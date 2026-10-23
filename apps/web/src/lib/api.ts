@@ -65,7 +65,25 @@ function withQuery(path: string, query?: Query) {
   return s ? `${path}?${s}` : path;
 }
 
+const cache = new Map<string, { at: number; value: Promise<unknown> }>();
+const fresh = 20_000;
+
+function cached<T>(path: string, query?: Query): Promise<T> {
+  const key = withQuery(path, query);
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < fresh) return hit.value as Promise<T>;
+  const value = request<T>('GET', path, undefined, query);
+  cache.set(key, { at: Date.now(), value });
+  value.catch(() => cache.delete(key));
+  return value;
+}
+
+function prime(path: string, value: unknown) {
+  cache.set(path, { at: Date.now(), value: Promise.resolve(value) });
+}
+
 async function request<T>(method: string, path: string, body?: unknown, query?: Query, quiet = false): Promise<T> {
+  if (method !== 'GET') cache.clear();
   const init: RequestInit = { method, credentials: 'same-origin', headers: { Accept: 'application/json' } };
   if (body instanceof FormData) {
     init.body = body;
@@ -119,21 +137,26 @@ export const api = {
   revert: (id: string) => request<Change>('POST', `/api/changes/${enc(id)}/revert`),
 
   list: (type: string, o: ListOptions = {}) =>
-    request<ArchiveRecord[]>('GET', `/api/${enc(type)}`, undefined, {
+    cached<ArchiveRecord[]>(`/api/${enc(type)}`, {
       ...(o.where ?? {}),
       space: o.space,
       limit: o.limit,
       after: o.after,
       reveal: o.reveal || undefined
+    }).then((rs) => {
+      if (!o.reveal) for (const r of rs) if (!cache.has(`/api/${enc(r.type)}/${enc(r.id)}`)) prime(`/api/${enc(r.type)}/${enc(r.id)}`, r);
+      return rs;
     }),
   get: (type: string, id: string, reveal = false) =>
-    request<ArchiveRecord>('GET', `/api/${enc(type)}/${enc(id)}`, undefined, { reveal: reveal || undefined }),
+    reveal
+      ? request<ArchiveRecord>('GET', `/api/${enc(type)}/${enc(id)}`, undefined, { reveal: true })
+      : cached<ArchiveRecord>(`/api/${enc(type)}/${enc(id)}`),
   create: (type: string, data: { [field: string]: unknown }, space?: string) =>
     request<ArchiveRecord>('POST', `/api/${enc(type)}`, data, { space }),
   patch: (type: string, id: string, data: { [field: string]: unknown }) => request<ArchiveRecord>('PATCH', `/api/${enc(type)}/${enc(id)}`, data),
   remove: (type: string, id: string) => request<void>('DELETE', `/api/${enc(type)}/${enc(id)}`),
-  provenance: (type: string, id: string) => request<Provenance[] | null>('GET', `/api/${enc(type)}/${enc(id)}/provenance`),
-  links: (type: string, id: string) => request<RecordLink[]>('GET', `/api/${enc(type)}/${enc(id)}/links`),
+  provenance: (type: string, id: string) => cached<Provenance[] | null>(`/api/${enc(type)}/${enc(id)}/provenance`),
+  links: (type: string, id: string) => cached<RecordLink[]>(`/api/${enc(type)}/${enc(id)}/links`),
 
   search: (q: string, f: { type?: string; space?: string; source?: string; from?: string; to?: string; limit?: number } = {}) =>
     request<SearchHit[] | null>('GET', '/api/search', undefined, { q, ...f }),
@@ -162,7 +185,7 @@ export const api = {
   removeSource: (id: string) => request<void>('DELETE', `/api/sources/${enc(id)}`),
 
   views: () => request<View[]>('GET', '/api/views'),
-  view: (id: string) => request<View>('GET', `/api/views/${enc(id)}`),
+  view: (id: string) => cached<View>(`/api/views/${enc(id)}`),
   addView: (v: ViewInput) => request<View>('POST', '/api/views', v),
   setView: (id: string, v: ViewInput) => request<View>('PUT', `/api/views/${enc(id)}`, v),
   removeView: (id: string) => request<void>('DELETE', `/api/views/${enc(id)}`)

@@ -124,7 +124,6 @@
   }
   .lead {
     display: grid;
-    animation: lead-in var(--duration-normal) var(--ease-spring);
   }
   .trail {
     display: grid;
@@ -134,11 +133,5 @@
   [data-variant='primary'] .trail,
   [data-variant='danger'] .trail {
     color: inherit;
-  }
-  @keyframes lead-in {
-    from {
-      transform: scale(var(--enter-scale-small));
-      opacity: 0;
-    }
   }
 </style>

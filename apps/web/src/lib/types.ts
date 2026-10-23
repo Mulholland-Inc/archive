@@ -48,7 +48,7 @@ export type Provenance = {
   page?: number;
 };
 
-export type RecordLink = { id: string; from_id: string; to_id: string; kind: string; space: string };
+export type RecordLink = { id: string; from_id: string; to_id: string; kind: string; space: string; from_type: string };
 
 export type ArchiveFile = {
   id: string;

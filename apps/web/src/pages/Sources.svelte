@@ -4,7 +4,8 @@
   import { session, canWrite, spaceName } from '../lib/session.svelte';
   import { query, setQuery } from '../lib/router.svelte';
   import { setCrumbs } from '../lib/page.svelte';
-  import { humanize, relative, objectTypes } from '../lib/spec';
+  import { humanize, relative } from '../lib/spec';
+  import { objectTypeItems } from '../lib/ontology';
   import { kindLabel, kindIcon, scheduleLabel, statusLabel, statusTone, schedules } from '../lib/sources';
   import { toast, fail } from '../lib/toast.svelte';
   import type { Source } from '../lib/types';
@@ -174,7 +175,7 @@
 <Dialog open={!!editing} title={`Edit ${editing?.name ?? ''}`} onclose={() => (editing = null)}>
   <Stack gap="4">
     <Field label="Read into">
-      <Select variant="field" bind:value={editType} options={[{ id: '', label: 'Keep them unmapped' }, ...objectTypes(session.ontology).map((t) => ({ id: t, label: humanize(t), icon: 'table' }))]} label="Read into" />
+      <Select variant="field" bind:value={editType} options={[{ id: '', label: 'Keep them unmapped' }, ...objectTypeItems()]} label="Read into" />
     </Field>
     <Field label="Sync">
       <Select variant="field" bind:value={editSchedule} options={schedules} label="Sync schedule" />

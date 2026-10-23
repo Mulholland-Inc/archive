@@ -45,11 +45,5 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
-    animation: thumb-in var(--duration-slow) var(--ease-out);
-  }
-  @keyframes thumb-in {
-    from {
-      opacity: 0;
-    }
   }
 </style>

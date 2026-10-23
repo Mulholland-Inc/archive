@@ -52,12 +52,6 @@
     setCrumbs([{ label: humanize(type), href: `/records/${type}` }, { label: record ? recordTitle(o, record) : '…' }]);
   });
 
-  function incomingType(l: RecordLink): string | undefined {
-    const types = Object.entries(o?.spec.types ?? {});
-    const candidates = types.filter(([n]) => fieldsOf(o, n).some(([fn, f]) => fn === l.kind && f.type === 'reference'));
-    return candidates[0]?.[0];
-  }
-
   const outgoing = $derived(links.filter((l) => l.from_id === id));
   const incoming = $derived(links.filter((l) => l.to_id === id && l.from_id !== id));
 
@@ -163,7 +157,7 @@
                 </Row>
               {/each}
               {#each incoming as l (l.id)}
-                {@const from = incomingType(l)}
+                {@const from = l.from_type}
                 <Row gap="2">
                   <Icon name="arrow-left" size="sm" />
                   {#if from}

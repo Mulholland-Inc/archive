@@ -323,7 +323,7 @@ func (s *pgStore) SetLinks(ctx context.Context, r *Record, ls []*Link) error {
 }
 
 func (s *pgStore) ListLinks(ctx context.Context, id uuid.UUID) ([]*Link, error) {
-	return storeAll[Link](ctx, s, `SELECT * FROM links WHERE from_id = $1 OR to_id = $1 ORDER BY id`, id)
+	return storeAll[Link](ctx, s, `SELECT l.*, coalesce(r.type, '') AS from_type FROM links l LEFT JOIN records r ON r.id = l.from_id WHERE l.from_id = $1 OR l.to_id = $1 ORDER BY l.id`, id)
 }
 
 const storePutChangeSQL = `

@@ -1,9 +1,9 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
-  let { width = 'default', children }: { width?: 'default' | 'full' | 'narrow'; children: Snippet } = $props();
+  let { width = 'default', fit = false, children }: { width?: 'default' | 'full' | 'narrow'; fit?: boolean; children: Snippet } = $props();
 </script>
 
-<div class="scroll">
+<div class="scroll" data-fit={fit || undefined}>
   <div class="page" data-width={width}>{@render children()}</div>
 </div>
 
@@ -19,19 +19,22 @@
     gap: var(--space-6);
     max-width: var(--page-width);
     padding: var(--space-6) var(--space-8) var(--space-16);
-    animation: page-in var(--duration-slow) var(--ease-out);
+  }
+  [data-fit] {
+    display: flex;
+    overflow: hidden;
+  }
+  [data-fit] .page {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    padding-bottom: var(--space-6);
   }
   [data-width='full'] {
     max-width: none;
   }
   [data-width='narrow'] {
     max-width: calc(var(--form-width) + var(--space-16));
-  }
-  @keyframes page-in {
-    from {
-      opacity: 0;
-      transform: translateY(var(--nudge));
-    }
   }
   @media (max-width: 40rem) {
     .page {

@@ -4,7 +4,7 @@
   import { session, isAdmin, canWrite } from '../lib/session.svelte';
   import { navigate } from '../lib/router.svelte';
   import { setCrumbs } from '../lib/page.svelte';
-  import { objectTypes, fieldsOf, humanize, formatBytes, relative } from '../lib/spec';
+  import { objectTypes, fieldsOf, humanize, formatBytes, relative, typeIcon } from '../lib/spec';
   import { kindIcon, statusLabel, statusTone } from '../lib/sources';
   import type { ArchiveFile, Source } from '../lib/types';
   import NewTypeDialog from './parts/NewTypeDialog.svelte';
@@ -75,6 +75,7 @@
           <RecordTile
             href={`/records/${t}`}
             title={humanize(t)}
+            icon={typeIcon(o, t)}
             rows={[{ label: 'Fields', value: fieldsOf(o, t).map(([n]) => humanize(n).toLowerCase()).slice(0, 5).join(', ') || 'None yet' }]}
           />
         {/each}

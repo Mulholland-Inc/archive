@@ -22,20 +22,24 @@
     Text,
     Popover,
     Menu,
-    Dialog
+    Dialog,
+    Sheet,
+    Input
   } from '../lib';
   import { api } from '../lib/api';
-  import { session, reloadViews, canWrite, spaceName, spaceLabel } from '../lib/session.svelte';
+  import { session, reloadViews, canWrite } from '../lib/session.svelte';
   import { route, query, setQuery, navigate } from '../lib/router.svelte';
   import { setCrumbs } from '../lib/page.svelte';
   import { fieldsOf, humanize, kindOf, recordTitle, titleField, formatValue, relative } from '../lib/spec';
-  import { remember } from '../lib/refs.svelte';
+  import { remember, refTitle } from '../lib/refs.svelte';
   import { toast, fail } from '../lib/toast.svelte';
   import type { ArchiveRecord, View } from '../lib/types';
   import FieldValue from './parts/FieldValue.svelte';
   import FilterAdd from './parts/FilterAdd.svelte';
   import RecordForm from './parts/RecordForm.svelte';
   import SaveViewDialog from './parts/SaveViewDialog.svelte';
+  import RecordPeek from './parts/RecordPeek.svelte';
+  import { preloadRecord } from '../lib/preload';
 
   let { type: typeProp, viewId }: { type?: string; viewId?: string } = $props();
 
@@ -70,7 +74,7 @@
     return { layout: q.get('layout') ?? 'table', by: q.get('by') ?? '', where };
   });
 
-  const space = $derived(viewId ? (view ? spaceName(view.space) : '') : session.space);
+  const space = $derived(session.space);
   const whereKey = $derived(JSON.stringify(settings.where));
   const dirty = $derived(
     !!view &&
@@ -109,7 +113,7 @@
   });
 
   async function fetchPage(after?: string) {
-    const rs = await api.list(type, { space: space || undefined, where: settings.where, limit: pageSize, after });
+    const rs = await api.list(type, { space: space || undefined, where: JSON.parse(whereKey), limit: pageSize, after });
     rs.forEach(remember);
     return rs;
   }
@@ -208,12 +212,12 @@
     let keys: string[];
     if (k === 'enum') keys = [...(f.enum ?? [])];
     else if (k === 'boolean') keys = ['true', 'false'];
-    else keys = [...new Set(records.map(groupKey).filter((x) => x !== '__none'))].sort();
+    else keys = [...new Set(shown.map(groupKey).filter((x) => x !== '__none'))].sort();
     keys.push('__none');
     return keys.map((key) => ({
       id: key,
       label: key === '__none' ? 'None' : k === 'boolean' ? (key === 'true' ? 'Yes' : 'No') : formatValue(o, f, key),
-      items: records.filter((r) => groupKey(r) === key)
+      items: shown.filter((r) => groupKey(r) === key)
     }));
   });
 
@@ -248,8 +252,64 @@
     { id: '__updated', label: 'Updated', width: 'narrow' as const }
   ]);
 
+  const peek = $derived.by(() => {
+    const [t, i] = (new URLSearchParams(route.search).get('peek') ?? '').split('/');
+    return t && i ? { type: t, id: i } : null;
+  });
+
+  function openPeek(t: string, i: string) {
+    setQuery({ peek: `${t}/${i}` });
+  }
+
+  function replaceRecord(r: ArchiveRecord) {
+    const i = records.findIndex((x) => x.id === r.id);
+    if (i >= 0) records[i] = r;
+  }
+
+  let q = $state('');
+  let found = $state<ArchiveRecord[]>([]);
+  const term = $derived(q.trim().toLowerCase());
+
+  $effect(() => {
+    found = [];
+    if (!term || !more) return;
+    let cancelled = false;
+    const t = setTimeout(() => {
+      api
+        .search(term, { type, space: space || undefined, limit: 50 })
+        .then((hits) => Promise.all((hits ?? []).filter((h) => h.kind === 'record' && h.type === type).map((h) => api.get(type, h.id).catch(() => null))))
+        .then((rs) => {
+          if (!cancelled) found = rs.filter((r): r is ArchiveRecord => !!r);
+        })
+        .catch(() => {});
+    }, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  });
+
+  function haystack(r: ArchiveRecord) {
+    return fields
+      .map(([n, f]) => {
+        const v = r.data[n];
+        if (v === undefined || v === null) return '';
+        if (kindOf(o, f.type) !== 'reference' || !f.to) return formatValue(o, f, v);
+        return (Array.isArray(v) ? v : [v]).map((x) => refTitle(f.to!, String(x))).join(' ');
+      })
+      .concat(recordTitle(o, r))
+      .join(' ')
+      .toLowerCase();
+  }
+
+  const shown = $derived.by(() => {
+    if (!term) return records;
+    const hits = records.filter((r) => haystack(r).includes(term));
+    const ids = new Set(hits.map((r) => r.id));
+    return [...hits, ...found.filter((r) => !ids.has(r.id))];
+  });
+
   const writable = $derived(canWrite());
-  const description = $derived(o?.spec.types[type]?.description);
 </script>
 
 {#if viewMissing}
@@ -265,8 +325,8 @@
     </EmptyState>
   </Page>
 {:else if type}
-  <Page width="full">
-    <PageHeader title={view?.name ?? `${humanize(type)}`} description={view ? `${humanize(type)} records${space ? ` in ${spaceLabel(space)}` : ''}` : description}>
+  <Page width="full" fit>
+    <PageHeader title={view?.name ?? `${humanize(type)}`} description={view ? `${humanize(type)} records` : undefined}>
       {#snippet actions()}
         {#if view}
           {#if dirty}<Button variant="tint" icon="check" onclick={saveView}>Save changes</Button>{/if}
@@ -304,6 +364,7 @@
     </PageHeader>
 
     <Row gap="2" wrap>
+      <div class="search"><Input bind:value={q} type="search" icon="search" placeholder={`Search ${humanize(type).toLowerCase()} records`} label="Search" /></div>
       <FilterAdd {type} where={settings.where} onadd={(k, v) => update({ where: { ...settings.where, [k]: v } })} />
       {#each Object.entries(settings.where) as [k, v] (k)}
         <FilterChip
@@ -335,10 +396,15 @@
       />
     </Row>
 
+    <div class="body">
     {#if error}
       <Notice tone="danger">{error}</Notice>
-    {:else if loading}
+    {:else if loading && !records.length}
       <Skeleton rows={8} />
+    {:else if term && !shown.length}
+      <EmptyState icon="search" title={`Nothing matches “${q.trim()}”`} description="Try other words, or clear the search.">
+        <Button onclick={() => (q = '')}>Clear search</Button>
+      </EmptyState>
     {:else if !records.length}
       <EmptyState
         icon="table"
@@ -360,7 +426,7 @@
       {:else}
         <Board {columns} onmove={(id, col) => move(id, col)} draggable={writable}>
           {#snippet card(r, state)}
-            <RecordTile href={`/records/${r.type}/${r.id}`} title={recordTitle(o, r)} rows={tileRows(r)} {state} />
+            <RecordTile href={`/records/${r.type}/${r.id}`} title={recordTitle(o, r)} rows={tileRows(r)} {state} onclick={() => openPeek(r.type, r.id)} />
           {/snippet}
         </Board>
       {/if}
@@ -369,21 +435,21 @@
         <Notice>This type has no date field. Add a date or timestamp field to use the calendar.</Notice>
       {:else}
         <MonthGrid
-          items={records}
+          items={shown}
           key={(r) => r.id}
           date={(r) => {
             const v = r.data[by];
             return typeof v === 'string' ? v : (v as { utc?: string } | undefined)?.utc;
           }}
         >
-          {#snippet item(r)}<EventChip href={`/records/${r.type}/${r.id}`} label={recordTitle(o, r)} />{/snippet}
+          {#snippet item(r)}<EventChip href={`/records/${r.type}/${r.id}`} label={recordTitle(o, r)} onclick={() => openPeek(r.type, r.id)} />{/snippet}
         </MonthGrid>
       {/if}
     {:else}
-      <Table columns={tableColumns} rows={records} key={(r) => r.id} onrowclick={(r) => navigate(`/records/${r.type}/${r.id}`)}>
+      <Table columns={tableColumns} rows={shown} key={(r) => r.id} onrowclick={(r) => openPeek(r.type, r.id)} onrowhover={(r) => preloadRecord(r.type, r.id)}>
         {#snippet cell(r, c)}
           {#if c === '__title' || c === tf}
-            <Link href={`/records/${r.type}/${r.id}`}>{recordTitle(o, r)}</Link>
+            <Text variant="strong">{recordTitle(o, r)}</Text>
           {:else if c === '__updated'}
             <Text variant="muted">{relative(r.updated_at)}</Text>
           {:else}
@@ -394,9 +460,10 @@
       </Table>
     {/if}
 
-    {#if more && !loading}
+    {#if more && !loading && !term}
       <Row><Button loading={loadingMore} onclick={loadMore}>Load more</Button></Row>
     {/if}
+    </div>
   </Page>
 
   <RecordForm
@@ -408,6 +475,20 @@
       toast(`Created ${recordTitle(o, r)}`, 'success', { label: 'Open', run: () => navigate(`/records/${r.type}/${r.id}`) });
     }}
   />
+  <Sheet open={!!peek} label="Record" onclose={() => setQuery({ peek: undefined })}>
+    {#if peek}
+      {#key `${peek.type}/${peek.id}`}
+        <RecordPeek
+          type={peek.type}
+          id={peek.id}
+          onopen={openPeek}
+          onclose={() => setQuery({ peek: undefined })}
+          onsaved={replaceRecord}
+          ondeleted={(r) => (records = records.filter((x) => x.id !== r.id))}
+        />
+      {/key}
+    {/if}
+  </Sheet>
   <SaveViewDialog bind:open={saving} {type} layout={settings.layout} by={by} where={settings.where} />
   <Dialog bind:open={confirmDelete} title="Delete this view?" description="The records stay; only the saved filters and layout go.">
     {#snippet children()}{/snippet}
@@ -419,3 +500,17 @@
 {:else}
   <Page><Skeleton /></Page>
 {/if}
+
+<style>
+  .body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    overflow: auto;
+  }
+  .search {
+    width: min(20rem, 100%);
+  }
+</style>

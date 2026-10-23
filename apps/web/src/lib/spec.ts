@@ -1,4 +1,5 @@
 import type { ArchiveRecord, Field, Ontology, TypeDef } from './types';
+import { iconNames, typeIconNames } from './components/Icon.svelte';
 
 export type Kind =
   | 'text'
@@ -63,6 +64,25 @@ export function objectTypes(o: Ontology | null): string[] {
   return Object.keys(o.spec.types)
     .filter((n) => !o.builtin.includes(n))
     .sort((a, b) => a.localeCompare(b));
+}
+
+export function typeIcon(o: Ontology | null, type: string): string {
+  const types = objectTypes(o);
+  const own = (t: string) => {
+    const i = o?.spec.types[t]?.icon;
+    return i && iconNames.includes(i) ? i : '';
+  };
+  if (own(type)) return own(type);
+  const used = new Set(types.map(own).filter(Boolean));
+  for (const t of [...types.filter((t) => t !== type && !own(t)), type]) {
+    let h = 0;
+    for (const c of t) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+    const free = typeIconNames.filter((i) => !used.has(i));
+    const icon = free.length ? free[h % free.length] : 'table';
+    if (t === type) return icon;
+    used.add(icon);
+  }
+  return 'table';
 }
 
 export function fieldTypes(o: Ontology | null): string[] {
@@ -151,6 +171,7 @@ export function formatBytes(n: number) {
 function formatOne(o: Ontology | null, f: Field, v: unknown): string {
   if (v === null || v === undefined || v === '') return '';
   if (isSecret(v)) return '••••••';
+  if (f.type === 'percentage' && !isNaN(Number(v))) return new Intl.NumberFormat(undefined, { style: 'percent', maximumFractionDigits: 2 }).format(Number(v));
   const kind = kindOf(o, f.type);
   switch (kind) {
     case 'boolean':

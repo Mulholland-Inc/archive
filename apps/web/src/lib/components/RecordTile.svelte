@@ -1,15 +1,23 @@
 <script lang="ts">
   import { intercept } from '../router.svelte';
+  import Icon from './Icon.svelte';
   let {
     href,
     title,
+    icon,
     rows = [],
+    onclick,
     state = 'rest'
-  }: { href: string; title: string; rows?: { label: string; value: string }[]; state?: 'rest' | 'lifted' | 'placeholder' } = $props();
+  }: { href: string; title: string; icon?: string; onclick?: () => void; rows?: { label: string; value: string }[]; state?: 'rest' | 'lifted' | 'placeholder' } = $props();
 </script>
 
-<a class="tile" {href} data-state={state} onclick={(e) => intercept(e, href)} draggable="false">
-  <span class="title">{title}</span>
+<a class="tile" {href} data-state={state} onclick={(e) => {
+    if (onclick && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+      e.preventDefault();
+      onclick();
+    } else intercept(e, href);
+  }} draggable="false">
+  <span class="title">{#if icon}<Icon name={icon} size="sm" />{/if}{title}</span>
   {#each rows as row (row.label)}
     <span class="row"><span class="label">{row.label}</span><span class="value">{row.value}</span></span>
   {/each}
@@ -44,6 +52,9 @@
     box-shadow: var(--shadow-lift);
   }
   .title {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
     font-weight: var(--font-medium);
     overflow-wrap: anywhere;
   }

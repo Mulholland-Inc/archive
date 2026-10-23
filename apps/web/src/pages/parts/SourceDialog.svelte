@@ -2,8 +2,7 @@
   import { Dialog, Field, Input, Textarea, Select, Button, Stack, Notice, ChoiceCard, Grid, Checkbox, Row, Text } from '../../lib';
   import { api, ApiError } from '../../lib/api';
   import { session, spaceLabel } from '../../lib/session.svelte';
-  import { objectTypes, humanize } from '../../lib/spec';
-  import { slug } from '../../lib/ontology';
+  import { slug, objectTypeItems } from '../../lib/ontology';
   import { kinds, schedules } from '../../lib/sources';
   import type { Source } from '../../lib/types';
 
@@ -141,7 +140,7 @@
           <Input bind:value={name} mono invalid={!!errors.name} oninput={() => (nameTouched = true)} label="Name" />
         </Field>
         <Field label="Read into" hint="Without a type, items stay searchable as unmapped raw data." error={errors.type}>
-          <Select variant="field" bind:value={type} options={[{ id: '', label: 'Keep them unmapped' }, ...objectTypes(session.ontology).map((t) => ({ id: t, label: humanize(t), icon: 'table' }))]} label="Read into" />
+          <Select variant="field" bind:value={type} options={[{ id: '', label: 'Keep them unmapped' }, ...objectTypeItems()]} label="Read into" />
         </Field>
         <Field label="Sync" error={errors.schedule}>
           <Select variant="field" bind:value={schedule} options={schedules} label="Sync schedule" />

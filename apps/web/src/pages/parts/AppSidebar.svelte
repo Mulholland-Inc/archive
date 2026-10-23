@@ -2,7 +2,7 @@
   import { Sidebar, SidebarSection, SidebarItem, WorkspaceSwitcher, IconButton, Popover, Menu, Spacer, type MenuItem } from '../../lib';
   import { session, setSpace, signOut, isAdmin, spaceLabel } from '../../lib/session.svelte';
   import { route, navigate } from '../../lib/router.svelte';
-  import { objectTypes, humanize } from '../../lib/spec';
+  import { objectTypes, humanize, typeIcon } from '../../lib/spec';
   import NewTypeDialog from './NewTypeDialog.svelte';
 
   let { theme, ontheme, oncollapse }: { theme: 'light' | 'dark'; ontheme: () => void; oncollapse: () => void } = $props();
@@ -55,20 +55,8 @@
 
   <SidebarSection>
     <SidebarItem href="/" icon="home" label="Home" active={route.path === '/'} />
-    <SidebarItem href="/search" icon="search" label="Search" active={at('/search')} />
     <SidebarItem href="/library" icon="folder" label="Files" active={at('/library')} />
     <SidebarItem href="/sources" icon="plug" label="Sources" active={at('/sources')} />
-  </SidebarSection>
-
-  <SidebarSection title="Types" bind:open={typesOpen}>
-    {#snippet action()}
-      {#if isAdmin()}<IconButton icon="plus" label="New type" size="sm" onclick={() => (newType = true)} />{/if}
-    {/snippet}
-    {#each types as t (t)}
-      <SidebarItem href={`/records/${encodeURIComponent(t)}`} icon="table" label={humanize(t)} active={route.path.startsWith(`/records/${encodeURIComponent(t)}`)} />
-    {:else}
-      <SidebarItem href="/types" icon="plus" label="Define a type" />
-    {/each}
   </SidebarSection>
 
   {#if views.length}
@@ -78,6 +66,17 @@
       {/each}
     </SidebarSection>
   {/if}
+
+  <SidebarSection title="Types" bind:open={typesOpen}>
+    {#snippet action()}
+      {#if isAdmin()}<IconButton icon="plus" label="New type" size="sm" onclick={() => (newType = true)} />{/if}
+    {/snippet}
+    {#each types as t (t)}
+      <SidebarItem href={`/records/${encodeURIComponent(t)}`} icon={typeIcon(session.ontology, t)} label={humanize(t)} active={route.path.startsWith(`/records/${encodeURIComponent(t)}`)} />
+    {:else}
+      <SidebarItem href="/types" icon="plus" label="Define a type" />
+    {/each}
+  </SidebarSection>
 
   <SidebarSection>
     <SidebarItem href="/types" icon="shapes" label="Ontology" active={at('/types') || at('/changes')} />

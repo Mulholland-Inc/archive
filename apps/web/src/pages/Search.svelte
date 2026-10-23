@@ -1,23 +1,21 @@
 <script lang="ts">
-  import { Page, PageHeader, Input, Select, Row, Stack, ResultRow, Highlight, EmptyState, Notice, Skeleton, Text } from '../lib';
+  import { Page, PageHeader, Stack, ResultRow, Highlight, EmptyState, Notice, Skeleton, Text } from '../lib';
   import { api } from '../lib/api';
   import { session } from '../lib/session.svelte';
-  import { query, setQuery } from '../lib/router.svelte';
+  import { route } from '../lib/router.svelte';
   import { setCrumbs } from '../lib/page.svelte';
-  import { objectTypes, humanize, recordTitle, formatDate } from '../lib/spec';
+  import { humanize, recordTitle, formatDate, typeIcon } from '../lib/spec';
   import type { SearchHit } from '../lib/types';
 
   setCrumbs([{ label: 'Search' }]);
 
-  let q = $state(query().get('q') ?? '');
-  let type = $state(query().get('type') ?? '');
+  const q = $derived(new URLSearchParams(route.search).get('q') ?? '');
+  const type = $derived(new URLSearchParams(route.search).get('type') ?? '');
   let hits = $state<SearchHit[] | null>(null);
   let loading = $state(false);
   let error = $state('');
   let timer: ReturnType<typeof setTimeout>;
   let seq = 0;
-
-  const typeItems = $derived([{ id: '', label: 'Everything', icon: 'layers' }, { id: 'file', label: 'Files', icon: 'folder' }, ...objectTypes(session.ontology).map((t) => ({ id: t, label: humanize(t), icon: 'table' }))]);
 
   $effect(() => {
     const term = q.trim();
@@ -25,7 +23,6 @@
     const space = session.space;
     clearTimeout(timer);
     timer = setTimeout(() => {
-      setQuery({ q: term || undefined, type: t || undefined });
       if (!term) {
         hits = null;
         return;
@@ -62,16 +59,12 @@
   function hitIcon(h: SearchHit) {
     if (h.kind === 'raw') return 'inbox';
     if (h.type === 'file') return 'document';
-    return 'table';
+    return h.type ? typeIcon(session.ontology, h.type) : 'table';
   }
 </script>
 
 <Page width="narrow">
   <PageHeader title="Search" description="Find records, files and synced items by their words, and by meaning when semantic search is on." />
-  <Row gap="2" wrap>
-    <Input bind:value={q} type="search" icon="search" placeholder="Search everything" autofocus label="Search" />
-    <Select icon="filter" bind:value={type} options={typeItems} searchable={typeItems.length > 8} />
-  </Row>
   {#if error}
     <Notice tone="danger">{error}</Notice>
   {:else if loading && !hits}
@@ -87,6 +80,6 @@
       {/each}
     </Stack>
   {:else}
-    <Text variant="muted">Press ⌘K anywhere to come back here.</Text>
+    <Text variant="muted">Type in the search bar at the top, or press ⌘K from anywhere.</Text>
   {/if}
 </Page>

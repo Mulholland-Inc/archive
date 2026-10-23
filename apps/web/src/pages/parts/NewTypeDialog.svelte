@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { Dialog, Field, Input, Textarea, Button, Stack, Divider, Notice } from '../../lib';
+  import { Dialog, Field, Input, Select, Button, Stack, Divider, Notice, typeIconNames } from '../../lib';
   import { checkName, slug, changeOntology, emptyDraft, draftToField, checkDraft, type FieldDraft } from '../../lib/ontology';
   import { session } from '../../lib/session.svelte';
+  import { humanize, typeIcon } from '../../lib/spec';
   import { navigate } from '../../lib/router.svelte';
   import { toast } from '../../lib/toast.svelte';
   import FieldDraftRow from './FieldDraftRow.svelte';
@@ -11,7 +12,8 @@
   let label = $state('');
   let name = $state('');
   let nameTouched = $state(false);
-  let description = $state('');
+  let icon = $state('');
+  let iconTouched = $state(false);
   let drafts = $state<FieldDraft[]>([{ ...emptyDraft(), name: 'name', required: true }]);
   let errors = $state<{ name?: string; fields: string[] }>({ fields: [] });
   let busy = $state(false);
@@ -19,6 +21,7 @@
 
   $effect(() => {
     if (!nameTouched) name = slug(label);
+    if (!iconTouched) icon = typeIcon(session.ontology, name || '_');
   });
 
   $effect(() => {
@@ -26,7 +29,7 @@
       label = '';
       name = '';
       nameTouched = false;
-      description = '';
+      iconTouched = false;
       drafts = [{ ...emptyDraft(), name: 'name', required: true }];
       errors = { fields: [] };
       failure = '';
@@ -43,8 +46,7 @@
     failure = '';
     try {
       const fields = Object.fromEntries(drafts.map((d) => [d.name, draftToField(d)]));
-      const def: { [k: string]: unknown } = { fields };
-      if (description.trim()) def.description = description.trim();
+      const def = { icon, fields };
       const { applied } = await changeOntology([{ op: 'add_type', type: name, def }]);
       open = false;
       if (applied) {
@@ -74,8 +76,8 @@
           <Input bind:value={name} mono oninput={() => (nameTouched = true)} label="Stored name" />
         </Field>
       {/if}
-      <Field label="Description" hint="Helps people and the intake model know what belongs here.">
-        <Textarea bind:value={description} rows={2} placeholder="Bills from suppliers, with totals and due dates" label="Description" />
+      <Field label="Icon">
+        <Select variant="field" bind:value={icon} options={typeIconNames.map((i) => ({ id: i, label: humanize(i), icon: i }))} onchange={() => (iconTouched = true)} label="Icon" />
       </Field>
       <Divider label="Fields" />
       {#each drafts as _, i (i)}

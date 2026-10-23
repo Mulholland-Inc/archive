@@ -1,9 +1,14 @@
 <script lang="ts">
   import { intercept } from '../router.svelte';
-  let { href, label }: { href: string; label: string } = $props();
+  let { href, label, onclick }: { href: string; label: string; onclick?: () => void } = $props();
 </script>
 
-<a class="chip" {href} title={label} onclick={(e) => intercept(e, href)}>{label}</a>
+<a class="chip" {href} title={label} onclick={(e) => {
+  if (onclick && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+    e.preventDefault();
+    onclick();
+  } else intercept(e, href);
+}}>{label}</a>
 
 <style>
   .chip {

@@ -127,11 +127,12 @@ type Provenance struct {
 }
 
 type Link struct {
-	ID     uuid.UUID `json:"id"`
-	FromID uuid.UUID `json:"from_id"`
-	ToID   uuid.UUID `json:"to_id"`
-	Kind   string    `json:"kind"`
-	Space  uuid.UUID `json:"space"`
+	ID       uuid.UUID `json:"id"`
+	FromID   uuid.UUID `json:"from_id"`
+	ToID     uuid.UUID `json:"to_id"`
+	Kind     string    `json:"kind"`
+	Space    uuid.UUID `json:"space"`
+	FromType string    `json:"from_type"`
 }
 
 type Change struct {

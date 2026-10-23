@@ -27,7 +27,6 @@
     transition:
       background-color var(--duration-fast) var(--ease-out),
       transform var(--duration-normal) var(--ease-spring);
-    animation: card-in var(--duration-slow) var(--ease-out);
   }
   .card:hover {
     background: var(--hover);
@@ -49,11 +48,5 @@
     padding: 0 var(--space-1);
     font-size: var(--text-sm);
     color: var(--muted-foreground);
-  }
-  @keyframes card-in {
-    from {
-      opacity: 0;
-      transform: translateY(var(--nudge));
-    }
   }
 </style>

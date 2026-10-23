@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { Page, PageHeader, Button, IconButton, Table, Text, Row, Dialog, Field, Input, Textarea, Stack, Notice, EmptyState, Popover, Menu, Link } from '../lib';
+  import { Page, PageHeader, Button, IconButton, Table, Text, Row, Dialog, Field, Input, Select, Stack, Notice, EmptyState, Popover, Menu, Link, typeIconNames } from '../lib';
   import { session, isAdmin } from '../lib/session.svelte';
   import { navigate } from '../lib/router.svelte';
   import { setCrumbs } from '../lib/page.svelte';
-  import { fieldsOf, humanize } from '../lib/spec';
+  import { fieldsOf, humanize, typeIcon } from '../lib/spec';
   import { changeOntology, emptyDraft, draftToField, checkDraft, checkName, type FieldDraft } from '../lib/ontology';
   import { toast, fail } from '../lib/toast.svelte';
   import type { Op } from '../lib/types';
@@ -27,8 +27,8 @@
   let newName = $state('');
   let renameError = $state('');
   let removing = $state<string | null>(null);
-  let describing = $state(false);
-  let description = $state('');
+  let choosingIcon = $state(false);
+  let icon = $state('');
   let deleting = $state(false);
   let busy = $state(false);
   let menus = $state<{ [k: string]: boolean }>({});
@@ -67,9 +67,9 @@
     if (await run([{ op: 'remove_field', type: name, field: removing }], `Removed ${removing}`)) removing = null;
   }
 
-  async function saveDescription() {
-    const { fields: _f, ...rest } = def ?? {};
-    if (await run([{ op: 'change_type', type: name, def: { ...rest, description: description.trim() || undefined } }], 'Saved the description')) describing = false;
+  async function saveIcon() {
+    const { fields: _f, description: _d, ...rest } = def ?? {};
+    if (await run([{ op: 'change_type', type: name, def: { ...rest, icon } }], 'Changed the icon')) choosingIcon = false;
   }
 
   async function deleteType() {
@@ -88,14 +88,14 @@
   </Page>
 {:else}
   <Page>
-    <PageHeader title={humanize(name)} description={def.description ?? (builtin ? 'A built-in field type.' : 'No description yet.')}>
+    <PageHeader title={humanize(name)}>
       {#snippet meta()}
         <Text variant="mono">{name}</Text>
         {#if def.extends}<Text>Extends <Link href={`/types/${def.extends}`} variant="accent">{humanize(def.extends)}</Link></Text>{/if}
         {#if def.sensitivity}<Text>{humanize(def.sensitivity)}</Text>{/if}
       {/snippet}
       {#snippet actions()}
-        {#if !builtin}<Button icon="table" onclick={() => navigate(`/records/${name}`)}>Records</Button>{/if}
+        {#if !builtin}<Button icon={typeIcon(o, name)} onclick={() => navigate(`/records/${name}`)}>Records</Button>{/if}
         {#if admin}
           <Button variant="primary" icon="plus" onclick={() => { draft = emptyDraft(); draftError = ''; adding = true; }}>Add field</Button>
           <Popover bind:open={typeMenu} align="end">
@@ -104,14 +104,14 @@
               <Menu
                 searchable={false}
                 items={[
-                  { id: 'describe', label: 'Edit description', icon: 'pencil' },
+                  { id: 'icon', label: 'Change icon', icon: typeIcon(o, name) },
                   { id: 'delete', label: 'Remove type', icon: 'trash', danger: true, separator: true }
                 ]}
                 onselect={(i) => {
                   close();
-                  if (i.id === 'describe') {
-                    description = def?.description ?? '';
-                    describing = true;
+                  if (i.id === 'icon') {
+                    icon = typeIcon(o, name);
+                    choosingIcon = true;
                   }
                   if (i.id === 'delete') deleting = true;
                 }}
@@ -213,13 +213,13 @@
     {/snippet}
   </Dialog>
 
-  <Dialog bind:open={describing} title="Edit description">
-    <Field label="Description" hint="Helps people and the intake model know what belongs here.">
-      <Textarea bind:value={description} rows={3} label="Description" />
+  <Dialog bind:open={choosingIcon} title="Change icon">
+    <Field label="Icon">
+      <Select variant="field" bind:value={icon} options={typeIconNames.map((i) => ({ id: i, label: humanize(i), icon: i }))} label="Icon" />
     </Field>
     {#snippet footer()}
-      <Button variant="ghost" onclick={() => (describing = false)}>Cancel</Button>
-      <Button variant="primary" loading={busy} onclick={saveDescription}>Save</Button>
+      <Button variant="ghost" onclick={() => (choosingIcon = false)}>Cancel</Button>
+      <Button variant="primary" loading={busy} onclick={saveIcon}>Save</Button>
     {/snippet}
   </Dialog>
 

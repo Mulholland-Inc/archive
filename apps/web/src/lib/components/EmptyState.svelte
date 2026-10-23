@@ -21,7 +21,6 @@
     gap: var(--space-4);
     max-width: var(--form-width);
     padding: var(--space-6) 0;
-    animation: empty-in var(--duration-slow) var(--ease-out);
   }
   .icon {
     display: grid;
@@ -42,11 +41,5 @@
   .actions {
     display: flex;
     gap: var(--space-2);
-  }
-  @keyframes empty-in {
-    from {
-      opacity: 0;
-      transform: translateY(var(--nudge));
-    }
   }
 </style>

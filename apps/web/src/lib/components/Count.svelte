@@ -24,12 +24,5 @@
   }
   .digits {
     grid-area: 1 / 1;
-    animation: count-in var(--duration-slow) var(--ease-spring);
-  }
-  @keyframes count-in {
-    from {
-      transform: translateY(var(--count-offset));
-      opacity: 0;
-    }
   }
 </style>

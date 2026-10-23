@@ -6,6 +6,7 @@
     key,
     cell,
     onrowclick,
+    onrowhover,
     empty
   }: {
     columns: { id: string; label: string; width?: 'narrow' | 'wide' | 'auto' }[];
@@ -13,6 +14,7 @@
     key: (row: T) => string;
     cell: Snippet<[T, string]>;
     onrowclick?: (row: T, e: MouseEvent) => void;
+    onrowhover?: (row: T) => void;
     empty?: Snippet;
   } = $props();
 </script>
@@ -34,6 +36,7 @@
             onrowclick?.(row, e);
           }}
           onkeydown={(e) => e.key === 'Enter' && onrowclick?.(row, e as unknown as MouseEvent)}
+          onpointerenter={() => onrowhover?.(row)}
         >
           {#each columns as c (c.id)}<td data-width={c.width ?? 'auto'}>{@render cell(row, c.id)}</td>{/each}
         </tr>
@@ -46,11 +49,12 @@
 <style>
   .wrap {
     min-width: 0;
+    min-height: 0;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     border-radius: var(--radius-lg);
     background: var(--card);
-    box-shadow: inset 0 0 0 var(--border-width) var(--border);
+    border: var(--border-width) solid var(--border);
   }
   .table {
     width: 100%;
@@ -82,6 +86,10 @@
   }
   tbody tr:last-child td {
     border-bottom: none;
+  }
+  th:not(:last-child),
+  td:not(:last-child) {
+    border-right: var(--border-width) solid var(--border);
   }
   [data-width='narrow'] {
     width: 1%;

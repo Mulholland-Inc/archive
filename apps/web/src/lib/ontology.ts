@@ -1,6 +1,6 @@
 import { api, ApiError } from './api';
 import { reloadOntology, session } from './session.svelte';
-import { humanize, objectTypes } from './spec';
+import { humanize, objectTypes, typeIcon } from './spec';
 import type { Change, Field, Op } from './types';
 import type { MenuItem } from './components/Menu.svelte';
 
@@ -57,7 +57,7 @@ export function fieldTypeItems(): MenuItem[] {
 }
 
 export function objectTypeItems(): MenuItem[] {
-  return objectTypes(session.ontology).map((t) => ({ id: t, label: humanize(t), icon: 'table' }));
+  return objectTypes(session.ontology).map((t) => ({ id: t, label: humanize(t), icon: typeIcon(session.ontology, t) }));
 }
 
 export type FieldDraft = { name: string; type: string; required: boolean; list: boolean; to: string; values: string };

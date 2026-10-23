@@ -197,7 +197,7 @@
   --surface-foreground: var(--gray-950);
   --card: var(--gray-0);
   --card-foreground: var(--gray-950);
-  --popover: var(--gray-100);
+  --popover: var(--gray-0);
   --popover-foreground: var(--gray-950);
   --muted: var(--tint-2);
   --muted-foreground: var(--gray-500);
