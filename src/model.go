@@ -42,6 +42,7 @@ type Type struct {
 	Extends     string            `json:"extends,omitempty"`
 	Category    string            `json:"category,omitempty"`
 	Sensitivity Sensitivity       `json:"sensitivity,omitempty"`
+	Restricted  bool              `json:"restricted,omitempty"`
 	Schema      map[string]any    `json:"schema,omitempty"`
 	Normalize   []string          `json:"normalize,omitempty"`
 	Parse       string            `json:"parse,omitempty"`
@@ -111,6 +112,8 @@ type Record struct {
 	CreatedAt   time.Time       `json:"created_at"`
 	UpdatedAt   time.Time       `json:"updated_at"`
 	Space       uuid.UUID       `json:"space"`
+	Restricted  bool            `json:"restricted"`
+	Creator     string          `json:"-"`
 }
 
 type Provenance struct {

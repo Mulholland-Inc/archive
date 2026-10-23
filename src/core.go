@@ -440,6 +440,21 @@ func (a *Archive) Delete(ctx context.Context, typ string, id uuid.UUID) error {
 	})
 }
 
+// Restrict hides an object from everyone in its space but the space's admins and owners and the
+// user who made it, or opens it again. Only an admin of the space may; schema.sql's
+// records_restrict trigger and the records policy hold that, here and in psql alike.
+func (a *Archive) Restrict(ctx context.Context, typ string, id uuid.UUID, restricted bool) (*Record, error) {
+	return coreDo(a, ctx, func(ctx context.Context) (*Record, error) {
+		if _, err := a.Get(ctx, typ, id); err != nil {
+			return nil, err
+		}
+		if _, err := a.st.Q(ctx).Exec(ctx, `UPDATE records SET restricted = $2 WHERE id = $1`, id, restricted); err != nil {
+			return nil, storeErr(err)
+		}
+		return a.Get(ctx, typ, id)
+	})
+}
+
 func (a *Archive) Provenance(ctx context.Context, typ string, id uuid.UUID) ([]*Provenance, error) {
 	return coreDo(a, ctx, func(ctx context.Context) ([]*Provenance, error) {
 		if _, err := a.Get(ctx, typ, id); err != nil {
