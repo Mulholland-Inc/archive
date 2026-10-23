@@ -96,6 +96,9 @@ CREATE TABLE IF NOT EXISTS provenance (
 ALTER TABLE provenance ADD COLUMN IF NOT EXISTS space uuid REFERENCES spaces;
 ALTER TABLE provenance ADD COLUMN IF NOT EXISTS file_id uuid;
 ALTER TABLE provenance ADD COLUMN IF NOT EXISTS page int NOT NULL DEFAULT 0;
+-- the record a field cites as its evidence; deleting it keeps the citation's words
+ALTER TABLE provenance ADD COLUMN IF NOT EXISTS source_id uuid REFERENCES records ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS provenance_source_idx ON provenance (source_id);
 CREATE INDEX IF NOT EXISTS provenance_record_idx ON provenance (record_id);
 CREATE INDEX IF NOT EXISTS provenance_space_idx ON provenance (space);
 
@@ -324,7 +327,8 @@ CREATE POLICY viewer ON records FOR SELECT USING (space = ANY ((SELECT my_spaces
 CREATE POLICY viewer ON raw FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[]));
 -- what hangs off a record is read only with it
 CREATE POLICY viewer ON provenance FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[])
-    AND EXISTS (SELECT FROM records r WHERE r.id = record_id));
+    AND EXISTS (SELECT FROM records r WHERE r.id = record_id)
+    AND (source_id IS NULL OR EXISTS (SELECT FROM records r WHERE r.id = source_id)));
 CREATE POLICY viewer ON links FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[])
     AND EXISTS (SELECT FROM records r WHERE r.id = from_id) AND EXISTS (SELECT FROM records r WHERE r.id = to_id));
 CREATE POLICY viewer ON files FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[])

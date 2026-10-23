@@ -464,6 +464,78 @@ func (a *Archive) Provenance(ctx context.Context, typ string, id uuid.UUID) ([]*
 	})
 }
 
+// Citation says which record backs a field of another: the source, the words as written there,
+// the page, and how sure the person citing it is (1 unless they say).
+type Citation struct {
+	Field      string   `json:"field" jsonschema:"the field the source backs, or empty for the whole object"`
+	Source     string   `json:"source" jsonschema:"id of the record that is the evidence, such as a register, letter or certificate"`
+	Original   string   `json:"original,omitempty" jsonschema:"the words as written in the source"`
+	Page       int      `json:"page,omitempty" jsonschema:"page in the source, if it has pages"`
+	Confidence *float64 `json:"confidence,omitempty" jsonschema:"0 to 1, how sure the citation is; 1 when left out"`
+}
+
+// Cite records what backs an object's fields. It needs editor in the object's space, a field the
+// type has, and a source the caller can read; the provenance policy then shows each citation
+// only to those who can read both ends.
+func (a *Archive) Cite(ctx context.Context, typ string, id uuid.UUID, cs []Citation) ([]*Provenance, error) {
+	return coreDo(a, ctx, func(ctx context.Context) ([]*Provenance, error) {
+		r, err := a.Get(ctx, typ, id)
+		if err != nil {
+			return nil, err
+		}
+		var writable bool
+		if err := a.st.Q(ctx).QueryRow(ctx, `SELECT $1::uuid = ANY(my_spaces('editor'))`, r.Space).Scan(&writable); err != nil {
+			return nil, err
+		}
+		if !writable {
+			return nil, fmt.Errorf("you cannot cite in this space: %w", ErrForbidden)
+		}
+		spec := a.Spec()
+		fields, err := spec.Fields(r.Type)
+		if err != nil {
+			return nil, err
+		}
+		verr := &ValidationError{Type: "citation"}
+		var ps []*Provenance
+		for i, c := range cs {
+			at := fmt.Sprintf("citations[%d].", i)
+			if _, ok := fields[c.Field]; c.Field != "" && !ok {
+				verr.Errors = append(verr.Errors, FieldError{Path: at + "field", Message: r.Type + " has no field " + c.Field})
+			}
+			sid, err := uuid.Parse(c.Source)
+			if err == nil {
+				_, err = a.st.GetRecord(ctx, sid)
+			}
+			if err != nil {
+				verr.Errors = append(verr.Errors, FieldError{Path: at + "source", Message: "want the id of a record you can read"})
+				continue
+			}
+			conf := 1.0
+			if c.Confidence != nil {
+				conf = *c.Confidence
+			}
+			if conf < 0 || conf > 1 {
+				verr.Errors = append(verr.Errors, FieldError{Path: at + "confidence", Message: "want 0 to 1"})
+			}
+			p := &Provenance{RecordID: r.ID, FieldPath: c.Field, Method: "cite", Confidence: conf, Original: c.Original, Page: c.Page, SourceID: &sid}
+			if spec.secretField(r.Type, c.Field) {
+				p.Original = ""
+			}
+			ps = append(ps, p)
+		}
+		if len(cs) == 0 {
+			verr.Errors = append(verr.Errors, FieldError{Path: "citations", Message: "want at least one"})
+		}
+		if len(verr.Errors) > 0 {
+			return nil, verr
+		}
+		if err := a.st.AddProvenance(ctx, ps); err != nil {
+			return nil, err
+		}
+		return a.st.ListProvenance(ctx, r.ID)
+	})
+}
+
 func (a *Archive) Links(ctx context.Context, typ string, id uuid.UUID) ([]*Link, error) {
 	return coreDo(a, ctx, func(ctx context.Context) ([]*Link, error) {
 		if _, err := a.Get(ctx, typ, id); err != nil {

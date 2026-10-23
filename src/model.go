@@ -127,6 +127,7 @@ type Provenance struct {
 	Space      uuid.UUID   `json:"space"`
 	FileID     *uuid.UUID  `json:"file_id,omitempty"`
 	Page       int         `json:"page,omitempty"`
+	SourceID   *uuid.UUID  `json:"source_id,omitempty"`
 }
 
 type Link struct {
