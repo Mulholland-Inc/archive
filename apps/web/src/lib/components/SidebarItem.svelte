@@ -1,78 +1,91 @@
 <script lang="ts">
   import Icon from './Icon.svelte';
   import Tile from './Tile.svelte';
+  import { intercept } from '../router.svelte';
   let {
     label,
+    href,
     icon,
-    glyph,
     tile,
     active = false,
     expanded,
-    trailing,
     onclick
   }: {
     label: string;
+    href?: string;
     icon?: string;
-    glyph?: string;
     tile?: { icon: string; color: number };
     active?: boolean;
     expanded?: boolean;
-    trailing?: boolean;
     onclick?: () => void;
   } = $props();
 </script>
 
-<button class="item" data-active={active || undefined} data-plain={tile ? true : undefined} aria-current={active ? 'page' : undefined} aria-expanded={expanded} {onclick}>
-  {#if tile}<Tile icon={tile.icon} color={tile.color} />{:else if glyph}<Icon name={glyph} />{:else if icon}<Icon name={icon} />{/if}
+{#snippet content()}
+  {#if tile}<Tile icon={tile.icon} color={tile.color} />{:else if icon}<Icon name={icon} />{/if}
   <span class="label">{label}</span>
-  {#if expanded !== undefined || trailing}
-    <span class="chev" data-rotates={expanded !== undefined || undefined} data-open={expanded || undefined}><Icon name={expanded !== undefined ? 'chevron-down' : 'chevron-right'} size="sm" /></span>
+  {#if expanded !== undefined}
+    <span class="chev" data-open={expanded || undefined}><Icon name="chevron-down" size="sm" /></span>
   {/if}
-</button>
+{/snippet}
+
+{#if href}
+  <a class="item" {href} data-active={active || undefined} aria-current={active ? 'page' : undefined} onclick={(e) => intercept(e, href)}>
+    {@render content()}
+  </a>
+{:else}
+  <button class="item" data-active={active || undefined} aria-expanded={expanded} {onclick}>{@render content()}</button>
+{/if}
 
 <style>
   .item {
-    display: inline-flex;
+    display: flex;
     align-items: center;
     gap: var(--space-2);
-    max-width: 100%;
+    width: 100%;
     height: var(--sidebar-item-height);
     padding: 0 var(--space-2);
     border-radius: var(--radius);
-    background: var(--sidebar-item-background);
+    color: var(--foreground);
+    text-decoration: none;
     font-size: var(--text-base);
     text-align: start;
     white-space: nowrap;
+    user-select: none;
     transition:
       background-color var(--duration-fast) var(--ease-out),
-      box-shadow var(--duration-fast) var(--ease-out),
       transform var(--duration-normal) var(--ease-spring);
   }
   .item:hover {
-    background: var(--tint-3);
+    background: var(--hover);
   }
   .item:active {
-    transform: scale(var(--press-scale));
-  }
-  [data-plain] {
-    background: transparent;
-    padding-left: var(--space-1);
+    transform: scale(var(--press-scale-subtle));
   }
   [data-active],
   [data-active]:hover {
     background: var(--selected);
     color: var(--selected-foreground);
+    box-shadow: 0 0 0 var(--border-width) var(--tint-2);
+  }
+  .item > :global(.icon) {
+    color: var(--muted-foreground);
+  }
+  [data-active] > :global(.icon) {
+    color: var(--foreground);
   }
   .label {
+    flex: 1;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
   }
   .chev {
     display: grid;
-    color: var(--foreground);
+    color: var(--muted-foreground);
     transition: transform var(--duration-normal) var(--ease-spring);
   }
-  .chev[data-rotates]:not([data-open]) {
+  .chev:not([data-open]) {
     transform: rotate(-90deg);
   }
 </style>

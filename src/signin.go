@@ -367,6 +367,14 @@ func (s *signin) browser(w http.ResponseWriter, r *http.Request, user func() (*U
 	if err == nil {
 		v, err = s.signedIn(w, r, u)
 	}
+	if webBrowser(r) {
+		to := "/"
+		if err != nil {
+			to = "/signin"
+		}
+		webRedirect(w, r, to, err)
+		return
+	}
 	httpWrite(w, http.StatusOK, v, err)
 }
 

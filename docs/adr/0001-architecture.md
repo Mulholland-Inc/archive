@@ -7,7 +7,7 @@
 
 ## Summary
 
-Build Archive as one Go binary on top of Postgres, with a web UI still to be built (TODO) and local LLMs reached over an OpenAI-compatible HTTP endpoint. Postgres does the heavy data work, so the application language mostly needs to be good at concurrent I/O, easy to ship as one static file, and easy for outside contributors to write connectors in. Go wins on all three.
+Build Archive as one Go binary on top of Postgres, with a web dashboard built into it and local LLMs reached over an OpenAI-compatible HTTP endpoint. Postgres does the heavy data work, so the application language mostly needs to be good at concurrent I/O, easy to ship as one static file, and easy for outside contributors to write connectors in. Go wins on all three.
 
 The product has four layers: a **raw layer** that keeps every source record untouched, a **canonical layer** of user-defined types (the ontology), an **intake loop** that maps raw into canonical with calibrated confidence, and **access surfaces** (UI, API, MCP, CLI) that all call the same core. For businesses, the same ontology can sit over their existing systems as a semantic layer instead of copying data in.
 
@@ -165,7 +165,7 @@ All four surfaces are thin wrappers over one core service layer, so a feature ad
 
 | Surface | What it offers |
 |---|---|
-| Web UI | TODO: Notion-like tables, boards and record pages; schema editor; intake review queue; connector setup |
+| Web UI | Svelte dashboard in `apps/web`, built to static files and embedded in the binary: tables, boards and calendars per type, saved views, record pages with provenance, files, search, sources, the ontology editor with change review, spaces, members and tokens |
 | HTTP API | REST with an OpenAPI spec generated from the registry, so every user type gets typed endpoints; webhooks on change |
 | MCP server | Tools to describe the ontology, query, upsert, propose schema changes and run intake, so agents work with the user's data and its meaning |
 | CLI | The same binary: `archive serve`, `archive spec push spec.json`, `archive query`, `archive connect gmail`, `archive intake ./inbox` |
@@ -250,23 +250,23 @@ Users, space roles and tokens are real Postgres roles, so the database itself is
 
 ## Language and stack
 
-**Recommendation: Go for the server, CLI and built-in connectors; the web UI's stack is TODO; Postgres for everything stateful.** Query speed comes from Postgres, not from the app layer, so the language is chosen for concurrency, shipping and contributors rather than raw speed.
+**Recommendation: Go for the server, CLI and built-in connectors; Svelte, built to static files and embedded in the binary, for the web dashboard; Postgres for everything stateful.** Query speed comes from Postgres, not from the app layer, so the language is chosen for concurrency, shipping and contributors rather than raw speed.
 
 | Option | Strengths for Archive | Weaknesses for Archive | Verdict |
 |---|---|---|---|
 | Go | Goroutines fit thousands of concurrent syncs; one static binary; fast builds; mature Postgres driver (`pgx`); official MCP SDK; large pool of contributors who can write connectors | Less expressive type system; GC pauses (irrelevant at this workload) | Recommended |
 | Rust | Top performance and memory safety; good fit for parsing and embedded inference | Slower to build features and harder for outside connector authors; compile times | Use later for hot paths if profiling demands it |
 | Elixir / Erlang | Best-in-class supervision and concurrency; LiveView for real-time UI | Heavier runtime in the container; small contributor pool; weaker CLI story | Strong but niche; not worth the hiring and community cost |
-| TypeScript (Node or Bun) | One language front to back; huge ecosystem | Single-threaded event loop for CPU work; heavier runtime; weaker single-binary story | Not needed: the UI is plain HTML with no build step |
+| TypeScript (Node or Bun) | One language front to back; huge ecosystem | Single-threaded event loop for CPU work; heavier runtime; weaker single-binary story | Not needed for the server; the dashboard is Svelte compiled to static files at build time, so no Node runs in production |
 | C++ | Raw speed | Slow to build, unsafe, hard for contributors | No |
 
-Supporting choices: Go 1.27 (released 19 August 2026, brings generic methods and JSON v2); Postgres 18 (18.6), the newest version Google Cloud SQL supports, which also brings the built-in uuidv7(), with `pgvector`; a few fixed SQL migrations for the core tables; the web UI is TODO; local inference reached over HTTP so Python never enters the core.
+Supporting choices: Go 1.27 (released 19 August 2026, brings generic methods and JSON v2); Postgres 18 (18.6), the newest version Google Cloud SQL supports, which also brings the built-in uuidv7(), with `pgvector`; a few fixed SQL migrations for the core tables; the dashboard is built with Vite and embedded with go:embed; local inference reached over HTTP so Python never enters the core.
 
 Policy: track the latest stable Go within a month of each release. Postgres follows the newest major version that Cloud SQL supports, so self-hosted and managed setups always run the same version. Sources: [Go 1.27 release](https://go.dev/blog/go1.27), [PostgreSQL release notes](https://releasebot.io/updates/postgresql).
 
 ## Deployment
 
-`curl -fsSL https://raw.githubusercontent.com/Mulholland-Inc/archive/main/install.sh | sh` is the whole install. The script (`install.sh` in the repo) checks for Docker, pulls `ghcr.io/mulholland-inc/archive`, runs it with one `archive` volume on port 8080, waits until it is healthy, and on a rerun replaces the container to update. Under it, the plain `docker run -v archive:/data -p 8080:8080 ghcr.io/mulholland-inc/archive` still works. The image holds Postgres and the Archive binary; the binary starts and supervises Postgres, runs migrations, then serves the API and MCP on one port (and the web UI, once it exists).
+`curl -fsSL https://raw.githubusercontent.com/Mulholland-Inc/archive/main/install.sh | sh` is the whole install. The script (`install.sh` in the repo) checks for Docker, pulls `ghcr.io/mulholland-inc/archive`, runs it with one `archive` volume on port 8080, waits until it is healthy, and on a rerun replaces the container to update. Under it, the plain `docker run -v archive:/data -p 8080:8080 ghcr.io/mulholland-inc/archive` still works. The image holds Postgres and the Archive binary; the binary starts and supervises Postgres, runs migrations, then serves the API, MCP and the dashboard on one port.
 
 - **One volume** (`/data`) holds the Postgres data directory, uploaded files and config, so backup is one directory or one `pg_dump`.
 - **External Postgres** is a config switch for businesses that already run managed Postgres; the binary then skips the bundled one.

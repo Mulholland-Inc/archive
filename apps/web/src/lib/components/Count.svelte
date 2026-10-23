@@ -11,13 +11,13 @@
     display: inline-grid;
     place-items: center;
     flex: none;
-    min-width: var(--count-size);
-    height: var(--count-size);
-    padding: 0 var(--space-2);
+    min-width: var(--chip-height);
+    height: var(--chip-height);
+    padding: 0 var(--space-1-5);
     border-radius: var(--radius-full);
     background: var(--tint-2);
     color: var(--muted-foreground);
-    font-size: var(--text-base);
+    font-size: var(--text-sm);
     font-variant-numeric: tabular-nums;
     overflow: hidden;
     user-select: none;

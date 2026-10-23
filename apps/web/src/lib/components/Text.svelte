@@ -4,16 +4,18 @@
     variant = 'body',
     as = 'span',
     truncate = false,
+    tone,
     children
   }: {
-    variant?: 'body' | 'strong' | 'muted' | 'subtle' | 'mono' | 'small' | 'heading' | 'title';
+    variant?: 'body' | 'strong' | 'muted' | 'subtle' | 'mono' | 'code' | 'small' | 'heading' | 'title';
     as?: 'span' | 'p' | 'h1' | 'h2' | 'h3' | 'div';
     truncate?: boolean;
+    tone?: 'success' | 'warning' | 'danger' | 'accent' | 'muted';
     children: Snippet;
   } = $props();
 </script>
 
-<svelte:element this={as} class="text" data-variant={variant} data-truncate={truncate || undefined}>{@render children()}</svelte:element>
+<svelte:element this={as} class="text" data-variant={variant} data-truncate={truncate || undefined} data-tone={tone}>{@render children()}</svelte:element>
 
 <style>
   .text {
@@ -28,6 +30,11 @@
     white-space: nowrap;
     text-overflow: ellipsis;
   }
+  [data-tone='success'] { color: var(--success); }
+  [data-tone='warning'] { color: var(--warning); }
+  [data-tone='danger'] { color: var(--danger); }
+  [data-tone='accent'] { color: var(--accent); }
+  [data-tone='muted'] { color: var(--muted-foreground); }
   [data-variant='strong'] { font-weight: var(--font-medium); }
   [data-variant='muted'] { color: var(--muted-foreground); }
   [data-variant='subtle'] { color: var(--subtle-foreground); }
@@ -40,6 +47,11 @@
     font-size: var(--text-sm);
     letter-spacing: var(--tracking-mono);
     color: var(--subtle-foreground);
+  }
+  [data-variant='code'] {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    letter-spacing: var(--tracking-mono);
   }
   [data-variant='heading'] {
     font-size: var(--text-lg);

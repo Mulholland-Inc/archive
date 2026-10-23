@@ -21,21 +21,7 @@
 
   --blue-200: #9ecaff;
   --blue-500: #3e8df8;
-  --blue-100: #e3efff;
-  --amber-200: #f8c564;
-  --amber-500: #c28b12;
-  --olive-200: #d0c986;
-  --olive-500: #8c872d;
-  --grass-200: #abd69f;
-  --grass-500: #3baf22;
-  --violet-500: #a945ff;
-  --violet-600: #8842e7;
-  --rust-500: #d75529;
-  --vermilion-500: #da4b10;
   --red-500: #d45453;
-  --orange-500: #e77234;
-  --neutral-200: #d6d6d6;
-  --neutral-500: #777777;
 
   --label-amber: #bc8906;
   --label-violet: #9d73e8;
@@ -53,7 +39,6 @@
   --lime-400: #d6ed3d;
   --emerald-400: #2fdda0;
   --emerald-500: #21b45c;
-  --lavender-300: #c4b4fb;
   --tangerine-500: #f9a11b;
 
   --ink: #0a0a0a;
@@ -88,21 +73,7 @@
 
   --blue-200: #4188c0;
   --blue-500: #3f8ff8;
-  --blue-100: #24344a;
-  --amber-200: #c28d12;
-  --amber-500: #c28c11;
-  --olive-200: #82872d;
-  --olive-500: #798928;
-  --grass-200: #5c9151;
-  --grass-500: #5c9151;
-  --violet-500: #7d72b4;
-  --violet-600: #9d73e8;
-  --rust-500: #ab5152;
-  --vermilion-500: #c06141;
   --red-500: #d45355;
-  --orange-500: #e77234;
-  --neutral-200: #797979;
-  --neutral-500: #8a8a8a;
 
   --label-amber: #af8700;
   --label-violet: #9d73e8;
@@ -200,14 +171,10 @@
   --press-scale: 0.96;
   --press-scale-strong: 0.88;
   --press-scale-icon: 0.92;
-  --hover-scale: 1.08;
   --enter-scale-small: 0.4;
-  --enter-scale-tiny: 0.3;
-  --enter-rotate: -45deg;
-  --sparkle-rotate: 18deg;
+  --press-scale-subtle: 0.985;
   --rise-offset: 35%;
   --count-offset: 60%;
-  --hover-filter: brightness(0.97) saturate(1.08);
   --opacity-soft: 0.4;
   --pop-scale: 0.96;
   --lift-scale: 1.025;
@@ -217,12 +184,10 @@
 
   --opacity-disabled: 0.4;
   --opacity-placeholder: 0.35;
-  --opacity-inactive-bar: 0.28;
 
   --z-raised: 10;
   --z-popover: 50;
   --z-drag: 80;
-  --z-dock: 90;
 
   --background: var(--gray-200);
   --foreground: var(--gray-950);
@@ -259,31 +224,8 @@
   --warning-foreground: var(--ink);
   --info: var(--blue-500);
   --info-foreground: var(--paper);
-  --ai-strong: var(--violet-600);
   --highlight: var(--lime-400);
 
-  --status-done: var(--grass-500);
-  --status-review: var(--blue-500);
-  --status-progress: var(--amber-500);
-  --status-todo: var(--neutral-500);
-  --status-unscoped: var(--violet-500);
-  --status-backlog: var(--olive-500);
-  --status-canceled: var(--rust-500);
-  --status-duplicate: var(--gray-950);
-  --status-triage: var(--vermilion-500);
-  --status-blocked: var(--red-500);
-  --status-blocks: var(--orange-500);
-  --status-urgent: var(--red-500);
-  --status-glyph-foreground: var(--gray-0);
-
-  --group-done: var(--grass-200);
-  --group-review: var(--blue-200);
-  --group-progress: var(--amber-200);
-  --group-todo: var(--neutral-200);
-  --group-backlog: var(--olive-200);
-  --group-unscoped: var(--lavender-300);
-  --group-canceled: var(--neutral-200);
-  --group-foreground: var(--ink);
 
   --label-1: var(--label-amber);
   --label-2: var(--label-violet);
@@ -314,32 +256,48 @@
 
   --sidebar-width: 15rem;
   --sidebar-background: var(--background);
-  --sidebar-item-background: var(--tint-2);
   --sidebar-item-height: 1.75rem;
   --topbar-height: 3.25rem;
   --panel-radius: var(--radius-2xl);
-  --pill-height: 2rem;
-  --row-height: 2.625rem;
   --card-radius: var(--radius-lg);
   --card-padding: var(--space-3-5);
   --column-width: 18.5rem;
   --chip-height: 1.375rem;
-  --chip-radius: var(--radius-sm);
-  --chip-background: var(--tint-2);
   --filter-segment: var(--filter-200);
   --menu-width: 13rem;
   --menu-radius: var(--radius-lg);
   --menu-item-height: 1.75rem;
-  --menu-border: var(--tint-3);
-  --hovercard-width: 21rem;
   --avatar-size: 1.375rem;
   --avatar-size-sm: 1.1875rem;
   --avatar-size-lg: 1.625rem;
   --avatar-radius: var(--radius-sm);
   --checkbox-size: 1rem;
-  --count-size: var(--pill-height);
-  --dock-height: 2.25rem;
   --specimen-height: 34rem;
+
+  --danger: var(--destructive);
+  --field-height: 2.25rem;
+  --field-radius: var(--radius-md);
+  --field-background: var(--card);
+  --field-border: var(--tint-3);
+  --field-border-hover: var(--tint-4);
+  --label-width: 10rem;
+  --dialog-width: 32rem;
+  --dialog-width-lg: 44rem;
+  --dialog-radius: var(--radius-xl);
+  --dialog-offset: 10vh;
+  --overlay: rgb(0 0 0 / 0.28);
+  --table-row-height: 2.5rem;
+  --table-cell-width: 14rem;
+  --toast-width: 22rem;
+  --page-width: 72rem;
+  --split-aside: 22rem;
+  --form-width: 36rem;
+  --auth-width: 24rem;
+  --calendar-cell-height: 7rem;
+  --preview-height: 40rem;
+  --progress-height: 0.25rem;
+  --z-dialog: 70;
+  --z-toast: 95;
 }
 
 *,

@@ -10,9 +10,6 @@ export function ms(name: 'instant' | 'fast' | 'normal' | 'slow' | 'slower' | 'ho
   return value.endsWith('ms') ? n : n * 1000;
 }
 
-export function stagger(index: number) {
-  return index * ms('instant') * 0.35;
-}
 
 function solve(x1: number, y1: number, x2: number, y2: number) {
   const a = (a1: number, a2: number) => 1 - 3 * a2 + 3 * a1;
@@ -50,27 +47,5 @@ export function pop(_node: Element, { y = -0.25, scale = 0.96 }: { y?: number; s
     easing: ease('out'),
     css: (t: number) =>
       `opacity:${t};transform:translateY(${(1 - t) * y}rem) scale(${scale + (1 - scale) * t});filter:blur(${(1 - t) * 0.125}rem)`
-  };
-}
-
-export function rise(_node: Element, { delay = 0, distance = 0.5 }: { delay?: number; distance?: number } = {}) {
-  return {
-    delay,
-    duration: ms('slow'),
-    easing: ease('out'),
-    css: (t: number) => `opacity:${t};transform:translateY(${(1 - t) * distance}rem)`
-  };
-}
-
-export function fade(_node: Element, { delay = 0 }: { delay?: number } = {}) {
-  return { delay, duration: ms('fast'), easing: ease('out'), css: (t: number) => `opacity:${t}` };
-}
-
-export function collapse(node: Element) {
-  const h = (node as HTMLElement).offsetHeight;
-  return {
-    duration: ms('normal'),
-    easing: ease('out'),
-    css: (t: number) => `opacity:${t};height:${t * h}px;overflow:hidden`
   };
 }

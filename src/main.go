@@ -595,7 +595,7 @@ func cliServe(ctx context.Context, a *Archive, addr string) error {
 			fmt.Fprintf(os.Stderr, "archive: created the first owner %s; sign in at %s/auth/magic\n", u.Email, base)
 		} else {
 			si.setup = authNewSecret()
-			fmt.Fprintf(os.Stderr, "archive: no users yet; create the first owner at %s/auth/setup?token=%s\n", base, si.setup)
+			fmt.Fprintf(os.Stderr, "archive: no users yet; create the first owner at %s/setup?token=%s\n", base, si.setup)
 		}
 	}
 	mux := http.NewServeMux()
@@ -607,6 +607,14 @@ func cliServe(ctx context.Context, a *Archive, addr string) error {
 		if q.Get("error") == "" {
 			s, err = a.SourceOAuth(r.Context(), q.Get("state"), q.Get("code"))
 		}
+		if webBrowser(r) {
+			to := "/sources"
+			if s != nil {
+				to += "?connected=" + url.QueryEscape(s.Name)
+			}
+			webRedirect(w, r, to, err)
+			return
+		}
 		httpWrite(w, http.StatusOK, s, err)
 	})
 	tus := a.httpAuth(http.HandlerFunc(a.tus))
@@ -614,6 +622,7 @@ func cliServe(ctx context.Context, a *Archive, addr string) error {
 	mux.Handle("/api/files/tus/", tus)
 	mux.HandleFunc("GET /files/{id}", a.fileSigned)
 	mux.Handle("/auth/", si.handler())
+	mux.Handle("/", webHandler())
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	srv := mcpServer(a)
 	mux.Handle("/mcp", auth.RequireBearerToken(a.mcpVerify, &auth.RequireBearerTokenOptions{AllowMissingExpiration: true})(

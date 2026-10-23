@@ -22,20 +22,21 @@
     align-items: center;
     justify-content: space-between;
     height: var(--topbar-height);
-    padding: 0 var(--space-3) 0 var(--space-4);
+    padding: 0 var(--space-3);
   }
   .body {
     flex: 1;
     display: flex;
     flex-direction: column;
     gap: var(--space-5);
-    padding: var(--space-2) var(--space-3) var(--space-4) var(--space-4);
+    padding: var(--space-2) var(--space-3) var(--space-4);
     overflow-y: auto;
   }
   .footer {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: var(--space-3) var(--space-4) var(--space-4);
+    padding: var(--space-3);
+    gap: var(--space-1);
   }
 </style>

@@ -2,14 +2,14 @@
   import type { Snippet } from 'svelte';
   import { pop } from '../motion';
   let {
-    open = $bindable(false),
+    open = $bindable(),
     align = 'start',
     block = false,
     trigger,
     children,
     onclose
   }: {
-    open?: boolean;
+    open?: boolean | undefined;
     align?: 'start' | 'end';
     block?: boolean;
     trigger: Snippet<[{ toggle: () => void; open: boolean }]>;
@@ -22,11 +22,13 @@
   let x = $state(0);
   let y = $state(0);
   let up = $state(false);
+  let width = $state(0);
   let placed = $state(false);
 
   function place() {
     if (!anchor || !panel) return;
     const r = anchor.getBoundingClientRect();
+    width = r.width;
     const p = { width: panel.offsetWidth, height: panel.offsetHeight };
     const gap = parseFloat(getComputedStyle(anchor).fontSize) * 0.375;
     up = r.bottom + gap + p.height > window.innerHeight - gap && r.top - gap - p.height > 0;
@@ -81,7 +83,7 @@
   });
 </script>
 
-<span class="anchor" data-block={block || undefined} bind:this={anchor}>{@render trigger({ toggle, open })}</span>
+<span class="anchor" data-block={block || undefined} bind:this={anchor}>{@render trigger({ toggle, open: !!open })}</span>
 {#if open}
   <div
     class="panel"
@@ -91,6 +93,7 @@
     data-align={align}
     style:--x={`${x}px`}
     style:--y={`${y}px`}
+    style:--anchor-width={`${width}px`}
     transition:pop={{ y: up ? 0.25 : -0.25 }}
   >
     {@render children({ close })}

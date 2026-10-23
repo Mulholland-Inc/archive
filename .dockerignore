@@ -1,5 +1,9 @@
 *
 !src/
+!apps/web/
 src/archive
 src/data/
+src/web/dist/
+apps/web/node_modules/
+apps/web/dist/
 **/.DS_Store

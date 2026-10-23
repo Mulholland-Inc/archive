@@ -690,7 +690,7 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 func TestFirstRunSetupLinkAndUpgradeIntoADefaultSpace(t *testing.T) {
 	in := newInst(t)
 	srv := in.serve()
-	m := regexp.MustCompile(`/auth/setup\?token=(\S+)`).FindStringSubmatch(srv.log.String())
+	m := regexp.MustCompile(`/setup\?token=(\S+)`).FindStringSubmatch(srv.log.String())
 	if m == nil {
 		t.Fatalf("no setup link in log:\n%s", srv.log)
 	}
@@ -755,6 +755,9 @@ func TestDockerImageServesAndAcceptsCLICommandsFromDockerExec(t *testing.T) {
 			out, _ := exec.Command("docker", "logs", name).CombinedOutput()
 			t.Fatalf("container not healthy:\n%s", out)
 		}
+	}
+	if out := docker("", "exec", name, "wget", "-q", "-O", "-", "http://127.0.0.1:8080/records"); !strings.Contains(out, `<div id="app">`) {
+		t.Errorf("image does not serve the dashboard: %s", out)
 	}
 	docker(e2eSpec, "exec", "-i", name, "archive", "spec", "push", "-")
 	docker("", "exec", name, "archive", "create", "company", `{"name":"Docker Inc"}`)
@@ -2479,4 +2482,84 @@ func TestSavedViewsSourceUpdatesAndFullTokensOverHTTP(t *testing.T) {
 			t.Errorf("used magic link: %v %v", resp, err)
 		}
 	})
+}
+
+func TestDashboardIsServedAndBrowserSignInLandsInIt(t *testing.T) {
+	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=ann@example.com")
+	srv := in.serve()
+	get := func(path, accept string) *http.Response {
+		t.Helper()
+		req, _ := http.NewRequest("GET", srv.url+path, nil)
+		if accept != "" {
+			req.Header.Set("Accept", accept)
+		}
+		resp, err := (&http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		return resp
+	}
+
+	built := false
+	if _, err := os.Stat(filepath.Join("web", "dist", "index.html")); err == nil {
+		built = true
+	}
+	page := get("/records/invoice", "text/html")
+	if built {
+		wantStatus(t, page.StatusCode, 200, "dashboard route")
+		if ct := page.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+			t.Errorf("dashboard content type %q", ct)
+		}
+		if csp := page.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "frame-ancestors 'none'") {
+			t.Errorf("dashboard CSP %q", csp)
+		}
+	} else {
+		wantStatus(t, page.StatusCode, 503, "dashboard route without a build")
+	}
+	wantStatus(t, get("/assets/missing.js", "").StatusCode, 404, "missing asset")
+	st, _ := call(t, "POST", srv.url+"/records/invoice", "", map[string]any{}, nil)
+	wantStatus(t, st, 404, "non-GET outside the API")
+	if r := get("/api/person", "text/html"); r.StatusCode != 401 || !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		t.Errorf("API without a session: %d %s", r.StatusCode, r.Header.Get("Content-Type"))
+	}
+
+	call(t, "POST", srv.url+"/auth/magic", "", map[string]any{"email": "ann@example.com"}, nil)
+	re := regexp.MustCompile(`sign-in link for ann@example\.com: \S+(/auth/magic\?token=\S+)`)
+	var link string
+	for deadline := time.Now().Add(5 * time.Second); link == "" && time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		if m := re.FindStringSubmatch(srv.log.String()); m != nil {
+			link = m[1]
+		}
+	}
+	if link == "" {
+		t.Fatalf("no sign-in link in log:\n%s", srv.log)
+	}
+	first := get(link, "text/html,application/xhtml+xml")
+	wantStatus(t, first.StatusCode, 303, "browser opens the sign-in link")
+	if loc := first.Header.Get("Location"); loc != "/" {
+		t.Errorf("signed in browser goes to %q, want /", loc)
+	}
+	var session *http.Cookie
+	for _, c := range first.Cookies() {
+		if c.Name == "archive_session" {
+			session = c
+		}
+	}
+	if session == nil {
+		t.Fatal("no session cookie after browser sign-in")
+	}
+	var me struct {
+		Actor Actor `json:"actor"`
+	}
+	call(t, "GET", srv.url+"/auth/me", "", nil, &me, session)
+	if me.Actor.Email != "ann@example.com" {
+		t.Fatalf("me = %+v", me.Actor)
+	}
+	again := get(link, "text/html")
+	wantStatus(t, again.StatusCode, 303, "browser reuses the sign-in link")
+	if loc := again.Header.Get("Location"); !strings.HasPrefix(loc, "/signin?error=") {
+		t.Errorf("used link goes to %q, want /signin with an error", loc)
+	}
 }

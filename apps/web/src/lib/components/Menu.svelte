@@ -3,10 +3,10 @@
     id: string;
     label: string;
     icon?: string;
-    glyph?: string;
     avatar?: { name: string; color: number };
     separator?: boolean;
     trailing?: string;
+    danger?: boolean;
   };
 </script>
 
@@ -18,9 +18,10 @@
   let {
     items,
     searchable = true,
-    placeholder = 'Filter…',
+    placeholder = 'Search…',
     multiple = false,
     selected = [],
+    empty = 'No matches',
     onselect
   }: {
     items: MenuItem[];
@@ -28,6 +29,7 @@
     placeholder?: string;
     multiple?: boolean;
     selected?: string[];
+    empty?: string;
     onselect?: (item: MenuItem) => void;
   } = $props();
 
@@ -93,6 +95,7 @@
       <div
         class="item"
         data-item
+        data-danger={item.danger || undefined}
         role="option"
         tabindex="-1"
         aria-selected={selected.includes(item.id)}
@@ -106,8 +109,6 @@
         {#if multiple}<Checkbox checked={selected.includes(item.id)} />{/if}
         {#if item.avatar}
           <Avatar name={item.avatar.name} color={item.avatar.color} size="sm" />
-        {:else if item.glyph}
-          <Icon name={item.glyph} />
         {:else if item.icon}
           <Icon name={item.icon} />
         {/if}
@@ -116,7 +117,7 @@
         {#if item.trailing}<span class="trailing">{item.trailing}</span>{/if}
       </div>
     {:else}
-      <div class="empty">No results</div>
+      <div class="empty">{empty}</div>
     {/each}
   </div>
 </div>
@@ -124,6 +125,7 @@
 <style>
   .menu {
     width: var(--menu-width);
+    min-width: var(--anchor-width, var(--menu-width));
     padding: var(--space-1);
     border-radius: var(--menu-radius);
     background: var(--popover);
@@ -185,6 +187,9 @@
     cursor: pointer;
     user-select: none;
     white-space: nowrap;
+  }
+  [data-danger] {
+    color: var(--danger);
   }
   .text {
     flex: 1;

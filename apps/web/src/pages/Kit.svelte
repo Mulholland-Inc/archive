@@ -1,333 +1,345 @@
 <script lang="ts">
   import {
+    AuthFrame,
     Avatar,
-    AvatarGroup,
     Board,
     Breadcrumb,
     Button,
     Canvas,
+    Card,
     Checkbox,
+    ChoiceCard,
+    Code,
+    Columns,
     Count,
+    DatePicker,
+    Dialog,
     Divider,
-    Dock,
-    FilterBar,
+    Dropzone,
+    EmptyState,
+    EventChip,
+    Field,
+    FileCard,
+    FilePicker,
+    FilePreview,
+    FileThumb,
     FilterChip,
     Grid,
-    GroupPill,
-    HoverCard,
+    Highlight,
     Icon,
     IconButton,
-    Label,
+    Input,
+    KeyValue,
+    Link,
     Menu,
+    MonthGrid,
+    Notice,
+    Page,
+    PageHeader,
     Popover,
-    RecordCard,
-    RecordGroup,
-    RecordRow,
-    RelationChip,
+    PopoverCard,
+    Progress,
+    RecordTile,
+    ResultRow,
     Row,
-    Scroller,
     Section,
     SegmentedControl,
     Select,
     Shell,
     Sidebar,
-    SidebarGroup,
     SidebarItem,
     SidebarSection,
+    Skeleton,
     Spacer,
     Specimen,
+    Split,
     Stack,
-    Swap,
     Swatch,
+    Table,
     Text,
+    Textarea,
     Tile,
-    Toolbar,
+    Toaster,
     WorkspaceSwitcher,
-    iconNames,
-    glyphNames,
-    type MenuItem
+    iconNames
   } from '../lib';
-  import { people, tags, statusItems, filterProperties, records, glyphOf, confidenceOf, statuses } from '../data';
+  import { toast } from '../lib/toast.svelte';
+  import { iso } from '../lib/calendar';
 
   const tokens = {
-    Surfaces: ['--background', '--surface', '--card', '--popover', '--muted', '--border', '--foreground', '--muted-foreground', '--subtle-foreground', '--ring'],
-    Intent: ['--primary', '--secondary', '--accent', '--destructive', '--success', '--warning', '--info'],
-    Status: ['--status-done', '--status-review', '--status-progress', '--status-todo', '--status-unscoped', '--status-backlog', '--status-canceled', '--status-triage', '--status-blocked', '--status-blocks'],
-    Groups: ['--group-done', '--group-review', '--group-progress', '--group-todo', '--group-backlog', '--filter-segment'],
-    Labels: ['--label-1', '--label-2', '--label-3', '--label-4', '--label-5', '--avatar-1', '--avatar-2', '--avatar-3', '--avatar-4', '--avatar-5']
+    Surfaces: ['--background', '--surface', '--card', '--popover', '--border', '--foreground', '--muted-foreground', '--subtle-foreground'],
+    Intent: ['--primary', '--accent', '--danger', '--success', '--warning', '--info', '--highlight', '--ring'],
+    Labels: ['--label-1', '--label-2', '--label-3', '--label-4', '--label-5', '--avatar-1', '--avatar-2', '--avatar-3', '--avatar-4']
   };
 
-  const glyphLabels: { [k: string]: string } = {
-    'status-done': 'Done',
-    'status-review': 'In review',
-    'status-progress': 'In progress',
-    'status-todo': 'To do',
-    'status-unscoped': 'Unscoped',
-    'status-backlog': 'Backlog',
-    'status-canceled': 'Canceled',
-    'status-duplicate': 'Duplicate',
-    'status-triage': 'Triage',
-    'status-blocked': 'Blocked by',
-    'status-blocks': 'Blocks',
-    'status-parent': 'Parent',
-    'status-subissue': 'Sub-record',
-    'priority-urgent': 'Urgent',
-    'priority-high': 'High',
-    'priority-medium': 'Medium',
-    'priority-low': 'Low',
-    'priority-none': 'No priority'
-  };
-
-  let segment = $state('list');
-  let grouping = $state('status');
+  const people = ['Mila Ahn', 'Hana Mori', 'Marco Rossi', 'Arne Olsen'];
+  let layout = $state('table');
+  let choice = $state('gmail');
   let checked = $state(true);
-  let swapKey = $state(0);
-  let unchecked = $state(false);
-  let menuSelected = $state<string[]>(['Mila Ahn']);
-  let popoverOpen = $state(false);
-  let query = $state('');
-  let groupCollapsed = $state(false);
-  let hoverAnchor = $state<HTMLElement | null>(null);
-  let filterOn = $state(true);
-  let routeDemo = $state('specimen');
-  let shellCollapsed = $state(false);
-  let sectionOpen = $state(true);
-  let board = $state(structuredClone(records.slice(0, 6)));
+  let text = $state('');
+  let notes = $state('');
+  let date = $state('');
+  let status = $state('sent');
+  let popover = $state(false);
+  let dialog = $state(false);
+  let collapsed = $state(false);
+  let chip = $state(true);
+  let progress = $state(0.35);
+  let cards = $state([
+    { id: 'a', title: 'Hetzner invoice', status: 'sent' },
+    { id: 'b', title: 'KPN bill', status: 'paid' },
+    { id: 'c', title: 'Dentist', status: 'sent' }
+  ]);
+  const today = iso(new Date());
 
-  const personItems: MenuItem[] = [{ id: 'none', label: 'No reviewer', icon: 'user-square' }, ...people.map((p) => ({ id: p.name, label: p.name, avatar: p }))];
-
-  const columns = $derived(
-    (['todo', 'progress', 'review'] as const).map((s) => ({
-      id: s,
-      status: s,
-      label: statuses.find((x) => x.id === s)!.label,
-      items: board.filter((r) => r.status === s)
-    }))
-  );
-
-  function move(id: string, column: string, index: number) {
-    const from = board.findIndex((r) => r.id === id);
-    const [item] = board.splice(from, 1);
-    item.status = column as typeof item.status;
-    const peers = board.filter((r) => r.status === column);
-    const before = peers[index];
-    board.splice(before ? board.indexOf(before) : board.length, 0, item);
-  }
-
+  const columns = $derived(['sent', 'paid'].map((s) => ({ id: s, label: s === 'sent' ? 'Sent' : 'Paid', items: cards.filter((c) => c.status === s) })));
 </script>
-
-{#snippet sample(r: (typeof records)[number], state: 'rest' | 'lifted' | 'placeholder' | 'floating')}
-  {@const c = confidenceOf(r.confidence)}
-  <RecordCard id={r.id} glyph={glyphOf(r.status)} title={r.title} labels={r.labels} priority={{ glyph: c.glyph, label: c.label }} person={r.person} {state} />
-{/snippet}
 
 <Canvas>
   <Stack gap="2">
     <Text as="h1" variant="title">Archive components</Text>
-    <Text variant="muted">Every component in the library, drawn from the same tokens in light and dark.</Text>
+    <Text variant="muted">Every component in the dashboard kit, drawn from the tokens in app.css.</Text>
   </Stack>
 
-  <Section title="Color" description="Three tiers: primitives, semantic roles and component values. Dark mode redefines only primitives.">
+  <Section title="Color">
     {#each Object.entries(tokens) as [group, list] (group)}
       <Stack gap="3">
         <Text variant="strong">{group}</Text>
-        <Grid min="sm">
-          {#each list as token (token)}<Swatch {token} />{/each}
-        </Grid>
+        <Grid min="sm">{#each list as token (token)}<Swatch {token} />{/each}</Grid>
       </Stack>
     {/each}
   </Section>
 
-  <Section title="Type">
-    <Stack gap="3">
+  <Section title="Type and icons">
+    <Stack gap="2">
       <Text variant="title">Your stuff, finally yours</Text>
       <Text variant="heading">Source evidence</Text>
       <Text variant="strong">Hetzner invoice for October</Text>
-      <Text>Archive maps raw files into clean records with calibrated confidence.</Text>
-      <Text variant="muted">Documents behind this record</Text>
-      <Text variant="small">Proposed on Oct 21 at 10:42 AM</Text>
+      <Text>Archive reads raw files into clean records.</Text>
+      <Text variant="muted">Muted</Text>
+      <Text variant="small">Small</Text>
       <Text variant="mono">REC-48291</Text>
-      <Text variant="subtle">Draft 2</Text>
+      <Row gap="4"><Text tone="success">Up to date</Text><Text tone="warning">Needs sign-in</Text><Text tone="danger">Failing</Text></Row>
+      <Highlight text="the **invoice** from Hetzner" />
     </Stack>
+    <Grid min="xs">{#each iconNames as name (name)}<Row gap="2"><Icon {name} size="lg" /><Text variant="muted">{name}</Text></Row>{/each}</Grid>
   </Section>
 
-  <Section title="Status glyphs" description="Drawn at 16 units on a squircle, colored by status tokens, or mono inside a pill.">
-    <Grid min="xs">
-      {#each glyphNames as name (name)}
-        <Row gap="3"><Icon {name} size="xl" /><Text>{glyphLabels[name]}</Text></Row>
-      {/each}
-    </Grid>
-  </Section>
-
-  <Section title="Icons">
-    <Grid min="xs">
-      {#each iconNames as name (name)}
-        <Row gap="3"><Icon {name} size="lg" /><Text variant="muted">{name}</Text></Row>
-      {/each}
-    </Grid>
-  </Section>
-
-  <Section title="Buttons">
+  <Section title="Actions">
     <Grid>
       <Specimen name="Button">
-        <Button icon="filter">Filter</Button>
+        <Button variant="primary" icon="plus">New</Button>
+        <Button icon="upload">Upload</Button>
         <Button variant="tint" icon="layers" trailing="chevron-down">Status</Button>
-        <Button variant="ghost" icon="plus">New</Button>
-        <Button disabled>Disabled</Button>
+        <Button variant="ghost">Ghost</Button>
+        <Button variant="danger">Delete</Button>
+        <Button loading>Saving</Button>
+        <Button size="lg" variant="primary">Large</Button>
       </Specimen>
-      <Specimen name="IconButton">
+      <Specimen name="IconButton and FilePicker">
         <IconButton icon="settings" label="Settings" />
-        <IconButton icon="bell" label="Notifications" />
         <IconButton icon="plus" label="Add" variant="tint" />
-        <IconButton icon="compose" label="New" variant="solid" size="lg" />
-        <IconButton icon="arrow-right" label="Forward" disabled />
+        <IconButton icon="more" label="More" size="lg" />
+        <FilePicker onpick={(f) => toast(`Picked ${f.length} files`)} />
       </Specimen>
-      <Specimen name="SegmentedControl, toolbar">
-        <SegmentedControl bind:value={segment} label="View" options={[{ value: 'list', label: 'List', icon: 'rows' }, { value: 'board', label: 'Board', icon: 'columns' }]} />
-        <SegmentedControl bind:value={routeDemo} label="Page" variant="plain" options={[{ value: 'dashboard', label: 'Dashboard' }, { value: 'specimen', label: 'Specimen' }]} />
+      <Specimen name="SegmentedControl">
+        <SegmentedControl
+          bind:value={layout}
+          label="Layout"
+          options={[
+            { value: 'table', label: 'Table', icon: 'rows' },
+            { value: 'board', label: 'Board', icon: 'columns' },
+            { value: 'calendar', label: 'Calendar', icon: 'calendar' }
+          ]}
+        />
+        <SegmentedControl bind:value={layout} label="Layout" variant="plain" options={[{ value: 'table', label: 'Table' }, { value: 'board', label: 'Board' }]} />
       </Specimen>
-      <Specimen name="Select">
-        <Select icon="layers" bind:value={grouping} options={[{ id: 'status', label: 'Status' }, { id: 'confidence', label: 'Confidence' }]} />
-        <Select variant="secondary" icon="list" value="person" options={[{ id: 'person', label: 'Reviewer' }]} />
-      </Specimen>
-      <Specimen name="Swap">
-        <Button icon="refresh" onclick={() => swapKey++}>Swap</Button>
-        <Swap key={swapKey} direction={1}><Text>Version {swapKey + 1}</Text></Swap>
-      </Specimen>
-      <Specimen name="Checkbox">
-        <Checkbox checked={checked} label="Checked" onchange={(v) => (checked = v)} />
-        <Checkbox checked={unchecked} label="Unchecked" onchange={(v) => (unchecked = v)} />
-      </Specimen>
-      <Specimen name="Dock">
-        <Dock floating={false} bind:route={routeDemo} routes={[{ value: 'dashboard', label: 'Dashboard' }, { value: 'specimen', label: 'Specimen' }]} theme="light" ontheme={() => {}} />
-      </Specimen>
-    </Grid>
-  </Section>
-
-  <Section title="People and labels">
-    <Grid>
-      <Specimen name="Avatar">
-        {#each people as p (p.name)}<Avatar name={p.name} color={p.color} />{/each}
-        <Avatar name="Mila Ahn" color={5} shape="circle" size="lg" />
-        <Avatar name="Arne Olsen" color={4} ring />
-      </Specimen>
-      <Specimen name="AvatarGroup">
-        <AvatarGroup {people} selected={menuSelected} ontoggle={(n) => (menuSelected = menuSelected.includes(n) ? menuSelected.filter((x) => x !== n) : [...menuSelected, n])} />
-      </Specimen>
-      <Specimen name="Label" surface="card">
-        {#each Object.values(tags).slice(0, 6) as t (t.name)}<Label name={t.name} color={t.color} />{/each}
-      </Specimen>
-      <Specimen name="Count and Tile">
-        <Count value={6} />
-        <Count value={102} />
-        <Tile icon="code" color={5} />
-        <Tile icon="home" color={3} />
-        <Tile icon="building" color={4} size="lg" />
-      </Specimen>
-    </Grid>
-  </Section>
-
-  <Section title="Records">
-    <Grid>
-      <Specimen name="GroupPill">
-        <GroupPill status="backlog" label="Inbox" />
-        <GroupPill status="todo" label="Queued" />
-        <GroupPill status="progress" label="Extracting" />
-        <GroupPill status="review" label="In review" />
-        <GroupPill status="done" label="Accepted" />
-      </Specimen>
-      <Specimen name="RelationChip" surface="card">
-        <RelationChip glyph="status-subissue" label="Pages" count={2} menu />
-        <RelationChip glyph="status-blocked" label="Conflicts with" menu />
-        <RelationChip glyph="status-blocks" label="Supersedes" target={[{ glyph: 'status-progress', id: 'REC-213' }]} />
-        <RelationChip glyph="status-parent" label="Source" target={[{ glyph: 'status-progress', id: 'REC-213' }]} />
-        <RelationChip glyph="status-subissue" label="Pages" target={[{ glyph: 'status-progress', id: 'REC-213' }, { glyph: 'status-todo', id: 'REC-214' }]} />
-      </Specimen>
-      <Specimen name="FilterChip and FilterBar">
-        <Stack gap="3">
-          {#if filterOn}<FilterChip icon="priority-medium" field="Confidence" operator="is any of" value="2 levels" onremove={() => (filterOn = false)} />{/if}
-          <FilterBar bind:query>
-            {#snippet chips()}
-              <FilterChip icon="tag" field="Label" operator="is" value="Invoice" />
-            {/snippet}
-          </FilterBar>
-        </Stack>
-      </Specimen>
-      <Specimen name="Popover and Menu">
-        <Popover bind:open={popoverOpen}>
+      <Specimen name="Popover, Menu and PopoverCard">
+        <Popover bind:open={popover}>
           {#snippet trigger({ toggle })}<Button icon="filter" onclick={toggle}>Filter</Button>{/snippet}
-          {#snippet children({ close })}<Menu items={filterProperties} onselect={close} />{/snippet}
+          {#snippet children({ close })}
+            <Menu items={[{ id: 'a', label: 'Edit', icon: 'pencil' }, { id: 'b', label: 'Delete', icon: 'trash', danger: true, separator: true }]} searchable={false} onselect={close} />
+          {/snippet}
         </Popover>
-        <Menu items={personItems} multiple selected={menuSelected} onselect={(i) => (menuSelected = menuSelected.includes(i.id) ? menuSelected.filter((x) => x !== i.id) : [...menuSelected, i.id])} searchable={false} />
+        <PopoverCard><Text>Popover content</Text></PopoverCard>
       </Specimen>
-      <Specimen name="RecordCard">
-        {@render sample(records[1], 'rest')}
+      <Specimen name="Dialog and Toaster">
+        <Button onclick={() => (dialog = true)}>Open dialog</Button>
+        <Button onclick={() => toast('Saved', 'success')}>Toast</Button>
+        <Toaster />
       </Specimen>
-      <Specimen name="RecordGroup, RecordRow and HoverCard">
-        <Stack gap="0">
-          <RecordGroup status="review" label="In review" count={2} bind:collapsed={groupCollapsed}>
-            <RecordRow glyph="status-review" title={records[0].title} labels={[tags.invoice]} person={people[0]} statuses={statusItems} status="review" onenter={(el) => (hoverAnchor = el)} onleave={() => (hoverAnchor = null)} />
-            <RecordRow glyph="status-review" title={records[1].title} statuses={statusItems} status="review">
-              <RelationChip glyph="status-subissue" label="Pages" count={2} menu />
-            </RecordRow>
-            <RecordRow glyph="status-progress" title={records[2].title} indent statuses={statusItems} status="progress" />
-          </RecordGroup>
-        </Stack>
-        <HoverCard anchor={hoverAnchor}>{@render sample(records[0], 'floating')}</HoverCard>
+      <Specimen name="Link and EventChip">
+        <Link href="/kit" variant="accent">Accent link</Link>
+        <Link href="/kit" variant="subtle">Subtle link</Link>
+        <EventChip href="/kit" label="Invoice due" />
       </Specimen>
     </Grid>
-    <Specimen name="Board, drag cards between columns">
-      <Board {columns} onmove={move} card={sample} />
+  </Section>
+
+  <Section title="Forms">
+    <Grid>
+      <Specimen name="Field, Input and Textarea" surface="card">
+        <Stack gap="3">
+          <Field label="Email" hint="We never share it."><Input bind:value={text} type="email" placeholder="you@example.com" label="Email" /></Field>
+          <Field label="Search"><Input bind:value={text} type="search" icon="search" placeholder="Search" label="Search" /></Field>
+          <Field label="Notes" error="Too short"><Textarea bind:value={notes} invalid label="Notes" /></Field>
+        </Stack>
+      </Specimen>
+      <Specimen name="Select, DatePicker, Checkbox and Columns" surface="card">
+        <Stack gap="3">
+          <Field label="Status"><Select variant="field" bind:value={status} options={[{ id: 'sent', label: 'Sent' }, { id: 'paid', label: 'Paid' }]} label="Status" /></Field>
+          <Field label="Due"><DatePicker bind:value={date} label="Due" /></Field>
+          <Row gap="2"><Checkbox {checked} label="Required" onchange={(v) => (checked = v)} /><Text>Required</Text></Row>
+          <Columns count={2}><Input placeholder="Left" label="Left" /><Input placeholder="Right" label="Right" /></Columns>
+        </Stack>
+      </Specimen>
+      <Specimen name="ChoiceCard">
+        <Stack gap="2">
+          <ChoiceCard icon="mail" title="Gmail" description="Read-only through Google" selected={choice === 'gmail'} onclick={() => (choice = 'gmail')} />
+          <ChoiceCard icon="folder" title="Folder" description="On the server" selected={choice === 'folder'} onclick={() => (choice = 'folder')} />
+        </Stack>
+      </Specimen>
+      <Specimen name="FilterChip">
+        {#if chip}<FilterChip icon="filter" field="Status" operator="is" value="Paid" onremove={() => (chip = false)} />{/if}
+      </Specimen>
+    </Grid>
+  </Section>
+
+  <Section title="Feedback">
+    <Grid>
+      <Specimen name="Notice">
+        <Stack gap="2">
+          <Notice>Intake reads files into records.</Notice>
+          <Notice tone="warning">One change waits for approval.</Notice>
+          <Notice tone="danger">Archive is not reachable.</Notice>
+          <Notice tone="success">Applied.</Notice>
+        </Stack>
+      </Specimen>
+      <Specimen name="Progress, Skeleton and Count">
+        <Stack gap="3">
+          <Progress value={progress} label="Upload" />
+          <Button onclick={() => (progress = progress >= 1 ? 0.1 : Math.min(1, progress + 0.3))}>Advance</Button>
+          <Skeleton rows={3} />
+          <Row gap="2"><Count value={3} /><Count value={128} /></Row>
+        </Stack>
+      </Specimen>
+      <Specimen name="EmptyState">
+        <EmptyState icon="table" title="No invoices yet" description="Add one by hand or upload files.">
+          <Button variant="primary" icon="plus">New invoice</Button>
+        </EmptyState>
+      </Specimen>
+    </Grid>
+  </Section>
+
+  <Section title="Data">
+    <Grid>
+      <Specimen name="Avatar and Tile">
+        {#each people as p, i (p)}<Avatar name={p} color={i + 1} />{/each}
+        <Avatar name="Mila Ahn" color={5} shape="circle" size="lg" />
+        <Tile icon="code" color={5} />
+        <Tile icon="home" color={3} size="lg" />
+      </Specimen>
+      <Specimen name="RecordTile">
+        <RecordTile href="/kit" title="Hetzner invoice" rows={[{ label: 'Total', value: '€48.90' }, { label: 'Due', value: 'Nov 1' }]} />
+      </Specimen>
+      <Specimen name="ResultRow">
+        <Stack gap="0">
+          <ResultRow href="/kit" icon="table" title="Hetzner invoice" meta="Invoice"><Highlight text="the **invoice** total" /></ResultRow>
+          <ResultRow icon="inbox" title="Unmapped item" meta="gmail" />
+        </Stack>
+      </Specimen>
+      <Specimen name="Code">
+        <Stack gap="2">
+          <Code value="arc_7vkemkgKDcdrkjhVRCk2qPXsoKJKTsnEjn8jbiJfqw0" />
+          <Code value={'Line one\nLine two'} block copy={false} />
+        </Stack>
+      </Specimen>
+      <Specimen name="FileCard, FileThumb and FilePreview">
+        <Stack gap="3">
+          <Grid min="xs">
+            <FileCard href="/kit" mime="application/pdf" name="invoice.pdf" detail="48 KB" />
+            <FileThumb mime="image/jpeg" name="photo.jpg" size="sm" />
+          </Grid>
+          <FilePreview src="/favicon.svg" mime="image/svg+xml" name="Logo" />
+        </Stack>
+      </Specimen>
+      <Specimen name="KeyValue">
+        <KeyValue items={[{ k: 'Number', v: 'INV-2026-0141' }, { k: 'Total', v: '€48.90' }]} label={(i) => i.k}>
+          {#snippet value(i)}<Text>{i.v}</Text>{/snippet}
+        </KeyValue>
+      </Specimen>
+    </Grid>
+    <Specimen name="Table">
+      <Table columns={[{ id: 'name', label: 'Name' }, { id: 'total', label: 'Total' }]} rows={cards} key={(r) => r.id} onrowclick={(r) => toast(r.title)}>
+        {#snippet cell(r, c)}<Text>{c === 'name' ? r.title : '€48.90'}</Text>{/snippet}
+      </Table>
+    </Specimen>
+    <Specimen name="Board">
+      <Board
+        {columns}
+        onmove={(id, col) => {
+          const c = cards.find((x) => x.id === id);
+          if (c) c.status = col;
+        }}
+      >
+        {#snippet card(c, state)}<RecordTile href="/kit" title={c.title} {state} />{/snippet}
+      </Board>
+    </Specimen>
+    <Specimen name="MonthGrid">
+      <MonthGrid items={[{ id: '1', d: today, t: 'Invoice due' }]} key={(i) => i.id} date={(i) => i.d}>
+        {#snippet item(i)}<EventChip href="/kit" label={i.t} />{/snippet}
+      </MonthGrid>
     </Specimen>
   </Section>
 
-  <Section title="Navigation">
-    <Specimen name="Shell, Sidebar, SidebarSection, SidebarGroup, SidebarItem, WorkspaceSwitcher, Breadcrumb, Toolbar" surface="background" tall>
-      <Shell embedded collapsed={shellCollapsed}>
+  <Section title="Layout">
+    <Specimen name="Shell, Sidebar, SidebarSection, SidebarItem, WorkspaceSwitcher, Breadcrumb, Page, PageHeader, Split, Card, Divider, Spacer" surface="background" tall>
+      <Shell embedded {collapsed}>
         {#snippet sidebar()}
           <Sidebar>
             {#snippet header()}
-              <WorkspaceSwitcher name="Mulholland" />
-              <IconButton icon="sidebar" label="Hide sidebar" onclick={() => (shellCollapsed = true)} />
+              <WorkspaceSwitcher name="Archive" detail="All spaces" />
+              <IconButton icon="sidebar" label="Hide sidebar" onclick={() => (collapsed = true)} />
             {/snippet}
             <SidebarSection>
-              <SidebarItem icon="grid" label="My records" />
-              <SidebarItem icon="inbox" label="Inbox" />
+              <SidebarItem href="/kit" icon="home" label="Home" active />
+              <SidebarItem href="/kit" icon="search" label="Search" />
             </SidebarSection>
-            <SidebarSection title="Spaces" bind:open={sectionOpen}>
-              <SidebarItem tile={{ icon: 'code', color: 5 }} label="Finance" expanded />
-              <SidebarGroup>
-                <SidebarItem icon="check" label="Records" active />
-                <SidebarItem icon="columns" label="Views" />
-              </SidebarGroup>
+            <SidebarSection title="Types">
+              <SidebarItem href="/kit" icon="table" label="Invoice" />
             </SidebarSection>
           </Sidebar>
         {/snippet}
         {#snippet topbar()}
           <Row gap="1">
-            {#if shellCollapsed}<IconButton icon="sidebar" label="Show sidebar" onclick={() => (shellCollapsed = false)} />{/if}
-            <Breadcrumb items={[{ label: 'Finance', tile: { icon: 'code', color: 5 } }, { label: 'All records' }]} />
+            {#if collapsed}<IconButton icon="sidebar" label="Show sidebar" onclick={() => (collapsed = false)} />{/if}
+            <Breadcrumb items={[{ label: 'Invoice' }, { label: 'Hetzner' }]} />
           </Row>
         {/snippet}
-        <Toolbar>
-          {#snippet start()}
-            <Button icon="filter">Filter</Button>
-            <Divider vertical />
-            <AvatarGroup {people} />
-          {/snippet}
-          {#snippet end()}
-            <IconButton icon="settings" label="Settings" />
-          {/snippet}
-        </Toolbar>
-        <Scroller>
-          <Row>
-            <Text variant="muted">Content</Text>
-            <Spacer />
-            <Text variant="mono">REC-196</Text>
-          </Row>
-        </Scroller>
+        <Page>
+          <PageHeader title="Hetzner invoice" description="Invoice in Finance">
+            {#snippet actions()}<Button icon="pencil">Edit</Button>{/snippet}
+          </PageHeader>
+          <Split>
+            {#snippet main()}<Card title="Fields"><Text>Main column</Text><Divider /><Row><Text>Left</Text><Spacer /><Text>Right</Text></Row></Card>{/snippet}
+            {#snippet aside()}<Card title="Links"><Text variant="muted">Aside</Text></Card>{/snippet}
+          </Split>
+        </Page>
       </Shell>
     </Specimen>
+    <Specimen name="AuthFrame" surface="background" tall>
+      <AuthFrame title="Sign in to Archive" description="Your records, files and sources.">
+        <Button variant="primary" size="lg" block>Email me a link</Button>
+      </AuthFrame>
+    </Specimen>
   </Section>
-
 </Canvas>
+
+<Dialog bind:open={dialog} title="Delete this record?" description="It goes from every view and search.">
+  <Text>Dialog body</Text>
+  {#snippet footer()}
+    <Button variant="ghost" onclick={() => (dialog = false)}>Cancel</Button>
+    <Button variant="danger" onclick={() => (dialog = false)}>Delete</Button>
+  {/snippet}
+</Dialog>
+<Dropzone ondrop={(f) => toast(`Dropped ${f.length} files`)} />
