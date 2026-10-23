@@ -288,3 +288,13 @@ func fuzzyWords(p, locale string) string {
 	}
 	return w
 }
+
+// FuzzyDate reads a date as people write it, the way the fuzzy_date type does, for a module that
+// needs the reading outside a record: its edtf, min, max and text, or nil for an empty string.
+func FuzzyDate(s string, h Hints) map[string]any {
+	c, err := fuzzyParse(s, h)
+	if err != nil || len(c) == 0 {
+		return nil
+	}
+	return c[0].Value.(map[string]any)
+}

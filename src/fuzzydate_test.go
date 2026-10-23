@@ -123,3 +123,12 @@ func TestFuzzyDateFieldOverHTTP(t *testing.T) {
 		t.Fatalf("born = %v", r.Data["born"])
 	}
 }
+
+func TestFuzzyDateIsExportedForModules(t *testing.T) {
+	if v := FuzzyDate("BEF 1900", Hints{}); v["edtf"] != "../1900" {
+		t.Errorf("FuzzyDate: %v", v)
+	}
+	if FuzzyDate("  ", Hints{}) != nil {
+		t.Errorf("an empty date read as something")
+	}
+}
