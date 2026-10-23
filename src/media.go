@@ -20,6 +20,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -154,15 +155,27 @@ func (a *Archive) media(ctx context.Context, f *File) (map[string]any, string, e
 	case top == "text" || f.MIME == "application/json":
 		return meta, string(b), nil
 	case top == "image":
-		if c, _, err := image.DecodeConfig(bytes.NewReader(b)); err == nil {
-			meta["width"], meta["height"] = c.Width, c.Height
-		}
 		mediaEXIF(b, meta)
-		if t, err := a.mediaThumbnail(ctx, b); err == nil && t != nil {
+		pic, picMIME := b, f.MIME
+		if !mediaVision[f.MIME] {
+			if d, err := a.mediaDisplay(ctx, b); err == nil {
+				if t, err := a.mediaPut(ctx, d); err == nil {
+					meta["display"] = t
+					pic, picMIME = d, "image/jpeg"
+				}
+			}
+		}
+		if c, _, err := image.DecodeConfig(bytes.NewReader(pic)); err == nil {
+			meta["width"], meta["height"] = c.Width, c.Height
+			if d, ok := meta["display"].(map[string]any); ok {
+				d["width"], d["height"] = c.Width, c.Height
+			}
+		}
+		if t, err := a.mediaThumbnail(ctx, pic); err == nil && t != nil {
 			meta["thumbnail"] = t
 		}
-		if cfg.Vision != "" && mediaVision[f.MIME] {
-			text, err := a.mediaOCR(ctx, f.MIME, b)
+		if cfg.Vision != "" && mediaVision[picMIME] {
+			text, err := a.mediaOCR(ctx, picMIME, pic)
 			return meta, text, err
 		}
 	case top == "audio" || top == "video":
@@ -392,24 +405,60 @@ func (a *Archive) mediaThumbnail(ctx context.Context, b []byte) (map[string]any,
 	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: 80}); err != nil {
 		return nil, err
 	}
-	sum := sha256.Sum256(buf.Bytes())
+	t, err := a.mediaPut(ctx, buf.Bytes())
+	if err != nil {
+		return nil, err
+	}
+	t["width"], t["height"] = dst.Bounds().Dx(), dst.Bounds().Dy()
+	return t, nil
+}
+
+// mediaPut stores bytes the archive made from a file, such as a thumbnail, as a blob of their own.
+func (a *Archive) mediaPut(ctx context.Context, b []byte) (map[string]any, error) {
+	sum := sha256.Sum256(b)
 	hash := hex.EncodeToString(sum[:])
-	tmp, err := os.CreateTemp(a.uploads, "thumb-")
+	tmp, err := os.CreateTemp(a.uploads, "made-")
 	if err != nil {
 		return nil, err
 	}
 	defer os.Remove(tmp.Name())
-	_, err = tmp.Write(buf.Bytes())
+	_, err = tmp.Write(b)
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
 	}
 	if err == nil {
-		err = a.blobs.put(ctx, hash, tmp.Name(), int64(buf.Len()))
+		err = a.blobs.put(ctx, hash, tmp.Name(), int64(len(b)))
 	}
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"sha256": hash, "size": buf.Len(), "width": dst.Bounds().Dx(), "height": dst.Bounds().Dy()}, nil
+	return map[string]any{"sha256": hash, "size": len(b)}, nil
+}
+
+// mediaDisplay makes a JPEG anyone's browser shows from an image only some do, such as an iPhone's
+// HEIC or a scanner's TIFF, turned the way the camera held it and with its metadata, location
+// included, stripped. It needs the vips command, which the image ships with; without it the
+// original is all there is.
+func (a *Archive) mediaDisplay(ctx context.Context, b []byte) ([]byte, error) {
+	vips, err := exec.LookPath("vips")
+	if err != nil {
+		return nil, err
+	}
+	dir, err := os.MkdirTemp(a.uploads, "display-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+	in, out := filepath.Join(dir, "in"), filepath.Join(dir, "out.jpg")
+	if err := os.WriteFile(in, b, 0o600); err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	if msg, err := exec.CommandContext(ctx, vips, "autorot", in, out+"[Q=85,strip]").CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("vips: %w: %s", err, bytes.TrimSpace(msg))
+	}
+	return os.ReadFile(out)
 }
 
 func (a *Archive) mediaPost(ctx context.Context, path, ct string, body []byte, out any) error {
