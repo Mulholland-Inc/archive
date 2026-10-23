@@ -219,8 +219,18 @@ CREATE OR REPLACE FUNCTION my_spaces(lvl text DEFAULT 'viewer') RETURNS uuid[] L
     SELECT coalesce(array_agg(id), '{}') FROM spaces WHERE pg_has_role(current_user, (role || '_' || lvl)::name, 'USAGE')
 $$;
 
+-- Whether role r is an API token of a user who is the instance admin. Definer rights, because user
+-- roles cannot read tokens or users; it takes the caller's role as an argument for the same reason.
+CREATE OR REPLACE FUNCTION admin_token(r name) RETURNS bool LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $$
+    SELECT EXISTS (SELECT FROM tokens t JOIN users u ON u.id = t.user_id WHERE t.role = r::text AND pg_has_role(u.role::name, '{p}_admin', 'USAGE'))
+$$;
+
+-- The instance admin, signed in or through a full token, or through one of their API tokens that
+-- holds admin in some space. Admin of a space alone is not enough: every user owns their home space,
+-- and what this guards (the ontology, sources that run programs or read the server's disk) reaches
+-- every space and the server itself.
 CREATE OR REPLACE FUNCTION ontology_admin() RETURNS bool LANGUAGE sql STABLE AS $$
-    SELECT pg_has_role(current_user, '{p}_admin', 'USAGE') OR cardinality(my_spaces('admin')) > 0
+    SELECT pg_has_role(current_user, '{p}_admin', 'USAGE') OR (cardinality(my_spaces('admin')) > 0 AND admin_token(current_user))
 $$;
 
 CREATE OR REPLACE FUNCTION secret_granted(typ text) RETURNS bool LANGUAGE sql STABLE AS $$

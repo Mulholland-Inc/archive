@@ -812,6 +812,9 @@ func coreValidate(s *Spec, typ string, data map[string]any) error {
 }
 
 func (a *Archive) IntakeDir(ctx context.Context, space, dir, typ string) ([]*IntakeResult, error) {
+	if err := a.adminOnly(ctx, "reads folders on the server"); err != nil {
+		return nil, err
+	}
 	if err := coreHasType(a.Spec(), typ); err != nil {
 		return nil, err
 	}
