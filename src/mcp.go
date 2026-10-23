@@ -1,4 +1,4 @@
-package main
+package archive
 
 import (
 	"cmp"
@@ -290,6 +290,7 @@ func mcpServer(a *Archive) *mcp.Server {
 		func(ctx context.Context, _ struct{}) (any, error) { return a.Sources(ctx) })
 	mcpTool(s, "sync", "Sync one source now: fetch new items into the raw layer and map them into the source's type with intake. Returns how many items were fetched, new and mapped, and the error if the run failed.",
 		func(ctx context.Context, in mcpSourceInput) (any, error) { return a.RunSource(ctx, in.Source) })
+	moduleTools(s, a)
 	return s
 }
 

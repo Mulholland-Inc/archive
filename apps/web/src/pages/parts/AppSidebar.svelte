@@ -4,6 +4,9 @@
   import { route, navigate } from '../../lib/router.svelte';
   import { objectTypes, humanize, typeIcon } from '../../lib/spec';
   import NewTypeDialog from './NewTypeDialog.svelte';
+  import { api } from '../../lib/api';
+  import { hasIcon } from '../../lib/components/Icon.svelte';
+  import type { ModuleApp } from '../../lib/types';
 
   let { theme, ontheme, oncollapse }: { theme: 'light' | 'dark'; ontheme: () => void; oncollapse: () => void } = $props();
 
@@ -14,6 +17,12 @@
   let viewsOpen = $state(true);
 
   const types = $derived(objectTypes(session.ontology));
+
+  // pages a module built on the engine adds, such as a family archive's tree
+  let apps = $state<ModuleApp[]>([]);
+  $effect(() => {
+    if (session.status === 'ready') api.apps().then((a) => (apps = a), () => (apps = []));
+  });
 
   $effect(() => {
     route.path;
@@ -65,6 +74,14 @@
     <SidebarItem href="/library" icon="folder" label="Files" active={at('/library')} />
     <SidebarItem href="/sources" icon="plug" label="Sources" active={at('/sources')} />
   </SidebarSection>
+
+  {#if apps.length}
+    <SidebarSection>
+      {#each apps as app (app.path)}
+        <SidebarItem href={app.path} icon={hasIcon(app.icon) ? app.icon : 'shapes'} label={app.title} external />
+      {/each}
+    </SidebarSection>
+  {/if}
 
   {#if views.length}
     <SidebarSection title="Views" bind:open={viewsOpen}>

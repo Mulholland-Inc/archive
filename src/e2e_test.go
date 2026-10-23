@@ -1,4 +1,4 @@
-package main
+package archive
 
 import (
 	"bytes"
@@ -47,7 +47,7 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	e2eBin = filepath.Join(dir, "archive")
-	if out, err := exec.Command("go", "build", "-o", e2eBin, ".").CombinedOutput(); err != nil {
+	if out, err := exec.Command("go", "build", "-o", e2eBin, "./cmd/archive").CombinedOutput(); err != nil {
 		os.RemoveAll(dir)
 		panic(fmt.Sprintf("go build: %v\n%s", err, out))
 	}
@@ -79,6 +79,7 @@ type e2eInst struct {
 	t   *testing.T
 	dir string
 	env []string
+	bin string // a product's binary built on the engine, instead of the engine's own
 }
 
 func newInst(t *testing.T, env ...string) *e2eInst {
@@ -98,7 +99,7 @@ func (in *e2eInst) on(t *testing.T) *e2eInst {
 }
 
 func (in *e2eInst) cmd(args ...string) *exec.Cmd {
-	c := exec.Command(e2eBin, args...)
+	c := exec.Command(cmp.Or(in.bin, e2eBin), args...)
 	c.Env = append(os.Environ(), in.env...)
 	return c
 }
