@@ -133,7 +133,7 @@ func newArchive(ctx context.Context, st *pgStore, cfg IntakeConfig) (*Archive, e
 		return nil, fmt.Errorf("load spec: %w", err)
 	}
 	a := &Archive{st: st, spec: spec, hints: cfg.Hints, wake: make(chan struct{}, 1), base: strings.TrimRight(coreEnv("ARCHIVE_URL", "http://localhost:8080"), "/")}
-	a.intake = NewIntake(cfg, a.Spec, a.coreSave)
+	a.intake = NewIntake(cfg, a.Spec, a.intakeSave)
 	return a, nil
 }
 
@@ -272,6 +272,22 @@ func (a *Archive) coreSpace(ctx context.Context, name string) (uuid.UUID, error)
 		return id, fmt.Errorf("space %q: %w", name, ErrNotFound)
 	}
 	return id, err
+}
+
+// intakeSave saves what intake accepted through the same checks as any other write, references
+// included, so a model cannot store what a person could not.
+func (a *Archive) intakeSave(ctx context.Context, r *Record, data map[string]any, prov []*Provenance) error {
+	var out map[string]any
+	if err := a.as(ctx, func(ctx context.Context) (err error) {
+		out, _, err = a.coreCheck(ctx, a.Spec(), r.Type, data)
+		return err
+	}); err != nil {
+		return err
+	}
+	// in place, since coreSave seals secrets in the map it is given and intake shows the caller that
+	clear(data)
+	maps.Copy(data, out)
+	return a.coreSave(ctx, r, data, prov)
 }
 
 func (a *Archive) coreSave(ctx context.Context, r *Record, data map[string]any, prov []*Provenance) error {

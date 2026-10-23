@@ -1,10 +1,15 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 // Sources that run a program or read the server's own disk are the instance admin's alone.
@@ -85,4 +90,93 @@ func TestOnlyInstanceAdminsChangeTheOntology(t *testing.T) {
 
 	st, _ = call(t, "POST", api+"/changes/"+c.ID.String()+"/apply", aliceTok, nil, nil)
 	wantStatus(t, st, 200, "the instance admin applies it")
+}
+
+// e2eSure is a chat completion whose every token the model was all but certain of, as a server that
+// returns logprobs reports it.
+func e2eSure(content string) map[string]any {
+	var toks []map[string]any
+	for _, r := range content {
+		toks = append(toks, map[string]any{"token": string(r), "logprob": -0.001})
+	}
+	return map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": content}, "logprobs": map[string]any{"content": toks}}}}
+}
+
+func e2eLLM(t *testing.T, reply func() map[string]any) string {
+	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { json.NewEncoder(w).Encode(reply()) }))
+	t.Cleanup(llm.Close)
+	return llm.URL + "/v1"
+}
+
+func e2eIntakeOne(t *testing.T, llm, typ, text string) (*e2eInst, IntakeResult) {
+	in := newInst(t, "ARCHIVE_LOCALE=nl-NL", "ARCHIVE_LLM_URL="+llm, "ARCHIVE_LLM_MODEL=fake")
+	in.must("user", "add", "ann@example.com")
+	in.must("spec", "push", in.writeSpec())
+	inbox := filepath.Join(in.dir, "inbox")
+	os.MkdirAll(inbox, 0o755)
+	os.WriteFile(filepath.Join(inbox, "doc.txt"), []byte(text), 0o644)
+	res := decode[[]IntakeResult](t, in.must("intake", inbox, "-type", typ))
+	if len(res) != 1 {
+		t.Fatalf("intake: %+v", res)
+	}
+	return in, res[0]
+}
+
+func e2eRoutes(r IntakeResult) string {
+	var out []string
+	for _, f := range r.Fields {
+		out = append(out, f.Path+"="+f.Route)
+	}
+	return strings.Join(out, ",")
+}
+
+// A model server that gives no token probabilities (Ollama, the default) cannot tell a sure value
+// from one it gets wrong the same way three times, so with no labels either, a person reviews it.
+func TestIntakeWithoutLogprobsOrLabelsWaitsForReview(t *testing.T) {
+	llm := e2eLLM(t, func() map[string]any {
+		return map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": `{"number":"INV-7","date":"03-04-2025"}`}}}}
+	})
+	in, res := e2eIntakeOne(t, llm, "invoice", "Factuur INV-7, datum 03-04-2025")
+	if res.RecordID != uuid.Nil {
+		t.Fatalf("saved a record on agreement alone: %s", e2eRoutes(res))
+	}
+	if got := e2eRoutes(res); !strings.Contains(got, "date=review,number=review") {
+		t.Errorf("routes: %s", got)
+	}
+	if got := decode[[]e2eRecord](t, in.must("list", "invoice")); len(got) != 0 {
+		t.Errorf("invoices saved: %v", got)
+	}
+	if c := decode[map[string]int](t, in.must("review", "counts")); c["review"] != 1 || c["accepted"] != 0 {
+		t.Errorf("review counts: %v", c)
+	}
+}
+
+// What intake saves on its own passes the same checks as any write: a sure model that names an
+// employer that does not exist leaves the person for review instead of saving a dangling reference.
+func TestIntakeSavesOnlyWhatAPersonCouldSave(t *testing.T) {
+	ghost := "01a16a5f-0000-7000-8000-000000000000"
+	llm := e2eLLM(t, func() map[string]any { return e2eSure(`{"name":"Ann","employer":"` + ghost + `"}`) })
+	in, res := e2eIntakeOne(t, llm, "person", "Ann works at a company")
+	if res.RecordID != uuid.Nil {
+		t.Fatalf("saved a person whose employer does not exist: %s", e2eRoutes(res))
+	}
+	if got := e2eRoutes(res); got != "employer=review,name=review,ssn=drop" {
+		t.Errorf("routes: %s", got)
+	}
+	if got := decode[[]e2eRecord](t, in.must("list", "person")); len(got) != 0 {
+		t.Errorf("people saved: %v", got)
+	}
+}
+
+// One field the model gets wrong does not leave the others as it wrote them.
+func TestIntakeNormalizesGoodFieldsWhenAnotherIsBad(t *testing.T) {
+	llm := e2eLLM(t, func() map[string]any { return e2eSure(`{"number":"INV-8","date":"03-04-2025","bsn":"123"}`) })
+	in, res := e2eIntakeOne(t, llm, "invoice", "Factuur INV-8, datum 03-04-2025, BSN 123")
+	if res.RecordID == uuid.Nil {
+		t.Fatalf("nothing saved: %s", e2eRoutes(res))
+	}
+	got := decode[e2eRecord](t, in.must("get", "invoice", res.RecordID.String()))
+	if got.Data["date"] != "2025-04-03" || got.Data["bsn"] != nil {
+		t.Errorf("saved %v, want the date normalized and no bsn", got.Data)
+	}
 }
