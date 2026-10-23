@@ -165,7 +165,21 @@ func (s *signin) handler() http.Handler {
 		return http.StatusAccepted, map[string]string{"status": "if that address has an account, a sign-in link is on its way"}, nil
 	})
 	mux.HandleFunc("GET /auth/magic", func(w http.ResponseWriter, r *http.Request) {
-		s.browser(w, r, func() (*User, error) { return a.UseMagicLink(r.Context(), r.URL.Query().Get("token")) })
+		next := r.URL.Query().Get("next")
+		if !strings.HasPrefix(next, "/oauth/authorize?") {
+			s.browser(w, r, func() (*User, error) { return a.UseMagicLink(r.Context(), r.URL.Query().Get("token")) })
+			return
+		}
+		// a link mailed from an app's sign-in comes back to its consent page, and only there
+		u, err := a.UseMagicLink(r.Context(), r.URL.Query().Get("token"))
+		if err == nil {
+			_, err = s.signedIn(w, r, u)
+		}
+		if err != nil {
+			webRedirect(w, r, "/signin", err)
+			return
+		}
+		http.Redirect(w, r, next, http.StatusSeeOther)
 	})
 	open("GET /auth/methods", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		providers := append([]string{}, slices.Sorted(maps.Keys(s.oidc))...)
