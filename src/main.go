@@ -1,4 +1,4 @@
-package main
+package archive
 
 import (
 	"bufio"
@@ -144,7 +144,9 @@ Environment:
 
 var cliErrUsage = errors.New("usage")
 
-func main() {
+// Main runs the archive command line, serve included, with whatever modules the binary
+// registered before calling it. cmd/archive is the engine alone.
+func Main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	err := cliRun(ctx, os.Args[1:], os.Stdin, os.Stdout)
 	cancel()
@@ -267,6 +269,9 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 		return err
 	}
 	defer a.Close()
+	if err := a.applyPacks(ctx); err != nil {
+		return err
+	}
 	ac, err := a.CLIActor(ctx, *as)
 	if err != nil {
 		return err
@@ -672,6 +677,9 @@ func cliServe(ctx context.Context, a *Archive, addr string) error {
 			fmt.Fprintf(os.Stderr, "archive: no users yet; create the first owner at %s/setup?token=%s\n", base, si.setup)
 		}
 	}
+	if err := a.applyPacks(ctx); err != nil {
+		return err
+	}
 	mux := http.NewServeMux()
 	mux.Handle("/api/", a.httpAuth(httpHandler(a)))
 	mux.HandleFunc("GET /api/sources/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
@@ -697,6 +705,7 @@ func cliServe(ctx context.Context, a *Archive, addr string) error {
 	mux.HandleFunc("GET /files/{id}", a.fileSigned)
 	mux.Handle("/auth/", si.handler())
 	si.oauthRoutes(mux)
+	a.moduleRoutes(mux)
 	mux.Handle("/", webHandler())
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	srv := mcpServer(a)

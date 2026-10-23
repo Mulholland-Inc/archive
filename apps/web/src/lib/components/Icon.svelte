@@ -116,6 +116,11 @@
   };
 
   export const iconNames = [...Object.keys(lines), ...Object.keys(kinds), ...Object.keys(solids)];
+
+  /** Whether name is an icon here, for names that come from outside, such as a module's. */
+  export function hasIcon(name: string): boolean {
+    return name in lines || name in kinds || name in solids;
+  }
 </script>
 
 <script lang="ts">

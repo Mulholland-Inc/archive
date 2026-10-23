@@ -19,7 +19,8 @@ import type {
   SyncResult,
   Token,
   View,
-  ViewInput
+  ViewInput,
+  ModuleApp
 } from './types';
 
 export type FieldError = { path: string; message: string };
@@ -134,6 +135,7 @@ export const api = {
   revokeToken: (id: string) => request<void>('DELETE', `/auth/tokens/${enc(id)}`),
 
   ontology: () => request<Ontology>('GET', '/api/types'),
+  apps: () => request<ModuleApp[]>('GET', '/api/apps', undefined, undefined, true),
   changes: () => request<Change[]>('GET', '/api/changes'),
   propose: (ops: Op[]) => request<Change>('POST', '/api/changes', { ops }),
   preview: (id: string) => request<ChangePreview>('POST', `/api/changes/${enc(id)}/preview`),

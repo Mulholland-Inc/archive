@@ -23,6 +23,9 @@ export type TypeDef = {
 
 export type Spec = { version: number; types: { [name: string]: TypeDef } };
 
+/** Web pages a module built on the engine adds, linked from the sidebar. */
+export type ModuleApp = { path: string; title: string; icon: string };
+
 export type Ontology = { spec: Spec; builtin: string[]; edited: string[] };
 
 export type ArchiveRecord = {

@@ -1,4 +1,4 @@
-package main
+package archive
 
 import (
 	"cmp"
@@ -209,6 +209,9 @@ func (s *signin) handler() http.Handler {
 			s.mu.Lock()
 			s.setup = body.Token
 			s.mu.Unlock()
+			return 0, nil, err
+		}
+		if err := a.applyPacks(r.Context()); err != nil {
 			return 0, nil, err
 		}
 		return ok(s.signedIn(w, r, u))

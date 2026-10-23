@@ -61,8 +61,9 @@ export function kindOf(o: Ontology | null, type: string): Kind {
 
 export function objectTypes(o: Ontology | null): string[] {
   if (!o) return [];
+  // a type with a schema is a value, like a date, that fields hold; it has no records of its own
   return Object.keys(o.spec.types)
-    .filter((n) => !o.builtin.includes(n))
+    .filter((n) => !o.builtin.includes(n) && !o.spec.types[n].schema)
     .sort((a, b) => a.localeCompare(b));
 }
 
