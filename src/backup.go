@@ -238,7 +238,7 @@ func Backup(ctx context.Context, dataDir string, w io.Writer) error {
 	}
 	defer os.Remove(dump.Name())
 	defer dump.Close()
-	bin, err := pgBin("pg_dumpall")
+	bin, err := pgBin(ctx, dataDir, "pg_dumpall")
 	if err != nil {
 		return err
 	}
@@ -370,7 +370,7 @@ func Restore(ctx context.Context, dataDir string, r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	bin, err := pgBin("psql")
+	bin, err := pgBin(ctx, dataDir, "psql")
 	if err != nil {
 		return err
 	}
