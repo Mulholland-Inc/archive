@@ -345,6 +345,9 @@ func (a *Archive) coreLinks(ctx context.Context, spec *Spec, r *Record, data map
 
 func (a *Archive) Replace(ctx context.Context, typ string, id uuid.UUID, data map[string]any) (*Record, error) {
 	return coreDo(a, ctx, func(ctx context.Context) (*Record, error) {
+		if err := a.coreLock(ctx, id); err != nil {
+			return nil, err
+		}
 		r, err := a.Get(ctx, typ, id)
 		if err != nil {
 			return nil, err
@@ -353,8 +356,19 @@ func (a *Archive) Replace(ctx context.Context, typ string, id uuid.UUID, data ma
 	})
 }
 
+// coreLock holds one object until the transaction ends, so a read-merge-write such as Patch reads
+// what the last writer committed instead of overwriting it. An advisory lock rather than FOR UPDATE,
+// which a viewer may not take and would turn a clean 403 into a permission error.
+func (a *Archive) coreLock(ctx context.Context, id uuid.UUID) error {
+	_, err := a.st.Q(ctx).Exec(ctx, `SELECT pg_advisory_xact_lock(7274, hashtext($1::text))`, id)
+	return err
+}
+
 func (a *Archive) Patch(ctx context.Context, typ string, id uuid.UUID, patch map[string]any) (*Record, error) {
 	return coreDo(a, ctx, func(ctx context.Context) (*Record, error) {
+		if err := a.coreLock(ctx, id); err != nil {
+			return nil, err
+		}
 		r, err := a.Get(ctx, typ, id)
 		if err != nil {
 			return nil, err

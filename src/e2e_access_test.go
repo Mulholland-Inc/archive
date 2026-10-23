@@ -2,11 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -178,5 +180,41 @@ func TestIntakeNormalizesGoodFieldsWhenAnotherIsBad(t *testing.T) {
 	got := decode[e2eRecord](t, in.must("get", "invoice", res.RecordID.String()))
 	if got.Data["date"] != "2025-04-03" || got.Data["bsn"] != nil {
 		t.Errorf("saved %v, want the date normalized and no bsn", got.Data)
+	}
+}
+
+// Two people changing different fields of one object at the same time both keep their change.
+func TestConcurrentPatchesOfDifferentFieldsBothLand(t *testing.T) {
+	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
+	srv := in.serve()
+	api := srv.url + "/api"
+	in.must("spec", "push", in.writeSpec())
+	tok := decode[Token](t, in.must("token", "create", "-full")).Secret
+	var c e2eRecord
+	st, _ := call(t, "POST", api+"/contact", tok, map[string]any{"name": "Ann"}, &c)
+	wantStatus(t, st, 201, "create")
+
+	for round := range 30 {
+		email, phone := fmt.Sprintf("ann%d@example.com", round), fmt.Sprintf("+3161234%04d", round)
+		var wg sync.WaitGroup
+		for _, p := range []map[string]any{{"email": email}, {"phone": phone}} {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				b, _ := json.Marshal(p)
+				req, _ := http.NewRequest("PATCH", api+"/contact/"+c.ID, strings.NewReader(string(b)))
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Authorization", "Bearer "+tok)
+				if resp, err := http.DefaultClient.Do(req); err == nil {
+					resp.Body.Close()
+				}
+			}()
+		}
+		wg.Wait()
+		var got e2eRecord
+		call(t, "GET", api+"/contact/"+c.ID, tok, nil, &got)
+		if got.Data["email"] != email || got.Data["phone"] != phone {
+			t.Fatalf("round %d: one edit wiped the other: %v", round, got.Data)
+		}
 	}
 }
