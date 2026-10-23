@@ -979,6 +979,18 @@ func httpHandler(a *Archive) http.Handler {
 		}
 		return http.StatusNoContent, nil, a.Delete(r.Context(), r.PathValue("type"), id)
 	})
+	handle("PUT /api/{type}/{id}/restricted", object(func(ctx context.Context, typ string, id uuid.UUID, r *http.Request) (any, error) {
+		var body struct {
+			Restricted *bool `json:"restricted"`
+		}
+		if err := httpDecode(r, &body); err != nil {
+			return nil, err
+		}
+		if body.Restricted == nil {
+			return nil, &ValidationError{Type: typ, Errors: []FieldError{{Path: "restricted", Message: "want true or false"}}}
+		}
+		return a.Restrict(ctx, typ, id, *body.Restricted)
+	}))
 	handle("GET /api/{type}/{id}/provenance", object(func(ctx context.Context, typ string, id uuid.UUID, _ *http.Request) (any, error) {
 		return a.Provenance(ctx, typ, id)
 	}))

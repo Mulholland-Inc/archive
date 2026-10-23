@@ -47,6 +47,12 @@ type mcpIDInput struct {
 	ID   string `json:"id" jsonschema:"object id (uuid)"`
 }
 
+type mcpRestrictInput struct {
+	Type       string `json:"type" jsonschema:"type of the object, or one of its parent types"`
+	ID         string `json:"id" jsonschema:"object id (uuid)"`
+	Restricted bool   `json:"restricted" jsonschema:"true hides it, false opens it"`
+}
+
 type mcpGetInput struct {
 	Type   string `json:"type" jsonschema:"type of the object, or one of its parent types"`
 	ID     string `json:"id" jsonschema:"object id (uuid)"`
@@ -165,6 +171,14 @@ func mcpServer(a *Archive) *mcp.Server {
 				return nil, err
 			}
 			return map[string]string{"deleted": id.String()}, a.Delete(ctx, in.Type, id)
+		})
+	mcpTool(s, "restrict", "Hide an object from everyone in its space but the space's admins and owners and the person who made it (restricted true), or open it again (false). Only an admin of the space may; use it for what is private, such as people who may be living.",
+		func(ctx context.Context, in mcpRestrictInput) (any, error) {
+			id, err := uuid.Parse(in.ID)
+			if err != nil {
+				return nil, err
+			}
+			return a.Restrict(ctx, in.Type, id, in.Restricted)
 		})
 	mcpTool(s, "propose", `Propose an ontology change; nothing changes until apply. Each op has "op", "type" and, depending on op: add_type (def: {"description","icon","extends","fields":{name: field}}), change_type (def: the type without fields, replacing description, icon, extends, schema and the other type-level properties), remove_type (not for built-in types), add_field (field, def), remove_field (field), change_field (field, def), rename_field (field, to: new name). A field def is {"type": any type name or "reference", "to": target type for references, "required", "list", "indexed", "enum": [...] for enum, "description"}. Returns the change with its id.`,
 		func(ctx context.Context, in mcpProposeInput) (any, error) {

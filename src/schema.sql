@@ -75,6 +75,8 @@ CREATE TABLE IF NOT EXISTS records (
     space        uuid NOT NULL REFERENCES spaces
 );
 ALTER TABLE records ADD COLUMN IF NOT EXISTS space uuid REFERENCES spaces;
+ALTER TABLE records ADD COLUMN IF NOT EXISTS restricted bool NOT NULL DEFAULT false;
+ALTER TABLE records ADD COLUMN IF NOT EXISTS creator text NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS records_data_idx ON records USING gin (data);
 CREATE INDEX IF NOT EXISTS records_type_id_idx ON records (type, id);
 CREATE INDEX IF NOT EXISTS records_space_idx ON records (space);
@@ -237,6 +239,29 @@ CREATE OR REPLACE FUNCTION secret_granted(typ text) RETURNS bool LANGUAGE sql ST
     SELECT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_secret_' || typ AND pg_has_role(current_user, oid, 'USAGE'))
 $$;
 
+-- The user behind role r: r itself, or the user who owns API token r. Definer rights, because
+-- user roles cannot read tokens or users.
+CREATE OR REPLACE FUNCTION actor_user(r name) RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $$
+    SELECT coalesce((SELECT u.role FROM tokens t JOIN users u ON u.id = t.user_id WHERE t.role = r::text), r::text)
+$$;
+
+-- A restricted record is read only by the admins and owners of its space and by the user who made
+-- it. New records of a type whose definition says "restricted" start restricted, whoever makes them,
+-- and only an admin of the space restricts or opens one.
+CREATE OR REPLACE FUNCTION records_restrict() RETURNS trigger LANGUAGE plpgsql SET search_path FROM CURRENT AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        NEW.creator := actor_user(current_user);
+        IF EXISTS (SELECT FROM types WHERE name = NEW.type AND (def ->> 'restricted')::bool) THEN
+            NEW.restricted := true;
+        END IF;
+    ELSIF NEW.restricted IS DISTINCT FROM OLD.restricted AND NOT NEW.space = ANY (my_spaces('admin')) THEN
+        RAISE EXCEPTION 'only an admin of the space restricts or opens a record' USING ERRCODE = '42501';
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE OR REPLACE TRIGGER records_restrict BEFORE INSERT OR UPDATE OF restricted ON records FOR EACH ROW EXECUTE FUNCTION records_restrict();
+
 CREATE OR REPLACE FUNCTION secrets_prune() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
 BEGIN
     DELETE FROM secrets WHERE record_id = NEW.id
@@ -281,16 +306,24 @@ DO $$ DECLARE t text; BEGIN
     END LOOP;
 END $$;
 
-CREATE POLICY viewer ON records FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[]));
+CREATE POLICY viewer ON records FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[])
+    AND (NOT restricted OR space = ANY ((SELECT my_spaces('admin'))::uuid[]) OR creator = (SELECT actor_user(current_user))));
 CREATE POLICY viewer ON raw FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[]));
-CREATE POLICY viewer ON provenance FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[]));
+-- what hangs off a record is read only with it
+CREATE POLICY viewer ON provenance FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[])
+    AND EXISTS (SELECT FROM records r WHERE r.id = record_id));
 CREATE POLICY viewer ON links FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[])
     AND EXISTS (SELECT FROM records r WHERE r.id = from_id) AND EXISTS (SELECT FROM records r WHERE r.id = to_id));
-CREATE POLICY viewer ON files FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[]));
+CREATE POLICY viewer ON files FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[])
+    AND EXISTS (SELECT FROM records r WHERE r.id = files.id));
 CREATE POLICY viewer ON sources FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[]));
 CREATE POLICY viewer ON views FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[]));
-CREATE POLICY viewer ON proposals FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[]));
-CREATE POLICY viewer ON secrets FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[]) AND secret_granted(type));
+-- a proposal for a restricted type is for the admins who review it, as its record would be
+CREATE POLICY viewer ON proposals FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[])
+    AND (record_id IS NULL OR EXISTS (SELECT FROM records r WHERE r.id = record_id))
+    AND (space = ANY ((SELECT my_spaces('admin'))::uuid[]) OR NOT EXISTS (SELECT FROM types t WHERE t.name = proposals.type AND (t.def ->> 'restricted')::bool)));
+CREATE POLICY viewer ON secrets FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[]) AND secret_granted(type)
+    AND (record_id IS NULL OR EXISTS (SELECT FROM records r WHERE r.id = record_id)));
 
 CREATE OR REPLACE FUNCTION search_fold(t text) RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
     SELECT translate(replace(replace(replace(lower(regexp_replace(regexp_replace(normalize(coalesce(t, ''), NFD),
