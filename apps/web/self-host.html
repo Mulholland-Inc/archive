@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Self-host: Archive</title>
+  <meta name="description" content="Run Archive yourself with one docker command, on your laptop, a server or any cloud.">
+  <meta name="theme-color" content="#ffffff">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="fonts/crimson-pro-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/inter-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="components/index.js"></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <div class="hero-panel hero-panel-short">
+    <archive-nav><a class="nav-home" href="./"><archive-wordmark>Archive</archive-wordmark></a></archive-nav>
+
+    <header class="hero">
+      <reveal-text on="load">
+        <h1 class="page-title">One command. That is the install.</h1>
+      </reveal-text>
+      <p class="hero-sub" data-rise>It checks for Docker, starts Archive with everything inside, and keeps your data in one volume. Run it again to update.</p>
+    </header>
+    <div data-rise>
+      <div class="code-card">
+        <pre><span class="prompt" aria-hidden="true">$ </span><code id="install">curl -fsSL https://archive.us.org/install.sh | sh</code></pre>
+        <copy-button for="install" hidden><button type="button">Copy</button></copy-button>
+      </div>
+      <p class="code-after">Then open <code>localhost:8080</code> and say hello.</p>
+    </div>
+  </div>
+
+  <main id="main">
+    <section class="section" aria-labelledby="keep-title">
+      <div class="container">
+        <div class="section-head" data-reveal>
+          <h2 id="keep-title">Easy to keep.</h2>
+          <p>Nothing to babysit. One folder, one image, your models.</p>
+        </div>
+        <div class="cards cards-two">
+          <article class="card" data-reveal><span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h4l2 2h7A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></svg></span><h3>One folder holds it all</h3><p>Your database, files and settings live in <code>/data</code>, so a backup is one folder.</p></article>
+          <article class="card" data-reveal><span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg></span><h3>Upgrades are a pull</h3><p>Fetch the new image and restart. Archive takes a backup before it changes anything.</p></article>
+          <article class="card" data-reveal><span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="3"/><path d="M9 2.5v2.5M15 2.5v2.5M9 19v2.5M15 19v2.5M2.5 9h2.5M2.5 15h2.5M19 9h2.5M19 15h2.5"/></svg></span><h3>Bring your own AI</h3><p>Point Archive at Ollama, llama.cpp, vLLM or LM Studio. Models never ship inside the image.</p></article>
+          <article class="card" data-reveal><span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="2.5"/><path d="M5 6v12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5V6M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></svg></span><h3>Already run Postgres?</h3><p>Flip one setting and Archive uses yours instead of the bundled one.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="anywhere" aria-labelledby="anywhere-title">
+      <div class="container">
+        <div class="section-head" data-reveal>
+          <h2 id="anywhere-title">Run it anywhere.</h2>
+          <p>All it needs is a container runtime, a volume and one port.</p>
+        </div>
+        <div class="cards">
+          <article class="card" data-reveal><h3>Your laptop or a VPS</h3><p>Docker or Podman.</p><p class="card-meta"><span>Bundled database</span></p></article>
+          <article class="card" data-reveal><h3>Kubernetes</h3><p>A Helm chart.</p><p class="card-meta"><span>Bundled, or your own</span></p></article>
+          <article class="card" data-reveal><h3>AWS</h3><p>ECS Fargate or App Runner.</p><p class="card-meta"><span>RDS or Aurora</span></p></article>
+          <article class="card" data-reveal><h3>Google Cloud</h3><p>Cloud Run.</p><p class="card-meta"><span>Cloud SQL</span></p></article>
+          <article class="card" data-reveal><h3>Azure</h3><p>Container Apps.</p><p class="card-meta"><span>Azure Database for PostgreSQL</span></p></article>
+          <article class="card" data-reveal><h3>Fly.io, Railway, Render</h3><p>Native container deploy.</p><p class="card-meta"><span>Their managed Postgres</span></p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section statement" aria-labelledby="cta-title">
+      <div class="container statement-short" data-reveal>
+        <h2 id="cta-title">Rather not?</h2>
+        <p>No shame in it. We can run it for you, or you can read the full guide first.</p>
+        <div class="actions">
+          <a class="button button-primary button-lg" href="pricing.html">See plans</a>
+          <a class="button button-secondary button-lg" href="https://docs.archive.us.org">Read the docs</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <archive-footer></archive-footer>
+</body>
+</html>

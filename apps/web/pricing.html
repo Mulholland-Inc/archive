@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pricing: Archive</title>
+  <meta name="description" content="Archive is free to self-host. Hosted plans for people, teams and businesses are priced at launch.">
+  <meta name="theme-color" content="#ffffff">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="fonts/crimson-pro-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/inter-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="components/index.js"></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <div class="hero-panel hero-panel-short">
+    <archive-nav><a class="nav-home" href="./"><archive-wordmark>Archive</archive-wordmark></a></archive-nav>
+
+    <header class="hero">
+      <reveal-text on="load">
+        <h1 class="page-title">Free to keep, pay for comfort.</h1>
+      </reveal-text>
+      <p class="hero-sub" data-rise>Every plan is the same Archive, so you can move between them and take everything with you. Prices land at launch.</p>
+      <billing-toggle class="toggle" role="group" aria-label="Billing period" data-rise>
+        <button type="button" value="monthly" aria-pressed="true">Monthly</button>
+        <button type="button" value="yearly" aria-pressed="false">Yearly</button>
+      </billing-toggle>
+    </header>
+  </div>
+
+  <main id="main">
+    <section class="section" aria-label="Plans">
+      <div class="container">
+        <div class="plans">
+          <article class="plan" data-reveal>
+            <div>
+              <h3>Free</h3>
+              <p class="plan-blurb">Run it yourself on a laptop, a home server or your own cloud.</p>
+            </div>
+            <p class="plan-price"><strong>€0</strong> forever<span class="plan-note">Self-hosted, nothing held back</span></p>
+            <p class="plan-includes">Includes:</p>
+            <ul>
+              <li>Everything Archive does</li>
+              <li>Local AI models</li>
+              <li>App, API, MCP and CLI</li>
+            </ul>
+            <a class="button button-secondary" href="self-host.html">Self-host it</a>
+          </article>
+          <article class="plan plan-featured" data-reveal>
+            <div>
+              <h3>Personal</h3>
+              <p class="plan-blurb">We run your archive for you. Sign up, connect your stuff, done.</p>
+            </div>
+            <p class="plan-price"><strong>€—</strong> <span data-period>/mo</span><span class="plan-note" data-billed>Billed monthly</span></p>
+            <p class="plan-includes">Everything in Free, plus:</p>
+            <ul>
+              <li>Your own isolated instance</li>
+              <li>Updates and backups handled</li>
+              <li>Move to self-hosting any time</li>
+            </ul>
+            <a class="button button-primary" href="./#waitlist">Join the waitlist</a>
+          </article>
+          <article class="plan" data-reveal>
+            <div>
+              <h3>Team</h3>
+              <p class="plan-blurb">For households and small teams that share some things and not others.</p>
+            </div>
+            <p class="plan-price"><strong>€—</strong> <span data-period>/mo</span><span class="plan-note" data-billed>Billed monthly</span></p>
+            <p class="plan-includes">Everything in Personal, plus:</p>
+            <ul>
+              <li>Shared and private spaces</li>
+              <li>Owner, admin, editor and viewer roles</li>
+              <li>Private things stay private</li>
+            </ul>
+            <a class="button button-primary" href="./#waitlist">Join the waitlist</a>
+          </article>
+          <article class="plan" data-reveal>
+            <div>
+              <h3>We install it for you</h3>
+              <p class="plan-blurb">For businesses. We set Archive up on your own systems.</p>
+            </div>
+            <p class="plan-price"><strong>Let us talk</strong><span class="plan-note">Scoped to your setup</span></p>
+            <p class="plan-includes">Everything in Team, plus:</p>
+            <ul>
+              <li>On your cloud or servers</li>
+              <li>Single sign-on and provisioning</li>
+              <li>Setup kept as code with Terraform</li>
+            </ul>
+            <a class="button button-secondary" href="mailto:hello@archive.us.org">Get in touch</a>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="faq-title">
+      <div class="container">
+        <div class="section-head" data-reveal>
+          <h2 id="faq-title">Questions, answered</h2>
+        </div>
+        <div class="faq" data-reveal>
+          <details>
+            <summary>Is the free version really everything?</summary>
+            <p>Yes. Self-hosted Archive is the whole product. The paid plans are for when you would rather we ran it.</p>
+          </details>
+          <details>
+            <summary>Can I move between plans?</summary>
+            <p>Any time. Your archive is one folder, so moving from hosted to self-hosted, or back, is an export and an import.</p>
+          </details>
+          <details>
+            <summary>Who can see my data on a hosted plan?</summary>
+            <p>Each archive runs in its own isolated instance. We do not read it, and it never trains anyone's AI.</p>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <section class="section statement" aria-labelledby="cta-title">
+      <div class="container statement-short" data-reveal>
+        <h2 id="cta-title">Start with your own stuff.</h2>
+        <p>Join the waitlist for a hosted archive, or run it yourself today.</p>
+        <div class="actions">
+          <a class="button button-primary button-lg" href="./#waitlist">Join the waitlist</a>
+          <a class="button button-secondary button-lg" href="self-host.html">Run it yourself</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <archive-footer></archive-footer>
+</body>
+</html>

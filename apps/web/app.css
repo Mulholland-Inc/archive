@@ -1,0 +1,1042 @@
+app-shell,
+app-dialog,
+sign-in {
+  font-size: var(--app-font-size);
+  line-height: var(--leading-relaxed);
+  user-select: none;
+}
+
+app-shell {
+  display: grid;
+  grid-template-columns: var(--shell-sidebar-width) minmax(0, 1fr);
+  min-height: 100dvh;
+}
+
+app-shell .button,
+app-dialog .button,
+sign-in .button {
+  height: var(--app-field-height);
+  padding: 0 var(--app-inset);
+  font-size: var(--app-font-size);
+}
+
+app-shell .button-primary,
+app-dialog .button-primary,
+sign-in .button-primary {
+  box-shadow: inset 0 0 0 var(--hairline) var(--primary-ring);
+}
+
+app-shell .button-secondary,
+app-dialog .button-secondary,
+sign-in .button-secondary {
+  box-shadow: inset 0 0 0 var(--hairline) var(--secondary-ring);
+}
+
+app-shell .button:disabled,
+app-dialog .button:disabled,
+sign-in .button:disabled {
+  cursor: default;
+  filter: none;
+  color: var(--faint-foreground);
+}
+
+app-dialog .button[data-danger] {
+  background: var(--destructive);
+  box-shadow: none;
+}
+
+app-icon {
+  display: inline-flex;
+  flex: none;
+  width: var(--app-icon-size);
+  height: var(--app-icon-size);
+}
+
+app-icon svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: var(--stroke);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+app-icon .fill {
+  fill: currentColor;
+  stroke: none;
+}
+
+app-shell > aside {
+  position: sticky;
+  top: var(--shell-inset);
+  display: flex;
+  flex-direction: column;
+  gap: var(--shell-inset);
+  height: calc(100dvh - 2 * var(--shell-inset));
+  margin: var(--shell-inset);
+  margin-inline-end: 0;
+  padding: var(--shell-inset);
+  overflow-y: auto;
+  border-radius: var(--app-radius);
+  background: var(--shell-sidebar-background);
+}
+
+app-shell > aside > a {
+  display: flex;
+  align-items: center;
+  height: var(--app-field-height);
+  padding: 0 var(--shell-inset);
+  border-radius: var(--app-radius-inner);
+}
+
+app-shell > aside archive-wordmark {
+  --wordmark-size: var(--text-title-sm);
+  --wordmark-mark: var(--app-wordmark-mark);
+  --wordmark-gap: var(--app-wordmark-gap);
+}
+
+app-shell nav:last-child {
+  margin-top: auto;
+}
+
+app-shell nav a,
+app-shell [data-results] a {
+  display: flex;
+  align-items: center;
+  gap: var(--app-tight);
+  height: var(--app-field-height);
+  padding: 0 var(--shell-inset);
+  border-radius: var(--app-radius-inner);
+  color: var(--muted-foreground);
+  font-weight: var(--weight-ui);
+}
+
+app-shell nav a span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+app-shell nav a:hover,
+app-shell [data-results] a:hover,
+app-shell [data-results] a:focus-visible {
+  background: var(--hover);
+  color: var(--foreground);
+}
+
+app-shell nav a[aria-current='page'] {
+  background: var(--tile);
+  color: var(--foreground);
+  box-shadow: inset 0 0 0 var(--hairline) var(--border);
+}
+
+app-shell [data-frame] {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+app-shell [data-frame] > header {
+  display: flex;
+  align-items: center;
+  gap: var(--app-tight);
+  padding: calc(2 * var(--shell-inset)) var(--app-gap) 0;
+}
+
+app-shell [data-menu] {
+  display: none;
+  place-items: center;
+  flex: none;
+  width: var(--app-field-height);
+  height: var(--app-field-height);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--panel);
+  color: var(--foreground);
+  cursor: pointer;
+}
+
+app-shell [role='search'] {
+  display: flex;
+  align-items: center;
+  gap: var(--app-tight);
+  width: min(100%, var(--app-search-width));
+  height: var(--app-field-height);
+  padding: 0 var(--app-inset);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+  color: var(--faint-foreground);
+}
+
+app-shell [role='search']:focus-within {
+  box-shadow: var(--focus-ring);
+}
+
+app-shell [role='search'] input,
+app-shell [role='search'] input:focus-visible {
+  height: 100%;
+  padding: 0;
+  background: none;
+  box-shadow: none;
+}
+
+app-shell [data-results],
+app-select [role='listbox'] {
+  position: fixed;
+  inset: auto;
+  max-height: var(--app-popover-height);
+  margin: var(--space-1) 0;
+  padding: var(--space-1);
+  overflow-y: auto;
+  border: var(--hairline) solid var(--border-strong);
+  border-radius: var(--radius-medium);
+  background: var(--tile);
+  color: var(--foreground);
+  font-size: var(--app-font-size);
+  user-select: none;
+}
+
+app-shell [data-results] a {
+  padding: 0 var(--app-tight);
+  border-radius: var(--radius-small);
+}
+
+app-shell main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-gap);
+  min-width: 0;
+  padding: var(--app-gap);
+}
+
+app-shell main:focus {
+  box-shadow: none;
+}
+
+records-page,
+record-view,
+type-editor,
+change-preview,
+settings-page,
+record-view > form,
+change-preview section,
+type-editor section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-gap);
+  min-width: 0;
+}
+
+:is(records-page, record-view, type-editor, change-preview, settings-page) > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--app-inset);
+}
+
+:is(records-page, record-view, type-editor, change-preview, settings-page) > header > :last-child:not(h1),
+app-dialog footer,
+record-view footer,
+change-preview footer,
+settings-page footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--app-tight);
+}
+
+:is(record-view, type-editor) > header > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+app-shell h1 {
+  font: var(--weight-display) var(--app-title-size) / var(--leading-heading) var(--font-display);
+  letter-spacing: var(--tracking-heading);
+}
+
+app-shell h2,
+app-dialog h2 {
+  font: var(--weight-display) var(--text-title-sm) / var(--leading-heading) var(--font-display);
+  letter-spacing: var(--tracking-heading);
+}
+
+app-shell h3 {
+  font-size: var(--app-font-size);
+  font-weight: var(--weight-strong);
+}
+
+app-shell header p {
+  color: var(--faint-foreground);
+}
+
+app-shell main a:not(.button),
+sign-in p a {
+  color: var(--link);
+}
+
+app-shell main a:not(.button):hover {
+  text-decoration: underline;
+  text-underline-offset: var(--nudge);
+}
+
+app-shell input,
+app-dialog input,
+sign-in input {
+  width: 100%;
+  height: var(--app-field-height);
+  padding: 0 var(--app-inset);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--tile);
+  box-shadow: inset 0 0 0 var(--hairline) var(--border-strong);
+  color: var(--foreground);
+  font: inherit;
+  letter-spacing: inherit;
+  user-select: text;
+}
+
+app-shell input::placeholder,
+app-dialog input::placeholder,
+sign-in input::placeholder {
+  color: var(--faint-foreground);
+}
+
+app-shell input:focus-visible,
+app-dialog input:focus-visible,
+sign-in input:focus-visible,
+app-select > button:focus-visible,
+app-switch button:focus-visible {
+  border-radius: var(--radius-control);
+  box-shadow: var(--focus-ring);
+}
+
+app-select {
+  display: block;
+  min-width: 0;
+}
+
+app-select > button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--app-tight);
+  width: 100%;
+  height: var(--app-field-height);
+  padding: 0 var(--app-inset);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--tile);
+  box-shadow: inset 0 0 0 var(--hairline) var(--border-strong);
+  color: var(--foreground);
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+app-select > button span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+app-select > button[data-empty] span {
+  color: var(--faint-foreground);
+}
+
+app-select > button:disabled {
+  color: var(--faint-foreground);
+  cursor: default;
+}
+
+app-select [role='option'] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--app-inset);
+  min-height: var(--app-field-height);
+  padding: 0 var(--app-tight);
+  border-radius: var(--radius-small);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+app-select [role='option']:hover,
+app-select [role='option']:focus-visible {
+  background: var(--hover);
+  box-shadow: none;
+}
+
+app-select [role='option'][aria-selected='false'] app-icon {
+  visibility: hidden;
+}
+
+app-switch button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--app-tight);
+  height: var(--app-field-height);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--foreground);
+  font: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+
+app-switch i {
+  display: flex;
+  width: var(--switch-width);
+  height: var(--switch-height);
+  padding: var(--switch-pad);
+  border-radius: var(--radius-full);
+  background: var(--rule);
+}
+
+app-switch i::after {
+  content: '';
+  width: var(--switch-knob);
+  height: var(--switch-knob);
+  border-radius: var(--radius-full);
+  background: var(--tile);
+}
+
+app-switch [aria-checked='true'] i {
+  justify-content: flex-end;
+  background: var(--primary);
+}
+
+field-input {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+field-input [role='alert'],
+app-dialog [data-error],
+record-view [role='alert'],
+records-page [role='alert'],
+change-preview [role='alert'],
+sign-in [role='alert'],
+[data-tone='destructive'] {
+  color: var(--destructive);
+}
+
+field-input[data-invalid] input,
+field-input[data-invalid] app-select > button {
+  box-shadow: inset 0 0 0 var(--hairline-strong) var(--destructive);
+}
+
+[data-tone='success'] {
+  color: var(--success);
+}
+
+[data-tone='warning'] {
+  color: var(--warning);
+}
+
+[data-scroll] {
+  overflow-x: auto;
+}
+
+app-shell table {
+  width: 100%;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--app-box-radius);
+  border-spacing: 0;
+  overflow: hidden;
+}
+
+app-shell th,
+app-shell td {
+  height: var(--app-row-height);
+  max-width: var(--app-cell-max);
+  padding: 0 var(--app-inset);
+  overflow: hidden;
+  text-align: start;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+app-shell th {
+  background: var(--muted);
+  color: var(--faint-foreground);
+  font-weight: var(--weight-ui);
+}
+
+app-shell td {
+  border-top: var(--hairline) solid var(--border);
+  user-select: text;
+}
+
+app-shell main :is(td:first-child, record-board article, record-calendar li) > a:not(.button) {
+  color: var(--foreground);
+  font-weight: var(--weight-ui);
+}
+
+record-table,
+record-board,
+record-calendar {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--app-inset);
+}
+
+record-table > [data-scroll] {
+  align-self: stretch;
+}
+
+app-shell td:not(:first-child) {
+  font-variant-numeric: tabular-nums;
+}
+
+record-table [data-empty],
+record-calendar [data-empty],
+field-value[data-empty],
+change-preview > [data-draft] > p,
+change-preview [data-meta],
+type-editor tr[data-inherited] td:first-child {
+  color: var(--faint-foreground);
+}
+
+[data-toolbar],
+view-switch,
+filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--app-tight);
+}
+
+view-switch [role='group'] {
+  display: inline-flex;
+  gap: var(--space-1);
+  height: var(--app-field-height);
+  padding: var(--space-1);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+}
+
+view-switch [role='group'] button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--app-tight);
+  padding: 0 var(--shell-inset);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: none;
+  color: var(--muted-foreground);
+  font: inherit;
+  font-weight: var(--weight-ui);
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+
+view-switch [role='group'] button[aria-pressed='true'] {
+  background: var(--tile);
+  color: var(--foreground);
+  box-shadow: inset 0 0 0 var(--hairline) var(--border);
+}
+
+view-switch [role='group'] button:disabled {
+  color: var(--faint-foreground);
+  cursor: default;
+}
+
+view-switch app-select > button {
+  width: auto;
+}
+
+record-board {
+  flex-direction: row;
+  align-self: stretch;
+  overflow-x: auto;
+}
+
+record-board section {
+  display: flex;
+  flex: 0 0 var(--board-column-width);
+  flex-direction: column;
+  gap: var(--app-tight);
+}
+
+record-board h2 {
+  padding: 0 var(--app-inset);
+  color: var(--muted-foreground);
+}
+
+app-shell record-board h2 {
+  font: var(--weight-ui) var(--app-font-size) / var(--app-field-height) var(--font-body);
+  letter-spacing: var(--tracking-ui);
+}
+
+record-board article {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--app-inset);
+  border-radius: var(--app-box-radius);
+  background: var(--panel);
+}
+
+record-board field-value {
+  color: var(--muted-foreground);
+}
+
+record-calendar {
+  align-items: stretch;
+}
+
+record-calendar > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--app-inset);
+}
+
+record-calendar > header > div {
+  display: flex;
+  gap: var(--app-tight);
+}
+
+record-calendar [data-prev],
+record-calendar [data-next] {
+  width: var(--app-field-height);
+}
+
+app-shell record-calendar [data-prev],
+app-shell record-calendar [data-next] {
+  padding: 0;
+}
+
+record-calendar ol {
+  display: grid;
+  margin: 0;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  padding: 0;
+  list-style: none;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--app-box-radius);
+  overflow: hidden;
+}
+
+record-calendar li {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--app-tight);
+}
+
+record-calendar li[data-weekday] {
+  background: var(--muted);
+  color: var(--faint-foreground);
+  font-weight: var(--weight-ui);
+}
+
+record-calendar li:not([data-weekday]) {
+  min-height: var(--calendar-cell-height);
+  border-top: var(--hairline) solid var(--border);
+}
+
+record-calendar li:not(:nth-child(7n + 1)) {
+  border-left: var(--hairline) solid var(--border);
+}
+
+record-calendar time {
+  color: var(--muted-foreground);
+}
+
+record-calendar [data-long] {
+  display: none;
+}
+
+record-calendar li[data-outside] {
+  background: var(--muted);
+}
+
+record-calendar li[data-outside] time {
+  color: var(--faint-foreground);
+}
+
+record-calendar li[data-today] time {
+  color: var(--foreground);
+  font-weight: var(--weight-strong);
+}
+
+record-calendar a {
+  padding: 0 var(--app-tight);
+  overflow: hidden;
+  border-radius: var(--radius-small);
+  background: var(--panel);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+app-shell dl {
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--app-box-radius);
+}
+
+app-shell dl > div {
+  display: grid;
+  grid-template-columns: var(--app-label-width) minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    'label value confidence actions'
+    'label source confidence actions';
+  align-items: center;
+  align-content: center;
+  column-gap: var(--app-inset);
+  min-height: var(--app-row-height);
+  padding: var(--app-tight) var(--app-tight) var(--app-tight) var(--app-inset);
+}
+
+app-shell dl > div + div {
+  border-top: var(--hairline) solid var(--border);
+}
+
+app-shell dt {
+  grid-area: label;
+  color: var(--faint-foreground);
+}
+
+app-shell dt label {
+  color: inherit;
+}
+
+app-shell dd[data-value],
+settings-page dd {
+  grid-area: value;
+  min-width: 0;
+  font-weight: var(--weight-ui);
+  user-select: text;
+}
+
+settings-page dl > div {
+  grid-template-columns: var(--app-label-width) minmax(0, 1fr);
+  grid-template-areas: 'label value';
+}
+
+record-view [data-source] {
+  grid-area: source;
+  color: var(--faint-foreground);
+}
+
+record-view [data-source]:empty {
+  display: none;
+}
+
+@media (min-width: 40.0625rem) {
+  record-view dl > div:has([data-source]:empty):not([data-editing]) [data-value] {
+    grid-row: 1 / 3;
+  }
+}
+
+record-view [data-confidence] {
+  grid-area: confidence;
+}
+
+record-view [data-actions] {
+  display: flex;
+  gap: var(--app-tight);
+  grid-area: actions;
+}
+
+record-view [data-edit] {
+  width: var(--app-field-height);
+}
+
+app-shell record-view [data-edit] {
+  padding: 0;
+}
+
+record-view dl > div[data-editing] {
+  grid-template-areas: 'label value value actions';
+}
+
+record-view dl > div[data-editing] :is([data-source], [data-confidence]) {
+  display: none;
+}
+
+record-view footer {
+  justify-content: flex-end;
+}
+
+type-editor td:not([data-actions]) {
+  white-space: normal;
+}
+
+type-editor td[data-actions] {
+  padding-inline-end: var(--app-tight);
+  text-align: end;
+}
+
+type-editor td[data-actions] .button {
+  vertical-align: middle;
+}
+
+type-editor td[data-actions] .button + .button {
+  margin-inline-start: var(--app-tight);
+}
+
+type-editor section[data-draft]:empty {
+  display: none;
+}
+
+:is(type-editor, change-preview) section ul {
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--app-box-radius);
+}
+
+:is(type-editor, change-preview) section li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--app-inset);
+  min-height: var(--app-row-height);
+  padding: var(--app-tight) var(--app-tight) var(--app-tight) var(--app-inset);
+}
+
+:is(type-editor, change-preview) section li + li {
+  border-top: var(--hairline) solid var(--border);
+}
+
+change-preview [data-draft] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-gap);
+}
+
+change-preview [data-sample] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-tight);
+}
+
+app-dialog dialog {
+  width: min(100% - 2 * var(--shell-inset), var(--app-dialog-width));
+  max-height: calc(100dvh - 2 * var(--shell-inset));
+  padding: var(--app-gap);
+  border: 0;
+  border-radius: var(--app-radius);
+  background: var(--background);
+  color: var(--foreground);
+}
+
+app-dialog dialog::backdrop {
+  background: var(--scrim);
+}
+
+app-dialog form,
+app-dialog [data-body] > div,
+app-dialog [data-body] > label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-inset);
+}
+
+app-dialog [data-form-field],
+app-dialog [data-body] label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-tight);
+}
+
+app-dialog label,
+sign-in label {
+  color: var(--muted-foreground);
+  font-weight: var(--weight-ui);
+}
+
+app-dialog footer {
+  justify-content: flex-end;
+}
+
+app-shell [data-scrim] {
+  display: none;
+}
+
+body:has(> main > sign-in) main {
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  padding: var(--app-gap);
+}
+
+sign-in {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-gap);
+  width: min(100%, var(--sign-in-width));
+}
+
+sign-in > a {
+  align-self: flex-start;
+}
+
+sign-in h1 {
+  font: var(--weight-display) var(--app-title-size) / var(--leading-heading) var(--font-display);
+  letter-spacing: var(--tracking-heading);
+}
+
+sign-in form,
+sign-in [data-others] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-tight);
+}
+
+sign-in .button {
+  justify-content: flex-start;
+  width: 100%;
+}
+
+@media (max-width: 40rem) {
+  app-shell,
+  sign-in,
+  body:has(> main > sign-in) main {
+    --app-gap: var(--space-4);
+  }
+
+  app-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  app-shell > aside {
+    position: fixed;
+    inset: var(--shell-inset) auto var(--shell-inset) var(--shell-inset);
+    z-index: 20;
+    width: var(--shell-sidebar-width);
+    height: auto;
+    margin: 0;
+    visibility: hidden;
+    translate: calc(-100% - var(--shell-inset)) 0;
+  }
+
+  app-shell[data-open] > aside {
+    visibility: visible;
+    translate: none;
+  }
+
+  app-shell[data-open] [data-scrim] {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    display: block;
+    background: var(--scrim);
+  }
+
+  app-shell [data-frame] > header {
+    padding: var(--app-gap) var(--app-gap) 0;
+  }
+
+  app-shell [data-menu] {
+    display: grid;
+  }
+
+  app-shell [role='search'] {
+    width: auto;
+    flex: 1;
+  }
+
+  app-shell [data-extra] {
+    display: none;
+  }
+
+  view-switch [role='group'] button span {
+    display: none;
+  }
+
+  record-calendar ol {
+    display: flex;
+    flex-direction: column;
+  }
+
+  record-calendar li[data-weekday],
+  record-calendar li[data-free] {
+    display: none;
+  }
+
+  record-calendar li:not([data-weekday]) {
+    min-height: 0;
+    border-top: 0;
+    border-left: 0;
+  }
+
+  record-calendar li:not([data-weekday]):not([data-free]) ~ li:not([data-free]) {
+    border-top: var(--hairline) solid var(--border);
+  }
+
+  record-calendar [data-long] {
+    display: inline;
+  }
+
+  record-calendar time span:first-child {
+    display: none;
+  }
+
+  app-shell dl > div {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'label confidence'
+      'value actions'
+      'source source';
+  }
+
+  record-view dl > div[data-editing] {
+    grid-template-areas:
+      'label label'
+      'value value'
+      'actions actions';
+    row-gap: var(--app-tight);
+  }
+
+  settings-page dl > div {
+    grid-template-areas: 'label' 'value';
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  type-editor td[data-actions] .button span {
+    display: none;
+  }
+
+  app-shell type-editor td[data-actions] .button {
+    width: var(--app-field-height);
+    padding: 0;
+  }
+
+  type-editor td[data-actions] {
+    padding-inline-start: 0;
+  }
+}
+
+app-shell [hidden],
+app-dialog [hidden],
+sign-in [hidden] {
+  display: none;
+}
+
+record-view form dl > div[data-editing] {
+  grid-template-columns: var(--app-label-width) minmax(0, 1fr);
+  grid-template-areas: 'label value';
+}
+
+@media (max-width: 40rem) {
+  record-view form dl > div[data-editing] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: 'label' 'value';
+    row-gap: var(--app-tight);
+  }
+}
+
+change-preview table {
+  table-layout: fixed;
+}

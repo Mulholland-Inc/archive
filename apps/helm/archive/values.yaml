@@ -1,0 +1,32 @@
+image:
+  repository: ghcr.io/mulholland-inc/archive
+  tag: ""
+  pullPolicy: IfNotPresent
+
+url: ""
+adminEmail: ""
+secretKey: ""
+
+database:
+  url: ""
+
+env: {}
+secretEnv: {}
+existingSecret: ""
+
+persistence:
+  size: 10Gi
+  storageClass: ""
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+  className: ""
+  host: archive.example.com
+  tlsSecret: ""
+  annotations: {}
+
+resources: {}

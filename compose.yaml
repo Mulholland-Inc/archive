@@ -1,0 +1,28 @@
+services:
+  archive:
+    image: ghcr.io/mulholland-inc/archive:latest
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - archive:/data
+    environment:
+      ARCHIVE_LLM_URL: ${ARCHIVE_LLM_URL:-http://ollama:11434/v1}
+      ARCHIVE_LLM_MODEL: ${ARCHIVE_LLM_MODEL:-}
+      ARCHIVE_EMBED_MODEL: ${ARCHIVE_EMBED_MODEL:-}
+      ARCHIVE_EMBED_DIM: ${ARCHIVE_EMBED_DIM:-768}
+      ARCHIVE_LOCALE: ${ARCHIVE_LOCALE:-}
+      ARCHIVE_ADMIN_EMAIL: ${ARCHIVE_ADMIN_EMAIL:-}
+      ARCHIVE_URL: ${ARCHIVE_URL:-}
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama
+    volumes:
+      - ollama:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  archive:
+  ollama:

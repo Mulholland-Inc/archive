@@ -7,7 +7,7 @@
 
 ## Summary
 
-Build Archive as one Go binary on top of Postgres, with a TypeScript web UI embedded in that binary and local LLMs reached over an OpenAI-compatible HTTP endpoint. Postgres does the heavy data work, so the application language mostly needs to be good at concurrent I/O, easy to ship as one static file, and easy for outside contributors to write connectors in. Go wins on all three.
+Build Archive as one Go binary on top of Postgres, with a static web UI (plain HTML, native Web Components and one token file, shared with the marketing site) served by that binary and local LLMs reached over an OpenAI-compatible HTTP endpoint. Postgres does the heavy data work, so the application language mostly needs to be good at concurrent I/O, easy to ship as one static file, and easy for outside contributors to write connectors in. Go wins on all three.
 
 The product has four layers: a **raw layer** that keeps every source record untouched, a **canonical layer** of user-defined types (the ontology), an **intake loop** that maps raw into canonical with calibrated confidence, and **access surfaces** (UI, API, MCP, CLI) that all call the same core. For businesses, the same ontology can sit over their existing systems as a semantic layer instead of copying data in.
 
@@ -42,7 +42,7 @@ The ontology is the product. Types, fields, normalization rules and relations li
 | `provenance` | Entity, field path, raw records it came from, method, confidence |
 | `links` | Identity resolution and relations between entities |
 
-- **Spec format**: a JSON Schema-compatible core plus Archive extensions, readable and writable through the API, MCP and CLI, and exportable to YAML for git.
+- **Spec format**: a JSON Schema-compatible core plus Archive extensions, readable and writable through the API, MCP and CLI, and stored and exported as JSON (JSONB in Postgres, a `spec.json` file for git).
 - **Semantic types and normalization**: field types like money, email, phone, address, timestamp or unit quantity are themselves defined in the spec library, each with a validator and a normalizer (E.164 phones, ISO 4217 currencies, UTC timestamps). They are reused across ontologies and are what the intake loop targets.
 - **Validation** runs in the Go core on every write, so every surface gets the same checks. Each entity records the spec version it was validated against.
 - **Ontology changes** are changesets that apply instantly because storage is JSONB. Existing records are re-validated in the background and flagged, or migrated by a transform defined in the changeset.
@@ -62,7 +62,7 @@ Every type defines the same six parts:
 3. **Normalizer**: turns messy input into the canonical form. When the input is ambiguous (`03/04/2025`, a phone number with no country), it returns ranked candidates with confidence, which the intake loop uses directly.
 4. **Formatter**: locale-aware display, for example `€1.234,50` or `$1,234.50` from the same stored value.
 5. **Sort and index key**: so money sorts by amount within a currency and timestamps sort in UTC.
-6. **Sensitivity**: `public`, `personal` or `secret`. Secret types are encrypted at rest, masked by default, and every read is logged.
+6. **Sensitivity**: `public`, `personal` or `secret`. Secret types are encrypted at rest and masked by default.
 
 The original input is always kept next to the normalized value, so a bad normalization can be fixed later without losing data.
 
@@ -121,13 +121,13 @@ Files are first-class: every document, PDF, image, video or audio file is a reco
 - **Processing on upload**, in background workers:
   - Detect the real file type and pull metadata: EXIF, dimensions, page count, duration, camera, location.
   - Make previews: image thumbnails in several sizes (libvips, including HEIC and RAW), PDF page images, video poster frames (ffmpeg), Office documents converted to PDF for preview.
-  - Extract text: the PDF text layer, OCR for scans and photos (Tesseract, or a local vision model), and speech-to-text for audio and video (a local Whisper model).
+  - Extract text: the PDF text layer, OCR for scans and photos through the local vision model, and speech-to-text for audio and video (a local Whisper model).
   - Index it: full-text search over extracted text, and embeddings for semantic search across text and images, such as "photos of whiteboards" or "the lease for the Utrecht flat".
 - **Intake**: a file can be pushed straight into the intake loop, so a folder of receipts, invoices or payslips becomes clean records with links back to the exact page and region each value came from.
 - **Views**: a gallery view (grid, by date from EXIF, and on a map from GPS), a document viewer with page thumbnails and highlighted search hits, and `file` as a field type on any record.
 - **Privacy**: location data in photos is marked `personal`, can be stripped on export or share, and files can be encrypted at rest with per-instance keys.
 
-Trade-off: libvips, ffmpeg and LibreOffice make the image much bigger. The default image ships images and PDFs; a `full` image adds video, audio and Office documents, and the core binary stays the same in both.
+Trade-off: libvips, ffmpeg and LibreOffice are large, so the default image stays slim: Alpine's own `postgresql18` package (without its separate JIT package, which alone is about 180 MB) plus the static Archive binary, about 100 MB in total. A `full` image adds the media tools for previews, video, audio and Office documents, and the core binary stays the same in both.
 
 ## Connectors and the semantic layer
 
@@ -168,7 +168,7 @@ All four surfaces are thin wrappers over one core service layer, so a feature ad
 | Web UI | Notion-like tables, boards and record pages; schema editor; intake review queue; connector setup |
 | HTTP API | REST with an OpenAPI spec generated from the registry, so every user type gets typed endpoints; webhooks on change |
 | MCP server | Tools to describe the ontology, query, upsert, propose schema changes and run intake, so agents work with the user's data and its meaning |
-| CLI | The same binary: `archive serve`, `archive schema apply spec.yaml`, `archive query`, `archive connect gmail`, `archive intake ./inbox` |
+| CLI | The same binary: `archive serve`, `archive spec push spec.json`, `archive query`, `archive connect gmail`, `archive intake ./inbox` |
 
 Auth is scoped API tokens mapped to Postgres roles, with row-level security doing the actual enforcement. Agents get their own tokens, so a schema change proposed by an agent is attributable and can require human approval.
 
@@ -188,7 +188,7 @@ The loop every surface follows:
 |---|---|
 | MCP | Tools: `describe`, `propose`, `preview`, `apply`, `revert`, `sample` |
 | API | `GET /types`, `POST /changes`, `POST /changes/{id}/preview`, `POST /changes/{id}/apply` |
-| CLI | `archive spec pull` writes YAML files; edit them by hand or with an agent; `archive spec push` previews and applies the diff |
+| CLI | `archive spec pull` writes `spec.json`; edit it by hand or with an agent; `archive spec push` previews and applies the diff |
 | Terraform | `archive_type` resources, applied through the same change path |
 | UI | Visual schema editor that shows the same preview before applying |
 
@@ -227,9 +227,8 @@ Every instance supports many users, from a family sharing one Archive to a compa
 - **Agents act as someone**: every token belongs to a user and can only narrow that user's rights, never widen them. An agent's edits show up as "Claude, on behalf of Marijn".
 - **Sign-in**: email magic links and passkeys for everyone; Google and Microsoft sign-in; OIDC and SAML single sign-on plus SCIM provisioning for companies.
 - **Enforcement**: the Go core sets the current user on each database session, and Postgres row-level security filters every query by space membership. A bug in one surface cannot leak another user's data.
-- **Audit**: every change and every read of a secret field is written to an `audit` table.
 
-New tables, all short: `users`, `spaces`, `members`, `tokens`, `audit`.
+New tables, all short: `users` (email, name, sign-in methods), `spaces` and `tokens`. Membership is not a table: it is Postgres role grants, described below.
 
 How row-level security works in practice:
 
@@ -243,7 +242,7 @@ How row-level security works in practice:
 Users, space roles and tokens are real Postgres roles, so the database itself is the permission system. Anyone connecting with plain SQL, from psql or a BI tool, gets exactly the same access as in the app.
 
 - **Users**: each user is a Postgres role. Direct SQL login is optional and off by default.
-- **Space roles**: each space gets four group roles, such as `s_<space>_owner`, `_admin`, `_editor` and `_viewer`, nested so that owner includes admin, admin includes editor, and so on. Joining a space is a `GRANT`, leaving is a `REVOKE`, and `members` becomes a view over Postgres' own role memberships.
+- **Space roles**: each space gets four group roles, such as `s_<space>_owner`, `_admin`, `_editor` and `_viewer`, nested so that owner includes admin, admin includes editor, and so on. Joining a space is a `GRANT`, leaving is a `REVOKE`, and Postgres' own `pg_auth_members` is the membership list.
 - **Privileges**: viewers get `SELECT`, editors add `INSERT`, `UPDATE` and `DELETE`, and RLS policies check membership with `pg_has_role`.
 - **Tokens**: each token is its own role granted a subset of its user's space roles, which is how a token can only narrow rights, never widen them.
 - **Speed**: policies call one cached `STABLE` function, `my_spaces()`, wrapped in a subselect so Postgres runs it once per query, not once per row.
@@ -251,23 +250,23 @@ Users, space roles and tokens are real Postgres roles, so the database itself is
 
 ## Language and stack
 
-**Recommendation: Go for the server, CLI and built-in connectors; TypeScript for the web UI; Postgres for everything stateful.** Query speed comes from Postgres, not from the app layer, so the language is chosen for concurrency, shipping and contributors rather than raw speed.
+**Recommendation: Go for the server, CLI and built-in connectors; plain HTML and Web Components for the web UI; Postgres for everything stateful.** Query speed comes from Postgres, not from the app layer, so the language is chosen for concurrency, shipping and contributors rather than raw speed.
 
 | Option | Strengths for Archive | Weaknesses for Archive | Verdict |
 |---|---|---|---|
 | Go | Goroutines fit thousands of concurrent syncs; one static binary; fast builds; mature Postgres driver (`pgx`); official MCP SDK; large pool of contributors who can write connectors | Less expressive type system; GC pauses (irrelevant at this workload) | Recommended |
 | Rust | Top performance and memory safety; good fit for parsing and embedded inference | Slower to build features and harder for outside connector authors; compile times | Use later for hot paths if profiling demands it |
 | Elixir / Erlang | Best-in-class supervision and concurrency; LiveView for real-time UI | Heavier runtime in the container; small contributor pool; weaker CLI story | Strong but niche; not worth the hiring and community cost |
-| TypeScript (Node or Bun) | One language front to back; huge ecosystem | Single-threaded event loop for CPU work; heavier runtime; weaker single-binary story | Use for the UI only |
+| TypeScript (Node or Bun) | One language front to back; huge ecosystem | Single-threaded event loop for CPU work; heavier runtime; weaker single-binary story | Not needed: the UI is plain HTML with no build step |
 | C++ | Raw speed | Slow to build, unsafe, hard for contributors | No |
 
-Supporting choices: Go 1.27 (released 19 August 2026, brings generic methods and JSON v2); Postgres 18 (18.6), the newest version Google Cloud SQL supports, which also brings the built-in uuidv7(), with `pgvector`; a few fixed SQL migrations for the core tables; a Svelte 5 UI (SvelteKit with the static adapter, Tailwind CSS and shadcn-svelte components, all on their latest versions) built to static files and embedded with Go's `embed`; local inference reached over HTTP so Python never enters the core.
+Supporting choices: Go 1.27 (released 19 August 2026, brings generic methods and JSON v2); Postgres 18 (18.6), the newest version Google Cloud SQL supports, which also brings the built-in uuidv7(), with `pgvector`; a few fixed SQL migrations for the core tables; a web UI of static HTML pages and native Web Components with one shared token file, no framework and no build step, served by the binary; local inference reached over HTTP so Python never enters the core.
 
 Policy: track the latest stable Go within a month of each release. Postgres follows the newest major version that Cloud SQL supports, so self-hosted and managed setups always run the same version. Sources: [Go 1.27 release](https://go.dev/blog/go1.27), [PostgreSQL release notes](https://releasebot.io/updates/postgresql).
 
 ## Deployment
 
-`docker run -v archive:/data -p 8080:8080 archive/archive` should be the whole install. The image holds Postgres and the Archive binary; the binary starts and supervises Postgres, runs migrations, then serves the UI, API and MCP on one port.
+`curl -fsSL https://archive.us.org/install.sh | sh` is the whole install. The script (`install.sh` in the repo, served by the site) checks for Docker, pulls `ghcr.io/mulholland-inc/archive`, runs it with one `archive` volume on port 8080, waits until it is healthy, and on a rerun replaces the container to update. Under it, the plain `docker run -v archive:/data -p 8080:8080 ghcr.io/mulholland-inc/archive` still works. The image holds Postgres and the Archive binary; the binary starts and supervises Postgres, runs migrations, then serves the UI, API and MCP on one port.
 
 - **One volume** (`/data`) holds the Postgres data directory, uploaded files and config, so backup is one directory or one `pg_dump`.
 - **External Postgres** is a config switch for businesses that already run managed Postgres; the binary then skips the bundled one.
@@ -344,16 +343,16 @@ Brand direction, taking the cues that work on Poke:
 - **Show, don't tell**: short clips of real moments, like dropping in a pile of receipts and watching them become clean records, or asking Claude about your own data.
 - **Logo walls**: a wall of the platforms Archive connects to, which doubles as the partnership story.
 - **Simple pricing**: Free (self-hosted, always), a personal managed plan, and a team plan, plus "we install it for you" for businesses.
-- **Same feel in the product**: the Svelte UI uses the same palette, type and voice, so the site and the app feel like one thing.
+- **Same feel in the product**: the web app uses the same tokens and components, type and voice, so the site and the app feel like one thing.
 
 Registrar note: DNS can stay on Porkbun, or move to Cloudflare for the managed platform's per-instance subdomains and TLS.
 
 ## First milestone and open questions
 
-The suggested first milestone is a thin vertical slice that proves the differentiator: define a type in YAML, point Archive at a folder of messy files, run the intake loop on a local model, and get canonical records with provenance and calibrated confidence, queryable from the CLI and an MCP client. The web UI and platform connectors come after this works.
+The suggested first milestone is a thin vertical slice that proves the differentiator: define a type in JSON, point Archive at a folder of messy files, run the intake loop on a local model, and get canonical records with provenance and calibrated confidence, queryable from the CLI and an MCP client. The web UI and platform connectors come after this works.
 
 - Go binary that boots bundled Postgres and applies migrations
-- Ontology spec with semantic types, normalizers and YAML apply; JSONB entities validated against it
+- Ontology spec with semantic types, normalizers and JSON apply; JSONB entities validated against it
 - Raw layer plus a file-folder source
 - Intake loop against an Ollama endpoint, with a small labeled set for calibration
 - CLI query and a minimal MCP server

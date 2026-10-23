@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Archive: all your stuff, finally yours</title>
+  <meta name="description" content="Archive gathers your receipts, emails, files and bank exports, and tidies them into clean records you own.">
+  <meta name="theme-color" content="#ffffff">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="fonts/crimson-pro-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/inter-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="components/index.js"></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <div class="hero-panel">
+    <archive-nav><a class="nav-home" href="./"><archive-wordmark>Archive</archive-wordmark></a></archive-nav>
+
+    <header class="hero">
+      <reveal-text on="load">
+        <h1>All your stuff, finally yours.</h1>
+      </reveal-text>
+      <p class="hero-sub" data-rise>Receipts, mail, files and bank exports, tidied into clean records that you own.</p>
+      <div class="actions" data-rise>
+        <a class="button button-primary" href="#waitlist">Join the waitlist</a>
+        <a class="button button-secondary" href="self-host.html">Run it yourself</a>
+      </div>
+    </header>
+
+    <div class="product" data-rise>
+      <div class="app" role="img" aria-label="The Archive app: a list of receipts with the Albert Heijn receipt open, showing each field and where it came from.">
+        <aside class="app-sidebar" aria-hidden="true">
+          <div class="app-brand"><archive-wordmark>Archive</archive-wordmark></div>
+          <div class="app-search"><svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>Search or ask</div>
+          <ul class="app-nav">
+            <li><svg viewBox="0 0 16 16"><path d="M2.5 9.5h3l1 2h3l1-2h3"/><rect x="2.5" y="3" width="11" height="10" rx="2.5"/></svg>Inbox<span>12</span></li>
+            <li class="is-active"><svg viewBox="0 0 16 16"><path d="M4 2.5h8v11l-2-1.2-2 1.2-2-1.2-2 1.2z"/><path d="M6 6h4M6 8.5h4"/></svg>Receipts<span>248</span></li>
+            <li><svg viewBox="0 0 16 16"><rect x="3" y="2.5" width="10" height="11" rx="2"/><path d="M5.5 6h5M5.5 8.5h5M5.5 11h3"/></svg>Invoices<span>31</span></li>
+            <li><svg viewBox="0 0 16 16"><circle cx="8" cy="6" r="2.5"/><path d="M3.5 13.5c.8-2.4 2.5-3.5 4.5-3.5s3.7 1.1 4.5 3.5"/></svg>People<span>86</span></li>
+            <li><svg viewBox="0 0 16 16"><path d="M2.5 5a1.5 1.5 0 0 1 1.5-1.5h2.5l1.5 1.5h4A1.5 1.5 0 0 1 13.5 6.5V12A1.5 1.5 0 0 1 12 13.5H4A1.5 1.5 0 0 1 2.5 12z"/></svg>Files<span>1.204</span></li>
+          </ul>
+          <p class="app-label">Sources</p>
+          <ul class="app-sources">
+            <li><i style="--dot: #EA4335"></i>Gmail</li>
+            <li><i style="--dot: #4285F4"></i>Google Drive</li>
+            <li><i style="--dot: #FF6200"></i>ING export</li>
+          </ul>
+          <p class="app-sync"><i></i>Synced 2 minutes ago</p>
+        </aside>
+
+        <section class="app-list" aria-hidden="true">
+          <div class="app-list-head">
+            <p class="app-list-title">Receipts</p>
+            <p class="app-chip">October 2026</p>
+          </div>
+          <ul>
+            <li class="is-selected"><b class="app-avatar" style="--avatar: #00A0E2">AH</b><span><strong>Albert Heijn</strong><small>3 Oct · Receipt photo</small></span><em>€18,34</em></li>
+            <li><b class="app-avatar" style="--avatar: #00A1DE">KL</b><span><strong>KLM, AMS → LIS</strong><small>2 Oct · Gmail</small></span><em>€212,00</em></li>
+            <li><b class="app-avatar" style="--avatar: #3F3F46">PS</b><span><strong>Payslip, September</strong><small>30 Sep · Drive</small></span><em class="is-in">+€3.412,50</em></li>
+            <li><b class="app-avatar" style="--avatar: #003082">NS</b><span><strong>NS Reizen</strong><small>29 Sep · ING export</small></span><em>€24,60</em></li>
+            <li><b class="app-avatar" style="--avatar: #1DB954">Sp</b><span><strong>Spotify Premium</strong><small>28 Sep · Gmail</small></span><em>€10,99</em></li>
+            <li><b class="app-avatar" style="--avatar: #0090E3">CB</b><span><strong>Coolblue</strong><small>24 Sep · Gmail</small></span><em>€89,00</em></li>
+            <li><b class="app-avatar" style="--avatar: #E2007A">Ze</b><span><strong>Ziggo internet</strong><small>22 Sep · Invoice PDF</small></span><em>€54,25</em></li>
+          </ul>
+        </section>
+
+        <section class="app-detail" aria-hidden="true">
+          <div class="app-detail-head">
+            <b class="app-avatar app-avatar-lg" style="--avatar: #00A0E2">AH</b>
+            <div>
+              <p class="app-detail-title">Albert Heijn</p>
+              <p class="app-detail-sub">Groceries · Saturday 3 October 2026</p>
+            </div>
+            <p class="app-detail-total">€18,34</p>
+          </div>
+          <dl class="app-fields">
+            <div><dt>Date</dt><dd>3 Oct 2026</dd><dd class="app-source">from receipt photo in Gmail</dd><dd class="app-confidence is-certain">Certain</dd></div>
+            <div><dt>Total</dt><dd>€18,34</dd><dd class="app-source">receipt, matched to ING statement</dd><dd class="app-confidence is-certain">Certain</dd></div>
+            <div><dt>Paid with</dt><dd>ING debit ·· 4821</dd><dd class="app-source">from ING bank export</dd><dd class="app-confidence is-certain">Certain</dd></div>
+            <div><dt>VAT</dt><dd>€1,51</dd><dd class="app-source">read from receipt photo</dd><dd class="app-confidence is-likely">Likely</dd></div>
+            <div><dt>Category</dt><dd>Groceries</dd><dd class="app-source">from the shop's name</dd><dd class="app-confidence is-likely">Likely</dd></div>
+          </dl>
+          <div class="app-lines">
+            <p><span>Oat milk</span><span>2,49</span></p>
+            <p><span>Sourdough</span><span>3,95</span></p>
+            <p><span>Coffee beans</span><span>11,90</span></p>
+          </div>
+          <div class="app-original">
+            <span class="app-thumb"><i></i><i></i><i></i><i></i></span>
+            <span><strong>IMG_2041.jpg</strong><small>Original kept · Gmail, 3 Oct, 18:02</small></span>
+            <span class="app-open">Open</span>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <main id="main">
+    <section class="section fits" aria-labelledby="fits-title">
+      <div class="container">
+        <h2 id="fits-title" class="fits-title" data-reveal>Works with everything you use<sup>(1)</sup>,<br><span class="quiet">and keeps a copy of all of it.</span></h2>
+      </div>
+      <div class="marquees" data-reveal>
+        <logo-marquee>
+          <ul class="tiles" aria-label="Connects to">
+            <li class="tile" style="--brand: #EA4335"><svg viewBox="0 0 24 24" role="img" aria-label="Gmail"><path d="M24 5.457v13.909c0 .904-.732 1.636-1.636 1.636h-3.819V11.73L12 16.64l-6.545-4.91v9.273H1.636A1.636 1.636 0 0 1 0 19.366V5.457c0-2.023 2.309-3.178 3.927-1.964L5.455 4.64 12 9.548l6.545-4.91 1.528-1.145C21.69 2.28 24 3.434 24 5.457z"/></svg></li>
+            <li class="tile" style="--brand: #4285F4"><svg viewBox="0 0 24 24" role="img" aria-label="Google Drive"><path d="M12.01 1.485c-2.082 0-3.754.02-3.743.047.01.02 1.708 3.001 3.774 6.62l3.76 6.574h3.76c2.081 0 3.753-.02 3.742-.047-.005-.02-1.708-3.001-3.775-6.62l-3.76-6.574zm-4.76 1.73a789.828 789.861 0 0 0-3.63 6.319L0 15.868l1.89 3.298 1.885 3.297 3.62-6.335 3.618-6.33-1.88-3.287C8.1 4.704 7.255 3.22 7.25 3.214zm2.259 12.653-.203.348c-.114.198-.96 1.672-1.88 3.287a423.93 423.948 0 0 1-1.698 2.97c-.01.026 3.24.042 7.222.042h7.244l1.796-3.157c.992-1.734 1.85-3.23 1.906-3.323l.104-.167h-7.249z"/></svg></li>
+            <li class="tile" style="--brand: #4285F4"><svg viewBox="0 0 24 24" role="img" aria-label="Google Calendar"><path d="M18.316 5.684H24v12.632h-5.684V5.684zM5.684 24h12.632v-5.684H5.684V24zM18.316 5.684V0H1.895A1.894 1.894 0 0 0 0 1.895v16.421h5.684V5.684h12.632zm-7.207 6.25v-.065c.272-.144.5-.349.687-.617s.279-.595.279-.982c0-.379-.099-.72-.3-1.025a2.05 2.05 0 0 0-.832-.714 2.703 2.703 0 0 0-1.197-.257c-.6 0-1.094.156-1.481.467-.386.311-.65.671-.793 1.078l1.085.452c.086-.249.224-.461.413-.633.189-.172.445-.257.767-.257.33 0 .602.088.816.264a.86.86 0 0 1 .322.703c0 .33-.12.589-.36.778-.24.19-.535.284-.886.284h-.567v1.085h.633c.407 0 .748.109 1.02.327.272.218.407.499.407.843 0 .336-.129.614-.387.832s-.565.327-.924.327c-.351 0-.651-.103-.897-.311-.248-.208-.422-.502-.521-.881l-1.096.452c.178.616.505 1.082.977 1.401.472.319.984.478 1.538.477a2.84 2.84 0 0 0 1.293-.291c.382-.193.684-.458.902-.794.218-.336.327-.72.327-1.149 0-.429-.115-.797-.344-1.105a2.067 2.067 0 0 0-.881-.689zm2.093-1.931l.602.913L15 10.045v5.744h1.187V8.446h-.827l-2.158 1.557zM22.105 0h-3.289v5.184H24V1.895A1.894 1.894 0 0 0 22.105 0zm-3.289 23.5l4.684-4.684h-4.684V23.5zM0 22.105C0 23.152.848 24 1.895 24h3.289v-5.184H0v3.289z"/></svg></li>
+            <li class="tile" style="--brand: #000000"><svg viewBox="0 0 24 24" role="img" aria-label="Notion"><path d="M4.459 4.208c.746.606 1.026.56 2.428.466l13.215-.793c.28 0 .047-.28-.046-.326L17.86 1.968c-.42-.326-.981-.7-2.055-.607L3.01 2.295c-.466.046-.56.28-.374.466zm.793 3.08v13.904c0 .747.373 1.027 1.214.98l14.523-.84c.841-.046.935-.56.935-1.167V6.354c0-.606-.233-.933-.748-.887l-15.177.887c-.56.047-.747.327-.747.933zm14.337.745c.093.42 0 .84-.42.888l-.7.14v10.264c-.608.327-1.168.514-1.635.514-.748 0-.935-.234-1.495-.933l-4.577-7.186v6.952L12.21 19s0 .84-1.168.84l-3.222.186c-.093-.186 0-.653.327-.746l.84-.233V9.854L7.822 9.76c-.094-.42.14-1.026.793-1.073l3.456-.233 4.764 7.279v-6.44l-1.215-.139c-.093-.514.28-.887.747-.933zM1.936 1.035l13.31-.98c1.634-.14 2.055-.047 3.082.7l4.249 2.986c.7.513.934.653.934 1.213v16.378c0 1.026-.373 1.634-1.68 1.726l-15.458.934c-.98.047-1.448-.093-1.962-.747l-3.129-4.06c-.56-.747-.793-1.306-.793-1.96V2.667c0-.839.374-1.54 1.447-1.632z"/></svg></li>
+            <li class="tile" style="--brand: #0061FF"><svg viewBox="0 0 24 24" role="img" aria-label="Dropbox"><path d="M6 1.807L0 5.629l6 3.822 6.001-3.822L6 1.807zM18 1.807l-6 3.822 6 3.822 6-3.822-6-3.822zM0 13.274l6 3.822 6.001-3.822L6 9.452l-6 3.822zM18 9.452l-6 3.822 6 3.822 6-3.822-6-3.822zM6 18.371l6.001 3.822 6-3.822-6-3.822L6 18.371z"/></svg></li>
+            <li class="tile" style="--brand: #3693F3"><svg viewBox="0 0 24 24" role="img" aria-label="iCloud"><path d="M13.762 4.29a6.51 6.51 0 0 0-5.669 3.332 3.571 3.571 0 0 0-1.558-.36 3.571 3.571 0 0 0-3.516 3A4.918 4.918 0 0 0 0 14.796a4.918 4.918 0 0 0 4.92 4.914 4.93 4.93 0 0 0 .617-.045h14.42c2.305-.272 4.041-2.258 4.043-4.589v-.009a4.594 4.594 0 0 0-3.727-4.508 6.51 6.51 0 0 0-6.511-6.27z"/></svg></li>
+            <li class="tile" style="--brand: #25D366"><svg viewBox="0 0 24 24" role="img" aria-label="WhatsApp"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg></li>
+            <li class="tile" style="--brand: #26A5E4"><svg viewBox="0 0 24 24" role="img" aria-label="Telegram"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg></li>
+            <li class="tile" style="--brand: #635BFF"><svg viewBox="0 0 24 24" role="img" aria-label="Stripe"><path d="M13.976 9.15c-2.172-.806-3.356-1.426-3.356-2.409 0-.831.683-1.305 1.901-1.305 2.227 0 4.515.858 6.09 1.631l.89-5.494C18.252.975 15.697 0 12.165 0 9.667 0 7.589.654 6.104 1.872 4.56 3.147 3.757 4.992 3.757 7.218c0 4.039 2.467 5.76 6.476 7.219 2.585.92 3.445 1.574 3.445 2.583 0 .98-.84 1.545-2.354 1.545-1.875 0-4.965-.921-6.99-2.109l-.9 5.555C5.175 22.99 8.385 24 11.714 24c2.641 0 4.843-.624 6.328-1.813 1.664-1.305 2.525-3.236 2.525-5.732 0-4.128-2.524-5.851-6.594-7.305h.003z"/></svg></li>
+            <li class="tile" style="--brand: #002991"><svg viewBox="0 0 24 24" role="img" aria-label="PayPal"><path d="M15.607 4.653H8.941L6.645 19.251H1.82L4.862 0h7.995c3.754 0 6.375 2.294 6.473 5.513-.648-.478-2.105-.86-3.722-.86m6.57 5.546c0 3.41-3.01 6.853-6.958 6.853h-2.493L11.595 24H6.74l1.845-11.538h3.592c4.208 0 7.346-3.634 7.153-6.949a5.24 5.24 0 0 1 2.848 4.686M9.653 5.546h6.408c.907 0 1.942.222 2.363.541-.195 2.741-2.655 5.483-6.441 5.483H8.714Z"/></svg></li>
+          </ul>
+        </logo-marquee>
+        <logo-marquee direction="reverse">
+          <ul class="tiles" aria-label="And to">
+            <li class="tile" style="--brand: #191C1F"><svg viewBox="0 0 24 24" role="img" aria-label="Revolut"><path d="M20.9133 6.9566C20.9133 3.1208 17.7898 0 13.9503 0H2.424v3.8605h10.9782c1.7376 0 3.177 1.3651 3.2087 3.043.016.84-.2994 1.633-.8878 2.2324-.5886.5998-1.375.9303-2.2144.9303H9.2322a.2756.2756 0 0 0-.2755.2752v3.431c0 .0585.018.1142.052.1612L16.2646 24h5.3114l-7.2727-10.094c3.6625-.1838 6.61-3.2612 6.61-6.9494zM6.8943 5.9229H2.424V24h4.4704z"/></svg></li>
+            <li class="tile" style="--brand: #163300"><svg viewBox="0 0 24 24" role="img" aria-label="Wise"><path d="M6.488 7.469 0 15.05h11.585l1.301-3.576H7.922l3.033-3.507.01-.092L8.993 4.48h8.873l-6.878 18.925h4.706L24 .595H2.543l3.945 6.874Z"/></svg></li>
+            <li class="tile" style="--brand: #7AB55C"><svg viewBox="0 0 24 24" role="img" aria-label="Shopify"><path d="M15.337 23.979l7.216-1.561s-2.604-17.613-2.625-17.73c-.018-.116-.114-.192-.211-.192s-1.929-.136-1.929-.136-1.275-1.274-1.439-1.411c-.045-.037-.075-.057-.121-.074l-.914 21.104h.023zM11.71 11.305s-.81-.424-1.774-.424c-1.447 0-1.504.906-1.504 1.141 0 1.232 3.24 1.715 3.24 4.629 0 2.295-1.44 3.76-3.406 3.76-2.354 0-3.54-1.465-3.54-1.465l.646-2.086s1.245 1.066 2.28 1.066c.675 0 .975-.545.975-.932 0-1.619-2.654-1.694-2.654-4.359-.034-2.237 1.571-4.416 4.827-4.416 1.257 0 1.875.361 1.875.361l-.945 2.715-.02.01zM11.17.83c.136 0 .271.038.405.135-.984.465-2.064 1.639-2.508 3.992-.656.213-1.293.405-1.889.578C7.697 3.75 8.951.84 11.17.84V.83zm1.235 2.949v.135c-.754.232-1.583.484-2.394.736.466-1.777 1.333-2.645 2.085-2.971.193.501.309 1.176.309 2.1zm.539-2.234c.694.074 1.141.867 1.429 1.755-.349.114-.735.231-1.158.366v-.252c0-.752-.096-1.371-.271-1.871v.002zm2.992 1.289c-.02 0-.06.021-.078.021s-.289.075-.714.21c-.423-1.233-1.176-2.37-2.508-2.37h-.115C12.135.209 11.669 0 11.265 0 8.159 0 6.675 3.877 6.21 5.846c-1.194.365-2.063.636-2.16.674-.675.213-.694.232-.772.87-.075.462-1.83 14.063-1.83 14.063L15.009 24l.927-21.166z"/></svg></li>
+            <li class="tile" style="--brand: #F24E1E"><svg viewBox="0 0 24 24" role="img" aria-label="Figma"><path d="M15.852 8.981h-4.588V0h4.588c2.476 0 4.49 2.014 4.49 4.49s-2.014 4.491-4.49 4.491zM12.735 7.51h3.117c1.665 0 3.019-1.355 3.019-3.019s-1.355-3.019-3.019-3.019h-3.117V7.51zm0 1.471H8.148c-2.476 0-4.49-2.014-4.49-4.49S5.672 0 8.148 0h4.588v8.981zm-4.587-7.51c-1.665 0-3.019 1.355-3.019 3.019s1.354 3.02 3.019 3.02h3.117V1.471H8.148zm4.587 15.019H8.148c-2.476 0-4.49-2.014-4.49-4.49s2.014-4.49 4.49-4.49h4.588v8.98zM8.148 8.981c-1.665 0-3.019 1.355-3.019 3.019s1.355 3.019 3.019 3.019h3.117V8.981H8.148zM8.172 24c-2.489 0-4.515-2.014-4.515-4.49s2.014-4.49 4.49-4.49h4.588v4.441c0 2.503-2.047 4.539-4.563 4.539zm-.024-7.51a3.023 3.023 0 0 0-3.019 3.019c0 1.665 1.365 3.019 3.044 3.019 1.705 0 3.093-1.376 3.093-3.068v-2.97H8.148zm7.704 0h-.098c-2.476 0-4.49-2.014-4.49-4.49s2.014-4.49 4.49-4.49h.098c2.476 0 4.49 2.014 4.49 4.49s-2.014 4.49-4.49 4.49zm-.097-7.509c-1.665 0-3.019 1.355-3.019 3.019s1.355 3.019 3.019 3.019h.098c1.665 0 3.019-1.355 3.019-3.019s-1.355-3.019-3.019-3.019h-.098z"/></svg></li>
+            <li class="tile" style="--brand: #181717"><svg viewBox="0 0 24 24" role="img" aria-label="GitHub"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg></li>
+            <li class="tile" style="--brand: #00A82D"><svg viewBox="0 0 24 24" role="img" aria-label="Evernote"><path d="M8.222 5.393c0 .239-.02.637-.256.895-.257.24-.652.259-.888.259H4.552c-.73 0-1.165 0-1.46.04-.159.02-.356.1-.455.14-.04.019-.04 0-.02-.02L8.38.796c.02-.02.04-.02.02.02-.04.099-.118.298-.138.457-.04.298-.04.736-.04 1.472v2.647zm5.348 17.869c-.67-.438-1.026-1.015-1.164-1.373a2.924 2.924 0 01-.217-1.095 3.007 3.007 0 013-3.004c.493 0 .888.398.888.895a.88.88 0 01-.454.776c-.099.06-.237.1-.336.12-.098.02-.473.06-.65.218-.198.16-.356.418-.356.697 0 .298.118.577.316.776.355.358.829.557 1.342.557a2.436 2.436 0 002.427-2.447c0-1.214-.809-2.29-1.875-2.766-.158-.08-.414-.14-.651-.2a8.04 8.04 0 00-.592-.1c-.829-.1-2.901-.755-3.04-2.605 0 0-.611 2.785-1.835 3.54-.118.06-.276.12-.454.16-.177.04-.374.06-.434.06-1.993.12-4.105-.517-5.565-2.03 0 0-.987-.815-1.5-3.103-.118-.558-.355-1.553-.493-2.488-.06-.338-.08-.597-.099-.836 0-.975.592-1.631 1.342-1.73h4.026c.69 0 1.086-.18 1.342-.42.336-.317.415-.775.415-1.312V1.354C9.05.617 9.703 0 10.669 0h.474c.197 0 .434.02.651.04.158.02.296.06.533.12 1.204.298 1.46 1.532 1.46 1.532s2.27.398 3.415.597c1.085.199 3.77.378 4.282 3.104 1.204 6.487.474 12.775.415 12.775-.849 6.129-5.901 5.83-5.901 5.83a4.1 4.1 0 01-2.428-.736zm4.54-13.034c-.652-.06-1.204.2-1.402.697-.04.1-.079.219-.059.278.02.06.06.08.099.1.237.12.631.179 1.204.239.572.06.967.1 1.223.06.04 0 .08-.02.119-.08.04-.06.02-.18.02-.28-.06-.536-.553-.934-1.204-1.014z"/></svg></li>
+            <li class="tile" style="--brand: #7C3AED"><svg viewBox="0 0 24 24" role="img" aria-label="Obsidian"><path d="M19.355 18.538a68.967 68.959 0 0 0 1.858-2.954.81.81 0 0 0-.062-.9c-.516-.685-1.504-2.075-2.042-3.362-.553-1.321-.636-3.375-.64-4.377a1.707 1.707 0 0 0-.358-1.05l-3.198-4.064a3.744 3.744 0 0 1-.076.543c-.106.503-.307 1.004-.536 1.5-.134.29-.29.6-.446.914l-.31.626c-.516 1.068-.997 2.227-1.132 3.59-.124 1.26.046 2.73.815 4.481.128.011.257.025.386.044a6.363 6.363 0 0 1 3.326 1.505c.916.79 1.744 1.922 2.415 3.5zM8.199 22.569c.073.012.146.02.22.02.78.024 2.095.092 3.16.29.87.16 2.593.64 4.01 1.055 1.083.316 2.198-.548 2.355-1.664.114-.814.33-1.735.725-2.58l-.01.005c-.67-1.87-1.522-3.078-2.416-3.849a5.295 5.295 0 0 0-2.778-1.257c-1.54-.216-2.952.19-3.84.45.532 2.218.368 4.829-1.425 7.531zM5.533 9.938c-.023.1-.056.197-.098.29L2.82 16.059a1.602 1.602 0 0 0 .313 1.772l4.116 4.24c2.103-3.101 1.796-6.02.836-8.3-.728-1.73-1.832-3.081-2.55-3.831zM9.32 14.01c.615-.183 1.606-.465 2.745-.534-.683-1.725-.848-3.233-.716-4.577.154-1.552.7-2.847 1.235-3.95.113-.235.223-.454.328-.664.149-.297.288-.577.419-.86.217-.47.379-.885.46-1.27.08-.38.08-.72-.014-1.043-.095-.325-.297-.675-.68-1.06a1.6 1.6 0 0 0-1.475.36l-4.95 4.452a1.602 1.602 0 0 0-.513.952l-.427 2.83c.672.59 2.328 2.316 3.335 4.711.09.21.175.43.253.653z"/></svg></li>
+            <li class="tile" style="--brand: #18BFFF"><svg viewBox="0 0 24 24" role="img" aria-label="Airtable"><path d="M11.992 1.966c-.434 0-.87.086-1.28.257L1.779 5.917c-.503.208-.49.908.012 1.116l8.982 3.558a3.266 3.266 0 0 0 2.454 0l8.982-3.558c.503-.196.503-.908.012-1.116l-8.957-3.694a3.255 3.255 0 0 0-1.272-.257zM23.4 8.056a.589.589 0 0 0-.222.045l-10.012 3.877a.612.612 0 0 0-.38.564v8.896a.6.6 0 0 0 .821.552L23.62 18.1a.583.583 0 0 0 .38-.551V8.653a.6.6 0 0 0-.6-.596zM.676 8.095a.644.644 0 0 0-.48.19C.086 8.396 0 8.53 0 8.69v8.355c0 .442.515.737.908.54l6.27-3.006.307-.147 2.969-1.436c.466-.22.43-.908-.061-1.092L.883 8.138a.57.57 0 0 0-.207-.044z"/></svg></li>
+            <li class="tile" style="--brand: #D97757"><svg viewBox="0 0 24 24" role="img" aria-label="Claude"><path d="m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z"/></svg></li>
+          </ul>
+        </logo-marquee>
+      </div>
+      <div class="container">
+        <p class="footnote" data-reveal><span>(1)</span>Connect your inbox, your drives, your bank exports and the apps you already pay for. Archive pulls everything in and keeps every original, untouched.</p>
+      </div>
+    </section>
+
+    <section class="section features" id="features" aria-label="How it works">
+      <div class="container">
+        <article class="feature" data-reveal>
+          <div class="feature-card" aria-hidden="true">
+            <div class="splay">
+              <div class="source-card">
+                <span class="source-icon" style="--brand: #FF6200"><svg viewBox="0 0 24 24"><path d="M4 7.5h16M4 12h16M4 16.5h10"/></svg></span>
+                <p class="source-name">ING export</p>
+                <p class="source-text">1.204 transactions from a CSV you downloaded</p>
+                <p class="source-meta"><i></i>Imported</p>
+              </div>
+              <div class="source-card">
+                <span class="source-icon" style="--brand: #4285F4"><svg viewBox="0 0 24 24"><path class="fill" d="M12.01 1.485c-2.082 0-3.754.02-3.743.047.01.02 1.708 3.001 3.774 6.62l3.76 6.574h3.76c2.081 0 3.753-.02 3.742-.047-.005-.02-1.708-3.001-3.775-6.62l-3.76-6.574zm-4.76 1.73a789.828 789.861 0 0 0-3.63 6.319L0 15.868l1.89 3.298 1.885 3.297 3.62-6.335 3.618-6.33-1.88-3.287C8.1 4.704 7.255 3.22 7.25 3.214zm2.259 12.653-.203.348c-.114.198-.96 1.672-1.88 3.287a423.93 423.948 0 0 1-1.698 2.97c-.01.026 3.24.042 7.222.042h7.244l1.796-3.157c.992-1.734 1.85-3.23 1.906-3.323l.104-.167h-7.249z"/></svg></span>
+                <p class="source-name">Google Drive</p>
+                <p class="source-text">412 files, from leases to warranty cards</p>
+                <p class="source-meta"><i></i>Connected</p>
+              </div>
+              <div class="source-card">
+                <span class="source-icon" style="--brand: #EA4335"><svg viewBox="0 0 24 24"><path class="fill" d="M24 5.457v13.909c0 .904-.732 1.636-1.636 1.636h-3.819V11.73L12 16.64l-6.545-4.91v9.273H1.636A1.636 1.636 0 0 1 0 19.366V5.457c0-2.023 2.309-3.178 3.927-1.964L5.455 4.64 12 9.548l6.545-4.91 1.528-1.145C21.69 2.28 24 3.434 24 5.457z"/></svg></span>
+                <p class="source-name">Gmail</p>
+                <p class="source-text">2.318 receipts, tickets and payslips found</p>
+                <p class="source-meta"><i></i>Connected</p>
+              </div>
+            </div>
+          </div>
+          <div class="feature-text">
+            <p class="feature-number">(2)</p>
+            <h2>Gathers everything, wherever it landed</h2>
+            <p>Your inbox, your drive, the bank export in Downloads. Archive reads them all and keeps each original exactly as it came.</p>
+            <a class="more" href="#waitlist">See what it connects to <span aria-hidden="true">→</span></a>
+          </div>
+        </article>
+
+        <article class="feature feature-flip" data-reveal>
+          <div class="feature-card" aria-hidden="true">
+            <div class="tidy">
+              <div class="receipt">
+                <p class="receipt-head">ALBERT HEIJN 1427<br>AMSTERDAM</p>
+                <p><span>HAVERDRANK</span><span>2,49</span></p>
+                <p><span>DESEMBROOD</span><span>3,95</span></p>
+                <p><span>KOFFIEBONEN</span><span>11,90</span></p>
+                <p class="receipt-total"><span>TOTAAL</span><span>18,34</span></p>
+                <p class="receipt-foot">PIN ****4821 03-10 18:02</p>
+              </div>
+              <span class="tidy-arrow"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+              <div class="record">
+                <p class="record-title">Albert Heijn</p>
+                <p class="record-total">€18,34</p>
+                <dl>
+                  <div><dt>Date</dt><dd>3 Oct 2026</dd></div>
+                  <div><dt>Paid</dt><dd>ING ·· 4821</dd></div>
+                  <div><dt>Type</dt><dd>Groceries</dd></div>
+                </dl>
+                <p class="record-sources"><span>Receipt photo</span><span>ING statement</span></p>
+              </div>
+            </div>
+          </div>
+          <div class="feature-text">
+            <p class="feature-number">(3)</p>
+            <h2>Tidies it into records you can trust</h2>
+            <p>A crumpled receipt becomes a clean record. Every value remembers where it came from, and how sure Archive is about it.</p>
+            <a class="more" href="#waitlist">See a record <span aria-hidden="true">→</span></a>
+          </div>
+        </article>
+
+        <article class="feature" data-reveal>
+          <div class="feature-card" aria-hidden="true">
+            <div class="chat">
+              <p class="bubble bubble-me">What did I spend on groceries in October?</p>
+              <div class="bubble-row">
+                <span class="claude-mark"><svg viewBox="0 0 24 24"><path class="fill" d="m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z"/></svg></span>
+                <div class="bubble bubble-claude">
+                  <p><strong>€312,40</strong> across 14 receipts, most of it at Albert Heijn. That is €40 more than in September.</p>
+                  <p class="bubble-sources"><span>14 receipts</span><span>ING statement</span></p>
+                </div>
+              </div>
+              <p class="bubble bubble-me bubble-short">And the KLM flight?</p>
+              <p class="typing"><i></i><i></i><i></i></p>
+            </div>
+          </div>
+          <div class="feature-text">
+            <p class="feature-number">(4)</p>
+            <h2>Ask it anything, from anywhere</h2>
+            <p>Search in the app, call the API, or ask Claude over MCP. Answers come from your own records, with the sources to prove it.</p>
+            <a class="more" href="https://docs.archive.us.org">Read about the API <span aria-hidden="true">→</span></a>
+          </div>
+        </article>
+
+        <article class="feature feature-flip" id="private" data-reveal>
+          <div class="feature-card feature-card-night" aria-hidden="true">
+            <span class="stars"></span>
+            <span class="lock"><svg viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="3"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/><path d="M12 14.5v2"/></svg></span>
+            <span class="night-caption">Runs on your machine</span>
+          </div>
+          <div class="feature-text">
+            <p class="feature-number">(5)</p>
+            <h2>Private by design</h2>
+            <p>Run it on your own laptop with your own models, or let us host an isolated instance. Either way, your data never trains anyone's AI.</p>
+            <a class="more" href="self-host.html">How self-hosting works <span aria-hidden="true">→</span></a>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section statement" aria-labelledby="statement-title">
+      <div class="container">
+        <h2 id="statement-title" class="visually-hidden">Why Archive</h2>
+        <reveal-text class="statement-text">
+          <p>Your receipts, <span class="chip" aria-hidden="true"><svg viewBox="0 0 24 24" style="--brand: #EA4335"><path d="M24 5.457v13.909c0 .904-.732 1.636-1.636 1.636h-3.819V11.73L12 16.64l-6.545-4.91v9.273H1.636A1.636 1.636 0 0 1 0 19.366V5.457c0-2.023 2.309-3.178 3.927-1.964L5.455 4.64 12 9.548l6.545-4.91 1.528-1.145C21.69 2.28 24 3.434 24 5.457z"/></svg></span> mail and files become one archive that is searchable, portable and <span class="chip chip-lock" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="3"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg></span> yours alone.</p>
+        </reveal-text>
+        <div class="actions" data-reveal>
+          <a class="button button-primary button-lg" href="#waitlist">Join the waitlist</a>
+          <a class="button button-secondary button-lg" href="pricing.html">See plans</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="section waitlist" id="waitlist" aria-labelledby="waitlist-title">
+      <div class="waitlist-panel" data-reveal>
+        <h2 id="waitlist-title">Be first in line.</h2>
+        <p class="waitlist-sub">We will write once, when your archive is ready. Nothing else.</p>
+        <waitlist-form>
+          <form class="pill-form" method="dialog">
+            <label class="visually-hidden" for="email">Email address</label>
+            <input id="email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required>
+            <button class="button button-primary" type="submit">Join<span class="wide-only"> the waitlist</span></button>
+          </form>
+          <p class="thanks" role="status" hidden>Thank you. You are on the list, and we will be in touch.</p>
+        </waitlist-form>
+      </div>
+    </section>
+  </main>
+
+  <archive-footer></archive-footer>
+</body>
+</html>
