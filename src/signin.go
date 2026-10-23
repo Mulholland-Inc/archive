@@ -171,7 +171,8 @@ func (s *signin) handler() http.Handler {
 		http.Redirect(w, r, "/app/signin.html?"+url.Values{"setup": {r.URL.Query().Get("token")}}.Encode(), http.StatusSeeOther)
 	})
 	open("GET /auth/methods", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		return ok(map[string]any{"providers": slices.Sorted(maps.Keys(s.oidc)), "mail": os.Getenv("ARCHIVE_SMTP_URL") != ""}, nil)
+		providers := append([]string{}, slices.Sorted(maps.Keys(s.oidc))...)
+		return ok(map[string]any{"providers": providers, "mail": os.Getenv("ARCHIVE_SMTP_URL") != ""}, nil)
 	})
 	open("POST /auth/setup", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		var body struct {

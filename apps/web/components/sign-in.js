@@ -96,10 +96,8 @@ class SignIn extends HTMLElement {
       <h1>Set up Archive</h1>
       <p>Create the first owner. You can add more people later.</p>
       <form novalidate data-setup>
-        <label for="setup-email">Email</label>
-        <input id="setup-email" name="email" type="email" autocomplete="email" inputmode="email" placeholder="you@example.com">
-        <label for="setup-name">Name, optional</label>
-        <input id="setup-name" name="name" type="text" autocomplete="name">
+        <div><label for="setup-email">Email</label><input id="setup-email" name="email" type="email" autocomplete="email" inputmode="email" placeholder="you@example.com"></div>
+        <div><label for="setup-name">Name, optional</label><input id="setup-name" name="name" type="text" autocomplete="name"></div>
         <button class="button button-primary button-sm"><span>Create the first owner</span></button>
       </form>
       <p role="alert" hidden></p>`;

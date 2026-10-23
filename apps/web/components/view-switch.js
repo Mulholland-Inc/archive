@@ -1,11 +1,11 @@
-const views = [
+const recordViews = [
   ['table', 'Table'],
   ['board', 'Board'],
   ['calendar', 'Calendar'],
 ];
 
 class ViewSwitch extends HTMLElement {
-  show({ view, by, choices }) {
+  show({ view, by, choices = {}, views = recordViews }) {
     this.innerHTML = '<div role="group" aria-label="View"></div>';
     const group = this.firstElementChild;
     for (const [value, text] of views) {
@@ -13,7 +13,7 @@ class ViewSwitch extends HTMLElement {
       b.type = 'button';
       b.innerHTML = `<app-icon name="${value}"></app-icon><span>${text}</span>`;
       b.setAttribute('aria-pressed', String(value === view));
-      b.disabled = value !== 'table' && !choices[value].length;
+      b.disabled = Boolean(choices[value] && !choices[value].length);
       b.addEventListener('click', () => this.emit(value, choices[value]?.[0]?.value));
       group.append(b);
     }

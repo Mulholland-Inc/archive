@@ -49,6 +49,8 @@ export async function currentSpace() {
   return spaces.find((s) => s.name === saved) ?? spaces.find((s) => s.id === home) ?? spaces[0] ?? null;
 }
 
+export const spaceLabel = (s, home) => (s.id === home ? 'Private' : s.name.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase()));
+
 export function setSpace(name) {
   localStorage.setItem('archive.space', name);
 }

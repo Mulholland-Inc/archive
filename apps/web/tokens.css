@@ -299,6 +299,11 @@
   --board-column-width: 280px;
   --calendar-cell-height: 112px;
   --sign-in-width: 400px;
+  --gallery-tile: 160px;
+  --progress-width: 160px;
+  --progress-height: 6px;
+  --drop-height: 120px;
+  --viewer-height: 640px;
 
   --tile-size: 64px;
   --tile-icon: 30px;

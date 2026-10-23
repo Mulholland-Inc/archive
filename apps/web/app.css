@@ -100,8 +100,7 @@ app-shell nav:last-child {
   margin-top: auto;
 }
 
-app-shell nav a,
-app-shell [data-results] a {
+app-shell nav a {
   display: flex;
   align-items: center;
   gap: var(--app-tight);
@@ -118,9 +117,7 @@ app-shell nav a span {
   text-overflow: ellipsis;
 }
 
-app-shell nav a:hover,
-app-shell [data-results] a:hover,
-app-shell [data-results] a:focus-visible {
+app-shell nav a:hover {
   background: var(--hover);
   color: var(--foreground);
 }
@@ -182,7 +179,6 @@ app-shell [role='search'] input:focus-visible {
   box-shadow: none;
 }
 
-app-shell [data-results],
 app-select [role='listbox'] {
   position: fixed;
   inset: auto;
@@ -196,11 +192,6 @@ app-select [role='listbox'] {
   color: var(--foreground);
   font-size: var(--app-font-size);
   user-select: none;
-}
-
-app-shell [data-results] a {
-  padding: 0 var(--app-tight);
-  border-radius: var(--radius-small);
 }
 
 app-shell main {
@@ -220,6 +211,10 @@ record-view,
 type-editor,
 change-preview,
 settings-page,
+search-page,
+sources-page,
+files-page,
+file-view,
 record-view > form,
 change-preview section,
 type-editor section {
@@ -229,7 +224,8 @@ type-editor section {
   min-width: 0;
 }
 
-:is(records-page, record-view, type-editor, change-preview, settings-page) > header {
+:is(records-page, record-view, type-editor, change-preview, settings-page, search-page, sources-page, files-page, file-view) > header,
+settings-page section > header {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -237,7 +233,9 @@ type-editor section {
   gap: var(--app-inset);
 }
 
-:is(records-page, record-view, type-editor, change-preview, settings-page) > header > :last-child:not(h1),
+:is(records-page, record-view, type-editor, change-preview, settings-page, search-page, sources-page, files-page, file-view) > header > :last-child:not(h1),
+settings-page section > header > div,
+li > [data-actions],
 app-dialog footer,
 record-view footer,
 change-preview footer,
@@ -247,7 +245,7 @@ settings-page footer {
   gap: var(--app-tight);
 }
 
-:is(record-view, type-editor) > header > div:first-child {
+:is(records-page, record-view, type-editor, change-preview, settings-page, search-page, sources-page, files-page, file-view) > header > div:first-child {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
@@ -386,11 +384,13 @@ app-switch button {
   color: var(--foreground);
   font: inherit;
   letter-spacing: inherit;
+  text-align: start;
   cursor: pointer;
 }
 
 app-switch i {
   display: flex;
+  flex: none;
   width: var(--switch-width);
   height: var(--switch-height);
   padding: var(--switch-pad);
@@ -421,8 +421,7 @@ field-input {
 field-input [role='alert'],
 app-dialog [data-error],
 record-view [role='alert'],
-records-page [role='alert'],
-change-preview [role='alert'],
+app-shell [role='alert'],
 sign-in [role='alert'],
 [data-tone='destructive'] {
   color: var(--destructive);
@@ -439,6 +438,10 @@ field-input[data-invalid] app-select > button {
 
 [data-tone='warning'] {
   color: var(--warning);
+}
+
+[data-tone='muted'] {
+  color: var(--faint-foreground);
 }
 
 [data-scroll] {
@@ -712,17 +715,11 @@ app-shell dt label {
   color: inherit;
 }
 
-app-shell dd[data-value],
-settings-page dd {
+app-shell dd[data-value] {
   grid-area: value;
   min-width: 0;
   font-weight: var(--weight-ui);
   user-select: text;
-}
-
-settings-page dl > div {
-  grid-template-columns: var(--app-label-width) minmax(0, 1fr);
-  grid-template-areas: 'label value';
 }
 
 record-view [data-source] {
@@ -791,12 +788,15 @@ type-editor section[data-draft]:empty {
   display: none;
 }
 
-:is(type-editor, change-preview) section ul {
+:is(type-editor, change-preview, settings-page) section ul,
+[data-list],
+[data-uploads] {
   border: var(--hairline) solid var(--border);
   border-radius: var(--app-box-radius);
 }
 
-:is(type-editor, change-preview) section li {
+:is(type-editor, change-preview, settings-page) section li,
+[data-list] > li {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -805,8 +805,33 @@ type-editor section[data-draft]:empty {
   padding: var(--app-tight) var(--app-tight) var(--app-tight) var(--app-inset);
 }
 
-:is(type-editor, change-preview) section li + li {
+:is(type-editor, change-preview, settings-page) section li + li,
+[data-list] > li + li,
+[data-uploads] > li + li {
   border-top: var(--hairline) solid var(--border);
+}
+
+li > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+li > [data-actions] {
+  align-items: center;
+  justify-content: flex-end;
+}
+
+li > [data-actions]:empty,
+li > [data-actions] > span:empty {
+  display: none;
+}
+
+li > [data-actions] app-select > button,
+[data-toolbar] app-select > button {
+  width: auto;
 }
 
 change-preview [data-draft] {
@@ -894,9 +919,239 @@ sign-in [data-others] {
   gap: var(--app-tight);
 }
 
+sign-in [data-setup] {
+  gap: var(--app-inset);
+}
+
+sign-in [data-setup] > div {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-tight);
+}
+
 sign-in .button {
   justify-content: flex-start;
   width: 100%;
+}
+
+app-shell nav li > ul a {
+  padding-inline-start: calc(2 * var(--shell-inset) + var(--app-icon-size));
+}
+
+search-page [data-results] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-gap);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+search-page [data-results] li {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+app-shell main search-page [data-title] {
+  color: var(--foreground);
+  font-weight: var(--weight-ui);
+}
+
+[data-meta],
+[data-summary] {
+  color: var(--faint-foreground);
+}
+
+[data-snippet] {
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+[data-snippet] strong {
+  color: var(--foreground);
+  font-weight: var(--weight-strong);
+}
+
+files-page [data-drop] {
+  display: flex;
+  align-items: center;
+  min-height: var(--drop-height);
+  padding: var(--app-gap);
+  border-radius: var(--app-box-radius);
+  background: var(--panel);
+  color: var(--muted-foreground);
+}
+
+app-shell files-page[data-dragging] [data-drop] {
+  display: flex;
+  box-shadow: inset 0 0 0 var(--hairline-strong) var(--ring);
+}
+
+[data-uploads] > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--progress-width) auto;
+  align-items: center;
+  gap: var(--app-inset);
+  min-height: var(--app-row-height);
+  padding: 0 var(--app-inset);
+  font-variant-numeric: tabular-nums;
+}
+
+[data-uploads] > li > span:first-child {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+[data-uploads] progress {
+  width: 100%;
+  height: var(--progress-height);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--panel);
+  overflow: hidden;
+  appearance: none;
+}
+
+[data-uploads] progress::-webkit-progress-bar {
+  background: var(--panel);
+}
+
+[data-uploads] progress::-webkit-progress-value {
+  border-radius: var(--radius-full);
+  background: var(--primary);
+}
+
+[data-uploads] progress::-moz-progress-bar {
+  border-radius: var(--radius-full);
+  background: var(--primary);
+}
+
+[data-gallery],
+[data-gallery] section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-gap);
+}
+
+[data-gallery] section {
+  gap: var(--app-inset);
+}
+
+[data-gallery] ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--gallery-tile), 1fr));
+  gap: var(--app-tight);
+}
+
+[data-gallery] a {
+  display: block;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: var(--app-box-radius);
+  background: var(--panel);
+}
+
+[data-gallery] img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+file-view figure {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--app-inset);
+}
+
+file-view figure :is(img, video) {
+  max-width: 100%;
+  max-height: var(--viewer-height);
+  border-radius: var(--app-box-radius);
+  background: var(--panel);
+}
+
+file-view figure :is(iframe, audio) {
+  width: 100%;
+}
+
+file-view iframe {
+  height: var(--viewer-height);
+  border: 0;
+  border-radius: var(--app-box-radius);
+  background: var(--panel);
+}
+
+file-view [data-text],
+[data-secret] {
+  align-self: stretch;
+  padding: var(--app-inset);
+  border-radius: var(--app-box-radius);
+  background: var(--panel);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+file-view [data-text] {
+  max-height: var(--viewer-height);
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+[data-secret] {
+  font-weight: var(--weight-ui);
+  user-select: all;
+}
+
+[data-share] {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--app-tight);
+}
+
+app-shell dl:is([data-details]) > div {
+  grid-template-columns: var(--app-label-width) minmax(0, 1fr);
+  grid-template-areas: 'label value';
+}
+
+app-dialog [data-inline] {
+  display: flex;
+  gap: var(--app-tight);
+}
+
+app-dialog [data-body] .button {
+  align-self: flex-start;
+}
+
+app-dialog [data-inline] > * {
+  flex: none;
+}
+
+app-dialog [data-inline] > input {
+  flex: 1;
+  min-width: 0;
+}
+
+app-dialog [data-inline] app-select > button {
+  width: auto;
+}
+
+settings-page section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-inset);
+}
+
+app-dialog [data-stack] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-inset);
 }
 
 @media (max-width: 40rem) {
@@ -999,13 +1254,31 @@ sign-in .button {
     row-gap: var(--app-tight);
   }
 
-  settings-page dl > div {
-    grid-template-areas: 'label' 'value';
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   type-editor td[data-actions] .button span {
     display: none;
+  }
+
+  :is(type-editor, change-preview, settings-page) section li,
+  [data-list] > li {
+    flex-wrap: wrap;
+  }
+
+  li > [data-actions] {
+    justify-content: flex-start;
+  }
+
+  app-shell dl:is([data-details]) > div {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: 'label' 'value';
+  }
+
+  [data-uploads] > li {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  [data-uploads] progress {
+    grid-column: 1 / -1;
+    grid-row: 2;
   }
 
   app-shell type-editor td[data-actions] .button {

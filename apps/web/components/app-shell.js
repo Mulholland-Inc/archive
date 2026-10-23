@@ -1,4 +1,4 @@
-import { api, currentSpace, loadMe, setSpace } from './api.js';
+import { api, currentSpace, loadMe, setSpace, spaceLabel } from './api.js';
 import { endpoints, pages } from './endpoints.js';
 import { label, loadSpec, userTypes } from './ontology.js';
 
@@ -27,7 +27,7 @@ class AppShell extends HTMLElement {
     const params = new URLSearchParams(location.search);
     const here = location.pathname.split('/').pop() || 'index.html';
     this.type = ['records.html', 'record.html', 'index.html'].includes(here) ? params.get('type') : null;
-    this.saved = here === 'records.html' ? params.get('saved') : null;
+    this.here = here;
 
     this.innerHTML = `
       <a class="skip" href="#main">Skip to content</a>
@@ -79,8 +79,8 @@ class AppShell extends HTMLElement {
 
   async spaces() {
     const picker = this.querySelector('[data-space]');
-    const [{ spaces }, current] = await Promise.all([loadMe(), currentSpace()]);
-    picker.options = spaces.map((s) => ({ value: s.name, label: label(s.name) }));
+    const [{ spaces, home }, current] = await Promise.all([loadMe(), currentSpace()]);
+    picker.options = spaces.map((s) => ({ value: s.name, label: spaceLabel(s, home) }));
     picker.value = current?.name ?? '';
     picker.addEventListener('change', () => {
       setSpace(picker.value);
@@ -91,14 +91,15 @@ class AppShell extends HTMLElement {
   async types() {
     const [spec, views, space] = await Promise.all([loadSpec(), api(endpoints.views).catch(() => []), currentSpace()]);
     this.spec = spec;
+    const saved = this.here === 'records.html' ? new URLSearchParams(location.search).get('saved') : null;
     const list = this.querySelector('[data-types]');
     list.replaceChildren(
       ...userTypes(spec).map((t) => {
-        const li = link(pages.records(t), 'record', label(t), t === this.type && !this.saved);
+        const li = link(pages.records(t), 'record', label(t), t === this.type && !saved);
         const mine = views.filter((v) => v.type === t && v.space === space?.id);
         if (mine.length) {
           const ul = document.createElement('ul');
-          ul.append(...mine.map((v) => link(pages.records(t, viewParams(v)), 'view', v.name, v.id === this.saved)));
+          ul.append(...mine.map((v) => link(pages.records(t, viewParams(v)), 'view', v.name, v.id === saved)));
           li.append(ul);
         }
         return li;

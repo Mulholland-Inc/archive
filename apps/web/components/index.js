@@ -24,4 +24,8 @@ import './record-view.js';
 import './type-editor.js';
 import './change-preview.js';
 import './settings-page.js';
+import './search-page.js';
+import './sources-page.js';
+import './files-page.js';
+import './file-view.js';
 import './sign-in.js';

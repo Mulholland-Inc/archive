@@ -44,13 +44,6 @@ export const button = (text, icon, kind = 'secondary') => {
   return b;
 };
 
-export const iconButton = (label, icon) => {
-  const b = button(label, icon);
-  b.dataset.icon = '';
-  b.setAttribute('aria-label', label);
-  return b;
-};
-
 export const link = (text, href, kind) => {
   const a = document.createElement('a');
   a.href = href;

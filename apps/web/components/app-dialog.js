@@ -17,6 +17,10 @@ class AppDialog extends HTMLElement {
         if (a.kind === 'danger') b.dataset.danger = '';
         b.value = a.value ?? '';
         b.textContent = a.label;
+        if (!b.value) {
+          b.type = 'button';
+          b.addEventListener('click', () => dialog.close(''));
+        }
         return b;
       }),
     );
