@@ -103,7 +103,8 @@ Usage:
 Environment:
   DATABASE_URL       external Postgres; unset starts the bundled one
   ARCHIVE_DATA       data directory for the bundled Postgres (default ./data)
-  ARCHIVE_PG_BIN     directory holding the Postgres binaries
+  ARCHIVE_PG_BIN     directory holding the Postgres binaries; unset uses those on PATH, or
+                     downloads Postgres into $ARCHIVE_DATA/pgbin on first run (without pgvector)
   ARCHIVE_LLM_URL    OpenAI-compatible endpoint (default http://localhost:11434/v1)
   ARCHIVE_LLM_MODEL  model for intake
   ARCHIVE_LLM_KEY    API key for the endpoint, if it needs one

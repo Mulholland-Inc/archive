@@ -915,6 +915,35 @@ func TestFirstRunSetupLinkAndUpgradeIntoADefaultSpace(t *testing.T) {
 	}
 }
 
+func TestWithoutPostgresInstalledTheFirstRunDownloadsItIntoTheDataDir(t *testing.T) {
+	if testing.Short() {
+		t.Skip("downloads Postgres")
+	}
+	path := "PATH=/usr/bin:/bin:/usr/sbin:/sbin"
+	for _, name := range []string{"initdb", "postgres"} {
+		for _, d := range filepath.SplitList(strings.TrimPrefix(path, "PATH=")) {
+			if _, err := os.Stat(filepath.Join(d, name)); err == nil {
+				t.Skipf("%s is installed in %s", name, d)
+			}
+		}
+	}
+	in := newInst(t, path, "ARCHIVE_PG_BIN=", "ARCHIVE_EMBED_MODEL=embed")
+	_, errs, err := in.run("", "types")
+	if err != nil || !strings.Contains(errs, "downloading Postgres "+pgVersion) {
+		t.Fatalf("first run: %v\n%s", err, errs)
+	}
+	if _, err := os.Stat(filepath.Join(in.dir, "pgbin", pgVersion, "bin", "postgres")); err != nil {
+		t.Fatal(err)
+	}
+	srv := in.serve()
+	if log := srv.log.String(); strings.Contains(log, "downloading") || !strings.Contains(log, "semantic search is off (pgvector is not installed)") {
+		t.Fatalf("second run:\n%s", log)
+	}
+	if out := in.must("types"); !strings.Contains(out, "email") {
+		t.Errorf("types while serve runs: %s", out)
+	}
+}
+
 func TestDockerImageServesAndAcceptsCLICommandsFromDockerExec(t *testing.T) {
 	if err := exec.Command("docker", "info").Run(); err != nil {
 		t.Skip("docker is not available")
