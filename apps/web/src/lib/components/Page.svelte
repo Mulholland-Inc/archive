@@ -33,4 +33,10 @@
       transform: translateY(var(--nudge));
     }
   }
+  @media (max-width: 40rem) {
+    .page {
+      gap: var(--space-5);
+      padding: var(--space-4) var(--space-4) var(--space-12);
+    }
+  }
 </style>

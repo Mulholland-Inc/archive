@@ -89,7 +89,7 @@
       <Link href="/library" variant="subtle">All files</Link>
     </Row>
     {#if files.length}
-      <Grid min="sm">
+      <Grid min="tile">
         {#each files as f (f.id)}
           <FileCard href={`/library/${f.id}`} src={f.metadata?.thumbnail ? api.fileThumbnailURL(f.id) : undefined} mime={f.mime} name={f.name} detail={`${formatBytes(f.size)}, ${relative(f.created_at)}`} />
         {/each}

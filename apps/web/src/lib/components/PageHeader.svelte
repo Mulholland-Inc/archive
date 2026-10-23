@@ -51,4 +51,12 @@
     align-items: center;
     gap: var(--space-2);
   }
+  @media (max-width: 40rem) {
+    .title {
+      font-size: var(--text-lg);
+    }
+    .actions {
+      flex-wrap: wrap;
+    }
+  }
 </style>

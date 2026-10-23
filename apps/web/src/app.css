@@ -37,6 +37,8 @@
   --filter-200: #dcdfea;
   --filter-ring: #c9dcf6;
   --lime-400: #d6ed3d;
+  --flame-500: #f0532d;
+  --flame-foreground: #ffffff;
   --emerald-400: #2fdda0;
   --emerald-500: #21b45c;
   --tangerine-500: #f9a11b;
@@ -225,6 +227,8 @@
   --info: var(--blue-500);
   --info-foreground: var(--paper);
   --highlight: var(--lime-400);
+  --brand: var(--flame-500);
+  --brand-foreground: var(--flame-foreground);
 
 
   --label-1: var(--label-amber);

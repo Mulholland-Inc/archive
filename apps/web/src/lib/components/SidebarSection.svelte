@@ -83,4 +83,9 @@
     padding: var(--space-0-5);
     margin: calc(var(--space-0-5) * -1);
   }
+  @media (hover: none) {
+    .action {
+      opacity: 1;
+    }
+  }
 </style>

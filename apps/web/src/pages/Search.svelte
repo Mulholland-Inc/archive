@@ -68,7 +68,7 @@
 
 <Page width="narrow">
   <PageHeader title="Search" description="Find records, files and synced items by their words, and by meaning when semantic search is on." />
-  <Row gap="2">
+  <Row gap="2" wrap>
     <Input bind:value={q} type="search" icon="search" placeholder="Search everything" autofocus label="Search" />
     <Select icon="filter" bind:value={type} options={typeItems} searchable={typeItems.length > 8} />
   </Row>

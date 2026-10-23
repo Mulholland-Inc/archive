@@ -21,7 +21,21 @@
   import Offline from './pages/Offline.svelte';
   import NotFound from './pages/NotFound.svelte';
 
-  let collapsed = $state(localStorage.getItem('archive.sidebar') === 'collapsed' || innerWidth < 900);
+  let collapsed = $state(localStorage.getItem('archive.sidebar') === 'collapsed');
+  const narrowQuery = matchMedia('(max-width: 64rem)');
+  let narrow = $state(narrowQuery.matches);
+  let drawer = $state(false);
+  narrowQuery.addEventListener('change', () => {
+    narrow = narrowQuery.matches;
+    drawer = false;
+  });
+  const hidden = $derived(narrow ? !drawer : collapsed);
+
+  $effect(() => {
+    route.path;
+    route.search;
+    drawer = false;
+  });
   let theme = $state<'light' | 'dark'>(
     (localStorage.getItem('archive.theme') as 'light' | 'dark') ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
   );
@@ -43,6 +57,10 @@
   }
 
   function toggleSidebar() {
+    if (narrow) {
+      drawer = !drawer;
+      return;
+    }
     collapsed = !collapsed;
     localStorage.setItem('archive.sidebar', collapsed ? 'collapsed' : 'open');
   }
@@ -74,6 +92,7 @@
 
 <svelte:window
   onkeydown={(e) => {
+    if (e.key === 'Escape' && drawer) drawer = false;
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k' && session.status === 'ready') {
       e.preventDefault();
       navigate('/search');
@@ -90,13 +109,13 @@
 {:else if session.status === 'offline'}
   <Offline />
 {:else if session.status === 'ready'}
-  <Shell {collapsed}>
+  <Shell collapsed={hidden} onclose={() => (drawer = false)}>
     {#snippet sidebar()}
       <AppSidebar {theme} ontheme={toggleTheme} oncollapse={toggleSidebar} />
     {/snippet}
     {#snippet topbar()}
       <Row gap="1">
-        {#if collapsed}<IconButton icon="sidebar" label="Show sidebar" onclick={toggleSidebar} />{/if}
+        {#if hidden}<IconButton icon={narrow ? 'rows' : 'sidebar'} label="Show menu" onclick={toggleSidebar} />{/if}
         <Breadcrumb items={page.crumbs.map((c) => ({ label: c.label, onclick: c.href ? () => navigate(c.href!) : undefined }))} />
       </Row>
     {/snippet}

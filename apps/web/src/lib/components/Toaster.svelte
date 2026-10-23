@@ -89,4 +89,15 @@
   .close:hover {
     color: var(--foreground);
   }
+  @media (max-width: 40rem) {
+    .toaster {
+      left: var(--space-3);
+      right: var(--space-3);
+      bottom: var(--space-3);
+    }
+    .toast {
+      width: 100%;
+      max-width: none;
+    }
+  }
 </style>

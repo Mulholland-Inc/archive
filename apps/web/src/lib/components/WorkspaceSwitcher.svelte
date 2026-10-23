@@ -1,14 +1,11 @@
 <script lang="ts">
   import Icon from './Icon.svelte';
-  let { name, detail, pressed = false, onclick }: { name: string; detail?: string; pressed?: boolean; onclick?: () => void } = $props();
+  let { name, pressed = false, onclick }: { name: string; pressed?: boolean; onclick?: () => void } = $props();
 </script>
 
-<button class="switcher" data-pressed={pressed || undefined} aria-expanded={pressed} {onclick}>
-  <span class="logo"><Icon name="brand" /></span>
-  <span class="names">
-    <span class="name">{name}</span>
-    {#if detail}<span class="detail">{detail}</span>{/if}
-  </span>
+<button class="switcher" data-pressed={pressed || undefined} aria-expanded={pressed} aria-label={`Space: ${name}`} {onclick}>
+  <span class="logo"><Icon name="brand" size="sm" /></span>
+  <span class="name">{name}</span>
   <Icon name="chevron-down" size="sm" />
 </button>
 
@@ -19,7 +16,7 @@
     gap: var(--space-2);
     min-width: 0;
     max-width: 100%;
-    height: calc(var(--control-height) + var(--space-2));
+    height: var(--control-height);
     padding: 0 var(--space-1-5) 0 var(--space-1);
     border-radius: var(--radius);
     text-align: start;
@@ -38,27 +35,17 @@
     flex: none;
     display: grid;
     place-items: center;
-    width: var(--control-height);
-    height: var(--control-height);
-    border-radius: var(--radius-md);
-    background: var(--foreground);
-    color: var(--highlight);
-    --glyph-cut: var(--foreground);
-  }
-  .names {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    line-height: var(--leading-snug);
+    width: calc(var(--control-height) - var(--space-1));
+    height: calc(var(--control-height) - var(--space-1));
+    border-radius: var(--radius-sm);
+    background: var(--brand);
+    color: var(--brand-foreground);
   }
   .name {
-    font-weight: var(--font-semibold);
-  }
-  .detail {
-    font-size: var(--text-sm);
-    color: var(--muted-foreground);
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    font-weight: var(--font-semibold);
   }
 </style>

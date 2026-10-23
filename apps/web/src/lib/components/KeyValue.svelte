@@ -35,4 +35,10 @@
     min-width: 0;
     overflow-wrap: anywhere;
   }
+  @media (max-width: 40rem) {
+    .row {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-1);
+    }
+  }
 </style>

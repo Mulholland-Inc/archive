@@ -150,4 +150,20 @@
     gap: var(--space-2);
     padding: 0 var(--space-5) var(--space-5);
   }
+  @media (max-width: 40rem) {
+    .overlay {
+      padding: var(--space-3);
+      place-items: end center;
+    }
+    .header {
+      padding: var(--space-4) var(--space-4) 0;
+    }
+    .body {
+      padding: var(--space-4);
+    }
+    .footer {
+      flex-wrap: wrap;
+      padding: 0 var(--space-4) var(--space-4);
+    }
+  }
 </style>

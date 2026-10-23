@@ -40,9 +40,8 @@
     width: var(--control-height);
     height: var(--control-height);
     border-radius: var(--radius-md);
-    background: var(--foreground);
-    color: var(--highlight);
-    --glyph-cut: var(--foreground);
+    background: var(--brand);
+    color: var(--brand-foreground);
   }
   .card {
     align-self: center;
@@ -80,6 +79,14 @@
     from {
       opacity: 0;
       transform: translateY(var(--slide)) scale(var(--pop-scale));
+    }
+  }
+  @media (max-width: 40rem) {
+    .frame {
+      padding: var(--space-4);
+    }
+    .card {
+      padding: var(--space-5);
     }
   }
 </style>

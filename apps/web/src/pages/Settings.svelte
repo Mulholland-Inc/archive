@@ -151,7 +151,7 @@
   <PageHeader title="Settings" />
 
   <Card title="Account">
-    <Row gap="3">
+    <Row gap="3" wrap>
       <Avatar name={session.actor?.name || session.actor?.email || '?'} color={1} shape="circle" size="lg" />
       <Stack gap="0">
         <Text variant="strong">{session.actor?.name || 'No name'}</Text>

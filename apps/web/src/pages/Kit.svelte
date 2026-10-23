@@ -298,7 +298,7 @@
         {#snippet sidebar()}
           <Sidebar>
             {#snippet header()}
-              <WorkspaceSwitcher name="Archive" detail="All spaces" />
+              <WorkspaceSwitcher name="All spaces" />
               <IconButton icon="sidebar" label="Hide sidebar" onclick={() => (collapsed = true)} />
             {/snippet}
             <SidebarSection>

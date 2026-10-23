@@ -47,6 +47,7 @@
   .wrap {
     min-width: 0;
     overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
     border-radius: var(--radius-lg);
     background: var(--card);
     box-shadow: inset 0 0 0 var(--border-width) var(--border);

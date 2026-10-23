@@ -68,4 +68,15 @@
   [data-flush] .body {
     margin: 0 calc(var(--space-5) * -1) calc(var(--space-5) * -1);
   }
+  @media (max-width: 40rem) {
+    .card {
+      padding: var(--space-4);
+    }
+    .header {
+      flex-wrap: wrap;
+    }
+    [data-flush] .body {
+      margin: 0 calc(var(--space-4) * -1) calc(var(--space-4) * -1);
+    }
+  }
 </style>

@@ -35,7 +35,7 @@
   );
 
   function down(e: PointerEvent, item: T, from: string) {
-    if (!draggable || e.button !== 0 || (e.target as HTMLElement).closest('button,input,textarea')) return;
+    if (!draggable || e.pointerType === 'touch' || e.button !== 0 || (e.target as HTMLElement).closest('button,input,textarea')) return;
     pending = { item, from, sx: e.clientX, sy: e.clientY, el: e.currentTarget as HTMLElement };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up, { once: true });
@@ -213,7 +213,11 @@
   }
   .slot {
     cursor: grab;
-    touch-action: none;
+  }
+  @media (pointer: fine) {
+    .slot {
+      touch-action: none;
+    }
   }
   .ghost {
     position: fixed;

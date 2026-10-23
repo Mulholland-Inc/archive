@@ -48,4 +48,17 @@
   .crumb:hover {
     background: var(--hover);
   }
+  li:last-child {
+    min-width: 0;
+  }
+  .crumb {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  @media (max-width: 40rem) {
+    li:not(:last-child) {
+      display: none;
+    }
+  }
 </style>

@@ -118,4 +118,15 @@
     color: var(--accent);
     font-weight: var(--font-semibold);
   }
+  @media (max-width: 40rem) {
+    .calendar {
+      overflow-x: auto;
+    }
+    .grid {
+      min-width: calc(var(--calendar-cell-height) * 6);
+    }
+    .day {
+      min-height: calc(var(--calendar-cell-height) - var(--space-8));
+    }
+  }
 </style>

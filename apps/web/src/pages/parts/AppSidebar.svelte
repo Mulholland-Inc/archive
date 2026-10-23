@@ -35,7 +35,7 @@
   {#snippet header()}
     <Popover bind:open={spaceOpen}>
       {#snippet trigger({ toggle, open })}
-        <WorkspaceSwitcher name="Archive" detail={session.space ? spaceLabel(session.space) : 'All spaces'} pressed={open} onclick={toggle} />
+        <WorkspaceSwitcher name={session.space ? spaceLabel(session.space) : 'All spaces'} pressed={open} onclick={toggle} />
       {/snippet}
       {#snippet children({ close })}
         <Menu

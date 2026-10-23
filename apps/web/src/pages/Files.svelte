@@ -130,7 +130,7 @@
       {#if writable}<FilePicker onpick={send} label="Choose files" />{/if}
     </EmptyState>
   {:else}
-    <Grid min="sm">
+    <Grid min="tile">
       {#each files as f (f.id)}
         <FileCard
           href={`/library/${f.id}`}

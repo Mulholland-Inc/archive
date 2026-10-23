@@ -73,10 +73,7 @@
   };
 
   const solids: Record<string, [string, string]> = {
-    brand: [
-      '0 0 24 24',
-      '<rect class="fc" x="2.5" y="3" width="19" height="6" rx="2"/><path class="fc" d="M4 10.4h16v7.4a2.7 2.7 0 0 1-2.7 2.7H6.7A2.7 2.7 0 0 1 4 17.8z"/><rect class="cut" x="9.4" y="13" width="5.2" height="1.9" rx="0.95"/>'
-    ]
+    brand: ['0 0 24 24', '<path class="fc tri" d="M12 4.6 20.2 18.9H3.8z"/>']
   };
 
   export const iconNames = [...Object.keys(lines), ...Object.keys(solids)];
@@ -140,8 +137,10 @@
   .icon :global(.fc) {
     fill: currentColor;
   }
-  .icon :global(.cut) {
-    fill: var(--glyph-cut, var(--card));
+  .icon :global(.tri) {
+    stroke: currentColor;
+    stroke-width: 2.6;
+    stroke-linejoin: round;
   }
   .icon :global(.spin) {
     transform-origin: 50% 50%;
