@@ -177,6 +177,26 @@ CREATE INDEX IF NOT EXISTS secrets_record_idx ON secrets (record_id);
 CREATE INDEX IF NOT EXISTS secrets_source_idx ON secrets (source_id);
 CREATE INDEX IF NOT EXISTS secrets_space_idx ON secrets (space);
 
+CREATE TABLE IF NOT EXISTS proposals (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    raw_id     uuid REFERENCES raw ON DELETE CASCADE,
+    type       text NOT NULL,
+    source     text NOT NULL DEFAULT '',
+    label      text NOT NULL DEFAULT '',
+    file_id    uuid,
+    method     text NOT NULL DEFAULT '',
+    fields     jsonb NOT NULL,
+    confidence double precision NOT NULL,
+    status     text NOT NULL,
+    record_id  uuid REFERENCES records ON DELETE SET NULL,
+    decided_by text NOT NULL DEFAULT '',
+    decided_at timestamptz,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    space      uuid NOT NULL REFERENCES spaces
+);
+CREATE INDEX IF NOT EXISTS proposals_status_idx ON proposals (status, id);
+CREATE INDEX IF NOT EXISTS proposals_space_idx ON proposals (space);
+
 DO $$ BEGIN
     IF to_regclass('specs') IS NOT NULL THEN
         INSERT INTO types (name, extends, def, updated_at)
@@ -218,7 +238,7 @@ CREATE OR REPLACE TRIGGER records_secrets_prune AFTER UPDATE OF data ON records 
 GRANT SELECT ON types, changes, spaces, schema_version TO {p}_user;
 GRANT INSERT, UPDATE, DELETE ON types TO {p}_user;
 GRANT INSERT, UPDATE ON changes TO {p}_user;
-GRANT SELECT, INSERT, UPDATE, DELETE ON sources, files, views TO {p}_user;
+GRANT SELECT, INSERT, UPDATE, DELETE ON sources, files, views, proposals TO {p}_user;
 
 ALTER TABLE types ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS everyone ON types;
@@ -239,7 +259,7 @@ DROP POLICY IF EXISTS member ON spaces;
 CREATE POLICY member ON spaces FOR SELECT USING (pg_has_role(current_user, (role || '_viewer')::name, 'USAGE'));
 
 DO $$ DECLARE t text; BEGIN
-    FOREACH t IN ARRAY ARRAY['records', 'raw', 'provenance', 'links', 'secrets', 'sources', 'files', 'views'] LOOP
+    FOREACH t IN ARRAY ARRAY['records', 'raw', 'provenance', 'links', 'secrets', 'sources', 'files', 'views', 'proposals'] LOOP
         EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY', t);
         EXECUTE format('DROP POLICY IF EXISTS viewer ON %I', t);
         EXECUTE format('DROP POLICY IF EXISTS editor_insert ON %I', t);
@@ -259,6 +279,7 @@ CREATE POLICY viewer ON links FOR SELECT USING (space = ANY ((SELECT my_spaces()
 CREATE POLICY viewer ON files FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[]));
 CREATE POLICY viewer ON sources FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[]));
 CREATE POLICY viewer ON views FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[]));
+CREATE POLICY viewer ON proposals FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[]));
 CREATE POLICY viewer ON secrets FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[]) AND secret_granted(type));
 
 CREATE OR REPLACE FUNCTION search_fold(t text) RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
@@ -321,4 +342,4 @@ CREATE OR REPLACE TRIGGER records_embed_update AFTER UPDATE OF data ON records F
 CREATE OR REPLACE TRIGGER files_embed_update AFTER UPDATE OF text ON files FOR EACH ROW
     WHEN (OLD.text IS DISTINCT FROM NEW.text) EXECUTE FUNCTION embed_enqueue();
 
-INSERT INTO schema_version (version) VALUES (2), (3), (4), (5), (6), (7) ON CONFLICT DO NOTHING;
+INSERT INTO schema_version (version) VALUES (2), (3), (4), (5), (6), (7), (8) ON CONFLICT DO NOTHING;

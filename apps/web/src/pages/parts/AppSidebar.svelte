@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Sidebar, SidebarSection, SidebarItem, WorkspaceSwitcher, IconButton, Popover, Menu, Spacer, type MenuItem } from '../../lib';
-  import { session, setSpace, signOut, isAdmin, spaceLabel } from '../../lib/session.svelte';
+  import { session, setSpace, signOut, isAdmin, spaceLabel, reloadPending } from '../../lib/session.svelte';
   import { route, navigate } from '../../lib/router.svelte';
   import { objectTypes, humanize, typeIcon } from '../../lib/spec';
   import NewTypeDialog from './NewTypeDialog.svelte';
@@ -14,6 +14,12 @@
   let viewsOpen = $state(true);
 
   const types = $derived(objectTypes(session.ontology));
+
+  $effect(() => {
+    route.path;
+    session.space;
+    reloadPending();
+  });
   const views = $derived(session.views.filter((v) => !session.space || session.spaces.find((s) => s.id === v.space)?.name === session.space));
 
   const spaceItems = $derived<MenuItem[]>([
@@ -55,6 +61,7 @@
 
   <SidebarSection>
     <SidebarItem href="/" icon="home" label="Home" active={route.path === '/'} />
+    <SidebarItem href="/review" icon="inbox" label="Review" count={session.pending} active={at('/review')} />
     <SidebarItem href="/library" icon="folder" label="Files" active={at('/library')} />
     <SidebarItem href="/sources" icon="plug" label="Sources" active={at('/sources')} />
   </SidebarSection>

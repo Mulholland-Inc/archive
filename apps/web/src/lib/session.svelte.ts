@@ -10,6 +10,7 @@ type State = {
   ontology: Ontology | null;
   views: View[];
   space: string;
+  pending: number;
 };
 
 export const session = $state<State>({
@@ -19,7 +20,8 @@ export const session = $state<State>({
   home: '',
   ontology: null,
   views: [],
-  space: localStorage.getItem('archive.space') ?? ''
+  space: localStorage.getItem('archive.space') ?? '',
+  pending: 0
 });
 
 const publicPaths = ['/signin', '/setup'];
@@ -54,6 +56,10 @@ export async function reloadOntology() {
 
 export async function reloadViews() {
   session.views = (await api.views()) ?? [];
+}
+
+export async function reloadPending() {
+  session.pending = (await api.reviewCounts(session.space || undefined).catch(() => null))?.review ?? 0;
 }
 
 export async function reloadSpaces() {

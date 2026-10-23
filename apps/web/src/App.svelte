@@ -12,6 +12,7 @@
   import Records from './pages/Records.svelte';
   import RecordPage from './pages/RecordPage.svelte';
   import Search from './pages/Search.svelte';
+  import Review from './pages/Review.svelte';
   import Files from './pages/Files.svelte';
   import FilePage from './pages/FilePage.svelte';
   import Sources from './pages/Sources.svelte';
@@ -184,6 +185,8 @@
         <Records viewId={params.view.id} />
       {:else if route.path === '/search'}
         <Search />
+      {:else if route.path === '/review'}
+        <Review />
       {:else if route.path === '/library'}
         <Files />
       {:else if params.file}

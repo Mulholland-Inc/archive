@@ -415,6 +415,108 @@ func TestIntakeMapsFilesThroughAFakeOpenAIServer(t *testing.T) {
 	}
 }
 
+func TestUnsureIntakeWaitsForReviewAndApprovesInBulk(t *testing.T) {
+	var mu sync.Mutex
+	seen := map[string]int{}
+	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		body := string(b)
+		mu.Lock()
+		defer mu.Unlock()
+		content := `{"number":"INV-3","total":"€ 30,00","date":"03-04-2025"}`
+		switch {
+		case strings.Contains(body, "FILE-A"):
+			seen["a"]++
+			content = `{"number":"INV-1","total":"€ 10,00","date":"01-04-2025"}`
+			if seen["a"] == 2 {
+				content = `{"number":"INV-1","total":"€ 12,00","date":"01-04-2025"}`
+			}
+		case strings.Contains(body, "FILE-B"):
+			seen["b"]++
+			content = `{"number":"INV-2","total":"€ 20,00","date":"02-04-2025"}`
+			if seen["b"] == 2 {
+				content = `{"number":"INV-20","total":"€ 20,00","date":"02-04-2025"}`
+			}
+		}
+		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": content}}}})
+	}))
+	defer llm.Close()
+	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=ann@example.com", "ARCHIVE_LOCALE=nl-NL", "ARCHIVE_LLM_URL="+llm.URL+"/v1", "ARCHIVE_LLM_MODEL=fake")
+	srv := in.serve()
+	in.must("user", "add", "bob@example.com")
+	in.must("spec", "push", in.writeSpec())
+	inbox := filepath.Join(in.dir, "inbox")
+	os.MkdirAll(inbox, 0o755)
+	os.WriteFile(filepath.Join(inbox, "a.txt"), []byte("FILE-A invoice INV-1"), 0o644)
+	os.WriteFile(filepath.Join(inbox, "b.txt"), []byte("FILE-B invoice INV-2"), 0o644)
+	os.WriteFile(filepath.Join(inbox, "c.txt"), []byte("FILE-C invoice INV-3"), 0o644)
+	in.must("intake", inbox, "-type", "invoice")
+	tok := decode[Token](t, in.must("token", "create", "-name", "Review")).Secret
+	bobTok := decode[Token](t, in.must("-as", "bob@example.com", "token", "create")).Secret
+
+	if c := decode[map[string]int](t, in.must("review", "counts")); c["review"] != 2 || c["accepted"] != 1 {
+		t.Fatalf("counts: %v", c)
+	}
+	byLabel := map[string]Proposal{}
+	for _, p := range decode[[]Proposal](t, in.must("review", "list")) {
+		byLabel[p.Label] = p
+	}
+	a, b, c := byLabel["a.txt"], byLabel["b.txt"], byLabel["c.txt"]
+	if a.Status != "review" || a.RecordID == nil || a.Confidence > 0.7 || b.Status != "review" || b.RecordID != nil || c.Status != "accepted" {
+		t.Fatalf("proposals: a %+v b %+v c %+v", a, b, c)
+	}
+	for _, f := range a.Fields {
+		if f.Path == "total" && (f.Route != "review" || f.Original == "") {
+			t.Errorf("a.total: %+v", f)
+		}
+	}
+	var none []Proposal
+	call(t, "GET", srv.url+"/api/review", bobTok, nil, &none)
+	if len(none) != 0 {
+		t.Errorf("bob sees ann's proposals: %+v", none)
+	}
+
+	var res ReviewOutcome
+	st, _ := call(t, "POST", srv.url+"/api/review/approve", tok, map[string]any{
+		"ids":   []string{a.ID.String(), b.ID.String()},
+		"edits": map[string]any{b.ID.String(): map[string]any{"number": "INV-9"}},
+	}, &res)
+	wantStatus(t, st, 200, "bulk approve")
+	if len(res.Done) != 2 || len(res.Failed) != 0 {
+		t.Fatalf("approve: %+v", res)
+	}
+	ra := decode[e2eRecord](t, in.must("get", "invoice", a.RecordID.String()))
+	if fmt.Sprint(ra.Data["total"]) != "map[amount:10.00 currency:EUR]" || ra.Data["number"] != "INV-1" {
+		t.Errorf("approved a: %v", ra.Data)
+	}
+	if prov := in.must("provenance", "invoice", a.RecordID.String()); !strings.Contains(prov, "review:") {
+		t.Errorf("a provenance: %s", prov)
+	}
+	var rb e2eRecord
+	for _, p := range res.Done {
+		if p.ID == b.ID && p.RecordID != nil {
+			rb = decode[e2eRecord](t, in.must("get", "invoice", p.RecordID.String()))
+		}
+	}
+	if rb.Data["number"] != "INV-9" || fmt.Sprint(rb.Data["total"]) != "map[amount:20.00 currency:EUR]" {
+		t.Errorf("approved b: %v", rb.Data)
+	}
+
+	st, _ = call(t, "POST", srv.url+"/api/review/approve", tok, map[string]any{"ids": []string{a.ID.String()}}, &res)
+	wantStatus(t, st, 200, "approve twice")
+	if len(res.Failed) != 1 || !strings.Contains(res.Failed[0].Error, "already approved") {
+		t.Errorf("approve twice: %+v", res)
+	}
+	in.must("review", "reject", c.ID.String())
+	if c := decode[map[string]int](t, in.must("review", "counts")); c["review"] != 0 || c["approved"] != 2 || c["rejected"] != 1 {
+		t.Errorf("counts after review: %v", c)
+	}
+	errs := in.fails("-as", "bob@example.com", "review", "approve", a.ID.String())
+	if !strings.Contains(errs, "not found") {
+		t.Errorf("bob approves: %s", errs)
+	}
+}
+
 func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
 	srv := in.serve()
@@ -685,6 +787,65 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 		st, _ = call(t, "GET", api+"/person", bobNarrow.Secret, nil, nil)
 		wantStatus(t, st, 401, "revoked token")
 	})
+}
+
+func TestDeletingASpaceRemovesEverythingInItForOwnersOnly(t *testing.T) {
+	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
+	srv := in.serve()
+	api := srv.url + "/api"
+
+	in.must("user", "add", "bob@example.com", "-name", "Bob")
+	in.must("spec", "push", in.writeSpec())
+	in.must("space", "add", "team")
+	in.must("space", "add", "scratch")
+	in.must("space", "grant", "team", "bob@example.com", "editor")
+	aliceTok := decode[Token](t, in.must("token", "create", "-name", "Claude")).Secret
+	full := decode[Token](t, in.must("token", "create", "-name", "Terraform", "-full")).Secret
+
+	acme := decode[e2eRecord](t, in.must("create", "company", `{"name": "Acme"}`))
+	member := decode[e2eRecord](t, in.must("create", "person", "-space", "team", `{"name": "Team member", "ssn": "123-45-6789", "employer": "`+acme.ID+`"}`))
+	st, _ := call(t, "POST", api+"/views", aliceTok, map[string]any{"name": "Team people", "type": "person", "space": "team"}, nil)
+	wantStatus(t, st, 201, "view in team")
+
+	errs := in.fails("-as", "bob@example.com", "space", "remove", "team")
+	if !strings.Contains(errs, "needs owner") {
+		t.Errorf("editor removes team: %s", errs)
+	}
+	errs = in.fails("space", "remove", "alice_example_com")
+	if !strings.Contains(errs, "personal space of alice@example.com") {
+		t.Errorf("owner removes her personal space: %s", errs)
+	}
+	errs = in.fails("-as", "bob@example.com", "space", "remove", "scratch")
+	if !strings.Contains(errs, "not found") {
+		t.Errorf("non-member removes scratch: %s", errs)
+	}
+	st, _ = call(t, "DELETE", srv.url+"/auth/spaces/team", aliceTok, nil, nil)
+	wantStatus(t, st, 403, "scoped token deletes a space")
+
+	spaces := decode[[]SpaceInfo](t, in.must("space", "remove", "team"))
+	for _, s := range spaces {
+		if s.Name == "team" {
+			t.Fatalf("team still listed: %+v", spaces)
+		}
+	}
+	if got := in.psql("archive", "SELECT count(*) FROM records WHERE id = '"+member.ID+"'"); got != "0" {
+		t.Errorf("team record survived: %s", got)
+	}
+	if got := in.psql("archive", "SELECT (SELECT count(*) FROM views) + (SELECT count(*) FROM links) + (SELECT count(*) FROM secrets)"); got != "0" {
+		t.Errorf("views, links and secrets left: %s", got)
+	}
+	if got := in.psql("archive", "SELECT count(*) FROM pg_roles WHERE rolname LIKE 'a\\_s\\_team\\_%'"); got != "0" {
+		t.Errorf("team roles left: %s", got)
+	}
+	if got := decode[e2eRecord](t, in.must("get", "company", acme.ID)); got.ID != acme.ID {
+		t.Errorf("company outside team: %+v", got)
+	}
+
+	st, _ = call(t, "DELETE", srv.url+"/auth/spaces/scratch", full, nil, nil)
+	wantStatus(t, st, 204, "full token deletes scratch")
+	st, _ = call(t, "DELETE", srv.url+"/auth/spaces/scratch", full, nil, nil)
+	wantStatus(t, st, 404, "delete scratch twice")
+	in.must("space", "add", "team")
 }
 
 func TestFirstRunSetupLinkAndUpgradeIntoADefaultSpace(t *testing.T) {

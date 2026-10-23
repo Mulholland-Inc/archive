@@ -222,7 +222,7 @@ func (a *Archive) IntakeFile(ctx context.Context, id uuid.UUID, typ string) (*In
 	if err != nil {
 		return nil, err
 	}
-	return a.intake.Ingest(ctx, raw, typ)
+	return a.ingest(ctx, raw, typ)
 }
 
 func (a *Archive) ProcessFile(ctx context.Context, id uuid.UUID) (*File, error) {

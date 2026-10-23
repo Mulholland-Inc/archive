@@ -15,7 +15,7 @@
     display: block;
     padding: var(--space-0-5) var(--space-1-5);
     border-radius: var(--radius-xs);
-    background: color-mix(in srgb, var(--accent) 14%, var(--card));
+    background: var(--tint-2);
     color: var(--foreground);
     font-size: var(--text-sm);
     text-decoration: none;
@@ -25,6 +25,6 @@
     transition: background-color var(--duration-fast) var(--ease-out);
   }
   .chip:hover {
-    background: color-mix(in srgb, var(--accent) 24%, var(--card));
+    background: var(--tint-3);
   }
 </style>

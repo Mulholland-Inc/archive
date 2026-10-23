@@ -1,6 +1,7 @@
 <script lang="ts">
   import Icon from './Icon.svelte';
   import Tile from './Tile.svelte';
+  import Count from './Count.svelte';
   import { intercept } from '../router.svelte';
   let {
     label,
@@ -9,6 +10,7 @@
     tile,
     active = false,
     expanded,
+    count,
     onclick
   }: {
     label: string;
@@ -17,6 +19,7 @@
     tile?: { icon: string; color: number };
     active?: boolean;
     expanded?: boolean;
+    count?: number;
     onclick?: () => void;
   } = $props();
 </script>
@@ -24,6 +27,7 @@
 {#snippet content()}
   {#if tile}<Tile icon={tile.icon} color={tile.color} />{:else if icon}<Icon name={icon} />{/if}
   <span class="label">{label}</span>
+  {#if count}<Count value={count} />{/if}
   {#if expanded !== undefined}
     <span class="chev" data-open={expanded || undefined}><Icon name="chevron-down" size="sm" /></span>
   {/if}

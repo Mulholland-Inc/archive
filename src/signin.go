@@ -220,6 +220,9 @@ func (s *signin) handler() http.Handler {
 		sp, err := a.AddSpace(r.Context(), body.Name)
 		return http.StatusCreated, sp, err
 	})
+	authed("DELETE /auth/spaces/{space}", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
+		return http.StatusNoContent, nil, a.DeleteSpace(r.Context(), r.PathValue("space"))
+	})
 	authed("GET /auth/spaces/{space}/members", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		return ok(a.Members(r.Context(), r.PathValue("space")))
 	})

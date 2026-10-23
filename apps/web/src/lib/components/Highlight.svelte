@@ -13,7 +13,7 @@
   mark {
     padding: 0 var(--space-0-5);
     border-radius: var(--radius-xs);
-    background: color-mix(in srgb, var(--highlight) 55%, transparent);
+    background: var(--highlight);
     color: var(--foreground);
   }
 </style>

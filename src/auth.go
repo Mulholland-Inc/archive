@@ -463,6 +463,45 @@ func (a *Archive) AddSpace(ctx context.Context, name string) (*SpaceInfo, error)
 	})
 }
 
+func (a *Archive) DeleteSpace(ctx context.Context, name string) error {
+	ac, err := authUser(ctx)
+	if err != nil {
+		return err
+	}
+	if _, err := coreDo(a, ctx, func(ctx context.Context) (string, error) { return a.spaceRole(ctx, name) }); err != nil {
+		return err
+	}
+	return a.sys(ctx, func(ctx context.Context) error {
+		q := a.st.Q(ctx)
+		var id uuid.UUID
+		var base string
+		if err := q.QueryRow(ctx, `SELECT id, role FROM spaces WHERE name = $1`, name).Scan(&id, &base); err != nil {
+			return fmt.Errorf("space %q: %w", name, ErrNotFound)
+		}
+		if !a.has(ctx, ac.UserRole, base+"_owner") {
+			return fmt.Errorf("deleting %s needs owner: %w", name, ErrForbidden)
+		}
+		var home string
+		if q.QueryRow(ctx, `SELECT email FROM users WHERE home = $1`, id).Scan(&home) == nil {
+			return fmt.Errorf("%s is the personal space of %s: %w", name, home, ErrConflict)
+		}
+		for _, t := range []string{"proposals", "views", "sources", "secrets", "links", "provenance", "records", "raw"} {
+			if _, err := q.Exec(ctx, `DELETE FROM `+t+` WHERE space = $1`, id); err != nil {
+				return err
+			}
+		}
+		if _, err := q.Exec(ctx, `DELETE FROM spaces WHERE id = $1`, id); err != nil {
+			return err
+		}
+		for i := len(authLevels) - 1; i >= 0; i-- {
+			if err := a.exec(ctx, "REVOKE ALL ON "+authTables+" FROM "+authIdent(base+"_"+authLevels[i]), "DROP ROLE "+authIdent(base+"_"+authLevels[i])); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func (a *Archive) spaceRole(ctx context.Context, name string) (string, error) {
 	var role string
 	err := a.st.Q(ctx).QueryRow(ctx, `SELECT role FROM spaces WHERE name = $1`, name).Scan(&role)

@@ -22,14 +22,15 @@
     min-width: 0;
     padding: var(--space-2);
     border-radius: var(--radius-lg);
+    background: var(--tint-3);
     color: inherit;
     text-decoration: none;
     transition:
-      background-color var(--duration-fast) var(--ease-out),
+      box-shadow var(--duration-fast) var(--ease-out),
       transform var(--duration-normal) var(--ease-spring);
   }
   .card:hover {
-    background: var(--hover);
+    box-shadow: inset 0 0 0 var(--border-width) var(--gray-400);
   }
   .card:active {
     transform: scale(var(--press-scale-subtle));

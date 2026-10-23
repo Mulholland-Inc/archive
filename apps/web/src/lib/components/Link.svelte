@@ -24,7 +24,9 @@
     text-decoration: none;
     min-width: 0;
     border-radius: var(--radius-xs);
-    transition: color var(--duration-fast) var(--ease-out);
+    transition:
+      color var(--duration-fast) var(--ease-out),
+      text-decoration-color var(--duration-fast) var(--ease-out);
   }
   [data-variant='plain']:hover {
     text-decoration: underline;
@@ -38,11 +40,12 @@
     color: var(--foreground);
   }
   [data-variant='accent'] {
-    color: var(--accent);
+    text-decoration: underline;
+    text-decoration-color: var(--tint-4);
+    text-underline-offset: 0.2em;
   }
   [data-variant='accent']:hover {
-    text-decoration: underline;
-    text-underline-offset: 0.2em;
+    text-decoration-color: currentColor;
   }
   [data-variant='block'] {
     display: block;

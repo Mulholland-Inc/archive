@@ -3,11 +3,12 @@
   import { api } from '../../lib/api';
   import { session, canWrite, spaceLabel } from '../../lib/session.svelte';
   import { navigate } from '../../lib/router.svelte';
-  import { fieldsOf, humanize, recordTitle, titleField, formatValue, kindOf, isSecret, relative, typeIcon } from '../../lib/spec';
+  import { fieldsOf, humanize, recordTitle, titleField, formatValue, kindOf, isSecret, typeIcon } from '../../lib/spec';
   import { refTitle, remember } from '../../lib/refs.svelte';
   import { toast, fail } from '../../lib/toast.svelte';
   import type { ArchiveRecord, Field, RecordLink } from '../../lib/types';
-  import RecordForm from './RecordForm.svelte';
+  import FieldInput from './FieldInput.svelte';
+  import { RecordEdit, secretTypes } from '../../lib/edit.svelte';
   import { preloadRecord } from '../../lib/preload';
 
   let {
@@ -29,7 +30,6 @@
   let record = $state<ArchiveRecord | null>(null);
   let links = $state<RecordLink[]>([]);
   let error = $state('');
-  let editing = $state(false);
   let menu = $state(false);
   let confirm = $state(false);
   let deleting = $state(false);
@@ -37,6 +37,17 @@
   const o = $derived(session.ontology);
   const tf = $derived(titleField(o, type));
   const fields = $derived(fieldsOf(o, type).filter(([n]) => n !== tf));
+  const writable = $derived(!!record && canWrite(record.space));
+  const edit = new RecordEdit();
+  const secrets = $derived(secretTypes());
+  const shown = $derived(edit.active ? fieldsOf(o, type) : fields);
+
+  async function save() {
+    const r = await edit.save();
+    if (!r) return;
+    record = r;
+    onsaved?.(r);
+  }
   const people = ['user', 'users', 'contact'];
 
   $effect(() => {
@@ -129,7 +140,7 @@
   <IconButton icon="maximize" label="Open as page" onclick={() => navigate(`/records/${type}/${id}`)} />
   <span class="crumb"><Icon name={typeIcon(o, type)} size="sm" />{humanize(type)}{#if record?.space}<span class="sep">/</span>{spaceLabel(record.space)}{/if}</span>
   <span class="grow"></span>
-  {#if record && canWrite(record.space)}<Button variant="ghost" icon="pencil" onclick={() => (editing = true)}>Edit</Button>{/if}
+  {#if record && writable && !edit.active}<Button variant="ghost" icon="pencil" onclick={() => edit.begin(record!, fieldsOf(o, type))}>Edit</Button>{/if}
   {#if record}
     <Popover bind:open={menu} align="end">
       {#snippet trigger({ toggle })}<IconButton icon="more" label="More" onclick={toggle} />{/snippet}
@@ -166,13 +177,18 @@
     <h1 class="title">{recordTitle(o, record)}</h1>
 
     <dl class="props">
-      {#each fields as [n, f] (n)}
+      {#each shown as [n, f] (n)}
         {@const vs = values(f, record.data[n])}
         {@const kind = kindOf(o, f.type)}
         <div class="prop">
           <dt><Icon name={fieldIcon(f)} size="sm" /><span>{humanize(n)}</span></dt>
           <dd>
-            {#if !vs.length}
+            {#if edit.active}
+              <div class="field">
+                <FieldInput name={n} field={f} bind:value={edit.values[n]} bind:checked={edit.checks[n]} invalid={!!edit.errors[n]} secret={secrets.has(f.type)} />
+                {#if edit.errors[n]}<span class="error">{edit.errors[n]}</span>{/if}
+              </div>
+            {:else if !vs.length}
               <span class="empty">Empty</span>
             {:else if isSecret(vs[0])}
               <span class="muted"><Icon name="lock" size="xs" /> Hidden</span>
@@ -208,7 +224,7 @@
           <h2><Icon name={typeIcon(o, g.type)} size="sm" />{humanize(g.type)}{g.field !== type ? ` · ${humanize(g.field).toLowerCase()}` : ''}<span class="count">{g.ids.length}</span></h2>
           <ul>
             {#each g.ids.slice(0, 12) as rid (rid)}
-              <li><button class="row" onclick={() => onopen(g.type, rid)} onpointerenter={() => preloadRecord(g.type, rid)}><Icon name={typeIcon(o, g.type)} size="sm" /><span>{refTitle(g.type, rid)}</span><Icon name="arrow-up-right" size="xs" /></button></li>
+              <li><button class="row" onclick={() => onopen(g.type, rid)} onpointerenter={() => preloadRecord(g.type, rid)}><span>{refTitle(g.type, rid)}</span><Icon name="arrow-up-right" size="xs" /></button></li>
             {/each}
           </ul>
           {#if g.ids.length > 12}<p class="more">and {g.ids.length - 12} more</p>{/if}
@@ -216,12 +232,19 @@
       </section>
     {/if}
 
-    <p class="stamp">Created {relative(record.created_at)} · Updated {relative(record.updated_at)}</p>
   {/if}
 </div>
 
+{#if edit.active}
+  <footer class="foot">
+    {#if edit.failure}<span class="error">{edit.failure}</span>{/if}
+    <span class="grow"></span>
+    <Button variant="ghost" disabled={edit.busy} onclick={() => edit.cancel()}>Cancel</Button>
+    <Button variant="primary" icon="check" loading={edit.busy} onclick={save}>Save</Button>
+  </footer>
+{/if}
+
 {#if record}
-  <RecordForm bind:open={editing} type={record.type} {record} onsaved={(r) => { record = r; remember(r); onsaved?.(r); toast('Saved', 'success'); }} />
   <Dialog bind:open={confirm} title="Delete this record?" description="It goes from every view, search and link. Its source files stay.">
     {#snippet children()}{/snippet}
     {#snippet footer()}
@@ -362,7 +385,7 @@
     border-radius: var(--radius-full);
     font-size: var(--text-sm);
     --dot: var(--gray-500);
-    background: color-mix(in srgb, var(--dot) 14%, transparent);
+    background: var(--tint-2);
   }
   .pill i {
     width: 0.4375rem;
@@ -439,14 +462,28 @@
   .row:hover {
     background: var(--tint-1);
   }
-  .more,
-  .stamp {
+  .more {
     color: var(--muted-foreground);
     font-size: var(--text-sm);
     padding: 0 var(--space-2);
   }
-  .stamp {
-    margin-top: var(--space-10);
+  .field {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+  .error {
+    color: var(--red-500);
+    font-size: var(--text-sm);
+  }
+  .foot {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    border-top: var(--border-width) solid var(--tint-2);
   }
   @media (max-width: 40rem) {
     .scroll {

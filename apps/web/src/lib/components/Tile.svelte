@@ -13,8 +13,8 @@
     width: calc(var(--icon-size) + var(--space-1-5));
     height: calc(var(--icon-size) + var(--space-1-5));
     border-radius: var(--radius-sm);
-    background: color-mix(in srgb, var(--tile) 42%, var(--card));
-    color: color-mix(in srgb, var(--tile) 70%, var(--ink));
+    background: var(--tile);
+    color: #ffffff;
   }
   [data-size='lg'] {
     width: calc(var(--icon-size) * 2);

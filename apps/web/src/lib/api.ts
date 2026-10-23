@@ -7,7 +7,10 @@ import type {
   Member,
   Ontology,
   Op,
+  Proposal,
+  ProposalStatus,
   Provenance,
+  ReviewOutcome,
   RecordLink,
   SearchHit,
   SigninMethods,
@@ -122,6 +125,7 @@ export const api = {
 
   spaces: () => request<Space[]>('GET', '/auth/spaces'),
   addSpace: (name: string) => request<Space>('POST', '/auth/spaces', { name }),
+  removeSpace: (name: string) => request<void>('DELETE', `/auth/spaces/${enc(name)}`),
   members: (space: string) => request<Member[]>('GET', `/auth/spaces/${enc(space)}/members`),
   setMember: (space: string, email: string, role: string) => request<Member[]>('POST', `/auth/spaces/${enc(space)}/members`, { email, role }),
   tokens: () => request<Token[]>('GET', '/auth/tokens'),
@@ -183,6 +187,12 @@ export const api = {
   patchSource: (id: string, body: { type?: string; schedule?: string; rate?: number }) => request<Source>('PATCH', `/api/sources/${enc(id)}`, body),
   runSource: (id: string) => request<SyncResult>('POST', `/api/sources/${enc(id)}/run`),
   removeSource: (id: string) => request<void>('DELETE', `/api/sources/${enc(id)}`),
+
+  review: (o: { status?: ProposalStatus; type?: string; space?: string; limit?: number; after?: string } = {}) => request<Proposal[]>('GET', '/api/review', undefined, o),
+  reviewCounts: (space?: string) => request<{ [status: string]: number }>('GET', '/api/review/counts', undefined, { space }),
+  proposal: (id: string) => request<Proposal>('GET', `/api/review/${enc(id)}`),
+  approve: (ids: string[], edits?: { [id: string]: { [field: string]: unknown } }) => request<ReviewOutcome>('POST', '/api/review/approve', { ids, edits }),
+  reject: (ids: string[]) => request<ReviewOutcome>('POST', '/api/review/reject', { ids }),
 
   views: () => request<View[]>('GET', '/api/views'),
   view: (id: string) => cached<View>(`/api/views/${enc(id)}`),

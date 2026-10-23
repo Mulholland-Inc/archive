@@ -486,7 +486,7 @@ func (r *syncRun) ingest(ctx context.Context, raw *Raw) {
 	if r.src.Type == "" {
 		return
 	}
-	res, err := r.a.intake.Ingest(ctx, raw, r.src.Type)
+	res, err := r.a.ingest(ctx, raw, r.src.Type)
 	if err != nil {
 		r.intake = append(r.intake, fmt.Errorf("intake %s: %w", raw.ExternalID, err))
 		return

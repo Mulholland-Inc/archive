@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Page, PageHeader, Card, KeyValue, Button, Table, Text, Row, Stack, Dialog, Field, Input, Select, Checkbox, Code, Notice, Avatar, Spacer, Columns } from '../lib';
   import { api, passkeyRegister, passkeysSupported } from '../lib/api';
-  import { session, reloadSpaces, signOut, spaceLabel } from '../lib/session.svelte';
+  import { session, reloadSpaces, reloadViews, setSpace, signOut, spaceLabel } from '../lib/session.svelte';
   import { setCrumbs } from '../lib/page.svelte';
   import { humanize, formatDate, relative } from '../lib/spec';
   import { toast, fail } from '../lib/toast.svelte';
@@ -16,6 +16,10 @@
   let spaceName = $state('');
   let spaceError = $state('');
   let spaceBusy = $state(false);
+
+  let deleting = $state<string | null>(null);
+  let confirmName = $state('');
+  let deleteBusy = $state(false);
 
   let membersOf = $state<string | null>(null);
   let members = $state<Member[]>([]);
@@ -73,6 +77,23 @@
       spaceError = (err as Error).message;
     } finally {
       spaceBusy = false;
+    }
+  }
+
+  async function deleteSpace() {
+    const name = deleting;
+    if (!name || confirmName !== name) return;
+    deleteBusy = true;
+    try {
+      await api.removeSpace(name);
+      if (session.space === name) setSpace('');
+      await Promise.all([reloadSpaces(), reloadViews()]);
+      toast(`Deleted ${humanize(name)} and everything in it`, 'success');
+      deleting = null;
+    } catch (e) {
+      fail(e);
+    } finally {
+      deleteBusy = false;
     }
   }
 
@@ -180,7 +201,12 @@
         {:else if c === 'level'}
           <Text>{humanize(s.level)}</Text>
         {:else if ['admin', 'owner'].includes(s.level)}
-          <Button variant="ghost" icon="users" onclick={() => openMembers(s.name)}>Members</Button>
+          <Row gap="1">
+            <Button variant="ghost" icon="users" onclick={() => openMembers(s.name)}>Members</Button>
+            {#if s.level === 'owner' && s.id !== session.home}
+              <Button variant="ghost" icon="trash" onclick={() => { deleting = s.name; confirmName = ''; }}>Delete</Button>
+            {/if}
+          </Row>
         {/if}
       {/snippet}
     </Table>
@@ -229,6 +255,23 @@
   {#snippet footer()}
     <Button variant="ghost" onclick={() => (newSpace = false)}>Cancel</Button>
     <Button variant="primary" loading={spaceBusy} onclick={() => createSpace()}>Create space</Button>
+  {/snippet}
+</Dialog>
+
+<Dialog
+  open={!!deleting}
+  title={`Delete ${spaceLabel(deleting ?? '')}?`}
+  description="This deletes the space with every record, file, source, view and link in it, for everyone. It cannot be undone."
+  onclose={() => (deleting = null)}
+>
+  <form onsubmit={(e) => { e.preventDefault(); deleteSpace(); }} novalidate>
+    <Field label={`Type ${deleting ?? ''} to confirm`}>
+      <Input bind:value={confirmName} placeholder={deleting ?? ''} mono autofocus autocomplete="off" label="Space name" />
+    </Field>
+  </form>
+  {#snippet footer()}
+    <Button variant="ghost" onclick={() => (deleting = null)}>Cancel</Button>
+    <Button variant="danger" loading={deleteBusy} disabled={confirmName !== deleting} onclick={deleteSpace}>Delete space</Button>
   {/snippet}
 </Dialog>
 

@@ -77,9 +77,17 @@ Usage:
                                      into the source's type
   archive source remove <id|name>    stop syncing; raw data and objects stay
 
+  archive review list [-status s] [-type t] [-space s] [-limit n] [-after id]
+                                     what intake read: review (waiting for you), accepted
+                                     (saved automatically), approved or rejected
+  archive review counts [-space s]
+  archive review approve <id> ...    save the proposed values as records
+  archive review reject <id> ...
+
   archive user add <email> [-name n] [-admin]
   archive space add <name>
   archive space list
+  archive space remove <space>       delete the space and everything in it; needs owner
   archive space members <space>
   archive space grant <space> <email> <owner|admin|editor|viewer|none>
   archive token create [-name n] [-space s:role,...] [-expires 720h] [-full]
@@ -188,6 +196,7 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	source := fs.String("source", "", "only items from this source (search)")
 	from := fs.String("from", "", "only items added on or after this date (search)")
 	to := fs.String("to", "", "only items added up to this date (search)")
+	status := fs.String("status", "", "review, accepted, approved or rejected (review list)")
 	if cmd == "-as" && len(args) > 1 {
 		*as, cmd, args = args[0], args[1], args[2:]
 	}
@@ -241,6 +250,8 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	case "source":
 		in := SourceInput{Name: *name, Space: *space, Type: *typ, Schedule: *schedule, Rate: *rateLimit}
 		return cliSource(ctx, a, pos, in, stdin, stdout, out)
+	case "review":
+		return cliReview(ctx, a, pos, ReviewFilter{Status: *status, Type: *typ, Space: *space, Limit: *limit}, *after, out)
 	case "user", "space", "token", "secret":
 		return cliAuth(ctx, a, cmd, pos, *name, *admin, *full, *space, *expires, out)
 	case "list":
@@ -306,7 +317,7 @@ func cliCheckCommand(cmd string, pos []string) error {
 	n, ok := map[string]int{
 		"serve": 0, "mcp": 0, "types": 0, "spec": 1, "intake": 1, "list": 1, "create": 1,
 		"get": 2, "provenance": 2, "delete": 2, "set": 2, "update": 2, "links": 2,
-		"user": 2, "space": 1, "token": 1, "secret": 3, "source": 1, "file": 1, "search": 1,
+		"user": 2, "space": 1, "token": 1, "secret": 3, "source": 1, "file": 1, "search": 1, "review": 1,
 	}[cmd]
 	if !ok {
 		return fmt.Errorf("unknown command %q (see archive help)", cmd)
@@ -327,6 +338,13 @@ func cliAuth(ctx context.Context, a *Archive, cmd string, pos []string, name str
 		}
 	case "space list":
 		return out(a.Spaces(ctx))
+	case "space remove":
+		if len(pos) > 1 {
+			if err := a.DeleteSpace(ctx, pos[1]); err != nil {
+				return err
+			}
+			return out(a.Spaces(ctx))
+		}
 	case "space members":
 		if len(pos) > 1 {
 			return out(a.Members(ctx, pos[1]))
@@ -770,6 +788,36 @@ func httpHandler(a *Archive) http.Handler {
 	})
 	handle("DELETE /api/sources/{id}", func(r *http.Request) (int, any, error) {
 		return http.StatusNoContent, nil, a.RemoveSource(r.Context(), r.PathValue("id"))
+	})
+
+	handle("GET /api/review", func(r *http.Request) (int, any, error) {
+		q := r.URL.Query()
+		limit, _ := strconv.Atoi(q.Get("limit"))
+		after, _ := uuid.Parse(q.Get("after"))
+		return ok(a.Proposals(r.Context(), ReviewFilter{Status: q.Get("status"), Type: q.Get("type"), Space: q.Get("space"), Limit: limit, After: after}))
+	})
+	handle("GET /api/review/counts", func(r *http.Request) (int, any, error) {
+		return ok(a.ProposalCounts(r.Context(), r.URL.Query().Get("space")))
+	})
+	handle("GET /api/review/{id}", change(func(ctx context.Context, id uuid.UUID) (any, error) { return a.GetProposal(ctx, id) }))
+	handle("POST /api/review/approve", func(r *http.Request) (int, any, error) {
+		var body struct {
+			IDs   []uuid.UUID                  `json:"ids"`
+			Edits map[uuid.UUID]map[string]any `json:"edits"`
+		}
+		if err := httpDecode(r, &body); err != nil {
+			return 0, nil, err
+		}
+		return ok(a.Approve(r.Context(), body.IDs, body.Edits))
+	})
+	handle("POST /api/review/reject", func(r *http.Request) (int, any, error) {
+		var body struct {
+			IDs []uuid.UUID `json:"ids"`
+		}
+		if err := httpDecode(r, &body); err != nil {
+			return 0, nil, err
+		}
+		return ok(a.Reject(r.Context(), body.IDs))
 	})
 
 	handle("GET /api/views", func(r *http.Request) (int, any, error) {

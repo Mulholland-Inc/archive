@@ -9,7 +9,8 @@
   import { toast, fail } from '../lib/toast.svelte';
   import type { ArchiveRecord, Provenance, RecordLink } from '../lib/types';
   import FieldValue from './parts/FieldValue.svelte';
-  import RecordForm from './parts/RecordForm.svelte';
+  import FieldInput from './parts/FieldInput.svelte';
+  import { RecordEdit, secretTypes } from '../lib/edit.svelte';
 
   let { type, id }: { type: string; id: string } = $props();
 
@@ -19,7 +20,6 @@
   let missing = $state(false);
   let error = $state('');
   let reveal = $state(false);
-  let editing = $state(false);
   let menu = $state(false);
   let confirm = $state(false);
   let deleting = $state(false);
@@ -28,6 +28,13 @@
   const fields = $derived(fieldsOf(o, record?.type ?? type));
   const hasSecrets = $derived(!!record && Object.values(record.data).some(isSecret));
   const byField = $derived(new Map(prov.map((p) => [p.field_path.split('.')[0], p])));
+
+  const edit = new RecordEdit();
+  const secrets = $derived(secretTypes());
+
+  async function save() {
+    if (await edit.save()) load();
+  }
 
   async function load() {
     try {
@@ -96,7 +103,12 @@
         {#if hasSecrets || reveal}
           <Button variant="ghost" icon={reveal ? 'eye-off' : 'eye'} onclick={() => (reveal = !reveal)}>{reveal ? 'Hide secrets' : 'Reveal secrets'}</Button>
         {/if}
-        {#if canWrite(record!.space)}<Button icon="pencil" onclick={() => (editing = true)}>Edit</Button>{/if}
+        {#if edit.active}
+          <Button variant="ghost" disabled={edit.busy} onclick={() => edit.cancel()}>Cancel</Button>
+          <Button variant="primary" icon="check" loading={edit.busy} onclick={save}>Save</Button>
+        {:else if canWrite(record!.space)}
+          <Button icon="pencil" onclick={() => edit.begin(record!, fields)}>Edit</Button>
+        {/if}
         <Popover bind:open={menu} align="end">
           {#snippet trigger({ toggle })}<IconButton icon="more" label="More" onclick={toggle} />{/snippet}
           {#snippet children({ close })}
@@ -120,13 +132,19 @@
       {/snippet}
     </PageHeader>
 
+    {#if edit.failure}<Notice tone="danger">{edit.failure}</Notice>{/if}
     <Split>
       {#snippet main()}
         <Card title="Fields">
           <KeyValue items={fields} label={([n]) => humanize(n)}>
             {#snippet value([n, f])}
               <Stack gap="1">
-                <FieldValue field={f} value={record!.data[n]} />
+                {#if edit.active}
+                  <FieldInput name={n} field={f} bind:value={edit.values[n]} bind:checked={edit.checks[n]} invalid={!!edit.errors[n]} secret={secrets.has(f.type)} />
+                  {#if edit.errors[n]}<Text tone="danger" variant="small">{edit.errors[n]}</Text>{/if}
+                {:else}
+                  <FieldValue field={f} value={record!.data[n]} />
+                {/if}
                 {#if byField.get(n) && byField.get(n)!.method !== 'manual'}
                   {@const p = byField.get(n)!}
                   <Row gap="2" wrap>
@@ -201,7 +219,6 @@
     </Split>
   </Page>
 
-  <RecordForm bind:open={editing} type={record.type} {record} onsaved={(r) => { record = r; toast('Saved', 'success'); }} />
   <Dialog bind:open={confirm} title="Delete this record?" description="It goes from every view, search and link. Its source files stay.">
     {#snippet children()}{/snippet}
     {#snippet footer()}

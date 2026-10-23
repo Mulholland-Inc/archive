@@ -60,13 +60,13 @@
     width: 100%;
     border-collapse: separate;
     border-spacing: 0;
-    font-size: var(--text-base);
+    font-size: var(--text-sm);
   }
   th {
     position: sticky;
     top: 0;
     height: var(--table-row-height);
-    padding: 0 var(--space-3);
+    padding: 0 var(--space-2-5);
     text-align: start;
     font-weight: var(--font-medium);
     color: var(--muted-foreground);
@@ -78,7 +78,7 @@
   td {
     height: var(--table-row-height);
     max-width: var(--table-cell-width);
-    padding: 0 var(--space-3);
+    padding: 0 var(--space-2-5);
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;

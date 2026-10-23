@@ -828,7 +828,7 @@ func (a *Archive) IntakeDir(ctx context.Context, space, dir, typ string) ([]*Int
 	var out []*IntakeResult
 	var errs []error
 	for _, raw := range raws {
-		res, err := a.intake.Ingest(ctx, raw, typ)
+		res, err := a.ingest(ctx, raw, typ)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", raw.ExternalID, err))
 			continue

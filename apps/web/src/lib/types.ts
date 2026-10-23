@@ -160,3 +160,27 @@ export type ChangePreview = {
 export type Me = { actor: Actor; spaces: Space[]; home: string };
 
 export type SigninMethods = { providers: string[]; mail: boolean };
+
+export type ProposedField = { path: string; value: unknown; original?: string; confidence: number; route: 'accept' | 'review' | 'drop' | string; page?: number; secret?: boolean };
+
+export type ProposalStatus = 'review' | 'accepted' | 'approved' | 'rejected';
+
+export type Proposal = {
+  id: string;
+  raw_id?: string;
+  type: string;
+  source: string;
+  label: string;
+  file_id?: string;
+  method: string;
+  fields: ProposedField[];
+  confidence: number;
+  status: ProposalStatus;
+  record_id?: string;
+  decided_by?: string;
+  decided_at?: string;
+  created_at: string;
+  space: string;
+};
+
+export type ReviewOutcome = { done: Proposal[]; failed: { id: string; error: string }[] };

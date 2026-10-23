@@ -4,7 +4,7 @@ import { humanize, objectTypes, typeIcon } from './spec';
 import type { Change, Field, Op } from './types';
 import type { MenuItem } from './components/Menu.svelte';
 
-export const reserved = ['types', 'changes', 'search', 'sources', 'views', 'files'];
+export const reserved = ['types', 'changes', 'search', 'sources', 'views', 'files', 'review'];
 
 export function checkName(name: string, kind: 'type' | 'field', taken: string[] = []): string {
   if (!name) return `Give the ${kind} a name.`;
