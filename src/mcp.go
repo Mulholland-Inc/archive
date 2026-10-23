@@ -47,6 +47,13 @@ type mcpIDInput struct {
 	ID   string `json:"id" jsonschema:"object id (uuid)"`
 }
 
+type mcpWalkInput struct {
+	Type  string   `json:"type" jsonschema:"type of the object to start from, or one of its parent types"`
+	ID    string   `json:"id" jsonschema:"object id (uuid) to start from"`
+	Steps []string `json:"steps" jsonschema:"one round of steps, each in:field or out:field"`
+	Depth int      `json:"depth,omitempty" jsonschema:"how many rounds, 1 to 25; 1 when left out"`
+}
+
 type mcpCiteInput struct {
 	Type      string     `json:"type" jsonschema:"type of the object, or one of its parent types"`
 	ID        string     `json:"id" jsonschema:"object id (uuid)"`
@@ -177,6 +184,14 @@ func mcpServer(a *Archive) *mcp.Server {
 				return nil, err
 			}
 			return map[string]string{"deleted": id.String()}, a.Delete(ctx, in.Type, id)
+		})
+	mcpTool(s, "walk", "Follow links from one object, a round of steps at a time: out:field goes to what its reference field points at, in:field to the objects whose field points at it. Ancestors through parent links are steps [in:child, out:parent] with depth the number of generations. Returns each object reached with its depth, and the links walked.",
+		func(ctx context.Context, in mcpWalkInput) (any, error) {
+			id, err := uuid.Parse(in.ID)
+			if err != nil {
+				return nil, err
+			}
+			return a.Walk(ctx, in.Type, id, in.Steps, cmp.Or(in.Depth, 1))
 		})
 	mcpTool(s, "cite", "Record the evidence for an object's fields: for each, the field, the id of the record it comes from (a register, letter, certificate), the words as written there and the page. Needs editor in the object's space and a source the user can read. Returns the object's provenance.",
 		func(ctx context.Context, in mcpCiteInput) (any, error) {
