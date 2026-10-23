@@ -3,3 +3,6 @@
 /data/
 /.claude/
 .wrangler/
+node_modules/
+dist/
+xcuserdata/
