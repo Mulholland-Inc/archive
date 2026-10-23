@@ -968,6 +968,21 @@ func httpHandler(a *Archive) http.Handler {
 		}
 		return rec, err
 	}))
+	handle("GET /api/{type}/{id}/walk", object(func(ctx context.Context, typ string, id uuid.UUID, r *http.Request) (any, error) {
+		var steps []string
+		if s := r.URL.Query().Get("steps"); s != "" {
+			steps = strings.Split(s, ",")
+		}
+		depth := 1
+		if d := r.URL.Query().Get("depth"); d != "" {
+			n, err := strconv.Atoi(d)
+			if err != nil {
+				return nil, &ValidationError{Type: "walk", Errors: []FieldError{{Path: "depth", Message: "want a number"}}}
+			}
+			depth = n
+		}
+		return a.Walk(ctx, typ, id, steps, depth)
+	}))
 	handle("GET /api/{type}/{id}/links", object(func(ctx context.Context, typ string, id uuid.UUID, _ *http.Request) (any, error) {
 		return a.Links(ctx, typ, id)
 	}))
