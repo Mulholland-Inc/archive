@@ -1,6 +1,0 @@
-/archive
-/bin/
-.data/
-*.test
-node_modules/
-.DS_Store
