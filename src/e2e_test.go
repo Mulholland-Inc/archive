@@ -517,6 +517,35 @@ func TestUnsureIntakeWaitsForReviewAndApprovesInBulk(t *testing.T) {
 	}
 }
 
+func TestDemoDataLoadsOnceWithLinkedRecordsAndReviewItems(t *testing.T) {
+	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=ann@example.com")
+	in.must("user", "add", "ann@example.com")
+	counts := decode[map[string]int](t, in.must("demo"))
+	if counts["company"] < 20 || counts["deal"] < 20 || counts["review"] < 20 {
+		t.Fatalf("demo counts: %v", counts)
+	}
+	spaces := in.must("space", "list")
+	for _, s := range []string{"sales", "finance", "operations", "people"} {
+		if !strings.Contains(spaces, `"`+s+`"`) {
+			t.Errorf("space %s missing: %s", s, spaces)
+		}
+	}
+	deals := decode[[]e2eRecord](t, in.must("list", "deal", "-limit", "1"))
+	if len(deals) != 1 || deals[0].Data["company"] == nil {
+		t.Fatalf("deal without company: %+v", deals)
+	}
+	if links := in.must("links", "deal", deals[0].ID); !strings.Contains(links, `"kind": "company"`) {
+		t.Errorf("deal links: %s", links)
+	}
+	rc := decode[map[string]int](t, in.must("review", "counts"))
+	if rc["review"] == 0 || rc["accepted"] == 0 || rc["review"]+rc["accepted"] != counts["review"] {
+		t.Errorf("review counts %v for %d items", rc, counts["review"])
+	}
+	if errs := in.fails("demo"); !strings.Contains(errs, "demo data needs an archive without") {
+		t.Errorf("second demo: %s", errs)
+	}
+}
+
 func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
 	srv := in.serve()

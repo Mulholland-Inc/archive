@@ -77,6 +77,9 @@ Usage:
                                      into the source's type
   archive source remove <id|name>    stop syncing; raw data and objects stay
 
+  archive demo                       load example types, spaces, records and review items
+                                     into an archive that has none of the demo types yet
+
   archive review list [-status s] [-type t] [-space s] [-limit n] [-after id]
                                      what intake read: review (waiting for you), accepted
                                      (saved automatically), approved or rejected
@@ -250,6 +253,8 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	case "source":
 		in := SourceInput{Name: *name, Space: *space, Type: *typ, Schedule: *schedule, Rate: *rateLimit}
 		return cliSource(ctx, a, pos, in, stdin, stdout, out)
+	case "demo":
+		return out(a.LoadDemo(ctx))
 	case "review":
 		return cliReview(ctx, a, pos, ReviewFilter{Status: *status, Type: *typ, Space: *space, Limit: *limit}, *after, out)
 	case "user", "space", "token", "secret":
@@ -317,7 +322,7 @@ func cliCheckCommand(cmd string, pos []string) error {
 	n, ok := map[string]int{
 		"serve": 0, "mcp": 0, "types": 0, "spec": 1, "intake": 1, "list": 1, "create": 1,
 		"get": 2, "provenance": 2, "delete": 2, "set": 2, "update": 2, "links": 2,
-		"user": 2, "space": 1, "token": 1, "secret": 3, "source": 1, "file": 1, "search": 1, "review": 1,
+		"user": 2, "space": 1, "token": 1, "secret": 3, "source": 1, "file": 1, "search": 1, "review": 1, "demo": 0,
 	}[cmd]
 	if !ok {
 		return fmt.Errorf("unknown command %q (see archive help)", cmd)
@@ -790,6 +795,9 @@ func httpHandler(a *Archive) http.Handler {
 		return http.StatusNoContent, nil, a.RemoveSource(r.Context(), r.PathValue("id"))
 	})
 
+	handle("POST /api/demo", func(r *http.Request) (int, any, error) {
+		return ok(a.LoadDemo(r.Context()))
+	})
 	handle("GET /api/review", func(r *http.Request) (int, any, error) {
 		q := r.URL.Query()
 		limit, _ := strconv.Atoi(q.Get("limit"))

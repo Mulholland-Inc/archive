@@ -188,6 +188,7 @@ export const api = {
   runSource: (id: string) => request<SyncResult>('POST', `/api/sources/${enc(id)}/run`),
   removeSource: (id: string) => request<void>('DELETE', `/api/sources/${enc(id)}`),
 
+  demo: () => request<{ [type: string]: number }>('POST', '/api/demo'),
   review: (o: { status?: ProposalStatus; type?: string; space?: string; limit?: number; after?: string } = {}) => request<Proposal[]>('GET', '/api/review', undefined, o),
   reviewCounts: (space?: string) => request<{ [status: string]: number }>('GET', '/api/review/counts', undefined, { space }),
   proposal: (id: string) => request<Proposal>('GET', `/api/review/${enc(id)}`),

@@ -1,7 +1,8 @@
 <script lang="ts">
   import { Page, PageHeader, Grid, RecordTile, FileCard, Card, ResultRow, Stack, Notice, Button, Text, Row, Spacer, Link } from '../lib';
   import { api } from '../lib/api';
-  import { session, isAdmin, canWrite } from '../lib/session.svelte';
+  import { session, isAdmin, canWrite, reloadOntology, reloadSpaces, reloadViews, reloadPending } from '../lib/session.svelte';
+  import { toast, fail } from '../lib/toast.svelte';
   import { navigate } from '../lib/router.svelte';
   import { setCrumbs } from '../lib/page.svelte';
   import { objectTypes, fieldsOf, humanize, formatBytes, relative, typeIcon } from '../lib/spec';
@@ -15,6 +16,22 @@
   let sources = $state<Source[]>([]);
   let pending = $state(0);
   let creating = $state(false);
+  let loadingDemo = $state(false);
+
+  async function demo() {
+    loadingDemo = true;
+    try {
+      const counts = await api.demo();
+      await Promise.all([reloadOntology(), reloadSpaces(), reloadViews()]);
+      reloadPending();
+      const records = Object.entries(counts).filter(([k]) => k !== 'review').reduce((n, [, v]) => n + v, 0);
+      toast(`Loaded ${records} example records and ${counts.review ?? 0} items to review`, 'success');
+    } catch (e) {
+      fail(e);
+    } finally {
+      loadingDemo = false;
+    }
+  }
 
   $effect(() => {
     const space = session.space || undefined;
@@ -61,7 +78,12 @@
           <Text variant="muted">New items keep flowing in on their own.</Text>
         </ResultRow>
       </Stack>
-      {#if isAdmin()}<Row><Button variant="primary" icon="plus" onclick={() => (creating = true)}>Define your first type</Button></Row>{/if}
+      {#if isAdmin()}
+        <Row>
+          <Button variant="primary" icon="plus" onclick={() => (creating = true)}>Define your first type</Button>
+          <Button icon="sparkle" loading={loadingDemo} onclick={demo}>Load demo data</Button>
+        </Row>
+      {/if}
     </Card>
   {:else}
     <Stack gap="3">
