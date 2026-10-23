@@ -373,6 +373,19 @@ func (a *Archive) fileRoutes(mux *http.ServeMux) {
 		}
 		a.fileServe(w, r, t, false)
 	})
+	// what to put in front of a person: the display copy when there is one, else the file itself
+	mux.HandleFunc("GET /api/files/{id}/display", func(w http.ResponseWriter, r *http.Request) {
+		f, err := file(r)
+		if err != nil {
+			httpWrite(w, 0, nil, err)
+			return
+		}
+		if d := f.display(); d != nil {
+			a.fileServe(w, r, d, false)
+			return
+		}
+		a.fileServe(w, r, f, r.URL.Query().Get("strip") == "gps")
+	})
 	mux.HandleFunc("GET /api/files/{id}/text", func(w http.ResponseWriter, r *http.Request) {
 		id, err := httpID(r)
 		var text string
@@ -388,17 +401,22 @@ func (a *Archive) fileRoutes(mux *http.ServeMux) {
 	})
 }
 
-func (f *File) thumbnail() *File {
+func (f *File) thumbnail() *File { return f.made("thumbnail", ".thumb.jpg") }
+
+// display is the JPEG made for an image browsers do not all show, such as HEIC or TIFF.
+func (f *File) display() *File { return f.made("display", ".jpg") }
+
+func (f *File) made(key, ext string) *File {
 	if f == nil {
 		return nil
 	}
-	t, _ := f.Metadata["thumbnail"].(map[string]any)
+	t, _ := f.Metadata[key].(map[string]any)
 	hash, _ := t["sha256"].(string)
 	size, _ := t["size"].(float64)
 	if hash == "" {
 		return nil
 	}
-	return &File{ID: f.ID, Hash: hash, Size: int64(size), Name: strings.TrimSuffix(f.Name, filepath.Ext(f.Name)) + ".thumb.jpg",
+	return &File{ID: f.ID, Hash: hash, Size: int64(size), Name: strings.TrimSuffix(f.Name, filepath.Ext(f.Name)) + ext,
 		MIME: "image/jpeg", CreatedAt: f.CreatedAt}
 }
 

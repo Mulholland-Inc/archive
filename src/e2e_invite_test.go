@@ -57,8 +57,11 @@ func TestASpaceAdminInvitesSomeoneNewWithOneLinkThatWorksOnce(t *testing.T) {
 	if !strings.Contains(inv.Link, "/auth/invite?token=") || inv.Role != "viewer" || time.Until(inv.ExpiresAt) < 6*24*time.Hour {
 		t.Fatalf("invite: %+v", inv)
 	}
-	if !strings.Contains(srv.log.String(), "invite link for dana@example.com") {
-		t.Errorf("no invite mail (logged without SMTP):\n%s", srv.log)
+	// the log comes through a pipe, so the line can land a moment after the response
+	for deadline := time.Now().Add(5 * time.Second); !strings.Contains(srv.log.String(), "invite link for dana@example.com"); time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("no invite mail (logged without SMTP):\n%s", srv.log)
+		}
 	}
 
 	t.Run("NoHigherThanTheInviterAndOnlyAsAnAdmin", func(t *testing.T) {

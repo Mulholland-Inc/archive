@@ -15,7 +15,7 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
     CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /archive .
 
 FROM alpine:3.24
-RUN apk add --no-cache postgresql18 postgresql-pgvector && install -d -o postgres -g postgres -m 700 /data
+RUN apk add --no-cache postgresql18 postgresql-pgvector vips-tools vips-heif && install -d -o postgres -g postgres -m 700 /data
 COPY --from=build /archive /usr/local/bin/archive
 
 ENV ARCHIVE_DATA=/data \
