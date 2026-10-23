@@ -620,6 +620,20 @@ func cliServe(ctx context.Context, a *Archive, addr string) error {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	web := coreEnv("ARCHIVE_WEB", "../apps/web")
 	mux.HandleFunc("/{$}", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/app/", http.StatusFound) })
+	mux.HandleFunc("/index.html", func(w http.ResponseWriter, r *http.Request) {
+		f, err := os.Open(filepath.Join(web, "index.html"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		defer f.Close()
+		st, err := f.Stat()
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		http.ServeContent(w, r, "index.html", st.ModTime(), f)
+	})
 	mux.Handle("/", http.FileServer(http.Dir(web)))
 	srv := mcpServer(a)
 	mux.Handle("/mcp", auth.RequireBearerToken(a.mcpVerify, &auth.RequireBearerTokenOptions{AllowMissingExpiration: true})(
