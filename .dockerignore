@@ -1,0 +1,5 @@
+*
+!src/
+src/archive
+src/data/
+**/.DS_Store
