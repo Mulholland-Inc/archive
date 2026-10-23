@@ -59,6 +59,15 @@ func TestRestrictedRecordsHideFromEveryoneButAdminsAndTheirMaker(t *testing.T) {
 		if living.Data == nil || !strings.Contains(in.on(t).psql("archive", "SELECT restricted FROM records WHERE id = '"+living.ID+"'"), "t") {
 			t.Fatalf("a new relative is not restricted")
 		}
+		var created struct {
+			ID         string `json:"id"`
+			Restricted bool   `json:"restricted"`
+		}
+		st, _ := call(t, "POST", api+"/relative?space=family", alice, map[string]any{"name": "Merritt Quist"}, &created)
+		if st != 201 || !created.Restricted {
+			t.Errorf("creating a relative answers restricted %v", created.Restricted)
+		}
+		call(t, "DELETE", api+"/relative/"+created.ID, alice, nil, nil)
 	})
 
 	t.Run("AViewerSeesOnlyWhatIsOpen", func(t *testing.T) {
