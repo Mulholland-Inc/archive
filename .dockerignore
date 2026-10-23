@@ -1,7 +1,6 @@
 *
 !src/
 !apps/web/
-apps/web/install.sh
 src/archive
 src/data/
 **/.DS_Store
