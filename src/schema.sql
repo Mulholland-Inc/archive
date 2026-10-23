@@ -199,6 +199,19 @@ CREATE TABLE IF NOT EXISTS proposals (
 CREATE INDEX IF NOT EXISTS proposals_status_idx ON proposals (status, id);
 CREATE INDEX IF NOT EXISTS proposals_space_idx ON proposals (space);
 
+-- An invite into a space for someone who may have no account yet. Only its hash is kept; it is read
+-- and used through the system pool, never by user roles, so it needs no policy of its own.
+CREATE TABLE IF NOT EXISTS invites (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    space      uuid NOT NULL REFERENCES spaces ON DELETE CASCADE,
+    email      text NOT NULL,
+    level      text NOT NULL,
+    hash       text NOT NULL UNIQUE,
+    invited_by text NOT NULL,
+    expires_at timestamptz NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
 DO $$ BEGIN
     IF to_regclass('specs') IS NOT NULL THEN
         INSERT INTO types (name, extends, def, updated_at)
