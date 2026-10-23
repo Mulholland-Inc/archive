@@ -87,6 +87,12 @@ Usage:
   archive review approve <id> ...    save the proposed values as records
   archive review reject <id> ...
 
+  archive backup -o <file|->          the whole archive in one file, while it serves or not: the
+                                     database, the secret key and the stored files; keep it off
+                                     this machine, like docker exec archive archive backup -o - > a.tgz
+  archive restore <file|->           load a backup into an empty $ARCHIVE_DATA, with the server
+                                     stopped; then start it as usual
+
   archive user add <email> [-name n] [-admin]
   archive space add <name>
   archive space list
@@ -164,6 +170,31 @@ func cliPrintError(w io.Writer, err error) {
 	fmt.Fprintln(w, "archive:", err)
 }
 
+// cliBackup writes a backup to path, or stdout for -, and only puts a file at path once the backup
+// is whole.
+func cliBackup(ctx context.Context, path string, stdout io.Writer) error {
+	dir := coreEnv("ARCHIVE_DATA", "./data")
+	if path == "-" {
+		return Backup(ctx, dir, stdout)
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), ".partial-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	err = Backup(ctx, dir, f)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
+}
+
 func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
 	if len(args) == 0 {
 		return cliErrUsage
@@ -176,6 +207,25 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	case "version":
 		fmt.Fprintln(stdout, cliVersion)
 		return nil
+	case "backup":
+		if len(args) != 2 || args[0] != "-o" {
+			return cliErrUsage
+		}
+		return cliBackup(ctx, args[1], stdout)
+	case "restore":
+		if len(args) != 1 {
+			return cliErrUsage
+		}
+		in := stdin
+		if args[0] != "-" {
+			f, err := os.Open(args[0])
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			in = f
+		}
+		return Restore(ctx, coreEnv("ARCHIVE_DATA", "./data"), in)
 	}
 
 	fs := flag.NewFlagSet("archive "+cmd, flag.ContinueOnError)

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -216,5 +217,61 @@ func TestConcurrentPatchesOfDifferentFieldsBothLand(t *testing.T) {
 		if got.Data["email"] != email || got.Data["phone"] != phone {
 			t.Fatalf("round %d: one edit wiped the other: %v", round, got.Data)
 		}
+	}
+}
+
+// A backup taken while the archive serves restores into an empty directory with everything a
+// person would miss: records, secret values (the key travels with them), files and sign-in tokens.
+func TestBackupWhileServingRestoresRecordsSecretsFilesAndTokens(t *testing.T) {
+	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
+	srv := in.serve()
+	api := srv.url + "/api"
+	in.must("spec", "push", in.writeSpec())
+	in.must("secret", "grant", "alice@example.com", "us_ssn")
+	tok := decode[Token](t, in.must("token", "create", "-full")).Secret
+	var p e2eRecord
+	st, _ := call(t, "POST", api+"/person", tok, map[string]any{"name": "Ann", "ssn": "123-45-6789"}, &p)
+	wantStatus(t, st, 201, "create")
+	st, f := e2eUpload(t, api+"/files", tok, "note.txt", []byte("the letter from 1931"))
+	wantStatus(t, st, 201, "upload")
+	before := in.must("get", "person", p.ID, "-reveal")
+	if !strings.Contains(before, "123456789") {
+		t.Fatalf("reveal before backup: %s", before)
+	}
+
+	file := filepath.Join(t.TempDir(), "archive.tgz")
+	in.must("backup", "-o", file)
+	srv.stop()
+
+	again := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
+	if out, errs, err := again.run("", "restore", file); err != nil {
+		t.Fatalf("restore: %v\n%s%s", err, out, errs)
+	}
+	if errs := again.fails("restore", file); !strings.Contains(errs, "already holds an archive") {
+		t.Errorf("restore over an archive: %s", errs)
+	}
+	srv2 := again.serve()
+	if after := again.must("get", "person", p.ID, "-reveal"); after != before {
+		t.Errorf("after restore:\n%s\nbefore:\n%s", after, before)
+	}
+	resp, body := e2eGet(t, srv2.url+"/api/files/"+f.ID.String()+"/content", tok)
+	if resp.StatusCode != 200 || string(body) != "the letter from 1931" {
+		t.Errorf("file after restore: %d %q", resp.StatusCode, body)
+	}
+}
+
+// Every new binary is a new version to BackupBeforeUpgrade, and its snapshot carries the key.
+func TestStartingANewBinaryKeepsASnapshotWithTheKey(t *testing.T) {
+	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
+	in.must("user", "add", "alice@example.com")
+	os.WriteFile(filepath.Join(in.dir, "version"), []byte(cliVersion+"+an-older-build\n"), 0o600)
+	in.must("types")
+	snaps, _ := filepath.Glob(filepath.Join(in.dir, "backups", "*.tar.gz"))
+	if len(snaps) != 1 {
+		t.Fatalf("snapshots: %v", snaps)
+	}
+	out, err := exec.Command("tar", "-tzf", snaps[0]).Output()
+	if err != nil || !strings.Contains(string(out), "secret.key") || !strings.Contains(string(out), "pg/PG_VERSION") {
+		t.Errorf("snapshot holds:\n%s", out)
 	}
 }

@@ -72,7 +72,7 @@ func Open(ctx context.Context) (*Archive, error) {
 	dsn, stop := os.Getenv("DATABASE_URL"), func() error { return nil }
 	if dsn == "" {
 		if dsn = pgLive(dir); dsn == "" {
-			if err := BackupBeforeUpgrade(ctx, dir, cliVersion); err != nil {
+			if err := BackupBeforeUpgrade(ctx, dir, backupBuild()); err != nil {
 				return nil, fmt.Errorf("backup: %w", err)
 			}
 			if dsn, stop, err = StartPostgres(ctx, dir); err != nil {
