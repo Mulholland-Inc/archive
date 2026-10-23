@@ -380,7 +380,7 @@ func TestIntakeMapsFilesThroughAFakeOpenAIServer(t *testing.T) {
 		calls++
 		mu.Unlock()
 		content := `{"number":"INV-7","total":"€ 1.234,50","date":"03-04-2025","bsn":"111222333"}`
-		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": content}}}})
+		json.NewEncoder(w).Encode(e2eSure(content))
 	}))
 	defer llm.Close()
 	in := newInst(t, "ARCHIVE_LOCALE=nl-NL", "ARCHIVE_LLM_URL="+llm.URL+"/v1", "ARCHIVE_LLM_MODEL=fake")
@@ -438,7 +438,7 @@ func TestUnsureIntakeWaitsForReviewAndApprovesInBulk(t *testing.T) {
 				content = `{"number":"INV-20","total":"€ 20,00","date":"02-04-2025"}`
 			}
 		}
-		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": content}}}})
+		json.NewEncoder(w).Encode(e2eSure(content))
 	}))
 	defer llm.Close()
 	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=ann@example.com", "ARCHIVE_LOCALE=nl-NL", "ARCHIVE_LLM_URL="+llm.URL+"/v1", "ARCHIVE_LLM_MODEL=fake")
@@ -1170,7 +1170,7 @@ func TestSourcesSyncGmailDriveIMAPAndExternalConnectorsIntoRawAndTypes(t *testin
 			subject = []string{"", ""}
 		}
 		content, _ := json.Marshal(map[string]string{"subject": subject[1], "from": from})
-		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": string(content)}}}})
+		json.NewEncoder(w).Encode(e2eSure(string(content)))
 	}))
 	defer llm.Close()
 
@@ -1660,7 +1660,7 @@ type e2eOpenAI struct {
 func (o *e2eOpenAI) handler() http.Handler {
 	mux := http.NewServeMux()
 	reply := func(w http.ResponseWriter, content string) {
-		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": content}}}})
+		json.NewEncoder(w).Encode(e2eSure(content))
 	}
 	mux.HandleFunc("POST /v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {

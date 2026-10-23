@@ -72,7 +72,7 @@ func Open(ctx context.Context) (*Archive, error) {
 	dsn, stop := os.Getenv("DATABASE_URL"), func() error { return nil }
 	if dsn == "" {
 		if dsn = pgLive(dir); dsn == "" {
-			if err := BackupBeforeUpgrade(ctx, dir, cliVersion); err != nil {
+			if err := BackupBeforeUpgrade(ctx, dir, backupBuild()); err != nil {
 				return nil, fmt.Errorf("backup: %w", err)
 			}
 			if dsn, stop, err = StartPostgres(ctx, dir); err != nil {
@@ -133,7 +133,7 @@ func newArchive(ctx context.Context, st *pgStore, cfg IntakeConfig) (*Archive, e
 		return nil, fmt.Errorf("load spec: %w", err)
 	}
 	a := &Archive{st: st, spec: spec, hints: cfg.Hints, wake: make(chan struct{}, 1), base: strings.TrimRight(coreEnv("ARCHIVE_URL", "http://localhost:8080"), "/")}
-	a.intake = NewIntake(cfg, a.Spec, a.coreSave)
+	a.intake = NewIntake(cfg, a.Spec, a.intakeSave)
 	return a, nil
 }
 
@@ -274,6 +274,22 @@ func (a *Archive) coreSpace(ctx context.Context, name string) (uuid.UUID, error)
 	return id, err
 }
 
+// intakeSave saves what intake accepted through the same checks as any other write, references
+// included, so a model cannot store what a person could not.
+func (a *Archive) intakeSave(ctx context.Context, r *Record, data map[string]any, prov []*Provenance) error {
+	var out map[string]any
+	if err := a.as(ctx, func(ctx context.Context) (err error) {
+		out, _, err = a.coreCheck(ctx, a.Spec(), r.Type, data)
+		return err
+	}); err != nil {
+		return err
+	}
+	// in place, since coreSave seals secrets in the map it is given and intake shows the caller that
+	clear(data)
+	maps.Copy(data, out)
+	return a.coreSave(ctx, r, data, prov)
+}
+
 func (a *Archive) coreSave(ctx context.Context, r *Record, data map[string]any, prov []*Provenance) error {
 	return a.as(ctx, func(ctx context.Context) error {
 		spec := a.Spec()
@@ -329,6 +345,9 @@ func (a *Archive) coreLinks(ctx context.Context, spec *Spec, r *Record, data map
 
 func (a *Archive) Replace(ctx context.Context, typ string, id uuid.UUID, data map[string]any) (*Record, error) {
 	return coreDo(a, ctx, func(ctx context.Context) (*Record, error) {
+		if err := a.coreLock(ctx, id); err != nil {
+			return nil, err
+		}
 		r, err := a.Get(ctx, typ, id)
 		if err != nil {
 			return nil, err
@@ -337,8 +356,19 @@ func (a *Archive) Replace(ctx context.Context, typ string, id uuid.UUID, data ma
 	})
 }
 
+// coreLock holds one object until the transaction ends, so a read-merge-write such as Patch reads
+// what the last writer committed instead of overwriting it. An advisory lock rather than FOR UPDATE,
+// which a viewer may not take and would turn a clean 403 into a permission error.
+func (a *Archive) coreLock(ctx context.Context, id uuid.UUID) error {
+	_, err := a.st.Q(ctx).Exec(ctx, `SELECT pg_advisory_xact_lock(7274, hashtext($1::text))`, id)
+	return err
+}
+
 func (a *Archive) Patch(ctx context.Context, typ string, id uuid.UUID, patch map[string]any) (*Record, error) {
 	return coreDo(a, ctx, func(ctx context.Context) (*Record, error) {
+		if err := a.coreLock(ctx, id); err != nil {
+			return nil, err
+		}
 		r, err := a.Get(ctx, typ, id)
 		if err != nil {
 			return nil, err
@@ -812,6 +842,9 @@ func coreValidate(s *Spec, typ string, data map[string]any) error {
 }
 
 func (a *Archive) IntakeDir(ctx context.Context, space, dir, typ string) ([]*IntakeResult, error) {
+	if err := a.adminOnly(ctx, "reads folders on the server"); err != nil {
+		return nil, err
+	}
 	if err := coreHasType(a.Spec(), typ); err != nil {
 		return nil, err
 	}

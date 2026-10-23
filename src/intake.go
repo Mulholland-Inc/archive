@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -99,9 +100,13 @@ func (in *Intake) Ingest(ctx context.Context, raw *Raw, typ string) (*IntakeResu
 	sort.Strings(names)
 	complete, accepted := true, map[string]any{}
 	for _, name := range names {
-		value, original, score := intakeScore(samples, name)
+		value, original, score, backed := intakeScore(samples, name)
 		conf := in.calibrate(typ, name, score)
 		route := intakeRoute(conf, in.cfg.Accept, in.cfg.Review)
+		if route == "accept" && !backed && in.cal[typ+"."+name] == nil {
+			// neither token probabilities nor labels stand behind this score, so a person looks first
+			route = "review"
+		}
 		if value == nil {
 			route = "drop"
 		}
@@ -126,10 +131,22 @@ func (in *Intake) Ingest(ctx context.Context, raw *Raw, typ string) (*IntakeResu
 			}
 		}
 		rec := &Record{Type: typ, SpecVersion: spec.Version, Space: raw.Space}
-		if err := in.save(ctx, rec, accepted, prov); err != nil {
+		var ve *ValidationError
+		switch err := in.save(ctx, rec, accepted, prov); {
+		case errors.As(err, &ve):
+			// the record as a whole fails a check no single field shows, such as a reference to an
+			// object that does not exist: nothing is saved and a person decides
+			saved = false
+			for i := range res.Fields {
+				if res.Fields[i].Route == "accept" {
+					res.Fields[i].Route = "review"
+				}
+			}
+		case err != nil:
 			return nil, err
+		default:
+			res.RecordID = rec.ID
 		}
-		res.RecordID = rec.ID
 	}
 	for i, f := range res.Fields {
 		if spec.secretField(typ, f.Path) {
@@ -361,6 +378,24 @@ func intakeValidate(spec *Spec, typ string, c *intakeCompletion, h Hints) intake
 	} else if err != nil {
 		return s
 	}
+	if len(bad) > 0 {
+		// one bad field voids Normalize's whole result, so the good ones are normalized one by one
+		// rather than kept as the model wrote them
+		out, originals = map[string]any{}, map[string]string{}
+		fields, _ := spec.Fields(typ)
+		for k, raw := range in {
+			if f := fields[k]; f != nil && !bad[k] {
+				if nv, err := spec.NormalizeField(f, raw, h); err != nil {
+					bad[k] = true
+				} else {
+					out[k] = nv
+					if !reflect.DeepEqual(raw, nv) {
+						originals[k] = specString(raw)
+					}
+				}
+			}
+		}
+	}
 	for k, raw := range in {
 		v := intakeValue{Value: raw, Valid: !bad[k]}
 		if nv, ok := out[k]; ok && v.Valid {
@@ -375,9 +410,13 @@ func intakeValidate(spec *Spec, typ string, c *intakeCompletion, h Hints) intake
 	return s
 }
 
-func intakeScore(samples []intakeSample, field string) (value any, original string, score float64) {
+// intakeScore picks the value most samples agree on and scores it by agreement, validity and the
+// model's own token probabilities. backed says whether those probabilities were there: without
+// them (Ollama and other servers that ignore logprobs) agreement alone can reach 1.0, which says
+// nothing about a value the model gets wrong the same way every time.
+func intakeScore(samples []intakeSample, field string) (value any, original string, score float64, backed bool) {
 	if len(samples) == 0 {
-		return nil, "", 0
+		return nil, "", 0, false
 	}
 	type group struct {
 		v        intakeValue
@@ -411,14 +450,14 @@ func intakeScore(samples []intakeSample, field string) (value any, original stri
 		}
 	}
 	if best == nil {
-		return nil, "", 0
+		return nil, "", 0, false
 	}
 	lp := 1.0
 	if best.lpN > 0 {
 		lp = math.Exp(best.lpSum / float64(best.lpN))
 	}
 	score = float64(best.n) / float64(len(samples)) * float64(best.valid) / float64(best.n) * lp
-	return best.v.Value, best.v.Original, score
+	return best.v.Value, best.v.Original, score, best.lpN > 0
 }
 
 type intakeLabel struct {
