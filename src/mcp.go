@@ -47,6 +47,12 @@ type mcpIDInput struct {
 	ID   string `json:"id" jsonschema:"object id (uuid)"`
 }
 
+type mcpCiteInput struct {
+	Type      string     `json:"type" jsonschema:"type of the object, or one of its parent types"`
+	ID        string     `json:"id" jsonschema:"object id (uuid)"`
+	Citations []Citation `json:"citations" jsonschema:"one per field and source"`
+}
+
 type mcpRestrictInput struct {
 	Type       string `json:"type" jsonschema:"type of the object, or one of its parent types"`
 	ID         string `json:"id" jsonschema:"object id (uuid)"`
@@ -171,6 +177,14 @@ func mcpServer(a *Archive) *mcp.Server {
 				return nil, err
 			}
 			return map[string]string{"deleted": id.String()}, a.Delete(ctx, in.Type, id)
+		})
+	mcpTool(s, "cite", "Record the evidence for an object's fields: for each, the field, the id of the record it comes from (a register, letter, certificate), the words as written there and the page. Needs editor in the object's space and a source the user can read. Returns the object's provenance.",
+		func(ctx context.Context, in mcpCiteInput) (any, error) {
+			id, err := uuid.Parse(in.ID)
+			if err != nil {
+				return nil, err
+			}
+			return a.Cite(ctx, in.Type, id, in.Citations)
 		})
 	mcpTool(s, "restrict", "Hide an object from everyone in its space but the space's admins and owners and the person who made it (restricted true), or open it again (false). Only an admin of the space may; use it for what is private, such as people who may be living.",
 		func(ctx context.Context, in mcpRestrictInput) (any, error) {

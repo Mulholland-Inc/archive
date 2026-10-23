@@ -991,6 +991,20 @@ func httpHandler(a *Archive) http.Handler {
 		}
 		return a.Restrict(ctx, typ, id, *body.Restricted)
 	}))
+	handle("POST /api/{type}/{id}/provenance", func(r *http.Request) (int, any, error) {
+		id, err := httpID(r)
+		if err != nil {
+			return 0, nil, err
+		}
+		var body struct {
+			Citations []Citation `json:"citations"`
+		}
+		if err := httpDecode(r, &body); err != nil {
+			return 0, nil, err
+		}
+		ps, err := a.Cite(r.Context(), r.PathValue("type"), id, body.Citations)
+		return http.StatusCreated, ps, err
+	})
 	handle("GET /api/{type}/{id}/provenance", object(func(ctx context.Context, typ string, id uuid.UUID, _ *http.Request) (any, error) {
 		return a.Provenance(ctx, typ, id)
 	}))
