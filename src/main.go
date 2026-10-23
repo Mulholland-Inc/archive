@@ -696,10 +696,12 @@ func cliServe(ctx context.Context, a *Archive, addr string) error {
 	mux.Handle("/api/files/tus/", tus)
 	mux.HandleFunc("GET /files/{id}", a.fileSigned)
 	mux.Handle("/auth/", si.handler())
+	si.oauthRoutes(mux)
 	mux.Handle("/", webHandler())
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	srv := mcpServer(a)
-	mux.Handle("/mcp", auth.RequireBearerToken(a.mcpVerify, &auth.RequireBearerTokenOptions{AllowMissingExpiration: true})(
+	mux.Handle("/mcp", auth.RequireBearerToken(a.mcpVerify, &auth.RequireBearerTokenOptions{AllowMissingExpiration: true,
+		ResourceMetadataURL: a.base + "/.well-known/oauth-protected-resource/mcp"})(
 		mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)))
 	hs := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	errc := make(chan error, 1)

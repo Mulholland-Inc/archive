@@ -202,6 +202,30 @@ CREATE TABLE IF NOT EXISTS proposals (
 CREATE INDEX IF NOT EXISTS proposals_status_idx ON proposals (status, id);
 CREATE INDEX IF NOT EXISTS proposals_space_idx ON proposals (space);
 
+-- OAuth clients (registered by themselves, public, no secret), the short-lived codes of the
+-- authorization flow, and each grant's refresh token beside the API token it refreshes. Read and
+-- written through the system pool only, like invites.
+CREATE TABLE IF NOT EXISTS oauth_clients (
+    id            text PRIMARY KEY,
+    name          text NOT NULL,
+    redirect_uris text[] NOT NULL,
+    created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS oauth_codes (
+    hash         text PRIMARY KEY,
+    client_id    text NOT NULL REFERENCES oauth_clients ON DELETE CASCADE,
+    user_id      uuid NOT NULL REFERENCES users ON DELETE CASCADE,
+    redirect_uri text NOT NULL,
+    challenge    text NOT NULL,
+    expires_at   timestamptz NOT NULL
+);
+CREATE TABLE IF NOT EXISTS oauth_grants (
+    token_id     uuid PRIMARY KEY REFERENCES tokens ON DELETE CASCADE,
+    client_id    text NOT NULL REFERENCES oauth_clients ON DELETE CASCADE,
+    refresh_hash text NOT NULL UNIQUE,
+    created_at   timestamptz NOT NULL DEFAULT now()
+);
+
 -- An invite into a space for someone who may have no account yet. Only its hash is kept; it is read
 -- and used through the system pool, never by user roles, so it needs no policy of its own.
 CREATE TABLE IF NOT EXISTS invites (
