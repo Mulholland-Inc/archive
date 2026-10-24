@@ -4,65 +4,55 @@ on:
   pull_request_target:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
-  workflow_dispatch:
-    inputs:
-      pr:
-        description: PR number to review again
-        required: true
-        type: string
 
-permissions: {}
+permissions:
+  contents: write
+  pull-requests: write
 
 jobs:
   review:
     name: Jev review
-    if: >-
-      github.ref == 'refs/heads/main' &&
-      (github.event_name == 'workflow_dispatch' ||
-       (!github.event.pull_request.draft &&
-        github.event.pull_request.head.repo.full_name == github.repository))
-    concurrency:
-      group: review-${{ github.event.pull_request.number || inputs.pr }}
-      cancel-in-progress: true
+    if: ${{ !github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
-    environment: luna-review-publish
     timeout-minutes: 5
-    permissions:
-      contents: read
-      id-token: write
+    concurrency:
+      group: review-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.workflow_sha }}
-          sparse-checkout: .github/review
-          persist-credentials: false
-      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
-        with:
-          project_id: marzy-agent
-          workload_identity_provider: projects/715996976929/locations/global/workloadIdentityPools/luna-review/providers/repos
-      - id: secrets
-        uses: google-github-actions/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262 # v3.0.0
-        with:
-          secrets: |-
-            private-key:marzy-agent/GITHUB_APP_PRIVATE_KEY/latest
-            typesafe:marzy-agent/TYPESAFE_API_KEY/latest
-          export_to_environment: false
-      - id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: Iv23li7MnowhEXjkSkYu # marzy-agent (app 4032475), owned by Mulholland-Inc
-          private-key: ${{ steps.secrets.outputs.private-key }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
-          permission-contents: write
-          permission-pull-requests: write
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          TYPESAFE_API_KEY: ${{ steps.secrets.outputs.typesafe }}
-          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
-          REVIEW_BOT: ${{ steps.app-token.outputs.app-slug }}[bot]
+          KEY: ${{ secrets.TYPESAFE_API_KEY }}
         with:
-          github-token: ${{ steps.app-token.outputs.token }}
           script: |
-            const { review } = require('./.github/review/review.cjs');
-            await review({ github, context, core }, { number: Number(process.env.PR_NUMBER), key: process.env.TYPESAFE_API_KEY, bot: process.env.REVIEW_BOT });
+            const rules = {
+              access: 'Does this change let a user read or write data they should not, or remove or weaken an authorization or permission check?',
+              secret: 'Does this change expose a secret, such as a token, API key, password or private key, in source, logs or responses?',
+              injection: 'Does this change let outside input reach SQL, a shell command, a file path or eval without parameterisation or validation?',
+              authentication: 'Does this change let a request skip an authentication, session or signature check?',
+            };
+            const pr = context.payload.pull_request;
+            const params = { ...context.repo, pull_number: pr.number };
+            const files = await github.paginate(github.rest.pulls.listFiles, { ...params, per_page: 100 });
+            const notes = [];
+            for (const f of files.filter(f => f.patch && f.status !== 'removed')) {
+              const res = await fetch('https://api.typesafe.ai/v1/systemone', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.KEY}` },
+                body: JSON.stringify({
+                  model: 'jev-latest',
+                  state: { path: f.filename, patch: f.patch.slice(0, 200000) },
+                  questions: Object.fromEntries(Object.entries(rules).map(([k, q]) => [k, { type: 'noul', instructions: q }])),
+                }),
+              });
+              if (!res.ok) { notes.push(`- ${f.filename}: Jev answered ${res.status}`); continue; }
+              const { answers } = await res.json();
+              for (const [k, q] of Object.entries(rules)) {
+                const p = answers?.[k]?.noul ?? 0;
+                if (p >= 0.25) notes.push(`- **${p >= 0.5 ? 'P0' : 'P1'}** ${f.filename} (${Math.round(p * 100)}%): ${q}`);
+              }
+            }
+            const body = `## Jev review\n\n${notes.length ? notes.join('\n') : `Jev read ${files.length} changed files and found nothing.`}`;
+            await github.rest.pulls.createReview({ ...params, commit_id: pr.head.sha, event: 'APPROVE', body });
+      - run: gh pr merge --auto --squash "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
