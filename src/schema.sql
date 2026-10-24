@@ -211,6 +211,9 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
     redirect_uris text[] NOT NULL,
     created_at    timestamptz NOT NULL DEFAULT now()
 );
+-- a confidential client keeps the hash of its secret and says how it sends it (RFC 7591)
+ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS secret_hash text;
+ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS auth_method text NOT NULL DEFAULT 'none';
 CREATE TABLE IF NOT EXISTS oauth_codes (
     hash         text PRIMARY KEY,
     client_id    text NOT NULL REFERENCES oauth_clients ON DELETE CASCADE,

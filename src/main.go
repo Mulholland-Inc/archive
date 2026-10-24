@@ -231,6 +231,27 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 		return Restore(ctx, coreEnv("ARCHIVE_DATA", "./data"), in)
 	}
 
+	// a module's own command runs as the first owner on the opened archive, its types in place;
+	// it reads its own flags
+	if run := moduleCommand(cmd); run != nil {
+		a, err := Open(ctx)
+		if err != nil {
+			return err
+		}
+		defer a.Close()
+		if err := a.applyPacks(ctx); err != nil {
+			return err
+		}
+		ac, err := a.CLIActor(ctx, "")
+		if err != nil {
+			return err
+		}
+		if ac == nil {
+			return errors.New("no users yet: create the first owner with archive user add <email>")
+		}
+		return run(WithActor(ctx, ac), a, args)
+	}
+
 	fs := flag.NewFlagSet("archive "+cmd, flag.ContinueOnError)
 	fs.Usage = func() { fmt.Fprint(fs.Output(), cliUsage) }
 	addr := fs.String("addr", ":8080", "listen address (serve)")
@@ -709,6 +730,7 @@ func cliServe(ctx context.Context, a *Archive, addr string) error {
 	mux.Handle("/", webHandler())
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	srv := mcpServer(a)
+	mux.HandleFunc("GET /llms.txt", a.llmsHandler(srv))
 	mux.Handle("/mcp", auth.RequireBearerToken(a.mcpVerify, &auth.RequireBearerTokenOptions{AllowMissingExpiration: true,
 		ResourceMetadataURL: a.base + "/.well-known/oauth-protected-resource/mcp"})(
 		mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)))

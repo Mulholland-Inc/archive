@@ -5,10 +5,12 @@ package main
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/Mulholland-Inc/archive"
@@ -60,8 +62,22 @@ func main() {
 				archive.WriteJSON(w, http.StatusOK, map[string]string{"email": archive.ActorFrom(r.Context()).Email}, nil)
 			})))
 		},
-		App: &archive.App{Path: "/toy", Title: "Toy", Icon: "box", Files: pages},
-		Brand: &archive.Brand{Name: "Toy Archive", Logo: `<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"/></svg>`,
+		Commands: map[string]func(context.Context, *archive.Archive, []string) error{
+			// grants from another server, as JSON on stdin, the way a product moving its users brings them
+			"import-grants": func(ctx context.Context, a *archive.Archive, _ []string) error {
+				var gs []archive.OAuthImport
+				if err := json.NewDecoder(os.Stdin).Decode(&gs); err != nil {
+					return err
+				}
+				res, err := a.ImportOAuth(ctx, gs)
+				if err == nil {
+					fmt.Println("imported", res.Imported)
+				}
+				return err
+			},
+		},
+		App: &archive.App{Path: "/toy", Title: "Toy", Icon: "box", Files: pages, Front: true},
+		Brand: &archive.Brand{Name: "Toy Archive", About: "A toy archive, for the engine's tests.", Logo: `<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"/></svg>`,
 			Icon: []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5"/></svg>`),
 			CSS:  []byte(":root { --brand: rgb(1, 2, 3); }\n@font-face { font-family: Toy; src: url(/brand/toy.woff2); }\n"), Files: fonts},
 	})

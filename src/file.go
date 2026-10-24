@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"mime"
 	"net/http"
 	"os"
@@ -38,6 +39,45 @@ type File struct {
 	Owner     string         `json:"-"`
 	Space     uuid.UUID      `json:"space"`
 	CreatedAt time.Time      `json:"created_at"`
+	// located: where the file was made (metadata's personal) was taken out for the person asking,
+	// so its bytes go to them without it too
+	located bool
+}
+
+// fileWithoutPlace takes where a file was made, a photo's GPS, out of what the person asking sees,
+// unless they sent it or are an admin of its space: a photo shows the family who is in it, and
+// where someone lives is theirs and the approvers' to know. Its bytes are served without it too.
+func (a *Archive) fileWithoutPlace(ctx context.Context, fs ...*File) {
+	ac := ActorFrom(ctx)
+	admin := map[uuid.UUID]bool{}
+	for _, f := range fs {
+		if f == nil {
+			continue
+		}
+		if _, ok := f.Metadata["personal"]; !ok {
+			continue
+		}
+		if ac != nil && (f.Owner == ac.Role || f.Owner == ac.UserRole) {
+			continue
+		}
+		if ac != nil {
+			ok, seen := admin[f.Space]
+			if !seen {
+				var base string
+				a.sys(ctx, func(ctx context.Context) error {
+					return a.st.Q(ctx).QueryRow(ctx, `SELECT role FROM spaces WHERE id = $1`, f.Space).Scan(&base)
+				})
+				ok = base != "" && a.has(ctx, ac.UserRole, base+"_admin")
+				admin[f.Space] = ok
+			}
+			if ok {
+				continue
+			}
+		}
+		m := maps.Clone(f.Metadata)
+		delete(m, "personal")
+		f.Metadata, f.located = m, true
+	}
 }
 
 const (
@@ -157,6 +197,7 @@ func (a *Archive) Files(ctx context.Context, space string, limit int, after uuid
 		if fs == nil {
 			fs = []*File{}
 		}
+		a.fileWithoutPlace(ctx, fs...)
 		return fs, err
 	})
 }
@@ -167,6 +208,7 @@ func (a *Archive) GetFile(ctx context.Context, id uuid.UUID) (*File, error) {
 		if errors.Is(err, ErrNotFound) {
 			return nil, fmt.Errorf("file %s: %w", id, ErrNotFound)
 		}
+		a.fileWithoutPlace(ctx, f)
 		return f, err
 	})
 }
@@ -277,7 +319,7 @@ func (a *Archive) fileServe(w http.ResponseWriter, r *http.Request, f *File, str
 	defer rc.Close()
 	var content io.ReadSeeker = rc
 	etag := `"` + f.Hash + `"`
-	if _, gps := f.Metadata["personal"]; strip && gps {
+	if _, gps := f.Metadata["personal"]; f.located || strip && gps {
 		b, err := io.ReadAll(rc)
 		if err != nil {
 			httpWrite(w, 0, nil, err)
@@ -447,7 +489,13 @@ type tusUpload struct {
 	Intake string    `json:"intake"`
 	Space  uuid.UUID `json:"space"`
 	Role   string    `json:"role"`
+	// File is the file a finished upload became: kept a week, so a client whose last answer was
+	// lost (a phone in a lift) asks again and finds it, rather than sending it all again
+	File string `json:"file,omitempty"`
 }
+
+// tusKept is how long an upload waits untouched, finished or not, before it is let go.
+const tusKept = 7 * 24 * time.Hour
 
 func tusMetadata(s string) map[string]string {
 	out := map[string]string{}
@@ -546,8 +594,32 @@ func (a *Archive) tusUpload(w http.ResponseWriter, r *http.Request, id string) {
 	if err == nil {
 		err = json.Unmarshal(b, &up)
 	}
-	st, serr := os.Stat(path)
-	if err != nil || serr != nil || up.Role != ActorFrom(r.Context()).Role {
+	if err != nil || up.Role != ActorFrom(r.Context()).Role {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	if up.File != "" {
+		switch r.Method {
+		case http.MethodDelete:
+			os.Remove(path + ".json")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		case http.MethodPatch:
+			if r.Header.Get("Upload-Offset") != strconv.FormatInt(up.Length, 10) {
+				h.Set("Upload-Offset", strconv.FormatInt(up.Length, 10))
+				w.WriteHeader(http.StatusConflict)
+				return
+			}
+		}
+		h.Set("Upload-Offset", strconv.FormatInt(up.Length, 10))
+		h.Set("Upload-Length", strconv.FormatInt(up.Length, 10))
+		h.Set("Archive-File-Id", up.File)
+		h.Set("Cache-Control", "no-store")
+		w.WriteHeader(map[bool]int{true: http.StatusOK, false: http.StatusNoContent}[r.Method == http.MethodHead])
+		return
+	}
+	st, err := os.Stat(path)
+	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
@@ -583,6 +655,8 @@ func (a *Archive) tusUpload(w http.ResponseWriter, r *http.Request, id string) {
 			cerr = err
 		}
 		off += n
+		now := time.Now()
+		os.Chtimes(path+".json", now, now) // a slow upload is not an abandoned one
 		h.Set("Upload-Offset", strconv.FormatInt(off, 10))
 		if cerr != nil {
 			httpWrite(w, 0, nil, cerr)
@@ -607,7 +681,25 @@ func (a *Archive) tusFinish(ctx context.Context, id string, up *tusUpload) (*Fil
 		return nil, err
 	}
 	os.Remove(path)
-	os.Remove(path + ".json")
-	a.tusLocks.Delete(id)
+	up.File = f.ID.String()
+	if err := a.tusSave(id, up); err != nil {
+		return nil, err
+	}
 	return f, nil
+}
+
+// tusSweep lets go of uploads nobody has touched for tusKept: the half-sent, and the record of
+// the finished.
+func (a *Archive) tusSweep() {
+	es, _ := os.ReadDir(a.uploads)
+	for _, e := range es {
+		id := strings.TrimSuffix(e.Name(), ".json")
+		if _, err := uuid.Parse(id); err != nil {
+			continue
+		}
+		if i, err := e.Info(); err == nil && time.Since(i.ModTime()) > tusKept {
+			os.Remove(filepath.Join(a.uploads, e.Name()))
+			a.tusLocks.Delete(id)
+		}
+	}
 }

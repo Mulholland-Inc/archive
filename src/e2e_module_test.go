@@ -1,8 +1,10 @@
 package archive
 
 import (
+	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -97,6 +99,102 @@ func TestAModuleAddsTypesConnectorsToolsRoutesAndPages(t *testing.T) {
 			resp.Body.Close()
 			if resp.StatusCode != want || want == 200 && !strings.Contains(string(b), "The toy module's page") {
 				t.Errorf("%s: %d", path, resp.StatusCode)
+			}
+		}
+	})
+
+	t.Run("ItsCommandImportsGrantsAndTheirClientsRefreshAsBefore", func(t *testing.T) {
+		hash := func(s string) string { return authHash(s) }
+		grants := fmt.Sprintf(`[
+		  {"client_id": "elsewhere-public", "client_name": "An assistant", "redirect_uris": ["https://example.com/cb"], "email": "alice@example.com", "refresh_hash": %q},
+		  {"client_id": "elsewhere-secret", "client_name": "A server", "redirect_uris": ["https://example.com/cb"], "auth_method": "client_secret_basic", "secret_hash": %q, "email": "alice@example.com", "refresh_hash": %q},
+		  {"client_id": "elsewhere-public", "client_name": "Nobody here", "redirect_uris": ["https://example.com/cb"], "email": "nobody@example.com", "refresh_hash": %q}]`,
+			hash("refresh-1"), hash("the-secret"), hash("refresh-2"), hash("refresh-3"))
+		out, errs, err := in.run(grants, "import-grants")
+		if err != nil || strings.TrimSpace(out) != "imported 2" {
+			t.Fatalf("import-grants: %v %q %s", err, out, errs)
+		}
+		if out, _, _ := in.run(grants, "import-grants"); strings.TrimSpace(out) != "imported 0" {
+			t.Errorf("importing again: %q", out)
+		}
+		refresh := func(client, secret, token string) int {
+			form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {token}}
+			if secret == "" {
+				form.Set("client_id", client)
+			}
+			req, _ := http.NewRequest("POST", srv.url+"/oauth/token", strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			if secret != "" {
+				req.SetBasicAuth(client, secret)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			return resp.StatusCode
+		}
+		for _, c := range []struct {
+			client, secret, token string
+			want                  int
+		}{
+			{"elsewhere-public", "", "refresh-1", 200},
+			{"elsewhere-secret", "", "refresh-2", 401},
+			{"elsewhere-secret", "wrong", "refresh-2", 401},
+			{"elsewhere-secret", "the-secret", "refresh-2", 200},
+			{"elsewhere-public", "", "refresh-3", 400},
+		} {
+			if st := refresh(c.client, c.secret, c.token); st != c.want {
+				t.Errorf("refresh %s with secret %q: %d, want %d", c.client, c.secret, st, c.want)
+			}
+		}
+	})
+
+	t.Run("ItsPageIsTheFrontDoor", func(t *testing.T) {
+		// a visitor not signed in sees the app's own page at /; someone signed in is sent into the app
+		noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		resp, err := noRedirect.Get(srv.url + "/")
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 || !strings.Contains(string(b), "The toy module's page") {
+			t.Errorf("/ for a visitor: %d %s", resp.StatusCode, b)
+		}
+		req, _ := http.NewRequest("GET", srv.url+"/", nil)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		resp, err = noRedirect.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 303 || resp.Header.Get("Location") != "/toy/" {
+			t.Errorf("/ for a member: %d %q", resp.StatusCode, resp.Header.Get("Location"))
+		}
+		// the dashboard's other pages are where they were
+		resp, _ = http.Get(srv.url + "/records")
+		b, _ = io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if strings.Contains(string(b), "The toy module's page") {
+			t.Errorf("the dashboard's /records is the toy's page")
+		}
+	})
+
+	t.Run("LlmsTxtSaysHowAnAgentConnectsAndEveryToolThereIs", func(t *testing.T) {
+		resp, err := http.Get(srv.url + "/llms.txt")
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		txt := string(b)
+		if resp.StatusCode != 200 || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/plain") {
+			t.Fatalf("llms.txt: %d %s", resp.StatusCode, resp.Header.Get("Content-Type"))
+		}
+		for _, want := range []string{"# Toy Archive", "> A toy archive, for the engine's tests.", "/mcp, over Streamable HTTP", "/.well-known/oauth-authorization-server", "An access token lasts an hour;", "- `describe`: Describe the ontology", "- `toy_whoami`: ", "- `query`: "} {
+			if !strings.Contains(txt, want) {
+				t.Errorf("llms.txt lacks %q:\n%s", want, txt)
 			}
 		}
 	})

@@ -64,8 +64,13 @@ func (a *Archive) fileLoop(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
+	swept := time.Time{}
 	for {
 		for a.fileNext(ctx) {
+		}
+		if time.Since(swept) > time.Hour {
+			a.tusSweep()
+			swept = time.Now()
 		}
 		select {
 		case <-ctx.Done():

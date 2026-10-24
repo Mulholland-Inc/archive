@@ -313,6 +313,10 @@ func mcpTool[In any](s *mcp.Server, name, desc string, f func(context.Context, I
 				ctx = WithActor(ctx, ac)
 			}
 			out, err := f(ctx, in)
+			if s, ok := out.(string); ok && err == nil {
+				// words, for a client to read as they are
+				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: s}}}, nil, nil
+			}
 			var ve *ValidationError
 			if errors.As(err, &ve) {
 				b, _ := json.Marshal(ve)

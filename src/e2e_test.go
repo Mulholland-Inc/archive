@@ -1775,8 +1775,16 @@ func TestFilesUploadProcessShareAndIntake(t *testing.T) {
 		if resp.StatusCode != 204 || resp.Header.Get("Upload-Offset") != strconv.Itoa(len(big)) || resp.Header.Get("Archive-File-Id") == "" {
 			t.Fatalf("resume: %d %v", resp.StatusCode, resp.Header)
 		}
-		if st, _ := offset(aliceTok); st != 404 {
-			t.Errorf("finished upload still answers HEAD: %d", st)
+		// asked again, as a client whose last answer was lost asks, it says what it became
+		id := resp.Header.Get("Archive-File-Id")
+		if again, _ := e2eTus(t, "HEAD", loc, aliceTok, nil, 0); again.StatusCode != 200 || again.Header.Get("Upload-Offset") != strconv.Itoa(len(big)) || again.Header.Get("Archive-File-Id") != id {
+			t.Errorf("finished upload, asked again: %d %v, want file %s", again.StatusCode, again.Header, id)
+		}
+		if again, _ := e2eTus(t, "PATCH", loc, aliceTok, bytes.NewReader(nil), 0, "Content-Type", "application/offset+octet-stream", "Upload-Offset", strconv.Itoa(len(big))); again.StatusCode != 204 || again.Header.Get("Archive-File-Id") != id {
+			t.Errorf("the last piece sent again: %d %v", again.StatusCode, again.Header)
+		}
+		if st, _ := offset(bobTok); st != 404 {
+			t.Errorf("bob reads alice's finished upload: %d", st)
 		}
 		bigFile = e2eWaitFile(t, api, aliceTok, resp.Header.Get("Archive-File-Id"))
 		_, body := e2eGet(t, api+"/files/"+bigFile.ID.String()+"/content", aliceTok)
@@ -1819,8 +1827,12 @@ func TestFilesUploadProcessShareAndIntake(t *testing.T) {
 		if n := in.psql("archive", "SELECT count(*) FROM files WHERE hash = '"+bigFile.Hash+"'"); n != "3" || len(blobs) != 1 {
 			t.Errorf("%s file rows, %d blobs", n, len(blobs))
 		}
-		if leftovers, _ := os.ReadDir(filepath.Join(in.dir, "uploads")); len(leftovers) != 0 {
-			t.Errorf("uploads left behind: %d", len(leftovers))
+		// what is left is the record of each finished upload, never its bytes
+		leftovers, _ := os.ReadDir(filepath.Join(in.dir, "uploads"))
+		for _, e := range leftovers {
+			if !strings.HasSuffix(e.Name(), ".json") {
+				t.Errorf("upload left behind: %s", e.Name())
+			}
 		}
 	})
 
@@ -1963,6 +1975,30 @@ func TestFilesUploadProcessShareAndIntake(t *testing.T) {
 		}
 		if string(speech) != "Hello from the voice memo" || strings.Join(ai.audio, ",") != fmt.Sprintf("whisper-fake:memo.wav:%d", len(wav)) {
 			t.Errorf("transcription %q, calls %v", speech, ai.audio)
+		}
+	})
+
+	t.Run("WhereAPhotoWasTakenIsTheSendersAndTheSpaceAdminsAlone", func(t *testing.T) {
+		in.must("space", "add", "shared")
+		in.must("user", "add", "carol@example.com")
+		in.must("space", "grant", "shared", "bob@example.com", "editor")
+		in.must("space", "grant", "shared", "carol@example.com", "admin")
+		carolTok := decode[Token](t, in.must("-as", "carol@example.com", "token", "create")).Secret
+		// tokens made now, which cover the space made just now
+		aliceTok := decode[Token](t, in.must("token", "create")).Secret
+		bobTok := decode[Token](t, in.must("-as", "bob@example.com", "token", "create")).Secret
+		st, f := e2eUpload(t, api+"/files?space=shared", aliceTok, "photo.jpg", photo)
+		wantStatus(t, st, 201, "upload a photo to a shared space")
+		e2eWaitFile(t, api, aliceTok, f.ID.String())
+		for who, tok := range map[string]string{"alice, who sent it": aliceTok, "carol, the space's admin": carolTok, "bob, a member": bobTok} {
+			var got File
+			call(t, "GET", api+"/files/"+f.ID.String(), tok, nil, &got)
+			_, body := e2eGet(t, api+"/files/"+f.ID.String()+"/content", tok)
+			_, sees := got.Metadata["personal"]
+			wants := who != "bob, a member"
+			if sees != wants || bytes.Contains(body, e2eLatitude) != wants || got.Metadata["camera"] != "Canon EOS" {
+				t.Errorf("%s: sees where it was taken %v in its details, %v in its bytes; want %v", who, sees, bytes.Contains(body, e2eLatitude), wants)
+			}
 		}
 	})
 }

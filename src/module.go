@@ -37,6 +37,19 @@ type Module struct {
 	// Brand dresses the dashboard as the product: its name, logo, colours and type. One module
 	// at most brings one; without it the dashboard looks as the engine's own.
 	Brand *Brand
+	// Commands adds commands to the binary, by name: each runs as the first owner on the opened
+	// archive, with every module's types applied, and reads its own arguments.
+	Commands map[string]func(ctx context.Context, a *Archive, args []string) error
+}
+
+// moduleCommand is a module's command of this name, or nil.
+func moduleCommand(name string) func(context.Context, *Archive, []string) error {
+	for _, m := range registered() {
+		if run := m.Commands[name]; run != nil {
+			return run
+		}
+	}
+	return nil
 }
 
 // Brand is how a product built on the engine looks. CSS is loaded after the dashboard's own
@@ -45,7 +58,9 @@ type Module struct {
 // Files holds what it refers to, such as fonts, served under /brand/. Logo is an SVG drawn where
 // the dashboard draws its mark, in the colour around it; Icon is the browser tab's SVG.
 type Brand struct {
-	Name  string
+	Name string
+	// About says in a sentence what the product is, for an agent reading /llms.txt.
+	About string
 	Logo  string
 	Icon  []byte
 	CSS   []byte
@@ -84,6 +99,9 @@ type App struct {
 	Title string
 	Icon  string
 	Files fs.FS
+	// Front makes the app's own page the front door: a visitor who is not signed in sees it at /,
+	// and someone signed in is sent into the app. One module at most sets it.
+	Front bool
 }
 
 var (
@@ -198,7 +216,18 @@ func (a *Archive) moduleRoutes(mux *http.ServeMux) {
 		}
 		if m.App != nil {
 			p := strings.TrimRight(m.App.Path, "/")
-			mux.Handle(p+"/", http.StripPrefix(p, appFiles(m.App.Files)))
+			files := appFiles(m.App.Files)
+			mux.Handle(p+"/", http.StripPrefix(p, files))
+			if m.App.Front {
+				mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+					if _, err := a.httpActor(r); err == nil {
+						http.Redirect(w, r, p+"/", http.StatusSeeOther)
+						return
+					}
+					w.Header().Set("Cache-Control", "no-store")
+					files.ServeHTTP(w, r)
+				})
+			}
 			apps = append(apps, map[string]string{"path": p + "/", "title": m.App.Title, "icon": m.App.Icon})
 		}
 	}
