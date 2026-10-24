@@ -19,7 +19,7 @@ func (a *Archive) llmsHandler(srv *mcp.Server) http.HandlerFunc {
 	var once sync.Once
 	var txt string
 	return func(w http.ResponseWriter, r *http.Request) {
-		once.Do(func() { txt = a.llms(r.Context(), srv) })
+		once.Do(func() { txt = a.llms(context.WithoutCancel(r.Context()), srv) }) // the first ask going away keeps nothing short
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Write([]byte(txt))
 	}

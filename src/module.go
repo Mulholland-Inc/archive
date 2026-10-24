@@ -28,9 +28,9 @@ type Module struct {
 	Types map[string]SemanticType
 	// Connectors are source kinds by name, added like gmail or imap.
 	Connectors map[string]Connector
-	// Tools adds MCP tools; Tool registers one that runs as the caller.
+	// Tools adds MCP tools; the package's Tool function registers one that runs as the caller.
 	Tools func(s *mcp.Server, a *Archive)
-	// Routes adds HTTP routes; Authed wraps one that needs a signed-in caller.
+	// Routes adds HTTP routes; Archive.Authed wraps one that needs a signed-in caller.
 	Routes func(mux *http.ServeMux, a *Archive)
 	// App is a set of web pages the dashboard links to from its sidebar.
 	App *App

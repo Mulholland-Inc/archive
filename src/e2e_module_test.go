@@ -150,6 +150,33 @@ func TestAModuleAddsTypesConnectorsToolsRoutesAndPages(t *testing.T) {
 		}
 	})
 
+	t.Run("AGuardedTypeIsWrittenByTheModuleOrAnAdminOnly", func(t *testing.T) {
+		in.must("space", "add", "shared")
+		in.must("user", "add", "bob@example.com")
+		in.must("space", "grant", "shared", "bob@example.com", "editor")
+		bob := decode[Token](t, in.must("-as", "bob@example.com", "token", "create")).Secret
+		alice := decode[Token](t, in.must("token", "create", "-full")).Secret
+		var v e2eRecord
+		if st, _ := call(t, "POST", api+"/vow?space=shared", bob, map[string]any{"text": "mine"}, &v); st != 403 {
+			t.Errorf("an editor writes a guarded type through the API: %d", st)
+		}
+		if out, isErr := mcpCall(t, srv.url, bob, "upsert", map[string]any{"type": "vow", "space": "shared", "data": map[string]any{"text": "mine"}}); !isErr {
+			t.Errorf("an editor writes a guarded type through MCP: %s", out)
+		}
+		if st, _ := call(t, "POST", api+"/toy/vow?space=shared", bob, nil, &v); st != 201 {
+			t.Fatalf("the module writes it as the editor: %d", st)
+		}
+		if st, _ := call(t, "PATCH", api+"/vow/"+v.ID, bob, map[string]any{"text": "changed"}, nil); st != 403 {
+			t.Errorf("an editor changes a guarded record through the API: %d", st)
+		}
+		if st, _ := call(t, "DELETE", api+"/vow/"+v.ID, bob, nil, nil); st != 403 {
+			t.Errorf("an editor deletes a guarded record through the API: %d", st)
+		}
+		if st, _ := call(t, "PATCH", api+"/vow/"+v.ID, alice, map[string]any{"text": "changed"}, nil); st != 200 {
+			t.Errorf("the space's admin changes it through the API: %d", st)
+		}
+	})
+
 	t.Run("ItsPageIsTheFrontDoor", func(t *testing.T) {
 		// a visitor not signed in sees the app's own page at /; someone signed in is sent into the app
 		noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}

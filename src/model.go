@@ -34,22 +34,25 @@ type Spec struct {
 }
 
 type Type struct {
-	Name        string            `json:"-"`
-	Builtin     bool              `json:"-"`
-	Edited      bool              `json:"-"`
-	Description string            `json:"description,omitempty"`
-	Icon        string            `json:"icon,omitempty"`
-	Extends     string            `json:"extends,omitempty"`
-	Category    string            `json:"category,omitempty"`
-	Sensitivity Sensitivity       `json:"sensitivity,omitempty"`
-	Restricted  bool              `json:"restricted,omitempty"`
-	Schema      map[string]any    `json:"schema,omitempty"`
-	Normalize   []string          `json:"normalize,omitempty"`
-	Parse       string            `json:"parse,omitempty"`
-	Check       string            `json:"check,omitempty"`
-	Format      string            `json:"format,omitempty"`
-	Fields      map[string]*Field `json:"fields,omitempty"`
-	Examples    []any             `json:"examples,omitempty"`
+	Name        string      `json:"-"`
+	Builtin     bool        `json:"-"`
+	Edited      bool        `json:"-"`
+	Description string      `json:"description,omitempty"`
+	Icon        string      `json:"icon,omitempty"`
+	Extends     string      `json:"extends,omitempty"`
+	Category    string      `json:"category,omitempty"`
+	Sensitivity Sensitivity `json:"sensitivity,omitempty"`
+	Restricted  bool        `json:"restricted,omitempty"`
+	// Guarded: only the admins of a space write records of this type through the API and MCP;
+	// a product writes them through its own rules (its module's routes and tools)
+	Guarded   bool              `json:"guarded,omitempty"`
+	Schema    map[string]any    `json:"schema,omitempty"`
+	Normalize []string          `json:"normalize,omitempty"`
+	Parse     string            `json:"parse,omitempty"`
+	Check     string            `json:"check,omitempty"`
+	Format    string            `json:"format,omitempty"`
+	Fields    map[string]*Field `json:"fields,omitempty"`
+	Examples  []any             `json:"examples,omitempty"`
 }
 
 type Field struct {

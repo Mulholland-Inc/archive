@@ -796,7 +796,10 @@ func httpHandle(mux *http.ServeMux, pattern string, f func(r *http.Request) (int
 
 func httpHandler(a *Archive) http.Handler {
 	mux := http.NewServeMux()
-	handle := func(pattern string, f func(r *http.Request) (int, any, error)) { httpHandle(mux, pattern, f) }
+	// the engine's own routes are outside: a guarded type is written here only by an admin of its space
+	handle := func(pattern string, f func(r *http.Request) (int, any, error)) {
+		httpHandle(mux, pattern, func(r *http.Request) (int, any, error) { return f(r.WithContext(outside(r.Context()))) })
+	}
 	ok := func(v any, err error) (int, any, error) { return http.StatusOK, v, err }
 
 	handle("GET /api/types", func(r *http.Request) (int, any, error) {

@@ -113,6 +113,11 @@ func (a *Archive) AddFile(ctx context.Context, space, name, intake string, r io.
 		if err != nil {
 			return nil, err
 		}
+		if intake != "" {
+			if err := a.guard(ctx, intake, sid); err != nil {
+				return nil, err
+			}
+		}
 		return a.fileAdd(ctx, sid, name, intake, r)
 	})
 }
@@ -242,6 +247,9 @@ func (a *Archive) IntakeFile(ctx context.Context, id uuid.UUID, typ string) (*In
 		if err != nil {
 			return nil, err
 		}
+		if err := a.guard(ctx, typ, f.Space); err != nil {
+			return nil, err
+		}
 		text, err := a.FileText(ctx, id)
 		if err != nil {
 			return nil, err
@@ -340,7 +348,9 @@ func (a *Archive) fileServe(w http.ResponseWriter, r *http.Request, f *File, str
 }
 
 func (a *Archive) fileRoutes(mux *http.ServeMux) {
-	handle := func(pattern string, f func(r *http.Request) (int, any, error)) { httpHandle(mux, pattern, f) }
+	handle := func(pattern string, f func(r *http.Request) (int, any, error)) {
+		httpHandle(mux, pattern, func(r *http.Request) (int, any, error) { return f(r.WithContext(outside(r.Context()))) })
+	}
 	file := func(r *http.Request) (*File, error) {
 		id, err := httpID(r)
 		if err != nil {
@@ -548,7 +558,13 @@ func (a *Archive) tusCreate(w http.ResponseWriter, r *http.Request) {
 		err = coreHasType(a.Spec(), up.Intake)
 	}
 	if err == nil {
-		up.Space, err = coreDo(a, ctx, func(ctx context.Context) (uuid.UUID, error) { return a.coreSpace(ctx, meta["space"]) })
+		up.Space, err = coreDo(a, ctx, func(ctx context.Context) (uuid.UUID, error) {
+			sid, err := a.coreSpace(ctx, meta["space"])
+			if err == nil && up.Intake != "" {
+				err = a.guard(outside(ctx), up.Intake, sid)
+			}
+			return sid, err
+		})
 	}
 	id := coreNewID().String()
 	path := filepath.Join(a.uploads, id)
