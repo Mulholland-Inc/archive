@@ -1,4 +1,4 @@
-package main
+package archive
 
 import (
 	"cmp"
@@ -45,6 +45,25 @@ type mcpQueryInput struct {
 type mcpIDInput struct {
 	Type string `json:"type" jsonschema:"type of the object, or one of its parent types"`
 	ID   string `json:"id" jsonschema:"object id (uuid)"`
+}
+
+type mcpWalkInput struct {
+	Type  string   `json:"type" jsonschema:"type of the object to start from, or one of its parent types"`
+	ID    string   `json:"id" jsonschema:"object id (uuid) to start from"`
+	Steps []string `json:"steps" jsonschema:"one round of steps, each in:field or out:field"`
+	Depth int      `json:"depth,omitempty" jsonschema:"how many rounds, 1 to 25; 1 when left out"`
+}
+
+type mcpCiteInput struct {
+	Type      string     `json:"type" jsonschema:"type of the object, or one of its parent types"`
+	ID        string     `json:"id" jsonschema:"object id (uuid)"`
+	Citations []Citation `json:"citations" jsonschema:"one per field and source"`
+}
+
+type mcpRestrictInput struct {
+	Type       string `json:"type" jsonschema:"type of the object, or one of its parent types"`
+	ID         string `json:"id" jsonschema:"object id (uuid)"`
+	Restricted bool   `json:"restricted" jsonschema:"true hides it, false opens it"`
 }
 
 type mcpGetInput struct {
@@ -166,6 +185,30 @@ func mcpServer(a *Archive) *mcp.Server {
 			}
 			return map[string]string{"deleted": id.String()}, a.Delete(ctx, in.Type, id)
 		})
+	mcpTool(s, "walk", "Follow links from one object, a round of steps at a time: out:field goes to what its reference field points at, in:field to the objects whose field points at it. Ancestors through parent links are steps [in:child, out:parent] with depth the number of generations. Returns each object reached with its depth, and the links walked.",
+		func(ctx context.Context, in mcpWalkInput) (any, error) {
+			id, err := uuid.Parse(in.ID)
+			if err != nil {
+				return nil, err
+			}
+			return a.Walk(ctx, in.Type, id, in.Steps, cmp.Or(in.Depth, 1))
+		})
+	mcpTool(s, "cite", "Record the evidence for an object's fields: for each, the field, the id of the record it comes from (a register, letter, certificate), the words as written there and the page. Needs editor in the object's space and a source the user can read. Returns the object's provenance.",
+		func(ctx context.Context, in mcpCiteInput) (any, error) {
+			id, err := uuid.Parse(in.ID)
+			if err != nil {
+				return nil, err
+			}
+			return a.Cite(ctx, in.Type, id, in.Citations)
+		})
+	mcpTool(s, "restrict", "Hide an object from everyone in its space but the space's admins and owners and the person who made it (restricted true), or open it again (false). Only an admin of the space may; use it for what is private, such as people who may be living.",
+		func(ctx context.Context, in mcpRestrictInput) (any, error) {
+			id, err := uuid.Parse(in.ID)
+			if err != nil {
+				return nil, err
+			}
+			return a.Restrict(ctx, in.Type, id, in.Restricted)
+		})
 	mcpTool(s, "propose", `Propose an ontology change; nothing changes until apply. Each op has "op", "type" and, depending on op: add_type (def: {"description","icon","extends","fields":{name: field}}), change_type (def: the type without fields, replacing description, icon, extends, schema and the other type-level properties), remove_type (not for built-in types), add_field (field, def), remove_field (field), change_field (field, def), rename_field (field, to: new name). A field def is {"type": any type name or "reference", "to": target type for references, "required", "list", "indexed", "enum": [...] for enum, "description"}. Returns the change with its id.`,
 		func(ctx context.Context, in mcpProposeInput) (any, error) {
 			return a.Propose(ctx, in.Ops)
@@ -247,6 +290,7 @@ func mcpServer(a *Archive) *mcp.Server {
 		func(ctx context.Context, _ struct{}) (any, error) { return a.Sources(ctx) })
 	mcpTool(s, "sync", "Sync one source now: fetch new items into the raw layer and map them into the source's type with intake. Returns how many items were fetched, new and mapped, and the error if the run failed.",
 		func(ctx context.Context, in mcpSourceInput) (any, error) { return a.RunSource(ctx, in.Source) })
+	moduleTools(s, a)
 	return s
 }
 

@@ -75,6 +75,8 @@ CREATE TABLE IF NOT EXISTS records (
     space        uuid NOT NULL REFERENCES spaces
 );
 ALTER TABLE records ADD COLUMN IF NOT EXISTS space uuid REFERENCES spaces;
+ALTER TABLE records ADD COLUMN IF NOT EXISTS restricted bool NOT NULL DEFAULT false;
+ALTER TABLE records ADD COLUMN IF NOT EXISTS creator text NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS records_data_idx ON records USING gin (data);
 CREATE INDEX IF NOT EXISTS records_type_id_idx ON records (type, id);
 CREATE INDEX IF NOT EXISTS records_space_idx ON records (space);
@@ -94,6 +96,9 @@ CREATE TABLE IF NOT EXISTS provenance (
 ALTER TABLE provenance ADD COLUMN IF NOT EXISTS space uuid REFERENCES spaces;
 ALTER TABLE provenance ADD COLUMN IF NOT EXISTS file_id uuid;
 ALTER TABLE provenance ADD COLUMN IF NOT EXISTS page int NOT NULL DEFAULT 0;
+-- the record a field cites as its evidence; deleting it keeps the citation's words
+ALTER TABLE provenance ADD COLUMN IF NOT EXISTS source_id uuid REFERENCES records ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS provenance_source_idx ON provenance (source_id);
 CREATE INDEX IF NOT EXISTS provenance_record_idx ON provenance (record_id);
 CREATE INDEX IF NOT EXISTS provenance_space_idx ON provenance (space);
 
@@ -197,6 +202,43 @@ CREATE TABLE IF NOT EXISTS proposals (
 CREATE INDEX IF NOT EXISTS proposals_status_idx ON proposals (status, id);
 CREATE INDEX IF NOT EXISTS proposals_space_idx ON proposals (space);
 
+-- OAuth clients (registered by themselves, public, no secret), the short-lived codes of the
+-- authorization flow, and each grant's refresh token beside the API token it refreshes. Read and
+-- written through the system pool only, like invites.
+CREATE TABLE IF NOT EXISTS oauth_clients (
+    id            text PRIMARY KEY,
+    name          text NOT NULL,
+    redirect_uris text[] NOT NULL,
+    created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS oauth_codes (
+    hash         text PRIMARY KEY,
+    client_id    text NOT NULL REFERENCES oauth_clients ON DELETE CASCADE,
+    user_id      uuid NOT NULL REFERENCES users ON DELETE CASCADE,
+    redirect_uri text NOT NULL,
+    challenge    text NOT NULL,
+    expires_at   timestamptz NOT NULL
+);
+CREATE TABLE IF NOT EXISTS oauth_grants (
+    token_id     uuid PRIMARY KEY REFERENCES tokens ON DELETE CASCADE,
+    client_id    text NOT NULL REFERENCES oauth_clients ON DELETE CASCADE,
+    refresh_hash text NOT NULL UNIQUE,
+    created_at   timestamptz NOT NULL DEFAULT now()
+);
+
+-- An invite into a space for someone who may have no account yet. Only its hash is kept; it is read
+-- and used through the system pool, never by user roles, so it needs no policy of its own.
+CREATE TABLE IF NOT EXISTS invites (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    space      uuid NOT NULL REFERENCES spaces ON DELETE CASCADE,
+    email      text NOT NULL,
+    level      text NOT NULL,
+    hash       text NOT NULL UNIQUE,
+    invited_by text NOT NULL,
+    expires_at timestamptz NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
 DO $$ BEGIN
     IF to_regclass('specs') IS NOT NULL THEN
         INSERT INTO types (name, extends, def, updated_at)
@@ -219,13 +261,46 @@ CREATE OR REPLACE FUNCTION my_spaces(lvl text DEFAULT 'viewer') RETURNS uuid[] L
     SELECT coalesce(array_agg(id), '{}') FROM spaces WHERE pg_has_role(current_user, (role || '_' || lvl)::name, 'USAGE')
 $$;
 
+-- Whether role r is an API token of a user who is the instance admin. Definer rights, because user
+-- roles cannot read tokens or users; it takes the caller's role as an argument for the same reason.
+CREATE OR REPLACE FUNCTION admin_token(r name) RETURNS bool LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $$
+    SELECT EXISTS (SELECT FROM tokens t JOIN users u ON u.id = t.user_id WHERE t.role = r::text AND pg_has_role(u.role::name, '{p}_admin', 'USAGE'))
+$$;
+
+-- The instance admin, signed in or through a full token, or through one of their API tokens that
+-- holds admin in some space. Admin of a space alone is not enough: every user owns their home space,
+-- and what this guards (the ontology, sources that run programs or read the server's disk) reaches
+-- every space and the server itself.
 CREATE OR REPLACE FUNCTION ontology_admin() RETURNS bool LANGUAGE sql STABLE AS $$
-    SELECT pg_has_role(current_user, '{p}_admin', 'USAGE') OR cardinality(my_spaces('admin')) > 0
+    SELECT pg_has_role(current_user, '{p}_admin', 'USAGE') OR (cardinality(my_spaces('admin')) > 0 AND admin_token(current_user))
 $$;
 
 CREATE OR REPLACE FUNCTION secret_granted(typ text) RETURNS bool LANGUAGE sql STABLE AS $$
     SELECT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_secret_' || typ AND pg_has_role(current_user, oid, 'USAGE'))
 $$;
+
+-- The user behind role r: r itself, or the user who owns API token r. Definer rights, because
+-- user roles cannot read tokens or users.
+CREATE OR REPLACE FUNCTION actor_user(r name) RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path FROM CURRENT AS $$
+    SELECT coalesce((SELECT u.role FROM tokens t JOIN users u ON u.id = t.user_id WHERE t.role = r::text), r::text)
+$$;
+
+-- A restricted record is read only by the admins and owners of its space and by the user who made
+-- it. New records of a type whose definition says "restricted" start restricted, whoever makes them,
+-- and only an admin of the space restricts or opens one.
+CREATE OR REPLACE FUNCTION records_restrict() RETURNS trigger LANGUAGE plpgsql SET search_path FROM CURRENT AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        NEW.creator := actor_user(current_user);
+        IF EXISTS (SELECT FROM types WHERE name = NEW.type AND (def ->> 'restricted')::bool) THEN
+            NEW.restricted := true;
+        END IF;
+    ELSIF NEW.restricted IS DISTINCT FROM OLD.restricted AND NOT NEW.space = ANY (my_spaces('admin')) THEN
+        RAISE EXCEPTION 'only an admin of the space restricts or opens a record' USING ERRCODE = '42501';
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE OR REPLACE TRIGGER records_restrict BEFORE INSERT OR UPDATE OF restricted ON records FOR EACH ROW EXECUTE FUNCTION records_restrict();
 
 CREATE OR REPLACE FUNCTION secrets_prune() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
 BEGIN
@@ -271,16 +346,25 @@ DO $$ DECLARE t text; BEGIN
     END LOOP;
 END $$;
 
-CREATE POLICY viewer ON records FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[]));
+CREATE POLICY viewer ON records FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[])
+    AND (NOT restricted OR space = ANY ((SELECT my_spaces('admin'))::uuid[]) OR creator = (SELECT actor_user(current_user))));
 CREATE POLICY viewer ON raw FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[]));
-CREATE POLICY viewer ON provenance FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[]));
+-- what hangs off a record is read only with it
+CREATE POLICY viewer ON provenance FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[])
+    AND EXISTS (SELECT FROM records r WHERE r.id = record_id)
+    AND (source_id IS NULL OR EXISTS (SELECT FROM records r WHERE r.id = source_id)));
 CREATE POLICY viewer ON links FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[])
     AND EXISTS (SELECT FROM records r WHERE r.id = from_id) AND EXISTS (SELECT FROM records r WHERE r.id = to_id));
-CREATE POLICY viewer ON files FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[]));
+CREATE POLICY viewer ON files FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[])
+    AND EXISTS (SELECT FROM records r WHERE r.id = files.id));
 CREATE POLICY viewer ON sources FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[]));
 CREATE POLICY viewer ON views FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[]));
-CREATE POLICY viewer ON proposals FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[]));
-CREATE POLICY viewer ON secrets FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[]) AND secret_granted(type));
+-- a proposal for a restricted type is for the admins who review it, as its record would be
+CREATE POLICY viewer ON proposals FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[])
+    AND (record_id IS NULL OR EXISTS (SELECT FROM records r WHERE r.id = record_id))
+    AND (space = ANY ((SELECT my_spaces('admin'))::uuid[]) OR NOT EXISTS (SELECT FROM types t WHERE t.name = proposals.type AND (t.def ->> 'restricted')::bool)));
+CREATE POLICY viewer ON secrets FOR SELECT USING (space = ANY ((SELECT my_spaces())::uuid[]) AND secret_granted(type)
+    AND (record_id IS NULL OR EXISTS (SELECT FROM records r WHERE r.id = record_id)));
 
 CREATE OR REPLACE FUNCTION search_fold(t text) RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
     SELECT translate(replace(replace(replace(lower(regexp_replace(regexp_replace(normalize(coalesce(t, ''), NFD),

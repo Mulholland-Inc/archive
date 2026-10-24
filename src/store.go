@@ -1,4 +1,4 @@
-package main
+package archive
 
 import (
 	"bytes"
@@ -221,7 +221,7 @@ func (s *pgStore) GetRaw(ctx context.Context, id uuid.UUID) (*Raw, error) {
 const (
 	storeCreateRecord = `
 		INSERT INTO records (id, type, spec_version, data, space) VALUES ($1, $2, $3, coalesce($4::jsonb, '{}'), $5)
-		RETURNING created_at, updated_at`
+		RETURNING created_at, updated_at, restricted, creator`
 	storeUpdateRecord = `
 		UPDATE records SET type = $2, spec_version = $3, data = coalesce($4::jsonb, '{}'), updated_at = now()
 		WHERE id = $1 RETURNING created_at, updated_at`
@@ -236,7 +236,8 @@ func (s *pgStore) CreateRecord(ctx context.Context, r *Record) error {
 	if r.ID == uuid.Nil {
 		r.ID = coreNewID()
 	}
-	return s.Q(ctx).QueryRow(ctx, storeCreateRecord, r.ID, r.Type, r.SpecVersion, r.Data, r.Space).Scan(&r.CreatedAt, &r.UpdatedAt)
+	// restricted and creator come back as the records_restrict trigger set them
+	return s.Q(ctx).QueryRow(ctx, storeCreateRecord, r.ID, r.Type, r.SpecVersion, r.Data, r.Space).Scan(&r.CreatedAt, &r.UpdatedAt, &r.Restricted, &r.Creator)
 }
 
 func (s *pgStore) GetRecord(ctx context.Context, id uuid.UUID) (*Record, error) {
@@ -287,13 +288,13 @@ func storeLiteral(s string) string {
 }
 
 const storeAddProvenance = `
-	INSERT INTO provenance (record_id, field_path, raw_ids, method, confidence, original, space, file_id, page)
-	VALUES ($1, $2, coalesce($3, '{}'::uuid[]), $4, $5, $6, (SELECT space FROM records WHERE id = $1), $7, $8) RETURNING id, space`
+	INSERT INTO provenance (record_id, field_path, raw_ids, method, confidence, original, space, file_id, page, source_id)
+	VALUES ($1, $2, coalesce($3, '{}'::uuid[]), $4, $5, $6, (SELECT space FROM records WHERE id = $1), $7, $8, $9) RETURNING id, space`
 
 func (s *pgStore) AddProvenance(ctx context.Context, ps []*Provenance) error {
 	return pgx.BeginFunc(ctx, s.Q(ctx), func(tx pgx.Tx) error {
 		for _, p := range ps {
-			err := tx.QueryRow(ctx, storeAddProvenance, p.RecordID, p.FieldPath, p.RawIDs, p.Method, p.Confidence, p.Original, p.FileID, p.Page).Scan(&p.ID, &p.Space)
+			err := tx.QueryRow(ctx, storeAddProvenance, p.RecordID, p.FieldPath, p.RawIDs, p.Method, p.Confidence, p.Original, p.FileID, p.Page, p.SourceID).Scan(&p.ID, &p.Space)
 			if err != nil {
 				return err
 			}

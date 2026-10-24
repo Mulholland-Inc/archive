@@ -1,4 +1,4 @@
-package main
+package archive
 
 import (
 	"crypto/sha256"
@@ -92,11 +92,12 @@ var semParsers = map[string]func(in any, h Hints) ([]Candidate, error){
 		s, _ := in.(string)
 		return semDateCands(s, h), nil
 	},
-	"timestamp": semParseTimestamp,
-	"time":      semParseTime,
-	"duration":  semParseDuration,
-	"interval":  semParseInterval,
-	"money":     semParseMoney,
+	"timestamp":  semParseTimestamp,
+	"time":       semParseTime,
+	"duration":   semParseDuration,
+	"interval":   semParseInterval,
+	"fuzzy_date": fuzzyParse,
+	"money":      semParseMoney,
 	"currency": func(in any, h Hints) ([]Candidate, error) {
 		s, _ := in.(string)
 		return semOne(semCurrency(s, h))
@@ -174,8 +175,9 @@ var semChecks = map[string]func(v any) error{
 		}
 		return nil
 	},
-	"duration": semStrCheck("must be a canonical ISO 8601 duration", func(s string) bool { return semMust(semDuration(s)) == s }),
-	"interval": semCheckInterval,
+	"duration":   semStrCheck("must be a canonical ISO 8601 duration", func(s string) bool { return semMust(semDuration(s)) == s }),
+	"interval":   semCheckInterval,
+	"fuzzy_date": fuzzyCheck,
 	"currency": semStrCheck("not an ISO 4217 currency", func(s string) bool {
 		u, err := currency.ParseISO(s)
 		return err == nil && u.String() == s
@@ -306,6 +308,7 @@ var semFormats = map[string]func(v any, locale string) string{
 		p, _ := time.Parse(time.TimeOnly, v.(map[string]any)["time"].(string))
 		return p.Format(semClockLayout(locale, p.Second() != 0))
 	},
+	"fuzzy_date": fuzzyFormat,
 	"interval": func(v any, locale string) string {
 		m := v.(map[string]any)
 		part := func(k string) string {

@@ -1,4 +1,4 @@
-package main
+package archive
 
 import (
 	"context"
@@ -103,6 +103,11 @@ func (a *Archive) AddSource(ctx context.Context, in SourceInput) (*Source, strin
 	c, ok := connectors[in.Kind]
 	if !ok {
 		return nil, "", sourceInvalid("kind", "want one of "+strings.Join(slices.Sorted(maps.Keys(connectors)), ", "))
+	}
+	if in.Kind == "external" || in.Kind == "folder" {
+		if err := a.adminOnly(ctx, "adds "+in.Kind+" sources, which run programs or read the server's disk"); err != nil {
+			return nil, "", err
+		}
 	}
 	if !sourceNameRe.MatchString(in.Name) {
 		return nil, "", sourceInvalid("name", "want 1-64 lowercase letters, digits, _, . or -")

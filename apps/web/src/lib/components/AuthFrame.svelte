@@ -1,11 +1,12 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
-  import Icon from './Icon.svelte';
+  import BrandMark from './BrandMark.svelte';
+  import { brand } from '../brand.svelte';
   let { title, description, children, footer }: { title: string; description?: string; children: Snippet; footer?: Snippet } = $props();
 </script>
 
 <div class="frame">
-  <div class="brand"><span class="logo"><Icon name="brand" /></span>Archive</div>
+  <div class="brand"><span class="logo"><BrandMark /></span>{brand.name}</div>
   <main class="card">
     <div class="titles">
       <h1 class="title">{title}</h1>

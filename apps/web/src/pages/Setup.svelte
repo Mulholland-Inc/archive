@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { brand } from '../lib/brand.svelte';
   import { AuthFrame, Button, Field, Input, Stack, Notice } from '../lib';
   import { api, ApiError } from '../lib/api';
   import { load } from '../lib/session.svelte';
@@ -29,7 +30,7 @@
   }
 </script>
 
-<AuthFrame title="Set up Archive" description="Create the first owner. You can invite everyone else once you are in.">
+<AuthFrame title={`Set up ${brand.name}`} description="Create the first owner. You can invite everyone else once you are in.">
   {#if !token}
     <Notice tone="warning">This page needs the setup link the server printed when it started. Open that link instead.</Notice>
   {:else}

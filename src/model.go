@@ -1,4 +1,4 @@
-package main
+package archive
 
 import (
 	"encoding/json"
@@ -42,6 +42,7 @@ type Type struct {
 	Extends     string            `json:"extends,omitempty"`
 	Category    string            `json:"category,omitempty"`
 	Sensitivity Sensitivity       `json:"sensitivity,omitempty"`
+	Restricted  bool              `json:"restricted,omitempty"`
 	Schema      map[string]any    `json:"schema,omitempty"`
 	Normalize   []string          `json:"normalize,omitempty"`
 	Parse       string            `json:"parse,omitempty"`
@@ -111,6 +112,8 @@ type Record struct {
 	CreatedAt   time.Time       `json:"created_at"`
 	UpdatedAt   time.Time       `json:"updated_at"`
 	Space       uuid.UUID       `json:"space"`
+	Restricted  bool            `json:"restricted"`
+	Creator     string          `json:"-"`
 }
 
 type Provenance struct {
@@ -124,6 +127,7 @@ type Provenance struct {
 	Space      uuid.UUID   `json:"space"`
 	FileID     *uuid.UUID  `json:"file_id,omitempty"`
 	Page       int         `json:"page,omitempty"`
+	SourceID   *uuid.UUID  `json:"source_id,omitempty"`
 }
 
 type Link struct {

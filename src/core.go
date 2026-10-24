@@ -1,4 +1,4 @@
-package main
+package archive
 
 import (
 	"context"
@@ -72,7 +72,7 @@ func Open(ctx context.Context) (*Archive, error) {
 	dsn, stop := os.Getenv("DATABASE_URL"), func() error { return nil }
 	if dsn == "" {
 		if dsn = pgLive(dir); dsn == "" {
-			if err := BackupBeforeUpgrade(ctx, dir, cliVersion); err != nil {
+			if err := BackupBeforeUpgrade(ctx, dir, backupBuild()); err != nil {
 				return nil, fmt.Errorf("backup: %w", err)
 			}
 			if dsn, stop, err = StartPostgres(ctx, dir); err != nil {
@@ -133,7 +133,7 @@ func newArchive(ctx context.Context, st *pgStore, cfg IntakeConfig) (*Archive, e
 		return nil, fmt.Errorf("load spec: %w", err)
 	}
 	a := &Archive{st: st, spec: spec, hints: cfg.Hints, wake: make(chan struct{}, 1), base: strings.TrimRight(coreEnv("ARCHIVE_URL", "http://localhost:8080"), "/")}
-	a.intake = NewIntake(cfg, a.Spec, a.coreSave)
+	a.intake = NewIntake(cfg, a.Spec, a.intakeSave)
 	return a, nil
 }
 
@@ -274,6 +274,22 @@ func (a *Archive) coreSpace(ctx context.Context, name string) (uuid.UUID, error)
 	return id, err
 }
 
+// intakeSave saves what intake accepted through the same checks as any other write, references
+// included, so a model cannot store what a person could not.
+func (a *Archive) intakeSave(ctx context.Context, r *Record, data map[string]any, prov []*Provenance) error {
+	var out map[string]any
+	if err := a.as(ctx, func(ctx context.Context) (err error) {
+		out, _, err = a.coreCheck(ctx, a.Spec(), r.Type, data)
+		return err
+	}); err != nil {
+		return err
+	}
+	// in place, since coreSave seals secrets in the map it is given and intake shows the caller that
+	clear(data)
+	maps.Copy(data, out)
+	return a.coreSave(ctx, r, data, prov)
+}
+
 func (a *Archive) coreSave(ctx context.Context, r *Record, data map[string]any, prov []*Provenance) error {
 	return a.as(ctx, func(ctx context.Context) error {
 		spec := a.Spec()
@@ -329,6 +345,9 @@ func (a *Archive) coreLinks(ctx context.Context, spec *Spec, r *Record, data map
 
 func (a *Archive) Replace(ctx context.Context, typ string, id uuid.UUID, data map[string]any) (*Record, error) {
 	return coreDo(a, ctx, func(ctx context.Context) (*Record, error) {
+		if err := a.coreLock(ctx, id); err != nil {
+			return nil, err
+		}
 		r, err := a.Get(ctx, typ, id)
 		if err != nil {
 			return nil, err
@@ -337,8 +356,19 @@ func (a *Archive) Replace(ctx context.Context, typ string, id uuid.UUID, data ma
 	})
 }
 
+// coreLock holds one object until the transaction ends, so a read-merge-write such as Patch reads
+// what the last writer committed instead of overwriting it. An advisory lock rather than FOR UPDATE,
+// which a viewer may not take and would turn a clean 403 into a permission error.
+func (a *Archive) coreLock(ctx context.Context, id uuid.UUID) error {
+	_, err := a.st.Q(ctx).Exec(ctx, `SELECT pg_advisory_xact_lock(7274, hashtext($1::text))`, id)
+	return err
+}
+
 func (a *Archive) Patch(ctx context.Context, typ string, id uuid.UUID, patch map[string]any) (*Record, error) {
 	return coreDo(a, ctx, func(ctx context.Context) (*Record, error) {
+		if err := a.coreLock(ctx, id); err != nil {
+			return nil, err
+		}
 		r, err := a.Get(ctx, typ, id)
 		if err != nil {
 			return nil, err
@@ -410,12 +440,99 @@ func (a *Archive) Delete(ctx context.Context, typ string, id uuid.UUID) error {
 	})
 }
 
+// Restrict hides an object from everyone in its space but the space's admins and owners and the
+// user who made it, or opens it again. Only an admin of the space may; schema.sql's
+// records_restrict trigger and the records policy hold that, here and in psql alike.
+func (a *Archive) Restrict(ctx context.Context, typ string, id uuid.UUID, restricted bool) (*Record, error) {
+	return coreDo(a, ctx, func(ctx context.Context) (*Record, error) {
+		if _, err := a.Get(ctx, typ, id); err != nil {
+			return nil, err
+		}
+		if _, err := a.st.Q(ctx).Exec(ctx, `UPDATE records SET restricted = $2 WHERE id = $1`, id, restricted); err != nil {
+			return nil, storeErr(err)
+		}
+		return a.Get(ctx, typ, id)
+	})
+}
+
 func (a *Archive) Provenance(ctx context.Context, typ string, id uuid.UUID) ([]*Provenance, error) {
 	return coreDo(a, ctx, func(ctx context.Context) ([]*Provenance, error) {
 		if _, err := a.Get(ctx, typ, id); err != nil {
 			return nil, err
 		}
 		return a.st.ListProvenance(ctx, id)
+	})
+}
+
+// Citation says which record backs a field of another: the source, the words as written there,
+// the page, and how sure the person citing it is (1 unless they say).
+type Citation struct {
+	Field      string   `json:"field" jsonschema:"the field the source backs, or empty for the whole object"`
+	Source     string   `json:"source" jsonschema:"id of the record that is the evidence, such as a register, letter or certificate"`
+	Original   string   `json:"original,omitempty" jsonschema:"the words as written in the source"`
+	Page       int      `json:"page,omitempty" jsonschema:"page in the source, if it has pages"`
+	Confidence *float64 `json:"confidence,omitempty" jsonschema:"0 to 1, how sure the citation is; 1 when left out"`
+}
+
+// Cite records what backs an object's fields. It needs editor in the object's space, a field the
+// type has, and a source the caller can read; the provenance policy then shows each citation
+// only to those who can read both ends.
+func (a *Archive) Cite(ctx context.Context, typ string, id uuid.UUID, cs []Citation) ([]*Provenance, error) {
+	return coreDo(a, ctx, func(ctx context.Context) ([]*Provenance, error) {
+		r, err := a.Get(ctx, typ, id)
+		if err != nil {
+			return nil, err
+		}
+		var writable bool
+		if err := a.st.Q(ctx).QueryRow(ctx, `SELECT $1::uuid = ANY(my_spaces('editor'))`, r.Space).Scan(&writable); err != nil {
+			return nil, err
+		}
+		if !writable {
+			return nil, fmt.Errorf("you cannot cite in this space: %w", ErrForbidden)
+		}
+		spec := a.Spec()
+		fields, err := spec.Fields(r.Type)
+		if err != nil {
+			return nil, err
+		}
+		verr := &ValidationError{Type: "citation"}
+		var ps []*Provenance
+		for i, c := range cs {
+			at := fmt.Sprintf("citations[%d].", i)
+			if _, ok := fields[c.Field]; c.Field != "" && !ok {
+				verr.Errors = append(verr.Errors, FieldError{Path: at + "field", Message: r.Type + " has no field " + c.Field})
+			}
+			sid, err := uuid.Parse(c.Source)
+			if err == nil {
+				_, err = a.st.GetRecord(ctx, sid)
+			}
+			if err != nil {
+				verr.Errors = append(verr.Errors, FieldError{Path: at + "source", Message: "want the id of a record you can read"})
+				continue
+			}
+			conf := 1.0
+			if c.Confidence != nil {
+				conf = *c.Confidence
+			}
+			if conf < 0 || conf > 1 {
+				verr.Errors = append(verr.Errors, FieldError{Path: at + "confidence", Message: "want 0 to 1"})
+			}
+			p := &Provenance{RecordID: r.ID, FieldPath: c.Field, Method: "cite", Confidence: conf, Original: c.Original, Page: c.Page, SourceID: &sid}
+			if spec.secretField(r.Type, c.Field) {
+				p.Original = ""
+			}
+			ps = append(ps, p)
+		}
+		if len(cs) == 0 {
+			verr.Errors = append(verr.Errors, FieldError{Path: "citations", Message: "want at least one"})
+		}
+		if len(verr.Errors) > 0 {
+			return nil, verr
+		}
+		if err := a.st.AddProvenance(ctx, ps); err != nil {
+			return nil, err
+		}
+		return a.st.ListProvenance(ctx, r.ID)
 	})
 }
 
@@ -812,6 +929,9 @@ func coreValidate(s *Spec, typ string, data map[string]any) error {
 }
 
 func (a *Archive) IntakeDir(ctx context.Context, space, dir, typ string) ([]*IntakeResult, error) {
+	if err := a.adminOnly(ctx, "reads folders on the server"); err != nil {
+		return nil, err
+	}
 	if err := coreHasType(a.Spec(), typ); err != nil {
 		return nil, err
 	}
