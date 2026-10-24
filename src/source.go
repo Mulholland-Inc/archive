@@ -118,6 +118,11 @@ func (a *Archive) AddSource(ctx context.Context, in SourceInput) (*Source, strin
 	if in.Mode != "mirror" {
 		return nil, "", sourceInvalid("mode", "only mirror is supported; federate is not built yet")
 	}
+	if in.Type != "" && a.Spec().Types[in.Type].Guarded {
+		if err := a.adminOnly(ctx, "adds sources that write "+in.Type+", which the product writes through its own pages"); err != nil {
+			return nil, "", err
+		}
+	}
 	if err := a.sourceCheck(in.Type, in.Schedule, in.Rate); err != nil {
 		return nil, "", err
 	}

@@ -312,7 +312,8 @@ func mcpTool[In any](s *mcp.Server, name, desc string, f func(context.Context, I
 				ac, _ := req.Extra.TokenInfo.Extra["actor"].(*Actor)
 				ctx = WithActor(ctx, ac)
 			}
-			out, err := f(ctx, in)
+			// the engine's own tools are outside: a guarded type is written by them only as an admin of its space
+			out, err := f(outside(ctx), in)
 			if s, ok := out.(string); ok && err == nil {
 				// words, for a client to read as they are
 				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: s}}}, nil, nil

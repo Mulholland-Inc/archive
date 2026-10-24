@@ -145,6 +145,27 @@ func (a *Archive) as(ctx context.Context, fn func(context.Context) error) error 
 	return a.st.As(ctx, ac.Role, fn)
 }
 
+type outsideKey struct{}
+
+// outside marks a request that came through the engine's own API or MCP tools, not a module's
+// code: a guarded type is written there only by an admin of its space.
+func outside(ctx context.Context) context.Context { return context.WithValue(ctx, outsideKey{}, true) }
+
+// guard refuses a write of a guarded type from outside by anyone who is not an admin of the space.
+func (a *Archive) guard(ctx context.Context, typ string, space uuid.UUID) error {
+	if ctx.Value(outsideKey{}) == nil || !a.Spec().Types[typ].Guarded {
+		return nil
+	}
+	var admin bool
+	if err := a.st.Q(ctx).QueryRow(ctx, `SELECT $1::uuid = ANY(my_spaces('admin'))`, space).Scan(&admin); err != nil {
+		return err
+	}
+	if !admin {
+		return fmt.Errorf("only an admin of the space writes %s here; the product writes it through its own pages: %w", typ, ErrForbidden)
+	}
+	return nil
+}
+
 func coreDo[T any](a *Archive, ctx context.Context, fn func(context.Context) (T, error)) (T, error) {
 	var out T
 	err := a.as(ctx, func(ctx context.Context) (err error) {
@@ -240,6 +261,9 @@ func (a *Archive) Create(ctx context.Context, space, typ string, data map[string
 	return coreDo(a, ctx, func(ctx context.Context) (*Record, error) {
 		sid, err := a.coreSpace(ctx, space)
 		if err != nil {
+			return nil, err
+		}
+		if err := a.guard(ctx, typ, sid); err != nil {
 			return nil, err
 		}
 		out, originals, err := a.coreCheck(ctx, spec, typ, data)
@@ -352,6 +376,9 @@ func (a *Archive) Replace(ctx context.Context, typ string, id uuid.UUID, data ma
 		if err != nil {
 			return nil, err
 		}
+		if err := a.guard(ctx, typ, r.Space); err != nil {
+			return nil, err
+		}
 		return a.coreUpdate(ctx, r, data, data)
 	})
 }
@@ -371,6 +398,9 @@ func (a *Archive) Patch(ctx context.Context, typ string, id uuid.UUID, patch map
 		}
 		r, err := a.Get(ctx, typ, id)
 		if err != nil {
+			return nil, err
+		}
+		if err := a.guard(ctx, typ, r.Space); err != nil {
 			return nil, err
 		}
 		data := map[string]any{}
@@ -429,7 +459,11 @@ func (a *Archive) coreUpdate(ctx context.Context, r *Record, data, changed map[s
 
 func (a *Archive) Delete(ctx context.Context, typ string, id uuid.UUID) error {
 	return a.as(ctx, func(ctx context.Context) error {
-		if _, err := a.Get(ctx, typ, id); err != nil {
+		r, err := a.Get(ctx, typ, id)
+		if err != nil {
+			return err
+		}
+		if err := a.guard(ctx, typ, r.Space); err != nil {
 			return err
 		}
 		if err := a.st.DeleteRecord(ctx, id); errors.Is(err, ErrNotFound) {
@@ -481,6 +515,9 @@ func (a *Archive) Cite(ctx context.Context, typ string, id uuid.UUID, cs []Citat
 	return coreDo(a, ctx, func(ctx context.Context) ([]*Provenance, error) {
 		r, err := a.Get(ctx, typ, id)
 		if err != nil {
+			return nil, err
+		}
+		if err := a.guard(ctx, typ, r.Space); err != nil {
 			return nil, err
 		}
 		var writable bool

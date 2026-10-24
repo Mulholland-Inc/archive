@@ -27,7 +27,8 @@ func main() {
 		Name: "toy",
 		Pack: []byte(`{"types": {
 		  "shout": {"description": "Text said loudly", "schema": {"type": "string"}, "parse": "shout", "check": "shout", "format": "shout"},
-		  "note": {"description": "A note", "fields": {"text": {"type": "shout", "required": true}}}}}`),
+		  "note": {"description": "A note", "fields": {"text": {"type": "shout", "required": true}}},
+		  "vow": {"description": "A promise the toy keeps by its own rules", "guarded": true, "fields": {"text": {"type": "text", "required": true}}}}}`),
 		Types: map[string]archive.SemanticType{"shout": {
 			Parse: func(in any, _ archive.Hints) ([]archive.Candidate, error) {
 				s, _ := in.(string)
@@ -58,6 +59,11 @@ func main() {
 			})
 		},
 		Routes: func(mux *http.ServeMux, a *archive.Archive) {
+			// the toy's own way to write a vow, as the caller, whoever they are in the space
+			mux.Handle("POST /api/toy/vow", a.Authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				rec, err := a.Create(r.Context(), r.URL.Query().Get("space"), "vow", map[string]any{"text": "kept"})
+				archive.WriteJSON(w, http.StatusCreated, rec, err)
+			})))
 			mux.Handle("GET /api/toy/whoami", a.Authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				archive.WriteJSON(w, http.StatusOK, map[string]string{"email": archive.ActorFrom(r.Context()).Email}, nil)
 			})))
