@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"maps"
 	"net/http"
+	"path"
 	"slices"
 	"strings"
 	"sync"
@@ -197,7 +198,7 @@ func (a *Archive) moduleRoutes(mux *http.ServeMux) {
 		}
 		if m.App != nil {
 			p := strings.TrimRight(m.App.Path, "/")
-			mux.Handle(p+"/", http.StripPrefix(p, http.FileServerFS(m.App.Files)))
+			mux.Handle(p+"/", http.StripPrefix(p, appFiles(m.App.Files)))
 			apps = append(apps, map[string]string{"path": p + "/", "title": m.App.Title, "icon": m.App.Icon})
 		}
 	}
@@ -229,6 +230,24 @@ func (a *Archive) moduleRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/apps", a.httpAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		httpWrite(w, http.StatusOK, append([]map[string]string{}, apps...), nil)
 	})))
+}
+
+// appFiles serves a module's pages, and its index.html for an address that names no file, so a
+// single-page app's own routes (/family/tree) load the app and it draws them.
+func appFiles(files fs.FS) http.Handler {
+	fsrv := http.FileServerFS(files)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, "/")
+		if name != "" && !strings.HasSuffix(name, "/") {
+			if _, err := fs.Stat(files, name); err != nil && !strings.Contains(path.Base(name), ".") {
+				r2 := r.Clone(r.Context())
+				r2.URL.Path = "/"
+				fsrv.ServeHTTP(w, r2)
+				return
+			}
+		}
+		fsrv.ServeHTTP(w, r)
+	})
 }
 
 func moduleTools(s *mcp.Server, a *Archive) {

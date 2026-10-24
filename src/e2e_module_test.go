@@ -87,6 +87,18 @@ func TestAModuleAddsTypesConnectorsToolsRoutesAndPages(t *testing.T) {
 		if len(apps) != 1 || apps[0]["path"] != "/toy/" || apps[0]["title"] != "Toy" {
 			t.Errorf("apps: %v", apps)
 		}
+		// an address of the app's own, with no file behind it, loads the app; a missing file is still 404
+		for path, want := range map[string]int{"/toy/some/route": 200, "/toy/missing.js": 404} {
+			resp, err := http.Get(srv.url + path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode != want || want == 200 && !strings.Contains(string(b), "The toy module's page") {
+				t.Errorf("%s: %d", path, resp.StatusCode)
+			}
+		}
 	})
 
 	t.Run("ItsBrandDressesTheDashboard", func(t *testing.T) {
