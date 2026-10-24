@@ -147,14 +147,25 @@ func (a *Archive) as(ctx context.Context, fn func(context.Context) error) error 
 
 type outsideKey struct{}
 
-// outside marks a request that came through the engine's own API or MCP tools, not a module's
-// code: a guarded type is written there only by an admin of its space.
-func outside(ctx context.Context) context.Context { return context.WithValue(ctx, outsideKey{}, true) }
+// outside marks a request that came through the engine's own API, not a module's code: a guarded
+// type is written there only by an admin of its space.
+func outside(ctx context.Context) context.Context { return context.WithValue(ctx, outsideKey{}, "api") }
 
-// guard refuses a write of a guarded type from outside by anyone who is not an admin of the space.
+// byAgent marks a request that came through the engine's own MCP tools: an agent drafts a guarded
+// type through the module's tools, for a person to decide, and never writes it itself.
+func byAgent(ctx context.Context) context.Context {
+	return context.WithValue(ctx, outsideKey{}, "agent")
+}
+
+// guard refuses a write of a guarded type from outside: always to an agent, and to anyone else who
+// is not an admin of the space.
 func (a *Archive) guard(ctx context.Context, typ string, space uuid.UUID) error {
-	if ctx.Value(outsideKey{}) == nil || !a.Spec().Types[typ].Guarded {
+	from := ctx.Value(outsideKey{})
+	if from == nil || !a.Spec().Types[typ].Guarded {
 		return nil
+	}
+	if from == "agent" {
+		return fmt.Errorf("an agent does not write %s here; the product's own tools draft it for a person to decide: %w", typ, ErrForbidden)
 	}
 	var admin bool
 	if err := a.st.Q(ctx).QueryRow(ctx, `SELECT $1::uuid = ANY(my_spaces('admin'))`, space).Scan(&admin); err != nil {
