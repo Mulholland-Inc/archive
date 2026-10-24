@@ -89,6 +89,25 @@ func TestAModuleAddsTypesConnectorsToolsRoutesAndPages(t *testing.T) {
 		}
 	})
 
+	t.Run("ItsBrandDressesTheDashboard", func(t *testing.T) {
+		var b map[string]string
+		call(t, "GET", srv.url+"/api/brand", "", nil, &b)
+		if b["name"] != "Toy Archive" || !strings.Contains(b["logo"], "<circle") {
+			t.Errorf("brand: %v", b)
+		}
+		for path, want := range map[string]string{"/brand.css": "--brand: rgb(1, 2, 3)", "/brand/toy.woff2": "toy font bytes", "/favicon.svg": `r="5"`} {
+			resp, err := http.Get(srv.url + path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode != 200 || !strings.Contains(string(body), want) {
+				t.Errorf("%s: %d %q", path, resp.StatusCode, body)
+			}
+		}
+	})
+
 	t.Run("TheEngineAloneHasNoneOfIt", func(t *testing.T) {
 		plain := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
 		srv := plain.serve()
@@ -101,6 +120,20 @@ func TestAModuleAddsTypesConnectorsToolsRoutesAndPages(t *testing.T) {
 		call(t, "GET", srv.url+"/api/apps", tok, nil, &apps)
 		if len(apps) != 0 {
 			t.Errorf("apps: %v", apps)
+		}
+		var b map[string]string
+		call(t, "GET", srv.url+"/api/brand", "", nil, &b)
+		if b["name"] != "Archive" || b["logo"] != "" {
+			t.Errorf("the engine alone wears a brand: %v", b)
+		}
+		resp, err := http.Get(srv.url + "/brand.css")
+		if err != nil {
+			t.Fatal(err)
+		}
+		css, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 || len(css) != 0 {
+			t.Errorf("the engine alone serves brand.css: %d %q", resp.StatusCode, css)
 		}
 	})
 }

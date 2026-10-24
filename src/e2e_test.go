@@ -2148,14 +2148,17 @@ func TestFullTextSearchInDutchAndEnglishAcrossRecordsFilesRawAndUsers(t *testing
 		if got := e2eTitles(e2eSearch(t, api, aliceTok, "huur", "type", "note")); strings.Contains(got, "huur.txt") || !strings.Contains(got, "Huurcontract") {
 			t.Errorf("type note: %s", got)
 		}
-		day := time.Now().Format(time.DateOnly)
+		// the server reads from and to as days in UTC, so today is UTC's (between 5pm and midnight
+		// in California, local time says yesterday)
+		now := time.Now().UTC()
+		day := now.Format(time.DateOnly)
 		if n := len(e2eSearch(t, api, aliceTok, "huur", "from", day, "to", day)); n < 2 {
 			t.Errorf("today: %d hits", n)
 		}
-		if n := len(e2eSearch(t, api, aliceTok, "huur", "from", time.Now().AddDate(0, 0, 1).Format(time.DateOnly))); n != 0 {
+		if n := len(e2eSearch(t, api, aliceTok, "huur", "from", now.AddDate(0, 0, 1).Format(time.DateOnly))); n != 0 {
 			t.Errorf("from tomorrow: %d hits", n)
 		}
-		if n := len(e2eSearch(t, api, aliceTok, "huur", "to", time.Now().AddDate(0, 0, -1).Format(time.DateOnly))); n != 0 {
+		if n := len(e2eSearch(t, api, aliceTok, "huur", "to", now.AddDate(0, 0, -1).Format(time.DateOnly))); n != 0 {
 			t.Errorf("to yesterday: %d hits", n)
 		}
 		st, _ := call(t, "GET", api+"/search?q=huur&space=family", aliceTok, nil, nil)

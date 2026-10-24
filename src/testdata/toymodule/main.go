@@ -15,11 +15,12 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-//go:embed app
+//go:embed app brand
 var app embed.FS
 
 func main() {
 	pages, _ := fs.Sub(app, "app")
+	fonts, _ := fs.Sub(app, "brand")
 	archive.Register(archive.Module{
 		Name: "toy",
 		Pack: []byte(`{"types": {
@@ -60,6 +61,9 @@ func main() {
 			})))
 		},
 		App: &archive.App{Path: "/toy", Title: "Toy", Icon: "box", Files: pages},
+		Brand: &archive.Brand{Name: "Toy Archive", Logo: `<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"/></svg>`,
+			Icon: []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5"/></svg>`),
+			CSS:  []byte(":root { --brand: rgb(1, 2, 3); }\n@font-face { font-family: Toy; src: url(/brand/toy.woff2); }\n"), Files: fonts},
 	})
 	archive.Main()
 }
