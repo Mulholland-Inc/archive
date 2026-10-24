@@ -1,4 +1,4 @@
-package main
+package archive
 
 import (
 	"cmp"
@@ -165,7 +165,21 @@ func (s *signin) handler() http.Handler {
 		return http.StatusAccepted, map[string]string{"status": "if that address has an account, a sign-in link is on its way"}, nil
 	})
 	mux.HandleFunc("GET /auth/magic", func(w http.ResponseWriter, r *http.Request) {
-		s.browser(w, r, func() (*User, error) { return a.UseMagicLink(r.Context(), r.URL.Query().Get("token")) })
+		next := r.URL.Query().Get("next")
+		if !strings.HasPrefix(next, "/oauth/authorize?") {
+			s.browser(w, r, func() (*User, error) { return a.UseMagicLink(r.Context(), r.URL.Query().Get("token")) })
+			return
+		}
+		// a link mailed from an app's sign-in comes back to its consent page, and only there
+		u, err := a.UseMagicLink(r.Context(), r.URL.Query().Get("token"))
+		if err == nil {
+			_, err = s.signedIn(w, r, u)
+		}
+		if err != nil {
+			webRedirect(w, r, "/signin", err)
+			return
+		}
+		http.Redirect(w, r, next, http.StatusSeeOther)
 	})
 	open("GET /auth/methods", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		providers := append([]string{}, slices.Sorted(maps.Keys(s.oidc))...)
@@ -197,6 +211,9 @@ func (s *signin) handler() http.Handler {
 			s.mu.Unlock()
 			return 0, nil, err
 		}
+		if err := a.applyPacks(r.Context()); err != nil {
+			return 0, nil, err
+		}
 		return ok(s.signedIn(w, r, u))
 	})
 	authed("POST /auth/signout", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
@@ -222,6 +239,58 @@ func (s *signin) handler() http.Handler {
 	})
 	authed("DELETE /auth/spaces/{space}", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		return http.StatusNoContent, nil, a.DeleteSpace(r.Context(), r.PathValue("space"))
+	})
+	authed("POST /auth/spaces/{space}/invites", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
+		var body struct {
+			Email string `json:"email"`
+			Role  string `json:"role"`
+		}
+		if err := httpDecode(r, &body); err != nil {
+			return 0, nil, err
+		}
+		inv, secret, err := a.Invite(r.Context(), r.PathValue("space"), body.Email, body.Role)
+		if err != nil {
+			return 0, nil, err
+		}
+		// the link goes back to the inviter too, who may rather send it by text than mail
+		inv.Link = s.base.String() + "/auth/invite?token=" + url.QueryEscape(secret)
+		lead := inv.InvitedBy + " invited you to " + inv.Space + " on Archive. Open this link within 7 days to join:"
+		if err := s.send(inv.Email, "invite", "You're invited to "+inv.Space+" on Archive", lead, inv.Link); err != nil {
+			return 0, nil, err
+		}
+		return http.StatusCreated, inv, nil
+	})
+	// Opening an invite only shows it; a press of its button uses it, so a mail scanner that
+	// follows links does not spend it.
+	mux.HandleFunc("GET /auth/invite", func(w http.ResponseWriter, r *http.Request) {
+		token := r.URL.Query().Get("token")
+		inv, err := a.PeekInvite(r.Context(), token)
+		if err != nil {
+			webRedirect(w, r, "/signin", err)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Content-Security-Policy", webCSP)
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		as := "a " + inv.Role
+		if inv.Role == "admin" || inv.Role == "editor" || inv.Role == "owner" {
+			as = "an " + inv.Role
+		}
+		inviteTmpl.Execute(w, map[string]any{"Invite": inv, "Token": token, "As": as})
+	})
+	mux.HandleFunc("POST /auth/invite", func(w http.ResponseWriter, r *http.Request) {
+		token := r.PostFormValue("token")
+		if token == "" {
+			var body struct {
+				Token string `json:"token"`
+			}
+			if err := httpDecode(r, &body); err != nil {
+				httpWrite(w, 0, nil, err)
+				return
+			}
+			token = body.Token
+		}
+		s.browser(w, r, func() (*User, error) { return a.AcceptInvite(r.Context(), token) })
 	})
 	authed("GET /auth/spaces/{space}/members", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		return ok(a.Members(r.Context(), r.PathValue("space")))
@@ -395,9 +464,14 @@ func (s *signin) signedIn(w http.ResponseWriter, r *http.Request, u *User) (any,
 }
 
 func (s *signin) mail(to, link string) error {
+	return s.send(to, "sign-in", "Sign in to Archive", "Open this link within 15 minutes to sign in to Archive:", link)
+}
+
+// send mails one link, or prints it to the log when no SMTP server is set.
+func (s *signin) send(to, what, subject, lead, link string) error {
 	raw := os.Getenv("ARCHIVE_SMTP_URL")
 	if raw == "" {
-		fmt.Fprintf(os.Stderr, "archive: sign-in link for %s: %s\n", to, link)
+		fmt.Fprintf(os.Stderr, "archive: %s link for %s: %s\n", what, to, link)
 		return nil
 	}
 	u, err := url.Parse(raw)
@@ -410,8 +484,8 @@ func (s *signin) mail(to, link string) error {
 		auth = smtp.PlainAuth("", u.User.Username(), pw, u.Hostname())
 	}
 	from := coreEnv("ARCHIVE_SMTP_FROM", "archive@"+s.base.Hostname())
-	msg := "From: " + from + "\r\nTo: " + to + "\r\nSubject: Sign in to Archive\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" +
-		"Open this link within 15 minutes to sign in to Archive:\r\n\r\n" + link + "\r\n"
+	msg := "From: " + from + "\r\nTo: " + to + "\r\nSubject: " + subject + "\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" +
+		lead + "\r\n\r\n" + link + "\r\n"
 	return smtp.SendMail(u.Hostname()+":"+cmp.Or(u.Port(), "587"), auth, from, []string{to}, []byte(msg))
 }
 

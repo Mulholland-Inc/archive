@@ -1,4 +1,4 @@
-package main
+package archive
 
 import (
 	"bufio"
@@ -87,6 +87,12 @@ Usage:
   archive review approve <id> ...    save the proposed values as records
   archive review reject <id> ...
 
+  archive backup -o <file|->          the whole archive in one file, while it serves or not: the
+                                     database, the secret key and the stored files; keep it off
+                                     this machine, like docker exec archive archive backup -o - > a.tgz
+  archive restore <file|->           load a backup into an empty $ARCHIVE_DATA, with the server
+                                     stopped; then start it as usual
+
   archive user add <email> [-name n] [-admin]
   archive space add <name>
   archive space list
@@ -138,7 +144,9 @@ Environment:
 
 var cliErrUsage = errors.New("usage")
 
-func main() {
+// Main runs the archive command line, serve included, with whatever modules the binary
+// registered before calling it. cmd/archive is the engine alone.
+func Main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	err := cliRun(ctx, os.Args[1:], os.Stdin, os.Stdout)
 	cancel()
@@ -165,6 +173,31 @@ func cliPrintError(w io.Writer, err error) {
 	fmt.Fprintln(w, "archive:", err)
 }
 
+// cliBackup writes a backup to path, or stdout for -, and only puts a file at path once the backup
+// is whole.
+func cliBackup(ctx context.Context, path string, stdout io.Writer) error {
+	dir := coreEnv("ARCHIVE_DATA", "./data")
+	if path == "-" {
+		return Backup(ctx, dir, stdout)
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), ".partial-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	err = Backup(ctx, dir, f)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
+}
+
 func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
 	if len(args) == 0 {
 		return cliErrUsage
@@ -177,6 +210,25 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	case "version":
 		fmt.Fprintln(stdout, cliVersion)
 		return nil
+	case "backup":
+		if len(args) != 2 || args[0] != "-o" {
+			return cliErrUsage
+		}
+		return cliBackup(ctx, args[1], stdout)
+	case "restore":
+		if len(args) != 1 {
+			return cliErrUsage
+		}
+		in := stdin
+		if args[0] != "-" {
+			f, err := os.Open(args[0])
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			in = f
+		}
+		return Restore(ctx, coreEnv("ARCHIVE_DATA", "./data"), in)
 	}
 
 	fs := flag.NewFlagSet("archive "+cmd, flag.ContinueOnError)
@@ -217,6 +269,9 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 		return err
 	}
 	defer a.Close()
+	if err := a.applyPacks(ctx); err != nil {
+		return err
+	}
 	ac, err := a.CLIActor(ctx, *as)
 	if err != nil {
 		return err
@@ -622,6 +677,9 @@ func cliServe(ctx context.Context, a *Archive, addr string) error {
 			fmt.Fprintf(os.Stderr, "archive: no users yet; create the first owner at %s/setup?token=%s\n", base, si.setup)
 		}
 	}
+	if err := a.applyPacks(ctx); err != nil {
+		return err
+	}
 	mux := http.NewServeMux()
 	mux.Handle("/api/", a.httpAuth(httpHandler(a)))
 	mux.HandleFunc("GET /api/sources/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
@@ -646,10 +704,13 @@ func cliServe(ctx context.Context, a *Archive, addr string) error {
 	mux.Handle("/api/files/tus/", tus)
 	mux.HandleFunc("GET /files/{id}", a.fileSigned)
 	mux.Handle("/auth/", si.handler())
+	si.oauthRoutes(mux)
+	a.moduleRoutes(mux)
 	mux.Handle("/", webHandler())
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	srv := mcpServer(a)
-	mux.Handle("/mcp", auth.RequireBearerToken(a.mcpVerify, &auth.RequireBearerTokenOptions{AllowMissingExpiration: true})(
+	mux.Handle("/mcp", auth.RequireBearerToken(a.mcpVerify, &auth.RequireBearerTokenOptions{AllowMissingExpiration: true,
+		ResourceMetadataURL: a.base + "/.well-known/oauth-protected-resource/mcp"})(
 		mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)))
 	hs := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	errc := make(chan error, 1)
@@ -918,6 +979,21 @@ func httpHandler(a *Archive) http.Handler {
 		}
 		return rec, err
 	}))
+	handle("GET /api/{type}/{id}/walk", object(func(ctx context.Context, typ string, id uuid.UUID, r *http.Request) (any, error) {
+		var steps []string
+		if s := r.URL.Query().Get("steps"); s != "" {
+			steps = strings.Split(s, ",")
+		}
+		depth := 1
+		if d := r.URL.Query().Get("depth"); d != "" {
+			n, err := strconv.Atoi(d)
+			if err != nil {
+				return nil, &ValidationError{Type: "walk", Errors: []FieldError{{Path: "depth", Message: "want a number"}}}
+			}
+			depth = n
+		}
+		return a.Walk(ctx, typ, id, steps, depth)
+	}))
 	handle("GET /api/{type}/{id}/links", object(func(ctx context.Context, typ string, id uuid.UUID, _ *http.Request) (any, error) {
 		return a.Links(ctx, typ, id)
 	}))
@@ -929,6 +1005,32 @@ func httpHandler(a *Archive) http.Handler {
 			return 0, nil, err
 		}
 		return http.StatusNoContent, nil, a.Delete(r.Context(), r.PathValue("type"), id)
+	})
+	handle("PUT /api/{type}/{id}/restricted", object(func(ctx context.Context, typ string, id uuid.UUID, r *http.Request) (any, error) {
+		var body struct {
+			Restricted *bool `json:"restricted"`
+		}
+		if err := httpDecode(r, &body); err != nil {
+			return nil, err
+		}
+		if body.Restricted == nil {
+			return nil, &ValidationError{Type: typ, Errors: []FieldError{{Path: "restricted", Message: "want true or false"}}}
+		}
+		return a.Restrict(ctx, typ, id, *body.Restricted)
+	}))
+	handle("POST /api/{type}/{id}/provenance", func(r *http.Request) (int, any, error) {
+		id, err := httpID(r)
+		if err != nil {
+			return 0, nil, err
+		}
+		var body struct {
+			Citations []Citation `json:"citations"`
+		}
+		if err := httpDecode(r, &body); err != nil {
+			return 0, nil, err
+		}
+		ps, err := a.Cite(r.Context(), r.PathValue("type"), id, body.Citations)
+		return http.StatusCreated, ps, err
 	})
 	handle("GET /api/{type}/{id}/provenance", object(func(ctx context.Context, typ string, id uuid.UUID, _ *http.Request) (any, error) {
 		return a.Provenance(ctx, typ, id)

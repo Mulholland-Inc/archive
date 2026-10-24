@@ -9,6 +9,7 @@
     icon,
     tile,
     active = false,
+    external = false,
     expanded,
     count,
     onclick
@@ -18,6 +19,8 @@
     icon?: string;
     tile?: { icon: string; color: number };
     active?: boolean;
+    /** a page the dashboard does not route, such as a module's: the browser loads it */
+    external?: boolean;
     expanded?: boolean;
     count?: number;
     onclick?: () => void;
@@ -34,7 +37,7 @@
 {/snippet}
 
 {#if href}
-  <a class="item" {href} data-active={active || undefined} aria-current={active ? 'page' : undefined} onclick={(e) => intercept(e, href)}>
+  <a class="item" {href} data-active={active || undefined} aria-current={active ? 'page' : undefined} onclick={(e) => !external && intercept(e, href)}>
     {@render content()}
   </a>
 {:else}

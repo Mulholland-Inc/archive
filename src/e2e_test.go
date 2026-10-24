@@ -1,4 +1,4 @@
-package main
+package archive
 
 import (
 	"bytes"
@@ -47,7 +47,7 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	e2eBin = filepath.Join(dir, "archive")
-	if out, err := exec.Command("go", "build", "-o", e2eBin, ".").CombinedOutput(); err != nil {
+	if out, err := exec.Command("go", "build", "-o", e2eBin, "./cmd/archive").CombinedOutput(); err != nil {
 		os.RemoveAll(dir)
 		panic(fmt.Sprintf("go build: %v\n%s", err, out))
 	}
@@ -79,6 +79,7 @@ type e2eInst struct {
 	t   *testing.T
 	dir string
 	env []string
+	bin string // a product's binary built on the engine, instead of the engine's own
 }
 
 func newInst(t *testing.T, env ...string) *e2eInst {
@@ -98,7 +99,7 @@ func (in *e2eInst) on(t *testing.T) *e2eInst {
 }
 
 func (in *e2eInst) cmd(args ...string) *exec.Cmd {
-	c := exec.Command(e2eBin, args...)
+	c := exec.Command(cmp.Or(in.bin, e2eBin), args...)
 	c.Env = append(os.Environ(), in.env...)
 	return c
 }
@@ -380,7 +381,7 @@ func TestIntakeMapsFilesThroughAFakeOpenAIServer(t *testing.T) {
 		calls++
 		mu.Unlock()
 		content := `{"number":"INV-7","total":"€ 1.234,50","date":"03-04-2025","bsn":"111222333"}`
-		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": content}}}})
+		json.NewEncoder(w).Encode(e2eSure(content))
 	}))
 	defer llm.Close()
 	in := newInst(t, "ARCHIVE_LOCALE=nl-NL", "ARCHIVE_LLM_URL="+llm.URL+"/v1", "ARCHIVE_LLM_MODEL=fake")
@@ -438,7 +439,7 @@ func TestUnsureIntakeWaitsForReviewAndApprovesInBulk(t *testing.T) {
 				content = `{"number":"INV-20","total":"€ 20,00","date":"02-04-2025"}`
 			}
 		}
-		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": content}}}})
+		json.NewEncoder(w).Encode(e2eSure(content))
 	}))
 	defer llm.Close()
 	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=ann@example.com", "ARCHIVE_LOCALE=nl-NL", "ARCHIVE_LLM_URL="+llm.URL+"/v1", "ARCHIVE_LLM_MODEL=fake")
@@ -1170,7 +1171,7 @@ func TestSourcesSyncGmailDriveIMAPAndExternalConnectorsIntoRawAndTypes(t *testin
 			subject = []string{"", ""}
 		}
 		content, _ := json.Marshal(map[string]string{"subject": subject[1], "from": from})
-		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": string(content)}}}})
+		json.NewEncoder(w).Encode(e2eSure(string(content)))
 	}))
 	defer llm.Close()
 
@@ -1660,7 +1661,7 @@ type e2eOpenAI struct {
 func (o *e2eOpenAI) handler() http.Handler {
 	mux := http.NewServeMux()
 	reply := func(w http.ResponseWriter, content string) {
-		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": content}}}})
+		json.NewEncoder(w).Encode(e2eSure(content))
 	}
 	mux.HandleFunc("POST /v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -2147,14 +2148,17 @@ func TestFullTextSearchInDutchAndEnglishAcrossRecordsFilesRawAndUsers(t *testing
 		if got := e2eTitles(e2eSearch(t, api, aliceTok, "huur", "type", "note")); strings.Contains(got, "huur.txt") || !strings.Contains(got, "Huurcontract") {
 			t.Errorf("type note: %s", got)
 		}
-		day := time.Now().Format(time.DateOnly)
+		// the server reads from and to as days in UTC, so today is UTC's (between 5pm and midnight
+		// in California, local time says yesterday)
+		now := time.Now().UTC()
+		day := now.Format(time.DateOnly)
 		if n := len(e2eSearch(t, api, aliceTok, "huur", "from", day, "to", day)); n < 2 {
 			t.Errorf("today: %d hits", n)
 		}
-		if n := len(e2eSearch(t, api, aliceTok, "huur", "from", time.Now().AddDate(0, 0, 1).Format(time.DateOnly))); n != 0 {
+		if n := len(e2eSearch(t, api, aliceTok, "huur", "from", now.AddDate(0, 0, 1).Format(time.DateOnly))); n != 0 {
 			t.Errorf("from tomorrow: %d hits", n)
 		}
-		if n := len(e2eSearch(t, api, aliceTok, "huur", "to", time.Now().AddDate(0, 0, -1).Format(time.DateOnly))); n != 0 {
+		if n := len(e2eSearch(t, api, aliceTok, "huur", "to", now.AddDate(0, 0, -1).Format(time.DateOnly))); n != 0 {
 			t.Errorf("to yesterday: %d hits", n)
 		}
 		st, _ := call(t, "GET", api+"/search?q=huur&space=family", aliceTok, nil, nil)

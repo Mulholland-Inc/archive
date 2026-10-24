@@ -1,4 +1,4 @@
-package main
+package archive
 
 import (
 	"cmp"
@@ -145,6 +145,21 @@ func (a *Archive) has(ctx context.Context, role, group string) bool {
 	return err == nil && ok
 }
 
+// adminOnly refuses unless the caller is the instance admin, as ontology_admin() in schema.sql
+// decides. It guards what reaches past one space: the server's own disk and programs.
+func (a *Archive) adminOnly(ctx context.Context, what string) error {
+	var ok bool
+	if err := a.as(ctx, func(ctx context.Context) error {
+		return a.st.Q(ctx).QueryRow(ctx, `SELECT ontology_admin()`).Scan(&ok)
+	}); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("only the instance admin %s: %w", what, ErrForbidden)
+	}
+	return nil
+}
+
 func (a *Archive) level(ctx context.Context, role, base string, direct bool) int {
 	if !direct {
 		for i := len(authLevels); i > 0; i-- {
@@ -251,6 +266,12 @@ func (a *Archive) userCount(ctx context.Context) (int, error) {
 }
 
 func (a *Archive) AddUser(ctx context.Context, email, name string, admin bool) (*User, error) {
+	return a.addUser(ctx, email, name, admin, true)
+}
+
+// addUser makes a user with a home space they own. checked says whether the caller must be the
+// instance admin, which every caller but an accepted invite must be, once there is a first user.
+func (a *Archive) addUser(ctx context.Context, email, name string, admin, checked bool) (*User, error) {
 	email, err := authEmail(email)
 	if err != nil {
 		return nil, err
@@ -266,7 +287,7 @@ func (a *Archive) AddUser(ctx context.Context, email, name string, admin bool) (
 		if err := q.QueryRow(ctx, `SELECT NOT EXISTS (SELECT FROM users)`).Scan(&first); err != nil {
 			return err
 		}
-		if !first {
+		if !first && checked {
 			ac, err := authUser(ctx)
 			if err != nil {
 				return err

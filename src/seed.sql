@@ -32,6 +32,16 @@ SELECT name, extends, def::jsonb, true FROM (VALUES
     "required": ["start", "end"], "additionalProperties": false},
   "parse": "interval", "check": "interval", "format": "interval",
   "examples": [{"start": "2026-01-01", "end": "2026-12-31"}, {"start": "2026-10-23T08:00:00Z", "end": null}]}'),
+('fuzzy_date', '', '{
+  "description": "A date as people know it, exact or not: about 1890, before 1900, between 1890 and 1895, March 1890, the 1890s. EDTF with the earliest and latest day it can mean; text no date can be read from is kept as text", "category": "time",
+  "schema": {"type": "object", "properties": {
+    "edtf": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    "min": {"anyOf": [{"type": "string", "format": "date"}, {"type": "null"}]},
+    "max": {"anyOf": [{"type": "string", "format": "date"}, {"type": "null"}]},
+    "text": {"anyOf": [{"type": "string"}, {"type": "null"}]}},
+    "required": ["edtf", "min", "max", "text"], "additionalProperties": false},
+  "parse": "fuzzy_date", "check": "fuzzy_date", "format": "fuzzy_date",
+  "examples": [{"edtf": "1890~", "min": "1890-01-01", "max": "1890-12-31", "text": null}, {"edtf": "../1900", "min": null, "max": "1900-12-31", "text": null}, {"edtf": null, "min": null, "max": null, "text": "the spring after the flood"}]}'),
 ('timezone', '', '{
   "description": "IANA time zone", "category": "time",
   "schema": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_+\\-/]*$"},
