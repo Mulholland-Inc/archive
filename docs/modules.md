@@ -31,6 +31,8 @@ func main() {
   - Sources of a module's kind follow the same rules as gmail or imap. Only `external` and `folder` are reserved for the instance admin.
 - **Tools** add MCP tools. `archive.Tool` runs each one as the person or token calling it, with the engine's error handling.
 - **Routes** add HTTP routes. `a.Authed` makes a route need a signed-in caller, who is available as `archive.ActorFrom(ctx)`. `archive.WriteJSON` answers in the engine's format. Every read and write through `*archive.Archive` goes through the same permissions and row-level security as the engine's own routes.
-- **App** serves static pages under `Path`. The dashboard lists them in its sidebar from `GET /api/apps`.
+- **App** serves static pages under `Path`. The dashboard lists them in its sidebar from `GET /api/apps`. With `Front`, the app's page is the front door: a visitor who is not signed in sees it at `/`, and someone signed in is sent into the app.
+- **Brand** dresses the dashboard as the product: its name, logo, icon, stylesheet and fonts. `About` says in a sentence what the product is; `/llms.txt` opens with it, then the MCP address, how to sign in, and every tool, read from the MCP server itself.
+- **Commands** add commands to the binary by name, run as the first owner with every pack applied. A product moving its users from another server can bring their assistants' grants with `a.ImportOAuth`, so nobody connects again.
 
 `src/testdata/toymodule` uses every hook. `e2e_module_test.go` drives each one through a real server.

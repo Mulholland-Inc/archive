@@ -8,11 +8,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html/template"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -24,8 +26,9 @@ import (
 
 // OAuth 2.1 for MCP clients and apps, as the MCP authorization spec asks: protected resource and
 // authorization server metadata, dynamic client registration, the authorization code flow with
-// PKCE (S256 only), refresh tokens that rotate, and revocation. Clients are public, so none has a
-// secret. A grant is an ordinary API token over the user's spaces at their levels, named after the
+// PKCE (S256 only), refresh tokens that rotate, and revocation. A client is public unless it
+// registers with client_secret_basic or client_secret_post, when it gets a secret it must send to
+// the token endpoint from then on. A grant is an ordinary API token over the user's spaces at their levels, named after the
 // client, so it shows in the token list and is revoked like any other; its secret is the access
 // token, replaced on every refresh.
 
@@ -37,21 +40,34 @@ const (
 func (s *signin) oauthRoutes(mux *http.ServeMux) {
 	base := s.base.String()
 	prm := func(w http.ResponseWriter, r *http.Request) {
+		oauthCORS(w)
 		oauthJSON(w, http.StatusOK, &oauthex.ProtectedResourceMetadata{Resource: base + "/mcp", AuthorizationServers: []string{base},
 			BearerMethodsSupported: []string{"header"}, ResourceName: "Archive"})
 	}
 	mux.HandleFunc("GET /.well-known/oauth-protected-resource", prm)
 	mux.HandleFunc("GET /.well-known/oauth-protected-resource/mcp", prm)
 	mux.HandleFunc("GET /.well-known/oauth-authorization-server", func(w http.ResponseWriter, r *http.Request) {
+		oauthCORS(w)
 		oauthJSON(w, http.StatusOK, &oauthex.AuthServerMeta{
 			Issuer: base, AuthorizationEndpoint: base + "/oauth/authorize", TokenEndpoint: base + "/oauth/token",
 			RegistrationEndpoint: base + "/oauth/register", RevocationEndpoint: base + "/oauth/revoke",
 			ResponseTypesSupported: []string{"code"}, GrantTypesSupported: []string{"authorization_code", "refresh_token"},
-			TokenEndpointAuthMethodsSupported: []string{"none"}, CodeChallengeMethodsSupported: []string{"S256"},
-			RevocationEndpointAuthMethodsSupported:     []string{"none"},
+			TokenEndpointAuthMethodsSupported: oauthAuthMethods, CodeChallengeMethodsSupported: []string{"S256"},
+			RevocationEndpointAuthMethodsSupported:     oauthAuthMethods,
 			AuthorizationResponseIssParameterSupported: true,
 		})
 	})
+	// a client in a browser reads the metadata and calls these from another origin; none of them
+	// reads a cookie, so allowing any origin gives a page nothing it could not get by itself
+	for _, p := range []string{"/oauth/register", "/oauth/token", "/oauth/revoke"} {
+		mux.HandleFunc("OPTIONS "+p, func(w http.ResponseWriter, r *http.Request) {
+			oauthCORS(w)
+			w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "authorization, content-type")
+			w.Header().Set("Access-Control-Max-Age", "3600")
+			w.WriteHeader(http.StatusNoContent)
+		})
+	}
 	mux.HandleFunc("POST /oauth/register", s.oauthRegister)
 	mux.HandleFunc("GET /oauth/authorize", s.oauthAuthorizePage)
 	mux.HandleFunc("POST /oauth/authorize", s.oauthAuthorize)
@@ -59,6 +75,10 @@ func (s *signin) oauthRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /oauth/token", s.oauthToken)
 	mux.HandleFunc("POST /oauth/revoke", s.oauthRevoke)
 }
+
+var oauthAuthMethods = []string{"none", "client_secret_basic", "client_secret_post"}
+
+func oauthCORS(w http.ResponseWriter) { w.Header().Set("Access-Control-Allow-Origin", "*") }
 
 func oauthJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -112,19 +132,35 @@ func (s *signin) oauthRegister(w http.ResponseWriter, r *http.Request) {
 	if len(name) > 64 {
 		name = name[:64]
 	}
+	method := cmp.Or(meta.TokenEndpointAuthMethod, "none")
+	if !slices.Contains(oauthAuthMethods, method) {
+		oauthError(w, 400, "invalid_client_metadata", "token_endpoint_auth_method must be none, client_secret_basic or client_secret_post")
+		return
+	}
 	id := authNewSecret()[:32]
+	var secret, secretHash any
+	if method != "none" {
+		sec := authNewSecret()
+		secret, secretHash = sec, authHash(sec)
+	}
 	err := s.a.sys(r.Context(), func(ctx context.Context) error {
-		_, err := s.a.st.Q(ctx).Exec(ctx, `INSERT INTO oauth_clients (id, name, redirect_uris) VALUES ($1, $2, $3)`, id, name, meta.RedirectURIs)
+		_, err := s.a.st.Q(ctx).Exec(ctx, `INSERT INTO oauth_clients (id, name, redirect_uris, secret_hash, auth_method) VALUES ($1, $2, $3, $4, $5)`,
+			id, name, meta.RedirectURIs, secretHash, method)
 		return err
 	})
 	if err != nil {
 		oauthError(w, 500, "server_error", "could not register the client")
 		return
 	}
-	oauthJSON(w, http.StatusCreated, map[string]any{
+	out := map[string]any{
 		"client_id": id, "client_name": name, "redirect_uris": meta.RedirectURIs, "client_id_issued_at": time.Now().Unix(),
-		"token_endpoint_auth_method": "none", "grant_types": []string{"authorization_code", "refresh_token"}, "response_types": []string{"code"},
-	})
+		"token_endpoint_auth_method": method, "grant_types": []string{"authorization_code", "refresh_token"}, "response_types": []string{"code"},
+	}
+	if secret != nil {
+		out["client_secret"], out["client_secret_expires_at"] = secret, 0
+	}
+	oauthCORS(w)
+	oauthJSON(w, http.StatusCreated, out)
 }
 
 type oauthRequest struct {
@@ -260,24 +296,50 @@ func (s *signin) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 	s.oauthBack(w, r, q, url.Values{"code": {secret}})
 }
 
+// oauthClient is the client calling the token endpoint: from HTTP Basic or the form's client_id,
+// and when it registered with a secret, only if it sent that secret.
+func (s *signin) oauthClient(r *http.Request) (string, bool) {
+	id, secret, basic := r.BasicAuth()
+	if basic {
+		id, _ = url.QueryUnescape(id)
+		secret, _ = url.QueryUnescape(secret)
+	} else {
+		id, secret = r.PostFormValue("client_id"), r.PostFormValue("client_secret")
+	}
+	var hash *string
+	err := s.a.sys(r.Context(), func(ctx context.Context) error {
+		return s.a.st.Q(ctx).QueryRow(ctx, `SELECT secret_hash FROM oauth_clients WHERE id = $1`, id).Scan(&hash)
+	})
+	if err != nil {
+		return id, false
+	}
+	return id, hash == nil || secret != "" && subtle.ConstantTimeCompare([]byte(authHash(secret)), []byte(*hash)) == 1
+}
+
 func (s *signin) oauthToken(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	clientID := r.PostFormValue("client_id")
+	oauthCORS(w)
+	clientID, ok := s.oauthClient(r)
+	if !ok {
+		w.Header().Set("WWW-Authenticate", `Basic realm="archive"`)
+		oauthError(w, http.StatusUnauthorized, "invalid_client", "the client is unknown or its secret is wrong")
+		return
+	}
 	switch r.PostFormValue("grant_type") {
 	case "authorization_code":
 		var uid uuid.UUID
-		var redirectURI, challenge, clientName string
+		var redirectURI, challenge, clientName, codeClient string
 		err := s.a.sys(ctx, func(ctx context.Context) error {
 			return s.a.st.Q(ctx).QueryRow(ctx, `DELETE FROM oauth_codes c USING oauth_clients k WHERE k.id = c.client_id
 				AND c.hash = $1 AND c.expires_at > now() RETURNING c.user_id, c.client_id, c.redirect_uri, c.challenge, k.name`,
-				authHash(r.PostFormValue("code"))).Scan(&uid, &clientID, &redirectURI, &challenge, &clientName)
+				authHash(r.PostFormValue("code"))).Scan(&uid, &codeClient, &redirectURI, &challenge, &clientName)
 		})
 		sum := sha256.Sum256([]byte(r.PostFormValue("code_verifier")))
 		switch {
 		case err != nil:
 			oauthError(w, 400, "invalid_grant", "the code is invalid, used or expired")
 			return
-		case clientID != r.PostFormValue("client_id") || redirectURI != r.PostFormValue("redirect_uri"):
+		case codeClient != clientID || redirectURI != r.PostFormValue("redirect_uri"):
 			oauthError(w, 400, "invalid_grant", "the code was issued to another client or redirect_uri")
 			return
 		case subtle.ConstantTimeCompare([]byte(base64.RawURLEncoding.EncodeToString(sum[:])), []byte(challenge)) != 1:
@@ -336,6 +398,7 @@ func (s *signin) oauthToken(w http.ResponseWriter, r *http.Request) {
 // oauthRevoke ends a grant given either of its tokens, and answers 200 whatever it was given, as
 // RFC 7009 asks, so it says nothing about which tokens exist.
 func (s *signin) oauthRevoke(w http.ResponseWriter, r *http.Request) {
+	oauthCORS(w)
 	h := authHash(r.PostFormValue("token"))
 	s.a.sys(r.Context(), func(ctx context.Context) error {
 		_, err := s.a.st.Q(ctx).Exec(ctx, `DELETE FROM tokens WHERE id IN (
@@ -365,3 +428,105 @@ input{border:1px solid #888;width:100%;box-sizing:border-box;margin:.25rem 0 1re
 <button name="allow" value="yes">Allow</button><button class="no" name="allow" value="no">Deny</button></form>{{end}}
 </body></html>
 `))
+
+// OAuthImport is a grant another server gave a client, brought here so the client keeps working
+// without asking its person again: the client as it registered (its secret's hash, when it has
+// one), the person it acts for, and the hash of its live refresh token, sha256 in hex as this
+// engine keeps its own. The client's next refresh is answered here as if the grant were made here.
+type OAuthImport struct {
+	ClientID     string   `json:"client_id"`
+	ClientName   string   `json:"client_name"`
+	RedirectURIs []string `json:"redirect_uris"`
+	AuthMethod   string   `json:"auth_method"`
+	SecretHash   string   `json:"secret_hash,omitempty"`
+	Email        string   `json:"email"`
+	RefreshHash  string   `json:"refresh_hash"`
+}
+
+// OAuthImported says what an import did: grants made, and the ones left out with why.
+type OAuthImported struct {
+	Imported int               `json:"imported"`
+	Skipped  map[string]string `json:"skipped"`
+}
+
+var oauthHashRe = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// ImportOAuth brings grants from another server, for the instance admin. A grant whose person has
+// no account here, or whose refresh token is here already, is left out, so running it twice
+// changes nothing. Each grant is an API token over the person's spaces at their levels, as one made
+// here is; its access token starts expired, so the client's first call refreshes.
+func (a *Archive) ImportOAuth(ctx context.Context, gs []OAuthImport) (*OAuthImported, error) {
+	ac, err := authUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !a.has(ctx, ac.UserRole, a.prefix+"_admin") {
+		return nil, fmt.Errorf("only instance admins import grants: %w", ErrForbidden)
+	}
+	out := &OAuthImported{Skipped: map[string]string{}}
+	for i, g := range gs {
+		key := fmt.Sprintf("%d %s", i, g.ClientName)
+		method := cmp.Or(g.AuthMethod, "none")
+		switch {
+		case g.ClientID == "" || len(g.RedirectURIs) == 0:
+			out.Skipped[key] = "no client_id or redirect_uris"
+			continue
+		case !slices.Contains(oauthAuthMethods, method) || (method == "none") != (g.SecretHash == "") || g.SecretHash != "" && !oauthHashRe.MatchString(g.SecretHash):
+			out.Skipped[key] = "the auth_method and secret_hash do not agree"
+			continue
+		case !oauthHashRe.MatchString(g.RefreshHash):
+			out.Skipped[key] = "refresh_hash is not sha256 hex"
+			continue
+		}
+		var u *User
+		err := a.sys(ctx, func(ctx context.Context) error {
+			var err error
+			u, err = a.userBy(ctx, `email = $1`, strings.ToLower(strings.TrimSpace(g.Email)))
+			return err
+		})
+		if errors.Is(err, ErrNotFound) {
+			out.Skipped[key] = "nobody here has that address"
+			continue
+		} else if err != nil {
+			return out, err
+		}
+		name := cmp.Or(strings.TrimSpace(g.ClientName), "An assistant")
+		var have bool
+		err = a.sys(ctx, func(ctx context.Context) error {
+			q := a.st.Q(ctx)
+			var secret any
+			if g.SecretHash != "" {
+				secret = g.SecretHash
+			}
+			if _, err := q.Exec(ctx, `INSERT INTO oauth_clients (id, name, redirect_uris, secret_hash, auth_method) VALUES ($1, $2, $3, $4, $5)
+				ON CONFLICT (id) DO NOTHING`, g.ClientID, name, g.RedirectURIs, secret, method); err != nil {
+				return err
+			}
+			return q.QueryRow(ctx, `SELECT EXISTS (SELECT FROM oauth_grants WHERE refresh_hash = $1)`, g.RefreshHash).Scan(&have)
+		})
+		if err != nil {
+			return out, err
+		}
+		if have {
+			out.Skipped[key] = "this grant is here already"
+			continue
+		}
+		t, err := a.CreateToken(WithActor(ctx, a.userActor(u)), name, nil, oauthAccessTTL, false)
+		if err != nil {
+			return out, err
+		}
+		err = a.sys(ctx, func(ctx context.Context) error {
+			q := a.st.Q(ctx)
+			if _, err := q.Exec(ctx, `UPDATE tokens SET expires_at = now() WHERE id = $1`, t.ID); err != nil {
+				return err
+			}
+			_, err := q.Exec(ctx, `INSERT INTO oauth_grants (token_id, client_id, refresh_hash) VALUES ($1, $2, $3)`, t.ID, g.ClientID, g.RefreshHash)
+			return err
+		})
+		if err != nil {
+			return out, err
+		}
+		out.Imported++
+	}
+	return out, nil
+}
