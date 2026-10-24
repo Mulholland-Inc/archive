@@ -1,6 +1,7 @@
 package archive
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -32,6 +33,22 @@ type Module struct {
 	Routes func(mux *http.ServeMux, a *Archive)
 	// App is a set of web pages the dashboard links to from its sidebar.
 	App *App
+	// Brand dresses the dashboard as the product: its name, logo, colours and type. One module
+	// at most brings one; without it the dashboard looks as the engine's own.
+	Brand *Brand
+}
+
+// Brand is how a product built on the engine looks. CSS is loaded after the dashboard's own
+// stylesheet, so it changes the dashboard's tokens (app.css: the palette, the roles such as
+// --brand and --accent, --font-sans and --font-display) for day and for night ([data-theme]);
+// Files holds what it refers to, such as fonts, served under /brand/. Logo is an SVG drawn where
+// the dashboard draws its mark, in the colour around it; Icon is the browser tab's SVG.
+type Brand struct {
+	Name  string
+	Logo  string
+	Icon  []byte
+	CSS   []byte
+	Files fs.FS
 }
 
 // SemanticType reads a value as people write it into its stored form, checks a stored value and
@@ -103,7 +120,19 @@ func Register(m Module) {
 	if m.App != nil && (!strings.HasPrefix(m.App.Path, "/") || strings.HasPrefix(m.App.Path, "/api") || strings.HasPrefix(m.App.Path, "/auth")) {
 		panic(fmt.Sprintf("archive: module %s: app path %q must start with / and not be /api or /auth", m.Name, m.App.Path))
 	}
+	if m.Brand != nil && slices.ContainsFunc(modules, func(o Module) bool { return o.Brand != nil }) {
+		panic(fmt.Sprintf("archive: module %s: another module already brings the brand", m.Name))
+	}
 	modules = append(modules, m)
+}
+
+func brandOf() *Brand {
+	for _, m := range registered() {
+		if m.Brand != nil {
+			return m.Brand
+		}
+	}
+	return nil
 }
 
 func registered() []Module {
@@ -171,6 +200,31 @@ func (a *Archive) moduleRoutes(mux *http.ServeMux) {
 			mux.Handle(p+"/", http.StripPrefix(p, http.FileServerFS(m.App.Files)))
 			apps = append(apps, map[string]string{"path": p + "/", "title": m.App.Title, "icon": m.App.Icon})
 		}
+	}
+	// the brand, public, since the sign-in page wears it too; empty when the engine is alone
+	b := brandOf()
+	mux.HandleFunc("GET /brand.css", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		if b != nil {
+			w.Write(b.CSS)
+		}
+	})
+	mux.HandleFunc("GET /api/brand", func(w http.ResponseWriter, r *http.Request) {
+		v := map[string]string{"name": "Archive"}
+		if b != nil {
+			v["name"], v["logo"] = cmp.Or(b.Name, "Archive"), b.Logo
+		}
+		httpWrite(w, http.StatusOK, v, nil)
+	})
+	if b != nil && b.Files != nil {
+		mux.Handle("GET /brand/", http.StripPrefix("/brand", http.FileServerFS(b.Files)))
+	}
+	if b != nil && len(b.Icon) > 0 {
+		mux.HandleFunc("GET /favicon.svg", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "image/svg+xml")
+			w.Write(b.Icon)
+		})
 	}
 	mux.Handle("GET /api/apps", a.httpAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		httpWrite(w, http.StatusOK, append([]map[string]string{}, apps...), nil)

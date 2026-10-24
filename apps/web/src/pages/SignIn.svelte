@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { brand } from '../lib/brand.svelte';
   import { AuthFrame, Button, Field, Input, Stack, Notice, Divider, Text } from '../lib';
   import { api, passkeySignIn, passkeysSupported, ApiError } from '../lib/api';
   import { load } from '../lib/session.svelte';
@@ -17,7 +18,7 @@
   async function sendLink(e: SubmitEvent) {
     e.preventDefault();
     if (!email.trim()) {
-      error = 'Enter the email address of your Archive account.';
+      error = `Enter the email address of your ${brand.name} account.`;
       return;
     }
     sending = true;
@@ -47,7 +48,7 @@
   }
 </script>
 
-<AuthFrame title={sent ? 'Check your email' : 'Sign in to Archive'} description={sent ? undefined : 'Your records, files and sources, in one place.'}>
+<AuthFrame title={sent ? 'Check your email' : `Sign in to ${brand.name}`} description={sent ? undefined : 'Your records, files and sources, in one place.'}>
   {#if sent}
     <Stack gap="4">
       <Text as="p">If {email} has an account, a sign-in link is on its way. It works for 15 minutes.</Text>

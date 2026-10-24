@@ -1,10 +1,11 @@
 <script lang="ts">
   import Icon from './Icon.svelte';
+  import BrandMark from './BrandMark.svelte';
   let { name, pressed = false, onclick }: { name: string; pressed?: boolean; onclick?: () => void } = $props();
 </script>
 
 <button class="switcher" data-pressed={pressed || undefined} aria-expanded={pressed} aria-label={`Space: ${name}`} {onclick}>
-  <span class="logo"><Icon name="brand" size="sm" /></span>
+  <span class="logo"><BrandMark size="sm" /></span>
   <span class="name">{name}</span>
   <Icon name="chevron-down" size="sm" />
 </button>
