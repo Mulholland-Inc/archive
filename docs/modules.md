@@ -23,7 +23,7 @@ func main() {
 
 ## The hooks
 
-- **Pack** is a spec of the module's types. A type marked `"guarded": true` is the module's to write: through the engine's own API and MCP tools (records, intake, typed sources) only an admin of the space writes it, while the module's routes and tools write it by their own rules.
+- **Pack** is a spec of the module's types. A type marked `"guarded": true` is the module's to write: through the engine's own API (records, intake, typed sources) only an admin of the space writes it; through the engine's own MCP tools no agent writes it at all, so agents draft through the module's tools for a person to decide; and the module's routes and tools write it by their own rules.
   The first instance admin applies it on every start, including the first one after setup. It adds and changes only the pack's own types and leaves everyone else's alone. An unchanged pack makes no change.
 - **Types** are semantic types: `Parse` reads what people or models write, `Check` validates a stored value, and `Format` shows it. A pack type names them in `parse`, `check` and `format`.
 - **Connectors** are source kinds:

@@ -175,6 +175,16 @@ func TestAModuleAddsTypesConnectorsToolsRoutesAndPages(t *testing.T) {
 		if st, _ := call(t, "PATCH", api+"/vow/"+v.ID, alice, map[string]any{"text": "changed"}, nil); st != 200 {
 			t.Errorf("the space's admin changes it through the API: %d", st)
 		}
+		// an agent drafts through the module's tools and never writes a guarded type itself, the admin's included
+		if out, isErr := mcpCall(t, srv.url, alice, "upsert", map[string]any{"type": "vow", "id": v.ID, "data": map[string]any{"text": "the agent's"}}); !isErr {
+			t.Errorf("the admin's agent writes a guarded type through MCP: %s", out)
+		}
+		if out, isErr := mcpCall(t, srv.url, alice, "delete", map[string]any{"type": "vow", "id": v.ID}); !isErr {
+			t.Errorf("the admin's agent deletes a guarded record through MCP: %s", out)
+		}
+		if out, isErr := mcpCall(t, srv.url, alice, "upsert", map[string]any{"type": "note", "space": "shared", "data": map[string]any{"text": "fine"}}); isErr {
+			t.Errorf("the admin's agent writes a type nobody guards: %s", out)
+		}
 	})
 
 	t.Run("ItsPageIsTheFrontDoor", func(t *testing.T) {

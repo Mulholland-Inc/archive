@@ -305,15 +305,20 @@ func (a *Archive) mcpVerify(ctx context.Context, token string, _ *http.Request) 
 	return &auth.TokenInfo{UserID: ac.UserID.String(), Extra: map[string]any{"actor": ac}}, nil
 }
 
+// mcpTool adds one of the engine's own tools: an agent's, which never writes a guarded type.
 func mcpTool[In any](s *mcp.Server, name, desc string, f func(context.Context, In) (any, error)) {
+	addTool(s, name, desc, func(ctx context.Context, in In) (any, error) { return f(byAgent(ctx), in) })
+}
+
+// addTool adds a tool that runs as the caller, with the engine's error handling.
+func addTool[In any](s *mcp.Server, name, desc string, f func(context.Context, In) (any, error)) {
 	mcp.AddTool(s, &mcp.Tool{Name: name, Description: desc},
 		func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
 			if req.Extra != nil && req.Extra.TokenInfo != nil {
 				ac, _ := req.Extra.TokenInfo.Extra["actor"].(*Actor)
 				ctx = WithActor(ctx, ac)
 			}
-			// the engine's own tools are outside: a guarded type is written by them only as an admin of its space
-			out, err := f(outside(ctx), in)
+			out, err := f(ctx, in)
 			if s, ok := out.(string); ok && err == nil {
 				// words, for a client to read as they are
 				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: s}}}, nil, nil

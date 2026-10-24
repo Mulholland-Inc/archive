@@ -163,7 +163,7 @@ func registered() []Module {
 // Tool adds an MCP tool that runs as the person or token calling it, with the same error handling
 // as the engine's own tools.
 func Tool[In any](s *mcp.Server, name, desc string, f func(context.Context, In) (any, error)) {
-	mcpTool(s, name, desc, f)
+	addTool(s, name, desc, f) // a module's tool writes by the module's own rules
 }
 
 // Authed wraps an HTTP handler so it runs as the signed-in caller (ActorFrom gives them), and
