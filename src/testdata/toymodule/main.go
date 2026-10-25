@@ -12,8 +12,10 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/Mulholland-Inc/archive"
+	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -59,6 +61,31 @@ func main() {
 			})
 		},
 		Routes: func(mux *http.ServeMux, a *archive.Archive) {
+			// the toy's own careful save: a note changes only from the words its writer last read
+			mux.Handle("PATCH /api/toy/note/{id}", a.Authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body struct{ From, To string }
+				id, err := uuid.Parse(r.PathValue("id"))
+				if err == nil {
+					err = json.NewDecoder(r.Body).Decode(&body)
+				}
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				rec, err := a.PatchIf(r.Context(), "note", id, map[string]any{"text": body.To}, func(now *archive.Record) error {
+					// a check that takes a moment, so writers the lock did not hold would all pass it
+					time.Sleep(20 * time.Millisecond)
+					var note struct{ Text string }
+					if err := json.Unmarshal(now.Data, &note); err != nil {
+						return err
+					}
+					if note.Text != body.From {
+						return fmt.Errorf("the note says %s now: %w", note.Text, archive.ErrConflict)
+					}
+					return nil
+				})
+				archive.WriteJSON(w, http.StatusOK, rec, err)
+			})))
 			// the toy's own way to write a vow, as the caller, whoever they are in the space
 			mux.Handle("POST /api/toy/vow", a.Authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				rec, err := a.Create(r.Context(), r.URL.Query().Get("space"), "vow", map[string]any{"text": "kept"})

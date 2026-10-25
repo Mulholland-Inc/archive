@@ -403,6 +403,14 @@ func (a *Archive) coreLock(ctx context.Context, id uuid.UUID) error {
 }
 
 func (a *Archive) Patch(ctx context.Context, typ string, id uuid.UUID, patch map[string]any) (*Record, error) {
+	return a.PatchIf(ctx, typ, id, patch, nil)
+}
+
+// PatchIf patches an object as Patch does, if check, given the object as it stands under the
+// object's lock, returns nil; otherwise nothing is written and check's error is returned as it
+// is. Two writers that each check what they read, such as a revision, cannot both pass on the
+// same one: the second waits for the first and checks what it wrote.
+func (a *Archive) PatchIf(ctx context.Context, typ string, id uuid.UUID, patch map[string]any, check func(*Record) error) (*Record, error) {
 	return coreDo(a, ctx, func(ctx context.Context) (*Record, error) {
 		if err := a.coreLock(ctx, id); err != nil {
 			return nil, err
@@ -413,6 +421,11 @@ func (a *Archive) Patch(ctx context.Context, typ string, id uuid.UUID, patch map
 		}
 		if err := a.guard(ctx, typ, r.Space); err != nil {
 			return nil, err
+		}
+		if check != nil {
+			if err := check(r); err != nil {
+				return nil, err
+			}
 		}
 		data := map[string]any{}
 		if err := json.Unmarshal(r.Data, &data); err != nil {
