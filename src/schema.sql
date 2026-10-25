@@ -241,6 +241,8 @@ CREATE TABLE IF NOT EXISTS invites (
     expires_at timestamptz NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now()
 );
+-- the invitee's name, as whoever invited them gave it: the account's name when the invite makes one
+ALTER TABLE invites ADD COLUMN IF NOT EXISTS name text NOT NULL DEFAULT '';
 
 DO $$ BEGIN
     IF to_regclass('specs') IS NOT NULL THEN

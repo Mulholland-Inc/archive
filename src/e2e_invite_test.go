@@ -4,6 +4,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -146,6 +148,59 @@ func TestASpaceAdminInvitesSomeoneNewWithOneLinkThatWorksOnce(t *testing.T) {
 		wantStatus(t, st, 200, "carol joins")
 		if n := in.psql("archive", "SELECT count(*) FROM users WHERE email = 'carol@example.com'"); n != "1" {
 			t.Errorf("%s carols", n)
+		}
+	})
+}
+
+// A product invites someone by the name whoever invites them gives: the account the invite makes
+// takes it, and so does an account that has no name yet, but a name someone already has is theirs.
+func TestAnInviteCarriesTheInviteesNameToTheirAccount(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "toymodule")
+	if out, err := exec.Command("go", "build", "-o", bin, "./testdata/toymodule").CombinedOutput(); err != nil {
+		t.Fatalf("build the toy module: %v\n%s", err, out)
+	}
+	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
+	in.bin = bin
+	srv := in.serve()
+	in.must("user", "add", "bob@example.com", "-name", "Bob")
+	in.must("user", "add", "erin@example.com")
+	in.must("user", "add", "frank@example.com", "-name", "Frank")
+	in.must("space", "add", "family")
+	in.must("space", "grant", "family", "bob@example.com", "admin")
+	bob := e2eSignIn(t, srv, "bob@example.com")
+
+	for email, name := range map[string]string{"dana@example.com": "  Dana Quist ", "erin@example.com": "Erin Quist", "frank@example.com": "Francis Quist"} {
+		var got struct {
+			Invite Invite `json:"invite"`
+			Token  string `json:"token"`
+		}
+		st, _ := call(t, "POST", srv.url+"/api/toy/invites", "", map[string]any{"space": "family", "email": email, "name": name, "role": "viewer"}, &got, bob)
+		wantStatus(t, st, 201, "bob invites "+email)
+		if got.Invite.Name != strings.TrimSpace(name) || got.Token == "" {
+			t.Fatalf("invite: %+v", got.Invite)
+		}
+		resp, _ := e2eGet(t, srv.url+"/auth/invite?token="+url.QueryEscape(got.Token), "")
+		wantStatus(t, resp.StatusCode, 200, "the invite opens")
+		st, _ = call(t, "POST", srv.url+"/auth/invite", "", map[string]any{"token": got.Token}, nil)
+		wantStatus(t, st, 200, email+" joins")
+	}
+	for email, want := range map[string]string{"dana@example.com": "Dana Quist", "erin@example.com": "Erin Quist", "frank@example.com": "Frank"} {
+		if got := in.psql("archive", "SELECT name FROM users WHERE email = '"+email+"'"); got != want {
+			t.Errorf("%s is named %q, want %q", email, got, want)
+		}
+	}
+
+	t.Run("AnInviteWithoutANameLeavesItEmpty", func(t *testing.T) {
+		in := in.on(t)
+		var inv struct {
+			Link string `json:"link"`
+		}
+		call(t, "POST", srv.url+"/auth/spaces/family/invites", "", map[string]any{"email": "gil@example.com", "role": "viewer"}, &inv, bob)
+		u, _ := url.Parse(inv.Link)
+		st, _ := call(t, "POST", srv.url+"/auth/invite", "", map[string]any{"token": u.Query().Get("token")}, nil)
+		wantStatus(t, st, 200, "gil joins")
+		if got := in.psql("archive", "SELECT name FROM users WHERE email = 'gil@example.com'"); got != "" {
+			t.Errorf("gil is named %q", got)
 		}
 	})
 }

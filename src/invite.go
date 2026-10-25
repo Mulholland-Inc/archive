@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -15,6 +16,7 @@ const inviteTTL = 7 * 24 * time.Hour
 // Invite is a single-use link into one space at one level, for someone who may have no account.
 type Invite struct {
 	Email     string    `json:"email"`
+	Name      string    `json:"name,omitempty"`
 	Space     string    `json:"space"`
 	Role      string    `json:"role"`
 	InvitedBy string    `json:"invited_by"`
@@ -26,6 +28,12 @@ type Invite struct {
 // owners invite owners, admins invite admins and below. Like membership, it needs a signed-in
 // person, not an API token. It returns the secret the link carries.
 func (a *Archive) Invite(ctx context.Context, space, email, level string) (*Invite, string, error) {
+	return a.InviteNamed(ctx, space, email, "", level)
+}
+
+// InviteNamed is Invite with the invitee's name, as whoever invites them gives it: an account the
+// invite makes takes it, and so does one that has no name yet.
+func (a *Archive) InviteNamed(ctx context.Context, space, email, name, level string) (*Invite, string, error) {
 	ac, err := authUser(ctx)
 	if err != nil {
 		return nil, "", err
@@ -41,7 +49,7 @@ func (a *Archive) Invite(ctx context.Context, space, email, level string) (*Invi
 		need = "owner"
 	}
 	secret := authNewSecret()
-	inv := &Invite{Email: email, Space: space, Role: level, InvitedBy: ac.label()}
+	inv := &Invite{Email: email, Name: strings.TrimSpace(name), Space: space, Role: level, InvitedBy: ac.label()}
 	return inv, secret, a.sys(ctx, func(ctx context.Context) error {
 		base, err := a.spaceRole(ctx, space)
 		if err != nil {
@@ -50,9 +58,9 @@ func (a *Archive) Invite(ctx context.Context, space, email, level string) (*Invi
 		if !a.has(ctx, ac.UserRole, base+"_"+need) {
 			return fmt.Errorf("inviting a %s needs %s in %s: %w", level, need, space, ErrForbidden)
 		}
-		return a.st.Q(ctx).QueryRow(ctx, `INSERT INTO invites (space, email, level, hash, invited_by, expires_at)
-			SELECT id, $2, $3, $4, $5, now() + $6::interval FROM spaces WHERE name = $1 RETURNING expires_at`,
-			space, email, level, authHash(secret), inv.InvitedBy, inviteTTL.String()).Scan(&inv.ExpiresAt)
+		return a.st.Q(ctx).QueryRow(ctx, `INSERT INTO invites (space, email, level, hash, invited_by, expires_at, name)
+			SELECT id, $2, $3, $4, $5, now() + $6::interval, $7 FROM spaces WHERE name = $1 RETURNING expires_at`,
+			space, email, level, authHash(secret), inv.InvitedBy, inviteTTL.String(), inv.Name).Scan(&inv.ExpiresAt)
 	})
 }
 
@@ -60,8 +68,8 @@ func (a *Archive) Invite(ctx context.Context, space, email, level string) (*Invi
 func (a *Archive) PeekInvite(ctx context.Context, secret string) (*Invite, error) {
 	inv := &Invite{}
 	err := a.sys(ctx, func(ctx context.Context) error {
-		return a.st.Q(ctx).QueryRow(ctx, `SELECT i.email, s.name, i.level, i.invited_by, i.expires_at FROM invites i JOIN spaces s ON s.id = i.space
-			WHERE i.hash = $1 AND i.expires_at > now()`, authHash(secret)).Scan(&inv.Email, &inv.Space, &inv.Role, &inv.InvitedBy, &inv.ExpiresAt)
+		return a.st.Q(ctx).QueryRow(ctx, `SELECT i.email, i.name, s.name, i.level, i.invited_by, i.expires_at FROM invites i JOIN spaces s ON s.id = i.space
+			WHERE i.hash = $1 AND i.expires_at > now()`, authHash(secret)).Scan(&inv.Email, &inv.Name, &inv.Space, &inv.Role, &inv.InvitedBy, &inv.ExpiresAt)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("invite link is invalid, used or expired: %w", ErrUnauthorized)
@@ -76,9 +84,9 @@ func (a *Archive) AcceptInvite(ctx context.Context, secret string) (*User, error
 	var u *User
 	err := a.sys(ctx, func(ctx context.Context) error {
 		q := a.st.Q(ctx)
-		var email, level, base string
+		var email, name, level, base string
 		err := q.QueryRow(ctx, `DELETE FROM invites i USING spaces s WHERE s.id = i.space AND i.hash = $1 AND i.expires_at > now()
-			RETURNING i.email, i.level, s.role`, authHash(secret)).Scan(&email, &level, &base)
+			RETURNING i.email, i.name, i.level, s.role`, authHash(secret)).Scan(&email, &name, &level, &base)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("invite link is invalid, used or expired: %w", ErrUnauthorized)
 		}
@@ -86,7 +94,10 @@ func (a *Archive) AcceptInvite(ctx context.Context, secret string) (*User, error
 			return err
 		}
 		if u, err = a.userBy(ctx, `email = $1`, email); errors.Is(err, ErrNotFound) {
-			u, err = a.addUser(ctx, email, "", false, false)
+			u, err = a.addUser(ctx, email, name, false, false)
+		} else if err == nil && u.Name == "" && name != "" {
+			u.Name = name
+			_, err = q.Exec(ctx, `UPDATE users SET name = $2 WHERE id = $1 AND name = ''`, u.ID, name)
 		}
 		if err != nil {
 			return err
