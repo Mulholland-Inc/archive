@@ -72,6 +72,16 @@ func main() {
 			mux.Handle("GET /api/toy/whoami", a.Authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				archive.WriteJSON(w, http.StatusOK, map[string]string{"email": archive.ActorFrom(r.Context()).Email}, nil)
 			})))
+			// the toy invites someone by the name they go by, as whoever invites them gives it
+			mux.Handle("POST /api/toy/invites", a.Authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body struct{ Space, Email, Name, Role string }
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				inv, secret, err := a.InviteNamed(r.Context(), body.Space, body.Email, body.Name, body.Role)
+				archive.WriteJSON(w, http.StatusCreated, map[string]any{"invite": inv, "token": secret}, err)
+			})))
 		},
 		Commands: map[string]func(context.Context, *archive.Archive, []string) error{
 			// grants from another server, as JSON on stdin, the way a product moving its users brings them
