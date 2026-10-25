@@ -64,6 +64,11 @@ func main() {
 				rec, err := a.Create(r.Context(), r.URL.Query().Get("space"), "vow", map[string]any{"text": "kept"})
 				archive.WriteJSON(w, http.StatusCreated, rec, err)
 			})))
+			// the toy keeps a file back from the moment it arrives, for the space's admins and whoever adds it
+			mux.Handle("POST /api/toy/files", a.Authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				f, err := a.AddRestrictedFile(r.Context(), r.URL.Query().Get("space"), r.URL.Query().Get("name"), r.Body)
+				archive.WriteJSON(w, http.StatusCreated, f, err)
+			})))
 			mux.Handle("GET /api/toy/whoami", a.Authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				archive.WriteJSON(w, http.StatusOK, map[string]string{"email": archive.ActorFrom(r.Context()).Email}, nil)
 			})))

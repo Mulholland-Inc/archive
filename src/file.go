@@ -24,6 +24,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type File struct {
@@ -118,11 +119,26 @@ func (a *Archive) AddFile(ctx context.Context, space, name, intake string, r io.
 				return nil, err
 			}
 		}
-		return a.fileAdd(ctx, sid, name, intake, r)
+		return a.fileAdd(ctx, sid, name, intake, r, false)
 	})
 }
 
-func (a *Archive) fileAdd(ctx context.Context, sid uuid.UUID, name, intake string, r io.Reader) (*File, error) {
+// AddRestrictedFile adds a file as AddFile does, restricted from the moment it is made: only the
+// space's admins and owners and the person adding it see it, until an admin opens it, with no
+// moment in between when anyone else could. Bytes the space already holds under the same name
+// are another file, perhaps one others see, so they are refused with ErrConflict rather than
+// shut or shared; the caller names its file again.
+func (a *Archive) AddRestrictedFile(ctx context.Context, space, name string, r io.Reader) (*File, error) {
+	return coreDo(a, ctx, func(ctx context.Context) (*File, error) {
+		sid, err := a.coreSpace(ctx, space)
+		if err != nil {
+			return nil, err
+		}
+		return a.fileAdd(ctx, sid, name, "", r, true)
+	})
+}
+
+func (a *Archive) fileAdd(ctx context.Context, sid uuid.UUID, name, intake string, r io.Reader, restricted bool) (*File, error) {
 	tmp, err := os.CreateTemp(a.uploads, "post-")
 	if err != nil {
 		return nil, err
@@ -135,10 +151,10 @@ func (a *Archive) fileAdd(ctx context.Context, sid uuid.UUID, name, intake strin
 	if err != nil {
 		return nil, err
 	}
-	return a.fileCommit(ctx, sid, name, intake, tmp.Name())
+	return a.fileCommit(ctx, sid, name, intake, tmp.Name(), restricted)
 }
 
-func (a *Archive) fileCommit(ctx context.Context, sid uuid.UUID, name, intake, path string) (*File, error) {
+func (a *Archive) fileCommit(ctx context.Context, sid uuid.UUID, name, intake, path string, restricted bool) (*File, error) {
 	fh, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -161,6 +177,9 @@ func (a *Archive) fileCommit(ctx context.Context, sid uuid.UUID, name, intake, p
 	}
 	f, err := coreDo(a, ctx, func(ctx context.Context) (*File, error) {
 		f, err := storeOne[File](ctx, a.st, `SELECT `+fileCols+` FROM files WHERE space = $1 AND hash = $2 AND name = $3`, sid, hash, name)
+		if err == nil && restricted {
+			return nil, fmt.Errorf("the space holds these bytes as %q already: %w", name, ErrConflict)
+		}
 		if err == nil && intake != "" {
 			f, err = storeOne[File](ctx, a.st, `UPDATE files SET intake = $2, status = 'pending' WHERE id = $1 RETURNING `+fileCols, f.ID, intake)
 		}
@@ -172,12 +191,17 @@ func (a *Archive) fileCommit(ctx context.Context, sid uuid.UUID, name, intake, p
 		if err != nil {
 			return nil, err
 		}
-		rec := &Record{Type: "file", SpecVersion: spec.Version, Space: sid}
+		rec := &Record{Type: "file", SpecVersion: spec.Version, Space: sid, Restricted: restricted}
 		if err := a.coreSave(ctx, rec, data, nil); err != nil {
 			return nil, err
 		}
-		return storeOne[File](ctx, a.st, `INSERT INTO files (id, hash, name, mime, size, intake, owner, space)
+		f, err = storeOne[File](ctx, a.st, `INSERT INTO files (id, hash, name, mime, size, intake, owner, space)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING `+fileCols, rec.ID, hash, name, mt, size, intake, ActorFrom(ctx).Role, sid)
+		if pe := (*pgconn.PgError)(nil); errors.As(err, &pe) && pe.Code == "23505" {
+			// the same bytes and name as a file the person adding cannot see
+			return nil, fmt.Errorf("the space holds these bytes as %q already: %w", name, ErrConflict)
+		}
+		return f, err
 	})
 	if err == nil {
 		a.wakeFiles()
@@ -709,7 +733,7 @@ func (a *Archive) tusUpload(w http.ResponseWriter, r *http.Request, id string) {
 
 func (a *Archive) tusFinish(ctx context.Context, id string, up *tusUpload) (*File, error) {
 	path := filepath.Join(a.uploads, id)
-	f, err := a.fileCommit(ctx, up.Space, up.Name, up.Intake, path)
+	f, err := a.fileCommit(ctx, up.Space, up.Name, up.Intake, path, false)
 	if err != nil {
 		return nil, err
 	}

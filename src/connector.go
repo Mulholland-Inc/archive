@@ -379,7 +379,7 @@ func (r *syncRun) driveFile(ctx context.Context, hc *http.Client, base string, f
 
 func (r *syncRun) file(ctx context.Context, into map[string]any, name string, b []byte) error {
 	return r.a.as(ctx, func(ctx context.Context) error {
-		f, err := r.a.fileAdd(ctx, r.src.Space, name, "", bytes.NewReader(b))
+		f, err := r.a.fileAdd(ctx, r.src.Space, name, "", bytes.NewReader(b), false)
 		if err == nil {
 			into["file_id"] = f.ID.String()
 		}
