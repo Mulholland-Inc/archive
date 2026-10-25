@@ -37,8 +37,6 @@ type Intake struct {
 
 const intakeMinLabels = 10
 
-const intakeTemperature = 0.7
-
 func NewIntake(cfg IntakeConfig, spec func() *Spec, save func(ctx context.Context, r *Record, data map[string]any, prov []*Provenance) error) *Intake {
 	if cfg.Samples <= 0 {
 		cfg.Samples = 3
@@ -242,10 +240,9 @@ func intakePrompt(typ, description string) string {
 }
 
 func intakeChat(ctx context.Context, hc *http.Client, cfg IntakeConfig, typ string, schema map[string]any, system, text string) (*intakeCompletion, error) {
-	body, err := json.Marshal(map[string]any{
-		"model":       cfg.Model,
-		"temperature": intakeTemperature,
-		"logprobs":    true,
+	payload := map[string]any{
+		"model":    cfg.Model,
+		"logprobs": true,
 		"messages": []map[string]string{
 			{"role": "system", "content": system},
 			{"role": "user", "content": text},
@@ -258,7 +255,13 @@ func intakeChat(ctx context.Context, hc *http.Client, cfg IntakeConfig, typ stri
 				"strict": true,
 			},
 		},
-	})
+	}
+	// only when asked for: some models (Claude's, on Anthropic's OpenAI-compatible endpoint)
+	// refuse a temperature, and the endpoint's own default samples well enough
+	if cfg.Temperature != nil {
+		payload["temperature"] = *cfg.Temperature
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}

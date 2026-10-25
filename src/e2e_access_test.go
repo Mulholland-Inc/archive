@@ -1,6 +1,7 @@
 package archive
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -273,5 +274,34 @@ func TestStartingANewBinaryKeepsASnapshotWithTheKey(t *testing.T) {
 	out, err := exec.Command("tar", "-tzf", snaps[0]).Output()
 	if err != nil || !strings.Contains(string(out), "secret.key") || !strings.Contains(string(out), "pg/PG_VERSION") {
 		t.Errorf("snapshot holds:\n%s", out)
+	}
+}
+
+// Intake sends a temperature only when one is set: Claude's models on Anthropic's
+// OpenAI-compatible endpoint refuse one, so by default there is none.
+func TestIntakeSendsATemperatureOnlyWhenOneIsSet(t *testing.T) {
+	var got []map[string]any
+	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		got = append(got, body)
+		json.NewEncoder(w).Encode(e2eSure(`{"number":"INV-7"}`))
+	}))
+	defer llm.Close()
+	half := 0.5
+	for _, temp := range []*float64{nil, &half} {
+		cfg := IntakeConfig{Endpoint: llm.URL + "/v1", Model: "fake", Temperature: temp}
+		if _, err := intakeChat(context.Background(), llm.Client(), cfg, "invoice", map[string]any{"type": "object"}, "system", "text"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(got) != 2 {
+		t.Fatalf("%d requests", len(got))
+	}
+	if _, sent := got[0]["temperature"]; sent {
+		t.Errorf("a temperature with none set: %v", got[0]["temperature"])
+	}
+	if got[1]["temperature"] != 0.5 {
+		t.Errorf("the temperature set: %v", got[1]["temperature"])
 	}
 }

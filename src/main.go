@@ -114,6 +114,8 @@ Environment:
   ARCHIVE_LLM_URL    OpenAI-compatible endpoint (default http://localhost:11434/v1)
   ARCHIVE_LLM_MODEL  model for intake
   ARCHIVE_LLM_KEY    API key for the endpoint, if it needs one
+  ARCHIVE_LLM_TEMPERATURE
+                     sampling temperature for intake; unset sends none, as some models refuse one
   ARCHIVE_VISION_MODEL
                      vision model on the endpoint for OCR of photos and scans; unset skips OCR
   ARCHIVE_WHISPER_MODEL
