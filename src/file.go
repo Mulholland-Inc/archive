@@ -416,6 +416,23 @@ func (a *Archive) fileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/files/{id}/thumbnail", func(w http.ResponseWriter, r *http.Request) {
 		f, err := file(r)
 		t := f.thumbnail()
+		if err == nil && t == nil && (f.Status == "pending" || f.Status == "processing") {
+			// not made yet, moments after the file arrived: an image a browser shows stands in for
+			// it, its GPS taken out, and anything else is asked for again shortly, never not found
+			w.Header().Set("Cache-Control", "no-store")
+			if d := f.display(); d != nil {
+				a.fileServe(w, r, d, false)
+			} else if mediaInline(f.MIME) && strings.HasPrefix(f.MIME, "image/") && f.MIME != "image/heic" && f.MIME != "image/heif" && f.MIME != "image/tiff" {
+				// its metadata is not read yet, so nothing says where it was made: take any place out
+				stand := *f
+				stand.located = true
+				a.fileServe(w, r, &stand, false)
+			} else {
+				w.Header().Set("Retry-After", "1")
+				w.WriteHeader(http.StatusAccepted)
+			}
+			return
+		}
 		if err == nil && t == nil {
 			err = fmt.Errorf("file %s has no thumbnail: %w", f.ID, ErrNotFound)
 		}
