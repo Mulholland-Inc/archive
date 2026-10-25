@@ -68,13 +68,9 @@ func (d *dirBlobs) put(_ context.Context, hash, path string, _ int64) error {
 		return nil
 	}
 	// a folder that cannot hard-link (a bucket mounted on Cloud Run) takes a whole copy, written
-	// beside the blob and renamed into place so a half-written blob is never there
-	tmp := p + ".part"
-	if err := blobCopy(path, tmp); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return os.Rename(tmp, p)
+	// to a file of its own beside the blob, synced, and renamed into place, so a half-written blob
+	// is never there and two copies of the same bytes at once never write into one file
+	return blobCopy(path, p)
 }
 
 // blobLink is os.Link, a variable so a test can play a folder without hard links.
@@ -86,15 +82,25 @@ func blobCopy(from, to string) error {
 		return err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(to, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	out, err := os.CreateTemp(filepath.Dir(to), filepath.Base(to)+".*.part")
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		return err
+	tmp := out.Name()
+	_, err = io.Copy(out, in)
+	if err == nil {
+		err = out.Sync()
 	}
-	return out.Close()
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp, to)
+	}
+	if err != nil {
+		os.Remove(tmp)
+	}
+	return err
 }
 
 func (d *dirBlobs) open(_ context.Context, hash string, _ int64) (io.ReadSeekCloser, error) {
