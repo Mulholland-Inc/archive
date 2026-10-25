@@ -90,6 +90,15 @@ func Open(ctx context.Context) (*Archive, error) {
 		stop()
 		return nil, fmt.Errorf("open store: %w", err)
 	}
+	var temp *float64
+	if v := os.Getenv("ARCHIVE_LLM_TEMPERATURE"); v != "" {
+		t, err := strconv.ParseFloat(v, 64)
+		if err != nil || t < 0 || t > 2 {
+			stop()
+			return nil, fmt.Errorf("ARCHIVE_LLM_TEMPERATURE %q: want a number from 0 to 2", v)
+		}
+		temp = &t
+	}
 	a, err := newArchive(ctx, st, IntakeConfig{
 		Endpoint: coreEnv("ARCHIVE_LLM_URL", "http://localhost:11434/v1"),
 		Model:    os.Getenv("ARCHIVE_LLM_MODEL"),
@@ -100,6 +109,8 @@ func Open(ctx context.Context) (*Archive, error) {
 		Whisper:  os.Getenv("ARCHIVE_WHISPER_MODEL"),
 		Embed:    os.Getenv("ARCHIVE_EMBED_MODEL"),
 		EmbedDim: dim,
+
+		Temperature: temp,
 	})
 	if err == nil {
 		a.prefix, a.aead, a.stop = prefix, aead, stop

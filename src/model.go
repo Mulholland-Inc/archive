@@ -174,6 +174,9 @@ type IntakeConfig struct {
 	Whisper  string
 	Embed    string
 	EmbedDim int
+
+	// Temperature is sent only when set (ARCHIVE_LLM_TEMPERATURE): some models refuse one.
+	Temperature *float64
 }
 
 type FieldResult struct {
