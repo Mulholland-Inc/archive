@@ -289,8 +289,9 @@ CREATE OR REPLACE FUNCTION actor_user(r name) RETURNS text LANGUAGE sql STABLE S
 $$;
 
 -- A restricted record is read only by the admins and owners of its space and by the user who made
--- it. New records of a type whose definition says "restricted" start restricted, whoever makes them,
--- and only an admin of the space restricts or opens one.
+-- it. New records of a type whose definition says "restricted" start restricted, whoever makes them;
+-- whoever adds a record may add it restricted, since that only keeps it to the admins and
+-- themselves; and only an admin of the space restricts or opens one after it is made.
 CREATE OR REPLACE FUNCTION records_restrict() RETURNS trigger LANGUAGE plpgsql SET search_path FROM CURRENT AS $$
 BEGIN
     IF TG_OP = 'INSERT' THEN

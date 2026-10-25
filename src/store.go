@@ -220,7 +220,7 @@ func (s *pgStore) GetRaw(ctx context.Context, id uuid.UUID) (*Raw, error) {
 
 const (
 	storeCreateRecord = `
-		INSERT INTO records (id, type, spec_version, data, space) VALUES ($1, $2, $3, coalesce($4::jsonb, '{}'), $5)
+		INSERT INTO records (id, type, spec_version, data, space, restricted) VALUES ($1, $2, $3, coalesce($4::jsonb, '{}'), $5, $6)
 		RETURNING created_at, updated_at, restricted, creator`
 	storeUpdateRecord = `
 		UPDATE records SET type = $2, spec_version = $3, data = coalesce($4::jsonb, '{}'), updated_at = now()
@@ -237,7 +237,8 @@ func (s *pgStore) CreateRecord(ctx context.Context, r *Record) error {
 		r.ID = coreNewID()
 	}
 	// restricted and creator come back as the records_restrict trigger set them
-	return s.Q(ctx).QueryRow(ctx, storeCreateRecord, r.ID, r.Type, r.SpecVersion, r.Data, r.Space).Scan(&r.CreatedAt, &r.UpdatedAt, &r.Restricted, &r.Creator)
+	// restricted when the caller asks (records_restrict makes a restricted type's always so)
+	return s.Q(ctx).QueryRow(ctx, storeCreateRecord, r.ID, r.Type, r.SpecVersion, r.Data, r.Space, r.Restricted).Scan(&r.CreatedAt, &r.UpdatedAt, &r.Restricted, &r.Creator)
 }
 
 func (s *pgStore) GetRecord(ctx context.Context, id uuid.UUID) (*Record, error) {
