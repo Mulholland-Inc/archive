@@ -72,6 +72,9 @@ func (in *Intake) Ingest(ctx context.Context, raw *Raw, typ string) (*IntakeResu
 	if err := json.Unmarshal(raw.Payload, &payload); err != nil {
 		return nil, fmt.Errorf("intake: payload: %w", err)
 	}
+	if strings.TrimSpace(payload.Text) == "" {
+		return nil, fmt.Errorf("intake: no usable text to read: %w", ErrConflict)
+	}
 	fields, err := spec.Fields(typ)
 	if err != nil {
 		return nil, err
@@ -592,6 +595,9 @@ func ScanFolder(ctx context.Context, st *pgStore, dir string, space uuid.UUID) (
 }
 
 func folderMIME(path string, b []byte) string {
+	if format := officeFormat(path); format != "" && (bytes.HasPrefix(b, []byte("PK")) || bytes.HasPrefix(b, []byte{0xd0, 0xcf, 0x11, 0xe0})) {
+		return officeMIME(format)
+	}
 	mt, _, _ := mime.ParseMediaType(http.DetectContentType(b))
 	if mt == "application/octet-stream" || mt == "text/plain" {
 		if ext, _, err := mime.ParseMediaType(mime.TypeByExtension(strings.ToLower(filepath.Ext(path)))); err == nil {
@@ -602,6 +608,10 @@ func folderMIME(path string, b []byte) string {
 }
 
 func folderText(ctx context.Context, path, mt string, b []byte) string {
+	if officeFormat(path) != "" {
+		_, text, _ := mediaOffice(path, b)
+		return text
+	}
 	var cmd []string
 	switch {
 	case folderTextExt[strings.ToLower(filepath.Ext(path))]:

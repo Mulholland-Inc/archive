@@ -315,6 +315,37 @@ func (a *Archive) ProcessFile(ctx context.Context, id uuid.UUID) (*File, error) 
 	return a.GetFile(ctx, id)
 }
 
+// RetryFile asks the existing worker to extract a saved original again. Only its owner can
+// request work, through a grant that still reaches the file; reading someone else's shared
+// file does not authorize charging them for extraction. An active job is never duplicated.
+func (a *Archive) RetryFile(ctx context.Context, id uuid.UUID) (*File, error) {
+	f, err := coreDo(a, ctx, func(ctx context.Context) (*File, error) {
+		f, err := a.GetFile(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		ac := ActorFrom(ctx)
+		if ac == nil || f.Owner != ac.Role && f.Owner != ac.UserRole {
+			return nil, fmt.Errorf("only the file's owner may retry extraction: %w", ErrForbidden)
+		}
+		if f.Status == "pending" {
+			return f, nil
+		}
+		if f.Status == "processing" {
+			return nil, fmt.Errorf("the file is being processed: %w", ErrConflict)
+		}
+		got, err := storeOne[File](ctx, a.st, `UPDATE files SET status = 'pending', error = '' WHERE id = $1 AND status IN ('done', 'error') RETURNING `+fileCols, id)
+		if errors.Is(err, ErrNotFound) {
+			return nil, fmt.Errorf("the file cannot be retried in its current state: %w", ErrConflict)
+		}
+		return got, err
+	})
+	if err == nil {
+		a.wakeFiles()
+	}
+	return f, err
+}
+
 func (a *Archive) fileSign(id uuid.UUID, exp int64) string {
 	m := hmac.New(sha256.New, a.linkKey)
 	fmt.Fprintf(m, "%s.%d", id, exp)

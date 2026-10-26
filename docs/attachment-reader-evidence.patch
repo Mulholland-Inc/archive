@@ -1,0 +1,132 @@
+diff --git a/src/file.go b/src/file.go
+index 8644a1d..ad15a02 100644
+--- a/src/file.go
++++ b/src/file.go
+@@ -274,11 +274,14 @@ func (a *Archive) IntakeFile(ctx context.Context, id uuid.UUID, typ string) (*In
+ 		if err := a.guard(ctx, typ, f.Space); err != nil {
+ 			return nil, err
+ 		}
++		if extraction, _ := f.Metadata["extraction"].(map[string]any); extraction["status"] == "encrypted" {
++			return nil, fmt.Errorf("file %s needs an unlocked original to read: %w", id, ErrConflict)
++		}
+ 		text, err := a.FileText(ctx, id)
+ 		if err != nil {
+ 			return nil, err
+ 		}
+-		if strings.TrimSpace(text) == "" && (a.intake.cfg.API != "anthropic" || readMIME[f.MIME] == "") {
++		if strings.TrimSpace(text) == "" && (a.intake.cfg.API != "anthropic" || f.Size > readMax || readMIME[f.MIME] == "" && f.MIME != "image/heic" && f.MIME != "image/heif" && f.MIME != "image/tiff") {
+ 			return nil, fmt.Errorf("file %s has no text to read (status %s): %w", id, f.Status, ErrConflict)
+ 		}
+ 		payload := map[string]any{"file": f.ID, "name": f.Name, "mime": f.MIME, "text": text}
+diff --git a/src/intake.go b/src/intake.go
+index 772e253..6ce1f77 100644
+--- a/src/intake.go
++++ b/src/intake.go
+@@ -98,6 +98,9 @@ func (in *Intake) Ingest(ctx context.Context, raw *Raw, typ string) (*IntakeResu
+ 		prompt = spec.readPrompt(typ, kinds)
+ 	}
+ 	file := in.readOpen(ctx, payload.File, payload.Path, payload.MIME)
++	if strings.TrimSpace(payload.Text) == "" && file == nil {
++		return nil, fmt.Errorf("intake: no usable text or attachment to read: %w", ErrConflict)
++	}
+ 
+ 	var cs []*intakeCompletion
+ 	for range in.cfg.Samples {
+diff --git a/src/read.go b/src/read.go
+index ea30c33..49a155c 100644
+--- a/src/read.go
++++ b/src/read.go
+@@ -229,7 +229,11 @@ func (in *Intake) readOpen(ctx context.Context, id *uuid.UUID, path, mt string)
+ 	case id != nil && in.open != nil:
+ 		b, err = in.open(ctx, *id)
+ 	case path != "":
+-		b, err = os.ReadFile(path)
++		var r *os.File
++		if r, err = os.Open(path); err == nil {
++			b, err = io.ReadAll(io.LimitReader(r, readMax+1))
++			r.Close()
++		}
+ 	}
+ 	if err != nil || len(b) == 0 || len(b) > readMax {
+ 		return nil
+@@ -271,6 +275,9 @@ func (in *Intake) complete(ctx context.Context, typ string, schema map[string]an
+ // a document, a picture as an image. It has no token probabilities, so its scores rest on the
+ // labels until there are enough of them.
+ func readMessages(ctx context.Context, hc *http.Client, cfg IntakeConfig, schema map[string]any, system, text string, f *readFile) (*intakeCompletion, error) {
++	if strings.TrimSpace(text) == "" && (f == nil || len(f.Data) == 0) {
++		return nil, fmt.Errorf("intake: no usable text or attachment to read: %w", ErrConflict)
++	}
+ 	var content []map[string]any
+ 	if f != nil {
+ 		content = append(content, map[string]any{"type": readMIME[f.MIME], "source": map[string]any{
+--- a/src/office_test.go
++++ b/src/office_test.go
+@@ -7,12 +7,16 @@
+ 	"crypto/sha256"
+ 	"encoding/hex"
+ 	"encoding/json"
++	"errors"
+ 	"fmt"
+ 	"io"
++	"net/http"
+ 	"os"
+ 	"path/filepath"
+ 	"strings"
+ 	"testing"
++
++	"github.com/google/uuid"
+ )
+ 
+ func officeMedia(t *testing.T, name string, b []byte) (map[string]any, string, error) {
+@@ -162,3 +166,41 @@
+ 		t.Fatalf("slide order = %q, %v", text, err)
+ 	}
+ }
++
++type officeTransport func(*http.Request) (*http.Response, error)
++
++func (f officeTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
++
++func TestReadingRequiresTextOrAnActualAttachment(t *testing.T) {
++	for _, tc := range []struct {
++		name, mt, text string
++		bytes          int
++		calls          int
++	}{
++		{"large PDF without text", "application/pdf", "", (20 << 20) + 1, 0},
++		{"large image without text", "image/jpeg", "", (20 << 20) + 1, 0},
++		{"missing attachment", "application/pdf", "", 0, 0},
++		{"large PDF with text", "application/pdf", "A made-up Quist paper.", (20 << 20) + 1, 1},
++		{"small attachment", "application/pdf", "", 8, 1},
++		{"audio transcript", "audio/mp4", "An invented Quist memory.", 0, 1},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			spec := readSpec(t)
++			in := NewIntake(IntakeConfig{API: "anthropic", Samples: 1}, func() *Spec { return spec }, nil)
++			in.open = func(context.Context, uuid.UUID) ([]byte, error) { return make([]byte, tc.bytes), nil }
++			calls := 0
++			in.http = &http.Client{Transport: officeTransport(func(*http.Request) (*http.Response, error) {
++				calls++
++				return &http.Response{StatusCode: 503, Body: io.NopCloser(strings.NewReader("offline")), Header: make(http.Header)}, nil
++			})}
++			p, _ := json.Marshal(map[string]any{"file": uuid.New(), "mime": tc.mt, "text": tc.text})
++			_, err := in.Ingest(context.Background(), &Raw{Payload: p}, "paper")
++			if calls != tc.calls {
++				t.Errorf("made %d model requests, want %d", calls, tc.calls)
++			}
++			if tc.calls == 0 && !errors.Is(err, ErrConflict) {
++				t.Errorf("no-evidence error = %v, want conflict", err)
++			}
++		})
++	}
++}
+--- a/src/file_retry_test.go
++++ b/src/file_retry_test.go
+@@ -155,6 +155,7 @@
+ 		t.Fatal(err)
+ 	}
+ 	requests := 0
++	a.intake.cfg.API = "anthropic"
+ 	a.intake.http = &http.Client{Transport: fileRetryTransport(func(*http.Request) (*http.Response, error) {
+ 		requests++
+ 		return nil, errors.New("no model is called by this fixture")

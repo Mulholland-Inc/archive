@@ -130,19 +130,42 @@ func (a *Archive) fileProcess(ctx context.Context, id uuid.UUID) {
 	}
 }
 
-func (a *Archive) media(ctx context.Context, f *File) (map[string]any, string, error) {
-	meta := map[string]any{}
+func (a *Archive) media(ctx context.Context, f *File) (meta map[string]any, text string, err error) {
+	meta = map[string]any{}
+	defer func() {
+		if _, exists := meta["extraction"]; exists {
+			return
+		}
+		status, reason := "ready", ""
+		if err != nil {
+			status, reason = "invalid", "The file's contents could not be read."
+			if strings.Contains(strings.ToLower(err.Error()), "password") || strings.Contains(strings.ToLower(err.Error()), "encrypt") {
+				status, reason = "encrypted", "The file is encrypted; an unlocked copy is needed to read it."
+			}
+		} else if strings.TrimSpace(text) == "" {
+			status, reason = "empty", "No readable text was extracted."
+		}
+		meta["extraction"] = extractionStatus(status, f.MIME, reason)
+	}()
 	if f.Size > mediaMax {
+		meta["extraction"] = extractionStatus("too_large", f.MIME, "The file is saved, but exceeds the 64 MiB automatic extraction limit.")
 		return meta, "", nil
 	}
 	rc, err := a.blobs.open(ctx, f.Hash, f.Size)
 	if err != nil {
 		return meta, "", err
 	}
-	b, err := io.ReadAll(rc)
+	b, err := io.ReadAll(io.LimitReader(rc, mediaMax+1))
 	rc.Close()
 	if err != nil {
 		return meta, "", err
+	}
+	if len(b) > mediaMax {
+		meta["extraction"] = extractionStatus("too_large", f.MIME, "The file exceeds the automatic extraction limit.")
+		return meta, "", nil
+	}
+	if officeFormat(f.Name) != "" {
+		return mediaOffice(f.Name, b)
 	}
 	cfg := a.intake.cfg
 	top, _, _ := strings.Cut(f.MIME, "/")
@@ -188,6 +211,9 @@ func (a *Archive) media(ctx context.Context, f *File) (map[string]any, string, e
 			text, err := a.mediaTranscribe(ctx, f.Name, b)
 			return meta, text, err
 		}
+		meta["extraction"] = extractionStatus("unsupported", f.MIME, "Transcription is not configured; the original is saved.")
+	default:
+		meta["extraction"] = extractionStatus("unsupported", f.MIME, "Text extraction is not available for this format; the original is saved.")
 	}
 	return meta, "", nil
 }
