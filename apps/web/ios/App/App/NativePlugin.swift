@@ -332,6 +332,7 @@ final class ComposerBar: UIView, UITextViewDelegate {
         field.textContainerInset = UIEdgeInsets(top: 10, left: 4, bottom: 10, right: 4)
         field.autocapitalizationType = .sentences
         field.autocorrectionType = .yes
+        field.returnKeyType = .send
         field.isScrollEnabled = false
         field.delegate = self
         field.translatesAutoresizingMaskIntoConstraints = false
@@ -372,6 +373,12 @@ final class ComposerBar: UIView, UITextViewDelegate {
     required init?(coder: NSCoder) { nil }
 
     func textViewDidChange(_ textView: UITextView) { refresh() }
+
+    func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+        guard text == "\n" else { return true }
+        tapSend()
+        return false
+    }
 
     private func refresh() {
         placeholder.isHidden = !field.text.isEmpty

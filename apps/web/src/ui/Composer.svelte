@@ -3,10 +3,9 @@
 
   let { value = $bindable(''), busy = false, onsend, onstop, ...rest } = $props();
   let box = $state();
-  const touch = matchMedia('(pointer: coarse)').matches;
 
   function key(e) {
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !touch) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       if (!busy && value.trim()) onsend();
     }
@@ -20,7 +19,7 @@
 </script>
 
 <form class="composer" onsubmit={(e) => (e.preventDefault(), busy ? onstop() : value.trim() && onsend())}>
-  <textarea bind:this={box} bind:value rows="1" autocapitalize="sentences" autocorrect="on" spellcheck="true" enterkeyhint={touch ? 'enter' : 'send'} onkeydown={key} {...rest}></textarea>
+  <textarea bind:this={box} bind:value rows="1" autocapitalize="sentences" autocorrect="on" spellcheck="true" enterkeyhint="send" onkeydown={key} {...rest}></textarea>
   <Button icon={busy ? 'square' : 'arrow-up'} type="submit" title={busy ? 'Stop' : 'Send'} aria-label={busy ? 'Stop' : 'Send'} disabled={!busy && !value.trim()} />
 </form>
 
