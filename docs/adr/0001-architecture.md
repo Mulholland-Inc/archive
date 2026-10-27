@@ -136,7 +136,7 @@ Archive's own web and iOS apps are the editors; there is no embedded office suit
 - **Formulas without an engine**: a cell value is written as an inline string, so the shared strings are never touched. A formula is written with its cached value removed, and the workbook is marked to recalculate when it is opened. Computed values for reading come from the render pass and are stored as derived data, never written into the file.
 - **Legacy and ODF files** (doc, xls, ppt, odt, ods, odp) are converted to OOXML once, on request, as a new file.
 
-**One edit API for everyone**: `archive.document(id)` returns the model, and `archive.edit(id, edits)` applies a list of edits (replace text, insert a paragraph or table, set a cell, add a comment). Agents call it from code mode; the apps send the same edits over the API.
+**One edit API for everyone**: `archive.read(id)` returns the model, with an id for every paragraph, cell and shape, and `archive.edit(id, edits)` applies a list of edits (replace text, insert a paragraph or table, set a cell, add a comment). Agents call them from code mode; the apps send the same edits over the API. `archive.file(id)` stays for metadata and plain text.
 
 **Editing together**: clients send edits to the server, which applies them in order to the current file and sends them on to everyone else with the document open. The server's order decides conflicts, and it writes a new version when editing pauses. This needs no CRDT and no second copy of the document, at the cost of offline editing.
 
