@@ -1,7 +1,7 @@
 <script>
   import Button from './Button.svelte';
 
-  let { text } = $props();
+  let { text, children } = $props();
   let done = $state(false);
 
   async function copy() {
@@ -14,6 +14,7 @@
 <div class="copy">
   <code>{text}</code>
   <Button quiet icon={done ? 'check' : 'copy'} title="Copy" aria-label="Copy" onclick={copy} />
+  {@render children?.()}
 </div>
 
 <style>

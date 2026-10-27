@@ -87,7 +87,7 @@
   --bar-inset: var(--space-4);
   --bar: 64px;
   --inset: var(--space-6);
-  --gutter: var(--space-5);
+  --gutter: var(--space-4);
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --sidebar: 280px;

@@ -518,7 +518,7 @@
   .toolbar { position: relative; z-index: 1; display: flex; flex: none; min-width: 0; padding: var(--space-1); background: var(--panel); border-radius: var(--radius-pill); }
   .toolbar > :global(.bar) { flex: 1; min-width: 0; gap: var(--space-1); }
   .sep { flex: none; align-self: stretch; width: var(--stroke); background: var(--line); }
-  .people { position: fixed; top: calc(var(--space-2) + var(--space-3) + (var(--size-logo) - var(--size-sm)) / 2); right: var(--gutter); z-index: 1; display: flex; }
+  .people { position: fixed; top: calc(var(--gutter) + var(--space-3) + (var(--size-logo) - var(--size-sm)) / 2); right: var(--gutter); z-index: 1; display: flex; }
   @media (max-width: 767px) {
     .people { display: none; }
   }

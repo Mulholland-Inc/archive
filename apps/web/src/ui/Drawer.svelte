@@ -68,11 +68,11 @@
 </div>
 
 <style>
-  .drawer { position: sticky; top: 0; display: flex; flex-direction: column; align-self: start; height: 100vh; padding: var(--space-2); }
+  .drawer { position: sticky; top: var(--gutter); display: flex; flex-direction: column; align-self: start; height: calc(100vh - 2 * var(--gutter)); }
   .content { display: contents; }
   .shade { display: none; }
   @media (max-width: 767px) {
-    .drawer { position: fixed; inset: 0 auto 0 0; width: var(--drawer); height: auto; visibility: hidden; }
+    .drawer { position: fixed; inset: 0 auto 0 0; width: var(--drawer); height: auto; padding: var(--space-2); visibility: hidden; }
     .drawer::before, .drawer::after { content: ''; flex: none; }
     .drawer::before { height: var(--safe-top); }
     .drawer::after { height: var(--safe-bottom); }

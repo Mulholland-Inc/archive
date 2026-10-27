@@ -224,7 +224,7 @@
 {/if}
 
 <style>
-  .app { display: grid; grid-template-columns: var(--sidebar) minmax(0, 1fr); grid-template-rows: auto 1fr; min-height: 100vh; }
+  .app { display: grid; grid-template-columns: var(--sidebar) minmax(0, 1fr); grid-template-rows: auto 1fr; column-gap: var(--gutter); min-height: 100vh; padding: var(--gutter); }
   .app::before { content: ''; grid-column: 1 / -1; height: var(--safe-top); }
   .top { display: none; }
   .brand { display: flex; align-items: center; padding: var(--space-3); }
@@ -238,10 +238,10 @@
   }
   nav::before, nav::after { content: ''; flex: 0 0 var(--space-5); }
   footer { display: flex; align-items: center; gap: var(--space-1); }
-  main { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; padding: var(--gutter); }
+  main { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; }
   main > :global(:last-child) { flex: 1; }
   @media (max-width: 767px) {
-    .app { display: block; }
+    .app { display: block; padding: 0; }
     .app::before { content: none; }
     .top { display: grid; flex: none; grid-template-columns: var(--bar-inset) var(--size-bar) minmax(0, 1fr) var(--size-bar) var(--bar-inset); align-items: center; height: var(--bar); padding: 0; }
     .top::before, .top::after { content: ''; }

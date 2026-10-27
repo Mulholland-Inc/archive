@@ -42,8 +42,9 @@
 <Grid>
   <Card icon="key-round" title="Token">
     {#if token}
-      <Copy text={token} />
-      <div><Button icon="refresh-cw" onclick={() => load(true)} disabled={busy}>{busy ? 'Rotating…' : 'Rotate'}</Button></div>
+      <Copy text={token}>
+        <Button quiet icon="refresh-cw" title="Rotate" aria-label="Rotate token" onclick={() => load(true)} disabled={busy} />
+      </Copy>
     {/if}
     {#if error}<Note error>{error}</Note>{/if}
   </Card>
