@@ -89,6 +89,10 @@ declare const archive: {
     files(opts?: { limit?: number; after?: string; space?: string }): Promise<StoredFile[]>;
     /** One file with its extracted text. */
     file(id: string): Promise<StoredFile>;
+    /** The structure of a docx, xlsx or pptx file: paragraphs with ids, cells, slides and shapes (see Documents). */
+    read(fileId: string): Promise<Model>;
+    /** Apply edits to a docx, xlsx or pptx file in place and save it as the file's new content; all or nothing (see Documents). */
+    edit(fileId: string, edits: Edit[]): Promise<StoredFile>;
     /** The spaces you can see, with your level in each. */
     spaces(): Promise<Space[]>;
 };
@@ -181,3 +185,132 @@ interface Postcode { country: Country; code: string }
 interface Geo { lat: number; lon: number }
 /** Value in the SI base unit, with the UCUM unit it was given in. Also takes "5 km". */
 interface Quantity { value: number; unit: string; original_unit: string }
+
+/**
+ * Documents
+ * Office documents (docx, xlsx, pptx) are edited in place: an edit changes only
+ * the XML it targets and every other part of the file is kept byte for byte, so
+ * formatting, images, comments, charts and anything else survive.
+ *
+ * Workflow: read the model, then send a list of edits. Edits apply in order, all
+ * or nothing: if one fails, nothing is saved and the error says which edit failed
+ * and why. Call archive.read again after a successful edit before planning more.
+ */
+
+type Model = DocxModel | XlsxModel | PptxModel;
+
+interface DocxModel {
+  type: "docx";
+  /** Every paragraph in document order, including those in tables and text boxes. */
+  paragraphs: {
+    id: string;        // "p0", "p1", ... Ids refer to the document as read; they stay valid
+                       // for all edits in one archive.edit call, even after inserts and deletes.
+    style?: string;    // paragraph style id, e.g. "Heading1"
+    list?: string;     // "list 3 level 0" when the paragraph is a numbered or bulleted item
+    in?: string;       // "t0/r1/c2" for a paragraph in table 0, row 1, cell 2; "textbox"
+    text: string;      // tabs are "\t", line breaks "\n"
+    runs?: string[];   // the text split by formatting runs, when there is more than one
+  }[];
+  /** Tables by index, as rows of cell text. Merged cells count once. */
+  tables?: { id: string; rows: string[][] }[];
+}
+
+interface XlsxModel {
+  type: "xlsx";
+  sheets: {
+    name: string;
+    dimension?: string;                 // used range, e.g. "A1:H23"
+    merged?: string[];                  // merged ranges, e.g. ["A1:G1"]
+    tables?: { name: string; ref: string; columns: string[] }[];  // Excel tables
+    cells: { ref: string; value?: string; formula?: string }[];   // non-empty cells; formulas without "="
+  }[];
+}
+
+interface PptxModel {
+  type: "pptx";
+  slides: {
+    slide: number;     // 1-based, in presentation order
+    hidden?: boolean;  // hidden slides do not show in previews
+    shapes: {          // shapes that hold text, by index
+      shape: number;
+      name?: string;
+      placeholder?: string;  // "title", "ctrTitle", "subTitle", "body", "sldNum", ...
+      paragraphs: { text: string; runs?: string[] }[];
+    }[];
+  }[];
+}
+
+type Edit =
+  // ---- docx and pptx
+  /**
+   * Replace text inside one paragraph, even when it spans several formatting runs,
+   * hyperlinks or tracked changes. The new text takes the formatting of the first
+   * character replaced. Without "para" (docx) or "slide"/"shape" (pptx) the text must
+   * occur in exactly one paragraph, unless "all" is true (then every occurrence is
+   * replaced in docx, and the first occurrence in each paragraph in pptx). The text may not start or end with a tab or line break.
+   * {op: "replace_text", find: "March 25th @ 10:30", replace: "March 26th @ 09:00"}
+   * {op: "replace_text", para: "p2", find: "https://foo.com", replace: "the Foo homepage"}
+   * {op: "replace_text", slide: 4, shape: 1, find: "Obama", replace: "Biden"}
+   */
+  | { op: "replace_text"; find: string; replace: string; para?: string; slide?: number; shape?: number; all?: boolean }
+
+  // ---- docx
+  /**
+   * Insert a paragraph after another, formatted like it (same style, list numbering and
+   * the font of its first run) unless "style" is given. "\n" in text becomes a line break.
+   * Several inserts after the same id appear in the order given.
+   * {op: "insert_paragraph_after", para: "p15", text: "Tika Workshop - March 27th"}
+   */
+  | { op: "insert_paragraph_after"; para: string; text: string; style?: string }
+  /** {op: "delete_paragraph", para: "p9"}  Fails for the only paragraph in a cell, or one holding a section break. */
+  | { op: "delete_paragraph"; para: string }
+  /**
+   * Replace all content of a table cell with one paragraph of text, keeping the cell's
+   * paragraph and font formatting. table, row and col are 0-based indexes from the model.
+   * {op: "set_cell_text", table: 0, row: 1, col: 2, text: "321"}
+   */
+  | { op: "set_cell_text"; table: number; row: number; col: number; text: string }
+
+  // ---- xlsx ("sheet" defaults to the first sheet)
+  /**
+   * Set a cell to a constant. A JSON number stays a number, a string stays text (also
+   * "123"), a boolean becomes TRUE/FALSE. The cell keeps its number format. Creates the
+   * cell and row if needed. Formulas elsewhere recalculate when the file is opened.
+   * {op: "set_cell", sheet: "Sheet1", cell: "C5", value: 4200}
+   * {op: "set_cell", cell: "A5", value: "Transport"}
+   */
+  | { op: "set_cell"; cell: string; value: string | number | boolean; sheet?: string }
+  /** {op: "set_formula", cell: "B6", formula: "SUM(B3:B5)"}  With or without "=". */
+  | { op: "set_formula"; cell: string; formula: string; sheet?: string }
+  /** {op: "clear_cell", cell: "D4"}  Empties the value and formula, keeps the format. */
+  | { op: "clear_cell"; cell: string; sheet?: string }
+  /**
+   * Add a row directly below an Excel table and grow the table to include it, so totals,
+   * formulas and charts that use the table pick it up. One value per column; a string
+   * starting with "=" is a formula. The row below the table must be empty.
+   * {op: "append_table_row", table_name: "tblExpenses", values: ["Internet", 60]}
+   */
+  | { op: "append_table_row"; table_name: string; values: (string | number | boolean)[]; sheet?: string }
+
+  // ---- pptx
+  /**
+   * Replace all text of a shape. Each "\n" starts a new paragraph (a new bullet). The
+   * text takes the paragraph and font formatting of the shape's first paragraph and run.
+   * {op: "replace_shape_text", slide: 2, shape: 2, text: "Revenue up 12%\nCosts flat"}
+   */
+  | { op: "replace_shape_text"; slide: number; shape: number; text: string };
+
+/**
+ * Errors name the edit and say how to fix it, for example:
+ *   edit 0 (replace_text): text "Boot Camp" occurs in 2 paragraphs (p14, p15); pass "para" or set "all": true
+ *   edit 0 (replace_text): paragraph p3 does not contain "Mahout"; its text is "A title in ..."
+ *   edit 0 (set_cell_text): row 9 does not exist; table 0 has 3 rows
+ *   edit 0 (set_cell): B1 is hidden inside merged range A1:G1; write to its top-left cell A1 instead
+ *   edit 0 (set_cell): C3 is part of the array formula over C3:C9, which cannot be edited cell by cell
+ *   edit 0 (append_table_row): the row below table tblExpenses (row 24) is not empty (B24 = "x"); move that content first
+ *   edit 1 (insert_paragraph_after): paragraph p9 was deleted or replaced by an earlier edit in this call
+ *   edits must be a JSON array of objects with an "op" field: json: unknown field "cel"
+ *
+ * Not possible: inserting or deleting rows, columns, slides, shapes or tables; changing
+ * formatting (bold, colours, number formats); comments; charts; headers and footers.
+ */
