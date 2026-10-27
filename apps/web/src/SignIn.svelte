@@ -10,6 +10,11 @@
   let sent = $state(false);
   let error = $state('');
 
+  $effect(() => {
+    const token = email.match(/[?&]token=([^&\s]+)/)?.[1];
+    if (token) location.assign(`/auth/magic?token=${token}`);
+  });
+
   async function send(e) {
     e.preventDefault();
     error = '';
@@ -38,6 +43,6 @@
 
 <style>
   .door { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-5); min-height: 100vh; padding: var(--space-5); text-align: center; }
-  .brand { position: absolute; top: var(--space-5); left: var(--space-5); }
+  .brand { position: absolute; top: calc(var(--space-5) + var(--safe-top)); left: var(--space-5); }
   form { width: 100%; max-width: var(--form); }
 </style>

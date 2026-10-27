@@ -16,6 +16,7 @@
     at = { x: r.left, y: r.bottom };
     index = Math.max(0, items.indexOf(current));
     pop.showPopover();
+    if (r.left + pop.offsetWidth > innerWidth) at = { x: r.right - pop.offsetWidth, y: r.bottom };
   }
 
   function pick(item) {

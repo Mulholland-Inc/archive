@@ -47,6 +47,18 @@
 
   $effect(() => () => ctrl?.abort());
 
+  $effect(() => {
+    let pinned = true;
+    const scroll = () => (pinned = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < scroller.clientHeight / 4);
+    const o = new ResizeObserver(() => pinned && (scroller.scrollTop = scroller.scrollHeight));
+    scroller.addEventListener('scroll', scroll, { passive: true });
+    o.observe(scroller);
+    return () => {
+      o.disconnect();
+      scroller.removeEventListener('scroll', scroll);
+    };
+  });
+
   async function send() {
     const start = messages.length;
     const text = draft.trim();

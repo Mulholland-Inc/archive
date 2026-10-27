@@ -8,12 +8,17 @@
     "build": "npm run wasm && vite build"
   },
   "dependencies": {
+    "@capacitor/core": "8.5.3",
+    "@capacitor/ios": "8.5.3",
+    "@capacitor/keyboard": "8.0.6",
+    "@capacitor/status-bar": "8.0.4",
     "@fontsource-variable/eb-garamond": "5.3.0",
     "@fontsource-variable/geist": "5.3.0",
     "@fontsource-variable/jetbrains-mono": "5.3.0",
     "@lucide/svelte": "1.62.0"
   },
   "devDependencies": {
+    "@capacitor/cli": "8.5.3",
     "@sveltejs/vite-plugin-svelte": "7.3.1",
     "svelte": "5.57.3",
     "vite": "8.3.5"

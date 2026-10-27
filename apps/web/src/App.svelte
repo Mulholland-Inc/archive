@@ -13,6 +13,7 @@
   import Connectors from './Connectors.svelte';
   import Chat from './Chat.svelte';
   import Profile from './ui/Profile.svelte';
+  import Drawer from './ui/Drawer.svelte';
 
   let me = $state(null);
   let signedOut = $state(false);
@@ -23,10 +24,12 @@
   let space = $state('');
   let conversation = $state([]);
   let fresh = $state(0);
+  let drawer = $state(false);
   let theme = $state(localStorage.theme ?? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'));
 
   $effect(() => {
     document.documentElement.dataset.theme = theme;
+    window.Capacitor?.nativePromise?.('StatusBar', 'setStyle', { style: theme === 'light' ? 'LIGHT' : 'DARK' }).catch(() => {});
   });
 
   function flip() {
@@ -54,6 +57,7 @@
     const a = e.target.closest?.('a[href^="/"]');
     if (!a || e.defaultPrevented || a.target || e.metaKey || e.ctrlKey || e.shiftKey || /^\/(api|auth)\//.test(a.getAttribute('href'))) return;
     e.preventDefault();
+    drawer = false;
     go(a.getAttribute('href'));
   });
 
@@ -80,6 +84,7 @@
   function newChat(e) {
     e.preventDefault();
     conversation = [];
+    drawer = false;
     fresh++;
     if (path !== '/chat') go('/chat');
   }
@@ -116,7 +121,11 @@
   <SignIn />
 {:else if me}
   <div class="app">
-    <aside>
+    <header class="top">
+      <Button quiet icon="panel-left" title="Open sidebar" aria-label="Open sidebar" aria-expanded={drawer} onclick={() => (drawer = true)} />
+      <Button quiet href="/chat" icon="square-pen" title="New chat" aria-label="New chat" onclick={newChat} />
+    </header>
+    <Drawer bind:open={drawer}>
       <a class="brand" href="/chat" aria-label="Chat"><Logo /></a>
       <nav>
         <NavItem href="/chat" icon="square-pen" active={route.first === 'chat'} onclick={newChat}>New chat</NavItem>
@@ -139,7 +148,7 @@
         <Button quiet icon={theme === 'light' ? 'moon' : 'sun'} title="Switch theme" aria-label="Switch theme" onclick={flip} />
         <Button quiet icon="signout" title="Sign out" aria-label="Sign out" onclick={signOut} />
       </footer>
-    </aside>
+    </Drawer>
     <main>
       {#key space}
       {#if route.first === 'chat'}
@@ -176,8 +185,9 @@
 {/if}
 
 <style>
-  .app { display: grid; grid-template-columns: var(--sidebar) minmax(0, 1fr); height: 100vh; }
-  aside { display: flex; flex-direction: column; min-height: 0; padding: var(--space-2); }
+  .app { display: grid; grid-template-columns: var(--sidebar) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); height: 100vh; }
+  .app::before { content: ''; grid-column: 1 / -1; height: var(--safe-top); }
+  .top { display: none; }
   .brand { display: flex; align-items: center; padding: var(--space-3); }
   nav {
     display: flex;
@@ -192,11 +202,10 @@
   main { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; min-height: 0; padding: var(--space-7); overflow: hidden; }
   main > :global(:last-child) { flex: 1; min-height: 0; overflow: auto; }
   @media (max-width: 767px) {
-    .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
-    aside { order: 1; flex-direction: row; align-items: center; padding: var(--space-3); margin-bottom: env(safe-area-inset-bottom); }
-    nav { flex-direction: row; gap: var(--space-1); overflow-x: auto; mask-image: linear-gradient(to right, transparent, black var(--space-5), black calc(100% - var(--space-5)), transparent); }
-    nav > :global(div), .brand { display: none; }
-    footer { gap: 0; }
-    main { padding: var(--space-4); mask-image: linear-gradient(black calc(100% - var(--space-5)), transparent); }
+    .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; }
+    .app::after { content: ''; height: var(--safe-bottom); }
+    .top { display: flex; align-items: center; justify-content: space-between; padding: var(--space-2); }
+    .top :global(.button) { width: var(--size-lg); height: var(--size-lg); color: var(--text); }
+    main { padding: var(--space-4); }
   }
 </style>

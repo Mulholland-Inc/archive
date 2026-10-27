@@ -21,7 +21,7 @@
     border-radius: var(--radius-pill);
     background: var(--panel);
     color: var(--text-2);
-    font-size: var(--text-sm);
+    font-size: var(--text-input);
     transition: background var(--dur) var(--ease);
   }
   .search:hover, .search:focus-within, .set { background: var(--raised); color: var(--text); }

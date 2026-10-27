@@ -98,12 +98,7 @@
   .space { font-size: var(--text-xs); color: var(--text-3); }
   .pop { position: fixed; inset: auto; left: var(--x); bottom: calc(var(--y) + var(--space-2)); margin: 0; padding: 0; border: 0; background: none; overflow: visible; }
   .add { display: flex; flex-direction: column; gap: var(--space-2); width: var(--menu); padding: var(--space-2); background: var(--raised); border-radius: var(--radius-lg); box-shadow: var(--shadow); }
-  .add input { padding: var(--space-3); border: 0; border-radius: var(--radius-sm); background: var(--panel); font-size: var(--text-sm); outline: 0; }
+  .add input { padding: var(--space-3); border: 0; border-radius: var(--radius-sm); background: var(--panel); font-size: var(--text-input); outline: 0; }
   .add input::placeholder { color: var(--text-3); }
   .error { padding: var(--space-2); font-size: var(--text-xs); color: var(--alarm); }
-  @media (max-width: 767px) {
-    .profile { flex: none; padding: var(--space-2); border-radius: var(--radius-pill); }
-    .text { display: none; }
-    .pop { left: auto; right: var(--space-3); }
-  }
 </style>

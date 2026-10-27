@@ -3,9 +3,10 @@
 
   let { value = $bindable(''), busy = false, onsend, onstop, ...rest } = $props();
   let box = $state();
+  const touch = matchMedia('(pointer: coarse)').matches;
 
   function key(e) {
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !touch) {
       e.preventDefault();
       if (!busy && value.trim()) onsend();
     }
@@ -19,7 +20,7 @@
 </script>
 
 <form class="composer" onsubmit={(e) => (e.preventDefault(), busy ? onstop() : value.trim() && onsend())}>
-  <textarea bind:this={box} bind:value rows="1" onkeydown={key} {...rest}></textarea>
+  <textarea bind:this={box} bind:value rows="1" autocapitalize="sentences" autocorrect="on" spellcheck="true" enterkeyhint={touch ? 'enter' : 'send'} onkeydown={key} {...rest}></textarea>
   <Button icon={busy ? 'square' : 'arrow-up'} type="submit" title={busy ? 'Stop' : 'Send'} aria-label={busy ? 'Stop' : 'Send'} disabled={!busy && !value.trim()} />
 </form>
 
@@ -50,4 +51,10 @@
   }
   textarea::placeholder { color: var(--text-3); }
   .composer :global(button:disabled) { opacity: var(--dim); }
+  @media (max-width: 767px) {
+    .composer { padding: var(--space-1); border: var(--stroke) solid var(--line-strong); }
+    .composer:focus-within { background: var(--panel); border-color: var(--line-focus); }
+    textarea { max-height: var(--composer); padding: var(--space-2); }
+    .composer :global(.button) { width: var(--size-sm); height: var(--size-sm); }
+  }
 </style>

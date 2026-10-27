@@ -20,8 +20,4 @@
   }
   a:hover { background: var(--hover); }
   .active, .active:hover { background: var(--cream); color: var(--cream-ink); font-weight: var(--weight-bold); }
-  @media (max-width: 767px) {
-    a { flex: none; white-space: nowrap; }
-    a :global(svg) { display: none; }
-  }
 </style>
