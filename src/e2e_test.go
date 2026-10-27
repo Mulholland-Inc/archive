@@ -2186,7 +2186,7 @@ return { planned: plan.statements.length, before: plan.applied, applied: done.ap
 		resp, body := e2eGet(t, api+"/run/docs", tok)
 		docs := string(body)
 		for _, want := range []string{"declare const archive", "sql(query: string, ...params: unknown[]): Promise<Row[]>", "interface Money { amount: number; currency: Currency }",
-			"/** A house you own or rent. */\ninterface House extends Base {\n    address: string;\n    /** Asking price. */\n    price?: Money;\n    sold?: boolean;\n}", "house: House;", "type Email = string;", "read(fileId: string): Promise<Model>;", "edit(fileId: string, edits: Edit[]): Promise<StoredFile>;"} {
+			"/** A house you own or rent. */\ninterface House extends Base {\n    address: string;\n    /** Asking price. */\n    price?: Money;\n    sold?: boolean;\n}", "house: House;", "type Email = string;", "read(fileId: string): Promise<Model>;", "edit(fileId: string, edits: Edit[], opts: { version: string }): Promise<StoredFile & { version: string }>;"} {
 			if resp.StatusCode != 200 || !strings.Contains(docs, want) {
 				t.Errorf("docs lack %q:\n%s", want, docs)
 			}
@@ -2233,12 +2233,12 @@ return { price: a.price, sold: b.sold, listed: listed.map(h => h.id === b.id), p
 			ids[filepath.Ext(name)], orig[filepath.Ext(name)] = f.ID.String(), b
 		}
 		got := ok(t, `const [doc, sheet, deck] = [`+strconv.Quote(ids[".docx"])+`, `+strconv.Quote(ids[".xlsx"])+`, `+strconv.Quote(ids[".pptx"])+`];
-const before = (await archive.read(doc)).paragraphs.find(p => p.text.includes("window frame"));
-await archive.edit(doc, [{ op: "replace_text", find: "window frame", replace: "window sill" }, { op: "insert_paragraph_after", para: before.id, text: "It got worse in October." }]);
-await archive.edit(sheet, [{ op: "set_cell", cell: "B4", value: 500 }, { op: "set_formula", cell: "C5", formula: "B5*12" }]);
-await archive.edit(deck, [{ op: "replace_shape_text", slide: 1, shape: 1, text: "Porto long weekend" }]);
+const read = await archive.read(doc), before = read.paragraphs.find(p => p.text.includes("window frame"));
+const { version } = await archive.edit(doc, [{ op: "replace_text", find: "window frame", replace: "window sill" }, { op: "insert_paragraph_after", para: before.id, text: "It got worse in October." }], { version: read.version });
+await archive.edit(sheet, [{ op: "set_cell", cell: "B4", value: 500 }, { op: "set_formula", cell: "C5", formula: "B5*12" }], { version: (await archive.read(sheet)).version });
+await archive.edit(deck, [{ op: "replace_shape_text", slide: 1, shape: 1, text: "Porto long weekend" }], { version: (await archive.read(deck)).version });
 let bad = "";
-try { await archive.edit(doc, [{ op: "replace_text", find: "no such words", replace: "x" }]); } catch (e) { bad = e.message; }
+try { await archive.edit(doc, [{ op: "replace_text", find: "no such words", replace: "x" }], { version }); } catch (e) { bad = e.message; }
 const d = await archive.read(doc), x = await archive.read(sheet), k = await archive.read(deck);
 return { para: d.paragraphs.map(p => p.text).filter(t => t.includes("window") || t.startsWith("It got")), cells: x.sheets[0].cells.filter(c => ["B4", "C5"].includes(c.ref)),
   title: k.slides[0].shapes[1].paragraphs[0].text, bad };`)
@@ -2273,6 +2273,108 @@ return { para: d.paragraphs.map(p => p.text).filter(t => t.includes("window") ||
 					t.Errorf("%s: %s changed", ext, f.Name)
 				}
 			}
+		}
+	})
+
+	officeUpload := func(t *testing.T, src, name string) string {
+		b, err := os.ReadFile(filepath.Join("..", "demo", "files", src))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, f := e2eUpload(t, api+"/files", tok, name, b)
+		return strconv.Quote(f.ID.String())
+	}
+
+	t.Run("AnEditOnAStaleVersionConflictsInsteadOfHittingTheWrongParagraph", func(t *testing.T) {
+		doc := officeUpload(t, "Letter to landlord.docx", "Stale letter.docx")
+		old := ok(t, `const m = await archive.read(`+doc+`), p = m.paragraphs.find(p => p.text.includes("window frame"));
+return { version: m.version, id: p.id, text: p.text, n: m.paragraphs.length };`)
+		newer := ok(t, `const m = await archive.read(`+doc+`);
+return await archive.edit(`+doc+`, [{ op: "insert_paragraph_after", para: "p0", text: "Inserted by someone else." }], { version: m.version });`)
+		got := ok(t, `const errs = [];
+for (const opts of [{ version: `+strconv.Quote(fmt.Sprint(old["version"]))+` }, {}, { version: "nope" }, undefined]) {
+  try { await archive.edit(`+doc+`, [{ op: "delete_paragraph", para: `+strconv.Quote(fmt.Sprint(old["id"]))+` }], opts); errs.push("saved"); } catch (e) { errs.push(e.code + ": " + e.message); }
+}
+const m = await archive.read(`+doc+`), f = await archive.file(`+doc+`);
+return { errs, version: m.version, sha256: f.sha256, n: m.paragraphs.length, kept: m.paragraphs.filter(p => p.text === `+strconv.Quote(fmt.Sprint(old["text"]))+`).length,
+  moved: m.paragraphs.find(p => p.text === `+strconv.Quote(fmt.Sprint(old["text"]))+`)?.id };`)
+		errs, _ := got["errs"].([]any)
+		if len(errs) != 4 {
+			t.Fatalf("errs: %v", got)
+		}
+		for _, e := range errs {
+			if s := fmt.Sprint(e); !strings.HasPrefix(s, "conflict: archive.edit:") || !strings.Contains(s, "archive.read") {
+				t.Errorf("a stale or missing version: %q", s)
+			}
+		}
+		if got["version"] != newer["version"] || got["sha256"] != newer["version"] || newer["version"] == old["version"] {
+			t.Errorf("versions: old %v, newer %v, now %v", old["version"], newer["version"], got)
+		}
+		if n, _ := old["n"].(json.Number).Int64(); fmt.Sprint(got["n"]) != fmt.Sprint(n+1) || fmt.Sprint(got["kept"]) != "1" || got["moved"] == old["id"] {
+			t.Errorf("the stale delete touched the document: %v (read before: %v)", got, old)
+		}
+	})
+
+	t.Run("ManyAgentsEditOneDocxAndOneXlsxAtOnceAndNoEditIsLost", func(t *testing.T) {
+		const agents = 30
+		doc := officeUpload(t, "Letter to landlord.docx", "Shared letter.docx")
+		sheet := officeUpload(t, "family/Monthly budget.xlsx", "Shared budget.xlsx")
+		before := ok(t, `return { n: (await archive.read(`+doc+`)).paragraphs.length }`)
+		retry := func(id, plan string) string {
+			return `let conflicts = 0;
+for (;;) {
+  const m = await archive.read(` + id + `);
+  try { await archive.edit(` + id + `, ` + plan + `, { version: m.version }); return { conflicts }; }
+  catch (e) { if (e.code !== "conflict") throw e; conflicts++; }
+}`
+		}
+		var mu sync.Mutex
+		runs, conflicts := 0, 0
+		agent := func(code string) {
+			var out RunOutput
+			st, _ := call(t, "POST", api+"/run", tok, map[string]string{"code": code}, &out)
+			if st != 200 || out.Error != "" {
+				t.Errorf("agent run: %d %s", st, out.Error)
+				return
+			}
+			n, _ := decode[map[string]json.Number](t, string(out.Result))["conflicts"].Int64()
+			mu.Lock()
+			runs, conflicts = runs+1, conflicts+int(n)
+			mu.Unlock()
+		}
+		start := time.Now()
+		var wg sync.WaitGroup
+		for i := range agents {
+			wg.Go(func() {
+				agent(retry(doc, `[{ op: "insert_paragraph_after", para: m.paragraphs.find(p => p.text.includes("window frame")).id, text: "Agent `+strconv.Itoa(i)+` draft" }]`))
+				agent(retry(doc, `[{ op: "replace_text", para: m.paragraphs.find(p => p.text === "Agent `+strconv.Itoa(i)+` draft").id, find: "draft", replace: "was here" }]`))
+			})
+			wg.Go(func() {
+				agent(retry(sheet, `[{ op: "set_cell", cell: "J`+strconv.Itoa(40+i)+`", value: "Agent `+strconv.Itoa(i)+`" }]`))
+			})
+		}
+		wg.Wait()
+		t.Logf("%d agents, %d runs, %d conflicts retried, %s", 2*agents, runs, conflicts, time.Since(start).Round(time.Millisecond))
+		got := ok(t, `const d = await archive.read(`+doc+`), x = await archive.read(`+sheet+`);
+const f = await archive.file(`+doc+`), g = await archive.file(`+sheet+`);
+return { n: d.paragraphs.length, agents: d.paragraphs.map(p => p.text).filter(t => t.startsWith("Agent ")).sort(),
+  cells: x.sheets[0].cells.filter(c => c.ref.startsWith("J") && +c.ref.slice(1) >= 40).map(c => c.ref + "=" + c.value).sort(),
+  current: f.sha256 === d.version && g.sha256 === x.version };`)
+		var wantParas, wantCells []string
+		for i := range agents {
+			wantParas = append(wantParas, "Agent "+strconv.Itoa(i)+" was here")
+			wantCells = append(wantCells, "J"+strconv.Itoa(40+i)+"=Agent "+strconv.Itoa(i))
+		}
+		slices.Sort(wantParas)
+		slices.Sort(wantCells)
+		if fmt.Sprint(got["agents"]) != fmt.Sprint(wantParas) {
+			t.Errorf("docx paragraphs by agents:\n got %v\nwant %v", got["agents"], wantParas)
+		}
+		if fmt.Sprint(got["cells"]) != fmt.Sprint(wantCells) {
+			t.Errorf("xlsx cells by agents:\n got %v\nwant %v", got["cells"], wantCells)
+		}
+		if n, _ := before["n"].(json.Number).Int64(); fmt.Sprint(got["n"]) != fmt.Sprint(n+agents) || got["current"] != true || runs != 3*agents || conflicts == 0 {
+			t.Errorf("after the agents: %v, %d runs, %d conflicts", got, runs, conflicts)
 		}
 	})
 
