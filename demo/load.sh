@@ -1,0 +1,26 @@
+#!/bin/sh
+set -eu
+demo=$(dirname "$0")
+archive=${ARCHIVE_BIN:-archive}
+
+$archive space list >/dev/null 2>&1 || $archive user add "${1:-me@example.com}" -name Me -admin >/dev/null
+if [ "$($archive list person -limit 1 2>/dev/null || echo '[]')" != "[]" ]; then
+	echo "demo: this archive already has people in it; load the demo into an empty one" >&2
+	exit 1
+fi
+
+schema=$(mktemp -d)
+trap 'rm -rf "$schema"' EXIT
+$archive schema pull "$schema" >/dev/null
+cp "$demo"/schema/*.sql "$schema"
+$archive schema push "$schema" >/dev/null
+
+$archive space add family >/dev/null
+$archive user add sanne@example.com -name "Sanne de Vries" >/dev/null
+$archive space grant family sanne@example.com editor >/dev/null
+
+for f in "$demo"/files/*.*; do $archive file add "$f" >/dev/null; done
+for f in "$demo"/files/family/*; do $archive file add "$f" -space family >/dev/null; done
+
+ARCHIVE_RUN_TIMEOUT=600s $archive run "$demo/seed.ts"
+echo "demo: loaded; restart archive serve if it was running, so it sees the new tables" >&2

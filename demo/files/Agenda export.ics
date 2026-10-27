@@ -1,0 +1,28 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Marijn//Calendar export//EN
+BEGIN:VEVENT
+UID:dinner-oma-20261102@cal
+DTSTART:20261102T170000Z
+DTEND:20261102T200000Z
+SUMMARY:Sunday dinner at mum and dad's
+LOCATION:Kerkstraat 8, Haarlem
+DESCRIPTION:Bring the photo book from Lisbon. Dad's birthday cake.
+END:VEVENT
+BEGIN:VEVENT
+UID:passport-20261105@cal
+DTSTART:20261105T083000Z
+DTEND:20261105T084500Z
+SUMMARY:Passport renewal appointment, Stadsloket Centrum
+LOCATION:Amstel 1, Amsterdam
+DESCRIPTION:Bring old passport, a passport photo and EUR 84,00.
+END:VEVENT
+BEGIN:VEVENT
+UID:climbing-weekly@cal
+DTSTART:20261029T180000Z
+DTEND:20261029T200000Z
+RRULE:FREQ=WEEKLY;BYDAY=WE
+SUMMARY:Bouldering with Daan
+LOCATION:Monk Bouldergym Amsterdam
+END:VEVENT
+END:VCALENDAR

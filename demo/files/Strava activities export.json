@@ -1,0 +1,246 @@
+{
+  "athlete": "Marijn Brussel",
+  "exported": "2026-10-26",
+  "activities": [
+    {
+      "date": "2026-09-01",
+      "type": "Run",
+      "distance_km": 7.64,
+      "moving_time_min": 39.5,
+      "avg_hr": 158,
+      "route": "Westerpark loop"
+    },
+    {
+      "date": "2026-09-02",
+      "type": "Run",
+      "distance_km": 5.2,
+      "moving_time_min": 29.1,
+      "avg_hr": 149,
+      "route": "Amsterdamse Bos long run"
+    },
+    {
+      "date": "2026-09-03",
+      "type": "Run",
+      "distance_km": 5.06,
+      "moving_time_min": 28.1,
+      "avg_hr": 139,
+      "route": "Westerpark loop"
+    },
+    {
+      "date": "2026-09-04",
+      "type": "Run",
+      "distance_km": 8.71,
+      "moving_time_min": 44.2,
+      "avg_hr": 140,
+      "route": "Amsterdamse Bos long run"
+    },
+    {
+      "date": "2026-09-05",
+      "type": "Run",
+      "distance_km": 8.62,
+      "moving_time_min": 50.9,
+      "avg_hr": 141,
+      "route": "Amstel and back"
+    },
+    {
+      "date": "2026-09-06",
+      "type": "Run",
+      "distance_km": 10.62,
+      "moving_time_min": 59.9,
+      "avg_hr": 139,
+      "route": "Amsterdamse Bos long run"
+    },
+    {
+      "date": "2026-09-07",
+      "type": "Run",
+      "distance_km": 10.18,
+      "moving_time_min": 51.5,
+      "avg_hr": 145,
+      "route": "Westerpark loop"
+    },
+    {
+      "date": "2026-09-08",
+      "type": "Run",
+      "distance_km": 9.9,
+      "moving_time_min": 51.0,
+      "avg_hr": 151,
+      "route": "Amstel and back"
+    },
+    {
+      "date": "2026-09-09",
+      "type": "Run",
+      "distance_km": 9.74,
+      "moving_time_min": 54.8,
+      "avg_hr": 155,
+      "route": "Amstel and back"
+    },
+    {
+      "date": "2026-09-10",
+      "type": "Run",
+      "distance_km": 5.5,
+      "moving_time_min": 31.0,
+      "avg_hr": 144,
+      "route": "Vondelpark x2"
+    },
+    {
+      "date": "2026-09-11",
+      "type": "Run",
+      "distance_km": 5.45,
+      "moving_time_min": 31.5,
+      "avg_hr": 156,
+      "route": "Westerpark loop"
+    },
+    {
+      "date": "2026-09-12",
+      "type": "Run",
+      "distance_km": 10.5,
+      "moving_time_min": 58.2,
+      "avg_hr": 155,
+      "route": "IJ waterfront"
+    },
+    {
+      "date": "2026-09-13",
+      "type": "Run",
+      "distance_km": 12.04,
+      "moving_time_min": 66.4,
+      "avg_hr": 152,
+      "route": "Vondelpark x2"
+    },
+    {
+      "date": "2026-09-14",
+      "type": "Run",
+      "distance_km": 7.41,
+      "moving_time_min": 43.5,
+      "avg_hr": 160,
+      "route": "Amstel and back"
+    },
+    {
+      "date": "2026-09-15",
+      "type": "Run",
+      "distance_km": 5.29,
+      "moving_time_min": 28.2,
+      "avg_hr": 153,
+      "route": "Vondelpark x2"
+    },
+    {
+      "date": "2026-09-16",
+      "type": "Run",
+      "distance_km": 11.58,
+      "moving_time_min": 61.6,
+      "avg_hr": 140,
+      "route": "Westerpark loop"
+    },
+    {
+      "date": "2026-09-17",
+      "type": "Run",
+      "distance_km": 9.47,
+      "moving_time_min": 49.1,
+      "avg_hr": 148,
+      "route": "Amstel and back"
+    },
+    {
+      "date": "2026-09-18",
+      "type": "Run",
+      "distance_km": 13.55,
+      "moving_time_min": 74.0,
+      "avg_hr": 159,
+      "route": "Westerpark loop"
+    },
+    {
+      "date": "2026-09-19",
+      "type": "Run",
+      "distance_km": 11.92,
+      "moving_time_min": 67.1,
+      "avg_hr": 148,
+      "route": "Vondelpark x2"
+    },
+    {
+      "date": "2026-09-20",
+      "type": "Run",
+      "distance_km": 11.24,
+      "moving_time_min": 63.5,
+      "avg_hr": 156,
+      "route": "IJ waterfront"
+    },
+    {
+      "date": "2026-10-06",
+      "type": "Run",
+      "distance_km": 5.17,
+      "moving_time_min": 26.4,
+      "avg_hr": 146,
+      "route": "IJ waterfront"
+    },
+    {
+      "date": "2026-10-07",
+      "type": "Run",
+      "distance_km": 11.26,
+      "moving_time_min": 57.1,
+      "avg_hr": 161,
+      "route": "Vondelpark x2"
+    },
+    {
+      "date": "2026-10-08",
+      "type": "Run",
+      "distance_km": 10.78,
+      "moving_time_min": 65.7,
+      "avg_hr": 152,
+      "route": "Vondelpark x2"
+    },
+    {
+      "date": "2026-10-09",
+      "type": "Run",
+      "distance_km": 11.45,
+      "moving_time_min": 68.4,
+      "avg_hr": 149,
+      "route": "Westerpark loop"
+    },
+    {
+      "date": "2026-10-10",
+      "type": "Run",
+      "distance_km": 13.62,
+      "moving_time_min": 73.4,
+      "avg_hr": 157,
+      "route": "Westerpark loop"
+    },
+    {
+      "date": "2026-10-11",
+      "type": "Run",
+      "distance_km": 9.29,
+      "moving_time_min": 48.7,
+      "avg_hr": 147,
+      "route": "Amstel and back"
+    },
+    {
+      "date": "2026-10-12",
+      "type": "Run",
+      "distance_km": 11.66,
+      "moving_time_min": 63.4,
+      "avg_hr": 153,
+      "route": "Westerpark loop"
+    },
+    {
+      "date": "2026-10-13",
+      "type": "Run",
+      "distance_km": 6.11,
+      "moving_time_min": 33.2,
+      "avg_hr": 146,
+      "route": "Amstel and back"
+    },
+    {
+      "date": "2026-10-14",
+      "type": "Run",
+      "distance_km": 12.45,
+      "moving_time_min": 74.1,
+      "avg_hr": 146,
+      "route": "IJ waterfront"
+    },
+    {
+      "date": "2026-10-15",
+      "type": "Run",
+      "distance_km": 14.07,
+      "moving_time_min": 80.9,
+      "avg_hr": 150,
+      "route": "Amstel and back"
+    }
+  ]
+}
