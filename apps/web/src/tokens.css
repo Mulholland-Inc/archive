@@ -77,6 +77,7 @@
   --size-md: 40px;
   --size-lg: 44px;
   --size-xl: 56px;
+  --inset: var(--space-6);
   --sidebar: 280px;
   --lane: 280px;
   --cell: 320px;
@@ -93,5 +94,6 @@
     --display-lg: 44px;
     --display-xl: 64px;
     --text-2xl: 18px;
+    --inset: var(--space-5);
   }
 }

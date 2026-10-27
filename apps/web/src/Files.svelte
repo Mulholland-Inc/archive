@@ -76,5 +76,5 @@
 </Panel>
 
 <style>
-  .actions { margin-top: var(--space-5); }
+  .actions { margin-top: var(--space-5); padding: 0 var(--inset); }
 </style>

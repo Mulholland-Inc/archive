@@ -129,8 +129,8 @@
     .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
     aside { order: 1; flex-direction: row; align-items: center; padding: var(--space-3) var(--space-2) calc(var(--space-3) + env(safe-area-inset-bottom)); }
     .brand { height: var(--size-lg); padding: 0 var(--space-2); }
-    nav { display: flex; gap: var(--space-1); overflow-x: auto; padding: 0; mask-image: none; }
+    nav { display: flex; gap: var(--space-1); overflow-x: auto; padding: 0 var(--space-5); mask-image: linear-gradient(to right, transparent, black var(--space-5), black calc(100% - var(--space-5)), transparent); }
     nav > :global(div), footer { display: none; }
-    main { padding: var(--space-6) var(--space-4); }
+    main { padding: var(--space-6) var(--space-4); mask-image: linear-gradient(black calc(100% - var(--space-5)), transparent); }
   }
 </style>
