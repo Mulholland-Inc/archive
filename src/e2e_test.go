@@ -867,6 +867,9 @@ func TestDockerImageServesAndAcceptsCLICommandsFromDockerExec(t *testing.T) {
 	if os.Getenv("CI") == "" {
 		t.Skip("builds the Docker image; runs in CI")
 	}
+	if err := exec.Command("docker", "info").Run(); err != nil {
+		t.Skip("docker is not available")
+	}
 	name := fmt.Sprintf("archive-e2e-%d", time.Now().UnixNano())
 	docker := func(stdin string, args ...string) string {
 		t.Helper()
