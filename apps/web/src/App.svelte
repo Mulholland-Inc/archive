@@ -12,6 +12,7 @@
   import Page from './Page.svelte';
   import Connectors from './Connectors.svelte';
   import Chat from './Chat.svelte';
+  import Ontology from './Ontology.svelte';
   import Profile from './ui/Profile.svelte';
   import Drawer from './ui/Drawer.svelte';
   import { call, native, on } from './native.js';
@@ -164,6 +165,7 @@
           <NavItem href="/chat" icon="square-pen" active={route.first === 'chat'} onclick={newChat}>Chat</NavItem>
           <NavItem href="/files" icon="folder" active={route.first === 'files'}>Files</NavItem>
           <NavItem href="/pages" icon="page" active={route.first === 'pages'}>Pages</NavItem>
+          <NavItem href="/ontology" icon="waypoints" active={route.first === 'ontology'}>Ontology</NavItem>
           {#if views.length}
             <Divider />
             {#each views as v (v.name)}
@@ -201,6 +203,8 @@
           {/key}
         {:else if route.first === 'pages'}
           <Files pages />
+        {:else if route.first === 'ontology'}
+          <Ontology {tables} {views} {types} />
         {:else if route.first === 'connectors'}
           <Connectors {space} />
         {:else if route.first === 'views'}

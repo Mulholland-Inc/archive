@@ -4,6 +4,7 @@
   --shell: #0b0d12;
   --panel: #0f1217;
   --raised: #161a21;
+  --raised-hover: #1e232c;
   --text: #ffffff;
   --text-2: rgb(255 255 255 / 0.65);
   --text-3: rgb(255 255 255 / 0.45);
@@ -74,6 +75,7 @@
   --stroke-bold: 2px;
 
   --size-xs: 8px;
+  --size-dot: 6px;
   --size-icon: 20px;
   --size-title-icon: 44px;
   --size-logo: 28px;
@@ -128,6 +130,7 @@
   --shell: #ecebe6;
   --panel: #fbfaf7;
   --raised: #f1f0eb;
+  --raised-hover: #e6e5df;
   --text: #141413;
   --text-2: rgb(20 20 19 / 0.65);
   --text-3: rgb(20 20 19 / 0.45);
