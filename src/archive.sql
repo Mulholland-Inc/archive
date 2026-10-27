@@ -76,11 +76,6 @@ CREATE TABLE archive.upload (
     created_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE archive.schema_file (
-    name text PRIMARY KEY,
-    body text NOT NULL
-);
-
 CREATE TABLE archive.view (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     name       text NOT NULL,

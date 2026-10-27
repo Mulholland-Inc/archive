@@ -13,7 +13,7 @@ schema=$(mktemp -d)
 trap 'rm -rf "$schema"' EXIT
 $archive schema pull "$schema" >/dev/null
 cp "$demo"/schema/*.sql "$schema"
-$archive schema push "$schema" >/dev/null
+$archive schema apply "$schema" >/dev/null
 
 $archive space add family >/dev/null
 $archive user add sanne@example.com -name "Sanne de Vries" >/dev/null

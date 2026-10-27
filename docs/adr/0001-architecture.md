@@ -22,7 +22,7 @@ flowchart LR
 ## Stack
 
 - **Postgres 18** for all data, **Go** for the server, **a directory or S3** for file bytes.
-- **One Dockerfile**: the image holds Postgres and the binary. The binary starts Postgres, brings the schema in line with the DDL, and serves the API and MCP on one port. One `/data` volume holds everything.
+- **One Dockerfile**: the image holds Postgres and the binary. The binary starts Postgres, brings Archive's own schema in line with `archive.sql`, and serves the API and MCP on one port. One `/data` volume holds everything.
 - **Clients**: web and iOS clients will be rebuilt on the HTTP API; none ship today.
 - **Gotenberg**, optional: a second container that renders office documents to PDF (see Documents).
 
@@ -63,13 +63,13 @@ COMMENT ON TABLE house IS 'A house you own or rent';
 
 ## Schema changes
 
-The schema is declarative and DDL only, with no migrations folder. Archive ships `archive.sql`; the user's types are `*.sql` files in `/data/schema`, synced with a git repo through `archive schema pull` and `push`.
+The schema is declarative and DDL only, with no migrations folder. Archive ships `archive.sql`; the user's types live only in the database. `archive schema pull` and `archive.schema()` generate DDL from it on demand, one `<table>.sql` per table, by planning with pg-schema-diff from an empty database to the live one; `archive schema apply <dir>` and `archive.apply(files)` take the whole desired set back, so the files can be kept in a git repo. Nothing but the DDL itself is stored, and `apply(schema())` plans nothing.
 
 1. **Plan**: [pg-schema-diff](https://github.com/dilame/pg-schema-diff) (the dilame fork, pinned in `go.mod`, since upstream lacks domains) compares the files with the live database and returns the statements to run, each with its hazards.
 2. **Apply**: statements run with lock timeouts, indexes are built concurrently and foreign keys are added `NOT VALID` and then validated. A statement that deletes data is blocked unless the caller explicitly allows it.
 3. **Renames** are not detected by the diff, so they are passed explicitly: `archive.apply(files, { renames: ["ALTER TABLE house RENAME COLUMN city TO town"] })` runs them first, in the same transaction, then plans the edited files, so no data is lost.
 
-Archive's own schema goes through the same plan on every start, and is never allowed to delete data.
+Archive's own schema goes through the same plan when `archive.sql` changed since the last apply, with the user's tables generated from the database, and is never allowed to delete data.
 
 ## Code mode
 

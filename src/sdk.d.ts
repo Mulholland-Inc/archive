@@ -28,9 +28,13 @@
  *   take the real value and read back masked; list and get with { reveal: true } show them if you are granted.
  *
  * Changing the schema (ontology admins)
- * - Types are DDL files. Read them with archive.schema(), change or add a file, and pass the whole set to
- *   archive.apply(files): first without confirm to see the plan, then with { confirm: true }. A file you leave
- *   out is dropped, with its tables.
+ * - Types are the tables in the database, and nothing else is stored. archive.schema() generates their DDL from the
+ *   database: one file per table, named <table>.sql, holding its CREATE TABLE, indexes, foreign keys, row-level
+ *   security, policies, triggers, comments, and the enums, domains and functions only it uses (one used by no
+ *   table gets its own <name>.sql). It is normalized: your layout, -- comments and statement order are not kept,
+ *   COMMENT ON is. Change or add a file and pass the whole set to archive.apply(files): first without confirm to
+ *   see the plan, then with { confirm: true }. A table in no file is dropped. apply(await archive.schema()) plans
+ *   nothing.
  * - apply commits on its own as soon as it succeeds, even if the script throws later. It waits for locks on
  *   the tables it changes, including locks this run took by reading or writing them, so apply before touching
  *   those tables, or in a run of its own. After it, the new tables work in the same run.
@@ -81,9 +85,9 @@ declare const archive: {
     delete(table: keyof Tables, id: string): Promise<void>;
     /** Full-text search over every table and file you can see, best first; words match by prefix, ignoring case and accents. */
     search(text: string, opts?: { type?: keyof Tables | "file"; space?: string; from?: string; to?: string; limit?: number }): Promise<Hit[]>;
-    /** The DDL files of your types: file name to SQL. */
+    /** DDL generated from the database: <table>.sql to SQL, one file per table (see the header). */
     schema(): Promise<Record<string, string>>;
-    /** Plan the DDL files against the database; with confirm, apply the plan and save the files (see the header). */
+    /** Plan the whole set of DDL files against the database; with confirm, apply the plan (see the header). */
     apply(files: Record<string, string>, opts?: { confirm?: boolean; allowDrop?: boolean; renames?: string[] }): Promise<Plan>;
     /** Every table with its columns, types, comments and references, as Postgres has them now. */
     tables(): Promise<Table[]>;

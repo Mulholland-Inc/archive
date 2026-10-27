@@ -38,15 +38,16 @@ Usage:
                                      as MCP's run tool does, and print {result, logs, error}
   archive run -docs                  print the SDK documentation, with an interface per table
 
-  archive schema plan [-allow-drop]  show the statements that bring the database to the DDL files
-                                     stored in it; statements that delete data are blocked unless
-                                     -allow-drop
-  archive schema apply [-allow-drop] run that plan
-  archive schema pull [dir]          print the DDL files, or write them into dir
-  archive schema push <dir> [-allow-drop]
-                                     plan and apply the *.sql files in dir, then make them the
-                                     DDL files; renames are not detected, so rename a table or
-                                     column with ALTER ... RENAME in psql first
+  archive schema pull [dir]          print DDL generated from the database, one <table>.sql file
+                                     per table, or write those files into dir; layout and
+                                     comments outside DDL are not kept, COMMENT ON is
+  archive schema plan <dir> [-allow-drop]
+                                     show the statements that bring the database to the *.sql
+                                     files in dir, the whole schema: a table in no file is dropped;
+                                     statements that delete data are blocked unless -allow-drop
+  archive schema apply <dir> [-allow-drop]
+                                     run that plan; renames are not detected, so rename a table
+                                     or column with ALTER ... RENAME in psql first
 
   archive file add <path>... [-space s]
                                      store files and extract their metadata and text
@@ -79,8 +80,7 @@ Usage:
 Environment:
   DATABASE_URL       external Postgres, as a superuser; unset starts the bundled one; several
                      instances can share one when they share ARCHIVE_SECRET_KEY and ARCHIVE_BLOB_URL
-  ARCHIVE_DATA       data directory: the bundled Postgres, its secret.key and files (default ./data);
-                     DDL files in its schema/*.sql from older versions are imported once
+  ARCHIVE_DATA       data directory: the bundled Postgres, its secret.key and files (default ./data)
   ARCHIVE_PG_BIN     directory holding the Postgres binaries; unset uses those on PATH, or
                      downloads Postgres into $ARCHIVE_DATA/pgbin on first run
   ARCHIVE_LOCALE     locale that messy input is read in, like nl-NL
@@ -456,10 +456,6 @@ func cliJSON(w io.Writer, v any) error {
 
 func cliSchema(ctx context.Context, a *Archive, pos []string, allowDrop bool, stdout io.Writer, out func(any, error) error) error {
 	switch {
-	case pos[0] == "plan":
-		return out(a.ApplySchema(ctx, nil, nil, allowDrop, true))
-	case pos[0] == "apply":
-		return out(a.ApplySchema(ctx, nil, nil, allowDrop, false))
 	case pos[0] == "pull":
 		files, err := a.st.SchemaFiles(ctx)
 		if err != nil {
@@ -480,7 +476,7 @@ func cliSchema(ctx context.Context, a *Archive, pos []string, allowDrop bool, st
 			fmt.Fprintf(stdout, "-- %s\n%s\n", name, strings.TrimRight(files[name], "\n"))
 		}
 		return nil
-	case pos[0] == "push" && len(pos) > 1:
+	case (pos[0] == "plan" || pos[0] == "apply") && len(pos) > 1:
 		paths, err := filepath.Glob(filepath.Join(pos[1], "*.sql"))
 		if err != nil {
 			return err
@@ -493,7 +489,7 @@ func cliSchema(ctx context.Context, a *Archive, pos []string, allowDrop bool, st
 			}
 			files[filepath.Base(p)] = string(b)
 		}
-		return out(a.ApplySchema(ctx, files, nil, allowDrop, false))
+		return out(a.ApplySchema(ctx, files, nil, allowDrop, pos[0] == "plan"))
 	}
 	return cliErrUsage
 }
