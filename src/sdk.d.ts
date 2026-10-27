@@ -41,7 +41,9 @@
  * - Every table needs id, space, created_at, updated_at and a search tsvector column, row-level security with
  *   policies, and should have COMMENT ON its table and columns: they become these docs. Use the built-in types
  *   (archive.email, archive.money, ...) to get their cleaning. A reference is `uuid REFERENCES other`; a list of
- *   references is `uuid[]` with a column comment starting 'references other'. A complete file, house.sql:
+ *   references is `uuid[]` with a column comment starting 'references other'. Files load in any order, and a
+ *   statement waits for the tables it needs; for tables that reference each other, add at least one of those
+ *   references with ALTER TABLE ... ADD FOREIGN KEY after the CREATE TABLE. A complete file, house.sql:
  *
  *     CREATE TABLE house (
  *         id         uuid PRIMARY KEY DEFAULT uuidv7(),

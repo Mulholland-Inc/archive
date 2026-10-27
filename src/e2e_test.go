@@ -1573,6 +1573,48 @@ INSERT INTO archive.revision (hash) VALUES ('old'); CREATE TABLE archive.source 
 	}
 }
 
+func TestTablesThatReferenceEachOtherRoundTripAndRecreate(t *testing.T) {
+	t.Parallel()
+	cols := func(refs string) string {
+		return "    name       text NOT NULL,\n" + refs + "    search     tsvector GENERATED ALWAYS AS (archive.search_doc(name)) STORED"
+	}
+	cyclic := map[string]string{
+		"alpha.sql": e2eTable("alpha", cols("    beta       uuid,\n")) + `ALTER TABLE alpha ADD FOREIGN KEY (beta) REFERENCES beta;
+-- the name; trimmed
+CREATE FUNCTION alpha_trim() RETURNS trigger LANGUAGE plpgsql AS $body$ BEGIN NEW.name = trim(NEW.name); RETURN NEW; END $body$;
+CREATE TRIGGER alpha_trim BEFORE INSERT ON alpha FOR EACH ROW EXECUTE FUNCTION alpha_trim();
+`,
+		"beta.sql":  e2eTable("beta", cols("    alpha      uuid REFERENCES alpha,\n    gamma      uuid,\n")) + "ALTER TABLE beta ADD FOREIGN KEY (gamma) REFERENCES gamma;\n",
+		"gamma.sql": e2eTable("gamma", cols("    alpha      uuid,\n")) + "ALTER TABLE gamma ADD FOREIGN KEY (alpha) REFERENCES alpha;\nCOMMENT ON TABLE gamma IS E'one; two \\' three';\n",
+	}
+	in := newInst(t)
+	in.must("user", "add", "ann@example.com")
+	in.push(cyclic)
+	a := decode[row](t, in.must("create", "alpha", `{"name":" A "}`))
+	in.must("create", "beta", `{"name":"B","alpha":"`+id(a)+`"}`)
+	files := in.roundTrips()
+	if !slices.Equal(slices.Sorted(maps.Keys(files)), []string{"alpha.sql", "beta.sql", "gamma.sql"}) || !strings.Contains(files["alpha.sql"], "REFERENCES beta(id)") ||
+		!strings.Contains(files["gamma.sql"], "REFERENCES alpha(id)") || !strings.Contains(files["gamma.sql"], "one; two '' three") || a["name"] != "A" {
+		t.Errorf("cyclic schema pull: %v %v", files, a)
+	}
+	if p := decode[SchemaPlan](t, in.must("schema", "plan", in.writeDir("ddl", cyclic))); len(p.Statements) != 0 {
+		t.Errorf("the hand-written files plan %+v", p.Statements)
+	}
+
+	fresh := newInst(t)
+	fresh.must("user", "add", "ann@example.com")
+	fresh.push(files)
+	if got := fresh.roundTrips(); !maps.Equal(got, files) {
+		t.Errorf("a fresh instance from the generated files pulls %v", got)
+	}
+	if got := fresh.psql("archive", "SELECT count(*) FROM pg_constraint WHERE contype = 'f' AND conrelid::regclass::text IN ('alpha', 'beta', 'gamma') AND confrelid <> 'archive.space'::regclass"); got != "4" {
+		t.Errorf("%s foreign keys between the tables on the fresh instance", got)
+	}
+	if errs := in.fails("schema", "plan", in.writeDir("ddl", with(cyclic, "gamma.sql", strings.Replace(cyclic["gamma.sql"], "REFERENCES alpha", "REFERENCES delta", 1)))); !strings.Contains(errs, "gamma.sql:") || !strings.Contains(errs, `"delta" does not exist`) {
+		t.Errorf("a reference to a missing table: %s", errs)
+	}
+}
+
 var e2eNote = e2eTable("note", `    title      text NOT NULL,
     body       text,
     bsn        archive.nl_bsn,
