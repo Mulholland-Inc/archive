@@ -13,6 +13,8 @@ flowchart LR
   Connectors[Gmail, Drive, Outlook, SharePoint, Slack] --> Core[Go core]
   Apps[ChatGPT, Claude, Gemini, Grok] <--> MCP[MCP: run code] --> Core
   Clients[Web and iOS] <--> API[HTTP API] --> Core
+  Guests[People without an account] --> Shares[Share links] --> Core
+  Core <--> Render[Gotenberg, optional]
   Core --> PG[(Postgres: archive + public)]
   Core --> Files[(Files: disk or S3)]
 ```
@@ -22,6 +24,7 @@ flowchart LR
 - **Postgres 18** for all data, **Go** for the server, **a directory or S3** for file bytes.
 - **One Dockerfile**: the image holds Postgres and the binary. The binary starts Postgres, brings the schema in line with the DDL, and serves the API and MCP on one port. One `/data` volume holds everything.
 - **Clients**: web and iOS clients will be rebuilt on the HTTP API; none ship today.
+- **Gotenberg**, optional: a second container that renders office documents to PDF (see Documents).
 
 ## Data model
 
@@ -29,7 +32,7 @@ Two Postgres schemas. Tables are named in the singular, and every id is a UUIDv7
 
 | Schema | Holds |
 |---|---|
-| `archive` | Archive's own tables (`space`, `user`, `token`, `file`, `source`, `view`, `secret`) and the built-in types as domains and composite types (`archive.email`, `archive.iban`, `archive.money`) |
+| `archive` | Archive's own tables (`space`, `user`, `token`, `file`, `file_version`, `share`, `source`, `view`, `secret`) and the built-in types as domains and composite types (`archive.email`, `archive.iban`, `archive.money`) |
 | `public` | One table per type. The table is the type and a row is the entity |
 
 There is no `type` or `entity` table: Postgres already is that. Archive reads types, columns, foreign keys and `COMMENT ON` descriptions from the catalog.
@@ -114,9 +117,61 @@ Archive is listed in ChatGPT, Claude, Gemini and Grok as one remote MCP server. 
 
 File bytes are content-addressed by SHA-256 in the `/data` volume or in S3. Uploads are resumable (tus). On upload, Archive pulls metadata, makes thumbnails and extracts the text of PDFs, HTML and email, so files are searchable and agents can read them.
 
+- **Versions**: a file is a name, a space and its current bytes. Every save adds a row to `archive.file_version` (file, hash, size, saved by, saved at) and points `file.hash` at the new bytes. Old bytes stay, so any version can be opened or restored, and a save that changes nothing costs nothing.
+- **Text and previews follow the current version**: each save extracts the text and makes the thumbnail again.
+
+## Documents
+
+Archive's own web and iOS apps are the editors; there is no embedded office suite. Every document is a file in a standard format: Markdown or plain text, docx, xlsx or pptx. There is no Archive-specific document format, so a document can always be downloaded and opened anywhere.
+
+- **New documents** are made as an empty docx, xlsx or pptx (or a Markdown file) and are files like any other: they live in a space, have versions and can be shared.
+- **Edits splice bytes; nothing is rebuilt.** docx, xlsx and pptx are zips of XML parts. One small Archive package, using only Go's standard library, edits all three:
+  1. Parts an edit does not touch are copied raw with `zip.Writer.Copy`, so they stay byte-identical.
+  2. For the part an edit does touch, `encoding/xml`'s decoder records the byte range of every paragraph, run, table, cell and shape.
+  3. An edit replaces one byte range with a small new fragment, or inserts one, written with the prefixes the part already declares. Everything around it stays as it was, including namespaces, revision ids and extensions Archive has never heard of. The part is never re-encoded.
+  4. The part is parsed again after the edit, to check it is still well-formed.
+- **Markdown and text** are edited as text.
+- **The model** Archive exposes is built from that index: paragraphs, runs, tables and comments for docx; sheets, cells and formulas for xlsx; slides, shapes and their text for pptx. Edits outside it are not possible, by design.
+- **Text across runs**: Word splits a sentence into many runs. Replacing text finds it across runs and rewrites only those runs, keeping the first run's formatting. This is the core of the package.
+- **Formulas without an engine**: a cell value is written as an inline string, so the shared strings are never touched. A formula is written with its cached value removed, and the workbook is marked to recalculate when it is opened. Computed values for reading come from the render pass and are stored as derived data, never written into the file.
+- **Legacy and ODF files** (doc, xls, ppt, odt, ods, odp) are converted to OOXML once, on request, as a new file.
+
+**One edit API for everyone**: `archive.read(id)` returns the model, with an id for every paragraph, cell and shape, and `archive.edit(id, edits)` applies a list of edits (replace text, insert a paragraph or table, set a cell, add a comment). Agents call them from code mode; the apps send the same edits over the API. `archive.file(id)` stays for metadata and plain text.
+
+**Editing together**: clients send edits to the server, which applies them in order to the current file and sends them on to everyone else with the document open. The server's order decides conflicts, and it writes a new version when editing pauses. This needs no CRDT and no second copy of the document, at the cost of offline editing.
+
+**Rendering**: Gotenberg (MIT), a Go service around LibreOffice, turns a docx, xlsx or pptx into a PDF once per version, and computes the values of formulas. Previews, page images and thumbnails come from that PDF; search text comes from Archive's own parsing. The rule: Archive writes only the bytes it changes, and LibreOffice only makes derived output. Gotenberg is an optional container in `compose.yaml` and the Helm chart, set with `ARCHIVE_GOTENBERG_URL`; without it, documents have no previews, but can still be edited and searched. LibreOffice is used to render and to convert legacy files, never to save users' files, since its OOXML output can lose Word-only features.
+
+**Not chosen**:
+- An Archive-specific document format (for example ProseMirror JSON with Yjs): it would make every download a conversion, and Office files a second kind of document.
+- Collabora and ONLYOFFICE: their value is the editor UI, which Archive does not use, and running them in a closed SaaS needs paid editions.
+- ONLYOFFICE Document Builder: AGPL or a paid edition.
+- Office libraries (excelize, go-docx, unioffice): they load a document into their own structures and write it back out, which loses what they do not model, and some are AGPL or commercial. A formula engine (excelize's, IronCalc) is not needed while LibreOffice computes values for reading.
+- Aspose: faithful but commercial; it stays the option for customers whose complex files need more than patching.
+
+Slides are the weakest area: no good open-source pptx engine exists, so pptx edits start with text, and new slide layouts come later.
+
+## Sharing
+
+A user can share a file with people who have no Archive account, through a link. Shares are rows, not signed URLs, so they can be listed and revoked and their use is visible.
+
+```
+archive.share: id, file, token_hash, access (view | download), emails, password_hash,
+               expires_at, revoked_at, created_by, created_at, last_used_at, uses
+```
+
+- **The link** is `/s/<token>`, with 32 random bytes as the token; Archive stores only its hash. It opens a public page that previews the file (the PDF rendition for docx, xlsx and pptx, the browser for PDFs, images and text), with a download button when access is `download`.
+- **Who can open it**: anyone with the link, optionally behind a password; or only the listed email addresses, which get a one-time code by email, sent the same way as sign-in links. A share can expire and can be revoked at any time.
+- **The current version**: a share points at the file, so it always shows the latest version. GPS data is removed from shared photos.
+- **Who can share**: editors of the file's space. Owners and admins of the space see and revoke every share in it.
+- **Access**: the share page reads through a system role that can see only the shared file, never anything else in the space.
+- **Surfaces**: `archive.share(fileId, { access, emails, password, expires })` returns the link, `archive.shares()` lists them and `archive.unshare(id)` revokes one; the same as `/api/files/{id}/shares` and `archive share` on the command line.
+
+Short signed links stay for the app's own downloads, such as image previews; anything handed to another person is a share. Guests editing through a share, and sharing a folder or a collection of files, come later.
+
 ## Deployment
 
-`install.sh` pulls the image and runs it with one volume on port 8080. The same image runs on any cloud; a Helm chart covers Kubernetes, and Terraform modules for AWS, GCP and Azure swap the bundled Postgres for the managed one. The `archive` Terraform provider manages the schema DDL, sources, views, tokens and access rules as code.
+`install.sh` pulls the image and runs it with one volume on port 8080, with Gotenberg as an optional second container. The same image runs on any cloud; a Helm chart covers Kubernetes, and Terraform modules for AWS, GCP and Azure swap the bundled Postgres for the managed one. The `archive` Terraform provider manages the schema DDL, sources, views, tokens and access rules as code.
 
 ## Not doing
 
