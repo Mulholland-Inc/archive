@@ -414,25 +414,24 @@
   });
 </script>
 
-<Heading editable placeholder="Untitled" {@attach (el) => (heading = el)} {@attach sync(title)} oninput={retitle} onkeydown={titleKey}>
-  {#snippet aside()}
-    <div class="people" class:live title={live ? 'Live' : 'Connecting'}>
-      {#each [{ ...me, site, you: true }, ...online] as p (p.site)}
-        <Chip name={p.you ? `${p.name} (you)` : p.name} pulse={p.agent} />
-      {/each}
-    </div>
-  {/snippet}
-</Heading>
-<Bar>
-  {#each TYPES as t (t.type)}
-    <Tool icon={t.icon} label={t.label} on={(active?.type || 'paragraph') === t.type && !!active} onclick={() => turn(t.type)} />
-  {/each}
-  <Tool icon="list-indent-decrease" label="Outdent" onclick={() => indent(-1)} />
-  <Tool icon="list-indent-increase" label="Indent" onclick={() => indent(1)} />
-  {#each MARKS as m (m.name)}
-    <Tool icon={m.icon} label={m.label} on={on.includes(m.name)} onclick={() => format(m)} />
-  {/each}
-</Bar>
+<Heading editable placeholder="Untitled" {@attach (el) => (heading = el)} {@attach sync(title)} oninput={retitle} onkeydown={titleKey} />
+<div class="tools">
+  <Bar>
+    {#each TYPES as t (t.type)}
+      <Tool icon={t.icon} label={t.label} on={(active?.type || 'paragraph') === t.type && !!active} onclick={() => turn(t.type)} />
+    {/each}
+    <Tool icon="list-indent-decrease" label="Outdent" onclick={() => indent(-1)} />
+    <Tool icon="list-indent-increase" label="Indent" onclick={() => indent(1)} />
+    {#each MARKS as m (m.name)}
+      <Tool icon={m.icon} label={m.label} on={on.includes(m.name)} onclick={() => format(m)} />
+    {/each}
+  </Bar>
+  <div class="people" class:live title={live ? 'Live' : 'Connecting'}>
+    {#each [{ ...me, site, you: true }, ...online] as p (p.site)}
+      <Chip name={p.you ? `${p.name} (you)` : p.name} pulse={p.agent} />
+    {/each}
+  </div>
+</div>
 <div class="doc">
   <div class="blocks" bind:this={root}>
     {#each blocks as b, i (b.id)}
@@ -484,7 +483,9 @@
 </div>
 
 <style>
-  .people { display: flex; align-items: center; gap: var(--space-2); opacity: 0.5; transition: opacity var(--dur) var(--ease); }
+  .tools { display: flex; flex: none; align-items: center; gap: var(--space-4); }
+  .tools > :global(.bar) { flex: 1; min-width: 0; }
+  .people { display: flex; flex: none; align-items: center; gap: var(--space-2); opacity: 0.5; transition: opacity var(--dur) var(--ease); }
   .people.live { opacity: 1; }
 
   [contenteditable] { outline: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
