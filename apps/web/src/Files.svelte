@@ -1,5 +1,5 @@
 <script>
-  import { api, run, size } from './api.js';
+  import { api, go, run, size } from './api.js';
   import Icon from './Icon.svelte';
 
   let { pages = false } = $props();
@@ -40,7 +40,7 @@
     const name = prompt('Page name', 'Untitled');
     if (!name) return;
     const id = await run(`return (await archive.create(${JSON.stringify(name + '.page')})).id`);
-    location.hash = `#/p/${id}`;
+    go(`/pages/${id}`);
   }
 
   load().catch((e) => (error = e.message));
@@ -59,7 +59,7 @@
 <div class="panel">
   {#if error}<p class="error">{error}</p>{/if}
   {#each files as f (f.id)}
-    <a class="file" href={pages ? `#/p/${f.id}` : `/api/files/${f.id}/content`} target={pages ? undefined : '_blank'}>
+    <a class="file" href={pages ? `/pages/${f.id}` : `/api/files/${f.id}/content`} target={pages ? undefined : '_blank'}>
       <span class="thumb">
         {#if f.mime.startsWith('image/')}
           <img src="/api/files/{f.id}/thumbnail" alt="" loading="lazy" />

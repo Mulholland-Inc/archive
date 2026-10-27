@@ -1,16 +1,17 @@
 <script>
   import { api, hidden, show } from './api.js';
 
-  let { table } = $props();
+  let { table, where = {}, title, lead, rows: given } = $props();
   let rows = $state([]);
   let more = $state(false);
   let error = $state('');
-  const columns = $derived(table ? table.columns.filter((c) => !hidden.has(c.name)) : []);
+  const columns = $derived(table ? table.columns.filter((c) => !hidden.has(c.name) && !(c.name in where)) : []);
 
   async function page() {
     try {
-      const after = rows.length ? `&after=${rows.at(-1).id}` : '';
-      const next = await api(`/api/${table.name}?limit=100${after}`);
+      const q = new URLSearchParams({ ...where, limit: '100' });
+      if (rows.length) q.set('after', rows.at(-1).id);
+      const next = await api(`/api/${table.name}?${q}`);
       rows = [...rows, ...next];
       more = next.length === 100;
     } catch (e) {
@@ -18,12 +19,13 @@
     }
   }
 
-  if (table) page();
+  if (given) rows = given;
+  else if (table) page();
 </script>
 
 {#if table}
-  <h1>{table.name.replaceAll('_', ' ')}</h1>
-  {#if table.description}<p class="lead">{table.description}</p>{/if}
+  <h1>{title ?? table.name.replaceAll('_', ' ')}</h1>
+  {#if lead ?? table.description}<p class="lead">{lead ?? table.description}</p>{/if}
   <div class="panel">
     {#if error}<p class="error">{error}</p>{/if}
     <div class="wrap">
@@ -47,7 +49,7 @@
       </table>
     </div>
     {#if !rows.length && !error}<p class="muted">Nothing here yet.</p>{/if}
-    {#if more}<button class="more" onclick={page}>Show more</button>{/if}
+    {#if more && !given}<button class="more" onclick={page}>Show more</button>{/if}
   </div>
 {/if}
 

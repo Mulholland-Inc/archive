@@ -1,5 +1,10 @@
 export class Unauthorized extends Error {}
 
+export function go(path) {
+  history.pushState(null, '', path);
+  dispatchEvent(new PopStateEvent('popstate'));
+}
+
 export async function api(path, { method = 'GET', body, raw } = {}) {
   const init = { method, headers: {} };
   if (raw !== undefined) init.body = raw;

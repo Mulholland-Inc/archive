@@ -1838,6 +1838,17 @@ func TestSavedViewsSchemaDropsAndFullTokensOverHTTP(t *testing.T) {
 		wantStatus(t, st, 204, "owner removes a view")
 		st, _ = call(t, "GET", api+"/views/"+v.ID.String(), aliceTok, nil, nil)
 		wantStatus(t, st, 404, "removed view")
+
+		cv := decode[View](t, in.must("view", "add", "-space", "family", `{"name": "Board from the CLI", "type": "person", "layout": "board", "by": "employer"}`))
+		if cv.Layout != "board" || cv.By != "employer" || cv.Space != v.Space {
+			t.Errorf("view added from the CLI: %+v", cv)
+		}
+		if listed := decode[[]View](t, in.must("view", "list")); !slices.ContainsFunc(listed, func(x View) bool { return x.ID == cv.ID }) {
+			t.Errorf("view list: %+v", listed)
+		}
+		if e := in.fails("view", "add", `{"name": "Bad", "type": "person", "layout": "wall"}`); !strings.Contains(e, "layout") {
+			t.Errorf("bad layout from the CLI: %s", e)
+		}
 	})
 
 	t.Run("DroppingATableIsBlockedUntilAllowed", func(t *testing.T) {
