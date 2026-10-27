@@ -19,7 +19,7 @@
       {#if item.icon}<span class="icon"><Icon name={item.icon} /></span>{/if}
       <span class="label">{item.label}</span>
       {#if item.hint}<span class="hint">{item.hint}</span>{/if}
-      {#if item.checked}<span class="check"><Icon name="check" /></span>{/if}
+      {#if item.checked || item.after}<span class="check"><Icon name={item.after ?? 'check'} /></span>{/if}
     </button>
   {/each}
 </div>

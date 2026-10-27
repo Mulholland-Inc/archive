@@ -12,7 +12,7 @@
   let error = $state('');
   let at = $state({ x: 0, y: 0 });
   const current = $derived(items.find((i) => i.value === value));
-  const options = $derived([...items.map((i) => ({ ...i, checked: i.value === value })), { label: 'Add space', icon: 'plus', add: true }]);
+  const options = $derived([...items.map((i) => ({ ...i, checked: i.value === value })), { label: 'Add space', after: 'plus', add: true }]);
 
   function toggle() {
     if (open) return pop.hidePopover();
