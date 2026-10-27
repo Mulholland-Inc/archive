@@ -121,7 +121,7 @@ public class NativePlugin: CAPPlugin, CAPBridgedPlugin {
                     self.top.leadingAnchor.constraint(equalTo: view.leadingAnchor),
                     self.top.trailingAnchor.constraint(equalTo: view.trailingAnchor),
                     self.top.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-                    self.top.heightAnchor.constraint(equalToConstant: 64)
+                    self.top.heightAnchor.constraint(equalToConstant: 80)
                 ])
             }
             self.top.isHidden = !on
@@ -269,10 +269,10 @@ final class TopBar: UIView {
         addSubview(left)
         addSubview(right)
         NSLayoutConstraint.activate([
-            left.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            left.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            right.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            right.topAnchor.constraint(equalTo: topAnchor, constant: 8)
+            left.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 16),
+            left.topAnchor.constraint(equalTo: topAnchor, constant: 16),
+            right.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -16),
+            right.topAnchor.constraint(equalTo: topAnchor, constant: 16)
         ])
     }
 

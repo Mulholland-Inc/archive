@@ -84,6 +84,7 @@
   --size-lg: 44px;
   --size-xl: 56px;
   --size-bar: 48px;
+  --bar-inset: var(--space-4);
   --inset: var(--space-6);
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
