@@ -11,12 +11,15 @@ import (
 	"time"
 )
 
-//go:embed demo.json
-var demoJSON []byte
+var (
+	//go:embed demo.json
+	demoJSON []byte
+	//go:embed demo.sql
+	demoSQL string
+)
 
 type demoSet struct {
-	Types    map[string]json.RawMessage `json:"types"`
-	Spaces   []string                   `json:"spaces"`
+	Spaces   []string `json:"spaces"`
 	Entities []struct {
 		Ref   string         `json:"ref"`
 		Type  string         `json:"type"`
@@ -38,16 +41,20 @@ func (a *Archive) LoadDemo(ctx context.Context) (map[string]int, error) {
 	if err := json.Unmarshal(demoJSON, &d); err != nil {
 		return nil, err
 	}
-	for _, name := range specKeys(d.Types) {
-		if a.Spec().Types[name] != nil {
-			return nil, fmt.Errorf("demo data needs an archive without a %s type: %w", name, ErrConflict)
+	for _, e := range d.Entities {
+		if a.Catalog().Tables[e.Type] != nil {
+			return nil, fmt.Errorf("demo data needs an archive without a %s table: %w", e.Type, ErrConflict)
 		}
 	}
-	b, err := json.Marshal(map[string]any{"types": d.Types})
+	files, err := a.st.SchemaFiles()
 	if err != nil {
 		return nil, err
 	}
-	if _, err := a.ApplySpec(ctx, b, false); err != nil {
+	if _, ok := files["demo.sql"]; ok {
+		return nil, fmt.Errorf("demo data needs an archive without a demo.sql schema file: %w", ErrConflict)
+	}
+	files["demo.sql"] = demoSQL
+	if _, err := a.ApplySchema(ctx, files, nil, false, false); err != nil {
 		return nil, err
 	}
 	have, err := a.Spaces(ctx)
@@ -67,40 +74,19 @@ func (a *Archive) LoadDemo(ctx context.Context) (map[string]int, error) {
 	counts := map[string]int{}
 	for _, r := range d.Entities {
 		data, _ := demoResolve(r.Data, now, ids).(map[string]any)
-		rec, err := a.Create(ctx, r.Space, r.Type, data)
+		row, err := a.Create(ctx, r.Space, r.Type, data)
 		if err != nil {
 			return nil, fmt.Errorf("demo %s %s: %w", r.Type, r.Ref, err)
 		}
-		ids[r.Ref] = rec.ID.String()
+		ids[r.Ref] = coreRowID(row).String()
 		counts[r.Type]++
 	}
-
-	spec := a.Spec()
 	for i, p := range d.Proposals {
-		fields, err := spec.Fields(p.Type)
-		if err != nil {
-			return nil, err
+		data, _ := demoResolve(p.Data, now, ids).(map[string]any)
+		if _, err := a.Create(ctx, p.Space, p.Type, data); err != nil {
+			return nil, fmt.Errorf("demo %s %d: %w", p.Type, i, err)
 		}
-		data := map[string]any{}
-		for k, v := range p.Data {
-			if f := fields[k]; f != nil {
-				if nv, err := spec.NormalizeField(f, demoResolve(v, now, ids), a.hints); err == nil {
-					data[k] = nv
-				}
-			}
-		}
-		_, err = coreDo(a, ctx, func(ctx context.Context) (*Entity, error) {
-			sid, err := a.coreSpace(ctx, p.Space)
-			if err != nil {
-				return nil, err
-			}
-			e := &Entity{Type: p.Type, Space: sid, Proposed: true}
-			return e, a.coreSave(ctx, e, data)
-		})
-		if err != nil {
-			return nil, fmt.Errorf("demo review %s %d: %w", p.Type, i, err)
-		}
-		counts["review"]++
+		counts[p.Type]++
 	}
 	return counts, nil
 }

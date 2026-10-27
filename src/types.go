@@ -145,7 +145,13 @@ var semParsers = map[string]func(in any, h Hints) ([]Candidate, error){
 	"postcode": semParsePostcode,
 	"geo":      semParseGeo,
 	"quantity": semParseQuantity,
-	"file":     semParseFile,
+	"instant": func(in any, h Hints) ([]Candidate, error) {
+		var out []Candidate
+		for _, c := range semInstants(in, h) {
+			out = append(out, Candidate{Value: semUTC(c.Value.(time.Time)), Confidence: c.Confidence})
+		}
+		return out, nil
+	},
 }
 
 var semChecks = map[string]func(v any) error{
@@ -281,14 +287,17 @@ var semChecks = map[string]func(v any) error{
 	"isbn": semStrCheck("not a valid ISBN-13", func(s string) bool {
 		return len(s) == 13 && semAllDigits(s) && (strings.HasPrefix(s, "978") || strings.HasPrefix(s, "979")) && semGS1(s[:12]) == s[12]
 	}),
-	"file": func(v any) error {
+	"card": func(v any) error {
 		m, _ := v.(map[string]any)
-		n := semS(m, "name")
-		if !semSHA256Re.MatchString(semS(m, "sha256")) || n == "" || strings.ContainsAny(n, "/\\") || strings.TrimSpace(n) != n {
-			return errors.New("file must have a sha256 hex hash and a base name")
+		if len(semS(m, "token")) != 64 || len(semS(m, "last4")) != 4 || semS(m, "brand") == "" || len(m) != 3 {
+			return errors.New("want a card number")
 		}
 		return nil
 	},
+	"instant": semStrCheck("must be an RFC 3339 UTC instant", func(s string) bool {
+		_, ok := semParseUTC(s)
+		return ok
+	}),
 }
 
 var semFormats = map[string]func(v any, locale string) string{
@@ -398,7 +407,6 @@ var semFormats = map[string]func(v any, locale string) string{
 		d, _ := semNumStr(semRound12((m["value"].(float64) - u.offset) / u.factor))
 		return semFormatDec(d, locale, 0) + " " + u.disp
 	},
-	"file": func(v any, _ string) string { return v.(map[string]any)["name"].(string) },
 }
 
 func semStrCheck(msg string, ok func(string) bool) func(any) error {
@@ -1935,16 +1943,64 @@ func semMIME(s string) (string, error) {
 	return mime.FormatMediaType(mt, params), nil
 }
 
-var semSHA256Re = regexp.MustCompile(`^[0-9a-f]{64}$`)
+type semType struct {
+	Normalize []string
+	Parse     string
+	Check     string
+	Format    string
+	Secret    bool
+}
 
-func semParseFile(in any, _ Hints) ([]Candidate, error) {
-	m, ok := in.(map[string]any)
-	if !ok {
-		return nil, errors.New("file must be an object")
-	}
-	mt, err := semMIME(semFirst(m, "mime", "mime_type", "content_type"))
-	if err != nil {
-		return nil, err
-	}
-	return []Candidate{{Value: map[string]any{"sha256": strings.ToLower(semFirst(m, "sha256", "hash")), "name": semFirst(m, "name", "filename"), "mime": mt}, Confidence: 1}}, nil
+var semBase = map[string]string{
+	"text": "text", "varchar": "text", "bpchar": "text", "int2": "integer", "int4": "integer", "int8": "integer",
+	"numeric": "decimal", "float4": "number", "float8": "number", "bool": "boolean", "date": "date", "uuid": "uuid", "timestamptz": "instant",
+}
+
+var semLib = map[string]semType{
+	"text":       {Normalize: []string{"nfc"}},
+	"richtext":   {Normalize: []string{"nfc"}},
+	"integer":    {Parse: "number", Format: "number"},
+	"number":     {Parse: "number", Format: "number"},
+	"decimal":    {Parse: "decimal", Format: "number"},
+	"boolean":    {Parse: "boolean"},
+	"date":       {Parse: "date", Check: "date", Format: "date"},
+	"instant":    {Parse: "instant", Check: "instant"},
+	"uuid":       {Normalize: []string{"uuid"}},
+	"timestamp":  {Parse: "timestamp", Check: "timestamp", Format: "timestamp"},
+	"time":       {Parse: "time", Check: "time", Format: "time"},
+	"duration":   {Parse: "duration", Check: "duration"},
+	"interval":   {Parse: "interval", Check: "interval", Format: "interval"},
+	"timezone":   {Normalize: []string{"timezone"}},
+	"recurrence": {Normalize: []string{"rrule"}},
+	"money":      {Parse: "money", Check: "money", Format: "money"},
+	"currency":   {Parse: "currency", Check: "currency"},
+	"percentage": {Parse: "percentage", Format: "percentage"},
+	"iban":       {Normalize: []string{"strip_separators", "upper"}, Check: "mod97", Format: "group4"},
+	"bic":        {Normalize: []string{"strip_separators", "upper", "bic"}},
+	"card":       {Parse: "card", Format: "card", Secret: true},
+	"us_routing": {Normalize: []string{"strip_separators"}, Check: "aba"},
+	"lei":        {Normalize: []string{"strip_separators", "upper"}, Check: "lei"},
+	"isin":       {Normalize: []string{"strip_separators", "upper"}, Check: "isin"},
+	"vat_id":     {Normalize: []string{"strip_separators", "upper"}, Parse: "vat_id"},
+	"us_ein":     {Normalize: []string{"strip_separators", "ein_dash"}},
+	"us_ssn":     {Normalize: []string{"strip_separators"}, Check: "ssn_ranges", Format: "mask_ssn", Secret: true},
+	"nl_bsn":     {Normalize: []string{"strip_separators", "bsn9"}, Check: "elfproef", Format: "mask", Secret: true},
+	"national":   {Parse: "national", Check: "national", Format: "national", Secret: true},
+	"passport":   {Parse: "passport", Check: "passport", Format: "passport", Secret: true},
+	"email":      {Normalize: []string{"mail_address", "lower_domain"}, Format: "email"},
+	"phone":      {Parse: "phone", Check: "phone", Format: "phone"},
+	"address":    {Parse: "address", Check: "address", Format: "address"},
+	"name":       {Parse: "name", Check: "name", Format: "name"},
+	"url":        {Parse: "url", Check: "url"},
+	"country":    {Normalize: []string{"country"}, Format: "country"},
+	"region":     {Parse: "region", Check: "region"},
+	"postcode":   {Parse: "postcode", Check: "postcode", Format: "postcode"},
+	"geo":        {Parse: "geo", Check: "geo", Format: "geo"},
+	"locale":     {Normalize: []string{"locale"}},
+	"quantity":   {Parse: "quantity", Check: "quantity", Format: "quantity"},
+	"gtin":       {Normalize: []string{"strip_separators", "gtin14"}, Check: "gtin"},
+	"isbn":       {Normalize: []string{"strip_separators", "upper", "isbn13"}, Check: "isbn"},
+	"ip":         {Normalize: []string{"ip"}},
+	"domain":     {Normalize: []string{"punycode"}, Format: "domain"},
+	"mime":       {Normalize: []string{"mime"}},
 }

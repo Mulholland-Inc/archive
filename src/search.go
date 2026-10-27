@@ -2,23 +2,15 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
-
-const searchIndexRe = `^entity_f_[0-9a-f]{12}_`
-
-var searchSlugRe = regexp.MustCompile(`[^a-z0-9]+`)
 
 type SearchFilter struct {
 	Type  string
@@ -39,34 +31,29 @@ type SearchHit struct {
 	Score   float64         `json:"score"`
 }
 
-const searchSQL = `
-	WITH q AS (SELECT search_query($1) AS q),
-	hit AS (
-		SELECT e.id, ts_rank(search_entity(e.type, e.data), q.q, 1) AS rank
-		FROM entity e, q WHERE search_entity(e.type, e.data) @@ q.q
-		UNION ALL
-		SELECT f.id, ts_rank(search_file(f.text), q.q, 1) FROM file f, q WHERE search_file(f.text) @@ q.q
-	)
-	SELECT e.id, e.type, e.space, e.created_at, e.data, sum(h.rank),
-		coalesce((SELECT ts_headline('simple', left(f.text, 100000), search_query($1),
-			'MaxFragments=1, MaxWords=30, MinWords=10, StartSel=**, StopSel=**') FROM file f WHERE f.id = e.id AND f.text <> ''), '')
-	FROM hit h JOIN entity e ON e.id = h.id
-	WHERE NOT e.proposed AND (cardinality($2::text[]) = 0 OR e.type = ANY($2))
-		AND ($3::uuid IS NULL OR e.space = $3)
-		AND ($4::timestamptz IS NULL OR e.created_at >= $4) AND ($5::timestamptz IS NULL OR e.created_at < $5)
-	GROUP BY e.id ORDER BY sum(h.rank) DESC, e.id LIMIT $6`
+const searchFile = `SELECT 'file' AS kind, 'file' AS type, f.id, f.space, f.created_at, jsonb_build_object('id', f.id, 'name', f.name, 'mime', f.mime,
+		'size', f.size, 'sha256', f.hash, 'space', f.space, 'created_at', f.created_at) AS data, ts_rank(f.search, q.q, 1) AS rank,
+		CASE WHEN f.text <> '' THEN ts_headline('simple', left(f.text, 100000), q.q, 'MaxFragments=1, MaxWords=30, MinWords=10, StartSel=**, StopSel=**') ELSE '' END AS snippet
+	FROM archive.file f, q WHERE f.search @@ q.q`
 
 func (a *Archive) Search(ctx context.Context, query string, f SearchFilter) ([]*SearchHit, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, &ValidationError{Type: "search", Errors: []FieldError{{Path: "q", Message: "empty query"}}}
 	}
-	spec := a.Spec()
-	types := []string{}
-	if f.Type != "" {
-		if err := coreHasType(spec, f.Type); err != nil {
-			return nil, err
+	cat := a.Catalog()
+	var parts []string
+	for _, name := range cat.names() {
+		if f.Type == "" || f.Type == name {
+			tb := cat.Tables[name]
+			parts = append(parts, `SELECT 'entity' AS kind, `+pgLiteral(name)+` AS type, t.id, t.space, t.created_at, `+tb.rowSQL("t")+` AS data, ts_rank(t.search, q.q, 1) AS rank, '' AS snippet
+				FROM `+tb.ident()+` t, q WHERE t.search @@ q.q`)
 		}
-		types = spec.Subtypes(f.Type)
+	}
+	if f.Type == "" || f.Type == "file" {
+		parts = append(parts, searchFile)
+	}
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("type %q: %w", f.Type, ErrNotFound)
 	}
 	from, err := searchTime("from", f.From, false)
 	if err != nil {
@@ -80,6 +67,10 @@ func (a *Archive) Search(ctx context.Context, query string, f SearchFilter) ([]*
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
+	sql := `WITH q AS (SELECT search_query($1) AS q)
+		SELECT h.kind, h.type, h.id, h.space, h.created_at, h.data, h.rank, h.snippet FROM (` + strings.Join(parts, "\nUNION ALL\n") + `) h
+		WHERE ($2::uuid IS NULL OR h.space = $2) AND ($3::timestamptz IS NULL OR h.created_at >= $3) AND ($4::timestamptz IS NULL OR h.created_at < $4)
+		ORDER BY h.rank DESC, h.id LIMIT $5`
 	return coreDo(a, ctx, func(ctx context.Context) ([]*SearchHit, error) {
 		q := a.st.Q(ctx)
 		var space any
@@ -92,18 +83,20 @@ func (a *Archive) Search(ctx context.Context, query string, f SearchFilter) ([]*
 			}
 			space = id
 		}
-		rows, _ := q.Query(ctx, searchSQL, query, types, space, from, to, limit)
+		rows, _ := q.Query(ctx, sql, query, space, from, to, limit)
 		out := []*SearchHit{}
 		var h SearchHit
-		_, err := pgx.ForEachRow(rows, []any{&h.ID, &h.Type, &h.Space, &h.Date, &h.Data, &h.Score, &h.Snippet}, func() error {
+		_, err := pgx.ForEachRow(rows, []any{&h.Kind, &h.Type, &h.ID, &h.Space, &h.Date, &h.Data, &h.Score, &h.Snippet}, func() error {
 			c := h
-			c.Kind = "entity"
+			c.Data = append(json.RawMessage(nil), h.Data...)
 			out = append(out, &c)
 			return nil
 		})
 		return out, err
 	})
 }
+
+func pgLiteral(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
 
 func searchTime(name, s string, end bool) (*time.Time, error) {
 	if s == "" {
@@ -120,45 +113,4 @@ func searchTime(name, s string, end bool) (*time.Time, error) {
 		t = t.AddDate(0, 0, 1)
 	}
 	return &t, nil
-}
-
-func (a *Archive) searchIndexes(ctx context.Context, spec *Spec) error {
-	want := map[string]string{}
-	for _, name := range specKeys(spec.Types) {
-		for _, field := range specKeys(spec.Types[name].Fields) {
-			if !spec.Types[name].Fields[field].Indexed {
-				continue
-			}
-			sum := sha256.Sum256([]byte(field))
-			slug := strings.Trim(searchSlugRe.ReplaceAllString(strings.ToLower(field), "_"), "_")
-			idx := ("entity_f_" + hex.EncodeToString(sum[:6]) + "_" + slug)[:min(63, 22+len(slug))]
-			want[idx] = "CREATE INDEX IF NOT EXISTS " + pgx.Identifier{idx}.Sanitize() + " ON entity ((data ->> " + storeLiteral(field) + "))"
-		}
-	}
-	return a.st.System(ctx, func(ctx context.Context) error {
-		q := a.st.Q(ctx)
-		if _, err := q.Exec(ctx, `SELECT pg_advisory_xact_lock(7273)`); err != nil {
-			return err
-		}
-		rows, _ := q.Query(ctx, `SELECT indexname FROM pg_indexes WHERE schemaname = current_schema() AND tablename = 'entity' AND indexname ~ $1`, searchIndexRe)
-		have, err := pgx.CollectRows(rows, pgx.RowTo[string])
-		if err != nil {
-			return err
-		}
-		for _, idx := range have {
-			if want[idx] == "" {
-				if _, err := q.Exec(ctx, "DROP INDEX "+pgx.Identifier{idx}.Sanitize()); err != nil {
-					return err
-				}
-			}
-		}
-		for _, idx := range specKeys(want) {
-			if !slices.Contains(have, idx) {
-				if _, err := q.Exec(ctx, want[idx]); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	})
 }

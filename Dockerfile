@@ -11,7 +11,6 @@ RUN apk add --no-cache postgresql18 && install -d -o postgres -g postgres -m 700
 COPY --from=build /archive /usr/local/bin/archive
 
 ENV ARCHIVE_DATA=/data \
-    ARCHIVE_LLM_URL=http://host.docker.internal:11434/v1 \
     ARCHIVE_LOCALE=
 
 USER postgres

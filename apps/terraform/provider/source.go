@@ -20,7 +20,6 @@ type sourceModel struct {
 	Name        types.String  `tfsdk:"name"`
 	Kind        types.String  `tfsdk:"kind"`
 	Space       types.String  `tfsdk:"space"`
-	Type        types.String  `tfsdk:"type"`
 	Schedule    types.String  `tfsdk:"schedule"`
 	Rate        types.Float64 `tfsdk:"rate"`
 	Config      types.String  `tfsdk:"config"`
@@ -34,7 +33,6 @@ type apiSource struct {
 	Kind     string          `json:"kind"`
 	Name     string          `json:"name"`
 	Space    string          `json:"space"`
-	Type     string          `json:"type"`
 	Schedule string          `json:"schedule"`
 	Rate     float64         `json:"rate"`
 	Config   json.RawMessage `json:"config"`
@@ -74,7 +72,6 @@ func (r *sourceResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			"name":     schema.StringAttribute{Required: true, PlanModifiers: replace},
 			"kind":     schema.StringAttribute{Required: true, PlanModifiers: replace, Description: "gmail, drive, imap, folder or external."},
 			"space":    schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace(), stringplanmodifier.UseStateForUnknown()}, Description: "Space name; defaults to your own space."},
-			"type":     schema.StringAttribute{Optional: true, Description: "Type that intake maps new items into."},
 			"schedule": schema.StringAttribute{Optional: true, Description: "Sync every duration, like 15m."},
 			"rate":     schema.Float64Attribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.Float64{float64planmodifier.UseStateForUnknown()}, Description: "Requests per second to the platform."},
 			"config":   schema.StringAttribute{Optional: true, PlanModifiers: replace, Description: "Connector config as JSON, for example jsonencode({path = \"/inbox\"})."},
@@ -94,7 +91,7 @@ func (m *sourceModel) fill(ctx context.Context, c *client, s apiSource) diag.Dia
 		return diags
 	}
 	m.ID, m.Name, m.Kind, m.Space = types.StringValue(s.ID), types.StringValue(s.Name), types.StringValue(s.Kind), types.StringValue(name)
-	m.Type, m.Schedule, m.Rate, m.Status = optString(s.Type), optString(s.Schedule), types.Float64Value(s.Rate), types.StringValue(s.Status)
+	m.Schedule, m.Rate, m.Status = optString(s.Schedule), types.Float64Value(s.Rate), types.StringValue(s.Status)
 	if !sameJSON(m.Config, s.Config) {
 		m.Config = types.StringValue(string(s.Config))
 	}
@@ -122,7 +119,7 @@ func (r *sourceResource) Create(ctx context.Context, req resource.CreateRequest,
 	}
 	var s apiSource
 	err = r.c.do(ctx, "POST", "/api/sources", map[string]any{
-		"kind": m.Kind.ValueString(), "name": m.Name.ValueString(), "space": m.Space.ValueString(), "type": m.Type.ValueString(),
+		"kind": m.Kind.ValueString(), "name": m.Name.ValueString(), "space": m.Space.ValueString(),
 		"schedule": m.Schedule.ValueString(), "rate": m.Rate.ValueFloat64(), "config": config, "credentials": creds,
 	}, &s)
 	if err != nil {
@@ -161,7 +158,7 @@ func (r *sourceResource) Update(ctx context.Context, req resource.UpdateRequest,
 	}
 	var s apiSource
 	err := r.c.do(ctx, "PATCH", "/api/sources/"+esc(m.ID.ValueString()), map[string]any{
-		"type": m.Type.ValueString(), "schedule": m.Schedule.ValueString(), "rate": m.Rate.ValueFloat64(),
+		"schedule": m.Schedule.ValueString(), "rate": m.Rate.ValueFloat64(),
 	}, &s)
 	if err != nil {
 		resp.Diagnostics.AddError("Updating the source failed", err.Error())

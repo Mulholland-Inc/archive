@@ -24,7 +24,6 @@ import (
 var (
 	authLevels  = []string{"viewer", "editor", "admin", "owner"}
 	authSpaceRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_]{0,31}$`)
-	authTables  = "entity, secret"
 )
 
 type Actor struct {
@@ -197,9 +196,7 @@ func (a *Archive) createSpace(ctx context.Context, name string) (uuid.UUID, erro
 			}
 		}
 	}
-	return id, a.exec(ctx,
-		"GRANT SELECT ON "+authTables+" TO "+authIdent(base+"_viewer"),
-		"GRANT INSERT, UPDATE, DELETE ON "+authTables+" TO "+authIdent(base+"_editor"))
+	return id, nil
 }
 
 func (a *Archive) createRole(ctx context.Context, role string) error {
@@ -350,13 +347,13 @@ func (a *Archive) Authenticate(ctx context.Context, secret string) (*Actor, erro
 	var stamp string
 	err := a.sys(ctx, func(ctx context.Context) error {
 		return a.st.Q(ctx).QueryRow(ctx, `
-			SELECT t.id, t.kind, t.name, coalesce(t.role, ''), u.id, u.email, u.name, u.role, u.home, (`+storeStamp+`)
+			SELECT t.id, t.kind, t.name, coalesce(t.role, ''), u.id, u.email, u.name, u.role, u.home, (`+storeRevision+`)
 			FROM token t JOIN "user" u ON u.id = t.user_id
 			WHERE t.hash = $1 AND t.kind IN ('api', 'session', 'user') AND (t.expires_at IS NULL OR t.expires_at > now())`,
 			authHash(secret)).Scan(&tid, &kind, &ac.TokenName, &trole, &ac.UserID, &ac.Email, &ac.Name, &ac.UserRole, &ac.Home, &stamp)
 	})
-	if err == nil && stamp != a.Spec().stamp {
-		err = a.reloadSpec(ctx)
+	if err == nil && stamp != a.Catalog().stamp {
+		err = a.reload(ctx)
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("invalid or expired token: %w", ErrUnauthorized)
@@ -372,16 +369,6 @@ func (a *Archive) Authenticate(ctx context.Context, secret string) (*Actor, erro
 		ac.Session, ac.TokenName = tid, ""
 	}
 	return ac, nil
-}
-
-func (a *Archive) reloadSpec(ctx context.Context) error {
-	return a.sys(ctx, func(ctx context.Context) error {
-		spec, err := a.st.CurrentSpec(ctx)
-		if err == nil {
-			a.setSpec(spec)
-		}
-		return err
-	})
 }
 
 func (a *Archive) newToken(ctx context.Context, userID uuid.UUID, kind string, ttl time.Duration) (string, error) {
@@ -485,7 +472,11 @@ func (a *Archive) DeleteSpace(ctx context.Context, name string) error {
 		if q.QueryRow(ctx, `SELECT email FROM "user" WHERE home = $1`, id).Scan(&home) == nil {
 			return fmt.Errorf("%s is the personal space of %s: %w", name, home, ErrConflict)
 		}
-		for _, t := range []string{"view", "source", "secret", "entity"} {
+		var tables []string
+		for _, t := range a.Catalog().deleteOrder() {
+			tables = append(tables, pgIdent("public", t))
+		}
+		for _, t := range append(append([]string{"view", "source", "secret"}, tables...), "file") {
 			if _, err := q.Exec(ctx, `DELETE FROM `+t+` WHERE space = $1`, id); err != nil {
 				return err
 			}
@@ -494,7 +485,7 @@ func (a *Archive) DeleteSpace(ctx context.Context, name string) error {
 			return err
 		}
 		for i := len(authLevels) - 1; i >= 0; i-- {
-			if err := a.exec(ctx, "REVOKE ALL ON "+authTables+" FROM "+authIdent(base+"_"+authLevels[i]), "DROP ROLE "+authIdent(base+"_"+authLevels[i])); err != nil {
+			if err := a.exec(ctx, "DROP ROLE "+authIdent(base+"_"+authLevels[i])); err != nil {
 				return err
 			}
 		}
@@ -719,8 +710,8 @@ func (a *Archive) GrantSecret(ctx context.Context, email, typ string, grant bool
 	if err != nil {
 		return err
 	}
-	if t := a.Spec().Types[typ]; t == nil || t.Sensitivity != Secret || a.Spec().secretRoot(typ) != typ {
-		return fmt.Errorf("%s is not a secret type that holds its own grants: %w", typ, ErrNotFound)
+	if !semLib[typ].Secret {
+		return fmt.Errorf("%s is not a secret type: %w", typ, ErrNotFound)
 	}
 	if email, err = authEmail(email); err != nil {
 		return err

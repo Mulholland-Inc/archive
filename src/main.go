@@ -19,7 +19,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"text/tabwriter"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,63 +28,54 @@ import (
 
 var cliVersion = "0.1.0"
 
-const cliUsage = `archive keeps all your stuff in one place, in types you define.
+const cliUsage = `archive keeps all your stuff in one place, in Postgres tables you define.
 
 Usage:
   archive [-as email] <command> ...  every command acts as a user (default the first owner)
 
   archive serve [-addr :8080]        serve the HTTP API (/api), sign-in (/auth) and MCP (/mcp)
   archive mcp                        serve MCP over stdio
-  archive types                      list every type, built-in and user-defined
+  archive types                      print the tables, their columns and the built-in types
+  archive run <file.ts|->            run TypeScript against the archive SDK in one transaction,
+                                     as MCP's run tool does, and print {result, logs, error}
+  archive run -docs                  print the SDK documentation, with an interface per table
 
-  archive spec pull [-all] [file]    write the user types and edited built-ins as JSON
-                                     (default stdout); -all adds every built-in type
-  archive spec push [-dry-run] <file>
-                                     write every type that differs and remove user types the
-                                     file leaves out; built-in types it leaves out are kept;
-                                     existing objects are not migrated
+  archive schema plan [-allow-drop]  show the statements that bring the database to the DDL in
+                                     $ARCHIVE_DATA/schema/*.sql; statements that delete data are
+                                     blocked unless -allow-drop
+  archive schema apply [-allow-drop] run that plan
+  archive schema pull [dir]          print the DDL files, or write them into dir
+  archive schema push <dir> [-allow-drop]
+                                     plan and apply the *.sql files in dir, then make them the
+                                     DDL files; renames are not detected, so rename a table or
+                                     column with ALTER ... RENAME in psql first
 
-  archive intake <dir|file-id> -type <type> [-space s]
-                                     read every new file in dir, or one stored file, into
-                                     objects of type
-
-  archive file add <path> [-space s] [-type t]
-                                     store a file, extract its metadata and text, and with
-                                     -type also read it into an object of type t
+  archive file add <path> [-space s] store a file and extract its metadata and text
   archive file get <id> [-o path|-]  print the file's metadata, or with -o write its content
   archive file list [-limit n] [-after id]
 
-  archive list <type> [-limit n] [-after id] [-reveal] [-proposed] [field=value ...]
-                                     -proposed lists only objects waiting for review
-  archive get <type> <id> [-reveal] [-proposed]
-                                     -reveal shows secret values you are granted; -proposed
-                                     also finds objects waiting for review
-  archive create <type> [-space s] [json]
+  archive list <table> [-limit n] [-after id] [-reveal] [column=value ...]
+  archive get <table> <id> [-reveal] -reveal shows secret values you are granted
+  archive create <table> [-space s] [json]
                                      json from the argument or stdin; default space is your own
-  archive set <type> <id> [json]     set some fields; null clears a field
-  archive update <type> <id> [json]  replace the whole object
-  archive delete <type> <id>
-  archive links <type> <id>          objects this one references and objects referencing it
+  archive set <table> <id> [json]    set some columns; null clears a column
+  archive update <table> <id> [json] replace the whole row
+  archive delete <table> <id>
   archive search <query> [-type t] [-space s] [-from date] [-to date] [-limit n]
-                                     find objects and files by their words
+                                     find rows and files by their words
 
-  archive source add <kind> [-name n] [-space s] [-type t] [-schedule 15m] [-rate n] [json|-]
-                                     connect a source: gmail, drive or folder;
+  archive source add <kind> [-name n] [-space s] [-schedule 15m] [-rate n] [json|-]
+                                     connect a source: gmail, drive or folder; it stores every
+                                     new mail, attachment and file as a file;
                                      json is {"config": {...}, "credentials": {...}}, and
                                      credentials are stored encrypted; gmail and drive print a
                                      Google sign-in address and read the code from stdin
   archive source list
-  archive source run <id|name>       sync now: intake maps new items into the source's type
-  archive source remove <id|name>    stop syncing; objects stay
+  archive source run <id|name>       sync now
+  archive source remove <id|name>    stop syncing; files stay
 
-  archive demo                       load example types, spaces, objects and review items
-                                     into an archive that has none of the demo types yet
-
-  archive review list [-type t] [-space s] [-limit n] [-after id]
-                                     objects intake saved as proposed, waiting for you
-  archive review counts [-space s]
-  archive review approve <id> ...    validate them and keep them
-  archive review reject <id> ...     delete them
+  archive demo                       load example tables, spaces and rows into an archive that
+                                     has none of the demo tables yet
 
   archive user add <email> [-name n] [-admin]
   archive space add <name>
@@ -101,17 +91,13 @@ Usage:
   archive secret grant|revoke <email> <type>
 
 Environment:
-  DATABASE_URL       external Postgres; unset starts the bundled one
-  ARCHIVE_DATA       data directory for the bundled Postgres (default ./data)
+  DATABASE_URL       external Postgres, as a superuser; unset starts the bundled one
+  ARCHIVE_DATA       data directory: the bundled Postgres, files and schema/*.sql (default ./data)
   ARCHIVE_PG_BIN     directory holding the Postgres binaries; unset uses those on PATH, or
                      downloads Postgres into $ARCHIVE_DATA/pgbin on first run
-  ARCHIVE_LLM_URL    OpenAI-compatible endpoint (default http://localhost:11434/v1)
-  ARCHIVE_LLM_MODEL  model for intake
-  ARCHIVE_LLM_KEY    API key for the endpoint, if it needs one
-  ARCHIVE_VISION_MODEL
-                     vision model on the endpoint for OCR of photos and scans; unset skips OCR
-  ARCHIVE_WHISPER_MODEL
-                     speech-to-text model on the endpoint for audio and video; unset skips it
+  ARCHIVE_LOCALE     locale that messy input is read in, like nl-NL
+  ARCHIVE_RUN_TIMEOUT
+                     time limit of one archive run, POST /api/run or MCP run (default 30s)
   ARCHIVE_BLOB_URL   s3://bucket/prefix?endpoint=https://host&region=r for S3, R2, MinIO or GCS;
                      unset stores files in $ARCHIVE_DATA/blobs
   ARCHIVE_BLOB_KEY, ARCHIVE_BLOB_SECRET
@@ -177,30 +163,32 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	fs := flag.NewFlagSet("archive "+cmd, flag.ContinueOnError)
 	fs.Usage = func() { fmt.Fprint(fs.Output(), cliUsage) }
 	addr := fs.String("addr", ":8080", "listen address (serve)")
-	dryRun := fs.Bool("dry-run", false, "only preview (spec push)")
-	typ := fs.String("type", "", "target type (intake)")
+	allowDrop := fs.Bool("allow-drop", false, "apply statements that delete data (schema)")
+	typ := fs.String("type", "", "only this table, or file (search)")
 	limit := fs.Int("limit", 100, "page size (list)")
 	after := fs.String("after", "", "list objects after this id (list)")
-	all := fs.Bool("all", false, "include every built-in type (spec pull)")
 	as := fs.String("as", "", "act as this user")
 	name := fs.String("name", "", "name (user add, token create)")
 	admin := fs.Bool("admin", false, "instance admin (user add)")
 	full := fs.Bool("full", false, "token with all your rights (token create)")
-	space := fs.String("space", "", "space (create, intake); space:role,... (token create)")
+	space := fs.String("space", "", "space (create, file add); space:role,... (token create)")
 	expires := fs.Duration("expires", 0, "token lifetime (token create)")
 	reveal := fs.Bool("reveal", false, "show granted secret values (list, get)")
 	schedule := fs.String("schedule", "", "sync every duration, like 15m (source add)")
 	rateLimit := fs.Float64("rate", 0, "requests per second to the platform (source add)")
 	output := fs.String("o", "", "write the file content here, - for stdout (file get)")
+	docs := fs.Bool("docs", false, "print the SDK documentation (run)")
 	from := fs.String("from", "", "only items added on or after this date (search)")
 	to := fs.String("to", "", "only items added up to this date (search)")
-	proposed := fs.Bool("proposed", false, "objects waiting for review (list, get)")
 	if cmd == "-as" && len(args) > 1 {
 		*as, cmd, args = args[0], args[1], args[2:]
 	}
 	pos, err := cliParse(fs, args)
 	if err != nil {
 		return err
+	}
+	if cmd == "run" && *docs {
+		pos = append(pos, "")
 	}
 	if err := cliCheckCommand(cmd, pos); err != nil {
 		return err
@@ -215,7 +203,7 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	if err != nil {
 		return err
 	}
-	if ac == nil && cmd != "serve" && cmd != "types" && cmd != "user" && (cmd != "spec" || pos[0] != "pull") {
+	if ac == nil && cmd != "serve" && cmd != "types" && cmd != "user" && (cmd != "schema" || pos[0] != "pull") {
 		return errors.New("no users yet: create the first owner with archive user add <email>, or run archive serve with ARCHIVE_ADMIN_EMAIL")
 	}
 	ctx = WithActor(ctx, ac)
@@ -232,26 +220,41 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	case "mcp":
 		return mcpServer(a).Run(ctx, &mcp.StdioTransport{})
 	case "types":
-		return cliTypes(stdout, a.Spec())
-	case "spec":
-		return cliSpec(ctx, a, pos, *all, *dryRun, stdin, stdout)
-	case "intake":
-		if *typ == "" {
-			return cliErrUsage
+		return cliJSON(stdout, a.Catalog())
+	case "run":
+		if *docs {
+			_, err := io.WriteString(stdout, a.RunDocs(ctx))
+			return err
 		}
-		if id, err := uuid.Parse(pos[0]); err == nil {
-			return out(a.IntakeFile(ctx, id, *typ))
+		var code []byte
+		if pos[0] == "-" {
+			code, err = io.ReadAll(stdin)
+		} else {
+			code, err = os.ReadFile(pos[0])
 		}
-		return out(a.IntakeDir(ctx, *space, pos[0], *typ))
+		if err != nil {
+			return err
+		}
+		res, err := a.Run(ctx, string(code))
+		if err != nil {
+			return err
+		}
+		if err := cliJSON(stdout, res); err != nil {
+			return err
+		}
+		if res.Error != "" {
+			return errors.New(res.Error)
+		}
+		return nil
+	case "schema":
+		return cliSchema(ctx, a, pos, *allowDrop, stdout, out)
 	case "file":
-		return cliFile(ctx, a, pos, *space, *typ, *output, *limit, *after, stdout, out)
+		return cliFile(ctx, a, pos, *space, *output, *limit, *after, stdout, out)
 	case "source":
-		in := SourceInput{Name: *name, Space: *space, Type: *typ, Schedule: *schedule, Rate: *rateLimit}
+		in := SourceInput{Name: *name, Space: *space, Schedule: *schedule, Rate: *rateLimit}
 		return cliSource(ctx, a, pos, in, stdin, stdout, out)
 	case "demo":
 		return out(a.LoadDemo(ctx))
-	case "review":
-		return cliReview(ctx, a, pos, ReviewFilter{Type: *typ, Space: *space, Limit: *limit}, *after, out)
 	case "user", "space", "token", "secret":
 		return cliAuth(ctx, a, cmd, pos, *name, *admin, *full, *space, *expires, out)
 	case "list":
@@ -269,9 +272,9 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 				return fmt.Errorf("-after: %w", err)
 			}
 		}
-		rs, err := a.List(ctx, pos[0], "", where, *limit, aid, *proposed)
+		rs, err := a.List(ctx, pos[0], "", where, *limit, aid)
 		if err == nil && *reveal {
-			err = a.Reveal(ctx, rs...)
+			err = a.Reveal(ctx, pos[0], rs...)
 		}
 		return out(rs, err)
 	case "search":
@@ -291,13 +294,11 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	}
 	switch cmd {
 	case "get":
-		r, err := a.Get(ctx, pos[0], id, *proposed)
+		r, err := a.Get(ctx, pos[0], id)
 		if err == nil && *reveal {
-			err = a.Reveal(ctx, r)
+			err = a.Reveal(ctx, pos[0], r)
 		}
 		return out(r, err)
-	case "links":
-		return out(a.Links(ctx, pos[0], id))
 	case "delete":
 		return a.Delete(ctx, pos[0], id)
 	}
@@ -313,9 +314,9 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 
 func cliCheckCommand(cmd string, pos []string) error {
 	n, ok := map[string]int{
-		"serve": 0, "mcp": 0, "types": 0, "spec": 1, "intake": 1, "list": 1, "create": 1,
-		"get": 2, "delete": 2, "set": 2, "update": 2, "links": 2,
-		"user": 2, "space": 1, "token": 1, "secret": 3, "source": 1, "file": 1, "search": 1, "review": 1, "demo": 0,
+		"serve": 0, "mcp": 0, "types": 0, "run": 1, "schema": 1, "list": 1, "create": 1,
+		"get": 2, "delete": 2, "set": 2, "update": 2,
+		"user": 2, "space": 1, "token": 1, "secret": 3, "source": 1, "file": 1, "search": 1, "demo": 0,
 	}[cmd]
 	if !ok {
 		return fmt.Errorf("unknown command %q (see archive help)", cmd)
@@ -434,7 +435,7 @@ func cliSource(ctx context.Context, a *Archive, pos []string, in SourceInput, st
 	return cliErrUsage
 }
 
-func cliFile(ctx context.Context, a *Archive, pos []string, space, typ, output string, limit int, after string, stdout io.Writer, out func(any, error) error) error {
+func cliFile(ctx context.Context, a *Archive, pos []string, space, output string, limit int, after string, stdout io.Writer, out func(any, error) error) error {
 	if pos[0] == "list" {
 		var aid uuid.UUID
 		if after != "" {
@@ -455,7 +456,7 @@ func cliFile(ctx context.Context, a *Archive, pos []string, space, typ, output s
 			return err
 		}
 		defer fh.Close()
-		f, err := a.AddFile(ctx, space, filepath.Base(pos[1]), typ, fh)
+		f, err := a.AddFile(ctx, space, filepath.Base(pos[1]), fh)
 		if err != nil {
 			return err
 		}
@@ -519,67 +520,46 @@ func cliJSON(w io.Writer, v any) error {
 	return enc.Encode(v)
 }
 
-func cliTypes(w io.Writer, s *Spec) error {
-	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	for _, name := range specKeys(s.Types) {
-		t, err := s.resolve(name)
-		if err != nil {
-			return err
-		}
-		kind, origin := "composite", "user"
-		if t.Schema != nil {
-			kind = "scalar"
-		}
-		if t.Builtin {
-			origin = map[bool]string{false: "built-in", true: "built-in, edited"}[t.Edited]
-		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", name, kind, t.Category, cmp.Or(t.Sensitivity, Public), origin)
-	}
-	return tw.Flush()
-}
-
-func cliPullSpec(s *Spec, all bool) *Spec {
-	out := &Spec{Types: map[string]*Type{}}
-	for name, t := range s.Types {
-		if all || !t.Builtin || t.Edited {
-			out.Types[name] = t
-		}
-	}
-	return out
-}
-
-func cliSpec(ctx context.Context, a *Archive, pos []string, all, dryRun bool, stdin io.Reader, stdout io.Writer) error {
+func cliSchema(ctx context.Context, a *Archive, pos []string, allowDrop bool, stdout io.Writer, out func(any, error) error) error {
 	switch {
+	case pos[0] == "plan":
+		return out(a.ApplySchema(ctx, nil, nil, allowDrop, true))
+	case pos[0] == "apply":
+		return out(a.ApplySchema(ctx, nil, nil, allowDrop, false))
 	case pos[0] == "pull":
-		b, err := cliPullSpec(a.Spec(), all).JSON()
+		files, err := a.st.SchemaFiles()
 		if err != nil {
 			return err
 		}
-		if len(pos) > 1 && pos[1] != "-" {
-			return os.WriteFile(pos[1], b, 0o644)
-		}
-		_, err = stdout.Write(b)
-		return err
-	case pos[0] == "push" && len(pos) > 1:
-		var b []byte
-		var err error
-		if pos[1] == "-" {
-			b, err = io.ReadAll(stdin)
-		} else {
-			b, err = os.ReadFile(pos[1])
-		}
-		if err != nil {
-			return err
-		}
-		c, err := a.ApplySpec(ctx, b, dryRun)
-		if c == nil && err == nil {
-			fmt.Fprintln(os.Stderr, "spec is up to date")
+		if len(pos) > 1 {
+			if err := os.MkdirAll(pos[1], 0o755); err != nil {
+				return err
+			}
+			for name, body := range files {
+				if err := os.WriteFile(filepath.Join(pos[1], name), []byte(body), 0o644); err != nil {
+					return err
+				}
+			}
 			return nil
 		}
+		for _, name := range specKeys(files) {
+			fmt.Fprintf(stdout, "-- %s\n%s\n", name, strings.TrimRight(files[name], "\n"))
+		}
+		return nil
+	case pos[0] == "push" && len(pos) > 1:
+		paths, err := filepath.Glob(filepath.Join(pos[1], "*.sql"))
 		if err != nil {
 			return err
 		}
-		return cliJSON(stdout, c)
+		files := map[string]string{}
+		for _, p := range paths {
+			b, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			files[filepath.Base(p)] = string(b)
+		}
+		return out(a.ApplySchema(ctx, files, nil, allowDrop, false))
 	}
 	return cliErrUsage
 }
@@ -688,35 +668,44 @@ func httpHandler(a *Archive) http.Handler {
 	handle := func(pattern string, f func(r *http.Request) (int, any, error)) { httpHandle(mux, pattern, f) }
 	ok := func(v any, err error) (int, any, error) { return http.StatusOK, v, err }
 
+	handle("POST /api/run", func(r *http.Request) (int, any, error) {
+		var body struct {
+			Code string `json:"code"`
+		}
+		if err := httpDecode(r, &body); err != nil {
+			return 0, nil, err
+		}
+		if body.Code == "" {
+			return 0, nil, fmt.Errorf("code: want the TypeScript to run: %w", httpErrBadRequest)
+		}
+		return ok(a.Run(r.Context(), body.Code))
+	})
+	mux.HandleFunc("GET /api/run/docs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		io.WriteString(w, a.RunDocs(r.Context()))
+	})
 	handle("GET /api/types", func(r *http.Request) (int, any, error) {
-		spec := a.Spec()
-		builtin, edited := []string{}, []string{}
-		for _, name := range specKeys(spec.Types) {
-			if t := spec.Types[name]; t.Builtin {
-				builtin = append(builtin, name)
-				if t.Edited {
-					edited = append(edited, name)
-				}
+		return ok(a.Catalog(), nil)
+	})
+	handle("GET /api/schema", func(r *http.Request) (int, any, error) {
+		files, err := a.SchemaFiles(r.Context())
+		return ok(map[string]any{"files": files}, err)
+	})
+	schema := func(dryRun bool) func(r *http.Request) (int, any, error) {
+		return func(r *http.Request) (int, any, error) {
+			var body struct {
+				Files     map[string]string `json:"files"`
+				Renames   []string          `json:"renames"`
+				AllowDrop bool              `json:"allow_drop"`
 			}
+			if err := httpDecode(r, &body); err != nil {
+				return 0, nil, err
+			}
+			return ok(a.ApplySchema(r.Context(), body.Files, body.Renames, body.AllowDrop, dryRun))
 		}
-		return ok(map[string]any{"spec": spec, "builtin": builtin, "edited": edited}, nil)
-	})
-	handle("GET /api/types/{name}", func(r *http.Request) (int, any, error) {
-		return ok(httpType(a.Spec(), r.PathValue("name")))
-	})
-	handle("PUT /api/types/{name}", func(r *http.Request) (int, any, error) {
-		var def Type
-		if err := httpDecode(r, &def); err != nil {
-			return 0, nil, err
-		}
-		if err := a.DefineType(r.Context(), r.PathValue("name"), &def); err != nil {
-			return 0, nil, err
-		}
-		return ok(httpType(a.Spec(), r.PathValue("name")))
-	})
-	handle("DELETE /api/types/{name}", func(r *http.Request) (int, any, error) {
-		return http.StatusNoContent, nil, a.DeleteType(r.Context(), r.PathValue("name"))
-	})
+	}
+	handle("POST /api/schema/plan", schema(true))
+	handle("POST /api/schema/apply", schema(false))
 
 	a.fileRoutes(mux)
 	handle("GET /api/search", func(r *http.Request) (int, any, error) {
@@ -759,35 +748,6 @@ func httpHandler(a *Archive) http.Handler {
 	handle("POST /api/demo", func(r *http.Request) (int, any, error) {
 		return ok(a.LoadDemo(r.Context()))
 	})
-	handle("GET /api/review", func(r *http.Request) (int, any, error) {
-		q := r.URL.Query()
-		limit, _ := strconv.Atoi(q.Get("limit"))
-		after, _ := uuid.Parse(q.Get("after"))
-		return ok(a.Proposed(r.Context(), ReviewFilter{Type: q.Get("type"), Space: q.Get("space"), Limit: limit, After: after}))
-	})
-	handle("GET /api/review/counts", func(r *http.Request) (int, any, error) {
-		return ok(a.ProposedCount(r.Context(), r.URL.Query().Get("space")))
-	})
-	handle("POST /api/review/approve", func(r *http.Request) (int, any, error) {
-		var body struct {
-			IDs   []uuid.UUID                  `json:"ids"`
-			Edits map[uuid.UUID]map[string]any `json:"edits"`
-		}
-		if err := httpDecode(r, &body); err != nil {
-			return 0, nil, err
-		}
-		return ok(a.Approve(r.Context(), body.IDs, body.Edits))
-	})
-	handle("POST /api/review/reject", func(r *http.Request) (int, any, error) {
-		var body struct {
-			IDs []uuid.UUID `json:"ids"`
-		}
-		if err := httpDecode(r, &body); err != nil {
-			return 0, nil, err
-		}
-		return ok(a.Reject(r.Context(), body.IDs))
-	})
-
 	handle("GET /api/views", func(r *http.Request) (int, any, error) {
 		return ok(a.Views(r.Context()))
 	})
@@ -837,13 +797,13 @@ func httpHandler(a *Archive) http.Handler {
 		}
 		where := map[string]any{}
 		for k, v := range q {
-			if k != "limit" && k != "after" && k != "reveal" && k != "space" && k != "proposed" {
+			if k != "limit" && k != "after" && k != "reveal" && k != "space" {
 				where[k] = v[0]
 			}
 		}
-		rs, err := a.List(r.Context(), r.PathValue("type"), q.Get("space"), where, limit, after, q.Get("proposed") == "true")
+		rs, err := a.List(r.Context(), r.PathValue("type"), q.Get("space"), where, limit, after)
 		if err == nil && q.Get("reveal") == "true" {
-			err = a.Reveal(r.Context(), rs...)
+			err = a.Reveal(r.Context(), r.PathValue("type"), rs...)
 		}
 		return ok(rs, err)
 	})
@@ -864,7 +824,7 @@ func httpHandler(a *Archive) http.Handler {
 			return ok(f(r.Context(), r.PathValue("type"), id, r))
 		}
 	}
-	withData := func(f func(ctx context.Context, typ string, id uuid.UUID, data map[string]any) (*Entity, error)) func(r *http.Request) (int, any, error) {
+	withData := func(f func(ctx context.Context, typ string, id uuid.UUID, data map[string]any) (map[string]any, error)) func(r *http.Request) (int, any, error) {
 		return object(func(ctx context.Context, typ string, id uuid.UUID, r *http.Request) (any, error) {
 			var data map[string]any
 			if err := httpDecode(r, &data); err != nil {
@@ -874,14 +834,11 @@ func httpHandler(a *Archive) http.Handler {
 		})
 	}
 	handle("GET /api/{type}/{id}", object(func(ctx context.Context, typ string, id uuid.UUID, r *http.Request) (any, error) {
-		rec, err := a.Get(ctx, typ, id, r.URL.Query().Get("proposed") == "true")
+		rec, err := a.Get(ctx, typ, id)
 		if err == nil && r.URL.Query().Get("reveal") == "true" {
-			err = a.Reveal(ctx, rec)
+			err = a.Reveal(ctx, typ, rec)
 		}
 		return rec, err
-	}))
-	handle("GET /api/{type}/{id}/links", object(func(ctx context.Context, typ string, id uuid.UUID, _ *http.Request) (any, error) {
-		return a.Links(ctx, typ, id)
 	}))
 	handle("PUT /api/{type}/{id}", withData(a.Replace))
 	handle("PATCH /api/{type}/{id}", withData(a.Patch))
@@ -893,25 +850,6 @@ func httpHandler(a *Archive) http.Handler {
 		return http.StatusNoContent, nil, a.Delete(r.Context(), r.PathValue("type"), id)
 	})
 	return mux
-}
-
-func httpType(s *Spec, name string) (any, error) {
-	t, ok := s.Types[name]
-	if !ok {
-		return nil, fmt.Errorf("type %q: %w", name, ErrNotFound)
-	}
-	fields, err := s.Fields(name)
-	if err != nil {
-		return nil, err
-	}
-	schema, err := s.JSONSchema(name)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{
-		"name": name, "description": t.Description, "extends": t.Extends,
-		"fields": fields, "subtypes": s.Subtypes(name), "schema": schema,
-	}, nil
 }
 
 func httpError(err error) (int, any) {

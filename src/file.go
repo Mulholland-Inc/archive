@@ -34,14 +34,12 @@ type File struct {
 	Metadata  map[string]any `json:"metadata"`
 	Status    string         `json:"status"`
 	Error     string         `json:"error,omitempty"`
-	Intake    string         `json:"intake,omitempty"`
-	Owner     string         `json:"-"`
 	Space     uuid.UUID      `json:"space"`
 	CreatedAt time.Time      `json:"created_at"`
 }
 
 const (
-	fileCols    = `id, hash, name, mime, size, metadata, status, error, intake, owner, space, created_at`
+	fileCols    = `id, hash, name, mime, size, metadata, status, error, space, created_at`
 	fileMaxPost = 64 << 20
 	fileLinkTTL = 24 * time.Hour
 	tusVersion  = "1.0.0"
@@ -62,22 +60,17 @@ func fileName(name, hash string) string {
 	return name
 }
 
-func (a *Archive) AddFile(ctx context.Context, space, name, intake string, r io.Reader) (*File, error) {
-	if intake != "" {
-		if err := coreHasType(a.Spec(), intake); err != nil {
-			return nil, err
-		}
-	}
+func (a *Archive) AddFile(ctx context.Context, space, name string, r io.Reader) (*File, error) {
 	return coreDo(a, ctx, func(ctx context.Context) (*File, error) {
 		sid, err := a.coreSpace(ctx, space)
 		if err != nil {
 			return nil, err
 		}
-		return a.fileAdd(ctx, sid, name, intake, r)
+		return a.fileAdd(ctx, sid, name, r)
 	})
 }
 
-func (a *Archive) fileAdd(ctx context.Context, sid uuid.UUID, name, intake string, r io.Reader) (*File, error) {
+func (a *Archive) fileAdd(ctx context.Context, sid uuid.UUID, name string, r io.Reader) (*File, error) {
 	tmp, err := os.CreateTemp(a.uploads, "post-")
 	if err != nil {
 		return nil, err
@@ -90,10 +83,10 @@ func (a *Archive) fileAdd(ctx context.Context, sid uuid.UUID, name, intake strin
 	if err != nil {
 		return nil, err
 	}
-	return a.fileCommit(ctx, sid, name, intake, tmp.Name())
+	return a.fileCommit(ctx, sid, name, tmp.Name())
 }
 
-func (a *Archive) fileCommit(ctx context.Context, sid uuid.UUID, name, intake, path string) (*File, error) {
+func (a *Archive) fileCommit(ctx context.Context, sid uuid.UUID, name, path string) (*File, error) {
 	fh, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -116,23 +109,11 @@ func (a *Archive) fileCommit(ctx context.Context, sid uuid.UUID, name, intake, p
 	}
 	f, err := coreDo(a, ctx, func(ctx context.Context) (*File, error) {
 		f, err := storeOne[File](ctx, a.st, `SELECT `+fileCols+` FROM file WHERE space = $1 AND hash = $2 AND name = $3`, sid, hash, name)
-		if err == nil && intake != "" {
-			f, err = storeOne[File](ctx, a.st, `UPDATE file SET intake = $2, status = 'pending' WHERE id = $1 RETURNING `+fileCols, f.ID, intake)
-		}
 		if !errors.Is(err, ErrNotFound) {
 			return f, err
 		}
-		spec := a.Spec()
-		data, err := a.coreCheck(ctx, spec, "file", map[string]any{"sha256": hash, "name": name, "mime": mt})
-		if err != nil {
-			return nil, err
-		}
-		rec := &Entity{Type: "file", Space: sid}
-		if err := a.coreSave(ctx, rec, data); err != nil {
-			return nil, err
-		}
-		return storeOne[File](ctx, a.st, `INSERT INTO file (id, hash, name, mime, size, intake, owner, space)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING `+fileCols, rec.ID, hash, name, mt, size, intake, ActorFrom(ctx).Role, sid)
+		return storeOne[File](ctx, a.st, `INSERT INTO file (hash, name, mime, size, space)
+			VALUES ($1, $2, $3, $4, $5) RETURNING `+fileCols, hash, name, mt, size, sid)
 	})
 	if err == nil {
 		a.wakeFiles()
@@ -189,34 +170,6 @@ func (a *Archive) OpenFile(ctx context.Context, id uuid.UUID) (*File, io.ReadSee
 	}
 	rc, err := a.blobs.open(ctx, f.Hash, f.Size)
 	return f, rc, err
-}
-
-func (a *Archive) IntakeFile(ctx context.Context, id uuid.UUID, typ string) (*IntakeResult, error) {
-	if err := coreHasType(a.Spec(), typ); err != nil {
-		return nil, err
-	}
-	it, err := coreDo(a, ctx, func(ctx context.Context) (*Item, error) {
-		f, err := a.GetFile(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		text, err := a.FileText(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		if strings.TrimSpace(text) == "" {
-			return nil, fmt.Errorf("file %s has no text to read (status %s): %w", id, f.Status, ErrConflict)
-		}
-		b, err := json.Marshal(map[string]any{"file": f.ID, "name": f.Name, "mime": f.MIME, "text": text})
-		if err != nil {
-			return nil, err
-		}
-		return &Item{Source: "file", ExternalID: f.ID.String(), Payload: b, Space: f.Space}, nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return a.intake.Ingest(ctx, it, typ)
 }
 
 func (a *Archive) ProcessFile(ctx context.Context, id uuid.UUID) (*File, error) {
@@ -324,7 +277,7 @@ func (a *Archive) fileRoutes(mux *http.ServeMux) {
 				return 0, nil, fmt.Errorf("no file part: %w", httpErrBadRequest)
 			}
 			if p.FormName() == "file" {
-				f, err := a.AddFile(r.Context(), r.URL.Query().Get("space"), p.FileName(), r.URL.Query().Get("intake"), p)
+				f, err := a.AddFile(r.Context(), r.URL.Query().Get("space"), p.FileName(), p)
 				return http.StatusCreated, f, err
 			}
 		}
@@ -420,7 +373,6 @@ func (a *Archive) fileSigned(w http.ResponseWriter, r *http.Request) {
 type tusUpload struct {
 	Length int64     `json:"length"`
 	Name   string    `json:"name"`
-	Intake string    `json:"intake"`
 	Space  uuid.UUID `json:"space"`
 	Role   string    `json:"role"`
 }
@@ -471,13 +423,8 @@ func (a *Archive) tusCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	meta := tusMetadata(r.Header.Get("Upload-Metadata"))
-	up := &tusUpload{Length: n, Name: cmp.Or(meta["filename"], meta["name"]), Intake: meta["intake"], Role: ActorFrom(ctx).Role}
-	if up.Intake != "" {
-		err = coreHasType(a.Spec(), up.Intake)
-	}
-	if err == nil {
-		up.Space, err = coreDo(a, ctx, func(ctx context.Context) (uuid.UUID, error) { return a.coreSpace(ctx, meta["space"]) })
-	}
+	up := &tusUpload{Length: n, Name: cmp.Or(meta["filename"], meta["name"]), Role: ActorFrom(ctx).Role}
+	up.Space, err = coreDo(a, ctx, func(ctx context.Context) (uuid.UUID, error) { return a.coreSpace(ctx, meta["space"]) })
 	id := coreNewID().String()
 	path := filepath.Join(a.uploads, id)
 	if err == nil {
@@ -578,7 +525,7 @@ func (a *Archive) tusUpload(w http.ResponseWriter, r *http.Request, id string) {
 
 func (a *Archive) tusFinish(ctx context.Context, id string, up *tusUpload) (*File, error) {
 	path := filepath.Join(a.uploads, id)
-	f, err := a.fileCommit(ctx, up.Space, up.Name, up.Intake, path)
+	f, err := a.fileCommit(ctx, up.Space, up.Name, path)
 	if err != nil {
 		return nil, err
 	}

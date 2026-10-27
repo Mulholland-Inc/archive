@@ -4,10 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -17,7 +15,7 @@ import (
 	_ "image/png"
 	"io"
 	"math"
-	"mime/multipart"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -40,10 +38,7 @@ const (
 	mediaMax     = 64 << 20
 	mediaThumb   = 320
 	mediaWorkers = 2
-	mediaOCR     = "Transcribe all text in this image exactly as written, keeping line breaks. Reply with the text only, or nothing if there is no text."
 )
-
-var mediaVision = map[string]bool{"image/jpeg": true, "image/png": true, "image/gif": true, "image/webp": true}
 
 func mediaSniff(name string, b []byte) string {
 	if len(b) >= 12 && string(b[4:8]) == "ftyp" {
@@ -59,7 +54,13 @@ func mediaSniff(name string, b []byte) string {
 	if strings.EqualFold(filepath.Ext(name), ".eml") {
 		return "message/rfc822"
 	}
-	return folderMIME(name, b)
+	mt, _, _ := mime.ParseMediaType(http.DetectContentType(b))
+	if mt == "application/octet-stream" || mt == "text/plain" {
+		if ext, _, err := mime.ParseMediaType(mime.TypeByExtension(strings.ToLower(filepath.Ext(name)))); err == nil {
+			return ext
+		}
+	}
+	return mt
 }
 
 func (a *Archive) fileLoop(ctx context.Context, wg *sync.WaitGroup) {
@@ -109,17 +110,12 @@ func (a *Archive) fileProcess(ctx context.Context, id uuid.UUID) {
 		_, err := a.st.Q(ctx).Exec(ctx, `UPDATE file SET metadata = $2, text = $3 WHERE id = $1`, id, meta, strings.ToValidUTF8(strings.ReplaceAll(text, "\x00", ""), "�"))
 		return err
 	})
-	if err == nil && perr == nil && f.Intake != "" {
-		if _, ierr := a.IntakeFile(WithActor(ctx, &Actor{Role: f.Owner}), id, f.Intake); ierr != nil {
-			perr = fmt.Errorf("intake: %w", ierr)
-		}
-	}
 	status, msg := "done", ""
 	if perr = errors.Join(err, perr); perr != nil {
 		status, msg = "error", perr.Error()
 	}
 	err = a.st.System(context.WithoutCancel(ctx), func(ctx context.Context) error {
-		_, err := a.st.Q(ctx).Exec(ctx, `UPDATE file SET status = $2, error = $3, intake = '' WHERE id = $1`, id, status, msg)
+		_, err := a.st.Q(ctx).Exec(ctx, `UPDATE file SET status = $2, error = $3 WHERE id = $1`, id, status, msg)
 		return err
 	})
 	if err != nil {
@@ -141,7 +137,6 @@ func (a *Archive) media(ctx context.Context, f *File) (map[string]any, string, e
 	if err != nil {
 		return meta, "", err
 	}
-	cfg := a.intake.cfg
 	top, _, _ := strings.Cut(f.MIME, "/")
 	switch {
 	case f.MIME == "application/pdf":
@@ -151,9 +146,9 @@ func (a *Archive) media(ctx context.Context, f *File) (map[string]any, string, e
 	case f.MIME == "text/html":
 		return meta, mediaHTML(b), nil
 	case f.MIME == "message/rfc822":
-		headers, body, atts := mailParse(b)
+		headers, body, _ := mailParse(b)
 		meta["headers"] = headers
-		return meta, mailPayload(headers, body, atts, nil)["text"].(string), nil
+		return meta, mailText(headers, body), nil
 	case top == "text" || f.MIME == "application/json":
 		return meta, string(b), nil
 	case top == "image":
@@ -163,15 +158,6 @@ func (a *Archive) media(ctx context.Context, f *File) (map[string]any, string, e
 		mediaEXIF(b, meta)
 		if t, err := a.mediaThumbnail(ctx, b); err == nil && t != nil {
 			meta["thumbnail"] = t
-		}
-		if cfg.Vision != "" && mediaVision[f.MIME] {
-			text, err := a.mediaOCR(ctx, f.MIME, b)
-			return meta, text, err
-		}
-	case top == "audio" || top == "video":
-		if cfg.Whisper != "" {
-			text, err := a.mediaTranscribe(ctx, f.Name, b)
-			return meta, text, err
 		}
 	}
 	return meta, "", nil
@@ -413,86 +399,6 @@ func (a *Archive) mediaThumbnail(ctx context.Context, b []byte) (map[string]any,
 		return nil, err
 	}
 	return map[string]any{"sha256": hash, "size": buf.Len(), "width": dst.Bounds().Dx(), "height": dst.Bounds().Dy()}, nil
-}
-
-func (a *Archive) mediaPost(ctx context.Context, path, ct string, body []byte, out any) error {
-	cfg := a.intake.cfg
-	req, err := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(cfg.Endpoint, "/")+path, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", ct)
-	if cfg.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
-	}
-	resp, err := a.intake.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-	var e struct {
-		Error *struct {
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if json.Unmarshal(b, &e); e.Error != nil || resp.StatusCode != http.StatusOK {
-		msg := strings.TrimSpace(string(b[:min(len(b), 300)]))
-		if e.Error != nil {
-			msg = e.Error.Message
-		}
-		return fmt.Errorf("%s: %s: %s", path, resp.Status, msg)
-	}
-	return json.Unmarshal(b, out)
-}
-
-func (a *Archive) mediaOCR(ctx context.Context, mt string, b []byte) (string, error) {
-	body, err := json.Marshal(map[string]any{"model": a.intake.cfg.Vision, "messages": []any{map[string]any{"role": "user", "content": []any{
-		map[string]any{"type": "text", "text": mediaOCR},
-		map[string]any{"type": "image_url", "image_url": map[string]string{"url": "data:" + mt + ";base64," + base64.StdEncoding.EncodeToString(b)}},
-	}}}})
-	if err != nil {
-		return "", err
-	}
-	var out struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err := a.mediaPost(ctx, "/chat/completions", "application/json", body, &out); err != nil {
-		return "", fmt.Errorf("ocr: %w", err)
-	}
-	if len(out.Choices) == 0 {
-		return "", errors.New("ocr: no choices")
-	}
-	return strings.TrimSpace(out.Choices[0].Message.Content), nil
-}
-
-func (a *Archive) mediaTranscribe(ctx context.Context, name string, b []byte) (string, error) {
-	var buf bytes.Buffer
-	w := multipart.NewWriter(&buf)
-	w.WriteField("model", a.intake.cfg.Whisper)
-	w.WriteField("response_format", "json")
-	part, err := w.CreateFormFile("file", name)
-	if err != nil {
-		return "", err
-	}
-	part.Write(b)
-	if err := w.Close(); err != nil {
-		return "", err
-	}
-	var out struct {
-		Text string `json:"text"`
-	}
-	if err := a.mediaPost(ctx, "/audio/transcriptions", w.FormDataContentType(), buf.Bytes(), &out); err != nil {
-		return "", fmt.Errorf("transcription: %w", err)
-	}
-	return strings.TrimSpace(out.Text), nil
 }
 
 func mailParse(b []byte) (map[string]string, string, []map[string]any) {

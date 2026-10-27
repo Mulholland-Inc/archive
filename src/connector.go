@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"maps"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
@@ -26,20 +28,25 @@ const syncMaxBody = 32 << 20
 
 var mailHeaders = []string{"From", "To", "Cc", "Subject", "Date", "Message-ID", "In-Reply-To", "References", "Reply-To"}
 
-func mailPayload(headers map[string]string, body string, attachments []map[string]any, extra map[string]any) map[string]any {
+func mailText(headers map[string]string, body string) string {
 	var text strings.Builder
 	for _, h := range []string{"From", "To", "Cc", "Subject", "Date"} {
 		if v := headers[h]; v != "" {
 			text.WriteString(h + ": " + v + "\n")
 		}
 	}
-	text.WriteString("\n" + body)
-	if attachments == nil {
-		attachments = []map[string]any{}
+	return text.String() + "\n" + body
+}
+
+func mailEML(headers map[string]string, body string) []byte {
+	var b strings.Builder
+	for _, h := range mailHeaders {
+		if v := headers[h]; v != "" {
+			b.WriteString(h + ": " + strings.ReplaceAll(strings.ReplaceAll(v, "\r", ""), "\n", " ") + "\r\n")
+		}
 	}
-	p := map[string]any{"headers": headers, "attachments": attachments, "text": text.String()}
-	maps.Copy(p, extra)
-	return p
+	b.WriteString("MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" + body)
+	return []byte(b.String())
 }
 
 func googleAPI() string {
@@ -196,12 +203,11 @@ func syncGmail(ctx context.Context, r *syncRun) error {
 				return fmt.Errorf("gmail attachment %s: %w", aid, err)
 			}
 			name, _ := att["filename"].(string)
-			if err := r.file(ctx, att, name, b); err != nil {
+			if _, err := r.file(ctx, name, b); err != nil {
 				return err
 			}
 		}
-		if err := r.emit(ctx, m.ID, mailPayload(headers, cmp.Or(body, m.Snippet), atts, map[string]any{
-			"id": m.ID, "thread_id": m.ThreadID, "labels": m.LabelIDs, "internal_date": m.InternalDate})); err != nil {
+		if _, err := r.file(ctx, cmp.Or(headers["Subject"], m.ID)+".eml", mailEML(headers, cmp.Or(body, m.Snippet))); err != nil {
 			return err
 		}
 	}
@@ -343,41 +349,25 @@ func syncDrive(ctx context.Context, r *syncRun) error {
 func (r *syncRun) driveFile(ctx context.Context, hc *http.Client, base string, f map[string]any) error {
 	id, _ := f["id"].(string)
 	mt, _ := f["mimeType"].(string)
+	name, _ := f["name"].(string)
 	size, _ := strconv.Atoi(fmt.Sprint(f["size"]))
 	var u string
 	switch {
 	case mt == "application/vnd.google-apps.document":
-		u = base + "/files/" + url.PathEscape(id) + "/export?mimeType=text%2Fplain"
+		u, name = base+"/files/"+url.PathEscape(id)+"/export?mimeType=text%2Fplain", name+".txt"
 	case !strings.HasPrefix(mt, "application/vnd.google-apps.") && size <= syncMaxBody:
 		u = base + "/files/" + url.PathEscape(id) + "?alt=media"
+	default:
+		return nil
 	}
-	payload := map[string]any{"file": f, "text": ""}
-	if u != "" {
-		b, err := syncFetch(ctx, hc, u)
-		switch {
-		case errors.Is(err, ErrNotFound):
-		case err != nil:
-			return err
-		case strings.HasPrefix(mt, "text/") || mt == "application/vnd.google-apps.document":
-			payload["text"] = strings.ToValidUTF8(string(b), "�")
-		default:
-			name, _ := f["name"].(string)
-			if err := r.file(ctx, payload, name, b); err != nil {
-				return err
-			}
-		}
+	b, err := syncFetch(ctx, hc, u)
+	if errors.Is(err, ErrNotFound) {
+		return nil
 	}
-	return r.emit(ctx, id, payload)
-}
-
-func (r *syncRun) file(ctx context.Context, into map[string]any, name string, b []byte) error {
-	return r.a.as(ctx, func(ctx context.Context) error {
-		f, err := r.a.fileAdd(ctx, r.src.Space, name, "", bytes.NewReader(b))
-		if err == nil {
-			into["file_id"] = f.ID.String()
-		}
-		return err
-	})
+	if err == nil {
+		_, err = r.file(ctx, name, b)
+	}
+	return err
 }
 
 func checkFolder(_ context.Context, _ *Archive, src *Source, _ map[string]any) error {
@@ -405,13 +395,38 @@ func syncFolder(ctx context.Context, r *syncRun) error {
 	if st.Files == nil {
 		st.Files = map[string]string{}
 	}
-	items, err := ScanFolder(ctx, cfg.Path, r.src.Space, st.Files)
+	err := filepath.WalkDir(cfg.Path, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path != cfg.Path && strings.HasPrefix(d.Name(), ".") {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(cfg.Path, path)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(b)
+		if hash := hex.EncodeToString(sum[:]); st.Files[filepath.ToSlash(rel)] != hash {
+			if _, err := r.file(ctx, d.Name(), b); err != nil {
+				return err
+			}
+			st.Files[filepath.ToSlash(rel)] = hash
+		}
+		return nil
+	})
 	if err != nil {
 		return err
-	}
-	for _, it := range items {
-		r.res.Fetched++
-		r.ingest(ctx, it)
 	}
 	return r.save(ctx, st)
 }

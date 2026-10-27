@@ -21,24 +21,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const secretRefKey = "$secret"
-
 var secretMasks = map[string]bool{"card": true, "mask": true, "mask_ssn": true, "national": true, "passport": true}
-
-type secretRow struct {
-	id    uuid.UUID
-	typ   string
-	value []byte
-}
-
-func secretRef(v any) (string, bool) {
-	m, ok := v.(map[string]any)
-	if !ok {
-		return "", false
-	}
-	id, ok := m[secretRefKey].(string)
-	return id, ok
-}
 
 func secretLoadKey(dir string) ([]byte, error) {
 	if s := strings.TrimSpace(os.Getenv("ARCHIVE_SECRET_KEY")); s != "" {
@@ -96,37 +79,11 @@ func secretDerive(key []byte, purpose string) []byte {
 
 func authPassword(key []byte) string { return hex.EncodeToString(secretDerive(key, "authenticator")) }
 
-func (a *Archive) seal(spec *Spec, typ string, data, old map[string]any) ([]secretRow, error) {
-	known := map[string]bool{}
-	if old != nil {
-		spec.eachSecret(typ, old, func(_ string, _ *Type, v any) (any, error) {
-			if id, ok := secretRef(v); ok {
-				known[id] = true
-			}
-			return v, nil
-		})
+func secretMask(s *semType, v any) string {
+	if secretMasks[s.Format] {
+		return semFormat(s, v, "")
 	}
-	var rows []secretRow
-	err := spec.eachSecret(typ, data, func(path string, t *Type, v any) (any, error) {
-		if id, ok := secretRef(v); ok {
-			if !known[id] {
-				return nil, &ValidationError{Type: typ, Errors: []FieldError{{Path: path, Message: "unknown secret reference"}}}
-			}
-			return v, nil
-		}
-		b, err := json.Marshal(v)
-		if err != nil {
-			return nil, err
-		}
-		id, root := coreNewID(), spec.secretRoot(t.Name)
-		rows = append(rows, secretRow{id, root, a.secretBox(id, root, b)})
-		masked := "****"
-		if secretMasks[t.Format] {
-			masked = spec.Format(t.Name, v, "")
-		}
-		return map[string]any{secretRefKey: id.String(), "masked": masked}, nil
-	})
-	return rows, err
+	return "****"
 }
 
 func (a *Archive) secretBox(id uuid.UUID, typ string, plain []byte) []byte {
@@ -147,34 +104,50 @@ func (a *Archive) secretOpen(id uuid.UUID, typ string, ct []byte) ([]byte, error
 	return b, nil
 }
 
-func (a *Archive) secretsPut(ctx context.Context, r *Entity, rows []secretRow) error {
-	for _, s := range rows {
-		_, err := a.st.Q(ctx).Exec(ctx, `INSERT INTO secret (id, entity_id, type, value, space) VALUES ($1, $2, $3, $4, $5)`,
-			s.id, r.ID, s.typ, s.value, r.Space)
+func (a *Archive) secretsPut(ctx context.Context, tb *Table, row map[string]any, seal map[string]any) error {
+	id, space := coreRowID(row), row["space"]
+	cat := a.Catalog()
+	for _, col := range specKeys(seal) {
+		q := a.st.Q(ctx)
+		if _, err := q.Exec(ctx, `SELECT secret_clear($1, $2, $3)`, tb.Name, id, col); err != nil {
+			return err
+		}
+		if seal[col] == nil {
+			continue
+		}
+		b, err := json.Marshal(seal[col])
 		if err != nil {
+			return err
+		}
+		sid, typ := coreNewID(), tb.col(col).Type
+		if cat.secret(tb.col(col)) == nil {
+			return fmt.Errorf("%s.%s is not a secret column", tb.Name, col)
+		}
+		if _, err := q.Exec(ctx, `INSERT INTO secret (id, table_name, row_id, column_name, type, value, space) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+			sid, tb.Name, id, col, typ, a.secretBox(sid, typ, b), space); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (a *Archive) Reveal(ctx context.Context, rs ...*Entity) error {
-	if len(rs) == 0 {
+func (a *Archive) Reveal(ctx context.Context, typ string, rows ...map[string]any) error {
+	if len(rows) == 0 {
 		return nil
 	}
-	ids := make([]uuid.UUID, len(rs))
-	for i, r := range rs {
-		ids[i] = r.ID
+	ids := make([]uuid.UUID, len(rows))
+	byID := map[uuid.UUID]map[string]any{}
+	for i, r := range rows {
+		ids[i] = coreRowID(r)
+		byID[ids[i]] = r
 	}
 	return a.as(ctx, func(ctx context.Context) error {
-		rows, _ := a.st.Q(ctx).Query(ctx, `SELECT id, entity_id, type, value FROM secret WHERE entity_id = ANY($1)`, ids)
-		vals := map[string]any{}
-		owner := map[string]uuid.UUID{}
-		var id, rec uuid.UUID
-		var typ string
+		q, _ := a.st.Q(ctx).Query(ctx, `SELECT id, row_id, column_name, type, value FROM secret WHERE table_name = $1 AND row_id = ANY($2)`, typ, ids)
+		var id, row uuid.UUID
+		var col, t string
 		var ct []byte
-		_, err := pgx.ForEachRow(rows, []any{&id, &rec, &typ, &ct}, func() error {
-			b, err := a.secretOpen(id, typ, ct)
+		_, err := pgx.ForEachRow(q, []any{&id, &row, &col, &t, &ct}, func() error {
+			b, err := a.secretOpen(id, t, ct)
 			if err != nil {
 				return err
 			}
@@ -182,45 +155,9 @@ func (a *Archive) Reveal(ctx context.Context, rs ...*Entity) error {
 			if err := json.Unmarshal(b, &v); err != nil {
 				return err
 			}
-			vals[id.String()], owner[id.String()] = v, rec
+			byID[row][col] = v
 			return nil
 		})
-		if err != nil || len(vals) == 0 {
-			return err
-		}
-		for _, r := range rs {
-			var data any
-			if err := json.Unmarshal(r.Data, &data); err != nil {
-				return err
-			}
-			data = secretReplace(data, func(id string) (any, bool) {
-				v, ok := vals[id]
-				return v, ok && owner[id] == r.ID
-			})
-			if r.Data, err = json.Marshal(data); err != nil {
-				return err
-			}
-		}
-		return nil
+		return err
 	})
-}
-
-func secretReplace(v any, f func(id string) (any, bool)) any {
-	switch x := v.(type) {
-	case map[string]any:
-		if id, ok := secretRef(x); ok {
-			if nv, ok := f(id); ok {
-				return nv
-			}
-			return x
-		}
-		for k, e := range x {
-			x[k] = secretReplace(e, f)
-		}
-	case []any:
-		for i, e := range x {
-			x[i] = secretReplace(e, f)
-		}
-	}
-	return v
 }

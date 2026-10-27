@@ -7,20 +7,11 @@ services:
     volumes:
       - archive:/data
     environment:
-      ARCHIVE_LLM_URL: ${ARCHIVE_LLM_URL:-http://ollama:11434/v1}
-      ARCHIVE_LLM_MODEL: ${ARCHIVE_LLM_MODEL:-}
       ARCHIVE_LOCALE: ${ARCHIVE_LOCALE:-}
       ARCHIVE_ADMIN_EMAIL: ${ARCHIVE_ADMIN_EMAIL:-}
       ARCHIVE_URL: ${ARCHIVE_URL:-}
     stop_grace_period: 30s
     restart: unless-stopped
 
-  ollama:
-    image: ollama/ollama
-    volumes:
-      - ollama:/root/.ollama
-    restart: unless-stopped
-
 volumes:
   archive:
-  ollama:

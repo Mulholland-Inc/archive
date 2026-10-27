@@ -60,18 +60,15 @@ func (a *Archive) viewCheck(in *ViewInput) error {
 	if !slices.Contains(viewLayouts, in.Layout) {
 		return viewInvalid("layout", "want "+strings.Join(viewLayouts, ", "))
 	}
-	if err := coreHasType(a.Spec(), in.Type); err != nil {
-		return err
-	}
-	fields, err := a.Spec().Fields(in.Type)
+	tb, err := a.Catalog().table(in.Type)
 	if err != nil {
 		return err
 	}
-	if in.By != "" && fields[in.By] == nil {
+	if in.By != "" && tb.col(in.By) == nil {
 		return viewInvalid("by", "unknown field")
 	}
 	for _, k := range specKeys(in.Where) {
-		if fields[k] == nil {
+		if tb.col(k) == nil {
 			return viewInvalid("where."+k, "unknown field")
 		}
 	}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -31,7 +32,6 @@ type Source struct {
 	Space     uuid.UUID       `json:"space"`
 	Owner     string          `json:"-"`
 	CreatedBy string          `json:"created_by"`
-	Type      string          `json:"type,omitempty"`
 	Mode      string          `json:"mode"`
 	Schedule  string          `json:"schedule,omitempty"`
 	Rate      float64         `json:"rate"`
@@ -49,7 +49,6 @@ type SourceInput struct {
 	Kind        string         `json:"kind"`
 	Name        string         `json:"name"`
 	Space       string         `json:"space"`
-	Type        string         `json:"type"`
 	Mode        string         `json:"mode"`
 	Schedule    string         `json:"schedule"`
 	Rate        float64        `json:"rate"`
@@ -58,13 +57,11 @@ type SourceInput struct {
 }
 
 type SyncResult struct {
-	Source   uuid.UUID `json:"source"`
-	Fetched  int       `json:"fetched"`
-	New      int       `json:"new"`
-	Mapped   int       `json:"mapped"`
-	Proposed int       `json:"proposed"`
-	Status   string    `json:"status"`
-	Error    string    `json:"error,omitempty"`
+	Source  uuid.UUID `json:"source"`
+	Fetched int       `json:"fetched"`
+	New     int       `json:"new"`
+	Status  string    `json:"status"`
+	Error   string    `json:"error,omitempty"`
 }
 
 type connector struct {
@@ -84,7 +81,7 @@ var googleScopes = map[string][]string{
 }
 
 const (
-	sourceCols    = `id, kind, name, space, owner, created_by, type, mode, schedule, rate, config, state, status, error, failures, last_run_at, next_run_at, created_at`
+	sourceCols    = `id, kind, name, space, owner, created_by, mode, schedule, rate, config, state, status, error, failures, last_run_at, next_run_at, created_at`
 	sourceLock    = 7274
 	sourceRetries = 3
 	sourceBackoff = 500 * time.Millisecond
@@ -112,7 +109,7 @@ func (a *Archive) AddSource(ctx context.Context, in SourceInput) (*Source, strin
 	if in.Mode != "mirror" {
 		return nil, "", sourceInvalid("mode", "only mirror is supported; federate is not built yet")
 	}
-	if err := a.sourceCheck(in.Type, in.Schedule, in.Rate); err != nil {
+	if err := sourceCheck(in.Schedule, in.Rate); err != nil {
 		return nil, "", err
 	}
 	if in.Config == nil {
@@ -121,7 +118,7 @@ func (a *Archive) AddSource(ctx context.Context, in SourceInput) (*Source, strin
 	if in.Credentials == nil {
 		in.Credentials = map[string]any{}
 	}
-	src := &Source{ID: coreNewID(), Kind: in.Kind, Name: in.Name, Type: in.Type, Mode: in.Mode, Schedule: in.Schedule,
+	src := &Source{ID: coreNewID(), Kind: in.Kind, Name: in.Name, Mode: in.Mode, Schedule: in.Schedule,
 		Rate: in.Rate, Status: "new"}
 	if src.Rate == 0 {
 		src.Rate = 5
@@ -157,9 +154,9 @@ func (a *Archive) AddSource(ctx context.Context, in SourceInput) (*Source, strin
 			return err
 		}
 		s, err := storeOne[Source](ctx, a.st, `
-			INSERT INTO source (id, kind, name, space, owner, created_by, type, mode, schedule, rate, config, status, next_run_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING `+sourceCols,
-			src.ID, src.Kind, src.Name, sid, ac.Role, ac.Label, src.Type, src.Mode, src.Schedule, src.Rate, src.Config, src.Status, next)
+			INSERT INTO source (id, kind, name, space, owner, created_by, mode, schedule, rate, config, status, next_run_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING `+sourceCols,
+			src.ID, src.Kind, src.Name, sid, ac.Role, ac.Label, src.Mode, src.Schedule, src.Rate, src.Config, src.Status, next)
 		if err != nil {
 			return err
 		}
@@ -171,7 +168,7 @@ func (a *Archive) AddSource(ctx context.Context, in SourceInput) (*Source, strin
 	}))
 }
 
-func (a *Archive) sourceCheck(typ, schedule string, rate float64) error {
+func sourceCheck(schedule string, rate float64) error {
 	if schedule != "" {
 		if d, err := time.ParseDuration(schedule); err != nil || d < time.Second {
 			return sourceInvalid("schedule", "want a duration of at least 1s, like 15m or 6h")
@@ -180,14 +177,10 @@ func (a *Archive) sourceCheck(typ, schedule string, rate float64) error {
 	if rate < 0 {
 		return sourceInvalid("rate", "want requests per second, 0 for the default")
 	}
-	if typ != "" {
-		return coreHasType(a.Spec(), typ)
-	}
 	return nil
 }
 
 type SourcePatch struct {
-	Type     *string  `json:"type"`
 	Schedule *string  `json:"schedule"`
 	Rate     *float64 `json:"rate"`
 }
@@ -198,25 +191,22 @@ func (a *Archive) UpdateSource(ctx context.Context, ref string, p SourcePatch) (
 		if err != nil {
 			return nil, err
 		}
-		typ, schedule, rate := s.Type, s.Schedule, s.Rate
-		if p.Type != nil {
-			typ = *p.Type
-		}
+		schedule, rate := s.Schedule, s.Rate
 		if p.Schedule != nil {
 			schedule = *p.Schedule
 		}
 		if p.Rate != nil {
 			rate = *p.Rate
 		}
-		if err := a.sourceCheck(typ, schedule, rate); err != nil {
+		if err := sourceCheck(schedule, rate); err != nil {
 			return nil, err
 		}
 		if rate == 0 {
 			rate = 5
 		}
-		out, err := storeOne[Source](ctx, a.st, `UPDATE source SET type = $2, rate = $3, schedule = $4,
-			next_run_at = CASE WHEN $4 = '' OR status = 'needs_auth' THEN NULL WHEN $4 = schedule THEN next_run_at ELSE now() END
-			WHERE id = $1 RETURNING `+sourceCols, s.ID, typ, rate, schedule)
+		out, err := storeOne[Source](ctx, a.st, `UPDATE source SET rate = $2, schedule = $3,
+			next_run_at = CASE WHEN $3 = '' OR status = 'needs_auth' THEN NULL WHEN $3 = schedule THEN next_run_at ELSE now() END
+			WHERE id = $1 RETURNING `+sourceCols, s.ID, rate, schedule)
 		if errors.Is(err, ErrNotFound) {
 			return nil, fmt.Errorf("you cannot change sources in this space: %w", ErrForbidden)
 		}
@@ -238,7 +228,7 @@ func (a *Archive) sourceSeal(ctx context.Context, src *Source, creds map[string]
 		return err
 	}
 	id := coreNewID()
-	_, err = a.st.Q(ctx).Exec(ctx, `INSERT INTO secret (id, source_id, type, value, space) VALUES ($1, $2, $3, $4, $5)`,
+	_, err = a.st.Q(ctx).Exec(ctx, `INSERT INTO secret (id, table_name, row_id, column_name, type, value, space) VALUES ($1, 'source', $2, 'credentials', $3, $4, $5)`,
 		id, src.ID, sourceSecret, a.secretBox(id, sourceSecret, b), src.Space)
 	return err
 }
@@ -247,7 +237,7 @@ func (a *Archive) sourceCreds(ctx context.Context, id uuid.UUID) (map[string]any
 	var sid uuid.UUID
 	var ct []byte
 	creds := map[string]any{}
-	err := a.st.Q(ctx).QueryRow(ctx, `SELECT id, value FROM secret WHERE source_id = $1`, id).Scan(&sid, &ct)
+	err := a.st.Q(ctx).QueryRow(ctx, `SELECT id, value FROM secret WHERE table_name = 'source' AND row_id = $1`, id).Scan(&sid, &ct)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return creds, nil
 	}
@@ -297,6 +287,9 @@ func (a *Archive) RemoveSource(ctx context.Context, ref string) error {
 		tag, err := a.st.Q(ctx).Exec(ctx, `DELETE FROM source WHERE id = $1`, s.ID)
 		if err == nil && tag.RowsAffected() == 0 {
 			return fmt.Errorf("you cannot remove sources in this space: %w", ErrForbidden)
+		}
+		if err == nil {
+			_, err = a.st.Q(ctx).Exec(ctx, `SELECT secret_clear('source', $1, NULL)`, s.ID)
 		}
 		return err
 	})
@@ -359,7 +352,7 @@ func (a *Archive) SourceOAuth(ctx context.Context, state, code string) (*Source,
 		if tok.RefreshToken == "" {
 			return fmt.Errorf("Google sent no refresh token; remove Archive at myaccount.google.com/permissions and add the source again: %w", ErrUnauthorized)
 		}
-		if _, err := a.st.Q(ctx).Exec(ctx, `DELETE FROM secret WHERE source_id = $1`, id); err != nil {
+		if _, err := a.st.Q(ctx).Exec(ctx, `DELETE FROM secret WHERE table_name = 'source' AND row_id = $1`, id); err != nil {
 			return err
 		}
 		if err := a.sourceSeal(ctx, s, map[string]any{"refresh_token": tok.RefreshToken}); err != nil {
@@ -383,14 +376,13 @@ func googleOAuth(redirect string, scopes []string) (*oauth2.Config, error) {
 }
 
 type syncRun struct {
-	a      *Archive
-	src    *Source
-	creds  map[string]any
-	octx   context.Context
-	limit  *rate.Limiter
-	http   *http.Client
-	res    *SyncResult
-	intake []error
+	a     *Archive
+	src   *Source
+	creds map[string]any
+	octx  context.Context
+	limit *rate.Limiter
+	http  *http.Client
+	res   *SyncResult
 }
 
 func (a *Archive) sync(ctx context.Context, id uuid.UUID) (*SyncResult, error) {
@@ -429,7 +421,7 @@ func (a *Archive) sync(ctx context.Context, id uuid.UUID) (*SyncResult, error) {
 	limit := rate.NewLimiter(rate.Limit(src.Rate), 1)
 	r := &syncRun{a: a, src: src, creds: creds, limit: limit, http: syncClient(limit), res: &SyncResult{Source: id},
 		octx: WithActor(ctx, &Actor{Role: src.Owner})}
-	err = errors.Join(append([]error{connectors[src.Kind].sync(r.octx, r)}, r.intake...)...)
+	err = connectors[src.Kind].sync(r.octx, r)
 	r.res.Status = "ok"
 	if err != nil {
 		r.res.Status, r.res.Error = "error", err.Error()
@@ -449,31 +441,15 @@ func (a *Archive) sync(ctx context.Context, id uuid.UUID) (*SyncResult, error) {
 	})
 }
 
-func (r *syncRun) emit(ctx context.Context, externalID string, payload map[string]any) error {
-	b, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
+func (r *syncRun) file(ctx context.Context, name string, b []byte) (*File, error) {
 	r.res.Fetched++
-	r.ingest(ctx, &Item{Source: r.src.Kind + ":" + r.src.ID.String(), ExternalID: externalID, Payload: b, Space: r.src.Space})
-	return nil
-}
-
-func (r *syncRun) ingest(ctx context.Context, it *Item) {
-	r.res.New++
-	if r.src.Type == "" {
-		return
+	f, err := coreDo(r.a, ctx, func(ctx context.Context) (*File, error) {
+		return r.a.fileAdd(ctx, r.src.Space, name, bytes.NewReader(b))
+	})
+	if err == nil {
+		r.res.New++
 	}
-	res, err := r.a.intake.Ingest(ctx, it, r.src.Type)
-	switch {
-	case err != nil:
-		r.intake = append(r.intake, fmt.Errorf("intake %s: %w", it.ExternalID, err))
-	case res.EntityID == uuid.Nil:
-	case res.Proposed:
-		r.res.Proposed++
-	default:
-		r.res.Mapped++
-	}
+	return f, err
 }
 
 func (r *syncRun) save(ctx context.Context, state any) error {
