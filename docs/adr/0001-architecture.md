@@ -236,7 +236,7 @@ Designed but not built:
 - **Office text extraction** for search, and legacy and ODF conversion to OOXML on request.
 - **More Office edits**: rows, columns, slides and formatting.
 - **Google Docs and Sheets integration** for people editing Office files.
-- **Webhooks** instead of polling connectors to bring data in.
+- **Connectors** that sync mail, files, chat and business data in, read-only and by delta: see [ADR 0002](0002-connectors.md).
 - **Clients**: the Svelte app, as the website and in Tauri 2 shells for iOS, Android and desktop (Capacitor as the fallback on mobile). Every shell runs it in the platform's own web view (WKWebView, Android WebView, WebView2, WebKitGTK), and all of them run WebAssembly. The page editor therefore uses the same go-crdt WebAssembly build as `apps/web` on every platform, and merges with the same code as the server.
 - **Pages**: formatting, nesting and tables in the editor and the model; checking that a client only sends operations for its own site; cleaning up old page blobs.
 
@@ -247,7 +247,7 @@ These were in earlier designs and are cut to keep Archive small:
 - JSONB records, spec versions and change review, and type inheritance;
 - built-in LLM calls, intake, confidence scoring, confidence calibration and the review queue;
 - OCR, transcription and embeddings;
-- polling connectors (Gmail, Drive, folders) and `.eml` text extraction, removed in favour of webhooks later;
+- folder connectors and `.eml` text extraction (connectors are now [ADR 0002](0002-connectors.md));
 - IMAP and the external connector protocol;
 - stored schema files.
 
