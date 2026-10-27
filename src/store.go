@@ -414,38 +414,115 @@ func (s *pgStore) plan(ctx context.Context, src sqldb.Queryable, files map[strin
 	return out, nil
 }
 
+type storeUnit struct{ file, sql string }
+
 func storeLoad(ctx context.Context, db *sql.DB, files map[string]string) error {
-	left := specKeys(files)
-	errs := map[string]error{}
+	var units []storeUnit
+	for _, name := range specKeys(files) {
+		units = append(units, storeUnit{name, files[name]})
+	}
+	left, errs, err := storeTry(ctx, db, units)
+	if err != nil || len(left) == 0 {
+		return err
+	}
+	var stmts []storeUnit
+	for _, u := range left {
+		for _, st := range storeSplit(u.sql) {
+			stmts = append(stmts, storeUnit{u.file, st})
+		}
+	}
+	if left, errs, err = storeTry(ctx, db, stmts); err != nil || len(left) == 0 {
+		return err
+	}
+	ve := &ValidationError{Type: "schema"}
+	for _, u := range left {
+		if !slices.ContainsFunc(ve.Errors, func(e FieldError) bool { return e.Path == u.file }) {
+			ve.Errors = append(ve.Errors, FieldError{Path: u.file, Message: errs[u.file].Error()})
+		}
+	}
+	return ve
+}
+
+func storeTry(ctx context.Context, db *sql.DB, left []storeUnit) ([]storeUnit, map[string]error, error) {
+	var errs map[string]error
 	for progress := true; progress && len(left) > 0; {
-		progress = false
-		var next []string
-		for _, name := range left {
+		progress, errs = false, map[string]error{}
+		var next []storeUnit
+		for _, u := range left {
 			tx, err := db.BeginTx(ctx, nil)
 			if err != nil {
-				return err
+				return nil, nil, err
 			}
-			if _, err = tx.ExecContext(ctx, "SET LOCAL statement_timeout = 0; "+files[name]); err == nil {
+			if _, err = tx.ExecContext(ctx, "SET LOCAL statement_timeout = 0; "+u.sql); err == nil {
 				err = tx.Commit()
 			}
 			if err != nil {
 				tx.Rollback()
-				errs[name] = err
-				next = append(next, name)
+				if errs[u.file] == nil {
+					errs[u.file] = err
+				}
+				next = append(next, u)
 				continue
 			}
 			progress = true
 		}
 		left = next
 	}
-	if len(left) == 0 {
-		return nil
+	return left, errs, nil
+}
+
+var (
+	storeDollarRe = regexp.MustCompile(`^\$([A-Za-z_][A-Za-z0-9_]*)?\$`)
+	storeIdentRe  = regexp.MustCompile(`[A-Za-z0-9_$]`)
+)
+
+func storeSplit(src string) []string {
+	var out []string
+	start := 0
+	for i := 0; i < len(src); i++ {
+		switch c := src[i]; {
+		case c == '-' && strings.HasPrefix(src[i:], "--"):
+			if n := strings.IndexByte(src[i:], '\n'); n >= 0 {
+				i += n
+			} else {
+				i = len(src)
+			}
+		case c == '/' && strings.HasPrefix(src[i:], "/*"):
+			for d := 0; i < len(src); i++ {
+				if strings.HasPrefix(src[i:], "/*") {
+					d, i = d+1, i+1
+				} else if strings.HasPrefix(src[i:], "*/") {
+					if d, i = d-1, i+1; d == 0 {
+						break
+					}
+				}
+			}
+		case c == '\'' || c == '"':
+			esc := c == '\'' && i > 0 && (src[i-1] == 'E' || src[i-1] == 'e')
+			for i++; i < len(src) && src[i] != c; i++ {
+				if esc && src[i] == '\\' {
+					i++
+				}
+			}
+		case c == '$':
+			if m := storeDollarRe.FindString(src[i:]); m != "" && (i == 0 || !storeIdentRe.MatchString(src[i-1:i])) {
+				if n := strings.Index(src[i+len(m):], m); n >= 0 {
+					i += len(m) + n + len(m) - 1
+				} else {
+					i = len(src)
+				}
+			}
+		case c == ';':
+			if st := strings.TrimSpace(src[start:i]); st != "" {
+				out = append(out, st)
+			}
+			start = i + 1
+		}
 	}
-	ve := &ValidationError{Type: "schema"}
-	for _, name := range left {
-		ve.Errors = append(ve.Errors, FieldError{Path: name, Message: errs[name].Error()})
+	if st := strings.TrimSpace(src[start:]); st != "" {
+		out = append(out, st)
 	}
-	return ve
+	return out
 }
 
 func (s *pgStore) Catalog(ctx context.Context) (*Catalog, error) {
