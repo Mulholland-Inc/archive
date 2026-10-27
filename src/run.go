@@ -653,13 +653,7 @@ func (r *runner) sdk() {
 		if err != nil {
 			return nil, fmt.Errorf("archive.edit: %v: %w", err, httpErrBadRequest)
 		}
-		var opts struct {
-			Version string `json:"version"`
-		}
-		if err := r.arg(call, 2, "edit", "opts", &opts); err != nil {
-			return nil, err
-		}
-		return a.EditDocument(ctx, id, ops, opts.Version)
+		return a.EditDocument(ctx, id, ops)
 	})
 	r.def(o, "spaces", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		return a.Spaces(ctx)
