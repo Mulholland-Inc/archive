@@ -62,7 +62,7 @@
  * - Renames are not detected: the plan would drop and re-add, losing data. Rename in the same call, and pass
  *   the files as they read after it: archive.apply(files, { confirm: true, renames:
  *   ["ALTER TABLE house RENAME COLUMN price TO asking_price"] }). The renames run first, in the same
- *   transaction, so the plan holds only your other changes.
+ *   transaction, and are listed first in the plan, followed by your other changes.
  */
 declare const archive: {
     /** Run one SQL statement as you, with $1, $2, ... bound to params; returns its rows, or [] when it has none. */

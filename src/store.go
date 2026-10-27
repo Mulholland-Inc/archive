@@ -255,10 +255,10 @@ func (s *pgStore) Apply(ctx context.Context, files map[string]string, renames []
 	}
 	p, err := s.plan(ctx, src, files, allowDrop)
 	if err != nil || dryRun {
-		return p, err
+		return storeWithRenames(p, renames), err
 	}
 	if b := p.blocked(); len(b) > 0 {
-		return p, fmt.Errorf("the plan deletes data (%s); apply it with allow_drop: %w", strings.Join(b, "; "), ErrConflict)
+		return storeWithRenames(p, renames), fmt.Errorf("the plan deletes data (%s); apply it with allow_drop: %w", strings.Join(b, "; "), ErrConflict)
 	}
 	for _, st := range p.Statements {
 		set := fmt.Sprintf(`SET LOCAL statement_timeout = %d; SET LOCAL lock_timeout = %d`, st.timeout.Milliseconds(), st.lock.Milliseconds())
@@ -276,7 +276,19 @@ func (s *pgStore) Apply(ctx context.Context, files map[string]string, renames []
 		return nil, err
 	}
 	p.Applied = true
-	return p, nil
+	return storeWithRenames(p, renames), nil
+}
+
+func storeWithRenames(p *SchemaPlan, renames []string) *SchemaPlan {
+	if p == nil || len(renames) == 0 {
+		return p
+	}
+	out := make([]SchemaStatement, 0, len(renames)+len(p.Statements))
+	for _, r := range renames {
+		out = append(out, SchemaStatement{DDL: strings.TrimSuffix(strings.TrimSpace(r), ";")})
+	}
+	p.Statements = append(out, p.Statements...)
+	return p
 }
 
 var storeRenameRe = regexp.MustCompile(`(?is)^ALTER\s+(TABLE|TYPE|DOMAIN|INDEX)\s+(IF\s+EXISTS\s+)?(ONLY\s+)?((public|"public")\.)?("[a-z_][a-z0-9_]*"|[a-z_][a-z0-9_]*)\s+RENAME\s+[^;]+$`)

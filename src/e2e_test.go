@@ -2227,8 +2227,16 @@ throw new Error("changed my mind");`)
 files["house.sql"] = files["house.sql"].replaceAll("price", "asking_price");
 const plan = await archive.apply(files, { confirm: true, renames: ["ALTER TABLE house RENAME COLUMN price TO asking_price"] });
 return { ddl: plan.statements.map(s => s.ddl), price: (await archive.sql("SELECT (asking_price).amount FROM house WHERE asking_price IS NOT NULL"))[0].amount };`)
-		if fmt.Sprint(got["ddl"]) != `[COMMENT ON COLUMN "public"."house"."asking_price" IS 'Asking asking_price']` || fmt.Sprint(got["price"]) != "500000" {
+		if fmt.Sprint(got["ddl"]) != `[ALTER TABLE house RENAME COLUMN price TO asking_price COMMENT ON COLUMN "public"."house"."asking_price" IS 'Asking asking_price']` || fmt.Sprint(got["price"]) != "500000" {
 			t.Errorf("rename: %v", got)
+		}
+		dry := ok(t, `const files = await archive.schema();
+files["house.sql"] = files["house.sql"].replaceAll("asking_price", "list_price");
+const plan = await archive.apply(files, { renames: ["ALTER TABLE house RENAME COLUMN asking_price TO list_price;"] });
+const cols = await archive.sql("SELECT column_name FROM information_schema.columns WHERE table_name = 'house' AND column_name LIKE '%price'");
+return { ddl: plan.statements.map(s => s.ddl), applied: plan.applied, cols: cols.map(c => c.column_name) };`)
+		if fmt.Sprint(dry["ddl"]) != `[ALTER TABLE house RENAME COLUMN asking_price TO list_price COMMENT ON COLUMN "public"."house"."list_price" IS 'Asking list_price']` || dry["applied"] != false || fmt.Sprint(dry["cols"]) != "[asking_price]" {
+			t.Errorf("a dry run lists its renames and changes nothing: %v", dry)
 		}
 		if out := run(t, tok, `await archive.apply(await archive.schema(), { renames: ["DROP TABLE house"] })`); !strings.Contains(out.Error, "renames[0]: want one ALTER") {
 			t.Errorf("a rename that drops: %q", out.Error)
