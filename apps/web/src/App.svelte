@@ -3,7 +3,7 @@
   import Avatar from './ui/Avatar.svelte';
   import Button from './ui/Button.svelte';
   import Heading from './ui/Heading.svelte';
-  import Label from './ui/Label.svelte';
+  import Divider from './ui/Divider.svelte';
   import Logo from './ui/Logo.svelte';
   import NavItem from './ui/NavItem.svelte';
   import SignIn from './SignIn.svelte';
@@ -94,12 +94,12 @@
         <NavItem href="/files" icon="folder" active={route.first === 'files'}>Files</NavItem>
         <NavItem href="/pages" icon="page" active={route.first === 'pages'}>Pages</NavItem>
         {#if views.length}
-          <Label>Views</Label>
+          <Divider />
           {#each views as v (v.name)}
             <NavItem href="/views/{v.name}" icon={v.icon} active={route.first === 'views' && route.second === v.name}>{v.name.replaceAll('_', ' ')}</NavItem>
           {/each}
         {/if}
-        <Label>Tables</Label>
+        <Divider />
         {#each tables as t (t.name)}
           <NavItem href="/{t.name}" icon={t.icon} active={route.first === t.name}>{t.name.replaceAll('_', ' ')}</NavItem>
         {/each}
