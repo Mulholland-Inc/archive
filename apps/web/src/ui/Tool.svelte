@@ -16,12 +16,12 @@
     padding: 0;
     border: 0;
     border-radius: var(--radius-pill);
-    background: var(--panel);
+    background: none;
     color: var(--text-2);
     cursor: pointer;
     transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
   }
   .tool:hover, .tool:focus-visible { outline: 0; background: var(--raised); color: var(--text); }
-  .on, .on:hover, .on:focus-visible { background: var(--cream); color: var(--cream-ink); }
+  .on, .on:hover, .on:focus-visible { background: var(--raised); color: var(--text); }
   .tool :global(svg) { width: var(--text-lg); height: var(--text-lg); }
 </style>

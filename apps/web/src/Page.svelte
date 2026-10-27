@@ -416,16 +416,20 @@
 
 <Heading editable placeholder="Untitled" {@attach (el) => (heading = el)} {@attach sync(title)} oninput={retitle} onkeydown={titleKey} />
 <div class="tools">
-  <Bar>
+  <div class="toolbar">
+    <Bar>
     {#each TYPES as t (t.type)}
       <Tool icon={t.icon} label={t.label} on={(active?.type || 'paragraph') === t.type && !!active} onclick={() => turn(t.type)} />
     {/each}
+    <span class="sep"></span>
     <Tool icon="list-indent-decrease" label="Outdent" onclick={() => indent(-1)} />
     <Tool icon="list-indent-increase" label="Indent" onclick={() => indent(1)} />
+    <span class="sep"></span>
     {#each MARKS as m (m.name)}
       <Tool icon={m.icon} label={m.label} on={on.includes(m.name)} onclick={() => format(m)} />
     {/each}
   </Bar>
+  </div>
   <div class="people" class:live title={live ? 'Live' : 'Connecting'}>
     {#each [{ ...me, site, you: true }, ...online] as p (p.site)}
       <Chip name={p.you ? `${p.name} (you)` : p.name} pulse={p.agent} />
@@ -484,7 +488,9 @@
 
 <style>
   .tools { display: flex; flex: none; align-items: center; gap: var(--space-4); }
-  .tools > :global(.bar) { flex: 1; min-width: 0; }
+  .toolbar { display: flex; flex: 1; min-width: 0; padding: var(--space-1); background: var(--panel); border-radius: var(--radius-pill); }
+  .toolbar > :global(.bar) { flex: 1; min-width: 0; gap: var(--space-1); }
+  .sep { flex: none; align-self: stretch; width: var(--stroke); background: var(--line); }
   .people { display: flex; flex: none; align-items: center; gap: var(--space-2); opacity: 0.5; transition: opacity var(--dur) var(--ease); }
   .people.live { opacity: 1; }
 
