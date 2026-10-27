@@ -122,31 +122,27 @@ File bytes are content-addressed by SHA-256 in the `/data` volume or in S3. Uplo
 
 ## Documents
 
-Archive's own web and iOS apps are the editors; there is no embedded office suite. The server's job is to hold a document's model, apply edits to it and render it. Two kinds of document are handled differently.
+Archive's own web and iOS apps are the editors; there is no embedded office suite. Every document is a file in a standard format: Markdown or plain text, docx, xlsx or pptx. There is no Archive-specific document format, so a document can always be downloaded and opened anywhere.
 
-**Native documents** are made in Archive: text documents, spreadsheets and, later, slides.
-
-- A native document is a file whose bytes are Archive's own JSON model: a ProseMirror-style tree for text, and a grid of cells, formulas and formats for spreadsheets. It lives in a space, has versions and can be shared like any other file.
-- **Editing together** uses Yjs. The Go server hosts the Yjs document with a pure-Go port and writes a new version when editing pauses.
-- **Formulas** are calculated in Go with excelize's engine. IronCalc (Rust, MIT/Apache) is the upgrade path if Excel compatibility needs to be closer.
-- **Office import and export**: docx is imported through Pandoc, run as a separate command, and exported by Archive's own Go writer; xlsx goes both ways through excelize. An import is a new native copy, and the user is told the formatting may differ.
-
-**Office files** are uploaded docx, xlsx and pptx. The original file stays the source of truth.
-
-- **Edits are patches.** xlsx is edited with excelize. docx and pptx are edited by Archive's own Go package, which changes only the XML parts an edit touches and copies every other part of the zip byte for byte, so whatever Archive does not understand survives. Each save is a new version.
+- **New documents** are made as an empty docx, xlsx or pptx (or a Markdown file) and are files like any other: they live in a space, have versions and can be shared.
+- **Edits are patches against the file.** xlsx is edited with excelize. docx and pptx are edited by Archive's own Go package, which changes only the XML parts an edit touches and copies every other part of the zip byte for byte, so whatever Archive does not understand survives. Markdown and text are edited as text.
 - **The model** Archive exposes is a projection of the file: paragraphs, runs, tables and comments for docx; sheets, cells and formulas for xlsx; slides, shapes and their text for pptx. Edits outside that projection are not possible, by design.
+- **Formulas** are calculated with excelize's engine. IronCalc (Rust, MIT/Apache) is the upgrade path if Excel compatibility needs to be closer.
 - **Legacy and ODF files** (doc, xls, ppt, odt, ods, odp) are converted to OOXML once, on request, as a new file.
 
-**Agents** use the same model for both kinds: `archive.document(id)` returns it, and `archive.edit(id, edits)` applies a list of edits (replace text, insert a paragraph or table, set a cell, add a comment) and saves a new version. Code mode needs nothing else.
+**One edit API for everyone**: `archive.document(id)` returns the model, and `archive.edit(id, edits)` applies a list of edits (replace text, insert a paragraph or table, set a cell, add a comment). Agents call it from code mode; the apps send the same edits over the API.
 
-**Rendering**: Gotenberg (MIT), a Go service around LibreOffice, turns any office or native document into a PDF once per version. Previews, page images and thumbnails come from that PDF; search text comes from Archive's own parsing. Gotenberg is an optional container in `compose.yaml` and the Helm chart, set with `ARCHIVE_GOTENBERG_URL`; without it, office files have no previews, but can still be edited and searched. LibreOffice is used to render and to convert legacy files, never to save users' Office files, since its OOXML output can lose Word-only features.
+**Editing together**: clients send edits to the server, which applies them in order to the current file and sends them on to everyone else with the document open. The server's order decides conflicts, and it writes a new version when editing pauses. This needs no CRDT and no second copy of the document, at the cost of offline editing.
+
+**Rendering**: Gotenberg (MIT), a Go service around LibreOffice, turns a docx, xlsx or pptx into a PDF once per version. Previews, page images and thumbnails come from that PDF; search text comes from Archive's own parsing. Gotenberg is an optional container in `compose.yaml` and the Helm chart, set with `ARCHIVE_GOTENBERG_URL`; without it, documents have no previews, but can still be edited and searched. LibreOffice is used to render and to convert legacy files, never to save users' files, since its OOXML output can lose Word-only features.
 
 **Not chosen**:
+- An Archive-specific document format (for example ProseMirror JSON with Yjs): it would make every download a conversion, and Office files a second kind of document.
 - Collabora and ONLYOFFICE: their value is the editor UI, which Archive does not use, and running them in a closed SaaS needs paid editions.
 - ONLYOFFICE Document Builder: AGPL or a paid edition.
 - Aspose: faithful but commercial; it stays the option for customers whose complex files need more than patching.
 
-Slides are the weakest area: no good open-source pptx engine exists, so native slides export to pptx only, and uploaded pptx files get text edits.
+Slides are the weakest area: no good open-source pptx engine exists, so pptx edits start with text, and new slide layouts come later.
 
 ## Sharing
 
@@ -157,7 +153,7 @@ archive.share: id, file, token_hash, access (view | download), emails, password_
                expires_at, revoked_at, created_by, created_at, last_used_at, uses
 ```
 
-- **The link** is `/s/<token>`, with 32 random bytes as the token; Archive stores only its hash. It opens a public page that previews the file (the PDF rendition for office and native documents, the browser for PDFs, images and text), with a download button when access is `download`.
+- **The link** is `/s/<token>`, with 32 random bytes as the token; Archive stores only its hash. It opens a public page that previews the file (the PDF rendition for docx, xlsx and pptx, the browser for PDFs, images and text), with a download button when access is `download`.
 - **Who can open it**: anyone with the link, optionally behind a password; or only the listed email addresses, which get a one-time code by email, sent the same way as sign-in links. A share can expire and can be revoked at any time.
 - **The current version**: a share points at the file, so it always shows the latest version. GPS data is removed from shared photos.
 - **Who can share**: editors of the file's space. Owners and admins of the space see and revoke every share in it.
