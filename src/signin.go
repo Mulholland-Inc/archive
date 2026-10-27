@@ -128,6 +128,23 @@ func (a *Archive) httpAuth(h http.Handler) http.Handler {
 			httpWrite(w, 0, nil, err)
 			return
 		}
+		// Cookies are shared between tabs. Bind queued work to the account the
+		// client observed, using this request's authenticated actor, not a
+		// separate /auth/me preflight. This precondition grants no permissions.
+		if values, present := r.Header["Archive-Expected-User"]; present {
+			var expected uuid.UUID
+			if len(values) == 1 {
+				expected, err = uuid.Parse(values[0])
+			}
+			if len(values) != 1 || err != nil || expected == uuid.Nil {
+				httpWrite(w, 0, nil, fmt.Errorf("Archive-Expected-User: want one user UUID: %w", httpErrBadRequest))
+				return
+			}
+			if expected != ac.UserID {
+				httpWrite(w, http.StatusPreconditionFailed, map[string]string{"error": "signed-in account changed"}, nil)
+				return
+			}
+		}
 		h.ServeHTTP(w, r.WithContext(WithActor(r.Context(), ac)))
 	})
 }

@@ -232,9 +232,24 @@ func (s *pgStore) SchemaFiles(ctx context.Context) (map[string]string, error) {
 	grant := regexp.MustCompile(`^GRANT (SELECT|INSERT|UPDATE|DELETE) ON \S+ TO ` + regexp.QuoteMeta(pgIdent(s.prefix+"_user")) + `$`)
 	var ddl, subject []string
 	tables, views := map[string]bool{}, map[string]bool{}
+	out := map[string]string{}
 	for _, st := range plan.Statements {
 		m := storeSubjectRe.FindStringSubmatch(st.DDL)
-		if m == nil || storeUnquote(m[1]) != "public" || strings.HasSuffix(st.DDL, owner) || grant.MatchString(st.DDL) || storeValidRe.MatchString(st.DDL) {
+		if m == nil || strings.HasSuffix(st.DDL, owner) || grant.MatchString(st.DDL) || storeValidRe.MatchString(st.DDL) {
+			continue
+		}
+		schema := storeUnquote(m[1])
+		if schema == "archive" {
+			// Product foreign keys can depend on additional unique keys on core
+			// tables. Keep those additions, but never export removals of newer
+			// core objects when bootstrapping an older database.
+			if strings.HasPrefix(st.DDL, "CREATE UNIQUE INDEX ") ||
+				(strings.HasPrefix(st.DDL, "ALTER TABLE ") && strings.Contains(st.DDL, " ADD CONSTRAINT ") && strings.Contains(st.DDL, " UNIQUE USING INDEX ")) {
+				out["archive."+storeUnquote(m[2])+".sql"] += strings.TrimSuffix(st.DDL, ";") + ";\n"
+			}
+			continue
+		}
+		if schema != "public" {
 			continue
 		}
 		name := storeUnquote(m[2])
@@ -267,7 +282,6 @@ func (s *pgStore) SchemaFiles(ctx context.Context) (map[string]string, error) {
 			}
 		}
 	}
-	out := map[string]string{}
 	for i, d := range ddl {
 		out[file[subject[i]]+".sql"] += d + ";\n"
 	}
