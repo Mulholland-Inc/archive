@@ -237,7 +237,11 @@
   @media (max-width: 767px) {
     .app { display: block; }
     .app::before { content: none; }
-    .top { display: flex; flex: none; align-items: center; justify-content: space-between; padding: var(--bar-inset); }
+    .top { display: grid; flex: none; grid-template-columns: var(--bar-inset) var(--size-bar) minmax(0, 1fr) var(--size-bar) var(--bar-inset); align-items: center; height: var(--bar); padding: 0; }
+    .top::before, .top::after { content: ''; }
+    .top::after { grid-column: 5; }
+    .top > :global(a) { grid-column: 4; }
+    .top > :global(.people) { grid-column: 3; justify-self: center; }
     .top :global(.button) { width: var(--size-bar); height: var(--size-bar); color: var(--text); }
     .top :global(.button svg.icon) { width: var(--text-xl); height: var(--text-xl); }
     .native :global(.button) { visibility: hidden; }
