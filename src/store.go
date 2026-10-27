@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -83,7 +82,6 @@ type pgStore struct {
 	ddl      *sql.DB
 	cfg      *pgx.ConnConfig
 	prefix   string
-	dir      string
 }
 
 type SchemaStatement struct {
@@ -109,13 +107,13 @@ func (p *SchemaPlan) blocked() []string {
 	return out
 }
 
-func OpenStore(ctx context.Context, dsn, prefix, password, dir string) (*pgStore, error) {
+func OpenStore(ctx context.Context, dsn, prefix, password string) (*pgStore, error) {
 	cfg, err := pgx.ParseConfig(dsn)
 	if err != nil {
 		return nil, err
 	}
 	cfg.RuntimeParams["search_path"] = "public"
-	s := &pgStore{cfg: cfg, prefix: prefix, dir: filepath.Join(dir, "schema"), ddl: stdlib.OpenDB(*cfg.Copy())}
+	s := &pgStore{cfg: cfg, prefix: prefix, ddl: stdlib.OpenDB(*cfg.Copy())}
 	if s.sys, err = storePool(ctx, dsn, nil); err == nil {
 		err = s.bootstrap(ctx, password)
 	}
@@ -153,81 +151,120 @@ func (s *pgStore) bootstrap(ctx context.Context, password string) error {
 	if err := pgx.BeginFunc(ctx, s.sys, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, storeLock)
 		if err == nil {
-			_, err = tx.Exec(ctx, storeDropSource)
+			_, err = tx.Exec(ctx, storeDropOld)
 		}
 		return err
 	}); err != nil {
 		return err
 	}
-	files, err := s.SchemaFiles(ctx)
-	if err != nil {
-		return err
-	}
 	var rev string
 	s.sys.QueryRow(ctx, storeRevision).Scan(&rev)
-	if _, err := os.Stat(s.dir); err != nil && strings.HasSuffix(rev, ":"+s.hash(files)) {
+	if strings.HasSuffix(rev, ":"+s.hash()) {
 		return nil
 	}
 	p, err := s.Apply(ctx, nil, nil, false, false)
 	if err != nil && p != nil && len(p.blocked()) > 0 {
-		fmt.Fprintf(os.Stderr, "archive: schema not applied at startup, it would delete data:\n  %s\nrun archive schema apply -allow-drop, or push DDL files that keep those tables\n", strings.Join(p.blocked(), "\n  "))
+		fmt.Fprintf(os.Stderr, "archive: archive.sql not applied at startup, it would delete data:\n  %s\nrun archive schema pull dir, then archive schema apply dir -allow-drop\n", strings.Join(p.blocked(), "\n  "))
 		return nil
 	}
 	return err
 }
 
-const storeDropSource = `DO $$ BEGIN
+const storeDropOld = `DO $$ BEGIN
     IF to_regclass('archive.source') IS NOT NULL THEN
         DELETE FROM archive.secret WHERE table_name = 'source';
         DROP TABLE archive.source;
     END IF;
+    DROP TABLE IF EXISTS archive.schema_file;
 END $$`
 
 func (s *pgStore) expand(sql string) string { return strings.ReplaceAll(sql, "{p}", s.prefix) }
 
-func (s *pgStore) hash(files map[string]string) string {
-	h := sha256.New()
-	h.Write([]byte(s.expand(storeSchema)))
-	for _, name := range specKeys(files) {
-		fmt.Fprintf(h, "\x00%s\x00%s", name, files[name])
-	}
-	return hex.EncodeToString(h.Sum(nil))
+func (s *pgStore) hash() string {
+	h := sha256.Sum256([]byte(s.expand(storeSchema)))
+	return hex.EncodeToString(h[:])
 }
 
 const storeMinTimeout = time.Minute
 
 var storeFileRe = regexp.MustCompile(`^[a-z0-9_][a-z0-9_.-]*\.sql$`)
 
-func (s *pgStore) SchemaFiles(ctx context.Context) (map[string]string, error) {
-	return s.readFiles(ctx, s.ddl)
+var (
+	storeSubjectRe = regexp.MustCompile(`("(?:[^"]|"")+"|[a-z_][a-z0-9_$]*)\.("(?:[^"]|"")+"|[a-z_][a-z0-9_$]*)`)
+	storeValidRe   = regexp.MustCompile(`^ALTER TABLE \S+ VALIDATE CONSTRAINT `)
+)
+
+func storeUnquote(id string) string {
+	if strings.HasPrefix(id, `"`) {
+		return strings.ReplaceAll(id[1:len(id)-1], `""`, `"`)
+	}
+	return id
 }
 
-func (s *pgStore) readFiles(ctx context.Context, q interface {
-	QueryRowContext(context.Context, string, ...any) *sql.Row
-}) (map[string]string, error) {
+func (s *pgStore) withTemp(ctx context.Context, fn func(f tempdb.Factory, tmp *sql.DB) error) error {
+	f, err := tempdb.NewOnInstanceFactory(ctx, s.openDB, tempdb.WithRootDatabase(s.cfg.Database))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	tmp, err := f.Create(ctx)
+	if err != nil {
+		return err
+	}
+	defer tmp.Close(context.WithoutCancel(ctx))
+	if _, err := tmp.ConnPool.ExecContext(ctx, "SET statement_timeout = 0; "+s.expand(storeSchema)); err != nil {
+		return fmt.Errorf("archive.sql: %w", err)
+	}
+	return fn(f, tmp.ConnPool)
+}
+
+func (s *pgStore) SchemaFiles(ctx context.Context) (map[string]string, error) {
+	var plan diff.Plan
+	if err := s.withTemp(ctx, func(f tempdb.Factory, tmp *sql.DB) (err error) {
+		plan, err = diff.Generate(ctx, diff.DBSchemaSource(tmp), diff.DBSchemaSource(s.ddl), diff.WithTempDbFactory(f), diff.WithDoNotValidatePlan(),
+			diff.WithIncludeSchemas("archive", "public"), diff.WithNoConcurrentIndexOps(), diff.WithDisableCheckFunctionBodies())
+		return err
+	}); err != nil {
+		return nil, fmt.Errorf("schema: %w", err)
+	}
+	owner := ` OWNER TO ` + pgIdent(s.cfg.User)
+	grant := regexp.MustCompile(`^GRANT (SELECT|INSERT|UPDATE|DELETE) ON \S+ TO ` + regexp.QuoteMeta(pgIdent(s.prefix+"_user")) + `$`)
+	var ddl, subject []string
+	tables := map[string]bool{}
+	for _, st := range plan.Statements {
+		m := storeSubjectRe.FindStringSubmatch(st.DDL)
+		if m == nil || storeUnquote(m[1]) != "public" || strings.HasSuffix(st.DDL, owner) || grant.MatchString(st.DDL) || storeValidRe.MatchString(st.DDL) {
+			continue
+		}
+		name := storeUnquote(m[2])
+		if strings.HasPrefix(st.DDL, "CREATE TABLE ") {
+			tables[name] = true
+		}
+		ddl = append(ddl, strings.ReplaceAll(strings.ReplaceAll(st.DDL, ` COLLATE "pg_catalog"."default"`, ""), " NOT VALID", ""))
+		subject = append(subject, name)
+	}
+	file := map[string]string{}
+	for name := range tables {
+		file[name] = name
+	}
+	for i, name := range subject {
+		if file[name] != "" {
+			continue
+		}
+		file[name] = name
+		used := regexp.MustCompile(`(^|[^a-z0-9_$])` + regexp.QuoteMeta(name) + `($|[^a-z0-9_$])`)
+		for j, d := range ddl {
+			if j != i && tables[subject[j]] && used.MatchString(d) {
+				file[name] = subject[j]
+				break
+			}
+		}
+	}
 	out := map[string]string{}
-	var ok bool
-	if err := q.QueryRowContext(ctx, `SELECT to_regclass('archive.schema_file') IS NOT NULL`).Scan(&ok); err != nil {
-		return nil, err
+	for i, d := range ddl {
+		out[file[subject[i]]+".sql"] += d + ";\n"
 	}
-	if ok {
-		var b []byte
-		if err := q.QueryRowContext(ctx, `SELECT coalesce(jsonb_object_agg(name, body), '{}') FROM archive.schema_file`).Scan(&b); err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(b, &out); err != nil || len(out) > 0 {
-			return out, err
-		}
-	}
-	paths, err := filepath.Glob(filepath.Join(s.dir, "*.sql"))
-	for _, p := range paths {
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return nil, err
-		}
-		out[filepath.Base(p)] = string(b)
-	}
-	return out, err
+	return out, nil
 }
 
 func storeCheckFiles(files map[string]string) error {
@@ -271,7 +308,7 @@ func (s *pgStore) Apply(ctx context.Context, files map[string]string, renames []
 	}
 	defer tx.Rollback()
 	if files == nil {
-		if files, err = s.readFiles(ctx, tx); err != nil {
+		if files, err = s.SchemaFiles(ctx); err != nil {
 			return nil, err
 		}
 	}
@@ -306,21 +343,11 @@ func (s *pgStore) Apply(ctx context.Context, files map[string]string, renames []
 			return p, fmt.Errorf("schema: %s: %w", st.DDL, err)
 		}
 	}
-	b, err := json.Marshal(files)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := tx.ExecContext(ctx, `SET LOCAL statement_timeout = 0; DELETE FROM archive.schema_file; INSERT INTO archive.revision (hash) VALUES ('`+s.hash(files)+`')`); err != nil {
-		return nil, err
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO archive.schema_file (name, body) SELECT key, value FROM jsonb_each_text($1::jsonb)`, string(b)); err != nil {
+	if _, err := tx.ExecContext(ctx, `SET LOCAL statement_timeout = 0; INSERT INTO archive.revision (hash) VALUES ('`+s.hash()+`')`); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
-	}
-	if _, err := os.Stat(s.dir); err == nil {
-		os.Rename(s.dir, s.dir+".imported")
 	}
 	p.Applied = true
 	return storeWithRenames(p, renames), nil
@@ -354,37 +381,30 @@ func storeCheckRenames(renames []string) error {
 }
 
 func (s *pgStore) plan(ctx context.Context, src sqldb.Queryable, files map[string]string, allowDrop bool) (*SchemaPlan, error) {
-	f, err := tempdb.NewOnInstanceFactory(ctx, s.openDB, tempdb.WithRootDatabase(s.cfg.Database))
-	if err != nil {
+	var plan diff.Plan
+	if err := s.withTemp(ctx, func(f tempdb.Factory, tmp *sql.DB) error {
+		if err := storeLoad(ctx, tmp, files); err != nil {
+			return err
+		}
+		var b []byte
+		if err := tmp.QueryRowContext(ctx, catalogSQL).Scan(&b); err != nil {
+			return err
+		}
+		cat, err := catalogParse(b)
+		if err != nil {
+			return err
+		}
+		if err := cat.Check(); err != nil {
+			return err
+		}
+		plan, err = diff.Generate(ctx, diff.DBSchemaSource(src), diff.DBSchemaSource(tmp), diff.WithTempDbFactory(f),
+			diff.WithIncludeSchemas("archive", "public"), diff.WithNoConcurrentIndexOps(), diff.WithDisableCheckFunctionBodies())
+		if err != nil {
+			return fmt.Errorf("schema plan: %w", err)
+		}
+		return nil
+	}); err != nil {
 		return nil, err
-	}
-	defer f.Close()
-	tmp, err := f.Create(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tmp.Close(context.WithoutCancel(ctx))
-	if _, err := tmp.ConnPool.ExecContext(ctx, "SET statement_timeout = 0; "+s.expand(storeSchema)); err != nil {
-		return nil, fmt.Errorf("archive.sql: %w", err)
-	}
-	if err := storeLoad(ctx, tmp.ConnPool, files); err != nil {
-		return nil, err
-	}
-	var b []byte
-	if err := tmp.ConnPool.QueryRowContext(ctx, catalogSQL).Scan(&b); err != nil {
-		return nil, err
-	}
-	cat, err := catalogParse(b)
-	if err != nil {
-		return nil, err
-	}
-	if err := cat.Check(); err != nil {
-		return nil, err
-	}
-	plan, err := diff.Generate(ctx, diff.DBSchemaSource(src), diff.DBSchemaSource(tmp.ConnPool), diff.WithTempDbFactory(f),
-		diff.WithIncludeSchemas("archive", "public"), diff.WithNoConcurrentIndexOps(), diff.WithDisableCheckFunctionBodies())
-	if err != nil {
-		return nil, fmt.Errorf("schema plan: %w", err)
 	}
 	out := &SchemaPlan{Statements: []SchemaStatement{}}
 	for _, st := range plan.Statements {

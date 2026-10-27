@@ -224,7 +224,33 @@ func (in *e2eInst) writeDir(name string, files map[string]string) string {
 
 func (in *e2eInst) push(files map[string]string, args ...string) string {
 	in.t.Helper()
-	return in.must(append([]string{"schema", "push", in.writeDir("ddl", files)}, args...)...)
+	return in.must(append([]string{"schema", "apply", in.writeDir("ddl", files)}, args...)...)
+}
+
+func (in *e2eInst) pulled() map[string]string {
+	in.t.Helper()
+	dir := filepath.Join(in.dir, "pulled")
+	os.RemoveAll(dir)
+	in.must("schema", "pull", dir)
+	paths, _ := filepath.Glob(filepath.Join(dir, "*"))
+	files := map[string]string{}
+	for _, p := range paths {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			in.t.Fatal(err)
+		}
+		files[filepath.Base(p)] = string(b)
+	}
+	return files
+}
+
+func (in *e2eInst) roundTrips() map[string]string {
+	in.t.Helper()
+	files := in.pulled()
+	if p := decode[SchemaPlan](in.t, in.must("schema", "plan", in.writeDir("ddl", files))); len(p.Statements) != 0 {
+		in.t.Errorf("applying the pulled schema plans %d statements: %+v", len(p.Statements), p.Statements)
+	}
+	return files
 }
 
 func (in *e2eInst) psql(user, sql string) string {
@@ -390,12 +416,24 @@ func TestSchemaPushNormalizesMessyDutchInputAndBlocksDrops(t *testing.T) {
 	if !plan.Applied || !slices.ContainsFunc(plan.Statements, func(s SchemaStatement) bool { return strings.Contains(s.DDL, `CREATE TABLE "public"."invoice"`) }) {
 		t.Fatalf("schema push: %+v", plan)
 	}
-	if p := decode[SchemaPlan](t, in.must("schema", "plan")); len(p.Statements) != 0 {
-		t.Fatalf("plan after push is not empty: %+v", p.Statements)
+	if files := in.roundTrips(); !slices.Equal(slices.Sorted(maps.Keys(files)), slices.Sorted(maps.Keys(e2eSchema))) || !strings.Contains(files["invoice.sql"], "CREATE TYPE \"public\".\"invoice_status\"") ||
+		!strings.Contains(files["contact.sql"], "CREATE DOMAIN \"public\".\"zip\"") || !strings.Contains(files["person.sql"], "REFERENCES company(id)") {
+		t.Errorf("schema pull: %v", files)
 	}
-	if pulled := in.must("schema", "pull"); !strings.Contains(pulled, "-- invoice.sql") || !strings.Contains(pulled, "invoice_status") {
-		t.Errorf("schema pull: %s", pulled)
+	extra := map[string]string{"zz.sql": `CREATE INDEX person_name ON person (lower(name)) WHERE name <> '';
+CREATE FUNCTION touch() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.updated_at = now(); RETURN NEW; END $$;
+CREATE TRIGGER person_touch BEFORE UPDATE ON person FOR EACH ROW EXECUTE FUNCTION touch();
+CREATE TYPE mood AS ENUM ('good', 'bad');
+COMMENT ON TABLE person IS 'Someone''s record';
+COMMENT ON COLUMN company.name IS 'Legal name';`}
+	in.push(with(e2eSchema, "zz.sql", extra["zz.sql"]))
+	files := in.roundTrips()
+	if _, ok := files["zz.sql"]; ok || !strings.Contains(files["person.sql"], "EXECUTE FUNCTION touch()") || !strings.Contains(files["person.sql"], "FUNCTION public.touch()") ||
+		!strings.Contains(files["person.sql"], "person_name") || !strings.Contains(files["person.sql"], `'Someone''s record'`) || !strings.Contains(files["company.sql"], "'Legal name'") ||
+		!strings.Contains(files["mood.sql"], "CREATE TYPE") || strings.Contains(files["person.sql"], "OWNER TO") || strings.Contains(files["person.sql"], "GRANT") {
+		t.Errorf("schema pull with an index, trigger, unused enum and comments: %v", files)
 	}
+	in.push(e2eSchema)
 
 	r := decode[row](t, in.must("create", "contact", `{"name":" Ann ","email":"Ann@EXAMPLE.com","phone":"06 12345678","birthday":"3-4-1990","balance":"€ 1.234,50","tags":"vip","zip":"1012 LG"}`))
 	want := map[string]string{"phone": "+31612345678", "birthday": "1990-04-03", "email": "Ann@example.com", "zip": "1012 LG",
@@ -442,12 +480,12 @@ func TestSchemaPushNormalizesMessyDutchInputAndBlocksDrops(t *testing.T) {
 	}
 
 	noTags := with(e2eSchema, "contact.sql", strings.Replace(e2eSchema["contact.sql"], "    tags       text[],\n", "", 1))
-	out, errs, err := in.run("", "schema", "push", in.writeDir("ddl", noTags))
+	out, errs, err := in.run("", "schema", "apply", in.writeDir("ddl", noTags))
 	if err == nil || !strings.Contains(errs, "deletes data") || !strings.Contains(errs, `DROP COLUMN "tags"`) {
 		t.Fatalf("drop without -allow-drop: %v %s%s", err, out, errs)
 	}
 	if pulled := in.must("schema", "pull"); !strings.Contains(pulled, "tags") {
-		t.Errorf("blocked push changed the files")
+		t.Errorf("a blocked apply changed the schema")
 	}
 	plan = decode[SchemaPlan](t, in.push(noTags, "-allow-drop"))
 	if !plan.Applied || len(plan.Statements) != 1 || plan.Statements[0].Hazards[0].Type != "DELETES_DATA" {
@@ -458,15 +496,15 @@ func TestSchemaPushNormalizesMessyDutchInputAndBlocksDrops(t *testing.T) {
 	}
 
 	bad := map[string]string{"bad.sql": "CREATE TABLE loose (id uuid PRIMARY KEY, name text);"}
-	if errs := in.fails("schema", "push", in.writeDir("bad", with(noTags, "bad.sql", bad["bad.sql"]))); !strings.Contains(errs, "loose.space: want space uuid NOT NULL REFERENCES archive.space") ||
+	if errs := in.fails("schema", "apply", in.writeDir("bad", with(noTags, "bad.sql", bad["bad.sql"]))); !strings.Contains(errs, "loose.space: want space uuid NOT NULL REFERENCES archive.space") ||
 		!strings.Contains(errs, "ROW LEVEL SECURITY") || !strings.Contains(errs, "loose.search") {
 		t.Errorf("table without the required columns: %s", errs)
 	}
-	if errs := in.fails("schema", "push", in.writeDir("bad", with(noTags, "bad.sql", "CREATE TABLE oops ("))); !strings.Contains(errs, "bad.sql:") {
+	if errs := in.fails("schema", "apply", in.writeDir("bad", with(noTags, "bad.sql", "CREATE TABLE oops ("))); !strings.Contains(errs, "bad.sql:") {
 		t.Errorf("broken DDL: %s", errs)
 	}
-	if _, err := os.Stat(filepath.Join(in.dir, "schema", "bad.sql")); err == nil {
-		t.Error("a rejected file was written")
+	if n := in.psql("archive", "SELECT count(*) FROM pg_tables WHERE tablename IN ('loose', 'oops')"); n != "0" {
+		t.Errorf("%s rejected tables created", n)
 	}
 }
 
@@ -500,6 +538,9 @@ func TestDemoVaultLoadsOnceWithLinkedRowsAndFiles(t *testing.T) {
 	got := decode[struct{ Result map[string]any }](t, res).Result
 	if fmt.Sprint(got["files"]) != "35" || fmt.Sprint(got["receipts"]) == "0" {
 		t.Errorf("files and links: %v", got)
+	}
+	if files := in.roundTrips(); len(files) != 18 || !strings.Contains(files["payment_card.sql"], `"number" archive.card`) || !strings.Contains(files["payment_card.sql"], "REFERENCES person(id)") {
+		t.Errorf("demo schema pull: %v", slices.Sorted(maps.Keys(files)))
 	}
 	if _, errs, err := load(); err == nil || !strings.Contains(errs, "already has people") {
 		t.Errorf("second load: %v %s", err, errs)
@@ -942,7 +983,7 @@ func TestDockerImageServesAndAcceptsCLICommandsFromDockerExec(t *testing.T) {
 		}
 	}
 	docker(e2eSchema["company.sql"], "exec", "-i", name, "sh", "-c", "mkdir -p /tmp/ddl && cat > /tmp/ddl/company.sql")
-	docker("", "exec", name, "archive", "schema", "push", "/tmp/ddl")
+	docker("", "exec", name, "archive", "schema", "apply", "/tmp/ddl")
 	docker("", "exec", name, "archive", "create", "company", `{"name":"Docker Inc"}`)
 	if out := docker("", "exec", name, "archive", "list", "company"); !strings.Contains(out, "Docker Inc") {
 		t.Fatalf("docker exec list: %s", out)
@@ -1441,15 +1482,20 @@ func TestTwoInstancesShareOnePostgresAndBlobStore(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(a.dir, "schema")); err == nil {
 			t.Error("schema files written to the data directory")
 		}
+		st, _ = call(t, "POST", srvA.url+"/api/schema/apply", tok, map[string]any{"files": with(schema.Files, "note.sql", e2eNote)}, nil)
+		wantStatus(t, st, 200, "apply note on a")
+		call(t, "GET", srvB.url+"/api/schema", tok, nil, &schema)
+		if !strings.Contains(schema.Files["note.sql"], "CREATE INDEX note_search ON public.note USING gin (search)") {
+			t.Errorf("note.sql on b: %v", schema.Files)
+		}
+		st, _ = call(t, "POST", srvB.url+"/api/note", tok, map[string]any{"title": "Shared"}, nil)
+		wantStatus(t, st, 201, "create on b in a table applied on a")
 	})
 
 	t.Run("AFreshContainerKeepsTheSchema", func(t *testing.T) {
 		c := a.twin()
-		if out := c.must("schema", "pull"); !strings.Contains(out, "-- invoice.sql") || !strings.Contains(out, "invoice_status") {
-			t.Fatalf("pull on a fresh container: %s", out)
-		}
-		if p := decode[SchemaPlan](t, c.must("schema", "plan")); len(p.Statements) != 0 {
-			t.Errorf("plan on a fresh container: %+v", p.Statements)
+		if files := c.roundTrips(); !strings.Contains(files["invoice.sql"], "invoice_status") {
+			t.Fatalf("pull on a fresh container: %v", files)
 		}
 		if n := a.psql("archive", "SELECT count(*) FROM company"); n != "1" {
 			t.Errorf("%s companies after a fresh container started", n)
@@ -1505,28 +1551,25 @@ func TestTwoInstancesShareOnePostgresAndBlobStore(t *testing.T) {
 	})
 }
 
-func TestOldDataDirSchemaFilesAreImportedOnce(t *testing.T) {
+func TestStoredSchemaFilesFromOlderVersionsAreDroppedAndTheTablesKept(t *testing.T) {
 	t.Parallel()
 	in := newInst(t)
 	in.must("user", "add", "ann@example.com")
 	in.push(e2eSchema)
 	in.must("create", "company", `{"name":"Acme"}`)
-	in.psql("archive", "DELETE FROM archive.schema_file; INSERT INTO archive.revision (hash) VALUES ('old'); CREATE TABLE archive.source (id uuid PRIMARY KEY)")
-	in.writeDir("schema", e2eSchema)
-	if out := in.must("schema", "pull"); !strings.Contains(out, "-- invoice.sql") {
-		t.Fatalf("pull: %s", out)
+	in.psql("archive", `CREATE TABLE archive.schema_file (name text PRIMARY KEY, body text NOT NULL);
+INSERT INTO archive.schema_file (name, body) VALUES ('company.sql', 'CREATE TABLE stale (id uuid PRIMARY KEY)');
+INSERT INTO archive.revision (hash) VALUES ('old'); CREATE TABLE archive.source (id uuid PRIMARY KEY)`)
+	in.writeDir("schema", map[string]string{"company.sql": "CREATE TABLE stale (id uuid PRIMARY KEY)"})
+	files := in.roundTrips()
+	if !slices.Equal(slices.Sorted(maps.Keys(files)), slices.Sorted(maps.Keys(e2eSchema))) || strings.Contains(files["company.sql"], "stale") {
+		t.Errorf("schema after the upgrade: %v", files)
 	}
-	if n := in.psql("archive", "SELECT count(*) FROM archive.schema_file"); n != fmt.Sprint(len(e2eSchema)) {
-		t.Errorf("%s schema files imported", n)
-	}
-	if got := in.psql("archive", "SELECT to_regclass('archive.source') IS NULL"); got != "t" {
-		t.Error("archive.source is still there")
-	}
-	if _, err := os.Stat(filepath.Join(in.dir, "schema")); err == nil {
-		t.Error("the schema directory is still in place")
+	if got := in.psql("archive", "SELECT to_regclass('archive.schema_file') IS NULL AND to_regclass('archive.source') IS NULL AND to_regclass('stale') IS NULL"); got != "t" {
+		t.Error("archive.schema_file or archive.source is still there, or the stored files were applied")
 	}
 	if out := in.must("list", "company"); !strings.Contains(out, "Acme") {
-		t.Errorf("companies after the import: %s", out)
+		t.Errorf("companies after the upgrade: %s", out)
 	}
 }
 
@@ -1971,7 +2014,7 @@ return { planned: plan.statements.length, before: plan.applied, applied: done.ap
 			t.Errorf("apply: %v", got)
 		}
 		if files := in.must("schema", "pull"); !strings.Contains(files, "-- house.sql") {
-			t.Errorf("apply did not save the file: %s", files)
+			t.Errorf("schema pull lacks the applied table: %s", files)
 		}
 	})
 

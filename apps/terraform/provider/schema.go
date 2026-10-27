@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"maps"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -59,8 +58,8 @@ func (r *schemaResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 		Description: "The DDL of every user table: one CREATE TABLE per type, with RLS, policies and comments. Archive plans the difference to the database and applies it. Use one per instance.",
 		Attributes: map[string]schema.Attribute{
 			"id":      schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-			"content": schema.StringAttribute{Optional: true, Description: "All the DDL in one file, stored as " + schemaMain + ". Set this or files."},
-			"files":   schema.MapAttribute{Optional: true, ElementType: types.StringType, Description: "DDL files by name, like house.sql. Set this or content."},
+			"content": schema.StringAttribute{Optional: true, Description: "All the DDL in one string, applied as " + schemaMain + ". Set this or files."},
+			"files":   schema.MapAttribute{Optional: true, ElementType: types.StringType, Description: "DDL files by name, like house.sql. Set this or content. When the database drifts from them, they are read back as DDL generated from it, one <table>.sql per table."},
 			"allow_drop": schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false),
 				Description: "Apply statements that delete data, like dropping a table or a column. Renames are not detected; rename with ALTER ... RENAME first."},
 		},
@@ -94,16 +93,17 @@ func (r *schemaResource) Read(ctx context.Context, req resource.ReadRequest, res
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	var out struct {
-		Files map[string]string `json:"files"`
+	var plan struct {
+		Statements []any `json:"statements"`
 	}
-	if err := r.c.do(ctx, "GET", "/api/schema", nil, &out); err != nil {
-		resp.Diagnostics.AddError("Reading the schema failed", err.Error())
-		return
-	}
-	if body, ok := out.Files[schemaMain]; ok && len(out.Files) == 1 && m.Files == nil {
-		m.Content = types.StringValue(body)
-	} else if !maps.Equal(out.Files, m.files()) {
+	if err := r.c.do(ctx, "POST", "/api/schema/plan", map[string]any{"files": m.files()}, &plan); err != nil || len(plan.Statements) > 0 {
+		var out struct {
+			Files map[string]string `json:"files"`
+		}
+		if err := r.c.do(ctx, "GET", "/api/schema", nil, &out); err != nil {
+			resp.Diagnostics.AddError("Reading the schema failed", err.Error())
+			return
+		}
 		m.Content, m.Files = types.StringNull(), out.Files
 	}
 	m.ID = types.StringValue("schema")

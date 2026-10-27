@@ -68,7 +68,7 @@ func Open(ctx context.Context) (*Archive, error) {
 			}
 		}
 	}
-	st, err := OpenStore(ctx, dsn, prefix, authPassword(key), dir)
+	st, err := OpenStore(ctx, dsn, prefix, authPassword(key))
 	if err != nil {
 		stop()
 		return nil, fmt.Errorf("open store: %w", err)
