@@ -1,5 +1,10 @@
 <script>
   import { api, hidden, show } from './api.js';
+  import Button from './ui/Button.svelte';
+  import DataTable from './ui/DataTable.svelte';
+  import Heading from './ui/Heading.svelte';
+  import Note from './ui/Note.svelte';
+  import Panel from './ui/Panel.svelte';
 
   let { table } = $props();
   let rows = $state([]);
@@ -22,62 +27,14 @@
   page();
 </script>
 
-<h1>{table.name.replaceAll('_', ' ')}</h1>
-{#if table.description}<p class="lead">{table.description}</p>{/if}
-<div class="panel">
-  {#if error}<p class="error">{error}</p>{/if}
-  <div class="wrap">
-    <table>
-      <thead>
-        <tr>
-          {#each columns as c (c.name)}
-            <th title={c.description}>{c.name.replaceAll('_', ' ')}</th>
-          {/each}
-        </tr>
-      </thead>
-      <tbody>
-        {#each rows as r (r.id)}
-          <tr>
-            {#each columns as c (c.name)}
-              <td class:ref={c.ref}>{show(r[c.name])}</td>
-            {/each}
-          </tr>
-        {/each}
-      </tbody>
-    </table>
-  </div>
-  {#if !rows.length && !error}<p class="muted">Nothing here yet.</p>{/if}
-  {#if more}<button class="more" onclick={page}>Show more</button>{/if}
-</div>
+<Heading title={table.name.replaceAll('_', ' ')} description={table.description} />
+<Panel>
+  {#if error}<Note error>{error}</Note>{/if}
+  <DataTable {columns} {rows} cell={show} />
+  {#if !rows.length && !error}<Note>Nothing here yet.</Note>{/if}
+  {#if more}<div class="more"><Button onclick={page}>Show more</Button></div>{/if}
+</Panel>
 
 <style>
-  h1 { text-transform: capitalize; }
-  .wrap { overflow-x: auto; margin: 0 -8px; }
-  table { border-collapse: collapse; min-width: 100%; }
-  th {
-    text-align: left;
-    font-size: 14px;
-    font-weight: 400;
-    color: var(--text-2);
-    padding: 0 8px 12px;
-    border-bottom: 1px solid var(--line);
-    white-space: nowrap;
-    text-transform: capitalize;
-  }
-  td {
-    padding: 14px 8px;
-    border-bottom: 1px solid var(--line);
-    max-width: 320px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--text-2);
-    font-size: 15px;
-  }
-  td:first-child { color: var(--text); font-weight: 500; }
-  td.ref { font-family: var(--mono); font-size: 12px; color: var(--text-3); }
-  tbody tr:last-child td { border-bottom: 0; }
-  .error { color: var(--alarm); margin: 0 0 16px; }
-  .muted { margin: 0; }
-  .more { margin-top: 24px; }
+  .more { margin-top: var(--space-5); }
 </style>

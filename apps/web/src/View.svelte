@@ -1,6 +1,11 @@
 <script>
   import { api, hidden, show } from './api.js';
   import Table from './Table.svelte';
+  import Card from './ui/Card.svelte';
+  import Heading from './ui/Heading.svelte';
+  import ListItem from './ui/ListItem.svelte';
+  import Note from './ui/Note.svelte';
+  import Panel from './ui/Panel.svelte';
 
   let { view, types = {} } = $props();
   let rows = $state(null);
@@ -45,57 +50,43 @@
 {#if view.layout === 'table' || !view.by}
   <Table table={view} />
 {:else}
-  <h1>{view.name.replaceAll('_', ' ')}</h1>
-  {#if view.description}<p class="lead">{view.description}</p>{/if}
-  {#if error}<p class="error">{error}</p>{/if}
+  <Heading title={view.name.replaceAll('_', ' ')} description={view.description} />
+  {#if error}<Note error>{error}</Note>{/if}
   {#if view.layout === 'board'}
     <div class="board">
       {#each groups as [key, items] (key)}
-        <section>
-          <header><span>{key}</span><span class="count">{items.length}</span></header>
-          {#each items as r (r.id)}
-            <article>
-              <div class="title">{show(r[label])}</div>
-              {#each details as c (c.name)}
-                {#if show(r[c.name])}<div class="detail">{show(r[c.name])}</div>{/if}
-              {/each}
-            </article>
-          {/each}
-        </section>
+        <div class="lane">
+          <Panel compact>
+            <header><span>{key}</span><span class="count">{items.length}</span></header>
+            {#each items as r (r.id)}
+              <Card title={show(r[label])} details={details.map((c) => show(r[c.name])).filter(Boolean)} />
+            {/each}
+          </Panel>
+        </div>
       {/each}
     </div>
   {:else}
-    <div class="panel">
+    <Panel>
       {#each groups as [month, items] (month)}
         <h2>{month}</h2>
         {#each items as r (r.id)}
-          <div class="day">
-            <span class="date">{new Date(r[view.by]).toLocaleDateString(undefined, { day: 'numeric', weekday: 'short' })}</span>
-            <span class="title">{show(r[label])}</span>
-            {#if details[0]}<span class="detail">{show(r[details[0].name])}</span>{/if}
-          </div>
+          <ListItem
+            lead={new Date(r[view.by]).toLocaleDateString(undefined, { day: 'numeric', weekday: 'short' })}
+            meta={details[0] ? [show(r[details[0].name])] : []}
+          >{show(r[label])}</ListItem>
         {/each}
       {:else}
-        <p class="muted">{rows ? 'Nothing with a date yet.' : ''}</p>
+        <Note>{rows ? 'Nothing with a date yet.' : ''}</Note>
       {/each}
-    </div>
+    </Panel>
   {/if}
 {/if}
 
 <style>
-  h1 { text-transform: capitalize; }
-  .board { display: flex; gap: 12px; margin-top: 32px; overflow-x: auto; padding-bottom: 8px; align-items: flex-start; }
-  section { flex: 0 0 280px; background: var(--panel); border-radius: 28px; padding: 18px; }
-  section header { display: flex; justify-content: space-between; padding: 0 6px 12px; text-transform: capitalize; font-weight: 500; }
-  .count { color: var(--text-3); font-weight: 400; }
-  article { background: var(--raised); border-radius: 16px; padding: 12px 14px; margin-top: 8px; }
-  article .title { font-weight: 500; }
-  .detail { color: var(--text-2); font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  h2 { font: 500 28px/1.2 var(--display); letter-spacing: -0.02em; margin: 24px 0 8px; }
+  .board { display: flex; align-items: flex-start; gap: var(--space-3); margin-top: var(--space-6); padding-bottom: var(--space-2); overflow-x: auto; }
+  .lane { flex: 0 0 var(--lane); }
+  header { display: flex; justify-content: space-between; padding: 0 var(--space-2) var(--space-3); font-weight: var(--weight-medium); text-transform: capitalize; }
+  .count { color: var(--text-3); font-weight: var(--weight); }
+  h2 { font: var(--weight-medium) var(--display-sm)/var(--leading-tight) var(--display); letter-spacing: var(--tracking-tight); margin: var(--space-5) 0 var(--space-2); }
   h2:first-child { margin-top: 0; }
-  .day { display: grid; grid-template-columns: 96px 1fr auto; gap: 16px; align-items: baseline; padding: 10px 0; border-bottom: 1px solid var(--line); }
-  .date { color: var(--text-2); font-size: 14px; }
-  .day .detail { text-align: right; }
-  .error { color: var(--alarm); }
-  .muted { margin: 0; }
 </style>

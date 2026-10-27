@@ -1,7 +1,11 @@
 <script>
-  import { api, go, icon, Unauthorized } from './api.js';
-  import Icon from './Icon.svelte';
-  import Logo from './Logo.svelte';
+  import { api, go, Unauthorized } from './api.js';
+  import Avatar from './ui/Avatar.svelte';
+  import Button from './ui/Button.svelte';
+  import Heading from './ui/Heading.svelte';
+  import Label from './ui/Label.svelte';
+  import Logo from './ui/Logo.svelte';
+  import NavItem from './ui/NavItem.svelte';
   import SignIn from './SignIn.svelte';
   import Table from './Table.svelte';
   import View from './View.svelte';
@@ -13,7 +17,6 @@
   let tables = $state([]);
   let views = $state([]);
   let types = $state({});
-  let icons = $state({});
   let path = $state(location.pathname);
 
   addEventListener('popstate', () => (path = location.pathname));
@@ -30,14 +33,12 @@
   });
   const table = (name) => tables.find((t) => t.name === name);
   const who = $derived(me ? me.actor.name || me.actor.email : '');
-  const initials = $derived(who.split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join(''));
 
   async function load() {
     try {
       me = await api('/auth/me');
       const cat = await api('/api/types');
       const all = Object.values(cat.tables).sort((a, b) => a.name.localeCompare(b.name));
-      icons = Object.fromEntries(await Promise.all(all.map(async (t) => [t.name, await icon(t.icon)])));
       types = cat.types;
       tables = all.filter((t) => t.kind === 'table');
       views = all.filter((t) => t.kind === 'view');
@@ -61,28 +62,26 @@
 {:else if me}
   <div class="app">
     <aside>
-      <a class="brand" href="/files"><Logo height={19} /></a>
-      <div class="rows">
-        <a class="row" href="/files" class:on={route.first === 'files'}><Icon name="folder" size={22} />Files</a>
-        <a class="row" href="/pages" class:on={route.first === 'pages'}><Icon name="page" size={22} />Pages</a>
+      <a class="brand" href="/files"><Logo /></a>
+      <nav>
+        <NavItem href="/files" icon="folder" active={route.first === 'files'}>Files</NavItem>
+        <NavItem href="/pages" icon="page" active={route.first === 'pages'}>Pages</NavItem>
         {#if views.length}
-          <div class="label">Views</div>
+          <Label>Views</Label>
           {#each views as v (v.name)}
-            {@const ViewIcon = icons[v.name]}
-            <a class="row" href="/views/{v.name}" class:on={route.first === 'views' && route.second === v.name}><ViewIcon size={21} strokeWidth={1.75} />{v.name.replaceAll('_', ' ')}</a>
+            <NavItem href="/views/{v.name}" icon={v.icon} active={route.first === 'views' && route.second === v.name}>{v.name.replaceAll('_', ' ')}</NavItem>
           {/each}
         {/if}
-        <div class="label">Tables</div>
+        <Label>Tables</Label>
         {#each tables as t (t.name)}
-          {@const TableIcon = icons[t.name]}
-          <a class="row" href="/{t.name}" class:on={route.first === t.name}><TableIcon size={21} strokeWidth={1.75} />{t.name.replaceAll('_', ' ')}</a>
+          <NavItem href="/{t.name}" icon={t.icon} active={route.first === t.name}>{t.name.replaceAll('_', ' ')}</NavItem>
         {/each}
-      </div>
-      <div class="foot">
-        <span class="avatar">{initials}</span>
+      </nav>
+      <footer>
+        <Avatar name={who} />
         <span class="name">{who}</span>
-        <button class="quiet" title="Sign out" onclick={signOut}><Icon name="signout" /></button>
-      </div>
+        <Button quiet icon="signout" title="Sign out" aria-label="Sign out" onclick={signOut} />
+      </footer>
     </aside>
     <main>
       {#if route.first === 'files'}
@@ -105,59 +104,26 @@
           <Table table={table(route.first)} />
         {/key}
       {:else}
-        <h1>Not here</h1>
-        <p class="lead">There is no table, view or page at this address.</p>
+        <Heading title="Not here" description="There is no table, view or page at this address." />
       {/if}
     </main>
   </div>
 {/if}
 
 <style>
-  .app { display: grid; grid-template-columns: 285px minmax(0, 1fr); height: 100vh; }
-  aside { display: flex; flex-direction: column; min-height: 0; padding: 0 10px; }
-  .brand { display: flex; align-items: center; height: 56px; padding: 0 10px; color: var(--text); }
-  .rows { flex: 1; overflow-y: auto; min-height: 0; padding-bottom: 12px; scrollbar-width: none; }
-  .rows::-webkit-scrollbar { display: none; }
-  .row {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    height: 40px;
-    padding: 0 10px;
-    border-radius: 999px;
-    font-weight: 450;
-    letter-spacing: -0.02em;
-    text-transform: capitalize;
-    color: var(--text);
-    transition: background var(--dur) var(--ease);
-  }
-  .row :global(svg) { flex: none; }
-  .row:hover { background: var(--hover); }
-  .row.on { background: var(--cream); color: var(--cream-ink); font-weight: 600; }
-  .label { font-size: 14px; line-height: 37px; padding: 8px 10px 0; color: var(--text-2); }
-  .foot { display: flex; align-items: center; gap: 10px; height: 60px; padding: 0 6px 0 10px; border-top: 1px solid var(--line); }
-  .avatar {
-    display: grid;
-    place-items: center;
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    background: var(--cream);
-    color: var(--cream-ink);
-    font-size: 10px;
-    font-weight: 700;
-    flex: none;
-  }
-  .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
-  main { overflow: auto; min-width: 0; padding: 72px 48px 48px; }
+  .app { display: grid; grid-template-columns: var(--sidebar) minmax(0, 1fr); height: 100vh; }
+  aside { display: flex; flex-direction: column; min-height: 0; padding: 0 var(--space-2); }
+  .brand { display: flex; align-items: center; height: var(--size-xl); padding: 0 var(--space-3); }
+  nav { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: var(--space-3); scrollbar-width: none; }
+  footer { display: flex; align-items: center; gap: var(--space-3); height: var(--size-xl); padding: 0 var(--space-1) 0 var(--space-3); border-top: var(--stroke) solid var(--line); }
+  .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  main { overflow: auto; min-width: 0; padding: var(--space-8) var(--space-7) var(--space-7); }
   @media (max-width: 767px) {
     .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
-    aside { flex-direction: row; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--line); }
-    .brand { padding: 0 8px; height: 44px; }
-    .rows { display: flex; gap: 2px; overflow-x: auto; padding: 0; }
-    .label, .foot { display: none; }
-    .row { white-space: nowrap; flex: none; }
-    .row :global(svg) { display: none; }
-    main { padding: 32px 16px; }
+    aside { flex-direction: row; align-items: center; padding: var(--space-1) var(--space-2); border-bottom: var(--stroke) solid var(--line); }
+    .brand { height: var(--size-lg); padding: 0 var(--space-2); }
+    nav { display: flex; gap: var(--space-1); overflow-x: auto; padding: 0; }
+    nav > :global(div), footer { display: none; }
+    main { padding: var(--space-6) var(--space-4); }
   }
 </style>

@@ -13,6 +13,7 @@
 <script>
   import { onMount } from 'svelte';
   import { api } from './api.js';
+  import Avatar from './ui/Avatar.svelte';
 
   let { id, name } = $props();
   let title = $state('');
@@ -21,9 +22,9 @@
   let root;
 
   const types = ['paragraph', 'heading1', 'heading2', 'heading3', 'bullet', 'todo', 'quote', 'code'];
-  const colors = ['#f7768e', '#7aa2f7', '#9ece6a', '#bb9af7', '#ff9e64', '#7dcfff', '#e0af68', '#2ac3de'];
   const site = 2 + Math.floor(Math.random() * 2 ** 40);
-  const me = { name, color: colors[site % colors.length] };
+  const me = { name };
+  const peer = (p) => (p.agent ? 'agent' : p.site % 8);
   const runes = (s) => [...s].length;
   const caret = (input) => runes(input.value.slice(0, input.selectionStart));
 
@@ -133,6 +134,10 @@
       return input.offsetLeft + parseFloat(cs.paddingLeft) - input.scrollLeft + measure.measureText([...input.value].slice(0, offset).join('')).width;
     }
 
+    function place(el, x, y, w, h) {
+      for (const [k, v] of Object.entries({ x, y, w, h })) el.style.setProperty(`--${k}`, `${v}px`);
+    }
+
     function cursors() {
       for (const el of root.querySelectorAll('.caret, .sel')) el.remove();
       const peers = call('peers');
@@ -143,17 +148,16 @@
         const input = block.querySelector('input');
         const top = input.offsetTop + 4, h = input.offsetHeight - 8;
         const c = document.createElement('div');
-        c.className = 'caret';
-        c.style.cssText = `left:${xOf(input, p.head)}px;top:${top}px;height:${h}px;background:${p.color}`;
+        c.className = `caret peer-${peer(p)}`;
+        place(c, xOf(input, p.head), top, 0, h);
         c.innerHTML = '<b></b>';
         c.firstChild.textContent = p.name;
-        c.firstChild.style.background = p.color;
         block.append(c);
         if (p.anchorBlock === p.headBlock && p.anchor !== p.head) {
           const a = xOf(input, Math.min(p.anchor, p.head)), z = xOf(input, Math.max(p.anchor, p.head));
           const s = document.createElement('div');
-          s.className = 'sel';
-          s.style.cssText = `left:${a}px;width:${z - a}px;top:${top}px;height:${h}px;background:${p.color}`;
+          s.className = `sel peer-${peer(p)}`;
+          place(s, a, top, z - a, h);
           block.append(s);
         }
       }
@@ -201,74 +205,60 @@
   <a class="crumb" href="/pages">Pages <span>/</span> {title}</a>
   <div class="people">
     <span class="dot" class:live></span>
-    {#each [{ ...me, you: true }, ...online] as p (p.site ?? 'me')}
-      <span class="who" class:agent={p.agent} title={p.you ? `${p.name} (you)` : p.agent ? `${p.name} editing` : p.name}>
-        <i style:background={p.color || 'var(--text-3)'}>{(p.name || '?')[0]}</i>
-      </span>
+    {#each [{ ...me, site, you: true }, ...online] as p (p.site)}
+      <Avatar name={p.name} peer={peer(p)} pulse={p.agent} title={p.you ? `${p.name} (you)` : p.agent ? `${p.name} editing` : p.name} />
     {/each}
   </div>
 </header>
 <div class="page" bind:this={root}></div>
 
 <style>
-  header { display: flex; align-items: center; justify-content: space-between; gap: 16px; max-width: 760px; margin: -40px auto 32px; }
-  .crumb { font-size: 14px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .crumb span { margin: 0 4px; }
-  .people { display: flex; align-items: center; gap: 4px; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: rgb(255 255 255 / 0.25); margin-right: 8px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); max-width: var(--measure); margin: calc(-1 * var(--space-7)) auto var(--space-6); }
+  .crumb { font-size: var(--text-sm); color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .crumb span { margin: 0 var(--space-1); }
+  .people { display: flex; align-items: center; gap: var(--space-1); }
+  .dot { width: var(--size-xs); height: var(--size-xs); border-radius: 50%; background: var(--line-strong); margin-right: var(--space-2); }
   .dot.live { background: var(--cream); }
-  .who i {
-    border-radius: 50%;
-    display: grid;
-    place-items: center;
-    width: 24px;
-    height: 24px;
-    color: #fff;
-    font: 600 12px var(--font);
-    font-style: normal;
-  }
-  .who.agent i { animation: pulse 1s infinite alternate; }
-  @keyframes pulse { to { opacity: 0.35; } }
-  .page { max-width: 760px; margin: 0 auto; padding-bottom: 120px; }
-  .page :global(.block) { position: relative; display: flex; align-items: baseline; gap: 6px; }
+  .page { max-width: var(--measure); margin: 0 auto; padding-bottom: var(--space-9); }
+  .page :global(.block) { position: relative; display: flex; align-items: baseline; gap: var(--space-2); }
   .page :global(select) {
-    opacity: 0;
-    height: auto;
+    width: var(--size-xl);
+    margin-left: calc(-1 * var(--size-xl) - var(--space-2));
     padding: 0;
-    width: 84px;
-    margin-left: -90px;
-    font-size: 12px;
-    color: var(--text-3);
-    background: none;
     border: 0;
+    background: none;
+    font-size: var(--text-xs);
+    color: var(--text-3);
+    opacity: 0;
     transition: opacity var(--dur) var(--ease);
   }
   .page :global(.block:hover select), .page :global(.block:focus-within select) { opacity: 1; }
-  .page :global(input) { flex: 1; height: auto; border: 0; border-radius: 0; background: none; padding: 4px 0; font-size: 17px; line-height: 1.6; outline: 0; }
-  .page :global(input::placeholder) { color: rgb(255 255 255 / 0.25); }
-  .page :global(.heading1 input) { font: 500 52px/1.1 var(--display); letter-spacing: -0.04em; padding-bottom: 12px; }
-  .page :global(.heading2 input) { font: 500 34px/1.2 var(--display); letter-spacing: -0.03em; padding-top: 16px; }
-  .page :global(.heading3 input) { font-size: 20px; font-weight: 600; padding-top: 8px; }
-  .page :global(.quote input) { border-left: 2px solid rgb(255 255 255 / 0.25); padding-left: 12px; color: var(--text-2); }
-  .page :global(.code input) { font-family: var(--mono); font-size: 14px; background: var(--raised); padding: 8px 14px; border-radius: 10px; }
-  .page :global(.mark) { width: 14px; color: var(--text-3); flex: none; }
+  .page :global(input) { flex: 1; min-width: 0; padding: var(--space-1) 0; border: 0; background: none; font-size: var(--text-lg); line-height: 1.6; outline: 0; }
+  .page :global(input::placeholder) { color: var(--line-strong); }
+  .page :global(.heading1 input) { font: var(--weight-medium) var(--display-lg)/var(--leading-tight) var(--display); letter-spacing: var(--tracking-display); padding-bottom: var(--space-3); }
+  .page :global(.heading2 input) { font: var(--weight-medium) var(--display-sm)/var(--leading-tight) var(--display); letter-spacing: var(--tracking-tight); padding-top: var(--space-4); }
+  .page :global(.heading3 input) { font-size: var(--text-xl); font-weight: var(--weight-bold); padding-top: var(--space-2); }
+  .page :global(.quote input) { border-left: var(--stroke-bold) solid var(--line-strong); padding-left: var(--space-3); color: var(--text-2); }
+  .page :global(.code input) { font-family: var(--mono); font-size: var(--text-sm); background: var(--raised); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); }
+  .page :global(.mark) { flex: none; width: var(--space-3); color: var(--text-3); }
   .page :global(.bullet .mark::before) { content: '•'; }
   .page :global(.todo .mark::before) { content: '☐'; }
-  .page :global(.caret) { position: absolute; width: 2px; pointer-events: none; transition: left 80ms; }
+  .page :global(.caret), .page :global(.sel) { position: absolute; left: var(--x); top: var(--y); height: var(--h); background: var(--peer); pointer-events: none; }
+  .page :global(.caret) { width: var(--stroke-bold); transition: left var(--dur-fast); }
+  .page :global(.sel) { width: var(--w); opacity: 0.22; }
   .page :global(.caret b) {
     position: absolute;
     bottom: 100%;
     left: 0;
-    font: 600 11px var(--font);
-    color: #fff;
-    padding: 1px 6px;
-    border-radius: 6px 6px 6px 0;
+    padding: var(--stroke) var(--space-2);
+    border-radius: var(--radius-sm) var(--radius-sm) var(--radius-sm) 0;
+    background: var(--peer);
+    color: var(--on-peer);
+    font: var(--weight-bold) var(--text-xs) var(--font);
     white-space: nowrap;
   }
-  .page :global(.sel) { position: absolute; pointer-events: none; opacity: 0.22; }
   @media (max-width: 767px) {
-    header { margin-top: -16px; }
-    .page :global(.heading1 input) { font-size: 38px; }
+    header { margin-top: calc(-1 * var(--space-4)); }
     .page :global(select) { display: none; }
   }
 </style>
