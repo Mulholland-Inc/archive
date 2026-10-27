@@ -14,12 +14,25 @@ public class NativePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "toolbar", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setState", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "topBar", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "shift", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "shift", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "filters", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "spaces", returnType: CAPPluginReturnPromise)
     ]
 
     private lazy var composer = ComposerBar { [weak self] text in self?.notifyListeners("send", data: ["text": text]) }
     private lazy var tools = ToolsBar { [weak self] action in self?.notifyListeners("tap", data: ["action": action]) }
     private lazy var top = TopBar { [weak self] action in self?.notifyListeners("tap", data: ["action": action]) }
+    private lazy var filterBar = FilterBar(
+        onFilter: { [weak self] key, value in self?.notifyListeners("filter", data: ["key": key, "value": value]) },
+        onSearch: { [weak self] text in self?.notifyListeners("search", data: ["text": text]) },
+        presenter: { [weak self] in self?.bridge?.viewController }
+    )
+    private lazy var spaceButton = SpaceButton(
+        onPick: { [weak self] value in self?.notifyListeners("space", data: ["value": value]) },
+        onAdd: { [weak self] name in self?.notifyListeners("addSpace", data: ["name": name]) },
+        presenter: { [weak self] in self?.bridge?.viewController }
+    )
+    private var filtersWanted = false
     private var keyboard = false
     private var toolsWanted = false
     private var cover: CGFloat = -1
@@ -37,6 +50,7 @@ public class NativePlugin: CAPPlugin, CAPBridgedPlugin {
         DispatchQueue.main.async {
             self.attach(self.composer)
             self.composer.isHidden = false
+            self.updateTools()
             self.report()
             call.resolve()
         }
@@ -46,6 +60,7 @@ public class NativePlugin: CAPPlugin, CAPBridgedPlugin {
         DispatchQueue.main.async {
             self.composer.field.resignFirstResponder()
             self.composer.isHidden = true
+            self.updateTools()
             self.report()
             call.resolve()
         }
@@ -117,7 +132,7 @@ public class NativePlugin: CAPPlugin, CAPBridgedPlugin {
         let animate = call.getBool("animate", false) && !UIAccessibility.isReduceMotionEnabled
         DispatchQueue.main.async {
             let apply = {
-                for bar in [self.composer, self.tools, self.top] as [UIView] {
+                for bar in [self.composer, self.tools, self.top, self.filterBar] as [UIView] {
                     bar.transform = CGAffineTransform(translationX: px, y: 0)
                     bar.alpha = 1 - 0.4 * progress
                 }
@@ -131,6 +146,36 @@ public class NativePlugin: CAPPlugin, CAPBridgedPlugin {
             } else {
                 apply()
             }
+            call.resolve()
+        }
+    }
+
+    @objc func filters(_ call: CAPPluginCall) {
+        let on = call.getBool("show", true)
+        let search = call.getString("search", "")
+        let controls = (call.getArray("controls") as? [[String: Any]]) ?? []
+        DispatchQueue.main.async {
+            self.attach(self.filterBar)
+            self.filtersWanted = on
+            if on { self.filterBar.update(search: search, controls: controls) }
+            self.updateTools()
+            call.resolve()
+        }
+    }
+
+    @objc func spaces(_ call: CAPPluginCall) {
+        let on = call.getBool("show", true)
+        let items = (call.getArray("items") as? [[String: Any]]) ?? []
+        let value = call.getString("value", "")
+        let frame = call.getObject("frame") ?? [:]
+        DispatchQueue.main.async {
+            if self.spaceButton.superview == nil, let view = self.bridge?.viewController?.view {
+                view.addSubview(self.spaceButton)
+            }
+            let n = { (k: String) in CGFloat((frame[k] as? NSNumber)?.doubleValue ?? 0) }
+            self.spaceButton.frame = CGRect(x: n("x"), y: n("y"), width: n("w"), height: n("h"))
+            self.spaceButton.update(items: items, value: value)
+            self.spaceButton.isHidden = !on
             call.resolve()
         }
     }
@@ -151,6 +196,7 @@ public class NativePlugin: CAPPlugin, CAPBridgedPlugin {
 
     private func updateTools() {
         tools.isHidden = !(toolsWanted && keyboard && !composer.field.isFirstResponder)
+        filterBar.isHidden = !(filtersWanted && (composer.superview == nil || composer.isHidden) && tools.isHidden)
         report()
     }
 
@@ -171,7 +217,7 @@ public class NativePlugin: CAPPlugin, CAPBridgedPlugin {
             guard let view = self.bridge?.viewController?.view, let web = self.bridge?.webView else { return }
             view.layoutIfNeeded()
             let bottom = web.convert(web.bounds, to: view).maxY
-            let tops = [self.composer, self.tools].filter { $0.superview != nil && !$0.isHidden }.map { $0.frame.minY }
+            let tops = [self.composer, self.tools, self.filterBar].filter { $0.superview != nil && !$0.isHidden }.map { $0.frame.minY }
             let px = max(0, bottom - (tops.min() ?? bottom))
             if px != self.cover {
                 self.cover = px
@@ -429,5 +475,175 @@ final class ToolsBar: UIView {
             c.attributedTitle = t
         }
         return c
+    }
+}
+
+final class FilterBar: UIView, UISearchTextFieldDelegate {
+    private let search = UISearchTextField()
+    private let stack = UIStackView()
+    private let onFilter: (String, String) -> Void
+    private let onSearch: (String) -> Void
+    private let presenter: () -> UIViewController?
+
+    init(onFilter: @escaping (String, String) -> Void, onSearch: @escaping (String) -> Void, presenter: @escaping () -> UIViewController?) {
+        self.onFilter = onFilter
+        self.onSearch = onSearch
+        self.presenter = presenter
+        super.init(frame: .zero)
+        let glass = Glass(radius: 26)
+        let scroll = UIScrollView()
+        scroll.showsHorizontalScrollIndicator = false
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .horizontal
+        stack.alignment = .center
+        stack.spacing = 6
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        search.placeholder = "Search"
+        search.returnKeyType = .search
+        search.clearButtonMode = .whileEditing
+        search.delegate = self
+        search.addAction(UIAction { [weak self] _ in self?.onSearch(self?.search.text ?? "") }, for: .editingChanged)
+        search.widthAnchor.constraint(equalToConstant: 170).isActive = true
+        addSubview(glass)
+        glass.contentView.addSubview(scroll)
+        scroll.addSubview(stack)
+        NSLayoutConstraint.activate([
+            glass.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            glass.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            glass.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            glass.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+            glass.heightAnchor.constraint(equalToConstant: 52),
+            scroll.leadingAnchor.constraint(equalTo: glass.contentView.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: glass.contentView.trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: glass.contentView.topAnchor),
+            scroll.bottomAnchor.constraint(equalTo: glass.contentView.bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor, constant: 8),
+            stack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor, constant: -8),
+            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
+            stack.heightAnchor.constraint(equalTo: scroll.frameLayoutGuide.heightAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+        onSearch(textField.text ?? "")
+        textField.resignFirstResponder()
+        return true
+    }
+
+    func update(search text: String, controls: [[String: Any]]) {
+        if !search.isFirstResponder && search.text != text { search.text = text }
+        stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        stack.addArrangedSubview(search)
+        for c in controls {
+            let key = c["key"] as? String ?? ""
+            let label = c["label"] as? String ?? key
+            let kind = c["kind"] as? String ?? "text"
+            let value = c["value"] as? String ?? ""
+            let options = (c["options"] as? [[String: Any]] ?? []).map { ($0["value"] as? String ?? "", $0["label"] as? String ?? "") }
+            let chosen = options.first { $0.0 == value }?.1 ?? value
+            let button: UIButton
+            switch kind {
+            case "dir":
+                button = Self.pill(title: nil, symbol: value == "desc" ? "arrow.down" : "arrow.up", on: false, chevron: false)
+                button.accessibilityLabel = "Flip order"
+                button.addAction(UIAction { [weak self] _ in self?.onFilter(key, value == "desc" ? "asc" : "desc") }, for: .primaryActionTriggered)
+            case "text":
+                button = Self.pill(title: value.isEmpty ? label : "\(label): \(value)", symbol: nil, on: !value.isEmpty, chevron: false)
+                button.addAction(UIAction { [weak self] _ in self?.prompt(key: key, label: label, value: value) }, for: .primaryActionTriggered)
+            default:
+                button = Self.pill(title: value.isEmpty ? label : "\(label): \(chosen)", symbol: kind == "sort" ? "arrow.up.arrow.down" : nil, on: !value.isEmpty, chevron: true)
+                button.menu = UIMenu(children: options.map { option in
+                    UIAction(title: option.1, state: option.0 == value ? .on : .off) { [weak self] _ in self?.onFilter(key, option.0) }
+                })
+                button.showsMenuAsPrimaryAction = true
+            }
+            stack.addArrangedSubview(button)
+        }
+    }
+
+    private func prompt(key: String, label: String, value: String) {
+        let alert = UIAlertController(title: label.capitalized, message: nil, preferredStyle: .alert)
+        alert.addTextField { field in
+            field.text = value
+            field.placeholder = label
+            field.clearButtonMode = .whileEditing
+        }
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        if !value.isEmpty {
+            alert.addAction(UIAlertAction(title: "Clear", style: .destructive) { [weak self] _ in self?.onFilter(key, "") })
+        }
+        alert.addAction(UIAlertAction(title: "Apply", style: .default) { [weak self, weak alert] _ in
+            self?.onFilter(key, alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespaces) ?? "")
+        })
+        alert.preferredAction = alert.actions.last
+        presenter()?.present(alert, animated: true)
+    }
+
+    private static func pill(title: String?, symbol: String?, on: Bool, chevron: Bool) -> UIButton {
+        var c: UIButton.Configuration = on ? .filled() : .gray()
+        c.cornerStyle = .capsule
+        c.baseForegroundColor = on ? .systemBackground : .label
+        c.baseBackgroundColor = on ? .label : nil
+        c.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12)
+        c.imagePadding = 4
+        if let title {
+            var t = AttributedString(title.prefix(1).uppercased() + title.dropFirst())
+            t.font = .systemFont(ofSize: 15, weight: .medium)
+            c.attributedTitle = t
+        }
+        if let symbol {
+            c.image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
+        } else if chevron {
+            c.image = UIImage(systemName: "chevron.down", withConfiguration: UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold))
+            c.imagePlacement = .trailing
+        }
+        let button = UIButton(configuration: c)
+        button.heightAnchor.constraint(equalToConstant: 36).isActive = true
+        return button
+    }
+}
+
+final class SpaceButton: UIButton {
+    private let onPick: (String) -> Void
+    private let onAdd: (String) -> Void
+    private let presenter: () -> UIViewController?
+
+    init(onPick: @escaping (String) -> Void, onAdd: @escaping (String) -> Void, presenter: @escaping () -> UIViewController?) {
+        self.onPick = onPick
+        self.onAdd = onAdd
+        self.presenter = presenter
+        super.init(frame: .zero)
+        isHidden = true
+        showsMenuAsPrimaryAction = true
+        accessibilityLabel = "Spaces"
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func update(items: [[String: Any]], value: String) {
+        let picks = items.map { item -> UIAction in
+            let v = item["value"] as? String ?? ""
+            return UIAction(title: item["label"] as? String ?? v, state: v == value ? .on : .off) { [weak self] _ in
+                UISelectionFeedbackGenerator().selectionChanged()
+                self?.onPick(v)
+            }
+        }
+        let add = UIAction(title: "Add space", image: UIImage(systemName: "plus")) { [weak self] _ in self?.prompt() }
+        menu = UIMenu(children: [UIMenu(options: .displayInline, children: picks), add])
+    }
+
+    private func prompt() {
+        let alert = UIAlertController(title: "Add space", message: nil, preferredStyle: .alert)
+        alert.addTextField { $0.placeholder = "Space name" }
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Add", style: .default) { [weak self, weak alert] _ in
+            let name = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespaces) ?? ""
+            if !name.isEmpty { self?.onAdd(name) }
+        })
+        alert.preferredAction = alert.actions.last
+        presenter()?.present(alert, animated: true)
     }
 }

@@ -25,6 +25,7 @@
   const server = $derived(Object.fromEntries(Object.entries(filters).filter(([k, v]) => v !== '' && choice(columns.find((c) => c.name === k), types))));
   const key = $derived(JSON.stringify([query, server]));
   const sort = $derived(by ? { name: by, desc } : null);
+  const sorts = $derived([{ value: '', label: 'None' }, ...columns.map((c) => ({ value: c.name, label: c.name.replaceAll('_', ' ') }))]);
   const shown = $derived(rows ? arrange(rows, columns, types, { filters, sort }) : null);
   let seq = 0;
 
@@ -66,9 +67,9 @@
   <Table table={view} {types} />
 {:else}
   <Heading title={view.name.replaceAll('_', ' ')} icon={view.icon} />
-  <Filters {columns} {types} bind:query bind:filters>
+  <Filters {columns} {types} bind:query bind:filters extra={view.layout === 'board' ? [{ key: 'sort', label: 'Sort', kind: 'sort', options: sorts, value: by }, ...(by ? [{ key: 'dir', label: 'Order', kind: 'dir', value: desc ? 'desc' : 'asc' }] : [])] : []} onextra={(k, v) => (k === 'sort' ? (by = v) : (desc = v === 'desc'))}>
     {#if view.layout === 'board'}
-      <Select label="Sort" icon="arrow-up-down" items={[{ value: '', label: 'None' }, ...columns.map((c) => ({ value: c.name, label: c.name.replaceAll('_', ' ') }))]} bind:value={by} />
+      <Select label="Sort" icon="arrow-up-down" items={sorts} bind:value={by} />
       {#if by}<Button quiet icon={desc ? 'arrow-down' : 'arrow-up'} title="Flip order" aria-label="Flip order" onclick={() => (desc = !desc)} />{/if}
     {/if}
   </Filters>

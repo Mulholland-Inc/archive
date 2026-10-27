@@ -39,8 +39,13 @@
       if (action === 'sidebar') drawer = !drawer;
       else if (action === 'newChat') newChat();
     });
+    const offSpace = on('space', ({ value }) => (space = value));
+    const offAdd = on('addSpace', ({ name }) => addSpace(name).catch((e) => alert(e.message)));
     return () => {
       off();
+      offSpace();
+      offAdd();
+      call('spaces', { show: false });
       call('topBar', { show: false });
     };
   });
@@ -86,6 +91,12 @@
   });
   const table = (name) => tables.find((t) => t.name === name);
   const who = $derived(me ? me.actor.name || me.actor.email : '');
+  $effect(() => {
+    if (!native || !me) return;
+    const r = drawer && document.querySelector('aside .profile')?.getBoundingClientRect();
+    call('spaces', { show: !!r, items: $state.snapshot(spaces), value: space, frame: r ? { x: r.left, y: r.top, w: r.width, h: r.height } : {} });
+  });
+
   const spaces = $derived((me?.spaces ?? []).map((s) => ({ value: s.name, label: s.id === me.home ? 'Personal' : s.name.replaceAll('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase()) })));
 
   $effect(() => {
