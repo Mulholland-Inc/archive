@@ -13,8 +13,10 @@ jobs:
   review:
     name: Jev review
     if: ${{ !github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'marzy-devbox' }}
     timeout-minutes: 5
+    env:
+      APP_KEY: ${{ secrets.MARZY_AGENT_PRIVATE_KEY }}
     concurrency:
       group: review-${{ github.event.pull_request.number }}
       cancel-in-progress: true
@@ -53,6 +55,16 @@ jobs:
             }
             const body = `## Jev review\n\n${notes.length ? notes.join('\n') : `Jev read ${files.length} changed files and found nothing.`}`;
             await github.rest.pulls.createReview({ ...params, commit_id: pr.head.sha, event: 'APPROVE', body });
+      - id: app
+        if: ${{ env.APP_KEY != '' }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: Iv23li7MnowhEXjkSkYu
+          private-key: ${{ secrets.MARZY_AGENT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: archive
+          permission-contents: write
+          permission-pull-requests: write
       - run: gh pr merge --auto --squash "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}"
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app.outputs.token || github.token }}

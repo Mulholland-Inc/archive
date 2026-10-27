@@ -16,20 +16,25 @@ concurrency:
 jobs:
   test:
     name: test
-    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ${{ vars.CI_RUNNER || 'marzy-devbox' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
           go-version-file: src/go.mod
-          cache-dependency-path: src/go.sum
+          cache: false
       - name: Postgres 18
         run: |
-          sudo apt-get install -y -q postgresql-common
-          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
-          sudo apt-get install -y -q postgresql-18
-          echo /usr/lib/postgresql/18/bin >> "$GITHUB_PATH"
+          if [ -x /usr/lib/postgresql/18/bin/initdb ]; then
+            echo /usr/lib/postgresql/18/bin >> "$GITHUB_PATH"
+          elif ! initdb --version | grep -q " 18"; then
+            sudo apt-get install -y -q postgresql-common
+            sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+            sudo apt-get install -y -q postgresql-18
+            echo /usr/lib/postgresql/18/bin >> "$GITHUB_PATH"
+          fi
       - run: go vet ./...
         working-directory: src
       - run: go test -count=1 -timeout 25m ./...
