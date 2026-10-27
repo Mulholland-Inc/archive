@@ -16,11 +16,14 @@ public class NativePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "topBar", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "shift", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "filters", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "spaces", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "spaces", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "dismiss", returnType: CAPPluginReturnPromise)
     ]
 
     private lazy var composer = ComposerBar { [weak self] text in self?.notifyListeners("send", data: ["text": text]) }
-    private lazy var tools = ToolsBar { [weak self] action in self?.notifyListeners("tap", data: ["action": action]) }
+    private lazy var tools = ToolsBar { [weak self] action in
+        if action == "dismiss" { self?.endEditing() } else { self?.notifyListeners("tap", data: ["action": action]) }
+    }
     private lazy var top = TopBar { [weak self] action in self?.notifyListeners("tap", data: ["action": action]) }
     private lazy var filterBar = FilterBar(
         onFilter: { [weak self] key, value in self?.notifyListeners("filter", data: ["key": key, "value": value]) },
@@ -148,6 +151,18 @@ public class NativePlugin: CAPPlugin, CAPBridgedPlugin {
             }
             call.resolve()
         }
+    }
+
+    @objc func dismiss(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            self.endEditing()
+            call.resolve()
+        }
+    }
+
+    private func endEditing() {
+        bridge?.webView?.evaluateJavaScript("document.activeElement && document.activeElement.blur()")
+        bridge?.viewController?.view.endEditing(true)
     }
 
     @objc func filters(_ call: CAPPluginCall) {
@@ -328,6 +343,7 @@ final class ComposerBar: UIView, UITextViewDelegate {
         send.tintColor = .label
         send.accessibilityLabel = "Send"
         send.addTarget(self, action: #selector(tapSend), for: .touchUpInside)
+        addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(pan)))
         send.translatesAutoresizingMaskIntoConstraints = false
         addSubview(glass)
         glass.contentView.addSubview(field)
@@ -377,6 +393,11 @@ final class ComposerBar: UIView, UITextViewDelegate {
         refresh()
     }
 
+    @objc private func pan(_ gesture: UIPanGestureRecognizer) {
+        let move = gesture.translation(in: self)
+        if gesture.state == .changed, move.y > 16, move.y > abs(move.x) { field.resignFirstResponder() }
+    }
+
     @objc private func tapSend() {
         let text = field.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard send.isEnabled, !text.isEmpty else { return }
@@ -392,7 +413,8 @@ final class ToolsBar: UIView {
         ("turn:quote", "text.quote", nil), ("turn:code", "curlybraces", nil), ("", nil, nil),
         ("indent:-1", "decrease.indent", nil), ("indent:1", "increase.indent", nil), ("", nil, nil),
         ("mark:bold", "bold", nil), ("mark:italic", "italic", nil), ("mark:underline", "underline", nil),
-        ("mark:strike", "strikethrough", nil), ("mark:code", "chevron.left.forwardslash.chevron.right", nil), ("mark:link", "link", nil)
+        ("mark:strike", "strikethrough", nil), ("mark:code", "chevron.left.forwardslash.chevron.right", nil), ("mark:link", "link", nil), ("", nil, nil),
+        ("dismiss", "keyboard.chevron.compact.down", nil)
     ]
     private var buttons: [String: UIButton] = [:]
     private let onTap: (String) -> Void
@@ -455,6 +477,7 @@ final class ToolsBar: UIView {
     func update(type: String?, marks: Set<String>) {
         for (action, symbol, title) in Self.items where !action.isEmpty {
             let parts = action.split(separator: ":").map(String.init)
+            guard parts.count == 2 else { continue }
             let on = (parts[0] == "turn" && parts[1] == type) || (parts[0] == "mark" && marks.contains(parts[1]))
             buttons[action]?.configuration = Self.style(on: on, symbol: symbol, title: title)
         }

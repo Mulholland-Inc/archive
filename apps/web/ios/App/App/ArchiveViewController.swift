@@ -15,6 +15,7 @@ class ArchiveViewController: CAPBridgeViewController {
         webView?.isOpaque = false
         webView?.backgroundColor = shell
         webView?.scrollView.backgroundColor = shell
+        webView?.scrollView.keyboardDismissMode = .interactive
         if #available(iOS 26.0, *) {
             webView?.scrollView.topEdgeEffect.isHidden = true
             webView?.scrollView.bottomEdgeEffect.isHidden = true
