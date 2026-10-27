@@ -85,14 +85,16 @@
       z-index: 1;
       display: flex;
       flex-direction: column;
-      overflow: hidden;
+      overflow: clip;
       background: var(--shell);
       border-radius: calc(var(--shown) * var(--radius-xl));
       box-shadow: var(--shadow);
       transform: translateX(calc(var(--shown) * var(--drawer)));
     }
     .content::before { content: ''; flex: none; height: var(--safe-top); }
-    .content::after { content: ''; flex: none; height: max(var(--safe-bottom), var(--cover, 0px)); }
+    .content::after { content: ''; flex: none; height: min(max(var(--safe-bottom), var(--cover, 0px)), var(--cover-max)); }
+    :global(html.flow) .content { position: relative; inset: auto; min-height: 100vh; }
+    :global(html.flow) .content::before { position: sticky; top: 0; z-index: 2; background: var(--shell); }
     .content.ready { transition: transform var(--dur-drawer) var(--ease-drawer), border-radius var(--dur-drawer) var(--ease-drawer); }
     .shade {
       display: block;

@@ -14,6 +14,7 @@
   let error = $state('');
   let ctrl;
   let scroller = $state();
+  const box = () => (native ? document.scrollingElement : scroller);
 
   const items = $derived.by(() => {
     const results = {};
@@ -43,7 +44,8 @@
     items.length;
     live;
     busy;
-    if (scroller && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < scroller.clientHeight / 2) scroller.scrollTop = scroller.scrollHeight;
+    const el = scroller && box();
+    if (el && el.scrollHeight - el.scrollTop - el.clientHeight < el.clientHeight / 2) el.scrollTop = el.scrollHeight;
   });
 
   $effect(() => () => ctrl?.abort());
@@ -69,13 +71,16 @@
 
   $effect(() => {
     let pinned = true;
-    const scroll = () => (pinned = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < scroller.clientHeight / 4);
-    const o = new ResizeObserver(() => pinned && (scroller.scrollTop = scroller.scrollHeight));
-    scroller.addEventListener('scroll', scroll, { passive: true });
+    const el = box();
+    const target = native ? window : scroller;
+    const scroll = () => (pinned = el.scrollHeight - el.scrollTop - el.clientHeight < el.clientHeight / 4);
+    const o = new ResizeObserver(() => pinned && (el.scrollTop = el.scrollHeight));
+    target.addEventListener('scroll', scroll, { passive: true });
     o.observe(scroller);
+    o.observe(document.body);
     return () => {
       o.disconnect();
-      scroller.removeEventListener('scroll', scroll);
+      target.removeEventListener('scroll', scroll);
     };
   });
 
@@ -87,7 +92,7 @@
     busy = true;
     ctrl = new AbortController();
     messages = [...messages, { role: 'user', content: text }];
-    requestAnimationFrame(() => scroller && (scroller.scrollTop = scroller.scrollHeight));
+    requestAnimationFrame(() => scroller && (box().scrollTop = box().scrollHeight));
     try {
       for await (const ev of chat(messages, ctrl.signal)) {
         if (ev.text) live += ev.text;

@@ -3,6 +3,7 @@
 @import '@fontsource-variable/jetbrains-mono';
 
 * { box-sizing: border-box; scrollbar-width: none; }
+html.flow, html.flow body { height: auto; min-height: 100%; overscroll-behavior: auto; }
 *::-webkit-scrollbar { display: none; }
 html, body { margin: 0; height: 100%; background: var(--shell); overscroll-behavior: none; -webkit-text-size-adjust: 100%; -webkit-tap-highlight-color: transparent; }
 body {

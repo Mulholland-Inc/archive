@@ -85,6 +85,14 @@
     go(a.getAttribute('href'));
   });
 
+  const flow = $derived(native && route.first === 'chat');
+
+  $effect(() => {
+    document.documentElement.classList.toggle('flow', flow);
+    call('scrolling', { flow });
+    if (native) window.Capacitor.nativePromise('Keyboard', 'setResizeMode', { mode: flow ? 'none' : 'native' }).catch(() => {});
+  });
+
   const route = $derived.by(() => {
     const [, first = '', second = ''] = path.split('/').map(decodeURIComponent);
     return { first, second };
@@ -246,5 +254,8 @@
     .top :global(.button svg.icon) { width: var(--text-xl); height: var(--text-xl); }
     .native :global(.button) { visibility: hidden; }
     main { flex: 1; padding: var(--space-4); }
+    :global(html.flow) .top { position: sticky; top: var(--safe-top); z-index: 2; background: var(--shell); }
+    :global(html.flow) main { flex: none; overflow: visible; }
+    :global(html.flow) main > :global(:last-child) { overflow: visible; }
   }
 </style>

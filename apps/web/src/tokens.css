@@ -118,6 +118,7 @@
   --drawer: 84vw;
   --backdrop: rgb(0 0 0 / 0.5);
   --composer: 160px;
+  --cover-max: 70vh;
 }
 
 :root[data-theme='light'] {

@@ -17,7 +17,8 @@ public class NativePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "shift", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "filters", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "spaces", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "dismiss", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "dismiss", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "scrolling", returnType: CAPPluginReturnPromise)
     ]
 
     private lazy var composer = ComposerBar { [weak self] text in self?.notifyListeners("send", data: ["text": text]) }
@@ -47,6 +48,7 @@ public class NativePlugin: CAPPlugin, CAPBridgedPlugin {
         center.addObserver(self, selector: #selector(report), name: UIResponder.keyboardDidShowNotification, object: nil)
         center.addObserver(self, selector: #selector(report), name: UIResponder.keyboardDidHideNotification, object: nil)
         composer.onResize = { [weak self] in self?.report() }
+        center.addObserver(self, selector: #selector(report), name: ArchiveViewController.didLayout, object: nil)
     }
 
     @objc func show(_ call: CAPPluginCall) {
@@ -149,6 +151,18 @@ public class NativePlugin: CAPPlugin, CAPBridgedPlugin {
             } else {
                 apply()
             }
+            call.resolve()
+        }
+    }
+
+    @objc func scrolling(_ call: CAPPluginCall) {
+        let flow = call.getBool("flow", false)
+        DispatchQueue.main.async {
+            guard let scroll = self.bridge?.webView?.scrollView else { return call.resolve() }
+            scroll.isScrollEnabled = flow
+            scroll.alwaysBounceVertical = flow
+            scroll.keyboardDismissMode = .interactive
+            if !flow { scroll.setContentOffset(.zero, animated: false) }
             call.resolve()
         }
     }

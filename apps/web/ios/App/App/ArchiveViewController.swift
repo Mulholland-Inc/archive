@@ -2,6 +2,7 @@ import UIKit
 import Capacitor
 
 class ArchiveViewController: CAPBridgeViewController {
+    static let didLayout = Notification.Name("ArchiveDidLayout")
     private var pending: URL?
 
     override func capacitorDidLoad() {
@@ -21,6 +22,11 @@ class ArchiveViewController: CAPBridgeViewController {
             webView?.scrollView.bottomEdgeEffect.isHidden = true
         }
         if let url = pending { open(url) }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        NotificationCenter.default.post(name: Self.didLayout, object: nil)
     }
 
     func open(_ url: URL) {
