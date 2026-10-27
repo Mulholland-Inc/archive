@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Archive pages</title>
+<style>
+  body { font: 16px/1.5 system-ui, -apple-system, sans-serif; max-width: 760px; margin: 40px auto; padding: 0 20px; color: #1d1d1f; }
+  header { display: flex; gap: 12px; align-items: center; margin-bottom: 24px; color: #6e6e73; font-size: 14px; }
+  header a { color: inherit; }
+  #status::before { content: "●"; margin-right: 6px; color: #c7c7cc; }
+  #status.live::before { color: #34c759; }
+  .block { display: flex; gap: 8px; align-items: baseline; }
+  .block select { opacity: 0; width: 92px; font-size: 12px; color: #6e6e73; border: 0; background: none; }
+  .block:hover select, .block:focus-within select { opacity: 1; }
+  .block input { flex: 1; border: 0; outline: 0; font: inherit; padding: 4px 0; background: none; color: inherit; }
+  .heading1 input { font-size: 30px; font-weight: 700; }
+  .heading2 input { font-size: 23px; font-weight: 650; }
+  .heading3 input { font-size: 19px; font-weight: 600; }
+  .bullet .mark::before { content: "•"; }
+  .todo .mark::before { content: "☐"; }
+  .quote input { border-left: 3px solid #d2d2d7; padding-left: 12px; color: #48484a; }
+  .code input { font-family: ui-monospace, monospace; background: #f5f5f7; padding: 4px 8px; }
+  .mark { width: 12px; color: #6e6e73; }
+  .block input::placeholder { color: #c7c7cc; }
+  ul { padding-left: 20px; }
+  button { font: inherit; }
+  .block { position: relative; }
+  #online { display: flex; gap: 6px; margin-left: auto; }
+  .who { display: flex; align-items: center; gap: 5px; padding: 2px 8px 2px 4px; border-radius: 12px; background: #f5f5f7; color: #1d1d1f; }
+  .who i { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; color: #fff; font: 600 11px system-ui; }
+  .who.agent i { animation: pulse 1s infinite alternate; }
+  @keyframes pulse { to { opacity: .35; } }
+  .caret { position: absolute; width: 2px; pointer-events: none; transition: left 80ms; }
+  .caret b { position: absolute; bottom: 100%; left: -1px; font: 600 11px system-ui; color: #fff; padding: 1px 5px; border-radius: 4px 4px 4px 0; white-space: nowrap; }
+  .sel { position: absolute; pointer-events: none; opacity: .22; }
+</style>
+</head>
+<body>
+<header><a href="/">Pages</a><span id="status">connecting</span><span id="online"></span></header>
+<main id="main"></main>
+<script src="/wasm_exec.js"></script>
+<script>
+const types = ["paragraph", "heading1", "heading2", "heading3", "bullet", "todo", "quote", "code"];
+const site = 2 + Math.floor(Math.random() * 2 ** 40);
+const page = new URLSearchParams(location.search).get("page");
+const main = document.getElementById("main");
+const status = document.getElementById("status");
+const people = [["Ada", "#ff3b30"], ["Grace", "#007aff"], ["Linus", "#34c759"], ["Margaret", "#af52de"], ["Alan", "#ff9500"], ["Barbara", "#5ac8fa"], ["Ken", "#ff2d55"], ["Radia", "#30b0c7"]];
+const me = { name: people[site % people.length][0], color: people[site % people.length][1] };
+
+function call(name, ...args) {
+  const r = pages[name](...args);
+  if (r instanceof Error) throw r;
+  return JSON.parse(r);
+}
+
+async function run(code) {
+  const r = await fetch("/api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) });
+  const out = await r.json();
+  if (out.error) throw new Error(out.error);
+  return out.result;
+}
+
+async function list() {
+  const files = await run(`return (await archive.files({ limit: 500 })).filter(f => f.name.endsWith(".page")).map(f => ({ id: f.id, name: f.name }))`);
+  main.innerHTML = "<p><button id=new>New page</button></p><ul></ul>";
+  for (const f of files) main.querySelector("ul").insertAdjacentHTML("beforeend", `<li><a href="?page=${f.id}"></a></li>`), main.querySelector("ul li:last-child a").textContent = f.name;
+  main.querySelector("#new").onclick = async () => {
+    const name = prompt("Page name", "Untitled");
+    if (name) location.search = "?page=" + (await run(`return (await archive.create(${JSON.stringify(name + ".page")})).id`));
+  };
+  status.textContent = "";
+}
+
+const runes = s => [...s].length;
+const caret = input => runes(input.value.slice(0, input.selectionStart));
+function focusAt(id, offset) {
+  const input = main.querySelector(`[data-id="${id}"] input`);
+  if (!input) return;
+  const at = [...input.value].slice(0, offset).join("").length;
+  input.focus();
+  input.setSelectionRange(at, at);
+}
+
+function render() {
+  let blocks = call("blocks");
+  const seen = new Set();
+  let prev = null;
+  for (const b of blocks) {
+    seen.add(b.id);
+    let el = main.querySelector(`[data-id="${b.id}"]`);
+    if (!el) {
+      el = document.createElement("div");
+      el.dataset.id = b.id;
+      el.innerHTML = `<select>${types.map(t => `<option>${t}</option>`).join("")}</select><span class="mark"></span><input spellcheck="false" placeholder="Type here">`;
+      const input = el.querySelector("input"), select = el.querySelector("select");
+      input.oninput = () => { edit(() => call("setText", b.id, input.value)); publish().catch(console.error); };
+      select.onchange = () => edit(() => call("setType", b.id, select.value));
+      input.onkeydown = e => key(e, b.id, input);
+    }
+    el.className = "block " + (b.type || "paragraph");
+    el.querySelector("select").value = types.includes(b.type) ? b.type : "paragraph";
+    const input = el.querySelector("input");
+    if (input.value !== b.text) {
+      if (document.activeElement === input) {
+        const old = input.value, at = input.selectionStart;
+        let p = 0;
+        while (p < old.length && p < b.text.length && old[p] === b.text[p]) p++;
+        const moved = at > p ? at + b.text.length - old.length : at;
+        input.value = b.text;
+        input.setSelectionRange(moved, moved);
+      } else input.value = b.text;
+    }
+    const after = prev ? prev.nextSibling : main.firstChild;
+    if (after !== el) main.insertBefore(el, after);
+    prev = el;
+  }
+  for (const el of [...main.children]) if (!seen.has(el.dataset.id)) el.remove();
+  cursors();
+}
+
+function edit(f) {
+  try { f(); } catch (e) { console.error(e); }
+  render();
+}
+
+function key(e, id, input) {
+  const blocks = call("blocks"), i = blocks.findIndex(b => b.id === id);
+  if (e.key === "Enter") {
+    e.preventDefault();
+    const b = blocks[i], type = ["bullet", "todo"].includes(b.type) ? b.type : "paragraph";
+    let next;
+    edit(() => { next = call("split", id, caret(input), type); });
+    focusAt(next, 0);
+  } else if (e.key === "Backspace" && input.selectionStart === 0 && input.selectionEnd === 0 && i > 0) {
+    e.preventDefault();
+    const above = blocks[i - 1];
+    edit(() => call("merge", id));
+    focusAt(above.id, runes(above.text));
+  } else if ((e.key === "ArrowUp" && i > 0) || (e.key === "ArrowDown" && i < blocks.length - 1)) {
+    e.preventDefault();
+    const to = blocks[e.key === "ArrowUp" ? i - 1 : i + 1];
+    focusAt(to.id, Math.min(caret(input), runes(to.text)));
+  }
+}
+
+async function flush() {
+  const ops = call("flush");
+  if (!ops) return;
+  const bytes = Uint8Array.from(atob(ops), c => c.charCodeAt(0));
+  const r = await fetch(`/api/pages/${page}/ops`, { method: "POST", body: bytes });
+  if (!r.ok) console.error("ops rejected", r.status, await r.text());
+}
+
+let lastPresence = "";
+async function publish(force) {
+  const input = document.activeElement?.closest?.(".block") && document.activeElement.tagName === "INPUT" ? document.activeElement : null;
+  const id = input ? input.closest(".block").dataset.id : "";
+  const from = input ? runes(input.value.slice(0, input.selectionStart)) : 0, to = input ? runes(input.value.slice(0, input.selectionEnd)) : 0;
+  const key = [id, from, to].join(":");
+  if (key === lastPresence && !force) return;
+  lastPresence = key;
+  const back = input && input.selectionDirection === "backward";
+  const u = call("presence", id, back ? to : from, back ? from : to, JSON.stringify(me));
+  await fetch(`/api/pages/${page}/presence`, { method: "POST", body: Uint8Array.from(atob(u), c => c.charCodeAt(0)) });
+}
+
+const measure = document.createElement("canvas").getContext("2d");
+function xOf(input, offset) {
+  measure.font = getComputedStyle(input).font;
+  const cs = getComputedStyle(input);
+  return input.offsetLeft + parseFloat(cs.paddingLeft) + parseFloat(cs.borderLeftWidth) - input.scrollLeft + measure.measureText([...input.value].slice(0, offset).join("")).width;
+}
+
+function cursors() {
+  for (const el of main.querySelectorAll(".caret, .sel")) el.remove();
+  const peers = call("peers");
+  const online = document.getElementById("online");
+  online.replaceChildren();
+  for (const p of [{ ...me, you: true }, ...peers]) {
+    const el = document.createElement("span");
+    el.className = "who" + (p.agent ? " agent" : "");
+    el.innerHTML = `<i></i><span></span>`;
+    el.querySelector("i").style.background = p.color || "#8e8e93";
+    el.querySelector("i").textContent = (p.name || "?")[0];
+    el.querySelector("span").textContent = p.you ? p.name + " (you)" : p.agent ? p.name + " editing" : p.name;
+    online.append(el);
+  }
+  for (const p of peers) {
+    const block = p.headBlock && main.querySelector(`[data-id="${p.headBlock}"]`);
+    if (!block) continue;
+    const input = block.querySelector("input");
+    const caret = document.createElement("div");
+    caret.className = "caret";
+    caret.style.cssText = `left:${xOf(input, p.head)}px;top:${input.offsetTop + 4}px;height:${input.offsetHeight - 8}px;background:${p.color}`;
+    caret.innerHTML = "<b></b>";
+    caret.firstChild.textContent = p.name;
+    caret.firstChild.style.background = p.color;
+    block.append(caret);
+    if (p.anchorBlock === p.headBlock && p.anchor !== p.head) {
+      const a = xOf(input, Math.min(p.anchor, p.head)), b = xOf(input, Math.max(p.anchor, p.head));
+      const sel = document.createElement("div");
+      sel.className = "sel";
+      sel.style.cssText = `left:${a}px;width:${b - a}px;top:${input.offsetTop + 4}px;height:${input.offsetHeight - 8}px;background:${p.color}`;
+      block.append(sel);
+    }
+  }
+}
+
+function open() {
+  const es = new EventSource(`/api/pages/${page}/sync?site=${site}`);
+  es.addEventListener("presence", e => {
+    try { call("applyPresence", e.data); } catch (err) { console.error(err); }
+    cursors();
+  });
+  document.addEventListener("selectionchange", () => publish().catch(console.error));
+  document.addEventListener("focusout", () => setTimeout(() => publish().catch(console.error)));
+  es.addEventListener("snapshot", e => {
+    main.replaceChildren();
+    call("load", e.data, site);
+    if (call("blocks").length === 0) call("insert", "", "paragraph");
+    render();
+    publish(true).catch(console.error);
+    status.textContent = "live";
+    status.className = "live";
+  });
+  es.onmessage = e => {
+    try { call("apply", e.data); } catch (err) { console.error(err); }
+    render();
+  };
+  es.onerror = () => { status.textContent = "reconnecting"; status.className = ""; };
+  setInterval(() => flush().catch(console.error), 150);
+}
+
+window.pagesReady = () => (page ? open() : list().catch(e => (main.textContent = e.message)));
+const go = new Go();
+WebAssembly.instantiateStreaming(fetch("/editor.wasm"), go.importObject).then(r => go.run(r.instance));
+</script>
+</body>
+</html>

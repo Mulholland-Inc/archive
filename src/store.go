@@ -56,8 +56,26 @@ type storeQ interface {
 type storeTxKey struct{}
 
 type storeTx struct {
-	tx   pgx.Tx
-	role string
+	tx    pgx.Tx
+	role  string
+	after *[]func()
+}
+
+func storeAfter(ctx context.Context, fn func()) {
+	if t, ok := ctx.Value(storeTxKey{}).(storeTx); ok && t.after != nil {
+		*t.after = append(*t.after, fn)
+		return
+	}
+	fn()
+}
+
+func storeCommitted(after *[]func(), err error) error {
+	if err == nil {
+		for _, fn := range *after {
+			fn()
+		}
+	}
+	return err
 }
 
 type pgStore struct {
@@ -420,21 +438,23 @@ func (s *pgStore) As(ctx context.Context, role string, fn func(context.Context) 
 	if t, ok := ctx.Value(storeTxKey{}).(storeTx); ok && t.role == role {
 		return fn(ctx)
 	}
-	return storeErr(pgx.BeginFunc(ctx, s.app, func(tx pgx.Tx) error {
+	after := &[]func(){}
+	return storeCommitted(after, storeErr(pgx.BeginFunc(ctx, s.app, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, "SET LOCAL ROLE "+pgx.Identifier{role}.Sanitize()); err != nil {
 			return err
 		}
-		return fn(context.WithValue(ctx, storeTxKey{}, storeTx{tx, role}))
-	}))
+		return fn(context.WithValue(ctx, storeTxKey{}, storeTx{tx, role, after}))
+	})))
 }
 
 func (s *pgStore) System(ctx context.Context, fn func(context.Context) error) error {
 	if t, ok := ctx.Value(storeTxKey{}).(storeTx); ok && t.role == "" {
 		return fn(ctx)
 	}
-	return storeErr(pgx.BeginFunc(ctx, s.sys, func(tx pgx.Tx) error {
-		return fn(context.WithValue(ctx, storeTxKey{}, storeTx{tx, ""}))
-	}))
+	after := &[]func(){}
+	return storeCommitted(after, storeErr(pgx.BeginFunc(ctx, s.sys, func(tx pgx.Tx) error {
+		return fn(context.WithValue(ctx, storeTxKey{}, storeTx{tx, "", after}))
+	})))
 }
 
 func storeErr(err error) error {
