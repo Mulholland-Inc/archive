@@ -520,7 +520,7 @@ final class FilterBar: UIView, UISearchTextFieldDelegate {
         self.onSearch = onSearch
         self.presenter = presenter
         super.init(frame: .zero)
-        let glass = Glass(radius: 26)
+        let glass = Glass(radius: 28)
         let scroll = UIScrollView()
         scroll.showsHorizontalScrollIndicator = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
@@ -529,11 +529,17 @@ final class FilterBar: UIView, UISearchTextFieldDelegate {
         stack.spacing = 6
         stack.translatesAutoresizingMaskIntoConstraints = false
         search.placeholder = "Search"
+        search.borderStyle = .none
+        search.backgroundColor = .clear
+        search.background = UIImage()
+        search.font = UIFontMetrics(forTextStyle: .body).scaledFont(for: .systemFont(ofSize: 17))
+        search.leftView?.tintColor = .secondaryLabel
         search.returnKeyType = .search
         search.clearButtonMode = .whileEditing
         search.delegate = self
         search.addAction(UIAction { [weak self] _ in self?.onSearch(self?.search.text ?? "") }, for: .editingChanged)
-        search.widthAnchor.constraint(equalToConstant: 170).isActive = true
+        search.widthAnchor.constraint(equalToConstant: 190).isActive = true
+        search.heightAnchor.constraint(equalToConstant: 44).isActive = true
         addSubview(glass)
         glass.contentView.addSubview(scroll)
         scroll.addSubview(stack)
@@ -542,13 +548,13 @@ final class FilterBar: UIView, UISearchTextFieldDelegate {
             glass.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             glass.topAnchor.constraint(equalTo: topAnchor, constant: 8),
             glass.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
-            glass.heightAnchor.constraint(equalToConstant: 52),
+            glass.heightAnchor.constraint(equalToConstant: 62),
             scroll.leadingAnchor.constraint(equalTo: glass.contentView.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: glass.contentView.trailingAnchor),
             scroll.topAnchor.constraint(equalTo: glass.contentView.topAnchor),
             scroll.bottomAnchor.constraint(equalTo: glass.contentView.bottomAnchor),
-            stack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor, constant: 8),
-            stack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor, constant: -8),
+            stack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor, constant: 14),
+            stack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor, constant: -12),
             stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
             stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
             stack.heightAnchor.constraint(equalTo: scroll.frameLayoutGuide.heightAnchor)
@@ -631,7 +637,7 @@ final class FilterBar: UIView, UISearchTextFieldDelegate {
             c.imagePlacement = .trailing
         }
         let button = UIButton(configuration: c)
-        button.heightAnchor.constraint(equalToConstant: 36).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 38).isActive = true
         return button
     }
 }
