@@ -1,0 +1,20 @@
+{
+  "name": "archive-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "wasm": "cd wasm && GOOS=js GOARCH=wasm go build -o ../public/editor.wasm . && cp -f \"$(go env GOROOT)/lib/wasm/wasm_exec.js\" ../public/",
+    "dev": "npm run wasm && vite",
+    "build": "npm run wasm && vite build"
+  },
+  "dependencies": {
+    "@fontsource-variable/eb-garamond": "5.3.0",
+    "@fontsource-variable/geist": "5.3.0",
+    "@fontsource-variable/jetbrains-mono": "5.3.0"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "7.3.1",
+    "svelte": "5.57.3",
+    "vite": "8.3.5"
+  }
+}

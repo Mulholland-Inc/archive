@@ -25,7 +25,7 @@ flowchart LR
 - **Postgres 18** for all data, **Go** for the server, **a directory or S3-compatible storage** (S3, R2, MinIO, GCS) for file bytes.
 - **One Dockerfile**: the image holds Postgres and the binary. Without `DATABASE_URL`, the binary starts the bundled Postgres in `/data`; with it, it uses the external database and keeps nothing local.
 - **One port** serves the HTTP API (`/api`), sign-in (`/auth`) and MCP (`/mcp`).
-- **Clients**: one Svelte web app is the client everywhere. It is served as the website, and wrapped with Tauri 2 for iOS, Android, macOS, Windows and Linux; Capacitor is the fallback for iOS and Android if Tauri's mobile side proves rough. It is a client of the HTTP API and the page sync endpoints. None ship yet; `apps/editor` is a prototype page editor (see Pages).
+- **Clients**: one Svelte web app is the client everywhere. It is served as the website, and wrapped with Tauri 2 for iOS, Android, macOS, Windows and Linux; Capacitor is the fallback for iOS and Android if Tauri's mobile side proves rough. It is a client of the HTTP API and the page sync endpoints. `apps/web` is its start: Svelte 5 and Vite, in the look of archive.family's app (Geist and EB Garamond, a dark shell, cream pills, rounded panels). It has sign-in, files, pages with the live editor, and a view of every table; it is not yet wrapped in Tauri.
 
 ## Data model
 
@@ -185,10 +185,9 @@ A page is Archive's own document for Notion-style collaboration: a list of block
   Agent edits reach open editors the same way, and show as "(agent) editing" in the online list. A tab whose stream closes is announced as gone.
 - **Across instances**: after a page commit, the instance sends `NOTIFY archive_page` with the page id; presence travels in the payload. Every instance keeps one `LISTEN` connection. On a notification, an instance with that page open reloads it from its blob and sends its editors the operations since its old version. Nothing is sent for a transaction that rolls back.
 - **Search**: a page's text is extracted on every save, like any file.
-- **Editor**: `apps/editor` is a barebones prototype:
-  - `wasm.go` wraps go-crdt for the browser;
-  - `index.html` has one input per block, Enter to split and Backspace to merge, an online list, live carets and selections;
-  - `serve.go` is a dev server that proxies `/api` with a token.
+- **Editor**: the page editor in `apps/web`:
+  - `wasm/main.go` wraps go-crdt for the browser, built to WebAssembly by `npm run wasm`;
+  - `src/Page.svelte` has one input per block, Enter to split and Backspace to merge, an online list, live carets and selections.
 
   It has no formatting, nesting or tables yet.
 
@@ -227,7 +226,7 @@ Designed but not built:
 - **More Office edits**: rows, columns, slides and formatting.
 - **Google Docs and Sheets integration** for people editing Office files.
 - **Webhooks** instead of polling connectors to bring data in.
-- **Clients**: the Svelte app, as the website and in Tauri 2 shells for iOS, Android and desktop (Capacitor as the fallback on mobile). Every shell runs it in the platform's own web view (WKWebView, Android WebView, WebView2, WebKitGTK), and all of them run WebAssembly. The page editor therefore uses the same go-crdt WebAssembly build as `apps/editor` on every platform, and merges with the same code as the server.
+- **Clients**: the Svelte app, as the website and in Tauri 2 shells for iOS, Android and desktop (Capacitor as the fallback on mobile). Every shell runs it in the platform's own web view (WKWebView, Android WebView, WebView2, WebKitGTK), and all of them run WebAssembly. The page editor therefore uses the same go-crdt WebAssembly build as `apps/web` on every platform, and merges with the same code as the server.
 - **Pages**: formatting, nesting and tables in the editor and the model; checking that a client only sends operations for its own site; cleaning up old page blobs.
 
 ## Not doing
