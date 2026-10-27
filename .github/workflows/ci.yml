@@ -27,20 +27,12 @@ jobs:
           cache: false
       - name: Postgres 18
         run: |
-          if [ -x /usr/lib/postgresql/18/bin/initdb ]; then
-            echo /usr/lib/postgresql/18/bin >> "$GITHUB_PATH"
-            exit 0
+          if [ ! -x /usr/lib/postgresql/18/bin/initdb ]; then
+            sudo apt-get install -y -q postgresql-common
+            sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+            sudo apt-get install -y -q postgresql-18
           fi
-          cache="$HOME/.cache/archive-postgres"
-          mkdir -p "$cache"
-          (
-            flock 9
-            if ! ls "$cache"/pgbin/*/bin/initdb >/dev/null 2>&1; then
-              (cd src && go build -o "$RUNNER_TEMP/archive" .)
-              PATH=/usr/bin:/bin ARCHIVE_DATA="$cache" "$RUNNER_TEMP/archive" types >/dev/null
-            fi
-          ) 9>"$cache.lock"
-          dirname "$(ls "$cache"/pgbin/*/bin/initdb | tail -1)" >> "$GITHUB_PATH"
+          echo /usr/lib/postgresql/18/bin >> "$GITHUB_PATH"
       - run: go vet ./...
         working-directory: src
       - run: go test -count=1 -timeout 25m ./...
