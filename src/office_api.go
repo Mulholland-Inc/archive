@@ -18,7 +18,6 @@ import (
 
 type OfficeModel struct {
 	Type       string            `json:"type"`
-	Version    string            `json:"version"`
 	Paragraphs []OfficeParagraph `json:"paragraphs,omitempty"`
 	Tables     []OfficeTable     `json:"tables,omitempty"`
 	Sheets     []OfficeSheet     `json:"sheets,omitempty"`
@@ -273,26 +272,35 @@ func (a *Archive) ReadDocument(ctx context.Context, id uuid.UUID) (*OfficeModel,
 	if err != nil {
 		return nil, fmt.Errorf("archive.read: %v: %w", err, httpErrBadRequest)
 	}
-	m.Version = f.Hash
 	return m, nil
 }
 
-type EditedFile struct {
-	*File
-	Version string `json:"version"`
+func (a *Archive) EditDocument(ctx context.Context, id uuid.UUID, ops []OfficeOp) (*File, error) {
+	nf, err := coreDo(a, ctx, func(ctx context.Context) (*File, error) {
+		return a.editDocument(ctx, id, ops)
+	})
+	if err == nil {
+		a.wakeFiles()
+	}
+	return nf, err
 }
 
-func (a *Archive) EditDocument(ctx context.Context, id uuid.UUID, ops []OfficeOp, base string) (*EditedFile, error) {
-	if base == "" {
-		return nil, fmt.Errorf("archive.edit: pass the version from archive.read, as archive.edit(id, edits, { version }): %w", ErrConflict)
+func (a *Archive) editDocument(ctx context.Context, id uuid.UUID, ops []OfficeOp) (*File, error) {
+	f, err := storeOne[File](ctx, a.st, `SELECT `+fileCols+` FROM file WHERE id = $1 FOR UPDATE`, id)
+	if errors.Is(err, ErrNotFound) {
+		return nil, fmt.Errorf("file %s: %w", id, ErrNotFound)
 	}
-	stale := fmt.Errorf("archive.edit: file %s changed since version %s; call archive.read again and redo your edit against the new version: %w", id, base, ErrConflict)
-	f, b, err := a.documentBytes(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if f.Hash != base {
-		return nil, stale
+	rc, err := a.blobs.open(ctx, f.Hash, f.Size)
+	if err != nil {
+		return nil, err
+	}
+	b, err := io.ReadAll(rc)
+	rc.Close()
+	if err != nil {
+		return nil, err
 	}
 	out, err := OfficeEdit(b, f.Name, ops)
 	if err != nil {
@@ -315,16 +323,6 @@ func (a *Archive) EditDocument(ctx context.Context, id uuid.UUID, ops []OfficeOp
 	if err := a.blobs.put(ctx, hash, tmp.Name(), int64(len(out))); err != nil {
 		return nil, err
 	}
-	nf, err := coreDo(a, ctx, func(ctx context.Context) (*File, error) {
-		return storeOne[File](ctx, a.st, `UPDATE file SET hash = $2, size = $3, status = 'pending', text = '', error = '', metadata = '{}'
-			WHERE id = $1 AND hash = $4 RETURNING `+fileCols, id, hash, int64(len(out)), base)
-	})
-	if errors.Is(err, ErrNotFound) {
-		return nil, stale
-	}
-	if err != nil {
-		return nil, err
-	}
-	a.wakeFiles()
-	return &EditedFile{nf, nf.Hash}, nil
+	return storeOne[File](ctx, a.st, `UPDATE file SET hash = $2, size = $3, status = 'pending', text = '', error = '', metadata = '{}'
+		WHERE id = $1 RETURNING `+fileCols, id, hash, int64(len(out)))
 }
