@@ -13,6 +13,8 @@ flowchart LR
   Connectors[Gmail, Drive, Outlook, SharePoint, Slack] --> Core[Go core]
   Apps[ChatGPT, Claude, Gemini, Grok] <--> MCP[MCP: run code] --> Core
   Clients[Web and iOS] <--> API[HTTP API] --> Core
+  Guests[People without an account] --> Shares[Share links] --> Core
+  Core <--> Office[Collabora, optional]
   Core --> PG[(Postgres: archive + public)]
   Core --> Files[(Files: disk or S3)]
 ```
@@ -22,6 +24,7 @@ flowchart LR
 - **Postgres 18** for all data, **Go** for the server, **a directory or S3** for file bytes.
 - **One Dockerfile**: the image holds Postgres and the binary. The binary starts Postgres, brings the schema in line with the DDL, and serves the API and MCP on one port. One `/data` volume holds everything.
 - **Clients**: web and iOS clients will be rebuilt on the HTTP API; none ship today.
+- **Collabora Online**, optional: a second container that edits and converts office documents (see Documents).
 
 ## Data model
 
@@ -29,7 +32,7 @@ Two Postgres schemas. Tables are named in the singular, and every id is a UUIDv7
 
 | Schema | Holds |
 |---|---|
-| `archive` | Archive's own tables (`space`, `user`, `token`, `file`, `source`, `view`, `secret`) and the built-in types as domains and composite types (`archive.email`, `archive.iban`, `archive.money`) |
+| `archive` | Archive's own tables (`space`, `user`, `token`, `file`, `file_version`, `share`, `source`, `view`, `secret`) and the built-in types as domains and composite types (`archive.email`, `archive.iban`, `archive.money`) |
 | `public` | One table per type. The table is the type and a row is the entity |
 
 There is no `type` or `entity` table: Postgres already is that. Archive reads types, columns, foreign keys and `COMMENT ON` descriptions from the catalog.
@@ -114,9 +117,43 @@ Archive is listed in ChatGPT, Claude, Gemini and Grok as one remote MCP server. 
 
 File bytes are content-addressed by SHA-256 in the `/data` volume or in S3. Uploads are resumable (tus). On upload, Archive pulls metadata, makes thumbnails and extracts the text of PDFs, HTML and email, so files are searchable and agents can read them.
 
+- **Versions**: a file is a name, a space and its current bytes. Every save adds a row to `archive.file_version` (file, hash, size, saved by, saved at) and points `file.hash` at the new bytes. Old bytes stay, so any version can be opened or restored, and a save that changes nothing costs nothing.
+- **Text and previews follow the current version**: each save extracts the text and makes the thumbnail again.
+
+## Documents
+
+Archive edits documents without building an editor per format.
+
+- **Text formats** (Markdown, plain text, CSV, JSON, code) open in an editor built into the web client. Saving writes a new version through the API.
+- **Office formats** (docx, xlsx, pptx, odt, ods, odp, rtf) open in Collabora Online in an iframe. Archive is the WOPI host: it serves `CheckFileInfo`, `GetFile`, `PutFile`, `Lock` and `Unlock` under `/wopi`, with a short-lived access token per user and file, so Collabora only ever sees the one file it is editing. Every save from Collabora is a new version.
+- **Conversion**: when Collabora is set up, Archive also sends office files to its `convert-to` endpoint, to extract their text and make a PDF preview and a thumbnail. Office files are then searchable and readable by agents, like PDFs.
+- **Without Collabora**, office files can be stored, downloaded and found by name, but not edited, previewed or searched by content.
+- **PDFs and images** are viewed, not edited.
+- **Agents** read every format as text through `archive.file(id)`. Writing office files from code mode is not supported.
+
+Collabora is an optional container in `compose.yaml` and the Helm chart, set with `ARCHIVE_COLLABORA_URL`. OnlyOffice was the alternative; Collabora is chosen for its licence (MPL) and because its free edition has no limit on editors.
+
+## Sharing
+
+A user can share a file with people who have no Archive account, through a link. Shares are rows, not signed URLs, so they can be listed and revoked and their use is visible.
+
+```
+archive.share: id, file, token_hash, access (view | download), emails, password_hash,
+               expires_at, revoked_at, created_by, created_at, last_used_at, uses
+```
+
+- **The link** is `/s/<token>`, with 32 random bytes as the token; Archive stores only its hash. It opens a public page that previews the file (Collabora's viewer for office files, the browser for PDFs, images and text), with a download button when access is `download`.
+- **Who can open it**: anyone with the link, optionally behind a password; or only the listed email addresses, which get a one-time code by email, sent the same way as sign-in links. A share can expire and can be revoked at any time.
+- **The current version**: a share points at the file, so it always shows the latest version. GPS data is removed from shared photos.
+- **Who can share**: editors of the file's space. Owners and admins of the space see and revoke every share in it.
+- **Access**: the share page reads through a system role that can see only the shared file, never anything else in the space.
+- **Surfaces**: `archive.share(fileId, { access, emails, password, expires })` returns the link, `archive.shares()` lists them and `archive.unshare(id)` revokes one; the same as `/api/files/{id}/shares` and `archive share` on the command line.
+
+Short signed links stay for the app's own downloads, such as image previews; anything handed to another person is a share. Guests editing through a share, and sharing a folder or a collection of files, come later.
+
 ## Deployment
 
-`install.sh` pulls the image and runs it with one volume on port 8080. The same image runs on any cloud; a Helm chart covers Kubernetes, and Terraform modules for AWS, GCP and Azure swap the bundled Postgres for the managed one. The `archive` Terraform provider manages the schema DDL, sources, views, tokens and access rules as code.
+`install.sh` pulls the image and runs it with one volume on port 8080, with Collabora as an optional second container. The same image runs on any cloud; a Helm chart covers Kubernetes, and Terraform modules for AWS, GCP and Azure swap the bundled Postgres for the managed one. The `archive` Terraform provider manages the schema DDL, sources, views, tokens and access rules as code.
 
 ## Not doing
 
