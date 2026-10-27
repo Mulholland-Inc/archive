@@ -25,7 +25,7 @@ flowchart LR
 - **Postgres 18** for all data, **Go** for the server, **a directory or S3-compatible storage** (S3, R2, MinIO, GCS) for file bytes.
 - **One Dockerfile**: the image holds Postgres and the binary. Without `DATABASE_URL`, the binary starts the bundled Postgres in `/data`; with it, it uses the external database and keeps nothing local.
 - **One port** serves the HTTP API (`/api`), sign-in (`/auth`) and MCP (`/mcp`).
-- **Clients**: one React Native app, built with Expo, runs on iOS, Android and the web from one codebase. It is a client of the HTTP API and the page sync endpoints. None ship yet; `apps/editor` is a prototype page editor (see Pages).
+- **Clients**: one Svelte web app is the client everywhere. It is served as the website, and wrapped with Tauri 2 for iOS, Android, macOS, Windows and Linux; Capacitor is the fallback for iOS and Android if Tauri's mobile side proves rough. It is a client of the HTTP API and the page sync endpoints. None ship yet; `apps/editor` is a prototype page editor (see Pages).
 
 ## Data model
 
@@ -197,6 +197,7 @@ A page is Archive's own document for Notion-style collaboration: a list of block
 - Office libraries (excelize, go-docx, unioffice): they load a document into their own structures and write it back out, which loses what they do not model, and some are AGPL or commercial.
 - Live co-editing of Office files: people edit Office files in Google Docs and Sheets through an integration (planned), while pages cover collaboration inside Archive. A CRDT model of OOXML would mean converting in both directions.
 - Version numbers on `archive.edit`: tried and dropped as too complex for agents; the row lock prevents lost updates instead.
+- React Native for clients: its engine (Hermes) has no WebAssembly on iOS and Android, so the page editor could not run go-crdt there without gomobile bindings or a WebView. A web app in Tauri or Capacitor shells runs the same code everywhere. Electron covers desktop only.
 
 ## Deployment
 
@@ -226,7 +227,7 @@ Designed but not built:
 - **More Office edits**: rows, columns, slides and formatting.
 - **Google Docs and Sheets integration** for people editing Office files.
 - **Webhooks** instead of polling connectors to bring data in.
-- **Clients**: one React Native app (Expo) for iOS, Android and the web, on the HTTP API. The page editor must merge with go-crdt, the same code as the server. On the web that is the WebAssembly build from `apps/editor`. React Native's engine (Hermes) has no WebAssembly on iOS and Android, so there it is either go-crdt bound natively with gomobile or the editor in a WebView; that is still to decide.
+- **Clients**: the Svelte app, as the website and in Tauri 2 shells for iOS, Android and desktop (Capacitor as the fallback on mobile). Every shell runs it in the platform's own web view (WKWebView, Android WebView, WebView2, WebKitGTK), and all of them run WebAssembly. The page editor therefore uses the same go-crdt WebAssembly build as `apps/editor` on every platform, and merges with the same code as the server.
 - **Pages**: formatting, nesting and tables in the editor and the model; checking that a client only sends operations for its own site; cleaning up old page blobs.
 
 ## Not doing
