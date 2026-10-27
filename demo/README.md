@@ -1,6 +1,6 @@
 # Demo vault
 
-A made-up personal archive to try Archive with: 18 tables (people, places, payments, events, tasks, notes, health, ...), about 820 rows and 32 files (PDFs, emails, photos with EXIF, a bank CSV, a calendar). Rent, trips, recipes and other shared things are in a `family` space, shared with a second user, sanne@example.com.
+A made-up personal archive to try Archive with: 18 tables (people, places, payments, events, tasks, notes, health, ...), about 820 rows and 35 files (PDFs, emails, photos with EXIF, a bank CSV, a calendar, and a docx, xlsx and pptx to edit). Rent, trips, recipes and other shared things are in a `family` space, shared with a second user, sanne@example.com.
 
 Load it into an empty archive:
 

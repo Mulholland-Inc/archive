@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"cmp"
 	"crypto/sha256"
@@ -453,7 +454,7 @@ func TestDemoVaultLoadsOnceWithLinkedRowsAndFiles(t *testing.T) {
 		t.Fatalf("run: %v %s", err, res)
 	}
 	got := decode[struct{ Result map[string]any }](t, res).Result
-	if fmt.Sprint(got["files"]) != "32" || fmt.Sprint(got["receipts"]) == "0" {
+	if fmt.Sprint(got["files"]) != "35" || fmt.Sprint(got["receipts"]) == "0" {
 		t.Errorf("files and links: %v", got)
 	}
 	if _, errs, err := load(); err == nil || !strings.Contains(errs, "already has people") {
@@ -2163,7 +2164,7 @@ return { planned: plan.statements.length, before: plan.applied, applied: done.ap
 		resp, body := e2eGet(t, api+"/run/docs", tok)
 		docs := string(body)
 		for _, want := range []string{"declare const archive", "sql(query: string, ...params: unknown[]): Promise<Row[]>", "interface Money { amount: number; currency: Currency }",
-			"/** A house you own or rent. */\ninterface House extends Base {\n    address: string;\n    /** Asking price. */\n    price?: Money;\n    sold?: boolean;\n}", "house: House;", "type Email = string;"} {
+			"/** A house you own or rent. */\ninterface House extends Base {\n    address: string;\n    /** Asking price. */\n    price?: Money;\n    sold?: boolean;\n}", "house: House;", "type Email = string;", "read(fileId: string): Promise<Model>;", "edit(fileId: string, edits: Edit[]): Promise<StoredFile>;"} {
 			if resp.StatusCode != 200 || !strings.Contains(docs, want) {
 				t.Errorf("docs lack %q:\n%s", want, docs)
 			}
@@ -2195,6 +2196,61 @@ return { price: a.price, sold: b.sold, listed: listed.map(h => h.id === b.id), p
 		}
 		if out := run(t, bobTok, `return (await archive.list("house")).length + (await archive.sql("SELECT * FROM house")).length`); string(out.Result) != "0" || out.Error != "" {
 			t.Errorf("bob sees alice's houses: %+v", out)
+		}
+	})
+
+	t.Run("ReadAndEditOfficeFilesInPlace", func(t *testing.T) {
+		ids := map[string]string{}
+		orig := map[string][]byte{}
+		for _, name := range []string{"Letter to landlord.docx", "family/Monthly budget.xlsx", "Lisbon trip.pptx"} {
+			b, err := os.ReadFile(filepath.Join("..", "demo", "files", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, f := e2eUpload(t, api+"/files", tok, filepath.Base(name), b)
+			ids[filepath.Ext(name)], orig[filepath.Ext(name)] = f.ID.String(), b
+		}
+		got := ok(t, `const [doc, sheet, deck] = [`+strconv.Quote(ids[".docx"])+`, `+strconv.Quote(ids[".xlsx"])+`, `+strconv.Quote(ids[".pptx"])+`];
+const before = (await archive.read(doc)).paragraphs.find(p => p.text.includes("window frame"));
+await archive.edit(doc, [{ op: "replace_text", find: "window frame", replace: "window sill" }, { op: "insert_paragraph_after", para: before.id, text: "It got worse in October." }]);
+await archive.edit(sheet, [{ op: "set_cell", cell: "B4", value: 500 }, { op: "set_formula", cell: "C5", formula: "B5*12" }]);
+await archive.edit(deck, [{ op: "replace_shape_text", slide: 1, shape: 1, text: "Porto long weekend" }]);
+let bad = "";
+try { await archive.edit(doc, [{ op: "replace_text", find: "no such words", replace: "x" }]); } catch (e) { bad = e.message; }
+const d = await archive.read(doc), x = await archive.read(sheet), k = await archive.read(deck);
+return { para: d.paragraphs.map(p => p.text).filter(t => t.includes("window") || t.startsWith("It got")), cells: x.sheets[0].cells.filter(c => ["B4", "C5"].includes(c.ref)),
+  title: k.slides[0].shapes[1].paragraphs[0].text, bad };`)
+		want := map[string]string{"para": "[The bedroom window sill still lets in a draft. It got worse in October.]", "cells": "[map[ref:B4 value:500] map[formula:B5*12 ref:C5]]", "title": "Porto long weekend"}
+		for k, v := range want {
+			if fmt.Sprint(got[k]) != v {
+				t.Errorf("%s = %v, want %s", k, got[k], v)
+			}
+		}
+		if bad, _ := got["bad"].(string); !strings.Contains(bad, "no such words") {
+			t.Errorf("a failing edit: %q", bad)
+		}
+		for ext, touched := range map[string][]string{".docx": {"word/document.xml"}, ".xlsx": {"xl/worksheets/sheet1.xml", "xl/workbook.xml"}, ".pptx": {"ppt/slides/slide1.xml"}} {
+			_, edited := e2eGet(t, api+"/files/"+ids[ext]+"/content", tok)
+			a, err := zip.NewReader(bytes.NewReader(orig[ext]), int64(len(orig[ext])))
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, err := zip.NewReader(bytes.NewReader(edited), int64(len(edited)))
+			if err != nil {
+				t.Fatalf("%s: %v", ext, err)
+			}
+			raw := map[string][]byte{}
+			for _, f := range b.File {
+				r, _ := f.OpenRaw()
+				raw[f.Name], _ = io.ReadAll(r)
+			}
+			for _, f := range a.File {
+				r, _ := f.OpenRaw()
+				was, _ := io.ReadAll(r)
+				if !slices.Contains(touched, f.Name) && !bytes.Equal(was, raw[f.Name]) {
+					t.Errorf("%s: %s changed", ext, f.Name)
+				}
+			}
 		}
 	})
 

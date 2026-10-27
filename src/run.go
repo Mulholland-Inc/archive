@@ -633,6 +633,28 @@ func (r *runner) sdk() {
 			return f, err
 		})
 	})
+	r.def(o, "read", func(ctx context.Context, call goja.FunctionCall) (any, error) {
+		id, err := r.id(call, 0, "read")
+		if err != nil {
+			return nil, err
+		}
+		return a.ReadDocument(ctx, id)
+	})
+	r.def(o, "edit", func(ctx context.Context, call goja.FunctionCall) (any, error) {
+		id, err := r.id(call, 0, "edit")
+		if err != nil {
+			return nil, err
+		}
+		raw, err := r.json(call.Argument(1))
+		if err != nil {
+			return nil, err
+		}
+		ops, err := OfficeParseOps(raw)
+		if err != nil {
+			return nil, fmt.Errorf("archive.edit: %v: %w", err, httpErrBadRequest)
+		}
+		return a.EditDocument(ctx, id, ops)
+	})
 	r.def(o, "spaces", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		return a.Spaces(ctx)
 	})
