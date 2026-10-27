@@ -18,7 +18,7 @@ import (
 
 type OfficeModel struct {
 	Type       string            `json:"type"`
-	Paragraphs []OfficeParagraph `json:"paragraphs,omitempty"`
+	Paragraphs []OfficeParagraph `json:"paragraphs,omitzero"`
 	Tables     []OfficeTable     `json:"tables,omitempty"`
 	Sheets     []OfficeSheet     `json:"sheets,omitempty"`
 	Slides     []OfficeSlide     `json:"slides,omitempty"`
@@ -264,6 +264,9 @@ func (a *Archive) documentBytes(ctx context.Context, id uuid.UUID) (*File, []byt
 }
 
 func (a *Archive) ReadDocument(ctx context.Context, id uuid.UUID) (*OfficeModel, error) {
+	if m, ok, err := a.ReadPage(ctx, id); ok {
+		return m, err
+	}
 	f, b, err := a.documentBytes(ctx, id)
 	if err != nil {
 		return nil, err
@@ -292,6 +295,9 @@ func (a *Archive) editDocument(ctx context.Context, id uuid.UUID, ops []OfficeOp
 	}
 	if err != nil {
 		return nil, err
+	}
+	if pageIs(f.Name) {
+		return a.editPage(ctx, f, ops)
 	}
 	rc, err := a.blobs.open(ctx, f.Hash, f.Size)
 	if err != nil {

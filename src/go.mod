@@ -1,12 +1,13 @@
 module github.com/Mulholland-Inc/archive
 
-go 1.26.2
+go 1.27.2
 
 require (
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/dop251/goja v0.0.0-20261026132650-6b6a90e51946
 	github.com/emersion/go-message v0.18.2
 	github.com/evanw/esbuild v0.28.2
+	github.com/go-crdt/crdt v0.57.0
 	github.com/go-webauthn/webauthn v0.18.2
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0

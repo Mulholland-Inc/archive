@@ -89,12 +89,14 @@ declare const archive: {
     files(opts?: { limit?: number; after?: string; space?: string }): Promise<StoredFile[]>;
     /** One file with its extracted text. */
     file(id: string): Promise<StoredFile>;
-    /** The structure of a docx, xlsx or pptx file: paragraphs with ids, cells, slides and shapes (see Documents). */
+    /** The structure of a docx, xlsx, pptx or page file: paragraphs with ids, cells, slides and shapes (see Documents and Pages). */
     read(fileId: string): Promise<Model>;
-    /** Apply edits to a docx, xlsx or pptx file in place and save it as the file's new content; all or nothing (see Documents). */
+    /** Apply edits to a docx, xlsx, pptx or page file and save it as the file's new content; all or nothing (see Documents and Pages). */
     edit(fileId: string, edits: Edit[]): Promise<StoredFile>;
     /** The spaces you can see, with your level in each. */
     spaces(): Promise<Space[]>;
+    /** Create an empty page (a native Archive document, see Pages) named name + ".page"; fill it with archive.edit. */
+    createPage(name: string, opts?: { space?: string }): Promise<StoredFile>;
 };
 
 type Row = Record<string, any>;
@@ -197,7 +199,7 @@ interface Quantity { value: number; unit: string; original_unit: string }
  * and why. Call archive.read again after a successful edit before planning more.
  */
 
-type Model = DocxModel | XlsxModel | PptxModel;
+type Model = DocxModel | XlsxModel | PptxModel | PageModel;
 
 interface DocxModel {
   type: "docx";
@@ -298,7 +300,10 @@ type Edit =
    * text takes the paragraph and font formatting of the shape's first paragraph and run.
    * {op: "replace_shape_text", slide: 2, shape: 2, text: "Revenue up 12%\nCosts flat"}
    */
-  | { op: "replace_shape_text"; slide: number; shape: number; text: string };
+  | { op: "replace_shape_text"; slide: number; shape: number; text: string }
+
+  // ---- page (see Pages)
+  | PageEdit;
 
 /**
  * Errors name the edit and say how to fix it, for example:
@@ -314,3 +319,44 @@ type Edit =
  * Not possible: inserting or deleting rows, columns, slides, shapes or tables; changing
  * formatting (bold, colours, number formats); comments; charts; headers and footers.
  */
+
+/**
+ * Pages
+ * A page is Archive's own collaborative document: a list of paragraphs that many agents
+ * and people edit at the same time. Its file name ends in ".page"; make one with
+ * archive.createPage, then use archive.read and archive.edit as for Office files.
+ * Edits from different callers never conflict, they merge, so an edit planned on an older
+ * read still applies. Paragraph ids are permanent: an id from any earlier read stays
+ * valid until that paragraph is deleted, whatever others insert or delete meanwhile.
+ * One archive.edit call is still all or nothing. Pages have no tables or formatting.
+ */
+interface PageModel {
+  type: "page";
+  paragraphs: {
+    id: string;        // like "12@1": permanent, not a position
+    style: string;     // "paragraph", "heading1", "heading2", "heading3", "bullet", "numbered", "todo", "quote", "code", or your own
+    text: string;      // may contain "\n"
+  }[];
+}
+
+type PageEdit =
+  /**
+   * With "para" and no "find", replace the whole text of that paragraph. When several callers
+   * rewrite the same paragraph at once, the last rewrite wins whole; texts are never mixed.
+   * {op: "replace_text", para: "12@1", replace: "Budget approved on 3 March."}
+   * With "find", replace just that text, as in docx: inside "para", or where it occurs in one
+   * paragraph only, or everywhere with "all": true. Edits to the rest of the paragraph are kept.
+   * {op: "replace_text", find: "Q3", replace: "Q4", all: true}
+   */
+  | { op: "replace_text"; para?: string; find?: string; replace: string; all?: boolean }
+  /**
+   * Insert a paragraph after "para", or at the top of the page without "para". Its style is
+   * "paragraph" unless given. Several inserts after the same id appear in the order given.
+   * {op: "insert_paragraph_after", text: "Meeting notes", style: "heading1"}
+   * {op: "insert_paragraph_after", para: "12@1", text: "Call the notary", style: "todo"}
+   */
+  | { op: "insert_paragraph_after"; para?: string; text: string; style?: string }
+  /** {op: "delete_paragraph", para: "12@1"} */
+  | { op: "delete_paragraph"; para: string }
+  /** {op: "set_style", para: "12@1", style: "heading2"} */
+  | { op: "set_style"; para: string; style: string };

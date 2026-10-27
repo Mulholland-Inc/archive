@@ -31,6 +31,7 @@ type Archive struct {
 	linkKey  []byte
 	wake     chan struct{}
 	tusLocks sync.Map
+	pages    sync.Map
 
 	mu  sync.RWMutex
 	cat *Catalog
