@@ -53,7 +53,7 @@ func (a *Archive) chat(w http.ResponseWriter, r *http.Request) {
 	}}
 	msgs := body.Messages
 	for {
-		msg, stop, err := chatTurn(ctx, key, tools, msgs, func(s string) { send(map[string]string{"text": s}) })
+		msg, stop, err := chatTurn(ctx, key, tools, msgs, func(s string) { send(map[string]string{"text": s}) }, func() { send(map[string]bool{"tool": true}) })
 		if err != nil {
 			send(map[string]string{"error": err.Error()})
 			return
@@ -92,7 +92,7 @@ func (a *Archive) chat(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func chatTurn(ctx context.Context, key string, tools []any, msgs []json.RawMessage, text func(string)) (map[string]any, string, error) {
+func chatTurn(ctx context.Context, key string, tools []any, msgs []json.RawMessage, text func(string), tool func()) (map[string]any, string, error) {
 	b, err := json.Marshal(map[string]any{
 		"model":      cmp.Or(os.Getenv("ARCHIVE_MODEL"), "claude-haiku-5-5"),
 		"max_tokens": 32000,
@@ -153,6 +153,9 @@ func chatTurn(ctx context.Context, key string, tools []any, msgs []json.RawMessa
 				blocks, partial = append(blocks, nil), append(partial, "")
 			}
 			blocks[ev.Index] = ev.ContentBlock
+			if ev.ContentBlock["type"] == "tool_use" {
+				tool()
+			}
 		case "content_block_delta":
 			if ev.Index >= len(blocks) {
 				continue

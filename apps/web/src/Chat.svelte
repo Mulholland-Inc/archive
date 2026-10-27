@@ -3,11 +3,12 @@
   import Composer from './ui/Composer.svelte';
   import Markdown from './ui/Markdown.svelte';
   import Note from './ui/Note.svelte';
-  import ToolCall from './ui/ToolCall.svelte';
+  import Activity from './ui/Activity.svelte';
 
   let { messages = $bindable([]) } = $props();
   let draft = $state('');
   let live = $state('');
+  let calling = $state(false);
   let busy = $state(false);
   let error = $state('');
   let ctrl;
@@ -17,20 +18,30 @@
     const results = {};
     for (const m of messages) if (m.role === 'user' && Array.isArray(m.content)) for (const b of m.content) if (b.type === 'tool_result') results[b.tool_use_id] = b;
     const out = [];
-    messages.forEach((m, i) => {
+    let turn = null;
+    for (const m of messages) {
       const blocks = typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : m.content;
-      blocks.forEach((b, j) => {
-        const key = `${i}.${j}`;
-        if (b.type === 'text' && b.text.trim()) out.push({ key, kind: m.role, text: b.text });
-        else if (b.type === 'tool_use') out.push({ key, kind: 'tool', code: b.input?.code ?? '', result: results[b.id] });
-      });
-    });
+      if (m.role === 'user') {
+        const text = blocks.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
+        if (!text) continue;
+        out.push({ kind: 'user', text });
+        out.push((turn = { kind: 'turn', calls: [], texts: [], phase: 'done' }));
+        continue;
+      }
+      for (const b of blocks) {
+        if (b.type === 'text' && b.text.trim()) turn?.texts.push(b.text);
+        else if (b.type === 'tool_use') turn?.calls.push({ code: b.input?.code ?? '', result: results[b.id] });
+      }
+    }
+    if (turn && live) turn.texts.push(live);
+    if (turn && busy) turn.phase = calling || turn.calls.some((c) => !c.result) ? 'running' : live ? 'done' : 'thinking';
     return out;
   });
 
   $effect(() => {
     items.length;
     live;
+    busy;
     if (scroller && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < scroller.clientHeight / 2) scroller.scrollTop = scroller.scrollHeight;
   });
 
@@ -48,7 +59,9 @@
     try {
       for await (const ev of chat(messages, ctrl.signal)) {
         if (ev.text) live += ev.text;
+        if (ev.tool) calling = true;
         if (ev.message) {
+          calling = false;
           messages = [...messages, ev.message];
           live = '';
         }
@@ -63,22 +76,21 @@
       draft = text;
     }
     live = '';
+    calling = false;
     busy = false;
   }
 </script>
 
 <div class="chat" bind:this={scroller}>
   <div class="log">
-    {#each items as it (it.key)}
+    {#each items as it, i (i)}
       {#if it.kind === 'user'}
         <div class="user">{it.text}</div>
-      {:else if it.kind === 'assistant'}
-        <Markdown text={it.text} />
       {:else}
-        <ToolCall code={it.code} result={it.result} />
+        {#if it.calls.length || it.phase !== 'done'}<Activity calls={it.calls} phase={it.phase} />{/if}
+        {#each it.texts as text, j (j)}<Markdown {text} />{/each}
       {/if}
     {/each}
-    {#if live}<Markdown text={live} />{:else if busy && !(items.at(-1)?.kind === 'tool' && !items.at(-1).result)}<span class="wait"></span>{/if}
     {#if error}<Note error>{error}</Note>{/if}
   </div>
   <div class="dock">
@@ -98,7 +110,5 @@
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
-  .wait { width: var(--size-xs); height: var(--size-xs); border-radius: 50%; background: var(--text-2); animation: pulse 1s infinite alternate; }
-  @keyframes pulse { to { opacity: var(--dim); } }
   .dock { position: sticky; bottom: 0; width: 100%; max-width: var(--chat); background: var(--shell); }
 </style>

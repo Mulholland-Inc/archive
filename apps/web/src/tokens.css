@@ -96,6 +96,11 @@
   --tile: 300px;
 
   --dim: 0.4;
+  --spin: 800ms;
+  --shimmer: 2s;
+  --code-keyword: #bb9af7;
+  --code-string: #9ece6a;
+  --code-number: #ff9e64;
   --chat: 720px;
   --bubble: 85%;
 
@@ -123,6 +128,9 @@
   --cream-ink: #ffffff;
   --alarm: #d63c3c;
   --on-peer: #ffffff;
+  --code-keyword: #7c3aed;
+  --code-string: #3f7d20;
+  --code-number: #c2410c;
   --shadow: 0 16px 48px rgb(0 0 0 / 0.12), 0 0 0 var(--stroke) var(--line);
 }
 
