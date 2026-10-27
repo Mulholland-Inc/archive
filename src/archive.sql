@@ -24,6 +24,8 @@ CREATE TABLE archive.token (
     name       text NOT NULL DEFAULT '',
     role       text UNIQUE,
     hash       text NOT NULL UNIQUE,
+    space      uuid UNIQUE REFERENCES archive.space ON DELETE CASCADE,
+    value      bytea,
     expires_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now()
 );
@@ -90,6 +92,7 @@ CREATE INDEX secret_space_idx ON archive.secret (space);
 
 CREATE FUNCTION archive.my_spaces(lvl text DEFAULT 'viewer') RETURNS uuid[] LANGUAGE sql STABLE AS $$
     SELECT coalesce(array_agg(id), '{}') FROM archive.space WHERE pg_has_role(current_user, (role || '_' || lvl)::name, 'USAGE')
+        AND coalesce(nullif(current_setting('archive.space', true), '') = name, true)
 $$;
 
 CREATE FUNCTION archive.ontology_admin() RETURNS bool LANGUAGE sql STABLE AS $$

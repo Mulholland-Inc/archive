@@ -509,7 +509,7 @@ COMMENT ON TABLE person IS 'icon: user';`}
 
 func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 	t.Parallel()
-	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
+	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com", "ANTHROPIC_API_KEY=")
 	srv := in.serve()
 	api := srv.url + "/api"
 
@@ -518,7 +518,7 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 	in.must("space", "add", "family")
 	in.must("space", "grant", "family", "bob@example.com", "viewer")
 	aliceTok := decode[Token](t, in.must("token", "create", "-name", "Claude")).Secret
-	narrowTok := decode[Token](t, in.must("token", "create", "-name", "Narrow", "-space", "family:viewer")).Secret
+	narrowTok := decode[Token](t, in.must("token", "create", "-space", "family")).Secret
 	bobTok := decode[Token](t, in.must("-as", "bob@example.com", "token", "create")).Secret
 
 	var alicePriv, bobPriv, acme, fam row
@@ -600,27 +600,91 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 		in.fails("-as", "bob@example.com", "create", "person", "-space", "family", `{"name":"x"}`)
 	})
 
-	t.Run("NarrowedTokenSeesOnlyItsSpace", func(t *testing.T) {
+	t.Run("EachSpaceHasOneTokenThatSeesOnlyItsSpace", func(t *testing.T) {
 		in := in.on(t)
 		var rs []row
 		call(t, "GET", api+"/person", narrowTok, nil, &rs)
 		if names(rs) != "Family member" {
-			t.Fatalf("narrow token sees %q", names(rs))
+			t.Fatalf("space token sees %q", names(rs))
 		}
-		st, _ := call(t, "POST", api+"/person", narrowTok, map[string]any{"name": "x"}, nil)
-		wantStatus(t, st, 403, "narrow viewer token creates")
+		var made row
+		st, _ := call(t, "POST", api+"/person", narrowTok, map[string]any{"name": "x"}, &made)
+		wantStatus(t, st, 201, "space token creates")
+		if made["space"] != fam["space"] {
+			t.Errorf("space token created in %v, want family %v", made["space"], fam["space"])
+		}
+		call(t, "DELETE", api+"/person/"+id(made), narrowTok, nil, nil)
 		var me struct {
 			Spaces []SpaceInfo `json:"spaces"`
 		}
 		call(t, "GET", srv.url+"/auth/me", narrowTok, nil, &me)
-		if len(me.Spaces) != 1 || me.Spaces[0].Name != "family" || me.Spaces[0].Level != "viewer" {
-			t.Errorf("narrow token spaces: %+v", me.Spaces)
+		if len(me.Spaces) != 1 || me.Spaces[0].Name != "family" || me.Spaces[0].Level != "editor" {
+			t.Errorf("space token spaces: %+v", me.Spaces)
+		}
+		if again := decode[Token](t, in.must("token", "create", "-space", "family")); again.Secret != narrowTok {
+			t.Errorf("a second token for family: %+v", again)
+		}
+		in.fails("token", "create", "-space", "family:viewer")
+		in.fails("-as", "bob@example.com", "token", "rotate", "family")
+		full := decode[Token](t, in.must("token", "create", "-full")).Secret
+		var shown, rotated Token
+		st, _ = call(t, "GET", srv.url+"/auth/spaces/family/token", full, nil, &shown)
+		wantStatus(t, st, 200, "show the family token")
+		if shown.Secret != narrowTok || shown.Spaces["family"] != "editor" {
+			t.Errorf("shown token: %+v", shown)
+		}
+		st, _ = call(t, "GET", srv.url+"/auth/spaces/family/token", narrowTok, nil, nil)
+		wantStatus(t, st, 403, "a space token shows itself")
+		st, _ = call(t, "POST", srv.url+"/auth/spaces/family/token/rotate", full, nil, &rotated)
+		wantStatus(t, st, 200, "rotate the family token")
+		if rotated.Secret == "" || rotated.Secret == narrowTok || rotated.ID == shown.ID {
+			t.Fatalf("rotated token: %+v", rotated)
+		}
+		st, _ = call(t, "GET", api+"/person", narrowTok, nil, nil)
+		wantStatus(t, st, 401, "the token from before the rotation")
+		narrowTok = rotated.Secret
+		st, _ = call(t, "GET", api+"/person", narrowTok, nil, nil)
+		wantStatus(t, st, 200, "the rotated token")
+		if n := in.psql("archive", "SELECT count(*) FROM archive.token WHERE space IS NOT NULL AND position(convert_to('"+narrowTok+"', 'UTF8') in value) > 0"); n != "0" {
+			t.Errorf("space token stored in plain text")
 		}
 		st, _ = call(t, "POST", srv.url+"/auth/tokens", narrowTok, map[string]any{"spaces": map[string]string{"family": "owner"}}, nil)
 		wantStatus(t, st, 403, "token mints a wider token")
 		st, _ = call(t, "POST", srv.url+"/auth/tokens", bobTok, nil, nil)
 		wantStatus(t, st, 400, "token endpoint without a body")
 		in.fails("-as", "bob@example.com", "token", "create", "-space", "family:editor")
+	})
+
+	t.Run("AnArchiveSpaceHeaderScopesEveryRequest", func(t *testing.T) {
+		var all, scoped RunOutput
+		code := `const c = await archive.create("company", { name: "Scoped firm" });
+await archive.delete("company", c.id);
+return { list: (await archive.list("person")).length, sql: (await archive.sql("SELECT count(*)::int AS n FROM person"))[0].n,
+  hits: (await archive.search("member")).length, space: c.space };`
+		call(t, "POST", api+"/run", aliceTok, map[string]string{"code": code}, &all)
+		b, _ := json.Marshal(map[string]string{"code": code})
+		req, _ := http.NewRequest("POST", api+"/run", bytes.NewReader(b))
+		req.Header.Set("Authorization", "Bearer "+aliceTok)
+		req.Header.Set("Archive-Space", "family")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		json.NewDecoder(resp.Body).Decode(&scoped)
+		resp.Body.Close()
+		got := decode[map[string]any](t, string(scoped.Result))
+		if fmt.Sprintf("%v %v %v", got["list"], got["sql"], got["hits"]) != "1 1 1" || got["space"] != fam["space"] {
+			t.Errorf("scoped to family: %s %s", scoped.Result, scoped.Error)
+		}
+		if got := decode[map[string]any](t, string(all.Result)); fmt.Sprint(got["list"]) != "2" || got["space"] == fam["space"] {
+			t.Errorf("unscoped: %s %s", all.Result, all.Error)
+		}
+		var out map[string]string
+		st, _ := call(t, "POST", api+"/chat", aliceTok, map[string]any{"messages": []any{map[string]string{"role": "user", "content": "hi"}}}, &out)
+		wantStatus(t, st, 503, "chat without ANTHROPIC_API_KEY")
+		if !strings.Contains(out["error"], "ANTHROPIC_API_KEY") {
+			t.Errorf("chat error: %v", out)
+		}
 	})
 
 	t.Run("ReferencesNeedRowsYouCanSee", func(t *testing.T) {
@@ -692,12 +756,12 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 		files := with(e2eSchema, "company.sql", strings.Replace(e2eSchema["company.sql"], "    name       text NOT NULL,\n", "    name       text NOT NULL,\n    vat        archive.vat_id,\n", 1))
 		var plan SchemaPlan
 		st, _ := call(t, "POST", api+"/schema/plan", narrowTok, map[string]any{"files": files}, &plan)
-		wantStatus(t, st, 200, "viewer token plans")
+		wantStatus(t, st, 200, "editor token plans")
 		if len(plan.Statements) != 1 || !strings.Contains(plan.Statements[0].DDL, `ADD COLUMN "vat" archive.vat_id`) || plan.Applied {
 			t.Fatalf("plan: %+v", plan)
 		}
 		st, _ = call(t, "POST", api+"/schema/apply", narrowTok, map[string]any{"files": files}, nil)
-		wantStatus(t, st, 403, "viewer token applies")
+		wantStatus(t, st, 403, "editor token applies")
 		st, _ = call(t, "POST", api+"/schema/apply", aliceTok, map[string]any{"files": files}, &plan)
 		wantStatus(t, st, 200, "admin applies")
 		var cat Catalog
@@ -775,8 +839,8 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 		var ms []Member
 		st, _ := call(t, "POST", srv.url+"/auth/spaces/family/members", bobTok, map[string]any{"email": "bob@example.com", "role": "owner"}, nil)
 		wantStatus(t, st, 403, "token changes membership")
-		in.must("space", "grant", "family", "bob@example.com", "editor")
-		bobNarrow := decode[Token](t, in.must("-as", "bob@example.com", "token", "create", "-space", "family:editor"))
+		in.must("space", "grant", "family", "bob@example.com", "admin")
+		bobNarrow := decode[Token](t, in.must("-as", "bob@example.com", "token", "rotate", "family"))
 		st, _ = call(t, "POST", api+"/person?space=family", bobNarrow.Secret, map[string]any{"name": "Bob in family"}, nil)
 		wantStatus(t, st, 201, "editor token creates")
 		ms = decode[[]Member](t, in.must("space", "grant", "family", "bob@example.com", "none"))
@@ -806,6 +870,7 @@ func TestDeletingASpaceRemovesEverythingInItForOwnersOnly(t *testing.T) {
 	in.must("space", "add", "team")
 	in.must("space", "add", "scratch")
 	in.must("space", "grant", "team", "bob@example.com", "editor")
+	in.must("token", "create", "-space", "team")
 	aliceTok := decode[Token](t, in.must("token", "create", "-name", "Claude")).Secret
 	full := decode[Token](t, in.must("token", "create", "-name", "Terraform", "-full")).Secret
 
@@ -838,6 +903,9 @@ func TestDeletingASpaceRemovesEverythingInItForOwnersOnly(t *testing.T) {
 	}
 	if got := in.psql("archive", "SELECT count(*) FROM archive.secret"); got != "0" {
 		t.Errorf("secrets left: %s", got)
+	}
+	if got := in.psql("archive", "SELECT count(*) FROM archive.token WHERE name = 'team'"); got != "0" {
+		t.Errorf("team token left: %s", got)
 	}
 	if got := in.psql("archive", "SELECT count(*) FROM pg_roles WHERE rolname LIKE 'a\\_s\\_team\\_%'"); got != "0" {
 		t.Errorf("team roles left: %s", got)
@@ -1747,15 +1815,15 @@ return { made: made.applied, t1, rows1, changed: changed.applied, t2, rows2, dro
 			t.Errorf("members: %+v", ms)
 		}
 		var made Token
-		st, _ = call(t, "POST", srv.url+"/auth/tokens", full.Secret, map[string]any{"name": "Agent", "spaces": map[string]string{"family": "viewer"}}, &made)
-		wantStatus(t, st, 201, "full token makes a scoped token")
+		st, _ = call(t, "POST", srv.url+"/auth/tokens", full.Secret, map[string]any{"name": "Agent", "spaces": map[string]string{"family": "editor"}}, &made)
+		wantStatus(t, st, 201, "full token shows the family token")
 		var ts []Token
 		call(t, "GET", srv.url+"/auth/tokens", full.Secret, nil, &ts)
 		var listed bool
 		for _, tk := range ts {
 			listed = listed || tk.ID == full.ID && tk.Full && tk.Secret == ""
 		}
-		if !listed || !slices.ContainsFunc(ts, func(tk Token) bool { return tk.ID == made.ID && tk.Spaces["family"] == "viewer" }) {
+		if !listed || !slices.ContainsFunc(ts, func(tk Token) bool { return tk.ID == made.ID && tk.Spaces["family"] == "editor" }) {
 			t.Errorf("tokens: %+v", ts)
 		}
 		st, _ = call(t, "DELETE", srv.url+"/auth/tokens/"+full.ID.String(), full.Secret, nil, nil)
@@ -1879,7 +1947,29 @@ func (b e2eBearer) RoundTrip(r *http.Request) (*http.Response, error) {
 
 func TestCodeModeRunsTypeScriptInOneTransactionOverHTTPMCPAndCLI(t *testing.T) {
 	t.Parallel()
-	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com", "ARCHIVE_RUN_TIMEOUT=30s")
+	var model []map[string]any
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]any
+		json.NewDecoder(r.Body).Decode(&req)
+		model = append(model, req)
+		ev := func(s string) { fmt.Fprintf(w, "event: x\ndata: %s\n\n", s) }
+		if len(req["messages"].([]any)) == 1 {
+			ev(`{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`)
+			ev(`{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig"}}`)
+			ev(`{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"t1","name":"run","input":{}}}`)
+			ev(`{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"code\": \"return (await archive.spaces()).length"}}`)
+			ev(`{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":" * 7\"}"}}`)
+			ev(`{"type":"content_block_stop","index":1}`)
+			ev(`{"type":"message_delta","delta":{"stop_reason":"tool_use"}}`)
+			return
+		}
+		ev(`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`)
+		ev(`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"You have "}}`)
+		ev(`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"one space."}}`)
+		ev(`{"type":"message_delta","delta":{"stop_reason":"end_turn"}}`)
+	}))
+	defer fake.Close()
+	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com", "ARCHIVE_RUN_TIMEOUT=30s", "ANTHROPIC_API_KEY=test", "ANTHROPIC_BASE_URL="+fake.URL)
 	srv := in.serve()
 	api := srv.url + "/api"
 	in.must("user", "add", "bob@example.com")
@@ -2160,6 +2250,52 @@ throw new Error("changed my mind");`)
 		res, err = sess.CallTool(ctx, &mcp.CallToolParams{Name: "run", Arguments: map[string]any{"code": `return archive.get("house", "nope")`}})
 		if err != nil || !res.IsError || !strings.Contains(res.Content[0].(*mcp.TextContent).Text, `not a uuid`) {
 			t.Errorf("mcp error: %v %+v", err, res)
+		}
+	})
+
+	t.Run("ChatLoopsTheModelThroughTheRunToolOnly", func(t *testing.T) {
+		b, _ := json.Marshal(map[string]any{"messages": []any{map[string]string{"role": "user", "content": "how many spaces?"}}})
+		req, _ := http.NewRequest("POST", api+"/chat", bytes.NewReader(b))
+		req.Header.Set("Authorization", "Bearer "+tok)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var text string
+		var msgs []map[string]any
+		sc := bufio.NewScanner(resp.Body)
+		for sc.Scan() {
+			var ev struct {
+				Text    string         `json:"text"`
+				Message map[string]any `json:"message"`
+				Error   string         `json:"error"`
+			}
+			json.Unmarshal(sc.Bytes(), &ev)
+			if ev.Error != "" {
+				t.Fatalf("chat: %s", ev.Error)
+			}
+			text += ev.Text
+			if ev.Message != nil {
+				msgs = append(msgs, ev.Message)
+			}
+		}
+		if text != "You have one space." || len(msgs) != 3 || len(model) != 2 {
+			t.Fatalf("chat: %q %v", text, msgs)
+		}
+		if s, _ := json.Marshal(msgs[0]); !strings.Contains(string(s), `"signature":"sig"`) || !strings.Contains(string(s), `"input":{"code":"return (await archive.spaces()).length * 7"}`) {
+			t.Errorf("assistant turn: %s", s)
+		}
+		if s, _ := json.Marshal(msgs[1]); !strings.Contains(string(s), `"tool_use_id":"t1"`) || !strings.Contains(string(s), `\"result\":7`) {
+			t.Errorf("tool result: %s", s)
+		}
+		first, tools := model[0], model[0]["tools"].([]any)
+		tool := tools[0].(map[string]any)
+		if first["system"] != nil || first["model"] != "claude-haiku-5-5" || len(tools) != 1 || tool["name"] != "run" || !strings.Contains(fmt.Sprint(tool["description"]), "declare const archive") {
+			t.Errorf("model request: system %v, model %v, %d tools, %v", first["system"], first["model"], len(tools), tool["name"])
+		}
+		if n := len(model[1]["messages"].([]any)); n != 3 {
+			t.Errorf("second model request carries %d messages", n)
 		}
 	})
 

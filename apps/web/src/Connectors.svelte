@@ -7,6 +7,7 @@
   import Heading from './ui/Heading.svelte';
   import Note from './ui/Note.svelte';
 
+  let { space } = $props();
   const origin = location.origin;
   let token = $state('');
   let busy = $state(false);
@@ -21,25 +22,28 @@
     { icon: 'boxes', name: 'Terraform', line: 'Schema, tokens and members as code. Needs a full token.', copy: `provider "archive" { endpoint = "${origin}" }` },
   ]);
 
-  async function create() {
+  const path = $derived(`/auth/spaces/${encodeURIComponent(space)}/token`);
+
+  async function load(rotate) {
     busy = true;
     error = '';
     try {
-      token = (await api('/auth/tokens', { method: 'POST', body: { name: `web ${new Date().toLocaleDateString()}` } })).token;
+      token = (await api(rotate ? `${path}/rotate` : path, rotate ? { method: 'POST' } : {})).token;
     } catch (e) {
       error = e.message;
     }
     busy = false;
   }
+
+  load(false);
 </script>
 
 <Heading title="Connectors" icon="plug" />
 <Grid>
-  <Card icon="key-round" title="Token" details={[token ? 'Shown once. Keep it somewhere safe.' : 'A bearer token with your access, for the clients here.']}>
+  <Card icon="key-round" title="Token">
     {#if token}
       <Copy text={token} />
-    {:else}
-      <div><Button icon="plus" onclick={create} disabled={busy}>{busy ? 'Creating…' : 'Create token'}</Button></div>
+      <div><Button icon="refresh-cw" onclick={() => load(true)} disabled={busy}>{busy ? 'Rotating…' : 'Rotate'}</Button></div>
     {/if}
     {#if error}<Note error>{error}</Note>{/if}
   </Card>

@@ -94,6 +94,10 @@
   --field: 160px;
   --tile: 300px;
 
+  --dim: 0.4;
+  --chat: 720px;
+  --bubble: 85%;
+
   --dur: 150ms;
   --dur-fast: 80ms;
   --ease: cubic-bezier(0, 0, 0.2, 1);

@@ -128,6 +128,7 @@ func (a *Archive) httpAuth(h http.Handler) http.Handler {
 			httpWrite(w, 0, nil, err)
 			return
 		}
+		ac.Space = r.Header.Get("Archive-Space")
 		h.ServeHTTP(w, r.WithContext(WithActor(r.Context(), ac)))
 	})
 }
@@ -261,6 +262,12 @@ func (s *signin) handler() http.Handler {
 		}
 		t, err := a.CreateToken(r.Context(), body.Name, body.Spaces, ttl, body.Full)
 		return http.StatusCreated, t, err
+	})
+	authed("GET /auth/spaces/{space}/token", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
+		return ok(a.SpaceToken(r.Context(), r.PathValue("space"), false))
+	})
+	authed("POST /auth/spaces/{space}/token/rotate", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
+		return ok(a.SpaceToken(r.Context(), r.PathValue("space"), true))
 	})
 	authed("DELETE /auth/tokens/{id}", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		id, err := httpID(r)

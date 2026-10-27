@@ -1,5 +1,5 @@
 <script>
-  import { api, go, known, preload, Unauthorized } from './api.js';
+  import { api, go, known, preload, scope, Unauthorized } from './api.js';
   import Avatar from './ui/Avatar.svelte';
   import Button from './ui/Button.svelte';
   import Heading from './ui/Heading.svelte';
@@ -12,6 +12,8 @@
   import Files from './Files.svelte';
   import Page from './Page.svelte';
   import Connectors from './Connectors.svelte';
+  import Chat from './Chat.svelte';
+  import Select from './ui/Select.svelte';
 
   let me = $state(null);
   let signedOut = $state(false);
@@ -19,6 +21,9 @@
   let views = $state([]);
   let types = $state({});
   let path = $state(location.pathname);
+  let space = $state('');
+  let conversation = $state([]);
+  let fresh = $state(0);
   let theme = $state(localStorage.theme ?? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'));
 
   $effect(() => {
@@ -59,17 +64,34 @@
   });
   const table = (name) => tables.find((t) => t.name === name);
   const who = $derived(me ? me.actor.name || me.actor.email : '');
+  const spaces = $derived((me?.spaces ?? []).map((s) => ({ value: s.name, label: s.id === me.home ? 'Personal' : s.name.replaceAll('_', ' ') })));
+
+  $effect(() => {
+    if (!space) return;
+    scope(space);
+    localStorage.space = space;
+  });
+
+  function newChat() {
+    conversation = [];
+    fresh++;
+    go('/chat');
+  }
 
   async function load() {
     try {
       me = await api('/auth/me');
+      const names = me.spaces.map((s) => s.name);
+      const pick = names.includes(localStorage.space) ? localStorage.space : me.spaces.find((s) => s.id === me.home)?.name ?? names[0] ?? '';
+      scope(pick);
+      space = pick;
       const cat = await api('/api/types');
       known(cat);
       const all = Object.values(cat.tables).sort((a, b) => a.name.localeCompare(b.name));
       types = cat.types;
       tables = all.filter((t) => t.kind === 'table');
       views = all.filter((t) => t.kind === 'view');
-      if (location.pathname === '/') history.replaceState(null, '', (path = '/files'));
+      if (location.pathname === '/') history.replaceState(null, '', (path = '/chat'));
     } catch (e) {
       if (e instanceof Unauthorized) signedOut = true;
       else throw e;
@@ -89,7 +111,10 @@
 {:else if me}
   <div class="app">
     <aside>
-      <a class="brand" href="/files"><Logo /></a>
+      <div class="brand">
+        <a href="/chat" aria-label="Chat"><Logo /></a>
+        <Button quiet icon="square-pen" title="New chat" aria-label="New chat" onclick={newChat} />
+      </div>
       <nav>
         <NavItem href="/files" icon="folder" active={route.first === 'files'}>Files</NavItem>
         <NavItem href="/pages" icon="page" active={route.first === 'pages'}>Pages</NavItem>
@@ -106,14 +131,22 @@
       </nav>
       <footer>
         <Avatar name={who} />
-        <span class="name">{who}</span>
+        <div class="who">
+          <span class="name">{who}</span>
+          <Select quiet up label="Space" items={spaces} bind:value={space} icon="chevrons-up-down" />
+        </div>
         <Button quiet href="/connectors" icon="plug" title="Connectors" aria-label="Connectors" />
         <Button quiet icon={theme === 'light' ? 'moon' : 'sun'} title="Switch theme" aria-label="Switch theme" onclick={flip} />
         <Button quiet icon="signout" title="Sign out" aria-label="Sign out" onclick={signOut} />
       </footer>
     </aside>
     <main>
-      {#if route.first === 'files'}
+      {#key space}
+      {#if route.first === 'chat'}
+        {#key fresh}
+          <Chat bind:messages={conversation} />
+        {/key}
+      {:else if route.first === 'files'}
         <Files />
       {:else if route.first === 'pages' && route.second}
         {#key route.second}
@@ -122,7 +155,7 @@
       {:else if route.first === 'pages'}
         <Files pages />
       {:else if route.first === 'connectors'}
-        <Connectors />
+        <Connectors {space} />
       {:else if route.first === 'views'}
         {@const v = views.find((x) => x.name === route.second)}
         {#if v}
@@ -137,6 +170,7 @@
       {:else}
         <Heading title="Not here" />
       {/if}
+      {/key}
     </main>
   </div>
 {/if}
@@ -144,7 +178,10 @@
 <style>
   .app { display: grid; grid-template-columns: var(--sidebar) minmax(0, 1fr); height: 100vh; }
   aside { display: flex; flex-direction: column; min-height: 0; padding: var(--space-2); }
-  .brand { display: flex; align-items: center; padding: var(--space-3); }
+  .brand { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-3); }
+  .brand a { display: flex; }
+  .who { display: flex; flex: 1; flex-direction: column; align-items: flex-start; min-width: 0; }
+  .who :global(.select) { max-width: 100%; }
   nav {
     display: flex;
     flex-direction: column;
@@ -155,14 +192,15 @@
   }
   nav::before, nav::after { content: ''; flex: 0 0 var(--space-5); }
   footer { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3); }
-  .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   main { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; min-height: 0; padding: var(--space-7); overflow: hidden; }
   main > :global(:last-child) { flex: 1; min-height: 0; overflow: auto; }
   @media (max-width: 767px) {
     .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
     aside { order: 1; flex-direction: row; align-items: center; padding: var(--space-3); margin-bottom: env(safe-area-inset-bottom); }
     nav { flex-direction: row; gap: var(--space-1); overflow-x: auto; mask-image: linear-gradient(to right, transparent, black var(--space-5), black calc(100% - var(--space-5)), transparent); }
-    nav > :global(div), .name, footer > :global(.avatar) { display: none; }
+    nav > :global(div), .name, .brand a, footer > :global(.avatar) { display: none; }
+    .brand { padding: 0; }
     footer { gap: 0; padding: 0; }
     main { padding: var(--space-4); mask-image: linear-gradient(black calc(100% - var(--space-5)), transparent); }
   }

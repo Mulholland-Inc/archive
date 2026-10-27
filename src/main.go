@@ -70,11 +70,14 @@ Usage:
   archive space remove <space>       delete the space and everything in it; needs owner
   archive space members <space>
   archive space grant <space> <email> <owner|admin|editor|viewer|none>
-  archive token create [-name n] [-space s:role,...] [-expires 720h] [-full]
-                                     -full makes a token with all your rights, which can also
+  archive token create [-name n] [-expires 720h] [-full]
+                                     a token with your rights in every space; -full can also
                                      manage spaces, members and tokens, as Terraform needs
+  archive token create -space s      the one token of space s, editor there; owners and admins
+                                     can show it again
+  archive token rotate <space>       replace the token of space s; the old one stops working
   archive token list
-  archive token revoke <id>
+  archive token revoke <id>          a revoked space token is replaced on its next read
   archive secret grant|revoke <email> <type>
 
 Environment:
@@ -84,6 +87,8 @@ Environment:
   ARCHIVE_PG_BIN     directory holding the Postgres binaries; unset uses those on PATH, or
                      downloads Postgres into $ARCHIVE_DATA/pgbin on first run
   ARCHIVE_LOCALE     locale that messy input is read in, like nl-NL
+  ANTHROPIC_API_KEY  key for the agent behind POST /api/chat, which can only call the run tool
+  ARCHIVE_MODEL      model of that agent (default claude-haiku-5-5)
   ARCHIVE_RUN_TIMEOUT
                      time limit of one archive run, POST /api/run or MCP run (default 30s)
   ARCHIVE_BLOB_URL   s3://bucket/prefix?endpoint=https://host&region=r for S3, R2, MinIO or GCS;
@@ -156,7 +161,7 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	name := fs.String("name", "", "name (user add, token create)")
 	admin := fs.Bool("admin", false, "instance admin (user add)")
 	full := fs.Bool("full", false, "token with all your rights (token create)")
-	space := fs.String("space", "", "space (create, file add); space:role,... (token create)")
+	space := fs.String("space", "", "space (create, file add, search, token create)")
 	expires := fs.Duration("expires", 0, "token lifetime (token create)")
 	reveal := fs.Bool("reveal", false, "show granted secret values (list, get)")
 	output := fs.String("o", "", "write the file content here, - for stdout (file get)")
@@ -339,13 +344,14 @@ func cliAuth(ctx context.Context, a *Archive, cmd string, pos []string, name str
 			if sr == "" {
 				continue
 			}
-			n, r, ok := strings.Cut(sr, ":")
-			if !ok {
-				return fmt.Errorf("-space %q: want space:role", sr)
-			}
+			n, r, _ := strings.Cut(sr, ":")
 			spaces[n] = r
 		}
 		return out(a.CreateToken(ctx, name, spaces, expires, full))
+	case "token rotate":
+		if len(pos) > 1 {
+			return out(a.SpaceToken(ctx, pos[1], true))
+		}
 	case "token list":
 		return out(a.Tokens(ctx))
 	case "token revoke":
@@ -607,6 +613,7 @@ func httpHandler(a *Archive) http.Handler {
 		}
 		return ok(a.Run(r.Context(), body.Code))
 	})
+	mux.HandleFunc("POST /api/chat", a.chat)
 	mux.HandleFunc("GET /api/pages/{id}/sync", a.pageSync)
 	mux.HandleFunc("POST /api/pages/{id}/ops", func(w http.ResponseWriter, r *http.Request) {
 		id, err := httpID(r)

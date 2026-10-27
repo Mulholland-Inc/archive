@@ -2,7 +2,7 @@
   import Icon from './Icon.svelte';
   import Menu from './Menu.svelte';
 
-  let { label, items, value = $bindable(''), icon = 'chevron-down' } = $props();
+  let { label, items, value = $bindable(''), icon = 'chevron-down', quiet = false, up = false } = $props();
   let trigger = $state();
   let pop = $state();
   let open = $state(false);
@@ -13,7 +13,7 @@
   function toggle() {
     if (open) return pop.hidePopover();
     const r = trigger.getBoundingClientRect();
-    at = { x: r.left, y: r.bottom };
+    at = { x: r.left, y: up ? innerHeight - r.top : r.bottom };
     index = Math.max(0, items.indexOf(current));
     pop.showPopover();
   }
@@ -35,11 +35,11 @@
   }
 </script>
 
-<button bind:this={trigger} class="select" class:set={value !== ''} aria-haspopup="listbox" aria-expanded={open} onclick={toggle} onkeydown={key}>
-  <span>{current && value !== '' ? `${label}: ${current.label}` : label}</span>
+<button bind:this={trigger} class="select" class:quiet class:set={value !== '' && !quiet} aria-haspopup="listbox" aria-expanded={open} onclick={toggle} onkeydown={key}>
+  <span>{quiet ? current?.label ?? label : current && value !== '' ? `${label}: ${current.label}` : label}</span>
   <Icon name={icon} />
 </button>
-<div bind:this={pop} class="pop" popover="auto" ontoggle={(e) => (open = e.newState === 'open')} style:--x="{at.x}px" style:--y="{at.y}px">
+<div bind:this={pop} class="pop" class:up popover="auto" ontoggle={(e) => (open = e.newState === 'open')} style:--x="{at.x}px" style:--y="{at.y}px">
   <Menu compact items={items} {index} onpick={pick} onhover={(n) => (index = n)} />
 </div>
 
@@ -66,5 +66,10 @@
   .set, .set:hover, .set:focus-visible, .set[aria-expanded='true'] { background: var(--cream); color: var(--cream-ink); }
   .set:hover, .set:focus-visible { background: var(--cream-hover); }
   .select :global(svg) { width: var(--text-md); height: var(--text-md); }
+  .quiet { min-width: 0; height: auto; gap: var(--space-1); padding: var(--space-1); background: none; color: var(--text-3); font-size: var(--text-xs); }
+  .select.quiet :global(svg) { width: var(--text-xs); height: var(--text-xs); }
+  .quiet span { overflow: hidden; text-overflow: ellipsis; }
+  .quiet:hover, .quiet:focus-visible, .quiet[aria-expanded='true'] { background: var(--hover); }
   .pop { position: fixed; inset: auto; left: var(--x); top: calc(var(--y) + var(--space-2)); margin: 0; padding: 0; border: 0; background: none; overflow: visible; text-transform: capitalize; }
+  .pop.up { top: auto; bottom: calc(var(--y) + var(--space-2)); }
 </style>

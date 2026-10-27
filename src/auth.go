@@ -32,6 +32,7 @@ type Actor struct {
 	Name      string    `json:"name"`
 	TokenID   uuid.UUID `json:"token_id,omitzero"`
 	TokenName string    `json:"token_name,omitempty"`
+	Space     string    `json:"space,omitempty"`
 	Label     string    `json:"acting_as"`
 	Role      string    `json:"-"`
 	UserRole  string    `json:"-"`
@@ -481,6 +482,12 @@ func (a *Archive) DeleteSpace(ctx context.Context, name string) error {
 				return err
 			}
 		}
+		var trole string
+		if q.QueryRow(ctx, `DELETE FROM token WHERE space = $1 RETURNING role`, id).Scan(&trole) == nil {
+			if err := a.exec(ctx, "DROP ROLE "+authIdent(trole)); err != nil {
+				return err
+			}
+		}
 		if _, err := q.Exec(ctx, `DELETE FROM space WHERE id = $1`, id); err != nil {
 			return err
 		}
@@ -590,6 +597,17 @@ func (a *Archive) CreateToken(ctx context.Context, name string, spaces map[strin
 	if full && len(spaces) > 0 {
 		return nil, &ValidationError{Type: "token", Errors: []FieldError{{Path: "spaces", Message: "a full token has all your rights, so it takes no spaces"}}}
 	}
+	if len(spaces) > 0 {
+		if len(spaces) > 1 || ttl > 0 {
+			return nil, &ValidationError{Type: "token", Errors: []FieldError{{Path: "spaces", Message: "a space has one token, which does not expire: name one space"}}}
+		}
+		for n, lv := range spaces {
+			if lv != "" && lv != "editor" {
+				return nil, &ValidationError{Type: "token", Errors: []FieldError{{Path: "spaces." + n, Message: "a space token is editor in its space"}}}
+			}
+			return a.SpaceToken(ctx, n, false)
+		}
+	}
 	t := &Token{ID: coreNewID(), Name: strings.TrimSpace(name), Spaces: map[string]string{}, Full: full, Secret: authNewSecret()}
 	role := a.roleID("t", t.ID)
 	var exp *time.Time
@@ -648,6 +666,52 @@ func (a *Archive) CreateToken(ctx context.Context, name string, spaces map[strin
 			}
 		}
 		return nil
+	})
+}
+
+func (a *Archive) SpaceToken(ctx context.Context, space string, rotate bool) (*Token, error) {
+	ac, err := authUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	t := &Token{Name: space, Spaces: map[string]string{space: "editor"}}
+	return t, a.sys(ctx, func(ctx context.Context) error {
+		q := a.st.Q(ctx)
+		var sid uuid.UUID
+		var base, role string
+		if err := q.QueryRow(ctx, `SELECT id, role FROM space WHERE name = $1 FOR UPDATE`, space).Scan(&sid, &base); err != nil {
+			return fmt.Errorf("space %q: %w", space, ErrNotFound)
+		}
+		if !a.has(ctx, ac.UserRole, base+"_admin") {
+			return fmt.Errorf("the token of %s needs admin: %w", space, ErrForbidden)
+		}
+		var ct []byte
+		err := q.QueryRow(ctx, `SELECT id, role, value, created_at FROM token WHERE space = $1`, sid).Scan(&t.ID, &role, &ct, &t.CreatedAt)
+		if err == nil && !rotate {
+			b, err := a.secretOpen(t.ID, "token", ct)
+			t.Secret = string(b)
+			return err
+		}
+		if err == nil {
+			if _, err := q.Exec(ctx, `DELETE FROM token WHERE id = $1`, t.ID); err != nil {
+				return err
+			}
+			if err := a.exec(ctx, "DROP ROLE "+authIdent(role)); err != nil {
+				return err
+			}
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		t.ID, t.Secret = coreNewID(), authNewSecret()
+		role = a.roleID("t", t.ID)
+		if err := q.QueryRow(ctx, `INSERT INTO token (id, user_id, kind, name, role, hash, space, value) VALUES ($1, $2, 'api', $3, $4, $5, $6, $7) RETURNING created_at`,
+			t.ID, ac.UserID, space, role, authHash(t.Secret), sid, a.secretBox(t.ID, "token", []byte(t.Secret))).Scan(&t.CreatedAt); err != nil {
+			return err
+		}
+		if err := a.createRole(ctx, role); err != nil {
+			return err
+		}
+		return a.setLevel(ctx, role, base, authLevel("editor"))
 	})
 }
 
