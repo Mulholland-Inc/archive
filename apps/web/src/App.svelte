@@ -144,7 +144,7 @@
       {#snippet side()}
         <a class="brand" href="/chat" aria-label="Chat"><Logo /></a>
         <nav>
-          <NavItem href="/chat" icon="square-pen" active={route.first === 'chat'} onclick={newChat}>New chat</NavItem>
+          <NavItem href="/chat" icon="square-pen" active={route.first === 'chat'} onclick={newChat}>Chat</NavItem>
           <NavItem href="/files" icon="folder" active={route.first === 'files'}>Files</NavItem>
           <NavItem href="/pages" icon="page" active={route.first === 'pages'}>Pages</NavItem>
           {#if views.length}
