@@ -1,22 +1,26 @@
 <script>
-  let { title, hero = false, editable = false, placeholder = 'Untitled', aside, children, ...rest } = $props();
+  import Icon from './Icon.svelte';
+
+  let { title, icon, hero = false, editable = false, placeholder = 'Untitled', children, ...rest } = $props();
 </script>
 
 <div class="heading" class:hero>
   <div class="row">
+    {#if icon}<span class="mark"><Icon name={icon} /></span>{/if}
     {#if editable}
       <h1 class="editable" contenteditable="plaintext-only" role="textbox" tabindex="0" data-placeholder={placeholder} {...rest}></h1>
     {:else}
       <h1>{title}</h1>
     {/if}
-    {@render aside?.()}
   </div>
   {@render children?.()}
 </div>
 
 <style>
   .heading { display: flex; flex: none; flex-direction: column; align-items: flex-start; gap: var(--space-5); padding: var(--inset); }
-  .row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); width: 100%; }
+  .row { display: flex; align-items: center; gap: var(--space-4); width: 100%; }
+  .mark { display: grid; flex: none; place-items: center; }
+  .mark :global(svg.icon) { width: var(--size-title-icon); height: var(--size-title-icon); }
   .hero { align-items: center; padding: 0; }
   .hero .row { justify-content: center; }
   h1 {

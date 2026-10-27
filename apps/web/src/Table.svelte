@@ -44,7 +44,7 @@
   }
 </script>
 
-<Heading title={table.name.replaceAll('_', ' ')} />
+<Heading title={table.name.replaceAll('_', ' ')} icon={table.icon} />
 <Filters {columns} {types} bind:query bind:filters />
 <Panel>
   {#if error}<Note error>{error}</Note>{/if}

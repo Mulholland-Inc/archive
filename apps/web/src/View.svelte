@@ -65,7 +65,7 @@
 {#if view.layout === 'table' || !view.by}
   <Table table={view} {types} />
 {:else}
-  <Heading title={view.name.replaceAll('_', ' ')} />
+  <Heading title={view.name.replaceAll('_', ' ')} icon={view.icon} />
   <Filters {columns} {types} bind:query bind:filters>
     {#if view.layout === 'board'}
       <Select label="Sort" icon="arrow-up-down" items={[{ value: '', label: 'None' }, ...columns.map((c) => ({ value: c.name, label: c.name.replaceAll('_', ' ') }))]} bind:value={by} />

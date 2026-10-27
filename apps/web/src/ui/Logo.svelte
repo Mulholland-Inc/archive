@@ -15,6 +15,6 @@
 </svg>
 
 <style>
-  .logo { height: var(--text-xl); width: auto; }
-  .large { height: var(--text-2xl); }
+  .logo { height: var(--size-logo); width: auto; }
+  .large { height: var(--size-logo-large); }
 </style>

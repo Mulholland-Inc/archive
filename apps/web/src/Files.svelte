@@ -49,7 +49,7 @@
   load().catch((e) => (error = e.message));
 </script>
 
-<Heading title={pages ? 'Pages' : 'Files'}>
+<Heading title={pages ? 'Pages' : 'Files'} icon={pages ? 'page' : 'folder'}>
   {#if pages}
     <Button icon="newpage" onclick={newPage}>New page</Button>
   {:else}

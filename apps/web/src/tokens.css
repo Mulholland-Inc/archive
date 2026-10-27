@@ -73,6 +73,9 @@
 
   --size-xs: 8px;
   --size-icon: 20px;
+  --size-title-icon: 48px;
+  --size-logo: 28px;
+  --size-logo-large: 36px;
   --size-avatar: 24px;
   --size-sm: 36px;
   --size-md: 40px;
@@ -121,6 +124,8 @@
 
 @media (max-width: 767px) {
   :root {
+    --size-title-icon: 32px;
+    --size-logo: 24px;
     --display-lg: 44px;
     --display-xl: 64px;
     --text-2xl: 18px;

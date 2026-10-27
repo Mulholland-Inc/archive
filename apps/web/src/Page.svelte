@@ -419,7 +419,7 @@
     <Chip name={p.you ? `${p.name} (you)` : p.name} pulse={p.agent} />
   {/each}
 </div>
-<Heading editable placeholder="Untitled" {@attach (el) => (heading = el)} {@attach sync(title)} oninput={retitle} onkeydown={titleKey} />
+<Heading editable icon="page" placeholder="Untitled" {@attach (el) => (heading = el)} {@attach sync(title)} oninput={retitle} onkeydown={titleKey} />
 <div class="toolbar">
   <Bar>
     {#each TYPES as t (t.type)}

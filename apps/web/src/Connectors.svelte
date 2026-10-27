@@ -33,7 +33,7 @@
   }
 </script>
 
-<Heading title="Connectors" />
+<Heading title="Connectors" icon="plug" />
 <Grid>
   <Card icon="key-round" title="Token" details={[token ? 'Shown once. Keep it somewhere safe.' : 'A bearer token with your access, for the clients here.']}>
     {#if token}
