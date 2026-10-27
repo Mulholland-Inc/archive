@@ -125,21 +125,28 @@ File bytes are content-addressed by SHA-256 in the `/data` volume or in S3. Uplo
 Archive's own web and iOS apps are the editors; there is no embedded office suite. Every document is a file in a standard format: Markdown or plain text, docx, xlsx or pptx. There is no Archive-specific document format, so a document can always be downloaded and opened anywhere.
 
 - **New documents** are made as an empty docx, xlsx or pptx (or a Markdown file) and are files like any other: they live in a space, have versions and can be shared.
-- **Edits are patches against the file.** xlsx is edited with excelize. docx and pptx are edited by Archive's own Go package, which changes only the XML parts an edit touches and copies every other part of the zip byte for byte, so whatever Archive does not understand survives. Markdown and text are edited as text.
-- **The model** Archive exposes is a projection of the file: paragraphs, runs, tables and comments for docx; sheets, cells and formulas for xlsx; slides, shapes and their text for pptx. Edits outside that projection are not possible, by design.
-- **Formulas** are calculated with excelize's engine. IronCalc (Rust, MIT/Apache) is the upgrade path if Excel compatibility needs to be closer.
+- **Edits splice bytes; nothing is rebuilt.** docx, xlsx and pptx are zips of XML parts. One small Archive package, using only Go's standard library, edits all three:
+  1. Parts an edit does not touch are copied raw with `zip.Writer.Copy`, so they stay byte-identical.
+  2. For the part an edit does touch, `encoding/xml`'s decoder records the byte range of every paragraph, run, table, cell and shape.
+  3. An edit replaces one byte range with a small new fragment, or inserts one, written with the prefixes the part already declares. Everything around it stays as it was, including namespaces, revision ids and extensions Archive has never heard of. The part is never re-encoded.
+  4. The part is parsed again after the edit, to check it is still well-formed.
+- **Markdown and text** are edited as text.
+- **The model** Archive exposes is built from that index: paragraphs, runs, tables and comments for docx; sheets, cells and formulas for xlsx; slides, shapes and their text for pptx. Edits outside it are not possible, by design.
+- **Text across runs**: Word splits a sentence into many runs. Replacing text finds it across runs and rewrites only those runs, keeping the first run's formatting. This is the core of the package.
+- **Formulas without an engine**: a cell value is written as an inline string, so the shared strings are never touched. A formula is written with its cached value removed, and the workbook is marked to recalculate when it is opened. Computed values for reading come from the render pass and are stored as derived data, never written into the file.
 - **Legacy and ODF files** (doc, xls, ppt, odt, ods, odp) are converted to OOXML once, on request, as a new file.
 
 **One edit API for everyone**: `archive.document(id)` returns the model, and `archive.edit(id, edits)` applies a list of edits (replace text, insert a paragraph or table, set a cell, add a comment). Agents call it from code mode; the apps send the same edits over the API.
 
 **Editing together**: clients send edits to the server, which applies them in order to the current file and sends them on to everyone else with the document open. The server's order decides conflicts, and it writes a new version when editing pauses. This needs no CRDT and no second copy of the document, at the cost of offline editing.
 
-**Rendering**: Gotenberg (MIT), a Go service around LibreOffice, turns a docx, xlsx or pptx into a PDF once per version. Previews, page images and thumbnails come from that PDF; search text comes from Archive's own parsing. Gotenberg is an optional container in `compose.yaml` and the Helm chart, set with `ARCHIVE_GOTENBERG_URL`; without it, documents have no previews, but can still be edited and searched. LibreOffice is used to render and to convert legacy files, never to save users' files, since its OOXML output can lose Word-only features.
+**Rendering**: Gotenberg (MIT), a Go service around LibreOffice, turns a docx, xlsx or pptx into a PDF once per version, and computes the values of formulas. Previews, page images and thumbnails come from that PDF; search text comes from Archive's own parsing. The rule: Archive writes only the bytes it changes, and LibreOffice only makes derived output. Gotenberg is an optional container in `compose.yaml` and the Helm chart, set with `ARCHIVE_GOTENBERG_URL`; without it, documents have no previews, but can still be edited and searched. LibreOffice is used to render and to convert legacy files, never to save users' files, since its OOXML output can lose Word-only features.
 
 **Not chosen**:
 - An Archive-specific document format (for example ProseMirror JSON with Yjs): it would make every download a conversion, and Office files a second kind of document.
 - Collabora and ONLYOFFICE: their value is the editor UI, which Archive does not use, and running them in a closed SaaS needs paid editions.
 - ONLYOFFICE Document Builder: AGPL or a paid edition.
+- Office libraries (excelize, go-docx, unioffice): they load a document into their own structures and write it back out, which loses what they do not model, and some are AGPL or commercial. A formula engine (excelize's, IronCalc) is not needed while LibreOffice computes values for reading.
 - Aspose: faithful but commercial; it stays the option for customers whose complex files need more than patching.
 
 Slides are the weakest area: no good open-source pptx engine exists, so pptx edits start with text, and new slide layouts come later.
