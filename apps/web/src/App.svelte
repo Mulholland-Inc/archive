@@ -63,13 +63,19 @@
   });
   const table = (name) => tables.find((t) => t.name === name);
   const who = $derived(me ? me.actor.name || me.actor.email : '');
-  const spaces = $derived((me?.spaces ?? []).map((s) => ({ value: s.name, label: s.id === me.home ? 'Personal' : s.name.replaceAll('_', ' ') })));
+  const spaces = $derived((me?.spaces ?? []).map((s) => ({ value: s.name, label: s.id === me.home ? 'Personal' : s.name.replaceAll('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase()) })));
 
   $effect(() => {
     if (!space) return;
     scope(space);
     localStorage.space = space;
   });
+
+  async function addSpace(name) {
+    const made = await api('/auth/spaces', { method: 'POST', body: { name: name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') } });
+    me = await api('/auth/me');
+    space = made.name;
+  }
 
   function newChat(e) {
     e.preventDefault();
@@ -128,7 +134,7 @@
         {/each}
       </nav>
       <footer>
-        <Profile name={who} items={spaces} bind:value={space} />
+        <Profile name={who} items={spaces} bind:value={space} onadd={addSpace} />
         <Button quiet href="/connectors" icon="plug" title="Connectors" aria-label="Connectors" />
         <Button quiet icon={theme === 'light' ? 'moon' : 'sun'} title="Switch theme" aria-label="Switch theme" onclick={flip} />
         <Button quiet icon="signout" title="Sign out" aria-label="Sign out" onclick={signOut} />
