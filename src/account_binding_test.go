@@ -118,4 +118,37 @@ func TestExpectedUserBindsRequestsToTheAuthenticatedAccount(t *testing.T) {
 	if got := in.must("list", "person"); !strings.Contains(got, "Submitted by Rook") || strings.Contains(got, "Stale CRUD") {
 		t.Fatal("account-bound writes did not preserve the expected rows")
 	}
+
+	// An account conflict must not be treated as a retryable TUS offset conflict.
+	// Keep a real partial upload, refuse stale reads/writes/deletes, then finish
+	// with the original account and verify its exact bytes.
+	upload := func(method, path, body string, cookie *http.Cookie, expected string, headers ...string) *http.Response {
+		t.Helper()
+		headers = append(headers, "Authorization", "", "Cookie", cookie.String(), "Archive-Expected-User", expected)
+		response, err := e2eTus(t, method, srv.url+path, "", strings.NewReader(body), int64(len(body)), headers...)
+		if err != nil {
+			t.Fatal("account-bound upload request failed")
+		}
+		return response
+	}
+	response := upload("POST", "/api/files/tus", "", wrenSession, wren.ID.String(), "Upload-Length", "4", "Upload-Metadata", "space ZmFtaWx5")
+	wantStatus(t, response.StatusCode, 201, "create bound upload")
+	path := response.Header.Get("Location")
+	response = upload("PATCH", path, "ab", wrenSession, wren.ID.String(), "Upload-Offset", "0", "Content-Type", "application/offset+octet-stream")
+	wantStatus(t, response.StatusCode, 204, "write first part")
+	for _, method := range []string{"HEAD", "PATCH", "DELETE"} {
+		response = upload(method, path, "cd", rookSession, wren.ID.String(), "Upload-Offset", "2", "Content-Type", "application/offset+octet-stream")
+		wantStatus(t, response.StatusCode, 412, "stale partial upload "+method)
+	}
+	response = upload("HEAD", path, "", wrenSession, wren.ID.String())
+	wantStatus(t, response.StatusCode, 200, "original account resumes")
+	if response.Header.Get("Upload-Offset") != "2" {
+		t.Fatal("stale account changed the upload offset")
+	}
+	response = upload("PATCH", path, "cd", wrenSession, wren.ID.String(), "Upload-Offset", "2", "Content-Type", "application/offset+octet-stream")
+	wantStatus(t, response.StatusCode, 204, "complete original upload")
+	content, data := e2eGet(t, srv.url+"/api/files/"+response.Header.Get("Archive-File-Id")+"/content", "", "Authorization", "", "Cookie", wrenSession.String())
+	if content.StatusCode != 200 || string(data) != "abcd" {
+		t.Fatal("original upload did not preserve its exact bytes")
+	}
 }
