@@ -468,20 +468,26 @@ func (a *Archive) syncLoop(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 	var mu sync.Mutex
 	running := map[uuid.UUID]bool{}
-	tick := time.NewTicker(time.Second)
-	defer tick.Stop()
+	wait := time.Second
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-tick.C:
+		case <-time.After(wait):
 		}
 		var ids []uuid.UUID
+		var next *time.Time
 		err := a.st.System(ctx, func(ctx context.Context) (err error) {
 			rows, _ := a.st.Q(ctx).Query(ctx, `SELECT id FROM source WHERE next_run_at <= now() AND status <> 'needs_auth'`)
-			ids, err = pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
-			return err
+			if ids, err = pgx.CollectRows(rows, pgx.RowTo[uuid.UUID]); err != nil {
+				return err
+			}
+			return a.st.Q(ctx).QueryRow(ctx, `SELECT min(next_run_at) FROM source WHERE next_run_at > now() AND status <> 'needs_auth'`).Scan(&next)
 		})
+		wait = time.Second
+		if next != nil {
+			wait = min(wait, max(time.Until(*next), 10*time.Millisecond))
+		}
 		if err != nil && ctx.Err() == nil {
 			fmt.Fprintln(os.Stderr, "archive: sync:", err)
 		}

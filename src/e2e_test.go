@@ -25,6 +25,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -39,15 +40,21 @@ import (
 
 var e2eBin, e2eTemplate string
 
+var e2eCopyFlag = map[string]string{"darwin": "-c", "linux": "--reflink=auto"}[runtime.GOOS]
+
 func TestMain(m *testing.M) {
+	if os.Getenv("ARCHIVE_E2E_MAIN") == "1" {
+		main()
+		os.Exit(0)
+	}
+	os.Setenv("ARCHIVE_E2E_MAIN", "1")
+	var err error
+	if e2eBin, err = os.Executable(); err != nil {
+		panic(err)
+	}
 	dir, err := os.MkdirTemp("", "arcbin")
 	if err != nil {
 		panic(err)
-	}
-	e2eBin = filepath.Join(dir, "archive")
-	if out, err := exec.Command("go", "build", "-o", e2eBin, ".").CombinedOutput(); err != nil {
-		os.RemoveAll(dir)
-		panic(fmt.Sprintf("go build: %v\n%s", err, out))
 	}
 	e2eTemplate = filepath.Join(dir, "template")
 	c := exec.Command(e2eBin, "types")
@@ -116,8 +123,22 @@ func newInst(t *testing.T, env ...string) *e2eInst {
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	if !slices.Contains(env, "ARCHIVE_PG_BIN=") {
-		if out, err := exec.Command("cp", "-R", e2eTemplate+"/.", dir).CombinedOutput(); err != nil {
+		if out, err := exec.Command("cp", e2eCopyFlag, "-R", e2eTemplate+"/.", dir).CombinedOutput(); err != nil {
 			t.Fatalf("copy template: %v %s", err, out)
+		}
+		pg := exec.Command("postgres", "-D", filepath.Join(dir, "pg"), "-c", "listen_addresses=", "-k", dir)
+		pg.Env = append(os.Environ(), "LC_ALL=C")
+		if err := pg.Start(); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			pg.Process.Signal(syscall.SIGINT)
+			pg.Wait()
+		})
+		for deadline := time.Now().Add(30 * time.Second); exec.Command("pg_isready", "-q", "-h", dir).Run() != nil; time.Sleep(20 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatal("postgres did not start")
+			}
 		}
 	}
 	return &e2eInst{t: t, dir: dir, env: append([]string{"ARCHIVE_DATA=" + dir}, env...)}
@@ -338,7 +359,6 @@ func id(r row) string { return fmt.Sprint(r["id"]) }
 func TestSchemaPushNormalizesMessyDutchInputAndBlocksDrops(t *testing.T) {
 	t.Parallel()
 	in := newInst(t, "ARCHIVE_LOCALE=nl-NL")
-	in.serve()
 	in.fails("list", "contact")
 	in.must("user", "add", "ann@example.com", "-name", "Ann")
 	plan := decode[SchemaPlan](t, in.push(e2eSchema))
@@ -428,7 +448,6 @@ func TestSchemaPushNormalizesMessyDutchInputAndBlocksDrops(t *testing.T) {
 func TestDemoVaultLoadsOnceWithLinkedRowsAndFiles(t *testing.T) {
 	t.Parallel()
 	in := newInst(t)
-	in.serve()
 	load := func() (string, string, error) {
 		c := exec.Command("../demo/load.sh", "ann@example.com")
 		c.Env = append(os.Environ(), append(in.env, "ARCHIVE_BIN="+e2eBin)...)
