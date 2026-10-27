@@ -25,7 +25,7 @@ flowchart LR
 - **Postgres 18** for all data, **Go** for the server, **a directory or S3-compatible storage** (S3, R2, MinIO, GCS) for file bytes.
 - **One Dockerfile**: the image holds Postgres and the binary. Without `DATABASE_URL`, the binary starts the bundled Postgres in `/data`; with it, it uses the external database and keeps nothing local.
 - **One port** serves the HTTP API (`/api`), sign-in (`/auth`) and MCP (`/mcp`).
-- **Clients**: none ship yet. `apps/editor` is a prototype page editor (see Pages).
+- **Clients**: one React Native app, built with Expo, runs on iOS, Android and the web from one codebase. It is a client of the HTTP API and the page sync endpoints. None ship yet; `apps/editor` is a prototype page editor (see Pages).
 
 ## Data model
 
@@ -226,7 +226,7 @@ Designed but not built:
 - **More Office edits**: rows, columns, slides and formatting.
 - **Google Docs and Sheets integration** for people editing Office files.
 - **Webhooks** instead of polling connectors to bring data in.
-- **Clients**: web and iOS apps on the HTTP API. Native SwiftUI for iOS.
+- **Clients**: one React Native app (Expo) for iOS, Android and the web, on the HTTP API. The page editor must merge with go-crdt, the same code as the server. On the web that is the WebAssembly build from `apps/editor`. React Native's engine (Hermes) has no WebAssembly on iOS and Android, so there it is either go-crdt bound natively with gomobile or the editor in a WebView; that is still to decide.
 - **Pages**: formatting, nesting and tables in the editor and the model; checking that a client only sends operations for its own site; cleaning up old page blobs.
 
 ## Not doing
