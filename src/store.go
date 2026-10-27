@@ -160,8 +160,6 @@ func (s *pgStore) hash(files map[string]string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-const storeMinTimeout = time.Minute
-
 var storeFileRe = regexp.MustCompile(`^[a-z0-9_][a-z0-9_.-]*\.sql$`)
 
 func (s *pgStore) SchemaFiles() (map[string]string, error) {
@@ -263,7 +261,7 @@ func (s *pgStore) Apply(ctx context.Context, files map[string]string, renames []
 		return storeWithRenames(p, renames), fmt.Errorf("the plan deletes data (%s); apply it with allow_drop: %w", strings.Join(b, "; "), ErrConflict)
 	}
 	for _, st := range p.Statements {
-		set := fmt.Sprintf(`SET LOCAL statement_timeout = %d; SET LOCAL lock_timeout = %d`, max(st.timeout, storeMinTimeout).Milliseconds(), st.lock.Milliseconds())
+		set := fmt.Sprintf(`SET LOCAL statement_timeout = %d; SET LOCAL lock_timeout = %d`, st.timeout.Milliseconds(), st.lock.Milliseconds())
 		if _, err := tx.ExecContext(ctx, set); err != nil {
 			return nil, err
 		}
@@ -319,7 +317,7 @@ func (s *pgStore) plan(ctx context.Context, src sqldb.Queryable, files map[strin
 		return nil, err
 	}
 	defer tmp.Close(context.WithoutCancel(ctx))
-	if _, err := tmp.ConnPool.ExecContext(ctx, s.expand(storeSchema)); err != nil {
+	if _, err := tmp.ConnPool.ExecContext(ctx, "SET statement_timeout = 0; "+s.expand(storeSchema)); err != nil {
 		return nil, fmt.Errorf("archive.sql: %w", err)
 	}
 	if err := storeLoad(ctx, tmp.ConnPool, files); err != nil {
@@ -360,7 +358,7 @@ func storeLoad(ctx context.Context, db *sql.DB, files map[string]string) error {
 			if err != nil {
 				return err
 			}
-			if _, err = tx.ExecContext(ctx, files[name]); err == nil {
+			if _, err = tx.ExecContext(ctx, "SET LOCAL statement_timeout = 0; "+files[name]); err == nil {
 				err = tx.Commit()
 			}
 			if err != nil {
