@@ -19,8 +19,8 @@ $archive space add family >/dev/null
 $archive user add sanne@example.com -name "Sanne de Vries" >/dev/null
 $archive space grant family sanne@example.com editor >/dev/null
 
-for f in "$demo"/files/*.*; do $archive file add "$f" >/dev/null; done
-for f in "$demo"/files/family/*; do $archive file add "$f" -space family >/dev/null; done
+$archive file add "$demo"/files/*.* >/dev/null
+$archive file add -space family "$demo"/files/family/* >/dev/null
 
 ARCHIVE_RUN_TIMEOUT=600s $archive run "$demo/seed.ts"
 echo "demo: loaded; restart archive serve if it was running, so it sees the new tables" >&2

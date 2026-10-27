@@ -185,7 +185,12 @@ func (a *Archive) ProcessFile(ctx context.Context, id uuid.UUID) (*File, error) 
 	if claimed {
 		a.fileProcess(ctx, id)
 	}
-	return a.GetFile(ctx, id)
+	for deadline := time.Now().Add(time.Minute); ; time.Sleep(50 * time.Millisecond) {
+		f, err := a.GetFile(ctx, id)
+		if err != nil || f.Status != "processing" || time.Now().After(deadline) {
+			return f, err
+		}
+	}
 }
 
 func (a *Archive) fileSign(id uuid.UUID, exp int64) string {

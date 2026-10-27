@@ -50,7 +50,8 @@ Usage:
                                      DDL files; renames are not detected, so rename a table or
                                      column with ALTER ... RENAME in psql first
 
-  archive file add <path> [-space s] store a file and extract its metadata and text
+  archive file add <path>... [-space s]
+                                     store files and extract their metadata and text
   archive file get <id> [-o path|-]  print the file's metadata, or with -o write its content
   archive file list [-limit n] [-after id]
 
@@ -446,16 +447,26 @@ func cliFile(ctx context.Context, a *Archive, pos []string, space, output string
 	}
 	switch pos[0] {
 	case "add":
-		fh, err := os.Open(pos[1])
-		if err != nil {
-			return err
+		var fs []*File
+		for _, p := range pos[1:] {
+			fh, err := os.Open(p)
+			if err != nil {
+				return err
+			}
+			f, err := a.AddFile(ctx, space, filepath.Base(p), fh)
+			fh.Close()
+			if err == nil {
+				f, err = a.ProcessFile(ctx, f.ID)
+			}
+			if err != nil {
+				return fmt.Errorf("%s: %w", p, err)
+			}
+			fs = append(fs, f)
 		}
-		defer fh.Close()
-		f, err := a.AddFile(ctx, space, filepath.Base(pos[1]), fh)
-		if err != nil {
-			return err
+		if len(fs) == 1 {
+			return out(fs[0], nil)
 		}
-		return out(a.ProcessFile(ctx, f.ID))
+		return out(fs, nil)
 	case "get":
 		id, err := uuid.Parse(pos[1])
 		if err != nil {
