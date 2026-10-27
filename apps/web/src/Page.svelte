@@ -198,7 +198,7 @@
 </script>
 
 <header>
-  <a class="crumb" href="#/pages">Pages <span>/</span> {title}</a>
+  <a class="crumb" href="/pages">Pages <span>/</span> {title}</a>
   <div class="people">
     <span class="dot" class:live></span>
     {#each [{ ...me, you: true }, ...online] as p (p.site ?? 'me')}

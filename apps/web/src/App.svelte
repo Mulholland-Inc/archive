@@ -1,32 +1,46 @@
 <script>
-  import { api, Unauthorized } from './api.js';
+  import { api, go, Unauthorized } from './api.js';
+  import { layoutIcons, tableIcons } from './icons.js';
   import Icon from './Icon.svelte';
   import Logo from './Logo.svelte';
   import SignIn from './SignIn.svelte';
   import Table from './Table.svelte';
+  import View from './View.svelte';
   import Files from './Files.svelte';
   import Page from './Page.svelte';
 
   let me = $state(null);
   let signedOut = $state(false);
   let tables = $state([]);
-  let hash = $state(location.hash);
+  let views = $state([]);
+  let types = $state({});
+  let path = $state(location.pathname);
 
-  addEventListener('hashchange', () => (hash = location.hash));
+  addEventListener('popstate', () => (path = location.pathname));
+  addEventListener('click', (e) => {
+    const a = e.target.closest?.('a[href^="/"]');
+    if (!a || a.target || e.metaKey || e.ctrlKey || e.shiftKey || /^\/(api|auth)\//.test(a.getAttribute('href'))) return;
+    e.preventDefault();
+    go(a.getAttribute('href'));
+  });
 
   const route = $derived.by(() => {
-    const [, kind, id] = hash.split('/');
-    return { kind: kind ?? '', id: id ? decodeURIComponent(id) : '' };
+    const [, first = '', second = ''] = path.split('/').map(decodeURIComponent);
+    return { first, second };
   });
+  const icons = $derived(tableIcons(tables.map((t) => t.name)));
+  const table = (name) => tables.find((t) => t.name === name);
   const who = $derived(me ? me.actor.name || me.actor.email : '');
   const initials = $derived(who.split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join(''));
 
   async function load() {
     try {
       me = await api('/auth/me');
-      const cat = await api('/api/types');
+      const [cat, vs] = await Promise.all([api('/api/types'), api('/api/views')]);
+      types = cat.types;
       tables = Object.values(cat.tables).sort((a, b) => a.name.localeCompare(b.name));
-      if (!location.hash) location.hash = '#/files';
+      views = vs.sort((a, b) => a.name.localeCompare(b.name));
+      if (location.pathname === '/') history.replaceState(null, '', (path = '/files'));
     } catch (e) {
       if (e instanceof Unauthorized) signedOut = true;
       else throw e;
@@ -35,8 +49,7 @@
 
   async function signOut() {
     await api('/auth/signout', { method: 'POST' });
-    location.hash = '';
-    location.reload();
+    location.assign('/');
   }
 
   load();
@@ -47,13 +60,21 @@
 {:else if me}
   <div class="app">
     <aside>
-      <a class="brand" href="#/files"><Logo height={19} /></a>
+      <a class="brand" href="/files"><Logo height={19} /></a>
       <div class="rows">
-        <a class="row" href="#/files" class:on={route.kind === 'files'}><Icon name="folder" size={22} />Files</a>
-        <a class="row" href="#/pages" class:on={route.kind === 'pages' || route.kind === 'p'}><Icon name="page" size={22} />Pages</a>
+        <a class="row" href="/files" class:on={route.first === 'files'}><Icon name="folder" size={22} />Files</a>
+        <a class="row" href="/pages" class:on={route.first === 'pages'}><Icon name="page" size={22} />Pages</a>
+        {#if views.length}
+          <div class="label">Views</div>
+          {#each views as v (v.id)}
+            {@const LayoutIcon = layoutIcons[v.layout] ?? layoutIcons.table}
+            <a class="row plain" href="/views/{v.id}" class:on={route.first === 'views' && route.second === v.id}><LayoutIcon size={21} strokeWidth={1.75} />{v.name}</a>
+          {/each}
+        {/if}
         <div class="label">Tables</div>
         {#each tables as t (t.name)}
-          <a class="row" href="#/t/{t.name}" class:on={route.kind === 't' && route.id === t.name}><Icon name="hash" size={22} />{t.name.replaceAll('_', ' ')}</a>
+          {@const TableIcon = icons[t.name]}
+          <a class="row" href="/{t.name}" class:on={route.first === t.name}><TableIcon size={21} strokeWidth={1.75} />{t.name.replaceAll('_', ' ')}</a>
         {/each}
       </div>
       <div class="foot">
@@ -63,18 +84,28 @@
       </div>
     </aside>
     <main>
-      {#if route.kind === 't'}
-        {#key route.id}
-          <Table table={tables.find((t) => t.name === route.id)} />
-        {/key}
-      {:else if route.kind === 'files'}
+      {#if route.first === 'files'}
         <Files />
-      {:else if route.kind === 'pages'}
-        <Files pages />
-      {:else if route.kind === 'p'}
-        {#key route.id}
-          <Page id={route.id} name={who} />
+      {:else if route.first === 'pages' && route.second}
+        {#key route.second}
+          <Page id={route.second} name={who} />
         {/key}
+      {:else if route.first === 'pages'}
+        <Files pages />
+      {:else if route.first === 'views'}
+        {@const v = views.find((x) => x.id === route.second)}
+        {#if v}
+          {#key v.id}
+            <View view={v} table={table(v.type)} {types} />
+          {/key}
+        {/if}
+      {:else if table(route.first)}
+        {#key route.first}
+          <Table table={table(route.first)} />
+        {/key}
+      {:else}
+        <h1>Not here</h1>
+        <p class="lead">There is no table, view or page at this address.</p>
       {/if}
     </main>
   </div>
@@ -84,7 +115,8 @@
   .app { display: grid; grid-template-columns: 285px minmax(0, 1fr); height: 100vh; }
   aside { display: flex; flex-direction: column; min-height: 0; padding: 0 10px; }
   .brand { display: flex; align-items: center; height: 56px; padding: 0 10px; color: var(--text); }
-  .rows { flex: 1; overflow-y: auto; min-height: 0; padding-bottom: 12px; }
+  .rows { flex: 1; overflow-y: auto; min-height: 0; padding-bottom: 12px; scrollbar-width: none; }
+  .rows::-webkit-scrollbar { display: none; }
   .row {
     display: flex;
     align-items: center;
@@ -98,6 +130,8 @@
     color: var(--text);
     transition: background var(--dur) var(--ease);
   }
+  .row.plain { text-transform: none; }
+  .row :global(svg) { flex: none; }
   .row:hover { background: var(--hover); }
   .row.on { background: var(--cream); color: var(--cream-ink); font-weight: 600; }
   .label { font-size: 14px; line-height: 37px; padding: 8px 10px 0; color: var(--text-2); }
@@ -123,7 +157,7 @@
     .rows { display: flex; gap: 2px; overflow-x: auto; padding: 0; }
     .label, .foot { display: none; }
     .row { white-space: nowrap; flex: none; }
-    .row :global(.icon) { display: none; }
+    .row :global(svg) { display: none; }
     main { padding: 32px 16px; }
   }
 </style>

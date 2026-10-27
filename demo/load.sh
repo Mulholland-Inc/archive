@@ -23,4 +23,15 @@ $archive file add "$demo"/files/*.* >/dev/null
 $archive file add -space family "$demo"/files/family/* >/dev/null
 
 ARCHIVE_RUN_TIMEOUT=600s $archive run "$demo/seed.ts"
+
+for v in \
+	'{"name": "Task board", "type": "task", "layout": "board", "by": "status"}' \
+	'{"name": "Family", "type": "person", "where": {"relation": "family"}}' \
+	'{"name": "Doctors", "type": "person", "where": {"relation": "doctor"}}' \
+	'{"name": "Rent", "type": "payment", "where": {"category": "rent"}}' \
+	'{"name": "Renewals", "type": "subscription", "layout": "calendar", "by": "renews"}' \
+	'{"name": "Things by category", "type": "possession", "layout": "board", "by": "category"}'; do
+	$archive view add "$v" >/dev/null
+done
+$archive view add -space family '{"name": "Trips", "type": "trip", "layout": "calendar", "by": "starts"}' >/dev/null
 echo "demo: loaded; restart archive serve if it was running, so it sees the new tables" >&2

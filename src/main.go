@@ -64,6 +64,11 @@ Usage:
   archive search <query> [-type t] [-space s] [-from date] [-to date] [-limit n]
                                      find rows and files by their words
 
+  archive view add [-space s] [json|-]
+                                     save a view: {"name","type","layout":"table|board|calendar",
+                                     "by":field,"where":{field:value}}
+  archive view list
+
   archive user add <email> [-name n] [-admin]
   archive space add <name>
   archive space list
@@ -235,6 +240,23 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 		return cliFile(ctx, a, pos, *space, *output, *limit, *after, stdout, out)
 	case "user", "space", "token", "secret":
 		return cliAuth(ctx, a, cmd, pos, *name, *admin, *full, *space, *expires, out)
+	case "view":
+		switch pos[0] {
+		case "list":
+			return out(a.Views(ctx))
+		case "add":
+			var in ViewInput
+			var r io.Reader = stdin
+			if len(pos) > 1 && pos[1] != "-" {
+				r = strings.NewReader(pos[1])
+			}
+			if err := json.NewDecoder(r).Decode(&in); err != nil {
+				return fmt.Errorf("reading view JSON: %w", err)
+			}
+			in.Space = cmp.Or(in.Space, *space)
+			return out(a.AddView(ctx, in))
+		}
+		return cliErrUsage
 	case "list":
 		where := map[string]any{}
 		for _, kv := range pos[1:] {
@@ -294,7 +316,7 @@ func cliCheckCommand(cmd string, pos []string) error {
 	n, ok := map[string]int{
 		"serve": 0, "mcp": 0, "types": 0, "run": 1, "schema": 1, "list": 1, "create": 1,
 		"get": 2, "delete": 2, "set": 2, "update": 2,
-		"user": 2, "space": 1, "token": 1, "secret": 3, "file": 1, "search": 1,
+		"user": 2, "space": 1, "token": 1, "secret": 3, "file": 1, "search": 1, "view": 1,
 	}[cmd]
 	if !ok {
 		return fmt.Errorf("unknown command %q (see archive help)", cmd)
