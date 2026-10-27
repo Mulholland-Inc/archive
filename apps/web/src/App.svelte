@@ -238,7 +238,7 @@
   }
   nav::before, nav::after { content: ''; flex: 0 0 var(--space-5); }
   footer { display: flex; align-items: center; gap: var(--space-1); }
-  main { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; padding: var(--space-7); }
+  main { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; padding: var(--gutter); }
   main > :global(:last-child) { flex: 1; }
   @media (max-width: 767px) {
     .app { display: block; }
