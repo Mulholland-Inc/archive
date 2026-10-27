@@ -113,9 +113,10 @@ func main() {
 		return nil, err
 	})
 	def("blocks", func(a []js.Value) (any, error) {
-		out := []map[string]string{}
+		out := []map[string]any{}
 		for _, b := range doc.List() {
-			out = append(out, map[string]string{"id": b.ID.String(), "type": b.Type, "text": b.Text})
+			done, _ := doc.Field(b.ID, "done")
+			out = append(out, map[string]any{"id": b.ID.String(), "type": b.Type, "text": b.Text, "done": string(done) == "1"})
 		}
 		return out, nil
 	})
@@ -149,6 +150,24 @@ func main() {
 		}
 		ops, err := doc.Merge(b)
 		queue(ops...)
+		return nil, err
+	})
+	def("remove", func(a []js.Value) (any, error) {
+		b, err := block(a[0].String())
+		if err != nil {
+			return nil, err
+		}
+		ops, err := doc.Remove(b)
+		queue(ops...)
+		return nil, err
+	})
+	def("setField", func(a []js.Value) (any, error) {
+		b, err := block(a[0].String())
+		if err != nil {
+			return nil, err
+		}
+		op, err := doc.SetField(b, a[1].String(), []byte(a[2].String()))
+		queue(op)
 		return nil, err
 	})
 	def("setType", func(a []js.Value) (any, error) {

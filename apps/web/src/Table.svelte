@@ -27,14 +27,10 @@
   page();
 </script>
 
-<Heading title={table.name.replaceAll('_', ' ')} description={table.description} />
+<Heading title={table.name.replaceAll('_', ' ')} />
 <Panel>
   {#if error}<Note error>{error}</Note>{/if}
   <DataTable {columns} {rows} cell={show} />
   {#if !rows.length && !error}<Note>Nothing here yet.</Note>{/if}
-  {#if more}<div class="more"><Button onclick={page}>Show more</Button></div>{/if}
+  {#if more}<div><Button onclick={page}>Show more</Button></div>{/if}
 </Panel>
-
-<style>
-  .more { margin-top: var(--space-5); }
-</style>

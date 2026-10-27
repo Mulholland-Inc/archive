@@ -34,13 +34,13 @@
     box-shadow: var(--shadow);
     scrollbar-width: none;
   }
-  .title { padding: var(--space-1) var(--space-2) var(--space-2); font-size: var(--text-xs); color: var(--text-3); }
+  .title { padding: var(--space-2); font-size: var(--text-xs); color: var(--text-3); }
   button {
     display: flex;
     align-items: center;
     gap: var(--space-3);
     width: 100%;
-    padding: var(--space-1) var(--space-2);
+    padding: var(--space-2);
     border: 0;
     border-radius: var(--radius-sm);
     background: none;

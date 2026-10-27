@@ -7,7 +7,7 @@
     <thead>
       <tr>
         {#each columns as c (c.name)}
-          <th title={c.description}>{c.name.replaceAll('_', ' ')}</th>
+          <th>{c.name.replaceAll('_', ' ')}</th>
         {/each}
       </tr>
     </thead>
@@ -24,21 +24,24 @@
 </div>
 
 <style>
-  .wrap { overflow-x: auto; margin: 0 calc(-1 * var(--space-2)); }
+  .wrap { overflow-x: auto; margin: calc(-1 * var(--space-3)); }
   table { border-collapse: collapse; min-width: 100%; }
   th {
+    position: sticky;
+    top: 0;
+    background: var(--panel);
     text-align: left;
     font-size: var(--text-sm);
     font-weight: var(--weight);
     color: var(--text-2);
-    padding: 0 var(--space-2) var(--space-3);
+    padding: var(--space-3);
     border-bottom: var(--stroke) solid var(--line);
     white-space: nowrap;
     text-transform: capitalize;
   }
   td {
     max-width: var(--cell);
-    padding: var(--space-3) var(--space-2);
+    padding: var(--space-3);
     border-bottom: var(--stroke) solid var(--line);
     overflow: hidden;
     text-overflow: ellipsis;

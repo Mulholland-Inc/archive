@@ -40,10 +40,9 @@
  *   the tables and views it changes, including locks this run took by writing them or reading them with
  *   archive.sql (list, get and search hold no locks), so apply before those, or in a run of its own. After it,
  *   the new tables and views work in the same run.
- * - Every table needs id, space, created_at, updated_at and a search tsvector column, row-level security with
- *   policies, and should have COMMENT ON its table and columns: they become these docs. Use the built-in types
- *   (archive.email, archive.money, ...) to get their cleaning. A reference is `uuid REFERENCES other`; a list of
- *   references is `uuid[]` with a column comment starting 'references other'. Files load in any order, and a
+ * - Every table needs id, space, created_at, updated_at and a search tsvector column, and row-level security with
+ *   policies. Use the built-in types (archive.email, archive.money, ...) to get their cleaning. A reference is
+ *   `uuid REFERENCES other`; a list of references is `uuid[]` with COMMENT ON COLUMN ... IS 'references: other'. Files load in any order, and a
  *   statement waits for the tables it needs; for tables that reference each other, add at least one of those
  *   references with ALTER TABLE ... ADD FOREIGN KEY after the CREATE TABLE. A complete file, house.sql:
  *
@@ -63,14 +62,12 @@
  *     CREATE POLICY viewer ON house FOR SELECT USING (space = ANY (archive.my_spaces()));
  *     CREATE POLICY editor ON house USING (space = ANY (archive.my_spaces('editor')))
  *         WITH CHECK (space = ANY (archive.my_spaces('editor')));
- *     COMMENT ON TABLE house IS 'A house you own or rent
- *     icon: house';
- *     COMMENT ON COLUMN house.price IS 'Asking price';
+ *     COMMENT ON TABLE house IS 'icon: house';
  *
- * - Comments on tables and views: the first lines are the description; the last lines may be key: value
- *   settings. icon is a Lucide icon name in kebab-case (user, credit-card, square-check, ...; lucide.dev/icons),
- *   on tables and views. Views also take layout (table, board or calendar) and by (the column a board groups
- *   by, or the date a calendar places rows on). Any other key is an error.
+ * - Comments hold settings only, one key: value per line; there are no descriptions. Tables and views take
+ *   icon, a Lucide icon name in kebab-case (user, credit-card, square-check, ...; lucide.dev/icons). Views also
+ *   take layout (table, board or calendar) and by (the column a board groups by, or the date a calendar places
+ *   rows on). A uuid[] column takes references. Any other key, or any other text, is an error.
  *
  * Views
  * - A view is a saved way to look at a table: a Postgres view in its own file, <view>.sql, with
@@ -79,14 +76,13 @@
  *
  *     CREATE VIEW task_board WITH (security_invoker = true) AS
  *         SELECT * FROM task WHERE status <> 'done';
- *     COMMENT ON VIEW task_board IS 'Open tasks by progress
- *     layout: board
+ *     COMMENT ON VIEW task_board IS 'layout: board
  *     by: status
  *     icon: kanban';
  *
  * - Create or change one: const files = await archive.schema(); files["task_board.sql"] = `...`;
  *   await archive.apply(files, { confirm: true }). Then archive.list("task_board") reads its rows, and
- *   archive.tables() shows its kind, description, layout, by and icon.
+ *   archive.tables() shows its kind, layout, by and icon.
  * - Delete one: delete files["task_board.sql"] and apply. A view holds no data, so dropping it is never blocked.
  *
  * - A statement that deletes data (dropping a table or column, not a view) is blocked unless you pass { allowDrop: true }.
@@ -163,8 +159,6 @@ interface Plan {
 interface Table {
     name: string;
     kind: "table" | "view";
-    /** The comment without its key: value lines. */
-    description: string;
     /** Lucide icon name from the comment's icon: line. */
     icon?: string;
     /** A view's layout: and by: lines. */
@@ -174,7 +168,6 @@ interface Table {
         name: string;
         /** SQL type, like "text", "archive.money", "uuid[]" or "invoice_status". */
         type: string;
-        description: string;
         /** Must be given on create. */
         required: boolean;
         /** Table this column references, like "public.person" or "archive.file". */

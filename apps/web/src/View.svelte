@@ -3,6 +3,7 @@
   import Table from './Table.svelte';
   import Card from './ui/Card.svelte';
   import Heading from './ui/Heading.svelte';
+  import List from './ui/List.svelte';
   import ListItem from './ui/ListItem.svelte';
   import Note from './ui/Note.svelte';
   import Panel from './ui/Panel.svelte';
@@ -50,8 +51,8 @@
 {#if view.layout === 'table' || !view.by}
   <Table table={view} />
 {:else}
-  <Heading title={view.name.replaceAll('_', ' ')} description={view.description} />
-  {#if error}<Note error>{error}</Note>{/if}
+  <Heading title={view.name.replaceAll('_', ' ')} />
+  {#if error}<Panel><Note error>{error}</Note></Panel>{/if}
   {#if view.layout === 'board'}
     <div class="board">
       {#each groups as [key, items] (key)}
@@ -68,13 +69,17 @@
   {:else}
     <Panel>
       {#each groups as [month, items] (month)}
-        <h2>{month}</h2>
-        {#each items as r (r.id)}
-          <ListItem
-            lead={new Date(r[view.by]).toLocaleDateString(undefined, { day: 'numeric', weekday: 'short' })}
-            meta={details[0] ? [show(r[details[0].name])] : []}
-          >{show(r[label])}</ListItem>
-        {/each}
+        <div class="month">
+          <h2>{month}</h2>
+          <List>
+            {#each items as r (r.id)}
+              <ListItem
+                lead={new Date(r[view.by]).toLocaleDateString(undefined, { day: 'numeric', weekday: 'short' })}
+                meta={details[0] ? [show(r[details[0].name])] : []}
+              >{show(r[label])}</ListItem>
+            {/each}
+          </List>
+        </div>
       {:else}
         <Note>{rows ? 'Nothing with a date yet.' : ''}</Note>
       {/each}
@@ -83,10 +88,10 @@
 {/if}
 
 <style>
-  .board { display: flex; align-items: flex-start; gap: var(--space-3); margin-top: var(--space-6); padding-bottom: var(--space-2); overflow-x: auto; }
+  .board { display: flex; align-items: flex-start; gap: var(--space-3); }
   .lane { flex: 0 0 var(--lane); }
-  header { display: flex; justify-content: space-between; padding: 0 var(--space-2) var(--space-3); font-weight: var(--weight-medium); text-transform: capitalize; }
+  header { display: flex; justify-content: space-between; padding: var(--space-2); font-weight: var(--weight-medium); text-transform: capitalize; }
   .count { color: var(--text-3); font-weight: var(--weight); }
-  h2 { font: var(--weight-medium) var(--display-sm)/var(--leading-tight) var(--display); letter-spacing: var(--tracking-tight); margin: var(--space-5) 0 var(--space-2); }
-  h2:first-child { margin-top: 0; }
+  .month { display: flex; flex-direction: column; gap: var(--space-3); }
+  h2 { font: var(--weight-medium) var(--display-sm)/var(--leading-tight) var(--display); letter-spacing: var(--tracking-tight); }
 </style>

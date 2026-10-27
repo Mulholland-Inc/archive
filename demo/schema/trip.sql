@@ -18,13 +18,5 @@ ALTER TABLE trip ENABLE ROW LEVEL SECURITY;
 ALTER TABLE trip FORCE ROW LEVEL SECURITY;
 CREATE POLICY viewer ON trip FOR SELECT USING (space = ANY (archive.my_spaces()));
 CREATE POLICY editor ON trip USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
-COMMENT ON TABLE trip IS 'A trip or holiday, past or planned
-icon: plane';
-COMMENT ON COLUMN trip.name IS 'Name of the trip';
-COMMENT ON COLUMN trip.destination IS 'City or region';
-COMMENT ON COLUMN trip.country IS 'Country';
-COMMENT ON COLUMN trip.starts IS 'First day';
-COMMENT ON COLUMN trip.ends IS 'Last day';
-COMMENT ON COLUMN trip.budget IS 'Budget';
-COMMENT ON COLUMN trip.people IS 'references person';
-COMMENT ON COLUMN trip.notes IS 'Plans, bookings, what to pack';
+COMMENT ON TABLE trip IS 'icon: plane';
+COMMENT ON COLUMN trip.people IS 'references: person';

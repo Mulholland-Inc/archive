@@ -43,22 +43,20 @@ type runFile struct {
 }
 
 type runTable struct {
-	Name        string      `json:"name"`
-	Kind        string      `json:"kind"`
-	Description string      `json:"description"`
-	Icon        string      `json:"icon,omitempty"`
-	Layout      string      `json:"layout,omitempty"`
-	By          string      `json:"by,omitempty"`
-	Columns     []runColumn `json:"columns"`
+	Name    string      `json:"name"`
+	Kind    string      `json:"kind"`
+	Icon    string      `json:"icon,omitempty"`
+	Layout  string      `json:"layout,omitempty"`
+	By      string      `json:"by,omitempty"`
+	Columns []runColumn `json:"columns"`
 }
 
 type runColumn struct {
-	Name        string   `json:"name"`
-	Type        string   `json:"type"`
-	Description string   `json:"description"`
-	Required    bool     `json:"required"`
-	References  string   `json:"references,omitempty"`
-	Values      []string `json:"values,omitempty"`
+	Name       string   `json:"name"`
+	Type       string   `json:"type"`
+	Required   bool     `json:"required"`
+	References string   `json:"references,omitempty"`
+	Values     []string `json:"values,omitempty"`
 }
 
 type runQueryErr struct {
@@ -763,12 +761,12 @@ func runTables(cat *Catalog) []runTable {
 	out := []runTable{}
 	for _, name := range cat.names() {
 		tb := cat.Tables[name]
-		t := runTable{Name: name, Kind: tb.Kind, Description: tb.Description, Icon: tb.Icon, Layout: tb.Layout, By: tb.By, Columns: []runColumn{}}
+		t := runTable{Name: name, Kind: tb.Kind, Icon: tb.Icon, Layout: tb.Layout, By: tb.By, Columns: []runColumn{}}
 		for _, c := range tb.Columns {
 			if c.Type == "tsvector" {
 				continue
 			}
-			col := runColumn{Name: c.Name, Type: c.Reg, Description: c.Description, Required: c.required() && !catalogSystem[c.Name], References: c.target()}
+			col := runColumn{Name: c.Name, Type: c.Reg, Required: c.required() && !catalogSystem[c.Name], References: c.target()}
 			if pt := cat.typ(c.Schema, c.Type); pt != nil && pt.Kind == "e" {
 				col.Values = pt.Enum
 			}
@@ -886,7 +884,7 @@ func runTypes(cat *Catalog) string {
 			if t.Schema != schema || t.Schema == "archive" && t.Kind == "c" && slices.Contains(runStatic, n.names[k]) {
 				continue
 			}
-			b.WriteString(runDoc("", t.Description))
+			b.WriteString(runDoc("", t.Comment))
 			switch t.Kind {
 			case "d":
 				fmt.Fprintf(&b, "type %s = %s;\n", n.names[k], n.ts(t.BaseSchema, t.Base, false))
@@ -899,7 +897,7 @@ func runTypes(cat *Catalog) string {
 			case "c":
 				fmt.Fprintf(&b, "interface %s {\n", n.names[k])
 				for _, at := range t.Attrs {
-					b.WriteString(runDoc("    ", at.Description, runFormat(at.Schema, at.Type)))
+					b.WriteString(runDoc("    ", at.Comment, runFormat(at.Schema, at.Type)))
 					fmt.Fprintf(&b, "    %s?: %s;\n", runProp(at.Name), n.ts(at.Schema, at.Type, at.List))
 				}
 				b.WriteString("}\n")
@@ -925,7 +923,7 @@ func runTypes(cat *Catalog) string {
 		if tb.Kind == "view" {
 			ro = "View; read only"
 		}
-		b.WriteString("\n" + runDoc("", tb.Description, ro))
+		b.WriteString("\n" + runDoc("", ro))
 		fmt.Fprintf(&b, "interface %s extends Base {\n", tables[name])
 		for _, c := range tb.Columns {
 			if catalogSystem[c.Name] || c.Type == "tsvector" {
@@ -934,14 +932,14 @@ func runTypes(cat *Catalog) string {
 			ref := ""
 			if tg := c.target(); tg == "archive.file" {
 				ref = "References a file: archive.file(id)"
-			} else if tg != "" && !strings.HasPrefix(strings.ToLower(c.Description), "references") {
+			} else if tg != "" {
 				ref = "References " + strings.TrimPrefix(tg, "public.")
 			}
 			gen := ""
 			if c.Generated {
 				gen = "Generated; read only"
 			}
-			b.WriteString(runDoc("    ", c.Description, ref, runFormat(c.Schema, c.Type), gen))
+			b.WriteString(runDoc("    ", ref, runFormat(c.Schema, c.Type), gen))
 			opt := "?"
 			if c.required() {
 				opt = ""

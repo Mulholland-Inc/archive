@@ -17,11 +17,4 @@ ALTER TABLE gift ENABLE ROW LEVEL SECURITY;
 ALTER TABLE gift FORCE ROW LEVEL SECURITY;
 CREATE POLICY viewer ON gift FOR SELECT USING (space = ANY (archive.my_spaces()));
 CREATE POLICY editor ON gift USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
-COMMENT ON TABLE gift IS 'A gift idea or a gift given or received
-icon: gift';
-COMMENT ON COLUMN gift.idea IS 'The gift';
-COMMENT ON COLUMN gift.person IS 'For or from whom';
-COMMENT ON COLUMN gift.occasion IS 'Birthday, Sinterklaas, ...';
-COMMENT ON COLUMN gift.price IS 'Price';
-COMMENT ON COLUMN gift.status IS 'Where it stands';
-COMMENT ON COLUMN gift.link IS 'Where to buy it';
+COMMENT ON TABLE gift IS 'icon: gift';

@@ -18,12 +18,4 @@ ALTER TABLE payment ENABLE ROW LEVEL SECURITY;
 ALTER TABLE payment FORCE ROW LEVEL SECURITY;
 CREATE POLICY viewer ON payment FOR SELECT USING (space = ANY (archive.my_spaces()));
 CREATE POLICY editor ON payment USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
-COMMENT ON TABLE payment IS 'Money in or out of an account; negative amounts are spending
-icon: arrow-left-right';
-COMMENT ON COLUMN payment.booked IS 'Booking date';
-COMMENT ON COLUMN payment.amount IS 'Amount, negative when you paid';
-COMMENT ON COLUMN payment.counterparty IS 'Who paid you or whom you paid';
-COMMENT ON COLUMN payment.description IS 'Description from the bank';
-COMMENT ON COLUMN payment.category IS 'Spending category';
-COMMENT ON COLUMN payment.account IS 'Account it was booked on';
-COMMENT ON COLUMN payment.receipt IS 'Receipt or invoice file';
+COMMENT ON TABLE payment IS 'icon: arrow-left-right';

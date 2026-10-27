@@ -83,7 +83,7 @@
         <Button quiet icon="signout" title="Sign out" aria-label="Sign out" onclick={signOut} />
       </footer>
     </aside>
-    <main>
+    <main class:document={route.first === 'pages' && route.second}>
       {#if route.first === 'files'}
         <Files />
       {:else if route.first === 'pages' && route.second}
@@ -104,7 +104,7 @@
           <Table table={table(route.first)} />
         {/key}
       {:else}
-        <Heading title="Not here" description="There is no table, view or page at this address." />
+        <Heading title="Not here" />
       {/if}
     </main>
   </div>
@@ -112,25 +112,28 @@
 
 <style>
   .app { display: grid; grid-template-columns: var(--sidebar) minmax(0, 1fr); height: 100vh; }
-  aside { display: flex; flex-direction: column; min-height: 0; padding: 0 var(--space-2); }
-  .brand { display: flex; align-items: center; height: var(--size-xl); padding: 0 var(--space-3); }
+  aside { display: flex; flex-direction: column; min-height: 0; padding: var(--space-2); }
+  .brand { display: flex; align-items: center; padding: var(--space-3); }
   nav {
+    display: flex;
+    flex-direction: column;
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: var(--space-5) 0;
     scrollbar-width: none;
     mask-image: linear-gradient(transparent, black var(--space-5), black calc(100% - var(--space-5)), transparent);
   }
-  footer { display: flex; align-items: center; gap: var(--space-3); height: var(--size-xl); padding: 0 var(--space-1) 0 var(--space-3); }
+  nav::before, nav::after { content: ''; flex: 0 0 var(--space-5); }
+  footer { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3); }
   .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  main { overflow: auto; min-width: 0; padding: var(--space-8) var(--space-7) var(--space-7); }
+  main { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: var(--space-7); overflow: hidden; }
+  main > :global(section:last-child), main > :global(.board) { flex: 1; min-height: 0; overflow: auto; }
+  main.document { overflow: auto; }
   @media (max-width: 767px) {
     .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
-    aside { order: 1; flex-direction: row; align-items: center; padding: var(--space-3) var(--space-2) calc(var(--space-3) + env(safe-area-inset-bottom)); }
-    .brand { height: var(--size-lg); padding: 0 var(--space-2); }
-    nav { display: flex; gap: var(--space-1); overflow-x: auto; padding: 0 var(--space-5); mask-image: linear-gradient(to right, transparent, black var(--space-5), black calc(100% - var(--space-5)), transparent); }
+    aside { order: 1; flex-direction: row; align-items: center; padding: var(--space-3); margin-bottom: env(safe-area-inset-bottom); }
+    nav { flex-direction: row; gap: var(--space-1); overflow-x: auto; mask-image: linear-gradient(to right, transparent, black var(--space-5), black calc(100% - var(--space-5)), transparent); }
     nav > :global(div), footer { display: none; }
-    main { padding: var(--space-6) var(--space-4); mask-image: linear-gradient(black calc(100% - var(--space-5)), transparent); }
+    main { padding: var(--space-4); mask-image: linear-gradient(black calc(100% - var(--space-5)), transparent); }
   }
 </style>

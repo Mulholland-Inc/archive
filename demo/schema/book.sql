@@ -18,12 +18,4 @@ ALTER TABLE book ENABLE ROW LEVEL SECURITY;
 ALTER TABLE book FORCE ROW LEVEL SECURITY;
 CREATE POLICY viewer ON book FOR SELECT USING (space = ANY (archive.my_spaces()));
 CREATE POLICY editor ON book USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
-COMMENT ON TABLE book IS 'A book you read, are reading or want to read
-icon: book-open';
-COMMENT ON COLUMN book.title IS 'Title';
-COMMENT ON COLUMN book.author IS 'Author';
-COMMENT ON COLUMN book.isbn IS 'ISBN-13';
-COMMENT ON COLUMN book.status IS 'Reading status';
-COMMENT ON COLUMN book.rating IS 'Your rating, 1 to 5';
-COMMENT ON COLUMN book.finished IS 'Date you finished it';
-COMMENT ON COLUMN book.notes IS 'Thoughts and quotes';
+COMMENT ON TABLE book IS 'icon: book-open';

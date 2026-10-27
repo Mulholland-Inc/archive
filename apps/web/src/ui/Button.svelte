@@ -15,13 +15,13 @@
     align-items: center;
     justify-content: center;
     gap: var(--space-2);
-    height: var(--size-lg);
-    padding: 0 var(--space-5);
+    padding: var(--space-3);
     border: 0;
     border-radius: var(--radius-pill);
     background: var(--cream);
     color: var(--cream-ink);
     font-weight: var(--weight-medium);
+    line-height: 1;
     letter-spacing: var(--tracking-tight);
     cursor: pointer;
     transition: background var(--dur) var(--ease), color var(--dur) var(--ease), transform var(--dur) var(--ease);
@@ -29,7 +29,7 @@
   button:hover { background: var(--cream-hover); }
   button:active { transform: scale(0.96); }
   button:disabled { cursor: default; }
-  .round { width: var(--size-lg); padding: 0; }
-  .quiet { background: none; color: var(--text-2); width: var(--size-sm); height: var(--size-sm); }
+  .round { width: var(--size-lg); height: var(--size-lg); padding: 0; }
+  .quiet { width: var(--size-sm); height: var(--size-sm); padding: 0; background: none; color: var(--text-2); }
   .quiet:hover { background: var(--hover); color: var(--text); }
 </style>

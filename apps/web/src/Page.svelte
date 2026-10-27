@@ -11,22 +11,17 @@
 
   const TYPES = [
     { type: 'paragraph', label: 'Text', icon: 'pilcrow' },
-    { type: 'heading1', label: 'Heading 1', icon: 'heading-1', hint: '#' },
-    { type: 'heading2', label: 'Heading 2', icon: 'heading-2', hint: '##' },
-    { type: 'heading3', label: 'Heading 3', icon: 'heading-3', hint: '###' },
-    { type: 'bullet', label: 'Bulleted list', icon: 'list', hint: '-' },
-    { type: 'numbered', label: 'Numbered list', icon: 'list-ordered', hint: '1.' },
-    { type: 'todo', label: 'To-do', icon: 'square-check', hint: '[]' },
-    { type: 'quote', label: 'Quote', icon: 'text-quote', hint: '>' },
-    { type: 'callout', label: 'Callout', icon: 'lightbulb', hint: '!' },
-    { type: 'code', label: 'Code', icon: 'code', hint: '```' },
+    { type: 'heading1', label: 'Heading 1', icon: 'heading-1' },
+    { type: 'heading2', label: 'Heading 2', icon: 'heading-2' },
+    { type: 'heading3', label: 'Heading 3', icon: 'heading-3' },
+    { type: 'bullet', label: 'Bulleted list', icon: 'list' },
+    { type: 'numbered', label: 'Numbered list', icon: 'list-ordered' },
+    { type: 'todo', label: 'To-do', icon: 'square-check' },
+    { type: 'quote', label: 'Quote', icon: 'text-quote' },
+    { type: 'code', label: 'Code', icon: 'code' },
   ];
-  const SHORTCUTS = [
-    ['### ', 'heading3'], ['## ', 'heading2'], ['# ', 'heading1'], ['- ', 'bullet'], ['* ', 'bullet'], ['1. ', 'numbered'],
-    ['[] ', 'todo'], ['[ ] ', 'todo'], ['[x] ', 'done'], ['> ', 'quote'], ['! ', 'callout'], ['```', 'code'],
-  ];
-  const LISTS = ['bullet', 'numbered', 'todo', 'done'];
-  const PLACEHOLDERS = { heading1: 'Heading 1', heading2: 'Heading 2', heading3: 'Heading 3', bullet: 'List', numbered: 'List', todo: 'To-do', done: 'To-do', quote: 'Quote', callout: 'Callout', code: 'Code' };
+  const LISTS = ['bullet', 'numbered', 'todo'];
+  const PLACEHOLDERS = { heading1: 'Heading 1', heading2: 'Heading 2', heading3: 'Heading 3', bullet: 'List', numbered: 'List', todo: 'To-do', quote: 'Quote', code: 'Code' };
 
   const runes = (s) => [...s].length;
   const units = (s, n) => [...s].slice(0, n).join('').length;
@@ -88,7 +83,7 @@
 <script>
   import { onMount, tick } from 'svelte';
   import { api, run } from './api.js';
-  import Avatar from './ui/Avatar.svelte';
+  import Chip from './ui/Chip.svelte';
   import Icon from './ui/Icon.svelte';
   import Menu from './ui/Menu.svelte';
 
@@ -113,12 +108,7 @@
     return out;
   });
 
-  const options = $derived.by(() => {
-    if (!menu) return [];
-    const q = menu.query.toLowerCase();
-    const found = TYPES.filter((t) => t.label.toLowerCase().includes(q) || t.type.startsWith(q));
-    return menu.turn ? [...found, { type: 'delete', label: 'Delete', icon: 'trash' }] : found;
-  });
+  const options = $derived(menu?.turn ? [...TYPES, { type: 'delete', label: 'Delete', icon: 'trash' }] : TYPES);
 
   function call(fn, ...args) {
     const r = pages[fn](...args);
@@ -141,21 +131,7 @@
 
   async function input(b, el) {
     if (!el.textContent && el.firstChild) el.replaceChildren();
-    const text = el.textContent;
-    const at = selection(el)?.focus ?? text.length;
-    const shortcut = (b.type || 'paragraph') === 'paragraph' && SHORTCUTS.find(([p]) => text.startsWith(p) && at === p.length);
-    if (shortcut) {
-      menu = null;
-      await edit(() => {
-        call('setText', b.id, text.slice(shortcut[0].length));
-        call('setType', b.id, shortcut[1]);
-      });
-      return focus(b.id, 0);
-    }
-    const slash = text.slice(0, at).match(/(?:^|\s)\/([^\s/]*)$/);
-    menu = slash ? { block: b.id, query: slash[1], from: at - slash[1].length - 1, to: at, index: 0 } : null;
-    if (menu && !options.length) menu = null;
-    await edit(() => call('setText', b.id, text));
+    await edit(() => call('setText', b.id, el.textContent));
     publish();
   }
 
@@ -164,48 +140,40 @@
     menu = null;
     const b = blocks.find((x) => x.id === m.block);
     if (!b) return;
-    if (o.type === 'delete') return remove(b);
+    if (o.type === 'delete') {
+      const i = blocks.indexOf(b);
+      if (blocks.length === 1) {
+        await edit(() => { call('setText', b.id, ''); call('setType', b.id, 'paragraph'); });
+        return focus(b.id);
+      }
+      await edit(() => call('remove', b.id));
+      return focus(blocks[Math.max(0, i - 1)].id);
+    }
     if (m.turn) {
       await edit(() => call('setType', b.id, o.type));
       return focus(b.id);
     }
-    const text = textOf(b.id).textContent;
-    await edit(() => {
-      call('setText', b.id, text.slice(0, m.from) + text.slice(m.to));
-      call('setType', b.id, o.type);
-    });
-    focus(b.id, m.from);
-  }
-
-  async function remove(b) {
-    const i = blocks.indexOf(b);
-    if (i > 0) {
-      const above = blocks[i - 1];
-      await edit(() => {
-        call('setText', b.id, '');
-        call('merge', b.id);
-      });
-      return focus(above.id);
-    }
-    await edit(() => {
-      call('setText', b.id, '');
-      call('setType', b.id, 'paragraph');
-    });
-    focus(b.id);
-  }
-
-  async function add(b) {
     let next;
-    await edit(() => {
-      next = call('insert', b.id, 'paragraph');
-      call('setText', next, '/');
-    });
-    menu = { block: next, query: '', from: 0, to: 1, index: 0 };
+    await edit(() => (next = call('insert', b.id, o.type)));
     focus(next);
   }
 
   function toggle(b) {
-    edit(() => call('setType', b.id, b.type === 'done' ? 'todo' : 'done'));
+    edit(() => call('setField', b.id, 'done', b.done ? '' : '1'));
+  }
+
+  function onMenuKey(e) {
+    if (!menu) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      menu.index = (menu.index + (e.key === 'ArrowDown' ? 1 : options.length - 1)) % options.length;
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      pick(options[menu.index]);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      menu = null;
+    }
   }
 
   function atEdge(el, up) {
@@ -232,44 +200,25 @@
   }
 
   async function key(e, b, i) {
+    if (menu) return;
     const el = e.currentTarget;
-    if (menu?.block === b.id && options.length) {
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        e.preventDefault();
-        menu.index = (menu.index + (e.key === 'ArrowDown' ? 1 : options.length - 1)) % options.length;
-        return;
-      }
-      if (e.key === 'Enter' || e.key === 'Tab') {
-        e.preventDefault();
-        return pick(options[menu.index]);
-      }
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        menu = null;
-        return;
-      }
-    }
     const s = selection(el);
     const at = s?.focus ?? 0;
     const collapsed = s && s.anchor === s.focus;
     const text = el.textContent;
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && LISTS.includes(b.type)) {
+    const type = b.type || 'paragraph';
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && type === 'todo') {
       e.preventDefault();
-      if (b.type !== 'bullet' && b.type !== 'numbered') toggle(b);
-    } else if (e.key === 'Enter' && !e.shiftKey && (b.type !== 'code' || e.metaKey || e.ctrlKey)) {
+      toggle(b);
+    } else if (e.key === 'Enter' && !e.shiftKey && (type !== 'code' || e.metaKey || e.ctrlKey)) {
       e.preventDefault();
-      menu = null;
-      if (LISTS.includes(b.type) && !text) return edit(() => call('setType', b.id, 'paragraph'));
-      const type = b.type === 'done' ? 'todo' : LISTS.includes(b.type) ? b.type : 'paragraph';
+      if (LISTS.includes(type) && !text) return edit(() => call('setType', b.id, 'paragraph'));
       let next;
-      await edit(() => {
-        call('setText', b.id, text);
-        next = call('split', b.id, runes(text.slice(0, at)), type);
-      });
+      await edit(() => (next = call('split', b.id, runes(text.slice(0, at)), LISTS.includes(type) ? type : 'paragraph')));
       focus(next, 0);
     } else if (e.key === 'Backspace' && collapsed && at === 0) {
       e.preventDefault();
-      if (b.type && b.type !== 'paragraph') return edit(() => call('setType', b.id, 'paragraph'));
+      if (type !== 'paragraph') return edit(() => call('setType', b.id, 'paragraph'));
       if (i === 0) return;
       const above = blocks[i - 1];
       await edit(() => call('merge', b.id));
@@ -281,8 +230,6 @@
     } else if (e.key === 'ArrowDown' && !e.shiftKey && atEdge(el, false) && i < blocks.length - 1) {
       e.preventDefault();
       moveTo(textOf(blocks[i + 1].id), false);
-    } else if (e.key === 'Escape') {
-      menu = null;
     }
   }
 
@@ -355,7 +302,7 @@
 
     const onSelection = () => publish().catch(console.error);
     const onBlur = () => setTimeout(onSelection);
-    const onPointer = (e) => { if (!e.target.closest?.('.menu, .grip')) menu = null; };
+    const onPointer = (e) => { if (!e.target.closest?.('.menu, .add')) menu = null; };
 
     crdt().then((p) => {
       pages = p;
@@ -377,6 +324,7 @@
       document.addEventListener('selectionchange', onSelection);
       document.addEventListener('focusout', onBlur);
       document.addEventListener('pointerdown', onPointer);
+      document.addEventListener('keydown', onMenuKey, true);
       addEventListener('resize', cursors);
     });
 
@@ -387,17 +335,18 @@
       document.removeEventListener('selectionchange', onSelection);
       document.removeEventListener('focusout', onBlur);
       document.removeEventListener('pointerdown', onPointer);
+      document.removeEventListener('keydown', onMenuKey, true);
       removeEventListener('resize', cursors);
     };
   });
 </script>
 
+<div class="page">
 <header>
   <a class="crumb" href="/pages"><Icon name="chevron-left" />Pages</a>
-  <div class="people">
-    <span class="dot" class:live title={live ? 'Live' : 'Connecting'}></span>
+  <div class="people" class:live title={live ? 'Live' : 'Connecting'}>
     {#each [{ ...me, site, you: true }, ...online] as p (p.site)}
-      <Avatar name={p.name} peer={peer(p)} pulse={p.agent} title={p.you ? `${p.name} (you)` : p.agent ? `${p.name} editing` : p.name} />
+      <Chip name={p.you ? `${p.name} (you)` : p.name} pulse={p.agent} />
     {/each}
   </div>
 </header>
@@ -417,35 +366,41 @@
 
   <div class="blocks" bind:this={root}>
     {#each blocks as b, i (b.id)}
-      <div class="block {b.type || 'paragraph'}" class:todo={b.type === 'done'} class:lonely={blocks.length === 1} data-id={b.id}>
-        <div class="gutter">
-          <button tabindex="-1" aria-label="Add a block below" onmousedown={(e) => e.preventDefault()} onclick={() => add(b)}><Icon name="plus" /></button>
-          <button class="grip" tabindex="-1" aria-label="Turn into" onclick={() => (menu = { block: b.id, turn: true, query: '', index: 0 })}><Icon name="grip-vertical" /></button>
-        </div>
-        {#if b.type === 'todo' || b.type === 'done'}
-          <button class="check" tabindex="-1" aria-label={b.type === 'done' ? 'Mark as not done' : 'Mark as done'} onmousedown={(e) => e.preventDefault()} onclick={() => toggle(b)}>
-            {#if b.type === 'done'}<Icon name="check" />{/if}
-          </button>
+      <div
+        class="block {b.type || 'paragraph'}"
+        class:done={b.done}
+        class:lonely={blocks.length === 1}
+        data-id={b.id}
+        role="group"
+        oncontextmenu={(e) => { e.preventDefault(); menu = { block: b.id, turn: true, index: 0 }; }}
+      >
+        <button class="add" tabindex="-1" aria-label="Add a block below" onmousedown={(e) => e.preventDefault()} onclick={() => (menu = { block: b.id, index: 0 })}><Icon name="plus" /></button>
+        {#if b.type === 'todo'}
+          <span class="mark">
+            <button class="check" tabindex="-1" aria-label={b.done ? 'Mark as not done' : 'Mark as done'} onmousedown={(e) => e.preventDefault()} onclick={() => toggle(b)}>
+              {#if b.done}<Icon name="check" />{/if}
+            </button>
+          </span>
+        {:else if b.type === 'quote'}
+          <span class="bar"></span>
         {:else if b.type === 'bullet'}
           <span class="mark">•</span>
         {:else if b.type === 'numbered'}
           <span class="mark">{numbers[b.id]}.</span>
-        {:else if b.type === 'callout'}
-          <span class="mark"><Icon name="lightbulb" /></span>
         {/if}
         <div
           class="text"
           contenteditable="plaintext-only"
           role="textbox"
           tabindex="0"
-          data-placeholder={PLACEHOLDERS[b.type] ?? (blocks.length === 1 ? "Write something, or press '/' for commands" : "Press '/' for commands")}
+          data-placeholder={PLACEHOLDERS[b.type] ?? 'Write something'}
           {@attach sync(b.text)}
           oninput={(e) => input(b, e.currentTarget)}
           onkeydown={(e) => key(e, b, i)}
         ></div>
-        {#if menu?.block === b.id && options.length}
+        {#if menu?.block === b.id}
           <div class="popover">
-            <Menu title={menu.turn ? 'Turn into' : 'Blocks'} items={options} index={menu.index} onpick={pick} onhover={(n) => (menu.index = n)} />
+            <Menu title={menu.turn ? 'Turn into' : 'Add below'} items={options} index={menu.index} onpick={pick} onhover={(n) => (menu.index = n)} />
           </div>
         {/if}
       </div>
@@ -455,83 +410,91 @@
     {/each}
   </div>
 </article>
+</div>
 
 <style>
-  header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); max-width: var(--measure); margin: calc(-1 * var(--space-7)) auto var(--space-7); }
+  .page { display: flex; flex-direction: column; gap: var(--space-7); width: 100%; max-width: var(--measure); align-self: center; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
   .crumb { display: flex; align-items: center; gap: var(--space-1); font-size: var(--text-sm); color: var(--text-3); transition: color var(--dur) var(--ease); }
   .crumb:hover { color: var(--text); }
-  .people { display: flex; align-items: center; gap: var(--space-1); }
-  .dot { width: var(--size-xs); height: var(--size-xs); border-radius: 50%; background: var(--line-strong); margin-right: var(--space-2); transition: background var(--dur) var(--ease); }
-  .dot.live { background: var(--cream); }
+  .people { display: flex; align-items: center; gap: var(--space-2); opacity: 0.5; transition: opacity var(--dur) var(--ease); }
+  .people.live { opacity: 1; }
 
-  article { max-width: var(--measure); margin: 0 auto; padding-bottom: var(--space-9); }
+  article { display: flex; flex-direction: column; gap: var(--space-5); }
   [contenteditable] { outline: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
   [contenteditable]:empty::before { content: attr(data-placeholder); color: var(--text-3); pointer-events: none; }
   .title {
-    margin-bottom: var(--space-5);
+    padding: var(--space-1);
     font: var(--weight-medium) var(--display-lg)/var(--leading-tight) var(--display);
     letter-spacing: var(--tracking-display);
   }
 
-  .blocks { position: relative; }
-  .block { position: relative; display: flex; align-items: flex-start; gap: var(--space-2); padding: var(--stroke) 0; }
-  .text { flex: 1; min-width: 0; padding: var(--space-1) 0; font-size: var(--text-lg); line-height: var(--leading-loose); }
+  .blocks { position: relative; display: flex; flex-direction: column; gap: var(--space-1); }
+  .block { position: relative; display: flex; align-items: stretch; gap: var(--space-2); }
+  .text { flex: 1; min-width: 0; padding: var(--space-1); font-size: var(--text-lg); line-height: var(--leading-loose); }
   .paragraph:not(:focus-within):not(.lonely) .text:empty::before { content: none; }
 
-  .gutter {
+  .add {
     position: absolute;
-    right: 100%;
     top: var(--space-1);
-    display: flex;
-    padding-right: var(--space-2);
-    opacity: 0;
-    transition: opacity var(--dur) var(--ease);
-  }
-  .block:hover .gutter, .gutter:focus-within { opacity: 1; }
-  .gutter button, .check {
+    right: calc(100% + var(--space-2));
     display: grid;
     place-items: center;
-    width: var(--size-avatar);
-    height: var(--size-avatar);
+    width: var(--size-sm);
+    height: var(--size-sm);
     padding: 0;
     border: 0;
     border-radius: var(--radius-sm);
     background: none;
     color: var(--text-3);
     cursor: pointer;
-    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+    opacity: 0;
+    transition: opacity var(--dur) var(--ease), background var(--dur) var(--ease), color var(--dur) var(--ease);
   }
-  .gutter button:hover { background: var(--hover); color: var(--text); }
-  .gutter :global(svg.icon), .check :global(svg.icon), .mark :global(svg.icon) { width: var(--text-lg); height: var(--text-lg); }
+  .block:hover .add { opacity: 1; }
+  .add:hover { background: var(--hover); color: var(--text); }
 
-  .mark { flex: none; min-width: var(--size-avatar); padding-top: var(--space-1); font-size: var(--text-lg); line-height: var(--leading-loose); color: var(--text-2); text-align: center; }
-  .check { flex: none; margin-top: var(--space-2); width: var(--text-xl); height: var(--text-xl); border: var(--stroke-bold) solid var(--line-strong); border-radius: var(--radius-sm); color: var(--cream-ink); }
+  .mark {
+    display: grid;
+    place-items: center;
+    flex: none;
+    min-width: var(--size-avatar);
+    height: calc(var(--text-lg) * var(--leading-loose) + 2 * var(--space-1));
+    font-size: var(--text-lg);
+    color: var(--text-2);
+  }
+  .bar { flex: none; width: var(--stroke-bold); border-radius: var(--radius-pill); background: var(--cream); }
+  .check {
+    display: grid;
+    place-items: center;
+    width: var(--text-xl);
+    height: var(--text-xl);
+    padding: 0;
+    border: var(--stroke-bold) solid var(--line-strong);
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--cream-ink);
+    cursor: pointer;
+    transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+  }
   .check:hover { border-color: var(--line-focus); }
+  .check :global(svg.icon) { width: var(--text-md); height: var(--text-md); }
   .done .check { background: var(--cream); border-color: var(--cream); }
   .done .text { color: var(--text-3); text-decoration: line-through; text-decoration-color: var(--line-strong); }
 
-  .heading1 { margin-top: var(--space-6); }
-  .heading2 { margin-top: var(--space-5); }
-  .heading3 { margin-top: var(--space-4); }
   .heading1 .text { font: var(--weight-medium) var(--display-md)/var(--leading-tight) var(--display); letter-spacing: var(--tracking-display); }
   .heading2 .text { font: var(--weight-medium) var(--display-sm)/var(--leading-tight) var(--display); letter-spacing: var(--tracking-tight); }
   .heading3 .text { font-size: var(--text-xl); font-weight: var(--weight-bold); }
-  .heading1 .gutter, .heading2 .gutter { top: var(--space-3); }
-
-  .quote .text { padding-left: var(--space-4); border-left: var(--stroke-bold) solid var(--cream); color: var(--text-2); }
-  .callout { padding: var(--space-3) var(--space-4); margin: var(--space-2) 0; background: var(--panel); border-radius: var(--radius-lg); }
-  .callout .gutter { top: var(--space-4); }
+  .quote .text { color: var(--text-2); }
   .code .text {
-    padding: var(--space-4) var(--space-5);
-    margin: var(--space-2) 0;
+    padding: var(--space-4);
     background: var(--panel);
     border-radius: var(--radius-md);
     font: var(--text-sm)/var(--leading) var(--mono);
     font-variant-ligatures: none;
   }
-  .code .gutter { top: var(--space-5); }
 
-  .popover { position: absolute; top: 100%; left: 0; z-index: 1; margin-top: var(--space-1); }
+  .popover { position: absolute; top: calc(100% + var(--space-1)); left: 0; z-index: 1; }
 
   .caret, .sel { position: absolute; left: var(--x); top: var(--y); height: var(--h); background: var(--peer); pointer-events: none; }
   .caret { width: var(--stroke-bold); transition: left var(--dur-fast), top var(--dur-fast); }
@@ -540,16 +503,15 @@
     position: absolute;
     bottom: 100%;
     left: 0;
-    padding: var(--stroke) var(--space-2);
-    border-radius: var(--radius-sm) var(--radius-sm) var(--radius-sm) 0;
+    padding: var(--space-1);
+    border-radius: var(--radius-sm);
     background: var(--peer);
     color: var(--on-peer);
-    font: var(--weight-bold) var(--text-xs) var(--font);
+    font: var(--weight-bold) var(--text-xs)/1 var(--font);
     white-space: nowrap;
   }
 
   @media (max-width: 767px) {
-    header { margin: 0 0 var(--space-5); }
-    .gutter { display: none; }
+    .add { display: none; }
   }
 </style>

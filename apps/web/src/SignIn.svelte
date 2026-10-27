@@ -24,7 +24,8 @@
 
 <div class="door">
   <div class="brand"><Logo large /></div>
-  <Heading hero title="Hello" description={sent ? `If ${email} has an account, a sign-in link is on its way.` : 'Sign in to your archive.'} />
+  <Heading hero title="Hello" />
+  <Note>{sent ? `If ${email} has an account, a sign-in link is on its way.` : 'Sign in to your archive.'}</Note>
   {#if !sent}
     <form onsubmit={send}>
       <Field type="email" placeholder="Sign in with your email" bind:value={email} required autofocus>
@@ -36,7 +37,7 @@
 </div>
 
 <style>
-  .door { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: var(--space-5); text-align: center; }
-  .brand { position: absolute; top: var(--space-5); left: var(--space-6); }
-  form { width: 100%; max-width: var(--form); margin: var(--space-7) 0 var(--space-4); }
+  .door { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-5); min-height: 100vh; padding: var(--space-5); text-align: center; }
+  .brand { position: absolute; top: var(--space-5); left: var(--space-5); }
+  form { width: 100%; max-width: var(--form); }
 </style>

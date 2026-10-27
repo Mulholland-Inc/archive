@@ -21,7 +21,6 @@
     align-items: center;
     gap: var(--space-4);
     padding: var(--space-3);
-    margin: 0 calc(-1 * var(--space-3));
     border-radius: var(--radius-lg);
     transition: background var(--dur) var(--ease);
   }

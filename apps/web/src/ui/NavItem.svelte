@@ -11,8 +11,8 @@
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    height: var(--size-md);
-    padding: 0 var(--space-3);
+    padding: var(--space-3);
+    line-height: 1;
     border-radius: var(--radius-pill);
     font-weight: var(--weight-medium);
     text-transform: capitalize;

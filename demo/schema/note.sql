@@ -14,9 +14,4 @@ ALTER TABLE note ENABLE ROW LEVEL SECURITY;
 ALTER TABLE note FORCE ROW LEVEL SECURITY;
 CREATE POLICY viewer ON note FOR SELECT USING (space = ANY (archive.my_spaces()));
 CREATE POLICY editor ON note USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
-COMMENT ON TABLE note IS 'A note, idea or piece of reference
-icon: sticky-note';
-COMMENT ON COLUMN note.title IS 'Title';
-COMMENT ON COLUMN note.body IS 'The note, in Markdown';
-COMMENT ON COLUMN note.tags IS 'Tags';
-COMMENT ON COLUMN note.pinned IS 'Pinned to the top';
+COMMENT ON TABLE note IS 'icon: sticky-note';

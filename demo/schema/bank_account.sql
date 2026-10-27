@@ -18,12 +18,4 @@ ALTER TABLE bank_account ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bank_account FORCE ROW LEVEL SECURITY;
 CREATE POLICY viewer ON bank_account FOR SELECT USING (space = ANY (archive.my_spaces()));
 CREATE POLICY editor ON bank_account USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
-COMMENT ON TABLE bank_account IS 'A bank, savings, credit or investment account
-icon: landmark';
-COMMENT ON COLUMN bank_account.name IS 'Your name for the account';
-COMMENT ON COLUMN bank_account.institution IS 'Bank or broker';
-COMMENT ON COLUMN bank_account.kind IS 'Type of account';
-COMMENT ON COLUMN bank_account.iban IS 'IBAN';
-COMMENT ON COLUMN bank_account.bic IS 'BIC of the bank';
-COMMENT ON COLUMN bank_account.balance IS 'Last known balance';
-COMMENT ON COLUMN bank_account.opened IS 'Date opened';
+COMMENT ON TABLE bank_account IS 'icon: landmark';

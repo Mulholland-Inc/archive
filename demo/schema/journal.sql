@@ -13,8 +13,4 @@ ALTER TABLE journal ENABLE ROW LEVEL SECURITY;
 ALTER TABLE journal FORCE ROW LEVEL SECURITY;
 CREATE POLICY viewer ON journal FOR SELECT USING (space = ANY (archive.my_spaces()));
 CREATE POLICY editor ON journal USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
-COMMENT ON TABLE journal IS 'A diary entry for a day
-icon: notebook-pen';
-COMMENT ON COLUMN journal.day IS 'The day';
-COMMENT ON COLUMN journal.mood IS 'Mood, 1 (bad) to 5 (great)';
-COMMENT ON COLUMN journal.entry IS 'What happened and how it felt';
+COMMENT ON TABLE journal IS 'icon: notebook-pen';

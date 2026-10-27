@@ -22,43 +22,47 @@ type Catalog struct {
 }
 
 type Table struct {
-	Name        string    `json:"name"`
-	Kind        string    `json:"kind"`
-	Description string    `json:"description"`
-	Icon        string    `json:"icon"`
-	Layout      string    `json:"layout,omitempty"`
-	By          string    `json:"by,omitempty"`
-	RLS         bool      `json:"rls"`
-	Force       bool      `json:"force"`
-	Invoker     bool      `json:"security_invoker,omitempty"`
-	Policies    int       `json:"policies"`
-	Columns     []*Column `json:"columns"`
-	meta        [][2]string
+	Name     string    `json:"name"`
+	Kind     string    `json:"kind"`
+	Comment  string    `json:"comment,omitempty"`
+	Icon     string    `json:"icon"`
+	Layout   string    `json:"layout,omitempty"`
+	By       string    `json:"by,omitempty"`
+	RLS      bool      `json:"rls"`
+	Force    bool      `json:"force"`
+	Invoker  bool      `json:"security_invoker,omitempty"`
+	Policies int       `json:"policies"`
+	Columns  []*Column `json:"columns"`
+	meta     [][2]string
+	prose    string
 }
 
 type Column struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Type        string `json:"type"`
-	Schema      string `json:"schema"`
-	Reg         string `json:"reg"`
-	List        bool   `json:"list"`
-	NotNull     bool   `json:"not_null"`
-	Default     bool   `json:"default"`
-	Generated   bool   `json:"generated"`
-	PK          bool   `json:"pk"`
-	Ref         string `json:"ref"`
+	Name       string `json:"name"`
+	Comment    string `json:"comment,omitempty"`
+	Type       string `json:"type"`
+	Schema     string `json:"schema"`
+	Reg        string `json:"reg"`
+	List       bool   `json:"list"`
+	NotNull    bool   `json:"not_null"`
+	Default    bool   `json:"default"`
+	Generated  bool   `json:"generated"`
+	PK         bool   `json:"pk"`
+	Ref        string `json:"ref"`
+	References string `json:"references,omitempty"`
+	meta       [][2]string
+	prose      string
 }
 
 type PgType struct {
-	Name        string    `json:"name"`
-	Schema      string    `json:"schema"`
-	Kind        string    `json:"kind"`
-	Description string    `json:"description"`
-	Base        string    `json:"base"`
-	BaseSchema  string    `json:"base_schema"`
-	Enum        []string  `json:"enum"`
-	Attrs       []*Column `json:"attrs"`
+	Name       string    `json:"name"`
+	Schema     string    `json:"schema"`
+	Kind       string    `json:"kind"`
+	Comment    string    `json:"comment,omitempty"`
+	Base       string    `json:"base"`
+	BaseSchema string    `json:"base_schema"`
+	Enum       []string  `json:"enum"`
+	Attrs      []*Column `json:"attrs"`
 }
 
 type Hints struct {
@@ -102,7 +106,7 @@ const catalogSQL = `
 WITH col AS (
     SELECT a.attrelid AS rel, a.attnum AS num, jsonb_build_object(
         'name', a.attname,
-        'description', coalesce(col_description(a.attrelid, a.attnum), ''),
+        'comment', coalesce(col_description(a.attrelid, a.attnum), ''),
         'type', e.typname,
         'schema', e.typnamespace::regnamespace::text,
         'reg', format_type(e.oid, a.atttypmod),
@@ -122,7 +126,7 @@ SELECT jsonb_build_object(
     'tables', coalesce((SELECT jsonb_object_agg(c.relname, jsonb_build_object(
         'name', c.relname,
         'kind', CASE c.relkind WHEN 'v' THEN 'view' ELSE 'table' END,
-        'description', coalesce(obj_description(c.oid, 'pg_class'), ''),
+        'comment', coalesce(obj_description(c.oid, 'pg_class'), ''),
         'rls', c.relrowsecurity,
         'force', c.relforcerowsecurity,
         'security_invoker', coalesce((SELECT o.option_value::bool FROM pg_options_to_table(c.reloptions) o WHERE o.option_name = 'security_invoker'), false),
@@ -133,7 +137,7 @@ SELECT jsonb_build_object(
         'name', t.typname,
         'schema', t.typnamespace::regnamespace::text,
         'kind', t.typtype,
-        'description', coalesce(obj_description(t.oid, 'pg_type'), ''),
+        'comment', coalesce(obj_description(t.oid, 'pg_type'), ''),
         'base', coalesce((SELECT b.typname FROM pg_type b WHERE b.oid = t.typbasetype), ''),
         'base_schema', coalesce((SELECT b.typnamespace::regnamespace::text FROM pg_type b WHERE b.oid = t.typbasetype), ''),
         'enum', coalesce((SELECT jsonb_agg(l.enumlabel ORDER BY l.enumsortorder) FROM pg_enum l WHERE l.enumtypid = t.oid), '[]'),
@@ -148,7 +152,17 @@ func catalogParse(b []byte) (*Catalog, error) {
 		return nil, fmt.Errorf("catalog: %w", err)
 	}
 	for _, t := range c.Tables {
-		t.Description, t.meta = catalogComment(t.Description)
+		t.prose, t.meta = catalogComment(t.Comment)
+		t.Comment = ""
+		for _, col := range t.Columns {
+			col.prose, col.meta = catalogComment(col.Comment)
+			col.Comment = ""
+			for _, kv := range col.meta {
+				if kv[0] == "references" {
+					col.References = kv[1]
+				}
+			}
+		}
 		for _, kv := range t.meta {
 			switch kv[0] {
 			case "icon":
@@ -202,7 +216,6 @@ var (
 	catalogReserved = map[string]bool{"files": true, "pages": true, "views": true, "search": true, "schema": true, "types": true,
 		"space": true, "user": true, "token": true, "file": true, "upload": true, "secret": true, "revision": true, "run": true}
 	catalogNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
-	catalogRefRe  = regexp.MustCompile(`(?i)^references\s+([a-z][a-z0-9_]*)\b[\s.;:,-]*`)
 )
 
 func (c *Catalog) table(name string) (*Table, error) {
@@ -260,8 +273,8 @@ func (c *Column) target() string {
 	if c.Ref != "" {
 		return c.Ref
 	}
-	if m := catalogRefRe.FindStringSubmatch(c.Description); m != nil && c.List && c.Type == "uuid" {
-		return "public." + m[1]
+	if c.References != "" && c.List && c.Type == "uuid" {
+		return "public." + c.References
 	}
 	return ""
 }
@@ -340,12 +353,31 @@ func (c *Catalog) checkMeta(t *Table, bad func(path, msg string)) {
 	if t.Kind == "view" {
 		keys, what = []string{"icon", "layout", "by"}, "COMMENT ON VIEW "+t.Name
 	}
+	if t.prose != "" {
+		bad(t.Name, what+" holds only key: value lines ("+strings.Join(keys, ", ")+"); there are no descriptions")
+	}
+	for _, col := range t.Columns {
+		path, what := t.Name+"."+col.Name, "COMMENT ON COLUMN "+t.Name+"."+col.Name
+		if col.prose != "" {
+			bad(path, what+" holds only a references: <table> line, for a uuid[] list; there are no descriptions")
+		}
+		for _, kv := range col.meta {
+			switch {
+			case kv[0] != "references":
+				bad(path, "unknown key "+kv[0]+" in "+what+"; want references")
+			case !col.List || col.Type != "uuid":
+				bad(path, "references: goes on a uuid[] column; a single reference is uuid REFERENCES "+kv[1])
+			case c.Tables[kv[1]] == nil:
+				bad(path, "references: "+strconv.Quote(kv[1])+" is not a table")
+			}
+		}
+	}
 	seen := map[string]bool{}
 	for _, kv := range t.meta {
 		k, v, path := kv[0], kv[1], t.Name+"."+kv[0]
 		switch {
 		case !slices.Contains(keys, k):
-			bad(path, "unknown key "+k+" in the last lines of "+what+"; want description lines, then key: value lines with "+strings.Join(keys, ", "))
+			bad(path, "unknown key "+k+" in the last lines of "+what+"; want key: value lines with "+strings.Join(keys, ", "))
 		case seen[k]:
 			bad(path, k+" is set twice in "+what)
 		case k == "icon" && !catalogIcons[v]:

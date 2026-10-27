@@ -18,12 +18,4 @@ ALTER TABLE place ENABLE ROW LEVEL SECURITY;
 ALTER TABLE place FORCE ROW LEVEL SECURITY;
 CREATE POLICY viewer ON place FOR SELECT USING (space = ANY (archive.my_spaces()));
 CREATE POLICY editor ON place USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
-COMMENT ON TABLE place IS 'A place you go to or want to remember
-icon: map-pin';
-COMMENT ON COLUMN place.name IS 'Name of the place';
-COMMENT ON COLUMN place.kind IS 'What sort of place';
-COMMENT ON COLUMN place.address IS 'Street address';
-COMMENT ON COLUMN place.location IS 'Coordinates';
-COMMENT ON COLUMN place.website IS 'Website';
-COMMENT ON COLUMN place.rating IS 'Your rating, 1 to 5';
-COMMENT ON COLUMN place.notes IS 'What to order, who to ask for, opening quirks';
+COMMENT ON TABLE place IS 'icon: map-pin';

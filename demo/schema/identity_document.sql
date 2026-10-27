@@ -18,12 +18,4 @@ ALTER TABLE identity_document ENABLE ROW LEVEL SECURITY;
 ALTER TABLE identity_document FORCE ROW LEVEL SECURITY;
 CREATE POLICY viewer ON identity_document FOR SELECT USING (space = ANY (archive.my_spaces()));
 CREATE POLICY editor ON identity_document USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
-COMMENT ON TABLE identity_document IS 'A passport, ID card, driving licence or permit
-icon: id-card';
-COMMENT ON COLUMN identity_document.kind IS 'Type of document';
-COMMENT ON COLUMN identity_document.number IS 'Document number';
-COMMENT ON COLUMN identity_document.holder IS 'Whose document it is';
-COMMENT ON COLUMN identity_document.country IS 'Issuing country';
-COMMENT ON COLUMN identity_document.issued IS 'Issue date';
-COMMENT ON COLUMN identity_document.expires IS 'Expiry date';
-COMMENT ON COLUMN identity_document.scan IS 'Scan of the document';
+COMMENT ON TABLE identity_document IS 'icon: id-card';

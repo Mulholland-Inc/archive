@@ -6,5 +6,5 @@
 
 <style>
   p { color: var(--text-2); }
-  .error { color: var(--alarm); margin-bottom: var(--space-4); }
+  .error { color: var(--alarm); }
 </style>
