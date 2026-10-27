@@ -32,7 +32,6 @@
     background: var(--raised);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow);
-    scrollbar-width: none;
   }
   .compact { width: auto; min-width: var(--field); }
   .title { padding: var(--space-2); font-size: var(--text-xs); color: var(--text-3); }

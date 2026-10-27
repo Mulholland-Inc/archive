@@ -18,5 +18,5 @@
 
 <style>
   .copy { display: flex; align-items: center; gap: var(--space-1); padding: var(--space-1); background: var(--raised); border-radius: var(--radius-pill); }
-  code { flex: 1; min-width: 0; padding: var(--space-2); overflow-x: auto; scrollbar-width: none; white-space: nowrap; font: var(--text-xs) var(--mono); color: var(--text-2); }
+  code { flex: 1; min-width: 0; padding: var(--space-2); overflow-x: auto; white-space: nowrap; font: var(--text-xs) var(--mono); color: var(--text-2); }
 </style>

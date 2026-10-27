@@ -27,7 +27,6 @@
     align-items: center;
     gap: var(--space-2);
     overflow-x: auto;
-    scrollbar-width: none;
     mask-image: linear-gradient(to right, transparent, black var(--fade), black calc(100% - var(--fade)), transparent);
   }
   .start { mask-image: linear-gradient(to right, black calc(100% - var(--fade)), transparent); }

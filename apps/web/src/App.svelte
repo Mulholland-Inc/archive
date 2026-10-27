@@ -151,7 +151,6 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    scrollbar-width: none;
     mask-image: linear-gradient(transparent, black var(--space-5), black calc(100% - var(--space-5)), transparent);
   }
   nav::before, nav::after { content: ''; flex: 0 0 var(--space-5); }
