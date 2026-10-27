@@ -1,10 +1,10 @@
 <script>
   import Icon from './Icon.svelte';
 
-  let { href, icon, active = false, children } = $props();
+  let { href, icon, active = false, children, ...rest } = $props();
 </script>
 
-<a {href} class:active aria-current={active ? 'page' : undefined}><Icon name={icon} />{@render children()}</a>
+<a {href} class:active aria-current={active ? 'page' : undefined} {...rest}><Icon name={icon} />{@render children()}</a>
 
 <style>
   a {

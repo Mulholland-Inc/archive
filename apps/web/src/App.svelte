@@ -1,6 +1,5 @@
 <script>
   import { api, go, known, preload, scope, Unauthorized } from './api.js';
-  import Avatar from './ui/Avatar.svelte';
   import Button from './ui/Button.svelte';
   import Heading from './ui/Heading.svelte';
   import Divider from './ui/Divider.svelte';
@@ -13,7 +12,7 @@
   import Page from './Page.svelte';
   import Connectors from './Connectors.svelte';
   import Chat from './Chat.svelte';
-  import Select from './ui/Select.svelte';
+  import Profile from './ui/Profile.svelte';
 
   let me = $state(null);
   let signedOut = $state(false);
@@ -53,7 +52,7 @@
   });
   addEventListener('click', (e) => {
     const a = e.target.closest?.('a[href^="/"]');
-    if (!a || a.target || e.metaKey || e.ctrlKey || e.shiftKey || /^\/(api|auth)\//.test(a.getAttribute('href'))) return;
+    if (!a || e.defaultPrevented || a.target || e.metaKey || e.ctrlKey || e.shiftKey || /^\/(api|auth)\//.test(a.getAttribute('href'))) return;
     e.preventDefault();
     go(a.getAttribute('href'));
   });
@@ -72,10 +71,11 @@
     localStorage.space = space;
   });
 
-  function newChat() {
+  function newChat(e) {
+    e.preventDefault();
     conversation = [];
     fresh++;
-    go('/chat');
+    if (path !== '/chat') go('/chat');
   }
 
   async function load() {
@@ -111,11 +111,9 @@
 {:else if me}
   <div class="app">
     <aside>
-      <div class="brand">
-        <a href="/chat" aria-label="Chat"><Logo /></a>
-        <Button quiet icon="square-pen" title="New chat" aria-label="New chat" onclick={newChat} />
-      </div>
+      <a class="brand" href="/chat" aria-label="Chat"><Logo /></a>
       <nav>
+        <NavItem href="/chat" icon="square-pen" active={route.first === 'chat'} onclick={newChat}>New chat</NavItem>
         <NavItem href="/files" icon="folder" active={route.first === 'files'}>Files</NavItem>
         <NavItem href="/pages" icon="page" active={route.first === 'pages'}>Pages</NavItem>
         {#if views.length}
@@ -130,11 +128,7 @@
         {/each}
       </nav>
       <footer>
-        <Avatar name={who} />
-        <div class="who">
-          <span class="name">{who}</span>
-          <Select quiet up label="Space" items={spaces} bind:value={space} icon="chevrons-up-down" />
-        </div>
+        <Profile name={who} items={spaces} bind:value={space} />
         <Button quiet href="/connectors" icon="plug" title="Connectors" aria-label="Connectors" />
         <Button quiet icon={theme === 'light' ? 'moon' : 'sun'} title="Switch theme" aria-label="Switch theme" onclick={flip} />
         <Button quiet icon="signout" title="Sign out" aria-label="Sign out" onclick={signOut} />
@@ -178,10 +172,7 @@
 <style>
   .app { display: grid; grid-template-columns: var(--sidebar) minmax(0, 1fr); height: 100vh; }
   aside { display: flex; flex-direction: column; min-height: 0; padding: var(--space-2); }
-  .brand { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-3); }
-  .brand a { display: flex; }
-  .who { display: flex; flex: 1; flex-direction: column; align-items: flex-start; min-width: 0; }
-  .who :global(.select) { max-width: 100%; }
+  .brand { display: flex; align-items: center; padding: var(--space-3); }
   nav {
     display: flex;
     flex-direction: column;
@@ -191,17 +182,15 @@
     mask-image: linear-gradient(transparent, black var(--space-5), black calc(100% - var(--space-5)), transparent);
   }
   nav::before, nav::after { content: ''; flex: 0 0 var(--space-5); }
-  footer { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3); }
-  .name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  footer { display: flex; align-items: center; gap: var(--space-1); }
   main { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; min-height: 0; padding: var(--space-7); overflow: hidden; }
   main > :global(:last-child) { flex: 1; min-height: 0; overflow: auto; }
   @media (max-width: 767px) {
     .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
     aside { order: 1; flex-direction: row; align-items: center; padding: var(--space-3); margin-bottom: env(safe-area-inset-bottom); }
     nav { flex-direction: row; gap: var(--space-1); overflow-x: auto; mask-image: linear-gradient(to right, transparent, black var(--space-5), black calc(100% - var(--space-5)), transparent); }
-    nav > :global(div), .name, .brand a, footer > :global(.avatar) { display: none; }
-    .brand { padding: 0; }
-    footer { gap: 0; padding: 0; }
+    nav > :global(div), .brand { display: none; }
+    footer { gap: 0; }
     main { padding: var(--space-4); mask-image: linear-gradient(black calc(100% - var(--space-5)), transparent); }
   }
 </style>

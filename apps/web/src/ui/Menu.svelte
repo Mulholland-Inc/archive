@@ -19,6 +19,7 @@
       {#if item.icon}<span class="icon"><Icon name={item.icon} /></span>{/if}
       <span class="label">{item.label}</span>
       {#if item.hint}<span class="hint">{item.hint}</span>{/if}
+      {#if item.checked}<span class="check"><Icon name="check" /></span>{/if}
     </button>
   {/each}
 </div>
@@ -59,5 +60,7 @@
     color: var(--text-2);
   }
   .label { flex: 1; font-size: var(--text-sm); }
+  .check { display: flex; color: var(--text-2); }
+  .check :global(svg) { width: var(--text-md); height: var(--text-md); }
   .hint { font: var(--text-xs) var(--mono); color: var(--text-3); }
 </style>
