@@ -14,7 +14,7 @@ flowchart LR
   Apps[ChatGPT, Claude, Gemini, Grok] <--> MCP[MCP: run code] --> Core
   Clients[Web and iOS] <--> API[HTTP API] --> Core
   Guests[People without an account] --> Shares[Share links] --> Core
-  Core <--> Office[Collabora, optional]
+  Core <--> Render[Gotenberg, optional]
   Core --> PG[(Postgres: archive + public)]
   Core --> Files[(Files: disk or S3)]
 ```
@@ -24,7 +24,7 @@ flowchart LR
 - **Postgres 18** for all data, **Go** for the server, **a directory or S3** for file bytes.
 - **One Dockerfile**: the image holds Postgres and the binary. The binary starts Postgres, brings the schema in line with the DDL, and serves the API and MCP on one port. One `/data` volume holds everything.
 - **Clients**: web and iOS clients will be rebuilt on the HTTP API; none ship today.
-- **Collabora Online**, optional: a second container that edits and converts office documents (see Documents).
+- **Gotenberg**, optional: a second container that renders office documents to PDF (see Documents).
 
 ## Data model
 
@@ -122,16 +122,27 @@ File bytes are content-addressed by SHA-256 in the `/data` volume or in S3. Uplo
 
 ## Documents
 
-Archive edits documents without building an editor per format.
+Archive's own web and iOS apps are the editors; there is no embedded office suite. Every document is a file in a standard format: Markdown or plain text, docx, xlsx or pptx. There is no Archive-specific document format, so a document can always be downloaded and opened anywhere.
 
-- **Text formats** (Markdown, plain text, CSV, JSON, code) open in an editor built into the web client. Saving writes a new version through the API.
-- **Office formats** (docx, xlsx, pptx, odt, ods, odp, rtf) open in Collabora Online in an iframe. Archive is the WOPI host: it serves `CheckFileInfo`, `GetFile`, `PutFile`, `Lock` and `Unlock` under `/wopi`, with a short-lived access token per user and file, so Collabora only ever sees the one file it is editing. Every save from Collabora is a new version.
-- **Conversion**: when Collabora is set up, Archive also sends office files to its `convert-to` endpoint, to extract their text and make a PDF preview and a thumbnail. Office files are then searchable and readable by agents, like PDFs.
-- **Without Collabora**, office files can be stored, downloaded and found by name, but not edited, previewed or searched by content.
-- **PDFs and images** are viewed, not edited.
-- **Agents** read every format as text through `archive.file(id)`. Writing office files from code mode is not supported.
+- **New documents** are made as an empty docx, xlsx or pptx (or a Markdown file) and are files like any other: they live in a space, have versions and can be shared.
+- **Edits are patches against the file.** xlsx is edited with excelize. docx and pptx are edited by Archive's own Go package, which changes only the XML parts an edit touches and copies every other part of the zip byte for byte, so whatever Archive does not understand survives. Markdown and text are edited as text.
+- **The model** Archive exposes is a projection of the file: paragraphs, runs, tables and comments for docx; sheets, cells and formulas for xlsx; slides, shapes and their text for pptx. Edits outside that projection are not possible, by design.
+- **Formulas** are calculated with excelize's engine. IronCalc (Rust, MIT/Apache) is the upgrade path if Excel compatibility needs to be closer.
+- **Legacy and ODF files** (doc, xls, ppt, odt, ods, odp) are converted to OOXML once, on request, as a new file.
 
-Collabora is an optional container in `compose.yaml` and the Helm chart, set with `ARCHIVE_COLLABORA_URL`. OnlyOffice was the alternative; Collabora is chosen for its licence (MPL) and because its free edition has no limit on editors.
+**One edit API for everyone**: `archive.document(id)` returns the model, and `archive.edit(id, edits)` applies a list of edits (replace text, insert a paragraph or table, set a cell, add a comment). Agents call it from code mode; the apps send the same edits over the API.
+
+**Editing together**: clients send edits to the server, which applies them in order to the current file and sends them on to everyone else with the document open. The server's order decides conflicts, and it writes a new version when editing pauses. This needs no CRDT and no second copy of the document, at the cost of offline editing.
+
+**Rendering**: Gotenberg (MIT), a Go service around LibreOffice, turns a docx, xlsx or pptx into a PDF once per version. Previews, page images and thumbnails come from that PDF; search text comes from Archive's own parsing. Gotenberg is an optional container in `compose.yaml` and the Helm chart, set with `ARCHIVE_GOTENBERG_URL`; without it, documents have no previews, but can still be edited and searched. LibreOffice is used to render and to convert legacy files, never to save users' files, since its OOXML output can lose Word-only features.
+
+**Not chosen**:
+- An Archive-specific document format (for example ProseMirror JSON with Yjs): it would make every download a conversion, and Office files a second kind of document.
+- Collabora and ONLYOFFICE: their value is the editor UI, which Archive does not use, and running them in a closed SaaS needs paid editions.
+- ONLYOFFICE Document Builder: AGPL or a paid edition.
+- Aspose: faithful but commercial; it stays the option for customers whose complex files need more than patching.
+
+Slides are the weakest area: no good open-source pptx engine exists, so pptx edits start with text, and new slide layouts come later.
 
 ## Sharing
 
@@ -142,7 +153,7 @@ archive.share: id, file, token_hash, access (view | download), emails, password_
                expires_at, revoked_at, created_by, created_at, last_used_at, uses
 ```
 
-- **The link** is `/s/<token>`, with 32 random bytes as the token; Archive stores only its hash. It opens a public page that previews the file (Collabora's viewer for office files, the browser for PDFs, images and text), with a download button when access is `download`.
+- **The link** is `/s/<token>`, with 32 random bytes as the token; Archive stores only its hash. It opens a public page that previews the file (the PDF rendition for docx, xlsx and pptx, the browser for PDFs, images and text), with a download button when access is `download`.
 - **Who can open it**: anyone with the link, optionally behind a password; or only the listed email addresses, which get a one-time code by email, sent the same way as sign-in links. A share can expire and can be revoked at any time.
 - **The current version**: a share points at the file, so it always shows the latest version. GPS data is removed from shared photos.
 - **Who can share**: editors of the file's space. Owners and admins of the space see and revoke every share in it.
@@ -153,7 +164,7 @@ Short signed links stay for the app's own downloads, such as image previews; any
 
 ## Deployment
 
-`install.sh` pulls the image and runs it with one volume on port 8080, with Collabora as an optional second container. The same image runs on any cloud; a Helm chart covers Kubernetes, and Terraform modules for AWS, GCP and Azure swap the bundled Postgres for the managed one. The `archive` Terraform provider manages the schema DDL, sources, views, tokens and access rules as code.
+`install.sh` pulls the image and runs it with one volume on port 8080, with Gotenberg as an optional second container. The same image runs on any cloud; a Helm chart covers Kubernetes, and Terraform modules for AWS, GCP and Azure swap the bundled Postgres for the managed one. The `archive` Terraform provider manages the schema DDL, sources, views, tokens and access rules as code.
 
 ## Not doing
 
