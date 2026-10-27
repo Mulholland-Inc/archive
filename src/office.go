@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/go-crdt/crdt/structured"
 	"github.com/google/uuid"
 )
 
@@ -2077,4 +2078,128 @@ func (d *officeDeck) replaceText(e OfficeOp) error {
 		}
 	}
 	return nil
+}
+
+const (
+	officeNSW   = `xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"`
+	officeNSS   = `xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"`
+	officeNSP   = `xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"`
+	officeRel   = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
+	officeXML   = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` + "\n"
+	officeCTRel = `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>`
+)
+
+func officeRels(rels ...string) string {
+	var b strings.Builder
+	b.WriteString(officeXML + `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">`)
+	for i := 0; i+1 < len(rels); i += 2 {
+		fmt.Fprintf(&b, `<Relationship Id="rId%d" Type="%s%s" Target="%s"/>`, i/2+1, officeRel, rels[i], rels[i+1])
+	}
+	return b.String() + `</Relationships>`
+}
+
+func officeTypes(overrides ...string) string {
+	var b strings.Builder
+	b.WriteString(officeXML + `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` + officeCTRel)
+	for i := 0; i+1 < len(overrides); i += 2 {
+		fmt.Fprintf(&b, `<Override PartName="%s" ContentType="application/vnd.openxmlformats-%s+xml"/>`, overrides[i], overrides[i+1])
+	}
+	return b.String() + `</Types>`
+}
+
+func officeBlankParts(kind string) []string {
+	switch kind {
+	case "docx":
+		style := func(id, name, size string, bold bool) string {
+			rpr := `<w:sz w:val="` + size + `"/>`
+			if bold {
+				rpr = `<w:b/>` + rpr
+			}
+			return `<w:style w:type="paragraph" w:styleId="` + id + `"><w:name w:val="` + name + `"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="120"/></w:pPr><w:rPr>` + rpr + `</w:rPr></w:style>`
+		}
+		return []string{
+			"[Content_Types].xml", officeTypes("/word/document.xml", "officedocument.wordprocessingml.document.main", "/word/styles.xml", "officedocument.wordprocessingml.styles"),
+			"_rels/.rels", officeRels("officeDocument", "word/document.xml"),
+			"word/_rels/document.xml.rels", officeRels("styles", "styles.xml"),
+			"word/document.xml", officeXML + `<w:document ` + officeNSW + `><w:body><w:p/><w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>`,
+			"word/styles.xml", officeXML + `<w:styles ` + officeNSW + `><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri" w:cs="Calibri"/><w:sz w:val="22"/><w:lang w:val="en-US"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="259" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>` +
+				`<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style>` +
+				style("Title", "Title", "56", false) + style("Heading1", "heading 1", "32", true) + style("Heading2", "heading 2", "26", true) + style("Heading3", "heading 3", "24", true) +
+				`<w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/></w:pPr></w:style></w:styles>`,
+		}
+	case "xlsx":
+		return []string{
+			"[Content_Types].xml", officeTypes("/xl/workbook.xml", "officedocument.spreadsheetml.sheet.main", "/xl/worksheets/sheet1.xml", "officedocument.spreadsheetml.worksheet", "/xl/styles.xml", "officedocument.spreadsheetml.styles"),
+			"_rels/.rels", officeRels("officeDocument", "xl/workbook.xml"),
+			"xl/_rels/workbook.xml.rels", officeRels("worksheet", "worksheets/sheet1.xml", "styles", "styles.xml"),
+			"xl/workbook.xml", officeXML + `<workbook ` + officeNSS + `><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+			"xl/worksheets/sheet1.xml", officeXML + `<worksheet ` + officeNSS + `><sheetData/></worksheet>`,
+			"xl/styles.xml", officeXML + `<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="1"><font><sz val="11"/><name val="Calibri"/><family val="2"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`,
+		}
+	case "pptx":
+		group := `<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>`
+		shape := func(id, name, ph string, y, h int, body string) string {
+			return fmt.Sprintf(`<p:sp><p:nvSpPr><p:cNvPr id="%s" name="%s"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr>%s</p:nvPr></p:nvSpPr><p:spPr><a:xfrm><a:off x="1524000" y="%d"/><a:ext cx="9144000" cy="%d"/></a:xfrm></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/>%s</p:txBody></p:sp>`, id, name, ph, y, h, body)
+		}
+		title := func(body string) string {
+			return shape("2", "Title 1", `<p:ph type="ctrTitle"/>`, 1122363, 2387600, body)
+		}
+		sub := func(body string) string {
+			return shape("3", "Subtitle 2", `<p:ph type="subTitle" idx="1"/>`, 3602038, 1655762, body)
+		}
+		empty := `<a:p><a:endParaRPr lang="en-US"/></a:p>`
+		layoutTitle := `<a:p><a:pPr algn="ctr"/><a:r><a:rPr lang="en-US" sz="6000"/><a:t>Click to add title</a:t></a:r></a:p>`
+		layoutSub := `<a:p><a:pPr marL="0" indent="0" algn="ctr"><a:buNone/></a:pPr><a:r><a:rPr lang="en-US" sz="2400"/><a:t>Click to add subtitle</a:t></a:r></a:p>`
+		clr := func(name, v string) string { return `<a:` + name + `><a:srgbClr val="` + v + `"/></a:` + name + `>` }
+		fill := `<a:solidFill><a:schemeClr val="phClr"/></a:solidFill>`
+		line := `<a:ln w="12700"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln>`
+		theme := officeXML + `<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Office Theme"><a:themeElements><a:clrScheme name="Office">` +
+			`<a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1><a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1>` +
+			clr("dk2", "44546A") + clr("lt2", "E7E6E6") + clr("accent1", "4472C4") + clr("accent2", "ED7D31") + clr("accent3", "A5A5A5") + clr("accent4", "FFC000") + clr("accent5", "5B9BD5") + clr("accent6", "70AD47") + clr("hlink", "0563C1") + clr("folHlink", "954F72") +
+			`</a:clrScheme><a:fontScheme name="Office"><a:majorFont><a:latin typeface="Calibri Light"/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont><a:minorFont><a:latin typeface="Calibri"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont></a:fontScheme>` +
+			`<a:fmtScheme name="Office"><a:fillStyleLst>` + fill + fill + fill + `</a:fillStyleLst><a:lnStyleLst>` + line + line + line + `</a:lnStyleLst><a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst><a:bgFillStyleLst>` + fill + fill + fill + `</a:bgFillStyleLst></a:fmtScheme></a:themeElements><a:objectDefaults/><a:extraClrSchemeLst/></a:theme>`
+		return []string{
+			"[Content_Types].xml", officeTypes("/ppt/presentation.xml", "officedocument.presentationml.presentation.main", "/ppt/slideMasters/slideMaster1.xml", "officedocument.presentationml.slideMaster", "/ppt/slideLayouts/slideLayout1.xml", "officedocument.presentationml.slideLayout", "/ppt/slides/slide1.xml", "officedocument.presentationml.slide", "/ppt/theme/theme1.xml", "officedocument.theme"),
+			"_rels/.rels", officeRels("officeDocument", "ppt/presentation.xml"),
+			"ppt/_rels/presentation.xml.rels", officeRels("slideMaster", "slideMasters/slideMaster1.xml", "slide", "slides/slide1.xml", "theme", "theme/theme1.xml"),
+			"ppt/presentation.xml", officeXML + `<p:presentation ` + officeNSP + `><p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst><p:sldIdLst><p:sldId id="256" r:id="rId2"/></p:sldIdLst><p:sldSz cx="12192000" cy="6858000"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>`,
+			"ppt/slideMasters/_rels/slideMaster1.xml.rels", officeRels("slideLayout", "../slideLayouts/slideLayout1.xml", "theme", "../theme/theme1.xml"),
+			"ppt/slideMasters/slideMaster1.xml", officeXML + `<p:sldMaster ` + officeNSP + `><p:cSld><p:spTree>` + group + title(layoutTitle) + sub(layoutSub) + `</p:spTree></p:cSld><p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/><p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/></p:sldLayoutIdLst></p:sldMaster>`,
+			"ppt/slideLayouts/_rels/slideLayout1.xml.rels", officeRels("slideMaster", "../slideMasters/slideMaster1.xml"),
+			"ppt/slideLayouts/slideLayout1.xml", officeXML + `<p:sldLayout ` + officeNSP + ` type="title" preserve="1"><p:cSld name="Title Slide"><p:spTree>` + group + title(layoutTitle) + sub(layoutSub) + `</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>`,
+			"ppt/slides/_rels/slide1.xml.rels", officeRels("slideLayout", "../slideLayouts/slideLayout1.xml"),
+			"ppt/slides/slide1.xml", officeXML + `<p:sld ` + officeNSP + `><p:cSld><p:spTree>` + group + title(empty) + sub(empty) + `</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>`,
+			"ppt/theme/theme1.xml", theme,
+		}
+	}
+	return nil
+}
+
+func OfficeBlank(kind string) []byte {
+	var buf bytes.Buffer
+	z := zip.NewWriter(&buf)
+	parts := officeBlankParts(kind)
+	for i := 0; i+1 < len(parts); i += 2 {
+		w, _ := z.Create(parts[i])
+		io.WriteString(w, parts[i+1])
+	}
+	z.Close()
+	return buf.Bytes()
+}
+
+func (a *Archive) CreateDocument(ctx context.Context, space, name string) (*File, error) {
+	ext := strings.ToLower(path.Ext(name))
+	if strings.TrimSpace(strings.TrimSuffix(name, path.Ext(name))) == "" {
+		return nil, fmt.Errorf("archive.create: the file name before %s must not be empty: %w", ext, httpErrBadRequest)
+	}
+	var b []byte
+	switch ext {
+	case pageExt:
+		b = structured.NewBlocks(pageSite).Snapshot()
+	case ".docx", ".xlsx", ".pptx":
+		b = OfficeBlank(ext[1:])
+	default:
+		return nil, fmt.Errorf("archive.create: %q is not a document; end the name in .page, .docx, .xlsx or .pptx: %w", name, httpErrBadRequest)
+	}
+	return a.AddFile(ctx, space, name, bytes.NewReader(b))
 }

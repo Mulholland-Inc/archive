@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"crypto/sha256"
@@ -57,16 +56,6 @@ func pageModel(d *structured.Blocks) *OfficeModel {
 		m.Paragraphs = append(m.Paragraphs, OfficeParagraph{ID: b.ID.String(), Style: b.Type, Text: b.Text})
 	}
 	return m
-}
-
-func (a *Archive) CreatePage(ctx context.Context, space, name string) (*File, error) {
-	if strings.TrimSpace(strings.TrimSuffix(name, pageExt)) == "" {
-		return nil, fmt.Errorf("archive.createPage: name must not be empty: %w", httpErrBadRequest)
-	}
-	if !pageIs(name) {
-		name += pageExt
-	}
-	return a.AddFile(ctx, space, name, bytes.NewReader(structured.NewBlocks(pageSite).Snapshot()))
 }
 
 func (a *Archive) pageGet(ctx context.Context, f *File) (*pageDoc, error) {
