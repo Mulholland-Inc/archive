@@ -317,7 +317,7 @@ func (s *pgStore) plan(ctx context.Context, src sqldb.Queryable, files map[strin
 		return nil, err
 	}
 	defer tmp.Close(context.WithoutCancel(ctx))
-	if _, err := tmp.ConnPool.ExecContext(ctx, s.expand(storeSchema)); err != nil {
+	if _, err := tmp.ConnPool.ExecContext(ctx, "SET statement_timeout = 0; "+s.expand(storeSchema)); err != nil {
 		return nil, fmt.Errorf("archive.sql: %w", err)
 	}
 	if err := storeLoad(ctx, tmp.ConnPool, files); err != nil {
@@ -358,7 +358,7 @@ func storeLoad(ctx context.Context, db *sql.DB, files map[string]string) error {
 			if err != nil {
 				return err
 			}
-			if _, err = tx.ExecContext(ctx, files[name]); err == nil {
+			if _, err = tx.ExecContext(ctx, "SET LOCAL statement_timeout = 0; "+files[name]); err == nil {
 				err = tx.Commit()
 			}
 			if err != nil {
