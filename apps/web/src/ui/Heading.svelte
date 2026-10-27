@@ -17,9 +17,9 @@
 </div>
 
 <style>
-  .heading { display: flex; flex: none; flex-direction: column; align-items: flex-start; gap: var(--space-5); padding: var(--inset); }
-  .row { display: flex; align-items: center; gap: var(--space-4); width: 100%; }
-  .mark { display: grid; flex: none; place-items: center; }
+  .heading { display: flex; flex: none; flex-direction: column; align-items: flex-start; gap: var(--space-5); }
+  .row { display: flex; align-items: baseline; gap: var(--space-4); width: 100%; }
+  .mark { display: flex; flex: none; }
   .mark :global(svg.icon) { width: var(--size-title-icon); height: var(--size-title-icon); }
   .hero { align-items: center; padding: 0; }
   .hero .row { justify-content: center; }

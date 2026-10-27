@@ -485,7 +485,7 @@
 </div>
 
 <style>
-  .toolbar { display: flex; flex: none; min-width: 0; padding: var(--space-1); background: var(--panel); border-radius: var(--radius-pill); }
+  .toolbar { position: relative; z-index: 1; display: flex; flex: none; min-width: 0; padding: var(--space-1); background: var(--panel); border-radius: var(--radius-pill); }
   .toolbar > :global(.bar) { flex: 1; min-width: 0; gap: var(--space-1); }
   .sep { flex: none; align-self: stretch; width: var(--stroke); background: var(--line); }
   .people { display: flex; flex: none; align-self: flex-end; align-items: center; gap: var(--space-2); opacity: 0.5; transition: opacity var(--dur) var(--ease); }
@@ -494,7 +494,7 @@
   [contenteditable] { outline: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
   [contenteditable]:empty::before { content: attr(data-placeholder); color: var(--text-3); pointer-events: none; }
 
-  .doc { padding: var(--inset-text); }
+  .doc { margin: calc(-1 * var(--inset)); padding: var(--inset); }
   .blocks { position: relative; display: flex; flex-direction: column; gap: var(--space-1); }
   .block { position: relative; display: flex; align-items: stretch; gap: var(--space-2); }
   .text { flex: 1; min-width: 0; padding: var(--space-1); font-size: var(--text-lg); line-height: var(--leading-loose); }

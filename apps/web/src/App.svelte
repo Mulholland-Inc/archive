@@ -156,7 +156,7 @@
   nav::before, nav::after { content: ''; flex: 0 0 var(--space-5); }
   footer { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3); }
   .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  main { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; min-height: 0; padding: var(--space-7); overflow: hidden; }
+  main { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; min-height: 0; padding: var(--space-7); overflow: hidden; }
   main > :global(:last-child) { flex: 1; min-height: 0; overflow: auto; }
   @media (max-width: 767px) {
     .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }

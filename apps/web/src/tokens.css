@@ -73,7 +73,7 @@
 
   --size-xs: 8px;
   --size-icon: 20px;
-  --size-title-icon: 48px;
+  --size-title-icon: 44px;
   --size-logo: 28px;
   --size-logo-large: 36px;
   --size-avatar: 24px;
@@ -82,7 +82,6 @@
   --size-lg: 44px;
   --size-xl: 56px;
   --inset: var(--space-6);
-  --inset-text: calc(var(--inset) - var(--space-1));
   --sidebar: 280px;
   --lane: 280px;
   --cell: 320px;
@@ -124,7 +123,7 @@
 
 @media (max-width: 767px) {
   :root {
-    --size-title-icon: 32px;
+    --size-title-icon: 30px;
     --size-logo: 24px;
     --display-lg: 44px;
     --display-xl: 64px;
