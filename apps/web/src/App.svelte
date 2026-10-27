@@ -14,6 +14,9 @@
   import Chat from './Chat.svelte';
   import Profile from './ui/Profile.svelte';
   import Drawer from './ui/Drawer.svelte';
+  import { call, native, on } from './native.js';
+  import People from './ui/People.svelte';
+  import { top } from './top.svelte.js';
 
   let me = $state(null);
   let signedOut = $state(false);
@@ -25,6 +28,22 @@
   let conversation = $state([]);
   let fresh = $state(0);
   let drawer = $state(false);
+  let cover = $state(0);
+
+  $effect(() => on('height', ({ px }) => (cover = px)));
+
+  $effect(() => {
+    if (!native || !me) return;
+    call('topBar', { show: true });
+    const off = on('tap', ({ action }) => {
+      if (action === 'sidebar') drawer = !drawer;
+      else if (action === 'newChat') newChat();
+    });
+    return () => {
+      off();
+      call('topBar', { show: false });
+    };
+  });
   let theme = $state(localStorage.theme ?? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'));
 
   $effect(() => {
@@ -82,7 +101,7 @@
   }
 
   function newChat(e) {
-    e.preventDefault();
+    e?.preventDefault();
     conversation = [];
     drawer = false;
     fresh++;
@@ -120,67 +139,70 @@
 {#if signedOut}
   <SignIn />
 {:else if me}
-  <div class="app">
-    <header class="top">
-      <Button quiet icon="panel-left" title="Open sidebar" aria-label="Open sidebar" aria-expanded={drawer} onclick={() => (drawer = true)} />
-      <Button quiet href="/chat" icon="square-pen" title="New chat" aria-label="New chat" onclick={newChat} />
-    </header>
-    <Drawer bind:open={drawer}>
-      <a class="brand" href="/chat" aria-label="Chat"><Logo /></a>
-      <nav>
-        <NavItem href="/chat" icon="square-pen" active={route.first === 'chat'} onclick={newChat}>New chat</NavItem>
-        <NavItem href="/files" icon="folder" active={route.first === 'files'}>Files</NavItem>
-        <NavItem href="/pages" icon="page" active={route.first === 'pages'}>Pages</NavItem>
-        {#if views.length}
+  <div class="app" style:--cover="{cover}px">
+    <Drawer bind:open={drawer} onshift={(px, p, animate) => call('shift', { px, p, animate })}>
+      {#snippet side()}
+        <a class="brand" href="/chat" aria-label="Chat"><Logo /></a>
+        <nav>
+          <NavItem href="/chat" icon="square-pen" active={route.first === 'chat'} onclick={newChat}>New chat</NavItem>
+          <NavItem href="/files" icon="folder" active={route.first === 'files'}>Files</NavItem>
+          <NavItem href="/pages" icon="page" active={route.first === 'pages'}>Pages</NavItem>
+          {#if views.length}
+            <Divider />
+            {#each views as v (v.name)}
+              <NavItem href="/views/{v.name}" icon={v.icon} active={route.first === 'views' && route.second === v.name}>{v.name.replaceAll('_', ' ')}</NavItem>
+            {/each}
+          {/if}
           <Divider />
-          {#each views as v (v.name)}
-            <NavItem href="/views/{v.name}" icon={v.icon} active={route.first === 'views' && route.second === v.name}>{v.name.replaceAll('_', ' ')}</NavItem>
+          {#each tables as t (t.name)}
+            <NavItem href="/{t.name}" icon={t.icon} active={route.first === t.name}>{t.name.replaceAll('_', ' ')}</NavItem>
           {/each}
-        {/if}
-        <Divider />
-        {#each tables as t (t.name)}
-          <NavItem href="/{t.name}" icon={t.icon} active={route.first === t.name}>{t.name.replaceAll('_', ' ')}</NavItem>
-        {/each}
-      </nav>
-      <footer>
-        <Profile name={who} items={spaces} bind:value={space} onadd={addSpace} />
-        <Button quiet href="/connectors" icon="plug" title="Connectors" aria-label="Connectors" />
-        <Button quiet icon={theme === 'light' ? 'moon' : 'sun'} title="Switch theme" aria-label="Switch theme" onclick={flip} />
-        <Button quiet icon="signout" title="Sign out" aria-label="Sign out" onclick={signOut} />
-      </footer>
-    </Drawer>
-    <main>
-      {#key space}
-      {#if route.first === 'chat'}
-        {#key fresh}
-          <Chat bind:messages={conversation} />
-        {/key}
-      {:else if route.first === 'files'}
-        <Files />
-      {:else if route.first === 'pages' && route.second}
-        {#key route.second}
-          <Page id={route.second} name={who} />
-        {/key}
-      {:else if route.first === 'pages'}
-        <Files pages />
-      {:else if route.first === 'connectors'}
-        <Connectors {space} />
-      {:else if route.first === 'views'}
-        {@const v = views.find((x) => x.name === route.second)}
-        {#if v}
-          {#key v.name}
-            <View view={v} {types} />
+        </nav>
+        <footer>
+          <Profile name={who} items={spaces} bind:value={space} onadd={addSpace} />
+          <Button quiet href="/connectors" icon="plug" title="Connectors" aria-label="Connectors" />
+          <Button quiet icon={theme === 'light' ? 'moon' : 'sun'} title="Switch theme" aria-label="Switch theme" onclick={flip} />
+          <Button quiet icon="signout" title="Sign out" aria-label="Sign out" onclick={signOut} />
+        </footer>
+      {/snippet}
+      <header class="top" class:native>
+        <Button quiet icon="panel-left" title="Open sidebar" aria-label="Open sidebar" aria-expanded={drawer} onclick={() => (drawer = true)} />
+        {#if top.people}<People live={top.live} people={top.people} />{/if}
+        <Button quiet href="/chat" icon="square-pen" title="New chat" aria-label="New chat" onclick={newChat} />
+      </header>
+      <main>
+        {#key space}
+        {#if route.first === 'chat'}
+          {#key fresh}
+            <Chat bind:messages={conversation} />
           {/key}
+        {:else if route.first === 'files'}
+          <Files />
+        {:else if route.first === 'pages' && route.second}
+          {#key route.second}
+            <Page id={route.second} name={who} />
+          {/key}
+        {:else if route.first === 'pages'}
+          <Files pages />
+        {:else if route.first === 'connectors'}
+          <Connectors {space} />
+        {:else if route.first === 'views'}
+          {@const v = views.find((x) => x.name === route.second)}
+          {#if v}
+            {#key v.name}
+              <View view={v} {types} />
+            {/key}
+          {/if}
+        {:else if table(route.first)}
+          {#key route.first}
+            <Table table={table(route.first)} {types} />
+          {/key}
+        {:else}
+          <Heading title="Not here" />
         {/if}
-      {:else if table(route.first)}
-        {#key route.first}
-          <Table table={table(route.first)} {types} />
         {/key}
-      {:else}
-        <Heading title="Not here" />
-      {/if}
-      {/key}
-    </main>
+      </main>
+    </Drawer>
   </div>
 {/if}
 
@@ -202,10 +224,11 @@
   main { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; min-height: 0; padding: var(--space-7); overflow: hidden; }
   main > :global(:last-child) { flex: 1; min-height: 0; overflow: auto; }
   @media (max-width: 767px) {
-    .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; }
-    .app::after { content: ''; height: var(--safe-bottom); }
-    .top { display: flex; align-items: center; justify-content: space-between; padding: var(--space-2); }
+    .app { display: block; }
+    .app::before { content: none; }
+    .top { display: flex; flex: none; align-items: center; justify-content: space-between; padding: var(--space-2); }
     .top :global(.button) { width: var(--size-lg); height: var(--size-lg); color: var(--text); }
-    main { padding: var(--space-4); }
+    .native :global(.button) { visibility: hidden; }
+    main { flex: 1; padding: var(--space-4); }
   }
 </style>

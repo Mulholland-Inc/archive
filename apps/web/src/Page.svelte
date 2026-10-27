@@ -117,6 +117,8 @@
   import Icon from './ui/Icon.svelte';
   import Menu from './ui/Menu.svelte';
   import Tool from './ui/Tool.svelte';
+  import { native, call as bridge, on as listen } from './native.js';
+  import { top } from './top.svelte.js';
 
   let { id, name } = $props();
   let title = $state('');
@@ -139,6 +141,15 @@
     for (const b of blocks) out[b.id] = n = b.type === 'numbered' ? n + 1 : 0;
     return out;
   });
+
+  const crowd = $derived([{ ...me, site, you: true }, ...online].map((p) => ({ key: p.site, name: p.you ? `${p.name} (you)` : p.name, pulse: p.agent })));
+
+  $effect(() => {
+    top.people = crowd;
+    top.live = live;
+  });
+
+  $effect(() => () => (top.people = null));
 
   const active = $derived(cur && blocks.find((b) => b.id === cur.id));
   const on = $derived(active ? marksIn(active, Math.min(cur.anchor, cur.focus), Math.max(cur.anchor, cur.focus)) : []);
@@ -222,6 +233,25 @@
     }
     edit(() => call('mark', active.id, from, to, m.name, value, !has, m.expand));
   }
+
+  $effect(() => {
+    if (!native) return;
+    bridge('toolbar', { show: true });
+    const off = listen('tap', ({ action }) => {
+      const [kind, arg] = action.split(':');
+      if (kind === 'turn') turn(arg);
+      else if (kind === 'indent') indent(Number(arg));
+      else if (kind === 'mark') format(MARKS.find((m) => m.name === arg));
+    });
+    return () => {
+      off();
+      bridge('toolbar', { show: false });
+    };
+  });
+
+  $effect(() => {
+    if (native) bridge('setState', { type: active ? active.type || 'paragraph' : null, marks: [...on] });
+  });
 
   function onMenuKey(e) {
     if (!menu) return;
@@ -415,9 +445,10 @@
 </script>
 
 <div class="people">
-  <People live={live} people={[{ ...me, site, you: true }, ...online].map((p) => ({ key: p.site, name: p.you ? `${p.name} (you)` : p.name, pulse: p.agent }))} />
+  <People {live} people={crowd} />
 </div>
 <Heading editable icon="page" placeholder="Untitled" {@attach (el) => (heading = el)} {@attach sync(title)} oninput={retitle} onkeydown={titleKey} />
+{#if !native}
 <div class="toolbar">
   <Bar>
     {#each TYPES as t (t.type)}
@@ -432,6 +463,7 @@
     {/each}
   </Bar>
 </div>
+{/if}
 <div class="doc">
   <div class="blocks" bind:this={root}>
     {#each blocks as b, i (b.id)}
@@ -487,6 +519,9 @@
   .toolbar > :global(.bar) { flex: 1; min-width: 0; gap: var(--space-1); }
   .sep { flex: none; align-self: stretch; width: var(--stroke); background: var(--line); }
   .people { display: flex; flex: none; align-self: flex-end; }
+  @media (max-width: 767px) {
+    .people { display: none; }
+  }
 
   [contenteditable] { outline: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
   [contenteditable]:empty::before { content: attr(data-placeholder); color: var(--text-3); pointer-events: none; }

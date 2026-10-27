@@ -4,7 +4,7 @@
 
 <div class="people" class:live>
   {#each people as p (p.key)}
-    <span class="person" class:pulse={p.pulse} data-name={p.name} aria-label={p.name} role="img">{(p.name || '?')[0].toUpperCase()}</span>
+    <span class="person" class:pulse={p.pulse} data-name={p.name} aria-label={p.name} role="img" tabindex="-1">{(p.name || '?')[0].toUpperCase()}</span>
   {/each}
 </div>
 
@@ -44,7 +44,8 @@
     pointer-events: none;
     transition: opacity var(--dur) var(--ease);
   }
-  .person:hover::after { opacity: 1; }
+  .person:hover::after, .person:focus::after { opacity: 1; }
+  .person:focus { outline: 0; }
   .pulse { animation: pulse 1s infinite alternate; }
   @keyframes pulse { to { opacity: 0.5; } }
 </style>

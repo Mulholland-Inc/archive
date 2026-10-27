@@ -1,12 +1,19 @@
 <script>
-  let { open = $bindable(false), children } = $props();
+  let { open = $bindable(false), onshift, side, children } = $props();
   const query = matchMedia('(max-width: 767px)');
   let mobile = $state(query.matches);
   let panel = $state();
   let drag = $state(null);
-  const shown = $derived(drag?.lock === 'x' ? drag.p : open ? 1 : 0);
+  let ready = $state(false);
+  const moving = $derived(drag?.lock === 'x');
+  const shown = $derived(moving ? drag.p : open ? 1 : 0);
 
   $effect(() => {
+    if (mobile) onshift?.(shown * panel.offsetWidth, shown, !moving);
+  });
+
+  $effect(() => {
+    const frame = requestAnimationFrame(() => (ready = true));
     const change = () => (mobile = query.matches);
     query.addEventListener('change', change);
     const start = (e) => {
@@ -40,6 +47,7 @@
     addEventListener('touchend', end);
     addEventListener('touchcancel', end);
     return () => {
+      cancelAnimationFrame(frame);
       query.removeEventListener('change', change);
       removeEventListener('touchstart', start, opts);
       removeEventListener('touchmove', move, opts);
@@ -51,50 +59,52 @@
 
 <svelte:window onkeydown={(e) => e.key === 'Escape' && (open = false)} />
 
-<aside
-  bind:this={panel}
-  class="drawer"
-  class:open
-  class:dragging={drag?.lock === 'x'}
-  inert={mobile && !open && !drag}
-  style:--shown={shown}
->
-  {@render children()}
+<aside bind:this={panel} class="drawer" class:open class:ready class:moving inert={mobile && !open && !drag}>
+  {@render side()}
 </aside>
-<div class="scrim" class:open class:dragging={drag?.lock === 'x'} style:--shown={shown} onclick={() => (open = false)} aria-hidden="true"></div>
+<div class="content" class:open class:ready class:moving style:--shown={shown}>
+  {@render children()}
+  <div class="shade" onclick={() => (open = false)} aria-hidden="true"></div>
+</div>
 
 <style>
   .drawer { display: flex; flex-direction: column; min-height: 0; padding: var(--space-2); }
-  .scrim { display: none; }
+  .content { display: contents; }
+  .shade { display: none; }
   @media (max-width: 767px) {
-    .drawer {
-      position: fixed;
-      inset: 0 auto 0 0;
-      z-index: 2;
-      width: var(--drawer);
-      background: var(--shell);
-      box-shadow: var(--shadow);
-      transform: translateX(calc((var(--shown) - 1) * 100%));
-      visibility: hidden;
-      touch-action: pan-y;
-      transition: transform var(--dur-drawer) var(--ease-drawer), visibility 0s var(--dur-drawer);
-    }
+    .drawer { position: fixed; inset: 0 auto 0 0; width: var(--drawer); visibility: hidden; }
     .drawer::before, .drawer::after { content: ''; flex: none; }
     .drawer::before { height: var(--safe-top); }
     .drawer::after { height: var(--safe-bottom); }
-    .open, .dragging { visibility: visible; transition: transform var(--dur-drawer) var(--ease-drawer); }
-    .scrim {
-      display: block;
+    .drawer.ready { transition: visibility 0s var(--dur-drawer); }
+    .open, .moving { visibility: visible; }
+    .drawer.ready.open, .drawer.ready.moving { transition: none; }
+    .content {
       position: fixed;
       inset: 0;
       z-index: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: var(--shell);
+      border-radius: calc(var(--shown) * var(--radius-xl));
+      box-shadow: var(--shadow);
+      transform: translateX(calc(var(--shown) * var(--drawer)));
+    }
+    .content::before { content: ''; flex: none; height: var(--safe-top); }
+    .content::after { content: ''; flex: none; height: max(var(--safe-bottom), var(--cover, 0px)); }
+    .content.ready { transition: transform var(--dur-drawer) var(--ease-drawer), border-radius var(--dur-drawer) var(--ease-drawer); }
+    .shade {
+      display: block;
+      position: absolute;
+      inset: 0;
       background: var(--backdrop);
       opacity: var(--shown);
       pointer-events: none;
       touch-action: none;
-      transition: opacity var(--dur-drawer) var(--ease-drawer);
     }
-    .scrim.open { pointer-events: auto; }
-    .dragging { transition: none; }
+    .content.ready .shade { transition: opacity var(--dur-drawer) var(--ease-drawer); }
+    .open .shade { pointer-events: auto; }
+    .content.moving, .content.moving .shade { transition: none; }
   }
 </style>

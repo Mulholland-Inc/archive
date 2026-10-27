@@ -4,6 +4,7 @@
   import Markdown from './ui/Markdown.svelte';
   import Note from './ui/Note.svelte';
   import Activity from './ui/Activity.svelte';
+  import { native, call, on } from './native.js';
 
   let { messages = $bindable([]) } = $props();
   let draft = $state('');
@@ -48,6 +49,25 @@
   $effect(() => () => ctrl?.abort());
 
   $effect(() => {
+    if (!native) return;
+    call('show');
+    const off = on('send', ({ text }) => {
+      if (busy) return;
+      draft = text;
+      call('clear');
+      send();
+    });
+    return () => {
+      off();
+      call('hide');
+    };
+  });
+
+  $effect(() => {
+    if (native) call('setEnabled', { enabled: !busy });
+  });
+
+  $effect(() => {
     let pinned = true;
     const scroll = () => (pinned = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < scroller.clientHeight / 4);
     const o = new ResizeObserver(() => pinned && (scroller.scrollTop = scroller.scrollHeight));
@@ -86,6 +106,7 @@
       if (e.name !== 'AbortError') error = e.message;
       messages = messages.slice(0, start);
       draft = text;
+      call('setText', { text });
     }
     live = '';
     calling = false;
@@ -105,9 +126,11 @@
     {/each}
     {#if error}<Note error>{error}</Note>{/if}
   </div>
-  <div class="dock">
-    <Composer bind:value={draft} {busy} onsend={send} onstop={() => ctrl?.abort()} placeholder="Message" aria-label="Message" />
-  </div>
+  {#if !native}
+    <div class="dock">
+      <Composer bind:value={draft} {busy} onsend={send} onstop={() => ctrl?.abort()} placeholder="Message" aria-label="Message" />
+    </div>
+  {/if}
 </div>
 
 <style>

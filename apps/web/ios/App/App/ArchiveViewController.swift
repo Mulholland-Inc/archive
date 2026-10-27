@@ -4,6 +4,10 @@ import Capacitor
 class ArchiveViewController: CAPBridgeViewController {
     private var pending: URL?
 
+    override func capacitorDidLoad() {
+        bridge?.registerPluginInstance(NativePlugin())
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         let shell = UIColor(named: "Shell")
