@@ -408,31 +408,38 @@ func TestSchemaPushNormalizesMessyDutchInputAndBlocksDrops(t *testing.T) {
 	}
 }
 
-func TestDemoDataLoadsOnceWithLinkedRows(t *testing.T) {
-	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=ann@example.com")
-	in.must("user", "add", "ann@example.com")
-	counts := decode[map[string]int](t, in.must("demo"))
-	if counts["company"] < 20 || counts["deal"] < 20 || counts["invoice"] < 20 {
+func TestDemoVaultLoadsOnceWithLinkedRowsAndFiles(t *testing.T) {
+	in := newInst(t)
+	load := func() (string, string, error) {
+		c := exec.Command("../demo/load.sh", "ann@example.com")
+		c.Env = append(os.Environ(), append(in.env, "ARCHIVE_BIN="+e2eBin)...)
+		var out, errb bytes.Buffer
+		c.Stdout, c.Stderr = &out, &errb
+		err := c.Run()
+		return out.String(), errb.String(), err
+	}
+	out, errs, err := load()
+	if err != nil {
+		t.Fatalf("load: %v\n%s%s", err, out, errs)
+	}
+	counts := decode[struct{ Result map[string]int }](t, out).Result
+	if counts["person"] < 10 || counts["payment"] < 100 || counts["measurement"] < 100 || len(counts) != 18 {
 		t.Fatalf("demo counts: %v", counts)
 	}
-	spaces := in.must("space", "list")
-	for _, s := range []string{"sales", "finance", "operations", "people"} {
-		if !strings.Contains(spaces, `"`+s+`"`) {
-			t.Errorf("space %s missing: %s", s, spaces)
-		}
+	if spaces := in.must("space", "list"); !strings.Contains(spaces, `"family"`) {
+		t.Errorf("family space missing: %s", spaces)
 	}
-	deals := decode[[]row](t, in.must("list", "deal", "-limit", "1"))
-	if len(deals) != 1 || deals[0]["company"] == nil {
-		t.Fatalf("deal without company: %+v", deals)
+	res, _, err := in.run(`return { files: (await archive.files({ limit: 100 })).length,
+  receipts: (await archive.sql("SELECT count(*)::int AS n FROM payment WHERE receipt IS NOT NULL"))[0].n };`, "run", "-")
+	if err != nil {
+		t.Fatalf("run: %v %s", err, res)
 	}
-	if c := decode[row](t, in.must("get", "company", fmt.Sprint(deals[0]["company"]))); c["name"] == nil {
-		t.Errorf("deal company: %v", c)
+	got := decode[struct{ Result map[string]any }](t, res).Result
+	if fmt.Sprint(got["files"]) != "32" || fmt.Sprint(got["receipts"]) == "0" {
+		t.Errorf("files and links: %v", got)
 	}
-	if files := in.must("schema", "pull"); !strings.Contains(files, "-- demo.sql") {
-		t.Errorf("demo schema file: %s", files[:min(len(files), 200)])
-	}
-	if errs := in.fails("demo"); !strings.Contains(errs, "demo data needs an archive without") {
-		t.Errorf("second demo: %s", errs)
+	if _, errs, err := load(); err == nil || !strings.Contains(errs, "already has people") {
+		t.Errorf("second load: %v %s", err, errs)
 	}
 }
 

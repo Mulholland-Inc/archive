@@ -74,9 +74,6 @@ Usage:
   archive source run <id|name>       sync now
   archive source remove <id|name>    stop syncing; files stay
 
-  archive demo                       load example tables, spaces and rows into an archive that
-                                     has none of the demo tables yet
-
   archive user add <email> [-name n] [-admin]
   archive space add <name>
   archive space list
@@ -253,8 +250,6 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	case "source":
 		in := SourceInput{Name: *name, Space: *space, Schedule: *schedule, Rate: *rateLimit}
 		return cliSource(ctx, a, pos, in, stdin, stdout, out)
-	case "demo":
-		return out(a.LoadDemo(ctx))
 	case "user", "space", "token", "secret":
 		return cliAuth(ctx, a, cmd, pos, *name, *admin, *full, *space, *expires, out)
 	case "list":
@@ -316,7 +311,7 @@ func cliCheckCommand(cmd string, pos []string) error {
 	n, ok := map[string]int{
 		"serve": 0, "mcp": 0, "types": 0, "run": 1, "schema": 1, "list": 1, "create": 1,
 		"get": 2, "delete": 2, "set": 2, "update": 2,
-		"user": 2, "space": 1, "token": 1, "secret": 3, "source": 1, "file": 1, "search": 1, "demo": 0,
+		"user": 2, "space": 1, "token": 1, "secret": 3, "source": 1, "file": 1, "search": 1,
 	}[cmd]
 	if !ok {
 		return fmt.Errorf("unknown command %q (see archive help)", cmd)
@@ -745,9 +740,6 @@ func httpHandler(a *Archive) http.Handler {
 		return http.StatusNoContent, nil, a.RemoveSource(r.Context(), r.PathValue("id"))
 	})
 
-	handle("POST /api/demo", func(r *http.Request) (int, any, error) {
-		return ok(a.LoadDemo(r.Context()))
-	})
 	handle("GET /api/views", func(r *http.Request) (int, any, error) {
 		return ok(a.Views(r.Context()))
 	})
