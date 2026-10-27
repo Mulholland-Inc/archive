@@ -41,9 +41,7 @@
   }
 
   async function newPage() {
-    const name = prompt('Page name', 'Untitled');
-    if (!name) return;
-    const id = await run(`return (await archive.create(${JSON.stringify(name + '.page')})).id`);
+    const id = await run(`return (await archive.create("Untitled.page")).id`);
     go(`/pages/${id}`);
   }
 
