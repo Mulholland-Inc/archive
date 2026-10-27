@@ -6,11 +6,11 @@
 
 <style>
   .chip {
-    padding: var(--space-2);
+    padding: var(--space-3);
     border-radius: var(--radius-pill);
     background: var(--raised);
     color: var(--text);
-    font-size: var(--text-xs);
+    font-size: var(--text-sm);
     font-weight: var(--weight-bold);
     line-height: 1;
     white-space: nowrap;
