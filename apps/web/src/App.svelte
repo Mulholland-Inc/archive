@@ -85,12 +85,10 @@
     go(a.getAttribute('href'));
   });
 
-  const flow = $derived(native && route.first === 'chat');
-
   $effect(() => {
-    document.documentElement.classList.toggle('flow', flow);
-    call('scrolling', { flow });
-    if (native) window.Capacitor.nativePromise('Keyboard', 'setResizeMode', { mode: flow ? 'none' : 'native' }).catch(() => {});
+    if (!native) return;
+    call('scrolling', { flow: true });
+    window.Capacitor.nativePromise('Keyboard', 'setResizeMode', { mode: 'none' }).catch(() => {});
   });
 
   const route = $derived.by(() => {
@@ -226,7 +224,7 @@
 {/if}
 
 <style>
-  .app { display: grid; grid-template-columns: var(--sidebar) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); height: 100vh; }
+  .app { display: grid; grid-template-columns: var(--sidebar) minmax(0, 1fr); grid-template-rows: auto 1fr; min-height: 100vh; }
   .app::before { content: ''; grid-column: 1 / -1; height: var(--safe-top); }
   .top { display: none; }
   .brand { display: flex; align-items: center; padding: var(--space-3); }
@@ -240,8 +238,8 @@
   }
   nav::before, nav::after { content: ''; flex: 0 0 var(--space-5); }
   footer { display: flex; align-items: center; gap: var(--space-1); }
-  main { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; min-height: 0; padding: var(--space-7); overflow: hidden; }
-  main > :global(:last-child) { flex: 1; min-height: 0; overflow: auto; }
+  main { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; padding: var(--space-7); }
+  main > :global(:last-child) { flex: 1; }
   @media (max-width: 767px) {
     .app { display: block; }
     .app::before { content: none; }
@@ -253,9 +251,7 @@
     .top :global(.button) { width: var(--size-bar); height: var(--size-bar); color: var(--text); }
     .top :global(.button svg.icon) { width: var(--text-xl); height: var(--text-xl); }
     .native :global(.button) { visibility: hidden; }
+    .top { position: sticky; top: var(--safe-top); z-index: 2; background: var(--shell); }
     main { flex: 1; padding: var(--space-4); }
-    :global(html.flow) .top { position: sticky; top: var(--safe-top); z-index: 2; background: var(--shell); }
-    :global(html.flow) main { flex: none; overflow: visible; }
-    :global(html.flow) main > :global(:last-child) { overflow: visible; }
   }
 </style>

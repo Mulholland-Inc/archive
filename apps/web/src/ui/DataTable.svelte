@@ -35,8 +35,6 @@
   .wrap { overflow-x: auto; margin: calc(-1 * var(--space-3)); }
   table { border-collapse: collapse; min-width: 100%; }
   th {
-    position: sticky;
-    top: 0;
     padding: 0;
     background: var(--panel);
     text-align: left;

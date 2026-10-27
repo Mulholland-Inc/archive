@@ -43,8 +43,7 @@
   .out { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-4); background: var(--raised); border-radius: var(--radius-lg); }
   pre {
     margin: 0;
-    max-height: var(--tile);
-    overflow: auto;
+    overflow-x: auto;
     font: var(--text-xs)/var(--leading) var(--mono);
     color: var(--text-2);
     white-space: pre;

@@ -32,7 +32,7 @@ if (native) {
     const dx = t.clientX - touch.x;
     const dy = t.clientY - touch.y;
     if (Math.hypot(dx, dy) > 8) touch.moved = true;
-    if (!touch.done && !document.documentElement.classList.contains('flow') && dy > 48 && dy > Math.abs(dx) * 2 && !(editable(document.activeElement) && document.activeElement.contains(touch.target))) {
+    if (!touch.done && dy > 48 && dy > Math.abs(dx) * 2 && !(editable(document.activeElement) && document.activeElement.contains(touch.target))) {
       touch.done = true;
       hide();
     }

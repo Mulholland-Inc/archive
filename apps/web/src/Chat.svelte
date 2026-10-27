@@ -14,7 +14,7 @@
   let error = $state('');
   let ctrl;
   let scroller = $state();
-  const box = () => (native ? document.scrollingElement : scroller);
+  const box = () => document.scrollingElement;
 
   const items = $derived.by(() => {
     const results = {};
@@ -72,7 +72,7 @@
   $effect(() => {
     let pinned = true;
     const el = box();
-    const target = native ? window : scroller;
+    const target = window;
     const scroll = () => (pinned = el.scrollHeight - el.scrollTop - el.clientHeight < el.clientHeight / 4);
     const o = new ResizeObserver(() => pinned && (el.scrollTop = el.scrollHeight));
     target.addEventListener('scroll', scroll, { passive: true });
@@ -150,5 +150,6 @@
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
-  .dock { position: sticky; bottom: 0; width: 100%; max-width: var(--chat); background: var(--shell); }
+  .dock { position: sticky; bottom: 0; display: flex; flex-direction: column; width: 100%; max-width: var(--chat); background: var(--shell); }
+  .dock::after { content: ''; height: var(--space-5); }
 </style>

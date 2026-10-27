@@ -9,11 +9,11 @@
   },
   "ios": {
     "contentInset": "never",
-    "scrollEnabled": false
+    "scrollEnabled": true
   },
   "plugins": {
     "Keyboard": {
-      "resize": "native",
+      "resize": "none",
       "resizeOnFullScreen": true
     },
     "StatusBar": {

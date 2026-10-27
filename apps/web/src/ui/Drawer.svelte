@@ -68,11 +68,11 @@
 </div>
 
 <style>
-  .drawer { display: flex; flex-direction: column; min-height: 0; padding: var(--space-2); }
+  .drawer { position: sticky; top: 0; display: flex; flex-direction: column; align-self: start; height: 100vh; padding: var(--space-2); }
   .content { display: contents; }
   .shade { display: none; }
   @media (max-width: 767px) {
-    .drawer { position: fixed; inset: 0 auto 0 0; width: var(--drawer); visibility: hidden; }
+    .drawer { position: fixed; inset: 0 auto 0 0; width: var(--drawer); height: auto; visibility: hidden; }
     .drawer::before, .drawer::after { content: ''; flex: none; }
     .drawer::before { height: var(--safe-top); }
     .drawer::after { height: var(--safe-bottom); }
@@ -80,9 +80,9 @@
     .open, .moving { visibility: visible; }
     .drawer.ready.open, .drawer.ready.moving { transition: none; }
     .content {
-      position: fixed;
-      inset: 0;
+      position: relative;
       z-index: 1;
+      min-height: 100vh;
       display: flex;
       flex-direction: column;
       overflow: clip;
@@ -93,8 +93,7 @@
     }
     .content::before { content: ''; flex: none; height: var(--safe-top); }
     .content::after { content: ''; flex: none; height: min(max(var(--safe-bottom), var(--cover, 0px)), var(--cover-max)); }
-    :global(html.flow) .content { position: relative; inset: auto; min-height: 100vh; }
-    :global(html.flow) .content::before { position: sticky; top: 0; z-index: 2; background: var(--shell); }
+    .content::before { position: sticky; top: 0; z-index: 2; background: var(--shell); }
     .content.ready { transition: transform var(--dur-drawer) var(--ease-drawer), border-radius var(--dur-drawer) var(--ease-drawer); }
     .shade {
       display: block;

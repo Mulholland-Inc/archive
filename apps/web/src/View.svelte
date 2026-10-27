@@ -111,10 +111,10 @@
 {/if}
 
 <style>
-  .board { display: flex; gap: var(--space-3); }
-  .lane { display: flex; flex: 0 0 var(--lane); flex-direction: column; min-height: 0; }
-  .lane > :global(section) { flex: 1; min-height: 0; }
-  .cards { display: flex; flex: 1; flex-direction: column; gap: var(--space-2); min-height: 0; overflow-y: auto; border-radius: var(--radius-lg); }
+  .board { display: flex; gap: var(--space-3); overflow-x: auto; }
+  .lane { display: flex; flex: 0 0 var(--lane); flex-direction: column; }
+  .lane > :global(section) { flex: 1; }
+  .cards { display: flex; flex-direction: column; gap: var(--space-2); border-radius: var(--radius-lg); }
   header { display: flex; flex: none; justify-content: space-between; padding: var(--space-2); font-weight: var(--weight-medium); text-transform: capitalize; }
   .count { color: var(--text-3); font-weight: var(--weight); }
   .month { display: flex; flex-direction: column; gap: var(--space-3); }
