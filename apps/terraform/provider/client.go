@@ -9,14 +9,12 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 )
 
 type client struct {
-	base    string
-	token   string
-	http    *http.Client
-	changes sync.Mutex
+	base  string
+	token string
+	http  *http.Client
 }
 
 type apiError struct {
@@ -29,11 +27,6 @@ func (e *apiError) Error() string { return fmt.Sprintf("archive: %d: %s", e.Stat
 func notFound(err error) bool {
 	e, ok := err.(*apiError)
 	return ok && e.Status == http.StatusNotFound
-}
-
-func conflict(err error) bool {
-	e, ok := err.(*apiError)
-	return ok && e.Status == http.StatusConflict
 }
 
 func (c *client) do(ctx context.Context, method, path string, in, out any) error {

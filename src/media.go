@@ -25,6 +25,9 @@ import (
 	"sync"
 	"time"
 
+	_ "github.com/emersion/go-message/charset"
+	gomail "github.com/emersion/go-message/mail"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/ledongthuc/pdf"
@@ -78,8 +81,8 @@ func (a *Archive) fileLoop(ctx context.Context, wg *sync.WaitGroup) {
 func (a *Archive) fileNext(ctx context.Context) bool {
 	var id uuid.UUID
 	err := a.st.System(ctx, func(ctx context.Context) error {
-		return a.st.Q(ctx).QueryRow(ctx, `UPDATE files SET status = 'processing' WHERE id = (
-			SELECT id FROM files WHERE status = 'pending' ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING id`).Scan(&id)
+		return a.st.Q(ctx).QueryRow(ctx, `UPDATE file SET status = 'processing' WHERE id = (
+			SELECT id FROM file WHERE status = 'pending' ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING id`).Scan(&id)
 	})
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) && ctx.Err() == nil {
@@ -94,7 +97,7 @@ func (a *Archive) fileNext(ctx context.Context) bool {
 func (a *Archive) fileProcess(ctx context.Context, id uuid.UUID) {
 	var f *File
 	err := a.st.System(ctx, func(ctx context.Context) (err error) {
-		f, err = storeOne[File](ctx, a.st, `SELECT `+fileCols+` FROM files WHERE id = $1`, id)
+		f, err = storeOne[File](ctx, a.st, `SELECT `+fileCols+` FROM file WHERE id = $1`, id)
 		return err
 	})
 	if err != nil {
@@ -103,7 +106,7 @@ func (a *Archive) fileProcess(ctx context.Context, id uuid.UUID) {
 	}
 	meta, text, perr := a.media(ctx, f)
 	err = a.st.System(ctx, func(ctx context.Context) error {
-		_, err := a.st.Q(ctx).Exec(ctx, `UPDATE files SET metadata = $2, text = $3 WHERE id = $1`, id, meta, strings.ToValidUTF8(strings.ReplaceAll(text, "\x00", ""), "�"))
+		_, err := a.st.Q(ctx).Exec(ctx, `UPDATE file SET metadata = $2, text = $3 WHERE id = $1`, id, meta, strings.ToValidUTF8(strings.ReplaceAll(text, "\x00", ""), "�"))
 		return err
 	})
 	if err == nil && perr == nil && f.Intake != "" {
@@ -116,7 +119,7 @@ func (a *Archive) fileProcess(ctx context.Context, id uuid.UUID) {
 		status, msg = "error", perr.Error()
 	}
 	err = a.st.System(context.WithoutCancel(ctx), func(ctx context.Context) error {
-		_, err := a.st.Q(ctx).Exec(ctx, `UPDATE files SET status = $2, error = $3, intake = '' WHERE id = $1`, id, status, msg)
+		_, err := a.st.Q(ctx).Exec(ctx, `UPDATE file SET status = $2, error = $3, intake = '' WHERE id = $1`, id, status, msg)
 		return err
 	})
 	if err != nil {
@@ -148,7 +151,7 @@ func (a *Archive) media(ctx context.Context, f *File) (map[string]any, string, e
 	case f.MIME == "text/html":
 		return meta, mediaHTML(b), nil
 	case f.MIME == "message/rfc822":
-		headers, body, atts := imapParse(b)
+		headers, body, atts := mailParse(b)
 		meta["headers"] = headers
 		return meta, mailPayload(headers, body, atts, nil)["text"].(string), nil
 	case top == "text" || f.MIME == "application/json":
@@ -490,4 +493,39 @@ func (a *Archive) mediaTranscribe(ctx context.Context, name string, b []byte) (s
 		return "", fmt.Errorf("transcription: %w", err)
 	}
 	return strings.TrimSpace(out.Text), nil
+}
+
+func mailParse(b []byte) (map[string]string, string, []map[string]any) {
+	headers := map[string]string{}
+	mr, _ := gomail.CreateReader(bytes.NewReader(b))
+	if mr == nil {
+		return headers, strings.ToValidUTF8(string(b), "�"), nil
+	}
+	defer mr.Close()
+	for _, h := range mailHeaders {
+		if v, err := mr.Header.Text(h); err == nil && v != "" {
+			headers[h] = v
+		}
+	}
+	var body string
+	var atts []map[string]any
+	for {
+		p, err := mr.NextPart()
+		if err != nil {
+			break
+		}
+		switch h := p.Header.(type) {
+		case *gomail.InlineHeader:
+			if ct, _, _ := h.ContentType(); (ct == "text/plain" || ct == "") && body == "" {
+				bb, _ := io.ReadAll(io.LimitReader(p.Body, syncMaxBody))
+				body = strings.ToValidUTF8(string(bb), "�")
+			}
+		case *gomail.AttachmentHeader:
+			name, _ := h.Filename()
+			ct, _, _ := h.ContentType()
+			n, _ := io.Copy(io.Discard, p.Body)
+			atts = append(atts, map[string]any{"filename": name, "mime": ct, "size": n})
+		}
+	}
+	return headers, body, atts
 }

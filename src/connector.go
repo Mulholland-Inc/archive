@@ -1,13 +1,10 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"cmp"
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,16 +13,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 
-	"github.com/emersion/go-imap/v2"
-	"github.com/emersion/go-imap/v2/imapclient"
 	_ "github.com/emersion/go-message/charset"
-	gomail "github.com/emersion/go-message/mail"
 	"golang.org/x/oauth2"
 )
 
@@ -387,148 +380,6 @@ func (r *syncRun) file(ctx context.Context, into map[string]any, name string, b 
 	})
 }
 
-type imapConfig struct {
-	Host      string   `json:"host"`
-	Username  string   `json:"username"`
-	Mailboxes []string `json:"mailboxes"`
-	StartTLS  bool     `json:"starttls"`
-	Plaintext bool     `json:"plaintext"`
-}
-
-type imapCursor struct {
-	UIDValidity uint32 `json:"uidvalidity"`
-	UID         uint32 `json:"uid"`
-}
-
-const imapBatch = 25
-
-func checkIMAP(_ context.Context, _ *Archive, src *Source, creds map[string]any) error {
-	var cfg imapConfig
-	if err := json.Unmarshal(src.Config, &cfg); err != nil {
-		return sourceInvalid("config", err.Error())
-	}
-	switch pw, _ := creds["password"].(string); {
-	case cfg.Host == "":
-		return sourceInvalid("config.host", "want host:port, like imap.fastmail.com:993")
-	case cfg.Username == "":
-		return sourceInvalid("config.username", "required")
-	case pw == "":
-		return sourceInvalid("credentials.password", "required; use an app password for iCloud, Outlook and Fastmail")
-	}
-	return nil
-}
-
-func syncIMAP(ctx context.Context, r *syncRun) error {
-	var cfg imapConfig
-	json.Unmarshal(r.src.Config, &cfg)
-	pw, _ := r.creds["password"].(string)
-	dial := imapclient.DialTLS
-	switch {
-	case cfg.Plaintext:
-		dial = imapclient.DialInsecure
-	case cfg.StartTLS:
-		dial = imapclient.DialStartTLS
-	}
-	c, err := dial(cfg.Host, nil)
-	if err != nil {
-		return fmt.Errorf("imap: %w", err)
-	}
-	defer c.Close()
-	defer context.AfterFunc(ctx, func() { c.Close() })()
-	if err := c.Login(cfg.Username, pw).Wait(); err != nil {
-		return fmt.Errorf("imap login: %w", err)
-	}
-	var st struct {
-		Mailboxes map[string]imapCursor `json:"mailboxes"`
-	}
-	json.Unmarshal(r.src.State, &st)
-	if st.Mailboxes == nil {
-		st.Mailboxes = map[string]imapCursor{}
-	}
-	if len(cfg.Mailboxes) == 0 {
-		cfg.Mailboxes = []string{"INBOX"}
-	}
-	for _, mb := range cfg.Mailboxes {
-		sel, err := c.Select(mb, &imap.SelectOptions{ReadOnly: true}).Wait()
-		if err != nil {
-			return fmt.Errorf("imap select %s: %w", mb, err)
-		}
-		cur := st.Mailboxes[mb]
-		if cur.UIDValidity != sel.UIDValidity {
-			cur = imapCursor{UIDValidity: sel.UIDValidity}
-		}
-		found, err := c.UIDSearch(&imap.SearchCriteria{UID: []imap.UIDSet{{{Start: imap.UID(cur.UID + 1), Stop: 0}}}}, nil).Wait()
-		if err != nil {
-			return fmt.Errorf("imap search %s: %w", mb, err)
-		}
-		uids := slices.DeleteFunc(found.AllUIDs(), func(u imap.UID) bool { return uint32(u) <= cur.UID })
-		slices.Sort(uids)
-		for chunk := range slices.Chunk(uids, imapBatch) {
-			if err := r.limit.Wait(ctx); err != nil {
-				return err
-			}
-			section := &imap.FetchItemBodySection{Peek: true}
-			msgs, err := c.Fetch(imap.UIDSetNum(chunk...), &imap.FetchOptions{UID: true, BodySection: []*imap.FetchItemBodySection{section}}).Collect()
-			if err != nil {
-				return fmt.Errorf("imap fetch %s: %w", mb, err)
-			}
-			slices.SortFunc(msgs, func(x, y *imapclient.FetchMessageBuffer) int { return cmp.Compare(x.UID, y.UID) })
-			for _, m := range msgs {
-				headers, body, atts := imapParse(m.FindBodySection(section))
-				id := fmt.Sprintf("%s:%d:%d", mb, cur.UIDValidity, m.UID)
-				if err := r.emit(ctx, id, mailPayload(headers, body, atts, map[string]any{"mailbox": mb, "uid": m.UID})); err != nil {
-					return err
-				}
-				cur.UID = max(cur.UID, uint32(m.UID))
-			}
-			st.Mailboxes[mb] = cur
-			if err := r.save(ctx, st); err != nil {
-				return err
-			}
-		}
-		st.Mailboxes[mb] = cur
-	}
-	if err := r.save(ctx, st); err != nil {
-		return err
-	}
-	return c.Logout().Wait()
-}
-
-func imapParse(b []byte) (map[string]string, string, []map[string]any) {
-	headers := map[string]string{}
-	mr, _ := gomail.CreateReader(bytes.NewReader(b))
-	if mr == nil {
-		return headers, strings.ToValidUTF8(string(b), "�"), nil
-	}
-	defer mr.Close()
-	for _, h := range mailHeaders {
-		if v, err := mr.Header.Text(h); err == nil && v != "" {
-			headers[h] = v
-		}
-	}
-	var body string
-	var atts []map[string]any
-	for {
-		p, err := mr.NextPart()
-		if err != nil {
-			break
-		}
-		switch h := p.Header.(type) {
-		case *gomail.InlineHeader:
-			if ct, _, _ := h.ContentType(); (ct == "text/plain" || ct == "") && body == "" {
-				bb, _ := io.ReadAll(io.LimitReader(p.Body, syncMaxBody))
-				body = strings.ToValidUTF8(string(bb), "�")
-			}
-		case *gomail.AttachmentHeader:
-			name, _ := h.Filename()
-			ct, _, _ := h.ContentType()
-			n, _ := io.Copy(io.Discard, p.Body)
-			atts = append(atts, map[string]any{"filename": name, "mime": ct, "size": n})
-		}
-	}
-	return headers, body, atts
-}
-
 func checkFolder(_ context.Context, _ *Archive, src *Source, _ map[string]any) error {
 	var cfg map[string]any
 	json.Unmarshal(src.Config, &cfg)
@@ -547,322 +398,20 @@ func syncFolder(ctx context.Context, r *syncRun) error {
 		Path string `json:"path"`
 	}
 	json.Unmarshal(r.src.Config, &cfg)
-	var raws []*Raw
-	err := r.a.as(ctx, func(ctx context.Context) (err error) {
-		raws, err = ScanFolder(ctx, r.a.st, cfg.Path, r.src.Space)
-		return err
-	})
-	for _, raw := range raws {
-		r.res.Fetched++
-		r.res.New++
-		r.ingest(ctx, raw)
+	var st struct {
+		Files map[string]string `json:"files"`
 	}
-	return err
-}
-
-type externalConfig struct {
-	Command  []string       `json:"command"`
-	Protocol string         `json:"protocol"`
-	Streams  []string       `json:"streams"`
-	Config   map[string]any `json:"config"`
-}
-
-type externalMsg struct {
-	Type   string          `json:"type"`
-	Record json.RawMessage `json:"record"`
-	State  json.RawMessage `json:"state"`
-	Value  json.RawMessage `json:"value"`
-	Stream string          `json:"stream"`
-	Keys   []string        `json:"key_properties"`
-	Spec   *struct {
-		ConnectionSpecification struct {
-			Required []string `json:"required"`
-		} `json:"connectionSpecification"`
-	} `json:"spec"`
-	ConnectionStatus *struct {
-		Status  string `json:"status"`
-		Message string `json:"message"`
-	} `json:"connectionStatus"`
-	Catalog *struct {
-		Streams []json.RawMessage `json:"streams"`
-	} `json:"catalog"`
-	Trace *struct {
-		Error *struct {
-			Message string `json:"message"`
-		} `json:"error"`
-	} `json:"trace"`
-}
-
-type externalStream struct {
-	Name       string     `json:"name"`
-	Modes      []string   `json:"supported_sync_modes"`
-	Cursor     []string   `json:"default_cursor_field"`
-	PrimaryKey [][]string `json:"source_defined_primary_key"`
-}
-
-type externalState struct {
-	Airbyte map[string]json.RawMessage `json:"airbyte,omitempty"`
-	Legacy  json.RawMessage            `json:"legacy,omitempty"`
-	Singer  json.RawMessage            `json:"singer,omitempty"`
-}
-
-func externalSetup(src *Source, creds map[string]any) (*externalConfig, string, error) {
-	var cfg externalConfig
-	if err := json.Unmarshal(src.Config, &cfg); err != nil {
-		return nil, "", sourceInvalid("config", err.Error())
-	}
-	if len(cfg.Command) == 0 {
-		return nil, "", sourceInvalid("config.command", "want the connector executable and its arguments")
-	}
-	if cfg.Protocol != "" && cfg.Protocol != "airbyte" && cfg.Protocol != "singer" {
-		return nil, "", sourceInvalid("config.protocol", "want airbyte or singer")
-	}
-	dir, err := os.MkdirTemp("", "archive-connector-")
-	if err != nil {
-		return nil, "", err
-	}
-	conf := map[string]any{}
-	maps.Copy(conf, cfg.Config)
-	maps.Copy(conf, creds)
-	return &cfg, dir, externalWrite(dir, "config.json", conf)
-}
-
-func externalWrite(dir, name string, v any) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(dir, name), b, 0o600)
-}
-
-func externalRun(ctx context.Context, cfg *externalConfig, dir string, args []string, fn func(*externalMsg) error) error {
-	argv := slices.Clone(cfg.Command)
-	for i := range argv {
-		argv[i] = strings.ReplaceAll(argv[i], "{dir}", dir)
-	}
-	for i, a := range args {
-		if strings.HasSuffix(a, ".json") {
-			args[i] = filepath.Join(dir, a)
-		}
-	}
-	cmd := exec.CommandContext(ctx, argv[0], append(argv[1:], args...)...)
-	cmd.Dir = dir
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("connector: %w", err)
-	}
-	var ferr, trace error
-	sc := bufio.NewScanner(out)
-	sc.Buffer(make([]byte, 0, 1<<20), syncMaxBody)
-	for sc.Scan() {
-		var m externalMsg
-		if ferr != nil || json.Unmarshal(sc.Bytes(), &m) != nil {
-			continue
-		}
-		if m.Type == "TRACE" && m.Trace != nil && m.Trace.Error != nil {
-			trace = errors.New(m.Trace.Error.Message)
-		}
-		ferr = fn(&m)
-	}
-	io.Copy(io.Discard, out)
-	werr := cmd.Wait()
-	if ferr != nil {
-		return ferr
-	}
-	if werr != nil {
-		tail := strings.TrimSpace(stderr.String())
-		return fmt.Errorf("connector %s: %w", args[0], cmp.Or(trace, errors.New(cmp.Or(tail[max(0, len(tail)-500):], werr.Error()))))
-	}
-	return cmp.Or(sc.Err(), trace)
-}
-
-func checkExternal(ctx context.Context, _ *Archive, src *Source, creds map[string]any) error {
-	cfg, dir, err := externalSetup(src, creds)
-	if dir != "" {
-		defer os.RemoveAll(dir)
-	}
-	if err != nil || cfg.Protocol == "singer" {
-		return err
-	}
-	conf := maps.Clone(cfg.Config)
-	if conf == nil {
-		conf = map[string]any{}
-	}
-	maps.Copy(conf, creds)
-	verr := &ValidationError{Type: "source"}
-	err = externalRun(ctx, cfg, dir, []string{"spec"}, func(m *externalMsg) error {
-		if m.Type == "SPEC" && m.Spec != nil {
-			for _, k := range m.Spec.ConnectionSpecification.Required {
-				if conf[k] == nil {
-					verr.Errors = append(verr.Errors, FieldError{Path: "config." + k, Message: "required by the connector"})
-				}
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	if len(verr.Errors) > 0 {
-		return verr
-	}
-	return externalRun(ctx, cfg, dir, []string{"check", "--config", "config.json"}, func(m *externalMsg) error {
-		if m.Type == "CONNECTION_STATUS" && m.ConnectionStatus != nil && m.ConnectionStatus.Status != "SUCCEEDED" {
-			return sourceInvalid("config", "connector check failed: "+m.ConnectionStatus.Message)
-		}
-		return nil
-	})
-}
-
-func syncExternal(ctx context.Context, r *syncRun) error {
-	cfg, dir, err := externalSetup(r.src, r.creds)
-	if dir != "" {
-		defer os.RemoveAll(dir)
-	}
-	if err != nil {
-		return err
-	}
-	var st externalState
 	json.Unmarshal(r.src.State, &st)
-	keys := map[string][][]string{}
-	record := func(stream string, data json.RawMessage) error {
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			return fmt.Errorf("connector record: %w", err)
-		}
-		return r.emit(ctx, externalID(stream, keys[stream], m, data), map[string]any{"stream": stream, "data": m, "text": string(data)})
+	if st.Files == nil {
+		st.Files = map[string]string{}
 	}
-	if cfg.Protocol == "singer" {
-		args := []string{"--config", "config.json"}
-		if st.Singer != nil {
-			if err := os.WriteFile(filepath.Join(dir, "state.json"), st.Singer, 0o600); err != nil {
-				return err
-			}
-			args = append(args, "--state", "state.json")
-		}
-		return externalRun(ctx, cfg, dir, args, func(m *externalMsg) error {
-			switch m.Type {
-			case "SCHEMA":
-				keys[m.Stream] = nil
-				for _, k := range m.Keys {
-					keys[m.Stream] = append(keys[m.Stream], []string{k})
-				}
-			case "RECORD":
-				return record(m.Stream, m.Record)
-			case "STATE":
-				st.Singer = m.Value
-				return r.save(ctx, st)
-			}
-			return nil
-		})
-	}
-	var streams []map[string]any
-	err = externalRun(ctx, cfg, dir, []string{"discover", "--config", "config.json"}, func(m *externalMsg) error {
-		if m.Type != "CATALOG" || m.Catalog == nil {
-			return nil
-		}
-		for _, raw := range m.Catalog.Streams {
-			var s externalStream
-			if json.Unmarshal(raw, &s) != nil || len(cfg.Streams) > 0 && !slices.Contains(cfg.Streams, s.Name) {
-				continue
-			}
-			mode := "full_refresh"
-			if slices.Contains(s.Modes, "incremental") {
-				mode = "incremental"
-			}
-			keys[s.Name] = s.PrimaryKey
-			c := map[string]any{"stream": raw, "sync_mode": mode, "destination_sync_mode": "append"}
-			if s.Cursor != nil {
-				c["cursor_field"] = s.Cursor
-			}
-			if s.PrimaryKey != nil {
-				c["primary_key"] = s.PrimaryKey
-			}
-			streams = append(streams, c)
-		}
-		return nil
-	})
+	items, err := ScanFolder(ctx, cfg.Path, r.src.Space, st.Files)
 	if err != nil {
 		return err
 	}
-	if err := externalWrite(dir, "catalog.json", map[string]any{"streams": streams}); err != nil {
-		return err
+	for _, it := range items {
+		r.res.Fetched++
+		r.ingest(ctx, it)
 	}
-	args := []string{"read", "--config", "config.json", "--catalog", "catalog.json"}
-	if st.Legacy != nil || len(st.Airbyte) > 0 {
-		var state any = st.Legacy
-		if st.Legacy == nil {
-			state = slices.Collect(maps.Values(st.Airbyte))
-		}
-		if err := externalWrite(dir, "state.json", state); err != nil {
-			return err
-		}
-		args = append(args, "--state", "state.json")
-	}
-	return externalRun(ctx, cfg, dir, args, func(m *externalMsg) error {
-		switch m.Type {
-		case "RECORD":
-			var rec struct {
-				Stream string          `json:"stream"`
-				Data   json.RawMessage `json:"data"`
-			}
-			if err := json.Unmarshal(m.Record, &rec); err != nil {
-				return fmt.Errorf("connector record: %w", err)
-			}
-			return record(rec.Stream, rec.Data)
-		case "STATE":
-			var s struct {
-				Type   string          `json:"type"`
-				Data   json.RawMessage `json:"data"`
-				Stream struct {
-					Descriptor struct {
-						Name      string `json:"name"`
-						Namespace string `json:"namespace"`
-					} `json:"stream_descriptor"`
-				} `json:"stream"`
-			}
-			if err := json.Unmarshal(m.State, &s); err != nil {
-				return fmt.Errorf("connector state: %w", err)
-			}
-			switch s.Type {
-			case "STREAM":
-				if st.Airbyte == nil {
-					st.Airbyte = map[string]json.RawMessage{}
-				}
-				st.Airbyte[s.Stream.Descriptor.Namespace+"."+s.Stream.Descriptor.Name] = m.State
-			case "GLOBAL":
-				st.Airbyte = map[string]json.RawMessage{"": m.State}
-			default:
-				st.Legacy = s.Data
-			}
-			return r.save(ctx, st)
-		}
-		return nil
-	})
-}
-
-func externalID(stream string, pk [][]string, m map[string]any, data []byte) string {
-	var parts []string
-	for _, path := range pk {
-		var v any = m
-		for _, k := range path {
-			obj, _ := v.(map[string]any)
-			v = obj[k]
-		}
-		if v == nil {
-			parts = nil
-			break
-		}
-		parts = append(parts, fmt.Sprint(v))
-	}
-	if len(parts) == 0 {
-		sum := sha256.Sum256(data)
-		return stream + ":" + hex.EncodeToString(sum[:12])
-	}
-	return stream + ":" + strings.Join(parts, ",")
+	return r.save(ctx, st)
 }

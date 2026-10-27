@@ -34,7 +34,7 @@ variable "instance" {
 
 variable "env" {
   type        = map(string)
-  description = "Extra environment variables, such as ARCHIVE_LLM_URL, ARCHIVE_LLM_MODEL and ARCHIVE_EMBED_MODEL."
+  description = "Extra environment variables, such as ARCHIVE_LLM_URL, ARCHIVE_LLM_MODEL and ARCHIVE_LLM_KEY."
   default     = {}
 }
 

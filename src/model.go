@@ -29,8 +29,8 @@ type Candidate struct {
 }
 
 type Spec struct {
-	Version int              `json:"version"`
-	Types   map[string]*Type `json:"types"`
+	Types map[string]*Type `json:"types"`
+	stamp string
 }
 
 type Type struct {
@@ -61,14 +61,6 @@ type Field struct {
 	Enum        []string `json:"enum,omitempty"`
 }
 
-type Op struct {
-	Op    string `json:"op"`
-	Type  string `json:"type"`
-	Field string `json:"field,omitempty"`
-	To    string `json:"to,omitempty"`
-	Def   any    `json:"def,omitempty"`
-}
-
 type FieldError struct {
 	Path    string `json:"path"`
 	Message string `json:"message"`
@@ -93,65 +85,38 @@ var (
 	ErrUnauthorized = errors.New("unauthorized")
 )
 
-type Raw struct {
-	ID         uuid.UUID       `json:"id"`
-	Source     string          `json:"source"`
-	ExternalID string          `json:"external_id"`
-	Hash       string          `json:"hash"`
-	FetchedAt  time.Time       `json:"fetched_at"`
-	Payload    json.RawMessage `json:"payload"`
-	Space      uuid.UUID       `json:"space"`
+type Item struct {
+	Source     string
+	ExternalID string
+	Payload    json.RawMessage
+	Space      uuid.UUID
 }
 
-type Record struct {
-	ID          uuid.UUID       `json:"id"`
-	Type        string          `json:"type"`
-	SpecVersion int             `json:"spec_version"`
-	Data        json.RawMessage `json:"data"`
-	CreatedAt   time.Time       `json:"created_at"`
-	UpdatedAt   time.Time       `json:"updated_at"`
-	Space       uuid.UUID       `json:"space"`
-}
-
-type Provenance struct {
-	ID         uuid.UUID   `json:"id"`
-	RecordID   uuid.UUID   `json:"record_id"`
-	FieldPath  string      `json:"field_path"`
-	RawIDs     []uuid.UUID `json:"raw_ids"`
-	Method     string      `json:"method"`
-	Confidence float64     `json:"confidence"`
-	Original   string      `json:"original,omitempty"`
-	Space      uuid.UUID   `json:"space"`
-	FileID     *uuid.UUID  `json:"file_id,omitempty"`
-	Page       int         `json:"page,omitempty"`
+type Entity struct {
+	ID        uuid.UUID       `json:"id"`
+	Type      string          `json:"type"`
+	Data      json.RawMessage `json:"data"`
+	Proposed  bool            `json:"proposed"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
+	Space     uuid.UUID       `json:"space"`
 }
 
 type Link struct {
-	ID       uuid.UUID `json:"id"`
 	FromID   uuid.UUID `json:"from_id"`
 	ToID     uuid.UUID `json:"to_id"`
 	Kind     string    `json:"kind"`
-	Space    uuid.UUID `json:"space"`
 	FromType string    `json:"from_type"`
 }
 
-type Change struct {
-	ID         uuid.UUID `json:"id"`
-	ProposedBy string    `json:"proposed_by"`
-	Status     string    `json:"status"`
-	Ops        []Op      `json:"ops"`
-	FromVer    int       `json:"from_version"`
-	ToVer      int       `json:"to_version"`
-	CreatedAt  time.Time `json:"created_at"`
-}
-
 type Filter struct {
-	Types []string
-	Where map[string]any
-	Keys  map[string]string
-	Space uuid.UUID
-	Limit int
-	After uuid.UUID
+	Types    []string
+	Where    map[string]any
+	Keys     map[string]string
+	Space    uuid.UUID
+	Proposed bool
+	Limit    int
+	After    uuid.UUID
 }
 
 type IntakeConfig struct {
@@ -161,26 +126,24 @@ type IntakeConfig struct {
 	Samples  int
 	Accept   float64
 	Review   float64
-	Labels   string
 	Hints    Hints
 	Vision   string
 	Whisper  string
-	Embed    string
-	EmbedDim int
 }
 
 type FieldResult struct {
 	Path       string  `json:"path"`
 	Value      any     `json:"value"`
-	Original   string  `json:"original,omitempty"`
-	RawScore   float64 `json:"raw_score"`
 	Confidence float64 `json:"confidence"`
 	Route      string  `json:"route"`
 }
 
 type IntakeResult struct {
-	RawID    uuid.UUID     `json:"raw_id"`
-	Type     string        `json:"type"`
-	RecordID uuid.UUID     `json:"record_id,omitempty"`
-	Fields   []FieldResult `json:"fields"`
+	Source     string        `json:"source,omitempty"`
+	ExternalID string        `json:"external_id,omitempty"`
+	Type       string        `json:"type"`
+	EntityID   uuid.UUID     `json:"entity_id,omitzero"`
+	Proposed   bool          `json:"proposed,omitempty"`
+	Confidence float64       `json:"confidence"`
+	Fields     []FieldResult `json:"fields"`
 }

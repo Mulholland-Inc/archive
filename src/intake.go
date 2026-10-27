@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -17,7 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -25,20 +24,15 @@ import (
 )
 
 type Intake struct {
-	cfg    IntakeConfig
-	save   func(ctx context.Context, r *Record, data map[string]any, prov []*Provenance) error
-	spec   func() *Spec
-	http   *http.Client
-	cal    map[string]*intakeIsotonic
-	labels map[string][]intakeLabel
-	err    error
+	cfg  IntakeConfig
+	save func(ctx context.Context, e *Entity, data map[string]any) error
+	spec func() *Spec
+	http *http.Client
 }
-
-const intakeMinLabels = 10
 
 const intakeTemperature = 0.7
 
-func NewIntake(cfg IntakeConfig, spec func() *Spec, save func(ctx context.Context, r *Record, data map[string]any, prov []*Provenance) error) *Intake {
+func NewIntake(cfg IntakeConfig, spec func() *Spec, save func(ctx context.Context, e *Entity, data map[string]any) error) *Intake {
 	if cfg.Samples <= 0 {
 		cfg.Samples = 3
 	}
@@ -48,29 +42,19 @@ func NewIntake(cfg IntakeConfig, spec func() *Spec, save func(ctx context.Contex
 	if cfg.Review == 0 {
 		cfg.Review = 0.5
 	}
-	in := &Intake{cfg: cfg, save: save, spec: spec, http: &http.Client{Timeout: 5 * time.Minute}}
-	if cfg.Labels != "" {
-		in.labels, in.err = intakeLoadLabels(cfg.Labels)
-		in.cal = intakeFitAll(in.labels)
-	}
-	return in
+	return &Intake{cfg: cfg, save: save, spec: spec, http: &http.Client{Timeout: 5 * time.Minute}}
 }
 
-func (in *Intake) Ingest(ctx context.Context, raw *Raw, typ string) (*IntakeResult, error) {
-	if in.err != nil {
-		return nil, in.err
-	}
+func (in *Intake) Ingest(ctx context.Context, it *Item, typ string) (*IntakeResult, error) {
 	spec := in.spec()
 	if spec == nil || spec.Types[typ] == nil {
 		return nil, fmt.Errorf("intake: unknown type %q", typ)
 	}
-
 	var payload struct {
-		Text  string     `json:"text"`
-		File  *uuid.UUID `json:"file"`
-		Pages []string   `json:"pages"`
+		Text string     `json:"text"`
+		File *uuid.UUID `json:"file"`
 	}
-	if err := json.Unmarshal(raw.Payload, &payload); err != nil {
+	if err := json.Unmarshal(it.Payload, &payload); err != nil {
 		return nil, fmt.Errorf("intake: payload: %w", err)
 	}
 	fields, err := spec.Fields(typ)
@@ -91,122 +75,45 @@ func (in *Intake) Ingest(ctx context.Context, raw *Raw, typ string) (*IntakeResu
 		samples = append(samples, intakeValidate(spec, typ, c, in.cfg.Hints))
 	}
 
-	res := &IntakeResult{RawID: raw.ID, Type: typ}
-	names := make([]string, 0, len(fields))
-	for name := range fields {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	complete, accepted := true, map[string]any{}
-	for _, name := range names {
-		value, original, score := intakeScore(samples, name)
-		conf := in.calibrate(typ, name, score)
-		route := intakeRoute(conf, in.cfg.Accept, in.cfg.Review)
+	res := &IntakeResult{Source: it.Source, ExternalID: it.ExternalID, Type: typ, Confidence: 1}
+	complete, data := true, map[string]any{}
+	for _, name := range specKeys(fields) {
+		f := fields[name]
+		value, score := intakeScore(samples, name)
+		if payload.File != nil && f.Type == specReference && !f.List && slices.Contains(spec.Subtypes("file"), f.To) {
+			value, score = payload.File.String(), 1
+		}
+		route := intakeRoute(score, in.cfg.Accept, in.cfg.Review)
 		if value == nil {
 			route = "drop"
 		}
-		if route == "accept" {
-			accepted[name] = value
-		} else if fields[name].Required {
+		if route != "drop" {
+			data[name] = value
+			res.Confidence = min(res.Confidence, score)
+		} else if f.Required {
 			complete = false
 		}
-		if spec.secretField(typ, name) {
-			original = ""
-		}
-		res.Fields = append(res.Fields, FieldResult{Path: name, Value: value, Original: original, RawScore: score, Confidence: conf, Route: route})
+		res.Fields = append(res.Fields, FieldResult{Path: name, Value: value, Confidence: score, Route: route})
 	}
-
-	saved := complete && len(accepted) > 0
-	if saved {
-		var prov []*Provenance
-		for _, f := range res.Fields {
-			if f.Route == "accept" {
-				prov = append(prov, &Provenance{FieldPath: f.Path, RawIDs: []uuid.UUID{raw.ID}, FileID: payload.File,
-					Page: intakePage(payload.Pages, f.Original, f.Value), Method: "intake:" + in.cfg.Model, Confidence: f.Confidence, Original: f.Original})
-			}
-		}
-		rec := &Record{Type: typ, SpecVersion: spec.Version, Space: raw.Space}
-		if err := in.save(ctx, rec, accepted, prov); err != nil {
+	if len(data) == 0 {
+		res.Confidence = 0
+	} else {
+		res.Proposed = !complete || res.Confidence < in.cfg.Accept
+		e := &Entity{Type: typ, Space: it.Space, Proposed: res.Proposed}
+		if err := in.save(ctx, e, data); err != nil {
 			return nil, err
 		}
-		res.RecordID = rec.ID
+		res.EntityID = e.ID
 	}
 	for i, f := range res.Fields {
 		if spec.secretField(typ, f.Path) {
 			res.Fields[i].Value = "****"
-			if v, ok := accepted[f.Path]; ok && saved {
+			if v, ok := data[f.Path]; ok {
 				res.Fields[i].Value = v
 			}
 		}
 	}
 	return res, nil
-}
-
-func intakePage(pages []string, original string, v any) int {
-	s, _ := v.(string)
-	needle := cmp.Or(original, s)
-	for i, p := range pages {
-		if needle != "" && strings.Contains(p, needle) {
-			return i + 1
-		}
-	}
-	return 0
-}
-
-func (in *Intake) calibrate(typ, field string, score float64) float64 {
-	if c := in.cal[typ+"."+field]; c != nil {
-		return c.predict(score)
-	}
-	return score
-}
-
-func (in *Intake) CalibrationError() map[string]float64 {
-	out := map[string]float64{}
-	for key, ls := range in.labels {
-		if len(ls) < 2*intakeMinLabels {
-			continue
-		}
-		var conf []float64
-		var correct []bool
-		for fold := range 2 {
-			var train, test []intakeLabel
-			for i, l := range ls {
-				if i%2 == fold {
-					test = append(test, l)
-				} else {
-					train = append(train, l)
-				}
-			}
-			iso := intakeFit(train)
-			for _, l := range test {
-				conf = append(conf, iso.predict(l.Score))
-				correct = append(correct, l.Correct)
-			}
-		}
-		out[key] = ExpectedCalibrationError(conf, correct)
-	}
-	return out
-}
-
-func ExpectedCalibrationError(conf []float64, correct []bool) float64 {
-	const bins = 10
-	var n, sum, hit [bins]float64
-	for i, c := range conf {
-		b := min(int(c*bins), bins-1)
-		b = max(b, 0)
-		n[b]++
-		sum[b] += c
-		if correct[i] {
-			hit[b]++
-		}
-	}
-	var ece float64
-	for b := range bins {
-		if n[b] > 0 {
-			ece += n[b] / float64(len(conf)) * math.Abs(sum[b]/n[b]-hit[b]/n[b])
-		}
-	}
-	return ece
 }
 
 type intakeCompletion struct {
@@ -336,11 +243,10 @@ func intakeValueLogprobs(content string, toks []intakeToken) map[string]float64 
 type intakeSample map[string]intakeValue
 
 type intakeValue struct {
-	Value    any
-	Original string
-	Valid    bool
-	Logprob  float64
-	HasLP    bool
+	Value   any
+	Valid   bool
+	Logprob float64
+	HasLP   bool
 }
 
 func intakeValidate(spec *Spec, typ string, c *intakeCompletion, h Hints) intakeSample {
@@ -349,7 +255,7 @@ func intakeValidate(spec *Spec, typ string, c *intakeCompletion, h Hints) intake
 	if json.Unmarshal([]byte(c.Content), &in) != nil {
 		return s
 	}
-	out, originals, err := spec.Normalize(typ, in, h)
+	out, err := spec.Normalize(typ, in, h)
 	bad := map[string]bool{}
 	var ve *ValidationError
 	if errors.As(err, &ve) {
@@ -366,7 +272,6 @@ func intakeValidate(spec *Spec, typ string, c *intakeCompletion, h Hints) intake
 		if nv, ok := out[k]; ok && v.Valid {
 			v.Value = nv
 		}
-		v.Original = originals[k]
 		v.Logprob, v.HasLP = c.Logprobs[k]
 		if v.Value != nil {
 			s[k] = v
@@ -375,9 +280,9 @@ func intakeValidate(spec *Spec, typ string, c *intakeCompletion, h Hints) intake
 	return s
 }
 
-func intakeScore(samples []intakeSample, field string) (value any, original string, score float64) {
+func intakeScore(samples []intakeSample, field string) (value any, score float64) {
 	if len(samples) == 0 {
-		return nil, "", 0
+		return nil, 0
 	}
 	type group struct {
 		v        intakeValue
@@ -411,80 +316,14 @@ func intakeScore(samples []intakeSample, field string) (value any, original stri
 		}
 	}
 	if best == nil {
-		return nil, "", 0
+		return nil, 0
 	}
 	lp := 1.0
 	if best.lpN > 0 {
 		lp = math.Exp(best.lpSum / float64(best.lpN))
 	}
 	score = float64(best.n) / float64(len(samples)) * float64(best.valid) / float64(best.n) * lp
-	return best.v.Value, best.v.Original, score
-}
-
-type intakeLabel struct {
-	Type    string  `json:"type"`
-	Field   string  `json:"field"`
-	Score   float64 `json:"score"`
-	Correct bool    `json:"correct"`
-}
-
-func intakeLoadLabels(path string) (map[string][]intakeLabel, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("intake labels: %w", err)
-	}
-	var ls []intakeLabel
-	if err := json.Unmarshal(b, &ls); err != nil {
-		return nil, fmt.Errorf("intake labels %s: %w", path, err)
-	}
-	out := map[string][]intakeLabel{}
-	for _, l := range ls {
-		out[l.Type+"."+l.Field] = append(out[l.Type+"."+l.Field], l)
-	}
-	return out, nil
-}
-
-func intakeFitAll(labels map[string][]intakeLabel) map[string]*intakeIsotonic {
-	out := map[string]*intakeIsotonic{}
-	for key, ls := range labels {
-		if len(ls) >= intakeMinLabels {
-			out[key] = intakeFit(ls)
-		}
-	}
-	return out
-}
-
-type intakeIsotonic struct {
-	x, y []float64
-}
-
-func intakeFit(ls []intakeLabel) *intakeIsotonic {
-	ls = append([]intakeLabel(nil), ls...)
-	sort.Slice(ls, func(i, j int) bool { return ls[i].Score < ls[j].Score })
-	var x, sum, w []float64
-	for _, l := range ls {
-		y := 0.0
-		if l.Correct {
-			y = 1
-		}
-		x, sum, w = append(x, l.Score), append(sum, y), append(w, 1)
-
-		for n := len(w); n > 1 && sum[n-1]/w[n-1] <= sum[n-2]/w[n-2]; n-- {
-			sum[n-2] += sum[n-1]
-			w[n-2] += w[n-1]
-			x, sum, w = x[:n-1], sum[:n-1], w[:n-1]
-		}
-	}
-	iso := &intakeIsotonic{x: x}
-	for i := range sum {
-		iso.y = append(iso.y, sum[i]/w[i])
-	}
-	return iso
-}
-
-func (c *intakeIsotonic) predict(score float64) float64 {
-	i := sort.Search(len(c.x), func(i int) bool { return c.x[i] > score }) - 1
-	return c.y[max(i, 0)]
+	return best.v.Value, score
 }
 
 func intakeRoute(conf, accept, review float64) string {
@@ -499,12 +338,12 @@ func intakeRoute(conf, accept, review float64) string {
 
 var folderTextExt = map[string]bool{".txt": true, ".md": true, ".csv": true, ".json": true, ".html": true, ".htm": true, ".eml": true}
 
-func ScanFolder(ctx context.Context, st *pgStore, dir string, space uuid.UUID) ([]*Raw, error) {
+func ScanFolder(ctx context.Context, dir string, space uuid.UUID, seen map[string]string) ([]*Item, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, err
 	}
-	var out []*Raw
+	var out []*Item
 	err = filepath.WalkDir(abs, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -526,6 +365,12 @@ func ScanFolder(ctx context.Context, st *pgStore, dir string, space uuid.UUID) (
 		if err != nil {
 			return err
 		}
+		rel = filepath.ToSlash(rel)
+		sum := sha256.Sum256(b)
+		hash := hex.EncodeToString(sum[:])
+		if seen != nil && seen[rel] == hash {
+			return nil
+		}
 		mt := folderMIME(path, b)
 		payload, err := json.Marshal(map[string]any{
 			"path": path, "name": d.Name(), "mime": mt, "size": len(b),
@@ -534,16 +379,10 @@ func ScanFolder(ctx context.Context, st *pgStore, dir string, space uuid.UUID) (
 		if err != nil {
 			return err
 		}
-		sum := sha256.Sum256(payload)
-		r := &Raw{ID: uuid.Must(uuid.NewV7()), Source: "folder:" + abs, ExternalID: filepath.ToSlash(rel),
-			Hash: hex.EncodeToString(sum[:]), FetchedAt: time.Now().UTC(), Payload: payload, Space: space}
-		inserted, err := st.PutRaw(ctx, r)
-		if err != nil {
-			return err
+		if seen != nil {
+			seen[rel] = hash
 		}
-		if inserted {
-			out = append(out, r)
-		}
+		out = append(out, &Item{Source: "folder:" + abs, ExternalID: rel, Payload: payload, Space: space})
 		return nil
 	})
 	return out, err

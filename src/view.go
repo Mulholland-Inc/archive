@@ -83,7 +83,7 @@ func (a *Archive) viewCheck(in *ViewInput) error {
 
 func (a *Archive) Views(ctx context.Context) ([]*View, error) {
 	return coreDo(a, ctx, func(ctx context.Context) ([]*View, error) {
-		out, err := storeAll[View](ctx, a.st, `SELECT `+viewCols+` FROM views ORDER BY name, id`)
+		out, err := storeAll[View](ctx, a.st, `SELECT `+viewCols+` FROM view ORDER BY name, id`)
 		if out == nil {
 			out = []*View{}
 		}
@@ -93,7 +93,7 @@ func (a *Archive) Views(ctx context.Context) ([]*View, error) {
 
 func (a *Archive) GetView(ctx context.Context, id uuid.UUID) (*View, error) {
 	return coreDo(a, ctx, func(ctx context.Context) (*View, error) {
-		v, err := storeOne[View](ctx, a.st, `SELECT `+viewCols+` FROM views WHERE id = $1`, id)
+		v, err := storeOne[View](ctx, a.st, `SELECT `+viewCols+` FROM view WHERE id = $1`, id)
 		if errors.Is(err, ErrNotFound) {
 			return nil, fmt.Errorf("view %s: %w", id, ErrNotFound)
 		}
@@ -110,7 +110,7 @@ func (a *Archive) AddView(ctx context.Context, in ViewInput) (*View, error) {
 		if err != nil {
 			return nil, err
 		}
-		return storeOne[View](ctx, a.st, `INSERT INTO views (name, space, type, layout, by_field, filter, created_by)
+		return storeOne[View](ctx, a.st, `INSERT INTO view (name, space, type, layout, by_field, filter, created_by)
 			VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING `+viewCols, in.Name, sid, in.Type, in.Layout, in.By, in.Where, ActorFrom(ctx).Label)
 	})
 	return v, viewErr(err)
@@ -131,7 +131,7 @@ func (a *Archive) SetView(ctx context.Context, id uuid.UUID, in ViewInput) (*Vie
 				return nil, err
 			}
 		}
-		v, err := storeOne[View](ctx, a.st, `UPDATE views SET name = $2, space = $3, type = $4, layout = $5, by_field = $6, filter = $7
+		v, err := storeOne[View](ctx, a.st, `UPDATE view SET name = $2, space = $3, type = $4, layout = $5, by_field = $6, filter = $7
 			WHERE id = $1 RETURNING `+viewCols, id, in.Name, sid, in.Type, in.Layout, in.By, in.Where)
 		if errors.Is(err, ErrNotFound) {
 			return nil, fmt.Errorf("you cannot change views in this space: %w", ErrForbidden)
@@ -146,7 +146,7 @@ func (a *Archive) RemoveView(ctx context.Context, id uuid.UUID) error {
 		if _, err := a.GetView(ctx, id); err != nil {
 			return err
 		}
-		tag, err := a.st.Q(ctx).Exec(ctx, `DELETE FROM views WHERE id = $1`, id)
+		tag, err := a.st.Q(ctx).Exec(ctx, `DELETE FROM view WHERE id = $1`, id)
 		if err == nil && tag.RowsAffected() == 0 {
 			return fmt.Errorf("you cannot remove views in this space: %w", ErrForbidden)
 		}

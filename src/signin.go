@@ -370,14 +370,6 @@ func (s *signin) browser(w http.ResponseWriter, r *http.Request, user func() (*U
 	if err == nil {
 		v, err = s.signedIn(w, r, u)
 	}
-	if webBrowser(r) {
-		to := "/"
-		if err != nil {
-			to = "/signin"
-		}
-		webRedirect(w, r, to, err)
-		return
-	}
 	httpWrite(w, http.StatusOK, v, err)
 }
 
@@ -435,7 +427,7 @@ func (s *signin) save(ctx context.Context, pu *signinUser) error {
 		return err
 	}
 	return s.a.sys(ctx, func(ctx context.Context) error {
-		_, err := s.a.st.Q(ctx).Exec(ctx, `UPDATE users SET signin = $2 WHERE id = $1`, pu.u.ID, b)
+		_, err := s.a.st.Q(ctx).Exec(ctx, `UPDATE "user" SET signin = $2 WHERE id = $1`, pu.u.ID, b)
 		return err
 	})
 }

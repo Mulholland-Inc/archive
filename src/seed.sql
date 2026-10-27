@@ -1,4 +1,4 @@
-INSERT INTO types (name, extends, def, builtin)
+INSERT INTO type (name, extends, def, builtin)
 SELECT name, extends, def::jsonb, true FROM (VALUES
 ('date', '', '{
   "description": "Calendar date, ISO 8601", "category": "time",

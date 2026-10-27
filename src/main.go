@@ -41,8 +41,9 @@ Usage:
   archive spec pull [-all] [file]    write the user types and edited built-ins as JSON
                                      (default stdout); -all adds every built-in type
   archive spec push [-dry-run] <file>
-                                     preview the diff against the ontology, then apply it;
-                                     built-in types the file leaves out are kept
+                                     write every type that differs and remove user types the
+                                     file leaves out; built-in types it leaves out are kept;
+                                     existing objects are not migrated
 
   archive intake <dir|file-id> -type <type> [-space s]
                                      read every new file in dir, or one stored file, into
@@ -54,38 +55,37 @@ Usage:
   archive file get <id> [-o path|-]  print the file's metadata, or with -o write its content
   archive file list [-limit n] [-after id]
 
-  archive list <type> [-limit n] [-after id] [-reveal] [field=value ...]
-  archive get <type> <id> [-reveal]  -reveal shows secret values you are granted
+  archive list <type> [-limit n] [-after id] [-reveal] [-proposed] [field=value ...]
+                                     -proposed lists only objects waiting for review
+  archive get <type> <id> [-reveal] [-proposed]
+                                     -reveal shows secret values you are granted; -proposed
+                                     also finds objects waiting for review
   archive create <type> [-space s] [json]
                                      json from the argument or stdin; default space is your own
   archive set <type> <id> [json]     set some fields; null clears a field
   archive update <type> <id> [json]  replace the whole object
   archive delete <type> <id>
-  archive provenance <type> <id>
-  archive links <type> <id>
-  archive search <query> [-type t] [-space s] [-source src] [-from date] [-to date] [-limit n]
-                                     find objects, files and unmapped synced items by their
-                                     words and, with ARCHIVE_EMBED_MODEL, by meaning
+  archive links <type> <id>          objects this one references and objects referencing it
+  archive search <query> [-type t] [-space s] [-from date] [-to date] [-limit n]
+                                     find objects and files by their words
 
   archive source add <kind> [-name n] [-space s] [-type t] [-schedule 15m] [-rate n] [json|-]
-                                     connect a source: gmail, drive, imap, folder or external;
+                                     connect a source: gmail, drive or folder;
                                      json is {"config": {...}, "credentials": {...}}, and
                                      credentials are stored encrypted; gmail and drive print a
                                      Google sign-in address and read the code from stdin
   archive source list
-  archive source run <id|name>       sync now: new items land in raw, then intake maps them
-                                     into the source's type
-  archive source remove <id|name>    stop syncing; raw data and objects stay
+  archive source run <id|name>       sync now: intake maps new items into the source's type
+  archive source remove <id|name>    stop syncing; objects stay
 
-  archive demo                       load example types, spaces, records and review items
+  archive demo                       load example types, spaces, objects and review items
                                      into an archive that has none of the demo types yet
 
-  archive review list [-status s] [-type t] [-space s] [-limit n] [-after id]
-                                     what intake read: review (waiting for you), accepted
-                                     (saved automatically), approved or rejected
+  archive review list [-type t] [-space s] [-limit n] [-after id]
+                                     objects intake saved as proposed, waiting for you
   archive review counts [-space s]
-  archive review approve <id> ...    save the proposed values as records
-  archive review reject <id> ...
+  archive review approve <id> ...    validate them and keep them
+  archive review reject <id> ...     delete them
 
   archive user add <email> [-name n] [-admin]
   archive space add <name>
@@ -104,7 +104,7 @@ Environment:
   DATABASE_URL       external Postgres; unset starts the bundled one
   ARCHIVE_DATA       data directory for the bundled Postgres (default ./data)
   ARCHIVE_PG_BIN     directory holding the Postgres binaries; unset uses those on PATH, or
-                     downloads Postgres into $ARCHIVE_DATA/pgbin on first run (without pgvector)
+                     downloads Postgres into $ARCHIVE_DATA/pgbin on first run
   ARCHIVE_LLM_URL    OpenAI-compatible endpoint (default http://localhost:11434/v1)
   ARCHIVE_LLM_MODEL  model for intake
   ARCHIVE_LLM_KEY    API key for the endpoint, if it needs one
@@ -112,15 +112,10 @@ Environment:
                      vision model on the endpoint for OCR of photos and scans; unset skips OCR
   ARCHIVE_WHISPER_MODEL
                      speech-to-text model on the endpoint for audio and video; unset skips it
-  ARCHIVE_EMBED_MODEL
-                     embedding model on the endpoint for semantic search (needs pgvector);
-                     unset leaves search to full text only
-  ARCHIVE_EMBED_DIM  dimensions of ARCHIVE_EMBED_MODEL's vectors (default 768)
   ARCHIVE_BLOB_URL   s3://bucket/prefix?endpoint=https://host&region=r for S3, R2, MinIO or GCS;
                      unset stores files in $ARCHIVE_DATA/blobs
   ARCHIVE_BLOB_KEY, ARCHIVE_BLOB_SECRET
                      access key for ARCHIVE_BLOB_URL (default AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
-  ARCHIVE_LABELS     labeled examples (JSON) for calibrating intake confidence
   ARCHIVE_INSTANCE   prefix of every Postgres role of this instance (default a)
   ARCHIVE_SECRET_KEY 32-byte key (hex or base64) for secret values; default $ARCHIVE_DATA/secret.key
   ARCHIVE_URL        public base URL for links, cookies and passkeys (default http://localhost:<port>)
@@ -197,10 +192,9 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	schedule := fs.String("schedule", "", "sync every duration, like 15m (source add)")
 	rateLimit := fs.Float64("rate", 0, "requests per second to the platform (source add)")
 	output := fs.String("o", "", "write the file content here, - for stdout (file get)")
-	source := fs.String("source", "", "only items from this source (search)")
 	from := fs.String("from", "", "only items added on or after this date (search)")
 	to := fs.String("to", "", "only items added up to this date (search)")
-	status := fs.String("status", "", "review, accepted, approved or rejected (review list)")
+	proposed := fs.Bool("proposed", false, "objects waiting for review (list, get)")
 	if cmd == "-as" && len(args) > 1 {
 		*as, cmd, args = args[0], args[1], args[2:]
 	}
@@ -257,7 +251,7 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	case "demo":
 		return out(a.LoadDemo(ctx))
 	case "review":
-		return cliReview(ctx, a, pos, ReviewFilter{Status: *status, Type: *typ, Space: *space, Limit: *limit}, *after, out)
+		return cliReview(ctx, a, pos, ReviewFilter{Type: *typ, Space: *space, Limit: *limit}, *after, out)
 	case "user", "space", "token", "secret":
 		return cliAuth(ctx, a, cmd, pos, *name, *admin, *full, *space, *expires, out)
 	case "list":
@@ -275,13 +269,13 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 				return fmt.Errorf("-after: %w", err)
 			}
 		}
-		rs, err := a.List(ctx, pos[0], "", where, *limit, aid)
+		rs, err := a.List(ctx, pos[0], "", where, *limit, aid, *proposed)
 		if err == nil && *reveal {
 			err = a.Reveal(ctx, rs...)
 		}
 		return out(rs, err)
 	case "search":
-		f := SearchFilter{Type: *typ, Space: *space, Source: *source, From: *from, To: *to, Limit: *limit}
+		f := SearchFilter{Type: *typ, Space: *space, From: *from, To: *to, Limit: *limit}
 		return out(a.Search(ctx, strings.Join(pos, " "), f))
 	case "create":
 		data, err := cliData(pos[1:], stdin)
@@ -297,15 +291,13 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	}
 	switch cmd {
 	case "get":
-		r, err := a.Get(ctx, pos[0], id)
+		r, err := a.Get(ctx, pos[0], id, *proposed)
 		if err == nil && *reveal {
 			err = a.Reveal(ctx, r)
 		}
 		return out(r, err)
 	case "links":
 		return out(a.Links(ctx, pos[0], id))
-	case "provenance":
-		return out(a.Provenance(ctx, pos[0], id))
 	case "delete":
 		return a.Delete(ctx, pos[0], id)
 	}
@@ -322,7 +314,7 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 func cliCheckCommand(cmd string, pos []string) error {
 	n, ok := map[string]int{
 		"serve": 0, "mcp": 0, "types": 0, "spec": 1, "intake": 1, "list": 1, "create": 1,
-		"get": 2, "provenance": 2, "delete": 2, "set": 2, "update": 2, "links": 2,
+		"get": 2, "delete": 2, "set": 2, "update": 2, "links": 2,
 		"user": 2, "space": 1, "token": 1, "secret": 3, "source": 1, "file": 1, "search": 1, "review": 1, "demo": 0,
 	}[cmd]
 	if !ok {
@@ -547,7 +539,7 @@ func cliTypes(w io.Writer, s *Spec) error {
 }
 
 func cliPullSpec(s *Spec, all bool) *Spec {
-	out := &Spec{Version: s.Version, Types: map[string]*Type{}}
+	out := &Spec{Types: map[string]*Type{}}
 	for name, t := range s.Types {
 		if all || !t.Builtin || t.Edited {
 			out.Types[name] = t
@@ -579,20 +571,15 @@ func cliSpec(ctx context.Context, a *Archive, pos []string, all, dryRun bool, st
 		if err != nil {
 			return err
 		}
-		p, err := a.ApplySpec(ctx, b, dryRun)
-		if p == nil && err == nil {
+		c, err := a.ApplySpec(ctx, b, dryRun)
+		if c == nil && err == nil {
 			fmt.Fprintln(os.Stderr, "spec is up to date")
 			return nil
 		}
-		if p != nil {
-			if err := cliJSON(stdout, p); err != nil {
-				return err
-			}
+		if err != nil {
+			return err
 		}
-		if err == nil && !dryRun {
-			fmt.Fprintf(os.Stderr, "applied change %s: spec v%d\n", p.Change.ID, p.Change.ToVer)
-		}
-		return err
+		return cliJSON(stdout, c)
 	}
 	return cliErrUsage
 }
@@ -619,7 +606,7 @@ func cliServe(ctx context.Context, a *Archive, addr string) error {
 			fmt.Fprintf(os.Stderr, "archive: created the first owner %s; sign in at %s/auth/magic\n", u.Email, base)
 		} else {
 			si.setup = authNewSecret()
-			fmt.Fprintf(os.Stderr, "archive: no users yet; create the first owner at %s/setup?token=%s\n", base, si.setup)
+			fmt.Fprintf(os.Stderr, "archive: no users yet; create the first owner with POST %s/auth/setup {\"token\": \"%s\", \"email\": ...}\n", base, si.setup)
 		}
 	}
 	mux := http.NewServeMux()
@@ -631,14 +618,6 @@ func cliServe(ctx context.Context, a *Archive, addr string) error {
 		if q.Get("error") == "" {
 			s, err = a.SourceOAuth(r.Context(), q.Get("state"), q.Get("code"))
 		}
-		if webBrowser(r) {
-			to := "/sources"
-			if s != nil {
-				to += "?connected=" + url.QueryEscape(s.Name)
-			}
-			webRedirect(w, r, to, err)
-			return
-		}
 		httpWrite(w, http.StatusOK, s, err)
 	})
 	tus := a.httpAuth(http.HandlerFunc(a.tus))
@@ -646,7 +625,6 @@ func cliServe(ctx context.Context, a *Archive, addr string) error {
 	mux.Handle("/api/files/tus/", tus)
 	mux.HandleFunc("GET /files/{id}", a.fileSigned)
 	mux.Handle("/auth/", si.handler())
-	mux.Handle("/", webHandler())
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	srv := mcpServer(a)
 	mux.Handle("/mcp", auth.RequireBearerToken(a.mcpVerify, &auth.RequireBearerTokenOptions{AllowMissingExpiration: true})(
@@ -661,19 +639,13 @@ func cliServe(ctx context.Context, a *Archive, addr string) error {
 	wg.Add(1 + mediaWorkers)
 	go a.syncLoop(syncCtx, &wg)
 	if err := a.st.System(ctx, func(ctx context.Context) error {
-		_, err := a.st.Q(ctx).Exec(ctx, `UPDATE files SET status = 'pending' WHERE status = 'processing'`)
+		_, err := a.st.Q(ctx).Exec(ctx, `UPDATE file SET status = 'pending' WHERE status = 'processing'`)
 		return err
 	}); err != nil {
 		return err
 	}
 	for range mediaWorkers {
 		go a.fileLoop(syncCtx, &wg)
-	}
-	if a.embedOff == "" {
-		wg.Add(1)
-		go a.embedLoop(syncCtx, &wg)
-	} else if a.intake.cfg.Embed != "" {
-		fmt.Fprintf(os.Stderr, "archive: semantic search is off (%s); full-text search still works\n", a.embedOff)
 	}
 	fmt.Fprintf(os.Stderr, "archive: serving API on %s/api, sign-in on %s/auth and MCP on %s/mcp\n", base, base, base)
 	select {
@@ -729,40 +701,28 @@ func httpHandler(a *Archive) http.Handler {
 		}
 		return ok(map[string]any{"spec": spec, "builtin": builtin, "edited": edited}, nil)
 	})
-	handle("GET /api/changes", func(r *http.Request) (int, any, error) {
-		return ok(a.Changes(r.Context()))
-	})
 	handle("GET /api/types/{name}", func(r *http.Request) (int, any, error) {
 		return ok(httpType(a.Spec(), r.PathValue("name")))
 	})
-	handle("POST /api/changes", func(r *http.Request) (int, any, error) {
-		var body struct {
-			Ops []Op `json:"ops"`
-		}
-		if err := httpDecode(r, &body); err != nil {
+	handle("PUT /api/types/{name}", func(r *http.Request) (int, any, error) {
+		var def Type
+		if err := httpDecode(r, &def); err != nil {
 			return 0, nil, err
 		}
-		c, err := a.Propose(r.Context(), body.Ops)
-		return http.StatusCreated, c, err
-	})
-	change := func(f func(context.Context, uuid.UUID) (any, error)) func(r *http.Request) (int, any, error) {
-		return func(r *http.Request) (int, any, error) {
-			id, err := httpID(r)
-			if err != nil {
-				return 0, nil, err
-			}
-			return ok(f(r.Context(), id))
+		if err := a.DefineType(r.Context(), r.PathValue("name"), &def); err != nil {
+			return 0, nil, err
 		}
-	}
-	handle("POST /api/changes/{id}/preview", change(func(ctx context.Context, id uuid.UUID) (any, error) { return a.Preview(ctx, id) }))
-	handle("POST /api/changes/{id}/apply", change(func(ctx context.Context, id uuid.UUID) (any, error) { return a.Apply(ctx, id) }))
-	handle("POST /api/changes/{id}/revert", change(func(ctx context.Context, id uuid.UUID) (any, error) { return a.Revert(ctx, id) }))
+		return ok(httpType(a.Spec(), r.PathValue("name")))
+	})
+	handle("DELETE /api/types/{name}", func(r *http.Request) (int, any, error) {
+		return http.StatusNoContent, nil, a.DeleteType(r.Context(), r.PathValue("name"))
+	})
 
 	a.fileRoutes(mux)
 	handle("GET /api/search", func(r *http.Request) (int, any, error) {
 		q := r.URL.Query()
 		limit, _ := strconv.Atoi(q.Get("limit"))
-		f := SearchFilter{Type: q.Get("type"), Space: q.Get("space"), Source: q.Get("source"), From: q.Get("from"), To: q.Get("to"), Limit: limit}
+		f := SearchFilter{Type: q.Get("type"), Space: q.Get("space"), From: q.Get("from"), To: q.Get("to"), Limit: limit}
 		return ok(a.Search(r.Context(), q.Get("q"), f))
 	})
 	handle("GET /api/sources", func(r *http.Request) (int, any, error) {
@@ -803,12 +763,11 @@ func httpHandler(a *Archive) http.Handler {
 		q := r.URL.Query()
 		limit, _ := strconv.Atoi(q.Get("limit"))
 		after, _ := uuid.Parse(q.Get("after"))
-		return ok(a.Proposals(r.Context(), ReviewFilter{Status: q.Get("status"), Type: q.Get("type"), Space: q.Get("space"), Limit: limit, After: after}))
+		return ok(a.Proposed(r.Context(), ReviewFilter{Type: q.Get("type"), Space: q.Get("space"), Limit: limit, After: after}))
 	})
 	handle("GET /api/review/counts", func(r *http.Request) (int, any, error) {
-		return ok(a.ProposalCounts(r.Context(), r.URL.Query().Get("space")))
+		return ok(a.ProposedCount(r.Context(), r.URL.Query().Get("space")))
 	})
-	handle("GET /api/review/{id}", change(func(ctx context.Context, id uuid.UUID) (any, error) { return a.GetProposal(ctx, id) }))
 	handle("POST /api/review/approve", func(r *http.Request) (int, any, error) {
 		var body struct {
 			IDs   []uuid.UUID                  `json:"ids"`
@@ -840,7 +799,13 @@ func httpHandler(a *Archive) http.Handler {
 		v, err := a.AddView(r.Context(), in)
 		return http.StatusCreated, v, err
 	})
-	handle("GET /api/views/{id}", change(func(ctx context.Context, id uuid.UUID) (any, error) { return a.GetView(ctx, id) }))
+	handle("GET /api/views/{id}", func(r *http.Request) (int, any, error) {
+		id, err := httpID(r)
+		if err != nil {
+			return 0, nil, err
+		}
+		return ok(a.GetView(r.Context(), id))
+	})
 	handle("PUT /api/views/{id}", func(r *http.Request) (int, any, error) {
 		id, err := httpID(r)
 		if err != nil {
@@ -872,14 +837,11 @@ func httpHandler(a *Archive) http.Handler {
 		}
 		where := map[string]any{}
 		for k, v := range q {
-			if k != "limit" && k != "after" && k != "reveal" && k != "space" {
+			if k != "limit" && k != "after" && k != "reveal" && k != "space" && k != "proposed" {
 				where[k] = v[0]
 			}
 		}
-		rs, err := a.List(r.Context(), r.PathValue("type"), q.Get("space"), where, limit, after)
-		if rs == nil {
-			rs = []*Record{}
-		}
+		rs, err := a.List(r.Context(), r.PathValue("type"), q.Get("space"), where, limit, after, q.Get("proposed") == "true")
 		if err == nil && q.Get("reveal") == "true" {
 			err = a.Reveal(r.Context(), rs...)
 		}
@@ -902,7 +864,7 @@ func httpHandler(a *Archive) http.Handler {
 			return ok(f(r.Context(), r.PathValue("type"), id, r))
 		}
 	}
-	withData := func(f func(ctx context.Context, typ string, id uuid.UUID, data map[string]any) (*Record, error)) func(r *http.Request) (int, any, error) {
+	withData := func(f func(ctx context.Context, typ string, id uuid.UUID, data map[string]any) (*Entity, error)) func(r *http.Request) (int, any, error) {
 		return object(func(ctx context.Context, typ string, id uuid.UUID, r *http.Request) (any, error) {
 			var data map[string]any
 			if err := httpDecode(r, &data); err != nil {
@@ -912,7 +874,7 @@ func httpHandler(a *Archive) http.Handler {
 		})
 	}
 	handle("GET /api/{type}/{id}", object(func(ctx context.Context, typ string, id uuid.UUID, r *http.Request) (any, error) {
-		rec, err := a.Get(ctx, typ, id)
+		rec, err := a.Get(ctx, typ, id, r.URL.Query().Get("proposed") == "true")
 		if err == nil && r.URL.Query().Get("reveal") == "true" {
 			err = a.Reveal(ctx, rec)
 		}
@@ -930,9 +892,6 @@ func httpHandler(a *Archive) http.Handler {
 		}
 		return http.StatusNoContent, nil, a.Delete(r.Context(), r.PathValue("type"), id)
 	})
-	handle("GET /api/{type}/{id}/provenance", object(func(ctx context.Context, typ string, id uuid.UUID, _ *http.Request) (any, error) {
-		return a.Provenance(ctx, typ, id)
-	}))
 	return mux
 }
 

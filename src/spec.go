@@ -213,26 +213,20 @@ func (s *Spec) Subtypes(typ string) []string {
 	return specKeys(in)
 }
 
-func (s *Spec) Normalize(typ string, in map[string]any, h Hints) (out map[string]any, originals map[string]string, err error) {
+func (s *Spec) Normalize(typ string, in map[string]any, h Hints) (map[string]any, error) {
 	t, err := s.resolve(typ)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if t.Schema != nil {
-		return nil, nil, fmt.Errorf("%s is a scalar type, not a record type", typ)
+		return nil, fmt.Errorf("%s is a scalar type, not an entity type", typ)
 	}
 	ve := &ValidationError{Type: typ}
-	out, _ = s.specObject(t, "", in, &h, &ve.Errors)
+	out, _ := s.specObject(t, "", in, &h, &ve.Errors)
 	if len(ve.Errors) > 0 {
-		return nil, nil, ve
+		return nil, ve
 	}
-	originals = map[string]string{}
-	for k, v := range out {
-		if !reflect.DeepEqual(in[k], v) {
-			originals[k] = specString(in[k])
-		}
-	}
-	return out, originals, nil
+	return out, nil
 }
 
 func (s *Spec) Validate(typ string, v any) error {
@@ -510,17 +504,6 @@ func specList(v any) ([]any, bool) {
 	return l, true
 }
 
-func specString(v any) string {
-	if str, ok := v.(string); ok {
-		return str
-	}
-	b, err := json.Marshal(v)
-	if err != nil {
-		return fmt.Sprint(v)
-	}
-	return string(b)
-}
-
 func (s *Spec) JSONSchema(typ string) (map[string]any, error) {
 	t, err := s.resolve(typ)
 	if err != nil {
@@ -712,59 +695,26 @@ func specClone(v any) any {
 	return v
 }
 
-func DiffSpecs(a, b *Spec) []Op {
-	var ops []Op
-	for _, name := range specKeys(a.Types) {
-		if _, ok := b.Types[name]; !ok && !a.Types[name].Builtin {
-			ops = append(ops, Op{Op: "remove_type", Type: name})
-		}
-	}
-	for _, name := range specKeys(b.Types) {
-		bt := b.Types[name]
-		at, ok := a.Types[name]
-		if !ok {
-			ops = append(ops, Op{Op: "add_type", Type: name, Def: bt})
+func (s *Spec) with(defs map[string]*Type) (*Spec, error) {
+	n := &Spec{Types: maps.Clone(s.Types)}
+	for _, name := range specKeys(defs) {
+		t, old := defs[name], s.Types[name]
+		if t == nil {
+			if old == nil {
+				return nil, fmt.Errorf("type %q: %w", name, ErrNotFound)
+			}
+			if old.Builtin {
+				return nil, &ValidationError{Type: name, Errors: []FieldError{{Path: name, Message: "built-in types cannot be removed"}}}
+			}
+			delete(n.Types, name)
 			continue
 		}
-		if !specSame(specLevel(at), specLevel(bt)) {
-			ops = append(ops, Op{Op: "change_type", Type: name, Def: specLevel(bt)})
+		c := *t
+		c.Name, c.Edited, c.Builtin = name, true, old != nil && old.Builtin
+		if c.Fields == nil {
+			c.Fields = map[string]*Field{}
 		}
-		for _, f := range specKeys(at.Fields) {
-			if _, ok := bt.Fields[f]; !ok {
-				ops = append(ops, Op{Op: "remove_field", Type: name, Field: f})
-			}
-		}
-		for _, f := range specKeys(bt.Fields) {
-			af, ok := at.Fields[f]
-			switch {
-			case !ok:
-				ops = append(ops, Op{Op: "add_field", Type: name, Field: f, Def: bt.Fields[f]})
-			case !reflect.DeepEqual(af, bt.Fields[f]):
-				ops = append(ops, Op{Op: "change_field", Type: name, Field: f, Def: bt.Fields[f]})
-			}
-		}
-	}
-	return ops
-}
-
-func specLevel(t *Type) *Type {
-	c := *t
-	c.Fields = nil
-	return &c
-}
-
-func specSame(a, b any) bool {
-	x, _ := json.Marshal(a)
-	y, _ := json.Marshal(b)
-	return bytes.Equal(x, y)
-}
-
-func (s *Spec) Apply(ops []Op) (*Spec, error) {
-	n := &Spec{Version: s.Version + 1, Types: maps.Clone(s.Types)}
-	for i, op := range ops {
-		if err := n.specApply(op); err != nil {
-			return nil, fmt.Errorf("op %d (%s %s): %w", i, op.Op, op.Type, err)
-		}
+		n.Types[name] = &c
 	}
 	if err := n.Check(); err != nil {
 		return nil, err
@@ -772,101 +722,10 @@ func (s *Spec) Apply(ops []Op) (*Spec, error) {
 	return n, nil
 }
 
-func (s *Spec) specApply(op Op) error {
-	t, exists := s.Types[op.Type]
-	if op.Op == "add_type" {
-		if exists {
-			return fmt.Errorf("type exists")
-		}
-		nt := &Type{}
-		if op.Def != nil {
-			if err := specCopy(op.Def, nt); err != nil {
-				return err
-			}
-		}
-		nt.Name, nt.Edited = op.Type, true
-		if nt.Fields == nil {
-			nt.Fields = map[string]*Field{}
-		}
-		s.Types[op.Type] = nt
-		return nil
-	}
-	if !exists {
-		return fmt.Errorf("unknown type")
-	}
-	switch op.Op {
-	case "remove_type":
-		if t.Builtin {
-			return fmt.Errorf("built-in types cannot be removed")
-		}
-		delete(s.Types, op.Type)
-		return nil
-	case "change_type":
-		nt := &Type{}
-		if op.Def == nil {
-			return fmt.Errorf("def is required")
-		}
-		if err := specCopy(op.Def, nt); err != nil {
-			return err
-		}
-		if len(nt.Fields) > 0 {
-			return fmt.Errorf("change_type cannot change fields; use field ops")
-		}
-		nt.Name, nt.Builtin, nt.Edited, nt.Fields = t.Name, t.Builtin, true, t.Fields
-		s.Types[op.Type] = nt
-		return nil
-	}
-	c := *t
-	c.Fields, c.Edited = maps.Clone(t.Fields), true
-	s.Types[op.Type] = &c
-	_, has := c.Fields[op.Field]
-	switch op.Op {
-	case "add_field", "change_field":
-		if op.Op == "add_field" && has {
-			return fmt.Errorf("field %q exists", op.Field)
-		}
-		if op.Op == "change_field" && !has {
-			return fmt.Errorf("unknown field %q", op.Field)
-		}
-		if op.Field == "" || op.Def == nil {
-			return fmt.Errorf("field and def are required")
-		}
-		f := &Field{}
-		if err := specCopy(op.Def, f); err != nil {
-			return err
-		}
-		c.Fields[op.Field] = f
-	case "remove_field":
-		if !has {
-			return fmt.Errorf("unknown field %q", op.Field)
-		}
-		delete(c.Fields, op.Field)
-	case "rename_field":
-		if !has {
-			return fmt.Errorf("unknown field %q", op.Field)
-		}
-		if _, taken := c.Fields[op.To]; taken || op.To == "" {
-			return fmt.Errorf("cannot rename to %q", op.To)
-		}
-		c.Fields[op.To] = c.Fields[op.Field]
-		delete(c.Fields, op.Field)
-	default:
-		return fmt.Errorf("unknown op")
-	}
-	return nil
-}
-
-func specCopy(src, dst any) error {
-	b, err := json.Marshal(src)
-	if err != nil {
-		return err
-	}
-	dec := json.NewDecoder(bytes.NewReader(b))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(dst); err != nil {
-		return fmt.Errorf("bad def: %w", err)
-	}
-	return nil
+func specSame(a, b any) bool {
+	x, _ := json.Marshal(a)
+	y, _ := json.Marshal(b)
+	return bytes.Equal(x, y)
 }
 
 func (s *Spec) eachSecret(typ string, data map[string]any, fn func(path string, t *Type, v any) (any, error)) error {

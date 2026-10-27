@@ -58,12 +58,13 @@ type SourceInput struct {
 }
 
 type SyncResult struct {
-	Source  uuid.UUID `json:"source"`
-	Fetched int       `json:"fetched"`
-	New     int       `json:"new"`
-	Mapped  int       `json:"mapped"`
-	Status  string    `json:"status"`
-	Error   string    `json:"error,omitempty"`
+	Source   uuid.UUID `json:"source"`
+	Fetched  int       `json:"fetched"`
+	New      int       `json:"new"`
+	Mapped   int       `json:"mapped"`
+	Proposed int       `json:"proposed"`
+	Status   string    `json:"status"`
+	Error    string    `json:"error,omitempty"`
 }
 
 type connector struct {
@@ -72,11 +73,9 @@ type connector struct {
 }
 
 var connectors = map[string]connector{
-	"gmail":    {check: checkGoogle, sync: syncGmail},
-	"drive":    {check: checkGoogle, sync: syncDrive},
-	"imap":     {check: checkIMAP, sync: syncIMAP},
-	"folder":   {check: checkFolder, sync: syncFolder},
-	"external": {check: checkExternal, sync: syncExternal},
+	"gmail":  {check: checkGoogle, sync: syncGmail},
+	"drive":  {check: checkGoogle, sync: syncDrive},
+	"folder": {check: checkFolder, sync: syncFolder},
 }
 
 var googleScopes = map[string][]string{
@@ -158,7 +157,7 @@ func (a *Archive) AddSource(ctx context.Context, in SourceInput) (*Source, strin
 			return err
 		}
 		s, err := storeOne[Source](ctx, a.st, `
-			INSERT INTO sources (id, kind, name, space, owner, created_by, type, mode, schedule, rate, config, status, next_run_at)
+			INSERT INTO source (id, kind, name, space, owner, created_by, type, mode, schedule, rate, config, status, next_run_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING `+sourceCols,
 			src.ID, src.Kind, src.Name, sid, ac.Role, ac.Label, src.Type, src.Mode, src.Schedule, src.Rate, src.Config, src.Status, next)
 		if err != nil {
@@ -215,7 +214,7 @@ func (a *Archive) UpdateSource(ctx context.Context, ref string, p SourcePatch) (
 		if rate == 0 {
 			rate = 5
 		}
-		out, err := storeOne[Source](ctx, a.st, `UPDATE sources SET type = $2, rate = $3, schedule = $4,
+		out, err := storeOne[Source](ctx, a.st, `UPDATE source SET type = $2, rate = $3, schedule = $4,
 			next_run_at = CASE WHEN $4 = '' OR status = 'needs_auth' THEN NULL WHEN $4 = schedule THEN next_run_at ELSE now() END
 			WHERE id = $1 RETURNING `+sourceCols, s.ID, typ, rate, schedule)
 		if errors.Is(err, ErrNotFound) {
@@ -239,7 +238,7 @@ func (a *Archive) sourceSeal(ctx context.Context, src *Source, creds map[string]
 		return err
 	}
 	id := coreNewID()
-	_, err = a.st.Q(ctx).Exec(ctx, `INSERT INTO secrets (id, source_id, type, value, space) VALUES ($1, $2, $3, $4, $5)`,
+	_, err = a.st.Q(ctx).Exec(ctx, `INSERT INTO secret (id, source_id, type, value, space) VALUES ($1, $2, $3, $4, $5)`,
 		id, src.ID, sourceSecret, a.secretBox(id, sourceSecret, b), src.Space)
 	return err
 }
@@ -248,7 +247,7 @@ func (a *Archive) sourceCreds(ctx context.Context, id uuid.UUID) (map[string]any
 	var sid uuid.UUID
 	var ct []byte
 	creds := map[string]any{}
-	err := a.st.Q(ctx).QueryRow(ctx, `SELECT id, value FROM secrets WHERE source_id = $1`, id).Scan(&sid, &ct)
+	err := a.st.Q(ctx).QueryRow(ctx, `SELECT id, value FROM secret WHERE source_id = $1`, id).Scan(&sid, &ct)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return creds, nil
 	}
@@ -264,7 +263,7 @@ func (a *Archive) sourceCreds(ctx context.Context, id uuid.UUID) (map[string]any
 
 func (a *Archive) Sources(ctx context.Context) ([]*Source, error) {
 	return coreDo(a, ctx, func(ctx context.Context) ([]*Source, error) {
-		out, err := storeAll[Source](ctx, a.st, `SELECT `+sourceCols+` FROM sources ORDER BY name, id`)
+		out, err := storeAll[Source](ctx, a.st, `SELECT `+sourceCols+` FROM source ORDER BY name, id`)
 		if out == nil {
 			out = []*Source{}
 		}
@@ -273,7 +272,7 @@ func (a *Archive) Sources(ctx context.Context) ([]*Source, error) {
 }
 
 func (a *Archive) sourceFind(ctx context.Context, ref string) (*Source, error) {
-	rs, err := storeAll[Source](ctx, a.st, `SELECT `+sourceCols+` FROM sources WHERE id::text = $1 OR name = $1`, ref)
+	rs, err := storeAll[Source](ctx, a.st, `SELECT `+sourceCols+` FROM source WHERE id::text = $1 OR name = $1`, ref)
 	switch {
 	case err != nil:
 		return nil, err
@@ -295,7 +294,7 @@ func (a *Archive) RemoveSource(ctx context.Context, ref string) error {
 		if err != nil {
 			return err
 		}
-		tag, err := a.st.Q(ctx).Exec(ctx, `DELETE FROM sources WHERE id = $1`, s.ID)
+		tag, err := a.st.Q(ctx).Exec(ctx, `DELETE FROM source WHERE id = $1`, s.ID)
 		if err == nil && tag.RowsAffected() == 0 {
 			return fmt.Errorf("you cannot remove sources in this space: %w", ErrForbidden)
 		}
@@ -332,7 +331,7 @@ func (a *Archive) SourceOAuth(ctx context.Context, state, code string) (*Source,
 	}
 	var src *Source
 	err = a.st.System(ctx, func(ctx context.Context) error {
-		s, err := storeOne[Source](ctx, a.st, `SELECT `+sourceCols+` FROM sources WHERE id = $1`, id)
+		s, err := storeOne[Source](ctx, a.st, `SELECT `+sourceCols+` FROM source WHERE id = $1`, id)
 		if errors.Is(err, ErrNotFound) {
 			return fmt.Errorf("authorization state names no source: %w", ErrUnauthorized)
 		}
@@ -360,13 +359,13 @@ func (a *Archive) SourceOAuth(ctx context.Context, state, code string) (*Source,
 		if tok.RefreshToken == "" {
 			return fmt.Errorf("Google sent no refresh token; remove Archive at myaccount.google.com/permissions and add the source again: %w", ErrUnauthorized)
 		}
-		if _, err := a.st.Q(ctx).Exec(ctx, `DELETE FROM secrets WHERE source_id = $1`, id); err != nil {
+		if _, err := a.st.Q(ctx).Exec(ctx, `DELETE FROM secret WHERE source_id = $1`, id); err != nil {
 			return err
 		}
 		if err := a.sourceSeal(ctx, s, map[string]any{"refresh_token": tok.RefreshToken}); err != nil {
 			return err
 		}
-		src, err = storeOne[Source](ctx, a.st, `UPDATE sources SET status = 'new', error = '',
+		src, err = storeOne[Source](ctx, a.st, `UPDATE source SET status = 'new', error = '',
 			next_run_at = CASE WHEN schedule <> '' THEN now() END WHERE id = $1 RETURNING `+sourceCols, id)
 		return err
 	})
@@ -412,7 +411,7 @@ func (a *Archive) sync(ctx context.Context, id uuid.UUID) (*SyncResult, error) {
 	var src *Source
 	var creds map[string]any
 	err = a.st.System(ctx, func(ctx context.Context) (err error) {
-		if src, err = storeOne[Source](ctx, a.st, `SELECT `+sourceCols+` FROM sources WHERE id = $1`, id); err != nil {
+		if src, err = storeOne[Source](ctx, a.st, `SELECT `+sourceCols+` FROM source WHERE id = $1`, id); err != nil {
 			return err
 		}
 		if src.Status == "needs_auth" {
@@ -421,7 +420,7 @@ func (a *Archive) sync(ctx context.Context, id uuid.UUID) (*SyncResult, error) {
 		if creds, err = a.sourceCreds(ctx, id); err != nil {
 			return err
 		}
-		_, err = a.st.Q(ctx).Exec(ctx, `UPDATE sources SET status = 'running' WHERE id = $1`, id)
+		_, err = a.st.Q(ctx).Exec(ctx, `UPDATE source SET status = 'running' WHERE id = $1`, id)
 		return err
 	})
 	if err != nil {
@@ -444,23 +443,10 @@ func (a *Archive) sync(ctx context.Context, id uuid.UUID) (*SyncResult, error) {
 		next = &t
 	}
 	return r.res, a.st.System(context.WithoutCancel(ctx), func(ctx context.Context) error {
-		_, err := a.st.Q(ctx).Exec(ctx, `UPDATE sources SET status = $2, error = $3, last_run_at = now(), next_run_at = $4,
+		_, err := a.st.Q(ctx).Exec(ctx, `UPDATE source SET status = $2, error = $3, last_run_at = now(), next_run_at = $4,
 			failures = CASE WHEN $2 = 'ok' THEN 0 ELSE failures + 1 END WHERE id = $1`, id, r.res.Status, r.res.Error, next)
 		return err
 	})
-}
-
-func (r *syncRun) rawSource() string { return sourceRaw(r.src) }
-
-func sourceRaw(src *Source) string {
-	if src.Kind == "folder" {
-		var cfg struct {
-			Path string `json:"path"`
-		}
-		json.Unmarshal(src.Config, &cfg)
-		return "folder:" + cfg.Path
-	}
-	return src.Kind + ":" + src.ID.String()
 }
 
 func (r *syncRun) emit(ctx context.Context, externalID string, payload map[string]any) error {
@@ -468,30 +454,24 @@ func (r *syncRun) emit(ctx context.Context, externalID string, payload map[strin
 	if err != nil {
 		return err
 	}
-	raw := &Raw{Source: r.rawSource(), ExternalID: externalID, Payload: b, Space: r.src.Space}
 	r.res.Fetched++
-	var inserted bool
-	if err := r.a.as(ctx, func(ctx context.Context) (err error) {
-		inserted, err = r.a.st.PutRaw(ctx, raw)
-		return err
-	}); err != nil || !inserted {
-		return err
-	}
-	r.res.New++
-	r.ingest(ctx, raw)
+	r.ingest(ctx, &Item{Source: r.src.Kind + ":" + r.src.ID.String(), ExternalID: externalID, Payload: b, Space: r.src.Space})
 	return nil
 }
 
-func (r *syncRun) ingest(ctx context.Context, raw *Raw) {
+func (r *syncRun) ingest(ctx context.Context, it *Item) {
+	r.res.New++
 	if r.src.Type == "" {
 		return
 	}
-	res, err := r.a.ingest(ctx, raw, r.src.Type)
-	if err != nil {
-		r.intake = append(r.intake, fmt.Errorf("intake %s: %w", raw.ExternalID, err))
-		return
-	}
-	if res.RecordID != uuid.Nil {
+	res, err := r.a.intake.Ingest(ctx, it, r.src.Type)
+	switch {
+	case err != nil:
+		r.intake = append(r.intake, fmt.Errorf("intake %s: %w", it.ExternalID, err))
+	case res.EntityID == uuid.Nil:
+	case res.Proposed:
+		r.res.Proposed++
+	default:
 		r.res.Mapped++
 	}
 }
@@ -503,7 +483,7 @@ func (r *syncRun) save(ctx context.Context, state any) error {
 	}
 	r.src.State = b
 	return r.a.st.System(ctx, func(ctx context.Context) error {
-		_, err := r.a.st.Q(ctx).Exec(ctx, `UPDATE sources SET state = $2 WHERE id = $1`, r.src.ID, b)
+		_, err := r.a.st.Q(ctx).Exec(ctx, `UPDATE source SET state = $2 WHERE id = $1`, r.src.ID, b)
 		return err
 	})
 }
@@ -522,7 +502,7 @@ func (a *Archive) syncLoop(ctx context.Context, wg *sync.WaitGroup) {
 		}
 		var ids []uuid.UUID
 		err := a.st.System(ctx, func(ctx context.Context) (err error) {
-			rows, _ := a.st.Q(ctx).Query(ctx, `SELECT id FROM sources WHERE next_run_at <= now() AND status <> 'needs_auth'`)
+			rows, _ := a.st.Q(ctx).Query(ctx, `SELECT id FROM source WHERE next_run_at <= now() AND status <> 'needs_auth'`)
 			ids, err = pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
 			return err
 		})

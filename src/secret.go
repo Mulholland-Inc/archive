@@ -147,9 +147,9 @@ func (a *Archive) secretOpen(id uuid.UUID, typ string, ct []byte) ([]byte, error
 	return b, nil
 }
 
-func (a *Archive) secretsPut(ctx context.Context, r *Record, rows []secretRow) error {
+func (a *Archive) secretsPut(ctx context.Context, r *Entity, rows []secretRow) error {
 	for _, s := range rows {
-		_, err := a.st.Q(ctx).Exec(ctx, `INSERT INTO secrets (id, record_id, type, value, space) VALUES ($1, $2, $3, $4, $5)`,
+		_, err := a.st.Q(ctx).Exec(ctx, `INSERT INTO secret (id, entity_id, type, value, space) VALUES ($1, $2, $3, $4, $5)`,
 			s.id, r.ID, s.typ, s.value, r.Space)
 		if err != nil {
 			return err
@@ -158,15 +158,7 @@ func (a *Archive) secretsPut(ctx context.Context, r *Record, rows []secretRow) e
 	return nil
 }
 
-func (a *Archive) sealRecord(ctx context.Context, spec *Spec, r *Record, data map[string]any) (bool, error) {
-	rows, err := a.seal(spec, r.Type, data, data)
-	if err != nil || len(rows) == 0 {
-		return false, err
-	}
-	return true, a.secretsPut(ctx, r, rows)
-}
-
-func (a *Archive) Reveal(ctx context.Context, rs ...*Record) error {
+func (a *Archive) Reveal(ctx context.Context, rs ...*Entity) error {
 	if len(rs) == 0 {
 		return nil
 	}
@@ -175,7 +167,7 @@ func (a *Archive) Reveal(ctx context.Context, rs ...*Record) error {
 		ids[i] = r.ID
 	}
 	return a.as(ctx, func(ctx context.Context) error {
-		rows, _ := a.st.Q(ctx).Query(ctx, `SELECT id, record_id, type, value FROM secrets WHERE record_id = ANY($1)`, ids)
+		rows, _ := a.st.Q(ctx).Query(ctx, `SELECT id, entity_id, type, value FROM secret WHERE entity_id = ANY($1)`, ids)
 		vals := map[string]any{}
 		owner := map[string]uuid.UUID{}
 		var id, rec uuid.UUID

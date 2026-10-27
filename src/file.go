@@ -115,23 +115,23 @@ func (a *Archive) fileCommit(ctx context.Context, sid uuid.UUID, name, intake, p
 		return nil, err
 	}
 	f, err := coreDo(a, ctx, func(ctx context.Context) (*File, error) {
-		f, err := storeOne[File](ctx, a.st, `SELECT `+fileCols+` FROM files WHERE space = $1 AND hash = $2 AND name = $3`, sid, hash, name)
+		f, err := storeOne[File](ctx, a.st, `SELECT `+fileCols+` FROM file WHERE space = $1 AND hash = $2 AND name = $3`, sid, hash, name)
 		if err == nil && intake != "" {
-			f, err = storeOne[File](ctx, a.st, `UPDATE files SET intake = $2, status = 'pending' WHERE id = $1 RETURNING `+fileCols, f.ID, intake)
+			f, err = storeOne[File](ctx, a.st, `UPDATE file SET intake = $2, status = 'pending' WHERE id = $1 RETURNING `+fileCols, f.ID, intake)
 		}
 		if !errors.Is(err, ErrNotFound) {
 			return f, err
 		}
 		spec := a.Spec()
-		data, _, err := a.coreCheck(ctx, spec, "file", map[string]any{"sha256": hash, "name": name, "mime": mt})
+		data, err := a.coreCheck(ctx, spec, "file", map[string]any{"sha256": hash, "name": name, "mime": mt})
 		if err != nil {
 			return nil, err
 		}
-		rec := &Record{Type: "file", SpecVersion: spec.Version, Space: sid}
-		if err := a.coreSave(ctx, rec, data, nil); err != nil {
+		rec := &Entity{Type: "file", Space: sid}
+		if err := a.coreSave(ctx, rec, data); err != nil {
 			return nil, err
 		}
-		return storeOne[File](ctx, a.st, `INSERT INTO files (id, hash, name, mime, size, intake, owner, space)
+		return storeOne[File](ctx, a.st, `INSERT INTO file (id, hash, name, mime, size, intake, owner, space)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING `+fileCols, rec.ID, hash, name, mt, size, intake, ActorFrom(ctx).Role, sid)
 	})
 	if err == nil {
@@ -153,7 +153,7 @@ func (a *Archive) Files(ctx context.Context, space string, limit int, after uuid
 			}
 			sid = id
 		}
-		fs, err := storeAll[File](ctx, a.st, `SELECT `+fileCols+` FROM files WHERE id > $1 AND ($3::uuid IS NULL OR space = $3) ORDER BY id LIMIT $2`, after, limit, sid)
+		fs, err := storeAll[File](ctx, a.st, `SELECT `+fileCols+` FROM file WHERE id > $1 AND ($3::uuid IS NULL OR space = $3) ORDER BY id LIMIT $2`, after, limit, sid)
 		if fs == nil {
 			fs = []*File{}
 		}
@@ -163,7 +163,7 @@ func (a *Archive) Files(ctx context.Context, space string, limit int, after uuid
 
 func (a *Archive) GetFile(ctx context.Context, id uuid.UUID) (*File, error) {
 	return coreDo(a, ctx, func(ctx context.Context) (*File, error) {
-		f, err := storeOne[File](ctx, a.st, `SELECT `+fileCols+` FROM files WHERE id = $1`, id)
+		f, err := storeOne[File](ctx, a.st, `SELECT `+fileCols+` FROM file WHERE id = $1`, id)
 		if errors.Is(err, ErrNotFound) {
 			return nil, fmt.Errorf("file %s: %w", id, ErrNotFound)
 		}
@@ -174,7 +174,7 @@ func (a *Archive) GetFile(ctx context.Context, id uuid.UUID) (*File, error) {
 func (a *Archive) FileText(ctx context.Context, id uuid.UUID) (string, error) {
 	return coreDo(a, ctx, func(ctx context.Context) (string, error) {
 		var text string
-		err := a.st.Q(ctx).QueryRow(ctx, `SELECT text FROM files WHERE id = $1`, id).Scan(&text)
+		err := a.st.Q(ctx).QueryRow(ctx, `SELECT text FROM file WHERE id = $1`, id).Scan(&text)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", fmt.Errorf("file %s: %w", id, ErrNotFound)
 		}
@@ -195,7 +195,7 @@ func (a *Archive) IntakeFile(ctx context.Context, id uuid.UUID, typ string) (*In
 	if err := coreHasType(a.Spec(), typ); err != nil {
 		return nil, err
 	}
-	raw, err := coreDo(a, ctx, func(ctx context.Context) (*Raw, error) {
+	it, err := coreDo(a, ctx, func(ctx context.Context) (*Item, error) {
 		f, err := a.GetFile(ctx, id)
 		if err != nil {
 			return nil, err
@@ -207,28 +207,22 @@ func (a *Archive) IntakeFile(ctx context.Context, id uuid.UUID, typ string) (*In
 		if strings.TrimSpace(text) == "" {
 			return nil, fmt.Errorf("file %s has no text to read (status %s): %w", id, f.Status, ErrConflict)
 		}
-		payload := map[string]any{"file": f.ID, "name": f.Name, "mime": f.MIME, "text": text}
-		if f.MIME == "application/pdf" {
-			payload["pages"] = strings.Split(text, "\f")
-		}
-		b, err := json.Marshal(payload)
+		b, err := json.Marshal(map[string]any{"file": f.ID, "name": f.Name, "mime": f.MIME, "text": text})
 		if err != nil {
 			return nil, err
 		}
-		raw := &Raw{Source: "file", ExternalID: f.ID.String(), Payload: b, Space: f.Space}
-		_, err = a.st.PutRaw(ctx, raw)
-		return raw, err
+		return &Item{Source: "file", ExternalID: f.ID.String(), Payload: b, Space: f.Space}, nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	return a.ingest(ctx, raw, typ)
+	return a.intake.Ingest(ctx, it, typ)
 }
 
 func (a *Archive) ProcessFile(ctx context.Context, id uuid.UUID) (*File, error) {
 	var claimed bool
 	err := a.st.System(ctx, func(ctx context.Context) error {
-		tag, err := a.st.Q(ctx).Exec(ctx, `UPDATE files SET status = 'processing' WHERE id = $1 AND status = 'pending'`, id)
+		tag, err := a.st.Q(ctx).Exec(ctx, `UPDATE file SET status = 'processing' WHERE id = $1 AND status = 'pending'`, id)
 		claimed = tag.RowsAffected() == 1
 		return err
 	})
@@ -412,7 +406,7 @@ func (a *Archive) fileSigned(w http.ResponseWriter, r *http.Request) {
 	var f *File
 	if err == nil {
 		err = a.st.System(r.Context(), func(ctx context.Context) (err error) {
-			f, err = storeOne[File](ctx, a.st, `SELECT `+fileCols+` FROM files WHERE id = $1`, id)
+			f, err = storeOne[File](ctx, a.st, `SELECT `+fileCols+` FROM file WHERE id = $1`, id)
 			return err
 		})
 	}

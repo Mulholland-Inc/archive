@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
-	"reflect"
-	"slices"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	dschema "github.com/hashicorp/terraform-plugin-framework/datasource/schema"
@@ -46,18 +44,6 @@ type apiField struct {
 	Indexed     bool     `json:"indexed,omitempty"`
 	To          string   `json:"to,omitempty"`
 	Enum        []string `json:"enum,omitempty"`
-}
-
-type apiOp struct {
-	Op    string `json:"op"`
-	Type  string `json:"type"`
-	Field string `json:"field,omitempty"`
-	Def   any    `json:"def,omitempty"`
-}
-
-type apiChange struct {
-	ID     string `json:"id"`
-	Status string `json:"status"`
 }
 
 func optString(s string) types.String {
@@ -110,88 +96,36 @@ func (m *typeModel) setLevel(l map[string]any) {
 	}
 }
 
-func (m *typeModel) ops(cur map[string]any) ([]apiOp, error) {
-	name := m.Name.ValueString()
-	want := map[string]apiField{}
+func (m *typeModel) def(cur map[string]any) map[string]any {
+	fields := map[string]apiField{}
 	for k, f := range m.Fields {
-		want[k] = f.api()
+		fields[k] = f.api()
 	}
-	if cur == nil {
-		def := map[string]any{"fields": want}
-		m.setLevel(def)
-		return []apiOp{{Op: "add_type", Type: name, Def: def}}, nil
+	def := typeLevel(cur)
+	if def == nil {
+		def = map[string]any{}
 	}
-	var ops []apiOp
-	level := typeLevel(cur)
-	m.setLevel(level)
-	if !reflect.DeepEqual(level, typeLevel(cur)) {
-		ops = append(ops, apiOp{Op: "change_type", Type: name, Def: level})
-	}
-	have, err := typeFields(cur)
-	if err != nil {
-		return nil, err
-	}
-	for _, k := range slices.Sorted(maps.Keys(have)) {
-		if _, ok := want[k]; !ok {
-			ops = append(ops, apiOp{Op: "remove_field", Type: name, Field: k})
-		}
-	}
-	for _, k := range slices.Sorted(maps.Keys(want)) {
-		h, ok := have[k]
-		switch {
-		case !ok:
-			ops = append(ops, apiOp{Op: "add_field", Type: name, Field: k, Def: want[k]})
-		case !reflect.DeepEqual(h, want[k]):
-			ops = append(ops, apiOp{Op: "change_field", Type: name, Field: k, Def: want[k]})
-		}
-	}
-	return ops, nil
+	m.setLevel(def)
+	def["fields"] = fields
+	return def
 }
 
-func (c *client) change(ctx context.Context, name string, ops func(cur map[string]any) ([]apiOp, error)) diag.Diagnostics {
-	c.changes.Lock()
-	defer c.changes.Unlock()
+func (c *client) define(ctx context.Context, name string, def func(cur map[string]any) (map[string]any, error)) diag.Diagnostics {
 	var diags diag.Diagnostics
-	for attempt := 0; ; attempt++ {
-		all, err := c.types(ctx)
-		if err != nil {
-			diags.AddError("Reading the ontology failed", err.Error())
-			return diags
-		}
-		o, err := ops(all[name])
-		if err != nil {
-			diags.AddError("Building the change failed", err.Error())
-			return diags
-		}
-		if len(o) == 0 {
-			return diags
-		}
-		var ch apiChange
-		if err := c.do(ctx, "POST", "/api/changes", map[string]any{"ops": o}, &ch); err != nil {
-			diags.AddError("Proposing the change failed", err.Error())
-			return diags
-		}
-		var pv struct {
-			Touched int `json:"touched"`
-			Failing int `json:"failing"`
-		}
-		err = c.do(ctx, "POST", "/api/changes/"+ch.ID+"/preview", nil, &pv)
-		if err == nil {
-			err = c.do(ctx, "POST", "/api/changes/"+ch.ID+"/apply", nil, &ch)
-		}
-		if conflict(err) && attempt < 5 {
-			continue
-		}
-		if err != nil {
-			diags.AddError("Applying the change failed", fmt.Sprintf("change %s for type %s: %v", ch.ID, name, err))
-			return diags
-		}
-		if pv.Failing > 0 {
-			diags.AddWarning("Some objects no longer validate",
-				fmt.Sprintf("change %s touched %d objects of %s; %d fail validation against the new spec and are flagged until fixed", ch.ID, pv.Touched, name, pv.Failing))
-		}
+	all, err := c.types(ctx)
+	if err != nil {
+		diags.AddError("Reading the ontology failed", err.Error())
 		return diags
 	}
+	d, err := def(all[name])
+	if err != nil {
+		diags.AddError("Building the type failed", err.Error())
+		return diags
+	}
+	if err := c.do(ctx, "PUT", "/api/types/"+esc(name), d, nil); err != nil {
+		diags.AddError("Writing the type failed", fmt.Sprintf("type %s: %v", name, err))
+	}
+	return diags
 }
 
 type typeResource struct{ configured }
@@ -202,7 +136,7 @@ func (r *typeResource) Metadata(_ context.Context, req resource.MetadataRequest,
 
 func (r *typeResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "An ontology type and its fields, changed through Archive's propose, preview and apply flow.",
+		Description: "An ontology type and its fields. Changing it does not migrate existing objects.",
 		Attributes: map[string]schema.Attribute{
 			"id":          schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"name":        schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
@@ -210,7 +144,7 @@ func (r *typeResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 			"extends":     schema.StringAttribute{Optional: true, Description: "Parent type whose fields this type inherits."},
 			"fields": schema.MapNestedAttribute{
 				Optional:    true,
-				Description: "Fields by name. Renaming a field here removes the old one and its values.",
+				Description: "Fields by name. Renaming a field here removes the old one; stored values stay under the old name.",
 				NestedObject: schema.NestedAttributeObject{Attributes: map[string]schema.Attribute{
 					"type":        schema.StringAttribute{Required: true, Description: "A built-in type like text, email, money or reference, or another type."},
 					"description": schema.StringAttribute{Optional: true},
@@ -231,11 +165,11 @@ func (r *typeResource) Create(ctx context.Context, req resource.CreateRequest, r
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	resp.Diagnostics.Append(r.c.change(ctx, m.Name.ValueString(), func(cur map[string]any) ([]apiOp, error) {
+	resp.Diagnostics.Append(r.c.define(ctx, m.Name.ValueString(), func(cur map[string]any) (map[string]any, error) {
 		if cur != nil {
 			return nil, fmt.Errorf("type %s already exists; import it instead", m.Name.ValueString())
 		}
-		return m.ops(nil)
+		return m.def(nil), nil
 	})...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -291,11 +225,11 @@ func (r *typeResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	resp.Diagnostics.Append(r.c.change(ctx, m.Name.ValueString(), func(cur map[string]any) ([]apiOp, error) {
+	resp.Diagnostics.Append(r.c.define(ctx, m.Name.ValueString(), func(cur map[string]any) (map[string]any, error) {
 		if cur == nil {
 			return nil, fmt.Errorf("type %s no longer exists", m.Name.ValueString())
 		}
-		return m.ops(cur)
+		return m.def(cur), nil
 	})...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -309,12 +243,9 @@ func (r *typeResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	resp.Diagnostics.Append(r.c.change(ctx, m.ID.ValueString(), func(cur map[string]any) ([]apiOp, error) {
-		if cur == nil {
-			return nil, nil
-		}
-		return []apiOp{{Op: "remove_type", Type: m.ID.ValueString()}}, nil
-	})...)
+	if err := r.c.do(ctx, "DELETE", "/api/types/"+esc(m.ID.ValueString()), nil, nil); err != nil && !notFound(err) {
+		resp.Diagnostics.AddError("Removing the type failed", err.Error())
+	}
 }
 
 func (r *typeResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {

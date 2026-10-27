@@ -20,12 +20,6 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 26
-      - name: Web dashboard
-        working-directory: apps/web
-        run: npm ci && npx vite build --outDir ../../src/web/dist --emptyOutDir
       - uses: actions/setup-go@v6
         with:
           go-version-file: src/go.mod
@@ -34,7 +28,7 @@ jobs:
         run: |
           sudo apt-get install -y -q postgresql-common
           sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
-          sudo apt-get install -y -q postgresql-18 postgresql-18-pgvector
+          sudo apt-get install -y -q postgresql-18
           echo /usr/lib/postgresql/18/bin >> "$GITHUB_PATH"
       - run: go vet ./...
         working-directory: src

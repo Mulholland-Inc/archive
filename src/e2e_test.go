@@ -33,9 +33,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emersion/go-imap/v2"
-	"github.com/emersion/go-imap/v2/imapserver"
-	"github.com/emersion/go-imap/v2/imapserver/imapmemserver"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -72,7 +69,8 @@ const e2eSpec = `{"types": {
     "number": {"type": "text", "required": true},
     "total": {"type": "money"},
     "date": {"type": "date"},
-    "bsn": {"type": "nl_bsn"}}}
+    "bsn": {"type": "nl_bsn"},
+    "document": {"type": "reference", "to": "file"}}}
 }}`
 
 type e2eInst struct {
@@ -310,9 +308,9 @@ func TestSpecPushNormalizesMessyDutchInputAndKeepsBuiltinEditsAcrossRestarts(t *
 	in := newInst(t, "ARCHIVE_LOCALE=nl-NL")
 	in.fails("list", "contact")
 	in.must("user", "add", "ann@example.com", "-name", "Ann")
-	_, errs, err := in.run("", "spec", "push", in.writeSpec())
-	if err != nil || !strings.Contains(errs, "applied change") {
-		t.Fatalf("spec push: %v %s", err, errs)
+	out, errs, err := in.run("", "spec", "push", in.writeSpec())
+	if err != nil || !strings.Contains(out, `"invoice"`) {
+		t.Fatalf("spec push: %v %s%s", err, out, errs)
 	}
 
 	r := decode[e2eRecord](t, in.must("create", "contact", `{"name":" Ann ","email":"Ann@EXAMPLE.com","phone":"06 12345678","birthday":"3-4-1990","balance":"€ 1.234,50"}`))
@@ -353,13 +351,12 @@ func TestSpecPushNormalizesMessyDutchInputAndKeepsBuiltinEditsAcrossRestarts(t *
 		b, _ := json.Marshal(sp)
 		return string(b)
 	}
-	out, errs, err := in.run(withIcon("receipt"), "spec", "push", "-")
-	if err != nil || !strings.Contains(errs, "applied change") {
+	out, errs, err = in.run(withIcon("receipt"), "spec", "push", "-")
+	if err != nil {
 		t.Fatalf("push icon: %v %s", err, errs)
 	}
-	ops := decode[struct{ Change struct{ Ops []Op } }](t, out).Change.Ops
-	if len(ops) != 1 || ops[0].Op != "change_type" || ops[0].Type != "invoice" || !strings.Contains(fmt.Sprint(ops[0].Def), "icon:receipt") {
-		t.Errorf("icon change ops = %+v", ops)
+	if c := decode[SpecChange](t, out); fmt.Sprint(c.Defined) != "[invoice]" || len(c.Removed) != 0 {
+		t.Errorf("icon change = %+v", c)
 	}
 	sp := decode[struct{ Types map[string]Type }](t, in.must("spec", "pull"))
 	if sp.Types["invoice"].Icon != "receipt" || sp.Types["invoice"].Fields["number"] == nil || sp.Types["person"].Icon != "" {
@@ -391,7 +388,7 @@ func TestIntakeMapsFilesThroughAFakeOpenAIServer(t *testing.T) {
 	os.WriteFile(filepath.Join(inbox, "inv.txt"), []byte("Factuur INV-7, totaal € 1.234,50, datum 03-04-2025, BSN 111222333"), 0o644)
 
 	res := decode[[]IntakeResult](t, in.must("intake", inbox, "-type", "invoice"))
-	if len(res) != 1 || res[0].RecordID.String() == "00000000-0000-0000-0000-000000000000" || calls != 3 {
+	if len(res) != 1 || res[0].EntityID.String() == "00000000-0000-0000-0000-000000000000" || res[0].Proposed || calls != 3 {
 		t.Fatalf("intake: %+v (calls %d)", res, calls)
 	}
 	for _, f := range res[0].Fields {
@@ -399,19 +396,12 @@ func TestIntakeMapsFilesThroughAFakeOpenAIServer(t *testing.T) {
 			t.Errorf("intake result shows the secret bsn: %v", f.Value)
 		}
 	}
-	got := decode[e2eRecord](t, in.must("get", "invoice", res[0].RecordID.String()))
+	got := decode[e2eRecord](t, in.must("get", "invoice", res[0].EntityID.String()))
 	if fmt.Sprint(got.Data["date"]) != "2025-04-03" || fmt.Sprint(got.Data["total"]) != "map[amount:1234.50 currency:EUR]" {
 		t.Errorf("intake record: %v", got.Data)
 	}
 	if bsn, _ := got.Data["bsn"].(map[string]any); bsn["masked"] != "*****2333" {
 		t.Errorf("bsn = %v, want masked", got.Data["bsn"])
-	}
-	prov := in.must("provenance", "invoice", res[0].RecordID.String())
-	if !strings.Contains(prov, "intake:fake") || strings.Contains(prov, "111222333") {
-		t.Errorf("provenance: %s", prov)
-	}
-	if again := decode[[]IntakeResult](t, in.must("intake", inbox, "-type", "invoice")); len(again) != 0 {
-		t.Errorf("second intake read the file again: %+v", again)
 	}
 }
 
@@ -437,6 +427,12 @@ func TestUnsureIntakeWaitsForReviewAndApprovesInBulk(t *testing.T) {
 			if seen["b"] == 2 {
 				content = `{"number":"INV-20","total":"€ 20,00","date":"02-04-2025"}`
 			}
+		case strings.Contains(body, "FILE-D"):
+			seen["d"]++
+			content = `{"number":"INV-4","total":"€ 40,00","date":"04-04-2025"}`
+			if seen["d"] == 2 {
+				content = `{"number":"INV-4","total":"€ 40,00","date":"05-04-2025"}`
+			}
 		}
 		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": content}}}})
 	}))
@@ -447,71 +443,75 @@ func TestUnsureIntakeWaitsForReviewAndApprovesInBulk(t *testing.T) {
 	in.must("spec", "push", in.writeSpec())
 	inbox := filepath.Join(in.dir, "inbox")
 	os.MkdirAll(inbox, 0o755)
-	os.WriteFile(filepath.Join(inbox, "a.txt"), []byte("FILE-A invoice INV-1"), 0o644)
-	os.WriteFile(filepath.Join(inbox, "b.txt"), []byte("FILE-B invoice INV-2"), 0o644)
-	os.WriteFile(filepath.Join(inbox, "c.txt"), []byte("FILE-C invoice INV-3"), 0o644)
+	for name, text := range map[string]string{"a.txt": "FILE-A invoice INV-1", "b.txt": "FILE-B invoice INV-2", "c.txt": "FILE-C invoice INV-3", "d.txt": "FILE-D invoice INV-4"} {
+		os.WriteFile(filepath.Join(inbox, name), []byte(text), 0o644)
+	}
 	in.must("intake", inbox, "-type", "invoice")
 	tok := decode[Token](t, in.must("token", "create", "-name", "Review")).Secret
 	bobTok := decode[Token](t, in.must("-as", "bob@example.com", "token", "create")).Secret
 
-	if c := decode[map[string]int](t, in.must("review", "counts")); c["review"] != 2 || c["accepted"] != 1 {
+	if c := decode[map[string]int](t, in.must("review", "counts")); c["review"] != 3 {
 		t.Fatalf("counts: %v", c)
 	}
-	byLabel := map[string]Proposal{}
-	for _, p := range decode[[]Proposal](t, in.must("review", "list")) {
-		byLabel[p.Label] = p
+	byNumber := map[string]e2eRecord{}
+	for _, e := range decode[[]e2eRecord](t, in.must("review", "list")) {
+		byNumber[fmt.Sprint(e.Data["number"])] = e
 	}
-	a, b, c := byLabel["a.txt"], byLabel["b.txt"], byLabel["c.txt"]
-	if a.Status != "review" || a.RecordID == nil || a.Confidence > 0.7 || b.Status != "review" || b.RecordID != nil || c.Status != "accepted" {
-		t.Fatalf("proposals: a %+v b %+v c %+v", a, b, c)
+	a, b, d := byNumber["INV-1"], byNumber["INV-2"], byNumber["INV-4"]
+	if a.ID == "" || b.ID == "" || d.ID == "" || len(byNumber) != 3 {
+		t.Fatalf("proposed: %v", byNumber)
 	}
-	for _, f := range a.Fields {
-		if f.Path == "total" && (f.Route != "review" || f.Original == "") {
-			t.Errorf("a.total: %+v", f)
-		}
+	if got := decode[[]e2eRecord](t, in.must("list", "invoice")); len(got) != 1 || got[0].Data["number"] != "INV-3" {
+		t.Errorf("list invoice: %+v", got)
 	}
-	var none []Proposal
+	if got := decode[[]e2eRecord](t, in.must("list", "invoice", "-proposed")); len(got) != 3 {
+		t.Errorf("list -proposed: %+v", got)
+	}
+	in.fails("get", "invoice", a.ID)
+	if got := decode[e2eRecord](t, in.must("get", "invoice", a.ID, "-proposed")); fmt.Sprint(got.Data["total"]) != "map[amount:10.00 currency:EUR]" {
+		t.Errorf("get -proposed: %v", got.Data)
+	}
+	if hits := e2eSearch(t, srv.url+"/api", tok, "INV"); len(hits) != 1 || hits[0].Data == nil {
+		t.Errorf("search shows proposed objects: %+v", hits)
+	}
+	var none []e2eRecord
 	call(t, "GET", srv.url+"/api/review", bobTok, nil, &none)
 	if len(none) != 0 {
-		t.Errorf("bob sees ann's proposals: %+v", none)
+		t.Errorf("bob sees ann's proposed objects: %+v", none)
 	}
 
 	var res ReviewOutcome
 	st, _ := call(t, "POST", srv.url+"/api/review/approve", tok, map[string]any{
-		"ids":   []string{a.ID.String(), b.ID.String()},
-		"edits": map[string]any{b.ID.String(): map[string]any{"number": "INV-9"}},
+		"ids":   []string{a.ID, b.ID},
+		"edits": map[string]any{b.ID: map[string]any{"number": "INV-9"}},
 	}, &res)
 	wantStatus(t, st, 200, "bulk approve")
 	if len(res.Done) != 2 || len(res.Failed) != 0 {
 		t.Fatalf("approve: %+v", res)
 	}
-	ra := decode[e2eRecord](t, in.must("get", "invoice", a.RecordID.String()))
+	ra := decode[e2eRecord](t, in.must("get", "invoice", a.ID))
 	if fmt.Sprint(ra.Data["total"]) != "map[amount:10.00 currency:EUR]" || ra.Data["number"] != "INV-1" {
 		t.Errorf("approved a: %v", ra.Data)
 	}
-	if prov := in.must("provenance", "invoice", a.RecordID.String()); !strings.Contains(prov, "review:") {
-		t.Errorf("a provenance: %s", prov)
-	}
-	var rb e2eRecord
-	for _, p := range res.Done {
-		if p.ID == b.ID && p.RecordID != nil {
-			rb = decode[e2eRecord](t, in.must("get", "invoice", p.RecordID.String()))
-		}
-	}
+	rb := decode[e2eRecord](t, in.must("get", "invoice", b.ID))
 	if rb.Data["number"] != "INV-9" || fmt.Sprint(rb.Data["total"]) != "map[amount:20.00 currency:EUR]" {
 		t.Errorf("approved b: %v", rb.Data)
 	}
 
-	st, _ = call(t, "POST", srv.url+"/api/review/approve", tok, map[string]any{"ids": []string{a.ID.String()}}, &res)
+	st, _ = call(t, "POST", srv.url+"/api/review/approve", tok, map[string]any{"ids": []string{a.ID}}, &res)
 	wantStatus(t, st, 200, "approve twice")
-	if len(res.Failed) != 1 || !strings.Contains(res.Failed[0].Error, "already approved") {
+	if len(res.Failed) != 1 || !strings.Contains(res.Failed[0].Error, "not waiting for review") {
 		t.Errorf("approve twice: %+v", res)
 	}
-	in.must("review", "reject", c.ID.String())
-	if c := decode[map[string]int](t, in.must("review", "counts")); c["review"] != 0 || c["approved"] != 2 || c["rejected"] != 1 {
+	in.must("review", "reject", d.ID)
+	if c := decode[map[string]int](t, in.must("review", "counts")); c["review"] != 0 {
 		t.Errorf("counts after review: %v", c)
 	}
-	errs := in.fails("-as", "bob@example.com", "review", "approve", a.ID.String())
+	in.fails("get", "invoice", d.ID, "-proposed")
+	if got := decode[[]e2eRecord](t, in.must("list", "invoice")); len(got) != 3 {
+		t.Errorf("invoices after review: %+v", got)
+	}
+	errs := in.fails("-as", "bob@example.com", "review", "approve", a.ID)
 	if !strings.Contains(errs, "not found") {
 		t.Errorf("bob approves: %s", errs)
 	}
@@ -538,7 +538,7 @@ func TestDemoDataLoadsOnceWithLinkedRecordsAndReviewItems(t *testing.T) {
 		t.Errorf("deal links: %s", links)
 	}
 	rc := decode[map[string]int](t, in.must("review", "counts"))
-	if rc["review"] == 0 || rc["accepted"] == 0 || rc["review"]+rc["accepted"] != counts["review"] {
+	if rc["review"] != counts["review"] {
 		t.Errorf("review counts %v for %d items", rc, counts["review"])
 	}
 	if errs := in.fails("demo"); !strings.Contains(errs, "demo data needs an archive without") {
@@ -614,19 +614,16 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 
 	t.Run("PlainPsqlAsTheUserRoleSeesWhatTheAppSees", func(t *testing.T) {
 		in := in.on(t)
-		role := in.psql("archive", "SELECT role FROM users WHERE email = 'bob@example.com'")
+		role := in.psql("archive", "SELECT role FROM \"user\" WHERE email = 'bob@example.com'")
 		in.psql("archive", "ALTER ROLE "+role+" LOGIN")
-		got := in.psql(role, "SELECT string_agg(data->>'name', ',' ORDER BY id) FROM records WHERE type = 'person'")
+		got := in.psql(role, "SELECT string_agg(data->>'name', ',' ORDER BY id) FROM entity WHERE type = 'person'")
 		if got != "Bob private,Family member" {
 			t.Fatalf("psql as bob: %q", got)
 		}
-		if n := in.psql(role, "SELECT count(*) FROM secrets"); n != "0" {
+		if n := in.psql(role, "SELECT count(*) FROM secret"); n != "0" {
 			t.Errorf("psql as bob sees %s secrets", n)
 		}
-		if n := in.psql(role, "SELECT count(*) FROM links"); n != "0" {
-			t.Errorf("psql as bob sees %s links", n)
-		}
-		out, err := exec.Command("psql", "-X", "-h", in.dir, "-U", role, "-d", "archive", "-Atc", "INSERT INTO records (type, spec_version, data, space) SELECT 'person', 1, '{}', id FROM spaces WHERE name = 'family'").CombinedOutput()
+		out, err := exec.Command("psql", "-X", "-h", in.dir, "-U", role, "-d", "archive", "-Atc", "INSERT INTO entity (type, data, space) SELECT 'person', '{}', id FROM space WHERE name = 'family'").CombinedOutput()
 		if err == nil || !strings.Contains(string(out), "row-level security") {
 			t.Errorf("psql insert into family as viewer: %v %s", err, out)
 		}
@@ -700,11 +697,11 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 		if s := ssn(aliceTok); strings.Contains(s, "123456789") {
 			t.Fatalf("alice reveals without grant: %s", s)
 		}
-		if n := in.psql("archive", "SELECT count(*) FROM secrets WHERE position(convert_to('123456789', 'UTF8') in value) > 0"); n != "0" {
+		if n := in.psql("archive", "SELECT count(*) FROM secret WHERE position(convert_to('123456789', 'UTF8') in value) > 0"); n != "0" {
 			t.Fatalf("secret stored in plain text")
 		}
-		if n := in.psql("archive", "SELECT count(*) FROM records WHERE data::text LIKE '%123456789%' OR id IN (SELECT record_id FROM provenance WHERE original LIKE '%6789%')"); n != "0" {
-			t.Fatalf("secret leaked into records or provenance")
+		if n := in.psql("archive", "SELECT count(*) FROM entity WHERE data::text LIKE '%123456789%'"); n != "0" {
+			t.Fatalf("secret leaked into entities")
 		}
 		in.fails("-as", "bob@example.com", "secret", "grant", "bob@example.com", "us_ssn")
 		in.must("secret", "grant", "alice@example.com", "us_ssn")
@@ -718,31 +715,30 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 			t.Fatalf("bob reveals: %s", s)
 		}
 		call(t, "PATCH", api+"/person/"+fam.ID, aliceTok, map[string]any{"ssn": "078-05-1120"}, nil)
-		if n := in.psql("archive", "SELECT count(*) FROM secrets WHERE record_id = '"+fam.ID+"'"); n != "1" {
+		if n := in.psql("archive", "SELECT count(*) FROM secret WHERE entity_id = '"+fam.ID+"'"); n != "1" {
 			t.Errorf("old secret not pruned: %s rows", n)
 		}
 		st, _ := call(t, "PATCH", api+"/person/"+fam.ID, aliceTok, map[string]any{"ssn": map[string]any{"$secret": "01a166cb-2d4c-7eff-9923-6316a92882b7"}}, nil)
 		wantStatus(t, st, 422, "forged secret reference")
 	})
 
-	t.Run("OntologyChangesNeedAdminAndAreAttributed", func(t *testing.T) {
-		ops := []Op{{Op: "add_field", Type: "company", Field: "vat", Def: map[string]any{"type": "vat_id"}}}
-		var c Change
-		st, _ := call(t, "POST", api+"/changes", narrowTok, map[string]any{"ops": ops}, &c)
-		wantStatus(t, st, 201, "viewer token proposes")
-		if c.ProposedBy != "Narrow, on behalf of alice@example.com" {
-			t.Errorf("proposed_by = %q", c.ProposedBy)
+	t.Run("OntologyChangesNeedAdmin", func(t *testing.T) {
+		def := map[string]any{"fields": map[string]any{"name": map[string]any{"type": "text", "required": true}, "vat": map[string]any{"type": "vat_id"}}}
+		st, _ := call(t, "PUT", api+"/types/company", narrowTok, def, nil)
+		wantStatus(t, st, 403, "viewer token defines a type")
+		got, isErr := mcpCall(t, srv.url, aliceTok, "define", map[string]any{"type": "company", "def": def})
+		if isErr || !strings.Contains(got, `"vat"`) {
+			t.Fatalf("admin defines over mcp: %s", got)
 		}
-		st, _ = call(t, "POST", api+"/changes/"+c.ID.String()+"/apply", narrowTok, nil, nil)
-		wantStatus(t, st, 403, "viewer token applies")
-		got, isErr := mcpCall(t, srv.url, aliceTok, "apply", map[string]any{"change_id": c.ID.String()})
-		if isErr || !strings.Contains(got, `"applied"`) {
-			t.Fatalf("admin applies over mcp: %s", got)
+		var ty struct {
+			Fields map[string]Field `json:"fields"`
 		}
-		got, _ = mcpCall(t, srv.url, aliceTok, "propose", map[string]any{"ops": []Op{{Op: "remove_field", Type: "company", Field: "vat"}}})
-		if !strings.Contains(got, "Claude, on behalf of alice@example.com") {
-			t.Errorf("mcp proposal: %s", got)
+		call(t, "GET", api+"/types/company", bobTok, nil, &ty)
+		if ty.Fields["vat"].Type != "vat_id" {
+			t.Errorf("company after define: %+v", ty)
 		}
+		st, _ = call(t, "DELETE", api+"/types/email", aliceTok, nil, nil)
+		wantStatus(t, st, 422, "remove a built-in type")
 	})
 
 	t.Run("MagicLinkSignInFromTheLog", func(t *testing.T) {
@@ -835,7 +831,6 @@ func TestDeletingASpaceRemovesEverythingInItForOwnersOnly(t *testing.T) {
 	member := decode[e2eRecord](t, in.must("create", "person", "-space", "team", `{"name": "Team member", "ssn": "123-45-6789", "employer": "`+acme.ID+`"}`))
 	st, _ := call(t, "POST", api+"/views", aliceTok, map[string]any{"name": "Team people", "type": "person", "space": "team"}, nil)
 	wantStatus(t, st, 201, "view in team")
-
 	errs := in.fails("-as", "bob@example.com", "space", "remove", "team")
 	if !strings.Contains(errs, "needs owner") {
 		t.Errorf("editor removes team: %s", errs)
@@ -857,11 +852,11 @@ func TestDeletingASpaceRemovesEverythingInItForOwnersOnly(t *testing.T) {
 			t.Fatalf("team still listed: %+v", spaces)
 		}
 	}
-	if got := in.psql("archive", "SELECT count(*) FROM records WHERE id = '"+member.ID+"'"); got != "0" {
-		t.Errorf("team record survived: %s", got)
+	if got := in.psql("archive", "SELECT count(*) FROM entity WHERE id = '"+member.ID+"'"); got != "0" {
+		t.Errorf("team entity survived: %s", got)
 	}
-	if got := in.psql("archive", "SELECT (SELECT count(*) FROM views) + (SELECT count(*) FROM links) + (SELECT count(*) FROM secrets)"); got != "0" {
-		t.Errorf("views, links and secrets left: %s", got)
+	if got := in.psql("archive", "SELECT (SELECT count(*) FROM view) + (SELECT count(*) FROM secret)"); got != "0" {
+		t.Errorf("views and secrets left: %s", got)
 	}
 	if got := in.psql("archive", "SELECT count(*) FROM pg_roles WHERE rolname LIKE 'a\\_s\\_team\\_%'"); got != "0" {
 		t.Errorf("team roles left: %s", got)
@@ -877,41 +872,23 @@ func TestDeletingASpaceRemovesEverythingInItForOwnersOnly(t *testing.T) {
 	in.must("space", "add", "team")
 }
 
-func TestFirstRunSetupLinkAndUpgradeIntoADefaultSpace(t *testing.T) {
+func TestFirstRunSetupTokenCreatesTheFirstOwner(t *testing.T) {
 	in := newInst(t)
 	srv := in.serve()
-	m := regexp.MustCompile(`/setup\?token=(\S+)`).FindStringSubmatch(srv.log.String())
+	m := regexp.MustCompile(`/auth/setup \{"token": "([^"]+)"`).FindStringSubmatch(srv.log.String())
 	if m == nil {
-		t.Fatalf("no setup link in log:\n%s", srv.log)
+		t.Fatalf("no setup token in log:\n%s", srv.log)
 	}
-	in.psql("archive", `
-		ALTER TABLE records ALTER COLUMN space DROP NOT NULL;
-		ALTER TABLE raw ALTER COLUMN space DROP NOT NULL;
-		ALTER TABLE provenance ALTER COLUMN space DROP NOT NULL;
-		ALTER TABLE links ALTER COLUMN space DROP NOT NULL;
-		INSERT INTO types (name, extends, def, updated_at) VALUES ('legacy', '', '{"fields": {"name": {"type": "text"}, "ssn": {"type": "us_ssn"}}}', now());
-		INSERT INTO records (type, spec_version, data) VALUES ('legacy', 0, '{"name": "Old", "ssn": "123456789"}')`)
-	if errs := in.fails("list", "legacy"); !strings.Contains(errs, "no users yet") {
+	if errs := in.fails("list", "file"); !strings.Contains(errs, "no users yet") {
 		t.Fatalf("list before setup: %s", errs)
 	}
-	st, _ := call(t, "POST", srv.url+"/auth/setup?token="+m[1], "", map[string]any{"email": "first@example.com", "name": "First"}, nil)
-	wantStatus(t, st, 200, "setup link creates the first owner")
-	st, _ = call(t, "POST", srv.url+"/auth/setup?token="+m[1], "", map[string]any{"email": "second@example.com"}, nil)
-	wantStatus(t, st, 401, "setup link used twice")
-
-	rs := decode[[]e2eRecord](t, in.must("list", "legacy"))
-	if len(rs) != 1 || rs[0].Data["name"] != "Old" {
-		t.Fatalf("legacy records: %+v", rs)
-	}
-	if ssn, _ := rs[0].Data["ssn"].(map[string]any); ssn["masked"] != "***-**-6789" {
-		t.Errorf("legacy ssn not moved into secrets: %v", rs[0].Data["ssn"])
-	}
+	st, _ := call(t, "POST", srv.url+"/auth/setup", "", map[string]any{"token": m[1], "email": "first@example.com", "name": "First"}, nil)
+	wantStatus(t, st, 200, "setup token creates the first owner")
+	st, _ = call(t, "POST", srv.url+"/auth/setup", "", map[string]any{"token": m[1], "email": "second@example.com"}, nil)
+	wantStatus(t, st, 401, "setup token used twice")
 	spaces := decode[[]SpaceInfo](t, in.must("space", "list"))
-	if len(spaces) != 2 || spaces[0].Name != "default" || spaces[0].Level != "owner" || spaces[0].ID.String() != rs[0].Space {
+	if len(spaces) != 1 || spaces[0].Level != "owner" {
 		t.Errorf("spaces: %+v", spaces)
-	}
-	if n := in.psql("archive", "SELECT count(*) FROM information_schema.columns WHERE column_name = 'space' AND is_nullable = 'YES'"); n != "0" {
-		t.Errorf("%s space columns still nullable", n)
 	}
 }
 
@@ -927,7 +904,7 @@ func TestWithoutPostgresInstalledTheFirstRunDownloadsItIntoTheDataDir(t *testing
 			}
 		}
 	}
-	in := newInst(t, path, "ARCHIVE_PG_BIN=", "ARCHIVE_EMBED_MODEL=embed")
+	in := newInst(t, path, "ARCHIVE_PG_BIN=")
 	_, errs, err := in.run("", "types")
 	if err != nil || !strings.Contains(errs, "downloading Postgres "+pgVersion) {
 		t.Fatalf("first run: %v\n%s", err, errs)
@@ -936,7 +913,7 @@ func TestWithoutPostgresInstalledTheFirstRunDownloadsItIntoTheDataDir(t *testing
 		t.Fatal(err)
 	}
 	srv := in.serve()
-	if log := srv.log.String(); strings.Contains(log, "downloading") || !strings.Contains(log, "semantic search is off (pgvector is not installed)") {
+	if log := srv.log.String(); strings.Contains(log, "downloading") {
 		t.Fatalf("second run:\n%s", log)
 	}
 	if out := in.must("types"); !strings.Contains(out, "email") {
@@ -974,9 +951,6 @@ func TestDockerImageServesAndAcceptsCLICommandsFromDockerExec(t *testing.T) {
 			out, _ := exec.Command("docker", "logs", name).CombinedOutput()
 			t.Fatalf("container not healthy:\n%s", out)
 		}
-	}
-	if out := docker("", "exec", name, "wget", "-q", "-O", "-", "http://127.0.0.1:8080/records"); !strings.Contains(out, `<div id="app">`) {
-		t.Errorf("image does not serve the dashboard: %s", out)
 	}
 	docker(e2eSpec, "exec", "-i", name, "archive", "spec", "push", "-")
 	docker("", "exec", name, "archive", "create", "company", `{"name":"Docker Inc"}`)
@@ -1112,45 +1086,7 @@ func (g *e2eGoogle) handler(t *testing.T) http.Handler {
 	return mux
 }
 
-const e2eAirbyte = `#!/bin/sh
-cmd=$1; shift
-config=; state=
-while [ $# -gt 0 ]; do
-  case $1 in --config) config=$2; shift;; --state) state=$2; shift;; --catalog) catalog=$2; shift;; esac
-  shift
-done
-case $cmd in
-spec) echo '{"type":"SPEC","spec":{"connectionSpecification":{"required":["api_key"]}}}';;
-check)
-  if grep -q '"api_key":"s3cret"' "$config"; then echo '{"type":"CONNECTION_STATUS","connectionStatus":{"status":"SUCCEEDED"}}'
-  else echo '{"type":"CONNECTION_STATUS","connectionStatus":{"status":"FAILED","message":"bad key"}}'; fi;;
-discover) echo '{"type":"CATALOG","catalog":{"streams":[{"name":"notes","json_schema":{},"supported_sync_modes":["full_refresh","incremental"],"source_defined_cursor":true,"source_defined_primary_key":[["id"]]}]}}';;
-read)
-  grep -q '"sync_mode":"incremental"' "$catalog" || exit 3
-  [ -f DIR/slow ] && sleep 3
-  last=0
-  [ -n "$state" ] && last=$(sed -n 's/.*"cursor":\([0-9]*\).*/\1/p' "$state")
-  n=$(cat DIR/count)
-  echo 'not json, ignored'
-  echo '{"type":"LOG","log":{"level":"INFO","message":"reading"}}'
-  i=$((last+1))
-  while [ $i -le $n ]; do
-    echo "{\"type\":\"RECORD\",\"record\":{\"stream\":\"notes\",\"data\":{\"id\":$i,\"body\":\"Note $i\"},\"emitted_at\":0}}"
-    i=$((i+1))
-  done
-  echo "{\"type\":\"STATE\",\"state\":{\"type\":\"STREAM\",\"stream\":{\"stream_descriptor\":{\"name\":\"notes\"},\"stream_state\":{\"cursor\":$n}}}}";;
-esac
-`
-
-const e2eSinger = `#!/bin/sh
-while [ $# -gt 0 ]; do [ "$1" = --state ] && exit 0; shift; done
-echo '{"type":"SCHEMA","stream":"tasks","schema":{},"key_properties":["id"]}'
-echo '{"type":"RECORD","stream":"tasks","record":{"id":"t1","title":"Buy milk"}}'
-echo '{"type":"RECORD","stream":"tasks","record":{"id":"t2","title":"Call mom"}}'
-echo '{"type":"STATE","value":{"done":true}}'
-`
-
-func TestSourcesSyncGmailDriveIMAPAndExternalConnectorsIntoRawAndTypes(t *testing.T) {
+func TestSourcesSyncGmailDriveAndFolderIntoTypes(t *testing.T) {
 	g := &e2eGoogle{history: 99, added: map[int]string{}, subjects: map[string]string{}, fail: 1}
 	g.deliver("m1", "Hello one")
 	g.deliver("m2", "Hello two")
@@ -1174,34 +1110,6 @@ func TestSourcesSyncGmailDriveIMAPAndExternalConnectorsIntoRawAndTypes(t *testin
 	}))
 	defer llm.Close()
 
-	mem := imapmemserver.New()
-	mailbox := imapmemserver.NewUser("bob@icloud.test", "app-pass")
-	mailbox.Create("INBOX", nil)
-	mem.AddUser(mailbox)
-	deliverIMAP := func(subject string) {
-		msg := "From: Carol <carol@example.com>\r\nTo: bob@icloud.test\r\nSubject: " + subject + "\r\nDate: Thu, 22 Oct 2026 10:00:00 +0000\r\n" +
-			"MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHi from " + subject +
-			"\r\n--b\r\nContent-Type: text/csv\r\nContent-Disposition: attachment; filename=data.csv\r\n\r\na,b\r\n--b--\r\n"
-		if _, err := mailbox.Append("INBOX", bytes.NewReader([]byte(msg)), &imap.AppendOptions{}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	deliverIMAP("Mail one")
-	deliverIMAP("Mail two")
-	imapSrv := imapserver.New(&imapserver.Options{
-		NewSession: func(*imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
-			return mem.NewSession(), nil, nil
-		},
-		Caps:         imap.CapSet{imap.CapIMAP4rev1: {}},
-		InsecureAuth: true,
-	})
-	imapLn, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	go imapSrv.Serve(imapLn)
-	defer imapSrv.Close()
-
 	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com", "ARCHIVE_GOOGLE_CLIENT_ID=cid", "ARCHIVE_GOOGLE_CLIENT_SECRET=csecret",
 		"ARCHIVE_GOOGLE_API_URL="+google.URL, "ARCHIVE_GOOGLE_TOKEN_URL="+google.URL+"/token", "ARCHIVE_LLM_URL="+llm.URL+"/v1", "ARCHIVE_LLM_MODEL=fake")
 	srv := in.serve()
@@ -1212,10 +1120,7 @@ func TestSourcesSyncGmailDriveIMAPAndExternalConnectorsIntoRawAndTypes(t *testin
 	in.must("spec", "push", specPath)
 	aliceTok := decode[Token](t, in.must("token", "create", "-name", "Claude")).Secret
 	bobTok := decode[Token](t, in.must("-as", "bob@example.com", "token", "create")).Secret
-	aliceHome := in.psql("archive", "SELECT home FROM users WHERE email = 'alice@example.com'")
-	rawCount := func(src Source) string {
-		return in.psql("archive", "SELECT count(*) FROM raw WHERE source = '"+src.Kind+":"+src.ID.String()+"' AND space = '"+aliceHome+"'")
-	}
+	aliceHome := in.psql("archive", "SELECT home FROM \"user\" WHERE email = 'alice@example.com'")
 	runCLI := func(t *testing.T, name string) SyncResult {
 		t.Helper()
 		return decode[SyncResult](t, in.on(t).must("source", "run", name))
@@ -1240,19 +1145,12 @@ func TestSourcesSyncGmailDriveIMAPAndExternalConnectorsIntoRawAndTypes(t *testin
 		if res.Fetched != 2 || res.New != 2 || res.Mapped != 2 || res.Status != "ok" || g.listCalls != 2 {
 			t.Fatalf("first sync %+v, list calls %d", res, g.listCalls)
 		}
-		if n := rawCount(gmail); n != "2" {
-			t.Fatalf("%s raw rows in alice's space", n)
-		}
-		row := in.psql("archive", "SELECT payload->'attachments'->0->>'filename', payload->>'text' FROM raw WHERE external_id = 'm1'")
-		if !strings.HasPrefix(row, "invoice.pdf|From: Ann <ann@example.com>\nSubject: Hello one\n\nBody of Hello one") {
-			t.Errorf("payload: %q", row)
-		}
-		fid := in.psql("archive", "SELECT payload->'attachments'->0->>'file_id' FROM raw WHERE external_id = 'm1'")
+		fid := in.psql("archive", "SELECT id FROM file WHERE name = 'invoice.pdf' ORDER BY id LIMIT 1")
 		f := e2eWaitFile(t, api, aliceTok, fid)
 		if f.Name != "invoice.pdf" || f.MIME != "application/pdf" || f.Status != "done" || f.Space.String() != aliceHome || f.Metadata["pages"] != 1.0 {
 			t.Errorf("attachment file: %+v", f)
 		}
-		if text := in.psql("archive", "SELECT text FROM files WHERE id = '"+fid+"'"); !strings.Contains(text, "Attachment of m1") {
+		if text := in.psql("archive", "SELECT text FROM file WHERE id = '"+fid+"'"); !strings.Contains(text, "Attachment of m1") {
 			t.Errorf("attachment text: %q", text)
 		}
 		rs := decode[[]e2eRecord](t, in.must("list", "message"))
@@ -1305,135 +1203,31 @@ func TestSourcesSyncGmailDriveIMAPAndExternalConnectorsIntoRawAndTypes(t *testin
 		wantStatus(t, st, 401, "callback with the right source and a forged secret")
 		st, _ = call(t, "GET", cb+url.QueryEscape(u.Query().Get("state")), "", nil, nil)
 		wantStatus(t, st, 200, "callback")
-		waitRaw := func(want string) {
-			for deadline := time.Now().Add(20 * time.Second); rawCount(created.Source) != want; time.Sleep(200 * time.Millisecond) {
+		waitState := func(want string) Source {
+			var s Source
+			for deadline := time.Now().Add(20 * time.Second); !strings.Contains(string(s.State), want); time.Sleep(200 * time.Millisecond) {
 				if time.Now().After(deadline) {
-					t.Fatalf("drive raw rows %s, want %s\n%s", rawCount(created.Source), want, srv.log)
+					t.Fatalf("drive state %s, want %s\n%s", s.State, want, srv.log)
 				}
+				call(t, "GET", api+"/sources/docs", aliceTok, nil, &s)
 			}
+			return s
 		}
-		waitRaw("3")
-		texts := in.psql("archive", "SELECT string_agg(external_id || '=' || (payload->>'text'), ';' ORDER BY external_id) FROM raw WHERE source = 'drive:"+created.ID.String()+"'")
-		if texts != "d1=Doc text from Drive;d2=Contents of d2;d3=" {
-			t.Errorf("drive texts: %q", texts)
-		}
-		if f := in.psql("archive", "SELECT f.name || '|' || f.mime FROM raw r JOIN files f ON f.id = (r.payload->>'file_id')::uuid WHERE r.external_id = 'd3'"); f != "photo.jpg|image/jpeg" {
+		waitState(`"page_token":"1"`)
+		if f := in.psql("archive", "SELECT name || '|' || mime || '|' || (space = '"+aliceHome+"') FROM file WHERE name = 'photo.jpg'"); f != "photo.jpg|image/jpeg|true" {
 			t.Errorf("drive binary file: %q", f)
 		}
 		g.mu.Lock()
 		g.newFile = true
 		g.mu.Unlock()
-		waitRaw("4")
-		var s Source
-		call(t, "GET", api+"/sources/docs", aliceTok, nil, &s)
-		if !strings.Contains(string(s.State), `"page_token":"2"`) || s.Status == "error" {
+		if s := waitState(`"page_token":"2"`); s.Status == "error" {
 			t.Errorf("drive source: %+v %s", s, s.State)
 		}
-	})
-
-	t.Run("IMAPSyncsByUIDOverMCPAndCLI", func(t *testing.T) {
-		in := in.on(t)
-		cfg := `{"config":{"host":"` + imapLn.Addr().String() + `","username":"bob@icloud.test","plaintext":true},"credentials":{"password":"app-pass"}}`
-		in.must("source", "add", "imap", "-name", "icloud", cfg)
-		got, isErr := mcpCall(t, srv.url, aliceTok, "sync", map[string]any{"source": "icloud"})
-		if isErr || !strings.Contains(got, `"new":2`) {
-			t.Fatalf("mcp sync: %s", got)
-		}
-		deliverIMAP("Mail three")
-		if res := runCLI(t, "icloud"); res.Fetched != 1 || res.New != 1 {
-			t.Fatalf("imap incremental: %+v", res)
-		}
-		row := in.psql("archive", "SELECT payload->'headers'->>'Subject', payload->'attachments'->0->>'filename', payload->>'text' FROM raw WHERE external_id LIKE 'INBOX:%:3'")
-		if !strings.HasPrefix(row, "Mail three|data.csv|From: Carol <carol@example.com>") || !strings.Contains(row, "Hi from Mail three") {
-			t.Errorf("imap payload: %q", row)
-		}
-		if n := in.psql("archive", "SELECT count(*) FROM secrets WHERE position(convert_to('app-pass', 'UTF8') in value) > 0 OR position(convert_to('rt-1', 'UTF8') in value) > 0"); n != "0" {
+		if n := in.psql("archive", "SELECT count(*) FROM secret WHERE position(convert_to('rt-1', 'UTF8') in value) > 0"); n != "0" {
 			t.Fatalf("credentials stored in plain text")
 		}
-		if n := in.psql("archive", "SELECT count(*) FROM sources WHERE config::text LIKE '%app-pass%' OR state::text LIKE '%app-pass%'"); n != "0" {
-			t.Fatalf("password in source config")
-		}
-		in.must("source", "add", "imap", "-name", "wrong", strings.Replace(cfg, "app-pass", "nope", 1))
-		if errs := in.fails("source", "run", "wrong"); !strings.Contains(errs, "imap login") {
-			t.Errorf("wrong password: %s", errs)
-		}
-		var s Source
-		call(t, "GET", api+"/sources/wrong", aliceTok, nil, &s)
-		if s.Status != "error" || s.Failures != 1 || !strings.Contains(s.Error, "imap login") {
-			t.Errorf("failed source: %+v", s)
-		}
-	})
-
-	t.Run("ExternalAirbyteAndSingerConnectorsKeepTheirState", func(t *testing.T) {
-		in := in.on(t)
-		script := filepath.Join(in.dir, "airbyte.sh")
-		os.WriteFile(script, []byte(strings.ReplaceAll(e2eAirbyte, "DIR", in.dir)), 0o755)
-		os.WriteFile(filepath.Join(in.dir, "count"), []byte("2"), 0o644)
-		body := func(key string) string {
-			return `{"config":{"command":["` + script + `"],"config":{"region":"eu"}},"credentials":{"api_key":"` + key + `"}}`
-		}
-		if errs := in.fails("source", "add", "external", "-name", "notes", body("wrong")); !strings.Contains(errs, "connector check failed: bad key") {
-			t.Errorf("check with a bad key: %s", errs)
-		}
-		if errs := in.fails("source", "add", "external", "-name", "notes", `{"config":{"command":["`+script+`"]}}`); !strings.Contains(errs, "config.api_key: required by the connector") {
-			t.Errorf("spec required keys: %s", errs)
-		}
-		notes := decode[Source](t, in.must("source", "add", "external", "-name", "notes", body("s3cret")))
-		if res := runCLI(t, "notes"); res.New != 2 {
-			t.Fatalf("first read: %+v", res)
-		}
-		if res := runCLI(t, "notes"); res.Fetched != 0 {
-			t.Fatalf("read with state: %+v", res)
-		}
-		os.WriteFile(filepath.Join(in.dir, "count"), []byte("3"), 0o644)
-		if res := runCLI(t, "notes"); res.Fetched != 1 || res.New != 1 {
-			t.Fatalf("incremental read: %+v", res)
-		}
-		if ids := in.psql("archive", "SELECT string_agg(external_id, ',' ORDER BY external_id) FROM raw WHERE source = 'external:"+notes.ID.String()+"'"); ids != "notes:1,notes:2,notes:3" {
-			t.Errorf("external ids: %s", ids)
-		}
-
-		os.WriteFile(filepath.Join(in.dir, "slow"), nil, 0o644)
-		done := make(chan SyncResult)
-		go func() {
-			var res SyncResult
-			call(t, "POST", api+"/sources/notes/run", aliceTok, nil, &res)
-			done <- res
-		}()
-		for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(50 * time.Millisecond) {
-			var s Source
-			call(t, "GET", api+"/sources/notes", aliceTok, nil, &s)
-			if s.Status == "running" {
-				break
-			}
-			if time.Now().After(deadline) {
-				t.Fatal("slow sync never started")
-			}
-		}
-		if errs := in.fails("source", "run", "notes"); !strings.Contains(errs, "already syncing") {
-			t.Errorf("second run while the first holds the lock: %s", errs)
-		}
-		if res := <-done; res.Status != "ok" {
-			t.Errorf("slow run: %+v", res)
-		}
-		os.Remove(filepath.Join(in.dir, "slow"))
-
-		singer := filepath.Join(in.dir, "singer.sh")
-		os.WriteFile(singer, []byte(e2eSinger), 0o755)
-		in.must("source", "add", "external", "-name", "tasks", `{"config":{"command":["`+singer+`"],"protocol":"singer"}}`)
-		if res := runCLI(t, "tasks"); res.New != 2 {
-			t.Fatalf("singer: %+v", res)
-		}
-		if res := runCLI(t, "tasks"); res.Fetched != 0 {
-			t.Fatalf("singer with state: %+v", res)
-		}
-
-		in.must("source", "remove", "notes")
-		if n := in.psql("archive", "SELECT count(*) FROM secrets WHERE source_id = '"+notes.ID.String()+"'"); n != "0" {
-			t.Errorf("%s secrets left after remove", n)
-		}
-		if n := in.psql("archive", "SELECT count(*) FROM raw WHERE source = 'external:"+notes.ID.String()+"'"); n != "3" {
-			t.Errorf("raw after remove: %s", n)
+		if n := in.psql("archive", "SELECT count(*) FROM source WHERE config::text LIKE '%rt-1%' OR state::text LIKE '%rt-1%'"); n != "0" {
+			t.Fatalf("refresh token in source config")
 		}
 	})
 
@@ -1446,8 +1240,15 @@ func TestSourcesSyncGmailDriveIMAPAndExternalConnectorsIntoRawAndTypes(t *testin
 		if res := runCLI(t, "inbox"); res.New != 1 || res.Mapped != 1 {
 			t.Fatalf("folder: %+v", res)
 		}
-		if n := in.psql("archive", "SELECT count(*) FROM raw WHERE source = 'folder:"+inbox+"'"); n != "1" {
-			t.Errorf("folder raw: %s", n)
+		if res := runCLI(t, "inbox"); res.New != 0 {
+			t.Errorf("folder read the same file again: %+v", res)
+		}
+		os.WriteFile(filepath.Join(inbox, "mail.txt"), []byte("From: Dave <dave@example.com>\nSubject: Changed in a folder"), 0o644)
+		if res := runCLI(t, "inbox"); res.New != 1 || res.Mapped != 1 {
+			t.Errorf("folder after a change: %+v", res)
+		}
+		if got := in.must("list", "message", "subject=Changed in a folder"); !strings.Contains(got, "dave@example.com") {
+			t.Errorf("folder message: %s", got)
 		}
 	})
 
@@ -1471,15 +1272,15 @@ func TestSourcesSyncGmailDriveIMAPAndExternalConnectorsIntoRawAndTypes(t *testin
 		if got, _ := mcpCall(t, srv.url, aliceTok, "sources", map[string]any{}); !strings.Contains(got, `"name":"work"`) || !strings.Contains(got, `"name":"docs"`) {
 			t.Errorf("alice's mcp sources: %s", got)
 		}
-		role := in.psql("archive", "SELECT role FROM users WHERE email = 'bob@example.com'")
+		role := in.psql("archive", "SELECT role FROM \"user\" WHERE email = 'bob@example.com'")
 		in.psql("archive", "ALTER ROLE "+role+" LOGIN")
-		if got := in.psql(role, "SELECT (SELECT count(*) FROM raw) || ',' || (SELECT count(*) FROM sources) || ',' || (SELECT count(*) FROM secrets) || ',' || (SELECT count(*) FROM files)"); got != "0,0,0,0" {
-			t.Errorf("psql as bob sees raw, sources, secrets, files: %s", got)
+		if got := in.psql(role, "SELECT (SELECT count(*) FROM entity) || ',' || (SELECT count(*) FROM source) || ',' || (SELECT count(*) FROM secret) || ',' || (SELECT count(*) FROM file)"); got != "0,0,0,0" {
+			t.Errorf("psql as bob sees entities, sources, secrets, files: %s", got)
 		}
 		in.psql("archive", "ALTER ROLE "+role+" NOLOGIN")
-		alice := in.psql("archive", "SELECT role FROM users WHERE email = 'alice@example.com'")
+		alice := in.psql("archive", "SELECT role FROM \"user\" WHERE email = 'alice@example.com'")
 		in.psql("archive", "ALTER ROLE "+alice+" LOGIN")
-		if got := in.psql(alice, "SELECT (SELECT count(*) FROM sources) || ',' || (SELECT count(*) FROM secrets)"); got != "6,0" {
+		if got := in.psql(alice, "SELECT (SELECT count(*) FROM source) || ',' || (SELECT count(*) FROM secret)"); got != "3,0" {
 			t.Errorf("psql as alice sees sources, secrets: %s", got)
 		}
 		in.psql("archive", "ALTER ROLE "+alice+" NOLOGIN")
@@ -1815,7 +1616,7 @@ func TestFilesUploadProcessShareAndIntake(t *testing.T) {
 			t.Fatalf("same name %s, copy %s, bob %s, first %s", again.ID, copied.ID, bobs.ID, bigFile.ID)
 		}
 		blobs, _ := filepath.Glob(filepath.Join(in.dir, "blobs", "*", bigFile.Hash))
-		if n := in.psql("archive", "SELECT count(*) FROM files WHERE hash = '"+bigFile.Hash+"'"); n != "3" || len(blobs) != 1 {
+		if n := in.psql("archive", "SELECT count(*) FROM file WHERE hash = '"+bigFile.Hash+"'"); n != "3" || len(blobs) != 1 {
 			t.Errorf("%s file rows, %d blobs", n, len(blobs))
 		}
 		if leftovers, _ := os.ReadDir(filepath.Join(in.dir, "uploads")); len(leftovers) != 0 {
@@ -1887,15 +1688,15 @@ func TestFilesUploadProcessShareAndIntake(t *testing.T) {
 			t.Errorf("bob's mcp files: %s", got)
 		}
 		in.fails("-as", "bob@example.com", "file", "get", id, "-o", "-")
-		role := in.psql("archive", "SELECT role FROM users WHERE email = 'bob@example.com'")
+		role := in.psql("archive", "SELECT role FROM \"user\" WHERE email = 'bob@example.com'")
 		in.psql("archive", "ALTER ROLE "+role+" LOGIN")
-		if got := in.psql(role, "SELECT count(*) FROM files WHERE name = 'photo.jpg'"); got != "0" {
+		if got := in.psql(role, "SELECT count(*) FROM file WHERE name = 'photo.jpg'"); got != "0" {
 			t.Errorf("psql as bob sees %s photos", got)
 		}
 		in.psql("archive", "ALTER ROLE "+role+" NOLOGIN")
 	})
 
-	t.Run("TextExtractionFeedsIntakeWithPageProvenance", func(t *testing.T) {
+	t.Run("TextExtractionFeedsIntakeAndLinksTheFile", func(t *testing.T) {
 		in := in.on(t)
 		st, f := e2eUpload(t, api+"/files?intake=invoice", aliceTok, "invoice.pdf", e2ePDF("Cover letter", "Invoice INV-9 total due"))
 		wantStatus(t, st, 201, "upload pdf for intake")
@@ -1911,9 +1712,11 @@ func TestFilesUploadProcessShareAndIntake(t *testing.T) {
 		if len(rs) != 1 {
 			t.Fatalf("invoices: %+v", rs)
 		}
-		prov := decode[[]Provenance](t, in.must("provenance", "invoice", rs[0].ID))
-		if len(prov) != 1 || prov[0].FileID == nil || *prov[0].FileID != f.ID || prov[0].Page != 2 || prov[0].Method != "intake:fake" {
-			t.Errorf("provenance: %+v", prov)
+		if rs[0].Data["document"] != f.ID.String() {
+			t.Errorf("invoice does not reference its file: %+v", rs[0].Data)
+		}
+		if links := in.must("links", "file", f.ID.String()); !strings.Contains(links, `"kind": "document"`) || !strings.Contains(links, rs[0].ID) {
+			t.Errorf("file links: %s", links)
 		}
 
 		_, page := e2eUpload(t, api+"/files", aliceTok, "order.html", []byte("<html><head><style>p{}</style><script>var INV = 1</script></head><body><p>Order</p><p>INV-5</p></body></html>"))
@@ -1923,7 +1726,7 @@ func TestFilesUploadProcessShareAndIntake(t *testing.T) {
 			t.Errorf("html text: %d %q", resp.StatusCode, body)
 		}
 		res := decode[IntakeResult](t, in.must("intake", page.ID.String(), "-type", "invoice"))
-		if got := decode[e2eRecord](t, in.must("get", "invoice", res.RecordID.String())); got.Data["number"] != "INV-5" {
+		if got := decode[e2eRecord](t, in.must("get", "invoice", res.EntityID.String())); got.Data["number"] != "INV-5" {
 			t.Errorf("intake from html: %+v", got)
 		}
 
@@ -2062,12 +1865,12 @@ func e2eTitles(hits []SearchHit) string {
 	for _, h := range hits {
 		var d map[string]any
 		json.Unmarshal(h.Data, &d)
-		out = append(out, fmt.Sprint(cmp.Or[any](d["title"], d["name"], h.Source)))
+		out = append(out, fmt.Sprint(cmp.Or[any](d["title"], d["name"])))
 	}
 	return strings.Join(out, "|")
 }
 
-func TestFullTextSearchInDutchAndEnglishAcrossRecordsFilesRawAndUsers(t *testing.T) {
+func TestFullTextSearchInDutchAndEnglishAcrossEntitiesFilesAndUsers(t *testing.T) {
 	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
 	srv := in.serve()
 	api := srv.url + "/api"
@@ -2092,18 +1895,13 @@ func TestFullTextSearchInDutchAndEnglishAcrossRecordsFilesRawAndUsers(t *testing
 	_, en := e2eUpload(t, api+"/files", aliceTok, "policy.pdf", e2ePDF("Home insurance policy", "Covers water damage in the kitchen"))
 	e2eWaitFile(t, api, aliceTok, nl.ID.String())
 	e2eWaitFile(t, api, aliceTok, en.ID.String())
-	inbox := filepath.Join(in.dir, "inbox")
-	os.MkdirAll(inbox, 0o755)
-	os.WriteFile(filepath.Join(inbox, "memo.txt"), []byte("Reminder: the plumber comes on Tuesday"), 0o644)
-	in.must("source", "add", "folder", "-name", "inbox", `{"config":{"path":"`+inbox+`"}}`)
-	in.must("source", "run", "inbox")
 
-	t.Run("DutchAndEnglishRecordsRankByTheirWords", func(t *testing.T) {
+	t.Run("DutchAndEnglishEntitiesRankByTheirWords", func(t *testing.T) {
 		hits := e2eSearch(t, api, aliceTok, "huurcontract utrecht")
 		if got := e2eTitles(hits); !strings.HasPrefix(got, "Huurcontract appartement Utrecht|Weekend away") {
 			t.Fatalf("huurcontract utrecht: %s", got)
 		}
-		if hits[0].TextRank != 1 || hits[0].VectorRank != 0 || hits[0].Kind != "record" || hits[0].Type != "note" {
+		if hits[0].Kind != "entity" || hits[0].Type != "note" {
 			t.Errorf("hit: %+v", hits[0])
 		}
 		if got := e2eTitles(e2eSearch(t, api, aliceTok, "the lease for the London flat")); !strings.HasPrefix(got, "Lease agreement London flat") {
@@ -2130,16 +1928,6 @@ func TestFullTextSearchInDutchAndEnglishAcrossRecordsFilesRawAndUsers(t *testing
 		hits = e2eSearch(t, api, aliceTok, "water damage", "type", "file")
 		if len(hits) != 1 || hits[0].ID != en.ID {
 			t.Fatalf("english pdf: %+v", hits)
-		}
-	})
-
-	t.Run("UnmappedSyncedItemsAreFoundByTheirSource", func(t *testing.T) {
-		hits := e2eSearch(t, api, aliceTok, "plumber", "source", "inbox")
-		if len(hits) != 1 || hits[0].Kind != "raw" || hits[0].Source != "folder:"+inbox || !strings.Contains(hits[0].Snippet, "**plumber**") {
-			t.Fatalf("raw: %+v", hits)
-		}
-		if hits := e2eSearch(t, api, aliceTok, "huurcontract", "source", "inbox"); len(hits) != 0 {
-			t.Errorf("source filter lets records through: %s", e2eTitles(hits))
 		}
 	})
 
@@ -2175,7 +1963,7 @@ func TestFullTextSearchInDutchAndEnglishAcrossRecordsFilesRawAndUsers(t *testing
 				t.Errorf("%s matches %s", q, e2eTitles(hits))
 			}
 		}
-		if n := in.psql("archive", "SELECT count(*) FROM records WHERE search_record(type, data)::text LIKE '%2333%' OR search_text(data) LIKE '%2333%'"); n != "0" {
+		if n := in.psql("archive", "SELECT count(*) FROM entity WHERE search_entity(type, data)::text LIKE '%2333%' OR search_text(data) LIKE '%2333%'"); n != "0" {
 			t.Errorf("secret in %s search vectors", n)
 		}
 	})
@@ -2189,7 +1977,7 @@ func TestFullTextSearchInDutchAndEnglishAcrossRecordsFilesRawAndUsers(t *testing
 			t.Errorf("alice api: %s", got)
 		}
 		if got := e2eSearch(t, api, bobTok, "verhuurder plumber cafe"); len(got) != 0 {
-			t.Errorf("bob sees alice's files and raw: %+v", got)
+			t.Errorf("bob sees alice's notes and files: %+v", got)
 		}
 		if got := in.must("-as", "bob@example.com", "search", "huurcontract", "utrecht"); !strings.Contains(got, "Bob huurcontract") || strings.Contains(got, "appartement") {
 			t.Errorf("bob cli: %s", got)
@@ -2203,19 +1991,19 @@ func TestFullTextSearchInDutchAndEnglishAcrossRecordsFilesRawAndUsers(t *testing
 		if got, _ := mcpCall(t, srv.url, bobTok, "search", map[string]any{"query": "huurcontract utrecht"}); strings.Contains(got, "appartement") {
 			t.Errorf("bob mcp: %s", got)
 		}
-		role := in.psql("archive", "SELECT role FROM users WHERE email = 'bob@example.com'")
+		role := in.psql("archive", "SELECT role FROM \"user\" WHERE email = 'bob@example.com'")
 		in.psql("archive", "ALTER ROLE "+role+" LOGIN")
 		defer in.psql("archive", "ALTER ROLE "+role+" NOLOGIN")
-		q := "SELECT (SELECT count(*) FROM records WHERE search_record(type, data) @@ search_query('huurcontract verhuurder')) || ',' || " +
-			"(SELECT count(*) FROM files WHERE search_file(text) @@ search_query('verhuurder')) || ',' || (SELECT count(*) FROM raw WHERE search_raw(payload) @@ search_query('plumber'))"
-		if got := in.psql(role, q); got != "1,0,0" {
+		q := "SELECT (SELECT count(*) FROM entity WHERE search_entity(type, data) @@ search_query('huurcontract verhuurder')) || ',' || " +
+			"(SELECT count(*) FROM file WHERE search_file(text) @@ search_query('verhuurder'))"
+		if got := in.psql(role, q); got != "1,0" {
 			t.Errorf("psql as bob: %s", got)
 		}
 	})
 
 	t.Run("IndexedFieldsGetExpressionIndexes", func(t *testing.T) {
 		in := in.on(t)
-		q := "SELECT count(*) FROM pg_indexes WHERE tablename = 'records' AND indexdef LIKE '%(data ->> ''title''::text)%'"
+		q := "SELECT count(*) FROM pg_indexes WHERE tablename = 'entity' AND indexdef LIKE '%(data ->> ''title''::text)%'"
 		if n := in.psql("archive", q); n != "1" {
 			t.Fatalf("title index: %s", n)
 		}
@@ -2226,268 +2014,6 @@ func TestFullTextSearchInDutchAndEnglishAcrossRecordsFilesRawAndUsers(t *testing
 		in.must("spec", "push", spec)
 		if n := in.psql("archive", q); n != "0" {
 			t.Errorf("title index kept after indexed was dropped: %s", n)
-		}
-	})
-
-	t.Run("WithoutAnEmbeddingModelSearchIsFullTextOnly", func(t *testing.T) {
-		in := in.on(t)
-		if n := in.psql("archive", "SELECT count(*) FROM pg_tables WHERE tablename = 'embeddings'"); n != "0" {
-			t.Errorf("embeddings table without a model: %s", n)
-		}
-		for _, h := range e2eSearch(t, api, aliceTok, "huur") {
-			if h.VectorRank != 0 {
-				t.Errorf("vector rank without a model: %+v", h)
-			}
-		}
-	})
-}
-
-type e2eEmbedder struct {
-	mu    sync.Mutex
-	fail  bool
-	calls int
-}
-
-var e2eConcepts = [][]string{{"huur", "lease", "rent", "tenancy", "apartment", "appartement", "woning", "flat"}, {"factuur", "invoice", "bill", "energie"}, {"foto", "photo", "whiteboard"}, {"utrecht"}}
-
-func e2eVector(text string) []float64 {
-	v := make([]float64, 8)
-	v[7] = 0.05
-	for _, w := range strings.Fields(strings.ToLower(text)) {
-		for i, c := range e2eConcepts {
-			if slices.ContainsFunc(c, func(s string) bool { return strings.HasPrefix(w, s) }) {
-				v[i]++
-			}
-		}
-	}
-	return v
-}
-
-func (e *e2eEmbedder) handler() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/embeddings", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Model string   `json:"model"`
-			Input []string `json:"input"`
-		}
-		json.NewDecoder(r.Body).Decode(&req)
-		e.mu.Lock()
-		e.calls++
-		fail := e.fail
-		e.mu.Unlock()
-		if fail || req.Model != "embed-fake" {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"message": "model is loading"}})
-			return
-		}
-		var data []any
-		for i, s := range req.Input {
-			data = append(data, map[string]any{"index": i, "embedding": e2eVector(s)})
-		}
-		json.NewEncoder(w).Encode(map[string]any{"data": data})
-	})
-	mux.HandleFunc("POST /v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": "Whiteboard with the Q3 roadmap"}}}})
-	})
-	return mux
-}
-
-type e2eVecInst struct {
-	url     string
-	cli     func(stdin string, args ...string) string
-	psql    func(user, sql string) string
-	restart func(between func())
-}
-
-func e2eVecLocal(t *testing.T, llm string) *e2eVecInst {
-	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com", "ARCHIVE_LLM_URL="+llm+"/v1", "ARCHIVE_EMBED_MODEL=embed-fake", "ARCHIVE_EMBED_DIM=8", "ARCHIVE_VISION_MODEL=vision-fake")
-	srv := in.serve()
-	v := &e2eVecInst{url: srv.url, psql: in.psql}
-	v.cli = func(stdin string, args ...string) string {
-		t.Helper()
-		out, errs, err := in.run(stdin, args...)
-		if err != nil {
-			t.Fatalf("archive %s: %v\n%s%s", strings.Join(args, " "), err, out, errs)
-		}
-		return out
-	}
-	v.restart = func(between func()) {
-		srv.stop()
-		between()
-		srv = in.serve()
-		v.url = srv.url
-	}
-	return v
-}
-
-func e2eVecDocker(t *testing.T, llm string) *e2eVecInst {
-	name := fmt.Sprintf("archive-e2e-vec-%d", time.Now().UnixNano())
-	docker := func(stdin string, args ...string) string {
-		t.Helper()
-		c := exec.Command("docker", args...)
-		c.Stdin = strings.NewReader(stdin)
-		out, err := c.CombinedOutput()
-		if err != nil {
-			t.Fatalf("docker %s: %v\n%s", strings.Join(args, " "), err, out)
-		}
-		return string(out)
-	}
-	t.Cleanup(func() {
-		exec.Command("docker", "rm", "-f", name).Run()
-		exec.Command("docker", "volume", "rm", "-f", name).Run()
-		exec.Command("docker", "rmi", "-f", name).Run()
-	})
-	docker("", "build", "-q", "-t", name, "..")
-	_, port, _ := net.SplitHostPort(strings.TrimPrefix(llm, "http://"))
-	docker("", "run", "-d", "--name", name, "-v", name+":/data", "-p", "127.0.0.1::8080", "-e", "ARCHIVE_ADMIN_EMAIL=alice@example.com",
-		"-e", "ARCHIVE_LLM_URL=http://host.docker.internal:"+port+"/v1", "-e", "ARCHIVE_EMBED_MODEL=embed-fake", "-e", "ARCHIVE_EMBED_DIM=8",
-		"-e", "ARCHIVE_VISION_MODEL=vision-fake", name)
-	v := &e2eVecInst{}
-	ready := func() {
-		for deadline := time.Now().Add(90 * time.Second); ; time.Sleep(500 * time.Millisecond) {
-			if exec.Command("docker", "exec", name, "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz").Run() == nil {
-				break
-			}
-			if time.Now().After(deadline) {
-				out, _ := exec.Command("docker", "logs", name).CombinedOutput()
-				t.Fatalf("container not healthy:\n%s", out)
-			}
-		}
-		v.url = "http://" + strings.TrimSpace(strings.Split(docker("", "port", name, "8080"), "\n")[0])
-	}
-	ready()
-	v.cli = func(stdin string, args ...string) string {
-		return docker(stdin, append([]string{"exec", "-i", name, "archive"}, args...)...)
-	}
-	v.psql = func(user, sql string) string {
-		return strings.TrimSpace(docker("", "exec", name, "psql", "-X", "-h", "/data", "-U", user, "-d", "archive", "-Atc", sql))
-	}
-	v.restart = func(between func()) {
-		docker("", "stop", name)
-		between()
-		docker("", "start", name)
-		ready()
-	}
-	return v
-}
-
-func TestSemanticAndHybridSearchWithPgvector(t *testing.T) {
-	emb := &e2eEmbedder{}
-	llm := httptest.NewServer(emb.handler())
-	defer llm.Close()
-	var v *e2eVecInst
-	share, _ := exec.Command("pg_config", "--sharedir").Output()
-	if _, err := os.Stat(filepath.Join(strings.TrimSpace(string(share)), "extension", "vector.control")); err == nil {
-		v = e2eVecLocal(t, llm.URL)
-	} else if exec.Command("docker", "info").Run() == nil {
-		t.Log("the local Postgres has no pgvector; running the vector assertions in the Docker image")
-		v = e2eVecDocker(t, llm.URL)
-	} else {
-		t.Skip("vector assertions skipped: the local Postgres has no pgvector and Docker is not available; full-text search is covered by TestFullTextSearchInDutchAndEnglishAcrossRecordsFilesRawAndUsers")
-	}
-	api := func() string { return v.url + "/api" }
-	v.cli("", "user", "add", "bob@example.com")
-	v.cli(e2eSearchSpec, "spec", "push", "-")
-	aliceTok := decode[Token](t, v.cli("", "token", "create")).Secret
-	bobTok := decode[Token](t, v.cli("", "-as", "bob@example.com", "token", "create")).Secret
-	note := func(tok, title, body string) string {
-		t.Helper()
-		var r e2eRecord
-		st, _ := call(t, "POST", api()+"/note", tok, map[string]any{"title": title, "body": body}, &r)
-		wantStatus(t, st, 201, "create note")
-		return r.ID
-	}
-	lease := note(aliceTok, "Huurcontract woning Oudegracht", "Maandelijkse huur vooruit betalen")
-	trip := note(aliceTok, "Utrecht trip", "Foto's van de Dom")
-	note(aliceTok, "Factuur energie", "Eneco september")
-	bobLease := note(bobTok, "Huurcontract van Bob", "huur woning")
-	var shot bytes.Buffer
-	png.Encode(&shot, image.NewGray(image.Rect(0, 0, 40, 20)))
-	_, scan := e2eUpload(t, api()+"/files", aliceTok, "scan.png", shot.Bytes())
-	e2eWaitFile(t, api(), aliceTok, scan.ID.String())
-	settled := func(want int) {
-		t.Helper()
-		for deadline := time.Now().Add(60 * time.Second); ; time.Sleep(200 * time.Millisecond) {
-			got := v.psql("archive", "SELECT (SELECT count(*) FROM embed_queue) || ',' || (SELECT count(DISTINCT record_id) FROM embeddings)")
-			if got == "0,"+strconv.Itoa(want) {
-				return
-			}
-			if time.Now().After(deadline) {
-				t.Fatalf("queue, embedded = %s, want 0,%d", got, want)
-			}
-		}
-	}
-	settled(5)
-
-	t.Run("ACloseMeaningWinsWithoutSharedWords", func(t *testing.T) {
-		hits := e2eSearch(t, api(), aliceTok, "rental agreement for an apartment")
-		if len(hits) == 0 || hits[0].ID.String() != lease || hits[0].VectorRank != 1 || hits[0].TextRank != 0 {
-			t.Fatalf("semantic: %+v", hits)
-		}
-		for _, h := range hits {
-			if h.ID.String() == bobLease {
-				t.Errorf("bob's lease in alice's results")
-			}
-		}
-	})
-
-	t.Run("HybridFusionCombinesBothRankings", func(t *testing.T) {
-		hits := e2eSearch(t, api(), aliceTok, "Utrecht huur")
-		if len(hits) < 2 || hits[0].ID.String() != lease && hits[0].ID.String() != trip {
-			t.Fatalf("hybrid: %+v", hits)
-		}
-		both := 0
-		for _, h := range hits[:2] {
-			if h.TextRank > 0 && h.VectorRank > 0 {
-				both++
-			}
-		}
-		if both != 2 || hits[0].Score <= hits[len(hits)-1].Score {
-			t.Errorf("hybrid ranks: %+v", hits)
-		}
-	})
-
-	t.Run("PhotosAreFoundByTheirOCRText", func(t *testing.T) {
-		hits := e2eSearch(t, api(), aliceTok, "photos of whiteboards")
-		if len(hits) == 0 || hits[0].ID != scan.ID || hits[0].Type != "file" || hits[0].VectorRank != 1 {
-			t.Fatalf("photo: %+v", hits)
-		}
-	})
-
-	t.Run("AnotherUsersVectorsNeverShowUp", func(t *testing.T) {
-		if out := v.cli("", "-as", "bob@example.com", "search", "rental", "apartment"); !strings.Contains(out, "Huurcontract van Bob") || strings.Contains(out, "Oudegracht") {
-			t.Errorf("bob cli: %s", out)
-		}
-		if out, isErr := mcpCall(t, v.url, aliceTok, "search", map[string]any{"query": "rental apartment"}); isErr || !strings.Contains(out, "Oudegracht") || strings.Contains(out, "van Bob") {
-			t.Errorf("alice mcp: %s", out)
-		}
-		role := v.psql("archive", "SELECT role FROM users WHERE email = 'bob@example.com'")
-		v.psql("archive", "ALTER ROLE "+role+" LOGIN")
-		defer v.psql("archive", "ALTER ROLE "+role+" NOLOGIN")
-		if got := v.psql(role, "SELECT string_agg(DISTINCT record_id::text, ',') FROM embeddings"); got != bobLease {
-			t.Errorf("psql as bob sees embeddings of %s", got)
-		}
-	})
-
-	t.Run("TheWorkerResumesAfterARestart", func(t *testing.T) {
-		emb.mu.Lock()
-		emb.fail = true
-		emb.mu.Unlock()
-		bill := note(aliceTok, "Waterbedrijf", "Factuur kwartaal drie")
-		for deadline := time.Now().Add(30 * time.Second); v.psql("archive", "SELECT tries FROM embed_queue WHERE record_id = '"+bill+"'") < "1"; time.Sleep(200 * time.Millisecond) {
-			if time.Now().After(deadline) {
-				t.Fatal("the failing embedding was not retried")
-			}
-		}
-		v.restart(func() {
-			emb.mu.Lock()
-			emb.fail = false
-			emb.mu.Unlock()
-		})
-		settled(6)
-		hits := e2eSearch(t, api(), aliceTok, "invoice", "type", "note")
-		if len(hits) < 2 || hits[0].VectorRank == 0 || !strings.Contains(e2eTitles(hits[:2]), "Waterbedrijf") {
-			t.Errorf("after restart: %s %+v", e2eTitles(hits), hits)
 		}
 	})
 }
@@ -2563,21 +2089,17 @@ func TestSavedViewsSourceUpdatesAndFullTokensOverHTTP(t *testing.T) {
 		wantStatus(t, st, 404, "another user's source")
 	})
 
-	t.Run("RemovingATypeThatHasObjectsApplies", func(t *testing.T) {
+	t.Run("RemovingATypeKeepsItsObjects", func(t *testing.T) {
+		in := in.on(t)
 		st, _ := call(t, "POST", api+"/invoice", aliceTok, map[string]any{"number": "INV-1"}, nil)
 		wantStatus(t, st, 201, "create invoice")
-		var c Change
-		call(t, "POST", api+"/changes", aliceTok, map[string]any{"ops": []Op{{Op: "remove_type", Type: "invoice"}}}, &c)
-		var p Preview
-		st, _ = call(t, "POST", api+"/changes/"+c.ID.String()+"/preview", aliceTok, nil, &p)
-		wantStatus(t, st, 200, "preview type removal")
-		if p.Touched != 1 || p.Failing != 1 {
-			t.Errorf("preview: touched %d, failing %d", p.Touched, p.Failing)
-		}
-		st, _ = call(t, "POST", api+"/changes/"+c.ID.String()+"/apply", aliceTok, nil, &c)
-		wantStatus(t, st, 200, "apply type removal")
+		st, _ = call(t, "DELETE", api+"/types/invoice", aliceTok, nil, nil)
+		wantStatus(t, st, 204, "remove type")
 		st, _ = call(t, "GET", api+"/invoice", aliceTok, nil, nil)
 		wantStatus(t, st, 404, "list removed type")
+		if n := in.psql("archive", "SELECT count(*) FROM entity WHERE type = 'invoice'"); n != "1" {
+			t.Errorf("%s invoices left, want 1", n)
+		}
 	})
 
 	t.Run("FullTokenManagesMembersAndTokens", func(t *testing.T) {
@@ -2615,7 +2137,7 @@ func TestSavedViewsSourceUpdatesAndFullTokensOverHTTP(t *testing.T) {
 		wantStatus(t, st, 401, "revoked full token")
 	})
 
-	t.Run("ChangeHistoryBuiltinFlagsAndSpaceFilters", func(t *testing.T) {
+	t.Run("BuiltinFlagsAndSpaceFilters", func(t *testing.T) {
 		var types struct {
 			Spec    Spec     `json:"spec"`
 			Builtin []string `json:"builtin"`
@@ -2625,26 +2147,11 @@ func TestSavedViewsSourceUpdatesAndFullTokensOverHTTP(t *testing.T) {
 		if !slices.Contains(types.Builtin, "email") || slices.Contains(types.Builtin, "person") || types.Spec.Types["person"] == nil || len(types.Edited) != 0 {
 			t.Errorf("types: builtin %v, edited %v", types.Builtin, types.Edited)
 		}
-		var cs []Change
-		st, _ := call(t, "GET", api+"/changes", bobTok, nil, &cs)
-		wantStatus(t, st, 200, "viewer lists changes")
-		if len(cs) < 2 || cs[0].Status != "applied" || cs[0].Ops[0].Op != "remove_type" || !strings.Contains(cs[0].ProposedBy, "alice@example.com") ||
-			slices.ContainsFunc(cs, func(c Change) bool { return strings.HasPrefix(c.ProposedBy, "revert:") }) {
-			t.Fatalf("changes: %+v", cs)
-		}
-		removed := cs[0]
-		st, _ = call(t, "POST", api+"/changes/"+removed.ID.String()+"/revert", aliceTok, nil, nil)
-		wantStatus(t, st, 200, "revert")
-		call(t, "GET", api+"/changes", aliceTok, nil, &cs)
-		if cs[0].ProposedBy != "revert:"+removed.ID.String() || cs[0].Status != "applied" || cs[0].FromVer != removed.ToVer || cs[1].ID != removed.ID || cs[1].Status != "reverted" {
-			t.Errorf("after revert: %+v", cs[:2])
-		}
-
 		var fam, own e2eRecord
 		call(t, "POST", api+"/company?space=family", aliceTok, map[string]any{"name": "Family firm"}, &fam)
 		call(t, "POST", api+"/company", aliceTok, map[string]any{"name": "Own firm"}, &own)
 		var rs []e2eRecord
-		st, _ = call(t, "GET", api+"/company?space=family", aliceTok, nil, &rs)
+		st, _ := call(t, "GET", api+"/company?space=family", aliceTok, nil, &rs)
 		wantStatus(t, st, 200, "list one space")
 		if len(rs) != 1 || rs[0].ID != fam.ID {
 			t.Errorf("family companies: %+v", rs)
@@ -2701,84 +2208,4 @@ func TestSavedViewsSourceUpdatesAndFullTokensOverHTTP(t *testing.T) {
 			t.Errorf("used magic link: %v %v", resp, err)
 		}
 	})
-}
-
-func TestDashboardIsServedAndBrowserSignInLandsInIt(t *testing.T) {
-	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=ann@example.com")
-	srv := in.serve()
-	get := func(path, accept string) *http.Response {
-		t.Helper()
-		req, _ := http.NewRequest("GET", srv.url+path, nil)
-		if accept != "" {
-			req.Header.Set("Accept", accept)
-		}
-		resp, err := (&http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-		return resp
-	}
-
-	built := false
-	if _, err := os.Stat(filepath.Join("web", "dist", "index.html")); err == nil {
-		built = true
-	}
-	page := get("/records/invoice", "text/html")
-	if built {
-		wantStatus(t, page.StatusCode, 200, "dashboard route")
-		if ct := page.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
-			t.Errorf("dashboard content type %q", ct)
-		}
-		if csp := page.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "frame-ancestors 'none'") {
-			t.Errorf("dashboard CSP %q", csp)
-		}
-	} else {
-		wantStatus(t, page.StatusCode, 503, "dashboard route without a build")
-	}
-	wantStatus(t, get("/assets/missing.js", "").StatusCode, 404, "missing asset")
-	st, _ := call(t, "POST", srv.url+"/records/invoice", "", map[string]any{}, nil)
-	wantStatus(t, st, 404, "non-GET outside the API")
-	if r := get("/api/person", "text/html"); r.StatusCode != 401 || !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
-		t.Errorf("API without a session: %d %s", r.StatusCode, r.Header.Get("Content-Type"))
-	}
-
-	call(t, "POST", srv.url+"/auth/magic", "", map[string]any{"email": "ann@example.com"}, nil)
-	re := regexp.MustCompile(`sign-in link for ann@example\.com: \S+(/auth/magic\?token=\S+)`)
-	var link string
-	for deadline := time.Now().Add(5 * time.Second); link == "" && time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
-		if m := re.FindStringSubmatch(srv.log.String()); m != nil {
-			link = m[1]
-		}
-	}
-	if link == "" {
-		t.Fatalf("no sign-in link in log:\n%s", srv.log)
-	}
-	first := get(link, "text/html,application/xhtml+xml")
-	wantStatus(t, first.StatusCode, 303, "browser opens the sign-in link")
-	if loc := first.Header.Get("Location"); loc != "/" {
-		t.Errorf("signed in browser goes to %q, want /", loc)
-	}
-	var session *http.Cookie
-	for _, c := range first.Cookies() {
-		if c.Name == "archive_session" {
-			session = c
-		}
-	}
-	if session == nil {
-		t.Fatal("no session cookie after browser sign-in")
-	}
-	var me struct {
-		Actor Actor `json:"actor"`
-	}
-	call(t, "GET", srv.url+"/auth/me", "", nil, &me, session)
-	if me.Actor.Email != "ann@example.com" {
-		t.Fatalf("me = %+v", me.Actor)
-	}
-	again := get(link, "text/html")
-	wantStatus(t, again.StatusCode, 303, "browser reuses the sign-in link")
-	if loc := again.Header.Get("Location"); !strings.HasPrefix(loc, "/signin?error=") {
-		t.Errorf("used link goes to %q, want /signin with an error", loc)
-	}
 }

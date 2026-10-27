@@ -9,32 +9,24 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 //go:embed demo.json
 var demoJSON []byte
 
 type demoSet struct {
-	Types   map[string]json.RawMessage `json:"types"`
-	Spaces  []string                   `json:"spaces"`
-	Records []struct {
+	Types    map[string]json.RawMessage `json:"types"`
+	Spaces   []string                   `json:"spaces"`
+	Entities []struct {
 		Ref   string         `json:"ref"`
 		Type  string         `json:"type"`
 		Space string         `json:"space"`
 		Data  map[string]any `json:"data"`
-	} `json:"records"`
+	} `json:"entities"`
 	Proposals []struct {
-		Type   string `json:"type"`
-		Space  string `json:"space"`
-		Label  string `json:"label"`
-		Source string `json:"source"`
-		Fields []struct {
-			Path       string  `json:"path"`
-			Value      any     `json:"value"`
-			Confidence float64 `json:"confidence"`
-		} `json:"fields"`
+		Type  string         `json:"type"`
+		Space string         `json:"space"`
+		Data  map[string]any `json:"data"`
 	} `json:"proposals"`
 }
 
@@ -73,7 +65,7 @@ func (a *Archive) LoadDemo(ctx context.Context) (map[string]int, error) {
 	now := time.Now()
 	ids := map[string]string{}
 	counts := map[string]int{}
-	for _, r := range d.Records {
+	for _, r := range d.Entities {
 		data, _ := demoResolve(r.Data, now, ids).(map[string]any)
 		rec, err := a.Create(ctx, r.Space, r.Type, data)
 		if err != nil {
@@ -84,64 +76,29 @@ func (a *Archive) LoadDemo(ctx context.Context) (map[string]int, error) {
 	}
 
 	spec := a.Spec()
-	for _, p := range d.Proposals {
+	for i, p := range d.Proposals {
 		fields, err := spec.Fields(p.Type)
 		if err != nil {
 			return nil, err
 		}
-		res := &IntakeResult{Type: p.Type}
-		accepted, complete := map[string]any{}, true
-		for _, name := range specKeys(fields) {
-			fr := FieldResult{Path: name, Route: "drop"}
-			for _, f := range p.Fields {
-				if f.Path != name {
-					continue
-				}
-				raw := demoResolve(f.Value, now, ids)
-				fr.Original, fr.Confidence, fr.RawScore = fmt.Sprint(raw), f.Confidence, f.Confidence
-				if v, err := spec.NormalizeField(fields[name], raw, a.hints); err == nil {
-					fr.Value, fr.Route = v, intakeRoute(f.Confidence, a.intake.cfg.Accept, a.intake.cfg.Review)
+		data := map[string]any{}
+		for k, v := range p.Data {
+			if f := fields[k]; f != nil {
+				if nv, err := spec.NormalizeField(f, demoResolve(v, now, ids), a.hints); err == nil {
+					data[k] = nv
 				}
 			}
-			if fr.Route == "accept" {
-				accepted[name] = fr.Value
-			} else if fields[name].Required {
-				complete = false
-			}
-			res.Fields = append(res.Fields, fr)
 		}
-		payload, _ := json.Marshal(map[string]any{"name": p.Label})
-		raw, err := coreDo(a, ctx, func(ctx context.Context) (*Raw, error) {
+		_, err = coreDo(a, ctx, func(ctx context.Context) (*Entity, error) {
 			sid, err := a.coreSpace(ctx, p.Space)
 			if err != nil {
 				return nil, err
 			}
-			raw := &Raw{Source: p.Source, ExternalID: "demo/" + p.Label, Payload: payload, Space: sid}
-			if _, err := a.st.PutRaw(ctx, raw); err != nil {
-				return nil, err
-			}
-			if !complete || len(accepted) == 0 {
-				return raw, nil
-			}
-			var prov []*Provenance
-			for _, f := range res.Fields {
-				if f.Route == "accept" {
-					prov = append(prov, &Provenance{FieldPath: f.Path, RawIDs: []uuid.UUID{raw.ID}, Method: "intake:demo", Confidence: f.Confidence, Original: f.Original})
-				}
-			}
-			rec := &Record{Type: p.Type, SpecVersion: spec.Version, Space: sid}
-			if err := a.coreSave(ctx, rec, accepted, prov); err != nil {
-				return nil, err
-			}
-			res.RecordID = rec.ID
-			return raw, nil
+			e := &Entity{Type: p.Type, Space: sid, Proposed: true}
+			return e, a.coreSave(ctx, e, data)
 		})
 		if err != nil {
-			return nil, fmt.Errorf("demo review %s: %w", p.Label, err)
-		}
-		res.RawID = raw.ID
-		if err := a.propose(ctx, raw, res); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("demo review %s %d: %w", p.Type, i, err)
 		}
 		counts["review"]++
 	}
