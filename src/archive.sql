@@ -66,27 +66,20 @@ CREATE TABLE archive.file (
 CREATE INDEX file_pending_idx ON archive.file (id) WHERE status = 'pending';
 CREATE INDEX file_search_idx ON archive.file USING gin (search);
 
-CREATE TABLE archive.source (
-    id          uuid PRIMARY KEY DEFAULT uuidv7(),
-    kind        text NOT NULL,
-    name        text NOT NULL,
-    space       uuid NOT NULL REFERENCES archive.space,
-    owner       text NOT NULL,
-    created_by  text NOT NULL DEFAULT '',
-    mode        text NOT NULL DEFAULT 'mirror',
-    schedule    text NOT NULL DEFAULT '',
-    rate        double precision NOT NULL DEFAULT 5,
-    config      jsonb NOT NULL DEFAULT '{}',
-    state       jsonb NOT NULL DEFAULT '{}',
-    status      text NOT NULL DEFAULT 'new',
-    error       text NOT NULL DEFAULT '',
-    failures    int NOT NULL DEFAULT 0,
-    last_run_at timestamptz,
-    next_run_at timestamptz,
-    created_at  timestamptz NOT NULL DEFAULT now(),
-    UNIQUE (space, name)
+CREATE TABLE archive.upload (
+    id         uuid PRIMARY KEY,
+    role       text NOT NULL,
+    space      uuid NOT NULL REFERENCES archive.space ON DELETE CASCADE,
+    name       text NOT NULL,
+    length     bigint NOT NULL,
+    parts      bigint[] NOT NULL DEFAULT '{}',
+    created_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX source_next_run_idx ON archive.source (next_run_at);
+
+CREATE TABLE archive.schema_file (
+    name text PRIMARY KEY,
+    body text NOT NULL
+);
 
 CREATE TABLE archive.view (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -133,7 +126,7 @@ $$;
 
 GRANT USAGE ON SCHEMA archive TO {p}_user;
 GRANT SELECT ON archive.space TO {p}_user;
-GRANT SELECT, INSERT, UPDATE, DELETE ON archive.source, archive.file, archive.view, archive.secret TO {p}_user;
+GRANT SELECT, INSERT, UPDATE, DELETE ON archive.file, archive.view, archive.secret TO {p}_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {p}_user;
 
 ALTER TABLE archive.space ENABLE ROW LEVEL SECURITY;
@@ -144,11 +137,6 @@ ALTER TABLE archive.file ENABLE ROW LEVEL SECURITY;
 ALTER TABLE archive.file FORCE ROW LEVEL SECURITY;
 CREATE POLICY viewer ON archive.file FOR SELECT USING (space = ANY (archive.my_spaces()));
 CREATE POLICY editor ON archive.file USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
-
-ALTER TABLE archive.source ENABLE ROW LEVEL SECURITY;
-ALTER TABLE archive.source FORCE ROW LEVEL SECURITY;
-CREATE POLICY viewer ON archive.source FOR SELECT USING (space = ANY (archive.my_spaces()));
-CREATE POLICY editor ON archive.source USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
 
 ALTER TABLE archive.view ENABLE ROW LEVEL SECURITY;
 ALTER TABLE archive.view FORCE ROW LEVEL SECURITY;

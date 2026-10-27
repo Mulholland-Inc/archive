@@ -154,7 +154,7 @@ interface StoredFile {
     sha256: string;
     /** Extracted metadata: pages, dimensions, mail headers, ... */
     metadata: Row;
-    /** pending, processing, done or error; text is ready when done. */
+    /** pending, done or error; text is ready when done. */
     status: string;
     error?: string;
     space: string;

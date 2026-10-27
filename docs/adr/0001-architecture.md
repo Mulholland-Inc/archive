@@ -32,7 +32,7 @@ Two Postgres schemas. Tables are named in the singular, and every id is a UUIDv7
 
 | Schema | Holds |
 |---|---|
-| `archive` | Archive's own tables (`space`, `user`, `token`, `file`, `file_version`, `share`, `source`, `view`, `secret`) and the built-in types as domains and composite types (`archive.email`, `archive.iban`, `archive.money`) |
+| `archive` | Archive's own tables (`space`, `user`, `token`, `file`, `file_version`, `share`, `view`, `secret`) and the built-in types as domains and composite types (`archive.email`, `archive.iban`, `archive.money`) |
 | `public` | One table per type. The table is the type and a row is the entity |
 
 There is no `type` or `entity` table: Postgres already is that. Archive reads types, columns, foreign keys and `COMMENT ON` descriptions from the catalog.
@@ -115,7 +115,7 @@ Archive is listed in ChatGPT, Claude, Gemini and Grok as one remote MCP server. 
 
 ## Files
 
-File bytes are content-addressed by SHA-256 in the `/data` volume or in S3. Uploads are resumable (tus). On upload, Archive pulls metadata, makes thumbnails and extracts the text of PDFs, HTML and email, so files are searchable and agents can read them.
+File bytes are content-addressed by SHA-256 in the `/data` volume or in S3. Uploads are resumable (tus). On upload, Archive pulls metadata, makes thumbnails and extracts the text of PDFs and HTML, so files are searchable and agents can read them.
 
 - **Versions**: a file is a name, a space and its current bytes. Every save adds a row to `archive.file_version` (file, hash, size, saved by, saved at) and points `file.hash` at the new bytes. Old bytes stay, so any version can be opened or restored, and a save that changes nothing costs nothing.
 - **Text and previews follow the current version**: each save extracts the text and makes the thumbnail again.
@@ -171,7 +171,7 @@ Short signed links stay for the app's own downloads, such as image previews; any
 
 ## Deployment
 
-`install.sh` pulls the image and runs it with one volume on port 8080, with Gotenberg as an optional second container. The same image runs on any cloud; a Helm chart covers Kubernetes, and Terraform modules for AWS, GCP and Azure swap the bundled Postgres for the managed one. The `archive` Terraform provider manages the schema DDL, sources, views, tokens and access rules as code.
+`install.sh` pulls the image and runs it with one volume on port 8080, with Gotenberg as an optional second container. The same image runs on any cloud; a Helm chart covers Kubernetes, and Terraform modules for AWS, GCP and Azure swap the bundled Postgres for the managed one. The `archive` Terraform provider manages the schema DDL, views, tokens and access rules as code.
 
 ## Not doing
 

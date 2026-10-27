@@ -20,11 +20,18 @@ import (
 )
 
 type blobStore interface {
-	put(ctx context.Context, hash, path string, size int64) error
-	open(ctx context.Context, hash string, size int64) (io.ReadSeekCloser, error)
+	put(ctx context.Context, key, sum string, r io.Reader, size int64) error
+	open(ctx context.Context, key string, size int64) (io.ReadSeekCloser, error)
+	remove(ctx context.Context, key string) error
 }
 
 func blobKey(hash string) string { return hash[:2] + "/" + hash }
+
+func (a *Archive) blobPut(ctx context.Context, b []byte) (string, error) {
+	sum := sha256.Sum256(b)
+	hash := hex.EncodeToString(sum[:])
+	return hash, a.blobs.put(ctx, blobKey(hash), hash, bytes.NewReader(b), int64(len(b)))
+}
 
 func blobOpen(dir string) (blobStore, error) {
 	raw := os.Getenv("ARCHIVE_BLOB_URL")
@@ -51,30 +58,45 @@ func blobOpen(dir string) (blobStore, error) {
 
 type dirBlobs struct{ dir string }
 
-func (d *dirBlobs) path(hash string) string {
-	return filepath.Join(d.dir, filepath.FromSlash(blobKey(hash)))
-}
+func (d *dirBlobs) path(key string) string { return filepath.Join(d.dir, filepath.FromSlash(key)) }
 
-func (d *dirBlobs) put(_ context.Context, hash, path string, _ int64) error {
-	p := d.path(hash)
+func (d *dirBlobs) put(_ context.Context, key, _ string, r io.Reader, _ int64) error {
+	p := d.path(key)
 	if _, err := os.Stat(p); err == nil {
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
-	if err := os.Link(path, p); err != nil && !errors.Is(err, fs.ErrExist) {
+	tmp, err := os.CreateTemp(filepath.Dir(p), ".put-")
+	if err != nil {
 		return err
 	}
-	return nil
+	defer os.Remove(tmp.Name())
+	_, err = io.Copy(tmp, r)
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), p)
 }
 
-func (d *dirBlobs) open(_ context.Context, hash string, _ int64) (io.ReadSeekCloser, error) {
-	f, err := os.Open(d.path(hash))
+func (d *dirBlobs) open(_ context.Context, key string, _ int64) (io.ReadSeekCloser, error) {
+	f, err := os.Open(d.path(key))
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("blob %s: %w", hash, ErrNotFound)
+		return nil, fmt.Errorf("blob %s: %w", key, ErrNotFound)
 	}
 	return f, err
+}
+
+func (d *dirBlobs) remove(_ context.Context, key string) error {
+	if err := os.Remove(d.path(key)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	os.Remove(filepath.Dir(d.path(key)))
+	return nil
 }
 
 const s3EmptyHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -83,13 +105,12 @@ type s3Blobs struct {
 	base, prefix, region, key, secret string
 }
 
-func (s *s3Blobs) url(hash string) string {
-	k := blobKey(hash)
+func (s *s3Blobs) url(key string) string {
 	if s.prefix != "" {
-		k = s.prefix + "/" + k
+		key = s.prefix + "/" + key
 	}
 	var b strings.Builder
-	for _, c := range []byte(k) {
+	for _, c := range []byte(key) {
 		if c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || strings.IndexByte("-._~/", c) >= 0 {
 			b.WriteByte(c)
 		} else {
@@ -105,8 +126,8 @@ func s3HMAC(key []byte, s string) []byte {
 	return m.Sum(nil)
 }
 
-func (s *s3Blobs) do(ctx context.Context, method, hash string, body io.Reader, size int64, payload, rng string) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, method, s.url(hash), body)
+func (s *s3Blobs) do(ctx context.Context, method, obj string, body io.Reader, size int64, payload, rng string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, s.url(obj), body)
 	if err != nil {
 		return nil, err
 	}
@@ -141,8 +162,8 @@ func s3Err(resp *http.Response) error {
 	return fmt.Errorf("s3 %s: %s: %s", resp.Request.Method, resp.Status, bytes.TrimSpace(b))
 }
 
-func (s *s3Blobs) put(ctx context.Context, hash, path string, size int64) error {
-	resp, err := s.do(ctx, "HEAD", hash, nil, 0, s3EmptyHash, "")
+func (s *s3Blobs) put(ctx context.Context, key, sum string, r io.Reader, size int64) error {
+	resp, err := s.do(ctx, "HEAD", key, nil, 0, s3EmptyHash, "")
 	if err != nil {
 		return err
 	}
@@ -150,12 +171,7 @@ func (s *s3Blobs) put(ctx context.Context, hash, path string, size int64) error 
 	if resp.StatusCode == http.StatusOK {
 		return nil
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	if resp, err = s.do(ctx, "PUT", hash, f, size, hash, ""); err != nil {
+	if resp, err = s.do(ctx, "PUT", key, io.NopCloser(r), size, sum, ""); err != nil {
 		return err
 	}
 	if resp.StatusCode/100 != 2 {
@@ -165,14 +181,26 @@ func (s *s3Blobs) put(ctx context.Context, hash, path string, size int64) error 
 	return nil
 }
 
-func (s *s3Blobs) open(ctx context.Context, hash string, size int64) (io.ReadSeekCloser, error) {
-	return &s3Object{s: s, ctx: ctx, hash: hash, size: size}, nil
+func (s *s3Blobs) open(ctx context.Context, key string, size int64) (io.ReadSeekCloser, error) {
+	return &s3Object{s: s, ctx: ctx, key: key, size: size}, nil
+}
+
+func (s *s3Blobs) remove(ctx context.Context, key string) error {
+	resp, err := s.do(ctx, "DELETE", key, nil, 0, s3EmptyHash, "")
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode/100 != 2 && resp.StatusCode != http.StatusNotFound {
+		return s3Err(resp)
+	}
+	resp.Body.Close()
+	return nil
 }
 
 type s3Object struct {
 	s         *s3Blobs
 	ctx       context.Context
-	hash      string
+	key       string
 	size, off int64
 	body      io.ReadCloser
 }
@@ -182,7 +210,7 @@ func (o *s3Object) Read(p []byte) (int, error) {
 		return 0, io.EOF
 	}
 	if o.body == nil {
-		resp, err := o.s.do(o.ctx, "GET", o.hash, nil, 0, s3EmptyHash, fmt.Sprintf("bytes=%d-", o.off))
+		resp, err := o.s.do(o.ctx, "GET", o.key, nil, 0, s3EmptyHash, fmt.Sprintf("bytes=%d-", o.off))
 		if err != nil {
 			return 0, err
 		}
