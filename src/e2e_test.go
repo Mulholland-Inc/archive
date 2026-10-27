@@ -2417,3 +2417,201 @@ return { ddl: plan.statements.map(s => s.ddl), applied: plan.applied, cols: cols
 		}
 	})
 }
+
+func TestPagesMergeManyAgentsEditingAtOnceAndSurviveARestart(t *testing.T) {
+	t.Parallel()
+	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com", "ARCHIVE_RUN_TIMEOUT=60s")
+	srv := in.serve()
+	in.must("user", "add", "bob@example.com")
+	tok := decode[Token](t, in.must("token", "create")).Secret
+	bobTok := decode[Token](t, in.must("-as", "bob@example.com", "token", "create")).Secret
+	run := func(t *testing.T, tok, code string, out any) string {
+		t.Helper()
+		var res RunOutput
+		st, _ := call(t, "POST", srv.url+"/api/run", tok, map[string]string{"code": code}, &res)
+		wantStatus(t, st, 200, "run")
+		if res.Error == "" && out != nil {
+			if err := json.Unmarshal(res.Result, out); err != nil {
+				t.Fatalf("%s: %v", res.Result, err)
+			}
+		}
+		return res.Error
+	}
+	read := func(t *testing.T, id string) OfficeModel {
+		t.Helper()
+		var m OfficeModel
+		if e := run(t, tok, `return await archive.read(`+strconv.Quote(id)+`)`, &m); e != "" {
+			t.Fatal(e)
+		}
+		return m
+	}
+	texts := func(m OfficeModel) []string {
+		var out []string
+		for _, p := range m.Paragraphs {
+			out = append(out, p.Style+":"+p.Text)
+		}
+		return out
+	}
+	const n = 30
+	var tokens, inserts, want []string
+	for i := range n {
+		tokens = append(tokens, fmt.Sprintf("[t%d]", i))
+		inserts = append(inserts, fmt.Sprintf(`{ op: "insert_paragraph_after", para: h, text: "item %d" }`, i))
+		want = append(want, fmt.Sprintf("paragraph:item %d", i))
+	}
+	want = append([]string{"heading1:Renovation plan", "paragraph:Shared", "paragraph:" + strings.Join(tokens, " ")}, want...)
+	var page string
+	var start OfficeModel
+
+	t.Run("CreateReadAndEditRoundTrip", func(t *testing.T) {
+		var got struct {
+			File File
+			Page OfficeModel
+		}
+		if e := run(t, tok, `const file = await archive.createPage("Renovation");
+const empty = await archive.read(file.id);
+if (empty.paragraphs.length !== 0) throw new Error("not empty: " + JSON.stringify(empty));
+await archive.edit(file.id, [{ op: "insert_paragraph_after", text: "Renovation plan", style: "heading1" }]);
+const m = await archive.read(file.id);
+const h = m.paragraphs[0].id;
+await archive.edit(file.id, [{ op: "insert_paragraph_after", para: h, text: "Shared" },
+  { op: "insert_paragraph_after", para: h, text: `+strconv.Quote(strings.Join(tokens, " "))+` }, `+strings.Join(inserts, ", ")+`]);
+return { file: await archive.file(file.id), page: await archive.read(file.id) };`, &got); e != "" {
+			t.Fatal(e)
+		}
+		page, start = got.File.ID.String(), got.Page
+		if got.File.Name != "Renovation.page" || got.File.MIME != "application/vnd.archive.page" || got.File.Status != "done" {
+			t.Errorf("file: %+v", got.File)
+		}
+		if got := texts(start); !slices.Equal(got, want) {
+			t.Fatalf("page:\n%q\nwant\n%q", got, want)
+		}
+		if start.Type != "page" || !regexp.MustCompile(`^\d+@\d+$`).MatchString(start.Paragraphs[0].ID) {
+			t.Errorf("model: %+v", start)
+		}
+		var hits []SearchHit
+		if e := run(t, tok, `return await archive.search("renovation plan", { type: "file" })`, &hits); e != "" || len(hits) != 1 || hits[0].ID.String() != page {
+			t.Errorf("search: %s %+v", e, hits)
+		}
+	})
+
+	t.Run("EditsAreAllOrNothingAndErrorsSayWhy", func(t *testing.T) {
+		h := start.Paragraphs[0].ID
+		for code, want := range map[string]string{
+			`[{ op: "insert_paragraph_after", para: "` + h + `", text: "lost" }, { op: "delete_paragraph", para: "999@9" }]`: "edit 1 (delete_paragraph): paragraph 999@9 does not exist",
+			`[{ op: "replace_text", find: "item", replace: "x" }]`:                                                           "occurs in 30 paragraphs",
+			`[{ op: "set_cell", cell: "A1", value: 1 }]`:                                                                     "page ops are replace_text, insert_paragraph_after, delete_paragraph, set_style",
+			`[{ op: "replace_text", replace: "x" }]`:                                                                         `needs "find", or "para"`,
+		} {
+			if e := run(t, tok, `await archive.edit(`+strconv.Quote(page)+`, `+code+`)`, nil); !strings.Contains(e, want) {
+				t.Errorf("%s: %q, want %q", code, e, want)
+			}
+		}
+		if e := run(t, bobTok, `return await archive.read(`+strconv.Quote(page)+`)`, nil); !strings.Contains(e, "not found") {
+			t.Errorf("bob reads alice's page: %q", e)
+		}
+		if got := read(t, page); !slices.Equal(texts(got), want) {
+			t.Errorf("a failed edit changed the page: %q", texts(got))
+		}
+	})
+
+	t.Run("ManyAgentsAtOnceMergeAndOneRewriteWins", func(t *testing.T) {
+		h, shared, toks := start.Paragraphs[0].ID, start.Paragraphs[1].ID, start.Paragraphs[2].ID
+		var ready, wg sync.WaitGroup
+		gate := make(chan struct{})
+		errs := make([]string, n)
+		after := make([]OfficeModel, n)
+		ready.Add(n)
+		for i := range n {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				var mine OfficeModel
+				errs[i] = run(t, tok, `return await archive.read(`+strconv.Quote(page)+`)`, &mine)
+				ready.Done()
+				<-gate
+				if errs[i] != "" {
+					return
+				}
+				errs[i] = run(t, tok, fmt.Sprintf(`const id = %q;
+await archive.edit(id, [{ op: "insert_paragraph_after", para: %q, text: "note %d" },
+  { op: "replace_text", para: %q, find: "item", replace: "done item" },
+  { op: "replace_text", para: %q, find: "[t%d]", replace: "[T%d]" },
+  { op: "replace_text", para: %q, replace: "winner %d" }]);
+return await archive.read(id);`, page, h, i, mine.Paragraphs[3+i].ID, toks, i, i, shared, i), &after[i])
+			}()
+		}
+		ready.Wait()
+		close(gate)
+		wg.Wait()
+		for i, e := range errs {
+			if e != "" {
+				t.Fatalf("agent %d: %s", i, e)
+			}
+		}
+		m := read(t, page)
+		if len(m.Paragraphs) != len(start.Paragraphs)+n {
+			t.Fatalf("%d paragraphs, want %d: %q", len(m.Paragraphs), len(start.Paragraphs)+n, texts(m))
+		}
+		var notes []string
+		for _, p := range m.Paragraphs[1 : n+1] {
+			notes = append(notes, p.Text)
+		}
+		for i := range n {
+			if !slices.Contains(notes, fmt.Sprintf("note %d", i)) {
+				t.Errorf("note %d is missing: %q", i, notes)
+			}
+		}
+		for i, p := range append([]OfficeParagraph{m.Paragraphs[0]}, m.Paragraphs[n+1:]...) {
+			if p.ID != start.Paragraphs[i].ID {
+				t.Errorf("paragraph %d changed id from %s to %s", i, start.Paragraphs[i].ID, p.ID)
+			}
+		}
+		for i := range n {
+			if p := m.Paragraphs[n+3+i]; p.Text != fmt.Sprintf("done item %d", i) {
+				t.Errorf("item %d reads %q", i, p.Text)
+			}
+		}
+		if got := m.Paragraphs[n+2].Text; got != strings.ReplaceAll(strings.Join(tokens, " "), "[t", "[T") {
+			t.Errorf("character edits to one paragraph did not all survive: %q", got)
+		}
+		var last []int
+		for i, a := range after {
+			if len(a.Paragraphs) == len(m.Paragraphs) {
+				last = append(last, i)
+			}
+		}
+		if winner := m.Paragraphs[n+1].Text; len(last) != 1 || winner != fmt.Sprintf("winner %d", last[0]) {
+			t.Errorf("same-paragraph rewrites ended as %q; agents that saw the final page: %v", winner, last)
+		}
+		start = m
+	})
+
+	t.Run("ThePageSurvivesARestartAndKeepsMintingFreshIds", func(t *testing.T) {
+		srv.stop()
+		srv = in.serve()
+		m := read(t, page)
+		if !slices.Equal(texts(m), texts(start)) || m.Paragraphs[5].ID != start.Paragraphs[5].ID {
+			t.Fatalf("after restart:\n%q\nwant\n%q", texts(m), texts(start))
+		}
+		h := m.Paragraphs[0].ID
+		if e := run(t, tok, `await archive.edit(`+strconv.Quote(page)+`, [{ op: "insert_paragraph_after", para: "`+h+`", text: "after the restart", style: "todo" }, { op: "set_style", para: "`+h+`", style: "heading2" }])`, nil); e != "" {
+			t.Fatal(e)
+		}
+		got := read(t, page)
+		seen := map[string]bool{}
+		for _, p := range got.Paragraphs {
+			if seen[p.ID] {
+				t.Errorf("id %s is used twice", p.ID)
+			}
+			seen[p.ID] = true
+		}
+		if len(got.Paragraphs) != len(m.Paragraphs)+1 || texts(got)[0] != "heading2:Renovation plan" || texts(got)[1] != "todo:after the restart" {
+			t.Errorf("edit after restart: %q", texts(got))
+		}
+		var f runFile
+		if e := run(t, tok, `return await archive.file(`+strconv.Quote(page)+`)`, &f); e != "" || !strings.HasPrefix(f.Text, "Renovation plan\nafter the restart\nnote ") {
+			t.Errorf("extracted text: %s %q", e, f.Text)
+		}
+	})
+}

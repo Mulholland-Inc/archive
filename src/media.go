@@ -54,6 +54,9 @@ func mediaSniff(name string, b []byte) string {
 	if strings.EqualFold(filepath.Ext(name), ".eml") {
 		return "message/rfc822"
 	}
+	if pageIs(name) {
+		return pageMIME
+	}
 	mt, _, _ := mime.ParseMediaType(http.DetectContentType(b))
 	if mt == "application/octet-stream" || mt == "text/plain" {
 		if ext, _, err := mime.ParseMediaType(mime.TypeByExtension(strings.ToLower(filepath.Ext(name)))); err == nil {
@@ -145,6 +148,12 @@ func (a *Archive) media(ctx context.Context, f *File) (map[string]any, string, e
 		return meta, text, err
 	case f.MIME == "text/html":
 		return meta, mediaHTML(b), nil
+	case f.MIME == pageMIME:
+		d, err := pageLoad(b)
+		if err != nil {
+			return meta, "", err
+		}
+		return meta, pageText(d), nil
 	case f.MIME == "message/rfc822":
 		headers, body, _ := mailParse(b)
 		meta["headers"] = headers

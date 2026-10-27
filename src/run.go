@@ -658,6 +658,19 @@ func (r *runner) sdk() {
 	r.def(o, "spaces", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		return a.Spaces(ctx)
 	})
+	r.def(o, "createPage", func(ctx context.Context, call goja.FunctionCall) (any, error) {
+		name, err := r.str(call, 0, "createPage", "name")
+		if err != nil {
+			return nil, err
+		}
+		var opts struct {
+			Space string `json:"space"`
+		}
+		if err := r.arg(call, 1, "createPage", "opts", &opts); err != nil {
+			return nil, err
+		}
+		return a.CreatePage(ctx, opts.Space, name)
+	})
 	r.vm.Set("archive", o)
 }
 
