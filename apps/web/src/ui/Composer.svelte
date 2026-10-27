@@ -29,7 +29,7 @@
     display: flex;
     align-items: flex-end;
     gap: var(--space-2);
-    padding: var(--space-2);
+    padding: var(--space-3);
     background: var(--panel);
     border-radius: var(--radius-xl);
     transition: background var(--dur) var(--ease);
@@ -40,11 +40,12 @@
     min-width: 0;
     height: var(--height, auto);
     max-height: var(--tile);
-    padding: var(--space-3);
+    padding: var(--space-2);
     border: 0;
     background: none;
     color: var(--text);
     font: inherit;
+    font-size: var(--text-lg);
     letter-spacing: inherit;
     resize: none;
     outline: 0;
@@ -52,9 +53,8 @@
   textarea::placeholder { color: var(--text-3); }
   .composer :global(button:disabled) { opacity: var(--dim); }
   @media (max-width: 767px) {
-    .composer { padding: var(--space-1); border: var(--stroke) solid var(--line-strong); }
+    .composer { border: var(--stroke) solid var(--line-strong); }
     .composer:focus-within { background: var(--panel); border-color: var(--line-focus); }
-    textarea { max-height: var(--composer); padding: var(--space-2); }
-    .composer :global(.button) { width: var(--size-sm); height: var(--size-sm); }
+    textarea { max-height: var(--composer); }
   }
 </style>

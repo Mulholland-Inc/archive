@@ -118,7 +118,7 @@ public class NativePlugin: CAPPlugin, CAPBridgedPlugin {
                     self.top.leadingAnchor.constraint(equalTo: view.leadingAnchor),
                     self.top.trailingAnchor.constraint(equalTo: view.trailingAnchor),
                     self.top.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-                    self.top.heightAnchor.constraint(equalToConstant: 60)
+                    self.top.heightAnchor.constraint(equalToConstant: 64)
                 ])
             }
             self.top.isHidden = !on
@@ -275,7 +275,7 @@ final class TopBar: UIView {
         } else {
             c = .plain()
         }
-        c.image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .medium))
+        c.image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 20, weight: .medium))
         c.baseForegroundColor = .label
         c.cornerStyle = .capsule
         let button = UIButton(configuration: c, primaryAction: UIAction { _ in
@@ -284,8 +284,8 @@ final class TopBar: UIView {
         })
         button.accessibilityLabel = label
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.widthAnchor.constraint(equalToConstant: 44).isActive = true
-        button.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        button.widthAnchor.constraint(equalToConstant: 48).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 48).isActive = true
         return button
     }
 }
@@ -294,7 +294,7 @@ final class ComposerBar: UIView, UITextViewDelegate {
     let field = UITextView()
     private let placeholder = UILabel()
     private let send = UIButton(type: .system)
-    private let glass = Glass(radius: 22)
+    private let glass = Glass(radius: 28)
     private lazy var height = field.heightAnchor.constraint(equalToConstant: 36)
     private let onSend: (String) -> Void
     var onResize: (() -> Void)?
@@ -311,10 +311,10 @@ final class ComposerBar: UIView, UITextViewDelegate {
     init(onSend: @escaping (String) -> Void) {
         self.onSend = onSend
         super.init(frame: .zero)
-        field.font = .preferredFont(forTextStyle: .body)
+        field.font = UIFontMetrics(forTextStyle: .body).scaledFont(for: .systemFont(ofSize: 18))
         field.adjustsFontForContentSizeCategory = true
         field.backgroundColor = .clear
-        field.textContainerInset = UIEdgeInsets(top: 8, left: 4, bottom: 8, right: 4)
+        field.textContainerInset = UIEdgeInsets(top: 10, left: 4, bottom: 10, right: 4)
         field.autocapitalizationType = .sentences
         field.autocorrectionType = .yes
         field.isScrollEnabled = false
@@ -324,7 +324,7 @@ final class ComposerBar: UIView, UITextViewDelegate {
         placeholder.font = field.font
         placeholder.textColor = .placeholderText
         placeholder.translatesAutoresizingMaskIntoConstraints = false
-        send.setImage(UIImage(systemName: "arrow.up.circle.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 30)), for: .normal)
+        send.setImage(UIImage(systemName: "arrow.up.circle.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 36)), for: .normal)
         send.tintColor = .label
         send.accessibilityLabel = "Send"
         send.addTarget(self, action: #selector(tapSend), for: .touchUpInside)
@@ -338,17 +338,17 @@ final class ComposerBar: UIView, UITextViewDelegate {
             glass.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             glass.topAnchor.constraint(equalTo: topAnchor, constant: 8),
             glass.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
-            field.leadingAnchor.constraint(equalTo: glass.contentView.leadingAnchor, constant: 10),
-            field.topAnchor.constraint(equalTo: glass.contentView.topAnchor, constant: 4),
-            field.bottomAnchor.constraint(equalTo: glass.contentView.bottomAnchor, constant: -4),
+            field.leadingAnchor.constraint(equalTo: glass.contentView.leadingAnchor, constant: 14),
+            field.topAnchor.constraint(equalTo: glass.contentView.topAnchor, constant: 10),
+            field.bottomAnchor.constraint(equalTo: glass.contentView.bottomAnchor, constant: -10),
             height,
             placeholder.leadingAnchor.constraint(equalTo: field.leadingAnchor, constant: 9),
             placeholder.centerYAnchor.constraint(equalTo: field.centerYAnchor),
             send.leadingAnchor.constraint(equalTo: field.trailingAnchor, constant: 4),
-            send.trailingAnchor.constraint(equalTo: glass.contentView.trailingAnchor, constant: -6),
-            send.bottomAnchor.constraint(equalTo: glass.contentView.bottomAnchor, constant: -6),
-            send.widthAnchor.constraint(equalToConstant: 32),
-            send.heightAnchor.constraint(equalToConstant: 32)
+            send.trailingAnchor.constraint(equalTo: glass.contentView.trailingAnchor, constant: -11),
+            send.bottomAnchor.constraint(equalTo: glass.contentView.bottomAnchor, constant: -11),
+            send.widthAnchor.constraint(equalToConstant: 40),
+            send.heightAnchor.constraint(equalToConstant: 40)
         ])
         refresh()
     }

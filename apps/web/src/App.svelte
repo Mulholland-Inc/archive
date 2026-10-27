@@ -238,7 +238,8 @@
     .app { display: block; }
     .app::before { content: none; }
     .top { display: flex; flex: none; align-items: center; justify-content: space-between; padding: var(--space-2); }
-    .top :global(.button) { width: var(--size-lg); height: var(--size-lg); color: var(--text); }
+    .top :global(.button) { width: var(--size-bar); height: var(--size-bar); color: var(--text); }
+    .top :global(.button svg.icon) { width: var(--text-xl); height: var(--text-xl); }
     .native :global(.button) { visibility: hidden; }
     main { flex: 1; padding: var(--space-4); }
   }

@@ -83,6 +83,7 @@
   --size-md: 40px;
   --size-lg: 44px;
   --size-xl: 56px;
+  --size-bar: 48px;
   --inset: var(--space-6);
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -114,7 +115,7 @@
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   --drawer: 84vw;
   --backdrop: rgb(0 0 0 / 0.5);
-  --composer: 140px;
+  --composer: 160px;
 }
 
 :root[data-theme='light'] {
