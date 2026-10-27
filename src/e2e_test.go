@@ -2276,6 +2276,32 @@ return { para: d.paragraphs.map(p => p.text).filter(t => t.includes("window") ||
 		}
 	})
 
+	t.Run("CreateEmptyDocumentsOfEveryTypeAndFillThem", func(t *testing.T) {
+		got := ok(t, `const [doc, sheet, deck, page] = await Promise.all(["Plan.docx", "Costs.xlsx", "Pitch.pptx", "Notes.page"].map(n => archive.create(n)));
+const blank = { doc: await archive.read(doc.id), sheet: await archive.read(sheet.id), deck: await archive.read(deck.id), page: await archive.read(page.id) };
+await archive.edit(doc.id, [{ op: "insert_paragraph_after", para: blank.doc.paragraphs[0].id, text: "Kick-off", style: "Heading1" }]);
+await archive.edit(sheet.id, [{ op: "set_cell", cell: "A1", value: "Rent" }, { op: "set_cell", cell: "B1", value: 1200 }, { op: "set_formula", cell: "B2", formula: "B1*12" }]);
+await archive.edit(deck.id, [{ op: "replace_shape_text", slide: 1, shape: 0, text: "Series A" }, { op: "replace_shape_text", slide: 1, shape: 1, text: "October 2026" }]);
+await archive.edit(page.id, [{ op: "insert_paragraph_after", text: "Agenda", style: "heading1" }]);
+let bad = "";
+try { await archive.create("Plan.txt"); } catch (e) { bad = e.message; }
+const d = await archive.read(doc.id), x = await archive.read(sheet.id), k = await archive.read(deck.id), p = await archive.read(page.id);
+return { names: [doc.name, sheet.name, deck.name, page.name].join(","), blankDoc: blank.doc.paragraphs.length, blankSheet: blank.sheet.sheets.map(s => s.name + ":" + s.cells.length).join(","),
+  blankDeck: blank.deck.slides[0].shapes.length, blankPage: blank.page.paragraphs.length,
+  doc: d.paragraphs.map(p => (p.style || "") + ":" + p.text).join("|"), sheet: x.sheets[0].cells.map(c => c.ref + "=" + (c.formula || c.value)).join(","),
+  deck: k.slides[0].shapes.map(s => s.paragraphs.map(p => p.text).join("")).join("|"), page: p.paragraphs.map(p => p.style + ":" + p.text).join("|"), bad };`)
+		want := map[string]string{"names": "Plan.docx,Costs.xlsx,Pitch.pptx,Notes.page", "blankDoc": "1", "blankSheet": "Sheet1:0", "blankDeck": "2", "blankPage": "0",
+			"doc": ":|Heading1:Kick-off", "sheet": "A1=Rent,B1=1200,B2=B1*12", "deck": "Series A|October 2026", "page": "heading1:Agenda"}
+		for k, v := range want {
+			if fmt.Sprint(got[k]) != v {
+				t.Errorf("%s = %v, want %s", k, got[k], v)
+			}
+		}
+		if bad, _ := got["bad"].(string); !strings.Contains(bad, ".page, .docx, .xlsx or .pptx") {
+			t.Errorf("creating Plan.txt: %q", bad)
+		}
+	})
+
 	t.Run("ManyAgentsEditOneDocxAndOneXlsxAtOnceAndNoEditIsLost", func(t *testing.T) {
 		const agents = 30
 		upload := func(src, name string) string {
@@ -2468,7 +2494,7 @@ func TestPagesMergeManyAgentsEditingAtOnceAndSurviveARestart(t *testing.T) {
 			File File
 			Page OfficeModel
 		}
-		if e := run(t, tok, `const file = await archive.createPage("Renovation");
+		if e := run(t, tok, `const file = await archive.create("Renovation.page");
 const empty = await archive.read(file.id);
 if (empty.paragraphs.length !== 0) throw new Error("not empty: " + JSON.stringify(empty));
 await archive.edit(file.id, [{ op: "insert_paragraph_after", text: "Renovation plan", style: "heading1" }]);

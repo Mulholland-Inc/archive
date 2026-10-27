@@ -73,6 +73,8 @@ declare const archive: {
     get<T extends keyof Tables>(table: T, id: string, opts?: { reveal?: boolean }): Promise<Tables[T]>;
     /** Insert a row, cleaned and validated per field, and return it; it goes to opts.space or your own space. */
     create<T extends keyof Tables>(table: T, data: Partial<Tables[T]>, opts?: { space?: string }): Promise<Tables[T]>;
+    /** Create an empty document named name, its type taken from the extension: .page, .docx, .xlsx or .pptx; fill it with archive.edit (see Documents and Pages). */
+    create(name: `${string}.${"page" | "docx" | "xlsx" | "pptx"}`, opts?: { space?: string }): Promise<StoredFile>;
     /** Change the given fields, null clears one, and return the row. */
     update<T extends keyof Tables>(table: T, id: string, patch: Partial<Tables[T]>): Promise<Tables[T]>;
     /** Delete a row. */
@@ -95,8 +97,6 @@ declare const archive: {
     edit(fileId: string, edits: Edit[]): Promise<StoredFile>;
     /** The spaces you can see, with your level in each. */
     spaces(): Promise<Space[]>;
-    /** Create an empty page (a native Archive document, see Pages) named name + ".page"; fill it with archive.edit. */
-    createPage(name: string, opts?: { space?: string }): Promise<StoredFile>;
 };
 
 type Row = Record<string, any>;
@@ -193,6 +193,9 @@ interface Quantity { value: number; unit: string; original_unit: string }
  * Office documents (docx, xlsx, pptx) are edited in place: an edit changes only
  * the XML it targets and every other part of the file is kept byte for byte, so
  * formatting, images, comments, charts and anything else survive.
+ *
+ * archive.create("Budget.xlsx") makes an empty one: a docx with one empty paragraph, an
+ * xlsx with an empty Sheet1, a pptx with one title slide (shape 0 the title, shape 1 the subtitle).
  *
  * Workflow: read the model, then send a list of edits. Edits apply in order, all
  * or nothing: if one fails, nothing is saved and the error says which edit failed
@@ -324,7 +327,7 @@ type Edit =
  * Pages
  * A page is Archive's own collaborative document: a list of paragraphs that many agents
  * and people edit at the same time. Its file name ends in ".page"; make one with
- * archive.createPage, then use archive.read and archive.edit as for Office files.
+ * archive.create("Notes.page"), then use archive.read and archive.edit as for Office files.
  * Edits from different callers never conflict, they merge, so an edit planned on an older
  * read still applies. Paragraph ids are permanent: an id from any earlier read stays
  * valid until that paragraph is deleted, whatever others insert or delete meanwhile.
