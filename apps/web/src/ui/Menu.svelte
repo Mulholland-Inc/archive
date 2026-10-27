@@ -1,10 +1,10 @@
 <script>
   import Icon from './Icon.svelte';
 
-  let { title, items, index = 0, onpick, onhover } = $props();
+  let { title, items, index = 0, compact = false, onpick, onhover } = $props();
 </script>
 
-<div class="menu" role="listbox">
+<div class="menu" class:compact role="listbox">
   {#if title}<div class="title">{title}</div>{/if}
   {#each items as item, i (item.label)}
     <button
@@ -16,7 +16,7 @@
       onmouseenter={() => onhover?.(i)}
       onclick={() => onpick(item)}
     >
-      <span class="icon"><Icon name={item.icon} /></span>
+      {#if item.icon}<span class="icon"><Icon name={item.icon} /></span>{/if}
       <span class="label">{item.label}</span>
       {#if item.hint}<span class="hint">{item.hint}</span>{/if}
     </button>
@@ -34,6 +34,7 @@
     box-shadow: var(--shadow);
     scrollbar-width: none;
   }
+  .compact { width: auto; min-width: var(--field); }
   .title { padding: var(--space-2); font-size: var(--text-xs); color: var(--text-3); }
   button {
     display: flex;

@@ -5,7 +5,23 @@ export function go(path) {
   dispatchEvent(new PopStateEvent('popstate'));
 }
 
-export async function api(path, { method = 'GET', body, raw } = {}) {
+const cache = new Map();
+const ttl = 15000;
+
+export function api(path, opts = {}) {
+  if ((opts.method ?? 'GET') !== 'GET') {
+    cache.clear();
+    return request(path, opts);
+  }
+  const hit = cache.get(path);
+  if (hit && Date.now() - hit.at < ttl) return hit.out;
+  const out = request(path, opts);
+  cache.set(path, { at: Date.now(), out });
+  out.catch(() => cache.get(path)?.out === out && cache.delete(path));
+  return out;
+}
+
+async function request(path, { method = 'GET', body, raw } = {}) {
   const init = { method, headers: {} };
   if (raw !== undefined) init.body = raw;
   else if (body !== undefined) {
@@ -18,6 +34,34 @@ export async function api(path, { method = 'GET', body, raw } = {}) {
   const out = await r.json();
   if (!r.ok) throw new Error(out.error ?? r.statusText);
   return out;
+}
+
+let ready;
+export function editor() {
+  ready ??= new Promise((resolve) => {
+    window.pagesReady = () => resolve(window.pages);
+    const go = new window.Go();
+    WebAssembly.instantiateStreaming(fetch('/editor.wasm'), go.importObject).then((r) => go.run(r.instance));
+  });
+  return ready;
+}
+
+let catalog = null;
+export function known(c) {
+  catalog = c;
+}
+
+export function preload(path) {
+  const [, first = '', second = ''] = path.split(/[?#]/)[0].split('/').map(decodeURIComponent);
+  const get = (p) => api(p).catch(() => {});
+  if (first === 'files' || (first === 'pages' && !second)) return get('/api/files?limit=500');
+  if (first === 'pages') {
+    get(`/api/files/${second}`);
+    return editor();
+  }
+  const t = catalog?.tables[first === 'views' ? second : first];
+  if (!t) return;
+  get(`/api/${t.name}?limit=${t.kind === 'view' && t.layout !== 'table' && t.by ? 1000 : 100}`);
 }
 
 export async function run(code) {
@@ -48,4 +92,54 @@ export function size(n) {
   if (n < 1024) return `${n} B`;
   if (n < 1 << 20) return `${(n / 1024).toFixed(0)} KB`;
   return `${(n / (1 << 20)).toFixed(1)} MB`;
+}
+
+export function choice(c, types) {
+  return c.type === 'bool' || !!types[`${c.schema}.${c.type}`]?.enum?.length;
+}
+
+function key(v) {
+  if (v === null || v === undefined || v === '') return null;
+  if (typeof v === 'object' && !Array.isArray(v)) {
+    if ('amount' in v) return Number(v.amount);
+    if ('utc' in v) return v.utc;
+    if ('value' in v) return Number(v.value);
+  }
+  return typeof v === 'number' ? v : typeof v === 'string' ? v : show(v);
+}
+
+export function arrange(rows, columns, types, { filters = {}, sort } = {}) {
+  const tests = Object.entries(filters).filter(([, f]) => f !== '').map(([name, f]) => {
+    const c = columns.find((x) => x.name === name);
+    if (c && choice(c, types)) return (r) => String(r[name]) === f;
+    const want = f.toLowerCase();
+    return (r) => show(r[name]).toLowerCase().includes(want);
+  });
+  const out = rows.filter((r) => tests.every((t) => t(r)));
+  if (!sort) return out;
+  const dir = sort.desc ? -1 : 1;
+  return out.sort((a, b) => {
+    const x = key(a[sort.name]), y = key(b[sort.name]);
+    if (x === null || y === null) return x === y ? 0 : x === null ? 1 : -1;
+    return dir * (typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), undefined, { numeric: true }));
+  });
+}
+
+export async function rows(name, columns, types, { query = '', filters = {}, all = false, after = '' } = {}) {
+  if (query.trim()) {
+    const hits = await api(`/api/search?${new URLSearchParams({ q: query, type: name, limit: '100' })}`);
+    return { rows: hits.map((h) => h.data), more: false };
+  }
+  const where = Object.entries(filters).filter(([k, v]) => v !== '' && choice(columns.find((c) => c.name === k) ?? {}, types));
+  const out = [];
+  const size = all ? 1000 : 100;
+  for (;;) {
+    const q = new URLSearchParams([...where, ['limit', String(size)]]);
+    if (after) q.set('after', after);
+    const next = await api(`/api/${name}?${q}`);
+    out.push(...next);
+    if (next.length < size) return { rows: out, more: false };
+    after = next.at(-1).id;
+    if (!all) return { rows: out, more: true };
+  }
 }

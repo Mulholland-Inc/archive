@@ -1,5 +1,5 @@
 <script>
-  import { api, go, Unauthorized } from './api.js';
+  import { api, go, known, preload, Unauthorized } from './api.js';
   import Avatar from './ui/Avatar.svelte';
   import Button from './ui/Button.svelte';
   import Heading from './ui/Heading.svelte';
@@ -11,6 +11,7 @@
   import View from './View.svelte';
   import Files from './Files.svelte';
   import Page from './Page.svelte';
+  import Connectors from './Connectors.svelte';
 
   let me = $state(null);
   let signedOut = $state(false);
@@ -18,8 +19,33 @@
   let views = $state([]);
   let types = $state({});
   let path = $state(location.pathname);
+  let theme = $state(localStorage.theme ?? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'));
+
+  $effect(() => {
+    document.documentElement.dataset.theme = theme;
+  });
+
+  function flip() {
+    theme = localStorage.theme = theme === 'light' ? 'dark' : 'light';
+  }
 
   addEventListener('popstate', () => (path = location.pathname));
+  const hover = (e) => {
+    const href = e.target.closest?.('a[href^="/"]')?.getAttribute('href');
+    if (href && !/^\/(api|auth)\//.test(href)) preload(href);
+  };
+  for (const type of ['pointerover', 'touchstart', 'focusin']) addEventListener(type, hover, { passive: true });
+
+  $effect(() => {
+    if (!me) return;
+    const here = path;
+    const id = requestIdleCallback(() => {
+      const links = [...document.querySelectorAll('aside nav a')].map((a) => a.getAttribute('href'));
+      const i = links.findIndex((h) => here === h || here.startsWith(`${h}/`));
+      for (const h of i < 0 ? links.slice(0, 2) : [links[i - 1], links[i + 1]]) if (h) preload(h);
+    });
+    return () => cancelIdleCallback(id);
+  });
   addEventListener('click', (e) => {
     const a = e.target.closest?.('a[href^="/"]');
     if (!a || a.target || e.metaKey || e.ctrlKey || e.shiftKey || /^\/(api|auth)\//.test(a.getAttribute('href'))) return;
@@ -38,6 +64,7 @@
     try {
       me = await api('/auth/me');
       const cat = await api('/api/types');
+      known(cat);
       const all = Object.values(cat.tables).sort((a, b) => a.name.localeCompare(b.name));
       types = cat.types;
       tables = all.filter((t) => t.kind === 'table');
@@ -80,10 +107,12 @@
       <footer>
         <Avatar name={who} />
         <span class="name">{who}</span>
+        <Button quiet href="/connectors" icon="plug" title="Connectors" aria-label="Connectors" />
+        <Button quiet icon={theme === 'light' ? 'moon' : 'sun'} title="Switch theme" aria-label="Switch theme" onclick={flip} />
         <Button quiet icon="signout" title="Sign out" aria-label="Sign out" onclick={signOut} />
       </footer>
     </aside>
-    <main class:document={route.first === 'pages' && route.second}>
+    <main>
       {#if route.first === 'files'}
         <Files />
       {:else if route.first === 'pages' && route.second}
@@ -92,6 +121,8 @@
         {/key}
       {:else if route.first === 'pages'}
         <Files pages />
+      {:else if route.first === 'connectors'}
+        <Connectors />
       {:else if route.first === 'views'}
         {@const v = views.find((x) => x.name === route.second)}
         {#if v}
@@ -101,7 +132,7 @@
         {/if}
       {:else if table(route.first)}
         {#key route.first}
-          <Table table={table(route.first)} />
+          <Table table={table(route.first)} {types} />
         {/key}
       {:else}
         <Heading title="Not here" />
@@ -124,16 +155,16 @@
     mask-image: linear-gradient(transparent, black var(--space-5), black calc(100% - var(--space-5)), transparent);
   }
   nav::before, nav::after { content: ''; flex: 0 0 var(--space-5); }
-  footer { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3); }
+  footer { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3); }
   .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  main { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: var(--space-7); overflow: hidden; }
-  main > :global(section:last-child), main > :global(.board) { flex: 1; min-height: 0; overflow: auto; }
-  main.document { overflow: auto; }
+  main { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; min-height: 0; padding: var(--space-7); overflow: hidden; }
+  main > :global(:last-child) { flex: 1; min-height: 0; overflow: auto; }
   @media (max-width: 767px) {
     .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
     aside { order: 1; flex-direction: row; align-items: center; padding: var(--space-3); margin-bottom: env(safe-area-inset-bottom); }
     nav { flex-direction: row; gap: var(--space-1); overflow-x: auto; mask-image: linear-gradient(to right, transparent, black var(--space-5), black calc(100% - var(--space-5)), transparent); }
-    nav > :global(div), footer { display: none; }
+    nav > :global(div), .name, footer > :global(.avatar) { display: none; }
+    footer { gap: 0; padding: 0; }
     main { padding: var(--space-4); mask-image: linear-gradient(black calc(100% - var(--space-5)), transparent); }
   }
 </style>

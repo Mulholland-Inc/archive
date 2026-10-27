@@ -116,7 +116,15 @@ func main() {
 		out := []map[string]any{}
 		for _, b := range doc.List() {
 			done, _ := doc.Field(b.ID, "done")
-			out = append(out, map[string]any{"id": b.ID.String(), "type": b.Type, "text": b.Text, "done": string(done) == "1"})
+			spans := []map[string]any{}
+			for _, sp := range doc.Spans(b.ID) {
+				marks := map[string]string{}
+				for k, v := range sp.Marks {
+					marks[k] = string(v)
+				}
+				spans = append(spans, map[string]any{"text": sp.Text, "marks": marks})
+			}
+			out = append(out, map[string]any{"id": b.ID.String(), "type": b.Type, "depth": b.Depth, "text": b.Text, "done": string(done) == "1", "spans": spans})
 		}
 		return out, nil
 	})
@@ -176,6 +184,29 @@ func main() {
 			return nil, err
 		}
 		op, err := doc.SetType(b, a[1].String())
+		queue(op)
+		return nil, err
+	})
+	def("setDepth", func(a []js.Value) (any, error) {
+		b, err := block(a[0].String())
+		if err != nil {
+			return nil, err
+		}
+		op, err := doc.SetDepth(b, a[1].Int())
+		queue(op)
+		return nil, err
+	})
+	def("mark", func(a []js.Value) (any, error) {
+		b, err := block(a[0].String())
+		if err != nil {
+			return nil, err
+		}
+		var op crdt.PartOps
+		if a[5].Bool() {
+			op, err = doc.Mark(b, a[1].Int(), b, a[2].Int(), a[3].String(), []byte(a[4].String()), structured.Expand(a[6].Int()))
+		} else {
+			op, err = doc.Unmark(b, a[1].Int(), b, a[2].Int(), a[3].String())
+		}
 		queue(op)
 		return nil, err
 	})

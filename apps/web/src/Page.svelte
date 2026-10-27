@@ -1,14 +1,4 @@
 <script module>
-  let ready;
-  function crdt() {
-    ready ??= new Promise((resolve) => {
-      window.pagesReady = () => resolve(window.pages);
-      const go = new window.Go();
-      WebAssembly.instantiateStreaming(fetch('/editor.wasm'), go.importObject).then((r) => go.run(r.instance));
-    });
-    return ready;
-  }
-
   const TYPES = [
     { type: 'paragraph', label: 'Text', icon: 'pilcrow' },
     { type: 'heading1', label: 'Heading 1', icon: 'heading-1' },
@@ -18,9 +8,17 @@
     { type: 'numbered', label: 'Numbered list', icon: 'list-ordered' },
     { type: 'todo', label: 'To-do', icon: 'square-check' },
     { type: 'quote', label: 'Quote', icon: 'text-quote' },
-    { type: 'code', label: 'Code', icon: 'code' },
+    { type: 'code', label: 'Code', icon: 'square-code' },
   ];
   const LISTS = ['bullet', 'numbered', 'todo'];
+  const MARKS = [
+    { name: 'bold', label: 'Bold', icon: 'bold', key: 'b', expand: 4 },
+    { name: 'italic', label: 'Italic', icon: 'italic', key: 'i', expand: 4 },
+    { name: 'underline', label: 'Underline', icon: 'underline', key: 'u', expand: 4 },
+    { name: 'strike', label: 'Strikethrough', icon: 'strikethrough', key: 'x', expand: 4 },
+    { name: 'code', label: 'Inline code', icon: 'code', key: 'e', expand: 0 },
+    { name: 'link', label: 'Link', icon: 'link', key: 'k', expand: 0 },
+  ];
   const PLACEHOLDERS = { heading1: 'Heading 1', heading2: 'Heading 2', heading3: 'Heading 3', bullet: 'List', numbered: 'List', todo: 'To-do', quote: 'Quote', code: 'Code' };
 
   const runes = (s) => [...s].length;
@@ -63,17 +61,47 @@
     return { line: parseFloat(cs.lineHeight), top: parseFloat(cs.paddingTop), bottom: parseFloat(cs.paddingBottom), left: parseFloat(cs.paddingLeft) };
   }
 
-  const sync = (text) => (el) => {
-    if (el.textContent === text) return;
+  const escape = (t) => t.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('\u00a0', '&nbsp;');
+  const quote = (t) => t.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('\u00a0', '&nbsp;');
+
+  function markup(spans) {
+    return spans.map((s) => {
+      const names = MARKS.map((m) => m.name).filter((n) => n in s.marks);
+      if (!names.length) return escape(s.text);
+      return `<span class="${names.join(' ')}"${'link' in s.marks ? ` title="${quote(s.marks.link)}"` : ''}>${escape(s.text)}</span>`;
+    }).join('');
+  }
+
+  function write(el, text, set) {
     const s = document.activeElement === el ? selection(el) : null;
-    if (!s) return void (el.textContent = text);
     const old = el.textContent;
+    set();
+    if (!s) return;
     let p = 0;
     while (p < old.length && p < text.length && old[p] === text[p]) p++;
     const shift = (n) => (n > p ? Math.max(p, n + text.length - old.length) : n);
-    el.textContent = text;
     setCaret(el, shift(s.anchor), shift(s.focus));
+  }
+
+  const sync = (text) => (el) => {
+    if (el.textContent !== text) write(el, text, () => (el.textContent = text));
   };
+
+  const paint = (b) => (el) => {
+    const html = markup(b.spans ?? []);
+    if (el.innerHTML !== html) write(el, b.text, () => (el.innerHTML = html));
+  };
+
+  function marksIn(b, from, to) {
+    if (from === to) [from, to] = from > 0 ? [from - 1, from] : [0, 1];
+    let at = 0, out = null;
+    for (const s of b.spans ?? []) {
+      const n = runes(s.text);
+      if (at < to && at + n > from) out = out ? out.filter((k) => k in s.marks) : Object.keys(s.marks);
+      at += n;
+    }
+    return out ?? [];
+  }
 
   const place = (m) => (el) => {
     for (const k of ['x', 'y', 'w', 'h']) el.style.setProperty(`--${k}`, `${m[k]}px`);
@@ -82,10 +110,13 @@
 
 <script>
   import { onMount, tick } from 'svelte';
-  import { api, run } from './api.js';
+  import { api, editor, run } from './api.js';
+  import Bar from './ui/Bar.svelte';
   import Chip from './ui/Chip.svelte';
+  import Heading from './ui/Heading.svelte';
   import Icon from './ui/Icon.svelte';
   import Menu from './ui/Menu.svelte';
+  import Tool from './ui/Tool.svelte';
 
   let { id, name } = $props();
   let title = $state('');
@@ -94,6 +125,7 @@
   let blocks = $state([]);
   let marks = $state([]);
   let menu = $state(null);
+  let cur = $state(null);
   let root, heading, pages, renaming;
 
   const site = 2 + Math.floor(Math.random() * 2 ** 40);
@@ -108,6 +140,8 @@
     return out;
   });
 
+  const active = $derived(cur && blocks.find((b) => b.id === cur.id));
+  const on = $derived(active ? marksIn(active, Math.min(cur.anchor, cur.focus), Math.max(cur.anchor, cur.focus)) : []);
   const options = $derived(menu?.turn ? [...TYPES, { type: 'delete', label: 'Delete', icon: 'trash' }] : TYPES);
 
   function call(fn, ...args) {
@@ -162,6 +196,33 @@
     edit(() => call('setField', b.id, 'done', b.done ? '' : '1'));
   }
 
+  function track() {
+    const el = document.activeElement;
+    const b = el?.classList.contains('text') && root?.contains(el) && blocks.find((x) => x.id === el.closest('[data-id]').dataset.id);
+    const s = b && selection(el);
+    cur = s ? { id: b.id, anchor: runes(el.textContent.slice(0, s.anchor)), focus: runes(el.textContent.slice(0, s.focus)) } : null;
+  }
+
+  function turn(type) {
+    if (active) edit(() => call('setType', active.id, active.type === type && type !== 'paragraph' ? 'paragraph' : type));
+  }
+
+  function indent(by) {
+    if (active) edit(() => call('setDepth', active.id, Math.max(0, Math.min(8, (active.depth ?? 0) + by))));
+  }
+
+  function format(m) {
+    if (!active || cur.anchor === cur.focus) return;
+    const from = Math.min(cur.anchor, cur.focus), to = Math.max(cur.anchor, cur.focus);
+    const has = marksIn(active, from, to).includes(m.name);
+    let value = '';
+    if (m.name === 'link' && !has) {
+      value = prompt('Link', 'https://')?.trim();
+      if (!value) return;
+    }
+    edit(() => call('mark', active.id, from, to, m.name, value, !has, m.expand));
+  }
+
   function onMenuKey(e) {
     if (!menu) return;
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -207,7 +268,16 @@
     const collapsed = s && s.anchor === s.focus;
     const text = el.textContent;
     const type = b.type || 'paragraph';
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && type === 'todo') {
+    const shortcut = (e.metaKey || e.ctrlKey) && !e.altKey && MARKS.find((m) => m.key === e.key.toLowerCase() && (m.key !== 'x' || e.shiftKey));
+    if (shortcut) {
+      e.preventDefault();
+      track();
+      format(shortcut);
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      track();
+      indent(e.shiftKey ? -1 : 1);
+    } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && type === 'todo') {
       e.preventDefault();
       toggle(b);
     } else if (e.key === 'Enter' && !e.shiftKey && (type !== 'code' || e.metaKey || e.ctrlKey)) {
@@ -300,11 +370,14 @@
       if (ops) await fetch(`/api/pages/${id}/ops`, { method: 'POST', body: bytes(ops) });
     }
 
-    const onSelection = () => publish().catch(console.error);
+    const onSelection = () => {
+      track();
+      publish().catch(console.error);
+    };
     const onBlur = () => setTimeout(onSelection);
     const onPointer = (e) => { if (!e.target.closest?.('.menu, .add')) menu = null; };
 
-    crdt().then((p) => {
+    editor().then((p) => {
       pages = p;
       es = new EventSource(`/api/pages/${id}/sync?site=${site}`);
       es.addEventListener('snapshot', async (e) => {
@@ -341,29 +414,26 @@
   });
 </script>
 
-<div class="page">
-<header>
-  <a class="crumb" href="/pages"><Icon name="chevron-left" />Pages</a>
-  <div class="people" class:live title={live ? 'Live' : 'Connecting'}>
-    {#each [{ ...me, site, you: true }, ...online] as p (p.site)}
-      <Chip name={p.you ? `${p.name} (you)` : p.name} pulse={p.agent} />
-    {/each}
-  </div>
-</header>
-
-<article>
-  <h1
-    class="title"
-    contenteditable="plaintext-only"
-    role="textbox"
-    tabindex="0"
-    data-placeholder="Untitled"
-    bind:this={heading}
-    {@attach sync(title)}
-    oninput={retitle}
-    onkeydown={titleKey}
-  ></h1>
-
+<Heading editable placeholder="Untitled" {@attach (el) => (heading = el)} {@attach sync(title)} oninput={retitle} onkeydown={titleKey}>
+  {#snippet aside()}
+    <div class="people" class:live title={live ? 'Live' : 'Connecting'}>
+      {#each [{ ...me, site, you: true }, ...online] as p (p.site)}
+        <Chip name={p.you ? `${p.name} (you)` : p.name} pulse={p.agent} />
+      {/each}
+    </div>
+  {/snippet}
+</Heading>
+<Bar>
+  {#each TYPES as t (t.type)}
+    <Tool icon={t.icon} label={t.label} on={(active?.type || 'paragraph') === t.type && !!active} onclick={() => turn(t.type)} />
+  {/each}
+  <Tool icon="list-indent-decrease" label="Outdent" onclick={() => indent(-1)} />
+  <Tool icon="list-indent-increase" label="Indent" onclick={() => indent(1)} />
+  {#each MARKS as m (m.name)}
+    <Tool icon={m.icon} label={m.label} on={on.includes(m.name)} onclick={() => format(m)} />
+  {/each}
+</Bar>
+<div class="doc">
   <div class="blocks" bind:this={root}>
     {#each blocks as b, i (b.id)}
       <div
@@ -372,9 +442,11 @@
         class:lonely={blocks.length === 1}
         data-id={b.id}
         role="group"
+        style:--depth={b.depth || undefined}
         oncontextmenu={(e) => { e.preventDefault(); menu = { block: b.id, turn: true, index: 0 }; }}
       >
         <button class="add" tabindex="-1" aria-label="Add a block below" onmousedown={(e) => e.preventDefault()} onclick={() => (menu = { block: b.id, index: 0 })}><Icon name="plus" /></button>
+        {#if b.depth}<span class="indent"></span>{/if}
         {#if b.type === 'todo'}
           <span class="mark">
             <button class="check" tabindex="-1" aria-label={b.done ? 'Mark as not done' : 'Mark as done'} onmousedown={(e) => e.preventDefault()} onclick={() => toggle(b)}>
@@ -394,7 +466,7 @@
           role="textbox"
           tabindex="0"
           data-placeholder={PLACEHOLDERS[b.type] ?? 'Write something'}
-          {@attach sync(b.text)}
+          {@attach paint(b)}
           oninput={(e) => input(b, e.currentTarget)}
           onkeydown={(e) => key(e, b, i)}
         ></div>
@@ -409,26 +481,16 @@
       <div class="{m.kind} peer-{peer(m.p)}" {@attach place(m)}>{#if m.kind === 'caret'}<b>{m.p.name}</b>{/if}</div>
     {/each}
   </div>
-</article>
 </div>
 
 <style>
-  .page { display: flex; flex-direction: column; gap: var(--space-7); width: 100%; max-width: var(--measure); align-self: center; }
-  header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
-  .crumb { display: flex; align-items: center; gap: var(--space-1); font-size: var(--text-sm); color: var(--text-3); transition: color var(--dur) var(--ease); }
-  .crumb:hover { color: var(--text); }
   .people { display: flex; align-items: center; gap: var(--space-2); opacity: 0.5; transition: opacity var(--dur) var(--ease); }
   .people.live { opacity: 1; }
 
-  article { display: flex; flex-direction: column; gap: var(--space-5); }
   [contenteditable] { outline: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
   [contenteditable]:empty::before { content: attr(data-placeholder); color: var(--text-3); pointer-events: none; }
-  .title {
-    padding: var(--space-1);
-    font: var(--weight-medium) var(--display-lg)/var(--leading-tight) var(--display);
-    letter-spacing: var(--tracking-display);
-  }
 
+  .doc { padding: var(--inset-text); }
   .blocks { position: relative; display: flex; flex-direction: column; gap: var(--space-1); }
   .block { position: relative; display: flex; align-items: stretch; gap: var(--space-2); }
   .text { flex: 1; min-width: 0; padding: var(--space-1); font-size: var(--text-lg); line-height: var(--leading-loose); }
@@ -436,12 +498,12 @@
 
   .add {
     position: absolute;
-    top: var(--space-1);
-    right: calc(100% + var(--space-2));
+    top: var(--space-2);
+    right: calc(100% + var(--space-1));
     display: grid;
     place-items: center;
-    width: var(--size-sm);
-    height: var(--size-sm);
+    width: var(--size-avatar);
+    height: var(--size-avatar);
     padding: 0;
     border: 0;
     border-radius: var(--radius-sm);
@@ -453,6 +515,7 @@
   }
   .block:hover .add { opacity: 1; }
   .add:hover { background: var(--hover); color: var(--text); }
+  .indent { flex: none; width: calc(var(--depth) * var(--space-6)); }
 
   .mark {
     display: grid;
@@ -494,6 +557,13 @@
     font-variant-ligatures: none;
   }
 
+  .text :global(.bold) { font-weight: var(--weight-bold); }
+  .text :global(.italic) { font-style: italic; }
+  .text :global(.underline) { text-decoration: underline; }
+  .text :global(.strike) { text-decoration: line-through; }
+  .text :global(.underline.strike) { text-decoration: underline line-through; }
+  .text :global(.code) { background: var(--raised); border-radius: var(--radius-sm); font: var(--text-md) var(--mono); }
+  .text :global(.link) { text-decoration: underline; text-decoration-color: var(--line-strong); color: var(--text); }
   .popover { position: absolute; top: calc(100% + var(--space-1)); left: 0; z-index: 1; }
 
   .caret, .sel { position: absolute; left: var(--x); top: var(--y); height: var(--h); background: var(--peer); pointer-events: none; }
