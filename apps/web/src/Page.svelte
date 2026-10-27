@@ -414,10 +414,14 @@
   });
 </script>
 
+<div class="people" class:live title={live ? 'Live' : 'Connecting'}>
+  {#each [{ ...me, site, you: true }, ...online] as p (p.site)}
+    <Chip name={p.you ? `${p.name} (you)` : p.name} pulse={p.agent} />
+  {/each}
+</div>
 <Heading editable placeholder="Untitled" {@attach (el) => (heading = el)} {@attach sync(title)} oninput={retitle} onkeydown={titleKey} />
-<div class="tools">
-  <div class="toolbar">
-    <Bar>
+<div class="toolbar">
+  <Bar>
     {#each TYPES as t (t.type)}
       <Tool icon={t.icon} label={t.label} on={(active?.type || 'paragraph') === t.type && !!active} onclick={() => turn(t.type)} />
     {/each}
@@ -429,12 +433,6 @@
       <Tool icon={m.icon} label={m.label} on={on.includes(m.name)} onclick={() => format(m)} />
     {/each}
   </Bar>
-  </div>
-  <div class="people" class:live title={live ? 'Live' : 'Connecting'}>
-    {#each [{ ...me, site, you: true }, ...online] as p (p.site)}
-      <Chip name={p.you ? `${p.name} (you)` : p.name} pulse={p.agent} />
-    {/each}
-  </div>
 </div>
 <div class="doc">
   <div class="blocks" bind:this={root}>
@@ -487,11 +485,10 @@
 </div>
 
 <style>
-  .tools { display: flex; flex: none; align-items: center; gap: var(--space-4); }
-  .toolbar { display: flex; flex: 1; min-width: 0; padding: var(--space-1); background: var(--panel); border-radius: var(--radius-pill); }
+  .toolbar { display: flex; flex: none; min-width: 0; padding: var(--space-1); background: var(--panel); border-radius: var(--radius-pill); }
   .toolbar > :global(.bar) { flex: 1; min-width: 0; gap: var(--space-1); }
   .sep { flex: none; align-self: stretch; width: var(--stroke); background: var(--line); }
-  .people { display: flex; flex: none; align-items: center; gap: var(--space-2); opacity: 0.5; transition: opacity var(--dur) var(--ease); }
+  .people { display: flex; flex: none; align-self: flex-end; align-items: center; gap: var(--space-2); opacity: 0.5; transition: opacity var(--dur) var(--ease); }
   .people.live { opacity: 1; }
 
   [contenteditable] { outline: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
