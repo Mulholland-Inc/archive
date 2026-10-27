@@ -49,10 +49,3 @@ export function size(n) {
   if (n < 1 << 20) return `${(n / 1024).toFixed(0)} KB`;
   return `${(n / (1 << 20)).toFixed(1)} MB`;
 }
-
-const lucide = import.meta.glob('/node_modules/@lucide/svelte/dist/icons/*.svelte', { import: 'default' });
-
-export function icon(name) {
-  const dir = '/node_modules/@lucide/svelte/dist/icons/';
-  return (lucide[`${dir}${name}.svelte`] ?? lucide[`${dir}shapes.svelte`])();
-}

@@ -1,6 +1,10 @@
 <script>
   import { api, go, run, size } from './api.js';
-  import Icon from './Icon.svelte';
+  import Button from './ui/Button.svelte';
+  import Heading from './ui/Heading.svelte';
+  import ListItem from './ui/ListItem.svelte';
+  import Note from './ui/Note.svelte';
+  import Panel from './ui/Panel.svelte';
 
   let { pages = false } = $props();
   let files = $state([]);
@@ -46,64 +50,31 @@
   load().catch((e) => (error = e.message));
 </script>
 
-<h1>{pages ? 'Pages' : 'Files'}</h1>
+<Heading title={pages ? 'Pages' : 'Files'} />
 <div class="actions">
   {#if pages}
-    <button onclick={newPage}><Icon name="newpage" />New page</button>
+    <Button icon="newpage" onclick={newPage}>New page</Button>
   {:else}
-    <button onclick={() => picker.click()} disabled={busy}><Icon name="plus" />{busy ? 'Uploading…' : 'Add files'}</button>
+    <Button icon="plus" onclick={() => picker.click()} disabled={busy}>{busy ? 'Uploading…' : 'Add files'}</Button>
     <input bind:this={picker} type="file" multiple hidden onchange={upload} />
   {/if}
 </div>
-<div class="panel">
-  {#if error}<p class="error">{error}</p>{/if}
+<Panel>
+  {#if error}<Note error>{error}</Note>{/if}
   {#each files as f (f.id)}
-    <a class="file" href={pages ? `/pages/${f.id}` : `/api/files/${f.id}/content`} target={pages ? undefined : '_blank'}>
-      <span class="thumb">
-        {#if f.mime.startsWith('image/')}
-          <img src="/api/files/{f.id}/thumbnail" alt="" loading="lazy" />
-        {:else}
-          <Icon name={pages ? 'page' : 'file'} />
-        {/if}
-      </span>
-      <span class="name">{pages ? f.name.replace(/\.page$/, '') : f.name}</span>
-      {#if !pages}<span class="meta">{size(f.size)}</span>{/if}
-      <span class="meta">{new Date(f.created_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}</span>
-    </a>
+    {@const day = new Date(f.created_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}
+    <ListItem
+      href={pages ? `/pages/${f.id}` : `/api/files/${f.id}/content`}
+      target={pages ? undefined : '_blank'}
+      icon={pages ? 'page' : 'file'}
+      image={f.mime.startsWith('image/') ? `/api/files/${f.id}/thumbnail` : undefined}
+      meta={pages ? [day] : [size(f.size), day]}
+    >{pages ? f.name.replace(/\.page$/, '') : f.name}</ListItem>
   {:else}
-    <p class="muted">{pages ? 'No pages yet. Start one, or ask an agent to.' : 'No files yet. Add the first ones.'}</p>
+    <Note>{pages ? 'No pages yet. Start one, or ask an agent to.' : 'No files yet. Add the first ones.'}</Note>
   {/each}
-</div>
+</Panel>
 
 <style>
-  .actions { margin-top: 28px; }
-  .file {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 10px 12px;
-    margin: 0 -12px;
-    border-radius: 16px;
-    transition: background var(--dur) var(--ease);
-  }
-  .file:hover { background: var(--hover); }
-  .thumb {
-    width: 44px;
-    height: 44px;
-    border-radius: 12px;
-    display: grid;
-    place-items: center;
-    background: var(--raised);
-    color: var(--text-2);
-    overflow: hidden;
-    flex: none;
-  }
-  .thumb img { width: 100%; height: 100%; object-fit: cover; }
-  .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .meta { color: var(--text-2); font-size: 14px; min-width: 56px; text-align: right; }
-  .muted { margin: 0; }
-  .error { color: var(--alarm); margin: 0 0 16px; }
-  @media (max-width: 767px) {
-    .meta:last-child { display: none; }
-  }
+  .actions { margin-top: var(--space-5); }
 </style>

@@ -1,0 +1,29 @@
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/eb-garamond';
+@import '@fontsource-variable/jetbrains-mono';
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--shell); }
+body {
+  color: var(--text);
+  font: var(--weight) var(--text-md)/var(--leading) var(--font);
+  letter-spacing: var(--tracking);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+}
+::selection { background: var(--selection); }
+a { color: inherit; text-decoration: none; }
+p, h1, h2, h3 { margin: 0; }
+button, input, select { font: inherit; color: inherit; letter-spacing: inherit; }
+:focus-visible { outline: var(--stroke-bold) solid var(--cream); outline-offset: var(--stroke-bold); }
+svg { display: block; flex: none; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+.peer-0 { --peer: var(--peer-0); }
+.peer-1 { --peer: var(--peer-1); }
+.peer-2 { --peer: var(--peer-2); }
+.peer-3 { --peer: var(--peer-3); }
+.peer-4 { --peer: var(--peer-4); }
+.peer-5 { --peer: var(--peer-5); }
+.peer-6 { --peer: var(--peer-6); }
+.peer-7 { --peer: var(--peer-7); }
+.peer-agent { --peer: var(--peer-agent); }

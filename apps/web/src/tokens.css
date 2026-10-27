@@ -1,9 +1,6 @@
-@import '@fontsource-variable/geist';
-@import '@fontsource-variable/eb-garamond';
-@import '@fontsource-variable/jetbrains-mono';
-
 :root {
   color-scheme: dark;
+
   --shell: #0b0d12;
   --panel: #0f1217;
   --raised: #161a21;
@@ -11,74 +8,90 @@
   --text-2: rgb(255 255 255 / 0.65);
   --text-3: rgb(255 255 255 / 0.45);
   --line: rgb(255 255 255 / 0.08);
+  --line-strong: rgb(255 255 255 / 0.25);
+  --line-focus: rgb(255 255 255 / 0.6);
   --hover: rgb(255 255 255 / 0.06);
+  --selection: rgb(255 255 255 / 0.2);
   --cream: #f2f1ed;
   --cream-hover: #ffffff;
   --cream-ink: #141413;
   --alarm: #ff6b6b;
+  --on-peer: #ffffff;
+  --peer-0: #f7768e;
+  --peer-1: #7aa2f7;
+  --peer-2: #9ece6a;
+  --peer-3: #bb9af7;
+  --peer-4: #ff9e64;
+  --peer-5: #7dcfff;
+  --peer-6: #e0af68;
+  --peer-7: #2ac3de;
+  --peer-agent: #8e8e93;
+
   --font: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
   --display: 'EB Garamond Variable', 'EB Garamond', Garamond, 'Times New Roman', serif;
   --mono: 'JetBrains Mono Variable', ui-monospace, monospace;
+
+  --text-xs: 12px;
+  --text-sm: 14px;
+  --text-md: 16px;
+  --text-lg: 18px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --display-sm: 32px;
+  --display-md: 44px;
+  --display-lg: 64px;
+  --display-xl: 96px;
+  --weight: 400;
+  --weight-medium: 500;
+  --weight-bold: 600;
+  --leading-tight: 1.1;
+  --leading: 1.5;
+  --tracking: -0.01em;
+  --tracking-tight: -0.03em;
+  --tracking-display: -0.04em;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 72px;
+  --space-9: 120px;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 28px;
+  --radius-2xl: 48px;
+  --radius-pill: 999px;
+
+  --stroke: 1px;
+  --stroke-bold: 2px;
+
+  --size-xs: 8px;
+  --size-icon: 20px;
+  --size-avatar: 24px;
+  --size-sm: 36px;
+  --size-md: 40px;
+  --size-lg: 44px;
+  --size-xl: 56px;
+  --sidebar: 280px;
+  --lane: 280px;
+  --cell: 320px;
+  --measure: 760px;
+  --form: 520px;
+
   --dur: 150ms;
+  --dur-fast: 80ms;
   --ease: cubic-bezier(0, 0, 0.2, 1);
 }
 
-* { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; background: var(--shell); }
-body {
-  color: var(--text);
-  font: 16px/1.5 var(--font);
-  letter-spacing: -0.01em;
-  font-synthesis: none;
-  -webkit-font-smoothing: antialiased;
-}
-::selection { background: rgb(255 255 255 / 0.2); }
-a { color: inherit; text-decoration: none; }
-h1 {
-  font: 500 64px/1 var(--display);
-  letter-spacing: -0.04em;
-  margin: 0;
-}
-.lead { font-size: 24px; line-height: 1.5; color: var(--text-2); margin: 12px 0 0; max-width: 680px; }
-button, input, select { font: inherit; color: inherit; letter-spacing: inherit; }
-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  height: 44px;
-  padding: 0 20px;
-  border: 0;
-  border-radius: 999px;
-  background: var(--cream);
-  color: var(--cream-ink);
-  font-weight: 500;
-  letter-spacing: -0.03em;
-  cursor: pointer;
-  transition: background var(--dur) var(--ease), transform var(--dur) var(--ease);
-}
-button:hover { background: var(--cream-hover); }
-button:active { transform: scale(0.96); }
-button.quiet { background: none; color: var(--text-2); height: 36px; width: 36px; padding: 0; justify-content: center; }
-button.quiet:hover { background: var(--hover); color: var(--text); }
-input {
-  height: 56px;
-  padding: 0 24px;
-  background: var(--panel);
-  border: 1px solid rgb(255 255 255 / 0.25);
-  border-radius: 999px;
-  font-size: 17px;
-  outline: 0;
-  transition: border-color var(--dur) var(--ease);
-}
-input:focus { border-color: rgb(255 255 255 / 0.6); }
-input::placeholder { color: var(--text-2); }
-:focus-visible { outline: 2px solid var(--cream); outline-offset: 2px; }
-.mono { font-family: var(--mono); font-variant-ligatures: none; }
-.muted { color: var(--text-2); }
-.panel { background: var(--panel); border-radius: 48px; padding: 48px; margin: 32px 8px 8px; }
 @media (max-width: 767px) {
-  h1 { font-size: 44px; }
-  .lead { font-size: 19px; }
-  .panel { border-radius: 28px; padding: 20px; margin: 20px 0 0; }
+  :root {
+    --display-lg: 44px;
+    --display-xl: 64px;
+    --text-2xl: 18px;
+  }
 }
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
