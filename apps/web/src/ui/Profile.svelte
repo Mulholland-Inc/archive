@@ -84,7 +84,7 @@
     min-width: 0;
     padding: var(--space-3);
     border: 0;
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-pill);
     background: none;
     color: var(--text);
     text-align: left;
