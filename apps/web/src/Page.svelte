@@ -112,7 +112,7 @@
   import { onMount, tick } from 'svelte';
   import { api, editor, run } from './api.js';
   import Bar from './ui/Bar.svelte';
-  import Chip from './ui/Chip.svelte';
+  import People from './ui/People.svelte';
   import Heading from './ui/Heading.svelte';
   import Icon from './ui/Icon.svelte';
   import Menu from './ui/Menu.svelte';
@@ -414,10 +414,8 @@
   });
 </script>
 
-<div class="people" class:live title={live ? 'Live' : 'Connecting'}>
-  {#each [{ ...me, site, you: true }, ...online] as p (p.site)}
-    <Chip name={p.you ? `${p.name} (you)` : p.name} pulse={p.agent} />
-  {/each}
+<div class="people">
+  <People live={live} people={[{ ...me, site, you: true }, ...online].map((p) => ({ key: p.site, name: p.you ? `${p.name} (you)` : p.name, pulse: p.agent }))} />
 </div>
 <Heading editable icon="page" placeholder="Untitled" {@attach (el) => (heading = el)} {@attach sync(title)} oninput={retitle} onkeydown={titleKey} />
 <div class="toolbar">
@@ -488,8 +486,7 @@
   .toolbar { position: relative; z-index: 1; display: flex; flex: none; min-width: 0; padding: var(--space-1); background: var(--panel); border-radius: var(--radius-pill); }
   .toolbar > :global(.bar) { flex: 1; min-width: 0; gap: var(--space-1); }
   .sep { flex: none; align-self: stretch; width: var(--stroke); background: var(--line); }
-  .people { display: flex; flex: none; align-self: flex-end; align-items: center; gap: var(--space-2); opacity: 0.5; transition: opacity var(--dur) var(--ease); }
-  .people.live { opacity: 1; }
+  .people { display: flex; flex: none; align-self: flex-end; }
 
   [contenteditable] { outline: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
   [contenteditable]:empty::before { content: attr(data-placeholder); color: var(--text-3); pointer-events: none; }
