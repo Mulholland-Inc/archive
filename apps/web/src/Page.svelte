@@ -153,7 +153,7 @@
 
   const active = $derived(cur && blocks.find((b) => b.id === cur.id));
   const on = $derived(active ? marksIn(active, Math.min(cur.anchor, cur.focus), Math.max(cur.anchor, cur.focus)) : []);
-  const options = $derived(menu?.turn ? [...TYPES, { type: 'delete', label: 'Delete', icon: 'trash' }] : TYPES);
+  const options = [...TYPES, { type: 'delete', label: 'Delete', icon: 'trash' }];
 
   function call(fn, ...args) {
     const r = pages[fn](...args);
@@ -194,13 +194,8 @@
       await edit(() => call('remove', b.id));
       return focus(blocks[Math.max(0, i - 1)].id);
     }
-    if (m.turn) {
-      await edit(() => call('setType', b.id, o.type));
-      return focus(b.id);
-    }
-    let next;
-    await edit(() => (next = call('insert', b.id, o.type)));
-    focus(next);
+    await edit(() => call('setType', b.id, o.type));
+    focus(b.id);
   }
 
   function toggle(b) {
@@ -405,7 +400,7 @@
       publish().catch(console.error);
     };
     const onBlur = () => setTimeout(onSelection);
-    const onPointer = (e) => { if (!e.target.closest?.('.menu, .add')) menu = null; };
+    const onPointer = (e) => { if (!e.target.closest?.('.menu')) menu = null; };
 
     editor().then((p) => {
       pages = p;
@@ -474,9 +469,8 @@
         data-id={b.id}
         role="group"
         style:--depth={b.depth || undefined}
-        oncontextmenu={(e) => { e.preventDefault(); menu = { block: b.id, turn: true, index: 0 }; }}
+        oncontextmenu={(e) => { e.preventDefault(); menu = { block: b.id, index: 0 }; }}
       >
-        <button class="add" tabindex="-1" aria-label="Add a block below" onmousedown={(e) => e.preventDefault()} onclick={() => (menu = { block: b.id, index: 0 })}><Icon name="plus" /></button>
         {#if b.depth}<span class="indent"></span>{/if}
         {#if b.type === 'todo'}
           <span class="mark">
@@ -503,7 +497,7 @@
         ></div>
         {#if menu?.block === b.id}
           <div class="popover">
-            <Menu title={menu.turn ? 'Turn into' : 'Add below'} items={options} index={menu.index} onpick={pick} onhover={(n) => (menu.index = n)} />
+            <Menu title="Turn into" items={options} index={menu.index} onpick={pick} onhover={(n) => (menu.index = n)} />
           </div>
         {/if}
       </div>
@@ -515,7 +509,7 @@
 </div>
 
 <style>
-  .toolbar { position: relative; z-index: 1; display: flex; flex: none; min-width: 0; padding: var(--space-1); background: var(--panel); border-radius: var(--radius-pill); }
+  .toolbar { display: flex; flex: none; min-width: 0; padding: var(--space-1); background: var(--panel); border-radius: var(--radius-pill); }
   .toolbar > :global(.bar) { flex: 1; min-width: 0; gap: var(--space-1); }
   .sep { flex: none; align-self: stretch; width: var(--stroke); background: var(--line); }
   .people { position: fixed; top: calc(var(--gutter) + var(--space-3) + (var(--size-logo) - var(--size-sm)) / 2); right: var(--gutter); z-index: 1; display: flex; }
@@ -526,31 +520,11 @@
   [contenteditable] { outline: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
   [contenteditable]:empty::before { content: attr(data-placeholder); color: var(--text-3); pointer-events: none; }
 
-  .doc { margin: calc(-1 * var(--inset)); padding: var(--inset); }
   .blocks { position: relative; display: flex; flex-direction: column; gap: var(--space-1); }
   .block { position: relative; display: flex; align-items: stretch; gap: var(--space-2); }
   .text { flex: 1; min-width: 0; padding: var(--space-1); font-size: var(--text-lg); line-height: var(--leading-loose); }
   .paragraph:not(:focus-within):not(.lonely) .text:empty::before { content: none; }
 
-  .add {
-    position: absolute;
-    top: var(--space-2);
-    right: calc(100% + var(--space-1));
-    display: grid;
-    place-items: center;
-    width: var(--size-avatar);
-    height: var(--size-avatar);
-    padding: 0;
-    border: 0;
-    border-radius: var(--radius-sm);
-    background: none;
-    color: var(--text-3);
-    cursor: pointer;
-    opacity: 0;
-    transition: opacity var(--dur) var(--ease), background var(--dur) var(--ease), color var(--dur) var(--ease);
-  }
-  .block:hover .add { opacity: 1; }
-  .add:hover { background: var(--hover); color: var(--text); }
   .indent { flex: none; width: calc(var(--depth) * var(--space-6)); }
 
   .mark {
@@ -617,7 +591,4 @@
     white-space: nowrap;
   }
 
-  @media (max-width: 767px) {
-    .add { display: none; }
-  }
 </style>
