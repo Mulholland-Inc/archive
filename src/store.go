@@ -160,6 +160,8 @@ func (s *pgStore) hash(files map[string]string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+const storeMinTimeout = time.Minute
+
 var storeFileRe = regexp.MustCompile(`^[a-z0-9_][a-z0-9_.-]*\.sql$`)
 
 func (s *pgStore) SchemaFiles() (map[string]string, error) {
@@ -261,7 +263,7 @@ func (s *pgStore) Apply(ctx context.Context, files map[string]string, renames []
 		return storeWithRenames(p, renames), fmt.Errorf("the plan deletes data (%s); apply it with allow_drop: %w", strings.Join(b, "; "), ErrConflict)
 	}
 	for _, st := range p.Statements {
-		set := fmt.Sprintf(`SET LOCAL statement_timeout = %d; SET LOCAL lock_timeout = %d`, st.timeout.Milliseconds(), st.lock.Milliseconds())
+		set := fmt.Sprintf(`SET LOCAL statement_timeout = %d; SET LOCAL lock_timeout = %d`, max(st.timeout, storeMinTimeout).Milliseconds(), st.lock.Milliseconds())
 		if _, err := tx.ExecContext(ctx, set); err != nil {
 			return nil, err
 		}
