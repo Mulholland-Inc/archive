@@ -2,8 +2,10 @@ package main
 
 import (
 	"archive/zip"
+	"bufio"
 	"bytes"
 	"cmp"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
@@ -34,6 +36,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-crdt/crdt"
+	"github.com/go-crdt/crdt/awareness"
+	"github.com/go-crdt/crdt/structured"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stripe/pg-schema-diff/pkg/diff"
 )
@@ -2640,4 +2645,186 @@ return await archive.read(id);`, page, h, i, mine.Paragraphs[3+i].ID, toks, i, i
 			t.Errorf("extracted text: %s %q", e, f.Text)
 		}
 	})
+}
+
+func TestPageEditorsSyncLiveWithAgentsAndSeeWhoIsThere(t *testing.T) {
+	t.Parallel()
+	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
+	srv := in.serve()
+	tok := decode[Token](t, in.must("token", "create")).Secret
+	run := func(code string, out any) string {
+		t.Helper()
+		var res RunOutput
+		st, _ := call(t, "POST", srv.url+"/api/run", tok, map[string]string{"code": code}, &res)
+		wantStatus(t, st, 200, "run")
+		if res.Error == "" && out != nil {
+			if err := json.Unmarshal(res.Result, out); err != nil {
+				t.Fatalf("%s: %v", res.Result, err)
+			}
+		}
+		return res.Error
+	}
+	var page, other File
+	if e := run(`return await archive.create("Live.page")`, &page); e != "" {
+		t.Fatal(e)
+	}
+	if e := run(`return await archive.create("Not live.docx")`, &other); e != "" {
+		t.Fatal(e)
+	}
+	base := srv.url + "/api/pages/" + page.ID.String()
+	type event struct{ kind, data string }
+	open := func(site int) (chan event, context.CancelFunc) {
+		ctx, cancel := context.WithCancel(context.Background())
+		req, _ := http.NewRequestWithContext(ctx, "GET", base+"/sync?site="+strconv.Itoa(site), nil)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantStatus(t, resp.StatusCode, 200, "sync")
+		ch := make(chan event, 64)
+		go func() {
+			defer resp.Body.Close()
+			sc, kind := bufio.NewScanner(resp.Body), "message"
+			sc.Buffer(nil, 1<<20)
+			for sc.Scan() {
+				line := sc.Text()
+				switch {
+				case strings.HasPrefix(line, "event: "):
+					kind = line[7:]
+				case strings.HasPrefix(line, "data: "):
+					ch <- event{kind, line[6:]}
+					kind = "message"
+				}
+			}
+			close(ch)
+		}()
+		t.Cleanup(cancel)
+		return ch, cancel
+	}
+	next := func(ch chan event, kind string, want func([]byte) bool) []byte {
+		t.Helper()
+		timeout := time.After(10 * time.Second)
+		for {
+			select {
+			case e, ok := <-ch:
+				if !ok {
+					t.Fatalf("stream ended waiting for %s", kind)
+				}
+				b, err := base64.StdEncoding.DecodeString(e.data)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if e.kind == kind && (want == nil || want(b)) {
+					return b
+				}
+			case <-timeout:
+				t.Fatalf("no %s event", kind)
+			}
+		}
+	}
+	post := func(path string, b []byte) int {
+		req, _ := http.NewRequest("POST", base+path, bytes.NewReader(b))
+		req.Header.Set("Authorization", "Bearer "+tok)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	load := func(ch chan event, site crdt.SiteID) *structured.Blocks {
+		d, err := structured.LoadBlocks(site, next(ch, "snapshot", nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	apply := func(d *structured.Blocks, b []byte) {
+		ops, err := crdt.ParsePartOps(b)
+		if err == nil {
+			err = d.Apply(ops...)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	list := func(d *structured.Blocks) []string {
+		var out []string
+		for _, b := range d.List() {
+			out = append(out, b.Type+":"+b.Text)
+		}
+		return out
+	}
+	server := func() []string {
+		var m OfficeModel
+		if e := run(`return await archive.read(`+strconv.Quote(page.ID.String())+`)`, &m); e != "" {
+			t.Fatal(e)
+		}
+		var out []string
+		for _, p := range m.Paragraphs {
+			out = append(out, p.Style+":"+p.Text)
+		}
+		return out
+	}
+
+	ada, stopAda := open(5)
+	grace, _ := open(6)
+	adaDoc, graceDoc := load(ada, 5), load(grace, 6)
+
+	h, ops, err := adaDoc.Insert(structured.DocStart, "heading1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, err := adaDoc.InsertText(h, 0, "Lisbon trip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := crdt.AppendPartOps(nil, append(ops, text))
+	if st := post("/ops", b); st != http.StatusNoContent {
+		t.Fatalf("ops: %d", st)
+	}
+	apply(graceDoc, next(grace, "message", nil))
+	if got := list(graceDoc); !slices.Equal(got, []string{"heading1:Lisbon trip"}) {
+		t.Fatalf("grace sees %q", got)
+	}
+
+	if e := run(`await archive.edit(`+strconv.Quote(page.ID.String())+`, [{ op: "insert_paragraph_after", para: "`+h.String()+`", text: "rolled back" }]); throw new Error("agent gave up")`, nil); !strings.Contains(e, "agent gave up") {
+		t.Fatalf("failing run: %q", e)
+	}
+	if e := run(`await archive.edit(`+strconv.Quote(page.ID.String())+`, [{ op: "insert_paragraph_after", para: "`+h.String()+`", text: "Book flights", style: "todo" }])`, nil); e != "" {
+		t.Fatal(e)
+	}
+	apply(graceDoc, next(grace, "message", nil))
+	if got, want := list(graceDoc), server(); !slices.Equal(got, want) || !slices.Equal(want, []string{"heading1:Lisbon trip", "todo:Book flights"}) {
+		t.Fatalf("grace sees %q, the server has %q", got, want)
+	}
+	next(grace, "presence", func(b []byte) bool {
+		var u awareness.Update
+		return u.UnmarshalBinary(b) == nil && u.Site == 1 && u.Meta["agent"] == "1"
+	})
+
+	reg := awareness.New()
+	at, _ := adaDoc.At(h, 6)
+	u, _ := reg.Publish(5, awareness.Cursor{Anchor: at, Head: at}, map[string]string{"name": "Ada"}).MarshalBinary()
+	if st := post("/presence", u); st != http.StatusNoContent {
+		t.Fatalf("presence: %d", st)
+	}
+	var seen awareness.Update
+	next(grace, "presence", func(b []byte) bool { return seen.UnmarshalBinary(b) == nil && seen.Site == 5 })
+	if seen.Gone || seen.Meta["name"] != "Ada" || seen.Cursor.Head != at {
+		t.Errorf("grace sees ada as %+v", seen)
+	}
+	stopAda()
+	next(grace, "presence", func(b []byte) bool { return seen.UnmarshalBinary(b) == nil && seen.Site == 5 && seen.Gone })
+
+	fake, _ := (&awareness.Update{Site: 1, Clock: 99, Meta: map[string]string{"name": "Agent"}}).MarshalBinary()
+	for path, b := range map[string][]byte{"/ops": []byte("not ops"), "/presence": fake} {
+		if st := post(path, b); st != http.StatusBadRequest {
+			t.Errorf("%s with bad input: %d", path, st)
+		}
+	}
+	if st, _ := call(t, "GET", srv.url+"/api/pages/"+other.ID.String()+"/sync", tok, nil, nil); st != http.StatusNotFound {
+		t.Errorf("sync on a docx: %d", st)
+	}
 }

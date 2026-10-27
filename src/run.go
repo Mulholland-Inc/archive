@@ -445,7 +445,7 @@ func (r *runner) call(f func(ctx context.Context) (any, error)) (any, error) {
 	if err != nil {
 		return nil, storeErr(err)
 	}
-	v, err := f(context.WithValue(r.ctx, storeTxKey{}, storeTx{sp, t.role}))
+	v, err := f(context.WithValue(r.ctx, storeTxKey{}, storeTx{sp, t.role, t.after}))
 	if err != nil {
 		sp.Rollback(r.ctx)
 		return nil, storeErr(err)
@@ -694,7 +694,7 @@ func (a *Archive) runSQL(ctx context.Context, query string, params []any) ([]map
 		if err != nil {
 			return nil, err
 		}
-		rows, err := storeRows(context.WithValue(ctx, storeTxKey{}, storeTx{sp, t.role}), a.st, runWrap+q+"\n) SELECT to_jsonb(q) FROM q", params...)
+		rows, err := storeRows(context.WithValue(ctx, storeTxKey{}, storeTx{sp, t.role, t.after}), a.st, runWrap+q+"\n) SELECT to_jsonb(q) FROM q", params...)
 		if err == nil {
 			return rows, sp.Commit(ctx)
 		}

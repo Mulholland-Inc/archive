@@ -4,17 +4,22 @@ import (
 	"cmp"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/go-crdt/crdt"
+	"github.com/go-crdt/crdt/awareness"
 	"github.com/go-crdt/crdt/structured"
 	"github.com/google/uuid"
 )
@@ -31,6 +36,34 @@ type pageDoc struct {
 	hash string
 	snap []byte
 	doc  *structured.Blocks
+	subs map[chan string]struct{}
+	who  *awareness.Registry
+}
+
+func (p *pageDoc) send(frame string) {
+	for ch := range p.subs {
+		select {
+		case ch <- frame:
+		default:
+			delete(p.subs, ch)
+			close(ch)
+		}
+	}
+}
+
+func (p *pageDoc) presence(u awareness.Update) {
+	if p.who == nil {
+		p.who = awareness.New()
+	}
+	if p.who.Apply(u) {
+		p.announce(u)
+	}
+}
+
+func (p *pageDoc) announce(u awareness.Update) {
+	if b, err := u.MarshalBinary(); err == nil {
+		p.send("event: presence\ndata: " + base64.StdEncoding.EncodeToString(b) + "\n\n")
+	}
 }
 
 func pageIs(name string) bool { return strings.EqualFold(path.Ext(name), pageExt) }
@@ -99,6 +132,61 @@ func (a *Archive) ReadPage(ctx context.Context, id uuid.UUID) (*OfficeModel, boo
 }
 
 func (a *Archive) editPage(ctx context.Context, f *File, ops []OfficeOp) (*File, error) {
+	nf, err := a.pageChange(ctx, f, func(d *structured.Blocks) error {
+		if err := pageApply(d, ops); err != nil {
+			return fmt.Errorf("archive.edit: %v: %w", err, httpErrBadRequest)
+		}
+		return nil
+	})
+	if err == nil {
+		ac := ActorFrom(ctx)
+		storeAfter(ctx, func() { a.pageAgent(f.ID, ac) })
+	}
+	return nf, err
+}
+
+func (a *Archive) pageAgent(id uuid.UUID, ac *Actor) {
+	v, ok := a.pages.Load(id)
+	if !ok {
+		return
+	}
+	p := v.(*pageDoc)
+	name := "Agent"
+	if ac != nil && ac.Name != "" {
+		name = ac.Name + " (agent)"
+	}
+	p.mu.Lock()
+	if p.who == nil {
+		p.who = awareness.New()
+	}
+	p.announce(p.who.Publish(pageSite, awareness.Cursor{Anchor: -1, Head: -1}, map[string]string{"name": name, "color": "#8e8e93", "agent": "1"}))
+	p.mu.Unlock()
+	time.AfterFunc(4*time.Second, func() {
+		p.mu.Lock()
+		p.announce(p.who.Leave(pageSite))
+		p.mu.Unlock()
+	})
+}
+
+func (a *Archive) PagePresence(ctx context.Context, id uuid.UUID, b []byte) error {
+	var u awareness.Update
+	if err := u.UnmarshalBinary(b); err != nil || u.Site <= pageSite {
+		return fmt.Errorf("page presence: want an awareness update from a client site: %w", httpErrBadRequest)
+	}
+	f, err := coreDo(a, ctx, func(ctx context.Context) (*File, error) { return a.pageFile(ctx, id, false) })
+	if err != nil {
+		return err
+	}
+	p, err := a.pageGet(ctx, f)
+	if err != nil {
+		return err
+	}
+	p.presence(u)
+	p.mu.Unlock()
+	return nil
+}
+
+func (a *Archive) pageChange(ctx context.Context, f *File, change func(*structured.Blocks) error) (*File, error) {
 	p, err := a.pageGet(ctx, f)
 	if err != nil {
 		return nil, fmt.Errorf("archive.edit: %w", err)
@@ -108,8 +196,9 @@ func (a *Archive) editPage(ctx context.Context, f *File, ops []OfficeOp) (*File,
 	if err != nil {
 		return nil, err
 	}
-	if err := pageApply(d, ops); err != nil {
-		return nil, fmt.Errorf("archive.edit: %v: %w", err, httpErrBadRequest)
+	v := d.Version()
+	if err := change(d); err != nil {
+		return nil, err
 	}
 	out := d.Snapshot()
 	sum := sha256.Sum256(out)
@@ -123,7 +212,121 @@ func (a *Archive) editPage(ctx context.Context, f *File, ops []OfficeOp) (*File,
 		return nil, err
 	}
 	p.hash, p.snap, p.doc = hash, out, d
+	if ops := d.OpsSince(v); len(ops) > 0 {
+		if b, err := crdt.AppendPartOps(nil, ops); err == nil {
+			frame := "data: " + base64.StdEncoding.EncodeToString(b) + "\n\n"
+			storeAfter(ctx, func() {
+				p.mu.Lock()
+				p.send(frame)
+				p.mu.Unlock()
+			})
+		}
+	}
 	return nf, nil
+}
+
+func (a *Archive) pageFile(ctx context.Context, id uuid.UUID, lock bool) (*File, error) {
+	q := `SELECT ` + fileCols + ` FROM file WHERE id = $1`
+	if lock {
+		q += ` FOR UPDATE`
+	}
+	f, err := storeOne[File](ctx, a.st, q, id)
+	if err == nil && !pageIs(f.Name) {
+		err = ErrNotFound
+	}
+	if errors.Is(err, ErrNotFound) {
+		return nil, fmt.Errorf("page %s: %w", id, ErrNotFound)
+	}
+	return f, err
+}
+
+func (a *Archive) PageOps(ctx context.Context, id uuid.UUID, b []byte) error {
+	ops, err := crdt.ParsePartOps(b)
+	if err != nil {
+		return fmt.Errorf("page ops: %v: %w", err, httpErrBadRequest)
+	}
+	_, err = coreDo(a, ctx, func(ctx context.Context) (*File, error) {
+		f, err := a.pageFile(ctx, id, true)
+		if err != nil {
+			return nil, err
+		}
+		return a.pageChange(ctx, f, func(d *structured.Blocks) error {
+			if err := d.Apply(ops...); err != nil {
+				return fmt.Errorf("page ops: %v: %w", err, httpErrBadRequest)
+			}
+			return nil
+		})
+	})
+	return err
+}
+
+func (a *Archive) pageSync(w http.ResponseWriter, r *http.Request) {
+	id, err := httpID(r)
+	var f *File
+	if err == nil {
+		f, err = coreDo(a, r.Context(), func(ctx context.Context) (*File, error) { return a.pageFile(ctx, id, false) })
+	}
+	var p *pageDoc
+	if err == nil {
+		p, err = a.pageGet(r.Context(), f)
+	}
+	if err != nil {
+		httpWrite(w, 0, nil, err)
+		return
+	}
+	site, _ := strconv.ParseUint(r.URL.Query().Get("site"), 10, 64)
+	ch := make(chan string, 256)
+	if p.subs == nil {
+		p.subs = map[chan string]struct{}{}
+	}
+	if p.who == nil {
+		p.who = awareness.New()
+	}
+	p.subs[ch] = struct{}{}
+	snap := p.snap
+	if len(snap) == 0 {
+		snap = p.doc.Snapshot()
+	}
+	var peers []string
+	for _, u := range p.who.State() {
+		if b, err := u.MarshalBinary(); err == nil {
+			peers = append(peers, "event: presence\ndata: "+base64.StdEncoding.EncodeToString(b)+"\n\n")
+		}
+	}
+	p.mu.Unlock()
+	defer func() {
+		p.mu.Lock()
+		delete(p.subs, ch)
+		if site > uint64(pageSite) {
+			p.announce(p.who.Leave(crdt.SiteID(site)))
+		}
+		p.mu.Unlock()
+	}()
+	h := w.Header()
+	h.Set("Content-Type", "text/event-stream")
+	h.Set("Cache-Control", "no-store")
+	rc := http.NewResponseController(w)
+	fmt.Fprintf(w, "event: snapshot\ndata: %s\n\n", base64.StdEncoding.EncodeToString(snap))
+	io.WriteString(w, strings.Join(peers, ""))
+	rc.Flush()
+	tick := time.NewTicker(25 * time.Second)
+	defer tick.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-tick.C:
+			io.WriteString(w, ": ping\n\n")
+		case frame, ok := <-ch:
+			if !ok {
+				return
+			}
+			io.WriteString(w, frame)
+		}
+		if rc.Flush() != nil {
+			return
+		}
+	}
 }
 
 func (a *Archive) pagePut(ctx context.Context, hash string, b []byte) error {

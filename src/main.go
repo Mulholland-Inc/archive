@@ -686,6 +686,29 @@ func httpHandler(a *Archive) http.Handler {
 		}
 		return ok(a.Run(r.Context(), body.Code))
 	})
+	mux.HandleFunc("GET /api/pages/{id}/sync", a.pageSync)
+	mux.HandleFunc("POST /api/pages/{id}/ops", func(w http.ResponseWriter, r *http.Request) {
+		id, err := httpID(r)
+		var b []byte
+		if err == nil {
+			b, err = io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+		}
+		if err == nil {
+			err = a.PageOps(r.Context(), id, b)
+		}
+		httpWrite(w, http.StatusNoContent, nil, err)
+	})
+	mux.HandleFunc("POST /api/pages/{id}/presence", func(w http.ResponseWriter, r *http.Request) {
+		id, err := httpID(r)
+		var b []byte
+		if err == nil {
+			b, err = io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<16))
+		}
+		if err == nil {
+			err = a.PagePresence(r.Context(), id, b)
+		}
+		httpWrite(w, http.StatusNoContent, nil, err)
+	})
 	mux.HandleFunc("GET /api/run/docs", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		io.WriteString(w, a.RunDocs(r.Context()))
