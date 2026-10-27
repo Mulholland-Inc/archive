@@ -89,10 +89,10 @@ declare const archive: {
     files(opts?: { limit?: number; after?: string; space?: string }): Promise<StoredFile[]>;
     /** One file with its extracted text. */
     file(id: string): Promise<StoredFile>;
-    /** The structure of a docx, xlsx or pptx file: paragraphs with ids, cells, slides and shapes (see Documents). */
+    /** The structure of a docx, xlsx or pptx file: its version, paragraphs with ids, cells, slides and shapes (see Documents). */
     read(fileId: string): Promise<Model>;
-    /** Apply edits to a docx, xlsx or pptx file in place and save it as the file's new content; all or nothing (see Documents). */
-    edit(fileId: string, edits: Edit[]): Promise<StoredFile>;
+    /** Apply edits to the version of a docx, xlsx or pptx file you read and save the result as its new content; all or nothing (see Documents). */
+    edit(fileId: string, edits: Edit[], opts: { version: string }): Promise<StoredFile & { version: string }>;
     /** The spaces you can see, with your level in each. */
     spaces(): Promise<Space[]>;
 };
@@ -192,12 +192,20 @@ interface Quantity { value: number; unit: string; original_unit: string }
  * the XML it targets and every other part of the file is kept byte for byte, so
  * formatting, images, comments, charts and anything else survive.
  *
- * Workflow: read the model, then send a list of edits. Edits apply in order, all
- * or nothing: if one fails, nothing is saved and the error says which edit failed
- * and why. Call archive.read again after a successful edit before planning more.
+ * Workflow: read the model, then send a list of edits with the version you read:
+ *   const doc = await archive.read(id);
+ *   const { version } = await archive.edit(id, [...], { version: doc.version });
+ * Edits apply in order, all or nothing: if one fails, nothing is saved and the error
+ * says which edit failed and why. Ids and indexes refer to the version you read, so
+ * if anyone saved the file since, the edit saves nothing and fails with code
+ * "conflict": call archive.read again and redo your edit on the new version. A
+ * successful edit returns the new version; read again before planning more edits.
  */
 
-type Model = DocxModel | XlsxModel | PptxModel;
+type Model = (DocxModel | XlsxModel | PptxModel) & {
+  /** The file's content hash: pass it to archive.edit as { version }. */
+  version: string;
+};
 
 interface DocxModel {
   type: "docx";
