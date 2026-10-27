@@ -2040,6 +2040,7 @@ const e2eHouse = `CREATE TABLE house (
     updated_at timestamptz NOT NULL DEFAULT now(),
     address    text NOT NULL,
     price      archive.money,
+    sold       boolean NOT NULL DEFAULT false,
     search     tsvector GENERATED ALWAYS AS (archive.search_doc(address)) STORED
 );
 CREATE INDEX house_search ON house USING gin (search);
@@ -2108,7 +2109,7 @@ return { planned: plan.statements.length, before: plan.applied, applied: done.ap
 		resp, body := e2eGet(t, api+"/run/docs", tok)
 		docs := string(body)
 		for _, want := range []string{"declare const archive", "sql(query: string, ...params: unknown[]): Promise<Row[]>", "interface Money { amount: number; currency: Currency }",
-			"/** A house you own or rent. */\ninterface House extends Base {\n    address: string;\n    /** Asking price. */\n    price?: Money;\n}", "house: House;", "type Email = string;"} {
+			"/** A house you own or rent. */\ninterface House extends Base {\n    address: string;\n    /** Asking price. */\n    price?: Money;\n    sold?: boolean;\n}", "house: House;", "type Email = string;"} {
 			if resp.StatusCode != 200 || !strings.Contains(docs, want) {
 				t.Errorf("docs lack %q:\n%s", want, docs)
 			}
@@ -2129,9 +2130,9 @@ const [{ n }] = await archive.sql("SELECT count(*)::int AS n FROM house WHERE pr
 const files = await archive.files();
 const file = await archive.file(files[0].id);
 console.log("made", { a: a.address });
-return { price: a.price, listed: listed.map(h => h.id === b.id), priced: priced.price?.amount, cleared: cleared.price,
+return { price: a.price, sold: b.sold, listed: listed.map(h => h.id === b.id), priced: priced.price?.amount, cleared: cleared.price,
   hit: hits.find(h => h.type === "house")?.data.address, n, text: file.text, spaces: (await archive.spaces()).length };`)
-		want := map[string]string{"price": "map[amount:950000 currency:EUR]", "listed": "[true]", "priced": "500000", "cleared": "<nil>",
+		want := map[string]string{"price": "map[amount:950000 currency:EUR]", "sold": "false", "listed": "[true]", "priced": "500000", "cleared": "<nil>",
 			"hit": "Keizersgracht 1", "n": "1", "text": "Viewing on Friday at the canal house", "spaces": "1"}
 		for k, v := range want {
 			if fmt.Sprint(got[k]) != v {
