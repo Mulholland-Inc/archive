@@ -16,7 +16,8 @@ ALTER TABLE measurement ENABLE ROW LEVEL SECURITY;
 ALTER TABLE measurement FORCE ROW LEVEL SECURITY;
 CREATE POLICY viewer ON measurement FOR SELECT USING (space = ANY (archive.my_spaces()));
 CREATE POLICY editor ON measurement USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
-COMMENT ON TABLE measurement IS 'A health or fitness measurement';
+COMMENT ON TABLE measurement IS 'A health or fitness measurement
+icon: activity';
 COMMENT ON COLUMN measurement.taken IS 'Day of the measurement';
 COMMENT ON COLUMN measurement.kind IS 'What was measured';
 COMMENT ON COLUMN measurement.value IS 'The measured value';

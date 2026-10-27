@@ -47,7 +47,6 @@
 </script>
 
 <h1>{pages ? 'Pages' : 'Files'}</h1>
-<p class="lead">{pages ? 'Documents you and your agents write together, live.' : 'Everything in your archive, newest first.'}</p>
 <div class="actions">
   {#if pages}
     <button onclick={newPage}><Icon name="newpage" />New page</button>

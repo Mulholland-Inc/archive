@@ -25,7 +25,7 @@ flowchart LR
 - **Postgres 18** for all data, **Go** for the server, **a directory or S3-compatible storage** (S3, R2, MinIO, GCS) for file bytes.
 - **One Dockerfile**: the image holds Postgres and the binary. Without `DATABASE_URL`, the binary starts the bundled Postgres in `/data`; with it, it uses the external database and keeps nothing local.
 - **One port** serves the HTTP API (`/api`), sign-in (`/auth`) and MCP (`/mcp`).
-- **Clients**: one Svelte web app is the client everywhere. It is served as the website, and wrapped with Tauri 2 for iOS, Android, macOS, Windows and Linux; Capacitor is the fallback for iOS and Android if Tauri's mobile side proves rough. It is a client of the HTTP API and the page sync endpoints. `apps/web` is its start: Svelte 5 and Vite, in the look of archive.family's app (Geist and EB Garamond, a dark shell, cream pills, rounded panels). It has sign-in, files, pages with the live editor, and a view of every table; it is not yet wrapped in Tauri.
+- **Clients**: one Svelte web app is the client everywhere. It is served as the website, and wrapped with Tauri 2 for iOS, Android, macOS, Windows and Linux; Capacitor is the fallback for iOS and Android if Tauri's mobile side proves rough. It is a client of the HTTP API and the page sync endpoints. `apps/web` is its start: Svelte 5 and Vite, in the look of archive.family's app (Geist and EB Garamond, a dark shell, cream pills, rounded panels). It has sign-in, files, pages with the live editor, and a page for every table and view, each with the icon and description from its comment; it is not yet wrapped in Tauri.
 
 ## Data model
 
@@ -33,8 +33,8 @@ Two Postgres schemas. Tables are named in the singular, and every id is a UUIDv7
 
 | Schema | Holds |
 |---|---|
-| `archive` | Archive's own tables: `space`, `user`, `token`, `revision`, `file`, `upload`, `view` and `secret`. It also holds the built-in types, as domains (`archive.email`, `archive.iban`, `archive.phone`, …) and composite types (`archive.money`, `archive.address`, `archive.timestamp`, …) |
-| `public` | One table per type. The table is the type and a row is the entity |
+| `archive` | Archive's own tables: `space`, `user`, `token`, `revision`, `file`, `upload` and `secret`. It also holds the built-in types, as domains (`archive.email`, `archive.iban`, `archive.phone`, …) and composite types (`archive.money`, `archive.address`, `archive.timestamp`, …) |
+| `public` | One table per type, where the table is the type and a row is the entity, and the views over them |
 
 There is no `type` or `entity` table: Postgres already is that. Archive reads types, columns, foreign keys and `COMMENT ON` descriptions from the catalog.
 
@@ -55,21 +55,32 @@ CREATE INDEX house_search ON house USING gin (search);
 ALTER TABLE house ENABLE ROW LEVEL SECURITY;
 ALTER TABLE house FORCE ROW LEVEL SECURITY;
 CREATE POLICY member ON house USING (space = ANY (archive.my_spaces()));
-COMMENT ON TABLE house IS 'A house you own or rent';
+COMMENT ON TABLE house IS 'A house you own or rent
+icon: house';
+```
+
+- **Comments carry settings**: the first lines of a `COMMENT ON TABLE` or `COMMENT ON VIEW` are the description; trailing `key: value` lines are settings. `icon` (a Lucide icon name, checked against the list in `src/icons.json`) goes on tables and views; `layout` (`table`, `board` or `calendar`) and `by` (one of the view's columns) go on views. An unknown key, icon, layout or column fails the plan. The catalog (`GET /api/types`, `archive.tables()`, the code mode docs) shows the description without those lines, plus `kind`, `icon`, `layout` and `by`; the generated DDL keeps the whole comment. Parsing is `catalogComment` in `src/catalog.go`. Column comments may use the same convention later.
+- **Views** are Postgres views in `public`, written in the same DDL: a filtered, grouped or calendar way to look at a table, with its layout in its comment. Every view needs `WITH (security_invoker = true)`, so row-level security applies to whoever reads it, and an `id uuid` column. Views show in the catalog next to tables with `kind: "view"`; list, get and search read them, and writes to them fail with 405. They hold no space of their own: row-level security on the tables they read filters their rows.
+
+```sql
+CREATE VIEW task_board WITH (security_invoker = true) AS SELECT * FROM task;
+COMMENT ON VIEW task_board IS 'Tasks by progress
+layout: board
+by: status
+icon: kanban';
 ```
 
 - **Built-in types**: Postgres enforces their format through domains. A Go normalizer per domain cleans messy input first (read in `ARCHIVE_LOCALE`), so the same thing is stored the same way whatever source it came from.
 - **References** are foreign keys to the target table. **Lists** are arrays. There is no type inheritance.
 - **Across tables**: search and "everything in a space" are a `UNION ALL` over the `public` tables, which Archive generates from the catalog.
-- **Saved views** are rows of `archive.view`.
 
 ## Schema changes
 
 The schema is declarative and DDL only, with no migrations folder and no stored schema files: **the live database is the only source of truth** for users' types.
 
-- **Reading**: `archive.schema()`, `GET /api/schema` and `archive schema pull [dir]` generate the DDL on demand, one `<table>.sql` per table. They load `archive.sql` into an empty temp database and plan with pg-schema-diff from there to the live database, keeping the statements about `public`. Each file holds the table with its indexes, foreign keys, row-level security, policies, triggers and `COMMENT ON` statements. An enum, domain or function goes in the first table file that uses it.
+- **Reading**: `archive.schema()`, `GET /api/schema` and `archive schema pull [dir]` generate the DDL on demand, one `<name>.sql` per table or view. They load `archive.sql` into an empty temp database and plan with pg-schema-diff from there to the live database, keeping the statements about `public`. Each file holds the table with its indexes, foreign keys, row-level security, policies, triggers and `COMMENT ON` statements. An enum, domain or function goes in the first table file that uses it; a view always gets its own file. pg-schema-diff diffs views, their options and their comments, so a changed view comment plans one `COMMENT ON VIEW`.
 - **Normalized text**: the generated DDL is in pg-schema-diff's style, with quoted, schema-qualified names and spelled-out policies. `--` comments and layout are not kept; `COMMENT ON` is.
-- **Writing**: `archive.apply(files)`, `POST /api/schema/plan|apply` and `archive schema plan|apply <dir>` take the whole desired set. Leaving a table out drops it, which is blocked unless explicitly allowed. The invariant is that `apply(schema())` plans nothing, so files can be pulled, kept in git and applied back.
+- **Writing**: `archive.apply(files)`, `POST /api/schema/plan|apply` and `archive schema plan|apply <dir>` take the whole desired set. Leaving a table out drops it, which is blocked unless explicitly allowed; leaving a view out drops it without asking, since a view holds no data. The invariant is that `apply(schema())` plans nothing, so files can be pulled, kept in git and applied back.
 
 How an apply runs:
 
@@ -211,7 +222,7 @@ The same image runs in two modes.
   - background work, sync jobs and coordination: through Postgres locks (`SKIP LOCKED` for leftover files, an advisory lock for schema).
 
   It runs on request-based billing and scales to zero: no CPU is needed between requests, and an open page editor keeps its instance awake only while it is connected.
-- **Helm** (`apps/helm`) covers Kubernetes and refuses an external database without a secret key. The **`archive` Terraform provider** (`apps/terraform`) manages schema DDL, spaces, tokens, views and access rules as code. It compares configured DDL with the database through the plan endpoint, so normalized output never shows as drift.
+- **Helm** (`apps/helm`) covers Kubernetes and refuses an external database without a secret key. The **`archive` Terraform provider** (`apps/terraform`) manages schema DDL (tables and views), spaces, tokens and access rules as code. It compares configured DDL with the database through the plan endpoint, so normalized output never shows as drift.
 
 Not verified yet: a managed Postgres without a true superuser (Cloud SQL's `cloudsqlsuperuser`), and GCS through its S3 API.
 

@@ -1,6 +1,5 @@
 <script>
-  import { api, go, Unauthorized } from './api.js';
-  import { layoutIcons, tableIcons } from './icons.js';
+  import { api, go, icon, Unauthorized } from './api.js';
   import Icon from './Icon.svelte';
   import Logo from './Logo.svelte';
   import SignIn from './SignIn.svelte';
@@ -14,6 +13,7 @@
   let tables = $state([]);
   let views = $state([]);
   let types = $state({});
+  let icons = $state({});
   let path = $state(location.pathname);
 
   addEventListener('popstate', () => (path = location.pathname));
@@ -28,7 +28,6 @@
     const [, first = '', second = ''] = path.split('/').map(decodeURIComponent);
     return { first, second };
   });
-  const icons = $derived(tableIcons(tables.map((t) => t.name)));
   const table = (name) => tables.find((t) => t.name === name);
   const who = $derived(me ? me.actor.name || me.actor.email : '');
   const initials = $derived(who.split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join(''));
@@ -36,10 +35,12 @@
   async function load() {
     try {
       me = await api('/auth/me');
-      const [cat, vs] = await Promise.all([api('/api/types'), api('/api/views')]);
+      const cat = await api('/api/types');
+      const all = Object.values(cat.tables).sort((a, b) => a.name.localeCompare(b.name));
+      icons = Object.fromEntries(await Promise.all(all.map(async (t) => [t.name, await icon(t.icon)])));
       types = cat.types;
-      tables = Object.values(cat.tables).sort((a, b) => a.name.localeCompare(b.name));
-      views = vs.sort((a, b) => a.name.localeCompare(b.name));
+      tables = all.filter((t) => t.kind === 'table');
+      views = all.filter((t) => t.kind === 'view');
       if (location.pathname === '/') history.replaceState(null, '', (path = '/files'));
     } catch (e) {
       if (e instanceof Unauthorized) signedOut = true;
@@ -66,9 +67,9 @@
         <a class="row" href="/pages" class:on={route.first === 'pages'}><Icon name="page" size={22} />Pages</a>
         {#if views.length}
           <div class="label">Views</div>
-          {#each views as v (v.id)}
-            {@const LayoutIcon = layoutIcons[v.layout] ?? layoutIcons.table}
-            <a class="row plain" href="/views/{v.id}" class:on={route.first === 'views' && route.second === v.id}><LayoutIcon size={21} strokeWidth={1.75} />{v.name}</a>
+          {#each views as v (v.name)}
+            {@const ViewIcon = icons[v.name]}
+            <a class="row" href="/views/{v.name}" class:on={route.first === 'views' && route.second === v.name}><ViewIcon size={21} strokeWidth={1.75} />{v.name.replaceAll('_', ' ')}</a>
           {/each}
         {/if}
         <div class="label">Tables</div>
@@ -93,10 +94,10 @@
       {:else if route.first === 'pages'}
         <Files pages />
       {:else if route.first === 'views'}
-        {@const v = views.find((x) => x.id === route.second)}
+        {@const v = views.find((x) => x.name === route.second)}
         {#if v}
-          {#key v.id}
-            <View view={v} table={table(v.type)} {types} />
+          {#key v.name}
+            <View view={v} {types} />
           {/key}
         {/if}
       {:else if table(route.first)}
@@ -130,7 +131,6 @@
     color: var(--text);
     transition: background var(--dur) var(--ease);
   }
-  .row.plain { text-transform: none; }
   .row :global(svg) { flex: none; }
   .row:hover { background: var(--hover); }
   .row.on { background: var(--cream); color: var(--cream-ink); font-weight: 600; }

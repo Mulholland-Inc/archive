@@ -17,7 +17,8 @@ ALTER TABLE event ENABLE ROW LEVEL SECURITY;
 ALTER TABLE event FORCE ROW LEVEL SECURITY;
 CREATE POLICY viewer ON event FOR SELECT USING (space = ANY (archive.my_spaces()));
 CREATE POLICY editor ON event USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
-COMMENT ON TABLE event IS 'Something on your calendar';
+COMMENT ON TABLE event IS 'Something on your calendar
+icon: calendar-days';
 COMMENT ON COLUMN event.title IS 'What it is';
 COMMENT ON COLUMN event.starts IS 'Start time';
 COMMENT ON COLUMN event.ends IS 'End time';

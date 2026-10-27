@@ -76,19 +76,6 @@ CREATE TABLE archive.upload (
     created_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE archive.view (
-    id         uuid PRIMARY KEY DEFAULT uuidv7(),
-    name       text NOT NULL,
-    space      uuid NOT NULL REFERENCES archive.space,
-    type       text NOT NULL,
-    layout     text NOT NULL DEFAULT 'table',
-    by_field   text NOT NULL DEFAULT '',
-    filter     jsonb NOT NULL DEFAULT '{}',
-    created_by text NOT NULL DEFAULT '',
-    created_at timestamptz NOT NULL DEFAULT now(),
-    UNIQUE (space, name)
-);
-
 CREATE TABLE archive.secret (
     id          uuid PRIMARY KEY,
     table_name  text NOT NULL,
@@ -121,7 +108,7 @@ $$;
 
 GRANT USAGE ON SCHEMA archive TO {p}_user;
 GRANT SELECT ON archive.space TO {p}_user;
-GRANT SELECT, INSERT, UPDATE, DELETE ON archive.file, archive.view, archive.secret TO {p}_user;
+GRANT SELECT, INSERT, UPDATE, DELETE ON archive.file, archive.secret TO {p}_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {p}_user;
 
 ALTER TABLE archive.space ENABLE ROW LEVEL SECURITY;
@@ -133,10 +120,6 @@ ALTER TABLE archive.file FORCE ROW LEVEL SECURITY;
 CREATE POLICY viewer ON archive.file FOR SELECT USING (space = ANY (archive.my_spaces()));
 CREATE POLICY editor ON archive.file USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
 
-ALTER TABLE archive.view ENABLE ROW LEVEL SECURITY;
-ALTER TABLE archive.view FORCE ROW LEVEL SECURITY;
-CREATE POLICY viewer ON archive.view FOR SELECT USING (space = ANY (archive.my_spaces()));
-CREATE POLICY editor ON archive.view USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
 
 ALTER TABLE archive.secret ENABLE ROW LEVEL SECURITY;
 ALTER TABLE archive.secret FORCE ROW LEVEL SECURITY;
