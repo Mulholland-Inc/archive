@@ -142,8 +142,8 @@ func catalogParse(b []byte) (*Catalog, error) {
 
 var (
 	catalogSystem   = map[string]bool{"id": true, "space": true, "created_at": true, "updated_at": true}
-	catalogReserved = map[string]bool{"files": true, "views": true, "search": true, "schema": true, "types": true, "sources": true,
-		"space": true, "user": true, "token": true, "file": true, "source": true, "view": true, "secret": true, "revision": true, "run": true}
+	catalogReserved = map[string]bool{"files": true, "views": true, "search": true, "schema": true, "types": true,
+		"space": true, "user": true, "token": true, "file": true, "upload": true, "schema_file": true, "view": true, "secret": true, "revision": true, "run": true}
 	catalogNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 	catalogRefRe  = regexp.MustCompile(`(?i)^references\s+([a-z][a-z0-9_]*)\b[\s.;:,-]*`)
 )

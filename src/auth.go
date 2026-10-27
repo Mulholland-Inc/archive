@@ -476,7 +476,7 @@ func (a *Archive) DeleteSpace(ctx context.Context, name string) error {
 		for _, t := range a.Catalog().deleteOrder() {
 			tables = append(tables, pgIdent("public", t))
 		}
-		for _, t := range append(append([]string{"view", "source", "secret"}, tables...), "file") {
+		for _, t := range append(append([]string{"view", "secret"}, tables...), "file") {
 			if _, err := q.Exec(ctx, `DELETE FROM `+t+` WHERE space = $1`, id); err != nil {
 				return err
 			}

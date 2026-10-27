@@ -18,6 +18,7 @@ import (
 	"image/color"
 	"image/jpeg"
 	"io"
+	"maps"
 	"mime/multipart"
 	"net"
 	"net/http"
@@ -147,6 +148,25 @@ func newInst(t *testing.T, env ...string) *e2eInst {
 		}
 	}
 	return &e2eInst{t: t, dir: dir, env: append([]string{"ARCHIVE_DATA=" + dir}, env...)}
+}
+
+func (in *e2eInst) twin(env ...string) *e2eInst {
+	in.t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "arc")
+	if err != nil {
+		in.t.Fatal(err)
+	}
+	in.t.Cleanup(func() { os.RemoveAll(dir) })
+	key, err := os.ReadFile(filepath.Join(in.dir, "secret.key"))
+	if err != nil {
+		in.t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Join(in.dir, "blobs"), 0o700)
+	if err := os.Symlink(filepath.Join(in.dir, "blobs"), filepath.Join(dir, "blobs")); err != nil {
+		in.t.Fatal(err)
+	}
+	return &e2eInst{t: in.t, dir: dir, env: append([]string{"ARCHIVE_DATA=" + dir, "DATABASE_URL=host=" + in.dir + " user=archive dbname=archive",
+		"ARCHIVE_SECRET_KEY=" + strings.TrimSpace(string(key))}, env...)}
 }
 
 func (in *e2eInst) on(t *testing.T) *e2eInst {
@@ -932,332 +952,6 @@ func TestDockerImageServesAndAcceptsCLICommandsFromDockerExec(t *testing.T) {
 	}
 }
 
-type e2eGoogle struct {
-	mu        sync.Mutex
-	history   int
-	added     map[int]string
-	subjects  map[string]string
-	fail      int
-	listCalls int
-	fetched   []string
-	starts    []string
-	newFile   bool
-}
-
-func (g *e2eGoogle) deliver(id, subject string) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.history++
-	g.added[g.history] = id
-	g.subjects[id] = subject
-}
-
-func (g *e2eGoogle) handler(t *testing.T) http.Handler {
-	b64 := func(s string) string { return base64.RawURLEncoding.EncodeToString([]byte(s)) }
-	file := func(id, name, mime string) map[string]any {
-		return map[string]any{"id": id, "name": name, "mimeType": mime, "modifiedTime": "2026-10-01T10:00:00Z"}
-	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /token", func(w http.ResponseWriter, r *http.Request) {
-		r.ParseForm()
-		id, secret, _ := r.BasicAuth()
-		id, secret = cmp.Or(id, r.Form.Get("client_id")), cmp.Or(secret, r.Form.Get("client_secret"))
-		ok := id == "cid" && secret == "csecret"
-		switch r.Form.Get("grant_type") {
-		case "authorization_code":
-			ok = ok && r.Form.Get("code") == "good-code" && r.Form.Get("code_verifier") != ""
-		case "refresh_token":
-			ok = ok && r.Form.Get("refresh_token") == "rt-1"
-		}
-		w.Header().Set("Content-Type", "application/json")
-		if !ok {
-			w.WriteHeader(400)
-			w.Write([]byte(`{"error":"invalid_grant"}`))
-			return
-		}
-		w.Write([]byte(`{"access_token":"at-1","refresh_token":"rt-1","token_type":"Bearer","expires_in":3600}`))
-	})
-	api := http.NewServeMux()
-	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer at-1" {
-			w.WriteHeader(401)
-			return
-		}
-		g.mu.Lock()
-		defer g.mu.Unlock()
-		api.ServeHTTP(w, r)
-	}))
-	api.HandleFunc("GET /gmail/v1/users/me/profile", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"historyId": strconv.Itoa(g.history)})
-	})
-	api.HandleFunc("GET /gmail/v1/users/me/messages", func(w http.ResponseWriter, r *http.Request) {
-		g.listCalls++
-		if g.fail > 0 {
-			g.fail--
-			w.WriteHeader(500)
-			return
-		}
-		var ms []map[string]string
-		for h := g.history; h > 0; h-- {
-			if id, ok := g.added[h]; ok {
-				ms = append(ms, map[string]string{"id": id})
-			}
-		}
-		json.NewEncoder(w).Encode(map[string]any{"messages": ms})
-	})
-	api.HandleFunc("GET /gmail/v1/users/me/history", func(w http.ResponseWriter, r *http.Request) {
-		start, _ := strconv.Atoi(r.URL.Query().Get("startHistoryId"))
-		g.starts = append(g.starts, r.URL.Query().Get("startHistoryId"))
-		var hs []any
-		for h := start + 1; h <= g.history; h++ {
-			if id, ok := g.added[h]; ok {
-				hs = append(hs, map[string]any{"messagesAdded": []any{map[string]any{"message": map[string]string{"id": id}}}})
-			}
-		}
-		json.NewEncoder(w).Encode(map[string]any{"history": hs, "historyId": strconv.Itoa(g.history)})
-	})
-	api.HandleFunc("GET /gmail/v1/users/me/messages/{id}", func(w http.ResponseWriter, r *http.Request) {
-		id := r.PathValue("id")
-		g.fetched = append(g.fetched, id)
-		json.NewEncoder(w).Encode(map[string]any{"id": id, "threadId": "t-" + id, "labelIds": []string{"INBOX"}, "snippet": "snip",
-			"payload": map[string]any{"mimeType": "multipart/mixed",
-				"headers": []any{map[string]string{"name": "From", "value": "Ann <ann@example.com>"}, map[string]string{"name": "Subject", "value": g.subjects[id]}},
-				"parts": []any{
-					map[string]any{"mimeType": "multipart/alternative", "parts": []any{
-						map[string]any{"mimeType": "text/plain", "body": map[string]any{"data": b64("Body of " + g.subjects[id])}},
-						map[string]any{"mimeType": "text/html", "body": map[string]any{"data": b64("<p>html</p>")}}}},
-					map[string]any{"mimeType": "application/pdf", "filename": "invoice.pdf", "body": map[string]any{"attachmentId": "att-" + id, "size": 1234}}}}})
-	})
-	api.HandleFunc("GET /gmail/v1/users/me/messages/{id}/attachments/{aid}", func(w http.ResponseWriter, r *http.Request) {
-		if r.PathValue("aid") != "att-"+r.PathValue("id") {
-			w.WriteHeader(404)
-			return
-		}
-		json.NewEncoder(w).Encode(map[string]any{"size": 1234, "data": base64.URLEncoding.EncodeToString(e2ePDF("Attachment of " + r.PathValue("id")))})
-	})
-	api.HandleFunc("GET /drive/v3/changes/startPageToken", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"startPageToken":"1"}`))
-	})
-	api.HandleFunc("GET /drive/v3/files", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{"files": []any{
-			file("d1", "Plan", "application/vnd.google-apps.document"), file("d2", "notes.txt", "text/plain"), file("d3", "photo.jpg", "image/jpeg")}})
-	})
-	api.HandleFunc("GET /drive/v3/changes", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("pageToken") == "1" && g.newFile {
-			json.NewEncoder(w).Encode(map[string]any{"changes": []any{map[string]any{"file": file("d4", "new.txt", "text/plain")}}, "newStartPageToken": "2"})
-			return
-		}
-		json.NewEncoder(w).Encode(map[string]any{"changes": []any{}, "newStartPageToken": r.URL.Query().Get("pageToken")})
-	})
-	api.HandleFunc("GET /drive/v3/files/d1/export", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("Doc text from Drive")) })
-	api.HandleFunc("GET /drive/v3/files/{id}", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("Contents of " + r.PathValue("id")))
-	})
-	return mux
-}
-
-func TestSourcesSyncGmailDriveAndFolderIntoFiles(t *testing.T) {
-	t.Parallel()
-	g := &e2eGoogle{history: 99, added: map[int]string{}, subjects: map[string]string{}, fail: 1}
-	g.deliver("m1", "Hello one")
-	g.deliver("m2", "Hello two")
-	google := httptest.NewServer(g.handler(t))
-	defer google.Close()
-
-	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com", "ARCHIVE_GOOGLE_CLIENT_ID=cid", "ARCHIVE_GOOGLE_CLIENT_SECRET=csecret",
-		"ARCHIVE_GOOGLE_API_URL="+google.URL, "ARCHIVE_GOOGLE_TOKEN_URL="+google.URL+"/token")
-	srv := in.serve()
-	api := srv.url + "/api"
-	in.must("user", "add", "bob@example.com")
-	aliceTok := decode[Token](t, in.must("token", "create", "-name", "Claude")).Secret
-	bobTok := decode[Token](t, in.must("-as", "bob@example.com", "token", "create")).Secret
-	aliceHome := in.psql("archive", "SELECT home FROM archive.\"user\" WHERE email = 'alice@example.com'")
-	runCLI := func(t *testing.T, name string) SyncResult {
-		t.Helper()
-		return decode[SyncResult](t, in.on(t).must("source", "run", name))
-	}
-	fileNames := func() string {
-		return in.psql("archive", "SELECT string_agg(name, ',' ORDER BY name) FROM archive.file")
-	}
-
-	var gmail Source
-	t.Run("GmailOAuthInTheCLIThenFullSyncRetriesA500AndStoresMailAsFiles", func(t *testing.T) {
-		out, errs, err := in.run("good-code\n", "source", "add", "gmail", "-name", "work")
-		if err != nil {
-			t.Fatalf("source add gmail: %v\n%s%s", err, out, errs)
-		}
-		gmail = decode[Source](t, out)
-		m := regexp.MustCompile(`https://accounts\.google\.com/o/oauth2/auth\?\S+`).FindString(errs)
-		u, _ := url.Parse(m)
-		q := u.Query()
-		if gmail.Status != "new" || q.Get("client_id") != "cid" || q.Get("access_type") != "offline" || q.Get("code_challenge") == "" ||
-			q.Get("redirect_uri") != "http://localhost:8080/api/sources/oauth/callback" || !strings.HasPrefix(q.Get("state"), gmail.ID.String()+".") ||
-			!strings.Contains(q.Get("scope"), "gmail.readonly") {
-			t.Fatalf("source %+v, auth url %q", gmail, m)
-		}
-		res := runCLI(t, "work")
-		if res.Fetched != 4 || res.New != 4 || res.Status != "ok" || g.listCalls != 2 {
-			t.Fatalf("first sync %+v, list calls %d", res, g.listCalls)
-		}
-		if got := fileNames(); got != "Hello one.eml,Hello two.eml,invoice.pdf,invoice.pdf" {
-			t.Fatalf("files: %s", got)
-		}
-		fid := in.psql("archive", "SELECT id FROM archive.file WHERE name = 'invoice.pdf' ORDER BY id LIMIT 1")
-		f := e2eWaitFile(t, api, aliceTok, fid)
-		if f.MIME != "application/pdf" || f.Status != "done" || f.Space.String() != aliceHome || f.Metadata["pages"] != json.Number("1") {
-			t.Errorf("attachment file: %+v", f)
-		}
-		if text := in.psql("archive", "SELECT text FROM archive.file WHERE id = '"+fid+"'"); !strings.Contains(text, "Attachment of m1") {
-			t.Errorf("attachment text: %q", text)
-		}
-		mid := in.psql("archive", "SELECT id FROM archive.file WHERE name = 'Hello one.eml'")
-		mail := e2eWaitFile(t, api, aliceTok, mid)
-		if mail.MIME != "message/rfc822" || !strings.Contains(fmt.Sprint(mail.Metadata["headers"]), "Subject:Hello one") {
-			t.Errorf("mail file: %+v", mail)
-		}
-		if text := in.psql("archive", "SELECT text FROM archive.file WHERE id = '"+mid+"'"); !strings.Contains(text, "From: Ann <ann@example.com>") || !strings.Contains(text, "Body of Hello one") {
-			t.Errorf("mail text: %q", text)
-		}
-	})
-
-	t.Run("GmailIncrementalSyncFetchesOnlyNewMail", func(t *testing.T) {
-		g.deliver("m3", "Hello three")
-		res := runCLI(t, "work")
-		if res.Fetched != 2 || res.New != 2 || strings.Join(g.fetched, ",") != "m1,m2,m3" || strings.Join(g.starts, ",") != "101" {
-			t.Fatalf("second sync %+v, fetched %v, history starts %v", res, g.fetched, g.starts)
-		}
-	})
-
-	t.Run("CursorPersistsAcrossARestart", func(t *testing.T) {
-		srv.stop()
-		srv = in.serve()
-		api = srv.url + "/api"
-		var s Source
-		call(t, "GET", api+"/sources/work", aliceTok, nil, &s)
-		if !strings.Contains(string(s.State), `"history_id":"102"`) || s.LastRunAt == nil {
-			t.Fatalf("state after restart: %s", s.State)
-		}
-		var res SyncResult
-		st, _ := call(t, "POST", api+"/sources/work/run", aliceTok, nil, &res)
-		wantStatus(t, st, 200, "run over the API")
-		if res.Fetched != 0 || g.listCalls != 2 || strings.Join(g.starts, ",") != "101,102" {
-			t.Fatalf("after restart %+v, list calls %d, starts %v", res, g.listCalls, g.starts)
-		}
-	})
-
-	t.Run("DriveOAuthCallbackThenScheduledIncrementalSync", func(t *testing.T) {
-		var created struct {
-			Source
-			AuthURL string `json:"auth_url"`
-		}
-		st, _ := call(t, "POST", api+"/sources", aliceTok, map[string]any{"kind": "drive", "name": "docs", "schedule": "1s"}, &created)
-		wantStatus(t, st, 201, "add drive")
-		u, _ := url.Parse(created.AuthURL)
-		redirect := u.Query().Get("redirect_uri")
-		if created.Status != "needs_auth" || !strings.HasSuffix(redirect, "/api/sources/oauth/callback") {
-			t.Fatalf("drive %+v", created)
-		}
-		cb := srv.url + "/api/sources/oauth/callback?code=good-code&state="
-		st, _ = call(t, "GET", cb+"forged", "", nil, nil)
-		wantStatus(t, st, 401, "callback with a forged state")
-		st, _ = call(t, "GET", cb+created.ID.String()+".forged", "", nil, nil)
-		wantStatus(t, st, 401, "callback with the right source and a forged secret")
-		st, _ = call(t, "GET", cb+url.QueryEscape(u.Query().Get("state")), "", nil, nil)
-		wantStatus(t, st, 200, "callback")
-		waitState := func(want string) Source {
-			var s Source
-			for deadline := time.Now().Add(20 * time.Second); !strings.Contains(string(s.State), want); time.Sleep(200 * time.Millisecond) {
-				if time.Now().After(deadline) {
-					t.Fatalf("drive state %s, want %s\n%s", s.State, want, srv.log)
-				}
-				call(t, "GET", api+"/sources/docs", aliceTok, nil, &s)
-			}
-			return s
-		}
-		waitState(`"page_token":"1"`)
-		if f := in.psql("archive", "SELECT string_agg(name || '|' || mime || '|' || (space = '"+aliceHome+"'), ',' ORDER BY name) FROM archive.file WHERE name IN ('Plan.txt', 'notes.txt', 'photo.jpg')"); f != "Plan.txt|text/plain|true,notes.txt|text/plain|true,photo.jpg|image/jpeg|true" {
-			t.Errorf("drive files: %q", f)
-		}
-		if text := in.psql("archive", "SELECT text FROM archive.file WHERE name = 'Plan.txt'"); text != "Doc text from Drive" {
-			t.Errorf("exported doc: %q", text)
-		}
-		g.mu.Lock()
-		g.newFile = true
-		g.mu.Unlock()
-		if s := waitState(`"page_token":"2"`); s.Status == "error" {
-			t.Errorf("drive source: %+v %s", s, s.State)
-		}
-		if n := in.psql("archive", "SELECT count(*) FROM archive.file WHERE name = 'new.txt'"); n != "1" {
-			t.Errorf("new drive file: %s", n)
-		}
-		if n := in.psql("archive", "SELECT count(*) FROM archive.secret WHERE position(convert_to('rt-1', 'UTF8') in value) > 0"); n != "0" {
-			t.Fatalf("credentials stored in plain text")
-		}
-		if n := in.psql("archive", "SELECT count(*) FROM archive.source WHERE config::text LIKE '%rt-1%' OR state::text LIKE '%rt-1%'"); n != "0" {
-			t.Fatalf("refresh token in source config")
-		}
-	})
-
-	t.Run("FolderIsAConnectorKind", func(t *testing.T) {
-		in := in.on(t)
-		inbox := filepath.Join(in.dir, "inbox")
-		os.MkdirAll(inbox, 0o755)
-		os.WriteFile(filepath.Join(inbox, "mail.txt"), []byte("From: Dave <dave@example.com>\nSubject: From a folder"), 0o644)
-		os.WriteFile(filepath.Join(inbox, ".hidden"), []byte("skip me"), 0o644)
-		in.must("source", "add", "folder", "-name", "inbox", `{"config":{"path":"`+inbox+`"}}`)
-		if res := runCLI(t, "inbox"); res.New != 1 {
-			t.Fatalf("folder: %+v", res)
-		}
-		if res := runCLI(t, "inbox"); res.New != 0 {
-			t.Errorf("folder read the same file again: %+v", res)
-		}
-		os.WriteFile(filepath.Join(inbox, "mail.txt"), []byte("From: Dave <dave@example.com>\nSubject: Changed in a folder"), 0o644)
-		if res := runCLI(t, "inbox"); res.New != 1 {
-			t.Errorf("folder after a change: %+v", res)
-		}
-		if n := in.psql("archive", "SELECT count(*) FROM archive.file WHERE name = 'mail.txt'"); n != "2" {
-			t.Errorf("folder files: %s", n)
-		}
-	})
-
-	t.Run("AnotherUserCannotSeeTheSourcesOrTheirFiles", func(t *testing.T) {
-		in := in.on(t)
-		if out := strings.TrimSpace(in.must("-as", "bob@example.com", "source", "list")); out != "[]" {
-			t.Errorf("bob lists %s", out)
-		}
-		var list []Source
-		call(t, "GET", api+"/sources", bobTok, nil, &list)
-		if len(list) != 0 {
-			t.Errorf("bob sees %d sources over the API", len(list))
-		}
-		for _, c := range []struct{ method, path string }{{"GET", "/sources/work"}, {"POST", "/sources/work/run"}, {"DELETE", "/sources/work"}} {
-			st, _ := call(t, c.method, api+c.path, bobTok, nil, nil)
-			wantStatus(t, st, 404, "bob "+c.method+" "+c.path)
-		}
-		var files []File
-		call(t, "GET", api+"/files", bobTok, nil, &files)
-		if len(files) != 0 {
-			t.Errorf("bob sees %d files", len(files))
-		}
-		role := in.psql("archive", "SELECT role FROM archive.\"user\" WHERE email = 'bob@example.com'")
-		in.psql("archive", "ALTER ROLE "+role+" LOGIN")
-		if got := in.psql(role, "SELECT (SELECT count(*) FROM archive.source) || ',' || (SELECT count(*) FROM archive.secret) || ',' || (SELECT count(*) FROM archive.file)"); got != "0,0,0" {
-			t.Errorf("psql as bob sees sources, secrets, files: %s", got)
-		}
-		in.psql("archive", "ALTER ROLE "+role+" NOLOGIN")
-		alice := in.psql("archive", "SELECT role FROM archive.\"user\" WHERE email = 'alice@example.com'")
-		in.psql("archive", "ALTER ROLE "+alice+" LOGIN")
-		if got := in.psql(alice, "SELECT (SELECT count(*) FROM archive.source) || ',' || (SELECT count(*) FROM archive.secret)"); got != "3,0" {
-			t.Errorf("psql as alice sees sources, secrets: %s", got)
-		}
-		in.psql("archive", "ALTER ROLE "+alice+" NOLOGIN")
-		in.must("source", "remove", "work")
-		if n := in.psql("archive", "SELECT count(*) FROM archive.secret WHERE table_name = 'source'"); n != "1" {
-			t.Errorf("source credentials after removing work: %s", n)
-		}
-	})
-}
-
 func e2ePDF(pages ...string) []byte {
 	kids := make([]string, len(pages))
 	objs := []string{"<< /Type /Catalog /Pages 2 0 R >>", "", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"}
@@ -1380,18 +1074,14 @@ func e2eGet(t *testing.T, url, tok string, hdr ...string) (*http.Response, []byt
 	return resp, b
 }
 
-func e2eWaitFile(t *testing.T, api, tok, id string) File {
+func e2eDoneFile(t *testing.T, api, tok, id string) File {
 	t.Helper()
-	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(100 * time.Millisecond) {
-		var f File
-		call(t, "GET", api+"/files/"+id, tok, nil, &f)
-		if f.Status == "done" || f.Status == "error" {
-			return f
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("file %s still %q", id, f.Status)
-		}
+	var f File
+	call(t, "GET", api+"/files/"+id, tok, nil, &f)
+	if f.Status != "done" {
+		t.Fatalf("file %s is %q right after its upload, want done", id, f.Status)
 	}
+	return f
 }
 
 type e2eCut struct{ r io.Reader }
@@ -1486,7 +1176,7 @@ func TestFilesUploadProcessShareAndReference(t *testing.T) {
 		if st, _ := offset(aliceTok); st != 404 {
 			t.Errorf("finished upload still answers HEAD: %d", st)
 		}
-		bigFile = e2eWaitFile(t, api, aliceTok, resp.Header.Get("Archive-File-Id"))
+		bigFile = e2eDoneFile(t, api, aliceTok, resp.Header.Get("Archive-File-Id"))
 		_, body := e2eGet(t, api+"/files/"+bigFile.ID.String()+"/content", aliceTok)
 		if !bytes.Equal(body, big) || bigFile.Name != "big.txt" || bigFile.Size != int64(len(big)) {
 			t.Fatalf("downloaded %d bytes, want %d; file %+v", len(body), len(big), bigFile)
@@ -1527,8 +1217,9 @@ func TestFilesUploadProcessShareAndReference(t *testing.T) {
 		if n := in.psql("archive", "SELECT count(*) FROM archive.file WHERE hash = '"+bigFile.Hash+"'"); n != "3" || len(blobs) != 1 {
 			t.Errorf("%s file rows, %d blobs", n, len(blobs))
 		}
-		if leftovers, _ := os.ReadDir(filepath.Join(in.dir, "uploads")); len(leftovers) != 0 {
-			t.Errorf("uploads left behind: %d", len(leftovers))
+		parts, _ := os.ReadDir(filepath.Join(in.dir, "blobs", "uploads"))
+		if n := in.psql("archive", "SELECT count(*) FROM archive.upload"); n != "0" || len(parts) != 0 {
+			t.Errorf("uploads left behind: %s rows, %d part directories", n, len(parts))
 		}
 	})
 
@@ -1537,7 +1228,7 @@ func TestFilesUploadProcessShareAndReference(t *testing.T) {
 	t.Run("PhotoMetadataThumbnailAndLocationMarkedPersonal", func(t *testing.T) {
 		st, f := e2eUpload(t, api+"/files", aliceTok, "photo.jpg", photo)
 		wantStatus(t, st, 201, "upload photo")
-		photoFile = e2eWaitFile(t, api, aliceTok, f.ID.String())
+		photoFile = e2eDoneFile(t, api, aliceTok, f.ID.String())
 		m := photoFile.Metadata
 		loc, _ := m["personal"].(map[string]any)["location"].(map[string]any)
 		if photoFile.MIME != "image/jpeg" || fmt.Sprint(m["width"]) != "640" || fmt.Sprint(m["height"]) != "480" || m["camera"] != "Canon EOS" ||
@@ -1602,7 +1293,7 @@ func TestFilesUploadProcessShareAndReference(t *testing.T) {
 		in := in.on(t)
 		st, f := e2eUpload(t, api+"/files", aliceTok, "invoice.pdf", e2ePDF("Cover letter", "Invoice INV-9 total due"))
 		wantStatus(t, st, 201, "upload pdf")
-		f = e2eWaitFile(t, api, aliceTok, f.ID.String())
+		f = e2eDoneFile(t, api, aliceTok, f.ID.String())
 		if f.Status != "done" || fmt.Sprint(f.Metadata["pages"]) != "2" {
 			t.Fatalf("pdf: %+v", f)
 		}
@@ -1625,7 +1316,7 @@ func TestFilesUploadProcessShareAndReference(t *testing.T) {
 		}
 
 		_, page := e2eUpload(t, api+"/files", aliceTok, "order.html", []byte("<html><head><style>p{}</style><script>var INV = 1</script></head><body><p>Order</p><p>INV-5</p></body></html>"))
-		page = e2eWaitFile(t, api, aliceTok, page.ID.String())
+		page = e2eDoneFile(t, api, aliceTok, page.ID.String())
 		resp, body := e2eGet(t, api+"/files/"+page.ID.String()+"/text", aliceTok)
 		if resp.StatusCode != 200 || string(body) != "Order INV-5" {
 			t.Errorf("html text: %d %q", resp.StatusCode, body)
@@ -1634,8 +1325,11 @@ func TestFilesUploadProcessShareAndReference(t *testing.T) {
 		eml := filepath.Join(in.dir, "lunch.eml")
 		os.WriteFile(eml, []byte("From: Carol <carol@example.com>\r\nSubject: Lunch\r\nContent-Type: text/plain\r\n\r\nSee you at noon, INV-6"), 0o644)
 		mail := decode[File](t, in.must("file", "add", eml))
-		if mail.MIME != "message/rfc822" || mail.Status != "done" || !strings.Contains(fmt.Sprint(mail.Metadata["headers"]), "Subject:Lunch") {
+		if mail.Status != "done" || len(mail.Metadata) != 0 {
 			t.Errorf("eml: %+v", mail)
+		}
+		if _, text := e2eGet(t, api+"/files/"+mail.ID.String()+"/text", aliceTok); len(text) != 0 {
+			t.Errorf("eml text: %q", text)
 		}
 		if out := in.must("file", "get", mail.ID.String(), "-o", "-"); !strings.HasPrefix(out, "From: Carol") {
 			t.Errorf("file get -o -: %q", out)
@@ -1668,6 +1362,9 @@ func (s *e2eS3) handler(t *testing.T) http.Handler {
 			}
 			s.objects[r.URL.Path] = body
 			s.puts++
+		case "DELETE":
+			delete(s.objects, r.URL.Path)
+			w.WriteHeader(204)
 		case "HEAD", "GET":
 			if !ok {
 				w.WriteHeader(404)
@@ -1715,6 +1412,121 @@ func TestS3BlobBackendAgainstAFakeS3(t *testing.T) {
 	resp, body = e2eGet(t, srv.url+"/api/files/"+f.ID.String()+"/content", tok, "Range", "bytes=5-14")
 	if resp.StatusCode != 206 || string(body) != "5678901234" {
 		t.Errorf("middle range through s3: %d %q", resp.StatusCode, body)
+	}
+}
+
+func TestTwoInstancesShareOnePostgresAndBlobStore(t *testing.T) {
+	t.Parallel()
+	a := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
+	b := a.twin()
+	srvA, srvB := a.serve(), b.serve()
+	a.push(e2eSchema)
+	tok := decode[Token](t, a.must("token", "create")).Secret
+
+	t.Run("SchemaAppliedOnOneIsUsedOnTheOther", func(t *testing.T) {
+		var schema struct {
+			Files map[string]string `json:"files"`
+		}
+		call(t, "GET", srvB.url+"/api/schema", tok, nil, &schema)
+		if got := slices.Sorted(maps.Keys(schema.Files)); !slices.Equal(got, slices.Sorted(maps.Keys(e2eSchema))) {
+			t.Fatalf("schema on b: %v", got)
+		}
+		st, _ := call(t, "POST", srvB.url+"/api/company", tok, map[string]any{"name": "Acme"}, nil)
+		wantStatus(t, st, 201, "create on b in a table pushed on a")
+		var cos []row
+		call(t, "GET", srvA.url+"/api/company", tok, nil, &cos)
+		if names(cos) != "Acme" {
+			t.Errorf("companies on a: %v", cos)
+		}
+		if _, err := os.Stat(filepath.Join(a.dir, "schema")); err == nil {
+			t.Error("schema files written to the data directory")
+		}
+	})
+
+	t.Run("AFreshContainerKeepsTheSchema", func(t *testing.T) {
+		c := a.twin()
+		if out := c.must("schema", "pull"); !strings.Contains(out, "-- invoice.sql") || !strings.Contains(out, "invoice_status") {
+			t.Fatalf("pull on a fresh container: %s", out)
+		}
+		if p := decode[SchemaPlan](t, c.must("schema", "plan")); len(p.Statements) != 0 {
+			t.Errorf("plan on a fresh container: %+v", p.Statements)
+		}
+		if n := a.psql("archive", "SELECT count(*) FROM company"); n != "1" {
+			t.Errorf("%s companies after a fresh container started", n)
+		}
+	})
+
+	t.Run("ADatabaseURLNeedsASecretKey", func(t *testing.T) {
+		d := a.twin("ARCHIVE_SECRET_KEY=")
+		if errs := d.fails("types"); !strings.Contains(errs, "ARCHIVE_SECRET_KEY") {
+			t.Errorf("start without a key: %s", errs)
+		}
+		if _, err := os.Stat(filepath.Join(d.dir, "secret.key")); err == nil {
+			t.Error("a key file was generated")
+		}
+	})
+
+	t.Run("AFileIsDoneWhenItsUploadReturns", func(t *testing.T) {
+		st, f := e2eUpload(t, srvB.url+"/api/files", tok, "plan.html", []byte("<p>Stateless on Cloud Run</p>"))
+		wantStatus(t, st, 201, "upload")
+		_, text := e2eGet(t, srvA.url+"/api/files/"+f.ID.String()+"/text", tok)
+		if f.Status != "done" || string(text) != "Stateless on Cloud Run" {
+			t.Errorf("upload returned %+v, text %q", f, text)
+		}
+	})
+
+	t.Run("TusUploadStartedOnOneFinishesOnTheOther", func(t *testing.T) {
+		data := bytes.Repeat([]byte("stateless "), 50000)
+		meta := "filename " + base64.StdEncoding.EncodeToString([]byte("two.txt"))
+		resp, _ := e2eTus(t, "POST", srvA.url+"/api/files/tus", tok, nil, 0, "Upload-Length", strconv.Itoa(len(data)), "Upload-Metadata", meta)
+		wantStatus(t, resp.StatusCode, 201, "create on a")
+		loc := resp.Header.Get("Location")
+		resp, _ = e2eTus(t, "PATCH", srvA.url+loc, tok, bytes.NewReader(data[:200000]), 200000,
+			"Content-Type", "application/offset+octet-stream", "Upload-Offset", "0")
+		wantStatus(t, resp.StatusCode, 204, "first half on a")
+		resp, _ = e2eTus(t, "HEAD", srvB.url+loc, tok, nil, 0)
+		if resp.StatusCode != 200 || resp.Header.Get("Upload-Offset") != "200000" {
+			t.Fatalf("head on b: %d %v", resp.StatusCode, resp.Header)
+		}
+		resp, _ = e2eTus(t, "PATCH", srvB.url+loc, tok, bytes.NewReader(data[200000:]), int64(len(data)-200000),
+			"Content-Type", "application/offset+octet-stream", "Upload-Offset", "200000")
+		if resp.StatusCode != 204 || resp.Header.Get("Archive-File-Id") == "" {
+			t.Fatalf("rest on b: %d %v", resp.StatusCode, resp.Header)
+		}
+		f := e2eDoneFile(t, srvA.url+"/api", tok, resp.Header.Get("Archive-File-Id"))
+		_, body := e2eGet(t, srvA.url+"/api/files/"+f.ID.String()+"/content", tok)
+		if !bytes.Equal(body, data) || f.Name != "two.txt" {
+			t.Fatalf("downloaded %d bytes of %s", len(body), f.Name)
+		}
+		parts, _ := os.ReadDir(filepath.Join(a.dir, "blobs", "uploads"))
+		if n := a.psql("archive", "SELECT count(*) FROM archive.upload"); n != "0" || len(parts) != 0 {
+			t.Errorf("uploads left behind: %s rows, %d part directories", n, len(parts))
+		}
+	})
+}
+
+func TestOldDataDirSchemaFilesAreImportedOnce(t *testing.T) {
+	t.Parallel()
+	in := newInst(t)
+	in.must("user", "add", "ann@example.com")
+	in.push(e2eSchema)
+	in.must("create", "company", `{"name":"Acme"}`)
+	in.psql("archive", "DELETE FROM archive.schema_file; INSERT INTO archive.revision (hash) VALUES ('old'); CREATE TABLE archive.source (id uuid PRIMARY KEY)")
+	in.writeDir("schema", e2eSchema)
+	if out := in.must("schema", "pull"); !strings.Contains(out, "-- invoice.sql") {
+		t.Fatalf("pull: %s", out)
+	}
+	if n := in.psql("archive", "SELECT count(*) FROM archive.schema_file"); n != fmt.Sprint(len(e2eSchema)) {
+		t.Errorf("%s schema files imported", n)
+	}
+	if got := in.psql("archive", "SELECT to_regclass('archive.source') IS NULL"); got != "t" {
+		t.Error("archive.source is still there")
+	}
+	if _, err := os.Stat(filepath.Join(in.dir, "schema")); err == nil {
+		t.Error("the schema directory is still in place")
+	}
+	if out := in.must("list", "company"); !strings.Contains(out, "Acme") {
+		t.Errorf("companies after the import: %s", out)
 	}
 }
 
@@ -1770,8 +1582,8 @@ func TestFullTextSearchInDutchAndEnglishAcrossTablesFilesAndUsers(t *testing.T) 
 	call(t, "POST", api+"/company", aliceTok, map[string]any{"name": "Utrecht Plumbing"}, nil)
 	_, nl := e2eUpload(t, api+"/files", aliceTok, "huur.txt", []byte("De verhuurder verhuurt de woning aan de Prinsengracht aan de huurder."))
 	_, en := e2eUpload(t, api+"/files", aliceTok, "policy.pdf", e2ePDF("Home insurance policy", "Covers water damage in the kitchen"))
-	e2eWaitFile(t, api, aliceTok, nl.ID.String())
-	e2eWaitFile(t, api, aliceTok, en.ID.String())
+	e2eDoneFile(t, api, aliceTok, nl.ID.String())
+	e2eDoneFile(t, api, aliceTok, en.ID.String())
 
 	t.Run("DutchAndEnglishRowsRankByTheirWords", func(t *testing.T) {
 		hits := e2eSearch(t, api, aliceTok, "huurcontract utrecht")
@@ -1893,7 +1705,7 @@ func TestFullTextSearchInDutchAndEnglishAcrossTablesFilesAndUsers(t *testing.T) 
 	})
 }
 
-func TestSavedViewsSourceUpdatesAndFullTokensOverHTTP(t *testing.T) {
+func TestSavedViewsSchemaDropsAndFullTokensOverHTTP(t *testing.T) {
 	t.Parallel()
 	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com", `ARCHIVE_OIDC=[{"name":"google","issuer":"https://accounts.google.com","client_id":"web"}]`)
 	srv := in.serve()
@@ -1941,30 +1753,6 @@ func TestSavedViewsSourceUpdatesAndFullTokensOverHTTP(t *testing.T) {
 		wantStatus(t, st, 204, "owner removes a view")
 		st, _ = call(t, "GET", api+"/views/"+v.ID.String(), aliceTok, nil, nil)
 		wantStatus(t, st, 404, "removed view")
-	})
-
-	t.Run("SourceScheduleAndRateChangeInPlace", func(t *testing.T) {
-		inbox := filepath.Join(in.dir, "inbox")
-		os.MkdirAll(inbox, 0o755)
-		var s Source
-		st, _ := call(t, "POST", api+"/sources", aliceTok, map[string]any{"kind": "folder", "name": "inbox", "config": map[string]string{"path": inbox}}, &s)
-		wantStatus(t, st, 201, "add source")
-		var u Source
-		st, _ = call(t, "PATCH", api+"/sources/"+s.ID.String(), aliceTok, map[string]any{"schedule": "1h", "rate": 2}, &u)
-		wantStatus(t, st, 200, "patch source")
-		if u.ID != s.ID || u.Schedule != "1h" || u.Rate != 2 || u.NextRunAt == nil {
-			t.Fatalf("patched: %+v", u)
-		}
-		var c Source
-		st, _ = call(t, "PATCH", api+"/sources/inbox", aliceTok, map[string]any{"schedule": ""}, &c)
-		wantStatus(t, st, 200, "clear schedule")
-		if c.Schedule != "" || c.NextRunAt != nil || c.Rate != 2 {
-			t.Errorf("cleared: %+v", c)
-		}
-		st, _ = call(t, "PATCH", api+"/sources/inbox", aliceTok, map[string]any{"schedule": "soon"}, nil)
-		wantStatus(t, st, 422, "bad schedule")
-		st, _ = call(t, "PATCH", api+"/sources/"+s.ID.String(), bobTok, map[string]any{"rate": 9}, nil)
-		wantStatus(t, st, 404, "another user's source")
 	})
 
 	t.Run("DroppingATableIsBlockedUntilAllowed", func(t *testing.T) {
@@ -2169,7 +1957,7 @@ func TestCodeModeRunsTypeScriptInOneTransactionOverHTTPMCPAndCLI(t *testing.T) {
 		return fmt.Sprint(ok(t, `return { n: (await archive.sql("SELECT count(*)::int AS n FROM house WHERE address = $1", `+strconv.Quote(address)+`))[0].n }`)["n"])
 	}
 	_, note := e2eUpload(t, api+"/files", tok, "viewing.txt", []byte("Viewing on Friday at the canal house"))
-	e2eWaitFile(t, api, tok, note.ID.String())
+	e2eDoneFile(t, api, tok, note.ID.String())
 
 	t.Run("ApplyPlansThenConfirmsASchemaChange", func(t *testing.T) {
 		got := ok(t, `const files = await archive.schema();
@@ -2647,10 +2435,10 @@ return await archive.read(id);`, page, h, i, mine.Paragraphs[3+i].ID, toks, i, i
 	})
 }
 
-func TestPageEditorsSyncLiveWithAgentsAndSeeWhoIsThere(t *testing.T) {
+func TestPageEditorsSyncLiveAcrossInstancesWithAgentsAndSeeWhoIsThere(t *testing.T) {
 	t.Parallel()
 	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
-	srv := in.serve()
+	near, srv := in.serve(), in.twin().serve()
 	tok := decode[Token](t, in.must("token", "create")).Secret
 	run := func(code string, out any) string {
 		t.Helper()
@@ -2673,9 +2461,9 @@ func TestPageEditorsSyncLiveWithAgentsAndSeeWhoIsThere(t *testing.T) {
 	}
 	base := srv.url + "/api/pages/" + page.ID.String()
 	type event struct{ kind, data string }
-	open := func(site int) (chan event, context.CancelFunc) {
+	open := func(on *e2eServer, site int) (chan event, context.CancelFunc) {
 		ctx, cancel := context.WithCancel(context.Background())
-		req, _ := http.NewRequestWithContext(ctx, "GET", base+"/sync?site="+strconv.Itoa(site), nil)
+		req, _ := http.NewRequestWithContext(ctx, "GET", on.url+"/api/pages/"+page.ID.String()+"/sync?site="+strconv.Itoa(site), nil)
 		req.Header.Set("Authorization", "Bearer "+tok)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -2768,9 +2556,11 @@ func TestPageEditorsSyncLiveWithAgentsAndSeeWhoIsThere(t *testing.T) {
 		return out
 	}
 
-	ada, stopAda := open(5)
-	grace, _ := open(6)
+	ada, stopAda := open(near, 5)
+	grace, _ := open(near, 6)
+	hopper, _ := open(srv, 7)
 	adaDoc, graceDoc := load(ada, 5), load(grace, 6)
+	load(hopper, 7)
 
 	h, ops, err := adaDoc.Insert(structured.DocStart, "heading1")
 	if err != nil {
@@ -2817,6 +2607,7 @@ func TestPageEditorsSyncLiveWithAgentsAndSeeWhoIsThere(t *testing.T) {
 	}
 	stopAda()
 	next(grace, "presence", func(b []byte) bool { return seen.UnmarshalBinary(b) == nil && seen.Site == 5 && seen.Gone })
+	next(hopper, "presence", func(b []byte) bool { return seen.UnmarshalBinary(b) == nil && seen.Site == 5 && seen.Gone })
 
 	fake, _ := (&awareness.Update{Site: 1, Clock: 99, Meta: map[string]string{"name": "Agent"}}).MarshalBinary()
 	for path, b := range map[string][]byte{"/ops": []byte("not ops"), "/presence": fake} {

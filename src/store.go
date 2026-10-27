@@ -150,22 +150,38 @@ func (s *pgStore) bootstrap(ctx context.Context, password string) error {
 	if _, err := s.sys.Exec(ctx, "ALTER ROLE "+s.prefix+"_authenticator PASSWORD '"+password+"'"); err != nil {
 		return err
 	}
-	files, err := s.SchemaFiles()
+	if err := pgx.BeginFunc(ctx, s.sys, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, storeLock)
+		if err == nil {
+			_, err = tx.Exec(ctx, storeDropSource)
+		}
+		return err
+	}); err != nil {
+		return err
+	}
+	files, err := s.SchemaFiles(ctx)
 	if err != nil {
 		return err
 	}
 	var rev string
 	s.sys.QueryRow(ctx, storeRevision).Scan(&rev)
-	if strings.HasSuffix(rev, ":"+s.hash(files)) {
+	if _, err := os.Stat(s.dir); err != nil && strings.HasSuffix(rev, ":"+s.hash(files)) {
 		return nil
 	}
-	p, err := s.Apply(ctx, files, nil, false, false)
+	p, err := s.Apply(ctx, nil, nil, false, false)
 	if err != nil && p != nil && len(p.blocked()) > 0 {
-		fmt.Fprintf(os.Stderr, "archive: schema not applied at startup, it would delete data:\n  %s\nrun archive schema apply -allow-drop, or change %s\n", strings.Join(p.blocked(), "\n  "), s.dir)
+		fmt.Fprintf(os.Stderr, "archive: schema not applied at startup, it would delete data:\n  %s\nrun archive schema apply -allow-drop, or push DDL files that keep those tables\n", strings.Join(p.blocked(), "\n  "))
 		return nil
 	}
 	return err
 }
+
+const storeDropSource = `DO $$ BEGIN
+    IF to_regclass('archive.source') IS NOT NULL THEN
+        DELETE FROM archive.secret WHERE table_name = 'source';
+        DROP TABLE archive.source;
+    END IF;
+END $$`
 
 func (s *pgStore) expand(sql string) string { return strings.ReplaceAll(sql, "{p}", s.prefix) }
 
@@ -182,8 +198,27 @@ const storeMinTimeout = time.Minute
 
 var storeFileRe = regexp.MustCompile(`^[a-z0-9_][a-z0-9_.-]*\.sql$`)
 
-func (s *pgStore) SchemaFiles() (map[string]string, error) {
+func (s *pgStore) SchemaFiles(ctx context.Context) (map[string]string, error) {
+	return s.readFiles(ctx, s.ddl)
+}
+
+func (s *pgStore) readFiles(ctx context.Context, q interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}) (map[string]string, error) {
 	out := map[string]string{}
+	var ok bool
+	if err := q.QueryRowContext(ctx, `SELECT to_regclass('archive.schema_file') IS NOT NULL`).Scan(&ok); err != nil {
+		return nil, err
+	}
+	if ok {
+		var b []byte
+		if err := q.QueryRowContext(ctx, `SELECT coalesce(jsonb_object_agg(name, body), '{}') FROM archive.schema_file`).Scan(&b); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(b, &out); err != nil || len(out) > 0 {
+			return out, err
+		}
+	}
 	paths, err := filepath.Glob(filepath.Join(s.dir, "*.sql"))
 	for _, p := range paths {
 		b, err := os.ReadFile(p)
@@ -204,29 +239,6 @@ func storeCheckFiles(files map[string]string) error {
 	}
 	if len(ve.Errors) > 0 {
 		return ve
-	}
-	return nil
-}
-
-func (s *pgStore) writeFiles(files map[string]string) error {
-	if err := os.MkdirAll(s.dir, 0o700); err != nil {
-		return err
-	}
-	old, err := s.SchemaFiles()
-	if err != nil {
-		return err
-	}
-	for name := range old {
-		if _, ok := files[name]; !ok {
-			if err := os.Remove(filepath.Join(s.dir, name)); err != nil {
-				return err
-			}
-		}
-	}
-	for name, body := range files {
-		if err := os.WriteFile(filepath.Join(s.dir, name), []byte(body), 0o600); err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -258,6 +270,11 @@ func (s *pgStore) Apply(ctx context.Context, files map[string]string, renames []
 		return nil, err
 	}
 	defer tx.Rollback()
+	if files == nil {
+		if files, err = s.readFiles(ctx, tx); err != nil {
+			return nil, err
+		}
+	}
 	if _, err := tx.ExecContext(ctx, `SET LOCAL check_function_bodies = off`); err != nil {
 		return nil, err
 	}
@@ -289,11 +306,21 @@ func (s *pgStore) Apply(ctx context.Context, files map[string]string, renames []
 			return p, fmt.Errorf("schema: %s: %w", st.DDL, err)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `SET LOCAL statement_timeout = 0; INSERT INTO archive.revision (hash) VALUES ('`+s.hash(files)+`')`); err != nil {
+	b, err := json.Marshal(files)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `SET LOCAL statement_timeout = 0; DELETE FROM archive.schema_file; INSERT INTO archive.revision (hash) VALUES ('`+s.hash(files)+`')`); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO archive.schema_file (name, body) SELECT key, value FROM jsonb_each_text($1::jsonb)`, string(b)); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
+	}
+	if _, err := os.Stat(s.dir); err == nil {
+		os.Rename(s.dir, s.dir+".imported")
 	}
 	p.Applied = true
 	return storeWithRenames(p, renames), nil

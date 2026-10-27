@@ -3,9 +3,8 @@ package main
 import (
 	"cmp"
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -22,13 +21,16 @@ import (
 	"github.com/go-crdt/crdt/awareness"
 	"github.com/go-crdt/crdt/structured"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 const (
-	pageExt                  = ".page"
-	pageMIME                 = "application/vnd.archive.page"
-	pageSite     crdt.SiteID = 1
-	pageOpsNames             = "replace_text, insert_paragraph_after, delete_paragraph, set_style"
+	pageExt                     = ".page"
+	pageMIME                    = "application/vnd.archive.page"
+	pageSite        crdt.SiteID = 1
+	pageOpsNames                = "replace_text, insert_paragraph_after, delete_paragraph, set_style"
+	pageChannel                 = "archive_page"
+	pagePresenceMax             = 4 << 10
 )
 
 type pageDoc struct {
@@ -66,6 +68,113 @@ func (p *pageDoc) announce(u awareness.Update) {
 	}
 }
 
+func (p *pageDoc) sendOps(ops []crdt.PartOps) {
+	if len(ops) == 0 {
+		return
+	}
+	if b, err := crdt.AppendPartOps(nil, ops); err == nil {
+		p.send("data: " + base64.StdEncoding.EncodeToString(b) + "\n\n")
+	}
+}
+
+type pageNote struct {
+	Page     uuid.UUID `json:"page"`
+	Presence []byte    `json:"presence,omitempty"`
+}
+
+func (a *Archive) pageNotify(ctx context.Context, q storeQ, id uuid.UUID, u *awareness.Update) error {
+	n := pageNote{Page: id}
+	if u != nil {
+		b, err := u.MarshalBinary()
+		if err != nil {
+			return err
+		}
+		n.Presence = b
+	}
+	b, err := json.Marshal(n)
+	if err == nil {
+		_, err = q.Exec(ctx, `SELECT pg_notify($1, $2)`, pageChannel, string(b))
+	}
+	return err
+}
+
+func (a *Archive) pageListen(ctx context.Context, wg *sync.WaitGroup, listening func()) {
+	defer wg.Done()
+	for ctx.Err() == nil {
+		err := a.pageListenOnce(ctx, listening)
+		if ctx.Err() != nil {
+			return
+		}
+		fmt.Fprintln(os.Stderr, "archive: page sync:", err)
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+func (a *Archive) pageListenOnce(ctx context.Context, listening func()) error {
+	conn, err := pgx.ConnectConfig(ctx, a.st.cfg.Copy())
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.WithoutCancel(ctx))
+	if _, err := conn.Exec(ctx, "LISTEN "+pageChannel); err != nil {
+		return err
+	}
+	listening()
+	a.pages.Range(func(k, _ any) bool {
+		go a.pageRefresh(ctx, k.(uuid.UUID))
+		return true
+	})
+	for {
+		n, err := conn.WaitForNotification(ctx)
+		if err != nil {
+			return err
+		}
+		a.pageNoted(ctx, n.Payload)
+	}
+}
+
+func (a *Archive) pageNoted(ctx context.Context, payload string) {
+	var n pageNote
+	if json.Unmarshal([]byte(payload), &n) != nil {
+		return
+	}
+	if n.Presence == nil {
+		a.pageRefresh(ctx, n.Page)
+		return
+	}
+	var u awareness.Update
+	v, ok := a.pages.Load(n.Page)
+	if ok && u.UnmarshalBinary(n.Presence) == nil {
+		p := v.(*pageDoc)
+		p.mu.Lock()
+		p.presence(u)
+		p.mu.Unlock()
+	}
+}
+
+func (a *Archive) pageRefresh(ctx context.Context, id uuid.UUID) {
+	if _, ok := a.pages.Load(id); !ok {
+		return
+	}
+	var f *File
+	err := a.st.System(ctx, func(ctx context.Context) (err error) {
+		f, err = storeOne[File](ctx, a.st, `SELECT `+fileCols+` FROM file WHERE id = $1`, id)
+		return err
+	})
+	if err == nil {
+		var p *pageDoc
+		if p, err = a.pageGet(ctx, f); err == nil {
+			p.mu.Unlock()
+		}
+	}
+	if err != nil && ctx.Err() == nil {
+		fmt.Fprintf(os.Stderr, "archive: page %s: %v\n", id, err)
+	}
+}
+
 func pageIs(name string) bool { return strings.EqualFold(path.Ext(name), pageExt) }
 
 func pageLoad(b []byte) (*structured.Blocks, error) {
@@ -98,7 +207,7 @@ func (a *Archive) pageGet(ctx context.Context, f *File) (*pageDoc, error) {
 	if p.doc != nil && p.hash == f.Hash {
 		return p, nil
 	}
-	rc, err := a.blobs.open(ctx, f.Hash, f.Size)
+	rc, err := a.blobs.open(ctx, blobKey(f.Hash), f.Size)
 	var b []byte
 	if err == nil {
 		b, err = io.ReadAll(rc)
@@ -113,6 +222,9 @@ func (a *Archive) pageGet(ctx context.Context, f *File) (*pageDoc, error) {
 	if err != nil {
 		p.mu.Unlock()
 		return nil, err
+	}
+	if p.doc != nil {
+		p.sendOps(d.OpsSince(p.doc.Version()))
 	}
 	p.hash, p.snap, p.doc = f.Hash, b, d
 	return p, nil
@@ -146,26 +258,27 @@ func (a *Archive) editPage(ctx context.Context, f *File, ops []OfficeOp) (*File,
 }
 
 func (a *Archive) pageAgent(id uuid.UUID, ac *Actor) {
-	v, ok := a.pages.Load(id)
-	if !ok {
-		return
-	}
-	p := v.(*pageDoc)
 	name := "Agent"
 	if ac != nil && ac.Name != "" {
 		name = ac.Name + " (agent)"
 	}
-	p.mu.Lock()
-	if p.who == nil {
-		p.who = awareness.New()
-	}
-	p.announce(p.who.Publish(pageSite, awareness.Cursor{Anchor: -1, Head: -1}, map[string]string{"name": name, "color": "#8e8e93", "agent": "1"}))
-	p.mu.Unlock()
+	a.pagePublish(id, awareness.Update{Site: pageSite, Clock: uint64(time.Now().UnixNano()), Cursor: awareness.Cursor{Anchor: -1, Head: -1},
+		Meta: map[string]string{"name": name, "color": "#8e8e93", "agent": "1"}})
 	time.AfterFunc(4*time.Second, func() {
-		p.mu.Lock()
-		p.announce(p.who.Leave(pageSite))
-		p.mu.Unlock()
+		a.pagePublish(id, awareness.Update{Site: pageSite, Clock: uint64(time.Now().UnixNano()), Gone: true})
 	})
+}
+
+func (a *Archive) pagePublish(id uuid.UUID, u awareness.Update) {
+	if v, ok := a.pages.Load(id); ok {
+		p := v.(*pageDoc)
+		p.mu.Lock()
+		p.presence(u)
+		p.mu.Unlock()
+	}
+	if err := a.pageNotify(context.Background(), a.st.sys, id, &u); err != nil {
+		fmt.Fprintf(os.Stderr, "archive: page %s: %v\n", id, err)
+	}
 }
 
 func (a *Archive) PagePresence(ctx context.Context, id uuid.UUID, b []byte) error {
@@ -181,8 +294,8 @@ func (a *Archive) PagePresence(ctx context.Context, id uuid.UUID, b []byte) erro
 	if err != nil {
 		return err
 	}
-	p.presence(u)
 	p.mu.Unlock()
+	a.pagePublish(id, u)
 	return nil
 }
 
@@ -201,27 +314,25 @@ func (a *Archive) pageChange(ctx context.Context, f *File, change func(*structur
 		return nil, err
 	}
 	out := d.Snapshot()
-	sum := sha256.Sum256(out)
-	hash := hex.EncodeToString(sum[:])
-	if err := a.pagePut(ctx, hash, out); err != nil {
+	hash, err := a.blobPut(ctx, out)
+	if err != nil {
 		return nil, err
 	}
 	nf, err := storeOne[File](ctx, a.st, `UPDATE file SET hash = $2, size = $3, text = $4, status = 'done', error = ''
 		WHERE id = $1 RETURNING `+fileCols, f.ID, hash, int64(len(out)), pageText(d))
+	if err == nil {
+		err = a.pageNotify(ctx, a.st.Q(ctx), f.ID, nil)
+	}
 	if err != nil {
 		return nil, err
 	}
 	p.hash, p.snap, p.doc = hash, out, d
-	if ops := d.OpsSince(v); len(ops) > 0 {
-		if b, err := crdt.AppendPartOps(nil, ops); err == nil {
-			frame := "data: " + base64.StdEncoding.EncodeToString(b) + "\n\n"
-			storeAfter(ctx, func() {
-				p.mu.Lock()
-				p.send(frame)
-				p.mu.Unlock()
-			})
-		}
-	}
+	ops := d.OpsSince(v)
+	storeAfter(ctx, func() {
+		p.mu.Lock()
+		p.sendOps(ops)
+		p.mu.Unlock()
+	})
 	return nf, nil
 }
 
@@ -297,10 +408,15 @@ func (a *Archive) pageSync(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		p.mu.Lock()
 		delete(p.subs, ch)
+		var u awareness.Update
 		if site > uint64(pageSite) {
-			p.announce(p.who.Leave(crdt.SiteID(site)))
+			u = p.who.Leave(crdt.SiteID(site))
+			p.announce(u)
 		}
 		p.mu.Unlock()
+		if site > uint64(pageSite) {
+			a.pageNotify(context.Background(), a.st.sys, id, &u)
+		}
 	}()
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream")
@@ -327,22 +443,6 @@ func (a *Archive) pageSync(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-}
-
-func (a *Archive) pagePut(ctx context.Context, hash string, b []byte) error {
-	tmp, err := os.CreateTemp(a.uploads, "page-")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	_, err = tmp.Write(b)
-	if cerr := tmp.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
-		return err
-	}
-	return a.blobs.put(ctx, hash, tmp.Name(), int64(len(b)))
 }
 
 func pageApply(d *structured.Blocks, ops []OfficeOp) error {

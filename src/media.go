@@ -3,9 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"image"
@@ -22,9 +20,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	_ "github.com/emersion/go-message/charset"
-	gomail "github.com/emersion/go-message/mail"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -51,9 +46,6 @@ func mediaSniff(name string, b []byte) string {
 			return "video/quicktime"
 		}
 	}
-	if strings.EqualFold(filepath.Ext(name), ".eml") {
-		return "message/rfc822"
-	}
 	if pageIs(name) {
 		return pageMIME
 	}
@@ -68,62 +60,54 @@ func mediaSniff(name string, b []byte) string {
 
 func (a *Archive) fileLoop(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
-	tick := time.NewTicker(time.Second)
+	tick := time.NewTicker(10 * time.Second)
 	defer tick.Stop()
 	for {
-		for a.fileNext(ctx) {
+		for {
+			ok, err := a.fileProcess(ctx, uuid.Nil)
+			if err != nil && ctx.Err() == nil {
+				fmt.Fprintln(os.Stderr, "archive: files:", err)
+			}
+			if !ok || err != nil {
+				break
+			}
 		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-		case <-a.wake:
 		}
 	}
 }
 
-func (a *Archive) fileNext(ctx context.Context) bool {
-	var id uuid.UUID
+func (a *Archive) fileProcess(ctx context.Context, id uuid.UUID) (bool, error) {
+	q, args := `SELECT `+fileCols+` FROM file WHERE status = 'pending' ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED`, []any{}
+	if id != uuid.Nil {
+		q, args = `SELECT `+fileCols+` FROM file WHERE id = $1 AND status = 'pending' FOR UPDATE`, []any{id}
+	}
+	found := false
 	err := a.st.System(ctx, func(ctx context.Context) error {
-		return a.st.Q(ctx).QueryRow(ctx, `UPDATE file SET status = 'processing' WHERE id = (
-			SELECT id FROM file WHERE status = 'pending' ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING id`).Scan(&id)
-	})
-	if err != nil {
-		if !errors.Is(err, pgx.ErrNoRows) && ctx.Err() == nil {
-			fmt.Fprintln(os.Stderr, "archive: files:", err)
+		f, err := storeOne[File](ctx, a.st, q, args...)
+		if errors.Is(err, ErrNotFound) {
+			return nil
 		}
-		return false
-	}
-	a.fileProcess(ctx, id)
-	return true
-}
-
-func (a *Archive) fileProcess(ctx context.Context, id uuid.UUID) {
-	var f *File
-	err := a.st.System(ctx, func(ctx context.Context) (err error) {
-		f, err = storeOne[File](ctx, a.st, `SELECT `+fileCols+` FROM file WHERE id = $1`, id)
+		if err != nil {
+			return err
+		}
+		found = true
+		meta, text, perr := a.media(ctx, f)
+		err = pgx.BeginFunc(ctx, a.st.Q(ctx), func(tx pgx.Tx) error {
+			_, err := tx.Exec(ctx, `UPDATE file SET metadata = $2, text = $3 WHERE id = $1`, f.ID, meta, strings.ToValidUTF8(strings.ReplaceAll(text, "\x00", ""), "�"))
+			return err
+		})
+		status, msg := "done", ""
+		if perr = errors.Join(err, perr); perr != nil {
+			status, msg = "error", perr.Error()
+		}
+		_, err = a.st.Q(ctx).Exec(ctx, `UPDATE file SET status = $2, error = $3 WHERE id = $1`, f.ID, status, msg)
 		return err
 	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "archive: file %s: %v\n", id, err)
-		return
-	}
-	meta, text, perr := a.media(ctx, f)
-	err = a.st.System(ctx, func(ctx context.Context) error {
-		_, err := a.st.Q(ctx).Exec(ctx, `UPDATE file SET metadata = $2, text = $3 WHERE id = $1`, id, meta, strings.ToValidUTF8(strings.ReplaceAll(text, "\x00", ""), "�"))
-		return err
-	})
-	status, msg := "done", ""
-	if perr = errors.Join(err, perr); perr != nil {
-		status, msg = "error", perr.Error()
-	}
-	err = a.st.System(context.WithoutCancel(ctx), func(ctx context.Context) error {
-		_, err := a.st.Q(ctx).Exec(ctx, `UPDATE file SET status = $2, error = $3 WHERE id = $1`, id, status, msg)
-		return err
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "archive: file %s: %v\n", id, err)
-	}
+	return found, err
 }
 
 func (a *Archive) media(ctx context.Context, f *File) (map[string]any, string, error) {
@@ -131,7 +115,7 @@ func (a *Archive) media(ctx context.Context, f *File) (map[string]any, string, e
 	if f.Size > mediaMax {
 		return meta, "", nil
 	}
-	rc, err := a.blobs.open(ctx, f.Hash, f.Size)
+	rc, err := a.blobs.open(ctx, blobKey(f.Hash), f.Size)
 	if err != nil {
 		return meta, "", err
 	}
@@ -154,10 +138,6 @@ func (a *Archive) media(ctx context.Context, f *File) (map[string]any, string, e
 			return meta, "", err
 		}
 		return meta, pageText(d), nil
-	case f.MIME == "message/rfc822":
-		headers, body, _ := mailParse(b)
-		meta["headers"] = headers
-		return meta, mailText(headers, body), nil
 	case top == "text" || f.MIME == "application/json":
 		return meta, string(b), nil
 	case top == "image":
@@ -390,57 +370,9 @@ func (a *Archive) mediaThumbnail(ctx context.Context, b []byte) (map[string]any,
 	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: 80}); err != nil {
 		return nil, err
 	}
-	sum := sha256.Sum256(buf.Bytes())
-	hash := hex.EncodeToString(sum[:])
-	tmp, err := os.CreateTemp(a.uploads, "thumb-")
-	if err != nil {
-		return nil, err
-	}
-	defer os.Remove(tmp.Name())
-	_, err = tmp.Write(buf.Bytes())
-	if cerr := tmp.Close(); err == nil {
-		err = cerr
-	}
-	if err == nil {
-		err = a.blobs.put(ctx, hash, tmp.Name(), int64(buf.Len()))
-	}
+	hash, err := a.blobPut(ctx, buf.Bytes())
 	if err != nil {
 		return nil, err
 	}
 	return map[string]any{"sha256": hash, "size": buf.Len(), "width": dst.Bounds().Dx(), "height": dst.Bounds().Dy()}, nil
-}
-
-func mailParse(b []byte) (map[string]string, string, []map[string]any) {
-	headers := map[string]string{}
-	mr, _ := gomail.CreateReader(bytes.NewReader(b))
-	if mr == nil {
-		return headers, strings.ToValidUTF8(string(b), "�"), nil
-	}
-	defer mr.Close()
-	for _, h := range mailHeaders {
-		if v, err := mr.Header.Text(h); err == nil && v != "" {
-			headers[h] = v
-		}
-	}
-	var body string
-	var atts []map[string]any
-	for {
-		p, err := mr.NextPart()
-		if err != nil {
-			break
-		}
-		switch h := p.Header.(type) {
-		case *gomail.InlineHeader:
-			if ct, _, _ := h.ContentType(); (ct == "text/plain" || ct == "") && body == "" {
-				bb, _ := io.ReadAll(io.LimitReader(p.Body, syncMaxBody))
-				body = strings.ToValidUTF8(string(bb), "�")
-			}
-		case *gomail.AttachmentHeader:
-			name, _ := h.Filename()
-			ct, _, _ := h.ContentType()
-			n, _ := io.Copy(io.Discard, p.Body)
-			atts = append(atts, map[string]any{"filename": name, "mime": ct, "size": n})
-		}
-	}
-	return headers, body, atts
 }

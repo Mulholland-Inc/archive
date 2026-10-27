@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,7 +17,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -45,13 +43,6 @@ const (
 	tusVersion  = "1.0.0"
 )
 
-func (a *Archive) wakeFiles() {
-	select {
-	case a.wake <- struct{}{}:
-	default:
-	}
-}
-
 func fileName(name, hash string) string {
 	name = strings.TrimSpace(filepath.Base(strings.ReplaceAll(name, "\\", "/")))
 	if name == "." || name == "/" || name == "" {
@@ -61,17 +52,15 @@ func fileName(name, hash string) string {
 }
 
 func (a *Archive) AddFile(ctx context.Context, space, name string, r io.Reader) (*File, error) {
-	return coreDo(a, ctx, func(ctx context.Context) (*File, error) {
-		sid, err := a.coreSpace(ctx, space)
-		if err != nil {
-			return nil, err
-		}
-		return a.fileAdd(ctx, sid, name, r)
-	})
+	sid, err := coreDo(a, ctx, func(ctx context.Context) (uuid.UUID, error) { return a.coreSpace(ctx, space) })
+	if err != nil {
+		return nil, err
+	}
+	return a.fileAdd(ctx, sid, name, r)
 }
 
 func (a *Archive) fileAdd(ctx context.Context, sid uuid.UUID, name string, r io.Reader) (*File, error) {
-	tmp, err := os.CreateTemp(a.uploads, "post-")
+	tmp, err := os.CreateTemp("", "archive-post-")
 	if err != nil {
 		return nil, err
 	}
@@ -83,20 +72,20 @@ func (a *Archive) fileAdd(ctx context.Context, sid uuid.UUID, name string, r io.
 	if err != nil {
 		return nil, err
 	}
-	return a.fileCommit(ctx, sid, name, tmp.Name())
+	return a.fileCommit(ctx, sid, name, func() (io.ReadCloser, error) { return os.Open(tmp.Name()) })
 }
 
-func (a *Archive) fileCommit(ctx context.Context, sid uuid.UUID, name, path string) (*File, error) {
-	fh, err := os.Open(path)
+func (a *Archive) fileCommit(ctx context.Context, sid uuid.UUID, name string, open func() (io.ReadCloser, error)) (*File, error) {
+	r, err := open()
 	if err != nil {
 		return nil, err
 	}
 	h := sha256.New()
 	head := make([]byte, 512)
-	n, _ := io.ReadFull(fh, head)
+	n, _ := io.ReadFull(r, head)
 	h.Write(head[:n])
-	size, err := io.Copy(h, fh)
-	fh.Close()
+	size, err := io.Copy(h, r)
+	r.Close()
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +93,12 @@ func (a *Archive) fileCommit(ctx context.Context, sid uuid.UUID, name, path stri
 	hash := hex.EncodeToString(h.Sum(nil))
 	name = fileName(name, hash)
 	mt := mediaSniff(name, head[:n])
-	if err := a.blobs.put(ctx, hash, path, size); err != nil {
+	if r, err = open(); err != nil {
+		return nil, err
+	}
+	err = a.blobs.put(ctx, blobKey(hash), hash, r, size)
+	r.Close()
+	if err != nil {
 		return nil, err
 	}
 	f, err := coreDo(a, ctx, func(ctx context.Context) (*File, error) {
@@ -115,10 +109,26 @@ func (a *Archive) fileCommit(ctx context.Context, sid uuid.UUID, name, path stri
 		return storeOne[File](ctx, a.st, `INSERT INTO file (hash, name, mime, size, space)
 			VALUES ($1, $2, $3, $4, $5) RETURNING `+fileCols, hash, name, mt, size, sid)
 	})
-	if err == nil {
-		a.wakeFiles()
+	if err != nil {
+		return nil, err
 	}
-	return f, err
+	return a.fileReady(ctx, f)
+}
+
+func (a *Archive) fileReady(ctx context.Context, f *File) (*File, error) {
+	if f.Status != "pending" {
+		return f, nil
+	}
+	if _, ok := ctx.Value(storeTxKey{}).(storeTx); ok {
+		bg := context.WithValue(context.WithoutCancel(ctx), storeTxKey{}, nil)
+		storeAfter(ctx, func() {
+			if _, err := a.fileProcess(bg, f.ID); err != nil {
+				fmt.Fprintf(os.Stderr, "archive: file %s: %v\n", f.ID, err)
+			}
+		})
+		return f, nil
+	}
+	return a.ProcessFile(ctx, f.ID)
 }
 
 func (a *Archive) Files(ctx context.Context, space string, limit int, after uuid.UUID) ([]*File, error) {
@@ -168,29 +178,15 @@ func (a *Archive) OpenFile(ctx context.Context, id uuid.UUID) (*File, io.ReadSee
 	if err != nil {
 		return nil, nil, err
 	}
-	rc, err := a.blobs.open(ctx, f.Hash, f.Size)
+	rc, err := a.blobs.open(ctx, blobKey(f.Hash), f.Size)
 	return f, rc, err
 }
 
 func (a *Archive) ProcessFile(ctx context.Context, id uuid.UUID) (*File, error) {
-	var claimed bool
-	err := a.st.System(ctx, func(ctx context.Context) error {
-		tag, err := a.st.Q(ctx).Exec(ctx, `UPDATE file SET status = 'processing' WHERE id = $1 AND status = 'pending'`, id)
-		claimed = tag.RowsAffected() == 1
-		return err
-	})
-	if err != nil {
+	if _, err := a.fileProcess(context.WithoutCancel(ctx), id); err != nil {
 		return nil, err
 	}
-	if claimed {
-		a.fileProcess(ctx, id)
-	}
-	for deadline := time.Now().Add(time.Minute); ; time.Sleep(50 * time.Millisecond) {
-		f, err := a.GetFile(ctx, id)
-		if err != nil || f.Status != "processing" || time.Now().After(deadline) {
-			return f, err
-		}
-	}
+	return a.GetFile(ctx, id)
 }
 
 func (a *Archive) fileSign(id uuid.UUID, exp int64) string {
@@ -221,7 +217,7 @@ func mediaInline(mt string) bool {
 }
 
 func (a *Archive) fileServe(w http.ResponseWriter, r *http.Request, f *File, strip bool) {
-	rc, err := a.blobs.open(r.Context(), f.Hash, f.Size)
+	rc, err := a.blobs.open(r.Context(), blobKey(f.Hash), f.Size)
 	if err != nil {
 		httpWrite(w, 0, nil, err)
 		return
@@ -376,10 +372,66 @@ func (a *Archive) fileSigned(w http.ResponseWriter, r *http.Request) {
 }
 
 type tusUpload struct {
-	Length int64     `json:"length"`
-	Name   string    `json:"name"`
-	Space  uuid.UUID `json:"space"`
-	Role   string    `json:"role"`
+	ID     uuid.UUID
+	Role   string
+	Space  uuid.UUID
+	Name   string
+	Length int64
+	Parts  []int64
+}
+
+const tusCols = `id, role, space, name, length, parts`
+
+var errTusOffset = errors.New("upload offset")
+
+func (up *tusUpload) offset() int64 {
+	var n int64
+	for _, p := range up.Parts {
+		n += p
+	}
+	return n
+}
+
+func tusKey(id uuid.UUID, part int) string {
+	return "uploads/" + id.String() + "/" + strconv.Itoa(part)
+}
+
+type tusReader struct {
+	a   *Archive
+	ctx context.Context
+	up  *tusUpload
+	i   int
+	rc  io.ReadCloser
+}
+
+func (t *tusReader) Read(p []byte) (int, error) {
+	for {
+		if t.rc == nil {
+			if t.i == len(t.up.Parts) {
+				return 0, io.EOF
+			}
+			rc, err := t.a.blobs.open(t.ctx, tusKey(t.up.ID, t.i), t.up.Parts[t.i])
+			if err != nil {
+				return 0, err
+			}
+			t.rc = rc
+		}
+		n, err := t.rc.Read(p)
+		if err == io.EOF {
+			t.rc.Close()
+			t.rc, t.i, err = nil, t.i+1, nil
+		}
+		if n > 0 || err != nil {
+			return n, err
+		}
+	}
+}
+
+func (t *tusReader) Close() error {
+	if t.rc == nil {
+		return nil
+	}
+	return t.rc.Close()
 }
 
 func tusMetadata(s string) map[string]string {
@@ -417,125 +469,152 @@ func (a *Archive) tus(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	a.tusUpload(w, r, id.String())
+	a.tusUpload(w, r, id)
+}
+
+func (a *Archive) tusLocked(ctx context.Context, id uuid.UUID, lock bool, fn func(context.Context, *tusUpload) error) error {
+	q := `SELECT ` + tusCols + ` FROM upload WHERE id = $1`
+	if lock {
+		q += ` FOR UPDATE`
+	}
+	role := ActorFrom(ctx).Role
+	return a.st.System(ctx, func(ctx context.Context) error {
+		up, err := storeOne[tusUpload](ctx, a.st, q, id)
+		if err == nil && up.Role != role {
+			err = ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		return fn(ctx, up)
+	})
 }
 
 func (a *Archive) tusCreate(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	ctx := context.WithoutCancel(r.Context())
 	n, err := strconv.ParseInt(r.Header.Get("Upload-Length"), 10, 64)
 	if err != nil || n < 0 {
 		httpWrite(w, 0, nil, fmt.Errorf("Upload-Length: want the size in bytes: %w", httpErrBadRequest))
 		return
 	}
 	meta := tusMetadata(r.Header.Get("Upload-Metadata"))
-	up := &tusUpload{Length: n, Name: cmp.Or(meta["filename"], meta["name"]), Role: ActorFrom(ctx).Role}
+	up := &tusUpload{ID: coreNewID(), Length: n, Name: cmp.Or(meta["filename"], meta["name"]), Role: ActorFrom(ctx).Role}
 	up.Space, err = coreDo(a, ctx, func(ctx context.Context) (uuid.UUID, error) { return a.coreSpace(ctx, meta["space"]) })
-	id := coreNewID().String()
-	path := filepath.Join(a.uploads, id)
 	if err == nil {
-		err = os.WriteFile(path, nil, 0o600)
+		err = a.st.System(ctx, func(ctx context.Context) error {
+			_, err := a.st.Q(ctx).Exec(ctx, `INSERT INTO upload (id, role, space, name, length) VALUES ($1, $2, $3, $4, $5)`,
+				up.ID, up.Role, up.Space, up.Name, up.Length)
+			return err
+		})
 	}
-	if err == nil {
-		err = a.tusSave(id, up)
+	var f *File
+	if err == nil && n == 0 {
+		err = a.tusLocked(ctx, up.ID, true, func(ctx context.Context, up *tusUpload) (err error) {
+			f, err = a.tusFinish(ctx, up)
+			return err
+		})
 	}
 	if err != nil {
 		httpWrite(w, 0, nil, err)
 		return
 	}
-	w.Header().Set("Location", "/api/files/tus/"+id)
-	if n == 0 {
-		f, err := a.tusFinish(ctx, id, up)
-		if err != nil {
-			httpWrite(w, 0, nil, err)
-			return
-		}
+	w.Header().Set("Location", "/api/files/tus/"+up.ID.String())
+	if f != nil {
 		w.Header().Set("Archive-File-Id", f.ID.String())
 	}
 	w.WriteHeader(http.StatusCreated)
 }
 
-func (a *Archive) tusSave(id string, up *tusUpload) error {
-	b, err := json.Marshal(up)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(a.uploads, id+".json"), b, 0o600)
-}
-
-func (a *Archive) tusUpload(w http.ResponseWriter, r *http.Request, id string) {
-	v, _ := a.tusLocks.LoadOrStore(id, &sync.Mutex{})
-	v.(*sync.Mutex).Lock()
-	defer v.(*sync.Mutex).Unlock()
-
+func (a *Archive) tusUpload(w http.ResponseWriter, r *http.Request, id uuid.UUID) {
+	ctx := context.WithoutCancel(r.Context())
 	h := w.Header()
-	path := filepath.Join(a.uploads, id)
-	var up tusUpload
-	b, err := os.ReadFile(path + ".json")
-	if err == nil {
-		err = json.Unmarshal(b, &up)
-	}
-	st, serr := os.Stat(path)
-	if err != nil || serr != nil || up.Role != ActorFrom(r.Context()).Role {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-	off := st.Size()
+	var f *File
+	var cerr error
+	var err error
 	switch r.Method {
 	case http.MethodHead:
-		h.Set("Upload-Offset", strconv.FormatInt(off, 10))
-		h.Set("Upload-Length", strconv.FormatInt(up.Length, 10))
-		h.Set("Cache-Control", "no-store")
-		w.WriteHeader(http.StatusOK)
+		err = a.tusLocked(ctx, id, false, func(ctx context.Context, up *tusUpload) error {
+			h.Set("Upload-Offset", strconv.FormatInt(up.offset(), 10))
+			h.Set("Upload-Length", strconv.FormatInt(up.Length, 10))
+			h.Set("Cache-Control", "no-store")
+			return nil
+		})
 	case http.MethodDelete:
-		os.Remove(path)
-		os.Remove(path + ".json")
-		a.tusLocks.Delete(id)
-		w.WriteHeader(http.StatusNoContent)
+		err = a.tusLocked(ctx, id, true, a.tusDrop)
 	case http.MethodPatch:
 		if ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); ct != "application/offset+octet-stream" {
 			w.WriteHeader(http.StatusUnsupportedMediaType)
 			return
 		}
-		if r.Header.Get("Upload-Offset") != strconv.FormatInt(off, 10) {
+		err = a.tusLocked(ctx, id, true, func(ctx context.Context, up *tusUpload) error {
+			off := up.offset()
 			h.Set("Upload-Offset", strconv.FormatInt(off, 10))
-			w.WriteHeader(http.StatusConflict)
-			return
-		}
-		fh, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
-		if err != nil {
-			httpWrite(w, 0, nil, err)
-			return
-		}
-		n, cerr := io.Copy(fh, io.LimitReader(r.Body, up.Length-off))
-		if err := fh.Close(); cerr == nil {
-			cerr = err
-		}
-		off += n
-		h.Set("Upload-Offset", strconv.FormatInt(off, 10))
-		if cerr != nil {
-			httpWrite(w, 0, nil, cerr)
-			return
-		}
-		if off == up.Length {
-			f, err := a.tusFinish(r.Context(), id, &up)
-			if err != nil {
-				httpWrite(w, 0, nil, err)
-				return
+			if r.Header.Get("Upload-Offset") != strconv.FormatInt(off, 10) {
+				return errTusOffset
 			}
+			tmp, err := os.CreateTemp("", "archive-tus-")
+			if err != nil {
+				return err
+			}
+			defer os.Remove(tmp.Name())
+			defer tmp.Close()
+			sum := sha256.New()
+			var n int64
+			n, cerr = io.Copy(io.MultiWriter(tmp, sum), io.LimitReader(r.Body, up.Length-off))
+			if n > 0 {
+				if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+					return err
+				}
+				if err := a.blobs.put(ctx, tusKey(up.ID, len(up.Parts)), hex.EncodeToString(sum.Sum(nil)), tmp, n); err != nil {
+					return err
+				}
+				up.Parts = append(up.Parts, n)
+				if _, err := a.st.Q(ctx).Exec(ctx, `UPDATE upload SET parts = $2 WHERE id = $1`, up.ID, up.Parts); err != nil {
+					return err
+				}
+				h.Set("Upload-Offset", strconv.FormatInt(off+n, 10))
+			}
+			if cerr == nil && off+n == up.Length {
+				f, err = a.tusFinish(ctx, up)
+			}
+			return err
+		})
+	}
+	switch {
+	case errors.Is(err, ErrNotFound):
+		w.WriteHeader(http.StatusNotFound)
+	case errors.Is(err, errTusOffset):
+		w.WriteHeader(http.StatusConflict)
+	case err != nil || cerr != nil:
+		httpWrite(w, 0, nil, cmp.Or(err, cerr))
+	case r.Method == http.MethodHead:
+		w.WriteHeader(http.StatusOK)
+	default:
+		if f != nil {
 			h.Set("Archive-File-Id", f.ID.String())
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
 
-func (a *Archive) tusFinish(ctx context.Context, id string, up *tusUpload) (*File, error) {
-	path := filepath.Join(a.uploads, id)
-	f, err := a.fileCommit(ctx, up.Space, up.Name, path)
+func (a *Archive) tusFinish(ctx context.Context, up *tusUpload) (*File, error) {
+	f, err := a.fileCommit(ctx, up.Space, up.Name, func() (io.ReadCloser, error) { return &tusReader{a: a, ctx: ctx, up: up}, nil })
 	if err != nil {
 		return nil, err
 	}
-	os.Remove(path)
-	os.Remove(path + ".json")
-	a.tusLocks.Delete(id)
-	return f, nil
+	return f, a.tusDrop(ctx, up)
+}
+
+func (a *Archive) tusDrop(ctx context.Context, up *tusUpload) error {
+	if _, err := a.st.Q(ctx).Exec(ctx, `DELETE FROM upload WHERE id = $1`, up.ID); err != nil {
+		return err
+	}
+	storeAfter(ctx, func() {
+		for i := range up.Parts {
+			if err := a.blobs.remove(ctx, tusKey(up.ID, i)); err != nil {
+				fmt.Fprintf(os.Stderr, "archive: upload %s: %v\n", up.ID, err)
+			}
+		}
+	})
+	return nil
 }

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -11,7 +10,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -40,9 +38,9 @@ Usage:
                                      as MCP's run tool does, and print {result, logs, error}
   archive run -docs                  print the SDK documentation, with an interface per table
 
-  archive schema plan [-allow-drop]  show the statements that bring the database to the DDL in
-                                     $ARCHIVE_DATA/schema/*.sql; statements that delete data are
-                                     blocked unless -allow-drop
+  archive schema plan [-allow-drop]  show the statements that bring the database to the DDL files
+                                     stored in it; statements that delete data are blocked unless
+                                     -allow-drop
   archive schema apply [-allow-drop] run that plan
   archive schema pull [dir]          print the DDL files, or write them into dir
   archive schema push <dir> [-allow-drop]
@@ -65,16 +63,6 @@ Usage:
   archive search <query> [-type t] [-space s] [-from date] [-to date] [-limit n]
                                      find rows and files by their words
 
-  archive source add <kind> [-name n] [-space s] [-schedule 15m] [-rate n] [json|-]
-                                     connect a source: gmail, drive or folder; it stores every
-                                     new mail, attachment and file as a file;
-                                     json is {"config": {...}, "credentials": {...}}, and
-                                     credentials are stored encrypted; gmail and drive print a
-                                     Google sign-in address and read the code from stdin
-  archive source list
-  archive source run <id|name>       sync now
-  archive source remove <id|name>    stop syncing; files stay
-
   archive user add <email> [-name n] [-admin]
   archive space add <name>
   archive space list
@@ -89,8 +77,10 @@ Usage:
   archive secret grant|revoke <email> <type>
 
 Environment:
-  DATABASE_URL       external Postgres, as a superuser; unset starts the bundled one
-  ARCHIVE_DATA       data directory: the bundled Postgres, files and schema/*.sql (default ./data)
+  DATABASE_URL       external Postgres, as a superuser; unset starts the bundled one; several
+                     instances can share one when they share ARCHIVE_SECRET_KEY and ARCHIVE_BLOB_URL
+  ARCHIVE_DATA       data directory: the bundled Postgres, its secret.key and files (default ./data);
+                     DDL files in its schema/*.sql from older versions are imported once
   ARCHIVE_PG_BIN     directory holding the Postgres binaries; unset uses those on PATH, or
                      downloads Postgres into $ARCHIVE_DATA/pgbin on first run
   ARCHIVE_LOCALE     locale that messy input is read in, like nl-NL
@@ -101,18 +91,15 @@ Environment:
   ARCHIVE_BLOB_KEY, ARCHIVE_BLOB_SECRET
                      access key for ARCHIVE_BLOB_URL (default AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
   ARCHIVE_INSTANCE   prefix of every Postgres role of this instance (default a)
-  ARCHIVE_SECRET_KEY 32-byte key (hex or base64) for secret values; default $ARCHIVE_DATA/secret.key
+  ARCHIVE_SECRET_KEY 32-byte key (hex or base64) for secret values and the Postgres role password;
+                     required with DATABASE_URL, the same on every instance; unset with the
+                     bundled Postgres uses $ARCHIVE_DATA/secret.key
   ARCHIVE_URL        public base URL for links, cookies and passkeys (default http://localhost:<port>)
   ARCHIVE_ADMIN_EMAIL
                      first owner that serve creates when there are no users yet
   ARCHIVE_SMTP_URL   smtp://user:pass@host:587 for sign-in mail; unset prints links to the log
   ARCHIVE_SMTP_FROM  sender address for sign-in mail
   ARCHIVE_OIDC       JSON list of OIDC providers: [{"name","issuer","client_id","client_secret"}]
-  ARCHIVE_GOOGLE_CLIENT_ID, ARCHIVE_GOOGLE_CLIENT_SECRET
-                     Google OAuth client for the gmail and drive sources; its redirect URI is
-                     $ARCHIVE_URL/api/sources/oauth/callback
-  ARCHIVE_GOOGLE_API_URL, ARCHIVE_GOOGLE_TOKEN_URL
-                     Google API base and token endpoint (default the real Google)
 `
 
 var cliErrUsage = errors.New("usage")
@@ -172,8 +159,6 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	space := fs.String("space", "", "space (create, file add); space:role,... (token create)")
 	expires := fs.Duration("expires", 0, "token lifetime (token create)")
 	reveal := fs.Bool("reveal", false, "show granted secret values (list, get)")
-	schedule := fs.String("schedule", "", "sync every duration, like 15m (source add)")
-	rateLimit := fs.Float64("rate", 0, "requests per second to the platform (source add)")
 	output := fs.String("o", "", "write the file content here, - for stdout (file get)")
 	docs := fs.Bool("docs", false, "print the SDK documentation (run)")
 	from := fs.String("from", "", "only items added on or after this date (search)")
@@ -248,9 +233,6 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 		return cliSchema(ctx, a, pos, *allowDrop, stdout, out)
 	case "file":
 		return cliFile(ctx, a, pos, *space, *output, *limit, *after, stdout, out)
-	case "source":
-		in := SourceInput{Name: *name, Space: *space, Schedule: *schedule, Rate: *rateLimit}
-		return cliSource(ctx, a, pos, in, stdin, stdout, out)
 	case "user", "space", "token", "secret":
 		return cliAuth(ctx, a, cmd, pos, *name, *admin, *full, *space, *expires, out)
 	case "list":
@@ -312,7 +294,7 @@ func cliCheckCommand(cmd string, pos []string) error {
 	n, ok := map[string]int{
 		"serve": 0, "mcp": 0, "types": 0, "run": 1, "schema": 1, "list": 1, "create": 1,
 		"get": 2, "delete": 2, "set": 2, "update": 2,
-		"user": 2, "space": 1, "token": 1, "secret": 3, "source": 1, "file": 1, "search": 1,
+		"user": 2, "space": 1, "token": 1, "secret": 3, "file": 1, "search": 1,
 	}[cmd]
 	if !ok {
 		return fmt.Errorf("unknown command %q (see archive help)", cmd)
@@ -380,57 +362,6 @@ func cliAuth(ctx context.Context, a *Archive, cmd string, pos []string, name str
 	return cliErrUsage
 }
 
-func cliSource(ctx context.Context, a *Archive, pos []string, in SourceInput, stdin io.Reader, stdout io.Writer, out func(any, error) error) error {
-	switch {
-	case pos[0] == "list":
-		return out(a.Sources(ctx))
-	case pos[0] == "add" && len(pos) > 1:
-		if len(pos) > 2 {
-			var r io.Reader = strings.NewReader(pos[2])
-			if pos[2] == "-" {
-				r = stdin
-			}
-			if err := json.NewDecoder(r).Decode(&in); err != nil {
-				return fmt.Errorf("reading source JSON: %w", err)
-			}
-		}
-		in.Kind, in.Name = pos[1], cmp.Or(in.Name, pos[1])
-		s, authURL, err := a.AddSource(ctx, in)
-		if err != nil || authURL == "" {
-			return out(s, err)
-		}
-		fmt.Fprintf(os.Stderr, "Open this address to let Archive read your %s:\n\n  %s\n\nThen paste the code, or the whole address you were sent back to: ", in.Kind, authURL)
-		line, _ := bufio.NewReader(stdin).ReadString('\n')
-		code, state := strings.TrimSpace(line), ""
-		if u, err := url.Parse(authURL); err == nil {
-			state = u.Query().Get("state")
-		}
-		if u, err := url.Parse(code); err == nil && u.Query().Get("code") != "" {
-			code, state = u.Query().Get("code"), cmp.Or(u.Query().Get("state"), state)
-		}
-		if code == "" {
-			fmt.Fprintln(os.Stderr, "\nno code; the source waits until the browser finishes at the address above")
-			return out(s, nil)
-		}
-		return out(a.SourceOAuth(ctx, state, code))
-	case pos[0] == "run" && len(pos) > 1:
-		res, err := a.RunSource(ctx, pos[1])
-		if err != nil {
-			return err
-		}
-		if err := cliJSON(stdout, res); err != nil {
-			return err
-		}
-		if res.Error != "" {
-			return errors.New(res.Error)
-		}
-		return nil
-	case pos[0] == "remove" && len(pos) > 1:
-		return a.RemoveSource(ctx, pos[1])
-	}
-	return cliErrUsage
-}
-
 func cliFile(ctx context.Context, a *Archive, pos []string, space, output string, limit int, after string, stdout io.Writer, out func(any, error) error) error {
 	if pos[0] == "list" {
 		var aid uuid.UUID
@@ -455,9 +386,6 @@ func cliFile(ctx context.Context, a *Archive, pos []string, space, output string
 			}
 			f, err := a.AddFile(ctx, space, filepath.Base(p), fh)
 			fh.Close()
-			if err == nil {
-				f, err = a.ProcessFile(ctx, f.ID)
-			}
 			if err != nil {
 				return fmt.Errorf("%s: %w", p, err)
 			}
@@ -533,7 +461,7 @@ func cliSchema(ctx context.Context, a *Archive, pos []string, allowDrop bool, st
 	case pos[0] == "apply":
 		return out(a.ApplySchema(ctx, nil, nil, allowDrop, false))
 	case pos[0] == "pull":
-		files, err := a.st.SchemaFiles()
+		files, err := a.st.SchemaFiles(ctx)
 		if err != nil {
 			return err
 		}
@@ -597,15 +525,6 @@ func cliServe(ctx context.Context, a *Archive, addr string) error {
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/api/", a.httpAuth(httpHandler(a)))
-	mux.HandleFunc("GET /api/sources/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
-		var s *Source
-		err := fmt.Errorf("authorization: %s: %w", q.Get("error"), ErrUnauthorized)
-		if q.Get("error") == "" {
-			s, err = a.SourceOAuth(r.Context(), q.Get("state"), q.Get("code"))
-		}
-		httpWrite(w, http.StatusOK, s, err)
-	})
 	tus := a.httpAuth(http.HandlerFunc(a.tus))
 	mux.Handle("/api/files/tus", tus)
 	mux.Handle("/api/files/tus/", tus)
@@ -615,24 +534,30 @@ func cliServe(ctx context.Context, a *Archive, addr string) error {
 	srv := mcpServer(a)
 	mux.Handle("/mcp", auth.RequireBearerToken(a.mcpVerify, &auth.RequireBearerTokenOptions{AllowMissingExpiration: true})(
 		mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)))
-	hs := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-	errc := make(chan error, 1)
-	go func() { errc <- hs.ListenAndServe() }()
 	var wg sync.WaitGroup
-	syncCtx, stopSync := context.WithCancel(ctx)
+	bg, stop := context.WithCancel(ctx)
 	defer wg.Wait()
-	defer stopSync()
-	wg.Add(1 + mediaWorkers)
-	go a.syncLoop(syncCtx, &wg)
+	defer stop()
 	if err := a.st.System(ctx, func(ctx context.Context) error {
 		_, err := a.st.Q(ctx).Exec(ctx, `UPDATE file SET status = 'pending' WHERE status = 'processing'`)
 		return err
 	}); err != nil {
 		return err
 	}
+	listening := make(chan struct{})
+	wg.Add(1 + mediaWorkers)
+	go a.pageListen(bg, &wg, sync.OnceFunc(func() { close(listening) }))
 	for range mediaWorkers {
-		go a.fileLoop(syncCtx, &wg)
+		go a.fileLoop(bg, &wg)
 	}
+	select {
+	case <-listening:
+	case <-ctx.Done():
+		return nil
+	}
+	hs := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	errc := make(chan error, 1)
+	go func() { errc <- hs.ListenAndServe() }()
 	fmt.Fprintf(os.Stderr, "archive: serving API on %s/api, sign-in on %s/auth and MCP on %s/mcp\n", base, base, base)
 	select {
 	case err := <-errc:
@@ -702,7 +627,9 @@ func httpHandler(a *Archive) http.Handler {
 		id, err := httpID(r)
 		var b []byte
 		if err == nil {
-			b, err = io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<16))
+			if b, err = io.ReadAll(http.MaxBytesReader(w, r.Body, pagePresenceMax)); err != nil {
+				err = fmt.Errorf("page presence: %v: %w", err, httpErrBadRequest)
+			}
 		}
 		if err == nil {
 			err = a.PagePresence(r.Context(), id, b)
@@ -743,37 +670,6 @@ func httpHandler(a *Archive) http.Handler {
 		f := SearchFilter{Type: q.Get("type"), Space: q.Get("space"), From: q.Get("from"), To: q.Get("to"), Limit: limit}
 		return ok(a.Search(r.Context(), q.Get("q"), f))
 	})
-	handle("GET /api/sources", func(r *http.Request) (int, any, error) {
-		return ok(a.Sources(r.Context()))
-	})
-	handle("POST /api/sources", func(r *http.Request) (int, any, error) {
-		var in SourceInput
-		if err := httpDecode(r, &in); err != nil {
-			return 0, nil, err
-		}
-		s, authURL, err := a.AddSource(r.Context(), in)
-		return http.StatusCreated, struct {
-			*Source
-			AuthURL string `json:"auth_url,omitempty"`
-		}{s, authURL}, err
-	})
-	handle("GET /api/sources/{id}", func(r *http.Request) (int, any, error) {
-		return ok(a.GetSource(r.Context(), r.PathValue("id")))
-	})
-	handle("PATCH /api/sources/{id}", func(r *http.Request) (int, any, error) {
-		var p SourcePatch
-		if err := httpDecode(r, &p); err != nil {
-			return 0, nil, err
-		}
-		return ok(a.UpdateSource(r.Context(), r.PathValue("id"), p))
-	})
-	handle("POST /api/sources/{id}/run", func(r *http.Request) (int, any, error) {
-		return ok(a.RunSource(r.Context(), r.PathValue("id")))
-	})
-	handle("DELETE /api/sources/{id}", func(r *http.Request) (int, any, error) {
-		return http.StatusNoContent, nil, a.RemoveSource(r.Context(), r.PathValue("id"))
-	})
-
 	handle("GET /api/views", func(r *http.Request) (int, any, error) {
 		return ok(a.Views(r.Context()))
 	})

@@ -4,14 +4,11 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path"
 	"regexp"
 	"sort"
@@ -617,10 +614,10 @@ func (a *Archive) EditDocument(ctx context.Context, id uuid.UUID, ops []OfficeOp
 	nf, err := coreDo(a, ctx, func(ctx context.Context) (*File, error) {
 		return a.editDocument(ctx, id, ops)
 	})
-	if err == nil {
-		a.wakeFiles()
+	if err != nil {
+		return nil, err
 	}
-	return nf, err
+	return a.fileReady(ctx, nf)
 }
 
 func (a *Archive) editDocument(ctx context.Context, id uuid.UUID, ops []OfficeOp) (*File, error) {
@@ -634,7 +631,7 @@ func (a *Archive) editDocument(ctx context.Context, id uuid.UUID, ops []OfficeOp
 	if pageIs(f.Name) {
 		return a.editPage(ctx, f, ops)
 	}
-	rc, err := a.blobs.open(ctx, f.Hash, f.Size)
+	rc, err := a.blobs.open(ctx, blobKey(f.Hash), f.Size)
 	if err != nil {
 		return nil, err
 	}
@@ -647,21 +644,8 @@ func (a *Archive) editDocument(ctx context.Context, id uuid.UUID, ops []OfficeOp
 	if err != nil {
 		return nil, fmt.Errorf("archive.edit: %v: %w", err, httpErrBadRequest)
 	}
-	tmp, err := os.CreateTemp(a.uploads, "edit-")
+	hash, err := a.blobPut(ctx, out)
 	if err != nil {
-		return nil, err
-	}
-	defer os.Remove(tmp.Name())
-	_, err = tmp.Write(out)
-	if cerr := tmp.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
-		return nil, err
-	}
-	sum := sha256.Sum256(out)
-	hash := hex.EncodeToString(sum[:])
-	if err := a.blobs.put(ctx, hash, tmp.Name(), int64(len(out))); err != nil {
 		return nil, err
 	}
 	return storeOne[File](ctx, a.st, `UPDATE file SET hash = $2, size = $3, status = 'pending', text = '', error = '', metadata = '{}'

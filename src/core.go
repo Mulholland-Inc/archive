@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -26,12 +25,9 @@ type Archive struct {
 	base   string
 	aead   cipher.AEAD
 
-	blobs    blobStore
-	uploads  string
-	linkKey  []byte
-	wake     chan struct{}
-	tusLocks sync.Map
-	pages    sync.Map
+	blobs   blobStore
+	linkKey []byte
+	pages   sync.Map
 
 	mu  sync.RWMutex
 	cat *Catalog
@@ -46,6 +42,10 @@ func Open(ctx context.Context) (*Archive, error) {
 	if !corePrefixRe.MatchString(prefix) {
 		return nil, fmt.Errorf("ARCHIVE_INSTANCE %q: want 1-16 lowercase letters and digits, starting with a letter", prefix)
 	}
+	dsn, stop := os.Getenv("DATABASE_URL"), func() error { return nil }
+	if dsn != "" && strings.TrimSpace(os.Getenv("ARCHIVE_SECRET_KEY")) == "" {
+		return nil, errors.New("DATABASE_URL needs ARCHIVE_SECRET_KEY: every instance on that database must share one 32-byte key, like the output of openssl rand -hex 32")
+	}
 	key, err := secretLoadKey(dir)
 	if err != nil {
 		return nil, fmt.Errorf("secret key: %w", err)
@@ -58,11 +58,6 @@ func Open(ctx context.Context) (*Archive, error) {
 	if err != nil {
 		return nil, err
 	}
-	uploads := filepath.Join(dir, "uploads")
-	if err := os.MkdirAll(uploads, 0o700); err != nil {
-		return nil, err
-	}
-	dsn, stop := os.Getenv("DATABASE_URL"), func() error { return nil }
 	if dsn == "" {
 		if dsn = pgLive(dir); dsn == "" {
 			if err := BackupBeforeUpgrade(ctx, dir, cliVersion); err != nil {
@@ -84,9 +79,9 @@ func Open(ctx context.Context) (*Archive, error) {
 		stop()
 		return nil, fmt.Errorf("load catalog: %w", err)
 	}
-	return &Archive{st: st, cat: cat, hints: coreHints(os.Getenv("ARCHIVE_LOCALE")), wake: make(chan struct{}, 1),
+	return &Archive{st: st, cat: cat, hints: coreHints(os.Getenv("ARCHIVE_LOCALE")),
 		base: strings.TrimRight(coreEnv("ARCHIVE_URL", "http://localhost:8080"), "/"), prefix: prefix, aead: aead, stop: stop,
-		blobs: blobs, uploads: uploads, linkKey: secretDerive(key, "files")}, nil
+		blobs: blobs, linkKey: secretDerive(key, "files")}, nil
 }
 
 func (a *Archive) as(ctx context.Context, fn func(context.Context) error) error {
@@ -428,16 +423,10 @@ func (a *Archive) SchemaFiles(ctx context.Context) (map[string]string, error) {
 	if ActorFrom(ctx) == nil {
 		return nil, fmt.Errorf("not signed in: %w", ErrUnauthorized)
 	}
-	return a.st.SchemaFiles()
+	return a.st.SchemaFiles(ctx)
 }
 
 func (a *Archive) ApplySchema(ctx context.Context, files map[string]string, renames []string, allowDrop, dryRun bool) (*SchemaPlan, error) {
-	if files == nil {
-		var err error
-		if files, err = a.st.SchemaFiles(); err != nil {
-			return nil, err
-		}
-	}
 	admin, err := coreDo(a, ctx, func(ctx context.Context) (bool, error) {
 		var ok bool
 		return ok, a.st.Q(ctx).QueryRow(ctx, `SELECT ontology_admin()`).Scan(&ok)
@@ -452,9 +441,6 @@ func (a *Archive) ApplySchema(ctx context.Context, files map[string]string, rena
 	defer a.wmu.Unlock()
 	p, err := a.st.Apply(ctx, files, renames, allowDrop, dryRun)
 	if err != nil || dryRun {
-		return p, err
-	}
-	if err := a.st.writeFiles(files); err != nil {
 		return p, err
 	}
 	return p, a.reload(ctx)
