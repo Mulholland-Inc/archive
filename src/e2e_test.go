@@ -1966,6 +1966,24 @@ func TestSavedViewsSchemaDropsAndFullTokensOverHTTP(t *testing.T) {
 		if resp, err := http.Get(link); err != nil || resp.StatusCode < 400 {
 			t.Errorf("used magic link: %v %v", resp, err)
 		}
+		call(t, "POST", srv.url+"/auth/magic", "", map[string]any{"email": "bob@example.com"}, nil)
+		var browser string
+		for deadline := time.Now().Add(5 * time.Second); browser == "" && time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+			if m := re.FindAllStringSubmatch(srv.log.String(), -1); len(m) > 1 {
+				browser = m[len(m)-1][1]
+			}
+		}
+		req, _ := http.NewRequest("GET", browser, nil)
+		req.Header.Set("Accept", "text/html,application/xhtml+xml")
+		noFollow := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		resp, err = noFollow.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/" || !slices.ContainsFunc(resp.Cookies(), func(c *http.Cookie) bool { return c.Name == "archive_session" && c.Value != "" }) {
+			t.Errorf("magic link in a browser: %d %q %v", resp.StatusCode, resp.Header.Get("Location"), resp.Cookies())
+		}
 	})
 }
 

@@ -370,6 +370,10 @@ func (s *signin) browser(w http.ResponseWriter, r *http.Request, user func() (*U
 	if err == nil {
 		v, err = s.signedIn(w, r, u)
 	}
+	if err == nil && strings.Contains(r.Header.Get("Accept"), "text/html") {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
 	httpWrite(w, http.StatusOK, v, err)
 }
 
