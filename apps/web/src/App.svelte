@@ -119,8 +119,8 @@
   .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   main { overflow: auto; min-width: 0; padding: var(--space-8) var(--space-7) var(--space-7); }
   @media (max-width: 767px) {
-    .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
-    aside { flex-direction: row; align-items: center; padding: var(--space-1) var(--space-2); border-bottom: var(--stroke) solid var(--line); }
+    .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+    aside { order: 1; flex-direction: row; align-items: center; padding: var(--space-3) var(--space-2) calc(var(--space-3) + env(safe-area-inset-bottom)); }
     .brand { height: var(--size-lg); padding: 0 var(--space-2); }
     nav { display: flex; gap: var(--space-1); overflow-x: auto; padding: 0; }
     nav > :global(div), footer { display: none; }
