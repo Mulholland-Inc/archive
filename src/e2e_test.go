@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"image"
 	"image/color"
@@ -35,7 +36,7 @@ import (
 	"github.com/stripe/pg-schema-diff/pkg/diff"
 )
 
-var e2eBin string
+var e2eBin, e2eTemplate string
 
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "arcbin")
@@ -47,6 +48,14 @@ func TestMain(m *testing.M) {
 		os.RemoveAll(dir)
 		panic(fmt.Sprintf("go build: %v\n%s", err, out))
 	}
+	e2eTemplate = filepath.Join(dir, "template")
+	c := exec.Command(e2eBin, "types")
+	c.Env = append(os.Environ(), "ARCHIVE_DATA="+e2eTemplate)
+	if out, err := c.CombinedOutput(); err != nil {
+		os.RemoveAll(dir)
+		panic(fmt.Sprintf("template data dir: %v\n%s", err, out))
+	}
+	flag.Set("test.parallel", "32")
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)
@@ -105,6 +114,11 @@ func newInst(t *testing.T, env ...string) *e2eInst {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
+	if !slices.Contains(env, "ARCHIVE_PG_BIN=") {
+		if out, err := exec.Command("cp", "-R", e2eTemplate+"/.", dir).CombinedOutput(); err != nil {
+			t.Fatalf("copy template: %v %s", err, out)
+		}
+	}
 	return &e2eInst{t: t, dir: dir, env: append([]string{"ARCHIVE_DATA=" + dir}, env...)}
 }
 
@@ -321,7 +335,9 @@ func names(rs []row) string {
 func id(r row) string { return fmt.Sprint(r["id"]) }
 
 func TestSchemaPushNormalizesMessyDutchInputAndBlocksDrops(t *testing.T) {
+	t.Parallel()
 	in := newInst(t, "ARCHIVE_LOCALE=nl-NL")
+	in.serve()
 	in.fails("list", "contact")
 	in.must("user", "add", "ann@example.com", "-name", "Ann")
 	plan := decode[SchemaPlan](t, in.push(e2eSchema))
@@ -409,7 +425,9 @@ func TestSchemaPushNormalizesMessyDutchInputAndBlocksDrops(t *testing.T) {
 }
 
 func TestDemoVaultLoadsOnceWithLinkedRowsAndFiles(t *testing.T) {
+	t.Parallel()
 	in := newInst(t)
+	in.serve()
 	load := func() (string, string, error) {
 		c := exec.Command("../demo/load.sh", "ann@example.com")
 		c.Env = append(os.Environ(), append(in.env, "ARCHIVE_BIN="+e2eBin)...)
@@ -444,6 +462,7 @@ func TestDemoVaultLoadsOnceWithLinkedRowsAndFiles(t *testing.T) {
 }
 
 func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
+	t.Parallel()
 	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
 	srv := in.serve()
 	api := srv.url + "/api"
@@ -732,6 +751,7 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 }
 
 func TestDeletingASpaceRemovesEverythingInItForOwnersOnly(t *testing.T) {
+	t.Parallel()
 	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
 	srv := in.serve()
 	api := srv.url + "/api"
@@ -791,6 +811,7 @@ func TestDeletingASpaceRemovesEverythingInItForOwnersOnly(t *testing.T) {
 }
 
 func TestFirstRunSetupTokenCreatesTheFirstOwner(t *testing.T) {
+	t.Parallel()
 	in := newInst(t)
 	srv := in.serve()
 	m := regexp.MustCompile(`/auth/setup \{"token": "([^"]+)"`).FindStringSubmatch(srv.log.String())
@@ -811,8 +832,9 @@ func TestFirstRunSetupTokenCreatesTheFirstOwner(t *testing.T) {
 }
 
 func TestWithoutPostgresInstalledTheFirstRunDownloadsItIntoTheDataDir(t *testing.T) {
-	if testing.Short() {
-		t.Skip("downloads Postgres")
+	t.Parallel()
+	if os.Getenv("CI") == "" {
+		t.Skip("downloads Postgres; runs in CI")
 	}
 	path := "PATH=/usr/bin:/bin:/usr/sbin:/sbin"
 	for _, name := range []string{"initdb", "postgres"} {
@@ -840,8 +862,9 @@ func TestWithoutPostgresInstalledTheFirstRunDownloadsItIntoTheDataDir(t *testing
 }
 
 func TestDockerImageServesAndAcceptsCLICommandsFromDockerExec(t *testing.T) {
-	if err := exec.Command("docker", "info").Run(); err != nil {
-		t.Skip("docker is not available")
+	t.Parallel()
+	if os.Getenv("CI") == "" {
+		t.Skip("builds the Docker image; runs in CI")
 	}
 	name := fmt.Sprintf("archive-e2e-%d", time.Now().UnixNano())
 	docker := func(stdin string, args ...string) string {
@@ -1006,6 +1029,7 @@ func (g *e2eGoogle) handler(t *testing.T) http.Handler {
 }
 
 func TestSourcesSyncGmailDriveAndFolderIntoFiles(t *testing.T) {
+	t.Parallel()
 	g := &e2eGoogle{history: 99, added: map[int]string{}, subjects: map[string]string{}, fail: 1}
 	g.deliver("m1", "Hello one")
 	g.deliver("m2", "Hello two")
@@ -1370,6 +1394,7 @@ func e2eTus(t *testing.T, method, url, tok string, body io.Reader, size int64, h
 }
 
 func TestFilesUploadProcessShareAndReference(t *testing.T) {
+	t.Parallel()
 	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
 	srv := in.serve()
 	api := srv.url + "/api"
@@ -1507,7 +1532,7 @@ func TestFilesUploadProcessShareAndReference(t *testing.T) {
 			t.Fatalf("plain %d bytes, stripped %d bytes, decode %v", len(plain), len(stripped), err)
 		}
 		var link FileLink
-		st, _ := call(t, "POST", api+"/files/"+photoFile.ID.String()+"/link?expires=2s", aliceTok, nil, &link)
+		st, _ := call(t, "POST", api+"/files/"+photoFile.ID.String()+"/link?expires=1s", aliceTok, nil, &link)
 		wantStatus(t, st, 200, "create link")
 		resp, shared := e2eGet(t, link.URL, "")
 		if resp.StatusCode != 200 || bytes.Contains(shared, e2eLatitude) || !bytes.Equal(shared, stripped) {
@@ -1517,7 +1542,7 @@ func TestFilesUploadProcessShareAndReference(t *testing.T) {
 		wantStatus(t, resp.StatusCode, 403, "tampered link")
 		resp, _ = e2eGet(t, strings.Replace(link.URL, photoFile.ID.String(), bigFile.ID.String(), 1), "")
 		wantStatus(t, resp.StatusCode, 403, "signature for another file")
-		time.Sleep(time.Until(link.ExpiresAt) + 1500*time.Millisecond)
+		time.Sleep(time.Until(link.ExpiresAt) + 1100*time.Millisecond)
 		resp, _ = e2eGet(t, link.URL, "")
 		wantStatus(t, resp.StatusCode, 403, "expired link")
 	})
@@ -1626,6 +1651,7 @@ func (s *e2eS3) handler(t *testing.T) http.Handler {
 }
 
 func TestS3BlobBackendAgainstAFakeS3(t *testing.T) {
+	t.Parallel()
 	s3 := &e2eS3{objects: map[string][]byte{}}
 	fake := httptest.NewServer(s3.handler(t))
 	defer fake.Close()
@@ -1693,6 +1719,7 @@ func e2eTitles(hits []SearchHit) string {
 }
 
 func TestFullTextSearchInDutchAndEnglishAcrossTablesFilesAndUsers(t *testing.T) {
+	t.Parallel()
 	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
 	srv := in.serve()
 	api := srv.url + "/api"
@@ -1839,6 +1866,7 @@ func TestFullTextSearchInDutchAndEnglishAcrossTablesFilesAndUsers(t *testing.T) 
 }
 
 func TestSavedViewsSourceUpdatesAndFullTokensOverHTTP(t *testing.T) {
+	t.Parallel()
 	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com", `ARCHIVE_OIDC=[{"name":"google","issuer":"https://accounts.google.com","client_id":"web"}]`)
 	srv := in.serve()
 	api := srv.url + "/api"
@@ -2067,8 +2095,27 @@ func (b e2eBearer) RoundTrip(r *http.Request) (*http.Response, error) {
 	return http.DefaultTransport.RoundTrip(r)
 }
 
+func TestARunThatTimesOutStopsAndSavesNothing(t *testing.T) {
+	t.Parallel()
+	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com", "ARCHIVE_RUN_TIMEOUT=1s")
+	in.must("user", "add", "alice@example.com")
+	in.push(map[string]string{"house.sql": e2eHouse})
+	srv := in.serve()
+	tok := decode[Token](t, in.must("token", "create")).Secret
+	start := time.Now()
+	var out RunOutput
+	st, _ := call(t, "POST", srv.url+"/api/run", tok, map[string]string{"code": `await archive.create("house", { address: "Loop 1" }); while (true) {}`}, &out)
+	if st != 200 || out.Error != "timed out after 1s; nothing was saved" || time.Since(start) > 15*time.Second {
+		t.Errorf("timeout: %d %+v after %s", st, out, time.Since(start))
+	}
+	if n := in.must("list", "house"); strings.Contains(n, "Loop 1") {
+		t.Errorf("the timed out run saved a row: %s", n)
+	}
+}
+
 func TestCodeModeRunsTypeScriptInOneTransactionOverHTTPMCPAndCLI(t *testing.T) {
-	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com", "ARCHIVE_RUN_TIMEOUT=10s")
+	t.Parallel()
+	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com", "ARCHIVE_RUN_TIMEOUT=30s")
 	srv := in.serve()
 	api := srv.url + "/api"
 	in.must("user", "add", "bob@example.com")
@@ -2176,17 +2223,6 @@ throw new Error("changed my mind");`)
 		}
 		if out := run(t, tok, `await archive.sql("SELECT nope FROM house")`); !strings.Contains(out.Error, `column "nope" does not exist (SQLSTATE 42703)`) {
 			t.Errorf("sql error: %q", out.Error)
-		}
-	})
-
-	t.Run("ATimeoutStopsTheScriptAndSavesNothing", func(t *testing.T) {
-		start := time.Now()
-		out := run(t, tok, `await archive.create("house", { address: "Loop 1" }); while (true) {}`)
-		if out.Error != "timed out after 10s; nothing was saved" || time.Since(start) > 30*time.Second {
-			t.Errorf("timeout: %+v after %s", out, time.Since(start))
-		}
-		if n := count(t, "Loop 1"); n != "0" {
-			t.Errorf("the timed out run saved %s rows", n)
 		}
 	})
 
