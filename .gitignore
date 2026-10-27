@@ -3,3 +3,4 @@
 /data/
 /.claude/
 .wrangler/
+/apps/terraform/provider/provider
