@@ -539,7 +539,7 @@ func TestDemoVaultLoadsOnceWithLinkedRowsAndFiles(t *testing.T) {
 	if fmt.Sprint(got["files"]) != "35" || fmt.Sprint(got["receipts"]) == "0" {
 		t.Errorf("files and links: %v", got)
 	}
-	if files := in.roundTrips(); len(files) != 18 || !strings.Contains(files["payment_card.sql"], `"number" archive.card`) || !strings.Contains(files["payment_card.sql"], "REFERENCES person(id)") {
+	if files := in.roundTrips(); len(files) != 25 || !strings.Contains(files["task_board.sql"], "by: status") || !strings.Contains(files["payment_card.sql"], `"number" archive.card`) || !strings.Contains(files["payment_card.sql"], "REFERENCES person(id)") {
 		t.Errorf("demo schema pull: %v", slices.Sorted(maps.Keys(files)))
 	}
 	if _, errs, err := load(); err == nil || !strings.Contains(errs, "already has people") {
@@ -840,7 +840,6 @@ func TestDeletingASpaceRemovesEverythingInItForOwnersOnly(t *testing.T) {
 	t.Parallel()
 	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
 	srv := in.serve()
-	api := srv.url + "/api"
 
 	in.must("user", "add", "bob@example.com", "-name", "Bob")
 	in.push(e2eSchema)
@@ -853,8 +852,6 @@ func TestDeletingASpaceRemovesEverythingInItForOwnersOnly(t *testing.T) {
 	acme := decode[row](t, in.must("create", "company", `{"name": "Acme"}`))
 	teamCo := decode[row](t, in.must("create", "company", "-space", "team", `{"name": "Team co"}`))
 	member := decode[row](t, in.must("create", "person", "-space", "team", `{"name": "Team member", "ssn": "123-45-6789", "employer": "`+id(teamCo)+`"}`))
-	st, _ := call(t, "POST", api+"/views", aliceTok, map[string]any{"name": "Team people", "type": "person", "space": "team"}, nil)
-	wantStatus(t, st, 201, "view in team")
 	errs := in.fails("-as", "bob@example.com", "space", "remove", "team")
 	if !strings.Contains(errs, "needs owner") {
 		t.Errorf("editor removes team: %s", errs)
@@ -867,7 +864,7 @@ func TestDeletingASpaceRemovesEverythingInItForOwnersOnly(t *testing.T) {
 	if !strings.Contains(errs, "not found") {
 		t.Errorf("non-member removes scratch: %s", errs)
 	}
-	st, _ = call(t, "DELETE", srv.url+"/auth/spaces/team", aliceTok, nil, nil)
+	st, _ := call(t, "DELETE", srv.url+"/auth/spaces/team", aliceTok, nil, nil)
 	wantStatus(t, st, 403, "scoped token deletes a space")
 
 	spaces := decode[[]SpaceInfo](t, in.must("space", "remove", "team"))
@@ -879,8 +876,8 @@ func TestDeletingASpaceRemovesEverythingInItForOwnersOnly(t *testing.T) {
 	if got := in.psql("archive", "SELECT (SELECT count(*) FROM person WHERE id = '"+id(member)+"') + (SELECT count(*) FROM company WHERE id = '"+id(teamCo)+"')"); got != "0" {
 		t.Errorf("team rows survived: %s", got)
 	}
-	if got := in.psql("archive", "SELECT (SELECT count(*) FROM archive.view) + (SELECT count(*) FROM archive.secret)"); got != "0" {
-		t.Errorf("views and secrets left: %s", got)
+	if got := in.psql("archive", "SELECT count(*) FROM archive.secret"); got != "0" {
+		t.Errorf("secrets left: %s", got)
 	}
 	if got := in.psql("archive", "SELECT count(*) FROM pg_roles WHERE rolname LIKE 'a\\_s\\_team\\_%'"); got != "0" {
 		t.Errorf("team roles left: %s", got)
@@ -1559,14 +1556,15 @@ func TestStoredSchemaFilesFromOlderVersionsAreDroppedAndTheTablesKept(t *testing
 	in.must("create", "company", `{"name":"Acme"}`)
 	in.psql("archive", `CREATE TABLE archive.schema_file (name text PRIMARY KEY, body text NOT NULL);
 INSERT INTO archive.schema_file (name, body) VALUES ('company.sql', 'CREATE TABLE stale (id uuid PRIMARY KEY)');
-INSERT INTO archive.revision (hash) VALUES ('old'); CREATE TABLE archive.source (id uuid PRIMARY KEY)`)
+INSERT INTO archive.revision (hash) VALUES ('old'); CREATE TABLE archive.source (id uuid PRIMARY KEY);
+CREATE TABLE archive.view (id uuid PRIMARY KEY, name text NOT NULL); INSERT INTO archive.view VALUES (uuidv7(), 'Board')`)
 	in.writeDir("schema", map[string]string{"company.sql": "CREATE TABLE stale (id uuid PRIMARY KEY)"})
 	files := in.roundTrips()
 	if !slices.Equal(slices.Sorted(maps.Keys(files)), slices.Sorted(maps.Keys(e2eSchema))) || strings.Contains(files["company.sql"], "stale") {
 		t.Errorf("schema after the upgrade: %v", files)
 	}
-	if got := in.psql("archive", "SELECT to_regclass('archive.schema_file') IS NULL AND to_regclass('archive.source') IS NULL AND to_regclass('stale') IS NULL"); got != "t" {
-		t.Error("archive.schema_file or archive.source is still there, or the stored files were applied")
+	if got := in.psql("archive", "SELECT to_regclass('archive.schema_file') IS NULL AND to_regclass('archive.source') IS NULL AND to_regclass('archive.view') IS NULL AND to_regclass('stale') IS NULL"); got != "t" {
+		t.Error("archive.schema_file, archive.source or archive.view is still there, or the stored files were applied")
 	}
 	if out := in.must("list", "company"); !strings.Contains(out, "Acme") {
 		t.Errorf("companies after the upgrade: %s", out)
@@ -1790,7 +1788,7 @@ func TestFullTextSearchInDutchAndEnglishAcrossTablesFilesAndUsers(t *testing.T) 
 	})
 }
 
-func TestSavedViewsSchemaDropsAndFullTokensOverHTTP(t *testing.T) {
+func TestViewsSchemaDropsAndFullTokensOverHTTP(t *testing.T) {
 	t.Parallel()
 	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com", `ARCHIVE_OIDC=[{"name":"google","issuer":"https://accounts.google.com","client_id":"web"}]`)
 	srv := in.serve()
@@ -1802,52 +1800,106 @@ func TestSavedViewsSchemaDropsAndFullTokensOverHTTP(t *testing.T) {
 	aliceTok := decode[Token](t, in.must("token", "create")).Secret
 	bobTok := decode[Token](t, in.must("-as", "bob@example.com", "token", "create")).Secret
 
-	t.Run("SavedViewsFollowSpaceMembership", func(t *testing.T) {
-		var v View
-		body := map[string]any{"name": "Family people", "space": "family", "type": "person", "layout": "board", "by": "employer", "where": map[string]string{"name": "Ann"}}
-		st, _ := call(t, "POST", api+"/views", aliceTok, body, &v)
-		wantStatus(t, st, 201, "create view")
-		if v.Layout != "board" || v.By != "employer" || v.Where["name"] != "Ann" || !strings.HasSuffix(v.CreatedBy, "on behalf of alice@example.com") {
-			t.Fatalf("view: %+v", v)
-		}
-		st, _ = call(t, "POST", api+"/views", aliceTok, body, nil)
-		wantStatus(t, st, 409, "same name in the same space")
-		st, _ = call(t, "POST", api+"/views", aliceTok, map[string]any{"name": "Bad", "type": "person", "by": "nope"}, nil)
-		wantStatus(t, st, 422, "unknown column")
-		st, _ = call(t, "POST", api+"/views", aliceTok, map[string]any{"name": "Bad", "type": "nothing"}, nil)
-		wantStatus(t, st, 404, "unknown table")
-		st, _ = call(t, "POST", api+"/views", aliceTok, map[string]any{"name": "Mine", "type": "company"}, nil)
-		wantStatus(t, st, 201, "private view")
+	t.Run("ViewsAreSQLWithTheirSettingsInComments", func(t *testing.T) {
+		in := in.on(t)
+		board := "CREATE VIEW people_board WITH (security_invoker = true) AS SELECT * FROM person;\n" +
+			"COMMENT ON VIEW people_board IS 'Everyone you know\nby employer\nlayout: board\nby: employer\nicon: users';\n"
+		in.push(with(e2eSchema, "people_board.sql", board))
+		var fam, solo row
+		st, _ := call(t, "POST", api+"/person?space=family", aliceTok, map[string]any{"name": "Fam"}, &fam)
+		wantStatus(t, st, 201, "person in family")
+		st, _ = call(t, "POST", api+"/person", aliceTok, map[string]any{"name": "Solo"}, &solo)
+		wantStatus(t, st, 201, "person in alice's space")
 
-		var seen []View
-		call(t, "GET", api+"/views", bobTok, nil, &seen)
-		if len(seen) != 1 || seen[0].ID != v.ID {
-			t.Fatalf("bob sees %+v", seen)
+		var cat Catalog
+		call(t, "GET", api+"/types", aliceTok, nil, &cat)
+		v := cat.Tables["people_board"]
+		if v == nil || v.Kind != "view" || v.Layout != "board" || v.By != "employer" || v.Icon != "users" || v.Description != "Everyone you know\nby employer" || v.col("name") == nil {
+			t.Fatalf("view in the catalog: %+v", v)
 		}
-		st, _ = call(t, "PUT", api+"/views/"+v.ID.String(), bobTok, map[string]any{"name": "Hijacked", "type": "person"}, nil)
-		wantStatus(t, st, 403, "viewer changes a view")
-		var u View
-		st, _ = call(t, "PUT", api+"/views/"+v.ID.String(), aliceTok, map[string]any{"name": "Everyone", "type": "person"}, &u)
-		wantStatus(t, st, 200, "owner changes a view")
-		if u.Name != "Everyone" || u.Space != v.Space || u.Layout != "table" || len(u.Where) != 0 || u.By != "" {
-			t.Errorf("updated view: %+v", u)
+		if p := cat.Tables["person"]; p.Kind != "table" || p.Layout != "" {
+			t.Errorf("table in the catalog: %+v", p)
 		}
-		st, _ = call(t, "DELETE", api+"/views/"+v.ID.String(), bobTok, nil, nil)
-		wantStatus(t, st, 403, "viewer removes a view")
-		st, _ = call(t, "DELETE", api+"/views/"+v.ID.String(), aliceTok, nil, nil)
-		wantStatus(t, st, 204, "owner removes a view")
-		st, _ = call(t, "GET", api+"/views/"+v.ID.String(), aliceTok, nil, nil)
-		wantStatus(t, st, 404, "removed view")
+		var rows []row
+		call(t, "GET", api+"/people_board", aliceTok, nil, &rows)
+		if names(rows) != "Fam,Solo" {
+			t.Errorf("alice through the view: %s", names(rows))
+		}
+		call(t, "GET", api+"/people_board", bobTok, nil, &rows)
+		if names(rows) != "Fam" {
+			t.Errorf("bob through the view sees %s, want only the family space", names(rows))
+		}
+		st, _ = call(t, "POST", api+"/people_board", aliceTok, map[string]any{"name": "Nope"}, nil)
+		wantStatus(t, st, 405, "create through a view")
+		st, _ = call(t, "DELETE", api+"/people_board/"+id(fam), aliceTok, nil, nil)
+		wantStatus(t, st, 405, "delete through a view")
 
-		cv := decode[View](t, in.must("view", "add", "-space", "family", `{"name": "Board from the CLI", "type": "person", "layout": "board", "by": "employer"}`))
-		if cv.Layout != "board" || cv.By != "employer" || cv.Space != v.Space {
-			t.Errorf("view added from the CLI: %+v", cv)
+		files := in.pulled()
+		if !strings.Contains(files["people_board.sql"], "security_invoker=true") || !strings.Contains(files["people_board.sql"], "icon: users';") || strings.Contains(files["people_board.sql"], ";;") {
+			t.Errorf("pulled view: %s", files["people_board.sql"])
 		}
-		if listed := decode[[]View](t, in.must("view", "list")); !slices.ContainsFunc(listed, func(x View) bool { return x.ID == cv.ID }) {
-			t.Errorf("view list: %+v", listed)
+		in.roundTrips()
+		files["people_board.sql"] = strings.Replace(files["people_board.sql"], "icon: users", "icon: contact", 1)
+		if p := decode[SchemaPlan](t, in.must("schema", "plan", in.writeDir("ddl", files))); len(p.Statements) != 1 || !strings.HasPrefix(p.Statements[0].DDL, "COMMENT ON VIEW") {
+			t.Errorf("changing only the comment plans %+v", p.Statements)
 		}
-		if e := in.fails("view", "add", `{"name": "Bad", "type": "person", "layout": "wall"}`); !strings.Contains(e, "layout") {
-			t.Errorf("bad layout from the CLI: %s", e)
+
+		view := "CREATE VIEW bad WITH (security_invoker = true) AS SELECT * FROM person;\nCOMMENT ON VIEW bad IS 'x\n"
+		for _, bad := range []struct{ sql, want string }{
+			{"CREATE VIEW bad AS SELECT * FROM person;", "security_invoker = true"},
+			{view + "layout: board\nby: nope';", `no column "nope"`},
+			{view + "colour: red';", "unknown key colour"},
+			{view + "icon: not-an-icon';", "unknown icon"},
+			{view + "layout: calendar';", "needs a by:"},
+			{"CREATE VIEW bad WITH (security_invoker = true) AS SELECT name FROM person;", "want an id uuid column"},
+		} {
+			if e := in.fails("schema", "apply", in.writeDir("bad", with(e2eSchema, "bad.sql", bad.sql))); !strings.Contains(e, bad.want) {
+				t.Errorf("%s: %s", bad.sql, e)
+			}
+		}
+		company := strings.Replace(e2eSchema["company.sql"], "'A company'", "'A company\nlayout: board'", 1)
+		if e := in.fails("schema", "apply", in.writeDir("bad", with(e2eSchema, "company.sql", company))); !strings.Contains(e, "unknown key layout") {
+			t.Errorf("layout on a table: %s", e)
+		}
+
+		code := `const files = await archive.schema();
+files["open_people.sql"] = "CREATE VIEW open_people WITH (security_invoker = true) AS SELECT * FROM person WHERE name <> 'Solo';\n" +
+  "COMMENT ON VIEW open_people IS 'People but Solo\nlayout: board\nby: employer\nicon: users';";
+const made = await archive.apply(files, { confirm: true });
+const t1 = (await archive.tables()).find((t) => t.name === "open_people");
+const rows1 = (await archive.list("open_people")).map((r) => r.name);
+files["open_people.sql"] = "CREATE VIEW open_people WITH (security_invoker = true) AS SELECT * FROM person WHERE name = 'Solo';\n" +
+  "COMMENT ON VIEW open_people IS 'Only Solo\nicon: user';";
+const changed = await archive.apply(files, { confirm: true });
+const t2 = (await archive.tables()).find((t) => t.name === "open_people");
+const rows2 = (await archive.list("open_people")).map((r) => r.name);
+delete files["open_people.sql"];
+const dropped = await archive.apply(files, { confirm: true });
+const gone = !(await archive.tables()).some((t) => t.name === "open_people");
+return { made: made.applied, t1, rows1, changed: changed.applied, t2, rows2, dropped: dropped.applied, gone };`
+		var res struct {
+			Result struct {
+				Made, Changed, Dropped, Gone bool
+				T1, T2                       runTable
+				Rows1, Rows2                 []string
+			}
+			Error string
+		}
+		st, _ = call(t, "POST", srv.url+"/api/run", aliceTok, map[string]string{"code": code}, &res)
+		wantStatus(t, st, 200, "view lifecycle in code mode")
+		r := res.Result
+		if res.Error != "" || !r.Made || !r.Changed || !r.Dropped || !r.Gone {
+			t.Fatalf("view lifecycle: %+v", res)
+		}
+		if r.T1.Kind != "view" || r.T1.Layout != "board" || r.T1.By != "employer" || r.T1.Icon != "users" || r.T1.Description != "People but Solo" || strings.Join(r.Rows1, ",") != "Fam" {
+			t.Errorf("created view: %+v %v", r.T1, r.Rows1)
+		}
+		if r.T2.Layout != "table" || r.T2.By != "" || r.T2.Icon != "user" || r.T2.Description != "Only Solo" || strings.Join(r.Rows2, ",") != "Solo" {
+			t.Errorf("changed view: %+v %v", r.T2, r.Rows2)
+		}
+		in.push(e2eSchema)
+		if got := in.psql("archive", "SELECT count(*) FROM pg_views WHERE schemaname = 'public'"); got != "0" {
+			t.Errorf("%s views left after removing their files", got)
 		}
 	})
 

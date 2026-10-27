@@ -18,7 +18,8 @@ ALTER TABLE recipe ENABLE ROW LEVEL SECURITY;
 ALTER TABLE recipe FORCE ROW LEVEL SECURITY;
 CREATE POLICY viewer ON recipe FOR SELECT USING (space = ANY (archive.my_spaces()));
 CREATE POLICY editor ON recipe USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
-COMMENT ON TABLE recipe IS 'A recipe you cook';
+COMMENT ON TABLE recipe IS 'A recipe you cook
+icon: chef-hat';
 COMMENT ON COLUMN recipe.name IS 'Dish';
 COMMENT ON COLUMN recipe.cuisine IS 'Cuisine';
 COMMENT ON COLUMN recipe.minutes IS 'Total time in minutes';

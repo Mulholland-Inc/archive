@@ -17,7 +17,8 @@ ALTER TABLE subscription ENABLE ROW LEVEL SECURITY;
 ALTER TABLE subscription FORCE ROW LEVEL SECURITY;
 CREATE POLICY viewer ON subscription FOR SELECT USING (space = ANY (archive.my_spaces()));
 CREATE POLICY editor ON subscription USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
-COMMENT ON TABLE subscription IS 'Something you pay for on a schedule';
+COMMENT ON TABLE subscription IS 'Something you pay for on a schedule
+icon: repeat';
 COMMENT ON COLUMN subscription.name IS 'Service name';
 COMMENT ON COLUMN subscription.price IS 'Price per billing period';
 COMMENT ON COLUMN subscription.billing IS 'Billing schedule as an RRULE';

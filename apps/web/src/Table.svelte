@@ -1,15 +1,15 @@
 <script>
   import { api, hidden, show } from './api.js';
 
-  let { table, where = {}, title, lead, rows: given } = $props();
+  let { table } = $props();
   let rows = $state([]);
   let more = $state(false);
   let error = $state('');
-  const columns = $derived(table ? table.columns.filter((c) => !hidden.has(c.name) && !(c.name in where)) : []);
+  const columns = $derived(table.columns.filter((c) => !hidden.has(c.name)));
 
   async function page() {
     try {
-      const q = new URLSearchParams({ ...where, limit: '100' });
+      const q = new URLSearchParams({ limit: '100' });
       if (rows.length) q.set('after', rows.at(-1).id);
       const next = await api(`/api/${table.name}?${q}`);
       rows = [...rows, ...next];
@@ -19,39 +19,36 @@
     }
   }
 
-  if (given) rows = given;
-  else if (table) page();
+  page();
 </script>
 
-{#if table}
-  <h1>{title ?? table.name.replaceAll('_', ' ')}</h1>
-  {#if lead ?? table.description}<p class="lead">{lead ?? table.description}</p>{/if}
-  <div class="panel">
-    {#if error}<p class="error">{error}</p>{/if}
-    <div class="wrap">
-      <table>
-        <thead>
+<h1>{table.name.replaceAll('_', ' ')}</h1>
+{#if table.description}<p class="lead">{table.description}</p>{/if}
+<div class="panel">
+  {#if error}<p class="error">{error}</p>{/if}
+  <div class="wrap">
+    <table>
+      <thead>
+        <tr>
+          {#each columns as c (c.name)}
+            <th title={c.description}>{c.name.replaceAll('_', ' ')}</th>
+          {/each}
+        </tr>
+      </thead>
+      <tbody>
+        {#each rows as r (r.id)}
           <tr>
             {#each columns as c (c.name)}
-              <th title={c.description}>{c.name.replaceAll('_', ' ')}</th>
+              <td class:ref={c.ref}>{show(r[c.name])}</td>
             {/each}
           </tr>
-        </thead>
-        <tbody>
-          {#each rows as r (r.id)}
-            <tr>
-              {#each columns as c (c.name)}
-                <td class:ref={c.ref}>{show(r[c.name])}</td>
-              {/each}
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
-    {#if !rows.length && !error}<p class="muted">Nothing here yet.</p>{/if}
-    {#if more && !given}<button class="more" onclick={page}>Show more</button>{/if}
+        {/each}
+      </tbody>
+    </table>
   </div>
-{/if}
+  {#if !rows.length && !error}<p class="muted">Nothing here yet.</p>{/if}
+  {#if more}<button class="more" onclick={page}>Show more</button>{/if}
+</div>
 
 <style>
   h1 { text-transform: capitalize; }

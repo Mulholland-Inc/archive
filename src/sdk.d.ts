@@ -17,7 +17,8 @@
  *   and, when invalid, errors: [{ path, message }] with one entry per bad field.
  *
  * Data
- * - Each type is a table in the public schema, and a row is a plain object (see Tables at the end).
+ * - Each type is a table or a view in the public schema, and a row is a plain object (see Tables at the end).
+ *   Views are read only: list, get and search them; create, update and delete go to their tables.
  *   Archive sets id, space, created_at and updated_at. Fields without ? are required on create; empty fields
  *   read back as null.
  * - Writes clean messy input before Postgres checks it, so pass what you have: "06 12345678" becomes
@@ -29,15 +30,16 @@
  *
  * Changing the schema (ontology admins)
  * - Types are the tables in the database, and nothing else is stored. archive.schema() generates their DDL from the
- *   database: one file per table, named <table>.sql, holding its CREATE TABLE, indexes, foreign keys, row-level
+ *   database: one file per table or view, named <name>.sql, holding its CREATE TABLE, indexes, foreign keys, row-level
  *   security, policies, triggers, comments, and the enums, domains and functions only it uses (one used by no
  *   table gets its own <name>.sql). It is normalized: your layout, -- comments and statement order are not kept,
  *   COMMENT ON is. Change or add a file and pass the whole set to archive.apply(files): first without confirm to
  *   see the plan, then with { confirm: true }. A table in no file is dropped. apply(await archive.schema()) plans
  *   nothing.
  * - apply commits on its own as soon as it succeeds, even if the script throws later. It waits for locks on
- *   the tables it changes, including locks this run took by reading or writing them, so apply before touching
- *   those tables, or in a run of its own. After it, the new tables work in the same run.
+ *   the tables and views it changes, including locks this run took by writing them or reading them with
+ *   archive.sql (list, get and search hold no locks), so apply before those, or in a run of its own. After it,
+ *   the new tables and views work in the same run.
  * - Every table needs id, space, created_at, updated_at and a search tsvector column, row-level security with
  *   policies, and should have COMMENT ON its table and columns: they become these docs. Use the built-in types
  *   (archive.email, archive.money, ...) to get their cleaning. A reference is `uuid REFERENCES other`; a list of
@@ -61,10 +63,33 @@
  *     CREATE POLICY viewer ON house FOR SELECT USING (space = ANY (archive.my_spaces()));
  *     CREATE POLICY editor ON house USING (space = ANY (archive.my_spaces('editor')))
  *         WITH CHECK (space = ANY (archive.my_spaces('editor')));
- *     COMMENT ON TABLE house IS 'A house you own or rent';
+ *     COMMENT ON TABLE house IS 'A house you own or rent
+ *     icon: house';
  *     COMMENT ON COLUMN house.price IS 'Asking price';
  *
- * - A statement that deletes data (dropping a table or column) is blocked unless you pass { allowDrop: true }.
+ * - Comments on tables and views: the first lines are the description; the last lines may be key: value
+ *   settings. icon is a Lucide icon name in kebab-case (user, credit-card, square-check, ...; lucide.dev/icons),
+ *   on tables and views. Views also take layout (table, board or calendar) and by (the column a board groups
+ *   by, or the date a calendar places rows on). Any other key is an error.
+ *
+ * Views
+ * - A view is a saved way to look at a table: a Postgres view in its own file, <view>.sql, with
+ *   security_invoker = true so row-level security applies to whoever reads it, an id column, and a comment.
+ *   A complete file, task_board.sql:
+ *
+ *     CREATE VIEW task_board WITH (security_invoker = true) AS
+ *         SELECT * FROM task WHERE status <> 'done';
+ *     COMMENT ON VIEW task_board IS 'Open tasks by progress
+ *     layout: board
+ *     by: status
+ *     icon: kanban';
+ *
+ * - Create or change one: const files = await archive.schema(); files["task_board.sql"] = `...`;
+ *   await archive.apply(files, { confirm: true }). Then archive.list("task_board") reads its rows, and
+ *   archive.tables() shows its kind, description, layout, by and icon.
+ * - Delete one: delete files["task_board.sql"] and apply. A view holds no data, so dropping it is never blocked.
+ *
+ * - A statement that deletes data (dropping a table or column, not a view) is blocked unless you pass { allowDrop: true }.
  * - Renames are not detected: the plan would drop and re-add, losing data. Rename in the same call, and pass
  *   the files as they read after it: archive.apply(files, { confirm: true, renames:
  *   ["ALTER TABLE house RENAME COLUMN price TO asking_price"] }). The renames run first, in the same
@@ -87,11 +112,11 @@ declare const archive: {
     delete(table: keyof Tables, id: string): Promise<void>;
     /** Full-text search over every table and file you can see, best first; words match by prefix, ignoring case and accents. */
     search(text: string, opts?: { type?: keyof Tables | "file"; space?: string; from?: string; to?: string; limit?: number }): Promise<Hit[]>;
-    /** DDL generated from the database: <table>.sql to SQL, one file per table (see the header). */
+    /** DDL generated from the database: <name>.sql to SQL, one file per table or view (see the header). */
     schema(): Promise<Record<string, string>>;
     /** Plan the whole set of DDL files against the database; with confirm, apply the plan (see the header). */
     apply(files: Record<string, string>, opts?: { confirm?: boolean; allowDrop?: boolean; renames?: string[] }): Promise<Plan>;
-    /** Every table with its columns, types, comments and references, as Postgres has them now. */
+    /** Every table and view with its columns, types, comments and references, as Postgres has them now. */
     tables(): Promise<Table[]>;
     /** Files you can see, oldest first, with their extracted text; page with after = the last id. */
     files(opts?: { limit?: number; after?: string; space?: string }): Promise<StoredFile[]>;
@@ -137,7 +162,14 @@ interface Plan {
 
 interface Table {
     name: string;
+    kind: "table" | "view";
+    /** The comment without its key: value lines. */
     description: string;
+    /** Lucide icon name from the comment's icon: line. */
+    icon?: string;
+    /** A view's layout: and by: lines. */
+    layout?: "table" | "board" | "calendar";
+    by?: string;
     columns: {
         name: string;
         /** SQL type, like "text", "archive.money", "uuid[]" or "invoice_status". */

@@ -19,7 +19,8 @@ ALTER TABLE insurance ENABLE ROW LEVEL SECURITY;
 ALTER TABLE insurance FORCE ROW LEVEL SECURITY;
 CREATE POLICY viewer ON insurance FOR SELECT USING (space = ANY (archive.my_spaces()));
 CREATE POLICY editor ON insurance USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
-COMMENT ON TABLE insurance IS 'An insurance policy';
+COMMENT ON TABLE insurance IS 'An insurance policy
+icon: shield-check';
 COMMENT ON COLUMN insurance.name IS 'Your name for the policy';
 COMMENT ON COLUMN insurance.provider IS 'Insurer';
 COMMENT ON COLUMN insurance.kind IS 'What it covers';

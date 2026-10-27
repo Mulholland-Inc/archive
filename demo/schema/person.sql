@@ -18,7 +18,8 @@ ALTER TABLE person ENABLE ROW LEVEL SECURITY;
 ALTER TABLE person FORCE ROW LEVEL SECURITY;
 CREATE POLICY viewer ON person FOR SELECT USING (space = ANY (archive.my_spaces()));
 CREATE POLICY editor ON person USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
-COMMENT ON TABLE person IS 'Someone in your life: family, friends, colleagues, doctors';
+COMMENT ON TABLE person IS 'Someone in your life: family, friends, colleagues, doctors
+icon: user';
 COMMENT ON COLUMN person.name IS 'Full name';
 COMMENT ON COLUMN person.relation IS 'How you know them';
 COMMENT ON COLUMN person.birthday IS 'Date of birth';

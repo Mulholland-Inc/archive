@@ -2,19 +2,17 @@
   import { api, hidden, show } from './api.js';
   import Table from './Table.svelte';
 
-  let { view, table, types = {} } = $props();
+  let { view, types = {} } = $props();
   let rows = $state(null);
   let error = $state('');
 
-  const label = $derived(table ? table.columns.find((c) => !hidden.has(c.name) && c.name !== view.by)?.name : '');
-  const details = $derived(table ? table.columns.filter((c) => !hidden.has(c.name) && c.name !== view.by && c.name !== label && !c.ref).slice(0, 2) : []);
-  const filter = $derived(Object.entries(view.where ?? {}).map(([k, v]) => `${k.replaceAll('_', ' ')} is ${v}`).join(', '));
-  const lead = $derived(`${table?.name.replaceAll('_', ' ') ?? view.type}${filter ? `, where ${filter}` : ''}${view.by ? `, by ${view.by.replaceAll('_', ' ')}` : ''}`);
+  const label = $derived(view.columns.find((c) => !hidden.has(c.name) && c.name !== view.by)?.name);
+  const details = $derived(view.columns.filter((c) => !hidden.has(c.name) && c.name !== view.by && c.name !== label && !c.ref).slice(0, 2));
 
   const groups = $derived.by(() => {
     if (!rows || view.layout === 'table') return [];
     const out = new Map();
-    const col = table?.columns.find((c) => c.name === view.by);
+    const col = view.columns.find((c) => c.name === view.by);
     if (view.layout === 'board' && col) for (const v of types[`${col.schema}.${col.type}`]?.enum ?? []) out.set(v, []);
     const sorted = view.layout === 'calendar' ? [...rows].filter((r) => r[view.by]).sort((a, b) => String(a[view.by]).localeCompare(String(b[view.by]))) : rows;
     for (const r of sorted) {
@@ -31,9 +29,9 @@
   async function load() {
     const all = [];
     for (let after = ''; ; ) {
-      const q = new URLSearchParams({ ...view.where, limit: '500' });
+      const q = new URLSearchParams({ limit: '500' });
       if (after) q.set('after', after);
-      const next = await api(`/api/${view.type}?${q}`);
+      const next = await api(`/api/${view.name}?${q}`);
       all.push(...next);
       if (next.length < 500) break;
       after = next.at(-1).id;
@@ -41,16 +39,14 @@
     rows = all;
   }
 
-  load().catch((e) => (error = e.message));
+  if (view.layout !== 'table' && view.by) load().catch((e) => (error = e.message));
 </script>
 
 {#if view.layout === 'table' || !view.by}
-  {#if rows}
-    <Table {table} where={view.where ?? {}} title={view.name} {lead} {rows} />
-  {/if}
+  <Table table={view} />
 {:else}
-  <h1>{view.name}</h1>
-  <p class="lead">{lead}</p>
+  <h1>{view.name.replaceAll('_', ' ')}</h1>
+  {#if view.description}<p class="lead">{view.description}</p>{/if}
   {#if error}<p class="error">{error}</p>{/if}
   {#if view.layout === 'board'}
     <div class="board">
@@ -87,6 +83,7 @@
 {/if}
 
 <style>
+  h1 { text-transform: capitalize; }
   .board { display: flex; gap: 12px; margin-top: 32px; overflow-x: auto; padding-bottom: 8px; align-items: flex-start; }
   section { flex: 0 0 280px; background: var(--panel); border-radius: 28px; padding: 18px; }
   section header { display: flex; justify-content: space-between; padding: 0 6px 12px; text-transform: capitalize; font-weight: 500; }

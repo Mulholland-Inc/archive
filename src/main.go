@@ -38,8 +38,8 @@ Usage:
                                      as MCP's run tool does, and print {result, logs, error}
   archive run -docs                  print the SDK documentation, with an interface per table
 
-  archive schema pull [dir]          print DDL generated from the database, one <table>.sql file
-                                     per table, or write those files into dir; layout and
+  archive schema pull [dir]          print DDL generated from the database, one <name>.sql file
+                                     per table or view, or write those files into dir; layout and
                                      comments outside DDL are not kept, COMMENT ON is
   archive schema plan <dir> [-allow-drop]
                                      show the statements that bring the database to the *.sql
@@ -63,11 +63,6 @@ Usage:
   archive delete <table> <id>
   archive search <query> [-type t] [-space s] [-from date] [-to date] [-limit n]
                                      find rows and files by their words
-
-  archive view add [-space s] [json|-]
-                                     save a view: {"name","type","layout":"table|board|calendar",
-                                     "by":field,"where":{field:value}}
-  archive view list
 
   archive user add <email> [-name n] [-admin]
   archive space add <name>
@@ -240,23 +235,6 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 		return cliFile(ctx, a, pos, *space, *output, *limit, *after, stdout, out)
 	case "user", "space", "token", "secret":
 		return cliAuth(ctx, a, cmd, pos, *name, *admin, *full, *space, *expires, out)
-	case "view":
-		switch pos[0] {
-		case "list":
-			return out(a.Views(ctx))
-		case "add":
-			var in ViewInput
-			var r io.Reader = stdin
-			if len(pos) > 1 && pos[1] != "-" {
-				r = strings.NewReader(pos[1])
-			}
-			if err := json.NewDecoder(r).Decode(&in); err != nil {
-				return fmt.Errorf("reading view JSON: %w", err)
-			}
-			in.Space = cmp.Or(in.Space, *space)
-			return out(a.AddView(ctx, in))
-		}
-		return cliErrUsage
 	case "list":
 		where := map[string]any{}
 		for _, kv := range pos[1:] {
@@ -316,7 +294,7 @@ func cliCheckCommand(cmd string, pos []string) error {
 	n, ok := map[string]int{
 		"serve": 0, "mcp": 0, "types": 0, "run": 1, "schema": 1, "list": 1, "create": 1,
 		"get": 2, "delete": 2, "set": 2, "update": 2,
-		"user": 2, "space": 1, "token": 1, "secret": 3, "file": 1, "search": 1, "view": 1,
+		"user": 2, "space": 1, "token": 1, "secret": 3, "file": 1, "search": 1,
 	}[cmd]
 	if !ok {
 		return fmt.Errorf("unknown command %q (see archive help)", cmd)
@@ -688,42 +666,6 @@ func httpHandler(a *Archive) http.Handler {
 		f := SearchFilter{Type: q.Get("type"), Space: q.Get("space"), From: q.Get("from"), To: q.Get("to"), Limit: limit}
 		return ok(a.Search(r.Context(), q.Get("q"), f))
 	})
-	handle("GET /api/views", func(r *http.Request) (int, any, error) {
-		return ok(a.Views(r.Context()))
-	})
-	handle("POST /api/views", func(r *http.Request) (int, any, error) {
-		var in ViewInput
-		if err := httpDecode(r, &in); err != nil {
-			return 0, nil, err
-		}
-		v, err := a.AddView(r.Context(), in)
-		return http.StatusCreated, v, err
-	})
-	handle("GET /api/views/{id}", func(r *http.Request) (int, any, error) {
-		id, err := httpID(r)
-		if err != nil {
-			return 0, nil, err
-		}
-		return ok(a.GetView(r.Context(), id))
-	})
-	handle("PUT /api/views/{id}", func(r *http.Request) (int, any, error) {
-		id, err := httpID(r)
-		if err != nil {
-			return 0, nil, err
-		}
-		var in ViewInput
-		if err := httpDecode(r, &in); err != nil {
-			return 0, nil, err
-		}
-		return ok(a.SetView(r.Context(), id, in))
-	})
-	handle("DELETE /api/views/{id}", func(r *http.Request) (int, any, error) {
-		id, err := httpID(r)
-		if err != nil {
-			return 0, nil, err
-		}
-		return http.StatusNoContent, nil, a.RemoveView(r.Context(), id)
-	})
 
 	handle("GET /api/{type}", func(r *http.Request) (int, any, error) {
 		q := r.URL.Query()
@@ -808,6 +750,8 @@ func httpError(err error) (int, any) {
 		status = http.StatusUnauthorized
 	case errors.Is(err, ErrForbidden):
 		status = http.StatusForbidden
+	case errors.Is(err, ErrReadOnly):
+		status = http.StatusMethodNotAllowed
 	}
 	return status, map[string]string{"error": err.Error()}
 }

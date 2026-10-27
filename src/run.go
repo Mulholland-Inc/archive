@@ -44,7 +44,11 @@ type runFile struct {
 
 type runTable struct {
 	Name        string      `json:"name"`
+	Kind        string      `json:"kind"`
 	Description string      `json:"description"`
+	Icon        string      `json:"icon,omitempty"`
+	Layout      string      `json:"layout,omitempty"`
+	By          string      `json:"by,omitempty"`
 	Columns     []runColumn `json:"columns"`
 }
 
@@ -422,7 +426,7 @@ func runAfter(fn, s string) (uuid.UUID, error) {
 func (r *runner) def(o *goja.Object, name string, f func(ctx context.Context, call goja.FunctionCall) (any, error)) {
 	o.Set(name, func(call goja.FunctionCall) goja.Value {
 		p, resolve, reject := r.vm.NewPromise()
-		v, err := r.call(func(ctx context.Context) (any, error) { return f(ctx, call) })
+		v, err := r.call(runReads[name], func(ctx context.Context) (any, error) { return f(ctx, call) })
 		var jv goja.Value
 		if err == nil {
 			jv, err = r.toJS(v)
@@ -436,7 +440,9 @@ func (r *runner) def(o *goja.Object, name string, f func(ctx context.Context, ca
 	})
 }
 
-func (r *runner) call(f func(ctx context.Context) (any, error)) (any, error) {
+var runReads = map[string]bool{"list": true, "get": true, "search": true, "tables": true, "files": true, "file": true, "spaces": true}
+
+func (r *runner) call(read bool, f func(ctx context.Context) (any, error)) (any, error) {
 	t, ok := r.ctx.Value(storeTxKey{}).(storeTx)
 	if !ok {
 		return nil, errors.New("no transaction")
@@ -446,9 +452,9 @@ func (r *runner) call(f func(ctx context.Context) (any, error)) (any, error) {
 		return nil, storeErr(err)
 	}
 	v, err := f(context.WithValue(r.ctx, storeTxKey{}, storeTx{sp, t.role, t.after}))
-	if err != nil {
+	if err != nil || read {
 		sp.Rollback(r.ctx)
-		return nil, storeErr(err)
+		return v, storeErr(err)
 	}
 	return v, storeErr(sp.Commit(r.ctx))
 }
@@ -757,7 +763,7 @@ func runTables(cat *Catalog) []runTable {
 	out := []runTable{}
 	for _, name := range cat.names() {
 		tb := cat.Tables[name]
-		t := runTable{Name: name, Description: tb.Description, Columns: []runColumn{}}
+		t := runTable{Name: name, Kind: tb.Kind, Description: tb.Description, Icon: tb.Icon, Layout: tb.Layout, By: tb.By, Columns: []runColumn{}}
 		for _, c := range tb.Columns {
 			if c.Type == "tsvector" {
 				continue
@@ -915,7 +921,11 @@ func runTypes(cat *Catalog) string {
 	b.WriteString("}\n")
 	for _, name := range cat.names() {
 		tb := cat.Tables[name]
-		b.WriteString("\n" + runDoc("", tb.Description))
+		ro := ""
+		if tb.Kind == "view" {
+			ro = "View; read only"
+		}
+		b.WriteString("\n" + runDoc("", tb.Description, ro))
 		fmt.Fprintf(&b, "interface %s extends Base {\n", tables[name])
 		for _, c := range tb.Columns {
 			if catalogSystem[c.Name] || c.Type == "tsvector" {

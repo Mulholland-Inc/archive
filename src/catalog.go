@@ -2,6 +2,7 @@ package main
 
 import (
 	"cmp"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,11 +23,17 @@ type Catalog struct {
 
 type Table struct {
 	Name        string    `json:"name"`
+	Kind        string    `json:"kind"`
 	Description string    `json:"description"`
+	Icon        string    `json:"icon"`
+	Layout      string    `json:"layout,omitempty"`
+	By          string    `json:"by,omitempty"`
 	RLS         bool      `json:"rls"`
 	Force       bool      `json:"force"`
+	Invoker     bool      `json:"security_invoker,omitempty"`
 	Policies    int       `json:"policies"`
 	Columns     []*Column `json:"columns"`
+	meta        [][2]string
 }
 
 type Column struct {
@@ -88,6 +95,7 @@ var (
 	ErrConflict     = errors.New("conflict")
 	ErrForbidden    = errors.New("forbidden")
 	ErrUnauthorized = errors.New("unauthorized")
+	ErrReadOnly     = errors.New("read only")
 )
 
 const catalogSQL = `
@@ -113,12 +121,14 @@ WITH col AS (
 SELECT jsonb_build_object(
     'tables', coalesce((SELECT jsonb_object_agg(c.relname, jsonb_build_object(
         'name', c.relname,
+        'kind', CASE c.relkind WHEN 'v' THEN 'view' ELSE 'table' END,
         'description', coalesce(obj_description(c.oid, 'pg_class'), ''),
         'rls', c.relrowsecurity,
         'force', c.relforcerowsecurity,
+        'security_invoker', coalesce((SELECT o.option_value::bool FROM pg_options_to_table(c.reloptions) o WHERE o.option_name = 'security_invoker'), false),
         'policies', (SELECT count(*) FROM pg_policy p WHERE p.polrelid = c.oid),
         'columns', (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid)))
-        FROM pg_class c WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p')), '{}'),
+        FROM pg_class c WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
         'schema', t.typnamespace::regnamespace::text,
@@ -137,13 +147,60 @@ func catalogParse(b []byte) (*Catalog, error) {
 	if err := json.Unmarshal(b, c); err != nil {
 		return nil, fmt.Errorf("catalog: %w", err)
 	}
+	for _, t := range c.Tables {
+		t.Description, t.meta = catalogComment(t.Description)
+		for _, kv := range t.meta {
+			switch kv[0] {
+			case "icon":
+				t.Icon = kv[1]
+			case "layout":
+				t.Layout = kv[1]
+			case "by":
+				t.By = kv[1]
+			}
+		}
+		if t.Kind == "view" && t.Layout == "" {
+			t.Layout = "table"
+		}
+	}
 	return c, nil
 }
 
+var catalogMetaRe = regexp.MustCompile(`^([a-z][a-z0-9_]*):[ \t]*(\S.*?)\s*$`)
+
+func catalogComment(s string) (string, [][2]string) {
+	lines := strings.Split(s, "\n")
+	var meta [][2]string
+	for len(lines) > 0 {
+		m := catalogMetaRe.FindStringSubmatch(lines[len(lines)-1])
+		if m == nil {
+			break
+		}
+		meta = append([][2]string{{m[1], m[2]}}, meta...)
+		lines = lines[:len(lines)-1]
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n")), meta
+}
+
+//go:embed icons.json
+var catalogIconsJSON []byte
+
+var catalogIcons = func() map[string]bool {
+	var names []string
+	json.Unmarshal(catalogIconsJSON, &names)
+	out := map[string]bool{}
+	for _, n := range names {
+		out[n] = true
+	}
+	return out
+}()
+
+var catalogLayouts = []string{"table", "board", "calendar"}
+
 var (
 	catalogSystem   = map[string]bool{"id": true, "space": true, "created_at": true, "updated_at": true}
-	catalogReserved = map[string]bool{"files": true, "views": true, "search": true, "schema": true, "types": true,
-		"space": true, "user": true, "token": true, "file": true, "upload": true, "view": true, "secret": true, "revision": true, "run": true}
+	catalogReserved = map[string]bool{"files": true, "pages": true, "views": true, "search": true, "schema": true, "types": true,
+		"space": true, "user": true, "token": true, "file": true, "upload": true, "secret": true, "revision": true, "run": true}
 	catalogNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 	catalogRefRe  = regexp.MustCompile(`(?i)^references\s+([a-z][a-z0-9_]*)\b[\s.;:,-]*`)
 )
@@ -156,11 +213,19 @@ func (c *Catalog) table(name string) (*Table, error) {
 	return t, nil
 }
 
+func (c *Catalog) writable(name string) (*Table, error) {
+	t, err := c.table(name)
+	if err == nil && t.Kind == "view" {
+		return nil, fmt.Errorf("%s is a view, and views are read only; write to the tables it selects from: %w", name, ErrReadOnly)
+	}
+	return t, err
+}
+
 func (c *Catalog) names() []string { return specKeys(c.Tables) }
 
 func (c *Catalog) deleteOrder() []string {
 	var out []string
-	left := c.names()
+	left := slices.DeleteFunc(c.names(), func(n string) bool { return c.Tables[n].Kind == "view" })
 	refs := func(from, to string) bool {
 		return slices.ContainsFunc(c.Tables[from].Columns, func(col *Column) bool { return from != to && col.Ref == "public."+to })
 	}
@@ -228,7 +293,17 @@ func (c *Catalog) Check() error {
 	for _, name := range c.names() {
 		t := c.Tables[name]
 		if !catalogNameRe.MatchString(name) || catalogReserved[name] {
-			bad(name, "table names are lowercase letters, digits and _, and not one of "+strings.Join(specKeys(catalogReserved), ", "))
+			bad(name, t.Kind+" names are lowercase letters, digits and _, and not one of "+strings.Join(specKeys(catalogReserved), ", "))
+		}
+		c.checkMeta(t, bad)
+		if t.Kind == "view" {
+			if !t.Invoker {
+				bad(name, "want CREATE VIEW "+name+" WITH (security_invoker = true) AS SELECT ..., so row-level security applies to whoever reads it")
+			}
+			if col := t.col("id"); col == nil || col.Type != "uuid" || col.List {
+				bad(name+".id", "want an id uuid column, like CREATE VIEW "+name+" WITH (security_invoker = true) AS SELECT * FROM <table>")
+			}
+			continue
 		}
 		for _, w := range want {
 			col := t.col(w.name)
@@ -258,6 +333,43 @@ func (c *Catalog) Check() error {
 		return ve
 	}
 	return nil
+}
+
+func (c *Catalog) checkMeta(t *Table, bad func(path, msg string)) {
+	keys, what := []string{"icon"}, "COMMENT ON TABLE "+t.Name
+	if t.Kind == "view" {
+		keys, what = []string{"icon", "layout", "by"}, "COMMENT ON VIEW "+t.Name
+	}
+	seen := map[string]bool{}
+	for _, kv := range t.meta {
+		k, v, path := kv[0], kv[1], t.Name+"."+kv[0]
+		switch {
+		case !slices.Contains(keys, k):
+			bad(path, "unknown key "+k+" in the last lines of "+what+"; want description lines, then key: value lines with "+strings.Join(keys, ", "))
+		case seen[k]:
+			bad(path, k+" is set twice in "+what)
+		case k == "icon" && !catalogIcons[v]:
+			bad(path, "unknown icon "+strconv.Quote(v)+"; want a Lucide icon name in kebab-case, like user, credit-card or square-check (see lucide.dev/icons)")
+		case k == "layout" && !slices.Contains(catalogLayouts, v):
+			bad(path, "unknown layout "+strconv.Quote(v)+"; want "+strings.Join(catalogLayouts, ", "))
+		case k == "by" && t.col(v) == nil:
+			bad(path, "no column "+strconv.Quote(v)+" in view "+t.Name+"; want one of its columns: "+strings.Join(t.colNames(), ", "))
+		}
+		seen[k] = true
+	}
+	if (t.Layout == "board" || t.Layout == "calendar") && t.By == "" {
+		bad(t.Name+".by", "a "+t.Layout+" view needs a by: <column> line in "+what)
+	}
+}
+
+func (t *Table) colNames() []string {
+	var out []string
+	for _, c := range t.Columns {
+		if c.Type != "tsvector" {
+			out = append(out, c.Name)
+		}
+	}
+	return out
 }
 
 func (c *Catalog) typ(schema, name string) *PgType { return c.Types[schema+"."+name] }

@@ -176,6 +176,7 @@ const storeDropOld = `DO $$ BEGIN
         DROP TABLE archive.source;
     END IF;
     DROP TABLE IF EXISTS archive.schema_file;
+    DROP TABLE IF EXISTS archive.view;
 END $$`
 
 func (s *pgStore) expand(sql string) string { return strings.ReplaceAll(sql, "{p}", s.prefix) }
@@ -230,7 +231,7 @@ func (s *pgStore) SchemaFiles(ctx context.Context) (map[string]string, error) {
 	owner := ` OWNER TO ` + pgIdent(s.cfg.User)
 	grant := regexp.MustCompile(`^GRANT (SELECT|INSERT|UPDATE|DELETE) ON \S+ TO ` + regexp.QuoteMeta(pgIdent(s.prefix+"_user")) + `$`)
 	var ddl, subject []string
-	tables := map[string]bool{}
+	tables, views := map[string]bool{}, map[string]bool{}
 	for _, st := range plan.Statements {
 		m := storeSubjectRe.FindStringSubmatch(st.DDL)
 		if m == nil || storeUnquote(m[1]) != "public" || strings.HasSuffix(st.DDL, owner) || grant.MatchString(st.DDL) || storeValidRe.MatchString(st.DDL) {
@@ -240,11 +241,17 @@ func (s *pgStore) SchemaFiles(ctx context.Context) (map[string]string, error) {
 		if strings.HasPrefix(st.DDL, "CREATE TABLE ") {
 			tables[name] = true
 		}
-		ddl = append(ddl, strings.ReplaceAll(strings.ReplaceAll(st.DDL, ` COLLATE "pg_catalog"."default"`, ""), " NOT VALID", ""))
+		if strings.HasPrefix(st.DDL, "CREATE VIEW ") {
+			views[name] = true
+		}
+		ddl = append(ddl, strings.TrimSuffix(strings.ReplaceAll(strings.ReplaceAll(st.DDL, ` COLLATE "pg_catalog"."default"`, ""), " NOT VALID", ""), ";"))
 		subject = append(subject, name)
 	}
 	file := map[string]string{}
 	for name := range tables {
+		file[name] = name
+	}
+	for name := range views {
 		file[name] = name
 	}
 	for i, name := range subject {
@@ -307,6 +314,7 @@ func (s *pgStore) Apply(ctx context.Context, files map[string]string, renames []
 		return nil, err
 	}
 	defer tx.Rollback()
+	check := files != nil
 	if files == nil {
 		if files, err = s.SchemaFiles(ctx); err != nil {
 			return nil, err
@@ -327,7 +335,7 @@ func (s *pgStore) Apply(ctx context.Context, files map[string]string, renames []
 		}
 		src = tx
 	}
-	p, err := s.plan(ctx, src, files, allowDrop)
+	p, err := s.plan(ctx, src, files, allowDrop, check)
 	if err != nil || dryRun {
 		return storeWithRenames(p, renames), err
 	}
@@ -380,7 +388,7 @@ func storeCheckRenames(renames []string) error {
 	return nil
 }
 
-func (s *pgStore) plan(ctx context.Context, src sqldb.Queryable, files map[string]string, allowDrop bool) (*SchemaPlan, error) {
+func (s *pgStore) plan(ctx context.Context, src sqldb.Queryable, files map[string]string, allowDrop, check bool) (*SchemaPlan, error) {
 	var plan diff.Plan
 	if err := s.withTemp(ctx, func(f tempdb.Factory, tmp *sql.DB) error {
 		if err := storeLoad(ctx, tmp, files); err != nil {
@@ -394,7 +402,7 @@ func (s *pgStore) plan(ctx context.Context, src sqldb.Queryable, files map[strin
 		if err != nil {
 			return err
 		}
-		if err := cat.Check(); err != nil {
+		if err := cat.Check(); err != nil && check {
 			return err
 		}
 		plan, err = diff.Generate(ctx, diff.DBSchemaSource(src), diff.DBSchemaSource(tmp), diff.WithTempDbFactory(f),

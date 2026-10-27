@@ -20,7 +20,8 @@ ALTER TABLE task ENABLE ROW LEVEL SECURITY;
 ALTER TABLE task FORCE ROW LEVEL SECURITY;
 CREATE POLICY viewer ON task FOR SELECT USING (space = ANY (archive.my_spaces()));
 CREATE POLICY editor ON task USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
-COMMENT ON TABLE task IS 'Something you need to do';
+COMMENT ON TABLE task IS 'Something you need to do
+icon: square-check';
 COMMENT ON COLUMN task.title IS 'What to do';
 COMMENT ON COLUMN task.status IS 'Progress';
 COMMENT ON COLUMN task.priority IS 'How important';

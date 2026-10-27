@@ -43,8 +43,8 @@ func (a *Archive) Search(ctx context.Context, query string, f SearchFilter) ([]*
 	cat := a.Catalog()
 	var parts []string
 	for _, name := range cat.names() {
-		if f.Type == "" || f.Type == name {
-			tb := cat.Tables[name]
+		tb := cat.Tables[name]
+		if f.Type == name || f.Type == "" && tb.Kind == "table" {
 			parts = append(parts, `SELECT 'entity' AS kind, `+pgLiteral(name)+` AS type, t.id, t.space, t.created_at, `+tb.rowSQL("t")+` AS data, ts_rank(t.search, q.q, 1) AS rank, '' AS snippet
 				FROM `+tb.ident()+` t, q WHERE t.search @@ q.q`)
 		}

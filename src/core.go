@@ -194,7 +194,7 @@ func (a *Archive) coreGet(ctx context.Context, tb *Table, id uuid.UUID) (map[str
 }
 
 func (a *Archive) Create(ctx context.Context, space, typ string, data map[string]any) (map[string]any, error) {
-	tb, err := a.Catalog().table(typ)
+	tb, err := a.Catalog().writable(typ)
 	if err != nil {
 		return nil, err
 	}
@@ -259,7 +259,7 @@ func (a *Archive) Patch(ctx context.Context, typ string, id uuid.UUID, data map[
 }
 
 func (a *Archive) coreWrite(ctx context.Context, typ string, id uuid.UUID, data map[string]any, full bool) (map[string]any, error) {
-	tb, err := a.Catalog().table(typ)
+	tb, err := a.Catalog().writable(typ)
 	if err != nil {
 		return nil, err
 	}
@@ -399,7 +399,7 @@ func (a *Archive) pgCheck(ctx context.Context, tb *Table, out map[string]any) er
 }
 
 func (a *Archive) Delete(ctx context.Context, typ string, id uuid.UUID) error {
-	tb, err := a.Catalog().table(typ)
+	tb, err := a.Catalog().writable(typ)
 	if err != nil {
 		return err
 	}

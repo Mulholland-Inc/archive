@@ -18,7 +18,8 @@ ALTER TABLE possession ENABLE ROW LEVEL SECURITY;
 ALTER TABLE possession FORCE ROW LEVEL SECURITY;
 CREATE POLICY viewer ON possession FOR SELECT USING (space = ANY (archive.my_spaces()));
 CREATE POLICY editor ON possession USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
-COMMENT ON TABLE possession IS 'Something you own that is worth keeping track of';
+COMMENT ON TABLE possession IS 'Something you own that is worth keeping track of
+icon: package';
 COMMENT ON COLUMN possession.name IS 'What it is';
 COMMENT ON COLUMN possession.brand IS 'Brand and model';
 COMMENT ON COLUMN possession.category IS 'Like electronics, furniture or bike';
