@@ -220,6 +220,9 @@ func (a *Archive) coreCreate(ctx context.Context, tb *Table, sid uuid.UUID, data
 	q := `INSERT INTO ` + tb.ident() + ` AS t (space`
 	sel := ` SELECT $2`
 	for _, c := range cols {
+		if out[c] == nil && tb.col(c).Default {
+			continue
+		}
 		q += ", " + pgIdent(c)
 		sel += ", r." + pgIdent(c)
 	}
