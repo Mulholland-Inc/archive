@@ -397,9 +397,10 @@ code.inline, .prose code { background: var(--white-10); border-radius: 8px; }
 .split h2, .head h2, .feature h2, .cta h2 { font-family: var(--serif); }
 .prose h2 { font-family: var(--serif); }
 
-html { background: var(--night); }
-body { margin: var(--frame); border-radius: var(--radius-lg); min-height: calc(100vh - 2 * var(--frame)); }
-.nav { top: 0; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+html { background: #14171d; }
+body { padding: var(--frame); min-height: 100vh; }
+body::after { content: ""; position: fixed; inset: var(--frame); z-index: 100; pointer-events: none; border-radius: var(--radius-lg); box-shadow: 0 0 0 100vmax var(--night); }
+.nav { top: var(--frame); }
 .hero-top { margin: 0; background: transparent; border-radius: 0; padding-top: var(--s-8); }
 .foot { margin: var(--frame); }
-@media (max-width: 600px) { body { border-radius: 24px; } .nav { border-radius: 24px 24px 0 0; } .band, .foot { border-radius: 24px; } }
+@media (max-width: 600px) { body::after { border-radius: 24px; } .band, .foot { border-radius: 24px; } }
