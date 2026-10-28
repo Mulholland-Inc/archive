@@ -418,3 +418,21 @@ main { background: #14171d; border-radius: var(--radius-lg); overflow: clip; }
 .hero.page-hero h1 { font-size: min(clamp(52px, 7.4vw, 112px), 11vh); }
 .hero.page-hero img { max-height: calc(var(--screen) - 2 * clamp(32px, 6vh, 72px)); width: 100%; object-fit: contain; }
 @media (max-width: 900px) { .hero-top { height: auto; min-height: 0; } .hero-top .hero-art img { height: auto; width: 100%; } .hero.page-hero { min-height: 0; } }
+
+.nav .wrap { position: relative; }
+.menu { position: static; }
+.menu-panel { left: 0; right: 0; top: 100%; padding-top: 0; }
+.menu-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-2); padding: var(--s-3); border-radius: var(--radius); }
+.menu-grid a { flex-direction: column; align-items: stretch; gap: var(--s-1); padding: var(--s-3); border-radius: 20px; }
+.menu-grid .mi-art { display: flex; align-items: center; justify-content: center; height: 140px; overflow: hidden; margin-bottom: var(--s-2); padding: var(--s-4); background: var(--white-5); border-radius: 14px; transition: background var(--fast); }
+.menu-grid .mi-art img { max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; transition: transform var(--slow) var(--ease); }
+.menu-grid a:hover .mi-art { background: var(--white-10); }
+.menu-grid a:hover .mi-art img { transform: translateY(-4px); }
+.menu-grid strong { font-size: 17px; }
+.menu-grid small { font-size: 14px; }
+.hero.page-hero.compact { min-height: 0; padding: var(--s-8) 0 var(--s-5); }
+.post-hero { padding-top: var(--s-7); padding-bottom: var(--s-5); gap: var(--s-4); }
+.post-art { padding: 0 var(--gutter) var(--s-7); }
+.post-art img { max-height: min(56vh, 620px); width: auto; max-width: 100%; margin: 0 auto; }
+.post-card h3 { font-family: var(--serif); font-weight: 500; font-size: 32px; line-height: 1.05; letter-spacing: -0.04em; }
+.posts .post-card.lead h3 { font-family: var(--serif); font-weight: 500; }

@@ -5,14 +5,14 @@ const WORD = ["M 417.14 530 L 591.99 227.16 L 693.37 530 Z M 611.18 193.92 L 619
 const MARK = WORD[0];
 
 const PRODUCT = [
-  ["tables.html", "A", "", "Tables", "Your own records, shaped the way you work"],
-  ["pages.html", "B", "", "Pages", "Docs your team and AI write together"],
-  ["files.html", "C", "", "Files", "Documents your AI can read and edit"],
-  ["agents.html", "D", "", "Agents", "Works with ChatGPT, Claude, Gemini and Grok"],
-  ["models.html", "E", "", "Models", "AI models that know your business"],
-  ["connectors.html", "F", "", "Connectors", "Mail, files, chat and CRM in one place"],
-  ["security.html", "G", "", "Security", "Only the right people see it"],
-  ["developers.html", "H", "", "Developers", "API, command line and Terraform"],
+  ["tables.html", "A", "tables", "Tables", "Your own records, shaped the way you work"],
+  ["pages.html", "B", "pages", "Pages", "Docs your team and AI write together"],
+  ["files.html", "C", "files", "Files", "Documents your AI can read and edit"],
+  ["agents.html", "D", "agents", "Agents", "Works with ChatGPT, Claude, Gemini and Grok"],
+  ["models.html", "E", "models", "Models", "AI models that know your business"],
+  ["connectors.html", "F", "connectors", "Connectors", "Mail, files, chat and CRM in one place"],
+  ["security.html", "G", "security", "Security", "Only the right people see it"],
+  ["developers.html", "H", "api", "Developers", "API, command line and Terraform"],
 ];
 
 const svg = (paths, box, cls) =>
@@ -36,7 +36,7 @@ function nav() {
     <nav class="nav-links">
       <div class="menu"><button type="button" aria-haspopup="true">Product ${caret}</button>
         <div class="menu-panel"><div class="menu-grid">${PRODUCT.map(
-          ([h, l, c, t, d]) => `<a href="${h}"><b style="--c:${c}">${l}</b><span><strong>${t}</strong><small>${d}</small></span></a>`
+          ([h, , a, t, d]) => `<a href="${h}"><span class="mi-art"><img src="art/${a}.webp" alt="" loading="lazy"></span><strong>${t}</strong><small>${d}</small></a>`
         ).join("")}</div></div>
       </div>
       <a href="developers.html"${cur("developers.html")}>Developers</a>
