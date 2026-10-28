@@ -81,13 +81,15 @@ func (a *Archive) fileLoop(ctx context.Context, wg *sync.WaitGroup) {
 }
 
 func (a *Archive) fileProcess(ctx context.Context, id uuid.UUID) (bool, error) {
-	q, args := `SELECT `+fileCols+` FROM file WHERE status = 'pending' ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED`, []any{}
-	if id != uuid.Nil {
-		q, args = `SELECT `+fileCols+` FROM file WHERE id = $1 AND status = 'pending' FOR UPDATE`, []any{id}
-	}
 	found := false
 	err := a.st.System(ctx, func(ctx context.Context) error {
-		f, err := storeOne[File](ctx, a.st, q, args...)
+		var f *File
+		var err error
+		if id == uuid.Nil {
+			f, err = fileOf(a.st.db(ctx).NextPendingFile(ctx))
+		} else {
+			f, err = fileOf(a.st.db(ctx).LockPendingFile(ctx, id))
+		}
 		if errors.Is(err, ErrNotFound) {
 			return nil
 		}
@@ -97,15 +99,13 @@ func (a *Archive) fileProcess(ctx context.Context, id uuid.UUID) (bool, error) {
 		found = true
 		meta, text, perr := a.media(ctx, f)
 		err = pgx.BeginFunc(ctx, a.st.Q(ctx), func(tx pgx.Tx) error {
-			_, err := tx.Exec(ctx, `UPDATE file SET metadata = $2, text = $3 WHERE id = $1`, f.ID, meta, strings.ToValidUTF8(strings.ReplaceAll(text, "\x00", ""), "�"))
-			return err
+			return New(tx).SetFileContent(ctx, f.ID, meta, strings.ToValidUTF8(strings.ReplaceAll(text, "\x00", ""), "�"))
 		})
 		status, msg := "done", ""
 		if perr = errors.Join(err, perr); perr != nil {
 			status, msg = "error", perr.Error()
 		}
-		_, err = a.st.Q(ctx).Exec(ctx, `UPDATE file SET status = $2, error = $3 WHERE id = $1`, f.ID, status, msg)
-		return err
+		return a.st.db(ctx).SetFileStatus(ctx, f.ID, status, msg)
 	})
 	return found, err
 }

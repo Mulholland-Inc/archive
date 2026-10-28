@@ -621,7 +621,7 @@ func (a *Archive) EditDocument(ctx context.Context, id uuid.UUID, ops []OfficeOp
 }
 
 func (a *Archive) editDocument(ctx context.Context, id uuid.UUID, ops []OfficeOp) (*File, error) {
-	f, err := storeOne[File](ctx, a.st, `SELECT `+fileCols+` FROM file WHERE id = $1 FOR UPDATE`, id)
+	f, err := fileOf(a.st.db(ctx).LockFile(ctx, id))
 	if errors.Is(err, ErrNotFound) {
 		return nil, fmt.Errorf("file %s: %w", id, ErrNotFound)
 	}
@@ -648,8 +648,7 @@ func (a *Archive) editDocument(ctx context.Context, id uuid.UUID, ops []OfficeOp
 	if err != nil {
 		return nil, err
 	}
-	return storeOne[File](ctx, a.st, `UPDATE file SET hash = $2, size = $3, status = 'pending', text = '', error = '', metadata = '{}'
-		WHERE id = $1 RETURNING `+fileCols, id, hash, int64(len(out)))
+	return fileOf(a.st.db(ctx).ReplaceFile(ctx, id, hash, int64(len(out))))
 }
 
 const officeDocPart = "word/document.xml"

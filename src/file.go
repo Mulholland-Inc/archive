@@ -37,11 +37,25 @@ type File struct {
 }
 
 const (
-	fileCols    = `id, hash, name, mime, size, metadata, status, error, space, created_at`
 	fileMaxPost = 64 << 20
 	fileLinkTTL = 24 * time.Hour
 	tusVersion  = "1.0.0"
 )
+
+type fileRow interface {
+	FileByKeyRow | CreateFileRow | GetFileRow | LockFileRow | NextPendingFileRow | LockPendingFileRow | SavePageRow | ReplaceFileRow
+}
+
+func fileOf[R fileRow](r R, err error) (*File, error) {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	f := File(r)
+	return &f, nil
+}
 
 func fileName(name, hash string) string {
 	name = strings.TrimSpace(filepath.Base(strings.ReplaceAll(name, "\\", "/")))
@@ -102,12 +116,11 @@ func (a *Archive) fileCommit(ctx context.Context, sid uuid.UUID, name string, op
 		return nil, err
 	}
 	f, err := coreDo(a, ctx, func(ctx context.Context) (*File, error) {
-		f, err := storeOne[File](ctx, a.st, `SELECT `+fileCols+` FROM file WHERE space = $1 AND hash = $2 AND name = $3`, sid, hash, name)
+		f, err := fileOf(a.st.db(ctx).FileByKey(ctx, sid, hash, name))
 		if !errors.Is(err, ErrNotFound) {
 			return f, err
 		}
-		return storeOne[File](ctx, a.st, `INSERT INTO file (hash, name, mime, size, space)
-			VALUES ($1, $2, $3, $4, $5) RETURNING `+fileCols, hash, name, mt, size, sid)
+		return fileOf(a.st.db(ctx).CreateFile(ctx, CreateFileParams{Hash: hash, Name: name, MIME: mt, Size: size, Space: sid}))
 	})
 	if err != nil {
 		return nil, err
@@ -136,17 +149,18 @@ func (a *Archive) Files(ctx context.Context, space string, limit int, after uuid
 		limit = 100
 	}
 	return coreDo(a, ctx, func(ctx context.Context) ([]*File, error) {
-		var sid any
+		var sid *uuid.UUID
 		if space != "" {
 			id, err := a.coreSpace(ctx, space)
 			if err != nil {
 				return nil, err
 			}
-			sid = id
+			sid = &id
 		}
-		fs, err := storeAll[File](ctx, a.st, `SELECT `+fileCols+` FROM file WHERE id > $1 AND ($3::uuid IS NULL OR space = $3) ORDER BY id LIMIT $2`, after, limit, sid)
-		if fs == nil {
-			fs = []*File{}
+		rows, err := a.st.db(ctx).Files(ctx, after, sid, int32(limit))
+		fs := make([]*File, len(rows))
+		for i := range rows {
+			fs[i] = (*File)(&rows[i])
 		}
 		return fs, err
 	})
@@ -154,7 +168,7 @@ func (a *Archive) Files(ctx context.Context, space string, limit int, after uuid
 
 func (a *Archive) GetFile(ctx context.Context, id uuid.UUID) (*File, error) {
 	return coreDo(a, ctx, func(ctx context.Context) (*File, error) {
-		f, err := storeOne[File](ctx, a.st, `SELECT `+fileCols+` FROM file WHERE id = $1`, id)
+		f, err := fileOf(a.st.db(ctx).GetFile(ctx, id))
 		if errors.Is(err, ErrNotFound) {
 			return nil, fmt.Errorf("file %s: %w", id, ErrNotFound)
 		}
@@ -164,8 +178,7 @@ func (a *Archive) GetFile(ctx context.Context, id uuid.UUID) (*File, error) {
 
 func (a *Archive) FileText(ctx context.Context, id uuid.UUID) (string, error) {
 	return coreDo(a, ctx, func(ctx context.Context) (string, error) {
-		var text string
-		err := a.st.Q(ctx).QueryRow(ctx, `SELECT text FROM file WHERE id = $1`, id).Scan(&text)
+		text, err := a.st.db(ctx).FileText(ctx, id)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", fmt.Errorf("file %s: %w", id, ErrNotFound)
 		}
@@ -360,7 +373,7 @@ func (a *Archive) fileSigned(w http.ResponseWriter, r *http.Request) {
 	var f *File
 	if err == nil {
 		err = a.st.System(r.Context(), func(ctx context.Context) (err error) {
-			f, err = storeOne[File](ctx, a.st, `SELECT `+fileCols+` FROM file WHERE id = $1`, id)
+			f, err = fileOf(a.st.db(ctx).GetFile(ctx, id))
 			return err
 		})
 	}
@@ -371,16 +384,7 @@ func (a *Archive) fileSigned(w http.ResponseWriter, r *http.Request) {
 	a.fileServe(w, r, f, true)
 }
 
-type tusUpload struct {
-	ID     uuid.UUID
-	Role   string
-	Space  uuid.UUID
-	Name   string
-	Length int64
-	Parts  []int64
-}
-
-const tusCols = `id, role, space, name, length, parts`
+type tusUpload = ArchiveUpload
 
 var errTusOffset = errors.New("upload offset")
 
@@ -473,20 +477,20 @@ func (a *Archive) tus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Archive) tusLocked(ctx context.Context, id uuid.UUID, lock bool, fn func(context.Context, *tusUpload) error) error {
-	q := `SELECT ` + tusCols + ` FROM upload WHERE id = $1`
-	if lock {
-		q += ` FOR UPDATE`
-	}
 	role := ActorFrom(ctx).Role
 	return a.st.System(ctx, func(ctx context.Context) error {
-		up, err := storeOne[tusUpload](ctx, a.st, q, id)
-		if err == nil && up.Role != role {
+		get := (*Queries).Upload
+		if lock {
+			get = (*Queries).LockUpload
+		}
+		up, err := get(a.st.db(ctx), ctx, id)
+		if errors.Is(err, pgx.ErrNoRows) || err == nil && up.Role != role {
 			err = ErrNotFound
 		}
 		if err != nil {
 			return err
 		}
-		return fn(ctx, up)
+		return fn(ctx, &up)
 	})
 }
 
@@ -502,9 +506,7 @@ func (a *Archive) tusCreate(w http.ResponseWriter, r *http.Request) {
 	up.Space, err = coreDo(a, ctx, func(ctx context.Context) (uuid.UUID, error) { return a.coreSpace(ctx, meta["space"]) })
 	if err == nil {
 		err = a.st.System(ctx, func(ctx context.Context) error {
-			_, err := a.st.Q(ctx).Exec(ctx, `INSERT INTO upload (id, role, space, name, length) VALUES ($1, $2, $3, $4, $5)`,
-				up.ID, up.Role, up.Space, up.Name, up.Length)
-			return err
+			return a.st.db(ctx).CreateUpload(ctx, CreateUploadParams{ID: up.ID, Role: up.Role, Space: up.Space, Name: up.Name, Length: up.Length})
 		})
 	}
 	var f *File
@@ -569,7 +571,7 @@ func (a *Archive) tusUpload(w http.ResponseWriter, r *http.Request, id uuid.UUID
 					return err
 				}
 				up.Parts = append(up.Parts, n)
-				if _, err := a.st.Q(ctx).Exec(ctx, `UPDATE upload SET parts = $2 WHERE id = $1`, up.ID, up.Parts); err != nil {
+				if err := a.st.db(ctx).SetUploadParts(ctx, up.ID, up.Parts); err != nil {
 					return err
 				}
 				h.Set("Upload-Offset", strconv.FormatInt(off+n, 10))
@@ -606,7 +608,7 @@ func (a *Archive) tusFinish(ctx context.Context, up *tusUpload) (*File, error) {
 }
 
 func (a *Archive) tusDrop(ctx context.Context, up *tusUpload) error {
-	if _, err := a.st.Q(ctx).Exec(ctx, `DELETE FROM upload WHERE id = $1`, up.ID); err != nil {
+	if err := a.st.db(ctx).DeleteUpload(ctx, up.ID); err != nil {
 		return err
 	}
 	storeAfter(ctx, func() {

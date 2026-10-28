@@ -232,15 +232,16 @@ func (a *Archive) coreCreate(ctx context.Context, tb *Table, sid uuid.UUID, data
 
 func (a *Archive) coreSpace(ctx context.Context, name string) (uuid.UUID, error) {
 	var id uuid.UUID
-	q, args := `SELECT id FROM space WHERE name = $1`, []any{name}
-	if name == "" {
+	var err error
+	if name != "" {
+		id, err = a.st.db(ctx).SpaceID(ctx, name)
+	} else {
 		home := uuid.Nil
 		if ac := ActorFrom(ctx); ac != nil {
 			home = ac.Home
 		}
-		q, args = `SELECT id FROM space WHERE id = ANY(my_spaces('editor')) ORDER BY id = $1 DESC, id LIMIT 1`, []any{home}
+		id, err = a.st.db(ctx).DefaultSpace(ctx, home)
 	}
-	err := a.st.Q(ctx).QueryRow(ctx, q, args...).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if name == "" {
 			return id, fmt.Errorf("no space you can write to: %w", ErrForbidden)
@@ -268,8 +269,8 @@ func (a *Archive) coreWrite(ctx context.Context, typ string, id uuid.UUID, data 
 		if err != nil {
 			return nil, err
 		}
-		var writable bool
-		if err := a.st.Q(ctx).QueryRow(ctx, `SELECT $1::uuid = ANY(my_spaces('editor'))`, old["space"]).Scan(&writable); err != nil {
+		writable, err := a.st.db(ctx).CanWrite(ctx, coreUUID(old, "space"))
+		if err != nil {
 			return nil, err
 		}
 		if !writable {
@@ -380,17 +381,13 @@ func (a *Archive) pgCheck(ctx context.Context, tb *Table, out map[string]any) er
 	for i, l := range ls {
 		texts[i], regs[i] = l.text, l.reg
 	}
-	rows, _ := a.st.Q(ctx).Query(ctx, `SELECT u.i, e.message FROM unnest($1::text[], $2::text[]) WITH ORDINALITY u(v, t, i),
-		pg_input_error_info(u.v, u.t) e WHERE e.message IS NOT NULL ORDER BY u.i`, texts, regs)
-	verr := &ValidationError{Type: tb.Name}
-	var i int
-	var msg string
-	_, err := pgx.ForEachRow(rows, []any{&i, &msg}, func() error {
-		verr.Errors = append(verr.Errors, FieldError{Path: ls[i-1].path, Message: msg})
-		return nil
-	})
+	rows, err := a.st.db(ctx).InputErrors(ctx, texts, regs)
 	if err != nil {
 		return err
+	}
+	verr := &ValidationError{Type: tb.Name}
+	for _, r := range rows {
+		verr.Errors = append(verr.Errors, FieldError{Path: ls[r.I-1].path, Message: r.Message})
 	}
 	if len(verr.Errors) > 0 {
 		return verr
@@ -414,8 +411,7 @@ func (a *Archive) Delete(ctx context.Context, typ string, id uuid.UUID) error {
 		if tag.RowsAffected() == 0 {
 			return fmt.Errorf("you cannot delete objects in this space: %w", ErrForbidden)
 		}
-		_, err = a.st.Q(ctx).Exec(ctx, `SELECT secret_clear($1, $2, NULL)`, tb.Name, id)
-		return err
+		return a.st.db(ctx).ClearSecrets(ctx, tb.Name, id, nil)
 	})
 }
 
@@ -428,8 +424,7 @@ func (a *Archive) SchemaFiles(ctx context.Context) (map[string]string, error) {
 
 func (a *Archive) ApplySchema(ctx context.Context, files map[string]string, renames []string, allowDrop, dryRun bool) (*SchemaPlan, error) {
 	admin, err := coreDo(a, ctx, func(ctx context.Context) (bool, error) {
-		var ok bool
-		return ok, a.st.Q(ctx).QueryRow(ctx, `SELECT ontology_admin()`).Scan(&ok)
+		return a.st.db(ctx).OntologyAdmin(ctx)
 	})
 	if err != nil {
 		return nil, err
@@ -446,8 +441,10 @@ func (a *Archive) ApplySchema(ctx context.Context, files map[string]string, rena
 	return p, a.reload(ctx)
 }
 
-func coreRowID(row map[string]any) uuid.UUID {
-	s, _ := row["id"].(string)
+func coreRowID(row map[string]any) uuid.UUID { return coreUUID(row, "id") }
+
+func coreUUID(row map[string]any, key string) uuid.UUID {
+	s, _ := row[key].(string)
 	id, _ := uuid.Parse(s)
 	return id
 }

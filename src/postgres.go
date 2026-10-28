@@ -341,12 +341,10 @@ func pgEnsureDB(ctx context.Context, dsn string) error {
 		return err
 	}
 	defer c.Close(ctx)
-	var ok bool
-	if err := c.QueryRow(ctx, `SELECT EXISTS (SELECT FROM pg_database WHERE datname = 'archive')`).Scan(&ok); err != nil {
-		return err
-	}
-	if !ok {
-		_, err = c.Exec(ctx, `CREATE DATABASE archive`)
+	q := New(c)
+	ok, err := q.DatabaseExists(ctx)
+	if err == nil && !ok {
+		err = q.CreateDatabase(ctx)
 	}
 	return err
 }

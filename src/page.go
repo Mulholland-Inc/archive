@@ -29,7 +29,6 @@ const (
 	pageMIME                    = "application/vnd.archive.page"
 	pageSite        crdt.SiteID = 1
 	pageOpsNames                = "replace_text, insert_paragraph_after, delete_paragraph, set_style"
-	pageChannel                 = "archive_page"
 	pagePresenceMax             = 4 << 10
 )
 
@@ -93,7 +92,7 @@ func (a *Archive) pageNotify(ctx context.Context, q storeQ, id uuid.UUID, u *awa
 	}
 	b, err := json.Marshal(n)
 	if err == nil {
-		_, err = q.Exec(ctx, `SELECT pg_notify($1, $2)`, pageChannel, string(b))
+		err = New(q).Notify(ctx, string(b))
 	}
 	return err
 }
@@ -119,7 +118,7 @@ func (a *Archive) pageListenOnce(ctx context.Context, listening func()) error {
 		return err
 	}
 	defer conn.Close(context.WithoutCancel(ctx))
-	if _, err := conn.Exec(ctx, "LISTEN "+pageChannel); err != nil {
+	if err := New(conn).Listen(ctx); err != nil {
 		return err
 	}
 	listening()
@@ -161,7 +160,7 @@ func (a *Archive) pageRefresh(ctx context.Context, id uuid.UUID) {
 	}
 	var f *File
 	err := a.st.System(ctx, func(ctx context.Context) (err error) {
-		f, err = storeOne[File](ctx, a.st, `SELECT `+fileCols+` FROM file WHERE id = $1`, id)
+		f, err = fileOf(a.st.db(ctx).GetFile(ctx, id))
 		return err
 	})
 	if err == nil {
@@ -318,8 +317,7 @@ func (a *Archive) pageChange(ctx context.Context, f *File, change func(*structur
 	if err != nil {
 		return nil, err
 	}
-	nf, err := storeOne[File](ctx, a.st, `UPDATE file SET hash = $2, size = $3, text = $4, status = 'done', error = ''
-		WHERE id = $1 RETURNING `+fileCols, f.ID, hash, int64(len(out)), pageText(d))
+	nf, err := fileOf(a.st.db(ctx).SavePage(ctx, SavePageParams{ID: f.ID, Hash: hash, Size: int64(len(out)), Text: pageText(d)}))
 	if err == nil {
 		err = a.pageNotify(ctx, a.st.Q(ctx), f.ID, nil)
 	}
@@ -337,11 +335,13 @@ func (a *Archive) pageChange(ctx context.Context, f *File, change func(*structur
 }
 
 func (a *Archive) pageFile(ctx context.Context, id uuid.UUID, lock bool) (*File, error) {
-	q := `SELECT ` + fileCols + ` FROM file WHERE id = $1`
+	var f *File
+	var err error
 	if lock {
-		q += ` FOR UPDATE`
+		f, err = fileOf(a.st.db(ctx).LockFile(ctx, id))
+	} else {
+		f, err = fileOf(a.st.db(ctx).GetFile(ctx, id))
 	}
-	f, err := storeOne[File](ctx, a.st, q, id)
 	if err == nil && !pageIs(f.Name) {
 		err = ErrNotFound
 	}

@@ -13,6 +13,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,15 +41,10 @@ const storeRoles = `DO $$ BEGIN
     END IF;
 END $$`
 
-const (
-	storeLock     = 7271
-	storeRevision = `SELECT coalesce((SELECT id::text || ':' || hash FROM archive.revision ORDER BY created_at DESC, id DESC LIMIT 1), '')`
-)
+const storeLock = 7271
 
 type storeQ interface {
-	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
-	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	DBTX
 	Begin(ctx context.Context) (pgx.Tx, error)
 }
 
@@ -149,7 +145,7 @@ func (s *pgStore) bootstrap(ctx context.Context, password string) error {
 		return err
 	}
 	if err := pgx.BeginFunc(ctx, s.sys, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, storeLock)
+		err := New(tx).AdvisoryXactLock(ctx, storeLock)
 		if err == nil {
 			_, err = tx.Exec(ctx, storeDropOld)
 		}
@@ -157,8 +153,7 @@ func (s *pgStore) bootstrap(ctx context.Context, password string) error {
 	}); err != nil {
 		return err
 	}
-	var rev string
-	s.sys.QueryRow(ctx, storeRevision).Scan(&rev)
+	rev, _ := New(s.sys).Revision(ctx)
 	if strings.HasSuffix(rev, ":"+s.hash()) {
 		return nil
 	}
@@ -213,7 +208,7 @@ func (s *pgStore) withTemp(ctx context.Context, fn func(f tempdb.Factory, tmp *s
 		return err
 	}
 	defer tmp.Close(context.WithoutCancel(ctx))
-	if _, err := tmp.ConnPool.ExecContext(ctx, "SET statement_timeout = 0; "+s.expand(storeSchema)); err != nil {
+	if _, err := tmp.ConnPool.ExecContext(ctx, s.expand(storeSchema)); err != nil {
 		return fmt.Errorf("archive.sql: %w", err)
 	}
 	return fn(f, tmp.ConnPool)
@@ -290,6 +285,7 @@ func storeCheckFiles(files map[string]string) error {
 func (s *pgStore) openDB(_ context.Context, name string) (*sql.DB, error) {
 	c := s.cfg.Copy()
 	c.Database = name
+	c.RuntimeParams["statement_timeout"] = "0"
 	return stdlib.OpenDB(*c), nil
 }
 
@@ -305,10 +301,10 @@ func (s *pgStore) Apply(ctx context.Context, files map[string]string, renames []
 		return nil, err
 	}
 	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock($1)`, storeLock); err != nil {
+	if _, err := conn.ExecContext(ctx, advisoryLock, storeLock); err != nil {
 		return nil, err
 	}
-	defer conn.ExecContext(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock($1)`, storeLock)
+	defer conn.ExecContext(context.WithoutCancel(ctx), advisoryUnlock, storeLock)
 	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -320,12 +316,12 @@ func (s *pgStore) Apply(ctx context.Context, files map[string]string, renames []
 			return nil, err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `SET LOCAL check_function_bodies = off`); err != nil {
+	if err := storeSet(ctx, tx, "check_function_bodies", "off"); err != nil {
 		return nil, err
 	}
 	var src sqldb.Queryable = s.ddl
 	if len(renames) > 0 {
-		if _, err := tx.ExecContext(ctx, `SET LOCAL lock_timeout = '10s'`); err != nil {
+		if err := storeSet(ctx, tx, "lock_timeout", "10s"); err != nil {
 			return nil, err
 		}
 		for i, r := range renames {
@@ -343,15 +339,17 @@ func (s *pgStore) Apply(ctx context.Context, files map[string]string, renames []
 		return storeWithRenames(p, renames), fmt.Errorf("the plan deletes data (%s); apply it with allow_drop: %w", strings.Join(b, "; "), ErrConflict)
 	}
 	for _, st := range p.Statements {
-		set := fmt.Sprintf(`SET LOCAL statement_timeout = %d; SET LOCAL lock_timeout = %d`, max(st.timeout, storeMinTimeout).Milliseconds(), st.lock.Milliseconds())
-		if _, err := tx.ExecContext(ctx, set); err != nil {
+		if err := storeSet(ctx, tx, "statement_timeout", storeMS(max(st.timeout, storeMinTimeout)), "lock_timeout", storeMS(st.lock)); err != nil {
 			return nil, err
 		}
 		if _, err := tx.ExecContext(ctx, st.DDL); err != nil {
 			return p, fmt.Errorf("schema: %s: %w", st.DDL, err)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `SET LOCAL statement_timeout = 0; INSERT INTO archive.revision (hash) VALUES ('`+s.hash()+`')`); err != nil {
+	if err := storeSet(ctx, tx, "statement_timeout", "0"); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, insertRevision, s.hash()); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -360,6 +358,17 @@ func (s *pgStore) Apply(ctx context.Context, files map[string]string, renames []
 	p.Applied = true
 	return storeWithRenames(p, renames), nil
 }
+
+func storeSet(ctx context.Context, tx *sql.Tx, kv ...string) error {
+	for i := 0; i < len(kv); i += 2 {
+		if _, err := tx.ExecContext(ctx, setLocal, kv[i], kv[i+1]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func storeMS(d time.Duration) string { return strconv.FormatInt(d.Milliseconds(), 10) }
 
 func storeWithRenames(p *SchemaPlan, renames []string) *SchemaPlan {
 	if p == nil || len(renames) == 0 {
@@ -395,7 +404,7 @@ func (s *pgStore) plan(ctx context.Context, src sqldb.Queryable, files map[strin
 			return err
 		}
 		var b []byte
-		if err := tmp.QueryRowContext(ctx, catalogSQL).Scan(&b); err != nil {
+		if err := tmp.QueryRowContext(ctx, catalog).Scan(&b); err != nil {
 			return err
 		}
 		cat, err := catalogParse(b)
@@ -461,7 +470,7 @@ func storeTry(ctx context.Context, db *sql.DB, left []storeUnit) ([]storeUnit, m
 			if err != nil {
 				return nil, nil, err
 			}
-			if _, err = tx.ExecContext(ctx, "SET LOCAL statement_timeout = 0; "+u.sql); err == nil {
+			if _, err = tx.ExecContext(ctx, u.sql); err == nil {
 				err = tx.Commit()
 			}
 			if err != nil {
@@ -534,12 +543,13 @@ func storeSplit(src string) []string {
 }
 
 func (s *pgStore) Catalog(ctx context.Context) (*Catalog, error) {
-	var b []byte
-	var rev string
-	if err := s.sys.QueryRow(ctx, catalogSQL).Scan(&b); err != nil {
+	q := New(s.sys)
+	b, err := q.Catalog(ctx)
+	if err != nil {
 		return nil, err
 	}
-	if err := s.sys.QueryRow(ctx, storeRevision).Scan(&rev); err != nil {
+	rev, err := q.Revision(ctx)
+	if err != nil {
 		return nil, err
 	}
 	c, err := catalogParse(b)
@@ -566,13 +576,15 @@ func (s *pgStore) Q(ctx context.Context) storeQ {
 	return s.app
 }
 
+func (s *pgStore) db(ctx context.Context) *Queries { return New(s.Q(ctx)) }
+
 func (s *pgStore) As(ctx context.Context, role string, fn func(context.Context) error) error {
 	if t, ok := ctx.Value(storeTxKey{}).(storeTx); ok && t.role == role {
 		return fn(ctx)
 	}
 	after := &[]func(){}
 	return storeCommitted(after, storeErr(pgx.BeginFunc(ctx, s.app, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, "SET LOCAL ROLE "+pgx.Identifier{role}.Sanitize()); err != nil {
+		if err := New(tx).SetLocal(ctx, "role", role); err != nil {
 			return err
 		}
 		return fn(context.WithValue(ctx, storeTxKey{}, storeTx{tx, role, after}))
@@ -608,20 +620,6 @@ func storeErr(err error) error {
 }
 
 func pgIdent(parts ...string) string { return pgx.Identifier(parts).Sanitize() }
-
-func storeOne[T any](ctx context.Context, s *pgStore, sql string, args ...any) (*T, error) {
-	rows, _ := s.Q(ctx).Query(ctx, sql, args...)
-	v, err := pgx.CollectOneRow(rows, pgx.RowToAddrOfStructByName[T])
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	return v, err
-}
-
-func storeAll[T any](ctx context.Context, s *pgStore, sql string, args ...any) ([]*T, error) {
-	rows, _ := s.Q(ctx).Query(ctx, sql, args...)
-	return pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[T])
-}
 
 func storeRows(ctx context.Context, s *pgStore, sql string, args ...any) ([]map[string]any, error) {
 	rows, _ := s.Q(ctx).Query(ctx, sql, args...)

@@ -38,8 +38,17 @@ type RunOutput struct {
 }
 
 type runFile struct {
-	File
-	Text string `json:"text"`
+	ID        uuid.UUID      `json:"id"`
+	Hash      string         `json:"sha256"`
+	Name      string         `json:"name"`
+	MIME      string         `json:"mime"`
+	Size      int64          `json:"size"`
+	Metadata  map[string]any `json:"metadata"`
+	Status    string         `json:"status"`
+	Error     string         `json:"error,omitempty"`
+	Space     uuid.UUID      `json:"space"`
+	CreatedAt time.Time      `json:"created_at"`
+	Text      string         `json:"text"`
 }
 
 type runTable struct {
@@ -97,8 +106,7 @@ func runTimeout() time.Duration {
 }
 
 func (a *Archive) refresh(ctx context.Context) {
-	var rev string
-	if a.st.sys.QueryRow(ctx, storeRevision).Scan(&rev) == nil && rev != a.Catalog().stamp {
+	if rev, err := New(a.st.sys).Revision(ctx); err == nil && rev != a.Catalog().stamp {
 		a.reload(ctx)
 	}
 }
@@ -639,11 +647,11 @@ func (r *runner) sdk() {
 			return nil, err
 		}
 		return coreDo(a, ctx, func(ctx context.Context) (*runFile, error) {
-			f, err := storeOne[runFile](ctx, a.st, `SELECT `+fileCols+`, text FROM file WHERE id = $1`, id)
-			if errors.Is(err, ErrNotFound) {
+			r, err := a.st.db(ctx).FileWithText(ctx, id)
+			if errors.Is(err, pgx.ErrNoRows) {
 				return nil, fmt.Errorf("file %s: %w", id, ErrNotFound)
 			}
-			return f, err
+			return (*runFile)(&r), err
 		})
 	})
 	r.def(o, "read", func(ctx context.Context, call goja.FunctionCall) (any, error) {
@@ -743,17 +751,18 @@ func (a *Archive) runFiles(ctx context.Context, space string, limit int, after u
 		limit = 100
 	}
 	return coreDo(a, ctx, func(ctx context.Context) ([]*runFile, error) {
-		var sid any
+		var sid *uuid.UUID
 		if space != "" {
 			id, err := a.coreSpace(ctx, space)
 			if err != nil {
 				return nil, err
 			}
-			sid = id
+			sid = &id
 		}
-		fs, err := storeAll[runFile](ctx, a.st, `SELECT `+fileCols+`, text FROM file WHERE id > $1 AND ($3::uuid IS NULL OR space = $3) ORDER BY id LIMIT $2`, after, limit, sid)
-		if fs == nil {
-			fs = []*runFile{}
+		rows, err := a.st.db(ctx).FilesWithText(ctx, after, sid, int32(limit))
+		fs := make([]*runFile, len(rows))
+		for i := range rows {
+			fs[i] = (*runFile)(&rows[i])
 		}
 		return fs, err
 	})
