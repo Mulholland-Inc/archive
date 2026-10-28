@@ -370,7 +370,7 @@ code.inline { font: 500 0.88em var(--mono); background: var(--cell-strong); padd
 .nav-links > a:hover, .nav-links > .menu:hover > button, .nav-links > a[aria-current] { background: var(--white-10); }
 .icon-btn { border-radius: 50%; width: 40px; height: 40px; background: var(--white-10); color: var(--fg); }
 .icon-btn:hover { background: rgba(255, 255, 255, 0.16); }
-.menu-grid { background: #222630; color: var(--fg); border-radius: var(--radius-sm); padding: var(--s-3); box-shadow: 0 30px 60px rgba(0, 0, 0, 0.45); }
+.menu-grid { background: #222630; color: var(--fg); border-radius: var(--radius-sm); padding: var(--s-3); }
 .menu-grid a { border-radius: 12px; }
 .menu-grid a:hover { background: var(--white-5); }
 .menu-grid small { color: var(--muted); }
