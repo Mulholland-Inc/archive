@@ -436,3 +436,4 @@ main { background: #14171d; border-radius: var(--radius-lg); overflow: clip; }
 .post-art img { max-height: min(56vh, 620px); width: auto; max-width: 100%; margin: 0 auto; }
 .post-card h3 { font-family: var(--serif); font-weight: 500; font-size: 32px; line-height: 1.05; letter-spacing: -0.04em; }
 .posts .post-card.lead h3 { font-family: var(--serif); font-weight: 500; }
+.post .pull { background: #000000; color: var(--white); }
