@@ -1,0 +1,65 @@
+{
+  "version": "2",
+  "sql": [
+    {
+      "engine": "postgresql",
+      "schema": "archive.sql",
+      "queries": "queries",
+      "gen": {
+        "go": {
+          "package": "main",
+          "out": ".",
+          "sql_package": "pgx/v5",
+          "emit_pointers_for_null_types": true,
+          "omit_unused_structs": true,
+          "query_parameter_limit": 3,
+          "rename": {
+            "mime": "MIME"
+          },
+          "overrides": [
+            {
+              "db_type": "uuid",
+              "go_type": "github.com/google/uuid.UUID"
+            },
+            {
+              "db_type": "uuid",
+              "nullable": true,
+              "go_type": {
+                "import": "github.com/google/uuid",
+                "type": "UUID",
+                "pointer": true
+              }
+            },
+            {
+              "db_type": "timestamptz",
+              "go_type": "time.Time"
+            },
+            {
+              "db_type": "timestamptz",
+              "nullable": true,
+              "go_type": {
+                "import": "time",
+                "type": "Time",
+                "pointer": true
+              }
+            },
+            {
+              "column": "archive.user.home",
+              "go_type": "github.com/google/uuid.UUID"
+            },
+            {
+              "column": "archive.user.signin",
+              "go_type": "encoding/json.RawMessage"
+            },
+            {
+              "column": "archive.file.metadata",
+              "go_type": {
+                "type": "map[string]any"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -97,6 +97,18 @@ func authLevel(s string) int { return slices.Index(authLevels, s) + 1 }
 
 func authIdent(s string) string { return pgx.Identifier{s}.Sanitize() }
 
+func authCreate(role string) string { return "CREATE ROLE " + authIdent(role) + " NOLOGIN" }
+
+func authDrop(role string) string { return "DROP ROLE " + authIdent(role) }
+
+func authGrant(group, role string) string {
+	return "GRANT " + authIdent(group) + " TO " + authIdent(role)
+}
+
+func authRevoke(group, role string) string {
+	return "REVOKE " + authIdent(group) + " FROM " + authIdent(role)
+}
+
 func authHash(secret string) string {
 	sum := sha256.Sum256([]byte(secret))
 	return hex.EncodeToString(sum[:])
@@ -139,8 +151,7 @@ func (a *Archive) sys(ctx context.Context, fn func(context.Context) error) error
 }
 
 func (a *Archive) has(ctx context.Context, role, group string) bool {
-	var ok bool
-	err := a.st.Q(ctx).QueryRow(ctx, `SELECT EXISTS (SELECT FROM pg_roles WHERE rolname = $2) AND pg_has_role($1::name, $2::name, 'USAGE')`, role, group).Scan(&ok)
+	ok, err := a.st.db(ctx).HasRole(ctx, role, group)
 	return err == nil && ok
 }
 
@@ -153,11 +164,7 @@ func (a *Archive) level(ctx context.Context, role, base string, direct bool) int
 		}
 		return 0
 	}
-	var names []string
-	rows, _ := a.st.Q(ctx).Query(ctx, `
-		SELECT r.rolname FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid JOIN pg_roles u ON u.oid = m.member
-		WHERE u.rolname = $1 AND r.rolname = ANY($2)`, role, []string{base + "_viewer", base + "_editor", base + "_admin", base + "_owner"})
-	names, _ = pgx.CollectRows(rows, pgx.RowTo[string])
+	names, _ := a.st.db(ctx).DirectRoles(ctx, role, []string{base + "_viewer", base + "_editor", base + "_admin", base + "_owner"})
 	n := 0
 	for _, s := range names {
 		n = max(n, authLevel(strings.TrimPrefix(s, base+"_")))
@@ -167,14 +174,14 @@ func (a *Archive) level(ctx context.Context, role, base string, direct bool) int
 
 func (a *Archive) setLevel(ctx context.Context, role, base string, lvl int) error {
 	for _, l := range authLevels {
-		if err := a.exec(ctx, "REVOKE "+authIdent(base+"_"+l)+" FROM "+authIdent(role)); err != nil {
+		if err := a.exec(ctx, authRevoke(base+"_"+l, role)); err != nil {
 			return err
 		}
 	}
 	if lvl == 0 {
 		return nil
 	}
-	return a.exec(ctx, "GRANT "+authIdent(base+"_"+authLevels[lvl-1])+" TO "+authIdent(role))
+	return a.exec(ctx, authGrant(base+"_"+authLevels[lvl-1], role))
 }
 
 func (a *Archive) createSpace(ctx context.Context, name string) (uuid.UUID, error) {
@@ -183,15 +190,16 @@ func (a *Archive) createSpace(ctx context.Context, name string) (uuid.UUID, erro
 		return id, &ValidationError{Type: "space", Errors: []FieldError{{Path: "name", Message: "want 1-32 lowercase letters, digits or _"}}}
 	}
 	base := a.prefix + "_s_" + name
-	if err := a.st.Q(ctx).QueryRow(ctx, `INSERT INTO space (name, role) VALUES ($1, $2) RETURNING id`, name, base).Scan(&id); err != nil {
+	id, err := a.st.db(ctx).CreateSpace(ctx, name, base)
+	if err != nil {
 		return id, err
 	}
 	for i, l := range authLevels {
-		if err := a.exec(ctx, "CREATE ROLE "+authIdent(base+"_"+l)+" NOLOGIN"); err != nil {
+		if err := a.exec(ctx, authCreate(base+"_"+l)); err != nil {
 			return id, err
 		}
 		if i > 0 {
-			if err := a.exec(ctx, "GRANT "+authIdent(base+"_"+authLevels[i-1])+" TO "+authIdent(base+"_"+l)); err != nil {
+			if err := a.exec(ctx, authGrant(base+"_"+authLevels[i-1], base+"_"+l)); err != nil {
 				return id, err
 			}
 		}
@@ -200,10 +208,7 @@ func (a *Archive) createSpace(ctx context.Context, name string) (uuid.UUID, erro
 }
 
 func (a *Archive) createRole(ctx context.Context, role string) error {
-	return a.exec(ctx,
-		"CREATE ROLE "+authIdent(role)+" NOLOGIN",
-		"GRANT "+authIdent(a.prefix+"_user")+" TO "+authIdent(role),
-		"GRANT "+authIdent(role)+" TO "+authIdent(a.prefix+"_authenticator"))
+	return a.exec(ctx, authCreate(role), authGrant(a.prefix+"_user", role), authGrant(role, a.prefix+"_authenticator"))
 }
 
 func (a *Archive) freeSpaceName(ctx context.Context, email string) string {
@@ -220,9 +225,7 @@ func (a *Archive) freeSpaceName(ctx context.Context, email string) string {
 	base = base[:min(len(base), 28)]
 	name := base
 	for i := 2; ; i++ {
-		var taken bool
-		a.st.Q(ctx).QueryRow(ctx, `SELECT EXISTS (SELECT FROM space WHERE name = $1)`, name).Scan(&taken)
-		if !taken {
+		if taken, _ := a.st.db(ctx).SpaceTaken(ctx, name); !taken {
 			return name
 		}
 		name = fmt.Sprintf("%s_%d", base, i)
@@ -241,10 +244,12 @@ func authUser(ctx context.Context) (*Actor, error) {
 }
 
 func (a *Archive) userCount(ctx context.Context) (int, error) {
-	var n int
-	return n, a.sys(ctx, func(ctx context.Context) error {
-		return a.st.Q(ctx).QueryRow(ctx, `SELECT count(*) FROM "user"`).Scan(&n)
+	var n int64
+	err := a.sys(ctx, func(ctx context.Context) (err error) {
+		n, err = a.st.db(ctx).CountUsers(ctx)
+		return err
 	})
+	return int(n), err
 }
 
 func (a *Archive) AddUser(ctx context.Context, email, name string, admin bool) (*User, error) {
@@ -255,12 +260,12 @@ func (a *Archive) AddUser(ctx context.Context, email, name string, admin bool) (
 	u := &User{ID: coreNewID(), Email: email, Name: strings.TrimSpace(name)}
 	u.Role = a.roleID("u", u.ID)
 	return u, a.sys(ctx, func(ctx context.Context) error {
-		q := a.st.Q(ctx)
-		if _, err := q.Exec(ctx, `SELECT pg_advisory_xact_lock(7273)`); err != nil {
+		q := a.st.db(ctx)
+		if err := q.AdvisoryXactLock(ctx, 7273); err != nil {
 			return err
 		}
-		var first bool
-		if err := q.QueryRow(ctx, `SELECT NOT EXISTS (SELECT FROM "user")`).Scan(&first); err != nil {
+		first, err := q.NoUsers(ctx)
+		if err != nil {
 			return err
 		}
 		if !first {
@@ -274,24 +279,25 @@ func (a *Archive) AddUser(ctx context.Context, email, name string, admin bool) (
 		}
 		var orphans []string
 		if first {
-			rows, _ := q.Query(ctx, `SELECT role FROM space`)
-			orphans, _ = pgx.CollectRows(rows, pgx.RowTo[string])
+			spaces, _ := q.SpaceRoles(ctx)
+			for _, sp := range spaces {
+				orphans = append(orphans, sp.Role)
+			}
 		}
 		home, err := a.createSpace(ctx, a.freeSpaceName(ctx, email))
 		if err != nil {
 			return err
 		}
 		u.Home = home
-		err = q.QueryRow(ctx, `INSERT INTO "user" (id, email, name, role, home) VALUES ($1, $2, $3, $4, $5) RETURNING created_at`,
-			u.ID, u.Email, u.Name, u.Role, home).Scan(&u.CreatedAt)
+		u.CreatedAt, err = q.CreateUser(ctx, CreateUserParams{ID: u.ID, Email: u.Email, Name: u.Name, Role: u.Role, Home: home})
 		if err != nil {
 			return err
 		}
 		if err := a.createRole(ctx, u.Role); err != nil {
 			return err
 		}
-		var homeRole string
-		if err := q.QueryRow(ctx, `SELECT role FROM space WHERE id = $1`, home).Scan(&homeRole); err != nil {
+		homeRole, err := q.SpaceRoleByID(ctx, home)
+		if err != nil {
 			return err
 		}
 		for _, base := range append(orphans, homeRole) {
@@ -300,16 +306,20 @@ func (a *Archive) AddUser(ctx context.Context, email, name string, admin bool) (
 			}
 		}
 		if admin || first {
-			return a.exec(ctx, "GRANT "+authIdent(a.prefix+"_admin")+" TO "+authIdent(u.Role))
+			return a.exec(ctx, authGrant(a.prefix+"_admin", u.Role))
 		}
 		return nil
 	})
 }
 
-func (a *Archive) userBy(ctx context.Context, where string, arg any) (*User, error) {
+func userBy[T any](ctx context.Context, a *Archive, get func(*Queries, context.Context, T) (ArchiveUser, error), arg T) (*User, error) {
 	var u *User
-	return u, a.sys(ctx, func(ctx context.Context) (err error) {
-		u, err = storeOne[User](ctx, a.st, `SELECT id, email, name, role, home, signin, created_at FROM "user" WHERE `+where, arg)
+	return u, a.sys(ctx, func(ctx context.Context) error {
+		r, err := get(a.st.db(ctx), ctx, arg)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		u = (*User)(&r)
 		return err
 	})
 }
@@ -320,7 +330,7 @@ func (a *Archive) userActor(u *User) *Actor {
 
 func (a *Archive) CLIActor(ctx context.Context, email string) (*Actor, error) {
 	if email == "" {
-		u, err := a.userBy(ctx, `true ORDER BY created_at, id LIMIT $1`, 1)
+		u, err := userBy(ctx, a, (*Queries).FirstUser, 1)
 		if errors.Is(err, ErrNotFound) {
 			return nil, nil
 		}
@@ -333,7 +343,7 @@ func (a *Archive) CLIActor(ctx context.Context, email string) (*Actor, error) {
 	if err != nil {
 		return nil, err
 	}
-	u, err := a.userBy(ctx, `email = $1`, email)
+	u, err := userBy(ctx, a, (*Queries).UserByEmail, email)
 	if err != nil {
 		return nil, fmt.Errorf("user %s: %w", email, err)
 	}
@@ -341,18 +351,12 @@ func (a *Archive) CLIActor(ctx context.Context, email string) (*Actor, error) {
 }
 
 func (a *Archive) Authenticate(ctx context.Context, secret string) (*Actor, error) {
-	ac := &Actor{}
-	var tid uuid.UUID
-	var kind, trole string
-	var stamp string
-	err := a.sys(ctx, func(ctx context.Context) error {
-		return a.st.Q(ctx).QueryRow(ctx, `
-			SELECT t.id, t.kind, t.name, coalesce(t.role, ''), u.id, u.email, u.name, u.role, u.home, (`+storeRevision+`)
-			FROM token t JOIN "user" u ON u.id = t.user_id
-			WHERE t.hash = $1 AND t.kind IN ('api', 'session', 'user') AND (t.expires_at IS NULL OR t.expires_at > now())`,
-			authHash(secret)).Scan(&tid, &kind, &ac.TokenName, &trole, &ac.UserID, &ac.Email, &ac.Name, &ac.UserRole, &ac.Home, &stamp)
+	var t AuthenticateRow
+	err := a.sys(ctx, func(ctx context.Context) (err error) {
+		t, err = a.st.db(ctx).Authenticate(ctx, authHash(secret))
+		return err
 	})
-	if err == nil && stamp != a.Catalog().stamp {
+	if err == nil && t.Stamp != a.Catalog().stamp {
 		err = a.reload(ctx)
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -361,12 +365,12 @@ func (a *Archive) Authenticate(ctx context.Context, secret string) (*Actor, erro
 	if err != nil {
 		return nil, err
 	}
-	ac.Role = ac.UserRole
-	switch kind {
+	ac := &Actor{UserID: t.UserID, Email: t.Email, Name: t.UserName, TokenName: t.Name, Role: t.UserRole, UserRole: t.UserRole, Home: t.Home}
+	switch t.Kind {
 	case "api":
-		ac.Role, ac.TokenID = trole, tid
+		ac.Role, ac.TokenID = t.Role, t.ID
 	case "session":
-		ac.Session, ac.TokenName = tid, ""
+		ac.Session, ac.TokenName = t.ID, ""
 	}
 	return ac, nil
 }
@@ -374,9 +378,7 @@ func (a *Archive) Authenticate(ctx context.Context, secret string) (*Actor, erro
 func (a *Archive) newToken(ctx context.Context, userID uuid.UUID, kind string, ttl time.Duration) (string, error) {
 	secret := authNewSecret()
 	return secret, a.sys(ctx, func(ctx context.Context) error {
-		_, err := a.st.Q(ctx).Exec(ctx, `INSERT INTO token (user_id, kind, hash, expires_at) VALUES ($1, $2, $3, now() + $4::interval)`,
-			userID, kind, authHash(secret), ttl.String())
-		return err
+		return a.st.db(ctx).CreateLoginToken(ctx, CreateLoginTokenParams{UserID: userID, Kind: kind, Hash: authHash(secret), Ttl: ttl.String()})
 	})
 }
 
@@ -389,7 +391,7 @@ func (a *Archive) MagicLink(ctx context.Context, email string) (string, *User, e
 	if err != nil {
 		return "", nil, err
 	}
-	u, err := a.userBy(ctx, `email = $1`, email)
+	u, err := userBy(ctx, a, (*Queries).UserByEmail, email)
 	if err != nil {
 		return "", nil, err
 	}
@@ -399,9 +401,9 @@ func (a *Archive) MagicLink(ctx context.Context, email string) (string, *User, e
 
 func (a *Archive) UseMagicLink(ctx context.Context, secret string) (*User, error) {
 	var id uuid.UUID
-	err := a.sys(ctx, func(ctx context.Context) error {
-		return a.st.Q(ctx).QueryRow(ctx, `DELETE FROM token WHERE hash = $1 AND kind = 'magic' AND expires_at > now() RETURNING user_id`,
-			authHash(secret)).Scan(&id)
+	err := a.sys(ctx, func(ctx context.Context) (err error) {
+		id, err = a.st.db(ctx).UseMagicLink(ctx, authHash(secret))
+		return err
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("sign-in link is invalid, used or expired: %w", ErrUnauthorized)
@@ -409,7 +411,7 @@ func (a *Archive) UseMagicLink(ctx context.Context, secret string) (*User, error
 	if err != nil {
 		return nil, err
 	}
-	return a.userBy(ctx, `id = $1`, id)
+	return userBy(ctx, a, (*Queries).UserByID, id)
 }
 
 func (a *Archive) SignOut(ctx context.Context) error {
@@ -418,21 +420,18 @@ func (a *Archive) SignOut(ctx context.Context) error {
 		return nil
 	}
 	return a.sys(ctx, func(ctx context.Context) error {
-		_, err := a.st.Q(ctx).Exec(ctx, `DELETE FROM token WHERE id = $1`, ac.Session)
-		return err
+		return a.st.db(ctx).DeleteToken(ctx, ac.Session)
 	})
 }
 
 func (a *Archive) Spaces(ctx context.Context) ([]SpaceInfo, error) {
 	return coreDo(a, ctx, func(ctx context.Context) ([]SpaceInfo, error) {
-		rows, _ := a.st.Q(ctx).Query(ctx, `
-			SELECT id, name, CASE
-				WHEN pg_has_role(current_user, (role || '_owner')::name, 'USAGE') THEN 'owner'
-				WHEN pg_has_role(current_user, (role || '_admin')::name, 'USAGE') THEN 'admin'
-				WHEN pg_has_role(current_user, (role || '_editor')::name, 'USAGE') THEN 'editor'
-				ELSE 'viewer' END AS level
-			FROM space ORDER BY name`)
-		return pgx.CollectRows(rows, pgx.RowToStructByName[SpaceInfo])
+		rows, err := a.st.db(ctx).Spaces(ctx)
+		out := make([]SpaceInfo, len(rows))
+		for i, r := range rows {
+			out[i] = SpaceInfo(r)
+		}
+		return out, err
 	})
 }
 
@@ -459,33 +458,34 @@ func (a *Archive) DeleteSpace(ctx context.Context, name string) error {
 		return err
 	}
 	return a.sys(ctx, func(ctx context.Context) error {
-		q := a.st.Q(ctx)
-		var id uuid.UUID
-		var base string
-		if err := q.QueryRow(ctx, `SELECT id, role FROM space WHERE name = $1`, name).Scan(&id, &base); err != nil {
+		q := a.st.db(ctx)
+		sp, err := q.SpaceByName(ctx, name)
+		if err != nil {
 			return fmt.Errorf("space %q: %w", name, ErrNotFound)
 		}
+		id, base := sp.ID, sp.Role
 		if !a.has(ctx, ac.UserRole, base+"_owner") {
 			return fmt.Errorf("deleting %s needs owner: %w", name, ErrForbidden)
 		}
-		var home string
-		if q.QueryRow(ctx, `SELECT email FROM "user" WHERE home = $1`, id).Scan(&home) == nil {
+		if home, err := q.HomeOwner(ctx, id); err == nil {
 			return fmt.Errorf("%s is the personal space of %s: %w", name, home, ErrConflict)
 		}
-		var tables []string
-		for _, t := range a.Catalog().deleteOrder() {
-			tables = append(tables, pgIdent("public", t))
+		if err := q.DeleteSpaceSecrets(ctx, id); err != nil {
+			return err
 		}
-		for _, t := range append(append([]string{"secret"}, tables...), "file") {
-			if _, err := q.Exec(ctx, `DELETE FROM `+t+` WHERE space = $1`, id); err != nil {
+		for _, t := range a.Catalog().deleteOrder() {
+			if _, err := a.st.Q(ctx).Exec(ctx, `DELETE FROM `+pgIdent("public", t)+` WHERE space = $1`, id); err != nil {
 				return err
 			}
 		}
-		if _, err := q.Exec(ctx, `DELETE FROM space WHERE id = $1`, id); err != nil {
+		if err := q.DeleteSpaceFiles(ctx, id); err != nil {
+			return err
+		}
+		if err := q.DeleteSpace(ctx, id); err != nil {
 			return err
 		}
 		for i := len(authLevels) - 1; i >= 0; i-- {
-			if err := a.exec(ctx, "DROP ROLE "+authIdent(base+"_"+authLevels[i])); err != nil {
+			if err := a.exec(ctx, authDrop(base+"_"+authLevels[i])); err != nil {
 				return err
 			}
 		}
@@ -493,9 +493,17 @@ func (a *Archive) DeleteSpace(ctx context.Context, name string) error {
 	})
 }
 
+func (a *Archive) spaceRoles(ctx context.Context) (map[string]string, error) {
+	rows, err := a.st.db(ctx).SpaceRoles(ctx)
+	all := map[string]string{}
+	for _, r := range rows {
+		all[r.Name] = r.Role
+	}
+	return all, err
+}
+
 func (a *Archive) spaceRole(ctx context.Context, name string) (string, error) {
-	var role string
-	err := a.st.Q(ctx).QueryRow(ctx, `SELECT role FROM space WHERE name = $1`, name).Scan(&role)
+	role, err := a.st.db(ctx).SpaceRole(ctx, name)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", fmt.Errorf("space %q: %w", name, ErrNotFound)
 	}
@@ -512,9 +520,9 @@ func (a *Archive) Members(ctx context.Context, space string) ([]Member, error) {
 		if err != nil {
 			return err
 		}
-		rows, _ := a.st.Q(ctx).Query(ctx, `SELECT email, name, role AS level FROM "user" ORDER BY email`)
-		users, err := pgx.CollectRows(rows, pgx.RowToStructByName[Member])
-		for _, m := range users {
+		users, err := a.st.db(ctx).Members(ctx)
+		for _, r := range users {
+			m := Member(r)
 			if l := a.level(ctx, m.Level, base, true); l > 0 {
 				m.Level = authLevels[l-1]
 				out = append(out, m)
@@ -537,16 +545,16 @@ func (a *Archive) SetMember(ctx context.Context, space, email, level string) err
 		return err
 	}
 	return a.sys(ctx, func(ctx context.Context) error {
-		q := a.st.Q(ctx)
+		q := a.st.db(ctx)
 		base, err := a.spaceRole(ctx, space)
 		if err != nil {
 			return err
 		}
-		var uid uuid.UUID
-		var role string
-		if err := q.QueryRow(ctx, `SELECT id, role FROM "user" WHERE email = $1`, email).Scan(&uid, &role); err != nil {
+		u, err := q.UserRole(ctx, email)
+		if err != nil {
 			return fmt.Errorf("user %s: %w", email, ErrNotFound)
 		}
+		uid, role := u.ID, u.Role
 		cur := a.level(ctx, role, base, true)
 		need := "admin"
 		if max(lvl, cur) == authLevel("owner") {
@@ -556,18 +564,14 @@ func (a *Archive) SetMember(ctx context.Context, space, email, level string) err
 			return fmt.Errorf("changing this membership needs %s in %s: %w", need, space, ErrForbidden)
 		}
 		if cur == authLevel("owner") && lvl != cur {
-			var owners int
-			q.QueryRow(ctx, `SELECT count(*) FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid
-				JOIN pg_roles u ON u.oid = m.member JOIN "user" ON "user".role = u.rolname WHERE r.rolname = $1`, base+"_owner").Scan(&owners)
-			if owners <= 1 {
+			if owners, _ := q.CountOwners(ctx, base+"_owner"); owners <= 1 {
 				return fmt.Errorf("%s is the last owner of %s: %w", email, space, ErrConflict)
 			}
 		}
 		if err := a.setLevel(ctx, role, base, lvl); err != nil {
 			return err
 		}
-		rows, _ := q.Query(ctx, `SELECT role FROM token WHERE user_id = $1 AND role IS NOT NULL`, uid)
-		troles, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		troles, err := q.TokenRoles(ctx, uid)
 		if err != nil {
 			return err
 		}
@@ -598,15 +602,14 @@ func (a *Archive) CreateToken(ctx context.Context, name string, spaces map[strin
 		exp = &e
 	}
 	return t, a.sys(ctx, func(ctx context.Context) error {
-		q := a.st.Q(ctx)
+		q := a.st.db(ctx)
 		if full {
-			return q.QueryRow(ctx, `INSERT INTO token (id, user_id, kind, name, hash, expires_at) VALUES ($1, $2, 'user', $3, $4, $5) RETURNING created_at, expires_at`,
-				t.ID, ac.UserID, t.Name, authHash(t.Secret), exp).Scan(&t.CreatedAt, &t.ExpiresAt)
+			r, err := q.CreateUserToken(ctx, CreateUserTokenParams{ID: t.ID, UserID: ac.UserID, Name: t.Name, Hash: authHash(t.Secret), ExpiresAt: exp})
+			t.CreatedAt, t.ExpiresAt = r.CreatedAt, r.ExpiresAt
+			return err
 		}
-		rows, _ := q.Query(ctx, `SELECT name, role FROM space ORDER BY name`)
-		all := map[string]string{}
-		var sn, sr string
-		if _, err := pgx.ForEachRow(rows, []any{&sn, &sr}, func() error { all[sn] = sr; return nil }); err != nil {
+		all, err := a.spaceRoles(ctx)
+		if err != nil {
 			return err
 		}
 		if len(spaces) == 0 {
@@ -634,11 +637,11 @@ func (a *Archive) CreateToken(ctx context.Context, name string, spaces map[strin
 		if len(t.Spaces) == 0 {
 			return &ValidationError{Type: "token", Errors: []FieldError{{Path: "spaces", Message: "a token needs at least one space"}}}
 		}
-		err := q.QueryRow(ctx, `INSERT INTO token (id, user_id, kind, name, role, hash, expires_at) VALUES ($1, $2, 'api', $3, $4, $5, $6) RETURNING created_at, expires_at`,
-			t.ID, ac.UserID, t.Name, role, authHash(t.Secret), exp).Scan(&t.CreatedAt, &t.ExpiresAt)
+		r, err := q.CreateAPIToken(ctx, CreateAPITokenParams{ID: t.ID, UserID: ac.UserID, Name: t.Name, Role: &role, Hash: authHash(t.Secret), ExpiresAt: exp})
 		if err != nil {
 			return err
 		}
+		t.CreatedAt, t.ExpiresAt = r.CreatedAt, r.ExpiresAt
 		if err := a.createRole(ctx, role); err != nil {
 			return err
 		}
@@ -658,30 +661,19 @@ func (a *Archive) Tokens(ctx context.Context) ([]*Token, error) {
 	}
 	out := []*Token{}
 	return out, a.sys(ctx, func(ctx context.Context) error {
-		q := a.st.Q(ctx)
-		rows, _ := q.Query(ctx, `SELECT name, role FROM space`)
-		all := map[string]string{}
-		var sn, sr string
-		if _, err := pgx.ForEachRow(rows, []any{&sn, &sr}, func() error { all[sn] = sr; return nil }); err != nil {
+		all, err := a.spaceRoles(ctx)
+		if err != nil {
 			return err
 		}
-		rows, _ = q.Query(ctx, `SELECT id, name, coalesce(role, ''), kind = 'user', expires_at, created_at FROM token
-			WHERE user_id = $1 AND kind IN ('api', 'user') ORDER BY id`, ac.UserID)
-		var roles []string
-		var role string
-		t := &Token{}
-		_, err := pgx.ForEachRow(rows, []any{&t.ID, &t.Name, &role, &t.Full, &t.ExpiresAt, &t.CreatedAt}, func() error {
-			c := *t
-			out, roles = append(out, &c), append(roles, role)
-			return nil
-		})
-		for i, c := range out {
-			c.Spaces = map[string]string{}
+		rows, err := a.st.db(ctx).Tokens(ctx, ac.UserID)
+		for _, r := range rows {
+			c := &Token{ID: r.ID, Name: r.Name, Spaces: map[string]string{}, Full: r.Full, ExpiresAt: r.ExpiresAt, CreatedAt: r.CreatedAt}
 			for n, base := range all {
-				if l := a.level(ctx, roles[i], base, true); l > 0 {
+				if l := a.level(ctx, r.Role, base, true); l > 0 {
 					c.Spaces[n] = authLevels[l-1]
 				}
 			}
+			out = append(out, c)
 		}
 		return err
 	})
@@ -693,15 +685,14 @@ func (a *Archive) RevokeToken(ctx context.Context, id uuid.UUID) error {
 		return err
 	}
 	return a.sys(ctx, func(ctx context.Context) error {
-		var role string
-		err := a.st.Q(ctx).QueryRow(ctx, `DELETE FROM token WHERE id = $1 AND user_id = $2 AND kind IN ('api', 'user') RETURNING coalesce(role, '')`, id, ac.UserID).Scan(&role)
+		role, err := a.st.db(ctx).RevokeToken(ctx, id, ac.UserID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("token %s: %w", id, ErrNotFound)
 		}
 		if err != nil || role == "" {
 			return err
 		}
-		return a.exec(ctx, "DROP ROLE "+authIdent(role))
+		return a.exec(ctx, authDrop(role))
 	})
 }
 
@@ -720,21 +711,19 @@ func (a *Archive) GrantSecret(ctx context.Context, email, typ string, grant bool
 		if !a.has(ctx, ac.UserRole, a.prefix+"_admin") {
 			return fmt.Errorf("only instance admins grant secret types: %w", ErrForbidden)
 		}
-		var role string
-		if err := a.st.Q(ctx).QueryRow(ctx, `SELECT role FROM "user" WHERE email = $1`, email).Scan(&role); err != nil {
+		u, err := a.st.db(ctx).UserRole(ctx, email)
+		if err != nil {
 			return fmt.Errorf("user %s: %w", email, ErrNotFound)
 		}
-		group := a.prefix + "_secret_" + typ
-		var exists bool
-		a.st.Q(ctx).QueryRow(ctx, `SELECT EXISTS (SELECT FROM pg_roles WHERE rolname = $1)`, group).Scan(&exists)
-		if !exists {
-			if err := a.exec(ctx, "CREATE ROLE "+authIdent(group)+" NOLOGIN"); err != nil {
+		role, group := u.Role, a.prefix+"_secret_"+typ
+		if exists, _ := a.st.db(ctx).RoleExists(ctx, group); !exists {
+			if err := a.exec(ctx, authCreate(group)); err != nil {
 				return err
 			}
 		}
 		if grant {
-			return a.exec(ctx, "GRANT "+authIdent(group)+" TO "+authIdent(role))
+			return a.exec(ctx, authGrant(group, role))
 		}
-		return a.exec(ctx, "REVOKE "+authIdent(group)+" FROM "+authIdent(role))
+		return a.exec(ctx, authRevoke(group, role))
 	})
 }

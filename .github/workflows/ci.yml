@@ -33,6 +33,8 @@ jobs:
             sudo apt-get install -y -q postgresql-18
           fi
           echo /usr/lib/postgresql/18/bin >> "$GITHUB_PATH"
+      - run: go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 diff
+        working-directory: src
       - run: go vet ./...
         working-directory: src
       - run: go test -count=1 -timeout 25m ./...

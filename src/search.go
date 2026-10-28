@@ -75,8 +75,8 @@ func (a *Archive) Search(ctx context.Context, query string, f SearchFilter) ([]*
 		q := a.st.Q(ctx)
 		var space any
 		if f.Space != "" {
-			var id uuid.UUID
-			if err := q.QueryRow(ctx, `SELECT id FROM space WHERE name = $1`, f.Space).Scan(&id); errors.Is(err, pgx.ErrNoRows) {
+			id, err := a.st.db(ctx).SpaceID(ctx, f.Space)
+			if errors.Is(err, pgx.ErrNoRows) {
 				return nil, fmt.Errorf("space %q: %w", f.Space, ErrNotFound)
 			} else if err != nil {
 				return nil, err

@@ -18,7 +18,6 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 )
 
 var secretMasks = map[string]bool{"card": true, "mask": true, "mask_ssn": true, "national": true, "passport": true}
@@ -105,11 +104,11 @@ func (a *Archive) secretOpen(id uuid.UUID, typ string, ct []byte) ([]byte, error
 }
 
 func (a *Archive) secretsPut(ctx context.Context, tb *Table, row map[string]any, seal map[string]any) error {
-	id, space := coreRowID(row), row["space"]
+	id, space := coreRowID(row), coreUUID(row, "space")
 	cat := a.Catalog()
 	for _, col := range specKeys(seal) {
-		q := a.st.Q(ctx)
-		if _, err := q.Exec(ctx, `SELECT secret_clear($1, $2, $3)`, tb.Name, id, col); err != nil {
+		q := a.st.db(ctx)
+		if err := q.ClearSecrets(ctx, tb.Name, id, &col); err != nil {
 			return err
 		}
 		if seal[col] == nil {
@@ -123,8 +122,7 @@ func (a *Archive) secretsPut(ctx context.Context, tb *Table, row map[string]any,
 		if cat.secret(tb.col(col)) == nil {
 			return fmt.Errorf("%s.%s is not a secret column", tb.Name, col)
 		}
-		if _, err := q.Exec(ctx, `INSERT INTO secret (id, table_name, row_id, column_name, type, value, space) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-			sid, tb.Name, id, col, typ, a.secretBox(sid, typ, b), space); err != nil {
+		if err := q.CreateSecret(ctx, CreateSecretParams{ID: sid, TableName: tb.Name, RowID: id, ColumnName: col, Type: typ, Value: a.secretBox(sid, typ, b), Space: space}); err != nil {
 			return err
 		}
 	}
@@ -142,12 +140,9 @@ func (a *Archive) Reveal(ctx context.Context, typ string, rows ...map[string]any
 		byID[ids[i]] = r
 	}
 	return a.as(ctx, func(ctx context.Context) error {
-		q, _ := a.st.Q(ctx).Query(ctx, `SELECT id, row_id, column_name, type, value FROM secret WHERE table_name = $1 AND row_id = ANY($2)`, typ, ids)
-		var id, row uuid.UUID
-		var col, t string
-		var ct []byte
-		_, err := pgx.ForEachRow(q, []any{&id, &row, &col, &t, &ct}, func() error {
-			b, err := a.secretOpen(id, t, ct)
+		rows, err := a.st.db(ctx).Secrets(ctx, typ, ids)
+		for _, r := range rows {
+			b, err := a.secretOpen(r.ID, r.Type, r.Value)
 			if err != nil {
 				return err
 			}
@@ -155,9 +150,8 @@ func (a *Archive) Reveal(ctx context.Context, typ string, rows ...map[string]any
 			if err := json.Unmarshal(b, &v); err != nil {
 				return err
 			}
-			byID[row][col] = v
-			return nil
-		})
+			byID[r.RowID][r.ColumnName] = v
+		}
 		return err
 	})
 }

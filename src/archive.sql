@@ -106,10 +106,10 @@ CREATE FUNCTION archive.secret_clear(tbl text, rid uuid, col text) RETURNS void 
       AND pg_has_role(current_setting('role')::name, (sp.role || '_editor')::name, 'USAGE')
 $$;
 
-GRANT USAGE ON SCHEMA archive TO {p}_user;
-GRANT SELECT ON archive.space TO {p}_user;
-GRANT SELECT, INSERT, UPDATE, DELETE ON archive.file, archive.secret TO {p}_user;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {p}_user;
+GRANT USAGE ON SCHEMA archive TO "{p}_user";
+GRANT SELECT ON archive.space TO "{p}_user";
+GRANT SELECT, INSERT, UPDATE, DELETE ON archive.file, archive.secret TO "{p}_user";
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "{p}_user";
 
 ALTER TABLE archive.space ENABLE ROW LEVEL SECURITY;
 ALTER TABLE archive.space FORCE ROW LEVEL SECURITY;

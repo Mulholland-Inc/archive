@@ -412,7 +412,7 @@ func (s *signin) mail(to, link string) error {
 }
 
 func (s *signin) user(ctx context.Context, id uuid.UUID) (*signinUser, error) {
-	u, err := s.a.userBy(ctx, `id = $1`, id)
+	u, err := userBy(ctx, s.a, (*Queries).UserByID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -431,8 +431,7 @@ func (s *signin) save(ctx context.Context, pu *signinUser) error {
 		return err
 	}
 	return s.a.sys(ctx, func(ctx context.Context) error {
-		_, err := s.a.st.Q(ctx).Exec(ctx, `UPDATE "user" SET signin = $2 WHERE id = $1`, pu.u.ID, b)
-		return err
+		return s.a.st.db(ctx).SetSignin(ctx, pu.u.ID, b)
 	})
 }
 
@@ -535,10 +534,10 @@ func (s *signin) oidcCallback(w http.ResponseWriter, r *http.Request) (*User, er
 	}
 	link := signinOIDCLink{idt.Issuer, idt.Subject}
 	lb, _ := json.Marshal([]signinOIDCLink{link})
-	u, err := s.a.userBy(r.Context(), `signin->'oidc' @> $1::jsonb`, string(lb))
+	u, err := userBy(r.Context(), s.a, (*Queries).UserByOIDC, lb)
 	if errors.Is(err, ErrNotFound) && claims.Email != "" && (claims.EmailVerified || claims.DomainOwner) {
 		if email, e := authEmail(claims.Email); e == nil {
-			u, err = s.a.userBy(r.Context(), `email = $1`, email)
+			u, err = userBy(r.Context(), s.a, (*Queries).UserByEmail, email)
 		}
 		if err == nil {
 			pu, err := s.user(r.Context(), u.ID)

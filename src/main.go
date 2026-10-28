@@ -535,8 +535,7 @@ func cliServe(ctx context.Context, a *Archive, addr string) error {
 	defer wg.Wait()
 	defer stop()
 	if err := a.st.System(ctx, func(ctx context.Context) error {
-		_, err := a.st.Q(ctx).Exec(ctx, `UPDATE file SET status = 'pending' WHERE status = 'processing'`)
-		return err
+		return a.st.db(ctx).ResetProcessing(ctx)
 	}); err != nil {
 		return err
 	}
