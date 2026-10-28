@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Developers — Archive</title>
+<meta name="description" content="Build on your Archive data from the API, the command line, Terraform or your AI assistant, with the same rules about who can see what everywhere.">
+<meta name="theme-color" content="#15161a">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&family=Inter+Tight:wght@400;500;600&family=EB+Garamond:ital,wght@0,400..800;1,400..800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body class="theme-sky">
+<header data-nav></header>
+
+<main>
+<section class="hero page-hero band theme-ink">
+  <div class="wrap hero-grid">
+    <div>
+<h1>Build on your data from anywhere.</h1>
+      <p class="lead">Use the API, the command line, Terraform or the AI you already use. Every one of them sees the same information and follows the same rules about who can see what.</p>
+      <div class="row">
+        <a class="btn" href="https://mulholland.ai"><i><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></i><span>Start building free</span></a>
+        <a class="btn btn-ghost" href="docs.html"><i><svg viewBox="0 0 24 24"><path d="M5 4h10l4 4v12H5z M14 4v5h5"/></svg></i><span>Read the docs</span></a>
+      </div>
+    </div>
+    <div class="hero-art"><img class="float" data-art src="art/api.webp" alt="A switchboard connecting a terminal, a browser and an AI assistant to one place"></div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="split reveal">
+      <h2>One API for everything.</h2>
+      <div class="body">
+        <p>Read and write your records, files and search with plain web requests and one access key.</p>
+        <p>Add a new kind of record and it is ready to use right away, with nothing to rebuild or redeploy.</p>
+      </div>
+      <img class="art" data-art src="art/endpoint.webp" alt="A service window handing out neatly packed parcels">
+    </div>
+    <hr class="rule">
+    <div class="split flip reveal">
+      <h2>Fifteen words do it all.</h2>
+      <div class="body">
+        <p>Short commands like list, create, search and edit cover the whole product, and the same script runs from the API, the command line or your AI assistant.</p>
+        <p>Each script acts with your permissions and saves all of its changes or none of them.</p>
+      </div>
+      <img class="art" data-art src="art/code.webp" alt="A code editor whose lines snap neatly into place">
+    </div>
+    <hr class="rule">
+    <div class="split reveal">
+      <h2>Works with the AI you already use.</h2>
+      <div class="body">
+        <p>ChatGPT, Claude, Gemini, Grok, Claude Code and Cursor connect with a link and an access key.</p>
+        <p>They see how your data is actually organized, so they work with your real records instead of guessing.</p>
+      </div>
+      <img class="art" data-art src="art/agents.webp" alt="Several AI assistants plugged into one socket">
+    </div>
+    <hr class="rule">
+    <div class="split flip reveal">
+      <h2>Change your structure like code.</h2>
+      <div class="body">
+        <p>Keep the shape of your data in files next to your code, preview each change and what it could affect, then apply it.</p>
+        <p>Renaming a field keeps everything in it, and nothing is deleted unless you say so.</p>
+      </div>
+      <img class="art" data-art src="art/schema.webp" alt="A blueprint being stamped into place">
+    </div>
+  </div>
+</section>
+
+<section class="band theme-mint">
+  <div class="wrap">
+    <div class="feature">
+      <div class="copy">
+<h2 class="reveal">Write it <em>once</em>.</h2>
+        <p class="body">Add a record and read it back from a web request, a script or your terminal. The same checks and the same permissions apply everywhere.</p>
+        <div class="row"><a class="btn" href="docs.html"><i><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></i><span>API reference</span></a></div>
+      </div>
+      <div class="code reveal">
+        <div class="code-bar"><span class="dots"><i></i><i></i><i></i></span><span class="tabs"><button aria-selected="true">curl</button><button aria-selected="false">run.ts</button><button aria-selected="false">cli</button></span><button class="copy">Copy</button></div>
+<pre>curl <span class="s">"https://your-workspace.archive.mulholland.ai/api/invoice?space=acme"</span> \
+  -H <span class="s">"Authorization: Bearer $ARCHIVE_TOKEN"</span> \
+  -d <span class="s">'{"customer": "Northwind", "total": {"amount": 1240, "currency": "USD"}, "due": "2026-11-30"}'</span>
+
+curl <span class="s">"https://your-workspace.archive.mulholland.ai/api/invoice?customer=Northwind&amp;limit=20"</span> \
+  -H <span class="s">"Authorization: Bearer $ARCHIVE_TOKEN"</span></pre>
+<pre hidden><span class="k">await</span> archive.<span class="f">create</span>(<span class="s">"invoice"</span>, {
+  customer: <span class="s">"Northwind"</span>,
+  total: { amount: <span class="n">1240</span>, currency: <span class="s">"USD"</span> },
+  due: <span class="s">"2026-11-30"</span>,
+}, { space: <span class="s">"acme"</span> })
+
+<span class="k">return</span> archive.<span class="f">list</span>(<span class="s">"invoice"</span>, { where: { customer: <span class="s">"Northwind"</span> }, limit: <span class="n">20</span> })</pre>
+<pre hidden>archive create invoice -space acme \
+  <span class="s">'{"customer": "Northwind", "total": {"amount": 1240, "currency": "USD"}, "due": "2026-11-30"}'</span>
+
+archive list invoice -limit <span class="n">20</span> customer=Northwind
+
+archive search <span class="s">"Northwind"</span> -type invoice -from <span class="n">2026-10-01</span></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="head">
+      <h2 class="reveal">The API, route by route.</h2>
+      <p class="body reveal">Every request carries a sign-in or an access key. When something is wrong, you get a clear reason and a note on each field to fix.</p>
+    </div>
+    <table class="facts reveal">
+      <thead><tr><th>Endpoint</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code class="inline">GET /api/types</code></td><td>Every table and view with its columns, comments and references.</td></tr>
+        <tr><td><code class="inline">GET /api/{type}</code></td><td>List rows, oldest first. Filter with <code class="inline">column=value</code>, page with <code class="inline">limit</code> and <code class="inline">after</code>, add <code class="inline">reveal=true</code> for granted secrets.</td></tr>
+        <tr><td><code class="inline">POST /api/{type}</code></td><td>Create a row, cleaned and validated per field, in your space or <code class="inline">?space=</code>.</td></tr>
+        <tr><td><code class="inline">GET /api/{type}/{id}</code></td><td>One row.</td></tr>
+        <tr><td><code class="inline">PATCH /api/{type}/{id}</code></td><td>Change some fields; <code class="inline">null</code> clears one.</td></tr>
+        <tr><td><code class="inline">PUT /api/{type}/{id}</code></td><td>Replace the whole row.</td></tr>
+        <tr><td><code class="inline">DELETE /api/{type}/{id}</code></td><td>Delete a row.</td></tr>
+        <tr><td><code class="inline">GET /api/search</code></td><td>Full-text search over rows and files with <code class="inline">q</code>, <code class="inline">type</code>, <code class="inline">space</code>, <code class="inline">from</code>, <code class="inline">to</code> and <code class="inline">limit</code>.</td></tr>
+        <tr><td><code class="inline">GET|POST /api/files</code></td><td>List files, or upload one as multipart form data. Large files use resumable tus uploads at <code class="inline">/api/files/tus</code>.</td></tr>
+        <tr><td><code class="inline">GET /api/files/{id}/content</code></td><td>The file's bytes. <code class="inline">/text</code> gives its extracted text, <code class="inline">/thumbnail</code> an image preview.</td></tr>
+        <tr><td><code class="inline">POST /api/files/{id}/link</code></td><td>A short-lived signed download link.</td></tr>
+        <tr><td><code class="inline">GET /api/schema</code></td><td>DDL generated from the database, one <code class="inline">&lt;name&gt;.sql</code> per table or view.</td></tr>
+        <tr><td><code class="inline">POST /api/schema/plan</code></td><td>Plan the whole set of files against the database, with hazards per statement.</td></tr>
+        <tr><td><code class="inline">POST /api/schema/apply</code></td><td>Apply that plan. Takes <code class="inline">renames</code> and <code class="inline">allow_drop</code>.</td></tr>
+        <tr><td><code class="inline">POST /api/run</code></td><td>Run TypeScript against the SDK in one transaction; returns result, logs and error.</td></tr>
+        <tr><td><code class="inline">GET /api/run/docs</code></td><td>The SDK docs, with an interface per table.</td></tr>
+        <tr><td><code class="inline">GET /api/pages/{id}/sync</code></td><td>A server-sent event stream: the page, then everyone's operations and presence.</td></tr>
+        <tr><td><code class="inline">POST /api/pages/{id}/ops</code></td><td>Send a tab's go-crdt operations; <code class="inline">/presence</code> sends a caret, a name and a colour.</td></tr>
+        <tr><td><code class="inline">/auth/spaces</code>, <code class="inline">/auth/tokens</code></td><td>Spaces, members and scoped tokens.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="band theme-paper">
+  <div class="wrap">
+    <div class="section">
+      <div class="head">
+        <h2 class="reveal">Every script command.</h2>
+        <p class="body reveal">Each one is fully typed, so your editor helps as you write. Errors tell you plainly whether something was invalid, missing, not allowed or in conflict.</p>
+      </div>
+      <table class="facts reveal">
+        <thead><tr><th>Verb</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td><code class="inline">sql(query, ...params)</code></td><td>Run one SQL statement as you, with <code class="inline">$1</code>, <code class="inline">$2</code> bound to params.</td></tr>
+          <tr><td><code class="inline">list(table, opts)</code></td><td>Rows of a table, oldest first, filtered by <code class="inline">where</code> and paged with <code class="inline">after</code>.</td></tr>
+          <tr><td><code class="inline">get(table, id)</code></td><td>One row by id.</td></tr>
+          <tr><td><code class="inline">create(table, data)</code></td><td>Insert a cleaned, validated row. <code class="inline">create("Notes.page")</code> makes an empty page, docx, xlsx or pptx.</td></tr>
+          <tr><td><code class="inline">update(table, id, patch)</code></td><td>Change the given fields; <code class="inline">null</code> clears one.</td></tr>
+          <tr><td><code class="inline">delete(table, id)</code></td><td>Delete a row.</td></tr>
+          <tr><td><code class="inline">search(text, opts)</code></td><td>Full-text search over every table and file you can see, best first.</td></tr>
+          <tr><td><code class="inline">schema()</code></td><td>DDL generated from the database, one file per table or view.</td></tr>
+          <tr><td><code class="inline">apply(files, opts)</code></td><td>Plan the whole set of DDL files; with <code class="inline">confirm</code>, apply it.</td></tr>
+          <tr><td><code class="inline">tables()</code></td><td>Every table and view with its columns, types, comments and references.</td></tr>
+          <tr><td><code class="inline">files(opts)</code></td><td>Files you can see, oldest first, with their extracted text.</td></tr>
+          <tr><td><code class="inline">file(id)</code></td><td>One file with its extracted text.</td></tr>
+          <tr><td><code class="inline">read(fileId)</code></td><td>The structure of a docx, xlsx, pptx or page: paragraphs, cells, slides and shapes.</td></tr>
+          <tr><td><code class="inline">edit(fileId, edits)</code></td><td>Apply a list of edits to a document, all or nothing.</td></tr>
+          <tr><td><code class="inline">spaces()</code></td><td>The spaces you can see, with your role in each.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="head">
+      <h2 class="reveal">The <em>archive</em> command line.</h2>
+      <p class="body reveal">Every command acts as a real person with their permissions. Its output is easy for scripts, scheduled jobs and CI to read.</p>
+    </div>
+    <table class="facts reveal">
+      <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code class="inline">archive run &lt;file.ts|-&gt;</code></td><td>Run TypeScript against the SDK in one transaction. <code class="inline">-docs</code> prints the SDK docs.</td></tr>
+        <tr><td><code class="inline">archive types</code></td><td>Print the tables, their columns and the built-in types.</td></tr>
+        <tr><td><code class="inline">archive schema pull [dir]</code></td><td>Print the generated DDL, or write one <code class="inline">&lt;name&gt;.sql</code> per table or view into dir.</td></tr>
+        <tr><td><code class="inline">archive schema plan &lt;dir&gt;</code></td><td>Show the statements that bring the database to the files in dir.</td></tr>
+        <tr><td><code class="inline">archive schema apply &lt;dir&gt;</code></td><td>Run that plan. <code class="inline">-allow-drop</code> lets statements that delete data through.</td></tr>
+        <tr><td><code class="inline">archive list &lt;table&gt;</code></td><td>List rows with <code class="inline">column=value</code> filters, <code class="inline">-limit</code>, <code class="inline">-after</code> and <code class="inline">-reveal</code>.</td></tr>
+        <tr><td><code class="inline">archive get &lt;table&gt; &lt;id&gt;</code></td><td>One row.</td></tr>
+        <tr><td><code class="inline">archive create &lt;table&gt; [json]</code></td><td>Create a row from the argument or stdin, in <code class="inline">-space</code> or your own.</td></tr>
+        <tr><td><code class="inline">archive set | update</code></td><td>Set some columns, or replace the whole row.</td></tr>
+        <tr><td><code class="inline">archive delete &lt;table&gt; &lt;id&gt;</code></td><td>Delete a row.</td></tr>
+        <tr><td><code class="inline">archive search &lt;query&gt;</code></td><td>Find rows and files by their words, with <code class="inline">-type</code>, <code class="inline">-space</code>, <code class="inline">-from</code> and <code class="inline">-to</code>.</td></tr>
+        <tr><td><code class="inline">archive file add|get|list</code></td><td>Store files and extract their text, print their metadata, or write their content.</td></tr>
+        <tr><td><code class="inline">archive space add|list|members|grant|remove</code></td><td>Make spaces and set who holds which role in them.</td></tr>
+        <tr><td><code class="inline">archive token create|list|revoke</code></td><td>Scoped tokens with a role per space and an expiry.</td></tr>
+        <tr><td><code class="inline">archive secret grant|revoke</code></td><td>Let a person read one secret type, like <code class="inline">us_ssn</code> or <code class="inline">passport</code>.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="band theme-sun">
+  <div class="wrap">
+    <div class="feature flip">
+      <div class="copy">
+<h2 class="reveal">Your workspace, <em>as code</em>.</h2>
+        <p class="body">Keep the shape of your data, your access keys and who can do what in Terraform, next to the rest of your stack. Archive previews each change itself, so you never chase false differences.</p>
+        <ul class="letters">
+          <li><span class="l">A</span><div><h3>Your structure</h3><p>Every kind of record and every board, previewed and applied together.</p></div></li>
+          <li><span class="l">B</span><div><h3>Who can do what</h3><p>What each person can see and change in a space.</p></div></li>
+          <li><span class="l">C</span><div><h3>Access keys</h3><p>A key for an AI assistant or a service, limited in scope and time.</p></div></li>
+          <li><span class="l">D</span><div><h3>Your spaces</h3><p>A list of every space a key can reach.</p></div></li>
+        </ul>
+      </div>
+      <div class="code reveal">
+        <div class="code-bar"><span class="dots"><i></i><i></i><i></i></span><span class="tabs"><button aria-selected="true">main.tf</button><button aria-selected="false">schema/house.sql</button></span><button class="copy">Copy</button></div>
+<pre><span class="k">terraform</span> {
+  required_providers {
+    archive = { source = <span class="s">"mulholland-inc/archive"</span> }
+  }
+}
+
+<span class="k">provider</span> <span class="s">"archive"</span> {
+  endpoint = <span class="s">"https://your-workspace.archive.mulholland.ai"</span>
+}
+
+<span class="k">resource</span> <span class="s">"archive_schema"</span> <span class="s">"main"</span> {
+  files = {
+    <span class="k">for</span> f <span class="k">in</span> <span class="f">fileset</span>(<span class="s">"${path.module}/schema"</span>, <span class="s">"*.sql"</span>) :
+    f =&gt; <span class="f">file</span>(<span class="s">"${path.module}/schema/${f}"</span>)
+  }
+}
+
+<span class="k">resource</span> <span class="s">"archive_policy"</span> <span class="s">"sam"</span> {
+  space = <span class="s">"acme"</span>
+  user  = <span class="s">"sam@acme.com"</span>
+  role  = <span class="s">"editor"</span>
+}
+
+<span class="k">resource</span> <span class="s">"archive_token"</span> <span class="s">"intake"</span> {
+  name    = <span class="s">"intake-agent"</span>
+  spaces  = { acme = <span class="s">"editor"</span> }
+  expires = <span class="s">"720h"</span>
+}</pre>
+<pre hidden><span class="k">CREATE TABLE</span> house (
+    id         <span class="k">uuid PRIMARY KEY DEFAULT</span> <span class="f">uuidv7</span>(),
+    space      <span class="k">uuid NOT NULL REFERENCES</span> archive.space,
+    created_at <span class="k">timestamptz NOT NULL DEFAULT</span> <span class="f">now</span>(),
+    updated_at <span class="k">timestamptz NOT NULL DEFAULT</span> <span class="f">now</span>(),
+    address    <span class="k">text NOT NULL</span>,
+    price      archive.money,
+    search     <span class="k">tsvector GENERATED ALWAYS AS</span> (archive.<span class="f">search_doc</span>(address)) <span class="k">STORED</span>
+);
+<span class="k">CREATE INDEX</span> house_search <span class="k">ON</span> house <span class="k">USING</span> gin (search);
+<span class="k">ALTER TABLE</span> house <span class="k">ENABLE ROW LEVEL SECURITY</span>;
+<span class="k">ALTER TABLE</span> house <span class="k">FORCE ROW LEVEL SECURITY</span>;
+<span class="k">CREATE POLICY</span> viewer <span class="k">ON</span> house <span class="k">FOR SELECT USING</span> (space = <span class="k">ANY</span> (archive.<span class="f">my_spaces</span>()));
+<span class="k">CREATE POLICY</span> editor <span class="k">ON</span> house <span class="k">USING</span> (space = <span class="k">ANY</span> (archive.<span class="f">my_spaces</span>(<span class="s">'editor'</span>)))
+    <span class="k">WITH CHECK</span> (space = <span class="k">ANY</span> (archive.<span class="f">my_spaces</span>(<span class="s">'editor'</span>)));
+<span class="k">COMMENT ON TABLE</span> house <span class="k">IS</span> <span class="s">'A house you own or rent
+icon: house'</span>;</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="head">
+      <h2 class="reveal">Under the hood.</h2>
+      <p class="body reveal">Pages that update live, changes that never end up half done, and servers that rest when nobody is working.</p>
+    </div>
+    <div class="specs">
+      <div class="spec reveal"><img data-art src="art/crdt.webp" alt=""><h3>Live pages</h3><ul><li>Everyone's edits appear on screen as they happen</li><li>Edits from people and AI merge on their own, so nothing gets lost</li><li>See who is on the page and where they are typing</li></ul></div>
+      <div class="spec reveal"><img data-art src="art/transaction.webp" alt=""><h3>All or nothing</h3><ul><li>If a script fails or runs out of time, nothing is saved</li><li>An error you handle undoes only that one step</li><li>Live updates and file processing wait until the work is saved</li></ul></div>
+      <div class="spec reveal"><img data-art src="art/scale.webp" alt=""><h3>Rests when idle</h3><ul><li>No single server holds anything, so any one can answer</li><li>Nothing runs between requests</li><li>An open page keeps things awake only while it is open</li></ul></div>
+    </div>
+  </div>
+</section>
+
+<section class="band theme-lilac">
+  <div class="wrap">
+    <div class="section">
+      <div class="head">
+        <h2 class="reveal">Developer questions.</h2>
+        <p class="body reveal">The rest is in the docs.</p>
+      </div>
+      <div class="faq reveal">
+        <details><summary>Which AI assistants can connect?</summary><p>Any assistant that supports remote connectors with an access key, including ChatGPT, Claude, Gemini, Grok, Claude Code and Cursor. Give it your workspace link and a key.</p></details>
+        <details><summary>What can a script do, and for how long?</summary><p>It can use Archive and standard JavaScript, but it cannot reach the internet, import code, set timers or open files. Each run has a time limit, up to 256 KB of results and 64 KB of logs.</p></details>
+        <details><summary>How do I give an AI assistant its own access?</summary><p>Make an access key from the command line, the API or Terraform, and choose what it can do in each space and when it expires. It can never do more than you can.</p></details>
+        <details><summary>Can I keep my structure in git?</summary><p>Yes. Pull it as one file for each kind of record or board, edit, preview and apply. Applying what you just pulled changes nothing, so the files stay stable.</p></details>
+        <details><summary>How do I page through a lot of records?</summary><p>Lists come back oldest first. Pass the last id you saw as <code class="inline">after</code> to get the next page.</p></details>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap cta">
+    <h2>Build on your own data.</h2>
+    <p class="lead">Free for your first workspace. Make an access key and start building.</p>
+    <div class="row">
+      <a class="btn" href="https://mulholland.ai"><i><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></i><span>Start building free</span></a>
+      <a class="btn btn-ghost" href="docs.html"><i><svg viewBox="0 0 24 24"><path d="M5 4h10l4 4v12H5z M14 4v5h5"/></svg></i><span>Read the docs</span></a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer data-foot></footer>
+</body>
+</html>
