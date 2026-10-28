@@ -1,0 +1,81 @@
+:root {
+    --night: #0b0d12;
+  --night-2: #0f1217;
+  --night-3: #161a21;
+  --white: #ffffff;
+  --white-65: rgba(255, 255, 255, 0.65);
+  --white-45: rgba(255, 255, 255, 0.45);
+  --white-10: rgba(255, 255, 255, 0.1);
+  --white-5: rgba(255, 255, 255, 0.05);
+  --fog: #e6e8ea;
+  --blue: #0066c5;
+  --blue-deep: #1a40a1;
+  --blue-light: #66aef5;
+
+  --ink: var(--night);
+  --graphite: var(--white-65);
+  --slate: var(--white-65);
+  --steel: var(--white-10);
+  --paper: var(--night-2);
+
+    --bg: var(--night);
+  --fg: var(--white);
+  --muted: var(--white-65);
+  --faint: var(--white-45);
+  --line: var(--white-10);
+  --surface: var(--white-5);
+  --panel: var(--night-2);
+  --accent: var(--blue);
+  --accent-soft: rgba(102, 174, 245, 0.12);
+
+    --serif: "EB Garamond", Garamond, "Times New Roman", serif;
+  --sans: "Inter Tight", "Helvetica Now Display", Helvetica, Arial, sans-serif;
+  --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --text-xs: 12px;
+  --text-sm: 15px;
+  --text-md: 17px;
+  --text-lg: 22px;
+  --text-xl: 28px;
+  --text-2xl: 34px;
+  --text-3xl: clamp(42px, 5vw, 64px);
+  --text-4xl: clamp(56px, 7.4vw, 104px);
+
+  --leading-tight: 1;
+  --leading-snug: 1.2;
+  --leading: 1.55;
+  --tracking-display: -0.06em;
+
+    --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 56px;
+  --s-8: 80px;
+  --s-9: 120px;
+  --s-10: 160px;
+
+  --page: 1200px;
+  --prose: 600px;
+  --gutter: clamp(22px, 5vw, 64px);
+  --frame: clamp(8px, 1.2vw, 16px);
+
+    --radius-sm: 16px;
+  --radius: 32px;
+  --radius-lg: 48px;
+  --radius-pill: 9999px;
+
+    --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --fast: 160ms;
+  --slow: 600ms;
+}
+
+.theme-sky, .theme-paper, .theme-lime, .theme-lilac, .theme-mint, .theme-sun, .theme-coral, .theme-ink { --bg: #14171d; }
+.band, .foot { --bg: #1b1f27; }
+
+:root, [class*="theme-"] {
+  --cell: var(--white-5);
+  --cell-strong: var(--white-10);
+}

@@ -3,146 +3,170 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Archive, the memory of your company</title>
-<meta name="description" content="Archive gathers mail, files, chats and contracts from the tools you already use, tidies them into one place, and hands them to your team and every AI you work with.">
-<meta name="theme-color" content="#ffffff">
+<title>Archive — own your data infrastructure</title>
+<meta name="description" content="Database. File storage. Agent access. A foundation for your digital world, built to run on your terms.">
+<meta name="theme-color" content="#dce8f7">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:wght@400..600&family=Geist:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&family=Inter+Tight:wght@400;500;600&family=EB+Garamond:ital,wght@0,400..800;1,400..800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="tokens.css">
 <link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
 </head>
-<body>
-<svg width="0" height="0" class="defs" aria-hidden="true">
-<symbol id="logo" viewBox="417 135 1662 403"><path d="M 417.14 530 L 591.99 227.16 L 693.37 530 Z M 611.18 193.92 L 619.68 179.2 L 822.21 530 L 723.69 530 Z"/><path d="M 914 289.7 C 913.2 290 909.4 291.8 905.6 293.7 C 892.4 300.1 855.4 315.8 844.6 319.6 C 836 322.6 834 324.3 834 328.7 C 834 332.9 836.6 335.5 841.8 336.3 C 852.7 338.1 860 344.1 862 353.2 C 863.5 360.1 864.4 480.4 862.9 490.4 C 861.3 502 855 510.6 846.4 512.9 C 843.6 513.6 843.5 513.9 843.2 520.4 C 843 524.5 843.4 527.7 844.1 528.6 C 845.1 529.8 855.2 530 908.2 530 C 979.3 530 976.9 530.3 977 522.3 C 977 517.9 974.4 516.4 964.5 515 C 942.4 512 933.3 505.4 930.1 490.2 C 929.4 486.6 929 466 929 427 C 929 361.4 928.5 366.1 937.6 353.3 C 945.8 341.8 954.9 337.2 963.9 339.8 C 966 340.5 970.8 343.8 975 347.6 C 979 351.3 984.2 355.1 986.4 356.1 C 998.9 361.8 1015.7 354.4 1022.7 340.2 C 1025.2 335.2 1025.5 333.4 1025.5 325 C 1025.5 313.3 1022.7 306.6 1014.9 299.6 C 1002 288 983 287.2 965.6 297.7 C 957.3 302.7 940.8 319.7 933.5 330.9 L 927.5 340 L 926.9 316.8 C 926.6 304 926.3 293.4 926.2 293.3 C 922.7 289.3 918.4 288.1 914 289.7 Z"/><path d="M 1122.5 290.1 C 1079.8 293.5 1036.9 324.5 1017.9 365.6 C 1002.6 398.6 1001.9 438.5 1015.9 470.1 C 1031.5 505.1 1064.2 529.2 1102.6 534.1 C 1148.6 539.9 1188.9 521.9 1213.6 484.6 C 1225.1 467.4 1226.6 459.1 1218.9 456.1 C 1215 454.7 1211.1 457 1204.5 465 C 1176.3 498.7 1136.3 504.9 1104.3 480.4 C 1073.3 456.6 1062.9 397 1081.4 349 C 1091.5 322.9 1107.2 309.3 1128.6 308.2 C 1149.2 307.2 1158.2 317.1 1161.5 344.8 C 1164 364.7 1168.1 371.1 1181.3 375.6 C 1201.9 382.6 1222.4 370.7 1223.8 350.8 C 1226.4 314.3 1178.4 285.5 1122.5 290.1 Z"/><path d="M 1288 138.1 C 1261.2 151 1224.2 166.9 1211.7 170.9 C 1206.5 172.6 1205 174.5 1205 179.1 C 1205 183.5 1209 187 1214 187 C 1217.4 187 1228 192.2 1230.7 195.1 C 1231.9 196.4 1233.9 199.8 1235.2 202.5 L 1237.5 207.5 L 1238 332.5 C 1238.6 482.2 1238.4 495.8 1235.2 501.8 C 1232.1 507.6 1226.2 511.6 1216.3 514.6 C 1205.9 517.8 1203 522.4 1208 527.8 L 1210.1 530 L 1274 530 L 1337.9 530 L 1340 527.8 C 1344.5 522.9 1342 517.6 1334.2 515.5 C 1316.1 510.5 1310.7 505.5 1308.1 491.5 C 1307.4 487.6 1307 462.8 1307 418.9 L 1307 352.2 L 1313.7 346 C 1342.3 319.8 1379.6 327 1390.7 360.9 C 1392.5 366.5 1393.6 403.2 1393.4 456.5 C 1393.3 491 1393.2 492.7 1391.1 498.2 C 1387.5 507.4 1380.8 512.5 1368.8 515 C 1360.4 516.7 1357.1 523.1 1362 528 C 1365.2 531.2 1620.8 531.2 1624 528 C 1625.2 526.8 1626 524.7 1626 522.5 C 1626 518.3 1623.6 516.5 1616.5 515.4 C 1597 512.7 1587.5 504.1 1586.4 488.1 C 1586.1 484.5 1585.8 438.4 1585.7 385.7 L 1585.5 289.8 L 1582.7 287.4 C 1578.2 283.5 1575.5 284.2 1551.7 295.9 C 1525.5 308.7 1514.8 313.5 1502.2 318 C 1491.4 321.8 1490 322.9 1490 327.4 C 1490 331.6 1492.2 333.6 1499.1 335.6 C 1508.4 338.3 1512.5 341.3 1515.7 347.7 L 1518.5 353.5 L 1518.5 424.5 C 1518.5 503 1519 496.9 1512.2 505.9 C 1505.9 514.3 1486.2 517.5 1475.5 511.8 C 1469.3 508.6 1466.7 505.9 1463.8 499.5 L 1461.5 494.5 L 1460.9 427 C 1460.3 353.2 1460.4 354.8 1454.1 338.3 C 1442.2 307.4 1411.9 288.4 1378 290.3 C 1355.6 291.6 1337.7 300.2 1317.3 319.4 C 1310.4 326 1308.1 327.6 1307.6 326.4 C 1307.3 325.5 1307 283.4 1307 232.8 L 1307 140.8 L 1304.1 137.9 C 1300.2 134.1 1296.3 134.1 1288 138.1 Z"/><path d="M 1543.4 180.1 C 1520.3 184 1505.6 208.1 1513 230 C 1516.5 240.3 1522.3 247 1532.4 252.3 C 1541.3 257 1558.3 257.1 1567.5 252.6 C 1574.9 248.9 1582.5 241.3 1585.9 234 C 1589.5 226.4 1589.7 210.1 1586.3 202.7 C 1581.2 191.7 1569 182.4 1556.6 180.1 C 1550 178.9 1550.6 178.9 1543.4 180.1 Z"/><path d="M 1595.5 294.5 C 1590.4 299.5 1593 306.1 1600.9 308 C 1607.1 309.5 1613.9 313.7 1617.3 318.1 C 1619.6 321.2 1631.8 346.5 1637.7 360.5 C 1639.1 363.8 1641.5 369.2 1643 372.5 C 1644.5 375.8 1648.3 384.1 1651.5 391 C 1654.7 397.9 1660.7 410.9 1665 420 C 1669.3 429.1 1677.1 445.7 1682.3 457 C 1700.6 496.4 1715.9 527.5 1718.3 530.2 C 1721.8 534.2 1729 534.2 1732.7 530.2 C 1735.4 527.3 1773.6 458.4 1796 416 C 1804.9 399.3 1828.1 356.4 1833.2 347.4 C 1847.6 322.1 1858.6 311.8 1875 308 C 1884.6 305.8 1887.9 299.8 1882.5 294.5 L 1880.1 292 L 1829.6 292 C 1776.3 292 1775.2 292.1 1773.1 296.7 C 1770.2 303 1773.7 306.5 1784.6 308.4 C 1804.9 311.9 1811.2 322.3 1805 342.2 C 1803.3 347.6 1760.5 434.1 1752.6 448 L 1750.1 452.4 L 1743.6 438.6 C 1739.9 431 1737 424.6 1737 424.4 C 1737 424 1721.1 389.4 1711.5 369 C 1698.5 341.3 1695.9 334.6 1695.8 328.2 C 1695.6 316.5 1701.8 310.7 1717.3 308 C 1724.4 306.7 1726.6 305.1 1727.6 300.3 C 1728.1 297.7 1727.7 296.6 1725.7 294.6 L 1723.1 292 L 1660.5 292 L 1597.9 292 L 1595.5 294.5 Z"/><path d="M 1954.5 290.4 C 1935.2 293.6 1910.4 304 1895.5 315.1 C 1873.7 331.4 1855.4 357.2 1848.2 381.5 C 1839.7 410.3 1841.6 446.4 1852.9 470.5 C 1891.2 552.2 2006.5 561.2 2062.6 486.7 C 2074.2 471.3 2076.7 464.6 2072.5 460 C 2068.9 456 2063.6 457.7 2057.1 465.1 C 2038.5 486.4 2003.4 498.8 1976.9 493.6 C 1937 485.7 1912 449.7 1912 400.1 L 1912 388 L 1992.5 388 L 2073.1 388 L 2075.5 385.5 C 2080.2 380.9 2078.5 359.9 2072.2 343.7 C 2062.4 318.5 2035.3 297.8 2003.5 291.4 C 1993.4 289.3 1964.4 288.7 1954.5 290.4 Z M 1985.1 311.3 C 1991.4 314.3 2000.6 323.4 2003.8 329.6 C 2008 337.9 2010.8 354.5 2009.5 363.9 L 2008.8 369 L 1961.4 369 C 1935.3 369 1914 368.7 1914 368.2 C 1914 365.7 1919.4 348 1921.9 342.7 C 1929.3 326.3 1941.8 313.7 1954.6 309.6 C 1962.7 307 1978.1 307.8 1985.1 311.3 Z"/></symbol>
-<symbol id="brain" viewBox="-24 -24 1309 949"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M1080.5,450.5c0,49.75-40.25,90-90,90"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M1080.5,450.5c0-49.75-40.25-90-90-90h-90v-90"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M810.5,450.5c0,99.49,80.51,180,180,180"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M1170.5,450.5c0,99.49-80.51,180-180,180"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M1170.5,450.5c0-99.49-80.51-180-180-180"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M900.5,270.5c0-49.75-40.25-90-90-90"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M686.8,139.68c-34.68,32.8-56.3,79.26-56.3,130.82v90h90v-90"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M720.5,270.5c0-49.75,40.25-90,90-90"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M450.5,180.5c49.75,0,90,40.25,90,90"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M810.5,90.5c-47.93,0-91.46,18.69-123.7,49.18"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M990.5,270.5c0-99.49-80.51-180-180-180"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M574.2,139.68c-32.24-30.49-75.77-49.18-123.7-49.18"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M270.5,270.5c0-99.49,80.51-180,180-180"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M180.5,450.5c0-49.75,40.25-90,90-90h90v-90c0-49.75,40.25-90,90-90"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M180.5,450.5c0,49.75,40.25,90,90,90"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M90.5,450.5c0-99.49,80.51-180,180-180"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M990.5,720.5c-149.24,0-270-120.76-270-270h180c0,49.75,40.25,90,90,90"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M1260.5,450.5c0,149.24-120.76,270-270,270"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M1068.95,192.05c110.92,33.57,191.55,136.5,191.55,258.45"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M810.5.5c121.95,0,224.88,80.63,258.45,191.55"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M574.2,139.68c34.68,32.8,56.3,79.26,56.3,130.82v90h-90v-90"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M630.5,69.17C678.25,26.45,741.31.5,810.5.5"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M450.5.5c69.19,0,132.25,25.95,180,68.67"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M192.05,192.05C225.62,81.13,328.55.5,450.5.5"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M.5,450.5c0-121.95,80.63-224.88,191.55-258.45"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M270.5,630.5c99.49,0,180,80.51,180,180v90"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M270.5,720.5c49.75,0,90,40.25,90,90v90h180v-90c0-149.24-120.76-270-270-270"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M90.5,450.5c0,99.49,80.51,180,180,180"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="M.5,450.5c0,149.24,120.76,270,270,270"/></symbol>
-<symbol id="mark" viewBox="397 134 445 445"><path d="M 417.14 530 L 591.99 227.16 L 693.37 530 Z M 611.18 193.92 L 619.68 179.2 L 822.21 530 L 723.69 530 Z"/></symbol>
-</svg>
+<body class="theme-sky">
+<header data-nav></header>
 
-<div class="frame">
-<header class="nav">
-<a class="logo" href="#top" aria-label="Archive"><svg><use href="#logo"/></svg></a>
-<div class="nav-actions"><a class="nav-link" href="docs.html">Docs</a><a class="pill pill-light gh" href="https://github.com/Mulholland-Inc/archive" target="_blank" rel="noopener">GitHub ↗</a><a class="pill pill-dark by" href="https://mulholland.ai" target="_blank" rel="noopener" aria-label="by Mulholland"><svg class="brain"><use href="#brain"/></svg><span>by Mulholland</span></a></div>
-</header>
-
-<main id="top">
-<section class="hero" id="hero">
-<div class="stage">
-<div class="hero-copy">
-<h1 class="reveal"><span class="line">Own your data</span><span class="line">infrastructure.</span></h1>
-<div class="hero-build">
-<div class="hero-art" aria-hidden="true"><canvas></canvas></div>
-<div class="parts"><span class="part">Database.</span><span class="part">File storage.</span><span class="part">Agent access.</span></div>
-</div>
-<p class="lead rise">A foundation for your digital world, built to run on your terms.</p>
-<div class="actions rise">
-<a class="pill pill-dark" href="https://mulholland.ai" target="_blank" rel="noopener">Get Archive</a>
-<button class="pill pill-light copy-prompt" type="button"><span>Run it yourself</span><svg class="copy-ic" viewBox="0 0 24 24" aria-hidden="true"><g class="ic-copy"><rect x="8" y="8" width="12" height="12" rx="3"/><path d="M16 8V6.5A2.5 2.5 0 0 0 13.5 4h-7A2.5 2.5 0 0 0 4 6.5v7A2.5 2.5 0 0 0 6.5 16H8"/></g><path class="ic-check" d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>
-</div>
-</div>
-</div>
+<main>
+<section class="hero hero-top">
+  <div class="wrap">
+    <h1>Own your data infrastructure.</h1>
+    <div class="hero-grid">
+      <div>
+        <p class="subtitle">Database. File storage. Agent access.</p>
+        <p class="lead">A foundation for your digital world, built to run on your terms.</p>
+        <div class="row">
+          <a class="btn" href="https://mulholland.ai"><i><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></i><span>Start building free</span></a>
+          <a class="btn btn-ghost" href="docs.html"><i><svg viewBox="0 0 24 24"><path d="M5 4h10l4 4v12H5z M14 4v5h5"/></svg></i><span>Read the docs</span></a>
+        </div>
+      </div>
+      <div class="hero-art"><img class="float" data-art src="art/hero.webp" alt="An isometric machine joining your records, a page, a file cabinet and a chat window"></div>
+    </div>
+  </div>
 </section>
 
-<section class="band band-lanes" id="tidy">
-<div class="head">
-<h2 class="reveal"><span class="line">Messy in, tidy out.</span></h2>
-<p class="body rise">Messy data goes in. Your agents get clean records.</p>
-</div>
-<div class="lanes" aria-hidden="true">
-<div class="lane lane-in"><div class="track"></div></div>
-<div class="layer"><canvas></canvas></div>
-<div class="lane lane-out"><div class="track"></div></div>
-</div>
+<section class="section">
+  <div class="wrap">
+    <div class="cards">
+      <a class="card reveal" href="tables.html"><h3><span class="n">1.</span> Tables</h3><div class="frame"><img data-art src="art/tables.webp" alt=""></div><p>Your own records, shaped the way your business works.</p></a>
+      <a class="card reveal" href="pages.html"><h3><span class="n">2.</span> Pages</h3><div class="frame"><img data-art src="art/pages.webp" alt=""></div><p>Documents your team and your AI write together.</p></a>
+      <a class="card reveal" href="agents.html"><h3><span class="n">3.</span> Agents</h3><div class="frame"><img data-art src="art/agents.webp" alt=""></div><p>Works with ChatGPT, Claude, Gemini and Grok.</p></a>
+      <a class="card reveal" href="models.html"><h3><span class="n">4.</span> Models</h3><div class="frame"><img data-art src="art/models.webp" alt=""></div><p>Small AI models that know your business.</p></a>
+    </div>
+  </div>
 </section>
 
-<section class="band band-water" id="flow">
-<canvas class="water" aria-hidden="true"></canvas>
-<div class="head">
-<h2 class="reveal"><span class="line">Connect once.</span></h2>
-<p class="body rise">Every AI your team uses then reads from the same place.</p>
-</div>
-<div class="connect-panel"><div class="connect"><div class="t-list"><div class="t-row"><span class="t-ic"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M4 7.5 12 13l8-5.5"/></svg></span><span class="t-text"><span class="t-name">Gmail</span><span class="t-count">2,418 emails</span></span><span class="t-pill">Connect</span></div><div class="t-row"><span class="t-ic"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M4 7.5 12 13l8-5.5"/></svg></span><span class="t-text"><span class="t-name">Outlook</span><span class="t-count">1,106 emails</span></span><span class="t-pill">Connect</span></div><div class="t-row"><span class="t-ic"><svg viewBox="0 0 24 24"><path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h3.5l2 2H18a2.5 2.5 0 0 1 2.5 2.5v7A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5z"/></svg></span><span class="t-text"><span class="t-name">Google Drive</span><span class="t-count">312 files</span></span><span class="t-pill">Connect</span></div><div class="t-row"><span class="t-ic"><svg viewBox="0 0 24 24"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v7a2.5 2.5 0 0 1-2.5 2.5H10l-5 4v-4.5A2.5 2.5 0 0 1 4 13.5z"/></svg></span><span class="t-text"><span class="t-name">Slack</span><span class="t-count">5,940 messages</span></span><span class="t-pill">Connect</span></div><div class="t-row"><span class="t-ic"><svg viewBox="0 0 24 24"><path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h3.5l2 2H18a2.5 2.5 0 0 1 2.5 2.5v7A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5z"/></svg></span><span class="t-text"><span class="t-name">SharePoint</span><span class="t-count">820 files</span></span><span class="t-pill">Connect</span></div><div class="t-row"><span class="t-ic"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg></span><span class="t-text"><span class="t-name">Calendar</span><span class="t-count">640 meetings</span></span><span class="t-pill">Connect</span></div></div></div></div>
+<section class="section">
+  <div class="wrap">
+    <div class="head">
+      <h2 class="reveal">Messy in, <em>tidy</em> out.</h2>
+      <p class="body reveal">Email, files and chats arrive however they arrive. Your AI assistant reads each one, works out what it is, and files it neatly in the right place.</p>
+    </div>
+  </div>
+  <div class="scene-bleed reveal"><img data-art src="art/factory.webp" alt="A factory turning envelopes, sheets and folders into neat stacks stored in a silo"></div>
 </section>
 
-<section class="band" id="ask">
-<div class="head">
-<h2 class="reveal"><span class="line">Ask <span class="swap" id="ai">ChatGPT</span>.</span></h2>
-<p class="body rise">It answers from your own records and shows where each answer came from.</p>
-</div>
-<div class="panel chat-panel">
-<div class="chat">
-<div class="thread">
-<div class="ask">What payment terms did we agree with Northwind?</div>
-<div class="answer">Thirty days from the invoice date. Anna agreed it by email on 4 March, and it is written into the contract signed on 12 March.</div>
-<div class="found">
-<div class="source"><span class="doc"><i></i><i></i><i></i></span><span>Northwind contract</span></div>
-<div class="source"><span class="doc doc-mail"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M4 7.5 12 13l8-5.5"/></svg></span><span>Email from Anna</span></div>
-</div>
-</div>
-<div class="composer"><span class="typed"></span><span class="send"><svg viewBox="0 0 24 24"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg></span></div>
-</div>
-</div>
+<section class="band theme-sun">
+  <div class="wrap">
+    <div class="section">
+      <div class="head">
+        <h2 class="reveal">Organized your way, never locked away.</h2>
+        <p class="body reveal">Every kind of record you keep has its own home you can open, sort and search. Nothing hides in a format only one app understands, so your information stays yours.</p>
+      </div>
+      <div class="specs">
+        <div class="spec reveal"><img data-art src="art/schema.webp" alt=""><h3>Change it anytime</h3><ul><li>Add a field or a new kind of record in seconds</li><li>See what a change will do before it happens</li><li>Rename anything and nothing gets lost</li></ul></div>
+        <div class="spec reveal"><img data-art src="art/views.webp" alt=""><h3>Boards and calendars</h3><ul><li>See the same records as a board, a calendar or a list</li><li>Group them the way your team thinks</li><li>Everyone sees only what they are allowed to</li></ul></div>
+        <div class="spec reveal"><img data-art src="art/security.webp" alt=""><h3>Only the right people</h3><ul><li>Everything belongs to a space for a team or a person</li><li>Set who can see and change what</li><li>Your AI assistants never see more than you do</li></ul></div>
+      </div>
+    </div>
+  </div>
 </section>
 
-<section class="band band-full" id="yours">
-<div class="head">
-<h2 class="reveal"><span class="line">Your data stays yours.</span></h2>
-<p class="body rise">Archive is open source: run it yourself, or let us run it for you.</p>
-</div>
-<div class="own-art"><canvas></canvas></div>
-<div class="modes"><button class="mode on" type="button">We run it for you</button><button class="mode copy-prompt" type="button"><span>You run it yourself</span><svg class="copy-ic" viewBox="0 0 24 24" aria-hidden="true"><g class="ic-copy"><rect x="8" y="8" width="12" height="12" rx="3"/><path d="M16 8V6.5A2.5 2.5 0 0 0 13.5 4h-7A2.5 2.5 0 0 0 4 6.5v7A2.5 2.5 0 0 0 6.5 16H8"/></g><path class="ic-check" d="M5 12.5l4.5 4.5L19 7.5"/></svg></button></div>
+<section class="band theme-ink">
+  <div class="wrap">
+    <div class="feature">
+      <div class="copy">
+<h2 class="reveal">One connection. <em>Any</em> assistant.</h2>
+        <p class="body">Connect ChatGPT, Claude, Gemini or Grok once, and it can search, sort and update everything in a single step. If anything goes wrong partway, nothing changes, so nothing ends up half done.</p>
+        <div class="row"><a class="btn" href="agents.html"><i><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></i><span>How agents work</span></a></div>
+      </div>
+      <div class="code reveal">
+        <div class="code-bar"><span class="dots"><i></i><i></i><i></i></span><span class="tabs"><button aria-selected="true">run.ts</button><button aria-selected="false">mcp.json</button><button aria-selected="false">curl</button></span><button class="copy">Copy</button></div>
+<pre><span class="k">const</span> hits = <span class="k">await</span> archive.<span class="f">search</span>(<span class="s">"Northwind terms"</span>, {
+  type: <span class="s">"file"</span>,
+})
+
+<span class="k">for</span> (<span class="k">const</span> hit <span class="k">of</span> hits.<span class="f">slice</span>(<span class="n">0</span>, <span class="n">5</span>)) {
+  <span class="k">await</span> archive.<span class="f">create</span>(<span class="s">"contract"</span>, {
+    party: <span class="s">"Northwind"</span>,
+    terms: <span class="s">"30 days"</span>,
+    source: hit.id,
+  })
+}
+
+<span class="k">return</span> archive.<span class="f">list</span>(<span class="s">"contract"</span>, {
+  where: { party: <span class="s">"Northwind"</span> },
+})</pre>
+<pre hidden>{
+  <span class="s">"mcpServers"</span>: {
+    <span class="s">"archive"</span>: {
+      <span class="s">"url"</span>: <span class="s">"https://your-workspace.archive.mulholland.ai/mcp"</span>,
+      <span class="s">"headers"</span>: { <span class="s">"Authorization"</span>: <span class="s">"Bearer $ARCHIVE_TOKEN"</span> }
+    }
+  }
+}</pre>
+<pre hidden>curl https://your-workspace.archive.mulholland.ai/api/run \
+  -H <span class="s">"Authorization: Bearer $ARCHIVE_TOKEN"</span> \
+  -d <span class="s">'{"code": "return archive.tables()"}'</span></pre>
+      </div>
+    </div>
+  </div>
 </section>
 
-<section class="band" id="edit">
-<div class="head">
-<h2 class="reveal"><span class="line">Shape your data with your AI.</span></h2>
-<p class="body rise">Add fields, new kinds of records or whole lists just by asking, and change them whenever your work changes.</p>
-</div>
-<div class="panel edit-panel">
-<div class="edit">
-<div class="tabs"><button class="tab" type="button">In the app</button><button class="tab on" type="button">With your AI</button><button class="tab" type="button">From your tools</button></div>
-<div class="ways">
-<div class="way way-app"><span class="add">+ Add column</span></div>
-<div class="way way-ai on"><div class="say"></div></div>
-<div class="way way-tool"><div class="tool"><span class="tool-ic"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 13.7-5.6M20 12a8 8 0 0 1-13.7 5.6M17.5 3v4h-4M6.5 21v-4h4"/></svg></span><span>Your billing tool added a Paid on column and filled in the dates.</span></div></div>
-</div>
-<div class="tables">
-<div class="tbl-card"><b class="tbl-name">Invoices</b><div class="tbl"><span class="th th-who">Customer</span><span class="th">Amount</span><span class="th">Due</span><span class="th pc th-paid">Paid on</span><span>Northwind</span><span>€4,200</span><span>Thu</span><span class="pc">3 Mar</span><span>Acme</span><span>€1,350</span><span>Mon</span><span class="pc">28 Feb</span><span>Hart</span><span>€980</span><span>Fri</span><span class="pc">5 Mar</span></div></div>
-<span class="link" aria-hidden="true"></span>
-<div class="tbl-card sup"><b class="tbl-name">Suppliers</b><div class="sup-rows"><span>Office Plus</span><span>Print House</span></div></div>
-</div>
-</div>
-</div>
+<section class="band theme-lilac">
+  <div class="wrap section">
+    <div class="head">
+      <div class="stack"><h2 class="reveal">Your work trains <em>your</em> models.</h2></div>
+      <p class="body reveal">Everything your team and assistants file is an example of how your business works. Turn it into a small model that knows your business.</p>
+    </div>
+  </div>
+  <div class="scene-bleed reveal"><img data-art src="art/lab.webp" alt="A model foundry: storage silos feed a training rig that stamps out model chips"></div>
+  <div class="wrap section">
+    <ul class="letters row-3">
+      <li><span class="l">A</span><div><h3>Collect</h3><p>Gather examples straight from your own records, ready to learn from.</p></div></li>
+      <li><span class="l">B</span><div><h3>Train</h3><p>Teach a model to recognize what each new item is, or to fill in your records from plain text.</p></div></li>
+      <li><span class="l">C</span><div><h3>Use</h3><p>Your assistants call on it whenever they need it, right next to your data.</p></div></li>
+    </ul>
+  </div>
 </section>
 
-<section class="band" id="spaces">
-<div class="head">
-<h2 class="reveal"><span class="line">A space for every team.</span></h2>
-<p class="body rise">Each team, client or project gets its own space, and people and their AI only see the spaces they are in.</p>
-</div>
-<div class="rooms-wrap"><div class="room-names"><span class="room-name">Finance</span><span class="room-name">Sales</span><span class="room-name"><span class="nm-long">Northwind project</span><span class="nm-short">Northwind</span></span></div><div class="rooms-art"><canvas></canvas></div></div>
+<section class="band theme-mint">
+  <div class="wrap section">
+    <div class="head">
+      <div class="stack"><h2 class="reveal">Connect once. Stay in sync.</h2></div>
+      <p class="body reveal">Bring in the mail, files, chats and business tools you already use. Archive only reads, picks up just what is new, and keeps it all in one place.</p>
+    </div>
+  </div>
+  <div class="scene-bleed reveal"><img data-art src="art/harbor.webp" alt="A harbor where barges of containers are unloaded into a warehouse"></div>
+  <div class="wrap section">
+    <div class="logos"><span>Gmail</span><span>Outlook</span><span>Google Drive</span><span>SharePoint</span><span>Slack</span><span>Teams</span><span>Notion</span><span>Jira</span><span>Linear</span><span>GitHub</span><span>HubSpot</span><span>Salesforce</span><span>Zendesk</span><span>Stripe</span><span>QuickBooks</span><span>+ 13 more</span></div>
+  </div>
 </section>
 
-<section class="band" id="cta">
-<div class="cta">
-<canvas></canvas>
-<div class="cta-copy">
-<h2 class="reveal"><span class="line">Give your company a memory.</span></h2>
-<div class="actions rise">
-<a class="pill pill-dark" href="https://mulholland.ai" target="_blank" rel="noopener">Get Archive</a>
-<a class="pill pill-light" href="https://github.com/Mulholland-Inc/archive">Read the code</a>
-</div>
-</div>
-</div>
+<section class="section">
+  <div class="wrap">
+    <div class="stats reveal">
+      <div><strong>1</strong><span>Connection for every AI assistant</span></div>
+      <div><strong>28</strong><span>Apps you can bring in</span></div>
+      <div><strong>0</strong><span>Scripts to write when your needs change</span></div>
+      <div><strong>1</strong><span>Home for records, pages and files</span></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="scene-bleed reveal"><img data-art src="art/city.webp" alt="A city block whose buildings are records, pages, files, a vault and an antenna for AI assistants"></div>
+  <div class="wrap cta">
+    <h2>Start building in minutes.</h2>
+    <p class="lead">Free for your first workspace. No card, no sales call.</p>
+    <div class="row">
+      <a class="btn" href="https://mulholland.ai"><i><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></i><span>Start building free</span></a>
+      <a class="btn btn-ghost" href="pricing.html"><i><svg viewBox="0 0 24 24"><path d="M4 12h16M4 6h16M4 18h10"/></svg></i><span>See pricing</span></a>
+    </div>
+  </div>
 </section>
 </main>
 
-<footer class="foot">
-<a class="logo" href="#top" aria-label="Archive"><svg><use href="#logo"/></svg></a>
-</footer>
-</div>
-
-<div class="toast" role="status" aria-live="polite"></div>
-<script src="site.js"></script>
+<footer data-foot></footer>
 </body>
 </html>

@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agents — Archive</title>
+<meta name="description" content="Add Archive to ChatGPT, Claude, Gemini or Grok, and your AI assistant can find, update and file your company's information for you, as you, with nothing left half done.">
+<meta name="theme-color" content="#dce8f7">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&family=Inter+Tight:wght@400;500;600&family=EB+Garamond:ital,wght@0,400..800;1,400..800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body class="theme-sky">
+<header data-nav></header>
+
+<main>
+<section class="hero page-hero">
+  <div class="wrap hero-grid">
+    <div class="stack">
+<h1>Every AI app. One connection.</h1>
+      <p class="lead">Add Archive to ChatGPT, Claude, Gemini or Grok. Your assistant can then find, update and file your company's information for you.</p>
+      <div class="row">
+        <a class="btn" href="https://mulholland.ai"><i><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></i><span>Start building free</span></a>
+        <a class="btn btn-ghost" href="docs.html"><i><svg viewBox="0 0 24 24"><path d="M5 4h10l4 4v12H5z M14 4v5h5"/></svg></i><span>Read the docs</span></a>
+      </div>
+      <div class="logos"><span>ChatGPT</span><span>Claude</span><span>Gemini</span><span>Grok</span><span>Claude Code</span><span>Cursor</span></div>
+    </div>
+    <div class="hero-art"><img class="float" data-art src="art/agents.webp" alt="Chat windows from several AI apps plugged into one Archive antenna"></div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <hr class="rule">
+    <div class="split reveal">
+      <h2>Big jobs in one go.</h2>
+      <div class="body">
+        <p>Your assistant writes out the steps and Archive carries them out right next to your information.</p>
+        <p>Sorting a hundred files or updating a whole list takes one request, not a hundred back-and-forths.</p>
+      </div>
+      <img class="art" data-art src="art/code.webp" alt="A short list of steps fed into a small engine">
+    </div>
+    <hr class="rule">
+    <div class="split flip reveal">
+      <h2>As you, all or nothing.</h2>
+      <div class="body">
+        <p>Your assistant sees and changes only what you could, nothing more.</p>
+        <p>If anything goes wrong partway, every change is undone, so nothing ends up half done.</p>
+      </div>
+      <img class="art" data-art src="art/transaction.webp" alt="A set of steps sealed together in one envelope">
+    </div>
+    <hr class="rule">
+    <div class="split reveal">
+      <h2>It already knows your business.</h2>
+      <div class="body">
+        <p>Before it starts, your assistant sees how your information is organized: every field, what is required and how things link together.</p>
+        <p>Add a field and the next conversation already knows about it.</p>
+      </div>
+      <img class="art" data-art src="art/schema.webp" alt="A blueprint of your records turning into a guide for the assistant">
+    </div>
+    <hr class="rule">
+    <div class="split flip reveal">
+      <h2>A key for each assistant.</h2>
+      <div class="body">
+        <p>Every assistant gets its own access key, and it can only do less than you: fewer spaces, less say, an end date.</p>
+        <p>Turn off one key and only that assistant stops.</p>
+      </div>
+      <img class="art" data-art src="art/tokens.webp" alt="A ring of keys, each cut to open fewer doors">
+    </div>
+  </div>
+</section>
+
+<section class="band theme-ink">
+  <div class="wrap">
+    <div class="feature">
+      <div class="copy">
+<h2 class="reveal">Fifty files, <em>one</em> request.</h2>
+        <p class="body">Ask your assistant to go through new files and file every invoice. It already knows what an invoice looks like in your business, so there is nothing to explain.</p>
+        <div class="row"><a class="btn" href="docs.html"><i><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></i><span>Developer docs</span></a></div>
+      </div>
+      <div class="code reveal">
+        <div class="code-bar"><span class="dots"><i></i><i></i><i></i></span><span class="tabs"><button aria-selected="true">intake.ts</button><button aria-selected="false">tables.d.ts</button><button aria-selected="false">curl</button></span><button class="copy">Copy</button></div>
+<pre><span class="k">const</span> files = <span class="k">await</span> archive.<span class="f">files</span>({ limit: <span class="n">50</span> })
+<span class="k">const</span> filed = []
+
+<span class="k">for</span> (<span class="k">const</span> file <span class="k">of</span> files) {
+  <span class="k">if</span> (file.status !== <span class="s">"done"</span> || !<span class="s">/invoice/i</span>.<span class="f">test</span>(file.text)) <span class="k">continue</span>
+  <span class="k">const</span> seen = <span class="k">await</span> archive.<span class="f">list</span>(<span class="s">"invoice"</span>, { where: { source: file.id }, limit: <span class="n">1</span> })
+  <span class="k">if</span> (seen.length) <span class="k">continue</span>
+
+  <span class="k">const</span> row = <span class="k">await</span> archive.<span class="f">create</span>(<span class="s">"invoice"</span>, {
+    customer: file.metadata.from ?? file.name,
+    amount: file.text.<span class="f">match</span>(<span class="s">/total[:\s]+([^\n]+)/i</span>)?.[<span class="n">1</span>],
+    source: file.id,
+  })
+  filed.<span class="f">push</span>(row.id)
+}
+
+<span class="k">return</span> { filed }</pre>
+<pre hidden><span class="c">/** Table name to row type. */</span>
+<span class="k">interface</span> Tables {
+    invoice: Invoice;
+    contract: Contract;
+    person: Person;
+}
+
+<span class="c">/** An invoice you sent or received. */</span>
+<span class="k">interface</span> Invoice <span class="k">extends</span> Base {
+    <span class="c">/** Who it is billed to. */</span>
+    customer: <span class="k">string</span>;
+    <span class="c">/** Total due. */</span>
+    amount?: Money;
+    <span class="c">/** The file it came from. References a file: archive.file(id). */</span>
+    source?: <span class="k">string</span>;
+}</pre>
+<pre hidden>curl https://your-workspace.archive.mulholland.ai/api/run \
+  -H <span class="s">"Authorization: Bearer $ARCHIVE_TOKEN"</span> \
+  -d <span class="s">'{"code": "return archive.list(\"invoice\", { limit: 5 })"}'</span>
+
+<span class="c"># {"result": [...], "logs": [], "error": ""}</span></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="feature flip">
+      <div class="copy">
+        <h2 class="reveal">Connect in a minute.</h2>
+        <p class="body">In ChatGPT, Claude, Gemini and Grok, add Archive from the app's connectors and sign in. Coding tools connect with your workspace address and an access key.</p>
+        <ul class="letters">
+          <li><span class="l">A</span><div><h3>Claude Code</h3><p>One command and you are connected.</p></div></li>
+          <li><span class="l">B</span><div><h3>Cursor</h3><p>Add Archive to your project's settings.</p></div></li>
+          <li><span class="l">C</span><div><h3>Claude Desktop</h3><p>Add Archive to the app's settings file.</p></div></li>
+          <li><span class="l">D</span><div><h3>ChatGPT and claude.ai</h3><p>Add Archive as a connector and sign in to your workspace.</p></div></li>
+        </ul>
+      </div>
+      <div class="code reveal">
+        <div class="code-bar"><span class="dots"><i></i><i></i><i></i></span><span class="tabs"><button aria-selected="true">Claude Code</button><button aria-selected="false">Cursor</button><button aria-selected="false">Claude Desktop</button><button aria-selected="false">ChatGPT</button></span><button class="copy">Copy</button></div>
+<pre>claude mcp add --transport http archive \
+  https://your-workspace.archive.mulholland.ai/mcp \
+  --header <span class="s">"Authorization: Bearer $ARCHIVE_TOKEN"</span></pre>
+<pre hidden>{
+  <span class="s">"mcpServers"</span>: {
+    <span class="s">"archive"</span>: {
+      <span class="s">"url"</span>: <span class="s">"https://your-workspace.archive.mulholland.ai/mcp"</span>,
+      <span class="s">"headers"</span>: { <span class="s">"Authorization"</span>: <span class="s">"Bearer $ARCHIVE_TOKEN"</span> }
+    }
+  }
+}</pre>
+<pre hidden>{
+  <span class="s">"mcpServers"</span>: {
+    <span class="s">"archive"</span>: {
+      <span class="s">"command"</span>: <span class="s">"npx"</span>,
+      <span class="s">"args"</span>: [
+        <span class="s">"-y"</span>, <span class="s">"mcp-remote"</span>,
+        <span class="s">"https://your-workspace.archive.mulholland.ai/mcp"</span>,
+        <span class="s">"--header"</span>, <span class="s">"Authorization:${AUTH_HEADER}"</span>
+      ],
+      <span class="s">"env"</span>: { <span class="s">"AUTH_HEADER"</span>: <span class="s">"Bearer $ARCHIVE_TOKEN"</span> }
+    }
+  }
+}</pre>
+<pre hidden><span class="c"># Settings → Connectors → Add Archive</span>
+Server URL   https://your-workspace.archive.mulholland.ai/mcp
+Tool         run
+
+<span class="c"># Then ask:</span>
+<span class="s">"Call run with: return await archive.tables()"</span></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="band theme-lime">
+  <div class="wrap">
+    <div class="section">
+      <div class="head">
+        <h2 class="reveal">Works the same <em>everywhere</em>.</h2>
+        <p class="body reveal">What your assistant does in a chat works the same from your own apps and from the command line.</p>
+      </div>
+      <div class="specs">
+        <div class="spec reveal"><img data-art src="art/api.webp" alt=""><h3>Your own apps</h3><ul><li>Send the same steps from anything you build</li><li>Every action is also available on its own</li><li>Each request carries a sign-in or an access key</li></ul></div>
+        <div class="spec reveal"><img data-art src="art/cli.webp" alt=""><h3>Command line</h3><ul><li>Run a saved set of steps from your terminal</li><li>Print every action, with your own records in it</li><li>Make a new access key for an assistant</li></ul></div>
+        <div class="spec reveal"><img data-art src="art/security.webp" alt=""><h3>Guardrails</h3><ul><li>Sees only what its person can see</li><li>No reaching out to the internet or other files</li><li>Time and size limits on every job</li></ul></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="head">
+      <h2 class="reveal">Fifteen things it can do.</h2>
+      <p class="body reveal">Everything your assistant can do in Archive, in fifteen plain actions. If something is off, it hears exactly which field to fix.</p>
+    </div>
+    <table class="facts reveal">
+      <thead><tr><th>Action</th><th>Area</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td>Ask</td><td>Records</td><td>Answer a precise question about your records, from only what you can see</td></tr>
+        <tr><td>Browse</td><td>Records</td><td>A list of records or a saved board, narrowed to exact values</td></tr>
+        <tr><td>Open</td><td>Records</td><td>One record</td></tr>
+        <tr><td>Add</td><td>Records</td><td>Add a record, checked and tidied first, or start a blank page, Word document, spreadsheet or slide deck</td></tr>
+        <tr><td>Change</td><td>Records</td><td>Change some fields of a record, or clear one</td></tr>
+        <tr><td>Remove</td><td>Records</td><td>Remove a record</td></tr>
+        <tr><td>Search</td><td>Records</td><td>Search all the records and files you can see, best match first</td></tr>
+        <tr><td>Describe</td><td>Structure</td><td>Write out how your information is organized, one part at a time</td></tr>
+        <tr><td>Reshape</td><td>Structure</td><td>Plan a change to how your information is organized, then make it</td></tr>
+        <tr><td>Overview</td><td>Structure</td><td>Every kind of record and saved board, with its fields, notes and links</td></tr>
+        <tr><td>Files</td><td>Files</td><td>The files you can see, with the text read out of them</td></tr>
+        <tr><td>File</td><td>Files</td><td>One file, with the text read out of it</td></tr>
+        <tr><td>Read</td><td>Documents</td><td>The layout of a Word document, spreadsheet, slide deck or page</td></tr>
+        <tr><td>Edit</td><td>Documents</td><td>Make a list of edits to a document, all of them or none</td></tr>
+        <tr><td>Spaces</td><td>Access</td><td>The spaces you can see, and what you may do in each</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="head">
+      <h2 class="reveal">Questions</h2>
+    </div>
+    <div class="faq reveal">
+      <details><summary>Which AI apps can use Archive?</summary><p>ChatGPT, Claude, Gemini and Grok, right from their connector lists. Coding tools like Claude Code and Cursor connect with an access key.</p></details>
+      <details><summary>Can my assistant see things it shouldn't?</summary><p>No. It sees exactly what the person who connected it can see, and its key can only narrow that, never widen it.</p></details>
+      <details><summary>What if a job fails halfway?</summary><p>Everything it changed is undone, so nothing ends up half done. The one exception is a change to how your information is organized, which sticks as soon as it succeeds.</p></details>
+      <details><summary>Can it reach other websites or apps?</summary><p>Not while it works in Archive. Your assistant can look up what it needs first, then bring it along.</p></details>
+      <details><summary>How does my assistant know how my business is organized?</summary><p>Archive tells it up front: every kind of record, its fields and the notes you wrote about them. When you change something, the next conversation sees it.</p></details>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap cta">
+    <h2>Give your AI something real to work with.</h2>
+    <p class="lead">Connect ChatGPT, Claude, Gemini or Grok to your first workspace for free.</p>
+    <div class="row">
+      <a class="btn" href="https://mulholland.ai"><i><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></i><span>Start building free</span></a>
+      <a class="btn btn-ghost" href="docs.html"><i><svg viewBox="0 0 24 24"><path d="M5 4h10l4 4v12H5z M14 4v5h5"/></svg></i><span>Read the docs</span></a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer data-foot></footer>
+</body>
+</html>

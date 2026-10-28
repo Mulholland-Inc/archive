@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pages — Archive</title>
+<meta name="description" content="Live documents your team and your AI assistants write together. Everyone edits the same page at once, and nobody's work gets overwritten.">
+<meta name="theme-color" content="#ece4fd">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&family=Inter+Tight:wght@400;500;600&family=EB+Garamond:ital,wght@0,400..800;1,400..800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body class="theme-lilac">
+<header data-nav></header>
+
+<main>
+<section class="hero page-hero">
+  <div class="wrap hero-grid">
+    <div>
+<h1>Pages your team and your AI write together.</h1>
+      <p class="lead">Your team types in the browser while your AI assistant edits the same page. Every change lands, and nothing gets overwritten.</p>
+      <div class="row">
+        <a class="btn" href="https://mulholland.ai"><i><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></i><span>Start building free</span></a>
+        <a class="btn btn-ghost" href="docs.html"><i><svg viewBox="0 0 24 24"><path d="M5 4h10l4 4v12H5z M14 4v5h5"/></svg></i><span>Read the docs</span></a>
+      </div>
+    </div>
+    <div class="hero-art"><img class="float" data-art src="art/pages.webp" alt="An open document with blocks being placed by two hands and a small robot arm"></div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <hr class="rule">
+    <div class="split">
+      <h2 class="reveal">Live for everyone.</h2>
+      <div class="body reveal">
+        <p>Your words appear the instant you type them, then show up for everyone else on the page.</p>
+        <p>You see who is here and where they are typing, and edits from different people never clash.</p>
+      </div>
+      <img class="art reveal" data-art src="art/crdt.webp" alt="Several copies of one document passing small blocks around a ring">
+    </div>
+    <hr class="rule">
+    <div class="split flip">
+      <h2 class="reveal">Agents are editors too.</h2>
+      <div class="body reveal">
+        <p>Your AI assistant can add, rewrite or remove any part of a page, even while others keep typing around it.</p>
+        <p>It shows up in the list of who is here, and its changes appear on everyone's screen just like a teammate's.</p>
+      </div>
+      <img class="art reveal" data-art src="art/agents.webp" alt="Chat windows connected to a document by thin cables">
+    </div>
+    <hr class="rule">
+    <div class="split">
+      <h2 class="reveal">Pages and Office files, one way.</h2>
+      <div class="body reveal">
+        <p>The same simple steps that create, read and edit a page also work on Word, Excel and PowerPoint files.</p>
+        <p>An assistant that can write a page can already fix a contract.</p>
+      </div>
+      <img class="art reveal" data-art src="art/office.webp" alt="A page, a spreadsheet and a slide deck plugged into one socket">
+    </div>
+    <hr class="rule">
+    <div class="split flip">
+      <h2 class="reveal">Every word is searchable.</h2>
+      <div class="body reveal">
+        <p>Every page can be found the moment it is saved, right next to your records and files.</p>
+        <p>Each page belongs to one space, so only the right people see it.</p>
+      </div>
+      <img class="art reveal" data-art src="art/search.webp" alt="A magnifier sweeping across stacked pages">
+    </div>
+    <hr class="rule">
+  </div>
+</section>
+
+<section class="band theme-mint">
+  <div class="wrap">
+    <div class="feature">
+      <div class="copy">
+<h2 class="reveal">From your screen to <em>every</em> screen.</h2>
+        <ul class="letters">
+          <li><span class="l">A</span><div><h3>Type</h3><p>Your change shows up on your screen at once and heads to Archive.</p></div></li>
+          <li><span class="l">B</span><div><h3>Merge</h3><p>Archive weaves it in with everyone else's and saves the page.</p></div></li>
+          <li><span class="l">C</span><div><h3>Share</h3><p>Everyone with the page open sees it a moment later, wherever they are.</p></div></li>
+        </ul>
+      </div>
+      <img class="art reveal" data-art src="art/api.webp" alt="Messages flowing from one screen through a hub to many others">
+    </div>
+  </div>
+</section>
+
+<section class="band theme-ink">
+  <div class="wrap">
+    <div class="feature flip">
+      <div class="copy">
+<h2 class="reveal">Write a page in <em>one</em> go.</h2>
+        <p class="body">Your AI assistant can create a page, fill it in, and come back later to change a single line. If anything goes wrong partway, the page stays exactly as it was.</p>
+        <div class="row"><a class="btn" href="docs.html"><i><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></i><span>Pages docs</span></a></div>
+      </div>
+      <div class="code reveal">
+        <div class="code-bar"><span class="dots"><i></i><i></i><i></i></span><span class="tabs"><button aria-selected="true">create.ts</button><button aria-selected="false">update.ts</button><button aria-selected="false">model.json</button></span><button class="copy">Copy</button></div>
+<pre><span class="k">const</span> page = <span class="k">await</span> archive.<span class="f">create</span>(<span class="s">"Launch plan.page"</span>)
+
+<span class="k">await</span> archive.<span class="f">edit</span>(page.id, [
+  { op: <span class="s">"insert_paragraph_after"</span>, text: <span class="s">"Launch plan"</span>, style: <span class="s">"heading1"</span> },
+  { op: <span class="s">"insert_paragraph_after"</span>, text: <span class="s">"Ship pricing and docs on Thursday."</span> },
+  { op: <span class="s">"insert_paragraph_after"</span>, text: <span class="s">"Write the changelog entry"</span>, style: <span class="s">"todo"</span> },
+  { op: <span class="s">"insert_paragraph_after"</span>, text: <span class="s">"Record the demo"</span>, style: <span class="s">"todo"</span> },
+])
+
+<span class="k">return</span> archive.<span class="f">read</span>(page.id)</pre>
+<pre hidden><span class="k">const</span> [hit] = <span class="k">await</span> archive.<span class="f">search</span>(<span class="s">"Launch plan"</span>, { type: <span class="s">"file"</span>, limit: <span class="n">1</span> })
+<span class="k">const</span> page = <span class="k">await</span> archive.<span class="f">read</span>(hit.id)
+<span class="k">const</span> demo = page.paragraphs.<span class="f">find</span>((p) =&gt; p.text === <span class="s">"Record the demo"</span>)
+
+<span class="k">await</span> archive.<span class="f">edit</span>(hit.id, [
+  { op: <span class="s">"replace_text"</span>, para: demo.id, find: <span class="s">"demo"</span>, replace: <span class="s">"two-minute demo"</span> },
+  { op: <span class="s">"insert_paragraph_after"</span>, para: demo.id, text: <span class="s">"Post it in #launch"</span>, style: <span class="s">"todo"</span> },
+  { op: <span class="s">"replace_text"</span>, find: <span class="s">"Thursday"</span>, replace: <span class="s">"Friday"</span> },
+])</pre>
+<pre hidden>{
+  <span class="s">"type"</span>: <span class="s">"page"</span>,
+  <span class="s">"paragraphs"</span>: [
+    { <span class="s">"id"</span>: <span class="s">"1@1"</span>, <span class="s">"style"</span>: <span class="s">"heading1"</span>, <span class="s">"text"</span>: <span class="s">"Launch plan"</span> },
+    { <span class="s">"id"</span>: <span class="s">"13@1"</span>, <span class="s">"style"</span>: <span class="s">"paragraph"</span>, <span class="s">"text"</span>: <span class="s">"Ship pricing and docs on Thursday."</span> },
+    { <span class="s">"id"</span>: <span class="s">"48@1"</span>, <span class="s">"style"</span>: <span class="s">"todo"</span>, <span class="s">"text"</span>: <span class="s">"Write the changelog entry"</span> },
+    { <span class="s">"id"</span>: <span class="s">"75@1"</span>, <span class="s">"style"</span>: <span class="s">"todo"</span>, <span class="s">"text"</span>: <span class="s">"Record the demo"</span> }
+  ]
+}</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="head">
+      <h2 class="reveal">Built from simple blocks.</h2>
+      <p class="body reveal">A page is a stack of blocks, like headings, lists and to-dos. Use the built-in styles or name your own.</p>
+    </div>
+    <table class="facts reveal">
+      <thead><tr><th>Style</th><th>For</th></tr></thead>
+      <tbody>
+        <tr><td>Paragraph</td><td>Body text, the default for a new block</td></tr>
+        <tr><td>Headings, in three sizes</td><td>Titles and sections</td></tr>
+        <tr><td>Bulleted and numbered</td><td>Lists</td></tr>
+        <tr><td>To-do</td><td>Checklists your team and your AI work through</td></tr>
+        <tr><td>Quote</td><td>Pulled quotes and callouts</td></tr>
+        <tr><td>Code</td><td>Snippets, kept exactly as typed</td></tr>
+        <tr><td>Your own</td><td>Any style your team or assistant uses, like <code class="inline">decision</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="specs">
+      <div class="spec reveal"><img data-art src="art/crdt.webp" alt=""><h3>See who is here</h3><ul><li>Everyone on the page, each with a name and color</li><li>Live cursors and highlights</li><li>People leave the list when they close the page</li></ul></div>
+      <div class="spec reveal"><img data-art src="art/transaction.webp" alt=""><h3>All or nothing</h3><ul><li>Every change lands in full or not at all</li><li>If something goes wrong, nothing is saved</li><li>Everyone sees only finished changes</li></ul></div>
+      <div class="spec reveal"><img data-art src="art/spaces.webp" alt=""><h3>Spaces</h3><ul><li>Every page belongs to one space</li><li>Viewers read, editors write</li><li>Your AI assistants follow the same rules as your team</li></ul></div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="head">
+      <h2 class="reveal">Questions.</h2>
+      <p class="body reveal">More in the <a class="link" href="docs.html">pages docs</a>.</p>
+    </div>
+    <div class="faq">
+      <details><summary>Can my AI assistant edit while I am typing?</summary><p>Yes. Your edits and its edits are woven together, and it never loses its place, even when you add or delete around it.</p></details>
+      <details><summary>What if two of us rewrite the same block?</summary><p>If you both replace the whole block, the last one saved wins and the words are never jumbled. Smaller edits inside a block keep everyone else's changes to the rest of it.</p></details>
+      <details><summary>Does my AI assistant need anything special?</summary><p>No. It edits pages the same way it edits Word, Excel and PowerPoint files, through one connection.</p></details>
+      <details><summary>Do pages support formatting and tables?</summary><p>Today pages hold headings, lists, to-dos, quotes and code; bold text, nesting and tables are on the way. To keep track of records, use Tables.</p></details>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap cta">
+    <h2>Write the first page together.</h2>
+    <p class="lead">Invite your team, connect your AI assistant, and open the same page.</p>
+    <div class="row">
+      <a class="btn" href="https://mulholland.ai"><i><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></i><span>Start building free</span></a>
+      <a class="btn btn-ghost" href="agents.html"><i><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></i><span>How agents work</span></a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer data-foot></footer>
+</body>
+</html>

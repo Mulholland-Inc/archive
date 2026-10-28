@@ -1,0 +1,14 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>draw render</title>
+<style>html, body { margin: 0; background: transparent; }</style>
+<script type="module">
+import { bake } from './render.js';
+window.bake = async (name, opts) => {
+  try {
+    return { png: await bake(name, opts) };
+  } catch (e) {
+    return { error: e.message };
+  }
+};
+</script>
