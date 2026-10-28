@@ -29,6 +29,18 @@ CREATE TABLE archive.token (
 );
 CREATE INDEX token_user_idx ON archive.token (user_id);
 
+CREATE TABLE archive.invite (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    space      uuid NOT NULL REFERENCES archive.space ON DELETE CASCADE,
+    email      text NOT NULL,
+    name       text NOT NULL DEFAULT '',
+    level      text NOT NULL,
+    invited_by text NOT NULL,
+    hash       text NOT NULL UNIQUE,
+    expires_at timestamptz NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE archive.revision (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     hash       text NOT NULL,

@@ -33,7 +33,7 @@ Two Postgres schemas. Tables are named in the singular, and every id is a UUIDv7
 
 | Schema | Holds |
 |---|---|
-| `archive` | Archive's own tables: `space`, `user`, `token`, `revision`, `file`, `upload` and `secret`. It also holds the built-in types, as domains (`archive.email`, `archive.iban`, `archive.phone`, …) and composite types (`archive.money`, `archive.address`, `archive.timestamp`, …) |
+| `archive` | Archive's own tables: `space`, `user`, `token`, `invite`, `revision`, `file`, `upload` and `secret`. It also holds the built-in types, as domains (`archive.email`, `archive.iban`, `archive.phone`, …) and composite types (`archive.money`, `archive.address`, `archive.timestamp`, …) |
 | `public` | One table per type, where the table is the type and a row is the entity, and the views over them |
 
 There is no `type` or `entity` table: Postgres already is that. Archive reads types, columns, foreign keys and `COMMENT ON` descriptions from the catalog.
@@ -132,7 +132,8 @@ Archive is listed in ChatGPT, Claude, Gemini and Grok as one remote MCP server. 
 - **Spaces**: every user gets a private space, and shared spaces can be made for a household or a team. Every row and file belongs to one space.
 - **Roles are Postgres roles**: users, space roles (`owner`, `admin`, `editor`, `viewer`) and tokens are real Postgres roles, prefixed per instance (`ARCHIVE_INSTANCE`), and row-level security filters every query. A bug in one surface cannot leak another user's data, and plain SQL gets the same access as the app.
 - **Tokens** belong to a user and can only narrow that user's rights. Agents get their own tokens.
-- **Sign-in**: email magic links (`ARCHIVE_SMTP_URL`), passkeys, and OIDC providers such as Google or Microsoft (`ARCHIVE_OIDC`). The first owner comes from `ARCHIVE_ADMIN_EMAIL`, or a one-time setup link.
+- **Sign-in**: email magic links (`ARCHIVE_SMTP_URL`), passkeys, and OIDC providers such as Google or Microsoft (`ARCHIVE_OIDC`). The first owner comes from `ARCHIVE_ADMIN_EMAIL`, or a one-time setup link. `GET /auth/magic` uses a link at once; a product that shows the link as its own page first, so a mail scanner does not spend it, posts the token to `POST /auth/magic/use`. `POST /auth/signout/everywhere` ends every session of the person; their API tokens stay.
+- **Invites**: an admin of a space invites an email address at a level no higher than their own (`POST /auth/spaces/{space}/invites` with `email`, `role` and an optional `name`), and gets back a one-time link that lasts 7 days, to send as they like. Opening it (`GET /auth/invite?token=`) only shows it, or says what it is for to a client that is not a browser; pressing its button (`POST /auth/invite`) makes or finds the user, raises their level in the space to the invite's, and signs them in. Invites are rows of `archive.invite`, which only the system role reads.
 - **Secret fields**: values of secret types such as `iban` or `us_ssn` are encrypted in `archive.secret` with `ARCHIVE_SECRET_KEY`. They are hidden from anyone not granted that type.
 
 ## Files

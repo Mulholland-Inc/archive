@@ -252,8 +252,7 @@ func (a *Archive) AddUser(ctx context.Context, email, name string, admin bool) (
 	if err != nil {
 		return nil, err
 	}
-	u := &User{ID: coreNewID(), Email: email, Name: strings.TrimSpace(name)}
-	u.Role = a.roleID("u", u.ID)
+	var u *User
 	return u, a.sys(ctx, func(ctx context.Context) error {
 		q := a.st.Q(ctx)
 		if _, err := q.Exec(ctx, `SELECT pg_advisory_xact_lock(7273)`); err != nil {
@@ -277,33 +276,43 @@ func (a *Archive) AddUser(ctx context.Context, email, name string, admin bool) (
 			rows, _ := q.Query(ctx, `SELECT role FROM space`)
 			orphans, _ = pgx.CollectRows(rows, pgx.RowTo[string])
 		}
-		home, err := a.createSpace(ctx, a.freeSpaceName(ctx, email))
-		if err != nil {
-			return err
-		}
-		u.Home = home
-		err = q.QueryRow(ctx, `INSERT INTO "user" (id, email, name, role, home) VALUES ($1, $2, $3, $4, $5) RETURNING created_at`,
-			u.ID, u.Email, u.Name, u.Role, home).Scan(&u.CreatedAt)
-		if err != nil {
-			return err
-		}
-		if err := a.createRole(ctx, u.Role); err != nil {
-			return err
-		}
-		var homeRole string
-		if err := q.QueryRow(ctx, `SELECT role FROM space WHERE id = $1`, home).Scan(&homeRole); err != nil {
-			return err
-		}
-		for _, base := range append(orphans, homeRole) {
-			if err := a.setLevel(ctx, u.Role, base, authLevel("owner")); err != nil {
-				return err
-			}
-		}
-		if admin || first {
-			return a.exec(ctx, "GRANT "+authIdent(a.prefix+"_admin")+" TO "+authIdent(u.Role))
-		}
-		return nil
+		u, err = a.addUser(ctx, email, name, orphans, admin || first)
+		return err
 	})
+}
+
+// addUser makes a user with a home space, owning the spaces in owns too, inside a system
+// transaction whose caller has already decided they may.
+func (a *Archive) addUser(ctx context.Context, email, name string, owns []string, admin bool) (*User, error) {
+	q := a.st.Q(ctx)
+	u := &User{ID: coreNewID(), Email: email, Name: strings.TrimSpace(name)}
+	u.Role = a.roleID("u", u.ID)
+	home, err := a.createSpace(ctx, a.freeSpaceName(ctx, email))
+	if err != nil {
+		return nil, err
+	}
+	u.Home = home
+	err = q.QueryRow(ctx, `INSERT INTO "user" (id, email, name, role, home) VALUES ($1, $2, $3, $4, $5) RETURNING created_at`,
+		u.ID, u.Email, u.Name, u.Role, home).Scan(&u.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	if err := a.createRole(ctx, u.Role); err != nil {
+		return nil, err
+	}
+	var homeRole string
+	if err := q.QueryRow(ctx, `SELECT role FROM space WHERE id = $1`, home).Scan(&homeRole); err != nil {
+		return nil, err
+	}
+	for _, base := range append(owns, homeRole) {
+		if err := a.setLevel(ctx, u.Role, base, authLevel("owner")); err != nil {
+			return nil, err
+		}
+	}
+	if admin {
+		return u, a.exec(ctx, "GRANT "+authIdent(a.prefix+"_admin")+" TO "+authIdent(u.Role))
+	}
+	return u, nil
 }
 
 func (a *Archive) userBy(ctx context.Context, where string, arg any) (*User, error) {
@@ -419,6 +428,19 @@ func (a *Archive) SignOut(ctx context.Context) error {
 	}
 	return a.sys(ctx, func(ctx context.Context) error {
 		_, err := a.st.Q(ctx).Exec(ctx, `DELETE FROM token WHERE id = $1`, ac.Session)
+		return err
+	})
+}
+
+// SignOutEverywhere ends every session of the signed-in person, in every browser and app, this one
+// too. Their API tokens stay, since they made those to outlast a session.
+func (a *Archive) SignOutEverywhere(ctx context.Context) error {
+	ac, err := authUser(ctx)
+	if err != nil {
+		return err
+	}
+	return a.sys(ctx, func(ctx context.Context) error {
+		_, err := a.st.Q(ctx).Exec(ctx, `DELETE FROM token WHERE user_id = $1 AND kind = 'session'`, ac.UserID)
 		return err
 	})
 }

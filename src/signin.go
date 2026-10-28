@@ -184,6 +184,13 @@ func (s *signin) handler() http.Handler {
 	mux.HandleFunc("GET /auth/magic", func(w http.ResponseWriter, r *http.Request) {
 		s.browser(w, r, func() (*User, error) { return a.UseMagicLink(r.Context(), r.URL.Query().Get("token")) })
 	})
+	// A product that shows a sign-in link as a page of its own, so a mail scanner that follows the
+	// link does not spend it, uses the link when that page's button is pressed.
+	mux.HandleFunc("POST /auth/magic/use", func(w http.ResponseWriter, r *http.Request) {
+		if token, ok := s.posted(w, r); ok {
+			s.browser(w, r, func() (*User, error) { return a.UseMagicLink(r.Context(), token) })
+		}
+	})
 	open("GET /auth/methods", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		providers := append([]string{}, slices.Sorted(maps.Keys(s.oidc))...)
 		return ok(map[string]any{"providers": providers, "mail": os.Getenv("ARCHIVE_SMTP_URL") != ""}, nil)
@@ -220,6 +227,10 @@ func (s *signin) handler() http.Handler {
 		http.SetCookie(w, s.cookie(signinCookie, "", "/", -1))
 		return http.StatusNoContent, nil, a.SignOut(r.Context())
 	})
+	authed("POST /auth/signout/everywhere", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
+		http.SetCookie(w, s.cookie(signinCookie, "", "/", -1))
+		return http.StatusNoContent, nil, a.SignOutEverywhere(r.Context())
+	})
 	authed("GET /auth/me", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		sp, err := a.Spaces(r.Context())
 		return ok(map[string]any{"actor": ActorFrom(r.Context()), "spaces": sp, "home": ActorFrom(r.Context()).Home}, err)
@@ -239,6 +250,46 @@ func (s *signin) handler() http.Handler {
 	})
 	authed("DELETE /auth/spaces/{space}", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		return http.StatusNoContent, nil, a.DeleteSpace(r.Context(), r.PathValue("space"))
+	})
+	authed("POST /auth/spaces/{space}/invites", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
+		var body struct {
+			Email string `json:"email"`
+			Name  string `json:"name"`
+			Role  string `json:"role"`
+		}
+		if err := httpDecode(r, &body); err != nil {
+			return 0, nil, err
+		}
+		inv, secret, err := a.Invite(r.Context(), r.PathValue("space"), body.Email, body.Name, body.Role)
+		if err != nil {
+			return 0, nil, err
+		}
+		// the link goes back to whoever invited, to send as they like
+		inv.Link = s.base.String() + "/auth/invite?token=" + url.QueryEscape(secret)
+		return http.StatusCreated, inv, nil
+	})
+	// Opening an invite only shows it; a press of its button uses it, so a mail scanner that
+	// follows links does not spend it. A client that is not a browser reads what it is for.
+	mux.HandleFunc("GET /auth/invite", func(w http.ResponseWriter, r *http.Request) {
+		token := r.URL.Query().Get("token")
+		inv, err := a.PeekInvite(r.Context(), token)
+		w.Header().Set("Cache-Control", "no-store")
+		if err != nil || !strings.Contains(r.Header.Get("Accept"), "text/html") {
+			httpWrite(w, http.StatusOK, inv, err)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		as := "a " + inv.Role
+		if inv.Role == "admin" || inv.Role == "editor" || inv.Role == "owner" {
+			as = "an " + inv.Role
+		}
+		inviteTmpl.Execute(w, map[string]any{"Invite": inv, "Token": token, "As": as})
+	})
+	mux.HandleFunc("POST /auth/invite", func(w http.ResponseWriter, r *http.Request) {
+		if token, ok := s.posted(w, r); ok {
+			s.browser(w, r, func() (*User, error) { return a.AcceptInvite(r.Context(), token) })
+		}
 	})
 	authed("GET /auth/spaces/{space}/members", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		return ok(a.Members(r.Context(), r.PathValue("space")))
@@ -392,6 +443,28 @@ func (s *signin) browser(w http.ResponseWriter, r *http.Request, user func() (*U
 		return
 	}
 	httpWrite(w, http.StatusOK, v, err)
+}
+
+// posted is the token a press of a link's button sends, as a form or as JSON. A press that signs a
+// browser in must come from this archive's own pages or from no browser at all (an app, a script),
+// so a page elsewhere cannot sign it into an account of that page's choosing; posted answers 403
+// itself when not.
+func (s *signin) posted(w http.ResponseWriter, r *http.Request) (string, bool) {
+	if err := http.NewCrossOriginProtection().Check(r); err != nil {
+		httpWrite(w, 0, nil, fmt.Errorf("that came from another site: %w", ErrForbidden))
+		return "", false
+	}
+	if token := r.PostFormValue("token"); token != "" {
+		return token, true
+	}
+	var body struct {
+		Token string `json:"token"`
+	}
+	if err := httpDecode(r, &body); err != nil {
+		httpWrite(w, 0, nil, err)
+		return "", false
+	}
+	return body.Token, true
 }
 
 func (s *signin) cookie(name, value, path string, maxAge int) *http.Cookie {
