@@ -433,14 +433,15 @@ func (a *Archive) SignOut(ctx context.Context) error {
 }
 
 // SignOutEverywhere ends every session of the signed-in person, in every browser and app, this one
-// too. Their API tokens stay, since they made those to outlast a session.
+// too, and spends every sign-in link of theirs still waiting. Their API and app tokens stay, since
+// they made those to outlast a session.
 func (a *Archive) SignOutEverywhere(ctx context.Context) error {
 	ac, err := authUser(ctx)
 	if err != nil {
 		return err
 	}
 	return a.sys(ctx, func(ctx context.Context) error {
-		_, err := a.st.Q(ctx).Exec(ctx, `DELETE FROM token WHERE user_id = $1 AND kind = 'session'`, ac.UserID)
+		_, err := a.st.Q(ctx).Exec(ctx, `DELETE FROM token WHERE user_id = $1 AND kind IN ('session', 'magic')`, ac.UserID)
 		return err
 	})
 }

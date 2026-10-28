@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -27,7 +28,7 @@ type Invite struct {
 // Invite lets an admin of a space bring someone in at a level no higher than their own: an owner
 // invites owners, an admin admins and below. Like membership, it needs a signed-in person, not an
 // API token. The name, if given, becomes the account's name when the invite makes one. It returns
-// the secret the link carries.
+// the secret the link carries. A person's own home space takes no invites: it is theirs alone.
 func (a *Archive) Invite(ctx context.Context, space, email, name, level string) (*Invite, string, error) {
 	ac, err := authUser(ctx)
 	if err != nil {
@@ -53,6 +54,13 @@ func (a *Archive) Invite(ctx context.Context, space, email, name, level string) 
 		if !a.has(ctx, ac.UserRole, base+"_"+need) {
 			return fmt.Errorf("inviting a %s needs %s in %s: %w", level, need, space, ErrForbidden)
 		}
+		var home bool
+		if err := a.st.Q(ctx).QueryRow(ctx, `SELECT EXISTS (SELECT FROM "user" u JOIN space s ON s.id = u.home WHERE s.name = $1)`, space).Scan(&home); err != nil {
+			return err
+		}
+		if home {
+			return fmt.Errorf("%s is someone's personal space, which takes no invites: %w", space, ErrConflict)
+		}
 		return a.st.Q(ctx).QueryRow(ctx, `INSERT INTO invite (space, email, name, level, invited_by, hash, expires_at)
 			SELECT id, $2, $3, $4, $5, $6, now() + $7::interval FROM space WHERE name = $1 RETURNING expires_at`,
 			space, email, inv.Name, level, inv.InvitedBy, authHash(secret), inviteTTL.String()).Scan(&inv.ExpiresAt)
@@ -72,16 +80,27 @@ func (a *Archive) PeekInvite(ctx context.Context, secret string) (*Invite, error
 	return inv, err
 }
 
-// AcceptInvite uses an invite once: it makes the user if the address has none, grants the level in
-// the space (raising, never lowering, what they already have), and returns the user to sign in.
-// It is one transaction, so a failure leaves the invite unused.
-func (a *Archive) AcceptInvite(ctx context.Context, secret string) (*User, error) {
-	var u *User
-	err := a.sys(ctx, func(ctx context.Context) error {
+// ErrSignInFirst is an invite for an address that has an account, used by someone not signed in
+// as that account. The invite stays good, for them to use once they are.
+var ErrSignInFirst = fmt.Errorf("this invite is for an address that already has an account: sign in as that address, then use the invite again: %w", ErrConflict)
+
+// AcceptInvite uses an invite once and grants its level in the space, raising, never lowering,
+// what the person already has. For an address with no account it makes one, and says so (made),
+// so the caller signs the link holder in as it. For an address that has an account it only grants,
+// and only when ctx's signed-in person is that account (ErrSignInFirst otherwise): holding the link
+// is never a way into an account that exists, since whoever invited holds the link too. It is one
+// transaction, so a failure leaves the invite unused.
+func (a *Archive) AcceptInvite(ctx context.Context, secret string) (u *User, made bool, err error) {
+	signedIn := uuid.Nil
+	if ac := ActorFrom(ctx); ac != nil && ac.TokenID == uuid.Nil {
+		signedIn = ac.UserID
+	}
+	err = a.sys(ctx, func(ctx context.Context) error {
 		q := a.st.Q(ctx)
+		var id uuid.UUID
 		var email, name, level, base string
-		err := q.QueryRow(ctx, `DELETE FROM invite i USING space s WHERE s.id = i.space AND i.hash = $1 AND i.expires_at > now()
-			RETURNING i.email, i.name, i.level, s.role`, authHash(secret)).Scan(&email, &name, &level, &base)
+		err := q.QueryRow(ctx, `SELECT i.id, i.email, i.name, i.level, s.role FROM invite i JOIN space s ON s.id = i.space
+			WHERE i.hash = $1 AND i.expires_at > now() FOR UPDATE OF i`, authHash(secret)).Scan(&id, &email, &name, &level, &base)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("invite link is invalid, used or expired: %w", ErrUnauthorized)
 		}
@@ -89,13 +108,21 @@ func (a *Archive) AcceptInvite(ctx context.Context, secret string) (*User, error
 			return err
 		}
 		u, err = a.userBy(ctx, `email = $1`, email)
-		if errors.Is(err, ErrNotFound) {
+		switch {
+		case errors.Is(err, ErrNotFound):
 			u, err = a.addUser(ctx, email, name, nil, false)
-		} else if err == nil && u.Name == "" && name != "" {
+			made = true
+		case err != nil:
+		case u.ID != signedIn:
+			return ErrSignInFirst
+		case u.Name == "" && name != "":
 			u.Name = name
 			_, err = q.Exec(ctx, `UPDATE "user" SET name = $2 WHERE id = $1 AND name = ''`, u.ID, name)
 		}
 		if err != nil {
+			return err
+		}
+		if _, err := q.Exec(ctx, `DELETE FROM invite WHERE id = $1`, id); err != nil {
 			return err
 		}
 		if a.level(ctx, u.Role, base, true) >= authLevel(level) {
@@ -103,7 +130,10 @@ func (a *Archive) AcceptInvite(ctx context.Context, secret string) (*User, error
 		}
 		return a.setLevel(ctx, u.Role, base, authLevel(level))
 	})
-	return u, err
+	if err != nil {
+		return nil, false, err
+	}
+	return u, made, nil
 }
 
 // inviteTmpl is an invite opened in a browser: who asked them in, and one button that uses it, so

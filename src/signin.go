@@ -227,6 +227,9 @@ func (s *signin) handler() http.Handler {
 		http.SetCookie(w, s.cookie(signinCookie, "", "/", -1))
 		return http.StatusNoContent, nil, a.SignOut(r.Context())
 	})
+	// Signing out everywhere ends every session of the person and every sign-in link still waiting
+	// to be used. Their API tokens and app tokens stay: they made those to outlast a session, and
+	// take them back one by one at DELETE /auth/tokens/{id}.
 	authed("POST /auth/signout/everywhere", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		http.SetCookie(w, s.cookie(signinCookie, "", "/", -1))
 		return http.StatusNoContent, nil, a.SignOutEverywhere(r.Context())
@@ -286,10 +289,27 @@ func (s *signin) handler() http.Handler {
 		}
 		inviteTmpl.Execute(w, map[string]any{"Invite": inv, "Token": token, "As": as})
 	})
+	// Pressing Join signs the presser in only as an account the invite makes. An address that has an
+	// account joins only from a session of that account (AcceptInvite), which keeps its session.
 	mux.HandleFunc("POST /auth/invite", func(w http.ResponseWriter, r *http.Request) {
-		if token, ok := s.posted(w, r); ok {
-			s.browser(w, r, func() (*User, error) { return a.AcceptInvite(r.Context(), token) })
+		token, ok := s.posted(w, r)
+		if !ok {
+			return
 		}
+		ctx := r.Context()
+		if ac, err := a.httpActor(r); err == nil {
+			ctx = WithActor(ctx, ac)
+		}
+		u, made, err := a.AcceptInvite(ctx, token)
+		if err != nil || made {
+			s.browser(w, r, func() (*User, error) { return u, err })
+			return
+		}
+		if strings.Contains(r.Header.Get("Accept"), "text/html") {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+		httpWrite(w, http.StatusOK, map[string]any{"user": u}, nil)
 	})
 	authed("GET /auth/spaces/{space}/members", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		return ok(a.Members(r.Context(), r.PathValue("space")))
