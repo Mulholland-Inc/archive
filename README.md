@@ -108,6 +108,11 @@ All or nothing, only your spaces (even with raw SQL), no network, a 30 second li
 
 ## Your data, in plain Postgres
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/readme/tidy-dark.gif">
+  <img src=".github/readme/tidy.gif" alt="Pixel art: messy blocks fall into wells and settle into tidy rows." width="100%">
+</picture>
+
 Every kind of record is a real Postgres table, and a row is one record. Built-in column types clean messy input before it is stored:
 
 | You send | Archive stores |
@@ -128,6 +133,11 @@ The live database is the only source of truth, so there is no migrations folder.
 
 ## A space for every team
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/readme/spaces-dark.gif">
+  <img src=".github/readme/spaces.gif" alt="Pixel art: a person and their AI walk past three rooms and only go into the ones they belong to." width="100%">
+</picture>
+
 Each team, client or project gets its own space, and people and their AI only see the spaces they are in. People, spaces and tokens are real Postgres roles, and every table has row-level security, so the database itself checks every row against who is asking.
 
 ```sh
@@ -140,6 +150,11 @@ Roles are `viewer`, `editor`, `admin` and `owner`. Tokens only ever narrow what 
 
 ## Run it anywhere
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/readme/own-dark.gif">
+  <img src=".github/readme/own.gif" alt="Pixel art: an office and a house on rolling hills, a courier walking between them while the lights switch from one to the other." width="100%">
+</picture>
+
 Run Archive yourself, or [let us run it for you](https://mulholland.ai).
 
 | | |
@@ -150,13 +165,6 @@ Run Archive yourself, or [let us run it for you](https://mulholland.ai).
 | **As code** | an [`archive` Terraform provider](apps/terraform/provider) for your schema, spaces, tokens and roles |
 
 The image holds Postgres and the binary. Give it an outside Postgres (`DATABASE_URL`), S3-compatible storage (`ARCHIVE_BLOB_URL`) and one `ARCHIVE_SECRET_KEY`, and it keeps nothing local, so you can run as many copies side by side as you like. In production, put it behind HTTPS and set `ARCHIVE_URL`. Every setting is an environment variable; the [docs](https://archive.us.org/docs.html) list them all.
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset=".github/readme/tidy-dark.gif">
-    <img src=".github/readme/tidy.gif" alt="Pixel art: blocks fall into wells and settle into tidy rows." width="100%">
-  </picture>
-</p>
 
 ## How it is built
 
