@@ -331,7 +331,7 @@ code.inline { font: 500 0.88em var(--mono); background: var(--cell-strong); padd
 .post-card:hover .frame { background: var(--cell-strong); }
 .post-card:hover .frame img { transform: translateY(-6px); }
 .post-card h3 { font-size: 26px; }
-.post-card p { color: var(--muted); font-size: var(--text-sm); }
+.post-card p { color: rgba(255, 255, 255, 0.82); font-size: var(--text-sm); }
 .post-card .meta, .post-meta { font: 500 var(--text-xs) / 1 var(--mono); color: var(--muted); }
 .posts .post-card.lead { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: var(--s-7); align-items: center; }
 .posts .post-card.lead h3 { font-size: var(--text-3xl); line-height: 1.05; }
@@ -347,7 +347,7 @@ code.inline { font: 500 0.88em var(--mono); background: var(--cell-strong); padd
 .post > * + * { margin-top: var(--s-5); }
 .post h2 { font-size: 38px; margin-top: var(--s-8); line-height: 1.1; }
 .post h3 { font-size: 24px; margin-top: var(--s-6); }
-.post p, .post li { color: var(--graphite); }
+.post p, .post li { color: rgba(255, 255, 255, 0.88); }
 .theme-ink .post p, .theme-ink .post li { color: var(--muted); }
 .post ul, .post ol { padding-left: 22px; display: flex; flex-direction: column; gap: var(--s-2); }
 .post a { text-decoration: underline; text-underline-offset: 3px; }
@@ -437,3 +437,5 @@ main { background: #14171d; border-radius: var(--radius-lg); overflow: clip; }
 .post-card h3 { font-family: var(--serif); font-weight: 500; font-size: 32px; line-height: 1.05; letter-spacing: -0.04em; }
 .posts .post-card.lead h3 { font-family: var(--serif); font-weight: 500; }
 .post .pull { background: #000000; color: var(--white); }
+.post-hero .lead { color: rgba(255, 255, 255, 0.82); }
+.posts .post-card.lead p { font-size: var(--text-lg); color: var(--fg); }
