@@ -29,3 +29,24 @@ func TestSchemaRoundTripsConstraintsOnCoreTables(t *testing.T) {
 		t.Fatalf("reapplying exported extensions changed the schema: %+v", p)
 	}
 }
+
+func TestSchemaRoundTripsPoliciesOnCoreTables(t *testing.T) {
+	in := newInst(t)
+	in.must("user", "add", "wren@example.com")
+	// A product may narrow who reads core rows with a restrictive policy; export must keep it,
+	// or reapplying the export would plan to drop the restriction.
+	ddl := e2eTable("hidden_file", `    file uuid NOT NULL REFERENCES archive.file ON DELETE CASCADE,
+    search tsvector GENERATED ALWAYS AS (archive.search_doc('')) STORED`) + `CREATE FUNCTION hidden_file_open(f uuid) RETURNS boolean LANGUAGE sql STABLE AS $$
+    SELECT NOT EXISTS (SELECT FROM public.hidden_file h WHERE h.file = f)
+$$;
+CREATE POLICY product_hidden ON archive.file AS RESTRICTIVE FOR SELECT USING (hidden_file_open(id));
+`
+	in.push(map[string]string{"hidden_file.sql": ddl})
+	files := in.roundTrips()
+	if !strings.Contains(files["archive.file.sql"], "product_hidden") {
+		t.Fatalf("export lost a policy on a core table: %v", files)
+	}
+	if p := decode[SchemaPlan](t, in.push(files)); len(p.Statements) != 0 {
+		t.Fatalf("reapplying exported extensions changed the schema: %+v", p)
+	}
+}

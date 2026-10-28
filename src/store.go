@@ -241,9 +241,10 @@ func (s *pgStore) SchemaFiles(ctx context.Context) (map[string]string, error) {
 		schema := storeUnquote(m[1])
 		if schema == "archive" {
 			// Product foreign keys can depend on additional unique keys on core
-			// tables. Keep those additions, but never export removals of newer
+			// tables, and a product may narrow who reads core rows with its own
+			// policies. Keep those additions, but never export removals of newer
 			// core objects when bootstrapping an older database.
-			if strings.HasPrefix(st.DDL, "CREATE UNIQUE INDEX ") ||
+			if strings.HasPrefix(st.DDL, "CREATE UNIQUE INDEX ") || strings.HasPrefix(st.DDL, "CREATE POLICY ") ||
 				(strings.HasPrefix(st.DDL, "ALTER TABLE ") && strings.Contains(st.DDL, " ADD CONSTRAINT ") && strings.Contains(st.DDL, " UNIQUE USING INDEX ")) {
 				out["archive."+storeUnquote(m[2])+".sql"] += strings.TrimSuffix(st.DDL, ";") + ";\n"
 			}
