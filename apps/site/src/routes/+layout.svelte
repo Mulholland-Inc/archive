@@ -24,7 +24,7 @@
   });
 </script>
 
+<Explain />
 <Nav />
 <main bind:this={main}>{@render children()}</main>
 <Footer />
-<Explain />

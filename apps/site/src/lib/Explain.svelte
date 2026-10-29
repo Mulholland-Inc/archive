@@ -6,36 +6,26 @@
   import { EXPLAIN, PAGES } from './explain.js';
   import { START } from './site.js';
 
-  // The nudge waits a little, then stays away for a few days once closed or read.
-  const DELAY = 12_000;
+  // The bar stays away for a few days once closed, longer once the book is read. app.html hides it before
+  // first paint while it rests, so it never jumps in.
   const REST = { closed: 3, read: 30 };
-  const KEY = 'explain';
 
   let dialog;
-  let shown = $state(false);
+  let gone = $state(false);
   let at = $state(0);
 
   const page = $derived(PAGES[at]);
   const last = $derived(at === PAGES.length - 1);
 
   function rest(kind) {
-    try { localStorage[KEY] = Date.now() + REST[kind] * 864e5; } catch {}
-  }
-
-  function resting() {
-    try { return Date.now() < +(localStorage[KEY] ?? 0); } catch { return false; }
+    gone = true;
+    try { localStorage.explain = Date.now() + REST[kind] * 864e5; } catch {}
   }
 
   export function open() {
-    shown = false;
     at = 0;
     rest('read');
     dialog.showModal();
-  }
-
-  function close() {
-    shown = false;
-    rest('closed');
   }
 
   function key(e) {
@@ -44,20 +34,17 @@
   }
 
   onMount(() => {
-    if (new URLSearchParams(location.search).has('explain')) return open();
-    if (resting()) return;
-    const t = setTimeout(() => (shown = true), DELAY);
-    return () => clearTimeout(t);
+    if (new URLSearchParams(location.search).has('explain')) open();
   });
 </script>
 
-<div class={['nudge', shown && 'shown']} inert={!shown}>
-  <button type="button" class="nudge-open" onclick={open}>
-    <span class="nudge-art"><Art name="hidden" /></span>
-    <span><small>{EXPLAIN.nudge}</small><strong>{EXPLAIN.title}</strong></span>
+<div class={['topbar', gone && 'gone']}>
+  <button type="button" class="topbar-open" onclick={open}>
+    <span class="topbar-nudge">{EXPLAIN.nudge}</span>
+    <strong>{EXPLAIN.title}</strong><span class="topbar-sub">, {EXPLAIN.subtitle}</span>
     <Icon name="arrow" />
   </button>
-  <button type="button" class="icon-btn" aria-label="Close" onclick={close}><Icon name="close" /></button>
+  <button type="button" class="icon-btn topbar-close" aria-label="Close" onclick={() => rest('closed')}><Icon name="close" /></button>
 </div>
 
 <dialog class="explain" bind:this={dialog} onkeydown={key} onclick={(e) => e.target === dialog && dialog.close()} aria-label={EXPLAIN.title}>
@@ -67,7 +54,7 @@
       {#key at}<Art name={page.art} alt={page.alt} />{/key}
     </div>
     <div class="explain-copy" aria-live="polite">
-      <small>{at + 1} of {PAGES.length}</small>
+      <small>{EXPLAIN.title}, {EXPLAIN.subtitle} · {at + 1} of {PAGES.length}</small>
       <h2>{page.title}</h2>
       {#if page.list}
         <ul class="explain-list">{#each page.list as [name, what]}<li><strong>{name}</strong> {what}</li>{/each}</ul>
