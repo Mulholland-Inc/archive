@@ -84,6 +84,9 @@ Environment:
   ARCHIVE_PG_BIN     directory holding the Postgres binaries; unset uses those on PATH, or
                      downloads Postgres into $ARCHIVE_DATA/pgbin on first run
   ARCHIVE_LOCALE     locale that messy input is read in, like nl-NL
+  ANTHROPIC_API_KEY  key for the agent behind POST /api/chat, which can only call the run tool;
+                     ANTHROPIC_BASE_URL points it at another Messages API endpoint
+  ARCHIVE_CHAT_MODEL model of that agent (default claude-haiku-5-5)
   ARCHIVE_RUN_TIMEOUT
                      time limit of one archive run, POST /api/run or MCP run (default 30s)
   ARCHIVE_BLOB_URL   s3://bucket/prefix?endpoint=https://host&region=r for S3, R2, MinIO or GCS;
@@ -605,6 +608,37 @@ func httpHandler(a *Archive) http.Handler {
 			return 0, nil, fmt.Errorf("code: want the TypeScript to run: %w", httpErrBadRequest)
 		}
 		return ok(a.Run(r.Context(), body.Code))
+	})
+	mux.HandleFunc("POST /api/chat", a.chat)
+	handle("GET /api/chats", func(r *http.Request) (int, any, error) {
+		return ok(a.Chats(r.Context()))
+	})
+	handle("GET /api/chats/{id}", func(r *http.Request) (int, any, error) {
+		id, err := httpID(r)
+		if err != nil {
+			return 0, nil, err
+		}
+		return ok(a.Chat(r.Context(), id))
+	})
+	handle("PATCH /api/chats/{id}", func(r *http.Request) (int, any, error) {
+		id, err := httpID(r)
+		if err != nil {
+			return 0, nil, err
+		}
+		var body struct {
+			Title string `json:"title"`
+		}
+		if err := httpDecode(r, &body); err != nil {
+			return 0, nil, err
+		}
+		return ok(a.RenameChat(r.Context(), id, body.Title))
+	})
+	handle("DELETE /api/chats/{id}", func(r *http.Request) (int, any, error) {
+		id, err := httpID(r)
+		if err != nil {
+			return 0, nil, err
+		}
+		return http.StatusNoContent, nil, a.DeleteChat(r.Context(), id)
 	})
 	mux.HandleFunc("GET /api/pages/{id}/sync", a.pageSync)
 	mux.HandleFunc("POST /api/pages/{id}/ops", func(w http.ResponseWriter, r *http.Request) {

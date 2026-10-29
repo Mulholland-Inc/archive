@@ -1,5 +1,5 @@
 <script>
-  import Button from './Button.svelte';
+  import Button from '#kit/Button.svelte';
   import { START } from './site.js';
 
   let { links = [START, ['/docs', 'Read the docs']], children } = $props();

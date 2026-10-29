@@ -578,7 +578,7 @@ func (s *pgStore) Q(ctx context.Context) storeQ {
 
 func (s *pgStore) db(ctx context.Context) *Queries { return New(s.Q(ctx)) }
 
-func (s *pgStore) As(ctx context.Context, role string, fn func(context.Context) error) error {
+func (s *pgStore) As(ctx context.Context, role, space string, fn func(context.Context) error) error {
 	if t, ok := ctx.Value(storeTxKey{}).(storeTx); ok && t.role == role {
 		return fn(ctx)
 	}
@@ -586,6 +586,11 @@ func (s *pgStore) As(ctx context.Context, role string, fn func(context.Context) 
 	return storeCommitted(after, storeErr(pgx.BeginFunc(ctx, s.app, func(tx pgx.Tx) error {
 		if err := New(tx).SetLocal(ctx, "role", role); err != nil {
 			return err
+		}
+		if space != "" {
+			if err := New(tx).SetLocal(ctx, "archive.space", space); err != nil {
+				return err
+			}
 		}
 		return fn(context.WithValue(ctx, storeTxKey{}, storeTx{tx, role, after}))
 	})))

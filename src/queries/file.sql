@@ -12,6 +12,10 @@ WHERE id > sqlc.arg(after) AND (sqlc.narg(space)::uuid IS NULL OR space = sqlc.n
 -- name: GetFile :one
 SELECT id, hash, name, mime, size, metadata, status, error, space, created_at FROM archive.file WHERE id = $1;
 
+-- name: RenameFile :one
+UPDATE archive.file SET name = $2 WHERE id = $1
+RETURNING id, hash, name, mime, size, metadata, status, error, space, created_at;
+
 -- name: LockFile :one
 SELECT id, hash, name, mime, size, metadata, status, error, space, created_at FROM archive.file WHERE id = $1 FOR UPDATE;
 

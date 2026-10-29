@@ -438,6 +438,42 @@ func (q *Queries) NextPendingFile(ctx context.Context) (NextPendingFileRow, erro
 	return i, err
 }
 
+const renameFile = `-- name: RenameFile :one
+UPDATE archive.file SET name = $2 WHERE id = $1
+RETURNING id, hash, name, mime, size, metadata, status, error, space, created_at
+`
+
+type RenameFileRow struct {
+	ID        uuid.UUID
+	Hash      string
+	Name      string
+	MIME      string
+	Size      int64
+	Metadata  map[string]any
+	Status    string
+	Error     string
+	Space     uuid.UUID
+	CreatedAt time.Time
+}
+
+func (q *Queries) RenameFile(ctx context.Context, iD uuid.UUID, name string) (RenameFileRow, error) {
+	row := q.db.QueryRow(ctx, renameFile, iD, name)
+	var i RenameFileRow
+	err := row.Scan(
+		&i.ID,
+		&i.Hash,
+		&i.Name,
+		&i.MIME,
+		&i.Size,
+		&i.Metadata,
+		&i.Status,
+		&i.Error,
+		&i.Space,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const replaceFile = `-- name: ReplaceFile :one
 UPDATE archive.file SET hash = $2, size = $3, status = 'pending', text = '', error = '', metadata = '{}' WHERE id = $1
 RETURNING id, hash, name, mime, size, metadata, status, error, space, created_at

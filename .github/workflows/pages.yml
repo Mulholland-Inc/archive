@@ -3,7 +3,7 @@ name: pages
 on:
   push:
     branches: [main]
-    paths: [apps/site/**, .github/workflows/pages.yml]
+    paths: [apps/site/**, apps/kit/**, .github/workflows/pages.yml]
   workflow_dispatch:
 
 permissions:

@@ -31,25 +31,6 @@ h3 { font-size: var(--text-2xl); }
 .prose a, .post a { text-decoration: underline; text-underline-offset: var(--underline-offset); }
 code.inline, .prose code { font: var(--weight-medium) var(--text-em) var(--font-mono); background: var(--fill); padding: var(--space-px) var(--space-1-5); border-radius: var(--radius-xs); }
 
-.icon { width: var(--size-icon); height: var(--size-icon); flex: none; fill: none; stroke: currentColor; stroke-width: var(--icon-stroke); stroke-linecap: round; stroke-linejoin: round; }
-.icon.filled { fill: currentColor; stroke: none; }
-
-.btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); min-height: var(--control-height); padding: 0 var(--space-5) var(--space-px);
-  background: var(--primary); color: var(--on-primary); border-radius: var(--radius-full);
-  font: var(--weight-medium) var(--text-md) / var(--leading-none) var(--font-sans); letter-spacing: var(--tracking-snug); white-space: nowrap;
-  transition: background var(--duration-fast), transform var(--duration-fast) var(--ease-out);
-}
-.btn:hover { background: var(--primary-hover); }
-.btn:active { transform: scale(var(--scale-press)); }
-.btn-ghost { background: var(--fill); color: var(--fg); }
-.btn-ghost:hover { background: var(--fill-strong); }
-.btn-ghost .icon { display: none; }
-.btn-sm { min-height: var(--control-height-sm); padding: 0 var(--space-4) var(--space-px); font-size: var(--text-sm); }
-
-.icon-btn { display: grid; place-items: center; width: var(--size-control); height: var(--size-control); border-radius: var(--radius-full); background: var(--fill); transition: background var(--duration-fast); }
-.icon-btn:hover { background: var(--fill-strong); }
-
 .nav { position: sticky; top: 0; z-index: var(--z-nav); background: var(--bg); transition: transform var(--duration-normal) var(--ease-out); }
 .nav.hidden { transform: translateY(calc(-100% - var(--radius-panel))); }
 .nav::before, .nav::after { content: ""; position: absolute; top: 100%; width: var(--radius-panel); height: var(--radius-panel); pointer-events: none; }

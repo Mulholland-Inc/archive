@@ -1,5 +1,5 @@
 <script>
-  import Button from './Button.svelte';
+  import Button from '#kit/Button.svelte';
   import { clipboard } from './copy.svelte.js';
 
   let { text, label = 'Copy self-host prompt' } = $props();

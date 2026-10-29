@@ -2,9 +2,10 @@
   import { page } from '$app/state';
   import { afterNavigate } from '$app/navigation';
   import Art from './Art.svelte';
-  import Button from './Button.svelte';
-  import Icon from './Icon.svelte';
-  import Word from './Word.svelte';
+  import Button from '#kit/Button.svelte';
+  import Icon from '#kit/Icon.svelte';
+  import Theme from '#kit/Theme.svelte';
+  import Word from '#kit/Word.svelte';
   import { APP, GITHUB, PRODUCT } from './site.js';
 
   const LINKS = [
@@ -21,16 +22,11 @@
   let menu;
   let last = 0;
   let slack = 0;
-  let dark = $state(false);
 
   const here = $derived(page.url.pathname.replace(/(.)\/$/, '$1'));
 
   $effect(() => {
     document.documentElement.classList.toggle('locked', open);
-  });
-
-  $effect(() => {
-    dark = document.documentElement.dataset.theme === 'dark';
   });
 
   $effect(() => {
@@ -47,17 +43,6 @@
     if (Math.abs(y - last) < slack) return;
     hidden = y > last;
     last = y;
-  }
-
-  function theme() {
-    dark = !dark;
-    const root = document.documentElement;
-    if (dark) root.dataset.theme = 'dark';
-    else delete root.dataset.theme;
-    document.querySelector('meta[name="theme-color"]').content = dark ? '#0b0d12' : '#e4e7ec';
-    try {
-      localStorage.theme = dark ? 'dark' : 'light';
-    } catch {}
   }
 
   afterNavigate(({ from }) => {
@@ -91,7 +76,7 @@
       {/each}
     </nav>
     <div class="nav-right">
-      <button class="icon-btn" type="button" aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'} onclick={theme}><Icon name={dark ? 'sun' : 'moon'} /></button>
+      <Theme />
       <a class="icon-btn gh" href={GITHUB} target="_blank" rel="noopener" aria-label="GitHub"><Icon name="github" /></a>
       <Button href={APP} small>Log in</Button>
       <button class="icon-btn burger" type="button" aria-label={open ? 'Close menu' : 'Menu'} aria-expanded={open} aria-controls="sheet" onclick={() => (open = !open)}><Icon name={open ? 'close' : 'menu'} /></button>

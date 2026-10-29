@@ -29,6 +29,16 @@ CREATE TABLE archive.token (
 );
 CREATE INDEX token_user_idx ON archive.token (user_id);
 
+CREATE TABLE archive.chat (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    user_id    uuid NOT NULL REFERENCES archive."user" ON DELETE CASCADE,
+    title      text NOT NULL DEFAULT '',
+    messages   jsonb NOT NULL DEFAULT '[]',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX chat_user_idx ON archive.chat (user_id, updated_at);
+
 CREATE TABLE archive.revision (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     hash       text NOT NULL,
@@ -90,6 +100,7 @@ CREATE INDEX secret_space_idx ON archive.secret (space);
 
 CREATE FUNCTION archive.my_spaces(lvl text DEFAULT 'viewer') RETURNS uuid[] LANGUAGE sql STABLE AS $$
     SELECT coalesce(array_agg(id), '{}') FROM archive.space WHERE pg_has_role(current_user, (role || '_' || lvl)::name, 'USAGE')
+        AND coalesce(nullif(current_setting('archive.space', true), '') = name, true)
 $$;
 
 CREATE FUNCTION archive.ontology_admin() RETURNS bool LANGUAGE sql STABLE AS $$

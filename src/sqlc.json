@@ -52,6 +52,10 @@
               "go_type": "encoding/json.RawMessage"
             },
             {
+              "column": "archive.chat.messages",
+              "go_type": "encoding/json.RawMessage"
+            },
+            {
               "column": "archive.file.metadata",
               "go_type": {
                 "type": "map[string]any"

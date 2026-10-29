@@ -6,7 +6,7 @@ Load it into an empty archive:
 
 ```sh
 cd src && go build -o archive .
-ARCHIVE_DATA=../data ARCHIVE_BIN=./archive ../demo/load.sh you@example.com
+ARCHIVE_DATA=../data ARCHIVE_BIN=./archive ../demo/load.sh you@example.com "Your Name"
 ```
 
 The email is the first owner, created when the archive has no users yet. Then `archive serve` and connect an agent to `/mcp` with a token from `archive token create -full`.

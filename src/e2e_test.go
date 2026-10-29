@@ -549,7 +549,7 @@ func TestDemoVaultLoadsOnceWithLinkedRowsAndFiles(t *testing.T) {
 
 func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 	t.Parallel()
-	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
+	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com", "ANTHROPIC_API_KEY=")
 	srv := in.serve()
 	api := srv.url + "/api"
 
@@ -661,6 +661,70 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 		st, _ = call(t, "POST", srv.url+"/auth/tokens", bobTok, nil, nil)
 		wantStatus(t, st, 400, "token endpoint without a body")
 		in.fails("-as", "bob@example.com", "token", "create", "-space", "family:editor")
+	})
+
+	t.Run("ArchiveSpaceHeaderScopesARequestToOneSpace", func(t *testing.T) {
+		in := in.on(t)
+		scoped := func(method, path, tok, space string, body, out any) int {
+			t.Helper()
+			b, _ := json.Marshal(body)
+			req, _ := http.NewRequest(method, srv.url+path, bytes.NewReader(b))
+			req.Header.Set("Authorization", "Bearer "+tok)
+			req.Header.Set("Archive-Space", space)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if out != nil {
+				json.NewDecoder(resp.Body).Decode(out)
+			}
+			return resp.StatusCode
+		}
+		home := ""
+		for _, sp := range decode[[]SpaceInfo](t, in.must("space", "list")) {
+			if sp.Name != "family" {
+				home = sp.Name
+			}
+		}
+		for _, c := range []struct{ tok, space, want string }{
+			{aliceTok, "family", "Family member"}, {aliceTok, home, "Alice private"}, {bobTok, "family", "Family member"},
+			{bobTok, home, ""}, {aliceTok, "nope", ""}, {aliceTok, "", "Alice private,Family member"},
+		} {
+			var rs []row
+			if st := scoped("GET", "/api/person", c.tok, c.space, nil, &rs); st != 200 || names(rs) != c.want {
+				t.Errorf("space %q: %d %q, want %q", c.space, st, names(rs), c.want)
+			}
+		}
+		var out RunOutput
+		scoped("POST", "/api/run", aliceTok, "family", map[string]string{"code": `return { people: (await archive.list("person")).map(p => p.name), spaces: (await archive.spaces()).length }`}, &out)
+		if string(out.Result) != `{"people":["Family member"],"spaces":2}` {
+			t.Errorf("scoped run: %s %s", out.Result, out.Error)
+		}
+		var co row
+		if st := scoped("POST", "/api/company", aliceTok, "family", map[string]string{"name": "Scoped Co"}, &co); st != 201 || co["space"] != fam["space"] {
+			t.Errorf("create in the header's space: %d %v, want space %v", st, co, fam["space"])
+		}
+		if st := scoped("POST", "/api/company", bobTok, home, map[string]string{"name": "Intruder Co"}, nil); st < 400 {
+			t.Errorf("bob creates in alice's space through the header: %d", st)
+		}
+		if st := scoped("DELETE", "/api/company/"+id(co), aliceTok, "family", nil, nil); st != 204 {
+			t.Errorf("delete in the header's space: %d", st)
+		}
+		var sp []SpaceInfo
+		scoped("GET", "/auth/spaces", aliceTok, "family", nil, &sp)
+		if len(sp) != 2 {
+			t.Errorf("the spaces list ignores the header: %+v", sp)
+		}
+	})
+
+	t.Run("ChatWithoutAnAnthropicKeyIs503", func(t *testing.T) {
+		var out map[string]string
+		st, _ := call(t, "POST", api+"/chat", aliceTok, map[string]any{"text": "hi"}, &out)
+		wantStatus(t, st, 503, "chat without ANTHROPIC_API_KEY")
+		if !strings.Contains(out["error"], "ANTHROPIC_API_KEY") {
+			t.Errorf("chat error: %v", out)
+		}
 	})
 
 	t.Run("ReferencesNeedRowsYouCanSee", func(t *testing.T) {
@@ -2125,6 +2189,23 @@ func TestCodeModeRunsTypeScriptInOneTransactionOverHTTPMCPAndCLI(t *testing.T) {
 	_, note := e2eUpload(t, api+"/files", tok, "viewing.txt", []byte("Viewing on Friday at the canal house"))
 	e2eDoneFile(t, api, tok, note.ID.String())
 
+	t.Run("RenamingAFileKeepsItsContentAndNeedsAnEditor", func(t *testing.T) {
+		var f File
+		st, _ := call(t, "PATCH", api+"/files/"+note.ID.String(), tok, map[string]string{"name": "  dir/Viewing notes.txt "}, &f)
+		wantStatus(t, st, 200, "rename")
+		if f.Name != "Viewing notes.txt" || f.ID != note.ID || f.Hash != note.Hash {
+			t.Errorf("renamed: %+v", f)
+		}
+		_, body := e2eGet(t, api+"/files/"+note.ID.String()+"/content", tok)
+		if string(body) != "Viewing on Friday at the canal house" {
+			t.Errorf("content after rename: %q", body)
+		}
+		st, _ = call(t, "PATCH", api+"/files/"+note.ID.String(), bobTok, map[string]string{"name": "mine.txt"}, nil)
+		wantStatus(t, st, 404, "bob renames alice's file")
+		st, _ = call(t, "PATCH", api+"/files/"+note.ID.String(), tok, map[string]string{"name": " "}, nil)
+		wantStatus(t, st, 400, "empty name")
+	})
+
 	t.Run("ApplyPlansThenConfirmsASchemaChange", func(t *testing.T) {
 		got := ok(t, `const files = await archive.schema();
 const house = `+strconv.Quote(e2eHouse)+`;
@@ -2784,4 +2865,261 @@ func TestPageEditorsSyncLiveAcrossInstancesWithAgentsAndSeeWhoIsThere(t *testing
 	if st, _ := call(t, "GET", srv.url+"/api/pages/"+other.ID.String()+"/sync", tok, nil, nil); st != http.StatusNotFound {
 		t.Errorf("sync on a docx: %d", st)
 	}
+}
+
+func e2eChat(ctx context.Context, t *testing.T, url, tok string, body map[string]any, each func(ev map[string]any) bool) (int, []map[string]any) {
+	t.Helper()
+	b, _ := json.Marshal(body)
+	req, _ := http.NewRequestWithContext(ctx, "POST", url+"/chat", bytes.NewReader(b))
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var evs []map[string]any
+	if resp.StatusCode != 200 {
+		return resp.StatusCode, nil
+	}
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(make([]byte, 1<<20), 16<<20)
+	for sc.Scan() {
+		ev := decode[map[string]any](t, sc.Text())
+		evs = append(evs, ev)
+		if each != nil && !each(ev) {
+			break
+		}
+	}
+	return resp.StatusCode, evs
+}
+
+func e2eKinds(evs []map[string]any) string {
+	var out []string
+	for _, ev := range evs {
+		if k := fmt.Sprint(ev["type"]); len(out) == 0 || out[len(out)-1] != k {
+			out = append(out, k)
+		}
+	}
+	return strings.Join(out, ",")
+}
+
+func TestChatStreamsTheAgentLoopThroughRunAndKeepsEachUsersHistory(t *testing.T) {
+	t.Parallel()
+	var mu sync.Mutex
+	var model []map[string]any
+	var headers []http.Header
+	hung := make(chan struct{})
+	hangDone := false
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]any
+		json.NewDecoder(r.Body).Decode(&req)
+		mu.Lock()
+		model, headers = append(model, req), append(headers, r.Header.Clone())
+		mu.Unlock()
+		msgs := req["messages"].([]any)
+		first := fmt.Sprint(msgs[0].(map[string]any)["content"].([]any)[0].(map[string]any)["text"])
+		last := msgs[len(msgs)-1].(map[string]any)
+		answered := false
+		for _, b := range last["content"].([]any) {
+			answered = answered || b.(map[string]any)["type"] == "tool_result"
+		}
+		ev := func(s string) {
+			fmt.Fprintf(w, "event: x\ndata: %s\n\n", s)
+			w.(http.Flusher).Flush()
+		}
+		text := func(parts ...string) {
+			ev(`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`)
+			for _, p := range parts {
+				b, _ := json.Marshal(p)
+				ev(`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":` + string(b) + `}}`)
+			}
+			ev(`{"type":"content_block_stop","index":0}`)
+			ev(`{"type":"message_delta","delta":{"stop_reason":"end_turn"}}`)
+		}
+		tool := func(code ...string) {
+			ev(`{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`)
+			ev(`{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig"}}`)
+			ev(`{"type":"content_block_stop","index":0}`)
+			ev(`{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"t` + strconv.Itoa(len(msgs)) + `","name":"run","input":{}}}`)
+			for _, c := range code {
+				b, _ := json.Marshal(c)
+				ev(`{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":` + string(b) + `}}`)
+			}
+			ev(`{"type":"content_block_stop","index":1}`)
+			ev(`{"type":"message_delta","delta":{"stop_reason":"tool_use"}}`)
+		}
+		switch {
+		case first == "fail":
+			w.WriteHeader(400)
+			io.WriteString(w, `{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long"}}`)
+		case first == "hang" && !hangDone:
+			hangDone = true
+			ev(`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`)
+			ev(`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Let me "}}`)
+			<-r.Context().Done()
+			close(hung)
+		case first == "boom" && len(msgs) == 1:
+			tool(`{"code": "throw new Error(\"boom\")"}`)
+		case first == "how many spaces?" && len(msgs) == 1:
+			tool(`{"code": "return (await archive.spa`, `ces()).length * 7"}`)
+		case answered:
+			text("You have ", "one space.")
+		default:
+			text("Hello again.")
+		}
+	}))
+	defer fake.Close()
+	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com", "ANTHROPIC_API_KEY=test", "ANTHROPIC_BASE_URL="+fake.URL, "ARCHIVE_CHAT_MODEL=")
+	srv := in.serve()
+	api := srv.url + "/api"
+	in.must("user", "add", "bob@example.com")
+	tok := decode[Token](t, in.must("token", "create")).Secret
+	bobTok := decode[Token](t, in.must("-as", "bob@example.com", "token", "create")).Secret
+	ctx := context.Background()
+	var chatID string
+
+	t.Run("StreamsTextCodeAndRunResultsThenSavesTheTurn", func(t *testing.T) {
+		st, evs := e2eChat(ctx, t, api, tok, map[string]any{"text": "how many spaces?"}, nil)
+		wantStatus(t, st, 200, "chat")
+		chatID = fmt.Sprint(evs[0]["chat"].(map[string]any)["id"])
+		if got := e2eKinds(evs); got != "chat,thinking,tool,code,run,result,text,done" {
+			t.Fatalf("events: %s\n%v", got, evs)
+		}
+		var codes, text []string
+		for _, ev := range evs {
+			switch ev["type"] {
+			case "code":
+				codes = append(codes, fmt.Sprint(ev["code"]))
+			case "text":
+				text = append(text, fmt.Sprint(ev["text"]))
+			case "result":
+				if fmt.Sprint(ev["result"]) != "7" || ev["error"] != "" || ev["id"] != "t1" {
+					t.Errorf("result event: %v", ev)
+				}
+			}
+		}
+		if strings.Join(codes, "|") != "return (await archive.spa|return (await archive.spaces()).length * 7" || strings.Join(text, "") != "You have one space." {
+			t.Errorf("streamed code %q, text %q", codes, text)
+		}
+		mu.Lock()
+		first, h := model[len(model)-2], headers[len(headers)-2]
+		second := model[len(model)-1]
+		mu.Unlock()
+		tool := first["tools"].([]any)[0].(map[string]any)
+		if first["model"] != "claude-haiku-5-5" || len(first["tools"].([]any)) != 1 || tool["name"] != "run" || tool["eager_input_streaming"] != true ||
+			!strings.Contains(fmt.Sprint(tool["description"]), "declare const archive") || h.Get("anthropic-version") != "2026-10-21" || h.Get("x-api-key") != "test" {
+			t.Errorf("model request: model %v, tool %v %v, version %q", first["model"], tool["name"], tool["eager_input_streaming"], h.Get("anthropic-version"))
+		}
+		if sys := fmt.Sprint(first["system"]); !strings.Contains(sys, "Today is") || !strings.Contains(sys, "alice@example.com") {
+			t.Errorf("system: %s", sys)
+		}
+		if s, _ := json.Marshal(second["messages"]); len(second["messages"].([]any)) != 3 || !strings.Contains(string(s), `"signature":"sig"`) || !strings.Contains(string(s), `\"result\":7`) {
+			t.Errorf("second model request: %s", s)
+		}
+	})
+
+	t.Run("HistoryIsListedOpenedRenamedAndOnlyYours", func(t *testing.T) {
+		var list []Chat
+		call(t, "GET", api+"/chats", tok, nil, &list)
+		if len(list) != 1 || list[0].ID.String() != chatID || list[0].Title != "how many spaces?" || list[0].Messages != nil {
+			t.Fatalf("chats: %+v", list)
+		}
+		var c struct {
+			Messages []map[string]any `json:"messages"`
+		}
+		call(t, "GET", api+"/chats/"+chatID, tok, nil, &c)
+		roles := []string{}
+		for _, m := range c.Messages {
+			roles = append(roles, fmt.Sprint(m["role"]))
+		}
+		if strings.Join(roles, ",") != "user,assistant,user,assistant" {
+			t.Errorf("saved roles: %v", roles)
+		}
+		var renamed Chat
+		st, _ := call(t, "PATCH", api+"/chats/"+chatID, tok, map[string]string{"title": "  Counting   spaces "}, &renamed)
+		wantStatus(t, st, 200, "rename")
+		if renamed.Title != "Counting spaces" {
+			t.Errorf("renamed: %+v", renamed)
+		}
+		var bobs []Chat
+		call(t, "GET", api+"/chats", bobTok, nil, &bobs)
+		st, _ = call(t, "GET", api+"/chats/"+chatID, bobTok, nil, nil)
+		wantStatus(t, st, 404, "bob opens alice's chat")
+		st, _ = call(t, "DELETE", api+"/chats/"+chatID, bobTok, nil, nil)
+		wantStatus(t, st, 404, "bob deletes alice's chat")
+		st, _ = e2eChat(ctx, t, api, bobTok, map[string]any{"chat": chatID, "text": "hi"}, nil)
+		wantStatus(t, st, 404, "bob writes in alice's chat")
+		if len(bobs) != 0 {
+			t.Errorf("bob lists %+v", bobs)
+		}
+		st, evs := e2eChat(ctx, t, api, tok, map[string]any{"chat": chatID, "text": "thanks"}, nil)
+		if st != 200 || e2eKinds(evs) != "chat,text,done" || fmt.Sprint(evs[0]["chat"].(map[string]any)["title"]) != "Counting spaces" {
+			t.Errorf("follow-up: %d %v", st, evs)
+		}
+	})
+
+	t.Run("AFailingRunIsReportedToTheModelAndTheUser", func(t *testing.T) {
+		_, evs := e2eChat(ctx, t, api, tok, map[string]any{"text": "boom"}, nil)
+		for _, ev := range evs {
+			if ev["type"] == "result" && (!strings.Contains(fmt.Sprint(ev["error"]), "boom") || ev["result"] != nil) {
+				t.Errorf("result: %v", ev)
+			}
+		}
+		mu.Lock()
+		last, _ := json.Marshal(model[len(model)-1]["messages"])
+		mu.Unlock()
+		if e2eKinds(evs) != "chat,thinking,tool,code,run,result,text,done" || !strings.Contains(string(last), `"is_error":true`) {
+			t.Errorf("events %s, model saw %s", e2eKinds(evs), last)
+		}
+	})
+
+	t.Run("ModelErrorsStreamAndRetryContinuesTheSavedChat", func(t *testing.T) {
+		_, evs := e2eChat(ctx, t, api, tok, map[string]any{"text": "fail"}, nil)
+		if e2eKinds(evs) != "chat,error" || !strings.Contains(fmt.Sprint(evs[1]["error"]), "prompt is too long") {
+			t.Fatalf("error events: %v", evs)
+		}
+		id := fmt.Sprint(evs[0]["chat"].(map[string]any)["id"])
+		_, evs = e2eChat(ctx, t, api, tok, map[string]any{"chat": id}, nil)
+		if e2eKinds(evs) != "chat,error" {
+			t.Errorf("retry: %v", evs)
+		}
+		st, _ := e2eChat(ctx, t, api, tok, map[string]any{}, nil)
+		wantStatus(t, st, 400, "chat without text")
+	})
+
+	t.Run("CancellingStopsTheModelCallAndKeepsTheQuestion", func(t *testing.T) {
+		cctx, cancel := context.WithCancel(ctx)
+		var id string
+		e2eChat(cctx, t, api, tok, map[string]any{"text": "hang"}, func(ev map[string]any) bool {
+			if ev["type"] == "chat" {
+				id = fmt.Sprint(ev["chat"].(map[string]any)["id"])
+			}
+			if ev["type"] == "text" {
+				cancel()
+				return false
+			}
+			return true
+		})
+		cancel()
+		select {
+		case <-hung:
+		case <-time.After(15 * time.Second):
+			t.Fatal("the model call kept running after the client went away")
+		}
+		var c struct {
+			Messages []map[string]any `json:"messages"`
+		}
+		call(t, "GET", api+"/chats/"+id, tok, nil, &c)
+		if len(c.Messages) != 1 || c.Messages[0]["role"] != "user" {
+			t.Errorf("saved after cancel: %v", c.Messages)
+		}
+		_, evs := e2eChat(ctx, t, api, tok, map[string]any{"chat": id}, nil)
+		if e2eKinds(evs) != "chat,text,done" {
+			t.Errorf("continue after cancel: %v", evs)
+		}
+		st, _ := call(t, "DELETE", api+"/chats/"+id, tok, nil, nil)
+		wantStatus(t, st, 204, "delete")
+		st, _ = call(t, "GET", api+"/chats/"+id, tok, nil, nil)
+		wantStatus(t, st, 404, "deleted chat")
+	})
 }

@@ -2,7 +2,7 @@
   import Actions from './Actions.svelte';
   import Art from './Art.svelte';
 
-  import Icon from './Icon.svelte';
+  import Icon from '#kit/Icon.svelte';
 
   let { kind = 'page', title, lead, art, alt, links, actions, badges = [], children } = $props();
 </script>

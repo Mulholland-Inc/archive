@@ -3,7 +3,7 @@ set -eu
 demo=$(dirname "$0")
 archive=${ARCHIVE_BIN:-archive}
 
-$archive space list >/dev/null 2>&1 || $archive user add "${1:-me@example.com}" -name Me -admin >/dev/null
+$archive space list >/dev/null 2>&1 || $archive user add "${1:-me@example.com}" -name "${2:-Me}" -admin >/dev/null
 if [ "$($archive list person -limit 1 2>/dev/null || echo '[]')" != "[]" ]; then
 	echo "demo: this archive already has people in it; load the demo into an empty one" >&2
 	exit 1

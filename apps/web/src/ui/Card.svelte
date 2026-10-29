@@ -8,7 +8,7 @@
 </article>
 
 <style>
-  article { background: var(--raised); border-radius: var(--radius-lg); padding: var(--space-3) var(--space-4); margin-top: var(--space-2); }
-  .title { font-weight: var(--weight-medium); }
-  .detail { color: var(--text-2); font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  article { display: flex; flex-direction: column; gap: var(--space-0-5); padding: var(--space-3); border-radius: var(--radius-item); background: var(--surface-raised); }
+  .title { font-weight: var(--weight-medium); line-height: var(--leading-snug); }
+  .detail { overflow: hidden; color: var(--fg-muted); font-size: var(--text-table); text-overflow: ellipsis; white-space: nowrap; }
 </style>

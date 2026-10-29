@@ -5,8 +5,24 @@ export function go(path) {
   dispatchEvent(new PopStateEvent('popstate'));
 }
 
-export async function api(path, { method = 'GET', body, raw } = {}) {
-  const init = { method, headers: {} };
+export function space() {
+  try {
+    return localStorage.space ?? '';
+  } catch {
+    return '';
+  }
+}
+
+export function setSpace(name) {
+  try {
+    if (name) localStorage.space = name;
+    else delete localStorage.space;
+  } catch {}
+}
+
+async function send(path, { method = 'GET', body, raw, signal } = {}) {
+  const init = { method, headers: {}, signal };
+  if (space()) init.headers['Archive-Space'] = space();
   if (raw !== undefined) init.body = raw;
   else if (body !== undefined) {
     init.body = JSON.stringify(body);
@@ -14,10 +30,30 @@ export async function api(path, { method = 'GET', body, raw } = {}) {
   }
   const r = await fetch(path, init);
   if (r.status === 401) throw new Unauthorized();
-  if (r.status === 204) return null;
-  const out = await r.json();
-  if (!r.ok) throw new Error(out.error ?? r.statusText);
-  return out;
+  if (!r.ok && r.status !== 204) {
+    const out = await r.json().catch(() => ({}));
+    throw new Error(out.error ?? r.statusText);
+  }
+  return r;
+}
+
+export async function api(path, opts) {
+  const r = await send(path, opts);
+  return r.status === 204 ? null : r.json();
+}
+
+export async function* chat(body, signal) {
+  const r = await send('/api/chat', { method: 'POST', body, signal });
+  const reader = r.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buf = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += value;
+    const lines = buf.split('\n');
+    buf = lines.pop();
+    for (const line of lines) if (line) yield JSON.parse(line);
+  }
 }
 
 export async function run(code) {

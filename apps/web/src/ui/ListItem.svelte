@@ -1,5 +1,5 @@
 <script>
-  import Icon from './Icon.svelte';
+  import Icon from '#kit/Icon.svelte';
 
   let { href, target, icon, image, lead, meta = [], children } = $props();
 </script>
@@ -19,29 +19,27 @@
   .item {
     display: flex;
     align-items: center;
-    gap: var(--space-4);
-    padding: var(--space-3);
-    margin: 0 calc(-1 * var(--space-3));
-    border-radius: var(--radius-lg);
-    transition: background var(--dur) var(--ease);
+    gap: var(--space-3);
+    margin-inline: calc(-1 * var(--item-pad));
+    padding: var(--item-pad);
+    border-radius: var(--radius-item);
+    transition: background var(--duration-fast);
   }
-  .link:hover { background: var(--hover); }
-  .lead { flex: none; width: var(--size-xl); font-size: var(--text-sm); color: var(--text-2); }
+  .link:hover { background: var(--fill-faint); }
+  .lead { flex: none; width: var(--size-control-lg); color: var(--fg-muted); font-size: var(--text-table); }
   .thumb {
     display: grid;
     place-items: center;
     flex: none;
-    width: var(--size-lg);
-    height: var(--size-lg);
-    border-radius: var(--radius-md);
-    background: var(--raised);
-    color: var(--text-2);
+    width: var(--size-control-xs);
+    height: var(--size-control-xs);
     overflow: hidden;
+    border-radius: var(--radius-xs);
+    background: var(--fill);
+    color: var(--fg-muted);
   }
   img { width: 100%; height: 100%; object-fit: cover; }
   .main { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .meta { flex: none; min-width: var(--size-xl); font-size: var(--text-sm); color: var(--text-2); text-align: right; }
-  @media (max-width: 767px) {
-    .meta:not(:last-child) { display: none; }
-  }
+  .meta { flex: none; justify-content: flex-end; text-align: right; min-width: var(--size-control-lg); color: var(--fg-muted); font-size: var(--text-table); }
+  .meta:not(:last-child) { display: var(--wide-only); }
 </style>
