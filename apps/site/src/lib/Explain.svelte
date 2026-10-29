@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte';
+  import { page as here } from '$app/state';
   import Art from './Art.svelte';
   import Button from '#kit/Button.svelte';
   import Icon from '#kit/Icon.svelte';
@@ -15,6 +16,8 @@
   let at = $state(0);
 
   const page = $derived(PAGES[at]);
+  // On the homepage the bar always stands, with no way to close it.
+  const home = $derived(here.url.pathname === '/');
   const last = $derived(at === PAGES.length - 1);
 
   function rest(kind) {
@@ -38,13 +41,13 @@
   });
 </script>
 
-<div class={['topbar', gone && 'gone']}>
+<div class={['topbar', home ? 'home' : gone && 'gone']}>
   <button type="button" class="topbar-open" onclick={open}>
     <span class="topbar-nudge">{EXPLAIN.nudge}</span>
     <strong>{EXPLAIN.title}</strong><span class="topbar-sub">, {EXPLAIN.subtitle}</span>
     <Icon name="arrow" />
   </button>
-  <button type="button" class="icon-btn topbar-close" aria-label="Close" onclick={() => rest('closed')}><Icon name="close" /></button>
+  {#if !home}<button type="button" class="icon-btn topbar-close" aria-label="Close" onclick={() => rest('closed')}><Icon name="close" /></button>{/if}
 </div>
 
 <dialog class="explain" bind:this={dialog} onkeydown={key} onclick={(e) => e.target === dialog && dialog.close()} aria-label={EXPLAIN.title}>
