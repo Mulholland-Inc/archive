@@ -4,14 +4,13 @@
 
   import Icon from './Icon.svelte';
 
-  let { kind = 'page', title, subtitle, lead, art, alt, links, actions, badges = [], children } = $props();
+  let { kind = 'page', title, lead, art, alt, links, actions, badges = [], children } = $props();
 </script>
 
 {#if kind === 'home'}
   <section class="home-hero">
     <div class="wrap home-copy">
       <h1>{title}</h1>
-      <p class="subtitle">{subtitle}</p>
       <p class="lead">{lead}</p>
       <Actions {links} children={actions} />
       {#if badges.length}<ul class="badges">{#each badges as b}<li><Icon name="shield" />{b}</li>{/each}</ul>{/if}

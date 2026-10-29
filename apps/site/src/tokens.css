@@ -99,7 +99,8 @@
   --size-control-lg: 48px;
   --size-bar: 72px;
   --size-brand: 22px;
-  --hero-peek: 240px;
+  --hero-peek: 180px;
+  --hero-min: 380px;
 
   --art-2xs: 96px;
   --art-xs: 128px;

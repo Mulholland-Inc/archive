@@ -49,12 +49,11 @@
 <Hero
   kind="home"
   title="Own your data infrastructure."
-  subtitle="Database. File storage. Agent access."
   lead="A foundation for your digital world, built to run on your terms."
   badges={['SOC 2', 'HIPAA', 'ISO 27001']}
 />
 
-<Section center wide body="One clearinghouse for every tool your business already runs on.">
+<Section wide>
   <Logos marquee items={CONNECTORS} />
 </Section>
 
