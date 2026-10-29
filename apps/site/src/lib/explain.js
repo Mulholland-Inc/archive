@@ -7,49 +7,61 @@ export const PAGES = [
   {
     art: 'hidden',
     alt: 'Three app screens in front of a locked wall, with a database peeking over the top',
-    title: 'Every app has a hidden box.',
-    text: 'Notion, NetSuite, Google Sheets, even Claude. Behind the screen sits a database: a giant box of neat lists where your stuff really lives. You never get to see it.'
+    title: 'Every app is secretly a database.',
+    text: 'Notion, Salesforce, NetSuite, QuickBooks, Google Sheets, even Claude. Behind the screen, every one of them keeps your stuff in a database.'
   },
   {
-    art: 'story-1',
-    alt: 'A filing cabinet, a data silo, a mailbox and a spreadsheet board, each standing apart',
-    title: 'And every app has its own.',
-    text: 'Your notes are in one box, your numbers in another, your files in a third. They don’t talk to each other, so you copy and paste between them. All day.'
+    art: 'tables',
+    alt: 'A board of neat rows and columns, some of them highlighted',
+    title: 'And a database is just tables.',
+    text: 'Rows and columns, like a spreadsheet. Customers in one table, orders in another, and a line from each order to its customer. That’s the “relational” part. That’s it.'
+  },
+  {
+    art: 'endpoint',
+    alt: 'A big machine with a single thin hose running out to a small plug',
+    title: 'But you only get a straw.',
+    text: 'You can’t touch those tables yourself. Your AI has to sip through the app’s API or MCP, one small question at a time. It’s slow, and it only sees what fits through the straw.'
   },
   {
     art: 'security',
     alt: 'A locked vault with a keypad',
-    title: 'You only get the buttons they give you.',
-    text: 'Want a new column, a new rule, a new way to look at things? You wait for them to build it. Or you give up and start another spreadsheet.'
-  },
-  {
-    art: 'blog-own-your-data',
-    alt: 'A sturdy base holding a records drum and a filing cabinet, with a key turned in its lock',
-    title: 'What if the box was yours?',
-    text: 'Archive gives you your own backend: a real Postgres database, the same kind big companies run on. Everything goes in one place, and you hold the key.'
+    title: 'And it only bends so far.',
+    text: 'Want a new kind of record, a new rule, or ten times more data? You get what the app’s makers built, at the size they allow.'
   },
   {
     art: 'ontology',
     alt: 'Records for people, places and documents joined by lines on a board',
-    title: 'Shaped like your work.',
-    text: 'Say “I keep customers, orders and invoices” and it makes those lists and links them together. Change your mind tomorrow? Change it in seconds.'
+    title: 'Palantir calls the right way an ontology.',
+    text: 'Typed tables that describe how your business really works: what a customer is, what an order is, and how they connect. It’s how some of the biggest companies in the world run.'
   },
   {
-    art: 'cli',
-    alt: 'A computer with code on the screen, a keyboard and a mug',
-    title: 'Your AI writes the code. Not you.',
-    text: 'Coding agents like Claude Code change your database directly, in code. Say “add a due date to every invoice and remind me a week before.” Done.'
+    art: 'blog-own-your-data',
+    alt: 'A sturdy base holding a records drum and a filing cabinet, with a key turned in its lock',
+    title: 'Archive gives you your own.',
+    text: 'A real Postgres database, typed and shaped like your business, living where you choose. Not a copy. Not a straw. The real tables.'
+  },
+  {
+    art: 'code',
+    alt: 'A screen of code beside a big play button',
+    title: 'Your AI writes code, right on the data.',
+    text: 'Coding agents like Claude Code don’t click around. They write code that runs next to your tables: change a hundred thousand records, add a new type, build a new view. In seconds.'
   },
   {
     art: 'delta',
     alt: 'A conveyor moving sheets along in a straight line',
     title: 'That’s why it’s 10x faster.',
-    text: 'No hunting through menus. No waiting for a feature. No copy and paste. One sentence to your AI does what takes an afternoon in Notion, Google Sheets or Google Drive.'
+    text: 'No straw. No waiting for a feature. No limits someone else set. Your AI works on the real thing, directly.'
   },
   {
     art: 'story-5',
     alt: 'A factory with new modules plugged in around it',
-    title: 'And it’s still all yours.',
-    text: 'Archive is open source. You can see how it works, run it yourself, and take everything with you whenever you want.'
+    title: 'Five things, in one place.',
+    list: [
+      ['Direct data', 'the real tables, not a copy'],
+      ['A database', 'Postgres, built to grow'],
+      ['Code', 'your AI can change anything'],
+      ['Sovereignty', 'you own it and can take it anywhere'],
+      ['Agents', 'every assistant works from the same source']
+    ]
   }
 ];

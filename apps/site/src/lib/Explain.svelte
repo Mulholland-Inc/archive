@@ -69,7 +69,11 @@
     <div class="explain-copy" aria-live="polite">
       <small>{at + 1} of {PAGES.length}</small>
       <h2>{page.title}</h2>
-      <p>{page.text}</p>
+      {#if page.list}
+        <ul class="explain-list">{#each page.list as [name, what]}<li><strong>{name}</strong> {what}</li>{/each}</ul>
+      {:else}
+        <p>{page.text}</p>
+      {/if}
     </div>
     <div class="explain-foot">
       <div class="explain-dots">
