@@ -3,6 +3,10 @@ export const APP = "https://mulholland.ai";
 export const GITHUB = "https://github.com/Mulholland-Inc/archive";
 export const START = [APP, "Start building free"];
 
+export const BUILT = [
+  { href: "/family", art: "family", title: "archive.family", text: "A family's papers, photos and history, kept private" }
+];
+
 export const PRODUCT = [
   { href: "/ontology", art: "ontology", title: "Ontology", text: "You decide what your business runs on" },
   { href: "/pages", art: "pages", title: "Pages", text: "Docs your team and AI write together" },

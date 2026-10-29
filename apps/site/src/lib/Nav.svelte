@@ -6,7 +6,7 @@
   import Icon from '#kit/Icon.svelte';
   import Theme from '#kit/Theme.svelte';
   import Word from '#kit/Word.svelte';
-  import { APP, GITHUB, PRODUCT } from './site.js';
+  import { APP, BUILT, GITHUB, PRODUCT } from './site.js';
 
   const LINKS = [
     ['/developers', 'Developers'],
@@ -69,6 +69,12 @@
               <a href={p.href}><span class="mi-art"><Art name={p.art} lazy /></span><strong>{p.title}</strong><small>{p.text}</small></a>
             {/each}
           </div>
+          <div class="menu-built">
+            <span class="eyebrow">Built on Archive</span>
+            {#each BUILT as b}
+              <a href={b.href}><span class="mb-art"><Art name={b.art} lazy /></span><strong>{b.title}</strong><small>{b.text}</small><Icon name="arrow" /></a>
+            {/each}
+          </div>
         </div>
       </div>
       {#each LINKS as [href, label]}
@@ -86,6 +92,9 @@
     <div class="sheet-grid">
       {#each PRODUCT as p}
         <a href={p.href}><span class="sheet-art"><Art name={p.art} lazy /></span><span>{p.title}</span></a>
+      {/each}
+      {#each BUILT as b}
+        <a class="sheet-built" href={b.href}><span class="sheet-art"><Art name={b.art} lazy /></span><span>{b.title}</span><small>Built on Archive</small></a>
       {/each}
     </div>
     <div class="sheet-links">
