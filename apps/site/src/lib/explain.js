@@ -8,7 +8,7 @@ export const PAGES = [
     art: 'hidden',
     alt: 'Three app screens in front of a locked wall, with a database peeking over the top',
     title: 'Every app has a hidden box.',
-    text: 'Notion, Oracle, Google Sheets, even Claude. Behind the screen sits a database: a giant box of neat lists where your stuff really lives. You never get to see it.'
+    text: 'Notion, NetSuite, Google Sheets, even Claude. Behind the screen sits a database: a giant box of neat lists where your stuff really lives. You never get to see it.'
   },
   {
     art: 'story-1',
