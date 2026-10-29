@@ -42,7 +42,7 @@
   const TOOLS = ['Gmail', 'Outlook', 'Google Drive', 'SharePoint', 'Slack', 'Teams', 'Notion', 'Jira', 'Linear', 'GitHub', 'HubSpot', 'Salesforce', 'Zendesk', 'Stripe', 'QuickBooks', '+ 13 more'];
 </script>
 
-<Meta title="Archive — Own your data infrastructure" description="Own your data infrastructure. An open foundation for your agents to build on." />
+<Meta title="Archive — Your company’s ontology, in a database you own" description="Your records, documents and conversations in one typed Postgres database. Your AI agents change it directly, in code, and you can take it anywhere." />
 
 <Hero
   kind="home"
