@@ -3,6 +3,7 @@
   import Facts from '#lib/Facts.svelte';
   import Faq from '#lib/Faq.svelte';
   import Hero from '#lib/Hero.svelte';
+  import Logos from '#lib/Logos.svelte';
   import Row from '#lib/Row.svelte';
   import Section from '#lib/Section.svelte';
   import Specs from '#lib/Specs.svelte';
@@ -43,7 +44,6 @@
 <svelte:head>
   <title>Agents — Archive</title>
   <meta name="description" content="Add Archive to ChatGPT, Claude, Gemini or Grok, and your AI assistant can find, update and file your company's information for you, as you, with nothing left half done." />
-  <meta name="theme-color" content="#0b0d12" />
 </svelte:head>
 
 <Hero
@@ -52,7 +52,7 @@
   art="agents"
   alt="Chat windows from several AI apps plugged into one Archive antenna"
 >
-  <div class="logos"><span>ChatGPT</span><span>Claude</span><span>Gemini</span><span>Grok</span><span>Claude Code</span><span>Cursor</span></div>
+  <Logos items={['ChatGPT', 'Claude', 'Gemini', 'Grok', 'Claude Code', 'Cursor']} />
 </Hero>
 
 <Section>

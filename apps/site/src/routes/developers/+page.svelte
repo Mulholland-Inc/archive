@@ -1,5 +1,4 @@
 <script>
-  import Button from '#lib/Button.svelte';
   import CopyPrompt from '#lib/CopyPrompt.svelte';
   import Cta from '#lib/Cta.svelte';
   import Facts from '#lib/Facts.svelte';
@@ -8,7 +7,7 @@
   import Row from '#lib/Row.svelte';
   import Section from '#lib/Section.svelte';
   import Specs from '#lib/Specs.svelte';
-  import { APP, GITHUB } from '#lib/site.js';
+  import { GITHUB, START } from '#lib/site.js';
 
   const PROMPT = [
     `Help me self-host Archive, the open-source data server at ${GITHUB}.`,
@@ -50,7 +49,6 @@
 <svelte:head>
   <title>Developers — Archive</title>
   <meta name="description" content="Shape your data with your AI agent, let it run code inside Archive, connect your other tools, and self-host or fork the open-source server." />
-  <meta name="theme-color" content="#0b0d12" />
 </svelte:head>
 
 <Hero
@@ -58,11 +56,9 @@
   lead="Shape your data by talking to your AI agent, let it run code right next to your data, and connect the tools you already use. Archive is open source, so you can run it yourself and make it your own."
   art="api"
   alt="A switchboard connecting a terminal, a browser and an AI assistant to one place"
+  links={[START]}
 >
-  {#snippet actions()}
-    <Button href={APP}>Start building free</Button>
-    <CopyPrompt text={PROMPT} />
-  {/snippet}
+  {#snippet actions()}<CopyPrompt text={PROMPT} />{/snippet}
 </Hero>
 
 <Section body="Most of the work happens in a conversation with your agent. The rest is yours to change.">
@@ -102,9 +98,4 @@
   <Faq items={FAQ} />
 </Section>
 
-<Cta title="Build on your own data." lead="Free for your first workspace, or run your own copy from GitHub.">
-  {#snippet actions()}
-    <Button href={APP}>Start building free</Button>
-    <Button href={GITHUB} ghost>View on GitHub</Button>
-  {/snippet}
-</Cta>
+<Cta title="Build on your own data." lead="Free for your first workspace, or run your own copy from GitHub." links={[START, [GITHUB, 'View on GitHub']]} />

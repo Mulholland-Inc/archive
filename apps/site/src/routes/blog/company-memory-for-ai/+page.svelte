@@ -1,6 +1,7 @@
 <script>
   import PostLayout from '#lib/PostLayout.svelte';
-  import Art from '#lib/Art.svelte';
+  import Figure from '#lib/Figure.svelte';
+  import Pull from '#lib/Pull.svelte';
 </script>
 
 <PostLayout
@@ -18,7 +19,7 @@
     <p>There is nothing to keep in sync by hand. When someone adds a client or updates a contract, the next question your assistant answers already includes the change.</p>
     <p>It also works the other way. Because the assistant can make changes as well as read, you can ask it to log the call you just had, add a follow-up to a project or fill in the missing details on a supplier, and it lands in the same place everyone else looks.</p>
 
-    <div class="pull">The assistant stops guessing about your business and starts looking things up, in the same place your team does.</div>
+    <Pull>The assistant stops guessing about your business and starts looking things up, in the same place your team does.</Pull>
 
     <h2>What it looks like in practice</h2>
     <p>Picture a small design agency with a dozen active clients. The account lead asks, "Which projects are waiting on client feedback, and how long has each been waiting?" Instead of opening five tools, the assistant looks at the agency's projects and messages in Archive and comes back with a short list, oldest first.</p>
@@ -26,10 +27,7 @@
     <p>Or a finance team closing the month. "List the supplier invoices over five thousand dollars that don't have an approval yet." The answer comes from your own invoices, not from a general idea of what invoices usually look like.</p>
     <p>None of these questions are hard. They are just impossible for an assistant that cannot see your records.</p>
 
-    <figure>
-      <Art name="blog-company-memory-for-ai-2" alt="A laptop showing a chat answer, with a blue thread running from the answer to one folder lifted out of an open filing cabinet drawer" />
-      <figcaption>Every answer can point back to the record or file it came from.</figcaption>
-    </figure>
+    <Figure art="blog-company-memory-for-ai-2" alt="A laptop showing a chat answer, with a blue thread running from the answer to one folder lifted out of an open filing cabinet drawer" caption="Every answer can point back to the record or file it came from." />
 
     <h2>Answers you can check</h2>
     <p>A confident answer is only useful if you can trust it. When your assistant works from Archive, it is reading specific records and files, each with its own place in your workspace. So it can tell you where an answer came from: this lease, that invoice, the notes from the March kickoff call. You can open the source and see for yourself.</p>

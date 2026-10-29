@@ -32,6 +32,7 @@ function parseFrame(scene) {
     pitch: f.pitch ?? 35.2644,
     bounds: f.bounds ?? [[-20, -20, -20], [20, 20, 20]],
     shade: f.shade ?? 0,
+    trim: f.trim ?? true,
     body: scene.replace(m[0], ''),
   };
 }
@@ -378,8 +379,9 @@ export class Renderer {
 
 export async function bake(name, opts = {}) {
   const r = new Renderer();
-  const img = await r.render(await loadSources(name), opts);
-  const [x, y, w, h] = opts.bg || opts.trim === false ? [0, 0, img.width, img.height] : trim(img);
+  const src = await loadSources(name);
+  const img = await r.render(src, opts);
+  const [x, y, w, h] = opts.bg || opts.trim === false || !parseFrame(src.scene).trim ? [0, 0, img.width, img.height] : trim(img);
   const cv = document.createElement('canvas');
   cv.width = w;
   cv.height = h;

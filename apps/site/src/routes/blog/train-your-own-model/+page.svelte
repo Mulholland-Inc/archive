@@ -1,6 +1,7 @@
 <script>
   import PostLayout from '#lib/PostLayout.svelte';
-  import Art from '#lib/Art.svelte';
+  import Figure from '#lib/Figure.svelte';
+  import Pull from '#lib/Pull.svelte';
 </script>
 
 <PostLayout
@@ -17,7 +18,7 @@
     <p>Do that a few hundred times, and you have a collection of worked examples, written by the people who know your business best. Nobody had to sit down and label anything. The examples came from doing the job.</p>
     <p>The same is true when your AI assistant does the filing and a person checks or corrects it. Every correction is a lesson too.</p>
 
-    <div class="pull">You don't need a labeling project. Your team has been building one every time they filed something.</div>
+    <Pull>You don't need a labeling project. Your team has been building one every time they filed something.</Pull>
 
     <h2>Two kinds of model</h2>
     <p>Archive turns those examples into one of two small models, each built for a specific job.</p>
@@ -28,10 +29,7 @@
     <p>The second reads long text and turns it into filled-in records, field by field, in the same shape your team uses. Hand it a long contract, a full email thread or a whole report in one go, and it returns the client, the dates, the amounts and the terms, ready to save.</p>
     <p>For a finance team, that could be supplier invoices turned into records with the vendor, invoice number, due date and total already filled in. For an agency, a project brief becomes a project with its deadline, budget and contacts.</p>
 
-    <figure>
-      <Art name="blog-train-your-own-model-2" alt="A long paper roll of text feeds into a machine, which prints neat record cards with filled-in blue fields into a tray" />
-      <figcaption>The filer reads long text and hands back records with the fields already filled in.</figcaption>
-    </figure>
+    <Figure art="blog-train-your-own-model-2" alt="A long paper roll of text feeds into a machine, which prints neat record cards with filled-in blue fields into a tray" caption="The filer reads long text and hands back records with the fields already filled in." />
 
     <h2>Checked before it starts work</h2>
     <p>A model is only useful if it is right often enough to trust. Before a model sorts or files anything for real, Archive tests it on examples from your own records that it never saw during training, and shows you how it did. You see where it does well and where it still gets confused, using your own documents as the yardstick, not a public benchmark.</p>

@@ -1,5 +1,4 @@
 <script>
-  import Button from '#lib/Button.svelte';
   import Cta from '#lib/Cta.svelte';
   import Facts from '#lib/Facts.svelte';
   import Faq from '#lib/Faq.svelte';
@@ -82,7 +81,6 @@
 <svelte:head>
   <title>Pricing — Archive</title>
   <meta name="description" content="Start free with your first workspace. Pro and Team are priced per member, and training your own AI models is billed by use." />
-  <meta name="theme-color" content="#0b0d12" />
 </svelte:head>
 
 <Hero
@@ -90,12 +88,8 @@
   lead="Your first workspace is free. Upgrade as your team grows; every plan works with your AI assistants and keeps your information with the right people."
   art="pricing"
   alt="A set of scales weighing a small stack of records against a few coins"
->
-  {#snippet actions()}
-    <Button href={APP}>Start free</Button>
-    <Button href="#compare" ghost>Compare plans</Button>
-  {/snippet}
-</Hero>
+  links={[[APP, 'Start free'], ['#compare', 'Compare plans']]}
+/>
 
 <Section>
   <Plans plans={PLANS} />

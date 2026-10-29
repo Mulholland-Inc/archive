@@ -1,6 +1,7 @@
 <script>
   import PostLayout from '#lib/PostLayout.svelte';
-  import Art from '#lib/Art.svelte';
+  import Figure from '#lib/Figure.svelte';
+  import Pull from '#lib/Pull.svelte';
 </script>
 
 <PostLayout
@@ -27,14 +28,11 @@
     <h2>See exactly what will change, before it happens</h2>
     <p>Changing how information is organized should never be a leap of faith. Before anything is applied, Archive shows you a preview of the change: what will be added, what will be renamed, what will be removed, and which steps carry a risk worth a second look.</p>
 
-    <figure>
-      <Art name="blog-change-the-shape-anytime-2" alt="A plan board beside a control desk with a lever and a guarded button, and a magnifier held over a single record block with a tag on it" />
-      <figcaption>Look at the plan first. Apply it when you are happy. The risky button has a guard on it.</figcaption>
-    </figure>
+    <Figure art="blog-change-the-shape-anytime-2" alt="A plan board beside a control desk with a lever and a guarded button, and a magnifier held over a single record block with a tag on it" caption="Look at the plan first. Apply it when you are happy. The risky button has a guard on it." />
 
     <p>When you approve it, the change is applied all at once. Either every part of it lands or none of it does, so your workspace never ends up half changed. Everyone connected sees the new shape right away, including every AI assistant, which always works from the current version.</p>
 
-    <p class="pull">Renaming a field should never cost you the information in it. Removing one should never happen by accident.</p>
+    <Pull>Renaming a field should never cost you the information in it. Removing one should never happen by accident.</Pull>
 
     <h2>Nothing deleted by accident</h2>
     <p>The scariest change is the one that throws information away. Archive treats it that way. If a change would remove a field or a kind of record that holds information, it is blocked unless you explicitly say that is what you want. A tidy-up that would quietly wipe a year of notes does not go through on a misclick, and it does not go through because an assistant misunderstood an instruction.</p>
@@ -47,10 +45,7 @@
     <h2>Boards, calendars and lists follow along</h2>
     <p>Most people never look at the raw shape of their information. They look at a board of jobs by status, a calendar of lease renewals, a list of open invoices. In Archive, those are simply different ways of looking at the same records, so they move with your changes.</p>
 
-    <figure>
-      <Art name="views" alt="A stand holding a board with cards in lanes, a calendar grid and a spreadsheet-like list" />
-      <figcaption>Boards, calendars and lists are ways of looking at the same records, so they update with them.</figcaption>
-    </figure>
+    <Figure art="views" alt="A stand holding a board with cards in lanes, a calendar grid and a spreadsheet-like list" caption="Boards, calendars and lists are ways of looking at the same records, so they update with them." />
 
     <p>Add a renewal date to clients, and you can put clients on a calendar by renewal date the same afternoon. Add a "stage" to retainers, and a board grouped by stage is one step away. Rename a field, and every board and list that used it keeps working under the new name. Nobody has to rebuild a dashboard because the business learned something.</p>
     <p>And because every record follows the same access rules, a new kind of record is protected from the start. Only the right people, and the right AI, see it.</p>

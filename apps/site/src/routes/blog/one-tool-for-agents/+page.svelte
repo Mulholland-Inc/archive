@@ -1,6 +1,7 @@
 <script>
   import PostLayout from '#lib/PostLayout.svelte';
-  import Art from '#lib/Art.svelte';
+  import Figure from '#lib/Figure.svelte';
+  import Pull from '#lib/Pull.svelte';
 </script>
 
 <PostLayout
@@ -17,7 +18,7 @@
     <p>Now picture a good cook with a knife and a recipe card. The recipe says what to do, in order: chop these, set those aside, taste, adjust. The cook follows it from start to finish. One general tool, guided by clear instructions, covers almost anything the gadgets do, plus everything they don't.</p>
     <p>A workshop works the same way. You can hang a hundred specialty jigs on the wall, or you can hand a skilled machinist a written work order. The work order wins as soon as the job is something nobody built a jig for.</p>
 
-    <div class="pull">A hundred narrow buttons can only do what someone thought of in advance. One tool and a clear set of steps can do what you actually asked.</div>
+    <Pull>A hundred narrow buttons can only do what someone thought of in advance. One tool and a clear set of steps can do what you actually asked.</Pull>
 
     <h2>What the one tool does</h2>
     <p>Archive's tool takes a short script, a few lines of written steps, and runs it right next to your information. Your assistant writes the script for the request in front of it. One script can look things up, go through them one by one, make decisions, and make changes, all in a single go.</p>
@@ -29,10 +30,7 @@
     <p>A long chain of separate tool calls has an uncomfortable failure mode. If step thirty-one goes wrong, steps one through thirty have already happened. Half the tasks are created, half the records are updated, and someone has to work out by hand where it stopped.</p>
     <p>In Archive, a script's changes are all-or-nothing. If anything in the script fails, none of its changes are kept. Your records look exactly as they did before, and the assistant can fix the problem and try again. Either the whole errand happens, or none of it does.</p>
 
-    <figure>
-      <Art name="blog-one-tool-for-agents-2" alt="Bundles of cards strapped together with a blue band ride a roller conveyor through a gate into a cabinet, each bundle moving as one piece" />
-      <figcaption>Every change in a script travels as one bundle: it all lands, or none of it does.</figcaption>
-    </figure>
+    <Figure art="blog-one-tool-for-agents-2" alt="Bundles of cards strapped together with a blue band ride a roller conveyor through a gate into a cabinet, each bundle moving as one piece" caption="Every change in a script travels as one bundle: it all lands, or none of it does." />
     <p>Back in the kitchen, it is the difference between a cook who either finishes the dish or clears the counter, and one who leaves you with half-chopped onions and a cold pan.</p>
 
     <h2>It always works with your real, current setup</h2>

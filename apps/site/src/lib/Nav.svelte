@@ -3,6 +3,7 @@
   import { afterNavigate } from '$app/navigation';
   import Art from './Art.svelte';
   import Button from './Button.svelte';
+  import Icon from './Icon.svelte';
   import Word from './Word.svelte';
   import { APP, GITHUB, PRODUCT } from './site.js';
 
@@ -15,8 +16,12 @@
 
   let open = $state(false);
   let shut = $state(false);
-  let y = $state(0);
+  let hidden = $state(false);
+  let header;
   let menu;
+  let last = 0;
+  let slack = 0;
+  let dark = $state(false);
 
   const here = $derived(page.url.pathname.replace(/(.)\/$/, '$1'));
 
@@ -24,25 +29,61 @@
     document.documentElement.classList.toggle('locked', open);
   });
 
+  $effect(() => {
+    dark = document.documentElement.dataset.theme === 'dark';
+  });
+
+  $effect(() => {
+    slack =parseFloat(getComputedStyle(header).getPropertyValue('--nav-slack'));
+  });
+
+  function scrolled() {
+    const y = Math.min(Math.max(scrollY, 0), document.documentElement.scrollHeight - innerHeight);
+    if (y <= header.offsetHeight || open || menu.matches(':hover, :focus-within')) {
+      hidden = false;
+      last = y;
+      return;
+    }
+    if (Math.abs(y - last) < slack) return;
+    hidden = y > last;
+    last = y;
+  }
+
+  function theme() {
+    const swap = () => {
+      dark = !dark;
+      const root = document.documentElement;
+      if (dark) root.dataset.theme = 'dark';
+      else delete root.dataset.theme;
+      document.querySelector('meta[name="theme-color"]').content = dark ? '#0b0d12' : '#e4e7ec';
+      try {
+        localStorage.theme = dark ? 'dark' : 'light';
+      } catch {}
+    };
+    if (!document.startViewTransition || matchMedia('(prefers-reduced-motion: reduce)').matches) return swap();
+    document.documentElement.classList.add('theming');
+    document.startViewTransition(swap).finished.finally(() => document.documentElement.classList.remove('theming'));
+  }
+
   afterNavigate(({ from }) => {
     open = false;
+    hidden = false;
+    last = scrollY;
     if (!from) return;
     if (menu.matches(':hover')) shut = true;
     if (menu.contains(document.activeElement)) document.activeElement.blur();
   });
 </script>
 
-<svelte:window bind:scrollY={y} onkeydown={(e) => e.key === 'Escape' && (open = false)} />
+<svelte:window onkeydown={(e) => e.key === 'Escape' && (open = false)} onscroll={scrolled} />
 
-<header class={['nav', y > 8 && 'scrolled', open && 'open']}>
+<header class={['nav', open && 'open', hidden && 'hidden']} bind:this={header} onfocusin={() => (hidden = false)}>
   <div class="wrap">
     <a class="brand" href="/" aria-label="Archive home"><Word /></a>
     <nav class="nav-links">
       <div class="menu" bind:this={menu} role="presentation" onmouseleave={() => (shut = false)}>
-        <button type="button" aria-haspopup="true"
-          >Product <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5 5 6.5 8 3.5" /></svg></button
-        >
-        <div class="menu-panel" style:visibility={shut ? 'hidden' : null} style:opacity={shut ? '0' : null}>
+        <button type="button" aria-haspopup="true">Product <Icon name="chevron" /></button>
+        <div class={['menu-panel', shut && 'shut']}>
           <div class="menu-grid">
             {#each PRODUCT as p}
               <a href={p.href}><span class="mi-art"><Art name={p.art} lazy /></span><strong>{p.title}</strong><small>{p.text}</small></a>
@@ -55,17 +96,10 @@
       {/each}
     </nav>
     <div class="nav-right">
-      <a class="icon-btn gh" href={GITHUB} target="_blank" rel="noopener" aria-label="GitHub"
-        ><svg viewBox="0 0 16 16" fill="currentColor"
-          ><path
-            d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"
-          /></svg
-        ></a
-      >
+      <button class="icon-btn" type="button" aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'} onclick={theme}><Icon name={dark ? 'sun' : 'moon'} /></button>
+      <a class="icon-btn gh" href={GITHUB} target="_blank" rel="noopener" aria-label="GitHub"><Icon name="github" /></a>
       <Button href={APP} small>Log in</Button>
-      <button class="icon-btn burger" type="button" aria-label={open ? 'Close menu' : 'Menu'} aria-expanded={open} aria-controls="sheet" onclick={() => (open = !open)}
-        ><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d={open ? 'M3.5 3.5l9 9M12.5 3.5l-9 9' : 'M2 5.5h12M2 10.5h12'} /></svg></button
-      >
+      <button class="icon-btn burger" type="button" aria-label={open ? 'Close menu' : 'Menu'} aria-expanded={open} aria-controls="sheet" onclick={() => (open = !open)}><Icon name={open ? 'close' : 'menu'} /></button>
     </div>
   </div>
   <div class="sheet" id="sheet" inert={!open}>

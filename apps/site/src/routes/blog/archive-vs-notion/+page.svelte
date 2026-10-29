@@ -1,6 +1,7 @@
 <script>
   import PostLayout from '#lib/PostLayout.svelte';
-  import Art from '#lib/Art.svelte';
+  import Figure from '#lib/Figure.svelte';
+  import Pull from '#lib/Pull.svelte';
   import Compare from '#lib/Compare.svelte';
 </script>
 
@@ -21,16 +22,13 @@
   <p>Archive works with the AI you already use: ChatGPT, Claude, Gemini and Grok. Add Archive once, and your assistant can read and change your lists, pages and files directly, as you. It sees exactly what you are allowed to see, and nothing more.</p>
   <p>Rather than pressing a long chain of small buttons, the assistant writes a short piece of code and Archive runs it right next to your data. One request can search, update fifty records and write a summary page. Changes are all-or-nothing: if something goes wrong halfway, nothing is saved, so you never end up with half an update to clean up.</p>
   <p>Each assistant gets its own access key. You can narrow what it may touch, and switch one off without affecting the others.</p>
-  <p class="pull">The question is not whether your AI can see your workspace. It is whether it can do real work there, safely.</p>
+  <Pull>The question is not whether your AI can see your workspace. It is whether it can do real work there, safely.</Pull>
   <p>Notion connects to outside tools and assistants too, and Notion AI is genuinely useful for writing and summarizing. The difference is in what sits underneath: in Archive, every record your assistant touches lives in a database that checks every change and keeps everything in step.</p>
 
   <h2>Pages people and AI write together</h2>
   <p>Archive pages are live documents. Your team types in the browser, an assistant edits the same page at the same moment, and every change merges. Nobody's typing gets overwritten. While the assistant works, it shows up in the list of who is on the page, just like a teammate.</p>
   <p>Say a property manager keeps a page per building, with a checklist for the next inspection, notes from tenants and open repairs. While she walks the building ticking boxes on her phone, Claude adds the repair requests that came in by email that morning to the same page. Neither of them waits for the other.</p>
-  <figure>
-    <Art name="blog-archive-vs-notion-2" alt="A laptop and an AI chat window both wired into the same page, with two editing markers on it" />
-    <figcaption>One page, two editors: a person on a laptop and an AI assistant, both writing at once.</figcaption>
-  </figure>
+  <Figure art="blog-archive-vs-notion-2" alt="A laptop and an AI chat window both wired into the same page, with two editing markers on it" caption="One page, two editors: a person on a laptop and an AI assistant, both writing at once." />
   <p>To be fair: Notion's editor is richer today, with embeds, layouts and years of polish. Archive pages are blocks of text, such as headings, lists, to-dos, quotes and code. Inline formatting and nested blocks are on the way.</p>
 
   <h2>Files that stay files</h2>

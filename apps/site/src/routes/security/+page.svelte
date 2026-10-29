@@ -3,10 +3,10 @@
   import Facts from '#lib/Facts.svelte';
   import Faq from '#lib/Faq.svelte';
   import Hero from '#lib/Hero.svelte';
+  import Logos from '#lib/Logos.svelte';
   import Row from '#lib/Row.svelte';
   import Section from '#lib/Section.svelte';
   import Specs from '#lib/Specs.svelte';
-  import { reveal } from '#lib/reveal.js';
 
   const LEVELS = [
     ['viewer', 'Browse, open and search records and files, read pages and documents, and open boards, calendars and lists.'],
@@ -34,7 +34,6 @@
 <svelte:head>
   <title>Security — Archive</title>
   <meta name="description" content="Only the right people see your information. Private and shared spaces, sealed secret fields, and AI assistants that follow the same rules as everyone else." />
-  <meta name="theme-color" content="#0b0d12" />
 </svelte:head>
 
 <Hero
@@ -72,7 +71,7 @@
 </Section>
 
 <Section title="Sign in without a password." body="Use an email link, a passkey, or your Google or Microsoft account. However you sign in, you get the same access.">
-  <div class="logos reveal" use:reveal><span>Email magic link</span><span>Passkeys</span><span>Google</span><span>Microsoft</span><span>Single sign-on</span></div>
+  <Logos reveal items={['Email magic link', 'Passkeys', 'Google', 'Microsoft', 'Single sign-on']} />
 </Section>
 
 <Section band title="Safe to hand to an assistant." body="Assistants, connected tools and share links follow the same rules as people. Nothing gets a side door.">

@@ -1,14 +1,13 @@
 <script>
-  import Button from '#lib/Button.svelte';
   import Cta from '#lib/Cta.svelte';
   import Facts from '#lib/Facts.svelte';
   import Faq from '#lib/Faq.svelte';
-  import Feature from '#lib/Feature.svelte';
   import Hero from '#lib/Hero.svelte';
+  import Letters from '#lib/Letters.svelte';
   import Row from '#lib/Row.svelte';
   import Scene from '#lib/Scene.svelte';
   import Section from '#lib/Section.svelte';
-  import { APP } from '#lib/site.js';
+  import { START } from '#lib/site.js';
 
   const STEPS = [
     ['File', 'Filing is teaching. Where something lands says what it is, and what you write down says what it means.'],
@@ -39,7 +38,6 @@
 <svelte:head>
   <title>Models — Archive</title>
   <meta name="description" content="Train AI on your own work. Everything you file is an example, so you can build a model that sorts and fills in records the way your business does, ready for your assistants." />
-  <meta name="theme-color" content="#0b0d12" />
 </svelte:head>
 
 <Hero
@@ -54,9 +52,12 @@
   <Scene name="lab" alt="A model foundry: silos of examples feed a training rig that stamps out model chips" />
 </Section>
 
-<Feature flip steps={STEPS} art="training" alt="A training rig with a progress gauge, fed by a conveyor of labeled cards">
-  {#snippet title()}File, train, <em>use</em>.{/snippet}
-</Feature>
+<Section band>
+  <Row flip art="training" alt="A training rig with a progress gauge, fed by a conveyor of labeled cards">
+    <h2>File, train, <em>use</em>.</h2>
+    <Letters steps={STEPS} />
+  </Row>
+</Section>
 
 <Section>
   <Row art="dataset" alt="Filed records stacked into a crate of examples">
@@ -89,9 +90,4 @@
   <Faq items={FAQ} />
 </Section>
 
-<Cta title="Train a model on your own work." lead="Start filing today, and your first examples start adding up.">
-  {#snippet actions()}
-    <Button href={APP}>Start building free</Button>
-    <Button href="/agents" ghost>How assistants work</Button>
-  {/snippet}
-</Cta>
+<Cta title="Train a model on your own work." lead="Start filing today, and your first examples start adding up." links={[START, ['/agents', 'How assistants work']]} />
