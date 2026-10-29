@@ -2189,6 +2189,34 @@ func TestCodeModeRunsTypeScriptInOneTransactionOverHTTPMCPAndCLI(t *testing.T) {
 	_, note := e2eUpload(t, api+"/files", tok, "viewing.txt", []byte("Viewing on Friday at the canal house"))
 	e2eDoneFile(t, api, tok, note.ID.String())
 
+	t.Run("DroppingATableFromARunAppliesAfterTheRunCommits", func(t *testing.T) {
+		shed := e2eTable("shed", "    label text NOT NULL,\n    search tsvector GENERATED ALWAYS AS (archive.search_doc(label)) STORED")
+		ok(t, `const files = await archive.schema();
+files["shed.sql"] = `+strconv.Quote(shed)+`;
+await archive.apply(files, { confirm: true });
+await archive.create("shed", { label: "tools" });
+return {};`)
+		drop := `const files = await archive.schema(); delete files["shed.sql"]; await archive.apply(files, { confirm: true, allowDrop: true });`
+		if out := run(t, tok, drop+` throw new Error("changed my mind");`); !strings.Contains(out.Error, "changed my mind") {
+			t.Fatalf("rolled back run: %+v", out)
+		}
+		if kept := ok(t, `return { kept: (await archive.tables()).some((t) => t.name === "shed") };`); kept["kept"] != true {
+			t.Errorf("a rolled back run still dropped the table: %v", kept)
+		}
+		got := ok(t, `const files = await archive.schema();
+const before = (await archive.list("shed")).length;
+delete files["shed.sql"];
+const blocked = await archive.apply(files, { confirm: true }).then(() => "", (e) => e.message);
+const plan = await archive.apply(files, { confirm: true, allowDrop: true });
+return { before, blocked, applied: plan.applied, deferred: plan.deferred, still: (await archive.tables()).some((t) => t.name === "shed") };`)
+		if fmt.Sprintf("%v %v %v %v", got["before"], got["applied"], got["deferred"], got["still"]) != "1 false true true" || !strings.Contains(fmt.Sprint(got["blocked"]), "allow_drop") {
+			t.Fatalf("drop in a run: %v", got)
+		}
+		if gone := ok(t, `return { gone: !(await archive.tables()).some((t) => t.name === "shed") };`); gone["gone"] != true {
+			t.Errorf("shed is still there after the run: %v", gone)
+		}
+	})
+
 	t.Run("RenamingAFileKeepsItsContentAndNeedsAnEditor", func(t *testing.T) {
 		var f File
 		st, _ := call(t, "PATCH", api+"/files/"+note.ID.String(), tok, map[string]string{"name": "  dir/Viewing notes.txt "}, &f)

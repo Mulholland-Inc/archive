@@ -91,6 +91,7 @@ type SchemaStatement struct {
 type SchemaPlan struct {
 	Statements []SchemaStatement `json:"statements"`
 	Applied    bool              `json:"applied"`
+	Deferred   bool              `json:"deferred,omitempty"`
 }
 
 func (p *SchemaPlan) blocked() []string {
