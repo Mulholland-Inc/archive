@@ -35,7 +35,7 @@
   subtitle="Database. File storage. Agent access."
   lead="A foundation for your digital world, built to run on your terms."
   art="landscape"
-  alt="People working in an open office, robots sorting and scanning their documents, and everything filed into cabinets in a records room"
+  alt="A mailroom, a sorter, a scanner and a binding press joined by pneumatic tubes, feeding a building made of filing cabinets"
 />
 
 <Section>
