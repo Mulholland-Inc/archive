@@ -14,10 +14,11 @@
   import { onMount } from 'svelte';
   import { api } from './api.js';
   import Avatar from './ui/Avatar.svelte';
+  import Heading from './ui/Heading.svelte';
+  import Sheet from './ui/Sheet.svelte';
 
   let { id, name } = $props();
   let title = $state('');
-  let live = $state(false);
   let online = $state([]);
   let root;
 
@@ -57,7 +58,7 @@
         if (!el) {
           el = document.createElement('div');
           el.dataset.id = b.id;
-          el.innerHTML = `<select>${types.map((t) => `<option>${t}</option>`).join('')}</select><span class="mark"></span><input spellcheck="false" placeholder="Type here">`;
+          el.innerHTML = `<span class="type"><select aria-label="Block type">${types.map((t) => `<option>${t}</option>`).join('')}</select><svg class="icon" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5"/></svg></span><span class="mark"></span><input spellcheck="false" placeholder="Type here">`;
           const input = el.querySelector('input');
           const select = el.querySelector('select');
           input.oninput = () => { edit(() => call('setText', b.id, input.value)); publish(); };
@@ -175,7 +176,6 @@
         if (call('blocks').length === 0) call('insert', '', 'paragraph');
         render();
         publish(true).catch(console.error);
-        live = true;
       });
       es.addEventListener('presence', (e) => {
         try { call('applyPresence', e.data); } catch (err) { console.error(err); }
@@ -185,7 +185,6 @@
         try { call('apply', e.data); } catch (err) { console.error(err); }
         render();
       };
-      es.onerror = () => (live = false);
       timer = setInterval(() => flush().catch(console.error), 150);
       document.addEventListener('selectionchange', onSelection);
       document.addEventListener('focusout', onBlur);
@@ -199,66 +198,77 @@
       document.removeEventListener('focusout', onBlur);
     };
   });
+
+  async function rename(next) {
+    const before = title;
+    title = next;
+    try {
+      title = (await api(`/api/files/${id}`, { method: 'PATCH', body: { name: `${next}.page` } })).name.replace(/\.page$/, '');
+    } catch (e) {
+      title = before;
+      alert(e.message);
+    }
+  }
 </script>
 
-<header>
-  <a class="crumb" href="/pages">Pages <span>/</span> {title}</a>
+<Heading plain column="editor" {title} onrename={title ? rename : undefined}>
   <div class="people">
-    <span class="dot" class:live></span>
     {#each [{ ...me, site, you: true }, ...online] as p (p.site)}
-      <Avatar name={p.name} peer={peer(p)} pulse={p.agent} title={p.you ? `${p.name} (you)` : p.agent ? `${p.name} editing` : p.name} />
+      <Avatar name={p.name} pulse={p.agent} title={p.you ? `${p.name} (you)` : p.agent ? `${p.name} editing` : p.name} />
     {/each}
   </div>
-</header>
-<div class="page" bind:this={root}></div>
+</Heading>
+<Sheet plain>
+  <div class="page" bind:this={root}></div>
+</Sheet>
 
 <style>
-  header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); max-width: var(--measure); margin: calc(-1 * var(--space-7)) auto var(--space-6); }
-  .crumb { font-size: var(--text-sm); color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .crumb span { margin: 0 var(--space-1); }
   .people { display: flex; align-items: center; gap: var(--space-1); }
-  .dot { width: var(--size-xs); height: var(--size-xs); border-radius: 50%; background: var(--line-strong); margin-right: var(--space-2); }
-  .dot.live { background: var(--cream); }
-  .page { max-width: var(--measure); margin: 0 auto; padding-bottom: var(--space-9); }
-  .page :global(.block) { position: relative; display: flex; align-items: baseline; gap: var(--space-2); }
-  .page :global(select) {
-    width: var(--size-xl);
-    margin-left: calc(-1 * var(--size-xl) - var(--space-2));
-    padding: 0;
-    border: 0;
-    background: none;
-    font-size: var(--text-xs);
-    color: var(--text-3);
+  .page { display: flex; flex-direction: column; align-self: center; width: 100%; max-width: var(--editor-width); }
+  .page :global(.block) { position: relative; display: flex; align-items: baseline; gap: var(--space-1); }
+  .page :global(.type) {
+    display: var(--wide-only);
+    flex: none;
+    order: 1;
+    align-items: center;
+    align-self: center;
+    gap: var(--space-1);
+    padding: var(--space-1-5);
+    border-radius: var(--radius-full);
+    background: var(--fill);
+    color: var(--fg-muted);
     opacity: 0;
-    transition: opacity var(--dur) var(--ease);
+    transition: opacity var(--duration-fast), background var(--duration-fast);
   }
-  .page :global(.block:hover select), .page :global(.block:focus-within select) { opacity: 1; }
-  .page :global(input) { flex: 1; min-width: 0; padding: var(--space-1) 0; border: 0; background: none; font-size: var(--text-lg); line-height: 1.6; outline: 0; }
-  .page :global(input::placeholder) { color: var(--line-strong); }
-  .page :global(.heading1 input) { font: var(--weight-medium) var(--display-lg)/var(--leading-tight) var(--display); letter-spacing: var(--tracking-display); padding-bottom: var(--space-3); }
-  .page :global(.heading2 input) { font: var(--weight-medium) var(--display-sm)/var(--leading-tight) var(--display); letter-spacing: var(--tracking-tight); padding-top: var(--space-4); }
-  .page :global(.heading3 input) { font-size: var(--text-xl); font-weight: var(--weight-bold); padding-top: var(--space-2); }
-  .page :global(.quote input) { border-left: var(--stroke-bold) solid var(--line-strong); padding-left: var(--space-3); color: var(--text-2); }
-  .page :global(.code input) { font-family: var(--mono); font-size: var(--text-sm); background: var(--raised); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); }
-  .page :global(.mark) { flex: none; width: var(--space-3); color: var(--text-3); }
+  .page :global(.type select) { padding: 0; background: none; color: inherit; font-size: var(--text-app); line-height: var(--leading-none); text-transform: capitalize; appearance: none; outline: 0; cursor: pointer; }
+  .page :global(.type .icon) { width: var(--size-icon-sm); height: var(--size-icon-sm); pointer-events: none; }
+  .page :global(.type:hover), .page :global(.type:focus-within) { background: var(--fill-strong); color: var(--fg); }
+  .page :global(.block:hover .type), .page :global(.block:focus-within .type) { opacity: 1; }
+  .page :global(input) { flex: 1; min-width: 0; padding: var(--space-1); font-size: var(--text-editor); line-height: var(--leading-normal); outline: 0; }
+  .page :global(input::placeholder) { color: transparent; }
+  .page :global(.block:only-child input::placeholder), .page :global(input:focus::placeholder) { color: var(--fg-muted); }
+  .page :global(.heading1 input) { font: var(--weight-medium) var(--text-4xl) / var(--leading-normal) var(--font-serif); letter-spacing: var(--tracking-tight); }
+  .page :global(.heading2 input) { font: var(--weight-medium) var(--text-2xl) / var(--leading-normal) var(--font-serif); letter-spacing: var(--tracking-snug); }
+  .page :global(.heading3 input) { font-size: var(--text-app); font-weight: var(--weight-semibold); line-height: var(--leading-loose); }
+  .page :global(.quote input) { color: var(--fg-soft); font-family: var(--font-serif); font-style: italic; }
+  .page :global(.code input) { padding: var(--space-2); border-radius: var(--radius-xs); background: var(--fill); font-family: var(--font-mono); font-size: var(--text-app); }
+  .page :global(.mark) { display: none; flex: none; width: var(--space-3); color: var(--fg-muted); text-align: center; }
+  .page :global(.bullet .mark), .page :global(.todo .mark) { display: block; }
+  .page :global(.quote .mark) { display: block; align-self: stretch; width: var(--underline-thick); border-radius: var(--radius-full); background: var(--fill-strong); }
   .page :global(.bullet .mark::before) { content: '•'; }
   .page :global(.todo .mark::before) { content: '☐'; }
   .page :global(.caret), .page :global(.sel) { position: absolute; left: var(--x); top: var(--y); height: var(--h); background: var(--peer); pointer-events: none; }
-  .page :global(.caret) { width: var(--stroke-bold); transition: left var(--dur-fast); }
-  .page :global(.sel) { width: var(--w); opacity: 0.22; }
+  .page :global(.caret) { width: var(--underline-thick); transition: left var(--duration-instant); }
+  .page :global(.sel) { width: var(--w); opacity: var(--opacity-faint); }
   .page :global(.caret b) {
     position: absolute;
     bottom: 100%;
     left: 0;
-    padding: var(--stroke) var(--space-2);
-    border-radius: var(--radius-sm) var(--radius-sm) var(--radius-sm) 0;
+    padding: var(--space-1);
+    border-radius: var(--radius-xs) var(--radius-xs) var(--radius-xs) 0;
     background: var(--peer);
     color: var(--on-peer);
-    font: var(--weight-bold) var(--text-xs) var(--font);
+    font: var(--weight-semibold) var(--text-meta) / var(--leading-none) var(--font-sans);
     white-space: nowrap;
-  }
-  @media (max-width: 767px) {
-    header { margin-top: calc(-1 * var(--space-4)); }
-    .page :global(select) { display: none; }
   }
 </style>

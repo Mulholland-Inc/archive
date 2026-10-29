@@ -1,16 +1,17 @@
 <script>
-  import { api, go, Unauthorized } from './api.js';
-  import Avatar from './ui/Avatar.svelte';
-  import Button from './ui/Button.svelte';
+  import { api, go, setSpace, space, Unauthorized } from './api.js';
+  import Button from '#kit/Button.svelte';
+  import Theme from '#kit/Theme.svelte';
+  import Word from '#kit/Word.svelte';
+  import Profile from './ui/Profile.svelte';
   import Heading from './ui/Heading.svelte';
-  import Label from './ui/Label.svelte';
-  import Logo from './ui/Logo.svelte';
   import NavItem from './ui/NavItem.svelte';
   import SignIn from './SignIn.svelte';
   import Table from './Table.svelte';
   import View from './View.svelte';
   import Files from './Files.svelte';
   import Page from './Page.svelte';
+  import Chat from './Chat.svelte';
 
   let me = $state(null);
   let signedOut = $state(false);
@@ -18,6 +19,9 @@
   let views = $state([]);
   let types = $state({});
   let path = $state(location.pathname);
+  let chats = $state([]);
+  let scope = $state(space());
+  let generation = $state(0);
 
   addEventListener('popstate', () => (path = location.pathname));
   addEventListener('click', (e) => {
@@ -34,9 +38,29 @@
   const table = (name) => tables.find((t) => t.name === name);
   const who = $derived(me ? me.actor.name || me.actor.email : '');
 
+  async function loadChats() {
+    try {
+      chats = await api('/api/chats');
+    } catch {}
+  }
+
+  async function create(name) {
+    const sp = await api('/auth/spaces', { method: 'POST', body: { name } });
+    me = await api('/auth/me');
+    pick(sp.name);
+  }
+
+  function pick(name) {
+    setSpace(name);
+    scope = name;
+    generation++;
+  }
+
   async function load() {
     try {
       me = await api('/auth/me');
+      if (scope && !me.spaces.some((s) => s.name === scope)) pick('');
+      loadChats();
       const cat = await api('/api/types');
       const all = Object.values(cat.tables).sort((a, b) => a.name.localeCompare(b.name));
       types = cat.types;
@@ -60,31 +84,45 @@
 {#if signedOut}
   <SignIn />
 {:else if me}
-  <div class="app">
+  <div class="shell">
     <aside>
-      <a class="brand" href="/files"><Logo /></a>
-      <nav>
+      <a class="brand" href="/files" aria-label="Archive"><Word /></a>
+      <nav class="fade">
+        <NavItem href="/chat" icon="plus" active={route.first === 'chat' && !route.second}>New chat</NavItem>
         <NavItem href="/files" icon="folder" active={route.first === 'files'}>Files</NavItem>
         <NavItem href="/pages" icon="page" active={route.first === 'pages'}>Pages</NavItem>
+        {#if chats.length}
+          <div class="chats">
+            <hr />
+            {#each chats as c (c.id)}
+              <NavItem plain href="/chat/{c.id}" active={route.first === 'chat' && route.second === c.id}>{c.title || 'Untitled'}</NavItem>
+            {/each}
+          </div>
+        {/if}
         {#if views.length}
-          <Label>Views</Label>
+          <hr />
           {#each views as v (v.name)}
             <NavItem href="/views/{v.name}" icon={v.icon} active={route.first === 'views' && route.second === v.name}>{v.name.replaceAll('_', ' ')}</NavItem>
           {/each}
         {/if}
-        <Label>Tables</Label>
-        {#each tables as t (t.name)}
-          <NavItem href="/{t.name}" icon={t.icon} active={route.first === t.name}>{t.name.replaceAll('_', ' ')}</NavItem>
-        {/each}
+        {#if tables.length}
+          <hr />
+          {#each tables as t (t.name)}
+            <NavItem href="/{t.name}" icon={t.icon} active={route.first === t.name}>{t.name.replaceAll('_', ' ')}</NavItem>
+          {/each}
+        {/if}
       </nav>
       <footer>
-        <Avatar name={who} />
-        <span class="name">{who}</span>
-        <Button quiet icon="signout" title="Sign out" aria-label="Sign out" onclick={signOut} />
+        <Profile name={who} spaces={me.spaces} home={me.home} current={scope} onpick={pick} oncreate={create} />
+        <Theme />
+        <Button icon="signout" title="Sign out" aria-label="Sign out" onclick={signOut} />
       </footer>
     </aside>
     <main>
-      {#if route.first === 'files'}
+      {#key generation}
+      {#if route.first === 'chat'}
+        <Chat id={route.second} name={me.actor.name} onsaved={loadChats} />
+      {:else if route.first === 'files'}
         <Files />
       {:else if route.first === 'pages' && route.second}
         {#key route.second}
@@ -104,33 +142,53 @@
           <Table table={table(route.first)} />
         {/key}
       {:else}
-        <Heading title="Not here" description="There is no table, view or page at this address." />
+        <Heading plain title="Not here" />
       {/if}
+      {/key}
     </main>
   </div>
 {/if}
 
 <style>
-  .app { display: grid; grid-template-columns: var(--sidebar) minmax(0, 1fr); height: 100vh; }
-  aside { display: flex; flex-direction: column; min-height: 0; padding: 0 var(--space-2); }
-  .brand { display: flex; align-items: center; height: var(--size-xl); padding: 0 var(--space-3); }
+  .shell {
+    display: grid;
+    grid-template-columns: var(--app-columns);
+    grid-template-rows: var(--shell-rows);
+    gap: var(--frame);
+    min-height: calc(100svh - 2 * var(--frame) - env(safe-area-inset-top));
+  }
+  aside {
+    position: sticky;
+    top: var(--bar-top);
+    bottom: var(--bar-bottom);
+    z-index: var(--z-raised);
+    order: var(--bar-order);
+    display: flex;
+    flex-direction: var(--bar-direction);
+    align-items: stretch;
+    align-self: start;
+    min-width: 0;
+    height: var(--bar-height);
+    padding: var(--bar-pad);
+    padding-bottom: calc(var(--bar-pad) + env(safe-area-inset-bottom));
+    background: var(--bg);
+  }
+  .chats { display: flex; flex: none; flex-direction: var(--bar-direction); gap: var(--space-0-5); }
+  .brand { display: var(--wide-only); flex: none; align-items: center; min-height: var(--size-control-lg); padding: var(--item-pad); color: var(--fg); }
+  .brand :global(.word) { height: var(--text-lg); width: auto; fill: currentColor; }
   nav {
+    --fade-to: var(--bar-fade-to);
+    --fade-axis: var(--bar-fade-axis);
+    display: flex;
     flex: 1;
+    flex-direction: var(--bar-direction);
+    gap: var(--space-0-5);
+    min-width: 0;
     min-height: 0;
-    overflow-y: auto;
-    padding: var(--space-5) 0;
-    scrollbar-width: none;
-    mask-image: linear-gradient(transparent, black var(--space-5), black calc(100% - var(--space-5)), transparent);
+    overflow: auto;
   }
-  footer { display: flex; align-items: center; gap: var(--space-3); height: var(--size-xl); padding: 0 var(--space-1) 0 var(--space-3); }
-  .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  main { overflow: auto; min-width: 0; padding: var(--space-8) var(--space-7) var(--space-7); }
-  @media (max-width: 767px) {
-    .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
-    aside { order: 1; flex-direction: row; align-items: center; padding: var(--space-3) var(--space-2) calc(var(--space-3) + env(safe-area-inset-bottom)); }
-    .brand { height: var(--size-lg); padding: 0 var(--space-2); }
-    nav { display: flex; gap: var(--space-1); overflow-x: auto; padding: 0; mask-image: none; }
-    nav > :global(div), footer { display: none; }
-    main { padding: var(--space-6) var(--space-4); }
-  }
+  hr { flex: none; align-self: stretch; min-width: var(--hairline); min-height: var(--hairline); margin: var(--space-2); border: 0; }
+  footer { display: flex; flex: none; align-items: center; gap: var(--space-1); }
+  main { display: flex; flex-direction: column; min-width: 0; height: var(--main-height); }
+  main > :global(header) { position: sticky; top: 0; z-index: var(--z-raised); padding: var(--header-pad) var(--header-inset); background: var(--bg); }
 </style>

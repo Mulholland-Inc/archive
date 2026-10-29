@@ -89,7 +89,7 @@ func (a *Archive) as(ctx context.Context, fn func(context.Context) error) error 
 	if ac == nil {
 		return fmt.Errorf("not signed in: %w", ErrUnauthorized)
 	}
-	return a.st.As(ctx, ac.Role, fn)
+	return a.st.As(ctx, ac.Role, ac.Space, fn)
 }
 
 func coreDo[T any](a *Archive, ctx context.Context, fn func(context.Context) (T, error)) (T, error) {

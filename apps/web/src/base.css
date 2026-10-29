@@ -1,23 +1,42 @@
-@import '@fontsource-variable/geist';
+@import '@fontsource-variable/inter-tight';
 @import '@fontsource-variable/eb-garamond';
-@import '@fontsource-variable/jetbrains-mono';
+@import '@fontsource-variable/geist-mono';
 
-* { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; background: var(--shell); }
+@property --fade-start { syntax: '<length>'; inherits: false; initial-value: 0px; }
+@property --fade-end { syntax: '<length>'; inherits: false; initial-value: 0px; }
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; scrollbar-width: none; }
+::-webkit-scrollbar { display: none; }
+html { -webkit-text-size-adjust: 100%; background: var(--bg); }
 body {
-  color: var(--text);
-  font: var(--weight) var(--text-md)/var(--leading) var(--font);
-  letter-spacing: var(--tracking);
+  min-height: 100svh;
+  padding: var(--frame);
+  padding-top: calc(var(--frame) + env(safe-area-inset-top));
+  background: var(--bg);
+  color: var(--fg);
+  font: var(--weight-normal) var(--text-ui) / var(--leading-medium) var(--font-sans);
   font-synthesis: none;
   -webkit-font-smoothing: antialiased;
 }
-::selection { background: var(--selection); }
+img, svg { display: block; max-width: 100%; }
 a { color: inherit; text-decoration: none; }
-p, h1, h2, h3 { margin: 0; }
-button, input, select { font: inherit; color: inherit; letter-spacing: inherit; }
-:focus-visible { outline: var(--stroke-bold) solid var(--cream); outline-offset: var(--stroke-bold); }
-svg { display: block; flex: none; }
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+button, input, select { font: inherit; color: inherit; letter-spacing: inherit; background: none; border: 0; }
+button { cursor: pointer; }
+button:disabled { cursor: default; }
+::selection { background: var(--primary); color: var(--on-primary); }
+
+.fade {
+  --fade-to: to bottom;
+  --fade-axis: block;
+  mask-image: linear-gradient(var(--fade-to), transparent, black var(--fade-start), black calc(100% - var(--fade-end)), transparent);
+  animation: fade-start linear both, fade-end linear both;
+  animation-timeline: scroll(self var(--fade-axis));
+  animation-range: 0 var(--fade), calc(100% - var(--fade)) 100%;
+}
+.fade-x { --fade-to: to right; --fade-axis: inline; }
+@keyframes fade-start { to { --fade-start: var(--fade); } }
+@keyframes fade-end { from { --fade-end: var(--fade); } }
+
 .peer-0 { --peer: var(--peer-0); }
 .peer-1 { --peer: var(--peer-1); }
 .peer-2 { --peer: var(--peer-2); }
@@ -27,3 +46,10 @@ svg { display: block; flex: none; }
 .peer-6 { --peer: var(--peer-6); }
 .peer-7 { --peer: var(--peer-7); }
 .peer-agent { --peer: var(--peer-agent); }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
+
+.app .icon-btn { border-radius: var(--radius-nav); background: none; color: var(--fg-muted); transition: background var(--duration-fast), color var(--duration-fast); }
+.app .icon-btn:hover { background: var(--fill-faint); color: var(--fg); }
+
+.app .btn, .app .btn-sm { font-size: var(--text-ui); }

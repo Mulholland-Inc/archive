@@ -1,5 +1,5 @@
 <script>
-  import Word from './Word.svelte';
+  import Word from '#kit/Word.svelte';
   import { GITHUB, PRODUCT } from './site.js';
 
   const link = (p) => [p.href, p.title];

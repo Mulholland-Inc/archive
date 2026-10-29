@@ -128,6 +128,7 @@ func (a *Archive) httpAuth(h http.Handler) http.Handler {
 			httpWrite(w, 0, nil, err)
 			return
 		}
+		ac.Space = r.Header.Get("Archive-Space")
 		h.ServeHTTP(w, r.WithContext(WithActor(r.Context(), ac)))
 	})
 }

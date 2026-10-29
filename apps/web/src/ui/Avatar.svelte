@@ -12,14 +12,14 @@
     flex: none;
     width: var(--size-avatar);
     height: var(--size-avatar);
-    border-radius: 50%;
-    background: var(--cream);
-    color: var(--cream-ink);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-bold);
-    letter-spacing: 0;
+    border-radius: var(--radius-full);
+    background: var(--fill-strong);
+    color: var(--fg);
+    font-size: var(--text-meta);
+    font-weight: var(--weight-semibold);
+    line-height: var(--leading-none);
   }
   .tinted { background: var(--peer); color: var(--on-peer); }
-  .pulse { animation: pulse 1s infinite alternate; }
-  @keyframes pulse { to { opacity: 0.35; } }
+  .pulse { animation: pulse var(--duration-slow) infinite alternate; }
+  @keyframes pulse { to { opacity: var(--opacity-dim); } }
 </style>

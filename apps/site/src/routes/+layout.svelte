@@ -1,5 +1,6 @@
 <script>
-  import '../tokens.css';
+  import '#kit/tokens.css';
+  import '#kit/ui.css';
   import '../site.css';
   import { beforeNavigate, afterNavigate } from '$app/navigation';
   import Nav from '#lib/Nav.svelte';

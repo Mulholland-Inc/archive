@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type File struct {
@@ -43,7 +44,7 @@ const (
 )
 
 type fileRow interface {
-	FileByKeyRow | CreateFileRow | GetFileRow | LockFileRow | NextPendingFileRow | LockPendingFileRow | SavePageRow | ReplaceFileRow
+	FileByKeyRow | CreateFileRow | GetFileRow | RenameFileRow | LockFileRow | NextPendingFileRow | LockPendingFileRow | SavePageRow | ReplaceFileRow
 }
 
 func fileOf[R fileRow](r R, err error) (*File, error) {
@@ -176,6 +177,24 @@ func (a *Archive) GetFile(ctx context.Context, id uuid.UUID) (*File, error) {
 	})
 }
 
+func (a *Archive) RenameFile(ctx context.Context, id uuid.UUID, name string) (*File, error) {
+	name = strings.TrimSpace(filepath.Base(strings.ReplaceAll(name, "\\", "/")))
+	if name == "" || name == "." || name == "/" {
+		return nil, fmt.Errorf("name: want a file name: %w", httpErrBadRequest)
+	}
+	return coreDo(a, ctx, func(ctx context.Context) (*File, error) {
+		f, err := fileOf(a.st.db(ctx).RenameFile(ctx, id, name))
+		var pe *pgconn.PgError
+		switch {
+		case errors.Is(err, ErrNotFound):
+			return nil, fmt.Errorf("file %s: %w", id, ErrNotFound)
+		case errors.As(err, &pe) && pe.Code == "23505":
+			return nil, fmt.Errorf("a file named %q with the same content is already in this space: %w", name, ErrConflict)
+		}
+		return f, err
+	})
+}
+
 func (a *Archive) FileText(ctx context.Context, id uuid.UUID) (string, error) {
 	return coreDo(a, ctx, func(ctx context.Context) (string, error) {
 		text, err := a.st.db(ctx).FileText(ctx, id)
@@ -298,6 +317,20 @@ func (a *Archive) fileRoutes(mux *http.ServeMux) {
 	})
 	handle("GET /api/files/{id}", func(r *http.Request) (int, any, error) {
 		f, err := file(r)
+		return http.StatusOK, f, err
+	})
+	handle("PATCH /api/files/{id}", func(r *http.Request) (int, any, error) {
+		id, err := httpID(r)
+		if err != nil {
+			return 0, nil, err
+		}
+		var body struct {
+			Name string `json:"name"`
+		}
+		if err := httpDecode(r, &body); err != nil {
+			return 0, nil, err
+		}
+		f, err := a.RenameFile(r.Context(), id, body.Name)
 		return http.StatusOK, f, err
 	})
 	handle("POST /api/files/{id}/link", func(r *http.Request) (int, any, error) {

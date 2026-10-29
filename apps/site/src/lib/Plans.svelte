@@ -1,5 +1,5 @@
 <script>
-  import Button from './Button.svelte';
+  import Button from '#kit/Button.svelte';
   import { reveal } from './reveal.js';
 
   let { plans } = $props();

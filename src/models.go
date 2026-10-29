@@ -11,6 +11,15 @@ import (
 	"github.com/google/uuid"
 )
 
+type ArchiveChat struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	Title     string
+	Messages  json.RawMessage
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 type ArchiveUpload struct {
 	ID        uuid.UUID
 	Role      string

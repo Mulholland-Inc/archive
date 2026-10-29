@@ -37,6 +37,7 @@ type Actor struct {
 	UserRole  string    `json:"-"`
 	Home      uuid.UUID `json:"-"`
 	Session   uuid.UUID `json:"-"`
+	Space     string    `json:"-"`
 }
 
 func (ac *Actor) label() string {

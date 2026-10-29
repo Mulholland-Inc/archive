@@ -1,9 +1,15 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="app">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color">
 <title>Archive</title>
+<script>
+  try {
+    if (localStorage.theme === 'dark') document.documentElement.dataset.theme = 'dark';
+  } catch {}
+</script>
 <script src="/wasm_exec.js"></script>
 </head>
 <body>
