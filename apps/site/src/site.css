@@ -129,10 +129,9 @@ code.inline, .prose code { font: var(--weight-medium) var(--text-em) var(--font-
 .page-art { display: flex; justify-content: center; }
 .page-art img { max-height: min(var(--art-2xl), var(--art-vh)); }
 
-.home-hero { display: grid; place-items: center; height: calc(100svh - var(--nav-height) - var(--frame) - var(--hero-peek)); min-height: var(--measure-hero); }
+.home-hero { display: grid; place-items: center; height: calc(100svh - var(--nav-height) - var(--frame) - var(--hero-peek)); min-height: var(--hero-min); }
 .home-copy h1 { font-size: min(var(--display-2xl), var(--display-vh)); }
 .home-copy { display: flex; flex-direction: column; align-items: center; text-align: center; gap: var(--space-4); }
-.home-copy .subtitle { font: var(--weight-normal) var(--text-4xl) / var(--leading-compact) var(--font-sans); letter-spacing: var(--tracking-snug); }
 .home-copy .lead { margin-bottom: var(--space-3); }
 .home-copy .row, .cta .row { justify-content: center; }
 
@@ -194,8 +193,8 @@ code.inline, .prose code { font: var(--weight-medium) var(--text-em) var(--font-
 .marquee span { display: inline-flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-5); border-radius: var(--radius-full); background: var(--fill-faint); font: var(--weight-medium) var(--text-lg) / var(--leading-snug) var(--font-sans); letter-spacing: var(--tracking-snug); white-space: nowrap; }
 .marquee .brand { width: var(--size-brand); height: var(--size-brand); flex: none; fill: currentColor; }
 @keyframes marquee { to { transform: translateX(calc(-50% - var(--space-3) / 2)); } }
-.badges { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-2); margin-top: var(--space-4); list-style: none; }
-.badges li { display: inline-flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); border-radius: var(--radius-full); background: var(--fill-faint); color: var(--fg-soft); font: var(--weight-medium) var(--text-sm) / var(--leading-snug) var(--font-sans); }
+.badges { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-2) var(--space-5); margin-top: var(--space-4); list-style: none; }
+.badges li { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--fg-soft); font: var(--weight-medium) var(--text-sm) / var(--leading-snug) var(--font-sans); }
 .badges .icon { color: var(--accent); }
 .logos span { padding: var(--space-2) var(--space-4); border-radius: var(--radius-full); font-size: var(--text-sm); background: var(--fill-faint); }
 
@@ -360,7 +359,6 @@ code.inline, .prose code { font: var(--weight-medium) var(--text-em) var(--font-
   .specs:not(.four), .plans { grid-template-columns: 1fr; }
   .specs.four { gap: var(--space-7) var(--space-4); }
   .card .spec-art { height: var(--art-xs); }
-  .home-copy .subtitle { font-size: var(--text-2xl); }
   .lead { font-size: var(--text-lg); }
   .home-hero { height: auto; min-height: 0; padding: var(--space-8) 0 var(--space-6); }
   .faq summary { font-size: var(--text-lg); }
