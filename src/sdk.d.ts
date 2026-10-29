@@ -90,6 +90,10 @@
  * - Delete one: delete files["task_board.sql"] and apply. A view holds no data, so dropping it is never blocked.
  *
  * - A statement that deletes data (dropping a table or column, not a view) is blocked unless you pass { allowDrop: true }.
+ *   A confirmed plan that deletes data runs right after this run commits, not during it, because the run holds
+ *   locks on the tables it drops: apply returns the plan with deferred: true and applied: false, later calls in
+ *   the same run still see the old tables, a run that throws drops nothing, and if the change fails the run's
+ *   error says so.
  * - Renames are not detected: the plan would drop and re-add, losing data. Rename in the same call, and pass
  *   the files as they read after it: archive.apply(files, { confirm: true, renames:
  *   ["ALTER TABLE house RENAME COLUMN price TO asking_price"] }). The renames run first, in the same
@@ -158,6 +162,8 @@ interface Hit {
 interface Plan {
     statements: { ddl: string; hazards?: { type: string; message: string }[]; blocked?: boolean }[];
     applied: boolean;
+    /** True when the plan deletes data and runs after this run commits. */
+    deferred?: boolean;
 }
 
 interface Table {

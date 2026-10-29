@@ -422,15 +422,21 @@ func (a *Archive) SchemaFiles(ctx context.Context) (map[string]string, error) {
 	return a.st.SchemaFiles(ctx)
 }
 
-func (a *Archive) ApplySchema(ctx context.Context, files map[string]string, renames []string, allowDrop, dryRun bool) (*SchemaPlan, error) {
+func (a *Archive) schemaAdmin(ctx context.Context) error {
 	admin, err := coreDo(a, ctx, func(ctx context.Context) (bool, error) {
 		return a.st.db(ctx).OntologyAdmin(ctx)
 	})
-	if err != nil {
-		return nil, err
+	if err == nil && !admin {
+		err = fmt.Errorf("only ontology admins change the schema: %w", ErrForbidden)
 	}
-	if !admin && (!dryRun || len(renames) > 0) {
-		return nil, fmt.Errorf("only ontology admins change the schema: %w", ErrForbidden)
+	return err
+}
+
+func (a *Archive) ApplySchema(ctx context.Context, files map[string]string, renames []string, allowDrop, dryRun bool) (*SchemaPlan, error) {
+	if !dryRun || len(renames) > 0 {
+		if err := a.schemaAdmin(ctx); err != nil {
+			return nil, err
+		}
 	}
 	a.wmu.Lock()
 	defer a.wmu.Unlock()

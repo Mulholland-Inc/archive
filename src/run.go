@@ -87,6 +87,7 @@ type runner struct {
 	logBytes  int
 	stringify goja.Callable
 	parse     goja.Callable
+	later     []func(context.Context) error
 }
 
 var (
@@ -148,6 +149,16 @@ func (a *Archive) Run(ctx context.Context, code string) (*RunOutput, error) {
 		out.Error = fmt.Sprintf("timed out after %s; nothing was saved", limit)
 	case err != nil && out.Error == "":
 		out.Error = runMessage(err)
+	}
+	if err == nil && out.Error == "" {
+		after, done := context.WithTimeout(context.WithoutCancel(ctx), limit)
+		for _, fn := range r.later {
+			if err := fn(after); err != nil {
+				out.Error = "the run was saved, but the schema change it left for after the run failed: " + runMessage(err)
+				break
+			}
+		}
+		done()
 	}
 	if out.Error != "" {
 		out.Result = json.RawMessage("null")
@@ -366,7 +377,7 @@ func runMessage(err error) string {
 			s += "; hint: " + pe.Hint
 		}
 		if pe.Code == "55P03" {
-			s += "; another transaction, maybe this run, holds a lock on the table: apply before reading or writing the tables it changes, or in a run of its own"
+			s += "; another transaction, maybe this run, holds a lock on the table: apply before reading or writing the tables it changes"
 		}
 		var qe *runQueryErr
 		if errors.As(err, &qe) && pe.Position > 0 {
@@ -621,7 +632,28 @@ func (r *runner) sdk() {
 		if files == nil {
 			return nil, fmt.Errorf("archive.apply: files must be an object of file name to SQL, like the one archive.schema() returns: %w", httpErrBadRequest)
 		}
-		return a.ApplySchema(ctx, files, opts.Renames, opts.AllowDrop, !opts.Confirm)
+		if !opts.Confirm || !opts.AllowDrop {
+			return a.ApplySchema(ctx, files, opts.Renames, opts.AllowDrop, !opts.Confirm)
+		}
+		p, err := a.ApplySchema(ctx, files, opts.Renames, false, true)
+		if err != nil {
+			return p, err
+		}
+		if len(p.blocked()) == 0 {
+			return a.ApplySchema(ctx, files, opts.Renames, true, false)
+		}
+		if err := a.schemaAdmin(ctx); err != nil {
+			return nil, err
+		}
+		for i := range p.Statements {
+			p.Statements[i].Blocked = false
+		}
+		p.Deferred = true
+		r.later = append(r.later, func(ctx context.Context) error {
+			_, err := a.ApplySchema(ctx, files, opts.Renames, true, false)
+			return err
+		})
+		return p, nil
 	})
 	r.def(o, "tables", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		return runTables(a.Catalog()), nil
