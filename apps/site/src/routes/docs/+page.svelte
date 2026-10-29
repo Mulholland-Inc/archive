@@ -3,6 +3,7 @@
   import Code from '#lib/Code.svelte';
   import Cta from '#lib/Cta.svelte';
   import Hero from '#lib/Hero.svelte';
+  import Meta from '#lib/Meta.svelte';
   import Note from '#lib/Note.svelte';
   import Section from '#lib/Section.svelte';
   import Specs from '#lib/Specs.svelte';
@@ -99,10 +100,7 @@
   });
 </script>
 
-<svelte:head>
-  <title>Docs — Archive</title>
-  <meta name="description" content="How Archive works: your own Postgres types, live schema changes, code mode over MCP, the SDK, the HTTP API, files, pages, Office documents, spaces and roles." />
-</svelte:head>
+<Meta title="Docs — Archive" description="How Archive works: your own Postgres types, live schema changes, code mode over MCP, the SDK, the HTTP API, files, pages, Office documents, spaces and roles." />
 
 <Hero
   title="Everything, documented."

@@ -3,6 +3,7 @@
   import Hero from '#lib/Hero.svelte';
   import Letters from '#lib/Letters.svelte';
   import Logos from '#lib/Logos.svelte';
+  import Meta from '#lib/Meta.svelte';
   import Scene from '#lib/Scene.svelte';
   import Section from '#lib/Section.svelte';
   import Specs from '#lib/Specs.svelte';
@@ -41,10 +42,7 @@
   const TOOLS = ['Gmail', 'Outlook', 'Google Drive', 'SharePoint', 'Slack', 'Teams', 'Notion', 'Jira', 'Linear', 'GitHub', 'HubSpot', 'Salesforce', 'Zendesk', 'Stripe', 'QuickBooks', '+ 13 more'];
 </script>
 
-<svelte:head>
-  <title>Archive — own your data infrastructure</title>
-  <meta name="description" content="Own your data infrastructure. An open foundation for your agents to build on." />
-</svelte:head>
+<Meta title="Archive — own your data infrastructure" description="Own your data infrastructure. An open foundation for your agents to build on." />
 
 <Hero
   kind="home"

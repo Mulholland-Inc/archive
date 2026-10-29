@@ -1,6 +1,7 @@
 <script>
   import Cta from './Cta.svelte';
   import Hero from './Hero.svelte';
+  import Meta from './Meta.svelte';
   import { START } from './site.js';
   import { post as find } from './posts.js';
 
@@ -10,10 +11,7 @@
   const links = $derived([START, ...related.map((other) => [`/blog/${other}`, find(other).short])]);
 </script>
 
-<svelte:head>
-  <title>{post.title} — Archive</title>
-  <meta name="description" content={post.description} />
-</svelte:head>
+<Meta title="{post.title} — Archive" description={post.description} />
 
 <Hero kind="post" title={post.title} lead={post.lead} art="blog-{post.slug}" alt={post.alt} />
 

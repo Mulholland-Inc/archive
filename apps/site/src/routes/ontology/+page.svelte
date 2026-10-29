@@ -3,6 +3,7 @@
   import Facts from '#lib/Facts.svelte';
   import Faq from '#lib/Faq.svelte';
   import Hero from '#lib/Hero.svelte';
+  import Meta from '#lib/Meta.svelte';
   import Row from '#lib/Row.svelte';
   import Section from '#lib/Section.svelte';
   import Specs from '#lib/Specs.svelte';
@@ -40,10 +41,7 @@
   ];
 </script>
 
-<svelte:head>
-  <title>Ontology — Archive</title>
-  <meta name="description" content="You decide what your business runs on. Shape it together with your AI, keep it in the open, and take it with you whenever you want." />
-</svelte:head>
+<Meta title="Ontology — Archive" description="You decide what your business runs on. Shape it together with your AI, keep it in the open, and take it with you whenever you want." />
 
 <Hero
   title="You decide what your business runs on."

@@ -4,6 +4,7 @@
   import Faq from '#lib/Faq.svelte';
   import Hero from '#lib/Hero.svelte';
   import Logos from '#lib/Logos.svelte';
+  import Meta from '#lib/Meta.svelte';
   import Row from '#lib/Row.svelte';
   import Section from '#lib/Section.svelte';
   import Specs from '#lib/Specs.svelte';
@@ -31,10 +32,7 @@
   ];
 </script>
 
-<svelte:head>
-  <title>Security — Archive</title>
-  <meta name="description" content="Only the right people see your information. Private and shared spaces, sealed secret fields, and AI assistants that follow the same rules as everyone else." />
-</svelte:head>
+<Meta title="Security — Archive" description="Only the right people see your information. Private and shared spaces, sealed secret fields, and AI assistants that follow the same rules as everyone else." />
 
 <Hero
   title="Only the right people see it."

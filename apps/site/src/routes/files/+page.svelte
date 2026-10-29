@@ -3,6 +3,7 @@
   import Facts from '#lib/Facts.svelte';
   import Faq from '#lib/Faq.svelte';
   import Hero from '#lib/Hero.svelte';
+  import Meta from '#lib/Meta.svelte';
   import Row from '#lib/Row.svelte';
   import Section from '#lib/Section.svelte';
   import Specs from '#lib/Specs.svelte';
@@ -29,10 +30,7 @@
   ];
 </script>
 
-<svelte:head>
-  <title>Files — Archive</title>
-  <meta name="description" content="Upload anything and it is ready to search and preview right away. Your AI assistants edit Word, Excel and PowerPoint files and leave everything else exactly as it was." />
-</svelte:head>
+<Meta title="Files — Archive" description="Upload anything and it is ready to search and preview right away. Your AI assistants edit Word, Excel and PowerPoint files and leave everything else exactly as it was." />
 
 <Hero
   title="Files your AI can edit for you."

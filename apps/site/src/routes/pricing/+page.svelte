@@ -3,6 +3,7 @@
   import Facts from '#lib/Facts.svelte';
   import Faq from '#lib/Faq.svelte';
   import Hero from '#lib/Hero.svelte';
+  import Meta from '#lib/Meta.svelte';
   import Plans from '#lib/Plans.svelte';
   import Section from '#lib/Section.svelte';
   import Specs from '#lib/Specs.svelte';
@@ -78,10 +79,7 @@
   ];
 </script>
 
-<svelte:head>
-  <title>Pricing — Archive</title>
-  <meta name="description" content="Start free with your first workspace. Pro and Team are priced per member, and training your own AI models is billed by use." />
-</svelte:head>
+<Meta title="Pricing — Archive" description="Start free with your first workspace. Pro and Team are priced per member, and training your own AI models is billed by use." />
 
 <Hero
   title="Start free. Pay per member."

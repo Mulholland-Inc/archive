@@ -4,6 +4,7 @@
   import Facts from '#lib/Facts.svelte';
   import Faq from '#lib/Faq.svelte';
   import Hero from '#lib/Hero.svelte';
+  import Meta from '#lib/Meta.svelte';
   import Row from '#lib/Row.svelte';
   import Section from '#lib/Section.svelte';
   import Specs from '#lib/Specs.svelte';
@@ -46,10 +47,7 @@
   ];
 </script>
 
-<svelte:head>
-  <title>Developers — Archive</title>
-  <meta name="description" content="Shape your data with your AI agent, let it run code inside Archive, connect your other tools, and self-host or fork the open-source server." />
-</svelte:head>
+<Meta title="Developers — Archive" description="Shape your data with your AI agent, let it run code inside Archive, connect your other tools, and self-host or fork the open-source server." />
 
 <Hero
   title="Build on your data from anywhere."
