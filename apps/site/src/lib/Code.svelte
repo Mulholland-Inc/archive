@@ -19,10 +19,15 @@
 </script>
 
 <div class="code" bind:this={block}>
-  <div class="code-bar">
-    <span class="dots"><i></i><i></i><i></i></span><span class="tabs" role="tablist"
-      >{#each tabs as tab, i}<button role="tab" aria-selected={i === on} onclick={() => (on = i)}>{tab}</button>{/each}</span
-    ><button class="copy" onclick={copy}>{copied ? 'Copied' : 'Copy'}</button>
+  <div class="code-head">
+    {#if tabs.length > 1}
+      <span class="tabs" role="tablist"
+        >{#each tabs as tab, i}<button role="tab" aria-selected={i === on} onclick={() => (on = i)}>{tab}</button>{/each}</span
+      >
+    {:else}
+      <span class="label">{tabs[0]}</span>
+    {/if}
+    <button class="copy" onclick={copy}>{copied ? 'Copied' : 'Copy'}</button>
   </div>
   {@render children()}
 </div>

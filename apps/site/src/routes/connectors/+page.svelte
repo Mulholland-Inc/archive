@@ -1,14 +1,13 @@
 <script>
-  import Art from '#lib/Art.svelte';
   import Button from '#lib/Button.svelte';
-  import Comp from '#lib/Comp.svelte';
   import Cta from '#lib/Cta.svelte';
   import Facts from '#lib/Facts.svelte';
   import Faq from '#lib/Faq.svelte';
   import Hero from '#lib/Hero.svelte';
+  import Row from '#lib/Row.svelte';
+  import Scene from '#lib/Scene.svelte';
   import Section from '#lib/Section.svelte';
-  import TextBlock from '#lib/TextBlock.svelte';
-  import { reveal } from '#lib/reveal.js';
+  import Specs from '#lib/Specs.svelte';
   import { APP } from '#lib/site.js';
 
   const SOON = 'As soon as it changes';
@@ -59,16 +58,21 @@
     ['Who can see what comes in?', 'The members of the space the connection belongs to, according to what each may see. The same rules apply to people and assistants alike.'],
     ['Can my assistants use it?', 'Yes. Mail, messages and events become records, and files stay files. Your assistants search and work with them like anything else.']
   ];
+
+  const TRUST = [
+    { art: 'security', title: 'Read-only', items: ['Permission to read, nothing more, on every tool', 'Archive never changes anything there', 'Sign-in details are stored encrypted'] },
+    { art: 'spaces', title: 'Per space', items: ['Each connection belongs to one space', 'Everything it brings in lands there', 'Only the right people see it'] },
+    { art: 'office', title: 'Office files', items: ['Google Docs, Sheets and Slides as Word, Excel and PowerPoint', 'Drive files handled just like uploads', 'Assistants can open and read them'] }
+  ];
 </script>
 
 <svelte:head>
   <title>Connectors — Archive</title>
   <meta name="description" content="Bring in mail, calendars, files, chat, docs, projects, customers and finance from the tools you already use. Archive only reads, keeps up as things change, and puts it all in one place." />
-  <meta name="theme-color" content="#d6f3e4" />
+  <meta name="theme-color" content="#0b0d12" />
 </svelte:head>
 
 <Hero
-  stack
   title="All your tools, in one place."
   lead="Mail, calendars, files, chat, docs, projects, customers and finance flow into Archive and stay up to date. Archive only reads, and the newest things arrive first."
   art="connectors"
@@ -80,54 +84,39 @@
   {/snippet}
 </Hero>
 
-<section class="section">
-  <div class="wrap">
-    <div class="head">
-      <h2 class="reveal" use:reveal>Connect once. <em>Stay</em> up to date.</h2>
-      <p class="body reveal" use:reveal>Each connection brings in only what is new and puts it in one space, where people and assistants can use it right away.</p>
-    </div>
-  </div>
-  <div class="scene-bleed reveal" use:reveal><Art name="harbor" alt="A harbor where barges of containers are unloaded into a warehouse" /></div>
-  <div class="wrap">
-    <div class="comp">
-      <Art class="s-7 bleed-l" reveal name="delta" alt="Two snapshots of a stack with only the new cards highlighted" />
-      <TextBlock class="s-4 at-9 down-1">
-        <h2>Only what changed.</h2>
-        <p>Archive brings in only what is new or changed since last time, and nothing gets skipped or lost.</p>
-        <p>Most tools tell Archive the moment something changes, and the rest are checked every minute, less often once an account goes quiet.</p>
-      </TextBlock>
-      <h2 class="c-big s-5 at-2 down-1 reveal" use:reveal>Newest first.</h2>
-      <Art class="s-5 at-8 rows-2 down-1" reveal name="search" alt="A magnifying glass over a timeline, the newest end lit first" />
-      <TextBlock class="s-4 at-2">
-        <p>When you first connect, Archive brings in your history newest first, so this week's mail is searchable before last year's.</p>
-        <p>Delete something in the original tool and it disappears from Archive too.</p>
-      </TextBlock>
-      <Art class="s-8 at-1 bleed-l down-2" reveal name="tables" alt="Crates being unpacked onto shelves" />
-      <TextBlock class="s-4 at-9">
-        <h2>Ready to search and use.</h2>
-        <p>Mail, messages, events, issues, customer records, tickets and invoices arrive as records you can search, sort and link like anything else.</p>
-        <p>Files arrive just like uploads, and Google Docs, Sheets and Slides come in as Word, Excel and PowerPoint files.</p>
-      </TextBlock>
-    </div>
-  </div>
-</section>
+<Section body="Each connection brings in only what is new and puts it in one space, where people and assistants can use it right away.">
+  {#snippet title()}Connect once. <em>Stay</em> up to date.{/snippet}
+  <Scene name="harbor" alt="A harbor where barges of containers are unloaded into a warehouse" />
+</Section>
 
-<Section id="all" title="Every connector." body="Seven areas a team runs on. Each connector only reads, and keeps up as things change.">
+<Section>
+  <Row art="delta" alt="Two snapshots of a stack with only the new cards highlighted">
+    <h2>Only what changed.</h2>
+    <p>Archive brings in only what is new or changed since last time, and nothing gets skipped or lost.</p>
+    <p>Most tools tell Archive the moment something changes, and the rest are checked every minute, less often once an account goes quiet.</p>
+  </Row>
+  <Row flip art="search" alt="A magnifying glass over a timeline, the newest end lit first">
+    <h2>Newest first.</h2>
+    <p>When you first connect, Archive brings in your history newest first, so this week's mail is searchable before last year's.</p>
+    <p>Delete something in the original tool and it disappears from Archive too.</p>
+  </Row>
+  <Row art="tables" alt="Crates being unpacked onto shelves">
+    <h2>Ready to search and use.</h2>
+    <p>Mail, messages, events, issues, customer records, tickets and invoices arrive as records you can search, sort and link like anything else.</p>
+    <p>Files arrive just like uploads, and Google Docs, Sheets and Slides come in as Word, Excel and PowerPoint files.</p>
+  </Row>
+</Section>
+
+<Section band id="all" title="Every connector." body="Seven areas a team runs on. Each connector only reads, and keeps up as things change.">
   <Facts head={['Connector', 'What it brings in', 'How changes arrive']} rows={CONNECTORS} />
 </Section>
 
-<Comp band>
-  <TextBlock class="s-5">
-    <h2>Built to be <em>trusted</em> with your inbox.</h2>
-    <p>Connectors only read, put things where they belong, and stay out of the way.</p>
-  </TextBlock>
-  <Art class="s-6 at-7 rows-2 bleed-r" reveal name="security" />
-  <TextBlock class="s-4 at-2 down-1" title="Read-only" items={['Permission to read, nothing more, on every tool', 'Archive never changes anything there', 'Sign-in details are stored encrypted']} />
-  <TextBlock class="s-4 at-1 down-1" art="spaces" title="Per space" items={['Each connection belongs to one space', 'Everything it brings in lands there', 'Only the right people see it']} />
-  <TextBlock class="s-5 at-7 down-3" art="office" title="Office files" items={['Google Docs, Sheets and Slides as Word, Excel and PowerPoint', 'Drive files handled just like uploads', 'Assistants can open and read them']} />
-</Comp>
+<Section body="Connectors only read, put things where they belong, and stay out of the way.">
+  {#snippet title()}Built to be <em>trusted</em> with your inbox.{/snippet}
+  <Specs items={TRUST} />
+</Section>
 
-<Section title="Questions">
+<Section band title="Questions.">
   <Faq items={FAQ} />
 </Section>
 

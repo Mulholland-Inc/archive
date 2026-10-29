@@ -1,15 +1,12 @@
 <script>
-  import Art from '#lib/Art.svelte';
   import Button from '#lib/Button.svelte';
-  import Comp from '#lib/Comp.svelte';
   import Cta from '#lib/Cta.svelte';
   import Facts from '#lib/Facts.svelte';
   import Faq from '#lib/Faq.svelte';
   import Hero from '#lib/Hero.svelte';
   import Plans from '#lib/Plans.svelte';
   import Section from '#lib/Section.svelte';
-  import TextBlock from '#lib/TextBlock.svelte';
-  import { reveal } from '#lib/reveal.js';
+  import Specs from '#lib/Specs.svelte';
   import { APP } from '#lib/site.js';
 
   const PLANS = [
@@ -74,12 +71,18 @@
     ['How is model training billed?', 'By the GPU-hour while a model trains, and by how much text it handles when your AI assistants use it.'],
     ['Can I take my data with me?', 'Yes, at any time. Export the structure of your data as plain files, and download every record and file.']
   ];
+
+  const EVERY = [
+    { art: 'spaces', title: 'Spaces and permissions', items: ['A private space for every member', 'Owner, admin, editor or viewer in each space', 'Only the right people see each record'] },
+    { art: 'agents', title: 'Every AI assistant', items: ['ChatGPT, Claude, Gemini and Grok connect directly', 'A separate access key for each assistant', 'Changes are all-or-nothing, so nothing ends up half done'] },
+    { art: 'training', title: 'Your records, your models', items: ['Turn your records into training examples', 'Train on paid plans, billed by use', 'Your model runs right next to your data'] }
+  ];
 </script>
 
 <svelte:head>
   <title>Pricing — Archive</title>
   <meta name="description" content="Start free with your first workspace. Pro and Team are priced per member, and training your own AI models is billed by use." />
-  <meta name="theme-color" content="#f1f9d6" />
+  <meta name="theme-color" content="#0b0d12" />
 </svelte:head>
 
 <Hero
@@ -102,16 +105,9 @@
   <Facts wide head={['', 'Free', 'Pro', 'Team', 'Enterprise']} rows={COMPARE} />
 </Section>
 
-<Comp>
-  <h2 class="c-big s-7 at-1 row-1 reveal" use:reveal>In every plan.</h2>
-  <TextBlock class="s-4 at-9 row-1 end">
-    <p>The free plan is the real product. Nothing that keeps your data safe sits behind an upgrade.</p>
-  </TextBlock>
-  <Art class="s-7 at-1 row-2 bleed-l" reveal name="spaces" />
-  <TextBlock class="s-4 at-2 row-3 up-1" title="Spaces and permissions" items={['A private space for every member', 'Owner, admin, editor or viewer in each space', 'Only the right people see each record']} />
-  <TextBlock class="s-4 at-9 row-2 down-2" art="agents" title="Every AI assistant" items={['ChatGPT, Claude, Gemini and Grok connect directly', 'A separate access key for each assistant', 'Changes are all-or-nothing, so nothing ends up half done']} />
-  <TextBlock class="s-4 at-7 row-3" art="training" title="Your records, your models" items={['Turn your records into training examples', 'Train on paid plans, billed by use', 'Your model runs right next to your data']} />
-</Comp>
+<Section title="In every plan." body="The free plan is the real product. Nothing that keeps your data safe sits behind an upgrade.">
+  <Specs items={EVERY} />
+</Section>
 
 <Section band title="Billing questions.">
   {#snippet body()}Anything else, write to <a class="link" href="mailto:hello@mulholland.ai">hello@mulholland.ai</a>.{/snippet}

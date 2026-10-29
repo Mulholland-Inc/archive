@@ -13,7 +13,7 @@
 <svelte:head>
   <title>{post.title} — Archive</title>
   <meta name="description" content={post.description} />
-  <meta name="theme-color" content="#dce8f7" />
+  <meta name="theme-color" content="#0b0d12" />
 </svelte:head>
 
 <section class="post-hero">
