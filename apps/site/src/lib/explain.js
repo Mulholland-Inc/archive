@@ -1,5 +1,6 @@
 export const EXPLAIN = {
-  title: "Archive, explained like you're 12",
+  title: 'Archive for Dummies',
+  subtitle: "explained like you're 12",
   nudge: 'New to all this?'
 };
 

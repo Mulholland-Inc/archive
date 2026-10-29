@@ -6,6 +6,7 @@
 <meta name="theme-color" content="#e4e7ec">
 <script>
   try {
+    if (Date.now() < +(localStorage.explain || 0)) document.documentElement.classList.add('explained');
     if (localStorage.theme === 'dark') {
       document.documentElement.dataset.theme = 'dark';
       document.querySelector('meta[name="theme-color"]').content = '#0b0d12';
