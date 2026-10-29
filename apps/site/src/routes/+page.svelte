@@ -42,7 +42,7 @@
   const TOOLS = ['Gmail', 'Outlook', 'Google Drive', 'SharePoint', 'Slack', 'Teams', 'Notion', 'Jira', 'Linear', 'GitHub', 'HubSpot', 'Salesforce', 'Zendesk', 'Stripe', 'QuickBooks', '+ 13 more'];
 </script>
 
-<Meta title="Archive — own your data infrastructure" description="Own your data infrastructure. An open foundation for your agents to build on." />
+<Meta title="Archive — Own your data infrastructure" description="Own your data infrastructure. An open foundation for your agents to build on." />
 
 <Hero
   kind="home"
