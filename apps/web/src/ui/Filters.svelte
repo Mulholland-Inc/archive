@@ -15,17 +15,10 @@
 
   const get = (name) => q.values[name] ?? '';
   const set = (name, v) => (q.values[name] = v);
-  const picked = (name) => (get(name) ? get(name).split(',') : []);
   const range = (name) => {
     const [from = '', to = ''] = get(name).split('..');
     return { from, to };
   };
-
-  function toggle(name, v) {
-    const now = new Set(picked(name));
-    if (!now.delete(v)) now.add(v);
-    set(name, [...now].join(','));
-  }
 
   function span(name, side, v) {
     const r = range(name);
@@ -53,18 +46,8 @@
 <div class="filters">
   <Search bind:value={q.query} />
   {#each controls as { c, k, items } (c.name)}
-    {#if k === 'enum'}
+    {#if k === 'enum' || k === 'bool'}
       <Choice label={title(c)} {items} bind:value={() => get(c.name), (v) => set(c.name, v)} />
-    {:else if k === 'bool'}
-      {@const on = picked(c.name)}
-      <div class="group" class:set={on.length} role="group" aria-label={title(c)}>
-        <span class="name">{title(c)}</span>
-        <div class="values">
-          {#each items as [v, label] (v)}
-            <button type="button" class="value" class:on={on.includes(v)} aria-pressed={on.includes(v)} onclick={() => toggle(c.name, v)}>{label}</button>
-          {/each}
-        </div>
-      </div>
     {:else if k === 'date'}
       {@const r = range(c.name)}
       <div class="group" class:set={r.from || r.to} role="group" aria-label={title(c)}>
@@ -108,6 +91,7 @@
     align-items: center;
     gap: var(--space-0-5);
     min-width: 0;
+    height: var(--filter-height);
     padding: var(--space-0-5);
     border-radius: var(--radius-full);
     background: var(--fill);
@@ -115,8 +99,7 @@
   }
   .group.set { background: var(--fill-strong); }
   .name { flex: none; padding: var(--space-1-5); color: var(--fg-muted); text-transform: capitalize; white-space: nowrap; }
-  .values { display: flex; gap: var(--space-0-5); min-width: 0; }
-  .value, .date {
+  .date {
     flex: none;
     padding: var(--space-1-5);
     border-radius: var(--radius-full);
@@ -125,13 +108,12 @@
     text-transform: capitalize;
     transition: background var(--duration-fast), color var(--duration-fast);
   }
-  .value:hover { color: var(--fg); }
-  .value.on { background: var(--surface-raised); color: var(--fg); }
   .date { line-height: var(--leading-none); outline: 0; }
   .date:hover, .date:focus { background: var(--fill); color: var(--fg); }
   .field {
     flex: 0 0 var(--filter-width);
     min-width: 0;
+    height: var(--filter-height);
     padding: var(--space-2);
     border-radius: var(--radius-full);
     background: var(--fill);
@@ -143,6 +125,6 @@
   .field::placeholder { color: var(--fg-muted); text-transform: capitalize; }
   .field::-webkit-search-cancel-button { display: none; }
   .field:hover, .field:focus, .field.set { background: var(--fill-strong); }
-  .clear { flex: none; padding: var(--space-2); color: var(--fg-muted); white-space: nowrap; transition: color var(--duration-fast); }
+  .clear { flex: none; height: var(--filter-height); padding: var(--space-2); color: var(--fg-muted); white-space: nowrap; transition: color var(--duration-fast); }
   .clear:hover { color: var(--fg); }
 </style>

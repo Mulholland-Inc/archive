@@ -57,6 +57,7 @@
     display: inline-flex;
     align-items: center;
     gap: var(--space-1);
+    height: var(--filter-height);
     padding: var(--space-2);
     border-radius: var(--radius-full);
     background: var(--fill);

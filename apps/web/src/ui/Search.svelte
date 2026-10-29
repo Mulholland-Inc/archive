@@ -30,6 +30,7 @@
     align-items: center;
     gap: var(--space-2);
     min-width: 0;
+    height: var(--filter-height);
     padding: var(--space-2);
     border-radius: var(--radius-full);
     background: var(--fill);
