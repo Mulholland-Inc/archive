@@ -1,4 +1,4 @@
-#pragma frame {"size":[2000,580],"center":[0.0735,0.0,0.0735],"zoom":115,"bounds":[[-12.0,-0.4,-12.0],[12.0,3.0,12.0]]}
+#pragma frame {"size":[2000,580],"center":[-0.45,0.19,-0.45],"zoom":118,"bounds":[[-12.0,-0.4,-12.0],[12.0,3.2,12.0]]}
 
 #define R2 0.70710678
 
@@ -28,325 +28,347 @@ vec2 folder(vec3 p, float m) {
   return seam(f, p.y - 0.006);
 }
 
-vec2 card(vec3 p) {
-  vec2 c = M(sdBox(p, vec3(0.15, 0.018, 0.105)), WHITE);
-  vec3 q = faceY(p, 0.018);
-  c = decal(c, q, sdRect(q.xz - vec2(-0.085, 0.0), vec2(0.03, 0.08), 0.02), LIME);
-  c = decal(c, q, sdRect(q.xz - vec2(0.05, -0.035), vec2(0.07, 0.012), 0.012), STEEL);
-  c = decal(c, q, sdRect(q.xz - vec2(0.03, 0.025), vec2(0.05, 0.012), 0.012), STEEL);
+vec2 stack(vec3 p, vec2 h, float n, float m) {
+  vec2 s = M(sdBox(p - vec3(0.0, n * 0.5, 0.0), vec3(h.x, n * 0.5, h.y)), WHITE);
+  s = stripes(s, p.y, 0.018);
+  return decal(s, faceY(p, n), sdRect(p.xz - vec2(h.x * 0.3, 0.0), vec2(h.x * 0.45, h.y * 0.12), 0.005), m);
+}
+
+vec2 tube(vec3 p, vec3 a, vec3 b, float r, float off) {
+  vec3 ab = b - a;
+  float t = clamp(dot(p - a, ab) / dot(ab, ab), 0.0, 1.0);
+  float l = t * length(ab);
+  vec2 g = M(length(p - a - ab * t) - r, SKY + SOLID);
+  g = paint(g, abs(mod(l + off, 0.9) - 0.45) - 0.12, LIME + SOLID);
+  if (g.y == LIME + SOLID) g = seam(g, abs(mod(l + off, 0.9) - 0.45) - 0.06);
+  float c = abs(mod(l + 0.2, 0.45) - 0.225) - 0.025;
+  g = U(g, M(max(length(p - a - ab * t) - r - 0.025, max(c, max(-l + 0.01, l - length(ab) + 0.01))), STEEL + SOLID));
+  return g;
+}
+
+vec2 drawers(vec3 f, vec2 c0, vec2 pitch, vec2 n, vec2 h, vec2 skip, float k) {
+  vec2 g = (f.xz - c0) / pitch + (n - 1.0) * 0.5;
+  vec2 i0 = clamp(floor(g + 0.5), vec2(0.0), n - 1.0);
+  vec2 s = vec2(g.x >= i0.x ? 1.0 : -1.0, g.y >= i0.y ? 1.0 : -1.0);
+  vec2 r = M(1e9, 0.0);
+  for (int j = 0; j < 4; j++) {
+    vec2 idx = clamp(i0 + vec2(mod(float(j), 2.0), floor(float(j) / 2.0)) * s, vec2(0.0), n - 1.0);
+    if (idx == skip) continue;
+    vec2 cc = c0 + (idx - (n - 1.0) * 0.5) * pitch;
+    vec3 d = vec3(f.x - cc.x, f.y, f.z - cc.y);
+    vec2 pl = M(extrude(sdRect(d.xz, h, 0.015), d.y - 0.012, 0.012), WHITE);
+    vec3 dq = d - vec3(0.0, 0.024, 0.0);
+    float lit = hash(k + idx.x * 7.0 + idx.y * 13.0);
+    pl = decal(pl, dq, sdRect(dq.xz - vec2(0.0, h.y * 0.42), vec2(h.x * 0.28, h.y * 0.2), 0.006), lit > 0.72 ? LIME : PAPER);
+    pl = U(pl, M(sdBox(dq - vec3(0.0, 0.012, -h.y * 0.18), vec3(h.x * 0.4, 0.012, 0.022)), STEEL));
+    r = U(r, pl);
+  }
+  return r;
+}
+
+vec2 pulled(vec3 d, vec2 h, float ext, float k) {
+  vec2 r = M(sdBox(d - vec3(0.0, ext * 0.5, -h.y * 0.25), vec3(h.x * 0.94, ext * 0.5, h.y * 0.68)), WHITE);
+  vec3 e = d - vec3(0.0, ext, 0.0);
+  r = U(r, M(extrude(sdRect(e.xz, h, 0.015), e.y - 0.012, 0.012), WHITE));
+  r = U(r, M(sdBox(e - vec3(0.0, 0.036, -h.y * 0.18), vec3(h.x * 0.4, 0.012, 0.022)), STEEL));
+  float top = h.y * 0.43;
+  float n = 4.0;
+  float fi = repI(d.y - ext * 0.5, ext / (n + 0.6), n);
+  vec3 fo = vec3(d.x, repC(d.y - ext * 0.5, ext / (n + 0.6), n), d.z - top);
+  float fm = fi == 0.0 ? LIME : fi == 1.0 ? SKY : fi == 2.0 ? LILAC : WHITE;
+  r = U(r, M(sdBox(fo, vec3(h.x * 0.85, 0.016, h.y * 0.32)), fm));
+  r = U(r, M(sdBox(fo - vec3(-h.x * 0.5 + h.x * 0.33 * fi, 0.0, h.y * 0.38), vec3(h.x * 0.2, 0.016, h.y * 0.1)), fm));
+  return r;
+}
+
+vec2 mailroom(vec3 p) {
+  vec2 r = M(sdBox(p - vec3(0.0, 0.47, 0.0), vec3(0.85, 0.47, 0.7)), WHITE);
+  r = paint(r, p.y - 0.08, STEEL);
+  r = seam(r, p.y - 0.84);
+  vec3 t = p - vec3(0.0, 0.97, 0.0);
+  r = U(r, M(max(sdBox(t, vec3(0.87, 0.04, 0.72)), -sdBox(t - vec3(0.0, 0.04, 0.0), vec3(0.81, 0.06, 0.66))), WHITE));
+  vec3 fz = faceZ(p, 0.7);
+  vec3 s = fz - vec3(-0.2, 0.0, 0.55);
+  r = Sc(r, M(max(sdRect(s.xz, vec2(0.4, 0.07), 0.0), -(s.y + 0.2)), GRAPHITE));
+  r = U(r, M(extrude(max(sdRect(s.xz, vec2(0.48, 0.14), 0.04), -sdRect(s.xz, vec2(0.4, 0.07), 0.0)), s.y - 0.035, 0.035), LIME));
+  r = U(r, envelope(rotX(p - vec3(-0.42, 0.55, 0.78), 0.12), WHITE));
+  r = U(r, envelope(rotX(rotY(p - vec3(-0.05, 0.56, 0.76), 0.15), 0.1), SKY));
+  r = inset(r, fz - vec3(0.55, 0.0, 0.3), vec2(0.13, 0.27), 0.02, 0.03, GRAPHITE);
+  r = inset(r, fz - vec3(0.55, 0.0, 0.73), vec2(0.13, 0.05), 0.02, 0.02, SKY);
+  vec3 fx = faceX(p, 0.85);
+  vec3 g = fx - vec3(0.0, 0.0, 0.48);
+  r = U(r, M(extrude(sdRect(g.xz, vec2(0.52, 0.3), 0.02), g.y - 0.03, 0.03), WHITE));
+  vec2 ci = vec2(repI(g.x, 0.2, 5.0), repI(g.z, 0.19, 3.0));
+  vec3 cq = vec3(repC(g.x, 0.2, 5.0), g.y, repC(g.z, 0.19, 3.0));
+  r = Sc(r, M(max(sdRect(cq.xz, vec2(0.08, 0.075), 0.0), -(cq.y + 0.04)), GRAPHITE));
+  float h = hash(ci.x * 3.0 + ci.y * 11.0);
+  if (h > 0.3) {
+    float em = h > 0.8 ? LIME : h > 0.6 ? SKY : WHITE;
+    r = U(r, M(max(sdBox(cq - vec3(0.0, 0.0, -0.01 - 0.02 * h), vec3(0.06, 0.06, 0.04 + 0.02 * h)), -cq.y - 0.04), em));
+  }
+  vec3 hq = p - vec3(-0.35, 1.01, 0.2);
+  r = U(r, M(sdCylinder(hq - vec3(0.0, 0.08, 0.0), 0.13, 0.08), STEEL + ROUND));
+  vec3 cq2 = hq - vec3(0.0, 0.42, 0.0);
+  float outer = sdCone(cq2, 0.26, 0.14, 0.5);
+  float inner = sdCone(cq2 - vec3(0.0, 0.035, 0.0), 0.26, 0.105, 0.465);
+  r = U(r, M(max(outer, -inner), WHITE + SOLID));
+  r = U(r, M(sdTorus(cq2 - vec3(0.0, 0.26, 0.0), 0.5, 0.028), LIME + SOLID));
+  r = U(r, envelope(rotZ(rotY(cq2 - vec3(0.06, 0.12, 0.03), 0.6), 0.4), WHITE));
+  r = U(r, sheet(rotX(rotY(cq2 - vec3(-0.12, 0.14, -0.08), -0.3), -0.45), SKY));
+  vec3 th = p - vec3(0.45, 1.01, -0.35);
+  r = U(r, M(sdBox(th - vec3(0.0, 0.14, 0.0), vec3(0.17, 0.14, 0.17)), WHITE));
+  r = U(r, M(sdBox(th - vec3(0.0, 0.3, 0.0), vec3(0.2, 0.025, 0.2)), WHITE));
+  r = U(r, led(faceZ(th, 0.17) - vec3(0.08, 0.0, 0.16), 0.025, LIME));
+  return r;
+}
+
+vec2 trays(vec3 p) {
+  vec3 l = mirXZ(p) - vec3(0.27, 0.8, 0.2);
+  vec2 r = M(sdBox(l, vec3(0.02, 0.8, 0.02)), GRAPHITE);
+  r = U(r, M(sdBox(p - vec3(0.0, 0.02, 0.0), vec3(0.32, 0.02, 0.25)), GRAPHITE));
+  float i = repI(p.y - 0.95, 0.3, 5.0);
+  vec3 q = vec3(p.x, repC(p.y - 0.95, 0.3, 5.0), p.z);
+  vec2 tr = M(max(sdBox(q - vec3(0.0, -0.08, 0.0), vec3(0.29, 0.06, 0.22)), -sdBox(q - vec3(0.0, -0.04, 0.04), vec3(0.26, 0.06, 0.22))), i == 2.0 ? LIME : WHITE);
+  r = U(r, tr);
+  float hh = 0.03 + 0.05 * hash(i + 4.0);
+  r = U(r, stack(q - vec3(0.0, -0.12, 0.0), vec2(0.2, 0.15), hh, i == 1.0 ? LILAC : SKY));
+  r = U(r, envelope(rotY(q - vec3(0.02, -0.12 + hh + 0.014, 0.02), 0.3 * sin(i * 3.1)), mod(i, 2.0) < 0.5 ? WHITE : SKY));
+  r = U(r, M(sdBox(p - vec3(0.0, 1.66, 0.0), vec3(0.31, 0.025, 0.24)), WHITE));
+  r = U(r, led(p - vec3(0.15, 1.7, 0.1), 0.03, LIME));
+  return r;
+}
+
+vec2 mfp(vec3 p) {
+  vec2 r = M(sdBox(p - vec3(0.0, 0.37, 0.0), vec3(1.0, 0.35, 0.6)), WHITE);
+  r = U(r, M(sdBox(p - vec3(0.0, 0.02, 0.0), vec3(0.97, 0.02, 0.57)), GRAPHITE));
+  vec3 fz = faceZ(p, 0.6);
+  vec3 dq = vec3(repC(fz.x, 0.98, 2.0), fz.y, repC(fz.z - 0.38, 0.28, 2.0));
+  vec2 dr = M(extrude(sdRect(dq.xz, vec2(0.45, 0.115), 0.02), dq.y - 0.012, 0.012), WHITE);
+  vec3 dd = dq - vec3(0.0, 0.024, 0.0);
+  dr = Sc(dr, M(max(sdRect(dd.xz - vec2(0.0, 0.05), vec2(0.1, 0.022), 0.02), -(dd.y + 0.015)), GRAPHITE));
+  dr = decal(dr, dd, sdRect(dd.xz - vec2(0.33, -0.04), vec2(0.07, 0.015), 0.01), LIME);
+  r = U(r, dr);
+  vec3 fx = faceX(p, 1.0);
+  r = vents(r, fx - vec3(-0.25, 0.0, 0.4), 6.0, 0.07, 0.24, 0.028, GRAPHITE);
+  vec2 eng = M(sdBox(p - vec3(0.0, 0.88, 0.0), vec3(0.97, 0.16, 0.58)), WHITE);
+  eng = inset(eng, faceZ(p, 0.58) - vec3(-0.2, 0.0, 0.95), vec2(0.6, 0.018), 0.018, 0.012, LIME);
+  vec3 ex = faceX(p, 0.97);
+  eng = Sc(eng, M(max(sdRect(ex.xz - vec2(0.05, 0.88), vec2(0.42, 0.09), 0.02), -(ex.y + 0.3)), GRAPHITE));
+  r = U(r, eng);
+  vec3 ot = p - vec3(1.12, 0.84, 0.05);
+  r = U(r, M(sdBox(rotZ(ot, 0.12), vec3(0.2, 0.014, 0.36)), STEEL));
+  r = U(r, stack(rotZ(ot - vec3(0.02, 0.014, 0.0), 0.12), vec2(0.13, 0.17), 0.07, LIME));
+  vec3 sb = p - vec3(-0.08, 1.09, -0.02);
+  vec2 bed = M(sdBox(sb, vec3(0.86, 0.05, 0.53)), WHITE);
+  bed = decal(bed, faceY(sb, 0.05), sdRect(sb.xz - vec2(0.0, 0.03), vec2(0.72, 0.4), 0.02), SKY);
+  r = U(r, bed);
+  r = U(r, M(sdBox(sb - vec3(-0.1, 0.07, 0.03), vec3(0.03, 0.025, 0.41)), LIME + SOLID));
+  vec3 lq = rotX(sb - vec3(0.0, 0.05, -0.53), 0.42);
+  vec2 lid = M(sdBox(lq - vec3(0.0, 0.035, 0.52), vec3(0.86, 0.035, 0.52)), WHITE);
+  lid = seam(lid, lq.y - 0.035);
+  r = U(r, lid);
+  vec3 af = lq - vec3(0.15, 0.07, 0.5);
+  r = U(r, M(sdBox(af - vec3(0.0, 0.03, 0.0), vec3(0.5, 0.03, 0.34)), WHITE));
+  r = U(r, stack(af - vec3(0.0, 0.06, 0.0), vec2(0.3, 0.24), 0.05, SKY));
+  vec3 cp = rotX(p - vec3(0.62, 1.08, 0.7), 0.55);
+  vec2 pan = M(sdBox(cp, vec3(0.28, 0.03, 0.13)), WHITE);
+  vec3 ct = faceY(cp, 0.03);
+  pan = decal(pan, ct, sdRect(ct.xz - vec2(-0.08, 0.0), vec2(0.13, 0.085), 0.015), SKY);
+  pan = decal(pan, ct, sdRect(ct.xz - vec2(-0.12, -0.02), vec2(0.06, 0.02), 0.01), LIME);
+  r = U(r, pan);
+  r = U(r, led(ct - vec3(0.13, 0.0, -0.04), 0.022, LIME));
+  r = U(r, led(ct - vec3(0.2, 0.0, -0.04), 0.022, STEEL));
+  r = U(r, button(ct - vec3(0.165, 0.0, 0.05), 0.03, 0.012, WHITE));
+  return r;
+}
+
+vec2 sorter(vec3 p) {
+  vec3 l = mirXZ(p) - vec3(0.24, 0.32, 0.24);
+  vec2 r = M(sdBox(l, vec3(0.025, 0.32, 0.025)), GRAPHITE);
+  r = U(r, M(sdBox(vec3(p.x, p.y - 0.2, abs(p.z) - 0.24), vec3(0.24, 0.018, 0.018)), GRAPHITE));
+  r = U(r, M(sdBox(vec3(abs(p.x) - 0.24, p.y - 0.2, p.z), vec3(0.018, 0.018, 0.24)), GRAPHITE));
+  vec3 b = p - vec3(0.0, 0.84, 0.0);
+  vec2 body = M(sdRoundBox(b, vec3(0.32, 0.2, 0.32), 0.025), WHITE);
+  body = seam(body, b.y + 0.08);
+  body = seam(body, b.y - 0.15);
+  vec3 fx = faceX(p, 0.32);
+  body = vents(body, fx - vec3(-0.14, 0.0, 0.9), 4.0, 0.055, 0.1, 0.022, GRAPHITE);
+  vec3 fz = faceZ(p, 0.32);
+  body = inset(body, fz - vec3(-0.06, 0.0, 0.9), vec2(0.16, 0.05), 0.02, 0.02, GRAPHITE);
+  r = U(r, body);
+  r = U(r, led(fx - vec3(0.07, 0.0, 0.9), 0.026, LIME));
+  r = U(r, led(fx - vec3(0.15, 0.0, 0.9), 0.026, LILAC));
+  r = U(r, led(fx - vec3(0.23, 0.0, 0.9), 0.026, SKY));
+  r = U(r, M(sdBox(fz - vec3(-0.06, 0.0, 0.9), vec3(0.14, 0.004, 0.006)), LIME + SOLID));
+  vec3 h = p - vec3(0.0, 1.06, 0.0);
+  r = U(r, M(sdCylinder(h - vec3(0.0, 0.04, 0.0), 0.12, 0.05), STEEL + ROUND));
+  vec3 cq = h - vec3(0.0, 0.32, 0.0);
+  float outer = sdCone(cq, 0.22, 0.12, 0.42);
+  float inner = sdCone(cq - vec3(0.0, 0.03, 0.0), 0.22, 0.09, 0.39);
+  r = U(r, M(max(outer, -inner), WHITE + SOLID));
+  r = U(r, M(sdTorus(cq - vec3(0.0, 0.22, 0.0), 0.42, 0.025), BLUE + SOLID));
+  r = U(r, sheet(rotZ(rotY(cq - vec3(0.06, 0.04, 0.02), 0.6), 0.45), SKY));
+  r = U(r, sheet(rotX(rotY(cq - vec3(-0.1, 0.07, -0.06), -0.3), -0.5), WHITE));
+  return r;
+}
+
+vec2 chute(vec3 p, vec3 a, vec3 b, float m) {
+  vec3 d = b - a;
+  vec3 q = rotY(p - a, -atan(d.z, d.x));
+  q = rotZ(q, atan(d.y, length(d.xz)));
+  float l = length(d);
+  vec3 c = q - vec3(l * 0.5, 0.0, 0.0);
+  vec2 r = M(max(sdBox(c, vec3(l * 0.5, 0.035, 0.13)), -sdBox(c - vec3(0.0, 0.04, 0.0), vec3(l * 0.5 + 0.05, 0.04, 0.1))), STEEL);
+  return U(r, sheet(rotY(c - vec3(0.05, 0.0, 0.0), PI * 0.5 + 0.1), m));
+}
+
+vec2 bin(vec3 p, float m) {
+  vec3 q = p - vec3(0.0, 0.2, 0.0);
+  vec2 c = M(max(sdRoundBox(q, vec3(0.27, 0.2, 0.27), 0.015), -sdBox(q - vec3(0.0, 0.05, 0.0), vec3(0.24, 0.2, 0.24))), WHITE);
+  c = seam(c, q.y + 0.12);
+  c = paint(c, 0.14 - q.y, m);
+  c = U(c, stack(q - vec3(0.0, -0.15, 0.0), vec2(0.15, 0.18), 0.3, m == LIME ? SKY : LIME));
   return c;
 }
 
-vec2 head(vec3 h, float hair) {
-  vec2 r = M(sdSphere(h, 0.078), WHITE + SOLID);
-  r = U(r, M(max(sdSphere(h - vec3(-0.006, 0.006, 0.0), 0.084), -(h.y - 0.55 * h.x + 0.005)), hair + SOLID));
-  return r;
-}
-
-vec2 person(vec3 p, float shirt, float hair) {
-  vec3 m = vec3(p.x, p.y, abs(p.z));
-  vec2 r = M(sdCapsule(m, vec3(0.0, 0.05, 0.055), vec3(0.0, 0.3, 0.055), 0.045), GRAPHITE + SOLID);
-  r = U(r, M(sdBox(m - vec3(0.025, 0.02, 0.055), vec3(0.06, 0.02, 0.04)), GRAPHITE));
-  r = U(r, M(sdCapsule(p, vec3(0.0, 0.38, 0.0), vec3(0.0, 0.52, 0.0), 0.11), shirt + SOLID));
-  r = U(r, M(sdCapsule(m, vec3(0.0, 0.56, 0.13), vec3(0.05, 0.34, 0.15), 0.036), shirt + SOLID));
-  r = U(r, head(p - vec3(0.0, 0.74, 0.0), hair));
-  return r;
-}
-
-vec2 carrier(vec3 p, float shirt, float hair, float m) {
-  vec3 q = vec3(p.x, p.y, abs(p.z));
-  vec2 r = M(sdCapsule(q, vec3(0.0, 0.05, 0.055), vec3(0.0, 0.3, 0.055), 0.045), GRAPHITE + SOLID);
-  r = U(r, M(sdBox(q - vec3(0.025, 0.02, 0.055), vec3(0.06, 0.02, 0.04)), GRAPHITE));
-  r = U(r, M(sdCapsule(p, vec3(0.0, 0.38, 0.0), vec3(0.0, 0.52, 0.0), 0.11), shirt + SOLID));
-  r = U(r, M(sdCapsule(q, vec3(0.0, 0.56, 0.13), vec3(0.17, 0.44, 0.1), 0.036), shirt + SOLID));
-  r = U(r, head(p - vec3(0.0, 0.74, 0.0), hair));
-  vec3 b = p - vec3(0.2, 0.47, 0.0);
-  vec2 box = M(sdBox(b, vec3(0.09, 0.07, 0.11)), WHITE);
-  box = seam(box, b.y - 0.035);
-  r = U(r, inset(box, faceX(b, 0.09) - vec3(0.0, 0.0, 0.0), vec2(0.06, 0.018), 0.01, 0.01, m));
-  return r;
-}
-
-vec2 seated(vec3 p, float shirt, float hair) {
-  vec3 m = vec3(p.x, p.y, abs(p.z));
-  vec2 r = M(sdCapsule(m, vec3(-0.02, 0.33, 0.055), vec3(0.17, 0.33, 0.055), 0.045), GRAPHITE + SOLID);
-  r = U(r, M(sdCapsule(m, vec3(0.17, 0.33, 0.055), vec3(0.17, 0.05, 0.055), 0.042), GRAPHITE + SOLID));
-  r = U(r, M(sdBox(m - vec3(0.2, 0.02, 0.055), vec3(0.06, 0.02, 0.04)), GRAPHITE));
-  r = U(r, M(sdCapsule(p, vec3(-0.03, 0.44, 0.0), vec3(-0.03, 0.56, 0.0), 0.11), shirt + SOLID));
-  r = U(r, M(sdCapsule(m, vec3(-0.03, 0.6, 0.13), vec3(0.2, 0.46, 0.09), 0.036), shirt + SOLID));
-  r = U(r, head(p - vec3(-0.03, 0.78, 0.0), hair));
-  return r;
-}
-
-vec2 chair(vec3 p) {
-  vec2 r = M(sdBox(p - vec3(-0.02, 0.27, 0.0), vec3(0.13, 0.025, 0.13)), STEEL);
-  r = U(r, M(sdBox(p - vec3(-0.16, 0.44, 0.0), vec3(0.025, 0.14, 0.12)), STEEL));
-  r = U(r, M(sdCylinder(p - vec3(-0.02, 0.14, 0.0), 0.018, 0.12), GRAPHITE + SOLID));
-  r = U(r, M(sdCylinder(p - vec3(-0.02, 0.02, 0.0), 0.12, 0.02), GRAPHITE + SOLID));
-  return r;
-}
-
-vec2 screen(vec3 p, float k) {
-  vec3 s = p - vec3(0.0, 0.62, 0.0);
-  vec2 r = M(sdBox(s, vec3(0.018, 0.12, 0.19)), GRAPHITE);
-  vec3 f = faceNX(s, -0.018);
-  r = U(r, M(extrude(sdRect(f.xz, vec2(0.165, 0.095), 0.01), f.y - 0.004, 0.004), SKY));
-  vec3 g = faceNX(s, -0.026);
-  r = decal(r, g, sdRect(g.xz - vec2(-0.07, 0.04), vec2(0.06, 0.035), 0.01), k > 0.5 ? LIME : WHITE);
-  r = decal(r, g, sdRect(g.xz - vec2(0.06, 0.05), vec2(0.06, 0.012), 0.01), WHITE);
-  r = decal(r, g, sdRect(g.xz - vec2(0.06, 0.01), vec2(0.06, 0.012), 0.01), WHITE);
-  r = decal(r, g, sdRect(g.xz - vec2(0.0, -0.05), vec2(0.13, 0.012), 0.01), k > 0.5 ? WHITE : LIME);
-  r = U(r, M(sdBox(p - vec3(0.03, 0.47, 0.0), vec3(0.012, 0.04, 0.025)), GRAPHITE));
-  r = U(r, M(sdBox(p - vec3(0.02, 0.44, 0.0), vec3(0.05, 0.008, 0.07)), GRAPHITE));
-  return r;
-}
-
-vec2 desk(vec3 p, float k) {
-  vec3 t = p - vec3(0.0, 0.42, 0.0);
-  vec2 r = M(sdBox(t, vec3(0.17, 0.018, 0.3)), WHITE);
-  r = U(r, M(sdBox(vec3(p.x, p.y - 0.21, abs(p.z) - 0.28), vec3(0.15, 0.2, 0.015)), WHITE));
-  r = U(r, screen(p - vec3(0.08, 0.0, 0.08), k));
-  r = U(r, M(sdBox(p - vec3(-0.07, 0.445, 0.04), vec3(0.04, 0.007, 0.12)), STEEL));
-  vec3 ps = p - vec3(-0.02, 0.44, -0.2);
-  vec2 pile = M(sdBox(ps - vec3(0.0, 0.035, 0.0), vec3(0.08, 0.035, 0.065)), WHITE);
-  r = U(r, stripes(pile, ps.y, 0.014));
-  r = U(r, M(sdCylinder(p - vec3(-0.08, 0.475, -0.05), 0.022, 0.035), (k > 0.5 ? LILAC : WHITE) + ROUND));
-  return r;
-}
-
-vec2 station(vec3 p, float shirt, float hair, float k) {
-  vec2 r = chair(p);
-  r = U(r, seated(p, shirt, hair));
-  r = U(r, desk(p - vec3(0.4, 0.0, 0.0), k));
-  return r;
-}
-
-vec2 plant(vec3 p, float s) {
-  vec2 r = M(sdCylinder(p - vec3(0.0, 0.1 * s, 0.0), 0.08 * s, 0.1 * s), WHITE + ROUND);
-  r = U(r, M(sdCylinder(p - vec3(0.0, 0.205 * s, 0.0), 0.09 * s, 0.012 * s), STEEL + ROUND));
-  vec3 l = polarY(rotY(p, 0.3), 5.0) - vec3(0.0, 0.22 * s, 0.0);
-  float f = sdEllipsoid(rotZ(l - vec3(0.1, 0.1, 0.0) * s, -0.75), vec3(0.11, 0.025, 0.045) * s);
-  vec3 l2 = polarY(rotY(p, 0.9), 3.0) - vec3(0.0, 0.22 * s, 0.0);
-  f = min(f, sdEllipsoid(rotZ(l2 - vec3(0.04, 0.17, 0.0) * s, -1.2), vec3(0.13, 0.025, 0.045) * s));
-  r = U(r, M(f, MINT + SOLID));
-  return r;
-}
-
-vec2 bubble(vec3 p, float m, float check) {
-  float d2 = min(sdRect(p.xy, vec2(0.24, 0.15), 0.1), sdSeg(p.xy, vec2(-0.08, -0.08), vec2(-0.16, -0.24)) - 0.035);
-  vec2 b = M(extrude(d2, p.z, 0.025), m);
-  vec3 q = vec3(p.x, p.z - 0.025, p.y);
-  float mark = m == WHITE ? LIME : WHITE;
-  if (check > 0.5) {
-    float c = min(sdSeg(q.xz, vec2(-0.09, 0.0), vec2(-0.025, -0.065)), sdSeg(q.xz, vec2(-0.025, -0.065), vec2(0.1, 0.07))) - 0.028;
-    return decal(b, q, c, mark);
+vec2 sortUnit(vec3 p) {
+  vec2 r = sorter(p);
+  r = U(r, bin(p - vec3(0.0, 0.0, 1.3), SKY));
+  r = U(r, bin(p - vec3(0.95, 0.0, 0.95), LILAC));
+  r = U(r, bin(p - vec3(1.3, 0.0, 0.0), LIME));
+  if (near(p - vec3(0.6, 0.6, 0.6), vec3(0.9, 0.2, 0.9), r.x)) {
+    r = U(r, chute(p, vec3(0.0, 0.7, 0.3), vec3(0.0, 0.5, 1.2), SKY));
+    r = U(r, chute(p, vec3(0.22, 0.7, 0.22), vec3(0.88, 0.5, 0.88), LILAC));
+    r = U(r, chute(p, vec3(0.3, 0.7, 0.0), vec3(1.2, 0.5, 0.0), LIME));
   }
-  return decal(b, q, length(vec2(repC(q.x, 0.11, 3.0), q.z)) - 0.03, mark);
-}
-
-vec2 table(vec3 p) {
-  vec2 r = M(sdCylinder(p - vec3(0.0, 0.42, 0.0), 0.32, 0.02), WHITE + SOLID);
-  r = U(r, M(sdCylinder(p - vec3(0.0, 0.21, 0.0), 0.03, 0.2), GRAPHITE + SOLID));
-  r = U(r, M(sdCylinder(p - vec3(0.0, 0.015, 0.0), 0.15, 0.015), GRAPHITE + SOLID));
-  r = U(r, sheet(rotY(p - vec3(-0.08, 0.446, 0.06), 0.4), WHITE));
-  r = U(r, sheet(rotY(p - vec3(0.1, 0.446, -0.08), -0.3), SKY));
-  r = U(r, M(sdBox(p - vec3(0.08, 0.452, 0.12), vec3(0.09, 0.006, 0.06)), GRAPHITE));
   return r;
 }
 
-vec2 inbox(vec3 p) {
-  vec2 r = M(sdBox(p - vec3(0.0, 0.42, 0.0), vec3(0.22, 0.018, 0.22)), WHITE);
-  r = U(r, M(sdBox(vec3(abs(p.x) - 0.19, p.y - 0.21, abs(p.z) - 0.19), vec3(0.018, 0.2, 0.018)), WHITE));
-  r = U(r, envelope(rotY(p - vec3(-0.05, 0.452, 0.04), 0.3), WHITE));
-  r = U(r, envelope(rotY(p - vec3(0.06, 0.48, -0.03), -0.5), LILAC));
-  r = U(r, sheet(rotY(p - vec3(0.0, 0.505, 0.02), 1.1), WHITE));
-  r = U(r, envelope(rotZ(rotY(p - vec3(-0.02, 0.535, -0.02), 0.9), 0.15), SKY));
-  r = U(r, envelope(rotY(p - vec3(0.12, 0.02, 0.3), 0.7), WHITE));
-  r = U(r, sheet(rotY(p - vec3(-0.18, 0.012, 0.32), -0.4), WHITE));
+vec2 binder(vec3 p) {
+  vec3 c = vec3(p.x, p.y - 0.62, abs(p.z) - 0.42);
+  vec2 r = M(sdBox(c, vec3(0.16, 0.62, 0.09)), WHITE);
+  r = paint(r, p.y - 0.1, STEEL);
+  r = U(r, M(sdBox(vec3(p.x, p.y - 0.03, abs(p.z) - 0.42), vec3(0.22, 0.03, 0.14)), GRAPHITE));
+  vec3 h = p - vec3(0.0, 1.32, 0.0);
+  vec2 hd = M(sdRoundBox(h, vec3(0.24, 0.13, 0.55), 0.03), WHITE);
+  hd = seam(hd, h.y + 0.04);
+  hd = inset(hd, faceX(h, 0.24) - vec3(0.0, 0.0, 0.03), vec2(0.36, 0.035), 0.02, 0.015, LIME);
+  r = U(r, hd);
+  r = U(r, M(sdCylinder(p - vec3(0.0, 1.04, 0.0), 0.1, 0.16), STEEL + ROUND));
+  r = U(r, M(sdBox(p - vec3(0.0, 0.84, 0.0), vec3(0.2, 0.04, 0.2)), GRAPHITE));
+  r = U(r, led(faceY(h, 0.13) - vec3(0.1, 0.0, 0.35), 0.03, LIME));
   return r;
 }
 
-vec2 board(vec3 f) {
-  vec2 r = M(extrude(sdRect(f.xz, vec2(0.36, 0.2), 0.02), f.y - 0.01, 0.01), WHITE);
-  vec3 g = f - vec3(0.0, 0.02, 0.0);
-  r = decal(r, g, max(sdRect(vec2(repC(g.x + 0.12, 0.07, 4.0), g.z + 0.1 - (0.05 + 0.04 * repI(g.x + 0.12, 0.07, 4.0)) * 0.5), vec2(0.022, (0.05 + 0.04 * repI(g.x + 0.12, 0.07, 4.0)) * 0.5), 0.0), -1.0), LIME);
-  r = decal(r, g, length(g.xz - vec2(0.2, 0.0)) - 0.11, SKY);
-  r = decal(r, g, max(length(g.xz - vec2(0.2, 0.0)) - 0.11, min(g.x - 0.2, g.z)), LILAC);
+vec2 belt(vec3 p, float len, float h) {
+  vec3 q = p - vec3(len * 0.5, 0.0, 0.0);
+  vec2 r = M(sdBox(vec3(q.x, q.y - h + 0.04, abs(q.z) - 0.17), vec3(len * 0.5, 0.04, 0.02)), WHITE);
+  vec3 ro = vec3(repC(q.x, 0.11, floor(len / 0.11)), q.y - h + 0.035, q.z);
+  r = U(r, M(sdCylinder(rotX(ro, PI * 0.5), 0.028, 0.16), STEEL + SOLID));
+  float n = floor(len / 0.7) + 1.0;
+  float lx = repC(q.x, len / (n - 1.0) * 0.96, n);
+  r = U(r, M(sdBox(vec3(lx, q.y - (h - 0.08) * 0.5, abs(q.z) - 0.17), vec3(0.02, (h - 0.08) * 0.5, 0.02)), GRAPHITE));
   return r;
 }
 
-vec2 room(vec3 p, float h, float H) {
-  vec2 r = M(sdBox(p - vec3(0.0, 0.06, 0.0), vec3(h, 0.06, h)), WHITE);
-  r = seam(r, p.y - 0.02);
-  vec3 t = faceY(p, 0.12);
-  if (abs(p.y - 0.12) < 0.01) r = stripes(stripes(r, p.x + h, 0.5), p.z + h, 0.5);
-  vec3 wx = p - vec3(-h + 0.04, 0.12 + H * 0.5, 0.0);
-  vec2 w = M(sdBox(wx, vec3(0.04, H * 0.5, h)), WHITE);
-  vec3 wz = p - vec3(0.0, 0.12 + H * 0.5, -h + 0.04);
-  w = U(w, M(sdBox(wz, vec3(h, H * 0.5, 0.04)), WHITE));
-  w = seam(w, p.y - 0.12 - H + 0.06);
-  vec3 fx = faceX(p, -h + 0.08);
-  vec3 fz = faceZ(p, -h + 0.08);
-  float wy = 0.12 + H * 0.58;
-  w = inset(w, vec3(repC(fx.x - 0.35, 0.62, 3.0), fx.y, fx.z - wy), vec2(0.22, H * 0.25), 0.02, 0.02, SKY);
-  w = inset(w, vec3(repC(fz.x - 0.35, 0.62, 3.0), fz.y, fz.z - wy), vec2(0.22, H * 0.25), 0.02, 0.02, SKY);
-  return U(r, w);
+vec2 cabinetHall(vec3 p) {
+  vec3 b = p - vec3(0.0, 0.98, 0.0);
+  vec2 r = M(sdBox(b, vec3(0.78, 0.94, 0.7)), WHITE);
+  r = U(r, M(sdBox(p - vec3(0.0, 0.02, 0.0), vec3(0.75, 0.02, 0.67)), GRAPHITE));
+  r = U(r, M(sdBox(p - vec3(0.0, 1.95, 0.0), vec3(0.82, 0.04, 0.74)), WHITE));
+  vec2 h = vec2(0.32, 0.145);
+  vec3 fz = faceZ(p, 0.7);
+  vec2 cz = vec2(0.0, 0.98);
+  vec2 sz = vec2(1.0, 1.0);
+  vec3 dz = vec3(fz.x - (sz.x - 0.5) * 0.74, fz.y, fz.z - (cz.y + (sz.y - 2.0) * 0.36));
+  r = Sc(r, M(max(sdRect(dz.xz, h, 0.0), -(dz.y + 0.3)), GRAPHITE));
+  r = U(r, drawers(fz, cz, vec2(0.74, 0.36), vec2(2.0, 5.0), h, sz, 1.0));
+  r = U(r, pulled(dz, h, 0.55, 1.0));
+  vec3 fx = faceX(p, 0.78);
+  vec2 cx = vec2(0.0, 0.98);
+  vec2 sx = vec2(0.0, 3.0);
+  vec3 dx = vec3(fx.x - (sx.x - 0.5) * 0.66, fx.y, fx.z - (cx.y + (sx.y - 2.0) * 0.36));
+  r = Sc(r, M(max(sdRect(dx.xz, vec2(0.28, 0.145), 0.0), -(dx.y + 0.3)), GRAPHITE));
+  r = U(r, drawers(fx, cx, vec2(0.66, 0.36), vec2(2.0, 5.0), vec2(0.28, 0.145), sx, 9.0));
+  r = U(r, pulled(dx, vec2(0.28, 0.145), 0.4, 2.0));
+  vec3 m = p - vec3(-0.35, 1.99, -0.3);
+  r = U(r, M(sdBox(m - vec3(0.0, 0.03, 0.0), vec3(0.14, 0.03, 0.14)), WHITE));
+  r = U(r, M(sdCylinder(m - vec3(0.0, 0.3, 0.0), 0.018, 0.28), STEEL + SOLID));
+  r = U(r, M(sdTorus(m - vec3(0.0, 0.36, 0.0), 0.09, 0.014), STEEL + SOLID));
+  r = U(r, M(sdTorus(m - vec3(0.0, 0.48, 0.0), 0.06, 0.014), STEEL + SOLID));
+  r = U(r, led(m - vec3(0.0, 0.6, 0.0), 0.04, LIME));
+  return r;
 }
 
-vec2 cabinet(vec3 p, float k) {
-  vec2 r = M(sdBox(p - vec3(0.0, 0.5, 0.0), vec3(0.16, 0.48, 0.2)), WHITE);
-  r = U(r, M(sdBox(p - vec3(0.0, 0.015, 0.0), vec3(0.15, 0.015, 0.19)), GRAPHITE));
-  r = U(r, M(sdBox(p - vec3(0.0, 0.985, 0.0), vec3(0.165, 0.015, 0.205)), WHITE));
-  vec3 f = faceZ(p, 0.2);
-  float row = repI(f.z - 0.53, 0.225, 4.0);
-  float op = hash(k * 7.1 + 1.3) > 0.5 ? floor(hash(k * 3.3 + 0.7) * 4.0) : -1.0;
-  float zc = f.z - 0.53 - (row - 1.5) * 0.225;
-  for (int j = 0; j < 2; j++) {
-    float rw = j == 0 ? row : clamp(row + (zc > 0.0 ? 1.0 : -1.0), 0.0, 3.0);
-    if (rw == op || (j == 1 && rw == row)) continue;
-    vec3 d = vec3(f.x, f.y, f.z - 0.53 - (rw - 1.5) * 0.225);
-    vec2 fr = M(extrude(sdRect(d.xz, vec2(0.135, 0.098), 0.012), d.y - 0.008, 0.008), WHITE);
-    vec3 fq = d - vec3(0.0, 0.016, 0.0);
-    fr = U(fr, M(sdBox(fq - vec3(0.0, 0.01, -0.03), vec3(0.055, 0.01, 0.012)), STEEL));
-    fr = decal(fr, fq, sdRect(fq.xz - vec2(0.0, 0.035), vec2(0.04, 0.02), 0.004), hash(k + rw * 5.0) > 0.7 ? LIME : PAPER);
-    r = U(r, fr);
-  }
-  if (op >= 0.0) {
-    vec3 e0 = vec3(f.x, f.y, f.z - 0.53 - (op - 1.5) * 0.225);
-    r = Sc(r, M(max(sdRect(e0.xz, vec2(0.135, 0.098), 0.0), -(e0.y + 0.3)), GRAPHITE));
-    vec3 o = e0 - vec3(0.0, 0.1, 0.0);
-    vec2 tray = M(sdBox(o - vec3(0.0, 0.0, -0.02), vec3(0.13, 0.12, 0.07)), WHITE);
-    vec3 tt = faceY(o, 0.05);
-    tray = decal(tray, tt, sdRect(tt.xz, vec2(0.115, 0.105), 0.005), GRAPHITE);
-    r = U(r, tray);
-    vec3 e = e0 - vec3(0.0, 0.228, 0.0);
-    vec2 fr = M(extrude(sdRect(e.xz, vec2(0.135, 0.098), 0.012), e.y, 0.008), WHITE);
-    fr = U(fr, M(sdBox(e - vec3(0.0, 0.018, -0.03), vec3(0.055, 0.01, 0.012)), STEEL));
-    r = U(r, fr);
-    float fi = repI(o.y + 0.01, 0.07, 3.0);
-    vec3 fo = vec3(o.x, repC(o.y + 0.01, 0.07, 3.0), o.z);
-    float fm = fi == 0.0 ? LIME : fi == 1.0 ? SKY : LILAC;
-    r = U(r, M(sdBox(fo - vec3(0.0, 0.0, 0.07), vec3(0.1, 0.014, 0.04)), fm));
-    r = U(r, M(sdBox(fo - vec3(-0.05 + 0.05 * fi, 0.0, 0.12), vec3(0.03, 0.014, 0.014)), fm));
-  }
+vec2 catalog(vec3 p) {
+  vec3 b = p - vec3(0.0, 0.62, 0.0);
+  vec2 r = M(sdBox(b, vec3(0.5, 0.3, 0.3)), WHITE);
+  r = U(r, M(sdBox(p - vec3(0.0, 0.94, 0.0), vec3(0.53, 0.025, 0.33)), WHITE));
+  r = U(r, M(sdBox(p - vec3(0.0, 0.3, 0.0), vec3(0.52, 0.025, 0.32)), WHITE));
+  vec3 l = mirXZ(p) - vec3(0.44, 0.15, 0.25);
+  r = U(r, M(sdBox(l, vec3(0.03, 0.15, 0.03)), GRAPHITE));
+  r = U(r, drawers(faceZ(p, 0.3), vec2(0.0, 0.62), vec2(0.165, 0.145), vec2(6.0, 4.0), vec2(0.07, 0.06), vec2(-1.0), 30.0));
+  r = U(r, drawers(faceX(p, 0.5), vec2(0.0, 0.62), vec2(0.15, 0.145), vec2(4.0, 4.0), vec2(0.065, 0.06), vec2(-1.0), 50.0));
   return r;
 }
 
 vec2 vault(vec3 p) {
-  vec2 r = M(sdChamferBox(p - vec3(0.0, 0.44, 0.0), vec3(0.3, 0.42, 0.27), 0.03), WHITE);
-  r = U(r, M(sdBox(p - vec3(0.0, 0.02, 0.0), vec3(0.28, 0.02, 0.25)), GRAPHITE));
-  vec3 f = faceZ(p, 0.27);
-  vec3 d = f - vec3(0.0, 0.0, 0.46);
-  r = U(r, M(extrude(sdRect(d.xz, vec2(0.24, 0.34), 0.03), d.y - 0.012, 0.012), WHITE));
-  vec3 c = d - vec3(-0.02, 0.024, 0.05);
-  r = U(r, M(extrude(length(c.xz) - 0.13, c.y - 0.012, 0.012), LIME + SOLID));
-  r = U(r, M(extrude(length(c.xz) - 0.08, c.y - 0.03, 0.012), WHITE + SOLID));
-  r = U(r, M(extrude(max(abs(sdSeg(c.xz, vec2(0.0), vec2(0.0, 0.11)) ) - 0.012, -1.0), c.y - 0.03, 0.01), GRAPHITE));
-  float sp = min(sdSeg(c.xz, vec2(0.0), vec2(0.095, -0.055)), sdSeg(c.xz, vec2(0.0), vec2(-0.095, -0.055)));
-  r = U(r, M(extrude(min(sp, sdSeg(c.xz, vec2(0.0), vec2(0.0, 0.11))) - 0.012, c.y - 0.04, 0.008), GRAPHITE));
-  r = U(r, M(extrude(length(c.xz) - 0.03, c.y - 0.05, 0.012), GRAPHITE + SOLID));
-  vec3 h = d - vec3(0.17, 0.03, -0.15);
-  r = U(r, M(extrude(sdRect(h.xz, vec2(0.025, 0.05), 0.01), h.y - 0.01, 0.01), GRAPHITE));
-  r = U(r, led(h - vec3(0.0, 0.02, 0.0), 0.016, LIME));
-  vec3 hn = vec3(f.x, f.y, f.z) - vec3(0.0, 0.0, 0.0);
-  r = U(r, M(sdBox(vec3(abs(p.x - 0.0) - 0.0, p.y - 0.62, p.z - 0.29) - vec3(-0.25, 0.0, 0.0), vec3(0.02, 0.06, 0.02)), STEEL));
-  r = U(r, M(sdBox(vec3(p.x, p.y - 0.26, p.z - 0.29) - vec3(-0.25, 0.0, 0.0), vec3(0.02, 0.06, 0.02)), STEEL));
+  vec2 r = M(sdChamferBox(p - vec3(0.0, 0.46, 0.0), vec3(0.34, 0.44, 0.3), 0.03), WHITE);
+  r = U(r, M(sdBox(p - vec3(0.0, 0.02, 0.0), vec3(0.32, 0.02, 0.28)), GRAPHITE));
+  vec3 d = faceZ(p, 0.3) - vec3(0.0, 0.0, 0.47);
+  r = U(r, M(extrude(sdRect(d.xz, vec2(0.27, 0.36), 0.03), d.y - 0.014, 0.014), WHITE));
+  vec3 c = d - vec3(-0.03, 0.028, 0.04);
+  r = U(r, M(extrude(length(c.xz) - 0.16, c.y - 0.012, 0.012), LIME + SOLID));
+  r = U(r, M(extrude(length(c.xz) - 0.1, c.y - 0.03, 0.012), WHITE + SOLID));
+  float sp = min(min(sdSeg(c.xz, vec2(0.0), vec2(0.12, -0.07)), sdSeg(c.xz, vec2(0.0), vec2(-0.12, -0.07))), sdSeg(c.xz, vec2(0.0), vec2(0.0, 0.14)));
+  r = U(r, M(extrude(sp - 0.014, c.y - 0.045, 0.01), GRAPHITE));
+  r = U(r, M(extrude(length(c.xz) - 0.035, c.y - 0.055, 0.014), GRAPHITE + SOLID));
+  vec3 k = d - vec3(0.19, 0.03, -0.18);
+  r = U(r, M(extrude(sdRect(k.xz, vec2(0.03, 0.06), 0.01), k.y - 0.01, 0.01), GRAPHITE));
+  r = U(r, led(k - vec3(0.0, 0.02, 0.0), 0.018, LIME));
+  r = U(r, M(sdBox(vec3(p.x + 0.3, abs(p.y - 0.46) - 0.2, p.z - 0.32), vec3(0.025, 0.06, 0.025)), STEEL));
   return r;
 }
 
-vec2 helper(vec3 p, float m, float carry) {
-  vec2 r = M(sdRoundCylinder(p - vec3(0.0, 0.07, 0.0), 0.15, 0.05, 0.02), GRAPHITE + ROUND);
-  vec3 b = p - vec3(0.0, 0.29, 0.0);
-  vec2 body = M(sdRoundBox(b, vec3(0.12, 0.15, 0.12), 0.06), WHITE);
-  body = paint(body, abs(b.y + 0.06) - 0.025, m);
-  r = U(r, body);
-  r = U(r, M(sdCylinder(p - vec3(0.0, 0.47, 0.0), 0.04, 0.03), STEEL + ROUND));
-  vec3 h = p - vec3(0.0, 0.58, 0.0);
-  r = U(r, M(sdRoundBox(h, vec3(0.115, 0.085, 0.14), 0.05), WHITE));
-  vec3 f = faceX(h, 0.115);
-  r = Sc(r, M(max(sdRect(f.xz, vec2(0.1, 0.045), 0.04), -(f.y + 0.015)), GRAPHITE));
-  r = U(r, led(vec3(abs(f.x) - 0.045, f.y + 0.012, f.z - 0.005), 0.02, LIME));
-  r = U(r, M(sdCylinder(p - vec3(-0.03, 0.73, 0.0), 0.008, 0.06), GRAPHITE + SOLID));
-  r = U(r, led(p - vec3(-0.03, 0.8, 0.0), 0.025, m));
-  vec3 q = vec3(p.x, p.y, abs(p.z));
-  vec3 hand = carry > 0.5 ? vec3(0.2, 0.36, 0.1) : vec3(0.05, 0.16, 0.17);
-  r = U(r, M(sdCapsule(q, vec3(0.0, 0.36, 0.14), hand, 0.032), WHITE + SOLID));
-  r = U(r, M(sdSphere(q - hand, 0.04), GRAPHITE + SOLID));
-  if (carry > 0.5) r = U(r, folder(p - vec3(0.22, 0.4, 0.0), m));
+vec2 abox(vec3 p, float m) {
+  vec2 b = M(sdBox(p - vec3(0.0, 0.09, 0.0), vec3(0.13, 0.09, 0.1)), WHITE);
+  b = seam(b, p.y - 0.135);
+  return inset(b, faceX(p, 0.13) - vec3(0.0, 0.0, 0.08), vec2(0.05, 0.022), 0.012, 0.01, m);
+}
+
+vec2 shelving(vec3 p) {
+  vec3 l = vec3(abs(p.x) - 0.2, p.y - 0.6, abs(p.z) - 0.55);
+  vec2 r = M(sdBox(l, vec3(0.025, 0.6, 0.025)), GRAPHITE);
+  float i = repI(p.y - 0.62, 0.38, 4.0);
+  vec3 s = vec3(p.x, repC(p.y - 0.05 - 0.57, 0.38, 4.0), p.z);
+  r = U(r, M(sdBox(s, vec3(0.22, 0.015, 0.58)), WHITE));
+  float sh = clamp(floor((p.y - 0.05) / 0.38), 0.0, 2.0);
+  float j = repI(p.z, 0.27, 4.0);
+  vec3 bq = vec3(p.x, p.y - 0.065 - sh * 0.38, repC(p.z, 0.27, 4.0));
+  float hb = hash(sh * 5.0 + j);
+  r = U(r, abox(bq, hb > 0.7 ? LIME : hb > 0.45 ? SKY : PAPER));
   return r;
 }
 
-vec2 conveyor(vec3 p, float len, float w, float h) {
-  vec3 q = p - vec3(len * 0.5, 0.0, 0.0);
-  vec2 r = M(sdBox(vec3(q.x, q.y - h + 0.045, abs(q.z) - w), vec3(len * 0.5, 0.045, 0.022)), WHITE);
-  vec3 ro = vec3(repC(q.x, 0.11, floor(len / 0.11)), q.y - h + 0.04, q.z);
-  r = U(r, M(sdCylinder(rotX(ro, PI * 0.5), 0.03, w), STEEL + SOLID));
-  float n = floor(len / 0.7) + 1.0;
-  float lx = repC(q.x, len / (n - 1.0) * 0.96, n);
-  vec3 lq = vec3(lx, q.y - (h - 0.09) * 0.5, abs(q.z) - w);
-  r = U(r, M(sdBox(lq, vec3(0.022, (h - 0.09) * 0.5, 0.022)), GRAPHITE));
-  r = U(r, M(sdBox(vec3(lx, q.y - 0.14, q.z), vec3(0.016, 0.016, w)), GRAPHITE));
-  float ci = repI(q.x + 0.05, 0.4, floor(len / 0.4));
-  vec3 cq = vec3(repC(q.x + 0.05, 0.4, floor(len / 0.4)), q.y - h - 0.09, q.z);
-  if (q.x < 0.0) r = U(r, envelope(rotY(cq - vec3(0.0, -0.005, 0.0), 0.5 * sin(ci * 2.7)), mod(ci, 2.0) < 0.5 ? WHITE : SKY));
-  else r = U(r, card(cq));
+vec2 rack(vec3 p) {
+  vec2 r = M(sdBox(p - vec3(0.0, 0.62, 0.0), vec3(0.55, 0.6, 0.32)), WHITE);
+  r = U(r, M(sdBox(p - vec3(0.0, 0.02, 0.0), vec3(0.52, 0.02, 0.3)), GRAPHITE));
+  vec3 f = faceZ(p, 0.32);
+  vec3 u = vec3(repC(f.x, 0.36, 3.0), f.y, repC(f.z - 0.62, 0.17, 6.0));
+  r = U(r, M(extrude(sdRect(u.xz, vec2(0.155, 0.065), 0.01), u.y - 0.01, 0.01), WHITE));
+  r = vents(r, u - vec3(-0.04, 0.02, 0.0), 4.0, 0.04, 0.08, 0.016, GRAPHITE);
+  float on = hash(repI(f.x, 0.36, 3.0) * 7.0 + repI(f.z - 0.62, 0.17, 6.0));
+  r = U(r, led(u - vec3(0.11, 0.02, 0.0), 0.016, on > 0.45 ? LIME : STEEL));
+  r = vents(r, faceX(p, 0.55) - vec3(0.0, 0.0, 0.62), 4.0, 0.12, 0.8, 0.03, GRAPHITE);
+  r = U(r, M(sdBox(p - vec3(0.0, 1.24, 0.0), vec3(0.57, 0.02, 0.34)), WHITE));
   return r;
 }
 
-vec2 arm(vec3 p) {
-  vec2 r = M(sdCylinder(p - vec3(0.0, 0.05, 0.0), 0.22, 0.05), STEEL + ROUND);
-  r = U(r, M(sdCylinder(p - vec3(0.0, 0.22, 0.0), 0.14, 0.13), WHITE + ROUND));
-  r = U(r, M(sdCylinder(p - vec3(0.0, 0.37, 0.0), 0.17, 0.03), LIME + ROUND));
-  vec3 a = vec3(0.0, 0.48, 0.0), b = vec3(-0.15, 1.35, 0.15), c = vec3(0.7, 1.0, -0.55);
-  r = U(r, M(sdCapsule(p, a, b, 0.065), WHITE + SOLID));
-  r = U(r, M(sdCapsule(p, b, c, 0.055), WHITE + SOLID));
-  r = U(r, M(sdSphere(p - a, 0.1), GRAPHITE + SOLID));
-  r = U(r, M(sdSphere(p - b, 0.085), GRAPHITE + SOLID));
-  r = U(r, M(sdSphere(p - c, 0.07), LIME + SOLID));
-  vec3 g = p - c;
-  r = U(r, M(sdBox(g - vec3(0.0, -0.1, 0.0), vec3(0.08, 0.025, 0.05)), GRAPHITE));
-  r = U(r, M(sdBox(vec3(abs(g.x) - 0.07, g.y + 0.17, g.z), vec3(0.012, 0.07, 0.04)), GRAPHITE));
-  r = U(r, card(rotZ(g - vec3(0.0, -0.25, 0.0), 0.08)));
-  return r;
-}
-
-vec2 gate(vec3 p) {
-  vec3 g = vec3(abs(p.x) - 0.4, p.y, p.z);
-  vec2 r = M(sdBox(g - vec3(0.0, 0.6, 0.0), vec3(0.06, 0.6, 0.09)), WHITE);
-  r = paint(r, p.y - 0.12, STEEL);
-  r = U(r, M(sdBox(g - vec3(0.0, 0.02, 0.0), vec3(0.1, 0.02, 0.13)), GRAPHITE));
-  vec3 h = p - vec3(0.0, 1.27, 0.0);
-  vec2 hd = M(sdRoundBox(h, vec3(0.52, 0.11, 0.14), 0.03), WHITE);
-  vec3 hf = faceZ(h, 0.14);
-  hd = U(hd, led(hf - vec3(-0.3, 0.0, 0.0), 0.03, LIME));
-  hd = U(hd, led(hf - vec3(-0.2, 0.0, 0.0), 0.03, LIME));
-  hd = vents(hd, hf - vec3(0.2, 0.0, 0.0), 4.0, 0.06, 0.1, 0.025, GRAPHITE);
-  r = U(r, hd);
-  vec3 e = p - vec3(0.0, 1.13, 0.0);
-  r = U(r, M(sdBox(e, vec3(0.3, 0.03, 0.05)), GRAPHITE));
-  r = U(r, M(max(sdBox(e - vec3(0.0, -0.32, 0.0), vec3(0.24, 0.29, 0.004)), abs(mod(p.x + 0.03, 0.08) - 0.04) - 0.012), LIME + SOLID));
-  return r;
-}
-
-vec2 bin(vec3 p, float m) {
-  vec2 r = M(max(sdBox(p - vec3(0.0, 0.12, 0.0), vec3(0.15, 0.12, 0.12)), -sdBox(p - vec3(0.0, 0.2, 0.0), vec3(0.13, 0.12, 0.1))), WHITE);
-  r = paint(r, max(abs(p.y - 0.18) - 0.03, -1.0), m);
-  vec3 fo = vec3(repC(p.x, 0.05, 4.0), p.y - 0.2, p.z);
-  r = U(r, M(sdBox(fo, vec3(0.006, 0.08, 0.09)), m == LIME ? SKY : WHITE));
-  return r;
-}
-
-vec2 drone(vec3 p, float k) {
-  vec2 r = M(sdRoundBox(p, vec3(0.11, 0.04, 0.11), 0.03), WHITE);
-  vec3 m = mirXZ(p);
-  r = U(r, M(pipe(m, vec3(0.0), vec3(0.17, 0.02, 0.17), 0.016), GRAPHITE + SOLID));
-  vec3 ro = m - vec3(0.17, 0.05, 0.17);
-  r = U(r, M(sdCylinder(ro, 0.02, 0.03), GRAPHITE + SOLID));
-  r = U(r, M(sdCylinder(ro - vec3(0.0, 0.03, 0.0), 0.12, 0.006), STEEL + SOLID));
-  r = U(r, led(faceY(p, 0.04) - vec3(0.0, 0.0, 0.06), 0.025, LIME));
-  r = U(r, M(pipe(m, vec3(0.06, -0.04, 0.0), vec3(0.06, -0.12, 0.0), 0.008), GRAPHITE + SOLID));
-  if (k < 0.5) r = U(r, folder(p - vec3(0.0, -0.15, 0.0), LIME));
-  else r = U(r, envelope(p - vec3(0.0, -0.14, 0.0), WHITE));
+vec2 planter(vec3 p, float n) {
+  vec2 r = M(sdBox(p - vec3(0.0, 0.1, 0.0), vec3(0.18 * n, 0.1, 0.18)), WHITE);
+  r = seam(r, p.y - 0.17);
+  vec3 s = vec3(repC(p.x, 0.36, n), p.y - 0.24, p.z);
+  r = U(r, M(sdEllipsoid(s, vec3(0.16, 0.13, 0.15)), MINT + SOLID));
   return r;
 }
 
@@ -356,121 +378,20 @@ vec2 tree(vec3 p, float s) {
   return r;
 }
 
-vec2 pine(vec3 p, float s) {
-  vec2 r = M(sdCylinder(p - vec3(0.0, 0.12 * s, 0.0), 0.028 * s, 0.12 * s), GRAPHITE + SOLID);
-  r = U(r, M(sdCone(p - vec3(0.0, 0.34 * s, 0.0), 0.13 * s, 0.21 * s, 0.08 * s), MINT + SOLID));
-  r = U(r, M(sdCone(p - vec3(0.0, 0.53 * s, 0.0), 0.11 * s, 0.16 * s, 0.04 * s), MINT + SOLID));
-  r = U(r, M(sdCone(p - vec3(0.0, 0.69 * s, 0.0), 0.1 * s, 0.11 * s, 0.0), MINT + SOLID));
-  return r;
-}
-
-vec2 bench(vec3 p) {
-  vec3 s = p - vec3(0.0, 0.16, 0.0);
-  vec2 r = M(sdBox(s, vec3(0.26, 0.015, 0.08)), WHITE);
-  r = stripes(r, s.z + 0.08, 0.04);
-  r = U(r, M(sdBox(p - vec3(0.0, 0.28, -0.085), vec3(0.26, 0.05, 0.012)), WHITE));
-  r = U(r, M(sdBox(vec3(abs(p.x) - 0.2, p.y - 0.08, p.z), vec3(0.015, 0.08, 0.07)), GRAPHITE));
-  return r;
-}
-
 float paths(vec3 p, vec2 q) {
-  float d = abs(q.y - 0.0) - 0.26;
-  vec3 a = W(-5.6, 2.19), b = W(5.6, 2.19), c = W(0.0, 1.7);
-  d = min(d, sdSeg(p.xz, a.xz, a.xz + vec2(0.0, 6.0)) - 0.2);
-  d = min(d, sdSeg(p.xz, b.xz, b.xz + vec2(6.0, 0.0)) - 0.2);
-  d = min(d, sdSeg(p.xz, c.xz, c.xz + vec2(0.0, 6.0)) - 0.2);
+  float d = abs(q.y - 1.55) - 0.24;
+  vec3 a = W(-5.3, -0.6), b = W(0.0, -0.7), c = W(5.3, -0.6);
+  d = min(d, sdSeg(p.xz, a.xz, a.xz + vec2(0.0, 3.0)) - 0.2);
+  d = min(d, sdSeg(p.xz, c.xz, c.xz + vec2(0.0, 3.0)) - 0.2);
   return d;
 }
 
 vec2 ground(vec3 p, vec2 q) {
-  vec2 r = M(max(max(p.y, -p.y - 0.3), -(q.y + 2.6)), MINT);
+  vec2 r = M(max(max(p.y, -p.y - 0.3), -(q.y + 2.9)), MINT);
   vec3 top = faceY(p, 0.0);
   float pd = paths(p, q);
   r = decal(r, top, pd, WHITE);
-  if (pd < 0.0 && p.y > -0.01) r = stripes(r, q.x + q.y * 0.0, 0.3);
-  return r;
-}
-
-vec2 office(vec3 p) {
-  vec2 r = room(p, 1.55, 0.85);
-  vec3 o = p - vec3(0.0, 0.12, 0.0);
-  r = U(r, board(faceX(o, -1.47) - vec3(-0.85, 0.0, 0.55)));
-  if (max(o.z, o.x - 1.0) < r.x) {
-    float ix = repI(o.x + 0.1, 0.7, 3.0);
-    vec3 so = vec3(repC(o.x + 0.1, 0.7, 3.0), o.y, o.z + 0.4);
-    float sh = ix == 0.0 ? LIME : ix == 1.0 ? WHITE : LILAC;
-    float hr = ix == 0.0 ? GRAPHITE : ix == 1.0 ? CORAL : GRAPHITE;
-    r = U(r, station(along(so, vec2(0.0, -1.0)), sh, hr, mod(ix, 2.0)));
-  }
-  if (max(o.x - 0.2, -0.1 - o.z) < r.x) {
-    float iz = repI(o.z - 0.7, 0.7, 2.0);
-    vec3 so = vec3(o.x + 0.5, o.y, repC(o.z - 0.7, 0.7, 2.0));
-    r = U(r, station(along(so, vec2(-1.0, 0.0)), iz == 0.0 ? SKY : STEEL, iz == 0.0 ? CORAL : GRAPHITE, iz));
-  }
-  vec3 t = o - vec3(0.75, 0.0, 0.7);
-  if (near(t - vec3(0.0, 0.45, 0.0), vec3(0.75, 0.5, 0.75), r.x)) {
-    r = U(r, table(t));
-    r = U(r, person(along(t - vec3(-0.5, 0.0, 0.0), vec2(1.0, 0.0)), LIME, CORAL));
-    r = U(r, person(along(t - vec3(0.0, 0.0, -0.5), vec2(0.0, 1.0)), WHITE, GRAPHITE));
-    r = U(r, person(along(t - vec3(0.4, 0.0, 0.35), vec2(-1.0, -0.85)), LILAC, STEEL));
-  }
-  r = U(r, inbox(o - vec3(1.1, 0.0, -1.05)));
-  r = U(r, plant(o - vec3(-1.22, 0.0, -1.22), 1.15));
-  r = U(r, plant(o - vec3(1.3, 0.0, -0.2), 0.85));
-  return r;
-}
-
-vec2 hub(vec3 p) {
-  vec2 r = M(sdBox(p - vec3(0.0, 0.04, 0.0), vec3(1.2, 0.04, 1.2)), WHITE);
-  r = seam(r, p.y - 0.02);
-  if (abs(p.y - 0.08) < 0.01) r = stripes(stripes(r, p.x, 0.3), p.z, 0.3);
-  vec3 o = p - vec3(0.0, 0.08, 0.0);
-  r = U(r, conveyor(o - vec3(-0.95, 0.0, 0.0), 1.9, 0.17, 0.36));
-  vec2 g = gate(o / 0.6); r = U(r, M(g.x * 0.6, g.y));
-  r = U(r, scaled(arm((o - vec3(-0.9, 0.0, 0.33)) / 0.6), 0.6));
-  r = U(r, scaled(arm(rotY(o - vec3(0.95, 0.0, -0.33), PI) / 0.6), 0.6));
-  r = U(r, bin(o - vec3(0.85, 0.0, 0.45), LIME));
-  r = U(r, bin(o - vec3(0.5, 0.0, 0.62), LILAC));
-  r = U(r, envelope(rotY(o - vec3(-0.85, 0.014, -0.45), 0.6), WHITE));
-  r = U(r, envelope(rotY(o - vec3(-0.75, 0.042, -0.5), -0.2), SKY));
-  r = U(r, sheet(rotY(o - vec3(-0.6, 0.008, -0.62), 1.0), WHITE));
-  return r;
-}
-
-vec2 cabRow(vec3 o, float kind, float n, float base) {
-  float a = kind == 1.0 ? o.z - 0.2 : kind == 2.0 ? o.x - 0.25 : o.x;
-  float c = (n - 1.0) * 0.5;
-  float i0 = clamp(round(a / 0.34 + c), 0.0, n - 1.0);
-  float i1 = clamp(i0 + (a / 0.34 + c > i0 ? 1.0 : -1.0), 0.0, n - 1.0);
-  vec2 r = M(1e9, 0.0);
-  for (int j = 0; j < 2; j++) {
-    float i = j == 0 ? i0 : i1;
-    if (j == 1 && i1 == i0) break;
-    float l = a - (i - c) * 0.34;
-    vec3 q = kind == 1.0 ? along(vec3(o.x + 1.25, o.y, l), vec2(0.0, -1.0)) : kind == 2.0 ? vec3(l, o.y, o.z - 0.25) : vec3(l, o.y, o.z + 1.25);
-    r = U(r, cabinet(q, i + base));
-  }
-  return r;
-}
-
-vec2 archive(vec3 p) {
-  vec2 r = room(p, 1.55, 1.0);
-  vec3 o = p - vec3(0.0, 0.12, 0.0);
-  if (o.z + 0.75 < r.x) r = U(r, cabRow(o, 0.0, 7.0, 0.0));
-  if (o.x + 0.75 < r.x) r = U(r, cabRow(o, 1.0, 5.0, 20.0));
-  if (max(abs(o.z - 0.25) - 0.5, max(-0.5 - o.x, o.x - 1.0)) < r.x) r = U(r, cabRow(o, 2.0, 4.0, 41.0));
-  r = U(r, vault(o - vec3(1.1, 0.0, -0.55)));
-  r = U(r, helper(along(o - vec3(0.42, 0.0, 0.88), vec2(0.0, -1.0)), LIME, 1.0));
-  r = U(r, carrier(along(o - vec3(-0.55, 0.0, 0.95), vec2(1.0, 0.0)), SKY, GRAPHITE, LIME));
-  vec3 bs = o - vec3(1.1, 0.0, 1.0);
-  vec3 bq = vec3(repC(bs.x, 0.24, 2.0), bs.y, repC(bs.z, 0.18, 2.0));
-  vec2 bx = M(sdBox(bq - vec3(0.0, 0.08, 0.0), vec3(0.11, 0.08, 0.08)), WHITE);
-  bx = seam(bx, bq.y - 0.12);
-  bx = inset(bx, faceZ(bq, 0.08) - vec3(0.0, 0.0, 0.07), vec2(0.05, 0.018), 0.012, 0.01, LIME);
-  r = U(r, bx);
-  vec3 bt = bs - vec3(0.0, 0.16, 0.0);
-  vec2 bx2 = M(sdBox(bt - vec3(0.0, 0.08, 0.0), vec3(0.11, 0.08, 0.08)), WHITE);
-  r = U(r, inset(seam(bx2, bt.y - 0.12), faceZ(bt, 0.08) - vec3(0.0, 0.0, 0.07), vec2(0.05, 0.018), 0.012, 0.01, LILAC));
+  if (pd < 0.0 && p.y > -0.01) r = stripes(r, q.x, 0.3);
   return r;
 }
 
@@ -478,42 +399,66 @@ vec2 map(vec3 p) {
   vec2 q = toUV(p);
   vec2 r = p.y < 0.2 ? ground(p, q) : M(p.y - 0.1, MINT);
   vec3 c;
-  c = W(-5.6, 0.0);
-  if (near(p - c - vec3(0.0, 0.55, 0.0), vec3(1.6, 0.6, 1.6), r.x)) r = U(r, office(p - c));
-  c = W(0.0, 0.0);
-  if (near(p - c - vec3(0.0, 0.45, 0.0), vec3(1.25, 0.5, 1.25), r.x)) r = U(r, hub(p - c));
-  vec3 bq = c + vec3(0.0, 1.3, 0.0);
-  if (near(p - bq, vec3(0.3, 0.3, 0.1), r.x)) r = U(r, bubble(p - bq, WHITE, 1.0));
-  c = W(5.6, 0.0);
-  if (near(p - c - vec3(0.0, 0.6, 0.0), vec3(1.6, 0.65, 1.6), r.x)) r = U(r, archive(p - c));
-  vec3 mb = W(-5.6, 0.0) + vec3(0.75, 1.32, 0.7);
-  if (near(p - mb, vec3(0.3, 0.3, 0.1), r.x)) r = U(r, bubble(p - mb, LILAC, 0.0));
-  for (int i = 0; i < 5; i++) {
-    vec3 fp = i == 0 ? W(-3.6, -0.15) + vec3(0.0, 0.85, 0.0) : i == 1 ? W(-3.1, 0.15) + vec3(0.0, 1.1, 0.0) : i == 2 ? W(-2.6, -0.2) + vec3(0.0, 0.95, 0.0) : i == 3 ? W(-2.1, 0.1) + vec3(0.0, 0.78, 0.0) : W(-1.6, -0.25) + vec3(0.0, 0.62, 0.0);
-    if (!near(p - fp, vec3(0.22, 0.2, 0.22), r.x)) continue;
-    vec3 l = rotX(rotZ(rotY(p - fp, float(i) * 1.7), 0.35 * sin(float(i) * 2.1)), 0.3 * cos(float(i) * 1.3));
-    r = U(r, mod(float(i), 2.0) < 0.5 ? envelope(l, i == 2 ? SKY : WHITE) : sheet(l, WHITE));
+  c = W(-5.3, -0.6);
+  if (near(p - c - vec3(0.0, 0.8, 0.0), vec3(0.95, 0.85, 0.8), r.x)) r = U(r, mailroom(p - c));
+  vec3 tq = c + vec3(-1.2, 0.0, 0.45);
+  if (near(p - tq - vec3(0.0, 0.85, 0.0), vec3(0.35, 0.9, 0.3), r.x)) r = U(r, trays(p - tq));
+  vec3 a1 = W(-5.3, -0.6) + vec3(0.45, 1.33, -0.35);
+  c = W(0.0, -0.7);
+  vec3 so = c + vec3(-1.9, 0.0, 1.0);
+  vec3 a2 = so + vec3(0.0, 1.75, 0.0);
+  float tuv = toUV(a2).y;
+  vec3 a1b = W(toUV(a1).x, tuv) + vec3(0.0, 2.0, 0.0);
+  vec3 a1t = a1 + vec3(0.0, 0.42, 0.0);
+  if (near(p - vec3(0.0, 1.8, 0.0) - (a1 + a2) * vec3(0.5, 0.0, 0.5), vec3(abs(a1.x - a2.x) * 0.5 + 0.4, 0.4, abs(a1.z - a2.z) * 0.5 + 0.4), r.x)) {
+    r = U(r, tube(p, a1, a1t, 0.09, 0.0));
+    r = U(r, tube(p, a1t, vec3(a2.x, a1t.y, a2.z), 0.09, 0.3));
+    r = U(r, tube(p, vec3(a2.x, a1t.y, a2.z), a2 - vec3(0.0, 0.05, 0.0), 0.09, 0.0));
+    r = U(r, M(sdSphere(p - a1t, 0.12), STEEL + SOLID));
+    r = U(r, M(sdSphere(p - vec3(a2.x, a1t.y, a2.z), 0.12), STEEL + SOLID));
   }
-  for (int i = 0; i < 3; i++) {
-    vec3 dq = i == 0 ? W(2.5, -0.6) + vec3(0.0, 1.35, 0.0) : i == 1 ? W(3.4, 0.35) + vec3(0.0, 1.05, 0.0) : W(-8.2, -0.5) + vec3(0.0, 1.25, 0.0);
-    if (near(p - dq - vec3(0.0, -0.08, 0.0), vec3(0.3, 0.2, 0.3), r.x)) r = U(r, drone(p - dq, i == 2 ? 1.0 : 0.0));
+  if (near(p - c - vec3(0.0, 0.8, 0.0), vec3(1.4, 0.85, 1.0), r.x)) r = U(r, mfp(p - c));
+  if (near(p - so - vec3(0.65, 0.85, 0.65), vec3(1.0, 0.9, 1.0), r.x)) r = U(r, sortUnit(p - so));
+  vec3 bd = c + vec3(2.1, 0.0, 0.05);
+  if (near(p - bd - vec3(0.0, 0.75, 0.0), vec3(0.35, 0.8, 0.7), r.x)) r = U(r, binder(p - bd));
+  vec3 bs = c + vec3(1.3, 0.0, 0.05);
+  if (near(p - bs - vec3(0.75, 0.35, 0.0), vec3(0.8, 0.4, 0.25), r.x)) {
+    r = U(r, belt(p - bs, 1.62, 0.42));
+    float ix = repI(p.x - bs.x - 0.25, 0.42, 4.0);
+    vec3 iq = vec3(repC(p.x - bs.x - 0.25 - 0.55, 0.42, 4.0), p.y - 0.47, p.z - bs.z);
+    if (p.x - bs.x < 0.55) r = U(r, stack(iq, vec2(0.12, 0.15), 0.05, SKY));
+    else r = U(r, folder(iq - vec3(0.0, 0.022, 0.0), ix == 2.0 ? LILAC : LIME));
   }
-  vec3 h1 = W(2.4, 0.08);
-  if (near(p - h1 - vec3(0.0, 0.42, 0.0), vec3(0.32, 0.45, 0.32), r.x)) r = U(r, helper(along(p - h1, vec2(1.0, -1.0)), LILAC, 1.0));
-  vec3 h2 = W(-2.7, 0.08);
-  if (near(p - h2 - vec3(0.0, 0.42, 0.0), vec3(0.32, 0.45, 0.32), r.x)) r = U(r, helper(along(p - h2, vec2(1.0, -1.0)), LIME, 0.0));
-  vec3 pw = W(-7.9, 0.08);
-  if (near(p - pw - vec3(0.0, 0.42, 0.0), vec3(0.35, 0.45, 0.35), r.x)) r = U(r, carrier(along(p - pw, vec2(1.0, -1.0)), LILAC, GRAPHITE, LIME));
-  vec3 pw2 = W(-5.6, 2.19) + vec3(-0.0, 0.0, 0.6);
-  if (near(p - pw2 - vec3(0.0, 0.42, 0.0), vec3(0.35, 0.45, 0.35), r.x)) r = U(r, carrier(along(p - pw2, vec2(0.0, -1.0)), WHITE, CORAL, SKY));
-  vec3 pw3 = W(5.6, 2.19) + vec3(0.75, 0.0, 0.0);
-  if (near(p - pw3 - vec3(0.0, 0.42, 0.0), vec3(0.35, 0.45, 0.35), r.x)) r = U(r, carrier(along(p - pw3, vec2(-1.0, 0.0)), LIME, STEEL, WHITE));
-  for (int i = 0; i < 6; i++) {
-    vec4 t = i == 0 ? vec4(-8.6, 2.0, 1.1, 0.0) : i == 1 ? vec4(-2.6, 2.3, 1.0, 1.0) : i == 2 ? vec4(2.7, 2.2, 1.0, 0.0) : i == 3 ? vec4(8.5, 1.8, 1.1, 1.0) : i == 4 ? vec4(-2.7, -2.0, 1.0, 0.0) : vec4(2.8, -2.0, 1.0, 1.0);
+  vec3 b1 = bd + vec3(1.05, 0.0, 0.0);
+  vec3 b1t = b1 + vec3(0.0, 1.75, 0.0);
+  c = W(5.3, -0.6);
+  vec3 b2 = c + vec3(-0.78, 1.55, 0.2);
+  vec3 b2t = vec3(b2.x - 0.35, b1t.y, b2.z);
+  if (near(p - vec3(0.0, 1.2, 0.0) - (b1 + b2) * vec3(0.5, 0.0, 0.5), vec3(abs(b1.x - b2.x) * 0.5 + 0.4, 0.9, abs(b1.z - b2.z) * 0.5 + 0.4), r.x)) {
+    r = U(r, M(sdBox(p - b1 - vec3(0.0, 0.25, 0.0), vec3(0.16, 0.25, 0.2)), WHITE));
+    r = U(r, tube(p, b1 + vec3(0.0, 0.5, 0.0), b1t, 0.09, 0.0));
+    r = U(r, tube(p, b1t, b2t, 0.09, 0.5));
+    r = U(r, tube(p, b2t, b2, 0.09, 0.2));
+    r = U(r, M(sdSphere(p - b1t, 0.12), STEEL + SOLID));
+    r = U(r, M(sdSphere(p - b2t, 0.12), STEEL + SOLID));
+  }
+  if (near(p - c - vec3(0.0, 1.2, 0.0), vec3(1.0, 1.3, 1.0), r.x)) r = U(r, cabinetHall(p - c));
+  vec3 cc = c + vec3(-1.35, 0.0, 0.6);
+  if (near(p - cc - vec3(0.0, 0.5, 0.0), vec3(0.6, 0.55, 0.45), r.x)) r = U(r, catalog(p - cc));
+  vec3 vq = c + vec3(-0.35, 0.0, 1.45);
+  if (near(p - vq - vec3(0.0, 0.48, 0.0), vec3(0.4, 0.5, 0.4), r.x)) r = U(r, vault(p - vq));
+  vec3 sq = c + vec3(1.45, 0.0, -0.3);
+  if (near(p - sq - vec3(0.0, 0.62, 0.0), vec3(0.3, 0.65, 0.65), r.x)) r = U(r, shelving(p - sq));
+  vec3 rk = W(2.5, -2.0);
+  if (near(p - rk - vec3(0.0, 0.65, 0.0), vec3(0.6, 0.66, 0.36), r.x)) r = U(r, rack(p - rk));
+  for (int i = 0; i < 4; i++) {
+    vec3 pl = i == 0 ? W(-2.9, 1.1) : i == 1 ? W(2.8, 1.05) : i == 2 ? W(-7.6, 1.1) : W(7.7, 1.0);
+    if (near(p - pl - vec3(0.0, 0.2, 0.0), vec3(0.6, 0.25, 0.25), r.x)) r = U(r, planter(p - pl, 3.0));
+  }
+  for (int i = 0; i < 4; i++) {
+    vec4 t = i == 0 ? vec4(-7.7, -1.2, 1.1, 0.0) : i == 1 ? vec4(-3.4, 2.6, 0.9, 0.0) : i == 2 ? vec4(-0.6, 2.4, 0.9, 0.0) : vec4(7.9, -1.3, 1.1, 0.0);
     vec3 l = p - W(t.x, t.y);
-    if (near(l - vec3(0.0, 0.45 * t.z, 0.0), vec3(0.28, 0.5, 0.28) * t.z, r.x)) r = U(r, t.w > 0.5 ? pine(l, t.z) : tree(l, t.z));
+    if (near(l - vec3(0.0, 0.5 * t.z, 0.0), vec3(0.28, 0.55, 0.28) * t.z, r.x)) r = U(r, tree(l, t.z));
   }
-  vec3 bb = W(-1.5, 2.4);
-  if (near(p - bb - vec3(0.0, 0.18, 0.0), vec3(0.3, 0.2, 0.3), r.x)) r = U(r, bench(p - bb));
   return r;
 }
