@@ -98,6 +98,8 @@
   --size-control: 40px;
   --size-control-lg: 48px;
   --size-bar: 72px;
+  --size-brand: 22px;
+  --hero-peek: 240px;
 
   --art-2xs: 96px;
   --art-xs: 128px;
@@ -148,6 +150,7 @@
   --duration-fast: 160ms;
   --duration-normal: 240ms;
   --duration-slow: 600ms;
+  --duration-marquee: 70s;
   --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
   --ease-in: ease-in;
   --ease-in-out: ease;

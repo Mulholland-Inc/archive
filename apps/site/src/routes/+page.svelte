@@ -17,6 +17,8 @@
     { art: 'story-5', alt: 'The same factory with new service modules around it, plugged in by pipes, one of them still being connected', title: 'Archive grows with you.', text: 'Connect new services, or have an AI coding agent like Claude Code build what you need. It is open, so you can change anything.' }
   ];
 
+  const CONNECTORS = ['Salesforce', 'Notion', 'Shopify', 'Microsoft', 'Google Workspace', 'Slack', 'HubSpot', 'Stripe', 'QuickBooks', 'Xero', 'Zendesk', 'Intercom', 'Jira', 'Confluence', 'GitHub', 'Linear', 'Asana', 'monday.com', 'Gmail', 'Microsoft Teams', 'OneDrive', 'Google Drive', 'Dropbox', 'Box', 'Airtable', 'Snowflake', 'Databricks', 'Zoom', 'Mailchimp', 'Google Calendar', 'Google Sheets', 'Trello', 'Figma', 'Zapier'];
+
   const PRODUCTS = [
     { href: '/ontology', title: 'Ontology', art: 'ontology', text: 'You decide what your business runs on, and keep it.' },
     { href: '/developers', title: 'Developers', art: 'api', text: 'Build your own apps and workflows on your data.' },
@@ -49,7 +51,12 @@
   title="Own your data infrastructure."
   subtitle="Database. File storage. Agent access."
   lead="A foundation for your digital world, built to run on your terms."
+  badges={['SOC 2', 'HIPAA', 'ISO 27001']}
 />
+
+<Section center wide body="One clearinghouse for every tool your business already runs on.">
+  <Logos marquee items={CONNECTORS} />
+</Section>
 
 <Section center>
   {#snippet title()}One place for all of it. <em>Open and owned by you.</em>{/snippet}
