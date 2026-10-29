@@ -6,7 +6,7 @@
 </script>
 
 {#snippet table()}
-  <table class={['facts', !wide && 'reveal']} use:reveal={!wide}>
+  <table class={['facts', wide && 'wide', !wide && 'reveal']} use:reveal={!wide}>
     <thead><tr>{#each head as h}<th>{h}</th>{/each}</tr></thead>
     <tbody>
       {#each rows as row}
@@ -21,7 +21,7 @@
 {/snippet}
 
 {#if wide}
-  <div class="facts-wide reveal" use:reveal>{@render table()}</div>
+  <div class="facts-wrap reveal" use:reveal>{@render table()}</div>
 {:else}
   {@render table()}
 {/if}

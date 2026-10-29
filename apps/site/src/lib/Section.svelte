@@ -4,18 +4,12 @@
   let { title, body, band = false, id, children } = $props();
 </script>
 
-{#snippet content()}
+<section class={['section', band && 'band']} {id}>
   {#if title}
-    <div class="head">
+    <div class="wrap head">
       <h2 class="reveal" use:reveal>{#if typeof title === 'function'}{@render title()}{:else}{title}{/if}</h2>
       {#if body}<p class="body reveal" use:reveal>{#if typeof body === 'function'}{@render body()}{:else}{body}{/if}</p>{/if}
     </div>
   {/if}
-  {@render children?.()}
-{/snippet}
-
-{#if band}
-  <section class="band" {id}><div class="wrap"><div class="section">{@render content()}</div></div></section>
-{:else}
-  <section class="section" {id}><div class="wrap">{@render content()}</div></section>
-{/if}
+  {#if children}<div class="wrap section-body">{@render children()}</div>{/if}
+</section>

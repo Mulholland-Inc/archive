@@ -94,7 +94,7 @@
 <svelte:head>
   <title>Docs — Archive</title>
   <meta name="description" content="How Archive works: your own Postgres types, live schema changes, code mode over MCP, the SDK, the HTTP API, files, pages, Office documents, spaces and roles." />
-  <meta name="theme-color" content="#f6f4ec" />
+  <meta name="theme-color" content="#0b0d12" />
 </svelte:head>
 
 <Hero
@@ -112,10 +112,10 @@
 <section class="section">
   <div class="wrap">
     <div class="cards">
-      <Card href="#quickstart" n="1" title="Quick start" art="tokens" text="Sign up, make a token, make a call." />
-      <Card href="#connect" n="2" title="Connect your AI" art="agents" text="Claude, Cursor and ChatGPT over MCP." />
-      <Card href="#code" n="3" title="Code mode" art="code" text="One tool, one script, one transaction." />
-      <Card href="#api" n="4" title="HTTP API" art="api" text="Plain JSON for every table you make." />
+      <Card href="#quickstart" title="Quick start" art="tokens" text="Sign up, make a token, make a call." />
+      <Card href="#connect" title="Connect your AI" art="agents" text="Claude, Cursor and ChatGPT over MCP." />
+      <Card href="#code" title="Code mode" art="code" text="One tool, one script, one transaction." />
+      <Card href="#api" title="HTTP API" art="api" text="Plain JSON for every table you make." />
     </div>
   </div>
 </section>

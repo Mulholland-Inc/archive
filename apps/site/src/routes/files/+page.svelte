@@ -1,13 +1,11 @@
 <script>
-  import Art from '#lib/Art.svelte';
-  import Comp from '#lib/Comp.svelte';
   import Cta from '#lib/Cta.svelte';
   import Facts from '#lib/Facts.svelte';
   import Faq from '#lib/Faq.svelte';
   import Hero from '#lib/Hero.svelte';
+  import Row from '#lib/Row.svelte';
   import Section from '#lib/Section.svelte';
-  import TextBlock from '#lib/TextBlock.svelte';
-  import { reveal } from '#lib/reveal.js';
+  import Specs from '#lib/Specs.svelte';
 
   const KINDS = [
     ['Word', 'Paragraphs, styles and lists, including those in tables and text boxes, and the text in every table cell', 'Replace text, add or remove paragraphs, fill in table cells'],
@@ -23,12 +21,18 @@
     ['How large can a file be?', 'Up to 64 MB in a single upload. Bigger files go up in pieces and resume if the connection drops.'],
     ['What happens when two assistants edit the same file?', 'They take turns, and each edit goes on top of the latest version, so nothing gets lost.']
   ];
+
+  const MORE = [
+    { art: 'tokens', title: 'Share links', items: ['Private links for downloads and previews that expire on their own', 'A day by default, or any time you choose', 'No sign-in needed to open one'] },
+    { art: 'files', title: 'Photos', items: ['Size, camera and time taken, saved automatically', 'Previews made on upload', 'Location removed on download when you ask'] },
+    { art: 'search', title: 'Search', items: ['File names and the text inside, next to your records', 'Results show the matching words', 'Filter by kind of file, space and date'] }
+  ];
 </script>
 
 <svelte:head>
   <title>Files — Archive</title>
   <meta name="description" content="Upload anything and it is ready to search and preview right away. Your AI assistants edit Word, Excel and PowerPoint files and leave everything else exactly as it was." />
-  <meta name="theme-color" content="#f6c944" />
+  <meta name="theme-color" content="#0b0d12" />
 </svelte:head>
 
 <Hero
@@ -38,44 +42,38 @@
   alt="A file cabinet with drawers of documents, photos and spreadsheets"
 />
 
-<Comp>
-  <TextBlock class="s-4 at-9 row-1 end">
+<Section>
+  <Row art="scale" alt="A conveyor moving parcels of different sizes into a single intake">
     <h2>Ready the moment it lands.</h2>
     <p>Drop in a small file or a huge one, and big uploads pick up where they left off if the connection drops.</p>
     <p>Its details, its text and a preview of every photo are ready as soon as the upload finishes, with no waiting.</p>
-  </TextBlock>
-  <Art class="s-8 at-1 row-1 bleed-l" reveal name="scale" alt="A conveyor moving parcels of different sizes into a single intake" />
-  <TextBlock class="s-4 at-2 row-2 down-2">
+  </Row>
+  <Row flip art="security" alt="A vault whose drawers are labeled by fingerprints">
     <h2>Kept once, seen by the right people.</h2>
     <p>Upload the same file twice and Archive keeps just one copy, along with its name, size and text.</p>
     <p>Every file belongs to a space, so only the right people see it, wherever they look.</p>
-  </TextBlock>
-  <Art class="s-5 at-7 row-2 tilt-r" reveal name="security" alt="A vault whose drawers are labeled by fingerprints" />
-  <h2 class="c-big s-10 at-3 row-3 right down-1 reveal" use:reveal>Office files, edited in place.</h2>
-  <Art class="s-7 at-2 up-1" reveal name="office" alt="A document, a spreadsheet and a slide on a workbench, one tile being swapped" />
-  <TextBlock class="s-4 at-9 down-1">
+  </Row>
+  <Row art="office" alt="A document, a spreadsheet and a slide on a workbench, one tile being swapped">
+    <h2>Office files, edited in place.</h2>
     <p>When your AI assistant changes a Word, Excel or PowerPoint file, it touches only the part it was asked to.</p>
     <p>Styles, images, comments and charts all survive, because nothing else is rebuilt.</p>
-  </TextBlock>
-  <TextBlock class="s-4 at-1 center">
+  </Row>
+  <Row flip art="transaction" alt="Robots lining up at a single turnstile in front of a spreadsheet">
     <h2>Assistants take turns.</h2>
     <p>When two assistants edit the same workbook, they line up and each change goes in after the last, so nothing gets lost.</p>
     <p>Your assistant can also start a fresh workbook, document or slide deck from scratch.</p>
-  </TextBlock>
-  <Art class="s-6 at-6 down-1" reveal name="transaction" alt="Robots lining up at a single turnstile in front of a spreadsheet" />
-</Comp>
+  </Row>
+</Section>
 
 <Section band title="What your AI can change." body="What an assistant can read, and what it can change, in each kind of file.">
   <Facts head={['File', 'It can read', 'It can change']} rows={KINDS} />
 </Section>
 
-<Comp band>
-  <TextBlock spec class="s-5 at-1 row-1 down-2" art="tokens" title="Share links" items={['Private links for downloads and previews that expire on their own', 'A day by default, or any time you choose', 'No sign-in needed to open one']} />
-  <TextBlock spec class="s-6 at-7 row-1" art="files" title="Photos" items={['Size, camera and time taken, saved automatically', 'Previews made on upload', 'Location removed on download when you ask']} />
-  <TextBlock spec class="s-4 at-6 row-2 down-1" art="search" title="Search" items={['File names and the text inside, next to your records', 'Results show the matching words', 'Filter by kind of file, space and date']} />
-</Comp>
+<Section title="Sharing, photos and search.">
+  <Specs items={MORE} />
+</Section>
 
-<Section title="Questions.">
+<Section band title="Questions.">
   {#snippet body()}More in the <a class="link" href="/docs">files docs</a>.{/snippet}
   <Faq still items={FAQ} />
 </Section>

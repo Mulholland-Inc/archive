@@ -10,8 +10,7 @@
     ['/developers', 'Developers'],
     ['/pricing', 'Pricing'],
     ['/docs', 'Docs'],
-    ['/blog', 'Blog'],
-    ['/changelog', 'Changelog']
+    ['/blog', 'Blog']
   ];
 
   let open = $state(false);
@@ -21,6 +20,10 @@
 
   const here = $derived(page.url.pathname.replace(/(.)\/$/, '$1'));
 
+  $effect(() => {
+    document.documentElement.classList.toggle('locked', open);
+  });
+
   afterNavigate(({ from }) => {
     open = false;
     if (!from) return;
@@ -29,9 +32,9 @@
   });
 </script>
 
-<svelte:window bind:scrollY={y} />
+<svelte:window bind:scrollY={y} onkeydown={(e) => e.key === 'Escape' && (open = false)} />
 
-<header class={['nav', y > 8 && 'scrolled']}>
+<header class={['nav', y > 8 && 'scrolled', open && 'open']}>
   <div class="wrap">
     <a class="brand" href="/" aria-label="Archive home"><Word /></a>
     <nav class="nav-links">
@@ -60,13 +63,20 @@
         ></a
       >
       <Button href={APP} small>Log in</Button>
-      <button class="icon-btn burger" type="button" aria-label="Menu" onclick={() => (open = !open)}
-        ><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 5h12M2 11h12" /></svg></button
+      <button class="icon-btn burger" type="button" aria-label={open ? 'Close menu' : 'Menu'} aria-expanded={open} aria-controls="sheet" onclick={() => (open = !open)}
+        ><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d={open ? 'M3.5 3.5l9 9M12.5 3.5l-9 9' : 'M2 5.5h12M2 10.5h12'} /></svg></button
       >
     </div>
   </div>
+  <div class="sheet" id="sheet" inert={!open}>
+    <div class="sheet-grid">
+      {#each PRODUCT as p}
+        <a href={p.href}><span class="sheet-art"><Art name={p.art} lazy /></span><span>{p.title}</span></a>
+      {/each}
+    </div>
+    <div class="sheet-links">
+      {#each LINKS.filter(([href]) => href !== '/developers') as [href, label]}<a {href}>{label}</a>{/each}
+      <a href={GITHUB} target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
 </header>
-<div class={['sheet', open && 'open']}>
-  {#each PRODUCT as p}<a href={p.href}>{p.title}</a>{/each}
-  <a href="/pricing">Pricing</a><a href="/docs">Docs</a><a href="/blog">Blog</a><a href="/changelog">Changelog</a><a href={GITHUB}>GitHub</a><a href={APP}>Log in</a>
-</div>

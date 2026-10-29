@@ -3,7 +3,7 @@
   import Button from './Button.svelte';
   import { APP } from './site.js';
 
-  let { title, subtitle, lead, art, alt, home = false, band = false, plain = false, stack = false, actions, children } = $props();
+  let { title, subtitle, lead, art, alt, home = false, actions, children } = $props();
 </script>
 
 {#snippet row()}
@@ -18,29 +18,25 @@
 {/snippet}
 
 {#if home}
-  <section class="hero hero-top">
-    <div class="wrap">
+  <section class="home-hero">
+    <div class="wrap home-copy">
       <h1>{title}</h1>
-      <div class="hero-grid">
-        <div>
-          <p class="subtitle">{subtitle}</p>
-          <p class="lead">{lead}</p>
-          {@render row()}
-        </div>
-        <div class="hero-art"><Art class="float" name={art} {alt} /></div>
-      </div>
+      <p class="subtitle">{subtitle}</p>
+      <p class="lead">{lead}</p>
+      {@render row()}
     </div>
+    <div class="landscape"><Art name={art} {alt} /></div>
   </section>
 {:else}
-  <section class={[!plain && 'hero', 'page-hero', band && 'band']}>
-    <div class="wrap hero-grid">
-      <div class={stack ? 'stack' : undefined}>
+  <section class="page-hero">
+    <div class="wrap">
+      <div class="page-copy">
         <h1>{title}</h1>
         <p class="lead">{lead}</p>
         {@render row()}
         {@render children?.()}
       </div>
-      <div class="hero-art"><Art class="float" name={art} {alt} /></div>
+      <div class="page-art"><Art name={art} {alt} /></div>
     </div>
   </section>
 {/if}
