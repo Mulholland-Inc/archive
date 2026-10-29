@@ -1,3 +1,4 @@
+export const SITE = "https://archive.dev";
 export const APP = "https://mulholland.ai";
 export const GITHUB = "https://github.com/Mulholland-Inc/archive";
 export const START = [APP, "Start building free"];

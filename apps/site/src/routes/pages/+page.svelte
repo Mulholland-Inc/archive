@@ -4,6 +4,7 @@
   import Faq from '#lib/Faq.svelte';
   import Hero from '#lib/Hero.svelte';
   import Letters from '#lib/Letters.svelte';
+  import Meta from '#lib/Meta.svelte';
   import Row from '#lib/Row.svelte';
   import Section from '#lib/Section.svelte';
   import Specs from '#lib/Specs.svelte';
@@ -39,10 +40,7 @@
   ];
 </script>
 
-<svelte:head>
-  <title>Pages — Archive</title>
-  <meta name="description" content="Live documents your team and your AI assistants write together. Everyone edits the same page at once, and nobody's work gets overwritten." />
-</svelte:head>
+<Meta title="Pages — Archive" description="Live documents your team and your AI assistants write together. Everyone edits the same page at once, and nobody's work gets overwritten." />
 
 <Hero
   title="Pages your team and your AI write together."

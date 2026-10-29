@@ -1,15 +1,13 @@
 <script>
   import BlogCard from '#lib/BlogCard.svelte';
   import Hero from '#lib/Hero.svelte';
+  import Meta from '#lib/Meta.svelte';
   import { POSTS } from '#lib/posts.js';
 
   const [lead, ...rest] = POSTS;
 </script>
 
-<svelte:head>
-  <title>Blog — Archive</title>
-  <meta name="description" content="Notes on Archive: how it compares, how teams use it with their AI, and why we built it." />
-</svelte:head>
+<Meta title="Blog — Archive" description="Notes on Archive: how it compares, how teams use it with their AI, and why we built it." />
 
 <Hero kind="blog" title="Blog" lead="How Archive compares, how teams use it with their AI, and why we built it the way we did." />
 

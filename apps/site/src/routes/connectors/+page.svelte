@@ -3,6 +3,7 @@
   import Facts from '#lib/Facts.svelte';
   import Faq from '#lib/Faq.svelte';
   import Hero from '#lib/Hero.svelte';
+  import Meta from '#lib/Meta.svelte';
   import Row from '#lib/Row.svelte';
   import Scene from '#lib/Scene.svelte';
   import Section from '#lib/Section.svelte';
@@ -65,10 +66,7 @@
   ];
 </script>
 
-<svelte:head>
-  <title>Connectors — Archive</title>
-  <meta name="description" content="Bring in mail, calendars, files, chat, docs, projects, customers and finance from the tools you already use. Archive only reads, keeps up as things change, and puts it all in one place." />
-</svelte:head>
+<Meta title="Connectors — Archive" description="Bring in mail, calendars, files, chat, docs, projects, customers and finance from the tools you already use. Archive only reads, keeps up as things change, and puts it all in one place." />
 
 <Hero
   title="All your tools, in one place."

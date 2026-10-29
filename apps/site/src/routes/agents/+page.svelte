@@ -4,6 +4,7 @@
   import Faq from '#lib/Faq.svelte';
   import Hero from '#lib/Hero.svelte';
   import Logos from '#lib/Logos.svelte';
+  import Meta from '#lib/Meta.svelte';
   import Row from '#lib/Row.svelte';
   import Section from '#lib/Section.svelte';
   import Specs from '#lib/Specs.svelte';
@@ -41,10 +42,7 @@
   ];
 </script>
 
-<svelte:head>
-  <title>Agents — Archive</title>
-  <meta name="description" content="Add Archive to ChatGPT, Claude, Gemini or Grok, and your AI assistant can find, update and file your company's information for you, as you, with nothing left half done." />
-</svelte:head>
+<Meta title="Agents — Archive" description="Add Archive to ChatGPT, Claude, Gemini or Grok, and your AI assistant can find, update and file your company's information for you, as you, with nothing left half done." />
 
 <Hero
   title="Every AI app. One connection."

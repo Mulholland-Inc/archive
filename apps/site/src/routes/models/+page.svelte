@@ -4,6 +4,7 @@
   import Faq from '#lib/Faq.svelte';
   import Hero from '#lib/Hero.svelte';
   import Letters from '#lib/Letters.svelte';
+  import Meta from '#lib/Meta.svelte';
   import Row from '#lib/Row.svelte';
   import Scene from '#lib/Scene.svelte';
   import Section from '#lib/Section.svelte';
@@ -35,10 +36,7 @@
   ];
 </script>
 
-<svelte:head>
-  <title>Models — Archive</title>
-  <meta name="description" content="Train AI on your own work. Everything you file is an example, so you can build a model that sorts and fills in records the way your business does, ready for your assistants." />
-</svelte:head>
+<Meta title="Models — Archive" description="Train AI on your own work. Everything you file is an example, so you can build a model that sorts and fills in records the way your business does, ready for your assistants." />
 
 <Hero
   title="AI that knows your business."
