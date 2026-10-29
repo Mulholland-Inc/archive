@@ -1,32 +1,27 @@
 <script>
   import '../tokens.css';
   import '../site.css';
-  import { beforeNavigate, afterNavigate, onNavigate } from '$app/navigation';
+  import { beforeNavigate, afterNavigate } from '$app/navigation';
   import Nav from '#lib/Nav.svelte';
   import Footer from '#lib/Footer.svelte';
 
   let { children } = $props();
 
+  let main;
+
   beforeNavigate(({ from, to }) => {
     if (from?.url.pathname !== to?.url.pathname) document.documentElement.classList.add('jump');
   });
 
-  onNavigate((nav) => {
-    if (!document.startViewTransition || nav.from?.url.pathname === nav.to?.url.pathname) return;
-    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    return new Promise((resolve) => {
-      document.startViewTransition(async () => {
-        resolve();
-        await nav.complete;
-      });
-    });
-  });
-
-  afterNavigate(() => {
+  afterNavigate(({ from, to }) => {
     document.documentElement.classList.remove('jump');
+    if (!from || from.url.pathname === to?.url.pathname) return;
+    main.classList.remove('enter');
+    void main.offsetWidth;
+    main.classList.add('enter');
   });
 </script>
 
 <Nav />
-<main>{@render children()}</main>
+<main bind:this={main}>{@render children()}</main>
 <Footer />

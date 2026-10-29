@@ -43,13 +43,13 @@
 
 <svelte:head>
   <title>Archive — own your data infrastructure</title>
-  <meta name="description" content="Database. File storage. Agent access. A foundation for your digital world, built to run on your terms." />
+  <meta name="description" content="Own your data infrastructure. An open foundation for your agents to build on." />
 </svelte:head>
 
 <Hero
   kind="home"
   title="Own your data infrastructure."
-  lead="A foundation for your digital world, built to run on your terms."
+  lead="An open foundation for your agents to build on."
   badges={['SOC 2', 'HIPAA', 'ISO 27001']}
 />
 

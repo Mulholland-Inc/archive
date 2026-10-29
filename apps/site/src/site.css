@@ -50,7 +50,7 @@ code.inline, .prose code { font: var(--weight-medium) var(--text-em) var(--font-
 .icon-btn { display: grid; place-items: center; width: var(--size-control); height: var(--size-control); border-radius: var(--radius-full); background: var(--fill); transition: background var(--duration-fast); }
 .icon-btn:hover { background: var(--fill-strong); }
 
-.nav { position: sticky; top: 0; z-index: var(--z-nav); background: var(--bg); view-transition-name: nav; transition: transform var(--duration-normal) var(--ease-out); }
+.nav { position: sticky; top: 0; z-index: var(--z-nav); background: var(--bg); transition: transform var(--duration-normal) var(--ease-out); }
 .nav.hidden { transform: translateY(calc(-100% - var(--radius-panel))); }
 .nav::before, .nav::after { content: ""; position: absolute; top: 100%; width: var(--radius-panel); height: var(--radius-panel); pointer-events: none; }
 .nav::before { left: 0; background: radial-gradient(circle at 100% 100%, transparent calc(var(--radius-panel) - var(--hairline) / 2), var(--bg) var(--radius-panel)); }
@@ -366,13 +366,7 @@ code.inline, .prose code { font: var(--weight-medium) var(--text-em) var(--font-
   .post .compare { font-size: var(--text-xs); }
 }
 
-::view-transition-group(nav) { animation: none; }
-::view-transition-old(nav), ::view-transition-new(nav) { animation-duration: var(--duration-fast); }
-::view-transition-old(root) { animation: page-out var(--duration-fast) var(--ease-in) both; }
-::view-transition-new(root) { animation: page-in var(--duration-normal) var(--ease-out) var(--duration-instant) both; }
-.theming::view-transition-old(root), .theming::view-transition-old(nav) { animation: page-out var(--duration-normal) var(--ease-in-out) both; }
-.theming::view-transition-new(root), .theming::view-transition-new(nav) { animation: none; }
-@keyframes page-out { to { opacity: 0; } }
+main.enter { animation: page-in var(--duration-normal) var(--ease-out); }
 @keyframes page-in { from { opacity: 0; transform: translateY(var(--space-2)); } }
 
 @media (prefers-reduced-motion: reduce) {
@@ -382,5 +376,5 @@ code.inline, .prose code { font: var(--weight-medium) var(--text-em) var(--font-
   .marquee-track { flex-wrap: wrap; justify-content: center; width: auto; animation: none; }
   .marquee span[aria-hidden] { display: none; }
   .reveal { opacity: 1; transform: none; transition: none; }
-  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none; }
+  main.enter { animation: none; }
 }
