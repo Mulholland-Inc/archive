@@ -2,7 +2,9 @@
   import Actions from './Actions.svelte';
   import Art from './Art.svelte';
 
-  let { kind = 'page', title, subtitle, lead, art, alt, links, actions, children } = $props();
+  import Icon from './Icon.svelte';
+
+  let { kind = 'page', title, subtitle, lead, art, alt, links, actions, badges = [], children } = $props();
 </script>
 
 {#if kind === 'home'}
@@ -12,6 +14,7 @@
       <p class="subtitle">{subtitle}</p>
       <p class="lead">{lead}</p>
       <Actions {links} children={actions} />
+      {#if badges.length}<ul class="badges">{#each badges as b}<li><Icon name="shield" />{b}</li>{/each}</ul>{/if}
     </div>
   </section>
 {:else if kind === 'post'}
