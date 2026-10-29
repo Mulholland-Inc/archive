@@ -320,6 +320,7 @@
   --profile-flex: 1;
   --search-width: var(--measure-2xs);
   --filter-width: var(--art-xs);
+  --filter-height: var(--size-control-xs);
   --board-height: auto;
 }
 
