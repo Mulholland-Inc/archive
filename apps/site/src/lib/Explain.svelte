@@ -31,6 +31,11 @@
     dialog.showModal();
   }
 
+  function rich(s) {
+    const bits = s.split(/\[([^\]]+)\]\(([^)]+)\)/);
+    return bits.flatMap((b, i) => (i % 3 === 0 ? [[b]] : i % 3 === 1 ? [[b, bits[i + 1]]] : []));
+  }
+
   function key(e) {
     if (e.key === 'ArrowRight' && !last) at++;
     if (e.key === 'ArrowLeft' && at > 0) at--;
@@ -50,6 +55,8 @@
   {#if !home}<button type="button" class="icon-btn topbar-close" aria-label="Close" onclick={() => rest('closed')}><Icon name="close" /></button>{/if}
 </div>
 
+{#snippet text(s)}{#each rich(s) as [words, href]}{#if href}<a class="link" {href} onclick={() => dialog.close()}>{words}</a>{:else}{words}{/if}{/each}{/snippet}
+
 <dialog class="explain" bind:this={dialog} onkeydown={key} onclick={(e) => e.target === dialog && dialog.close()} aria-label={EXPLAIN.title}>
   <div class="explain-page">
     <button type="button" class="icon-btn explain-close" aria-label="Close" onclick={() => dialog.close()}><Icon name="close" /></button>
@@ -57,13 +64,16 @@
       {#key at}<Art name={page.art} alt={page.alt} />{/key}
     </div>
     <div class="explain-copy" aria-live="polite">
-      <small>{EXPLAIN.title}, {EXPLAIN.subtitle} · {at + 1} of {PAGES.length}</small>
-      <h2>{page.title}</h2>
-      {#if page.list}
-        <ul class="explain-list">{#each page.list as [name, what]}<li><strong>{name}</strong> {what}</li>{/each}</ul>
-      {:else}
-        <p>{page.text}</p>
-      {/if}
+      {#each PAGES as p, i}
+        <div class={['explain-text', i === at && 'on']}>
+          <h2>{@render text(p.title)}</h2>
+          {#if p.list}
+            <dl class="explain-list">{#each p.list as [name, what]}<dt>{@render text(name)}</dt><dd>{what}</dd>{/each}</dl>
+          {:else}
+            <p>{@render text(p.text)}</p>
+          {/if}
+        </div>
+      {/each}
     </div>
     <div class="explain-foot">
       <div class="explain-dots">
