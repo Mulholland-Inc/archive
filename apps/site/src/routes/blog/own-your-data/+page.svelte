@@ -1,6 +1,7 @@
 <script>
   import PostLayout from '#lib/PostLayout.svelte';
-  import Art from '#lib/Art.svelte';
+  import Figure from '#lib/Figure.svelte';
+  import Pull from '#lib/Pull.svelte';
 </script>
 
 <PostLayout
@@ -17,7 +18,7 @@
     <p>Each tool holds a piece, and each piece is useful on its own. But ask a simple question, like "what did we promise this client in March, and did we bill for it?", and the answer is spread across five places with five search boxes, five sets of permissions and five ideas of what a client even is.</p>
     <p>That was already a problem for people. It is a bigger one now that every team also works with an AI assistant. ChatGPT, Claude, Gemini and Grok are remarkably capable, and they know nothing about your business unless you hand it to them, one pasted paragraph at a time.</p>
 
-    <p class="pull">The most valuable thing your company owns is what it knows. Too often, it is only renting a place to keep it.</p>
+    <Pull>The most valuable thing your company owns is what it knows. Too often, it is only renting a place to keep it.</Pull>
 
     <h2>One place, shaped like your business</h2>
     <p>Archive gives that knowledge a single home. It brings three things together that usually live apart:</p>
@@ -37,10 +38,7 @@
     <p>Ownership is easy to claim and easy to test: can you leave?</p>
     <p>Archive keeps your records in a standard, widely used database rather than a format only we can read. Your files stay ordinary files. The way your workspace is organized can be written out as plain text and applied again somewhere else. Nothing about your knowledge depends on staying with us.</p>
 
-    <figure>
-      <Art name="blog-own-your-data-2" alt="A hand truck wheeling a strapped records drum and cabinet out through an open door, past a stack of moving boxes" />
-      <figcaption>If you decide to move, everything comes along: records, files and the way they are organized.</figcaption>
-    </figure>
+    <Figure art="blog-own-your-data-2" alt="A hand truck wheeling a strapped records drum and cabinet out through an open door, past a stack of moving boxes" caption="If you decide to move, everything comes along: records, files and the way they are organized." />
 
     <p>We think that makes us a better product, not a riskier one for us. A tool you can leave is a tool that has to keep earning its place.</p>
 
@@ -55,10 +53,7 @@
     </ul>
     <p>Those are the terms. They are yours.</p>
 
-    <figure>
-      <Art name="security" alt="A secure records unit with locked compartments" />
-      <figcaption>Every record belongs to a space, and only the right people, and the right AI, see it.</figcaption>
-    </figure>
+    <Figure art="security" alt="A secure records unit with locked compartments" caption="Every record belongs to a space, and only the right people, and the right AI, see it." />
 
     <h2>A foundation, not another tool</h2>
     <p>Most software adds one more place to look. We are trying to build the opposite: the place underneath, where your company's knowledge collects and stays useful. Your team works in it directly. Your AI assistants work in it on your behalf. And over time, everything your team files becomes something more: the examples you can use to train a small model that sorts new work the way you would.</p>

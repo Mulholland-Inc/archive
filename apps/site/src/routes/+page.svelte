@@ -1,15 +1,31 @@
 <script>
-  import Button from '#lib/Button.svelte';
-  import Card from '#lib/Card.svelte';
   import Cta from '#lib/Cta.svelte';
   import Hero from '#lib/Hero.svelte';
+  import Letters from '#lib/Letters.svelte';
+  import Logos from '#lib/Logos.svelte';
   import Scene from '#lib/Scene.svelte';
   import Section from '#lib/Section.svelte';
   import Specs from '#lib/Specs.svelte';
-  import { APP } from '#lib/site.js';
+  import Story from '#lib/Story.svelte';
+  import { START } from '#lib/site.js';
+
+  const STORY = [
+    { art: 'story-1', alt: 'A filing cabinet, a data silo, a mailbox and a spreadsheet board, each standing apart', title: 'Today, it is scattered.', text: 'Files sit in SharePoint and Google Drive, numbers in Snowflake and NetSuite, decisions in Outlook and Slack.' },
+    { art: 'story-2', alt: 'The same four tools tied together with loose cables, papers on the ground', title: 'Held together by hand.', text: 'Spreadsheets and forms stand in for structure, and AI assistants glue it all together but remember nothing.' },
+    { art: 'story-3', alt: 'The four tools moving onto one shared platform, joined by one straight conduit', title: 'Archive brings it together.', text: 'Your documents, data and conversations move into one place, organized the way your business works.' },
+    { art: 'story-4', alt: 'A working factory with a wall of drawers, a data silo on the roof, an intake bay and a lit panel, with conveyors carrying mail in and sorted stacks out', title: 'Archive keeps it running.', text: 'Your team, your assistants and your own apps work from the same source, every day.' },
+    { art: 'story-5', alt: 'The same factory with new service modules around it, plugged in by pipes, one of them still being connected', title: 'Archive grows with you.', text: 'Connect new services, or have an AI coding agent like Claude Code build what you need. It is open, so you can change anything.' }
+  ];
+
+  const PRODUCTS = [
+    { href: '/ontology', title: 'Ontology', art: 'ontology', text: 'You decide what your business runs on, and keep it.' },
+    { href: '/developers', title: 'Developers', art: 'api', text: 'Build your own apps and workflows on your data.' },
+    { href: '/agents', title: 'Agents', art: 'agents', text: 'Works with ChatGPT, Claude, Gemini and Grok.' },
+    { href: '/models', title: 'Models', art: 'models', text: 'Small AI models that know your business.' }
+  ];
 
   const ORGANIZE = [
-    { art: 'schema', title: 'Change it anytime', items: ['Add a field or a new kind of record in seconds', 'See what a change will do before it happens', 'Rename anything and nothing gets lost'] },
+    { art: 'delta', title: 'Change it anytime', items: ['Add a field or a new kind of record in seconds', 'See what a change will do before it happens', 'Rename anything and nothing gets lost'] },
     { art: 'views', title: 'Boards and calendars', items: ['See the same records as a board, a calendar or a list', 'Group them the way your team thinks', 'Everyone sees only what they are allowed to'] },
     { art: 'security', title: 'Only the right people', items: ['Everything belongs to a space for a team or a person', 'Set who can see and change what', 'Your AI assistants never see more than you do'] }
   ];
@@ -26,25 +42,23 @@
 <svelte:head>
   <title>Archive — own your data infrastructure</title>
   <meta name="description" content="Database. File storage. Agent access. A foundation for your digital world, built to run on your terms." />
-  <meta name="theme-color" content="#0b0d12" />
 </svelte:head>
 
 <Hero
-  home
+  kind="home"
   title="Own your data infrastructure."
   subtitle="Database. File storage. Agent access."
   lead="A foundation for your digital world, built to run on your terms."
-  art="landscape"
-  alt="A mailroom, a scanner and a building made of filing cabinets, joined by one glass tube"
 />
 
-<Section>
-  <div class="cards">
-    <Card href="/tables" title="Tables" art="tables" text="Your own records, shaped the way your business works." />
-    <Card href="/pages" title="Pages" art="pages" text="Documents your team and your AI write together." />
-    <Card href="/agents" title="Agents" art="agents" text="Works with ChatGPT, Claude, Gemini and Grok." />
-    <Card href="/models" title="Models" art="models" text="Small AI models that know your business." />
-  </div>
+<Section center>
+  {#snippet title()}One place for all of it. <em>Open and owned by you.</em>{/snippet}
+  <Story steps={STORY} />
+</Section>
+
+<Section center>
+  {#snippet title()}Everything your business runs on. <em>Built as one.</em>{/snippet}
+  <Specs items={PRODUCTS} />
 </Section>
 
 <Section title="Messy in, tidy out." body="Email, files and chats arrive however they arrive. Your AI assistant reads each one, works out what it is, and files it neatly in the right place.">
@@ -57,16 +71,12 @@
 
 <Section title="Your work trains your models." body="Everything your team and assistants file is an example of how your business works. Turn it into a small model that knows your business.">
   <Scene name="lab" alt="A model foundry: storage silos feed a training rig that stamps out model chips" />
-  <ul class="letters three">
-    {#each STEPS as [name, text], i}
-      <li><span class="l">{String.fromCharCode(65 + i)}</span><div><h3>{name}</h3><p>{text}</p></div></li>
-    {/each}
-  </ul>
+  <Letters columns steps={STEPS} />
 </Section>
 
 <Section band title="Connect once. Stay in sync." body="Bring in the mail, files, chats and business tools you already use. Archive only reads, picks up just what is new, and keeps it all in one place.">
   <Scene name="harbor" alt="A harbor where barges of containers are unloaded into a warehouse" />
-  <div class="logos">{#each TOOLS as tool}<span>{tool}</span>{/each}</div>
+  <Logos items={TOOLS} />
 </Section>
 
 <Cta
@@ -74,9 +84,5 @@
   alt="A city block whose buildings are records, pages, files, a vault and an antenna for AI assistants"
   title="Start building in minutes."
   lead="Free for your first workspace. No card, no sales call."
->
-  {#snippet actions()}
-    <Button href={APP}>Start building free</Button>
-    <Button href="/pricing" ghost>See pricing</Button>
-  {/snippet}
-</Cta>
+  links={[START, ['/pricing', 'See pricing']]}
+/>

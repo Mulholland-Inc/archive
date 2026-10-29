@@ -1,35 +1,24 @@
 <script>
-  import Art from './Art.svelte';
-  import Button from './Button.svelte';
   import Cta from './Cta.svelte';
-  import { APP } from './site.js';
+  import Hero from './Hero.svelte';
+  import { START } from './site.js';
   import { post as find } from './posts.js';
 
   let { slug, cta, lead, related, children } = $props();
 
   const post = $derived(find(slug));
+  const links = $derived([START, ...related.map((other) => [`/blog/${other}`, find(other).short])]);
 </script>
 
 <svelte:head>
   <title>{post.title} — Archive</title>
   <meta name="description" content={post.description} />
-  <meta name="theme-color" content="#0b0d12" />
 </svelte:head>
 
-<section class="post-hero">
-  <h1>{post.title}</h1>
-  <p class="lead">{post.lead}</p>
-</section>
-
-<div class="post-art"><Art name="blog-{post.slug}" alt={post.alt} /></div>
+<Hero kind="post" title={post.title} lead={post.lead} art="blog-{post.slug}" alt={post.alt} />
 
 <article class="post">
   {@render children()}
 </article>
 
-<Cta title={cta} {lead}>
-  {#snippet actions()}
-    <Button href={APP}>Start building free</Button>
-    {#each related as other}<Button href="/blog/{other}" ghost>{find(other).short}</Button>{/each}
-  {/snippet}
-</Cta>
+<Cta title={cta} {lead} {links} />

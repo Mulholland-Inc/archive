@@ -1,6 +1,7 @@
 <script>
   import PostLayout from '#lib/PostLayout.svelte';
-  import Art from '#lib/Art.svelte';
+  import Figure from '#lib/Figure.svelte';
+  import Pull from '#lib/Pull.svelte';
   import Compare from '#lib/Compare.svelte';
 </script>
 
@@ -28,11 +29,8 @@
   <h2>The same rules everywhere</h2>
   <p>In Archive, who can see and change what is decided by the database itself. Your team in the browser, ChatGPT acting on your behalf, a script your developer wrote, a connected tool: all of them get exactly the access they were given, and nothing more. A mistake in one place cannot expose someone else's records.</p>
   <p>Work is grouped into spaces. Everyone gets a private space, and you can make shared ones for a team or a client. The contractor sees the project space and nothing else.</p>
-  <figure>
-    <Art name="blog-archive-vs-airtable-2" alt="A laptop, a tablet and an AI chat window each wired through the same small gate into one records cabinet" />
-    <figcaption>Every way in, whether a laptop, a phone or an AI assistant, goes through the same gate and follows the same rules.</figcaption>
-  </figure>
-  <p class="pull">When the rules live in the database, it does not matter who is asking. A person, a script or an AI gets exactly what it is allowed, and nothing more.</p>
+  <Figure art="blog-archive-vs-airtable-2" alt="A laptop, a tablet and an AI chat window each wired through the same small gate into one records cabinet" caption="Every way in, whether a laptop, a phone or an AI assistant, goes through the same gate and follows the same rules." />
+  <Pull>When the rules live in the database, it does not matter who is asking. A person, a script or an AI gets exactly what it is allowed, and nothing more.</Pull>
 
   <h2>Changes that land all at once, or not at all</h2>
   <p>Airtable's automations are great at "when this happens, do that". Archive takes a different route for bigger jobs: your AI assistant writes a short piece of code for the whole task, and Archive runs it in one go.</p>

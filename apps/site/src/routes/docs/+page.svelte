@@ -1,11 +1,19 @@
 <script>
   import { onMount } from 'svelte';
-  import Button from '#lib/Button.svelte';
-  import Card from '#lib/Card.svelte';
   import Code from '#lib/Code.svelte';
   import Cta from '#lib/Cta.svelte';
   import Hero from '#lib/Hero.svelte';
-  import { APP } from '#lib/site.js';
+  import Note from '#lib/Note.svelte';
+  import Section from '#lib/Section.svelte';
+  import Specs from '#lib/Specs.svelte';
+  import { START } from '#lib/site.js';
+
+  const GUIDES = [
+    { href: '#quickstart', title: 'Quick start', art: 'tokens', text: 'Sign up, make a token, make a call.' },
+    { href: '#connect', title: 'Connect your AI', art: 'agents', text: 'Claude, Cursor and ChatGPT over MCP.' },
+    { href: '#code', title: 'Code mode', art: 'code', text: 'One tool, one script, one transaction.' },
+    { href: '#api', title: 'HTTP API', art: 'api', text: 'Plain JSON for every table you make.' }
+  ];
 
   const NAV = [
     [
@@ -94,7 +102,6 @@
 <svelte:head>
   <title>Docs — Archive</title>
   <meta name="description" content="How Archive works: your own Postgres types, live schema changes, code mode over MCP, the SDK, the HTTP API, files, pages, Office documents, spaces and roles." />
-  <meta name="theme-color" content="#0b0d12" />
 </svelte:head>
 
 <Hero
@@ -102,23 +109,12 @@
   lead="Types, schema changes, code mode, the SDK and the HTTP API. Copy an example, or hand a prompt to your AI and let it do the work."
   art="docs"
   alt="An open binder of documentation pages with code snippets and diagrams"
->
-  {#snippet actions()}
-    <Button href="#quickstart">Quick start</Button>
-    <Button href={APP} ghost>Start building free</Button>
-  {/snippet}
-</Hero>
+  links={[['#quickstart', 'Quick start'], START]}
+/>
 
-<section class="section">
-  <div class="wrap">
-    <div class="cards">
-      <Card href="#quickstart" title="Quick start" art="tokens" text="Sign up, make a token, make a call." />
-      <Card href="#connect" title="Connect your AI" art="agents" text="Claude, Cursor and ChatGPT over MCP." />
-      <Card href="#code" title="Code mode" art="code" text="One tool, one script, one transaction." />
-      <Card href="#api" title="HTTP API" art="api" text="Plain JSON for every table you make." />
-    </div>
-  </div>
-</section>
+<Section>
+  <Specs items={GUIDES} />
+</Section>
 
 <div class="wrap docs">
   <nav class="docs-nav" aria-label="Docs">
@@ -178,7 +174,7 @@ Only apply it with &#123; confirm: true &#125; after I say yes.</pre>
 
 <h2 id="connect">Connect your AI</h2>
 <p>Archive is a remote MCP server at <code>/mcp</code>, over streamable HTTP, with one tool: <code>run</code>. Add it once with your token and your AI can read and change everything the token can.</p>
-<div class="note"><b>i</b><p>The <code>run</code> tool's description is the full SDK reference plus a type for each of your tables, so your AI writes against your real schema from the first call.</p></div>
+<Note>The <code>run</code> tool's description is the full SDK reference plus a type for each of your tables, so your AI writes against your real schema from the first call.</Note>
 
 <h3 id="claude-code">Claude Code</h3>
 <Code tabs={['terminal']}>
@@ -219,7 +215,7 @@ Only apply it with &#123; confirm: true &#125; after I say yes.</pre>
 
 <h3 id="chatgpt">ChatGPT and claude.ai</h3>
 <p>Both reach your workspace over its public HTTPS address. Add <code>https://your-workspace.archive.mulholland.ai/mcp</code> as a custom connector.</p>
-<div class="note"><b>!</b><p>Archive's MCP server signs requests in with a bearer token and has no OAuth sign-in yet. Use these apps where their connector settings let you send an <code>Authorization</code> header.</p></div>
+<Note mark="!">Archive's MCP server signs requests in with a bearer token and has no OAuth sign-in yet. Use these apps where their connector settings let you send an <code>Authorization</code> header.</Note>
 
 <h3 id="connect-check">Check the connection</h3>
 <Code tabs={['prompt']}>
@@ -341,7 +337,7 @@ files[<span class="s">"invoice.sql"</span>] += <span class="s">"\nALTER TABLE in
   "applied": false
 &#125;</pre>
 </Code>
-<div class="note"><b>!</b><p>Plan and apply take the whole schema. A table in no file is dropped, so always start from <code>archive.schema()</code>.</p></div>
+<Note mark="!">Plan and apply take the whole schema. A table in no file is dropped, so always start from <code>archive.schema()</code>.</Note>
 
 <h3 id="schema-apply">Apply</h3>
 <p>Call it again with <code>&#123; confirm: true &#125;</code>. Indexes are built concurrently, and foreign keys are added first and validated after, so tables stay usable while it runs.</p>
@@ -430,7 +426,7 @@ icon: calendar'</span>;</pre>
 
 <h3 id="files-processing">What Archive extracts</h3>
 <p>Text from PDF, HTML, plain text, JSON, email and pages. Metadata such as page counts, image dimensions and mail headers. Thumbnails for images. A file's <code>status</code> is <code>done</code> when its upload returns.</p>
-<div class="note"><b>i</b><p>Office files are stored and edited in place but not text-extracted yet, so search finds them by name only.</p></div>
+<Note>Office files are stored and edited in place but not text-extracted yet, so search finds them by name only.</Note>
 
 <h3 id="files-large">Large files</h3>
 <p>A plain upload takes up to 64 MB. For bigger files, use resumable tus uploads at <code>/api/files/tus</code>, which pick up where they stopped.</p>
@@ -746,7 +742,7 @@ archive schema pull ./schema &amp;&amp; archive schema plan ./schema</pre>
 <tr><td><code>archive search &lt;query&gt; [-type t] [-space s] [-from d] [-to d] [-limit n]</code></td><td>Finds rows and files.</td></tr>
 </tbody>
 </table>
-<div class="note"><b>!</b><p>On the command line, <code>set</code> changes some columns and <code>update</code> replaces the row. In the SDK, <code>update</code> changes only the fields you pass.</p></div>
+<Note mark="!">On the command line, <code>set</code> changes some columns and <code>update</code> replaces the row. In the SDK, <code>update</code> changes only the fields you pass.</Note>
 
 <h3 id="cli-schema">Schema and code</h3>
 <table>
@@ -880,7 +876,7 @@ archive schema pull ./schema &amp;&amp; archive schema plan ./schema</pre>
 <tr><td>Finance and meetings</td><td>Stripe, Xero, QuickBooks Online, Exact Online, Zoom</td></tr>
 </tbody>
 </table>
-<div class="note"><b>i</b><p>Connectors roll out provider by provider, as each provider approves the Archive app. Services that issue API tokens, such as Stripe, Notion, Linear and GitHub, connect with a pasted token.</p></div>
+<Note>Connectors roll out provider by provider, as each provider approves the Archive app. Services that issue API tokens, such as Stripe, Notion, Linear and GitHub, connect with a pasted token.</Note>
 
 <h2 id="models">Models</h2>
 <p>Every row you file is a labelled example. Export a dataset per table, fine-tune a small model on it, and call it from your agents.</p>
@@ -908,9 +904,4 @@ archive schema pull ./schema &amp;&amp; archive schema plan ./schema</pre>
   </aside>
 </div>
 
-<Cta title="Build on a real database." lead="Free for your first workspace. Connect your AI in minutes.">
-  {#snippet actions()}
-    <Button href={APP}>Start building free</Button>
-    <Button href="/developers" ghost>For developers</Button>
-  {/snippet}
-</Cta>
+<Cta title="Build on a real database." lead="Free for your first workspace. Connect your AI in minutes." links={[START, ['/developers', 'For developers']]} />

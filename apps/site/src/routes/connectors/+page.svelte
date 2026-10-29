@@ -1,5 +1,4 @@
 <script>
-  import Button from '#lib/Button.svelte';
   import Cta from '#lib/Cta.svelte';
   import Facts from '#lib/Facts.svelte';
   import Faq from '#lib/Faq.svelte';
@@ -8,7 +7,7 @@
   import Scene from '#lib/Scene.svelte';
   import Section from '#lib/Section.svelte';
   import Specs from '#lib/Specs.svelte';
-  import { APP } from '#lib/site.js';
+  import { START } from '#lib/site.js';
 
   const SOON = 'As soon as it changes';
   const MINUTE = 'Within a minute';
@@ -69,7 +68,6 @@
 <svelte:head>
   <title>Connectors — Archive</title>
   <meta name="description" content="Bring in mail, calendars, files, chat, docs, projects, customers and finance from the tools you already use. Archive only reads, keeps up as things change, and puts it all in one place." />
-  <meta name="theme-color" content="#0b0d12" />
 </svelte:head>
 
 <Hero
@@ -77,12 +75,8 @@
   lead="Mail, calendars, files, chat, docs, projects, customers and finance flow into Archive and stay up to date. Archive only reads, and the newest things arrive first."
   art="connectors"
   alt="Cables from mail, chat and file services plugged into one Archive socket"
->
-  {#snippet actions()}
-    <Button href={APP}>Start building free</Button>
-    <Button href="#all" ghost>See every connector</Button>
-  {/snippet}
-</Hero>
+  links={[START, ['#all', 'See every connector']]}
+/>
 
 <Section body="Each connection brings in only what is new and puts it in one space, where people and assistants can use it right away.">
   {#snippet title()}Connect once. <em>Stay</em> up to date.{/snippet}

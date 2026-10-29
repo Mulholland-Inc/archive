@@ -1,31 +1,31 @@
 <script>
+  import Actions from './Actions.svelte';
   import Art from './Art.svelte';
-  import Button from './Button.svelte';
-  import { APP } from './site.js';
 
-  let { title, subtitle, lead, art, alt, home = false, actions, children } = $props();
+  let { kind = 'page', title, subtitle, lead, art, alt, links, actions, children } = $props();
 </script>
 
-{#snippet row()}
-  <div class="row">
-    {#if actions}
-      {@render actions()}
-    {:else}
-      <Button href={APP}>Start building free</Button>
-      <Button href="/docs" ghost>Read the docs</Button>
-    {/if}
-  </div>
-{/snippet}
-
-{#if home}
+{#if kind === 'home'}
   <section class="home-hero">
     <div class="wrap home-copy">
       <h1>{title}</h1>
       <p class="subtitle">{subtitle}</p>
       <p class="lead">{lead}</p>
-      {@render row()}
+      <Actions {links} children={actions} />
     </div>
-    <div class="landscape"><Art name={art} {alt} /></div>
+  </section>
+{:else if kind === 'post'}
+  <section class="post-hero">
+    <h1>{title}</h1>
+    <p class="lead">{lead}</p>
+  </section>
+  <div class="post-art"><Art name={art} {alt} /></div>
+{:else if kind === 'blog'}
+  <section class="blog-head">
+    <div class="wrap">
+      <h1>{title}</h1>
+      <p>{lead}</p>
+    </div>
   </section>
 {:else}
   <section class="page-hero">
@@ -33,7 +33,7 @@
       <div class="page-copy">
         <h1>{title}</h1>
         <p class="lead">{lead}</p>
-        {@render row()}
+        <Actions {links} children={actions} />
         {@render children?.()}
       </div>
       <div class="page-art"><Art name={art} {alt} /></div>

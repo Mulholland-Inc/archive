@@ -1,6 +1,7 @@
 <script>
   import PostLayout from '#lib/PostLayout.svelte';
-  import Art from '#lib/Art.svelte';
+  import Figure from '#lib/Figure.svelte';
+  import Pull from '#lib/Pull.svelte';
 </script>
 
 <PostLayout
@@ -22,10 +23,7 @@
     </ul>
     <p>Messages, calendar events, tickets, CRM entries and payments land as records. Files land as files, with their text pulled out so they can be searched. When something is deleted at the source, it goes away in Archive too, so the copy never drifts from the original.</p>
 
-    <figure>
-      <Art name="harbor" alt="A harbour where barges of containers are unloaded into a warehouse" />
-      <figcaption>Connectors unload what changed in your tools and leave the rest alone.</figcaption>
-    </figure>
+    <Figure art="harbor" alt="A harbour where barges of containers are unloaded into a warehouse" caption="Connectors unload what changed in your tools and leave the rest alone." />
 
     <h2>One day at a small company</h2>
     <p>Picture a five-person property management company looking after a few dozen rental units. Here is an ordinary Tuesday, and what happens to it.</p>
@@ -47,15 +45,12 @@
 
     <p>Nobody on the team filled in a form all day. Yet by evening there is a clean maintenance request with a photo, a quote and a vendor; a lease with real numbers; a lead with history; and an up-to-date rent ledger. Anyone who opens Archive sees the same picture, in the lists and boards they already use.</p>
 
-    <p class="pull">Let things arrive as they are. Let your AI do the filing. Keep the result clean enough to trust.</p>
+    <Pull>Let things arrive as they are. Let your AI do the filing. Keep the result clean enough to trust.</Pull>
 
     <h2>The same thing, written the same way</h2>
     <p>Filing is only half of it. The other half is consistency. The tenant wrote her number as 415.555.0134. The CRM has it as (415) 555-0134. An old email signature says +1 415 555 0134. To a person these are obviously the same. To a search box, a report or another AI, they are three different strings.</p>
 
-    <figure>
-      <Art name="blog-messy-in-clean-out-2" alt="A press stamps a pile of mismatched slips into identical record cards, stacked neatly beside it" />
-      <figcaption>Different shapes in, one shape out: phone numbers, amounts, dates and addresses are cleaned on the way in.</figcaption>
-    </figure>
+    <Figure art="blog-messy-in-clean-out-2" alt="A press stamps a pile of mismatched slips into identical record cards, stacked neatly beside it" caption="Different shapes in, one shape out: phone numbers, amounts, dates and addresses are cleaned on the way in." />
 
     <p>Archive cleans common kinds of information as it is written, whoever writes it and wherever it came from. Phone numbers, email addresses, amounts of money, dates and addresses are stored in one consistent form. "$480" and "480.00 USD" are stored as the same amount, and every phone number above becomes one. That is what makes the rest possible: totals add up, duplicates are easy to spot, and a question like "what did we spend on plumbing this quarter?" has one honest answer.</p>
 

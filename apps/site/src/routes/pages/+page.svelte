@@ -1,14 +1,13 @@
 <script>
-  import Button from '#lib/Button.svelte';
   import Cta from '#lib/Cta.svelte';
   import Facts from '#lib/Facts.svelte';
   import Faq from '#lib/Faq.svelte';
-  import Feature from '#lib/Feature.svelte';
   import Hero from '#lib/Hero.svelte';
+  import Letters from '#lib/Letters.svelte';
   import Row from '#lib/Row.svelte';
   import Section from '#lib/Section.svelte';
   import Specs from '#lib/Specs.svelte';
-  import { APP } from '#lib/site.js';
+  import { START } from '#lib/site.js';
 
   const STEPS = [
     ['Type', 'Your change shows up on your screen at once and heads to Archive.'],
@@ -43,7 +42,6 @@
 <svelte:head>
   <title>Pages — Archive</title>
   <meta name="description" content="Live documents your team and your AI assistants write together. Everyone edits the same page at once, and nobody's work gets overwritten." />
-  <meta name="theme-color" content="#0b0d12" />
 </svelte:head>
 
 <Hero
@@ -76,9 +74,12 @@
   </Row>
 </Section>
 
-<Feature steps={STEPS} art="api" alt="Messages flowing from one screen through a hub to many others">
-  {#snippet title()}From your screen to <em>every</em> screen.{/snippet}
-</Feature>
+<Section band>
+  <Row art="api" alt="Messages flowing from one screen through a hub to many others">
+    <h2>From your screen to <em>every</em> screen.</h2>
+    <Letters steps={STEPS} />
+  </Row>
+</Section>
 
 <Section title="Built from simple blocks." body="A page is a stack of blocks, like headings, lists and to-dos. Use the built-in styles or name your own.">
   <Facts head={['Style', 'For']} rows={STYLES} />
@@ -93,9 +94,4 @@
   <Faq still items={FAQ} />
 </Section>
 
-<Cta title="Write the first page together." lead="Invite your team, connect your AI assistant, and open the same page.">
-  {#snippet actions()}
-    <Button href={APP}>Start building free</Button>
-    <Button href="/agents" ghost>How agents work</Button>
-  {/snippet}
-</Cta>
+<Cta title="Write the first page together." lead="Invite your team, connect your AI assistant, and open the same page." links={[START, ['/agents', 'How agents work']]} />

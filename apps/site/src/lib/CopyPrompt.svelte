@@ -1,13 +1,10 @@
 <script>
+  import Button from './Button.svelte';
+  import { clipboard } from './copy.svelte.js';
+
   let { text, label = 'Copy self-host prompt' } = $props();
 
-  let copied = $state(false);
-
-  async function copy() {
-    await navigator.clipboard.writeText(text);
-    copied = true;
-    setTimeout(() => (copied = false), 1500);
-  }
+  const clip = clipboard();
 </script>
 
-<button type="button" class="btn btn-ghost" onclick={copy}><span aria-live="polite">{copied ? 'Copied' : label}</span></button>
+<Button ghost onclick={() => clip.copy(text)}><span aria-live="polite">{clip.copied ? 'Copied' : label}</span></Button>

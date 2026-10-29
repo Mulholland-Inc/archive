@@ -32,7 +32,6 @@
 <svelte:head>
   <title>Files — Archive</title>
   <meta name="description" content="Upload anything and it is ready to search and preview right away. Your AI assistants edit Word, Excel and PowerPoint files and leave everything else exactly as it was." />
-  <meta name="theme-color" content="#0b0d12" />
 </svelte:head>
 
 <Hero
