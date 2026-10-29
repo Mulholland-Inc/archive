@@ -50,19 +50,14 @@
   }
 
   function theme() {
-    const swap = () => {
-      dark = !dark;
-      const root = document.documentElement;
-      if (dark) root.dataset.theme = 'dark';
-      else delete root.dataset.theme;
-      document.querySelector('meta[name="theme-color"]').content = dark ? '#0b0d12' : '#e4e7ec';
-      try {
-        localStorage.theme = dark ? 'dark' : 'light';
-      } catch {}
-    };
-    if (!document.startViewTransition || matchMedia('(prefers-reduced-motion: reduce)').matches) return swap();
-    document.documentElement.classList.add('theming');
-    document.startViewTransition(swap).finished.finally(() => document.documentElement.classList.remove('theming'));
+    dark = !dark;
+    const root = document.documentElement;
+    if (dark) root.dataset.theme = 'dark';
+    else delete root.dataset.theme;
+    document.querySelector('meta[name="theme-color"]').content = dark ? '#0b0d12' : '#e4e7ec';
+    try {
+      localStorage.theme = dark ? 'dark' : 'light';
+    } catch {}
   }
 
   afterNavigate(({ from }) => {
