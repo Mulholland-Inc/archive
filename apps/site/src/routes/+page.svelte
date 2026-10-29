@@ -35,7 +35,7 @@
   subtitle="Database. File storage. Agent access."
   lead="A foundation for your digital world, built to run on your terms."
   art="landscape"
-  alt="A mailroom, a sorter, a scanner and a binding press joined by pneumatic tubes, feeding a building made of filing cabinets"
+  alt="A mailroom, a scanner and a building made of filing cabinets, joined by one glass tube"
 />
 
 <Section>

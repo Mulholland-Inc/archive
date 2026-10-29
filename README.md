@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="apps/site/static/art/landscape.webp" alt="A mailroom, a sorter, a scanner and a binding press joined by pneumatic tubes, feeding a building made of filing cabinets." width="100%">
+  <img src="apps/site/static/art/landscape.webp" alt="A mailroom, a scanner and a building made of filing cabinets, joined by one glass tube." width="100%">
 </p>
 
 <h1 align="center">Archive</h1>
