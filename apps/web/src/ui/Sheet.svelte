@@ -3,7 +3,7 @@
 </script>
 
 <div class="sheet" class:plain class:tight>
-  <div class="body fade">{@render children()}</div>
+  <div class="body">{@render children()}</div>
 </div>
 
 <style>

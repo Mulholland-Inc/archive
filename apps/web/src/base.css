@@ -2,9 +2,6 @@
 @import '@fontsource-variable/eb-garamond';
 @import '@fontsource-variable/geist-mono';
 
-@property --fade-start { syntax: '<length>'; inherits: false; initial-value: 0px; }
-@property --fade-end { syntax: '<length>'; inherits: false; initial-value: 0px; }
-
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; scrollbar-width: none; }
 ::-webkit-scrollbar { display: none; }
 html { -webkit-text-size-adjust: 100%; background: var(--bg); }
@@ -24,18 +21,6 @@ button, input, select { font: inherit; color: inherit; letter-spacing: inherit; 
 button { cursor: pointer; }
 button:disabled { cursor: default; }
 ::selection { background: var(--primary); color: var(--on-primary); }
-
-.fade {
-  --fade-to: to bottom;
-  --fade-axis: block;
-  mask-image: linear-gradient(var(--fade-to), transparent, black var(--fade-start), black calc(100% - var(--fade-end)), transparent);
-  animation: fade-start linear both, fade-end linear both;
-  animation-timeline: scroll(self var(--fade-axis));
-  animation-range: 0 var(--fade), calc(100% - var(--fade)) 100%;
-}
-.fade-x { --fade-to: to right; --fade-axis: inline; }
-@keyframes fade-start { to { --fade-start: var(--fade); } }
-@keyframes fade-end { from { --fade-end: var(--fade); } }
 
 .peer-0 { --peer: var(--peer-0); }
 .peer-1 { --peer: var(--peer-1); }

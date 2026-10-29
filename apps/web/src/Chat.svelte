@@ -261,7 +261,7 @@
     {#if current}<Button icon="trash" title="Delete chat" aria-label="Delete chat" onclick={remove} />{/if}
   </Heading>
 {/if}
-<div class="chat fade" class:empty bind:this={pane}>
+<div class="chat" class:empty bind:this={pane}>
   {#if empty}<h2 class="hello">{hello}</h2>{/if}
   <div class="log" class:idle={empty && !failed} bind:this={log} aria-live="polite">
     {#if failed}<Note error>{failed}</Note>{/if}
@@ -301,7 +301,7 @@
 </div>
 
 <style>
-  .chat { --text-table: var(--text-chat); display: flex; flex: 1; flex-direction: column; align-items: center; gap: var(--space-5); min-height: 0; padding: var(--gutter); overflow-y: var(--sheet-overflow); font-size: var(--text-chat); animation-name: fade-start; }
+  .chat { --text-table: var(--text-chat); display: flex; flex: 1; flex-direction: column; align-items: center; gap: var(--space-5); min-height: 0; padding: var(--gutter); overflow-y: var(--sheet-overflow); font-size: var(--text-chat); }
   .log { display: flex; flex: 1; flex-direction: column; gap: var(--space-6); width: 100%; max-width: var(--chat-width); min-width: 0; }
   .empty { justify-content: center; gap: var(--space-6); }
   .empty .log { flex: none; }

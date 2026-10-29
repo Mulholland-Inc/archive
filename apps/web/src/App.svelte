@@ -87,7 +87,7 @@
   <div class="shell">
     <aside>
       <a class="brand" href="/files" aria-label="Archive"><Word /></a>
-      <nav class="fade">
+      <nav>
         <NavItem href="/chat" icon="plus" active={route.first === 'chat' && !route.second}>New chat</NavItem>
         <NavItem href="/files" icon="folder" active={route.first === 'files'}>Files</NavItem>
         <NavItem href="/pages" icon="page" active={route.first === 'pages'}>Pages</NavItem>
@@ -177,8 +177,6 @@
   .brand { display: var(--wide-only); flex: none; align-items: center; min-height: var(--size-control-lg); padding: var(--item-pad); color: var(--fg); }
   .brand :global(.word) { height: var(--text-lg); width: auto; fill: currentColor; }
   nav {
-    --fade-to: var(--bar-fade-to);
-    --fade-axis: var(--bar-fade-axis);
     display: flex;
     flex: 1;
     flex-direction: var(--bar-direction);
