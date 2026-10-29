@@ -4,7 +4,7 @@ export const GITHUB = "https://github.com/Mulholland-Inc/archive";
 export const START = [APP, "Start building free"];
 
 export const BUILT = [
-  { href: "/family", art: "family", title: "archive.family", text: "A family's papers, photos and history, kept private" }
+  { href: "/family", art: "family", title: "Archive Family", text: "A family's papers, photos and history, kept private" }
 ];
 
 export const PRODUCT = [

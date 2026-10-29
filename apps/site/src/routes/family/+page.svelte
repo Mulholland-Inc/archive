@@ -16,10 +16,10 @@
   ];
 </script>
 
-<Meta title="archive.family — Built on Archive" description="archive.family keeps a family's papers, photos and history in one private place. It is a module on the Archive engine: its own kinds of record, the same files, search and assistants." />
+<Meta title="Archive Family — Built on Archive" description="Archive Family keeps a family's papers, photos and history in one private place. It is a module on the Archive engine: its own kinds of record, the same files, search and assistants." />
 
 <Hero
-  title="archive.family"
+  title="Archive Family"
   lead="A private archive for a family's bills, receipts and warranties, and its photos, letters and history. Built as a module on Archive."
   art="family"
   alt="A house on a base, with a mailbox holding a letter, a photo album and a tree out front"
@@ -44,7 +44,7 @@
   </Row>
 </Section>
 
-<Section band title="One module, the whole engine." body="archive.family adds its own kinds of record and a few screens. Files, search, spaces, sharing and assistants all come from Archive, in one program.">
+<Section band title="One module, the whole engine." body="Archive Family adds its own kinds of record and a few screens. Files, search, spaces, sharing and assistants all come from Archive, in one program.">
   <Specs items={PARTS} />
 </Section>
 

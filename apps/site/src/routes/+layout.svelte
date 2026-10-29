@@ -4,6 +4,7 @@
   import '../site.css';
   import { beforeNavigate, afterNavigate } from '$app/navigation';
   import Nav from '#lib/Nav.svelte';
+  import Explain from '#lib/Explain.svelte';
   import Footer from '#lib/Footer.svelte';
 
   let { children } = $props();
@@ -26,3 +27,4 @@
 <Nav />
 <main bind:this={main}>{@render children()}</main>
 <Footer />
+<Explain />
