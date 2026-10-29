@@ -22,7 +22,7 @@
 </script>
 
 <div class="block">
-  <pre class="fade fade-x" class:live><code>{@html highlight(code)}</code></pre>
+  <pre class:live><code>{@html highlight(code)}</code></pre>
   {#if copy && code}<span class="tool"><Copy text={code} label="Copy code" /></span>{/if}
 </div>
 

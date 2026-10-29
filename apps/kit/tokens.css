@@ -252,7 +252,6 @@
 .app {
   --frame: var(--space-2);
   --gutter: var(--space-5);
-  --fade: var(--space-5);
   --radius-panel: var(--radius-sm);
   --radius-item: var(--radius-xs);
   --radius-nav: var(--radius-full);
@@ -298,13 +297,12 @@
   --bar-top: var(--frame);
   --bar-bottom: auto;
   --bar-pad: 0px;
-  --bar-fade-axis: block;
-  --bar-fade-to: to bottom;
   --wide-only: flex;
   --narrow-only: none;
   --chat-width: calc(var(--measure-2xl) * 3 / 4);
   --composer-width: var(--chat-width);
   --output-height: var(--art-md);
+  --chat-table-height: calc(var(--text-table) * var(--leading-none) + 2 * var(--space-2) + 5 * (var(--text-table) * var(--leading-medium) + 2 * var(--space-2) + var(--hairline)));
   --bubble-width: 80%;
   --composer-max: 40svh;
   --composer-line: var(--size-control);
@@ -338,8 +336,6 @@
     --bar-top: auto;
     --bar-bottom: 0;
     --bar-pad: var(--space-1);
-    --bar-fade-axis: inline;
-    --bar-fade-to: to right;
     --wide-only: none;
     --narrow-only: flex;
     --bubble-width: 88%;

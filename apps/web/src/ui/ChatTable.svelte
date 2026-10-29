@@ -25,14 +25,11 @@
 </script>
 
 <script>
-  import Button from '#kit/Button.svelte';
   import DataTable from './DataTable.svelte';
   import { cycle } from './filter.js';
 
   let { columns, rows } = $props();
   let sort = $state(null);
-  let all = $state(false);
-  const LIMIT = 12;
 
   const sorted = $derived.by(() => {
     if (!sort) return rows;
@@ -45,19 +42,14 @@
       return dir * (typeof x === 'number' ? x - y : String(x).localeCompare(String(y), undefined, { numeric: true, sensitivity: 'base' }));
     });
   });
-  const shown = $derived(all ? sorted : sorted.slice(0, LIMIT));
 </script>
 
 <div class="box">
-  <DataTable fill {columns} rows={shown} key={(r) => rows.indexOf(r)} {sort} onsort={(col) => (sort = cycle(sort, col))}>
+  <DataTable fill {columns} rows={sorted} key={(r) => rows.indexOf(r)} {sort} onsort={(col) => (sort = cycle(sort, col))}>
     {#snippet td(r, c)}{@html r.html[c.name]}{/snippet}
   </DataTable>
-  {#if rows.length > LIMIT}
-    <div class="more"><Button ghost small onclick={() => (all = !all)}>{all ? 'Show less' : `Show all ${rows.length}`}</Button></div>
-  {/if}
 </div>
 
 <style>
-  .box { --table-bleed: 0px; display: flex; flex-direction: column; min-width: 0; overflow: clip; border-radius: var(--radius-panel); background: var(--surface); }
-  .more { display: flex; justify-content: center; padding: var(--space-2); }
+  .box { --table-bleed: 0px; display: flex; flex-direction: column; min-width: 0; max-height: var(--chat-table-height); overflow: clip; border-radius: var(--radius-panel); background: var(--surface); }
 </style>

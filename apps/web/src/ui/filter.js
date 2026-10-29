@@ -77,10 +77,6 @@ export function filtering(q) {
   return Object.values(q.values).some((v) => v && v !== '..');
 }
 
-export function active(q) {
-  return !!q.sort || filtering(q);
-}
-
 export function read() {
   const p = new URLSearchParams(location.search);
   const s = p.get('sort');
