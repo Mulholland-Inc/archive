@@ -6,7 +6,7 @@ import { join, dirname, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const outDir = resolve(here, '../site/art');
+const outDir = resolve(here, '../site/static/art');
 const chrome = process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
 const args = process.argv.slice(2);
