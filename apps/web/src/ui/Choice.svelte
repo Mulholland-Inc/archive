@@ -84,6 +84,7 @@
     margin: var(--space-1);
     padding: var(--space-1);
     overflow-y: auto;
+    overscroll-behavior-y: none;
     border: 0;
     border-radius: var(--radius-panel);
     background: var(--surface-raised);

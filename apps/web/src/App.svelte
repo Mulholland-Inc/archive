@@ -184,6 +184,7 @@
     min-width: 0;
     min-height: 0;
     overflow: auto;
+    overscroll-behavior-y: none;
   }
   hr { flex: none; align-self: stretch; min-width: var(--hairline); min-height: var(--hairline); margin: var(--space-2); border: 0; }
   footer { display: flex; flex: none; align-items: center; gap: var(--space-1); }

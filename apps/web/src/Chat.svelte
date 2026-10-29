@@ -301,7 +301,7 @@
 </div>
 
 <style>
-  .chat { --text-table: var(--text-chat); display: flex; flex: 1; flex-direction: column; align-items: center; gap: var(--space-5); min-height: 0; padding: var(--gutter); overflow-y: var(--sheet-overflow); font-size: var(--text-chat); }
+  .chat { --text-table: var(--text-chat); display: flex; flex: 1; flex-direction: column; align-items: center; gap: var(--space-5); min-height: 0; padding: var(--gutter); overflow-y: var(--sheet-overflow); overscroll-behavior-y: none; font-size: var(--text-chat); }
   .log { display: flex; flex: 1; flex-direction: column; gap: var(--space-6); width: 100%; max-width: var(--chat-width); min-width: 0; }
   .empty { justify-content: center; gap: var(--space-6); }
   .empty .log { flex: none; }

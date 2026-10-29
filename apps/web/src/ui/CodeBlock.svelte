@@ -31,6 +31,7 @@
   pre {
     padding: var(--space-4);
     overflow-x: auto;
+    overscroll-behavior-x: none;
     border-radius: var(--radius-item);
     background: var(--fill-faint);
     color: var(--fg);

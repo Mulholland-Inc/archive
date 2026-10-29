@@ -46,7 +46,7 @@
 </div>
 
 <style>
-  .wrap { overflow-x: auto; margin-inline: calc(-1 * var(--space-2)); }
+  .wrap { overflow-x: auto; overscroll-behavior-x: none; margin-inline: calc(-1 * var(--space-2)); }
   .wrap.fill { flex: 1 1 auto; min-height: 0; margin: calc(-1 * var(--table-bleed)) calc(-1 * var(--table-bleed)) 0; overflow: auto; }
   .fill table { font-size: var(--text-table); }
   .fill th, .fill td { padding: var(--space-2); }

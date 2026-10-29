@@ -11,6 +11,7 @@
     max-height: var(--output-height);
     padding: var(--space-4);
     overflow: auto;
+    overscroll-behavior-x: none;
     border-radius: var(--radius-item);
     background: var(--fill-faint);
     color: var(--fg);

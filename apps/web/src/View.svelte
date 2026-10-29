@@ -98,7 +98,7 @@
 {/if}
 
 <style>
-  .board { display: flex; flex: 1 1 auto; gap: var(--space-2); min-height: 0; height: var(--board-height); overflow: auto hidden; }
+  .board { display: flex; flex: 1 1 auto; gap: var(--space-2); min-height: 0; height: var(--board-height); overflow: auto hidden; overscroll-behavior-x: none; }
   .lane {
     display: flex;
     flex: 0 0 var(--lane-width);
@@ -109,7 +109,7 @@
     border-radius: var(--radius-sm);
     background: var(--surface-band);
   }
-  .cards { display: flex; flex: 1; flex-direction: column; gap: var(--space-1); min-height: 0; overflow-y: auto; }
+  .cards { display: flex; flex: 1; flex-direction: column; gap: var(--space-1); min-height: 0; overflow-y: auto; overscroll-behavior-y: none; }
   .cards > :global(*) { flex: none; }
   header { display: flex; flex: none; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2); font-weight: var(--weight-medium); line-height: var(--leading-snug); text-transform: capitalize; }
   .count { min-width: var(--size-avatar); padding: var(--space-1); border-radius: var(--radius-full); background: var(--fill); color: var(--fg-muted); font-size: var(--text-meta); font-weight: var(--weight-normal); line-height: var(--leading-none); text-align: center; }
