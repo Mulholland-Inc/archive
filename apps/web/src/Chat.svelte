@@ -317,7 +317,7 @@
   .user {
     align-self: flex-end;
     max-width: var(--bubble-width);
-    padding: var(--space-3);
+    padding: var(--space-2);
     border-radius: var(--radius-sm);
     background: var(--fill);
     white-space: pre-wrap;
