@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Mulholland-Inc/archive/generated"
 	"github.com/dop251/goja"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -75,7 +76,7 @@ type workflowOn struct {
 	sched cron.Schedule
 }
 
-func workflowRunOf(r ArchiveWorkflowRun) WorkflowRun {
+func workflowRunOf(r generated.ArchiveWorkflowRun) WorkflowRun {
 	return WorkflowRun{ID: r.ID, At: r.CreatedAt.UTC(), Trigger: r.Trigger, MS: r.Ms, Result: r.Result, Logs: r.Logs, Error: r.Error}
 }
 
@@ -181,7 +182,7 @@ func workflowUser(ctx context.Context) (*Actor, error) {
 	return ac, nil
 }
 
-func (a *Archive) workflowOut(w ArchiveWorkflow) Workflow {
+func (a *Archive) workflowOut(w generated.ArchiveWorkflow) Workflow {
 	out := Workflow{Name: w.Name, On: w.Trigger}
 	if on, err := a.workflowParse(w.Trigger); err == nil {
 		switch on.kind {
@@ -228,7 +229,7 @@ func (a *Archive) Deploy(ctx context.Context, files map[string]string) (*Workflo
 		}
 		for _, n := range names {
 			c := ok[n]
-			p := SaveWorkflowParams{UserID: ac.UserID, Role: ac.Role, Name: n, Source: files[n], Trigger: c.on, Hook: workflowToken()}
+			p := generated.SaveWorkflowParams{UserID: ac.UserID, Role: ac.Role, Name: n, Source: files[n], Trigger: c.on, Hook: workflowToken()}
 			switch c.w.kind {
 			case "cron":
 				next := c.w.sched.Next(now.UTC())
@@ -260,12 +261,12 @@ func workflowToken() string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-func (a *Archive) workflowRows(ctx context.Context) ([]ArchiveWorkflow, error) {
+func (a *Archive) workflowRows(ctx context.Context) ([]generated.ArchiveWorkflow, error) {
 	ac, err := workflowUser(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var ws []ArchiveWorkflow
+	var ws []generated.ArchiveWorkflow
 	return ws, a.sys(ctx, func(ctx context.Context) (err error) {
 		ws, err = a.st.db(ctx).Workflows(ctx, ac.UserID)
 		return err
@@ -299,7 +300,7 @@ func (a *Archive) Workflows(ctx context.Context) ([]Workflow, error) {
 		}
 		for _, w := range ws {
 			o := a.workflowOut(w)
-			if i := slices.IndexFunc(last, func(r ArchiveWorkflowRun) bool { return r.Workflow == w.ID }); i >= 0 {
+			if i := slices.IndexFunc(last, func(r generated.ArchiveWorkflowRun) bool { return r.Workflow == w.ID }); i >= 0 {
 				r := workflowRunOf(last[i])
 				r.Result, r.Logs = nil, nil
 				o.Last = &r
@@ -310,14 +311,14 @@ func (a *Archive) Workflows(ctx context.Context) ([]Workflow, error) {
 	})
 }
 
-func (a *Archive) workflow(ctx context.Context, name string) (ArchiveWorkflow, error) {
+func (a *Archive) workflow(ctx context.Context, name string) (generated.ArchiveWorkflow, error) {
 	ac, err := workflowUser(ctx)
 	if err != nil {
-		return ArchiveWorkflow{}, err
+		return generated.ArchiveWorkflow{}, err
 	}
 	name = workflowName(name)
-	var w ArchiveWorkflow
-	var all []ArchiveWorkflow
+	var w generated.ArchiveWorkflow
+	var all []generated.ArchiveWorkflow
 	err = a.sys(ctx, func(ctx context.Context) (err error) {
 		q := a.st.db(ctx)
 		if w, err = q.WorkflowByName(ctx, ac.UserID, name); errors.Is(err, pgx.ErrNoRows) {
@@ -361,10 +362,10 @@ func (a *Archive) WorkflowRuns(ctx context.Context, name string, limit int) ([]W
 
 func (a *Archive) workflowRecord(ctx context.Context, id uuid.UUID, trigger string, at time.Time, out *RunOutput, d time.Duration) (WorkflowRun, error) {
 	logs, _ := json.Marshal(out.Logs)
-	var r ArchiveWorkflowRun
+	var r generated.ArchiveWorkflowRun
 	err := a.sys(context.WithoutCancel(ctx), func(ctx context.Context) (err error) {
 		q := a.st.db(ctx)
-		r, err = q.AddWorkflowRun(ctx, AddWorkflowRunParams{Workflow: id, Trigger: trigger, Result: out.Result, Logs: logs, Error: out.Error, Ms: int32(d.Milliseconds()), CreatedAt: at})
+		r, err = q.AddWorkflowRun(ctx, generated.AddWorkflowRunParams{Workflow: id, Trigger: trigger, Result: out.Result, Logs: logs, Error: out.Error, Ms: int32(d.Milliseconds()), CreatedAt: at})
 		if err != nil {
 			return err
 		}
@@ -372,15 +373,15 @@ func (a *Archive) workflowRecord(ctx context.Context, id uuid.UUID, trigger stri
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = nil
-		r = ArchiveWorkflowRun{ID: coreNewID(), Workflow: id, Trigger: trigger, Ms: int32(d.Milliseconds()), CreatedAt: at}
+		r = generated.ArchiveWorkflowRun{ID: coreNewID(), Workflow: id, Trigger: trigger, Ms: int32(d.Milliseconds()), CreatedAt: at}
 	}
 	run := workflowRunOf(r)
 	run.Result, run.Logs, run.Error = out.Result, logs, out.Error
 	return run, err
 }
 
-func (a *Archive) workflowActor(ctx context.Context, w ArchiveWorkflow) (*Actor, error) {
-	u, err := userBy(ctx, a, (*Queries).UserByID, w.UserID)
+func (a *Archive) workflowActor(ctx context.Context, w generated.ArchiveWorkflow) (*Actor, error) {
+	u, err := userBy(ctx, a, (*generated.Queries).UserByID, w.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -402,7 +403,7 @@ func (a *Archive) workflowActor(ctx context.Context, w ArchiveWorkflow) (*Actor,
 	return ac, nil
 }
 
-func (a *Archive) workflowExec(ctx context.Context, w ArchiveWorkflow, ac *Actor, trigger string, input any) (WorkflowRun, error) {
+func (a *Archive) workflowExec(ctx context.Context, w generated.ArchiveWorkflow, ac *Actor, trigger string, input any) (WorkflowRun, error) {
 	start := time.Now()
 	out, at := &RunOutput{Result: json.RawMessage("null"), Logs: []string{}}, start
 	var err error
@@ -468,7 +469,7 @@ func (a *Archive) workflowLoop(ctx context.Context, wg *sync.WaitGroup) {
 }
 
 func (a *Archive) workflowNext(ctx context.Context) (bool, error) {
-	var w ArchiveWorkflow
+	var w generated.ArchiveWorkflow
 	err := a.sys(ctx, func(ctx context.Context) (err error) {
 		w, err = a.st.db(ctx).ClaimWorkflow(ctx, time.Now().Add(runTimeout()+workflowRetry))
 		return err
@@ -499,7 +500,7 @@ func (a *Archive) workflowNext(ctx context.Context) (bool, error) {
 	}))
 }
 
-func (a *Archive) workflowTable(ctx context.Context, w ArchiveWorkflow, tb *Table) error {
+func (a *Archive) workflowTable(ctx context.Context, w generated.ArchiveWorkflow, tb *Table) error {
 	ctx = context.WithoutCancel(ctx)
 	next := func(d time.Duration) error {
 		t := time.Now().Add(d)
@@ -571,12 +572,12 @@ func (a *Archive) workflowTable(ctx context.Context, w ArchiveWorkflow, tb *Tabl
 	}
 	t := time.Now().Add(wait)
 	return a.sys(ctx, func(ctx context.Context) error {
-		return a.st.db(ctx).AdvanceWorkflow(ctx, AdvanceWorkflowParams{ID: w.ID, Trigger: w.Trigger, NextAt: &t, CursorAt: &last.at, CursorID: &last.id})
+		return a.st.db(ctx).AdvanceWorkflow(ctx, generated.AdvanceWorkflowParams{ID: w.ID, Trigger: w.Trigger, NextAt: &t, CursorAt: &last.at, CursorID: &last.id})
 	})
 }
 
 func (a *Archive) workflowHook(rw http.ResponseWriter, r *http.Request) {
-	var w ArchiveWorkflow
+	var w generated.ArchiveWorkflow
 	err := a.sys(r.Context(), func(ctx context.Context) (err error) {
 		w, err = a.st.db(ctx).WorkflowByHook(ctx, r.PathValue("token"))
 		return err

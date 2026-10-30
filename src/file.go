@@ -7,21 +7,36 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"image"
+	"image/draw"
+	_ "image/gif"
+	"image/jpeg"
+	_ "image/png"
 	"io"
+	"io/fs"
+	"math"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/Mulholland-Inc/archive/generated"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/ledongthuc/pdf"
+	xdraw "golang.org/x/image/draw"
+	_ "golang.org/x/image/webp"
+	"golang.org/x/net/html"
 )
 
 type File struct {
@@ -44,7 +59,7 @@ const (
 )
 
 type fileRow interface {
-	FileByKeyRow | CreateFileRow | GetFileRow | RenameFileRow | LockFileRow | NextPendingFileRow | LockPendingFileRow | ReplaceFileRow
+	generated.FileByKeyRow | generated.CreateFileRow | generated.GetFileRow | generated.RenameFileRow | generated.LockFileRow | generated.NextPendingFileRow | generated.LockPendingFileRow | generated.ReplaceFileRow
 }
 
 func fileOf[R fileRow](r R, err error) (*File, error) {
@@ -121,7 +136,7 @@ func (a *Archive) fileCommit(ctx context.Context, sid uuid.UUID, name string, op
 		if !errors.Is(err, ErrNotFound) {
 			return f, err
 		}
-		return fileOf(a.st.db(ctx).CreateFile(ctx, CreateFileParams{Hash: hash, Name: name, MIME: mt, Size: size, Space: sid}))
+		return fileOf(a.st.db(ctx).CreateFile(ctx, generated.CreateFileParams{Hash: hash, Name: name, MIME: mt, Size: size, Space: sid}))
 	})
 	if err != nil {
 		return nil, err
@@ -417,11 +432,11 @@ func (a *Archive) fileSigned(w http.ResponseWriter, r *http.Request) {
 	a.fileServe(w, r, f, true)
 }
 
-type tusUpload = ArchiveUpload
+type tusUpload = generated.ArchiveUpload
 
 var errTusOffset = errors.New("upload offset")
 
-func (up *tusUpload) offset() int64 {
+func tusOffset(up *tusUpload) int64 {
 	var n int64
 	for _, p := range up.Parts {
 		n += p
@@ -512,9 +527,9 @@ func (a *Archive) tus(w http.ResponseWriter, r *http.Request) {
 func (a *Archive) tusLocked(ctx context.Context, id uuid.UUID, lock bool, fn func(context.Context, *tusUpload) error) error {
 	role := ActorFrom(ctx).Role
 	return a.st.System(ctx, func(ctx context.Context) error {
-		get := (*Queries).Upload
+		get := (*generated.Queries).Upload
 		if lock {
-			get = (*Queries).LockUpload
+			get = (*generated.Queries).LockUpload
 		}
 		up, err := get(a.st.db(ctx), ctx, id)
 		if errors.Is(err, pgx.ErrNoRows) || err == nil && up.Role != role {
@@ -539,7 +554,7 @@ func (a *Archive) tusCreate(w http.ResponseWriter, r *http.Request) {
 	up.Space, err = coreDo(a, ctx, func(ctx context.Context) (uuid.UUID, error) { return a.coreSpace(ctx, meta["space"]) })
 	if err == nil {
 		err = a.st.System(ctx, func(ctx context.Context) error {
-			return a.st.db(ctx).CreateUpload(ctx, CreateUploadParams{ID: up.ID, Role: up.Role, Space: up.Space, Name: up.Name, Length: up.Length})
+			return a.st.db(ctx).CreateUpload(ctx, generated.CreateUploadParams{ID: up.ID, Role: up.Role, Space: up.Space, Name: up.Name, Length: up.Length})
 		})
 	}
 	var f *File
@@ -569,7 +584,7 @@ func (a *Archive) tusUpload(w http.ResponseWriter, r *http.Request, id uuid.UUID
 	switch r.Method {
 	case http.MethodHead:
 		err = a.tusLocked(ctx, id, false, func(ctx context.Context, up *tusUpload) error {
-			h.Set("Upload-Offset", strconv.FormatInt(up.offset(), 10))
+			h.Set("Upload-Offset", strconv.FormatInt(tusOffset(up), 10))
 			h.Set("Upload-Length", strconv.FormatInt(up.Length, 10))
 			h.Set("Cache-Control", "no-store")
 			return nil
@@ -582,7 +597,7 @@ func (a *Archive) tusUpload(w http.ResponseWriter, r *http.Request, id uuid.UUID
 			return
 		}
 		err = a.tusLocked(ctx, id, true, func(ctx context.Context, up *tusUpload) error {
-			off := up.offset()
+			off := tusOffset(up)
 			h.Set("Upload-Offset", strconv.FormatInt(off, 10))
 			if r.Header.Get("Upload-Offset") != strconv.FormatInt(off, 10) {
 				return errTusOffset
@@ -652,4 +667,573 @@ func (a *Archive) tusDrop(ctx context.Context, up *tusUpload) error {
 		}
 	})
 	return nil
+}
+
+const (
+	mediaMax     = 64 << 20
+	mediaThumb   = 320
+	mediaWorkers = 2
+)
+
+func mediaSniff(name string, b []byte) string {
+	if len(b) >= 12 && string(b[4:8]) == "ftyp" {
+		switch string(b[8:12]) {
+		case "heic", "heix", "heim", "heis", "mif1", "msf1":
+			return "image/heic"
+		case "M4A ":
+			return "audio/mp4"
+		case "qt  ":
+			return "video/quicktime"
+		}
+	}
+	mt, _, _ := mime.ParseMediaType(http.DetectContentType(b))
+	if mt == "application/octet-stream" || mt == "text/plain" {
+		if ext, _, err := mime.ParseMediaType(mime.TypeByExtension(strings.ToLower(filepath.Ext(name)))); err == nil {
+			return ext
+		}
+	}
+	return mt
+}
+
+func (a *Archive) fileLoop(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
+	tick := time.NewTicker(10 * time.Second)
+	defer tick.Stop()
+	for {
+		for {
+			ok, err := a.fileProcess(ctx, uuid.Nil)
+			if err != nil && ctx.Err() == nil {
+				fmt.Fprintln(os.Stderr, "archive: files:", err)
+			}
+			if !ok || err != nil {
+				break
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+	}
+}
+
+func (a *Archive) fileProcess(ctx context.Context, id uuid.UUID) (bool, error) {
+	found := false
+	err := a.st.System(ctx, func(ctx context.Context) error {
+		var f *File
+		var err error
+		if id == uuid.Nil {
+			f, err = fileOf(a.st.db(ctx).NextPendingFile(ctx))
+		} else {
+			f, err = fileOf(a.st.db(ctx).LockPendingFile(ctx, id))
+		}
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		found = true
+		meta, text, perr := a.media(ctx, f)
+		err = pgx.BeginFunc(ctx, a.st.Q(ctx), func(tx pgx.Tx) error {
+			return generated.New(tx).SetFileContent(ctx, f.ID, meta, strings.ToValidUTF8(strings.ReplaceAll(text, "\x00", ""), "�"))
+		})
+		status, msg := "done", ""
+		if perr = errors.Join(err, perr); perr != nil {
+			status, msg = "error", perr.Error()
+		}
+		return a.st.db(ctx).SetFileStatus(ctx, f.ID, status, msg)
+	})
+	return found, err
+}
+
+func (a *Archive) media(ctx context.Context, f *File) (map[string]any, string, error) {
+	meta := map[string]any{}
+	if f.Size > mediaMax {
+		return meta, "", nil
+	}
+	rc, err := a.blobs.open(ctx, blobKey(f.Hash), f.Size)
+	if err != nil {
+		return meta, "", err
+	}
+	b, err := io.ReadAll(rc)
+	rc.Close()
+	if err != nil {
+		return meta, "", err
+	}
+	top, _, _ := strings.Cut(f.MIME, "/")
+	switch {
+	case f.MIME == "application/pdf":
+		text, pages, err := mediaPDF(b)
+		meta["pages"] = pages
+		return meta, text, err
+	case f.MIME == "text/html":
+		return meta, mediaHTML(b), nil
+	case top == "text" || f.MIME == "application/json":
+		return meta, string(b), nil
+	case top == "image":
+		if c, _, err := image.DecodeConfig(bytes.NewReader(b)); err == nil {
+			meta["width"], meta["height"] = c.Width, c.Height
+		}
+		mediaEXIF(b, meta)
+		if t, err := a.mediaThumbnail(ctx, b); err == nil && t != nil {
+			meta["thumbnail"] = t
+		}
+	}
+	return meta, "", nil
+}
+
+func mediaPDF(b []byte) (text string, pages int, err error) {
+	defer func() {
+		if recover() != nil {
+			err = errors.New("unreadable PDF")
+		}
+	}()
+	r, err := pdf.NewReader(bytes.NewReader(b), int64(len(b)))
+	if err != nil {
+		return "", 0, fmt.Errorf("pdf: %w", err)
+	}
+	parts := make([]string, r.NumPage())
+	for i := range parts {
+		if p := r.Page(i + 1); !p.V.IsNull() {
+			parts[i], _ = p.GetPlainText(nil)
+		}
+	}
+	return strings.Join(parts, "\f"), len(parts), nil
+}
+
+func mediaHTML(b []byte) string {
+	z := html.NewTokenizer(bytes.NewReader(b))
+	var sb strings.Builder
+	skip := 0
+	for {
+		tt := z.Next()
+		switch tt {
+		case html.ErrorToken:
+			return strings.Join(strings.Fields(sb.String()), " ")
+		case html.StartTagToken, html.EndTagToken:
+			if n, _ := z.TagName(); string(n) == "script" || string(n) == "style" {
+				if tt == html.StartTagToken {
+					skip++
+				} else {
+					skip--
+				}
+			}
+			sb.WriteByte(' ')
+		case html.TextToken:
+			if skip <= 0 {
+				sb.Write(z.Text())
+			}
+		}
+	}
+}
+
+type mediaIFD struct {
+	b    []byte
+	tiff int
+	bo   binary.ByteOrder
+}
+
+type mediaTag struct {
+	typ   uint16
+	count uint32
+	at    int
+}
+
+var mediaTypeSize = map[uint16]int{1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1, 9: 4, 10: 8}
+
+func (d *mediaIFD) read(off uint32) (map[uint16]mediaTag, int, int) {
+	start := d.tiff + int(off)
+	if off == 0 || start+2 > len(d.b) {
+		return nil, 0, 0
+	}
+	n := int(d.bo.Uint16(d.b[start:]))
+	end := start + 2 + 12*n + 4
+	if end > len(d.b) {
+		return nil, 0, 0
+	}
+	tags := map[uint16]mediaTag{}
+	for i := range n {
+		e := d.b[start+2+12*i:]
+		t := mediaTag{typ: d.bo.Uint16(e[2:]), count: d.bo.Uint32(e[4:]), at: start + 2 + 12*i + 8}
+		size := mediaTypeSize[t.typ] * int(t.count)
+		if size > 4 {
+			t.at = d.tiff + int(d.bo.Uint32(e[8:]))
+		}
+		if size == 0 || t.at+size > len(d.b) || t.at < 0 {
+			continue
+		}
+		tags[d.bo.Uint16(e)] = t
+	}
+	return tags, start, end
+}
+
+func (d *mediaIFD) str(t mediaTag) string {
+	if t.typ != 2 {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimRight(string(d.b[t.at:t.at+int(t.count)]), "\x00"))
+}
+
+func (d *mediaIFD) num(t mediaTag, i int) float64 {
+	switch t.typ {
+	case 1, 7:
+		return float64(d.b[t.at+i])
+	case 3:
+		return float64(d.bo.Uint16(d.b[t.at+2*i:]))
+	case 4:
+		return float64(d.bo.Uint32(d.b[t.at+4*i:]))
+	case 5:
+		if den := d.bo.Uint32(d.b[t.at+8*i+4:]); den != 0 {
+			return float64(d.bo.Uint32(d.b[t.at+8*i:])) / float64(den)
+		}
+	}
+	return math.NaN()
+}
+
+func mediaTIFF(b []byte) *mediaIFD {
+	for i := 0; ; {
+		j := bytes.Index(b[i:], []byte("Exif\x00\x00"))
+		if j < 0 {
+			return nil
+		}
+		t := i + j + 6
+		if t+8 <= len(b) {
+			switch string(b[t : t+4]) {
+			case "MM\x00\x2a":
+				return &mediaIFD{b, t, binary.BigEndian}
+			case "II\x2a\x00":
+				return &mediaIFD{b, t, binary.LittleEndian}
+			}
+		}
+		i = t
+	}
+}
+
+func mediaEXIF(b []byte, meta map[string]any) [][2]int {
+	d := mediaTIFF(b)
+	if d == nil {
+		return nil
+	}
+	ifd0, _, _ := d.read(d.bo.Uint32(d.b[d.tiff+4:]))
+	if ifd0 == nil {
+		return nil
+	}
+	if camera := strings.TrimSpace(d.str(ifd0[0x010F]) + " " + d.str(ifd0[0x0110])); camera != "" {
+		meta["camera"] = camera
+	}
+	if t, ok := ifd0[0x0112]; ok && t.typ == 3 {
+		meta["orientation"] = d.num(t, 0)
+	}
+	if p, ok := ifd0[0x8769]; ok && p.typ == 4 {
+		exif, _, _ := d.read(uint32(d.num(p, 0)))
+		if ts, err := time.Parse("2006:01:02 15:04:05", d.str(exif[0x9003])); err == nil {
+			meta["taken_at"] = ts.Format("2006-01-02T15:04:05")
+		}
+		if w, h := exif[0xA002], exif[0xA003]; meta["width"] == nil && (w.typ == 3 || w.typ == 4) && (h.typ == 3 || h.typ == 4) {
+			meta["width"], meta["height"] = d.num(w, 0), d.num(h, 0)
+		}
+	}
+	p, ok := ifd0[0x8825]
+	if !ok || p.typ != 4 {
+		return nil
+	}
+	gps, start, end := d.read(uint32(d.num(p, 0)))
+	if gps == nil {
+		return nil
+	}
+	spans := [][2]int{{start, end}}
+	for _, t := range gps {
+		if size := mediaTypeSize[t.typ] * int(t.count); size > 4 {
+			spans = append(spans, [2]int{t.at, t.at + size})
+		}
+	}
+	coord := func(ref, val uint16, neg string) (float64, bool) {
+		t, ok := gps[val]
+		if !ok || t.typ != 5 || t.count < 3 {
+			return 0, false
+		}
+		v := d.num(t, 0) + d.num(t, 1)/60 + d.num(t, 2)/3600
+		if strings.EqualFold(d.str(gps[ref]), neg) {
+			v = -v
+		}
+		return math.Round(v*1e7) / 1e7, !math.IsNaN(v)
+	}
+	lat, ok1 := coord(1, 2, "S")
+	lon, ok2 := coord(3, 4, "W")
+	if ok1 && ok2 {
+		loc := map[string]any{"lat": lat, "lon": lon}
+		if t, ok := gps[6]; ok && t.typ == 5 && !math.IsNaN(d.num(t, 0)) {
+			alt := d.num(t, 0)
+			if r, ok := gps[5]; ok && d.num(r, 0) == 1 {
+				alt = -alt
+			}
+			loc["alt"] = alt
+		}
+		meta["personal"] = map[string]any{"location": loc}
+	}
+	return spans
+}
+
+func mediaStripGPS(b []byte) []byte {
+	spans := mediaEXIF(b, map[string]any{})
+	if len(spans) == 0 {
+		return b
+	}
+	out := bytes.Clone(b)
+	for _, s := range spans {
+		clear(out[s[0]:s[1]])
+	}
+	return out
+}
+
+func (a *Archive) mediaThumbnail(ctx context.Context, b []byte) (map[string]any, error) {
+	src, kind, err := image.Decode(bytes.NewReader(b))
+	if err != nil || kind == "webp" {
+		return nil, err
+	}
+	sb := src.Bounds()
+	scale := min(1, float64(mediaThumb)/float64(max(sb.Dx(), sb.Dy())))
+	dst := image.NewRGBA(image.Rect(0, 0, max(1, int(float64(sb.Dx())*scale)), max(1, int(float64(sb.Dy())*scale))))
+	draw.Draw(dst, dst.Bounds(), image.White, image.Point{}, draw.Src)
+	xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, sb, draw.Over, nil)
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: 80}); err != nil {
+		return nil, err
+	}
+	hash, err := a.blobPut(ctx, buf.Bytes())
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"sha256": hash, "size": buf.Len(), "width": dst.Bounds().Dx(), "height": dst.Bounds().Dy()}, nil
+}
+
+type blobStore interface {
+	put(ctx context.Context, key, sum string, r io.Reader, size int64) error
+	open(ctx context.Context, key string, size int64) (io.ReadSeekCloser, error)
+	remove(ctx context.Context, key string) error
+}
+
+func blobKey(hash string) string { return hash[:2] + "/" + hash }
+
+func (a *Archive) blobPut(ctx context.Context, b []byte) (string, error) {
+	sum := sha256.Sum256(b)
+	hash := hex.EncodeToString(sum[:])
+	return hash, a.blobs.put(ctx, blobKey(hash), hash, bytes.NewReader(b), int64(len(b)))
+}
+
+func blobOpen(dir string) (blobStore, error) {
+	raw := os.Getenv("ARCHIVE_BLOB_URL")
+	if raw == "" {
+		return &dirBlobs{filepath.Join(dir, "blobs")}, nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "s3" || u.Host == "" {
+		return nil, fmt.Errorf("ARCHIVE_BLOB_URL %q: want s3://bucket/prefix?endpoint=https://...&region=...", raw)
+	}
+	q := u.Query()
+	s := &s3Blobs{prefix: strings.Trim(u.Path, "/"), region: cmp.Or(q.Get("region"), "us-east-1"),
+		key:    cmp.Or(os.Getenv("ARCHIVE_BLOB_KEY"), os.Getenv("AWS_ACCESS_KEY_ID")),
+		secret: cmp.Or(os.Getenv("ARCHIVE_BLOB_SECRET"), os.Getenv("AWS_SECRET_ACCESS_KEY"))}
+	if s.key == "" || s.secret == "" {
+		return nil, errors.New("ARCHIVE_BLOB_URL needs ARCHIVE_BLOB_KEY and ARCHIVE_BLOB_SECRET")
+	}
+	s.base = "https://" + u.Host + ".s3." + s.region + ".amazonaws.com"
+	if ep := q.Get("endpoint"); ep != "" {
+		s.base = strings.TrimRight(ep, "/") + "/" + u.Host
+	}
+	return s, nil
+}
+
+type dirBlobs struct{ dir string }
+
+func (d *dirBlobs) path(key string) string { return filepath.Join(d.dir, filepath.FromSlash(key)) }
+
+func (d *dirBlobs) put(_ context.Context, key, _ string, r io.Reader, _ int64) error {
+	p := d.path(key)
+	if _, err := os.Stat(p); err == nil {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(p), ".put-")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	_, err = io.Copy(tmp, r)
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), p)
+}
+
+func (d *dirBlobs) open(_ context.Context, key string, _ int64) (io.ReadSeekCloser, error) {
+	f, err := os.Open(d.path(key))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("blob %s: %w", key, ErrNotFound)
+	}
+	return f, err
+}
+
+func (d *dirBlobs) remove(_ context.Context, key string) error {
+	if err := os.Remove(d.path(key)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	os.Remove(filepath.Dir(d.path(key)))
+	return nil
+}
+
+const s3EmptyHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+type s3Blobs struct {
+	base, prefix, region, key, secret string
+}
+
+func (s *s3Blobs) url(key string) string {
+	if s.prefix != "" {
+		key = s.prefix + "/" + key
+	}
+	var b strings.Builder
+	for _, c := range []byte(key) {
+		if c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || strings.IndexByte("-._~/", c) >= 0 {
+			b.WriteByte(c)
+		} else {
+			fmt.Fprintf(&b, "%%%02X", c)
+		}
+	}
+	return s.base + "/" + b.String()
+}
+
+func s3HMAC(key []byte, s string) []byte {
+	m := hmac.New(sha256.New, key)
+	m.Write([]byte(s))
+	return m.Sum(nil)
+}
+
+func (s *s3Blobs) do(ctx context.Context, method, obj string, body io.Reader, size int64, payload, rng string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, s.url(obj), body)
+	if err != nil {
+		return nil, err
+	}
+	req.ContentLength = size
+	if rng != "" {
+		req.Header.Set("Range", rng)
+	}
+	now := time.Now().UTC()
+	stamp, day := now.Format("20060102T150405Z"), now.Format("20060102")
+	scope := day + "/" + s.region + "/s3/aws4_request"
+	signed := "host;x-amz-content-sha256;x-amz-date"
+	canon := strings.Join([]string{method, req.URL.EscapedPath(), "",
+		"host:" + req.URL.Host + "\nx-amz-content-sha256:" + payload + "\nx-amz-date:" + stamp + "\n", signed, payload}, "\n")
+	sum := sha256.Sum256([]byte(canon))
+	key := []byte("AWS4" + s.secret)
+	for _, part := range []string{day, s.region, "s3", "aws4_request"} {
+		key = s3HMAC(key, part)
+	}
+	sig := hex.EncodeToString(s3HMAC(key, "AWS4-HMAC-SHA256\n"+stamp+"\n"+scope+"\n"+hex.EncodeToString(sum[:])))
+	req.Header.Set("X-Amz-Date", stamp)
+	req.Header.Set("X-Amz-Content-Sha256", payload)
+	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential="+s.key+"/"+scope+", SignedHeaders="+signed+", Signature="+sig)
+	return http.DefaultClient.Do(req)
+}
+
+func s3Err(resp *http.Response) error {
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 300))
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("s3 %s: %w", resp.Request.Method, ErrNotFound)
+	}
+	return fmt.Errorf("s3 %s: %s: %s", resp.Request.Method, resp.Status, bytes.TrimSpace(b))
+}
+
+func (s *s3Blobs) put(ctx context.Context, key, sum string, r io.Reader, size int64) error {
+	resp, err := s.do(ctx, "HEAD", key, nil, 0, s3EmptyHash, "")
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		return nil
+	}
+	if resp, err = s.do(ctx, "PUT", key, io.NopCloser(r), size, sum, ""); err != nil {
+		return err
+	}
+	if resp.StatusCode/100 != 2 {
+		return s3Err(resp)
+	}
+	resp.Body.Close()
+	return nil
+}
+
+func (s *s3Blobs) open(ctx context.Context, key string, size int64) (io.ReadSeekCloser, error) {
+	return &s3Object{s: s, ctx: ctx, key: key, size: size}, nil
+}
+
+func (s *s3Blobs) remove(ctx context.Context, key string) error {
+	resp, err := s.do(ctx, "DELETE", key, nil, 0, s3EmptyHash, "")
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode/100 != 2 && resp.StatusCode != http.StatusNotFound {
+		return s3Err(resp)
+	}
+	resp.Body.Close()
+	return nil
+}
+
+type s3Object struct {
+	s         *s3Blobs
+	ctx       context.Context
+	key       string
+	size, off int64
+	body      io.ReadCloser
+}
+
+func (o *s3Object) Read(p []byte) (int, error) {
+	if o.off >= o.size {
+		return 0, io.EOF
+	}
+	if o.body == nil {
+		resp, err := o.s.do(o.ctx, "GET", o.key, nil, 0, s3EmptyHash, fmt.Sprintf("bytes=%d-", o.off))
+		if err != nil {
+			return 0, err
+		}
+		if resp.StatusCode != http.StatusPartialContent && (resp.StatusCode != http.StatusOK || o.off != 0) {
+			return 0, s3Err(resp)
+		}
+		o.body = resp.Body
+	}
+	n, err := o.body.Read(p)
+	o.off += int64(n)
+	return n, err
+}
+
+func (o *s3Object) Seek(off int64, whence int) (int64, error) {
+	switch whence {
+	case io.SeekCurrent:
+		off += o.off
+	case io.SeekEnd:
+		off += o.size
+	}
+	if off < 0 {
+		return 0, errors.New("s3: negative seek")
+	}
+	if off != o.off {
+		o.Close()
+		o.body = nil
+	}
+	o.off = off
+	return off, nil
+}
+
+func (o *s3Object) Close() error {
+	if o.body == nil {
+		return nil
+	}
+	return o.body.Close()
 }

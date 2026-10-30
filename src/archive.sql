@@ -258,3 +258,354 @@ CREATE TABLE archive.composite_use (
     quantity    archive.quantity
 );
 COMMENT ON TABLE archive.composite_use IS 'Always empty; it uses every built-in composite type, so pg-schema-diff sees them as used by a table before and after a user table starts using one';
+
+-- name: HasRole :one
+SELECT pg_has_role(sqlc.arg(member)::name, rolname, 'USAGE') FROM pg_catalog.pg_roles WHERE rolname = sqlc.arg(grp)::name;
+
+-- name: RoleExists :one
+SELECT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = sqlc.arg(role)::name);
+
+-- name: DirectRoles :many
+SELECT r.rolname::text FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles r ON r.oid = m.roleid JOIN pg_catalog.pg_roles u ON u.oid = m.member
+WHERE u.rolname = sqlc.arg(member)::name AND r.rolname = ANY(sqlc.arg(grps)::name[]);
+
+-- name: CountOwners :one
+SELECT count(*) FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles r ON r.oid = m.roleid
+JOIN pg_catalog.pg_roles u ON u.oid = m.member JOIN archive."user" ON "user".role = u.rolname WHERE r.rolname = sqlc.arg(owner)::name;
+
+-- name: CreateSpace :one
+INSERT INTO archive.space (name, role) VALUES ($1, $2) RETURNING id;
+
+-- name: SpaceTaken :one
+SELECT EXISTS (SELECT FROM archive.space WHERE name = $1);
+
+-- name: SpaceRole :one
+SELECT role FROM archive.space WHERE name = $1;
+
+-- name: SpaceRoleByID :one
+SELECT role FROM archive.space WHERE id = $1;
+
+-- name: SpaceByName :one
+SELECT id, role FROM archive.space WHERE name = $1;
+
+-- name: SpaceRoles :many
+SELECT name, role FROM archive.space ORDER BY name;
+
+-- name: Spaces :many
+SELECT id, name, CASE
+    WHEN pg_has_role(current_user, (role || '_owner')::name, 'USAGE') THEN 'owner'
+    WHEN pg_has_role(current_user, (role || '_admin')::name, 'USAGE') THEN 'admin'
+    WHEN pg_has_role(current_user, (role || '_editor')::name, 'USAGE') THEN 'editor'
+    ELSE 'viewer' END::text AS level
+FROM archive.space ORDER BY name;
+
+-- name: DeleteSpaceSecrets :exec
+DELETE FROM archive.secret WHERE space = $1;
+
+-- name: DeleteSpaceFiles :exec
+DELETE FROM archive.file WHERE space = $1;
+
+-- name: DeleteSpace :exec
+DELETE FROM archive.space WHERE id = $1;
+
+-- name: CountUsers :one
+SELECT count(*) FROM archive."user";
+
+-- name: NoUsers :one
+SELECT NOT EXISTS (SELECT FROM archive."user");
+
+-- name: CreateUser :one
+INSERT INTO archive."user" (id, email, name, role, home) VALUES ($1, $2, $3, $4, $5) RETURNING created_at;
+
+-- name: UserByEmail :one
+SELECT * FROM archive."user" WHERE email = $1;
+
+-- name: UserByID :one
+SELECT * FROM archive."user" WHERE id = $1;
+
+-- name: FirstUser :one
+SELECT * FROM archive."user" ORDER BY created_at, id LIMIT $1;
+
+-- name: UserByOIDC :one
+SELECT * FROM archive."user" WHERE signin->'oidc' @> sqlc.arg(link)::jsonb;
+
+-- name: UserRole :one
+SELECT id, role FROM archive."user" WHERE email = $1;
+
+-- name: HomeOwner :one
+SELECT email FROM archive."user" WHERE home = $1;
+
+-- name: Members :many
+SELECT email, name, role AS level FROM archive."user" ORDER BY email;
+
+-- name: SetSignin :exec
+UPDATE archive."user" SET signin = $2 WHERE id = $1;
+
+-- name: Authenticate :one
+SELECT t.id, t.kind, t.name, coalesce(t.role, '') AS role, u.id AS user_id, u.email, u.name AS user_name, u.role AS user_role, u.home,
+    coalesce((SELECT r.id::text || ':' || r.hash FROM archive.revision r ORDER BY r.created_at DESC, r.id DESC LIMIT 1), '')::text AS stamp
+FROM archive.token t JOIN archive."user" u ON u.id = t.user_id
+WHERE t.hash = $1 AND t.kind IN ('api', 'session', 'user') AND (t.expires_at IS NULL OR t.expires_at > now());
+
+-- name: CreateLoginToken :exec
+INSERT INTO archive.token (user_id, kind, hash, expires_at) VALUES ($1, $2, $3, now() + sqlc.arg(ttl)::text::interval);
+
+-- name: UseMagicLink :one
+DELETE FROM archive.token WHERE hash = $1 AND kind = 'magic' AND expires_at > now() RETURNING user_id;
+
+-- name: DeleteToken :exec
+DELETE FROM archive.token WHERE id = $1;
+
+-- name: TokenRoles :many
+SELECT coalesce(role, '')::text FROM archive.token WHERE user_id = $1 AND role IS NOT NULL;
+
+-- name: CreateUserToken :one
+INSERT INTO archive.token (id, user_id, kind, name, hash, expires_at) VALUES ($1, $2, 'user', $3, $4, $5) RETURNING created_at, expires_at;
+
+-- name: CreateAPIToken :one
+INSERT INTO archive.token (id, user_id, kind, name, role, hash, expires_at) VALUES ($1, $2, 'api', $3, $4, $5, $6) RETURNING created_at, expires_at;
+
+-- name: Tokens :many
+SELECT id, name, coalesce(role, '')::text AS role, kind = 'user' AS full, expires_at, created_at FROM archive.token
+WHERE user_id = $1 AND kind IN ('api', 'user') ORDER BY id;
+
+-- name: RevokeToken :one
+DELETE FROM archive.token WHERE id = $1 AND user_id = $2 AND kind IN ('api', 'user') RETURNING coalesce(role, '')::text;
+
+-- name: Chats :many
+SELECT id, title, created_at, updated_at FROM archive.chat WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 200;
+
+-- name: ChatByID :one
+SELECT * FROM archive.chat WHERE id = $1 AND user_id = $2;
+
+-- name: CreateChat :one
+INSERT INTO archive.chat (user_id, title) VALUES ($1, $2) RETURNING *;
+
+-- name: AppendChat :exec
+UPDATE archive.chat SET messages = messages || sqlc.arg(messages)::jsonb, updated_at = now() WHERE id = sqlc.arg(id);
+
+-- name: RenameChat :execrows
+UPDATE archive.chat SET title = $3 WHERE id = $1 AND user_id = $2;
+
+-- name: DeleteChat :execrows
+DELETE FROM archive.chat WHERE id = $1 AND user_id = $2;
+
+-- name: SpaceID :one
+SELECT id FROM archive.space WHERE name = $1;
+
+-- name: DefaultSpace :one
+SELECT id FROM archive.space WHERE id = ANY(archive.my_spaces('editor')) ORDER BY id = sqlc.arg(home)::uuid DESC, id LIMIT 1;
+
+-- name: CanWrite :one
+SELECT sqlc.arg(space)::uuid = ANY(archive.my_spaces('editor'));
+
+-- name: OntologyAdmin :one
+SELECT archive.ontology_admin();
+
+-- name: InputErrors :many
+SELECT i::bigint AS i, e.message::text AS message
+FROM generate_subscripts(sqlc.arg(texts)::text[], 1) i, pg_input_error_info((sqlc.arg(texts)::text[])[i], (sqlc.arg(regs)::text[])[i]) e
+WHERE e.message IS NOT NULL ORDER BY i;
+
+-- name: ClearSecrets :exec
+SELECT archive.secret_clear(sqlc.arg(tbl), sqlc.arg(rid), sqlc.narg(col));
+
+-- name: CreateSecret :exec
+INSERT INTO archive.secret (id, table_name, row_id, column_name, type, value, space) VALUES ($1, $2, $3, $4, $5, $6, $7);
+
+-- name: Secrets :many
+SELECT id, row_id, column_name, type, value FROM archive.secret WHERE table_name = $1 AND row_id = ANY(sqlc.arg(ids)::uuid[]);
+
+-- name: FileByKey :one
+SELECT id, hash, name, mime, size, metadata, status, error, space, created_at FROM archive.file WHERE space = $1 AND hash = $2 AND name = $3;
+
+-- name: CreateFile :one
+INSERT INTO archive.file (hash, name, mime, size, space) VALUES ($1, $2, $3, $4, $5)
+RETURNING id, hash, name, mime, size, metadata, status, error, space, created_at;
+
+-- name: Files :many
+SELECT id, hash, name, mime, size, metadata, status, error, space, created_at FROM archive.file
+WHERE id > sqlc.arg(after) AND (sqlc.narg(space)::uuid IS NULL OR space = sqlc.narg(space)) ORDER BY id LIMIT sqlc.arg(lim);
+
+-- name: GetFile :one
+SELECT id, hash, name, mime, size, metadata, status, error, space, created_at FROM archive.file WHERE id = $1;
+
+-- name: RenameFile :one
+UPDATE archive.file SET name = $2 WHERE id = $1
+RETURNING id, hash, name, mime, size, metadata, status, error, space, created_at;
+
+-- name: LockFile :one
+SELECT id, hash, name, mime, size, metadata, status, error, space, created_at FROM archive.file WHERE id = $1 FOR UPDATE;
+
+-- name: FileText :one
+SELECT text FROM archive.file WHERE id = $1;
+
+-- name: FileWithText :one
+SELECT id, hash, name, mime, size, metadata, status, error, space, created_at, text FROM archive.file WHERE id = $1;
+
+-- name: FilesWithText :many
+SELECT id, hash, name, mime, size, metadata, status, error, space, created_at, text FROM archive.file
+WHERE id > sqlc.arg(after) AND (sqlc.narg(space)::uuid IS NULL OR space = sqlc.narg(space)) ORDER BY id LIMIT sqlc.arg(lim);
+
+-- name: NextPendingFile :one
+SELECT id, hash, name, mime, size, metadata, status, error, space, created_at FROM archive.file
+WHERE status = 'pending' ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED;
+
+-- name: LockPendingFile :one
+SELECT id, hash, name, mime, size, metadata, status, error, space, created_at FROM archive.file
+WHERE id = $1 AND status = 'pending' FOR UPDATE;
+
+-- name: SetFileContent :exec
+UPDATE archive.file SET metadata = $2, text = $3 WHERE id = $1;
+
+-- name: SetFileStatus :exec
+UPDATE archive.file SET status = $2, error = $3 WHERE id = $1;
+
+-- name: ResetProcessing :exec
+UPDATE archive.file SET status = 'pending' WHERE status = 'processing';
+
+-- name: ReplaceFile :one
+UPDATE archive.file SET hash = $2, size = $3, status = 'pending', text = '', error = '', metadata = '{}' WHERE id = $1
+RETURNING id, hash, name, mime, size, metadata, status, error, space, created_at;
+
+-- name: Upload :one
+SELECT * FROM archive.upload WHERE id = $1;
+
+-- name: LockUpload :one
+SELECT * FROM archive.upload WHERE id = $1 FOR UPDATE;
+
+-- name: CreateUpload :exec
+INSERT INTO archive.upload (id, role, space, name, length) VALUES ($1, $2, $3, $4, $5);
+
+-- name: SetUploadParts :exec
+UPDATE archive.upload SET parts = $2 WHERE id = $1;
+
+-- name: DeleteUpload :exec
+DELETE FROM archive.upload WHERE id = $1;
+
+-- name: DatabaseExists :one
+SELECT EXISTS (SELECT FROM pg_catalog.pg_database WHERE datname = 'archive');
+
+-- name: CreateDatabase :exec
+CREATE DATABASE archive;
+
+-- name: Revision :one
+SELECT coalesce((SELECT id::text || ':' || hash FROM archive.revision ORDER BY created_at DESC, id DESC LIMIT 1), '')::text;
+
+-- name: InsertRevision :exec
+INSERT INTO archive.revision (hash) VALUES ($1);
+
+-- name: SetLocal :exec
+SELECT set_config(sqlc.arg(name), sqlc.arg(value), true);
+
+-- name: AdvisoryLock :exec
+SELECT pg_advisory_lock(sqlc.arg(key));
+
+-- name: AdvisoryUnlock :exec
+SELECT pg_advisory_unlock(sqlc.arg(key));
+
+-- name: AdvisoryXactLock :exec
+SELECT pg_advisory_xact_lock(sqlc.arg(key));
+
+-- name: Catalog :one
+WITH col AS (
+    SELECT a.attrelid AS rel, a.attnum AS num, jsonb_build_object(
+        'name', a.attname,
+        'description', coalesce(col_description(a.attrelid, a.attnum), ''),
+        'type', e.typname,
+        'schema', e.typnamespace::regnamespace::text,
+        'reg', format_type(e.oid, a.atttypmod),
+        'list', t.typcategory = 'A' AND t.typelem <> 0,
+        'not_null', a.attnotnull,
+        'default', a.atthasdef,
+        'generated', a.attgenerated <> '',
+        'pk', EXISTS (SELECT FROM pg_catalog.pg_constraint k WHERE k.conrelid = a.attrelid AND k.contype = 'p' AND k.conkey = ARRAY[a.attnum]),
+        'ref', coalesce((SELECT r.relnamespace::regnamespace::text || '.' || r.relname FROM pg_catalog.pg_constraint k JOIN pg_catalog.pg_class r ON r.oid = k.confrelid
+            WHERE k.conrelid = a.attrelid AND k.contype = 'f' AND k.conkey = ARRAY[a.attnum] LIMIT 1), '')) AS c
+    FROM pg_catalog.pg_attribute a
+    JOIN pg_catalog.pg_type t ON t.oid = a.atttypid
+    JOIN pg_catalog.pg_type e ON e.oid = CASE WHEN t.typcategory = 'A' AND t.typelem <> 0 THEN t.typelem ELSE t.oid END
+    WHERE a.attnum > 0 AND NOT a.attisdropped
+)
+SELECT jsonb_build_object(
+    'tables', coalesce((SELECT jsonb_object_agg(c.relname, jsonb_build_object(
+        'name', c.relname,
+        'kind', CASE c.relkind WHEN 'v' THEN 'view' ELSE 'table' END,
+        'description', coalesce(obj_description(c.oid, 'pg_class'), ''),
+        'rls', c.relrowsecurity,
+        'force', c.relforcerowsecurity,
+        'security_invoker', coalesce((SELECT o.option_value::bool FROM pg_options_to_table(c.reloptions) o WHERE o.option_name = 'security_invoker'), false),
+        'policies', (SELECT count(*) FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid),
+        'columns', (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid)))
+        FROM pg_catalog.pg_class c WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p', 'v')), '{}'),
+    'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
+        'name', t.typname,
+        'schema', t.typnamespace::regnamespace::text,
+        'kind', t.typtype,
+        'description', coalesce(obj_description(t.oid, 'pg_type'), ''),
+        'base', coalesce((SELECT b.typname FROM pg_catalog.pg_type b WHERE b.oid = t.typbasetype), ''),
+        'base_schema', coalesce((SELECT b.typnamespace::regnamespace::text FROM pg_catalog.pg_type b WHERE b.oid = t.typbasetype), ''),
+        'enum', coalesce((SELECT jsonb_agg(l.enumlabel ORDER BY l.enumsortorder) FROM pg_catalog.pg_enum l WHERE l.enumtypid = t.oid), '[]'),
+        'attrs', coalesce((SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = t.typrelid), '[]')))
+        FROM pg_catalog.pg_type t LEFT JOIN pg_catalog.pg_class r ON r.oid = t.typrelid
+        WHERE t.typnamespace IN ('archive'::regnamespace, 'public'::regnamespace)
+          AND (t.typtype IN ('d', 'e') OR t.typtype = 'c' AND r.relkind = 'c')), '{}'));
+
+-- name: Workflows :many
+SELECT * FROM archive.workflow WHERE user_id = $1 ORDER BY name;
+
+-- name: WorkflowByName :one
+SELECT * FROM archive.workflow WHERE user_id = $1 AND name = $2;
+
+-- name: WorkflowByHook :one
+SELECT * FROM archive.workflow WHERE hook = $1 AND trigger = 'webhook';
+
+-- name: DeleteWorkflowsExcept :exec
+DELETE FROM archive.workflow WHERE user_id = $1 AND NOT (name = ANY (sqlc.arg(names)::text[]));
+
+-- name: DeleteWorkflow :exec
+DELETE FROM archive.workflow WHERE user_id = $1 AND name = $2;
+
+-- name: SaveWorkflow :one
+INSERT INTO archive.workflow (user_id, role, name, source, trigger, hook, next_at, cursor_at, cursor_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+ON CONFLICT (user_id, name) DO UPDATE SET role = EXCLUDED.role, source = EXCLUDED.source, trigger = EXCLUDED.trigger, next_at = EXCLUDED.next_at,
+    cursor_at = CASE WHEN archive.workflow.trigger = EXCLUDED.trigger THEN archive.workflow.cursor_at ELSE EXCLUDED.cursor_at END,
+    cursor_id = CASE WHEN archive.workflow.trigger = EXCLUDED.trigger THEN archive.workflow.cursor_id ELSE EXCLUDED.cursor_id END,
+    updated_at = now()
+RETURNING *;
+
+-- name: ClaimWorkflow :one
+UPDATE archive.workflow SET next_at = sqlc.arg(lease)::timestamptz
+WHERE id = (SELECT w.id FROM archive.workflow w WHERE w.next_at <= now() ORDER BY w.next_at LIMIT 1 FOR UPDATE SKIP LOCKED)
+RETURNING *;
+
+-- name: SetWorkflowNext :exec
+UPDATE archive.workflow SET next_at = $3 WHERE id = $1 AND trigger = $2;
+
+-- name: AdvanceWorkflow :exec
+UPDATE archive.workflow SET next_at = sqlc.arg(next_at), cursor_at = sqlc.arg(cursor_at), cursor_id = sqlc.arg(cursor_id)
+WHERE id = sqlc.arg(id) AND trigger = sqlc.arg(trigger);
+
+-- name: AddWorkflowRun :one
+INSERT INTO archive.workflow_run (workflow, trigger, result, logs, error, ms, created_at)
+SELECT w.id, sqlc.arg(trigger), sqlc.arg(result), sqlc.arg(logs), sqlc.arg(error), sqlc.arg(ms), sqlc.arg(created_at)
+FROM archive.workflow w WHERE w.id = sqlc.arg(workflow)
+RETURNING *;
+
+-- name: TrimWorkflowRuns :exec
+DELETE FROM archive.workflow_run d WHERE d.workflow = $1
+    AND d.id NOT IN (SELECT r.id FROM archive.workflow_run r WHERE r.workflow = $1 ORDER BY r.created_at DESC, r.id DESC LIMIT 100);
+
+-- name: WorkflowRuns :many
+SELECT * FROM archive.workflow_run WHERE workflow = $1 ORDER BY created_at DESC, id DESC LIMIT $2;
+
+-- name: LastWorkflowRuns :many
+SELECT DISTINCT ON (r.workflow) r.* FROM archive.workflow_run r JOIN archive.workflow w ON w.id = r.workflow
+WHERE w.user_id = $1 ORDER BY r.workflow, r.created_at DESC, r.id DESC;
+
+-- name: WorkflowRunTimes :many
+SELECT created_at FROM archive.workflow_run WHERE workflow = $1 AND created_at >= sqlc.arg(since)::timestamptz;
+
+-- name: TxNow :one
+SELECT now()::timestamptz;

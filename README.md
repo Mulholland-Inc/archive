@@ -201,7 +201,7 @@ flowchart LR
 
 | Path | What lives there |
 |---|---|
-| [`src`](src) | The Go server and CLI: API, MCP, sign-in, schema, search, files, Office editing |
+| [`src`](src) | The Go server and CLI: API, MCP, sign-in, schema, search, files, Office editing. `archive.sql` holds Archive's own schema and, after it, the sqlc queries; `generated` is the code sqlc makes from them |
 | [`apps/web`](apps/web) | The Svelte 5 web app |
 | [`apps/site`](apps/site) | [archive.us.org](https://archive.us.org) and the docs |
 | [`apps/helm`](apps/helm/archive), [`apps/terraform`](apps/terraform) | Kubernetes chart, cloud setups and the Terraform provider |
