@@ -1,10 +1,17 @@
-data "google_project" "this" {}
+resource "google_project_service" "crm" {
+  service            = "cloudresourcemanager.googleapis.com"
+  disable_on_destroy = false
+}
+
+data "google_project" "this" {
+  depends_on = [google_project_service.crm]
+}
 
 locals {
   run_url = "https://${var.name}-${data.google_project.this.number}.${var.region}.run.app"
   url     = var.app_domain != "" ? "https://${var.app_domain}" : local.run_url
   api_url = var.api_domain != "" ? "https://${var.api_domain}" : local.url
-  split   = local.url != local.api_url
+  split   = var.api_domain != "" && var.api_domain != var.app_domain
   domains = toset(compact([var.app_domain, var.api_domain]))
   run     = local.split ? var.api_domain : var.app_domain
 
@@ -37,6 +44,8 @@ resource "google_project_service" "this" {
   for_each           = toset(local.services)
   service            = each.value
   disable_on_destroy = false
+
+  depends_on = [google_project_service.crm]
 }
 
 resource "google_artifact_registry_repository" "ghcr" {
@@ -374,6 +383,25 @@ resource "cloudflare_dns_record" "run" {
   content = "ghs.googlehosted.com"
   proxied = true
   ttl     = 1
+}
+
+resource "cloudflare_ruleset" "run" {
+  count   = local.run != "" ? 1 : 0
+  zone_id = data.cloudflare_zone.this[0].zone_id
+  name    = "${var.name} origin TLS"
+  kind    = "zone"
+  phase   = "http_config_settings"
+  rules = [{
+    description       = "${local.run} reaches Google over verified TLS"
+    expression        = "http.host eq \"${local.run}\""
+    action            = "set_config"
+    action_parameters = { ssl = "strict" }
+    }, {
+    description       = "Google's certificate challenges reach it over HTTP, before it has a certificate"
+    expression        = "http.host eq \"${local.run}\" and starts_with(http.request.uri.path, \"/.well-known/acme-challenge/\")"
+    action            = "set_config"
+    action_parameters = { ssl = "flexible" }
+  }]
 }
 
 resource "cloudflare_workers_script" "app" {
