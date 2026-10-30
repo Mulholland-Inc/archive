@@ -152,7 +152,7 @@ var catalogIcons = func() map[string]bool {
 	return out
 }()
 
-var catalogLayouts = []string{"table", "board", "calendar"}
+var catalogLayouts = []string{"table", "board", "calendar", "tree"}
 
 var (
 	catalogSystem   = map[string]bool{"id": true, "space": true, "created_at": true, "updated_at": true}

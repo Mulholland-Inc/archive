@@ -1,6 +1,7 @@
 <script>
   import { hidden, show } from './api.js';
   import Table from './Table.svelte';
+  import FamilyTree, { isTree, loadBook } from './ui/FamilyTree.svelte';
   import Card from './ui/Card.svelte';
   import Filters from './ui/Filters.svelte';
   import Heading from './ui/Heading.svelte';
@@ -48,6 +49,22 @@
     }
   }
 
+  const tree = $derived(isTree(view));
+  let book = $state(null);
+  let home = $state(null);
+
+  async function loadTree() {
+    try {
+      ({ book, home } = await loadBook(view));
+    } catch (e) {
+      error = e.message;
+    }
+  }
+
+  $effect(() => {
+    if (tree) loadTree();
+  });
+
   $effect(() => {
     if (view.layout === 'table' || !view.by) return;
     const t = setTimeout(load, query ? 200 : 0);
@@ -55,7 +72,10 @@
   });
 </script>
 
-{#if view.layout === 'table' || !view.by}
+{#if tree}
+  <Heading title={view.name.replaceAll('_', ' ')} />
+  {#if error}<Note error>{error}</Note>{:else if book && home}<FamilyTree {book} {home} />{/if}
+{:else if view.layout === 'table' || !view.by}
   <Table table={view} {types} />
 {:else}
   <Heading title={view.name.replaceAll('_', ' ')} />
