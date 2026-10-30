@@ -86,15 +86,10 @@ jobs:
           image="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT/ghcr/mulholland-inc/archive:sha-${GITHUB_SHA::7}"
           gcloud run services update "$GCP_SERVICE" --project "$GCP_PROJECT" --region "$GCP_REGION" --image "$image"
           gcloud run jobs update "$GCP_SERVICE" --project "$GCP_PROJECT" --region "$GCP_REGION" --image "$image"
-          if [ -n "$GCP_WEB_SERVICE" ]; then
-            gcloud run services update "$GCP_WEB_SERVICE" --project "$GCP_PROJECT" --region "$GCP_REGION" \
-              --image "$GCP_REGION-docker.pkg.dev/$GCP_PROJECT/ghcr/mulholland-inc/archive-web:sha-${GITHUB_SHA::7}"
-          fi
         env:
           GCP_PROJECT: ${{ vars.GCP_PROJECT }}
           GCP_REGION: ${{ vars.GCP_REGION }}
           GCP_SERVICE: ${{ vars.GCP_SERVICE }}
-          GCP_WEB_SERVICE: ${{ vars.GCP_WEB_SERVICE }}
 
   app:
     needs: deploy

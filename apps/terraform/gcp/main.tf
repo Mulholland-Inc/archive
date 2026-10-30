@@ -3,15 +3,9 @@ resource "google_project_service" "crm" {
   disable_on_destroy = false
 }
 
-data "google_project" "this" {
-  depends_on = [google_project_service.crm]
-}
-
 locals {
-  domains = var.api_domain != ""
-  url     = local.domains ? "https://${var.app_domain}" : "https://${var.name}-web-${data.google_project.this.number}.${var.region}.run.app"
-  api_url = local.domains ? "https://${var.api_domain}" : "https://${var.name}-${data.google_project.this.number}.${var.region}.run.app"
-  run     = var.api_domain
+  url     = "https://${var.app_domain}"
+  api_url = "https://${var.api_domain}"
 
   required = {
     DATABASE_URL       = "host=/cloudsql/${google_sql_database_instance.this.connection_name} user=${google_sql_user.this.name} password=${random_password.db.result} dbname=${google_sql_database.this.name}"
@@ -192,8 +186,7 @@ resource "google_secret_manager_secret_iam_member" "this" {
 }
 
 locals {
-  web_image = "${var.region}-docker.pkg.dev/${var.project}/${google_artifact_registry_repository.ghcr.repository_id}/mulholland-inc/archive-web:${var.image_tag}"
-  image     = "${var.region}-docker.pkg.dev/${var.project}/${google_artifact_registry_repository.ghcr.repository_id}/mulholland-inc/archive:${var.image_tag}"
+  image = "${var.region}-docker.pkg.dev/${var.project}/${google_artifact_registry_repository.ghcr.repository_id}/mulholland-inc/archive:${var.image_tag}"
   env = merge(var.env, local.client_ids, {
     ARCHIVE_URL      = local.url
     ARCHIVE_API_URL  = local.api_url
@@ -293,58 +286,6 @@ resource "google_cloud_run_v2_service" "this" {
   ]
 }
 
-resource "google_cloud_run_v2_service" "web" {
-  count                = local.domains ? 0 : 1
-  name                 = "${var.name}-web"
-  location             = var.region
-  ingress              = "INGRESS_TRAFFIC_ALL"
-  invoker_iam_disabled = true
-  deletion_protection  = var.deletion_protection
-
-  template {
-    scaling {
-      min_instance_count = 0
-      max_instance_count = var.max_instances
-    }
-
-    containers {
-      image = local.web_image
-
-      ports {
-        container_port = 8080
-      }
-
-      resources {
-        cpu_idle          = true
-        startup_cpu_boost = true
-        limits = {
-          cpu    = "1"
-          memory = "256Mi"
-        }
-      }
-
-      env {
-        name  = "ARCHIVE_API_URL"
-        value = local.api_url
-      }
-    }
-  }
-
-  lifecycle {
-    ignore_changes = [template[0].containers[0].image, client, client_version]
-  }
-
-  depends_on = [google_project_service.this]
-}
-
-resource "google_cloud_run_v2_service_iam_member" "deploy_web" {
-  count    = !local.domains && var.github_repository != "" ? 1 : 0
-  name     = google_cloud_run_v2_service.web[0].name
-  location = var.region
-  role     = "roles/run.developer"
-  member   = google_service_account.deploy[0].member
-}
-
 resource "google_cloud_run_v2_job" "this" {
   name                = var.name
   location            = var.region
@@ -418,7 +359,6 @@ resource "google_cloud_run_v2_job" "this" {
 }
 
 data "cloudflare_zone" "this" {
-  count = local.domains ? 1 : 0
   filter = {
     name = var.cloudflare_zone
   }
@@ -427,35 +367,30 @@ data "cloudflare_zone" "this" {
 data "google_client_openid_userinfo" "me" {}
 
 resource "google_service_account" "verify" {
-  count      = local.run != "" ? 1 : 0
   account_id = "${var.name}-verify"
 
   depends_on = [google_project_service.this]
 }
 
 resource "google_service_account_iam_member" "verify" {
-  count              = local.run != "" ? 1 : 0
-  service_account_id = google_service_account.verify[0].name
+  service_account_id = google_service_account.verify.name
   role               = "roles/iam.serviceAccountTokenCreator"
   member             = "${endswith(data.google_client_openid_userinfo.me.email, ".gserviceaccount.com") ? "serviceAccount" : "user"}:${data.google_client_openid_userinfo.me.email}"
 }
 
 resource "google_project_iam_member" "verify" {
-  count   = local.run != "" ? 1 : 0
   project = var.project
   role    = "roles/run.admin"
-  member  = google_service_account.verify[0].member
+  member  = google_service_account.verify.member
 }
 
 resource "time_sleep" "verify" {
-  count           = local.run != "" ? 1 : 0
   create_duration = "3m"
 
   depends_on = [google_service_account_iam_member.verify, google_project_iam_member.verify]
 }
 
 data "google_site_verification_token" "this" {
-  count               = local.run != "" ? 1 : 0
   provider            = google.verify
   type                = "INET_DOMAIN"
   identifier          = var.cloudflare_zone
@@ -465,16 +400,14 @@ data "google_site_verification_token" "this" {
 }
 
 resource "cloudflare_dns_record" "verify" {
-  count   = local.run != "" ? 1 : 0
-  zone_id = data.cloudflare_zone.this[0].zone_id
+  zone_id = data.cloudflare_zone.this.zone_id
   name    = var.cloudflare_zone
   type    = "TXT"
-  content = "\"${data.google_site_verification_token.this[0].token}\""
+  content = "\"${data.google_site_verification_token.this.token}\""
   ttl     = 1
 }
 
 resource "google_site_verification_web_resource" "this" {
-  count    = local.run != "" ? 1 : 0
   provider = google.verify
   site {
     type       = "INET_DOMAIN"
@@ -486,16 +419,14 @@ resource "google_site_verification_web_resource" "this" {
 }
 
 resource "google_site_verification_owner" "me" {
-  count           = local.run != "" ? 1 : 0
   provider        = google.verify
-  web_resource_id = google_site_verification_web_resource.this[0].id
+  web_resource_id = google_site_verification_web_resource.this.id
   email           = data.google_client_openid_userinfo.me.email
 }
 
 resource "google_cloud_run_domain_mapping" "this" {
-  count    = local.run != "" ? 1 : 0
   provider = google.verify
-  name     = local.run
+  name     = var.api_domain
   location = var.region
 
   metadata {
@@ -510,9 +441,8 @@ resource "google_cloud_run_domain_mapping" "this" {
 }
 
 resource "cloudflare_dns_record" "run" {
-  count   = local.run != "" ? 1 : 0
-  zone_id = data.cloudflare_zone.this[0].zone_id
-  name    = local.run
+  zone_id = data.cloudflare_zone.this.zone_id
+  name    = var.api_domain
   type    = "CNAME"
   content = "ghs.googlehosted.com"
   proxied = true
@@ -520,27 +450,25 @@ resource "cloudflare_dns_record" "run" {
 }
 
 resource "cloudflare_ruleset" "run" {
-  count   = local.run != "" ? 1 : 0
-  zone_id = data.cloudflare_zone.this[0].zone_id
+  zone_id = data.cloudflare_zone.this.zone_id
   name    = "${var.name} origin TLS"
   kind    = "zone"
   phase   = "http_config_settings"
   rules = [{
-    description       = "${local.run} reaches Google over verified TLS"
-    expression        = "http.host eq \"${local.run}\""
+    description       = "${var.api_domain} reaches Google over verified TLS"
+    expression        = "http.host eq \"${var.api_domain}\""
     action            = "set_config"
     action_parameters = { ssl = "strict" }
     }, {
     description       = "Google's certificate challenges reach it over HTTP, before it has a certificate"
-    expression        = "http.host eq \"${local.run}\" and starts_with(http.request.uri.path, \"/.well-known/acme-challenge/\")"
+    expression        = "http.host eq \"${var.api_domain}\" and starts_with(http.request.uri.path, \"/.well-known/acme-challenge/\")"
     action            = "set_config"
     action_parameters = { ssl = "flexible" }
   }]
 }
 
 resource "cloudflare_workers_script" "app" {
-  count       = local.domains ? 1 : 0
-  account_id  = data.cloudflare_zone.this[0].account.id
+  account_id  = data.cloudflare_zone.this.account.id
   script_name = "${var.name}-app"
   main_module = "worker.js"
   content     = "export default { fetch: () => new Response(null, { status: 503 }) };"
@@ -551,31 +479,30 @@ resource "cloudflare_workers_script" "app" {
 }
 
 resource "cloudflare_workers_custom_domain" "app" {
-  count      = local.domains ? 1 : 0
-  account_id = data.cloudflare_zone.this[0].account.id
-  zone_id    = data.cloudflare_zone.this[0].zone_id
+  account_id = data.cloudflare_zone.this.account.id
+  zone_id    = data.cloudflare_zone.this.zone_id
   hostname   = var.app_domain
-  service    = cloudflare_workers_script.app[0].script_name
+  service    = cloudflare_workers_script.app.script_name
 }
 
 data "cloudflare_account_api_token_permission_groups_list" "this" {
-  count      = local.domains && var.github_repository != "" ? 1 : 0
-  account_id = data.cloudflare_zone.this[0].account.id
+  count      = var.github_repository != "" ? 1 : 0
+  account_id = data.cloudflare_zone.this.account.id
 }
 
 resource "cloudflare_account_token" "app" {
-  count      = local.domains && var.github_repository != "" ? 1 : 0
-  account_id = data.cloudflare_zone.this[0].account.id
+  count      = var.github_repository != "" ? 1 : 0
+  account_id = data.cloudflare_zone.this.account.id
   name       = "${var.name}-app-deploy"
   policies = [{
     effect            = "allow"
     permission_groups = [for g in data.cloudflare_account_api_token_permission_groups_list.this[0].result : { id = g.id } if g.name == "Workers Scripts Write"]
-    resources         = jsonencode({ "com.cloudflare.api.account.${data.cloudflare_zone.this[0].account.id}" = "*" })
+    resources         = jsonencode({ "com.cloudflare.api.account.${data.cloudflare_zone.this.account.id}" = "*" })
   }]
 }
 
 resource "github_actions_secret" "app" {
-  count       = local.domains && var.github_repository != "" ? 1 : 0
+  count       = var.github_repository != "" ? 1 : 0
   repository  = split("/", var.github_repository)[1]
   secret_name = "CLOUDFLARE_API_TOKEN"
   value       = cloudflare_account_token.app[0].value
@@ -648,16 +575,16 @@ resource "google_service_account_iam_member" "deploy_runs_as" {
 
 resource "github_actions_variable" "deploy" {
   for_each = var.github_repository != "" ? merge({
-    GCP_PROJECT                           = var.project
-    GCP_REGION                            = var.region
-    GCP_SERVICE                           = google_cloud_run_v2_service.this.name
-    GCP_SERVICE_ACCOUNT                   = google_service_account.deploy[0].email
-    GCP_WORKLOAD_IDENTITY_PROVIDER        = google_iam_workload_identity_pool_provider.github[0].name
-    }, !local.domains ? { GCP_WEB_SERVICE = google_cloud_run_v2_service.web[0].name } : {}, local.domains ? {
-    ARCHIVE_API_URL                       = local.api_url
-    CLOUDFLARE_ACCOUNT_ID                 = data.cloudflare_zone.this[0].account.id
-    CLOUDFLARE_WORKER                     = cloudflare_workers_script.app[0].script_name
-  } : {}) : {}
+    GCP_PROJECT                    = var.project
+    GCP_REGION                     = var.region
+    GCP_SERVICE                    = google_cloud_run_v2_service.this.name
+    GCP_SERVICE_ACCOUNT            = google_service_account.deploy[0].email
+    GCP_WORKLOAD_IDENTITY_PROVIDER = google_iam_workload_identity_pool_provider.github[0].name
+    }, {
+    ARCHIVE_API_URL       = local.api_url
+    CLOUDFLARE_ACCOUNT_ID = data.cloudflare_zone.this.account.id
+    CLOUDFLARE_WORKER     = cloudflare_workers_script.app.script_name
+  }) : {}
   repository    = split("/", var.github_repository)[1]
   variable_name = each.key
   value         = each.value

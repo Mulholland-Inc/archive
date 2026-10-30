@@ -17,30 +17,22 @@ variable "name" {
 
 variable "app_domain" {
   type        = string
-  description = "Domain of the web app, like app.archive.dev (ARCHIVE_URL), on Cloudflare: static files on a Worker of its own that the image workflow deploys. Set with api_domain; both empty run the web app as the archive-web Cloud Run service on its run.app URL."
-  default     = ""
+  description = "Domain of the web app, like app.archive.dev (ARCHIVE_URL), on Cloudflare: static files on a Worker of its own that the image workflow deploys."
 }
 
 variable "api_domain" {
   type        = string
-  description = "Domain of the API, sign-in, MCP, webhooks and OAuth redirects, like api.archive.dev (ARCHIVE_API_URL), on Cloudflare: a Cloud Run domain mapping behind Cloudflare's proxy. Set with app_domain; both empty use the service's run.app URL."
-  default     = ""
+  description = "Domain of the API, sign-in, MCP, webhooks and OAuth redirects, like api.archive.dev (ARCHIVE_API_URL), on Cloudflare: a Cloud Run domain mapping behind Cloudflare's proxy."
 
   validation {
-    condition     = (var.api_domain == "") == (var.app_domain == "") && (var.api_domain == "" || var.api_domain != var.app_domain)
-    error_message = "Set app_domain and api_domain together, to two different domains, or leave both empty: the web app and the API are always on their own addresses."
-  }
-
-  validation {
-    condition     = var.api_domain == "" || var.app_domain != ""
-    error_message = "api_domain needs app_domain: the web app on its own domain calls the API on api_domain."
+    condition     = var.api_domain != var.app_domain
+    error_message = "The web app and the API each need a domain of their own."
   }
 }
 
 variable "cloudflare_zone" {
   type        = string
   description = "Cloudflare zone holding app_domain and api_domain, like archive.dev, verified with Google as the archive-verify service account. Its token goes in CLOUDFLARE_API_TOKEN; the README lists the permissions it needs."
-  default     = ""
 }
 
 variable "github_repository" {
@@ -51,7 +43,7 @@ variable "github_repository" {
 
 variable "image_tag" {
   type        = string
-  description = "Tag of ghcr.io/mulholland-inc/archive and archive-web to run first; later deploys change the images outside Terraform."
+  description = "Tag of ghcr.io/mulholland-inc/archive to run first; later deploys change the image outside Terraform."
   default     = "latest"
 }
 

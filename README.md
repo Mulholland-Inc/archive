@@ -173,23 +173,23 @@ With no `-space`, the token gets your role in every space you are in. Narrow it 
 
 The API and the web app are separate images, always on addresses of their own: `ghcr.io/mulholland-inc/archive` serves the API, sign-in and MCP, and `ghcr.io/mulholland-inc/archive-web` serves the web app. Point them at each other with `ARCHIVE_URL` (the web app's address, on the API) and `ARCHIVE_API_URL` (the API's address, on both).
 
-On Google Cloud, everything is in Terraform, in one `apply`. You need a project with billing, Owner on it, and Terraform 1.9 or later:
+On Google Cloud, everything is in Terraform, in one `apply`. You need a project with billing, Owner on it, Terraform 1.9 or later, and a domain on Cloudflare: the API gets one subdomain and the web app another.
 
 ```sh
 gcloud auth application-default login
 cd apps/terraform/gcp && terraform init
-terraform apply -var project=<project>
+terraform apply -var project=<project> -var app_domain=app.example.com -var api_domain=api.example.com -var cloudflare_zone=example.com
 ```
 
-The first apply takes about 15 minutes, nearly all of it Cloud SQL. It runs the public API and web app images as two Cloud Run services and prints both addresses. Then add yourself as the first owner with the `archive` command, which Terraform also sets up as a Cloud Run job (`terraform output cli` prints its prefix):
+The Cloudflare account token goes in `CLOUDFLARE_API_TOKEN`. On the zone it needs DNS Write, Config Settings Write and Workers Routes Write; on the account it needs Workers Scripts Write and Account API Tokens Write. Terraform verifies the zone with Google, maps `api_domain` to the Cloud Run service behind Cloudflare's proxy, and makes the web app on `app_domain` a Worker of static files that calls the API on its own domain. The zone's own SSL settings don't matter: a Configuration Rule makes Cloudflare reach Google over verified TLS, and lets Google's certificate challenges through over HTTP.
+
+The first apply takes about 15 minutes, nearly all of it Cloud SQL, and Google's certificate for `api_domain` 15 minutes or more after that. Then add yourself as the first owner with the `archive` command, which Terraform also sets up as a Cloud Run job (`terraform output cli` prints its prefix):
 
 ```sh
 gcloud run jobs execute archive --region us-central1 --wait --args=user,add,you@example.com
 ```
 
 The same job runs any other command, like `--args=workspace,add,Acme,anna@acme.example`. The service scales to zero: Cloud Tasks wakes it at the moment a workflow or file is due, so nothing has to stay running.
-
-For your own domains, add `-var app_domain=… -var api_domain=… -var cloudflare_zone=…`, with a Cloudflare account token in `CLOUDFLARE_API_TOKEN`. On the zone it needs DNS Write, Config Settings Write and Workers Routes Write; on the account it needs Workers Scripts Write and Account API Tokens Write. Terraform verifies the zone with Google, maps `api_domain` to the service behind Cloudflare's proxy, and makes the web app on `app_domain` a Worker of static files that calls the API on its own domain. Google's certificate for `api_domain` takes 15 minutes or more after the apply. The zone's own SSL settings don't matter: a Configuration Rule makes Cloudflare reach Google over verified TLS, and lets Google's certificate challenges through over HTTP.
 
 To deploy every image built on main, add `-var github_repository=owner/repo` with a `GITHUB_TOKEN` that can write that repository's Actions variables and secrets (`gh auth token` works for an admin). Apply before merging anything else, then run the image workflow once: until it runs, the app domain answers 503.
 
