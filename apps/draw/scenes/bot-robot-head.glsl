@@ -1,5 +1,5 @@
 #pragma frame {"size":[320,320],"center":[0.0,0.62,0.0],"zoom":118,"trim":false,"bounds":[[-1.3,-0.1,-1.3],[1.3,1.9,1.3]]}
-#define GLOW LIME
+#define GLOW WHITE
 float gable(vec3 q, float h, float w) {
   return (h * abs(q.x) + w * q.y - h * w) / length(vec2(h, w));
 }

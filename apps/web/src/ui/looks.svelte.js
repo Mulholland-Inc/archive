@@ -2,7 +2,7 @@
 export const TYPES = {
   personal: { label: 'Personal', icons: ['robot', 'safe', 'bookcase'] },
   family: { label: 'Family', icons: ['robot', 'cottage', 'townhouse', 'farmhouse'] },
-  business: { label: 'Business', icons: ['robot', 'warehouse', 'factory', 'tower'] },
+  business: { label: 'Business', icons: ['robot', 'cabinet', 'warehouse', 'factory', 'bank'] },
 };
 export const TINTS = ['#e5484d', '#f5a524', '#30a46c', '#0091ff', '#8e4ec6', '#a0703c', '#2a2f38'];
 

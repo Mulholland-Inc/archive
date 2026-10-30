@@ -90,6 +90,7 @@
         {#each TINTS as tint (tint)}
           <button type="button" class:on={l.tint === tint} style="background: {tint}" aria-label="Colour {tint}" onclick={() => setLook(seed, { tint })}></button>
         {/each}
+        <label class="any" title="Any colour"><input type="color" value={l.tint} aria-label="Any colour" oninput={(e) => setLook(seed, { tint: e.currentTarget.value })} /></label>
       </div>
     </div>
   {/if}
@@ -190,8 +191,10 @@
   .icons { display: flex; justify-content: center; gap: var(--space-1); }
   .icons button { display: grid; place-items: center; width: 52px; height: 52px; border-radius: var(--radius-nav); color: var(--fg-soft); }
   .icons .on { background: var(--fill-strong); color: var(--fg); }
-  .tints { display: flex; justify-content: space-between; }
-  .tints button { width: 24px; height: 24px; border-radius: 50%; }
+  .tints { display: flex; justify-content: space-between; gap: 2px; }
+  .tints button { width: 22px; height: 22px; border-radius: 50%; }
+  .any { position: relative; width: 22px; height: 22px; overflow: hidden; border-radius: 50%; background: conic-gradient(#e5484d, #f5a524, #30a46c, #0091ff, #8e4ec6, #e5484d); }
+  .any input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
   .tints .on { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--fg-muted); }
   .list { display: flex; flex: none; flex-direction: column; gap: var(--space-0-5); width: 100%; font-size: var(--text-table); }
   .line { position: relative; display: flex; }

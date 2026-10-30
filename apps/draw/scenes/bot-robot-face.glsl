@@ -1,5 +1,5 @@
 #pragma frame {"size":[320,320],"center":[0.0,1.24,0.0],"zoom":212,"pitch":14,"trim":false,"bounds":[[-1.0,0.25,-1.0],[1.0,2.0,1.0]]}
-#define GLOW LIME
+#define GLOW WHITE
 vec2 map(vec3 p) {
   p = rotY(p, 0.785);
   vec3 m = mirX(p);
