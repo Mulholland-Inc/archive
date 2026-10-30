@@ -1,0 +1,1 @@
+import{n as e,r as t}from"./index-CUHWwu7r.js";import{t as n}from"./Icon-_CzsFgsJ.js";var r={name:`zodiac-ophiuchus`,size:24,node:[[`path`,{d:`M3 10A6.06 6.06 0 0 1 12 10 A6.06 6.06 0 0 0 21 10`}],[`path`,{d:`M6 3v12a6 6 0 0 0 12 0V3`}]]};r.node;var i=new Set([`$$slots`,`$$events`,`$$legacy`]);function a(a,o){let s=e(o,i);n(a,t(()=>s,{get icon(){return r}}))}export{a as default};

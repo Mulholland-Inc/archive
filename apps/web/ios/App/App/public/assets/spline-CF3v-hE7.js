@@ -1,0 +1,1 @@
+import{n as e,r as t}from"./index-CUHWwu7r.js";import{t as n}from"./Icon-_CzsFgsJ.js";var r={name:`spline`,size:24,node:[[`circle`,{cx:`19`,cy:`5`,r:`2`}],[`circle`,{cx:`5`,cy:`19`,r:`2`}],[`path`,{d:`M5 17A12 12 0 0 1 17 5`}]]};r.node;var i=new Set([`$$slots`,`$$events`,`$$legacy`]);function a(a,o){let s=e(o,i);n(a,t(()=>s,{get icon(){return r}}))}export{a as default};

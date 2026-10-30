@@ -1,0 +1,1 @@
+import{n as e,r as t}from"./index-CUHWwu7r.js";import{t as n}from"./Icon-_CzsFgsJ.js";var r={name:`turkish-lira`,size:24,node:[[`path`,{d:`M15 4 5 9`}],[`path`,{d:`m15 8.5-10 5`}],[`path`,{d:`M18 12a9 9 0 0 1-9 9V3`}]]};r.node;var i=new Set([`$$slots`,`$$events`,`$$legacy`]);function a(a,o){let s=e(o,i);n(a,t(()=>s,{get icon(){return r}}))}export{a as default};

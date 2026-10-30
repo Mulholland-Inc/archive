@@ -1,0 +1,1 @@
+import{n as e,r as t}from"./index-CUHWwu7r.js";import{t as n}from"./Icon-_CzsFgsJ.js";var r={name:`torus`,size:24,node:[[`ellipse`,{cx:`12`,cy:`11`,rx:`3`,ry:`2`}],[`ellipse`,{cx:`12`,cy:`12.5`,rx:`10`,ry:`8.5`}]]};r.node;var i=new Set([`$$slots`,`$$events`,`$$legacy`]);function a(a,o){let s=e(o,i);n(a,t(()=>s,{get icon(){return r}}))}export{a as default};

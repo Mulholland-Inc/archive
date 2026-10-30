@@ -1,0 +1,1 @@
+import{n as e,r as t}from"./index-CUHWwu7r.js";import{t as n}from"./Icon-_CzsFgsJ.js";var r={name:`arrow-down-to-dot`,size:24,node:[[`path`,{d:`M12 2v14`}],[`path`,{d:`m19 9-7 7-7-7`}],[`circle`,{cx:`12`,cy:`21`,r:`1`}]]};r.node;var i=new Set([`$$slots`,`$$events`,`$$legacy`]);function a(a,o){let s=e(o,i);n(a,t(()=>s,{get icon(){return r}}))}export{a as default};
