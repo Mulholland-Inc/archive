@@ -15,6 +15,18 @@ variable "name" {
   default     = "archive"
 }
 
+variable "app_domain" {
+  type        = string
+  description = "Domain of the web app and sign-in, like app.archive.dev (ARCHIVE_URL). Empty uses the run.app URL."
+  default     = ""
+}
+
+variable "api_domain" {
+  type        = string
+  description = "Domain of the API, MCP, webhooks, Stripe and OAuth redirects, like api.archive.dev (ARCHIVE_API_URL). Empty uses the app's address."
+  default     = ""
+}
+
 variable "image_tag" {
   type        = string
   description = "Tag of ghcr.io/mulholland-inc/archive to run."
@@ -34,8 +46,54 @@ variable "instance" {
 
 variable "env" {
   type        = map(string)
-  description = "Extra environment variables, such as ARCHIVE_SMTP_URL, ARCHIVE_SMTP_FROM and ARCHIVE_OIDC."
+  description = "Extra environment variables, such as ARCHIVE_OIDC and ARCHIVE_LOCALE."
   default     = {}
+}
+
+variable "anthropic_api_key" {
+  type        = string
+  description = "Anthropic API key for the in-app agent (ANTHROPIC_API_KEY), kept in Secret Manager. Empty leaves the agent off."
+  default     = ""
+  sensitive   = true
+}
+
+variable "smtp_url" {
+  type        = string
+  description = "smtp://user:pass@host:587 for sign-in mail (ARCHIVE_SMTP_URL), kept in Secret Manager. Empty prints links to the log."
+  default     = ""
+  sensitive   = true
+}
+
+variable "smtp_from" {
+  type        = string
+  description = "Sender address of sign-in mail (ARCHIVE_SMTP_FROM)."
+  default     = ""
+}
+
+variable "stripe_key" {
+  type        = string
+  description = "Stripe secret key (ARCHIVE_STRIPE_KEY), kept in Secret Manager. Empty turns billing and plan limits off."
+  default     = ""
+  sensitive   = true
+}
+
+variable "stripe_webhook_secret" {
+  type        = string
+  description = "Signing secret of the Stripe webhook at <api>/stripe (ARCHIVE_STRIPE_WEBHOOK_SECRET), kept in Secret Manager."
+  default     = ""
+  sensitive   = true
+}
+
+variable "min_instances" {
+  type        = number
+  description = "Cloud Run instances kept running; scheduled and table-triggered workflows only run while one is up."
+  default     = 1
+}
+
+variable "max_instances" {
+  type        = number
+  description = "Most Cloud Run instances."
+  default     = 1
 }
 
 variable "cpu" {
@@ -52,8 +110,37 @@ variable "memory" {
 
 variable "db_tier" {
   type        = string
-  description = "Cloud SQL machine tier."
+  description = "Cloud SQL machine tier. Connection pooling needs Enterprise Plus, so a db-perf-optimized-N-* tier."
   default     = "db-g1-small"
+
+  validation {
+    condition     = !var.connection_pooling || startswith(var.db_tier, "db-perf-optimized-")
+    error_message = "connection_pooling needs Cloud SQL Enterprise Plus: set db_tier to a db-perf-optimized-N-* tier."
+  }
+}
+
+variable "db_max_connections" {
+  type        = number
+  description = "Cloud SQL max_connections. Null keeps the tier's default."
+  default     = null
+}
+
+variable "connection_pooling" {
+  type        = bool
+  description = "Put Cloud SQL's managed connection pooling between Archive and Postgres, over a private network; schema changes still connect directly."
+  default     = false
+}
+
+variable "pool_size" {
+  type        = number
+  description = "Server connections the pooler keeps per database and role."
+  default     = 10
+}
+
+variable "subnet_range" {
+  type        = string
+  description = "IP range of the subnet Cloud Run reaches Cloud SQL through, with connection pooling."
+  default     = "10.8.0.0/26"
 }
 
 variable "deletion_protection" {

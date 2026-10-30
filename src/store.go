@@ -56,6 +56,10 @@ const storeRoles = `DO $$ BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_admin') THEN
         CREATE ROLE {p}_admin NOLOGIN;
     END IF;
+    IF NOT EXISTS (SELECT FROM pg_db_role_setting s JOIN pg_database d ON d.oid = s.setdatabase WHERE d.datname = current_database() AND s.setrole = 0) THEN
+        EXECUTE format('ALTER DATABASE %I SET search_path = archive, public', current_database());
+        EXECUTE format('ALTER DATABASE %I SET timezone = %L', current_database(), 'UTC');
+    END IF;
     IF NOT has_database_privilege('{p}_authenticator', current_database(), 'CONNECT') THEN
         EXECUTE format('GRANT CONNECT ON DATABASE %I TO {p}_authenticator', current_database());
     END IF;

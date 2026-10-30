@@ -37,6 +37,10 @@ spec:
             - name: ARCHIVE_URL
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.apiUrl }}
+            - name: ARCHIVE_API_URL
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .Values.adminEmail }}
             - name: ARCHIVE_ADMIN_EMAIL
               value: {{ . | quote }}

@@ -4,6 +4,7 @@ image:
   pullPolicy: IfNotPresent
 
 url: ""
+apiUrl: ""
 adminEmail: ""
 secretKey: ""
 
