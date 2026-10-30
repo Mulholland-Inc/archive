@@ -63,6 +63,12 @@
     generation++;
   }
 
+  const named = new URLSearchParams(location.search).get('workspace');
+  if (named) {
+    setWorkspace(named);
+    history.replaceState(null, '', location.pathname);
+  }
+
   async function load() {
     try {
       me = await api('/auth/me');
@@ -76,8 +82,8 @@
       views = all.filter((t) => t.kind === 'view');
       if (location.pathname === '/') history.replaceState(null, '', (path = '/files'));
     } catch (e) {
-      if (!(e instanceof Unauthorized)) throw e;
-      if (workspace()) {
+      if (!(e instanceof Unauthorized) && e.status !== 403) throw e;
+      if (workspace() && !(e instanceof Unauthorized)) {
         setWorkspace('');
         return load();
       }
@@ -98,7 +104,7 @@
 {#if signedOut}
   <SignIn />
 {:else if adding}
-  <SignIn oncancel={() => (adding = false)} />
+  <SignIn create address={me.actor.email} oncancel={() => (adding = false)} />
 {:else if me}
   <div class="shell">
     <aside>

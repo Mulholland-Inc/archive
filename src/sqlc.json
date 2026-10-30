@@ -44,10 +44,6 @@
               }
             },
             {
-              "column": "archive.user.home",
-              "go_type": "github.com/google/uuid.UUID"
-            },
-            {
               "column": "archive.user.signin",
               "go_type": "encoding/json.RawMessage"
             },

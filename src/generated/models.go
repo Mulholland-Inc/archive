@@ -43,13 +43,12 @@ type ArchiveUpload struct {
 }
 
 type ArchiveUser struct {
-	ID        uuid.UUID
-	Email     string
-	Name      string
-	Role      string
-	Home      uuid.UUID
-	Signin    json.RawMessage
-	CreatedAt time.Time
+	ID         uuid.UUID
+	Email      string
+	Name       string
+	Workspaces []uuid.UUID
+	Signin     json.RawMessage
+	CreatedAt  time.Time
 }
 
 type ArchiveWorkflow struct {

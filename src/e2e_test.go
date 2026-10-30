@@ -251,6 +251,10 @@ func (in *e2eInst) roundTrips() map[string]string {
 	return files
 }
 
+func (in *e2eInst) role(email string) string {
+	return in.psql("archive", "SELECT 'w' || w.short || '_u_' || replace(u.id::text, '-', '') FROM archive.\"user\" u, archive.workspace w WHERE u.email = '"+email+"' AND w.database = 'archive'")
+}
+
 func (in *e2eInst) psql(user, sql string) string {
 	in.t.Helper()
 	out, err := exec.Command("psql", "-X", "-h", in.dir, "-U", user, "-d", "archive", "-Atc", sql).CombinedOutput()
@@ -608,7 +612,7 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 
 	t.Run("PlainPsqlAsTheUserRoleSeesWhatTheAppSees", func(t *testing.T) {
 		in := in.on(t)
-		role := in.psql("archive", "SELECT role FROM archive.\"user\" WHERE email = 'bob@example.com'")
+		role := in.role("bob@example.com")
 		in.psql("archive", "ALTER ROLE "+role+" LOGIN")
 		defer in.psql("archive", "ALTER ROLE "+role+" NOLOGIN")
 		if got := in.psql(role, "SELECT string_agg(name, ',' ORDER BY id) FROM person"); got != "Bob private,Family member" {
@@ -919,7 +923,7 @@ func TestDeletingASpaceRemovesEverythingInItForOwnersOnly(t *testing.T) {
 		t.Errorf("editor removes team: %s", errs)
 	}
 	errs = in.fails("space", "remove", "alice_example_com")
-	if !strings.Contains(errs, "personal space of alice@example.com") {
+	if !strings.Contains(errs, "is a personal space") {
 		t.Errorf("owner removes her personal space: %s", errs)
 	}
 	errs = in.fails("-as", "bob@example.com", "space", "remove", "scratch")
@@ -1381,7 +1385,7 @@ func TestFilesUploadProcessShareAndReference(t *testing.T) {
 			t.Errorf("bob lists %+v", list)
 		}
 		in.fails("-as", "bob@example.com", "file", "get", id, "-o", "-")
-		role := in.psql("archive", "SELECT role FROM archive.\"user\" WHERE email = 'bob@example.com'")
+		role := in.role("bob@example.com")
 		in.psql("archive", "ALTER ROLE "+role+" LOGIN")
 		if got := in.psql(role, "SELECT count(*) FROM archive.file WHERE name = 'photo.jpg'"); got != "0" {
 			t.Errorf("psql as bob sees %s photos", got)
@@ -1798,7 +1802,7 @@ func TestFullTextSearchInDutchAndEnglishAcrossTablesFilesAndUsers(t *testing.T) 
 		if got := in.must("search", "huurcontract", "-type", "note"); !strings.Contains(got, "appartement") || strings.Contains(got, "Bob") {
 			t.Errorf("alice cli: %s", got)
 		}
-		role := in.psql("archive", "SELECT role FROM archive.\"user\" WHERE email = 'bob@example.com'")
+		role := in.role("bob@example.com")
 		in.psql("archive", "ALTER ROLE "+role+" LOGIN")
 		defer in.psql("archive", "ALTER ROLE "+role+" NOLOGIN")
 		q := "SELECT (SELECT count(*) FROM note WHERE search @@ archive.search_query('huurcontract verhuurder')) || ',' || " +
@@ -3112,7 +3116,7 @@ func TestTwoWorkspacesInOneProcessSeeNothingOfEachOther(t *testing.T) {
 	api := srv.url + "/api"
 	alice := decode[Token](t, in.must("token", "create")).Secret
 	bob := decode[Token](t, in.must("-workspace", ws, "-as", "bob@acme.test", "token", "create")).Secret
-	if !strings.HasPrefix(alice, "arc_"+one+"_") || !strings.HasPrefix(bob, "arc_"+ws+"_") || ws == one {
+	if !strings.HasPrefix(alice, "arc_") || !strings.HasPrefix(bob, "arc_") || ws == one {
 		t.Fatalf("tokens %q and %q for workspaces %s and %s", alice, bob, one, ws)
 	}
 
@@ -3127,7 +3131,7 @@ func TestTwoWorkspacesInOneProcessSeeNothingOfEachOther(t *testing.T) {
 		}(), 201, "bob creates")
 		var a, b []row
 		call(t, "GET", api+"/company", alice, nil, &a)
-		e2eDo(t, "GET", api+"/company", map[string]string{"Authorization": "Bearer " + bob, "Archive-Workspace": one}, nil, &b)
+		e2eDo(t, "GET", api+"/company", map[string]string{"Authorization": "Bearer " + bob, "Archive-Workspace": ws}, nil, &b)
 		if names(a) != "Alpha" || names(b) != "Beta" {
 			t.Errorf("alice sees %q, bob sees %q", names(a), names(b))
 		}
@@ -3221,11 +3225,18 @@ func TestTwoWorkspacesInOneProcessSeeNothingOfEachOther(t *testing.T) {
 		}
 	})
 
-	t.Run("TokensRouteByWorkspace", func(t *testing.T) {
-		secret := strings.TrimPrefix(bob, "arc_"+ws+"_")
-		for _, forged := range []string{"arc_" + one + "_" + secret, "arc_" + secret, "arc_nosuch_" + secret} {
-			st, _ := call(t, "GET", api+"/company", forged, nil, nil)
-			wantStatus(t, st, 401, "bob's secret as "+forged[:12])
+	t.Run("ATokenOnlyWorksInItsOwnWorkspace", func(t *testing.T) {
+		st, _ := e2eDo(t, "GET", api+"/company", map[string]string{"Authorization": "Bearer " + bob, "Archive-Workspace": one}, nil, nil)
+		wantStatus(t, st, 403, "bob's token in workspace one")
+		st, _ = e2eDo(t, "GET", api+"/company", map[string]string{"Authorization": "Bearer " + alice, "Archive-Workspace": ws}, nil, nil)
+		wantStatus(t, st, 403, "alice's token in bob's workspace")
+		st, _ = e2eDo(t, "GET", api+"/company", map[string]string{"Authorization": "Bearer " + alice, "Archive-Workspace": "nosuch"}, nil, nil)
+		wantStatus(t, st, 403, "alice's token in no workspace")
+		if n := in.psql("archive", "SELECT count(*) FROM archive.token t JOIN archive.workspace w ON w.id = t.workspace WHERE w.short = '"+ws+"'"); n != "1" {
+			t.Errorf("%s tokens for workspace %s in the main database", n, ws)
+		}
+		if n := in.psqlIn("archive_"+ws, `SELECT (SELECT count(*) FROM archive."user") + (SELECT count(*) FROM archive.token)`); n != "0" {
+			t.Errorf("%s users and tokens in bob's workspace database", n)
 		}
 		ctx := t.Context()
 		cl := mcp.NewClient(&mcp.Implementation{Name: "e2e", Version: "1"}, nil)
@@ -3310,46 +3321,66 @@ func TestSignupAndSigningInToSeveralWorkspaces(t *testing.T) {
 	st, _ = call(t, "POST", srv.url+"/auth/workspaces", full, map[string]string{"name": "Second", "owner": "alice@example.com"}, &second)
 	wantStatus(t, st, 201, "an instance admin creates a workspace")
 	call(t, "POST", srv.url+"/auth/magic", "", map[string]string{"email": "alice@example.com"}, nil)
-	links := srv.links(t, "sign-in", "alice@example.com", 2)
-	byWS := map[string]string{}
-	for _, l := range links {
-		u, _ := url.Parse(l)
-		byWS[secretWorkspace(u.Query().Get("token"))] = l
-	}
-	if len(links) != 2 || byWS[one] == "" || byWS[second.ID] == "" {
-		t.Fatalf("one sign-in link per workspace: %v", links)
-	}
-	_, cs = e2eDo(t, "GET", byWS[one], nil, nil, nil)
-	first := e2eSession(cs)
-	_, cs = e2eDo(t, "GET", byWS[second.ID], nil, nil, nil, first)
-	both := e2eSession(cs)
-	if first == nil || both == nil || strings.Count(both.Value, ".") != 1 {
-		t.Fatalf("cookies %v then %v", first, both)
+	_, cs = e2eDo(t, "GET", srv.links(t, "sign-in", "alice@example.com", 1)[0], nil, nil, nil)
+	alice := e2eSession(cs)
+	if n := strings.Count(srv.log.String(), "sign-in link for alice@example.com"); alice == nil || n != 1 {
+		t.Fatalf("one sign-in link for two workspaces: %d, cookie %v", n, alice)
 	}
 	var me struct {
 		Workspace string      `json:"workspace"`
 		All       []Workspace `json:"workspaces"`
 	}
-	e2eDo(t, "GET", srv.url+"/auth/me", nil, nil, &me, both)
-	if me.Workspace != second.ID || len(me.All) != 2 {
-		t.Errorf("me in the newest workspace: %+v", me)
+	e2eDo(t, "GET", srv.url+"/auth/me", nil, nil, &me, alice)
+	if me.Workspace != one || len(me.All) != 2 || me.All[0].ID != one || me.All[1].ID != second.ID {
+		t.Errorf("me without a workspace header: %+v", me)
 	}
-	e2eDo(t, "GET", srv.url+"/auth/me", map[string]string{"Archive-Workspace": one}, nil, &me, both)
-	if me.Workspace != one {
-		t.Errorf("me in the workspace the header names: %+v", me)
+	st, _ = e2eDo(t, "GET", srv.url+"/auth/me", map[string]string{"Archive-Workspace": second.ID}, nil, &me, alice)
+	if st != 200 || me.Workspace != second.ID {
+		t.Errorf("me in the workspace the header names: %d %+v", st, me)
 	}
-	st, _ = e2eDo(t, "GET", srv.url+"/auth/me", map[string]string{"Archive-Workspace": made.Workspace}, nil, nil, both)
-	wantStatus(t, st, 401, "a workspace this browser is not signed in to")
-	st, cs = e2eDo(t, "POST", srv.url+"/auth/signout", map[string]string{"Archive-Workspace": second.ID}, nil, nil, both)
-	left := e2eSession(cs)
-	if st != 204 || left == nil || strings.Contains(left.Value, ".") {
-		t.Fatalf("sign out of one workspace: %d %v", st, left)
+	st, _ = e2eDo(t, "POST", srv.url+"/api/run", map[string]string{"Archive-Workspace": second.ID}, map[string]string{"code": "return (await archive.spaces()).map((s) => s.level).join(',')"}, &out, alice)
+	if st != 200 || string(out.Result) != `"owner"` {
+		t.Errorf("alice runs in the second workspace with the same cookie: %d %+v", st, out)
 	}
-	st, _ = e2eDo(t, "GET", srv.url+"/auth/me", map[string]string{"Archive-Workspace": second.ID}, nil, nil, both)
-	wantStatus(t, st, 401, "the signed-out session")
-	st, _ = e2eDo(t, "GET", srv.url+"/auth/me", nil, nil, &me, left)
-	if st != 200 || me.Workspace != one {
-		t.Errorf("still signed in to workspace one: %d %+v", st, me)
+	st, _ = e2eDo(t, "GET", srv.url+"/auth/me", map[string]string{"Archive-Workspace": made.Workspace}, nil, nil, alice)
+	wantStatus(t, st, 403, "alice in carol's workspace")
+	st, _ = e2eDo(t, "GET", srv.url+"/auth/me", map[string]string{"Archive-Workspace": one}, nil, nil, carol)
+	wantStatus(t, st, 403, "carol in workspace one")
+
+	in.must("-workspace", second.ID, "user", "add", "carol@example.com")
+	in.fails("-workspace", second.ID, "user", "add", "carol@example.com")
+	in2 := map[string]string{"Archive-Workspace": second.ID}
+	var tok Token
+	st, _ = e2eDo(t, "POST", srv.url+"/auth/tokens", in2, map[string]any{"name": "carol in second"}, &tok, carol)
+	wantStatus(t, st, 201, "carol makes a token in the second workspace")
+	st, _ = call(t, "GET", srv.url+"/api/types", tok.Secret, nil, nil)
+	wantStatus(t, st, 200, "carol's token in the second workspace")
+	if errs := in.fails("-workspace", second.ID, "-as", "carol@example.com", "user", "remove", "alice@example.com"); !strings.Contains(errs, "only admins") {
+		t.Errorf("carol removes alice: %s", errs)
+	}
+	in.must("-workspace", second.ID, "user", "remove", "carol@example.com")
+	st, _ = e2eDo(t, "GET", srv.url+"/auth/me", in2, nil, nil, carol)
+	wantStatus(t, st, 403, "carol in the workspace she was removed from")
+	st, _ = call(t, "GET", srv.url+"/api/types", tok.Secret, nil, nil)
+	wantStatus(t, st, 401, "carol's token after she was removed")
+	st, _ = e2eDo(t, "GET", srv.url+"/auth/me", nil, nil, &me, carol)
+	if st != 200 || me.Workspace != made.Workspace || len(me.All) != 1 {
+		t.Errorf("carol still in her own workspace: %d %+v", st, me)
+	}
+	if n := in.psql("archive", "SELECT count(*) FROM pg_roles WHERE rolname LIKE 'w"+second.ID+"\\_u\\_%'"); n != "1" {
+		t.Errorf("%s user roles left in the second workspace, want alice's", n)
+	}
+	if got := decode[[]Member](t, in.must("-workspace", second.ID, "space", "members", "alice_example_com")); len(got) != 1 {
+		t.Errorf("members of alice's space in the second workspace: %+v", got)
+	}
+
+	st, cs = e2eDo(t, "POST", srv.url+"/auth/signout", nil, nil, nil, alice)
+	if left := e2eSession(cs); st != 204 || left == nil || left.Value != "" {
+		t.Fatalf("sign out: %d %v", st, left)
+	}
+	for _, ws := range []string{one, second.ID} {
+		st, _ = e2eDo(t, "GET", srv.url+"/auth/me", map[string]string{"Archive-Workspace": ws}, nil, nil, alice)
+		wantStatus(t, st, 401, "the signed-out session in "+ws)
 	}
 }
 
@@ -3378,7 +3409,7 @@ func TestGeneratedURLsUseTheAPIAddress(t *testing.T) {
 		t.Errorf("file link: %s", link.URL)
 	}
 	call(t, "POST", srv.url+"/auth/magic", "", map[string]string{"email": "alice@example.com"}, nil)
-	if l := srv.links(t, "sign-in", "alice@example.com", 1)[0]; !strings.HasPrefix(l, "http://app.test/auth/magic?token=arc_"+one+"_") {
+	if l := srv.links(t, "sign-in", "alice@example.com", 1)[0]; !strings.HasPrefix(l, "http://app.test/auth/magic?token=arc_") {
 		t.Errorf("sign-in link: %s", l)
 	}
 	st, hdr := call(t, "GET", srv.url+"/auth/oidc/fake", "", nil, nil)

@@ -172,7 +172,7 @@ With no `-space`, the token gets your role in every space you are in. Narrow it 
 
 The image holds Postgres and the binary. With nothing set, it runs the bundled Postgres and keeps files in `/data`. Give it an outside Postgres (`DATABASE_URL`), S3-compatible storage (`ARCHIVE_BLOB_URL`) and one `ARCHIVE_SECRET_KEY`, and it keeps nothing local, so you can run as many copies side by side as you like. In production, put it behind HTTPS and set `ARCHIVE_URL`.
 
-One Archive serves any number of workspaces: one per organization, each with its own Postgres database on the same server, its own users, spaces, files and workflows, and its own data key. A new install starts with one. Instance admins (the admins of workspace one) make more, or let people sign up for their own:
+One Archive serves any number of workspaces: one per organization, each with its own Postgres database on the same server, its own spaces, files and workflows, and its own data key. People are added to workspaces (`archive user add`), and one sign-in reaches all of theirs. A new install starts with one. Instance admins (the admins of workspace one) make more, or let people sign up for their own:
 
 ```sh
 docker exec archive archive workspace add "Acme Inc" anna@acme.example
@@ -180,7 +180,7 @@ docker exec archive archive signup on
 docker exec archive archive -workspace <id> space list
 ```
 
-Tokens name their workspace (`arc_<workspace>_<secret>`), and the web app keeps a session for each workspace you sign in to. With `ARCHIVE_STRIPE_KEY` set, plans and their monthly limits are rows (`archive plan set`), Stripe Checkout sells them and Stripe's webhook at `ARCHIVE_API_URL/stripe` changes a workspace's plan; without it, nothing is limited. [app.archive.dev](https://app.archive.dev) is this same image, deployed with [`apps/terraform/gcp`](apps/terraform/gcp) with `app_domain`, `api_domain` and `connection_pooling` set.
+A token works in the one workspace it was made in, and the web app's one session switches between all of yours. With `ARCHIVE_STRIPE_KEY` set, plans and their monthly limits are rows (`archive plan set`), Stripe Checkout sells them and Stripe's webhook at `ARCHIVE_API_URL/stripe` changes a workspace's plan; without it, nothing is limited. [app.archive.dev](https://app.archive.dev) is this same image, deployed with [`apps/terraform/gcp`](apps/terraform/gcp) with `app_domain`, `api_domain` and `connection_pooling` set.
 
 Every setting is an environment variable; `archive help` lists them all:
 

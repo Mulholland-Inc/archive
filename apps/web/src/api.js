@@ -48,7 +48,7 @@ async function send(path, { method = 'GET', body, raw, signal } = {}) {
   if (r.status === 401) throw new Unauthorized();
   if (!r.ok && r.status !== 204) {
     const out = await r.json().catch(() => ({}));
-    throw new Error(out.error ?? r.statusText);
+    throw Object.assign(new Error(out.error ?? r.statusText), { status: r.status });
   }
   return r;
 }

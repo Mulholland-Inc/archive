@@ -13,24 +13,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const addMember = `-- name: AddMember :exec
-INSERT INTO archive.member (email, workspace) VALUES ($1, $2) ON CONFLICT DO NOTHING
-`
-
-func (q *Queries) AddMember(ctx context.Context, email string, workspace uuid.UUID) error {
-	_, err := q.db.Exec(ctx, addMember, email, workspace)
-	return err
-}
-
-const addMembers = `-- name: AddMembers :exec
-INSERT INTO archive.member (email, workspace) SELECT unnest($1::text[]), $2 ON CONFLICT DO NOTHING
-`
-
-func (q *Queries) AddMembers(ctx context.Context, emails []string, workspace uuid.UUID) error {
-	_, err := q.db.Exec(ctx, addMembers, emails, workspace)
-	return err
-}
-
 const addUsage = `-- name: AddUsage :exec
 INSERT INTO archive.usage (workspace, day, runs, workflow_runs, ai_tokens) VALUES ($1, current_date, $2, $3, $4)
 ON CONFLICT (workspace, day) DO UPDATE SET runs = archive.usage.runs + EXCLUDED.runs,
@@ -193,23 +175,23 @@ func (q *Queries) AppendChat(ctx context.Context, messages []byte, iD uuid.UUID)
 }
 
 const authenticate = `-- name: Authenticate :one
-SELECT t.id, t.kind, t.name, coalesce(t.role, '') AS role, u.id AS user_id, u.email, u.name AS user_name, u.role AS user_role, u.home,
-    coalesce((SELECT r.id::text || ':' || r.hash FROM archive.revision r ORDER BY r.created_at DESC, r.id DESC LIMIT 1), '')::text AS stamp
+SELECT t.id, t.kind, t.name, coalesce(t.role, '')::text AS role, u.id AS user_id, u.email, u.name AS user_name,
+    coalesce((SELECT w.short FROM archive.workspace w WHERE w.id = t.workspace), '')::text AS workspace,
+    ARRAY(SELECT w.short FROM archive.workspace w WHERE w.id = ANY(u.workspaces) ORDER BY array_position(u.workspaces, w.id))::text[] AS workspaces
 FROM archive.token t JOIN archive."user" u ON u.id = t.user_id
 WHERE t.hash = $1 AND t.kind IN ('api', 'session', 'user') AND (t.expires_at IS NULL OR t.expires_at > now())
 `
 
 type AuthenticateRow struct {
-	ID       uuid.UUID
-	Kind     string
-	Name     string
-	Role     string
-	UserID   uuid.UUID
-	Email    string
-	UserName string
-	UserRole string
-	Home     uuid.UUID
-	Stamp    string
+	ID         uuid.UUID
+	Kind       string
+	Name       string
+	Role       string
+	UserID     uuid.UUID
+	Email      string
+	UserName   string
+	Workspace  string
+	Workspaces []string
 }
 
 func (q *Queries) Authenticate(ctx context.Context, hash string) (AuthenticateRow, error) {
@@ -223,9 +205,8 @@ func (q *Queries) Authenticate(ctx context.Context, hash string) (AuthenticateRo
 		&i.UserID,
 		&i.Email,
 		&i.UserName,
-		&i.UserRole,
-		&i.Home,
-		&i.Stamp,
+		&i.Workspace,
+		&i.Workspaces,
 	)
 	return i, err
 }
@@ -413,34 +394,24 @@ func (q *Queries) ClearSecrets(ctx context.Context, tbl string, rid uuid.UUID, c
 
 const countOwners = `-- name: CountOwners :one
 SELECT count(*) FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles r ON r.oid = m.roleid
-JOIN pg_catalog.pg_roles u ON u.oid = m.member JOIN archive."user" ON "user".role = u.rolname WHERE r.rolname = $1::name
+JOIN pg_catalog.pg_roles u ON u.oid = m.member WHERE r.rolname = $1::name AND starts_with(u.rolname, $2::text)
 `
 
-func (q *Queries) CountOwners(ctx context.Context, owner string) (int64, error) {
-	row := q.db.QueryRow(ctx, countOwners, owner)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const countUsers = `-- name: CountUsers :one
-SELECT count(*) FROM archive."user"
-`
-
-func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
-	row := q.db.QueryRow(ctx, countUsers)
+func (q *Queries) CountOwners(ctx context.Context, owner string, users string) (int64, error) {
+	row := q.db.QueryRow(ctx, countOwners, owner, users)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
 }
 
 const createAPIToken = `-- name: CreateAPIToken :one
-INSERT INTO archive.token (id, user_id, kind, name, role, hash, expires_at) VALUES ($1, $2, 'api', $3, $4, $5, $6) RETURNING created_at, expires_at
+INSERT INTO archive.token (id, user_id, workspace, kind, name, role, hash, expires_at) VALUES ($1, $2, $3, 'api', $4, $5, $6, $7) RETURNING created_at, expires_at
 `
 
 type CreateAPITokenParams struct {
 	ID        uuid.UUID
 	UserID    uuid.UUID
+	Workspace *uuid.UUID
 	Name      string
 	Role      *string
 	Hash      string
@@ -456,6 +427,7 @@ func (q *Queries) CreateAPIToken(ctx context.Context, arg CreateAPITokenParams) 
 	row := q.db.QueryRow(ctx, createAPIToken,
 		arg.ID,
 		arg.UserID,
+		arg.Workspace,
 		arg.Name,
 		arg.Role,
 		arg.Hash,
@@ -592,11 +564,11 @@ func (q *Queries) CreateSecret(ctx context.Context, arg CreateSecretParams) erro
 }
 
 const createSpace = `-- name: CreateSpace :one
-INSERT INTO archive.space (name, role) VALUES ($1, $2) RETURNING id
+INSERT INTO archive.space (name, role, home) VALUES ($1, $2, $3) RETURNING id
 `
 
-func (q *Queries) CreateSpace(ctx context.Context, name string, role string) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, createSpace, name, role)
+func (q *Queries) CreateSpace(ctx context.Context, name string, role string, home *uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, createSpace, name, role, home)
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
@@ -625,38 +597,14 @@ func (q *Queries) CreateUpload(ctx context.Context, arg CreateUploadParams) erro
 	return err
 }
 
-const createUser = `-- name: CreateUser :one
-INSERT INTO archive."user" (id, email, name, role, home) VALUES ($1, $2, $3, $4, $5) RETURNING created_at
-`
-
-type CreateUserParams struct {
-	ID    uuid.UUID
-	Email string
-	Name  string
-	Role  string
-	Home  uuid.UUID
-}
-
-func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (time.Time, error) {
-	row := q.db.QueryRow(ctx, createUser,
-		arg.ID,
-		arg.Email,
-		arg.Name,
-		arg.Role,
-		arg.Home,
-	)
-	var created_at time.Time
-	err := row.Scan(&created_at)
-	return created_at, err
-}
-
 const createUserToken = `-- name: CreateUserToken :one
-INSERT INTO archive.token (id, user_id, kind, name, hash, expires_at) VALUES ($1, $2, 'user', $3, $4, $5) RETURNING created_at, expires_at
+INSERT INTO archive.token (id, user_id, workspace, kind, name, hash, expires_at) VALUES ($1, $2, $3, 'user', $4, $5, $6) RETURNING created_at, expires_at
 `
 
 type CreateUserTokenParams struct {
 	ID        uuid.UUID
 	UserID    uuid.UUID
+	Workspace *uuid.UUID
 	Name      string
 	Hash      string
 	ExpiresAt *time.Time
@@ -671,6 +619,7 @@ func (q *Queries) CreateUserToken(ctx context.Context, arg CreateUserTokenParams
 	row := q.db.QueryRow(ctx, createUserToken,
 		arg.ID,
 		arg.UserID,
+		arg.Workspace,
 		arg.Name,
 		arg.Hash,
 		arg.ExpiresAt,
@@ -747,11 +696,11 @@ func (q *Queries) DatabaseExists(ctx context.Context) (bool, error) {
 }
 
 const defaultSpace = `-- name: DefaultSpace :one
-SELECT id FROM archive.space WHERE id = ANY(archive.my_spaces('editor')) ORDER BY id = $1::uuid DESC, id LIMIT 1
+SELECT id FROM archive.space WHERE id = ANY(archive.my_spaces('editor')) ORDER BY home IS NOT DISTINCT FROM $1::uuid DESC, id LIMIT 1
 `
 
-func (q *Queries) DefaultSpace(ctx context.Context, home uuid.UUID) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, defaultSpace, home)
+func (q *Queries) DefaultSpace(ctx context.Context, owner uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, defaultSpace, owner)
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
@@ -796,15 +745,6 @@ func (q *Queries) DeleteSpaceSecrets(ctx context.Context, space uuid.UUID) error
 	return err
 }
 
-const deleteToken = `-- name: DeleteToken :exec
-DELETE FROM archive.token WHERE id = $1
-`
-
-func (q *Queries) DeleteToken(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, deleteToken, id)
-	return err
-}
-
 const deleteUpload = `-- name: DeleteUpload :exec
 DELETE FROM archive.upload WHERE id = $1
 `
@@ -839,6 +779,30 @@ DELETE FROM archive.workspace WHERE id = $1
 func (q *Queries) DeleteWorkspace(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, deleteWorkspace, id)
 	return err
+}
+
+const deleteWorkspaceTokens = `-- name: DeleteWorkspaceTokens :many
+DELETE FROM archive.token WHERE user_id = $1 AND workspace = $2 RETURNING coalesce(role, '')::text
+`
+
+func (q *Queries) DeleteWorkspaceTokens(ctx context.Context, userID uuid.UUID, workspace *uuid.UUID) ([]string, error) {
+	rows, err := q.db.Query(ctx, deleteWorkspaceTokens, userID, workspace)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var column_1 string
+		if err := rows.Scan(&column_1); err != nil {
+			return nil, err
+		}
+		items = append(items, column_1)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const directRoles = `-- name: DirectRoles :many
@@ -1050,22 +1014,30 @@ func (q *Queries) FilesWithText(ctx context.Context, after uuid.UUID, space *uui
 }
 
 const firstUser = `-- name: FirstUser :one
-SELECT id, email, name, role, home, signin, created_at FROM archive."user" ORDER BY created_at, id LIMIT $1
+SELECT id, email, name, workspaces, signin, created_at FROM archive."user" WHERE workspaces @> ARRAY[$1::uuid] ORDER BY created_at, id LIMIT 1
 `
 
-func (q *Queries) FirstUser(ctx context.Context, limit int32) (ArchiveUser, error) {
-	row := q.db.QueryRow(ctx, firstUser, limit)
+func (q *Queries) FirstUser(ctx context.Context, workspace uuid.UUID) (ArchiveUser, error) {
+	row := q.db.QueryRow(ctx, firstUser, workspace)
 	var i ArchiveUser
 	err := row.Scan(
 		&i.ID,
 		&i.Email,
 		&i.Name,
-		&i.Role,
-		&i.Home,
+		&i.Workspaces,
 		&i.Signin,
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const forgetUser = `-- name: ForgetUser :exec
+WITH gone AS (DELETE FROM archive.chat c WHERE c.user_id = $1::uuid) DELETE FROM archive.workflow w WHERE w.user_id = $1::uuid
+`
+
+func (q *Queries) ForgetUser(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, forgetUser, id)
+	return err
 }
 
 const getFile = `-- name: GetFile :one
@@ -1125,15 +1097,15 @@ func (q *Queries) HasRole(ctx context.Context, member string, grp string) (bool,
 	return pg_has_role, err
 }
 
-const homeOwner = `-- name: HomeOwner :one
-SELECT email FROM archive."user" WHERE home = $1
+const homeSpace = `-- name: HomeSpace :one
+SELECT id FROM archive.space WHERE home = $1
 `
 
-func (q *Queries) HomeOwner(ctx context.Context, home uuid.UUID) (string, error) {
-	row := q.db.QueryRow(ctx, homeOwner, home)
-	var email string
-	err := row.Scan(&email)
-	return email, err
+func (q *Queries) HomeSpace(ctx context.Context, home *uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, homeSpace, home)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const inputErrors = `-- name: InputErrors :many
@@ -1176,13 +1148,24 @@ func (q *Queries) InsertRevision(ctx context.Context, hash string) error {
 	return err
 }
 
-const keepMembers = `-- name: KeepMembers :exec
-DELETE FROM archive.member WHERE workspace = $1 AND NOT (email = ANY ($2::text[]))
+const joinWorkspace = `-- name: JoinWorkspace :one
+INSERT INTO archive."user" (email, name, workspaces) VALUES ($1, $2, ARRAY[$3::uuid])
+ON CONFLICT (email) DO UPDATE SET workspaces = archive."user".workspaces || EXCLUDED.workspaces WHERE NOT archive."user".workspaces @> EXCLUDED.workspaces
+RETURNING id, email, name, workspaces, signin, created_at
 `
 
-func (q *Queries) KeepMembers(ctx context.Context, workspace uuid.UUID, emails []string) error {
-	_, err := q.db.Exec(ctx, keepMembers, workspace, emails)
-	return err
+func (q *Queries) JoinWorkspace(ctx context.Context, email string, name string, workspace uuid.UUID) (ArchiveUser, error) {
+	row := q.db.QueryRow(ctx, joinWorkspace, email, name, workspace)
+	var i ArchiveUser
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Name,
+		&i.Workspaces,
+		&i.Signin,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const lastWorkflowRuns = `-- name: LastWorkflowRuns :many
@@ -1217,6 +1200,15 @@ func (q *Queries) LastWorkflowRuns(ctx context.Context, userID uuid.UUID) ([]Arc
 		return nil, err
 	}
 	return items, nil
+}
+
+const leaveWorkspace = `-- name: LeaveWorkspace :exec
+UPDATE archive."user" SET workspaces = array_remove(workspaces, $1::uuid) WHERE id = $2
+`
+
+func (q *Queries) LeaveWorkspace(ctx context.Context, workspace uuid.UUID, iD uuid.UUID) error {
+	_, err := q.db.Exec(ctx, leaveWorkspace, workspace, iD)
+	return err
 }
 
 const lockFile = `-- name: LockFile :one
@@ -1333,65 +1325,6 @@ func (q *Queries) MainWorkspace(ctx context.Context) (ArchiveWorkspace, error) {
 	return i, err
 }
 
-const memberWorkspaces = `-- name: MemberWorkspaces :many
-SELECT w.short, w.name FROM archive.member m JOIN archive.workspace w ON w.id = m.workspace WHERE m.email = $1 ORDER BY w.created_at, w.id
-`
-
-type MemberWorkspacesRow struct {
-	Short string
-	Name  string
-}
-
-func (q *Queries) MemberWorkspaces(ctx context.Context, email string) ([]MemberWorkspacesRow, error) {
-	rows, err := q.db.Query(ctx, memberWorkspaces, email)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []MemberWorkspacesRow
-	for rows.Next() {
-		var i MemberWorkspacesRow
-		if err := rows.Scan(&i.Short, &i.Name); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const members = `-- name: Members :many
-SELECT email, name, role AS level FROM archive."user" ORDER BY email
-`
-
-type MembersRow struct {
-	Email string
-	Name  string
-	Level string
-}
-
-func (q *Queries) Members(ctx context.Context) ([]MembersRow, error) {
-	rows, err := q.db.Query(ctx, members)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []MembersRow
-	for rows.Next() {
-		var i MembersRow
-		if err := rows.Scan(&i.Email, &i.Name, &i.Level); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const monthUsage = `-- name: MonthUsage :one
 SELECT coalesce(sum(runs), 0)::bigint AS runs, coalesce(sum(workflow_runs), 0)::bigint AS workflow_runs, coalesce(sum(ai_tokens), 0)::bigint AS ai_tokens,
     coalesce((SELECT u.stored_bytes FROM archive.usage u WHERE u.workspace = $1 ORDER BY u.day DESC LIMIT 1), 0)::bigint AS stored_bytes
@@ -1464,12 +1397,12 @@ func (q *Queries) NextWorkflowAt(ctx context.Context) (*time.Time, error) {
 	return next_at, err
 }
 
-const noUsers = `-- name: NoUsers :one
-SELECT NOT EXISTS (SELECT FROM archive."user")
+const noMembers = `-- name: NoMembers :one
+SELECT NOT EXISTS (SELECT FROM archive."user" WHERE workspaces @> ARRAY[$1::uuid])
 `
 
-func (q *Queries) NoUsers(ctx context.Context) (bool, error) {
-	row := q.db.QueryRow(ctx, noUsers)
+func (q *Queries) NoMembers(ctx context.Context, workspace uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, noMembers, workspace)
 	var not_exists bool
 	err := row.Scan(&not_exists)
 	return not_exists, err
@@ -1676,11 +1609,11 @@ func (q *Queries) Revision(ctx context.Context) (string, error) {
 }
 
 const revokeToken = `-- name: RevokeToken :one
-DELETE FROM archive.token WHERE id = $1 AND user_id = $2 AND kind IN ('api', 'user') RETURNING coalesce(role, '')::text
+DELETE FROM archive.token WHERE id = $1 AND user_id = $2 AND workspace = $3 AND kind IN ('api', 'user') RETURNING coalesce(role, '')::text
 `
 
-func (q *Queries) RevokeToken(ctx context.Context, iD uuid.UUID, userID uuid.UUID) (string, error) {
-	row := q.db.QueryRow(ctx, revokeToken, iD, userID)
+func (q *Queries) RevokeToken(ctx context.Context, iD uuid.UUID, userID uuid.UUID, workspace *uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, revokeToken, iD, userID, workspace)
 	var column_1 string
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -1969,6 +1902,15 @@ func (q *Queries) Setting(ctx context.Context, key string) (json.RawMessage, err
 	return value, err
 }
 
+const signOut = `-- name: SignOut :exec
+DELETE FROM archive.token WHERE hash = $1 AND kind = 'session'
+`
+
+func (q *Queries) SignOut(ctx context.Context, hash string) error {
+	_, err := q.db.Exec(ctx, signOut, hash)
+	return err
+}
+
 const soonDue = `-- name: SoonDue :exec
 INSERT INTO archive.due (workspace, kind, at) VALUES ($1, $2, $3)
 ON CONFLICT (workspace, kind) DO UPDATE SET at = least(archive.due.at, EXCLUDED.at)
@@ -1980,18 +1922,19 @@ func (q *Queries) SoonDue(ctx context.Context, workspace uuid.UUID, kind string,
 }
 
 const spaceByName = `-- name: SpaceByName :one
-SELECT id, role FROM archive.space WHERE name = $1
+SELECT id, role, home FROM archive.space WHERE name = $1
 `
 
 type SpaceByNameRow struct {
 	ID   uuid.UUID
 	Role string
+	Home *uuid.UUID
 }
 
 func (q *Queries) SpaceByName(ctx context.Context, name string) (SpaceByNameRow, error) {
 	row := q.db.QueryRow(ctx, spaceByName, name)
 	var i SpaceByNameRow
-	err := row.Scan(&i.ID, &i.Role)
+	err := row.Scan(&i.ID, &i.Role, &i.Home)
 	return i, err
 }
 
@@ -2029,12 +1972,13 @@ func (q *Queries) SpaceRoleByID(ctx context.Context, id uuid.UUID) (string, erro
 }
 
 const spaceRoles = `-- name: SpaceRoles :many
-SELECT name, role FROM archive.space ORDER BY name
+SELECT name, role, home FROM archive.space ORDER BY name
 `
 
 type SpaceRolesRow struct {
 	Name string
 	Role string
+	Home *uuid.UUID
 }
 
 func (q *Queries) SpaceRoles(ctx context.Context) ([]SpaceRolesRow, error) {
@@ -2046,7 +1990,7 @@ func (q *Queries) SpaceRoles(ctx context.Context) ([]SpaceRolesRow, error) {
 	var items []SpaceRolesRow
 	for rows.Next() {
 		var i SpaceRolesRow
-		if err := rows.Scan(&i.Name, &i.Role); err != nil {
+		if err := rows.Scan(&i.Name, &i.Role, &i.Home); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -2115,11 +2059,11 @@ func (q *Queries) StoredBytes(ctx context.Context) (int64, error) {
 }
 
 const tokenRoles = `-- name: TokenRoles :many
-SELECT coalesce(role, '')::text FROM archive.token WHERE user_id = $1 AND role IS NOT NULL
+SELECT coalesce(role, '')::text FROM archive.token WHERE user_id = $1 AND workspace = $2 AND role IS NOT NULL
 `
 
-func (q *Queries) TokenRoles(ctx context.Context, userID uuid.UUID) ([]string, error) {
-	rows, err := q.db.Query(ctx, tokenRoles, userID)
+func (q *Queries) TokenRoles(ctx context.Context, userID uuid.UUID, workspace *uuid.UUID) ([]string, error) {
+	rows, err := q.db.Query(ctx, tokenRoles, userID, workspace)
 	if err != nil {
 		return nil, err
 	}
@@ -2140,7 +2084,7 @@ func (q *Queries) TokenRoles(ctx context.Context, userID uuid.UUID) ([]string, e
 
 const tokens = `-- name: Tokens :many
 SELECT id, name, coalesce(role, '')::text AS role, kind = 'user' AS full, expires_at, created_at FROM archive.token
-WHERE user_id = $1 AND kind IN ('api', 'user') ORDER BY id
+WHERE user_id = $1 AND workspace = $2 AND kind IN ('api', 'user') ORDER BY id
 `
 
 type TokensRow struct {
@@ -2152,8 +2096,8 @@ type TokensRow struct {
 	CreatedAt time.Time
 }
 
-func (q *Queries) Tokens(ctx context.Context, userID uuid.UUID) ([]TokensRow, error) {
-	rows, err := q.db.Query(ctx, tokens, userID)
+func (q *Queries) Tokens(ctx context.Context, userID uuid.UUID, workspace *uuid.UUID) ([]TokensRow, error) {
+	rows, err := q.db.Query(ctx, tokens, userID, workspace)
 	if err != nil {
 		return nil, err
 	}
@@ -2231,7 +2175,7 @@ func (q *Queries) UseMagicLink(ctx context.Context, hash string) (uuid.UUID, err
 }
 
 const userByEmail = `-- name: UserByEmail :one
-SELECT id, email, name, role, home, signin, created_at FROM archive."user" WHERE email = $1
+SELECT id, email, name, workspaces, signin, created_at FROM archive."user" WHERE email = $1
 `
 
 func (q *Queries) UserByEmail(ctx context.Context, email string) (ArchiveUser, error) {
@@ -2241,8 +2185,7 @@ func (q *Queries) UserByEmail(ctx context.Context, email string) (ArchiveUser, e
 		&i.ID,
 		&i.Email,
 		&i.Name,
-		&i.Role,
-		&i.Home,
+		&i.Workspaces,
 		&i.Signin,
 		&i.CreatedAt,
 	)
@@ -2250,7 +2193,7 @@ func (q *Queries) UserByEmail(ctx context.Context, email string) (ArchiveUser, e
 }
 
 const userByID = `-- name: UserByID :one
-SELECT id, email, name, role, home, signin, created_at FROM archive."user" WHERE id = $1
+SELECT id, email, name, workspaces, signin, created_at FROM archive."user" WHERE id = $1
 `
 
 func (q *Queries) UserByID(ctx context.Context, id uuid.UUID) (ArchiveUser, error) {
@@ -2260,8 +2203,7 @@ func (q *Queries) UserByID(ctx context.Context, id uuid.UUID) (ArchiveUser, erro
 		&i.ID,
 		&i.Email,
 		&i.Name,
-		&i.Role,
-		&i.Home,
+		&i.Workspaces,
 		&i.Signin,
 		&i.CreatedAt,
 	)
@@ -2269,7 +2211,7 @@ func (q *Queries) UserByID(ctx context.Context, id uuid.UUID) (ArchiveUser, erro
 }
 
 const userByOIDC = `-- name: UserByOIDC :one
-SELECT id, email, name, role, home, signin, created_at FROM archive."user" WHERE signin->'oidc' @> $1::jsonb
+SELECT id, email, name, workspaces, signin, created_at FROM archive."user" WHERE signin->'oidc' @> $1::jsonb
 `
 
 func (q *Queries) UserByOIDC(ctx context.Context, link []byte) (ArchiveUser, error) {
@@ -2279,52 +2221,40 @@ func (q *Queries) UserByOIDC(ctx context.Context, link []byte) (ArchiveUser, err
 		&i.ID,
 		&i.Email,
 		&i.Name,
-		&i.Role,
-		&i.Home,
+		&i.Workspaces,
 		&i.Signin,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
-const userEmails = `-- name: UserEmails :many
-SELECT email FROM archive."user" ORDER BY email
+const userWorkspaces = `-- name: UserWorkspaces :many
+SELECT w.short, w.name FROM archive.workspace w JOIN archive."user" u ON w.id = ANY(u.workspaces) WHERE u.id = $1 ORDER BY array_position(u.workspaces, w.id)
 `
 
-func (q *Queries) UserEmails(ctx context.Context) ([]string, error) {
-	rows, err := q.db.Query(ctx, userEmails)
+type UserWorkspacesRow struct {
+	Short string
+	Name  string
+}
+
+func (q *Queries) UserWorkspaces(ctx context.Context, id uuid.UUID) ([]UserWorkspacesRow, error) {
+	rows, err := q.db.Query(ctx, userWorkspaces, id)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []string
+	var items []UserWorkspacesRow
 	for rows.Next() {
-		var email string
-		if err := rows.Scan(&email); err != nil {
+		var i UserWorkspacesRow
+		if err := rows.Scan(&i.Short, &i.Name); err != nil {
 			return nil, err
 		}
-		items = append(items, email)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return items, nil
-}
-
-const userRole = `-- name: UserRole :one
-SELECT id, role FROM archive."user" WHERE email = $1
-`
-
-type UserRoleRow struct {
-	ID   uuid.UUID
-	Role string
-}
-
-func (q *Queries) UserRole(ctx context.Context, email string) (UserRoleRow, error) {
-	row := q.db.QueryRow(ctx, userRole, email)
-	var i UserRoleRow
-	err := row.Scan(&i.ID, &i.Role)
-	return i, err
 }
 
 const workflowByHook = `-- name: WorkflowByHook :one
@@ -2554,25 +2484,44 @@ func (q *Queries) WorkspaceLimits(ctx context.Context, id uuid.UUID) (WorkspaceL
 	return i, err
 }
 
-const workspaceNames = `-- name: WorkspaceNames :many
-SELECT short, name FROM archive.workspace WHERE short = ANY($1::text[])
+const workspaceUser = `-- name: WorkspaceUser :one
+SELECT id, email, name, workspaces, signin, created_at FROM archive."user" WHERE email = $1 AND workspaces @> ARRAY[$2::uuid]
 `
 
-type WorkspaceNamesRow struct {
-	Short string
+func (q *Queries) WorkspaceUser(ctx context.Context, email string, workspace uuid.UUID) (ArchiveUser, error) {
+	row := q.db.QueryRow(ctx, workspaceUser, email, workspace)
+	var i ArchiveUser
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Name,
+		&i.Workspaces,
+		&i.Signin,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const workspaceUsers = `-- name: WorkspaceUsers :many
+SELECT id, email, name FROM archive."user" WHERE workspaces @> ARRAY[$1::uuid] ORDER BY email
+`
+
+type WorkspaceUsersRow struct {
+	ID    uuid.UUID
+	Email string
 	Name  string
 }
 
-func (q *Queries) WorkspaceNames(ctx context.Context, shorts []string) ([]WorkspaceNamesRow, error) {
-	rows, err := q.db.Query(ctx, workspaceNames, shorts)
+func (q *Queries) WorkspaceUsers(ctx context.Context, workspace uuid.UUID) ([]WorkspaceUsersRow, error) {
+	rows, err := q.db.Query(ctx, workspaceUsers, workspace)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []WorkspaceNamesRow
+	var items []WorkspaceUsersRow
 	for rows.Next() {
-		var i WorkspaceNamesRow
-		if err := rows.Scan(&i.Short, &i.Name); err != nil {
+		var i WorkspaceUsersRow
+		if err := rows.Scan(&i.ID, &i.Email, &i.Name); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

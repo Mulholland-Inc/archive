@@ -40,7 +40,6 @@ type Archive struct {
 	mcph http.Handler
 }
 
-
 func (a *Archive) as(ctx context.Context, fn func(context.Context) error) error {
 	ac := ActorFrom(ctx)
 	if ac == nil {
@@ -190,11 +189,11 @@ func (a *Archive) coreSpace(ctx context.Context, name string) (uuid.UUID, error)
 	if name != "" {
 		id, err = a.st.db(ctx).SpaceID(ctx, name)
 	} else {
-		home := uuid.Nil
+		owner := uuid.Nil
 		if ac := ActorFrom(ctx); ac != nil {
-			home = ac.Home
+			owner = ac.UserID
 		}
-		id, err = a.st.db(ctx).DefaultSpace(ctx, home)
+		id, err = a.st.db(ctx).DefaultSpace(ctx, owner)
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		if name == "" {

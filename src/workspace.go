@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -403,7 +404,7 @@ func (h *Hub) upgradeAll(ctx context.Context, wg *sync.WaitGroup) {
 }
 
 func (a *Archive) afterOpen(ctx context.Context) {
-	err := errors.Join(a.syncMembers(ctx), a.st.System(ctx, func(ctx context.Context) error {
+	err := errors.Join(a.st.System(ctx, func(ctx context.Context) error {
 		return a.st.db(ctx).ResetProcessing(ctx)
 	}), a.storedBytes(ctx))
 	for _, kind := range []string{"workflow", "file"} {
@@ -416,24 +417,6 @@ func (a *Archive) afterOpen(ctx context.Context) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "archive: workspace %s: %v\n", a.ws.Short, err)
 	}
-}
-
-func (a *Archive) syncMembers(ctx context.Context) error {
-	var emails []string
-	if err := a.st.System(ctx, func(ctx context.Context) (err error) {
-		emails, err = a.st.db(ctx).UserEmails(ctx)
-		return err
-	}); err != nil {
-		return err
-	}
-	if emails == nil {
-		emails = []string{}
-	}
-	q := a.hub.q()
-	if err := q.KeepMembers(ctx, a.ws.ID, emails); err != nil {
-		return err
-	}
-	return q.AddMembers(ctx, emails, a.ws.ID)
 }
 
 func (a *Archive) soon(ctx context.Context, kind string, at time.Time) error {
@@ -533,35 +516,6 @@ func (h *Hub) next(ctx context.Context) (bool, error) {
 	return true, h.q().SetDue(bg, generated.SetDueParams{Next: *next, Short: d.Short, Kind: d.Kind, Claimed: d.At})
 }
 
-
-func secretWorkspace(s string) string {
-	rest, ok := strings.CutPrefix(s, "arc_")
-	if !ok {
-		return ""
-	}
-	ws, _, ok := strings.Cut(rest, "_")
-	if !ok || !workspaceShortRe.MatchString(ws) {
-		return ""
-	}
-	return ws
-}
-
-func (h *Hub) of(secret string) string { return cmp.Or(secretWorkspace(secret), "-") }
-
-func (a *Archive) newSecret() string {
-	b := make([]byte, 32)
-	rand.Read(b)
-	return "arc_" + a.ws.Short + "_" + base64.RawURLEncoding.EncodeToString(b)
-}
-
-func (h *Hub) sessions(r *http.Request) []string {
-	c, err := r.Cookie(signinCookie)
-	if err != nil {
-		return nil
-	}
-	return strings.FieldsFunc(c.Value, func(r rune) bool { return r == '.' })
-}
-
 func (h *Hub) secret(r *http.Request) (string, error) {
 	if hd := r.Header.Get("Authorization"); hd != "" {
 		tok, ok := strings.CutPrefix(hd, "Bearer ")
@@ -570,34 +524,48 @@ func (h *Hub) secret(r *http.Request) (string, error) {
 		}
 		return strings.TrimSpace(tok), nil
 	}
-	ss := h.sessions(r)
-	if len(ss) == 0 {
-		return "", fmt.Errorf("sign in or send a bearer token: %w", ErrUnauthorized)
+	if c, err := r.Cookie(signinCookie); err == nil && c.Value != "" {
+		return c.Value, nil
 	}
-	want := r.Header.Get("Archive-Workspace")
-	if want == "" {
-		return ss[0], nil
-	}
-	for _, s := range ss {
-		if h.of(s) == want {
-			return s, nil
-		}
-	}
-	return "", fmt.Errorf("not signed in to workspace %s: %w", want, ErrUnauthorized)
+	return "", fmt.Errorf("sign in or send a bearer token: %w", ErrUnauthorized)
 }
 
-func (h *Hub) authenticate(ctx context.Context, secret string) (*Archive, *Actor, func(), error) {
-	a, release, err := h.acquire(ctx, h.of(secret))
-	if errors.Is(err, ErrNotFound) {
-		err = fmt.Errorf("invalid or expired token: %w", ErrUnauthorized)
+func (h *Hub) authenticate(ctx context.Context, secret, want string) (*Archive, *Actor, func(), error) {
+	t, err := h.q().Authenticate(ctx, authHash(secret))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil, nil, fmt.Errorf("invalid or expired token: %w", ErrUnauthorized)
 	}
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	ac, err := a.Authenticate(ctx, secret)
+	short := cmp.Or(t.Workspace, want)
+	if short == "" && len(t.Workspaces) > 0 {
+		short = t.Workspaces[0]
+	}
+	if want != "" && want != short {
+		return nil, nil, nil, fmt.Errorf("this token belongs to another workspace: %w", ErrForbidden)
+	}
+	if !slices.Contains(t.Workspaces, short) {
+		return nil, nil, nil, fmt.Errorf("you are not in this workspace: %w", ErrForbidden)
+	}
+	a, release, err := h.acquire(ctx, short)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	stamp, err := generated.New(a.st.sys).Revision(ctx)
+	if err == nil && stamp != a.Catalog().stamp {
+		err = a.reload(ctx)
+	}
 	if err != nil {
 		release()
 		return nil, nil, nil, err
+	}
+	ac := a.userActor(&User{ID: t.UserID, Email: t.Email, Name: t.UserName})
+	if t.Kind != "session" {
+		ac.TokenName = t.Name
+	}
+	if t.Kind == "api" {
+		ac.Role, ac.TokenID = t.Role, t.ID
 	}
 	return a, ac, release, nil
 }
@@ -609,7 +577,7 @@ func (h *Hub) httpAuth(next func(a *Archive) http.Handler) http.Handler {
 			httpWrite(w, 0, nil, err)
 			return
 		}
-		a, ac, release, err := h.authenticate(r.Context(), secret)
+		a, ac, release, err := h.authenticate(r.Context(), secret, r.Header.Get("Archive-Workspace"))
 		if err != nil {
 			httpWrite(w, 0, nil, err)
 			return
@@ -638,12 +606,7 @@ func (h *Hub) inWorkspace(f func(a *Archive, w http.ResponseWriter, r *http.Requ
 
 func (h *Hub) mcp(w http.ResponseWriter, r *http.Request) {
 	tok, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	a, release, err := h.acquire(r.Context(), h.of(strings.TrimSpace(tok)))
-	if errors.Is(err, ErrNotFound) {
-		w.Header().Set("WWW-Authenticate", "Bearer")
-		http.Error(w, "invalid or expired token", http.StatusUnauthorized)
-		return
-	}
+	a, ac, release, err := h.authenticate(r.Context(), strings.TrimSpace(tok), "")
 	if err != nil {
 		httpWrite(w, 0, nil, err)
 		return
@@ -657,7 +620,7 @@ func (h *Hub) mcp(w http.ResponseWriter, r *http.Request) {
 	}
 	hd := a.mcph
 	a.hmu.Unlock()
-	hd.ServeHTTP(w, r)
+	hd.ServeHTTP(w, r.WithContext(WithActor(r.Context(), ac)))
 }
 
 func (a *Archive) handler() http.Handler {
@@ -898,40 +861,16 @@ func (h *Hub) signupClaim(token string) (*signupClaim, error) {
 	return &c, nil
 }
 
-func (h *Hub) signup(ctx context.Context, c *signupClaim) (*Archive, func(), *User, error) {
+func (h *Hub) signup(ctx context.Context, c *signupClaim) (*User, error) {
 	if !h.signupOpen(ctx) {
-		return nil, nil, nil, fmt.Errorf("signup is closed on this Archive: %w", ErrForbidden)
+		return nil, fmt.Errorf("signup is closed on this Archive: %w", ErrForbidden)
 	}
 	if _, err := h.createWorkspace(ctx, c.Short, c.Name, c.Email); errors.Is(err, ErrConflict) {
-		return nil, nil, nil, fmt.Errorf("this link was used already; sign in instead: %w", ErrConflict)
+		return nil, fmt.Errorf("this link was used already; sign in instead: %w", ErrConflict)
 	} else if err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
-	a, release, err := h.acquire(ctx, c.Short)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	u, err := userBy(ctx, a, (*generated.Queries).UserByEmail, c.Email)
-	if err != nil {
-		release()
-		return nil, nil, nil, err
-	}
-	return a, release, u, nil
-}
-
-func (h *Hub) names(ctx context.Context, shorts []string) []Workspace {
-	rows, _ := h.q().WorkspaceNames(ctx, shorts)
-	by := map[string]string{}
-	for _, r := range rows {
-		by[r.Short] = r.Name
-	}
-	out := []Workspace{}
-	for _, s := range shorts {
-		if n, ok := by[s]; ok {
-			out = append(out, Workspace{ID: s, Name: n})
-		}
-	}
-	return out
+	return userBy(ctx, h, (*generated.Queries).UserByEmail, c.Email)
 }
 
 type Usage struct {

@@ -67,6 +67,8 @@ Usage:
                                      find rows and files by their words
 
   archive user add <email> [-name n] [-admin]
+                                     add someone to the workspace; one sign-in reaches all of theirs
+  archive user remove <email>        take them out of the workspace, with their tokens and role
   archive space add <name>
   archive space list
   archive space remove <space>       delete the space and everything in it; needs owner
@@ -347,6 +349,8 @@ func cliAuth(ctx context.Context, a *Archive, cmd string, pos []string, name str
 	switch cmd + " " + pos[0] {
 	case "user add":
 		return out(a.AddUser(ctx, pos[1], name, admin))
+	case "user remove":
+		return a.RemoveUser(ctx, pos[1])
 	case "space add":
 		if len(pos) > 1 {
 			return out(a.AddSpace(ctx, pos[1]))
@@ -580,9 +584,9 @@ func cliServe(ctx context.Context, h *Hub, a *Archive, addr string) error {
 	if err != nil {
 		return err
 	}
-	if n, err := a.userCount(ctx); err != nil {
+	if none, err := h.q().NoMembers(ctx, a.ws.ID); err != nil {
 		return err
-	} else if n == 0 {
+	} else if none {
 		if email := os.Getenv("ARCHIVE_ADMIN_EMAIL"); email != "" {
 			u, err := a.AddUser(ctx, email, "", true)
 			if err != nil {
@@ -891,16 +895,10 @@ func mcpServer(a *Archive) *mcp.Server {
 	return s
 }
 
-func (a *Archive) mcpVerify(ctx context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {
-	if secretWorkspace(token) != a.ws.Short {
-		return nil, fmt.Errorf("%w: this token belongs to another workspace", auth.ErrInvalidToken)
-	}
-	ac, err := a.Authenticate(ctx, token)
-	if errors.Is(err, ErrUnauthorized) {
-		return nil, fmt.Errorf("%w: %v", auth.ErrInvalidToken, err)
-	}
-	if err != nil {
-		return nil, err
+func (a *Archive) mcpVerify(_ context.Context, _ string, r *http.Request) (*auth.TokenInfo, error) {
+	ac := ActorFrom(r.Context())
+	if ac == nil {
+		return nil, auth.ErrInvalidToken
 	}
 	return &auth.TokenInfo{UserID: ac.UserID.String(), Extra: map[string]any{"actor": ac}}, nil
 }
