@@ -10,8 +10,8 @@
   import Specs from '#lib/Specs.svelte';
 
   const LEVELS = [
-    ['viewer', 'Browse, open and search records and files, read pages and documents, and open boards, calendars and lists.'],
-    ['editor', 'Everything a viewer can, plus add, change and remove records and files, and edit pages and Office documents.'],
+    ['viewer', 'Browse, open and search records and files, read documents, and open boards, calendars and lists.'],
+    ['editor', 'Everything a viewer can, plus add, change and remove records and files, and edit Office documents.'],
     ['admin', "Everything an editor can, plus add, change and remove members below owner, and change how the space's information is organized."],
     ['owner', 'Everything an admin can, plus add or remove owners and delete the space with everything in it. A space always keeps at least one owner.']
   ];

@@ -519,54 +519,6 @@ func (q *Queries) ResetProcessing(ctx context.Context) error {
 	return err
 }
 
-const savePage = `-- name: SavePage :one
-UPDATE archive.file SET hash = $2, size = $3, text = $4, status = 'done', error = '' WHERE id = $1
-RETURNING id, hash, name, mime, size, metadata, status, error, space, created_at
-`
-
-type SavePageParams struct {
-	ID   uuid.UUID
-	Hash string
-	Size int64
-	Text string
-}
-
-type SavePageRow struct {
-	ID        uuid.UUID
-	Hash      string
-	Name      string
-	MIME      string
-	Size      int64
-	Metadata  map[string]any
-	Status    string
-	Error     string
-	Space     uuid.UUID
-	CreatedAt time.Time
-}
-
-func (q *Queries) SavePage(ctx context.Context, arg SavePageParams) (SavePageRow, error) {
-	row := q.db.QueryRow(ctx, savePage,
-		arg.ID,
-		arg.Hash,
-		arg.Size,
-		arg.Text,
-	)
-	var i SavePageRow
-	err := row.Scan(
-		&i.ID,
-		&i.Hash,
-		&i.Name,
-		&i.MIME,
-		&i.Size,
-		&i.Metadata,
-		&i.Status,
-		&i.Error,
-		&i.Space,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const setFileContent = `-- name: SetFileContent :exec
 UPDATE archive.file SET metadata = $2, text = $3 WHERE id = $1
 `

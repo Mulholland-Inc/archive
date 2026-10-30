@@ -36,10 +36,9 @@
   <p>Airtable's automations are great at "when this happens, do that". Archive takes a different route for bigger jobs: your AI assistant writes a short piece of code for the whole task, and Archive runs it in one go.</p>
   <p>Say the finance team asks Claude to match sixty invoices against their purchase orders, mark the ones that agree and flag the ones that do not. If something goes wrong at invoice forty-one, nothing is saved. You never end up with forty matched invoices, twenty untouched ones and no way to tell which is which. Fix the problem, run it again, and it all lands together.</p>
 
-  <h2>Pages, files and AI on top</h2>
+  <h2>Files and AI on top</h2>
   <p>Lists are only part of the work, so Archive keeps the rest in the same place:</p>
   <ul>
-    <li><strong>Pages</strong> your team and your AI write together, live, with every change merged.</li>
     <li><strong>Files</strong> that stay real Word, Excel and PowerPoint files, which your assistant can edit in place without disturbing the formatting.</li>
     <li><strong>Your AI assistants</strong>, whether ChatGPT, Claude, Gemini or Grok, working directly in your records, as you.</li>
     <li><strong>Your own models</strong>, trained on the records you already filed, to sort new invoices or fill in records from long documents the way your team would.</li>
@@ -55,12 +54,12 @@
       ['Who sees what', 'Enforced underneath, for people and AI alike', 'Workspace and base sharing, plus interfaces'],
       ['Big jobs', 'Your AI runs the whole task in one go, all or nothing', 'Built-in automations with triggers and actions'],
       ['AI', 'ChatGPT, Claude, Gemini and Grok, acting as you', "Airtable's own AI features"],
-      ['Documents', 'Live pages and Office files edited in place', 'Long text fields and attachments'],
+      ['Documents', 'Office files edited in place', 'Long text fields and attachments'],
       ['Bringing data in', 'Connectors for mail, files, chat, CRM and finance', 'Imports, syncs and integrations']
     ]}
   />
 
   <h2>Which one fits</h2>
   <p>If you need a quick tracker, your team loves the grid and your automations are simple, Airtable is a great choice and a pleasure to use.</p>
-  <p>If your lists have become the backbone of the business, you need every record to stay consistent, and you want your AI to do real work in them under the same rules as everyone else, that is what Archive is for. And because pages and files live alongside your records, you have fewer tools to keep in sync.</p>
+  <p>If your lists have become the backbone of the business, you need every record to stay consistent, and you want your AI to do real work in them under the same rules as everyone else, that is what Archive is for. And because your files live alongside your records, you have fewer tools to keep in sync.</p>
 </PostLayout>

@@ -58,7 +58,7 @@ return { count: unpaid.length, total };
 {"result": {"count": 3, "total": 6530}, "logs": [], "error": ""}
 ```
 
-All or nothing, only your spaces (even with raw SQL), no network, and a 30 second limit by default (`ARCHIVE_RUN_TIMEOUT`). The `run` tool's description is the full SDK reference plus a type for each of your tables, so your agent writes against your real schema. Scripts can also search every table and file, and edit Word, Excel and PowerPoint files and Archive's own pages in place.
+All or nothing, only your spaces (even with raw SQL), no network, and a 30 second limit by default (`ARCHIVE_RUN_TIMEOUT`). The `run` tool's description is the full SDK reference plus a type for each of your tables, so your agent writes against your real schema. Scripts can also search every table and file, and edit Word, Excel and PowerPoint files in place.
 
 ## Connect it to everything else
 
@@ -184,16 +184,14 @@ Every setting is an environment variable; `archive help` lists them all:
 ```mermaid
 flowchart LR
   Apps[ChatGPT, Claude, Gemini, Cursor] <--> MCP[MCP: run code] --> Core[Go core]
-  Editors[Page editors in the browser] <--> Sync[Page sync: SSE + ops] --> Core
   Clients[Web app, CLI, Terraform] <--> API[HTTP API] --> Core
   Core --> PG[(Postgres: archive + public)]
   Core --> Files[(Files: disk or S3)]
-  PG -. LISTEN/NOTIFY .-> Core
 ```
 
 | Path | What lives there |
 |---|---|
-| [`src`](src) | The Go server and CLI: API, MCP, sign-in, schema, search, files, pages, Office editing |
+| [`src`](src) | The Go server and CLI: API, MCP, sign-in, schema, search, files, Office editing |
 | [`apps/web`](apps/web) | The Svelte 5 web app |
 | [`apps/site`](apps/site) | [archive.us.org](https://archive.us.org) and the docs |
 | [`apps/helm`](apps/helm/archive), [`apps/terraform`](apps/terraform) | Kubernetes chart, cloud setups and the Terraform provider |

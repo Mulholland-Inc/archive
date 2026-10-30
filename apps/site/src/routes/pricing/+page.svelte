@@ -108,7 +108,7 @@
 
 <Cta
   scene="city"
-  alt="A city block whose buildings are spreadsheets, pages, files, a database and an antenna for AI assistants"
+  alt="A city block whose buildings are spreadsheets, papers, files, a database and an antenna for AI assistants"
   title="Your first workspace is free."
   lead="No card, no sales call."
 />

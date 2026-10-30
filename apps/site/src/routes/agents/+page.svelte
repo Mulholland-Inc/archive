@@ -13,7 +13,7 @@
     ['Ask', 'Records', 'Answer a precise question about your records, from only what you can see'],
     ['Browse', 'Records', 'A list of records or a saved board, narrowed to exact values'],
     ['Open', 'Records', 'One record'],
-    ['Add', 'Records', 'Add a record, checked and tidied first, or start a blank page, Word document, spreadsheet or slide deck'],
+    ['Add', 'Records', 'Add a record, checked and tidied first, or start a blank Word document, spreadsheet or slide deck'],
     ['Change', 'Records', 'Change some fields of a record, or clear one'],
     ['Remove', 'Records', 'Remove a record'],
     ['Search', 'Records', 'Search all the records and files you can see, best match first'],
@@ -22,7 +22,7 @@
     ['Overview', 'Structure', 'Every kind of record and saved board, with its fields, notes and links'],
     ['Files', 'Files', 'The files you can see, with the text read out of them'],
     ['File', 'Files', 'One file, with the text read out of it'],
-    ['Read', 'Documents', 'The layout of a Word document, spreadsheet, slide deck or page'],
+    ['Read', 'Documents', 'The layout of a Word document, spreadsheet or slide deck'],
     ['Edit', 'Documents', 'Make a list of edits to a document, all of them or none'],
     ['Spaces', 'Access', 'The spaces you can see, and what you may do in each']
   ];

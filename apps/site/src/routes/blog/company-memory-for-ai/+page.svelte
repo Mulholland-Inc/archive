@@ -12,7 +12,7 @@
 >
     <p>Ask a modern AI assistant to explain a tax rule, draft a polite reminder or summarize a long article, and it does a remarkable job. Ask it which of your clients is behind on payment, what you promised a tenant last spring, or who signed off on the new supplier, and it has nothing to say. It was trained on the public internet. Your business was never part of that.</p>
     <p>Most teams work around this by copying and pasting. Someone finds the contract, pastes the relevant paragraph into a chat, asks the question, and then does it all again tomorrow. It works, but it is slow, it depends on the person knowing where to look, and the assistant forgets everything the moment the chat ends.</p>
-    <p>Archive closes that gap. It is one place for your records, pages and files, and your AI assistant can read and work in it directly.</p>
+    <p>Archive closes that gap. It is one place for your records and files, and your AI assistant can read and work in it directly.</p>
 
     <h2>Connect once, then just ask</h2>
     <p>Archive is available in ChatGPT, Claude, Gemini and Grok. You add it from the assistant's list of connected apps, sign in to your workspace, and that is the whole setup. From then on, every conversation can reach the same information your team already keeps in Archive: clients, projects, invoices, contracts, notes, documents and the files people have uploaded.</p>

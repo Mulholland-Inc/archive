@@ -1,4 +1,2 @@
 node_modules
 dist
-public/editor.wasm
-public/wasm_exec.js

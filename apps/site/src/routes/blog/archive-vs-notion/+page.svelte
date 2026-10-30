@@ -1,6 +1,5 @@
 <script>
   import PostLayout from '#lib/PostLayout.svelte';
-  import Figure from '#lib/Figure.svelte';
   import Pull from '#lib/Pull.svelte';
   import Compare from '#lib/Compare.svelte';
 </script>
@@ -12,24 +11,18 @@
   related={['archive-vs-airtable', 'archive-vs-google-drive']}
 >
   <p>Notion is one of the best-loved work tools of the last decade, and it earned that. It is polished, quick to learn and flexible enough that teams run everything in it, from meeting notes to product roadmaps. Pages and databases sit side by side, the templates are excellent, and it has its own AI built in.</p>
-  <p>Archive also gives your team pages and lists. So why look at it at all? Because Archive is built for the moment your AI assistant stops being a chat window on the side and starts doing real work in your business.</p>
+  <p>Archive also keeps your team's lists and documents. So why look at it at all? Because Archive is built for the moment your AI assistant stops being a chat window on the side and starts doing real work in your business.</p>
 
   <h2>Same idea, different foundation</h2>
   <p>In Archive, every list is made of real records in a real database. Each field knows what it holds, such as an amount of money, a date or an email address. Records can point to each other, and the rules about who can see and change what are enforced underneath, not only in the screens you click through.</p>
   <p>Picture a design agency of eight people that tracks clients, projects and invoices. In Archive those are three lists that know about each other: a project belongs to a client, and an invoice belongs to a project. Ask Claude which clients have unpaid invoices on projects that wrapped up last month, and it reads the actual records to answer. Ask it to draft the reminders and mark them as sent, and it does that too, in one go.</p>
 
   <h2>Your AI, working directly in your records</h2>
-  <p>Archive works with the AI you already use: ChatGPT, Claude, Gemini and Grok. Add Archive once, and your assistant can read and change your lists, pages and files directly, as you. It sees exactly what you are allowed to see, and nothing more.</p>
-  <p>Rather than pressing a long chain of small buttons, the assistant writes a short piece of code and Archive runs it right next to your data. One request can search, update fifty records and write a summary page. Changes are all-or-nothing: if something goes wrong halfway, nothing is saved, so you never end up with half an update to clean up.</p>
+  <p>Archive works with the AI you already use: ChatGPT, Claude, Gemini and Grok. Add Archive once, and your assistant can read and change your lists and files directly, as you. It sees exactly what you are allowed to see, and nothing more.</p>
+  <p>Rather than pressing a long chain of small buttons, the assistant writes a short piece of code and Archive runs it right next to your data. One request can search, update fifty records and write a summary. Changes are all-or-nothing: if something goes wrong halfway, nothing is saved, so you never end up with half an update to clean up.</p>
   <p>Each assistant gets its own access key. You can narrow what it may touch, and switch one off without affecting the others.</p>
   <Pull>The question is not whether your AI can see your workspace. It is whether it can do real work there, safely.</Pull>
   <p>Notion connects to outside tools and assistants too, and Notion AI is genuinely useful for writing and summarizing. The difference is in what sits underneath: in Archive, every record your assistant touches lives in a database that checks every change and keeps everything in step.</p>
-
-  <h2>Pages people and AI write together</h2>
-  <p>Archive pages are live documents. Your team types in the browser, an assistant edits the same page at the same moment, and every change merges. Nobody's typing gets overwritten. While the assistant works, it shows up in the list of who is on the page, just like a teammate.</p>
-  <p>Say a property manager keeps a page per building, with a checklist for the next inspection, notes from tenants and open repairs. While she walks the building ticking boxes on her phone, Claude adds the repair requests that came in by email that morning to the same page. Neither of them waits for the other.</p>
-  <Figure art="blog-archive-vs-notion-2" alt="A laptop and an AI chat window both wired into the same page, with two editing markers on it" caption="One page, two editors: a person on a laptop and an AI assistant, both writing at once." />
-  <p>To be fair: Notion's editor is richer today, with embeds, layouts and years of polish. Archive pages are blocks of text, such as headings, lists, to-dos, quotes and code. Inline formatting and nested blocks are on the way.</p>
 
   <h2>Files that stay files</h2>
   <p>Most teams keep contracts, budgets and decks close to their notes. In Archive, Word, Excel and PowerPoint files stay real files that open anywhere, and your assistant can edit them in place: change a clause, fill in a cell, update the text on a slide. Everything it was not asked to touch, including styles, images and comments, stays exactly as it was.</p>
@@ -41,7 +34,6 @@
   <Compare
     them="Notion"
     rows={[
-      ['Pages', 'Live pages people and AI edit together, with every change merged', 'Polished, flexible pages with a rich editor'],
       ['Lists', 'Real records with typed fields and links between lists', 'Databases that live inside pages'],
       ['Ways to see a list', 'Lists, boards and calendars', 'Grids, boards, calendars, timelines, galleries and more'],
       ['AI', 'ChatGPT, Claude, Gemini and Grok, acting as you', 'Notion AI built in, plus integrations'],

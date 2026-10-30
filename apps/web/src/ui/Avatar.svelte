@@ -1,9 +1,9 @@
 <script>
-  let { name = '', peer, pulse = false, ...rest } = $props();
-  const initials = $derived(name.split(/[\s@.]+/).filter(Boolean).slice(0, peer === undefined ? 2 : 1).map((w) => w[0].toUpperCase()).join('') || '?');
+  let { name = '', ...rest } = $props();
+  const initials = $derived(name.split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('') || '?');
 </script>
 
-<span class={['avatar', peer !== undefined && `tinted peer-${peer}`, pulse && 'pulse']} {...rest}>{initials}</span>
+<span class="avatar" {...rest}>{initials}</span>
 
 <style>
   .avatar {
@@ -19,7 +19,4 @@
     font-weight: var(--weight-semibold);
     line-height: var(--leading-none);
   }
-  .tinted { background: var(--peer); color: var(--on-peer); }
-  .pulse { animation: pulse var(--duration-slow) infinite alternate; }
-  @keyframes pulse { to { opacity: var(--opacity-dim); } }
 </style>

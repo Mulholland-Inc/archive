@@ -44,7 +44,7 @@ const (
 )
 
 type fileRow interface {
-	FileByKeyRow | CreateFileRow | GetFileRow | RenameFileRow | LockFileRow | NextPendingFileRow | LockPendingFileRow | SavePageRow | ReplaceFileRow
+	FileByKeyRow | CreateFileRow | GetFileRow | RenameFileRow | LockFileRow | NextPendingFileRow | LockPendingFileRow | ReplaceFileRow
 }
 
 func fileOf[R fileRow](r R, err error) (*File, error) {

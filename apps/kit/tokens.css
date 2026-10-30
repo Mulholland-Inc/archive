@@ -17,14 +17,8 @@
   --red-300: #ff8a8a;
   --red-600: #c9302c;
 
-  --peer-red: #e5484d;
-  --peer-indigo: #3e63dd;
-  --peer-green: #2f9e5f;
-  --peer-purple: #8e4ec6;
-  --peer-orange: #e5631a;
-  --peer-sky: #0588f0;
-  --peer-amber: #b8790a;
-  --peer-teal: #12a594;
+  --green-600: #2f9e5f;
+  --orange-600: #e5631a;
 
   --ink-5: rgba(11, 13, 18, 0.045);
   --ink-8: rgba(11, 13, 18, 0.08);
@@ -197,8 +191,8 @@
   --on-primary-muted: var(--white-75);
   --danger: var(--red-600);
   --syntax-keyword: var(--blue-600);
-  --syntax-string: var(--peer-green);
-  --syntax-number: var(--peer-orange);
+  --syntax-string: var(--green-600);
+  --syntax-number: var(--orange-600);
   --syntax-comment: var(--fg-muted);
 
   --nav-height: var(--size-bar);
@@ -261,7 +255,6 @@
   --sidebar-width: var(--measure-xs);
   --lane-width: var(--measure-sm);
   --cell-width: var(--measure-sm);
-  --editor-width: var(--measure-2xl);
   --form-width: var(--measure-md);
   --door-width: calc(var(--measure-sm) + var(--space-8));
   --door-art: var(--art-lg);
@@ -276,17 +269,6 @@
   --text-chat: var(--text-ui);
   --greeting-size: var(--display-xs);
   --text-table: var(--text-app);
-  --text-editor: var(--text-app);
-  --on-peer: var(--gray-0);
-  --peer-0: var(--peer-red);
-  --peer-1: var(--peer-indigo);
-  --peer-2: var(--peer-green);
-  --peer-3: var(--peer-purple);
-  --peer-4: var(--peer-orange);
-  --peer-5: var(--peer-sky);
-  --peer-6: var(--peer-amber);
-  --peer-7: var(--peer-teal);
-  --peer-agent: var(--gray-500);
   --app-columns: var(--sidebar-width) minmax(0, 1fr);
   --bar-order: 0;
   --bar-direction: column;

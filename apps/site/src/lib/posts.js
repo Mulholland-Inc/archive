@@ -3,10 +3,10 @@ export const POSTS = [
     slug: "archive-vs-notion",
     title: "Archive vs Notion",
     short: "Archive vs Notion",
-    lead: "Both give your team pages and lists. The difference shows up when your AI starts doing the work.",
-    summary: "Both give your team pages and lists. The difference shows up when your AI starts doing the work.",
-    description: "Notion and Archive both give your team pages and lists. Here is what changes when your AI works directly in your records.",
-    alt: "A tidy paper notebook on a desk beside a platform where a live page, a records cabinet and an AI chat window are wired together",
+    lead: "Both keep your team's lists and documents. The difference shows up when your AI starts doing the work.",
+    summary: "Both keep your team's lists and documents. The difference shows up when your AI starts doing the work.",
+    description: "Notion and Archive both keep your team's lists and documents. Here is what changes when your AI works directly in your records.",
+    alt: "A tidy paper notebook on a desk beside a platform where a document, a records cabinet and an AI chat window are wired together",
     size: [2563, 1039]
   },
   {
@@ -35,7 +35,7 @@ export const POSTS = [
     short: "Archive vs Airtable",
     lead: "Flexible lists are great until you outgrow them. What changes when there is a real database underneath.",
     summary: "Flexible lists are great until you outgrow them. What changes when there is a real database underneath.",
-    description: "Airtable made databases friendly. Here is what changes with a real database underneath, plus pages, files and your AI on top.",
+    description: "Airtable made databases friendly. Here is what changes with a real database underneath, plus files and your AI on top.",
     alt: "A flat spreadsheet board on legs with a few loose tiles beside a pair of sturdy record cabinets, where a robot arm files a card",
     size: [2090, 1284]
   },

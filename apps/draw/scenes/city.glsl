@@ -77,7 +77,7 @@ vec2 slab(vec3 p, float k) {
   return s;
 }
 
-vec2 pages(vec3 p) {
+vec2 papers(vec3 p) {
   vec2 r = M(sdBox(p - vec3(0.0, 0.08, 0.0), vec3(0.44, 0.08, 0.37)), WHITE);
   r = seam(r, p.y - 0.12);
   r = U(r, M(sdBox(p - vec3(0.0, 1.2, 0.0), vec3(0.15, 1.12, 0.15)), GRAPHITE));
@@ -297,7 +297,7 @@ vec2 bench(vec3 p) {
 vec2 map(vec3 p) {
   vec2 r = M(1e9, 0.0);
   if (near(p - vec3(-1.3, 1.5, -1.3), vec3(0.65, 1.55, 0.7), r.x)) r = U(r, tower(p - vec3(-1.3, 0.0, -1.3)));
-  if (near(p - vec3(1.45, 1.25, -3.55), vec3(0.6, 1.4, 0.5), r.x)) r = U(r, pages(p - vec3(1.4, 0.0, -3.55)));
+  if (near(p - vec3(1.45, 1.25, -3.55), vec3(0.6, 1.4, 0.5), r.x)) r = U(r, papers(p - vec3(1.4, 0.0, -3.55)));
   if (near(p - vec3(-1.3, 0.4, 1.3), vec3(0.95, 0.45, 0.65), r.x)) r = U(r, warehouse(p - vec3(-1.3, 0.0, 1.3)));
   if (near(p - vec3(1.3, 0.75, -1.3), vec3(1.0, 0.8, 1.0), r.x)) r = U(r, dome(p - vec3(1.3, 0.0, -1.3)));
   if (near(p - vec3(-3.55, 0.85, 1.05), vec3(0.65, 0.9, 0.65), r.x)) r = U(r, agents(p - vec3(-3.55, 0.0, 1.05)));

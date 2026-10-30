@@ -27,7 +27,6 @@ type Archive struct {
 
 	blobs   blobStore
 	linkKey []byte
-	pages   sync.Map
 
 	mu  sync.RWMutex
 	cat *Catalog

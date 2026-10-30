@@ -22,16 +22,6 @@ button { cursor: pointer; }
 button:disabled { cursor: default; }
 ::selection { background: var(--primary); color: var(--on-primary); }
 
-.peer-0 { --peer: var(--peer-0); }
-.peer-1 { --peer: var(--peer-1); }
-.peer-2 { --peer: var(--peer-2); }
-.peer-3 { --peer: var(--peer-3); }
-.peer-4 { --peer: var(--peer-4); }
-.peer-5 { --peer: var(--peer-5); }
-.peer-6 { --peer: var(--peer-6); }
-.peer-7 { --peer: var(--peer-7); }
-.peer-agent { --peer: var(--peer-agent); }
-
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
 
 .app .icon-btn { border-radius: var(--radius-nav); background: none; color: var(--fg-muted); transition: background var(--duration-fast), color var(--duration-fast); }

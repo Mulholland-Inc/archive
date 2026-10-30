@@ -48,7 +48,7 @@
   ];
 
   const PARTS = [
-    { art: 'types', title: 'Its own kinds of record', items: ['People, couples, parents, events and places', 'Stories, pages and the sources behind each claim', 'Twelve kinds of document, from a bill to a keepsake'] },
+    { art: 'types', title: 'Its own kinds of record', items: ['People, couples, parents, events and places', 'Stories and the sources behind each claim', 'Twelve kinds of document, from a bill to a keepsake'] },
     { art: 'security', title: 'Private by default', items: ['A member’s files start in their own space', 'Family records stay closed until an approver opens them', 'Sharing is always on purpose'] },
     { art: 'calendar', title: 'Dates that matter', items: ['Everything due, expiring or renewing in one calendar', 'A reminder by email or text, if you want one', 'A private calendar address for each member'] }
   ];
@@ -94,7 +94,7 @@
 
 <Cta
   scene="city"
-  alt="A city block whose buildings are records, pages, files, a vault and an antenna for AI assistants"
+  alt="A city block whose buildings are records, papers, files, a vault and an antenna for AI assistants"
   title="Build your own on Archive."
   lead="Start with your own kinds of record. Archive does the rest."
   links={[[FAMILY, 'Visit archive.family'], ['/developers', 'Build on Archive']]}

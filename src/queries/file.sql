@@ -46,10 +46,6 @@ UPDATE archive.file SET status = $2, error = $3 WHERE id = $1;
 -- name: ResetProcessing :exec
 UPDATE archive.file SET status = 'pending' WHERE status = 'processing';
 
--- name: SavePage :one
-UPDATE archive.file SET hash = $2, size = $3, text = $4, status = 'done', error = '' WHERE id = $1
-RETURNING id, hash, name, mime, size, metadata, status, error, space, created_at;
-
 -- name: ReplaceFile :one
 UPDATE archive.file SET hash = $2, size = $3, status = 'pending', text = '', error = '', metadata = '{}' WHERE id = $1
 RETURNING id, hash, name, mime, size, metadata, status, error, space, created_at;

@@ -103,7 +103,7 @@ vec2 chatPanel(vec3 p) {
   return r;
 }
 
-vec2 minipage(vec2 o, vec3 q, vec2 h, float caret) {
+vec2 doc(vec2 o, vec3 q, vec2 h, float caret) {
   o = decal(o, q, sdRect(q.xz, h, 0.015), WHITE);
   float s = h.x / 0.2;
   vec2 c = q.xz / s;
@@ -134,7 +134,7 @@ vec2 laptop(vec3 p) {
   vec2 lid = M(sdRoundBox(l, vec3(0.5, 0.32, 0.018), 0.015), WHITE);
   vec3 s = faceZ(l, 0.018);
   lid = inset(lid, s, vec2(0.44, 0.27), 0.015, 0.006, BLUE);
-  lid = minipage(lid, s - vec3(0.0, -0.006, -0.01), vec2(0.2, 0.22), LILAC);
+  lid = doc(lid, s - vec3(0.0, -0.006, -0.01), vec2(0.2, 0.22), LILAC);
   lid = U(lid, M(sdCylinder(rotZ(h, PI * 0.5), 0.022, 0.4), STEEL + ROUND));
   r = U(r, lid);
   vec3 ft = vec3(abs(p.x) - 0.4, p.y + 0.004, abs(p.z) - 0.26);
@@ -151,7 +151,7 @@ vec2 tablet(vec3 p) {
   vec2 tab = M(sdRoundBox(l, vec3(0.3, 0.4, 0.022), 0.04), WHITE);
   vec3 s = faceZ(l, 0.022);
   tab = inset(tab, s, vec2(0.25, 0.35), 0.02, 0.006, BLUE);
-  tab = minipage(tab, s - vec3(0.0, -0.006, -0.02), vec2(0.2, 0.22), LIME);
+  tab = doc(tab, s - vec3(0.0, -0.006, -0.02), vec2(0.2, 0.22), LIME);
   r = U(r, tab);
   r = U(r, button(faceY(l, 0.4) - vec3(0.18, 0.0, 0.0), 0.025, 0.008, STEEL));
   r = U(r, M(sdBox(vec3(l.x, l.y + 0.36, l.z - 0.015), vec3(0.025, 0.008, 0.02)), GRAPHITE));
