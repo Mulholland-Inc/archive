@@ -1,17 +1,21 @@
 package main
 
 import (
+	"bytes"
 	"cmp"
 	"context"
+	"embed"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -26,6 +30,9 @@ import (
 
 var cliVersion = "0.1.0"
 
+//go:embed all:web
+var webFiles embed.FS
+
 const cliUsage = `archive keeps all your stuff in one place, in Postgres tables you define.
 
 Usage:
@@ -33,7 +40,7 @@ Usage:
                                      every command acts as a user (default the first owner) of a
                                      workspace (default the first one)
 
-  archive serve [-addr :8080]        serve the HTTP API (/api), sign-in (/auth) and MCP (/mcp)
+  archive serve [-addr :8080]        serve the web app, the HTTP API (/api), sign-in (/auth) and MCP (/mcp)
   archive mcp                        serve MCP over stdio
   archive types                      print the tables, their columns and the built-in types
   archive run <file.ts|->            run TypeScript against the archive SDK in one transaction,
@@ -614,6 +621,7 @@ func cliServe(ctx context.Context, h *Hub, a *Archive, addr string) error {
 	mux.Handle("/auth/", si.handler())
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("/mcp", h.mcp)
+	mux.HandleFunc("/", web)
 	var wg sync.WaitGroup
 	bg, stop := context.WithCancel(ctx)
 	defer wg.Wait()
@@ -627,7 +635,7 @@ func cliServe(ctx context.Context, h *Hub, a *Archive, addr string) error {
 	hs := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	errc := make(chan error, 1)
 	go func() { errc <- hs.ListenAndServe() }()
-	fmt.Fprintf(os.Stderr, "archive: serving the API on %s/api, MCP on %s/mcp and sign-in on %s/auth\n", h.api, h.api, h.app)
+	fmt.Fprintf(os.Stderr, "archive: serving the web app on %s, the API on %s/api and MCP on %s/mcp\n", h.app, h.api, h.api)
 	select {
 	case err := <-errc:
 		return err
@@ -636,6 +644,36 @@ func cliServe(ctx context.Context, h *Hub, a *Archive, addr string) error {
 		defer cancel()
 		return hs.Shutdown(sctx)
 	}
+}
+
+func web(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" && r.Method != "HEAD" {
+		http.NotFound(w, r)
+		return
+	}
+	name := strings.TrimPrefix(r.URL.Path, "/")
+	if first, _, _ := strings.Cut(name, "/"); first == "hooks" || first == "stripe" {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if f, err := fs.Stat(webFiles, "web/"+name); err != nil || f.IsDir() || strings.HasPrefix(path.Base(name), ".") {
+		if strings.HasPrefix(name, "assets/") {
+			http.NotFound(w, r)
+			return
+		}
+		name = "index.html"
+	}
+	b, err := webFiles.ReadFile("web/" + name)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if strings.HasPrefix(name, "assets/") {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	} else {
+		w.Header().Set("Cache-Control", "no-cache")
+	}
+	http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(b))
 }
 
 var httpErrBadRequest = errors.New("bad request")

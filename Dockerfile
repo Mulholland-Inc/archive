@@ -1,8 +1,18 @@
+FROM --platform=$BUILDPLATFORM node:26-alpine AS web
+WORKDIR /w/apps/web
+COPY apps/web/package.json apps/web/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci
+COPY apps/kit/ /w/apps/kit/
+COPY apps/site/static/art/ /w/apps/site/static/art/
+COPY apps/web/ ./
+RUN npm run build
+
 FROM golang:1.27-alpine AS build
 WORKDIR /src
 COPY src/go.mod src/go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY src/ ./
+COPY --from=web /w/apps/web/dist/ ./web/
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /archive .
 
