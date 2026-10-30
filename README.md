@@ -170,6 +170,16 @@ With no `-space`, the token gets your role in every space you are in. Narrow it 
 | **Cloud** | Terraform for [AWS](apps/terraform/aws) (Fargate, RDS, S3), [Google Cloud](apps/terraform/gcp) (Cloud Run, Cloud SQL, Storage) and [Azure](apps/terraform/azure) (Container Apps, Postgres, Files) |
 | **As code** | the [`archive` Terraform provider](apps/terraform/provider) for your schema, spaces, tokens and roles |
 
+On Google Cloud, everything is in Terraform but the bucket for its state:
+
+```sh
+gcloud storage buckets create gs://<project>-tfstate --versioning
+cd apps/terraform/gcp && terraform init -backend-config=bucket=<project>-tfstate
+terraform apply -var project=<project> -var admin_email=you@example.com
+```
+
+Add `-var app_domain=… -var api_domain=… -var cloudflare_zone=…` with `CLOUDFLARE_API_TOKEN` for your own domains, and `-var github_repository=owner/repo` with `GITHUB_TOKEN` to deploy every image built on main.
+
 The image holds Postgres and the binary. With nothing set, it runs the bundled Postgres and keeps files in `/data`. Give it an outside Postgres (`DATABASE_URL`), S3-compatible storage (`ARCHIVE_BLOB_URL`) and one `ARCHIVE_SECRET_KEY`, and it keeps nothing local, so you can run as many copies side by side as you like. In production, put it behind HTTPS and set `ARCHIVE_URL`.
 
 One Archive serves any number of workspaces: one per organization, each its own Postgres database on the same server, with its own spaces, files and workflows, its own login role and its own data key. People are invited to workspaces (`archive user add`, or the Users page), and one sign-in reaches all of theirs. A new install starts with one. Instance admins (the admins of the first workspace) make and delete more, each with its first owner:

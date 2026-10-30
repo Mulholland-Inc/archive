@@ -88,7 +88,8 @@ Without subdomains, every request names its workspace, and secrets stay plain `a
 - **Domains go through a Cloudflare Worker.** Cloud Run picks the service by Host header, so DNS alone cannot point a domain at it. Cloud Run's domain mapping is preview and not meant for production, a Google load balancer costs about $18 a month, and Cloudflare Origin Rules rewrite the Host header only on Enterprise. A Worker of a few lines, on Workers' free plan, fetches the same path from the service's run.app address. Its custom domains create the DNS records and certificates, and Cloudflare's protection sits in front. Without domains there is no Worker and the run.app address is the app's.
 - **The image comes through Artifact Registry.** Cloud Run cannot pull from ghcr.io, so a remote repository mirrors it. The ghcr.io package has to be public.
 - **State lives in a GCS bucket**, passed at `terraform init -backend-config=bucket=…`.
-- **Every image on main deploys itself.** The image workflow updates the service to that commit's image through workload identity federation, once the repository's GitHub variables name the identity Terraform made. Terraform ignores the image after creating the service.
+- **Every image on main deploys itself.** The image workflow updates the service to that commit's image through workload identity federation. Terraform makes that identity and sets the repository's Actions variables naming it, and ignores the image after creating the service.
+- **Everything is in Terraform but its state bucket**, which has to exist before `terraform init`. The Cloudflare account and zone are looked up from the zone's name.
 
 ## How it was built
 

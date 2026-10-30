@@ -27,21 +27,15 @@ variable "api_domain" {
   default     = ""
 }
 
-variable "cloudflare_account_id" {
+variable "cloudflare_zone" {
   type        = string
-  description = "Cloudflare account whose Worker serves app_domain and api_domain. Its token goes in CLOUDFLARE_API_TOKEN."
-  default     = ""
-}
-
-variable "cloudflare_zone_id" {
-  type        = string
-  description = "Cloudflare zone holding app_domain and api_domain."
+  description = "Cloudflare zone holding app_domain and api_domain, like archive.dev; a Worker there serves both. Its token goes in CLOUDFLARE_API_TOKEN."
   default     = ""
 }
 
 variable "github_repository" {
   type        = string
-  description = "owner/repo whose main branch may deploy new images to the service, like Mulholland-Inc/archive. Empty allows none."
+  description = "owner/repo whose main branch deploys each new image to the service, like Mulholland-Inc/archive; its Actions variables are set with GITHUB_TOKEN. Empty deploys nothing."
   default     = ""
 }
 
