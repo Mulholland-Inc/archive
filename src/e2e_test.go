@@ -374,6 +374,7 @@ func call(t *testing.T, method, url, bearer string, body any, out any, cookies .
 	if bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
+	req.Header.Set("X-Forwarded-For", "203.0.113.7")
 	for _, c := range cookies {
 		req.AddCookie(c)
 	}
@@ -892,14 +893,60 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 	})
 }
 
+func TestOnThisMachineTheFirstOwnerIsSignedInWithoutLoggingIn(t *testing.T) {
+	t.Parallel()
+	local := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
+	srv := local.serve()
+	local.must("user", "add", "bob@example.com")
+	here := map[string]string{"X-Forwarded-For": ""}
+	me := func(url string, hdr map[string]string) (int, string) {
+		var m struct {
+			Actor Actor `json:"actor"`
+		}
+		h := map[string]string{"X-Forwarded-For": ""}
+		maps.Copy(h, hdr)
+		st, _ := e2eDo(t, "GET", url+"/auth/me", h, nil, &m)
+		return st, m.Actor.Email
+	}
+	if st, who := me(srv.url, nil); st != 200 || who != "alice@example.com" {
+		t.Errorf("a request from this machine: %d %q", st, who)
+	}
+	host := strings.Replace(srv.url, "127.0.0.1", "localhost", 1)
+	if st, who := me(host, nil); st != 200 || who != "alice@example.com" {
+		t.Errorf("a request to localhost: %d %q", st, who)
+	}
+	if st, _ := e2eDo(t, "GET", srv.url+"/api/person", here, nil, nil); st == 401 {
+		t.Errorf("the API from this machine: %d", st)
+	}
+	if st, _ := e2eDo(t, "GET", srv.url+"/auth/me", here, nil, nil, &http.Cookie{Name: "archive_session", Value: "arc_stale"}); st != 200 {
+		t.Errorf("a stale session cookie on this machine: %d", st)
+	}
+	if st, _ := e2eDo(t, "GET", srv.url+"/auth/me", map[string]string{"X-Forwarded-For": "", "Authorization": "Bearer arc_nope"}, nil, nil); st != 401 {
+		t.Errorf("a bad bearer token on this machine: %d", st)
+	}
+	for _, hdr := range []map[string]string{{"X-Forwarded-For": "203.0.113.7"}, {"Forwarded": "for=203.0.113.7"}, {"Host": "app.example.com"}} {
+		if st, _ := me(srv.url, hdr); st != 401 {
+			t.Errorf("a request with %v: %d", hdr, st)
+		}
+	}
+	if st, _ := e2eDo(t, "POST", srv.url+"/mcp", here, map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize"}, nil); st != 401 {
+		t.Errorf("mcp from this machine without a token: %d", st)
+	}
+
+	public := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com", "ARCHIVE_URL=https://app.example.com")
+	pub := public.serve()
+	if st, _ := me(pub.url, nil); st != 401 {
+		t.Errorf("a request from this machine when ARCHIVE_URL is public: %d", st)
+	}
+	if !strings.Contains(srv.log.String(), "requests from this machine are signed in as the first owner") || !strings.Contains(pub.log.String(), "no sign-in provider is set") {
+		t.Errorf("logs:\n%s\n%s", srv.log, pub.log)
+	}
+}
+
 func TestDeletingASpaceRemovesEverythingInItForOwnersOnly(t *testing.T) {
 	t.Parallel()
 	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
 	srv := in.serve()
-	if !strings.Contains(srv.log.String(), "no sign-in provider is set") {
-		t.Errorf("no word in the log that nobody can sign in:\n%s", srv.log)
-	}
-
 	in.must("user", "add", "bob@example.com", "-name", "Bob")
 	in.push(e2eSchema)
 	in.must("space", "add", "team")
@@ -3031,9 +3078,14 @@ func e2eDo(t *testing.T, method, url string, hdr map[string]string, body any, ou
 	}
 	req, _ := http.NewRequest(method, url, rd)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forwarded-For", "203.0.113.7")
 	for k, v := range hdr {
 		req.Header.Set(k, v)
 	}
+	if req.Header.Get("X-Forwarded-For") == "" {
+		req.Header.Del("X-Forwarded-For")
+	}
+	req.Host = cmp.Or(hdr["Host"], req.Host)
 	for _, c := range cookies {
 		req.AddCookie(c)
 	}

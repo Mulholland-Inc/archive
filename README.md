@@ -250,4 +250,6 @@ ARCHIVE_DATA=../data ./archive serve  # web app, API, sign-in and MCP on :8080
 cd apps/web && npm run dev   # web app with hot reload on :5173
 ```
 
+While `ARCHIVE_URL` is `http://localhost…` (the default), requests from the same machine are signed in as the first owner, so local development needs no sign-in provider. Anything that arrives through a proxy, or for another host name, still signs in.
+
 <p align="center"><sub>Made by <a href="https://mulholland.ai">Mulholland</a>.</sub></p>

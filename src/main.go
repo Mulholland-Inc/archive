@@ -119,7 +119,8 @@ Environment:
                      required with DATABASE_URL, the same on every instance; unset with the
                      bundled Postgres uses $ARCHIVE_DATA/secret.key
   ARCHIVE_URL        public base URL of the web app and sign-in, for cookies and passkeys
-                     (default http://localhost:<port>)
+                     (default http://localhost:<port>); while it is http://localhost, requests
+                     from this machine are signed in as the first owner
   ARCHIVE_API_URL    public base URL of the API, MCP, webhooks, file links and every
                      OAuth redirect URL (default ARCHIVE_URL)
   ARCHIVE_ADMIN_EMAIL
@@ -581,7 +582,9 @@ func cliServe(ctx context.Context, h *Hub, a *Archive, addr string) error {
 			fmt.Fprintln(os.Stderr, "archive: no users yet; add the first owner with ARCHIVE_ADMIN_EMAIL or archive user add <email>")
 		}
 	}
-	if len(si.configs) == 0 {
+	if h.localApp() {
+		fmt.Fprintf(os.Stderr, "archive: %s is on this machine, so requests from this machine are signed in as the first owner\n", h.app)
+	} else if len(si.configs) == 0 {
 		fmt.Fprintln(os.Stderr, "archive: no sign-in provider is set, so nobody can sign in to the web app; set ARCHIVE_GOOGLE_CLIENT_ID and ARCHIVE_GOOGLE_CLIENT_SECRET, or Microsoft's, Slack's or GitHub's (see archive help)")
 	}
 	mux := http.NewServeMux()

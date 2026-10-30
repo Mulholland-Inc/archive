@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -525,6 +527,51 @@ func (h *Hub) authenticate(ctx context.Context, secret, want string) (*Archive, 
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	return h.enter(ctx, t, want)
+}
+
+func (h *Hub) localApp() bool {
+	app, err := url.Parse(h.app)
+	return err == nil && app.Scheme == "http" && localHost(app.Hostname())
+}
+
+func (h *Hub) local(r *http.Request) bool {
+	if !h.localApp() || r.Header.Get("X-Forwarded-For") != "" || r.Header.Get("Forwarded") != "" {
+		return false
+	}
+	peer, _, _ := net.SplitHostPort(r.RemoteAddr)
+	host, _, err := net.SplitHostPort(r.Host)
+	if err != nil {
+		host = r.Host
+	}
+	return localHost(peer) && localHost(host)
+}
+
+func localHost(host string) bool {
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return host == "localhost" || ip != nil && ip.IsLoopback()
+}
+
+func (h *Hub) localUser(ctx context.Context, want string) (*Archive, *Actor, func(), error) {
+	one, err := uuid.Parse(h.one)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	u, err := h.q().FirstUser(ctx, one)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil, nil, fmt.Errorf("no users yet; set ARCHIVE_ADMIN_EMAIL: %w", ErrUnauthorized)
+	}
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	t := generated.AuthenticateRow{Kind: "session", UserID: u.ID, Email: u.Email, UserName: u.Name}
+	for _, w := range u.Workspaces {
+		t.Workspaces = append(t.Workspaces, w.String())
+	}
+	return h.enter(ctx, t, want)
+}
+
+func (h *Hub) enter(ctx context.Context, t generated.AuthenticateRow, want string) (*Archive, *Actor, func(), error) {
 	short := cmp.Or(t.Workspace, want)
 	if short == "" && len(t.Workspaces) > 0 {
 		short = t.Workspaces[0]
@@ -559,12 +606,16 @@ func (h *Hub) authenticate(ctx context.Context, secret, want string) (*Archive, 
 
 func (h *Hub) httpAuth(next func(a *Archive) http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var a *Archive
+		var ac *Actor
+		var release func()
 		secret, err := h.secret(r)
-		if err != nil {
-			httpWrite(w, 0, nil, err)
-			return
+		if err == nil {
+			a, ac, release, err = h.authenticate(r.Context(), secret, r.Header.Get("Archive-Workspace"))
 		}
-		a, ac, release, err := h.authenticate(r.Context(), secret, r.Header.Get("Archive-Workspace"))
+		if errors.Is(err, ErrUnauthorized) && r.Header.Get("Authorization") == "" && h.local(r) {
+			a, ac, release, err = h.localUser(r.Context(), r.Header.Get("Archive-Workspace"))
+		}
 		if err != nil {
 			httpWrite(w, 0, nil, err)
 			return
