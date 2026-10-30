@@ -192,3 +192,11 @@ export function setDevMode(on) {
     else delete localStorage.dev;
   } catch {}
 }
+
+export function connectedApps() {
+  try {
+    return JSON.parse(localStorage[`connected:${workspace()}`] ?? '[]');
+  } catch {
+    return [];
+  }
+}

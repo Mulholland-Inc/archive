@@ -1,5 +1,6 @@
 <script>
-  import { api, setupHidden, hideSetup } from '../api.js';
+  import { onDestroy } from 'svelte';
+  import { api, connectedApps, setupHidden, hideSetup } from '../api.js';
   import Icon from '#kit/Icon.svelte';
 
   let { email = '' } = $props();
@@ -7,6 +8,10 @@
   let tokens = $state(null);
   let users = $state(null);
   let hidden = $state(setupHidden());
+  let connected = $state(connectedApps());
+  const refresh = () => (connected = connectedApps());
+  addEventListener('connected', refresh);
+  onDestroy(() => removeEventListener('connected', refresh));
 
   api('/api/files?limit=1').then((f) => (files = f)).catch(() => (files = []));
   api('/auth/tokens').then((t) => (tokens = t)).catch(() => (tokens = []));
@@ -15,7 +20,7 @@
   const admin = $derived(!!users?.find((u) => u.email === email)?.admin);
   const steps = $derived([
     { title: 'Add a file', href: '/files', done: files?.length > 0 },
-    { title: 'Connect your AI', href: 'https://archive.dev/docs', external: true, done: tokens?.length > 0 },
+    { title: 'Connect your AI', connect: true, done: tokens?.length > 0 || connected.length > 0 },
     ...(admin ? [{ title: 'Invite someone', href: '/users', done: users.length > 1 }] : []),
   ]);
   const ready = $derived(files && tokens && users);
@@ -34,10 +39,10 @@
       <button type="button" onclick={hide}>Hide</button>
     </div>
     {#each steps as s (s.title)}
-      <a class="step" class:done={s.done} href={s.href} target={s.external ? '_blank' : undefined}>
+      <svelte:element this={s.connect ? 'button' : 'a'} class="step" class:done={s.done} type={s.connect ? 'button' : undefined} href={s.href} onclick={s.connect ? () => dispatchEvent(new CustomEvent('connect')) : undefined}>
         <span class="mark">{#if s.done}<Icon name="check" />{/if}</span>
         <span>{s.title}</span>
-      </a>
+      </svelte:element>
     {/each}
   </section>
 {/if}
@@ -48,7 +53,7 @@
   h3 { font-size: inherit; font-weight: var(--weight-medium); }
   button { color: inherit; transition: color var(--duration-fast); }
   button:hover { color: var(--fg); }
-  .step { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1-5); border-radius: var(--radius-nav); transition: background var(--duration-fast); }
+  .step { width: 100%; text-align: left; display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1-5); border-radius: var(--radius-nav); transition: background var(--duration-fast); }
   .step:hover { background: var(--fill-faint); }
   .done { color: var(--fg-muted); }
   .mark { display: grid; place-items: center; flex: none; width: var(--size-icon-lg); height: var(--size-icon-lg); border: var(--hairline) solid var(--fg-muted); border-radius: var(--radius-full); }

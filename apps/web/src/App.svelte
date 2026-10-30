@@ -8,6 +8,8 @@
   import Profile from './ui/Profile.svelte';
   import Workspaces from './ui/Workspaces.svelte';
   import Panel from './ui/Panel.svelte';
+  import Connect from './ui/Connect.svelte';
+  import Library from './Library.svelte';
   import Heading from './ui/Heading.svelte';
   import NavItem from './ui/NavItem.svelte';
   import SignIn from './SignIn.svelte';
@@ -30,6 +32,7 @@
   let catalogued = $state(false);
   let dev = $state(devMode());
   let canAdd = $state(false);
+  let connecting = $state(false);
   let path = $state(location.pathname);
   let chats = $state([]);
   let scope = $state(space());
@@ -45,6 +48,7 @@
   });
 
   addEventListener('popstate', () => (path = location.pathname));
+  addEventListener('connect', () => (connecting = true));
   addEventListener('click', (e) => {
     const a = e.target.closest?.('a[href^="/"]');
     if (!a || a.target || e.metaKey || e.ctrlKey || e.shiftKey || /^\/(api|auth)\//.test(a.getAttribute('href'))) return;
@@ -155,6 +159,9 @@
       </div>
       <Workspaces workspaces={me.workspaces?.length ? me.workspaces : [{ id: me.workspace, name: 'Archive' }]} workspace={me.workspace} latest={chats[0]?.title} onpick={(id) => (id === me.workspace ? go('/') : switchTo(id))} {canAdd} onrename={renameArchive} onadd={addArchive} />
       <nav>
+        <NavItem href="/" icon="message-circle" active={!route.first || route.first === 'chat'}>Chat</NavItem>
+        <NavItem href="/library" icon="library" active={route.first === 'library'}>Library</NavItem>
+        <NavItem href="/users" icon="users" active={route.first === 'users'}>People</NavItem>
         {#if chats.length}
           <div class="chats">
             <hr />
@@ -163,18 +170,9 @@
             {/each}
           </div>
         {/if}
-        <div class="phone">
-          <hr />
-          <NavItem href="/files" icon="folder" active={route.first === 'files'}>Files</NavItem>
-          {#each views as v (v.name)}
-            <NavItem href="/views/{v.name}" icon={v.icon} active={route.first === 'views' && route.second === v.name}>{v.name.replaceAll('_', ' ')}</NavItem>
-          {/each}
-        </div>
         {#if dev}
           <hr />
-          <NavItem href="/files" icon="folder" active={route.first === 'files'}>Files</NavItem>
           <NavItem href="/workflows" icon="workflow" active={route.first === 'workflows'}>Workflows</NavItem>
-          <NavItem href="/users" icon="users" active={route.first === 'users'}>Users</NavItem>
         {/if}
         {#if dev && views.length}
           <hr />
@@ -191,6 +189,7 @@
       </nav>
       <footer>
         <Profile name={who} email={me.actor.email} {dev} ondev={toggleDev} onsignout={signOut} />
+        <button class="apps" type="button" aria-label="Connect apps" title="Connect apps" onclick={() => (connecting = true)}><Icon name="grid-2x2-plus" /></button>
         <Theme />
       </footer>
     </aside>
@@ -201,6 +200,8 @@
         {#if catalogued}
           <Chat id={route.second} name={me.actor.name} email={me.actor.email} family={views.some(isTree) ? me.workspaces?.find((w) => w.id === me.workspace)?.name : ''} onsaved={loadChats} />
         {/if}
+      {:else if route.first === 'library'}
+        {#if catalogued}<Library {views} {tables} />{/if}
       {:else if route.first === 'files'}
         <Files />
       {:else if route.first === 'workflows'}
@@ -233,6 +234,7 @@
     {/if}
     </div>
   </div>
+  {#if connecting}<Connect workspace={me.workspace} onclose={() => (connecting = false)} />{/if}
 {/if}
 
 <style>
@@ -268,6 +270,8 @@
   .side { display: var(--narrow-only); flex: none; align-items: center; justify-content: center; width: var(--size-control-lg); height: var(--size-control-lg); color: var(--fg-muted); transition: color var(--duration-fast); }
   .side :global(.icon) { width: var(--size-icon-lg); height: var(--size-icon-lg); }
   .side:hover { color: var(--fg); }
+  .apps { display: grid; place-items: center; flex: none; width: var(--size-control); height: var(--size-control); border-radius: var(--radius-full); color: var(--fg-muted); transition: color var(--duration-fast), background var(--duration-fast); }
+  .apps:hover { background: var(--fill-faint); color: var(--fg); }
   .actions { display: flex; align-items: center; gap: var(--space-1); }
   .new { display: grid; place-items: center; width: var(--size-control-lg); height: var(--size-control-lg); border-radius: var(--radius-full); color: var(--fg-muted); transition: color var(--duration-fast), background var(--duration-fast); }
   .new:hover { background: var(--fill-faint); color: var(--fg); }
