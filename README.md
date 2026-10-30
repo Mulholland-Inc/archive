@@ -167,8 +167,7 @@ With no `-space`, the token gets your role in every space you are in. Narrow it 
 
 | Where | How |
 |---|---|
-| **Docker** | [`install.sh`](install.sh), or `docker compose up -d` from the code |
-| **Cloud** | Terraform for [Google Cloud](apps/terraform/gcp) (Cloud Run, Cloud SQL, Storage) |
+| **Google Cloud** | [Terraform](apps/terraform/gcp) (Cloud Run, Cloud SQL, Storage), applied as it is or added to your own setup as a [module](apps/terraform/gcp/module) |
 | **As code** | the [`archive` Terraform provider](apps/terraform/provider) for your schema, spaces, tokens and roles |
 
 The API and the web app are separate images, always on addresses of their own: `ghcr.io/mulholland-inc/archive` serves the API, sign-in and MCP, and `ghcr.io/mulholland-inc/archive-web` serves the web app. Point them at each other with `ARCHIVE_URL` (the web app's address, on the API) and `ARCHIVE_API_URL` (the API's address, on both).
@@ -189,17 +188,41 @@ The first apply takes about 15 minutes, nearly all of it Cloud SQL, and Google's
 gcloud run jobs execute archive --region us-central1 --wait --args=user,add,you@example.com
 ```
 
-The same job runs any other command, like `--args=workspace,add,Acme,anna@acme.example`. The service scales to zero: Cloud Tasks wakes it at the moment a workflow or file is due, so nothing has to stay running.
+The same job runs any other `archive` command. The service scales to zero: Cloud Tasks wakes it at the moment a workflow or file is due, so nothing has to stay running.
 
 To deploy every image built on main, add `-var github_repository=owner/repo` with a `GITHUB_TOKEN` that can write that repository's Actions variables and secrets (`gh auth token` works for an admin). Apply before merging anything else, then run the image workflow once: until it runs, the app domain answers 503.
 
-The API image holds only the binary, built with [ko](https://ko.build) on a minimal base, and it needs a Postgres 18 (`DATABASE_URL`). With nothing else set, it keeps its key and files in `ARCHIVE_DATA`. Give it storage (`ARCHIVE_BLOB_URL`) and one `ARCHIVE_SECRET_KEY`, and it keeps nothing local, so you can run as many copies side by side as you like. In production, put both behind HTTPS and set `ARCHIVE_URL` and `ARCHIVE_API_URL`.
+To add Archive to a Terraform setup you already have, use the module in [`apps/terraform/gcp/module`](apps/terraform/gcp/module), which `apps/terraform/gcp` applies too. It takes the same variables and configures no providers, so give it a `google.verify` provider that acts as the `<name>-verify` service account it makes:
+
+```hcl
+provider "google" {
+  alias                       = "verify"
+  project                     = "my-project"
+  region                      = "us-central1"
+  impersonate_service_account = "archive-verify@my-project.iam.gserviceaccount.com"
+  scopes                      = ["https://www.googleapis.com/auth/cloud-platform", "https://www.googleapis.com/auth/siteverification"]
+}
+
+module "archive" {
+  source    = "github.com/Mulholland-Inc/archive//apps/terraform/gcp/module"
+  providers = { google = google, google.verify = google.verify }
+
+  project         = "my-project"
+  app_domain      = "app.example.com"
+  api_domain      = "api.example.com"
+  cloudflare_zone = "example.com"
+}
+```
+
+It outputs `url`, `api_url`, `service`, `service_account`, `bucket`, `tasks_queue`, `database_connection_name` and `cli`. It makes its own Cloud SQL instance, bucket and Cloud Tasks queue, all named after `name`, and owns the zone's Configuration Rules.
+
+The API image holds only the binary, built with [ko](https://ko.build) on a minimal base, and it needs a Postgres 18 (`DATABASE_URL`). With nothing else set, it keeps its key and files in `ARCHIVE_DATA`. Give it storage (`ARCHIVE_BLOB_URL`) and one `ARCHIVE_SECRET_KEY`, and it keeps nothing local, so you can run as many copies side by side as you like.
 
 One Archive serves any number of workspaces: one per organization, each its own Postgres database on the same server, with its own spaces, files and workflows, its own login role and its own data key. People are invited to workspaces (`archive user add`, or the Users page), and one sign-in reaches all of theirs. A new install starts with one. Instance admins (the admins of the first workspace) make and delete more, each with its first owner:
 
 ```sh
-docker exec archive archive workspace add "Acme Inc" anna@acme.example
-docker exec archive archive -workspace <uuid> space list
+gcloud run jobs execute archive --region us-central1 --wait --args=workspace,add,Acme,anna@acme.example
+gcloud run jobs execute archive --region us-central1 --wait --args=-workspace,<uuid>,space,list
 ```
 
 A workspace's roles can reach only its own database, so workspaces stay isolated even where Postgres has no superuser, as on Cloud SQL. A token works in the one workspace it was made in, and the web app's one session switches between all of yours. [app.archive.dev](https://app.archive.dev) is this same image, deployed with [`apps/terraform/gcp`](apps/terraform/gcp) with `app_domain` and `api_domain` set.
