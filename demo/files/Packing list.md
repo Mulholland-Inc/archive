@@ -1,9 +1,9 @@
 # Packing list
 
 ## Always
-- Passport (expires 2027, check before booking!) and ID card
+- Passport (expires Feb 2027, check before booking!) and driver's license
 - Phone, charger, Sony headphones, adapter
-- Health insurance card (Zilveren Kruis, policy 204-881-3392)
+- Health insurance card (Aetna, member ID W204881339)
 - Glasses and the spare contacts
 
 ## Warm trips
@@ -13,5 +13,5 @@
 - Thermal layers, the green Patagonia jacket, gloves
 
 ## Before leaving
-- Ask Femke (neighbour, 3rd floor) to water the plants and feed Mosterd
-- Turn the thermostat down to 15 degrees
+- Ask Maria (neighbor, 4th floor) to water the plants and feed Pickles
+- Turn the thermostat down to 60 °F

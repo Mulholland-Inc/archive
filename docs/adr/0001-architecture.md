@@ -31,7 +31,7 @@ Two Postgres schemas. Tables are named in the singular, and every id is a UUIDv7
 
 | Schema | Holds |
 |---|---|
-| `archive` | Archive's own tables: `space`, `user`, `token`, `chat`, `workflow`, `workflow_run`, `revision`, `file`, `upload` and `secret`. It also holds the built-in types, as domains (`archive.email`, `archive.iban`, `archive.phone`, …) and composite types (`archive.money`, `archive.address`, `archive.timestamp`, …) |
+| `archive` | Archive's own tables: `space`, `user`, `token`, `chat`, `workflow`, `workflow_run`, `revision`, `file`, `upload` and `secret`. It also holds the built-in types, as domains (`archive.email`, `archive.us_ein`, `archive.phone`, …) and composite types (`archive.money`, `archive.address`, `archive.timestamp`, …) |
 | `public` | One table per type, where the table is the type and a row is the entity, and the views over them |
 
 Each workspace (see [Workspaces](#workspaces)) has a database of its own with these two schemas. Only the main database's `user` and `token` are used, since people and their secrets are the instance's, not a workspace's; it also holds the instance's own tables: `workspace`, `due` and `setting`.
@@ -133,7 +133,7 @@ These run in the agent, as code against the SDK. The ones that recur can be save
 
 - **Intake and classification**: the agent reads new files, decides their type, and writes rows.
 - **Jev classifier**: a small model agents can use to pick the type for an input.
-- **Dataset preparation and training**: rows become labelled examples, exported per table, to retrain Jev.
+- **Dataset preparation and training**: rows become labeled examples, exported per table, to retrain Jev.
 - **Skill library**: reusable agent instructions stored as rows of a `skill` table.
 
 ## Apps
@@ -147,7 +147,7 @@ Archive is listed in ChatGPT, Claude, Gemini and Grok as one remote MCP server. 
 - **One identity per person**: a user is one row of `archive.user` in the main database, with the workspaces they belong to. In each of those workspaces they have a Postgres role and a personal space, made when they are added (`archive user add`) and dropped when they are removed (`archive user remove`).
 - **Tokens** belong to a user and one workspace, and can only narrow that user's rights there. Agents get their own tokens. Tokens and sessions are `arc_<secret>`, kept as hashes in the main database's `archive.token`; a session belongs to the person and works in all their workspaces.
 - **Sign-in is invite-only**: Google, Microsoft and Slack (OpenID Connect) and GitHub (OAuth), each turned on by its two variables, `ARCHIVE_<PROVIDER>_CLIENT_ID` and `ARCHIVE_<PROVIDER>_CLIENT_SECRET`, plus passkeys. Archive sends no mail and makes no sign-in links. An admin invites someone by email (`archive user add`, or the Users page and `/auth/users`); their first provider sign-in under that email links the provider's account to them, and later sign-ins match that link. An invite only ever matches an email the provider says is verified: `email_verified` for Google, Slack and Microsoft (or Microsoft's `xms_edov`, which stops a tenant from claiming someone else's domain), and GitHub's primary address with `verified`. Anyone else, and anyone removed from every workspace, is refused. After a provider sign-in the web app offers to add a passkey to the device. The first owner is whoever is added first with `archive user add`; with no provider set, the server says in its log that nobody can sign in. One sign-in reaches every workspace the person is in.
-- **Secret fields**: values of secret types such as `iban` or `us_ssn` are encrypted in `archive.secret` with the workspace's data key. They are hidden from anyone not granted that type.
+- **Secret fields**: values of secret types such as `card` or `us_ssn` are encrypted in `archive.secret` with the workspace's data key. They are hidden from anyone not granted that type.
 
 ## Workspaces
 

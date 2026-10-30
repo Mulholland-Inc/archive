@@ -1,246 +1,246 @@
 {
-  "athlete": "Marijn Brussel",
+  "athlete": "Jordan Ellis",
   "exported": "2026-10-26",
   "activities": [
     {
       "date": "2026-09-01",
       "type": "Run",
-      "distance_km": 7.64,
-      "moving_time_min": 39.5,
-      "avg_hr": 158,
-      "route": "Westerpark loop"
+      "distance_mi": 4.23,
+      "moving_time_min": 36.6,
+      "avg_hr": 156,
+      "route": "Prospect Park loop"
     },
     {
       "date": "2026-09-02",
       "type": "Run",
-      "distance_km": 5.2,
-      "moving_time_min": 29.1,
-      "avg_hr": 149,
-      "route": "Amsterdamse Bos long run"
+      "distance_mi": 3.28,
+      "moving_time_min": 30.4,
+      "avg_hr": 147,
+      "route": "East River esplanade"
     },
     {
       "date": "2026-09-03",
       "type": "Run",
-      "distance_km": 5.06,
-      "moving_time_min": 28.1,
-      "avg_hr": 139,
-      "route": "Westerpark loop"
+      "distance_mi": 3.22,
+      "moving_time_min": 29.7,
+      "avg_hr": 137,
+      "route": "Prospect Park loop"
     },
     {
       "date": "2026-09-04",
       "type": "Run",
-      "distance_km": 8.71,
-      "moving_time_min": 44.2,
-      "avg_hr": 140,
-      "route": "Amsterdamse Bos long run"
+      "distance_mi": 4.65,
+      "moving_time_min": 39.6,
+      "avg_hr": 138,
+      "route": "East River esplanade"
     },
     {
       "date": "2026-09-05",
       "type": "Run",
-      "distance_km": 8.62,
-      "moving_time_min": 50.9,
-      "avg_hr": 141,
-      "route": "Amstel and back"
+      "distance_mi": 4.61,
+      "moving_time_min": 44.8,
+      "avg_hr": 139,
+      "route": "Brooklyn Bridge and back"
     },
     {
       "date": "2026-09-06",
       "type": "Run",
-      "distance_km": 10.62,
-      "moving_time_min": 59.9,
-      "avg_hr": 139,
-      "route": "Amsterdamse Bos long run"
+      "distance_mi": 5.4,
+      "moving_time_min": 50.4,
+      "avg_hr": 137,
+      "route": "East River esplanade"
     },
     {
       "date": "2026-09-07",
-      "type": "Run",
-      "distance_km": 10.18,
-      "moving_time_min": 51.5,
-      "avg_hr": 145,
-      "route": "Westerpark loop"
+      "type": "Ride",
+      "distance_mi": 22.54,
+      "moving_time_min": 58.5,
+      "avg_hr": 127,
+      "route": "Hudson River Greenway"
     },
     {
       "date": "2026-09-08",
       "type": "Run",
-      "distance_km": 9.9,
-      "moving_time_min": 51.0,
-      "avg_hr": 151,
-      "route": "Amstel and back"
+      "distance_mi": 3.18,
+      "moving_time_min": 31.1,
+      "avg_hr": 145,
+      "route": "Prospect Park x2"
     },
     {
       "date": "2026-09-09",
       "type": "Run",
-      "distance_km": 9.74,
-      "moving_time_min": 54.8,
-      "avg_hr": 155,
-      "route": "Amstel and back"
+      "distance_mi": 3.55,
+      "moving_time_min": 30.5,
+      "avg_hr": 145,
+      "route": "East River esplanade"
     },
     {
       "date": "2026-09-10",
       "type": "Run",
-      "distance_km": 5.5,
-      "moving_time_min": 31.0,
-      "avg_hr": 144,
-      "route": "Vondelpark x2"
+      "distance_mi": 6.1,
+      "moving_time_min": 53.0,
+      "avg_hr": 154,
+      "route": "East River esplanade"
     },
     {
       "date": "2026-09-11",
       "type": "Run",
-      "distance_km": 5.45,
-      "moving_time_min": 31.5,
-      "avg_hr": 156,
-      "route": "Westerpark loop"
+      "distance_mi": 5.43,
+      "moving_time_min": 48.8,
+      "avg_hr": 153,
+      "route": "Prospect Park loop"
     },
     {
       "date": "2026-09-12",
       "type": "Run",
-      "distance_km": 10.5,
-      "moving_time_min": 58.2,
-      "avg_hr": 155,
-      "route": "IJ waterfront"
+      "distance_mi": 5.14,
+      "moving_time_min": 48.3,
+      "avg_hr": 151,
+      "route": "East River esplanade"
     },
     {
       "date": "2026-09-13",
       "type": "Run",
-      "distance_km": 12.04,
-      "moving_time_min": 66.4,
-      "avg_hr": 152,
-      "route": "Vondelpark x2"
+      "distance_mi": 4.62,
+      "moving_time_min": 41.1,
+      "avg_hr": 154,
+      "route": "Prospect Park x2"
     },
     {
       "date": "2026-09-14",
-      "type": "Run",
-      "distance_km": 7.41,
-      "moving_time_min": 43.5,
-      "avg_hr": 160,
-      "route": "Amstel and back"
+      "type": "Ride",
+      "distance_mi": 18.51,
+      "moving_time_min": 72.4,
+      "avg_hr": 125,
+      "route": "Hudson River Greenway"
     },
     {
       "date": "2026-09-15",
       "type": "Run",
-      "distance_km": 5.29,
-      "moving_time_min": 28.2,
-      "avg_hr": 153,
-      "route": "Vondelpark x2"
+      "distance_mi": 5.66,
+      "moving_time_min": 49.8,
+      "avg_hr": 154,
+      "route": "Hudson River Greenway long run"
     },
     {
       "date": "2026-09-16",
       "type": "Run",
-      "distance_km": 11.58,
-      "moving_time_min": 61.6,
-      "avg_hr": 140,
-      "route": "Westerpark loop"
+      "distance_mi": 5.0,
+      "moving_time_min": 49.0,
+      "avg_hr": 159,
+      "route": "Prospect Park x2"
     },
     {
       "date": "2026-09-17",
       "type": "Run",
-      "distance_km": 9.47,
-      "moving_time_min": 49.1,
-      "avg_hr": 148,
-      "route": "Amstel and back"
+      "distance_mi": 4.09,
+      "moving_time_min": 40.8,
+      "avg_hr": 139,
+      "route": "East River esplanade"
     },
     {
       "date": "2026-09-18",
       "type": "Run",
-      "distance_km": 13.55,
-      "moving_time_min": 74.0,
-      "avg_hr": 159,
-      "route": "Westerpark loop"
+      "distance_mi": 4.59,
+      "moving_time_min": 44.1,
+      "avg_hr": 140,
+      "route": "Prospect Park x2"
     },
     {
       "date": "2026-09-19",
       "type": "Run",
-      "distance_km": 11.92,
-      "moving_time_min": 67.1,
-      "avg_hr": 148,
-      "route": "Vondelpark x2"
+      "distance_mi": 4.6,
+      "moving_time_min": 45.7,
+      "avg_hr": 138,
+      "route": "East River esplanade"
     },
     {
       "date": "2026-09-20",
       "type": "Run",
-      "distance_km": 11.24,
-      "moving_time_min": 63.5,
-      "avg_hr": 156,
-      "route": "IJ waterfront"
-    },
-    {
-      "date": "2026-10-06",
-      "type": "Run",
-      "distance_km": 5.17,
-      "moving_time_min": 26.4,
+      "distance_mi": 5.18,
+      "moving_time_min": 50.8,
       "avg_hr": 146,
-      "route": "IJ waterfront"
+      "route": "Hudson River Greenway long run"
     },
     {
-      "date": "2026-10-07",
-      "type": "Run",
-      "distance_km": 11.26,
-      "moving_time_min": 57.1,
-      "avg_hr": 161,
-      "route": "Vondelpark x2"
+      "date": "2026-09-21",
+      "type": "Ride",
+      "distance_mi": 24.52,
+      "moving_time_min": 96.6,
+      "avg_hr": 138,
+      "route": "Hudson River Greenway"
     },
     {
-      "date": "2026-10-08",
+      "date": "2026-09-22",
       "type": "Run",
-      "distance_km": 10.78,
-      "moving_time_min": 65.7,
-      "avg_hr": 152,
-      "route": "Vondelpark x2"
+      "distance_mi": 6.03,
+      "moving_time_min": 51.3,
+      "avg_hr": 138,
+      "route": "Hudson River Greenway long run"
     },
     {
-      "date": "2026-10-09",
+      "date": "2026-09-23",
       "type": "Run",
-      "distance_km": 11.45,
-      "moving_time_min": 68.4,
-      "avg_hr": 149,
-      "route": "Westerpark loop"
+      "distance_mi": 4.8,
+      "moving_time_min": 45.4,
+      "avg_hr": 137,
+      "route": "Hudson River Greenway long run"
     },
     {
-      "date": "2026-10-10",
+      "date": "2026-09-24",
       "type": "Run",
-      "distance_km": 13.62,
-      "moving_time_min": 73.4,
-      "avg_hr": 157,
-      "route": "Westerpark loop"
-    },
-    {
-      "date": "2026-10-11",
-      "type": "Run",
-      "distance_km": 9.29,
-      "moving_time_min": 48.7,
-      "avg_hr": 147,
-      "route": "Amstel and back"
-    },
-    {
-      "date": "2026-10-12",
-      "type": "Run",
-      "distance_km": 11.66,
-      "moving_time_min": 63.4,
-      "avg_hr": 153,
-      "route": "Westerpark loop"
-    },
-    {
-      "date": "2026-10-13",
-      "type": "Run",
-      "distance_km": 6.11,
-      "moving_time_min": 33.2,
-      "avg_hr": 146,
-      "route": "Amstel and back"
-    },
-    {
-      "date": "2026-10-14",
-      "type": "Run",
-      "distance_km": 12.45,
-      "moving_time_min": 74.1,
-      "avg_hr": 146,
-      "route": "IJ waterfront"
-    },
-    {
-      "date": "2026-10-15",
-      "type": "Run",
-      "distance_km": 14.07,
-      "moving_time_min": 80.9,
+      "distance_mi": 5.46,
+      "moving_time_min": 54.5,
       "avg_hr": 150,
-      "route": "Amstel and back"
+      "route": "Hudson River Greenway long run"
+    },
+    {
+      "date": "2026-09-25",
+      "type": "Run",
+      "distance_mi": 5.72,
+      "moving_time_min": 56.2,
+      "avg_hr": 147,
+      "route": "Prospect Park loop"
+    },
+    {
+      "date": "2026-09-26",
+      "type": "Run",
+      "distance_mi": 6.57,
+      "moving_time_min": 58.9,
+      "avg_hr": 155,
+      "route": "Prospect Park loop"
+    },
+    {
+      "date": "2026-09-27",
+      "type": "Run",
+      "distance_mi": 4.88,
+      "moving_time_min": 42.7,
+      "avg_hr": 145,
+      "route": "Brooklyn Bridge and back"
+    },
+    {
+      "date": "2026-09-28",
+      "type": "Ride",
+      "distance_mi": 25.29,
+      "moving_time_min": 82.9,
+      "avg_hr": 135,
+      "route": "Hudson River Greenway"
+    },
+    {
+      "date": "2026-09-29",
+      "type": "Run",
+      "distance_mi": 3.31,
+      "moving_time_min": 30.2,
+      "avg_hr": 153,
+      "route": "Hudson River Greenway long run"
+    },
+    {
+      "date": "2026-09-30",
+      "type": "Run",
+      "distance_mi": 6.36,
+      "moving_time_min": 61.8,
+      "avg_hr": 153,
+      "route": "Hudson River Greenway long run"
     }
   ]
 }

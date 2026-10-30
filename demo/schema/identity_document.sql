@@ -18,7 +18,7 @@ ALTER TABLE identity_document ENABLE ROW LEVEL SECURITY;
 ALTER TABLE identity_document FORCE ROW LEVEL SECURITY;
 CREATE POLICY viewer ON identity_document FOR SELECT USING (space = ANY (archive.my_spaces()));
 CREATE POLICY editor ON identity_document USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
-COMMENT ON TABLE identity_document IS 'A passport, ID card, driving licence or permit
+COMMENT ON TABLE identity_document IS 'A passport, ID card, driver''s license or permit
 icon: id-card';
 COMMENT ON COLUMN identity_document.kind IS 'Type of document';
 COMMENT ON COLUMN identity_document.number IS 'Document number';

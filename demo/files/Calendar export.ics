@@ -1,0 +1,28 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Jordan//Calendar export//EN
+BEGIN:VEVENT
+UID:dinner-parents-20261101@cal
+DTSTART:20261101T220000Z
+DTEND:20261102T010000Z
+SUMMARY:Sunday dinner at mom and dad's
+LOCATION:27 Valley Road, Montclair, NJ 07042
+DESCRIPTION:Bring the photo book from Lisbon. Dad's birthday cake.
+END:VEVENT
+BEGIN:VEVENT
+UID:passport-20261105@cal
+DTSTART:20261105T143000Z
+DTEND:20261105T150000Z
+SUMMARY:Passport appointment, Brooklyn post office
+LOCATION:271 Cadman Plaza East, Brooklyn, NY 11201
+DESCRIPTION:Bring the old passport, a passport photo and a check for $130.
+END:VEVENT
+BEGIN:VEVENT
+UID:climbing-weekly@cal
+DTSTART:20261028T230000Z
+DTEND:20261029T010000Z
+RRULE:FREQ=WEEKLY;BYDAY=WE
+SUMMARY:Bouldering with Ben
+LOCATION:Gowanus Bouldering, Brooklyn
+END:VEVENT
+END:VCALENDAR

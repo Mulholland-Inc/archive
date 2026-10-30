@@ -1338,7 +1338,7 @@ func (s *signin) oidcCallback(r *http.Request) (*User, error) {
 	return u, err
 }
 
-var secretMasks = map[string]bool{"card": true, "mask": true, "mask_ssn": true, "national": true, "passport": true}
+var secretMasks = map[string]bool{"card": true, "mask_ssn": true, "national": true, "passport": true}
 
 func secretLoadKey(dir string) ([]byte, error) {
 	if s := strings.TrimSpace(os.Getenv("ARCHIVE_SECRET_KEY")); s != "" {

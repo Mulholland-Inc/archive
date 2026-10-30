@@ -96,7 +96,7 @@ Environment:
                      database on the same server
   ARCHIVE_DATA       data directory for secret.key and files, when ARCHIVE_SECRET_KEY and
                      ARCHIVE_BLOB_URL are unset (default ./data)
-  ARCHIVE_LOCALE     locale that messy input is read in, like nl-NL
+  ARCHIVE_LOCALE     locale that messy input is read in, like en-US
   ANTHROPIC_API_KEY  key for the agent behind POST /api/chat, which can only call the run tool;
                      ANTHROPIC_BASE_URL points it at another Messages API endpoint
   ARCHIVE_CHAT_MODEL model of that agent (default claude-haiku-5-5)

@@ -12,7 +12,7 @@
   const SCREENS = [
     {
       shot: 'tree',
-      alt: 'A family tree four generations deep, centred on one person, with photos on some of the people',
+      alt: 'A family tree four generations deep, centered on one person, with photos on some of the people',
       title: 'A family tree, from a file or a chat.',
       text: ['Bring in the tree you already have, from any genealogy app, and every person, couple, event and place becomes a record that points back to the line it came from.', 'Or just tell it who is who. Either way, it is the same tree.']
     },

@@ -22,11 +22,11 @@
  *   Views are read only: list, get and search them; create, update and delete go to their tables.
  *   Archive sets id, space, created_at and updated_at. Fields without ? are required on create; empty fields
  *   read back as null.
- * - Writes clean messy input before Postgres checks it, so pass what you have: "06 12345678" becomes
- *   "+31612345678", "€ 1.234,50" becomes { amount: 1234.5, currency: "EUR" }, "3-4-1990" becomes "1990-04-03".
+ * - Writes clean messy input before Postgres checks it, so pass what you have: "(415) 555-0123" becomes
+ *   "+14155550123", "$1,234.50" becomes { amount: 1234.5, currency: "USD" }, "4/3/1990" becomes "1990-04-03".
  * - JSON values: date "2026-10-27"; timestamptz "2026-10-27T09:30:00Z" (UTC); numbers as numbers; uuid and
  *   references as id strings; arrays as lists; enums as one of their strings; the built-in composite types
- *   (Money, Address, ...) as the objects below. Secret types (Card, UsSsn, NlBsn, National, Passport)
+ *   (Money, Address, ...) as the objects below. Secret types (Card, UsSsn, National, Passport)
  *   take the real value and read back masked; list and get with { reveal: true } show them if you are granted.
  *
  * Changing the schema (ontology admins)
@@ -345,7 +345,7 @@ interface Space {
     level: "owner" | "admin" | "editor" | "viewer";
 }
 
-/** Amount in major units with the currency's decimals: { amount: 1234.5, currency: "EUR" }. Also takes "€ 1.234,50" or a number. */
+/** Amount in major units with the currency's decimals: { amount: 1234.5, currency: "USD" }. Also takes "$1,234.50" or a number. */
 interface Money { amount: number; currency: Currency }
 /** Instant in UTC with the IANA zone it was given in. Also takes "2026-10-27 09:30" or an RFC 3339 string. */
 interface Timestamp { utc: string; zone: Timezone }
@@ -355,11 +355,11 @@ interface Time { time: string; zone?: Timezone }
 interface Interval { start: string | null; end: string | null }
 /** Postal address; country is taken from the locale when missing. */
 interface Address { lines: string[]; locality?: string; region?: Region; postcode?: string; country?: Country }
-/** Person name: the full original, and its parts when known. Also takes "Jan de Vries" or { given, family }. */
+/** Person name: the full original, and its parts when known. Also takes "Mary Ann Smith" or { given, family }. */
 interface Name { full: string; given?: string; family?: string; prefixes?: string }
-/** Postcode with the country it is valid in. Also takes "1012 LG". */
+/** Postcode with the country it is valid in. Also takes "94105". */
 interface Postcode { country: Country; code: string }
-/** WGS 84 coordinates. Also takes "52.37, 4.89". */
+/** WGS 84 coordinates. Also takes "40.71, -74.01". */
 interface Geo { lat: number; lon: number }
 /** Value in the SI base unit, with the UCUM unit it was given in. Also takes "5 km". */
 interface Quantity { value: number; unit: string; original_unit: string }
@@ -493,5 +493,5 @@ type Edit =
  *   edits must be a JSON array of objects with an "op" field: json: unknown field "cel"
  *
  * Not possible: inserting or deleting rows, columns, slides, shapes or tables; changing
- * formatting (bold, colours, number formats); comments; charts; headers and footers.
+ * formatting (bold, colors, number formats); comments; charts; headers and footers.
  */

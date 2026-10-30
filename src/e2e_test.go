@@ -103,7 +103,7 @@ CREATE POLICY editor ON %[1]s USING (space = ANY (archive.my_spaces('editor'))) 
 var e2eSchema = map[string]string{
 	"company.sql": e2eTable("company", `    name       text NOT NULL,
     search     tsvector GENERATED ALWAYS AS (archive.search_doc(name)) STORED`) + "COMMENT ON TABLE company IS 'A company';\n",
-	"contact.sql": "CREATE DOMAIN zip AS text CHECK (VALUE ~ '^[0-9]{4} [A-Z]{2}$');\n" + e2eTable("contact", `    name       text NOT NULL,
+	"contact.sql": "CREATE DOMAIN zip AS text CHECK (VALUE ~ '^[0-9]{5}(-[0-9]{4})?$');\n" + e2eTable("contact", `    name       text NOT NULL,
     zip        zip,
     email      archive.email,
     phone      archive.phone,
@@ -119,7 +119,7 @@ var e2eSchema = map[string]string{
 	"invoice.sql": "CREATE TYPE invoice_status AS ENUM ('draft', 'sent', 'paid');\n" + e2eTable("invoice", `    number     text NOT NULL,
     total      archive.money,
     date       date,
-    bsn        archive.nl_bsn,
+    ein        archive.us_ein,
     status     invoice_status,
     document   uuid REFERENCES archive.file,
     search     tsvector GENERATED ALWAYS AS (archive.search_doc(number)) STORED`),
@@ -598,9 +598,9 @@ func names(rs []row) string {
 
 func id(r row) string { return fmt.Sprint(r["id"]) }
 
-func TestSchemaPushNormalizesMessyDutchInputAndBlocksDrops(t *testing.T) {
+func TestSchemaPushNormalizesMessyInputAndBlocksDrops(t *testing.T) {
 	t.Parallel()
-	in := newInst(t, "ARCHIVE_LOCALE=nl-NL")
+	in := newInst(t, "ARCHIVE_LOCALE=en-US")
 	in.fails("list", "contact")
 	in.must("user", "add", "ann@example.com", "-name", "Ann")
 	plan := decode[SchemaPlan](t, in.push(e2eSchema))
@@ -626,9 +626,9 @@ COMMENT ON COLUMN company.name IS 'Legal name';`}
 	}
 	in.push(e2eSchema)
 
-	r := decode[row](t, in.must("create", "contact", `{"name":" Ann ","email":"Ann@EXAMPLE.com","phone":"06 12345678","birthday":"3-4-1990","balance":"€ 1.234,50","tags":"vip","zip":"1012 LG"}`))
-	want := map[string]string{"phone": "+31612345678", "birthday": "1990-04-03", "email": "Ann@example.com", "zip": "1012 LG",
-		"balance": "map[amount:1234.50 currency:EUR]", "tags": "[vip]"}
+	r := decode[row](t, in.must("create", "contact", `{"name":" Ann ","email":"Ann@EXAMPLE.com","phone":"(415) 555-0123","birthday":"4/3/1990","balance":"$1,234.50","tags":"vip","zip":"94105"}`))
+	want := map[string]string{"phone": "+14155550123", "birthday": "1990-04-03", "email": "Ann@example.com", "zip": "94105",
+		"balance": "map[amount:1234.50 currency:USD]", "tags": "[vip]"}
 	for k, v := range want {
 		if fmt.Sprint(r[k]) != v {
 			t.Errorf("%s = %v, want %v", k, r[k], v)
@@ -642,10 +642,10 @@ COMMENT ON COLUMN company.name IS 'Legal name';`}
 	if !strings.Contains(errs, "invalid contact") || !strings.Contains(errs, "email:") || !strings.Contains(errs, "phone:") || !strings.Contains(errs, "nope: unknown field") {
 		t.Errorf("validation errors: %s", errs)
 	}
-	if errs := in.fails("create", "contact", `{"email":"a@b.nl"}`); !strings.Contains(errs, "name: required") {
+	if errs := in.fails("create", "contact", `{"email":"a@b.com"}`); !strings.Contains(errs, "name: required") {
 		t.Errorf("required: %s", errs)
 	}
-	if errs := in.fails("create", "contact", `{"name":"Pat","zip":"1012"}`); !strings.Contains(errs, `zip: value for domain zip violates check constraint "zip_check"`) {
+	if errs := in.fails("create", "contact", `{"name":"Pat","zip":"9410"}`); !strings.Contains(errs, `zip: value for domain zip violates check constraint "zip_check"`) {
 		t.Errorf("domain check from Postgres: %s", errs)
 	}
 	if errs := in.fails("create", "invoice", `{"number":"X","status":"lost"}`); !strings.Contains(errs, "status: must be one of draft, sent, paid") {
@@ -655,10 +655,10 @@ COMMENT ON COLUMN company.name IS 'Legal name';`}
 		t.Errorf("enum case: %v", got)
 	}
 
-	if got := decode[[]row](t, in.must("list", "contact", "phone=06-1234 5678")); len(got) != 1 || id(got[0]) != id(r) {
+	if got := decode[[]row](t, in.must("list", "contact", "phone=415.555.0123")); len(got) != 1 || id(got[0]) != id(r) {
 		t.Errorf("filter on messy phone: %v", got)
 	}
-	if got := decode[[]row](t, in.must("list", "contact", "phone=0687654321")); len(got) != 0 {
+	if got := decode[[]row](t, in.must("list", "contact", "phone=4155550199")); len(got) != 0 {
 		t.Errorf("filter on other phone: %v", got)
 	}
 	in.must("set", "contact", id(r), `{"phone":null,"birthday":"1990-04-04"}`)
@@ -985,11 +985,11 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 	})
 
 	t.Run("SchemaChangesNeedAdmin", func(t *testing.T) {
-		files := with(e2eSchema, "company.sql", strings.Replace(e2eSchema["company.sql"], "    name       text NOT NULL,\n", "    name       text NOT NULL,\n    vat        archive.vat_id,\n", 1))
+		files := with(e2eSchema, "company.sql", strings.Replace(e2eSchema["company.sql"], "    name       text NOT NULL,\n", "    name       text NOT NULL,\n    ein        archive.us_ein,\n", 1))
 		var plan SchemaPlan
 		st, _ := call(t, "POST", api+"/schema/plan", narrowTok, map[string]any{"files": files}, &plan)
 		wantStatus(t, st, 200, "viewer token plans")
-		if len(plan.Statements) != 1 || !strings.Contains(plan.Statements[0].DDL, `ADD COLUMN "vat" archive.vat_id`) || plan.Applied {
+		if len(plan.Statements) != 1 || !strings.Contains(plan.Statements[0].DDL, `ADD COLUMN "ein" archive.us_ein`) || plan.Applied {
 			t.Fatalf("plan: %+v", plan)
 		}
 		st, _ = call(t, "POST", api+"/schema/apply", narrowTok, map[string]any{"files": files}, nil)
@@ -998,19 +998,19 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 		wantStatus(t, st, 200, "admin applies")
 		var cat Catalog
 		call(t, "GET", api+"/types", bobTok, nil, &cat)
-		if c := cat.Tables["company"]; c == nil || c.col("vat") == nil || c.col("vat").Type != "vat_id" || c.Description != "A company" || cat.Types["archive.email"] == nil {
+		if c := cat.Tables["company"]; c == nil || c.col("ein") == nil || c.col("ein").Type != "us_ein" || c.Description != "A company" || cat.Types["archive.email"] == nil {
 			t.Fatalf("catalog after apply: %+v", cat.Tables["company"])
 		}
 		var got struct {
 			Files map[string]string `json:"files"`
 		}
 		call(t, "GET", api+"/schema", bobTok, nil, &got)
-		if !strings.Contains(got.Files["company.sql"], "vat") || len(got.Files) != 4 {
+		if !strings.Contains(got.Files["company.sql"], "ein") || len(got.Files) != 4 {
 			t.Errorf("schema files: %v", got.Files)
 		}
-		st, _ = call(t, "POST", api+"/company", aliceTok, map[string]any{"name": "Vat Co", "vat": "nl 123456789 b01"}, nil)
+		st, _ = call(t, "POST", api+"/company", aliceTok, map[string]any{"name": "Ein Co", "ein": "12 3456789"}, nil)
 		wantStatus(t, st, 201, "use the new column")
-		if out := in.on(t).must("list", "company", "vat=NL123456789B01"); !strings.Contains(out, "Vat Co") {
+		if out := in.on(t).must("list", "company", "ein=123456789"); !strings.Contains(out, "Ein Co") {
 			t.Errorf("cli sees the new column: %s", out)
 		}
 	})
@@ -1582,7 +1582,7 @@ func TestFilesUploadProcessShareAndReference(t *testing.T) {
 			t.Errorf("pdf text: %q", text)
 		}
 		var inv row
-		st, _ = call(t, "POST", api+"/invoice", aliceTok, map[string]any{"number": "INV-9", "document": f.ID.String(), "total": "EUR 12.50"}, &inv)
+		st, _ = call(t, "POST", api+"/invoice", aliceTok, map[string]any{"number": "INV-9", "document": f.ID.String(), "total": "USD 12.50"}, &inv)
 		wantStatus(t, st, 201, "invoice that references its file")
 		if inv["document"] != f.ID.String() {
 			t.Errorf("invoice: %v", inv)
@@ -1823,8 +1823,8 @@ CREATE TRIGGER alpha_trim BEFORE INSERT ON alpha FOR EACH ROW EXECUTE FUNCTION a
 
 var e2eNote = e2eTable("note", `    title      text NOT NULL,
     body       text,
-    bsn        archive.nl_bsn,
-    search     tsvector GENERATED ALWAYS AS (setweight(archive.search_doc(title), 'A') || setweight(archive.search_doc(body, bsn), 'B')) STORED`) +
+    ssn        archive.us_ssn,
+    search     tsvector GENERATED ALWAYS AS (setweight(archive.search_doc(title), 'A') || setweight(archive.search_doc(body, ssn), 'B')) STORED`) +
 	"CREATE INDEX note_search ON note USING gin (search);\n"
 
 func e2eSearch(t *testing.T, api, tok, q string, params ...string) []SearchHit {
@@ -1849,7 +1849,7 @@ func e2eTitles(hits []SearchHit) string {
 	return strings.Join(out, "|")
 }
 
-func TestFullTextSearchInDutchAndEnglishAcrossTablesFilesAndUsers(t *testing.T) {
+func TestFullTextSearchAcrossTablesFilesAndUsers(t *testing.T) {
 	t.Parallel()
 	in := newInst(t)
 	in.must("user", "add", "alice@example.com")
@@ -1865,72 +1865,72 @@ func TestFullTextSearchInDutchAndEnglishAcrossTablesFilesAndUsers(t *testing.T) 
 		st, _ := call(t, "POST", api+"/note", tok, data, nil)
 		wantStatus(t, st, 201, "create note")
 	}
-	note(aliceTok, map[string]any{"title": "Huurcontract appartement Utrecht", "body": "Huurovereenkomst voor de woning aan de Oudegracht. Huur 1250 euro per maand."})
-	note(aliceTok, map[string]any{"title": "Weekend away", "body": "Met de trein naar Utrecht"})
+	note(aliceTok, map[string]any{"title": "Rental agreement Brooklyn apartment", "body": "Rental agreement for the apartment on Atlantic Avenue. Rent is 2450 dollars a month."})
+	note(aliceTok, map[string]any{"title": "Weekend away", "body": "Train to Brooklyn"})
 	note(aliceTok, map[string]any{"title": "Lease agreement London flat", "body": "Tenancy for the flat in Camden, rent paid monthly."})
-	note(aliceTok, map[string]any{"title": "Café De Zaak", "body": "Koffie en appeltaart"})
-	note(aliceTok, map[string]any{"title": "Belastingaangifte", "bsn": "111222333"})
-	note(bobTok, map[string]any{"title": "Bob huurcontract Utrecht"})
-	call(t, "POST", api+"/company", aliceTok, map[string]any{"name": "Utrecht Plumbing"}, nil)
-	_, nl := e2eUpload(t, api+"/files", aliceTok, "huur.txt", []byte("De verhuurder verhuurt de woning aan de Prinsengracht aan de huurder."))
-	_, en := e2eUpload(t, api+"/files", aliceTok, "policy.pdf", e2ePDF("Home insurance policy", "Covers water damage in the kitchen"))
-	e2eDoneFile(t, api, aliceTok, nl.ID.String())
-	e2eDoneFile(t, api, aliceTok, en.ID.String())
+	note(aliceTok, map[string]any{"title": "Café Grumpy", "body": "Coffee and apple pie"})
+	note(aliceTok, map[string]any{"title": "Tax return", "ssn": "111222333"})
+	note(bobTok, map[string]any{"title": "Bob rental agreement Brooklyn"})
+	call(t, "POST", api+"/company", aliceTok, map[string]any{"name": "Brooklyn Plumbing"}, nil)
+	_, txt := e2eUpload(t, api+"/files", aliceTok, "rental.txt", []byte("The landlord rents the apartment on Bedford Avenue to the tenant."))
+	_, pdf := e2eUpload(t, api+"/files", aliceTok, "policy.pdf", e2ePDF("Home insurance policy", "Covers water damage in the kitchen"))
+	e2eDoneFile(t, api, aliceTok, txt.ID.String())
+	e2eDoneFile(t, api, aliceTok, pdf.ID.String())
 
-	t.Run("DutchAndEnglishRowsRankByTheirWords", func(t *testing.T) {
-		hits := e2eSearch(t, api, aliceTok, "huurcontract utrecht")
-		if got := e2eTitles(hits); !strings.HasPrefix(got, "Huurcontract appartement Utrecht|") || !strings.Contains(got, "Utrecht Plumbing") || !strings.Contains(got, "Weekend away") {
-			t.Fatalf("huurcontract utrecht: %s", got)
+	t.Run("RowsRankByTheirWords", func(t *testing.T) {
+		hits := e2eSearch(t, api, aliceTok, "rental brooklyn")
+		if got := e2eTitles(hits); !strings.HasPrefix(got, "Rental agreement Brooklyn apartment|") || !strings.Contains(got, "Brooklyn Plumbing") || !strings.Contains(got, "Weekend away") {
+			t.Fatalf("rental brooklyn: %s", got)
 		}
 		if hits[0].Kind != "entity" || hits[0].Type != "note" {
 			t.Errorf("hit: %+v", hits[0])
 		}
 		if got := e2eTitles(e2eSearch(t, api, aliceTok, "the lease for the London flat")); !strings.HasPrefix(got, "Lease agreement London flat") {
-			t.Errorf("english: %s", got)
+			t.Errorf("lease: %s", got)
 		}
-		if got := e2eTitles(e2eSearch(t, api, aliceTok, "huur")); !strings.Contains(got, "Huurcontract appartement Utrecht") || !strings.Contains(got, "huur.txt") {
-			t.Errorf("prefix huur: %s", got)
+		if got := e2eTitles(e2eSearch(t, api, aliceTok, "rent")); !strings.Contains(got, "Rental agreement Brooklyn apartment") || !strings.Contains(got, "rental.txt") {
+			t.Errorf("prefix rent: %s", got)
 		}
 	})
 
 	t.Run("CaseAndAccentsAreFolded", func(t *testing.T) {
-		for _, q := range []string{"cafe", "CAFÉ", "café de zaak"} {
-			if got := e2eTitles(e2eSearch(t, api, aliceTok, q)); !strings.HasPrefix(got, "Café De Zaak") {
+		for _, q := range []string{"cafe", "CAFÉ", "café grumpy"} {
+			if got := e2eTitles(e2eSearch(t, api, aliceTok, q)); !strings.HasPrefix(got, "Café Grumpy") {
 				t.Errorf("%s: %s", q, got)
 			}
 		}
 	})
 
-	t.Run("FileTextInDutchAndEnglish", func(t *testing.T) {
-		hits := e2eSearch(t, api, aliceTok, "verhuurder Prinsengracht")
-		if len(hits) == 0 || hits[0].ID != nl.ID || hits[0].Type != "file" || !strings.Contains(hits[0].Snippet, "**verhuurder**") {
-			t.Fatalf("dutch file: %+v", hits)
+	t.Run("FileTextIsSearched", func(t *testing.T) {
+		hits := e2eSearch(t, api, aliceTok, "landlord Bedford")
+		if len(hits) == 0 || hits[0].ID != txt.ID || hits[0].Type != "file" || !strings.Contains(hits[0].Snippet, "**landlord**") {
+			t.Fatalf("text file: %+v", hits)
 		}
 		hits = e2eSearch(t, api, aliceTok, "water damage", "type", "file")
-		if len(hits) != 1 || hits[0].ID != en.ID {
-			t.Fatalf("english pdf: %+v", hits)
+		if len(hits) != 1 || hits[0].ID != pdf.ID {
+			t.Fatalf("pdf: %+v", hits)
 		}
 	})
 
 	t.Run("FiltersNarrowTheResults", func(t *testing.T) {
-		if got := e2eTitles(e2eSearch(t, api, aliceTok, "huur", "type", "note")); strings.Contains(got, "huur.txt") || !strings.Contains(got, "Huurcontract") {
+		if got := e2eTitles(e2eSearch(t, api, aliceTok, "rent", "type", "note")); strings.Contains(got, "rental.txt") || !strings.Contains(got, "Rental agreement") {
 			t.Errorf("type note: %s", got)
 		}
 		day := time.Now().Format(time.DateOnly)
-		if n := len(e2eSearch(t, api, aliceTok, "huur", "from", day, "to", day)); n < 2 {
+		if n := len(e2eSearch(t, api, aliceTok, "rent", "from", day, "to", day)); n < 2 {
 			t.Errorf("today: %d hits", n)
 		}
-		if n := len(e2eSearch(t, api, aliceTok, "huur", "from", time.Now().AddDate(0, 0, 1).Format(time.DateOnly))); n != 0 {
+		if n := len(e2eSearch(t, api, aliceTok, "rent", "from", time.Now().AddDate(0, 0, 1).Format(time.DateOnly))); n != 0 {
 			t.Errorf("from tomorrow: %d hits", n)
 		}
-		if n := len(e2eSearch(t, api, aliceTok, "huur", "to", time.Now().AddDate(0, 0, -1).Format(time.DateOnly))); n != 0 {
+		if n := len(e2eSearch(t, api, aliceTok, "rent", "to", time.Now().AddDate(0, 0, -1).Format(time.DateOnly))); n != 0 {
 			t.Errorf("to yesterday: %d hits", n)
 		}
-		st, _ := call(t, "GET", api+"/search?q=huur&space=family", aliceTok, nil, nil)
+		st, _ := call(t, "GET", api+"/search?q=rent&space=family", aliceTok, nil, nil)
 		wantStatus(t, st, 404, "unknown space")
-		st, _ = call(t, "GET", api+"/search?q=huur&type=nothing", aliceTok, nil, nil)
+		st, _ = call(t, "GET", api+"/search?q=rent&type=nothing", aliceTok, nil, nil)
 		wantStatus(t, st, 404, "unknown type")
-		st, _ = call(t, "GET", api+"/search?q=huur&from=soon", aliceTok, nil, nil)
+		st, _ = call(t, "GET", api+"/search?q=rent&from=soon", aliceTok, nil, nil)
 		wantStatus(t, st, 422, "bad date")
 		st, _ = call(t, "GET", api+"/search?q=+", aliceTok, nil, nil)
 		wantStatus(t, st, 422, "empty query")
@@ -1938,10 +1938,10 @@ func TestFullTextSearchInDutchAndEnglishAcrossTablesFilesAndUsers(t *testing.T) 
 
 	t.Run("SecretsNeverMatch", func(t *testing.T) {
 		in := in.on(t)
-		if hits := e2eSearch(t, api, aliceTok, "belastingaangifte"); len(hits) != 1 {
+		if hits := e2eSearch(t, api, aliceTok, "tax return"); len(hits) != 1 {
 			t.Fatalf("secret row by title: %+v", hits)
 		}
-		for _, q := range []string{"111222333", "111 222 333"} {
+		for _, q := range []string{"111222333", "111 22 2333"} {
 			if hits := e2eSearch(t, api, aliceTok, q); len(hits) != 0 {
 				t.Errorf("%s matches %s", q, e2eTitles(hits))
 			}
@@ -1953,26 +1953,26 @@ func TestFullTextSearchInDutchAndEnglishAcrossTablesFilesAndUsers(t *testing.T) 
 
 	t.Run("AnotherUsersDataNeverShowsUp", func(t *testing.T) {
 		in := in.on(t)
-		if got := e2eTitles(e2eSearch(t, api, bobTok, "utrecht")); got != "Bob huurcontract Utrecht" {
+		if got := e2eTitles(e2eSearch(t, api, bobTok, "brooklyn")); got != "Bob rental agreement Brooklyn" {
 			t.Errorf("bob api: %s", got)
 		}
-		if got := e2eTitles(e2eSearch(t, api, aliceTok, "huurcontract")); strings.Contains(got, "Bob") {
+		if got := e2eTitles(e2eSearch(t, api, aliceTok, "rental")); strings.Contains(got, "Bob") {
 			t.Errorf("alice api: %s", got)
 		}
-		if got := e2eSearch(t, api, bobTok, "verhuurder plumbing cafe"); len(got) != 0 {
+		if got := e2eSearch(t, api, bobTok, "landlord plumbing cafe"); len(got) != 0 {
 			t.Errorf("bob sees alice's notes and files: %+v", got)
 		}
-		if got := in.must("-as", "bob@example.com", "search", "huurcontract", "utrecht"); !strings.Contains(got, "Bob huurcontract") || strings.Contains(got, "appartement") {
+		if got := in.must("-as", "bob@example.com", "search", "rental", "brooklyn"); !strings.Contains(got, "Bob rental") || strings.Contains(got, "apartment") {
 			t.Errorf("bob cli: %s", got)
 		}
-		if got := in.must("search", "huurcontract", "-type", "note"); !strings.Contains(got, "appartement") || strings.Contains(got, "Bob") {
+		if got := in.must("search", "rental", "-type", "note"); !strings.Contains(got, "apartment") || strings.Contains(got, "Bob") {
 			t.Errorf("alice cli: %s", got)
 		}
 		role := in.role("bob@example.com")
 		in.psql("archive", "ALTER ROLE \""+role+"\" LOGIN")
 		defer in.psql("archive", "ALTER ROLE \""+role+"\" NOLOGIN")
-		q := "SELECT (SELECT count(*) FROM note WHERE search @@ archive.search_query('huurcontract verhuurder')) || ',' || " +
-			"(SELECT count(*) FROM archive.file WHERE search @@ archive.search_query('verhuurder'))"
+		q := "SELECT (SELECT count(*) FROM note WHERE search @@ archive.search_query('rental landlord')) || ',' || " +
+			"(SELECT count(*) FROM archive.file WHERE search @@ archive.search_query('landlord'))"
 		if got := in.psql(role, q); got != "1,0" {
 			t.Errorf("psql as bob: %s", got)
 		}
@@ -2378,20 +2378,20 @@ return { planned: plan.statements.length, before: plan.applied, applied: done.ap
 	})
 
 	t.Run("CRUDSearchSQLAndFilesInOneScript", func(t *testing.T) {
-		got := ok(t, `const a = await archive.create("house", { address: "Keizersgracht 1", price: "€ 950.000,00" });
-const b = await archive.create("house", { address: "Oudegracht 2" });
-const listed = await archive.list("house", { where: { address: "Oudegracht 2" } });
-const priced = await archive.update("house", b.id, { price: { amount: 500000, currency: "EUR" } });
+		got := ok(t, `const a = await archive.create("house", { address: "12 Willow Street", price: "$950,000.00" });
+const b = await archive.create("house", { address: "34 Maple Avenue" });
+const listed = await archive.list("house", { where: { address: "34 Maple Avenue" } });
+const priced = await archive.update("house", b.id, { price: { amount: 500000, currency: "USD" } });
 const cleared = await archive.update("house", a.id, { price: null });
-const hits = await archive.search("keizersgracht");
+const hits = await archive.search("willow");
 const [{ n }] = await archive.sql("SELECT count(*)::int AS n FROM house WHERE price IS NOT NULL");
 const files = await archive.files();
 const file = await archive.file(files[0].id);
 console.log("made", { a: a.address });
 return { price: a.price, sold: b.sold, listed: listed.map(h => h.id === b.id), priced: priced.price?.amount, cleared: cleared.price,
   hit: hits.find(h => h.type === "house")?.data.address, n, text: file.text, spaces: (await archive.spaces()).length };`)
-		want := map[string]string{"price": "map[amount:950000 currency:EUR]", "sold": "false", "listed": "[true]", "priced": "500000", "cleared": "<nil>",
-			"hit": "Keizersgracht 1", "n": "1", "text": "Viewing on Friday at the canal house", "spaces": "1"}
+		want := map[string]string{"price": "map[amount:950000 currency:USD]", "sold": "false", "listed": "[true]", "priced": "500000", "cleared": "<nil>",
+			"hit": "12 Willow Street", "n": "1", "text": "Viewing on Friday at the canal house", "spaces": "1"}
 		for k, v := range want {
 			if fmt.Sprint(got[k]) != v {
 				t.Errorf("%s = %v, want %s", k, got[k], v)
@@ -2571,7 +2571,7 @@ throw new Error("changed my mind");`)
 			t.Errorf("empty script from stdin: %+v", out)
 		}
 		stdout, _, err := in.run(`return (await archive.list("house")).map(h => h.address).sort()`, "run", "-")
-		if out := decode[RunOutput](t, stdout); err != nil || fmt.Sprint(decode[[]string](t, string(out.Result))) != "[Keizersgracht 1 Oudegracht 2]" {
+		if out := decode[RunOutput](t, stdout); err != nil || fmt.Sprint(decode[[]string](t, string(out.Result))) != "[12 Willow Street 34 Maple Avenue]" {
 			t.Errorf("archive run -: %v %s", err, stdout)
 		}
 	})
@@ -2588,12 +2588,12 @@ throw new Error("changed my mind");`)
 		if err != nil || len(tools.Tools) != 1 || tools.Tools[0].Name != "run" || !strings.Contains(tools.Tools[0].Description, "interface House extends Base") {
 			t.Fatalf("tools: %v %+v", err, tools)
 		}
-		res, err := sess.CallTool(ctx, &mcp.CallToolParams{Name: "run", Arguments: map[string]any{"code": `console.log("hi"); return (await archive.list("house", { where: { address: "Oudegracht 2" } }))[0].price;`}})
+		res, err := sess.CallTool(ctx, &mcp.CallToolParams{Name: "run", Arguments: map[string]any{"code": `console.log("hi"); return (await archive.list("house", { where: { address: "34 Maple Avenue" } }))[0].price;`}})
 		if err != nil || res.IsError || len(res.Content) != 1 {
 			t.Fatalf("call: %v %+v", err, res)
 		}
 		out := decode[RunOutput](t, res.Content[0].(*mcp.TextContent).Text)
-		if out.Error != "" || string(out.Result) != `{"amount":500000,"currency":"EUR"}` || !slices.Equal(out.Logs, []string{"hi"}) {
+		if out.Error != "" || string(out.Result) != `{"amount":500000,"currency":"USD"}` || !slices.Equal(out.Logs, []string{"hi"}) {
 			t.Errorf("mcp run: %+v", out)
 		}
 		res, err = sess.CallTool(ctx, &mcp.CallToolParams{Name: "run", Arguments: map[string]any{"code": `return archive.get("house", "nope")`}})

@@ -21,5 +21,5 @@ icon: activity';
 COMMENT ON COLUMN measurement.taken IS 'Day of the measurement';
 COMMENT ON COLUMN measurement.kind IS 'What was measured';
 COMMENT ON COLUMN measurement.value IS 'The measured value';
-COMMENT ON COLUMN measurement.unit IS 'Unit, like kg, h, steps, bpm, mmHg or km';
+COMMENT ON COLUMN measurement.unit IS 'Unit, like lb, h, steps, bpm, mmHg or mi';
 COMMENT ON COLUMN measurement.notes IS 'Context';

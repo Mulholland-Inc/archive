@@ -16,8 +16,8 @@ cp "$demo"/schema/*.sql "$schema"
 $archive schema apply "$schema" >/dev/null
 
 $archive space add family >/dev/null
-$archive user add sanne@example.com -name "Sanne de Vries" >/dev/null
-$archive space grant family sanne@example.com editor >/dev/null
+$archive user add sam@example.com -name "Sam Rivera" >/dev/null
+$archive space grant family sam@example.com editor >/dev/null
 
 $archive file add "$demo"/files/*.* >/dev/null
 $archive file add -space family "$demo"/files/family/* >/dev/null
