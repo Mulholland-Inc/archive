@@ -46,6 +46,7 @@ import (
 	"github.com/stripe/pg-schema-diff/pkg/diff"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -212,9 +213,12 @@ func (f *e2eTasks) route(queue, url, aud string) {
 	}
 }
 
-func (f *e2eTasks) CreateTask(_ context.Context, req *taskspb.CreateTaskRequest) (*taskspb.Task, error) {
+func (f *e2eTasks) CreateTask(ctx context.Context, req *taskspb.CreateTaskRequest) (*taskspb.Task, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if md, _ := metadata.FromIncomingContext(ctx); !slices.Contains(md.Get("x-goog-request-params"), "parent="+req.GetParent()) {
+		return nil, status.Error(codes.InvalidArgument, `"x-goog-request-params" must contain "parent=`+req.GetParent()+`"`)
+	}
 	tk := req.GetTask()
 	if !strings.HasPrefix(tk.GetName(), req.GetParent()+"/tasks/") || tk.GetHttpRequest() == nil {
 		return nil, status.Error(codes.InvalidArgument, "want a named HTTP task in the queue")

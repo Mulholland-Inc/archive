@@ -33,6 +33,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -416,7 +417,7 @@ func (h *Hub) wake(ctx context.Context, ws uuid.UUID, kind string, at time.Time)
 	url := h.api + "/tasks"
 	body, _ := json.Marshal(map[string]string{"workspace": ws.String(), "work": kind + "s"})
 	sum := sha256.Sum256(fmt.Appendf(nil, "%s/%s/%d", ws, kind, at.UnixMilli()))
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(metadata.AppendToOutgoingContext(ctx, "x-goog-request-params", "parent="+t.queue), 10*time.Second)
 	defer cancel()
 	_, err := t.client.CreateTask(ctx, &taskspb.CreateTaskRequest{Parent: t.queue, Task: &taskspb.Task{
 		Name:         t.queue + "/tasks/" + hex.EncodeToString(sum[:]),
