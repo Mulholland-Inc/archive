@@ -13,11 +13,6 @@ output "bucket" {
   value       = google_storage_bucket.this.name
 }
 
-output "tasks_queue" {
-  description = "Cloud Tasks queue that delivers due workflows and files to the API (ARCHIVE_TASKS_QUEUE)."
-  value       = google_cloud_tasks_queue.this.id
-}
-
 output "service" {
   description = "Name of the Cloud Run service running the API, and of the Cloud Run job running the archive command."
   value       = google_cloud_run_v2_service.this.name
@@ -26,6 +21,11 @@ output "service" {
 output "service_account" {
   description = "Email of the service account the API and the archive job run as."
   value       = google_service_account.this.email
+}
+
+output "tasks_queue" {
+  description = "Cloud Tasks queue that delivers due workflows and files to the API (ARCHIVE_TASKS_QUEUE)."
+  value       = google_cloud_tasks_queue.this.id
 }
 
 output "database_connection_name" {

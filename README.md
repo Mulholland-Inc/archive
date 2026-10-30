@@ -167,7 +167,7 @@ With no `-space`, the token gets your role in every space you are in. Narrow it 
 
 | Where | How |
 |---|---|
-| **Google Cloud** | [Terraform](apps/terraform/gcp) (Cloud Run, Cloud SQL, Storage), applied as it is or added to your own setup as a [module](apps/terraform/gcp/module) |
+| **Google Cloud** | [Terraform](apps/terraform/gcp) (Cloud Run, Cloud SQL, Storage), applied as it is or called as a module from your own setup |
 | **As code** | the [`archive` Terraform provider](apps/terraform/provider) for your schema, spaces, tokens and roles |
 
 The API and the web app are separate images, always on addresses of their own: `ghcr.io/mulholland-inc/archive` serves the API, sign-in and MCP, and `ghcr.io/mulholland-inc/archive-web` serves the web app. Point them at each other with `ARCHIVE_URL` (the web app's address, on the API) and `ARCHIVE_API_URL` (the API's address, on both).
@@ -192,21 +192,11 @@ The same job runs any other `archive` command. The service scales to zero: Cloud
 
 To deploy every image built on main, add `-var github_repository=owner/repo` with a `GITHUB_TOKEN` that can write that repository's Actions variables and secrets (`gh auth token` works for an admin). Apply before merging anything else, then run the image workflow once: until it runs, the app domain answers 503.
 
-To add Archive to a Terraform setup you already have, use the module in [`apps/terraform/gcp/module`](apps/terraform/gcp/module), which `apps/terraform/gcp` applies too. It takes the same variables and configures no providers, so give it a `google.verify` provider that acts as the `<name>-verify` service account it makes:
+To add Archive to a Terraform setup you already have, call the same directory as a module. It sets up its own providers from `project` and `region`, with the same `CLOUDFLARE_API_TOKEN` and `GITHUB_TOKEN`, so it can't take `count`, `for_each` or `depends_on`:
 
 ```hcl
-provider "google" {
-  alias                       = "verify"
-  project                     = "my-project"
-  region                      = "us-central1"
-  impersonate_service_account = "archive-verify@my-project.iam.gserviceaccount.com"
-  scopes                      = ["https://www.googleapis.com/auth/cloud-platform", "https://www.googleapis.com/auth/siteverification"]
-}
-
 module "archive" {
-  source    = "github.com/Mulholland-Inc/archive//apps/terraform/gcp/module"
-  providers = { google = google, google.verify = google.verify }
-
+  source          = "github.com/Mulholland-Inc/archive//apps/terraform/gcp"
   project         = "my-project"
   app_domain      = "app.example.com"
   api_domain      = "api.example.com"
