@@ -2,7 +2,7 @@
   import Icon from '#kit/Icon.svelte';
   import Avatar from './Avatar.svelte';
 
-  let { name, spaces = [], home, current = '', onpick, oncreate, workspaces = [], workspace = '', onworkspace } = $props();
+  let { name, spaces = [], home, current = '', onpick, oncreate } = $props();
   let open = $state(false);
   let adding = $state(false);
   let draft = $state('');
@@ -11,12 +11,6 @@
 
   const label = (s) => (s.id === home ? 'Personal' : s.name.replaceAll('_', ' '));
   const here = $derived(spaces.find((s) => s.name === current));
-  const team = $derived(workspaces.length > 1 ? workspaces.find((w) => w.id === workspace) : null);
-
-  function choose(id) {
-    open = false;
-    if (id !== workspace) onworkspace(id);
-  }
 
   function pick(space) {
     open = false;
@@ -58,18 +52,12 @@
     <Avatar {name} />
     <span class="text">
       <span class="name">{name}</span>
-      <span class="space">{team ? `${team.name} · ` : ''}{here ? label(here) : 'All spaces'}</span>
+      <span class="space">{here ? label(here) : 'All spaces'}</span>
     </span>
     <span class="updown"><Icon name="chevrons-up-down" /></span>
   </button>
   {#if open}
     <div class="menu" role="menu">
-      {#each workspaces as w (w.id)}
-        <button class="item workspace" role="menuitemradio" aria-checked={w.id === workspace} onclick={() => choose(w.id)}>
-          <span>{w.name}</span>{#if w.id === workspace}<Icon name="check" />{/if}
-        </button>
-      {/each}
-      {#if workspaces.length}<hr />{/if}
       <button class="item" role="menuitemradio" aria-checked={!current} onclick={() => pick('')}>
         <span>All spaces</span>{#if !current}<Icon name="check" />{/if}
       </button>
@@ -139,9 +127,7 @@
   }
   .item:hover, .item:focus-visible { outline: 0; background: var(--fill); color: var(--fg); }
   .item[aria-checked='true'] { color: var(--fg); }
-  .workspace { text-transform: none; }
   .new, .add { justify-content: flex-start; color: var(--fg-muted); }
-  hr { flex: none; min-height: var(--hairline); margin: var(--space-1); border: 0; }
   .add { background: var(--fill-faint); }
   .add.failed { color: var(--danger); }
   .add input { flex: 1; min-width: 0; padding: 0; color: var(--fg); outline: 0; }

@@ -6,6 +6,7 @@
   import Theme from '#kit/Theme.svelte';
   import Word from '#kit/Word.svelte';
   import Profile from './ui/Profile.svelte';
+  import Workspaces from './ui/Workspaces.svelte';
   import Heading from './ui/Heading.svelte';
   import NavItem from './ui/NavItem.svelte';
   import SignIn from './SignIn.svelte';
@@ -126,6 +127,9 @@
         <a class="brand" href="/files" aria-label="Archive"><Word /></a>
         <button class="side" type="button" aria-label="Sidebar" aria-expanded={open} onclick={toggle}><Icon name="panel-left" /></button>
       </div>
+      {#if me.workspaces?.length > 1}
+        <Workspaces workspaces={me.workspaces} workspace={me.workspace} onpick={switchTo} />
+      {/if}
       <nav>
         <NavItem href="/chat" icon="plus" active={route.first === 'chat' && !route.second}>New chat</NavItem>
         <NavItem href="/files" icon="folder" active={route.first === 'files'}>Files</NavItem>
@@ -153,8 +157,7 @@
         {/if}
       </nav>
       <footer>
-        <Profile name={who} spaces={me.spaces} home={me.home} current={scope} onpick={pick} oncreate={create}
-          workspaces={me.workspaces} workspace={me.workspace} onworkspace={switchTo} />
+        <Profile name={who} spaces={me.spaces} home={me.home} current={scope} onpick={pick} oncreate={create} />
         <Theme />
         <Button icon="signout" title="Sign out" aria-label="Sign out" onclick={signOut} />
       </footer>
