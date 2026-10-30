@@ -1,6 +1,7 @@
 <script>
   import Icon from '#kit/Icon.svelte';
   import Avatar from './Avatar.svelte';
+  import { setFloating, ui } from './looks.svelte.js';
 
   let { name, email = '', dev = false, ondev, onsignout } = $props();
   let open = $state(false);
@@ -31,6 +32,9 @@
   </button>
   {#if open}
     <div class="menu" role="menu">
+      <button class="item" role="menuitemcheckbox" aria-checked={ui.floating} onclick={() => setFloating(!ui.floating)}>
+        <span>Floating icons</span>{#if ui.floating}<Icon name="check" />{/if}
+      </button>
       <button class="item" role="menuitemcheckbox" aria-checked={dev} onclick={() => { open = false; ondev(); }}>
         <span>Developer mode</span>{#if dev}<Icon name="check" />{/if}
       </button>

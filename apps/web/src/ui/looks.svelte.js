@@ -16,6 +16,23 @@ function load() {
 
 const looks = $state(load());
 
+function floating() {
+  try {
+    return localStorage.floating !== 'off';
+  } catch {
+    return true;
+  }
+}
+
+export const ui = $state({ floating: floating() });
+
+export function setFloating(on) {
+  ui.floating = on;
+  try {
+    localStorage.floating = on ? 'on' : 'off';
+  } catch {}
+}
+
 function persist() {
   try {
     localStorage.looks = JSON.stringify(looks);
