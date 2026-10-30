@@ -218,6 +218,7 @@ Designed but not built:
 - **More Office edits**: rows, columns, slides and formatting.
 - **Google Docs and Sheets integration** for people editing Office files.
 - **Connectors** that sync mail, files, chat and business data in, read-only and by delta: see [ADR 0002](0002-connectors.md).
+- **Hosting** at app.archive.dev from this same repo: every install serves many workspaces, each with its own database, and the hosted version differs only in its environment and rows: see [ADR 0003](0003-hosting.md).
 - **Clients**: the Svelte app, as the website and in Tauri 2 shells for iOS, Android and desktop (Capacitor as the fallback on mobile). Every shell runs it in the platform's own web view (WKWebView, Android WebView, WebView2, WebKitGTK).
 
 ## Not doing
