@@ -7,7 +7,7 @@
     ['Product', PRODUCT.slice(0, 4).map(link)],
     ['Platform', PRODUCT.slice(4).map(link)],
     ['Resources', [['/docs', 'Docs'], ['/blog', 'Blog'], [GITHUB, 'GitHub']]],
-    ['Company', [['https://mulholland.ai', 'Mulholland'], ['mailto:hello@mulholland.ai', 'Contact'], ['/security', 'Trust'], [GITHUB + '/issues', 'Support']]]
+    ['Company', [['https://mulholland.ai', 'Mulholland'], ['mailto:hello@mulholland.ai', 'Contact'], ['/security', 'Trust'], [GITHUB + '/issues', 'Support'], ['/privacy', 'Privacy'], ['/terms', 'Terms']]]
   ];
 </script>
 
