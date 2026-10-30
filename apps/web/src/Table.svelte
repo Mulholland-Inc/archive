@@ -5,6 +5,7 @@
   import Heading from './ui/Heading.svelte';
   import Sheet from './ui/Sheet.svelte';
   import Note from './ui/Note.svelte';
+  import Empty from './ui/Empty.svelte';
   import { cycle, fetchRows, keep, order, read } from './ui/filter.js';
 
   let { table, types: given } = $props();
@@ -49,6 +50,6 @@
   <Sheet tight>
     {#if error}<Note error>{error}</Note>{/if}
     <DataTable fill {columns} rows={shown} cell={show} sort={q.sort} onsort={(col) => (q.sort = cycle(q.sort, col))} />
-    {#if loaded && !shown.length && !error}<Note>{rows.length || q.query ? 'Nothing matches' : 'Nothing here yet'}</Note>{/if}
+    {#if loaded && !shown.length && !error}{#if rows.length || q.query}<Note>Nothing matches</Note>{:else}<Empty title="Nothing here yet" />{/if}{/if}
   </Sheet>
 </Filters>
