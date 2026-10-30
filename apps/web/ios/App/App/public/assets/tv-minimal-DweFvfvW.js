@@ -1,0 +1,1 @@
+import{n as e,r as t}from"./index-CUHWwu7r.js";import{t as n}from"./Icon-_CzsFgsJ.js";var r={name:`tv-minimal`,size:24,node:[[`path`,{d:`M7 21h10`}],[`rect`,{width:`20`,height:`14`,x:`2`,y:`3`,rx:`2`}]],aliases:[`tv-2`]};r.node;var i=new Set([`$$slots`,`$$events`,`$$legacy`]);function a(a,o){let s=e(o,i);n(a,t(()=>s,{get icon(){return r}}))}export{a as default};

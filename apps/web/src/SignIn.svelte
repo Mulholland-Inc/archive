@@ -1,6 +1,7 @@
 <script>
   import { api, devicePasskey, passkeyLogin, passkeys } from './api.js';
   import Icon from '#kit/Icon.svelte';
+  import { BRANDS } from '#kit/brands.js';
   import Word from '#kit/Word.svelte';
   import art from '../../site/static/art/cli.webp';
 
@@ -36,7 +37,9 @@
       <div class="methods">
         {#if first}{@render key()}{/if}
         {#each providers as p (p.id)}
-          <a class="method" href="/auth/oidc/{encodeURIComponent(p.id)}">Continue with {p.name}</a>
+          <a class="method" href="/auth/oidc/{encodeURIComponent(p.id)}"
+            >{#if BRANDS[p.name]}<svg class="icon filled" viewBox={BRANDS[p.name][0]} aria-hidden="true">{@html BRANDS[p.name][1]}</svg>{/if}Continue with {p.name}</a
+          >
         {/each}
         {#if passkeys && !first}{@render key()}{/if}
       </div>

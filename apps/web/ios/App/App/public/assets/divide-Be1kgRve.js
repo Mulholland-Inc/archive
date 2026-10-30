@@ -1,0 +1,1 @@
+import{n as e,r as t}from"./index-CUHWwu7r.js";import{t as n}from"./Icon-_CzsFgsJ.js";var r={name:`divide`,size:24,node:[[`circle`,{cx:`12`,cy:`6`,r:`1`}],[`line`,{x1:`5`,x2:`19`,y1:`12`,y2:`12`}],[`circle`,{cx:`12`,cy:`18`,r:`1`}]]};r.node;var i=new Set([`$$slots`,`$$events`,`$$legacy`]);function a(a,o){let s=e(o,i);n(a,t(()=>s,{get icon(){return r}}))}export{a as default};

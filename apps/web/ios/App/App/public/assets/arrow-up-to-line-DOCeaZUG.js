@@ -1,0 +1,1 @@
+import{n as e,r as t}from"./index-CUHWwu7r.js";import{t as n}from"./Icon-_CzsFgsJ.js";var r={name:`arrow-up-to-line`,size:24,node:[[`path`,{d:`M5 3h14`}],[`path`,{d:`m18 13-6-6-6 6`}],[`path`,{d:`M12 7v14`}]]};r.node;var i=new Set([`$$slots`,`$$events`,`$$legacy`]);function a(a,o){let s=e(o,i);n(a,t(()=>s,{get icon(){return r}}))}export{a as default};

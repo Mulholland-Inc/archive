@@ -1,5 +1,5 @@
 <script>
-  import { BRANDS } from './brands.js';
+  import { BRANDS } from '#kit/brands.js';
   import { reveal as watch } from './reveal.js';
 
   let { items, reveal = false, marquee = false } = $props();

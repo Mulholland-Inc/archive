@@ -1,0 +1,1 @@
+import{n as e,r as t}from"./index-CUHWwu7r.js";import{t as n}from"./Icon-_CzsFgsJ.js";var r={name:`japanese-yen`,size:24,node:[[`path`,{d:`M12 9.5V21m0-11.5L6 3m6 6.5L18 3`}],[`path`,{d:`M6 15h12`}],[`path`,{d:`M6 11h12`}]]};r.node;var i=new Set([`$$slots`,`$$events`,`$$legacy`]);function a(a,o){let s=e(o,i);n(a,t(()=>s,{get icon(){return r}}))}export{a as default};

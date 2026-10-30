@@ -1,0 +1,1 @@
+import{n as e,r as t}from"./index-CUHWwu7r.js";import{t as n}from"./Icon-_CzsFgsJ.js";var r={name:`stretch-vertical`,size:24,node:[[`rect`,{width:`6`,height:`20`,x:`4`,y:`2`,rx:`2`}],[`rect`,{width:`6`,height:`20`,x:`14`,y:`2`,rx:`2`}]]};r.node;var i=new Set([`$$slots`,`$$events`,`$$legacy`]);function a(a,o){let s=e(o,i);n(a,t(()=>s,{get icon(){return r}}))}export{a as default};

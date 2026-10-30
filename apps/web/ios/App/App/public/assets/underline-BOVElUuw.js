@@ -1,0 +1,1 @@
+import{n as e,r as t}from"./index-CUHWwu7r.js";import{t as n}from"./Icon-_CzsFgsJ.js";var r={name:`underline`,size:24,node:[[`path`,{d:`M6 4v6a6 6 0 0 0 12 0V4`}],[`line`,{x1:`4`,x2:`20`,y1:`20`,y2:`20`}]]};r.node;var i=new Set([`$$slots`,`$$events`,`$$legacy`]);function a(a,o){let s=e(o,i);n(a,t(()=>s,{get icon(){return r}}))}export{a as default};

@@ -1,0 +1,1 @@
+import{n as e,r as t}from"./index-CUHWwu7r.js";import{t as n}from"./Icon-_CzsFgsJ.js";var r={name:`chart-gantt`,size:24,node:[[`path`,{d:`M10 6h8`}],[`path`,{d:`M12 16h6`}],[`path`,{d:`M3 3v16a2 2 0 0 0 2 2h16`}],[`path`,{d:`M8 11h7`}]]};r.node;var i=new Set([`$$slots`,`$$events`,`$$legacy`]);function a(a,o){let s=e(o,i);n(a,t(()=>s,{get icon(){return r}}))}export{a as default};
