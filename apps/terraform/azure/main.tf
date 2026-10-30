@@ -190,7 +190,6 @@ resource "azurerm_container_app" "this" {
         for_each = merge(var.env, {
           ARCHIVE_URL         = local.url
           ARCHIVE_ADMIN_EMAIL = var.admin_email
-          ARCHIVE_INSTANCE    = var.instance
         })
         content {
           name  = env.key

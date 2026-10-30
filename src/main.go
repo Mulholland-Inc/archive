@@ -29,7 +29,9 @@ var cliVersion = "0.1.0"
 const cliUsage = `archive keeps all your stuff in one place, in Postgres tables you define.
 
 Usage:
-  archive [-as email] <command> ...  every command acts as a user (default the first owner)
+  archive [-as email] [-workspace id] <command> ...
+                                     every command acts as a user (default the first owner) of a
+                                     workspace (default the first one)
 
   archive serve [-addr :8080]        serve the HTTP API (/api), sign-in (/auth) and MCP (/mcp)
   archive mcp                        serve MCP over stdio
@@ -77,9 +79,23 @@ Usage:
   archive token revoke <id>
   archive secret grant|revoke <email> <type>
 
+  archive workspace add <name> <owner email>
+                                     create a workspace, with its own database, for someone else
+  archive workspace list
+  archive signup on|off              let anyone create a workspace from the sign-in screen
+  archive plan list
+  archive plan set <id> [json]       a plan and its limits per month: {"name", "price" (a Stripe
+                                     price id), "runs", "workflow_runs", "ai_tokens",
+                                     "stored_bytes", "concurrent"}; null is no limit
+  archive plan default <id|none>     the plan new workspaces start on
+
 Environment:
   DATABASE_URL       external Postgres, as a superuser; unset starts the bundled one; several
-                     instances can share one when they share ARCHIVE_SECRET_KEY and ARCHIVE_BLOB_URL
+                     instances can share one when they share ARCHIVE_SECRET_KEY and ARCHIVE_BLOB_URL;
+                     every other workspace gets its own database on the same server
+  DATABASE_DIRECT_URL
+                     the same Postgres without a pooler in between, for schema changes, which
+                     hold a session lock (default DATABASE_URL)
   ARCHIVE_DATA       data directory: the bundled Postgres, its secret.key and files (default ./data)
   ARCHIVE_PG_BIN     directory holding the Postgres binaries; unset uses those on PATH, or
                      downloads Postgres into $ARCHIVE_DATA/pgbin on first run
@@ -93,16 +109,22 @@ Environment:
                      unset stores files in $ARCHIVE_DATA/blobs
   ARCHIVE_BLOB_KEY, ARCHIVE_BLOB_SECRET
                      access key for ARCHIVE_BLOB_URL (default AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
-  ARCHIVE_INSTANCE   prefix of every Postgres role of this instance (default a)
   ARCHIVE_SECRET_KEY 32-byte key (hex or base64) for secret values and the Postgres role password;
                      required with DATABASE_URL, the same on every instance; unset with the
                      bundled Postgres uses $ARCHIVE_DATA/secret.key
-  ARCHIVE_URL        public base URL for links, cookies and passkeys (default http://localhost:<port>)
+  ARCHIVE_URL        public base URL of the web app and sign-in, for sign-in links, cookies and
+                     passkeys (default http://localhost:<port>)
+  ARCHIVE_API_URL    public base URL of the API, MCP, webhooks, file links, Stripe and every
+                     OAuth redirect URL (default ARCHIVE_URL)
   ARCHIVE_ADMIN_EMAIL
                      first owner that serve creates when there are no users yet
   ARCHIVE_SMTP_URL   smtp://user:pass@host:587 for sign-in mail; unset prints links to the log
   ARCHIVE_SMTP_FROM  sender address for sign-in mail
   ARCHIVE_OIDC       JSON list of OIDC providers: [{"name","issuer","client_id","client_secret"}]
+  ARCHIVE_STRIPE_KEY Stripe secret key; set, plans have limits and Stripe Checkout sells them
+  ARCHIVE_STRIPE_WEBHOOK_SECRET
+                     signing secret of the Stripe webhook at ARCHIVE_API_URL/stripe
+  ARCHIVE_STRIPE_URL Stripe API base URL (default https://api.stripe.com)
 `
 
 var cliErrUsage = errors.New("usage")
@@ -164,10 +186,16 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	reveal := fs.Bool("reveal", false, "show granted secret values (list, get)")
 	output := fs.String("o", "", "write the file content here, - for stdout (file get)")
 	docs := fs.Bool("docs", false, "print the SDK documentation (run)")
+	workspace := fs.String("workspace", "", "act in this workspace")
 	from := fs.String("from", "", "only items added on or after this date (search)")
 	to := fs.String("to", "", "only items added up to this date (search)")
-	if cmd == "-as" && len(args) > 1 {
-		*as, cmd, args = args[0], args[1], args[2:]
+	for (cmd == "-as" || cmd == "-workspace") && len(args) > 1 {
+		if cmd == "-as" {
+			*as = args[0]
+		} else {
+			*workspace = args[0]
+		}
+		cmd, args = args[1], args[2:]
 	}
 	pos, err := cliParse(fs, args)
 	if err != nil {
@@ -180,11 +208,16 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 		return err
 	}
 
-	a, err := Open(ctx)
+	h, err := Open(ctx)
 	if err != nil {
 		return err
 	}
-	defer a.Close()
+	defer h.Close()
+	a, release, err := h.acquire(ctx, *workspace)
+	if err != nil {
+		return err
+	}
+	defer release()
 	ac, err := a.CLIActor(ctx, *as)
 	if err != nil {
 		return err
@@ -192,7 +225,7 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	if ac == nil && cmd != "serve" && cmd != "types" && cmd != "user" && (cmd != "schema" || pos[0] != "pull") {
 		return errors.New("no users yet: create the first owner with archive user add <email>, or run archive serve with ARCHIVE_ADMIN_EMAIL")
 	}
-	ctx = WithActor(ctx, ac)
+	ctx = withArchive(WithActor(ctx, ac), a)
 	out := func(v any, err error) error {
 		if err != nil {
 			return err
@@ -202,7 +235,7 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 
 	switch cmd {
 	case "serve":
-		return cliServe(ctx, a, *addr)
+		return cliServe(ctx, h, a, *addr)
 	case "mcp":
 		return mcpServer(a).Run(ctx, &mcp.StdioTransport{})
 	case "types":
@@ -238,6 +271,8 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 		return cliFile(ctx, a, pos, *space, *output, *limit, *after, stdout, out)
 	case "user", "space", "token", "secret":
 		return cliAuth(ctx, a, cmd, pos, *name, *admin, *full, *space, *expires, out)
+	case "workspace", "signup", "plan":
+		return cliWorkspace(ctx, h, cmd, pos, stdin, out)
 	case "list":
 		where := map[string]any{}
 		for _, kv := range pos[1:] {
@@ -297,7 +332,7 @@ func cliCheckCommand(cmd string, pos []string) error {
 	n, ok := map[string]int{
 		"serve": 0, "mcp": 0, "types": 0, "run": 1, "schema": 1, "list": 1, "create": 1,
 		"get": 2, "delete": 2, "set": 2, "update": 2,
-		"user": 2, "space": 1, "token": 1, "secret": 3, "file": 1, "search": 1,
+		"user": 2, "space": 1, "token": 1, "secret": 3, "file": 1, "search": 1, "workspace": 1, "signup": 1, "plan": 1,
 	}[cmd]
 	if !ok {
 		return fmt.Errorf("unknown command %q (see archive help)", cmd)
@@ -361,6 +396,45 @@ func cliAuth(ctx context.Context, a *Archive, cmd string, pos []string, name str
 		}
 	case "secret grant", "secret revoke":
 		return a.GrantSecret(ctx, pos[1], pos[2], pos[0] == "grant")
+	}
+	return cliErrUsage
+}
+
+func cliWorkspace(ctx context.Context, h *Hub, cmd string, pos []string, stdin io.Reader, out func(any, error) error) error {
+	switch cmd + " " + pos[0] {
+	case "workspace add":
+		if len(pos) > 2 {
+			return out(h.AddWorkspace(ctx, pos[1], pos[2]))
+		}
+	case "workspace list":
+		return out(h.Workspaces(ctx))
+	case "signup on", "signup off":
+		on := pos[0] == "on"
+		return out(h.SetSettings(ctx, &on, nil))
+	case "plan list":
+		return out(h.Plans(ctx))
+	case "plan set":
+		if len(pos) > 1 {
+			data, err := cliData(pos[2:], stdin)
+			if err != nil {
+				return err
+			}
+			var p Plan
+			b, _ := json.Marshal(data)
+			if err := json.Unmarshal(b, &p); err != nil {
+				return fmt.Errorf("plan: %w", err)
+			}
+			p.ID = pos[1]
+			return out(h.SetPlan(ctx, p))
+		}
+	case "plan default":
+		if len(pos) > 1 {
+			id := pos[1]
+			if id == "none" {
+				id = ""
+			}
+			return out(h.SetSettings(ctx, nil, &id))
+		}
 	}
 	return cliErrUsage
 }
@@ -497,14 +571,12 @@ func cliSchema(ctx context.Context, a *Archive, pos []string, allowDrop bool, st
 	return cliErrUsage
 }
 
-func cliServe(ctx context.Context, a *Archive, addr string) error {
-	base := os.Getenv("ARCHIVE_URL")
-	if base == "" {
+func cliServe(ctx context.Context, h *Hub, a *Archive, addr string) error {
+	if os.Getenv("ARCHIVE_URL") == "" {
 		_, port, _ := net.SplitHostPort(addr)
-		base = "http://localhost:" + cmp.Or(port, "80")
+		h.urls("http://localhost:" + cmp.Or(port, "80"))
 	}
-	a.base = strings.TrimRight(base, "/")
-	si, err := newSignin(a, base)
+	si, err := newSignin(h)
 	if err != nil {
 		return err
 	}
@@ -516,45 +588,37 @@ func cliServe(ctx context.Context, a *Archive, addr string) error {
 			if err != nil {
 				return fmt.Errorf("ARCHIVE_ADMIN_EMAIL: %w", err)
 			}
-			fmt.Fprintf(os.Stderr, "archive: created the first owner %s; sign in at %s/auth/magic\n", u.Email, base)
+			fmt.Fprintf(os.Stderr, "archive: created the first owner %s; sign in at %s/auth/magic\n", u.Email, h.app)
 		} else {
 			si.setup = authNewSecret()
-			fmt.Fprintf(os.Stderr, "archive: no users yet; create the first owner with POST %s/auth/setup {\"token\": \"%s\", \"email\": ...}\n", base, si.setup)
+			fmt.Fprintf(os.Stderr, "archive: no users yet; create the first owner with POST %s/auth/setup {\"token\": \"%s\", \"email\": ...}\n", h.app, si.setup)
 		}
 	}
 	mux := http.NewServeMux()
-	mux.Handle("/api/", a.httpAuth(httpHandler(a)))
-	tus := a.httpAuth(http.HandlerFunc(a.tus))
+	mux.Handle("/api/", h.httpAuth((*Archive).handler))
+	tus := h.httpAuth(func(a *Archive) http.Handler { return http.HandlerFunc(a.tus) })
 	mux.Handle("/api/files/tus", tus)
 	mux.Handle("/api/files/tus/", tus)
-	mux.HandleFunc("GET /files/{id}", a.fileSigned)
-	mux.HandleFunc("POST /hooks/run/{token}", a.workflowHook)
+	mux.HandleFunc("GET /files/{workspace}/{id}", h.inWorkspace((*Archive).fileSigned))
+	mux.HandleFunc("POST /hooks/run/{workspace}/{token}", h.inWorkspace((*Archive).workflowHook))
+	mux.HandleFunc("POST /stripe", h.stripe)
 	mux.Handle("/auth/", si.handler())
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	srv := mcpServer(a)
-	mux.Handle("/mcp", auth.RequireBearerToken(a.mcpVerify, &auth.RequireBearerTokenOptions{AllowMissingExpiration: true})(
-		mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)))
+	mux.HandleFunc("/mcp", h.mcp)
 	var wg sync.WaitGroup
 	bg, stop := context.WithCancel(ctx)
 	defer wg.Wait()
 	defer stop()
-	if err := a.st.System(ctx, func(ctx context.Context) error {
-		return a.st.db(ctx).ResetProcessing(ctx)
-	}); err != nil {
-		return err
+	wg.Add(hubWorkers + 2)
+	for range hubWorkers {
+		go h.work(bg, &wg)
 	}
-	wg.Add(mediaWorkers)
-	for range mediaWorkers {
-		go a.fileLoop(bg, &wg)
-	}
-	wg.Add(workflowWorkers)
-	for range workflowWorkers {
-		go a.workflowLoop(bg, &wg)
-	}
+	go h.janitor(bg, &wg)
+	go h.upgradeAll(bg, &wg)
 	hs := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	errc := make(chan error, 1)
 	go func() { errc <- hs.ListenAndServe() }()
-	fmt.Fprintf(os.Stderr, "archive: serving API on %s/api, sign-in on %s/auth and MCP on %s/mcp\n", base, base, base)
+	fmt.Fprintf(os.Stderr, "archive: serving the API on %s/api, MCP on %s/mcp and sign-in on %s/auth\n", h.api, h.api, h.app)
 	select {
 	case err := <-errc:
 		return err
@@ -759,6 +823,10 @@ func httpError(err error) (int, any) {
 		status = http.StatusForbidden
 	case errors.Is(err, ErrReadOnly):
 		status = http.StatusMethodNotAllowed
+	case errors.Is(err, ErrLimit):
+		status = http.StatusPaymentRequired
+	case errors.Is(err, ErrBusy):
+		status = http.StatusTooManyRequests
 	}
 	return status, map[string]string{"error": err.Error()}
 }
@@ -824,6 +892,9 @@ func mcpServer(a *Archive) *mcp.Server {
 }
 
 func (a *Archive) mcpVerify(ctx context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {
+	if secretWorkspace(token) != a.ws.Short {
+		return nil, fmt.Errorf("%w: this token belongs to another workspace", auth.ErrInvalidToken)
+	}
 	ac, err := a.Authenticate(ctx, token)
 	if errors.Is(err, ErrUnauthorized) {
 		return nil, fmt.Errorf("%w: %v", auth.ErrInvalidToken, err)

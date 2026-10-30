@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
@@ -1312,7 +1313,7 @@ func TestFilesUploadProcessShareAndReference(t *testing.T) {
 		if again.ID != bigFile.ID || copied.ID == bigFile.ID || bobs.ID == bigFile.ID || copied.Hash != bigFile.Hash || bobs.Hash != bigFile.Hash {
 			t.Fatalf("same name %s, copy %s, bob %s, first %s", again.ID, copied.ID, bobs.ID, bigFile.ID)
 		}
-		blobs, _ := filepath.Glob(filepath.Join(in.dir, "blobs", "*", bigFile.Hash))
+		blobs, _ := filepath.Glob(filepath.Join(in.dir, "blobs", "*", "*", bigFile.Hash))
 		if n := in.psql("archive", "SELECT count(*) FROM archive.file WHERE hash = '"+bigFile.Hash+"'"); n != "3" || len(blobs) != 1 {
 			t.Errorf("%s file rows, %d blobs", n, len(blobs))
 		}
@@ -1488,7 +1489,7 @@ func TestS3BlobBackendAgainstAFakeS3(t *testing.T) {
 	f := decode[File](t, in.must("file", "add", path))
 	os.WriteFile(filepath.Join(in.dir, "copy.txt"), content, 0o644)
 	in.must("file", "add", filepath.Join(in.dir, "copy.txt"))
-	key := "/photos/archive/" + f.Hash[:2] + "/" + f.Hash
+	key := "/photos/archive/" + in.psql("archive", "SELECT short FROM archive.workspace WHERE database = 'archive'") + "/" + f.Hash[:2] + "/" + f.Hash
 	s3.mu.Lock()
 	_, stored := s3.objects[key]
 	puts := s3.puts
@@ -1607,29 +1608,6 @@ func TestTwoInstancesShareOnePostgresAndBlobStore(t *testing.T) {
 			t.Errorf("uploads left behind: %s rows, %d part directories", n, len(parts))
 		}
 	})
-}
-
-func TestStoredSchemaFilesFromOlderVersionsAreDroppedAndTheTablesKept(t *testing.T) {
-	t.Parallel()
-	in := newInst(t)
-	in.must("user", "add", "ann@example.com")
-	in.push(e2eSchema)
-	in.must("create", "company", `{"name":"Acme"}`)
-	in.psql("archive", `CREATE TABLE archive.schema_file (name text PRIMARY KEY, body text NOT NULL);
-INSERT INTO archive.schema_file (name, body) VALUES ('company.sql', 'CREATE TABLE stale (id uuid PRIMARY KEY)');
-INSERT INTO archive.revision (hash) VALUES ('old'); CREATE TABLE archive.source (id uuid PRIMARY KEY);
-CREATE TABLE archive.view (id uuid PRIMARY KEY, name text NOT NULL); INSERT INTO archive.view VALUES (uuidv7(), 'Board')`)
-	in.writeDir("schema", map[string]string{"company.sql": "CREATE TABLE stale (id uuid PRIMARY KEY)"})
-	files := in.roundTrips()
-	if !slices.Equal(slices.Sorted(maps.Keys(files)), slices.Sorted(maps.Keys(e2eSchema))) || strings.Contains(files["company.sql"], "stale") {
-		t.Errorf("schema after the upgrade: %v", files)
-	}
-	if got := in.psql("archive", "SELECT to_regclass('archive.schema_file') IS NULL AND to_regclass('archive.source') IS NULL AND to_regclass('archive.view') IS NULL AND to_regclass('stale') IS NULL"); got != "t" {
-		t.Error("archive.schema_file, archive.source or archive.view is still there, or the stored files were applied")
-	}
-	if out := in.must("list", "company"); !strings.Contains(out, "Acme") {
-		t.Errorf("companies after the upgrade: %s", out)
-	}
 }
 
 func TestTablesThatReferenceEachOtherRoundTripAndRecreate(t *testing.T) {
@@ -3038,4 +3016,526 @@ return { ok: res.ok, status: res.status, statusText: res.statusText, reply: res.
 		st, _ = call(t, "DELETE", api+"/workflows/manual", tok, nil, nil)
 		wantStatus(t, st, 404, "delete again")
 	})
+}
+
+func (in *e2eInst) psqlIn(db, sql string) string {
+	in.t.Helper()
+	out, err := exec.Command("psql", "-X", "-h", in.dir, "-U", "archive", "-d", db, "-Atc", sql).CombinedOutput()
+	if err != nil {
+		in.t.Fatalf("psql -d %s %q: %v\n%s", db, sql, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func (s *e2eServer) links(t *testing.T, kind, email string, n int) []string {
+	t.Helper()
+	re := regexp.MustCompile(kind + ` link for ` + regexp.QuoteMeta(email) + `: (\S+)`)
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		if m := re.FindAllStringSubmatch(s.log.String(), -1); len(m) >= n {
+			var out []string
+			for _, x := range m {
+				out = append(out, x[1])
+			}
+			return out
+		}
+	}
+	t.Fatalf("no %d %s links for %s in the log:\n%s", n, kind, email, s.log)
+	return nil
+}
+
+func e2eWait(t *testing.T, what string, ok func() bool) {
+	t.Helper()
+	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
+		if ok() {
+			return
+		}
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
+
+func e2eDo(t *testing.T, method, url string, hdr map[string]string, body any, out any, cookies ...*http.Cookie) (int, []*http.Cookie) {
+	t.Helper()
+	var rd io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		rd = bytes.NewReader(b)
+	}
+	req, _ := http.NewRequest(method, url, rd)
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	resp, err := (&http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if out != nil && len(b) > 0 {
+		dec := json.NewDecoder(bytes.NewReader(b))
+		dec.UseNumber()
+		if err := dec.Decode(out); err != nil {
+			t.Fatalf("%s %s: %d %s", method, url, resp.StatusCode, b)
+		}
+	}
+	return resp.StatusCode, resp.Cookies()
+}
+
+func e2eSession(cs []*http.Cookie) *http.Cookie {
+	for _, c := range cs {
+		if c.Name == "archive_session" {
+			return c
+		}
+	}
+	return nil
+}
+
+func e2eRun(t *testing.T, api, tok, code string) (int, RunOutput) {
+	t.Helper()
+	var out RunOutput
+	st, _ := call(t, "POST", api+"/run", tok, map[string]string{"code": code}, &out)
+	return st, out
+}
+
+func TestTwoWorkspacesInOneProcessSeeNothingOfEachOther(t *testing.T) {
+	t.Parallel()
+	in := newInst(t)
+	in.must("user", "add", "alice@example.com")
+	in.push(e2eSchema)
+	ws := decode[Workspace](t, in.must("workspace", "add", "Acme", "bob@acme.test")).ID
+	in.push(with(e2eSchema, "note.sql", e2eNote), "-workspace", ws, "-as", "bob@acme.test")
+	one := in.psql("archive", "SELECT short FROM archive.workspace WHERE database = 'archive'")
+	srv := in.serve()
+	api := srv.url + "/api"
+	alice := decode[Token](t, in.must("token", "create")).Secret
+	bob := decode[Token](t, in.must("-workspace", ws, "-as", "bob@acme.test", "token", "create")).Secret
+	if !strings.HasPrefix(alice, "arc_"+one+"_") || !strings.HasPrefix(bob, "arc_"+ws+"_") || ws == one {
+		t.Fatalf("tokens %q and %q for workspaces %s and %s", alice, bob, one, ws)
+	}
+
+	t.Run("TablesRowsAndRawSQL", func(t *testing.T) {
+		wantStatus(t, func() int {
+			st, _ := call(t, "POST", api+"/company", alice, map[string]any{"name": "Alpha"}, nil)
+			return st
+		}(), 201, "alice creates")
+		wantStatus(t, func() int {
+			st, _ := call(t, "POST", api+"/company", bob, map[string]any{"name": "Beta"}, nil)
+			return st
+		}(), 201, "bob creates")
+		var a, b []row
+		call(t, "GET", api+"/company", alice, nil, &a)
+		e2eDo(t, "GET", api+"/company", map[string]string{"Authorization": "Bearer " + bob, "Archive-Workspace": one}, nil, &b)
+		if names(a) != "Alpha" || names(b) != "Beta" {
+			t.Errorf("alice sees %q, bob sees %q", names(a), names(b))
+		}
+		var ca, cb Catalog
+		call(t, "GET", api+"/types", alice, nil, &ca)
+		call(t, "GET", api+"/types", bob, nil, &cb)
+		if ca.Tables["note"] != nil || cb.Tables["note"] == nil {
+			t.Errorf("note is in alice's catalog: %v, in bob's: %v", ca.Tables["note"] != nil, cb.Tables["note"] != nil)
+		}
+		st, out := e2eRun(t, api, bob, `return await archive.sql("SELECT current_database() AS db, (SELECT count(*)::int FROM company) AS n")`)
+		if st != 200 || !strings.Contains(string(out.Result), `"db":"archive_`+ws+`"`) || !strings.Contains(string(out.Result), `"n":1`) {
+			t.Errorf("bob's raw SQL: %d %+v", st, out)
+		}
+		if _, out := e2eRun(t, api, bob, `return await archive.sql("SELECT set_config('role', 'w`+one+`_admin', true)")`); !strings.Contains(out.Error, "permission denied") {
+			t.Errorf("bob takes on a role of workspace one: %+v", out)
+		}
+		if n := in.psql("archive", "SELECT count(*) FROM pg_roles WHERE rolname = 'w"+ws+"_authenticator'"); n != "1" {
+			t.Errorf("%s authenticators for workspace %s", n, ws)
+		}
+	})
+
+	t.Run("Files", func(t *testing.T) {
+		st, f := e2eUpload(t, api+"/files", alice, "alpha.txt", []byte("alpha only"))
+		wantStatus(t, st, 201, "alice uploads")
+		var fs []File
+		call(t, "GET", api+"/files", bob, nil, &fs)
+		st, _ = call(t, "GET", api+"/files/"+f.ID.String(), bob, nil, nil)
+		if len(fs) != 0 || st != 404 {
+			t.Errorf("bob sees alice's file: %v, %d", fs, st)
+		}
+		st, g := e2eUpload(t, api+"/files", bob, "beta.txt", []byte("beta only"))
+		wantStatus(t, st, 201, "bob uploads")
+		if _, err := os.Stat(filepath.Join(in.dir, "blobs", ws, g.Hash[:2], g.Hash)); err != nil {
+			t.Errorf("bob's file is not under his workspace's prefix: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(in.dir, "blobs", one, f.Hash[:2], f.Hash)); err != nil {
+			t.Errorf("alice's file moved: %v", err)
+		}
+		var link FileLink
+		call(t, "POST", api+"/files/"+g.ID.String()+"/link", bob, nil, &link)
+		resp, body := e2eGet(t, link.URL, "")
+		if resp.StatusCode != 200 || string(body) != "beta only" || !strings.Contains(link.URL, "/files/"+ws+"/") {
+			t.Errorf("bob's file link %s: %d %q", link.URL, resp.StatusCode, body)
+		}
+		resp, _ = e2eGet(t, strings.Replace(link.URL, "/files/"+ws+"/", "/files/"+one+"/", 1), "")
+		wantStatus(t, resp.StatusCode, 403, "bob's link in workspace one")
+	})
+
+	t.Run("WorkflowsWebhooksAndDueWork", func(t *testing.T) {
+		st, out := e2eRun(t, api, alice, `return (await archive.deploy({ "hook.ts": "// on: webhook\nreturn 'alpha';" })).workflows[0].url;`)
+		var hookURL string
+		json.Unmarshal(out.Result, &hookURL)
+		if st != 200 || !strings.Contains(hookURL, "/hooks/run/"+one+"/") {
+			t.Fatalf("alice's webhook: %d %+v", st, out)
+		}
+		token := hookURL[strings.LastIndex(hookURL, "/")+1:]
+		hookURL = srv.url + "/hooks/run/" + one + "/" + token
+		var res any
+		st, _ = call(t, "POST", hookURL, "", nil, &res)
+		if st != 200 || res != "alpha" {
+			t.Errorf("alice's webhook: %d %v", st, res)
+		}
+		st, _ = call(t, "POST", srv.url+"/hooks/run/"+ws+"/"+token, "", nil, nil)
+		wantStatus(t, st, 404, "alice's webhook in bob's workspace")
+		st, _ = call(t, "POST", srv.url+"/hooks/run/nosuch/"+token, "", nil, nil)
+		wantStatus(t, st, 404, "a webhook in no workspace")
+
+		st, out = e2eRun(t, api, bob, `return (await archive.deploy({
+  "tick.ts": "// on: cron @every 1s\nawait archive.create('note', { title: 'tick' });",
+  "seen.ts": "// on: company\nfor (const r of input.rows) await archive.create('note', { title: 'saw ' + r.name });",
+})).deployed;`)
+		if st != 200 || string(out.Result) != "true" {
+			t.Fatalf("bob's deploy: %d %+v", st, out)
+		}
+		if n := in.psql("archive", "SELECT count(*) FROM archive.due d JOIN archive.workspace w ON w.id = d.workspace WHERE w.short = '"+ws+"' AND d.kind = 'workflow'"); n != "1" {
+			t.Errorf("%s due rows for bob's workflows", n)
+		}
+		call(t, "POST", api+"/company", bob, map[string]any{"name": "Gamma"}, nil)
+		e2eWait(t, "bob's workflows to run", func() bool {
+			var ns []row
+			call(t, "GET", api+"/note?limit=1000", bob, nil, &ns)
+			return strings.Contains(names2(ns, "title"), "tick") && strings.Contains(names2(ns, "title"), "saw Gamma")
+		})
+		var ws1 []Workflow
+		call(t, "GET", api+"/workflows", alice, nil, &ws1)
+		if len(ws1) != 1 || ws1[0].Name != "hook.ts" {
+			t.Errorf("alice's workflows: %+v", ws1)
+		}
+		if n := in.psql("archive", "SELECT count(*) FROM archive.workflow_run"); n != "1" {
+			t.Errorf("workspace one holds %s workflow runs, want alice's 1 webhook run", n)
+		}
+	})
+
+	t.Run("TokensRouteByWorkspace", func(t *testing.T) {
+		secret := strings.TrimPrefix(bob, "arc_"+ws+"_")
+		for _, forged := range []string{"arc_" + one + "_" + secret, "arc_" + secret, "arc_nosuch_" + secret} {
+			st, _ := call(t, "GET", api+"/company", forged, nil, nil)
+			wantStatus(t, st, 401, "bob's secret as "+forged[:12])
+		}
+		ctx := t.Context()
+		cl := mcp.NewClient(&mcp.Implementation{Name: "e2e", Version: "1"}, nil)
+		sess, err := cl.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: srv.url + "/mcp", HTTPClient: &http.Client{Transport: e2eBearer(bob)}}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer sess.Close()
+		res, err := sess.CallTool(ctx, &mcp.CallToolParams{Name: "run", Arguments: map[string]any{"code": `return (await archive.list("company")).map((c) => c.name).join(",");`}})
+		if err != nil || res.IsError || !strings.Contains(res.Content[0].(*mcp.TextContent).Text, "Beta,Gamma") {
+			t.Errorf("MCP as bob: %v %+v", err, res)
+		}
+	})
+
+	t.Run("UsageIsCountedPerWorkspace", func(t *testing.T) {
+		q := func(short, col string) int {
+			n, _ := strconv.Atoi(in.psql("archive", "SELECT coalesce(sum(u."+col+"), 0) FROM archive.usage u JOIN archive.workspace w ON w.id = u.workspace WHERE w.short = '"+short+"'"))
+			return n
+		}
+		if q(ws, "runs") < 4 || q(ws, "workflow_runs") < 2 || q(one, "workflow_runs") != 1 || q(one, "stored_bytes") != len("alpha only") || q(ws, "stored_bytes") != len("beta only") {
+			t.Errorf("usage: bob %d runs, %d workflow runs, %d bytes; alice %d workflow runs, %d bytes", q(ws, "runs"), q(ws, "workflow_runs"), q(ws, "stored_bytes"), q(one, "workflow_runs"), q(one, "stored_bytes"))
+		}
+	})
+}
+
+func names2(rs []row, col string) string {
+	var out []string
+	for _, r := range rs {
+		out = append(out, fmt.Sprint(r[col]))
+	}
+	return strings.Join(out, ",")
+}
+
+func TestSignupAndSigningInToSeveralWorkspaces(t *testing.T) {
+	t.Parallel()
+	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
+	srv := in.serve()
+	one := in.psql("archive", "SELECT short FROM archive.workspace WHERE database = 'archive'")
+	var methods struct {
+		Signup bool `json:"signup"`
+	}
+	call(t, "GET", srv.url+"/auth/methods", "", nil, &methods)
+	st, _ := call(t, "POST", srv.url+"/auth/signup", "", map[string]string{"email": "carol@example.com", "name": "Carol Co"}, nil)
+	if st != 403 || methods.Signup {
+		t.Fatalf("signup while off: %d, methods say %v", st, methods.Signup)
+	}
+	in.must("signup", "on")
+	call(t, "GET", srv.url+"/auth/methods", "", nil, &methods)
+	st, _ = call(t, "POST", srv.url+"/auth/signup", "", map[string]string{"email": "carol@example.com", "name": " "}, nil)
+	wantStatus(t, st, 422, "signup without a workspace name")
+	st, _ = call(t, "POST", srv.url+"/auth/signup", "", map[string]string{"email": "carol@example.com", "name": "Carol Co"}, nil)
+	if st != 202 || !methods.Signup {
+		t.Fatalf("signup while on: %d, methods say %v", st, methods.Signup)
+	}
+	link := srv.links(t, "signup", "carol@example.com", 1)[0]
+	var made struct {
+		User      User   `json:"user"`
+		Workspace string `json:"workspace"`
+	}
+	st, cs := e2eDo(t, "GET", link, nil, nil, &made)
+	carol := e2eSession(cs)
+	if st != 200 || carol == nil || made.User.Email != "carol@example.com" || made.Workspace == one || made.Workspace == "" {
+		t.Fatalf("open the signup link: %d %+v %v", st, made, cs)
+	}
+	if got := in.psql("archive", "SELECT w.name || ' ' || (SELECT count(*) FROM pg_database WHERE datname = w.database) FROM archive.workspace w WHERE w.short = '"+made.Workspace+"'"); got != "Carol Co 1" {
+		t.Errorf("carol's workspace row and database: %q", got)
+	}
+	var out RunOutput
+	st, _ = e2eDo(t, "POST", srv.url+"/api/run", nil, map[string]string{"code": "return (await archive.spaces()).map((s) => s.level).join(',')"}, &out, carol)
+	if st != 200 || string(out.Result) != `"owner"` {
+		t.Errorf("carol runs in her workspace: %d %+v", st, out)
+	}
+	st, _ = e2eDo(t, "GET", link, nil, nil, nil)
+	wantStatus(t, st, 409, "the signup link twice")
+	st, _ = e2eDo(t, "POST", srv.url+"/auth/workspaces", nil, map[string]string{"name": "Mine", "owner": "carol@example.com"}, nil, carol)
+	wantStatus(t, st, 403, "a workspace owner creates a workspace for someone")
+	st, _ = e2eDo(t, "PATCH", srv.url+"/auth/settings", nil, map[string]bool{"signup": false}, nil, carol)
+	wantStatus(t, st, 403, "a workspace owner closes signup")
+
+	full := decode[Token](t, in.must("token", "create", "-full")).Secret
+	var second Workspace
+	st, _ = call(t, "POST", srv.url+"/auth/workspaces", full, map[string]string{"name": "Second", "owner": "alice@example.com"}, &second)
+	wantStatus(t, st, 201, "an instance admin creates a workspace")
+	call(t, "POST", srv.url+"/auth/magic", "", map[string]string{"email": "alice@example.com"}, nil)
+	links := srv.links(t, "sign-in", "alice@example.com", 2)
+	byWS := map[string]string{}
+	for _, l := range links {
+		u, _ := url.Parse(l)
+		byWS[secretWorkspace(u.Query().Get("token"))] = l
+	}
+	if len(links) != 2 || byWS[one] == "" || byWS[second.ID] == "" {
+		t.Fatalf("one sign-in link per workspace: %v", links)
+	}
+	_, cs = e2eDo(t, "GET", byWS[one], nil, nil, nil)
+	first := e2eSession(cs)
+	_, cs = e2eDo(t, "GET", byWS[second.ID], nil, nil, nil, first)
+	both := e2eSession(cs)
+	if first == nil || both == nil || strings.Count(both.Value, ".") != 1 {
+		t.Fatalf("cookies %v then %v", first, both)
+	}
+	var me struct {
+		Workspace string      `json:"workspace"`
+		All       []Workspace `json:"workspaces"`
+	}
+	e2eDo(t, "GET", srv.url+"/auth/me", nil, nil, &me, both)
+	if me.Workspace != second.ID || len(me.All) != 2 {
+		t.Errorf("me in the newest workspace: %+v", me)
+	}
+	e2eDo(t, "GET", srv.url+"/auth/me", map[string]string{"Archive-Workspace": one}, nil, &me, both)
+	if me.Workspace != one {
+		t.Errorf("me in the workspace the header names: %+v", me)
+	}
+	st, _ = e2eDo(t, "GET", srv.url+"/auth/me", map[string]string{"Archive-Workspace": made.Workspace}, nil, nil, both)
+	wantStatus(t, st, 401, "a workspace this browser is not signed in to")
+	st, cs = e2eDo(t, "POST", srv.url+"/auth/signout", map[string]string{"Archive-Workspace": second.ID}, nil, nil, both)
+	left := e2eSession(cs)
+	if st != 204 || left == nil || strings.Contains(left.Value, ".") {
+		t.Fatalf("sign out of one workspace: %d %v", st, left)
+	}
+	st, _ = e2eDo(t, "GET", srv.url+"/auth/me", map[string]string{"Archive-Workspace": second.ID}, nil, nil, both)
+	wantStatus(t, st, 401, "the signed-out session")
+	st, _ = e2eDo(t, "GET", srv.url+"/auth/me", nil, nil, &me, left)
+	if st != 200 || me.Workspace != one {
+		t.Errorf("still signed in to workspace one: %d %+v", st, me)
+	}
+}
+
+func TestGeneratedURLsUseTheAPIAddress(t *testing.T) {
+	t.Parallel()
+	var issuer *httptest.Server
+	issuer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"issuer": issuer.URL, "authorization_endpoint": issuer.URL + "/authorize", "token_endpoint": issuer.URL + "/token",
+			"jwks_uri": issuer.URL + "/jwks", "id_token_signing_alg_values_supported": []string{"RS256"}})
+	}))
+	defer issuer.Close()
+	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com", "ARCHIVE_URL=http://app.test", "ARCHIVE_API_URL=http://api.test:9/",
+		`ARCHIVE_OIDC=[{"name":"fake","issuer":"`+issuer.URL+`","client_id":"web"}]`)
+	srv := in.serve()
+	api := srv.url + "/api"
+	one := in.psql("archive", "SELECT short FROM archive.workspace WHERE database = 'archive'")
+	tok := decode[Token](t, in.must("token", "create")).Secret
+	_, out := e2eRun(t, api, tok, `return (await archive.deploy({ "hook.ts": "// on: webhook\nreturn 1;" })).workflows[0].url;`)
+	if !strings.HasPrefix(string(out.Result), `"http://api.test:9/hooks/run/`+one+`/`) {
+		t.Errorf("webhook URL: %+v", out)
+	}
+	_, f := e2eUpload(t, api+"/files", tok, "a.txt", []byte("a"))
+	var link FileLink
+	call(t, "POST", api+"/files/"+f.ID.String()+"/link", tok, nil, &link)
+	if !strings.HasPrefix(link.URL, "http://api.test:9/files/"+one+"/") {
+		t.Errorf("file link: %s", link.URL)
+	}
+	call(t, "POST", srv.url+"/auth/magic", "", map[string]string{"email": "alice@example.com"}, nil)
+	if l := srv.links(t, "sign-in", "alice@example.com", 1)[0]; !strings.HasPrefix(l, "http://app.test/auth/magic?token=arc_"+one+"_") {
+		t.Errorf("sign-in link: %s", l)
+	}
+	st, hdr := call(t, "GET", srv.url+"/auth/oidc/fake", "", nil, nil)
+	loc, _ := url.Parse(hdr.Get("Location"))
+	if st != 302 || loc == nil || loc.Query().Get("redirect_uri") != "http://api.test:9/auth/oidc/fake/callback" || loc.Query().Get("state") == "" {
+		t.Errorf("OIDC redirect: %d %s", st, hdr.Get("Location"))
+	}
+	st, _ = call(t, "GET", srv.url+"/auth/oidc/fake/callback?state=forged&code=x", "", nil, nil)
+	wantStatus(t, st, 401, "an OIDC callback with a forged state")
+	if !strings.Contains(srv.log.String(), "the API on http://api.test:9/api") {
+		t.Errorf("startup line:\n%s", srv.log)
+	}
+}
+
+func e2eStripeSign(body, secret string, at time.Time) string {
+	ts := strconv.FormatInt(at.Unix(), 10)
+	m := hmac.New(sha256.New, []byte(secret))
+	m.Write([]byte(ts + "." + body))
+	return "t=" + ts + ",v1=" + hex.EncodeToString(m.Sum(nil))
+}
+
+func TestStripeBillingChangesPlansAndLimitsAreEnforced(t *testing.T) {
+	t.Parallel()
+	var mu sync.Mutex
+	var ws string
+	var checkout url.Values
+	var keys []string
+	stripe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if user, _, _ := r.BasicAuth(); user != "sk_test_1" {
+			w.WriteHeader(401)
+			return
+		}
+		switch r.Method + " " + r.URL.Path {
+		case "POST /v1/checkout/sessions":
+			r.ParseForm()
+			checkout = r.PostForm
+			json.NewEncoder(w).Encode(map[string]string{"id": "cs_1", "url": "https://checkout.stripe.test/cs_1"})
+		case "GET /v1/subscriptions/sub_1":
+			json.NewEncoder(w).Encode(map[string]any{"id": "sub_1", "customer": "cus_1", "status": "active", "metadata": map[string]string{"workspace": ws},
+				"items": map[string]any{"data": []any{map[string]any{"price": map[string]string{"id": "price_pro"}}}}})
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer stripe.Close()
+	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		keys = append(keys, r.Header.Get("x-api-key"))
+		mu.Unlock()
+		for _, ev := range []string{
+			`{"type":"message_start","message":{"usage":{"input_tokens":10,"cache_read_input_tokens":2,"output_tokens":1}}}`,
+			`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+			`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi."}}`,
+			`{"type":"content_block_stop","index":0}`,
+			`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}`,
+		} {
+			fmt.Fprintf(w, "event: x\ndata: %s\n\n", ev)
+		}
+	}))
+	defer model.Close()
+	in := newInst(t, "ARCHIVE_STRIPE_KEY=sk_test_1", "ARCHIVE_STRIPE_WEBHOOK_SECRET=whsec_1", "ARCHIVE_STRIPE_URL="+stripe.URL,
+		"ANTHROPIC_API_KEY=shared", "ANTHROPIC_BASE_URL="+model.URL, "ARCHIVE_CHAT_MODEL=")
+	in.must("user", "add", "alice@example.com")
+	in.must("plan", "set", "free", `{"runs": 2, "ai_tokens": 30}`)
+	in.must("plan", "set", "pro", `{"name": "Pro", "price": "price_pro", "runs": 1000}`)
+	in.must("plan", "default", "free")
+	mu.Lock()
+	ws = decode[Workspace](t, in.must("workspace", "add", "Bob Co", "bob@example.com")).ID
+	mu.Unlock()
+	srv := in.serve()
+	api := srv.url + "/api"
+	alice := decode[Token](t, in.must("token", "create")).Secret
+	bob := decode[Token](t, in.must("-workspace", ws, "-as", "bob@example.com", "token", "create", "-full")).Secret
+	info := func() WorkspaceInfo {
+		t.Helper()
+		var i WorkspaceInfo
+		st, _ := call(t, "GET", srv.url+"/auth/workspace", bob, nil, &i)
+		wantStatus(t, st, 200, "workspace info")
+		return i
+	}
+	if i := info(); i.Plan != "free" || i.Limits == nil || *i.Limits.Runs != 2 || !i.Billing {
+		t.Fatalf("a new workspace's plan: %+v", i)
+	}
+	chat := func(t *testing.T) int {
+		t.Helper()
+		st, _ := call(t, "POST", api+"/chat", bob, map[string]string{"text": "hi"}, nil)
+		return st
+	}
+	wantStatus(t, chat(t), 200, "chat on the shared key")
+	if got := in.psql("archive", "SELECT ai_tokens FROM archive.usage u JOIN archive.workspace w ON w.id = u.workspace WHERE w.short = '"+ws+"'"); got != "17" {
+		t.Errorf("AI tokens counted: %q, want 10 + 2 + 5", got)
+	}
+	wantStatus(t, chat(t), 200, "chat on the shared key again")
+	wantStatus(t, chat(t), 402, "chat over the AI token limit")
+	st, _ := call(t, "PATCH", srv.url+"/auth/workspace", bob, map[string]string{"anthropic_key": "own-key"}, nil)
+	wantStatus(t, st, 200, "set the workspace's own Anthropic key")
+	wantStatus(t, chat(t), 200, "chat on the workspace's own key")
+	mu.Lock()
+	if !slices.Equal(keys, []string{"shared", "shared", "own-key"}) {
+		t.Errorf("Anthropic keys used: %v", keys)
+	}
+	mu.Unlock()
+
+	for i := range 3 {
+		st, _ := e2eRun(t, api, bob, "return 1")
+		if i < 2 && st != 200 {
+			t.Fatalf("run %d: %d", i+1, st)
+		}
+		if i == 2 && st != 402 {
+			t.Fatalf("run over the plan's limit: %d", st)
+		}
+	}
+	for range 4 {
+		if st, _ := e2eRun(t, api, alice, "return 1"); st != 200 {
+			t.Fatalf("workspace one has no plan, so no limit: %d", st)
+		}
+	}
+
+	var co map[string]string
+	st, _ = call(t, "POST", srv.url+"/auth/billing/checkout", bob, map[string]string{"plan": "pro"}, &co)
+	mu.Lock()
+	if st != 200 || co["url"] != "https://checkout.stripe.test/cs_1" || checkout.Get("client_reference_id") != ws || checkout.Get("line_items[0][price]") != "price_pro" ||
+		checkout.Get("customer_email") != "bob@example.com" || checkout.Get("mode") != "subscription" {
+		t.Errorf("checkout: %d %v %v", st, co, checkout)
+	}
+	mu.Unlock()
+	stripeHook := func(body, sig string) int {
+		req, _ := http.NewRequest("POST", srv.url+"/stripe", strings.NewReader(body))
+		req.Header.Set("Stripe-Signature", sig)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	done := `{"type":"checkout.session.completed","data":{"object":{"client_reference_id":"` + ws + `","subscription":"sub_1"}}}`
+	wantStatus(t, stripeHook(done, e2eStripeSign(done, "whsec_wrong", time.Now())), 400, "a webhook signed with another secret")
+	wantStatus(t, stripeHook(done, e2eStripeSign(done, "whsec_1", time.Now().Add(-time.Hour))), 400, "an old webhook")
+	wantStatus(t, stripeHook(done, e2eStripeSign(done, "whsec_1", time.Now())), 200, "checkout completed")
+	if i := info(); i.Plan != "pro" || *i.Limits.Runs != 1000 {
+		t.Fatalf("plan after checkout: %+v", i)
+	}
+	if st, _ := e2eRun(t, api, bob, "return 1"); st != 200 {
+		t.Errorf("run on pro: %d", st)
+	}
+	gone := `{"type":"customer.subscription.deleted","data":{"object":{"id":"sub_1","customer":"cus_1","status":"canceled","metadata":{}}}}`
+	wantStatus(t, stripeHook(gone, e2eStripeSign(gone, "whsec_1", time.Now())), 200, "subscription canceled")
+	if i := info(); i.Plan != "free" {
+		t.Errorf("plan after canceling: %+v", i)
+	}
+	if st, _ := e2eRun(t, api, bob, "return 1"); st != 402 {
+		t.Errorf("run back on free: %d", st)
+	}
+	if got := in.psql("archive", "SELECT customer || '|' || subscription FROM archive.workspace WHERE short = '"+ws+"'"); got != "cus_1|" {
+		t.Errorf("customer and subscription: %q", got)
+	}
 }

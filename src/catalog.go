@@ -96,6 +96,8 @@ var (
 	ErrForbidden    = errors.New("forbidden")
 	ErrUnauthorized = errors.New("unauthorized")
 	ErrReadOnly     = errors.New("read only")
+	ErrLimit        = errors.New("over the plan's limit")
+	ErrBusy         = errors.New("busy")
 )
 
 func catalogParse(b []byte) (*Catalog, error) {

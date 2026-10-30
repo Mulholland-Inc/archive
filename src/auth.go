@@ -276,7 +276,7 @@ func (a *Archive) AddUser(ctx context.Context, email, name string, admin bool) (
 	}
 	u := &User{ID: coreNewID(), Email: email, Name: strings.TrimSpace(name)}
 	u.Role = a.roleID("u", u.ID)
-	return u, a.sys(ctx, func(ctx context.Context) error {
+	err = a.sys(ctx, func(ctx context.Context) error {
 		q := a.st.db(ctx)
 		if err := q.AdvisoryXactLock(ctx, 7273); err != nil {
 			return err
@@ -327,6 +327,10 @@ func (a *Archive) AddUser(ctx context.Context, email, name string, admin bool) (
 		}
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return u, a.hub.q().AddMember(context.WithoutCancel(ctx), u.Email, a.ws.ID)
 }
 
 func userBy[T any](ctx context.Context, a *Archive, get func(*generated.Queries, context.Context, T) (generated.ArchiveUser, error), arg T) (*User, error) {
@@ -393,7 +397,7 @@ func (a *Archive) Authenticate(ctx context.Context, secret string) (*Actor, erro
 }
 
 func (a *Archive) newToken(ctx context.Context, userID uuid.UUID, kind string, ttl time.Duration) (string, error) {
-	secret := authNewSecret()
+	secret := a.newSecret()
 	return secret, a.sys(ctx, func(ctx context.Context) error {
 		return a.st.db(ctx).CreateLoginToken(ctx, generated.CreateLoginTokenParams{UserID: userID, Kind: kind, Hash: authHash(secret), Ttl: ttl.String()})
 	})
@@ -412,7 +416,7 @@ func (a *Archive) MagicLink(ctx context.Context, email string) (string, *User, e
 	if err != nil {
 		return "", nil, err
 	}
-	s, err := a.newToken(ctx, u.ID, "magic", 15*time.Minute)
+	s, err := a.newToken(ctx, u.ID, "magic", signinTTL)
 	return s, u, err
 }
 
@@ -611,7 +615,7 @@ func (a *Archive) CreateToken(ctx context.Context, name string, spaces map[strin
 	if full && len(spaces) > 0 {
 		return nil, &ValidationError{Type: "token", Errors: []FieldError{{Path: "spaces", Message: "a full token has all your rights, so it takes no spaces"}}}
 	}
-	t := &Token{ID: coreNewID(), Name: strings.TrimSpace(name), Spaces: map[string]string{}, Full: full, Secret: authNewSecret()}
+	t := &Token{ID: coreNewID(), Name: strings.TrimSpace(name), Spaces: map[string]string{}, Full: full, Secret: a.newSecret()}
 	role := a.roleID("t", t.ID)
 	var exp *time.Time
 	if ttl > 0 {
@@ -749,11 +753,11 @@ const (
 	signinCookie   = "archive_session"
 	signinCeremony = "archive_webauthn"
 	signinOIDC     = "archive_oidc"
+	signinTTL      = 15 * time.Minute
 )
 
 type signin struct {
-	a      *Archive
-	base   *url.URL
+	h      *Hub
 	secure bool
 	wa     *webauthn.WebAuthn
 	oidc   map[string]signinOIDCConfig
@@ -793,23 +797,32 @@ type signinOIDCLink struct {
 	Subject string `json:"sub"`
 }
 
-type signinUser struct {
-	u *User
-	m signinMethods
+type signinState struct {
+	Nonce     string `json:"n"`
+	Verifier  string `json:"v"`
+	Bind      string `json:"b"`
+	Workspace string `json:"w,omitempty"`
+	Exp       int64  `json:"x"`
 }
 
-func (p *signinUser) WebAuthnID() []byte                         { return p.u.ID[:] }
+type signinUser struct {
+	u      *User
+	m      signinMethods
+	handle []byte
+}
+
+func (p *signinUser) WebAuthnID() []byte                         { return p.handle }
 func (p *signinUser) WebAuthnName() string                       { return p.u.Email }
 func (p *signinUser) WebAuthnDisplayName() string                { return cmp.Or(p.u.Name, p.u.Email) }
 func (p *signinUser) WebAuthnCredentials() []webauthn.Credential { return p.m.Passkeys }
 
-func newSignin(a *Archive, base string) (*signin, error) {
-	u, err := url.Parse(strings.TrimRight(base, "/"))
+func newSignin(h *Hub) (*signin, error) {
+	u, err := url.Parse(h.app)
 	if err != nil || u.Host == "" {
-		return nil, fmt.Errorf("ARCHIVE_URL %q is not a URL", base)
+		return nil, fmt.Errorf("ARCHIVE_URL %q is not a URL", h.app)
 	}
 	host := u.Hostname()
-	s := &signin{a: a, base: u, secure: host != "localhost" && host != "127.0.0.1" && host != "::1",
+	s := &signin{h: h, secure: host != "localhost" && host != "127.0.0.1" && host != "::1",
 		oidc: map[string]signinOIDCConfig{}, ceremonies: map[string]signinCeremonyData{}, providers: map[string]*signinProvider{}}
 	if s.wa, err = webauthn.New(&webauthn.Config{RPID: host, RPDisplayName: "Archive", RPOrigins: []string{u.Scheme + "://" + u.Host}}); err != nil {
 		return nil, fmt.Errorf("passkeys: %w", err)
@@ -829,34 +842,8 @@ func newSignin(a *Archive, base string) (*signin, error) {
 	return s, nil
 }
 
-func (a *Archive) httpActor(r *http.Request) (*Actor, error) {
-	if h := r.Header.Get("Authorization"); h != "" {
-		tok, ok := strings.CutPrefix(h, "Bearer ")
-		if !ok {
-			return nil, fmt.Errorf("want Authorization: Bearer <token>: %w", ErrUnauthorized)
-		}
-		return a.Authenticate(r.Context(), strings.TrimSpace(tok))
-	}
-	if c, err := r.Cookie(signinCookie); err == nil {
-		return a.Authenticate(r.Context(), c.Value)
-	}
-	return nil, fmt.Errorf("sign in or send a bearer token: %w", ErrUnauthorized)
-}
-
-func (a *Archive) httpAuth(h http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ac, err := a.httpActor(r)
-		if err != nil {
-			httpWrite(w, 0, nil, err)
-			return
-		}
-		ac.Space = r.Header.Get("Archive-Space")
-		h.ServeHTTP(w, r.WithContext(WithActor(r.Context(), ac)))
-	})
-}
-
 func (s *signin) handler() http.Handler {
-	a, mux := s.a, http.NewServeMux()
+	h, mux := s.h, http.NewServeMux()
 	open := func(pattern string, f func(w http.ResponseWriter, r *http.Request) (int, any, error)) {
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 			status, v, err := f(w, r)
@@ -864,10 +851,12 @@ func (s *signin) handler() http.Handler {
 		})
 	}
 	authed := func(pattern string, f func(w http.ResponseWriter, r *http.Request) (int, any, error)) {
-		mux.Handle(pattern, a.httpAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			status, v, err := f(w, r)
-			httpWrite(w, status, v, err)
-		})))
+		mux.Handle(pattern, h.httpAuth(func(*Archive) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				status, v, err := f(w, r)
+				httpWrite(w, status, v, err)
+			})
+		}))
 	}
 	ok := func(v any, err error) (int, any, error) { return http.StatusOK, v, err }
 
@@ -878,21 +867,52 @@ func (s *signin) handler() http.Handler {
 		if err := httpDecode(r, &body); err != nil {
 			return 0, nil, err
 		}
-		secret, u, err := a.MagicLink(r.Context(), body.Email)
-		if err == nil {
-			err = s.mail(u.Email, s.base.String()+"/auth/magic?token="+url.QueryEscape(secret))
-		}
-		if err != nil && !errors.Is(err, ErrNotFound) {
+		email, err := authEmail(body.Email)
+		if err != nil {
 			return 0, nil, err
+		}
+		ws, err := h.q().MemberWorkspaces(r.Context(), email)
+		if err != nil {
+			return 0, nil, err
+		}
+		var links [][2]string
+		for _, m := range ws {
+			a, release, err := h.acquire(r.Context(), m.Short)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "archive: sign-in link in workspace %s: %v\n", m.Short, err)
+				continue
+			}
+			secret, _, err := a.MagicLink(r.Context(), email)
+			release()
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return 0, nil, err
+			}
+			links = append(links, [2]string{m.Name, h.app + "/auth/magic?token=" + url.QueryEscape(secret)})
+		}
+		if len(links) > 0 {
+			if err := s.mail(email, "sign-in", "Sign in to Archive", "Open a link within 15 minutes to sign in to Archive:", links); err != nil {
+				return 0, nil, err
+			}
 		}
 		return http.StatusAccepted, map[string]string{"status": "if that address has an account, a sign-in link is on its way"}, nil
 	})
 	mux.HandleFunc("GET /auth/magic", func(w http.ResponseWriter, r *http.Request) {
-		s.browser(w, r, func() (*User, error) { return a.UseMagicLink(r.Context(), r.URL.Query().Get("token")) })
+		s.browser(w, r, func() (*Archive, func(), *User, error) {
+			tok := r.URL.Query().Get("token")
+			a, release, err := h.acquire(r.Context(), h.of(tok))
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("sign-in link is invalid, used or expired: %w", ErrUnauthorized)
+			}
+			u, err := a.UseMagicLink(r.Context(), tok)
+			return a, release, u, err
+		})
 	})
 	open("GET /auth/methods", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		providers := append([]string{}, slices.Sorted(maps.Keys(s.oidc))...)
-		return ok(map[string]any{"providers": providers, "mail": os.Getenv("ARCHIVE_SMTP_URL") != ""}, nil)
+		return ok(map[string]any{"providers": providers, "mail": os.Getenv("ARCHIVE_SMTP_URL") != "", "signup": h.signupOpen(r.Context())}, nil)
 	})
 	open("POST /auth/setup", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		var body struct {
@@ -913,6 +933,11 @@ func (s *signin) handler() http.Handler {
 		if !valid {
 			return 0, nil, fmt.Errorf("setup link is invalid or used: %w", ErrUnauthorized)
 		}
+		a, release, err := h.acquire(r.Context(), h.one)
+		if err != nil {
+			return 0, nil, err
+		}
+		defer release()
 		u, err := a.AddUser(r.Context(), body.Email, body.Name, true)
 		if err != nil {
 			s.mu.Lock()
@@ -920,18 +945,68 @@ func (s *signin) handler() http.Handler {
 			s.mu.Unlock()
 			return 0, nil, err
 		}
-		return ok(s.signedIn(w, r, u))
+		return ok(s.signedIn(w, r, a, u))
+	})
+	open("POST /auth/signup", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
+		var body struct {
+			Email string `json:"email"`
+			Name  string `json:"name"`
+		}
+		if err := httpDecode(r, &body); err != nil {
+			return 0, nil, err
+		}
+		if !h.signupOpen(r.Context()) {
+			return 0, nil, fmt.Errorf("signup is closed on this Archive; ask an admin for a workspace: %w", ErrForbidden)
+		}
+		email, err := authEmail(body.Email)
+		if err != nil {
+			return 0, nil, err
+		}
+		name, err := workspaceName(body.Name)
+		if err != nil {
+			return 0, nil, err
+		}
+		link := h.app + "/auth/signup?token=" + url.QueryEscape(h.signupToken(email, name))
+		if err := s.mail(email, "signup", "Create your Archive workspace", "Open this link within 15 minutes to create "+name+":", [][2]string{{name, link}}); err != nil {
+			return 0, nil, err
+		}
+		return http.StatusAccepted, map[string]string{"status": "a link to create the workspace is on its way"}, nil
+	})
+	mux.HandleFunc("GET /auth/signup", func(w http.ResponseWriter, r *http.Request) {
+		s.browser(w, r, func() (*Archive, func(), *User, error) {
+			c, err := h.signupClaim(r.URL.Query().Get("token"))
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			return h.signup(r.Context(), c)
+		})
 	})
 	authed("POST /auth/signout", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		http.SetCookie(w, s.cookie(signinCookie, "", "/", -1))
+		a := archiveFrom(r.Context())
+		var keep []string
+		for _, sess := range h.sessions(r) {
+			if h.of(sess) != a.ws.Short {
+				keep = append(keep, sess)
+			}
+		}
+		s.setSessions(w, keep)
 		return http.StatusNoContent, nil, a.SignOut(r.Context())
 	})
 	authed("GET /auth/me", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
+		a, ac := archiveFrom(r.Context()), ActorFrom(r.Context())
 		sp, err := a.Spaces(r.Context())
-		return ok(map[string]any{"actor": ActorFrom(r.Context()), "spaces": sp, "home": ActorFrom(r.Context()).Home}, err)
+		shorts := []string{a.ws.Short}
+		if r.Header.Get("Authorization") == "" {
+			for _, sess := range h.sessions(r) {
+				if w := h.of(sess); !slices.Contains(shorts, w) {
+					shorts = append(shorts, w)
+				}
+			}
+		}
+		return ok(map[string]any{"actor": ac, "spaces": sp, "home": ac.Home, "workspace": a.ws.Short, "workspaces": h.names(r.Context(), shorts)}, err)
 	})
 	authed("GET /auth/spaces", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		return ok(a.Spaces(r.Context()))
+		return ok(archiveFrom(r.Context()).Spaces(r.Context()))
 	})
 	authed("POST /auth/spaces", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		var body struct {
@@ -940,14 +1015,14 @@ func (s *signin) handler() http.Handler {
 		if err := httpDecode(r, &body); err != nil {
 			return 0, nil, err
 		}
-		sp, err := a.AddSpace(r.Context(), body.Name)
+		sp, err := archiveFrom(r.Context()).AddSpace(r.Context(), body.Name)
 		return http.StatusCreated, sp, err
 	})
 	authed("DELETE /auth/spaces/{space}", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		return http.StatusNoContent, nil, a.DeleteSpace(r.Context(), r.PathValue("space"))
+		return http.StatusNoContent, nil, archiveFrom(r.Context()).DeleteSpace(r.Context(), r.PathValue("space"))
 	})
 	authed("GET /auth/spaces/{space}/members", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		return ok(a.Members(r.Context(), r.PathValue("space")))
+		return ok(archiveFrom(r.Context()).Members(r.Context(), r.PathValue("space")))
 	})
 	authed("POST /auth/spaces/{space}/members", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		var body struct {
@@ -957,13 +1032,14 @@ func (s *signin) handler() http.Handler {
 		if err := httpDecode(r, &body); err != nil {
 			return 0, nil, err
 		}
+		a := archiveFrom(r.Context())
 		if err := a.SetMember(r.Context(), r.PathValue("space"), body.Email, body.Role); err != nil {
 			return 0, nil, err
 		}
 		return ok(a.Members(r.Context(), r.PathValue("space")))
 	})
 	authed("GET /auth/tokens", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		return ok(a.Tokens(r.Context()))
+		return ok(archiveFrom(r.Context()).Tokens(r.Context()))
 	})
 	authed("POST /auth/tokens", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		var body struct {
@@ -982,7 +1058,7 @@ func (s *signin) handler() http.Handler {
 				return 0, nil, fmt.Errorf("expires: %v: %w", err, httpErrBadRequest)
 			}
 		}
-		t, err := a.CreateToken(r.Context(), body.Name, body.Spaces, ttl, body.Full)
+		t, err := archiveFrom(r.Context()).CreateToken(r.Context(), body.Name, body.Spaces, ttl, body.Full)
 		return http.StatusCreated, t, err
 	})
 	authed("DELETE /auth/tokens/{id}", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
@@ -990,7 +1066,7 @@ func (s *signin) handler() http.Handler {
 		if err != nil {
 			return 0, nil, err
 		}
-		return http.StatusNoContent, nil, a.RevokeToken(r.Context(), id)
+		return http.StatusNoContent, nil, archiveFrom(r.Context()).RevokeToken(r.Context(), id)
 	})
 
 	authed("POST /auth/passkey/register", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
@@ -998,7 +1074,7 @@ func (s *signin) handler() http.Handler {
 		if err != nil {
 			return 0, nil, err
 		}
-		pu, err := s.user(r.Context(), ac.UserID)
+		pu, err := s.user(r.Context(), archiveFrom(r.Context()), ac.UserID)
 		if err != nil {
 			return 0, nil, err
 		}
@@ -1023,7 +1099,8 @@ func (s *signin) handler() http.Handler {
 		if err != nil || cer.user != ac.UserID {
 			return 0, nil, cmp.Or(err, fmt.Errorf("passkey ceremony belongs to another user: %w", ErrForbidden))
 		}
-		pu, err := s.user(r.Context(), ac.UserID)
+		a := archiveFrom(r.Context())
+		pu, err := s.user(r.Context(), a, ac.UserID)
 		if err != nil {
 			return 0, nil, err
 		}
@@ -1032,7 +1109,7 @@ func (s *signin) handler() http.Handler {
 			return 0, nil, fmt.Errorf("passkey: %v: %w", err, httpErrBadRequest)
 		}
 		pu.m.Passkeys = append(pu.m.Passkeys, *cred)
-		return ok(map[string]int{"passkeys": len(pu.m.Passkeys)}, s.save(r.Context(), pu))
+		return ok(map[string]int{"passkeys": len(pu.m.Passkeys)}, s.save(r.Context(), a, pu))
 	})
 	open("POST /auth/passkey/login", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		opts, data, err := s.wa.BeginDiscoverableLogin()
@@ -1048,12 +1125,22 @@ func (s *signin) handler() http.Handler {
 			return 0, nil, err
 		}
 		var found *signinUser
+		var a *Archive
+		release := func() {}
+		defer func() { release() }()
 		_, cred, err := s.wa.FinishPasskeyLogin(func(_, handle []byte) (webauthn.User, error) {
-			id, err := uuid.FromBytes(handle)
+			if len(handle) <= 16 {
+				return nil, errors.New("unknown passkey")
+			}
+			id, err := uuid.FromBytes(handle[:16])
 			if err != nil {
 				return nil, err
 			}
-			found, err = s.user(r.Context(), id)
+			if a, release, err = h.acquire(r.Context(), string(handle[16:])); err != nil {
+				release = func() {}
+				return nil, err
+			}
+			found, err = s.user(r.Context(), a, id)
 			return found, err
 		}, cer.data, r)
 		if err != nil {
@@ -1064,10 +1151,10 @@ func (s *signin) handler() http.Handler {
 				found.m.Passkeys[i] = *cred
 			}
 		}
-		if err := s.save(r.Context(), found); err != nil {
+		if err := s.save(r.Context(), a, found); err != nil {
 			return 0, nil, err
 		}
-		return ok(s.signedIn(w, r, found.u))
+		return ok(s.signedIn(w, r, a, found.u))
 	})
 
 	mux.HandleFunc("GET /auth/oidc/{provider}", func(w http.ResponseWriter, r *http.Request) {
@@ -1076,22 +1163,59 @@ func (s *signin) handler() http.Handler {
 			httpWrite(w, 0, nil, err)
 			return
 		}
-		state, nonce, verifier := authNewSecret(), authNewSecret(), oauth2.GenerateVerifier()
-		c := s.cookie(signinOIDC, state+"."+nonce+"."+verifier, "/auth/oidc/", 600)
-		http.SetCookie(w, c)
-		http.Redirect(w, r, p.cfg.AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier)), http.StatusFound)
+		bind := authNewSecret()
+		st := signinState{Nonce: authNewSecret(), Verifier: oauth2.GenerateVerifier(), Bind: authHash(bind), Workspace: r.URL.Query().Get("workspace"),
+			Exp: time.Now().Add(10 * time.Minute).Unix()}
+		http.SetCookie(w, s.cookie(signinOIDC, bind, "/auth/oidc/", 600))
+		http.Redirect(w, r, p.cfg.AuthCodeURL(s.seal(st), oidc.Nonce(st.Nonce), oauth2.S256ChallengeOption(st.Verifier)), http.StatusFound)
 	})
 	mux.HandleFunc("GET /auth/oidc/{provider}/callback", func(w http.ResponseWriter, r *http.Request) {
-		s.browser(w, r, func() (*User, error) { return s.oidcCallback(w, r) })
+		st, tokens, err := s.oidcCallback(r)
+		if err != nil {
+			httpWrite(w, 0, nil, err)
+			return
+		}
+		q := url.Values{"b": {st.Bind}, "token": tokens, "sig": {h.sign("oidc", st.Bind+"."+strings.Join(tokens, "."))}}
+		http.Redirect(w, r, h.app+"/auth/oidc/done?"+q.Encode(), http.StatusSeeOther)
 	})
+	mux.HandleFunc("GET /auth/oidc/done", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		c, err := r.Cookie(signinOIDC)
+		http.SetCookie(w, s.cookie(signinOIDC, "", "/auth/oidc/", -1))
+		b, tokens := q.Get("b"), q["token"]
+		if err != nil || len(tokens) == 0 || authHash(c.Value) != b || !hmac.Equal([]byte(q.Get("sig")), []byte(h.sign("oidc", b+"."+strings.Join(tokens, ".")))) {
+			httpWrite(w, 0, nil, fmt.Errorf("sign-in state does not match; start again: %w", ErrUnauthorized))
+			return
+		}
+		list := h.sessions(r)
+		for _, tok := range tokens {
+			a, release, err := h.acquire(r.Context(), h.of(tok))
+			if err != nil {
+				continue
+			}
+			var secret string
+			u, err := a.UseMagicLink(r.Context(), tok)
+			if err == nil {
+				secret, err = a.Session(r.Context(), u.ID)
+			}
+			release()
+			if err == nil {
+				list = s.merge(list, secret)
+			}
+		}
+		s.setSessions(w, list)
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+	})
+	h.workspaceRoutes(authed)
 	return mux
 }
 
-func (s *signin) browser(w http.ResponseWriter, r *http.Request, user func() (*User, error)) {
-	u, err := user()
+func (s *signin) browser(w http.ResponseWriter, r *http.Request, user func() (*Archive, func(), *User, error)) {
+	a, release, u, err := user()
 	var v any
 	if err == nil {
-		v, err = s.signedIn(w, r, u)
+		defer release()
+		v, err = s.signedIn(w, r, a, u)
 	}
 	if err == nil && strings.Contains(r.Header.Get("Accept"), "text/html") {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -1104,19 +1228,39 @@ func (s *signin) cookie(name, value, path string, maxAge int) *http.Cookie {
 	return &http.Cookie{Name: name, Value: value, Path: path, MaxAge: maxAge, HttpOnly: true, Secure: s.secure, SameSite: http.SameSiteLaxMode}
 }
 
-func (s *signin) signedIn(w http.ResponseWriter, r *http.Request, u *User) (any, error) {
-	secret, err := s.a.Session(r.Context(), u.ID)
+func (s *signin) merge(list []string, secret string) []string {
+	out := []string{secret}
+	for _, sess := range list {
+		if s.h.of(sess) != s.h.of(secret) {
+			out = append(out, sess)
+		}
+	}
+	return out
+}
+
+func (s *signin) setSessions(w http.ResponseWriter, list []string) {
+	if len(list) == 0 {
+		http.SetCookie(w, s.cookie(signinCookie, "", "/", -1))
+		return
+	}
+	http.SetCookie(w, s.cookie(signinCookie, strings.Join(list, "."), "/", 30*24*3600))
+}
+
+func (s *signin) signedIn(w http.ResponseWriter, r *http.Request, a *Archive, u *User) (any, error) {
+	secret, err := a.Session(r.Context(), u.ID)
 	if err != nil {
 		return nil, err
 	}
-	http.SetCookie(w, s.cookie(signinCookie, secret, "/", 30*24*3600))
-	return map[string]any{"user": u}, nil
+	s.setSessions(w, s.merge(s.h.sessions(r), secret))
+	return map[string]any{"user": u, "workspace": a.ws.Short}, nil
 }
 
-func (s *signin) mail(to, link string) error {
+func (s *signin) mail(to, kind, subject, intro string, links [][2]string) error {
 	raw := os.Getenv("ARCHIVE_SMTP_URL")
 	if raw == "" {
-		fmt.Fprintf(os.Stderr, "archive: sign-in link for %s: %s\n", to, link)
+		for _, l := range links {
+			fmt.Fprintf(os.Stderr, "archive: %s link for %s: %s\n", kind, to, l[1])
+		}
 		return nil
 	}
 	u, err := url.Parse(raw)
@@ -1128,18 +1272,28 @@ func (s *signin) mail(to, link string) error {
 		pw, _ := u.User.Password()
 		auth = smtp.PlainAuth("", u.User.Username(), pw, u.Hostname())
 	}
-	from := coreEnv("ARCHIVE_SMTP_FROM", "archive@"+s.base.Hostname())
-	msg := "From: " + from + "\r\nTo: " + to + "\r\nSubject: Sign in to Archive\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" +
-		"Open this link within 15 minutes to sign in to Archive:\r\n\r\n" + link + "\r\n"
+	host := s.h.app
+	if p, err := url.Parse(s.h.app); err == nil {
+		host = p.Hostname()
+	}
+	from := coreEnv("ARCHIVE_SMTP_FROM", "archive@"+host)
+	body := intro + "\r\n"
+	for _, l := range links {
+		if len(links) > 1 {
+			body += "\r\n" + l[0] + ":"
+		}
+		body += "\r\n" + l[1] + "\r\n"
+	}
+	msg := "From: " + from + "\r\nTo: " + to + "\r\nSubject: " + subject + "\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" + body
 	return smtp.SendMail(u.Hostname()+":"+cmp.Or(u.Port(), "587"), auth, from, []string{to}, []byte(msg))
 }
 
-func (s *signin) user(ctx context.Context, id uuid.UUID) (*signinUser, error) {
-	u, err := userBy(ctx, s.a, (*generated.Queries).UserByID, id)
+func (s *signin) user(ctx context.Context, a *Archive, id uuid.UUID) (*signinUser, error) {
+	u, err := userBy(ctx, a, (*generated.Queries).UserByID, id)
 	if err != nil {
 		return nil, err
 	}
-	pu := &signinUser{u: u}
+	pu := &signinUser{u: u, handle: append(append([]byte{}, u.ID[:]...), a.ws.Short...)}
 	if len(u.Signin) > 0 {
 		if err := json.Unmarshal(u.Signin, &pu.m); err != nil {
 			return nil, err
@@ -1148,13 +1302,13 @@ func (s *signin) user(ctx context.Context, id uuid.UUID) (*signinUser, error) {
 	return pu, nil
 }
 
-func (s *signin) save(ctx context.Context, pu *signinUser) error {
+func (s *signin) save(ctx context.Context, a *Archive, pu *signinUser) error {
 	b, err := json.Marshal(pu.m)
 	if err != nil {
 		return err
 	}
-	return s.a.sys(ctx, func(ctx context.Context) error {
-		return s.a.st.db(ctx).SetSignin(ctx, pu.u.ID, b)
+	return a.sys(ctx, func(ctx context.Context) error {
+		return a.st.db(ctx).SetSignin(ctx, pu.u.ID, b)
 	})
 }
 
@@ -1216,36 +1370,54 @@ func (s *signin) provider(name string) (*signinProvider, error) {
 	}
 	p := &signinProvider{multi: multi, verifier: op.Verifier(&oidc.Config{ClientID: c.ClientID, SkipIssuerCheck: multi}),
 		cfg: oauth2.Config{ClientID: c.ClientID, ClientSecret: c.ClientSecret, Endpoint: op.Endpoint(),
-			RedirectURL: s.base.String() + "/auth/oidc/" + name + "/callback", Scopes: []string{oidc.ScopeOpenID, "email", "profile"}}}
+			RedirectURL: s.h.api + "/auth/oidc/" + name + "/callback", Scopes: []string{oidc.ScopeOpenID, "email", "profile"}}}
 	s.providers[name] = p
 	return p, nil
 }
 
-func (s *signin) oidcCallback(w http.ResponseWriter, r *http.Request) (*User, error) {
+func (s *signin) seal(st signinState) string {
+	b, _ := json.Marshal(st)
+	nonce := make([]byte, s.h.aead.NonceSize())
+	rand.Read(nonce)
+	return base64.RawURLEncoding.EncodeToString(s.h.aead.Seal(nonce, nonce, b, []byte("oidc")))
+}
+
+func (s *signin) unseal(state string) (*signinState, error) {
+	bad := fmt.Errorf("sign-in state does not match; start again: %w", ErrUnauthorized)
+	ct, err := base64.RawURLEncoding.DecodeString(state)
+	n := s.h.aead.NonceSize()
+	if err != nil || len(ct) < n {
+		return nil, bad
+	}
+	b, err := s.h.aead.Open(nil, ct[:n], ct[n:], []byte("oidc"))
+	var st signinState
+	if err != nil || json.Unmarshal(b, &st) != nil || time.Now().Unix() > st.Exp {
+		return nil, bad
+	}
+	return &st, nil
+}
+
+func (s *signin) oidcCallback(r *http.Request) (*signinState, []string, error) {
+	ctx := r.Context()
 	p, err := s.provider(r.PathValue("provider"))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	c, err := r.Cookie(signinOIDC)
-	http.SetCookie(w, s.cookie(signinOIDC, "", "/auth/oidc/", -1))
-	parts := []string{}
-	if err == nil {
-		parts = strings.Split(c.Value, ".")
-	}
-	if len(parts) != 3 || r.URL.Query().Get("state") != parts[0] {
-		return nil, fmt.Errorf("sign-in state does not match; start again: %w", ErrUnauthorized)
-	}
-	tok, err := p.cfg.Exchange(r.Context(), r.URL.Query().Get("code"), oauth2.VerifierOption(parts[2]))
+	st, err := s.unseal(r.URL.Query().Get("state"))
 	if err != nil {
-		return nil, fmt.Errorf("sign-in: %v: %w", err, ErrUnauthorized)
+		return nil, nil, err
+	}
+	tok, err := p.cfg.Exchange(ctx, r.URL.Query().Get("code"), oauth2.VerifierOption(st.Verifier))
+	if err != nil {
+		return nil, nil, fmt.Errorf("sign-in: %v: %w", err, ErrUnauthorized)
 	}
 	raw, _ := tok.Extra("id_token").(string)
-	idt, err := p.verifier.Verify(r.Context(), raw)
-	if err != nil || idt.Nonce != parts[1] {
-		return nil, fmt.Errorf("sign-in: invalid ID token: %w", ErrUnauthorized)
+	idt, err := p.verifier.Verify(ctx, raw)
+	if err != nil || idt.Nonce != st.Nonce {
+		return nil, nil, fmt.Errorf("sign-in: invalid ID token: %w", ErrUnauthorized)
 	}
 	if p.multi && (!strings.HasPrefix(idt.Issuer, "https://login.microsoftonline.com/") || !strings.HasSuffix(idt.Issuer, "/v2.0")) {
-		return nil, fmt.Errorf("sign-in: unexpected issuer %s: %w", idt.Issuer, ErrUnauthorized)
+		return nil, nil, fmt.Errorf("sign-in: unexpected issuer %s: %w", idt.Issuer, ErrUnauthorized)
 	}
 	var claims struct {
 		Email         string `json:"email"`
@@ -1253,30 +1425,61 @@ func (s *signin) oidcCallback(w http.ResponseWriter, r *http.Request) (*User, er
 		DomainOwner   bool   `json:"xms_edov"`
 	}
 	if err := idt.Claims(&claims); err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	email := ""
+	if claims.EmailVerified || claims.DomainOwner {
+		email, _ = authEmail(claims.Email)
+	}
+	var shorts []string
+	if email != "" {
+		ms, err := s.h.q().MemberWorkspaces(ctx, email)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, m := range ms {
+			if st.Workspace == "" || st.Workspace == m.Short {
+				shorts = append(shorts, m.Short)
+			}
+		}
+	}
+	if len(shorts) == 0 {
+		shorts = []string{cmp.Or(st.Workspace, s.h.one)}
 	}
 	link := signinOIDCLink{idt.Issuer, idt.Subject}
 	lb, _ := json.Marshal([]signinOIDCLink{link})
-	u, err := userBy(r.Context(), s.a, (*generated.Queries).UserByOIDC, lb)
-	if errors.Is(err, ErrNotFound) && claims.Email != "" && (claims.EmailVerified || claims.DomainOwner) {
-		if email, e := authEmail(claims.Email); e == nil {
-			u, err = userBy(r.Context(), s.a, (*generated.Queries).UserByEmail, email)
+	var tokens []string
+	for _, short := range shorts {
+		a, release, err := s.h.acquire(ctx, short)
+		if err != nil {
+			continue
+		}
+		u, err := userBy(ctx, a, (*generated.Queries).UserByOIDC, lb)
+		if errors.Is(err, ErrNotFound) && email != "" {
+			if u, err = userBy(ctx, a, (*generated.Queries).UserByEmail, email); err == nil {
+				var pu *signinUser
+				if pu, err = s.user(ctx, a, u.ID); err == nil && !slices.Contains(pu.m.OIDC, link) {
+					pu.m.OIDC = append(pu.m.OIDC, link)
+					err = s.save(ctx, a, pu)
+				}
+			}
+		}
+		var secret string
+		if err == nil {
+			secret, err = a.newToken(ctx, u.ID, "magic", signinTTL)
+		}
+		release()
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return nil, nil, err
 		}
 		if err == nil {
-			pu, err := s.user(r.Context(), u.ID)
-			if err != nil {
-				return nil, err
-			}
-			if !slices.Contains(pu.m.OIDC, link) {
-				pu.m.OIDC = append(pu.m.OIDC, link)
-			}
-			return u, s.save(r.Context(), pu)
+			tokens = append(tokens, secret)
 		}
 	}
-	if errors.Is(err, ErrNotFound) {
-		return nil, fmt.Errorf("no Archive account for this sign-in; ask an admin to add you: %w", ErrForbidden)
+	if len(tokens) == 0 {
+		return nil, nil, fmt.Errorf("no Archive account for this sign-in; ask an admin to add you: %w", ErrForbidden)
 	}
-	return u, err
+	return st, tokens, nil
 }
 
 var secretMasks = map[string]bool{"card": true, "mask": true, "mask_ssn": true, "national": true, "passport": true}

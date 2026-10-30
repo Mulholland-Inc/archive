@@ -64,6 +64,10 @@
               "go_type": "encoding/json.RawMessage"
             },
             {
+              "column": "archive.setting.value",
+              "go_type": "encoding/json.RawMessage"
+            },
+            {
               "column": "archive.file.metadata",
               "go_type": {
                 "type": "map[string]any"

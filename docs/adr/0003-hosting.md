@@ -1,6 +1,6 @@
 # ADR 0003: Hosting app.archive.dev
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-30
 - Deciders: Marijn Brussel
 
@@ -23,8 +23,8 @@ flowchart LR
 ## Workspaces
 
 - **A database per workspace.** Each workspace's types are its own tables with their own columns, policies and schema changes (ADR 0001), so workspaces cannot share tables with a `workspace_id` column. Every workspace gets its own database on the same Postgres server: the bundled one, or Cloud SQL.
-- **Roles are prefixed per workspace.** Postgres roles are server-wide, so each workspace's roles carry its own prefix, as `ARCHIVE_INSTANCE` does today.
-- **The main database** is the one `DATABASE_URL` (or the bundled Postgres) points to. It is also the first workspace's database, so an existing install becomes workspace one in place, with nothing copied. In its `archive` schema it adds:
+- **Roles are prefixed per workspace.** Postgres roles are server-wide, so each workspace's roles carry its own prefix.
+- **The main database** is the one `DATABASE_URL` (or the bundled Postgres) points to. It is also the first workspace's database. In its `archive` schema it adds:
 
 | Table | Holds |
 |---|---|
@@ -48,7 +48,7 @@ flowchart LR
 
 Without subdomains, every request names its workspace:
 
-- **Tokens and sign-in secrets carry it**: `arc_<workspace>_<secret>`. The server opens that workspace and checks the secret there. Tokens in today's format, `arc_<secret>`, belong to workspace one, so existing tokens keep working.
+- **Tokens and sign-in secrets carry it**: `arc_<workspace>_<secret>`. The server opens that workspace and checks the secret there.
 - **The web app** holds one session per workspace the person is signed in to, in its cookie, and names the current one on each request, the way it already names the current space. The space switcher becomes a workspace and space switcher.
 - **Sign-in** looks up the email in `archive.member`. With one workspace it signs in there. With several, the person picks one, and can add the others to the same browser.
 - **Webhook URLs** carry it: `api.archive.dev/hooks/run/<workspace>/<token>`.
@@ -72,6 +72,20 @@ Without subdomains, every request names its workspace:
 
 `apps/terraform/gcp` deploys app.archive.dev exactly as it deploys anyone's Archive: one Cloud Run service with both domains mapped, Cloud SQL with PgBouncer, a bucket, and the secrets as environment variables. Mulholland's values (domains, keys, Stripe) are Terraform variables, not code.
 
+## How it was built
+
+Built as decided; [ADR 0001](0001-architecture.md#workspaces) describes the result. Where the build differs from the above, or chose where it was silent:
+
+- **One `archive.sql` for every database.** The instance tables are part of Archive's schema, so they exist, empty, in every workspace's database too; only the main database's are used. One schema keeps one revision hash and one upgrade path.
+- **More instance tables.** Plans are rows of `archive.plan` (Stripe price, monthly runs, workflow runs, AI tokens, stored bytes, concurrent runs; null is no limit), and the `plan` setting is the plan new workspaces start on. `archive.workspace` also holds a short id, the blob prefix, the Stripe customer and subscription, and the workspace's own Anthropic key, sealed with its data key.
+- **A short workspace id.** Tokens and URLs carry an 8-character id (`a`-`z` and `2`-`9`) rather than the UUID. Every workspace gets the role prefix `w<id>`, the blob prefix `<id>/` and its own data key; new workspaces get the database `archive_<id>`, and workspace one lives in the main database.
+- **Both hosts answer every route.** The server does not look at the host. The URLs it hands out use the right one: sign-in links `ARCHIVE_URL`; webhooks, file links, the Stripe webhook and OIDC redirects `ARCHIVE_API_URL`. The web app on app.archive.dev calls `/api` on its own host, so its cookie stays first-party.
+- **Several workspaces at sign-in.** A magic link request mails one link per workspace instead of showing a picker, so the sign-in screen never tells anyone which workspaces an email belongs to. Each link adds a session to the browser's cookie, and the switcher in the web app lists the workspaces signed in to plus "Add workspace". OIDC signs in to every workspace with that verified email: the callback on the API host redirects to `ARCHIVE_URL/auth/oidc/done` with one-time links that only work in the browser that started (a cookie bound into the encrypted `state`). Passkeys made in other workspaces carry the workspace id after the user id in their user handle.
+- **Instance admins** are the admins of workspace one.
+- **Limits per workspace** are concurrent runs (8, or the plan's), and small pools that close when idle. Memory is not limited per workspace. Plan limits count the calendar month, not the Stripe billing period. A workspace with no plan, like workspace one, has no limits; AI tokens on a workspace's own key are counted but not limited.
+- **The pooler** is Cloud SQL's managed connection pooling, which the Google provider supports, rather than PgBouncer: PgBouncer would need every workspace's authenticator password. It needs Enterprise Plus and a private network, so it is the module's `connection_pooling` variable, off by default. `DATABASE_DIRECT_URL` is the direct connection for schema changes and creating databases, and Archive sets each database's default `search_path` and `timezone` so the pooler can ignore those startup parameters.
+- **Workspace one stays open** in every instance; other workspaces close after 10 idle minutes.
+
 ## Not doing
 
 - A private repo, a hosted build, or code that only runs on app.archive.dev.
@@ -81,6 +95,9 @@ Without subdomains, every request names its workspace:
 - A proxy for AI usage: usage is counted where the calls are made.
 
 ## Open questions
+
+- **Serving the web app.** The image serves the API and sign-in but not `apps/web`, which app.archive.dev also needs, from the image or a static host on the same domain.
+- **Billing in the web app.** Plans, checkout, settings and admin are API and CLI only so far; there is no Stripe customer portal link.
 
 - **License.** The repo has no LICENSE yet. AGPL-3.0 makes anyone offering Archive as a service publish their changes. FSL forbids competing hosted offerings for two years, after which each release becomes Apache 2.0.
 - **MCP sign-in for AI apps.** Claude and ChatGPT connect MCP servers through OAuth. api.archive.dev would need to be an OAuth authorization server, and the person would pick a workspace while approving.

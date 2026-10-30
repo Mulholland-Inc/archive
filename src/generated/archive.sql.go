@@ -13,6 +13,47 @@ import (
 	"github.com/google/uuid"
 )
 
+const addMember = `-- name: AddMember :exec
+INSERT INTO archive.member (email, workspace) VALUES ($1, $2) ON CONFLICT DO NOTHING
+`
+
+func (q *Queries) AddMember(ctx context.Context, email string, workspace uuid.UUID) error {
+	_, err := q.db.Exec(ctx, addMember, email, workspace)
+	return err
+}
+
+const addMembers = `-- name: AddMembers :exec
+INSERT INTO archive.member (email, workspace) SELECT unnest($1::text[]), $2 ON CONFLICT DO NOTHING
+`
+
+func (q *Queries) AddMembers(ctx context.Context, emails []string, workspace uuid.UUID) error {
+	_, err := q.db.Exec(ctx, addMembers, emails, workspace)
+	return err
+}
+
+const addUsage = `-- name: AddUsage :exec
+INSERT INTO archive.usage (workspace, day, runs, workflow_runs, ai_tokens) VALUES ($1, current_date, $2, $3, $4)
+ON CONFLICT (workspace, day) DO UPDATE SET runs = archive.usage.runs + EXCLUDED.runs,
+    workflow_runs = archive.usage.workflow_runs + EXCLUDED.workflow_runs, ai_tokens = archive.usage.ai_tokens + EXCLUDED.ai_tokens
+`
+
+type AddUsageParams struct {
+	Workspace    uuid.UUID
+	Runs         int64
+	WorkflowRuns int64
+	AiTokens     int64
+}
+
+func (q *Queries) AddUsage(ctx context.Context, arg AddUsageParams) error {
+	_, err := q.db.Exec(ctx, addUsage,
+		arg.Workspace,
+		arg.Runs,
+		arg.WorkflowRuns,
+		arg.AiTokens,
+	)
+	return err
+}
+
 const addWorkflowRun = `-- name: AddWorkflowRun :one
 INSERT INTO archive.workflow_run (workflow, trigger, result, logs, error, ms, created_at)
 SELECT w.id, $1, $2, $3, $4, $5, $6
@@ -103,6 +144,43 @@ SELECT pg_advisory_xact_lock($1)
 func (q *Queries) AdvisoryXactLock(ctx context.Context, key int64) error {
 	_, err := q.db.Exec(ctx, advisoryXactLock, key)
 	return err
+}
+
+const allWorkspaces = `-- name: AllWorkspaces :many
+SELECT id, short, name, database, prefix, key, blobs, plan, customer, subscription, anthropic_key, created_at FROM archive.workspace ORDER BY created_at, id
+`
+
+func (q *Queries) AllWorkspaces(ctx context.Context) ([]ArchiveWorkspace, error) {
+	rows, err := q.db.Query(ctx, allWorkspaces)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ArchiveWorkspace
+	for rows.Next() {
+		var i ArchiveWorkspace
+		if err := rows.Scan(
+			&i.ID,
+			&i.Short,
+			&i.Name,
+			&i.Database,
+			&i.Prefix,
+			&i.Key,
+			&i.Blobs,
+			&i.Plan,
+			&i.Customer,
+			&i.Subscription,
+			&i.AnthropicKey,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const appendChat = `-- name: AppendChat :exec
@@ -269,6 +347,25 @@ func (q *Queries) Chats(ctx context.Context, userID uuid.UUID) ([]ChatsRow, erro
 	return items, nil
 }
 
+const claimDue = `-- name: ClaimDue :one
+UPDATE archive.due d SET at = $1::timestamptz FROM archive.workspace w
+WHERE w.id = d.workspace AND (d.workspace, d.kind) = (SELECT x.workspace, x.kind FROM archive.due x WHERE x.at <= now() ORDER BY x.at LIMIT 1 FOR UPDATE SKIP LOCKED)
+RETURNING w.short, d.kind, d.at
+`
+
+type ClaimDueRow struct {
+	Short string
+	Kind  string
+	At    time.Time
+}
+
+func (q *Queries) ClaimDue(ctx context.Context, lease time.Time) (ClaimDueRow, error) {
+	row := q.db.QueryRow(ctx, claimDue, lease)
+	var i ClaimDueRow
+	err := row.Scan(&i.Short, &i.Kind, &i.At)
+	return i, err
+}
+
 const claimWorkflow = `-- name: ClaimWorkflow :one
 UPDATE archive.workflow SET next_at = $1::timestamptz
 WHERE id = (SELECT w.id FROM archive.workflow w WHERE w.next_at <= now() ORDER BY w.next_at LIMIT 1 FOR UPDATE SKIP LOCKED)
@@ -293,6 +390,16 @@ func (q *Queries) ClaimWorkflow(ctx context.Context, lease time.Time) (ArchiveWo
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const clearDue = `-- name: ClearDue :exec
+DELETE FROM archive.due d USING archive.workspace w
+WHERE w.id = d.workspace AND w.short = $1 AND d.kind = $2 AND d.at = $3::timestamptz
+`
+
+func (q *Queries) ClearDue(ctx context.Context, short string, kind string, claimed time.Time) error {
+	_, err := q.db.Exec(ctx, clearDue, short, kind, claimed)
+	return err
 }
 
 const clearSecrets = `-- name: ClearSecrets :exec
@@ -573,6 +680,61 @@ func (q *Queries) CreateUserToken(ctx context.Context, arg CreateUserTokenParams
 	return i, err
 }
 
+const createWorkspace = `-- name: CreateWorkspace :one
+INSERT INTO archive.workspace (short, name, database, prefix, key, blobs, plan)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT DO NOTHING RETURNING id, short, name, database, prefix, key, blobs, plan, customer, subscription, anthropic_key, created_at
+`
+
+type CreateWorkspaceParams struct {
+	Short    string
+	Name     string
+	Database string
+	Prefix   string
+	Key      []byte
+	Blobs    string
+	Plan     *string
+}
+
+func (q *Queries) CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams) (ArchiveWorkspace, error) {
+	row := q.db.QueryRow(ctx, createWorkspace,
+		arg.Short,
+		arg.Name,
+		arg.Database,
+		arg.Prefix,
+		arg.Key,
+		arg.Blobs,
+		arg.Plan,
+	)
+	var i ArchiveWorkspace
+	err := row.Scan(
+		&i.ID,
+		&i.Short,
+		&i.Name,
+		&i.Database,
+		&i.Prefix,
+		&i.Key,
+		&i.Blobs,
+		&i.Plan,
+		&i.Customer,
+		&i.Subscription,
+		&i.AnthropicKey,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const currentDatabase = `-- name: CurrentDatabase :one
+SELECT current_database()::text
+`
+
+func (q *Queries) CurrentDatabase(ctx context.Context) (string, error) {
+	row := q.db.QueryRow(ctx, currentDatabase)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const databaseExists = `-- name: DatabaseExists :one
 SELECT EXISTS (SELECT FROM pg_catalog.pg_database WHERE datname = 'archive')
 `
@@ -667,6 +829,15 @@ DELETE FROM archive.workflow WHERE user_id = $1 AND NOT (name = ANY ($2::text[])
 
 func (q *Queries) DeleteWorkflowsExcept(ctx context.Context, userID uuid.UUID, names []string) error {
 	_, err := q.db.Exec(ctx, deleteWorkflowsExcept, userID, names)
+	return err
+}
+
+const deleteWorkspace = `-- name: DeleteWorkspace :exec
+DELETE FROM archive.workspace WHERE id = $1
+`
+
+func (q *Queries) DeleteWorkspace(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteWorkspace, id)
 	return err
 }
 
@@ -932,6 +1103,17 @@ func (q *Queries) GetFile(ctx context.Context, id uuid.UUID) (GetFileRow, error)
 	return i, err
 }
 
+const hasPendingFiles = `-- name: HasPendingFiles :one
+SELECT EXISTS (SELECT FROM archive.file WHERE status = 'pending')
+`
+
+func (q *Queries) HasPendingFiles(ctx context.Context) (bool, error) {
+	row := q.db.QueryRow(ctx, hasPendingFiles)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const hasRole = `-- name: HasRole :one
 SELECT pg_has_role($1::name, rolname, 'USAGE') FROM pg_catalog.pg_roles WHERE rolname = $2::name
 `
@@ -991,6 +1173,15 @@ INSERT INTO archive.revision (hash) VALUES ($1)
 
 func (q *Queries) InsertRevision(ctx context.Context, hash string) error {
 	_, err := q.db.Exec(ctx, insertRevision, hash)
+	return err
+}
+
+const keepMembers = `-- name: KeepMembers :exec
+DELETE FROM archive.member WHERE workspace = $1 AND NOT (email = ANY ($2::text[]))
+`
+
+func (q *Queries) KeepMembers(ctx context.Context, workspace uuid.UUID, emails []string) error {
+	_, err := q.db.Exec(ctx, keepMembers, workspace, emails)
 	return err
 }
 
@@ -1118,6 +1309,59 @@ func (q *Queries) LockUpload(ctx context.Context, id uuid.UUID) (ArchiveUpload, 
 	return i, err
 }
 
+const mainWorkspace = `-- name: MainWorkspace :one
+SELECT id, short, name, database, prefix, key, blobs, plan, customer, subscription, anthropic_key, created_at FROM archive.workspace WHERE database = current_database()
+`
+
+func (q *Queries) MainWorkspace(ctx context.Context) (ArchiveWorkspace, error) {
+	row := q.db.QueryRow(ctx, mainWorkspace)
+	var i ArchiveWorkspace
+	err := row.Scan(
+		&i.ID,
+		&i.Short,
+		&i.Name,
+		&i.Database,
+		&i.Prefix,
+		&i.Key,
+		&i.Blobs,
+		&i.Plan,
+		&i.Customer,
+		&i.Subscription,
+		&i.AnthropicKey,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const memberWorkspaces = `-- name: MemberWorkspaces :many
+SELECT w.short, w.name FROM archive.member m JOIN archive.workspace w ON w.id = m.workspace WHERE m.email = $1 ORDER BY w.created_at, w.id
+`
+
+type MemberWorkspacesRow struct {
+	Short string
+	Name  string
+}
+
+func (q *Queries) MemberWorkspaces(ctx context.Context, email string) ([]MemberWorkspacesRow, error) {
+	rows, err := q.db.Query(ctx, memberWorkspaces, email)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MemberWorkspacesRow
+	for rows.Next() {
+		var i MemberWorkspacesRow
+		if err := rows.Scan(&i.Short, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const members = `-- name: Members :many
 SELECT email, name, role AS level FROM archive."user" ORDER BY email
 `
@@ -1146,6 +1390,31 @@ func (q *Queries) Members(ctx context.Context) ([]MembersRow, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const monthUsage = `-- name: MonthUsage :one
+SELECT coalesce(sum(runs), 0)::bigint AS runs, coalesce(sum(workflow_runs), 0)::bigint AS workflow_runs, coalesce(sum(ai_tokens), 0)::bigint AS ai_tokens,
+    coalesce((SELECT u.stored_bytes FROM archive.usage u WHERE u.workspace = $1 ORDER BY u.day DESC LIMIT 1), 0)::bigint AS stored_bytes
+FROM archive.usage WHERE workspace = $1 AND day >= date_trunc('month', now())::date
+`
+
+type MonthUsageRow struct {
+	Runs         int64
+	WorkflowRuns int64
+	AiTokens     int64
+	StoredBytes  int64
+}
+
+func (q *Queries) MonthUsage(ctx context.Context, workspace uuid.UUID) (MonthUsageRow, error) {
+	row := q.db.QueryRow(ctx, monthUsage, workspace)
+	var i MonthUsageRow
+	err := row.Scan(
+		&i.Runs,
+		&i.WorkflowRuns,
+		&i.AiTokens,
+		&i.StoredBytes,
+	)
+	return i, err
 }
 
 const nextPendingFile = `-- name: NextPendingFile :one
@@ -1184,6 +1453,17 @@ func (q *Queries) NextPendingFile(ctx context.Context) (NextPendingFileRow, erro
 	return i, err
 }
 
+const nextWorkflowAt = `-- name: NextWorkflowAt :one
+SELECT next_at FROM archive.workflow WHERE next_at IS NOT NULL ORDER BY next_at LIMIT 1
+`
+
+func (q *Queries) NextWorkflowAt(ctx context.Context) (*time.Time, error) {
+	row := q.db.QueryRow(ctx, nextWorkflowAt)
+	var next_at *time.Time
+	err := row.Scan(&next_at)
+	return next_at, err
+}
+
 const noUsers = `-- name: NoUsers :one
 SELECT NOT EXISTS (SELECT FROM archive."user")
 `
@@ -1204,6 +1484,82 @@ func (q *Queries) OntologyAdmin(ctx context.Context) (bool, error) {
 	var ontology_admin bool
 	err := row.Scan(&ontology_admin)
 	return ontology_admin, err
+}
+
+const planByID = `-- name: PlanByID :one
+SELECT id, name, price, runs, workflow_runs, ai_tokens, stored_bytes, concurrent, created_at FROM archive.plan WHERE id = $1
+`
+
+func (q *Queries) PlanByID(ctx context.Context, id string) (ArchivePlan, error) {
+	row := q.db.QueryRow(ctx, planByID, id)
+	var i ArchivePlan
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Price,
+		&i.Runs,
+		&i.WorkflowRuns,
+		&i.AiTokens,
+		&i.StoredBytes,
+		&i.Concurrent,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const planByPrice = `-- name: PlanByPrice :one
+SELECT id, name, price, runs, workflow_runs, ai_tokens, stored_bytes, concurrent, created_at FROM archive.plan WHERE price = $1 AND price <> ''
+`
+
+func (q *Queries) PlanByPrice(ctx context.Context, price string) (ArchivePlan, error) {
+	row := q.db.QueryRow(ctx, planByPrice, price)
+	var i ArchivePlan
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Price,
+		&i.Runs,
+		&i.WorkflowRuns,
+		&i.AiTokens,
+		&i.StoredBytes,
+		&i.Concurrent,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const plans = `-- name: Plans :many
+SELECT id, name, price, runs, workflow_runs, ai_tokens, stored_bytes, concurrent, created_at FROM archive.plan ORDER BY id
+`
+
+func (q *Queries) Plans(ctx context.Context) ([]ArchivePlan, error) {
+	rows, err := q.db.Query(ctx, plans)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ArchivePlan
+	for rows.Next() {
+		var i ArchivePlan
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Price,
+			&i.Runs,
+			&i.WorkflowRuns,
+			&i.AiTokens,
+			&i.StoredBytes,
+			&i.Concurrent,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const renameChat = `-- name: RenameChat :execrows
@@ -1252,6 +1608,15 @@ func (q *Queries) RenameFile(ctx context.Context, iD uuid.UUID, name string) (Re
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const renameWorkspace = `-- name: RenameWorkspace :exec
+UPDATE archive.workspace SET name = $2 WHERE id = $1
+`
+
+func (q *Queries) RenameWorkspace(ctx context.Context, iD uuid.UUID, name string) error {
+	_, err := q.db.Exec(ctx, renameWorkspace, iD, name)
+	return err
 }
 
 const replaceFile = `-- name: ReplaceFile :one
@@ -1330,6 +1695,51 @@ func (q *Queries) RoleExists(ctx context.Context, role string) (bool, error) {
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const savePlan = `-- name: SavePlan :one
+INSERT INTO archive.plan (id, name, price, runs, workflow_runs, ai_tokens, stored_bytes, concurrent)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, price = EXCLUDED.price, runs = EXCLUDED.runs, workflow_runs = EXCLUDED.workflow_runs,
+    ai_tokens = EXCLUDED.ai_tokens, stored_bytes = EXCLUDED.stored_bytes, concurrent = EXCLUDED.concurrent
+RETURNING id, name, price, runs, workflow_runs, ai_tokens, stored_bytes, concurrent, created_at
+`
+
+type SavePlanParams struct {
+	ID           string
+	Name         string
+	Price        string
+	Runs         *int64
+	WorkflowRuns *int64
+	AiTokens     *int64
+	StoredBytes  *int64
+	Concurrent   *int32
+}
+
+func (q *Queries) SavePlan(ctx context.Context, arg SavePlanParams) (ArchivePlan, error) {
+	row := q.db.QueryRow(ctx, savePlan,
+		arg.ID,
+		arg.Name,
+		arg.Price,
+		arg.Runs,
+		arg.WorkflowRuns,
+		arg.AiTokens,
+		arg.StoredBytes,
+		arg.Concurrent,
+	)
+	var i ArchivePlan
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Price,
+		&i.Runs,
+		&i.WorkflowRuns,
+		&i.AiTokens,
+		&i.StoredBytes,
+		&i.Concurrent,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const saveWorkflow = `-- name: SaveWorkflow :one
@@ -1422,6 +1832,28 @@ func (q *Queries) Secrets(ctx context.Context, tableName string, ids []uuid.UUID
 	return items, nil
 }
 
+const setDue = `-- name: SetDue :exec
+UPDATE archive.due d SET at = $1::timestamptz FROM archive.workspace w
+WHERE w.id = d.workspace AND w.short = $2 AND d.kind = $3 AND d.at = $4::timestamptz
+`
+
+type SetDueParams struct {
+	Next    time.Time
+	Short   string
+	Kind    string
+	Claimed time.Time
+}
+
+func (q *Queries) SetDue(ctx context.Context, arg SetDueParams) error {
+	_, err := q.db.Exec(ctx, setDue,
+		arg.Next,
+		arg.Short,
+		arg.Kind,
+		arg.Claimed,
+	)
+	return err
+}
+
 const setFileContent = `-- name: SetFileContent :exec
 UPDATE archive.file SET metadata = $2, text = $3 WHERE id = $1
 `
@@ -1449,12 +1881,31 @@ func (q *Queries) SetLocal(ctx context.Context, name string, value string) error
 	return err
 }
 
+const setSetting = `-- name: SetSetting :exec
+INSERT INTO archive.setting (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+`
+
+func (q *Queries) SetSetting(ctx context.Context, key string, value json.RawMessage) error {
+	_, err := q.db.Exec(ctx, setSetting, key, value)
+	return err
+}
+
 const setSignin = `-- name: SetSignin :exec
 UPDATE archive."user" SET signin = $2 WHERE id = $1
 `
 
 func (q *Queries) SetSignin(ctx context.Context, iD uuid.UUID, signin json.RawMessage) error {
 	_, err := q.db.Exec(ctx, setSignin, iD, signin)
+	return err
+}
+
+const setStoredBytes = `-- name: SetStoredBytes :exec
+INSERT INTO archive.usage (workspace, day, stored_bytes) VALUES ($1, current_date, $2)
+ON CONFLICT (workspace, day) DO UPDATE SET stored_bytes = EXCLUDED.stored_bytes
+`
+
+func (q *Queries) SetStoredBytes(ctx context.Context, workspace uuid.UUID, storedBytes int64) error {
+	_, err := q.db.Exec(ctx, setStoredBytes, workspace, storedBytes)
 	return err
 }
 
@@ -1473,6 +1924,58 @@ UPDATE archive.workflow SET next_at = $3 WHERE id = $1 AND trigger = $2
 
 func (q *Queries) SetWorkflowNext(ctx context.Context, iD uuid.UUID, trigger string, nextAt *time.Time) error {
 	_, err := q.db.Exec(ctx, setWorkflowNext, iD, trigger, nextAt)
+	return err
+}
+
+const setWorkspaceAnthropicKey = `-- name: SetWorkspaceAnthropicKey :exec
+UPDATE archive.workspace SET anthropic_key = $2 WHERE id = $1
+`
+
+func (q *Queries) SetWorkspaceAnthropicKey(ctx context.Context, iD uuid.UUID, anthropicKey []byte) error {
+	_, err := q.db.Exec(ctx, setWorkspaceAnthropicKey, iD, anthropicKey)
+	return err
+}
+
+const setWorkspacePlan = `-- name: SetWorkspacePlan :exec
+UPDATE archive.workspace SET plan = $1, customer = coalesce(nullif($2::text, ''), customer), subscription = $3
+WHERE short = $4
+`
+
+type SetWorkspacePlanParams struct {
+	Plan         *string
+	Customer     string
+	Subscription string
+	Short        string
+}
+
+func (q *Queries) SetWorkspacePlan(ctx context.Context, arg SetWorkspacePlanParams) error {
+	_, err := q.db.Exec(ctx, setWorkspacePlan,
+		arg.Plan,
+		arg.Customer,
+		arg.Subscription,
+		arg.Short,
+	)
+	return err
+}
+
+const setting = `-- name: Setting :one
+SELECT value FROM archive.setting WHERE key = $1
+`
+
+func (q *Queries) Setting(ctx context.Context, key string) (json.RawMessage, error) {
+	row := q.db.QueryRow(ctx, setting, key)
+	var value json.RawMessage
+	err := row.Scan(&value)
+	return value, err
+}
+
+const soonDue = `-- name: SoonDue :exec
+INSERT INTO archive.due (workspace, kind, at) VALUES ($1, $2, $3)
+ON CONFLICT (workspace, kind) DO UPDATE SET at = least(archive.due.at, EXCLUDED.at)
+`
+
+func (q *Queries) SoonDue(ctx context.Context, workspace uuid.UUID, kind string, at time.Time) error {
+	_, err := q.db.Exec(ctx, soonDue, workspace, kind, at)
 	return err
 }
 
@@ -1598,6 +2101,17 @@ func (q *Queries) Spaces(ctx context.Context) ([]SpacesRow, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const storedBytes = `-- name: StoredBytes :one
+SELECT coalesce(sum(size), 0)::bigint FROM archive.file
+`
+
+func (q *Queries) StoredBytes(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, storedBytes)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const tokenRoles = `-- name: TokenRoles :many
@@ -1773,6 +2287,30 @@ func (q *Queries) UserByOIDC(ctx context.Context, link []byte) (ArchiveUser, err
 	return i, err
 }
 
+const userEmails = `-- name: UserEmails :many
+SELECT email FROM archive."user" ORDER BY email
+`
+
+func (q *Queries) UserEmails(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, userEmails)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var email string
+		if err := rows.Scan(&email); err != nil {
+			return nil, err
+		}
+		items = append(items, email)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const userRole = `-- name: UserRole :one
 SELECT id, role FROM archive."user" WHERE email = $1
 `
@@ -1921,6 +2459,120 @@ func (q *Queries) Workflows(ctx context.Context, userID uuid.UUID) ([]ArchiveWor
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const workspaceByShort = `-- name: WorkspaceByShort :one
+SELECT id, short, name, database, prefix, key, blobs, plan, customer, subscription, anthropic_key, created_at FROM archive.workspace WHERE short = $1
+`
+
+func (q *Queries) WorkspaceByShort(ctx context.Context, short string) (ArchiveWorkspace, error) {
+	row := q.db.QueryRow(ctx, workspaceByShort, short)
+	var i ArchiveWorkspace
+	err := row.Scan(
+		&i.ID,
+		&i.Short,
+		&i.Name,
+		&i.Database,
+		&i.Prefix,
+		&i.Key,
+		&i.Blobs,
+		&i.Plan,
+		&i.Customer,
+		&i.Subscription,
+		&i.AnthropicKey,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const workspaceBySubscription = `-- name: WorkspaceBySubscription :one
+SELECT id, short, name, database, prefix, key, blobs, plan, customer, subscription, anthropic_key, created_at FROM archive.workspace WHERE subscription = $1
+`
+
+func (q *Queries) WorkspaceBySubscription(ctx context.Context, subscription string) (ArchiveWorkspace, error) {
+	row := q.db.QueryRow(ctx, workspaceBySubscription, subscription)
+	var i ArchiveWorkspace
+	err := row.Scan(
+		&i.ID,
+		&i.Short,
+		&i.Name,
+		&i.Database,
+		&i.Prefix,
+		&i.Key,
+		&i.Blobs,
+		&i.Plan,
+		&i.Customer,
+		&i.Subscription,
+		&i.AnthropicKey,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const workspaceLimits = `-- name: WorkspaceLimits :one
+SELECT p.runs, p.workflow_runs, p.ai_tokens, p.stored_bytes, m.used_runs, m.used_workflow_runs, m.used_ai_tokens,
+    coalesce((SELECT u.stored_bytes FROM archive.usage u WHERE u.workspace = w.id ORDER BY u.day DESC LIMIT 1), 0)::bigint AS used_stored_bytes
+FROM archive.workspace w JOIN archive.plan p ON p.id = w.plan,
+LATERAL (SELECT coalesce(sum(x.runs), 0)::bigint AS used_runs, coalesce(sum(x.workflow_runs), 0)::bigint AS used_workflow_runs,
+    coalesce(sum(x.ai_tokens), 0)::bigint AS used_ai_tokens
+    FROM archive.usage x WHERE x.workspace = w.id AND x.day >= date_trunc('month', now())::date) m
+WHERE w.id = $1
+`
+
+type WorkspaceLimitsRow struct {
+	Runs             *int64
+	WorkflowRuns     *int64
+	AiTokens         *int64
+	StoredBytes      *int64
+	UsedRuns         int64
+	UsedWorkflowRuns int64
+	UsedAiTokens     int64
+	UsedStoredBytes  int64
+}
+
+func (q *Queries) WorkspaceLimits(ctx context.Context, id uuid.UUID) (WorkspaceLimitsRow, error) {
+	row := q.db.QueryRow(ctx, workspaceLimits, id)
+	var i WorkspaceLimitsRow
+	err := row.Scan(
+		&i.Runs,
+		&i.WorkflowRuns,
+		&i.AiTokens,
+		&i.StoredBytes,
+		&i.UsedRuns,
+		&i.UsedWorkflowRuns,
+		&i.UsedAiTokens,
+		&i.UsedStoredBytes,
+	)
+	return i, err
+}
+
+const workspaceNames = `-- name: WorkspaceNames :many
+SELECT short, name FROM archive.workspace WHERE short = ANY($1::text[])
+`
+
+type WorkspaceNamesRow struct {
+	Short string
+	Name  string
+}
+
+func (q *Queries) WorkspaceNames(ctx context.Context, shorts []string) ([]WorkspaceNamesRow, error) {
+	rows, err := q.db.Query(ctx, workspaceNames, shorts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WorkspaceNamesRow
+	for rows.Next() {
+		var i WorkspaceNamesRow
+		if err := rows.Scan(&i.Short, &i.Name); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

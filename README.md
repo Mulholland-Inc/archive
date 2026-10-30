@@ -67,7 +67,7 @@ Your agent can also save a script as a workflow that Archive runs on its own: on
 return await archive.sql("SELECT number, customer, due FROM invoice WHERE NOT paid AND due < current_date");
 ```
 
-The agent saves them with `archive.deploy(files)`, which returns compile and trigger errors instead of saving, and tries them on real data with `archive.test`, which undoes everything it wrote. A webhook workflow gets its own `ARCHIVE_URL/hooks/run/<secret>` address. Every run's result, logs and error show on the Workflows screen in the app.
+The agent saves them with `archive.deploy(files)`, which returns compile and trigger errors instead of saving, and tries them on real data with `archive.test`, which undoes everything it wrote. A webhook workflow gets its own `ARCHIVE_API_URL/hooks/run/<workspace>/<secret>` address. Every run's result, logs and error show on the Workflows screen in the app.
 
 ## Connect it to everything else
 
@@ -79,7 +79,7 @@ The same data and the same permissions, whichever way in:
 |---|---|
 | MCP at `/mcp` | Claude, ChatGPT, Gemini, Cursor and other agents, through one tool: `run` |
 | HTTP API at `/api` | Records, files, search and workflows from your own apps and services |
-| Webhooks at `/hooks/run/<secret>` | Other services starting a workflow with a POST |
+| Webhooks at `/hooks/run/<workspace>/<secret>` | Other services starting a workflow with a POST |
 | The `archive` CLI | Scripts, scheduled jobs and quick changes from your terminal |
 | [Terraform provider](apps/terraform/provider) | Your schema, spaces, tokens and roles, kept with the rest of your setup |
 
@@ -172,21 +172,34 @@ With no `-space`, the token gets your role in every space you are in. Narrow it 
 
 The image holds Postgres and the binary. With nothing set, it runs the bundled Postgres and keeps files in `/data`. Give it an outside Postgres (`DATABASE_URL`), S3-compatible storage (`ARCHIVE_BLOB_URL`) and one `ARCHIVE_SECRET_KEY`, and it keeps nothing local, so you can run as many copies side by side as you like. In production, put it behind HTTPS and set `ARCHIVE_URL`.
 
+One Archive serves any number of workspaces: one per organization, each with its own Postgres database on the same server, its own users, spaces, files and workflows, and its own data key. A new install starts with one. Instance admins (the admins of workspace one) make more, or let people sign up for their own:
+
+```sh
+docker exec archive archive workspace add "Acme Inc" anna@acme.example
+docker exec archive archive signup on
+docker exec archive archive -workspace <id> space list
+```
+
+Tokens name their workspace (`arc_<workspace>_<secret>`), and the web app keeps a session for each workspace you sign in to. With `ARCHIVE_STRIPE_KEY` set, plans and their monthly limits are rows (`archive plan set`), Stripe Checkout sells them and Stripe's webhook at `ARCHIVE_API_URL/stripe` changes a workspace's plan; without it, nothing is limited. [app.archive.dev](https://app.archive.dev) is this same image, deployed with [`apps/terraform/gcp`](apps/terraform/gcp) with `app_domain`, `api_domain` and `connection_pooling` set.
+
 Every setting is an environment variable; `archive help` lists them all:
 
 | Variable | What it does |
 |---|---|
 | `ARCHIVE_ADMIN_EMAIL` | First owner, created when there are no users yet |
-| `ARCHIVE_URL` | Public base URL for links, cookies and passkeys |
+| `ARCHIVE_URL` | Public base URL of the web app and sign-in, for sign-in links, cookies and passkeys |
+| `ARCHIVE_API_URL` | Public base URL of the API, MCP, webhooks, file links, Stripe and OAuth redirects (default `ARCHIVE_URL`) |
 | `ARCHIVE_DATA` | Data directory for the bundled Postgres, its key and files (default `./data`) |
-| `DATABASE_URL` | Outside Postgres, as a superuser; unset starts the bundled one |
+| `DATABASE_URL` | Outside Postgres, as a superuser; unset starts the bundled one. Each other workspace gets a database on the same server |
+| `DATABASE_DIRECT_URL` | The same Postgres without a pooler in between, for schema changes (default `DATABASE_URL`) |
 | `ARCHIVE_SECRET_KEY` | 32-byte key for secret values; required with `DATABASE_URL`, the same on every copy |
 | `ARCHIVE_BLOB_URL`, `ARCHIVE_BLOB_KEY`, `ARCHIVE_BLOB_SECRET` | S3, R2, MinIO or GCS for files |
 | `ARCHIVE_SMTP_URL`, `ARCHIVE_SMTP_FROM` | Mail for sign-in links; unset prints them to the log |
-| `ARCHIVE_OIDC` | OIDC providers, like Google and Microsoft |
+| `ARCHIVE_OIDC` | OIDC providers, like Google and Microsoft; their redirect URL is `ARCHIVE_API_URL/auth/oidc/<name>/callback` |
+| `ANTHROPIC_API_KEY` | Key of the in-app agent; a workspace can set its own |
+| `ARCHIVE_STRIPE_KEY`, `ARCHIVE_STRIPE_WEBHOOK_SECRET` | Billing: plan limits, Stripe Checkout and the webhook at `ARCHIVE_API_URL/stripe` |
 | `ARCHIVE_LOCALE` | Locale that messy input is read in |
 | `ARCHIVE_RUN_TIMEOUT` | Time limit of one run (default `30s`) |
-| `ARCHIVE_INSTANCE` | Prefix of this instance's Postgres roles (default `a`) |
 | `ARCHIVE_PG_BIN` | Where the Postgres binaries are; unset uses `PATH` or downloads them |
 
 ## How it is built

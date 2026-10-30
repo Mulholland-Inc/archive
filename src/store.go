@@ -56,6 +56,13 @@ const storeRoles = `DO $$ BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_admin') THEN
         CREATE ROLE {p}_admin NOLOGIN;
     END IF;
+    IF NOT EXISTS (SELECT FROM pg_db_role_setting s JOIN pg_database d ON d.oid = s.setdatabase WHERE d.datname = current_database() AND s.setrole = 0) THEN
+        EXECUTE format('ALTER DATABASE %I SET search_path = archive, public', current_database());
+        EXECUTE format('ALTER DATABASE %I SET timezone = %L', current_database(), 'UTC');
+    END IF;
+    IF NOT has_database_privilege('{p}_authenticator', current_database(), 'CONNECT') THEN
+        EXECUTE format('GRANT CONNECT ON DATABASE %I TO {p}_authenticator', current_database());
+    END IF;
 END $$`
 
 const storeLock = 7271
@@ -121,19 +128,20 @@ func (p *SchemaPlan) blocked() []string {
 	return out
 }
 
-func OpenStore(ctx context.Context, dsn, prefix, password string) (*pgStore, error) {
-	cfg, err := pgx.ParseConfig(dsn)
-	if err != nil {
-		return nil, err
-	}
+func OpenStore(ctx context.Context, pooled, direct *pgx.ConnConfig, prefix, password string) (*pgStore, error) {
+	cfg := direct.Copy()
 	cfg.RuntimeParams["search_path"] = "public"
-	s := &pgStore{cfg: cfg, prefix: prefix, ddl: stdlib.OpenDB(*cfg.Copy())}
-	if s.sys, err = storePool(ctx, dsn, nil); err == nil {
+	db := stdlib.OpenDB(*cfg.Copy())
+	db.SetMaxOpenConns(storeDDLConns)
+	db.SetConnMaxIdleTime(storeIdle)
+	s := &pgStore{cfg: cfg, prefix: prefix, ddl: db}
+	var err error
+	if s.sys, err = storePool(ctx, pooled, storeSysConns, nil); err == nil {
 		err = s.bootstrap(ctx, password)
 	}
 	if err == nil {
 		auth := prefix + "_authenticator"
-		s.app, err = storePool(ctx, dsn, func(c *pgx.ConnConfig) { c.User, c.Password = auth, password })
+		s.app, err = storePool(ctx, pooled, storeAppConns, func(c *pgx.ConnConfig) { c.User, c.Password = auth, password })
 	}
 	if err != nil {
 		s.Close()
@@ -142,13 +150,22 @@ func OpenStore(ctx context.Context, dsn, prefix, password string) (*pgStore, err
 	return s, nil
 }
 
-func storePool(ctx context.Context, dsn string, fn func(*pgx.ConnConfig)) (*pgxpool.Pool, error) {
-	cfg, err := pgxpool.ParseConfig(dsn)
+const (
+	storeAppConns = 8
+	storeSysConns = 4
+	storeDDLConns = 2
+	storeIdle     = time.Minute
+)
+
+func storePool(ctx context.Context, base *pgx.ConnConfig, conns int32, fn func(*pgx.ConnConfig)) (*pgxpool.Pool, error) {
+	cfg, err := pgxpool.ParseConfig("")
 	if err != nil {
 		return nil, err
 	}
+	cfg.ConnConfig = base.Copy()
 	cfg.ConnConfig.RuntimeParams["search_path"] = "archive, public"
 	cfg.ConnConfig.RuntimeParams["timezone"] = "UTC"
+	cfg.MaxConns, cfg.MinConns, cfg.MaxConnIdleTime = conns, 0, storeIdle
 	if fn != nil {
 		fn(cfg.ConnConfig)
 	}
@@ -162,15 +179,6 @@ func (s *pgStore) bootstrap(ctx context.Context, password string) error {
 	if _, err := s.sys.Exec(ctx, "ALTER ROLE "+s.prefix+"_authenticator PASSWORD '"+password+"'"); err != nil {
 		return err
 	}
-	if err := pgx.BeginFunc(ctx, s.sys, func(tx pgx.Tx) error {
-		err := generated.New(tx).AdvisoryXactLock(ctx, storeLock)
-		if err == nil {
-			_, err = tx.Exec(ctx, storeDropOld)
-		}
-		return err
-	}); err != nil {
-		return err
-	}
 	rev, _ := generated.New(s.sys).Revision(ctx)
 	if strings.HasSuffix(rev, ":"+s.hash()) {
 		return nil
@@ -182,15 +190,6 @@ func (s *pgStore) bootstrap(ctx context.Context, password string) error {
 	}
 	return err
 }
-
-const storeDropOld = `DO $$ BEGIN
-    IF to_regclass('archive.source') IS NOT NULL THEN
-        DELETE FROM archive.secret WHERE table_name = 'source';
-        DROP TABLE archive.source;
-    END IF;
-    DROP TABLE IF EXISTS archive.schema_file;
-    DROP TABLE IF EXISTS archive.view;
-END $$`
 
 func (s *pgStore) expand(sql string) string { return strings.ReplaceAll(sql, "{p}", s.prefix) }
 
