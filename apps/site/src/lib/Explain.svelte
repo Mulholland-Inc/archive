@@ -7,8 +7,6 @@
   import { EXPLAIN, PAGES } from './explain.js';
   import { START } from './site.js';
 
-  // The bar stays away for a few days once closed, longer once the book is read. app.html hides it before
-  // first paint while it rests, so it never jumps in.
   const REST = { closed: 3, read: 30 };
 
   let dialog;
@@ -16,7 +14,6 @@
   let at = $state(0);
 
   const page = $derived(PAGES[at]);
-  // On the homepage the bar always stands, with no way to close it.
   const home = $derived(here.url.pathname === '/');
   const last = $derived(at === PAGES.length - 1);
 

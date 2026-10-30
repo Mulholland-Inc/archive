@@ -215,7 +215,7 @@ The same image runs in two ways, each serving any number of workspaces.
   - file processing: inside the request;
   - background work, sync jobs and coordination: through Postgres locks (`SKIP LOCKED` on `archive.due`, an advisory lock for schema), woken by Cloud Tasks or `NOTIFY`.
 
-  A pooler such as PgBouncer or Cloud SQL's managed connection pooling can sit in `DATABASE_URL`, in transaction mode; schema changes and creating workspaces connect through `DATABASE_DIRECT_URL`, since they hold a session-level advisory lock. Archive sets each database's default `search_path` and `timezone`, so a pooler may drop those startup parameters.
+  `DATABASE_URL` reaches Postgres directly, with no pooler in between, since schema changes and creating workspaces hold a session-level advisory lock. Archive sets each database's default `search_path` and `timezone`.
 
   It runs on request-based billing and scales to zero: no CPU is needed between requests. With `ARCHIVE_TASKS_QUEUE` and `ARCHIVE_TASKS_SERVICE_ACCOUNT` set, Cloud Tasks calls `/tasks` at each due time, so scheduled and table-triggered workflows and pending files start an instance when they need one. Without them, due work runs only while `archive serve` is up.
 - The **`archive` Terraform provider** (`apps/terraform`) manages schema DDL (tables and views), spaces, tokens and access rules as code. It compares configured DDL with the database through the plan endpoint, so normalized output never shows as drift.

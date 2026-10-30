@@ -52,7 +52,6 @@
   --text-3xl: 24px;
   --text-4xl: 28px;
   --text-5xl: 40px;
-  --text-6xl: 44px;
   --text-em: 0.88em;
 
   --display-xs: clamp(30px, 2.8vw, 40px);
@@ -75,10 +74,8 @@
   --leading-loose: 1.65;
 
   --tracking-display: -0.06em;
-  --tracking-tighter: -0.04em;
   --tracking-tight: -0.02em;
   --tracking-snug: -0.01em;
-  --tracking-normal: 0;
 
   --space-px: 1px;
   --space-0-5: 2px;
@@ -94,8 +91,6 @@
   --space-9: 120px;
   --space-fluid-sm: clamp(8px, 1.2vw, 16px);
   --space-fluid-md: clamp(22px, 5vw, 64px);
-  --space-fluid-lg: clamp(24px, 5vh, 64px);
-  --space-fluid-xl: clamp(40px, 8vh, 112px);
 
   --size-icon-sm: 10px;
   --size-icon: 16px;
@@ -159,14 +154,12 @@
   --z-raised: 1;
   --z-nav: 110;
 
-  --duration-instant: 60ms;
   --duration-fast: 160ms;
   --duration-normal: 240ms;
   --duration-slow: 600ms;
   --duration-marquee: 70s;
   --duration-loop: 1400ms;
   --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
-  --ease-in: ease-in;
   --ease-in-out: ease;
 }
 
@@ -188,7 +181,6 @@
   --primary: var(--blue-600);
   --primary-hover: var(--blue-500);
   --on-primary: var(--gray-0);
-  --on-primary-soft: var(--gray-200);
   --on-primary-muted: var(--white-75);
   --danger: var(--red-600);
   --syntax-keyword: var(--blue-600);
@@ -256,7 +248,6 @@
   --sidebar-width: var(--measure-xs);
   --lane-width: var(--measure-sm);
   --cell-width: var(--measure-sm);
-  --form-width: var(--measure-md);
   --door-width: calc(var(--measure-sm) + var(--space-8));
   --door-art: var(--art-lg);
   --title-size: var(--text-4xl);

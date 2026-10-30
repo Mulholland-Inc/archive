@@ -3422,7 +3422,7 @@ func (in *e2eInst) cloudsql(env ...string) *e2eInst {
 	}
 	dsn := "host=" + in.dir + " user=cloudsql password=cloudsql dbname=tenantmain"
 	return &e2eInst{t: in.t, dir: dir, env: append([]string{"ARCHIVE_DATA=" + dir, "DATABASE_URL=" + dsn,
-		"DATABASE_DIRECT_URL=" + dsn, "ARCHIVE_SECRET_KEY=" + strings.TrimSpace(string(key))}, env...)}
+		"ARCHIVE_SECRET_KEY=" + strings.TrimSpace(string(key))}, env...)}
 }
 
 func TestWorkspacesIsolateWhenArchiveIsNotASuperuser(t *testing.T) {
@@ -3919,7 +3919,7 @@ func TestTheWebAppOnItsOwnHostCallsTheAPIHostWithTheAPIsCookie(t *testing.T) {
 	} else {
 		resp.Body.Close()
 	}
-	st, start := call(t, "GET", srv.url+"/auth/oidc/google", "", nil, nil)
+	_, start := call(t, "GET", srv.url+"/auth/oidc/google", "", nil, nil)
 	loc, _ := url.Parse(start.Get("Location"))
 	if st, _ := call(t, "GET", srv.url+"/auth/oidc/google/callback?"+url.Values{"state": {loc.Query().Get("state")}, "code": {"{}"}}.Encode(), "", nil, nil); st != 401 {
 		t.Errorf("a callback in a browser that did not start the sign-in: %d", st)

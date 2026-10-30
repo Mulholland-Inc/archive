@@ -32,17 +32,16 @@ import (
 )
 
 type Hub struct {
-	key    []byte
-	aead   cipher.AEAD
-	pooled *pgx.ConnConfig
-	direct *pgx.ConnConfig
-	main   *pgxpool.Pool
-	blobs  blobStore
-	hints  Hints
-	app    string
-	api    string
-	one    string
-	tasks  *hubTasks
+	key   []byte
+	aead  cipher.AEAD
+	pg    *pgx.ConnConfig
+	main  *pgxpool.Pool
+	blobs blobStore
+	hints Hints
+	app   string
+	api   string
+	one   string
+	tasks *hubTasks
 
 	mu   sync.Mutex
 	open map[string]*hubEntry
@@ -129,20 +128,14 @@ func Open(ctx context.Context) (*Hub, error) {
 	if err != nil {
 		return nil, err
 	}
-	pooled, err := pgx.ParseConfig(dsn)
+	pg, err := pgx.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("DATABASE_URL: %w", err)
 	}
-	direct := pooled
-	if d := os.Getenv("DATABASE_DIRECT_URL"); d != "" {
-		if direct, err = pgx.ParseConfig(d); err != nil {
-			return nil, fmt.Errorf("DATABASE_DIRECT_URL: %w", err)
-		}
-	}
-	h := &Hub{key: key, aead: aead, pooled: pooled, direct: direct, blobs: blobs, hints: coreHints(os.Getenv("ARCHIVE_LOCALE")),
+	h := &Hub{key: key, aead: aead, pg: pg, blobs: blobs, hints: coreHints(os.Getenv("ARCHIVE_LOCALE")),
 		tasks: tasks, open: map[string]*hubEntry{}}
 	h.urls("8080")
-	if h.main, err = storePool(ctx, pooled, storeSysConns, nil); err != nil {
+	if h.main, err = storePool(ctx, pg, storeSysConns, nil); err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
 	if err := h.register(ctx); err != nil {
@@ -237,16 +230,16 @@ func (h *Hub) unwrap(row generated.ArchiveWorkspace) ([]byte, error) {
 
 func (h *Hub) database(id string) string {
 	if id == h.one {
-		return h.pooled.Database
+		return h.pg.Database
 	}
 	return "archive_" + id
 }
 
 func (h *Hub) openArchive(ctx context.Context, row generated.ArchiveWorkspace, key []byte) (*Archive, error) {
 	id := row.ID.String()
-	pooled, direct := h.pooled.Copy(), h.direct.Copy()
-	pooled.Database, direct.Database = h.database(id), h.database(id)
-	st, err := OpenStore(ctx, pooled, direct, id, authPassword(key))
+	cfg := h.pg.Copy()
+	cfg.Database = h.database(id)
+	st, err := OpenStore(ctx, cfg, id, authPassword(key))
 	if err != nil {
 		return nil, err
 	}
@@ -610,7 +603,7 @@ func (h *Hub) listen(ctx context.Context, soon chan<- time.Time) {
 	}
 	wait := time.Second
 	for ctx.Err() == nil {
-		c, err := pgx.ConnectConfig(ctx, h.direct)
+		c, err := pgx.ConnectConfig(ctx, h.pg)
 		if err == nil {
 			if _, err = c.Exec(ctx, "LISTEN archive_due"); err == nil {
 				wait = time.Second
@@ -939,7 +932,7 @@ func (h *Hub) DeleteWorkspace(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if c, cerr := pgx.ConnectConfig(bg, h.direct); cerr == nil {
+	if c, cerr := pgx.ConnectConfig(bg, h.pg); cerr == nil {
 		c.Exec(bg, "DROP DATABASE IF EXISTS "+pgIdent(h.database(id))+" WITH (FORCE)")
 		for _, role := range roles {
 			c.Exec(bg, "DROP ROLE IF EXISTS "+pgIdent(role))
@@ -983,14 +976,14 @@ func (h *Hub) createWorkspace(ctx context.Context, name, owner string) (generate
 	ctx = context.WithoutCancel(ctx)
 	fail := func(err error) (generated.ArchiveWorkspace, error) {
 		h.forget(short)
-		if c, cerr := pgx.ConnectConfig(ctx, h.direct); cerr == nil {
+		if c, cerr := pgx.ConnectConfig(ctx, h.pg); cerr == nil {
 			c.Exec(ctx, "DROP DATABASE IF EXISTS "+pgIdent(h.database(short))+" WITH (FORCE)")
 			c.Close(ctx)
 		}
 		q.DeleteWorkspace(ctx, row.ID)
 		return row, fmt.Errorf("creating workspace %s: %w", name, err)
 	}
-	c, err := pgx.ConnectConfig(ctx, h.direct)
+	c, err := pgx.ConnectConfig(ctx, h.pg)
 	if err != nil {
 		return fail(err)
 	}

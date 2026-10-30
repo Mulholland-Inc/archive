@@ -1357,16 +1357,16 @@ func secretLoadKey(dir string) ([]byte, error) {
 		}
 		key := make([]byte, 32)
 		rand.Read(key)
-		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-		if err == nil {
-			_, err = f.WriteString(hex.EncodeToString(key) + "\n")
-			if cerr := f.Close(); err == nil {
-				err = cerr
+		f, ferr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if ferr == nil {
+			_, ferr = f.WriteString(hex.EncodeToString(key) + "\n")
+			if cerr := f.Close(); ferr == nil {
+				ferr = cerr
 			}
-			return key, err
+			return key, ferr
 		}
-		if !errors.Is(err, fs.ErrExist) {
-			return nil, err
+		if !errors.Is(ferr, fs.ErrExist) {
+			return nil, ferr
 		}
 		b, err = os.ReadFile(path)
 	}

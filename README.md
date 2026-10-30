@@ -225,7 +225,6 @@ Every setting is an environment variable; `archive help` lists them all:
 | `ARCHIVE_API_URL` | Public base URL of the API, sign-in, MCP, webhooks, file links and OAuth redirects, which holds the session cookie (default `http://localhost:8080`); `/api` and `/auth` allow `ARCHIVE_URL`'s origin over CORS. The web image reads it too |
 | `ARCHIVE_DATA` | Directory for `secret.key` and files, while `ARCHIVE_SECRET_KEY` and `ARCHIVE_BLOB_URL` are unset (default `./data`) |
 | `DATABASE_URL` | Postgres 18, required, with CREATEROLE and CREATEDB (no superuser needed); `docker compose up -d postgres` starts one. Each workspace gets its own database on the same server |
-| `DATABASE_DIRECT_URL` | The same Postgres without a pooler in between, for schema changes (default `DATABASE_URL`) |
 | `ARCHIVE_SECRET_KEY` | 32-byte key for secret values; required with `DATABASE_URL`, the same on every copy |
 | `ARCHIVE_BLOB_URL`, `ARCHIVE_BLOB_KEY`, `ARCHIVE_BLOB_SECRET` | S3, R2 or MinIO for files, or `gs://bucket` for GCS as the Cloud Run service account, with no key |
 | `ARCHIVE_GOOGLE_CLIENT_ID`, `ARCHIVE_GOOGLE_CLIENT_SECRET` | Sign-in with Google; each provider shows on the sign-in page when both of its variables are set, and its redirect URL is `ARCHIVE_API_URL/auth/oidc/<google\|microsoft\|slack\|github>/callback` |

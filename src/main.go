@@ -94,9 +94,6 @@ Environment:
                      docker compose up -d postgres starts; several instances can share one when they
                      share ARCHIVE_SECRET_KEY and ARCHIVE_BLOB_URL; every other workspace gets its own
                      database on the same server
-  DATABASE_DIRECT_URL
-                     the same Postgres without a pooler in between, for schema changes, which
-                     hold a session lock (default DATABASE_URL)
   ARCHIVE_DATA       data directory for secret.key and files, when ARCHIVE_SECRET_KEY and
                      ARCHIVE_BLOB_URL are unset (default ./data)
   ARCHIVE_LOCALE     locale that messy input is read in, like nl-NL

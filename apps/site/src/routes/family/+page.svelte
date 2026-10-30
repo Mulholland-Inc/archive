@@ -9,7 +9,6 @@
 
   const FAMILY = 'https://archive.family';
 
-  // The app's own screens, of a made-up family (the Quists) brought in as a family would.
   const SCREENS = [
     {
       shot: 'tree',
@@ -37,7 +36,6 @@
     }
   ];
 
-  // Public-domain examples of what families keep, none of them of any family in the archive.
   const KEEPS = [
     { img: 'family-tree', caption: 'A family tree drawn by hand, Connecticut, around 1800', credit: 'National Archives, NAID 12059080' },
     { img: 'marriage-certificate', caption: 'A marriage certificate filled in by hand, New Jersey, 1855', credit: 'Library of Congress, LC-DIG-pga-05615' },
