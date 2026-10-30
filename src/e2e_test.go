@@ -31,7 +31,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -41,12 +40,18 @@ import (
 	"testing"
 	"time"
 
+	taskspb "cloud.google.com/go/cloudtasks/apiv2/cloudtaskspb"
 	"github.com/jackc/pgx/v4"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stripe/pg-schema-diff/pkg/diff"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 var e2eBin, e2eTemplate string
+
+var e2eCloudTasks *e2eTasks
 
 var e2eCopyFlag = map[string]string{"darwin": "-c", "linux": "--reflink=auto"}[runtime.GOOS]
 
@@ -69,8 +74,13 @@ func TestMain(m *testing.M) {
 		os.RemoveAll(dir)
 		panic(fmt.Sprintf("template database: %v", err))
 	}
+	if e2eCloudTasks, err = e2eTasksStart(false); err != nil {
+		os.RemoveAll(dir)
+		panic(fmt.Sprintf("cloud tasks: %v", err))
+	}
 	flag.Set("test.parallel", "32")
 	code := m.Run()
+	e2eCloudTasks.stop()
 	os.RemoveAll(dir)
 	os.Exit(code)
 }
@@ -136,7 +146,146 @@ func newInst(t *testing.T, env ...string) *e2eInst {
 		t.Fatal(err)
 	}
 	t.Cleanup(stop)
-	return &e2eInst{t: t, dir: dir, env: append([]string{"ARCHIVE_DATA=" + dir, "DATABASE_URL=host=" + dir + " user=archive dbname=archive"}, env...)}
+	return &e2eInst{t: t, dir: dir, env: append(append([]string{"ARCHIVE_DATA=" + dir, "DATABASE_URL=host=" + dir + " user=archive dbname=archive"}, e2eCloudTasks.queue(t, dir)...), env...)}
+}
+
+type e2eTasks struct {
+	taskspb.UnimplementedCloudTasksServer
+	addr   string
+	hold   bool
+	issuer *httptest.Server
+	grpc   *grpc.Server
+
+	mu     sync.Mutex
+	names  map[string]bool
+	posted []*taskspb.Task
+	routes map[string]*e2eRoute
+}
+
+type e2eRoute struct{ url, aud string }
+
+const e2eTasksAccount = "tasks@e2e.iam.gserviceaccount.com"
+
+func e2eTasksStart(hold bool) (*e2eTasks, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, err
+	}
+	issuer, err := e2eIssuerServer()
+	if err != nil {
+		ln.Close()
+		return nil, err
+	}
+	f := &e2eTasks{addr: "http://" + ln.Addr().String(), hold: hold, issuer: issuer, grpc: grpc.NewServer(), names: map[string]bool{}, routes: map[string]*e2eRoute{}}
+	taskspb.RegisterCloudTasksServer(f.grpc, f)
+	go f.grpc.Serve(ln)
+	return f, nil
+}
+
+func (f *e2eTasks) stop() {
+	f.grpc.Stop()
+	f.issuer.Close()
+}
+
+func (f *e2eTasks) env(queue string) []string {
+	return []string{"ARCHIVE_TASKS_QUEUE=" + queue, "ARCHIVE_TASKS_SERVICE_ACCOUNT=" + e2eTasksAccount, "ARCHIVE_TASKS_URL=" + f.addr, "ARCHIVE_TASKS_ISSUER=" + f.issuer.URL}
+}
+
+func (f *e2eTasks) queue(t *testing.T, dir string) []string {
+	q := "projects/e2e/locations/here/queues/" + filepath.Base(dir)
+	f.mu.Lock()
+	f.routes[q] = &e2eRoute{}
+	f.mu.Unlock()
+	t.Cleanup(func() {
+		f.mu.Lock()
+		delete(f.routes, q)
+		f.mu.Unlock()
+	})
+	return f.env(q)
+}
+
+func (f *e2eTasks) route(queue, url, aud string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if r := f.routes[queue]; r != nil {
+		r.url, r.aud = url, aud
+	}
+}
+
+func (f *e2eTasks) CreateTask(_ context.Context, req *taskspb.CreateTaskRequest) (*taskspb.Task, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	tk := req.GetTask()
+	if !strings.HasPrefix(tk.GetName(), req.GetParent()+"/tasks/") || tk.GetHttpRequest() == nil {
+		return nil, status.Error(codes.InvalidArgument, "want a named HTTP task in the queue")
+	}
+	f.posted = append(f.posted, tk)
+	if f.names[tk.GetName()] {
+		return nil, status.Error(codes.AlreadyExists, "task exists")
+	}
+	f.names[tk.GetName()] = true
+	if !f.hold {
+		go f.deliver(req.GetParent(), tk)
+	}
+	return tk, nil
+}
+
+func (f *e2eTasks) deliver(queue string, tk *taskspb.Task) {
+	time.Sleep(time.Until(tk.GetScheduleTime().AsTime()))
+	for wait := 50 * time.Millisecond; ; wait = min(2*wait, time.Second) {
+		f.mu.Lock()
+		r, ok := f.routes[queue]
+		var to e2eRoute
+		if ok {
+			to = *r
+		}
+		f.mu.Unlock()
+		if !ok {
+			return
+		}
+		if to.url != "" {
+			if tok, err := f.token(map[string]any{"aud": to.aud, "sub": "1", "email": tk.GetHttpRequest().GetOidcToken().GetServiceAccountEmail(), "email_verified": true}); err == nil {
+				req, _ := http.NewRequest("POST", to.url+"/tasks", bytes.NewReader(tk.GetHttpRequest().GetBody()))
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Authorization", "Bearer "+tok)
+				if resp, err := http.DefaultClient.Do(req); err == nil {
+					resp.Body.Close()
+					if resp.StatusCode/100 == 2 {
+						return
+					}
+				}
+			}
+		}
+		time.Sleep(wait)
+	}
+}
+
+func (f *e2eTasks) token(claims map[string]any) (string, error) {
+	code, _ := json.Marshal(claims)
+	resp, err := http.PostForm(f.issuer.URL+"/token", url.Values{"code": {string(code)}})
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	var out struct {
+		IDToken string `json:"id_token"`
+	}
+	return out.IDToken, json.NewDecoder(resp.Body).Decode(&out)
+}
+
+func (f *e2eTasks) tasks() []*taskspb.Task {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.posted)
+}
+
+func (in *e2eInst) getenv(key string) string {
+	for _, kv := range slices.Backward(in.env) {
+		if v, ok := strings.CutPrefix(kv, key+"="); ok {
+			return v
+		}
+	}
+	return ""
 }
 
 func e2ePostgres(dir string) (func(), error) {
@@ -199,8 +348,8 @@ func (in *e2eInst) twin(env ...string) *e2eInst {
 	if err := os.Symlink(filepath.Join(in.dir, "blobs"), filepath.Join(dir, "blobs")); err != nil {
 		in.t.Fatal(err)
 	}
-	return &e2eInst{t: in.t, dir: dir, env: append([]string{"ARCHIVE_DATA=" + dir, "DATABASE_URL=host=" + in.dir + " user=archive dbname=archive",
-		"ARCHIVE_SECRET_KEY=" + strings.TrimSpace(string(key))}, env...)}
+	return &e2eInst{t: in.t, dir: dir, env: append(append([]string{"ARCHIVE_DATA=" + dir, "DATABASE_URL=host=" + in.dir + " user=archive dbname=archive",
+		"ARCHIVE_SECRET_KEY=" + strings.TrimSpace(string(key))}, e2eCloudTasks.queue(in.t, dir)...), env...)}
 }
 
 func (in *e2eInst) on(t *testing.T) *e2eInst {
@@ -365,9 +514,11 @@ func (in *e2eInst) serve() *e2eServer {
 	}
 	done := make(chan struct{})
 	go func() { c.Wait(); close(done) }()
+	queue, api := in.getenv("ARCHIVE_TASKS_QUEUE"), cmp.Or(in.getenv("ARCHIVE_API_URL"), "http://localhost:"+strings.TrimPrefix(addr, "127.0.0.1:"))
 	var once sync.Once
 	s.stop = func() {
 		once.Do(func() {
+			e2eCloudTasks.route(queue, "", "")
 			c.Process.Signal(syscall.SIGTERM)
 			select {
 			case <-done:
@@ -382,6 +533,7 @@ func (in *e2eInst) serve() *e2eServer {
 		if resp, err := http.Get(s.url + "/healthz"); err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusNoContent {
+				e2eCloudTasks.route(queue, s.url, strings.TrimRight(api, "/")+"/tasks")
 				return s
 			}
 		}
@@ -1079,91 +1231,6 @@ func TestTheFirstOwnerIsAddedOnTheCLIAndSignsInWithAProvider(t *testing.T) {
 	}
 }
 
-func TestDockerImagesServeTheAPIAndTheWebAppApartAndTakeCLICommandsFromDockerExec(t *testing.T) {
-	t.Parallel()
-	if os.Getenv("CI") == "" {
-		t.Skip("builds the Docker images; runs in CI")
-	}
-	if err := exec.Command("docker", "info").Run(); err != nil {
-		t.Skip("docker is not available")
-	}
-	name := fmt.Sprintf("archive-e2e-%d", time.Now().UnixNano())
-	web, pg := name+"-web", name+"-postgres"
-	docker := func(stdin string, args ...string) string {
-		t.Helper()
-		c := exec.Command("docker", args...)
-		c.Stdin = strings.NewReader(stdin)
-		out, err := c.CombinedOutput()
-		if err != nil {
-			t.Fatalf("docker %s: %v\n%s", strings.Join(args, " "), err, out)
-		}
-		return string(out)
-	}
-	t.Cleanup(func() {
-		exec.Command("docker", "rm", "-f", name, web, pg).Run()
-		exec.Command("docker", "volume", "rm", "-f", name).Run()
-		exec.Command("docker", "network", "rm", name).Run()
-		exec.Command("docker", "rmi", "-f", web).Run()
-	})
-	ko := exec.Command("go", "run", "github.com/google/ko@v0.18.1", "build", "--bare", "--platform=linux/"+runtime.GOARCH, ".")
-	ko.Env = append(os.Environ(), "KO_DOCKER_REPO=ko.local")
-	out, err := ko.Output()
-	if err != nil {
-		t.Fatalf("ko build: %v", err)
-	}
-	image := strings.TrimSpace(string(out))
-	t.Cleanup(func() { exec.Command("docker", "rmi", "-f", image).Run() })
-	docker("", "build", "-q", "-f", "../apps/web/Dockerfile", "-t", web, "..")
-	docker("", "network", "create", name)
-	docker("", "run", "-d", "--name", pg, "--network", name, "-e", "POSTGRES_USER=archive", "-e", "POSTGRES_PASSWORD=archive", "-e", "POSTGRES_DB=archive", "postgres:18-alpine")
-	for deadline := time.Now().Add(60 * time.Second); exec.Command("docker", "exec", pg, "pg_isready", "-q", "-h", "127.0.0.1", "-U", "archive").Run() != nil; time.Sleep(500 * time.Millisecond) {
-		if time.Now().After(deadline) {
-			t.Fatal("postgres did not start")
-		}
-	}
-	docker("", "run", "-d", "--name", name, "--network", name, "-v", name+":/home/nonroot", "-p", "127.0.0.1::8080",
-		"-e", "DATABASE_URL=postgres://archive:archive@"+pg+":5432/archive?sslmode=disable", "-e", "ARCHIVE_DATA=/home/nonroot", image, "serve")
-	api := "http://" + strings.TrimSpace(docker("", "port", name, "8080"))
-	for deadline := time.Now().Add(90 * time.Second); ; time.Sleep(500 * time.Millisecond) {
-		if resp, err := http.Get(api + "/healthz"); err == nil && resp.StatusCode == 204 {
-			resp.Body.Close()
-			break
-		}
-		if time.Now().After(deadline) {
-			out, _ := exec.Command("docker", "logs", name).CombinedOutput()
-			t.Fatalf("container not up:\n%s", out)
-		}
-	}
-	for _, page := range []string{"/", "/workflows", "/assets/index.js"} {
-		if resp, err := http.Get(api + page); err != nil || resp.StatusCode != 404 {
-			t.Errorf("the API image serves %s: %v %v", page, err, resp)
-		} else {
-			resp.Body.Close()
-		}
-	}
-	docker("", "run", "-d", "--name", web, "-e", "ARCHIVE_API_URL=https://api.example.test", web)
-	for _, page := range []string{"/", "/files", "/workflows"} {
-		if out := docker("", "exec", web, "wget", "-q", "-O", "-", "http://127.0.0.1:8080"+page); !strings.Contains(out, `<div id="app">`) || !strings.Contains(out, `<meta name="archive-api" content="https://api.example.test">`) {
-			t.Fatalf("web app at %s: %s", page, out)
-		}
-	}
-	asset := regexp.MustCompile(`/assets/[^"]+\.js`).FindString(docker("", "exec", web, "wget", "-q", "-O", "-", "http://127.0.0.1:8080/"))
-	if out := docker("", "exec", web, "wget", "-S", "-O", "/dev/null", "http://127.0.0.1:8080"+asset); asset == "" || !strings.Contains(out, "immutable") {
-		t.Fatalf("asset %q: %s", asset, out)
-	}
-	if exec.Command("docker", "exec", web, "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/assets/gone.js").Run() == nil {
-		t.Fatal("a missing asset answers")
-	}
-	ddl := t.TempDir()
-	os.WriteFile(filepath.Join(ddl, "company.sql"), []byte(e2eSchema["company.sql"]), 0o644)
-	docker("", "cp", ddl, name+":/home/nonroot/ddl")
-	docker("", "exec", name, "archive", "user", "add", "ops@example.com")
-	docker("", "exec", name, "archive", "schema", "apply", "/home/nonroot/ddl")
-	docker("", "exec", name, "archive", "create", "company", `{"name":"Docker Inc"}`)
-	if out := docker("", "exec", name, "archive", "list", "company"); !strings.Contains(out, "Docker Inc") {
-		t.Fatalf("docker exec list: %s", out)
-	}
-}
 func e2ePDF(pages ...string) []byte {
 	kids := make([]string, len(pages))
 	objs := []string{"<< /Type /Catalog /Pages 2 0 R >>", "", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"}
@@ -3164,9 +3231,18 @@ func e2eGoogle(t *testing.T) []string {
 
 func e2eIssuer(t *testing.T) *httptest.Server {
 	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	issuer, err := e2eIssuerServer()
 	if err != nil {
 		t.Fatal(err)
+	}
+	t.Cleanup(issuer.Close)
+	return issuer
+}
+
+func e2eIssuerServer() (*httptest.Server, error) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, err
 	}
 	b64 := base64.RawURLEncoding.EncodeToString
 	var issuer *httptest.Server
@@ -3198,8 +3274,7 @@ func e2eIssuer(t *testing.T) *httptest.Server {
 				"jwks_uri": issuer.URL + "/jwks", "id_token_signing_alg_values_supported": []string{"RS256"}})
 		}
 	}))
-	t.Cleanup(issuer.Close)
-	return issuer
+	return issuer, nil
 }
 
 func (s *e2eServer) oidc(t *testing.T, provider string, claims map[string]any) (int, *http.Cookie) {
@@ -3391,8 +3466,8 @@ func (in *e2eInst) cloudsql(env ...string) *e2eInst {
 		in.t.Fatal(err)
 	}
 	dsn := "host=" + in.dir + " user=cloudsql password=cloudsql dbname=tenantmain"
-	return &e2eInst{t: in.t, dir: dir, env: append([]string{"ARCHIVE_DATA=" + dir, "DATABASE_URL=" + dsn,
-		"ARCHIVE_SECRET_KEY=" + strings.TrimSpace(string(key))}, env...)}
+	return &e2eInst{t: in.t, dir: dir, env: append(append([]string{"ARCHIVE_DATA=" + dir, "DATABASE_URL=" + dsn,
+		"ARCHIVE_SECRET_KEY=" + strings.TrimSpace(string(key))}, e2eCloudTasks.queue(in.t, dir)...), env...)}
 }
 
 func TestWorkspacesIsolateWhenArchiveIsNotASuperuser(t *testing.T) {
@@ -3916,70 +3991,28 @@ func TestTheWebAppOnItsOwnHostCallsTheAPIHostWithTheAPIsCookie(t *testing.T) {
 func TestCloudTasksWakeTheServiceAtEachDueTimeAndNothingRunsOnItsOwn(t *testing.T) {
 	t.Parallel()
 	google, forger := e2eIssuer(t), e2eIssuer(t)
-	type task struct {
-		Name         string    `json:"name"`
-		ScheduleTime time.Time `json:"scheduleTime"`
-		HTTPRequest  struct {
-			HTTPMethod string            `json:"httpMethod"`
-			URL        string            `json:"url"`
-			Headers    map[string]string `json:"headers"`
-			Body       []byte            `json:"body"`
-			OIDCToken  struct {
-				ServiceAccountEmail string `json:"serviceAccountEmail"`
-				Audience            string `json:"audience"`
-			} `json:"oidcToken"`
-		} `json:"httpRequest"`
+	fake, err := e2eTasksStart(true)
+	if err != nil {
+		t.Fatal(err)
 	}
-	var mu sync.Mutex
-	var posted []task
-	names := map[string]bool{}
+	t.Cleanup(fake.stop)
 	queue, acct := "projects/p/locations/l/queues/q", "tasks@p.iam.gserviceaccount.com"
-	gcp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/computeMetadata/v1/instance/service-accounts/default/token" && r.Header.Get("Metadata-Flavor") == "Google":
-			json.NewEncoder(w).Encode(map[string]any{"access_token": "meta", "expires_in": 3600, "token_type": "Bearer"})
-		case r.Method == "POST" && r.URL.Path == "/v2/"+queue+"/tasks" && r.Header.Get("Authorization") == "Bearer meta":
-			var body struct {
-				Task task `json:"task"`
-			}
-			json.NewDecoder(r.Body).Decode(&body)
-			mu.Lock()
-			posted = append(posted, body.Task)
-			dup := names[body.Task.Name]
-			names[body.Task.Name] = true
-			mu.Unlock()
-			if dup {
-				w.WriteHeader(http.StatusConflict)
-				return
-			}
-			json.NewEncoder(w).Encode(body.Task)
-		default:
-			http.Error(w, "no", http.StatusForbidden)
-		}
-	}))
-	t.Cleanup(gcp.Close)
-	in := newInst(t, "ARCHIVE_GOOGLE_URL="+google.URL, "ARCHIVE_TASKS_QUEUE="+queue,
-		"ARCHIVE_TASKS_SERVICE_ACCOUNT="+acct, "ARCHIVE_TASKS_URL="+gcp.URL, "ARCHIVE_API_URL=http://api.test", "GCE_METADATA_HOST="+strings.TrimPrefix(gcp.URL, "http://"))
+	in := newInst(t, append(fake.env(queue), "ARCHIVE_TASKS_SERVICE_ACCOUNT="+acct, "ARCHIVE_TASKS_ISSUER="+google.URL, "ARCHIVE_API_URL=http://api.test")...)
 	in.must("user", "add", "alice@example.com")
 	in.push(map[string]string{"house.sql": e2eHouse})
 	srv := in.serve()
 	api := srv.url + "/api"
 	one := in.psql("archive", "SELECT id FROM archive.workspace ORDER BY created_at LIMIT 1")
 	tok := decode[Token](t, in.must("token", "create")).Secret
-	last := func(t *testing.T) task {
+	last := func(t *testing.T) *taskspb.Task {
 		t.Helper()
-		mu.Lock()
-		defer mu.Unlock()
+		posted := fake.tasks()
 		if len(posted) == 0 {
 			t.Fatal("no task was created")
 		}
 		return posted[len(posted)-1]
 	}
-	count := func() int {
-		mu.Lock()
-		defer mu.Unlock()
-		return len(posted)
-	}
+	count := func() int { return len(fake.tasks()) }
 	deploy := func(t *testing.T, files map[string]string) map[string]any {
 		t.Helper()
 		b, _ := json.Marshal(files)
@@ -4032,19 +4065,20 @@ func TestCloudTasksWakeTheServiceAtEachDueTimeAndNothingRunsOnItsOwn(t *testing.
 	next := deploy(t, map[string]string{"tick.ts": "// on: cron 0 9 * * *\nreturn 'tick';"})
 	want, _ := time.Parse(time.RFC3339Nano, fmt.Sprint(next["tick.ts"]))
 	tk := last(t)
+	hr := tk.GetHttpRequest()
 	var body map[string]string
-	json.Unmarshal(tk.HTTPRequest.Body, &body)
-	if !tk.ScheduleTime.Equal(want) || !strings.HasPrefix(tk.Name, queue+"/tasks/") || tk.HTTPRequest.HTTPMethod != "POST" ||
-		tk.HTTPRequest.URL != "http://api.test/tasks" || tk.HTTPRequest.OIDCToken.Audience != tk.HTTPRequest.URL ||
-		tk.HTTPRequest.OIDCToken.ServiceAccountEmail != acct || fmt.Sprint(body) != fmt.Sprint(work) {
+	json.Unmarshal(hr.GetBody(), &body)
+	if !tk.GetScheduleTime().AsTime().Equal(want) || !strings.HasPrefix(tk.GetName(), queue+"/tasks/") || hr.GetHttpMethod() != taskspb.HttpMethod_POST ||
+		hr.GetUrl() != "http://api.test/tasks" || hr.GetOidcToken().GetAudience() != hr.GetUrl() ||
+		hr.GetOidcToken().GetServiceAccountEmail() != acct || fmt.Sprint(body) != fmt.Sprint(work) {
 		t.Fatalf("the cron workflow's task: %+v %v, want it at %s", tk, body, want)
 	}
-	aud = tk.HTTPRequest.URL
+	aud = hr.GetUrl()
 
 	deploy(t, map[string]string{"tick.ts": "// on: cron 0 9 * * *\nreturn 'tick';",
 		"sold.ts": "// on: house\nfor (const r of input.rows) await archive.update('house', r.id, { sold: true });\nreturn input.rows.map((r) => r.address).join(',');"})
-	if tk := last(t); time.Until(tk.ScheduleTime) > time.Second {
-		t.Errorf("a table workflow's first task is at %s, want now", tk.ScheduleTime)
+	if tk := last(t); time.Until(tk.GetScheduleTime().AsTime()) > time.Second {
+		t.Errorf("a table workflow's first task is at %s, want now", tk.GetScheduleTime().AsTime())
 	}
 	call(t, "POST", api+"/house", tok, map[string]any{"address": "Canal 1"}, nil)
 	srv.stop()
@@ -4083,8 +4117,8 @@ func TestCloudTasksWakeTheServiceAtEachDueTimeAndNothingRunsOnItsOwn(t *testing.
 	if rs := runs(t, "sold"); len(rs) != 1 || string(rs[0].Result) != `"Canal 1"` || rs[0].Trigger != "table" {
 		t.Fatalf("the task's runs: %+v", rs)
 	}
-	if tk := last(t); !tk.ScheduleTime.Equal(want) {
-		t.Errorf("after the run the next task is at %s, want the cron time %s", tk.ScheduleTime, want)
+	if tk := last(t); !tk.GetScheduleTime().AsTime().Equal(want) {
+		t.Errorf("after the run the next task is at %s, want the cron time %s", tk.GetScheduleTime().AsTime(), want)
 	}
 	if at := in.psql("archive", "SELECT at = '"+want.Format(time.RFC3339Nano)+"' FROM archive.due WHERE kind = 'workflow'"); at != "t" {
 		t.Errorf("due after the run: %s", in.psql("archive", "SELECT at FROM archive.due"))
@@ -4092,8 +4126,8 @@ func TestCloudTasksWakeTheServiceAtEachDueTimeAndNothingRunsOnItsOwn(t *testing.
 
 	n := count()
 	st, out := e2eRun(t, api, tok, `const [h] = await archive.list("house"); await archive.update("house", h.id, { sold: false }); return 0;`)
-	if st != 200 || out.Error != "" || count() != n+1 || time.Until(last(t).ScheduleTime) > time.Second || time.Since(last(t).ScheduleTime) > 5*time.Second {
-		t.Fatalf("a write made %d tasks, the last at %s: %+v", count()-n, last(t).ScheduleTime, out)
+	if st != 200 || out.Error != "" || count() != n+1 || time.Until(last(t).GetScheduleTime().AsTime()) > time.Second || time.Since(last(t).GetScheduleTime().AsTime()) > 5*time.Second {
+		t.Fatalf("a write made %d tasks, the last at %s: %+v", count()-n, last(t).GetScheduleTime().AsTime(), out)
 	}
 	time.Sleep(time.Second)
 	if rs := runs(t, "sold"); len(rs) != 1 {

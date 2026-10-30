@@ -90,7 +90,6 @@ CREATE TABLE archive.due (
     at        timestamptz NOT NULL,
     PRIMARY KEY (workspace, kind)
 );
-CREATE INDEX due_at_idx ON archive.due (at);
 
 CREATE FUNCTION archive.search_fold(t text) RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
     SELECT translate(replace(replace(replace(lower(regexp_replace(regexp_replace(normalize(coalesce(t, ''), NFD),
@@ -675,11 +674,6 @@ INSERT INTO archive.due (workspace, kind, at) VALUES (sqlc.arg(workspace), sqlc.
 ON CONFLICT (workspace, kind) DO UPDATE SET at = least(archive.due.at, EXCLUDED.at)
 RETURNING at, (at IS DISTINCT FROM (SELECT was.at FROM was))::bool AS changed;
 
--- name: ClaimDue :one
-UPDATE archive.due d SET at = sqlc.arg(lease)::timestamptz FROM archive.workspace w
-WHERE w.id = d.workspace AND (d.workspace, d.kind) = (SELECT x.workspace, x.kind FROM archive.due x WHERE x.at <= now() ORDER BY x.at LIMIT 1 FOR UPDATE SKIP LOCKED)
-RETURNING w.id, d.kind, d.at;
-
 -- name: ClaimDueFor :one
 UPDATE archive.due d SET at = sqlc.arg(lease)::timestamptz
 WHERE d.workspace = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND d.at <= now()
@@ -687,12 +681,6 @@ RETURNING d.at;
 
 -- name: DueAt :one
 SELECT at FROM archive.due WHERE workspace = $1 AND kind = $2;
-
--- name: EarliestDue :one
-SELECT at FROM archive.due ORDER BY at LIMIT 1;
-
--- name: NotifyDue :exec
-SELECT pg_notify('archive_due', sqlc.arg(at)::text);
 
 -- name: SetDue :execrows
 UPDATE archive.due d SET at = sqlc.arg(next)::timestamptz FROM archive.workspace w
