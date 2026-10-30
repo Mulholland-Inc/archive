@@ -34,9 +34,12 @@ jobs:
       - run: npm run build
         working-directory: apps/site
       - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v4
+      - run: tar --dereference --hard-dereference -cf "$RUNNER_TEMP/artifact.tar" -C apps/site/build .
+      - uses: actions/upload-artifact@v4
         with:
-          path: apps/site/build
-          include-hidden-files: true
+          name: github-pages
+          path: ${{ runner.temp }}/artifact.tar
+          retention-days: 1
+          if-no-files-found: error
       - id: deployment
         uses: actions/deploy-pages@v4
