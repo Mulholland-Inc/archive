@@ -22,13 +22,31 @@ locals {
     for k, v in local.optional : k if nonsensitive(v != "")
   ]))
 
-  services = ["run.googleapis.com", "sqladmin.googleapis.com", "secretmanager.googleapis.com", "iam.googleapis.com", "storage.googleapis.com"]
+  services = ["run.googleapis.com", "sqladmin.googleapis.com", "secretmanager.googleapis.com", "iam.googleapis.com", "storage.googleapis.com", "artifactregistry.googleapis.com", "iamcredentials.googleapis.com", "sts.googleapis.com"]
 }
 
 resource "google_project_service" "this" {
   for_each           = toset(local.services)
   service            = each.value
   disable_on_destroy = false
+}
+
+resource "google_artifact_registry_repository" "ghcr" {
+  repository_id = "ghcr"
+  location      = var.region
+  format        = "DOCKER"
+  mode          = "REMOTE_REPOSITORY"
+
+  remote_repository_config {
+    description = "ghcr.io"
+    docker_repository {
+      custom_repository {
+        uri = "https://ghcr.io"
+      }
+    }
+  }
+
+  depends_on = [google_project_service.this]
 }
 
 resource "random_password" "db" {
@@ -147,7 +165,7 @@ resource "google_cloud_run_v2_service" "this" {
     }
 
     containers {
-      image = "ghcr.io/mulholland-inc/archive:${var.image_tag}"
+      image = "${var.region}-docker.pkg.dev/${var.project}/${google_artifact_registry_repository.ghcr.repository_id}/mulholland-inc/archive:${var.image_tag}"
 
       ports {
         container_port = 8080
@@ -212,6 +230,10 @@ resource "google_cloud_run_v2_service" "this" {
     }
   }
 
+  lifecycle {
+    ignore_changes = [template[0].containers[0].image, client, client_version]
+  }
+
   depends_on = [
     google_project_iam_member.sql,
     google_secret_manager_secret_iam_member.this,
@@ -220,16 +242,80 @@ resource "google_cloud_run_v2_service" "this" {
   ]
 }
 
-resource "google_cloud_run_domain_mapping" "this" {
-  for_each = local.domains
-  name     = each.value
+resource "cloudflare_workers_script" "this" {
+  count       = length(local.domains) > 0 ? 1 : 0
+  account_id  = var.cloudflare_account_id
+  script_name = var.name
+  main_module = "worker.js"
+  content     = <<-JS
+    export default {
+      fetch(request, env) {
+        const url = new URL(request.url);
+        url.hostname = env.ORIGIN;
+        return fetch(new Request(url, request));
+      },
+    };
+  JS
+  bindings = [{
+    name = "ORIGIN"
+    type = "plain_text"
+    text = trimprefix(google_cloud_run_v2_service.this.uri, "https://")
+  }]
+}
+
+resource "cloudflare_workers_custom_domain" "this" {
+  for_each   = local.domains
+  account_id = var.cloudflare_account_id
+  zone_id    = var.cloudflare_zone_id
+  hostname   = each.value
+  service    = cloudflare_workers_script.this[0].script_name
+}
+
+resource "google_iam_workload_identity_pool" "github" {
+  count                     = var.github_repository != "" ? 1 : 0
+  workload_identity_pool_id = "github"
+
+  depends_on = [google_project_service.this]
+}
+
+resource "google_iam_workload_identity_pool_provider" "github" {
+  count                              = var.github_repository != "" ? 1 : 0
+  workload_identity_pool_id          = google_iam_workload_identity_pool.github[0].workload_identity_pool_id
+  workload_identity_pool_provider_id = "github"
+  attribute_mapping = {
+    "google.subject"       = "assertion.sub"
+    "attribute.repository" = "assertion.repository"
+    "attribute.ref"        = "assertion.ref"
+  }
+  attribute_condition = "assertion.repository == '${var.github_repository}' && assertion.ref == 'refs/heads/main'"
+  oidc {
+    issuer_uri = "https://token.actions.githubusercontent.com"
+  }
+}
+
+resource "google_service_account" "deploy" {
+  count      = var.github_repository != "" ? 1 : 0
+  account_id = "${var.name}-deploy"
+}
+
+resource "google_service_account_iam_member" "deploy" {
+  count              = var.github_repository != "" ? 1 : 0
+  service_account_id = google_service_account.deploy[0].name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github[0].name}/attribute.repository/${var.github_repository}"
+}
+
+resource "google_cloud_run_v2_service_iam_member" "deploy" {
+  count    = var.github_repository != "" ? 1 : 0
+  name     = google_cloud_run_v2_service.this.name
   location = var.region
+  role     = "roles/run.developer"
+  member   = google_service_account.deploy[0].member
+}
 
-  metadata {
-    namespace = var.project
-  }
-
-  spec {
-    route_name = google_cloud_run_v2_service.this.name
-  }
+resource "google_service_account_iam_member" "deploy_runs_as" {
+  count              = var.github_repository != "" ? 1 : 0
+  service_account_id = google_service_account.this.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = google_service_account.deploy[0].member
 }

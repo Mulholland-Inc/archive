@@ -8,9 +8,15 @@ output "api_url" {
   value       = local.api_url
 }
 
-output "dns_records" {
-  description = "DNS records to create for each mapped domain."
-  value       = { for d, m in google_cloud_run_domain_mapping.this : d => m.status[0].resource_records }
+output "deploy" {
+  description = "GitHub Actions variables for deploying new images."
+  value = var.github_repository == "" ? null : {
+    GCP_PROJECT                    = var.project
+    GCP_WORKLOAD_IDENTITY_PROVIDER = google_iam_workload_identity_pool_provider.github[0].name
+    GCP_SERVICE_ACCOUNT            = google_service_account.deploy[0].email
+    GCP_REGION                     = var.region
+    GCP_SERVICE                    = google_cloud_run_v2_service.this.name
+  }
 }
 
 output "bucket" {
