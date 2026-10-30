@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 
-const archive = process.env.ARCHIVE ?? 'http://127.0.0.1:8080';
+const archive = 'http://127.0.0.1:8080';
 const kit = new URL('../kit', import.meta.url).pathname;
 const art = new URL('../site/static/art', import.meta.url).pathname;
 

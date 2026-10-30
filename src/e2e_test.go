@@ -147,7 +147,7 @@ func newInst(t *testing.T, env ...string) *e2eInst {
 		t.Fatal(err)
 	}
 	t.Cleanup(stop)
-	return &e2eInst{t: t, dir: dir, env: append(append([]string{"ARCHIVE_DATA=" + dir, "DATABASE_URL=host=" + dir + " user=archive dbname=archive"}, e2eCloudTasks.queue(t, dir)...), env...)}
+	return &e2eInst{t: t, dir: dir, env: append(append([]string{"DATABASE_URL=host=" + dir + " user=archive dbname=archive"}, e2eCloudTasks.queue(t, dir)...), env...)}
 }
 
 type e2eTasks struct {
@@ -155,6 +155,7 @@ type e2eTasks struct {
 	addr   string
 	hold   bool
 	issuer *httptest.Server
+	meta   *httptest.Server
 	grpc   *grpc.Server
 
 	mu     sync.Mutex
@@ -164,8 +165,6 @@ type e2eTasks struct {
 }
 
 type e2eRoute struct{ url, aud string }
-
-const e2eTasksAccount = "tasks@e2e.iam.gserviceaccount.com"
 
 func e2eTasksStart(hold bool) (*e2eTasks, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -177,7 +176,23 @@ func e2eTasksStart(hold bool) (*e2eTasks, error) {
 		ln.Close()
 		return nil, err
 	}
-	f := &e2eTasks{addr: "http://" + ln.Addr().String(), hold: hold, issuer: issuer, grpc: grpc.NewServer(), names: map[string]bool{}, routes: map[string]*e2eRoute{}}
+	meta := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Metadata-Flavor") != "Google" {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		switch r.URL.Path {
+		case "/computeMetadata/v1/project/project-id":
+			io.WriteString(w, "e2e")
+		case "/computeMetadata/v1/instance/region":
+			io.WriteString(w, "projects/123/regions/here")
+		case "/computeMetadata/v1/instance/service-accounts/default/token":
+			json.NewEncoder(w).Encode(map[string]any{"access_token": "meta", "expires_in": 3600, "token_type": "Bearer"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	f := &e2eTasks{addr: "http://" + ln.Addr().String(), hold: hold, issuer: issuer, meta: meta, grpc: grpc.NewServer(), names: map[string]bool{}, routes: map[string]*e2eRoute{}}
 	taskspb.RegisterCloudTasksServer(f.grpc, f)
 	go f.grpc.Serve(ln)
 	return f, nil
@@ -186,10 +201,7 @@ func e2eTasksStart(hold bool) (*e2eTasks, error) {
 func (f *e2eTasks) stop() {
 	f.grpc.Stop()
 	f.issuer.Close()
-}
-
-func (f *e2eTasks) env(queue string) []string {
-	return []string{"ARCHIVE_TASKS_QUEUE=" + queue, "ARCHIVE_TASKS_SERVICE_ACCOUNT=" + e2eTasksAccount, "ARCHIVE_TASKS_URL=" + f.addr, "ARCHIVE_TASKS_ISSUER=" + f.issuer.URL}
+	f.meta.Close()
 }
 
 func (f *e2eTasks) queue(t *testing.T, dir string) []string {
@@ -202,7 +214,7 @@ func (f *e2eTasks) queue(t *testing.T, dir string) []string {
 		delete(f.routes, q)
 		f.mu.Unlock()
 	})
-	return f.env(q)
+	return []string{"ARCHIVE_TASKS_URL=" + f.addr, "ARCHIVE_TASKS_ISSUER=" + f.issuer.URL, "GCE_METADATA_HOST=" + strings.TrimPrefix(f.meta.URL, "http://"), "K_SERVICE=" + filepath.Base(dir)}
 }
 
 func (f *e2eTasks) route(queue, url, aud string) {
@@ -283,6 +295,13 @@ func (f *e2eTasks) tasks() []*taskspb.Task {
 	return slices.Clone(f.posted)
 }
 
+func (in *e2eInst) queue() string {
+	if u, err := url.Parse(in.getenv("ARCHIVE_TASKS_URL")); err == nil && strings.Trim(u.Path, "/") != "" {
+		return strings.Trim(u.Path, "/")
+	}
+	return "projects/e2e/locations/here/queues/" + in.getenv("K_SERVICE")
+}
+
 func (in *e2eInst) getenv(key string) string {
 	for _, kv := range slices.Backward(in.env) {
 		if v, ok := strings.CutPrefix(kv, key+"="); ok {
@@ -319,7 +338,8 @@ func e2eTemplateDB(dir string) error {
 	}
 	key := make([]byte, 32)
 	rand.Read(key)
-	if err := os.WriteFile(filepath.Join(dir, "secret.key"), []byte(hex.EncodeToString(key)+"\n"), 0o600); err != nil {
+	os.MkdirAll(filepath.Join(dir, "data"), 0o700)
+	if err := os.WriteFile(filepath.Join(dir, "data", "secret.key"), []byte(hex.EncodeToString(key)+"\n"), 0o600); err != nil {
 		return err
 	}
 	stop, err := e2ePostgres(dir)
@@ -344,15 +364,16 @@ func (in *e2eInst) twin(env ...string) *e2eInst {
 		in.t.Fatal(err)
 	}
 	in.t.Cleanup(func() { os.RemoveAll(dir) })
-	key, err := os.ReadFile(filepath.Join(in.dir, "secret.key"))
+	key, err := os.ReadFile(filepath.Join(in.dir, "data", "secret.key"))
 	if err != nil {
 		in.t.Fatal(err)
 	}
-	os.MkdirAll(filepath.Join(in.dir, "blobs"), 0o700)
-	if err := os.Symlink(filepath.Join(in.dir, "blobs"), filepath.Join(dir, "blobs")); err != nil {
+	os.MkdirAll(filepath.Join(in.dir, "data", "blobs"), 0o700)
+	os.MkdirAll(filepath.Join(dir, "data"), 0o700)
+	if err := os.Symlink(filepath.Join(in.dir, "data", "blobs"), filepath.Join(dir, "data", "blobs")); err != nil {
 		in.t.Fatal(err)
 	}
-	return &e2eInst{t: in.t, dir: dir, env: append(append([]string{"ARCHIVE_DATA=" + dir, "DATABASE_URL=host=" + in.dir + " user=archive dbname=archive",
+	return &e2eInst{t: in.t, dir: dir, env: append(append([]string{"DATABASE_URL=host=" + in.dir + " user=archive dbname=archive",
 		"ARCHIVE_SECRET_KEY=" + strings.TrimSpace(string(key))}, e2eCloudTasks.queue(in.t, dir)...), env...)}
 }
 
@@ -364,8 +385,12 @@ func (in *e2eInst) on(t *testing.T) *e2eInst {
 
 func (in *e2eInst) cmd(args ...string) *exec.Cmd {
 	c := exec.Command(e2eBin, args...)
-	c.Env = append(os.Environ(), in.env...)
+	c.Dir, c.Env = in.dir, in.environ()
 	return c
+}
+
+func (in *e2eInst) environ() []string {
+	return append([]string{"ARCHIVE_E2E_MAIN=1", "PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "TMPDIR=" + os.TempDir()}, in.env...)
 }
 
 func (in *e2eInst) run(stdin string, args ...string) (string, string, error) {
@@ -518,7 +543,10 @@ func (in *e2eInst) serve() *e2eServer {
 	}
 	done := make(chan struct{})
 	go func() { c.Wait(); close(done) }()
-	queue, api := in.getenv("ARCHIVE_TASKS_QUEUE"), cmp.Or(in.getenv("ARCHIVE_API_URL"), "http://localhost:"+strings.TrimPrefix(addr, "127.0.0.1:"))
+	queue, api := in.queue(), "http://localhost:"+strings.TrimPrefix(addr, "127.0.0.1:")
+	if app, err := url.Parse(in.getenv("ARCHIVE_URL")); err == nil && strings.HasPrefix(app.Host, "app.") {
+		api = app.Scheme + "://api." + strings.TrimPrefix(app.Host, "app.")
+	}
 	var once sync.Once
 	s.stop = func() {
 		once.Do(func() {
@@ -604,7 +632,7 @@ func id(r row) string { return fmt.Sprint(r["id"]) }
 
 func TestSchemaPushNormalizesMessyInputAndBlocksDrops(t *testing.T) {
 	t.Parallel()
-	in := newInst(t, "ARCHIVE_LOCALE=en-US")
+	in := newInst(t)
 	in.fails("list", "contact")
 	in.must("user", "add", "ann@example.com", "-name", "Ann")
 	plan := decode[SchemaPlan](t, in.push(e2eSchema))
@@ -707,8 +735,9 @@ func TestDemoVaultLoadsOnceWithLinkedRowsAndFiles(t *testing.T) {
 	t.Parallel()
 	in := newInst(t)
 	load := func() (string, string, error) {
-		c := exec.Command("../demo/load.sh", "ann@example.com")
-		c.Env = append(os.Environ(), append(in.env, "ARCHIVE_BIN="+e2eBin)...)
+		load, _ := filepath.Abs("../demo/load.sh")
+		c := exec.Command(load, "ann@example.com")
+		c.Dir, c.Env = in.dir, append(in.environ(), "ARCHIVE_BIN="+e2eBin)
 		var out, errb bytes.Buffer
 		c.Stdout, c.Stderr = &out, &errb
 		err := c.Run()
@@ -744,7 +773,7 @@ func TestDemoVaultLoadsOnceWithLinkedRowsAndFiles(t *testing.T) {
 
 func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 	t.Parallel()
-	in := newInst(t, append(e2eGoogle(t), "ANTHROPIC_API_KEY=")...)
+	in := newInst(t, e2eGoogle(t)...)
 	in.must("user", "add", "alice@example.com")
 	srv := in.serve()
 	api := srv.url + "/api"
@@ -1497,11 +1526,11 @@ func TestFilesUploadProcessShareAndReference(t *testing.T) {
 		if again.ID != bigFile.ID || copied.ID == bigFile.ID || bobs.ID == bigFile.ID || copied.Hash != bigFile.Hash || bobs.Hash != bigFile.Hash {
 			t.Fatalf("same name %s, copy %s, bob %s, first %s", again.ID, copied.ID, bobs.ID, bigFile.ID)
 		}
-		blobs, _ := filepath.Glob(filepath.Join(in.dir, "blobs", "*", "*", bigFile.Hash))
+		blobs, _ := filepath.Glob(filepath.Join(in.dir, "data", "blobs", "*", "*", bigFile.Hash))
 		if n := in.psql("archive", "SELECT count(*) FROM archive.file WHERE hash = '"+bigFile.Hash+"'"); n != "3" || len(blobs) != 1 {
 			t.Errorf("%s file rows, %d blobs", n, len(blobs))
 		}
-		parts, _ := os.ReadDir(filepath.Join(in.dir, "blobs", "uploads"))
+		parts, _ := os.ReadDir(filepath.Join(in.dir, "data", "blobs", "uploads"))
 		if n := in.psql("archive", "SELECT count(*) FROM archive.upload"); n != "0" || len(parts) != 0 {
 			t.Errorf("uploads left behind: %s rows, %d part directories", n, len(parts))
 		}
@@ -1629,10 +1658,6 @@ type e2eGCS struct {
 
 func (s *e2eGCS) handler(t *testing.T) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/computeMetadata/v1/instance/service-accounts/default/token" && r.Header.Get("Metadata-Flavor") == "Google" {
-			json.NewEncoder(w).Encode(map[string]any{"access_token": "meta", "expires_in": 3600, "token_type": "Bearer"})
-			return
-		}
 		if r.Header.Get("Authorization") != "Bearer meta" {
 			w.WriteHeader(403)
 			return
@@ -1663,7 +1688,7 @@ func TestGCSBlobBackendSignsWithTheServiceAccountTokenFromTheMetadataServer(t *t
 	gcs := &e2eGCS{objects: map[string][]byte{}}
 	fake := httptest.NewServer(gcs.handler(t))
 	defer fake.Close()
-	in := newInst(t, "ARCHIVE_BLOB_URL=gs://photos/archive?endpoint="+url.QueryEscape(fake.URL), "GCE_METADATA_HOST="+strings.TrimPrefix(fake.URL, "http://"))
+	in := newInst(t, "ARCHIVE_BLOB_URL=gs://photos/archive?endpoint="+url.QueryEscape(fake.URL))
 	in.must("user", "add", "ann@example.com")
 	content := bytes.Repeat([]byte("0123456789"), 5000)
 	path := filepath.Join(in.dir, "numbers.txt")
@@ -1679,7 +1704,7 @@ func TestGCSBlobBackendSignsWithTheServiceAccountTokenFromTheMetadataServer(t *t
 	if !stored || puts != 1 || f.Status != "done" {
 		t.Fatalf("object %s stored %v, %d puts, file %+v", key, stored, puts, f)
 	}
-	if _, err := os.Stat(filepath.Join(in.dir, "blobs")); err == nil {
+	if _, err := os.Stat(filepath.Join(in.dir, "data", "blobs")); err == nil {
 		t.Error("blobs written to the data directory too")
 	}
 	if out := in.must("file", "get", f.ID.String(), "-o", "-"); out != string(content) {
@@ -1776,7 +1801,7 @@ func TestTwoInstancesShareOnePostgresAndBlobStore(t *testing.T) {
 		if !bytes.Equal(body, data) || f.Name != "two.txt" {
 			t.Fatalf("downloaded %d bytes of %s", len(body), f.Name)
 		}
-		parts, _ := os.ReadDir(filepath.Join(a.dir, "blobs", "uploads"))
+		parts, _ := os.ReadDir(filepath.Join(a.dir, "data", "blobs", "uploads"))
 		if n := a.psql("archive", "SELECT count(*) FROM archive.upload"); n != "0" || len(parts) != 0 {
 			t.Errorf("uploads left behind: %s rows, %d part directories", n, len(parts))
 		}
@@ -2259,7 +2284,7 @@ func (b e2eBearer) RoundTrip(r *http.Request) (*http.Response, error) {
 
 func TestARunThatTimesOutStopsAndSavesNothing(t *testing.T) {
 	t.Parallel()
-	in := newInst(t, "ARCHIVE_RUN_TIMEOUT=1s")
+	in := newInst(t)
 	in.must("user", "add", "alice@example.com")
 	in.push(map[string]string{"house.sql": e2eHouse})
 	srv := in.serve()
@@ -2267,7 +2292,7 @@ func TestARunThatTimesOutStopsAndSavesNothing(t *testing.T) {
 	start := time.Now()
 	var out RunOutput
 	st, _ := call(t, "POST", srv.url+"/api/run", tok, map[string]string{"code": `await archive.create("house", { address: "Loop 1" }); while (true) {}`}, &out)
-	if st != 200 || out.Error != "timed out after 1s; nothing was saved" || time.Since(start) > 15*time.Second {
+	if st != 200 || out.Error != "timed out after 30s; nothing was saved" || time.Since(start) > 45*time.Second {
 		t.Errorf("timeout: %d %+v after %s", st, out, time.Since(start))
 	}
 	if n := in.must("list", "house"); strings.Contains(n, "Loop 1") {
@@ -2277,7 +2302,7 @@ func TestARunThatTimesOutStopsAndSavesNothing(t *testing.T) {
 
 func TestCodeModeRunsTypeScriptInOneTransactionOverHTTPMCPAndCLI(t *testing.T) {
 	t.Parallel()
-	in := newInst(t, "ARCHIVE_RUN_TIMEOUT=30s")
+	in := newInst(t)
 	in.must("user", "add", "alice@example.com")
 	srv := in.serve()
 	api := srv.url + "/api"
@@ -2730,7 +2755,7 @@ func TestChatStreamsTheAgentLoopThroughRunAndKeepsEachUsersHistory(t *testing.T)
 		}
 	}))
 	defer fake.Close()
-	in := newInst(t, "ANTHROPIC_API_KEY=test", "ANTHROPIC_BASE_URL="+fake.URL, "ARCHIVE_CHAT_MODEL=")
+	in := newInst(t, "ANTHROPIC_API_KEY=test", "ANTHROPIC_BASE_URL="+fake.URL)
 	in.must("user", "add", "alice@example.com")
 	srv := in.serve()
 	api := srv.url + "/api"
@@ -2899,7 +2924,7 @@ func TestWorkflowsDeployTestStartAndFireOnTheirOwn(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]any{"method": r.Method, "body": string(b), "type": r.Header.Get("Content-Type"), "test": r.Header.Get("X-Test"), "x": r.URL.Query().Get("x")})
 	}))
 	defer echo.Close()
-	in := newInst(t, "ARCHIVE_RUN_TIMEOUT=30s")
+	in := newInst(t)
 	in.must("user", "add", "alice@example.com")
 	in.push(map[string]string{"house.sql": e2eHouse})
 	srv := in.serve()
@@ -3230,7 +3255,7 @@ func e2eSession(cs []*http.Cookie) *http.Cookie {
 }
 
 func e2eGoogle(t *testing.T) []string {
-	return []string{"ARCHIVE_GOOGLE_URL=" + e2eIssuer(t).URL, "ARCHIVE_GOOGLE_CLIENT_ID=web", "ARCHIVE_GOOGLE_CLIENT_SECRET=shh"}
+	return []string{"ARCHIVE_GOOGLE=" + strings.Replace(e2eIssuer(t).URL, "://", "://web:shh@", 1)}
 }
 
 func e2eIssuer(t *testing.T) *httptest.Server {
@@ -3368,10 +3393,10 @@ func TestTwoWorkspacesInOneProcessSeeNothingOfEachOther(t *testing.T) {
 		}
 		st, g := e2eUpload(t, api+"/files", bob, "beta.txt", []byte("beta only"))
 		wantStatus(t, st, 201, "bob uploads")
-		if _, err := os.Stat(filepath.Join(in.dir, "blobs", ws, g.Hash[:2], g.Hash)); err != nil {
+		if _, err := os.Stat(filepath.Join(in.dir, "data", "blobs", ws, g.Hash[:2], g.Hash)); err != nil {
 			t.Errorf("bob's file is not under his workspace's prefix: %v", err)
 		}
-		if _, err := os.Stat(filepath.Join(in.dir, "blobs", one, f.Hash[:2], f.Hash)); err != nil {
+		if _, err := os.Stat(filepath.Join(in.dir, "data", "blobs", one, f.Hash[:2], f.Hash)); err != nil {
 			t.Errorf("alice's file moved: %v", err)
 		}
 		var link FileLink
@@ -3465,19 +3490,19 @@ func (in *e2eInst) cloudsql(env ...string) *e2eInst {
 		in.t.Fatal(err)
 	}
 	in.t.Cleanup(func() { os.RemoveAll(dir) })
-	key, err := os.ReadFile(filepath.Join(in.dir, "secret.key"))
+	key, err := os.ReadFile(filepath.Join(in.dir, "data", "secret.key"))
 	if err != nil {
 		in.t.Fatal(err)
 	}
 	dsn := "host=" + in.dir + " user=cloudsql password=cloudsql dbname=tenantmain"
-	return &e2eInst{t: in.t, dir: dir, env: append(append([]string{"ARCHIVE_DATA=" + dir, "DATABASE_URL=" + dsn,
+	return &e2eInst{t: in.t, dir: dir, env: append(append([]string{"DATABASE_URL=" + dsn,
 		"ARCHIVE_SECRET_KEY=" + strings.TrimSpace(string(key))}, e2eCloudTasks.queue(in.t, dir)...), env...)}
 }
 
 func TestWorkspacesIsolateWhenArchiveIsNotASuperuser(t *testing.T) {
 	t.Parallel()
 	host := newInst(t)
-	in := host.cloudsql("ANTHROPIC_API_KEY=")
+	in := host.cloudsql()
 	if s := host.psqlIn("tenantmain", "SELECT rolsuper::text FROM pg_roles WHERE rolname = 'cloudsql'"); s != "false" {
 		t.Fatalf("archive's role is a superuser: %q", s)
 	}
@@ -3802,6 +3827,13 @@ func TestGitHubAndMicrosoftSignInOnlyMatchVerifiedEmails(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/login/oauth/access_token" {
 			r.ParseForm()
+			id, secret, _ := r.BasicAuth()
+			id, _ = url.QueryUnescape(cmp.Or(id, r.Form.Get("client_id")))
+			secret, _ = url.QueryUnescape(cmp.Or(secret, r.Form.Get("client_secret")))
+			if id != "gh" || secret != "s/h:h@ +" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
 			json.NewEncoder(w).Encode(map[string]any{"access_token": b64.EncodeToString([]byte(r.Form.Get("code"))), "token_type": "bearer"})
 			return
 		}
@@ -3823,9 +3855,8 @@ func TestGitHubAndMicrosoftSignInOnlyMatchVerifiedEmails(t *testing.T) {
 	t.Cleanup(gh.Close)
 	ms := e2eIssuer(t)
 	in := newInst(t,
-		"ARCHIVE_GITHUB_URL="+gh.URL, "ARCHIVE_GITHUB_CLIENT_ID=gh", "ARCHIVE_GITHUB_CLIENT_SECRET=shh",
-		"ARCHIVE_MICROSOFT_URL="+ms.URL, "ARCHIVE_MICROSOFT_CLIENT_ID=web", "ARCHIVE_MICROSOFT_CLIENT_SECRET=shh",
-		"ARCHIVE_SLACK_CLIENT_ID=slack", "ARCHIVE_SLACK_CLIENT_SECRET=shh", "ARCHIVE_GOOGLE_CLIENT_ID=only-an-id")
+		"ARCHIVE_GITHUB="+strings.Replace(gh.URL, "://", "://gh:s%2Fh%3Ah%40%20%2B@", 1), "ARCHIVE_MICROSOFT="+strings.Replace(ms.URL, "://", "://web:shh@", 1),
+		"ARCHIVE_SLACK=https://slack:shh@slack.com", "ARCHIVE_GOOGLE=https://only-an-id@accounts.google.com")
 	in.must("user", "add", "alice@example.com")
 	srv := in.serve()
 	var methods struct {
@@ -3886,30 +3917,30 @@ func TestGitHubAndMicrosoftSignInOnlyMatchVerifiedEmails(t *testing.T) {
 
 func TestGeneratedURLsUseTheAPIAddress(t *testing.T) {
 	t.Parallel()
-	in := newInst(t, append(e2eGoogle(t), "ARCHIVE_URL=http://app.test", "ARCHIVE_API_URL=http://api.test:9/")...)
+	in := newInst(t, append(e2eGoogle(t), "ARCHIVE_URL=http://app.test/")...)
 	in.must("user", "add", "alice@example.com")
 	srv := in.serve()
 	api := srv.url + "/api"
 	one := in.psql("archive", "SELECT id FROM archive.workspace ORDER BY created_at LIMIT 1")
 	tok := decode[Token](t, in.must("token", "create")).Secret
 	_, out := e2eRun(t, api, tok, `return (await archive.deploy({ "hook.ts": "// on: webhook\nreturn 1;" })).workflows[0].url;`)
-	if !strings.HasPrefix(string(out.Result), `"http://api.test:9/hooks/run/`+one+`/`) {
+	if !strings.HasPrefix(string(out.Result), `"http://api.test/hooks/run/`+one+`/`) {
 		t.Errorf("webhook URL: %+v", out)
 	}
 	_, f := e2eUpload(t, api+"/files", tok, "a.txt", []byte("a"))
 	var link FileLink
 	call(t, "POST", api+"/files/"+f.ID.String()+"/link", tok, nil, &link)
-	if !strings.HasPrefix(link.URL, "http://api.test:9/files/"+one+"/") {
+	if !strings.HasPrefix(link.URL, "http://api.test/files/"+one+"/") {
 		t.Errorf("file link: %s", link.URL)
 	}
 	st, hdr := call(t, "GET", srv.url+"/auth/oidc/google", "", nil, nil)
 	loc, _ := url.Parse(hdr.Get("Location"))
-	if st != 302 || loc == nil || loc.Query().Get("redirect_uri") != "http://api.test:9/auth/oidc/google/callback" || loc.Query().Get("state") == "" {
+	if st != 302 || loc == nil || loc.Query().Get("redirect_uri") != "http://api.test/auth/oidc/google/callback" || loc.Query().Get("state") == "" {
 		t.Errorf("OIDC redirect: %d %s", st, hdr.Get("Location"))
 	}
 	st, _ = call(t, "GET", srv.url+"/auth/oidc/google/callback?state=forged&code=x", "", nil, nil)
 	wantStatus(t, st, 401, "an OIDC callback with a forged state")
-	if !strings.Contains(srv.log.String(), "the API on http://api.test:9/api") {
+	if !strings.Contains(srv.log.String(), "the API on http://api.test/api") {
 		t.Errorf("startup line:\n%s", srv.log)
 	}
 }
@@ -3936,7 +3967,7 @@ func e2eFrom(t *testing.T, method, url, origin string, cookies ...*http.Cookie) 
 
 func TestTheWebAppOnItsOwnHostCallsTheAPIHostWithTheAPIsCookie(t *testing.T) {
 	t.Parallel()
-	in := newInst(t, append(e2eGoogle(t), "ARCHIVE_URL=https://app.test", "ARCHIVE_API_URL=https://api.test")...)
+	in := newInst(t, append(e2eGoogle(t), "ARCHIVE_URL=https://app.test")...)
 	in.must("user", "add", "alice@example.com")
 	srv := in.serve()
 	st, hdr := e2eFrom(t, "OPTIONS", srv.url+"/api/chats", "https://app.test")
@@ -4000,8 +4031,8 @@ func TestCloudTasksWakeTheServiceAtEachDueTimeAndNothingRunsOnItsOwn(t *testing.
 		t.Fatal(err)
 	}
 	t.Cleanup(fake.stop)
-	queue, acct := "projects/p/locations/l/queues/q", "tasks@p.iam.gserviceaccount.com"
-	in := newInst(t, append(fake.env(queue), "ARCHIVE_TASKS_SERVICE_ACCOUNT="+acct, "ARCHIVE_TASKS_ISSUER="+google.URL, "ARCHIVE_API_URL=http://api.test")...)
+	queue, acct := "projects/p/locations/l/queues/q", "q-tasks@p.iam.gserviceaccount.com"
+	in := newInst(t, "ARCHIVE_TASKS_URL="+fake.addr+"/"+queue, "ARCHIVE_TASKS_ISSUER="+google.URL, "ARCHIVE_URL=http://app.test")
 	in.must("user", "add", "alice@example.com")
 	in.push(map[string]string{"house.sql": e2eHouse})
 	srv := in.serve()
@@ -4186,7 +4217,7 @@ func TestChatUsesTheWorkspacesOwnAnthropicKey(t *testing.T) {
 		}
 	}))
 	defer model.Close()
-	in := newInst(t, "ANTHROPIC_API_KEY=shared", "ANTHROPIC_BASE_URL="+model.URL, "ARCHIVE_CHAT_MODEL=")
+	in := newInst(t, "ANTHROPIC_API_KEY=shared", "ANTHROPIC_BASE_URL="+model.URL)
 	in.must("user", "add", "alice@example.com")
 	ws := decode[Workspace](t, in.must("workspace", "add", "Bob Co", "bob@example.com")).ID
 	srv := in.serve()

@@ -4,7 +4,7 @@ output "url" {
 }
 
 output "api_url" {
-  description = "Public URL of the API, MCP, webhooks and OAuth redirects (ARCHIVE_API_URL)."
+  description = "Public URL of the API, MCP, webhooks and OAuth redirects."
   value       = local.api_url
 }
 
@@ -24,7 +24,7 @@ output "service_account" {
 }
 
 output "tasks_queue" {
-  description = "Cloud Tasks queue that delivers due workflows and files to the API (ARCHIVE_TASKS_QUEUE)."
+  description = "Cloud Tasks queue that delivers due workflows and files to the API, named after the service, which finds it from the metadata server."
   value       = google_cloud_tasks_queue.this.id
 }
 

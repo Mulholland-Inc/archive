@@ -94,45 +94,33 @@ Environment:
                      docker compose up -d starts; several instances can share one when they
                      share ARCHIVE_SECRET_KEY and ARCHIVE_BLOB_URL; every other workspace gets its own
                      database on the same server
-  ARCHIVE_DATA       data directory for secret.key and files, when ARCHIVE_SECRET_KEY and
-                     ARCHIVE_BLOB_URL are unset (default ./data)
-  ARCHIVE_LOCALE     locale that messy input is read in, like en-US
-  ANTHROPIC_API_KEY  key for the agent behind POST /api/chat, which can only call the run tool;
-                     ANTHROPIC_BASE_URL points it at another Messages API endpoint
-  ARCHIVE_CHAT_MODEL model of that agent (default claude-haiku-5-5)
-  ARCHIVE_RUN_TIMEOUT
-                     time limit of one archive run, POST /api/run or MCP run (default 30s)
-  ARCHIVE_BLOB_URL   gs://bucket/prefix for GCS as the service account of the Google Cloud metadata server;
-                     unset stores files in $ARCHIVE_DATA/blobs
   ARCHIVE_SECRET_KEY 32-byte key (hex or base64) for secret values and the Postgres role password,
-                     the same on every instance; unset uses $ARCHIVE_DATA/secret.key, for one instance
+                     the same on every instance; unset uses ./data/secret.key, for one instance
   ARCHIVE_URL        public base URL of the web app, which runs on its own as static files,
-                     for passkeys and where sign-in returns (default http://localhost:5173); while it is
-                     http://localhost, requests from this machine are signed in as the first owner
-  ARCHIVE_API_URL    public base URL of this server: the API, sign-in, MCP, webhooks, file links and every
-                     OAuth redirect URL, which holds the session cookie (default http://localhost:<port>);
-                     /api and /auth allow ARCHIVE_URL's origin over CORS with the cookie; unless
-                     ARCHIVE_URL is http://localhost, any other origin may call with a bearer token
-  ARCHIVE_TASKS_QUEUE
-                     Cloud Tasks queue, projects/<p>/locations/<r>/queues/<q>, required, that calls
-                     POST ARCHIVE_API_URL/tasks at each time workflows or files are due, so serve can
-                     scale to zero
-  ARCHIVE_TASKS_SERVICE_ACCOUNT
-                     service account whose OIDC token those calls carry, required; /tasks refuses any other
-  ARCHIVE_TASKS_URL  Cloud Tasks API (default https://cloudtasks.googleapis.com), or http://localhost:8123
-                     for the emulator in local development
-  ARCHIVE_TASKS_ISSUER
-                     issuer of those OIDC tokens (default https://accounts.google.com), or the emulator's
-  ARCHIVE_GOOGLE_CLIENT_ID, ARCHIVE_GOOGLE_CLIENT_SECRET
-  ARCHIVE_MICROSOFT_CLIENT_ID, ARCHIVE_MICROSOFT_CLIENT_SECRET
-  ARCHIVE_SLACK_CLIENT_ID, ARCHIVE_SLACK_CLIENT_SECRET
-  ARCHIVE_GITHUB_CLIENT_ID, ARCHIVE_GITHUB_CLIENT_SECRET
-                     sign-in providers; each shows on the sign-in page when both are set, and
-                     its redirect URL is ARCHIVE_API_URL/auth/oidc/<google|microsoft|slack|github>/callback.
-                     Only invited people sign in, matched on an email the provider says is verified
-  ARCHIVE_GOOGLE_URL, ARCHIVE_MICROSOFT_URL, ARCHIVE_SLACK_URL, ARCHIVE_GITHUB_URL
-                     provider base URLs (default https://accounts.google.com,
-                     https://login.microsoftonline.com, https://slack.com, https://github.com)
+                     for passkeys and where sign-in returns (default http://localhost:5173); the API,
+                     sign-in, MCP, webhooks, file links and OAuth redirects are on the same URL with
+                     app. made api., like https://api.archive.dev for https://app.archive.dev, or on
+                     http://localhost:<port> while it is http://localhost, when requests from this
+                     machine are signed in as the first owner
+  ARCHIVE_BLOB_URL   gs://bucket/prefix for GCS as the service account of the Google Cloud metadata server;
+                     unset stores files in ./data/blobs
+  ARCHIVE_GOOGLE     https://<client id>:<client secret>@accounts.google.com
+  ARCHIVE_MICROSOFT  https://<client id>:<client secret>@login.microsoftonline.com
+  ARCHIVE_SLACK      https://<client id>:<client secret>@slack.com
+  ARCHIVE_GITHUB     https://<client id>:<client secret>@github.com
+                     sign-in providers, with the id and secret URL-escaped; each shows on the sign-in
+                     page when it is set, and its redirect URL is
+                     <API>/auth/oidc/<google|microsoft|slack|github>/callback. Only invited people sign
+                     in, matched on an email the provider says is verified
+  ANTHROPIC_API_KEY  key for the agent behind POST /api/chat, which can only call the run tool, for
+                     workspaces without a key of their own; ANTHROPIC_BASE_URL points it at another
+                     Messages API endpoint
+
+On Cloud Run, the Cloud Tasks queue projects/<project>/locations/<region>/queues/<service> calls
+POST <API>/tasks at each time workflows or files are due, so serve can scale to zero, with the OIDC
+token of <service>-tasks@<project>.iam.gserviceaccount.com; /tasks refuses any other. In development,
+ARCHIVE_TASKS_URL is the emulator's queue, like
+http://localhost:8123/projects/dev/locations/here/queues/archive, and ARCHIVE_TASKS_ISSUER its issuer.
 `
 
 var cliErrUsage = errors.New("usage")
@@ -560,7 +548,9 @@ func cliSchema(ctx context.Context, a *Archive, pos []string, allowDrop bool, st
 
 func cliServe(ctx context.Context, h *Hub, a *Archive, addr string) error {
 	_, port, _ := net.SplitHostPort(addr)
-	h.urls(cmp.Or(port, "80"))
+	if err := h.urls(cmp.Or(port, "80")); err != nil {
+		return err
+	}
 	si, err := newSignin(h)
 	if err != nil {
 		return err
@@ -573,7 +563,7 @@ func cliServe(ctx context.Context, h *Hub, a *Archive, addr string) error {
 	if h.localApp() {
 		fmt.Fprintf(os.Stderr, "archive: %s is on this machine, so requests from this machine are signed in as the first owner\n", h.app)
 	} else if len(si.configs) == 0 {
-		fmt.Fprintln(os.Stderr, "archive: no sign-in provider is set, so nobody can sign in to the web app; set ARCHIVE_GOOGLE_CLIENT_ID and ARCHIVE_GOOGLE_CLIENT_SECRET, or Microsoft's, Slack's or GitHub's (see archive help)")
+		fmt.Fprintln(os.Stderr, "archive: no sign-in provider is set, so nobody can sign in to the web app; set ARCHIVE_GOOGLE, ARCHIVE_MICROSOFT, ARCHIVE_SLACK or ARCHIVE_GITHUB (see archive help)")
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/api/", h.httpAuth((*Archive).handler))

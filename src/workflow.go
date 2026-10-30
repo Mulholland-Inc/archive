@@ -450,7 +450,7 @@ func (a *Archive) RunWorkflow(ctx context.Context, name string) (WorkflowRun, er
 func (a *Archive) workflowNext(ctx context.Context) (bool, error) {
 	var w generated.ArchiveWorkflow
 	err := a.sys(ctx, func(ctx context.Context) (err error) {
-		w, err = a.st.db(ctx).ClaimWorkflow(ctx, time.Now().Add(runTimeout()+workflowRetry))
+		w, err = a.st.db(ctx).ClaimWorkflow(ctx, time.Now().Add(runTimeout+workflowRetry))
 		return err
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
