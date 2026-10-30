@@ -11,7 +11,7 @@
   import Connect from './ui/Connect.svelte';
   import Machine from './ui/Machine.svelte';
   import Bot from './ui/Bot.svelte';
-  import { setLook } from './ui/looks.svelte.js';
+  import { look, setLook } from './ui/looks.svelte.js';
   import Library from './Library.svelte';
   import Heading from './ui/Heading.svelte';
   import NavItem from './ui/NavItem.svelte';
@@ -206,7 +206,7 @@
       {#key generation}
       {#if !route.first || route.first === 'chat'}
         {#if catalogued}
-          <Chat id={route.second} name={me.actor.name} email={me.actor.email} family={archive} onsaved={loadChats} />
+          <Chat id={route.second} name={me.actor.name} email={me.actor.email} family={archive} tint={look(me.workspace).tint} onsaved={loadChats} />
         {/if}
       {:else if route.first === 'library'}
         {#if catalogued}<Library {views} {tables} />{/if}

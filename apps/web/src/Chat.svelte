@@ -57,7 +57,7 @@
   import Setup from './ui/Setup.svelte';
   import robot from '../../site/static/art/robot.webp';
 
-  let { id = '', name = '', email = '', family = '', onsaved } = $props();
+  let { id = '', name = '', email = '', family = '', tint = '', onsaved } = $props();
 
   let current = $state('');
   let title = $state('');
@@ -73,7 +73,7 @@
   let pinned = true;
 
   const empty = $derived(!current && !turns.length);
-  const hello = $derived(family ? `Hello, ${family}` : greeting(name));
+  const hello = $derived(!family ? greeting(name) : /archive$/i.test(family) ? family : `${family} Archive`);
 
   $effect(() => {
     const want = id;
@@ -258,10 +258,9 @@
   }
 </script>
 
-<Heading plain column="chat" title={empty ? '' : current ? title || 'Untitled' : 'New chat'} onrename={current ? rename : undefined}>
-  {#if current}<Button icon="trash" title="Delete chat" aria-label="Delete chat" onclick={remove} />{/if}
-</Heading>
-<div class="chat" class:empty bind:this={pane}>
+<Heading plain column="chat" title="" />
+{#if current}<span class="remove"><Button icon="trash" title="Delete chat" aria-label="Delete chat" onclick={remove} /></span>{/if}
+<div class="chat" class:empty style={tint ? `--primary: ${tint}; --primary-hover: ${tint}; --tint: ${tint}` : undefined} bind:this={pane}>
   {#if empty}
     <img class="robot" src={robot} alt="" />
     <h2 class="hello">{hello}</h2>
@@ -306,7 +305,8 @@
 
 <style>
   .chat { --text-table: var(--text-chat); display: flex; flex: 1; flex-direction: column; align-items: center; gap: var(--space-5); min-height: 0; padding: var(--gutter); overflow-y: var(--sheet-overflow); overscroll-behavior-y: none; font-size: var(--text-chat); }
-  .log { display: flex; flex: 1; flex-direction: column; gap: var(--space-6); width: 100%; max-width: var(--chat-width); min-width: 0; }
+  .remove { position: absolute; top: var(--space-2); right: var(--space-3); z-index: var(--z-raised); }
+  .log { display: flex; flex: 1; flex-direction: column; gap: var(--space-3); padding-top: var(--space-7, 40px); width: 100%; max-width: var(--chat-width); min-width: 0; }
   .empty { justify-content: center; gap: var(--space-6); }
   .empty .log { flex: none; }
   .robot { width: 120px; height: auto; margin-bottom: calc(-1 * var(--space-3)); }
@@ -322,13 +322,14 @@
   .user {
     align-self: flex-end;
     max-width: var(--bubble-width);
-    padding: var(--space-2);
-    border-radius: var(--radius-sm);
-    background: var(--fill);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-panel);
+    background: var(--tint, var(--fill));
+    color: #fff;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
-  .turn { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+  .turn { display: flex; flex-direction: column; gap: var(--space-3); align-self: flex-start; max-width: 100%; min-width: 0; padding: var(--space-3); border-radius: var(--radius-panel); background: var(--surface); }
   .fresh { animation: rise var(--duration-normal) var(--ease-out) both; }
   .problem { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
   .thinking { display: flex; gap: var(--space-1); padding: var(--space-2); align-self: flex-start; }
