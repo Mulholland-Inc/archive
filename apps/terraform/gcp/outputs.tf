@@ -17,3 +17,8 @@ output "database_connection_name" {
   description = "Cloud SQL connection name."
   value       = google_sql_database_instance.this.connection_name
 }
+
+output "cli" {
+  description = "Runs an archive command in the cloud: add the words after --args=, separated by commas, like user,add,you@example.com."
+  value       = "gcloud run jobs execute ${google_cloud_run_v2_job.this.name} --project ${var.project} --region ${var.region} --wait --args="
+}

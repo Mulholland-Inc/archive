@@ -41,10 +41,6 @@ spec:
             - name: ARCHIVE_API_URL
               value: {{ . | quote }}
             {{- end }}
-            {{- with .Values.adminEmail }}
-            - name: ARCHIVE_ADMIN_EMAIL
-              value: {{ . | quote }}
-            {{- end }}
             {{- range $k, $v := .Values.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}

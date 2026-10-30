@@ -104,15 +104,17 @@ Run Archive on your own computer, your own servers or your own cloud account, an
 One line starts Archive on your machine with Docker:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Mulholland-Inc/archive/main/install.sh | ARCHIVE_ADMIN_EMAIL=you@example.com sh
+curl -fsSL https://raw.githubusercontent.com/Mulholland-Inc/archive/main/install.sh | sh
+docker exec archive archive user add you@example.com
 ```
 
-Use your own email: you become the first owner. Set a sign-in provider too, such as `ARCHIVE_GOOGLE_CLIENT_ID` and `ARCHIVE_GOOGLE_CLIENT_SECRET`, and sign in with it under that email; once in, add a passkey. Run the same line again to update. Your data stays in the `archive` volume, and Archive backs itself up before each new version.
+Use your own email: the first person you add is the owner. Set a sign-in provider too, such as `ARCHIVE_GOOGLE_CLIENT_ID` and `ARCHIVE_GOOGLE_CLIENT_SECRET`, and sign in with it under that email; once in, add a passkey. Run the same line again to update. Your data stays in the `archive` volume, and Archive backs itself up before each new version.
 
 From a clone of this repo, Docker Compose does the same:
 
 ```sh
-ARCHIVE_ADMIN_EMAIL=you@example.com docker compose up -d
+docker compose up -d
+docker compose exec archive archive user add you@example.com
 ```
 
 Open `http://localhost:8080` for the web app; `/healthz` answers `204` when it is up.
@@ -166,7 +168,7 @@ With no `-space`, the token gets your role in every space you are in. Narrow it 
 | Where | How |
 |---|---|
 | **Docker** | [`install.sh`](install.sh), or `docker compose up -d` from the code |
-| **Kubernetes** | `helm install archive apps/helm/archive --set url=https://archive.example.com --set adminEmail=you@example.com` |
+| **Kubernetes** | `helm install archive apps/helm/archive --set url=https://archive.example.com`, then `kubectl exec archive-0 -- archive user add you@example.com` |
 | **Cloud** | Terraform for [AWS](apps/terraform/aws) (Fargate, RDS, S3), [Google Cloud](apps/terraform/gcp) (Cloud Run, Cloud SQL, Storage) and [Azure](apps/terraform/azure) (Container Apps, Postgres, Files) |
 | **As code** | the [`archive` Terraform provider](apps/terraform/provider) for your schema, spaces, tokens and roles |
 
@@ -175,10 +177,26 @@ On Google Cloud, everything is in Terraform, in one `apply`. You need a project 
 ```sh
 gcloud auth application-default login
 cd apps/terraform/gcp && terraform init
-terraform apply -var project=<project> -var admin_email=you@example.com
+terraform apply -var project=<project>
 ```
 
-The first apply takes about 15 minutes, nearly all of it Cloud SQL. It serves the public `ghcr.io/mulholland-inc/archive:latest` on the run.app address it prints. The service scales to zero: Cloud Tasks wakes it at the moment a workflow or file is due, so nothing has to stay running.
+The first apply takes about 15 minutes, nearly all of it Cloud SQL. It serves the public `ghcr.io/mulholland-inc/archive:latest` on the run.app address it prints. Then add yourself as the first owner with the `archive` command, which Terraform also sets up as a Cloud Run job (`terraform output cli` prints its prefix):
+
+```sh
+gcloud run jobs execute archive --region us-central1 --wait --args=user,add,you@example.com
+```
+
+The same job runs any other command, like `--args=workspace,add,Acme,anna@acme.example`.
+
+On AWS, run the command as a one-off copy of the service's task:
+
+```sh
+aws ecs run-task --cluster archive --task-definition archive --launch-type FARGATE \
+  --network-configuration "$(aws ecs describe-services --cluster archive --services archive --query 'services[0].networkConfiguration' --output json)" \
+  --overrides '{"containerOverrides":[{"name":"archive","command":["user","add","you@example.com"]}]}'
+```
+
+On Azure, run it in the container app: `az containerapp exec --name archive --resource-group archive --command "archive user add you@example.com"`. The service scales to zero: Cloud Tasks wakes it at the moment a workflow or file is due, so nothing has to stay running.
 
 For your own domains, add `-var app_domain=… -var api_domain=… -var cloudflare_zone=…`, with a Cloudflare account token in `CLOUDFLARE_API_TOKEN`. On the zone it needs DNS Write, Config Settings Write and Workers Routes Write; on the account it needs Workers Scripts Write and Account API Tokens Write. Terraform verifies the zone with Google, maps `api_domain` to the service behind Cloudflare's proxy, and makes the web app on `app_domain` a Worker of static files that calls the API on its own domain. Google's certificate for `api_domain` takes 15 minutes or more after the apply. The zone's own SSL settings don't matter: a Configuration Rule makes Cloudflare reach Google over verified TLS, and lets Google's certificate challenges through over HTTP.
 
@@ -199,7 +217,6 @@ Every setting is an environment variable; `archive help` lists them all:
 
 | Variable | What it does |
 |---|---|
-| `ARCHIVE_ADMIN_EMAIL` | First owner, created when there are no users yet |
 | `ARCHIVE_URL` | Public base URL of the web app, for passkeys and where sign-in returns |
 | `ARCHIVE_API_URL` | Public base URL of the API, sign-in, MCP, webhooks, file links and OAuth redirects, which holds the session cookie (default `ARCHIVE_URL`); on another origin, `/api` and `/auth` allow `ARCHIVE_URL`'s origin over CORS |
 | `ARCHIVE_DATA` | Data directory for the bundled Postgres, its key and files (default `./data`) |

@@ -8,7 +8,6 @@ services:
       - archive:/data
     environment:
       ARCHIVE_LOCALE: ${ARCHIVE_LOCALE:-}
-      ARCHIVE_ADMIN_EMAIL: ${ARCHIVE_ADMIN_EMAIL:-}
       ARCHIVE_URL: ${ARCHIVE_URL:-}
     stop_grace_period: 30s
     restart: unless-stopped

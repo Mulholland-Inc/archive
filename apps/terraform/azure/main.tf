@@ -209,7 +209,6 @@ resource "azurerm_container_app" "this" {
       dynamic "env" {
         for_each = merge(var.env, local.client_ids, {
           ARCHIVE_URL         = local.url
-          ARCHIVE_ADMIN_EMAIL = var.admin_email
         })
         content {
           name  = env.key

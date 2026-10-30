@@ -16,11 +16,6 @@ variable "image_tag" {
   default     = "latest"
 }
 
-variable "admin_email" {
-  type        = string
-  description = "Email of the first owner."
-}
-
 variable "env" {
   type        = map(string)
   description = "Extra environment variables, such as ARCHIVE_LOCALE."

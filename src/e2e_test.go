@@ -555,7 +555,8 @@ func TestDemoVaultLoadsOnceWithLinkedRowsAndFiles(t *testing.T) {
 
 func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 	t.Parallel()
-	in := newInst(t, append(e2eGoogle(t), "ARCHIVE_ADMIN_EMAIL=alice@example.com", "ANTHROPIC_API_KEY=")...)
+	in := newInst(t, append(e2eGoogle(t), "ANTHROPIC_API_KEY=")...)
+	in.must("user", "add", "alice@example.com")
 	srv := in.serve()
 	api := srv.url + "/api"
 
@@ -895,7 +896,8 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 
 func TestOnThisMachineTheFirstOwnerIsSignedInWithoutLoggingIn(t *testing.T) {
 	t.Parallel()
-	local := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
+	local := newInst(t)
+	local.must("user", "add", "alice@example.com")
 	srv := local.serve()
 	local.must("user", "add", "bob@example.com")
 	here := map[string]string{"X-Forwarded-For": ""}
@@ -933,7 +935,8 @@ func TestOnThisMachineTheFirstOwnerIsSignedInWithoutLoggingIn(t *testing.T) {
 		t.Errorf("mcp from this machine without a token: %d", st)
 	}
 
-	public := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com", "ARCHIVE_URL=https://app.example.com")
+	public := newInst(t, "ARCHIVE_URL=https://app.example.com")
+	public.must("user", "add", "alice@example.com")
 	pub := public.serve()
 	if st, _ := me(pub.url, nil); st != 401 {
 		t.Errorf("a request from this machine when ARCHIVE_URL is public: %d", st)
@@ -945,7 +948,8 @@ func TestOnThisMachineTheFirstOwnerIsSignedInWithoutLoggingIn(t *testing.T) {
 
 func TestDeletingASpaceRemovesEverythingInItForOwnersOnly(t *testing.T) {
 	t.Parallel()
-	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
+	in := newInst(t)
+	in.must("user", "add", "alice@example.com")
 	srv := in.serve()
 	in.must("user", "add", "bob@example.com", "-name", "Bob")
 	in.push(e2eSchema)
@@ -1090,7 +1094,7 @@ func TestDockerImageServesAndAcceptsCLICommandsFromDockerExec(t *testing.T) {
 		exec.Command("docker", "rmi", "-f", name).Run()
 	})
 	docker("", "build", "-q", "-t", name, "..")
-	docker("", "run", "-d", "--name", name, "-v", name+":/data", "-e", "ARCHIVE_ADMIN_EMAIL=ops@example.com", name)
+	docker("", "run", "-d", "--name", name, "-v", name+":/data", name)
 	for deadline := time.Now().Add(90 * time.Second); ; time.Sleep(500 * time.Millisecond) {
 		if exec.Command("docker", "exec", name, "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz").Run() == nil {
 			break
@@ -1112,6 +1116,7 @@ func TestDockerImageServesAndAcceptsCLICommandsFromDockerExec(t *testing.T) {
 	if exec.Command("docker", "exec", name, "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/assets/gone.js").Run() == nil {
 		t.Fatal("a missing asset answers")
 	}
+	docker("", "exec", name, "archive", "user", "add", "ops@example.com")
 	docker(e2eSchema["company.sql"], "exec", "-i", name, "sh", "-c", "mkdir -p /tmp/ddl && cat > /tmp/ddl/company.sql")
 	docker("", "exec", name, "archive", "schema", "apply", "/tmp/ddl")
 	docker("", "exec", name, "archive", "create", "company", `{"name":"Docker Inc"}`)
@@ -1284,7 +1289,8 @@ func e2eTus(t *testing.T, method, url, tok string, body io.Reader, size int64, h
 
 func TestFilesUploadProcessShareAndReference(t *testing.T) {
 	t.Parallel()
-	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
+	in := newInst(t)
+	in.must("user", "add", "alice@example.com")
 	srv := in.serve()
 	api := srv.url + "/api"
 	in.must("user", "add", "bob@example.com")
@@ -1616,7 +1622,8 @@ func TestGCSBlobBackendSignsWithTheServiceAccountTokenFromTheMetadataServer(t *t
 
 func TestTwoInstancesShareOnePostgresAndBlobStore(t *testing.T) {
 	t.Parallel()
-	a := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
+	a := newInst(t)
+	a.must("user", "add", "alice@example.com")
 	b := a.twin()
 	srvA, srvB := a.serve(), b.serve()
 	a.push(e2eSchema)
@@ -1781,7 +1788,8 @@ func e2eTitles(hits []SearchHit) string {
 
 func TestFullTextSearchInDutchAndEnglishAcrossTablesFilesAndUsers(t *testing.T) {
 	t.Parallel()
-	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
+	in := newInst(t)
+	in.must("user", "add", "alice@example.com")
 	srv := in.serve()
 	api := srv.url + "/api"
 	in.must("user", "add", "bob@example.com")
@@ -1928,7 +1936,8 @@ func TestFullTextSearchInDutchAndEnglishAcrossTablesFilesAndUsers(t *testing.T) 
 
 func TestViewsSchemaDropsAndFullTokensOverHTTP(t *testing.T) {
 	t.Parallel()
-	in := newInst(t, append(e2eGoogle(t), "ARCHIVE_ADMIN_EMAIL=alice@example.com")...)
+	in := newInst(t, e2eGoogle(t)...)
+	in.must("user", "add", "alice@example.com")
 	srv := in.serve()
 	api := srv.url + "/api"
 	in.must("user", "add", "bob@example.com")
@@ -2183,7 +2192,7 @@ func (b e2eBearer) RoundTrip(r *http.Request) (*http.Response, error) {
 
 func TestARunThatTimesOutStopsAndSavesNothing(t *testing.T) {
 	t.Parallel()
-	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com", "ARCHIVE_RUN_TIMEOUT=1s")
+	in := newInst(t, "ARCHIVE_RUN_TIMEOUT=1s")
 	in.must("user", "add", "alice@example.com")
 	in.push(map[string]string{"house.sql": e2eHouse})
 	srv := in.serve()
@@ -2201,7 +2210,8 @@ func TestARunThatTimesOutStopsAndSavesNothing(t *testing.T) {
 
 func TestCodeModeRunsTypeScriptInOneTransactionOverHTTPMCPAndCLI(t *testing.T) {
 	t.Parallel()
-	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com", "ARCHIVE_RUN_TIMEOUT=30s")
+	in := newInst(t, "ARCHIVE_RUN_TIMEOUT=30s")
+	in.must("user", "add", "alice@example.com")
 	srv := in.serve()
 	api := srv.url + "/api"
 	in.must("user", "add", "bob@example.com")
@@ -2653,7 +2663,8 @@ func TestChatStreamsTheAgentLoopThroughRunAndKeepsEachUsersHistory(t *testing.T)
 		}
 	}))
 	defer fake.Close()
-	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com", "ANTHROPIC_API_KEY=test", "ANTHROPIC_BASE_URL="+fake.URL, "ARCHIVE_CHAT_MODEL=")
+	in := newInst(t, "ANTHROPIC_API_KEY=test", "ANTHROPIC_BASE_URL="+fake.URL, "ARCHIVE_CHAT_MODEL=")
+	in.must("user", "add", "alice@example.com")
 	srv := in.serve()
 	api := srv.url + "/api"
 	in.must("user", "add", "bob@example.com")
@@ -2821,7 +2832,7 @@ func TestWorkflowsDeployTestStartAndFireOnTheirOwn(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]any{"method": r.Method, "body": string(b), "type": r.Header.Get("Content-Type"), "test": r.Header.Get("X-Test"), "x": r.URL.Query().Get("x")})
 	}))
 	defer echo.Close()
-	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com", "ARCHIVE_RUN_TIMEOUT=30s")
+	in := newInst(t, "ARCHIVE_RUN_TIMEOUT=30s")
 	in.must("user", "add", "alice@example.com")
 	in.push(map[string]string{"house.sql": e2eHouse})
 	srv := in.serve()
@@ -3539,7 +3550,8 @@ func names2(rs []row, col string) string {
 
 func TestInviteOnlySignInUsersAndSigningInToSeveralWorkspaces(t *testing.T) {
 	t.Parallel()
-	in := newInst(t, append(e2eGoogle(t), "ARCHIVE_ADMIN_EMAIL=alice@example.com")...)
+	in := newInst(t, e2eGoogle(t)...)
+	in.must("user", "add", "alice@example.com")
 	srv := in.serve()
 	one := in.psql("archive", "SELECT id FROM archive.workspace ORDER BY created_at LIMIT 1")
 	carolID := map[string]any{"sub": "carol-1", "email": "Carol@Example.com", "email_verified": true, "name": " Carol  Co "}
@@ -3576,9 +3588,6 @@ func TestInviteOnlySignInUsersAndSigningInToSeveralWorkspaces(t *testing.T) {
 		t.Errorf("a signed-in person adds a workspace of their own: %d", st)
 	}
 
-	if !strings.Contains(srv.log.String(), "created the first owner alice@example.com\n") {
-		t.Errorf("no first owner in the log:\n%s", srv.log)
-	}
 	st, alice := srv.oidc(t, "google", map[string]any{"sub": "alice-1", "email": "alice@example.com", "email_verified": true})
 	if st != 303 || alice == nil {
 		t.Fatalf("the first owner signs in with Google: %d", st)
@@ -3734,10 +3743,11 @@ func TestGitHubAndMicrosoftSignInOnlyMatchVerifiedEmails(t *testing.T) {
 	}))
 	t.Cleanup(gh.Close)
 	ms := e2eIssuer(t)
-	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com",
+	in := newInst(t,
 		"ARCHIVE_GITHUB_URL="+gh.URL, "ARCHIVE_GITHUB_CLIENT_ID=gh", "ARCHIVE_GITHUB_CLIENT_SECRET=shh",
 		"ARCHIVE_MICROSOFT_URL="+ms.URL, "ARCHIVE_MICROSOFT_CLIENT_ID=web", "ARCHIVE_MICROSOFT_CLIENT_SECRET=shh",
 		"ARCHIVE_SLACK_CLIENT_ID=slack", "ARCHIVE_SLACK_CLIENT_SECRET=shh", "ARCHIVE_GOOGLE_CLIENT_ID=only-an-id")
+	in.must("user", "add", "alice@example.com")
 	srv := in.serve()
 	var methods struct {
 		Providers []struct {
@@ -3797,7 +3807,8 @@ func TestGitHubAndMicrosoftSignInOnlyMatchVerifiedEmails(t *testing.T) {
 
 func TestGeneratedURLsUseTheAPIAddress(t *testing.T) {
 	t.Parallel()
-	in := newInst(t, append(e2eGoogle(t), "ARCHIVE_ADMIN_EMAIL=alice@example.com", "ARCHIVE_URL=http://app.test", "ARCHIVE_API_URL=http://api.test:9/")...)
+	in := newInst(t, append(e2eGoogle(t), "ARCHIVE_URL=http://app.test", "ARCHIVE_API_URL=http://api.test:9/")...)
+	in.must("user", "add", "alice@example.com")
 	srv := in.serve()
 	api := srv.url + "/api"
 	one := in.psql("archive", "SELECT id FROM archive.workspace ORDER BY created_at LIMIT 1")
@@ -3846,7 +3857,8 @@ func e2eFrom(t *testing.T, method, url, origin string, cookies ...*http.Cookie) 
 
 func TestTheWebAppOnItsOwnHostCallsTheAPIHostWithTheAPIsCookie(t *testing.T) {
 	t.Parallel()
-	in := newInst(t, append(e2eGoogle(t), "ARCHIVE_ADMIN_EMAIL=alice@example.com", "ARCHIVE_URL=https://app.test", "ARCHIVE_API_URL=https://api.test")...)
+	in := newInst(t, append(e2eGoogle(t), "ARCHIVE_URL=https://app.test", "ARCHIVE_API_URL=https://api.test")...)
+	in.must("user", "add", "alice@example.com")
 	srv := in.serve()
 	st, hdr := e2eFrom(t, "OPTIONS", srv.url+"/api/chats", "https://app.test")
 	allowed := hdr.Get("Access-Control-Allow-Headers") + " " + hdr.Get("Access-Control-Allow-Methods")
@@ -3946,7 +3958,7 @@ func TestCloudTasksWakeTheServiceAtEachDueTimeAndNothingRunsOnItsOwn(t *testing.
 		}
 	}))
 	t.Cleanup(gcp.Close)
-	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com", "ARCHIVE_GOOGLE_URL="+google.URL, "ARCHIVE_TASKS_QUEUE="+queue,
+	in := newInst(t, "ARCHIVE_GOOGLE_URL="+google.URL, "ARCHIVE_TASKS_QUEUE="+queue,
 		"ARCHIVE_TASKS_SERVICE_ACCOUNT="+acct, "ARCHIVE_TASKS_URL="+gcp.URL, "ARCHIVE_API_URL=http://api.test", "GCE_METADATA_HOST="+strings.TrimPrefix(gcp.URL, "http://"))
 	in.must("user", "add", "alice@example.com")
 	in.push(map[string]string{"house.sql": e2eHouse})
