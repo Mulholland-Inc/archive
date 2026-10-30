@@ -1,1 +1,0 @@
-import{n as e,r as t}from"./index-CUHWwu7r.js";import{t as n}from"./Icon-_CzsFgsJ.js";var r={name:`check-line`,size:24,node:[[`path`,{d:`M20 4L9 15`}],[`path`,{d:`M21 19L3 19`}],[`path`,{d:`M9 15L4 10`}]]};r.node;var i=new Set([`$$slots`,`$$events`,`$$legacy`]);function a(a,o){let s=e(o,i);n(a,t(()=>s,{get icon(){return r}}))}export{a as default};

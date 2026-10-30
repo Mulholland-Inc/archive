@@ -1,1 +1,0 @@
-import{n as e,r as t}from"./index-CUHWwu7r.js";import{t as n}from"./Icon-_CzsFgsJ.js";var r={name:`triangle`,size:24,node:[[`path`,{d:`M13.73 4a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z`}]]};r.node;var i=new Set([`$$slots`,`$$events`,`$$legacy`]);function a(a,o){let s=e(o,i);n(a,t(()=>s,{get icon(){return r}}))}export{a as default};

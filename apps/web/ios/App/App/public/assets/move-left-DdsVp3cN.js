@@ -1,1 +1,0 @@
-import{n as e,r as t}from"./index-CUHWwu7r.js";import{t as n}from"./Icon-_CzsFgsJ.js";var r={name:`move-left`,size:24,node:[[`path`,{d:`M6 8L2 12L6 16`}],[`path`,{d:`M2 12H22`}]]};r.node;var i=new Set([`$$slots`,`$$events`,`$$legacy`]);function a(a,o){let s=e(o,i);n(a,t(()=>s,{get icon(){return r}}))}export{a as default};

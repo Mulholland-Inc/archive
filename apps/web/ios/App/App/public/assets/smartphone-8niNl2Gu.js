@@ -1,1 +1,0 @@
-import{n as e,r as t}from"./index-CUHWwu7r.js";import{t as n}from"./Icon-_CzsFgsJ.js";var r={name:`smartphone`,size:24,node:[[`rect`,{width:`14`,height:`20`,x:`5`,y:`2`,rx:`2`,ry:`2`}],[`path`,{d:`M12 18h.01`}]]};r.node;var i=new Set([`$$slots`,`$$events`,`$$legacy`]);function a(a,o){let s=e(o,i);n(a,t(()=>s,{get icon(){return r}}))}export{a as default};

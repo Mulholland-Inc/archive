@@ -1,1 +1,0 @@
-import{n as e,r as t}from"./index-CUHWwu7r.js";import{t as n}from"./Icon-_CzsFgsJ.js";var r={name:`list-check`,size:24,node:[[`path`,{d:`M16 5H3`}],[`path`,{d:`M16 12H3`}],[`path`,{d:`M11 19H3`}],[`path`,{d:`m15 18 2 2 4-4`}]]};r.node;var i=new Set([`$$slots`,`$$events`,`$$legacy`]);function a(a,o){let s=e(o,i);n(a,t(()=>s,{get icon(){return r}}))}export{a as default};

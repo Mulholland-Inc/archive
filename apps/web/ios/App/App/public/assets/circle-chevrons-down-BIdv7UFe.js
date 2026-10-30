@@ -1,1 +1,0 @@
-import{n as e,r as t}from"./index-CUHWwu7r.js";import{t as n}from"./Icon-_CzsFgsJ.js";var r={name:`circle-chevrons-down`,size:24,node:[[`path`,{d:`M9 14L12 17L15 14`}],[`path`,{d:`M9 8L12 11L15 8`}],[`circle`,{cx:`12`,cy:`12`,r:`10`}]]};r.node;var i=new Set([`$$slots`,`$$events`,`$$legacy`]);function a(a,o){let s=e(o,i);n(a,t(()=>s,{get icon(){return r}}))}export{a as default};

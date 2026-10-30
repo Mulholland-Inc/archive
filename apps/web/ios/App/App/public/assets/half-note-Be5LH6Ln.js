@@ -1,1 +1,0 @@
-import{n as e,r as t}from"./index-CUHWwu7r.js";import{t as n}from"./Icon-_CzsFgsJ.js";var r={name:`half-note`,size:24,node:[[`circle`,{cx:`12`,cy:`18`,r:`4`}],[`path`,{d:`M16 18V2`}]],aliases:[`music-3`]};r.node;var i=new Set([`$$slots`,`$$events`,`$$legacy`]);function a(a,o){let s=e(o,i);n(a,t(()=>s,{get icon(){return r}}))}export{a as default};
