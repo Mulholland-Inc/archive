@@ -17,7 +17,6 @@ import (
 	"maps"
 	"net/http"
 	"net/mail"
-	"net/smtp"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -420,6 +419,19 @@ func (a *Archive) CLIActor(ctx context.Context, email string) (*Actor, error) {
 func (h *Hub) newToken(ctx context.Context, userID uuid.UUID, kind string, ttl time.Duration) (string, error) {
 	secret := authNewSecret()
 	return secret, h.q().CreateLoginToken(ctx, generated.CreateLoginTokenParams{UserID: userID, Kind: kind, Hash: authHash(secret), Ttl: ttl.String()})
+}
+
+type UserLink struct {
+	*User
+	Link string `json:"link"`
+}
+
+func (h *Hub) signinLink(ctx context.Context, u *User) (*UserLink, error) {
+	secret, err := h.newToken(ctx, u.ID, "magic", signinTTL)
+	if err != nil {
+		return nil, err
+	}
+	return &UserLink{u, h.app + "/auth/magic?token=" + url.QueryEscape(secret)}, nil
 }
 
 func (h *Hub) useMagicLink(ctx context.Context, secret string) (*User, error) {
@@ -845,29 +857,6 @@ func (s *signin) handler() http.Handler {
 	}
 	ok := func(v any, err error) (int, any, error) { return http.StatusOK, v, err }
 
-	open("POST /auth/magic", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		var body struct {
-			Email string `json:"email"`
-		}
-		if err := httpDecode(r, &body); err != nil {
-			return 0, nil, err
-		}
-		email, err := authEmail(body.Email)
-		if err != nil {
-			return 0, nil, err
-		}
-		u, err := userBy(r.Context(), h, (*generated.Queries).UserByEmail, email)
-		if err == nil {
-			var secret string
-			if secret, err = h.newToken(r.Context(), u.ID, "magic", signinTTL); err == nil {
-				err = s.mail(email, "sign-in", "Sign in to Archive", "Open this link within 15 minutes to sign in to Archive:", h.app+"/auth/magic?token="+url.QueryEscape(secret))
-			}
-		}
-		if err != nil && !errors.Is(err, ErrNotFound) {
-			return 0, nil, err
-		}
-		return http.StatusAccepted, map[string]string{"status": "if that address has an account, a sign-in link is on its way"}, nil
-	})
 	mux.HandleFunc("GET /auth/magic", func(w http.ResponseWriter, r *http.Request) {
 		s.browser(w, r, func() (*User, string, error) {
 			u, err := h.useMagicLink(r.Context(), r.URL.Query().Get("token"))
@@ -876,7 +865,7 @@ func (s *signin) handler() http.Handler {
 	})
 	open("GET /auth/methods", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		providers := append([]string{}, slices.Sorted(maps.Keys(s.oidc))...)
-		return ok(map[string]any{"providers": providers, "mail": os.Getenv("ARCHIVE_SMTP_URL") != "", "signup": h.signupOpen(r.Context())}, nil)
+		return ok(map[string]any{"providers": providers, "signup": h.signupOpen(r.Context())}, nil)
 	})
 	open("POST /auth/setup", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		var body struct {
@@ -911,47 +900,26 @@ func (s *signin) handler() http.Handler {
 		}
 		return ok(s.signedIn(w, r, u, h.one))
 	})
-	open("POST /auth/signup", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		var body struct {
-			Email string `json:"email"`
-			Name  string `json:"name"`
-		}
-		if err := httpDecode(r, &body); err != nil {
-			return 0, nil, err
-		}
-		if !h.signupOpen(r.Context()) {
-			return 0, nil, fmt.Errorf("signup is closed on this Archive; ask an admin for a workspace: %w", ErrForbidden)
-		}
-		email, err := authEmail(body.Email)
-		if err != nil {
-			return 0, nil, err
-		}
-		name, err := workspaceName(body.Name)
-		if err != nil {
-			return 0, nil, err
-		}
-		link := h.app + "/auth/signup?token=" + url.QueryEscape(h.signupToken(email, name))
-		if err := s.mail(email, "signup", "Create your Archive workspace", "Open this link within 15 minutes to create "+name+":", link); err != nil {
-			return 0, nil, err
-		}
-		return http.StatusAccepted, map[string]string{"status": "a link to create the workspace is on its way"}, nil
-	})
-	mux.HandleFunc("GET /auth/signup", func(w http.ResponseWriter, r *http.Request) {
-		s.browser(w, r, func() (*User, string, error) {
-			c, err := h.signupClaim(r.URL.Query().Get("token"))
-			if err != nil {
-				return nil, "", err
-			}
-			u, err := h.signup(r.Context(), c)
-			return u, c.ID, err
-		})
-	})
 	open("POST /auth/signout", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		s.setSession(w, "")
 		if c, err := r.Cookie(signinCookie); err == nil {
 			return http.StatusNoContent, nil, h.q().SignOut(r.Context(), authHash(c.Value))
 		}
 		return http.StatusNoContent, nil, nil
+	})
+	authed("POST /auth/signup", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
+		var body struct {
+			Name string `json:"name"`
+		}
+		if err := httpDecode(r, &body); err != nil {
+			return 0, nil, err
+		}
+		ac, err := authUser(r.Context())
+		if err != nil {
+			return 0, nil, err
+		}
+		id, err := h.signup(r.Context(), body.Name, ac.Email, ac.Name)
+		return http.StatusCreated, map[string]string{"workspace": id}, err
 	})
 	authed("GET /auth/me", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		a, ac := archiveFrom(r.Context()), ActorFrom(r.Context())
@@ -1193,30 +1161,6 @@ func (s *signin) signedIn(w http.ResponseWriter, r *http.Request, u *User, short
 	}{u, short}, nil
 }
 
-func (s *signin) mail(to, kind, subject, intro, link string) error {
-	raw := os.Getenv("ARCHIVE_SMTP_URL")
-	if raw == "" {
-		fmt.Fprintf(os.Stderr, "archive: %s link for %s: %s\n", kind, to, link)
-		return nil
-	}
-	u, err := url.Parse(raw)
-	if err != nil || u.Hostname() == "" {
-		return errors.New("ARCHIVE_SMTP_URL must look like smtp://user:pass@host:587")
-	}
-	var auth smtp.Auth
-	if u.User != nil {
-		pw, _ := u.User.Password()
-		auth = smtp.PlainAuth("", u.User.Username(), pw, u.Hostname())
-	}
-	host := s.h.app
-	if p, err := url.Parse(s.h.app); err == nil {
-		host = p.Hostname()
-	}
-	from := coreEnv("ARCHIVE_SMTP_FROM", "archive@"+host)
-	msg := "From: " + from + "\r\nTo: " + to + "\r\nSubject: " + subject + "\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" + intro + "\r\n\r\n" + link + "\r\n"
-	return smtp.SendMail(u.Hostname()+":"+cmp.Or(u.Port(), "587"), auth, from, []string{to}, []byte(msg))
-}
-
 func (s *signin) user(ctx context.Context, id uuid.UUID) (*signinUser, error) {
 	u, err := userBy(ctx, s.h, (*generated.Queries).UserByID, id)
 	if err != nil {
@@ -1350,6 +1294,7 @@ func (s *signin) oidcCallback(r *http.Request) (*signinState, string, error) {
 		Email         string `json:"email"`
 		EmailVerified bool   `json:"email_verified"`
 		DomainOwner   bool   `json:"xms_edov"`
+		Name          string `json:"name"`
 	}
 	if err := idt.Claims(&claims); err != nil {
 		return nil, "", err
@@ -1362,7 +1307,15 @@ func (s *signin) oidcCallback(r *http.Request) (*signinState, string, error) {
 	lb, _ := json.Marshal([]signinOIDCLink{link})
 	u, err := userBy(ctx, s.h, (*generated.Queries).UserByOIDC, lb)
 	if errors.Is(err, ErrNotFound) && email != "" {
-		if u, err = userBy(ctx, s.h, (*generated.Queries).UserByEmail, email); err == nil {
+		u, err = userBy(ctx, s.h, (*generated.Queries).UserByEmail, email)
+		if errors.Is(err, ErrNotFound) && s.h.signupOpen(ctx) {
+			name := strings.Join(strings.Fields(claims.Name), " ")
+			ws := cmp.Or(name, email)
+			if _, err = s.h.signup(ctx, strings.ToValidUTF8(ws[:min(len(ws), workspaceMax)], ""), email, name); err == nil {
+				u, err = userBy(ctx, s.h, (*generated.Queries).UserByEmail, email)
+			}
+		}
+		if err == nil {
 			var pu *signinUser
 			if pu, err = s.user(ctx, u.ID); err == nil {
 				pu.m.OIDC = append(pu.m.OIDC, link)

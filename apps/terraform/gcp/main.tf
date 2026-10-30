@@ -13,7 +13,6 @@ locals {
   }
   optional = {
     ANTHROPIC_API_KEY             = var.anthropic_api_key
-    ARCHIVE_SMTP_URL              = var.smtp_url
     ARCHIVE_STRIPE_KEY            = var.stripe_key
     ARCHIVE_STRIPE_WEBHOOK_SECRET = var.stripe_webhook_secret
   }
@@ -186,9 +185,7 @@ resource "google_cloud_run_v2_service" "this" {
           ARCHIVE_ADMIN_EMAIL = var.admin_email
           ARCHIVE_BLOB_URL    = "s3://${google_storage_bucket.this.name}?endpoint=https://storage.googleapis.com&region=auto"
           ARCHIVE_BLOB_KEY    = google_storage_hmac_key.this.access_id
-          }, var.smtp_from != "" ? {
-          ARCHIVE_SMTP_FROM = var.smtp_from
-        } : {})
+        })
         content {
           name  = env.key
           value = env.value

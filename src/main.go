@@ -74,7 +74,9 @@ Usage:
                                      find rows and files by their words
 
   archive user add <email> [-name n] [-admin]
-                                     add someone to the workspace; one sign-in reaches all of theirs
+                                     add someone to the workspace; one sign-in reaches all of theirs.
+                                     Prints a one-time sign-in link, valid for 15 minutes, to pass on
+  archive user link <email>          print a new one-time sign-in link for someone in the workspace
   archive user remove <email>        take them out of the workspace, with their tokens and role
   archive space add <name>
   archive space list
@@ -92,7 +94,8 @@ Usage:
                                      create a workspace, with its own database, for someone else
   archive workspace list
   archive workspace delete <uuid>    drop a workspace: its database and its roles
-  archive signup on|off              let anyone create a workspace from the sign-in screen
+  archive signup on|off              let anyone create a workspace with their first Google or
+                                     Microsoft sign-in
   archive plan list
   archive plan set <id> [json]       a plan and its limits per month: {"name", "price" (a Stripe
                                      price id), "runs", "workflow_runs", "ai_tokens",
@@ -128,8 +131,6 @@ Environment:
                      OAuth redirect URL (default ARCHIVE_URL)
   ARCHIVE_ADMIN_EMAIL
                      first owner that serve creates when there are no users yet
-  ARCHIVE_SMTP_URL   smtp://user:pass@host:587 for sign-in mail; unset prints links to the log
-  ARCHIVE_SMTP_FROM  sender address for sign-in mail
   ARCHIVE_OIDC       JSON list of OIDC providers: [{"name","issuer","client_id","client_secret"}]
   ARCHIVE_STRIPE_KEY Stripe secret key; set, plans have limits and Stripe Checkout sells them
   ARCHIVE_STRIPE_WEBHOOK_SECRET
@@ -355,8 +356,16 @@ func cliCheckCommand(cmd string, pos []string) error {
 
 func cliAuth(ctx context.Context, a *Archive, cmd string, pos []string, name string, admin, full bool, space string, expires time.Duration, out func(any, error) error) error {
 	switch cmd + " " + pos[0] {
-	case "user add":
-		return out(a.AddUser(ctx, pos[1], name, admin))
+	case "user add", "user link":
+		get := a.member
+		if pos[0] == "add" {
+			get = func(ctx context.Context, email string) (*User, error) { return a.AddUser(ctx, email, name, admin) }
+		}
+		u, err := get(ctx, pos[1])
+		if err != nil {
+			return err
+		}
+		return out(a.hub.signinLink(ctx, u))
 	case "user remove":
 		return a.RemoveUser(ctx, pos[1])
 	case "space add":
@@ -604,7 +613,11 @@ func cliServe(ctx context.Context, h *Hub, a *Archive, addr string) error {
 			if err != nil {
 				return fmt.Errorf("ARCHIVE_ADMIN_EMAIL: %w", err)
 			}
-			fmt.Fprintf(os.Stderr, "archive: created the first owner %s; sign in at %s/auth/magic\n", u.Email, h.app)
+			l, err := h.signinLink(ctx, u)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stderr, "archive: created the first owner %s; sign in within 15 minutes, or get a new link with archive user link: %s\n", u.Email, l.Link)
 		} else {
 			si.setup = authNewSecret()
 			fmt.Fprintf(os.Stderr, "archive: no users yet; create the first owner with POST %s/auth/setup {\"token\": \"%s\", \"email\": ...}\n", h.app, si.setup)
