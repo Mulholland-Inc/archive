@@ -2,7 +2,7 @@
   import Icon from '#kit/Icon.svelte';
   import Avatar from './Avatar.svelte';
 
-  let { name, spaces = [], home, current = '', onpick, oncreate } = $props();
+  let { name, spaces = [], home, current = '', onpick, oncreate, dev = false, ondev, onsignout } = $props();
   let open = $state(false);
   let adding = $state(false);
   let draft = $state('');
@@ -74,6 +74,11 @@
       {:else}
         <button class="item new" role="menuitem" onclick={() => (adding = true)}><Icon name="plus" /><span>New space</span></button>
       {/if}
+      <hr />
+      <button class="item" role="menuitemcheckbox" aria-checked={dev} onclick={() => { open = false; ondev(); }}>
+        <span>Developer mode</span>{#if dev}<Icon name="check" />{/if}
+      </button>
+      <button class="item" role="menuitem" onclick={onsignout}><span>Log out</span></button>
     </div>
   {/if}
 </div>
@@ -128,6 +133,7 @@
   .item:hover, .item:focus-visible { outline: 0; background: var(--fill); color: var(--fg); }
   .item[aria-checked='true'] { color: var(--fg); }
   .new, .add { justify-content: flex-start; color: var(--fg-muted); }
+  hr { flex: none; min-height: var(--hairline); margin: var(--space-1); border: 0; }
   .add { background: var(--fill-faint); }
   .add.failed { color: var(--danger); }
   .add input { flex: 1; min-width: 0; padding: 0; color: var(--fg); outline: 0; }

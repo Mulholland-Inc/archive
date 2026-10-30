@@ -1,81 +1,99 @@
 <script>
   import Icon from '#kit/Icon.svelte';
-  import Avatar from './Avatar.svelte';
+  import Bot from './Bot.svelte';
 
-  let { workspaces = [], workspace = '', onpick } = $props();
-  let open = $state(false);
-  let root = $state();
+  let { workspaces = [], workspace = '', latest = '', onpick, onrename, onadd } = $props();
+  let editing = $state('');
+  let adding = $state(false);
+  let draft = $state('');
+  let error = $state('');
 
-  const here = $derived(workspaces.find((w) => w.id === workspace));
-
-  function choose(id) {
-    open = false;
-    if (id !== workspace) onpick(id);
+  function reset() {
+    editing = '';
+    adding = false;
+    draft = '';
+    error = '';
   }
 
-  $effect(() => {
-    if (!open) return;
-    const away = (e) => !root.contains(e.target) && (open = false);
-    const esc = (e) => e.key === 'Escape' && (open = false);
-    addEventListener('pointerdown', away);
-    addEventListener('keydown', esc);
-    return () => {
-      removeEventListener('pointerdown', away);
-      removeEventListener('keydown', esc);
-    };
-  });
+  function rename(w) {
+    reset();
+    editing = w.id;
+    draft = w.name;
+  }
+
+  function add() {
+    reset();
+    adding = true;
+  }
+
+  async function save(e) {
+    e.preventDefault();
+    const name = draft.trim();
+    if (!name) return reset();
+    try {
+      if (adding) await onadd(name);
+      else if (name !== workspaces.find((w) => w.id === editing)?.name) await onrename(name);
+      reset();
+    } catch (err) {
+      error = err.status === 403 ? 'Ask your admin to do this.' : err.message;
+    }
+  }
+
+  const key = (e) => e.key === 'Escape' && reset();
 </script>
 
-<div class="workspaces" bind:this={root}>
-  <button class="now" type="button" aria-haspopup="menu" aria-expanded={open} aria-label="Switch workspace" onclick={() => (open = !open)}>
-    <Avatar name={here?.name} />
-    <span class="name">{here?.name}</span>
-    <span class="updown"><Icon name="chevrons-up-down" /></span>
-  </button>
-  {#if open}
-    <div class="menu" role="menu">
-      {#each workspaces as w (w.id)}
-        <button class="item" role="menuitemradio" aria-checked={w.id === workspace} onclick={() => choose(w.id)}>
-          <Avatar name={w.name} />
-          <span class="name">{w.name}</span>{#if w.id === workspace}<Icon name="check" />{/if}
+{#snippet field(label)}
+  <form class="edit" onsubmit={save}>
+    <input bind:value={draft} placeholder="Name your archive" aria-label={label} onkeydown={key} onblur={() => !error && !draft.trim() && reset()} {@attach (el) => el.select()} />
+    {#if error}<span class="error">{error}</span>{/if}
+  </form>
+{/snippet}
+
+<div class="bots">
+  {#each workspaces as w (w.id)}
+    <div class="wrap">
+      {#if editing === w.id}
+        <div class="row on"><Bot seed={w.id} />{@render field('Archive name')}</div>
+      {:else}
+        <button class="row" class:on={w.id === workspace} type="button" aria-current={w.id === workspace ? 'true' : undefined} onclick={() => onpick(w.id)}>
+          <Bot seed={w.id} />
+          <span class="text">
+            <span class="name">{w.name}</span>
+            {#if w.id === workspace}<span class="sub">{latest || 'Ask me anything'}</span>{/if}
+          </span>
         </button>
-      {/each}
+        {#if w.id === workspace}
+          <button class="pencil" type="button" aria-label="Rename {w.name}" title="Rename" onclick={() => rename(w)}><Icon name="pencil" /></button>
+        {/if}
+      {/if}
     </div>
+  {/each}
+  {#if adding}
+    <div class="row"><span class="plus"><Icon name="plus" /></span>{@render field('New archive name')}</div>
+  {:else}
+    <button class="row add" type="button" onclick={add}><span class="plus"><Icon name="plus" /></span><span>Add archive</span></button>
   {/if}
 </div>
 
 <style>
-  .workspaces { position: relative; flex: none; margin-bottom: var(--space-2); }
-  .now, .item {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    width: 100%;
-    border-radius: var(--radius-nav);
-    color: var(--fg-soft);
-    text-align: left;
-    transition: background var(--duration-fast);
-  }
-  .now { padding: var(--item-pad); }
-  .now:hover, .now[aria-expanded='true'] { background: var(--fill-faint); }
-  .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .updown { display: flex; color: var(--fg-muted); }
-  .menu {
-    position: absolute;
-    top: calc(100% + var(--space-1));
-    left: 0;
-    z-index: var(--z-nav);
-    display: flex;
-    flex-direction: column;
-    width: 100%;
-    padding: var(--space-1);
-    border-radius: var(--radius-panel);
-    background: var(--surface-raised);
-    animation: drop var(--duration-fast) var(--ease-out) both;
-  }
-  .item { padding: var(--space-1-5); font-size: var(--text-table); line-height: var(--leading-snug); }
-  .item:hover, .item:focus-visible { outline: 0; background: var(--fill); color: var(--fg); }
-  .item[aria-checked='true'] { color: var(--fg); }
-  @keyframes drop { from { opacity: 0; transform: translateY(calc(-1 * var(--rise))); } }
-  @media (prefers-reduced-motion: reduce) { .menu { animation: none; } }
+  .bots { display: flex; flex: none; flex-direction: column; gap: var(--space-0-5); margin-bottom: var(--space-3); }
+  .wrap { position: relative; }
+  .row { display: flex; align-items: center; gap: var(--space-2); width: 100%; padding: var(--space-1-5); border-radius: var(--radius-panel); text-align: left; transition: background var(--duration-fast); }
+  button.row:hover { background: var(--fill-faint); }
+  .on, button.on:hover { background: var(--fill); }
+  .text { display: flex; flex: 1; flex-direction: column; min-width: 0; padding-right: var(--space-5); line-height: var(--leading-snug); }
+  .name, .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .name { color: var(--fg); font-weight: var(--weight-medium); }
+  .sub { color: var(--fg-muted); font-size: var(--text-meta); }
+  .pencil { position: absolute; top: 50%; right: var(--space-1-5); display: grid; place-items: center; width: 28px; height: 28px; transform: translateY(-50%); border-radius: var(--radius-full); color: var(--fg-muted); opacity: 0; transition: opacity var(--duration-fast); }
+  .wrap:hover .pencil, .pencil:focus-visible { opacity: 1; }
+  .pencil:hover { color: var(--fg); }
+  @media (hover: none) { .pencil { opacity: 1; } }
+  .pencil :global(.icon) { width: var(--size-icon); height: var(--size-icon); }
+  .edit { display: flex; flex: 1; flex-direction: column; gap: var(--space-0-5); min-width: 0; }
+  input { width: 100%; padding: 0; color: var(--fg); font-weight: var(--weight-medium); outline: 0; }
+  input::placeholder { color: var(--fg-muted); font-weight: var(--weight-regular, 400); }
+  .error { color: var(--danger); font-size: var(--text-meta); }
+  .add { color: var(--fg-muted); }
+  .plus { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border: var(--hairline) dashed var(--fg-muted); border-radius: 30%; color: var(--fg-muted); }
 </style>

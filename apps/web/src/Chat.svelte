@@ -73,7 +73,7 @@
   let pinned = true;
 
   const empty = $derived(!current && !turns.length);
-  const hello = family ? `Hello, ${family}` : greeting(untrack(() => name));
+  const hello = $derived(family ? `Hello, ${family}` : greeting(name));
 
   $effect(() => {
     const want = id;

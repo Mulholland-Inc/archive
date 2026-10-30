@@ -97,9 +97,9 @@ export async function passkeyRegister(user) {
   rememberPasskey(user, 'yes');
 }
 
-async function send(path, { method = 'GET', body, raw, signal } = {}) {
+async function send(path, { method = 'GET', body, raw, signal, workspace: named } = {}) {
   const init = { method, headers: {}, signal, credentials: 'include' };
-  if (workspace()) init.headers['Archive-Workspace'] = workspace();
+  if (named || workspace()) init.headers['Archive-Workspace'] = named || workspace();
   if (space()) init.headers['Archive-Space'] = space();
   if (raw !== undefined) init.body = raw;
   else if (body !== undefined) {
@@ -175,5 +175,20 @@ export function setupHidden() {
 export function hideSetup() {
   try {
     localStorage[`setup:${workspace()}`] = 'hidden';
+  } catch {}
+}
+
+export function devMode() {
+  try {
+    return localStorage.dev === 'on';
+  } catch {
+    return false;
+  }
+}
+
+export function setDevMode(on) {
+  try {
+    if (on) localStorage.dev = 'on';
+    else delete localStorage.dev;
   } catch {}
 }
