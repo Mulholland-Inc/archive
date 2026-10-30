@@ -209,7 +209,7 @@
       {#key generation}
       {#if !route.first || route.first === 'chat'}
         {#if catalogued}
-          <Chat id={route.second} name={me.actor.name} email={me.actor.email} family={fullTitle} short={archive} seed={me.workspace} tint={look(me.workspace).tint} onsaved={loadChats} />
+          <Chat id={route.second} name={me.actor.name} email={me.actor.email} family={fullTitle} short={kind === 'personal' ? '' : archive} seed={me.workspace} tint={look(me.workspace).tint} onsaved={loadChats} />
         {/if}
       {:else if route.first === 'library'}
         {#if catalogued}<Library {views} {tables} seed={me.workspace} spaces={me.spaces} archives={me.workspaces ?? []} />{/if}
