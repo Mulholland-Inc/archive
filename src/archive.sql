@@ -39,6 +39,35 @@ CREATE TABLE archive.chat (
 );
 CREATE INDEX chat_user_idx ON archive.chat (user_id, updated_at);
 
+CREATE TABLE archive.workflow (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    user_id    uuid NOT NULL REFERENCES archive."user" ON DELETE CASCADE,
+    role       text NOT NULL,
+    name       text NOT NULL,
+    source     text NOT NULL,
+    trigger    text NOT NULL DEFAULT '',
+    hook       text NOT NULL UNIQUE,
+    next_at    timestamptz,
+    cursor_at  timestamptz,
+    cursor_id  uuid,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (user_id, name)
+);
+CREATE INDEX workflow_next_idx ON archive.workflow (next_at) WHERE next_at IS NOT NULL;
+
+CREATE TABLE archive.workflow_run (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    workflow   uuid NOT NULL REFERENCES archive.workflow ON DELETE CASCADE,
+    trigger    text NOT NULL,
+    result     jsonb NOT NULL DEFAULT 'null',
+    logs       jsonb NOT NULL DEFAULT '[]',
+    error      text NOT NULL DEFAULT '',
+    ms         integer NOT NULL DEFAULT 0,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX workflow_run_idx ON archive.workflow_run (workflow, created_at);
+
 CREATE TABLE archive.revision (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     hash       text NOT NULL,

@@ -31,7 +31,7 @@ Two Postgres schemas. Tables are named in the singular, and every id is a UUIDv7
 
 | Schema | Holds |
 |---|---|
-| `archive` | Archive's own tables: `space`, `user`, `token`, `revision`, `file`, `upload` and `secret`. It also holds the built-in types, as domains (`archive.email`, `archive.iban`, `archive.phone`, …) and composite types (`archive.money`, `archive.address`, `archive.timestamp`, …) |
+| `archive` | Archive's own tables: `space`, `user`, `token`, `chat`, `workflow`, `workflow_run`, `revision`, `file`, `upload` and `secret`. It also holds the built-in types, as domains (`archive.email`, `archive.iban`, `archive.phone`, …) and composite types (`archive.money`, `archive.address`, `archive.timestamp`, …) |
 | `public` | One table per type, where the table is the type and a row is the entity, and the views over them |
 
 There is no `type` or `entity` table: Postgres already is that. Archive reads types, columns, foreign keys and `COMMENT ON` descriptions from the catalog.
@@ -99,12 +99,13 @@ The plan therefore only touches Archive's own objects, and it is never allowed t
 
 Agents get one MCP tool, `run`, which takes a TypeScript script and runs it inside Archive. Code is cheaper and more capable than many small tool calls: one script can query, loop, transform and write in a single turn.
 
-- **Runtime**: esbuild strips the types and goja runs the JavaScript, both inside the Go binary. Scripts have no file or network access beyond the SDK, and they run with a timeout (`ARCHIVE_RUN_TIMEOUT`) and caps on result and log size.
+- **Runtime**: esbuild strips the types and goja runs the JavaScript, both inside the Go binary. Scripts have no file access beyond the SDK. A small `fetch` (method, headers, a string or JSON body; `ok`, `status`, `headers`, `text()`, `json()`) calls other services synchronously, since goja has no event loop; it shares the run's timeout and caps responses at 5 MB. Scripts run with a timeout (`ARCHIVE_RUN_TIMEOUT`) and caps on result and log size, and a global `input` holds what a workflow trigger passed.
 - **As the user**: the script runs as the calling user's Postgres role, so row-level security applies. It also runs as one transaction, so a script that throws changes nothing. Side effects that leave Postgres, such as file processing, happen only after that transaction commits.
 - **SDK**: one word per verb:
   - rows: `sql`, `list`, `get`, `create`, `update`, `delete`, `search`;
   - schema: `schema`, `apply`, `tables`;
   - files and documents: `files`, `file`, `read`, `edit`;
+  - workflows: `workflows`, `deploy`, `test`, `start`, `runs`;
   - `spaces`.
 
   `create(table, data)` inserts a row; `create("Name.docx" | ".xlsx" | ".pptx")` makes an empty document. Writes clean input per domain in Go before Postgres checks it.
@@ -112,9 +113,21 @@ Agents get one MCP tool, `run`, which takes a TypeScript script and runs it insi
 
 The same SDK runs from `POST /api/run` and `archive run script.ts`. The HTTP API offers the same operations as REST under `/api`. Every request carries a user's session or token.
 
+## Workflows
+
+A workflow is a saved script, `<name>.ts`, that Archive runs by itself. Clients never write code: their agent writes, tests and fixes every workflow, and the app only shows them.
+
+- **Storage**: `archive.workflow` holds each user's scripts (unique by user and name), with the trigger, a webhook token, the next due time and a table cursor. `archive.workflow_run` keeps the last 100 runs of each, with result, logs, error and duration. Like `archive.chat`, only the system role reads them, always filtered by the user.
+- **Triggers**: the script's first line, `// on: <trigger>`. None means it runs only when started. `cron <spec>` uses robfig/cron's standard parser, with descriptors and `CRON_TZ=`, only to compute the next time. `<table>` passes the rows created or changed since the last run as `input.rows`, up to 100 a run. `webhook` gives the workflow a URL with a random token.
+- **Deploy and test**: `archive.deploy(files)` replaces the user's whole set, like `apply` does for the schema. It compiles each file and checks its name and trigger, returns the errors instead of throwing, and saves nothing if there are any. Redeploying keeps webhook tokens and table cursors by name. `archive.test` runs a saved workflow or a draft inside a savepoint that is always rolled back, in its own goja VM and within the outer run's remaining time; `archive.start` runs one for real inside the current transaction and records it once that commits.
+- **As its owner**: a workflow runs through the same path as `POST /api/run`, as the role that deployed it (the user, or the token they used, so a token never gains rights), under row-level security and the run timeout.
+- **Worker**: `workflowLoop` ticks every second on every instance. It claims one due workflow at a time with `FOR UPDATE SKIP LOCKED` and leases it by moving `next_at` past the run timeout, so any number of instances share the work. A cron workflow then gets its next time. A table workflow polls its table as the owner for rows whose `(greatest(created_at, updated_at), id)` is past the cursor; a run that works moves the cursor, and one that fails keeps it and retries a minute later. Rows whose timestamp equals one of the workflow's own run transaction times are skipped, so its own writes never trigger it again. `updated_at` moves on `archive.update`, not on raw SQL.
+- **Webhooks**: `POST /hooks/run/<token>` sits beside the connectors' `/hooks/<provider>` (ADR 0002), outside the authenticated `/api` mux. The token is the only credential. The body is passed as parsed JSON or raw text with the method, query and headers, and the response is the run's result as JSON, or 500 with the error.
+- **API**: `GET /api/workflows`, `GET /api/workflows/{name}/runs` and `POST /api/workflows/{name}/run`; the app's Workflows screen lists them in plain words, with their runs and webhook URL, and never shows code.
+
 ## Agent workflows
 
-These run in the agent, as code against the SDK, not inside Archive.
+These run in the agent, as code against the SDK. The ones that recur can be saved as workflows that Archive runs on its own.
 
 - **Intake and classification**: the agent reads new files, decides their type, and writes rows.
 - **Jev classifier**: a small model agents can use to pick the type for an input.
@@ -187,9 +200,9 @@ The same image runs in two modes.
   - schema: generated from the database;
   - uploads: in Postgres and blob storage;
   - file processing: inside the request;
-  - background work, sync jobs and coordination: through Postgres locks (`SKIP LOCKED` for leftover files, an advisory lock for schema).
+  - background work, sync jobs and coordination: through Postgres locks (`SKIP LOCKED` for leftover files and due workflows, an advisory lock for schema).
 
-  It runs on request-based billing and scales to zero: no CPU is needed between requests.
+  It runs on request-based billing and scales to zero: no CPU is needed between requests, except for scheduled and table-triggered workflows, which run only while some instance is up; keep one instance warm if you use them.
 - **Helm** (`apps/helm`) covers Kubernetes and refuses an external database without a secret key. The **`archive` Terraform provider** (`apps/terraform`) manages schema DDL (tables and views), spaces, tokens and access rules as code. It compares configured DDL with the database through the plan endpoint, so normalized output never shows as drift.
 
 Not verified yet: a managed Postgres without a true superuser (Cloud SQL's `cloudsqlsuperuser`), and GCS through its S3 API.

@@ -58,7 +58,16 @@ return { count: unpaid.length, total };
 {"result": {"count": 3, "total": 6530}, "logs": [], "error": ""}
 ```
 
-All or nothing, only your spaces (even with raw SQL), no network, and a 30 second limit by default (`ARCHIVE_RUN_TIMEOUT`). The `run` tool's description is the full SDK reference plus a type for each of your tables, so your agent writes against your real schema. Scripts can also search every table and file, and edit Word, Excel and PowerPoint files in place.
+All or nothing, only your spaces (even with raw SQL), and a 30 second limit by default (`ARCHIVE_RUN_TIMEOUT`). A small `fetch` calls other services. The `run` tool's description is the full SDK reference plus a type for each of your tables, so your agent writes against your real schema. Scripts can also search every table and file, and edit Word, Excel and PowerPoint files in place.
+
+Your agent can also save a script as a workflow that Archive runs on its own: on a schedule, when rows of a table are added or changed, or when its webhook URL is called. The first line says when:
+
+```ts
+// on: cron CRON_TZ=America/New_York 0 9 * * 1-5
+return await archive.sql("SELECT number, customer, due FROM invoice WHERE NOT paid AND due < current_date");
+```
+
+The agent saves them with `archive.deploy(files)`, which returns compile and trigger errors instead of saving, and tries them on real data with `archive.test`, which undoes everything it wrote. A webhook workflow gets its own `ARCHIVE_URL/hooks/run/<secret>` address. Every run's result, logs and error show on the Workflows screen in the app.
 
 ## Connect it to everything else
 
@@ -69,7 +78,8 @@ The same data and the same permissions, whichever way in:
 | Way in | Good for |
 |---|---|
 | MCP at `/mcp` | Claude, ChatGPT, Gemini, Cursor and other agents, through one tool: `run` |
-| HTTP API at `/api` | Records, files and search from your own apps and services |
+| HTTP API at `/api` | Records, files, search and workflows from your own apps and services |
+| Webhooks at `/hooks/run/<secret>` | Other services starting a workflow with a POST |
 | The `archive` CLI | Scripts, scheduled jobs and quick changes from your terminal |
 | [Terraform provider](apps/terraform/provider) | Your schema, spaces, tokens and roles, kept with the rest of your setup |
 

@@ -528,6 +528,7 @@ func cliServe(ctx context.Context, a *Archive, addr string) error {
 	mux.Handle("/api/files/tus", tus)
 	mux.Handle("/api/files/tus/", tus)
 	mux.HandleFunc("GET /files/{id}", a.fileSigned)
+	mux.HandleFunc("POST /hooks/run/{token}", a.workflowHook)
 	mux.Handle("/auth/", si.handler())
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	srv := mcpServer(a)
@@ -545,6 +546,10 @@ func cliServe(ctx context.Context, a *Archive, addr string) error {
 	wg.Add(mediaWorkers)
 	for range mediaWorkers {
 		go a.fileLoop(bg, &wg)
+	}
+	wg.Add(workflowWorkers)
+	for range workflowWorkers {
+		go a.workflowLoop(bg, &wg)
 	}
 	hs := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	errc := make(chan error, 1)
@@ -661,6 +666,7 @@ func httpHandler(a *Archive) http.Handler {
 	handle("POST /api/schema/apply", schema(false))
 
 	a.fileRoutes(mux)
+	a.workflowRoutes(mux)
 	handle("GET /api/search", func(r *http.Request) (int, any, error) {
 		q := r.URL.Query()
 		limit, _ := strconv.Atoi(q.Get("limit"))

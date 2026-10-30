@@ -56,6 +56,14 @@
               "go_type": "encoding/json.RawMessage"
             },
             {
+              "column": "archive.workflow_run.result",
+              "go_type": "encoding/json.RawMessage"
+            },
+            {
+              "column": "archive.workflow_run.logs",
+              "go_type": "encoding/json.RawMessage"
+            },
+            {
               "column": "archive.file.metadata",
               "go_type": {
                 "type": "map[string]any"

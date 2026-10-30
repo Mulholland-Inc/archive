@@ -39,3 +39,29 @@ type ArchiveUser struct {
 	Signin    json.RawMessage
 	CreatedAt time.Time
 }
+
+type ArchiveWorkflow struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	Role      string
+	Name      string
+	Source    string
+	Trigger   string
+	Hook      string
+	NextAt    *time.Time
+	CursorAt  *time.Time
+	CursorID  *uuid.UUID
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type ArchiveWorkflowRun struct {
+	ID        uuid.UUID
+	Workflow  uuid.UUID
+	Trigger   string
+	Result    json.RawMessage
+	Logs      json.RawMessage
+	Error     string
+	Ms        int32
+	CreatedAt time.Time
+}
