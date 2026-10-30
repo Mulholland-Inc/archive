@@ -11,7 +11,7 @@
   import Connect from './ui/Connect.svelte';
   import Machine from './ui/Machine.svelte';
   import Bot from './ui/Bot.svelte';
-  import { look, setLook } from './ui/looks.svelte.js';
+  import { fullName, look, setLook, shortName } from './ui/looks.svelte.js';
   import Library from './Library.svelte';
   import Heading from './ui/Heading.svelte';
   import NavItem from './ui/NavItem.svelte';
@@ -67,7 +67,10 @@
   });
   const table = (name) => tables.find((t) => t.name === name);
   const who = $derived(me ? me.actor.name || me.actor.email : '');
-  const archive = $derived(me?.workspaces?.find((w) => w.id === me.workspace)?.name ?? 'Archive');
+  const typed = $derived(me?.workspaces?.find((w) => w.id === me.workspace)?.name ?? 'Archive');
+  const kind = $derived(me ? look(me.workspace).type : 'personal');
+  const archive = $derived(shortName(typed, kind));
+  const fullTitle = $derived(fullName(typed, kind));
 
   async function loadChats() {
     try {
@@ -206,10 +209,10 @@
       {#key generation}
       {#if !route.first || route.first === 'chat'}
         {#if catalogued}
-          <Chat id={route.second} name={me.actor.name} email={me.actor.email} family={archive} tint={look(me.workspace).tint} onsaved={loadChats} />
+          <Chat id={route.second} name={me.actor.name} email={me.actor.email} family={fullTitle} short={archive} seed={me.workspace} tint={look(me.workspace).tint} onsaved={loadChats} />
         {/if}
       {:else if route.first === 'library'}
-        {#if catalogued}<Library {views} {tables} />{/if}
+        {#if catalogued}<Library {views} {tables} seed={me.workspace} spaces={me.spaces} archives={me.workspaces ?? []} />{/if}
       {:else if route.first === 'files'}
         <Files />
       {:else if route.first === 'workflows'}
@@ -238,7 +241,7 @@
       {#if asking}<Passkey user={me.actor.user_id} ondone={() => (asking = false)} />{/if}
     </main>
     {#if catalogued && (!route.first || route.first === 'chat')}
-      {#key generation}<Panel name={archive} seed={me.workspace} {views} spaces={me.spaces} home={me.home} current={scope} email={me.actor.email} onpick={pick} oncreate={create} />{/key}
+      {#key generation}<Panel name={archive} seed={me.workspace} {views} archives={me.workspaces ?? []} spaces={me.spaces} home={me.home} current={scope} email={me.actor.email} onpick={pick} oncreate={create} />{/key}
     {/if}
     </div>
   </div>

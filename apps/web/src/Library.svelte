@@ -4,13 +4,20 @@
   import Heading from './ui/Heading.svelte';
   import ListItem from './ui/ListItem.svelte';
   import Sheet from './ui/Sheet.svelte';
+  import { look, shortName } from './ui/looks.svelte.js';
 
-  let { views = [], tables = [] } = $props();
+  let { views = [], tables = [], seed = '', spaces = [], archives = [] } = $props();
   let files = $state(null);
 
   // Tables that only link other tables together mean nothing on their own.
   const links = new Set(['parent_link', 'partnership']);
   const label = (n) => n.replaceAll('_', ' ');
+  const nameOf = (id) => {
+    const w = archives.find((a) => a.id === id);
+    return w ? shortName(w.name, look(id).type) : 'another archive';
+  };
+  // A file is shared when the space it sits in is.
+  const sharedTo = (f) => (look(seed).shares[spaces.find((s) => s.id === f.space)?.name] ?? []).map(nameOf);
   const kept = $derived(tables.filter((t) => !links.has(t.name)));
 
   api('/api/files?limit=500').then((all) => (files = all.reverse().slice(0, 6))).catch(() => (files = []));
@@ -38,7 +45,8 @@
     <section>
       <div class="top"><h3>Recent files</h3><a href="/files">All files</a></div>
       {#each files ?? [] as f (f.id)}
-        <ListItem href="{API}/api/files/{f.id}/content" target="_blank" icon="file">{f.name}</ListItem>
+        {@const to = sharedTo(f)}
+        <ListItem href="{API}/api/files/{f.id}/content" target="_blank" icon="file" meta={to.length ? [`Shared with ${to.join(', ')}`] : []}>{f.name}</ListItem>
       {:else}
         {#if files}<p>No files yet.</p>{/if}
       {/each}

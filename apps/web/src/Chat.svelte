@@ -55,9 +55,9 @@
   import RunCall from './ui/RunCall.svelte';
   import Note from './ui/Note.svelte';
   import Setup from './ui/Setup.svelte';
-  import robot from '../../site/static/art/robot.webp';
+  import Bot from './ui/Bot.svelte';
 
-  let { id = '', name = '', email = '', family = '', tint = '', onsaved } = $props();
+  let { id = '', name = '', email = '', family = '', short = '', seed = '', tint = '', onsaved } = $props();
 
   let current = $state('');
   let title = $state('');
@@ -73,7 +73,7 @@
   let pinned = true;
 
   const empty = $derived(!current && !turns.length);
-  const hello = $derived(!family ? greeting(name) : /archive$/i.test(family) ? family : `${family} Archive`);
+  const hello = $derived(family || greeting(name));
 
   $effect(() => {
     const want = id;
@@ -262,7 +262,7 @@
 {#if current}<span class="remove"><Button icon="trash" title="Delete chat" aria-label="Delete chat" onclick={remove} /></span>{/if}
 <div class="chat" class:empty style={tint ? `--primary: ${tint}; --primary-hover: ${tint}; --tint: ${tint}` : undefined} bind:this={pane}>
   {#if empty}
-    <img class="robot" src={robot} alt="" />
+    <span class="robot"><Bot {seed} size={150} bare /></span>
     <h2 class="hello">{hello}</h2>
   {/if}
   <div class="log" class:idle={empty && !failed} bind:this={log} aria-live="polite">
@@ -298,7 +298,7 @@
     {#if loading}<div class="thinking" role="status" aria-label="Loading"><span></span><span></span><span></span></div>{/if}
   </div>
   <div class="dock">
-    <Composer bind:value={draft} bind:field {busy} onsend={send} onstop={stop} placeholder={family ? `Message ${family}` : 'Ask anything'} aria-label="Message" />
+    <Composer bind:value={draft} bind:field {busy} onsend={send} onstop={stop} placeholder={short ? `Message ${short}` : 'Ask anything'} aria-label="Message" />
   </div>
   {#if empty}<Setup {email} />{/if}
 </div>
@@ -309,7 +309,7 @@
   .log { display: flex; flex: 1; flex-direction: column; gap: var(--space-3); padding-top: var(--space-7, 40px); width: 100%; max-width: var(--chat-width); min-width: 0; }
   .empty { justify-content: center; gap: var(--space-6); }
   .empty .log { flex: none; }
-  .robot { width: 120px; height: auto; margin-bottom: calc(-1 * var(--space-3)); }
+  .robot { margin-bottom: var(--space-1); }
   .log :global(.wrap) { margin-inline: 0; }
   .idle { display: none; }
   .hello {

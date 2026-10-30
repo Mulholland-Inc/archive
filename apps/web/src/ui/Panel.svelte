@@ -2,9 +2,9 @@
   import { api } from '../api.js';
   import Icon from '#kit/Icon.svelte';
   import Bot from './Bot.svelte';
-  import { look, setLook, TINTS, TYPES } from './looks.svelte.js';
+  import { incoming, look, setLook, shortName, TINTS, TYPES } from './looks.svelte.js';
 
-  let { name = '', seed = '', views = [], spaces = [], home = '', current = '', email = '', onpick, oncreate } = $props();
+  let { name = '', seed = '', views = [], archives = [], spaces = [], home = '', current = '', email = '', onpick, oncreate } = $props();
   let admin = $state(false);
   let adding = $state(false);
   let draft = $state('');
@@ -13,6 +13,7 @@
   let naming = $state(false);
   let who = $state('');
   let reach = $state('');
+  let sharing = $state('');
 
   const l = $derived(look(seed));
   const label = (s) => (s.id === home ? 'Personal' : s.name.replaceAll('_', ' '));
@@ -20,6 +21,19 @@
 
   function lock(s) {
     setLook(seed, { locked: isLocked(s) ? l.locked.filter((n) => n !== s.name) : [...l.locked, s.name] });
+  }
+
+  const nameOf = (id) => {
+    const w = archives.find((a) => a.id === id);
+    return w ? shortName(w.name, look(id).type) : 'another archive';
+  };
+  const others = $derived(archives.filter((a) => a.id !== seed));
+  const sharedTo = (s) => l.shares[s.name] ?? [];
+  const from = $derived(incoming(seed));
+
+  function share(s, id) {
+    const to = sharedTo(s);
+    setLook(seed, { shares: { ...l.shares, [s.name]: to.includes(id) ? to.filter((x) => x !== id) : [...to, id] } });
   }
 
   function choose(s) {
@@ -68,7 +82,7 @@
       <div class="icons">
         {#each TYPES[l.type].icons as icon (icon)}
           <button type="button" class:on={l.icon === icon} aria-label={icon} onclick={() => setLook(seed, { icon })}>
-            {#if icon === 'robot'}<Icon name="bot" />{:else}<Icon name={icon} />{/if}
+            <Bot {seed} {icon} size={36} bare />
           </button>
         {/each}
       </div>
@@ -90,11 +104,25 @@
           <button class="link" class:on={s.name === current} class:shut={shut && l.shared} type="button" disabled={shut && l.shared} onclick={() => choose(s)}>
             <Icon name={shut ? 'lock' : s.id === home ? 'user' : 'folder'} /><span>{label(s)}</span>
             {#if shut && l.shared}<small>Locked</small>{/if}
+            {#if sharedTo(s).length}<span class="linked" title="Shared with {sharedTo(s).map(nameOf).join(', ')}"><Icon name="users-round" /></span>{/if}
           </button>
           {#if !l.shared && s.id !== home}
-            <button class="key" type="button" aria-label="{shut ? 'Unlock' : 'Lock'} {label(s)}" title={shut ? 'Unlock' : 'Lock'} onclick={() => lock(s)}><Icon name={shut ? 'lock-open' : 'lock'} /></button>
+            <span class="tools">
+              <button class="key" type="button" aria-label="Share {label(s)}" aria-expanded={sharing === s.id} title="Share with another archive" onclick={() => (sharing = sharing === s.id ? '' : s.id)}><Icon name="share-2" /></button>
+              <button class="key" type="button" aria-label="{shut ? 'Unlock' : 'Lock'} {label(s)}" title={shut ? 'Unlock' : 'Lock'} onclick={() => lock(s)}><Icon name={shut ? 'lock-open' : 'lock'} /></button>
+            </span>
           {/if}
         </div>
+        {#if sharedTo(s).length}<p class="with">Shared with {sharedTo(s).map(nameOf).join(', ')}</p>{/if}
+        {#if sharing === s.id}
+          <div class="to">
+            {#each others as a (a.id)}
+              <button type="button" aria-pressed={sharedTo(s).includes(a.id)} onclick={() => share(s, a.id)}>
+                <Bot seed={a.id} size={22} /><span>{nameOf(a.id)}</span>{#if sharedTo(s).includes(a.id)}<Icon name="check" />{/if}
+              </button>
+            {/each}
+          </div>
+        {/if}
       {/each}
       {#if adding}
         <form class="link" class:failed onsubmit={create}>
@@ -105,6 +133,18 @@
         <button class="link quiet" type="button" onclick={() => (adding = true)}><Icon name="plus" /><span>Add space</span></button>
       {/if}
       {#if l.shared && l.locked.length}<p class="note">Locked by the archive's owners. Ask them if you need access.</p>{/if}
+    </div>
+  {/if}
+
+  {#if from.length}
+    <div class="list">
+      <h3>Shared with this archive</h3>
+      {#each from as f (f.from + f.space)}
+        <div class="link in" title="Stays in {nameOf(f.from)}, which can stop sharing at any time">
+          <span class="linked"><Icon name="users-round" /></span>
+          <span>{f.space.replaceAll('_', ' ')}<small>From {nameOf(f.from)}</small></span>
+        </div>
+      {/each}
     </div>
   {/if}
 
@@ -147,10 +187,9 @@
   .types { display: flex; gap: var(--space-1); }
   .types button { flex: 1; padding: var(--space-1); border-radius: var(--radius-full); color: var(--fg-muted); font-size: var(--text-meta); }
   .types .on { background: var(--fill); color: var(--fg); }
-  .icons { display: grid; grid-template-columns: repeat(6, 1fr); gap: var(--space-1); }
-  .icons button { display: grid; place-items: center; aspect-ratio: 1; border-radius: var(--radius-nav); color: var(--fg-soft); }
+  .icons { display: flex; justify-content: center; gap: var(--space-1); }
+  .icons button { display: grid; place-items: center; width: 52px; height: 52px; border-radius: var(--radius-nav); color: var(--fg-soft); }
   .icons .on { background: var(--fill-strong); color: var(--fg); }
-  .icons :global(.icon) { width: var(--size-icon); height: var(--size-icon); }
   .tints { display: flex; justify-content: space-between; }
   .tints button { width: 24px; height: 24px; border-radius: 50%; }
   .tints .on { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--fg-muted); }
@@ -161,8 +200,21 @@
   .link.on { background: var(--fill); }
   .shut { color: var(--fg-muted); cursor: not-allowed; }
   small { margin-left: auto; font-size: var(--text-meta); }
-  .key { position: absolute; top: 50%; right: var(--space-1); display: grid; place-items: center; width: 26px; height: 26px; transform: translateY(-50%); color: var(--fg-muted); opacity: 0; }
-  .line:hover .key, .key:focus-visible { opacity: 1; }
+  .tools { position: absolute; top: 50%; right: var(--space-1); display: flex; transform: translateY(-50%); }
+  .key { display: grid; place-items: center; width: 26px; height: 26px; color: var(--fg-muted); opacity: 0; }
+  .line:hover .key, .key:focus-visible, .key[aria-expanded='true'] { opacity: 1; }
+  .linked { display: grid; place-items: center; flex: none; width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: #fff; }
+  .linked :global(.icon) { width: 12px; height: 12px; }
+  .link .linked { margin-left: auto; }
+  .line:hover .link .linked { visibility: hidden; }
+  .with { padding: 0 var(--space-1-5) var(--space-1) 36px; color: var(--fg-muted); font-size: var(--text-meta); }
+  .to { display: flex; flex-direction: column; gap: var(--space-0-5); padding: var(--space-1); border-radius: var(--radius-nav); background: var(--surface); }
+  .to button { display: flex; align-items: center; gap: var(--space-2); width: 100%; padding: var(--space-1); border-radius: var(--radius-nav); text-align: left; }
+  .to button:hover { background: var(--fill-faint); }
+  .to span:not(.bot) { flex: 1; min-width: 0; }
+  .in { align-items: flex-start; }
+  .in .linked { margin-left: 0; }
+  .in small { display: block; margin: 0; color: var(--fg-muted); text-transform: none; }
   .key:hover { color: var(--fg); }
   @media (hover: none) { .key { opacity: 1; } }
   .key :global(.icon) { width: var(--size-icon); height: var(--size-icon); }

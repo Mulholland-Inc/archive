@@ -1,7 +1,7 @@
 <script>
   import Icon from '#kit/Icon.svelte';
   import Bot from './Bot.svelte';
-  import { look, TYPES } from './looks.svelte.js';
+  import { look, shortName, TYPES } from './looks.svelte.js';
 
   let { workspaces = [], workspace = '', latest = '', canAdd = false, onpick, onrename, onadd } = $props();
   let editing = $state('');
@@ -67,7 +67,7 @@
         <button class="row" class:on={w.id === workspace} type="button" aria-current={w.id === workspace ? 'true' : undefined} onclick={() => onpick(w.id)}>
           <Bot seed={w.id} />
           <span class="text">
-            <span class="name">{w.name}</span>
+            <span class="name">{shortName(w.name, look(w.id).type)}</span>
             {#if w.id === workspace}<span class="sub">{latest || 'Ask me anything'}</span>{:else if look(w.id).shared}<span class="sub">Shared with you</span>{/if}
           </span>
         </button>
