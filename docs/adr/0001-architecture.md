@@ -34,6 +34,8 @@ Two Postgres schemas. Tables are named in the singular, and every id is a UUIDv7
 | `archive` | Archive's own tables: `space`, `user`, `token`, `chat`, `workflow`, `workflow_run`, `revision`, `file`, `upload` and `secret`. It also holds the built-in types, as domains (`archive.email`, `archive.iban`, `archive.phone`, …) and composite types (`archive.money`, `archive.address`, `archive.timestamp`, …) |
 | `public` | One table per type, where the table is the type and a row is the entity, and the views over them |
 
+Each workspace (see [Workspaces](#workspaces)) has a database of its own with these two schemas. The main database's `archive` schema also holds the instance's own tables: `workspace`, `member`, `usage`, `due`, `setting` and `plan`.
+
 There is no `type` or `entity` table: Postgres already is that. Archive reads types, columns, foreign keys and `COMMENT ON` descriptions from the catalog.
 
 Every type table carries the same columns, row-level security and search column, and a plan without them is rejected:
@@ -121,8 +123,8 @@ A workflow is a saved script, `<name>.ts`, that Archive runs by itself. Clients 
 - **Triggers**: the script's first line, `// on: <trigger>`. None means it runs only when started. `cron <spec>` uses robfig/cron's standard parser, with descriptors and `CRON_TZ=`, only to compute the next time. `<table>` passes the rows created or changed since the last run as `input.rows`, up to 100 a run. `webhook` gives the workflow a URL with a random token.
 - **Deploy and test**: `archive.deploy(files)` replaces the user's whole set, like `apply` does for the schema. It compiles each file and checks its name and trigger, returns the errors instead of throwing, and saves nothing if there are any. Redeploying keeps webhook tokens and table cursors by name. `archive.test` runs a saved workflow or a draft inside a savepoint that is always rolled back, in its own goja VM and within the outer run's remaining time; `archive.start` runs one for real inside the current transaction and records it once that commits.
 - **As its owner**: a workflow runs through the same path as `POST /api/run`, as the role that deployed it (the user, or the token they used, so a token never gains rights), under row-level security and the run timeout.
-- **Worker**: `workflowLoop` ticks every second on every instance. It claims one due workflow at a time with `FOR UPDATE SKIP LOCKED` and leases it by moving `next_at` past the run timeout, so any number of instances share the work. A cron workflow then gets its next time. A table workflow polls its table as the owner for rows whose `(greatest(created_at, updated_at), id)` is past the cursor; a run that works moves the cursor, and one that fails keeps it and retries a minute later. Rows whose timestamp equals one of the workflow's own run transaction times are skipped, so its own writes never trigger it again. `updated_at` moves on `archive.update`, not on raw SQL.
-- **Webhooks**: `POST /hooks/run/<token>` sits beside the connectors' `/hooks/<provider>` (ADR 0002), outside the authenticated `/api` mux. The token is the only credential. The body is passed as parsed JSON or raw text with the method, query and headers, and the response is the run's result as JSON, or 500 with the error.
+- **Worker**: every workspace writes its next due time to `archive.due` in the main database: a deploy, a run that moves `next_at`, and opening the workspace all keep it up to date. Four workers per instance tick every second and claim a due row with `FOR UPDATE SKIP LOCKED`, leasing it past the run timeout, then open that workspace and claim its due workflows there the same way, up to 16 a turn, so no instance polls every workspace's database. A cron workflow then gets its next time. A table workflow polls its table as the owner for rows whose `(greatest(created_at, updated_at), id)` is past the cursor, every 3 seconds at first and backing off to once a minute as the table stays quiet (a tenth of the time since its last row); a run that works moves the cursor, and one that fails keeps it and retries a minute later. Rows whose timestamp equals one of the workflow's own run transaction times are skipped, so its own writes never trigger it again. `updated_at` moves on `archive.update`, not on raw SQL.
+- **Webhooks**: `POST /hooks/run/<workspace>/<token>` on `ARCHIVE_API_URL` (and `/hooks/run/<token>` for workspace one, as before) sits beside the connectors' `/hooks/<provider>` (ADR 0002), outside the authenticated `/api` mux. The token is the only credential. The body is passed as parsed JSON or raw text with the method, query and headers, and the response is the run's result as JSON, or 500 with the error.
 - **API**: `GET /api/workflows`, `GET /api/workflows/{name}/runs` and `POST /api/workflows/{name}/run`; the app's Workflows screen lists them in plain words, with their runs and webhook URL, and never shows code.
 
 ## Agent workflows
@@ -141,18 +143,28 @@ Archive is listed in ChatGPT, Claude, Gemini and Grok as one remote MCP server. 
 ## Users and permissions
 
 - **Spaces**: every user gets a private space, and shared spaces can be made for a household or a team. Every row and file belongs to one space.
-- **Roles are Postgres roles**: users, space roles (`owner`, `admin`, `editor`, `viewer`) and tokens are real Postgres roles, prefixed per instance (`ARCHIVE_INSTANCE`), and row-level security filters every query. A bug in one surface cannot leak another user's data, and plain SQL gets the same access as the app.
-- **Tokens** belong to a user and can only narrow that user's rights. Agents get their own tokens.
-- **Sign-in**: email magic links (`ARCHIVE_SMTP_URL`), passkeys, and OIDC providers such as Google or Microsoft (`ARCHIVE_OIDC`). The first owner comes from `ARCHIVE_ADMIN_EMAIL`, or a one-time setup link.
-- **Secret fields**: values of secret types such as `iban` or `us_ssn` are encrypted in `archive.secret` with `ARCHIVE_SECRET_KEY`. They are hidden from anyone not granted that type.
+- **Roles are Postgres roles**: users, space roles (`owner`, `admin`, `editor`, `viewer`) and tokens are real Postgres roles, prefixed per workspace (`ARCHIVE_INSTANCE` for workspace one, `w<id>` for the others), and row-level security filters every query. A bug in one surface cannot leak another user's data, and plain SQL gets the same access as the app.
+- **Tokens** belong to a user and can only narrow that user's rights. Agents get their own tokens. Tokens, sessions and sign-in links are `arc_<workspace>_<secret>`; the older `arc_<secret>` belongs to workspace one.
+- **Sign-in**: email magic links (`ARCHIVE_SMTP_URL`), passkeys, and OIDC providers such as Google or Microsoft (`ARCHIVE_OIDC`). The first owner comes from `ARCHIVE_ADMIN_EMAIL`, or a one-time setup link. A magic link request looks the email up in `archive.member` and mails one link per workspace; OIDC signs in to every workspace with that verified email.
+- **Secret fields**: values of secret types such as `iban` or `us_ssn` are encrypted in `archive.secret` with the workspace's data key (for workspace one, `ARCHIVE_SECRET_KEY` itself). They are hidden from anyone not granted that type.
+
+## Workspaces
+
+Every install serves many workspaces ([ADR 0003](0003-hosting.md)). A workspace is one customer's Archive: its own Postgres database on the same server, its own role prefix and its own data key, wrapped by `ARCHIVE_SECRET_KEY` in `archive.workspace`. The main database (`DATABASE_URL`, or the bundled one) is workspace one, so an install from before workspaces registers itself there on startup, keeping its prefix, its key and its data.
+
+- **Opening**: `src/workspace.go` holds the process's `Hub`: the main pool, the root key, the blob store and the open workspaces. A workspace's `Archive` (its pools, catalog, data key and run slots) opens on first use and closes after 10 idle minutes; pools are small (8 app, 4 system, 2 DDL connections) and close idle connections after a minute. Opening applies `archive.sql` under the advisory lock and revision check, and at startup a background pass does the same for every workspace not yet open.
+- **Finding it**: a bearer token or sign-in secret names its workspace. The web app's cookie holds a session per workspace and each request names the current one in `Archive-Workspace`, the way `Archive-Space` names the space. Webhooks and file links carry it in their path, and OIDC carries it in an encrypted `state`.
+- **Limits**: each workspace runs at most 8 scripts at once (or its plan's `concurrent`), and waits 10 s for a slot before answering 429.
+- **Signup and admins**: `archive.setting` holds `signup`, off by default (`archive signup on`). With it on, `POST /auth/signup` mails a link that creates the database, applies the schema and makes the person its owner. Instance admins, the admins of workspace one, list and create workspaces (`archive workspace add|list`, `/auth/workspaces`) and edit plans (`archive plan`, `/auth/plans`).
+- **Usage and billing**: `archive.usage` counts runs, workflow runs, the chat agent's tokens and stored bytes per workspace and day. With `ARCHIVE_STRIPE_KEY` set, a workspace's plan (a row in `archive.plan`) limits them per calendar month with 402, `POST /auth/billing/checkout` starts Stripe Checkout, and `POST /stripe` checks Stripe's signature and sets the plan. A workspace may set its own Anthropic key (`PATCH /auth/workspace`), whose tokens are counted but not limited.
 
 ## Files
 
-File bytes are content-addressed by SHA-256 in `$ARCHIVE_DATA/blobs` or in S3-compatible storage (`ARCHIVE_BLOB_URL`).
+File bytes are content-addressed by SHA-256 in `$ARCHIVE_DATA/blobs` or in S3-compatible storage (`ARCHIVE_BLOB_URL`), under a prefix per workspace (none for workspace one).
 
 - **Uploads**: a plain `POST /api/files` for small files, or resumable tus uploads for large ones. A tus upload's state lives in `archive.upload` and its chunks are stored as blob objects, so consecutive chunks can land on different instances. The last chunk assembles the file from blob storage, without a local copy.
-- **Processing in the request**: Archive pulls metadata, extracts text (PDF, HTML, plain text and JSON) and makes image thumbnails inside the request that stored the file. A file is therefore `done` when its upload, edit or create returns, and nothing has to run between requests. A worker loop polls for leftover `pending` files every 10 s as a safety net only.
-- **Links**: `POST /api/files/{id}/link` makes a short-lived signed URL for downloads such as image previews. GPS data can be stripped from photos on the way out.
+- **Processing in the request**: Archive pulls metadata, extracts text (PDF, HTML, plain text and JSON) and makes image thumbnails inside the request that stored the file. A file is therefore `done` when its upload, edit or create returns, and nothing has to run between requests. A file left `pending` is picked up from `archive.due` 10 s later, as a safety net only.
+- **Links**: `POST /api/files/{id}/link` makes a short-lived signed URL, `ARCHIVE_API_URL/files/<workspace>/<id>`, for downloads such as image previews. GPS data can be stripped from photos on the way out.
 
 ## Documents
 
@@ -193,14 +205,16 @@ Details of how it behaves:
 
 ## Deployment
 
-The same image runs in two modes.
+The same image runs in two ways, each serving any number of workspaces.
 
 - **Self-hosted**: `install.sh` or `compose.yaml` runs the image with one `/data` volume on port 8080. The bundled Postgres, the blobs and `secret.key` all live in `/data`, and Archive backs up the database before a version upgrade.
 - **Stateless** (Cloud Run, Kubernetes, any container platform): set `DATABASE_URL` to a managed Postgres, `ARCHIVE_BLOB_URL` to S3-compatible storage, and `ARCHIVE_SECRET_KEY`, the same on every instance. Archive refuses to start with `DATABASE_URL` but without the key. Nothing else is local:
   - schema: generated from the database;
   - uploads: in Postgres and blob storage;
   - file processing: inside the request;
-  - background work, sync jobs and coordination: through Postgres locks (`SKIP LOCKED` for leftover files and due workflows, an advisory lock for schema).
+  - background work, sync jobs and coordination: through Postgres locks (`SKIP LOCKED` on `archive.due`, an advisory lock for schema).
+
+  A pooler such as PgBouncer or Cloud SQL's managed connection pooling can sit in `DATABASE_URL`, in transaction mode; schema changes and creating workspaces connect through `DATABASE_DIRECT_URL`, since they hold a session-level advisory lock. Archive sets each database's default `search_path` and `timezone`, so a pooler may drop those startup parameters.
 
   It runs on request-based billing and scales to zero: no CPU is needed between requests, except for scheduled and table-triggered workflows, which run only while some instance is up; keep one instance warm if you use them.
 - **Helm** (`apps/helm`) covers Kubernetes and refuses an external database without a secret key. The **`archive` Terraform provider** (`apps/terraform`) manages schema DDL (tables and views), spaces, tokens and access rules as code. It compares configured DDL with the database through the plan endpoint, so normalized output never shows as drift.
@@ -218,7 +232,6 @@ Designed but not built:
 - **More Office edits**: rows, columns, slides and formatting.
 - **Google Docs and Sheets integration** for people editing Office files.
 - **Connectors** that sync mail, files, chat and business data in, read-only and by delta: see [ADR 0002](0002-connectors.md).
-- **Hosting** at app.archive.dev from this same repo: every install serves many workspaces, each with its own database, and the hosted version differs only in its environment and rows: see [ADR 0003](0003-hosting.md).
 - **Clients**: the Svelte app, as the website and in Tauri 2 shells for iOS, Android and desktop (Capacitor as the fallback on mobile). Every shell runs it in the platform's own web view (WKWebView, Android WebView, WebView2, WebKitGTK).
 
 ## Not doing
