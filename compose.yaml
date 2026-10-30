@@ -1,12 +1,33 @@
 services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: archive
+      POSTGRES_PASSWORD: archive
+      POSTGRES_DB: archive
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "archive"]
+      interval: 2s
+      retries: 30
+    restart: unless-stopped
+
   archive:
     image: ghcr.io/mulholland-inc/archive:latest
-    build: .
+    command: ["serve"]
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "8080:8080"
     volumes:
-      - archive:/data
+      - archive:/home/nonroot
     environment:
+      DATABASE_URL: postgres://archive:archive@postgres:5432/archive?sslmode=disable
+      ARCHIVE_DATA: /home/nonroot
       ARCHIVE_LOCALE: ${ARCHIVE_LOCALE:-}
       ARCHIVE_URL: ${ARCHIVE_URL:-http://localhost:3000}
       ARCHIVE_API_URL: ${ARCHIVE_API_URL:-http://localhost:8080}
@@ -25,4 +46,5 @@ services:
     restart: unless-stopped
 
 volumes:
+  postgres:
   archive:

@@ -90,15 +90,15 @@ Usage:
   archive workspace delete <uuid>    drop a workspace: its database and its roles
 
 Environment:
-  DATABASE_URL       external Postgres, as a superuser; unset starts the bundled one; several
-                     instances can share one when they share ARCHIVE_SECRET_KEY and ARCHIVE_BLOB_URL;
-                     every other workspace gets its own database on the same server
+  DATABASE_URL       Postgres 18, required, as a role with CREATEROLE and CREATEDB, like the one
+                     docker compose up -d postgres starts; several instances can share one when they
+                     share ARCHIVE_SECRET_KEY and ARCHIVE_BLOB_URL; every other workspace gets its own
+                     database on the same server
   DATABASE_DIRECT_URL
                      the same Postgres without a pooler in between, for schema changes, which
                      hold a session lock (default DATABASE_URL)
-  ARCHIVE_DATA       data directory: the bundled Postgres, its secret.key and files (default ./data)
-  ARCHIVE_PG_BIN     directory holding the Postgres binaries; unset uses those on PATH, or
-                     downloads Postgres into $ARCHIVE_DATA/pgbin on first run
+  ARCHIVE_DATA       data directory for secret.key and files, when ARCHIVE_SECRET_KEY and
+                     ARCHIVE_BLOB_URL are unset (default ./data)
   ARCHIVE_LOCALE     locale that messy input is read in, like nl-NL
   ANTHROPIC_API_KEY  key for the agent behind POST /api/chat, which can only call the run tool;
                      ANTHROPIC_BASE_URL points it at another Messages API endpoint
@@ -110,9 +110,8 @@ Environment:
                      unset stores files in $ARCHIVE_DATA/blobs
   ARCHIVE_BLOB_KEY, ARCHIVE_BLOB_SECRET
                      access key for an s3:// ARCHIVE_BLOB_URL (default AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
-  ARCHIVE_SECRET_KEY 32-byte key (hex or base64) for secret values and the Postgres role password;
-                     required with DATABASE_URL, the same on every instance; unset with the
-                     bundled Postgres uses $ARCHIVE_DATA/secret.key
+  ARCHIVE_SECRET_KEY 32-byte key (hex or base64) for secret values and the Postgres role password,
+                     the same on every instance; unset uses $ARCHIVE_DATA/secret.key, for one instance
   ARCHIVE_URL        public base URL of the web app, which runs on its own (ghcr.io/mulholland-inc/archive-web),
                      for passkeys and where sign-in returns (default http://localhost:3000); while it is
                      http://localhost, requests from this machine are signed in as the first owner

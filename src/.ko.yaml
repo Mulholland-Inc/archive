@@ -1,0 +1,7 @@
+defaultPlatforms: [linux/amd64, linux/arm64]
+builds:
+  - id: archive
+    main: .
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    ldflags: [-s -w]

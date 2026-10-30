@@ -101,14 +101,14 @@ Run Archive on your own computer, your own servers or your own cloud account, an
 
 ## Quick start
 
-One line starts Archive on your machine with Docker, as two containers: the API on port 8080 and the web app on port 3000.
+One line starts Archive on your machine with Docker, as three containers: Postgres, the API on port 8080 and the web app on port 3000.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Mulholland-Inc/archive/main/install.sh | sh
 docker exec archive archive user add you@example.com
 ```
 
-Use your own email: the first person you add is the owner. Set a sign-in provider too, such as `ARCHIVE_GOOGLE_CLIENT_ID` and `ARCHIVE_GOOGLE_CLIENT_SECRET`, and sign in with it under that email; once in, add a passkey. Run the same line again to update. Your data stays in the `archive` volume, and Archive backs itself up before each new version.
+Use your own email: the first person you add is the owner. Set a sign-in provider too, such as `ARCHIVE_GOOGLE_CLIENT_ID` and `ARCHIVE_GOOGLE_CLIENT_SECRET`, and sign in with it under that email; once in, add a passkey. Run the same line again to update. Your data stays in the `archive-postgres` and `archive` volumes.
 
 From a clone of this repo, Docker Compose does the same:
 
@@ -193,7 +193,7 @@ The same job runs any other command, like `--args=workspace,add,Acme,anna@acme.e
 
 To deploy every image built on main, add `-var github_repository=owner/repo` with a `GITHUB_TOKEN` that can write that repository's Actions variables and secrets (`gh auth token` works for an admin). Apply before merging anything else, then run the image workflow once: until it runs, the app domain answers 503.
 
-The image holds Postgres and the binary. With nothing set, it runs the bundled Postgres and keeps files in `/data`. Give it an outside Postgres (`DATABASE_URL`), S3-compatible storage (`ARCHIVE_BLOB_URL`) and one `ARCHIVE_SECRET_KEY`, and it keeps nothing local, so you can run as many copies side by side as you like. In production, put both behind HTTPS and set `ARCHIVE_URL` and `ARCHIVE_API_URL`.
+The API image holds only the binary, built with [ko](https://ko.build) on a minimal base, and it needs a Postgres 18 (`DATABASE_URL`). With nothing else set, it keeps its key and files in `ARCHIVE_DATA`. Give it storage (`ARCHIVE_BLOB_URL`) and one `ARCHIVE_SECRET_KEY`, and it keeps nothing local, so you can run as many copies side by side as you like. In production, put both behind HTTPS and set `ARCHIVE_URL` and `ARCHIVE_API_URL`.
 
 One Archive serves any number of workspaces: one per organization, each its own Postgres database on the same server, with its own spaces, files and workflows, its own login role and its own data key. People are invited to workspaces (`archive user add`, or the Users page), and one sign-in reaches all of theirs. A new install starts with one. Instance admins (the admins of the first workspace) make and delete more, each with its first owner:
 
@@ -210,8 +210,8 @@ Every setting is an environment variable; `archive help` lists them all:
 |---|---|
 | `ARCHIVE_URL` | Public base URL of the web app, for passkeys and where sign-in returns (default `http://localhost:3000`) |
 | `ARCHIVE_API_URL` | Public base URL of the API, sign-in, MCP, webhooks, file links and OAuth redirects, which holds the session cookie (default `http://localhost:8080`); `/api` and `/auth` allow `ARCHIVE_URL`'s origin over CORS. The web image reads it too |
-| `ARCHIVE_DATA` | Data directory for the bundled Postgres, its key and files (default `./data`) |
-| `DATABASE_URL` | Outside Postgres, with CREATEROLE and CREATEDB (no superuser needed); unset starts the bundled one. Each workspace gets its own database on the same server |
+| `ARCHIVE_DATA` | Directory for `secret.key` and files, while `ARCHIVE_SECRET_KEY` and `ARCHIVE_BLOB_URL` are unset (default `./data`) |
+| `DATABASE_URL` | Postgres 18, required, with CREATEROLE and CREATEDB (no superuser needed); `docker compose up -d postgres` starts one. Each workspace gets its own database on the same server |
 | `DATABASE_DIRECT_URL` | The same Postgres without a pooler in between, for schema changes (default `DATABASE_URL`) |
 | `ARCHIVE_SECRET_KEY` | 32-byte key for secret values; required with `DATABASE_URL`, the same on every copy |
 | `ARCHIVE_BLOB_URL`, `ARCHIVE_BLOB_KEY`, `ARCHIVE_BLOB_SECRET` | S3, R2 or MinIO for files, or `gs://bucket` for GCS as the Cloud Run service account, with no key |
@@ -222,7 +222,6 @@ Every setting is an environment variable; `archive help` lists them all:
 | `ANTHROPIC_API_KEY` | Key of the in-app agent; a workspace can set its own |
 | `ARCHIVE_LOCALE` | Locale that messy input is read in |
 | `ARCHIVE_RUN_TIMEOUT` | Time limit of one run (default `30s`) |
-| `ARCHIVE_PG_BIN` | Where the Postgres binaries are; unset uses `PATH` or downloads them |
 
 ## How it is built
 
@@ -246,11 +245,13 @@ flowchart LR
 ## Develop
 
 ```sh
+docker compose up -d postgres         # Postgres 18 on localhost:5433
 cd src
 go build -o archive .
-go test ./...                         # end-to-end tests against a real Postgres 18
-ARCHIVE_DATA=../data ARCHIVE_BIN=./archive ../demo/load.sh you@example.com
-ARCHIVE_DATA=../data ARCHIVE_URL=http://localhost:5173 ./archive serve  # API, sign-in and MCP on :8080
+go test ./...                         # end-to-end tests; each starts its own Postgres 18 with initdb and postgres from PATH
+export DATABASE_URL="postgres://archive:archive@localhost:5433/archive?sslmode=disable" ARCHIVE_DATA=../data
+ARCHIVE_BIN=./archive ../demo/load.sh you@example.com
+ARCHIVE_URL=http://localhost:5173 ./archive serve  # API, sign-in and MCP on :8080
 ```
 
 ```sh

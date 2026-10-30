@@ -41,6 +41,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v4"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stripe/pg-schema-diff/pkg/diff"
 )
@@ -64,11 +65,9 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	e2eTemplate = filepath.Join(dir, "template")
-	c := exec.Command(e2eBin, "types")
-	c.Env = append(os.Environ(), "ARCHIVE_DATA="+e2eTemplate)
-	if out, err := c.CombinedOutput(); err != nil {
+	if err := e2eTemplateDB(e2eTemplate); err != nil {
 		os.RemoveAll(dir)
-		panic(fmt.Sprintf("template data dir: %v\n%s", err, out))
+		panic(fmt.Sprintf("template database: %v", err))
 	}
 	flag.Set("test.parallel", "32")
 	code := m.Run()
@@ -129,26 +128,60 @@ func newInst(t *testing.T, env ...string) *e2eInst {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
-	if !slices.Contains(env, "ARCHIVE_PG_BIN=") {
-		if out, err := exec.Command("cp", e2eCopyFlag, "-R", e2eTemplate+"/.", dir).CombinedOutput(); err != nil {
-			t.Fatalf("copy template: %v %s", err, out)
-		}
-		pg := exec.Command("postgres", "-D", filepath.Join(dir, "pg"), "-c", "listen_addresses=", "-k", dir)
-		pg.Env = append(os.Environ(), "LC_ALL=C")
-		if err := pg.Start(); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() {
-			pg.Process.Signal(syscall.SIGINT)
-			pg.Wait()
-		})
-		for deadline := time.Now().Add(30 * time.Second); exec.Command("pg_isready", "-q", "-h", dir).Run() != nil; time.Sleep(20 * time.Millisecond) {
-			if time.Now().After(deadline) {
-				t.Fatal("postgres did not start")
-			}
+	if out, err := exec.Command("cp", e2eCopyFlag, "-R", e2eTemplate+"/.", dir).CombinedOutput(); err != nil {
+		t.Fatalf("copy template: %v %s", err, out)
+	}
+	stop, err := e2ePostgres(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(stop)
+	return &e2eInst{t: t, dir: dir, env: append([]string{"ARCHIVE_DATA=" + dir, "DATABASE_URL=host=" + dir + " user=archive dbname=archive"}, env...)}
+}
+
+func e2ePostgres(dir string) (func(), error) {
+	pg := exec.Command("postgres", "-D", filepath.Join(dir, "pg"), "-c", "listen_addresses=", "-k", dir)
+	pg.Env = append(os.Environ(), "LC_ALL=C")
+	if err := pg.Start(); err != nil {
+		return nil, err
+	}
+	stop := func() {
+		pg.Process.Signal(syscall.SIGINT)
+		pg.Wait()
+	}
+	for deadline := time.Now().Add(30 * time.Second); exec.Command("pg_isready", "-q", "-h", dir).Run() != nil; time.Sleep(20 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			stop()
+			return nil, errors.New("postgres did not start")
 		}
 	}
-	return &e2eInst{t: t, dir: dir, env: append([]string{"ARCHIVE_DATA=" + dir}, env...)}
+	return stop, nil
+}
+
+func e2eTemplateDB(dir string) error {
+	initdb := exec.Command("initdb", "-D", filepath.Join(dir, "pg"), "-U", "archive", "--auth-local=trust", "--auth-host=reject", "-E", "UTF8", "--locale=C")
+	initdb.Env = append(os.Environ(), "LC_ALL=C")
+	if out, err := initdb.CombinedOutput(); err != nil {
+		return fmt.Errorf("initdb: %v\n%s", err, out)
+	}
+	key := make([]byte, 32)
+	rand.Read(key)
+	if err := os.WriteFile(filepath.Join(dir, "secret.key"), []byte(hex.EncodeToString(key)+"\n"), 0o600); err != nil {
+		return err
+	}
+	stop, err := e2ePostgres(dir)
+	if err != nil {
+		return err
+	}
+	defer stop()
+	ctx := context.Background()
+	c, err := pgx.Connect(ctx, "host="+dir+" user=archive dbname=postgres")
+	if err != nil {
+		return err
+	}
+	defer c.Close(ctx)
+	_, err = c.Exec(ctx, "CREATE DATABASE archive")
+	return err
 }
 
 func (in *e2eInst) twin(env ...string) *e2eInst {
@@ -1046,36 +1079,6 @@ func TestTheFirstOwnerIsAddedOnTheCLIAndSignsInWithAProvider(t *testing.T) {
 	}
 }
 
-func TestWithoutPostgresInstalledTheFirstRunDownloadsItIntoTheDataDir(t *testing.T) {
-	t.Parallel()
-	if os.Getenv("CI") == "" {
-		t.Skip("downloads Postgres; runs in CI")
-	}
-	path := "PATH=/usr/bin:/bin:/usr/sbin:/sbin"
-	for _, name := range []string{"initdb", "postgres"} {
-		for _, d := range filepath.SplitList(strings.TrimPrefix(path, "PATH=")) {
-			if _, err := os.Stat(filepath.Join(d, name)); err == nil {
-				t.Skipf("%s is installed in %s", name, d)
-			}
-		}
-	}
-	in := newInst(t, path, "ARCHIVE_PG_BIN=")
-	_, errs, err := in.run("", "types")
-	if err != nil || !strings.Contains(errs, "downloading Postgres "+pgVersion) {
-		t.Fatalf("first run: %v\n%s", err, errs)
-	}
-	if _, err := os.Stat(filepath.Join(in.dir, "pgbin", pgVersion, "bin", "postgres")); err != nil {
-		t.Fatal(err)
-	}
-	srv := in.serve()
-	if log := srv.log.String(); strings.Contains(log, "downloading") {
-		t.Fatalf("second run:\n%s", log)
-	}
-	if out := in.must("types"); !strings.Contains(out, "archive.email") {
-		t.Errorf("types while serve runs: %s", out)
-	}
-}
-
 func TestDockerImagesServeTheAPIAndTheWebAppApartAndTakeCLICommandsFromDockerExec(t *testing.T) {
 	t.Parallel()
 	if os.Getenv("CI") == "" {
@@ -1085,7 +1088,7 @@ func TestDockerImagesServeTheAPIAndTheWebAppApartAndTakeCLICommandsFromDockerExe
 		t.Skip("docker is not available")
 	}
 	name := fmt.Sprintf("archive-e2e-%d", time.Now().UnixNano())
-	web := name + "-web"
+	web, pg := name+"-web", name+"-postgres"
 	docker := func(stdin string, args ...string) string {
 		t.Helper()
 		c := exec.Command("docker", args...)
@@ -1097,28 +1100,48 @@ func TestDockerImagesServeTheAPIAndTheWebAppApartAndTakeCLICommandsFromDockerExe
 		return string(out)
 	}
 	t.Cleanup(func() {
-		exec.Command("docker", "rm", "-f", name, web).Run()
+		exec.Command("docker", "rm", "-f", name, web, pg).Run()
 		exec.Command("docker", "volume", "rm", "-f", name).Run()
-		exec.Command("docker", "rmi", "-f", name, web).Run()
+		exec.Command("docker", "network", "rm", name).Run()
+		exec.Command("docker", "rmi", "-f", web).Run()
 	})
-	docker("", "build", "-q", "-t", name, "..")
+	ko := exec.Command("go", "run", "github.com/google/ko@v0.18.1", "build", "--bare", "--platform=linux/"+runtime.GOARCH, ".")
+	ko.Env = append(os.Environ(), "KO_DOCKER_REPO=ko.local")
+	out, err := ko.Output()
+	if err != nil {
+		t.Fatalf("ko build: %v", err)
+	}
+	image := strings.TrimSpace(string(out))
+	t.Cleanup(func() { exec.Command("docker", "rmi", "-f", image).Run() })
 	docker("", "build", "-q", "-f", "../apps/web/Dockerfile", "-t", web, "..")
-	docker("", "run", "-d", "--name", name, "-v", name+":/data", name)
-	docker("", "run", "-d", "--name", web, "-e", "ARCHIVE_API_URL=https://api.example.test", web)
+	docker("", "network", "create", name)
+	docker("", "run", "-d", "--name", pg, "--network", name, "-e", "POSTGRES_USER=archive", "-e", "POSTGRES_PASSWORD=archive", "-e", "POSTGRES_DB=archive", "postgres:18-alpine")
+	for deadline := time.Now().Add(60 * time.Second); exec.Command("docker", "exec", pg, "pg_isready", "-q", "-h", "127.0.0.1", "-U", "archive").Run() != nil; time.Sleep(500 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("postgres did not start")
+		}
+	}
+	docker("", "run", "-d", "--name", name, "--network", name, "-v", name+":/home/nonroot", "-p", "127.0.0.1::8080",
+		"-e", "DATABASE_URL=postgres://archive:archive@"+pg+":5432/archive?sslmode=disable", "-e", "ARCHIVE_DATA=/home/nonroot", image, "serve")
+	api := "http://" + strings.TrimSpace(docker("", "port", name, "8080"))
 	for deadline := time.Now().Add(90 * time.Second); ; time.Sleep(500 * time.Millisecond) {
-		if exec.Command("docker", "exec", name, "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz").Run() == nil {
+		if resp, err := http.Get(api + "/healthz"); err == nil && resp.StatusCode == 204 {
+			resp.Body.Close()
 			break
 		}
 		if time.Now().After(deadline) {
 			out, _ := exec.Command("docker", "logs", name).CombinedOutput()
-			t.Fatalf("container not healthy:\n%s", out)
+			t.Fatalf("container not up:\n%s", out)
 		}
 	}
 	for _, page := range []string{"/", "/workflows", "/assets/index.js"} {
-		if exec.Command("docker", "exec", name, "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080"+page).Run() == nil {
-			t.Errorf("the API image serves %s", page)
+		if resp, err := http.Get(api + page); err != nil || resp.StatusCode != 404 {
+			t.Errorf("the API image serves %s: %v %v", page, err, resp)
+		} else {
+			resp.Body.Close()
 		}
 	}
+	docker("", "run", "-d", "--name", web, "-e", "ARCHIVE_API_URL=https://api.example.test", web)
 	for _, page := range []string{"/", "/files", "/workflows"} {
 		if out := docker("", "exec", web, "wget", "-q", "-O", "-", "http://127.0.0.1:8080"+page); !strings.Contains(out, `<div id="app">`) || !strings.Contains(out, `<meta name="archive-api" content="https://api.example.test">`) {
 			t.Fatalf("web app at %s: %s", page, out)
@@ -1131,18 +1154,16 @@ func TestDockerImagesServeTheAPIAndTheWebAppApartAndTakeCLICommandsFromDockerExe
 	if exec.Command("docker", "exec", web, "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/assets/gone.js").Run() == nil {
 		t.Fatal("a missing asset answers")
 	}
+	ddl := t.TempDir()
+	os.WriteFile(filepath.Join(ddl, "company.sql"), []byte(e2eSchema["company.sql"]), 0o644)
+	docker("", "cp", ddl, name+":/home/nonroot/ddl")
 	docker("", "exec", name, "archive", "user", "add", "ops@example.com")
-	docker(e2eSchema["company.sql"], "exec", "-i", name, "sh", "-c", "mkdir -p /tmp/ddl && cat > /tmp/ddl/company.sql")
-	docker("", "exec", name, "archive", "schema", "apply", "/tmp/ddl")
+	docker("", "exec", name, "archive", "schema", "apply", "/home/nonroot/ddl")
 	docker("", "exec", name, "archive", "create", "company", `{"name":"Docker Inc"}`)
 	if out := docker("", "exec", name, "archive", "list", "company"); !strings.Contains(out, "Docker Inc") {
 		t.Fatalf("docker exec list: %s", out)
 	}
-	if logs := docker("", "logs", name); strings.Contains(logs, "already running") {
-		t.Errorf("logs: %s", logs)
-	}
 }
-
 func e2ePDF(pages ...string) []byte {
 	kids := make([]string, len(pages))
 	objs := []string{"<< /Type /Catalog /Pages 2 0 R >>", "", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"}
@@ -1679,16 +1700,6 @@ func TestTwoInstancesShareOnePostgresAndBlobStore(t *testing.T) {
 		}
 		if n := a.psql("archive", "SELECT count(*) FROM company"); n != "1" {
 			t.Errorf("%s companies after a fresh container started", n)
-		}
-	})
-
-	t.Run("ADatabaseURLNeedsASecretKey", func(t *testing.T) {
-		d := a.twin("ARCHIVE_SECRET_KEY=")
-		if errs := d.fails("types"); !strings.Contains(errs, "ARCHIVE_SECRET_KEY") {
-			t.Errorf("start without a key: %s", errs)
-		}
-		if _, err := os.Stat(filepath.Join(d.dir, "secret.key")); err == nil {
-			t.Error("a key file was generated")
 		}
 	})
 

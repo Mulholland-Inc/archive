@@ -215,6 +215,7 @@ resource "google_cloud_run_v2_service" "this" {
 
     containers {
       image = local.image
+      args  = ["serve"]
 
       ports {
         container_port = 8080

@@ -1,10 +1,7 @@
 *
-!src/
 !apps/web/
 !apps/kit/
 !apps/site/static/art/
-src/archive
-src/data/
 apps/web/node_modules/
 apps/web/dist/
 apps/web/ios/

@@ -510,12 +510,6 @@ UPDATE archive.upload SET parts = $2 WHERE id = $1;
 -- name: DeleteUpload :exec
 DELETE FROM archive.upload WHERE id = $1;
 
--- name: DatabaseExists :one
-SELECT EXISTS (SELECT FROM pg_catalog.pg_database WHERE datname = 'archive');
-
--- name: CreateDatabase :exec
-CREATE DATABASE archive;
-
 -- name: Revision :one
 SELECT coalesce((SELECT id::text || ':' || hash FROM archive.revision ORDER BY created_at DESC, id DESC LIMIT 1), '')::text;
 

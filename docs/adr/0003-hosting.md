@@ -24,9 +24,9 @@ flowchart LR
 
 ## Workspaces
 
-- **A database per workspace.** Each workspace's types are its own tables with their own columns, policies and schema changes (ADR 0001), so workspaces cannot share tables with a `workspace_id` column. Every workspace gets its own database on the same Postgres server: the bundled one, or Cloud SQL.
+- **A database per workspace.** Each workspace's types are its own tables with their own columns, policies and schema changes (ADR 0001), so workspaces cannot share tables with a `workspace_id` column. Every workspace gets its own database on the same Postgres server: the local container, or Cloud SQL.
 - **Roles are prefixed per workspace.** Postgres roles are server-wide, so each workspace's roles are prefixed by its id.
-- **The main database** is the one `DATABASE_URL` (or the bundled Postgres) points to. It is also the first workspace's database. In its `archive` schema it adds:
+- **The main database** is the one `DATABASE_URL` points to. It is also the first workspace's database. In its `archive` schema it adds:
 
 | Table | Holds |
 |---|---|
