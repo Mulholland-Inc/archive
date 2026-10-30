@@ -41,11 +41,12 @@
 </header>
 
 <style>
-  .side { display: var(--narrow-only); align-items: center; color: var(--fg-muted); transition: color var(--duration-fast); }
+  .side { display: var(--narrow-only); flex: none; align-items: center; justify-content: center; width: var(--size-control-lg); height: var(--size-control-lg); color: var(--fg-muted); transition: color var(--duration-fast); }
+  .side :global(.icon) { width: var(--size-icon-lg); height: var(--size-icon-lg); }
   .side:hover { color: var(--fg); }
   header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
   .bare { display: var(--narrow-only); }
-  .chat { align-self: center; width: 100%; max-width: calc(var(--chat-width) + 2 * var(--gutter)); padding-inline: var(--gutter); }
+  .chat { align-self: center; width: 100%; max-width: calc(var(--chat-width) + 2 * var(--gutter)); padding-inline: var(--chat-head-inset); }
   h1, .title {
     font: var(--weight-medium) var(--title-size) / var(--leading-tight) var(--font-serif);
     letter-spacing: var(--tracking-tight);
