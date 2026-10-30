@@ -9,9 +9,8 @@ locals {
   run     = local.split ? var.api_domain : var.app_domain
 
   required = {
-    DATABASE_URL        = "host=/cloudsql/${google_sql_database_instance.this.connection_name} user=${google_sql_user.this.name} password=${random_password.db.result} dbname=${google_sql_database.this.name}"
-    ARCHIVE_SECRET_KEY  = random_id.secret_key.hex
-    ARCHIVE_BLOB_SECRET = google_storage_hmac_key.this.secret
+    DATABASE_URL       = "host=/cloudsql/${google_sql_database_instance.this.connection_name} user=${google_sql_user.this.name} password=${random_password.db.result} dbname=${google_sql_database.this.name}"
+    ARCHIVE_SECRET_KEY = random_id.secret_key.hex
   }
   optional = {
     ANTHROPIC_API_KEY               = var.anthropic_api_key
@@ -161,10 +160,6 @@ resource "google_storage_bucket_iam_member" "this" {
   member = google_service_account.this.member
 }
 
-resource "google_storage_hmac_key" "this" {
-  service_account_email = google_service_account.this.email
-}
-
 resource "google_secret_manager_secret" "this" {
   for_each  = local.secret_names
   secret_id = "${var.name}-${replace(lower(each.key), "_", "-")}"
@@ -226,8 +221,7 @@ resource "google_cloud_run_v2_service" "this" {
           ARCHIVE_URL         = local.url
           ARCHIVE_API_URL     = local.api_url
           ARCHIVE_ADMIN_EMAIL = var.admin_email
-          ARCHIVE_BLOB_URL    = "s3://${google_storage_bucket.this.name}?endpoint=https://storage.googleapis.com&region=auto"
-          ARCHIVE_BLOB_KEY    = google_storage_hmac_key.this.access_id
+          ARCHIVE_BLOB_URL    = "gs://${google_storage_bucket.this.name}"
 
           ARCHIVE_TASKS_QUEUE           = google_cloud_tasks_queue.this.id
           ARCHIVE_TASKS_SERVICE_ACCOUNT = google_service_account.tasks.email

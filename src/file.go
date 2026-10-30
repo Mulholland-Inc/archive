@@ -1007,13 +1007,16 @@ func blobOpen(dir string) (blobStore, error) {
 		return &dirBlobs{filepath.Join(dir, "blobs")}, nil
 	}
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "s3" || u.Host == "" {
-		return nil, fmt.Errorf("ARCHIVE_BLOB_URL %q: want s3://bucket/prefix?endpoint=https://...&region=...", raw)
+	if err != nil || u.Scheme != "s3" && u.Scheme != "gs" || u.Host == "" {
+		return nil, fmt.Errorf("ARCHIVE_BLOB_URL %q: want gs://bucket/prefix or s3://bucket/prefix?endpoint=https://...&region=...", raw)
 	}
 	q := u.Query()
-	s := &s3Blobs{prefix: strings.Trim(u.Path, "/"), region: cmp.Or(q.Get("region"), "us-east-1"),
-		key:    cmp.Or(os.Getenv("ARCHIVE_BLOB_KEY"), os.Getenv("AWS_ACCESS_KEY_ID")),
-		secret: cmp.Or(os.Getenv("ARCHIVE_BLOB_SECRET"), os.Getenv("AWS_SECRET_ACCESS_KEY"))}
+	s := &s3Blobs{prefix: strings.Trim(u.Path, "/"), region: cmp.Or(q.Get("region"), "us-east-1")}
+	if u.Scheme == "gs" {
+		s.gcp, s.base = gcpMetadata(), cmp.Or(strings.TrimRight(q.Get("endpoint"), "/"), "https://storage.googleapis.com")+"/"+u.Host
+		return s, nil
+	}
+	s.key, s.secret = cmp.Or(os.Getenv("ARCHIVE_BLOB_KEY"), os.Getenv("AWS_ACCESS_KEY_ID")), cmp.Or(os.Getenv("ARCHIVE_BLOB_SECRET"), os.Getenv("AWS_SECRET_ACCESS_KEY"))
 	if s.key == "" || s.secret == "" {
 		return nil, errors.New("ARCHIVE_BLOB_URL needs ARCHIVE_BLOB_KEY and ARCHIVE_BLOB_SECRET")
 	}
@@ -1071,6 +1074,7 @@ const s3EmptyHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b785
 
 type s3Blobs struct {
 	base, prefix, region, key, secret string
+	gcp                               *gcpToken
 }
 
 func (s *s3Blobs) url(key string) string {
@@ -1102,6 +1106,14 @@ func (s *s3Blobs) do(ctx context.Context, method, obj string, body io.Reader, si
 	req.ContentLength = size
 	if rng != "" {
 		req.Header.Set("Range", rng)
+	}
+	if s.gcp != nil {
+		tok, err := s.gcp.access(ctx)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+		return http.DefaultClient.Do(req)
 	}
 	now := time.Now().UTC()
 	stamp, day := now.Format("20060102T150405Z"), now.Format("20060102")

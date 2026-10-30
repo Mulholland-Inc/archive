@@ -58,12 +58,22 @@ type hubEntry struct {
 }
 
 type hubTasks struct {
-	queue, account, base, meta string
+	queue, account, base string
+	gcp                  *gcpToken
 
 	mu     sync.Mutex
-	token  string
-	exp    time.Time
 	verify *oidc.IDTokenVerifier
+}
+
+type gcpToken struct {
+	meta  string
+	mu    sync.Mutex
+	token string
+	exp   time.Time
+}
+
+func gcpMetadata() *gcpToken {
+	return &gcpToken{meta: "http://" + coreEnv("GCE_METADATA_HOST", "metadata.google.internal")}
 }
 
 type Workspace struct {
@@ -103,7 +113,7 @@ func Open(ctx context.Context) (*Hub, error) {
 	var tasks *hubTasks
 	if q := os.Getenv("ARCHIVE_TASKS_QUEUE"); q != "" {
 		tasks = &hubTasks{queue: q, account: os.Getenv("ARCHIVE_TASKS_SERVICE_ACCOUNT"), base: coreEnv("ARCHIVE_TASKS_URL", "https://cloudtasks.googleapis.com"),
-			meta: "http://" + coreEnv("GCE_METADATA_HOST", "metadata.google.internal")}
+			gcp: gcpMetadata()}
 		if tasks.account == "" {
 			return nil, errors.New("ARCHIVE_TASKS_QUEUE needs ARCHIVE_TASKS_SERVICE_ACCOUNT, the service account whose OIDC token Cloud Tasks sends to /tasks")
 		}
@@ -403,7 +413,7 @@ func (h *Hub) wake(ctx context.Context, ws uuid.UUID, kind string, at time.Time)
 	if limit := time.Now().Add(hubTaskMax); at.After(limit) {
 		at = limit
 	}
-	tok, err := t.access(ctx)
+	tok, err := t.gcp.access(ctx)
 	if err != nil {
 		return err
 	}
@@ -433,7 +443,7 @@ func (h *Hub) wake(ctx context.Context, ws uuid.UUID, kind string, at time.Time)
 
 var hubHTTP = &http.Client{Timeout: 10 * time.Second}
 
-func (t *hubTasks) access(ctx context.Context) (string, error) {
+func (t *gcpToken) access(ctx context.Context) (string, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.token != "" && time.Now().Before(t.exp) {

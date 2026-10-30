@@ -1512,12 +1512,17 @@ type e2eS3 struct {
 	mu      sync.Mutex
 	objects map[string][]byte
 	puts    int
+	gcs     bool
 }
 
 func (s *e2eS3) handler(t *testing.T) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "AWS4-HMAC-SHA256 Credential=key-id/") || !strings.Contains(auth, "/eu-test/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=") {
+		if s.gcs && r.URL.Path == "/computeMetadata/v1/instance/service-accounts/default/token" && r.Header.Get("Metadata-Flavor") == "Google" {
+			json.NewEncoder(w).Encode(map[string]any{"access_token": "meta", "expires_in": 3600, "token_type": "Bearer"})
+			return
+		}
+		if s.gcs && auth != "Bearer meta" || !s.gcs && (!strings.HasPrefix(auth, "AWS4-HMAC-SHA256 Credential=key-id/") || !strings.Contains(auth, "/eu-test/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=")) {
 			w.WriteHeader(403)
 			return
 		}
@@ -1527,7 +1532,7 @@ func (s *e2eS3) handler(t *testing.T) http.Handler {
 		switch r.Method {
 		case "PUT":
 			body, _ := io.ReadAll(r.Body)
-			if sum := sha256.Sum256(body); hex.EncodeToString(sum[:]) != r.Header.Get("X-Amz-Content-Sha256") {
+			if sum := sha256.Sum256(body); !s.gcs && hex.EncodeToString(sum[:]) != r.Header.Get("X-Amz-Content-Sha256") {
 				w.WriteHeader(400)
 				return
 			}
@@ -1583,6 +1588,29 @@ func TestS3BlobBackendAgainstAFakeS3(t *testing.T) {
 	resp, body = e2eGet(t, srv.url+"/api/files/"+f.ID.String()+"/content", tok, "Range", "bytes=5-14")
 	if resp.StatusCode != 206 || string(body) != "5678901234" {
 		t.Errorf("middle range through s3: %d %q", resp.StatusCode, body)
+	}
+}
+
+func TestGCSBlobBackendSignsWithTheServiceAccountTokenFromTheMetadataServer(t *testing.T) {
+	t.Parallel()
+	gcs := &e2eS3{objects: map[string][]byte{}, gcs: true}
+	fake := httptest.NewServer(gcs.handler(t))
+	defer fake.Close()
+	in := newInst(t, "ARCHIVE_BLOB_URL=gs://photos?endpoint="+url.QueryEscape(fake.URL), "GCE_METADATA_HOST="+strings.TrimPrefix(fake.URL, "http://"))
+	in.must("user", "add", "ann@example.com")
+	content := bytes.Repeat([]byte("abcdefghij"), 3000)
+	path := filepath.Join(in.dir, "letters.txt")
+	os.WriteFile(path, content, 0o644)
+	f := decode[File](t, in.must("file", "add", path))
+	key := "/photos/" + in.psql("archive", "SELECT id FROM archive.workspace ORDER BY created_at LIMIT 1") + "/" + f.Hash[:2] + "/" + f.Hash
+	gcs.mu.Lock()
+	_, stored := gcs.objects[key]
+	gcs.mu.Unlock()
+	if !stored || f.Status != "done" {
+		t.Fatalf("object %s stored %v, file %+v", key, stored, f)
+	}
+	if out := in.must("file", "get", f.ID.String(), "-o", "-"); out != string(content) {
+		t.Errorf("download through gcs: %d bytes", len(out))
 	}
 }
 
