@@ -34,8 +34,6 @@ jobs:
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
 
-      - uses: ko-build/setup-ko@v0.9
-
       - working-directory: src
         env:
           KO_DOCKER_REPO: ghcr.io/mulholland-inc/archive
@@ -43,7 +41,7 @@ jobs:
           tags="sha-${GITHUB_SHA::7}"
           [ "$GITHUB_REF" = refs/heads/main ] && tags="$tags,latest"
           case "$GITHUB_REF" in refs/tags/v*) tags="$tags,${GITHUB_REF#refs/tags/v}" ;; esac
-          ko build --bare --tags "$tags" --image-label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" .
+          go run github.com/google/ko@v0.18.1 build --bare --tags "$tags" --image-label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" .
 
       - id: web
         uses: docker/metadata-action@v5
