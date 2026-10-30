@@ -112,10 +112,11 @@ Environment:
   ARCHIVE_CHAT_MODEL model of that agent (default claude-haiku-5-5)
   ARCHIVE_RUN_TIMEOUT
                      time limit of one archive run, POST /api/run or MCP run (default 30s)
-  ARCHIVE_BLOB_URL   s3://bucket/prefix?endpoint=https://host&region=r for S3, R2, MinIO or GCS;
+  ARCHIVE_BLOB_URL   gs://bucket/prefix for GCS as the service account of the Google Cloud metadata server,
+                     or s3://bucket/prefix?endpoint=https://host&region=r for S3, R2 or MinIO;
                      unset stores files in $ARCHIVE_DATA/blobs
   ARCHIVE_BLOB_KEY, ARCHIVE_BLOB_SECRET
-                     access key for ARCHIVE_BLOB_URL (default AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
+                     access key for an s3:// ARCHIVE_BLOB_URL (default AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
   ARCHIVE_SECRET_KEY 32-byte key (hex or base64) for secret values and the Postgres role password;
                      required with DATABASE_URL, the same on every instance; unset with the
                      bundled Postgres uses $ARCHIVE_DATA/secret.key
