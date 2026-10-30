@@ -68,10 +68,11 @@
     animation: appear var(--duration-slow) var(--ease-out) both;
   }
   img { align-self: center; width: auto; height: var(--door-art); max-width: 100%; object-fit: contain; }
-  .methods { display: flex; flex-direction: column; gap: var(--space-2); }
+  .methods { display: flex; flex-direction: column; gap: var(--space-2); align-self: center; width: 100%; max-width: var(--measure-sm); }
   .method {
     display: grid;
-    grid-template-columns: var(--size-icon) 1fr var(--size-icon);
+    grid-template-columns: var(--size-control-xs) 1fr var(--size-control-xs);
+    justify-items: center;
     align-items: center;
     gap: var(--space-2);
     padding: var(--space-2);
@@ -85,7 +86,7 @@
   .method:hover { background: var(--fill-strong); }
   .primary { background: var(--primary); color: var(--on-primary); }
   .primary:hover { background: var(--primary-hover); }
-  .quiet { background: none; color: var(--fg-muted); }
+  .quiet { display: flex; justify-content: center; background: none; color: var(--fg-muted); }
   .quiet:hover { background: var(--fill-faint); color: var(--fg); }
   .error { color: var(--danger); text-align: center; }
   @keyframes appear { from { opacity: 0; } }
