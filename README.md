@@ -101,7 +101,7 @@ Run Archive on your own computer, your own servers or your own cloud account, an
 
 ## Quick start
 
-One line starts Archive on your machine with Docker:
+One line starts Archive on your machine with Docker, as two containers: the API on port 8080 and the web app on port 3000.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Mulholland-Inc/archive/main/install.sh | sh
@@ -117,7 +117,7 @@ docker compose up -d
 docker compose exec archive archive user add you@example.com
 ```
 
-Open `http://localhost:8080` for the web app; `/healthz` answers `204` when it is up.
+Open `http://localhost:3000` for the web app. The API and MCP are on `http://localhost:8080`, where `/healthz` answers `204` when it is up.
 
 ## Connect your agent
 
@@ -168,9 +168,10 @@ With no `-space`, the token gets your role in every space you are in. Narrow it 
 | Where | How |
 |---|---|
 | **Docker** | [`install.sh`](install.sh), or `docker compose up -d` from the code |
-| **Kubernetes** | `helm install archive apps/helm/archive --set url=https://archive.example.com`, then `kubectl exec archive-0 -- archive user add you@example.com` |
-| **Cloud** | Terraform for [AWS](apps/terraform/aws) (Fargate, RDS, S3), [Google Cloud](apps/terraform/gcp) (Cloud Run, Cloud SQL, Storage) and [Azure](apps/terraform/azure) (Container Apps, Postgres, Files) |
+| **Cloud** | Terraform for [Google Cloud](apps/terraform/gcp) (Cloud Run, Cloud SQL, Storage) |
 | **As code** | the [`archive` Terraform provider](apps/terraform/provider) for your schema, spaces, tokens and roles |
+
+The API and the web app are separate images, always on addresses of their own: `ghcr.io/mulholland-inc/archive` serves the API, sign-in and MCP, and `ghcr.io/mulholland-inc/archive-web` serves the web app. Point them at each other with `ARCHIVE_URL` (the web app's address, on the API) and `ARCHIVE_API_URL` (the API's address, on both).
 
 On Google Cloud, everything is in Terraform, in one `apply`. You need a project with billing, Owner on it, and Terraform 1.9 or later:
 
@@ -180,29 +181,19 @@ cd apps/terraform/gcp && terraform init
 terraform apply -var project=<project>
 ```
 
-The first apply takes about 15 minutes, nearly all of it Cloud SQL. It serves the public `ghcr.io/mulholland-inc/archive:latest` on the run.app address it prints. Then add yourself as the first owner with the `archive` command, which Terraform also sets up as a Cloud Run job (`terraform output cli` prints its prefix):
+The first apply takes about 15 minutes, nearly all of it Cloud SQL. It runs the public API and web app images as two Cloud Run services and prints both addresses. Then add yourself as the first owner with the `archive` command, which Terraform also sets up as a Cloud Run job (`terraform output cli` prints its prefix):
 
 ```sh
 gcloud run jobs execute archive --region us-central1 --wait --args=user,add,you@example.com
 ```
 
-The same job runs any other command, like `--args=workspace,add,Acme,anna@acme.example`.
-
-On AWS, run the command as a one-off copy of the service's task:
-
-```sh
-aws ecs run-task --cluster archive --task-definition archive --launch-type FARGATE \
-  --network-configuration "$(aws ecs describe-services --cluster archive --services archive --query 'services[0].networkConfiguration' --output json)" \
-  --overrides '{"containerOverrides":[{"name":"archive","command":["user","add","you@example.com"]}]}'
-```
-
-On Azure, run it in the container app: `az containerapp exec --name archive --resource-group archive --command "archive user add you@example.com"`. The service scales to zero: Cloud Tasks wakes it at the moment a workflow or file is due, so nothing has to stay running.
+The same job runs any other command, like `--args=workspace,add,Acme,anna@acme.example`. The service scales to zero: Cloud Tasks wakes it at the moment a workflow or file is due, so nothing has to stay running.
 
 For your own domains, add `-var app_domain=… -var api_domain=… -var cloudflare_zone=…`, with a Cloudflare account token in `CLOUDFLARE_API_TOKEN`. On the zone it needs DNS Write, Config Settings Write and Workers Routes Write; on the account it needs Workers Scripts Write and Account API Tokens Write. Terraform verifies the zone with Google, maps `api_domain` to the service behind Cloudflare's proxy, and makes the web app on `app_domain` a Worker of static files that calls the API on its own domain. Google's certificate for `api_domain` takes 15 minutes or more after the apply. The zone's own SSL settings don't matter: a Configuration Rule makes Cloudflare reach Google over verified TLS, and lets Google's certificate challenges through over HTTP.
 
 To deploy every image built on main, add `-var github_repository=owner/repo` with a `GITHUB_TOKEN` that can write that repository's Actions variables and secrets (`gh auth token` works for an admin). Apply before merging anything else, then run the image workflow once: until it runs, the app domain answers 503.
 
-The image holds Postgres and the binary. With nothing set, it runs the bundled Postgres and keeps files in `/data`. Give it an outside Postgres (`DATABASE_URL`), S3-compatible storage (`ARCHIVE_BLOB_URL`) and one `ARCHIVE_SECRET_KEY`, and it keeps nothing local, so you can run as many copies side by side as you like. In production, put it behind HTTPS and set `ARCHIVE_URL`.
+The image holds Postgres and the binary. With nothing set, it runs the bundled Postgres and keeps files in `/data`. Give it an outside Postgres (`DATABASE_URL`), S3-compatible storage (`ARCHIVE_BLOB_URL`) and one `ARCHIVE_SECRET_KEY`, and it keeps nothing local, so you can run as many copies side by side as you like. In production, put both behind HTTPS and set `ARCHIVE_URL` and `ARCHIVE_API_URL`.
 
 One Archive serves any number of workspaces: one per organization, each its own Postgres database on the same server, with its own spaces, files and workflows, its own login role and its own data key. People are invited to workspaces (`archive user add`, or the Users page), and one sign-in reaches all of theirs. A new install starts with one. Instance admins (the admins of the first workspace) make and delete more, each with its first owner:
 
@@ -217,8 +208,8 @@ Every setting is an environment variable; `archive help` lists them all:
 
 | Variable | What it does |
 |---|---|
-| `ARCHIVE_URL` | Public base URL of the web app, for passkeys and where sign-in returns |
-| `ARCHIVE_API_URL` | Public base URL of the API, sign-in, MCP, webhooks, file links and OAuth redirects, which holds the session cookie (default `ARCHIVE_URL`); on another origin, `/api` and `/auth` allow `ARCHIVE_URL`'s origin over CORS |
+| `ARCHIVE_URL` | Public base URL of the web app, for passkeys and where sign-in returns (default `http://localhost:3000`) |
+| `ARCHIVE_API_URL` | Public base URL of the API, sign-in, MCP, webhooks, file links and OAuth redirects, which holds the session cookie (default `http://localhost:8080`); `/api` and `/auth` allow `ARCHIVE_URL`'s origin over CORS. The web image reads it too |
 | `ARCHIVE_DATA` | Data directory for the bundled Postgres, its key and files (default `./data`) |
 | `DATABASE_URL` | Outside Postgres, with CREATEROLE and CREATEDB (no superuser needed); unset starts the bundled one. Each workspace gets its own database on the same server |
 | `DATABASE_DIRECT_URL` | The same Postgres without a pooler in between, for schema changes (default `DATABASE_URL`) |
@@ -248,23 +239,22 @@ flowchart LR
 | [`src`](src) | The Go server and CLI: API, MCP, sign-in, schema, search, files, Office editing. `archive.sql` holds Archive's own schema and, after it, the sqlc queries; `generated` is the code sqlc makes from them |
 | [`apps/web`](apps/web) | The Svelte 5 web app |
 | [`apps/site`](apps/site) | [archive.us.org](https://archive.us.org) and the docs |
-| [`apps/helm`](apps/helm/archive), [`apps/terraform`](apps/terraform) | Kubernetes chart, cloud setups and the Terraform provider |
+| [`apps/terraform`](apps/terraform) | The Google Cloud setup and the Terraform provider |
 | [`demo`](demo) | A made-up personal archive: 18 tables, about 820 rows and 35 files to try it with |
 | [`docs/adr`](docs/adr) | Architecture decisions |
 
 ## Develop
 
 ```sh
-(cd apps/web && npm install && npm run build && cp -R dist/. ../../src/web/)
 cd src
 go build -o archive .
 go test ./...                         # end-to-end tests against a real Postgres 18
 ARCHIVE_DATA=../data ARCHIVE_BIN=./archive ../demo/load.sh you@example.com
-ARCHIVE_DATA=../data ./archive serve  # web app, API, sign-in and MCP on :8080
+ARCHIVE_DATA=../data ARCHIVE_URL=http://localhost:5173 ./archive serve  # API, sign-in and MCP on :8080
 ```
 
 ```sh
-cd apps/web && npm run dev   # web app with hot reload on :5173
+cd apps/web && npm install && npm run dev   # web app with hot reload on :5173, calling the API on :8080
 ```
 
 While `ARCHIVE_URL` is `http://localhost…` (the default), requests from the same machine are signed in as the first owner, so local development needs no sign-in provider. Anything that arrives through a proxy, or for another host name, still signs in.

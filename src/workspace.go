@@ -154,7 +154,7 @@ func Open(ctx context.Context) (*Hub, error) {
 	}
 	h := &Hub{key: key, aead: aead, pooled: pooled, direct: direct, blobs: blobs, hints: coreHints(os.Getenv("ARCHIVE_LOCALE")),
 		stop: stop, tasks: tasks, open: map[string]*hubEntry{}}
-	h.urls(coreEnv("ARCHIVE_URL", "http://localhost:8080"))
+	h.urls("8080")
 	if h.main, err = storePool(ctx, pooled, storeSysConns, nil); err != nil {
 		stop()
 		return nil, fmt.Errorf("open store: %w", err)
@@ -166,9 +166,9 @@ func Open(ctx context.Context) (*Hub, error) {
 	return h, nil
 }
 
-func (h *Hub) urls(app string) {
-	h.app = strings.TrimRight(app, "/")
-	h.api = strings.TrimRight(cmp.Or(os.Getenv("ARCHIVE_API_URL"), h.app), "/")
+func (h *Hub) urls(port string) {
+	h.app = strings.TrimRight(coreEnv("ARCHIVE_URL", "http://localhost:3000"), "/")
+	h.api = strings.TrimRight(coreEnv("ARCHIVE_API_URL", "http://localhost:"+port), "/")
 }
 
 func storeUndefined(err error) bool {

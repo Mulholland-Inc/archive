@@ -5,7 +5,6 @@
 !apps/site/static/art/
 src/archive
 src/data/
-src/web/
 apps/web/node_modules/
 apps/web/dist/
 apps/web/ios/

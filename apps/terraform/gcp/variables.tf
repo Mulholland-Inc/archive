@@ -17,14 +17,19 @@ variable "name" {
 
 variable "app_domain" {
   type        = string
-  description = "Domain of the web app, like app.archive.dev (ARCHIVE_URL), on Cloudflare. Alone it is the service's domain, a Cloud Run domain mapping behind Cloudflare's proxy; with api_domain it is only the web app, static files on a Worker of its own that the image workflow deploys. Empty uses the run.app URL."
+  description = "Domain of the web app, like app.archive.dev (ARCHIVE_URL), on Cloudflare: static files on a Worker of its own that the image workflow deploys. Set with api_domain; both empty run the web app as the archive-web Cloud Run service on its run.app URL."
   default     = ""
 }
 
 variable "api_domain" {
   type        = string
-  description = "Domain of the API, sign-in, MCP, webhooks and OAuth redirects, like api.archive.dev (ARCHIVE_API_URL), on Cloudflare: a Cloud Run domain mapping behind Cloudflare's proxy. Empty uses the app's address."
+  description = "Domain of the API, sign-in, MCP, webhooks and OAuth redirects, like api.archive.dev (ARCHIVE_API_URL), on Cloudflare: a Cloud Run domain mapping behind Cloudflare's proxy. Set with app_domain; both empty use the service's run.app URL."
   default     = ""
+
+  validation {
+    condition     = (var.api_domain == "") == (var.app_domain == "") && (var.api_domain == "" || var.api_domain != var.app_domain)
+    error_message = "Set app_domain and api_domain together, to two different domains, or leave both empty: the web app and the API are always on their own addresses."
+  }
 
   validation {
     condition     = var.api_domain == "" || var.app_domain != ""
@@ -46,7 +51,7 @@ variable "github_repository" {
 
 variable "image_tag" {
   type        = string
-  description = "Tag of ghcr.io/mulholland-inc/archive to run first; later deploys change the image outside Terraform."
+  description = "Tag of ghcr.io/mulholland-inc/archive and archive-web to run first; later deploys change the images outside Terraform."
   default     = "latest"
 }
 

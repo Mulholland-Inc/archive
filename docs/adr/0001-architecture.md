@@ -208,8 +208,8 @@ Details of how it behaves:
 
 The same image runs in two ways, each serving any number of workspaces.
 
-- **Self-hosted**: `install.sh` or `compose.yaml` runs the image with one `/data` volume on port 8080. The bundled Postgres, the blobs and `secret.key` all live in `/data`, and Archive backs up the database before a version upgrade.
-- **Stateless** (Cloud Run, Kubernetes, any container platform): set `DATABASE_URL` to a managed Postgres, `ARCHIVE_BLOB_URL` to S3-compatible storage, and `ARCHIVE_SECRET_KEY`, the same on every instance. Archive refuses to start with `DATABASE_URL` but without the key. Nothing else is local:
+- **Self-hosted**: `install.sh` or `compose.yaml` runs the API image with one `/data` volume on port 8080, and the web app image (`apps/web/Dockerfile`, nginx with the API's address filled in at start) on port 3000. The binary serves no web pages: the web app and the API are always on addresses of their own. The bundled Postgres, the blobs and `secret.key` all live in `/data`, and Archive backs up the database before a version upgrade.
+- **Stateless** (Cloud Run or any container platform): set `DATABASE_URL` to a managed Postgres, `ARCHIVE_BLOB_URL` to S3-compatible storage, and `ARCHIVE_SECRET_KEY`, the same on every instance. Archive refuses to start with `DATABASE_URL` but without the key. Nothing else is local:
   - schema: generated from the database;
   - uploads: in Postgres and blob storage;
   - file processing: inside the request;
@@ -218,7 +218,7 @@ The same image runs in two ways, each serving any number of workspaces.
   A pooler such as PgBouncer or Cloud SQL's managed connection pooling can sit in `DATABASE_URL`, in transaction mode; schema changes and creating workspaces connect through `DATABASE_DIRECT_URL`, since they hold a session-level advisory lock. Archive sets each database's default `search_path` and `timezone`, so a pooler may drop those startup parameters.
 
   It runs on request-based billing and scales to zero: no CPU is needed between requests. With `ARCHIVE_TASKS_QUEUE` and `ARCHIVE_TASKS_SERVICE_ACCOUNT` set, Cloud Tasks calls `/tasks` at each due time, so scheduled and table-triggered workflows and pending files start an instance when they need one. Without them, due work runs only while `archive serve` is up.
-- **Helm** (`apps/helm`) covers Kubernetes and refuses an external database without a secret key. The **`archive` Terraform provider** (`apps/terraform`) manages schema DDL (tables and views), spaces, tokens and access rules as code. It compares configured DDL with the database through the plan endpoint, so normalized output never shows as drift.
+- The **`archive` Terraform provider** (`apps/terraform`) manages schema DDL (tables and views), spaces, tokens and access rules as code. It compares configured DDL with the database through the plan endpoint, so normalized output never shows as drift.
 
 Not verified yet: a managed Postgres without a true superuser (Cloud SQL's `cloudsqlsuperuser`), and GCS through its S3 API.
 
