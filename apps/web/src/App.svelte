@@ -44,6 +44,7 @@
     if (!a || a.target || e.metaKey || e.ctrlKey || e.shiftKey || /^\/(api|auth)\//.test(a.getAttribute('href'))) return;
     e.preventDefault();
     open = false;
+    if (a.getAttribute('href') === '/') generation++;
     go(a.getAttribute('href'));
   });
 
@@ -96,7 +97,6 @@
       types = cat.types;
       tables = all.filter((t) => t.kind === 'table');
       views = all.filter((t) => t.kind === 'view');
-      if (location.pathname === '/') history.replaceState(null, '', (path = '/files'));
     } catch (e) {
       if (!(e instanceof Unauthorized) && e.status !== 403) throw e;
       if (workspace() && !(e instanceof Unauthorized)) {
@@ -124,14 +124,14 @@
     {#if open}<button class="scrim" type="button" aria-label="Close sidebar" onclick={toggle}></button>{/if}
     <aside class:open>
       <div class="top">
-        <a class="brand" href="/files" aria-label="Archive"><Word /></a>
+        <a class="brand" href="/" aria-label="Archive"><Word /></a>
         <button class="side" type="button" aria-label="Sidebar" aria-expanded={open} onclick={toggle}><Icon name="panel-left" /></button>
       </div>
       {#if me.workspaces?.length > 1}
         <Workspaces workspaces={me.workspaces} workspace={me.workspace} onpick={switchTo} />
       {/if}
       <nav>
-        <NavItem href="/chat" icon="plus" active={route.first === 'chat' && !route.second}>New chat</NavItem>
+        <NavItem href="/" icon="house" active={!route.first}>Home</NavItem>
         <NavItem href="/files" icon="folder" active={route.first === 'files'}>Files</NavItem>
         <NavItem href="/workflows" icon="workflow" active={route.first === 'workflows'}>Workflows</NavItem>
         <NavItem href="/users" icon="users" active={route.first === 'users'}>Users</NavItem>
@@ -164,7 +164,7 @@
     </aside>
     <main class:asking>
       {#key generation}
-      {#if route.first === 'chat'}
+      {#if !route.first || route.first === 'chat'}
         <Chat id={route.second} name={me.actor.name} onsaved={loadChats} />
       {:else if route.first === 'files'}
         <Files />

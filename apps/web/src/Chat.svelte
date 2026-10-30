@@ -54,6 +54,7 @@
   import Stream from './ui/Stream.svelte';
   import RunCall from './ui/RunCall.svelte';
   import Note from './ui/Note.svelte';
+  import robot from '../../site/static/art/robot.webp';
 
   let { id = '', name = '', onsaved } = $props();
 
@@ -242,7 +243,7 @@
     if (!confirm('Delete this chat?')) return;
     await api(`/api/chats/${current}`, { method: 'DELETE' });
     onsaved?.();
-    go('/chat');
+    go('/');
   }
 
   function segments(parts) {
@@ -260,7 +261,10 @@
   {#if current}<Button icon="trash" title="Delete chat" aria-label="Delete chat" onclick={remove} />{/if}
 </Heading>
 <div class="chat" class:empty bind:this={pane}>
-  {#if empty}<h2 class="hello">{hello}</h2>{/if}
+  {#if empty}
+    <img class="robot" src={robot} alt="" />
+    <h2 class="hello">{hello}</h2>
+  {/if}
   <div class="log" class:idle={empty && !failed} bind:this={log} aria-live="polite">
     {#if failed}<Note error>{failed}</Note>{/if}
     {#each turns as turn, i (turn.key)}
@@ -303,6 +307,7 @@
   .log { display: flex; flex: 1; flex-direction: column; gap: var(--space-6); width: 100%; max-width: var(--chat-width); min-width: 0; }
   .empty { justify-content: center; gap: var(--space-6); }
   .empty .log { flex: none; }
+  .robot { width: 120px; height: auto; margin-bottom: calc(-1 * var(--space-3)); }
   .log :global(.wrap) { margin-inline: 0; }
   .idle { display: none; }
   .hello {
