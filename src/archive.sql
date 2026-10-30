@@ -637,6 +637,12 @@ SELECT created_at FROM archive.workflow_run WHERE workflow = $1 AND created_at >
 -- name: TxNow :one
 SELECT now()::timestamptz;
 
+-- name: TxWrote :one
+SELECT (pg_current_xact_id_if_assigned() IS NOT NULL)::bool;
+
+-- name: WakeTableWorkflows :execrows
+UPDATE archive.workflow SET next_at = now() WHERE cursor_id IS NOT NULL AND next_at IS NULL;
+
 -- name: NextWorkflowAt :one
 SELECT next_at FROM archive.workflow WHERE next_at IS NOT NULL ORDER BY next_at LIMIT 1;
 
@@ -669,16 +675,32 @@ UPDATE archive.workspace SET name = $2 WHERE id = $1;
 -- name: SetWorkspaceAnthropicKey :exec
 UPDATE archive.workspace SET anthropic_key = $2 WHERE id = $1;
 
--- name: SoonDue :exec
-INSERT INTO archive.due (workspace, kind, at) VALUES ($1, $2, $3)
-ON CONFLICT (workspace, kind) DO UPDATE SET at = least(archive.due.at, EXCLUDED.at);
+-- name: SoonDue :one
+WITH was AS (SELECT x.at FROM archive.due x WHERE x.workspace = sqlc.arg(workspace) AND x.kind = sqlc.arg(kind))
+INSERT INTO archive.due (workspace, kind, at) VALUES (sqlc.arg(workspace), sqlc.arg(kind), sqlc.arg(at))
+ON CONFLICT (workspace, kind) DO UPDATE SET at = least(archive.due.at, EXCLUDED.at)
+RETURNING at, (at IS DISTINCT FROM (SELECT was.at FROM was))::bool AS changed;
 
 -- name: ClaimDue :one
 UPDATE archive.due d SET at = sqlc.arg(lease)::timestamptz FROM archive.workspace w
 WHERE w.id = d.workspace AND (d.workspace, d.kind) = (SELECT x.workspace, x.kind FROM archive.due x WHERE x.at <= now() ORDER BY x.at LIMIT 1 FOR UPDATE SKIP LOCKED)
 RETURNING w.id, d.kind, d.at;
 
--- name: SetDue :exec
+-- name: ClaimDueFor :one
+UPDATE archive.due d SET at = sqlc.arg(lease)::timestamptz
+WHERE d.workspace = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND d.at <= now()
+RETURNING d.at;
+
+-- name: DueAt :one
+SELECT at FROM archive.due WHERE workspace = $1 AND kind = $2;
+
+-- name: EarliestDue :one
+SELECT at FROM archive.due ORDER BY at LIMIT 1;
+
+-- name: NotifyDue :exec
+SELECT pg_notify('archive_due', sqlc.arg(at)::text);
+
+-- name: SetDue :execrows
 UPDATE archive.due d SET at = sqlc.arg(next)::timestamptz FROM archive.workspace w
 WHERE w.id = d.workspace AND w.id = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND d.at = sqlc.arg(claimed)::timestamptz;
 

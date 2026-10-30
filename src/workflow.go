@@ -25,8 +25,6 @@ import (
 const (
 	workflowBatch   = 100
 	workflowDepth   = 4
-	workflowPoll    = 3 * time.Second
-	workflowQuiet   = time.Minute
 	workflowRetry   = time.Minute
 	workflowMaxSize = 256 << 10
 	workflowMaxBody = 10 << 20
@@ -464,11 +462,9 @@ func (a *Archive) workflowNext(ctx context.Context) (bool, error) {
 	a.refresh(ctx)
 	on, perr := a.workflowParse(w.Trigger)
 	var next *time.Time
-	at := func(d time.Duration) *time.Time { t := time.Now().Add(d); return &t }
 	switch {
 	case perr != nil:
 		_, err = a.workflowRecord(ctx, w.ID, "table", time.Now(), &RunOutput{Result: json.RawMessage("null"), Logs: []string{}, Error: perr.Error() + "; deploy it again with a trigger that exists"}, 0)
-		next = at(workflowRetry)
 	case on.kind == "cron":
 		_, err = a.workflowExec(ctx, w, nil, "cron", nil)
 		t := on.sched.Next(time.Now().UTC())
@@ -483,13 +479,12 @@ func (a *Archive) workflowNext(ctx context.Context) (bool, error) {
 
 func (a *Archive) workflowTable(ctx context.Context, w generated.ArchiveWorkflow, tb *Table) error {
 	ctx = context.WithoutCancel(ctx)
-	next := func(d time.Duration) error {
-		t := time.Now().Add(d)
-		return a.sys(ctx, func(ctx context.Context) error { return a.st.db(ctx).SetWorkflowNext(ctx, w.ID, w.Trigger, &t) })
+	wait := func() error {
+		return a.sys(ctx, func(ctx context.Context) error { return a.st.db(ctx).SetWorkflowNext(ctx, w.ID, w.Trigger, nil) })
 	}
 	fail := func(err error) error {
 		_, rerr := a.workflowRecord(ctx, w.ID, "table", time.Now(), &RunOutput{Result: json.RawMessage("null"), Logs: []string{}, Error: err.Error()}, 0)
-		return errors.Join(rerr, next(workflowRetry))
+		return errors.Join(rerr, wait())
 	}
 	if w.CursorAt == nil || w.CursorID == nil {
 		return fail(errors.New("this workflow has no table cursor; deploy it again"))
@@ -513,28 +508,38 @@ func (a *Archive) workflowTable(ctx context.Context, w generated.ArchiveWorkflow
 		at  time.Time
 		id  uuid.UUID
 	}
-	var rows []found
-	err = a.as(WithActor(ctx, ac), func(ctx context.Context) error {
-		ts := "greatest(t.created_at, t.updated_at)"
-		res, err := a.st.Q(ctx).Query(ctx, `SELECT `+tb.rowSQL("t")+`, `+ts+`, t.id FROM `+tb.ident()+` t WHERE (`+ts+`, t.id) > ($1, $2) AND `+ts+` <> ALL ($3::timestamptz[]) ORDER BY 2, 3 LIMIT `+strconv.Itoa(workflowBatch), *w.CursorAt, *w.CursorID, own)
-		if err != nil {
-			return err
-		}
-		var b []byte
-		var f found
-		_, err = pgx.ForEachRow(res, []any{&b, &f.at, &f.id}, func() error {
-			r, err := rowDecode(b)
-			f.row = r
-			rows = append(rows, f)
+	read := func() (rows []found, err error) {
+		err = a.as(WithActor(ctx, ac), func(ctx context.Context) error {
+			ts := "greatest(t.created_at, t.updated_at)"
+			res, err := a.st.Q(ctx).Query(ctx, `SELECT `+tb.rowSQL("t")+`, `+ts+`, t.id FROM `+tb.ident()+` t WHERE (`+ts+`, t.id) > ($1, $2) AND `+ts+` <> ALL ($3::timestamptz[]) ORDER BY 2, 3 LIMIT `+strconv.Itoa(workflowBatch), *w.CursorAt, *w.CursorID, own)
+			if err != nil {
+				return err
+			}
+			var b []byte
+			var f found
+			_, err = pgx.ForEachRow(res, []any{&b, &f.at, &f.id}, func() error {
+				r, err := rowDecode(b)
+				f.row = r
+				rows = append(rows, f)
+				return err
+			})
 			return err
 		})
-		return err
-	})
+		return rows, err
+	}
+	rows, err := read()
 	if err != nil {
 		return fail(fmt.Errorf("reading new %s rows: %s", tb.Name, runMessage(err)))
 	}
 	if len(rows) == 0 {
-		return next(min(max(time.Since(*w.CursorAt)/10, workflowPoll), workflowQuiet))
+		if err := wait(); err != nil {
+			return err
+		}
+		if rows, err = read(); err != nil || len(rows) == 0 {
+			return err
+		}
+		now := time.Now()
+		return a.sys(ctx, func(ctx context.Context) error { return a.st.db(ctx).SetWorkflowNext(ctx, w.ID, w.Trigger, &now) })
 	}
 	in := make([]map[string]any, len(rows))
 	for i, f := range rows {
@@ -542,16 +547,12 @@ func (a *Archive) workflowTable(ctx context.Context, w generated.ArchiveWorkflow
 	}
 	rec, err := a.workflowExec(ctx, w, ac, "table", map[string]any{"rows": in})
 	if err != nil {
-		return errors.Join(err, next(workflowRetry))
+		return errors.Join(err, wait())
 	}
 	if rec.Error != "" {
-		return next(workflowRetry)
+		return wait()
 	}
-	last, wait := rows[len(rows)-1], workflowPoll
-	if len(rows) == workflowBatch {
-		wait = 0
-	}
-	t := time.Now().Add(wait)
+	last, t := rows[len(rows)-1], time.Now()
 	return a.sys(ctx, func(ctx context.Context) error {
 		return a.st.db(ctx).AdvanceWorkflow(ctx, generated.AdvanceWorkflowParams{ID: w.ID, Trigger: w.Trigger, NextAt: &t, CursorAt: &last.at, CursorID: &last.id})
 	})

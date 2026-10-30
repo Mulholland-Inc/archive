@@ -117,8 +117,8 @@ variable "anthropic_api_key" {
 
 variable "min_instances" {
   type        = number
-  description = "Cloud Run instances kept running; scheduled and table-triggered workflows only run while one is up."
-  default     = 1
+  description = "Cloud Run instances kept running. 0 scales to zero; Cloud Tasks starts one when a workflow or file is due."
+  default     = 0
 }
 
 variable "max_instances" {
@@ -142,7 +142,7 @@ variable "memory" {
 variable "db_tier" {
   type        = string
   description = "Cloud SQL machine tier."
-  default     = "db-g1-small"
+  default     = "db-f1-micro"
 }
 
 variable "db_max_connections" {
