@@ -248,7 +248,6 @@ resource "google_cloud_run_v2_service" "this" {
           ARCHIVE_URL         = local.url
           ARCHIVE_API_URL     = local.api_url
           ARCHIVE_ADMIN_EMAIL = var.admin_email
-          ARCHIVE_INSTANCE    = var.instance
           ARCHIVE_BLOB_URL    = "s3://${google_storage_bucket.this.name}?endpoint=https://storage.googleapis.com&region=auto"
           ARCHIVE_BLOB_KEY    = google_storage_hmac_key.this.access_id
           }, var.smtp_from != "" ? {

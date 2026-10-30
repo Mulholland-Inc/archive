@@ -179,15 +179,6 @@ func (s *pgStore) bootstrap(ctx context.Context, password string) error {
 	if _, err := s.sys.Exec(ctx, "ALTER ROLE "+s.prefix+"_authenticator PASSWORD '"+password+"'"); err != nil {
 		return err
 	}
-	if err := pgx.BeginFunc(ctx, s.sys, func(tx pgx.Tx) error {
-		err := generated.New(tx).AdvisoryXactLock(ctx, storeLock)
-		if err == nil {
-			_, err = tx.Exec(ctx, storeDropOld)
-		}
-		return err
-	}); err != nil {
-		return err
-	}
 	rev, _ := generated.New(s.sys).Revision(ctx)
 	if strings.HasSuffix(rev, ":"+s.hash()) {
 		return nil
@@ -199,15 +190,6 @@ func (s *pgStore) bootstrap(ctx context.Context, password string) error {
 	}
 	return err
 }
-
-const storeDropOld = `DO $$ BEGIN
-    IF to_regclass('archive.source') IS NOT NULL THEN
-        DELETE FROM archive.secret WHERE table_name = 'source';
-        DROP TABLE archive.source;
-    END IF;
-    DROP TABLE IF EXISTS archive.schema_file;
-    DROP TABLE IF EXISTS archive.view;
-END $$`
 
 func (s *pgStore) expand(sql string) string { return strings.ReplaceAll(sql, "{p}", s.prefix) }
 

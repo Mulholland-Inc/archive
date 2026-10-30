@@ -38,12 +38,6 @@ variable "admin_email" {
   description = "Email of the first owner."
 }
 
-variable "instance" {
-  type        = string
-  description = "Prefix of every Postgres role of this instance (ARCHIVE_INSTANCE)."
-  default     = "a"
-}
-
 variable "env" {
   type        = map(string)
   description = "Extra environment variables, such as ARCHIVE_OIDC and ARCHIVE_LOCALE."

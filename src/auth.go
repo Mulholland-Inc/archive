@@ -1129,14 +1129,14 @@ func (s *signin) handler() http.Handler {
 		release := func() {}
 		defer func() { release() }()
 		_, cred, err := s.wa.FinishPasskeyLogin(func(_, handle []byte) (webauthn.User, error) {
-			if len(handle) < 16 {
+			if len(handle) <= 16 {
 				return nil, errors.New("unknown passkey")
 			}
 			id, err := uuid.FromBytes(handle[:16])
 			if err != nil {
 				return nil, err
 			}
-			if a, release, err = h.acquire(r.Context(), cmp.Or(string(handle[16:]), h.one)); err != nil {
+			if a, release, err = h.acquire(r.Context(), string(handle[16:])); err != nil {
 				release = func() {}
 				return nil, err
 			}
@@ -1293,10 +1293,7 @@ func (s *signin) user(ctx context.Context, a *Archive, id uuid.UUID) (*signinUse
 	if err != nil {
 		return nil, err
 	}
-	pu := &signinUser{u: u, handle: u.ID[:]}
-	if a.ws.Short != s.h.one {
-		pu.handle = append(append([]byte{}, u.ID[:]...), a.ws.Short...)
-	}
+	pu := &signinUser{u: u, handle: append(append([]byte{}, u.ID[:]...), a.ws.Short...)}
 	if len(u.Signin) > 0 {
 		if err := json.Unmarshal(u.Signin, &pu.m); err != nil {
 			return nil, err

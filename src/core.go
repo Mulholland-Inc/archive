@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -41,7 +40,6 @@ type Archive struct {
 	mcph http.Handler
 }
 
-var corePrefixRe = regexp.MustCompile(`^[a-z][a-z0-9]{0,15}$`)
 
 func (a *Archive) as(ctx context.Context, fn func(context.Context) error) error {
 	ac := ActorFrom(ctx)

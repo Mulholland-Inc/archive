@@ -172,7 +172,7 @@ With no `-space`, the token gets your role in every space you are in. Narrow it 
 
 The image holds Postgres and the binary. With nothing set, it runs the bundled Postgres and keeps files in `/data`. Give it an outside Postgres (`DATABASE_URL`), S3-compatible storage (`ARCHIVE_BLOB_URL`) and one `ARCHIVE_SECRET_KEY`, and it keeps nothing local, so you can run as many copies side by side as you like. In production, put it behind HTTPS and set `ARCHIVE_URL`.
 
-One Archive serves any number of workspaces: one per organization, each with its own Postgres database on the same server, its own users, spaces, files and workflows, and its own data key. A new install has one, and an install from before workspaces becomes workspace one where it is, with nothing copied and every token still working. Instance admins (the admins of workspace one) make more, or let people sign up for their own:
+One Archive serves any number of workspaces: one per organization, each with its own Postgres database on the same server, its own users, spaces, files and workflows, and its own data key. A new install starts with one. Instance admins (the admins of workspace one) make more, or let people sign up for their own:
 
 ```sh
 docker exec archive archive workspace add "Acme Inc" anna@acme.example
@@ -200,7 +200,6 @@ Every setting is an environment variable; `archive help` lists them all:
 | `ARCHIVE_STRIPE_KEY`, `ARCHIVE_STRIPE_WEBHOOK_SECRET` | Billing: plan limits, Stripe Checkout and the webhook at `ARCHIVE_API_URL/stripe` |
 | `ARCHIVE_LOCALE` | Locale that messy input is read in |
 | `ARCHIVE_RUN_TIMEOUT` | Time limit of one run (default `30s`) |
-| `ARCHIVE_INSTANCE` | Prefix of workspace one's Postgres roles (default `a`); other workspaces get their own |
 | `ARCHIVE_PG_BIN` | Where the Postgres binaries are; unset uses `PATH` or downloads them |
 
 ## How it is built

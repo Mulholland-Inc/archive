@@ -246,7 +246,6 @@ resource "aws_ecs_task_definition" "this" {
     environment = [for k, v in merge(var.env, {
       ARCHIVE_URL         = local.url
       ARCHIVE_ADMIN_EMAIL = var.admin_email
-      ARCHIVE_INSTANCE    = var.instance
       ARCHIVE_BLOB_URL    = "s3://${aws_s3_bucket.this.bucket}?region=${var.region}"
       ARCHIVE_BLOB_KEY    = aws_iam_access_key.blob.id
     }) : { name = k, value = v }]

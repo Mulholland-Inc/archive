@@ -1313,7 +1313,7 @@ func TestFilesUploadProcessShareAndReference(t *testing.T) {
 		if again.ID != bigFile.ID || copied.ID == bigFile.ID || bobs.ID == bigFile.ID || copied.Hash != bigFile.Hash || bobs.Hash != bigFile.Hash {
 			t.Fatalf("same name %s, copy %s, bob %s, first %s", again.ID, copied.ID, bobs.ID, bigFile.ID)
 		}
-		blobs, _ := filepath.Glob(filepath.Join(in.dir, "blobs", "*", bigFile.Hash))
+		blobs, _ := filepath.Glob(filepath.Join(in.dir, "blobs", "*", "*", bigFile.Hash))
 		if n := in.psql("archive", "SELECT count(*) FROM archive.file WHERE hash = '"+bigFile.Hash+"'"); n != "3" || len(blobs) != 1 {
 			t.Errorf("%s file rows, %d blobs", n, len(blobs))
 		}
@@ -1489,7 +1489,7 @@ func TestS3BlobBackendAgainstAFakeS3(t *testing.T) {
 	f := decode[File](t, in.must("file", "add", path))
 	os.WriteFile(filepath.Join(in.dir, "copy.txt"), content, 0o644)
 	in.must("file", "add", filepath.Join(in.dir, "copy.txt"))
-	key := "/photos/archive/" + f.Hash[:2] + "/" + f.Hash
+	key := "/photos/archive/" + in.psql("archive", "SELECT short FROM archive.workspace WHERE database = 'archive'") + "/" + f.Hash[:2] + "/" + f.Hash
 	s3.mu.Lock()
 	_, stored := s3.objects[key]
 	puts := s3.puts
@@ -1608,29 +1608,6 @@ func TestTwoInstancesShareOnePostgresAndBlobStore(t *testing.T) {
 			t.Errorf("uploads left behind: %s rows, %d part directories", n, len(parts))
 		}
 	})
-}
-
-func TestStoredSchemaFilesFromOlderVersionsAreDroppedAndTheTablesKept(t *testing.T) {
-	t.Parallel()
-	in := newInst(t)
-	in.must("user", "add", "ann@example.com")
-	in.push(e2eSchema)
-	in.must("create", "company", `{"name":"Acme"}`)
-	in.psql("archive", `CREATE TABLE archive.schema_file (name text PRIMARY KEY, body text NOT NULL);
-INSERT INTO archive.schema_file (name, body) VALUES ('company.sql', 'CREATE TABLE stale (id uuid PRIMARY KEY)');
-INSERT INTO archive.revision (hash) VALUES ('old'); CREATE TABLE archive.source (id uuid PRIMARY KEY);
-CREATE TABLE archive.view (id uuid PRIMARY KEY, name text NOT NULL); INSERT INTO archive.view VALUES (uuidv7(), 'Board')`)
-	in.writeDir("schema", map[string]string{"company.sql": "CREATE TABLE stale (id uuid PRIMARY KEY)"})
-	files := in.roundTrips()
-	if !slices.Equal(slices.Sorted(maps.Keys(files)), slices.Sorted(maps.Keys(e2eSchema))) || strings.Contains(files["company.sql"], "stale") {
-		t.Errorf("schema after the upgrade: %v", files)
-	}
-	if got := in.psql("archive", "SELECT to_regclass('archive.schema_file') IS NULL AND to_regclass('archive.source') IS NULL AND to_regclass('archive.view') IS NULL AND to_regclass('stale') IS NULL"); got != "t" {
-		t.Error("archive.schema_file, archive.source or archive.view is still there, or the stored files were applied")
-	}
-	if out := in.must("list", "company"); !strings.Contains(out, "Acme") {
-		t.Errorf("companies after the upgrade: %s", out)
-	}
 }
 
 func TestTablesThatReferenceEachOtherRoundTripAndRecreate(t *testing.T) {
@@ -3123,77 +3100,6 @@ func e2eRun(t *testing.T, api, tok, code string) (int, RunOutput) {
 	return st, out
 }
 
-func e2eOldSecret(c byte) (string, string) {
-	s := "arc_" + strings.Repeat(string(c), 43)
-	sum := sha256.Sum256([]byte(s))
-	return s, hex.EncodeToString(sum[:])
-}
-
-func TestAnArchiveFromBeforeWorkspacesUpgradesInPlace(t *testing.T) {
-	t.Parallel()
-	in := newInst(t)
-	in.must("user", "add", "alice@example.com")
-	in.push(e2eSchema)
-	in.must("create", "company", `{"name": "Acme"}`)
-	pat := decode[row](t, in.must("create", "person", `{"name": "Pat", "ssn": "123-45-6789"}`))
-	in.must("secret", "grant", "alice@example.com", "us_ssn")
-	out, errs, err := in.run(`return await archive.deploy({ "hook.ts": "// on: webhook\nreturn { got: input.body };" });`, "run", "-")
-	if err != nil {
-		t.Fatalf("deploy: %v %s %s", err, out, errs)
-	}
-	hook := regexp.MustCompile(`/hooks/run/[a-z0-9]+/([A-Za-z0-9_-]+)`).FindStringSubmatch(out)
-	if hook == nil {
-		t.Fatalf("no webhook url in %s", out)
-	}
-	oldTok, oldTokHash := e2eOldSecret('T')
-	oldSess, oldSessHash := e2eOldSecret('S')
-	in.psql("archive", `INSERT INTO archive.token (user_id, kind, name, hash) SELECT id, 'user', 'old', '`+oldTokHash+`' FROM archive."user";
-INSERT INTO archive.token (user_id, kind, hash, expires_at) SELECT id, 'session', '`+oldSessHash+`', now() + interval '1 day' FROM archive."user";
-DROP TABLE archive.due, archive.usage, archive.member, archive.setting, archive.workspace, archive.plan;
-DELETE FROM archive.revision;`)
-
-	srv := in.serve()
-	api := srv.url + "/api"
-	if got := in.psql("archive", "SELECT name || '|' || database || '|' || prefix || '|' || blobs FROM archive.workspace"); got != "Archive|archive|a|" {
-		t.Fatalf("workspace one after the upgrade: %q", got)
-	}
-	if got := in.psql("archive", "SELECT email FROM archive.member"); got != "alice@example.com" {
-		t.Errorf("members after the upgrade: %q", got)
-	}
-	var cos []row
-	st, _ := call(t, "GET", api+"/company", oldTok, nil, &cos)
-	wantStatus(t, st, 200, "a token from before workspaces")
-	if names(cos) != "Acme" {
-		t.Errorf("companies: %v", cos)
-	}
-	var me struct {
-		Actor     Actor       `json:"actor"`
-		Workspace string      `json:"workspace"`
-		All       []Workspace `json:"workspaces"`
-	}
-	st, _ = call(t, "GET", srv.url+"/auth/me", "", nil, &me, &http.Cookie{Name: "archive_session", Value: oldSess})
-	wantStatus(t, st, 200, "a session from before workspaces")
-	if me.Actor.Email != "alice@example.com" || len(me.All) != 1 || me.All[0].ID != me.Workspace {
-		t.Errorf("me: %+v", me)
-	}
-	var p row
-	call(t, "GET", api+"/person/"+id(pat)+"?reveal=true", oldTok, nil, &p)
-	if p["ssn"] != "123456789" {
-		t.Errorf("a secret saved before workspaces reads back as %v", p["ssn"])
-	}
-	var got map[string]any
-	st, _ = call(t, "POST", srv.url+"/hooks/run/"+hook[1], "", map[string]int{"n": 1}, &got)
-	wantStatus(t, st, 200, "a webhook URL from before workspaces")
-	st, _ = call(t, "POST", srv.url+"/hooks/run/"+me.Workspace+"/"+hook[1], "", map[string]int{"n": 2}, &got)
-	wantStatus(t, st, 200, "the same webhook with its workspace")
-	tok := decode[Token](t, in.must("token", "create")).Secret
-	if !strings.HasPrefix(tok, "arc_"+me.Workspace+"_") {
-		t.Errorf("a new token %q does not name workspace %s", tok, me.Workspace)
-	}
-	st, _ = call(t, "GET", api+"/company", tok, nil, nil)
-	wantStatus(t, st, 200, "a new token")
-}
-
 func TestTwoWorkspacesInOneProcessSeeNothingOfEachOther(t *testing.T) {
 	t.Parallel()
 	in := newInst(t)
@@ -3235,7 +3141,7 @@ func TestTwoWorkspacesInOneProcessSeeNothingOfEachOther(t *testing.T) {
 		if st != 200 || !strings.Contains(string(out.Result), `"db":"archive_`+ws+`"`) || !strings.Contains(string(out.Result), `"n":1`) {
 			t.Errorf("bob's raw SQL: %d %+v", st, out)
 		}
-		if _, out := e2eRun(t, api, bob, `return await archive.sql("SELECT set_config('role', 'a_admin', true)")`); !strings.Contains(out.Error, "permission denied") {
+		if _, out := e2eRun(t, api, bob, `return await archive.sql("SELECT set_config('role', 'w`+one+`_admin', true)")`); !strings.Contains(out.Error, "permission denied") {
 			t.Errorf("bob takes on a role of workspace one: %+v", out)
 		}
 		if n := in.psql("archive", "SELECT count(*) FROM pg_roles WHERE rolname = 'w"+ws+"_authenticator'"); n != "1" {
@@ -3257,7 +3163,7 @@ func TestTwoWorkspacesInOneProcessSeeNothingOfEachOther(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(in.dir, "blobs", ws, g.Hash[:2], g.Hash)); err != nil {
 			t.Errorf("bob's file is not under his workspace's prefix: %v", err)
 		}
-		if _, err := os.Stat(filepath.Join(in.dir, "blobs", f.Hash[:2], f.Hash)); err != nil {
+		if _, err := os.Stat(filepath.Join(in.dir, "blobs", one, f.Hash[:2], f.Hash)); err != nil {
 			t.Errorf("alice's file moved: %v", err)
 		}
 		var link FileLink
@@ -3284,8 +3190,6 @@ func TestTwoWorkspacesInOneProcessSeeNothingOfEachOther(t *testing.T) {
 		if st != 200 || res != "alpha" {
 			t.Errorf("alice's webhook: %d %v", st, res)
 		}
-		st, _ = call(t, "POST", srv.url+"/hooks/run/"+token, "", nil, &res)
-		wantStatus(t, st, 200, "alice's webhook without its workspace")
 		st, _ = call(t, "POST", srv.url+"/hooks/run/"+ws+"/"+token, "", nil, nil)
 		wantStatus(t, st, 404, "alice's webhook in bob's workspace")
 		st, _ = call(t, "POST", srv.url+"/hooks/run/nosuch/"+token, "", nil, nil)
@@ -3312,8 +3216,8 @@ func TestTwoWorkspacesInOneProcessSeeNothingOfEachOther(t *testing.T) {
 		if len(ws1) != 1 || ws1[0].Name != "hook.ts" {
 			t.Errorf("alice's workflows: %+v", ws1)
 		}
-		if n := in.psql("archive", "SELECT count(*) FROM archive.workflow_run"); n != "2" {
-			t.Errorf("workspace one holds %s workflow runs, want alice's 2 webhook runs", n)
+		if n := in.psql("archive", "SELECT count(*) FROM archive.workflow_run"); n != "1" {
+			t.Errorf("workspace one holds %s workflow runs, want alice's 1 webhook run", n)
 		}
 	})
 
@@ -3322,13 +3226,6 @@ func TestTwoWorkspacesInOneProcessSeeNothingOfEachOther(t *testing.T) {
 		for _, forged := range []string{"arc_" + one + "_" + secret, "arc_" + secret, "arc_nosuch_" + secret} {
 			st, _ := call(t, "GET", api+"/company", forged, nil, nil)
 			wantStatus(t, st, 401, "bob's secret as "+forged[:12])
-		}
-		old, hash := e2eOldSecret('Q')
-		in.psql("archive", `INSERT INTO archive.token (user_id, kind, name, hash) SELECT id, 'user', 'old', '`+hash+`' FROM archive."user"`)
-		var cs []row
-		call(t, "GET", api+"/company", old, nil, &cs)
-		if names(cs) != "Alpha" {
-			t.Errorf("an old-style token sees %q", names(cs))
 		}
 		ctx := t.Context()
 		cl := mcp.NewClient(&mcp.Implementation{Name: "e2e", Version: "1"}, nil)
@@ -3348,7 +3245,7 @@ func TestTwoWorkspacesInOneProcessSeeNothingOfEachOther(t *testing.T) {
 			n, _ := strconv.Atoi(in.psql("archive", "SELECT coalesce(sum(u."+col+"), 0) FROM archive.usage u JOIN archive.workspace w ON w.id = u.workspace WHERE w.short = '"+short+"'"))
 			return n
 		}
-		if q(ws, "runs") < 4 || q(ws, "workflow_runs") < 2 || q(one, "workflow_runs") != 2 || q(one, "stored_bytes") != len("alpha only") || q(ws, "stored_bytes") != len("beta only") {
+		if q(ws, "runs") < 4 || q(ws, "workflow_runs") < 2 || q(one, "workflow_runs") != 1 || q(one, "stored_bytes") != len("alpha only") || q(ws, "stored_bytes") != len("beta only") {
 			t.Errorf("usage: bob %d runs, %d workflow runs, %d bytes; alice %d workflow runs, %d bytes", q(ws, "runs"), q(ws, "workflow_runs"), q(ws, "stored_bytes"), q(one, "workflow_runs"), q(one, "stored_bytes"))
 		}
 	})

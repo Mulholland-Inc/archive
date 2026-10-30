@@ -89,10 +89,6 @@ func withArchive(ctx context.Context, a *Archive) context.Context {
 
 func Open(ctx context.Context) (*Hub, error) {
 	dir := coreEnv("ARCHIVE_DATA", "./data")
-	prefix := coreEnv("ARCHIVE_INSTANCE", "a")
-	if !corePrefixRe.MatchString(prefix) {
-		return nil, fmt.Errorf("ARCHIVE_INSTANCE %q: want 1-16 lowercase letters and digits, starting with a letter", prefix)
-	}
 	dsn, stop := os.Getenv("DATABASE_URL"), func() error { return nil }
 	if dsn != "" && strings.TrimSpace(os.Getenv("ARCHIVE_SECRET_KEY")) == "" {
 		return nil, errors.New("DATABASE_URL needs ARCHIVE_SECRET_KEY: every instance on that database must share one 32-byte key, like the output of openssl rand -hex 32")
@@ -138,7 +134,7 @@ func Open(ctx context.Context) (*Hub, error) {
 		stop()
 		return nil, fmt.Errorf("open store: %w", err)
 	}
-	if err := h.register(ctx, prefix); err != nil {
+	if err := h.register(ctx); err != nil {
 		h.Close()
 		return nil, fmt.Errorf("open store: %w", err)
 	}
@@ -155,20 +151,23 @@ func storeUndefined(err error) bool {
 	return errors.As(err, &pe) && (pe.Code == "42P01" || pe.Code == "3F000")
 }
 
-func (h *Hub) register(ctx context.Context, prefix string) error {
+func (h *Hub) register(ctx context.Context) error {
 	q := h.q()
 	row, err := q.MainWorkspace(ctx)
 	fresh := errors.Is(err, pgx.ErrNoRows) || storeUndefined(err)
 	if err != nil && !fresh {
 		return err
 	}
-	key := h.key
+	var key []byte
 	if fresh {
 		db, err := q.CurrentDatabase(ctx)
 		if err != nil {
 			return err
 		}
-		row = generated.ArchiveWorkspace{Short: workspaceShort(), Name: "Archive", Database: db, Prefix: prefix}
+		short := workspaceShort()
+		key = make([]byte, 32)
+		rand.Read(key)
+		row = generated.ArchiveWorkspace{Short: short, Name: "Archive", Database: db, Prefix: "w" + short, Blobs: short + "/"}
 	} else if key, err = h.unwrap(row); err != nil {
 		return err
 	}
@@ -177,7 +176,7 @@ func (h *Hub) register(ctx context.Context, prefix string) error {
 		return err
 	}
 	if fresh {
-		r, err := q.CreateWorkspace(ctx, generated.CreateWorkspaceParams{Short: row.Short, Name: row.Name, Database: row.Database, Prefix: row.Prefix, Key: h.wrap(row.Short, key)})
+		r, err := q.CreateWorkspace(ctx, generated.CreateWorkspaceParams{Short: row.Short, Name: row.Name, Database: row.Database, Prefix: row.Prefix, Key: h.wrap(row.Short, key), Blobs: row.Blobs})
 		if errors.Is(err, pgx.ErrNoRows) {
 			r, err = q.MainWorkspace(ctx)
 		}
@@ -534,11 +533,10 @@ func (h *Hub) next(ctx context.Context) (bool, error) {
 	return true, h.q().SetDue(bg, generated.SetDueParams{Next: *next, Short: d.Short, Kind: d.Kind, Claimed: d.At})
 }
 
-const workspaceSecretLen = 43
 
 func secretWorkspace(s string) string {
 	rest, ok := strings.CutPrefix(s, "arc_")
-	if !ok || len(rest) == workspaceSecretLen {
+	if !ok {
 		return ""
 	}
 	ws, _, ok := strings.Cut(rest, "_")
@@ -548,7 +546,7 @@ func secretWorkspace(s string) string {
 	return ws
 }
 
-func (h *Hub) of(secret string) string { return cmp.Or(secretWorkspace(secret), h.one) }
+func (h *Hub) of(secret string) string { return cmp.Or(secretWorkspace(secret), "-") }
 
 func (a *Archive) newSecret() string {
 	b := make([]byte, 32)

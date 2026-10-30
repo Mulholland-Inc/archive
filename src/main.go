@@ -109,7 +109,6 @@ Environment:
                      unset stores files in $ARCHIVE_DATA/blobs
   ARCHIVE_BLOB_KEY, ARCHIVE_BLOB_SECRET
                      access key for ARCHIVE_BLOB_URL (default AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
-  ARCHIVE_INSTANCE   prefix of every Postgres role of this instance (default a)
   ARCHIVE_SECRET_KEY 32-byte key (hex or base64) for secret values and the Postgres role password;
                      required with DATABASE_URL, the same on every instance; unset with the
                      bundled Postgres uses $ARCHIVE_DATA/secret.key
@@ -600,9 +599,7 @@ func cliServe(ctx context.Context, h *Hub, a *Archive, addr string) error {
 	tus := h.httpAuth(func(a *Archive) http.Handler { return http.HandlerFunc(a.tus) })
 	mux.Handle("/api/files/tus", tus)
 	mux.Handle("/api/files/tus/", tus)
-	mux.HandleFunc("GET /files/{id}", h.inWorkspace((*Archive).fileSigned))
 	mux.HandleFunc("GET /files/{workspace}/{id}", h.inWorkspace((*Archive).fileSigned))
-	mux.HandleFunc("POST /hooks/run/{token}", h.inWorkspace((*Archive).workflowHook))
 	mux.HandleFunc("POST /hooks/run/{workspace}/{token}", h.inWorkspace((*Archive).workflowHook))
 	mux.HandleFunc("POST /stripe", h.stripe)
 	mux.Handle("/auth/", si.handler())
@@ -895,7 +892,7 @@ func mcpServer(a *Archive) *mcp.Server {
 }
 
 func (a *Archive) mcpVerify(ctx context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {
-	if secretWorkspace(token) != "" && secretWorkspace(token) != a.ws.Short {
+	if secretWorkspace(token) != a.ws.Short {
 		return nil, fmt.Errorf("%w: this token belongs to another workspace", auth.ErrInvalidToken)
 	}
 	ac, err := a.Authenticate(ctx, token)

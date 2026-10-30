@@ -23,8 +23,8 @@ flowchart LR
 ## Workspaces
 
 - **A database per workspace.** Each workspace's types are its own tables with their own columns, policies and schema changes (ADR 0001), so workspaces cannot share tables with a `workspace_id` column. Every workspace gets its own database on the same Postgres server: the bundled one, or Cloud SQL.
-- **Roles are prefixed per workspace.** Postgres roles are server-wide, so each workspace's roles carry its own prefix, as `ARCHIVE_INSTANCE` does today.
-- **The main database** is the one `DATABASE_URL` (or the bundled Postgres) points to. It is also the first workspace's database, so an existing install becomes workspace one in place, with nothing copied. In its `archive` schema it adds:
+- **Roles are prefixed per workspace.** Postgres roles are server-wide, so each workspace's roles carry its own prefix.
+- **The main database** is the one `DATABASE_URL` (or the bundled Postgres) points to. It is also the first workspace's database. In its `archive` schema it adds:
 
 | Table | Holds |
 |---|---|
@@ -48,7 +48,7 @@ flowchart LR
 
 Without subdomains, every request names its workspace:
 
-- **Tokens and sign-in secrets carry it**: `arc_<workspace>_<secret>`. The server opens that workspace and checks the secret there. Tokens in today's format, `arc_<secret>`, belong to workspace one, so existing tokens keep working.
+- **Tokens and sign-in secrets carry it**: `arc_<workspace>_<secret>`. The server opens that workspace and checks the secret there.
 - **The web app** holds one session per workspace the person is signed in to, in its cookie, and names the current one on each request, the way it already names the current space. The space switcher becomes a workspace and space switcher.
 - **Sign-in** looks up the email in `archive.member`. With one workspace it signs in there. With several, the person picks one, and can add the others to the same browser.
 - **Webhook URLs** carry it: `api.archive.dev/hooks/run/<workspace>/<token>`.
@@ -78,7 +78,7 @@ Built as decided; [ADR 0001](0001-architecture.md#workspaces) describes the resu
 
 - **One `archive.sql` for every database.** The instance tables are part of Archive's schema, so they exist, empty, in every workspace's database too; only the main database's are used. One schema keeps one revision hash and one upgrade path.
 - **More instance tables.** Plans are rows of `archive.plan` (Stripe price, monthly runs, workflow runs, AI tokens, stored bytes, concurrent runs; null is no limit), and the `plan` setting is the plan new workspaces start on. `archive.workspace` also holds a short id, the blob prefix, the Stripe customer and subscription, and the workspace's own Anthropic key, sealed with its data key.
-- **A short workspace id.** Tokens and URLs carry an 8-character id (`a`-`z` and `2`-`9`) rather than the UUID. New workspaces get the database `archive_<id>`, the role prefix `w<id>` and the blob prefix `<id>/`. Workspace one keeps its database, its `ARCHIVE_INSTANCE` prefix (stored in its row from then on), no blob prefix and `ARCHIVE_SECRET_KEY` as its data key.
+- **A short workspace id.** Tokens and URLs carry an 8-character id (`a`-`z` and `2`-`9`) rather than the UUID. Every workspace gets the role prefix `w<id>`, the blob prefix `<id>/` and its own data key; new workspaces get the database `archive_<id>`, and workspace one lives in the main database.
 - **Both hosts answer every route.** The server does not look at the host. The URLs it hands out use the right one: sign-in links `ARCHIVE_URL`; webhooks, file links, the Stripe webhook and OIDC redirects `ARCHIVE_API_URL`. The web app on app.archive.dev calls `/api` on its own host, so its cookie stays first-party.
 - **Several workspaces at sign-in.** A magic link request mails one link per workspace instead of showing a picker, so the sign-in screen never tells anyone which workspaces an email belongs to. Each link adds a session to the browser's cookie, and the switcher in the web app lists the workspaces signed in to plus "Add workspace". OIDC signs in to every workspace with that verified email: the callback on the API host redirects to `ARCHIVE_URL/auth/oidc/done` with one-time links that only work in the browser that started (a cookie bound into the encrypted `state`). Passkeys made in other workspaces carry the workspace id after the user id in their user handle.
 - **Instance admins** are the admins of workspace one.
