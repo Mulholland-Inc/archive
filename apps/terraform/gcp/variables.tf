@@ -17,19 +17,24 @@ variable "name" {
 
 variable "app_domain" {
   type        = string
-  description = "Domain of the web app and sign-in, like app.archive.dev (ARCHIVE_URL), on Cloudflare. Empty uses the run.app URL."
+  description = "Domain of the web app, like app.archive.dev (ARCHIVE_URL), on Cloudflare. Alone it serves the app and the API from the service; with api_domain it is only the web app, static files on a Worker of its own that the image workflow deploys. Empty uses the run.app URL."
   default     = ""
 }
 
 variable "api_domain" {
   type        = string
-  description = "Domain of the API, MCP, webhooks and OAuth redirects, like api.archive.dev (ARCHIVE_API_URL), on Cloudflare. Empty uses the app's address."
+  description = "Domain of the API, sign-in, MCP, webhooks and OAuth redirects, like api.archive.dev (ARCHIVE_API_URL), on Cloudflare. Empty uses the app's address."
   default     = ""
+
+  validation {
+    condition     = var.api_domain == "" || var.app_domain != ""
+    error_message = "api_domain needs app_domain: the web app on its own domain calls the API on api_domain."
+  }
 }
 
 variable "cloudflare_zone" {
   type        = string
-  description = "Cloudflare zone holding app_domain and api_domain, like archive.dev; a Worker there serves both. Its token goes in CLOUDFLARE_API_TOKEN."
+  description = "Cloudflare zone holding app_domain and api_domain, like archive.dev. Its token goes in CLOUDFLARE_API_TOKEN; with both domains and github_repository it also needs Account API Tokens Write, to make the narrower token the image workflow deploys the web app with."
   default     = ""
 }
 

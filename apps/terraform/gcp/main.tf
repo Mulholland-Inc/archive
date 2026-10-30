@@ -4,6 +4,7 @@ locals {
   run_url = "https://${var.name}-${data.google_project.this.number}.${var.region}.run.app"
   url     = var.app_domain != "" ? "https://${var.app_domain}" : local.run_url
   api_url = var.api_domain != "" ? "https://${var.api_domain}" : local.url
+  split   = local.url != local.api_url
   domains = toset(compact([var.app_domain, var.api_domain]))
 
   required = {
@@ -313,12 +314,47 @@ resource "cloudflare_workers_script" "this" {
   }]
 }
 
+resource "cloudflare_workers_script" "app" {
+  count       = local.split ? 1 : 0
+  account_id  = data.cloudflare_zone.this[0].account.id
+  script_name = "${var.name}-app"
+  main_module = "worker.js"
+  content     = "export default { fetch: () => new Response(null, { status: 503 }) };"
+
+  lifecycle {
+    ignore_changes = all
+  }
+}
+
 resource "cloudflare_workers_custom_domain" "this" {
   for_each   = local.domains
   account_id = data.cloudflare_zone.this[0].account.id
   zone_id    = data.cloudflare_zone.this[0].zone_id
   hostname   = each.value
-  service    = cloudflare_workers_script.this[0].script_name
+  service    = local.split && each.value == var.app_domain ? one(cloudflare_workers_script.app[*].script_name) : cloudflare_workers_script.this[0].script_name
+}
+
+data "cloudflare_account_api_token_permission_groups_list" "this" {
+  count      = local.split && var.github_repository != "" ? 1 : 0
+  account_id = data.cloudflare_zone.this[0].account.id
+}
+
+resource "cloudflare_account_token" "app" {
+  count      = local.split && var.github_repository != "" ? 1 : 0
+  account_id = data.cloudflare_zone.this[0].account.id
+  name       = "${var.name}-app-deploy"
+  policies = [{
+    effect            = "allow"
+    permission_groups = [for g in data.cloudflare_account_api_token_permission_groups_list.this[0].result : { id = g.id } if g.name == "Workers Scripts Write"]
+    resources         = jsonencode({ "com.cloudflare.api.account.${data.cloudflare_zone.this[0].account.id}" = "*" })
+  }]
+}
+
+resource "github_actions_secret" "app" {
+  count       = local.split && var.github_repository != "" ? 1 : 0
+  repository  = split("/", var.github_repository)[1]
+  secret_name = "CLOUDFLARE_API_TOKEN"
+  value       = cloudflare_account_token.app[0].value
 }
 
 resource "google_iam_workload_identity_pool" "github" {
@@ -371,13 +407,17 @@ resource "google_service_account_iam_member" "deploy_runs_as" {
 }
 
 resource "github_actions_variable" "deploy" {
-  for_each = var.github_repository != "" ? {
+  for_each = var.github_repository != "" ? merge({
     GCP_PROJECT                    = var.project
     GCP_REGION                     = var.region
     GCP_SERVICE                    = google_cloud_run_v2_service.this.name
     GCP_SERVICE_ACCOUNT            = google_service_account.deploy[0].email
     GCP_WORKLOAD_IDENTITY_PROVIDER = google_iam_workload_identity_pool_provider.github[0].name
-  } : {}
+    }, local.split ? {
+    ARCHIVE_API_URL       = local.api_url
+    CLOUDFLARE_ACCOUNT_ID = data.cloudflare_zone.this[0].account.id
+    CLOUDFLARE_WORKER     = cloudflare_workers_script.app[0].script_name
+  } : {}) : {}
   repository    = split("/", var.github_repository)[1]
   variable_name = each.key
   value         = each.value

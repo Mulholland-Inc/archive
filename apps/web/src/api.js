@@ -1,5 +1,7 @@
 export class Unauthorized extends Error {}
 
+export const API = (import.meta.env.VITE_ARCHIVE_API ?? '').replace(/\/+$/, '');
+
 export function go(path) {
   history.pushState(null, '', path);
   dispatchEvent(new PopStateEvent('popstate'));
@@ -95,8 +97,8 @@ export async function passkeyRegister(user) {
   rememberPasskey(user, 'yes');
 }
 
-async function send(path,{ method = 'GET', body, raw, signal } = {}) {
-  const init = { method, headers: {}, signal };
+async function send(path, { method = 'GET', body, raw, signal } = {}) {
+  const init = { method, headers: {}, signal, credentials: 'include' };
   if (workspace()) init.headers['Archive-Workspace'] = workspace();
   if (space()) init.headers['Archive-Space'] = space();
   if (raw !== undefined) init.body = raw;
@@ -104,7 +106,7 @@ async function send(path,{ method = 'GET', body, raw, signal } = {}) {
     init.body = JSON.stringify(body);
     init.headers['Content-Type'] = 'application/json';
   }
-  const r = await fetch(path, init);
+  const r = await fetch(API + path, init);
   if (r.status === 401) throw new Unauthorized();
   if (!r.ok && r.status !== 204) {
     const out = await r.json().catch(() => ({}));

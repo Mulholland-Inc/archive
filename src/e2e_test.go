@@ -835,7 +835,7 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 		}
 		in.on(t).fails("user", "link", "bob@example.com")
 		st, session := srv.oidc(t, "google", map[string]any{"sub": "bob-1", "email": "bob@example.com", "email_verified": true})
-		if st != 200 || session == nil || !session.HttpOnly || session.SameSite != http.SameSiteLaxMode {
+		if st != 303 || session == nil || !session.HttpOnly || session.SameSite != http.SameSiteLaxMode {
 			t.Fatalf("bob signs in with Google: %d %v", st, session)
 		}
 		var me struct {
@@ -1012,6 +1012,11 @@ func TestTheFirstOwnerIsAddedOnTheCLIAndSignsInWithAProvider(t *testing.T) {
 	if st, _ := call(t, "POST", srv.url+"/auth/setup", "", map[string]any{"email": "first@example.com"}, nil); st != 404 && st != 405 {
 		t.Errorf("a setup link: %d", st)
 	}
+	for _, origin := range []string{strings.Replace(srv.url, "127.0.0.1", "localhost", 1), "https://evil.test"} {
+		if _, hdr := e2eFrom(t, "OPTIONS", srv.url+"/api/types", origin); hdr.Get("Access-Control-Allow-Origin") != "" || hdr.Get("Vary") != "" {
+			t.Errorf("one origin answers %s with CORS: %v", origin, hdr)
+		}
+	}
 	first := map[string]any{"sub": "first-1", "email": "first@example.com", "email_verified": true}
 	if st, c := srv.oidc(t, "google", maps.Clone(first)); st != 403 || c != nil {
 		t.Errorf("signing in before anyone is added: %d", st)
@@ -1020,7 +1025,7 @@ func TestTheFirstOwnerIsAddedOnTheCLIAndSignsInWithAProvider(t *testing.T) {
 		t.Errorf("user add prints the person: %+v", u)
 	}
 	st, c := srv.oidc(t, "google", maps.Clone(first))
-	if st != 200 || c == nil {
+	if st != 303 || c == nil {
 		t.Fatalf("the first owner signs in with Google: %d", st)
 	}
 	var spaces []SpaceInfo
@@ -2114,8 +2119,8 @@ return { made: made.applied, t1, rows1, changed: changed.applied, t2, rows2, dro
 				t.Errorf("%s a sign-in link: %d", m, st)
 			}
 		}
-		st, to, c := srv.signIn(t, "google", map[string]any{"sub": "bob-1", "email": "bob@example.com", "email_verified": true}, "text/html,application/xhtml+xml")
-		if st != http.StatusSeeOther || to != "/" || c == nil || c.Value == "" {
+		st, to, c := srv.signIn(t, "google", map[string]any{"sub": "bob-1", "email": "bob@example.com", "email_verified": true})
+		if st != http.StatusSeeOther || !strings.HasPrefix(to, "http://localhost:") || !strings.HasSuffix(to, "/") || c == nil || c.Value == "" {
 			t.Errorf("Google sign-in in a browser: %d %q %v", st, to, c)
 		}
 	})
@@ -3160,11 +3165,11 @@ func e2eIssuer(t *testing.T) *httptest.Server {
 
 func (s *e2eServer) oidc(t *testing.T, provider string, claims map[string]any) (int, *http.Cookie) {
 	t.Helper()
-	st, _, c := s.signIn(t, provider, claims, "")
+	st, _, c := s.signIn(t, provider, claims)
 	return st, c
 }
 
-func (s *e2eServer) signIn(t *testing.T, provider string, claims map[string]any, accept string) (int, string, *http.Cookie) {
+func (s *e2eServer) signIn(t *testing.T, provider string, claims map[string]any) (int, string, *http.Cookie) {
 	t.Helper()
 	st, hdr := call(t, "GET", s.url+"/auth/oidc/"+provider, "", nil, nil)
 	loc, _ := url.Parse(hdr.Get("Location"))
@@ -3174,22 +3179,8 @@ func (s *e2eServer) signIn(t *testing.T, provider string, claims map[string]any,
 	}
 	claims["nonce"] = loc.Query().Get("nonce")
 	code, _ := json.Marshal(claims)
-	st, back := call(t, "GET", s.url+"/auth/oidc/"+provider+"/callback?"+url.Values{"state": {loc.Query().Get("state")}, "code": {string(code)}}.Encode(), "", nil, nil)
-	if st != http.StatusSeeOther {
-		return st, "", nil
-	}
-	done, _ := url.Parse(back.Get("Location"))
-	req, _ := http.NewRequest("GET", s.url+done.Path+"?"+done.RawQuery, nil)
-	if accept != "" {
-		req.Header.Set("Accept", accept)
-	}
-	req.AddCookie((&http.Response{Header: hdr}).Cookies()[bind])
-	resp, err := (&http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	return resp.StatusCode, resp.Header.Get("Location"), e2eSession(resp.Cookies())
+	st, back := call(t, "GET", s.url+"/auth/oidc/"+provider+"/callback?"+url.Values{"state": {loc.Query().Get("state")}, "code": {string(code)}}.Encode(), "", nil, nil, (&http.Response{Header: hdr}).Cookies()[bind])
+	return st, back.Get("Location"), e2eSession((&http.Response{Header: back}).Cookies())
 }
 
 func e2eRun(t *testing.T, api, tok, code string) (int, RunOutput) {
@@ -3537,13 +3528,13 @@ func TestInviteOnlySignInUsersAndSigningInToSeveralWorkspaces(t *testing.T) {
 		Workspace string      `json:"workspace"`
 		All       []Workspace `json:"workspaces"`
 	}
-	if st != 200 || dave == nil {
+	if st != 303 || dave == nil {
 		t.Fatalf("an invited person signs in with Google: %d", st)
 	}
 	if e2eDo(t, "GET", srv.url+"/auth/me", nil, nil, &me, dave); me.Actor.Email != "dave@example.com" || me.Actor.Name != "Dave Day" || me.Workspace != one {
 		t.Fatalf("an invited person's first Google sign-in links them, with their name: %+v", me)
 	}
-	if st, c := srv.oidc(t, "google", map[string]any{"sub": "dave-1", "email": "dave@elsewhere.test", "name": "Someone Else"}); st != 200 || c == nil {
+	if st, c := srv.oidc(t, "google", map[string]any{"sub": "dave-1", "email": "dave@elsewhere.test", "name": "Someone Else"}); st != 303 || c == nil {
 		t.Errorf("the linked Google account signs in again without its email: %d", st)
 	}
 	if e2eDo(t, "GET", srv.url+"/auth/me", nil, nil, &me, dave); me.Actor.Name != "Dave Day" {
@@ -3561,7 +3552,7 @@ func TestInviteOnlySignInUsersAndSigningInToSeveralWorkspaces(t *testing.T) {
 		t.Errorf("no first owner in the log:\n%s", srv.log)
 	}
 	st, alice := srv.oidc(t, "google", map[string]any{"sub": "alice-1", "email": "alice@example.com", "email_verified": true})
-	if st != 200 || alice == nil {
+	if st != 303 || alice == nil {
 		t.Fatalf("the first owner signs in with Google: %d", st)
 	}
 	who := func(ps []Person) string {
@@ -3594,7 +3585,7 @@ func TestInviteOnlySignInUsersAndSigningInToSeveralWorkspaces(t *testing.T) {
 	st, _ = e2eDo(t, "POST", srv.url+"/auth/users", nil, map[string]any{"email": "carol@example.com"}, nil, alice)
 	wantStatus(t, st, 409, "inviting carol twice")
 	st, carol := srv.oidc(t, "google", maps.Clone(carolID))
-	if st != 200 || carol == nil {
+	if st != 303 || carol == nil {
 		t.Fatalf("carol signs in once invited: %d", st)
 	}
 	if e2eDo(t, "GET", srv.url+"/auth/me", nil, nil, &me, carol); me.Actor.Email != "carol@example.com" || me.Actor.Name != "Carol Co" || me.Workspace != one {
@@ -3615,7 +3606,7 @@ func TestInviteOnlySignInUsersAndSigningInToSeveralWorkspaces(t *testing.T) {
 		t.Errorf("carol's workspace row and database: %q", got)
 	}
 	st, carol = srv.oidc(t, "google", maps.Clone(carolID))
-	if st != 200 || carol == nil {
+	if st != 303 || carol == nil {
 		t.Fatalf("carol signs in to the workspace an admin made for her: %d", st)
 	}
 	if e2eDo(t, "GET", srv.url+"/auth/me", nil, nil, &me, carol); me.Workspace != made || len(me.All) != 1 {
@@ -3745,7 +3736,7 @@ func TestGitHubAndMicrosoftSignInOnlyMatchVerifiedEmails(t *testing.T) {
 		}
 	}
 	st, gina := srv.oidc(t, "github", map[string]any{"id": 42, "name": "Gina G", "emails": []any{email("gina@other.test", false, true), email("Gina@Example.com", true, true)}})
-	if st != 200 || gina == nil {
+	if st != 303 || gina == nil {
 		t.Fatalf("GitHub sign-in with the invited email as the verified primary: %d", st)
 	}
 	var me struct {
@@ -3757,7 +3748,7 @@ func TestGitHubAndMicrosoftSignInOnlyMatchVerifiedEmails(t *testing.T) {
 	if got := in.psql("archive", "SELECT signin->'oidc' FROM archive.\"user\" WHERE email = 'gina@example.com'"); got != `[{"iss": "`+gh.URL+`", "sub": "42"}]` {
 		t.Errorf("gina's GitHub link: %s", got)
 	}
-	if st, c := srv.oidc(t, "github", map[string]any{"id": 42, "emails": []any{}}); st != 200 || c == nil {
+	if st, c := srv.oidc(t, "github", map[string]any{"id": 42, "emails": []any{}}); st != 303 || c == nil {
 		t.Errorf("gina signs in again by her GitHub user id: %d", st)
 	}
 	if st, _ := srv.oidc(t, "github", map[string]any{"id": 0, "emails": []any{email("gina@example.com", true, true)}}); st != 401 {
@@ -3771,7 +3762,7 @@ func TestGitHubAndMicrosoftSignInOnlyMatchVerifiedEmails(t *testing.T) {
 	if st, _ := srv.oidc(t, "microsoft", map[string]any{"iss": "http://evil.test/tenant/v2.0", "sub": "mia-1", "email": "mia@example.com", "xms_edov": true}); st != 401 {
 		t.Errorf("Microsoft sign-in from another issuer: %d", st)
 	}
-	if st, c := srv.oidc(t, "microsoft", map[string]any{"iss": tenant, "sub": "mia-1", "email": "mia@example.com", "xms_edov": true}); st != 200 || c == nil {
+	if st, c := srv.oidc(t, "microsoft", map[string]any{"iss": tenant, "sub": "mia-1", "email": "mia@example.com", "xms_edov": true}); st != 303 || c == nil {
 		t.Errorf("Microsoft sign-in with a domain-verified email: %d", st)
 	}
 }
@@ -3802,6 +3793,70 @@ func TestGeneratedURLsUseTheAPIAddress(t *testing.T) {
 	wantStatus(t, st, 401, "an OIDC callback with a forged state")
 	if !strings.Contains(srv.log.String(), "the API on http://api.test:9/api") {
 		t.Errorf("startup line:\n%s", srv.log)
+	}
+}
+
+func e2eFrom(t *testing.T, method, url, origin string, cookies ...*http.Cookie) (int, http.Header) {
+	t.Helper()
+	req, _ := http.NewRequest(method, url, nil)
+	req.Header.Set("Origin", origin)
+	req.Header.Set("X-Forwarded-For", "203.0.113.7")
+	if method == "OPTIONS" {
+		req.Header.Set("Access-Control-Request-Method", "PATCH")
+		req.Header.Set("Access-Control-Request-Headers", "content-type,archive-workspace,archive-space")
+	}
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	resp, err := (&http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	return resp.StatusCode, resp.Header
+}
+
+func TestTheWebAppOnItsOwnHostCallsTheAPIHostWithTheAPIsCookie(t *testing.T) {
+	t.Parallel()
+	in := newInst(t, append(e2eGoogle(t), "ARCHIVE_ADMIN_EMAIL=alice@example.com", "ARCHIVE_URL=https://app.test", "ARCHIVE_API_URL=https://api.test")...)
+	srv := in.serve()
+	st, hdr := e2eFrom(t, "OPTIONS", srv.url+"/api/chats", "https://app.test")
+	allowed := hdr.Get("Access-Control-Allow-Headers") + " " + hdr.Get("Access-Control-Allow-Methods")
+	if st != 204 || hdr.Get("Access-Control-Allow-Origin") != "https://app.test" || hdr.Get("Access-Control-Allow-Credentials") != "true" || hdr.Get("Access-Control-Max-Age") == "" ||
+		!strings.Contains(hdr.Get("Vary"), "Origin") || !strings.Contains(allowed, "Archive-Workspace") || !strings.Contains(allowed, "Archive-Space") || !strings.Contains(allowed, "Content-Type") || !strings.Contains(allowed, "PATCH") {
+		t.Errorf("preflight from the app: %d %v", st, hdr)
+	}
+	for _, m := range []string{"OPTIONS", "GET"} {
+		for _, origin := range []string{"https://evil.test", "https://api.test.evil.test", "null"} {
+			if _, hdr := e2eFrom(t, m, srv.url+"/auth/methods", origin); hdr.Get("Access-Control-Allow-Origin") != "" || hdr.Get("Access-Control-Allow-Credentials") != "" || hdr.Get("Access-Control-Allow-Headers") != "" {
+				t.Errorf("%s from %s: %v", m, origin, hdr)
+			}
+		}
+	}
+	if _, hdr := e2eFrom(t, "OPTIONS", srv.url+"/mcp", "https://app.test"); hdr.Get("Access-Control-Allow-Origin") != "" {
+		t.Errorf("MCP allows the app: %v", hdr)
+	}
+	st, start := call(t, "GET", srv.url+"/auth/oidc/google", "", nil, nil)
+	loc, _ := url.Parse(start.Get("Location"))
+	if st, _ := call(t, "GET", srv.url+"/auth/oidc/google/callback?"+url.Values{"state": {loc.Query().Get("state")}, "code": {"{}"}}.Encode(), "", nil, nil); st != 401 {
+		t.Errorf("a callback in a browser that did not start the sign-in: %d", st)
+	}
+	st, to, c := srv.signIn(t, "google", map[string]any{"sub": "alice-1", "email": "alice@example.com", "email_verified": true})
+	if st != http.StatusSeeOther || to != "https://app.test/" || c == nil || c.Domain != "" || c.Path != "/" || !c.HttpOnly || !c.Secure || c.SameSite != http.SameSiteLaxMode {
+		t.Fatalf("Google sign-in sets the API's own cookie and returns to the app: %d %q %+v", st, to, c)
+	}
+	for _, path := range []string{"/auth/me", "/api/types", "/api/chats"} {
+		if st, hdr := e2eFrom(t, "GET", srv.url+path, "https://app.test", c); st != 200 || hdr.Get("Access-Control-Allow-Origin") != "https://app.test" || hdr.Get("Access-Control-Allow-Credentials") != "true" {
+			t.Errorf("GET %s from the app with the cookie: %d %v", path, st, hdr)
+		}
+	}
+	st, out := e2eFrom(t, "POST", srv.url+"/auth/signout", "https://app.test", c)
+	gone := e2eSession((&http.Response{Header: out}).Cookies())
+	if st != 204 || gone == nil || gone.MaxAge >= 0 || out.Get("Access-Control-Allow-Origin") != "https://app.test" {
+		t.Errorf("sign out from the app: %d %v", st, out)
+	}
+	if st, _ := e2eFrom(t, "GET", srv.url+"/auth/me", "https://app.test", c); st != 401 {
+		t.Errorf("me after sign out: %d", st)
 	}
 }
 
