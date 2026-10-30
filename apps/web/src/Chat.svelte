@@ -54,9 +54,10 @@
   import Stream from './ui/Stream.svelte';
   import RunCall from './ui/RunCall.svelte';
   import Note from './ui/Note.svelte';
+  import Setup from './ui/Setup.svelte';
   import robot from '../../site/static/art/robot.webp';
 
-  let { id = '', name = '', onsaved } = $props();
+  let { id = '', name = '', email = '', onsaved } = $props();
 
   let current = $state('');
   let title = $state('');
@@ -300,6 +301,7 @@
   <div class="dock">
     <Composer bind:value={draft} bind:field {busy} onsend={send} onstop={stop} placeholder="Ask anything" aria-label="Message" />
   </div>
+  {#if empty}<Setup {email} />{/if}
 </div>
 
 <style>

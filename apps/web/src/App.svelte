@@ -165,7 +165,7 @@
     <main class:asking>
       {#key generation}
       {#if !route.first || route.first === 'chat'}
-        <Chat id={route.second} name={me.actor.name} onsaved={loadChats} />
+        <Chat id={route.second} name={me.actor.name} email={me.actor.email} onsaved={loadChats} />
       {:else if route.first === 'files'}
         <Files />
       {:else if route.first === 'workflows'}

@@ -163,3 +163,17 @@ export function size(n) {
   if (n < 1 << 20) return `${(n / 1024).toFixed(0)} KB`;
   return `${(n / (1 << 20)).toFixed(1)} MB`;
 }
+
+export function setupHidden() {
+  try {
+    return localStorage[`setup:${workspace()}`] === 'hidden';
+  } catch {
+    return false;
+  }
+}
+
+export function hideSetup() {
+  try {
+    localStorage[`setup:${workspace()}`] = 'hidden';
+  } catch {}
+}
