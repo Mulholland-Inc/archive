@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path"
@@ -16,6 +17,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 
@@ -370,6 +372,21 @@ func (r *runner) fetch() {
 	})
 }
 
+var runFetchPublic, runFetchLocal = runFetchClient(false), runFetchClient(true)
+
+func runFetchClient(local bool) *http.Client {
+	dial := &net.Dialer{Timeout: 10 * time.Second, Control: func(_, address string, _ syscall.RawConn) error {
+		host, _, _ := net.SplitHostPort(address)
+		ip := net.ParseIP(host)
+		if ip == nil || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() || ip.Equal(net.ParseIP("fd00:ec2::254")) ||
+			!local && (ip.IsLoopback() || ip.IsPrivate()) {
+			return fmt.Errorf("%s is an internal address, which scripts cannot reach", host)
+		}
+		return nil
+	}}
+	return &http.Client{Transport: &http.Transport{DialContext: dial.DialContext, ForceAttemptHTTP2: true, TLSHandshakeTimeout: 10 * time.Second}}
+}
+
 func (r *runner) fetchDo(call goja.FunctionCall) (goja.Value, error) {
 	u, ok := call.Argument(0).Export().(string)
 	if !ok {
@@ -406,7 +423,11 @@ func (r *runner) fetchDo(call goja.FunctionCall) (goja.Value, error) {
 		return nil, fmt.Errorf("fetch %s: %v", u, err)
 	}
 	req.Header = header
-	resp, err := http.DefaultClient.Do(req)
+	client := runFetchPublic
+	if r.a.hub.localApp() {
+		client = runFetchLocal
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		if r.ctx.Err() != nil {
 			return nil, fmt.Errorf("fetch %s: the run timed out", u)

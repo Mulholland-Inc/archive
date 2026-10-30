@@ -944,6 +944,13 @@ func TestOnThisMachineTheFirstOwnerIsSignedInWithoutLoggingIn(t *testing.T) {
 	if !strings.Contains(srv.log.String(), "requests from this machine are signed in as the first owner") || !strings.Contains(pub.log.String(), "no sign-in provider is set") {
 		t.Errorf("logs:\n%s\n%s", srv.log, pub.log)
 	}
+	inside := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("internal")) }))
+	defer inside.Close()
+	script := filepath.Join(public.dir, "inside.ts")
+	os.WriteFile(script, []byte(`return await fetch(`+strconv.Quote(inside.URL)+`).then((r) => r.text(), (e) => e.message);`), 0o644)
+	if out := public.must("run", script); !strings.Contains(out, "127.0.0.1 is an internal address, which scripts cannot reach") {
+		t.Errorf("a script on a public install reached this machine: %s", out)
+	}
 }
 
 func TestDeletingASpaceRemovesEverythingInItForOwnersOnly(t *testing.T) {
@@ -2976,7 +2983,8 @@ const sent = await res.json();
 const text = await (await fetch(`+js(echo.URL+"/plain")+`)).text();
 const notJSON = await (await fetch(`+js(echo.URL+"/plain")+`)).json().then(() => "", (e) => e.message);
 const down = await fetch("http://127.0.0.1:1/").then(() => "", (e) => e.message);
-return { ok: res.ok, status: res.status, statusText: res.statusText, reply: res.headers.get("X-Reply"), raw: res.headers["x-reply"], sent, text, notJSON, down };`)["v"].(map[string]any)
+const metadata = await fetch("http://169.254.169.254/computeMetadata/v1/", { headers: { "Metadata-Flavor": "Google" } }).then(() => "", (e) => e.message);
+return { ok: res.ok, status: res.status, statusText: res.statusText, reply: res.headers.get("X-Reply"), raw: res.headers["x-reply"], sent, text, notJSON, down, metadata };`)["v"].(map[string]any)
 		want := map[string]string{"ok": "true", "status": "201", "statusText": "Created", "reply": "done", "raw": "done", "text": "hello",
 			"sent": `map[body:{"a":1} method:POST test:yes type:application/json x:1]`}
 		for k, v := range want {
@@ -2986,6 +2994,9 @@ return { ok: res.ok, status: res.status, statusText: res.statusText, reply: res.
 		}
 		if !strings.Contains(fmt.Sprint(got["notJSON"]), `is not JSON: "hello"`) || !strings.Contains(fmt.Sprint(got["down"]), "connection refused") {
 			t.Errorf("fetch errors: %v", got)
+		}
+		if !strings.Contains(fmt.Sprint(got["metadata"]), "169.254.169.254 is an internal address, which scripts cannot reach") {
+			t.Errorf("fetch reached the cloud metadata address: %v", got["metadata"])
 		}
 	})
 

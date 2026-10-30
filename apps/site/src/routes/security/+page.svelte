@@ -20,15 +20,15 @@
     ['Can a technical user get around the rules?', 'No. The rules live at the core of Archive, so even someone working directly with the data only sees the spaces they belong to.'],
     ['What can an assistant see?', "Exactly what its access key allows. It acts as the person who connected it, narrowed to the key's spaces, access level and end date."],
     ['Can an assistant leave a half-finished change behind?', 'No. Every job is all or nothing, so if anything goes wrong, every change is undone.'],
-    ['Do connectors change anything in my mail or CRM?', "No. Connectors only ask to read and never write back. What they bring in lands in one space, under that space's rules."],
+    ['Can an assistant reach our servers or network?', 'No. The scripts it runs can call public web services, but never private or internal addresses, so they cannot reach the servers Archive runs on.'],
     ['Who can see a card number or a Social Security number?', 'Only people an admin has allowed, and only in spaces they can already see. Everyone else sees just the last few digits.'],
-    ['How do I share a file outside Archive?', 'Make a share link. It expires after a day, or sooner if you choose, and photos shared through it have their location data removed.']
+    ['How do I share a file outside Archive?', 'Make a share link. It lasts 24 hours unless you choose another length, and photos shared through it have their location data removed.']
   ];
 
   const SIDE = [
-    { art: 'transaction', title: 'Assistants act as you', items: ['They see and change only what you could', 'If a job fails partway, nothing is saved', 'No internet access, and a time limit on every job'] },
-    { art: 'connectors', title: 'Connectors only read', items: ['They only ask to read, and never write back', 'Each connection belongs to one space', 'Their sign-in details are encrypted like secret fields'] },
-    { art: 'files', title: 'Files leave carefully', items: ['Share links expire after a day, or sooner', 'Photos shared by link lose their location data', 'Files follow the same rules as their space'] }
+    { art: 'transaction', title: 'Assistants act as you', items: ['They see and change only what you could', 'If a job fails partway, nothing is saved', 'Only public web addresses, and a time limit on every job'] },
+    { art: 'api', title: 'Access keys only narrow', items: ['A key never does more than the person who made it', 'Limit it to some spaces and a lower level', 'Give it an end date, or revoke it anytime'] },
+    { art: 'files', title: 'Files leave carefully', items: ['Share links last 24 hours unless you choose otherwise', 'Photos shared by link lose their location data', 'Files follow the same rules as their space'] }
   ];
 </script>
 
