@@ -2,37 +2,10 @@
   import Icon from '#kit/Icon.svelte';
   import Avatar from './Avatar.svelte';
 
-  let { name, spaces = [], home, current = '', onpick, oncreate, dev = false, ondev, onsignout } = $props();
+  let { name, email = '', dev = false, ondev, onsignout } = $props();
   let open = $state(false);
-  let adding = $state(false);
-  let draft = $state('');
-  let failed = $state(false);
   let root = $state();
 
-  const label = (s) => (s.id === home ? 'Personal' : s.name.replaceAll('_', ' '));
-  const here = $derived(spaces.find((s) => s.name === current));
-
-  function pick(space) {
-    open = false;
-    if (space !== current) onpick(space);
-  }
-
-  async function create(e) {
-    e.preventDefault();
-    const n = draft.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
-    if (!n) return;
-    try {
-      await oncreate(n);
-      open = adding = failed = false;
-      draft = '';
-    } catch {
-      failed = true;
-    }
-  }
-
-  $effect(() => {
-    if (!open) adding = failed = false;
-  });
 
   $effect(() => {
     if (!open) return;
@@ -48,33 +21,16 @@
 </script>
 
 <div class="profile" bind:this={root}>
-  <button class="me" type="button" aria-haspopup="menu" aria-expanded={open} aria-label="Switch space" onclick={() => (open = !open)}>
+  <button class="me" type="button" aria-haspopup="menu" aria-expanded={open} aria-label="Account" onclick={() => (open = !open)}>
     <Avatar {name} />
     <span class="text">
       <span class="name">{name}</span>
-      <span class="space">{here ? label(here) : 'All spaces'}</span>
+      <span class="space">{email}</span>
     </span>
     <span class="updown"><Icon name="chevrons-up-down" /></span>
   </button>
   {#if open}
     <div class="menu" role="menu">
-      <button class="item" role="menuitemradio" aria-checked={!current} onclick={() => pick('')}>
-        <span>All spaces</span>{#if !current}<Icon name="check" />{/if}
-      </button>
-      {#each spaces as s (s.id)}
-        <button class="item" role="menuitemradio" aria-checked={s.name === current} onclick={() => pick(s.name)}>
-          <span>{label(s)}</span>{#if s.name === current}<Icon name="check" />{/if}
-        </button>
-      {/each}
-      {#if adding}
-        <form class="item add" class:failed onsubmit={create}>
-          <Icon name="plus" />
-          <input bind:value={draft} placeholder="Space name" aria-label="Space name" {@attach (el) => el.focus()} oninput={() => (failed = false)} />
-        </form>
-      {:else}
-        <button class="item new" role="menuitem" onclick={() => (adding = true)}><Icon name="plus" /><span>New space</span></button>
-      {/if}
-      <hr />
       <button class="item" role="menuitemcheckbox" aria-checked={dev} onclick={() => { open = false; ondev(); }}>
         <span>Developer mode</span>{#if dev}<Icon name="check" />{/if}
       </button>
@@ -100,7 +56,7 @@
   .text { display: flex; flex: 1; flex-direction: column; min-width: 0; line-height: var(--leading-snug); }
   .name, .space { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .name { color: var(--fg-soft); }
-  .space { color: var(--fg-muted); font-size: var(--text-meta); text-transform: capitalize; }
+  .space { color: var(--fg-muted); font-size: var(--text-meta); }
   .updown { display: flex; color: var(--fg-muted); }
   .menu {
     position: absolute;

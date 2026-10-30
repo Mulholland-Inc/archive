@@ -2,7 +2,7 @@
   import Icon from '#kit/Icon.svelte';
   import Bot from './Bot.svelte';
 
-  let { workspaces = [], workspace = '', latest = '', onpick, onrename, onadd } = $props();
+  let { workspaces = [], workspace = '', latest = '', canAdd = false, onpick, onrename, onadd } = $props();
   let editing = $state('');
   let adding = $state(false);
   let draft = $state('');
@@ -68,7 +68,8 @@
       {/if}
     </div>
   {/each}
-  {#if adding}
+  {#if !canAdd}
+  {:else if adding}
     <div class="row"><span class="plus"><Icon name="plus" /></span>{@render field('New archive name')}</div>
   {:else}
     <button class="row add" type="button" onclick={add}><span class="plus"><Icon name="plus" /></span><span>Add archive</span></button>

@@ -29,6 +29,7 @@
   let types = $state({});
   let catalogued = $state(false);
   let dev = $state(devMode());
+  let canAdd = $state(false);
   let path = $state(location.pathname);
   let chats = $state([]);
   let scope = $state(space());
@@ -118,6 +119,7 @@
       tables = all.filter((t) => t.kind === 'table');
       views = all.filter((t) => t.kind === 'view');
       catalogued = true;
+      if (me.workspaces?.length) api('/auth/workspaces', { workspace: me.workspaces[0].id }).then(() => (canAdd = true)).catch(() => {});
     } catch (e) {
       if (!(e instanceof Unauthorized) && e.status !== 403) throw e;
       if (workspace() && !(e instanceof Unauthorized)) {
@@ -151,7 +153,7 @@
           <button class="side" type="button" aria-label="Sidebar" aria-expanded={open} onclick={toggle}><Icon name="panel-left" /></button>
         </span>
       </div>
-      <Workspaces workspaces={me.workspaces?.length ? me.workspaces : [{ id: me.workspace, name: 'Archive' }]} workspace={me.workspace} latest={chats[0]?.title} onpick={(id) => (id === me.workspace ? go('/') : switchTo(id))} onrename={renameArchive} onadd={addArchive} />
+      <Workspaces workspaces={me.workspaces?.length ? me.workspaces : [{ id: me.workspace, name: 'Archive' }]} workspace={me.workspace} latest={chats[0]?.title} onpick={(id) => (id === me.workspace ? go('/') : switchTo(id))} {canAdd} onrename={renameArchive} onadd={addArchive} />
       <nav>
         {#if chats.length}
           <div class="chats">
@@ -188,7 +190,7 @@
         {/if}
       </nav>
       <footer>
-        <Profile name={who} spaces={me.spaces} home={me.home} current={scope} onpick={pick} oncreate={create} {dev} ondev={toggleDev} onsignout={signOut} />
+        <Profile name={who} email={me.actor.email} {dev} ondev={toggleDev} onsignout={signOut} />
         <Theme />
       </footer>
     </aside>
@@ -227,7 +229,7 @@
       {#if asking}<Passkey user={me.actor.user_id} ondone={() => (asking = false)} />{/if}
     </main>
     {#if catalogued && (!route.first || route.first === 'chat')}
-      {#key generation}<Panel name={me.workspaces?.find((w) => w.id === me.workspace)?.name ?? 'Archive'} seed={me.workspace} {views} />{/key}
+      {#key generation}<Panel name={me.workspaces?.find((w) => w.id === me.workspace)?.name ?? 'Archive'} seed={me.workspace} {views} spaces={me.spaces} home={me.home} current={scope} email={me.actor.email} onpick={pick} oncreate={create} />{/key}
     {/if}
     </div>
   </div>
