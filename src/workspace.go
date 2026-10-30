@@ -1081,8 +1081,8 @@ func blobPrefixed(b blobStore, p string) blobStore {
 	return prefixBlobs{b, p}
 }
 
-func (x prefixBlobs) put(ctx context.Context, key, sum string, r io.Reader, size int64) error {
-	return x.b.put(ctx, x.p+key, sum, r, size)
+func (x prefixBlobs) put(ctx context.Context, key string, r io.Reader, size int64) error {
+	return x.b.put(ctx, x.p+key, r, size)
 }
 
 func (x prefixBlobs) open(ctx context.Context, key string, size int64) (io.ReadSeekCloser, error) {

@@ -6,7 +6,7 @@
 
 ## Summary
 
-Archive is one Go binary on top of Postgres, with file bytes on disk or in S3-compatible storage. It stores each type as a real Postgres table and exposes everything over MCP, so any AI app can read and write it. Agents do the work of getting data in and keeping it clean, by writing code against Archive's SDK; Archive itself calls no LLM.
+Archive is one Go binary on top of Postgres, with file bytes on disk or in Google Cloud Storage. It stores each type as a real Postgres table and exposes everything over MCP, so any AI app can read and write it. Agents do the work of getting data in and keeping it clean, by writing code against Archive's SDK; Archive itself calls no LLM.
 
 The binary is stateless when given an external Postgres and blob store: any number of instances can run side by side, scale to zero, and share all state through Postgres.
 
@@ -15,12 +15,12 @@ flowchart LR
   Apps[ChatGPT, Claude, Gemini, Grok] <--> MCP[MCP: run code] --> Core[Go core]
   Clients[Clients, CLI, Terraform] <--> API[HTTP API] --> Core
   Core --> PG[(Postgres: archive + public)]
-  Core --> Files[(Files: disk or S3)]
+  Core --> Files[(Files: disk or GCS)]
 ```
 
 ## Stack
 
-- **Postgres 18** for all data, **Go** for the server, **a directory or S3-compatible storage** (S3, R2, MinIO, GCS) for file bytes.
+- **Postgres 18** for all data, **Go** for the server, **a directory or Google Cloud Storage** for file bytes.
 - **Two images**: ko builds the API image from the Go module alone (the binary on a minimal base, about 41 MB), and `apps/web/Dockerfile` builds the web app's. The binary never runs Postgres: it always connects through `DATABASE_URL`, and locally Postgres is its own `postgres:18-alpine` container.
 - **One port** serves the HTTP API (`/api`), sign-in (`/auth`) and MCP (`/mcp`).
 - **Clients**: one Svelte web app is the client everywhere. It is served as the website, and wrapped with Tauri 2 for iOS, Android, macOS, Windows and Linux; Capacitor is the fallback for iOS and Android if Tauri's mobile side proves rough. It is a client of the HTTP API. `apps/web` is its start: Svelte 5 and Vite, in the look of archive.family's app (Geist and EB Garamond, a dark shell, cream pills, rounded panels). It has sign-in, files, and a page for every table and view, each with the icon and description from its comment; it is not yet wrapped in Tauri.
@@ -161,7 +161,7 @@ Every install serves many workspaces ([ADR 0003](0003-hosting.md)). A workspace 
 
 ## Files
 
-File bytes are content-addressed by SHA-256 in `$ARCHIVE_DATA/blobs` or in S3-compatible storage (`ARCHIVE_BLOB_URL`), under a prefix per workspace.
+File bytes are content-addressed by SHA-256 in `$ARCHIVE_DATA/blobs` or in GCS (`ARCHIVE_BLOB_URL`), under a prefix per workspace.
 
 - **Uploads**: a plain `POST /api/files` for small files, or resumable tus uploads for large ones. A tus upload's state lives in `archive.upload` and its chunks are stored as blob objects, so consecutive chunks can land on different instances. The last chunk assembles the file from blob storage, without a local copy.
 - **Processing in the request**: Archive pulls metadata, extracts text (PDF, HTML, plain text and JSON) and makes image thumbnails inside the request that stored the file. A file is therefore `done` when its upload, edit or create returns, and nothing has to run between requests. A file left `pending` is due in `archive.due` 10 s later, as a safety net only.
@@ -209,7 +209,7 @@ Details of how it behaves:
 The same image runs in two ways, each serving any number of workspaces.
 
 - **Self-hosted**: `install.sh` or `compose.yaml` runs three containers: `postgres:18-alpine` with its own volume, the API image on port 8080 with a volume for `secret.key` and the blobs, and the web app image (nginx with the API's address filled in at start) on port 3000. The binary serves no web pages: the web app and the API are always on addresses of their own.
-- **Stateless** (Cloud Run or any container platform): set `DATABASE_URL` to a managed Postgres, `ARCHIVE_BLOB_URL` to S3-compatible storage, and `ARCHIVE_SECRET_KEY`, the same on every instance. Archive refuses to start with `DATABASE_URL` but without the key. Nothing else is local:
+- **Stateless** (Cloud Run or any container platform): set `DATABASE_URL` to a managed Postgres, `ARCHIVE_BLOB_URL` to a GCS bucket, and `ARCHIVE_SECRET_KEY`, the same on every instance. Archive refuses to start with `DATABASE_URL` but without the key. Nothing else is local:
   - schema: generated from the database;
   - uploads: in Postgres and blob storage;
   - file processing: inside the request;
@@ -220,7 +220,7 @@ The same image runs in two ways, each serving any number of workspaces.
   It runs on request-based billing and scales to zero: no CPU is needed between requests. With `ARCHIVE_TASKS_QUEUE` and `ARCHIVE_TASKS_SERVICE_ACCOUNT` set, Cloud Tasks calls `/tasks` at each due time, so scheduled and table-triggered workflows and pending files start an instance when they need one. Without them, due work runs only while `archive serve` is up.
 - The **`archive` Terraform provider** (`apps/terraform`) manages schema DDL (tables and views), spaces, tokens and access rules as code. It compares configured DDL with the database through the plan endpoint, so normalized output never shows as drift.
 
-Not verified yet: a managed Postgres without a true superuser (Cloud SQL's `cloudsqlsuperuser`), and GCS through its S3 API.
+Not verified yet: a managed Postgres without a true superuser (Cloud SQL's `cloudsqlsuperuser`), and GCS through its XML API.
 
 ## Planned
 

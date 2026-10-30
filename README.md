@@ -22,7 +22,7 @@
 
 ---
 
-Archive is one open-source Go program on top of Postgres. Your records live in real Postgres tables and your files on disk or in S3-compatible storage. The same rules guard all of it, whether it is read by you in the web app, by your code over the HTTP API, or by your AI agent over MCP.
+Archive is one open-source Go program on top of Postgres. Your records live in real Postgres tables and your files on disk or in Google Cloud Storage. The same rules guard all of it, whether it is read by you in the web app, by your code over the HTTP API, or by your AI agent over MCP.
 
 Archive never calls an AI model on its own. Your agent does the thinking and sends Archive code to run.
 
@@ -226,7 +226,7 @@ Every setting is an environment variable; `archive help` lists them all:
 | `ARCHIVE_DATA` | Directory for `secret.key` and files, while `ARCHIVE_SECRET_KEY` and `ARCHIVE_BLOB_URL` are unset (default `./data`) |
 | `DATABASE_URL` | Postgres 18, required, with CREATEROLE and CREATEDB (no superuser needed); `docker compose up -d postgres` starts one. Each workspace gets its own database on the same server |
 | `ARCHIVE_SECRET_KEY` | 32-byte key for secret values; required with `DATABASE_URL`, the same on every copy |
-| `ARCHIVE_BLOB_URL`, `ARCHIVE_BLOB_KEY`, `ARCHIVE_BLOB_SECRET` | S3, R2 or MinIO for files, or `gs://bucket` for GCS as the Cloud Run service account, with no key |
+| `ARCHIVE_BLOB_URL` | `gs://bucket/prefix` for files in GCS as the Cloud Run service account, with no key |
 | `ARCHIVE_GOOGLE_CLIENT_ID`, `ARCHIVE_GOOGLE_CLIENT_SECRET` | Sign-in with Google; each provider shows on the sign-in page when both of its variables are set, and its redirect URL is `ARCHIVE_API_URL/auth/oidc/<google\|microsoft\|slack\|github>/callback` |
 | `ARCHIVE_MICROSOFT_CLIENT_ID`, `ARCHIVE_MICROSOFT_CLIENT_SECRET` | Sign-in with Microsoft, work and personal accounts |
 | `ARCHIVE_SLACK_CLIENT_ID`, `ARCHIVE_SLACK_CLIENT_SECRET` | Sign-in with Slack |
@@ -242,7 +242,7 @@ flowchart LR
   Apps[ChatGPT, Claude, Gemini, Cursor] <--> MCP[MCP: run code] --> Core[Go core]
   Clients[Web app, CLI, Terraform] <--> API[HTTP API] --> Core
   Core --> PG[(Postgres: archive + public)]
-  Core --> Files[(Files: disk or S3)]
+  Core --> Files[(Files: disk or GCS)]
 ```
 
 | Path | What lives there |
