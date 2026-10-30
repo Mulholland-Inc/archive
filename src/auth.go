@@ -486,10 +486,16 @@ func (a *Archive) DeleteSpace(ctx context.Context, name string) error {
 		if err := q.DeleteSpaceSecrets(ctx, id); err != nil {
 			return err
 		}
+		if err := a.exec(ctx, "GRANT "+authIdent(ac.UserRole)+" TO CURRENT_USER", "SET LOCAL ROLE "+authIdent(ac.UserRole)); err != nil {
+			return err
+		}
 		for _, t := range a.Catalog().deleteOrder() {
 			if _, err := a.st.Q(ctx).Exec(ctx, `DELETE FROM `+pgIdent("public", t)+` WHERE space = $1`, id); err != nil {
 				return err
 			}
+		}
+		if err := a.exec(ctx, "RESET ROLE", "REVOKE "+authIdent(ac.UserRole)+" FROM CURRENT_USER"); err != nil {
+			return err
 		}
 		if err := q.DeleteSpaceFiles(ctx, id); err != nil {
 			return err

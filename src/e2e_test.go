@@ -3288,6 +3288,8 @@ func TestWorkspacesIsolateWhenArchiveIsNotASuperuser(t *testing.T) {
 		t.Fatalf("archive's role is a superuser: %q", s)
 	}
 	ledger := e2eTable("ledger", `    codename   text NOT NULL,
+    ssn        archive.us_ssn,
+    document   uuid REFERENCES archive.file,
     search     tsvector GENERATED ALWAYS AS (archive.search_doc(codename)) STORED`)
 	onlyA := e2eTable("only_in_a", `    note       text NOT NULL,
     search     tsvector GENERATED ALWAYS AS (archive.search_doc(note)) STORED`)
@@ -3368,6 +3370,47 @@ func TestWorkspacesIsolateWhenArchiveIsNotASuperuser(t *testing.T) {
 		}
 		if got := names(decode[[]row](t, in.must("file", "list"))); !strings.Contains(got, "memo.txt") {
 			t.Errorf("alice cannot see her own file: %s", got)
+		}
+	})
+	t.Run("RemovingASpaceDeletesItsRowsFilesSecretsAndRoles", func(t *testing.T) {
+		in := in.on(t)
+		in.must("space", "add", "team")
+		base := host.psqlIn("tenantmain", "SELECT role FROM archive.space WHERE name = 'team'")
+		path := filepath.Join(in.dir, "team.txt")
+		os.WriteFile(path, []byte("team memo"), 0o644)
+		f := decode[File](t, in.must("file", "add", path, "-space", "team"))
+		in.must("create", "ledger", "-space", "team", `{"codename": "Team", "ssn": "123-45-6789", "document": "`+f.ID.String()+`"}`)
+		in.must("create", "ledger", `{"codename": "Home"}`)
+		in.must("space", "remove", "team")
+		got := host.psqlIn("tenantmain", "SELECT (SELECT count(*) FROM ledger WHERE codename = 'Team') || ',' || (SELECT count(*) FROM ledger WHERE codename = 'Home') || ',' || "+
+			"(SELECT count(*) FROM archive.secret) || ',' || (SELECT count(*) FROM archive.file WHERE id = '"+f.ID.String()+"') || ',' || "+
+			"(SELECT count(*) FROM archive.space WHERE name = 'team') || ',' || (SELECT count(*) FROM pg_roles WHERE starts_with(rolname, '"+base+"'))")
+		if got != "0,1,0,0,0,0" {
+			t.Errorf("after removing team (team rows, home rows, secrets, team file, team space, team roles): %s", got)
+		}
+		if n := host.psqlIn("tenantmain", "SELECT count(*) FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid JOIN pg_roles u ON u.oid = m.member WHERE u.rolname = 'cloudsql' AND m.set_option AND starts_with(r.rolname, '"+a+"')"); n != "0" {
+			t.Errorf("archive's role can still set %s workspace roles", n)
+		}
+	})
+	t.Run("DeletingARowClearsItsSecret", func(t *testing.T) {
+		in := in.on(t)
+		r := decode[row](t, in.must("create", "ledger", `{"codename": "Secretive", "ssn": "234-56-7890"}`))
+		if n := host.psqlIn("tenantmain", "SELECT count(*) FROM archive.secret WHERE row_id = '"+id(r)+"'"); n != "1" {
+			t.Fatalf("%s secrets for the new row", n)
+		}
+		in.must("delete", "ledger", id(r))
+		if n := host.psqlIn("tenantmain", "SELECT count(*) FROM archive.secret WHERE row_id = '"+id(r)+"'"); n != "0" {
+			t.Errorf("%s secrets left after deleting the row", n)
+		}
+	})
+	t.Run("WorkflowsWriteAsTheirOwner", func(t *testing.T) {
+		in := in.on(t)
+		s, _, _ := in.run(`await archive.deploy({ "add.ts": "await archive.create('ledger', { codename: 'Flowed' });" });
+await archive.start("add.ts");
+return (await archive.list("ledger")).map((r) => r.codename).join(",");`, "run", "-")
+		out := decode[RunOutput](t, s)
+		if out.Error != "" || !strings.Contains(string(out.Result), "Flowed") {
+			t.Errorf("workflow write: %+v", out)
 		}
 	})
 	t.Run("DeletingBDropsItsDatabaseAndRoles", func(t *testing.T) {
