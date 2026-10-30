@@ -439,15 +439,6 @@ func (q *Queries) CreateChat(ctx context.Context, userID uuid.UUID, title string
 	return i, err
 }
 
-const createDatabase = `-- name: CreateDatabase :exec
-CREATE DATABASE archive
-`
-
-func (q *Queries) CreateDatabase(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, createDatabase)
-	return err
-}
-
 const createFile = `-- name: CreateFile :one
 INSERT INTO archive.file (hash, name, mime, size, space) VALUES ($1, $2, $3, $4, $5)
 RETURNING id, hash, name, mime, size, metadata, status, error, space, created_at
@@ -616,17 +607,6 @@ func (q *Queries) CreateWorkspace(ctx context.Context, iD uuid.UUID, name string
 		&i.CreatedAt,
 	)
 	return i, err
-}
-
-const databaseExists = `-- name: DatabaseExists :one
-SELECT EXISTS (SELECT FROM pg_catalog.pg_database WHERE datname = 'archive')
-`
-
-func (q *Queries) DatabaseExists(ctx context.Context) (bool, error) {
-	row := q.db.QueryRow(ctx, databaseExists)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
 }
 
 const defaultSpace = `-- name: DefaultSpace :one

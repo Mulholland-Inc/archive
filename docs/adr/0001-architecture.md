@@ -21,7 +21,7 @@ flowchart LR
 ## Stack
 
 - **Postgres 18** for all data, **Go** for the server, **a directory or S3-compatible storage** (S3, R2, MinIO, GCS) for file bytes.
-- **One Dockerfile**: the image holds Postgres and the binary. Without `DATABASE_URL`, the binary starts the bundled Postgres in `/data`; with it, it uses the external database and keeps nothing local.
+- **Two images**: ko builds the API image from the Go module alone (the binary on a minimal base, about 41 MB), and `apps/web/Dockerfile` builds the web app's. The binary never runs Postgres: it always connects through `DATABASE_URL`, and locally Postgres is its own `postgres:18-alpine` container.
 - **One port** serves the HTTP API (`/api`), sign-in (`/auth`) and MCP (`/mcp`).
 - **Clients**: one Svelte web app is the client everywhere. It is served as the website, and wrapped with Tauri 2 for iOS, Android, macOS, Windows and Linux; Capacitor is the fallback for iOS and Android if Tauri's mobile side proves rough. It is a client of the HTTP API. `apps/web` is its start: Svelte 5 and Vite, in the look of archive.family's app (Geist and EB Garamond, a dark shell, cream pills, rounded panels). It has sign-in, files, and a page for every table and view, each with the icon and description from its comment; it is not yet wrapped in Tauri.
 
@@ -151,7 +151,7 @@ Archive is listed in ChatGPT, Claude, Gemini and Grok as one remote MCP server. 
 
 ## Workspaces
 
-Every install serves many workspaces ([ADR 0003](0003-hosting.md)). A workspace is one customer's Archive: its own Postgres database on the same server, named `archive_<id>` by its UUID, its roles prefixed by that UUID, and its own data key, wrapped by `ARCHIVE_SECRET_KEY` in `archive.workspace`. The main database (`DATABASE_URL`, or the bundled one) is workspace one. A workspace's own login role (`"<id>_authenticator"`, password derived from its data key) can connect only to its own database, so no shared login crosses workspaces, and that works without a database superuser (as on Cloud SQL and AlloyDB); the archive tables the system writes use row-level security enabled but not forced, so the owning role bypasses it for background and admin work while tenant roles stay filtered.
+Every install serves many workspaces ([ADR 0003](0003-hosting.md)). A workspace is one customer's Archive: its own Postgres database on the same server, named `archive_<id>` by its UUID, its roles prefixed by that UUID, and its own data key, wrapped by `ARCHIVE_SECRET_KEY` in `archive.workspace`. The main database (`DATABASE_URL`) is workspace one. A workspace's own login role (`"<id>_authenticator"`, password derived from its data key) can connect only to its own database, so no shared login crosses workspaces, and that works without a database superuser (as on Cloud SQL and AlloyDB); the archive tables the system writes use row-level security enabled but not forced, so the owning role bypasses it for background and admin work while tenant roles stay filtered.
 
 - **Opening**: `src/workspace.go` holds the process's `Hub`: the main pool, the root key, the blob store and the open workspaces. A workspace's `Archive` (its pools, catalog, data key and run slots) opens on first use and closes 10 minutes after its last use, on a timer of its own; pools are small (8 app, 4 system, 2 DDL connections) and close idle connections after a minute. Opening applies `archive.sql` under the advisory lock and revision check. Startup opens only the main database, so it takes the same time however many workspaces there are.
 - **Finding it**: an API token belongs to one workspace, and a request naming another is refused. The web app's one session cookie works in all of the person's workspaces, and each request names the current one in `Archive-Workspace`, the way `Archive-Space` names the space; the server checks that the person is in it. Webhooks and file links carry the workspace UUID in their path.
@@ -208,7 +208,7 @@ Details of how it behaves:
 
 The same image runs in two ways, each serving any number of workspaces.
 
-- **Self-hosted**: `install.sh` or `compose.yaml` runs the API image with one `/data` volume on port 8080, and the web app image (`apps/web/Dockerfile`, nginx with the API's address filled in at start) on port 3000. The binary serves no web pages: the web app and the API are always on addresses of their own. The bundled Postgres, the blobs and `secret.key` all live in `/data`, and Archive backs up the database before a version upgrade.
+- **Self-hosted**: `install.sh` or `compose.yaml` runs three containers: `postgres:18-alpine` with its own volume, the API image on port 8080 with a volume for `secret.key` and the blobs, and the web app image (nginx with the API's address filled in at start) on port 3000. The binary serves no web pages: the web app and the API are always on addresses of their own.
 - **Stateless** (Cloud Run or any container platform): set `DATABASE_URL` to a managed Postgres, `ARCHIVE_BLOB_URL` to S3-compatible storage, and `ARCHIVE_SECRET_KEY`, the same on every instance. Archive refuses to start with `DATABASE_URL` but without the key. Nothing else is local:
   - schema: generated from the database;
   - uploads: in Postgres and blob storage;

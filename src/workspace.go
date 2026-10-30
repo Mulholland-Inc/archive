@@ -41,7 +41,6 @@ type Hub struct {
 	hints  Hints
 	app    string
 	api    string
-	stop   func() error
 	one    string
 	tasks  *hubTasks
 
@@ -106,9 +105,9 @@ func withArchive(ctx context.Context, a *Archive) context.Context {
 
 func Open(ctx context.Context) (*Hub, error) {
 	dir := coreEnv("ARCHIVE_DATA", "./data")
-	dsn, stop := os.Getenv("DATABASE_URL"), func() error { return nil }
-	if dsn != "" && strings.TrimSpace(os.Getenv("ARCHIVE_SECRET_KEY")) == "" {
-		return nil, errors.New("DATABASE_URL needs ARCHIVE_SECRET_KEY: every instance on that database must share one 32-byte key, like the output of openssl rand -hex 32")
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		return nil, errors.New("DATABASE_URL is required: a Postgres 18 role with CREATEROLE and CREATEDB, like the one docker compose up -d postgres starts")
 	}
 	var tasks *hubTasks
 	if q := os.Getenv("ARCHIVE_TASKS_QUEUE"); q != "" {
@@ -130,33 +129,20 @@ func Open(ctx context.Context) (*Hub, error) {
 	if err != nil {
 		return nil, err
 	}
-	if dsn == "" {
-		if dsn = pgLive(dir); dsn == "" {
-			if err := BackupBeforeUpgrade(ctx, dir, cliVersion); err != nil {
-				return nil, fmt.Errorf("backup: %w", err)
-			}
-			if dsn, stop, err = StartPostgres(ctx, dir); err != nil {
-				return nil, fmt.Errorf("start postgres: %w", err)
-			}
-		}
-	}
 	pooled, err := pgx.ParseConfig(dsn)
 	if err != nil {
-		stop()
 		return nil, fmt.Errorf("DATABASE_URL: %w", err)
 	}
 	direct := pooled
 	if d := os.Getenv("DATABASE_DIRECT_URL"); d != "" {
 		if direct, err = pgx.ParseConfig(d); err != nil {
-			stop()
 			return nil, fmt.Errorf("DATABASE_DIRECT_URL: %w", err)
 		}
 	}
 	h := &Hub{key: key, aead: aead, pooled: pooled, direct: direct, blobs: blobs, hints: coreHints(os.Getenv("ARCHIVE_LOCALE")),
-		stop: stop, tasks: tasks, open: map[string]*hubEntry{}}
+		tasks: tasks, open: map[string]*hubEntry{}}
 	h.urls("8080")
 	if h.main, err = storePool(ctx, pooled, storeSysConns, nil); err != nil {
-		stop()
 		return nil, fmt.Errorf("open store: %w", err)
 	}
 	if err := h.register(ctx); err != nil {
@@ -225,9 +211,6 @@ func (h *Hub) Close() error {
 	h.mu.Unlock()
 	if h.main != nil {
 		h.main.Close()
-	}
-	if h.stop != nil {
-		return h.stop()
 	}
 	return nil
 }

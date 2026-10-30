@@ -15,8 +15,8 @@
     '1. Clone the repo, then read README.md, Dockerfile, compose.yaml and the Environment section of src/main.go before you change anything.',
     '2. Check what I have installed. Prefer Docker; if I do not have it, build from source with Go 1.27 or newer: cd src && go build -o archive .',
     '3. Ask me which email should be the first owner, and which sign-in provider I want (Google, Microsoft, Slack or GitHub); set its ARCHIVE_<PROVIDER>_CLIENT_ID and ARCHIVE_<PROVIDER>_CLIENT_SECRET.',
-    '4. Leave DATABASE_URL unset so Archive runs its bundled Postgres in ARCHIVE_DATA, unless I want my own Postgres. In that case set DATABASE_URL and a 32-byte ARCHIVE_SECRET_KEY from openssl rand -hex 32.',
-    '5. Start it with docker compose up -d from the repo root: the API on port 8080 and the web app on port 3000. From source, run ARCHIVE_DATA=./data ./archive serve for the API and npm run dev in apps/web for the web app.',
+    '4. Archive needs Postgres 18 in DATABASE_URL. docker compose up -d starts one next to it; to use my own, set DATABASE_URL to a role with CREATEROLE and CREATEDB.',
+    '5. Start it with docker compose up -d from the repo root: Postgres, the API on port 8080 and the web app on port 3000. From source, run docker compose up -d postgres, then ./archive serve with DATABASE_URL set, and npm run dev in apps/web for the web app.',
     '6. Check that it is up: http://localhost:8080/healthz should answer 204 and http://localhost:3000 should show the web app. Then add me as the first owner with archive user add and my email.',
     '7. Make me an access token with archive token create and show me how to connect Claude Code to http://localhost:8080/mcp.',
     '8. If I want it public, give the web app and the API each an HTTPS address, set ARCHIVE_URL and ARCHIVE_API_URL to them, and use apps/terraform/gcp for Google Cloud. Ask me before you create any cloud resources.',
@@ -32,7 +32,7 @@
   ];
 
   const RUN = [
-    { art: 'cli', title: 'On your computer', items: ['One command starts it with Docker', 'Run it again to update; your data stays', 'It backs itself up before each new version'] },
+    { art: 'cli', title: 'On your computer', items: ['One command starts it with Docker', 'Run it again to update; your data stays', 'Postgres runs in its own container'] },
     { art: 'scale', title: 'On your servers', items: ['Two containers: the API and the web app', 'Use your own Postgres and file storage', 'Run as many copies side by side as you like'] },
     { art: 'harbor', title: 'In your cloud', items: ['A ready-made setup for Google Cloud', 'Your account, your database, your storage', 'Or let us run it for you'] }
   ];
