@@ -317,6 +317,19 @@ func (q *Queries) ClaimDue(ctx context.Context, lease time.Time) (ClaimDueRow, e
 	return i, err
 }
 
+const claimDueFor = `-- name: ClaimDueFor :one
+UPDATE archive.due d SET at = $1::timestamptz
+WHERE d.workspace = $2 AND d.kind = $3 AND d.at <= now()
+RETURNING d.at
+`
+
+func (q *Queries) ClaimDueFor(ctx context.Context, lease time.Time, iD uuid.UUID, kind string) (time.Time, error) {
+	row := q.db.QueryRow(ctx, claimDueFor, lease, iD, kind)
+	var at time.Time
+	err := row.Scan(&at)
+	return at, err
+}
+
 const claimWorkflow = `-- name: ClaimWorkflow :one
 UPDATE archive.workflow SET next_at = $1::timestamptz
 WHERE id = (SELECT w.id FROM archive.workflow w WHERE w.next_at <= now() ORDER BY w.next_at LIMIT 1 FOR UPDATE SKIP LOCKED)
@@ -750,6 +763,28 @@ func (q *Queries) DirectRoles(ctx context.Context, member string, grps []string)
 		return nil, err
 	}
 	return items, nil
+}
+
+const dueAt = `-- name: DueAt :one
+SELECT at FROM archive.due WHERE workspace = $1 AND kind = $2
+`
+
+func (q *Queries) DueAt(ctx context.Context, workspace uuid.UUID, kind string) (time.Time, error) {
+	row := q.db.QueryRow(ctx, dueAt, workspace, kind)
+	var at time.Time
+	err := row.Scan(&at)
+	return at, err
+}
+
+const earliestDue = `-- name: EarliestDue :one
+SELECT at FROM archive.due ORDER BY at LIMIT 1
+`
+
+func (q *Queries) EarliestDue(ctx context.Context) (time.Time, error) {
+	row := q.db.QueryRow(ctx, earliestDue)
+	var at time.Time
+	err := row.Scan(&at)
+	return at, err
 }
 
 const fileByKey = `-- name: FileByKey :one
@@ -1307,6 +1342,15 @@ func (q *Queries) NoMembers(ctx context.Context, workspace uuid.UUID) (bool, err
 	return not_exists, err
 }
 
+const notifyDue = `-- name: NotifyDue :exec
+SELECT pg_notify('archive_due', $1::text)
+`
+
+func (q *Queries) NotifyDue(ctx context.Context, at string) error {
+	_, err := q.db.Exec(ctx, notifyDue, at)
+	return err
+}
+
 const ontologyAdmin = `-- name: OntologyAdmin :one
 SELECT archive.ontology_admin()
 `
@@ -1567,7 +1611,7 @@ func (q *Queries) Secrets(ctx context.Context, tableName string, ids []uuid.UUID
 	return items, nil
 }
 
-const setDue = `-- name: SetDue :exec
+const setDue = `-- name: SetDue :execrows
 UPDATE archive.due d SET at = $1::timestamptz FROM archive.workspace w
 WHERE w.id = d.workspace AND w.id = $2 AND d.kind = $3 AND d.at = $4::timestamptz
 `
@@ -1579,14 +1623,17 @@ type SetDueParams struct {
 	Claimed time.Time
 }
 
-func (q *Queries) SetDue(ctx context.Context, arg SetDueParams) error {
-	_, err := q.db.Exec(ctx, setDue,
+func (q *Queries) SetDue(ctx context.Context, arg SetDueParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setDue,
 		arg.Next,
 		arg.ID,
 		arg.Kind,
 		arg.Claimed,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setFileContent = `-- name: SetFileContent :exec
@@ -1661,14 +1708,23 @@ func (q *Queries) SignOut(ctx context.Context, hash string) error {
 	return err
 }
 
-const soonDue = `-- name: SoonDue :exec
+const soonDue = `-- name: SoonDue :one
+WITH was AS (SELECT x.at FROM archive.due x WHERE x.workspace = $1 AND x.kind = $2)
 INSERT INTO archive.due (workspace, kind, at) VALUES ($1, $2, $3)
 ON CONFLICT (workspace, kind) DO UPDATE SET at = least(archive.due.at, EXCLUDED.at)
+RETURNING at, (at IS DISTINCT FROM (SELECT was.at FROM was))::bool AS changed
 `
 
-func (q *Queries) SoonDue(ctx context.Context, workspace uuid.UUID, kind string, at time.Time) error {
-	_, err := q.db.Exec(ctx, soonDue, workspace, kind, at)
-	return err
+type SoonDueRow struct {
+	At      time.Time
+	Changed bool
+}
+
+func (q *Queries) SoonDue(ctx context.Context, workspace uuid.UUID, kind string, at time.Time) (SoonDueRow, error) {
+	row := q.db.QueryRow(ctx, soonDue, workspace, kind, at)
+	var i SoonDueRow
+	err := row.Scan(&i.At, &i.Changed)
+	return i, err
 }
 
 const spaceByName = `-- name: SpaceByName :one
@@ -1883,6 +1939,17 @@ func (q *Queries) TxNow(ctx context.Context) (time.Time, error) {
 	return column_1, err
 }
 
+const txWrote = `-- name: TxWrote :one
+SELECT (pg_current_xact_id_if_assigned() IS NOT NULL)::bool
+`
+
+func (q *Queries) TxWrote(ctx context.Context) (bool, error) {
+	row := q.db.QueryRow(ctx, txWrote)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const upload = `-- name: Upload :one
 SELECT id, role, space, name, length, parts, created_at FROM archive.upload WHERE id = $1
 `
@@ -1983,6 +2050,18 @@ func (q *Queries) UserWorkspaces(ctx context.Context, id uuid.UUID) ([]UserWorks
 		return nil, err
 	}
 	return items, nil
+}
+
+const wakeTableWorkflows = `-- name: WakeTableWorkflows :execrows
+UPDATE archive.workflow SET next_at = now() WHERE cursor_id IS NOT NULL AND next_at IS NULL
+`
+
+func (q *Queries) WakeTableWorkflows(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, wakeTableWorkflows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const workflowByHook = `-- name: WorkflowByHook :one

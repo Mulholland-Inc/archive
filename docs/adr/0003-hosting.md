@@ -72,8 +72,8 @@ Without subdomains, every request names its workspace, and secrets stay plain `a
 ## Serving many workspaces
 
 - **Open on first use.** An instance opens a workspace (its small connection pool, table list and data key) on its first request, and closes it after it has been idle for a while. Each open workspace keeps a few connections; no pooler sits in front of Postgres.
-- **Schema upgrades.** After a deploy, an instance upgrades the main database first. Each workspace is upgraded when it is next opened, under the existing advisory lock and revision check. A background pass upgrades idle workspaces, so first requests rarely wait.
-- **Background work from one queue.** Workflows (schedules and table triggers) and pending files write their next due time to `archive.due` in the main database. Instances claim due rows with `FOR UPDATE SKIP LOCKED`, open that workspace and do the work. No instance polls every workspace.
+- **Schema upgrades.** After a deploy, an instance upgrades the main database first. Each workspace is upgraded when it is next opened, under the existing advisory lock and revision check. Nothing at startup touches the other workspaces, so a cold start stays fast however many there are.
+- **Background work from one queue, pushed.** Workflows (schedules and table triggers) and pending files write their next due time to `archive.due` in the main database. Each sooner time schedules a Cloud Tasks task for exactly then, which calls `/tasks` on the API host; that request claims the due row with `FOR UPDATE SKIP LOCKED`, opens that workspace and does the work. Nothing polls or ticks.
 - **Limits per workspace**: concurrent runs, so one busy workspace cannot starve the others on a shared instance.
 
 ## Invites
@@ -84,6 +84,10 @@ Without subdomains, every request names its workspace, and secrets stay plain `a
 ## Infrastructure
 
 `apps/terraform/gcp` deploys app.archive.dev exactly as it deploys anyone's Archive: one Cloud Run service, Cloud SQL reached directly over its socket, a bucket, and the secrets as environment variables. Mulholland's values (domains, keys) are Terraform variables, not code.
+
+- **It scales to zero.** No instance is kept warm and CPU is only allocated during requests, with a startup boost. A cold start connects, checks the main schema's revision and listens; workspaces open on first use.
+- **Cloud Tasks wakes it.** A queue holds one task per due time, calling `/tasks` with an OIDC token for a service account of its own; the handler checks Google's signature, the audience and that account's email. The runtime account may only enqueue on that queue and act as that account.
+- **It costs about $10 a month** when idle, nearly all of it the `db-f1-micro` Cloud SQL instance; Cloud Run, Cloud Tasks and the bucket stay within their free tiers at low traffic.
 
 - **Domains go through a Cloudflare Worker.** Cloud Run picks the service by Host header, so DNS alone cannot point a domain at it. Cloud Run's domain mapping is preview and not meant for production, a Google load balancer costs about $18 a month, and Cloudflare Origin Rules rewrite the Host header only on Enterprise. A Worker of a few lines, on Workers' free plan, fetches the same path from the service's run.app address. Its custom domains create the DNS records and certificates, and Cloudflare's protection sits in front. Without domains there is no Worker and the run.app address is the app's.
 - **The image comes through Artifact Registry.** Cloud Run cannot pull from ghcr.io, so a remote repository mirrors it. The ghcr.io package has to be public.

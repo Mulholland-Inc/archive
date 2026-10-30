@@ -2963,7 +2963,7 @@ return { ok: res.ok, status: res.status, statusText: res.statusText, reply: res.
 		if sold := run(t, tok, `return (await archive.list("house")).filter((h) => h.sold).map((h) => h.address).join(",");`)["v"]; sold != "Canal 1,Canal 2" {
 			t.Errorf("sold houses: %v", sold)
 		}
-		time.Sleep(3 * workflowPoll)
+		time.Sleep(3 * time.Second)
 		if rs := runs(t, "sold"); len(rs) != 1 {
 			t.Fatalf("the workflow's own updates triggered it again: %+v", rs)
 		}
@@ -3139,7 +3139,10 @@ func e2eIssuer(t *testing.T) *httptest.Server {
 			if claims["iss"] == nil {
 				claims["iss"] = issuer.URL
 			}
-			claims["aud"], claims["iat"], claims["exp"] = "web", now, now+300
+			if claims["aud"] == nil {
+				claims["aud"] = "web"
+			}
+			claims["iat"], claims["exp"] = now, now+300
 			body, _ := json.Marshal(claims)
 			signed := b64([]byte(`{"alg":"RS256","kid":"k","typ":"JWT"}`)) + "." + b64(body)
 			sum := sha256.Sum256([]byte(signed))
@@ -3799,6 +3802,223 @@ func TestGeneratedURLsUseTheAPIAddress(t *testing.T) {
 	wantStatus(t, st, 401, "an OIDC callback with a forged state")
 	if !strings.Contains(srv.log.String(), "the API on http://api.test:9/api") {
 		t.Errorf("startup line:\n%s", srv.log)
+	}
+}
+
+func TestCloudTasksWakeTheServiceAtEachDueTimeAndNothingRunsOnItsOwn(t *testing.T) {
+	t.Parallel()
+	google, forger := e2eIssuer(t), e2eIssuer(t)
+	type task struct {
+		Name         string    `json:"name"`
+		ScheduleTime time.Time `json:"scheduleTime"`
+		HTTPRequest  struct {
+			HTTPMethod string            `json:"httpMethod"`
+			URL        string            `json:"url"`
+			Headers    map[string]string `json:"headers"`
+			Body       []byte            `json:"body"`
+			OIDCToken  struct {
+				ServiceAccountEmail string `json:"serviceAccountEmail"`
+				Audience            string `json:"audience"`
+			} `json:"oidcToken"`
+		} `json:"httpRequest"`
+	}
+	var mu sync.Mutex
+	var posted []task
+	names := map[string]bool{}
+	queue, acct := "projects/p/locations/l/queues/q", "tasks@p.iam.gserviceaccount.com"
+	gcp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/computeMetadata/v1/instance/service-accounts/default/token" && r.Header.Get("Metadata-Flavor") == "Google":
+			json.NewEncoder(w).Encode(map[string]any{"access_token": "meta", "expires_in": 3600, "token_type": "Bearer"})
+		case r.Method == "POST" && r.URL.Path == "/v2/"+queue+"/tasks" && r.Header.Get("Authorization") == "Bearer meta":
+			var body struct {
+				Task task `json:"task"`
+			}
+			json.NewDecoder(r.Body).Decode(&body)
+			mu.Lock()
+			posted = append(posted, body.Task)
+			dup := names[body.Task.Name]
+			names[body.Task.Name] = true
+			mu.Unlock()
+			if dup {
+				w.WriteHeader(http.StatusConflict)
+				return
+			}
+			json.NewEncoder(w).Encode(body.Task)
+		default:
+			http.Error(w, "no", http.StatusForbidden)
+		}
+	}))
+	t.Cleanup(gcp.Close)
+	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com", "ARCHIVE_GOOGLE_URL="+google.URL, "ARCHIVE_TASKS_QUEUE="+queue,
+		"ARCHIVE_TASKS_SERVICE_ACCOUNT="+acct, "ARCHIVE_TASKS_URL="+gcp.URL, "ARCHIVE_API_URL=http://api.test", "GCE_METADATA_HOST="+strings.TrimPrefix(gcp.URL, "http://"))
+	in.must("user", "add", "alice@example.com")
+	in.push(map[string]string{"house.sql": e2eHouse})
+	srv := in.serve()
+	api := srv.url + "/api"
+	one := in.psql("archive", "SELECT id FROM archive.workspace ORDER BY created_at LIMIT 1")
+	tok := decode[Token](t, in.must("token", "create")).Secret
+	last := func(t *testing.T) task {
+		t.Helper()
+		mu.Lock()
+		defer mu.Unlock()
+		if len(posted) == 0 {
+			t.Fatal("no task was created")
+		}
+		return posted[len(posted)-1]
+	}
+	count := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(posted)
+	}
+	deploy := func(t *testing.T, files map[string]string) map[string]any {
+		t.Helper()
+		b, _ := json.Marshal(files)
+		st, out := e2eRun(t, api, tok, `const d = await archive.deploy(`+string(b)+`); return Object.fromEntries(d.workflows.map((w) => [w.name, w.next ?? null]));`)
+		if st != 200 || out.Error != "" {
+			t.Fatalf("deploy: %d %+v", st, out)
+		}
+		return decode[map[string]any](t, string(out.Result))
+	}
+	runs := func(t *testing.T, name string) []WorkflowRun {
+		t.Helper()
+		var rs []WorkflowRun
+		st, _ := call(t, "GET", api+"/workflows/"+name+"/runs", tok, nil, &rs)
+		wantStatus(t, st, 200, "runs")
+		return rs
+	}
+	idToken := func(t *testing.T, iss *httptest.Server, claims map[string]any) string {
+		t.Helper()
+		code, _ := json.Marshal(claims)
+		resp, err := http.PostForm(iss.URL+"/token", url.Values{"code": {string(code)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out struct {
+			IDToken string `json:"id_token"`
+		}
+		json.NewDecoder(resp.Body).Decode(&out)
+		return out.IDToken
+	}
+	var aud string
+	claims := func(kv ...any) map[string]any {
+		c := map[string]any{"iss": google.URL, "aud": aud, "sub": "1", "email": acct, "email_verified": true}
+		for i := 0; i+1 < len(kv); i += 2 {
+			c[kv[i].(string)] = kv[i+1]
+		}
+		return c
+	}
+	deliver := func(t *testing.T, tok string, body any) int {
+		t.Helper()
+		hdr := map[string]string{}
+		if tok != "" {
+			hdr["Authorization"] = "Bearer " + tok
+		}
+		st, _ := e2eDo(t, "POST", srv.url+"/tasks", hdr, body, nil)
+		return st
+	}
+	work := map[string]string{"workspace": one, "work": "workflows"}
+
+	next := deploy(t, map[string]string{"tick.ts": "// on: cron 0 9 * * *\nreturn 'tick';"})
+	want, _ := time.Parse(time.RFC3339Nano, fmt.Sprint(next["tick.ts"]))
+	tk := last(t)
+	var body map[string]string
+	json.Unmarshal(tk.HTTPRequest.Body, &body)
+	if !tk.ScheduleTime.Equal(want) || !strings.HasPrefix(tk.Name, queue+"/tasks/") || tk.HTTPRequest.HTTPMethod != "POST" ||
+		tk.HTTPRequest.URL != "http://api.test/tasks" || tk.HTTPRequest.OIDCToken.Audience != tk.HTTPRequest.URL ||
+		tk.HTTPRequest.OIDCToken.ServiceAccountEmail != acct || fmt.Sprint(body) != fmt.Sprint(work) {
+		t.Fatalf("the cron workflow's task: %+v %v, want it at %s", tk, body, want)
+	}
+	aud = tk.HTTPRequest.URL
+
+	deploy(t, map[string]string{"tick.ts": "// on: cron 0 9 * * *\nreturn 'tick';",
+		"sold.ts": "// on: house\nfor (const r of input.rows) await archive.update('house', r.id, { sold: true });\nreturn input.rows.map((r) => r.address).join(',');"})
+	if tk := last(t); time.Until(tk.ScheduleTime) > time.Second {
+		t.Errorf("a table workflow's first task is at %s, want now", tk.ScheduleTime)
+	}
+	call(t, "POST", api+"/house", tok, map[string]any{"address": "Canal 1"}, nil)
+	srv.stop()
+	srv = in.serve()
+	api = srv.url + "/api"
+	time.Sleep(3 * time.Second)
+	if rs := runs(t, "sold"); len(rs) != 0 {
+		t.Fatalf("a workflow ran without a task arriving: %+v", rs)
+	}
+
+	for what, c := range map[string]struct {
+		tok  string
+		want int
+	}{
+		"no token":                {"", 401},
+		"a forged token":          {idToken(t, forger, claims()), 401},
+		"another audience":        {idToken(t, google, claims("aud", "https://elsewhere.test/tasks")), 401},
+		"another service account": {idToken(t, google, claims("email", "someone@p.iam.gserviceaccount.com")), 403},
+		"an unverified email":     {idToken(t, google, claims("email_verified", false)), 403},
+	} {
+		if st := deliver(t, c.tok, work); st != c.want {
+			t.Errorf("%s: status %d, want %d", what, st, c.want)
+		}
+	}
+	if rs := runs(t, "sold"); len(rs) != 0 {
+		t.Fatalf("a refused call ran workflows: %+v", rs)
+	}
+	good := idToken(t, google, claims())
+	if st := deliver(t, good, map[string]string{"workspace": one, "work": "everything"}); st != 400 {
+		t.Errorf("unknown work: %d", st)
+	}
+
+	if st := deliver(t, good, work); st != 204 {
+		t.Fatalf("delivering the task: %d\n%s", st, srv.log)
+	}
+	if rs := runs(t, "sold"); len(rs) != 1 || string(rs[0].Result) != `"Canal 1"` || rs[0].Trigger != "table" {
+		t.Fatalf("the task's runs: %+v", rs)
+	}
+	if tk := last(t); !tk.ScheduleTime.Equal(want) {
+		t.Errorf("after the run the next task is at %s, want the cron time %s", tk.ScheduleTime, want)
+	}
+	if at := in.psql("archive", "SELECT at = '"+want.Format(time.RFC3339Nano)+"' FROM archive.due WHERE kind = 'workflow'"); at != "t" {
+		t.Errorf("due after the run: %s", in.psql("archive", "SELECT at FROM archive.due"))
+	}
+
+	n := count()
+	st, out := e2eRun(t, api, tok, `const [h] = await archive.list("house"); await archive.update("house", h.id, { sold: false }); return 0;`)
+	if st != 200 || out.Error != "" || count() != n+1 || time.Until(last(t).ScheduleTime) > time.Second || time.Since(last(t).ScheduleTime) > 5*time.Second {
+		t.Fatalf("a write made %d tasks, the last at %s: %+v", count()-n, last(t).ScheduleTime, out)
+	}
+	time.Sleep(time.Second)
+	if rs := runs(t, "sold"); len(rs) != 1 {
+		t.Fatalf("the write ran a workflow without a task: %+v", rs)
+	}
+	if st := deliver(t, good, work); st != 204 {
+		t.Fatalf("delivering the second task: %d", st)
+	}
+	if rs := runs(t, "sold"); len(rs) != 2 || string(rs[0].Result) != `"Canal 1"` {
+		t.Errorf("after the second task: %+v", rs)
+	}
+	if st := deliver(t, good, work); st != 204 || len(runs(t, "sold")) != 2 || len(runs(t, "tick")) != 0 {
+		t.Errorf("a task with nothing due: %d", st)
+	}
+}
+
+func TestServeOpensOtherWorkspacesOnlyWhenTheyAreUsed(t *testing.T) {
+	t.Parallel()
+	in := newInst(t)
+	in.must("user", "add", "alice@example.com")
+	ws := decode[Workspace](t, in.must("workspace", "add", "Acme", "bob@acme.test")).ID
+	bob := decode[Token](t, in.must("-workspace", ws, "-as", "bob@acme.test", "token", "create")).Secret
+	in.psqlIn("postgres", `ALTER DATABASE "archive_`+ws+`" ALLOW_CONNECTIONS false`)
+	srv := in.serve()
+	time.Sleep(time.Second)
+	if strings.Contains(srv.log.String(), ws) {
+		t.Fatalf("serve opened workspace %s at startup:\n%s", ws, srv.log)
+	}
+	in.psqlIn("postgres", `ALTER DATABASE "archive_`+ws+`" ALLOW_CONNECTIONS true`)
+	var info WorkspaceInfo
+	st, _ := call(t, "GET", srv.url+"/auth/workspace", bob, nil, &info)
+	if st != 200 || info.ID != ws {
+		t.Errorf("bob's workspace on first use: %d %+v\n%s", st, info, srv.log)
 	}
 }
 

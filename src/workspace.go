@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +22,7 @@ import (
 	"time"
 
 	"github.com/Mulholland-Inc/archive/generated"
+	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -38,6 +43,7 @@ type Hub struct {
 	api    string
 	stop   func() error
 	one    string
+	tasks  *hubTasks
 
 	mu   sync.Mutex
 	open map[string]*hubEntry
@@ -48,7 +54,16 @@ type hubEntry struct {
 	a     *Archive
 	err   error
 	users int
-	used  time.Time
+	idle  *time.Timer
+}
+
+type hubTasks struct {
+	queue, account, base, meta string
+
+	mu     sync.Mutex
+	token  string
+	exp    time.Time
+	verify *oidc.IDTokenVerifier
 }
 
 type Workspace struct {
@@ -59,10 +74,9 @@ type Workspace struct {
 
 const (
 	hubIdle       = 10 * time.Minute
-	hubSweep      = time.Minute
 	hubWorkers    = 4
-	hubTick       = time.Second
 	hubBatch      = 16
+	hubTaskMax    = 29 * 24 * time.Hour
 	hubFileDelay  = 10 * time.Second
 	hubBusy       = 10 * time.Second
 	workspaceRuns = 8
@@ -85,6 +99,14 @@ func Open(ctx context.Context) (*Hub, error) {
 	dsn, stop := os.Getenv("DATABASE_URL"), func() error { return nil }
 	if dsn != "" && strings.TrimSpace(os.Getenv("ARCHIVE_SECRET_KEY")) == "" {
 		return nil, errors.New("DATABASE_URL needs ARCHIVE_SECRET_KEY: every instance on that database must share one 32-byte key, like the output of openssl rand -hex 32")
+	}
+	var tasks *hubTasks
+	if q := os.Getenv("ARCHIVE_TASKS_QUEUE"); q != "" {
+		tasks = &hubTasks{queue: q, account: os.Getenv("ARCHIVE_TASKS_SERVICE_ACCOUNT"), base: coreEnv("ARCHIVE_TASKS_URL", "https://cloudtasks.googleapis.com"),
+			meta: "http://" + coreEnv("GCE_METADATA_HOST", "metadata.google.internal")}
+		if tasks.account == "" {
+			return nil, errors.New("ARCHIVE_TASKS_QUEUE needs ARCHIVE_TASKS_SERVICE_ACCOUNT, the service account whose OIDC token Cloud Tasks sends to /tasks")
+		}
 	}
 	key, err := secretLoadKey(dir)
 	if err != nil {
@@ -121,7 +143,7 @@ func Open(ctx context.Context) (*Hub, error) {
 		}
 	}
 	h := &Hub{key: key, aead: aead, pooled: pooled, direct: direct, blobs: blobs, hints: coreHints(os.Getenv("ARCHIVE_LOCALE")),
-		stop: stop, open: map[string]*hubEntry{}}
+		stop: stop, tasks: tasks, open: map[string]*hubEntry{}}
 	h.urls(coreEnv("ARCHIVE_URL", "http://localhost:8080"))
 	if h.main, err = storePool(ctx, pooled, storeSysConns, nil); err != nil {
 		stop()
@@ -177,7 +199,7 @@ func (h *Hub) register(ctx context.Context) error {
 	}
 	ready := make(chan struct{})
 	close(ready)
-	h.open[h.one] = &hubEntry{ready: ready, a: a, used: time.Now()}
+	h.open[h.one] = &hubEntry{ready: ready, a: a}
 	a.afterOpen(ctx)
 	return nil
 }
@@ -270,27 +292,43 @@ func (h *Hub) acquire(ctx context.Context, short string) (*Archive, func(), erro
 		h.mu.Unlock()
 	} else {
 		e.users++
+		if e.idle != nil {
+			e.idle.Stop()
+			e.idle = nil
+		}
 		h.mu.Unlock()
 		select {
 		case <-e.ready:
 		case <-ctx.Done():
-			h.done(e)
+			h.done(short, e)
 			return nil, nil, ctx.Err()
 		}
 	}
 	if e.err != nil {
-		h.done(e)
+		h.done(short, e)
 		return nil, nil, e.err
 	}
 	var once sync.Once
-	return e.a, func() { once.Do(func() { h.done(e) }) }, nil
+	return e.a, func() { once.Do(func() { h.done(short, e) }) }, nil
 }
 
-func (h *Hub) done(e *hubEntry) {
+func (h *Hub) done(short string, e *hubEntry) {
 	h.mu.Lock()
-	e.users--
-	e.used = time.Now()
-	h.mu.Unlock()
+	defer h.mu.Unlock()
+	if e.users--; e.users > 0 || short == h.one || e.a == nil {
+		return
+	}
+	e.idle = time.AfterFunc(hubIdle, func() {
+		h.mu.Lock()
+		idle := h.open[short] == e && e.users == 0
+		if idle {
+			delete(h.open, short)
+		}
+		h.mu.Unlock()
+		if idle {
+			e.a.Close()
+		}
+	})
 }
 
 func (h *Hub) load(ctx context.Context, short string) (*Archive, error) {
@@ -327,71 +365,6 @@ func (h *Hub) forget(short string) {
 	}
 }
 
-func (h *Hub) sweep() {
-	h.mu.Lock()
-	var idle []*Archive
-	for k, e := range h.open {
-		select {
-		case <-e.ready:
-		default:
-			continue
-		}
-		if k != h.one && e.users == 0 && e.a != nil && time.Since(e.used) > hubIdle {
-			idle = append(idle, e.a)
-			delete(h.open, k)
-		}
-	}
-	h.mu.Unlock()
-	for _, a := range idle {
-		a.Close()
-	}
-}
-
-func (h *Hub) janitor(ctx context.Context, wg *sync.WaitGroup) {
-	defer wg.Done()
-	tick := time.NewTicker(hubSweep)
-	defer tick.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-tick.C:
-			h.sweep()
-		}
-	}
-}
-
-func (h *Hub) upgradeAll(ctx context.Context, wg *sync.WaitGroup) {
-	defer wg.Done()
-	rows, err := h.q().AllWorkspaces(ctx)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "archive: upgrading workspaces:", err)
-		return
-	}
-	for _, row := range rows {
-		if ctx.Err() != nil {
-			return
-		}
-		h.mu.Lock()
-		_, open := h.open[row.ID.String()]
-		h.mu.Unlock()
-		if open {
-			continue
-		}
-		key, err := h.unwrap(row)
-		if err == nil {
-			var a *Archive
-			if a, err = h.openArchive(ctx, row, key); err == nil {
-				a.afterOpen(ctx)
-				a.Close()
-			}
-		}
-		if err != nil && ctx.Err() == nil {
-			fmt.Fprintf(os.Stderr, "archive: upgrading workspace %s: %v\n", row.ID, err)
-		}
-	}
-}
-
 func (a *Archive) afterOpen(ctx context.Context) {
 	err := a.st.System(ctx, func(ctx context.Context) error {
 		return a.st.db(ctx).ResetProcessing(ctx)
@@ -409,7 +382,145 @@ func (a *Archive) afterOpen(ctx context.Context) {
 }
 
 func (a *Archive) soon(ctx context.Context, kind string, at time.Time) error {
-	return a.hub.q().SoonDue(context.WithoutCancel(ctx), a.ws.ID, kind, at)
+	ctx = context.WithoutCancel(ctx)
+	r, err := a.hub.q().SoonDue(ctx, a.ws.ID, kind, at)
+	switch {
+	case err != nil:
+		return err
+	case r.Changed:
+		return a.hub.wake(ctx, a.ws.ID, kind, r.At)
+	case time.Since(r.At) > workflowRetry:
+		return a.hub.wake(ctx, a.ws.ID, kind, time.Now())
+	}
+	return nil
+}
+
+func (h *Hub) wake(ctx context.Context, ws uuid.UUID, kind string, at time.Time) error {
+	if h.tasks == nil {
+		return h.q().NotifyDue(ctx, at.Format(time.RFC3339Nano))
+	}
+	t := h.tasks
+	if limit := time.Now().Add(hubTaskMax); at.After(limit) {
+		at = limit
+	}
+	tok, err := t.access(ctx)
+	if err != nil {
+		return err
+	}
+	url := h.api + "/tasks"
+	body, _ := json.Marshal(map[string]string{"workspace": ws.String(), "work": kind + "s"})
+	sum := sha256.Sum256(fmt.Appendf(nil, "%s/%s/%d", ws, kind, at.UnixMilli()))
+	task, _ := json.Marshal(map[string]any{"task": map[string]any{
+		"name":         t.queue + "/tasks/" + hex.EncodeToString(sum[:]),
+		"scheduleTime": at.UTC().Format(time.RFC3339Nano),
+		"httpRequest": map[string]any{"httpMethod": "POST", "url": url, "headers": map[string]string{"Content-Type": "application/json"}, "body": body,
+			"oidcToken": map[string]string{"serviceAccountEmail": t.account, "audience": url}},
+	}})
+	req, _ := http.NewRequestWithContext(ctx, "POST", t.base+"/v2/"+t.queue+"/tasks", bytes.NewReader(task))
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := hubHTTP.Do(req)
+	if err != nil {
+		return fmt.Errorf("cloud tasks: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 == 2 || resp.StatusCode == http.StatusConflict {
+		return nil
+	}
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
+	return fmt.Errorf("cloud tasks: %s: %s", resp.Status, bytes.TrimSpace(b))
+}
+
+var hubHTTP = &http.Client{Timeout: 10 * time.Second}
+
+func (t *hubTasks) access(ctx context.Context) (string, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.token != "" && time.Now().Before(t.exp) {
+		return t.token, nil
+	}
+	req, _ := http.NewRequestWithContext(ctx, "GET", t.meta+"/computeMetadata/v1/instance/service-accounts/default/token", nil)
+	req.Header.Set("Metadata-Flavor", "Google")
+	resp, err := hubHTTP.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("metadata server: %w", err)
+	}
+	defer resp.Body.Close()
+	var tok struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tok); err != nil || resp.StatusCode != http.StatusOK || tok.AccessToken == "" {
+		return "", fmt.Errorf("metadata server: no access token (%s)", resp.Status)
+	}
+	t.token, t.exp = tok.AccessToken, time.Now().Add(time.Duration(tok.ExpiresIn)*time.Second-time.Minute)
+	return t.token, nil
+}
+
+func (h *Hub) taskCaller(r *http.Request) error {
+	t := h.tasks
+	tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if !ok {
+		return fmt.Errorf("want the OIDC token Cloud Tasks sends: %w", ErrUnauthorized)
+	}
+	t.mu.Lock()
+	if t.verify == nil {
+		p, err := oidc.NewProvider(context.Background(), coreEnv("ARCHIVE_GOOGLE_URL", signinBuiltin[0].base))
+		if err != nil {
+			t.mu.Unlock()
+			return fmt.Errorf("google's signing keys: %w", err)
+		}
+		t.verify = p.Verifier(&oidc.Config{ClientID: h.api + "/tasks"})
+	}
+	v := t.verify
+	t.mu.Unlock()
+	id, err := v.Verify(r.Context(), strings.TrimSpace(tok))
+	if err != nil {
+		return fmt.Errorf("%v: %w", err, ErrUnauthorized)
+	}
+	var c struct {
+		Email    string `json:"email"`
+		Verified bool   `json:"email_verified"`
+	}
+	if err := id.Claims(&c); err != nil || !c.Verified || c.Email != t.account {
+		return fmt.Errorf("only %s calls /tasks: %w", t.account, ErrForbidden)
+	}
+	return nil
+}
+
+func (h *Hub) tasksHTTP(w http.ResponseWriter, r *http.Request) {
+	if err := h.taskCaller(r); err != nil {
+		httpWrite(w, 0, nil, err)
+		return
+	}
+	var body struct {
+		Workspace uuid.UUID `json:"workspace"`
+		Work      string    `json:"work"`
+	}
+	if err := httpDecode(r, &body); err != nil {
+		httpWrite(w, 0, nil, err)
+		return
+	}
+	kind, ok := strings.CutSuffix(body.Work, "s")
+	if !ok || kind != "workflow" && kind != "file" {
+		httpWrite(w, 0, nil, fmt.Errorf("work: want workflows or files: %w", httpErrBadRequest))
+		return
+	}
+	ctx, q := r.Context(), h.q()
+	at, err := q.ClaimDueFor(ctx, time.Now().Add(runTimeout()+workflowRetry), body.Workspace, kind)
+	if err == nil {
+		err = h.due(ctx, body.Workspace, kind, at)
+	} else if errors.Is(err, pgx.ErrNoRows) {
+		if at, err = q.DueAt(ctx, body.Workspace, kind); err == nil && at.After(time.Now()) {
+			err = h.wake(ctx, body.Workspace, kind, at)
+		} else if errors.Is(err, pgx.ErrNoRows) {
+			err = nil
+		}
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "archive: workspace %s %s: %v\n", body.Workspace, body.Work, err)
+	}
+	httpWrite(w, http.StatusNoContent, nil, err)
 }
 
 func (a *Archive) nextDue(ctx context.Context, kind string) (*time.Time, error) {
@@ -441,68 +552,153 @@ func (a *Archive) scheduleWorkflows(ctx context.Context) error {
 	return a.soon(ctx, "workflow", *next)
 }
 
-func (h *Hub) work(ctx context.Context, wg *sync.WaitGroup) {
+func (h *Hub) clock(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
-	tick := time.NewTicker(hubTick)
-	defer tick.Stop()
-	for {
-		for {
-			ok, err := h.next(ctx)
-			if err != nil && ctx.Err() == nil {
+	soon, idle := make(chan time.Time), make(chan struct{})
+	go h.listen(ctx, soon)
+	t := time.NewTimer(time.Hour)
+	t.Stop()
+	var next time.Time
+	arm := func(at time.Time) {
+		next = at
+		t.Reset(time.Until(at))
+	}
+	earliest := func() {
+		at, err := h.q().EarliestDue(ctx)
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			next = time.Time{}
+			t.Stop()
+		case err != nil:
+			if ctx.Err() == nil {
 				fmt.Fprintln(os.Stderr, "archive: background work:", err)
 			}
-			if !ok || err != nil {
-				break
-			}
+			arm(time.Now().Add(workflowRetry))
+		default:
+			arm(at)
 		}
+	}
+	busy := 0
+	for {
 		select {
 		case <-ctx.Done():
+			t.Stop()
+			for ; busy > 0; busy-- {
+				<-idle
+			}
 			return
-		case <-tick.C:
+		case at := <-soon:
+			if at.IsZero() {
+				earliest()
+			} else if next.IsZero() || at.Before(next) {
+				arm(at)
+			}
+		case <-t.C:
+			next = time.Time{}
+			for ; busy < hubWorkers; busy++ {
+				go func() {
+					h.drain(ctx)
+					idle <- struct{}{}
+				}()
+			}
+		case <-idle:
+			busy--
+			earliest()
 		}
 	}
 }
 
-func (h *Hub) next(ctx context.Context) (bool, error) {
-	d, err := h.q().ClaimDue(ctx, time.Now().Add(runTimeout()+workflowRetry))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
+func (h *Hub) listen(ctx context.Context, soon chan<- time.Time) {
+	send := func(at time.Time) {
+		select {
+		case soon <- at:
+		case <-ctx.Done():
+		}
 	}
-	if err != nil {
-		return false, err
+	wait := time.Second
+	for ctx.Err() == nil {
+		c, err := pgx.ConnectConfig(ctx, h.direct)
+		if err == nil {
+			if _, err = c.Exec(ctx, "LISTEN archive_due"); err == nil {
+				wait = time.Second
+				send(time.Time{})
+			}
+			for err == nil {
+				var n *pgconn.Notification
+				if n, err = c.WaitForNotification(ctx); err == nil {
+					at, _ := time.Parse(time.RFC3339Nano, n.Payload)
+					send(at)
+				}
+			}
+			c.Close(context.Background())
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		fmt.Fprintln(os.Stderr, "archive: waiting for due work:", err)
+		select {
+		case <-ctx.Done():
+		case <-time.After(wait):
+		}
+		wait = min(2*wait, time.Minute)
 	}
+}
+
+func (h *Hub) drain(ctx context.Context) {
+	for ctx.Err() == nil {
+		d, err := h.q().ClaimDue(ctx, time.Now().Add(runTimeout()+workflowRetry))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return
+		}
+		if err == nil {
+			err = h.due(ctx, d.ID, d.Kind, d.At)
+		}
+		if err != nil {
+			if ctx.Err() == nil {
+				fmt.Fprintln(os.Stderr, "archive: background work:", err)
+			}
+			return
+		}
+	}
+}
+
+func (h *Hub) due(ctx context.Context, ws uuid.UUID, kind string, claimed time.Time) error {
 	bg := context.WithoutCancel(ctx)
-	a, release, err := h.acquire(ctx, d.ID.String())
+	a, release, err := h.acquire(ctx, ws.String())
 	if errors.Is(err, ErrNotFound) {
-		return true, h.q().ClearDue(bg, d.ID, d.Kind, d.At)
+		return h.q().ClearDue(bg, ws, kind, claimed)
 	}
 	if err != nil {
-		return false, err
+		return err
 	}
 	defer release()
 	for range hubBatch {
 		var ok bool
-		switch d.Kind {
+		switch kind {
 		case "workflow":
 			ok, err = a.workflowNext(ctx)
 		case "file":
 			ok, err = a.fileProcess(ctx, uuid.Nil)
 		}
 		if err != nil && ctx.Err() == nil {
-			fmt.Fprintf(os.Stderr, "archive: workspace %s %ss: %v\n", d.ID, d.Kind, err)
+			fmt.Fprintf(os.Stderr, "archive: workspace %s %ss: %v\n", ws, kind, err)
 		}
 		if !ok || err != nil || ctx.Err() != nil {
 			break
 		}
 	}
-	next, err := a.nextDue(bg, d.Kind)
+	next, err := a.nextDue(bg, kind)
 	if err != nil {
-		return true, err
+		return err
 	}
 	if next == nil {
-		return true, h.q().ClearDue(bg, d.ID, d.Kind, d.At)
+		return h.q().ClearDue(bg, ws, kind, claimed)
 	}
-	return true, h.q().SetDue(bg, generated.SetDueParams{Next: *next, ID: d.ID, Kind: d.Kind, Claimed: d.At})
+	n, err := h.q().SetDue(bg, generated.SetDueParams{Next: *next, ID: ws, Kind: kind, Claimed: claimed})
+	if err != nil || n == 0 {
+		return err
+	}
+	return h.wake(bg, ws, kind, *next)
 }
 
 func (h *Hub) secret(r *http.Request) (string, error) {

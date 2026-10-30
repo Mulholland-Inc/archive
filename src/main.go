@@ -125,6 +125,13 @@ Environment:
                      OAuth redirect URL (default ARCHIVE_URL)
   ARCHIVE_ADMIN_EMAIL
                      first owner that serve creates when there are no users yet
+  ARCHIVE_TASKS_QUEUE
+                     Cloud Tasks queue, projects/<p>/locations/<r>/queues/<q>, that calls
+                     POST ARCHIVE_API_URL/tasks at each time workflows or files are due, so serve can
+                     scale to zero; unset, serve keeps one timer for the next due time instead
+  ARCHIVE_TASKS_SERVICE_ACCOUNT
+                     service account whose Google OIDC token those calls carry; /tasks refuses any other
+  ARCHIVE_TASKS_URL  Cloud Tasks API base URL (default https://cloudtasks.googleapis.com)
   ARCHIVE_GOOGLE_CLIENT_ID, ARCHIVE_GOOGLE_CLIENT_SECRET
   ARCHIVE_MICROSOFT_CLIENT_ID, ARCHIVE_MICROSOFT_CLIENT_SECRET
   ARCHIVE_SLACK_CLIENT_ID, ARCHIVE_SLACK_CLIENT_SECRET
@@ -602,12 +609,12 @@ func cliServe(ctx context.Context, h *Hub, a *Archive, addr string) error {
 	bg, stop := context.WithCancel(ctx)
 	defer wg.Wait()
 	defer stop()
-	wg.Add(hubWorkers + 2)
-	for range hubWorkers {
-		go h.work(bg, &wg)
+	if h.tasks != nil {
+		mux.HandleFunc("POST /tasks", h.tasksHTTP)
+	} else {
+		wg.Add(1)
+		go h.clock(bg, &wg)
 	}
-	go h.janitor(bg, &wg)
-	go h.upgradeAll(bg, &wg)
 	hs := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	errc := make(chan error, 1)
 	go func() { errc <- hs.ListenAndServe() }()

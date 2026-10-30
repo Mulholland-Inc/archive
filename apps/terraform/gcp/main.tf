@@ -29,7 +29,7 @@ locals {
     for k, v in local.optional : k if nonsensitive(v != "")
   ]))
 
-  services = ["run.googleapis.com", "sqladmin.googleapis.com", "secretmanager.googleapis.com", "iam.googleapis.com", "storage.googleapis.com", "artifactregistry.googleapis.com", "iamcredentials.googleapis.com", "sts.googleapis.com"]
+  services = ["run.googleapis.com", "sqladmin.googleapis.com", "secretmanager.googleapis.com", "iam.googleapis.com", "storage.googleapis.com", "artifactregistry.googleapis.com", "iamcredentials.googleapis.com", "sts.googleapis.com", "cloudtasks.googleapis.com"]
 }
 
 resource "google_project_service" "this" {
@@ -75,6 +75,37 @@ resource "google_project_iam_member" "sql" {
   project = var.project
   role    = "roles/cloudsql.client"
   member  = google_service_account.this.member
+}
+
+resource "google_service_account" "tasks" {
+  account_id = "${var.name}-tasks"
+
+  depends_on = [google_project_service.this]
+}
+
+resource "google_service_account_iam_member" "tasks" {
+  service_account_id = google_service_account.tasks.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = google_service_account.this.member
+}
+
+resource "google_cloud_tasks_queue" "this" {
+  name     = var.name
+  location = var.region
+
+  retry_config {
+    min_backoff = "1s"
+    max_backoff = "600s"
+  }
+
+  depends_on = [google_project_service.this]
+}
+
+resource "google_cloud_tasks_queue_iam_member" "this" {
+  name     = google_cloud_tasks_queue.this.name
+  location = var.region
+  role     = "roles/cloudtasks.enqueuer"
+  member   = google_service_account.this.member
 }
 
 resource "google_sql_database_instance" "this" {
@@ -165,6 +196,7 @@ resource "google_cloud_run_v2_service" "this" {
 
   template {
     service_account = google_service_account.this.email
+    timeout         = "600s"
 
     scaling {
       min_instance_count = var.min_instances
@@ -179,7 +211,8 @@ resource "google_cloud_run_v2_service" "this" {
       }
 
       resources {
-        cpu_idle = false
+        cpu_idle          = true
+        startup_cpu_boost = true
         limits = {
           cpu    = var.cpu
           memory = var.memory
@@ -193,6 +226,9 @@ resource "google_cloud_run_v2_service" "this" {
           ARCHIVE_ADMIN_EMAIL = var.admin_email
           ARCHIVE_BLOB_URL    = "s3://${google_storage_bucket.this.name}?endpoint=https://storage.googleapis.com&region=auto"
           ARCHIVE_BLOB_KEY    = google_storage_hmac_key.this.access_id
+
+          ARCHIVE_TASKS_QUEUE           = google_cloud_tasks_queue.this.id
+          ARCHIVE_TASKS_SERVICE_ACCOUNT = google_service_account.tasks.email
         })
         content {
           name  = env.key
@@ -241,6 +277,8 @@ resource "google_cloud_run_v2_service" "this" {
 
   depends_on = [
     google_project_iam_member.sql,
+    google_cloud_tasks_queue_iam_member.this,
+    google_service_account_iam_member.tasks,
     google_secret_manager_secret_iam_member.this,
     google_secret_manager_secret_version.this,
     google_storage_bucket_iam_member.this,

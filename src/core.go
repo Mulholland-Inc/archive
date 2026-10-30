@@ -45,7 +45,33 @@ func (a *Archive) as(ctx context.Context, fn func(context.Context) error) error 
 	if ac == nil {
 		return fmt.Errorf("not signed in: %w", ErrUnauthorized)
 	}
-	return a.st.As(ctx, ac.Role, ac.Space, fn)
+	if t, ok := ctx.Value(storeTxKey{}).(storeTx); ok && t.role == ac.Role {
+		return fn(ctx)
+	}
+	return a.st.As(ctx, ac.Role, ac.Space, func(ctx context.Context) error {
+		if err := fn(ctx); err != nil {
+			return err
+		}
+		wrote, err := a.st.db(ctx).TxWrote(ctx)
+		if wrote {
+			storeAfter(ctx, func() { a.wakeTables(context.WithValue(context.WithoutCancel(ctx), storeTxKey{}, nil)) })
+		}
+		return err
+	})
+}
+
+func (a *Archive) wakeTables(ctx context.Context) {
+	var n int64
+	err := a.sys(ctx, func(ctx context.Context) (err error) {
+		n, err = a.st.db(ctx).WakeTableWorkflows(ctx)
+		return err
+	})
+	if err == nil && n > 0 {
+		err = a.soon(ctx, "workflow", time.Now())
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "archive: workspace %s table workflows: %v\n", a.ws.ID, err)
+	}
 }
 
 func coreDo[T any](a *Archive, ctx context.Context, fn func(context.Context) (T, error)) (T, error) {
