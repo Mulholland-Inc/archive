@@ -9,6 +9,8 @@
   import Workspaces from './ui/Workspaces.svelte';
   import Panel from './ui/Panel.svelte';
   import Connect from './ui/Connect.svelte';
+  import Recorder from './ui/Recorder.svelte';
+  import Journal from './ui/Journal.svelte';
   import Machine from './ui/Machine.svelte';
   import Bot from './ui/Bot.svelte';
   import { fullName, look, setLook, shortName } from './ui/looks.svelte.js';
@@ -36,6 +38,9 @@
   let dev = $state(devMode());
   let canAdd = $state(false);
   let connecting = $state(false);
+  let recording = $state(false);
+  let writing = $state(false);
+  let notice = $state('');
   let path = $state(location.pathname);
   let chats = $state([]);
   let scope = $state(space());
@@ -52,6 +57,8 @@
 
   addEventListener('popstate', () => (path = location.pathname));
   addEventListener('connect', () => (connecting = true));
+  addEventListener('capture-memory', () => (recording = true));
+  addEventListener('capture-journal', () => (writing = true));
   addEventListener('click', (e) => {
     const a = e.target.closest?.('a[href^="/"]');
     if (!a || a.target || e.metaKey || e.ctrlKey || e.shiftKey || /^\/(api|auth)\//.test(a.getAttribute('href'))) return;
@@ -88,6 +95,21 @@
     setWorkspace(id);
     setSpace('');
     location.assign('/');
+  }
+
+  async function keep(files) {
+    notice = files.length > 1 ? `Saving ${files.length} files` : 'Saving';
+    try {
+      for (const file of files) {
+        const form = new FormData();
+        form.append('file', file);
+        await api('/api/files', { method: 'POST', raw: form });
+      }
+      notice = `Saved to ${fullTitle}`;
+    } catch (e) {
+      notice = e.message;
+    }
+    setTimeout(() => (notice = ''), 4000);
   }
 
   async function renameArchive(name) {
@@ -209,7 +231,7 @@
       {#key generation}
       {#if !route.first || route.first === 'chat'}
         {#if catalogued}
-          <Chat id={route.second} name={me.actor.name} email={me.actor.email} family={fullTitle} short={kind === 'personal' ? '' : archive} seed={me.workspace} tint={look(me.workspace).tint} onsaved={loadChats} />
+          <Chat id={route.second} name={me.actor.name} email={me.actor.email} family={fullTitle} short={kind === 'personal' ? '' : archive} seed={me.workspace} tint={look(me.workspace).tint} onfiles={keep} onsaved={loadChats} />
         {/if}
       {:else if route.first === 'library'}
         {#if catalogued}<Library {views} {tables} seed={me.workspace} spaces={me.spaces} archives={me.workspaces ?? []} />{/if}
@@ -246,6 +268,9 @@
     </div>
   </div>
   {#if catalogued}<Machine name={archive} seed={me.workspace} />{/if}
+  {#if recording}<Recorder onsave={(f) => keep([f])} onclose={() => (recording = false)} />{/if}
+  {#if writing}<Journal seed={me.workspace} onsave={(f) => keep([f])} onclose={() => (writing = false)} />{/if}
+  {#if notice}<div class="notice" role="status">{notice}</div>{/if}
   {#if connecting}<Connect workspace={me.workspace} onclose={() => (connecting = false)} />{/if}
 {/if}
 
@@ -289,6 +314,7 @@
   .new:hover { background: var(--fill-faint); color: var(--fg); }
   .phone { display: var(--narrow-only); flex-direction: column; flex: none; gap: var(--space-0-5); }
   .stage { display: flex; min-width: 0; }
+  .notice { position: fixed; bottom: var(--space-5); left: 50%; z-index: calc(var(--z-nav) + 5); padding: var(--space-1-5) var(--space-3); transform: translateX(-50%); border-radius: var(--radius-full); background: var(--surface-inverse); color: #fff; }
   .now { position: absolute; top: var(--space-3); left: 50%; z-index: calc(var(--z-raised) + 1); display: flex; align-items: center; gap: var(--space-1-5); padding: var(--space-1) var(--space-3) var(--space-1) var(--space-1); transform: translateX(-50%); border-radius: var(--radius-full); background: var(--surface); white-space: nowrap; }
   main { position: relative; }
   .now span:last-child { font-weight: var(--weight-medium); }

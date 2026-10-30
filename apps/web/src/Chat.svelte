@@ -55,9 +55,10 @@
   import RunCall from './ui/RunCall.svelte';
   import Note from './ui/Note.svelte';
   import Setup from './ui/Setup.svelte';
+  import Capture from './ui/Capture.svelte';
   import Bot from './ui/Bot.svelte';
 
-  let { id = '', name = '', email = '', family = '', short = '', seed = '', tint = '', onsaved } = $props();
+  let { id = '', name = '', email = '', family = '', short = '', seed = '', tint = '', onfiles, onsaved } = $props();
 
   let current = $state('');
   let title = $state('');
@@ -298,7 +299,9 @@
     {#if loading}<div class="thinking" role="status" aria-label="Loading"><span></span><span></span><span></span></div>{/if}
   </div>
   <div class="dock">
-    <Composer bind:value={draft} bind:field {busy} onsend={send} onstop={stop} placeholder={short ? `Message ${short}` : 'Ask anything'} aria-label="Message" />
+    <Composer bind:value={draft} bind:field {busy} onsend={send} onstop={stop} placeholder={short ? `Message ${short}` : 'Ask anything'} aria-label="Message">
+      {#snippet lead()}<Capture {onfiles} />{/snippet}
+    </Composer>
   </div>
   {#if empty}<Setup {email} />{/if}
 </div>

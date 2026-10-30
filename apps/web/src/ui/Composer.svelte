@@ -1,7 +1,7 @@
 <script>
   import Icon from '#kit/Icon.svelte';
 
-  let { value = $bindable(''), busy = false, onsend, onstop, field = $bindable(), ...rest } = $props();
+  let { value = $bindable(''), busy = false, onsend, onstop, field = $bindable(), lead, ...rest } = $props();
 
   const ready = $derived(value.trim() !== '');
 
@@ -20,6 +20,7 @@
 </script>
 
 <form class="composer" onsubmit={submit}>
+  {@render lead?.()}
   <div class="grow" data-value={value}>
     <textarea bind:this={field} bind:value rows="1" autocapitalize="sentences" enterkeyhint="send" onkeydown={key} {...rest}></textarea>
   </div>
