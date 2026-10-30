@@ -6,6 +6,7 @@ locals {
   api_url = var.api_domain != "" ? "https://${var.api_domain}" : local.url
   split   = local.url != local.api_url
   domains = toset(compact([var.app_domain, var.api_domain]))
+  run     = local.split ? var.api_domain : var.app_domain
 
   required = {
     DATABASE_URL        = "host=/cloudsql/${google_sql_database_instance.this.connection_name} user=${google_sql_user.this.name} password=${random_password.db.result} dbname=${google_sql_database.this.name}"
@@ -30,7 +31,7 @@ locals {
     for k, v in local.optional : k if nonsensitive(v != "")
   ]))
 
-  services = ["run.googleapis.com", "sqladmin.googleapis.com", "secretmanager.googleapis.com", "iam.googleapis.com", "storage.googleapis.com", "artifactregistry.googleapis.com", "iamcredentials.googleapis.com", "sts.googleapis.com", "cloudtasks.googleapis.com"]
+  services = ["run.googleapis.com", "sqladmin.googleapis.com", "secretmanager.googleapis.com", "iam.googleapis.com", "storage.googleapis.com", "artifactregistry.googleapis.com", "iamcredentials.googleapis.com", "sts.googleapis.com", "cloudtasks.googleapis.com", "siteverification.googleapis.com"]
 }
 
 resource "google_project_service" "this" {
@@ -293,25 +294,59 @@ data "cloudflare_zone" "this" {
   }
 }
 
-resource "cloudflare_workers_script" "this" {
-  count       = length(local.domains) > 0 ? 1 : 0
-  account_id  = data.cloudflare_zone.this[0].account.id
-  script_name = var.name
-  main_module = "worker.js"
-  content     = <<-JS
-    export default {
-      fetch(request, env) {
-        const url = new URL(request.url);
-        url.hostname = env.ORIGIN;
-        return fetch(new Request(url, request));
-      },
-    };
-  JS
-  bindings = [{
-    name = "ORIGIN"
-    type = "plain_text"
-    text = trimprefix(google_cloud_run_v2_service.this.uri, "https://")
-  }]
+data "google_site_verification_token" "this" {
+  count               = local.run != "" ? 1 : 0
+  type                = "INET_DOMAIN"
+  identifier          = var.cloudflare_zone
+  verification_method = "DNS_TXT"
+
+  depends_on = [google_project_service.this]
+}
+
+resource "cloudflare_dns_record" "verify" {
+  count   = local.run != "" ? 1 : 0
+  zone_id = data.cloudflare_zone.this[0].zone_id
+  name    = var.cloudflare_zone
+  type    = "TXT"
+  content = "\"${data.google_site_verification_token.this[0].token}\""
+  ttl     = 1
+}
+
+resource "google_site_verification_web_resource" "this" {
+  count = local.run != "" ? 1 : 0
+  site {
+    type       = "INET_DOMAIN"
+    identifier = var.cloudflare_zone
+  }
+  verification_method = "DNS_TXT"
+
+  depends_on = [cloudflare_dns_record.verify]
+}
+
+resource "google_cloud_run_domain_mapping" "this" {
+  count    = local.run != "" ? 1 : 0
+  name     = local.run
+  location = var.region
+
+  metadata {
+    namespace = var.project
+  }
+
+  spec {
+    route_name = google_cloud_run_v2_service.this.name
+  }
+
+  depends_on = [google_site_verification_web_resource.this]
+}
+
+resource "cloudflare_dns_record" "run" {
+  count   = local.run != "" ? 1 : 0
+  zone_id = data.cloudflare_zone.this[0].zone_id
+  name    = local.run
+  type    = "CNAME"
+  content = "ghs.googlehosted.com"
+  proxied = true
+  ttl     = 1
 }
 
 resource "cloudflare_workers_script" "app" {
@@ -326,12 +361,12 @@ resource "cloudflare_workers_script" "app" {
   }
 }
 
-resource "cloudflare_workers_custom_domain" "this" {
-  for_each   = local.domains
+resource "cloudflare_workers_custom_domain" "app" {
+  count      = local.split ? 1 : 0
   account_id = data.cloudflare_zone.this[0].account.id
   zone_id    = data.cloudflare_zone.this[0].zone_id
-  hostname   = each.value
-  service    = local.split && each.value == var.app_domain ? one(cloudflare_workers_script.app[*].script_name) : cloudflare_workers_script.this[0].script_name
+  hostname   = var.app_domain
+  service    = cloudflare_workers_script.app[0].script_name
 }
 
 data "cloudflare_account_api_token_permission_groups_list" "this" {
