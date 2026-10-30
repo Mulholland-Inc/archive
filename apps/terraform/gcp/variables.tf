@@ -104,37 +104,14 @@ variable "memory" {
 
 variable "db_tier" {
   type        = string
-  description = "Cloud SQL machine tier. Connection pooling needs Enterprise Plus, so a db-perf-optimized-N-* tier."
+  description = "Cloud SQL machine tier."
   default     = "db-g1-small"
-
-  validation {
-    condition     = !var.connection_pooling || startswith(var.db_tier, "db-perf-optimized-")
-    error_message = "connection_pooling needs Cloud SQL Enterprise Plus: set db_tier to a db-perf-optimized-N-* tier."
-  }
 }
 
 variable "db_max_connections" {
   type        = number
   description = "Cloud SQL max_connections. Null keeps the tier's default."
   default     = null
-}
-
-variable "connection_pooling" {
-  type        = bool
-  description = "Put Cloud SQL's managed connection pooling between Archive and Postgres, over a private network; schema changes still connect directly."
-  default     = false
-}
-
-variable "pool_size" {
-  type        = number
-  description = "Server connections the pooler keeps per database and role."
-  default     = 10
-}
-
-variable "subnet_range" {
-  type        = string
-  description = "IP range of the subnet Cloud Run reaches Cloud SQL through, with connection pooling."
-  default     = "10.8.0.0/26"
 }
 
 variable "deletion_protection" {

@@ -9,10 +9,10 @@
   import Word from '#kit/Word.svelte';
   import art from '../../site/static/art/cli.webp';
 
-  let { oncancel } = $props();
-  let email = $state('');
+  let { oncancel, create = false, address = '' } = $props();
+  let email = $state(address);
   let team = $state('');
-  let creating = $state(false);
+  let creating = $state(create);
   let signup = $state(false);
   let sent = $state(false);
   let busy = $state(false);
@@ -99,7 +99,7 @@
         </button>
       </form>
       {#if error}<p class="error" role="alert">{error}</p>{/if}
-      {#if creating}
+      {#if creating && !create}
         <button class="again" type="button" onclick={() => (creating = false)}>Sign in instead</button>
       {:else if providers.length || passkeys || signup}
         <div class="methods">

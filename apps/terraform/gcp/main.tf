@@ -5,15 +5,9 @@ locals {
   url     = var.app_domain != "" ? "https://${var.app_domain}" : local.run_url
   api_url = var.api_domain != "" ? "https://${var.api_domain}" : local.url
   domains = toset(compact([var.app_domain, var.api_domain]))
-  pooling = var.connection_pooling
-
-  db_login  = "user=${google_sql_user.this.name} password=${random_password.db.result} dbname=${google_sql_database.this.name}"
-  db_direct = "host=/cloudsql/${google_sql_database_instance.this.connection_name} ${local.db_login}"
-  db_pooled = local.pooling ? "host=${google_sql_database_instance.this.private_ip_address} port=6432 ${local.db_login}" : local.db_direct
 
   required = {
-    DATABASE_URL        = local.db_pooled
-    DATABASE_DIRECT_URL = local.db_direct
+    DATABASE_URL        = "host=/cloudsql/${google_sql_database_instance.this.connection_name} user=${google_sql_user.this.name} password=${random_password.db.result} dbname=${google_sql_database.this.name}"
     ARCHIVE_SECRET_KEY  = random_id.secret_key.hex
     ARCHIVE_BLOB_SECRET = google_storage_hmac_key.this.secret
   }
@@ -28,10 +22,7 @@ locals {
     for k, v in local.optional : k if nonsensitive(v != "")
   ]))
 
-  services = concat(
-    ["run.googleapis.com", "sqladmin.googleapis.com", "secretmanager.googleapis.com", "iam.googleapis.com", "storage.googleapis.com"],
-    local.pooling ? ["compute.googleapis.com", "servicenetworking.googleapis.com"] : [],
-  )
+  services = ["run.googleapis.com", "sqladmin.googleapis.com", "secretmanager.googleapis.com", "iam.googleapis.com", "storage.googleapis.com"]
 }
 
 resource "google_project_service" "this" {
@@ -61,38 +52,6 @@ resource "google_project_iam_member" "sql" {
   member  = google_service_account.this.member
 }
 
-resource "google_compute_network" "this" {
-  count                   = local.pooling ? 1 : 0
-  name                    = var.name
-  auto_create_subnetworks = false
-
-  depends_on = [google_project_service.this]
-}
-
-resource "google_compute_subnetwork" "this" {
-  count         = local.pooling ? 1 : 0
-  name          = var.name
-  region        = var.region
-  network       = google_compute_network.this[0].id
-  ip_cidr_range = var.subnet_range
-}
-
-resource "google_compute_global_address" "sql" {
-  count         = local.pooling ? 1 : 0
-  name          = "${var.name}-sql"
-  purpose       = "VPC_PEERING"
-  address_type  = "INTERNAL"
-  prefix_length = 16
-  network       = google_compute_network.this[0].id
-}
-
-resource "google_service_networking_connection" "sql" {
-  count                   = local.pooling ? 1 : 0
-  network                 = google_compute_network.this[0].id
-  service                 = "servicenetworking.googleapis.com"
-  reserved_peering_ranges = [google_compute_global_address.sql[0].name]
-}
-
 resource "google_sql_database_instance" "this" {
   name                = var.name
   database_version    = "POSTGRES_18"
@@ -100,7 +59,7 @@ resource "google_sql_database_instance" "this" {
   deletion_protection = var.deletion_protection
 
   settings {
-    edition = local.pooling ? "ENTERPRISE_PLUS" : "ENTERPRISE"
+    edition = "ENTERPRISE"
     tier    = var.db_tier
 
     backup_configuration {
@@ -114,39 +73,9 @@ resource "google_sql_database_instance" "this" {
         value = tostring(database_flags.value)
       }
     }
-
-    dynamic "ip_configuration" {
-      for_each = local.pooling ? [1] : []
-      content {
-        ipv4_enabled    = true
-        private_network = google_compute_network.this[0].id
-      }
-    }
-
-    dynamic "connection_pool_config" {
-      for_each = local.pooling ? [1] : []
-      content {
-        connection_pooling_enabled = true
-
-        flags {
-          name  = "max_prepared_statements"
-          value = "1000"
-        }
-
-        flags {
-          name  = "ignore_startup_parameters"
-          value = "search_path"
-        }
-
-        flags {
-          name  = "max_pool_size"
-          value = tostring(var.pool_size)
-        }
-      }
-    }
   }
 
-  depends_on = [google_project_service.this, google_service_networking_connection.sql]
+  depends_on = [google_project_service.this]
 }
 
 resource "google_sql_database" "this" {
@@ -215,17 +144,6 @@ resource "google_cloud_run_v2_service" "this" {
     scaling {
       min_instance_count = var.min_instances
       max_instance_count = var.max_instances
-    }
-
-    dynamic "vpc_access" {
-      for_each = local.pooling ? [1] : []
-      content {
-        egress = "PRIVATE_RANGES_ONLY"
-        network_interfaces {
-          network    = google_compute_network.this[0].id
-          subnetwork = google_compute_subnetwork.this[0].id
-        }
-      }
     }
 
     containers {

@@ -145,7 +145,7 @@ func (a *Archive) fileCommit(ctx context.Context, sid uuid.UUID, name string, op
 	}
 	storeAfter(ctx, func() {
 		if err := a.storedBytes(context.WithValue(context.WithoutCancel(ctx), storeTxKey{}, nil)); err != nil {
-			fmt.Fprintf(os.Stderr, "archive: workspace %s usage: %v\n", a.ws.Short, err)
+			fmt.Fprintf(os.Stderr, "archive: workspace %s usage: %v\n", a.ws.ID, err)
 		}
 	})
 	return a.fileReady(ctx, f)
@@ -265,7 +265,7 @@ func (a *Archive) LinkFile(ctx context.Context, id uuid.UUID, ttl time.Duration)
 		ttl = fileLinkTTL
 	}
 	exp := time.Now().Add(ttl).Unix()
-	return &FileLink{URL: fmt.Sprintf("%s/files/%s/%s?exp=%d&sig=%s", a.hub.api, a.ws.Short, id, exp, a.fileSign(id, exp)), ExpiresAt: time.Unix(exp, 0).UTC()}, nil
+	return &FileLink{URL: fmt.Sprintf("%s/files/%s/%s?exp=%d&sig=%s", a.hub.api, a.ws.ID.String(), id, exp, a.fileSign(id, exp)), ExpiresAt: time.Unix(exp, 0).UTC()}, nil
 }
 
 func mediaInline(mt string) bool {

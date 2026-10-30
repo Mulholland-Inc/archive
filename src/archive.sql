@@ -4,22 +4,47 @@ CREATE TABLE archive.space (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     name       text NOT NULL UNIQUE,
     role       text NOT NULL UNIQUE,
+    home       uuid UNIQUE,
     created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE archive.plan (
+    id            text PRIMARY KEY,
+    name          text NOT NULL,
+    price         text NOT NULL DEFAULT '',
+    runs          bigint,
+    workflow_runs bigint,
+    ai_tokens     bigint,
+    stored_bytes  bigint,
+    concurrent    integer,
+    created_at    timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE archive.workspace (
+    id            uuid PRIMARY KEY DEFAULT uuidv7(),
+    name          text NOT NULL,
+    key           bytea NOT NULL,
+    plan          text REFERENCES archive.plan ON DELETE SET NULL,
+    customer      text NOT NULL DEFAULT '',
+    subscription  text NOT NULL DEFAULT '',
+    anthropic_key bytea,
+    created_at    timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE archive."user" (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     email      text NOT NULL UNIQUE,
     name       text NOT NULL DEFAULT '',
-    role       text NOT NULL UNIQUE,
-    home       uuid REFERENCES archive.space,
+    workspaces uuid[] NOT NULL DEFAULT '{}',
     signin     jsonb NOT NULL DEFAULT '{}',
     created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX user_workspaces_idx ON archive."user" USING gin (workspaces);
 
 CREATE TABLE archive.token (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     user_id    uuid NOT NULL REFERENCES archive."user" ON DELETE CASCADE,
+    workspace  uuid REFERENCES archive.workspace ON DELETE CASCADE,
     kind       text NOT NULL,
     name       text NOT NULL DEFAULT '',
     role       text UNIQUE,
@@ -31,7 +56,7 @@ CREATE INDEX token_user_idx ON archive.token (user_id);
 
 CREATE TABLE archive.chat (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
-    user_id    uuid NOT NULL REFERENCES archive."user" ON DELETE CASCADE,
+    user_id    uuid NOT NULL,
     title      text NOT NULL DEFAULT '',
     messages   jsonb NOT NULL DEFAULT '[]',
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -41,7 +66,7 @@ CREATE INDEX chat_user_idx ON archive.chat (user_id, updated_at);
 
 CREATE TABLE archive.workflow (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
-    user_id    uuid NOT NULL REFERENCES archive."user" ON DELETE CASCADE,
+    user_id    uuid NOT NULL,
     role       text NOT NULL,
     name       text NOT NULL,
     source     text NOT NULL,
@@ -73,40 +98,6 @@ CREATE TABLE archive.revision (
     hash       text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now()
 );
-
-CREATE TABLE archive.plan (
-    id            text PRIMARY KEY,
-    name          text NOT NULL,
-    price         text NOT NULL DEFAULT '',
-    runs          bigint,
-    workflow_runs bigint,
-    ai_tokens     bigint,
-    stored_bytes  bigint,
-    concurrent    integer,
-    created_at    timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE TABLE archive.workspace (
-    id            uuid PRIMARY KEY DEFAULT uuidv7(),
-    short         text NOT NULL UNIQUE,
-    name          text NOT NULL,
-    database      text NOT NULL UNIQUE,
-    prefix        text NOT NULL UNIQUE,
-    key           bytea NOT NULL,
-    blobs         text NOT NULL DEFAULT '',
-    plan          text REFERENCES archive.plan ON DELETE SET NULL,
-    customer      text NOT NULL DEFAULT '',
-    subscription  text NOT NULL DEFAULT '',
-    anthropic_key bytea,
-    created_at    timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE TABLE archive.member (
-    email     text NOT NULL,
-    workspace uuid NOT NULL REFERENCES archive.workspace ON DELETE CASCADE,
-    PRIMARY KEY (email, workspace)
-);
-CREATE INDEX member_workspace_idx ON archive.member (workspace);
 
 CREATE TABLE archive.usage (
     workspace     uuid NOT NULL REFERENCES archive.workspace ON DELETE CASCADE,
@@ -209,17 +200,14 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON archive.file, archive.secret TO "{p}_use
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "{p}_user";
 
 ALTER TABLE archive.space ENABLE ROW LEVEL SECURITY;
-ALTER TABLE archive.space FORCE ROW LEVEL SECURITY;
 CREATE POLICY member ON archive.space FOR SELECT USING (pg_has_role(current_user, (role || '_viewer')::name, 'USAGE'));
 
 ALTER TABLE archive.file ENABLE ROW LEVEL SECURITY;
-ALTER TABLE archive.file FORCE ROW LEVEL SECURITY;
 CREATE POLICY viewer ON archive.file FOR SELECT USING (space = ANY (archive.my_spaces()));
 CREATE POLICY editor ON archive.file USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
 
 
 ALTER TABLE archive.secret ENABLE ROW LEVEL SECURITY;
-ALTER TABLE archive.secret FORCE ROW LEVEL SECURITY;
 CREATE POLICY viewer ON archive.secret FOR SELECT USING (space = ANY (archive.my_spaces()) AND archive.secret_granted(type));
 CREATE POLICY editor_insert ON archive.secret FOR INSERT WITH CHECK (space = ANY (archive.my_spaces('editor')));
 CREATE POLICY editor_update ON archive.secret FOR UPDATE USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
@@ -328,10 +316,10 @@ WHERE u.rolname = sqlc.arg(member)::name AND r.rolname = ANY(sqlc.arg(grps)::nam
 
 -- name: CountOwners :one
 SELECT count(*) FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles r ON r.oid = m.roleid
-JOIN pg_catalog.pg_roles u ON u.oid = m.member JOIN archive."user" ON "user".role = u.rolname WHERE r.rolname = sqlc.arg(owner)::name;
+JOIN pg_catalog.pg_roles u ON u.oid = m.member WHERE r.rolname = sqlc.arg(owner)::name AND starts_with(u.rolname, sqlc.arg(users)::text);
 
 -- name: CreateSpace :one
-INSERT INTO archive.space (name, role) VALUES ($1, $2) RETURNING id;
+INSERT INTO archive.space (name, role, home) VALUES ($1, $2, $3) RETURNING id;
 
 -- name: SpaceTaken :one
 SELECT EXISTS (SELECT FROM archive.space WHERE name = $1);
@@ -343,10 +331,13 @@ SELECT role FROM archive.space WHERE name = $1;
 SELECT role FROM archive.space WHERE id = $1;
 
 -- name: SpaceByName :one
-SELECT id, role FROM archive.space WHERE name = $1;
+SELECT id, role, home FROM archive.space WHERE name = $1;
 
 -- name: SpaceRoles :many
-SELECT name, role FROM archive.space ORDER BY name;
+SELECT name, role, home FROM archive.space ORDER BY name;
+
+-- name: HomeSpace :one
+SELECT id FROM archive.space WHERE home = $1;
 
 -- name: Spaces :many
 SELECT id, name, CASE
@@ -365,42 +356,45 @@ DELETE FROM archive.file WHERE space = $1;
 -- name: DeleteSpace :exec
 DELETE FROM archive.space WHERE id = $1;
 
--- name: CountUsers :one
-SELECT count(*) FROM archive."user";
-
--- name: NoUsers :one
-SELECT NOT EXISTS (SELECT FROM archive."user");
-
--- name: CreateUser :one
-INSERT INTO archive."user" (id, email, name, role, home) VALUES ($1, $2, $3, $4, $5) RETURNING created_at;
-
 -- name: UserByEmail :one
 SELECT * FROM archive."user" WHERE email = $1;
 
 -- name: UserByID :one
 SELECT * FROM archive."user" WHERE id = $1;
 
--- name: FirstUser :one
-SELECT * FROM archive."user" ORDER BY created_at, id LIMIT $1;
-
 -- name: UserByOIDC :one
 SELECT * FROM archive."user" WHERE signin->'oidc' @> sqlc.arg(link)::jsonb;
 
--- name: UserRole :one
-SELECT id, role FROM archive."user" WHERE email = $1;
+-- name: WorkspaceUser :one
+SELECT * FROM archive."user" WHERE email = sqlc.arg(email) AND workspaces @> ARRAY[sqlc.arg(workspace)::uuid];
 
--- name: HomeOwner :one
-SELECT email FROM archive."user" WHERE home = $1;
+-- name: FirstUser :one
+SELECT * FROM archive."user" WHERE workspaces @> ARRAY[sqlc.arg(workspace)::uuid] ORDER BY created_at, id LIMIT 1;
 
--- name: Members :many
-SELECT email, name, role AS level FROM archive."user" ORDER BY email;
+-- name: NoMembers :one
+SELECT NOT EXISTS (SELECT FROM archive."user" WHERE workspaces @> ARRAY[sqlc.arg(workspace)::uuid]);
+
+-- name: WorkspaceUsers :many
+SELECT id, email, name FROM archive."user" WHERE workspaces @> ARRAY[sqlc.arg(workspace)::uuid] ORDER BY email;
+
+-- name: UserWorkspaces :many
+SELECT w.id, w.name FROM archive.workspace w JOIN archive."user" u ON w.id = ANY(u.workspaces) WHERE u.id = $1 ORDER BY array_position(u.workspaces, w.id);
+
+-- name: JoinWorkspace :one
+INSERT INTO archive."user" (email, name, workspaces) VALUES (sqlc.arg(email), sqlc.arg(name), ARRAY[sqlc.arg(workspace)::uuid])
+ON CONFLICT (email) DO UPDATE SET workspaces = archive."user".workspaces || EXCLUDED.workspaces WHERE NOT archive."user".workspaces @> EXCLUDED.workspaces
+RETURNING *;
+
+-- name: LeaveWorkspace :exec
+UPDATE archive."user" SET workspaces = array_remove(workspaces, sqlc.arg(workspace)::uuid) WHERE id = sqlc.arg(id);
 
 -- name: SetSignin :exec
 UPDATE archive."user" SET signin = $2 WHERE id = $1;
 
 -- name: Authenticate :one
-SELECT t.id, t.kind, t.name, coalesce(t.role, '') AS role, u.id AS user_id, u.email, u.name AS user_name, u.role AS user_role, u.home,
-    coalesce((SELECT r.id::text || ':' || r.hash FROM archive.revision r ORDER BY r.created_at DESC, r.id DESC LIMIT 1), '')::text AS stamp
+SELECT t.id, t.kind, t.name, coalesce(t.role, '')::text AS role, u.id AS user_id, u.email, u.name AS user_name,
+    coalesce(t.workspace::text, '')::text AS workspace,
+    ARRAY(SELECT w.id::text FROM archive.workspace w WHERE w.id = ANY(u.workspaces) ORDER BY array_position(u.workspaces, w.id))::text[] AS workspaces
 FROM archive.token t JOIN archive."user" u ON u.id = t.user_id
 WHERE t.hash = $1 AND t.kind IN ('api', 'session', 'user') AND (t.expires_at IS NULL OR t.expires_at > now());
 
@@ -410,24 +404,30 @@ INSERT INTO archive.token (user_id, kind, hash, expires_at) VALUES ($1, $2, $3, 
 -- name: UseMagicLink :one
 DELETE FROM archive.token WHERE hash = $1 AND kind = 'magic' AND expires_at > now() RETURNING user_id;
 
--- name: DeleteToken :exec
-DELETE FROM archive.token WHERE id = $1;
+-- name: SignOut :exec
+DELETE FROM archive.token WHERE hash = $1 AND kind = 'session';
 
 -- name: TokenRoles :many
-SELECT coalesce(role, '')::text FROM archive.token WHERE user_id = $1 AND role IS NOT NULL;
+SELECT coalesce(role, '')::text FROM archive.token WHERE user_id = $1 AND workspace = $2 AND role IS NOT NULL;
 
 -- name: CreateUserToken :one
-INSERT INTO archive.token (id, user_id, kind, name, hash, expires_at) VALUES ($1, $2, 'user', $3, $4, $5) RETURNING created_at, expires_at;
+INSERT INTO archive.token (id, user_id, workspace, kind, name, hash, expires_at) VALUES ($1, $2, $3, 'user', $4, $5, $6) RETURNING created_at, expires_at;
 
 -- name: CreateAPIToken :one
-INSERT INTO archive.token (id, user_id, kind, name, role, hash, expires_at) VALUES ($1, $2, 'api', $3, $4, $5, $6) RETURNING created_at, expires_at;
+INSERT INTO archive.token (id, user_id, workspace, kind, name, role, hash, expires_at) VALUES ($1, $2, $3, 'api', $4, $5, $6, $7) RETURNING created_at, expires_at;
 
 -- name: Tokens :many
 SELECT id, name, coalesce(role, '')::text AS role, kind = 'user' AS full, expires_at, created_at FROM archive.token
-WHERE user_id = $1 AND kind IN ('api', 'user') ORDER BY id;
+WHERE user_id = $1 AND workspace = $2 AND kind IN ('api', 'user') ORDER BY id;
 
 -- name: RevokeToken :one
-DELETE FROM archive.token WHERE id = $1 AND user_id = $2 AND kind IN ('api', 'user') RETURNING coalesce(role, '')::text;
+DELETE FROM archive.token WHERE id = $1 AND user_id = $2 AND workspace = $3 AND kind IN ('api', 'user') RETURNING coalesce(role, '')::text;
+
+-- name: DeleteWorkspaceTokens :many
+DELETE FROM archive.token WHERE user_id = $1 AND workspace = $2 RETURNING coalesce(role, '')::text;
+
+-- name: ForgetUser :exec
+WITH gone AS (DELETE FROM archive.chat c WHERE c.user_id = sqlc.arg(id)::uuid) DELETE FROM archive.workflow w WHERE w.user_id = sqlc.arg(id)::uuid;
 
 -- name: Chats :many
 SELECT id, title, created_at, updated_at FROM archive.chat WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 200;
@@ -451,7 +451,7 @@ DELETE FROM archive.chat WHERE id = $1 AND user_id = $2;
 SELECT id FROM archive.space WHERE name = $1;
 
 -- name: DefaultSpace :one
-SELECT id FROM archive.space WHERE id = ANY(archive.my_spaces('editor')) ORDER BY id = sqlc.arg(home)::uuid DESC, id LIMIT 1;
+SELECT id FROM archive.space WHERE id = ANY(archive.my_spaces('editor')) ORDER BY home IS NOT DISTINCT FROM sqlc.arg(owner)::uuid DESC, id LIMIT 1;
 
 -- name: CanWrite :one
 SELECT sqlc.arg(space)::uuid = ANY(archive.my_spaces('editor'));
@@ -676,17 +676,11 @@ SELECT EXISTS (SELECT FROM archive.file WHERE status = 'pending');
 -- name: StoredBytes :one
 SELECT coalesce(sum(size), 0)::bigint FROM archive.file;
 
--- name: UserEmails :many
-SELECT email FROM archive."user" ORDER BY email;
+-- name: FirstWorkspace :one
+SELECT * FROM archive.workspace ORDER BY created_at, id LIMIT 1;
 
--- name: MainWorkspace :one
-SELECT * FROM archive.workspace WHERE database = current_database();
-
--- name: CurrentDatabase :one
-SELECT current_database()::text;
-
--- name: WorkspaceByShort :one
-SELECT * FROM archive.workspace WHERE short = $1;
+-- name: WorkspaceByID :one
+SELECT * FROM archive.workspace WHERE id = $1;
 
 -- name: WorkspaceBySubscription :one
 SELECT * FROM archive.workspace WHERE subscription = $1;
@@ -694,16 +688,16 @@ SELECT * FROM archive.workspace WHERE subscription = $1;
 -- name: AllWorkspaces :many
 SELECT * FROM archive.workspace ORDER BY created_at, id;
 
--- name: WorkspaceNames :many
-SELECT short, name FROM archive.workspace WHERE short = ANY(sqlc.arg(shorts)::text[]);
-
 -- name: CreateWorkspace :one
-INSERT INTO archive.workspace (short, name, database, prefix, key, blobs, plan)
-VALUES (sqlc.arg(short), sqlc.arg(name), sqlc.arg(database), sqlc.arg(prefix), sqlc.arg(key), sqlc.arg(blobs), sqlc.narg(plan))
+INSERT INTO archive.workspace (id, name, key, plan) VALUES (sqlc.arg(id), sqlc.arg(name), sqlc.arg(key), sqlc.narg(plan))
 ON CONFLICT DO NOTHING RETURNING *;
 
 -- name: DeleteWorkspace :exec
-DELETE FROM archive.workspace WHERE id = $1;
+WITH gone AS (UPDATE archive."user" u SET workspaces = array_remove(u.workspaces, sqlc.arg(id)::uuid) WHERE u.workspaces @> ARRAY[sqlc.arg(id)::uuid])
+DELETE FROM archive.workspace w WHERE w.id = sqlc.arg(id)::uuid;
+
+-- name: RolesWithPrefix :many
+SELECT rolname::text FROM pg_catalog.pg_roles WHERE starts_with(rolname, sqlc.arg(prefix)::text);
 
 -- name: RenameWorkspace :exec
 UPDATE archive.workspace SET name = $2 WHERE id = $1;
@@ -713,19 +707,7 @@ UPDATE archive.workspace SET anthropic_key = $2 WHERE id = $1;
 
 -- name: SetWorkspacePlan :exec
 UPDATE archive.workspace SET plan = sqlc.narg(plan), customer = coalesce(nullif(sqlc.arg(customer)::text, ''), customer), subscription = sqlc.arg(subscription)
-WHERE short = sqlc.arg(short);
-
--- name: AddMember :exec
-INSERT INTO archive.member (email, workspace) VALUES ($1, $2) ON CONFLICT DO NOTHING;
-
--- name: KeepMembers :exec
-DELETE FROM archive.member WHERE workspace = $1 AND NOT (email = ANY (sqlc.arg(emails)::text[]));
-
--- name: AddMembers :exec
-INSERT INTO archive.member (email, workspace) SELECT unnest(sqlc.arg(emails)::text[]), sqlc.arg(workspace) ON CONFLICT DO NOTHING;
-
--- name: MemberWorkspaces :many
-SELECT w.short, w.name FROM archive.member m JOIN archive.workspace w ON w.id = m.workspace WHERE m.email = $1 ORDER BY w.created_at, w.id;
+WHERE id = sqlc.arg(id);
 
 -- name: Setting :one
 SELECT value FROM archive.setting WHERE key = $1;
@@ -770,15 +752,15 @@ ON CONFLICT (workspace, kind) DO UPDATE SET at = least(archive.due.at, EXCLUDED.
 -- name: ClaimDue :one
 UPDATE archive.due d SET at = sqlc.arg(lease)::timestamptz FROM archive.workspace w
 WHERE w.id = d.workspace AND (d.workspace, d.kind) = (SELECT x.workspace, x.kind FROM archive.due x WHERE x.at <= now() ORDER BY x.at LIMIT 1 FOR UPDATE SKIP LOCKED)
-RETURNING w.short, d.kind, d.at;
+RETURNING w.id, d.kind, d.at;
 
 -- name: SetDue :exec
 UPDATE archive.due d SET at = sqlc.arg(next)::timestamptz FROM archive.workspace w
-WHERE w.id = d.workspace AND w.short = sqlc.arg(short) AND d.kind = sqlc.arg(kind) AND d.at = sqlc.arg(claimed)::timestamptz;
+WHERE w.id = d.workspace AND w.id = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND d.at = sqlc.arg(claimed)::timestamptz;
 
 -- name: ClearDue :exec
 DELETE FROM archive.due d USING archive.workspace w
-WHERE w.id = d.workspace AND w.short = sqlc.arg(short) AND d.kind = sqlc.arg(kind) AND d.at = sqlc.arg(claimed)::timestamptz;
+WHERE w.id = d.workspace AND w.id = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND d.at = sqlc.arg(claimed)::timestamptz;
 
 -- name: WorkspaceLimits :one
 SELECT p.runs, p.workflow_runs, p.ai_tokens, p.stored_bytes, m.used_runs, m.used_workflow_runs, m.used_ai_tokens,

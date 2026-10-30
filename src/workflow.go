@@ -186,7 +186,7 @@ func (a *Archive) workflowOut(w generated.ArchiveWorkflow) Workflow {
 		case "cron":
 			out.Next = workflowUTC(w.NextAt)
 		case "webhook":
-			out.URL = a.hub.api + "/hooks/run/" + a.ws.Short + "/" + w.Hook
+			out.URL = a.hub.api + "/hooks/run/" + a.ws.ID.String() + "/" + w.Hook
 		}
 	}
 	return out
@@ -381,12 +381,15 @@ func (a *Archive) workflowRecord(ctx context.Context, id uuid.UUID, trigger stri
 }
 
 func (a *Archive) workflowActor(ctx context.Context, w generated.ArchiveWorkflow) (*Actor, error) {
-	u, err := userBy(ctx, a, (*generated.Queries).UserByID, w.UserID)
+	u, err := userBy(ctx, a.hub, (*generated.Queries).UserByID, w.UserID)
 	if err != nil {
 		return nil, err
 	}
+	if !slices.Contains(u.Workspaces, a.ws.ID) {
+		return nil, errors.New("the person who deployed this workflow left the workspace, so it cannot run")
+	}
 	ac := a.userActor(u)
-	if w.Role == u.Role {
+	if w.Role == ac.Role {
 		return ac, nil
 	}
 	var ok bool
