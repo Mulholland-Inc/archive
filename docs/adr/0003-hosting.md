@@ -58,7 +58,7 @@ A workspace is a database of about a hundred catalog objects; a few thousand per
 
 - **app.archive.dev** serves only the web app, as static files from Cloudflare's edge.
 - **api.archive.dev** serves the HTTP API, sign-in, MCP, workflow webhooks and every OAuth redirect URL: connectors (ADR 0002) and sign-in with Google and Microsoft. These are the URLs registered and approved with each vendor, so they never change and don't depend on the workspace. The web app calls it directly.
-- `ARCHIVE_URL` is the app's address and `ARCHIVE_API_URL` the API's. They are always different, self-hosted too: the binary embeds no web app and serves no pages, and self-hosters run the `archive-web` image next to it.
+- `ARCHIVE_URL` is the app's address and `ARCHIVE_API_URL` the API's. They are always different, self-hosted too: the binary embeds no web app and serves no pages, and `apps/terraform/gcp` deploys the web app as a Worker next to it.
 - Only api.archive.dev reaches the Cloud Run service. No subdomain per workspace, no wildcard certificates.
 
 ## Finding the workspace

@@ -21,8 +21,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: docker/setup-buildx-action@v3
-
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -42,26 +40,6 @@ jobs:
           [ "$GITHUB_REF" = refs/heads/main ] && tags="$tags,latest"
           case "$GITHUB_REF" in refs/tags/v*) tags="$tags,${GITHUB_REF#refs/tags/v}" ;; esac
           go run github.com/google/ko@v0.18.1 build --bare --tags "$tags" --image-label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" .
-
-      - id: web
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/mulholland-inc/archive-web
-          tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=sha,format=short
-            type=semver,pattern={{version}}
-
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: apps/web/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.web.outputs.tags }}
-          labels: ${{ steps.web.outputs.labels }}
-          cache-from: type=gha,scope=web
-          cache-to: type=gha,mode=max,scope=web
 
   deploy:
     needs: image

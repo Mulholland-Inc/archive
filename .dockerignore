@@ -1,7 +1,0 @@
-*
-!apps/web/
-!apps/kit/
-!apps/site/static/art/
-apps/web/node_modules/
-apps/web/dist/
-**/.DS_Store
