@@ -7,3 +7,9 @@
 /apps/site/node_modules
 /apps/site/build
 /apps/site/.svelte-kit
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfplan

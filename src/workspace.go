@@ -936,12 +936,19 @@ func (h *Hub) names(ctx context.Context, shorts []string) []Workspace {
 	return out
 }
 
+type Usage struct {
+	Runs         int64 `json:"runs"`
+	WorkflowRuns int64 `json:"workflow_runs"`
+	AiTokens     int64 `json:"ai_tokens"`
+	StoredBytes  int64 `json:"stored_bytes"`
+}
+
 type WorkspaceInfo struct {
 	Workspace
-	Usage        generated.MonthUsageRow `json:"usage"`
-	Limits       *Plan                   `json:"limits,omitempty"`
-	AnthropicKey bool                    `json:"anthropic_key"`
-	Billing      bool                    `json:"billing"`
+	Usage        Usage `json:"usage"`
+	Limits       *Plan `json:"limits,omitempty"`
+	AnthropicKey bool  `json:"anthropic_key"`
+	Billing      bool  `json:"billing"`
 }
 
 func (a *Archive) Info(ctx context.Context) (*WorkspaceInfo, error) {
@@ -957,7 +964,7 @@ func (a *Archive) Info(ctx context.Context) (*WorkspaceInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	info := &WorkspaceInfo{Workspace: workspaceOut(row), Usage: u, AnthropicKey: len(row.AnthropicKey) > 0, Billing: billingOn()}
+	info := &WorkspaceInfo{Workspace: workspaceOut(row), Usage: Usage(u), AnthropicKey: len(row.AnthropicKey) > 0, Billing: billingOn()}
 	if row.Plan != nil {
 		if p, err := q.PlanByID(ctx, *row.Plan); err == nil {
 			info.Limits = planOut(p)

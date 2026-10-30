@@ -680,8 +680,8 @@ func (a *Archive) tusDrop(ctx context.Context, up *tusUpload) error {
 }
 
 const (
-	mediaMax     = 64 << 20
-	mediaThumb   = 320
+	mediaMax   = 64 << 20
+	mediaThumb = 320
 )
 
 func mediaSniff(name string, b []byte) string {

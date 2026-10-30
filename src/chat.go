@@ -533,15 +533,18 @@ func chatTurn(ctx context.Context, key string, tools []any, system string, msgs 
 			if s, ok := ev.Delta["stop_reason"].(string); ok {
 				stop = s
 			}
+			if ev.Usage != nil && ev.Usage.Output > 0 {
+				use.Output = ev.Usage.Output
+			}
 		case "error":
-			return nil, "", 0, errors.New("model: " + ev.Error.Message)
+			return nil, "", tokens(), errors.New("model: " + ev.Error.Message)
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return nil, "", 0, err
+		return nil, "", tokens(), err
 	}
 	if stop == "" {
-		return nil, "", 0, errors.New("model: the stream ended early")
+		return nil, "", tokens(), errors.New("model: the stream ended early")
 	}
 	m := &chatMessage{Role: "assistant", Content: []chatBlock{}}
 	for _, blk := range blocks {
