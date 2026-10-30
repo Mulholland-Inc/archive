@@ -256,11 +256,9 @@
   }
 </script>
 
-{#if !empty}
-  <Heading plain column="chat" title={current ? title || 'Untitled' : 'New chat'} onrename={current ? rename : undefined}>
-    {#if current}<Button icon="trash" title="Delete chat" aria-label="Delete chat" onclick={remove} />{/if}
-  </Heading>
-{/if}
+<Heading plain column="chat" title={empty ? '' : current ? title || 'Untitled' : 'New chat'} onrename={current ? rename : undefined}>
+  {#if current}<Button icon="trash" title="Delete chat" aria-label="Delete chat" onclick={remove} />{/if}
+</Heading>
 <div class="chat" class:empty bind:this={pane}>
   {#if empty}<h2 class="hello">{hello}</h2>{/if}
   <div class="log" class:idle={empty && !failed} bind:this={log} aria-live="polite">
@@ -332,7 +330,7 @@
   .thinking span:nth-child(3) { animation-delay: calc(var(--duration-loop) / 3); }
   .dock {
     position: sticky;
-    bottom: calc(var(--dock-bottom) + var(--dock-gap) - var(--dock-inset));
+    bottom: calc(var(--dock-gap) - var(--dock-inset) + env(safe-area-inset-bottom));
     z-index: var(--z-raised);
     width: 100%;
     max-width: var(--composer-width);

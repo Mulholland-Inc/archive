@@ -9,6 +9,7 @@ body {
   min-height: 100svh;
   padding: var(--frame);
   padding-top: calc(var(--frame) + env(safe-area-inset-top));
+  padding-bottom: calc(var(--frame) + env(safe-area-inset-bottom));
   background: var(--bg);
   color: var(--fg);
   font: var(--weight-normal) var(--text-ui) / var(--leading-medium) var(--font-sans);

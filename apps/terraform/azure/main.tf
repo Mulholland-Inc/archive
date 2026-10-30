@@ -1,5 +1,17 @@
 locals {
   url = "https://${var.name}.${azurerm_container_app_environment.this.default_domain}"
+  client_ids = { for k, v in {
+    ARCHIVE_GOOGLE_CLIENT_ID    = var.google_client_id
+    ARCHIVE_MICROSOFT_CLIENT_ID = var.microsoft_client_id
+    ARCHIVE_SLACK_CLIENT_ID     = var.slack_client_id
+    ARCHIVE_GITHUB_CLIENT_ID    = var.github_client_id
+  } : k => v if v != "" }
+  client_secrets = { for k, v in {
+    ARCHIVE_GOOGLE_CLIENT_SECRET    = var.google_client_secret
+    ARCHIVE_MICROSOFT_CLIENT_SECRET = var.microsoft_client_secret
+    ARCHIVE_SLACK_CLIENT_SECRET     = var.slack_client_secret
+    ARCHIVE_GITHUB_CLIENT_SECRET    = var.github_client_secret
+  } : k => v if nonsensitive(v != "") }
 }
 
 resource "random_string" "suffix" {
@@ -147,6 +159,14 @@ resource "azurerm_container_app" "this" {
     value = random_id.secret_key.hex
   }
 
+  dynamic "secret" {
+    for_each = local.client_secrets
+    content {
+      name  = replace(lower(secret.key), "_", "-")
+      value = secret.value
+    }
+  }
+
   ingress {
     external_enabled = true
     target_port      = 8080
@@ -187,7 +207,7 @@ resource "azurerm_container_app" "this" {
       memory = var.memory
 
       dynamic "env" {
-        for_each = merge(var.env, {
+        for_each = merge(var.env, local.client_ids, {
           ARCHIVE_URL         = local.url
           ARCHIVE_ADMIN_EMAIL = var.admin_email
         })
@@ -205,6 +225,14 @@ resource "azurerm_container_app" "this" {
       env {
         name        = "ARCHIVE_SECRET_KEY"
         secret_name = "secret-key"
+      }
+
+      dynamic "env" {
+        for_each = local.client_secrets
+        content {
+          name        = env.key
+          secret_name = replace(lower(env.key), "_", "-")
+        }
       }
 
       volume_mounts {

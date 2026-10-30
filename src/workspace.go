@@ -4,11 +4,7 @@ import (
 	"cmp"
 	"context"
 	"crypto/cipher"
-	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -655,50 +651,6 @@ func (h *Hub) admin(ctx context.Context) error {
 	return nil
 }
 
-func (h *Hub) setting(ctx context.Context, key string, v any) (bool, error) {
-	b, err := h.q().Setting(ctx, key)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return true, json.Unmarshal(b, v)
-}
-
-func (h *Hub) signupOpen(ctx context.Context) bool {
-	var on bool
-	h.setting(ctx, "signup", &on)
-	return on
-}
-
-type Settings struct {
-	Signup bool `json:"signup"`
-}
-
-func (h *Hub) Settings(ctx context.Context) (*Settings, error) {
-	if err := h.admin(ctx); err != nil {
-		return nil, err
-	}
-	return &Settings{Signup: h.signupOpen(ctx)}, nil
-}
-
-func (h *Hub) SetSettings(ctx context.Context, signup *bool) (*Settings, error) {
-	if err := h.admin(ctx); err != nil {
-		return nil, err
-	}
-	set := func(k string, v any) error {
-		b, _ := json.Marshal(v)
-		return h.q().SetSetting(ctx, k, b)
-	}
-	if signup != nil {
-		if err := set("signup", *signup); err != nil {
-			return nil, err
-		}
-	}
-	return h.Settings(ctx)
-}
-
 func workspaceOut(r generated.ArchiveWorkspace) Workspace {
 	return Workspace{ID: r.ID.String(), Name: r.Name, CreatedAt: r.CreatedAt}
 }
@@ -719,7 +671,7 @@ func (h *Hub) AddWorkspace(ctx context.Context, name, owner string) (*Workspace,
 	if err := h.admin(ctx); err != nil {
 		return nil, err
 	}
-	r, err := h.createWorkspace(ctx, name, owner, "")
+	r, err := h.createWorkspace(ctx, name, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -767,7 +719,7 @@ func workspaceName(name string) (string, error) {
 	return name, nil
 }
 
-func (h *Hub) createWorkspace(ctx context.Context, name, owner, ownerName string) (generated.ArchiveWorkspace, error) {
+func (h *Hub) createWorkspace(ctx context.Context, name, owner string) (generated.ArchiveWorkspace, error) {
 	var row generated.ArchiveWorkspace
 	id := coreNewID()
 	name, err := workspaceName(name)
@@ -814,26 +766,12 @@ func (h *Hub) createWorkspace(ctx context.Context, name, owner, ownerName string
 	if err != nil {
 		return fail(err)
 	}
-	_, err = a.AddUser(context.Background(), owner, ownerName, true)
+	_, err = a.AddUser(context.Background(), owner, "", true)
 	release()
 	if err != nil {
 		return fail(err)
 	}
 	return row, nil
-}
-
-func (h *Hub) sign(purpose, payload string) string {
-	m := hmac.New(sha256.New, secretDerive(h.key, purpose))
-	m.Write([]byte(payload))
-	return hex.EncodeToString(m.Sum(nil))
-}
-
-func (h *Hub) signup(ctx context.Context, workspace, email, name string) (string, error) {
-	if !h.signupOpen(ctx) {
-		return "", fmt.Errorf("signup is closed on this Archive; ask an admin for a workspace: %w", ErrForbidden)
-	}
-	r, err := h.createWorkspace(ctx, workspace, email, name)
-	return r.ID.String(), err
 }
 
 type WorkspaceInfo struct {
@@ -951,17 +889,5 @@ func (h *Hub) workspaceRoutes(authed func(string, func(http.ResponseWriter, *htt
 	})
 	authed("DELETE /auth/workspaces/{id}", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		return http.StatusNoContent, nil, h.DeleteWorkspace(r.Context(), r.PathValue("id"))
-	})
-	authed("GET /auth/settings", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		return ok(h.Settings(r.Context()))
-	})
-	authed("PATCH /auth/settings", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		var body struct {
-			Signup *bool `json:"signup"`
-		}
-		if err := httpDecode(r, &body); err != nil {
-			return 0, nil, err
-		}
-		return ok(h.SetSettings(r.Context(), body.Signup))
 	})
 }

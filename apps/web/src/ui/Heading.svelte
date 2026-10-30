@@ -1,10 +1,12 @@
 <script>
-  import { tick } from 'svelte';
+  import { getContext, tick } from 'svelte';
+  import Icon from '#kit/Icon.svelte';
 
   let { title, plain = false, column = '', onrename, children } = $props();
   let editing = $state(false);
   let draft = $state('');
   let field = $state();
+  const side = getContext('side');
 
   async function edit() {
     draft = title;
@@ -26,7 +28,8 @@
   }
 </script>
 
-<header class={column}>
+<header class={[column, !title && 'bare']}>
+  {#if side}<button class="side" type="button" aria-label="Sidebar" aria-expanded={side.open} onclick={side.toggle}><Icon name="panel-left" /></button>{/if}
   {#if editing}
     <input class="title editable" bind:this={field} bind:value={draft} onblur={save} onkeydown={key} aria-label="Title" />
   {:else if onrename}
@@ -38,7 +41,10 @@
 </header>
 
 <style>
+  .side { display: var(--narrow-only); align-items: center; color: var(--fg-muted); transition: color var(--duration-fast); }
+  .side:hover { color: var(--fg); }
   header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+  .bare { display: var(--narrow-only); }
   .chat { align-self: center; width: 100%; max-width: calc(var(--chat-width) + 2 * var(--gutter)); padding-inline: var(--gutter); }
   h1, .title {
     font: var(--weight-medium) var(--title-size) / var(--leading-tight) var(--font-serif);

@@ -485,27 +485,6 @@ func (q *Queries) CreateFile(ctx context.Context, arg CreateFileParams) (CreateF
 	return i, err
 }
 
-const createLoginToken = `-- name: CreateLoginToken :exec
-INSERT INTO archive.token (user_id, kind, hash, expires_at) VALUES ($1, $2, $3, now() + $4::text::interval)
-`
-
-type CreateLoginTokenParams struct {
-	UserID uuid.UUID
-	Kind   string
-	Hash   string
-	Ttl    string
-}
-
-func (q *Queries) CreateLoginToken(ctx context.Context, arg CreateLoginTokenParams) error {
-	_, err := q.db.Exec(ctx, createLoginToken,
-		arg.UserID,
-		arg.Kind,
-		arg.Hash,
-		arg.Ttl,
-	)
-	return err
-}
-
 const createSecret = `-- name: CreateSecret :exec
 INSERT INTO archive.secret (id, table_name, row_id, column_name, type, value, space) VALUES ($1, $2, $3, $4, $5, $6, $7)
 `
@@ -530,6 +509,15 @@ func (q *Queries) CreateSecret(ctx context.Context, arg CreateSecretParams) erro
 		arg.Value,
 		arg.Space,
 	)
+	return err
+}
+
+const createSession = `-- name: CreateSession :exec
+INSERT INTO archive.token (user_id, kind, hash, expires_at) VALUES ($1, 'session', $2, now() + interval '30 days')
+`
+
+func (q *Queries) CreateSession(ctx context.Context, userID uuid.UUID, hash string) error {
+	_, err := q.db.Exec(ctx, createSession, userID, hash)
 	return err
 }
 
@@ -1252,6 +1240,15 @@ func (q *Queries) LockUpload(ctx context.Context, id uuid.UUID) (ArchiveUpload, 
 	return i, err
 }
 
+const nameUser = `-- name: NameUser :exec
+UPDATE archive."user" SET name = $2 WHERE id = $1 AND name = ''
+`
+
+func (q *Queries) NameUser(ctx context.Context, iD uuid.UUID, name string) error {
+	_, err := q.db.Exec(ctx, nameUser, iD, name)
+	return err
+}
+
 const nextPendingFile = `-- name: NextPendingFile :one
 SELECT id, hash, name, mime, size, metadata, status, error, space, created_at FROM archive.file
 WHERE status = 'pending' ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED
@@ -1619,15 +1616,6 @@ func (q *Queries) SetLocal(ctx context.Context, name string, value string) error
 	return err
 }
 
-const setSetting = `-- name: SetSetting :exec
-INSERT INTO archive.setting (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-`
-
-func (q *Queries) SetSetting(ctx context.Context, key string, value json.RawMessage) error {
-	_, err := q.db.Exec(ctx, setSetting, key, value)
-	return err
-}
-
 const setSignin = `-- name: SetSignin :exec
 UPDATE archive."user" SET signin = $2 WHERE id = $1
 `
@@ -1662,17 +1650,6 @@ UPDATE archive.workspace SET anthropic_key = $2 WHERE id = $1
 func (q *Queries) SetWorkspaceAnthropicKey(ctx context.Context, iD uuid.UUID, anthropicKey []byte) error {
 	_, err := q.db.Exec(ctx, setWorkspaceAnthropicKey, iD, anthropicKey)
 	return err
-}
-
-const setting = `-- name: Setting :one
-SELECT value FROM archive.setting WHERE key = $1
-`
-
-func (q *Queries) Setting(ctx context.Context, key string) (json.RawMessage, error) {
-	row := q.db.QueryRow(ctx, setting, key)
-	var value json.RawMessage
-	err := row.Scan(&value)
-	return value, err
 }
 
 const signOut = `-- name: SignOut :exec
@@ -1923,17 +1900,6 @@ func (q *Queries) Upload(ctx context.Context, id uuid.UUID) (ArchiveUpload, erro
 		&i.CreatedAt,
 	)
 	return i, err
-}
-
-const useMagicLink = `-- name: UseMagicLink :one
-DELETE FROM archive.token WHERE hash = $1 AND kind = 'magic' AND expires_at > now() RETURNING user_id
-`
-
-func (q *Queries) UseMagicLink(ctx context.Context, hash string) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, useMagicLink, hash)
-	var user_id uuid.UUID
-	err := row.Scan(&user_id)
-	return user_id, err
 }
 
 const userByEmail = `-- name: UserByEmail :one

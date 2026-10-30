@@ -14,6 +14,18 @@ locals {
   subnet_ids = coalesce(var.subnet_ids, data.aws_subnets.this.ids)
   https      = var.certificate_arn != null
   url        = "${local.https ? "https" : "http"}://${coalesce(var.domain, aws_lb.this.dns_name)}"
+  client_ids = { for k, v in {
+    ARCHIVE_GOOGLE_CLIENT_ID    = var.google_client_id
+    ARCHIVE_MICROSOFT_CLIENT_ID = var.microsoft_client_id
+    ARCHIVE_SLACK_CLIENT_ID     = var.slack_client_id
+    ARCHIVE_GITHUB_CLIENT_ID    = var.github_client_id
+  } : k => v if v != "" }
+  client_secrets = { for k, v in {
+    ARCHIVE_GOOGLE_CLIENT_SECRET    = var.google_client_secret
+    ARCHIVE_MICROSOFT_CLIENT_SECRET = var.microsoft_client_secret
+    ARCHIVE_SLACK_CLIENT_SECRET     = var.slack_client_secret
+    ARCHIVE_GITHUB_CLIENT_SECRET    = var.github_client_secret
+  } : k => v if nonsensitive(v != "") }
 }
 
 resource "random_password" "db" {
@@ -134,11 +146,11 @@ resource "aws_secretsmanager_secret" "this" {
 
 resource "aws_secretsmanager_secret_version" "this" {
   secret_id = aws_secretsmanager_secret.this.id
-  secret_string = jsonencode({
+  secret_string = jsonencode(merge({
     DATABASE_URL        = "postgres://archive:${random_password.db.result}@${aws_db_instance.this.address}:${aws_db_instance.this.port}/archive?sslmode=require"
     ARCHIVE_SECRET_KEY  = random_id.secret_key.hex
     ARCHIVE_BLOB_SECRET = aws_iam_access_key.blob.secret
-  })
+  }, local.client_secrets))
 }
 
 resource "aws_lb" "this" {
@@ -243,13 +255,13 @@ resource "aws_ecs_task_definition" "this" {
     image        = "ghcr.io/mulholland-inc/archive:${var.image_tag}"
     essential    = true
     portMappings = [{ containerPort = 8080 }]
-    environment = [for k, v in merge(var.env, {
+    environment = [for k, v in merge(var.env, local.client_ids, {
       ARCHIVE_URL         = local.url
       ARCHIVE_ADMIN_EMAIL = var.admin_email
       ARCHIVE_BLOB_URL    = "s3://${aws_s3_bucket.this.bucket}?region=${var.region}"
       ARCHIVE_BLOB_KEY    = aws_iam_access_key.blob.id
     }) : { name = k, value = v }]
-    secrets = [for k in ["DATABASE_URL", "ARCHIVE_SECRET_KEY", "ARCHIVE_BLOB_SECRET"] : {
+    secrets = [for k in concat(["DATABASE_URL", "ARCHIVE_SECRET_KEY", "ARCHIVE_BLOB_SECRET"], keys(local.client_secrets)) : {
       name      = k
       valueFrom = "${aws_secretsmanager_secret.this.arn}:${k}::"
     }]

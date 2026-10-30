@@ -12,8 +12,18 @@ locals {
     ARCHIVE_BLOB_SECRET = google_storage_hmac_key.this.secret
   }
   optional = {
-    ANTHROPIC_API_KEY = var.anthropic_api_key
+    ANTHROPIC_API_KEY               = var.anthropic_api_key
+    ARCHIVE_GOOGLE_CLIENT_SECRET    = var.google_client_secret
+    ARCHIVE_MICROSOFT_CLIENT_SECRET = var.microsoft_client_secret
+    ARCHIVE_SLACK_CLIENT_SECRET     = var.slack_client_secret
+    ARCHIVE_GITHUB_CLIENT_SECRET    = var.github_client_secret
   }
+  client_ids = { for k, v in {
+    ARCHIVE_GOOGLE_CLIENT_ID    = var.google_client_id
+    ARCHIVE_MICROSOFT_CLIENT_ID = var.microsoft_client_id
+    ARCHIVE_SLACK_CLIENT_ID     = var.slack_client_id
+    ARCHIVE_GITHUB_CLIENT_ID    = var.github_client_id
+  } : k => v if v != "" }
   secrets = merge(local.required, local.optional)
   secret_names = setunion(toset(keys(local.required)), toset([
     for k, v in local.optional : k if nonsensitive(v != "")
@@ -177,7 +187,7 @@ resource "google_cloud_run_v2_service" "this" {
       }
 
       dynamic "env" {
-        for_each = merge(var.env, {
+        for_each = merge(var.env, local.client_ids, {
           ARCHIVE_URL         = local.url
           ARCHIVE_API_URL     = local.api_url
           ARCHIVE_ADMIN_EMAIL = var.admin_email

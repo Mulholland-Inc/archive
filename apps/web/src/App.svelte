@@ -1,6 +1,8 @@
 <script>
-  import { api, go, setSpace, setWorkspace, space, workspace, Unauthorized } from './api.js';
+  import { setContext } from 'svelte';
+  import { api, go, passkeyAsked, passkeys, setSpace, setWorkspace, space, workspace, Unauthorized } from './api.js';
   import Button from '#kit/Button.svelte';
+  import Icon from '#kit/Icon.svelte';
   import Theme from '#kit/Theme.svelte';
   import Word from '#kit/Word.svelte';
   import Profile from './ui/Profile.svelte';
@@ -11,11 +13,13 @@
   import View from './View.svelte';
   import Files from './Files.svelte';
   import Workflows from './Workflows.svelte';
+  import Users from './Users.svelte';
+  import Passkey from './Passkey.svelte';
   import Chat from './Chat.svelte';
 
   let me = $state(null);
   let signedOut = $state(false);
-  let adding = $state(false);
+  let asking = $state(false);
   let tables = $state([]);
   let views = $state([]);
   let types = $state({});
@@ -23,12 +27,22 @@
   let chats = $state([]);
   let scope = $state(space());
   let generation = $state(0);
+  let open = $state(false);
+  const toggle = () => (open = !open);
+
+  setContext('side', {
+    get open() {
+      return open;
+    },
+    toggle
+  });
 
   addEventListener('popstate', () => (path = location.pathname));
   addEventListener('click', (e) => {
     const a = e.target.closest?.('a[href^="/"]');
     if (!a || a.target || e.metaKey || e.ctrlKey || e.shiftKey || /^\/(api|auth)\//.test(a.getAttribute('href'))) return;
     e.preventDefault();
+    open = false;
     go(a.getAttribute('href'));
   });
 
@@ -73,6 +87,7 @@
     try {
       me = await api('/auth/me');
       if (me.workspace !== workspace()) setWorkspace(me.workspace);
+      asking = passkeys && !passkeyAsked(me.actor.user_id);
       if (scope && !me.spaces.some((s) => s.name === scope)) pick('');
       loadChats();
       const cat = await api('/api/types');
@@ -103,16 +118,19 @@
 
 {#if signedOut}
   <SignIn />
-{:else if adding}
-  <SignIn create oncancel={() => (adding = false)} />
 {:else if me}
   <div class="shell">
-    <aside>
-      <a class="brand" href="/files" aria-label="Archive"><Word /></a>
+    {#if open}<button class="scrim" type="button" aria-label="Close sidebar" onclick={toggle}></button>{/if}
+    <aside class:open>
+      <div class="top">
+        <button class="side" type="button" aria-label="Sidebar" aria-expanded={open} onclick={toggle}><Icon name="panel-left" /></button>
+        <a class="brand" href="/files" aria-label="Archive"><Word /></a>
+      </div>
       <nav>
         <NavItem href="/chat" icon="plus" active={route.first === 'chat' && !route.second}>New chat</NavItem>
         <NavItem href="/files" icon="folder" active={route.first === 'files'}>Files</NavItem>
         <NavItem href="/workflows" icon="workflow" active={route.first === 'workflows'}>Workflows</NavItem>
+        <NavItem href="/users" icon="users" active={route.first === 'users'}>Users</NavItem>
         {#if chats.length}
           <div class="chats">
             <hr />
@@ -136,12 +154,13 @@
       </nav>
       <footer>
         <Profile name={who} spaces={me.spaces} home={me.home} current={scope} onpick={pick} oncreate={create}
-          workspaces={me.workspaces} workspace={me.workspace} onworkspace={switchTo} onadd={() => (adding = true)} />
+          workspaces={me.workspaces} workspace={me.workspace} onworkspace={switchTo} />
         <Theme />
         <Button icon="signout" title="Sign out" aria-label="Sign out" onclick={signOut} />
       </footer>
     </aside>
     <main>
+      {#if asking}<Passkey user={me.actor.user_id} ondone={() => (asking = false)} />{/if}
       {#key generation}
       {#if route.first === 'chat'}
         <Chat id={route.second} name={me.actor.name} onsaved={loadChats} />
@@ -149,6 +168,8 @@
         <Files />
       {:else if route.first === 'workflows'}
         <Workflows />
+      {:else if route.first === 'users'}
+        <Users email={me.actor.email} />
       {:else if route.first === 'views'}
         {@const v = views.find((x) => x.name === route.second)}
         {#if v}
@@ -172,33 +193,41 @@
   .shell {
     display: grid;
     grid-template-columns: var(--app-columns);
-    grid-template-rows: var(--shell-rows);
+    grid-template-rows: minmax(0, 1fr);
     gap: var(--frame);
     min-height: calc(100svh - 2 * var(--frame) - env(safe-area-inset-top));
   }
   aside {
-    position: sticky;
-    top: var(--bar-top);
-    bottom: var(--bar-bottom);
-    z-index: var(--z-raised);
-    order: var(--bar-order);
+    position: var(--side-position);
+    top: var(--side-top);
+    bottom: var(--side-bottom);
+    left: 0;
+    z-index: var(--z-nav);
     display: flex;
-    flex-direction: var(--bar-direction);
+    flex-direction: column;
     align-items: stretch;
-    align-self: start;
+    align-self: var(--side-align);
+    width: var(--sidebar-width);
     min-width: 0;
-    height: var(--bar-height);
-    padding: var(--bar-pad);
-    padding-bottom: calc(var(--bar-pad) + env(safe-area-inset-bottom));
+    height: var(--side-height);
+    padding: var(--side-pad-top) var(--side-pad) var(--side-pad-bottom);
     background: var(--bg);
+    visibility: var(--side-visibility);
+    transform: var(--side-closed);
+    transition: transform var(--duration-normal) var(--ease-out), visibility var(--duration-normal);
   }
-  .chats { display: flex; flex: none; flex-direction: var(--bar-direction); gap: var(--space-0-5); }
-  .brand { display: var(--wide-only); flex: none; align-items: center; min-height: var(--size-control-lg); padding: var(--item-pad); color: var(--fg); }
+  aside.open { visibility: visible; transform: none; }
+  .scrim { display: var(--narrow-only); position: fixed; inset: 0; z-index: var(--z-nav); background: var(--scrim); animation: fade var(--duration-normal) var(--ease-out) both; }
+  .top { display: flex; flex: none; align-items: center; }
+  .side { display: var(--narrow-only); align-items: center; padding: var(--item-pad); color: var(--fg-muted); transition: color var(--duration-fast); }
+  .side:hover { color: var(--fg); }
+  .chats { display: flex; flex: none; flex-direction: column; gap: var(--space-0-5); }
+  .brand { display: flex; flex: none; align-items: center; min-height: var(--size-control-lg); padding: var(--item-pad); color: var(--fg); }
   .brand :global(.word) { height: var(--text-lg); width: auto; fill: currentColor; }
   nav {
     display: flex;
     flex: 1;
-    flex-direction: var(--bar-direction);
+    flex-direction: column;
     gap: var(--space-0-5);
     min-width: 0;
     min-height: 0;
@@ -209,4 +238,6 @@
   footer { display: flex; flex: none; align-items: center; gap: var(--space-1); }
   main { display: flex; flex-direction: column; min-width: 0; height: var(--main-height); }
   main > :global(header) { position: sticky; top: 0; z-index: var(--z-raised); padding: var(--header-pad) var(--header-inset); background: var(--bg); }
+  @keyframes fade { from { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .scrim { animation: none; } }
 </style>
