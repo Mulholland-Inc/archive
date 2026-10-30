@@ -247,9 +247,16 @@ resource "google_cloud_run_v2_service" "this" {
   ]
 }
 
+data "cloudflare_zone" "this" {
+  count = length(local.domains) > 0 ? 1 : 0
+  filter = {
+    name = var.cloudflare_zone
+  }
+}
+
 resource "cloudflare_workers_script" "this" {
   count       = length(local.domains) > 0 ? 1 : 0
-  account_id  = var.cloudflare_account_id
+  account_id  = data.cloudflare_zone.this[0].account.id
   script_name = var.name
   main_module = "worker.js"
   content     = <<-JS
@@ -270,8 +277,8 @@ resource "cloudflare_workers_script" "this" {
 
 resource "cloudflare_workers_custom_domain" "this" {
   for_each   = local.domains
-  account_id = var.cloudflare_account_id
-  zone_id    = var.cloudflare_zone_id
+  account_id = data.cloudflare_zone.this[0].account.id
+  zone_id    = data.cloudflare_zone.this[0].zone_id
   hostname   = each.value
   service    = cloudflare_workers_script.this[0].script_name
 }
@@ -323,4 +330,17 @@ resource "google_service_account_iam_member" "deploy_runs_as" {
   service_account_id = google_service_account.this.name
   role               = "roles/iam.serviceAccountUser"
   member             = google_service_account.deploy[0].member
+}
+
+resource "github_actions_variable" "deploy" {
+  for_each = var.github_repository != "" ? {
+    GCP_PROJECT                    = var.project
+    GCP_REGION                     = var.region
+    GCP_SERVICE                    = google_cloud_run_v2_service.this.name
+    GCP_SERVICE_ACCOUNT            = google_service_account.deploy[0].email
+    GCP_WORKLOAD_IDENTITY_PROVIDER = google_iam_workload_identity_pool_provider.github[0].name
+  } : {}
+  repository    = split("/", var.github_repository)[1]
+  variable_name = each.key
+  value         = each.value
 }
