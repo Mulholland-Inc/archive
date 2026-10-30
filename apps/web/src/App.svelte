@@ -189,9 +189,16 @@
       </div>
       <Workspaces workspaces={me.workspaces?.length ? me.workspaces : [{ id: me.workspace, name: 'Archive' }]} workspace={me.workspace} latest={chats[0]?.title} onpick={(id) => (id === me.workspace ? go('/') : switchTo(id))} {canAdd} onrename={renameArchive} onadd={addArchive} />
       <nav>
-        <NavItem href="/" icon="message-circle" active={!route.first || route.first === 'chat'}>Chat</NavItem>
-        <NavItem href="/library" icon="library" active={route.first === 'library'}>Library</NavItem>
-        <NavItem href="/users" icon="users" active={route.first === 'users'}>People</NavItem>
+        {#if dev}
+          <NavItem href="/chat" icon="plus" active={route.first === 'chat' && !route.second}>New chat</NavItem>
+          <NavItem href="/files" icon="folder" active={route.first === 'files'}>Files</NavItem>
+          <NavItem href="/workflows" icon="workflow" active={route.first === 'workflows'}>Workflows</NavItem>
+          <NavItem href="/users" icon="users" active={route.first === 'users'}>Users</NavItem>
+        {:else}
+          <NavItem href="/" icon="message-circle" active={!route.first || route.first === 'chat'}>Chat</NavItem>
+          <NavItem href="/library" icon="library" active={route.first === 'library'}>Library</NavItem>
+          <NavItem href="/users" icon="users" active={route.first === 'users'}>People</NavItem>
+        {/if}
         {#if chats.length}
           <div class="chats">
             <hr />
@@ -199,10 +206,6 @@
               <NavItem plain href="/chat/{c.id}" active={route.first === 'chat' && route.second === c.id}>{c.title || 'Untitled'}</NavItem>
             {/each}
           </div>
-        {/if}
-        {#if dev}
-          <hr />
-          <NavItem href="/workflows" icon="workflow" active={route.first === 'workflows'}>Workflows</NavItem>
         {/if}
         {#if dev && views.length}
           <hr />
@@ -261,6 +264,7 @@
       {/if}
       {/key}
       {#if asking}<Passkey user={me.actor.user_id} ondone={() => (asking = false)} />{/if}
+      {#if recording}<Recorder tint={look(me.workspace).tint} onsave={(f) => keep([f])} onclose={() => (recording = false)} />{/if}
     </main>
     {#if catalogued && (!route.first || route.first === 'chat')}
       {#key generation}<Panel name={archive} seed={me.workspace} {views} archives={me.workspaces ?? []} spaces={me.spaces} home={me.home} current={scope} email={me.actor.email} onpick={pick} oncreate={create} />{/key}
@@ -268,7 +272,6 @@
     </div>
   </div>
   {#if catalogued}<Machine name={archive} seed={me.workspace} />{/if}
-  {#if recording}<Recorder onsave={(f) => keep([f])} onclose={() => (recording = false)} />{/if}
   {#if writing}<Journal seed={me.workspace} onsave={(f) => keep([f])} onclose={() => (writing = false)} />{/if}
   {#if notice}<div class="notice" role="status">{notice}</div>{/if}
   {#if connecting}<Connect workspace={me.workspace} onclose={() => (connecting = false)} />{/if}

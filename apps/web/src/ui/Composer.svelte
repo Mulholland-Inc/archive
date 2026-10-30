@@ -1,7 +1,7 @@
 <script>
   import Icon from '#kit/Icon.svelte';
 
-  let { value = $bindable(''), busy = false, onsend, onstop, field = $bindable(), lead, ...rest } = $props();
+  let { value = $bindable(''), busy = false, onsend, onstop, field = $bindable(), lead, tail, ontalk, ...rest } = $props();
 
   const ready = $derived(value.trim() !== '');
 
@@ -24,9 +24,14 @@
   <div class="grow" data-value={value}>
     <textarea bind:this={field} bind:value rows="1" autocapitalize="sentences" enterkeyhint="send" onkeydown={key} {...rest}></textarea>
   </div>
-  <button class="send" class:busy type="submit" disabled={!busy && !ready} title={busy ? 'Stop' : 'Send'} aria-label={busy ? 'Stop' : 'Send'}>
-    <Icon name={busy ? 'square' : 'arrow-up'} />
-  </button>
+  {@render tail?.()}
+  {#if !busy && !ready && ontalk}
+    <button class="send" type="button" title="Record a memory" aria-label="Record a memory" onclick={ontalk}><Icon name="audio-lines" /></button>
+  {:else}
+    <button class="send" class:busy type="submit" disabled={!busy && !ready} title={busy ? 'Stop' : 'Send'} aria-label={busy ? 'Stop' : 'Send'}>
+      <Icon name={busy ? 'square' : 'arrow-up'} />
+    </button>
+  {/if}
 </form>
 
 <style>

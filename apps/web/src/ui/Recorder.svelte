@@ -2,15 +2,18 @@
   import { onDestroy } from 'svelte';
   import Icon from '#kit/Icon.svelte';
 
-  let { onsave, onclose } = $props();
+  let { tint = '#ffffff', onsave, onclose } = $props();
   let state = $state('starting');
   let seconds = $state(0);
   let problem = $state('');
   let canvas = $state();
-  let stream, recorder, audio, analyser, timer, frame;
+  let inputs = $state([]);
+  let input = $state('');
+  let stream, recorder, audio, analyser, source, out, timer, frame;
   let chunks = [];
 
   const clock = $derived(`${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`);
+  const recording = $derived(state === 'recording');
 
   function draw() {
     frame = requestAnimationFrame(draw);
@@ -18,34 +21,49 @@
     const c = canvas.getContext('2d');
     const { width, height } = canvas;
     const data = new Uint8Array(analyser.frequencyBinCount);
-    analyser.getByteTimeDomainData(data);
+    analyser.getByteFrequencyData(data);
     c.clearRect(0, 0, width, height);
-    c.fillStyle = state === 'paused' ? '#555a66' : '#ffffff';
-    const bars = 48;
+    c.fillStyle = recording ? tint : '#3a3d45';
+    const bars = 56;
     const gap = width / bars;
     for (let i = 0; i < bars; i++) {
-      const v = state === 'paused' ? 0 : Math.abs(data[Math.floor((i / bars) * data.length)] - 128) / 128;
-      const h = Math.max(4, Math.min(1, v * 3.2) * height * 0.92);
+      const mirror = Math.abs(i - (bars - 1) / 2) / (bars / 2);
+      const v = recording ? data[Math.floor(mirror * data.length * 0.45)] / 255 : 0;
+      const h = Math.max(6, v * height * 0.95);
       c.beginPath();
-      c.roundRect(i * gap + gap * 0.28, (height - h) / 2, gap * 0.44, h, gap * 0.22);
+      c.roundRect(i * gap + gap * 0.3, (height - h) / 2, gap * 0.4, h, gap * 0.2);
       c.fill();
     }
   }
 
+  async function open(id) {
+    const next = await navigator.mediaDevices.getUserMedia({ audio: id ? { deviceId: { exact: id } } : true });
+    source?.disconnect();
+    stream?.getTracks().forEach((t) => t.stop());
+    stream = next;
+    source = audio.createMediaStreamSource(stream);
+    source.connect(analyser);
+    source.connect(out);
+  }
+
   async function start() {
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch {
-      state = 'failed';
-      problem = 'Your browser needs permission to use the microphone.';
-      return;
-    }
-    recorder = new MediaRecorder(stream);
-    recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
     audio = new AudioContext();
     analyser = audio.createAnalyser();
-    analyser.fftSize = 1024;
-    audio.createMediaStreamSource(stream).connect(analyser);
+    analyser.fftSize = 512;
+    analyser.smoothingTimeConstant = 0.72;
+    out = audio.createMediaStreamDestination();
+    try {
+      await open('');
+    } catch {
+      state = 'failed';
+      problem = 'Allow the microphone in your browser, then try again.';
+      return;
+    }
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    inputs = devices.filter((d) => d.kind === 'audioinput' && d.deviceId !== 'default' && d.deviceId !== 'communications');
+    input = stream.getAudioTracks()[0]?.getSettings().deviceId ?? inputs[0]?.deviceId ?? '';
+    recorder = new MediaRecorder(out.stream);
+    recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
     recorder.start(1000);
     state = 'recording';
     timer = setInterval(() => state === 'recording' && seconds++, 1000);
@@ -53,7 +71,7 @@
   }
 
   function pause() {
-    if (state === 'recording') {
+    if (recording) {
       recorder.pause();
       state = 'paused';
     } else {
@@ -73,53 +91,67 @@
     recorder.stop();
   }
 
-  function cleanup() {
+  onDestroy(() => {
     clearInterval(timer);
     cancelAnimationFrame(frame);
     stream?.getTracks().forEach((t) => t.stop());
     audio?.close();
-  }
+  });
 
-  onDestroy(cleanup);
   start();
 </script>
 
-<div class="recorder" role="dialog" aria-modal="true" aria-label="Recording a memory">
-  <button class="cancel" type="button" onclick={() => finish(false)}>Cancel</button>
-  <div class="status" aria-live="polite">
-    {#if state === 'failed'}
-      <p>{problem}</p>
-    {:else}
-      <span class="dot" class:still={state !== 'recording'}></span>
-      <span>{state === 'paused' ? 'Paused' : state === 'starting' ? 'Starting' : 'Recording'}</span>
+<section class="recorder" aria-label="Recording a memory">
+  <header>
+    <button class="ghost" type="button" onclick={() => finish(false)}><Icon name="x" />Discard</button>
+    {#if inputs.length}
+      <label class="input">
+        <Icon name="mic" />
+        <select bind:value={input} aria-label="Microphone" onchange={() => open(input)}>
+          {#each inputs as d, i (d.deviceId)}<option value={d.deviceId}>{d.label || `Microphone ${i + 1}`}</option>{/each}
+        </select>
+        <Icon name="chevron-down" />
+      </label>
     {/if}
-  </div>
-  {#if state !== 'failed'}
-    <div class="time">{clock}</div>
-    <canvas bind:this={canvas} width="960" height="240" aria-hidden="true"></canvas>
-    <div class="controls">
-      <button class="round" type="button" disabled={state === 'starting'} aria-label={state === 'paused' ? 'Keep recording' : 'Pause'} title={state === 'paused' ? 'Keep recording' : 'Pause'} onclick={pause}><Icon name={state === 'paused' ? 'mic' : 'pause'} /></button>
-      <button class="stop" type="button" disabled={state === 'starting'} aria-label="Stop and save" title="Stop and save" onclick={() => finish(true)}><span></span></button>
+  </header>
+
+  {#if state === 'failed'}
+    <p class="problem">{problem}</p>
+  {:else}
+    <div class="stage">
+      <div class="status" aria-live="polite"><span class="dot" class:still={!recording}></span>{state === 'paused' ? 'Paused' : state === 'starting' ? 'Getting ready' : 'Recording'}</div>
+      <div class="time">{clock}</div>
+      <canvas bind:this={canvas} width="1120" height="240" aria-hidden="true"></canvas>
     </div>
-    <p class="hint">Stop saves it to this archive.</p>
+    <footer>
+      <button class="round" type="button" disabled={state === 'starting'} aria-label={recording ? 'Pause' : 'Keep recording'} title={recording ? 'Pause' : 'Keep recording'} onclick={pause}><Icon name={recording ? 'pause' : 'mic'} /></button>
+      <button class="save" type="button" disabled={state === 'starting'} style="--tint: {tint}" onclick={() => finish(true)}><Icon name="check" />Save memory</button>
+    </footer>
   {/if}
-</div>
+</section>
 
 <style>
-  .recorder { position: fixed; inset: 0; z-index: calc(var(--z-nav) + 10); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-6); padding: var(--space-5); background: #000; color: #fff; }
-  .cancel { position: absolute; top: var(--space-4); left: var(--space-4); color: #9aa0ad; }
-  .cancel:hover { color: #fff; }
-  .status { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-lg); }
-  .dot { width: 12px; height: 12px; border-radius: 50%; background: #ff3b30; animation: beat 1.2s ease-in-out infinite; }
-  .dot.still { animation: none; background: #555a66; }
-  .time { font: var(--weight-medium) clamp(56px, 14vw, 104px) / 1 var(--font-sans); font-variant-numeric: tabular-nums; letter-spacing: var(--tracking-tight); }
-  canvas { width: min(760px, 100%); height: 160px; }
-  .controls { display: flex; align-items: center; gap: var(--space-6); }
-  .round { display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%; background: #1f2126; color: #fff; }
-  .round:hover { background: #2c2f36; }
-  .round :global(.icon) { width: 26px; height: 26px; }
-  .stop { display: grid; place-items: center; width: 88px; height: 88px; border: 4px solid #fff; border-radius: 50%; }
-  .stop span { width: 34px; height: 34px; border-radius: 8px; background: #ff3b30; }
-  .hint { color: #9aa0ad; font-size: var(--text-meta); }
+  .recorder { position: absolute; inset: var(--space-2); z-index: calc(var(--z-raised) + 2); display: flex; flex-direction: column; overflow: hidden; border-radius: var(--radius-panel); background: #08090c; color: #fff; animation: open 220ms var(--ease-out) both; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3); }
+  .ghost { display: inline-flex; align-items: center; gap: var(--space-1); color: #8f95a3; transition: color var(--duration-fast); }
+  .ghost:hover { color: #fff; }
+  .ghost :global(.icon), .input :global(.icon) { width: 15px; height: 15px; }
+  .input { position: relative; display: inline-flex; align-items: center; gap: var(--space-1-5); max-width: 62%; padding: var(--space-1) var(--space-2); border-radius: var(--radius-full); background: #17191f; color: #c9cdd6; font-size: var(--text-table); }
+  .input select { min-width: 0; max-width: 240px; appearance: none; border: 0; background: none; color: inherit; font: inherit; text-overflow: ellipsis; outline: 0; cursor: pointer; }
+  .stage { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-5); min-height: 0; padding: var(--space-3); }
+  .status { display: flex; align-items: center; gap: var(--space-2); color: #8f95a3; font-size: var(--text-table); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #ff3b30; animation: beat 1.4s ease-in-out infinite; }
+  .dot.still { animation: none; background: #4a4e59; }
+  .time { font: var(--weight-medium) clamp(48px, 9vw, 76px) / 1 var(--font-serif); font-variant-numeric: tabular-nums; letter-spacing: var(--tracking-tight); }
+  canvas { width: min(560px, 100%); height: 120px; }
+  footer { display: flex; align-items: center; justify-content: center; gap: var(--space-3); padding: var(--space-5) var(--space-3) var(--space-6); }
+  .round { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 50%; background: #17191f; color: #fff; transition: background var(--duration-fast); }
+  .round:hover { background: #24272f; }
+  .round :global(.icon) { width: 20px; height: 20px; }
+  .save { display: inline-flex; align-items: center; gap: var(--space-2); height: 52px; padding: 0 var(--space-5); border-radius: var(--radius-full); background: #fff; color: #08090c; font-weight: var(--weight-medium); transition: transform var(--duration-fast) var(--ease-out); }
+  .save:hover { transform: translateY(-1px); }
+  .save :global(.icon) { width: 18px; height: 18px; color: var(--tint); }
+  .problem { margin: auto; padding: var(--space-4); color: #c9cdd6; text-align: center; }
   @keyframes beat { 50% { opacity: 0.25; } }
+  @keyframes open { from { opacity: 0; transform: scale(0.985); } }
 </style>

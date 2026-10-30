@@ -11,9 +11,6 @@
   const float = $derived(ui.floating && !bare);
   const stem = $derived(robot ? (bare ? 'turn-robot-head' : float ? 'turn-float' : 'turn-face') : `turn-${shown}`);
   const src = (name) => `/bots/${name}.webp`;
-  // Where the little indicator lights sit on each drawing, as a share of its height.
-  const LEDS = { cottage: 72, townhouse: 56, farmhouse: 70, cabinet: 45, warehouse: 66, factory: 75, bank: 66, safe: 63, bookcase: 47 };
-  const ledY = $derived(robot ? (bare ? 45 : float ? 76 : 73) : LEDS[shown]);
   // With no tile behind it, the character itself carries the colour.
   const paint = $derived(float || bare);
 </script>
@@ -31,7 +28,9 @@
       {#if robot && bare}{@render layer('turn-robot-body')}{/if}
       {#each [0, 1, 2, 3] as i (i)}{@render layer(`${stem}-${i}`, `f f${i}`)}{/each}
       <img class="lit" src={src(`${stem}-lit`)} alt="" />
-      <span class="leds" style="top: {ledY}%"><b></b><b></b><b></b></span>
+      <img class="panel" src={src(`${stem}-panel`)} alt="" />
+      <i class="led red" style="--src: url({src(`${stem}-red`)})"></i>
+      <i class="led blue" style="--src: url({src(`${stem}-blue`)})"></i>
     </span>
   {:else}
     <Icon name={shown} />
@@ -65,17 +64,17 @@
   /* Eyes come on, and small hard indicator lights chatter like a droid's. No glow. */
   .lit { opacity: 0; }
   .bot:hover .lit, :global(.row:hover) .lit, :global(.avatar:hover) .lit, :global(.now:hover) .lit { opacity: 1; animation: eyes 2.4s step-end 260ms infinite; }
-  .leds { position: absolute; left: 50%; display: flex; gap: 3%; width: 30%; justify-content: center; transform: translate(-50%, -50%); visibility: hidden; }
-  .bot:hover .leds, :global(.row:hover) .leds, :global(.avatar:hover) .leds, :global(.now:hover) .leds { visibility: visible; }
-  .leds b { width: 16%; aspect-ratio: 1; min-width: 2px; border-radius: 1px; background: rgb(0 0 0 / 28%); }
-  .bot:hover .leds b, :global(.row:hover) .leds b, :global(.avatar:hover) .leds b, :global(.now:hover) .leds b { animation: 1.1s step-end 260ms infinite; }
-  .bot:hover .leds b:nth-child(1), :global(.row:hover) .leds b:nth-child(1), :global(.avatar:hover) .leds b:nth-child(1), :global(.now:hover) .leds b:nth-child(1) { animation-name: red; }
-  .bot:hover .leds b:nth-child(2), :global(.row:hover) .leds b:nth-child(2), :global(.avatar:hover) .leds b:nth-child(2), :global(.now:hover) .leds b:nth-child(2) { animation-name: blue; animation-duration: 0.7s; }
-  .bot:hover .leds b:nth-child(3), :global(.row:hover) .leds b:nth-child(3), :global(.avatar:hover) .leds b:nth-child(3), :global(.now:hover) .leds b:nth-child(3) { animation-name: red; animation-duration: 1.7s; animation-delay: 500ms; }
+  .panel, .led { opacity: 0; }
+  .led { position: absolute; inset: 0; mix-blend-mode: normal; -webkit-mask: var(--src) center / 100% 100% no-repeat; mask: var(--src) center / 100% 100% no-repeat; }
+  .red { background: #ff3b30; }
+  .blue { background: #2f9bff; }
+  .bot:hover .panel, :global(.row:hover) .panel, :global(.avatar:hover) .panel, :global(.now:hover) .panel { opacity: 1; }
+  .bot:hover .red, :global(.row:hover) .red, :global(.avatar:hover) .red, :global(.now:hover) .red { animation: red 1.1s step-end 260ms infinite; }
+  .bot:hover .blue, :global(.row:hover) .blue, :global(.avatar:hover) .blue, :global(.now:hover) .blue { animation: blue 0.7s step-end 260ms infinite; }
   @keyframes eyes { 0%, 88% { opacity: 1; } 90%, 94% { opacity: 0; } 96%, 100% { opacity: 1; } }
-  @keyframes red { 0%, 45% { background: #ff2d20; } 46%, 100% { background: rgb(0 0 0 / 28%); } }
-  @keyframes blue { 0%, 30% { background: rgb(0 0 0 / 28%); } 31%, 70% { background: #1e8cff; } 71%, 100% { background: rgb(0 0 0 / 28%); } }
+  @keyframes red { 0%, 45% { opacity: 1; } 46%, 100% { opacity: 0; } }
+  @keyframes blue { 0%, 30% { opacity: 0; } 31%, 70% { opacity: 1; } 71%, 100% { opacity: 0; } }
   @media (prefers-reduced-motion: reduce) {
-    .f, .lit, .leds b { animation: none !important; }
+    .f, .lit, .led { animation: none !important; }
   }
 </style>

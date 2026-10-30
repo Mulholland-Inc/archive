@@ -56,6 +56,7 @@
   import Note from './ui/Note.svelte';
   import Setup from './ui/Setup.svelte';
   import Capture from './ui/Capture.svelte';
+  import Dictate from './ui/Dictate.svelte';
   import Bot from './ui/Bot.svelte';
 
   let { id = '', name = '', email = '', family = '', short = '', seed = '', tint = '', onfiles, onsaved } = $props();
@@ -299,8 +300,9 @@
     {#if loading}<div class="thinking" role="status" aria-label="Loading"><span></span><span></span><span></span></div>{/if}
   </div>
   <div class="dock">
-    <Composer bind:value={draft} bind:field {busy} onsend={send} onstop={stop} placeholder={short ? `Message ${short}` : 'Ask anything'} aria-label="Message">
+    <Composer bind:value={draft} bind:field {busy} ontalk={() => dispatchEvent(new CustomEvent('capture-memory'))} onsend={send} onstop={stop} placeholder={short ? `Message ${short}` : 'Ask anything'} aria-label="Message">
       {#snippet lead()}<Capture {onfiles} />{/snippet}
+      {#snippet tail()}<Dictate bind:value={draft} />{/snippet}
     </Composer>
   </div>
   {#if empty}<Setup {email} />{/if}

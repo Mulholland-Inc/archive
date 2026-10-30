@@ -2,7 +2,7 @@
   import { fetchRows } from './filter.js';
 
   const NEEDS = ['name', 'sex', 'born_year', 'died_year', 'home', 'living', 'parents'];
-  export const isTree = (view) => view.layout === 'tree' && NEEDS.every((n) => view.columns.some((c) => c.name === n));
+  export const isTree = (view) => view.name === 'family_tree' && NEEDS.every((n) => view.columns.some((c) => c.name === n));
 
   function lifespan(p) {
     if (p.living) return p.born_year ? `${p.born_year}–Living` : 'Living';

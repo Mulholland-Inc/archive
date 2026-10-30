@@ -4,5 +4,4 @@ SELECT p.*,
     ARRAY(SELECT l.partnership FROM parent_link l WHERE l.child = p.id ORDER BY l.created_at) AS parents
 FROM person p;
 COMMENT ON VIEW family_tree IS 'The family, oldest at the top
-layout: tree
 icon: network';
