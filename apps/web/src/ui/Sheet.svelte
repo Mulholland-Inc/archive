@@ -27,7 +27,8 @@
     padding: var(--gutter);
     overflow-y: var(--sheet-overflow);
     overscroll-behavior-y: none;
+    mask-image: var(--sheet-fade);
   }
   .body > :global(*) { flex: none; }
-  .tight .body { --table-bleed: var(--space-2); gap: var(--space-2); padding: var(--space-2); }
+  .tight .body { --table-bleed: var(--space-2); gap: var(--space-2); padding: var(--space-2); mask-image: none; }
 </style>

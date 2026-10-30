@@ -276,6 +276,7 @@
   --main-height: var(--bar-height);
   --shell-rows: minmax(0, 1fr);
   --sheet-overflow: auto;
+  --sheet-fade: linear-gradient(transparent, var(--gray-1000) var(--gutter), var(--gray-1000) calc(100% - var(--gutter)), transparent);
   --bar-top: var(--frame);
   --bar-bottom: auto;
   --bar-pad: 0px;
@@ -315,6 +316,7 @@
     --main-height: auto;
     --shell-rows: 1fr auto;
     --sheet-overflow: visible;
+    --sheet-fade: none;
     --bar-top: auto;
     --bar-bottom: 0;
     --bar-pad: var(--space-1);
