@@ -8,7 +8,6 @@
   import Section from '#lib/Section.svelte';
   import Specs from '#lib/Specs.svelte';
   import Story from '#lib/Story.svelte';
-  import { START } from '#lib/site.js';
 
   const STORY = [
     { art: 'story-1', alt: 'A filing cabinet, a data silo, a mailbox and a spreadsheet board, each standing apart', title: 'Today, it is scattered.', text: 'Files sit in SharePoint and Google Drive, numbers in Snowflake and NetSuite, decisions in Outlook and Slack.' },
@@ -88,5 +87,4 @@
   alt="A city block whose buildings are records, papers, files, a vault and an antenna for AI assistants"
   title="Start building in minutes."
   lead="Free for your first workspace. No card, no sales call."
-  links={[START, ['/pricing', 'See pricing']]}
 />

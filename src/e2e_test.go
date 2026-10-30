@@ -7,7 +7,6 @@ import (
 	"cmp"
 	"context"
 	"crypto"
-	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -3285,16 +3284,6 @@ func TestTwoWorkspacesInOneProcessSeeNothingOfEachOther(t *testing.T) {
 			t.Errorf("MCP as bob: %v %+v", err, res)
 		}
 	})
-
-	t.Run("UsageIsCountedPerWorkspace", func(t *testing.T) {
-		q := func(short, col string) int {
-			n, _ := strconv.Atoi(in.psql("archive", "SELECT coalesce(sum(u."+col+"), 0) FROM archive.usage u JOIN archive.workspace w ON w.id = u.workspace WHERE w.id::text = '"+short+"'"))
-			return n
-		}
-		if q(ws, "runs") < 4 || q(ws, "workflow_runs") < 2 || q(one, "workflow_runs") != 1 || q(one, "stored_bytes") != len("alpha only") || q(ws, "stored_bytes") != len("beta only") {
-			t.Errorf("usage: bob %d runs, %d workflow runs, %d bytes; alice %d workflow runs, %d bytes", q(ws, "runs"), q(ws, "workflow_runs"), q(ws, "stored_bytes"), q(one, "workflow_runs"), q(one, "stored_bytes"))
-		}
-	})
 }
 
 func (in *e2eInst) cloudsql(env ...string) *e2eInst {
@@ -3662,149 +3651,45 @@ func TestGeneratedURLsUseTheAPIAddress(t *testing.T) {
 	}
 }
 
-func e2eStripeSign(body, secret string, at time.Time) string {
-	ts := strconv.FormatInt(at.Unix(), 10)
-	m := hmac.New(sha256.New, []byte(secret))
-	m.Write([]byte(ts + "." + body))
-	return "t=" + ts + ",v1=" + hex.EncodeToString(m.Sum(nil))
-}
-
-func TestStripeBillingChangesPlansAndLimitsAreEnforced(t *testing.T) {
+func TestChatUsesTheWorkspacesOwnAnthropicKey(t *testing.T) {
 	t.Parallel()
 	var mu sync.Mutex
-	var ws string
-	var checkout url.Values
 	var keys []string
-	stripe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		defer mu.Unlock()
-		if user, _, _ := r.BasicAuth(); user != "sk_test_1" {
-			w.WriteHeader(401)
-			return
-		}
-		switch r.Method + " " + r.URL.Path {
-		case "POST /v1/checkout/sessions":
-			r.ParseForm()
-			checkout = r.PostForm
-			json.NewEncoder(w).Encode(map[string]string{"id": "cs_1", "url": "https://checkout.stripe.test/cs_1"})
-		case "GET /v1/subscriptions/sub_1":
-			json.NewEncoder(w).Encode(map[string]any{"id": "sub_1", "customer": "cus_1", "status": "active", "metadata": map[string]string{"workspace": ws},
-				"items": map[string]any{"data": []any{map[string]any{"price": map[string]string{"id": "price_pro"}}}}})
-		default:
-			w.WriteHeader(404)
-		}
-	}))
-	defer stripe.Close()
 	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		keys = append(keys, r.Header.Get("x-api-key"))
 		mu.Unlock()
 		for _, ev := range []string{
-			`{"type":"message_start","message":{"usage":{"input_tokens":10,"cache_read_input_tokens":2,"output_tokens":1}}}`,
 			`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
 			`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi."}}`,
 			`{"type":"content_block_stop","index":0}`,
-			`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}`,
+			`{"type":"message_delta","delta":{"stop_reason":"end_turn"}}`,
 		} {
 			fmt.Fprintf(w, "event: x\ndata: %s\n\n", ev)
 		}
 	}))
 	defer model.Close()
-	in := newInst(t, "ARCHIVE_STRIPE_KEY=sk_test_1", "ARCHIVE_STRIPE_WEBHOOK_SECRET=whsec_1", "ARCHIVE_STRIPE_URL="+stripe.URL,
-		"ANTHROPIC_API_KEY=shared", "ANTHROPIC_BASE_URL="+model.URL, "ARCHIVE_CHAT_MODEL=")
+	in := newInst(t, "ANTHROPIC_API_KEY=shared", "ANTHROPIC_BASE_URL="+model.URL, "ARCHIVE_CHAT_MODEL=")
 	in.must("user", "add", "alice@example.com")
-	in.must("plan", "set", "free", `{"runs": 2, "ai_tokens": 30}`)
-	in.must("plan", "set", "pro", `{"name": "Pro", "price": "price_pro", "runs": 1000}`)
-	in.must("plan", "default", "free")
-	mu.Lock()
-	ws = decode[Workspace](t, in.must("workspace", "add", "Bob Co", "bob@example.com")).ID
-	mu.Unlock()
+	ws := decode[Workspace](t, in.must("workspace", "add", "Bob Co", "bob@example.com")).ID
 	srv := in.serve()
-	api := srv.url + "/api"
-	alice := decode[Token](t, in.must("token", "create")).Secret
 	bob := decode[Token](t, in.must("-workspace", ws, "-as", "bob@example.com", "token", "create", "-full")).Secret
-	info := func() WorkspaceInfo {
-		t.Helper()
-		var i WorkspaceInfo
-		st, _ := call(t, "GET", srv.url+"/auth/workspace", bob, nil, &i)
-		wantStatus(t, st, 200, "workspace info")
-		return i
-	}
-	if i := info(); i.Plan != "free" || i.Limits == nil || *i.Limits.Runs != 2 || !i.Billing {
-		t.Fatalf("a new workspace's plan: %+v", i)
-	}
 	chat := func(t *testing.T) int {
 		t.Helper()
-		st, _ := call(t, "POST", api+"/chat", bob, map[string]string{"text": "hi"}, nil)
+		st, _ := call(t, "POST", srv.url+"/api/chat", bob, map[string]string{"text": "hi"}, nil)
 		return st
 	}
 	wantStatus(t, chat(t), 200, "chat on the shared key")
-	if got := in.psql("archive", "SELECT ai_tokens FROM archive.usage u JOIN archive.workspace w ON w.id = u.workspace WHERE w.id::text = '"+ws+"'"); got != "17" {
-		t.Errorf("AI tokens counted: %q, want 10 + 2 + 5", got)
-	}
-	wantStatus(t, chat(t), 200, "chat on the shared key again")
-	wantStatus(t, chat(t), 402, "chat over the AI token limit")
-	st, _ := call(t, "PATCH", srv.url+"/auth/workspace", bob, map[string]string{"anthropic_key": "own-key"}, nil)
+	var i WorkspaceInfo
+	st, _ := call(t, "PATCH", srv.url+"/auth/workspace", bob, map[string]string{"anthropic_key": "own-key"}, &i)
 	wantStatus(t, st, 200, "set the workspace's own Anthropic key")
+	if !i.AnthropicKey {
+		t.Errorf("workspace info after setting a key: %+v", i)
+	}
 	wantStatus(t, chat(t), 200, "chat on the workspace's own key")
 	mu.Lock()
-	if !slices.Equal(keys, []string{"shared", "shared", "own-key"}) {
+	if !slices.Equal(keys, []string{"shared", "own-key"}) {
 		t.Errorf("Anthropic keys used: %v", keys)
 	}
 	mu.Unlock()
-
-	for i := range 3 {
-		st, _ := e2eRun(t, api, bob, "return 1")
-		if i < 2 && st != 200 {
-			t.Fatalf("run %d: %d", i+1, st)
-		}
-		if i == 2 && st != 402 {
-			t.Fatalf("run over the plan's limit: %d", st)
-		}
-	}
-	for range 4 {
-		if st, _ := e2eRun(t, api, alice, "return 1"); st != 200 {
-			t.Fatalf("workspace one has no plan, so no limit: %d", st)
-		}
-	}
-
-	var co map[string]string
-	st, _ = call(t, "POST", srv.url+"/auth/billing/checkout", bob, map[string]string{"plan": "pro"}, &co)
-	mu.Lock()
-	if st != 200 || co["url"] != "https://checkout.stripe.test/cs_1" || checkout.Get("client_reference_id") != ws || checkout.Get("line_items[0][price]") != "price_pro" ||
-		checkout.Get("customer_email") != "bob@example.com" || checkout.Get("mode") != "subscription" {
-		t.Errorf("checkout: %d %v %v", st, co, checkout)
-	}
-	mu.Unlock()
-	stripeHook := func(body, sig string) int {
-		req, _ := http.NewRequest("POST", srv.url+"/stripe", strings.NewReader(body))
-		req.Header.Set("Stripe-Signature", sig)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		return resp.StatusCode
-	}
-	done := `{"type":"checkout.session.completed","data":{"object":{"client_reference_id":"` + ws + `","subscription":"sub_1"}}}`
-	wantStatus(t, stripeHook(done, e2eStripeSign(done, "whsec_wrong", time.Now())), 400, "a webhook signed with another secret")
-	wantStatus(t, stripeHook(done, e2eStripeSign(done, "whsec_1", time.Now().Add(-time.Hour))), 400, "an old webhook")
-	wantStatus(t, stripeHook(done, e2eStripeSign(done, "whsec_1", time.Now())), 200, "checkout completed")
-	if i := info(); i.Plan != "pro" || *i.Limits.Runs != 1000 {
-		t.Fatalf("plan after checkout: %+v", i)
-	}
-	if st, _ := e2eRun(t, api, bob, "return 1"); st != 200 {
-		t.Errorf("run on pro: %d", st)
-	}
-	gone := `{"type":"customer.subscription.deleted","data":{"object":{"id":"sub_1","customer":"cus_1","status":"canceled","metadata":{}}}}`
-	wantStatus(t, stripeHook(gone, e2eStripeSign(gone, "whsec_1", time.Now())), 200, "subscription canceled")
-	if i := info(); i.Plan != "free" {
-		t.Errorf("plan after canceling: %+v", i)
-	}
-	if st, _ := e2eRun(t, api, bob, "return 1"); st != 402 {
-		t.Errorf("run back on free: %d", st)
-	}
-	if got := in.psql("archive", "SELECT customer || '|' || subscription FROM archive.workspace WHERE id::text = '"+ws+"'"); got != "cus_1|" {
-		t.Errorf("customer and subscription: %q", got)
-	}
 }

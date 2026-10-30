@@ -56,7 +56,6 @@ type hubEntry struct {
 type Workspace struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
-	Plan      string    `json:"plan,omitempty"`
 	CreatedAt time.Time `json:"created_at,omitzero"`
 }
 
@@ -168,7 +167,7 @@ func (h *Hub) register(ctx context.Context) error {
 		return err
 	}
 	if fresh {
-		r, err := q.CreateWorkspace(ctx, generated.CreateWorkspaceParams{ID: row.ID, Name: row.Name, Key: h.wrap(h.one, key)})
+		r, err := q.CreateWorkspace(ctx, row.ID, row.Name, h.wrap(h.one, key))
 		if errors.Is(err, pgx.ErrNoRows) {
 			r, err = q.FirstWorkspace(ctx)
 		}
@@ -249,7 +248,7 @@ func (h *Hub) openArchive(ctx context.Context, row generated.ArchiveWorkspace, k
 		return nil, err
 	}
 	return &Archive{hub: h, ws: row, st: st, cat: cat, hints: h.hints, prefix: id, aead: aead,
-		blobs: blobPrefixed(h.blobs, id+"/"), linkKey: secretDerive(key, "files"), slots: make(chan struct{}, h.concurrent(ctx, row))}, nil
+		blobs: blobPrefixed(h.blobs, id+"/"), linkKey: secretDerive(key, "files"), slots: make(chan struct{}, workspaceRuns)}, nil
 }
 
 func (h *Hub) acquire(ctx context.Context, short string) (*Archive, func(), error) {
@@ -396,9 +395,9 @@ func (h *Hub) upgradeAll(ctx context.Context, wg *sync.WaitGroup) {
 }
 
 func (a *Archive) afterOpen(ctx context.Context) {
-	err := errors.Join(a.st.System(ctx, func(ctx context.Context) error {
+	err := a.st.System(ctx, func(ctx context.Context) error {
 		return a.st.db(ctx).ResetProcessing(ctx)
-	}), a.storedBytes(ctx))
+	})
 	for _, kind := range []string{"workflow", "file"} {
 		next, nerr := a.nextDue(ctx, kind)
 		if nerr == nil && next != nil {
@@ -673,40 +672,20 @@ func (h *Hub) signupOpen(ctx context.Context) bool {
 	return on
 }
 
-func (h *Hub) defaultPlan(ctx context.Context) *string {
-	var p string
-	if ok, err := h.setting(ctx, "plan", &p); !ok || err != nil || p == "" {
-		return nil
-	}
-	return &p
-}
-
 type Settings struct {
-	Signup bool   `json:"signup"`
-	Plan   string `json:"plan"`
+	Signup bool `json:"signup"`
 }
 
 func (h *Hub) Settings(ctx context.Context) (*Settings, error) {
 	if err := h.admin(ctx); err != nil {
 		return nil, err
 	}
-	s := &Settings{Signup: h.signupOpen(ctx)}
-	if p := h.defaultPlan(ctx); p != nil {
-		s.Plan = *p
-	}
-	return s, nil
+	return &Settings{Signup: h.signupOpen(ctx)}, nil
 }
 
-func (h *Hub) SetSettings(ctx context.Context, signup *bool, plan *string) (*Settings, error) {
+func (h *Hub) SetSettings(ctx context.Context, signup *bool) (*Settings, error) {
 	if err := h.admin(ctx); err != nil {
 		return nil, err
-	}
-	if plan != nil && *plan != "" {
-		if _, err := h.q().PlanByID(ctx, *plan); errors.Is(err, pgx.ErrNoRows) {
-			return nil, fmt.Errorf("plan %q: %w", *plan, ErrNotFound)
-		} else if err != nil {
-			return nil, err
-		}
 	}
 	set := func(k string, v any) error {
 		b, _ := json.Marshal(v)
@@ -717,20 +696,11 @@ func (h *Hub) SetSettings(ctx context.Context, signup *bool, plan *string) (*Set
 			return nil, err
 		}
 	}
-	if plan != nil {
-		if err := set("plan", *plan); err != nil {
-			return nil, err
-		}
-	}
 	return h.Settings(ctx)
 }
 
 func workspaceOut(r generated.ArchiveWorkspace) Workspace {
-	w := Workspace{ID: r.ID.String(), Name: r.Name, CreatedAt: r.CreatedAt}
-	if r.Plan != nil {
-		w.Plan = *r.Plan
-	}
-	return w
+	return Workspace{ID: r.ID.String(), Name: r.Name, CreatedAt: r.CreatedAt}
 }
 
 func (h *Hub) Workspaces(ctx context.Context) ([]Workspace, error) {
@@ -811,7 +781,7 @@ func (h *Hub) createWorkspace(ctx context.Context, name, owner, ownerName string
 	key := make([]byte, 32)
 	rand.Read(key)
 	q := h.q()
-	row, err = q.CreateWorkspace(ctx, generated.CreateWorkspaceParams{ID: id, Name: name, Key: h.wrap(short, key), Plan: h.defaultPlan(ctx)})
+	row, err = q.CreateWorkspace(ctx, id, name, h.wrap(short, key))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return row, fmt.Errorf("workspace %s already exists: %w", short, ErrConflict)
 	}
@@ -866,41 +836,20 @@ func (h *Hub) signup(ctx context.Context, workspace, email, name string) (string
 	return r.ID.String(), err
 }
 
-type Usage struct {
-	Runs         int64 `json:"runs"`
-	WorkflowRuns int64 `json:"workflow_runs"`
-	AiTokens     int64 `json:"ai_tokens"`
-	StoredBytes  int64 `json:"stored_bytes"`
-}
-
 type WorkspaceInfo struct {
 	Workspace
-	Usage        Usage `json:"usage"`
-	Limits       *Plan `json:"limits,omitempty"`
-	AnthropicKey bool  `json:"anthropic_key"`
-	Billing      bool  `json:"billing"`
+	AnthropicKey bool `json:"anthropic_key"`
 }
 
 func (a *Archive) Info(ctx context.Context) (*WorkspaceInfo, error) {
 	if ActorFrom(ctx) == nil {
 		return nil, fmt.Errorf("not signed in: %w", ErrUnauthorized)
 	}
-	q := a.hub.q()
-	row, err := q.WorkspaceByID(ctx, a.ws.ID)
+	row, err := a.hub.q().WorkspaceByID(ctx, a.ws.ID)
 	if err != nil {
 		return nil, err
 	}
-	u, err := q.MonthUsage(ctx, row.ID)
-	if err != nil {
-		return nil, err
-	}
-	info := &WorkspaceInfo{Workspace: workspaceOut(row), Usage: Usage(u), AnthropicKey: len(row.AnthropicKey) > 0, Billing: billingOn()}
-	if row.Plan != nil {
-		if p, err := q.PlanByID(ctx, *row.Plan); err == nil {
-			info.Limits = planOut(p)
-		}
-	}
-	return info, nil
+	return &WorkspaceInfo{Workspace: workspaceOut(row), AnthropicKey: len(row.AnthropicKey) > 0}, nil
 }
 
 func (a *Archive) SetInfo(ctx context.Context, name, anthropicKey *string) (*WorkspaceInfo, error) {
@@ -929,22 +878,13 @@ func (a *Archive) SetInfo(ctx context.Context, name, anthropicKey *string) (*Wor
 	return a.Info(ctx)
 }
 
-func (a *Archive) anthropicKey(ctx context.Context) (string, bool) {
+func (a *Archive) anthropicKey(ctx context.Context) string {
 	if row, err := a.hub.q().WorkspaceByID(ctx, a.ws.ID); err == nil && len(row.AnthropicKey) > 0 {
 		if b, err := a.secretOpen(a.ws.ID, "anthropic", row.AnthropicKey); err == nil {
-			return string(b), true
+			return string(b)
 		}
 	}
-	return os.Getenv("ANTHROPIC_API_KEY"), false
-}
-
-func (h *Hub) concurrent(ctx context.Context, row generated.ArchiveWorkspace) int {
-	if billingOn() && row.Plan != nil {
-		if p, err := h.q().PlanByID(ctx, *row.Plan); err == nil && p.Concurrent != nil && *p.Concurrent > 0 {
-			return int(*p.Concurrent)
-		}
-	}
-	return workspaceRuns
+	return os.Getenv("ANTHROPIC_API_KEY")
 }
 
 func (a *Archive) slot(ctx context.Context) (func(), error) {
@@ -956,23 +896,6 @@ func (a *Archive) slot(ctx context.Context) (func(), error) {
 	case <-time.After(hubBusy):
 		return nil, fmt.Errorf("this workspace already runs %d scripts at once; try again shortly: %w", cap(a.slots), ErrBusy)
 	}
-}
-
-func (a *Archive) count(ctx context.Context, runs, workflowRuns, aiTokens int64) {
-	if err := a.hub.q().AddUsage(context.WithoutCancel(ctx), generated.AddUsageParams{Workspace: a.ws.ID, Runs: runs, WorkflowRuns: workflowRuns, AiTokens: aiTokens}); err != nil {
-		fmt.Fprintf(os.Stderr, "archive: workspace %s usage: %v\n", a.ws.ID, err)
-	}
-}
-
-func (a *Archive) storedBytes(ctx context.Context) error {
-	var n int64
-	if err := a.st.System(ctx, func(ctx context.Context) (err error) {
-		n, err = a.st.db(ctx).StoredBytes(ctx)
-		return err
-	}); err != nil {
-		return err
-	}
-	return a.hub.q().SetStoredBytes(context.WithoutCancel(ctx), a.ws.ID, n)
 }
 
 type prefixBlobs struct {
@@ -1034,33 +957,11 @@ func (h *Hub) workspaceRoutes(authed func(string, func(http.ResponseWriter, *htt
 	})
 	authed("PATCH /auth/settings", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		var body struct {
-			Signup *bool   `json:"signup"`
-			Plan   *string `json:"plan"`
+			Signup *bool `json:"signup"`
 		}
 		if err := httpDecode(r, &body); err != nil {
 			return 0, nil, err
 		}
-		return ok(h.SetSettings(r.Context(), body.Signup, body.Plan))
-	})
-	authed("GET /auth/plans", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		return ok(h.Plans(r.Context()))
-	})
-	authed("PUT /auth/plans/{id}", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		var p Plan
-		if err := httpDecode(r, &p); err != nil {
-			return 0, nil, err
-		}
-		p.ID = r.PathValue("id")
-		return ok(h.SetPlan(r.Context(), p))
-	})
-	authed("POST /auth/billing/checkout", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		var body struct {
-			Plan string `json:"plan"`
-		}
-		if err := httpDecode(r, &body); err != nil {
-			return 0, nil, err
-		}
-		u, err := archiveFrom(r.Context()).Checkout(r.Context(), body.Plan)
-		return ok(map[string]string{"url": u}, err)
+		return ok(h.SetSettings(r.Context(), body.Signup))
 	})
 }

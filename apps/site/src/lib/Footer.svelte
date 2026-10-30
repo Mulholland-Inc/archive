@@ -6,7 +6,7 @@
   const COLUMNS = [
     ['Product', PRODUCT.slice(0, 4).map(link)],
     ['Platform', PRODUCT.slice(4).map(link)],
-    ['Resources', [['/docs', 'Docs'], ['/blog', 'Blog'], ['/pricing', 'Pricing'], [GITHUB, 'GitHub']]],
+    ['Resources', [['/docs', 'Docs'], ['/blog', 'Blog'], [GITHUB, 'GitHub']]],
     ['Company', [['https://mulholland.ai', 'Mulholland'], ['mailto:hello@mulholland.ai', 'Contact'], ['/security', 'Trust'], [GITHUB + '/issues', 'Support']]]
   ];
 </script>

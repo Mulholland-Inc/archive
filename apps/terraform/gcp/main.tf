@@ -12,9 +12,7 @@ locals {
     ARCHIVE_BLOB_SECRET = google_storage_hmac_key.this.secret
   }
   optional = {
-    ANTHROPIC_API_KEY             = var.anthropic_api_key
-    ARCHIVE_STRIPE_KEY            = var.stripe_key
-    ARCHIVE_STRIPE_WEBHOOK_SECRET = var.stripe_webhook_secret
+    ANTHROPIC_API_KEY = var.anthropic_api_key
   }
   secrets = merge(local.required, local.optional)
   secret_names = setunion(toset(keys(local.required)), toset([
