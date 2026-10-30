@@ -41,7 +41,7 @@
     <p>Letting an assistant write and run its own steps sounds bold, so it helps to know what the script can and can't do:</p>
     <ul>
       <li><strong>It works as you.</strong> A script sees only what the person behind it is allowed to see, and can only change what they are allowed to change.</li>
-      <li><strong>It stays inside Archive.</strong> A script can work with your records, pages and files, and nothing else. It can't browse the internet or reach other systems.</li>
+      <li><strong>It stays inside Archive.</strong> A script can work with your records and files, and nothing else. It can't browse the internet or reach other systems.</li>
       <li><strong>It has limits.</strong> Every run has a time limit and a cap on how much it can return, so a mistake can't run away with itself.</li>
       <li><strong>It is all-or-nothing.</strong> If something goes wrong partway, nothing changes.</li>
     </ul>

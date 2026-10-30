@@ -13,11 +13,9 @@ The binary is stateless when given an external Postgres and blob store: any numb
 ```mermaid
 flowchart LR
   Apps[ChatGPT, Claude, Gemini, Grok] <--> MCP[MCP: run code] --> Core[Go core]
-  Editors[Page editors in the browser] <--> Sync[Page sync: SSE + ops] --> Core
   Clients[Clients, CLI, Terraform] <--> API[HTTP API] --> Core
   Core --> PG[(Postgres: archive + public)]
   Core --> Files[(Files: disk or S3)]
-  PG -. LISTEN/NOTIFY .-> Core
 ```
 
 ## Stack
@@ -25,7 +23,7 @@ flowchart LR
 - **Postgres 18** for all data, **Go** for the server, **a directory or S3-compatible storage** (S3, R2, MinIO, GCS) for file bytes.
 - **One Dockerfile**: the image holds Postgres and the binary. Without `DATABASE_URL`, the binary starts the bundled Postgres in `/data`; with it, it uses the external database and keeps nothing local.
 - **One port** serves the HTTP API (`/api`), sign-in (`/auth`) and MCP (`/mcp`).
-- **Clients**: one Svelte web app is the client everywhere. It is served as the website, and wrapped with Tauri 2 for iOS, Android, macOS, Windows and Linux; Capacitor is the fallback for iOS and Android if Tauri's mobile side proves rough. It is a client of the HTTP API and the page sync endpoints. `apps/web` is its start: Svelte 5 and Vite, in the look of archive.family's app (Geist and EB Garamond, a dark shell, cream pills, rounded panels). It has sign-in, files, pages with the live editor, and a page for every table and view, each with the icon and description from its comment; it is not yet wrapped in Tauri.
+- **Clients**: one Svelte web app is the client everywhere. It is served as the website, and wrapped with Tauri 2 for iOS, Android, macOS, Windows and Linux; Capacitor is the fallback for iOS and Android if Tauri's mobile side proves rough. It is a client of the HTTP API. `apps/web` is its start: Svelte 5 and Vite, in the look of archive.family's app (Geist and EB Garamond, a dark shell, cream pills, rounded panels). It has sign-in, files, and a page for every table and view, each with the icon and description from its comment; it is not yet wrapped in Tauri.
 
 ## Data model
 
@@ -102,14 +100,14 @@ The plan therefore only touches Archive's own objects, and it is never allowed t
 Agents get one MCP tool, `run`, which takes a TypeScript script and runs it inside Archive. Code is cheaper and more capable than many small tool calls: one script can query, loop, transform and write in a single turn.
 
 - **Runtime**: esbuild strips the types and goja runs the JavaScript, both inside the Go binary. Scripts have no file or network access beyond the SDK, and they run with a timeout (`ARCHIVE_RUN_TIMEOUT`) and caps on result and log size.
-- **As the user**: the script runs as the calling user's Postgres role, so row-level security applies. It also runs as one transaction, so a script that throws changes nothing. Side effects that leave Postgres, such as live page broadcasts and file processing, happen only after that transaction commits.
+- **As the user**: the script runs as the calling user's Postgres role, so row-level security applies. It also runs as one transaction, so a script that throws changes nothing. Side effects that leave Postgres, such as file processing, happen only after that transaction commits.
 - **SDK**: one word per verb:
   - rows: `sql`, `list`, `get`, `create`, `update`, `delete`, `search`;
   - schema: `schema`, `apply`, `tables`;
   - files and documents: `files`, `file`, `read`, `edit`;
   - `spaces`.
 
-  `create(table, data)` inserts a row; `create("Name.docx" | ".xlsx" | ".pptx" | ".page")` makes an empty document. Writes clean input per domain in Go before Postgres checks it.
+  `create(table, data)` inserts a row; `create("Name.docx" | ".xlsx" | ".pptx")` makes an empty document. Writes clean input per domain in Go before Postgres checks it.
 - **Documentation**: the tool's description is the SDK's `sdk.d.ts`, plus an interface per table generated from the catalog, so agents write against the real schema.
 
 The same SDK runs from `POST /api/run` and `archive run script.ts`. The HTTP API offers the same operations as REST under `/api`. Every request carries a user's session or token.
@@ -140,23 +138,14 @@ Archive is listed in ChatGPT, Claude, Gemini and Grok as one remote MCP server. 
 File bytes are content-addressed by SHA-256 in `$ARCHIVE_DATA/blobs` or in S3-compatible storage (`ARCHIVE_BLOB_URL`).
 
 - **Uploads**: a plain `POST /api/files` for small files, or resumable tus uploads for large ones. A tus upload's state lives in `archive.upload` and its chunks are stored as blob objects, so consecutive chunks can land on different instances. The last chunk assembles the file from blob storage, without a local copy.
-- **Processing in the request**: Archive pulls metadata, extracts text (PDF, HTML, plain text, JSON and pages) and makes image thumbnails inside the request that stored the file. A file is therefore `done` when its upload, edit or create returns, and nothing has to run between requests. A worker loop polls for leftover `pending` files every 10 s as a safety net only.
+- **Processing in the request**: Archive pulls metadata, extracts text (PDF, HTML, plain text and JSON) and makes image thumbnails inside the request that stored the file. A file is therefore `done` when its upload, edit or create returns, and nothing has to run between requests. A worker loop polls for leftover `pending` files every 10 s as a safety net only.
 - **Links**: `POST /api/files/{id}/link` makes a short-lived signed URL for downloads such as image previews. GPS data can be stripped from photos on the way out.
 
 ## Documents
 
-Archive has two kinds of documents, each edited the way that suits it, behind one API.
+Archive's documents are Office files (docx, xlsx, pptx): standard files that open anywhere. Agents edit them one edit at a time, by splicing the file's bytes.
 
-| | Office files (docx, xlsx, pptx) | Pages (`.page`) |
-|---|---|---|
-| What it is | A standard file that opens anywhere | Archive's own collaborative document |
-| How edits are made | Splicing the file's bytes | go-crdt operations |
-| Who edits | Agents, one edit at a time | People and agents, live and at the same time |
-| Paragraph ids | Positions in the version read | Permanent CRDT block ids |
-
-**One API**: `archive.create(name)` makes an empty document of the type its extension names. `archive.read(id)` returns the document as a model, and `archive.edit(id, edits)` applies a list of edits, all or nothing. Agents use them from code mode; nothing else is needed to edit either kind.
-
-### Office files
+**One API**: `archive.create(name)` makes an empty document of the type its extension names. `archive.read(id)` returns the document as a model, and `archive.edit(id, edits)` applies a list of edits, all or nothing. Agents use them from code mode; nothing else is needed.
 
 **Edits splice bytes; nothing is rebuilt.** docx, xlsx and pptx are zips of XML parts. `office.go` edits all three using only Go's standard library:
 
@@ -182,32 +171,12 @@ Details of how it behaves:
 - **Concurrency**: an edit locks the file row (`SELECT … FOR UPDATE`), then splices the latest bytes, so concurrent agents take turns and no edit is lost. Paragraph ids are positions: if another agent inserts a paragraph between your read and your edit, an id can point at a paragraph that moved. Within one `edit` call, ids keep pointing at the paragraphs as read, even after inserts and deletes.
 - **Search text**: Office files are not yet text-extracted.
 
-### Pages
-
-A page is Archive's own document for Notion-style collaboration: a list of blocks, each with a type (`paragraph`, `heading1`–`3`, `bullet`, `todo`, `quote`, `code` or anything the caller uses) and text.
-
-- **Format**: the file's bytes are go-crdt's own `structured.Blocks` encoding (github.com/go-crdt/crdt, pinned in `go.mod`), stored and loaded with the library. There is no format of Archive's own; the library can be forked if needed.
-- **Agents** edit through `archive.edit` with `replace_text`, `insert_paragraph_after`, `delete_paragraph` and `set_style`. They address blocks by their permanent CRDT ids, which survive any concurrent insert or delete. Server-side edits run as site 1 under the file-row lock; a whole-paragraph rewrite is last-write-wins, so concurrent rewrites never interleave.
-- **People** edit live in the browser. Each tab runs go-crdt compiled to WebAssembly as its own replica, with a random site id. It exchanges operations with the server:
-  - `GET /api/pages/{id}/sync?site=N` is a server-sent event stream: first the page's encoding, then everyone's operations as they are saved, then presence updates;
-  - `POST /api/pages/{id}/ops` sends a tab's operations, which the server merges under the file-row lock, saves and passes on;
-  - `POST /api/pages/{id}/presence` sends a go-crdt `awareness` update with a caret or selection, a name and a colour.
-
-  Agent edits reach open editors the same way, and show as "(agent) editing" in the online list. A tab whose stream closes is announced as gone.
-- **Across instances**: after a page commit, the instance sends `NOTIFY archive_page` with the page id; presence travels in the payload. Every instance keeps one `LISTEN` connection. On a notification, an instance with that page open reloads it from its blob and sends its editors the operations since its old version. Nothing is sent for a transaction that rolls back.
-- **Search**: a page's text is extracted on every save, like any file.
-- **Editor**: the page editor in `apps/web`:
-  - `wasm/main.go` wraps go-crdt for the browser, built to WebAssembly by `npm run wasm`;
-  - `src/Page.svelte` has one input per block, Enter to split and Backspace to merge, an online list, live carets and selections.
-
-  It has no formatting, nesting or tables yet.
-
 **Not chosen**:
 - An embedded office suite (Collabora, ONLYOFFICE): their value is the editor UI, which Archive does not use, and running them in a closed SaaS needs paid editions.
 - Office libraries (excelize, go-docx, unioffice): they load a document into their own structures and write it back out, which loses what they do not model, and some are AGPL or commercial.
-- Live co-editing of Office files: people edit Office files in Google Docs and Sheets through an integration (planned), while pages cover collaboration inside Archive. A CRDT model of OOXML would mean converting in both directions.
+- Live co-editing inside Archive: people edit Office files together in Google Docs and Sheets through an integration (planned). A CRDT model of OOXML would mean converting in both directions.
 - Version numbers on `archive.edit`: tried and dropped as too complex for agents; the row lock prevents lost updates instead.
-- React Native for clients: its engine (Hermes) has no WebAssembly on iOS and Android, so the page editor could not run go-crdt there without gomobile bindings or a WebView. A web app in Tauri or Capacitor shells runs the same code everywhere. Electron covers desktop only.
+- React Native for clients: a web app in Tauri or Capacitor shells runs the same code everywhere. Electron covers desktop only.
 
 ## Deployment
 
@@ -218,10 +187,9 @@ The same image runs in two modes.
   - schema: generated from the database;
   - uploads: in Postgres and blob storage;
   - file processing: inside the request;
-  - live page sync: across instances through `LISTEN/NOTIFY`;
   - background work, sync jobs and coordination: through Postgres locks (`SKIP LOCKED` for leftover files, an advisory lock for schema).
 
-  It runs on request-based billing and scales to zero: no CPU is needed between requests, and an open page editor keeps its instance awake only while it is connected.
+  It runs on request-based billing and scales to zero: no CPU is needed between requests.
 - **Helm** (`apps/helm`) covers Kubernetes and refuses an external database without a secret key. The **`archive` Terraform provider** (`apps/terraform`) manages schema DDL (tables and views), spaces, tokens and access rules as code. It compares configured DDL with the database through the plan endpoint, so normalized output never shows as drift.
 
 Not verified yet: a managed Postgres without a true superuser (Cloud SQL's `cloudsqlsuperuser`), and GCS through its S3 API.
@@ -237,8 +205,7 @@ Designed but not built:
 - **More Office edits**: rows, columns, slides and formatting.
 - **Google Docs and Sheets integration** for people editing Office files.
 - **Connectors** that sync mail, files, chat and business data in, read-only and by delta: see [ADR 0002](0002-connectors.md).
-- **Clients**: the Svelte app, as the website and in Tauri 2 shells for iOS, Android and desktop (Capacitor as the fallback on mobile). Every shell runs it in the platform's own web view (WKWebView, Android WebView, WebView2, WebKitGTK), and all of them run WebAssembly. The page editor therefore uses the same go-crdt WebAssembly build as `apps/web` on every platform, and merges with the same code as the server.
-- **Pages**: formatting, nesting and tables in the editor and the model; checking that a client only sends operations for its own site; cleaning up old page blobs.
+- **Clients**: the Svelte app, as the website and in Tauri 2 shells for iOS, Android and desktop (Capacitor as the fallback on mobile). Every shell runs it in the platform's own web view (WKWebView, Android WebView, WebView2, WebKitGTK).
 
 ## Not doing
 
@@ -249,6 +216,7 @@ These were in earlier designs and are cut to keep Archive small:
 - OCR, transcription and embeddings;
 - folder connectors and `.eml` text extraction (connectors are now [ADR 0002](0002-connectors.md));
 - IMAP and the external connector protocol;
-- stored schema files.
+- stored schema files;
+- pages, Archive's own live documents.
 
 Any of them can come back when a real user needs it.

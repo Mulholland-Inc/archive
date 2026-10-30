@@ -39,9 +39,7 @@
 
 <style>
   header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
-  .chat, .editor { align-self: center; width: 100%; padding-inline: var(--gutter); }
-  .chat { max-width: calc(var(--chat-width) + 2 * var(--gutter)); }
-  .editor { max-width: calc(var(--editor-width) + 2 * var(--gutter)); }
+  .chat { align-self: center; width: 100%; max-width: calc(var(--chat-width) + 2 * var(--gutter)); padding-inline: var(--gutter); }
   h1, .title {
     font: var(--weight-medium) var(--title-size) / var(--leading-tight) var(--font-serif);
     letter-spacing: var(--tracking-tight);

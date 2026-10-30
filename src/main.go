@@ -542,16 +542,9 @@ func cliServe(ctx context.Context, a *Archive, addr string) error {
 	}); err != nil {
 		return err
 	}
-	listening := make(chan struct{})
-	wg.Add(1 + mediaWorkers)
-	go a.pageListen(bg, &wg, sync.OnceFunc(func() { close(listening) }))
+	wg.Add(mediaWorkers)
 	for range mediaWorkers {
 		go a.fileLoop(bg, &wg)
-	}
-	select {
-	case <-listening:
-	case <-ctx.Done():
-		return nil
 	}
 	hs := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	errc := make(chan error, 1)
@@ -639,31 +632,6 @@ func httpHandler(a *Archive) http.Handler {
 			return 0, nil, err
 		}
 		return http.StatusNoContent, nil, a.DeleteChat(r.Context(), id)
-	})
-	mux.HandleFunc("GET /api/pages/{id}/sync", a.pageSync)
-	mux.HandleFunc("POST /api/pages/{id}/ops", func(w http.ResponseWriter, r *http.Request) {
-		id, err := httpID(r)
-		var b []byte
-		if err == nil {
-			b, err = io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
-		}
-		if err == nil {
-			err = a.PageOps(r.Context(), id, b)
-		}
-		httpWrite(w, http.StatusNoContent, nil, err)
-	})
-	mux.HandleFunc("POST /api/pages/{id}/presence", func(w http.ResponseWriter, r *http.Request) {
-		id, err := httpID(r)
-		var b []byte
-		if err == nil {
-			if b, err = io.ReadAll(http.MaxBytesReader(w, r.Body, pagePresenceMax)); err != nil {
-				err = fmt.Errorf("page presence: %v: %w", err, httpErrBadRequest)
-			}
-		}
-		if err == nil {
-			err = a.PagePresence(r.Context(), id, b)
-		}
-		httpWrite(w, http.StatusNoContent, nil, err)
 	})
 	mux.HandleFunc("GET /api/run/docs", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")

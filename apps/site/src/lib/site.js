@@ -9,7 +9,6 @@ export const BUILT = [
 
 export const PRODUCT = [
   { href: "/ontology", art: "ontology", title: "Ontology", text: "You decide what your business runs on" },
-  { href: "/pages", art: "pages", title: "Pages", text: "Docs your team and AI write together" },
   { href: "/files", art: "files", title: "Files", text: "Documents your AI can read and edit" },
   { href: "/agents", art: "agents", title: "Agents", text: "Works with ChatGPT, Claude, Gemini and Grok" },
   { href: "/models", art: "models", title: "Models", text: "AI models that know your business" },

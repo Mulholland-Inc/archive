@@ -239,18 +239,7 @@ vec2 checkbox(vec3 q, float on) {
   return r;
 }
 
-vec2 caret(vec3 q, float m) {
-  vec2 r = M(sdRoundCylinder(q - vec3(0.0, 0.015, 0.0), 0.06, 0.015, 0.006), GRAPHITE + ROUND);
-  r = U(r, M(sdCylinder(q - vec3(0.0, 0.26, 0.0), 0.016, 0.24), GRAPHITE + ROUND));
-  r = U(r, M(sdSphere(q - vec3(0.0, 0.54, 0.0), 0.075), m + SOLID));
-  vec3 f = q - vec3(0.12, 0.38, 0.0);
-  vec2 flag = M(sdRoundBox(f, vec3(0.11, 0.055, 0.012), 0.008), m);
-  vec3 fq = faceZ(f, 0.012);
-  flag = decal(flag, fq, sdRect(fq.xz - vec2(0.01, 0.0), vec2(0.06, 0.012), 0.012), WHITE);
-  return U(r, flag);
-}
-
-vec2 livePage(vec3 q) {
+vec2 doc(vec3 q) {
   vec2 r = M(sdRoundBox(q - vec3(0.0, 0.02, 0.0), vec3(0.72, 0.02, 0.95), 0.01), WHITE);
   vec3 t = faceY(q, 0.04);
   r = U(r, pbar(t, vec2(-0.2, -0.72), vec2(0.4, 0.075), 0.035, GRAPHITE));
@@ -265,8 +254,6 @@ vec2 livePage(vec3 q) {
   r = U(r, pbar(t, vec2(0.04, 0.47), vec2(0.5, 0.028), 0.012, STEEL));
   r = U(r, pbar(t, vec2(-0.06, 0.58), vec2(0.4, 0.028), 0.012, STEEL));
   r = U(r, pbar(t, vec2(-0.16, 0.69), vec2(0.3, 0.028), 0.012, STEEL));
-  r = U(r, caret(t - vec3(0.42, 0.0, -0.37), LILAC));
-  r = U(r, caret(t - vec3(0.54, 0.0, 0.2), LIME));
   return r;
 }
 
@@ -281,7 +268,7 @@ vec2 stand(vec3 p) {
   r = U(r, led(fz - vec3(0.5, 0.0, 0.14), 0.035, LIME));
   r = U(r, button(fz - vec3(0.66, 0.0, 0.14), 0.035, 0.012, GRAPHITE));
   r = U(r, M(sdBox(p - vec3(0.06, 0.229, 0.06), vec3(0.72, 0.014, 0.95)), PAPER));
-  r = U(r, livePage(p - vec3(0.0, 0.243, 0.0)));
+  r = U(r, doc(p - vec3(0.0, 0.243, 0.0)));
   return r;
 }
 

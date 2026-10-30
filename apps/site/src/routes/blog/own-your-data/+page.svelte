@@ -24,7 +24,7 @@
     <p>Archive gives that knowledge a single home. It brings three things together that usually live apart:</p>
     <ul>
       <li><strong>Your records</strong>: your own lists, shaped the way your business works. Clients, projects, properties, invoices, whatever you track, each with the fields you need and links between them.</li>
-      <li><strong>Your files</strong>: documents, spreadsheets, slides and PDFs, stored next to the records they belong to. Your AI can edit Word, Excel and PowerPoint files in place, and pages let people and AI write together live.</li>
+      <li><strong>Your files</strong>: documents, spreadsheets, slides and PDFs, stored next to the records they belong to. Your AI can edit Word, Excel and PowerPoint files in place.</li>
       <li><strong>Agent access</strong>: a way for the AI you already use to search, read and file information in your workspace, under the same rules as everyone else.</li>
     </ul>
     <p>You do not have to give up the tools your team likes. Read-only connectors bring in copies of your mail, files, chats and CRM data and keep them current, without ever changing anything at the source. The agency keeps its inbox and its chat. It just stops losing what happens in them.</p>

@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/go-crdt/crdt/structured"
 	"github.com/google/uuid"
 )
 
@@ -596,9 +595,6 @@ func (a *Archive) documentBytes(ctx context.Context, id uuid.UUID) (*File, []byt
 }
 
 func (a *Archive) ReadDocument(ctx context.Context, id uuid.UUID) (*OfficeModel, error) {
-	if m, ok, err := a.ReadPage(ctx, id); ok {
-		return m, err
-	}
 	f, b, err := a.documentBytes(ctx, id)
 	if err != nil {
 		return nil, err
@@ -627,9 +623,6 @@ func (a *Archive) editDocument(ctx context.Context, id uuid.UUID, ops []OfficeOp
 	}
 	if err != nil {
 		return nil, err
-	}
-	if pageIs(f.Name) {
-		return a.editPage(ctx, f, ops)
 	}
 	rc, err := a.blobs.open(ctx, blobKey(f.Hash), f.Size)
 	if err != nil {
@@ -2177,12 +2170,10 @@ func (a *Archive) CreateDocument(ctx context.Context, space, name string) (*File
 	}
 	var b []byte
 	switch ext {
-	case pageExt:
-		b = structured.NewBlocks(pageSite).Snapshot()
 	case ".docx", ".xlsx", ".pptx":
 		b = OfficeBlank(ext[1:])
 	default:
-		return nil, fmt.Errorf("archive.create: %q is not a document; end the name in .page, .docx, .xlsx or .pptx: %w", name, httpErrBadRequest)
+		return nil, fmt.Errorf("archive.create: %q is not a document; end the name in .docx, .xlsx or .pptx: %w", name, httpErrBadRequest)
 	}
 	return a.AddFile(ctx, space, name, bytes.NewReader(b))
 }

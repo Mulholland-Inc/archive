@@ -11,8 +11,7 @@
   const KINDS = [
     ['Word', 'Paragraphs, styles and lists, including those in tables and text boxes, and the text in every table cell', 'Replace text, add or remove paragraphs, fill in table cells'],
     ['Excel', 'Sheets, cells, formulas, merged cells and Excel tables', 'Set values and formulas, clear cells, add a line to a table'],
-    ['PowerPoint', 'Slides and the text on them', 'Replace text anywhere on a slide'],
-    ['Pages', 'Blocks, each with a style and its text', "Replace text, add or remove blocks, change a block's style"]
+    ['PowerPoint', 'Slides and the text on them', 'Replace text anywhere on a slide']
   ];
 
   const FAQ = [

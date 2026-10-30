@@ -85,7 +85,7 @@
 
 <Cta
   scene="city"
-  alt="A city block whose buildings are records, pages, files, a vault and an antenna for AI assistants"
+  alt="A city block whose buildings are records, papers, files, a vault and an antenna for AI assistants"
   title="Start building in minutes."
   lead="Free for your first workspace. No card, no sales call."
   links={[START, ['/pricing', 'See pricing']]}

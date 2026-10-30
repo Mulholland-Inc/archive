@@ -130,7 +130,7 @@ vec2 cart(vec3 p) {
   return r;
 }
 
-vec2 page(vec3 p) {
+vec2 sheet(vec3 p) {
   vec2 r = M(sdRoundBox(p, vec3(0.22, 0.012, 0.28), 0.006), WHITE);
   vec3 t = faceY(p, 0.012);
   r = decal(r, t, sdRect(t.xz - vec2(-0.05, -0.19), vec2(0.12, 0.025), 0.025), GRAPHITE);
@@ -183,7 +183,7 @@ vec2 map(vec3 p) {
     r = U(r, rack(g - vec3(-0.35, 0.0, -0.82), 0.0));
     r = U(r, cart(rotY(g - vec3(0.78, 0.0, 0.82), 0.35)));
     vec3 top = g - vec3(-0.35, 1.8, 0.32);
-    r = U(r, page(rotY(top - vec3(0.2, 0.012, 0.24), 0.1)));
+    r = U(r, sheet(rotY(top - vec3(0.2, 0.012, 0.24), 0.1)));
     r = U(r, folder(rotY(top - vec3(0.26, 0.0, -0.26), -0.1)));
     vec3 grip;
     float k = 1.25;

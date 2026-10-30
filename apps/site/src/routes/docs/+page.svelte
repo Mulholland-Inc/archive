@@ -39,7 +39,6 @@
       'Documents',
       [
         ['files', 'Files'],
-        ['pages', 'Pages'],
         ['office', 'Office documents']
       ]
     ],
@@ -100,7 +99,7 @@
   });
 </script>
 
-<Meta title="Docs — Archive" description="How Archive works: your own Postgres types, live schema changes, code mode over MCP, the SDK, the HTTP API, files, pages, Office documents, spaces and roles." />
+<Meta title="Docs — Archive" description="How Archive works: your own Postgres types, live schema changes, code mode over MCP, the SDK, the HTTP API, files, Office documents, spaces and roles." />
 
 <Hero
   title="Everything, documented."
@@ -125,11 +124,11 @@
   <article class="prose">
 
 <h2 id="intro">Introduction</h2>
-<p>Archive is a workspace for pages, tables and files with a real Postgres 18 database underneath. Your team works in the web app, your code calls the HTTP API, and every AI app connects over MCP.</p>
+<p>Archive is a workspace for tables and files with a real Postgres 18 database underneath. Your team works in the web app, your code calls the HTTP API, and every AI app connects over MCP.</p>
 
 <h3 id="intro-ways">Three ways in</h3>
 <ul>
-<li><strong>The web app</strong> for you and your team: pages, tables, views and files.</li>
+<li><strong>The web app</strong> for you and your team: tables, views and files.</li>
 <li><strong>The HTTP API</strong> at <code>/api</code> for your code, with a token.</li>
 <li><strong>MCP</strong> at <code>/mcp</code> for your AI, with one tool: <code>run</code>.</li>
 </ul>
@@ -423,7 +422,7 @@ icon: calendar'</span>;</pre>
 </Code>
 
 <h3 id="files-processing">What Archive extracts</h3>
-<p>Text from PDF, HTML, plain text, JSON, email and pages. Metadata such as page counts, image dimensions and mail headers. Thumbnails for images. A file's <code>status</code> is <code>done</code> when its upload returns.</p>
+<p>Text from PDF, HTML, plain text, JSON and email. Metadata such as page counts, image dimensions and mail headers. Thumbnails for images. A file's <code>status</code> is <code>done</code> when its upload returns.</p>
 <Note>Office files are stored and edited in place but not text-extracted yet, so search finds them by name only.</Note>
 
 <h3 id="files-large">Large files</h3>
@@ -443,41 +442,6 @@ icon: calendar'</span>;</pre>
 <tr><td><code>GET /api/files/&#123;id&#125;/text</code></td><td>Its extracted text.</td></tr>
 </tbody>
 </table>
-
-<h2 id="pages">Pages</h2>
-<p>A page is Archive's own collaborative document, built on go-crdt. People and agents edit it at the same time, and their edits merge instead of conflicting.</p>
-<Code tabs={['run.ts']}>
-<pre><span class="k">const</span> notes = <span class="k">await</span> archive.<span class="f">create</span>(<span class="s">"Kickoff notes.page"</span>, &#123; space: <span class="s">"finance"</span> &#125;)
-
-<span class="k">await</span> archive.<span class="f">edit</span>(notes.id, [
-  &#123; op: <span class="s">"insert_paragraph_after"</span>, text: <span class="s">"Kickoff"</span>, style: <span class="s">"heading1"</span> &#125;,
-])
-<span class="k">const</span> page = <span class="k">await</span> archive.<span class="f">read</span>(notes.id)
-<span class="k">await</span> archive.<span class="f">edit</span>(notes.id, [
-  &#123; op: <span class="s">"insert_paragraph_after"</span>, para: page.paragraphs[<span class="n">0</span>].id, text: <span class="s">"Send the contract"</span>, style: <span class="s">"todo"</span> &#125;,
-])</pre>
-</Code>
-
-<h3 id="pages-blocks">Blocks</h3>
-<p>A page is a list of paragraphs, each with a style and text. The styles are <code>paragraph</code>, <code>heading1</code>, <code>heading2</code>, <code>heading3</code>, <code>bullet</code>, <code>numbered</code>, <code>todo</code>, <code>quote</code> and <code>code</code>, or one of your own.</p>
-
-<h3 id="pages-live">Live editing</h3>
-<p>In the web app you see who is online, with their carets and selections. Agent edits arrive live too, marked as an agent in the online list.</p>
-
-<h3 id="pages-ids">Permanent ids</h3>
-<p>Paragraph ids like <code>"12@1"</code> never change. An id from any earlier read stays valid until that paragraph is deleted, whatever others insert meanwhile, so an edit planned on an older read still lands in the right place. When two callers rewrite the same whole paragraph at once, the last rewrite wins whole.</p>
-
-<h3 id="pages-edits">Edits</h3>
-<table>
-<thead><tr><th>Edit</th><th>Does</th></tr></thead>
-<tbody>
-<tr><td><code>replace_text</code></td><td>With <code>para</code> and no <code>find</code>, rewrites that paragraph. With <code>find</code>, replaces just that text; <code>all: true</code> for every occurrence.</td></tr>
-<tr><td><code>insert_paragraph_after</code></td><td>Adds a paragraph after <code>para</code>, or at the top without it.</td></tr>
-<tr><td><code>delete_paragraph</code></td><td>Removes a paragraph.</td></tr>
-<tr><td><code>set_style</code></td><td>Changes a paragraph's style.</td></tr>
-</tbody>
-</table>
-<p>One <code>archive.edit</code> call is all or nothing. Pages have no formatting, nesting or tables yet.</p>
 
 <h2 id="office">Office documents</h2>
 <p>Your AI reads and edits Word, Excel and PowerPoint files in place. An edit changes only what it targets, and every other part of the file stays byte for byte, so formatting, images, comments and charts survive.</p>
@@ -557,7 +521,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 </ul>
 
 <h3 id="code-runtime">How it runs</h3>
-<p>Your code is the body of an async function: use top-level <code>await</code> and <code>return</code> a JSON value. Archive strips the TypeScript types and runs the JavaScript inside the server. Effects that leave the database, such as live page updates and file processing, happen only after the transaction commits.</p>
+<p>Your code is the body of an async function: use top-level <code>await</code> and <code>return</code> a JSON value. Archive strips the TypeScript types and runs the JavaScript inside the server. Effects that leave the database, such as file processing, happen only after the transaction commits.</p>
 
 <h3 id="code-errors">Errors</h3>
 <p>SDK errors are <code>Error</code> objects with a <code>code</code>: <code>invalid</code>, <code>not_found</code>, <code>forbidden</code>, <code>conflict</code>, or a Postgres SQLSTATE. Invalid input adds <code>errors: [&#123; path, message &#125;]</code>, one per bad field. A failed call you catch undoes only that call.</p>
@@ -608,8 +572,8 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <tbody>
 <tr><td><code>files(&#123; limit?, after?, space? &#125;): StoredFile[]</code></td><td>Files you can see, oldest first, with their text.</td></tr>
 <tr><td><code>file(id): StoredFile</code></td><td>One file with its text.</td></tr>
-<tr><td><code>create(name, &#123; space? &#125;): StoredFile</code></td><td>An empty <code>.page</code>, <code>.docx</code>, <code>.xlsx</code> or <code>.pptx</code>, by extension.</td></tr>
-<tr><td><code>read(fileId): Model</code></td><td>The structure of a page or Office file.</td></tr>
+<tr><td><code>create(name, &#123; space? &#125;): StoredFile</code></td><td>An empty <code>.docx</code>, <code>.xlsx</code> or <code>.pptx</code>, by extension.</td></tr>
+<tr><td><code>read(fileId): Model</code></td><td>The structure of an Office file.</td></tr>
 <tr><td><code>edit(fileId, edits): StoredFile</code></td><td>Applies edits and saves the file, all or nothing.</td></tr>
 </tbody>
 </table>
