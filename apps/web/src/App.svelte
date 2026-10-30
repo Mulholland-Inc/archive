@@ -221,7 +221,7 @@
         {/if}
       </nav>
       <footer>
-        <Profile name={who} email={me.actor.email} {dev} ondev={toggleDev} onsignout={signOut} />
+        <Profile name={who} email={me.actor.email} {dev} ondev={toggleDev} onsignout={signOut} spaces={me.spaces} home={me.home} current={scope} onpick={pick} oncreate={create} />
         <button class="apps" type="button" aria-label="Connect apps" title="Connect apps" onclick={() => (connecting = true)}><Icon name="grid-2x2-plus" /></button>
         <Theme />
       </footer>

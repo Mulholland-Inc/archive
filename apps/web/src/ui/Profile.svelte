@@ -3,7 +3,35 @@
   import Avatar from './Avatar.svelte';
   import { setFloating, ui } from './looks.svelte.js';
 
-  let { name, email = '', dev = false, ondev, onsignout } = $props();
+  let { name, email = '', dev = false, ondev, onsignout, spaces = [], home, current = '', onpick, oncreate } = $props();
+  let adding = $state(false);
+  let draft = $state('');
+  let failed = $state(false);
+
+  const label = (s) => (s.id === home ? 'Personal' : s.name.replaceAll('_', ' '));
+  const here = $derived(spaces.find((s) => s.name === current));
+
+  function pick(space) {
+    open = false;
+    if (space !== current) onpick(space);
+  }
+
+  async function create(e) {
+    e.preventDefault();
+    const n = draft.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+    if (!n) return;
+    try {
+      await oncreate(n);
+      open = adding = failed = false;
+      draft = '';
+    } catch {
+      failed = true;
+    }
+  }
+
+  $effect(() => {
+    if (!open) adding = failed = false;
+  });
   let open = $state(false);
   let root = $state();
 
@@ -26,12 +54,31 @@
     <Avatar {name} />
     <span class="text">
       <span class="name">{name}</span>
-      <span class="space">{email}</span>
+      <span class="space">{dev ? (here ? label(here) : 'All spaces') : email}</span>
     </span>
     <span class="updown"><Icon name="chevrons-up-down" /></span>
   </button>
   {#if open}
     <div class="menu" role="menu">
+      {#if dev}
+        <button class="item" role="menuitemradio" aria-checked={!current} onclick={() => pick('')}>
+          <span>All spaces</span>{#if !current}<Icon name="check" />{/if}
+        </button>
+        {#each spaces as s (s.id)}
+          <button class="item" role="menuitemradio" aria-checked={s.name === current} onclick={() => pick(s.name)}>
+            <span>{label(s)}</span>{#if s.name === current}<Icon name="check" />{/if}
+          </button>
+        {/each}
+        {#if adding}
+          <form class="item add" class:failed onsubmit={create}>
+            <Icon name="plus" />
+            <input bind:value={draft} placeholder="Space name" aria-label="Space name" {@attach (el) => el.focus()} oninput={() => (failed = false)} />
+          </form>
+        {:else}
+          <button class="item new" role="menuitem" onclick={() => (adding = true)}><Icon name="plus" /><span>New space</span></button>
+        {/if}
+        <hr />
+      {/if}
       <button class="item" role="menuitemcheckbox" aria-checked={ui.floating} onclick={() => setFloating(!ui.floating)}>
         <span>Floating icons</span>{#if ui.floating}<Icon name="check" />{/if}
       </button>
