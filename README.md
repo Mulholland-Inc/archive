@@ -170,11 +170,10 @@ With no `-space`, the token gets your role in every space you are in. Narrow it 
 | **Cloud** | Terraform for [AWS](apps/terraform/aws) (Fargate, RDS, S3), [Google Cloud](apps/terraform/gcp) (Cloud Run, Cloud SQL, Storage) and [Azure](apps/terraform/azure) (Container Apps, Postgres, Files) |
 | **As code** | the [`archive` Terraform provider](apps/terraform/provider) for your schema, spaces, tokens and roles |
 
-On Google Cloud, everything is in Terraform but the bucket for its state:
+On Google Cloud, everything is in Terraform:
 
 ```sh
-gcloud storage buckets create gs://<project>-tfstate --versioning
-cd apps/terraform/gcp && terraform init -backend-config=bucket=<project>-tfstate
+cd apps/terraform/gcp && terraform init
 terraform apply -var project=<project> -var admin_email=you@example.com
 ```
 
