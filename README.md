@@ -115,7 +115,7 @@ From a clone of this repo, Docker Compose does the same:
 ARCHIVE_ADMIN_EMAIL=you@example.com docker compose up -d
 ```
 
-`http://localhost:8080` is the API server, not a website; `/healthz` answers `204` when it is up. The web app lives in [`apps/web`](apps/web): run `npm install && npm run dev` there and open `http://localhost:5173`.
+Open `http://localhost:8080` for the web app; `/healthz` answers `204` when it is up.
 
 ## Connect your agent
 
@@ -224,15 +224,16 @@ flowchart LR
 ## Develop
 
 ```sh
+(cd apps/web && npm install && npm run build && cp -R dist/. ../../src/web/)
 cd src
 go build -o archive .
 go test ./...                         # end-to-end tests against a real Postgres 18
 ARCHIVE_DATA=../data ARCHIVE_BIN=./archive ../demo/load.sh you@example.com
-ARCHIVE_DATA=../data ./archive serve  # API, sign-in and MCP on :8080
+ARCHIVE_DATA=../data ./archive serve  # web app, API, sign-in and MCP on :8080
 ```
 
 ```sh
-cd apps/web && npm install && npm run dev   # web app on :5173
+cd apps/web && npm run dev   # web app with hot reload on :5173
 ```
 
 <p align="center"><sub>Made by <a href="https://mulholland.ai">Mulholland</a>.</sub></p>

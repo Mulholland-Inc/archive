@@ -1045,6 +1045,18 @@ func TestDockerImageServesAndAcceptsCLICommandsFromDockerExec(t *testing.T) {
 			t.Fatalf("container not healthy:\n%s", out)
 		}
 	}
+	for _, page := range []string{"/", "/files", "/workflows"} {
+		if out := docker("", "exec", name, "wget", "-q", "-O", "-", "http://127.0.0.1:8080"+page); !strings.Contains(out, `<div id="app">`) {
+			t.Fatalf("web app at %s: %s", page, out)
+		}
+	}
+	asset := regexp.MustCompile(`/assets/[^"]+\.js`).FindString(docker("", "exec", name, "wget", "-q", "-O", "-", "http://127.0.0.1:8080/"))
+	if out := docker("", "exec", name, "wget", "-S", "-O", "/dev/null", "http://127.0.0.1:8080"+asset); asset == "" || !strings.Contains(out, "immutable") {
+		t.Fatalf("asset %q: %s", asset, out)
+	}
+	if exec.Command("docker", "exec", name, "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/assets/gone.js").Run() == nil {
+		t.Fatal("a missing asset answers")
+	}
 	docker(e2eSchema["company.sql"], "exec", "-i", name, "sh", "-c", "mkdir -p /tmp/ddl && cat > /tmp/ddl/company.sql")
 	docker("", "exec", name, "archive", "schema", "apply", "/tmp/ddl")
 	docker("", "exec", name, "archive", "create", "company", `{"name":"Docker Inc"}`)
