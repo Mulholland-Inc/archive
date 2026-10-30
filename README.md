@@ -85,11 +85,11 @@ The same data and the same permissions, whichever way in:
 
 Upload any file and Archive pulls out its text, so one search covers every table and file you can see. Read-only connectors for mail, files, chat and business tools are designed in [ADR 0002](docs/adr/0002-connectors.md) and not built yet.
 
-Each team, client or project gets its own space, and people and their agents only see the spaces they are in. People, spaces and tokens are real Postgres roles, and every table has row-level security, so the database itself checks every row against who is asking. Roles are `viewer`, `editor`, `admin` and `owner`, and tokens only ever narrow what their owner can do. Sign-in is by Google and Microsoft through `ARCHIVE_OIDC`, or passkeys. People without either get a one-time sign-in link from `archive user add` or `archive user link` to pass on, and add a passkey once in.
+Each team, client or project gets its own space, and people and their agents only see the spaces they are in. People, spaces and tokens are real Postgres roles, and every table has row-level security, so the database itself checks every row against who is asking. Roles are `viewer`, `editor`, `admin` and `owner`, and tokens only ever narrow what their owner can do. Archive is invite-only: an admin adds people by email on the Users page or with `archive user add`, and their first sign-in with Google, Microsoft, Slack or GitHub under that email, verified by the provider, links them. After that they can add a passkey to each device.
 
 ```sh
 docker exec archive archive space add finance
-docker exec archive archive user add anna@example.com -name Anna   # prints a one-time sign-in link for Anna
+docker exec archive archive user add anna@example.com -name Anna   # Anna can now sign in
 docker exec archive archive space grant finance anna@example.com editor
 ```
 
@@ -107,7 +107,7 @@ One line starts Archive on your machine with Docker:
 curl -fsSL https://raw.githubusercontent.com/Mulholland-Inc/archive/main/install.sh | ARCHIVE_ADMIN_EMAIL=you@example.com sh
 ```
 
-Use your own email: you become the first owner, and a one-time sign-in link appears in the log (`docker logs archive`); once in, add a passkey. `docker exec archive archive user link you@example.com` prints a new one. Run the same line again to update. Your data stays in the `archive` volume, and Archive backs itself up before each new version.
+Use your own email: you become the first owner. Set a sign-in provider too, such as `ARCHIVE_GOOGLE_CLIENT_ID` and `ARCHIVE_GOOGLE_CLIENT_SECRET`, and sign in with it under that email; once in, add a passkey. Run the same line again to update. Your data stays in the `archive` volume, and Archive backs itself up before each new version.
 
 From a clone of this repo, Docker Compose does the same:
 
@@ -172,11 +172,10 @@ With no `-space`, the token gets your role in every space you are in. Narrow it 
 
 The image holds Postgres and the binary. With nothing set, it runs the bundled Postgres and keeps files in `/data`. Give it an outside Postgres (`DATABASE_URL`), S3-compatible storage (`ARCHIVE_BLOB_URL`) and one `ARCHIVE_SECRET_KEY`, and it keeps nothing local, so you can run as many copies side by side as you like. In production, put it behind HTTPS and set `ARCHIVE_URL`.
 
-One Archive serves any number of workspaces: one per organization, each its own Postgres database on the same server, with its own spaces, files and workflows, its own login role and its own data key. People are added to workspaces (`archive user add`), and one sign-in reaches all of theirs. A new install starts with one. Instance admins (the admins of the first workspace) make and delete more, or let people sign up for their own with their first Google or Microsoft sign-in:
+One Archive serves any number of workspaces: one per organization, each its own Postgres database on the same server, with its own spaces, files and workflows, its own login role and its own data key. People are invited to workspaces (`archive user add`, or the Users page), and one sign-in reaches all of theirs. A new install starts with one. Instance admins (the admins of the first workspace) make and delete more, each with its first owner:
 
 ```sh
 docker exec archive archive workspace add "Acme Inc" anna@acme.example
-docker exec archive archive signup on
 docker exec archive archive -workspace <uuid> space list
 ```
 
@@ -187,14 +186,17 @@ Every setting is an environment variable; `archive help` lists them all:
 | Variable | What it does |
 |---|---|
 | `ARCHIVE_ADMIN_EMAIL` | First owner, created when there are no users yet |
-| `ARCHIVE_URL` | Public base URL of the web app and sign-in, for sign-in links, cookies and passkeys |
+| `ARCHIVE_URL` | Public base URL of the web app and sign-in, for cookies and passkeys |
 | `ARCHIVE_API_URL` | Public base URL of the API, MCP, webhooks, file links, Stripe and OAuth redirects (default `ARCHIVE_URL`) |
 | `ARCHIVE_DATA` | Data directory for the bundled Postgres, its key and files (default `./data`) |
 | `DATABASE_URL` | Outside Postgres, with CREATEROLE and CREATEDB (no superuser needed); unset starts the bundled one. Each workspace gets its own database on the same server |
 | `DATABASE_DIRECT_URL` | The same Postgres without a pooler in between, for schema changes (default `DATABASE_URL`) |
 | `ARCHIVE_SECRET_KEY` | 32-byte key for secret values; required with `DATABASE_URL`, the same on every copy |
 | `ARCHIVE_BLOB_URL`, `ARCHIVE_BLOB_KEY`, `ARCHIVE_BLOB_SECRET` | S3, R2, MinIO or GCS for files |
-| `ARCHIVE_OIDC` | OIDC providers, like Google and Microsoft; their redirect URL is `ARCHIVE_API_URL/auth/oidc/<name>/callback` |
+| `ARCHIVE_GOOGLE_CLIENT_ID`, `ARCHIVE_GOOGLE_CLIENT_SECRET` | Sign-in with Google; each provider shows on the sign-in page when both of its variables are set, and its redirect URL is `ARCHIVE_API_URL/auth/oidc/<google\|microsoft\|slack\|github>/callback` |
+| `ARCHIVE_MICROSOFT_CLIENT_ID`, `ARCHIVE_MICROSOFT_CLIENT_SECRET` | Sign-in with Microsoft, work and personal accounts |
+| `ARCHIVE_SLACK_CLIENT_ID`, `ARCHIVE_SLACK_CLIENT_SECRET` | Sign-in with Slack |
+| `ARCHIVE_GITHUB_CLIENT_ID`, `ARCHIVE_GITHUB_CLIENT_SECRET` | Sign-in with GitHub |
 | `ANTHROPIC_API_KEY` | Key of the in-app agent; a workspace can set its own |
 | `ARCHIVE_STRIPE_KEY`, `ARCHIVE_STRIPE_WEBHOOK_SECRET` | Billing: plan limits, Stripe Checkout and the webhook at `ARCHIVE_API_URL/stripe` |
 | `ARCHIVE_LOCALE` | Locale that messy input is read in |

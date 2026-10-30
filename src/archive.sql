@@ -391,6 +391,9 @@ UPDATE archive."user" SET workspaces = array_remove(workspaces, sqlc.arg(workspa
 -- name: SetSignin :exec
 UPDATE archive."user" SET signin = $2 WHERE id = $1;
 
+-- name: NameUser :exec
+UPDATE archive."user" SET name = $2 WHERE id = $1 AND name = '';
+
 -- name: Authenticate :one
 SELECT t.id, t.kind, t.name, coalesce(t.role, '')::text AS role, u.id AS user_id, u.email, u.name AS user_name,
     coalesce(t.workspace::text, '')::text AS workspace,
@@ -398,11 +401,8 @@ SELECT t.id, t.kind, t.name, coalesce(t.role, '')::text AS role, u.id AS user_id
 FROM archive.token t JOIN archive."user" u ON u.id = t.user_id
 WHERE t.hash = $1 AND t.kind IN ('api', 'session', 'user') AND (t.expires_at IS NULL OR t.expires_at > now());
 
--- name: CreateLoginToken :exec
-INSERT INTO archive.token (user_id, kind, hash, expires_at) VALUES ($1, $2, $3, now() + sqlc.arg(ttl)::text::interval);
-
--- name: UseMagicLink :one
-DELETE FROM archive.token WHERE hash = $1 AND kind = 'magic' AND expires_at > now() RETURNING user_id;
+-- name: CreateSession :exec
+INSERT INTO archive.token (user_id, kind, hash, expires_at) VALUES ($1, 'session', $2, now() + interval '30 days');
 
 -- name: SignOut :exec
 DELETE FROM archive.token WHERE hash = $1 AND kind = 'session';

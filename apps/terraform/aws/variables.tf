@@ -23,8 +23,60 @@ variable "admin_email" {
 
 variable "env" {
   type        = map(string)
-  description = "Extra environment variables, such as ARCHIVE_OIDC."
+  description = "Extra environment variables, such as ARCHIVE_LOCALE."
   default     = {}
+}
+
+variable "google_client_id" {
+  type        = string
+  description = "OAuth client id of sign-in with Google (ARCHIVE_GOOGLE_CLIENT_ID); its redirect URL is <api>/auth/oidc/google/callback. Google shows on the sign-in page when this and the secret are set."
+  default     = ""
+}
+
+variable "google_client_secret" {
+  type        = string
+  description = "OAuth client secret of sign-in with Google (ARCHIVE_GOOGLE_CLIENT_SECRET), kept in Secrets Manager."
+  default     = ""
+  sensitive   = true
+}
+
+variable "microsoft_client_id" {
+  type        = string
+  description = "OAuth client id of sign-in with Microsoft (ARCHIVE_MICROSOFT_CLIENT_ID); its redirect URL is <api>/auth/oidc/microsoft/callback. Microsoft shows on the sign-in page when this and the secret are set."
+  default     = ""
+}
+
+variable "microsoft_client_secret" {
+  type        = string
+  description = "OAuth client secret of sign-in with Microsoft (ARCHIVE_MICROSOFT_CLIENT_SECRET), kept in Secrets Manager."
+  default     = ""
+  sensitive   = true
+}
+
+variable "slack_client_id" {
+  type        = string
+  description = "OAuth client id of sign-in with Slack (ARCHIVE_SLACK_CLIENT_ID); its redirect URL is <api>/auth/oidc/slack/callback. Slack shows on the sign-in page when this and the secret are set."
+  default     = ""
+}
+
+variable "slack_client_secret" {
+  type        = string
+  description = "OAuth client secret of sign-in with Slack (ARCHIVE_SLACK_CLIENT_SECRET), kept in Secrets Manager."
+  default     = ""
+  sensitive   = true
+}
+
+variable "github_client_id" {
+  type        = string
+  description = "OAuth client id of sign-in with GitHub (ARCHIVE_GITHUB_CLIENT_ID); its redirect URL is <api>/auth/oidc/github/callback. GitHub shows on the sign-in page when this and the secret are set."
+  default     = ""
+}
+
+variable "github_client_secret" {
+  type        = string
+  description = "OAuth client secret of sign-in with GitHub (ARCHIVE_GITHUB_CLIENT_SECRET), kept in Secrets Manager."
+  default     = ""
+  sensitive   = true
 }
 
 variable "vpc_id" {

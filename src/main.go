@@ -74,9 +74,9 @@ Usage:
                                      find rows and files by their words
 
   archive user add <email> [-name n] [-admin]
-                                     add someone to the workspace; one sign-in reaches all of theirs.
-                                     Prints a one-time sign-in link, valid for 15 minutes, to pass on
-  archive user link <email>          print a new one-time sign-in link for someone in the workspace
+                                     invite someone to the workspace; their first sign-in with a
+                                     provider under that verified email links them, and one sign-in
+                                     reaches all of their workspaces
   archive user remove <email>        take them out of the workspace, with their tokens and role
   archive space add <name>
   archive space list
@@ -94,8 +94,6 @@ Usage:
                                      create a workspace, with its own database, for someone else
   archive workspace list
   archive workspace delete <uuid>    drop a workspace: its database and its roles
-  archive signup on|off              let anyone create a workspace with their first Google or
-                                     Microsoft sign-in
   archive plan list
   archive plan set <id> [json]       a plan and its limits per month: {"name", "price" (a Stripe
                                      price id), "runs", "workflow_runs", "ai_tokens",
@@ -125,13 +123,22 @@ Environment:
   ARCHIVE_SECRET_KEY 32-byte key (hex or base64) for secret values and the Postgres role password;
                      required with DATABASE_URL, the same on every instance; unset with the
                      bundled Postgres uses $ARCHIVE_DATA/secret.key
-  ARCHIVE_URL        public base URL of the web app and sign-in, for sign-in links, cookies and
-                     passkeys (default http://localhost:<port>)
+  ARCHIVE_URL        public base URL of the web app and sign-in, for cookies and passkeys
+                     (default http://localhost:<port>)
   ARCHIVE_API_URL    public base URL of the API, MCP, webhooks, file links, Stripe and every
                      OAuth redirect URL (default ARCHIVE_URL)
   ARCHIVE_ADMIN_EMAIL
                      first owner that serve creates when there are no users yet
-  ARCHIVE_OIDC       JSON list of OIDC providers: [{"name","issuer","client_id","client_secret"}]
+  ARCHIVE_GOOGLE_CLIENT_ID, ARCHIVE_GOOGLE_CLIENT_SECRET
+  ARCHIVE_MICROSOFT_CLIENT_ID, ARCHIVE_MICROSOFT_CLIENT_SECRET
+  ARCHIVE_SLACK_CLIENT_ID, ARCHIVE_SLACK_CLIENT_SECRET
+  ARCHIVE_GITHUB_CLIENT_ID, ARCHIVE_GITHUB_CLIENT_SECRET
+                     sign-in providers; each shows on the sign-in page when both are set, and
+                     its redirect URL is ARCHIVE_API_URL/auth/oidc/<google|microsoft|slack|github>/callback.
+                     Only invited people sign in, matched on an email the provider says is verified
+  ARCHIVE_GOOGLE_URL, ARCHIVE_MICROSOFT_URL, ARCHIVE_SLACK_URL, ARCHIVE_GITHUB_URL
+                     provider base URLs (default https://accounts.google.com,
+                     https://login.microsoftonline.com, https://slack.com, https://github.com)
   ARCHIVE_STRIPE_KEY Stripe secret key; set, plans have limits and Stripe Checkout sells them
   ARCHIVE_STRIPE_WEBHOOK_SECRET
                      signing secret of the Stripe webhook at ARCHIVE_API_URL/stripe
@@ -282,7 +289,7 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 		return cliFile(ctx, a, pos, *space, *output, *limit, *after, stdout, out)
 	case "user", "space", "token", "secret":
 		return cliAuth(ctx, a, cmd, pos, *name, *admin, *full, *space, *expires, out)
-	case "workspace", "signup", "plan":
+	case "workspace", "plan":
 		return cliWorkspace(ctx, h, cmd, pos, stdin, out)
 	case "list":
 		where := map[string]any{}
@@ -343,7 +350,7 @@ func cliCheckCommand(cmd string, pos []string) error {
 	n, ok := map[string]int{
 		"serve": 0, "mcp": 0, "types": 0, "run": 1, "schema": 1, "list": 1, "create": 1,
 		"get": 2, "delete": 2, "set": 2, "update": 2,
-		"user": 2, "space": 1, "token": 1, "secret": 3, "file": 1, "search": 1, "workspace": 1, "signup": 1, "plan": 1,
+		"user": 2, "space": 1, "token": 1, "secret": 3, "file": 1, "search": 1, "workspace": 1, "plan": 1,
 	}[cmd]
 	if !ok {
 		return fmt.Errorf("unknown command %q (see archive help)", cmd)
@@ -356,16 +363,8 @@ func cliCheckCommand(cmd string, pos []string) error {
 
 func cliAuth(ctx context.Context, a *Archive, cmd string, pos []string, name string, admin, full bool, space string, expires time.Duration, out func(any, error) error) error {
 	switch cmd + " " + pos[0] {
-	case "user add", "user link":
-		get := a.member
-		if pos[0] == "add" {
-			get = func(ctx context.Context, email string) (*User, error) { return a.AddUser(ctx, email, name, admin) }
-		}
-		u, err := get(ctx, pos[1])
-		if err != nil {
-			return err
-		}
-		return out(a.hub.signinLink(ctx, u))
+	case "user add":
+		return out(a.AddUser(ctx, pos[1], name, admin))
 	case "user remove":
 		return a.RemoveUser(ctx, pos[1])
 	case "space add":
@@ -433,9 +432,6 @@ func cliWorkspace(ctx context.Context, h *Hub, cmd string, pos []string, stdin i
 		if len(pos) > 1 {
 			return h.DeleteWorkspace(ctx, pos[1])
 		}
-	case "signup on", "signup off":
-		on := pos[0] == "on"
-		return out(h.SetSettings(ctx, &on, nil))
 	case "plan list":
 		return out(h.Plans(ctx))
 	case "plan set":
@@ -458,7 +454,7 @@ func cliWorkspace(ctx context.Context, h *Hub, cmd string, pos []string, stdin i
 			if id == "none" {
 				id = ""
 			}
-			return out(h.SetSettings(ctx, nil, &id))
+			return out(h.SetSettings(ctx, &id))
 		}
 	}
 	return cliErrUsage
@@ -613,15 +609,13 @@ func cliServe(ctx context.Context, h *Hub, a *Archive, addr string) error {
 			if err != nil {
 				return fmt.Errorf("ARCHIVE_ADMIN_EMAIL: %w", err)
 			}
-			l, err := h.signinLink(ctx, u)
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(os.Stderr, "archive: created the first owner %s; sign in within 15 minutes, or get a new link with archive user link: %s\n", u.Email, l.Link)
+			fmt.Fprintf(os.Stderr, "archive: created the first owner %s\n", u.Email)
 		} else {
-			si.setup = authNewSecret()
-			fmt.Fprintf(os.Stderr, "archive: no users yet; create the first owner with POST %s/auth/setup {\"token\": \"%s\", \"email\": ...}\n", h.app, si.setup)
+			fmt.Fprintln(os.Stderr, "archive: no users yet; add the first owner with ARCHIVE_ADMIN_EMAIL or archive user add <email>")
 		}
+	}
+	if len(si.configs) == 0 {
+		fmt.Fprintln(os.Stderr, "archive: no sign-in provider is set, so nobody can sign in to the web app; set ARCHIVE_GOOGLE_CLIENT_ID and ARCHIVE_GOOGLE_CLIENT_SECRET, or Microsoft's, Slack's or GitHub's (see archive help)")
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/api/", h.httpAuth((*Archive).handler))

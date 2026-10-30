@@ -35,7 +35,67 @@ export function setWorkspace(id) {
   } catch {}
 }
 
-async function send(path, { method = 'GET', body, raw, signal } = {}) {
+export const passkeys = typeof PublicKeyCredential !== 'undefined';
+
+function devices() {
+  try {
+    return JSON.parse(localStorage.passkeys ?? '{}');
+  } catch {
+    return {};
+  }
+}
+
+export const devicePasskey = () => Object.values(devices()).includes('yes');
+
+export const passkeyAsked = (user) => user in devices();
+
+export function rememberPasskey(user, answer) {
+  try {
+    localStorage.passkeys = JSON.stringify({ ...devices(), [user]: answer });
+  } catch {}
+}
+
+const bytes = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(s.length / 4) * 4, '=')), (c) => c.charCodeAt(0));
+const text = (b) => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+export async function passkeyLogin() {
+  const pk = (await api('/auth/passkey/login', { method: 'POST' })).publicKey;
+  pk.challenge = bytes(pk.challenge);
+  pk.allowCredentials = (pk.allowCredentials ?? []).map((c) => ({ ...c, id: bytes(c.id) }));
+  const cred = await navigator.credentials.get({ publicKey: pk });
+  const r = cred.response;
+  const done = await api('/auth/passkey/login/finish', {
+    method: 'POST',
+    body: {
+      id: cred.id,
+      rawId: text(cred.rawId),
+      type: cred.type,
+      response: { clientDataJSON: text(r.clientDataJSON), authenticatorData: text(r.authenticatorData), signature: text(r.signature), userHandle: r.userHandle ? text(r.userHandle) : null }
+    }
+  });
+  rememberPasskey(done.user.id, 'yes');
+}
+
+export async function passkeyRegister(user) {
+  const pk = (await api('/auth/passkey/register', { method: 'POST' })).publicKey;
+  pk.challenge = bytes(pk.challenge);
+  pk.user.id = bytes(pk.user.id);
+  pk.excludeCredentials = (pk.excludeCredentials ?? []).map((c) => ({ ...c, id: bytes(c.id) }));
+  const cred = await navigator.credentials.create({ publicKey: pk });
+  const r = cred.response;
+  await api('/auth/passkey/register/finish', {
+    method: 'POST',
+    body: {
+      id: cred.id,
+      rawId: text(cred.rawId),
+      type: cred.type,
+      response: { clientDataJSON: text(r.clientDataJSON), attestationObject: text(r.attestationObject), transports: r.getTransports?.() ?? [] }
+    }
+  });
+  rememberPasskey(user, 'yes');
+}
+
+async function send(path,{ method = 'GET', body, raw, signal } = {}) {
   const init = { method, headers: {}, signal };
   if (workspace()) init.headers['Archive-Workspace'] = workspace();
   if (space()) init.headers['Archive-Space'] = space();

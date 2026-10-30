@@ -10,7 +10,7 @@
   import { START } from '#lib/site.js';
 
   const GUIDES = [
-    { href: '#quickstart', title: 'Quick start', art: 'tokens', text: 'Sign up, make a token, make a call.' },
+    { href: '#quickstart', title: 'Quick start', art: 'tokens', text: 'Get invited, make a token, make a call.' },
     { href: '#connect', title: 'Connect your AI', art: 'agents', text: 'Claude, Cursor and ChatGPT over MCP.' },
     { href: '#code', title: 'Code mode', art: 'code', text: 'One tool, one script, one transaction.' },
     { href: '#api', title: 'HTTP API', art: 'api', text: 'Plain JSON for every table you make.' }
@@ -141,10 +141,10 @@
 <p>Archive calls no AI model on its own. Your assistant reads what is there, decides what to do, and sends Archive a short TypeScript script to run.</p>
 
 <h2 id="quickstart">Quick start</h2>
-<p>From sign-up to your first answer in a few minutes. No card, no sales call.</p>
+<p>From your invite to your first answer in a few minutes. No card, no sales call.</p>
 <ol>
-<li>Sign up at <a href="https://mulholland.ai">mulholland.ai</a> and create a workspace. It lives at <code>https://your-workspace.archive.mulholland.ai</code>.</li>
-<li>Sign in with the link we email you. You get a private space of your own.</li>
+<li>Get invited to a workspace by its admin, or ask <a href="https://mulholland.ai">Mulholland</a> for one.</li>
+<li>Sign in with Google, Microsoft, Slack or GitHub under the email you were invited with. You get a private space of your own.</li>
 <li>Create a token (see <a href="#tokens">Tokens</a>) and keep it as <code>ARCHIVE_TOKEN</code>.</li>
 <li>Connect your AI (see <a href="#connect">Connect your AI</a>), or call the API straight away.</li>
 </ol>
@@ -735,8 +735,7 @@ archive schema pull ./schema &amp;&amp; archive schema plan ./schema</pre>
 <tbody>
 <tr><td><code>archive space add|list|remove|members</code></td><td>Manages spaces.</td></tr>
 <tr><td><code>archive space grant &lt;space&gt; &lt;email&gt; &lt;role&gt;</code></td><td>Sets a role: owner, admin, editor, viewer or none.</td></tr>
-<tr><td><code>archive user add &lt;email&gt; [-name n] [-admin]</code></td><td>Adds a person to the workspace and prints a one-time sign-in link for them.</td></tr>
-<tr><td><code>archive user link &lt;email&gt;</code></td><td>Prints a new one-time sign-in link for someone in the workspace.</td></tr>
+<tr><td><code>archive user add &lt;email&gt; [-name n] [-admin]</code></td><td>Invites a person to the workspace; they sign in with a provider under that email.</td></tr>
 <tr><td><code>archive token create [-name n] [-space s:role,…] [-expires 720h] [-full]</code></td><td>Creates a token.</td></tr>
 <tr><td><code>archive token list</code>, <code>revoke &lt;id&gt;</code></td><td>Lists or revokes tokens.</td></tr>
 <tr><td><code>archive secret grant|revoke &lt;email&gt; &lt;type&gt;</code></td><td>Lets someone see a secret type.</td></tr>
@@ -776,7 +775,7 @@ archive schema pull ./schema &amp;&amp; archive schema plan ./schema</pre>
 </table>
 
 <h3 id="people-add">Adding people</h3>
-<p>A workspace admin adds the person by email. Then a space admin gives them a role, and they can sign in. Set the role to <code>none</code> to remove someone.</p>
+<p>A workspace admin invites the person by email on the Users page or with <code>archive user add</code>, and removes them there too. Then a space admin gives them a role in a space. Set the role to <code>none</code> to take them out of a space.</p>
 <Code tabs={['curl']}>
 <pre>curl https://your-workspace.archive.mulholland.ai/auth/spaces/finance/members \
   -H <span class="s">"Authorization: Bearer $ARCHIVE_TOKEN"</span> \
@@ -785,7 +784,7 @@ archive schema pull ./schema &amp;&amp; archive schema plan ./schema</pre>
 <p>Making or removing an owner takes an owner, and a space always keeps at least one.</p>
 
 <h3 id="people-signin">Signing in</h3>
-<p>No passwords. Sign in with Google, Microsoft or a passkey. An admin can also make a one-time sign-in link with <code>archive user link &lt;email&gt;</code> and pass it on; it works once, for 15 minutes.</p>
+<p>No passwords. Only invited people sign in: with Google, Microsoft, Slack or GitHub under the email they were invited with, as long as the provider says that email is verified. The first sign-in links that account, and the app then offers to add a passkey to the device.</p>
 
 <h3 id="people-security">Row-level security</h3>
 <p>Every table has a policy: only rows from your spaces. It applies to the web app, the API, your AI and raw SQL alike, so a bug in one surface cannot show another person's data.</p>

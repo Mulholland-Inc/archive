@@ -14,7 +14,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"maps"
 	"net/http"
 	"net/mail"
 	"net/url"
@@ -22,6 +21,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +34,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/github"
 )
 
 var (
@@ -94,6 +95,12 @@ type Member struct {
 	Email string `json:"email"`
 	Name  string `json:"name"`
 	Level string `json:"level"`
+}
+
+type Person struct {
+	Email string `json:"email"`
+	Name  string `json:"name"`
+	Admin bool   `json:"admin"`
 }
 
 type Token struct {
@@ -373,6 +380,20 @@ func (a *Archive) RemoveUser(ctx context.Context, email string) error {
 	})
 }
 
+func (a *Archive) People(ctx context.Context) ([]Person, error) {
+	if _, err := authUser(ctx); err != nil {
+		return nil, err
+	}
+	out := []Person{}
+	return out, a.sys(ctx, func(ctx context.Context) error {
+		users, err := a.hub.q().WorkspaceUsers(ctx, a.ws.ID)
+		for _, r := range users {
+			out = append(out, Person{Email: r.Email, Name: r.Name, Admin: a.has(ctx, a.roleID("u", r.ID), a.prefix+"_admin")})
+		}
+		return err
+	})
+}
+
 func userBy[T any](ctx context.Context, h *Hub, get func(*generated.Queries, context.Context, T) (generated.ArchiveUser, error), arg T) (*User, error) {
 	r, err := get(h.q(), ctx, arg)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -414,35 +435,6 @@ func (a *Archive) CLIActor(ctx context.Context, email string) (*Actor, error) {
 		return nil, err
 	}
 	return a.userActor(u), nil
-}
-
-func (h *Hub) newToken(ctx context.Context, userID uuid.UUID, kind string, ttl time.Duration) (string, error) {
-	secret := authNewSecret()
-	return secret, h.q().CreateLoginToken(ctx, generated.CreateLoginTokenParams{UserID: userID, Kind: kind, Hash: authHash(secret), Ttl: ttl.String()})
-}
-
-type UserLink struct {
-	*User
-	Link string `json:"link"`
-}
-
-func (h *Hub) signinLink(ctx context.Context, u *User) (*UserLink, error) {
-	secret, err := h.newToken(ctx, u.ID, "magic", signinTTL)
-	if err != nil {
-		return nil, err
-	}
-	return &UserLink{u, h.app + "/auth/magic?token=" + url.QueryEscape(secret)}, nil
-}
-
-func (h *Hub) useMagicLink(ctx context.Context, secret string) (*User, error) {
-	id, err := h.q().UseMagicLink(ctx, authHash(secret))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, fmt.Errorf("sign-in link is invalid, used or expired: %w", ErrUnauthorized)
-	}
-	if err != nil {
-		return nil, err
-	}
-	return userBy(ctx, h, (*generated.Queries).UserByID, id)
 }
 
 func (a *Archive) Spaces(ctx context.Context) ([]SpaceInfo, error) {
@@ -752,17 +744,27 @@ const (
 	signinCookie   = "archive_session"
 	signinCeremony = "archive_webauthn"
 	signinOIDC     = "archive_oidc"
-	signinTTL      = 15 * time.Minute
+	signinGitHub   = "https://github.com"
+)
+
+var (
+	signinRefused  = fmt.Errorf("no Archive account for this sign-in; ask an admin to add you: %w", ErrForbidden)
+	signinMismatch = fmt.Errorf("sign-in state does not match; start again: %w", ErrUnauthorized)
+	signinBuiltin  = []signinConfig{
+		{ID: "google", Name: "Google", base: "https://accounts.google.com"},
+		{ID: "microsoft", Name: "Microsoft", base: "https://login.microsoftonline.com"},
+		{ID: "slack", Name: "Slack", base: "https://slack.com"},
+		{ID: "github", Name: "GitHub", base: signinGitHub},
+	}
 )
 
 type signin struct {
-	h      *Hub
-	secure bool
-	wa     *webauthn.WebAuthn
-	oidc   map[string]signinOIDCConfig
+	h       *Hub
+	secure  bool
+	wa      *webauthn.WebAuthn
+	configs []signinConfig
 
 	mu         sync.Mutex
-	setup      string
 	ceremonies map[string]signinCeremonyData
 	providers  map[string]*signinProvider
 }
@@ -773,17 +775,18 @@ type signinCeremonyData struct {
 	exp  time.Time
 }
 
-type signinOIDCConfig struct {
-	Name         string `json:"name"`
-	Issuer       string `json:"issuer"`
-	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret"`
+type signinConfig struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	base     string
+	clientID string
+	secret   string
 }
 
 type signinProvider struct {
+	signinConfig
 	cfg      oauth2.Config
 	verifier *oidc.IDTokenVerifier
-	multi    bool
 }
 
 type signinMethods struct {
@@ -796,11 +799,18 @@ type signinOIDCLink struct {
 	Subject string `json:"sub"`
 }
 
+type signinIdentity struct {
+	link  signinOIDCLink
+	email string
+	name  string
+}
+
 type signinState struct {
-	Nonce    string `json:"n"`
-	Verifier string `json:"v"`
-	Bind     string `json:"b"`
-	Exp      int64  `json:"x"`
+	Nonce    string    `json:"n,omitempty"`
+	Verifier string    `json:"v,omitempty"`
+	User     uuid.UUID `json:"u,omitzero"`
+	Bind     string    `json:"b"`
+	Exp      int64     `json:"x"`
 }
 
 type signinUser struct {
@@ -820,20 +830,16 @@ func newSignin(h *Hub) (*signin, error) {
 	}
 	host := u.Hostname()
 	s := &signin{h: h, secure: host != "localhost" && host != "127.0.0.1" && host != "::1",
-		oidc: map[string]signinOIDCConfig{}, ceremonies: map[string]signinCeremonyData{}, providers: map[string]*signinProvider{}}
+		ceremonies: map[string]signinCeremonyData{}, providers: map[string]*signinProvider{}}
 	if s.wa, err = webauthn.New(&webauthn.Config{RPID: host, RPDisplayName: "Archive", RPOrigins: []string{u.Scheme + "://" + u.Host}}); err != nil {
 		return nil, fmt.Errorf("passkeys: %w", err)
 	}
-	if raw := os.Getenv("ARCHIVE_OIDC"); raw != "" {
-		var list []signinOIDCConfig
-		if err := json.Unmarshal([]byte(raw), &list); err != nil {
-			return nil, fmt.Errorf("ARCHIVE_OIDC: %w", err)
-		}
-		for _, c := range list {
-			if c.Name == "" || c.Issuer == "" || c.ClientID == "" {
-				return nil, errors.New("ARCHIVE_OIDC: every provider needs name, issuer and client_id")
-			}
-			s.oidc[c.Name] = c
+	for _, c := range signinBuiltin {
+		env := "ARCHIVE_" + strings.ToUpper(c.ID) + "_"
+		c.clientID, c.secret = os.Getenv(env+"CLIENT_ID"), os.Getenv(env+"CLIENT_SECRET")
+		c.base = strings.TrimRight(cmp.Or(os.Getenv(env+"URL"), c.base), "/")
+		if c.clientID != "" && c.secret != "" {
+			s.configs = append(s.configs, c)
 		}
 	}
 	return s, nil
@@ -857,48 +863,8 @@ func (s *signin) handler() http.Handler {
 	}
 	ok := func(v any, err error) (int, any, error) { return http.StatusOK, v, err }
 
-	mux.HandleFunc("GET /auth/magic", func(w http.ResponseWriter, r *http.Request) {
-		s.browser(w, r, func() (*User, string, error) {
-			u, err := h.useMagicLink(r.Context(), r.URL.Query().Get("token"))
-			return u, "", err
-		})
-	})
 	open("GET /auth/methods", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		providers := append([]string{}, slices.Sorted(maps.Keys(s.oidc))...)
-		return ok(map[string]any{"providers": providers, "signup": h.signupOpen(r.Context())}, nil)
-	})
-	open("POST /auth/setup", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		var body struct {
-			Token string `json:"token"`
-			Email string `json:"email"`
-			Name  string `json:"name"`
-		}
-		if err := httpDecode(r, &body); err != nil {
-			return 0, nil, err
-		}
-		body.Token = cmp.Or(body.Token, r.URL.Query().Get("token"))
-		s.mu.Lock()
-		valid := s.setup != "" && body.Token == s.setup
-		if valid {
-			s.setup = ""
-		}
-		s.mu.Unlock()
-		if !valid {
-			return 0, nil, fmt.Errorf("setup link is invalid or used: %w", ErrUnauthorized)
-		}
-		a, release, err := h.acquire(r.Context(), h.one)
-		if err != nil {
-			return 0, nil, err
-		}
-		defer release()
-		u, err := a.AddUser(r.Context(), body.Email, body.Name, true)
-		if err != nil {
-			s.mu.Lock()
-			s.setup = body.Token
-			s.mu.Unlock()
-			return 0, nil, err
-		}
-		return ok(s.signedIn(w, r, u, h.one))
+		return ok(map[string]any{"providers": append([]signinConfig{}, s.configs...)}, nil)
 	})
 	open("POST /auth/signout", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		s.setSession(w, "")
@@ -906,20 +872,6 @@ func (s *signin) handler() http.Handler {
 			return http.StatusNoContent, nil, h.q().SignOut(r.Context(), authHash(c.Value))
 		}
 		return http.StatusNoContent, nil, nil
-	})
-	authed("POST /auth/signup", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		var body struct {
-			Name string `json:"name"`
-		}
-		if err := httpDecode(r, &body); err != nil {
-			return 0, nil, err
-		}
-		ac, err := authUser(r.Context())
-		if err != nil {
-			return 0, nil, err
-		}
-		id, err := h.signup(r.Context(), body.Name, ac.Email, ac.Name)
-		return http.StatusCreated, map[string]string{"workspace": id}, err
 	})
 	authed("GET /auth/me", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		a, ac := archiveFrom(r.Context()), ActorFrom(r.Context())
@@ -940,6 +892,32 @@ func (s *signin) handler() http.Handler {
 			}
 		}
 		return ok(map[string]any{"actor": ac, "spaces": sp, "home": home, "workspace": a.ws.ID.String(), "workspaces": all}, err)
+	})
+	authed("GET /auth/users", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
+		return ok(archiveFrom(r.Context()).People(r.Context()))
+	})
+	authed("POST /auth/users", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
+		var body struct {
+			Email string `json:"email"`
+			Name  string `json:"name"`
+			Admin bool   `json:"admin"`
+		}
+		if err := httpDecode(r, &body); err != nil {
+			return 0, nil, err
+		}
+		a := archiveFrom(r.Context())
+		if _, err := a.AddUser(r.Context(), body.Email, body.Name, body.Admin); err != nil {
+			return 0, nil, err
+		}
+		p, err := a.People(r.Context())
+		return http.StatusCreated, p, err
+	})
+	authed("DELETE /auth/users/{email}", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
+		a := archiveFrom(r.Context())
+		if err := a.RemoveUser(r.Context(), r.PathValue("email")); err != nil {
+			return 0, nil, err
+		}
+		return ok(a.People(r.Context()))
 	})
 	authed("GET /auth/spaces", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		return ok(archiveFrom(r.Context()).Spaces(r.Context()))
@@ -1079,7 +1057,7 @@ func (s *signin) handler() http.Handler {
 		if err := s.save(r.Context(), found); err != nil {
 			return 0, nil, err
 		}
-		return ok(s.signedIn(w, r, found.u, ""))
+		return ok(s.signedIn(w, r, found.u))
 	})
 
 	mux.HandleFunc("GET /auth/oidc/{provider}", func(w http.ResponseWriter, r *http.Request) {
@@ -1091,50 +1069,38 @@ func (s *signin) handler() http.Handler {
 		bind := authNewSecret()
 		st := signinState{Nonce: authNewSecret(), Verifier: oauth2.GenerateVerifier(), Bind: authHash(bind), Exp: time.Now().Add(10 * time.Minute).Unix()}
 		http.SetCookie(w, s.cookie(signinOIDC, bind, "/auth/oidc/", 600))
-		http.Redirect(w, r, p.cfg.AuthCodeURL(s.seal(st), oidc.Nonce(st.Nonce), oauth2.S256ChallengeOption(st.Verifier)), http.StatusFound)
+		http.Redirect(w, r, p.cfg.AuthCodeURL(s.seal("oidc", st), oidc.Nonce(st.Nonce), oauth2.S256ChallengeOption(st.Verifier)), http.StatusFound)
 	})
 	mux.HandleFunc("GET /auth/oidc/{provider}/callback", func(w http.ResponseWriter, r *http.Request) {
-		st, token, err := s.oidcCallback(r)
+		st, u, err := s.oidcCallback(r)
 		if err != nil {
 			httpWrite(w, 0, nil, err)
 			return
 		}
-		q := url.Values{"b": {st.Bind}, "token": {token}, "sig": {h.sign("oidc", st.Bind+"."+token)}}
-		http.Redirect(w, r, h.app+"/auth/oidc/done?"+q.Encode(), http.StatusSeeOther)
+		done := s.seal("done", signinState{User: u.ID, Bind: st.Bind, Exp: time.Now().Add(time.Minute).Unix()})
+		http.Redirect(w, r, h.app+"/auth/oidc/done?"+url.Values{"state": {done}}.Encode(), http.StatusSeeOther)
 	})
 	mux.HandleFunc("GET /auth/oidc/done", func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
 		c, err := r.Cookie(signinOIDC)
 		http.SetCookie(w, s.cookie(signinOIDC, "", "/auth/oidc/", -1))
-		b, tok := q.Get("b"), q.Get("token")
-		if err != nil || tok == "" || authHash(c.Value) != b || !hmac.Equal([]byte(q.Get("sig")), []byte(h.sign("oidc", b+"."+tok))) {
-			httpWrite(w, 0, nil, fmt.Errorf("sign-in state does not match; start again: %w", ErrUnauthorized))
+		st, serr := s.unseal("done", r.URL.Query().Get("state"))
+		if err != nil || serr != nil || authHash(c.Value) != st.Bind {
+			httpWrite(w, 0, nil, signinMismatch)
 			return
 		}
-		s.browser(w, r, func() (*User, string, error) {
-			u, err := h.useMagicLink(r.Context(), tok)
-			return u, "", err
-		})
+		u, err := userBy(r.Context(), h, (*generated.Queries).UserByID, st.User)
+		var v any
+		if err == nil {
+			v, err = s.signedIn(w, r, u)
+		}
+		if err == nil && strings.Contains(r.Header.Get("Accept"), "text/html") {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+		httpWrite(w, http.StatusOK, v, err)
 	})
 	h.workspaceRoutes(authed)
 	return mux
-}
-
-func (s *signin) browser(w http.ResponseWriter, r *http.Request, user func() (*User, string, error)) {
-	u, short, err := user()
-	var v any
-	if err == nil {
-		v, err = s.signedIn(w, r, u, short)
-	}
-	if err == nil && strings.Contains(r.Header.Get("Accept"), "text/html") {
-		to := "/"
-		if short != "" {
-			to += "?workspace=" + url.QueryEscape(short)
-		}
-		http.Redirect(w, r, to, http.StatusSeeOther)
-		return
-	}
-	httpWrite(w, http.StatusOK, v, err)
 }
 
 func (s *signin) cookie(name, value, path string, maxAge int) *http.Cookie {
@@ -1149,16 +1115,16 @@ func (s *signin) setSession(w http.ResponseWriter, secret string) {
 	http.SetCookie(w, s.cookie(signinCookie, secret, "/", age))
 }
 
-func (s *signin) signedIn(w http.ResponseWriter, r *http.Request, u *User, short string) (any, error) {
-	secret, err := s.h.newToken(r.Context(), u.ID, "session", 30*24*time.Hour)
-	if err != nil {
+func (s *signin) signedIn(w http.ResponseWriter, r *http.Request, u *User) (any, error) {
+	if len(u.Workspaces) == 0 {
+		return nil, signinRefused
+	}
+	secret := authNewSecret()
+	if err := s.h.q().CreateSession(r.Context(), u.ID, authHash(secret)); err != nil {
 		return nil, err
 	}
 	s.setSession(w, secret)
-	return struct {
-		User      *User  `json:"user"`
-		Workspace string `json:"workspace,omitempty"`
-	}{u, short}, nil
+	return map[string]*User{"user": u}, nil
 }
 
 func (s *signin) user(ctx context.Context, id uuid.UUID) (*signinUser, error) {
@@ -1212,83 +1178,73 @@ func (s *signin) finish(w http.ResponseWriter, r *http.Request) (signinCeremonyD
 	return cer, nil
 }
 
-func signinMultiTenant(issuer string) bool {
-	for _, t := range []string{"common", "organizations", "consumers"} {
-		if strings.HasPrefix(issuer, "https://login.microsoftonline.com/"+t+"/") {
-			return true
-		}
-	}
-	return false
-}
-
-func (s *signin) provider(name string) (*signinProvider, error) {
+func (s *signin) provider(id string) (*signinProvider, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if p := s.providers[name]; p != nil {
+	if p := s.providers[id]; p != nil {
 		return p, nil
 	}
-	c, ok := s.oidc[name]
-	if !ok {
-		return nil, fmt.Errorf("sign-in provider %q: %w", name, ErrNotFound)
+	i := slices.IndexFunc(s.configs, func(c signinConfig) bool { return c.ID == id })
+	if i < 0 {
+		return nil, fmt.Errorf("sign-in provider %q: %w", id, ErrNotFound)
 	}
-	ctx, multi := context.Background(), signinMultiTenant(c.Issuer)
-	if multi {
-		ctx = oidc.InsecureIssuerURLContext(ctx, c.Issuer)
+	c := s.configs[i]
+	p := &signinProvider{signinConfig: c, cfg: oauth2.Config{ClientID: c.clientID, ClientSecret: c.secret,
+		RedirectURL: s.h.api + "/auth/oidc/" + id + "/callback", Scopes: []string{oidc.ScopeOpenID, "email", "profile"}}}
+	if id == "github" {
+		p.cfg.Endpoint, p.cfg.Scopes = github.Endpoint, []string{"read:user", "user:email"}
+		if c.base != signinGitHub {
+			p.cfg.Endpoint = oauth2.Endpoint{AuthURL: c.base + "/login/oauth/authorize", TokenURL: c.base + "/login/oauth/access_token"}
+		}
+	} else {
+		ctx, issuer := context.Background(), c.base
+		if id == "microsoft" {
+			issuer += "/common/v2.0"
+			ctx = oidc.InsecureIssuerURLContext(ctx, issuer)
+		}
+		op, err := oidc.NewProvider(ctx, issuer)
+		if err != nil {
+			return nil, fmt.Errorf("sign-in provider %s: %w", c.Name, err)
+		}
+		p.cfg.Endpoint = op.Endpoint()
+		p.verifier = op.Verifier(&oidc.Config{ClientID: c.clientID, SkipIssuerCheck: id == "microsoft"})
 	}
-	op, err := oidc.NewProvider(ctx, c.Issuer)
-	if err != nil {
-		return nil, fmt.Errorf("sign-in provider %s: %w", name, err)
-	}
-	p := &signinProvider{multi: multi, verifier: op.Verifier(&oidc.Config{ClientID: c.ClientID, SkipIssuerCheck: multi}),
-		cfg: oauth2.Config{ClientID: c.ClientID, ClientSecret: c.ClientSecret, Endpoint: op.Endpoint(),
-			RedirectURL: s.h.api + "/auth/oidc/" + name + "/callback", Scopes: []string{oidc.ScopeOpenID, "email", "profile"}}}
-	s.providers[name] = p
+	s.providers[id] = p
 	return p, nil
 }
 
-func (s *signin) seal(st signinState) string {
+func (s *signin) seal(purpose string, st signinState) string {
 	b, _ := json.Marshal(st)
 	nonce := make([]byte, s.h.aead.NonceSize())
 	rand.Read(nonce)
-	return base64.RawURLEncoding.EncodeToString(s.h.aead.Seal(nonce, nonce, b, []byte("oidc")))
+	return base64.RawURLEncoding.EncodeToString(s.h.aead.Seal(nonce, nonce, b, []byte(purpose)))
 }
 
-func (s *signin) unseal(state string) (*signinState, error) {
-	bad := fmt.Errorf("sign-in state does not match; start again: %w", ErrUnauthorized)
+func (s *signin) unseal(purpose, state string) (*signinState, error) {
 	ct, err := base64.RawURLEncoding.DecodeString(state)
 	n := s.h.aead.NonceSize()
 	if err != nil || len(ct) < n {
-		return nil, bad
+		return nil, signinMismatch
 	}
-	b, err := s.h.aead.Open(nil, ct[:n], ct[n:], []byte("oidc"))
+	b, err := s.h.aead.Open(nil, ct[:n], ct[n:], []byte(purpose))
 	var st signinState
 	if err != nil || json.Unmarshal(b, &st) != nil || time.Now().Unix() > st.Exp {
-		return nil, bad
+		return nil, signinMismatch
 	}
 	return &st, nil
 }
 
-func (s *signin) oidcCallback(r *http.Request) (*signinState, string, error) {
-	ctx := r.Context()
-	p, err := s.provider(r.PathValue("provider"))
-	if err != nil {
-		return nil, "", err
-	}
-	st, err := s.unseal(r.URL.Query().Get("state"))
-	if err != nil {
-		return nil, "", err
-	}
-	tok, err := p.cfg.Exchange(ctx, r.URL.Query().Get("code"), oauth2.VerifierOption(st.Verifier))
-	if err != nil {
-		return nil, "", fmt.Errorf("sign-in: %v: %w", err, ErrUnauthorized)
+func (s *signin) identify(ctx context.Context, p *signinProvider, tok *oauth2.Token, nonce string) (*signinIdentity, error) {
+	if p.verifier == nil {
+		return s.github(ctx, p, tok)
 	}
 	raw, _ := tok.Extra("id_token").(string)
 	idt, err := p.verifier.Verify(ctx, raw)
-	if err != nil || idt.Nonce != st.Nonce {
-		return nil, "", fmt.Errorf("sign-in: invalid ID token: %w", ErrUnauthorized)
+	if err != nil || idt.Nonce != nonce {
+		return nil, fmt.Errorf("sign-in: invalid ID token: %w", ErrUnauthorized)
 	}
-	if p.multi && (!strings.HasPrefix(idt.Issuer, "https://login.microsoftonline.com/") || !strings.HasSuffix(idt.Issuer, "/v2.0")) {
-		return nil, "", fmt.Errorf("sign-in: unexpected issuer %s: %w", idt.Issuer, ErrUnauthorized)
+	if p.ID == "microsoft" && (!strings.HasPrefix(idt.Issuer, p.base+"/") || !strings.HasSuffix(idt.Issuer, "/v2.0")) {
+		return nil, fmt.Errorf("sign-in: unexpected issuer %s: %w", idt.Issuer, ErrUnauthorized)
 	}
 	var claims struct {
 		Email         string `json:"email"`
@@ -1297,40 +1253,105 @@ func (s *signin) oidcCallback(r *http.Request) (*signinState, string, error) {
 		Name          string `json:"name"`
 	}
 	if err := idt.Claims(&claims); err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	email := ""
-	if claims.EmailVerified || claims.DomainOwner {
-		email, _ = authEmail(claims.Email)
+	id := &signinIdentity{link: signinOIDCLink{idt.Issuer, idt.Subject}, name: claims.Name}
+	if claims.EmailVerified || p.ID == "microsoft" && claims.DomainOwner {
+		id.email = claims.Email
 	}
-	link := signinOIDCLink{idt.Issuer, idt.Subject}
-	lb, _ := json.Marshal([]signinOIDCLink{link})
-	u, err := userBy(ctx, s.h, (*generated.Queries).UserByOIDC, lb)
-	if errors.Is(err, ErrNotFound) && email != "" {
-		u, err = userBy(ctx, s.h, (*generated.Queries).UserByEmail, email)
-		if errors.Is(err, ErrNotFound) && s.h.signupOpen(ctx) {
-			name := strings.Join(strings.Fields(claims.Name), " ")
-			ws := cmp.Or(name, email)
-			if _, err = s.h.signup(ctx, strings.ToValidUTF8(ws[:min(len(ws), workspaceMax)], ""), email, name); err == nil {
-				u, err = userBy(ctx, s.h, (*generated.Queries).UserByEmail, email)
-			}
+	return id, nil
+}
+
+func (s *signin) github(ctx context.Context, p *signinProvider, tok *oauth2.Token) (*signinIdentity, error) {
+	api := p.base
+	if api == signinGitHub {
+		api = "https://api.github.com"
+	}
+	c := p.cfg.Client(ctx, tok)
+	get := func(path string, v any) error {
+		req, err := http.NewRequestWithContext(ctx, "GET", api+path, nil)
+		if err != nil {
+			return err
 		}
-		if err == nil {
-			var pu *signinUser
-			if pu, err = s.user(ctx, u.ID); err == nil {
-				pu.m.OIDC = append(pu.m.OIDC, link)
-				err = s.save(ctx, pu)
-			}
+		req.Header.Set("Accept", "application/vnd.github+json")
+		resp, err := c.Do(req)
+		if err != nil {
+			return err
 		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("GitHub %s: %s", path, resp.Status)
+		}
+		return json.NewDecoder(resp.Body).Decode(v)
 	}
-	if errors.Is(err, ErrNotFound) {
-		return nil, "", fmt.Errorf("no Archive account for this sign-in; ask an admin to add you: %w", ErrForbidden)
+	var user struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+	}
+	var emails []struct {
+		Email    string `json:"email"`
+		Primary  bool   `json:"primary"`
+		Verified bool   `json:"verified"`
+	}
+	err := get("/user", &user)
+	if err == nil && user.ID == 0 {
+		err = errors.New("GitHub sent no user id")
+	}
+	if err == nil {
+		err = get("/user/emails", &emails)
 	}
 	if err != nil {
-		return nil, "", err
+		return nil, fmt.Errorf("sign-in: %v: %w", err, ErrUnauthorized)
 	}
-	secret, err := s.h.newToken(ctx, u.ID, "magic", signinTTL)
-	return st, secret, err
+	id := &signinIdentity{link: signinOIDCLink{p.base, strconv.FormatInt(user.ID, 10)}, name: user.Name}
+	for _, e := range emails {
+		if e.Primary && e.Verified {
+			id.email = e.Email
+		}
+	}
+	return id, nil
+}
+
+func (s *signin) oidcCallback(r *http.Request) (*signinState, *User, error) {
+	ctx := r.Context()
+	p, err := s.provider(r.PathValue("provider"))
+	if err != nil {
+		return nil, nil, err
+	}
+	st, err := s.unseal("oidc", r.URL.Query().Get("state"))
+	if err != nil {
+		return nil, nil, err
+	}
+	tok, err := p.cfg.Exchange(ctx, r.URL.Query().Get("code"), oauth2.VerifierOption(st.Verifier))
+	if err != nil {
+		return nil, nil, fmt.Errorf("sign-in: %v: %w", err, ErrUnauthorized)
+	}
+	id, err := s.identify(ctx, p, tok, st.Nonce)
+	if err != nil {
+		return nil, nil, err
+	}
+	email, _ := authEmail(id.email)
+	lb, _ := json.Marshal([]signinOIDCLink{id.link})
+	u, err := userBy(ctx, s.h, (*generated.Queries).UserByOIDC, lb)
+	if errors.Is(err, ErrNotFound) && email != "" {
+		if u, err = userBy(ctx, s.h, (*generated.Queries).UserByEmail, email); err == nil && len(u.Workspaces) > 0 {
+			var pu *signinUser
+			if pu, err = s.user(ctx, u.ID); err == nil {
+				pu.m.OIDC = append(pu.m.OIDC, id.link)
+				err = s.save(ctx, pu)
+			}
+			if name := strings.Join(strings.Fields(id.name), " "); err == nil && name != "" {
+				err = s.h.q().NameUser(ctx, u.ID, name)
+			}
+		}
+	}
+	if err == nil && len(u.Workspaces) == 0 {
+		err = ErrNotFound
+	}
+	if errors.Is(err, ErrNotFound) {
+		return nil, nil, signinRefused
+	}
+	return st, u, err
 }
 
 var secretMasks = map[string]bool{"card": true, "mask": true, "mask_ssn": true, "national": true, "passport": true}

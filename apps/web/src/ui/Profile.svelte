@@ -2,7 +2,7 @@
   import Icon from '#kit/Icon.svelte';
   import Avatar from './Avatar.svelte';
 
-  let { name, spaces = [], home, current = '', onpick, oncreate, workspaces = [], workspace = '', onworkspace, onadd } = $props();
+  let { name, spaces = [], home, current = '', onpick, oncreate, workspaces = [], workspace = '', onworkspace } = $props();
   let open = $state(false);
   let adding = $state(false);
   let draft = $state('');
@@ -69,8 +69,7 @@
           <span>{w.name}</span>{#if w.id === workspace}<Icon name="check" />{/if}
         </button>
       {/each}
-      <button class="item new" role="menuitem" onclick={() => ((open = false), onadd())}><Icon name="plus" /><span>Add workspace</span></button>
-      <hr />
+      {#if workspaces.length}<hr />{/if}
       <button class="item" role="menuitemradio" aria-checked={!current} onclick={() => pick('')}>
         <span>All spaces</span>{#if !current}<Icon name="check" />{/if}
       </button>
@@ -92,7 +91,7 @@
 </div>
 
 <style>
-  .profile { position: relative; display: flex; flex: var(--profile-flex); min-width: 0; }
+  .profile { position: relative; display: flex; flex: 1; min-width: 0; }
   .me {
     display: flex;
     flex: 1;
@@ -105,16 +104,15 @@
     transition: background var(--duration-fast);
   }
   .me:hover, .me[aria-expanded='true'] { background: var(--fill-faint); }
-  .text { display: var(--wide-only); flex: 1; flex-direction: column; min-width: 0; line-height: var(--leading-snug); }
+  .text { display: flex; flex: 1; flex-direction: column; min-width: 0; line-height: var(--leading-snug); }
   .name, .space { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .name { color: var(--fg-soft); }
   .space { color: var(--fg-muted); font-size: var(--text-meta); text-transform: capitalize; }
-  .updown { display: var(--wide-only); color: var(--fg-muted); }
+  .updown { display: flex; color: var(--fg-muted); }
   .menu {
     position: absolute;
     bottom: calc(100% + var(--space-1));
-    left: var(--menu-left);
-    right: var(--menu-right);
+    left: 0;
     z-index: var(--z-nav);
     display: flex;
     flex-direction: column;

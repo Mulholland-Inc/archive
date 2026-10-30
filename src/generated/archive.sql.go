@@ -511,27 +511,6 @@ func (q *Queries) CreateFile(ctx context.Context, arg CreateFileParams) (CreateF
 	return i, err
 }
 
-const createLoginToken = `-- name: CreateLoginToken :exec
-INSERT INTO archive.token (user_id, kind, hash, expires_at) VALUES ($1, $2, $3, now() + $4::text::interval)
-`
-
-type CreateLoginTokenParams struct {
-	UserID uuid.UUID
-	Kind   string
-	Hash   string
-	Ttl    string
-}
-
-func (q *Queries) CreateLoginToken(ctx context.Context, arg CreateLoginTokenParams) error {
-	_, err := q.db.Exec(ctx, createLoginToken,
-		arg.UserID,
-		arg.Kind,
-		arg.Hash,
-		arg.Ttl,
-	)
-	return err
-}
-
 const createSecret = `-- name: CreateSecret :exec
 INSERT INTO archive.secret (id, table_name, row_id, column_name, type, value, space) VALUES ($1, $2, $3, $4, $5, $6, $7)
 `
@@ -556,6 +535,15 @@ func (q *Queries) CreateSecret(ctx context.Context, arg CreateSecretParams) erro
 		arg.Value,
 		arg.Space,
 	)
+	return err
+}
+
+const createSession = `-- name: CreateSession :exec
+INSERT INTO archive.token (user_id, kind, hash, expires_at) VALUES ($1, 'session', $2, now() + interval '30 days')
+`
+
+func (q *Queries) CreateSession(ctx context.Context, userID uuid.UUID, hash string) error {
+	_, err := q.db.Exec(ctx, createSession, userID, hash)
 	return err
 }
 
@@ -1319,6 +1307,15 @@ func (q *Queries) MonthUsage(ctx context.Context, workspace uuid.UUID) (MonthUsa
 		&i.StoredBytes,
 	)
 	return i, err
+}
+
+const nameUser = `-- name: NameUser :exec
+UPDATE archive."user" SET name = $2 WHERE id = $1 AND name = ''
+`
+
+func (q *Queries) NameUser(ctx context.Context, iD uuid.UUID, name string) error {
+	_, err := q.db.Exec(ctx, nameUser, iD, name)
+	return err
 }
 
 const nextPendingFile = `-- name: NextPendingFile :one
@@ -2156,17 +2153,6 @@ func (q *Queries) Upload(ctx context.Context, id uuid.UUID) (ArchiveUpload, erro
 		&i.CreatedAt,
 	)
 	return i, err
-}
-
-const useMagicLink = `-- name: UseMagicLink :one
-DELETE FROM archive.token WHERE hash = $1 AND kind = 'magic' AND expires_at > now() RETURNING user_id
-`
-
-func (q *Queries) UseMagicLink(ctx context.Context, hash string) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, useMagicLink, hash)
-	var user_id uuid.UUID
-	err := row.Scan(&user_id)
-	return user_id, err
 }
 
 const userByEmail = `-- name: UserByEmail :one
