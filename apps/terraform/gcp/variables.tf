@@ -17,25 +17,22 @@ variable "name" {
 
 variable "app_domain" {
   type        = string
-  description = "Domain of the web app, like app.archive.dev (ARCHIVE_URL), on Cloudflare. Alone it is the service's domain, a Cloud Run domain mapping behind Cloudflare's proxy; with api_domain it is only the web app, static files on a Worker of its own that the image workflow deploys. Empty uses the run.app URL."
-  default     = ""
+  description = "Domain of the web app, like app.archive.dev (ARCHIVE_URL), on Cloudflare: static files on a Worker of its own that the image workflow deploys."
 }
 
 variable "api_domain" {
   type        = string
-  description = "Domain of the API, sign-in, MCP, webhooks and OAuth redirects, like api.archive.dev (ARCHIVE_API_URL), on Cloudflare: a Cloud Run domain mapping behind Cloudflare's proxy. Empty uses the app's address."
-  default     = ""
+  description = "Domain of the API, sign-in, MCP, webhooks and OAuth redirects, like api.archive.dev (ARCHIVE_API_URL), on Cloudflare: a Cloud Run domain mapping behind Cloudflare's proxy."
 
   validation {
-    condition     = var.api_domain == "" || var.app_domain != ""
-    error_message = "api_domain needs app_domain: the web app on its own domain calls the API on api_domain."
+    condition     = var.api_domain != var.app_domain
+    error_message = "The web app and the API each need a domain of their own."
   }
 }
 
 variable "cloudflare_zone" {
   type        = string
   description = "Cloudflare zone holding app_domain and api_domain, like archive.dev, verified with Google as the archive-verify service account. Its token goes in CLOUDFLARE_API_TOKEN; the README lists the permissions it needs."
-  default     = ""
 }
 
 variable "github_repository" {

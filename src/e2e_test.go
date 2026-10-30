@@ -1024,8 +1024,8 @@ func TestTheFirstOwnerIsAddedOnTheCLIAndSignsInWithAProvider(t *testing.T) {
 		t.Errorf("a setup link: %d", st)
 	}
 	for _, origin := range []string{strings.Replace(srv.url, "127.0.0.1", "localhost", 1), "https://evil.test"} {
-		if _, hdr := e2eFrom(t, "OPTIONS", srv.url+"/api/types", origin); hdr.Get("Access-Control-Allow-Origin") != "" || hdr.Get("Vary") != "" {
-			t.Errorf("one origin answers %s with CORS: %v", origin, hdr)
+		if _, hdr := e2eFrom(t, "OPTIONS", srv.url+"/api/types", origin); hdr.Get("Access-Control-Allow-Origin") != "" {
+			t.Errorf("a localhost install answers %s with CORS: %v", origin, hdr)
 		}
 	}
 	first := map[string]any{"sub": "first-1", "email": "first@example.com", "email_verified": true}
@@ -1076,15 +1076,16 @@ func TestWithoutPostgresInstalledTheFirstRunDownloadsItIntoTheDataDir(t *testing
 	}
 }
 
-func TestDockerImageServesAndAcceptsCLICommandsFromDockerExec(t *testing.T) {
+func TestDockerImagesServeTheAPIAndTheWebAppApartAndTakeCLICommandsFromDockerExec(t *testing.T) {
 	t.Parallel()
 	if os.Getenv("CI") == "" {
-		t.Skip("builds the Docker image; runs in CI")
+		t.Skip("builds the Docker images; runs in CI")
 	}
 	if err := exec.Command("docker", "info").Run(); err != nil {
 		t.Skip("docker is not available")
 	}
 	name := fmt.Sprintf("archive-e2e-%d", time.Now().UnixNano())
+	web := name + "-web"
 	docker := func(stdin string, args ...string) string {
 		t.Helper()
 		c := exec.Command("docker", args...)
@@ -1096,12 +1097,14 @@ func TestDockerImageServesAndAcceptsCLICommandsFromDockerExec(t *testing.T) {
 		return string(out)
 	}
 	t.Cleanup(func() {
-		exec.Command("docker", "rm", "-f", name).Run()
+		exec.Command("docker", "rm", "-f", name, web).Run()
 		exec.Command("docker", "volume", "rm", "-f", name).Run()
-		exec.Command("docker", "rmi", "-f", name).Run()
+		exec.Command("docker", "rmi", "-f", name, web).Run()
 	})
 	docker("", "build", "-q", "-t", name, "..")
+	docker("", "build", "-q", "-f", "../apps/web/Dockerfile", "-t", web, "..")
 	docker("", "run", "-d", "--name", name, "-v", name+":/data", name)
+	docker("", "run", "-d", "--name", web, "-e", "ARCHIVE_API_URL=https://api.example.test", web)
 	for deadline := time.Now().Add(90 * time.Second); ; time.Sleep(500 * time.Millisecond) {
 		if exec.Command("docker", "exec", name, "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz").Run() == nil {
 			break
@@ -1111,16 +1114,21 @@ func TestDockerImageServesAndAcceptsCLICommandsFromDockerExec(t *testing.T) {
 			t.Fatalf("container not healthy:\n%s", out)
 		}
 	}
+	for _, page := range []string{"/", "/workflows", "/assets/index.js"} {
+		if exec.Command("docker", "exec", name, "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080"+page).Run() == nil {
+			t.Errorf("the API image serves %s", page)
+		}
+	}
 	for _, page := range []string{"/", "/files", "/workflows"} {
-		if out := docker("", "exec", name, "wget", "-q", "-O", "-", "http://127.0.0.1:8080"+page); !strings.Contains(out, `<div id="app">`) {
+		if out := docker("", "exec", web, "wget", "-q", "-O", "-", "http://127.0.0.1:8080"+page); !strings.Contains(out, `<div id="app">`) || !strings.Contains(out, `<meta name="archive-api" content="https://api.example.test">`) {
 			t.Fatalf("web app at %s: %s", page, out)
 		}
 	}
-	asset := regexp.MustCompile(`/assets/[^"]+\.js`).FindString(docker("", "exec", name, "wget", "-q", "-O", "-", "http://127.0.0.1:8080/"))
-	if out := docker("", "exec", name, "wget", "-S", "-O", "/dev/null", "http://127.0.0.1:8080"+asset); asset == "" || !strings.Contains(out, "immutable") {
+	asset := regexp.MustCompile(`/assets/[^"]+\.js`).FindString(docker("", "exec", web, "wget", "-q", "-O", "-", "http://127.0.0.1:8080/"))
+	if out := docker("", "exec", web, "wget", "-S", "-O", "/dev/null", "http://127.0.0.1:8080"+asset); asset == "" || !strings.Contains(out, "immutable") {
 		t.Fatalf("asset %q: %s", asset, out)
 	}
-	if exec.Command("docker", "exec", name, "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/assets/gone.js").Run() == nil {
+	if exec.Command("docker", "exec", web, "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/assets/gone.js").Run() == nil {
 		t.Fatal("a missing asset answers")
 	}
 	docker("", "exec", name, "archive", "user", "add", "ops@example.com")

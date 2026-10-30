@@ -1,22 +1,18 @@
 package main
 
 import (
-	"bytes"
 	"cmp"
 	"context"
-	"embed"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
-	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -31,9 +27,6 @@ import (
 
 var cliVersion = "0.1.0"
 
-//go:embed all:web
-var webFiles embed.FS
-
 const cliUsage = `archive keeps all your stuff in one place, in Postgres tables you define.
 
 Usage:
@@ -41,7 +34,7 @@ Usage:
                                      every command acts as a user (default the first owner) of a
                                      workspace (default the first one)
 
-  archive serve [-addr :8080]        serve the web app, the HTTP API (/api), sign-in (/auth) and MCP (/mcp)
+  archive serve [-addr :8080]        serve the HTTP API (/api), sign-in (/auth) and MCP (/mcp) for the web app
   archive mcp                        serve MCP over stdio
   archive types                      print the tables, their columns and the built-in types
   archive run <file.ts|->            run TypeScript against the archive SDK in one transaction,
@@ -120,14 +113,13 @@ Environment:
   ARCHIVE_SECRET_KEY 32-byte key (hex or base64) for secret values and the Postgres role password;
                      required with DATABASE_URL, the same on every instance; unset with the
                      bundled Postgres uses $ARCHIVE_DATA/secret.key
-  ARCHIVE_URL        public base URL of the web app, for passkeys and where sign-in returns
-                     (default http://localhost:<port>); while it is http://localhost, requests
-                     from this machine are signed in as the first owner
-  ARCHIVE_API_URL    public base URL of the API, sign-in, MCP, webhooks, file links and every
-                     OAuth redirect URL, which holds the session cookie (default ARCHIVE_URL);
-                     on another origin, /api and /auth allow ARCHIVE_URL's origin over CORS with the
-                     cookie; unless ARCHIVE_URL is http://localhost, any other origin may call with
-                     a bearer token
+  ARCHIVE_URL        public base URL of the web app, which runs on its own (ghcr.io/mulholland-inc/archive-web),
+                     for passkeys and where sign-in returns (default http://localhost:3000); while it is
+                     http://localhost, requests from this machine are signed in as the first owner
+  ARCHIVE_API_URL    public base URL of this server: the API, sign-in, MCP, webhooks, file links and every
+                     OAuth redirect URL, which holds the session cookie (default http://localhost:<port>);
+                     /api and /auth allow ARCHIVE_URL's origin over CORS with the cookie; unless
+                     ARCHIVE_URL is http://localhost, any other origin may call with a bearer token
   ARCHIVE_TASKS_QUEUE
                      Cloud Tasks queue, projects/<p>/locations/<r>/queues/<q>, that calls
                      POST ARCHIVE_API_URL/tasks at each time workflows or files are due, so serve can
@@ -571,10 +563,8 @@ func cliSchema(ctx context.Context, a *Archive, pos []string, allowDrop bool, st
 }
 
 func cliServe(ctx context.Context, h *Hub, a *Archive, addr string) error {
-	if os.Getenv("ARCHIVE_URL") == "" {
-		_, port, _ := net.SplitHostPort(addr)
-		h.urls("http://localhost:" + cmp.Or(port, "80"))
-	}
+	_, port, _ := net.SplitHostPort(addr)
+	h.urls(cmp.Or(port, "80"))
 	si, err := newSignin(h)
 	if err != nil {
 		return err
@@ -599,7 +589,6 @@ func cliServe(ctx context.Context, h *Hub, a *Archive, addr string) error {
 	mux.Handle("/auth/", si.handler())
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("/mcp", h.mcp)
-	mux.HandleFunc("/", web)
 	var wg sync.WaitGroup
 	bg, stop := context.WithCancel(ctx)
 	defer wg.Wait()
@@ -613,7 +602,7 @@ func cliServe(ctx context.Context, h *Hub, a *Archive, addr string) error {
 	hs := &http.Server{Addr: addr, Handler: h.cors(mux), ReadHeaderTimeout: 10 * time.Second}
 	errc := make(chan error, 1)
 	go func() { errc <- hs.ListenAndServe() }()
-	fmt.Fprintf(os.Stderr, "archive: serving the web app on %s, the API on %s/api and MCP on %s/mcp\n", h.app, h.api, h.api)
+	fmt.Fprintf(os.Stderr, "archive: serving the API on %s/api and MCP on %s/mcp, for the web app on %s\n", h.api, h.api, h.app)
 	select {
 	case err := <-errc:
 		return err
@@ -660,36 +649,6 @@ func (h *Hub) cors(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
-}
-
-func web(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "GET" && r.Method != "HEAD" {
-		http.NotFound(w, r)
-		return
-	}
-	name := strings.TrimPrefix(r.URL.Path, "/")
-	if first, _, _ := strings.Cut(name, "/"); first == "hooks" {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if f, err := fs.Stat(webFiles, "web/"+name); err != nil || f.IsDir() || strings.HasPrefix(path.Base(name), ".") {
-		if strings.HasPrefix(name, "assets/") {
-			http.NotFound(w, r)
-			return
-		}
-		name = "index.html"
-	}
-	b, err := webFiles.ReadFile("web/" + name)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	if strings.HasPrefix(name, "assets/") {
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-	} else {
-		w.Header().Set("Cache-Control", "no-cache")
-	}
-	http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(b))
 }
 
 var httpErrBadRequest = errors.New("bad request")
