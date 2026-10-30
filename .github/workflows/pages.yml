@@ -37,5 +37,6 @@ jobs:
       - uses: actions/upload-pages-artifact@v4
         with:
           path: apps/site/build
+          include-hidden-files: true
       - id: deployment
         uses: actions/deploy-pages@v4
