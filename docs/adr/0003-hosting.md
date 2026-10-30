@@ -87,7 +87,12 @@ Without subdomains, every request names its workspace, and secrets stay plain `a
 
 ## Infrastructure
 
-`apps/terraform/gcp` deploys app.archive.dev exactly as it deploys anyone's Archive: one Cloud Run service with both domains mapped, Cloud SQL reached directly over its socket, a bucket, and the secrets as environment variables. Mulholland's values (domains, keys, Stripe) are Terraform variables, not code.
+`apps/terraform/gcp` deploys app.archive.dev exactly as it deploys anyone's Archive: one Cloud Run service, Cloud SQL reached directly over its socket, a bucket, and the secrets as environment variables. Mulholland's values (domains, keys, Stripe) are Terraform variables, not code.
+
+- **Domains go through a Cloudflare Worker.** Cloud Run picks the service by Host header, so DNS alone cannot point a domain at it. Cloud Run's domain mapping is preview and not meant for production, a Google load balancer costs about $18 a month, and Cloudflare Origin Rules rewrite the Host header only on Enterprise. A Worker of a few lines, on Workers' free plan, fetches the same path from the service's run.app address. Its custom domains create the DNS records and certificates, and Cloudflare's protection sits in front. Without domains there is no Worker and the run.app address is the app's.
+- **The image comes through Artifact Registry.** Cloud Run cannot pull from ghcr.io, so a remote repository mirrors it. The ghcr.io package has to be public.
+- **State lives in a GCS bucket**, passed at `terraform init -backend-config=bucket=…`.
+- **Every image on main deploys itself.** The image workflow updates the service to that commit's image through workload identity federation, once the repository's GitHub variables name the identity Terraform made. Terraform ignores the image after creating the service.
 
 ## How it was built
 
@@ -116,7 +121,6 @@ Built as decided; [ADR 0001](0001-architecture.md#workspaces) describes the resu
 
 ## Open questions
 
-- **Serving the web app.** The image serves the API and sign-in but not `apps/web`, which app.archive.dev also needs, from the image or a static host on the same domain.
 - **Billing in the web app.** Plans, checkout, settings and admin are API and CLI only so far; there is no Stripe customer portal link.
 
 - **License.** The repo has no LICENSE yet. AGPL-3.0 makes anyone offering Archive as a service publish their changes. FSL forbids competing hosted offerings for two years, after which each release becomes Apache 2.0.

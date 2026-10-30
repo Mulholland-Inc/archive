@@ -17,19 +17,37 @@ variable "name" {
 
 variable "app_domain" {
   type        = string
-  description = "Domain of the web app and sign-in, like app.archive.dev (ARCHIVE_URL). Empty uses the run.app URL."
+  description = "Domain of the web app and sign-in, like app.archive.dev (ARCHIVE_URL), on Cloudflare. Empty uses the run.app URL."
   default     = ""
 }
 
 variable "api_domain" {
   type        = string
-  description = "Domain of the API, MCP, webhooks, Stripe and OAuth redirects, like api.archive.dev (ARCHIVE_API_URL). Empty uses the app's address."
+  description = "Domain of the API, MCP, webhooks, Stripe and OAuth redirects, like api.archive.dev (ARCHIVE_API_URL), on Cloudflare. Empty uses the app's address."
+  default     = ""
+}
+
+variable "cloudflare_account_id" {
+  type        = string
+  description = "Cloudflare account whose Worker serves app_domain and api_domain. Its token goes in CLOUDFLARE_API_TOKEN."
+  default     = ""
+}
+
+variable "cloudflare_zone_id" {
+  type        = string
+  description = "Cloudflare zone holding app_domain and api_domain."
+  default     = ""
+}
+
+variable "github_repository" {
+  type        = string
+  description = "owner/repo whose main branch may deploy new images to the service, like Mulholland-Inc/archive. Empty allows none."
   default     = ""
 }
 
 variable "image_tag" {
   type        = string
-  description = "Tag of ghcr.io/mulholland-inc/archive to run."
+  description = "Tag of ghcr.io/mulholland-inc/archive to run first; later deploys change the image outside Terraform."
   default     = "latest"
 }
 
