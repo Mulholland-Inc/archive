@@ -4,7 +4,9 @@ locals {
   run_url = "https://${var.name}-${data.google_project.this.number}.${var.region}.run.app"
   url     = var.app_domain != "" ? "https://${var.app_domain}" : local.run_url
   api_url = var.api_domain != "" ? "https://${var.api_domain}" : local.url
+  split   = local.url != local.api_url
   domains = toset(compact([var.app_domain, var.api_domain]))
+  run     = local.split ? var.api_domain : var.app_domain
 
   required = {
     DATABASE_URL        = "host=/cloudsql/${google_sql_database_instance.this.connection_name} user=${google_sql_user.this.name} password=${random_password.db.result} dbname=${google_sql_database.this.name}"
@@ -29,7 +31,7 @@ locals {
     for k, v in local.optional : k if nonsensitive(v != "")
   ]))
 
-  services = ["run.googleapis.com", "sqladmin.googleapis.com", "secretmanager.googleapis.com", "iam.googleapis.com", "storage.googleapis.com", "artifactregistry.googleapis.com", "iamcredentials.googleapis.com", "sts.googleapis.com", "cloudtasks.googleapis.com"]
+  services = ["run.googleapis.com", "sqladmin.googleapis.com", "secretmanager.googleapis.com", "iam.googleapis.com", "storage.googleapis.com", "artifactregistry.googleapis.com", "iamcredentials.googleapis.com", "sts.googleapis.com", "cloudtasks.googleapis.com", "siteverification.googleapis.com"]
 }
 
 resource "google_project_service" "this" {
@@ -292,33 +294,102 @@ data "cloudflare_zone" "this" {
   }
 }
 
-resource "cloudflare_workers_script" "this" {
-  count       = length(local.domains) > 0 ? 1 : 0
+data "google_site_verification_token" "this" {
+  count               = local.run != "" ? 1 : 0
+  type                = "INET_DOMAIN"
+  identifier          = var.cloudflare_zone
+  verification_method = "DNS_TXT"
+
+  depends_on = [google_project_service.this]
+}
+
+resource "cloudflare_dns_record" "verify" {
+  count   = local.run != "" ? 1 : 0
+  zone_id = data.cloudflare_zone.this[0].zone_id
+  name    = var.cloudflare_zone
+  type    = "TXT"
+  content = "\"${data.google_site_verification_token.this[0].token}\""
+  ttl     = 1
+}
+
+resource "google_site_verification_web_resource" "this" {
+  count = local.run != "" ? 1 : 0
+  site {
+    type       = "INET_DOMAIN"
+    identifier = var.cloudflare_zone
+  }
+  verification_method = "DNS_TXT"
+
+  depends_on = [cloudflare_dns_record.verify]
+}
+
+resource "google_cloud_run_domain_mapping" "this" {
+  count    = local.run != "" ? 1 : 0
+  name     = local.run
+  location = var.region
+
+  metadata {
+    namespace = var.project
+  }
+
+  spec {
+    route_name = google_cloud_run_v2_service.this.name
+  }
+
+  depends_on = [google_site_verification_web_resource.this]
+}
+
+resource "cloudflare_dns_record" "run" {
+  count   = local.run != "" ? 1 : 0
+  zone_id = data.cloudflare_zone.this[0].zone_id
+  name    = local.run
+  type    = "CNAME"
+  content = "ghs.googlehosted.com"
+  proxied = true
+  ttl     = 1
+}
+
+resource "cloudflare_workers_script" "app" {
+  count       = local.split ? 1 : 0
   account_id  = data.cloudflare_zone.this[0].account.id
-  script_name = var.name
+  script_name = "${var.name}-app"
   main_module = "worker.js"
-  content     = <<-JS
-    export default {
-      fetch(request, env) {
-        const url = new URL(request.url);
-        url.hostname = env.ORIGIN;
-        return fetch(new Request(url, request));
-      },
-    };
-  JS
-  bindings = [{
-    name = "ORIGIN"
-    type = "plain_text"
-    text = trimprefix(google_cloud_run_v2_service.this.uri, "https://")
+  content     = "export default { fetch: () => new Response(null, { status: 503 }) };"
+
+  lifecycle {
+    ignore_changes = all
+  }
+}
+
+resource "cloudflare_workers_custom_domain" "app" {
+  count      = local.split ? 1 : 0
+  account_id = data.cloudflare_zone.this[0].account.id
+  zone_id    = data.cloudflare_zone.this[0].zone_id
+  hostname   = var.app_domain
+  service    = cloudflare_workers_script.app[0].script_name
+}
+
+data "cloudflare_account_api_token_permission_groups_list" "this" {
+  count      = local.split && var.github_repository != "" ? 1 : 0
+  account_id = data.cloudflare_zone.this[0].account.id
+}
+
+resource "cloudflare_account_token" "app" {
+  count      = local.split && var.github_repository != "" ? 1 : 0
+  account_id = data.cloudflare_zone.this[0].account.id
+  name       = "${var.name}-app-deploy"
+  policies = [{
+    effect            = "allow"
+    permission_groups = [for g in data.cloudflare_account_api_token_permission_groups_list.this[0].result : { id = g.id } if g.name == "Workers Scripts Write"]
+    resources         = jsonencode({ "com.cloudflare.api.account.${data.cloudflare_zone.this[0].account.id}" = "*" })
   }]
 }
 
-resource "cloudflare_workers_custom_domain" "this" {
-  for_each   = local.domains
-  account_id = data.cloudflare_zone.this[0].account.id
-  zone_id    = data.cloudflare_zone.this[0].zone_id
-  hostname   = each.value
-  service    = cloudflare_workers_script.this[0].script_name
+resource "github_actions_secret" "app" {
+  count       = local.split && var.github_repository != "" ? 1 : 0
+  repository  = split("/", var.github_repository)[1]
+  secret_name = "CLOUDFLARE_API_TOKEN"
+  value       = cloudflare_account_token.app[0].value
 }
 
 resource "google_iam_workload_identity_pool" "github" {
@@ -371,13 +442,17 @@ resource "google_service_account_iam_member" "deploy_runs_as" {
 }
 
 resource "github_actions_variable" "deploy" {
-  for_each = var.github_repository != "" ? {
+  for_each = var.github_repository != "" ? merge({
     GCP_PROJECT                    = var.project
     GCP_REGION                     = var.region
     GCP_SERVICE                    = google_cloud_run_v2_service.this.name
     GCP_SERVICE_ACCOUNT            = google_service_account.deploy[0].email
     GCP_WORKLOAD_IDENTITY_PROVIDER = google_iam_workload_identity_pool_provider.github[0].name
-  } : {}
+    }, local.split ? {
+    ARCHIVE_API_URL       = local.api_url
+    CLOUDFLARE_ACCOUNT_ID = data.cloudflare_zone.this[0].account.id
+    CLOUDFLARE_WORKER     = cloudflare_workers_script.app[0].script_name
+  } : {}) : {}
   repository    = split("/", var.github_repository)[1]
   variable_name = each.key
   value         = each.value

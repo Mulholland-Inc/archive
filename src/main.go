@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path"
@@ -118,11 +119,12 @@ Environment:
   ARCHIVE_SECRET_KEY 32-byte key (hex or base64) for secret values and the Postgres role password;
                      required with DATABASE_URL, the same on every instance; unset with the
                      bundled Postgres uses $ARCHIVE_DATA/secret.key
-  ARCHIVE_URL        public base URL of the web app and sign-in, for cookies and passkeys
+  ARCHIVE_URL        public base URL of the web app, for passkeys and where sign-in returns
                      (default http://localhost:<port>); while it is http://localhost, requests
                      from this machine are signed in as the first owner
-  ARCHIVE_API_URL    public base URL of the API, MCP, webhooks, file links and every
-                     OAuth redirect URL (default ARCHIVE_URL)
+  ARCHIVE_API_URL    public base URL of the API, sign-in, MCP, webhooks, file links and every
+                     OAuth redirect URL, which holds the session cookie (default ARCHIVE_URL);
+                     on another origin, /api and /auth allow ARCHIVE_URL's origin over CORS
   ARCHIVE_ADMIN_EMAIL
                      first owner that serve creates when there are no users yet
   ARCHIVE_TASKS_QUEUE
@@ -615,7 +617,7 @@ func cliServe(ctx context.Context, h *Hub, a *Archive, addr string) error {
 		wg.Add(1)
 		go h.clock(bg, &wg)
 	}
-	hs := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	hs := &http.Server{Addr: addr, Handler: h.cors(mux), ReadHeaderTimeout: 10 * time.Second}
 	errc := make(chan error, 1)
 	go func() { errc <- hs.ListenAndServe() }()
 	fmt.Fprintf(os.Stderr, "archive: serving the web app on %s, the API on %s/api and MCP on %s/mcp\n", h.app, h.api, h.api)
@@ -627,6 +629,38 @@ func cliServe(ctx context.Context, h *Hub, a *Archive, addr string) error {
 		defer cancel()
 		return hs.Shutdown(sctx)
 	}
+}
+
+func httpOrigin(s string) string {
+	u, err := url.Parse(s)
+	if err != nil {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+func (h *Hub) cors(next http.Handler) http.Handler {
+	app := httpOrigin(h.app)
+	if app == httpOrigin(h.api) {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if first, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/"); first == "api" || first == "auth" {
+			w.Header().Add("Vary", "Origin")
+			if r.Header.Get("Origin") == app {
+				w.Header().Set("Access-Control-Allow-Origin", app)
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+				if r.Method == "OPTIONS" && r.Header.Get("Access-Control-Request-Method") != "" {
+					w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE")
+					w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Archive-Workspace, Archive-Space")
+					w.Header().Set("Access-Control-Max-Age", "7200")
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func web(w http.ResponseWriter, r *http.Request) {

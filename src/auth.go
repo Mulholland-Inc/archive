@@ -806,11 +806,10 @@ type signinIdentity struct {
 }
 
 type signinState struct {
-	Nonce    string    `json:"n,omitempty"`
-	Verifier string    `json:"v,omitempty"`
-	User     uuid.UUID `json:"u,omitzero"`
-	Bind     string    `json:"b"`
-	Exp      int64     `json:"x"`
+	Nonce    string `json:"n"`
+	Verifier string `json:"v"`
+	Bind     string `json:"b"`
+	Exp      int64  `json:"x"`
 }
 
 type signinUser struct {
@@ -828,10 +827,8 @@ func newSignin(h *Hub) (*signin, error) {
 	if err != nil || u.Host == "" {
 		return nil, fmt.Errorf("ARCHIVE_URL %q is not a URL", h.app)
 	}
-	host := u.Hostname()
-	s := &signin{h: h, secure: host != "localhost" && host != "127.0.0.1" && host != "::1",
-		ceremonies: map[string]signinCeremonyData{}, providers: map[string]*signinProvider{}}
-	if s.wa, err = webauthn.New(&webauthn.Config{RPID: host, RPDisplayName: "Archive", RPOrigins: []string{u.Scheme + "://" + u.Host}}); err != nil {
+	s := &signin{h: h, secure: strings.HasPrefix(h.api, "https://"), ceremonies: map[string]signinCeremonyData{}, providers: map[string]*signinProvider{}}
+	if s.wa, err = webauthn.New(&webauthn.Config{RPID: u.Hostname(), RPDisplayName: "Archive", RPOrigins: []string{u.Scheme + "://" + u.Host}}); err != nil {
 		return nil, fmt.Errorf("passkeys: %w", err)
 	}
 	for _, c := range signinBuiltin {
@@ -1069,35 +1066,19 @@ func (s *signin) handler() http.Handler {
 		bind := authNewSecret()
 		st := signinState{Nonce: authNewSecret(), Verifier: oauth2.GenerateVerifier(), Bind: authHash(bind), Exp: time.Now().Add(10 * time.Minute).Unix()}
 		http.SetCookie(w, s.cookie(signinOIDC, bind, "/auth/oidc/", 600))
-		http.Redirect(w, r, p.cfg.AuthCodeURL(s.seal("oidc", st), oidc.Nonce(st.Nonce), oauth2.S256ChallengeOption(st.Verifier)), http.StatusFound)
+		http.Redirect(w, r, p.cfg.AuthCodeURL(s.seal(st), oidc.Nonce(st.Nonce), oauth2.S256ChallengeOption(st.Verifier)), http.StatusFound)
 	})
 	mux.HandleFunc("GET /auth/oidc/{provider}/callback", func(w http.ResponseWriter, r *http.Request) {
-		st, u, err := s.oidcCallback(r)
+		http.SetCookie(w, s.cookie(signinOIDC, "", "/auth/oidc/", -1))
+		u, err := s.oidcCallback(r)
+		if err == nil {
+			_, err = s.signedIn(w, r, u)
+		}
 		if err != nil {
 			httpWrite(w, 0, nil, err)
 			return
 		}
-		done := s.seal("done", signinState{User: u.ID, Bind: st.Bind, Exp: time.Now().Add(time.Minute).Unix()})
-		http.Redirect(w, r, h.app+"/auth/oidc/done?"+url.Values{"state": {done}}.Encode(), http.StatusSeeOther)
-	})
-	mux.HandleFunc("GET /auth/oidc/done", func(w http.ResponseWriter, r *http.Request) {
-		c, err := r.Cookie(signinOIDC)
-		http.SetCookie(w, s.cookie(signinOIDC, "", "/auth/oidc/", -1))
-		st, serr := s.unseal("done", r.URL.Query().Get("state"))
-		if err != nil || serr != nil || authHash(c.Value) != st.Bind {
-			httpWrite(w, 0, nil, signinMismatch)
-			return
-		}
-		u, err := userBy(r.Context(), h, (*generated.Queries).UserByID, st.User)
-		var v any
-		if err == nil {
-			v, err = s.signedIn(w, r, u)
-		}
-		if err == nil && strings.Contains(r.Header.Get("Accept"), "text/html") {
-			http.Redirect(w, r, "/", http.StatusSeeOther)
-			return
-		}
-		httpWrite(w, http.StatusOK, v, err)
+		http.Redirect(w, r, h.app+"/", http.StatusSeeOther)
 	})
 	h.workspaceRoutes(authed)
 	return mux
@@ -1213,20 +1194,20 @@ func (s *signin) provider(id string) (*signinProvider, error) {
 	return p, nil
 }
 
-func (s *signin) seal(purpose string, st signinState) string {
+func (s *signin) seal(st signinState) string {
 	b, _ := json.Marshal(st)
 	nonce := make([]byte, s.h.aead.NonceSize())
 	rand.Read(nonce)
-	return base64.RawURLEncoding.EncodeToString(s.h.aead.Seal(nonce, nonce, b, []byte(purpose)))
+	return base64.RawURLEncoding.EncodeToString(s.h.aead.Seal(nonce, nonce, b, []byte("oidc")))
 }
 
-func (s *signin) unseal(purpose, state string) (*signinState, error) {
+func (s *signin) unseal(state string) (*signinState, error) {
 	ct, err := base64.RawURLEncoding.DecodeString(state)
 	n := s.h.aead.NonceSize()
 	if err != nil || len(ct) < n {
 		return nil, signinMismatch
 	}
-	b, err := s.h.aead.Open(nil, ct[:n], ct[n:], []byte(purpose))
+	b, err := s.h.aead.Open(nil, ct[:n], ct[n:], []byte("oidc"))
 	var st signinState
 	if err != nil || json.Unmarshal(b, &st) != nil || time.Now().Unix() > st.Exp {
 		return nil, signinMismatch
@@ -1312,23 +1293,26 @@ func (s *signin) github(ctx context.Context, p *signinProvider, tok *oauth2.Toke
 	return id, nil
 }
 
-func (s *signin) oidcCallback(r *http.Request) (*signinState, *User, error) {
+func (s *signin) oidcCallback(r *http.Request) (*User, error) {
 	ctx := r.Context()
 	p, err := s.provider(r.PathValue("provider"))
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	st, err := s.unseal("oidc", r.URL.Query().Get("state"))
+	st, err := s.unseal(r.URL.Query().Get("state"))
 	if err != nil {
-		return nil, nil, err
+		return nil, err
+	}
+	if c, err := r.Cookie(signinOIDC); err != nil || authHash(c.Value) != st.Bind {
+		return nil, signinMismatch
 	}
 	tok, err := p.cfg.Exchange(ctx, r.URL.Query().Get("code"), oauth2.VerifierOption(st.Verifier))
 	if err != nil {
-		return nil, nil, fmt.Errorf("sign-in: %v: %w", err, ErrUnauthorized)
+		return nil, fmt.Errorf("sign-in: %v: %w", err, ErrUnauthorized)
 	}
 	id, err := s.identify(ctx, p, tok, st.Nonce)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	email, _ := authEmail(id.email)
 	lb, _ := json.Marshal([]signinOIDCLink{id.link})
@@ -1349,9 +1333,9 @@ func (s *signin) oidcCallback(r *http.Request) (*signinState, *User, error) {
 		err = ErrNotFound
 	}
 	if errors.Is(err, ErrNotFound) {
-		return nil, nil, signinRefused
+		return nil, signinRefused
 	}
-	return st, u, err
+	return u, err
 }
 
 var secretMasks = map[string]bool{"card": true, "mask": true, "mask_ssn": true, "national": true, "passport": true}

@@ -1,12 +1,12 @@
 <script>
   import Icon from '#kit/Icon.svelte';
-  import { go } from '../api.js';
+  import { API, go } from '../api.js';
 
   let { columns, rows, cell, td, key: rowKey = (r) => r.id, sort = null, onsort, fill = false, href, target } = $props();
 
   function open(r, e) {
     const url = href(r);
-    if (target || e.metaKey || e.ctrlKey || e.shiftKey || url.startsWith('/api/')) window.open(url, target || '_blank', 'noopener');
+    if (target || e.metaKey || e.ctrlKey || e.shiftKey || url.startsWith(API + '/api/')) window.open(url, target || '_blank', 'noopener');
     else go(url);
   }
 

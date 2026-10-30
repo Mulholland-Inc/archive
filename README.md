@@ -177,7 +177,7 @@ cd apps/terraform/gcp && terraform init
 terraform apply -var project=<project> -var admin_email=you@example.com
 ```
 
-Add `-var app_domain=… -var api_domain=… -var cloudflare_zone=…` with `CLOUDFLARE_API_TOKEN` for your own domains, and `-var github_repository=owner/repo` with `GITHUB_TOKEN` to deploy every image built on main. The service scales to zero: Cloud Tasks wakes it at the moment a workflow or file is due, so nothing has to stay running.
+Add `-var app_domain=… -var api_domain=… -var cloudflare_zone=…` with `CLOUDFLARE_API_TOKEN` for your own domains, and `-var github_repository=owner/repo` with `GITHUB_TOKEN` to deploy every image built on main. With both domains, the web app is static files on Cloudflare's edge, deployed by the image workflow after the API, and calls the API on its own domain. The service scales to zero: Cloud Tasks wakes it at the moment a workflow or file is due, so nothing has to stay running.
 
 The image holds Postgres and the binary. With nothing set, it runs the bundled Postgres and keeps files in `/data`. Give it an outside Postgres (`DATABASE_URL`), S3-compatible storage (`ARCHIVE_BLOB_URL`) and one `ARCHIVE_SECRET_KEY`, and it keeps nothing local, so you can run as many copies side by side as you like. In production, put it behind HTTPS and set `ARCHIVE_URL`.
 
@@ -195,13 +195,8 @@ Every setting is an environment variable; `archive help` lists them all:
 | Variable | What it does |
 |---|---|
 | `ARCHIVE_ADMIN_EMAIL` | First owner, created when there are no users yet |
-<<<<<<< HEAD
-| `ARCHIVE_URL` | Public base URL of the web app and sign-in, for cookies and passkeys |
-| `ARCHIVE_API_URL` | Public base URL of the API, MCP, webhooks, file links, Stripe and OAuth redirects (default `ARCHIVE_URL`) |
-=======
-| `ARCHIVE_URL` | Public base URL of the web app and sign-in, for sign-in links, cookies and passkeys |
-| `ARCHIVE_API_URL` | Public base URL of the API, MCP, webhooks, file links and OAuth redirects (default `ARCHIVE_URL`) |
->>>>>>> origin/main
+| `ARCHIVE_URL` | Public base URL of the web app, for passkeys and where sign-in returns |
+| `ARCHIVE_API_URL` | Public base URL of the API, sign-in, MCP, webhooks, file links and OAuth redirects, which holds the session cookie (default `ARCHIVE_URL`); on another origin, `/api` and `/auth` allow `ARCHIVE_URL`'s origin over CORS |
 | `ARCHIVE_DATA` | Data directory for the bundled Postgres, its key and files (default `./data`) |
 | `DATABASE_URL` | Outside Postgres, with CREATEROLE and CREATEDB (no superuser needed); unset starts the bundled one. Each workspace gets its own database on the same server |
 | `DATABASE_DIRECT_URL` | The same Postgres without a pooler in between, for schema changes (default `DATABASE_URL`) |

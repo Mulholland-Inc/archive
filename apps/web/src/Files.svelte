@@ -1,5 +1,5 @@
 <script>
-  import { api, size } from './api.js';
+  import { API, api, size } from './api.js';
   import Button from '#kit/Button.svelte';
   import Icon from '#kit/Icon.svelte';
   import DataTable from './ui/DataTable.svelte';
@@ -24,7 +24,7 @@
   const rows = $derived(files.map((f) => ({
     ...f,
     type: (f.name.match(/\.([a-z0-9]+)$/i)?.[1] ?? f.mime.split('/')[1] ?? '').toUpperCase(),
-    href: `/api/files/${f.id}/content`,
+    href: `${API}/api/files/${f.id}/content`,
   })));
   const shown = $derived.by(() => {
     const words = q.query.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -77,7 +77,7 @@
         {#snippet td(r, c)}
           {#if c.name === 'name'}
             <span class="name">
-              {#if r.mime.startsWith('image/')}<img src="/api/files/{r.id}/thumbnail" alt="" loading="lazy" />{:else}<Icon name="file" />{/if}
+              {#if r.mime.startsWith('image/')}<img src="{API}/api/files/{r.id}/thumbnail" alt="" loading="lazy" />{:else}<Icon name="file" />{/if}
               <span class="text">{r.name}</span>
             </span>
           {:else if c.name === 'size'}{size(r.size)}{:else if c.name === 'created_at'}{day(r.created_at)}{:else}{r[c.name]}{/if}
