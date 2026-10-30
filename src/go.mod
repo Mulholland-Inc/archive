@@ -12,6 +12,7 @@ require (
 	github.com/ledongthuc/pdf v0.0.0-20261020125853-5e46805f718e
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/nyaruka/phonenumbers v1.8.1
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/stripe/pg-schema-diff v1.0.9
 	github.com/ulikunitz/xz v0.5.17
 	golang.org/x/image v0.47.0

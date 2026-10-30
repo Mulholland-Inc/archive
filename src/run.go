@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -28,6 +32,7 @@ var runSDK string
 const (
 	runMaxResult = 256 << 10
 	runMaxLogs   = 64 << 10
+	runMaxFetch  = 5 << 20
 	runWrap      = "WITH q AS (\n"
 )
 
@@ -84,6 +89,9 @@ type runner struct {
 	ctx       context.Context
 	js        string
 	out       *RunOutput
+	input     json.RawMessage
+	at        time.Time
+	depth     int
 	logBytes  int
 	stringify goja.Callable
 	parse     goja.Callable
@@ -129,20 +137,25 @@ func runCompile(code string) (string, error) {
 }
 
 func (a *Archive) Run(ctx context.Context, code string) (*RunOutput, error) {
+	out, _, err := a.run(ctx, code, nil)
+	return out, err
+}
+
+func (a *Archive) run(ctx context.Context, code string, input json.RawMessage) (*RunOutput, time.Time, error) {
 	if ActorFrom(ctx) == nil {
-		return nil, fmt.Errorf("not signed in: %w", ErrUnauthorized)
+		return nil, time.Time{}, fmt.Errorf("not signed in: %w", ErrUnauthorized)
 	}
 	a.refresh(ctx)
 	out := &RunOutput{Result: json.RawMessage("null"), Logs: []string{}}
 	js, err := runCompile(code)
 	if err != nil {
 		out.Error = err.Error()
-		return out, nil
+		return out, time.Now(), nil
 	}
 	limit := runTimeout()
 	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
-	r := &runner{a: a, out: out, js: js}
+	r := &runner{a: a, out: out, js: js, input: input, at: time.Now()}
 	err = a.as(ctx, r.run)
 	switch {
 	case err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded):
@@ -163,18 +176,76 @@ func (a *Archive) Run(ctx context.Context, code string) (*RunOutput, error) {
 	if out.Error != "" {
 		out.Result = json.RawMessage("null")
 	}
+	return out, r.at, nil
+}
+
+func (r *runner) nested(ctx context.Context, code string, input json.RawMessage, keep bool) (*RunOutput, error) {
+	out := &RunOutput{Result: json.RawMessage("null"), Logs: []string{}}
+	if r.depth >= workflowDepth {
+		out.Error = fmt.Sprintf("workflows can test or start other workflows only %d deep; this one would be deeper", workflowDepth)
+		return out, nil
+	}
+	js, err := runCompile(code)
+	if err != nil {
+		out.Error = err.Error()
+		return out, nil
+	}
+	t, ok := ctx.Value(storeTxKey{}).(storeTx)
+	if !ok {
+		return nil, errors.New("no transaction")
+	}
+	sp, err := t.tx.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	after := &[]func(){}
+	n := &runner{a: r.a, out: out, js: js, input: input, at: r.at, depth: r.depth + 1}
+	err = n.run(context.WithValue(ctx, storeTxKey{}, storeTx{sp, t.role, after}))
+	switch {
+	case err != nil && ctx.Err() != nil:
+		out.Error = "timed out; nothing it did was saved"
+	case err != nil && out.Error == "":
+		out.Error = runMessage(err)
+	}
+	if out.Error != "" || !keep {
+		if out.Error != "" {
+			out.Result = json.RawMessage("null")
+		}
+		return out, sp.Rollback(ctx)
+	}
+	if err := sp.Commit(ctx); err != nil {
+		return nil, err
+	}
+	if t.after != nil {
+		*t.after = append(*t.after, *after...)
+	}
+	r.later = append(r.later, n.later...)
 	return out, nil
 }
 
 func (r *runner) run(ctx context.Context) error {
 	r.ctx = ctx
+	if at, err := r.a.st.db(ctx).TxNow(ctx); err == nil {
+		r.at = at
+	}
 	r.vm = goja.New()
 	r.vm.SetMaxCallStackSize(10000)
 	j := r.vm.Get("JSON").ToObject(r.vm)
 	r.stringify, _ = goja.AssertFunction(j.Get("stringify"))
 	r.parse, _ = goja.AssertFunction(j.Get("parse"))
 	r.console()
+	r.fetch()
 	r.sdk()
+	in := goja.Undefined()
+	if len(r.input) > 0 {
+		v, err := r.parse(goja.Undefined(), r.vm.ToValue(string(r.input)))
+		if err != nil {
+			r.out.Error = "input: " + err.Error()
+			return errRunFailed
+		}
+		in = v
+	}
+	r.vm.Set("input", in)
 	stop := context.AfterFunc(ctx, func() { r.vm.Interrupt(ctx.Err()) })
 	defer stop()
 	v, err := r.vm.RunScript("script.js", r.js)
@@ -279,6 +350,103 @@ func (r *runner) console() {
 		})
 	}
 	r.vm.Set("console", c)
+}
+
+func (r *runner) fetch() {
+	r.vm.Set("fetch", func(call goja.FunctionCall) goja.Value {
+		p, resolve, reject := r.vm.NewPromise()
+		if res, err := r.fetchDo(call); err != nil {
+			reject(r.jsErr(err))
+		} else {
+			resolve(res)
+		}
+		return r.vm.ToValue(p)
+	})
+}
+
+func (r *runner) fetchDo(call goja.FunctionCall) (goja.Value, error) {
+	u, ok := call.Argument(0).Export().(string)
+	if !ok {
+		return nil, errors.New(`fetch: the url must be a string, like fetch("https://example.com/api")`)
+	}
+	method, header := "GET", http.Header{}
+	var body io.Reader
+	if o, ok := call.Argument(1).(*goja.Object); ok {
+		if m := o.Get("method"); m != nil && !goja.IsUndefined(m) && !goja.IsNull(m) {
+			method = strings.ToUpper(m.String())
+		}
+		if h, ok := o.Get("headers").(*goja.Object); ok {
+			for _, k := range h.Keys() {
+				header.Set(k, h.Get(k).String())
+			}
+		}
+		switch b := o.Get("body"); {
+		case b == nil || goja.IsUndefined(b) || goja.IsNull(b):
+		case b.ExportType() == reflect.TypeFor[string]():
+			body = strings.NewReader(b.String())
+		default:
+			j, err := r.json(b)
+			if err != nil {
+				return nil, fmt.Errorf("fetch %s: body: %v", u, err)
+			}
+			body = bytes.NewReader(j)
+			if header.Get("Content-Type") == "" {
+				header.Set("Content-Type", "application/json")
+			}
+		}
+	}
+	req, err := http.NewRequestWithContext(r.ctx, method, u, body)
+	if err != nil {
+		return nil, fmt.Errorf("fetch %s: %v", u, err)
+	}
+	req.Header = header
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		if r.ctx.Err() != nil {
+			return nil, fmt.Errorf("fetch %s: the run timed out", u)
+		}
+		return nil, fmt.Errorf("fetch: %v", err)
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(io.LimitReader(resp.Body, runMaxFetch+1))
+	if err != nil {
+		return nil, fmt.Errorf("fetch %s: reading the response: %v", u, err)
+	}
+	if len(b) > runMaxFetch {
+		return nil, fmt.Errorf("fetch %s: the response is over %d MB", u, runMaxFetch>>20)
+	}
+	text := string(b)
+	res, hs := r.vm.NewObject(), r.vm.NewObject()
+	for k, v := range resp.Header {
+		hs.Set(strings.ToLower(k), strings.Join(v, ", "))
+	}
+	hs.DefineDataProperty("get", r.vm.ToValue(func(name string) goja.Value {
+		if v := resp.Header.Values(name); len(v) > 0 {
+			return r.vm.ToValue(strings.Join(v, ", "))
+		}
+		return goja.Null()
+	}), goja.FLAG_FALSE, goja.FLAG_FALSE, goja.FLAG_FALSE)
+	res.Set("ok", resp.StatusCode >= 200 && resp.StatusCode < 300)
+	res.Set("status", resp.StatusCode)
+	res.Set("statusText", http.StatusText(resp.StatusCode))
+	res.Set("url", resp.Request.URL.String())
+	res.Set("headers", hs)
+	res.Set("text", func(goja.FunctionCall) goja.Value {
+		p, resolve, _ := r.vm.NewPromise()
+		resolve(text)
+		return r.vm.ToValue(p)
+	})
+	res.Set("json", func(goja.FunctionCall) goja.Value {
+		p, resolve, reject := r.vm.NewPromise()
+		if v, err := r.parse(goja.Undefined(), r.vm.ToValue(text)); err != nil {
+			start := []rune(strings.TrimSpace(text))
+			reject(r.jsErr(fmt.Errorf("fetch %s: the response (status %d) is not JSON: %q", u, resp.StatusCode, string(start[:min(len(start), 200)]))))
+		} else {
+			resolve(v)
+		}
+		return r.vm.ToValue(p)
+	})
+	return res, nil
 }
 
 func (r *runner) text(v goja.Value) string {
@@ -459,7 +627,7 @@ func (r *runner) def(o *goja.Object, name string, f func(ctx context.Context, ca
 	})
 }
 
-var runReads = map[string]bool{"list": true, "get": true, "search": true, "tables": true, "files": true, "file": true, "spaces": true}
+var runReads = map[string]bool{"list": true, "get": true, "search": true, "tables": true, "files": true, "file": true, "spaces": true, "workflows": true, "runs": true}
 
 func (r *runner) call(read bool, f func(ctx context.Context) (any, error)) (any, error) {
 	t, ok := r.ctx.Value(storeTxKey{}).(storeTx)
@@ -711,6 +879,7 @@ func (r *runner) sdk() {
 	r.def(o, "spaces", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		return a.Spaces(ctx)
 	})
+	r.workflowSDK(o)
 	r.vm.Set("archive", o)
 }
 
@@ -825,7 +994,7 @@ func (a *Archive) RunDocs(ctx context.Context) string {
 	return strings.ReplaceAll(runSDK, "{timeout}", runTimeout().String()) + "\n" + runTypes(a.Catalog())
 }
 
-var runStatic = []string{"Base", "Row", "Hit", "Plan", "Table", "StoredFile", "Space", "Tables",
+var runStatic = []string{"Base", "Row", "Hit", "Plan", "Table", "StoredFile", "Space", "Tables", "FetchResponse", "RunResult", "Deployed", "WorkflowRun",
 	"Money", "Timestamp", "Time", "Interval", "Address", "Name", "Postcode", "Geo", "Quantity"}
 
 func runPascal(s string) string {

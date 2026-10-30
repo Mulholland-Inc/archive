@@ -5,7 +5,8 @@
  * - Your code is the body of an async function: use top-level await, and `return` a JSON value.
  * - Output: {"result": <returned value>, "logs": [...], "error": "" or a message}. console.log, warn and
  *   error add a line to logs; objects are written as JSON.
- * - Only `archive`, `console` and standard JavaScript exist: no fetch, require, import, timers, files or process.
+ * - Only `archive`, `console`, `fetch`, `input` and standard JavaScript exist: no require, import, timers, files or process.
+ *   fetch(url, init?) calls other services (see Workflows); input is undefined unless a workflow trigger passed one.
  * - Limits: {timeout} per run, 256 KB of result JSON, 64 KB of logs. Return what you need, not whole tables.
  *
  * Transaction and access
@@ -98,6 +99,74 @@
  *   the files as they read after it: archive.apply(files, { confirm: true, renames:
  *   ["ALTER TABLE house RENAME COLUMN price TO asking_price"] }). The renames run first, in the same
  *   transaction, and are listed first in the plan, followed by your other changes.
+ *
+ * Workflows
+ * - A workflow is a saved script, <name>.ts, that Archive runs by itself: on a schedule, when rows of a table
+ *   are added or changed, when its webhook URL is called, or when started. It is written like the code you run
+ *   now, and each of its runs is a run like this one: as you, one transaction, {timeout}, the same SDK, plus input.
+ *   Every run's result, logs and error are kept in its history: archive.runs(name), and in the app, where the
+ *   people you work for see their workflows (they never read the code).
+ * - The first line of the file says when it runs, exactly in one of these forms:
+ *     // on: cron 0 9 * * 1-5                         five fields, minute hour day month weekday, in UTC
+ *     // on: cron CRON_TZ=America/New_York 0 9 * * *  the same in a time zone: 9:00 New York time, every day
+ *     // on: cron @every 15m                          or @hourly, @daily, @weekly, @monthly
+ *     // on: invoice                                  rows of the invoice table added or changed since its last run
+ *     // on: webhook                                  every POST to its own URL
+ *   Without an // on: line it runs only when started: archive.start(name), or the Run button in the app.
+ * - input is what started the run:
+ *     cron        undefined
+ *     <table>     { rows: [...] }: up to 100 rows, as archive.list returns them, oldest change first; when there are
+ *                 more, the next run follows at once. A row counts as changed when its created_at or updated_at
+ *                 moves past the last run: archive.create and archive.update set them, raw SQL does not unless it
+ *                 sets updated_at = now(). Rows the workflow writes itself never trigger it again.
+ *     webhook     { method, query, headers, body }: query and headers are objects of strings (header names in lower
+ *                 case); body is the parsed JSON when it parses, otherwise the raw text, and null when empty.
+ *     start, test the input you pass, or undefined.
+ * - archive.deploy(files) replaces all your workflows with files, the way apply does with the schema: start from
+ *   archive.workflows(), change or add files, and pass the whole set; a file left out is deleted. It compiles each
+ *   file and checks its name and // on: line, and if any is wrong it saves nothing and returns
+ *   { deployed: false, errors: [{ file, message }] } instead of throwing. Otherwise it saves them at once, even if
+ *   this run throws later, and returns { deployed: true, workflows: [{ name, on, next, url }] }: next is a cron
+ *   workflow's next run, url a webhook's address. Deploying a file again keeps its webhook URL and its place in
+ *   the table it watches.
+ * - archive.test(nameOrSource, input) runs a saved workflow, or a draft's source, now, against the real data, and
+ *   then undoes everything it wrote (except archive.apply and archive.deploy, which save at once). It returns
+ *   { result, logs, error } like a run, error "" when it worked; compile errors come back there with their
+ *   line:column. Test every workflow before you deploy it, with the input its trigger would pass, like
+ *   { rows: await archive.list("invoice", { limit: 3 }) } for // on: invoice. The loop: write, test, read the
+ *   error, fix, test again, deploy. A complete run that builds, tests and deploys two workflows:
+ *
+ *     const files = await archive.workflows();
+ *     files["overdue-invoices.ts"] = `// on: cron CRON_TZ=America/New_York 0 9 * * 1-5
+ *     const late = await archive.sql("SELECT id, number, due FROM invoice WHERE NOT paid AND due < current_date");
+ *     console.log(late.length + " overdue");
+ *     return late;`;
+ *     files["add-invoice.ts"] = `// on: webhook
+ *     const b = input.body;
+ *     if (!b || !b.number) throw new Error("send JSON like { number, total, due }");
+ *     const inv = await archive.create("invoice", { number: b.number, total: b.total, due: b.due });
+ *     return { id: inv.id };`;
+ *     const late = await archive.test(files["overdue-invoices.ts"]);
+ *     const added = await archive.test(files["add-invoice.ts"], { method: "POST", query: {}, headers: {},
+ *       body: { number: "INV-7", total: "$120.00", due: "2026-11-30" } });
+ *     if (late.error || added.error) return { late, added };
+ *     const done = await archive.deploy(files);
+ *     if (!done.deployed) return done.errors;
+ *     return { late: late.result, added: added.result, workflows: done.workflows };
+ *
+ *   The sources are template strings, so a backtick or ${ inside a workflow must be escaped as \` and \${.
+ * - archive.start(name, input) runs a saved workflow for real inside this run and returns { result, logs, error };
+ *   when it fails, only what it wrote is undone. Its run shows in archive.runs(name) once this run commits.
+ * - Webhooks: anyone with the URL, ARCHIVE_URL/hooks/run/<secret>, can POST to it, with no other sign-in, so give
+ *   it only to the service that calls it. The response is 200 with what the workflow returned, as JSON, or 500
+ *   with { "error": message }. Other methods get 405 and an unknown URL 404.
+ * - When a run fails (it throws, times out or returns too much), nothing it wrote is saved and its error is kept
+ *   in the history. A cron workflow runs again at its next time; a table workflow gets the same rows again about
+ *   a minute later, until a run works or you deploy a fix; a webhook caller gets the 500.
+ * - fetch(url, init) calls any web address, in every run: init takes method, headers, and body as a string or as
+ *   an object, which is sent as JSON. It returns { ok, status, statusText, url, headers, text(), json() } and
+ *   throws when the address cannot be reached. It counts toward the run's {timeout}; responses over 5 MB fail.
+ *   Nothing is undone outside Archive when the run fails: a request that was sent stays sent.
  */
 declare const archive: {
     /** Run one SQL statement as you, with $1, $2, ... bound to params; returns its rows, or [] when it has none. */
@@ -132,7 +201,70 @@ declare const archive: {
     edit(fileId: string, edits: Edit[]): Promise<StoredFile>;
     /** The spaces you can see, with your level in each. */
     spaces(): Promise<Space[]>;
+    /** Your workflows: <name>.ts to its TypeScript (see Workflows in the header). */
+    workflows(): Promise<Record<string, string>>;
+    /** Replace all your workflows with files; a file left out is deleted. Returns errors instead of throwing, and saves nothing when there are any. */
+    deploy(files: Record<string, string>): Promise<Deployed>;
+    /** Run a saved workflow by name, or a draft's source, with input, then undo everything it wrote. */
+    test(nameOrSource: string, input?: unknown): Promise<RunResult>;
+    /** Run a saved workflow now, for real, inside this run, and record it in its history. */
+    start(name: string, input?: unknown): Promise<RunResult>;
+    /** A workflow's recent runs, newest first; limit defaults to 20, at most 100. */
+    runs(name: string, opts?: { limit?: number }): Promise<WorkflowRun[]>;
 };
+
+/** What started this run: undefined for a plain run (see Workflows in the header). */
+declare const input: any;
+
+/** Call a web address; body is a string, or an object sent as JSON. Throws when it cannot be reached. */
+declare function fetch(url: string, init?: { method?: string; headers?: Record<string, string>; body?: string | object }): Promise<FetchResponse>;
+
+interface FetchResponse {
+    ok: boolean;
+    status: number;
+    statusText: string;
+    url: string;
+    /** Header names in lower case; headers.get(name) works too. */
+    headers: Record<string, string> & { get(name: string): string | null };
+    text(): Promise<string>;
+    /** Throws when the body is not JSON. */
+    json(): Promise<any>;
+}
+
+interface RunResult {
+    result: any;
+    logs: string[];
+    /** "" when the run worked. */
+    error: string;
+}
+
+interface Deployed {
+    deployed: boolean;
+    /** When deployed is false: one per problem, and nothing was saved. */
+    errors?: { file: string; message: string }[];
+    workflows?: {
+        name: string;
+        /** The trigger from the // on: line; "" when it runs only when started. */
+        on: string;
+        /** A cron workflow's next run, UTC. */
+        next?: string;
+        /** A webhook workflow's URL. */
+        url?: string;
+    }[];
+}
+
+interface WorkflowRun {
+    id: string;
+    /** When it started, UTC. */
+    at: string;
+    /** What started it: cron, table, webhook, start (archive.start) or run (the Run button). */
+    trigger: "cron" | "table" | "webhook" | "start" | "run";
+    ms: number;
+    result: any;
+    logs: string[];
+    /** "" when the run worked. */
+    error: string;
+}
 
 type Row = Record<string, any>;
 

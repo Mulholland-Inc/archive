@@ -10,6 +10,7 @@
   import Table from './Table.svelte';
   import View from './View.svelte';
   import Files from './Files.svelte';
+  import Workflows from './Workflows.svelte';
   import Chat from './Chat.svelte';
 
   let me = $state(null);
@@ -89,6 +90,7 @@
       <nav>
         <NavItem href="/chat" icon="plus" active={route.first === 'chat' && !route.second}>New chat</NavItem>
         <NavItem href="/files" icon="folder" active={route.first === 'files'}>Files</NavItem>
+        <NavItem href="/workflows" icon="workflow" active={route.first === 'workflows'}>Workflows</NavItem>
         {#if chats.length}
           <div class="chats">
             <hr />
@@ -122,6 +124,10 @@
         <Chat id={route.second} name={me.actor.name} onsaved={loadChats} />
       {:else if route.first === 'files'}
         <Files />
+      {:else if route.first === 'workflows'}
+        {#key route.second}
+          <Workflows name={route.second} />
+        {/key}
       {:else if route.first === 'views'}
         {@const v = views.find((x) => x.name === route.second)}
         {#if v}
