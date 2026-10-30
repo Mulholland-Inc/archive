@@ -26,6 +26,7 @@
   let tables = $state([]);
   let views = $state([]);
   let types = $state({});
+  let catalogued = $state(false);
   let path = $state(location.pathname);
   let chats = $state([]);
   let scope = $state(space());
@@ -99,6 +100,7 @@
       types = cat.types;
       tables = all.filter((t) => t.kind === 'table');
       views = all.filter((t) => t.kind === 'view');
+      catalogued = true;
     } catch (e) {
       if (!(e instanceof Unauthorized) && e.status !== 403) throw e;
       if (workspace() && !(e instanceof Unauthorized)) {
@@ -167,7 +169,9 @@
     <main class:asking>
       {#key generation}
       {#if !route.first || route.first === 'chat'}
-        <Chat id={route.second} name={me.actor.name} email={me.actor.email} onsaved={loadChats} />
+        {#if catalogued}
+          <Chat id={route.second} name={me.actor.name} email={me.actor.email} family={views.some(isTree) ? me.workspaces?.find((w) => w.id === me.workspace)?.name : ''} onsaved={loadChats} />
+        {/if}
       {:else if route.first === 'files'}
         <Files />
       {:else if route.first === 'workflows'}

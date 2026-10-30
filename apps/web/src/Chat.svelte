@@ -57,7 +57,7 @@
   import Setup from './ui/Setup.svelte';
   import robot from '../../site/static/art/robot.webp';
 
-  let { id = '', name = '', email = '', onsaved } = $props();
+  let { id = '', name = '', email = '', family = '', onsaved } = $props();
 
   let current = $state('');
   let title = $state('');
@@ -73,7 +73,7 @@
   let pinned = true;
 
   const empty = $derived(!current && !turns.length);
-  const hello = greeting(untrack(() => name));
+  const hello = family ? `Hello, ${family}` : greeting(untrack(() => name));
 
   $effect(() => {
     const want = id;
