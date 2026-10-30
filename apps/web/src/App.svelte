@@ -9,6 +9,9 @@
   import Workspaces from './ui/Workspaces.svelte';
   import Panel from './ui/Panel.svelte';
   import Connect from './ui/Connect.svelte';
+  import Machine from './ui/Machine.svelte';
+  import Bot from './ui/Bot.svelte';
+  import { setLook } from './ui/looks.svelte.js';
   import Library from './Library.svelte';
   import Heading from './ui/Heading.svelte';
   import NavItem from './ui/NavItem.svelte';
@@ -64,6 +67,7 @@
   });
   const table = (name) => tables.find((t) => t.name === name);
   const who = $derived(me ? me.actor.name || me.actor.email : '');
+  const archive = $derived(me?.workspaces?.find((w) => w.id === me.workspace)?.name ?? 'Archive');
 
   async function loadChats() {
     try {
@@ -88,8 +92,9 @@
     me = await api('/auth/me');
   }
 
-  async function addArchive(name) {
+  async function addArchive(name, type) {
     const w = await api('/auth/workspaces', { method: 'POST', body: { name, owner: me.actor.email }, workspace: me.workspaces[0].id });
+    setLook(w.id, { type });
     switchTo(w.id);
   }
 
@@ -195,10 +200,13 @@
     </aside>
     <div class="stage">
     <main class:asking>
+      {#if catalogued && (!route.first || route.first === 'chat')}
+        <a class="now" href="/" aria-label="{archive} archive"><Bot seed={me.workspace} size={24} /><span>{archive}</span></a>
+      {/if}
       {#key generation}
       {#if !route.first || route.first === 'chat'}
         {#if catalogued}
-          <Chat id={route.second} name={me.actor.name} email={me.actor.email} family={views.some(isTree) ? me.workspaces?.find((w) => w.id === me.workspace)?.name : ''} onsaved={loadChats} />
+          <Chat id={route.second} name={me.actor.name} email={me.actor.email} family={archive} onsaved={loadChats} />
         {/if}
       {:else if route.first === 'library'}
         {#if catalogued}<Library {views} {tables} />{/if}
@@ -230,10 +238,11 @@
       {#if asking}<Passkey user={me.actor.user_id} ondone={() => (asking = false)} />{/if}
     </main>
     {#if catalogued && (!route.first || route.first === 'chat')}
-      {#key generation}<Panel name={me.workspaces?.find((w) => w.id === me.workspace)?.name ?? 'Archive'} seed={me.workspace} {views} spaces={me.spaces} home={me.home} current={scope} email={me.actor.email} onpick={pick} oncreate={create} />{/key}
+      {#key generation}<Panel name={archive} seed={me.workspace} {views} spaces={me.spaces} home={me.home} current={scope} email={me.actor.email} onpick={pick} oncreate={create} />{/key}
     {/if}
     </div>
   </div>
+  {#if catalogued}<Machine name={archive} seed={me.workspace} />{/if}
   {#if connecting}<Connect workspace={me.workspace} onclose={() => (connecting = false)} />{/if}
 {/if}
 
@@ -277,6 +286,9 @@
   .new:hover { background: var(--fill-faint); color: var(--fg); }
   .phone { display: var(--narrow-only); flex-direction: column; flex: none; gap: var(--space-0-5); }
   .stage { display: flex; min-width: 0; }
+  .now { position: absolute; top: var(--space-3); left: 50%; z-index: calc(var(--z-raised) + 1); display: flex; align-items: center; gap: var(--space-1-5); padding: var(--space-1) var(--space-3) var(--space-1) var(--space-1); transform: translateX(-50%); border-radius: var(--radius-full); background: var(--surface); white-space: nowrap; }
+  main { position: relative; }
+  .now span:last-child { font-weight: var(--weight-medium); }
   .stage main { flex: 1; }
   .chats { display: flex; flex: none; flex-direction: column; gap: var(--space-0-5); }
   .brand { display: flex; flex: none; align-items: center; min-height: var(--size-control-lg); padding: var(--item-pad); color: var(--fg); }

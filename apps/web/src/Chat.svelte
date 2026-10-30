@@ -299,7 +299,7 @@
     {#if loading}<div class="thinking" role="status" aria-label="Loading"><span></span><span></span><span></span></div>{/if}
   </div>
   <div class="dock">
-    <Composer bind:value={draft} bind:field {busy} onsend={send} onstop={stop} placeholder="Ask anything" aria-label="Message" />
+    <Composer bind:value={draft} bind:field {busy} onsend={send} onstop={stop} placeholder={family ? `Message ${family}` : 'Ask anything'} aria-label="Message" />
   </div>
   {#if empty}<Setup {email} />{/if}
 </div>

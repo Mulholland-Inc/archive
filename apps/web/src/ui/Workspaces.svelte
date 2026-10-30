@@ -1,12 +1,14 @@
 <script>
   import Icon from '#kit/Icon.svelte';
   import Bot from './Bot.svelte';
+  import { look, TYPES } from './looks.svelte.js';
 
   let { workspaces = [], workspace = '', latest = '', canAdd = false, onpick, onrename, onadd } = $props();
   let editing = $state('');
   let adding = $state(false);
   let draft = $state('');
   let error = $state('');
+  let kind = $state('family');
 
   function reset() {
     editing = '';
@@ -31,7 +33,7 @@
     const name = draft.trim();
     if (!name) return reset();
     try {
-      if (adding) await onadd(name);
+      if (adding) await onadd(name, kind);
       else if (name !== workspaces.find((w) => w.id === editing)?.name) await onrename(name);
       reset();
     } catch (err) {
@@ -45,6 +47,13 @@
 {#snippet field(label)}
   <form class="edit" onsubmit={save}>
     <input bind:value={draft} placeholder="Name your archive" aria-label={label} onkeydown={key} onblur={() => !error && !draft.trim() && reset()} {@attach (el) => el.select()} />
+    {#if adding}
+      <span class="kinds">
+        {#each Object.entries(TYPES) as [key, t] (key)}
+          <button type="button" class:on={kind === key} onmousedown={(e) => e.preventDefault()} onclick={() => (kind = key)}>{t.label}</button>
+        {/each}
+      </span>
+    {/if}
     {#if error}<span class="error">{error}</span>{/if}
   </form>
 {/snippet}
@@ -59,7 +68,7 @@
           <Bot seed={w.id} />
           <span class="text">
             <span class="name">{w.name}</span>
-            {#if w.id === workspace}<span class="sub">{latest || 'Ask me anything'}</span>{/if}
+            {#if w.id === workspace}<span class="sub">{latest || 'Ask me anything'}</span>{:else if look(w.id).shared}<span class="sub">Shared with you</span>{/if}
           </span>
         </button>
         {#if w.id === workspace}
@@ -96,5 +105,8 @@
   input::placeholder { color: var(--fg-muted); font-weight: var(--weight-regular, 400); }
   .error { color: var(--danger); font-size: var(--text-meta); }
   .add { color: var(--fg-muted); }
+  .kinds { display: flex; gap: var(--space-0-5); }
+  .kinds button { padding: 1px var(--space-1-5); border-radius: var(--radius-full); color: var(--fg-muted); font-size: var(--text-meta); }
+  .kinds .on { background: var(--fill-strong); color: var(--fg); }
   .plus { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border: var(--hairline) dashed var(--fg-muted); border-radius: 30%; color: var(--fg-muted); }
 </style>
