@@ -67,7 +67,7 @@ Without subdomains, every request names its workspace, and secrets stay plain `a
 
 - **Every secret is checked in the main database**, by one indexed lookup of its hash in `archive.token`. An API or agent token belongs to a user and one workspace, so it names that workspace itself, and a request naming another is refused.
 - **The web app** holds one session for the person, in its cookie, and names the current workspace on each request in `Archive-Workspace`, the way it already names the current space; the server checks that the person belongs to it. The space switcher is a workspace and space switcher, and "Add workspace" creates a new one.
-- **Sign-in** looks the person up in `archive.user`: by email for a magic link or OIDC, by user id for a passkey. One link, one passkey per device and one session reach all their workspaces.
+- **Sign-in** looks the person up in `archive.user`: by email for OIDC, by user id for a passkey or a one-time sign-in link. One link, one passkey per device and one session reach all their workspaces.
 - **Webhook and file-link URLs** carry it: `api.archive.dev/hooks/run/<workspace>/<token>`.
 - **OAuth callbacks** carry it in `state`, so one fixed callback URL serves every workspace.
 
@@ -80,9 +80,9 @@ Without subdomains, every request names its workspace, and secrets stay plain `a
 
 ## Signup and billing
 
-- **Signup** is an instance setting in `archive.setting`, off by default. An instance admin turns it on. On app.archive.dev it is on. Signing up creates the database, applies the schema, adds the `archive.workspace` row and makes the person its owner, adding the workspace to their `archive.user` row.
+- **Signup** is an instance setting in `archive.setting`, off by default. An instance admin turns it on. On app.archive.dev it is on. Signing up, by a first Google or Microsoft sign-in with a verified email or by a signed-in person adding a workspace, creates the database, applies the schema, adds the `archive.workspace` row and makes the person its owner, adding the workspace to their `archive.user` row. With signup off, an OIDC sign-in only finds people an admin added, by their verified email.
 - **Admins can also create and delete workspaces** for other people (`archive workspace add|delete`), which is how a self-hosted install hosts several organizations without opening signup. Deleting a workspace drops its database and its roles.
-- **Billing** works when `ARCHIVE_STRIPE_KEY` is set, like SMTP works when `ARCHIVE_SMTP_URL` is. Plans and their limits are rows. Stripe Checkout starts a subscription, and Stripe's webhook at `api.archive.dev/stripe` updates the workspace's plan. Without a key, workspaces have no limits.
+- **Billing** works when `ARCHIVE_STRIPE_KEY` is set, like Google sign-in works when `ARCHIVE_OIDC` names it. Plans and their limits are rows. Stripe Checkout starts a subscription, and Stripe's webhook at `api.archive.dev/stripe` updates the workspace's plan. Without a key, workspaces have no limits.
 - **AI usage** is counted in `archive.usage`: the chat agent records the tokens of every reply. The shared `ANTHROPIC_API_KEY` serves every workspace. A workspace can bring its own key in a setting.
 
 ## Infrastructure

@@ -104,7 +104,7 @@
 {#if signedOut}
   <SignIn />
 {:else if adding}
-  <SignIn create address={me.actor.email} oncancel={() => (adding = false)} />
+  <SignIn create oncancel={() => (adding = false)} />
 {:else if me}
   <div class="shell">
     <aside>

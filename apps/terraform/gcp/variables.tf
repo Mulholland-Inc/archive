@@ -69,19 +69,6 @@ variable "anthropic_api_key" {
   sensitive   = true
 }
 
-variable "smtp_url" {
-  type        = string
-  description = "smtp://user:pass@host:587 for sign-in mail (ARCHIVE_SMTP_URL), kept in Secret Manager. Empty prints links to the log."
-  default     = ""
-  sensitive   = true
-}
-
-variable "smtp_from" {
-  type        = string
-  description = "Sender address of sign-in mail (ARCHIVE_SMTP_FROM)."
-  default     = ""
-}
-
 variable "stripe_key" {
   type        = string
   description = "Stripe secret key (ARCHIVE_STRIPE_KEY), kept in Secret Manager. Empty turns billing and plan limits off."

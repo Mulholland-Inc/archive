@@ -9,12 +9,8 @@
   import Word from '#kit/Word.svelte';
   import art from '../../site/static/art/cli.webp';
 
-  let { oncancel, create = false, address = '' } = $props();
-  let email = $state(address);
+  let { oncancel, create = false } = $props();
   let team = $state('');
-  let creating = $state(create);
-  let signup = $state(false);
-  let sent = $state(false);
   let busy = $state(false);
   let error = $state('');
   let providers = $state([]);
@@ -23,25 +19,21 @@
   const name = (p) => p.charAt(0).toUpperCase() + p.slice(1);
 
   api('/auth/methods')
-    .then((m) => {
-      providers = m.providers ?? [];
-      signup = !!m.signup;
-    })
+    .then((m) => (providers = m.providers ?? []))
     .catch(() => {});
 
   $effect(() => {
-    if (!sent) field?.focus();
+    field?.focus();
   });
 
-  async function send(e) {
+  async function make(e) {
     e.preventDefault();
-    if (busy || !email.trim() || (creating && !team.trim())) return;
+    if (busy || !team.trim()) return;
     busy = true;
     error = '';
     try {
-      if (creating) await api('/auth/signup', { method: 'POST', body: { email: email.trim(), name: team.trim() } });
-      else await api('/auth/magic', { method: 'POST', body: { email: email.trim() } });
-      sent = true;
+      const made = await api('/auth/signup', { method: 'POST', body: { name: team.trim() } });
+      location.assign('/?workspace=' + encodeURIComponent(made.workspace));
     } catch (err) {
       error = err.message;
     }
@@ -71,47 +63,30 @@
       if (err.name !== 'NotAllowedError' && err.name !== 'AbortError') error = err.message;
     }
   }
-
-  function again() {
-    sent = false;
-    error = '';
-  }
 </script>
 
 <div class="door">
   <span class="brand" aria-label="Archive"><Word /></span>
   <div class="column">
     <img src={art} alt="" />
-    {#if sent}
-      <h1>Check your email</h1>
-      <p class="address">{email.trim()}</p>
-      <button class="again" type="button" onclick={again}>Use another email</button>
-    {:else}
-      {#if creating}
-        <form class="pill" onsubmit={send}>
-          <input bind:value={team} placeholder="Workspace name" aria-label="Workspace name" autocomplete="organization" required />
-        </form>
-      {/if}
-      <form class="pill" onsubmit={send}>
-        <input bind:this={field} bind:value={email} type="email" placeholder="Email" aria-label="Email" autocomplete="email webauthn" required />
-        <button class="go" type="submit" disabled={busy || !email.trim() || (creating && !team.trim())} aria-label={creating ? 'Create workspace' : 'Send sign-in link'}>
+    {#if create}
+      <form class="pill" onsubmit={make}>
+        <input bind:this={field} bind:value={team} placeholder="Workspace name" aria-label="Workspace name" autocomplete="organization" required />
+        <button class="go" type="submit" disabled={busy || !team.trim()} aria-label="Create workspace">
           <span class:spin={busy}><Icon name={busy ? 'loader-circle' : 'arrow-up'} /></span>
         </button>
       </form>
-      {#if error}<p class="error" role="alert">{error}</p>{/if}
-      {#if creating && !create}
-        <button class="again" type="button" onclick={() => (creating = false)}>Sign in instead</button>
-      {:else if providers.length || passkeys || signup}
-        <div class="methods">
-          {#each providers as p (p)}
-            <a class="method" href="/auth/oidc/{encodeURIComponent(p)}">Continue with {name(p)}</a>
-          {/each}
-          {#if passkeys}<button class="method" type="button" onclick={passkey}><Icon name="key-round" />Use a passkey</button>{/if}
-          {#if signup}<button class="method" type="button" onclick={() => (creating = true)}><Icon name="plus" />Create a workspace</button>{/if}
-        </div>
-      {/if}
-      {#if oncancel}<button class="again" type="button" onclick={oncancel}>Back</button>{/if}
     {/if}
+    {#if error}<p class="error" role="alert">{error}</p>{/if}
+    {#if !create && (providers.length || passkeys)}
+      <div class="methods">
+        {#each providers as p (p)}
+          <a class="method" href="/auth/oidc/{encodeURIComponent(p)}">Continue with {name(p)}</a>
+        {/each}
+        {#if passkeys}<button class="method" type="button" onclick={passkey}><Icon name="key-round" />Use a passkey</button>{/if}
+      </div>
+    {/if}
+    {#if oncancel}<button class="again" type="button" onclick={oncancel}>Back</button>{/if}
   </div>
 </div>
 
@@ -136,7 +111,6 @@
     animation: appear var(--duration-slow) var(--ease-out) both;
   }
   img { align-self: center; width: auto; height: var(--door-art); max-width: 100%; object-fit: contain; }
-  h1 { text-align: center; font: var(--weight-medium) var(--greeting-size) / var(--leading-tight) var(--font-serif); letter-spacing: var(--tracking-tight); text-wrap: balance; }
   .pill { display: flex; align-items: center; gap: var(--space-1); padding: var(--space-1-5); border-radius: var(--radius-full); background: var(--composer-bg); }
   input { flex: 1; min-width: 0; padding: var(--composer-pad); background: none; color: var(--fg); line-height: var(--leading-medium); outline: 0; }
   input::placeholder { color: var(--fg-muted); }
@@ -168,7 +142,6 @@
     transition: background var(--duration-fast);
   }
   .method:hover { background: var(--fill-strong); }
-  .address { color: var(--fg-muted); text-align: center; overflow-wrap: anywhere; }
   .again { align-self: center; color: var(--accent); }
   .again:hover { text-decoration: underline; }
   .error { color: var(--danger); text-align: center; }

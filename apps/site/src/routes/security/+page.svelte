@@ -68,8 +68,8 @@
   <Facts head={['Level', 'What they can do in the space']} rows={LEVELS} />
 </Section>
 
-<Section title="Sign in without a password." body="Use an email link, a passkey, or your Google or Microsoft account. However you sign in, you get the same access.">
-  <Logos reveal items={['Email magic link', 'Passkeys', 'Google', 'Microsoft', 'Single sign-on']} />
+<Section title="Sign in without a password." body="Use a passkey, or your Google or Microsoft account. However you sign in, you get the same access.">
+  <Logos reveal items={['Passkeys', 'Google', 'Microsoft', 'Single sign-on']} />
 </Section>
 
 <Section band title="Safe to hand to an assistant." body="Assistants, connected tools and share links follow the same rules as people. Nothing gets a side door.">

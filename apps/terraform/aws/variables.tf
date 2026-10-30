@@ -23,7 +23,7 @@ variable "admin_email" {
 
 variable "env" {
   type        = map(string)
-  description = "Extra environment variables, such as ARCHIVE_SMTP_URL, ARCHIVE_SMTP_FROM and ARCHIVE_OIDC."
+  description = "Extra environment variables, such as ARCHIVE_OIDC."
   default     = {}
 }
 

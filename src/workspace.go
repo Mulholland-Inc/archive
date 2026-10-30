@@ -7,7 +7,6 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -71,7 +70,6 @@ const (
 	hubBusy       = 10 * time.Second
 	workspaceRuns = 8
 	workspaceMax  = 64
-	signupTTL     = 15 * time.Minute
 )
 
 type archiveKey struct{}
@@ -751,7 +749,7 @@ func (h *Hub) AddWorkspace(ctx context.Context, name, owner string) (*Workspace,
 	if err := h.admin(ctx); err != nil {
 		return nil, err
 	}
-	r, err := h.createWorkspace(ctx, coreNewID(), name, owner)
+	r, err := h.createWorkspace(ctx, name, owner, "")
 	if err != nil {
 		return nil, err
 	}
@@ -799,8 +797,9 @@ func workspaceName(name string) (string, error) {
 	return name, nil
 }
 
-func (h *Hub) createWorkspace(ctx context.Context, id uuid.UUID, name, owner string) (generated.ArchiveWorkspace, error) {
+func (h *Hub) createWorkspace(ctx context.Context, name, owner, ownerName string) (generated.ArchiveWorkspace, error) {
 	var row generated.ArchiveWorkspace
+	id := coreNewID()
 	name, err := workspaceName(name)
 	if err != nil {
 		return row, err
@@ -845,19 +844,12 @@ func (h *Hub) createWorkspace(ctx context.Context, id uuid.UUID, name, owner str
 	if err != nil {
 		return fail(err)
 	}
-	_, err = a.AddUser(context.Background(), owner, "", true)
+	_, err = a.AddUser(context.Background(), owner, ownerName, true)
 	release()
 	if err != nil {
 		return fail(err)
 	}
 	return row, nil
-}
-
-type signupClaim struct {
-	Email string `json:"e"`
-	Name  string `json:"n"`
-	ID    string `json:"w"`
-	Exp   int64  `json:"x"`
 }
 
 func (h *Hub) sign(purpose, payload string) string {
@@ -866,40 +858,12 @@ func (h *Hub) sign(purpose, payload string) string {
 	return hex.EncodeToString(m.Sum(nil))
 }
 
-func (h *Hub) signupToken(email, name string) string {
-	b, _ := json.Marshal(signupClaim{Email: email, Name: name, ID: coreNewID().String(), Exp: time.Now().Add(signupTTL).Unix()})
-	p := base64.RawURLEncoding.EncodeToString(b)
-	return p + "." + h.sign("signup", p)
-}
-
-func (h *Hub) signupClaim(token string) (*signupClaim, error) {
-	p, sig, _ := strings.Cut(token, ".")
-	bad := fmt.Errorf("this link to create a workspace is invalid or expired: %w", ErrUnauthorized)
-	if !hmac.Equal([]byte(sig), []byte(h.sign("signup", p))) {
-		return nil, bad
-	}
-	b, err := base64.RawURLEncoding.DecodeString(p)
-	var c signupClaim
-	if err != nil || json.Unmarshal(b, &c) != nil || time.Now().Unix() > c.Exp {
-		return nil, bad
-	}
-	return &c, nil
-}
-
-func (h *Hub) signup(ctx context.Context, c *signupClaim) (*User, error) {
+func (h *Hub) signup(ctx context.Context, workspace, email, name string) (string, error) {
 	if !h.signupOpen(ctx) {
-		return nil, fmt.Errorf("signup is closed on this Archive: %w", ErrForbidden)
+		return "", fmt.Errorf("signup is closed on this Archive; ask an admin for a workspace: %w", ErrForbidden)
 	}
-	id, err := uuid.Parse(c.ID)
-	if err != nil {
-		return nil, fmt.Errorf("this link to create a workspace is invalid: %w", ErrUnauthorized)
-	}
-	if _, err := h.createWorkspace(ctx, id, c.Name, c.Email); errors.Is(err, ErrConflict) {
-		return nil, fmt.Errorf("this link was used already; sign in instead: %w", ErrConflict)
-	} else if err != nil {
-		return nil, err
-	}
-	return userBy(ctx, h, (*generated.Queries).UserByEmail, c.Email)
+	r, err := h.createWorkspace(ctx, workspace, email, name)
+	return r.ID.String(), err
 }
 
 type Usage struct {

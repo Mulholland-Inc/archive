@@ -58,7 +58,7 @@
     ['AI assistants and developer tools', 'Yes', 'Yes', 'Yes', 'Yes'],
     ['Control over who sees and changes what', 'Yes', 'Yes', 'Yes', 'Yes'],
     ['Encrypted sensitive details', 'Yes', 'Yes', 'Yes', 'Yes'],
-    ['Sign-in', 'Email link, passkeys, Google, Microsoft', 'Same', 'Same', "Plus your company's own login"],
+    ['Sign-in', 'Passkeys, Google, Microsoft', 'Same', 'Same', "Plus your company's own login"],
     ['Database', 'Shared', 'Shared', 'Shared', 'Dedicated'],
     ['Support', 'Community', 'Email', 'Priority', 'Named engineer']
   ];

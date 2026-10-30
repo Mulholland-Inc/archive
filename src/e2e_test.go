@@ -6,7 +6,10 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto"
 	"crypto/hmac"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
@@ -20,6 +23,7 @@ import (
 	"image/jpeg"
 	"io"
 	"maps"
+	"math/big"
 	"mime/multipart"
 	"net"
 	"net/http"
@@ -555,7 +559,7 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 	srv := in.serve()
 	api := srv.url + "/api"
 
-	in.must("user", "add", "bob@example.com", "-name", "Bob")
+	added := decode[UserLink](t, in.must("user", "add", "bob@example.com", "-name", "Bob"))
 	in.push(e2eSchema)
 	in.must("space", "add", "family")
 	in.must("space", "grant", "family", "bob@example.com", "viewer")
@@ -825,35 +829,20 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 		}
 	})
 
-	t.Run("MagicLinkSignInFromTheLog", func(t *testing.T) {
-		st, _ := call(t, "POST", srv.url+"/auth/magic", "", map[string]any{"email": "bob@example.com"}, nil)
-		wantStatus(t, st, 202, "request magic link")
-		st, _ = call(t, "POST", srv.url+"/auth/magic", "", map[string]any{"email": "nobody@example.com"}, nil)
-		wantStatus(t, st, 202, "request magic link for unknown user")
-		re := regexp.MustCompile(`sign-in link for bob@example\.com: (\S+)`)
-		var link string
-		for deadline := time.Now().Add(5 * time.Second); link == "" && time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
-			if m := re.FindStringSubmatch(srv.log.String()); m != nil {
-				link = m[1]
-			}
+	t.Run("OneTimeSignInLinksFromTheCLI", func(t *testing.T) {
+		if added.Email != "bob@example.com" || added.Name != "Bob" || !strings.Contains(added.Link, "/auth/magic?token=arc_") {
+			t.Fatalf("user add prints no sign-in link: %+v", added)
 		}
-		if link == "" || strings.Contains(srv.log.String(), "nobody@example.com") {
-			t.Fatalf("log:\n%s", srv.log)
+		if errs := in.on(t).fails("user", "link", "nobody@example.com"); !strings.Contains(errs, "not found") {
+			t.Errorf("a link for someone not in the workspace: %s", errs)
 		}
-		resp, err := http.Get(link)
-		if err != nil {
-			t.Fatal(err)
+		fresh := decode[UserLink](t, in.must("user", "link", "bob@example.com")).Link
+		if fresh == added.Link {
+			t.Fatalf("user link repeats the first link")
 		}
-		resp.Body.Close()
-		wantStatus(t, resp.StatusCode, 200, "open magic link")
-		var session *http.Cookie
-		for _, c := range resp.Cookies() {
-			if c.Name == "archive_session" && c.HttpOnly && c.SameSite == http.SameSiteLaxMode {
-				session = c
-			}
-		}
-		if session == nil {
-			t.Fatalf("no HttpOnly Lax session cookie: %v", resp.Cookies())
+		st, session := srv.open(t, fresh, nil)
+		if st != 200 || session == nil || !session.HttpOnly || session.SameSite != http.SameSiteLaxMode {
+			t.Fatalf("open the sign-in link: %d %v", st, session)
 		}
 		var me struct {
 			Actor Actor `json:"actor"`
@@ -867,9 +856,23 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 		if !strings.Contains(names(rs), "Bob private,Family member") {
 			t.Errorf("session lists %q", names(rs))
 		}
-		again, _ := http.Get(link)
-		again.Body.Close()
-		wantStatus(t, again.StatusCode, 401, "reuse magic link")
+		if st, _ := srv.open(t, fresh, nil); st != 401 {
+			t.Errorf("reuse a sign-in link: %d", st)
+		}
+		if st, c := srv.open(t, added.Link, nil); st != 200 || c == nil {
+			t.Errorf("the link user add printed: %d", st)
+		}
+		var opts struct {
+			PublicKey struct {
+				User struct {
+					Name string `json:"name"`
+				} `json:"user"`
+			} `json:"publicKey"`
+		}
+		st, _ = call(t, "POST", srv.url+"/auth/passkey/register", "", nil, &opts, session)
+		if st != 200 || opts.PublicKey.User.Name != "bob@example.com" {
+			t.Errorf("a person signed in by link starts adding a passkey: %d %+v", st, opts)
+		}
 		st, _ = call(t, "POST", srv.url+"/auth/signout", "", nil, nil, session)
 		wantStatus(t, st, 204, "sign out")
 		st, _ = call(t, "GET", srv.url+"/auth/me", "", nil, nil, session)
@@ -2052,55 +2055,28 @@ return { made: made.applied, t1, rows1, changed: changed.applied, t2, rows2, dro
 		}
 	})
 
-	t.Run("SignInMethodsAndMagicLink", func(t *testing.T) {
-		var methods struct {
-			Providers []string `json:"providers"`
-			Mail      bool     `json:"mail"`
-		}
+	t.Run("SignInMethodsAndALinkInTheBrowser", func(t *testing.T) {
+		var methods map[string]any
 		st, _ := call(t, "GET", srv.url+"/auth/methods", "", nil, &methods)
 		wantStatus(t, st, 200, "sign-in methods without a session")
-		if !slices.Equal(methods.Providers, []string{"google"}) || methods.Mail {
+		if fmt.Sprint(methods["providers"]) != "[google]" || methods["signup"] != false || len(methods) != 2 {
 			t.Errorf("methods: %+v", methods)
 		}
-		call(t, "POST", srv.url+"/auth/magic", "", map[string]any{"email": "bob@example.com"}, nil)
-		re := regexp.MustCompile(`sign-in link for bob@example\.com: (\S+)`)
-		var link string
-		for deadline := time.Now().Add(5 * time.Second); link == "" && time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
-			if m := re.FindStringSubmatch(srv.log.String()); m != nil {
-				link = m[1]
-			}
+		st, _ = call(t, "POST", srv.url+"/auth/magic", "", map[string]any{"email": "bob@example.com"}, nil)
+		if st != 405 && st != 404 {
+			t.Errorf("asking for a mailed link: %d", st)
 		}
-		if link == "" {
-			t.Fatalf("log:\n%s", srv.log)
-		}
-		resp, err := http.Get(link)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		if resp.StatusCode != 200 || !slices.ContainsFunc(resp.Cookies(), func(c *http.Cookie) bool { return c.Name == "archive_session" && c.Value != "" }) {
-			t.Errorf("magic link: %d %v", resp.StatusCode, resp.Cookies())
-		}
-		if resp, err := http.Get(link); err != nil || resp.StatusCode < 400 {
-			t.Errorf("used magic link: %v %v", resp, err)
-		}
-		call(t, "POST", srv.url+"/auth/magic", "", map[string]any{"email": "bob@example.com"}, nil)
-		var browser string
-		for deadline := time.Now().Add(5 * time.Second); browser == "" && time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
-			if m := re.FindAllStringSubmatch(srv.log.String(), -1); len(m) > 1 {
-				browser = m[len(m)-1][1]
-			}
-		}
-		req, _ := http.NewRequest("GET", browser, nil)
+		link, _ := url.Parse(decode[UserLink](t, in.on(t).must("user", "link", "bob@example.com")).Link)
+		req, _ := http.NewRequest("GET", srv.url+link.Path+"?"+link.RawQuery, nil)
 		req.Header.Set("Accept", "text/html,application/xhtml+xml")
 		noFollow := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-		resp, err = noFollow.Do(req)
+		resp, err := noFollow.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/" || !slices.ContainsFunc(resp.Cookies(), func(c *http.Cookie) bool { return c.Name == "archive_session" && c.Value != "" }) {
-			t.Errorf("magic link in a browser: %d %q %v", resp.StatusCode, resp.Header.Get("Location"), resp.Cookies())
+			t.Errorf("sign-in link in a browser: %d %q %v", resp.StatusCode, resp.Header.Get("Location"), resp.Cookies())
 		}
 	})
 }
@@ -3043,20 +3019,14 @@ func (in *e2eInst) psqlIn(db, sql string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func (s *e2eServer) links(t *testing.T, kind, email string, n int) []string {
+func (s *e2eServer) open(t *testing.T, link string, hdr map[string]string) (int, *http.Cookie) {
 	t.Helper()
-	re := regexp.MustCompile(kind + ` link for ` + regexp.QuoteMeta(email) + `: (\S+)`)
-	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
-		if m := re.FindAllStringSubmatch(s.log.String(), -1); len(m) >= n {
-			var out []string
-			for _, x := range m {
-				out = append(out, x[1])
-			}
-			return out
-		}
+	u, err := url.Parse(link)
+	if err != nil || u.Path != "/auth/magic" {
+		t.Fatalf("sign-in link %q", link)
 	}
-	t.Fatalf("no %d %s links for %s in the log:\n%s", n, kind, email, s.log)
-	return nil
+	st, cs := e2eDo(t, "GET", s.url+u.Path+"?"+u.RawQuery, hdr, nil, nil)
+	return st, e2eSession(cs)
 }
 
 func e2eWait(t *testing.T, what string, ok func() bool) {
@@ -3107,6 +3077,59 @@ func e2eSession(cs []*http.Cookie) *http.Cookie {
 		}
 	}
 	return nil
+}
+
+func e2eIssuer(t *testing.T) *httptest.Server {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b64 := base64.RawURLEncoding.EncodeToString
+	var issuer *httptest.Server
+	issuer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/jwks":
+			json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{{"kty": "RSA", "alg": "RS256", "use": "sig", "kid": "k",
+				"n": b64(key.N.Bytes()), "e": b64(big.NewInt(int64(key.E)).Bytes())}}})
+		case "/token":
+			r.ParseForm()
+			claims := map[string]any{}
+			json.Unmarshal([]byte(r.Form.Get("code")), &claims)
+			now := time.Now().Unix()
+			claims["iss"], claims["aud"], claims["iat"], claims["exp"] = issuer.URL, "web", now, now+300
+			body, _ := json.Marshal(claims)
+			signed := b64([]byte(`{"alg":"RS256","kid":"k","typ":"JWT"}`)) + "." + b64(body)
+			sum := sha256.Sum256([]byte(signed))
+			sig, _ := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, sum[:])
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"access_token": "at", "token_type": "Bearer", "expires_in": 300, "id_token": signed + "." + b64(sig)})
+		default:
+			json.NewEncoder(w).Encode(map[string]any{"issuer": issuer.URL, "authorization_endpoint": issuer.URL + "/authorize", "token_endpoint": issuer.URL + "/token",
+				"jwks_uri": issuer.URL + "/jwks", "id_token_signing_alg_values_supported": []string{"RS256"}})
+		}
+	}))
+	t.Cleanup(issuer.Close)
+	return issuer
+}
+
+func (s *e2eServer) oidc(t *testing.T, provider string, claims map[string]any) (int, *http.Cookie) {
+	t.Helper()
+	st, hdr := call(t, "GET", s.url+"/auth/oidc/"+provider, "", nil, nil)
+	loc, _ := url.Parse(hdr.Get("Location"))
+	bind := slices.IndexFunc((&http.Response{Header: hdr}).Cookies(), func(c *http.Cookie) bool { return c.Name == "archive_oidc" })
+	if st != 302 || loc == nil || bind < 0 {
+		t.Fatalf("start OIDC sign-in: %d %v", st, hdr)
+	}
+	claims["nonce"] = loc.Query().Get("nonce")
+	code, _ := json.Marshal(claims)
+	st, back := call(t, "GET", s.url+"/auth/oidc/"+provider+"/callback?"+url.Values{"state": {loc.Query().Get("state")}, "code": {string(code)}}.Encode(), "", nil, nil)
+	if st != http.StatusSeeOther {
+		return st, nil
+	}
+	done, _ := url.Parse(back.Get("Location"))
+	st, cs := e2eDo(t, "GET", s.url+done.Path+"?"+done.RawQuery, nil, nil, nil, (&http.Response{Header: hdr}).Cookies()[bind])
+	return st, e2eSession(cs)
 }
 
 func e2eRun(t *testing.T, api, tok, code string) (int, RunOutput) {
@@ -3447,36 +3470,55 @@ func names2(rs []row, col string) string {
 
 func TestSignupAndSigningInToSeveralWorkspaces(t *testing.T) {
 	t.Parallel()
-	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
+	issuer := e2eIssuer(t)
+	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com", `ARCHIVE_OIDC=[{"name":"google","issuer":"`+issuer.URL+`","client_id":"web"}]`)
 	srv := in.serve()
 	one := in.psql("archive", "SELECT id FROM archive.workspace ORDER BY created_at LIMIT 1")
 	var methods struct {
 		Signup bool `json:"signup"`
 	}
 	call(t, "GET", srv.url+"/auth/methods", "", nil, &methods)
-	st, _ := call(t, "POST", srv.url+"/auth/signup", "", map[string]string{"email": "carol@example.com", "name": "Carol Co"}, nil)
-	if st != 403 || methods.Signup {
-		t.Fatalf("signup while off: %d, methods say %v", st, methods.Signup)
+	carolID := map[string]any{"sub": "carol-1", "email": "Carol@Example.com", "email_verified": true, "name": " Carol  Co "}
+	if st, c := srv.oidc(t, "google", maps.Clone(carolID)); st != 403 || c != nil || methods.Signup {
+		t.Fatalf("Google sign-in for nobody while signup is off: %d %v, methods say %v", st, c, methods.Signup)
 	}
+	in.must("user", "add", "dave@example.com")
+	st, dave := srv.oidc(t, "google", map[string]any{"sub": "dave-1", "email": "dave@example.com", "email_verified": true})
+	var me struct {
+		Actor     Actor       `json:"actor"`
+		Workspace string      `json:"workspace"`
+		All       []Workspace `json:"workspaces"`
+	}
+	if st != 200 || dave == nil {
+		t.Fatalf("an invited person signs in with Google: %d", st)
+	}
+	if e2eDo(t, "GET", srv.url+"/auth/me", nil, nil, &me, dave); me.Actor.Email != "dave@example.com" || me.Workspace != one {
+		t.Fatalf("an invited person signs in with Google under the same email: %+v", me)
+	}
+	if st, c := srv.oidc(t, "google", map[string]any{"sub": "dave-1", "email": "dave@elsewhere.test"}); st != 200 || c == nil {
+		t.Errorf("the linked Google account signs in again without its email: %d", st)
+	}
+	in.must("user", "add", "frank@example.com")
+	if st, _ := srv.oidc(t, "google", map[string]any{"sub": "frank-1", "email": "frank@example.com", "email_verified": false}); st != 403 {
+		t.Errorf("an unverified email takes over an invite: %d", st)
+	}
+	st, _ = e2eDo(t, "POST", srv.url+"/auth/signup", nil, map[string]string{"name": "Dave Two"}, nil, dave)
+	wantStatus(t, st, 403, "a signed-in person adds a workspace while signup is off")
+
 	in.must("signup", "on")
 	call(t, "GET", srv.url+"/auth/methods", "", nil, &methods)
-	st, _ = call(t, "POST", srv.url+"/auth/signup", "", map[string]string{"email": "carol@example.com", "name": " "}, nil)
-	wantStatus(t, st, 422, "signup without a workspace name")
-	st, _ = call(t, "POST", srv.url+"/auth/signup", "", map[string]string{"email": "carol@example.com", "name": "Carol Co"}, nil)
-	if st != 202 || !methods.Signup {
-		t.Fatalf("signup while on: %d, methods say %v", st, methods.Signup)
+	if st, _ := srv.oidc(t, "google", map[string]any{"sub": "gus-1", "email": "gus@example.com"}); st != 403 || !methods.Signup {
+		t.Errorf("Google signup with an unverified email: %d, methods say %v", st, methods.Signup)
 	}
-	link := srv.links(t, "signup", "carol@example.com", 1)[0]
-	var made struct {
-		User      User   `json:"user"`
-		Workspace string `json:"workspace"`
+	st, carol := srv.oidc(t, "google", maps.Clone(carolID))
+	if st != 200 || carol == nil {
+		t.Fatalf("Google signup while signup is on: %d", st)
 	}
-	st, cs := e2eDo(t, "GET", link, nil, nil, &made)
-	carol := e2eSession(cs)
-	if st != 200 || carol == nil || made.User.Email != "carol@example.com" || made.Workspace == one || made.Workspace == "" {
-		t.Fatalf("open the signup link: %d %+v %v", st, made, cs)
+	if e2eDo(t, "GET", srv.url+"/auth/me", nil, nil, &me, carol); me.Actor.Email != "carol@example.com" || me.Actor.Name != "Carol Co" || len(me.All) != 1 || me.Workspace == one {
+		t.Fatalf("Google signup makes carol her own workspace: %+v", me)
 	}
-	if got := in.psql("archive", "SELECT w.name || ' ' || (SELECT count(*) FROM pg_database WHERE datname = 'archive_' || w.id) FROM archive.workspace w WHERE w.id::text = '"+made.Workspace+"'"); got != "Carol Co 1" {
+	made := me.Workspace
+	if got := in.psql("archive", "SELECT w.name || ' ' || (SELECT count(*) FROM pg_database WHERE datname = 'archive_' || w.id) FROM archive.workspace w WHERE w.id::text = '"+made+"'"); got != "Carol Co 1" {
 		t.Errorf("carol's workspace row and database: %q", got)
 	}
 	var out RunOutput
@@ -3484,26 +3526,45 @@ func TestSignupAndSigningInToSeveralWorkspaces(t *testing.T) {
 	if st != 200 || string(out.Result) != `"owner"` {
 		t.Errorf("carol runs in her workspace: %d %+v", st, out)
 	}
-	st, _ = e2eDo(t, "GET", link, nil, nil, nil)
-	wantStatus(t, st, 409, "the signup link twice")
+	if st, c := srv.oidc(t, "google", maps.Clone(carolID)); st != 200 || c == nil {
+		t.Errorf("carol signs in again: %d", st)
+	}
+	if n := in.psql("archive", "SELECT count(*) FROM archive.workspace WHERE name = 'Carol Co'"); n != "1" {
+		t.Errorf("carol's second sign-in made another workspace: %s", n)
+	}
+	st, _ = e2eDo(t, "POST", srv.url+"/auth/signup", nil, map[string]string{"name": " "}, nil, dave)
+	wantStatus(t, st, 422, "a workspace without a name")
+	st, _ = call(t, "POST", srv.url+"/auth/signup", "", map[string]string{"name": "Nobody's"}, nil)
+	wantStatus(t, st, 401, "a workspace without signing in")
+	var daveTwo struct {
+		Workspace string `json:"workspace"`
+	}
+	st, _ = e2eDo(t, "POST", srv.url+"/auth/signup", nil, map[string]string{"name": "Dave Two"}, &daveTwo, dave)
+	if st != 201 || daveTwo.Workspace == "" {
+		t.Fatalf("a signed-in person adds a workspace: %d %+v", st, daveTwo)
+	}
+	st, _ = e2eDo(t, "POST", srv.url+"/api/run", map[string]string{"Archive-Workspace": daveTwo.Workspace}, map[string]string{"code": "return (await archive.spaces()).map((s) => s.level).join(',')"}, &out, dave)
+	if st != 200 || string(out.Result) != `"owner"` {
+		t.Errorf("dave owns the workspace he added: %d %+v", st, out)
+	}
 	st, _ = e2eDo(t, "POST", srv.url+"/auth/workspaces", nil, map[string]string{"name": "Mine", "owner": "carol@example.com"}, nil, carol)
 	wantStatus(t, st, 403, "a workspace owner creates a workspace for someone")
 	st, _ = e2eDo(t, "PATCH", srv.url+"/auth/settings", nil, map[string]bool{"signup": false}, nil, carol)
 	wantStatus(t, st, 403, "a workspace owner closes signup")
 
 	full := decode[Token](t, in.must("token", "create", "-full")).Secret
+	st, _ = call(t, "POST", srv.url+"/auth/signup", decode[Token](t, in.must("token", "create")).Secret, map[string]string{"name": "By token"}, nil)
+	wantStatus(t, st, 403, "a scoped token adds a workspace")
 	var second Workspace
 	st, _ = call(t, "POST", srv.url+"/auth/workspaces", full, map[string]string{"name": "Second", "owner": "alice@example.com"}, &second)
 	wantStatus(t, st, 201, "an instance admin creates a workspace")
-	call(t, "POST", srv.url+"/auth/magic", "", map[string]string{"email": "alice@example.com"}, nil)
-	_, cs = e2eDo(t, "GET", srv.links(t, "sign-in", "alice@example.com", 1)[0], nil, nil, nil)
-	alice := e2eSession(cs)
-	if n := strings.Count(srv.log.String(), "sign-in link for alice@example.com"); alice == nil || n != 1 {
-		t.Fatalf("one sign-in link for two workspaces: %d, cookie %v", n, alice)
+	first := regexp.MustCompile(`created the first owner alice@example\.com; .*: (\S+)`).FindStringSubmatch(srv.log.String())
+	if first == nil {
+		t.Fatalf("no sign-in link for the first owner in the log:\n%s", srv.log)
 	}
-	var me struct {
-		Workspace string      `json:"workspace"`
-		All       []Workspace `json:"workspaces"`
+	st, alice := srv.open(t, first[1], nil)
+	if st != 200 || alice == nil {
+		t.Fatalf("the first owner's link from the log: %d", st)
 	}
 	e2eDo(t, "GET", srv.url+"/auth/me", nil, nil, &me, alice)
 	if me.Workspace != one || len(me.All) != 2 || me.All[0].ID != one || me.All[1].ID != second.ID {
@@ -3517,7 +3578,7 @@ func TestSignupAndSigningInToSeveralWorkspaces(t *testing.T) {
 	if st != 200 || string(out.Result) != `"owner"` {
 		t.Errorf("alice runs in the second workspace with the same cookie: %d %+v", st, out)
 	}
-	st, _ = e2eDo(t, "GET", srv.url+"/auth/me", map[string]string{"Archive-Workspace": made.Workspace}, nil, nil, alice)
+	st, _ = e2eDo(t, "GET", srv.url+"/auth/me", map[string]string{"Archive-Workspace": made}, nil, nil, alice)
 	wantStatus(t, st, 403, "alice in carol's workspace")
 	st, _ = e2eDo(t, "GET", srv.url+"/auth/me", map[string]string{"Archive-Workspace": one}, nil, nil, carol)
 	wantStatus(t, st, 403, "carol in workspace one")
@@ -3539,7 +3600,7 @@ func TestSignupAndSigningInToSeveralWorkspaces(t *testing.T) {
 	st, _ = call(t, "GET", srv.url+"/api/types", tok.Secret, nil, nil)
 	wantStatus(t, st, 401, "carol's token after she was removed")
 	st, _ = e2eDo(t, "GET", srv.url+"/auth/me", nil, nil, &me, carol)
-	if st != 200 || me.Workspace != made.Workspace || len(me.All) != 1 {
+	if st != 200 || me.Workspace != made || len(me.All) != 1 {
 		t.Errorf("carol still in her own workspace: %d %+v", st, me)
 	}
 	if n := in.psql("archive", "SELECT count(*) FROM pg_roles WHERE starts_with(rolname, '"+second.ID+"_u') AND rolname <> '"+second.ID+"_user'"); n != "1" {
@@ -3549,7 +3610,7 @@ func TestSignupAndSigningInToSeveralWorkspaces(t *testing.T) {
 		t.Errorf("members of alice's space in the second workspace: %+v", got)
 	}
 
-	st, cs = e2eDo(t, "POST", srv.url+"/auth/signout", nil, nil, nil, alice)
+	st, cs := e2eDo(t, "POST", srv.url+"/auth/signout", nil, nil, nil, alice)
 	if left := e2eSession(cs); st != 204 || left == nil || left.Value != "" {
 		t.Fatalf("sign out: %d %v", st, left)
 	}
@@ -3583,9 +3644,11 @@ func TestGeneratedURLsUseTheAPIAddress(t *testing.T) {
 	if !strings.HasPrefix(link.URL, "http://api.test:9/files/"+one+"/") {
 		t.Errorf("file link: %s", link.URL)
 	}
-	call(t, "POST", srv.url+"/auth/magic", "", map[string]string{"email": "alice@example.com"}, nil)
-	if l := srv.links(t, "sign-in", "alice@example.com", 1)[0]; !strings.HasPrefix(l, "http://app.test/auth/magic?token=arc_") {
+	if l := decode[UserLink](t, in.must("user", "link", "alice@example.com")).Link; !strings.HasPrefix(l, "http://app.test/auth/magic?token=arc_") {
 		t.Errorf("sign-in link: %s", l)
+	}
+	if !strings.Contains(srv.log.String(), "created the first owner alice@example.com; sign in within 15 minutes, or get a new link with archive user link: http://app.test/auth/magic?token=arc_") {
+		t.Errorf("the first owner's link in the log:\n%s", srv.log)
 	}
 	st, hdr := call(t, "GET", srv.url+"/auth/oidc/fake", "", nil, nil)
 	loc, _ := url.Parse(hdr.Get("Location"))

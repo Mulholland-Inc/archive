@@ -735,7 +735,8 @@ archive schema pull ./schema &amp;&amp; archive schema plan ./schema</pre>
 <tbody>
 <tr><td><code>archive space add|list|remove|members</code></td><td>Manages spaces.</td></tr>
 <tr><td><code>archive space grant &lt;space&gt; &lt;email&gt; &lt;role&gt;</code></td><td>Sets a role: owner, admin, editor, viewer or none.</td></tr>
-<tr><td><code>archive user add &lt;email&gt; [-name n] [-admin]</code></td><td>Adds a person to the workspace.</td></tr>
+<tr><td><code>archive user add &lt;email&gt; [-name n] [-admin]</code></td><td>Adds a person to the workspace and prints a one-time sign-in link for them.</td></tr>
+<tr><td><code>archive user link &lt;email&gt;</code></td><td>Prints a new one-time sign-in link for someone in the workspace.</td></tr>
 <tr><td><code>archive token create [-name n] [-space s:role,…] [-expires 720h] [-full]</code></td><td>Creates a token.</td></tr>
 <tr><td><code>archive token list</code>, <code>revoke &lt;id&gt;</code></td><td>Lists or revokes tokens.</td></tr>
 <tr><td><code>archive secret grant|revoke &lt;email&gt; &lt;type&gt;</code></td><td>Lets someone see a secret type.</td></tr>
@@ -784,7 +785,7 @@ archive schema pull ./schema &amp;&amp; archive schema plan ./schema</pre>
 <p>Making or removing an owner takes an owner, and a space always keeps at least one.</p>
 
 <h3 id="people-signin">Signing in</h3>
-<p>No passwords. Sign-in links arrive by email and work once, for 15 minutes. Passkeys work too.</p>
+<p>No passwords. Sign in with Google, Microsoft or a passkey. An admin can also make a one-time sign-in link with <code>archive user link &lt;email&gt;</code> and pass it on; it works once, for 15 minutes.</p>
 
 <h3 id="people-security">Row-level security</h3>
 <p>Every table has a policy: only rows from your spaces. It applies to the web app, the API, your AI and raw SQL alike, so a bug in one surface cannot show another person's data.</p>

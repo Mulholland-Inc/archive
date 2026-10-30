@@ -85,11 +85,11 @@ The same data and the same permissions, whichever way in:
 
 Upload any file and Archive pulls out its text, so one search covers every table and file you can see. Read-only connectors for mail, files, chat and business tools are designed in [ADR 0002](docs/adr/0002-connectors.md) and not built yet.
 
-Each team, client or project gets its own space, and people and their agents only see the spaces they are in. People, spaces and tokens are real Postgres roles, and every table has row-level security, so the database itself checks every row against who is asking. Roles are `viewer`, `editor`, `admin` and `owner`, and tokens only ever narrow what their owner can do. Sign-in is by one-time email links, passkeys, or Google and Microsoft through `ARCHIVE_OIDC`.
+Each team, client or project gets its own space, and people and their agents only see the spaces they are in. People, spaces and tokens are real Postgres roles, and every table has row-level security, so the database itself checks every row against who is asking. Roles are `viewer`, `editor`, `admin` and `owner`, and tokens only ever narrow what their owner can do. Sign-in is by Google and Microsoft through `ARCHIVE_OIDC`, or passkeys. People without either get a one-time sign-in link from `archive user add` or `archive user link` to pass on, and add a passkey once in.
 
 ```sh
 docker exec archive archive space add finance
-docker exec archive archive user add anna@example.com -name Anna
+docker exec archive archive user add anna@example.com -name Anna   # prints a one-time sign-in link for Anna
 docker exec archive archive space grant finance anna@example.com editor
 ```
 
@@ -107,7 +107,7 @@ One line starts Archive on your machine with Docker:
 curl -fsSL https://raw.githubusercontent.com/Mulholland-Inc/archive/main/install.sh | ARCHIVE_ADMIN_EMAIL=you@example.com sh
 ```
 
-Use your own email: you become the first owner, and your sign-in link appears in the log. Run the same line again to update. Your data stays in the `archive` volume, and Archive backs itself up before each new version.
+Use your own email: you become the first owner, and a one-time sign-in link appears in the log (`docker logs archive`); once in, add a passkey. `docker exec archive archive user link you@example.com` prints a new one. Run the same line again to update. Your data stays in the `archive` volume, and Archive backs itself up before each new version.
 
 From a clone of this repo, Docker Compose does the same:
 
@@ -172,7 +172,7 @@ With no `-space`, the token gets your role in every space you are in. Narrow it 
 
 The image holds Postgres and the binary. With nothing set, it runs the bundled Postgres and keeps files in `/data`. Give it an outside Postgres (`DATABASE_URL`), S3-compatible storage (`ARCHIVE_BLOB_URL`) and one `ARCHIVE_SECRET_KEY`, and it keeps nothing local, so you can run as many copies side by side as you like. In production, put it behind HTTPS and set `ARCHIVE_URL`.
 
-One Archive serves any number of workspaces: one per organization, each its own Postgres database on the same server, with its own spaces, files and workflows, its own login role and its own data key. People are added to workspaces (`archive user add`), and one sign-in reaches all of theirs. A new install starts with one. Instance admins (the admins of the first workspace) make and delete more, or let people sign up for their own:
+One Archive serves any number of workspaces: one per organization, each its own Postgres database on the same server, with its own spaces, files and workflows, its own login role and its own data key. People are added to workspaces (`archive user add`), and one sign-in reaches all of theirs. A new install starts with one. Instance admins (the admins of the first workspace) make and delete more, or let people sign up for their own with their first Google or Microsoft sign-in:
 
 ```sh
 docker exec archive archive workspace add "Acme Inc" anna@acme.example
@@ -194,7 +194,6 @@ Every setting is an environment variable; `archive help` lists them all:
 | `DATABASE_DIRECT_URL` | The same Postgres without a pooler in between, for schema changes (default `DATABASE_URL`) |
 | `ARCHIVE_SECRET_KEY` | 32-byte key for secret values; required with `DATABASE_URL`, the same on every copy |
 | `ARCHIVE_BLOB_URL`, `ARCHIVE_BLOB_KEY`, `ARCHIVE_BLOB_SECRET` | S3, R2, MinIO or GCS for files |
-| `ARCHIVE_SMTP_URL`, `ARCHIVE_SMTP_FROM` | Mail for sign-in links; unset prints them to the log |
 | `ARCHIVE_OIDC` | OIDC providers, like Google and Microsoft; their redirect URL is `ARCHIVE_API_URL/auth/oidc/<name>/callback` |
 | `ANTHROPIC_API_KEY` | Key of the in-app agent; a workspace can set its own |
 | `ARCHIVE_STRIPE_KEY`, `ARCHIVE_STRIPE_WEBHOOK_SECRET` | Billing: plan limits, Stripe Checkout and the webhook at `ARCHIVE_API_URL/stripe` |
