@@ -1,6 +1,6 @@
 export class Unauthorized extends Error {}
 
-export const API = (import.meta.env.VITE_ARCHIVE_API || '').replace(/\/+$/, '');
+export const API = location.hostname.startsWith('app.') ? location.origin.replace('//app.', '//api.') : '';
 
 export function go(path) {
   history.pushState(null, '', path);

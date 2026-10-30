@@ -832,9 +832,18 @@ func newSignin(h *Hub) (*signin, error) {
 		return nil, fmt.Errorf("passkeys: %w", err)
 	}
 	for _, c := range signinBuiltin {
-		env := "ARCHIVE_" + strings.ToUpper(c.ID) + "_"
-		c.clientID, c.secret = os.Getenv(env+"CLIENT_ID"), os.Getenv(env+"CLIENT_SECRET")
-		c.base = strings.TrimRight(cmp.Or(os.Getenv(env+"URL"), c.base), "/")
+		env := "ARCHIVE_" + strings.ToUpper(c.ID)
+		raw := os.Getenv(env)
+		if raw == "" {
+			continue
+		}
+		p, err := url.Parse(raw)
+		if err != nil || p.Host == "" || p.Scheme != "https" && p.Scheme != "http" {
+			return nil, fmt.Errorf("%s: want %s, with the client id and secret URL-escaped", env, strings.Replace(c.base, "://", "://<client id>:<client secret>@", 1))
+		}
+		c.clientID = p.User.Username()
+		c.secret, _ = p.User.Password()
+		c.base = strings.TrimRight(p.Scheme+"://"+p.Host+p.Path, "/")
 		if c.clientID != "" && c.secret != "" {
 			s.configs = append(s.configs, c)
 		}

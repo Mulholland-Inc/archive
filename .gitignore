@@ -1,6 +1,6 @@
 .DS_Store
 /src/archive
-/data/
+/src/data/
 /.claude/
 .wrangler/
 /apps/terraform/provider/provider

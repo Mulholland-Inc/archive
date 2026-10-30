@@ -38,6 +38,6 @@ provider "google" {
   alias                       = "verify"
   project                     = var.project
   region                      = var.region
-  impersonate_service_account = "${var.name}-verify@${var.project}.iam.gserviceaccount.com"
+  impersonate_service_account = "archive-verify@${var.project}.iam.gserviceaccount.com"
   scopes                      = ["https://www.googleapis.com/auth/cloud-platform", "https://www.googleapis.com/auth/siteverification"]
 }

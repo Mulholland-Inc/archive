@@ -33,6 +33,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -108,7 +109,7 @@ func withArchive(ctx context.Context, a *Archive) context.Context {
 }
 
 func Open(ctx context.Context) (*Hub, error) {
-	dir := coreEnv("ARCHIVE_DATA", "./data")
+	dir := "./data"
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
 		return nil, errors.New("DATABASE_URL is required: a Postgres 18 role with CREATEROLE and CREATEDB, like the one docker compose up -d starts")
@@ -133,9 +134,10 @@ func Open(ctx context.Context) (*Hub, error) {
 	if err != nil {
 		return nil, fmt.Errorf("DATABASE_URL: %w", err)
 	}
-	h := &Hub{key: key, aead: aead, pg: pg, blobs: blobs, hints: coreHints(os.Getenv("ARCHIVE_LOCALE")),
-		tasks: tasks, open: map[string]*hubEntry{}}
-	h.urls("8080")
+	h := &Hub{key: key, aead: aead, pg: pg, blobs: blobs, hints: coreHints("en-US"), tasks: tasks, open: map[string]*hubEntry{}}
+	if err := h.urls("8080"); err != nil {
+		return nil, err
+	}
 	if h.main, err = storePool(ctx, pg, storeSysConns, nil); err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
@@ -146,9 +148,20 @@ func Open(ctx context.Context) (*Hub, error) {
 	return h, nil
 }
 
-func (h *Hub) urls(port string) {
+func (h *Hub) urls(port string) error {
 	h.app = strings.TrimRight(coreEnv("ARCHIVE_URL", "http://localhost:5173"), "/")
-	h.api = strings.TrimRight(coreEnv("ARCHIVE_API_URL", "http://localhost:"+port), "/")
+	u, err := url.Parse(h.app)
+	switch {
+	case err != nil || u.Host == "":
+		return fmt.Errorf("ARCHIVE_URL %q is not a URL", h.app)
+	case h.localApp():
+		h.api = "http://localhost:" + port
+	case strings.HasPrefix(u.Host, "app."):
+		h.api = u.Scheme + "://api." + strings.TrimPrefix(u.Host, "app.")
+	default:
+		return fmt.Errorf("ARCHIVE_URL %q: want https://app.<domain>, whose API is https://api.<domain>, or http://localhost:<port> in development", h.app)
+	}
+	return nil
 }
 
 func storeUndefined(err error) bool {
@@ -383,22 +396,29 @@ func (a *Archive) soon(ctx context.Context, kind string, at time.Time) error {
 }
 
 func hubTasksOpen() (*hubTasks, error) {
-	t := &hubTasks{queue: os.Getenv("ARCHIVE_TASKS_QUEUE"), account: os.Getenv("ARCHIVE_TASKS_SERVICE_ACCOUNT"), issuer: coreEnv("ARCHIVE_TASKS_ISSUER", signinBuiltin[0].base)}
-	if t.queue == "" || t.account == "" {
-		return nil, errors.New("ARCHIVE_TASKS_QUEUE and ARCHIVE_TASKS_SERVICE_ACCOUNT are required: the Cloud Tasks queue that calls /tasks when work is due, and the service account whose OIDC token it sends")
-	}
 	raw := coreEnv("ARCHIVE_TASKS_URL", "https://cloudtasks.googleapis.com")
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || u.Scheme != "https" && u.Scheme != "http" {
-		return nil, fmt.Errorf("ARCHIVE_TASKS_URL %q: want https://host or, for an emulator, http://host:port", raw)
+		return nil, fmt.Errorf("ARCHIVE_TASKS_URL %q: want https://host or, for an emulator, http://host:port/projects/<p>/locations/<r>/queues/<q>", raw)
 	}
+	meta, queue := gcpMetadata(), strings.Trim(u.Path, "/")
+	if queue == "" {
+		if queue, err = meta.queue(context.Background()); err != nil {
+			return nil, err
+		}
+	}
+	p := strings.Split(queue, "/")
+	if len(p) != 6 || p[0] != "projects" || p[2] != "locations" || p[4] != "queues" {
+		return nil, fmt.Errorf("cloud tasks queue %q: want projects/<p>/locations/<r>/queues/<q>", queue)
+	}
+	t := &hubTasks{queue: queue, account: p[5] + "-tasks@" + p[1] + ".iam.gserviceaccount.com", issuer: coreEnv("ARCHIVE_TASKS_ISSUER", "https://accounts.google.com")}
 	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
 	host := u.Host
 	if u.Scheme == "https" {
 		if u.Port() == "" {
 			host += ":443"
 		}
-		opts = []grpc.DialOption{grpc.WithTransportCredentials(credentials.NewTLS(nil)), grpc.WithPerRPCCredentials(gcpMetadata())}
+		opts = []grpc.DialOption{grpc.WithTransportCredentials(credentials.NewTLS(nil)), grpc.WithPerRPCCredentials(meta)}
 	}
 	c, err := grpc.NewClient(host, opts...)
 	if err != nil {
@@ -416,7 +436,7 @@ func (h *Hub) wake(ctx context.Context, ws uuid.UUID, kind string, at time.Time)
 	url := h.api + "/tasks"
 	body, _ := json.Marshal(map[string]string{"workspace": ws.String(), "work": kind + "s"})
 	sum := sha256.Sum256(fmt.Appendf(nil, "%s/%s/%d", ws, kind, at.UnixMilli()))
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(metadata.AppendToOutgoingContext(ctx, "x-goog-request-params", "parent="+t.queue), 10*time.Second)
 	defer cancel()
 	_, err := t.client.CreateTask(ctx, &taskspb.CreateTaskRequest{Parent: t.queue, Task: &taskspb.Task{
 		Name:         t.queue + "/tasks/" + hex.EncodeToString(sum[:]),
@@ -429,6 +449,37 @@ func (h *Hub) wake(ctx context.Context, ws uuid.UUID, kind string, at time.Time)
 		return fmt.Errorf("cloud tasks: %w", err)
 	}
 	return nil
+}
+
+func (t *gcpToken) queue(ctx context.Context) (string, error) {
+	name := cmp.Or(os.Getenv("K_SERVICE"), os.Getenv("CLOUD_RUN_JOB"))
+	if name == "" {
+		return "", errors.New("cloud tasks: K_SERVICE and CLOUD_RUN_JOB are unset, so this is not Cloud Run; in development set ARCHIVE_TASKS_URL to the emulator's queue, like http://localhost:8123/projects/dev/locations/here/queues/archive")
+	}
+	project, err := t.get(ctx, "project/project-id")
+	if err != nil {
+		return "", err
+	}
+	region, err := t.get(ctx, "instance/region")
+	if err != nil {
+		return "", err
+	}
+	return "projects/" + project + "/locations/" + region[strings.LastIndex(region, "/")+1:] + "/queues/" + name, nil
+}
+
+func (t *gcpToken) get(ctx context.Context, path string) (string, error) {
+	req, _ := http.NewRequestWithContext(ctx, "GET", t.meta+"/computeMetadata/v1/"+path, nil)
+	req.Header.Set("Metadata-Flavor", "Google")
+	resp, err := hubHTTP.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("metadata server: %w", err)
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if v := strings.TrimSpace(string(b)); err == nil && resp.StatusCode == http.StatusOK && v != "" {
+		return v, nil
+	}
+	return "", fmt.Errorf("metadata server: no %s (%s)", path, resp.Status)
 }
 
 func (t *gcpToken) GetRequestMetadata(ctx context.Context, _ ...string) (map[string]string, error) {
@@ -517,7 +568,7 @@ func (h *Hub) tasksHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx, q := r.Context(), h.q()
-	at, err := q.ClaimDueFor(ctx, time.Now().Add(runTimeout()+workflowRetry), body.Workspace, kind)
+	at, err := q.ClaimDueFor(ctx, time.Now().Add(runTimeout+workflowRetry), body.Workspace, kind)
 	if err == nil {
 		err = h.due(ctx, body.Workspace, kind, at)
 	} else if errors.Is(err, pgx.ErrNoRows) {

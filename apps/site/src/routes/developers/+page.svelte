@@ -15,7 +15,7 @@
     '1. Clone the repo, then read README.md, apps/terraform/gcp and the Environment section of src/main.go before you change anything.',
     '2. Check that I have gcloud, Terraform 1.9 or newer, a Google Cloud project with billing where I am Owner, and a domain on Cloudflare.',
     '3. Ask me which email should be the first owner, which subdomains the web app and the API should get, and which sign-in provider I want (Google, Microsoft, Slack or GitHub).',
-    '4. Run gcloud auth application-default login, then terraform init and terraform apply in apps/terraform/gcp with my project, app_domain, api_domain and cloudflare_zone. Ask me before you apply anything.',
+    '4. Run gcloud auth application-default login, then terraform init and terraform apply in apps/terraform/gcp with my project and domain. Ask me before you apply anything.',
     '5. When the API answers 204 on /healthz, add me as the first owner with the Cloud Run job: gcloud run jobs execute archive --region us-central1 --wait --args=user,add,<my email>.',
     '6. Make me an access token with the same job and token,create, and show me how to connect Claude Code to my API address plus /mcp.',
     'Never write secrets into files that get committed, and tell me each step before you run it.'

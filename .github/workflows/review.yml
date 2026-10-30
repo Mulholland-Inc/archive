@@ -13,7 +13,7 @@ jobs:
   review:
     name: Jev review
     if: ${{ !github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository }}
-    runs-on: ${{ vars.CI_RUNNER || 'marzy-devbox' }}
+    runs-on: marzy-devbox
     timeout-minutes: 5
     concurrency:
       group: review-${{ github.event.pull_request.number }}
