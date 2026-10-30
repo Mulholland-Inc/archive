@@ -4,11 +4,11 @@
     {
       "engine": "postgresql",
       "schema": "archive.sql",
-      "queries": "queries",
+      "queries": "archive.sql",
       "gen": {
         "go": {
-          "package": "main",
-          "out": ".",
+          "package": "generated",
+          "out": "generated",
           "sql_package": "pgx/v5",
           "emit_pointers_for_null_types": true,
           "omit_unused_structs": true,

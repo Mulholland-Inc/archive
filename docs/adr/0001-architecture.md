@@ -76,7 +76,7 @@ icon: kanban';
 
 The schema is declarative and DDL only, with no migrations folder and no stored schema files: **the live database is the only source of truth** for users' types.
 
-- **Reading**: `archive.schema()`, `GET /api/schema` and `archive schema pull [dir]` generate the DDL on demand, one `<name>.sql` per table or view. They load `archive.sql` into an empty temp database and plan with pg-schema-diff from there to the live database, keeping the statements about `public`. Each file holds the table with its indexes, foreign keys, row-level security, policies, triggers and `COMMENT ON` statements. An enum, domain or function goes in the first table file that uses it; a view always gets its own file. pg-schema-diff diffs views, their options and their comments, so a changed view comment plans one `COMMENT ON VIEW`.
+- **Reading**: `archive.schema()`, `GET /api/schema` and `archive schema pull [dir]` generate the DDL on demand, one `<name>.sql` per table or view. They load Archive's own schema from `archive.sql` into an empty temp database and plan with pg-schema-diff from there to the live database, keeping the statements about `public`. Each file holds the table with its indexes, foreign keys, row-level security, policies, triggers and `COMMENT ON` statements. An enum, domain or function goes in the first table file that uses it; a view always gets its own file. pg-schema-diff diffs views, their options and their comments, so a changed view comment plans one `COMMENT ON VIEW`.
 - **Normalized text**: the generated DDL is in pg-schema-diff's style, with quoted, schema-qualified names and spelled-out policies. `--` comments and layout are not kept; `COMMENT ON` is.
 - **Writing**: `archive.apply(files)`, `POST /api/schema/plan|apply` and `archive schema plan|apply <dir>` take the whole desired set. Leaving a table out drops it, which is blocked unless explicitly allowed; leaving a view out drops it without asking, since a view holds no data. The invariant is that `apply(schema())` plans nothing, so files can be pulled, kept in git and applied back.
 
@@ -88,10 +88,10 @@ How an apply runs:
 4. **Renames** are not detected by the diff, so they are passed explicitly: `archive.apply(files, { renames: ["ALTER TABLE house RENAME COLUMN city TO town"] })` runs them first, in the same transaction, then plans the edited files, so no data is lost.
 5. **Other instances**: every apply inserts an `archive.revision` row, and each instance reloads its catalog when the latest revision differs from its own.
 
-**Archive's own schema** (`src/archive.sql`) is embedded in the binary. At startup, under the same advisory lock, Archive does three things:
+**Archive's own schema** (`src/archive.sql`) is embedded in the binary. The same file holds Archive's sqlc queries after the DDL; sqlc generates `src/generated` from it, and only the part before the first `-- name:` line is the schema. At startup, under the same advisory lock, Archive does three things:
 - it creates its Postgres roles;
 - it drops tables of earlier versions;
-- if the hash of `archive.sql` differs from the last revision, it plans `archive.sql` together with the user's tables generated from the database.
+- if the hash of that schema differs from the last revision, it plans the schema together with the user's tables generated from the database.
 
 The plan therefore only touches Archive's own objects, and it is never allowed to delete data at startup. Instances starting at once take turns on the lock; the first migrates and the rest find nothing to do.
 

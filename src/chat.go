@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Mulholland-Inc/archive/generated"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -71,7 +72,7 @@ func (a *Archive) Chat(ctx context.Context, id uuid.UUID) (*Chat, error) {
 	if err != nil {
 		return nil, err
 	}
-	var c ArchiveChat
+	var c generated.ArchiveChat
 	err = a.sys(ctx, func(ctx context.Context) (err error) {
 		c, err = a.st.db(ctx).ChatByID(ctx, id, uid)
 		return err

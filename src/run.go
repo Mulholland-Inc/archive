@@ -19,6 +19,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/Mulholland-Inc/archive/generated"
 	"github.com/dop251/goja"
 	"github.com/evanw/esbuild/pkg/api"
 	"github.com/google/uuid"
@@ -115,7 +116,7 @@ func runTimeout() time.Duration {
 }
 
 func (a *Archive) refresh(ctx context.Context) {
-	if rev, err := New(a.st.sys).Revision(ctx); err == nil && rev != a.Catalog().stamp {
+	if rev, err := generated.New(a.st.sys).Revision(ctx); err == nil && rev != a.Catalog().stamp {
 		a.reload(ctx)
 	}
 }
