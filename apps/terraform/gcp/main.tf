@@ -434,6 +434,13 @@ resource "google_site_verification_web_resource" "this" {
   depends_on = [cloudflare_dns_record.verify]
 }
 
+resource "google_site_verification_owner" "me" {
+  count           = local.run != "" ? 1 : 0
+  provider        = google.verify
+  web_resource_id = google_site_verification_web_resource.this[0].id
+  email           = data.google_client_openid_userinfo.me.email
+}
+
 resource "google_cloud_run_domain_mapping" "this" {
   count    = local.run != "" ? 1 : 0
   provider = google.verify
