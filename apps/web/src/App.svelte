@@ -12,6 +12,8 @@
   import SignIn from './SignIn.svelte';
   import Table from './Table.svelte';
   import View from './View.svelte';
+  import Record from './Record.svelte';
+  import { isTree } from './ui/FamilyTree.svelte';
   import Files from './Files.svelte';
   import Workflows from './Workflows.svelte';
   import Users from './Users.svelte';
@@ -179,6 +181,10 @@
             <View view={v} {types} />
           {/key}
         {/if}
+      {:else if table(route.first) && route.second}
+        {#key path}
+          <Record table={table(route.first)} id={route.second} tree={route.first === 'person' ? views.find(isTree) : null} />
+        {/key}
       {:else if table(route.first)}
         {#key route.first}
           <Table table={table(route.first)} />

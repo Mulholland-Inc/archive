@@ -49,7 +49,7 @@
 <Filters bind:q {columns} {types}>
   <Sheet tight>
     {#if error}<Note error>{error}</Note>{/if}
-    <DataTable fill {columns} rows={shown} cell={show} sort={q.sort} onsort={(col) => (q.sort = cycle(q.sort, col))} />
+    <DataTable fill {columns} rows={shown} cell={show} sort={q.sort} onsort={(col) => (q.sort = cycle(q.sort, col))} href={table.kind === 'table' ? (r) => `/${table.name}/${r.id}` : undefined} />
     {#if loaded && !shown.length && !error}{#if rows.length || q.query}<Note>Nothing matches</Note>{:else}<Empty title="Nothing here yet" />{/if}{/if}
   </Sheet>
 </Filters>
