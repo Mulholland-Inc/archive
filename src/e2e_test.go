@@ -252,7 +252,7 @@ func (in *e2eInst) roundTrips() map[string]string {
 }
 
 func (in *e2eInst) role(email string) string {
-	return in.psql("archive", "SELECT 'w' || w.short || '_u_' || replace(u.id::text, '-', '') FROM archive.\"user\" u, archive.workspace w WHERE u.email = '"+email+"' AND w.database = 'archive'")
+	return in.psql("archive", "SELECT w.id::text || '_u' || translate(rtrim(encode(uuid_send(u.id), 'base64'), '='), '+/', '-_') FROM archive.\"user\" u, archive.workspace w WHERE u.email = '"+email+"' AND w.id = (SELECT id FROM archive.workspace ORDER BY created_at LIMIT 1)")
 }
 
 func (in *e2eInst) psql(user, sql string) string {
@@ -613,8 +613,8 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 	t.Run("PlainPsqlAsTheUserRoleSeesWhatTheAppSees", func(t *testing.T) {
 		in := in.on(t)
 		role := in.role("bob@example.com")
-		in.psql("archive", "ALTER ROLE "+role+" LOGIN")
-		defer in.psql("archive", "ALTER ROLE "+role+" NOLOGIN")
+		in.psql("archive", "ALTER ROLE \""+role+"\" LOGIN")
+		defer in.psql("archive", "ALTER ROLE \""+role+"\" NOLOGIN")
 		if got := in.psql(role, "SELECT string_agg(name, ',' ORDER BY id) FROM person"); got != "Bob private,Family member" {
 			t.Fatalf("psql as bob: %q", got)
 		}
@@ -1386,11 +1386,11 @@ func TestFilesUploadProcessShareAndReference(t *testing.T) {
 		}
 		in.fails("-as", "bob@example.com", "file", "get", id, "-o", "-")
 		role := in.role("bob@example.com")
-		in.psql("archive", "ALTER ROLE "+role+" LOGIN")
+		in.psql("archive", "ALTER ROLE \""+role+"\" LOGIN")
 		if got := in.psql(role, "SELECT count(*) FROM archive.file WHERE name = 'photo.jpg'"); got != "0" {
 			t.Errorf("psql as bob sees %s photos", got)
 		}
-		in.psql("archive", "ALTER ROLE "+role+" NOLOGIN")
+		in.psql("archive", "ALTER ROLE \""+role+"\" NOLOGIN")
 	})
 
 	t.Run("TextExtractionAndRowsThatReferenceFiles", func(t *testing.T) {
@@ -1493,7 +1493,7 @@ func TestS3BlobBackendAgainstAFakeS3(t *testing.T) {
 	f := decode[File](t, in.must("file", "add", path))
 	os.WriteFile(filepath.Join(in.dir, "copy.txt"), content, 0o644)
 	in.must("file", "add", filepath.Join(in.dir, "copy.txt"))
-	key := "/photos/archive/" + in.psql("archive", "SELECT short FROM archive.workspace WHERE database = 'archive'") + "/" + f.Hash[:2] + "/" + f.Hash
+	key := "/photos/archive/" + in.psql("archive", "SELECT id FROM archive.workspace ORDER BY created_at LIMIT 1") + "/" + f.Hash[:2] + "/" + f.Hash
 	s3.mu.Lock()
 	_, stored := s3.objects[key]
 	puts := s3.puts
@@ -1803,8 +1803,8 @@ func TestFullTextSearchInDutchAndEnglishAcrossTablesFilesAndUsers(t *testing.T) 
 			t.Errorf("alice cli: %s", got)
 		}
 		role := in.role("bob@example.com")
-		in.psql("archive", "ALTER ROLE "+role+" LOGIN")
-		defer in.psql("archive", "ALTER ROLE "+role+" NOLOGIN")
+		in.psql("archive", "ALTER ROLE \""+role+"\" LOGIN")
+		defer in.psql("archive", "ALTER ROLE \""+role+"\" NOLOGIN")
 		q := "SELECT (SELECT count(*) FROM note WHERE search @@ archive.search_query('huurcontract verhuurder')) || ',' || " +
 			"(SELECT count(*) FROM archive.file WHERE search @@ archive.search_query('verhuurder'))"
 		if got := in.psql(role, q); got != "1,0" {
@@ -3111,7 +3111,7 @@ func TestTwoWorkspacesInOneProcessSeeNothingOfEachOther(t *testing.T) {
 	in.push(e2eSchema)
 	ws := decode[Workspace](t, in.must("workspace", "add", "Acme", "bob@acme.test")).ID
 	in.push(with(e2eSchema, "note.sql", e2eNote), "-workspace", ws, "-as", "bob@acme.test")
-	one := in.psql("archive", "SELECT short FROM archive.workspace WHERE database = 'archive'")
+	one := in.psql("archive", "SELECT id FROM archive.workspace ORDER BY created_at LIMIT 1")
 	srv := in.serve()
 	api := srv.url + "/api"
 	alice := decode[Token](t, in.must("token", "create")).Secret
@@ -3145,10 +3145,10 @@ func TestTwoWorkspacesInOneProcessSeeNothingOfEachOther(t *testing.T) {
 		if st != 200 || !strings.Contains(string(out.Result), `"db":"archive_`+ws+`"`) || !strings.Contains(string(out.Result), `"n":1`) {
 			t.Errorf("bob's raw SQL: %d %+v", st, out)
 		}
-		if _, out := e2eRun(t, api, bob, `return await archive.sql("SELECT set_config('role', 'w`+one+`_admin', true)")`); !strings.Contains(out.Error, "permission denied") {
+		if _, out := e2eRun(t, api, bob, `return await archive.sql("SELECT set_config('role', '`+one+`_admin', true)")`); !strings.Contains(out.Error, "permission denied") {
 			t.Errorf("bob takes on a role of workspace one: %+v", out)
 		}
-		if n := in.psql("archive", "SELECT count(*) FROM pg_roles WHERE rolname = 'w"+ws+"_authenticator'"); n != "1" {
+		if n := in.psql("archive", "SELECT count(*) FROM pg_roles WHERE rolname = '"+ws+"_authenticator'"); n != "1" {
 			t.Errorf("%s authenticators for workspace %s", n, ws)
 		}
 	})
@@ -3206,7 +3206,7 @@ func TestTwoWorkspacesInOneProcessSeeNothingOfEachOther(t *testing.T) {
 		if st != 200 || string(out.Result) != "true" {
 			t.Fatalf("bob's deploy: %d %+v", st, out)
 		}
-		if n := in.psql("archive", "SELECT count(*) FROM archive.due d JOIN archive.workspace w ON w.id = d.workspace WHERE w.short = '"+ws+"' AND d.kind = 'workflow'"); n != "1" {
+		if n := in.psql("archive", "SELECT count(*) FROM archive.due d JOIN archive.workspace w ON w.id = d.workspace WHERE w.id::text = '"+ws+"' AND d.kind = 'workflow'"); n != "1" {
 			t.Errorf("%s due rows for bob's workflows", n)
 		}
 		call(t, "POST", api+"/company", bob, map[string]any{"name": "Gamma"}, nil)
@@ -3232,7 +3232,7 @@ func TestTwoWorkspacesInOneProcessSeeNothingOfEachOther(t *testing.T) {
 		wantStatus(t, st, 403, "alice's token in bob's workspace")
 		st, _ = e2eDo(t, "GET", api+"/company", map[string]string{"Authorization": "Bearer " + alice, "Archive-Workspace": "nosuch"}, nil, nil)
 		wantStatus(t, st, 403, "alice's token in no workspace")
-		if n := in.psql("archive", "SELECT count(*) FROM archive.token t JOIN archive.workspace w ON w.id = t.workspace WHERE w.short = '"+ws+"'"); n != "1" {
+		if n := in.psql("archive", "SELECT count(*) FROM archive.token t JOIN archive.workspace w ON w.id = t.workspace WHERE w.id::text = '"+ws+"'"); n != "1" {
 			t.Errorf("%s tokens for workspace %s in the main database", n, ws)
 		}
 		if n := in.psqlIn("archive_"+ws, `SELECT (SELECT count(*) FROM archive."user") + (SELECT count(*) FROM archive.token)`); n != "0" {
@@ -3253,11 +3253,131 @@ func TestTwoWorkspacesInOneProcessSeeNothingOfEachOther(t *testing.T) {
 
 	t.Run("UsageIsCountedPerWorkspace", func(t *testing.T) {
 		q := func(short, col string) int {
-			n, _ := strconv.Atoi(in.psql("archive", "SELECT coalesce(sum(u."+col+"), 0) FROM archive.usage u JOIN archive.workspace w ON w.id = u.workspace WHERE w.short = '"+short+"'"))
+			n, _ := strconv.Atoi(in.psql("archive", "SELECT coalesce(sum(u."+col+"), 0) FROM archive.usage u JOIN archive.workspace w ON w.id = u.workspace WHERE w.id::text = '"+short+"'"))
 			return n
 		}
 		if q(ws, "runs") < 4 || q(ws, "workflow_runs") < 2 || q(one, "workflow_runs") != 1 || q(one, "stored_bytes") != len("alpha only") || q(ws, "stored_bytes") != len("beta only") {
 			t.Errorf("usage: bob %d runs, %d workflow runs, %d bytes; alice %d workflow runs, %d bytes", q(ws, "runs"), q(ws, "workflow_runs"), q(ws, "stored_bytes"), q(one, "workflow_runs"), q(one, "stored_bytes"))
+		}
+	})
+}
+
+func (in *e2eInst) cloudsql(env ...string) *e2eInst {
+	in.t.Helper()
+	in.psql("archive", "CREATE ROLE cloudsql LOGIN CREATEROLE CREATEDB NOSUPERUSER PASSWORD 'cloudsql'")
+	in.psql("archive", "CREATE DATABASE tenantmain OWNER cloudsql")
+	dir, err := os.MkdirTemp("/tmp", "arc")
+	if err != nil {
+		in.t.Fatal(err)
+	}
+	in.t.Cleanup(func() { os.RemoveAll(dir) })
+	key, err := os.ReadFile(filepath.Join(in.dir, "secret.key"))
+	if err != nil {
+		in.t.Fatal(err)
+	}
+	dsn := "host=" + in.dir + " user=cloudsql password=cloudsql dbname=tenantmain"
+	return &e2eInst{t: in.t, dir: dir, env: append([]string{"ARCHIVE_DATA=" + dir, "DATABASE_URL=" + dsn,
+		"DATABASE_DIRECT_URL=" + dsn, "ARCHIVE_SECRET_KEY=" + strings.TrimSpace(string(key))}, env...)}
+}
+
+func TestWorkspacesIsolateWhenArchiveIsNotASuperuser(t *testing.T) {
+	t.Parallel()
+	host := newInst(t)
+	in := host.cloudsql("ANTHROPIC_API_KEY=")
+	if s := host.psqlIn("tenantmain", "SELECT rolsuper::text FROM pg_roles WHERE rolname = 'cloudsql'"); s != "false" {
+		t.Fatalf("archive's role is a superuser: %q", s)
+	}
+	ledger := e2eTable("ledger", `    codename   text NOT NULL,
+    search     tsvector GENERATED ALWAYS AS (archive.search_doc(codename)) STORED`)
+	onlyA := e2eTable("only_in_a", `    note       text NOT NULL,
+    search     tsvector GENERATED ALWAYS AS (archive.search_doc(note)) STORED`)
+	in.must("user", "add", "alice@example.com")
+	in.push(map[string]string{"ledger.sql": ledger, "only_in_a.sql": onlyA})
+	in.must("create", "ledger", `{"codename": "Zephyr"}`)
+	a := host.psqlIn("tenantmain", "SELECT id FROM archive.workspace ORDER BY created_at LIMIT 1")
+	b := decode[Workspace](t, in.must("workspace", "add", "Bee", "bob@bee.test")).ID
+	in.push(map[string]string{"ledger.sql": ledger}, "-workspace", b, "-as", "bob@bee.test")
+	in.must("-workspace", b, "-as", "bob@bee.test", "create", "ledger", `{"codename": "Hornet"}`)
+
+	bob := func(code string) RunOutput {
+		s, _, _ := in.run(code, "-workspace", b, "-as", "bob@bee.test", "run", "-")
+		return decode[RunOutput](t, s)
+	}
+	aAdmin := a + "_admin"
+	aUser := host.psqlIn("tenantmain", "SELECT '"+a+"' || '_u' || translate(rtrim(encode(uuid_send(id), 'base64'), '='), '+/', '-_') FROM archive.\"user\" WHERE email = 'alice@example.com'")
+
+	t.Run("BobRunsInHisOwnDatabase", func(t *testing.T) {
+		out := bob(`return await archive.sql("SELECT current_database() AS db")`)
+		if out.Error != "" || !strings.Contains(string(out.Result), "archive_"+b) {
+			t.Errorf("bob's database: %+v", out)
+		}
+	})
+	t.Run("BobCannotReachTheOtherDatabase", func(t *testing.T) {
+		out := bob(`return await archive.sql('SELECT count(*) FROM "tenantmain".ledger')`)
+		if out.Error == "" {
+			t.Errorf("bob read the main database: %v", out.Result)
+		}
+	})
+	t.Run("BobCannotSwitchIntoTheOtherWorkspacesRoles", func(t *testing.T) {
+		for _, role := range []string{aAdmin, aUser} {
+			out := bob(`return await archive.sql("SELECT set_config('role', '` + role + `', true)")`)
+			if !strings.Contains(out.Error, "permission denied") {
+				t.Errorf("set_config role %s: %+v", role, out)
+			}
+			out = bob(`return await archive.sql('SET ROLE "` + role + `"')`)
+			if !strings.Contains(out.Error, "permission denied") {
+				t.Errorf("set role %s: %+v", role, out)
+			}
+		}
+	})
+	t.Run("SameTableNameInBothAndBobSeesOnlyHisRows", func(t *testing.T) {
+		mine := decode[[]row](t, in.must("-workspace", b, "-as", "bob@bee.test", "list", "ledger"))
+		if names2(mine, "codename") != "Hornet" {
+			t.Errorf("bob's ledger: %s", names2(mine, "codename"))
+		}
+		alice := decode[[]row](t, in.must("list", "ledger"))
+		if names2(alice, "codename") != "Zephyr" {
+			t.Errorf("alice's ledger: %s", names2(alice, "codename"))
+		}
+	})
+	t.Run("SchemaAppliedToOneOnly", func(t *testing.T) {
+		out := bob(`return await archive.sql("SELECT count(*)::int AS n FROM pg_class WHERE relname = 'only_in_a'")`)
+		var got []struct{ N int }
+		json.Unmarshal(out.Result, &got)
+		if out.Error != "" || len(got) != 1 || got[0].N != 0 {
+			t.Errorf("only_in_a visible to bob: %+v", out)
+		}
+		if n := host.psqlIn("tenantmain", "SELECT count(*) FROM pg_class WHERE relname = 'only_in_a' AND relkind = 'r'"); n != "1" {
+			t.Errorf("%s only_in_a tables in the first workspace", n)
+		}
+	})
+	t.Run("SearchStaysInItsWorkspace", func(t *testing.T) {
+		if got := in.must("search", "Zephyr"); !strings.Contains(got, "Zephyr") {
+			t.Errorf("alice cannot find her own row: %s", got)
+		}
+		if got := in.must("-workspace", b, "-as", "bob@bee.test", "search", "Zephyr"); strings.Contains(got, "Zephyr") {
+			t.Errorf("bob found alice's row: %s", got)
+		}
+	})
+	t.Run("FilesStayInTheirWorkspace", func(t *testing.T) {
+		path := filepath.Join(in.dir, "memo.txt")
+		os.WriteFile(path, []byte("Zephyr memo"), 0o644)
+		in.must("file", "add", path)
+		if got := in.must("-workspace", b, "-as", "bob@bee.test", "file", "list"); strings.Contains(got, "memo.txt") {
+			t.Errorf("bob sees alice's file: %s", got)
+		}
+		if got := names(decode[[]row](t, in.must("file", "list"))); !strings.Contains(got, "memo.txt") {
+			t.Errorf("alice cannot see her own file: %s", got)
+		}
+	})
+	t.Run("DeletingBDropsItsDatabaseAndRoles", func(t *testing.T) {
+		in.must("workspace", "delete", b)
+		got := host.psqlIn("tenantmain", "SELECT (SELECT count(*) FROM pg_database WHERE datname = 'archive_"+b+"') || ',' || "+
+			"(SELECT count(*) FROM pg_roles WHERE starts_with(rolname, '"+b+"')) || ',' || "+
+			"(SELECT count(*) FROM archive.workspace WHERE id = '"+b+"') || ',' || "+
+			"(SELECT count(*) FROM archive.\"user\" WHERE workspaces @> ARRAY['"+b+"'::uuid])")
+		if got != "0,0,0,0" {
+			t.Errorf("left after deleting workspace B: %s", got)
 		}
 	})
 }
@@ -3274,7 +3394,7 @@ func TestSignupAndSigningInToSeveralWorkspaces(t *testing.T) {
 	t.Parallel()
 	in := newInst(t, "ARCHIVE_ADMIN_EMAIL=alice@example.com")
 	srv := in.serve()
-	one := in.psql("archive", "SELECT short FROM archive.workspace WHERE database = 'archive'")
+	one := in.psql("archive", "SELECT id FROM archive.workspace ORDER BY created_at LIMIT 1")
 	var methods struct {
 		Signup bool `json:"signup"`
 	}
@@ -3301,7 +3421,7 @@ func TestSignupAndSigningInToSeveralWorkspaces(t *testing.T) {
 	if st != 200 || carol == nil || made.User.Email != "carol@example.com" || made.Workspace == one || made.Workspace == "" {
 		t.Fatalf("open the signup link: %d %+v %v", st, made, cs)
 	}
-	if got := in.psql("archive", "SELECT w.name || ' ' || (SELECT count(*) FROM pg_database WHERE datname = w.database) FROM archive.workspace w WHERE w.short = '"+made.Workspace+"'"); got != "Carol Co 1" {
+	if got := in.psql("archive", "SELECT w.name || ' ' || (SELECT count(*) FROM pg_database WHERE datname = 'archive_' || w.id) FROM archive.workspace w WHERE w.id::text = '"+made.Workspace+"'"); got != "Carol Co 1" {
 		t.Errorf("carol's workspace row and database: %q", got)
 	}
 	var out RunOutput
@@ -3367,7 +3487,7 @@ func TestSignupAndSigningInToSeveralWorkspaces(t *testing.T) {
 	if st != 200 || me.Workspace != made.Workspace || len(me.All) != 1 {
 		t.Errorf("carol still in her own workspace: %d %+v", st, me)
 	}
-	if n := in.psql("archive", "SELECT count(*) FROM pg_roles WHERE rolname LIKE 'w"+second.ID+"\\_u\\_%'"); n != "1" {
+	if n := in.psql("archive", "SELECT count(*) FROM pg_roles WHERE starts_with(rolname, '"+second.ID+"_u') AND rolname <> '"+second.ID+"_user'"); n != "1" {
 		t.Errorf("%s user roles left in the second workspace, want alice's", n)
 	}
 	if got := decode[[]Member](t, in.must("-workspace", second.ID, "space", "members", "alice_example_com")); len(got) != 1 {
@@ -3396,7 +3516,7 @@ func TestGeneratedURLsUseTheAPIAddress(t *testing.T) {
 		`ARCHIVE_OIDC=[{"name":"fake","issuer":"`+issuer.URL+`","client_id":"web"}]`)
 	srv := in.serve()
 	api := srv.url + "/api"
-	one := in.psql("archive", "SELECT short FROM archive.workspace WHERE database = 'archive'")
+	one := in.psql("archive", "SELECT id FROM archive.workspace ORDER BY created_at LIMIT 1")
 	tok := decode[Token](t, in.must("token", "create")).Secret
 	_, out := e2eRun(t, api, tok, `return (await archive.deploy({ "hook.ts": "// on: webhook\nreturn 1;" })).workflows[0].url;`)
 	if !strings.HasPrefix(string(out.Result), `"http://api.test:9/hooks/run/`+one+`/`) {
@@ -3501,7 +3621,7 @@ func TestStripeBillingChangesPlansAndLimitsAreEnforced(t *testing.T) {
 		return st
 	}
 	wantStatus(t, chat(t), 200, "chat on the shared key")
-	if got := in.psql("archive", "SELECT ai_tokens FROM archive.usage u JOIN archive.workspace w ON w.id = u.workspace WHERE w.short = '"+ws+"'"); got != "17" {
+	if got := in.psql("archive", "SELECT ai_tokens FROM archive.usage u JOIN archive.workspace w ON w.id = u.workspace WHERE w.id::text = '"+ws+"'"); got != "17" {
 		t.Errorf("AI tokens counted: %q, want 10 + 2 + 5", got)
 	}
 	wantStatus(t, chat(t), 200, "chat on the shared key again")
@@ -3566,7 +3686,7 @@ func TestStripeBillingChangesPlansAndLimitsAreEnforced(t *testing.T) {
 	if st, _ := e2eRun(t, api, bob, "return 1"); st != 402 {
 		t.Errorf("run back on free: %d", st)
 	}
-	if got := in.psql("archive", "SELECT customer || '|' || subscription FROM archive.workspace WHERE short = '"+ws+"'"); got != "cus_1|" {
+	if got := in.psql("archive", "SELECT customer || '|' || subscription FROM archive.workspace WHERE id::text = '"+ws+"'"); got != "cus_1|" {
 		t.Errorf("customer and subscription: %q", got)
 	}
 }

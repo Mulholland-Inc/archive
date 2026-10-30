@@ -22,12 +22,8 @@ CREATE TABLE archive.plan (
 
 CREATE TABLE archive.workspace (
     id            uuid PRIMARY KEY DEFAULT uuidv7(),
-    short         text NOT NULL UNIQUE,
     name          text NOT NULL,
-    database      text NOT NULL UNIQUE,
-    prefix        text NOT NULL UNIQUE,
     key           bytea NOT NULL,
-    blobs         text NOT NULL DEFAULT '',
     plan          text REFERENCES archive.plan ON DELETE SET NULL,
     customer      text NOT NULL DEFAULT '',
     subscription  text NOT NULL DEFAULT '',
@@ -204,17 +200,14 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON archive.file, archive.secret TO "{p}_use
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "{p}_user";
 
 ALTER TABLE archive.space ENABLE ROW LEVEL SECURITY;
-ALTER TABLE archive.space FORCE ROW LEVEL SECURITY;
 CREATE POLICY member ON archive.space FOR SELECT USING (pg_has_role(current_user, (role || '_viewer')::name, 'USAGE'));
 
 ALTER TABLE archive.file ENABLE ROW LEVEL SECURITY;
-ALTER TABLE archive.file FORCE ROW LEVEL SECURITY;
 CREATE POLICY viewer ON archive.file FOR SELECT USING (space = ANY (archive.my_spaces()));
 CREATE POLICY editor ON archive.file USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
 
 
 ALTER TABLE archive.secret ENABLE ROW LEVEL SECURITY;
-ALTER TABLE archive.secret FORCE ROW LEVEL SECURITY;
 CREATE POLICY viewer ON archive.secret FOR SELECT USING (space = ANY (archive.my_spaces()) AND archive.secret_granted(type));
 CREATE POLICY editor_insert ON archive.secret FOR INSERT WITH CHECK (space = ANY (archive.my_spaces('editor')));
 CREATE POLICY editor_update ON archive.secret FOR UPDATE USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
@@ -385,7 +378,7 @@ SELECT NOT EXISTS (SELECT FROM archive."user" WHERE workspaces @> ARRAY[sqlc.arg
 SELECT id, email, name FROM archive."user" WHERE workspaces @> ARRAY[sqlc.arg(workspace)::uuid] ORDER BY email;
 
 -- name: UserWorkspaces :many
-SELECT w.short, w.name FROM archive.workspace w JOIN archive."user" u ON w.id = ANY(u.workspaces) WHERE u.id = $1 ORDER BY array_position(u.workspaces, w.id);
+SELECT w.id, w.name FROM archive.workspace w JOIN archive."user" u ON w.id = ANY(u.workspaces) WHERE u.id = $1 ORDER BY array_position(u.workspaces, w.id);
 
 -- name: JoinWorkspace :one
 INSERT INTO archive."user" (email, name, workspaces) VALUES (sqlc.arg(email), sqlc.arg(name), ARRAY[sqlc.arg(workspace)::uuid])
@@ -400,8 +393,8 @@ UPDATE archive."user" SET signin = $2 WHERE id = $1;
 
 -- name: Authenticate :one
 SELECT t.id, t.kind, t.name, coalesce(t.role, '')::text AS role, u.id AS user_id, u.email, u.name AS user_name,
-    coalesce((SELECT w.short FROM archive.workspace w WHERE w.id = t.workspace), '')::text AS workspace,
-    ARRAY(SELECT w.short FROM archive.workspace w WHERE w.id = ANY(u.workspaces) ORDER BY array_position(u.workspaces, w.id))::text[] AS workspaces
+    coalesce(t.workspace::text, '')::text AS workspace,
+    ARRAY(SELECT w.id::text FROM archive.workspace w WHERE w.id = ANY(u.workspaces) ORDER BY array_position(u.workspaces, w.id))::text[] AS workspaces
 FROM archive.token t JOIN archive."user" u ON u.id = t.user_id
 WHERE t.hash = $1 AND t.kind IN ('api', 'session', 'user') AND (t.expires_at IS NULL OR t.expires_at > now());
 
@@ -683,14 +676,11 @@ SELECT EXISTS (SELECT FROM archive.file WHERE status = 'pending');
 -- name: StoredBytes :one
 SELECT coalesce(sum(size), 0)::bigint FROM archive.file;
 
--- name: MainWorkspace :one
-SELECT * FROM archive.workspace WHERE database = current_database();
+-- name: FirstWorkspace :one
+SELECT * FROM archive.workspace ORDER BY created_at, id LIMIT 1;
 
--- name: CurrentDatabase :one
-SELECT current_database()::text;
-
--- name: WorkspaceByShort :one
-SELECT * FROM archive.workspace WHERE short = $1;
+-- name: WorkspaceByID :one
+SELECT * FROM archive.workspace WHERE id = $1;
 
 -- name: WorkspaceBySubscription :one
 SELECT * FROM archive.workspace WHERE subscription = $1;
@@ -699,12 +689,15 @@ SELECT * FROM archive.workspace WHERE subscription = $1;
 SELECT * FROM archive.workspace ORDER BY created_at, id;
 
 -- name: CreateWorkspace :one
-INSERT INTO archive.workspace (short, name, database, prefix, key, blobs, plan)
-VALUES (sqlc.arg(short), sqlc.arg(name), sqlc.arg(database), sqlc.arg(prefix), sqlc.arg(key), sqlc.arg(blobs), sqlc.narg(plan))
+INSERT INTO archive.workspace (id, name, key, plan) VALUES (sqlc.arg(id), sqlc.arg(name), sqlc.arg(key), sqlc.narg(plan))
 ON CONFLICT DO NOTHING RETURNING *;
 
 -- name: DeleteWorkspace :exec
-DELETE FROM archive.workspace WHERE id = $1;
+WITH gone AS (UPDATE archive."user" u SET workspaces = array_remove(u.workspaces, sqlc.arg(id)::uuid) WHERE u.workspaces @> ARRAY[sqlc.arg(id)::uuid])
+DELETE FROM archive.workspace w WHERE w.id = sqlc.arg(id)::uuid;
+
+-- name: RolesWithPrefix :many
+SELECT rolname::text FROM pg_catalog.pg_roles WHERE starts_with(rolname, sqlc.arg(prefix)::text);
 
 -- name: RenameWorkspace :exec
 UPDATE archive.workspace SET name = $2 WHERE id = $1;
@@ -714,7 +707,7 @@ UPDATE archive.workspace SET anthropic_key = $2 WHERE id = $1;
 
 -- name: SetWorkspacePlan :exec
 UPDATE archive.workspace SET plan = sqlc.narg(plan), customer = coalesce(nullif(sqlc.arg(customer)::text, ''), customer), subscription = sqlc.arg(subscription)
-WHERE short = sqlc.arg(short);
+WHERE id = sqlc.arg(id);
 
 -- name: Setting :one
 SELECT value FROM archive.setting WHERE key = $1;
@@ -759,15 +752,15 @@ ON CONFLICT (workspace, kind) DO UPDATE SET at = least(archive.due.at, EXCLUDED.
 -- name: ClaimDue :one
 UPDATE archive.due d SET at = sqlc.arg(lease)::timestamptz FROM archive.workspace w
 WHERE w.id = d.workspace AND (d.workspace, d.kind) = (SELECT x.workspace, x.kind FROM archive.due x WHERE x.at <= now() ORDER BY x.at LIMIT 1 FOR UPDATE SKIP LOCKED)
-RETURNING w.short, d.kind, d.at;
+RETURNING w.id, d.kind, d.at;
 
 -- name: SetDue :exec
 UPDATE archive.due d SET at = sqlc.arg(next)::timestamptz FROM archive.workspace w
-WHERE w.id = d.workspace AND w.short = sqlc.arg(short) AND d.kind = sqlc.arg(kind) AND d.at = sqlc.arg(claimed)::timestamptz;
+WHERE w.id = d.workspace AND w.id = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND d.at = sqlc.arg(claimed)::timestamptz;
 
 -- name: ClearDue :exec
 DELETE FROM archive.due d USING archive.workspace w
-WHERE w.id = d.workspace AND w.short = sqlc.arg(short) AND d.kind = sqlc.arg(kind) AND d.at = sqlc.arg(claimed)::timestamptz;
+WHERE w.id = d.workspace AND w.id = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND d.at = sqlc.arg(claimed)::timestamptz;
 
 -- name: WorkspaceLimits :one
 SELECT p.runs, p.workflow_runs, p.ai_tokens, p.stored_bytes, m.used_runs, m.used_workflow_runs, m.used_ai_tokens,

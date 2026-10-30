@@ -48,20 +48,20 @@ var storeSchema, _, _ = strings.Cut(storeSQLFile, "\n-- name:")
 
 const storeRoles = `DO $$ BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_authenticator') THEN
-        CREATE ROLE {p}_authenticator LOGIN NOINHERIT;
+        CREATE ROLE "{p}_authenticator" LOGIN NOINHERIT;
     END IF;
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_user') THEN
-        CREATE ROLE {p}_user NOLOGIN;
+        CREATE ROLE "{p}_user" NOLOGIN;
     END IF;
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_admin') THEN
-        CREATE ROLE {p}_admin NOLOGIN;
+        CREATE ROLE "{p}_admin" NOLOGIN;
     END IF;
     IF NOT EXISTS (SELECT FROM pg_db_role_setting s JOIN pg_database d ON d.oid = s.setdatabase WHERE d.datname = current_database() AND s.setrole = 0) THEN
         EXECUTE format('ALTER DATABASE %I SET search_path = archive, public', current_database());
         EXECUTE format('ALTER DATABASE %I SET timezone = %L', current_database(), 'UTC');
     END IF;
     IF NOT has_database_privilege('{p}_authenticator', current_database(), 'CONNECT') THEN
-        EXECUTE format('GRANT CONNECT ON DATABASE %I TO {p}_authenticator', current_database());
+        EXECUTE format('GRANT CONNECT ON DATABASE %I TO "{p}_authenticator"', current_database());
     END IF;
 END $$`
 
@@ -176,7 +176,7 @@ func (s *pgStore) bootstrap(ctx context.Context, password string) error {
 	if _, err := s.sys.Exec(ctx, s.expand(storeRoles)); err != nil {
 		return err
 	}
-	if _, err := s.sys.Exec(ctx, "ALTER ROLE "+s.prefix+"_authenticator PASSWORD '"+password+"'"); err != nil {
+	if _, err := s.sys.Exec(ctx, "ALTER ROLE "+pgIdent(s.prefix+"_authenticator")+" PASSWORD '"+password+"'"); err != nil {
 		return err
 	}
 	rev, _ := generated.New(s.sys).Revision(ctx)

@@ -186,7 +186,7 @@ func (a *Archive) workflowOut(w generated.ArchiveWorkflow) Workflow {
 		case "cron":
 			out.Next = workflowUTC(w.NextAt)
 		case "webhook":
-			out.URL = a.hub.api + "/hooks/run/" + a.ws.Short + "/" + w.Hook
+			out.URL = a.hub.api + "/hooks/run/" + a.ws.ID.String() + "/" + w.Hook
 		}
 	}
 	return out

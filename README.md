@@ -172,15 +172,15 @@ With no `-space`, the token gets your role in every space you are in. Narrow it 
 
 The image holds Postgres and the binary. With nothing set, it runs the bundled Postgres and keeps files in `/data`. Give it an outside Postgres (`DATABASE_URL`), S3-compatible storage (`ARCHIVE_BLOB_URL`) and one `ARCHIVE_SECRET_KEY`, and it keeps nothing local, so you can run as many copies side by side as you like. In production, put it behind HTTPS and set `ARCHIVE_URL`.
 
-One Archive serves any number of workspaces: one per organization, each with its own Postgres database on the same server, its own spaces, files and workflows, and its own data key. People are added to workspaces (`archive user add`), and one sign-in reaches all of theirs. A new install starts with one. Instance admins (the admins of workspace one) make more, or let people sign up for their own:
+One Archive serves any number of workspaces: one per organization, each its own Postgres database on the same server, with its own spaces, files and workflows, its own login role and its own data key. People are added to workspaces (`archive user add`), and one sign-in reaches all of theirs. A new install starts with one. Instance admins (the admins of the first workspace) make and delete more, or let people sign up for their own:
 
 ```sh
 docker exec archive archive workspace add "Acme Inc" anna@acme.example
 docker exec archive archive signup on
-docker exec archive archive -workspace <id> space list
+docker exec archive archive -workspace <uuid> space list
 ```
 
-A token works in the one workspace it was made in, and the web app's one session switches between all of yours. With `ARCHIVE_STRIPE_KEY` set, plans and their monthly limits are rows (`archive plan set`), Stripe Checkout sells them and Stripe's webhook at `ARCHIVE_API_URL/stripe` changes a workspace's plan; without it, nothing is limited. [app.archive.dev](https://app.archive.dev) is this same image, deployed with [`apps/terraform/gcp`](apps/terraform/gcp) with `app_domain`, `api_domain` and `connection_pooling` set.
+A workspace's roles can reach only its own database, so workspaces stay isolated even where Postgres has no superuser, as on Cloud SQL. A token works in the one workspace it was made in, and the web app's one session switches between all of yours. With `ARCHIVE_STRIPE_KEY` set, plans and their monthly limits are rows (`archive plan set`), Stripe Checkout sells them and Stripe's webhook at `ARCHIVE_API_URL/stripe` changes a workspace's plan; without it, nothing is limited. [app.archive.dev](https://app.archive.dev) is this same image, deployed with [`apps/terraform/gcp`](apps/terraform/gcp) with `app_domain` and `api_domain` set.
 
 Every setting is an environment variable; `archive help` lists them all:
 
@@ -190,7 +190,7 @@ Every setting is an environment variable; `archive help` lists them all:
 | `ARCHIVE_URL` | Public base URL of the web app and sign-in, for sign-in links, cookies and passkeys |
 | `ARCHIVE_API_URL` | Public base URL of the API, MCP, webhooks, file links, Stripe and OAuth redirects (default `ARCHIVE_URL`) |
 | `ARCHIVE_DATA` | Data directory for the bundled Postgres, its key and files (default `./data`) |
-| `DATABASE_URL` | Outside Postgres, as a superuser; unset starts the bundled one. Each other workspace gets a database on the same server |
+| `DATABASE_URL` | Outside Postgres, with CREATEROLE and CREATEDB (no superuser needed); unset starts the bundled one. Each workspace gets its own database on the same server |
 | `DATABASE_DIRECT_URL` | The same Postgres without a pooler in between, for schema changes (default `DATABASE_URL`) |
 | `ARCHIVE_SECRET_KEY` | 32-byte key for secret values; required with `DATABASE_URL`, the same on every copy |
 | `ARCHIVE_BLOB_URL`, `ARCHIVE_BLOB_KEY`, `ARCHIVE_BLOB_SECRET` | S3, R2, MinIO or GCS for files |

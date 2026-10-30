@@ -23,12 +23,12 @@ flowchart LR
 ## Workspaces
 
 - **A database per workspace.** Each workspace's types are its own tables with their own columns, policies and schema changes (ADR 0001), so workspaces cannot share tables with a `workspace_id` column. Every workspace gets its own database on the same Postgres server: the bundled one, or Cloud SQL.
-- **Roles are prefixed per workspace.** Postgres roles are server-wide, so each workspace's roles carry its own prefix.
+- **Roles are prefixed per workspace.** Postgres roles are server-wide, so each workspace's roles are prefixed by its id.
 - **The main database** is the one `DATABASE_URL` (or the bundled Postgres) points to. It is also the first workspace's database. In its `archive` schema it adds:
 
 | Table | Holds |
 |---|---|
-| `archive.workspace` | id, name, database, role prefix, data key (encrypted with `ARCHIVE_SECRET_KEY`), plan, created_at |
+| `archive.workspace` | id (a UUIDv7), name, data key (encrypted with `ARCHIVE_SECRET_KEY`), plan, Stripe customer and subscription, its own Anthropic key, created_at |
 | `archive.user` | every person once: email, name, passkeys and OIDC links, and the workspaces they belong to (`workspaces uuid[]`, GIN-indexed) |
 | `archive.token` | sessions, sign-in links and API tokens, by hash; an API token also names its one workspace |
 | `archive.usage` | per workspace and day: runs, workflow runs, AI tokens, stored bytes |
@@ -36,7 +36,23 @@ flowchart LR
 | `archive.setting` | instance settings, such as whether signup is open |
 
 - **Each workspace has its own data key**, wrapped by `ARCHIVE_SECRET_KEY`, for its secret fields and file links.
-- **Files** go to the same blob store under a prefix per workspace.
+- **Files** go to the same blob store under the prefix `<id>/`.
+
+The workspace's id is a UUIDv7, used everywhere: its database is `archive_<id>`, its roles are prefixed `"<id>_"`, its blobs live under `<id>/`, and webhook and file-link URLs, the `-workspace` flag and the `Archive-Workspace` header all carry it. There is no separate short id. Every generated identifier is quoted.
+
+### Why a database, not one schema per workspace
+
+One shared database with a schema per workspace was tried, because it needs one connection pool instead of a pool per workspace, and an empty schema costs kilobytes of catalog rows where `CREATE DATABASE` copies a template of about 8 MB. It was dropped because it could not isolate tenants on our managed hosts:
+
+- **No superuser.** On Cloud SQL and AlloyDB, Archive's database role has CREATEROLE, CREATEDB and LOGIN and owns nothing in `pg_catalog`. Hiding one schema's objects from another needs revoking `SELECT` on the catalog tables and `EXECUTE` on `set_config`, plpgsql and advisory-lock functions from `PUBLIC`. Those revokes require ownership of `pg_catalog`; on Cloud SQL the plpgsql revoke errors and the function revokes are silent no-ops.
+- **Catalog leaks that cannot be closed.** Even with the revokes, `16384::regclass`, `::regrole`, `::regnamespace` and the `pg_get_*` and `obj_description` functions name objects in any schema by OID. Their output functions cannot be revoked and the casts cannot be dropped (`DROP CAST` is refused as required by the system), so one tenant's SQL can still enumerate another's table, column and index names.
+- **A role-switch hole.** A single shared login role, needed because connections cannot cross schemas cheaply otherwise, can `SET ROLE` into any workspace's roles, reaching another tenant's rows.
+
+A database per workspace sidesteps all three: Postgres keeps each database's catalog private, and a per-workspace login that can connect only to its own database closes the role-switch hole, with no superuser-only revoke anywhere.
+
+### Growing past one server
+
+A workspace is a database of about a hundred catalog objects; a few thousand per Postgres server is comfortable before `pg_database` and shared-catalog contention matter. Past that, or for a customer who needs it: give `archive.workspace` a server column and route each workspace's connections by it; move a workspace with `pg_dump` of its database plus its `archive` rows; put big customers on a server of their own. Sharding across servers is not built.
 
 ## Hosts
 
@@ -52,46 +68,49 @@ Without subdomains, every request names its workspace, and secrets stay plain `a
 - **Every secret is checked in the main database**, by one indexed lookup of its hash in `archive.token`. An API or agent token belongs to a user and one workspace, so it names that workspace itself, and a request naming another is refused.
 - **The web app** holds one session for the person, in its cookie, and names the current workspace on each request in `Archive-Workspace`, the way it already names the current space; the server checks that the person belongs to it. The space switcher is a workspace and space switcher, and "Add workspace" creates a new one.
 - **Sign-in** looks the person up in `archive.user`: by email for a magic link or OIDC, by user id for a passkey. One link, one passkey per device and one session reach all their workspaces.
-- **Webhook URLs** carry it: `api.archive.dev/hooks/run/<workspace>/<token>`.
+- **Webhook and file-link URLs** carry it: `api.archive.dev/hooks/run/<workspace>/<token>`.
 - **OAuth callbacks** carry it in `state`, so one fixed callback URL serves every workspace.
 
 ## Serving many workspaces
 
-- **Open on first use.** An instance opens a workspace (its connection pool, table list and data key) on its first request, and closes it after it has been idle for a while. Pools are small. PgBouncer in front of Cloud SQL keeps the total number of connections bounded. Schema changes take a session-level advisory lock, so they connect to Postgres directly, not through PgBouncer.
+- **Open on first use.** An instance opens a workspace (its small connection pool, table list and data key) on its first request, and closes it after it has been idle for a while. Each open workspace keeps a few connections; no pooler sits in front of Postgres.
 - **Schema upgrades.** After a deploy, an instance upgrades the main database first. Each workspace is upgraded when it is next opened, under the existing advisory lock and revision check. A background pass upgrades idle workspaces, so first requests rarely wait.
-- **Background work from one queue.** Workflows (schedules and table triggers) and pending files write their next due time to `archive.due`. Instances claim due rows with `FOR UPDATE SKIP LOCKED`, open that workspace and do the work. No instance polls every workspace. Table triggers are checked only in workspaces that have them, backing off while their tables are quiet.
-- **Limits per workspace**: concurrent runs, open connections and memory, so one busy workspace cannot starve the others on a shared instance.
+- **Background work from one queue.** Workflows (schedules and table triggers) and pending files write their next due time to `archive.due` in the main database. Instances claim due rows with `FOR UPDATE SKIP LOCKED`, open that workspace and do the work. No instance polls every workspace.
+- **Limits per workspace**: concurrent runs, so one busy workspace cannot starve the others on a shared instance.
 
 ## Signup and billing
 
 - **Signup** is an instance setting in `archive.setting`, off by default. An instance admin turns it on. On app.archive.dev it is on. Signing up creates the database, applies the schema, adds the `archive.workspace` row and makes the person its owner, adding the workspace to their `archive.user` row.
-- **Admins can also create workspaces** for other people, which is how a self-hosted install hosts several organizations without opening signup.
+- **Admins can also create and delete workspaces** for other people (`archive workspace add|delete`), which is how a self-hosted install hosts several organizations without opening signup. Deleting a workspace drops its database and its roles.
 - **Billing** works when `ARCHIVE_STRIPE_KEY` is set, like SMTP works when `ARCHIVE_SMTP_URL` is. Plans and their limits are rows. Stripe Checkout starts a subscription, and Stripe's webhook at `api.archive.dev/stripe` updates the workspace's plan. Without a key, workspaces have no limits.
 - **AI usage** is counted in `archive.usage`: the chat agent records the tokens of every reply. The shared `ANTHROPIC_API_KEY` serves every workspace. A workspace can bring its own key in a setting.
 
 ## Infrastructure
 
-`apps/terraform/gcp` deploys app.archive.dev exactly as it deploys anyone's Archive: one Cloud Run service with both domains mapped, Cloud SQL with PgBouncer, a bucket, and the secrets as environment variables. Mulholland's values (domains, keys, Stripe) are Terraform variables, not code.
+`apps/terraform/gcp` deploys app.archive.dev exactly as it deploys anyone's Archive: one Cloud Run service with both domains mapped, Cloud SQL reached directly over its socket, a bucket, and the secrets as environment variables. Mulholland's values (domains, keys, Stripe) are Terraform variables, not code.
 
 ## How it was built
 
 Built as decided; [ADR 0001](0001-architecture.md#workspaces) describes the result. Where the build differs from the above, or chose where it was silent:
 
 - **One `archive.sql` for every database.** The instance tables are part of Archive's schema, so they exist, empty, in every workspace's database too; only the main database's are used. One schema keeps one revision hash and one upgrade path.
-- **More instance tables.** Plans are rows of `archive.plan` (Stripe price, monthly runs, workflow runs, AI tokens, stored bytes, concurrent runs; null is no limit), and the `plan` setting is the plan new workspaces start on. `archive.workspace` also holds a short id, the blob prefix, the Stripe customer and subscription, and the workspace's own Anthropic key, sealed with its data key.
-- **A short workspace id.** URLs and the `Archive-Workspace` header carry an 8-character id (`a`-`z` and `2`-`9`) rather than the UUID. Every workspace gets the role prefix `w<id>`, the blob prefix `<id>/` and its own data key; new workspaces get the database `archive_<id>`, and workspace one lives in the main database.
+- **More instance tables.** Plans are rows of `archive.plan` (Stripe price, monthly runs, workflow runs, AI tokens, stored bytes, concurrent runs; null is no limit), and the `plan` setting is the plan new workspaces start on.
+- **The workspace id is a UUIDv7.** There is no short id. The database is `archive_<id>`, the roles are prefixed `"<id>_"` (quoted, since a UUID is not a bare identifier), the blobs live under `<id>/`, and URLs and the `Archive-Workspace` header carry it. Workspace one lives in the main database (`DATABASE_URL`). Role names fit Postgres's 63-byte limit: a user or token role is `<id>_u<base64url>` / `<id>_t<base64url>`, and a space is `<id>_s<random>_<level>`.
+- **Two walls of isolation, neither needing a superuser.** A workspace's roles can CONNECT only to its own database (its authenticator is granted CONNECT there and `PUBLIC` is revoked), and its authenticator's password derives from that workspace's own data key, so no shared login can reach another workspace. Postgres keeps each database's `pg_class`, `pg_attribute` and the rest to itself, so one workspace's raw SQL and psql cannot see another's table names, columns, comments, view definitions or rows. Within a database, row-level security and the space roles filter further. A workspace's authenticator is a member only of that workspace's roles, so `SET ROLE` or `set_config('role', …)` into another workspace's role is refused by Postgres. All of this works where Archive's database role has only CREATEROLE, CREATEDB and LOGIN, as on Cloud SQL and AlloyDB.
+- **Still shared across workspaces:** `pg_roles` and `pg_database` are server-wide, so a workspace's SQL can see that other databases and roles exist. Both are only UUIDs (`archive_<id>`, `"<id>_…"`), so they reveal counts, not names or data.
 - **Both hosts answer every route.** The server does not look at the host. The URLs it hands out use the right one: sign-in links `ARCHIVE_URL`; webhooks, file links, the Stripe webhook and OIDC redirects `ARCHIVE_API_URL`. The web app on app.archive.dev calls `/api` on its own host, so its cookie stays first-party.
-- **One identity per person.** `archive.user` and `archive.token` live in the main database only; a workspace database keeps its data and the Postgres roles row-level security needs, and its rows refer to people by their global user id, with no foreign key across databases. Adding someone to a workspace adds it to their `workspaces` and creates their role (`w<id>_u_<user>`) and personal space there once; removing them drops that role and their tokens, chats and workflows there, and keeps the personal space for when they come back. A session works in every workspace the person is in, and the server picks the first one when a request names none. The sign-in screen never tells anyone which workspaces an email belongs to. OIDC's callback on the API host redirects to `ARCHIVE_URL/auth/oidc/done` with a one-time link that only works in the browser that started (a cookie bound into the encrypted `state`). A passkey's user handle is the user id.
-- **Instance admins** are the admins of workspace one.
+- **One identity per person.** `archive.user` and `archive.token` live in the main database only; a workspace database keeps its data and the Postgres roles row-level security needs, and its rows refer to people by their global user id, with no foreign key across databases. Adding someone to a workspace adds it to their `workspaces` and creates their role (`<id>_u<user>`) and personal space there once; removing them drops that role and their tokens, chats and workflows there, and keeps the personal space for when they come back. A session works in every workspace the person is in, and the server picks the first one when a request names none. The sign-in screen never tells anyone which workspaces an email belongs to. OIDC's callback on the API host redirects to `ARCHIVE_URL/auth/oidc/done` with a one-time link that only works in the browser that started (a cookie bound into the encrypted `state`). A passkey's user handle is the user id.
+- **The archive tables the system writes** (`space`, `file`, `secret`) have row-level security enabled but not forced, so the role that owns them — the one `DATABASE_URL` connects as, never a tenant — bypasses it for background work and admin cleanup, while tenant roles stay filtered by the policies. This replaces relying on a superuser to bypass, which Cloud SQL does not offer.
+- **Instance admins** are the admins of workspace one, which cannot be deleted.
 - **Limits per workspace** are concurrent runs (8, or the plan's), and small pools that close when idle. Memory is not limited per workspace. Plan limits count the calendar month, not the Stripe billing period. A workspace with no plan, like workspace one, has no limits; AI tokens on a workspace's own key are counted but not limited.
-- **The pooler** is Cloud SQL's managed connection pooling, which the Google provider supports, rather than PgBouncer: PgBouncer would need every workspace's authenticator password. It needs Enterprise Plus and a private network, so it is the module's `connection_pooling` variable, off by default. `DATABASE_DIRECT_URL` is the direct connection for schema changes and creating databases, and Archive sets each database's default `search_path` and `timezone` so the pooler can ignore those startup parameters.
+- **No pooler.** Each instance holds a small pool per open workspace and talks to Postgres directly; `DATABASE_DIRECT_URL` stays available for a deployment that puts a transaction pooler in `DATABASE_URL`, since creating databases and schema changes need a direct session. Archive sets each database's default `search_path` and `timezone`.
 - **Workspace one stays open** in every instance; other workspaces close after 10 idle minutes.
 
 ## Not doing
 
 - A private repo, a hosted build, or code that only runs on app.archive.dev.
 - Feature flags or modes: a single-workspace install is the same code with one row.
-- Shared tables with a `workspace_id` column.
+- Shared tables with a `workspace_id` column, or one shared database with a schema per workspace (see above).
 - A Cloud Run service, database server or subdomain per workspace.
 - A proxy for AI usage: usage is counted where the calls are made.
 

@@ -143,7 +143,7 @@ func authEmail(s string) (string, error) {
 }
 
 func (a *Archive) roleID(kind string, id uuid.UUID) string {
-	return a.prefix + "_" + kind + "_" + strings.ReplaceAll(id.String(), "-", "")
+	return a.prefix + "_" + kind + base64.RawURLEncoding.EncodeToString(id[:])
 }
 
 func (a *Archive) exec(ctx context.Context, sqls ...string) error {
@@ -203,7 +203,9 @@ func (a *Archive) createSpace(ctx context.Context, name string, home *uuid.UUID)
 	if !authSpaceRe.MatchString(name) {
 		return id, &ValidationError{Type: "space", Errors: []FieldError{{Path: "name", Message: "want 1-32 lowercase letters, digits or _"}}}
 	}
-	base := a.prefix + "_s_" + name
+	b := make([]byte, 9)
+	rand.Read(b)
+	base := a.prefix + "_s" + base64.RawURLEncoding.EncodeToString(b)
 	id, err := a.st.db(ctx).CreateSpace(ctx, name, base, home)
 	if err != nil {
 		return id, err
@@ -349,7 +351,7 @@ func (a *Archive) RemoveUser(ctx context.Context, email string) error {
 		}
 		for _, sp := range spaces {
 			if (sp.Home == nil || *sp.Home != u.ID) && a.level(ctx, role, sp.Role, true) == authLevel("owner") {
-				if owners, _ := q.CountOwners(ctx, sp.Role+"_owner", a.prefix+"_u_"); owners <= 1 {
+				if owners, _ := q.CountOwners(ctx, sp.Role+"_owner", a.prefix+"_u"); owners <= 1 {
 					return fmt.Errorf("%s is the last owner of %s: %w", u.Email, sp.Name, ErrConflict)
 				}
 			}
@@ -452,7 +454,11 @@ func (a *Archive) AddSpace(ctx context.Context, name string) (*SpaceInfo, error)
 		if sp.ID, err = a.createSpace(ctx, name, nil); err != nil {
 			return err
 		}
-		return a.setLevel(ctx, ac.UserRole, a.prefix+"_s_"+name, authLevel("owner"))
+		base, err := a.st.db(ctx).SpaceRoleByID(ctx, sp.ID)
+		if err != nil {
+			return err
+		}
+		return a.setLevel(ctx, ac.UserRole, base, authLevel("owner"))
 	})
 }
 
@@ -566,7 +572,7 @@ func (a *Archive) SetMember(ctx context.Context, space, email, level string) err
 			return fmt.Errorf("changing this membership needs %s in %s: %w", need, space, ErrForbidden)
 		}
 		if cur == authLevel("owner") && lvl != cur {
-			if owners, _ := q.CountOwners(ctx, base+"_owner", a.prefix+"_u_"); owners <= 1 {
+			if owners, _ := q.CountOwners(ctx, base+"_owner", a.prefix+"_u"); owners <= 1 {
 				return fmt.Errorf("%s is the last owner of %s: %w", u.Email, space, ErrConflict)
 			}
 		}
@@ -931,7 +937,7 @@ func (s *signin) handler() http.Handler {
 				return nil, "", err
 			}
 			u, err := h.signup(r.Context(), c)
-			return u, c.Short, err
+			return u, c.ID, err
 		})
 	})
 	open("POST /auth/signout", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
@@ -955,11 +961,11 @@ func (s *signin) handler() http.Handler {
 		rows, err := h.q().UserWorkspaces(r.Context(), ac.UserID)
 		all := []Workspace{}
 		for _, x := range rows {
-			if r.Header.Get("Authorization") == "" || x.Short == a.ws.Short {
-				all = append(all, Workspace{ID: x.Short, Name: x.Name})
+			if r.Header.Get("Authorization") == "" || x.ID == a.ws.ID {
+				all = append(all, Workspace{ID: x.ID.String(), Name: x.Name})
 			}
 		}
-		return ok(map[string]any{"actor": ac, "spaces": sp, "home": home, "workspace": a.ws.Short, "workspaces": all}, err)
+		return ok(map[string]any{"actor": ac, "spaces": sp, "home": home, "workspace": a.ws.ID.String(), "workspaces": all}, err)
 	})
 	authed("GET /auth/spaces", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		return ok(archiveFrom(r.Context()).Spaces(r.Context()))

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Mulholland-Inc/archive/generated"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -163,17 +164,18 @@ func (a *Archive) Checkout(ctx context.Context, planID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	row, err := a.hub.q().WorkspaceByShort(ctx, a.ws.Short)
+	row, err := a.hub.q().WorkspaceByID(ctx, a.ws.ID)
 	if err != nil {
 		return "", err
 	}
+	id := row.ID.String()
 	f := url.Values{
 		"mode":                                   {"subscription"},
 		"line_items[0][price]":                   {p.Price},
 		"line_items[0][quantity]":                {"1"},
-		"client_reference_id":                    {row.Short},
-		"metadata[workspace]":                    {row.Short},
-		"subscription_data[metadata][workspace]": {row.Short},
+		"client_reference_id":                    {id},
+		"metadata[workspace]":                    {id},
+		"subscription_data[metadata][workspace]": {id},
 		"success_url":                            {a.hub.app + "/?billing=done"},
 		"cancel_url":                             {a.hub.app + "/"},
 	}
@@ -275,7 +277,7 @@ func (h *Hub) stripe(w http.ResponseWriter, r *http.Request) {
 		short = sub.Metadata["workspace"]
 		if short == "" && sub.ID != "" {
 			if row, err := h.q().WorkspaceBySubscription(ctx, sub.ID); err == nil {
-				short = row.Short
+				short = row.ID.String()
 			}
 		}
 	}
@@ -290,7 +292,11 @@ func (h *Hub) stripe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Hub) subscribe(ctx context.Context, short string, sub stripeSub) error {
-	p := generated.SetWorkspacePlanParams{Short: short, Customer: sub.Customer, Subscription: sub.ID}
+	id, err := uuid.Parse(short)
+	if err != nil {
+		return fmt.Errorf("workspace %q: %w", short, ErrNotFound)
+	}
+	p := generated.SetWorkspacePlanParams{ID: id, Customer: sub.Customer, Subscription: sub.ID}
 	switch sub.Status {
 	case "active", "trialing", "past_due":
 		if len(sub.Items.Data) == 0 {

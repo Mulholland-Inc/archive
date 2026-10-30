@@ -15,7 +15,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -74,8 +73,6 @@ const (
 	workspaceMax  = 64
 	signupTTL     = 15 * time.Minute
 )
-
-var workspaceShortRe = regexp.MustCompile(`^[a-z0-9]{1,16}$`)
 
 type archiveKey struct{}
 
@@ -154,32 +151,28 @@ func storeUndefined(err error) bool {
 
 func (h *Hub) register(ctx context.Context) error {
 	q := h.q()
-	row, err := q.MainWorkspace(ctx)
+	row, err := q.FirstWorkspace(ctx)
 	fresh := errors.Is(err, pgx.ErrNoRows) || storeUndefined(err)
 	if err != nil && !fresh {
 		return err
 	}
 	var key []byte
 	if fresh {
-		db, err := q.CurrentDatabase(ctx)
-		if err != nil {
-			return err
-		}
-		short := workspaceShort()
 		key = make([]byte, 32)
 		rand.Read(key)
-		row = generated.ArchiveWorkspace{Short: short, Name: "Archive", Database: db, Prefix: "w" + short, Blobs: short + "/"}
+		row = generated.ArchiveWorkspace{ID: coreNewID(), Name: "Archive"}
 	} else if key, err = h.unwrap(row); err != nil {
 		return err
 	}
+	h.one = row.ID.String()
 	a, err := h.openArchive(ctx, row, key)
 	if err != nil {
 		return err
 	}
 	if fresh {
-		r, err := q.CreateWorkspace(ctx, generated.CreateWorkspaceParams{Short: row.Short, Name: row.Name, Database: row.Database, Prefix: row.Prefix, Key: h.wrap(row.Short, key), Blobs: row.Blobs})
+		r, err := q.CreateWorkspace(ctx, generated.CreateWorkspaceParams{ID: row.ID, Name: row.Name, Key: h.wrap(h.one, key)})
 		if errors.Is(err, pgx.ErrNoRows) {
-			r, err = q.MainWorkspace(ctx)
+			r, err = q.FirstWorkspace(ctx)
 		}
 		if err != nil {
 			a.Close()
@@ -187,7 +180,6 @@ func (h *Hub) register(ctx context.Context) error {
 		}
 		a.ws = r
 	}
-	h.one = a.ws.Short
 	ready := make(chan struct{})
 	close(ready)
 	h.open[h.one] = &hubEntry{ready: ready, a: a, used: time.Now()}
@@ -215,38 +207,36 @@ func (h *Hub) Close() error {
 
 func (h *Hub) q() *generated.Queries { return generated.New(h.main) }
 
-func workspaceShort() string {
-	const abc = "abcdefghijkmnpqrstuvwxyz23456789"
-	b := make([]byte, 8)
-	rand.Read(b)
-	for i := range b {
-		b[i] = abc[int(b[i])%len(abc)]
-	}
-	return string(b)
-}
-
-func (h *Hub) wrap(short string, key []byte) []byte {
+func (h *Hub) wrap(id string, key []byte) []byte {
 	nonce := make([]byte, h.aead.NonceSize())
 	rand.Read(nonce)
-	return h.aead.Seal(nonce, nonce, key, []byte("workspace "+short))
+	return h.aead.Seal(nonce, nonce, key, []byte("workspace "+id))
 }
 
 func (h *Hub) unwrap(row generated.ArchiveWorkspace) ([]byte, error) {
 	n := h.aead.NonceSize()
 	if len(row.Key) < n {
-		return nil, fmt.Errorf("workspace %s: its data key is corrupt", row.Short)
+		return nil, fmt.Errorf("workspace %s: its data key is corrupt", row.ID)
 	}
-	k, err := h.aead.Open(nil, row.Key[:n], row.Key[n:], []byte("workspace "+row.Short))
+	k, err := h.aead.Open(nil, row.Key[:n], row.Key[n:], []byte("workspace "+row.ID.String()))
 	if err != nil {
-		return nil, fmt.Errorf("workspace %s: its data key does not open with ARCHIVE_SECRET_KEY: %w", row.Short, err)
+		return nil, fmt.Errorf("workspace %s: its data key does not open with ARCHIVE_SECRET_KEY: %w", row.ID, err)
 	}
 	return k, nil
 }
 
+func (h *Hub) database(id string) string {
+	if id == h.one {
+		return h.pooled.Database
+	}
+	return "archive_" + id
+}
+
 func (h *Hub) openArchive(ctx context.Context, row generated.ArchiveWorkspace, key []byte) (*Archive, error) {
+	id := row.ID.String()
 	pooled, direct := h.pooled.Copy(), h.direct.Copy()
-	pooled.Database, direct.Database = row.Database, row.Database
-	st, err := OpenStore(ctx, pooled, direct, row.Prefix, authPassword(key))
+	pooled.Database, direct.Database = h.database(id), h.database(id)
+	st, err := OpenStore(ctx, pooled, direct, id, authPassword(key))
 	if err != nil {
 		return nil, err
 	}
@@ -260,13 +250,13 @@ func (h *Hub) openArchive(ctx context.Context, row generated.ArchiveWorkspace, k
 		st.Close()
 		return nil, err
 	}
-	return &Archive{hub: h, ws: row, st: st, cat: cat, hints: h.hints, prefix: row.Prefix, aead: aead,
-		blobs: blobPrefixed(h.blobs, row.Blobs), linkKey: secretDerive(key, "files"), slots: make(chan struct{}, h.concurrent(ctx, row))}, nil
+	return &Archive{hub: h, ws: row, st: st, cat: cat, hints: h.hints, prefix: id, aead: aead,
+		blobs: blobPrefixed(h.blobs, id+"/"), linkKey: secretDerive(key, "files"), slots: make(chan struct{}, h.concurrent(ctx, row))}, nil
 }
 
 func (h *Hub) acquire(ctx context.Context, short string) (*Archive, func(), error) {
 	short = cmp.Or(short, h.one)
-	if !workspaceShortRe.MatchString(short) {
+	if _, err := uuid.Parse(short); err != nil {
 		return nil, nil, fmt.Errorf("workspace %q: %w", short, ErrNotFound)
 	}
 	h.mu.Lock()
@@ -309,7 +299,11 @@ func (h *Hub) done(e *hubEntry) {
 }
 
 func (h *Hub) load(ctx context.Context, short string) (*Archive, error) {
-	row, err := h.q().WorkspaceByShort(ctx, short)
+	id, err := uuid.Parse(short)
+	if err != nil {
+		return nil, fmt.Errorf("workspace %q: %w", short, ErrNotFound)
+	}
+	row, err := h.q().WorkspaceByID(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("workspace %q: %w", short, ErrNotFound)
 	}
@@ -384,7 +378,7 @@ func (h *Hub) upgradeAll(ctx context.Context, wg *sync.WaitGroup) {
 			return
 		}
 		h.mu.Lock()
-		_, open := h.open[row.Short]
+		_, open := h.open[row.ID.String()]
 		h.mu.Unlock()
 		if open {
 			continue
@@ -398,7 +392,7 @@ func (h *Hub) upgradeAll(ctx context.Context, wg *sync.WaitGroup) {
 			}
 		}
 		if err != nil && ctx.Err() == nil {
-			fmt.Fprintf(os.Stderr, "archive: upgrading workspace %s: %v\n", row.Short, err)
+			fmt.Fprintf(os.Stderr, "archive: upgrading workspace %s: %v\n", row.ID, err)
 		}
 	}
 }
@@ -415,7 +409,7 @@ func (a *Archive) afterOpen(ctx context.Context) {
 		err = errors.Join(err, nerr)
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "archive: workspace %s: %v\n", a.ws.Short, err)
+		fmt.Fprintf(os.Stderr, "archive: workspace %s: %v\n", a.ws.ID, err)
 	}
 }
 
@@ -483,9 +477,9 @@ func (h *Hub) next(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	bg := context.WithoutCancel(ctx)
-	a, release, err := h.acquire(ctx, d.Short)
+	a, release, err := h.acquire(ctx, d.ID.String())
 	if errors.Is(err, ErrNotFound) {
-		return true, h.q().ClearDue(bg, d.Short, d.Kind, d.At)
+		return true, h.q().ClearDue(bg, d.ID, d.Kind, d.At)
 	}
 	if err != nil {
 		return false, err
@@ -500,7 +494,7 @@ func (h *Hub) next(ctx context.Context) (bool, error) {
 			ok, err = a.fileProcess(ctx, uuid.Nil)
 		}
 		if err != nil && ctx.Err() == nil {
-			fmt.Fprintf(os.Stderr, "archive: workspace %s %ss: %v\n", d.Short, d.Kind, err)
+			fmt.Fprintf(os.Stderr, "archive: workspace %s %ss: %v\n", d.ID, d.Kind, err)
 		}
 		if !ok || err != nil || ctx.Err() != nil {
 			break
@@ -511,9 +505,9 @@ func (h *Hub) next(ctx context.Context) (bool, error) {
 		return true, err
 	}
 	if next == nil {
-		return true, h.q().ClearDue(bg, d.Short, d.Kind, d.At)
+		return true, h.q().ClearDue(bg, d.ID, d.Kind, d.At)
 	}
-	return true, h.q().SetDue(bg, generated.SetDueParams{Next: *next, Short: d.Short, Kind: d.Kind, Claimed: d.At})
+	return true, h.q().SetDue(bg, generated.SetDueParams{Next: *next, ID: d.ID, Kind: d.Kind, Claimed: d.At})
 }
 
 func (h *Hub) secret(r *http.Request) (string, error) {
@@ -658,7 +652,7 @@ func (h *Hub) admin(ctx context.Context) error {
 		return err
 	}
 	a := archiveFrom(ctx)
-	if a == nil || a.ws.Short != h.one || !a.isAdmin(ctx, ac) {
+	if a == nil || a.ws.ID.String() != h.one || !a.isAdmin(ctx, ac) {
 		return fmt.Errorf("only instance admins, the admins of the first workspace, do this: %w", ErrForbidden)
 	}
 	return nil
@@ -734,7 +728,7 @@ func (h *Hub) SetSettings(ctx context.Context, signup *bool, plan *string) (*Set
 }
 
 func workspaceOut(r generated.ArchiveWorkspace) Workspace {
-	w := Workspace{ID: r.Short, Name: r.Name, CreatedAt: r.CreatedAt}
+	w := Workspace{ID: r.ID.String(), Name: r.Name, CreatedAt: r.CreatedAt}
 	if r.Plan != nil {
 		w.Plan = *r.Plan
 	}
@@ -757,12 +751,44 @@ func (h *Hub) AddWorkspace(ctx context.Context, name, owner string) (*Workspace,
 	if err := h.admin(ctx); err != nil {
 		return nil, err
 	}
-	r, err := h.createWorkspace(ctx, "", name, owner)
+	r, err := h.createWorkspace(ctx, coreNewID(), name, owner)
 	if err != nil {
 		return nil, err
 	}
 	w := workspaceOut(r)
 	return &w, nil
+}
+
+func (h *Hub) DeleteWorkspace(ctx context.Context, id string) error {
+	if err := h.admin(ctx); err != nil {
+		return err
+	}
+	ws, err := uuid.Parse(id)
+	if err == nil {
+		_, err = h.q().WorkspaceByID(ctx, ws)
+	}
+	if err != nil {
+		return fmt.Errorf("workspace %q: %w", id, ErrNotFound)
+	}
+	if id == h.one {
+		return fmt.Errorf("the first workspace holds the instance admins and cannot be deleted: %w", ErrConflict)
+	}
+	h.forget(id)
+	bg := context.WithoutCancel(ctx)
+	roles, err := h.q().RolesWithPrefix(bg, id+"_")
+	if err != nil {
+		return err
+	}
+	if c, cerr := pgx.ConnectConfig(bg, h.direct); cerr == nil {
+		c.Exec(bg, "DROP DATABASE IF EXISTS "+pgIdent(h.database(id))+" WITH (FORCE)")
+		for _, role := range roles {
+			c.Exec(bg, "DROP ROLE IF EXISTS "+pgIdent(role))
+		}
+		c.Close(bg)
+	} else {
+		return cerr
+	}
+	return h.q().DeleteWorkspace(bg, ws)
 }
 
 func workspaceName(name string) (string, error) {
@@ -773,7 +799,7 @@ func workspaceName(name string) (string, error) {
 	return name, nil
 }
 
-func (h *Hub) createWorkspace(ctx context.Context, short, name, owner string) (generated.ArchiveWorkspace, error) {
+func (h *Hub) createWorkspace(ctx context.Context, id uuid.UUID, name, owner string) (generated.ArchiveWorkspace, error) {
 	var row generated.ArchiveWorkspace
 	name, err := workspaceName(name)
 	if err != nil {
@@ -782,12 +808,11 @@ func (h *Hub) createWorkspace(ctx context.Context, short, name, owner string) (g
 	if owner, err = authEmail(owner); err != nil {
 		return row, err
 	}
-	short = cmp.Or(short, workspaceShort())
+	short := id.String()
 	key := make([]byte, 32)
 	rand.Read(key)
 	q := h.q()
-	row, err = q.CreateWorkspace(ctx, generated.CreateWorkspaceParams{Short: short, Name: name, Database: "archive_" + short, Prefix: "w" + short,
-		Key: h.wrap(short, key), Blobs: short + "/", Plan: h.defaultPlan(ctx)})
+	row, err = q.CreateWorkspace(ctx, generated.CreateWorkspaceParams{ID: id, Name: name, Key: h.wrap(short, key), Plan: h.defaultPlan(ctx)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return row, fmt.Errorf("workspace %s already exists: %w", short, ErrConflict)
 	}
@@ -798,7 +823,7 @@ func (h *Hub) createWorkspace(ctx context.Context, short, name, owner string) (g
 	fail := func(err error) (generated.ArchiveWorkspace, error) {
 		h.forget(short)
 		if c, cerr := pgx.ConnectConfig(ctx, h.direct); cerr == nil {
-			c.Exec(ctx, "DROP DATABASE IF EXISTS "+pgIdent(row.Database)+" WITH (FORCE)")
+			c.Exec(ctx, "DROP DATABASE IF EXISTS "+pgIdent(h.database(short))+" WITH (FORCE)")
 			c.Close(ctx)
 		}
 		q.DeleteWorkspace(ctx, row.ID)
@@ -808,9 +833,9 @@ func (h *Hub) createWorkspace(ctx context.Context, short, name, owner string) (g
 	if err != nil {
 		return fail(err)
 	}
-	_, err = c.Exec(ctx, "CREATE DATABASE "+pgIdent(row.Database))
+	_, err = c.Exec(ctx, "CREATE DATABASE "+pgIdent(h.database(short)))
 	if err == nil {
-		_, err = c.Exec(ctx, "REVOKE CONNECT ON DATABASE "+pgIdent(row.Database)+" FROM PUBLIC")
+		_, err = c.Exec(ctx, "REVOKE CONNECT ON DATABASE "+pgIdent(h.database(short))+" FROM PUBLIC")
 	}
 	c.Close(ctx)
 	if err != nil {
@@ -831,7 +856,7 @@ func (h *Hub) createWorkspace(ctx context.Context, short, name, owner string) (g
 type signupClaim struct {
 	Email string `json:"e"`
 	Name  string `json:"n"`
-	Short string `json:"w"`
+	ID    string `json:"w"`
 	Exp   int64  `json:"x"`
 }
 
@@ -842,7 +867,7 @@ func (h *Hub) sign(purpose, payload string) string {
 }
 
 func (h *Hub) signupToken(email, name string) string {
-	b, _ := json.Marshal(signupClaim{Email: email, Name: name, Short: workspaceShort(), Exp: time.Now().Add(signupTTL).Unix()})
+	b, _ := json.Marshal(signupClaim{Email: email, Name: name, ID: coreNewID().String(), Exp: time.Now().Add(signupTTL).Unix()})
 	p := base64.RawURLEncoding.EncodeToString(b)
 	return p + "." + h.sign("signup", p)
 }
@@ -865,7 +890,11 @@ func (h *Hub) signup(ctx context.Context, c *signupClaim) (*User, error) {
 	if !h.signupOpen(ctx) {
 		return nil, fmt.Errorf("signup is closed on this Archive: %w", ErrForbidden)
 	}
-	if _, err := h.createWorkspace(ctx, c.Short, c.Name, c.Email); errors.Is(err, ErrConflict) {
+	id, err := uuid.Parse(c.ID)
+	if err != nil {
+		return nil, fmt.Errorf("this link to create a workspace is invalid: %w", ErrUnauthorized)
+	}
+	if _, err := h.createWorkspace(ctx, id, c.Name, c.Email); errors.Is(err, ErrConflict) {
 		return nil, fmt.Errorf("this link was used already; sign in instead: %w", ErrConflict)
 	} else if err != nil {
 		return nil, err
@@ -893,7 +922,7 @@ func (a *Archive) Info(ctx context.Context) (*WorkspaceInfo, error) {
 		return nil, fmt.Errorf("not signed in: %w", ErrUnauthorized)
 	}
 	q := a.hub.q()
-	row, err := q.WorkspaceByShort(ctx, a.ws.Short)
+	row, err := q.WorkspaceByID(ctx, a.ws.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -937,7 +966,7 @@ func (a *Archive) SetInfo(ctx context.Context, name, anthropicKey *string) (*Wor
 }
 
 func (a *Archive) anthropicKey(ctx context.Context) (string, bool) {
-	if row, err := a.hub.q().WorkspaceByShort(ctx, a.ws.Short); err == nil && len(row.AnthropicKey) > 0 {
+	if row, err := a.hub.q().WorkspaceByID(ctx, a.ws.ID); err == nil && len(row.AnthropicKey) > 0 {
 		if b, err := a.secretOpen(a.ws.ID, "anthropic", row.AnthropicKey); err == nil {
 			return string(b), true
 		}
@@ -967,7 +996,7 @@ func (a *Archive) slot(ctx context.Context) (func(), error) {
 
 func (a *Archive) count(ctx context.Context, runs, workflowRuns, aiTokens int64) {
 	if err := a.hub.q().AddUsage(context.WithoutCancel(ctx), generated.AddUsageParams{Workspace: a.ws.ID, Runs: runs, WorkflowRuns: workflowRuns, AiTokens: aiTokens}); err != nil {
-		fmt.Fprintf(os.Stderr, "archive: workspace %s usage: %v\n", a.ws.Short, err)
+		fmt.Fprintf(os.Stderr, "archive: workspace %s usage: %v\n", a.ws.ID, err)
 	}
 }
 
@@ -1032,6 +1061,9 @@ func (h *Hub) workspaceRoutes(authed func(string, func(http.ResponseWriter, *htt
 		}
 		ws, err := h.AddWorkspace(r.Context(), body.Name, body.Owner)
 		return http.StatusCreated, ws, err
+	})
+	authed("DELETE /auth/workspaces/{id}", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
+		return http.StatusNoContent, nil, h.DeleteWorkspace(r.Context(), r.PathValue("id"))
 	})
 	authed("GET /auth/settings", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		return ok(h.Settings(r.Context()))

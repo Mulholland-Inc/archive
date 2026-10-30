@@ -29,7 +29,7 @@ var cliVersion = "0.1.0"
 const cliUsage = `archive keeps all your stuff in one place, in Postgres tables you define.
 
 Usage:
-  archive [-as email] [-workspace id] <command> ...
+  archive [-as email] [-workspace uuid] <command> ...
                                      every command acts as a user (default the first owner) of a
                                      workspace (default the first one)
 
@@ -84,6 +84,7 @@ Usage:
   archive workspace add <name> <owner email>
                                      create a workspace, with its own database, for someone else
   archive workspace list
+  archive workspace delete <uuid>    drop a workspace: its database and its roles
   archive signup on|off              let anyone create a workspace from the sign-in screen
   archive plan list
   archive plan set <id> [json]       a plan and its limits per month: {"name", "price" (a Stripe
@@ -412,6 +413,10 @@ func cliWorkspace(ctx context.Context, h *Hub, cmd string, pos []string, stdin i
 		}
 	case "workspace list":
 		return out(h.Workspaces(ctx))
+	case "workspace delete":
+		if len(pos) > 1 {
+			return h.DeleteWorkspace(ctx, pos[1])
+		}
 	case "signup on", "signup off":
 		on := pos[0] == "on"
 		return out(h.SetSettings(ctx, &on, nil))
