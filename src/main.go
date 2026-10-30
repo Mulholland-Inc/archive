@@ -128,8 +128,6 @@ Environment:
                      on another origin, /api and /auth allow ARCHIVE_URL's origin over CORS with the
                      cookie; unless ARCHIVE_URL is http://localhost, any other origin may call with
                      a bearer token
-  ARCHIVE_ADMIN_EMAIL
-                     first owner that serve creates when there are no users yet
   ARCHIVE_TASKS_QUEUE
                      Cloud Tasks queue, projects/<p>/locations/<r>/queues/<q>, that calls
                      POST ARCHIVE_API_URL/tasks at each time workflows or files are due, so serve can
@@ -245,7 +243,7 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 		return err
 	}
 	if ac == nil && cmd != "serve" && cmd != "types" && cmd != "user" && (cmd != "schema" || pos[0] != "pull") {
-		return errors.New("no users yet: create the first owner with archive user add <email>, or run archive serve with ARCHIVE_ADMIN_EMAIL")
+		return errors.New("no users yet: add the first owner with archive user add <email>")
 	}
 	ctx = withArchive(WithActor(ctx, ac), a)
 	out := func(v any, err error) error {
@@ -584,15 +582,7 @@ func cliServe(ctx context.Context, h *Hub, a *Archive, addr string) error {
 	if none, err := h.q().NoMembers(ctx, a.ws.ID); err != nil {
 		return err
 	} else if none {
-		if email := os.Getenv("ARCHIVE_ADMIN_EMAIL"); email != "" {
-			u, err := a.AddUser(ctx, email, "", true)
-			if err != nil {
-				return fmt.Errorf("ARCHIVE_ADMIN_EMAIL: %w", err)
-			}
-			fmt.Fprintf(os.Stderr, "archive: created the first owner %s\n", u.Email)
-		} else {
-			fmt.Fprintln(os.Stderr, "archive: no users yet; add the first owner with ARCHIVE_ADMIN_EMAIL or archive user add <email>")
-		}
+		fmt.Fprintln(os.Stderr, "archive: no users yet; add the first owner with archive user add <email>")
 	}
 	if h.localApp() {
 		fmt.Fprintf(os.Stderr, "archive: %s is on this machine, so requests from this machine are signed in as the first owner\n", h.app)

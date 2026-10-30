@@ -5,7 +5,6 @@ image:
 
 url: ""
 apiUrl: ""
-adminEmail: ""
 secretKey: ""
 
 database:

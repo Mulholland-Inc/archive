@@ -765,7 +765,7 @@ func (h *Hub) localUser(ctx context.Context, want string) (*Archive, *Actor, fun
 	}
 	u, err := h.q().FirstUser(ctx, one)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil, nil, fmt.Errorf("no users yet; set ARCHIVE_ADMIN_EMAIL: %w", ErrUnauthorized)
+		return nil, nil, nil, fmt.Errorf("no users yet; add the first owner with archive user add <email>: %w", ErrUnauthorized)
 	}
 	if err != nil {
 		return nil, nil, nil, err

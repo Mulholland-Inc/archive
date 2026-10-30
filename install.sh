@@ -22,7 +22,7 @@ if docker container inspect "$name" >/dev/null 2>&1; then
 fi
 
 set --
-for var in ARCHIVE_LOCALE ARCHIVE_ADMIN_EMAIL ARCHIVE_URL ARCHIVE_SECRET_KEY ARCHIVE_GOOGLE_CLIENT_ID ARCHIVE_GOOGLE_CLIENT_SECRET ARCHIVE_MICROSOFT_CLIENT_ID ARCHIVE_MICROSOFT_CLIENT_SECRET ARCHIVE_SLACK_CLIENT_ID ARCHIVE_SLACK_CLIENT_SECRET ARCHIVE_GITHUB_CLIENT_ID ARCHIVE_GITHUB_CLIENT_SECRET ARCHIVE_BLOB_URL ARCHIVE_BLOB_KEY ARCHIVE_BLOB_SECRET DATABASE_URL; do
+for var in ARCHIVE_LOCALE ARCHIVE_URL ARCHIVE_SECRET_KEY ARCHIVE_GOOGLE_CLIENT_ID ARCHIVE_GOOGLE_CLIENT_SECRET ARCHIVE_MICROSOFT_CLIENT_ID ARCHIVE_MICROSOFT_CLIENT_SECRET ARCHIVE_SLACK_CLIENT_ID ARCHIVE_SLACK_CLIENT_SECRET ARCHIVE_GITHUB_CLIENT_ID ARCHIVE_GITHUB_CLIENT_SECRET ARCHIVE_BLOB_URL ARCHIVE_BLOB_KEY ARCHIVE_BLOB_SECRET DATABASE_URL; do
   eval "set_=\${$var+x}"
   [ -n "$set_" ] && set -- "$@" -e "$var"
 done
@@ -50,4 +50,7 @@ done
 say ""
 say "Archive is running at http://localhost:$port"
 docker logs "$name" 2>&1 | grep -i -E 'setup|sign.?in' | tail -n 3 || true
+if docker logs "$name" 2>&1 | grep -q 'no users yet'; then
+  say "Add yourself as the first owner: docker exec $name archive user add you@example.com"
+fi
 say "Run this command again any time to update."
