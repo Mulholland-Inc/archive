@@ -125,9 +125,7 @@
       {:else if route.first === 'files'}
         <Files />
       {:else if route.first === 'workflows'}
-        {#key route.second}
-          <Workflows name={route.second} />
-        {/key}
+        <Workflows />
       {:else if route.first === 'views'}
         {@const v = views.find((x) => x.name === route.second)}
         {#if v}

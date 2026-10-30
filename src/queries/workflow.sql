@@ -10,6 +10,9 @@ SELECT * FROM archive.workflow WHERE hook = $1 AND trigger = 'webhook';
 -- name: DeleteWorkflowsExcept :exec
 DELETE FROM archive.workflow WHERE user_id = $1 AND NOT (name = ANY (sqlc.arg(names)::text[]));
 
+-- name: DeleteWorkflow :exec
+DELETE FROM archive.workflow WHERE user_id = $1 AND name = $2;
+
 -- name: SaveWorkflow :one
 INSERT INTO archive.workflow (user_id, role, name, source, trigger, hook, next_at, cursor_at, cursor_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)

@@ -3019,7 +3019,7 @@ return { ok: res.ok, status: res.status, statusText: res.statusText, reply: res.
 		if wantStatus(t, st, 200, "bob's workflows"); len(ws) != 0 {
 			t.Errorf("bob sees alice's workflows: %+v", ws)
 		}
-		for _, c := range [][2]string{{"GET", "/workflows/manual/runs"}, {"POST", "/workflows/manual/run"}} {
+		for _, c := range [][2]string{{"GET", "/workflows/manual/runs"}, {"POST", "/workflows/manual/run"}, {"DELETE", "/workflows/manual"}} {
 			st, _ = call(t, c[0], api+c[1], bobTok, nil, nil)
 			wantStatus(t, st, 404, "bob "+c[0]+" "+c[1])
 		}
@@ -3029,5 +3029,13 @@ return { ok: res.ok, status: res.status, statusText: res.statusText, reply: res.
 		}
 		st, _ = call(t, "GET", api+"/workflows", "", nil, nil)
 		wantStatus(t, st, 401, "workflows without a token")
+		st, _ = call(t, "DELETE", api+"/workflows/manual", tok, nil, nil)
+		wantStatus(t, st, 204, "delete")
+		st, _ = call(t, "GET", api+"/workflows", tok, nil, &ws)
+		if wantStatus(t, st, 200, "workflows after delete"); len(ws) != 3 {
+			t.Errorf("after delete: %+v", ws)
+		}
+		st, _ = call(t, "DELETE", api+"/workflows/manual", tok, nil, nil)
+		wantStatus(t, st, 404, "delete again")
 	})
 }

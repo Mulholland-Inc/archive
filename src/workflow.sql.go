@@ -104,6 +104,15 @@ func (q *Queries) ClaimWorkflow(ctx context.Context, lease time.Time) (ArchiveWo
 	return i, err
 }
 
+const deleteWorkflow = `-- name: DeleteWorkflow :exec
+DELETE FROM archive.workflow WHERE user_id = $1 AND name = $2
+`
+
+func (q *Queries) DeleteWorkflow(ctx context.Context, userID uuid.UUID, name string) error {
+	_, err := q.db.Exec(ctx, deleteWorkflow, userID, name)
+	return err
+}
+
 const deleteWorkflowsExcept = `-- name: DeleteWorkflowsExcept :exec
 DELETE FROM archive.workflow WHERE user_id = $1 AND NOT (name = ANY ($2::text[]))
 `

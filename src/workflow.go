@@ -427,6 +427,16 @@ func (a *Archive) workflowExec(ctx context.Context, w ArchiveWorkflow, ac *Actor
 	return a.workflowRecord(ctx, w.ID, trigger, at, out, time.Since(start))
 }
 
+func (a *Archive) DeleteWorkflow(ctx context.Context, name string) error {
+	w, err := a.workflow(ctx, name)
+	if err != nil {
+		return err
+	}
+	return a.sys(ctx, func(ctx context.Context) error {
+		return a.st.db(ctx).DeleteWorkflow(ctx, w.UserID, w.Name)
+	})
+}
+
 func (a *Archive) RunWorkflow(ctx context.Context, name string) (WorkflowRun, error) {
 	w, err := a.workflow(ctx, name)
 	if err != nil {
@@ -627,6 +637,9 @@ func (a *Archive) workflowRoutes(mux *http.ServeMux) {
 	handle("POST /api/workflows/{name}/run", func(r *http.Request) (int, any, error) {
 		rec, err := a.RunWorkflow(context.WithoutCancel(r.Context()), r.PathValue("name"))
 		return http.StatusOK, rec, err
+	})
+	handle("DELETE /api/workflows/{name}", func(r *http.Request) (int, any, error) {
+		return http.StatusNoContent, nil, a.DeleteWorkflow(r.Context(), r.PathValue("name"))
 	})
 }
 

@@ -40,55 +40,45 @@
     return s.charAt(0).toUpperCase() + s.slice(1);
   };
 
-  const triggers = { cron: 'Schedule', table: 'Change', webhook: 'Webhook', start: 'Agent', run: 'Run button' };
-  export const by = (t) => triggers[t] ?? t;
-
   export const stamp = (v) => new Date(v).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 </script>
 
 <script>
   import { api } from './api.js';
-  import Button from '#kit/Button.svelte';
+  import Icon from '#kit/Icon.svelte';
   import Chip from './ui/Chip.svelte';
-  import Copy from './ui/Copy.svelte';
   import DataTable from './ui/DataTable.svelte';
   import Heading from './ui/Heading.svelte';
   import Note from './ui/Note.svelte';
-  import RunRow from './ui/RunRow.svelte';
   import Sheet from './ui/Sheet.svelte';
 
-  let { name = '' } = $props();
   let flows = $state(null);
-  let runs = $state(null);
   let error = $state('');
   let busy = $state('');
 
-  const flow = $derived(flows?.find((w) => w.name === name || w.name === `${name}.ts`));
   const columns = [
     { name: 'name', type: 'text' },
     { name: 'on', label: 'When', type: 'text' },
     { name: 'last', label: 'Last run', type: 'timestamptz' },
-    { name: 'run', label: '', type: 'text' },
+    { name: 'act', label: '', type: 'text' },
   ];
   const path = (n) => `/api/workflows/${encodeURIComponent(n)}`;
 
   async function load() {
     try {
       flows = await api('/api/workflows');
-      if (name) runs = await api(`${path(name)}/runs?limit=50`);
       error = '';
     } catch (e) {
       error = e.message;
     }
   }
 
-  async function start(n, e) {
-    e?.stopPropagation();
+  async function act(n, method, url) {
     busy = n;
     try {
-      await api(`${path(n)}/run`, { method: 'POST' });
-    } catch (err) {
-      error = err.message;
+      await api(url, { method });
+    } catch (e) {
+      error = e.message;
     }
     busy = '';
     await load();
@@ -97,54 +87,33 @@
   load();
 </script>
 
-{#if name}
-  <Heading title={flow ? pretty(flow.name) : ''}>
-    {#if flow}<Button small icon="play" onclick={() => start(flow.name)} disabled={!!busy}>{busy ? 'Running…' : 'Run'}</Button>{/if}
-  </Heading>
-  <Sheet>
-    {#if error}<Note error>{error}</Note>{/if}
-    {#if flow?.url}
-      <div class="hook">
-        <span class="url">{flow.url}</span>
-        <Copy text={flow.url} label="Copy webhook URL" />
-      </div>
-    {/if}
-    {#if runs?.length}
-      <div class="runs">
-        {#each runs as r (r.id)}
-          <RunRow at={stamp(r.at)} ms={r.ms} label={by(r.trigger)} error={r.error} result={r.result} logs={r.logs} />
-        {/each}
-      </div>
-    {:else if runs}
-      <Note>No runs yet</Note>
-    {/if}
-  </Sheet>
-{:else}
-  <Heading title="Workflows" />
-  <Sheet tight>
-    {#if error}<Note error>{error}</Note>{/if}
-    {#if flows?.length}
-      <DataTable fill {columns} rows={flows} key={(r) => r.name} href={(r) => `/workflows/${encodeURIComponent(r.name.replace(/\.ts$/, ''))}`}>
-        {#snippet td(r, c)}
-          {#if c.name === 'name'}{pretty(r.name)}
-          {:else if c.name === 'on'}{when(r.on)}
-          {:else if c.name === 'last'}
-            {#if r.last}<span class="last">{stamp(r.last.at)}{#if r.last.error}<Chip>Failed</Chip>{/if}</span>{/if}
-          {:else}
-            <span class="act"><Button small ghost onclick={(e) => start(r.name, e)} disabled={!!busy}>{busy === r.name ? 'Running…' : 'Run'}</Button></span>
-          {/if}
-        {/snippet}
-      </DataTable>
-    {:else if flows}
-      <Note>No workflows yet</Note>
-    {/if}
-  </Sheet>
-{/if}
+<Heading title="Workflows" />
+<Sheet tight>
+  {#if error}<Note error>{error}</Note>{/if}
+  {#if flows?.length}
+    <DataTable fill {columns} rows={flows} key={(r) => r.name}>
+      {#snippet td(r, c)}
+        {#if c.name === 'name'}{pretty(r.name)}
+        {:else if c.name === 'on'}{when(r.on)}
+        {:else if c.name === 'last'}
+          {#if r.last}<span class="last" title={r.last.error || undefined}>{stamp(r.last.at)}{#if r.last.error}<Chip>Failed</Chip>{/if}</span>{/if}
+        {:else}
+          <span class="acts">
+            <button type="button" title="Run" aria-label="Run {pretty(r.name)}" disabled={!!busy} onclick={() => act(r.name, 'POST', `${path(r.name)}/run`)}><Icon name="play" /></button>
+            <button type="button" title="Delete" aria-label="Delete {pretty(r.name)}" disabled={!!busy} onclick={() => act(r.name, 'DELETE', path(r.name))}><Icon name="trash" /></button>
+          </span>
+        {/if}
+      {/snippet}
+    </DataTable>
+  {:else if flows}
+    <Note>No workflows yet</Note>
+  {/if}
+</Sheet>
 
 <style>
-  .hook { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2); border-radius: var(--radius-item); background: var(--fill-faint); }
-  .url { flex: 1; min-width: 0; overflow: hidden; color: var(--fg-soft); font: var(--text-table) / var(--leading-medium) var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
-  .runs { display: flex; flex-direction: column; gap: var(--space-0-5); }
   .last { display: inline-flex; align-items: center; gap: var(--space-2); }
-  .act { display: flex; justify-content: flex-end; }
+  .acts { display: flex; justify-content: flex-end; gap: var(--space-2); }
+  .acts button { display: grid; place-items: center; color: var(--fg-muted); transition: color var(--duration-fast); }
+  .acts button:hover { color: var(--fg); }
+  .acts button:disabled { opacity: var(--opacity-dim); }
 </style>
