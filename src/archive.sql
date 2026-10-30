@@ -8,25 +8,10 @@ CREATE TABLE archive.space (
     created_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE archive.plan (
-    id            text PRIMARY KEY,
-    name          text NOT NULL,
-    price         text NOT NULL DEFAULT '',
-    runs          bigint,
-    workflow_runs bigint,
-    ai_tokens     bigint,
-    stored_bytes  bigint,
-    concurrent    integer,
-    created_at    timestamptz NOT NULL DEFAULT now()
-);
-
 CREATE TABLE archive.workspace (
     id            uuid PRIMARY KEY DEFAULT uuidv7(),
     name          text NOT NULL,
     key           bytea NOT NULL,
-    plan          text REFERENCES archive.plan ON DELETE SET NULL,
-    customer      text NOT NULL DEFAULT '',
-    subscription  text NOT NULL DEFAULT '',
     anthropic_key bytea,
     created_at    timestamptz NOT NULL DEFAULT now()
 );
@@ -99,16 +84,6 @@ CREATE TABLE archive.revision (
     created_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE archive.usage (
-    workspace     uuid NOT NULL REFERENCES archive.workspace ON DELETE CASCADE,
-    day           date NOT NULL,
-    runs          bigint NOT NULL DEFAULT 0,
-    workflow_runs bigint NOT NULL DEFAULT 0,
-    ai_tokens     bigint NOT NULL DEFAULT 0,
-    stored_bytes  bigint NOT NULL DEFAULT 0,
-    PRIMARY KEY (workspace, day)
-);
-
 CREATE TABLE archive.due (
     workspace uuid NOT NULL REFERENCES archive.workspace ON DELETE CASCADE,
     kind      text NOT NULL,
@@ -116,11 +91,6 @@ CREATE TABLE archive.due (
     PRIMARY KEY (workspace, kind)
 );
 CREATE INDEX due_at_idx ON archive.due (at);
-
-CREATE TABLE archive.setting (
-    key   text PRIMARY KEY,
-    value jsonb NOT NULL
-);
 
 CREATE FUNCTION archive.search_fold(t text) RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
     SELECT translate(replace(replace(replace(lower(regexp_replace(regexp_replace(normalize(coalesce(t, ''), NFD),
@@ -673,23 +643,17 @@ SELECT next_at FROM archive.workflow WHERE next_at IS NOT NULL ORDER BY next_at 
 -- name: HasPendingFiles :one
 SELECT EXISTS (SELECT FROM archive.file WHERE status = 'pending');
 
--- name: StoredBytes :one
-SELECT coalesce(sum(size), 0)::bigint FROM archive.file;
-
 -- name: FirstWorkspace :one
 SELECT * FROM archive.workspace ORDER BY created_at, id LIMIT 1;
 
 -- name: WorkspaceByID :one
 SELECT * FROM archive.workspace WHERE id = $1;
 
--- name: WorkspaceBySubscription :one
-SELECT * FROM archive.workspace WHERE subscription = $1;
-
 -- name: AllWorkspaces :many
 SELECT * FROM archive.workspace ORDER BY created_at, id;
 
 -- name: CreateWorkspace :one
-INSERT INTO archive.workspace (id, name, key, plan) VALUES (sqlc.arg(id), sqlc.arg(name), sqlc.arg(key), sqlc.narg(plan))
+INSERT INTO archive.workspace (id, name, key) VALUES ($1, $2, $3)
 ON CONFLICT DO NOTHING RETURNING *;
 
 -- name: DeleteWorkspace :exec
@@ -704,46 +668,6 @@ UPDATE archive.workspace SET name = $2 WHERE id = $1;
 
 -- name: SetWorkspaceAnthropicKey :exec
 UPDATE archive.workspace SET anthropic_key = $2 WHERE id = $1;
-
--- name: SetWorkspacePlan :exec
-UPDATE archive.workspace SET plan = sqlc.narg(plan), customer = coalesce(nullif(sqlc.arg(customer)::text, ''), customer), subscription = sqlc.arg(subscription)
-WHERE id = sqlc.arg(id);
-
--- name: Setting :one
-SELECT value FROM archive.setting WHERE key = $1;
-
--- name: SetSetting :exec
-INSERT INTO archive.setting (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
-
--- name: Plans :many
-SELECT * FROM archive.plan ORDER BY id;
-
--- name: PlanByID :one
-SELECT * FROM archive.plan WHERE id = $1;
-
--- name: PlanByPrice :one
-SELECT * FROM archive.plan WHERE price = $1 AND price <> '';
-
--- name: SavePlan :one
-INSERT INTO archive.plan (id, name, price, runs, workflow_runs, ai_tokens, stored_bytes, concurrent)
-VALUES (sqlc.arg(id), sqlc.arg(name), sqlc.arg(price), sqlc.narg(runs), sqlc.narg(workflow_runs), sqlc.narg(ai_tokens), sqlc.narg(stored_bytes), sqlc.narg(concurrent))
-ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, price = EXCLUDED.price, runs = EXCLUDED.runs, workflow_runs = EXCLUDED.workflow_runs,
-    ai_tokens = EXCLUDED.ai_tokens, stored_bytes = EXCLUDED.stored_bytes, concurrent = EXCLUDED.concurrent
-RETURNING *;
-
--- name: AddUsage :exec
-INSERT INTO archive.usage (workspace, day, runs, workflow_runs, ai_tokens) VALUES (sqlc.arg(workspace), current_date, sqlc.arg(runs), sqlc.arg(workflow_runs), sqlc.arg(ai_tokens))
-ON CONFLICT (workspace, day) DO UPDATE SET runs = archive.usage.runs + EXCLUDED.runs,
-    workflow_runs = archive.usage.workflow_runs + EXCLUDED.workflow_runs, ai_tokens = archive.usage.ai_tokens + EXCLUDED.ai_tokens;
-
--- name: SetStoredBytes :exec
-INSERT INTO archive.usage (workspace, day, stored_bytes) VALUES ($1, current_date, $2)
-ON CONFLICT (workspace, day) DO UPDATE SET stored_bytes = EXCLUDED.stored_bytes;
-
--- name: MonthUsage :one
-SELECT coalesce(sum(runs), 0)::bigint AS runs, coalesce(sum(workflow_runs), 0)::bigint AS workflow_runs, coalesce(sum(ai_tokens), 0)::bigint AS ai_tokens,
-    coalesce((SELECT u.stored_bytes FROM archive.usage u WHERE u.workspace = $1 ORDER BY u.day DESC LIMIT 1), 0)::bigint AS stored_bytes
-FROM archive.usage WHERE workspace = $1 AND day >= date_trunc('month', now())::date;
 
 -- name: SoonDue :exec
 INSERT INTO archive.due (workspace, kind, at) VALUES ($1, $2, $3)
@@ -762,11 +686,3 @@ WHERE w.id = d.workspace AND w.id = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND
 DELETE FROM archive.due d USING archive.workspace w
 WHERE w.id = d.workspace AND w.id = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND d.at = sqlc.arg(claimed)::timestamptz;
 
--- name: WorkspaceLimits :one
-SELECT p.runs, p.workflow_runs, p.ai_tokens, p.stored_bytes, m.used_runs, m.used_workflow_runs, m.used_ai_tokens,
-    coalesce((SELECT u.stored_bytes FROM archive.usage u WHERE u.workspace = w.id ORDER BY u.day DESC LIMIT 1), 0)::bigint AS used_stored_bytes
-FROM archive.workspace w JOIN archive.plan p ON p.id = w.plan,
-LATERAL (SELECT coalesce(sum(x.runs), 0)::bigint AS used_runs, coalesce(sum(x.workflow_runs), 0)::bigint AS used_workflow_runs,
-    coalesce(sum(x.ai_tokens), 0)::bigint AS used_ai_tokens
-    FROM archive.usage x WHERE x.workspace = w.id AND x.day >= date_trunc('month', now())::date) m
-WHERE w.id = $1;

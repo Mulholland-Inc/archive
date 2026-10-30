@@ -36,7 +36,7 @@
     align-self: center;
     gap: var(--space-2);
     max-width: 100%;
-    margin-bottom: var(--frame);
+    margin: var(--frame);
     padding: var(--space-2);
     border-radius: var(--radius-full);
     background: var(--surface-raised);

@@ -203,18 +203,6 @@ code.inline, .prose code { font: var(--weight-medium) var(--text-em) var(--font-
 .facts.wide { min-width: var(--measure-2xl); }
 @media (max-width: 700px) { .facts td:first-child { overflow-wrap: anywhere; } }
 
-.plans { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-2); }
-.plan { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-6) var(--space-5); background: var(--fill-faint); border-radius: var(--radius-md); }
-.plan.pick { background: var(--primary); color: var(--on-primary); }
-.plan h3 { font-size: var(--text-4xl); }
-.plan .price { font: var(--weight-semibold) var(--text-6xl) / var(--leading-none) var(--font-sans); letter-spacing: var(--tracking-tighter); }
-.plan .price small { display: block; margin-top: var(--space-2); font: var(--weight-normal) var(--text-sm) var(--font-sans); color: var(--fg-muted); letter-spacing: var(--tracking-normal); }
-.plan ul { list-style: none; display: flex; flex-direction: column; gap: var(--space-2); font-size: var(--text-sm); }
-.plan li { display: flex; gap: var(--space-2); }
-.plan li::before { content: "✓"; font-weight: var(--weight-semibold); }
-.plan .btn { margin-top: auto; }
-.plan.pick .btn { background: var(--on-primary); color: var(--primary); }
-.plan.pick .btn:hover { background: var(--on-primary-soft); }
 
 .faq { display: flex; flex-direction: column; gap: var(--space-1); }
 .faq details { background: var(--fill-faint); padding: var(--space-5); border-radius: var(--radius-md); }
@@ -316,7 +304,7 @@ code.inline, .prose code { font: var(--weight-medium) var(--text-em) var(--font-
 .reveal.in { opacity: 1; transform: none; }
 
 @media (max-width: 1100px) {
-  .specs.four, .plans { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .specs.four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .specs.four { row-gap: var(--space-8); }
   .docs { grid-template-columns: var(--measure-xs) minmax(0, 1fr); }
   .docs-toc { display: none; }
@@ -349,7 +337,7 @@ code.inline, .prose code { font: var(--weight-medium) var(--text-em) var(--font-
 }
 
 @media (max-width: 600px) {
-  .specs:not(.four), .plans { grid-template-columns: 1fr; }
+  .specs:not(.four) { grid-template-columns: 1fr; }
   .specs.four { gap: var(--space-7) var(--space-4); }
   .card .spec-art { height: var(--art-xs); }
   .lead { font-size: var(--text-lg); }

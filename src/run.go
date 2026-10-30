@@ -138,27 +138,19 @@ func runCompile(code string) (string, error) {
 }
 
 func (a *Archive) Run(ctx context.Context, code string) (*RunOutput, error) {
-	out, _, err := a.run(ctx, code, nil, false)
+	out, _, err := a.run(ctx, code, nil)
 	return out, err
 }
 
-func (a *Archive) run(ctx context.Context, code string, input json.RawMessage, workflow bool) (*RunOutput, time.Time, error) {
+func (a *Archive) run(ctx context.Context, code string, input json.RawMessage) (*RunOutput, time.Time, error) {
 	if ActorFrom(ctx) == nil {
 		return nil, time.Time{}, fmt.Errorf("not signed in: %w", ErrUnauthorized)
-	}
-	kind, runs, workflowRuns := "runs", int64(1), int64(0)
-	if workflow {
-		kind, runs, workflowRuns = "workflow runs", 0, 1
-	}
-	if err := a.limit(ctx, kind); err != nil {
-		return nil, time.Time{}, err
 	}
 	free, err := a.slot(ctx)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
 	defer free()
-	a.count(ctx, runs, workflowRuns, 0)
 	a.refresh(ctx)
 	out := &RunOutput{Result: json.RawMessage("null"), Logs: []string{}}
 	js, err := runCompile(code)

@@ -10,7 +10,6 @@
 
   const LINKS = [
     ['/developers', 'Developers'],
-    ['/pricing', 'Pricing'],
     ['/docs', 'Docs'],
     ['/blog', 'Blog']
   ];

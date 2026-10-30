@@ -13,8 +13,6 @@ locals {
   }
   optional = {
     ANTHROPIC_API_KEY               = var.anthropic_api_key
-    ARCHIVE_STRIPE_KEY              = var.stripe_key
-    ARCHIVE_STRIPE_WEBHOOK_SECRET   = var.stripe_webhook_secret
     ARCHIVE_GOOGLE_CLIENT_SECRET    = var.google_client_secret
     ARCHIVE_MICROSOFT_CLIENT_SECRET = var.microsoft_client_secret
     ARCHIVE_SLACK_CLIENT_SECRET     = var.slack_client_secret

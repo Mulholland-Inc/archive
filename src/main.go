@@ -94,11 +94,6 @@ Usage:
                                      create a workspace, with its own database, for someone else
   archive workspace list
   archive workspace delete <uuid>    drop a workspace: its database and its roles
-  archive plan list
-  archive plan set <id> [json]       a plan and its limits per month: {"name", "price" (a Stripe
-                                     price id), "runs", "workflow_runs", "ai_tokens",
-                                     "stored_bytes", "concurrent"}; null is no limit
-  archive plan default <id|none>     the plan new workspaces start on
 
 Environment:
   DATABASE_URL       external Postgres, as a superuser; unset starts the bundled one; several
@@ -125,7 +120,7 @@ Environment:
                      bundled Postgres uses $ARCHIVE_DATA/secret.key
   ARCHIVE_URL        public base URL of the web app and sign-in, for cookies and passkeys
                      (default http://localhost:<port>)
-  ARCHIVE_API_URL    public base URL of the API, MCP, webhooks, file links, Stripe and every
+  ARCHIVE_API_URL    public base URL of the API, MCP, webhooks, file links and every
                      OAuth redirect URL (default ARCHIVE_URL)
   ARCHIVE_ADMIN_EMAIL
                      first owner that serve creates when there are no users yet
@@ -139,10 +134,6 @@ Environment:
   ARCHIVE_GOOGLE_URL, ARCHIVE_MICROSOFT_URL, ARCHIVE_SLACK_URL, ARCHIVE_GITHUB_URL
                      provider base URLs (default https://accounts.google.com,
                      https://login.microsoftonline.com, https://slack.com, https://github.com)
-  ARCHIVE_STRIPE_KEY Stripe secret key; set, plans have limits and Stripe Checkout sells them
-  ARCHIVE_STRIPE_WEBHOOK_SECRET
-                     signing secret of the Stripe webhook at ARCHIVE_API_URL/stripe
-  ARCHIVE_STRIPE_URL Stripe API base URL (default https://api.stripe.com)
 `
 
 var cliErrUsage = errors.New("usage")
@@ -289,8 +280,8 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 		return cliFile(ctx, a, pos, *space, *output, *limit, *after, stdout, out)
 	case "user", "space", "token", "secret":
 		return cliAuth(ctx, a, cmd, pos, *name, *admin, *full, *space, *expires, out)
-	case "workspace", "plan":
-		return cliWorkspace(ctx, h, cmd, pos, stdin, out)
+	case "workspace":
+		return cliWorkspace(ctx, h, cmd, pos, out)
 	case "list":
 		where := map[string]any{}
 		for _, kv := range pos[1:] {
@@ -350,7 +341,7 @@ func cliCheckCommand(cmd string, pos []string) error {
 	n, ok := map[string]int{
 		"serve": 0, "mcp": 0, "types": 0, "run": 1, "schema": 1, "list": 1, "create": 1,
 		"get": 2, "delete": 2, "set": 2, "update": 2,
-		"user": 2, "space": 1, "token": 1, "secret": 3, "file": 1, "search": 1, "workspace": 1, "plan": 1,
+		"user": 2, "space": 1, "token": 1, "secret": 3, "file": 1, "search": 1, "workspace": 1,
 	}[cmd]
 	if !ok {
 		return fmt.Errorf("unknown command %q (see archive help)", cmd)
@@ -420,7 +411,7 @@ func cliAuth(ctx context.Context, a *Archive, cmd string, pos []string, name str
 	return cliErrUsage
 }
 
-func cliWorkspace(ctx context.Context, h *Hub, cmd string, pos []string, stdin io.Reader, out func(any, error) error) error {
+func cliWorkspace(ctx context.Context, h *Hub, cmd string, pos []string, out func(any, error) error) error {
 	switch cmd + " " + pos[0] {
 	case "workspace add":
 		if len(pos) > 2 {
@@ -431,30 +422,6 @@ func cliWorkspace(ctx context.Context, h *Hub, cmd string, pos []string, stdin i
 	case "workspace delete":
 		if len(pos) > 1 {
 			return h.DeleteWorkspace(ctx, pos[1])
-		}
-	case "plan list":
-		return out(h.Plans(ctx))
-	case "plan set":
-		if len(pos) > 1 {
-			data, err := cliData(pos[2:], stdin)
-			if err != nil {
-				return err
-			}
-			var p Plan
-			b, _ := json.Marshal(data)
-			if err := json.Unmarshal(b, &p); err != nil {
-				return fmt.Errorf("plan: %w", err)
-			}
-			p.ID = pos[1]
-			return out(h.SetPlan(ctx, p))
-		}
-	case "plan default":
-		if len(pos) > 1 {
-			id := pos[1]
-			if id == "none" {
-				id = ""
-			}
-			return out(h.SetSettings(ctx, &id))
 		}
 	}
 	return cliErrUsage
@@ -624,7 +591,6 @@ func cliServe(ctx context.Context, h *Hub, a *Archive, addr string) error {
 	mux.Handle("/api/files/tus/", tus)
 	mux.HandleFunc("GET /files/{workspace}/{id}", h.inWorkspace((*Archive).fileSigned))
 	mux.HandleFunc("POST /hooks/run/{workspace}/{token}", h.inWorkspace((*Archive).workflowHook))
-	mux.HandleFunc("POST /stripe", h.stripe)
 	mux.Handle("/auth/", si.handler())
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("/mcp", h.mcp)
@@ -659,7 +625,7 @@ func web(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := strings.TrimPrefix(r.URL.Path, "/")
-	if first, _, _ := strings.Cut(name, "/"); first == "hooks" || first == "stripe" {
+	if first, _, _ := strings.Cut(name, "/"); first == "hooks" {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -877,8 +843,6 @@ func httpError(err error) (int, any) {
 		status = http.StatusForbidden
 	case errors.Is(err, ErrReadOnly):
 		status = http.StatusMethodNotAllowed
-	case errors.Is(err, ErrLimit):
-		status = http.StatusPaymentRequired
 	case errors.Is(err, ErrBusy):
 		status = http.StatusTooManyRequests
 	}

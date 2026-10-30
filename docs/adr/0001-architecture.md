@@ -34,7 +34,7 @@ Two Postgres schemas. Tables are named in the singular, and every id is a UUIDv7
 | `archive` | Archive's own tables: `space`, `user`, `token`, `chat`, `workflow`, `workflow_run`, `revision`, `file`, `upload` and `secret`. It also holds the built-in types, as domains (`archive.email`, `archive.iban`, `archive.phone`, …) and composite types (`archive.money`, `archive.address`, `archive.timestamp`, …) |
 | `public` | One table per type, where the table is the type and a row is the entity, and the views over them |
 
-Each workspace (see [Workspaces](#workspaces)) has a database of its own with these two schemas. Only the main database's `user` and `token` are used, since people and their secrets are the instance's, not a workspace's; it also holds the instance's own tables: `workspace`, `usage`, `due`, `setting` and `plan`.
+Each workspace (see [Workspaces](#workspaces)) has a database of its own with these two schemas. Only the main database's `user` and `token` are used, since people and their secrets are the instance's, not a workspace's; it also holds the instance's own tables: `workspace`, `due` and `setting`.
 
 There is no `type` or `entity` table: Postgres already is that. Archive reads types, columns, foreign keys and `COMMENT ON` descriptions from the catalog.
 
@@ -155,9 +155,9 @@ Every install serves many workspaces ([ADR 0003](0003-hosting.md)). A workspace 
 
 - **Opening**: `src/workspace.go` holds the process's `Hub`: the main pool, the root key, the blob store and the open workspaces. A workspace's `Archive` (its pools, catalog, data key and run slots) opens on first use and closes after 10 idle minutes; pools are small (8 app, 4 system, 2 DDL connections) and close idle connections after a minute. Opening applies `archive.sql` under the advisory lock and revision check, and at startup a background pass does the same for every workspace not yet open.
 - **Finding it**: an API token belongs to one workspace, and a request naming another is refused. The web app's one session cookie works in all of the person's workspaces, and each request names the current one in `Archive-Workspace`, the way `Archive-Space` names the space; the server checks that the person is in it. Webhooks and file links carry the workspace UUID in their path.
-- **Limits**: each workspace runs at most 8 scripts at once (or its plan's `concurrent`), and waits 10 s for a slot before answering 429.
-- **Admins**: nobody makes a workspace for themselves. Instance admins, the admins of workspace one, list, create and delete workspaces, each with its first owner (`archive workspace add|list|delete`, `/auth/workspaces`), and edit plans (`archive plan`, `/auth/plans`); deleting a workspace drops its database and roles.
-- **Usage and billing**: `archive.usage` counts runs, workflow runs, the chat agent's tokens and stored bytes per workspace and day. With `ARCHIVE_STRIPE_KEY` set, a workspace's plan (a row in `archive.plan`) limits them per calendar month with 402, `POST /auth/billing/checkout` starts Stripe Checkout, and `POST /stripe` checks Stripe's signature and sets the plan. A workspace may set its own Anthropic key (`PATCH /auth/workspace`), whose tokens are counted but not limited.
+- **Limits**: each workspace runs at most 8 scripts at once, and waits 10 s for a slot before answering 429.
+- **Admins**: nobody makes a workspace for themselves. Instance admins, the admins of workspace one, list, create and delete workspaces, each with its first owner (`archive workspace add|list|delete`, `/auth/workspaces`); deleting a workspace drops its database and roles.
+- **Anthropic key**: a workspace may set its own (`PATCH /auth/workspace`), which the chat agent uses instead of `ANTHROPIC_API_KEY`.
 
 ## Files
 
