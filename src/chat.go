@@ -178,16 +178,10 @@ func chatToolError(uses []chatBlock, msg string) *chatMessage {
 }
 
 func (a *Archive) chat(w http.ResponseWriter, r *http.Request) {
-	key, own := a.anthropicKey(r.Context())
+	key := a.anthropicKey(r.Context())
 	if key == "" {
 		httpWrite(w, http.StatusServiceUnavailable, map[string]string{"error": "the agent needs ANTHROPIC_API_KEY set on the server, or an Anthropic key in the workspace settings"}, nil)
 		return
-	}
-	if !own {
-		if err := a.limit(r.Context(), "AI tokens"); err != nil {
-			httpWrite(w, 0, nil, err)
-			return
-		}
 	}
 	var body struct {
 		Chat uuid.UUID `json:"chat"`
@@ -271,10 +265,7 @@ func (a *Archive) chat(w http.ResponseWriter, r *http.Request) {
 	}}
 	system := chatSystem(ac)
 	for runs := 0; ; {
-		msg, stop, tokens, err := chatTurn(ctx, key, tools, system, msgs, send)
-		if tokens > 0 {
-			a.count(ctx, 0, 0, tokens)
-		}
+		msg, stop, err := chatTurn(ctx, key, tools, system, msgs, send)
 		if ctx.Err() != nil {
 			return
 		}
@@ -431,14 +422,7 @@ func chatPost(ctx context.Context, key string, body []byte) (*http.Response, err
 	}
 }
 
-type chatUsage struct {
-	Input      int64 `json:"input_tokens"`
-	CacheWrite int64 `json:"cache_creation_input_tokens"`
-	CacheRead  int64 `json:"cache_read_input_tokens"`
-	Output     int64 `json:"output_tokens"`
-}
-
-func chatTurn(ctx context.Context, key string, tools []any, system string, msgs []chatMessage, send func(map[string]any)) (*chatMessage, string, int64, error) {
+func chatTurn(ctx context.Context, key string, tools []any, system string, msgs []chatMessage, send func(map[string]any)) (*chatMessage, string, error) {
 	b, err := json.Marshal(map[string]any{
 		"model":         chatModel(),
 		"max_tokens":    chatMaxTokens,
@@ -449,18 +433,16 @@ func chatTurn(ctx context.Context, key string, tools []any, system string, msgs 
 		"cache_control": map[string]string{"type": "ephemeral"},
 	})
 	if err != nil {
-		return nil, "", 0, err
+		return nil, "", err
 	}
 	resp, err := chatPost(ctx, key, b)
 	if err != nil {
-		return nil, "", 0, err
+		return nil, "", err
 	}
 	defer resp.Body.Close()
 	var blocks []chatBlock
 	var partial []string
 	var stop string
-	var use chatUsage
-	tokens := func() int64 { return use.Input + use.CacheWrite + use.CacheRead + use.Output }
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 1<<20), 16<<20)
 	for sc.Scan() {
@@ -473,11 +455,7 @@ func chatTurn(ctx context.Context, key string, tools []any, system string, msgs 
 			Index        int            `json:"index"`
 			ContentBlock chatBlock      `json:"content_block"`
 			Delta        map[string]any `json:"delta"`
-			Usage        *chatUsage     `json:"usage"`
-			Message      struct {
-				Usage *chatUsage `json:"usage"`
-			} `json:"message"`
-			Error struct {
+			Error        struct {
 				Message string `json:"message"`
 			} `json:"error"`
 		}
@@ -485,10 +463,6 @@ func chatTurn(ctx context.Context, key string, tools []any, system string, msgs 
 			continue
 		}
 		switch ev.Type {
-		case "message_start":
-			if ev.Message.Usage != nil {
-				use = *ev.Message.Usage
-			}
 		case "content_block_start":
 			for len(blocks) <= ev.Index {
 				blocks, partial = append(blocks, nil), append(partial, "")
@@ -533,18 +507,15 @@ func chatTurn(ctx context.Context, key string, tools []any, system string, msgs 
 			if s, ok := ev.Delta["stop_reason"].(string); ok {
 				stop = s
 			}
-			if ev.Usage != nil && ev.Usage.Output > 0 {
-				use.Output = ev.Usage.Output
-			}
 		case "error":
-			return nil, "", tokens(), errors.New("model: " + ev.Error.Message)
+			return nil, "", errors.New("model: " + ev.Error.Message)
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return nil, "", tokens(), err
+		return nil, "", err
 	}
 	if stop == "" {
-		return nil, "", tokens(), errors.New("model: the stream ended early")
+		return nil, "", errors.New("model: the stream ended early")
 	}
 	m := &chatMessage{Role: "assistant", Content: []chatBlock{}}
 	for _, blk := range blocks {
@@ -552,5 +523,5 @@ func chatTurn(ctx context.Context, key string, tools []any, system string, msgs 
 			m.Content = append(m.Content, blk)
 		}
 	}
-	return m, stop, tokens(), nil
+	return m, stop, nil
 }

@@ -180,7 +180,7 @@ docker exec archive archive signup on
 docker exec archive archive -workspace <uuid> space list
 ```
 
-A workspace's roles can reach only its own database, so workspaces stay isolated even where Postgres has no superuser, as on Cloud SQL. A token works in the one workspace it was made in, and the web app's one session switches between all of yours. With `ARCHIVE_STRIPE_KEY` set, plans and their monthly limits are rows (`archive plan set`), Stripe Checkout sells them and Stripe's webhook at `ARCHIVE_API_URL/stripe` changes a workspace's plan; without it, nothing is limited. [app.archive.dev](https://app.archive.dev) is this same image, deployed with [`apps/terraform/gcp`](apps/terraform/gcp) with `app_domain` and `api_domain` set.
+A workspace's roles can reach only its own database, so workspaces stay isolated even where Postgres has no superuser, as on Cloud SQL. A token works in the one workspace it was made in, and the web app's one session switches between all of yours. [app.archive.dev](https://app.archive.dev) is this same image, deployed with [`apps/terraform/gcp`](apps/terraform/gcp) with `app_domain` and `api_domain` set.
 
 Every setting is an environment variable; `archive help` lists them all:
 
@@ -188,7 +188,7 @@ Every setting is an environment variable; `archive help` lists them all:
 |---|---|
 | `ARCHIVE_ADMIN_EMAIL` | First owner, created when there are no users yet |
 | `ARCHIVE_URL` | Public base URL of the web app and sign-in, for sign-in links, cookies and passkeys |
-| `ARCHIVE_API_URL` | Public base URL of the API, MCP, webhooks, file links, Stripe and OAuth redirects (default `ARCHIVE_URL`) |
+| `ARCHIVE_API_URL` | Public base URL of the API, MCP, webhooks, file links and OAuth redirects (default `ARCHIVE_URL`) |
 | `ARCHIVE_DATA` | Data directory for the bundled Postgres, its key and files (default `./data`) |
 | `DATABASE_URL` | Outside Postgres, with CREATEROLE and CREATEDB (no superuser needed); unset starts the bundled one. Each workspace gets its own database on the same server |
 | `DATABASE_DIRECT_URL` | The same Postgres without a pooler in between, for schema changes (default `DATABASE_URL`) |
@@ -196,7 +196,6 @@ Every setting is an environment variable; `archive help` lists them all:
 | `ARCHIVE_BLOB_URL`, `ARCHIVE_BLOB_KEY`, `ARCHIVE_BLOB_SECRET` | S3, R2, MinIO or GCS for files |
 | `ARCHIVE_OIDC` | OIDC providers, like Google and Microsoft; their redirect URL is `ARCHIVE_API_URL/auth/oidc/<name>/callback` |
 | `ANTHROPIC_API_KEY` | Key of the in-app agent; a workspace can set its own |
-| `ARCHIVE_STRIPE_KEY`, `ARCHIVE_STRIPE_WEBHOOK_SECRET` | Billing: plan limits, Stripe Checkout and the webhook at `ARCHIVE_API_URL/stripe` |
 | `ARCHIVE_LOCALE` | Locale that messy input is read in |
 | `ARCHIVE_RUN_TIMEOUT` | Time limit of one run (default `30s`) |
 | `ARCHIVE_PG_BIN` | Where the Postgres binaries are; unset uses `PATH` or downloads them |

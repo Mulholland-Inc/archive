@@ -23,7 +23,7 @@ variable "app_domain" {
 
 variable "api_domain" {
   type        = string
-  description = "Domain of the API, MCP, webhooks, Stripe and OAuth redirects, like api.archive.dev (ARCHIVE_API_URL), on Cloudflare. Empty uses the app's address."
+  description = "Domain of the API, MCP, webhooks and OAuth redirects, like api.archive.dev (ARCHIVE_API_URL), on Cloudflare. Empty uses the app's address."
   default     = ""
 }
 
@@ -65,20 +65,6 @@ variable "env" {
 variable "anthropic_api_key" {
   type        = string
   description = "Anthropic API key for the in-app agent (ANTHROPIC_API_KEY), kept in Secret Manager. Empty leaves the agent off."
-  default     = ""
-  sensitive   = true
-}
-
-variable "stripe_key" {
-  type        = string
-  description = "Stripe secret key (ARCHIVE_STRIPE_KEY), kept in Secret Manager. Empty turns billing and plan limits off."
-  default     = ""
-  sensitive   = true
-}
-
-variable "stripe_webhook_secret" {
-  type        = string
-  description = "Signing secret of the Stripe webhook at <api>/stripe (ARCHIVE_STRIPE_WEBHOOK_SECRET), kept in Secret Manager."
   default     = ""
   sensitive   = true
 }

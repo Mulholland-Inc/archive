@@ -422,7 +422,7 @@ func (a *Archive) workflowExec(ctx context.Context, w generated.ArchiveWorkflow,
 				return WorkflowRun{}, err
 			}
 		}
-		if o, t, err := a.run(WithActor(ctx, ac), w.Source, in, true); err != nil {
+		if o, t, err := a.run(WithActor(ctx, ac), w.Source, in); err != nil {
 			out.Error = err.Error()
 		} else {
 			out, at = o, t

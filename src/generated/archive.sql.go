@@ -13,29 +13,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const addUsage = `-- name: AddUsage :exec
-INSERT INTO archive.usage (workspace, day, runs, workflow_runs, ai_tokens) VALUES ($1, current_date, $2, $3, $4)
-ON CONFLICT (workspace, day) DO UPDATE SET runs = archive.usage.runs + EXCLUDED.runs,
-    workflow_runs = archive.usage.workflow_runs + EXCLUDED.workflow_runs, ai_tokens = archive.usage.ai_tokens + EXCLUDED.ai_tokens
-`
-
-type AddUsageParams struct {
-	Workspace    uuid.UUID
-	Runs         int64
-	WorkflowRuns int64
-	AiTokens     int64
-}
-
-func (q *Queries) AddUsage(ctx context.Context, arg AddUsageParams) error {
-	_, err := q.db.Exec(ctx, addUsage,
-		arg.Workspace,
-		arg.Runs,
-		arg.WorkflowRuns,
-		arg.AiTokens,
-	)
-	return err
-}
-
 const addWorkflowRun = `-- name: AddWorkflowRun :one
 INSERT INTO archive.workflow_run (workflow, trigger, result, logs, error, ms, created_at)
 SELECT w.id, $1, $2, $3, $4, $5, $6
@@ -129,7 +106,7 @@ func (q *Queries) AdvisoryXactLock(ctx context.Context, key int64) error {
 }
 
 const allWorkspaces = `-- name: AllWorkspaces :many
-SELECT id, name, key, plan, customer, subscription, anthropic_key, created_at FROM archive.workspace ORDER BY created_at, id
+SELECT id, name, key, anthropic_key, created_at FROM archive.workspace ORDER BY created_at, id
 `
 
 func (q *Queries) AllWorkspaces(ctx context.Context) ([]ArchiveWorkspace, error) {
@@ -145,9 +122,6 @@ func (q *Queries) AllWorkspaces(ctx context.Context) ([]ArchiveWorkspace, error)
 			&i.ID,
 			&i.Name,
 			&i.Key,
-			&i.Plan,
-			&i.Customer,
-			&i.Subscription,
 			&i.AnthropicKey,
 			&i.CreatedAt,
 		); err != nil {
@@ -626,32 +600,17 @@ func (q *Queries) CreateUserToken(ctx context.Context, arg CreateUserTokenParams
 }
 
 const createWorkspace = `-- name: CreateWorkspace :one
-INSERT INTO archive.workspace (id, name, key, plan) VALUES ($1, $2, $3, $4)
-ON CONFLICT DO NOTHING RETURNING id, name, key, plan, customer, subscription, anthropic_key, created_at
+INSERT INTO archive.workspace (id, name, key) VALUES ($1, $2, $3)
+ON CONFLICT DO NOTHING RETURNING id, name, key, anthropic_key, created_at
 `
 
-type CreateWorkspaceParams struct {
-	ID   uuid.UUID
-	Name string
-	Key  []byte
-	Plan *string
-}
-
-func (q *Queries) CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams) (ArchiveWorkspace, error) {
-	row := q.db.QueryRow(ctx, createWorkspace,
-		arg.ID,
-		arg.Name,
-		arg.Key,
-		arg.Plan,
-	)
+func (q *Queries) CreateWorkspace(ctx context.Context, iD uuid.UUID, name string, key []byte) (ArchiveWorkspace, error) {
+	row := q.db.QueryRow(ctx, createWorkspace, iD, name, key)
 	var i ArchiveWorkspace
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
 		&i.Key,
-		&i.Plan,
-		&i.Customer,
-		&i.Subscription,
 		&i.AnthropicKey,
 		&i.CreatedAt,
 	)
@@ -1007,7 +966,7 @@ func (q *Queries) FirstUser(ctx context.Context, workspace uuid.UUID) (ArchiveUs
 }
 
 const firstWorkspace = `-- name: FirstWorkspace :one
-SELECT id, name, key, plan, customer, subscription, anthropic_key, created_at FROM archive.workspace ORDER BY created_at, id LIMIT 1
+SELECT id, name, key, anthropic_key, created_at FROM archive.workspace ORDER BY created_at, id LIMIT 1
 `
 
 func (q *Queries) FirstWorkspace(ctx context.Context) (ArchiveWorkspace, error) {
@@ -1017,9 +976,6 @@ func (q *Queries) FirstWorkspace(ctx context.Context) (ArchiveWorkspace, error) 
 		&i.ID,
 		&i.Name,
 		&i.Key,
-		&i.Plan,
-		&i.Customer,
-		&i.Subscription,
 		&i.AnthropicKey,
 		&i.CreatedAt,
 	)
@@ -1296,31 +1252,6 @@ func (q *Queries) LockUpload(ctx context.Context, id uuid.UUID) (ArchiveUpload, 
 	return i, err
 }
 
-const monthUsage = `-- name: MonthUsage :one
-SELECT coalesce(sum(runs), 0)::bigint AS runs, coalesce(sum(workflow_runs), 0)::bigint AS workflow_runs, coalesce(sum(ai_tokens), 0)::bigint AS ai_tokens,
-    coalesce((SELECT u.stored_bytes FROM archive.usage u WHERE u.workspace = $1 ORDER BY u.day DESC LIMIT 1), 0)::bigint AS stored_bytes
-FROM archive.usage WHERE workspace = $1 AND day >= date_trunc('month', now())::date
-`
-
-type MonthUsageRow struct {
-	Runs         int64
-	WorkflowRuns int64
-	AiTokens     int64
-	StoredBytes  int64
-}
-
-func (q *Queries) MonthUsage(ctx context.Context, workspace uuid.UUID) (MonthUsageRow, error) {
-	row := q.db.QueryRow(ctx, monthUsage, workspace)
-	var i MonthUsageRow
-	err := row.Scan(
-		&i.Runs,
-		&i.WorkflowRuns,
-		&i.AiTokens,
-		&i.StoredBytes,
-	)
-	return i, err
-}
-
 const nextPendingFile = `-- name: NextPendingFile :one
 SELECT id, hash, name, mime, size, metadata, status, error, space, created_at FROM archive.file
 WHERE status = 'pending' ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED
@@ -1388,82 +1319,6 @@ func (q *Queries) OntologyAdmin(ctx context.Context) (bool, error) {
 	var ontology_admin bool
 	err := row.Scan(&ontology_admin)
 	return ontology_admin, err
-}
-
-const planByID = `-- name: PlanByID :one
-SELECT id, name, price, runs, workflow_runs, ai_tokens, stored_bytes, concurrent, created_at FROM archive.plan WHERE id = $1
-`
-
-func (q *Queries) PlanByID(ctx context.Context, id string) (ArchivePlan, error) {
-	row := q.db.QueryRow(ctx, planByID, id)
-	var i ArchivePlan
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Price,
-		&i.Runs,
-		&i.WorkflowRuns,
-		&i.AiTokens,
-		&i.StoredBytes,
-		&i.Concurrent,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const planByPrice = `-- name: PlanByPrice :one
-SELECT id, name, price, runs, workflow_runs, ai_tokens, stored_bytes, concurrent, created_at FROM archive.plan WHERE price = $1 AND price <> ''
-`
-
-func (q *Queries) PlanByPrice(ctx context.Context, price string) (ArchivePlan, error) {
-	row := q.db.QueryRow(ctx, planByPrice, price)
-	var i ArchivePlan
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Price,
-		&i.Runs,
-		&i.WorkflowRuns,
-		&i.AiTokens,
-		&i.StoredBytes,
-		&i.Concurrent,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const plans = `-- name: Plans :many
-SELECT id, name, price, runs, workflow_runs, ai_tokens, stored_bytes, concurrent, created_at FROM archive.plan ORDER BY id
-`
-
-func (q *Queries) Plans(ctx context.Context) ([]ArchivePlan, error) {
-	rows, err := q.db.Query(ctx, plans)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ArchivePlan
-	for rows.Next() {
-		var i ArchivePlan
-		if err := rows.Scan(
-			&i.ID,
-			&i.Name,
-			&i.Price,
-			&i.Runs,
-			&i.WorkflowRuns,
-			&i.AiTokens,
-			&i.StoredBytes,
-			&i.Concurrent,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const renameChat = `-- name: RenameChat :execrows
@@ -1625,51 +1480,6 @@ func (q *Queries) RolesWithPrefix(ctx context.Context, prefix string) ([]string,
 	return items, nil
 }
 
-const savePlan = `-- name: SavePlan :one
-INSERT INTO archive.plan (id, name, price, runs, workflow_runs, ai_tokens, stored_bytes, concurrent)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, price = EXCLUDED.price, runs = EXCLUDED.runs, workflow_runs = EXCLUDED.workflow_runs,
-    ai_tokens = EXCLUDED.ai_tokens, stored_bytes = EXCLUDED.stored_bytes, concurrent = EXCLUDED.concurrent
-RETURNING id, name, price, runs, workflow_runs, ai_tokens, stored_bytes, concurrent, created_at
-`
-
-type SavePlanParams struct {
-	ID           string
-	Name         string
-	Price        string
-	Runs         *int64
-	WorkflowRuns *int64
-	AiTokens     *int64
-	StoredBytes  *int64
-	Concurrent   *int32
-}
-
-func (q *Queries) SavePlan(ctx context.Context, arg SavePlanParams) (ArchivePlan, error) {
-	row := q.db.QueryRow(ctx, savePlan,
-		arg.ID,
-		arg.Name,
-		arg.Price,
-		arg.Runs,
-		arg.WorkflowRuns,
-		arg.AiTokens,
-		arg.StoredBytes,
-		arg.Concurrent,
-	)
-	var i ArchivePlan
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Price,
-		&i.Runs,
-		&i.WorkflowRuns,
-		&i.AiTokens,
-		&i.StoredBytes,
-		&i.Concurrent,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const saveWorkflow = `-- name: SaveWorkflow :one
 INSERT INTO archive.workflow (user_id, role, name, source, trigger, hook, next_at, cursor_at, cursor_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -1827,16 +1637,6 @@ func (q *Queries) SetSignin(ctx context.Context, iD uuid.UUID, signin json.RawMe
 	return err
 }
 
-const setStoredBytes = `-- name: SetStoredBytes :exec
-INSERT INTO archive.usage (workspace, day, stored_bytes) VALUES ($1, current_date, $2)
-ON CONFLICT (workspace, day) DO UPDATE SET stored_bytes = EXCLUDED.stored_bytes
-`
-
-func (q *Queries) SetStoredBytes(ctx context.Context, workspace uuid.UUID, storedBytes int64) error {
-	_, err := q.db.Exec(ctx, setStoredBytes, workspace, storedBytes)
-	return err
-}
-
 const setUploadParts = `-- name: SetUploadParts :exec
 UPDATE archive.upload SET parts = $2 WHERE id = $1
 `
@@ -1861,28 +1661,6 @@ UPDATE archive.workspace SET anthropic_key = $2 WHERE id = $1
 
 func (q *Queries) SetWorkspaceAnthropicKey(ctx context.Context, iD uuid.UUID, anthropicKey []byte) error {
 	_, err := q.db.Exec(ctx, setWorkspaceAnthropicKey, iD, anthropicKey)
-	return err
-}
-
-const setWorkspacePlan = `-- name: SetWorkspacePlan :exec
-UPDATE archive.workspace SET plan = $1, customer = coalesce(nullif($2::text, ''), customer), subscription = $3
-WHERE id = $4
-`
-
-type SetWorkspacePlanParams struct {
-	Plan         *string
-	Customer     string
-	Subscription string
-	ID           uuid.UUID
-}
-
-func (q *Queries) SetWorkspacePlan(ctx context.Context, arg SetWorkspacePlanParams) error {
-	_, err := q.db.Exec(ctx, setWorkspacePlan,
-		arg.Plan,
-		arg.Customer,
-		arg.Subscription,
-		arg.ID,
-	)
 	return err
 }
 
@@ -2040,17 +1818,6 @@ func (q *Queries) Spaces(ctx context.Context) ([]SpacesRow, error) {
 		return nil, err
 	}
 	return items, nil
-}
-
-const storedBytes = `-- name: StoredBytes :one
-SELECT coalesce(sum(size), 0)::bigint FROM archive.file
-`
-
-func (q *Queries) StoredBytes(ctx context.Context) (int64, error) {
-	row := q.db.QueryRow(ctx, storedBytes)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
 }
 
 const tokenRoles = `-- name: TokenRoles :many
@@ -2395,7 +2162,7 @@ func (q *Queries) Workflows(ctx context.Context, userID uuid.UUID) ([]ArchiveWor
 }
 
 const workspaceByID = `-- name: WorkspaceByID :one
-SELECT id, name, key, plan, customer, subscription, anthropic_key, created_at FROM archive.workspace WHERE id = $1
+SELECT id, name, key, anthropic_key, created_at FROM archive.workspace WHERE id = $1
 `
 
 func (q *Queries) WorkspaceByID(ctx context.Context, id uuid.UUID) (ArchiveWorkspace, error) {
@@ -2405,68 +2172,8 @@ func (q *Queries) WorkspaceByID(ctx context.Context, id uuid.UUID) (ArchiveWorks
 		&i.ID,
 		&i.Name,
 		&i.Key,
-		&i.Plan,
-		&i.Customer,
-		&i.Subscription,
 		&i.AnthropicKey,
 		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const workspaceBySubscription = `-- name: WorkspaceBySubscription :one
-SELECT id, name, key, plan, customer, subscription, anthropic_key, created_at FROM archive.workspace WHERE subscription = $1
-`
-
-func (q *Queries) WorkspaceBySubscription(ctx context.Context, subscription string) (ArchiveWorkspace, error) {
-	row := q.db.QueryRow(ctx, workspaceBySubscription, subscription)
-	var i ArchiveWorkspace
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Key,
-		&i.Plan,
-		&i.Customer,
-		&i.Subscription,
-		&i.AnthropicKey,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const workspaceLimits = `-- name: WorkspaceLimits :one
-SELECT p.runs, p.workflow_runs, p.ai_tokens, p.stored_bytes, m.used_runs, m.used_workflow_runs, m.used_ai_tokens,
-    coalesce((SELECT u.stored_bytes FROM archive.usage u WHERE u.workspace = w.id ORDER BY u.day DESC LIMIT 1), 0)::bigint AS used_stored_bytes
-FROM archive.workspace w JOIN archive.plan p ON p.id = w.plan,
-LATERAL (SELECT coalesce(sum(x.runs), 0)::bigint AS used_runs, coalesce(sum(x.workflow_runs), 0)::bigint AS used_workflow_runs,
-    coalesce(sum(x.ai_tokens), 0)::bigint AS used_ai_tokens
-    FROM archive.usage x WHERE x.workspace = w.id AND x.day >= date_trunc('month', now())::date) m
-WHERE w.id = $1
-`
-
-type WorkspaceLimitsRow struct {
-	Runs             *int64
-	WorkflowRuns     *int64
-	AiTokens         *int64
-	StoredBytes      *int64
-	UsedRuns         int64
-	UsedWorkflowRuns int64
-	UsedAiTokens     int64
-	UsedStoredBytes  int64
-}
-
-func (q *Queries) WorkspaceLimits(ctx context.Context, id uuid.UUID) (WorkspaceLimitsRow, error) {
-	row := q.db.QueryRow(ctx, workspaceLimits, id)
-	var i WorkspaceLimitsRow
-	err := row.Scan(
-		&i.Runs,
-		&i.WorkflowRuns,
-		&i.AiTokens,
-		&i.StoredBytes,
-		&i.UsedRuns,
-		&i.UsedWorkflowRuns,
-		&i.UsedAiTokens,
-		&i.UsedStoredBytes,
 	)
 	return i, err
 }

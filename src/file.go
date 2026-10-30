@@ -105,9 +105,6 @@ func (a *Archive) fileAdd(ctx context.Context, sid uuid.UUID, name string, r io.
 }
 
 func (a *Archive) fileCommit(ctx context.Context, sid uuid.UUID, name string, open func() (io.ReadCloser, error)) (*File, error) {
-	if err := a.limit(ctx, "stored bytes"); err != nil {
-		return nil, err
-	}
 	r, err := open()
 	if err != nil {
 		return nil, err
@@ -143,11 +140,6 @@ func (a *Archive) fileCommit(ctx context.Context, sid uuid.UUID, name string, op
 	if err != nil {
 		return nil, err
 	}
-	storeAfter(ctx, func() {
-		if err := a.storedBytes(context.WithValue(context.WithoutCancel(ctx), storeTxKey{}, nil)); err != nil {
-			fmt.Fprintf(os.Stderr, "archive: workspace %s usage: %v\n", a.ws.ID, err)
-		}
-	})
 	return a.fileReady(ctx, f)
 }
 

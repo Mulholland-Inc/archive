@@ -6,7 +6,7 @@
 
 ## Summary
 
-app.archive.dev is Archive hosted by Mulholland, with self-serve signup. It runs the same image from the same open repo as every self-hosted Archive. There is no private repo, no hosted build and no mode switch. What makes it the hosted version is its environment variables (the API keys filled in, Stripe, its two domains) and rows in its database (workspaces, plans, the signup setting).
+app.archive.dev is Archive hosted by Mulholland, with self-serve signup. It runs the same image from the same open repo as every self-hosted Archive. There is no private repo, no hosted build and no mode switch. What makes it the hosted version is its environment variables (the API keys filled in, its two domains) and rows in its database (workspaces, the signup setting).
 
 To get there, Archive serves many workspaces by default. A workspace is one customer's Archive: its own Postgres database, holding its tables, spaces, files and workflows. People are not per workspace: each has one identity, which can belong to several workspaces. A self-hosted install is the same code with one workspace.
 
@@ -14,7 +14,7 @@ To get there, Archive serves many workspaces by default. A workspace is one cust
 flowchart LR
   Browser[app.archive.dev] --> Run
   Clients[api.archive.dev: API, MCP, webhooks, OAuth callbacks] --> Run
-  Run[One Cloud Run service, any number of instances] --> Main[(Main database: workspaces, users, tokens, usage, due work)]
+  Run[One Cloud Run service, any number of instances] --> Main[(Main database: workspaces, users, tokens, due work)]
   Run --> W1[(Workspace database)]
   Run --> W2[(Workspace database)]
   Run --> Blobs[(One bucket, a prefix per workspace)]
@@ -28,10 +28,9 @@ flowchart LR
 
 | Table | Holds |
 |---|---|
-| `archive.workspace` | id (a UUIDv7), name, data key (encrypted with `ARCHIVE_SECRET_KEY`), plan, Stripe customer and subscription, its own Anthropic key, created_at |
+| `archive.workspace` | id (a UUIDv7), name, data key (encrypted with `ARCHIVE_SECRET_KEY`), its own Anthropic key, created_at |
 | `archive.user` | every person once: email, name, passkeys and OIDC links, and the workspaces they belong to (`workspaces uuid[]`, GIN-indexed) |
 | `archive.token` | sessions, sign-in links and API tokens, by hash; an API token also names its one workspace |
-| `archive.usage` | per workspace and day: runs, workflow runs, AI tokens, stored bytes |
 | `archive.due` | the next time each workspace has background work |
 | `archive.setting` | instance settings, such as whether signup is open |
 
@@ -57,7 +56,7 @@ A workspace is a database of about a hundred catalog objects; a few thousand per
 ## Hosts
 
 - **app.archive.dev** serves the web app and sign-in.
-- **api.archive.dev** serves the HTTP API, MCP, workflow webhooks, the Stripe webhook, and every OAuth redirect URL: connectors (ADR 0002) and sign-in with Google and Microsoft. These are the URLs registered and approved with each vendor, so they never change and don't depend on the workspace.
+- **api.archive.dev** serves the HTTP API, MCP, workflow webhooks and every OAuth redirect URL: connectors (ADR 0002) and sign-in with Google and Microsoft. These are the URLs registered and approved with each vendor, so they never change and don't depend on the workspace.
 - `ARCHIVE_URL` is the app's address. A new `ARCHIVE_API_URL` is the API's, and defaults to `ARCHIVE_URL`, so a self-hosted install keeps using one host for everything.
 - Both hosts point at the same Cloud Run service. No subdomain per workspace, no wildcard certificates.
 
@@ -78,16 +77,15 @@ Without subdomains, every request names its workspace, and secrets stay plain `a
 - **Background work from one queue.** Workflows (schedules and table triggers) and pending files write their next due time to `archive.due` in the main database. Instances claim due rows with `FOR UPDATE SKIP LOCKED`, open that workspace and do the work. No instance polls every workspace.
 - **Limits per workspace**: concurrent runs, so one busy workspace cannot starve the others on a shared instance.
 
-## Signup and billing
+## Signup
 
 - **Signup** is an instance setting in `archive.setting`, off by default. An instance admin turns it on. On app.archive.dev it is on. Signing up, by a first Google or Microsoft sign-in with a verified email or by a signed-in person adding a workspace, creates the database, applies the schema, adds the `archive.workspace` row and makes the person its owner, adding the workspace to their `archive.user` row. With signup off, an OIDC sign-in only finds people an admin added, by their verified email.
 - **Admins can also create and delete workspaces** for other people (`archive workspace add|delete`), which is how a self-hosted install hosts several organizations without opening signup. Deleting a workspace drops its database and its roles.
-- **Billing** works when `ARCHIVE_STRIPE_KEY` is set, like Google sign-in works when `ARCHIVE_OIDC` names it. Plans and their limits are rows. Stripe Checkout starts a subscription, and Stripe's webhook at `api.archive.dev/stripe` updates the workspace's plan. Without a key, workspaces have no limits.
-- **AI usage** is counted in `archive.usage`: the chat agent records the tokens of every reply. The shared `ANTHROPIC_API_KEY` serves every workspace. A workspace can bring its own key in a setting.
+- **AI keys**: the shared `ANTHROPIC_API_KEY` serves every workspace. A workspace can bring its own key in a setting.
 
 ## Infrastructure
 
-`apps/terraform/gcp` deploys app.archive.dev exactly as it deploys anyone's Archive: one Cloud Run service, Cloud SQL reached directly over its socket, a bucket, and the secrets as environment variables. Mulholland's values (domains, keys, Stripe) are Terraform variables, not code.
+`apps/terraform/gcp` deploys app.archive.dev exactly as it deploys anyone's Archive: one Cloud Run service, Cloud SQL reached directly over its socket, a bucket, and the secrets as environment variables. Mulholland's values (domains, keys) are Terraform variables, not code.
 
 - **Domains go through a Cloudflare Worker.** Cloud Run picks the service by Host header, so DNS alone cannot point a domain at it. Cloud Run's domain mapping is preview and not meant for production, a Google load balancer costs about $18 a month, and Cloudflare Origin Rules rewrite the Host header only on Enterprise. A Worker of a few lines, on Workers' free plan, fetches the same path from the service's run.app address. Its custom domains create the DNS records and certificates, and Cloudflare's protection sits in front. Without domains there is no Worker and the run.app address is the app's.
 - **The image comes through Artifact Registry.** Cloud Run cannot pull from ghcr.io, so a remote repository mirrors it. The ghcr.io package has to be public.
@@ -99,15 +97,15 @@ Without subdomains, every request names its workspace, and secrets stay plain `a
 Built as decided; [ADR 0001](0001-architecture.md#workspaces) describes the result. Where the build differs from the above, or chose where it was silent:
 
 - **One `archive.sql` for every database.** The instance tables are part of Archive's schema, so they exist, empty, in every workspace's database too; only the main database's are used. One schema keeps one revision hash and one upgrade path.
-- **More instance tables.** Plans are rows of `archive.plan` (Stripe price, monthly runs, workflow runs, AI tokens, stored bytes, concurrent runs; null is no limit), and the `plan` setting is the plan new workspaces start on.
+- **Billing was removed.** Plans with monthly limits, usage counting in `archive.usage`, Stripe Checkout and the Stripe webhook were built, then removed: instance admins make the workspaces, so there is nothing to sell or meter.
 - **The workspace id is a UUIDv7.** There is no short id. The database is `archive_<id>`, the roles are prefixed `"<id>_"` (quoted, since a UUID is not a bare identifier), the blobs live under `<id>/`, and URLs and the `Archive-Workspace` header carry it. Workspace one lives in the main database (`DATABASE_URL`). Role names fit Postgres's 63-byte limit: a user or token role is `<id>_u<base64url>` / `<id>_t<base64url>`, and a space is `<id>_s<random>_<level>`.
 - **Two walls of isolation, neither needing a superuser.** A workspace's roles can CONNECT only to its own database (its authenticator is granted CONNECT there and `PUBLIC` is revoked), and its authenticator's password derives from that workspace's own data key, so no shared login can reach another workspace. Postgres keeps each database's `pg_class`, `pg_attribute` and the rest to itself, so one workspace's raw SQL and psql cannot see another's table names, columns, comments, view definitions or rows. Within a database, row-level security and the space roles filter further. A workspace's authenticator is a member only of that workspace's roles, so `SET ROLE` or `set_config('role', …)` into another workspace's role is refused by Postgres. All of this works where Archive's database role has only CREATEROLE, CREATEDB and LOGIN, as on Cloud SQL and AlloyDB.
 - **Still shared across workspaces:** `pg_roles` and `pg_database` are server-wide, so a workspace's SQL can see that other databases and roles exist. Both are only UUIDs (`archive_<id>`, `"<id>_…"`), so they reveal counts, not names or data.
-- **Both hosts answer every route.** The server does not look at the host. The URLs it hands out use the right one: sign-in links `ARCHIVE_URL`; webhooks, file links, the Stripe webhook and OIDC redirects `ARCHIVE_API_URL`. The web app on app.archive.dev calls `/api` on its own host, so its cookie stays first-party.
+- **Both hosts answer every route.** The server does not look at the host. The URLs it hands out use the right one: sign-in links `ARCHIVE_URL`; webhooks, file links and OIDC redirects `ARCHIVE_API_URL`. The web app on app.archive.dev calls `/api` on its own host, so its cookie stays first-party.
 - **One identity per person.** `archive.user` and `archive.token` live in the main database only; a workspace database keeps its data and the Postgres roles row-level security needs, and its rows refer to people by their global user id, with no foreign key across databases. Adding someone to a workspace adds it to their `workspaces` and creates their role (`<id>_u<user>`) and personal space there once; removing them drops that role and their tokens, chats and workflows there, and keeps the personal space for when they come back. A session works in every workspace the person is in, and the server picks the first one when a request names none. The sign-in screen never tells anyone which workspaces an email belongs to. OIDC's callback on the API host redirects to `ARCHIVE_URL/auth/oidc/done` with a one-time link that only works in the browser that started (a cookie bound into the encrypted `state`). A passkey's user handle is the user id.
 - **The archive tables the system writes** (`space`, `file`, `secret`) have row-level security enabled but not forced, so the role that owns them — the one `DATABASE_URL` connects as, never a tenant — bypasses it for background work and admin cleanup, while tenant roles stay filtered by the policies. This replaces relying on a superuser to bypass, which Cloud SQL does not offer. Customer tables keep forced row-level security, so removing a space deletes their rows as the removing owner's role: the system role grants itself that role inside the transaction, sets it for the deletes, and revokes it before committing. No other system work touches customer tables.
 - **Instance admins** are the admins of workspace one, which cannot be deleted.
-- **Limits per workspace** are concurrent runs (8, or the plan's), and small pools that close when idle. Memory is not limited per workspace. Plan limits count the calendar month, not the Stripe billing period. A workspace with no plan, like workspace one, has no limits; AI tokens on a workspace's own key are counted but not limited.
+- **Limits per workspace** are concurrent runs (8) and small pools that close when idle. Memory is not limited per workspace.
 - **No pooler.** Each instance holds a small pool per open workspace and talks to Postgres directly; `DATABASE_DIRECT_URL` stays available for a deployment that puts a transaction pooler in `DATABASE_URL`, since creating databases and schema changes need a direct session. Archive sets each database's default `search_path` and `timezone`.
 - **Workspace one stays open** in every instance; other workspaces close after 10 idle minutes.
 
@@ -117,11 +115,8 @@ Built as decided; [ADR 0001](0001-architecture.md#workspaces) describes the resu
 - Feature flags or modes: a single-workspace install is the same code with one row.
 - Shared tables with a `workspace_id` column, or one shared database with a schema per workspace (see above).
 - A Cloud Run service, database server or subdomain per workspace.
-- A proxy for AI usage: usage is counted where the calls are made.
 
 ## Open questions
-
-- **Billing in the web app.** Plans, checkout, settings and admin are API and CLI only so far; there is no Stripe customer portal link.
 
 - **License.** The repo has no LICENSE yet. AGPL-3.0 makes anyone offering Archive as a service publish their changes. FSL forbids competing hosted offerings for two years, after which each release becomes Apache 2.0.
 - **MCP sign-in for AI apps.** Claude and ChatGPT connect MCP servers through OAuth. api.archive.dev would need to be an OAuth authorization server, and the person would pick a workspace while approving.
