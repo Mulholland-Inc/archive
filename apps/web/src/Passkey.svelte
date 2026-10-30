@@ -30,6 +30,9 @@
 
 <style>
   .prompt {
+    position: sticky;
+    bottom: calc(var(--frame) + env(safe-area-inset-bottom));
+    z-index: var(--z-raised);
     display: flex;
     flex: none;
     align-items: center;

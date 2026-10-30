@@ -99,6 +99,7 @@
 
   --size-icon-sm: 10px;
   --size-icon: 16px;
+  --size-icon-lg: 20px;
   --size-dot: 8px;
   --size-avatar: 24px;
   --size-control-xs: 32px;
@@ -297,6 +298,9 @@
   --menu-width: var(--measure-2xs);
   --rise: var(--space-2);
   --dock-gap: var(--frame);
+  --dock-lift: 0px;
+  --chat-head-inset: var(--gutter);
+  --prompt-lift: 0px;
   --dock-inset: var(--gutter);
   --composer-bg: var(--surface-raised);
   --search-width: var(--measure-2xs);
@@ -329,6 +333,8 @@
     --composer-width: 100%;
     --door-art: var(--art-md);
     --dock-inset: 0px;
+    --chat-head-inset: var(--header-inset);
+    --prompt-lift: calc(var(--control-height-sm) + 2 * var(--space-2) + var(--frame));
     --board-height: calc(100svh - 2 * var(--frame) - env(safe-area-inset-top) - var(--gutter) - 2 * var(--header-pad) - var(--title-size) * var(--leading-tight) - var(--size-icon) - 3 * var(--space-2) - env(safe-area-inset-bottom));
   }
 }

@@ -123,8 +123,8 @@
     {#if open}<button class="scrim" type="button" aria-label="Close sidebar" onclick={toggle}></button>{/if}
     <aside class:open>
       <div class="top">
-        <button class="side" type="button" aria-label="Sidebar" aria-expanded={open} onclick={toggle}><Icon name="panel-left" /></button>
         <a class="brand" href="/files" aria-label="Archive"><Word /></a>
+        <button class="side" type="button" aria-label="Sidebar" aria-expanded={open} onclick={toggle}><Icon name="panel-left" /></button>
       </div>
       <nav>
         <NavItem href="/chat" icon="plus" active={route.first === 'chat' && !route.second}>New chat</NavItem>
@@ -159,8 +159,7 @@
         <Button icon="signout" title="Sign out" aria-label="Sign out" onclick={signOut} />
       </footer>
     </aside>
-    <main>
-      {#if asking}<Passkey user={me.actor.user_id} ondone={() => (asking = false)} />{/if}
+    <main class:asking>
       {#key generation}
       {#if route.first === 'chat'}
         <Chat id={route.second} name={me.actor.name} onsaved={loadChats} />
@@ -185,6 +184,7 @@
         <Heading plain title="Not here" />
       {/if}
       {/key}
+      {#if asking}<Passkey user={me.actor.user_id} ondone={() => (asking = false)} />{/if}
     </main>
   </div>
 {/if}
@@ -218,8 +218,9 @@
   }
   aside.open { visibility: visible; transform: none; }
   .scrim { display: var(--narrow-only); position: fixed; inset: 0; z-index: var(--z-nav); background: var(--scrim); animation: fade var(--duration-normal) var(--ease-out) both; }
-  .top { display: flex; flex: none; align-items: center; }
-  .side { display: var(--narrow-only); align-items: center; padding: var(--item-pad); color: var(--fg-muted); transition: color var(--duration-fast); }
+  .top { display: flex; flex: none; align-items: center; justify-content: space-between; }
+  .side { display: var(--narrow-only); flex: none; align-items: center; justify-content: center; width: var(--size-control-lg); height: var(--size-control-lg); color: var(--fg-muted); transition: color var(--duration-fast); }
+  .side :global(.icon) { width: var(--size-icon-lg); height: var(--size-icon-lg); }
   .side:hover { color: var(--fg); }
   .chats { display: flex; flex: none; flex-direction: column; gap: var(--space-0-5); }
   .brand { display: flex; flex: none; align-items: center; min-height: var(--size-control-lg); padding: var(--item-pad); color: var(--fg); }
@@ -237,6 +238,7 @@
   hr { flex: none; align-self: stretch; min-width: var(--hairline); min-height: var(--hairline); margin: var(--space-2); border: 0; }
   footer { display: flex; flex: none; align-items: center; gap: var(--space-1); }
   main { display: flex; flex-direction: column; min-width: 0; height: var(--main-height); }
+  main.asking { --dock-lift: var(--prompt-lift); }
   main > :global(header) { position: sticky; top: 0; z-index: var(--z-raised); padding: var(--header-pad) var(--header-inset); background: var(--bg); }
   @keyframes fade { from { opacity: 0; } }
   @media (prefers-reduced-motion: reduce) { .scrim { animation: none; } }

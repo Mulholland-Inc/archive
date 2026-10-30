@@ -330,7 +330,7 @@
   .thinking span:nth-child(3) { animation-delay: calc(var(--duration-loop) / 3); }
   .dock {
     position: sticky;
-    bottom: calc(var(--dock-gap) - var(--dock-inset) + env(safe-area-inset-bottom));
+    bottom: calc(var(--dock-gap) - var(--dock-inset) + var(--dock-lift) + env(safe-area-inset-bottom));
     z-index: var(--z-raised);
     width: 100%;
     max-width: var(--composer-width);
