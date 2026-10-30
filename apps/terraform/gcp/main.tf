@@ -4,26 +4,22 @@ resource "google_project_service" "crm" {
 }
 
 locals {
-  url     = "https://${var.app_domain}"
-  api_url = "https://${var.api_domain}"
+  url     = "https://app.${var.domain}"
+  api_url = "https://api.${var.domain}"
 
   required = {
     DATABASE_URL       = "host=/cloudsql/${google_sql_database_instance.this.connection_name} user=${google_sql_user.this.name} password=${random_password.db.result} dbname=${google_sql_database.this.name}"
     ARCHIVE_SECRET_KEY = random_id.secret_key.hex
   }
-  optional = {
-    ANTHROPIC_API_KEY               = var.anthropic_api_key
-    ARCHIVE_GOOGLE_CLIENT_SECRET    = var.google_client_secret
-    ARCHIVE_MICROSOFT_CLIENT_SECRET = var.microsoft_client_secret
-    ARCHIVE_SLACK_CLIENT_SECRET     = var.slack_client_secret
-    ARCHIVE_GITHUB_CLIENT_SECRET    = var.github_client_secret
+  signin = {
+    ARCHIVE_GOOGLE    = ["accounts.google.com", var.google_client_id, var.google_client_secret]
+    ARCHIVE_MICROSOFT = ["login.microsoftonline.com", var.microsoft_client_id, var.microsoft_client_secret]
+    ARCHIVE_SLACK     = ["slack.com", var.slack_client_id, var.slack_client_secret]
+    ARCHIVE_GITHUB    = ["github.com", var.github_client_id, var.github_client_secret]
   }
-  client_ids = { for k, v in {
-    ARCHIVE_GOOGLE_CLIENT_ID    = var.google_client_id
-    ARCHIVE_MICROSOFT_CLIENT_ID = var.microsoft_client_id
-    ARCHIVE_SLACK_CLIENT_ID     = var.slack_client_id
-    ARCHIVE_GITHUB_CLIENT_ID    = var.github_client_id
-  } : k => v if v != "" }
+  optional = merge({ ANTHROPIC_API_KEY = var.anthropic_api_key }, { for k, v in local.signin :
+    k => v[1] != "" && v[2] != "" ? "https://${replace(urlencode(v[1]), "+", "%20")}:${replace(urlencode(v[2]), "+", "%20")}@${v[0]}" : ""
+  })
   secrets = merge(local.required, local.optional)
   secret_names = setunion(toset(keys(local.required)), toset([
     for k, v in local.optional : k if nonsensitive(v != "")
@@ -68,7 +64,7 @@ resource "random_id" "secret_key" {
 }
 
 resource "google_service_account" "this" {
-  account_id = var.name
+  account_id = "archive"
 
   depends_on = [google_project_service.this]
 }
@@ -80,7 +76,7 @@ resource "google_project_iam_member" "sql" {
 }
 
 resource "google_service_account" "tasks" {
-  account_id = "${var.name}-tasks"
+  account_id = "archive-tasks"
 
   depends_on = [google_project_service.this]
 }
@@ -92,7 +88,7 @@ resource "google_service_account_iam_member" "tasks" {
 }
 
 resource "google_cloud_tasks_queue" "this" {
-  name     = var.name
+  name     = "archive"
   location = var.region
 
   retry_config {
@@ -111,7 +107,7 @@ resource "google_cloud_tasks_queue_iam_member" "this" {
 }
 
 resource "google_sql_database_instance" "this" {
-  name                = var.name
+  name                = "archive"
   database_version    = "POSTGRES_18"
   region              = var.region
   deletion_protection = var.deletion_protection
@@ -148,7 +144,7 @@ resource "google_sql_user" "this" {
 }
 
 resource "google_storage_bucket" "this" {
-  name                        = "${var.project}-${var.name}"
+  name                        = "${var.project}-archive"
   location                    = var.region
   uniform_bucket_level_access = true
 
@@ -163,7 +159,7 @@ resource "google_storage_bucket_iam_member" "this" {
 
 resource "google_secret_manager_secret" "this" {
   for_each  = local.secret_names
-  secret_id = "${var.name}-${replace(lower(each.key), "_", "-")}"
+  secret_id = "archive-${replace(lower(each.key), "_", "-")}"
 
   replication {
     auto {}
@@ -187,18 +183,14 @@ resource "google_secret_manager_secret_iam_member" "this" {
 
 locals {
   image = "${var.region}-docker.pkg.dev/${var.project}/${google_artifact_registry_repository.ghcr.repository_id}/mulholland-inc/archive:${var.image_tag}"
-  env = merge(var.env, local.client_ids, {
+  env = {
     ARCHIVE_URL      = local.url
-    ARCHIVE_API_URL  = local.api_url
     ARCHIVE_BLOB_URL = "gs://${google_storage_bucket.this.name}"
-
-    ARCHIVE_TASKS_QUEUE           = google_cloud_tasks_queue.this.id
-    ARCHIVE_TASKS_SERVICE_ACCOUNT = google_service_account.tasks.email
-  })
+  }
 }
 
 resource "google_cloud_run_v2_service" "this" {
-  name                 = var.name
+  name                 = "archive"
   location             = var.region
   ingress              = "INGRESS_TRAFFIC_ALL"
   invoker_iam_disabled = true
@@ -288,7 +280,7 @@ resource "google_cloud_run_v2_service" "this" {
 }
 
 resource "google_cloud_run_v2_job" "this" {
-  name                = var.name
+  name                = "archive"
   location            = var.region
   deletion_protection = var.deletion_protection
 
@@ -361,14 +353,14 @@ resource "google_cloud_run_v2_job" "this" {
 
 data "cloudflare_zone" "this" {
   filter = {
-    name = var.cloudflare_zone
+    name = var.domain
   }
 }
 
 data "google_client_openid_userinfo" "me" {}
 
 resource "google_service_account" "verify" {
-  account_id = "${var.name}-verify"
+  account_id = "archive-verify"
 
   depends_on = [google_project_service.this]
 }
@@ -394,7 +386,7 @@ resource "time_sleep" "verify" {
 data "google_site_verification_token" "this" {
   provider            = google.verify
   type                = "INET_DOMAIN"
-  identifier          = var.cloudflare_zone
+  identifier          = var.domain
   verification_method = "DNS_TXT"
 
   depends_on = [time_sleep.verify]
@@ -402,7 +394,7 @@ data "google_site_verification_token" "this" {
 
 resource "cloudflare_dns_record" "verify" {
   zone_id = data.cloudflare_zone.this.zone_id
-  name    = var.cloudflare_zone
+  name    = var.domain
   type    = "TXT"
   content = "\"${data.google_site_verification_token.this.token}\""
   ttl     = 1
@@ -412,7 +404,7 @@ resource "google_site_verification_web_resource" "this" {
   provider = google.verify
   site {
     type       = "INET_DOMAIN"
-    identifier = var.cloudflare_zone
+    identifier = var.domain
   }
   verification_method = "DNS_TXT"
 
@@ -427,7 +419,7 @@ resource "google_site_verification_owner" "me" {
 
 resource "google_cloud_run_domain_mapping" "this" {
   provider = google.verify
-  name     = var.api_domain
+  name     = "api.${var.domain}"
   location = var.region
 
   metadata {
@@ -443,7 +435,7 @@ resource "google_cloud_run_domain_mapping" "this" {
 
 resource "cloudflare_dns_record" "run" {
   zone_id = data.cloudflare_zone.this.zone_id
-  name    = var.api_domain
+  name    = "api.${var.domain}"
   type    = "CNAME"
   content = "ghs.googlehosted.com"
   proxied = true
@@ -452,17 +444,17 @@ resource "cloudflare_dns_record" "run" {
 
 resource "cloudflare_ruleset" "run" {
   zone_id = data.cloudflare_zone.this.zone_id
-  name    = "${var.name} origin TLS"
+  name    = "archive origin TLS"
   kind    = "zone"
   phase   = "http_config_settings"
   rules = [{
-    description       = "${var.api_domain} reaches Google over verified TLS"
-    expression        = "http.host eq \"${var.api_domain}\""
+    description       = "api.${var.domain} reaches Google over verified TLS"
+    expression        = "http.host eq \"api.${var.domain}\""
     action            = "set_config"
     action_parameters = { ssl = "strict" }
     }, {
     description       = "Google's certificate challenges reach it over HTTP, before it has a certificate"
-    expression        = "http.host eq \"${var.api_domain}\" and starts_with(http.request.uri.path, \"/.well-known/acme-challenge/\")"
+    expression        = "http.host eq \"api.${var.domain}\" and starts_with(http.request.uri.path, \"/.well-known/acme-challenge/\")"
     action            = "set_config"
     action_parameters = { ssl = "flexible" }
   }]
@@ -470,7 +462,7 @@ resource "cloudflare_ruleset" "run" {
 
 resource "cloudflare_workers_script" "app" {
   account_id  = data.cloudflare_zone.this.account.id
-  script_name = "${var.name}-app"
+  script_name = "archive-app"
   main_module = "worker.js"
   content     = "export default { fetch: () => new Response(null, { status: 503 }) };"
 
@@ -482,7 +474,7 @@ resource "cloudflare_workers_script" "app" {
 resource "cloudflare_workers_custom_domain" "app" {
   account_id = data.cloudflare_zone.this.account.id
   zone_id    = data.cloudflare_zone.this.zone_id
-  hostname   = var.app_domain
+  hostname   = "app.${var.domain}"
   service    = cloudflare_workers_script.app.script_name
 }
 
@@ -494,7 +486,7 @@ data "cloudflare_account_api_token_permission_groups_list" "this" {
 resource "cloudflare_account_token" "app" {
   count      = var.github_repository != "" ? 1 : 0
   account_id = data.cloudflare_zone.this.account.id
-  name       = "${var.name}-app-deploy"
+  name       = "archive-app-deploy"
   policies = [{
     effect            = "allow"
     permission_groups = [for g in data.cloudflare_account_api_token_permission_groups_list.this[0].result : { id = g.id } if g.name == "Workers Scripts Write"]
@@ -533,7 +525,7 @@ resource "google_iam_workload_identity_pool_provider" "github" {
 
 resource "google_service_account" "deploy" {
   count      = var.github_repository != "" ? 1 : 0
-  account_id = "${var.name}-deploy"
+  account_id = "archive-deploy"
 }
 
 resource "google_service_account_iam_member" "deploy" {
@@ -578,12 +570,9 @@ resource "github_actions_variable" "deploy" {
   for_each = var.github_repository != "" ? tomap({
     GCP_PROJECT                    = var.project
     GCP_REGION                     = var.region
-    GCP_SERVICE                    = google_cloud_run_v2_service.this.name
     GCP_SERVICE_ACCOUNT            = google_service_account.deploy[0].email
     GCP_WORKLOAD_IDENTITY_PROVIDER = google_iam_workload_identity_pool_provider.github[0].name
-    ARCHIVE_API_URL                = local.api_url
     CLOUDFLARE_ACCOUNT_ID          = data.cloudflare_zone.this.account.id
-    CLOUDFLARE_WORKER              = cloudflare_workers_script.app.script_name
   }) : {}
   repository    = split("/", var.github_repository)[1]
   variable_name = each.key

@@ -22,6 +22,6 @@ $archive space grant family sam@example.com editor >/dev/null
 $archive file add "$demo"/files/*.* >/dev/null
 $archive file add -space family "$demo"/files/family/* >/dev/null
 
-ARCHIVE_RUN_TIMEOUT=600s $archive run "$demo/seed.ts"
+$archive run "$demo/seed.ts"
 
 echo "demo: loaded; restart archive serve if it was running, so it sees the new tables" >&2

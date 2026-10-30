@@ -10,7 +10,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"path"
 	"reflect"
 	"regexp"
@@ -36,6 +35,7 @@ const (
 	runMaxResult = 256 << 10
 	runMaxLogs   = 64 << 10
 	runMaxFetch  = 5 << 20
+	runTimeout   = 30 * time.Second
 	runWrap      = "WITH q AS (\n"
 )
 
@@ -106,17 +106,6 @@ var (
 	runStackRe   = regexp.MustCompile(`script\.js:(\d+):\d+`)
 )
 
-func runTimeout() time.Duration {
-	s := os.Getenv("ARCHIVE_RUN_TIMEOUT")
-	if d, err := time.ParseDuration(s); err == nil && d > 0 {
-		return d
-	}
-	if n, err := strconv.Atoi(s); err == nil && n > 0 {
-		return time.Duration(n) * time.Second
-	}
-	return 30 * time.Second
-}
-
 func (a *Archive) refresh(ctx context.Context) {
 	if rev, err := generated.New(a.st.sys).Revision(ctx); err == nil && rev != a.Catalog().stamp {
 		a.reload(ctx)
@@ -160,7 +149,7 @@ func (a *Archive) run(ctx context.Context, code string, input json.RawMessage) (
 		out.Error = err.Error()
 		return out, time.Now(), nil
 	}
-	limit := runTimeout()
+	limit := runTimeout
 	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
 	r := &runner{a: a, out: out, js: js, input: input, at: time.Now()}
@@ -1018,7 +1007,7 @@ func runTables(cat *Catalog) []runTable {
 
 func (a *Archive) RunDocs(ctx context.Context) string {
 	a.refresh(ctx)
-	return strings.ReplaceAll(runSDK, "{timeout}", runTimeout().String()) + "\n" + runTypes(a.Catalog())
+	return strings.ReplaceAll(runSDK, "{timeout}", runTimeout.String()) + "\n" + runTypes(a.Catalog())
 }
 
 var runStatic = []string{"Base", "Row", "Hit", "Plan", "Table", "StoredFile", "Space", "Tables", "FetchResponse", "RunResult", "Deployed", "WorkflowRun",

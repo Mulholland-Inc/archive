@@ -30,7 +30,7 @@ This replaces "polling connectors" in ADR 0001's "Not doing" list.
 | Pasted token | Providers with API tokens | The user creates a token in the service and pastes it. No app, no approval. |
 | Own app from a manifest | Slack | Archive gives a manifest; the workspace admin creates an internal app from it in one click and pastes its tokens. |
 
-Overrides follow one pattern: `ARCHIVE_CONNECT_<PROVIDER>` holds a JSON `{"client_id","client_secret"}`.
+Overrides would follow the sign-in pattern, one variable per provider holding `https://<client id>:<client secret>@<provider host>`; none is built yet.
 
 ## Sync
 

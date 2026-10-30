@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -30,7 +31,7 @@ func (p *archiveProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 	resp.Schema = schema.Schema{
 		Description: "Manage what lives inside an Archive instance: its schema (tables and views), tokens and space membership.",
 		Attributes: map[string]schema.Attribute{
-			"endpoint": schema.StringAttribute{Optional: true, Description: "Base URL of the Archive instance, like https://archive.example.com. Defaults to ARCHIVE_URL."},
+			"endpoint": schema.StringAttribute{Optional: true, Description: "Base URL of the Archive API, like https://api.example.com. Defaults to ARCHIVE_URL, the web app's URL, with app. made api., so https://app.example.com calls https://api.example.com."},
 			"token":    schema.StringAttribute{Optional: true, Sensitive: true, Description: "Archive token. Defaults to ARCHIVE_TOKEN. Managing tokens and policies needs a full token from archive token create -full."},
 		},
 	}
@@ -42,7 +43,13 @@ func (p *archiveProvider) Configure(ctx context.Context, req provider.ConfigureR
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	endpoint := cmp.Or(m.Endpoint.ValueString(), os.Getenv("ARCHIVE_URL"))
+	endpoint := m.Endpoint.ValueString()
+	if endpoint == "" {
+		endpoint = os.Getenv("ARCHIVE_URL")
+		if u, err := url.Parse(endpoint); err == nil && strings.HasPrefix(u.Host, "app.") {
+			endpoint = u.Scheme + "://api." + strings.TrimPrefix(u.Host, "app.")
+		}
+	}
 	token := cmp.Or(m.Token.ValueString(), os.Getenv("ARCHIVE_TOKEN"))
 	if endpoint == "" || token == "" {
 		resp.Diagnostics.AddError("Missing Archive endpoint or token", "Set endpoint and token in the provider block, or ARCHIVE_URL and ARCHIVE_TOKEN.")

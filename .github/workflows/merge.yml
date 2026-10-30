@@ -11,7 +11,7 @@ jobs:
   merge:
     name: merge
     if: ${{ github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.pull_requests[0].number }}
-    runs-on: ${{ vars.CI_RUNNER || 'marzy-devbox' }}
+    runs-on: marzy-devbox
     timeout-minutes: 5
     steps:
       - id: app

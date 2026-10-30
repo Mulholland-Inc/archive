@@ -35,7 +35,7 @@ type Chat struct {
 	UpdatedAt time.Time       `json:"updated_at"`
 }
 
-func chatModel() string { return cmp.Or(os.Getenv("ARCHIVE_CHAT_MODEL"), "claude-haiku-5-5") }
+const chatModel = "claude-haiku-5-5"
 
 func chatUser(ctx context.Context) (uuid.UUID, error) {
 	ac := ActorFrom(ctx)
@@ -424,7 +424,7 @@ func chatPost(ctx context.Context, key string, body []byte) (*http.Response, err
 
 func chatTurn(ctx context.Context, key string, tools []any, system string, msgs []chatMessage, send func(map[string]any)) (*chatMessage, string, error) {
 	b, err := json.Marshal(map[string]any{
-		"model":         chatModel(),
+		"model":         chatModel,
 		"max_tokens":    chatMaxTokens,
 		"stream":        true,
 		"system":        []any{map[string]string{"type": "text", "text": system}},
