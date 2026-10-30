@@ -170,14 +170,19 @@ With no `-space`, the token gets your role in every space you are in. Narrow it 
 | **Cloud** | Terraform for [AWS](apps/terraform/aws) (Fargate, RDS, S3), [Google Cloud](apps/terraform/gcp) (Cloud Run, Cloud SQL, Storage) and [Azure](apps/terraform/azure) (Container Apps, Postgres, Files) |
 | **As code** | the [`archive` Terraform provider](apps/terraform/provider) for your schema, spaces, tokens and roles |
 
-On Google Cloud, everything is in Terraform:
+On Google Cloud, everything is in Terraform, in one `apply`. You need a project with billing, Owner on it, and Terraform 1.9 or later:
 
 ```sh
+gcloud auth application-default login
 cd apps/terraform/gcp && terraform init
 terraform apply -var project=<project> -var admin_email=you@example.com
 ```
 
-Add `-var app_domain=… -var api_domain=… -var cloudflare_zone=…` with `CLOUDFLARE_API_TOKEN` for your own domains, and `-var github_repository=owner/repo` with `GITHUB_TOKEN` to deploy every image built on main. With both domains, the web app is static files on Cloudflare's edge, deployed by the image workflow after the API, and calls the API on its own domain. The service scales to zero: Cloud Tasks wakes it at the moment a workflow or file is due, so nothing has to stay running.
+The first apply takes about 15 minutes, nearly all of it Cloud SQL. It serves the public `ghcr.io/mulholland-inc/archive:latest` on the run.app address it prints. The service scales to zero: Cloud Tasks wakes it at the moment a workflow or file is due, so nothing has to stay running.
+
+For your own domains, add `-var app_domain=… -var api_domain=… -var cloudflare_zone=…`, with a Cloudflare account token in `CLOUDFLARE_API_TOKEN`. On the zone it needs DNS Write, Config Settings Write and Workers Routes Write; on the account it needs Workers Scripts Write and Account API Tokens Write. Terraform verifies the zone with Google, maps `api_domain` to the service behind Cloudflare's proxy, and makes the web app on `app_domain` a Worker of static files that calls the API on its own domain. Google's certificate for `api_domain` takes 15 minutes or more after the apply. The zone's own SSL settings don't matter: a Configuration Rule makes Cloudflare reach Google over verified TLS, and lets Google's certificate challenges through over HTTP.
+
+To deploy every image built on main, add `-var github_repository=owner/repo` with a `GITHUB_TOKEN` that can write that repository's Actions variables and secrets (`gh auth token` works for an admin). Apply before merging anything else, then run the image workflow once: until it runs, the app domain answers 503.
 
 The image holds Postgres and the binary. With nothing set, it runs the bundled Postgres and keeps files in `/data`. Give it an outside Postgres (`DATABASE_URL`), S3-compatible storage (`ARCHIVE_BLOB_URL`) and one `ARCHIVE_SECRET_KEY`, and it keeps nothing local, so you can run as many copies side by side as you like. In production, put it behind HTTPS and set `ARCHIVE_URL`.
 

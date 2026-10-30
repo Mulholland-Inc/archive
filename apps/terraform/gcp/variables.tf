@@ -34,7 +34,7 @@ variable "api_domain" {
 
 variable "cloudflare_zone" {
   type        = string
-  description = "Cloudflare zone holding app_domain and api_domain, like archive.dev, verified with Google as the account that applies this. Its token goes in CLOUDFLARE_API_TOKEN and needs DNS Edit on the zone; with both domains and github_repository it also needs Account API Tokens Write, to make the narrower token the image workflow deploys the web app with."
+  description = "Cloudflare zone holding app_domain and api_domain, like archive.dev, verified with Google as the archive-verify service account. Its token goes in CLOUDFLARE_API_TOKEN; the README lists the permissions it needs."
   default     = ""
 }
 
