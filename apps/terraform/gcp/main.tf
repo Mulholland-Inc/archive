@@ -461,6 +461,14 @@ resource "google_cloud_run_v2_service_iam_member" "deploy" {
   member   = google_service_account.deploy[0].member
 }
 
+resource "google_artifact_registry_repository_iam_member" "deploy" {
+  count      = var.github_repository != "" ? 1 : 0
+  location   = var.region
+  repository = google_artifact_registry_repository.ghcr.name
+  role       = "roles/artifactregistry.reader"
+  member     = google_service_account.deploy[0].member
+}
+
 resource "google_service_account_iam_member" "deploy_runs_as" {
   count              = var.github_repository != "" ? 1 : 0
   service_account_id = google_service_account.this.name
