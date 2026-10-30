@@ -18,6 +18,10 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.6"
     }
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.13"
+    }
   }
 }
 
@@ -28,4 +32,12 @@ provider "github" {
 provider "google" {
   project = var.project
   region  = var.region
+}
+
+provider "google" {
+  alias                       = "verify"
+  project                     = var.project
+  region                      = var.region
+  impersonate_service_account = "${var.name}-verify@${var.project}.iam.gserviceaccount.com"
+  scopes                      = ["https://www.googleapis.com/auth/cloud-platform", "https://www.googleapis.com/auth/siteverification"]
 }

@@ -288,13 +288,44 @@ data "cloudflare_zone" "this" {
   }
 }
 
+data "google_client_openid_userinfo" "me" {}
+
+resource "google_service_account" "verify" {
+  count      = local.run != "" ? 1 : 0
+  account_id = "${var.name}-verify"
+
+  depends_on = [google_project_service.this]
+}
+
+resource "google_service_account_iam_member" "verify" {
+  count              = local.run != "" ? 1 : 0
+  service_account_id = google_service_account.verify[0].name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "${endswith(data.google_client_openid_userinfo.me.email, ".gserviceaccount.com") ? "serviceAccount" : "user"}:${data.google_client_openid_userinfo.me.email}"
+}
+
+resource "google_project_iam_member" "verify" {
+  count   = local.run != "" ? 1 : 0
+  project = var.project
+  role    = "roles/run.admin"
+  member  = google_service_account.verify[0].member
+}
+
+resource "time_sleep" "verify" {
+  count           = local.run != "" ? 1 : 0
+  create_duration = "3m"
+
+  depends_on = [google_service_account_iam_member.verify, google_project_iam_member.verify]
+}
+
 data "google_site_verification_token" "this" {
   count               = local.run != "" ? 1 : 0
+  provider            = google.verify
   type                = "INET_DOMAIN"
   identifier          = var.cloudflare_zone
   verification_method = "DNS_TXT"
 
-  depends_on = [google_project_service.this]
+  depends_on = [time_sleep.verify]
 }
 
 resource "cloudflare_dns_record" "verify" {
@@ -307,7 +338,8 @@ resource "cloudflare_dns_record" "verify" {
 }
 
 resource "google_site_verification_web_resource" "this" {
-  count = local.run != "" ? 1 : 0
+  count    = local.run != "" ? 1 : 0
+  provider = google.verify
   site {
     type       = "INET_DOMAIN"
     identifier = var.cloudflare_zone
@@ -319,6 +351,7 @@ resource "google_site_verification_web_resource" "this" {
 
 resource "google_cloud_run_domain_mapping" "this" {
   count    = local.run != "" ? 1 : 0
+  provider = google.verify
   name     = local.run
   location = var.region
 
