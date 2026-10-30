@@ -25,7 +25,7 @@
 </script>
 
 {#snippet key()}
-  <button class={['method', first ? 'primary' : 'quiet']} type="button" onclick={passkey}><Icon name="key-round" />Use a passkey</button>
+  <button class={['method', first ? 'primary' : 'quiet']} type="button" onclick={passkey}><Icon name="key-round" /><span>Use a passkey</span></button>
 {/snippet}
 
 <div class="door">
@@ -38,7 +38,7 @@
         {#if first}{@render key()}{/if}
         {#each providers as p (p.id)}
           <a class="method" href="/auth/oidc/{encodeURIComponent(p.id)}"
-            >{#if BRANDS[p.name]}<svg class="icon filled" viewBox={BRANDS[p.name][0]} aria-hidden="true">{@html BRANDS[p.name][1]}</svg>{/if}Continue with {p.name}</a
+            >{#if BRANDS[p.name]}<svg class="icon filled" viewBox={BRANDS[p.name][0]} aria-hidden="true">{@html BRANDS[p.name][1]}</svg>{/if}<span>Continue with {p.name}</span></a
           >
         {/each}
         {#if passkeys && !first}{@render key()}{/if}
@@ -70,16 +70,18 @@
   img { align-self: center; width: auto; height: var(--door-art); max-width: 100%; object-fit: contain; }
   .methods { display: flex; flex-direction: column; gap: var(--space-2); }
   .method {
-    display: flex;
+    display: grid;
+    grid-template-columns: var(--size-icon) 1fr var(--size-icon);
     align-items: center;
-    justify-content: center;
     gap: var(--space-2);
-    padding: var(--space-3);
+    padding: var(--space-2);
+    font-size: var(--text-ui);
     border-radius: var(--radius-full);
     background: var(--fill);
     color: var(--fg);
     transition: background var(--duration-fast), color var(--duration-fast);
   }
+  .method span { grid-column: 2; text-align: center; }
   .method:hover { background: var(--fill-strong); }
   .primary { background: var(--primary); color: var(--on-primary); }
   .primary:hover { background: var(--primary-hover); }
