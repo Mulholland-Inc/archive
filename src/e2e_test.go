@@ -3854,15 +3854,28 @@ func TestTheWebAppOnItsOwnHostCallsTheAPIHostWithTheAPIsCookie(t *testing.T) {
 		!strings.Contains(hdr.Get("Vary"), "Origin") || !strings.Contains(allowed, "Archive-Workspace") || !strings.Contains(allowed, "Archive-Space") || !strings.Contains(allowed, "Content-Type") || !strings.Contains(allowed, "PATCH") {
 		t.Errorf("preflight from the app: %d %v", st, hdr)
 	}
+	if strings.Contains(allowed, "Authorization") {
+		t.Errorf("the app's preflight allows a bearer token: %v", hdr)
+	}
 	for _, m := range []string{"OPTIONS", "GET"} {
 		for _, origin := range []string{"https://evil.test", "https://api.test.evil.test", "null"} {
-			if _, hdr := e2eFrom(t, m, srv.url+"/auth/methods", origin); hdr.Get("Access-Control-Allow-Origin") != "" || hdr.Get("Access-Control-Allow-Credentials") != "" || hdr.Get("Access-Control-Allow-Headers") != "" {
+			_, hdr := e2eFrom(t, m, srv.url+"/auth/methods", origin)
+			if hdr.Get("Access-Control-Allow-Origin") != "*" || hdr.Get("Access-Control-Allow-Credentials") != "" || m == "OPTIONS" && !strings.Contains(hdr.Get("Access-Control-Allow-Headers"), "Authorization") {
 				t.Errorf("%s from %s: %v", m, origin, hdr)
 			}
 		}
 	}
-	if _, hdr := e2eFrom(t, "OPTIONS", srv.url+"/mcp", "https://app.test"); hdr.Get("Access-Control-Allow-Origin") != "" {
-		t.Errorf("MCP allows the app: %v", hdr)
+	if _, hdr := e2eFrom(t, "OPTIONS", srv.url+"/mcp", "https://app.test"); hdr.Get("Access-Control-Allow-Origin") != "*" || hdr.Get("Access-Control-Allow-Credentials") != "" {
+		t.Errorf("MCP from the app is a bearer call like from anywhere: %v", hdr)
+	}
+	tok := decode[Token](t, in.must("token", "create")).Secret
+	req, _ := http.NewRequest("GET", srv.url+"/api/types", nil)
+	req.Header.Set("Origin", "https://tool.example")
+	req.Header.Set("Authorization", "Bearer "+tok)
+	if resp, err := http.DefaultClient.Do(req); err != nil || resp.StatusCode != 200 || resp.Header.Get("Access-Control-Allow-Origin") != "*" {
+		t.Errorf("a bearer call from another site: %v %v", err, resp)
+	} else {
+		resp.Body.Close()
 	}
 	st, start := call(t, "GET", srv.url+"/auth/oidc/google", "", nil, nil)
 	loc, _ := url.Parse(start.Get("Location"))
