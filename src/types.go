@@ -72,12 +72,6 @@ var semTransforms = map[string]func(string) (string, error){
 		}
 		return s[:2] + "-" + s[2:], nil
 	},
-	"bsn9": func(s string) (string, error) {
-		if len(s) == 8 {
-			s = "0" + s
-		}
-		return s, nil
-	},
 	"gtin14": func(s string) (string, error) {
 		if !semAllDigits(s) || (len(s) != 8 && len(s) != 12 && len(s) != 13 && len(s) != 14) {
 			return "", errors.New("GTIN must be 8, 12, 13 or 14 digits")
@@ -130,8 +124,7 @@ var semParsers = map[string]func(in any, h Hints) ([]Candidate, error){
 		}
 		return []Candidate{{Value: b, Confidence: 1}}, nil
 	},
-	"phone":  semParsePhone,
-	"vat_id": semParseVAT,
+	"phone": semParsePhone,
 	"region": func(in any, h Hints) ([]Candidate, error) {
 		s, _ := in.(string)
 		return semOne(semRegion(s, h))
@@ -195,16 +188,14 @@ var semChecks = map[string]func(v any) error{
 		}
 		return nil
 	},
-	"mod97": semStrCheck("IBAN check digits do not match", func(s string) bool { return len(s) > 4 && semMod97(s[4:]+s[:4]) == 1 }),
-	"lei":   semStrCheck("LEI check digits do not match", func(s string) bool { return semMod97(s) == 1 }),
-	"isin":  semStrCheck("ISIN check digit does not match", semISIN),
-	"luhn":  semStrCheck("Luhn check failed", semLuhn),
+	"lei":  semStrCheck("LEI check digits do not match", func(s string) bool { return semMod97(s) == 1 }),
+	"isin": semStrCheck("ISIN check digit does not match", semISIN),
+	"luhn": semStrCheck("Luhn check failed", semLuhn),
 	"aba": semStrCheck("not a valid ABA routing number", func(s string) bool {
 		p, _ := strconv.Atoi(s[:min(2, len(s))])
 		return semABACheck(s) && (p <= 12 || (p >= 21 && p <= 32) || (p >= 61 && p <= 72) || p == 80)
 	}),
 	"ssn_ranges": semStrCheck("not a valid SSN", semSSN),
-	"elfproef":   semStrCheck("fails the elfproef", semElfproef),
 	"national": func(v any) error {
 		m, _ := v.(map[string]any)
 		c, sc := semS(m, "country"), semS(m, "scheme")
@@ -356,19 +347,10 @@ var semFormats = map[string]func(v any, locale string) string{
 		}
 		return semFormatDec(d, locale, 0)
 	},
-	"group4": func(v any, _ string) string {
-		s := v.(string)
-		var parts []string
-		for len(s) > 4 {
-			parts, s = append(parts, s[:4]), s[4:]
-		}
-		return strings.Join(append(parts, s), " ")
-	},
 	"card": func(v any, _ string) string {
 		m := v.(map[string]any)
 		return m["brand"].(string) + " **** " + m["last4"].(string)
 	},
-	"mask":     func(v any, _ string) string { return semMask(v.(string), 4) },
 	"mask_ssn": func(v any, _ string) string { return "***-**-" + v.(string)[5:] },
 	"national": func(v any, _ string) string {
 		m := v.(map[string]any)
@@ -857,8 +839,6 @@ func semDateLayout(locale string) string {
 	switch semLocaleRegion(locale) {
 	case "US":
 		return "1/2/2006"
-	case "NL":
-		return "02-01-2006"
 	case "DE", "AT", "CH":
 		return "02.01.2006"
 	case "GB", "FR", "BE", "IT", "ES", "IE", "AU", "NZ", "IN", "BR", "PT":
@@ -1274,17 +1254,6 @@ func semGS1(body string) byte {
 	return byte('0' + (10-sum%10)%10)
 }
 
-func semElfproef(s string) bool {
-	if len(s) != 9 || !semAllDigits(s) || s == "000000000" {
-		return false
-	}
-	sum := 0
-	for i := 0; i < 8; i++ {
-		sum += int(s[i]-'0') * (9 - i)
-	}
-	return (sum-int(s[8]-'0'))%11 == 0
-}
-
 func semABACheck(s string) bool {
 	if len(s) != 9 || !semAllDigits(s) {
 		return false
@@ -1377,21 +1346,8 @@ func semParseCard(in any, _ Hints) ([]Candidate, error) {
 	return []Candidate{{Value: map[string]any{"token": hex.EncodeToString(sum[:]), "brand": semCardBrand(n), "last4": n[len(n)-4:]}, Confidence: 1}}, nil
 }
 
-func semParseVAT(in any, h Hints) ([]Candidate, error) {
-	s, _ := in.(string)
-	if strings.HasPrefix(s, "GR") {
-		s = "EL" + s[2:]
-	}
-	cc := semHintCountry(h)
-	if cc == "GR" {
-		cc = "EL"
-	}
-	return []Candidate{{Value: s, Confidence: 1}, {Value: cc + s, Confidence: 0.9}}, nil
-}
-
 var (
 	semNINORe     = regexp.MustCompile(`^[A-CEGHJ-PR-TW-Z][A-CEGHJ-NPR-TW-Z][0-9]{6}[A-D]$`)
-	semNIRRe      = regexp.MustCompile(`^[1-478][0-9]{4}([0-9]{2}|2[AB])[0-9]{8}$`)
 	semPassportRe = regexp.MustCompile(`^[A-Z0-9]{6,9}$`)
 )
 
@@ -1399,41 +1355,9 @@ var semNationals = map[string]struct {
 	scheme string
 	check  func(string) bool
 }{
-	"NL": {"bsn", semElfproef},
 	"US": {"ssn", semSSN},
 	"GB": {"nino", func(s string) bool {
 		return semNINORe.MatchString(s) && !strings.Contains(" BG GB NK KN TN NT ZZ ", " "+s[:2]+" ")
-	}},
-	"DE": {"idnr", func(s string) bool {
-		if len(s) != 11 || !semAllDigits(s) || s[0] == '0' {
-			return false
-		}
-		p := 10
-		for i := 0; i < 10; i++ {
-			sum := (int(s[i]-'0') + p) % 10
-			if sum == 0 {
-				sum = 10
-			}
-			p = sum * 2 % 11
-		}
-		return (11-p)%10 == int(s[10]-'0')
-	}},
-	"FR": {"nir", func(s string) bool {
-		if !semNIRRe.MatchString(s) {
-			return false
-		}
-		body := strings.NewReplacer("2A", "19", "2B", "18").Replace(s[:13])
-		n, _ := strconv.ParseUint(body, 10, 64)
-		k, _ := strconv.Atoi(s[13:])
-		return int(97-n%97) == k
-	}},
-	"BE": {"rrn", func(s string) bool {
-		if len(s) != 11 || !semAllDigits(s) {
-			return false
-		}
-		n, _ := strconv.ParseUint(s[:9], 10, 64)
-		k, _ := strconv.Atoi(s[9:])
-		return int(97-n%97) == k || int(97-(n+2000000000)%97) == k
 	}},
 }
 
@@ -1453,9 +1377,6 @@ func semParseNational(in any, h Hints) ([]Candidate, error) {
 	c, val, conf, err := semCountryValue(in, h, "value", "number")
 	if err != nil {
 		return nil, err
-	}
-	if c == "NL" && len(val) == 8 {
-		val = "0" + val
 	}
 	return []Candidate{{Value: map[string]any{"country": c, "scheme": semNationals[c].scheme, "value": val}, Confidence: conf}}, nil
 }
@@ -1588,7 +1509,7 @@ func semFormatAddress(v any, locale string) string {
 	return strings.Join(keep, "\n")
 }
 
-var semParticles = map[string]bool{"van": true, "von": true, "der": true, "den": true, "de": true, "del": true, "della": true, "di": true, "da": true, "du": true, "la": true, "le": true, "ten": true, "ter": true, "te": true, "'t": true, "zu": true, "dos": true, "das": true}
+var semParticles = map[string]bool{"van": true, "von": true, "der": true, "den": true, "de": true, "del": true, "della": true, "di": true, "da": true, "du": true, "la": true, "le": true, "zu": true, "dos": true, "das": true}
 
 func semParseName(in any, _ Hints) ([]Candidate, error) {
 	if m, ok := in.(map[string]any); ok {
@@ -1674,7 +1595,7 @@ func semParseURL(in any, _ Hints) ([]Candidate, error) {
 
 var semCountryNames = sync.OnceValue(func() map[string]string {
 	m := map[string]string{}
-	namers := []display.Namer{display.English.Regions(), display.Dutch.Regions(), display.German.Regions(), display.French.Regions()}
+	namers := []display.Namer{display.English.Regions()}
 	for a := 'A'; a <= 'Z'; a++ {
 		for b := 'A'; b <= 'Z'; b++ {
 			code := string([]rune{a, b})
@@ -1717,10 +1638,6 @@ func semCountryName(c, locale string) string {
 }
 
 var semSubdivisions = map[string]string{
-	"NL": "DR FL FR GE GR LI NB NH OV UT ZE ZH",
-	"DE": "BW BY BE BB HB HH HE MV NI NW RP SL SN ST SH TH",
-	"BE": "VLG WAL BRU VAN VBR VLI VOV VWV WBR WHT WLG WLX WNA",
-	"FR": "ARA BFC BRE CVL 20R GES HDF IDF NOR NAQ OCC PDL PAC 971 972 973 974 976",
 	"US": "AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC AS GU MP PR UM VI",
 }
 
@@ -1748,12 +1665,8 @@ var semPostcodes = map[string]struct {
 	re  *regexp.Regexp
 	fmt func(m []string) string
 }{
-	"NL": {regexp.MustCompile(`^([1-9][0-9]{3})\s?([A-Z]{2})$`), func(m []string) string { return m[1] + " " + m[2] }},
 	"US": {regexp.MustCompile(`^([0-9]{5})(?:-?([0-9]{4}))?$`), func(m []string) string { return strings.TrimSuffix(m[1]+"-"+m[2], "-") }},
 	"GB": {regexp.MustCompile(`^([A-Z]{1,2}[0-9][A-Z0-9]?)\s?([0-9][A-Z]{2})$`), func(m []string) string { return m[1] + " " + m[2] }},
-	"DE": {regexp.MustCompile(`^([0-9]{5})$`), func(m []string) string { return m[1] }},
-	"FR": {regexp.MustCompile(`^([0-9]{5})$`), func(m []string) string { return m[1] }},
-	"BE": {regexp.MustCompile(`^([1-9][0-9]{3})$`), func(m []string) string { return m[1] }},
 }
 
 var semPostcodeRe = regexp.MustCompile(`^[A-Z0-9]+([ -][A-Z0-9]+)*$`)
@@ -1761,7 +1674,7 @@ var semPostcodeRe = regexp.MustCompile(`^[A-Z0-9]+([ -][A-Z0-9]+)*$`)
 func semPostcode(s, country string) (string, error) {
 	s = strings.ToUpper(strings.Join(strings.Fields(s), " "))
 	if r, ok := semPostcodes[country]; ok {
-		if m := r.re.FindStringSubmatch(s); m != nil && !(country == "NL" && strings.Contains(" SA SD SS ", " "+m[2]+" ")) {
+		if m := r.re.FindStringSubmatch(s); m != nil {
 			return r.fmt(m), nil
 		}
 		return "", fmt.Errorf("not a %s postcode", country)
@@ -1975,16 +1888,13 @@ var semLib = map[string]semType{
 	"money":      {Parse: "money", Check: "money", Format: "money"},
 	"currency":   {Parse: "currency", Check: "currency"},
 	"percentage": {Parse: "percentage", Format: "percentage"},
-	"iban":       {Normalize: []string{"strip_separators", "upper"}, Check: "mod97", Format: "group4"},
 	"bic":        {Normalize: []string{"strip_separators", "upper", "bic"}},
 	"card":       {Parse: "card", Format: "card", Secret: true},
 	"us_routing": {Normalize: []string{"strip_separators"}, Check: "aba"},
 	"lei":        {Normalize: []string{"strip_separators", "upper"}, Check: "lei"},
 	"isin":       {Normalize: []string{"strip_separators", "upper"}, Check: "isin"},
-	"vat_id":     {Normalize: []string{"strip_separators", "upper"}, Parse: "vat_id"},
 	"us_ein":     {Normalize: []string{"strip_separators", "ein_dash"}},
 	"us_ssn":     {Normalize: []string{"strip_separators"}, Check: "ssn_ranges", Format: "mask_ssn", Secret: true},
-	"nl_bsn":     {Normalize: []string{"strip_separators", "bsn9"}, Check: "elfproef", Format: "mask", Secret: true},
 	"national":   {Parse: "national", Check: "national", Format: "national", Secret: true},
 	"passport":   {Parse: "passport", Check: "passport", Format: "passport", Secret: true},
 	"email":      {Normalize: []string{"mail_address", "lower_domain"}, Format: "email"},

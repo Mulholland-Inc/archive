@@ -298,25 +298,6 @@ func (q *Queries) Chats(ctx context.Context, userID uuid.UUID) ([]ChatsRow, erro
 	return items, nil
 }
 
-const claimDue = `-- name: ClaimDue :one
-UPDATE archive.due d SET at = $1::timestamptz FROM archive.workspace w
-WHERE w.id = d.workspace AND (d.workspace, d.kind) = (SELECT x.workspace, x.kind FROM archive.due x WHERE x.at <= now() ORDER BY x.at LIMIT 1 FOR UPDATE SKIP LOCKED)
-RETURNING w.id, d.kind, d.at
-`
-
-type ClaimDueRow struct {
-	ID   uuid.UUID
-	Kind string
-	At   time.Time
-}
-
-func (q *Queries) ClaimDue(ctx context.Context, lease time.Time) (ClaimDueRow, error) {
-	row := q.db.QueryRow(ctx, claimDue, lease)
-	var i ClaimDueRow
-	err := row.Scan(&i.ID, &i.Kind, &i.At)
-	return i, err
-}
-
 const claimDueFor = `-- name: ClaimDueFor :one
 UPDATE archive.due d SET at = $1::timestamptz
 WHERE d.workspace = $2 AND d.kind = $3 AND d.at <= now()
@@ -751,17 +732,6 @@ SELECT at FROM archive.due WHERE workspace = $1 AND kind = $2
 
 func (q *Queries) DueAt(ctx context.Context, workspace uuid.UUID, kind string) (time.Time, error) {
 	row := q.db.QueryRow(ctx, dueAt, workspace, kind)
-	var at time.Time
-	err := row.Scan(&at)
-	return at, err
-}
-
-const earliestDue = `-- name: EarliestDue :one
-SELECT at FROM archive.due ORDER BY at LIMIT 1
-`
-
-func (q *Queries) EarliestDue(ctx context.Context) (time.Time, error) {
-	row := q.db.QueryRow(ctx, earliestDue)
 	var at time.Time
 	err := row.Scan(&at)
 	return at, err
@@ -1320,15 +1290,6 @@ func (q *Queries) NoMembers(ctx context.Context, workspace uuid.UUID) (bool, err
 	var not_exists bool
 	err := row.Scan(&not_exists)
 	return not_exists, err
-}
-
-const notifyDue = `-- name: NotifyDue :exec
-SELECT pg_notify('archive_due', $1::text)
-`
-
-func (q *Queries) NotifyDue(ctx context.Context, at string) error {
-	_, err := q.db.Exec(ctx, notifyDue, at)
-	return err
 }
 
 const ontologyAdmin = `-- name: OntologyAdmin :one

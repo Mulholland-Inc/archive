@@ -114,20 +114,20 @@ func (p *SchemaPlan) blocked() []string {
 	return out
 }
 
-func OpenStore(ctx context.Context, pooled, direct *pgx.ConnConfig, prefix, password string) (*pgStore, error) {
-	cfg := direct.Copy()
+func OpenStore(ctx context.Context, pg *pgx.ConnConfig, prefix, password string) (*pgStore, error) {
+	cfg := pg.Copy()
 	cfg.RuntimeParams["search_path"] = "public"
 	db := stdlib.OpenDB(*cfg.Copy())
 	db.SetMaxOpenConns(storeDDLConns)
 	db.SetConnMaxIdleTime(storeIdle)
 	s := &pgStore{cfg: cfg, prefix: prefix, ddl: db}
 	var err error
-	if s.sys, err = storePool(ctx, pooled, storeSysConns, nil); err == nil {
+	if s.sys, err = storePool(ctx, pg, storeSysConns, nil); err == nil {
 		err = s.bootstrap(ctx, password)
 	}
 	if err == nil {
 		auth := prefix + "_authenticator"
-		s.app, err = storePool(ctx, pooled, storeAppConns, func(c *pgx.ConnConfig) { c.User, c.Password = auth, password })
+		s.app, err = storePool(ctx, pg, storeAppConns, func(c *pgx.ConnConfig) { c.User, c.Password = auth, password })
 	}
 	if err != nil {
 		s.Close()
@@ -461,7 +461,7 @@ func storeLoad(ctx context.Context, db *sql.DB, files map[string]string) error {
 	for _, name := range specKeys(files) {
 		units = append(units, storeUnit{name, files[name]})
 	}
-	left, errs, err := storeTry(ctx, db, units)
+	left, _, err := storeTry(ctx, db, units)
 	if err != nil || len(left) == 0 {
 		return err
 	}
@@ -471,7 +471,8 @@ func storeLoad(ctx context.Context, db *sql.DB, files map[string]string) error {
 			stmts = append(stmts, storeUnit{u.file, st})
 		}
 	}
-	if left, errs, err = storeTry(ctx, db, stmts); err != nil || len(left) == 0 {
+	left, errs, err := storeTry(ctx, db, stmts)
+	if err != nil || len(left) == 0 {
 		return err
 	}
 	ve := &ValidationError{Type: "schema"}
@@ -667,5 +668,3 @@ func rowDecode(b []byte) (map[string]any, error) {
 	var m map[string]any
 	return m, dec.Decode(&m)
 }
-
-const pgSocketMax = 103

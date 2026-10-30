@@ -1,4 +1,4 @@
-CREATE TYPE account_kind AS ENUM ('checking', 'savings', 'credit', 'investment', 'pension');
+CREATE TYPE account_kind AS ENUM ('checking', 'savings', 'credit', 'investment', 'retirement');
 CREATE TABLE bank_account (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     space      uuid NOT NULL REFERENCES archive.space,
@@ -7,8 +7,8 @@ CREATE TABLE bank_account (
     name text NOT NULL,
     institution text,
     kind account_kind,
-    iban archive.iban,
-    bic archive.bic,
+    routing archive.us_routing,
+    last4 text,
     balance archive.money,
     opened date,
     search     tsvector GENERATED ALWAYS AS (archive.search_doc(name, institution)) STORED
@@ -23,7 +23,7 @@ icon: landmark';
 COMMENT ON COLUMN bank_account.name IS 'Your name for the account';
 COMMENT ON COLUMN bank_account.institution IS 'Bank or broker';
 COMMENT ON COLUMN bank_account.kind IS 'Type of account';
-COMMENT ON COLUMN bank_account.iban IS 'IBAN';
-COMMENT ON COLUMN bank_account.bic IS 'BIC of the bank';
+COMMENT ON COLUMN bank_account.routing IS 'ABA routing number of the bank';
+COMMENT ON COLUMN bank_account.last4 IS 'Last four digits of the account number';
 COMMENT ON COLUMN bank_account.balance IS 'Last known balance';
 COMMENT ON COLUMN bank_account.opened IS 'Date opened';

@@ -1,1 +1,0 @@
-import{n as e,r as t}from"./index-CUHWwu7r.js";import{t as n}from"./Icon-_CzsFgsJ.js";var r={name:`spell-check`,size:24,node:[[`path`,{d:`m20 15-5.5 5.5L12 18`}],[`path`,{d:`m4 16 6-12 5.115 10.23`}],[`path`,{d:`M6 12h8`}]]};r.node;var i=new Set([`$$slots`,`$$events`,`$$legacy`]);function a(a,o){let s=e(o,i);n(a,t(()=>s,{get icon(){return r}}))}export{a as default};

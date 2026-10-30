@@ -58,7 +58,7 @@ A workspace is a database of about a hundred catalog objects; a few thousand per
 
 - **app.archive.dev** serves only the web app, as static files from Cloudflare's edge.
 - **api.archive.dev** serves the HTTP API, sign-in, MCP, workflow webhooks and every OAuth redirect URL: connectors (ADR 0002) and sign-in with Google and Microsoft. These are the URLs registered and approved with each vendor, so they never change and don't depend on the workspace. The web app calls it directly.
-- `ARCHIVE_URL` is the app's address and `ARCHIVE_API_URL` the API's. They are always different, self-hosted too: the binary embeds no web app and serves no pages, and self-hosters run the `archive-web` image next to it.
+- `ARCHIVE_URL` is the app's address and `ARCHIVE_API_URL` the API's. They are always different, self-hosted too: the binary embeds no web app and serves no pages, and `apps/terraform/gcp` deploys the web app as a Worker next to it.
 - Only api.archive.dev reaches the Cloud Run service. No subdomain per workspace, no wildcard certificates.
 
 ## Finding the workspace
@@ -114,7 +114,7 @@ Built as decided; [ADR 0001](0001-architecture.md#workspaces) describes the resu
 - **The archive tables the system writes** (`space`, `file`, `secret`) have row-level security enabled but not forced, so the role that owns them — the one `DATABASE_URL` connects as, never a tenant — bypasses it for background work and admin cleanup, while tenant roles stay filtered by the policies. This replaces relying on a superuser to bypass, which Cloud SQL does not offer. Customer tables keep forced row-level security, so removing a space deletes their rows as the removing owner's role: the system role grants itself that role inside the transaction, sets it for the deletes, and revokes it before committing. No other system work touches customer tables.
 - **Instance admins** are the admins of workspace one, which cannot be deleted.
 - **Limits per workspace** are concurrent runs (8) and small pools that close when idle. Memory is not limited per workspace.
-- **No pooler.** Each instance holds a small pool per open workspace and talks to Postgres directly; `DATABASE_DIRECT_URL` stays available for a deployment that puts a transaction pooler in `DATABASE_URL`, since creating databases and schema changes need a direct session. Archive sets each database's default `search_path` and `timezone`.
+- **No pooler.** Each instance holds a small pool per open workspace and talks to Postgres directly, since creating databases and schema changes need a direct session. Archive sets each database's default `search_path` and `timezone`.
 - **Workspace one stays open** in every instance; other workspaces close after 10 idle minutes.
 
 ## Not doing

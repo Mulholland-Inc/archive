@@ -29,7 +29,7 @@
     ['What is an ontology?', 'A map of your business: the kinds of things you work with, like clients, properties and invoices, what you know about each, and how they connect.'],
     ['Who decides how it is set up?', 'You do. Your AI can suggest and prepare changes, but nothing changes until you confirm it.'],
     ['Can I take my data with me?', 'Yes. Your records sit in a standard, open database and your setup can be pulled as plain files. Copy all of it whenever you like, with no request to us.'],
-    ['Can I move to my own servers?', 'Yes. Archive is open source. Move everything to another provider or your own servers, or run Archive yourself, and it works the same.'],
+    ['Can I move to my own cloud?', 'Yes. Archive is open source. Move everything to another provider, or run Archive in your own Google Cloud account, and it works the same.'],
     ['Am I tied to one AI?', 'No. ChatGPT, Claude, Gemini and Grok all work with the same map and the same rules, so you can switch whenever you want.'],
     ['Can I delete something by accident?', 'No. Removing a kind of thing takes a deliberate extra step, and a renamed detail keeps everything in it.']
   ];
@@ -68,7 +68,7 @@
   </Row>
   <Row flip art="blog-own-your-data-2" alt="A database being wheeled out through an open door">
     <h2>Take it anywhere, anytime.</h2>
-    <p>Copy everything whenever you like, move it to another provider or your own servers, or run Archive yourself. It is open source, so you never need our permission.</p>
+    <p>Copy everything whenever you like, move it to another provider, or run Archive in your own Google Cloud account. It is open source, so you never need our permission.</p>
     <p>You stay because it works for you, not because leaving is hard.</p>
   </Row>
   <Row art="blog-company-memory-for-ai" alt="A central building of records connected to assistants around it">

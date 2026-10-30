@@ -31,7 +31,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -41,12 +40,18 @@ import (
 	"testing"
 	"time"
 
+	taskspb "cloud.google.com/go/cloudtasks/apiv2/cloudtaskspb"
 	"github.com/jackc/pgx/v4"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stripe/pg-schema-diff/pkg/diff"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 var e2eBin, e2eTemplate string
+
+var e2eCloudTasks *e2eTasks
 
 var e2eCopyFlag = map[string]string{"darwin": "-c", "linux": "--reflink=auto"}[runtime.GOOS]
 
@@ -69,8 +74,13 @@ func TestMain(m *testing.M) {
 		os.RemoveAll(dir)
 		panic(fmt.Sprintf("template database: %v", err))
 	}
+	if e2eCloudTasks, err = e2eTasksStart(false); err != nil {
+		os.RemoveAll(dir)
+		panic(fmt.Sprintf("cloud tasks: %v", err))
+	}
 	flag.Set("test.parallel", "32")
 	code := m.Run()
+	e2eCloudTasks.stop()
 	os.RemoveAll(dir)
 	os.Exit(code)
 }
@@ -93,7 +103,7 @@ CREATE POLICY editor ON %[1]s USING (space = ANY (archive.my_spaces('editor'))) 
 var e2eSchema = map[string]string{
 	"company.sql": e2eTable("company", `    name       text NOT NULL,
     search     tsvector GENERATED ALWAYS AS (archive.search_doc(name)) STORED`) + "COMMENT ON TABLE company IS 'A company';\n",
-	"contact.sql": "CREATE DOMAIN zip AS text CHECK (VALUE ~ '^[0-9]{4} [A-Z]{2}$');\n" + e2eTable("contact", `    name       text NOT NULL,
+	"contact.sql": "CREATE DOMAIN zip AS text CHECK (VALUE ~ '^[0-9]{5}(-[0-9]{4})?$');\n" + e2eTable("contact", `    name       text NOT NULL,
     zip        zip,
     email      archive.email,
     phone      archive.phone,
@@ -109,7 +119,7 @@ var e2eSchema = map[string]string{
 	"invoice.sql": "CREATE TYPE invoice_status AS ENUM ('draft', 'sent', 'paid');\n" + e2eTable("invoice", `    number     text NOT NULL,
     total      archive.money,
     date       date,
-    bsn        archive.nl_bsn,
+    ein        archive.us_ein,
     status     invoice_status,
     document   uuid REFERENCES archive.file,
     search     tsvector GENERATED ALWAYS AS (archive.search_doc(number)) STORED`),
@@ -136,7 +146,146 @@ func newInst(t *testing.T, env ...string) *e2eInst {
 		t.Fatal(err)
 	}
 	t.Cleanup(stop)
-	return &e2eInst{t: t, dir: dir, env: append([]string{"ARCHIVE_DATA=" + dir, "DATABASE_URL=host=" + dir + " user=archive dbname=archive"}, env...)}
+	return &e2eInst{t: t, dir: dir, env: append(append([]string{"ARCHIVE_DATA=" + dir, "DATABASE_URL=host=" + dir + " user=archive dbname=archive"}, e2eCloudTasks.queue(t, dir)...), env...)}
+}
+
+type e2eTasks struct {
+	taskspb.UnimplementedCloudTasksServer
+	addr   string
+	hold   bool
+	issuer *httptest.Server
+	grpc   *grpc.Server
+
+	mu     sync.Mutex
+	names  map[string]bool
+	posted []*taskspb.Task
+	routes map[string]*e2eRoute
+}
+
+type e2eRoute struct{ url, aud string }
+
+const e2eTasksAccount = "tasks@e2e.iam.gserviceaccount.com"
+
+func e2eTasksStart(hold bool) (*e2eTasks, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, err
+	}
+	issuer, err := e2eIssuerServer()
+	if err != nil {
+		ln.Close()
+		return nil, err
+	}
+	f := &e2eTasks{addr: "http://" + ln.Addr().String(), hold: hold, issuer: issuer, grpc: grpc.NewServer(), names: map[string]bool{}, routes: map[string]*e2eRoute{}}
+	taskspb.RegisterCloudTasksServer(f.grpc, f)
+	go f.grpc.Serve(ln)
+	return f, nil
+}
+
+func (f *e2eTasks) stop() {
+	f.grpc.Stop()
+	f.issuer.Close()
+}
+
+func (f *e2eTasks) env(queue string) []string {
+	return []string{"ARCHIVE_TASKS_QUEUE=" + queue, "ARCHIVE_TASKS_SERVICE_ACCOUNT=" + e2eTasksAccount, "ARCHIVE_TASKS_URL=" + f.addr, "ARCHIVE_TASKS_ISSUER=" + f.issuer.URL}
+}
+
+func (f *e2eTasks) queue(t *testing.T, dir string) []string {
+	q := "projects/e2e/locations/here/queues/" + filepath.Base(dir)
+	f.mu.Lock()
+	f.routes[q] = &e2eRoute{}
+	f.mu.Unlock()
+	t.Cleanup(func() {
+		f.mu.Lock()
+		delete(f.routes, q)
+		f.mu.Unlock()
+	})
+	return f.env(q)
+}
+
+func (f *e2eTasks) route(queue, url, aud string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if r := f.routes[queue]; r != nil {
+		r.url, r.aud = url, aud
+	}
+}
+
+func (f *e2eTasks) CreateTask(_ context.Context, req *taskspb.CreateTaskRequest) (*taskspb.Task, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	tk := req.GetTask()
+	if !strings.HasPrefix(tk.GetName(), req.GetParent()+"/tasks/") || tk.GetHttpRequest() == nil {
+		return nil, status.Error(codes.InvalidArgument, "want a named HTTP task in the queue")
+	}
+	f.posted = append(f.posted, tk)
+	if f.names[tk.GetName()] {
+		return nil, status.Error(codes.AlreadyExists, "task exists")
+	}
+	f.names[tk.GetName()] = true
+	if !f.hold {
+		go f.deliver(req.GetParent(), tk)
+	}
+	return tk, nil
+}
+
+func (f *e2eTasks) deliver(queue string, tk *taskspb.Task) {
+	time.Sleep(time.Until(tk.GetScheduleTime().AsTime()))
+	for wait := 50 * time.Millisecond; ; wait = min(2*wait, time.Second) {
+		f.mu.Lock()
+		r, ok := f.routes[queue]
+		var to e2eRoute
+		if ok {
+			to = *r
+		}
+		f.mu.Unlock()
+		if !ok {
+			return
+		}
+		if to.url != "" {
+			if tok, err := f.token(map[string]any{"aud": to.aud, "sub": "1", "email": tk.GetHttpRequest().GetOidcToken().GetServiceAccountEmail(), "email_verified": true}); err == nil {
+				req, _ := http.NewRequest("POST", to.url+"/tasks", bytes.NewReader(tk.GetHttpRequest().GetBody()))
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Authorization", "Bearer "+tok)
+				if resp, err := http.DefaultClient.Do(req); err == nil {
+					resp.Body.Close()
+					if resp.StatusCode/100 == 2 {
+						return
+					}
+				}
+			}
+		}
+		time.Sleep(wait)
+	}
+}
+
+func (f *e2eTasks) token(claims map[string]any) (string, error) {
+	code, _ := json.Marshal(claims)
+	resp, err := http.PostForm(f.issuer.URL+"/token", url.Values{"code": {string(code)}})
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	var out struct {
+		IDToken string `json:"id_token"`
+	}
+	return out.IDToken, json.NewDecoder(resp.Body).Decode(&out)
+}
+
+func (f *e2eTasks) tasks() []*taskspb.Task {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.posted)
+}
+
+func (in *e2eInst) getenv(key string) string {
+	for _, kv := range slices.Backward(in.env) {
+		if v, ok := strings.CutPrefix(kv, key+"="); ok {
+			return v
+		}
+	}
+	return ""
 }
 
 func e2ePostgres(dir string) (func(), error) {
@@ -199,8 +348,8 @@ func (in *e2eInst) twin(env ...string) *e2eInst {
 	if err := os.Symlink(filepath.Join(in.dir, "blobs"), filepath.Join(dir, "blobs")); err != nil {
 		in.t.Fatal(err)
 	}
-	return &e2eInst{t: in.t, dir: dir, env: append([]string{"ARCHIVE_DATA=" + dir, "DATABASE_URL=host=" + in.dir + " user=archive dbname=archive",
-		"ARCHIVE_SECRET_KEY=" + strings.TrimSpace(string(key))}, env...)}
+	return &e2eInst{t: in.t, dir: dir, env: append(append([]string{"ARCHIVE_DATA=" + dir, "DATABASE_URL=host=" + in.dir + " user=archive dbname=archive",
+		"ARCHIVE_SECRET_KEY=" + strings.TrimSpace(string(key))}, e2eCloudTasks.queue(in.t, dir)...), env...)}
 }
 
 func (in *e2eInst) on(t *testing.T) *e2eInst {
@@ -365,9 +514,11 @@ func (in *e2eInst) serve() *e2eServer {
 	}
 	done := make(chan struct{})
 	go func() { c.Wait(); close(done) }()
+	queue, api := in.getenv("ARCHIVE_TASKS_QUEUE"), cmp.Or(in.getenv("ARCHIVE_API_URL"), "http://localhost:"+strings.TrimPrefix(addr, "127.0.0.1:"))
 	var once sync.Once
 	s.stop = func() {
 		once.Do(func() {
+			e2eCloudTasks.route(queue, "", "")
 			c.Process.Signal(syscall.SIGTERM)
 			select {
 			case <-done:
@@ -382,6 +533,7 @@ func (in *e2eInst) serve() *e2eServer {
 		if resp, err := http.Get(s.url + "/healthz"); err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusNoContent {
+				e2eCloudTasks.route(queue, s.url, strings.TrimRight(api, "/")+"/tasks")
 				return s
 			}
 		}
@@ -446,9 +598,9 @@ func names(rs []row) string {
 
 func id(r row) string { return fmt.Sprint(r["id"]) }
 
-func TestSchemaPushNormalizesMessyDutchInputAndBlocksDrops(t *testing.T) {
+func TestSchemaPushNormalizesMessyInputAndBlocksDrops(t *testing.T) {
 	t.Parallel()
-	in := newInst(t, "ARCHIVE_LOCALE=nl-NL")
+	in := newInst(t, "ARCHIVE_LOCALE=en-US")
 	in.fails("list", "contact")
 	in.must("user", "add", "ann@example.com", "-name", "Ann")
 	plan := decode[SchemaPlan](t, in.push(e2eSchema))
@@ -474,9 +626,9 @@ COMMENT ON COLUMN company.name IS 'Legal name';`}
 	}
 	in.push(e2eSchema)
 
-	r := decode[row](t, in.must("create", "contact", `{"name":" Ann ","email":"Ann@EXAMPLE.com","phone":"06 12345678","birthday":"3-4-1990","balance":"€ 1.234,50","tags":"vip","zip":"1012 LG"}`))
-	want := map[string]string{"phone": "+31612345678", "birthday": "1990-04-03", "email": "Ann@example.com", "zip": "1012 LG",
-		"balance": "map[amount:1234.50 currency:EUR]", "tags": "[vip]"}
+	r := decode[row](t, in.must("create", "contact", `{"name":" Ann ","email":"Ann@EXAMPLE.com","phone":"(415) 555-0123","birthday":"4/3/1990","balance":"$1,234.50","tags":"vip","zip":"94105"}`))
+	want := map[string]string{"phone": "+14155550123", "birthday": "1990-04-03", "email": "Ann@example.com", "zip": "94105",
+		"balance": "map[amount:1234.50 currency:USD]", "tags": "[vip]"}
 	for k, v := range want {
 		if fmt.Sprint(r[k]) != v {
 			t.Errorf("%s = %v, want %v", k, r[k], v)
@@ -490,10 +642,10 @@ COMMENT ON COLUMN company.name IS 'Legal name';`}
 	if !strings.Contains(errs, "invalid contact") || !strings.Contains(errs, "email:") || !strings.Contains(errs, "phone:") || !strings.Contains(errs, "nope: unknown field") {
 		t.Errorf("validation errors: %s", errs)
 	}
-	if errs := in.fails("create", "contact", `{"email":"a@b.nl"}`); !strings.Contains(errs, "name: required") {
+	if errs := in.fails("create", "contact", `{"email":"a@b.com"}`); !strings.Contains(errs, "name: required") {
 		t.Errorf("required: %s", errs)
 	}
-	if errs := in.fails("create", "contact", `{"name":"Pat","zip":"1012"}`); !strings.Contains(errs, `zip: value for domain zip violates check constraint "zip_check"`) {
+	if errs := in.fails("create", "contact", `{"name":"Pat","zip":"9410"}`); !strings.Contains(errs, `zip: value for domain zip violates check constraint "zip_check"`) {
 		t.Errorf("domain check from Postgres: %s", errs)
 	}
 	if errs := in.fails("create", "invoice", `{"number":"X","status":"lost"}`); !strings.Contains(errs, "status: must be one of draft, sent, paid") {
@@ -503,10 +655,10 @@ COMMENT ON COLUMN company.name IS 'Legal name';`}
 		t.Errorf("enum case: %v", got)
 	}
 
-	if got := decode[[]row](t, in.must("list", "contact", "phone=06-1234 5678")); len(got) != 1 || id(got[0]) != id(r) {
+	if got := decode[[]row](t, in.must("list", "contact", "phone=415.555.0123")); len(got) != 1 || id(got[0]) != id(r) {
 		t.Errorf("filter on messy phone: %v", got)
 	}
-	if got := decode[[]row](t, in.must("list", "contact", "phone=0687654321")); len(got) != 0 {
+	if got := decode[[]row](t, in.must("list", "contact", "phone=4155550199")); len(got) != 0 {
 		t.Errorf("filter on other phone: %v", got)
 	}
 	in.must("set", "contact", id(r), `{"phone":null,"birthday":"1990-04-04"}`)
@@ -833,11 +985,11 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 	})
 
 	t.Run("SchemaChangesNeedAdmin", func(t *testing.T) {
-		files := with(e2eSchema, "company.sql", strings.Replace(e2eSchema["company.sql"], "    name       text NOT NULL,\n", "    name       text NOT NULL,\n    vat        archive.vat_id,\n", 1))
+		files := with(e2eSchema, "company.sql", strings.Replace(e2eSchema["company.sql"], "    name       text NOT NULL,\n", "    name       text NOT NULL,\n    ein        archive.us_ein,\n", 1))
 		var plan SchemaPlan
 		st, _ := call(t, "POST", api+"/schema/plan", narrowTok, map[string]any{"files": files}, &plan)
 		wantStatus(t, st, 200, "viewer token plans")
-		if len(plan.Statements) != 1 || !strings.Contains(plan.Statements[0].DDL, `ADD COLUMN "vat" archive.vat_id`) || plan.Applied {
+		if len(plan.Statements) != 1 || !strings.Contains(plan.Statements[0].DDL, `ADD COLUMN "ein" archive.us_ein`) || plan.Applied {
 			t.Fatalf("plan: %+v", plan)
 		}
 		st, _ = call(t, "POST", api+"/schema/apply", narrowTok, map[string]any{"files": files}, nil)
@@ -846,19 +998,19 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 		wantStatus(t, st, 200, "admin applies")
 		var cat Catalog
 		call(t, "GET", api+"/types", bobTok, nil, &cat)
-		if c := cat.Tables["company"]; c == nil || c.col("vat") == nil || c.col("vat").Type != "vat_id" || c.Description != "A company" || cat.Types["archive.email"] == nil {
+		if c := cat.Tables["company"]; c == nil || c.col("ein") == nil || c.col("ein").Type != "us_ein" || c.Description != "A company" || cat.Types["archive.email"] == nil {
 			t.Fatalf("catalog after apply: %+v", cat.Tables["company"])
 		}
 		var got struct {
 			Files map[string]string `json:"files"`
 		}
 		call(t, "GET", api+"/schema", bobTok, nil, &got)
-		if !strings.Contains(got.Files["company.sql"], "vat") || len(got.Files) != 4 {
+		if !strings.Contains(got.Files["company.sql"], "ein") || len(got.Files) != 4 {
 			t.Errorf("schema files: %v", got.Files)
 		}
-		st, _ = call(t, "POST", api+"/company", aliceTok, map[string]any{"name": "Vat Co", "vat": "nl 123456789 b01"}, nil)
+		st, _ = call(t, "POST", api+"/company", aliceTok, map[string]any{"name": "Ein Co", "ein": "12 3456789"}, nil)
 		wantStatus(t, st, 201, "use the new column")
-		if out := in.on(t).must("list", "company", "vat=NL123456789B01"); !strings.Contains(out, "Vat Co") {
+		if out := in.on(t).must("list", "company", "ein=123456789"); !strings.Contains(out, "Ein Co") {
 			t.Errorf("cli sees the new column: %s", out)
 		}
 	})
@@ -1079,91 +1231,6 @@ func TestTheFirstOwnerIsAddedOnTheCLIAndSignsInWithAProvider(t *testing.T) {
 	}
 }
 
-func TestDockerImagesServeTheAPIAndTheWebAppApartAndTakeCLICommandsFromDockerExec(t *testing.T) {
-	t.Parallel()
-	if os.Getenv("CI") == "" {
-		t.Skip("builds the Docker images; runs in CI")
-	}
-	if err := exec.Command("docker", "info").Run(); err != nil {
-		t.Skip("docker is not available")
-	}
-	name := fmt.Sprintf("archive-e2e-%d", time.Now().UnixNano())
-	web, pg := name+"-web", name+"-postgres"
-	docker := func(stdin string, args ...string) string {
-		t.Helper()
-		c := exec.Command("docker", args...)
-		c.Stdin = strings.NewReader(stdin)
-		out, err := c.CombinedOutput()
-		if err != nil {
-			t.Fatalf("docker %s: %v\n%s", strings.Join(args, " "), err, out)
-		}
-		return string(out)
-	}
-	t.Cleanup(func() {
-		exec.Command("docker", "rm", "-f", name, web, pg).Run()
-		exec.Command("docker", "volume", "rm", "-f", name).Run()
-		exec.Command("docker", "network", "rm", name).Run()
-		exec.Command("docker", "rmi", "-f", web).Run()
-	})
-	ko := exec.Command("go", "run", "github.com/google/ko@v0.18.1", "build", "--bare", "--platform=linux/"+runtime.GOARCH, ".")
-	ko.Env = append(os.Environ(), "KO_DOCKER_REPO=ko.local")
-	out, err := ko.Output()
-	if err != nil {
-		t.Fatalf("ko build: %v", err)
-	}
-	image := strings.TrimSpace(string(out))
-	t.Cleanup(func() { exec.Command("docker", "rmi", "-f", image).Run() })
-	docker("", "build", "-q", "-f", "../apps/web/Dockerfile", "-t", web, "..")
-	docker("", "network", "create", name)
-	docker("", "run", "-d", "--name", pg, "--network", name, "-e", "POSTGRES_USER=archive", "-e", "POSTGRES_PASSWORD=archive", "-e", "POSTGRES_DB=archive", "postgres:18-alpine")
-	for deadline := time.Now().Add(60 * time.Second); exec.Command("docker", "exec", pg, "pg_isready", "-q", "-h", "127.0.0.1", "-U", "archive").Run() != nil; time.Sleep(500 * time.Millisecond) {
-		if time.Now().After(deadline) {
-			t.Fatal("postgres did not start")
-		}
-	}
-	docker("", "run", "-d", "--name", name, "--network", name, "-v", name+":/home/nonroot", "-p", "127.0.0.1::8080",
-		"-e", "DATABASE_URL=postgres://archive:archive@"+pg+":5432/archive?sslmode=disable", "-e", "ARCHIVE_DATA=/home/nonroot", image, "serve")
-	api := "http://" + strings.TrimSpace(docker("", "port", name, "8080"))
-	for deadline := time.Now().Add(90 * time.Second); ; time.Sleep(500 * time.Millisecond) {
-		if resp, err := http.Get(api + "/healthz"); err == nil && resp.StatusCode == 204 {
-			resp.Body.Close()
-			break
-		}
-		if time.Now().After(deadline) {
-			out, _ := exec.Command("docker", "logs", name).CombinedOutput()
-			t.Fatalf("container not up:\n%s", out)
-		}
-	}
-	for _, page := range []string{"/", "/workflows", "/assets/index.js"} {
-		if resp, err := http.Get(api + page); err != nil || resp.StatusCode != 404 {
-			t.Errorf("the API image serves %s: %v %v", page, err, resp)
-		} else {
-			resp.Body.Close()
-		}
-	}
-	docker("", "run", "-d", "--name", web, "-e", "ARCHIVE_API_URL=https://api.example.test", web)
-	for _, page := range []string{"/", "/files", "/workflows"} {
-		if out := docker("", "exec", web, "wget", "-q", "-O", "-", "http://127.0.0.1:8080"+page); !strings.Contains(out, `<div id="app">`) || !strings.Contains(out, `<meta name="archive-api" content="https://api.example.test">`) {
-			t.Fatalf("web app at %s: %s", page, out)
-		}
-	}
-	asset := regexp.MustCompile(`/assets/[^"]+\.js`).FindString(docker("", "exec", web, "wget", "-q", "-O", "-", "http://127.0.0.1:8080/"))
-	if out := docker("", "exec", web, "wget", "-S", "-O", "/dev/null", "http://127.0.0.1:8080"+asset); asset == "" || !strings.Contains(out, "immutable") {
-		t.Fatalf("asset %q: %s", asset, out)
-	}
-	if exec.Command("docker", "exec", web, "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/assets/gone.js").Run() == nil {
-		t.Fatal("a missing asset answers")
-	}
-	ddl := t.TempDir()
-	os.WriteFile(filepath.Join(ddl, "company.sql"), []byte(e2eSchema["company.sql"]), 0o644)
-	docker("", "cp", ddl, name+":/home/nonroot/ddl")
-	docker("", "exec", name, "archive", "user", "add", "ops@example.com")
-	docker("", "exec", name, "archive", "schema", "apply", "/home/nonroot/ddl")
-	docker("", "exec", name, "archive", "create", "company", `{"name":"Docker Inc"}`)
-	if out := docker("", "exec", name, "archive", "list", "company"); !strings.Contains(out, "Docker Inc") {
-		t.Fatalf("docker exec list: %s", out)
-	}
-}
 func e2ePDF(pages ...string) []byte {
 	kids := make([]string, len(pages))
 	objs := []string{"<< /Type /Catalog /Pages 2 0 R >>", "", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"}
@@ -1515,7 +1582,7 @@ func TestFilesUploadProcessShareAndReference(t *testing.T) {
 			t.Errorf("pdf text: %q", text)
 		}
 		var inv row
-		st, _ = call(t, "POST", api+"/invoice", aliceTok, map[string]any{"number": "INV-9", "document": f.ID.String(), "total": "EUR 12.50"}, &inv)
+		st, _ = call(t, "POST", api+"/invoice", aliceTok, map[string]any{"number": "INV-9", "document": f.ID.String(), "total": "USD 12.50"}, &inv)
 		wantStatus(t, st, 201, "invoice that references its file")
 		if inv["document"] != f.ID.String() {
 			t.Errorf("invoice: %v", inv)
@@ -1550,21 +1617,19 @@ func TestFilesUploadProcessShareAndReference(t *testing.T) {
 	})
 }
 
-type e2eS3 struct {
+type e2eGCS struct {
 	mu      sync.Mutex
 	objects map[string][]byte
 	puts    int
-	gcs     bool
 }
 
-func (s *e2eS3) handler(t *testing.T) http.Handler {
+func (s *e2eGCS) handler(t *testing.T) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth := r.Header.Get("Authorization")
-		if s.gcs && r.URL.Path == "/computeMetadata/v1/instance/service-accounts/default/token" && r.Header.Get("Metadata-Flavor") == "Google" {
+		if r.URL.Path == "/computeMetadata/v1/instance/service-accounts/default/token" && r.Header.Get("Metadata-Flavor") == "Google" {
 			json.NewEncoder(w).Encode(map[string]any{"access_token": "meta", "expires_in": 3600, "token_type": "Bearer"})
 			return
 		}
-		if s.gcs && auth != "Bearer meta" || !s.gcs && (!strings.HasPrefix(auth, "AWS4-HMAC-SHA256 Credential=key-id/") || !strings.Contains(auth, "/eu-test/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=")) {
+		if r.Header.Get("Authorization") != "Bearer meta" {
 			w.WriteHeader(403)
 			return
 		}
@@ -1574,10 +1639,6 @@ func (s *e2eS3) handler(t *testing.T) http.Handler {
 		switch r.Method {
 		case "PUT":
 			body, _ := io.ReadAll(r.Body)
-			if sum := sha256.Sum256(body); !s.gcs && hex.EncodeToString(sum[:]) != r.Header.Get("X-Amz-Content-Sha256") {
-				w.WriteHeader(400)
-				return
-			}
 			s.objects[r.URL.Path] = body
 			s.puts++
 		case "DELETE":
@@ -1593,13 +1654,12 @@ func (s *e2eS3) handler(t *testing.T) http.Handler {
 	})
 }
 
-func TestS3BlobBackendAgainstAFakeS3(t *testing.T) {
+func TestGCSBlobBackendSignsWithTheServiceAccountTokenFromTheMetadataServer(t *testing.T) {
 	t.Parallel()
-	s3 := &e2eS3{objects: map[string][]byte{}}
-	fake := httptest.NewServer(s3.handler(t))
+	gcs := &e2eGCS{objects: map[string][]byte{}}
+	fake := httptest.NewServer(gcs.handler(t))
 	defer fake.Close()
-	in := newInst(t, "ARCHIVE_BLOB_URL=s3://photos/archive?endpoint="+url.QueryEscape(fake.URL)+"&region=eu-test",
-		"ARCHIVE_BLOB_KEY=key-id", "ARCHIVE_BLOB_SECRET=key-secret")
+	in := newInst(t, "ARCHIVE_BLOB_URL=gs://photos/archive?endpoint="+url.QueryEscape(fake.URL), "GCE_METADATA_HOST="+strings.TrimPrefix(fake.URL, "http://"))
 	in.must("user", "add", "ann@example.com")
 	content := bytes.Repeat([]byte("0123456789"), 5000)
 	path := filepath.Join(in.dir, "numbers.txt")
@@ -1608,10 +1668,10 @@ func TestS3BlobBackendAgainstAFakeS3(t *testing.T) {
 	os.WriteFile(filepath.Join(in.dir, "copy.txt"), content, 0o644)
 	in.must("file", "add", filepath.Join(in.dir, "copy.txt"))
 	key := "/photos/archive/" + in.psql("archive", "SELECT id FROM archive.workspace ORDER BY created_at LIMIT 1") + "/" + f.Hash[:2] + "/" + f.Hash
-	s3.mu.Lock()
-	_, stored := s3.objects[key]
-	puts := s3.puts
-	s3.mu.Unlock()
+	gcs.mu.Lock()
+	_, stored := gcs.objects[key]
+	puts := gcs.puts
+	gcs.mu.Unlock()
 	if !stored || puts != 1 || f.Status != "done" {
 		t.Fatalf("object %s stored %v, %d puts, file %+v", key, stored, puts, f)
 	}
@@ -1619,40 +1679,17 @@ func TestS3BlobBackendAgainstAFakeS3(t *testing.T) {
 		t.Error("blobs written to the data directory too")
 	}
 	if out := in.must("file", "get", f.ID.String(), "-o", "-"); out != string(content) {
-		t.Errorf("download through s3: %d bytes", len(out))
+		t.Errorf("download through gcs: %d bytes", len(out))
 	}
 	srv := in.serve()
 	tok := decode[Token](t, in.must("token", "create")).Secret
 	resp, body := e2eGet(t, srv.url+"/api/files/"+f.ID.String()+"/content", tok, "Range", "bytes=49990-")
 	if resp.StatusCode != 206 || string(body) != "0123456789" {
-		t.Errorf("range through s3: %d %q", resp.StatusCode, body)
+		t.Errorf("range through gcs: %d %q", resp.StatusCode, body)
 	}
 	resp, body = e2eGet(t, srv.url+"/api/files/"+f.ID.String()+"/content", tok, "Range", "bytes=5-14")
 	if resp.StatusCode != 206 || string(body) != "5678901234" {
-		t.Errorf("middle range through s3: %d %q", resp.StatusCode, body)
-	}
-}
-
-func TestGCSBlobBackendSignsWithTheServiceAccountTokenFromTheMetadataServer(t *testing.T) {
-	t.Parallel()
-	gcs := &e2eS3{objects: map[string][]byte{}, gcs: true}
-	fake := httptest.NewServer(gcs.handler(t))
-	defer fake.Close()
-	in := newInst(t, "ARCHIVE_BLOB_URL=gs://photos?endpoint="+url.QueryEscape(fake.URL), "GCE_METADATA_HOST="+strings.TrimPrefix(fake.URL, "http://"))
-	in.must("user", "add", "ann@example.com")
-	content := bytes.Repeat([]byte("abcdefghij"), 3000)
-	path := filepath.Join(in.dir, "letters.txt")
-	os.WriteFile(path, content, 0o644)
-	f := decode[File](t, in.must("file", "add", path))
-	key := "/photos/" + in.psql("archive", "SELECT id FROM archive.workspace ORDER BY created_at LIMIT 1") + "/" + f.Hash[:2] + "/" + f.Hash
-	gcs.mu.Lock()
-	_, stored := gcs.objects[key]
-	gcs.mu.Unlock()
-	if !stored || f.Status != "done" {
-		t.Fatalf("object %s stored %v, file %+v", key, stored, f)
-	}
-	if out := in.must("file", "get", f.ID.String(), "-o", "-"); out != string(content) {
-		t.Errorf("download through gcs: %d bytes", len(out))
+		t.Errorf("middle range through gcs: %d %q", resp.StatusCode, body)
 	}
 }
 
@@ -1786,8 +1823,8 @@ CREATE TRIGGER alpha_trim BEFORE INSERT ON alpha FOR EACH ROW EXECUTE FUNCTION a
 
 var e2eNote = e2eTable("note", `    title      text NOT NULL,
     body       text,
-    bsn        archive.nl_bsn,
-    search     tsvector GENERATED ALWAYS AS (setweight(archive.search_doc(title), 'A') || setweight(archive.search_doc(body, bsn), 'B')) STORED`) +
+    ssn        archive.us_ssn,
+    search     tsvector GENERATED ALWAYS AS (setweight(archive.search_doc(title), 'A') || setweight(archive.search_doc(body, ssn), 'B')) STORED`) +
 	"CREATE INDEX note_search ON note USING gin (search);\n"
 
 func e2eSearch(t *testing.T, api, tok, q string, params ...string) []SearchHit {
@@ -1812,7 +1849,7 @@ func e2eTitles(hits []SearchHit) string {
 	return strings.Join(out, "|")
 }
 
-func TestFullTextSearchInDutchAndEnglishAcrossTablesFilesAndUsers(t *testing.T) {
+func TestFullTextSearchAcrossTablesFilesAndUsers(t *testing.T) {
 	t.Parallel()
 	in := newInst(t)
 	in.must("user", "add", "alice@example.com")
@@ -1828,72 +1865,72 @@ func TestFullTextSearchInDutchAndEnglishAcrossTablesFilesAndUsers(t *testing.T) 
 		st, _ := call(t, "POST", api+"/note", tok, data, nil)
 		wantStatus(t, st, 201, "create note")
 	}
-	note(aliceTok, map[string]any{"title": "Huurcontract appartement Utrecht", "body": "Huurovereenkomst voor de woning aan de Oudegracht. Huur 1250 euro per maand."})
-	note(aliceTok, map[string]any{"title": "Weekend away", "body": "Met de trein naar Utrecht"})
+	note(aliceTok, map[string]any{"title": "Rental agreement Brooklyn apartment", "body": "Rental agreement for the apartment on Atlantic Avenue. Rent is 2450 dollars a month."})
+	note(aliceTok, map[string]any{"title": "Weekend away", "body": "Train to Brooklyn"})
 	note(aliceTok, map[string]any{"title": "Lease agreement London flat", "body": "Tenancy for the flat in Camden, rent paid monthly."})
-	note(aliceTok, map[string]any{"title": "Café De Zaak", "body": "Koffie en appeltaart"})
-	note(aliceTok, map[string]any{"title": "Belastingaangifte", "bsn": "111222333"})
-	note(bobTok, map[string]any{"title": "Bob huurcontract Utrecht"})
-	call(t, "POST", api+"/company", aliceTok, map[string]any{"name": "Utrecht Plumbing"}, nil)
-	_, nl := e2eUpload(t, api+"/files", aliceTok, "huur.txt", []byte("De verhuurder verhuurt de woning aan de Prinsengracht aan de huurder."))
-	_, en := e2eUpload(t, api+"/files", aliceTok, "policy.pdf", e2ePDF("Home insurance policy", "Covers water damage in the kitchen"))
-	e2eDoneFile(t, api, aliceTok, nl.ID.String())
-	e2eDoneFile(t, api, aliceTok, en.ID.String())
+	note(aliceTok, map[string]any{"title": "Café Grumpy", "body": "Coffee and apple pie"})
+	note(aliceTok, map[string]any{"title": "Tax return", "ssn": "111222333"})
+	note(bobTok, map[string]any{"title": "Bob rental agreement Brooklyn"})
+	call(t, "POST", api+"/company", aliceTok, map[string]any{"name": "Brooklyn Plumbing"}, nil)
+	_, txt := e2eUpload(t, api+"/files", aliceTok, "rental.txt", []byte("The landlord rents the apartment on Bedford Avenue to the tenant."))
+	_, pdf := e2eUpload(t, api+"/files", aliceTok, "policy.pdf", e2ePDF("Home insurance policy", "Covers water damage in the kitchen"))
+	e2eDoneFile(t, api, aliceTok, txt.ID.String())
+	e2eDoneFile(t, api, aliceTok, pdf.ID.String())
 
-	t.Run("DutchAndEnglishRowsRankByTheirWords", func(t *testing.T) {
-		hits := e2eSearch(t, api, aliceTok, "huurcontract utrecht")
-		if got := e2eTitles(hits); !strings.HasPrefix(got, "Huurcontract appartement Utrecht|") || !strings.Contains(got, "Utrecht Plumbing") || !strings.Contains(got, "Weekend away") {
-			t.Fatalf("huurcontract utrecht: %s", got)
+	t.Run("RowsRankByTheirWords", func(t *testing.T) {
+		hits := e2eSearch(t, api, aliceTok, "rental brooklyn")
+		if got := e2eTitles(hits); !strings.HasPrefix(got, "Rental agreement Brooklyn apartment|") || !strings.Contains(got, "Brooklyn Plumbing") || !strings.Contains(got, "Weekend away") {
+			t.Fatalf("rental brooklyn: %s", got)
 		}
 		if hits[0].Kind != "entity" || hits[0].Type != "note" {
 			t.Errorf("hit: %+v", hits[0])
 		}
 		if got := e2eTitles(e2eSearch(t, api, aliceTok, "the lease for the London flat")); !strings.HasPrefix(got, "Lease agreement London flat") {
-			t.Errorf("english: %s", got)
+			t.Errorf("lease: %s", got)
 		}
-		if got := e2eTitles(e2eSearch(t, api, aliceTok, "huur")); !strings.Contains(got, "Huurcontract appartement Utrecht") || !strings.Contains(got, "huur.txt") {
-			t.Errorf("prefix huur: %s", got)
+		if got := e2eTitles(e2eSearch(t, api, aliceTok, "rent")); !strings.Contains(got, "Rental agreement Brooklyn apartment") || !strings.Contains(got, "rental.txt") {
+			t.Errorf("prefix rent: %s", got)
 		}
 	})
 
 	t.Run("CaseAndAccentsAreFolded", func(t *testing.T) {
-		for _, q := range []string{"cafe", "CAFÉ", "café de zaak"} {
-			if got := e2eTitles(e2eSearch(t, api, aliceTok, q)); !strings.HasPrefix(got, "Café De Zaak") {
+		for _, q := range []string{"cafe", "CAFÉ", "café grumpy"} {
+			if got := e2eTitles(e2eSearch(t, api, aliceTok, q)); !strings.HasPrefix(got, "Café Grumpy") {
 				t.Errorf("%s: %s", q, got)
 			}
 		}
 	})
 
-	t.Run("FileTextInDutchAndEnglish", func(t *testing.T) {
-		hits := e2eSearch(t, api, aliceTok, "verhuurder Prinsengracht")
-		if len(hits) == 0 || hits[0].ID != nl.ID || hits[0].Type != "file" || !strings.Contains(hits[0].Snippet, "**verhuurder**") {
-			t.Fatalf("dutch file: %+v", hits)
+	t.Run("FileTextIsSearched", func(t *testing.T) {
+		hits := e2eSearch(t, api, aliceTok, "landlord Bedford")
+		if len(hits) == 0 || hits[0].ID != txt.ID || hits[0].Type != "file" || !strings.Contains(hits[0].Snippet, "**landlord**") {
+			t.Fatalf("text file: %+v", hits)
 		}
 		hits = e2eSearch(t, api, aliceTok, "water damage", "type", "file")
-		if len(hits) != 1 || hits[0].ID != en.ID {
-			t.Fatalf("english pdf: %+v", hits)
+		if len(hits) != 1 || hits[0].ID != pdf.ID {
+			t.Fatalf("pdf: %+v", hits)
 		}
 	})
 
 	t.Run("FiltersNarrowTheResults", func(t *testing.T) {
-		if got := e2eTitles(e2eSearch(t, api, aliceTok, "huur", "type", "note")); strings.Contains(got, "huur.txt") || !strings.Contains(got, "Huurcontract") {
+		if got := e2eTitles(e2eSearch(t, api, aliceTok, "rent", "type", "note")); strings.Contains(got, "rental.txt") || !strings.Contains(got, "Rental agreement") {
 			t.Errorf("type note: %s", got)
 		}
 		day := time.Now().Format(time.DateOnly)
-		if n := len(e2eSearch(t, api, aliceTok, "huur", "from", day, "to", day)); n < 2 {
+		if n := len(e2eSearch(t, api, aliceTok, "rent", "from", day, "to", day)); n < 2 {
 			t.Errorf("today: %d hits", n)
 		}
-		if n := len(e2eSearch(t, api, aliceTok, "huur", "from", time.Now().AddDate(0, 0, 1).Format(time.DateOnly))); n != 0 {
+		if n := len(e2eSearch(t, api, aliceTok, "rent", "from", time.Now().AddDate(0, 0, 1).Format(time.DateOnly))); n != 0 {
 			t.Errorf("from tomorrow: %d hits", n)
 		}
-		if n := len(e2eSearch(t, api, aliceTok, "huur", "to", time.Now().AddDate(0, 0, -1).Format(time.DateOnly))); n != 0 {
+		if n := len(e2eSearch(t, api, aliceTok, "rent", "to", time.Now().AddDate(0, 0, -1).Format(time.DateOnly))); n != 0 {
 			t.Errorf("to yesterday: %d hits", n)
 		}
-		st, _ := call(t, "GET", api+"/search?q=huur&space=family", aliceTok, nil, nil)
+		st, _ := call(t, "GET", api+"/search?q=rent&space=family", aliceTok, nil, nil)
 		wantStatus(t, st, 404, "unknown space")
-		st, _ = call(t, "GET", api+"/search?q=huur&type=nothing", aliceTok, nil, nil)
+		st, _ = call(t, "GET", api+"/search?q=rent&type=nothing", aliceTok, nil, nil)
 		wantStatus(t, st, 404, "unknown type")
-		st, _ = call(t, "GET", api+"/search?q=huur&from=soon", aliceTok, nil, nil)
+		st, _ = call(t, "GET", api+"/search?q=rent&from=soon", aliceTok, nil, nil)
 		wantStatus(t, st, 422, "bad date")
 		st, _ = call(t, "GET", api+"/search?q=+", aliceTok, nil, nil)
 		wantStatus(t, st, 422, "empty query")
@@ -1901,10 +1938,10 @@ func TestFullTextSearchInDutchAndEnglishAcrossTablesFilesAndUsers(t *testing.T) 
 
 	t.Run("SecretsNeverMatch", func(t *testing.T) {
 		in := in.on(t)
-		if hits := e2eSearch(t, api, aliceTok, "belastingaangifte"); len(hits) != 1 {
+		if hits := e2eSearch(t, api, aliceTok, "tax return"); len(hits) != 1 {
 			t.Fatalf("secret row by title: %+v", hits)
 		}
-		for _, q := range []string{"111222333", "111 222 333"} {
+		for _, q := range []string{"111222333", "111 22 2333"} {
 			if hits := e2eSearch(t, api, aliceTok, q); len(hits) != 0 {
 				t.Errorf("%s matches %s", q, e2eTitles(hits))
 			}
@@ -1916,26 +1953,26 @@ func TestFullTextSearchInDutchAndEnglishAcrossTablesFilesAndUsers(t *testing.T) 
 
 	t.Run("AnotherUsersDataNeverShowsUp", func(t *testing.T) {
 		in := in.on(t)
-		if got := e2eTitles(e2eSearch(t, api, bobTok, "utrecht")); got != "Bob huurcontract Utrecht" {
+		if got := e2eTitles(e2eSearch(t, api, bobTok, "brooklyn")); got != "Bob rental agreement Brooklyn" {
 			t.Errorf("bob api: %s", got)
 		}
-		if got := e2eTitles(e2eSearch(t, api, aliceTok, "huurcontract")); strings.Contains(got, "Bob") {
+		if got := e2eTitles(e2eSearch(t, api, aliceTok, "rental")); strings.Contains(got, "Bob") {
 			t.Errorf("alice api: %s", got)
 		}
-		if got := e2eSearch(t, api, bobTok, "verhuurder plumbing cafe"); len(got) != 0 {
+		if got := e2eSearch(t, api, bobTok, "landlord plumbing cafe"); len(got) != 0 {
 			t.Errorf("bob sees alice's notes and files: %+v", got)
 		}
-		if got := in.must("-as", "bob@example.com", "search", "huurcontract", "utrecht"); !strings.Contains(got, "Bob huurcontract") || strings.Contains(got, "appartement") {
+		if got := in.must("-as", "bob@example.com", "search", "rental", "brooklyn"); !strings.Contains(got, "Bob rental") || strings.Contains(got, "apartment") {
 			t.Errorf("bob cli: %s", got)
 		}
-		if got := in.must("search", "huurcontract", "-type", "note"); !strings.Contains(got, "appartement") || strings.Contains(got, "Bob") {
+		if got := in.must("search", "rental", "-type", "note"); !strings.Contains(got, "apartment") || strings.Contains(got, "Bob") {
 			t.Errorf("alice cli: %s", got)
 		}
 		role := in.role("bob@example.com")
 		in.psql("archive", "ALTER ROLE \""+role+"\" LOGIN")
 		defer in.psql("archive", "ALTER ROLE \""+role+"\" NOLOGIN")
-		q := "SELECT (SELECT count(*) FROM note WHERE search @@ archive.search_query('huurcontract verhuurder')) || ',' || " +
-			"(SELECT count(*) FROM archive.file WHERE search @@ archive.search_query('verhuurder'))"
+		q := "SELECT (SELECT count(*) FROM note WHERE search @@ archive.search_query('rental landlord')) || ',' || " +
+			"(SELECT count(*) FROM archive.file WHERE search @@ archive.search_query('landlord'))"
 		if got := in.psql(role, q); got != "1,0" {
 			t.Errorf("psql as bob: %s", got)
 		}
@@ -2341,20 +2378,20 @@ return { planned: plan.statements.length, before: plan.applied, applied: done.ap
 	})
 
 	t.Run("CRUDSearchSQLAndFilesInOneScript", func(t *testing.T) {
-		got := ok(t, `const a = await archive.create("house", { address: "Keizersgracht 1", price: "€ 950.000,00" });
-const b = await archive.create("house", { address: "Oudegracht 2" });
-const listed = await archive.list("house", { where: { address: "Oudegracht 2" } });
-const priced = await archive.update("house", b.id, { price: { amount: 500000, currency: "EUR" } });
+		got := ok(t, `const a = await archive.create("house", { address: "12 Willow Street", price: "$950,000.00" });
+const b = await archive.create("house", { address: "34 Maple Avenue" });
+const listed = await archive.list("house", { where: { address: "34 Maple Avenue" } });
+const priced = await archive.update("house", b.id, { price: { amount: 500000, currency: "USD" } });
 const cleared = await archive.update("house", a.id, { price: null });
-const hits = await archive.search("keizersgracht");
+const hits = await archive.search("willow");
 const [{ n }] = await archive.sql("SELECT count(*)::int AS n FROM house WHERE price IS NOT NULL");
 const files = await archive.files();
 const file = await archive.file(files[0].id);
 console.log("made", { a: a.address });
 return { price: a.price, sold: b.sold, listed: listed.map(h => h.id === b.id), priced: priced.price?.amount, cleared: cleared.price,
   hit: hits.find(h => h.type === "house")?.data.address, n, text: file.text, spaces: (await archive.spaces()).length };`)
-		want := map[string]string{"price": "map[amount:950000 currency:EUR]", "sold": "false", "listed": "[true]", "priced": "500000", "cleared": "<nil>",
-			"hit": "Keizersgracht 1", "n": "1", "text": "Viewing on Friday at the canal house", "spaces": "1"}
+		want := map[string]string{"price": "map[amount:950000 currency:USD]", "sold": "false", "listed": "[true]", "priced": "500000", "cleared": "<nil>",
+			"hit": "12 Willow Street", "n": "1", "text": "Viewing on Friday at the canal house", "spaces": "1"}
 		for k, v := range want {
 			if fmt.Sprint(got[k]) != v {
 				t.Errorf("%s = %v, want %s", k, got[k], v)
@@ -2534,7 +2571,7 @@ throw new Error("changed my mind");`)
 			t.Errorf("empty script from stdin: %+v", out)
 		}
 		stdout, _, err := in.run(`return (await archive.list("house")).map(h => h.address).sort()`, "run", "-")
-		if out := decode[RunOutput](t, stdout); err != nil || fmt.Sprint(decode[[]string](t, string(out.Result))) != "[Keizersgracht 1 Oudegracht 2]" {
+		if out := decode[RunOutput](t, stdout); err != nil || fmt.Sprint(decode[[]string](t, string(out.Result))) != "[12 Willow Street 34 Maple Avenue]" {
 			t.Errorf("archive run -: %v %s", err, stdout)
 		}
 	})
@@ -2551,12 +2588,12 @@ throw new Error("changed my mind");`)
 		if err != nil || len(tools.Tools) != 1 || tools.Tools[0].Name != "run" || !strings.Contains(tools.Tools[0].Description, "interface House extends Base") {
 			t.Fatalf("tools: %v %+v", err, tools)
 		}
-		res, err := sess.CallTool(ctx, &mcp.CallToolParams{Name: "run", Arguments: map[string]any{"code": `console.log("hi"); return (await archive.list("house", { where: { address: "Oudegracht 2" } }))[0].price;`}})
+		res, err := sess.CallTool(ctx, &mcp.CallToolParams{Name: "run", Arguments: map[string]any{"code": `console.log("hi"); return (await archive.list("house", { where: { address: "34 Maple Avenue" } }))[0].price;`}})
 		if err != nil || res.IsError || len(res.Content) != 1 {
 			t.Fatalf("call: %v %+v", err, res)
 		}
 		out := decode[RunOutput](t, res.Content[0].(*mcp.TextContent).Text)
-		if out.Error != "" || string(out.Result) != `{"amount":500000,"currency":"EUR"}` || !slices.Equal(out.Logs, []string{"hi"}) {
+		if out.Error != "" || string(out.Result) != `{"amount":500000,"currency":"USD"}` || !slices.Equal(out.Logs, []string{"hi"}) {
 			t.Errorf("mcp run: %+v", out)
 		}
 		res, err = sess.CallTool(ctx, &mcp.CallToolParams{Name: "run", Arguments: map[string]any{"code": `return archive.get("house", "nope")`}})
@@ -3194,9 +3231,18 @@ func e2eGoogle(t *testing.T) []string {
 
 func e2eIssuer(t *testing.T) *httptest.Server {
 	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	issuer, err := e2eIssuerServer()
 	if err != nil {
 		t.Fatal(err)
+	}
+	t.Cleanup(issuer.Close)
+	return issuer
+}
+
+func e2eIssuerServer() (*httptest.Server, error) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, err
 	}
 	b64 := base64.RawURLEncoding.EncodeToString
 	var issuer *httptest.Server
@@ -3228,8 +3274,7 @@ func e2eIssuer(t *testing.T) *httptest.Server {
 				"jwks_uri": issuer.URL + "/jwks", "id_token_signing_alg_values_supported": []string{"RS256"}})
 		}
 	}))
-	t.Cleanup(issuer.Close)
-	return issuer
+	return issuer, nil
 }
 
 func (s *e2eServer) oidc(t *testing.T, provider string, claims map[string]any) (int, *http.Cookie) {
@@ -3421,8 +3466,8 @@ func (in *e2eInst) cloudsql(env ...string) *e2eInst {
 		in.t.Fatal(err)
 	}
 	dsn := "host=" + in.dir + " user=cloudsql password=cloudsql dbname=tenantmain"
-	return &e2eInst{t: in.t, dir: dir, env: append([]string{"ARCHIVE_DATA=" + dir, "DATABASE_URL=" + dsn,
-		"DATABASE_DIRECT_URL=" + dsn, "ARCHIVE_SECRET_KEY=" + strings.TrimSpace(string(key))}, env...)}
+	return &e2eInst{t: in.t, dir: dir, env: append(append([]string{"ARCHIVE_DATA=" + dir, "DATABASE_URL=" + dsn,
+		"ARCHIVE_SECRET_KEY=" + strings.TrimSpace(string(key))}, e2eCloudTasks.queue(in.t, dir)...), env...)}
 }
 
 func TestWorkspacesIsolateWhenArchiveIsNotASuperuser(t *testing.T) {
@@ -3919,7 +3964,7 @@ func TestTheWebAppOnItsOwnHostCallsTheAPIHostWithTheAPIsCookie(t *testing.T) {
 	} else {
 		resp.Body.Close()
 	}
-	st, start := call(t, "GET", srv.url+"/auth/oidc/google", "", nil, nil)
+	_, start := call(t, "GET", srv.url+"/auth/oidc/google", "", nil, nil)
 	loc, _ := url.Parse(start.Get("Location"))
 	if st, _ := call(t, "GET", srv.url+"/auth/oidc/google/callback?"+url.Values{"state": {loc.Query().Get("state")}, "code": {"{}"}}.Encode(), "", nil, nil); st != 401 {
 		t.Errorf("a callback in a browser that did not start the sign-in: %d", st)
@@ -3946,70 +3991,28 @@ func TestTheWebAppOnItsOwnHostCallsTheAPIHostWithTheAPIsCookie(t *testing.T) {
 func TestCloudTasksWakeTheServiceAtEachDueTimeAndNothingRunsOnItsOwn(t *testing.T) {
 	t.Parallel()
 	google, forger := e2eIssuer(t), e2eIssuer(t)
-	type task struct {
-		Name         string    `json:"name"`
-		ScheduleTime time.Time `json:"scheduleTime"`
-		HTTPRequest  struct {
-			HTTPMethod string            `json:"httpMethod"`
-			URL        string            `json:"url"`
-			Headers    map[string]string `json:"headers"`
-			Body       []byte            `json:"body"`
-			OIDCToken  struct {
-				ServiceAccountEmail string `json:"serviceAccountEmail"`
-				Audience            string `json:"audience"`
-			} `json:"oidcToken"`
-		} `json:"httpRequest"`
+	fake, err := e2eTasksStart(true)
+	if err != nil {
+		t.Fatal(err)
 	}
-	var mu sync.Mutex
-	var posted []task
-	names := map[string]bool{}
+	t.Cleanup(fake.stop)
 	queue, acct := "projects/p/locations/l/queues/q", "tasks@p.iam.gserviceaccount.com"
-	gcp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/computeMetadata/v1/instance/service-accounts/default/token" && r.Header.Get("Metadata-Flavor") == "Google":
-			json.NewEncoder(w).Encode(map[string]any{"access_token": "meta", "expires_in": 3600, "token_type": "Bearer"})
-		case r.Method == "POST" && r.URL.Path == "/v2/"+queue+"/tasks" && r.Header.Get("Authorization") == "Bearer meta":
-			var body struct {
-				Task task `json:"task"`
-			}
-			json.NewDecoder(r.Body).Decode(&body)
-			mu.Lock()
-			posted = append(posted, body.Task)
-			dup := names[body.Task.Name]
-			names[body.Task.Name] = true
-			mu.Unlock()
-			if dup {
-				w.WriteHeader(http.StatusConflict)
-				return
-			}
-			json.NewEncoder(w).Encode(body.Task)
-		default:
-			http.Error(w, "no", http.StatusForbidden)
-		}
-	}))
-	t.Cleanup(gcp.Close)
-	in := newInst(t, "ARCHIVE_GOOGLE_URL="+google.URL, "ARCHIVE_TASKS_QUEUE="+queue,
-		"ARCHIVE_TASKS_SERVICE_ACCOUNT="+acct, "ARCHIVE_TASKS_URL="+gcp.URL, "ARCHIVE_API_URL=http://api.test", "GCE_METADATA_HOST="+strings.TrimPrefix(gcp.URL, "http://"))
+	in := newInst(t, append(fake.env(queue), "ARCHIVE_TASKS_SERVICE_ACCOUNT="+acct, "ARCHIVE_TASKS_ISSUER="+google.URL, "ARCHIVE_API_URL=http://api.test")...)
 	in.must("user", "add", "alice@example.com")
 	in.push(map[string]string{"house.sql": e2eHouse})
 	srv := in.serve()
 	api := srv.url + "/api"
 	one := in.psql("archive", "SELECT id FROM archive.workspace ORDER BY created_at LIMIT 1")
 	tok := decode[Token](t, in.must("token", "create")).Secret
-	last := func(t *testing.T) task {
+	last := func(t *testing.T) *taskspb.Task {
 		t.Helper()
-		mu.Lock()
-		defer mu.Unlock()
+		posted := fake.tasks()
 		if len(posted) == 0 {
 			t.Fatal("no task was created")
 		}
 		return posted[len(posted)-1]
 	}
-	count := func() int {
-		mu.Lock()
-		defer mu.Unlock()
-		return len(posted)
-	}
+	count := func() int { return len(fake.tasks()) }
 	deploy := func(t *testing.T, files map[string]string) map[string]any {
 		t.Helper()
 		b, _ := json.Marshal(files)
@@ -4062,19 +4065,20 @@ func TestCloudTasksWakeTheServiceAtEachDueTimeAndNothingRunsOnItsOwn(t *testing.
 	next := deploy(t, map[string]string{"tick.ts": "// on: cron 0 9 * * *\nreturn 'tick';"})
 	want, _ := time.Parse(time.RFC3339Nano, fmt.Sprint(next["tick.ts"]))
 	tk := last(t)
+	hr := tk.GetHttpRequest()
 	var body map[string]string
-	json.Unmarshal(tk.HTTPRequest.Body, &body)
-	if !tk.ScheduleTime.Equal(want) || !strings.HasPrefix(tk.Name, queue+"/tasks/") || tk.HTTPRequest.HTTPMethod != "POST" ||
-		tk.HTTPRequest.URL != "http://api.test/tasks" || tk.HTTPRequest.OIDCToken.Audience != tk.HTTPRequest.URL ||
-		tk.HTTPRequest.OIDCToken.ServiceAccountEmail != acct || fmt.Sprint(body) != fmt.Sprint(work) {
+	json.Unmarshal(hr.GetBody(), &body)
+	if !tk.GetScheduleTime().AsTime().Equal(want) || !strings.HasPrefix(tk.GetName(), queue+"/tasks/") || hr.GetHttpMethod() != taskspb.HttpMethod_POST ||
+		hr.GetUrl() != "http://api.test/tasks" || hr.GetOidcToken().GetAudience() != hr.GetUrl() ||
+		hr.GetOidcToken().GetServiceAccountEmail() != acct || fmt.Sprint(body) != fmt.Sprint(work) {
 		t.Fatalf("the cron workflow's task: %+v %v, want it at %s", tk, body, want)
 	}
-	aud = tk.HTTPRequest.URL
+	aud = hr.GetUrl()
 
 	deploy(t, map[string]string{"tick.ts": "// on: cron 0 9 * * *\nreturn 'tick';",
 		"sold.ts": "// on: house\nfor (const r of input.rows) await archive.update('house', r.id, { sold: true });\nreturn input.rows.map((r) => r.address).join(',');"})
-	if tk := last(t); time.Until(tk.ScheduleTime) > time.Second {
-		t.Errorf("a table workflow's first task is at %s, want now", tk.ScheduleTime)
+	if tk := last(t); time.Until(tk.GetScheduleTime().AsTime()) > time.Second {
+		t.Errorf("a table workflow's first task is at %s, want now", tk.GetScheduleTime().AsTime())
 	}
 	call(t, "POST", api+"/house", tok, map[string]any{"address": "Canal 1"}, nil)
 	srv.stop()
@@ -4113,8 +4117,8 @@ func TestCloudTasksWakeTheServiceAtEachDueTimeAndNothingRunsOnItsOwn(t *testing.
 	if rs := runs(t, "sold"); len(rs) != 1 || string(rs[0].Result) != `"Canal 1"` || rs[0].Trigger != "table" {
 		t.Fatalf("the task's runs: %+v", rs)
 	}
-	if tk := last(t); !tk.ScheduleTime.Equal(want) {
-		t.Errorf("after the run the next task is at %s, want the cron time %s", tk.ScheduleTime, want)
+	if tk := last(t); !tk.GetScheduleTime().AsTime().Equal(want) {
+		t.Errorf("after the run the next task is at %s, want the cron time %s", tk.GetScheduleTime().AsTime(), want)
 	}
 	if at := in.psql("archive", "SELECT at = '"+want.Format(time.RFC3339Nano)+"' FROM archive.due WHERE kind = 'workflow'"); at != "t" {
 		t.Errorf("due after the run: %s", in.psql("archive", "SELECT at FROM archive.due"))
@@ -4122,8 +4126,8 @@ func TestCloudTasksWakeTheServiceAtEachDueTimeAndNothingRunsOnItsOwn(t *testing.
 
 	n := count()
 	st, out := e2eRun(t, api, tok, `const [h] = await archive.list("house"); await archive.update("house", h.id, { sold: false }); return 0;`)
-	if st != 200 || out.Error != "" || count() != n+1 || time.Until(last(t).ScheduleTime) > time.Second || time.Since(last(t).ScheduleTime) > 5*time.Second {
-		t.Fatalf("a write made %d tasks, the last at %s: %+v", count()-n, last(t).ScheduleTime, out)
+	if st != 200 || out.Error != "" || count() != n+1 || time.Until(last(t).GetScheduleTime().AsTime()) > time.Second || time.Since(last(t).GetScheduleTime().AsTime()) > 5*time.Second {
+		t.Fatalf("a write made %d tasks, the last at %s: %+v", count()-n, last(t).GetScheduleTime().AsTime(), out)
 	}
 	time.Sleep(time.Second)
 	if rs := runs(t, "sold"); len(rs) != 1 {

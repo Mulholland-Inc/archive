@@ -90,7 +90,6 @@ CREATE TABLE archive.due (
     at        timestamptz NOT NULL,
     PRIMARY KEY (workspace, kind)
 );
-CREATE INDEX due_at_idx ON archive.due (at);
 
 CREATE FUNCTION archive.search_fold(t text) RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
     SELECT translate(replace(replace(replace(lower(regexp_replace(regexp_replace(normalize(coalesce(t, ''), NFD),
@@ -193,8 +192,6 @@ CREATE DOMAIN archive.currency AS text CHECK (VALUE ~ '^[A-Z]{3}$');
 COMMENT ON DOMAIN archive.currency IS 'ISO 4217 currency code';
 CREATE DOMAIN archive.percentage AS numeric;
 COMMENT ON DOMAIN archive.percentage IS 'Fraction, 0.21 is 21%';
-CREATE DOMAIN archive.iban AS text CHECK (VALUE ~ '^((NO)[0-9]{2}[A-Z0-9]{11}|(BE)[0-9]{2}[A-Z0-9]{12}|(DK|FI|FK|FO|GL|NL|SD)[0-9]{2}[A-Z0-9]{14}|(MK|SI)[0-9]{2}[A-Z0-9]{15}|(AT|BA|EE|KZ|LT|LU|MN|XK)[0-9]{2}[A-Z0-9]{16}|(CH|HR|LI|LV)[0-9]{2}[A-Z0-9]{17}|(BG|BH|CR|DE|GB|GE|IE|ME|RS|VA)[0-9]{2}[A-Z0-9]{18}|(AE|GI|IL|IQ|OM|SO|TL)[0-9]{2}[A-Z0-9]{19}|(AD|CZ|ES|MD|PK|RO|SA|SE|SK|TN|VG)[0-9]{2}[A-Z0-9]{20}|(LY|PT|ST)[0-9]{2}[A-Z0-9]{21}|(IS|TR)[0-9]{2}[A-Z0-9]{22}|(BI|DJ|FR|GR|IT|MC|MR|SM)[0-9]{2}[A-Z0-9]{23}|(AL|AZ|BY|CY|DO|GT|HU|LB|NI|PL|SV)[0-9]{2}[A-Z0-9]{24}|(BR|EG|PS|QA|UA)[0-9]{2}[A-Z0-9]{25}|(JO|KW|MU|YE)[0-9]{2}[A-Z0-9]{26}|(MT|SC)[0-9]{2}[A-Z0-9]{27}|(LC)[0-9]{2}[A-Z0-9]{28}|(RU)[0-9]{2}[A-Z0-9]{29})$');
-COMMENT ON DOMAIN archive.iban IS 'ISO 13616 bank account number';
 CREATE DOMAIN archive.bic AS text CHECK (VALUE ~ '^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$');
 COMMENT ON DOMAIN archive.bic IS 'ISO 9362 bank identifier';
 CREATE DOMAIN archive.card AS text;
@@ -205,14 +202,10 @@ CREATE DOMAIN archive.lei AS text CHECK (VALUE ~ '^[A-Z0-9]{18}[0-9]{2}$');
 COMMENT ON DOMAIN archive.lei IS 'ISO 17442 legal entity identifier';
 CREATE DOMAIN archive.isin AS text CHECK (VALUE ~ '^[A-Z]{2}[A-Z0-9]{9}[0-9]$');
 COMMENT ON DOMAIN archive.isin IS 'ISO 6166 securities identifier';
-CREATE DOMAIN archive.vat_id AS text CHECK (VALUE ~ '^(ATU[0-9]{8}|BE[01][0-9]{9}|BG[0-9]{9,10}|CY[0-9]{8}[A-Z]|CZ[0-9]{8,10}|DE[0-9]{9}|DK[0-9]{8}|EE[0-9]{9}|EL[0-9]{9}|ES[A-Z0-9][0-9]{7}[A-Z0-9]|FI[0-9]{8}|FR[A-HJ-NP-Z0-9]{2}[0-9]{9}|HR[0-9]{11}|HU[0-9]{8}|IE([0-9]{7}[A-W][A-I]?|[0-9][A-Z+*][0-9]{5}[A-W])|IT[0-9]{11}|LT([0-9]{9}|[0-9]{12})|LU[0-9]{8}|LV[0-9]{11}|MT[0-9]{8}|NL[0-9]{9}B[0-9]{2}|PL[0-9]{10}|PT[0-9]{9}|RO[0-9]{2,10}|SE[0-9]{12}|SI[0-9]{8}|SK[0-9]{10}|(GB|XI)([0-9]{9}|[0-9]{12}|GD[0-9]{3}|HA[0-9]{3}))$');
-COMMENT ON DOMAIN archive.vat_id IS 'EU or UK VAT number with its country prefix';
 CREATE DOMAIN archive.us_ein AS text CHECK (VALUE ~ '^(0[1-6]|1[0-6]|2[0-7]|3[0-9]|4[0-8]|5[0-9]|6[0-8]|7[1-7]|8[0-8]|9[0-58-9])-[0-9]{7}$');
 COMMENT ON DOMAIN archive.us_ein IS 'US employer identification number';
 CREATE DOMAIN archive.us_ssn AS text;
 COMMENT ON DOMAIN archive.us_ssn IS 'US social security number, stored encrypted; the column holds its mask';
-CREATE DOMAIN archive.nl_bsn AS text;
-COMMENT ON DOMAIN archive.nl_bsn IS 'Dutch citizen service number, stored encrypted; the column holds its mask';
 CREATE DOMAIN archive.national AS text;
 COMMENT ON DOMAIN archive.national IS 'National id number with its country and scheme, stored encrypted; the column holds its mask';
 CREATE DOMAIN archive.passport AS text;
@@ -675,11 +668,6 @@ INSERT INTO archive.due (workspace, kind, at) VALUES (sqlc.arg(workspace), sqlc.
 ON CONFLICT (workspace, kind) DO UPDATE SET at = least(archive.due.at, EXCLUDED.at)
 RETURNING at, (at IS DISTINCT FROM (SELECT was.at FROM was))::bool AS changed;
 
--- name: ClaimDue :one
-UPDATE archive.due d SET at = sqlc.arg(lease)::timestamptz FROM archive.workspace w
-WHERE w.id = d.workspace AND (d.workspace, d.kind) = (SELECT x.workspace, x.kind FROM archive.due x WHERE x.at <= now() ORDER BY x.at LIMIT 1 FOR UPDATE SKIP LOCKED)
-RETURNING w.id, d.kind, d.at;
-
 -- name: ClaimDueFor :one
 UPDATE archive.due d SET at = sqlc.arg(lease)::timestamptz
 WHERE d.workspace = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND d.at <= now()
@@ -687,12 +675,6 @@ RETURNING d.at;
 
 -- name: DueAt :one
 SELECT at FROM archive.due WHERE workspace = $1 AND kind = $2;
-
--- name: EarliestDue :one
-SELECT at FROM archive.due ORDER BY at LIMIT 1;
-
--- name: NotifyDue :exec
-SELECT pg_notify('archive_due', sqlc.arg(at)::text);
 
 -- name: SetDue :execrows
 UPDATE archive.due d SET at = sqlc.arg(next)::timestamptz FROM archive.workspace w

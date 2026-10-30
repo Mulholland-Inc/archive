@@ -23,7 +23,7 @@
     </ul>
     <p>Messages, calendar events, tickets, CRM entries and payments land as records. Files land as files, with their text pulled out so they can be searched. When something is deleted at the source, it goes away in Archive too, so the copy never drifts from the original.</p>
 
-    <Figure art="harbor" alt="A harbour where barges of containers are unloaded into a warehouse" caption="Connectors unload what changed in your tools and leave the rest alone." />
+    <Figure art="harbor" alt="A harbor where barges of containers are unloaded into a warehouse" caption="Connectors unload what changed in your tools and leave the rest alone." />
 
     <h2>One day at a small company</h2>
     <p>Picture a five-person property management company looking after a few dozen rental units. Here is an ordinary Tuesday, and what happens to it.</p>

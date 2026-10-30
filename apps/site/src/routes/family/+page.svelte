@@ -9,11 +9,10 @@
 
   const FAMILY = 'https://archive.family';
 
-  // The app's own screens, of a made-up family (the Quists) brought in as a family would.
   const SCREENS = [
     {
       shot: 'tree',
-      alt: 'A family tree four generations deep, centred on one person, with photos on some of the people',
+      alt: 'A family tree four generations deep, centered on one person, with photos on some of the people',
       title: 'A family tree, from a file or a chat.',
       text: ['Bring in the tree you already have, from any genealogy app, and every person, couple, event and place becomes a record that points back to the line it came from.', 'Or just tell it who is who. Either way, it is the same tree.']
     },
@@ -37,7 +36,6 @@
     }
   ];
 
-  // Public-domain examples of what families keep, none of them of any family in the archive.
   const KEEPS = [
     { img: 'family-tree', caption: 'A family tree drawn by hand, Connecticut, around 1800', credit: 'National Archives, NAID 12059080' },
     { img: 'marriage-certificate', caption: 'A marriage certificate filled in by hand, New Jersey, 1855', credit: 'Library of Congress, LC-DIG-pga-05615' },

@@ -1,4 +1,4 @@
-CREATE TYPE person_relation AS ENUM ('partner', 'family', 'friend', 'colleague', 'neighbour', 'doctor', 'service', 'other');
+CREATE TYPE person_relation AS ENUM ('partner', 'family', 'friend', 'colleague', 'neighbor', 'doctor', 'service', 'other');
 CREATE TABLE person (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     space      uuid NOT NULL REFERENCES archive.space,

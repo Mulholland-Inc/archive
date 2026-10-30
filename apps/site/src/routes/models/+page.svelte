@@ -63,7 +63,7 @@
     <p>Each time a person or an assistant files something, that is an example the model can learn from.</p>
     <p>There is no separate labeling job to keep up with.</p>
   </Row>
-  <Row flip art="classifier" alt="A sorting machine dropping documents into labelled bins">
+  <Row flip art="classifier" alt="A sorting machine dropping documents into labeled bins">
     <h2>A sorter that knows what is what.</h2>
     <p>It reads something new and knows where it belongs: invoice, contract, resume, or anything else you keep.</p>
     <p>It learns your categories, not generic ones, so it sorts the way your team already does.</p>

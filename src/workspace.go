@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"crypto/cipher"
@@ -21,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	taskspb "cloud.google.com/go/cloudtasks/apiv2/cloudtaskspb"
 	"github.com/Mulholland-Inc/archive/generated"
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/google/uuid"
@@ -29,20 +29,25 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type Hub struct {
-	key    []byte
-	aead   cipher.AEAD
-	pooled *pgx.ConnConfig
-	direct *pgx.ConnConfig
-	main   *pgxpool.Pool
-	blobs  blobStore
-	hints  Hints
-	app    string
-	api    string
-	one    string
-	tasks  *hubTasks
+	key   []byte
+	aead  cipher.AEAD
+	pg    *pgx.ConnConfig
+	main  *pgxpool.Pool
+	blobs blobStore
+	hints Hints
+	app   string
+	api   string
+	one   string
+	tasks *hubTasks
 
 	mu   sync.Mutex
 	open map[string]*hubEntry
@@ -57,8 +62,8 @@ type hubEntry struct {
 }
 
 type hubTasks struct {
-	queue, account, base string
-	gcp                  *gcpToken
+	queue, account, issuer string
+	client                 taskspb.CloudTasksClient
 
 	mu     sync.Mutex
 	verify *oidc.IDTokenVerifier
@@ -83,7 +88,6 @@ type Workspace struct {
 
 const (
 	hubIdle       = 10 * time.Minute
-	hubWorkers    = 4
 	hubBatch      = 16
 	hubTaskMax    = 29 * 24 * time.Hour
 	hubFileDelay  = 10 * time.Second
@@ -107,15 +111,11 @@ func Open(ctx context.Context) (*Hub, error) {
 	dir := coreEnv("ARCHIVE_DATA", "./data")
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		return nil, errors.New("DATABASE_URL is required: a Postgres 18 role with CREATEROLE and CREATEDB, like the one docker compose up -d postgres starts")
+		return nil, errors.New("DATABASE_URL is required: a Postgres 18 role with CREATEROLE and CREATEDB, like the one docker compose up -d starts")
 	}
-	var tasks *hubTasks
-	if q := os.Getenv("ARCHIVE_TASKS_QUEUE"); q != "" {
-		tasks = &hubTasks{queue: q, account: os.Getenv("ARCHIVE_TASKS_SERVICE_ACCOUNT"), base: coreEnv("ARCHIVE_TASKS_URL", "https://cloudtasks.googleapis.com"),
-			gcp: gcpMetadata()}
-		if tasks.account == "" {
-			return nil, errors.New("ARCHIVE_TASKS_QUEUE needs ARCHIVE_TASKS_SERVICE_ACCOUNT, the service account whose OIDC token Cloud Tasks sends to /tasks")
-		}
+	tasks, err := hubTasksOpen()
+	if err != nil {
+		return nil, err
 	}
 	key, err := secretLoadKey(dir)
 	if err != nil {
@@ -129,20 +129,14 @@ func Open(ctx context.Context) (*Hub, error) {
 	if err != nil {
 		return nil, err
 	}
-	pooled, err := pgx.ParseConfig(dsn)
+	pg, err := pgx.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("DATABASE_URL: %w", err)
 	}
-	direct := pooled
-	if d := os.Getenv("DATABASE_DIRECT_URL"); d != "" {
-		if direct, err = pgx.ParseConfig(d); err != nil {
-			return nil, fmt.Errorf("DATABASE_DIRECT_URL: %w", err)
-		}
-	}
-	h := &Hub{key: key, aead: aead, pooled: pooled, direct: direct, blobs: blobs, hints: coreHints(os.Getenv("ARCHIVE_LOCALE")),
+	h := &Hub{key: key, aead: aead, pg: pg, blobs: blobs, hints: coreHints(os.Getenv("ARCHIVE_LOCALE")),
 		tasks: tasks, open: map[string]*hubEntry{}}
 	h.urls("8080")
-	if h.main, err = storePool(ctx, pooled, storeSysConns, nil); err != nil {
+	if h.main, err = storePool(ctx, pg, storeSysConns, nil); err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
 	if err := h.register(ctx); err != nil {
@@ -153,7 +147,7 @@ func Open(ctx context.Context) (*Hub, error) {
 }
 
 func (h *Hub) urls(port string) {
-	h.app = strings.TrimRight(coreEnv("ARCHIVE_URL", "http://localhost:3000"), "/")
+	h.app = strings.TrimRight(coreEnv("ARCHIVE_URL", "http://localhost:5173"), "/")
 	h.api = strings.TrimRight(coreEnv("ARCHIVE_API_URL", "http://localhost:"+port), "/")
 }
 
@@ -237,16 +231,16 @@ func (h *Hub) unwrap(row generated.ArchiveWorkspace) ([]byte, error) {
 
 func (h *Hub) database(id string) string {
 	if id == h.one {
-		return h.pooled.Database
+		return h.pg.Database
 	}
 	return "archive_" + id
 }
 
 func (h *Hub) openArchive(ctx context.Context, row generated.ArchiveWorkspace, key []byte) (*Archive, error) {
 	id := row.ID.String()
-	pooled, direct := h.pooled.Copy(), h.direct.Copy()
-	pooled.Database, direct.Database = h.database(id), h.database(id)
-	st, err := OpenStore(ctx, pooled, direct, id, authPassword(key))
+	cfg := h.pg.Copy()
+	cfg.Database = h.database(id)
+	st, err := OpenStore(ctx, cfg, id, authPassword(key))
 	if err != nil {
 		return nil, err
 	}
@@ -388,41 +382,64 @@ func (a *Archive) soon(ctx context.Context, kind string, at time.Time) error {
 	return nil
 }
 
-func (h *Hub) wake(ctx context.Context, ws uuid.UUID, kind string, at time.Time) error {
-	if h.tasks == nil {
-		return h.q().NotifyDue(ctx, at.Format(time.RFC3339Nano))
+func hubTasksOpen() (*hubTasks, error) {
+	t := &hubTasks{queue: os.Getenv("ARCHIVE_TASKS_QUEUE"), account: os.Getenv("ARCHIVE_TASKS_SERVICE_ACCOUNT"), issuer: coreEnv("ARCHIVE_TASKS_ISSUER", signinBuiltin[0].base)}
+	if t.queue == "" || t.account == "" {
+		return nil, errors.New("ARCHIVE_TASKS_QUEUE and ARCHIVE_TASKS_SERVICE_ACCOUNT are required: the Cloud Tasks queue that calls /tasks when work is due, and the service account whose OIDC token it sends")
 	}
+	raw := coreEnv("ARCHIVE_TASKS_URL", "https://cloudtasks.googleapis.com")
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.Scheme != "https" && u.Scheme != "http" {
+		return nil, fmt.Errorf("ARCHIVE_TASKS_URL %q: want https://host or, for an emulator, http://host:port", raw)
+	}
+	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	host := u.Host
+	if u.Scheme == "https" {
+		if u.Port() == "" {
+			host += ":443"
+		}
+		opts = []grpc.DialOption{grpc.WithTransportCredentials(credentials.NewTLS(nil)), grpc.WithPerRPCCredentials(gcpMetadata())}
+	}
+	c, err := grpc.NewClient(host, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("ARCHIVE_TASKS_URL: %w", err)
+	}
+	t.client = taskspb.NewCloudTasksClient(c)
+	return t, nil
+}
+
+func (h *Hub) wake(ctx context.Context, ws uuid.UUID, kind string, at time.Time) error {
 	t := h.tasks
 	if limit := time.Now().Add(hubTaskMax); at.After(limit) {
 		at = limit
 	}
-	tok, err := t.gcp.access(ctx)
-	if err != nil {
-		return err
-	}
 	url := h.api + "/tasks"
 	body, _ := json.Marshal(map[string]string{"workspace": ws.String(), "work": kind + "s"})
 	sum := sha256.Sum256(fmt.Appendf(nil, "%s/%s/%d", ws, kind, at.UnixMilli()))
-	task, _ := json.Marshal(map[string]any{"task": map[string]any{
-		"name":         t.queue + "/tasks/" + hex.EncodeToString(sum[:]),
-		"scheduleTime": at.UTC().Format(time.RFC3339Nano),
-		"httpRequest": map[string]any{"httpMethod": "POST", "url": url, "headers": map[string]string{"Content-Type": "application/json"}, "body": body,
-			"oidcToken": map[string]string{"serviceAccountEmail": t.account, "audience": url}},
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	_, err := t.client.CreateTask(ctx, &taskspb.CreateTaskRequest{Parent: t.queue, Task: &taskspb.Task{
+		Name:         t.queue + "/tasks/" + hex.EncodeToString(sum[:]),
+		ScheduleTime: timestamppb.New(at),
+		MessageType: &taskspb.Task_HttpRequest{HttpRequest: &taskspb.HttpRequest{HttpMethod: taskspb.HttpMethod_POST, Url: url,
+			Headers: map[string]string{"Content-Type": "application/json"}, Body: body,
+			AuthorizationHeader: &taskspb.HttpRequest_OidcToken{OidcToken: &taskspb.OidcToken{ServiceAccountEmail: t.account, Audience: url}}}},
 	}})
-	req, _ := http.NewRequestWithContext(ctx, "POST", t.base+"/v2/"+t.queue+"/tasks", bytes.NewReader(task))
-	req.Header.Set("Authorization", "Bearer "+tok)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := hubHTTP.Do(req)
-	if err != nil {
+	if err != nil && status.Code(err) != codes.AlreadyExists {
 		return fmt.Errorf("cloud tasks: %w", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode/100 == 2 || resp.StatusCode == http.StatusConflict {
-		return nil
-	}
-	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
-	return fmt.Errorf("cloud tasks: %s: %s", resp.Status, bytes.TrimSpace(b))
+	return nil
 }
+
+func (t *gcpToken) GetRequestMetadata(ctx context.Context, _ ...string) (map[string]string, error) {
+	tok, err := t.access(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]string{"authorization": "Bearer " + tok}, nil
+}
+
+func (t *gcpToken) RequireTransportSecurity() bool { return true }
 
 var hubHTTP = &http.Client{Timeout: 10 * time.Second}
 
@@ -458,7 +475,7 @@ func (h *Hub) taskCaller(r *http.Request) error {
 	}
 	t.mu.Lock()
 	if t.verify == nil {
-		p, err := oidc.NewProvider(context.Background(), coreEnv("ARCHIVE_GOOGLE_URL", signinBuiltin[0].base))
+		p, err := oidc.NewProvider(context.Background(), t.issuer)
 		if err != nil {
 			t.mu.Unlock()
 			return fmt.Errorf("google's signing keys: %w", err)
@@ -543,116 +560,6 @@ func (a *Archive) scheduleWorkflows(ctx context.Context) error {
 		return err
 	}
 	return a.soon(ctx, "workflow", *next)
-}
-
-func (h *Hub) clock(ctx context.Context, wg *sync.WaitGroup) {
-	defer wg.Done()
-	soon, idle := make(chan time.Time), make(chan struct{})
-	go h.listen(ctx, soon)
-	t := time.NewTimer(time.Hour)
-	t.Stop()
-	var next time.Time
-	arm := func(at time.Time) {
-		next = at
-		t.Reset(time.Until(at))
-	}
-	earliest := func() {
-		at, err := h.q().EarliestDue(ctx)
-		switch {
-		case errors.Is(err, pgx.ErrNoRows):
-			next = time.Time{}
-			t.Stop()
-		case err != nil:
-			if ctx.Err() == nil {
-				fmt.Fprintln(os.Stderr, "archive: background work:", err)
-			}
-			arm(time.Now().Add(workflowRetry))
-		default:
-			arm(at)
-		}
-	}
-	busy := 0
-	for {
-		select {
-		case <-ctx.Done():
-			t.Stop()
-			for ; busy > 0; busy-- {
-				<-idle
-			}
-			return
-		case at := <-soon:
-			if at.IsZero() {
-				earliest()
-			} else if next.IsZero() || at.Before(next) {
-				arm(at)
-			}
-		case <-t.C:
-			next = time.Time{}
-			for ; busy < hubWorkers; busy++ {
-				go func() {
-					h.drain(ctx)
-					idle <- struct{}{}
-				}()
-			}
-		case <-idle:
-			busy--
-			earliest()
-		}
-	}
-}
-
-func (h *Hub) listen(ctx context.Context, soon chan<- time.Time) {
-	send := func(at time.Time) {
-		select {
-		case soon <- at:
-		case <-ctx.Done():
-		}
-	}
-	wait := time.Second
-	for ctx.Err() == nil {
-		c, err := pgx.ConnectConfig(ctx, h.direct)
-		if err == nil {
-			if _, err = c.Exec(ctx, "LISTEN archive_due"); err == nil {
-				wait = time.Second
-				send(time.Time{})
-			}
-			for err == nil {
-				var n *pgconn.Notification
-				if n, err = c.WaitForNotification(ctx); err == nil {
-					at, _ := time.Parse(time.RFC3339Nano, n.Payload)
-					send(at)
-				}
-			}
-			c.Close(context.Background())
-		}
-		if ctx.Err() != nil {
-			return
-		}
-		fmt.Fprintln(os.Stderr, "archive: waiting for due work:", err)
-		select {
-		case <-ctx.Done():
-		case <-time.After(wait):
-		}
-		wait = min(2*wait, time.Minute)
-	}
-}
-
-func (h *Hub) drain(ctx context.Context) {
-	for ctx.Err() == nil {
-		d, err := h.q().ClaimDue(ctx, time.Now().Add(runTimeout()+workflowRetry))
-		if errors.Is(err, pgx.ErrNoRows) {
-			return
-		}
-		if err == nil {
-			err = h.due(ctx, d.ID, d.Kind, d.At)
-		}
-		if err != nil {
-			if ctx.Err() == nil {
-				fmt.Fprintln(os.Stderr, "archive: background work:", err)
-			}
-			return
-		}
-	}
 }
 
 func (h *Hub) due(ctx context.Context, ws uuid.UUID, kind string, claimed time.Time) error {
@@ -939,7 +846,7 @@ func (h *Hub) DeleteWorkspace(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if c, cerr := pgx.ConnectConfig(bg, h.direct); cerr == nil {
+	if c, cerr := pgx.ConnectConfig(bg, h.pg); cerr == nil {
 		c.Exec(bg, "DROP DATABASE IF EXISTS "+pgIdent(h.database(id))+" WITH (FORCE)")
 		for _, role := range roles {
 			c.Exec(bg, "DROP ROLE IF EXISTS "+pgIdent(role))
@@ -983,14 +890,14 @@ func (h *Hub) createWorkspace(ctx context.Context, name, owner string) (generate
 	ctx = context.WithoutCancel(ctx)
 	fail := func(err error) (generated.ArchiveWorkspace, error) {
 		h.forget(short)
-		if c, cerr := pgx.ConnectConfig(ctx, h.direct); cerr == nil {
+		if c, cerr := pgx.ConnectConfig(ctx, h.pg); cerr == nil {
 			c.Exec(ctx, "DROP DATABASE IF EXISTS "+pgIdent(h.database(short))+" WITH (FORCE)")
 			c.Close(ctx)
 		}
 		q.DeleteWorkspace(ctx, row.ID)
 		return row, fmt.Errorf("creating workspace %s: %w", name, err)
 	}
-	c, err := pgx.ConnectConfig(ctx, h.direct)
+	c, err := pgx.ConnectConfig(ctx, h.pg)
 	if err != nil {
 		return fail(err)
 	}
@@ -1088,8 +995,8 @@ func blobPrefixed(b blobStore, p string) blobStore {
 	return prefixBlobs{b, p}
 }
 
-func (x prefixBlobs) put(ctx context.Context, key, sum string, r io.Reader, size int64) error {
-	return x.b.put(ctx, x.p+key, sum, r, size)
+func (x prefixBlobs) put(ctx context.Context, key string, r io.Reader, size int64) error {
+	return x.b.put(ctx, x.p+key, r, size)
 }
 
 func (x prefixBlobs) open(ctx context.Context, key string, size int64) (io.ReadSeekCloser, error) {

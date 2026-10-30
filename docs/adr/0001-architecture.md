@@ -6,7 +6,7 @@
 
 ## Summary
 
-Archive is one Go binary on top of Postgres, with file bytes on disk or in S3-compatible storage. It stores each type as a real Postgres table and exposes everything over MCP, so any AI app can read and write it. Agents do the work of getting data in and keeping it clean, by writing code against Archive's SDK; Archive itself calls no LLM.
+Archive is one Go binary on top of Postgres, with file bytes on disk or in Google Cloud Storage. It stores each type as a real Postgres table and exposes everything over MCP, so any AI app can read and write it. Agents do the work of getting data in and keeping it clean, by writing code against Archive's SDK; Archive itself calls no LLM.
 
 The binary is stateless when given an external Postgres and blob store: any number of instances can run side by side, scale to zero, and share all state through Postgres.
 
@@ -15,13 +15,13 @@ flowchart LR
   Apps[ChatGPT, Claude, Gemini, Grok] <--> MCP[MCP: run code] --> Core[Go core]
   Clients[Clients, CLI, Terraform] <--> API[HTTP API] --> Core
   Core --> PG[(Postgres: archive + public)]
-  Core --> Files[(Files: disk or S3)]
+  Core --> Files[(Files: disk or GCS)]
 ```
 
 ## Stack
 
-- **Postgres 18** for all data, **Go** for the server, **a directory or S3-compatible storage** (S3, R2, MinIO, GCS) for file bytes.
-- **Two images**: ko builds the API image from the Go module alone (the binary on a minimal base, about 41 MB), and `apps/web/Dockerfile` builds the web app's. The binary never runs Postgres: it always connects through `DATABASE_URL`, and locally Postgres is its own `postgres:18-alpine` container.
+- **Postgres 18** for all data, **Go** for the server, **Google Cloud Storage** for file bytes (a directory in local development).
+- **One image**: ko builds the API image from the Go module alone (the binary on a minimal base, about 44 MB); the web app is static files, built by Vite. The binary never runs Postgres: it always connects through `DATABASE_URL`, and locally Postgres is its own `postgres:18-alpine` container.
 - **One port** serves the HTTP API (`/api`), sign-in (`/auth`) and MCP (`/mcp`).
 - **Clients**: one Svelte web app is the client everywhere. It is served as the website, and wrapped with Tauri 2 for iOS, Android, macOS, Windows and Linux; Capacitor is the fallback for iOS and Android if Tauri's mobile side proves rough. It is a client of the HTTP API. `apps/web` is its start: Svelte 5 and Vite, in the look of archive.family's app (Geist and EB Garamond, a dark shell, cream pills, rounded panels). It has sign-in, files, and a page for every table and view, each with the icon and description from its comment; it is not yet wrapped in Tauri.
 
@@ -31,7 +31,7 @@ Two Postgres schemas. Tables are named in the singular, and every id is a UUIDv7
 
 | Schema | Holds |
 |---|---|
-| `archive` | Archive's own tables: `space`, `user`, `token`, `chat`, `workflow`, `workflow_run`, `revision`, `file`, `upload` and `secret`. It also holds the built-in types, as domains (`archive.email`, `archive.iban`, `archive.phone`, …) and composite types (`archive.money`, `archive.address`, `archive.timestamp`, …) |
+| `archive` | Archive's own tables: `space`, `user`, `token`, `chat`, `workflow`, `workflow_run`, `revision`, `file`, `upload` and `secret`. It also holds the built-in types, as domains (`archive.email`, `archive.us_ein`, `archive.phone`, …) and composite types (`archive.money`, `archive.address`, `archive.timestamp`, …) |
 | `public` | One table per type, where the table is the type and a row is the entity, and the views over them |
 
 Each workspace (see [Workspaces](#workspaces)) has a database of its own with these two schemas. Only the main database's `user` and `token` are used, since people and their secrets are the instance's, not a workspace's; it also holds the instance's own tables: `workspace`, `due` and `setting`.
@@ -123,7 +123,7 @@ A workflow is a saved script, `<name>.ts`, that Archive runs by itself. Clients 
 - **Triggers**: the script's first line, `// on: <trigger>`. None means it runs only when started. `cron <spec>` uses robfig/cron's standard parser, with descriptors and `CRON_TZ=`, only to compute the next time. `<table>` passes the rows created or changed since the last run as `input.rows`, up to 100 a run. `webhook` gives the workflow a URL with a random token.
 - **Deploy and test**: `archive.deploy(files)` replaces the user's whole set, like `apply` does for the schema. It compiles each file and checks its name and trigger, returns the errors instead of throwing, and saves nothing if there are any. Redeploying keeps webhook tokens and table cursors by name. `archive.test` runs a saved workflow or a draft inside a savepoint that is always rolled back, in its own goja VM and within the outer run's remaining time; `archive.start` runs one for real inside the current transaction and records it once that commits.
 - **As its owner**: a workflow runs through the same path as `POST /api/run`, as the role that deployed it (the user, or the token they used, so a token never gains rights), under row-level security and the run timeout.
-- **Background work is pushed, never polled**: every workspace writes its next due time to `archive.due` in the main database: a deploy, a run that moves `next_at`, a write, and opening the workspace all keep it up to date. Whenever a time there gets sooner, Archive schedules one wake-up for exactly that time. With `ARCHIVE_TASKS_QUEUE` set, that is a Cloud Tasks task, named from the workspace, kind and time so duplicates collapse, that calls `POST ARCHIVE_API_URL/tasks` with a Google OIDC token; the handler checks the token, claims that workspace's due row, does the work inside the request and schedules the next wake-up, so the service can scale to zero. Otherwise `archive serve` keeps one timer at the earliest time in `archive.due`, and every process tells it about sooner times with `NOTIFY archive_due`. Either way the due row is leased past the run timeout, the workspace opens, and its due workflows are claimed with `FOR UPDATE SKIP LOCKED`, up to 16 a turn. A cron workflow then gets its next time. A table workflow wakes when a transaction as a user commits a write: its rows whose `(greatest(created_at, updated_at), id)` are past the cursor are passed in, as the owner; a run that works moves the cursor and checks once more, one that finds nothing or fails waits for the next write. Rows whose timestamp equals one of the workflow's own run transaction times are skipped, so its own writes never trigger it again. `updated_at` moves on `archive.update`, not on raw SQL.
+- **Background work is pushed, never polled**: every workspace writes its next due time to `archive.due` in the main database: a deploy, a run that moves `next_at`, a write, and opening the workspace all keep it up to date. Whenever a time there gets sooner, Archive schedules one Cloud Tasks task for exactly that time, named from the workspace, kind and time so duplicates collapse, that calls `POST ARCHIVE_API_URL/tasks` with an OIDC token; the handler checks the token, claims that workspace's due row, does the work inside the request and schedules the next wake-up, so the service can scale to zero. Cloud Tasks is the only way due work arrives; local development and the end-to-end tests run an emulator of it. The due row is leased past the run timeout, the workspace opens, and its due workflows are claimed with `FOR UPDATE SKIP LOCKED`, up to 16 a turn. A cron workflow then gets its next time. A table workflow wakes when a transaction as a user commits a write: its rows whose `(greatest(created_at, updated_at), id)` are past the cursor are passed in, as the owner; a run that works moves the cursor and checks once more, one that finds nothing or fails waits for the next write. Rows whose timestamp equals one of the workflow's own run transaction times are skipped, so its own writes never trigger it again. `updated_at` moves on `archive.update`, not on raw SQL.
 - **Webhooks**: `POST /hooks/run/<workspace>/<token>` on `ARCHIVE_API_URL` sits beside the connectors' `/hooks/<provider>` (ADR 0002), outside the authenticated `/api` mux. The token is the only credential. The body is passed as parsed JSON or raw text with the method, query and headers, and the response is the run's result as JSON, or 500 with the error.
 - **API**: `GET /api/workflows`, `GET /api/workflows/{name}/runs` and `POST /api/workflows/{name}/run`; the app's Workflows screen lists them in plain words, with their runs and webhook URL, and never shows code.
 
@@ -133,7 +133,7 @@ These run in the agent, as code against the SDK. The ones that recur can be save
 
 - **Intake and classification**: the agent reads new files, decides their type, and writes rows.
 - **Jev classifier**: a small model agents can use to pick the type for an input.
-- **Dataset preparation and training**: rows become labelled examples, exported per table, to retrain Jev.
+- **Dataset preparation and training**: rows become labeled examples, exported per table, to retrain Jev.
 - **Skill library**: reusable agent instructions stored as rows of a `skill` table.
 
 ## Apps
@@ -147,7 +147,7 @@ Archive is listed in ChatGPT, Claude, Gemini and Grok as one remote MCP server. 
 - **One identity per person**: a user is one row of `archive.user` in the main database, with the workspaces they belong to. In each of those workspaces they have a Postgres role and a personal space, made when they are added (`archive user add`) and dropped when they are removed (`archive user remove`).
 - **Tokens** belong to a user and one workspace, and can only narrow that user's rights there. Agents get their own tokens. Tokens and sessions are `arc_<secret>`, kept as hashes in the main database's `archive.token`; a session belongs to the person and works in all their workspaces.
 - **Sign-in is invite-only**: Google, Microsoft and Slack (OpenID Connect) and GitHub (OAuth), each turned on by its two variables, `ARCHIVE_<PROVIDER>_CLIENT_ID` and `ARCHIVE_<PROVIDER>_CLIENT_SECRET`, plus passkeys. Archive sends no mail and makes no sign-in links. An admin invites someone by email (`archive user add`, or the Users page and `/auth/users`); their first provider sign-in under that email links the provider's account to them, and later sign-ins match that link. An invite only ever matches an email the provider says is verified: `email_verified` for Google, Slack and Microsoft (or Microsoft's `xms_edov`, which stops a tenant from claiming someone else's domain), and GitHub's primary address with `verified`. Anyone else, and anyone removed from every workspace, is refused. After a provider sign-in the web app offers to add a passkey to the device. The first owner is whoever is added first with `archive user add`; with no provider set, the server says in its log that nobody can sign in. One sign-in reaches every workspace the person is in.
-- **Secret fields**: values of secret types such as `iban` or `us_ssn` are encrypted in `archive.secret` with the workspace's data key. They are hidden from anyone not granted that type.
+- **Secret fields**: values of secret types such as `card` or `us_ssn` are encrypted in `archive.secret` with the workspace's data key. They are hidden from anyone not granted that type.
 
 ## Workspaces
 
@@ -161,7 +161,7 @@ Every install serves many workspaces ([ADR 0003](0003-hosting.md)). A workspace 
 
 ## Files
 
-File bytes are content-addressed by SHA-256 in `$ARCHIVE_DATA/blobs` or in S3-compatible storage (`ARCHIVE_BLOB_URL`), under a prefix per workspace.
+File bytes are content-addressed by SHA-256 in `$ARCHIVE_DATA/blobs` or in GCS (`ARCHIVE_BLOB_URL`), under a prefix per workspace.
 
 - **Uploads**: a plain `POST /api/files` for small files, or resumable tus uploads for large ones. A tus upload's state lives in `archive.upload` and its chunks are stored as blob objects, so consecutive chunks can land on different instances. The last chunk assembles the file from blob storage, without a local copy.
 - **Processing in the request**: Archive pulls metadata, extracts text (PDF, HTML, plain text and JSON) and makes image thumbnails inside the request that stored the file. A file is therefore `done` when its upload, edit or create returns, and nothing has to run between requests. A file left `pending` is due in `archive.due` 10 s later, as a safety net only.
@@ -208,19 +208,19 @@ Details of how it behaves:
 
 The same image runs in two ways, each serving any number of workspaces.
 
-- **Self-hosted**: `install.sh` or `compose.yaml` runs three containers: `postgres:18-alpine` with its own volume, the API image on port 8080 with a volume for `secret.key` and the blobs, and the web app image (nginx with the API's address filled in at start) on port 3000. The binary serves no web pages: the web app and the API are always on addresses of their own.
-- **Stateless** (Cloud Run or any container platform): set `DATABASE_URL` to a managed Postgres, `ARCHIVE_BLOB_URL` to S3-compatible storage, and `ARCHIVE_SECRET_KEY`, the same on every instance. Archive refuses to start with `DATABASE_URL` but without the key. Nothing else is local:
+- **Google Cloud**, always, set up by `apps/terraform/gcp`: the API on Cloud Run and the web app as static files on a Cloudflare Worker. The binary serves no web pages: the web app and the API are always on addresses of their own. Locally, `compose.yaml` runs only Postgres for development.
+- **Stateless**: set `DATABASE_URL` to a managed Postgres, `ARCHIVE_BLOB_URL` to a GCS bucket, and `ARCHIVE_SECRET_KEY`, the same on every instance. Archive refuses to start with `DATABASE_URL` but without the key. Nothing else is local:
   - schema: generated from the database;
   - uploads: in Postgres and blob storage;
   - file processing: inside the request;
-  - background work, sync jobs and coordination: through Postgres locks (`SKIP LOCKED` on `archive.due`, an advisory lock for schema), woken by Cloud Tasks or `NOTIFY`.
+  - background work, sync jobs and coordination: through Postgres locks (a lease on each `archive.due` row, an advisory lock for schema), woken by Cloud Tasks.
 
-  A pooler such as PgBouncer or Cloud SQL's managed connection pooling can sit in `DATABASE_URL`, in transaction mode; schema changes and creating workspaces connect through `DATABASE_DIRECT_URL`, since they hold a session-level advisory lock. Archive sets each database's default `search_path` and `timezone`, so a pooler may drop those startup parameters.
+  `DATABASE_URL` reaches Postgres directly, with no pooler in between, since schema changes and creating workspaces hold a session-level advisory lock. Archive sets each database's default `search_path` and `timezone`.
 
-  It runs on request-based billing and scales to zero: no CPU is needed between requests. With `ARCHIVE_TASKS_QUEUE` and `ARCHIVE_TASKS_SERVICE_ACCOUNT` set, Cloud Tasks calls `/tasks` at each due time, so scheduled and table-triggered workflows and pending files start an instance when they need one. Without them, due work runs only while `archive serve` is up.
+  It runs on request-based billing and scales to zero: no CPU is needed between requests. Cloud Tasks (`ARCHIVE_TASKS_QUEUE`, `ARCHIVE_TASKS_SERVICE_ACCOUNT`) calls `/tasks` at each due time, so scheduled and table-triggered workflows and pending files start an instance when they need one.
 - The **`archive` Terraform provider** (`apps/terraform`) manages schema DDL (tables and views), spaces, tokens and access rules as code. It compares configured DDL with the database through the plan endpoint, so normalized output never shows as drift.
 
-Not verified yet: a managed Postgres without a true superuser (Cloud SQL's `cloudsqlsuperuser`), and GCS through its S3 API.
+Not verified yet: a managed Postgres without a true superuser (Cloud SQL's `cloudsqlsuperuser`), and GCS through its XML API.
 
 ## Planned
 

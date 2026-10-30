@@ -14,7 +14,6 @@
 <p align="center">
   <a href="https://archive.us.org">Website</a> ·
   <a href="https://archive.us.org/docs">Docs</a> ·
-  <a href="#quick-start">Quick start</a> ·
   <a href="#connect-your-agent">Connect your agent</a> ·
   <a href="#run-it-anywhere">Run it anywhere</a> ·
   <a href="docs/adr/0001-architecture.md">Architecture</a>
@@ -22,7 +21,7 @@
 
 ---
 
-Archive is one open-source Go program on top of Postgres. Your records live in real Postgres tables and your files on disk or in S3-compatible storage. The same rules guard all of it, whether it is read by you in the web app, by your code over the HTTP API, or by your AI agent over MCP.
+Archive is one open-source Go program on top of Postgres. Your records live in real Postgres tables and your files in Google Cloud Storage. The same rules guard all of it, whether it is read by you in the web app, by your code over the HTTP API, or by your AI agent over MCP.
 
 Archive never calls an AI model on its own. Your agent does the thinking and sends Archive code to run.
 
@@ -88,50 +87,30 @@ Upload any file and Archive pulls out its text, so one search covers every table
 Each team, client or project gets its own space, and people and their agents only see the spaces they are in. People, spaces and tokens are real Postgres roles, and every table has row-level security, so the database itself checks every row against who is asking. Roles are `viewer`, `editor`, `admin` and `owner`, and tokens only ever narrow what their owner can do. Archive is invite-only: an admin adds people by email on the Users page or with `archive user add`, and their first sign-in with Google, Microsoft, Slack or GitHub under that email, verified by the provider, links them. After that they can add a passkey to each device.
 
 ```sh
-docker exec archive archive space add finance
-docker exec archive archive user add anna@example.com -name Anna   # Anna can now sign in
-docker exec archive archive space grant finance anna@example.com editor
+archive space add finance
+archive user add anna@example.com -name Anna   # Anna can now sign in
+archive space grant finance anna@example.com editor
 ```
 
 ## Open source. Make it yours.
 
 <img src="apps/site/static/art/factory.webp" alt="A factory turning a jumble of documents into neatly packed crates." width="320">
 
-Run Archive on your own computer, your own servers or your own cloud account, and keep your data where you want it. Change it or fork it anytime, by hand or by asking Claude Code to add what you need. Or [let us run it for you](https://mulholland.ai).
-
-## Quick start
-
-One line starts Archive on your machine with Docker, as three containers: Postgres, the API on port 8080 and the web app on port 3000.
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/Mulholland-Inc/archive/main/install.sh | sh
-docker exec archive archive user add you@example.com
-```
-
-Use your own email: the first person you add is the owner. Set a sign-in provider too, such as `ARCHIVE_GOOGLE_CLIENT_ID` and `ARCHIVE_GOOGLE_CLIENT_SECRET`, and sign in with it under that email; once in, add a passkey. Run the same line again to update. Your data stays in the `archive-postgres` and `archive` volumes.
-
-From a clone of this repo, Docker Compose does the same:
-
-```sh
-docker compose up -d
-docker compose exec archive archive user add you@example.com
-```
-
-Open `http://localhost:3000` for the web app. The API and MCP are on `http://localhost:8080`, where `/healthz` answers `204` when it is up.
+Run Archive in your own Google Cloud account, and keep your data where you want it. Change it or fork it anytime, by hand or by asking Claude Code to add what you need. Or [let us run it for you](https://mulholland.ai).
 
 ## Connect your agent
 
 Make a token, then add Archive to Claude Code with its secret:
 
 ```sh
-docker exec archive archive token create -name "Claude Code"
-claude mcp add --transport http archive http://localhost:8080/mcp --header "Authorization: Bearer <token>"
+archive token create -name "Claude Code"
+claude mcp add --transport http archive https://api.example.com/mcp --header "Authorization: Bearer <token>"
 ```
 
 With no `-space`, the token gets your role in every space you are in. Narrow it with `-space finance:viewer,ops:editor`.
 
 <details>
-<summary><b>Cursor, Claude Desktop, ChatGPT</b></summary>
+<summary><b>Cursor, ChatGPT</b></summary>
 
 **Cursor**: add this to `.cursor/mcp.json`:
 
@@ -139,27 +118,14 @@ With no `-space`, the token gets your role in every space you are in. Narrow it 
 {
   "mcpServers": {
     "archive": {
-      "url": "http://localhost:8080/mcp",
+      "url": "https://api.example.com/mcp",
       "headers": { "Authorization": "Bearer <token>" }
     }
   }
 }
 ```
 
-**Claude Desktop**, on the machine that runs Archive, with no token, as the person you name:
-
-```json
-{
-  "mcpServers": {
-    "archive": {
-      "command": "docker",
-      "args": ["exec", "-i", "archive", "archive", "-as", "you@example.com", "mcp"]
-    }
-  }
-}
-```
-
-**ChatGPT and claude.ai** run in the cloud, so they need a public HTTPS address and a connector that can send the bearer header. Archive has no OAuth sign-in yet.
+**ChatGPT and claude.ai** need a connector that can send the bearer header. Archive has no OAuth sign-in yet.
 
 </details>
 
@@ -170,7 +136,7 @@ With no `-space`, the token gets your role in every space you are in. Narrow it 
 | **Google Cloud** | [Terraform](apps/terraform/gcp) (Cloud Run, Cloud SQL, Storage), applied as it is or called as a module from your own setup |
 | **As code** | the [`archive` Terraform provider](apps/terraform/provider) for your schema, spaces, tokens and roles |
 
-The API and the web app are separate images, always on addresses of their own: `ghcr.io/mulholland-inc/archive` serves the API, sign-in and MCP, and `ghcr.io/mulholland-inc/archive-web` serves the web app. Point them at each other with `ARCHIVE_URL` (the web app's address, on the API) and `ARCHIVE_API_URL` (the API's address, on both).
+The API and the web app are always on addresses of their own: the `ghcr.io/mulholland-inc/archive` image serves the API, sign-in and MCP on Cloud Run, and the web app is static files on a Cloudflare Worker. Point them at each other with `ARCHIVE_URL` (the web app's address, on the API) and `ARCHIVE_API_URL` (the API's address, on the API and in the web app's build).
 
 On Google Cloud, everything is in Terraform, in one `apply`. You need a project with billing, Owner on it, Terraform 1.9 or later, and a domain on Cloudflare: the API gets one subdomain and the web app another.
 
@@ -221,13 +187,13 @@ Every setting is an environment variable; `archive help` lists them all:
 
 | Variable | What it does |
 |---|---|
-| `ARCHIVE_URL` | Public base URL of the web app, for passkeys and where sign-in returns (default `http://localhost:3000`) |
-| `ARCHIVE_API_URL` | Public base URL of the API, sign-in, MCP, webhooks, file links and OAuth redirects, which holds the session cookie (default `http://localhost:8080`); `/api` and `/auth` allow `ARCHIVE_URL`'s origin over CORS. The web image reads it too |
-| `ARCHIVE_DATA` | Directory for `secret.key` and files, while `ARCHIVE_SECRET_KEY` and `ARCHIVE_BLOB_URL` are unset (default `./data`) |
-| `DATABASE_URL` | Postgres 18, required, with CREATEROLE and CREATEDB (no superuser needed); `docker compose up -d postgres` starts one. Each workspace gets its own database on the same server |
-| `DATABASE_DIRECT_URL` | The same Postgres without a pooler in between, for schema changes (default `DATABASE_URL`) |
+| `ARCHIVE_URL` | Public base URL of the web app, for passkeys and where sign-in returns (default `http://localhost:5173`, the web app in development) |
+| `ARCHIVE_API_URL` | Public base URL of the API, sign-in, MCP, webhooks, file links and OAuth redirects, which holds the session cookie (default `http://localhost:8080`); `/api` and `/auth` allow `ARCHIVE_URL`'s origin over CORS. The web app's build reads it as `VITE_ARCHIVE_API` |
+| `ARCHIVE_DATA` | Directory for `secret.key` and files in local development, while `ARCHIVE_SECRET_KEY` and `ARCHIVE_BLOB_URL` are unset (default `./data`) |
+| `DATABASE_URL` | Postgres 18, required, with CREATEROLE and CREATEDB (no superuser needed); `docker compose up -d` starts one for development. Each workspace gets its own database on the same server |
+| `ARCHIVE_TASKS_QUEUE`, `ARCHIVE_TASKS_SERVICE_ACCOUNT` | The Cloud Tasks queue that calls `/tasks` when workflows or files are due, and the service account whose OIDC token it sends; required. `ARCHIVE_TASKS_URL` and `ARCHIVE_TASKS_ISSUER` point them at the emulator in development |
 | `ARCHIVE_SECRET_KEY` | 32-byte key for secret values; required with `DATABASE_URL`, the same on every copy |
-| `ARCHIVE_BLOB_URL`, `ARCHIVE_BLOB_KEY`, `ARCHIVE_BLOB_SECRET` | S3, R2 or MinIO for files, or `gs://bucket` for GCS as the Cloud Run service account, with no key |
+| `ARCHIVE_BLOB_URL` | `gs://bucket/prefix` for files in GCS as the Cloud Run service account, with no key |
 | `ARCHIVE_GOOGLE_CLIENT_ID`, `ARCHIVE_GOOGLE_CLIENT_SECRET` | Sign-in with Google; each provider shows on the sign-in page when both of its variables are set, and its redirect URL is `ARCHIVE_API_URL/auth/oidc/<google\|microsoft\|slack\|github>/callback` |
 | `ARCHIVE_MICROSOFT_CLIENT_ID`, `ARCHIVE_MICROSOFT_CLIENT_SECRET` | Sign-in with Microsoft, work and personal accounts |
 | `ARCHIVE_SLACK_CLIENT_ID`, `ARCHIVE_SLACK_CLIENT_SECRET` | Sign-in with Slack |
@@ -243,7 +209,7 @@ flowchart LR
   Apps[ChatGPT, Claude, Gemini, Cursor] <--> MCP[MCP: run code] --> Core[Go core]
   Clients[Web app, CLI, Terraform] <--> API[HTTP API] --> Core
   Core --> PG[(Postgres: archive + public)]
-  Core --> Files[(Files: disk or S3)]
+  Core --> Files[(Files: disk or GCS)]
 ```
 
 | Path | What lives there |
@@ -258,13 +224,19 @@ flowchart LR
 ## Develop
 
 ```sh
-docker compose up -d postgres         # Postgres 18 on localhost:5433
+docker compose up -d                  # Postgres 18 on localhost:5433
+go run github.com/aertje/cloud-tasks-emulator/v2/cmd/emulator@v2.0.0 -initial-queue projects/dev/locations/here/queues/archive -openid-issuer http://localhost:8980
+```
+
+```sh
 cd src
 go build -o archive .
-go test ./...                         # end-to-end tests; each starts its own Postgres 18 with initdb and postgres from PATH
-export DATABASE_URL="postgres://archive:archive@localhost:5433/archive?sslmode=disable" ARCHIVE_DATA=../data
+go test ./...                         # end-to-end tests; each starts its own Postgres 18 with initdb and postgres from PATH, and a fake Cloud Tasks
+export DATABASE_URL="postgres://archive:archive@localhost:5433/archive?sslmode=disable" ARCHIVE_DATA=../data \
+  ARCHIVE_TASKS_QUEUE=projects/dev/locations/here/queues/archive ARCHIVE_TASKS_SERVICE_ACCOUNT=dev@archive.test \
+  ARCHIVE_TASKS_URL=http://localhost:8123 ARCHIVE_TASKS_ISSUER=http://localhost:8980
 ARCHIVE_BIN=./archive ../demo/load.sh you@example.com
-ARCHIVE_URL=http://localhost:5173 ./archive serve  # API, sign-in and MCP on :8080
+./archive serve                       # API, sign-in and MCP on :8080; the emulator calls /tasks when work is due
 ```
 
 ```sh

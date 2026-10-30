@@ -299,12 +299,12 @@ icon: receipt'</span>;
 <tbody>
 <tr><td>People and places</td><td><code>name</code>, <code>email</code>, <code>phone</code>, <code>address</code>, <code>postcode</code>, <code>country</code>, <code>region</code>, <code>geo</code>, <code>locale</code></td></tr>
 <tr><td>Time</td><td><code>timestamp</code>, <code>time</code>, <code>interval</code>, <code>duration</code>, <code>timezone</code>, <code>recurrence</code></td></tr>
-<tr><td>Money and business</td><td><code>money</code>, <code>currency</code>, <code>percentage</code>, <code>iban</code>, <code>bic</code>, <code>us_routing</code>, <code>us_ein</code>, <code>vat_id</code>, <code>lei</code>, <code>isin</code></td></tr>
+<tr><td>Money and business</td><td><code>money</code>, <code>currency</code>, <code>percentage</code>, <code>bic</code>, <code>us_routing</code>, <code>us_ein</code>, <code>lei</code>, <code>isin</code></td></tr>
 <tr><td>Products and the web</td><td><code>quantity</code>, <code>gtin</code>, <code>isbn</code>, <code>url</code>, <code>domain</code>, <code>ip</code>, <code>mime</code>, <code>richtext</code></td></tr>
-<tr><td>Secret</td><td><code>card</code>, <code>us_ssn</code>, <code>nl_bsn</code>, <code>national</code>, <code>passport</code> (see <a href="#secrets">Secret fields</a>)</td></tr>
+<tr><td>Secret</td><td><code>card</code>, <code>us_ssn</code>, <code>national</code>, <code>passport</code> (see <a href="#secrets">Secret fields</a>)</td></tr>
 </tbody>
 </table>
-<p>So <code>"06 12345678"</code> is stored as <code>"+31612345678"</code>, <code>"€ 1.234,50"</code> as <code>&#123; amount: 1234.5, currency: "EUR" &#125;</code>, and <code>"3-4-1990"</code> as <code>"1990-04-03"</code>.</p>
+<p>So <code>"(415) 555-0123"</code> is stored as <code>"+14155550123"</code>, <code>"$1,234.50"</code> as <code>&#123; amount: 1234.5, currency: "USD" &#125;</code>, and <code>"4/3/1990"</code> as <code>"1990-04-03"</code>.</p>
 
 <h3 id="types-refs">References and lists</h3>
 <ul>
@@ -591,13 +591,13 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <table>
 <thead><tr><th>Type</th><th>Shape</th><th>Also takes</th></tr></thead>
 <tbody>
-<tr><td><code>Money</code></td><td><code>&#123; amount, currency &#125;</code></td><td><code>"€ 1.234,50"</code> or a number</td></tr>
+<tr><td><code>Money</code></td><td><code>&#123; amount, currency &#125;</code></td><td><code>"$1,234.50"</code> or a number</td></tr>
 <tr><td><code>Timestamp</code></td><td><code>&#123; utc, zone &#125;</code></td><td><code>"2026-10-27 09:30"</code></td></tr>
 <tr><td><code>Time</code></td><td><code>&#123; time, zone? &#125;</code></td><td><code>"9:30"</code></td></tr>
 <tr><td><code>Interval</code></td><td><code>&#123; start, end &#125;</code></td><td>A date or instant at each end; <code>null</code> is open</td></tr>
 <tr><td><code>Address</code></td><td><code>&#123; lines, locality?, region?, postcode?, country? &#125;</code></td><td>Country from the locale when missing</td></tr>
-<tr><td><code>Name</code></td><td><code>&#123; full, given?, family?, prefixes? &#125;</code></td><td><code>"Jan de Vries"</code></td></tr>
-<tr><td><code>Postcode</code></td><td><code>&#123; country, code &#125;</code></td><td><code>"1012 LG"</code></td></tr>
+<tr><td><code>Name</code></td><td><code>&#123; full, given?, family?, prefixes? &#125;</code></td><td><code>"Mary Ann Smith"</code></td></tr>
+<tr><td><code>Postcode</code></td><td><code>&#123; country, code &#125;</code></td><td><code>"94105"</code></td></tr>
 <tr><td><code>Geo</code></td><td><code>&#123; lat, lon &#125;</code></td><td><code>"52.37, 4.89"</code></td></tr>
 <tr><td><code>Quantity</code></td><td><code>&#123; value, unit, original_unit &#125;</code></td><td><code>"5 km"</code>, stored in the SI base unit</td></tr>
 </tbody>
@@ -609,12 +609,12 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <pre>curl <span class="s">"https://your-workspace.archive.mulholland.ai/api/invoice?status=unpaid&amp;limit=50"</span> \
   -H <span class="s">"Authorization: Bearer $ARCHIVE_TOKEN"</span>
 
-<span class="c"># 200 [&#123;"id": "0193…", "customer": "Northwind", "amount": &#123;"amount": 4200, "currency": "EUR"&#125;, "status": "unpaid", …&#125;]</span></pre>
+<span class="c"># 200 [&#123;"id": "0193…", "customer": "Northwind", "amount": &#123;"amount": 4200, "currency": "USD"&#125;, "status": "unpaid", …&#125;]</span></pre>
 <pre hidden>curl <span class="s">"https://your-workspace.archive.mulholland.ai/api/invoice?space=finance"</span> \
   -H <span class="s">"Authorization: Bearer $ARCHIVE_TOKEN"</span> \
-  -d <span class="s">'&#123;"customer": "Hart", "amount": "€ 980"&#125;'</span>
+  -d <span class="s">'&#123;"customer": "Hart", "amount": "$980"&#125;'</span>
 
-<span class="c"># 201 &#123;"id": "0193…", "customer": "Hart", "amount": &#123;"amount": 980, "currency": "EUR"&#125;, …&#125;</span></pre>
+<span class="c"># 201 &#123;"id": "0193…", "customer": "Hart", "amount": &#123;"amount": 980, "currency": "USD"&#125;, …&#125;</span></pre>
 <pre hidden>curl -X PATCH https://your-workspace.archive.mulholland.ai/api/invoice/&lt;id&gt; \
   -H <span class="s">"Authorization: Bearer $ARCHIVE_TOKEN"</span> \
   -d <span class="s">'&#123;"status": "paid"&#125;'</span>
@@ -754,7 +754,7 @@ archive schema pull ./schema &amp;&amp; archive schema plan ./schema</pre>
 <pre>curl https://your-workspace.archive.mulholland.ai/auth/spaces \
   -H <span class="s">"Authorization: Bearer $ARCHIVE_TOKEN"</span> \
   -d <span class="s">'&#123;"name": "finance"&#125;'</span></pre>
-<pre hidden><span class="k">await</span> archive.<span class="f">create</span>(<span class="s">"invoice"</span>, &#123; customer: <span class="s">"Hart"</span>, amount: <span class="s">"€ 980"</span> &#125;, &#123; space: <span class="s">"finance"</span> &#125;)
+<pre hidden><span class="k">await</span> archive.<span class="f">create</span>(<span class="s">"invoice"</span>, &#123; customer: <span class="s">"Hart"</span>, amount: <span class="s">"$980"</span> &#125;, &#123; space: <span class="s">"finance"</span> &#125;)
 
 <span class="k">return</span> archive.<span class="f">list</span>(<span class="s">"invoice"</span>, &#123; space: <span class="s">"finance"</span> &#125;)</pre>
 </Code>
@@ -798,7 +798,6 @@ archive schema pull ./schema &amp;&amp; archive schema plan ./schema</pre>
 <tbody>
 <tr><td><code>archive.card</code></td><td>Payment card numbers</td></tr>
 <tr><td><code>archive.us_ssn</code></td><td>US Social Security numbers</td></tr>
-<tr><td><code>archive.nl_bsn</code></td><td>Dutch citizen service numbers</td></tr>
 <tr><td><code>archive.national</code></td><td>National identity numbers</td></tr>
 <tr><td><code>archive.passport</code></td><td>Passport numbers</td></tr>
 </tbody>
@@ -841,7 +840,7 @@ archive schema pull ./schema &amp;&amp; archive schema plan ./schema</pre>
 <Note>Connectors roll out provider by provider, as each provider approves the Archive app. Services that issue API tokens, such as Stripe, Notion, Linear and GitHub, connect with a pasted token.</Note>
 
 <h2 id="models">Models</h2>
-<p>Every row you file is a labelled example. Export a dataset per table, fine-tune a small model on it, and call it from your agents.</p>
+<p>Every row you file is a labeled example. Export a dataset per table, fine-tune a small model on it, and call it from your agents.</p>
 <ul>
 <li><strong>Classifier</strong>: picks the type for an input, so intake knows where a file belongs.</li>
 <li><strong>Filer</strong>: turns text into rows of your schema.</li>

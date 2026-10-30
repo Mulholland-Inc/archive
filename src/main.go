@@ -91,41 +91,38 @@ Usage:
 
 Environment:
   DATABASE_URL       Postgres 18, required, as a role with CREATEROLE and CREATEDB, like the one
-                     docker compose up -d postgres starts; several instances can share one when they
+                     docker compose up -d starts; several instances can share one when they
                      share ARCHIVE_SECRET_KEY and ARCHIVE_BLOB_URL; every other workspace gets its own
                      database on the same server
-  DATABASE_DIRECT_URL
-                     the same Postgres without a pooler in between, for schema changes, which
-                     hold a session lock (default DATABASE_URL)
   ARCHIVE_DATA       data directory for secret.key and files, when ARCHIVE_SECRET_KEY and
                      ARCHIVE_BLOB_URL are unset (default ./data)
-  ARCHIVE_LOCALE     locale that messy input is read in, like nl-NL
+  ARCHIVE_LOCALE     locale that messy input is read in, like en-US
   ANTHROPIC_API_KEY  key for the agent behind POST /api/chat, which can only call the run tool;
                      ANTHROPIC_BASE_URL points it at another Messages API endpoint
   ARCHIVE_CHAT_MODEL model of that agent (default claude-haiku-5-5)
   ARCHIVE_RUN_TIMEOUT
                      time limit of one archive run, POST /api/run or MCP run (default 30s)
-  ARCHIVE_BLOB_URL   gs://bucket/prefix for GCS as the service account of the Google Cloud metadata server,
-                     or s3://bucket/prefix?endpoint=https://host&region=r for S3, R2 or MinIO;
+  ARCHIVE_BLOB_URL   gs://bucket/prefix for GCS as the service account of the Google Cloud metadata server;
                      unset stores files in $ARCHIVE_DATA/blobs
-  ARCHIVE_BLOB_KEY, ARCHIVE_BLOB_SECRET
-                     access key for an s3:// ARCHIVE_BLOB_URL (default AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
   ARCHIVE_SECRET_KEY 32-byte key (hex or base64) for secret values and the Postgres role password,
                      the same on every instance; unset uses $ARCHIVE_DATA/secret.key, for one instance
-  ARCHIVE_URL        public base URL of the web app, which runs on its own (ghcr.io/mulholland-inc/archive-web),
-                     for passkeys and where sign-in returns (default http://localhost:3000); while it is
+  ARCHIVE_URL        public base URL of the web app, which runs on its own as static files,
+                     for passkeys and where sign-in returns (default http://localhost:5173); while it is
                      http://localhost, requests from this machine are signed in as the first owner
   ARCHIVE_API_URL    public base URL of this server: the API, sign-in, MCP, webhooks, file links and every
                      OAuth redirect URL, which holds the session cookie (default http://localhost:<port>);
                      /api and /auth allow ARCHIVE_URL's origin over CORS with the cookie; unless
                      ARCHIVE_URL is http://localhost, any other origin may call with a bearer token
   ARCHIVE_TASKS_QUEUE
-                     Cloud Tasks queue, projects/<p>/locations/<r>/queues/<q>, that calls
+                     Cloud Tasks queue, projects/<p>/locations/<r>/queues/<q>, required, that calls
                      POST ARCHIVE_API_URL/tasks at each time workflows or files are due, so serve can
-                     scale to zero; unset, serve keeps one timer for the next due time instead
+                     scale to zero
   ARCHIVE_TASKS_SERVICE_ACCOUNT
-                     service account whose Google OIDC token those calls carry; /tasks refuses any other
-  ARCHIVE_TASKS_URL  Cloud Tasks API base URL (default https://cloudtasks.googleapis.com)
+                     service account whose OIDC token those calls carry, required; /tasks refuses any other
+  ARCHIVE_TASKS_URL  Cloud Tasks API (default https://cloudtasks.googleapis.com), or http://localhost:8123
+                     for the emulator in local development
+  ARCHIVE_TASKS_ISSUER
+                     issuer of those OIDC tokens (default https://accounts.google.com), or the emulator's
   ARCHIVE_GOOGLE_CLIENT_ID, ARCHIVE_GOOGLE_CLIENT_SECRET
   ARCHIVE_MICROSOFT_CLIENT_ID, ARCHIVE_MICROSOFT_CLIENT_SECRET
   ARCHIVE_SLACK_CLIENT_ID, ARCHIVE_SLACK_CLIENT_SECRET
@@ -588,16 +585,7 @@ func cliServe(ctx context.Context, h *Hub, a *Archive, addr string) error {
 	mux.Handle("/auth/", si.handler())
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("/mcp", h.mcp)
-	var wg sync.WaitGroup
-	bg, stop := context.WithCancel(ctx)
-	defer wg.Wait()
-	defer stop()
-	if h.tasks != nil {
-		mux.HandleFunc("POST /tasks", h.tasksHTTP)
-	} else {
-		wg.Add(1)
-		go h.clock(bg, &wg)
-	}
+	mux.HandleFunc("POST /tasks", h.tasksHTTP)
 	hs := &http.Server{Addr: addr, Handler: h.cors(mux), ReadHeaderTimeout: 10 * time.Second}
 	errc := make(chan error, 1)
 	go func() { errc <- hs.ListenAndServe() }()
