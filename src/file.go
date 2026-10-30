@@ -26,7 +26,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Mulholland-Inc/archive/generated"
@@ -106,6 +105,9 @@ func (a *Archive) fileAdd(ctx context.Context, sid uuid.UUID, name string, r io.
 }
 
 func (a *Archive) fileCommit(ctx context.Context, sid uuid.UUID, name string, open func() (io.ReadCloser, error)) (*File, error) {
+	if err := a.limit(ctx, "stored bytes"); err != nil {
+		return nil, err
+	}
 	r, err := open()
 	if err != nil {
 		return nil, err
@@ -141,12 +143,20 @@ func (a *Archive) fileCommit(ctx context.Context, sid uuid.UUID, name string, op
 	if err != nil {
 		return nil, err
 	}
+	storeAfter(ctx, func() {
+		if err := a.storedBytes(context.WithValue(context.WithoutCancel(ctx), storeTxKey{}, nil)); err != nil {
+			fmt.Fprintf(os.Stderr, "archive: workspace %s usage: %v\n", a.ws.Short, err)
+		}
+	})
 	return a.fileReady(ctx, f)
 }
 
 func (a *Archive) fileReady(ctx context.Context, f *File) (*File, error) {
 	if f.Status != "pending" {
 		return f, nil
+	}
+	if err := a.soon(ctx, "file", time.Now().Add(hubFileDelay)); err != nil {
+		return nil, err
 	}
 	if _, ok := ctx.Value(storeTxKey{}).(storeTx); ok {
 		bg := context.WithValue(context.WithoutCancel(ctx), storeTxKey{}, nil)
@@ -255,7 +265,7 @@ func (a *Archive) LinkFile(ctx context.Context, id uuid.UUID, ttl time.Duration)
 		ttl = fileLinkTTL
 	}
 	exp := time.Now().Add(ttl).Unix()
-	return &FileLink{URL: fmt.Sprintf("%s/files/%s?exp=%d&sig=%s", a.base, id, exp, a.fileSign(id, exp)), ExpiresAt: time.Unix(exp, 0).UTC()}, nil
+	return &FileLink{URL: fmt.Sprintf("%s/files/%s/%s?exp=%d&sig=%s", a.hub.api, a.ws.Short, id, exp, a.fileSign(id, exp)), ExpiresAt: time.Unix(exp, 0).UTC()}, nil
 }
 
 func mediaInline(mt string) bool {
@@ -672,7 +682,6 @@ func (a *Archive) tusDrop(ctx context.Context, up *tusUpload) error {
 const (
 	mediaMax     = 64 << 20
 	mediaThumb   = 320
-	mediaWorkers = 2
 )
 
 func mediaSniff(name string, b []byte) string {
@@ -693,28 +702,6 @@ func mediaSniff(name string, b []byte) string {
 		}
 	}
 	return mt
-}
-
-func (a *Archive) fileLoop(ctx context.Context, wg *sync.WaitGroup) {
-	defer wg.Done()
-	tick := time.NewTicker(10 * time.Second)
-	defer tick.Stop()
-	for {
-		for {
-			ok, err := a.fileProcess(ctx, uuid.Nil)
-			if err != nil && ctx.Err() == nil {
-				fmt.Fprintln(os.Stderr, "archive: files:", err)
-			}
-			if !ok || err != nil {
-				break
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-tick.C:
-		}
-	}
 }
 
 func (a *Archive) fileProcess(ctx context.Context, id uuid.UUID) (bool, error) {

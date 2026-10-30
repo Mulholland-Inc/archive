@@ -20,8 +20,24 @@ export function setSpace(name) {
   } catch {}
 }
 
+export function workspace() {
+  try {
+    return localStorage.workspace ?? '';
+  } catch {
+    return '';
+  }
+}
+
+export function setWorkspace(id) {
+  try {
+    if (id) localStorage.workspace = id;
+    else delete localStorage.workspace;
+  } catch {}
+}
+
 async function send(path, { method = 'GET', body, raw, signal } = {}) {
   const init = { method, headers: {}, signal };
+  if (workspace()) init.headers['Archive-Workspace'] = workspace();
   if (space()) init.headers['Archive-Space'] = space();
   if (raw !== undefined) init.body = raw;
   else if (body !== undefined) {

@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Mulholland-Inc/archive/generated"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/text/currency"
@@ -19,12 +21,13 @@ import (
 )
 
 type Archive struct {
+	hub    *Hub
+	ws     generated.ArchiveWorkspace
 	st     *pgStore
 	hints  Hints
-	stop   func() error
 	prefix string
-	base   string
 	aead   cipher.AEAD
+	slots  chan struct{}
 
 	blobs   blobStore
 	linkKey []byte
@@ -32,57 +35,13 @@ type Archive struct {
 	mu  sync.RWMutex
 	cat *Catalog
 	wmu sync.Mutex
+
+	hmu  sync.Mutex
+	api  http.Handler
+	mcph http.Handler
 }
 
 var corePrefixRe = regexp.MustCompile(`^[a-z][a-z0-9]{0,15}$`)
-
-func Open(ctx context.Context) (*Archive, error) {
-	dir := coreEnv("ARCHIVE_DATA", "./data")
-	prefix := coreEnv("ARCHIVE_INSTANCE", "a")
-	if !corePrefixRe.MatchString(prefix) {
-		return nil, fmt.Errorf("ARCHIVE_INSTANCE %q: want 1-16 lowercase letters and digits, starting with a letter", prefix)
-	}
-	dsn, stop := os.Getenv("DATABASE_URL"), func() error { return nil }
-	if dsn != "" && strings.TrimSpace(os.Getenv("ARCHIVE_SECRET_KEY")) == "" {
-		return nil, errors.New("DATABASE_URL needs ARCHIVE_SECRET_KEY: every instance on that database must share one 32-byte key, like the output of openssl rand -hex 32")
-	}
-	key, err := secretLoadKey(dir)
-	if err != nil {
-		return nil, fmt.Errorf("secret key: %w", err)
-	}
-	aead, err := secretAEAD(key)
-	if err != nil {
-		return nil, err
-	}
-	blobs, err := blobOpen(dir)
-	if err != nil {
-		return nil, err
-	}
-	if dsn == "" {
-		if dsn = pgLive(dir); dsn == "" {
-			if err := BackupBeforeUpgrade(ctx, dir, cliVersion); err != nil {
-				return nil, fmt.Errorf("backup: %w", err)
-			}
-			if dsn, stop, err = StartPostgres(ctx, dir); err != nil {
-				return nil, fmt.Errorf("start postgres: %w", err)
-			}
-		}
-	}
-	st, err := OpenStore(ctx, dsn, prefix, authPassword(key))
-	if err != nil {
-		stop()
-		return nil, fmt.Errorf("open store: %w", err)
-	}
-	cat, err := st.Catalog(ctx)
-	if err != nil {
-		st.Close()
-		stop()
-		return nil, fmt.Errorf("load catalog: %w", err)
-	}
-	return &Archive{st: st, cat: cat, hints: coreHints(os.Getenv("ARCHIVE_LOCALE")),
-		base: strings.TrimRight(coreEnv("ARCHIVE_URL", "http://localhost:8080"), "/"), prefix: prefix, aead: aead, stop: stop,
-		blobs: blobs, linkKey: secretDerive(key, "files")}, nil
-}
 
 func (a *Archive) as(ctx context.Context, fn func(context.Context) error) error {
 	ac := ActorFrom(ctx)
@@ -103,9 +62,6 @@ func coreDo[T any](a *Archive, ctx context.Context, fn func(context.Context) (T,
 
 func (a *Archive) Close() error {
 	a.st.Close()
-	if a.stop != nil {
-		return a.stop()
-	}
 	return nil
 }
 

@@ -56,6 +56,9 @@ const storeRoles = `DO $$ BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_admin') THEN
         CREATE ROLE {p}_admin NOLOGIN;
     END IF;
+    IF NOT has_database_privilege('{p}_authenticator', current_database(), 'CONNECT') THEN
+        EXECUTE format('GRANT CONNECT ON DATABASE %I TO {p}_authenticator', current_database());
+    END IF;
 END $$`
 
 const storeLock = 7271
@@ -121,19 +124,20 @@ func (p *SchemaPlan) blocked() []string {
 	return out
 }
 
-func OpenStore(ctx context.Context, dsn, prefix, password string) (*pgStore, error) {
-	cfg, err := pgx.ParseConfig(dsn)
-	if err != nil {
-		return nil, err
-	}
+func OpenStore(ctx context.Context, pooled, direct *pgx.ConnConfig, prefix, password string) (*pgStore, error) {
+	cfg := direct.Copy()
 	cfg.RuntimeParams["search_path"] = "public"
-	s := &pgStore{cfg: cfg, prefix: prefix, ddl: stdlib.OpenDB(*cfg.Copy())}
-	if s.sys, err = storePool(ctx, dsn, nil); err == nil {
+	db := stdlib.OpenDB(*cfg.Copy())
+	db.SetMaxOpenConns(storeDDLConns)
+	db.SetConnMaxIdleTime(storeIdle)
+	s := &pgStore{cfg: cfg, prefix: prefix, ddl: db}
+	var err error
+	if s.sys, err = storePool(ctx, pooled, storeSysConns, nil); err == nil {
 		err = s.bootstrap(ctx, password)
 	}
 	if err == nil {
 		auth := prefix + "_authenticator"
-		s.app, err = storePool(ctx, dsn, func(c *pgx.ConnConfig) { c.User, c.Password = auth, password })
+		s.app, err = storePool(ctx, pooled, storeAppConns, func(c *pgx.ConnConfig) { c.User, c.Password = auth, password })
 	}
 	if err != nil {
 		s.Close()
@@ -142,13 +146,22 @@ func OpenStore(ctx context.Context, dsn, prefix, password string) (*pgStore, err
 	return s, nil
 }
 
-func storePool(ctx context.Context, dsn string, fn func(*pgx.ConnConfig)) (*pgxpool.Pool, error) {
-	cfg, err := pgxpool.ParseConfig(dsn)
+const (
+	storeAppConns = 8
+	storeSysConns = 4
+	storeDDLConns = 2
+	storeIdle     = time.Minute
+)
+
+func storePool(ctx context.Context, base *pgx.ConnConfig, conns int32, fn func(*pgx.ConnConfig)) (*pgxpool.Pool, error) {
+	cfg, err := pgxpool.ParseConfig("")
 	if err != nil {
 		return nil, err
 	}
+	cfg.ConnConfig = base.Copy()
 	cfg.ConnConfig.RuntimeParams["search_path"] = "archive, public"
 	cfg.ConnConfig.RuntimeParams["timezone"] = "UTC"
+	cfg.MaxConns, cfg.MinConns, cfg.MaxConnIdleTime = conns, 0, storeIdle
 	if fn != nil {
 		fn(cfg.ConnConfig)
 	}

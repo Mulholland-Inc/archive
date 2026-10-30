@@ -1,5 +1,5 @@
 <script>
-  import { api, go, setSpace, space, Unauthorized } from './api.js';
+  import { api, go, setSpace, setWorkspace, space, workspace, Unauthorized } from './api.js';
   import Button from '#kit/Button.svelte';
   import Theme from '#kit/Theme.svelte';
   import Word from '#kit/Word.svelte';
@@ -15,6 +15,7 @@
 
   let me = $state(null);
   let signedOut = $state(false);
+  let adding = $state(false);
   let tables = $state([]);
   let views = $state([]);
   let types = $state({});
@@ -50,6 +51,12 @@
     pick(sp.name);
   }
 
+  function switchTo(id) {
+    setWorkspace(id);
+    setSpace('');
+    location.assign('/');
+  }
+
   function pick(name) {
     setSpace(name);
     scope = name;
@@ -59,6 +66,7 @@
   async function load() {
     try {
       me = await api('/auth/me');
+      if (me.workspace !== workspace()) setWorkspace(me.workspace);
       if (scope && !me.spaces.some((s) => s.name === scope)) pick('');
       loadChats();
       const cat = await api('/api/types');
@@ -68,13 +76,19 @@
       views = all.filter((t) => t.kind === 'view');
       if (location.pathname === '/') history.replaceState(null, '', (path = '/files'));
     } catch (e) {
-      if (e instanceof Unauthorized) signedOut = true;
-      else throw e;
+      if (!(e instanceof Unauthorized)) throw e;
+      if (workspace()) {
+        setWorkspace('');
+        return load();
+      }
+      signedOut = true;
     }
   }
 
   async function signOut() {
     await api('/auth/signout', { method: 'POST' });
+    setWorkspace('');
+    setSpace('');
     location.assign('/');
   }
 
@@ -83,6 +97,8 @@
 
 {#if signedOut}
   <SignIn />
+{:else if adding}
+  <SignIn oncancel={() => (adding = false)} />
 {:else if me}
   <div class="shell">
     <aside>
@@ -113,7 +129,8 @@
         {/if}
       </nav>
       <footer>
-        <Profile name={who} spaces={me.spaces} home={me.home} current={scope} onpick={pick} oncreate={create} />
+        <Profile name={who} spaces={me.spaces} home={me.home} current={scope} onpick={pick} oncreate={create}
+          workspaces={me.workspaces} workspace={me.workspace} onworkspace={switchTo} onadd={() => (adding = true)} />
         <Theme />
         <Button icon="signout" title="Sign out" aria-label="Sign out" onclick={signOut} />
       </footer>

@@ -9,7 +9,11 @@
   import Word from '#kit/Word.svelte';
   import art from '../../site/static/art/cli.webp';
 
+  let { oncancel } = $props();
   let email = $state('');
+  let team = $state('');
+  let creating = $state(false);
+  let signup = $state(false);
   let sent = $state(false);
   let busy = $state(false);
   let error = $state('');
@@ -18,7 +22,12 @@
   const passkeys = typeof PublicKeyCredential !== 'undefined';
   const name = (p) => p.charAt(0).toUpperCase() + p.slice(1);
 
-  api('/auth/methods').then((m) => (providers = m.providers ?? [])).catch(() => {});
+  api('/auth/methods')
+    .then((m) => {
+      providers = m.providers ?? [];
+      signup = !!m.signup;
+    })
+    .catch(() => {});
 
   $effect(() => {
     if (!sent) field?.focus();
@@ -26,11 +35,12 @@
 
   async function send(e) {
     e.preventDefault();
-    if (busy || !email.trim()) return;
+    if (busy || !email.trim() || (creating && !team.trim())) return;
     busy = true;
     error = '';
     try {
-      await api('/auth/magic', { method: 'POST', body: { email: email.trim() } });
+      if (creating) await api('/auth/signup', { method: 'POST', body: { email: email.trim(), name: team.trim() } });
+      else await api('/auth/magic', { method: 'POST', body: { email: email.trim() } });
       sent = true;
     } catch (err) {
       error = err.message;
@@ -77,21 +87,30 @@
       <p class="address">{email.trim()}</p>
       <button class="again" type="button" onclick={again}>Use another email</button>
     {:else}
+      {#if creating}
+        <form class="pill" onsubmit={send}>
+          <input bind:value={team} placeholder="Workspace name" aria-label="Workspace name" autocomplete="organization" required />
+        </form>
+      {/if}
       <form class="pill" onsubmit={send}>
         <input bind:this={field} bind:value={email} type="email" placeholder="Email" aria-label="Email" autocomplete="email webauthn" required />
-        <button class="go" type="submit" disabled={busy || !email.trim()} aria-label="Send sign-in link">
+        <button class="go" type="submit" disabled={busy || !email.trim() || (creating && !team.trim())} aria-label={creating ? 'Create workspace' : 'Send sign-in link'}>
           <span class:spin={busy}><Icon name={busy ? 'loader-circle' : 'arrow-up'} /></span>
         </button>
       </form>
       {#if error}<p class="error" role="alert">{error}</p>{/if}
-      {#if providers.length || passkeys}
+      {#if creating}
+        <button class="again" type="button" onclick={() => (creating = false)}>Sign in instead</button>
+      {:else if providers.length || passkeys || signup}
         <div class="methods">
           {#each providers as p (p)}
             <a class="method" href="/auth/oidc/{encodeURIComponent(p)}">Continue with {name(p)}</a>
           {/each}
           {#if passkeys}<button class="method" type="button" onclick={passkey}><Icon name="key-round" />Use a passkey</button>{/if}
+          {#if signup}<button class="method" type="button" onclick={() => (creating = true)}><Icon name="plus" />Create a workspace</button>{/if}
         </div>
       {/if}
+      {#if oncancel}<button class="again" type="button" onclick={oncancel}>Back</button>{/if}
     {/if}
   </div>
 </div>

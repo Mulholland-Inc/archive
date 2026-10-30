@@ -9,12 +9,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Mulholland-Inc/archive/generated"
@@ -27,9 +25,8 @@ import (
 const (
 	workflowBatch   = 100
 	workflowDepth   = 4
-	workflowWorkers = 4
-	workflowTick    = time.Second
 	workflowPoll    = 3 * time.Second
+	workflowQuiet   = time.Minute
 	workflowRetry   = time.Minute
 	workflowMaxSize = 256 << 10
 	workflowMaxBody = 10 << 20
@@ -189,7 +186,7 @@ func (a *Archive) workflowOut(w generated.ArchiveWorkflow) Workflow {
 		case "cron":
 			out.Next = workflowUTC(w.NextAt)
 		case "webhook":
-			out.URL = a.base + "/hooks/run/" + w.Hook
+			out.URL = a.hub.api + "/hooks/run/" + a.ws.Short + "/" + w.Hook
 		}
 	}
 	return out
@@ -246,6 +243,9 @@ func (a *Archive) Deploy(ctx context.Context, files map[string]string) (*Workflo
 		return nil
 	})
 	if err != nil {
+		return nil, err
+	}
+	if err := a.scheduleWorkflows(ctx); err != nil {
 		return nil, err
 	}
 	res.Deployed = true
@@ -419,7 +419,7 @@ func (a *Archive) workflowExec(ctx context.Context, w generated.ArchiveWorkflow,
 				return WorkflowRun{}, err
 			}
 		}
-		if o, t, err := a.run(WithActor(ctx, ac), w.Source, in); err != nil {
+		if o, t, err := a.run(WithActor(ctx, ac), w.Source, in, true); err != nil {
 			out.Error = err.Error()
 		} else {
 			out, at = o, t
@@ -444,28 +444,6 @@ func (a *Archive) RunWorkflow(ctx context.Context, name string) (WorkflowRun, er
 		return WorkflowRun{}, err
 	}
 	return a.workflowExec(ctx, w, nil, "run", nil)
-}
-
-func (a *Archive) workflowLoop(ctx context.Context, wg *sync.WaitGroup) {
-	defer wg.Done()
-	tick := time.NewTicker(workflowTick)
-	defer tick.Stop()
-	for {
-		for {
-			ok, err := a.workflowNext(ctx)
-			if err != nil && ctx.Err() == nil {
-				fmt.Fprintln(os.Stderr, "archive: workflows:", err)
-			}
-			if !ok || err != nil {
-				break
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-tick.C:
-		}
-	}
 }
 
 func (a *Archive) workflowNext(ctx context.Context) (bool, error) {
@@ -553,7 +531,7 @@ func (a *Archive) workflowTable(ctx context.Context, w generated.ArchiveWorkflow
 		return fail(fmt.Errorf("reading new %s rows: %s", tb.Name, runMessage(err)))
 	}
 	if len(rows) == 0 {
-		return next(workflowPoll)
+		return next(min(max(time.Since(*w.CursorAt)/10, workflowPoll), workflowQuiet))
 	}
 	in := make([]map[string]any, len(rows))
 	for i, f := range rows {

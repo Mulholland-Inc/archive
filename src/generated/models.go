@@ -20,6 +20,18 @@ type ArchiveChat struct {
 	UpdatedAt time.Time
 }
 
+type ArchivePlan struct {
+	ID           string
+	Name         string
+	Price        string
+	Runs         *int64
+	WorkflowRuns *int64
+	AiTokens     *int64
+	StoredBytes  *int64
+	Concurrent   *int32
+	CreatedAt    time.Time
+}
+
 type ArchiveUpload struct {
 	ID        uuid.UUID
 	Role      string
@@ -64,4 +76,19 @@ type ArchiveWorkflowRun struct {
 	Error     string
 	Ms        int32
 	CreatedAt time.Time
+}
+
+type ArchiveWorkspace struct {
+	ID           uuid.UUID
+	Short        string
+	Name         string
+	Database     string
+	Prefix       string
+	Key          []byte
+	Blobs        string
+	Plan         *string
+	Customer     string
+	Subscription string
+	AnthropicKey []byte
+	CreatedAt    time.Time
 }
