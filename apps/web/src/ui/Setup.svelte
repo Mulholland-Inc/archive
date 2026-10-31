@@ -19,9 +19,9 @@
 
   const admin = $derived(!!users?.find((u) => u.email === email)?.admin);
   const steps = $derived([
-    { title: 'Add a file', icon: 'file-up', href: '/files', done: files?.length > 0 },
-    { title: 'Connect your apps and agents', icon: 'grid-2x2-plus', connect: true, done: tokens?.length > 0 || connected.length > 0 },
-    ...(admin ? [{ title: 'Invite someone', icon: 'user-plus', href: '/users', done: users.length > 1 }] : []),
+    { title: 'Add a file', href: '/files', done: files?.length > 0 },
+    { title: 'Connect your apps and agents', connect: true, done: tokens?.length > 0 || connected.length > 0 },
+    ...(admin ? [{ title: 'Invite someone', href: '/users', done: users.length > 1 }] : []),
   ]);
   const ready = $derived(files && tokens && users);
   const left = $derived(steps.filter((s) => !s.done).length);
@@ -36,7 +36,7 @@
   <section aria-label="Get started">
     {#each steps.filter((s) => !s.done) as s (s.title)}
       <svelte:element this={s.connect ? 'button' : 'a'} class="step" type={s.connect ? 'button' : undefined} href={s.href} onclick={s.connect ? () => dispatchEvent(new CustomEvent('connect')) : undefined}>
-        <Icon name={s.icon} />{s.title}
+        {s.title}
       </svelte:element>
     {/each}
     <button class="hide" type="button" aria-label="Hide these" title="Hide these" onclick={hide}><Icon name="x" /></button>
@@ -44,11 +44,12 @@
 {/if}
 
 <style>
-  section { display: flex; flex: none; flex-wrap: wrap; align-items: center; justify-content: center; gap: var(--space-1); width: 100%; max-width: var(--composer-width); }
-  .step { display: flex; align-items: center; gap: var(--space-1); padding: var(--space-1) var(--space-2); border-radius: var(--radius-full); color: var(--fg-muted); font-size: var(--text-meta); transition: background var(--duration-fast), color var(--duration-fast); }
-  .step:hover { background: var(--fill); color: var(--fg); }
-  .step :global(.icon) { width: 15px; height: 15px; }
-  .hide { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; color: var(--fg-muted); opacity: 0.6; transition: opacity var(--duration-fast); }
+  section { position: relative; display: flex; flex: none; flex-wrap: wrap; align-items: center; justify-content: center; gap: var(--space-1) var(--space-6); width: 100%; max-width: var(--composer-width); margin-top: var(--space-2); }
+  .step { color: var(--fg-muted); font-size: var(--text-meta); transition: color var(--duration-fast); }
+  .step:hover { color: var(--fg); }
+  .hide { position: absolute; top: 50%; right: 0; display: grid; place-items: center; width: 24px; height: 24px; transform: translateY(-50%); color: var(--fg-muted); opacity: 0; transition: opacity var(--duration-fast); }
+  section:hover .hide, .hide:focus-visible { opacity: 0.7; }
   .hide:hover { opacity: 1; }
   .hide :global(.icon) { width: 13px; height: 13px; }
+  @media (hover: none) { .hide { opacity: 0.7; } }
 </style>
