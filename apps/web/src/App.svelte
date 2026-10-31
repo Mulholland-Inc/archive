@@ -16,6 +16,7 @@
   import { fullName, look, seedLooks, setLook, shortName } from './ui/looks.svelte.js';
   import Library from './Library.svelte';
   import Keys from './Keys.svelte';
+  import People from './People.svelte';
   import Heading from './ui/Heading.svelte';
   import NavItem from './ui/NavItem.svelte';
   import SignIn from './SignIn.svelte';
@@ -252,7 +253,7 @@
       {:else if route.first === 'workflows'}
         <Workflows />
       {:else if route.first === 'users'}
-        <Users email={me.actor.email} />
+        {#if dev}<Users email={me.actor.email} />{:else}<People email={me.actor.email} archive={fullTitle} />{/if}
       {:else if route.first === 'views'}
         {@const v = views.find((x) => x.name === route.second)}
         {#if v}
