@@ -4,7 +4,9 @@ export const TYPES = {
   family: { label: 'Family', icons: ['robot', 'cottage', 'townhouse', 'farmhouse'] },
   business: { label: 'Business', icons: ['robot', 'cabinet', 'warehouse', 'factory', 'bank'] },
 };
-export const TINTS = ['#e5484d', '#f5a524', '#30a46c', '#0091ff', '#8e4ec6', '#a0703c', '#2a2f38'];
+// The colours of a national archive: oxblood, gold leaf, Treasury green, federal navy, slate, parchment and ink.
+export const TINTS = ['#8a2433', '#b8963e', '#2f5d4e', '#22407a', '#5d7690', '#b5a27a', '#20252d'];
+const RETIRED = { '#e5484d': '#8a2433', '#f5a524': '#b8963e', '#30a46c': '#2f5d4e', '#0091ff': '#22407a', '#8e4ec6': '#5d7690', '#a0703c': '#b5a27a' };
 
 function load() {
   try {
@@ -41,7 +43,8 @@ function persist() {
 
 export function look(id = '') {
   const tint = TINTS[[...id].reduce((n, c) => n + c.charCodeAt(0), 0) % TINTS.length];
-  return { type: 'personal', icon: 'robot', tint, shared: false, locked: [], shares: {}, groups: {}, custodian: null, away: [], ...looks[id] };
+  const l = { type: 'personal', icon: 'robot', tint, shared: false, locked: [], shares: {}, groups: {}, custodian: null, away: [], ...looks[id] };
+  return { ...l, tint: RETIRED[l.tint] ?? l.tint };
 }
 
 // What the sidebar and chat call an archive: you type a name, and the type finishes it.

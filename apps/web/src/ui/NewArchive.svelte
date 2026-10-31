@@ -13,7 +13,7 @@
   let name = $state('');
   let type = $state('family');
   let icon = $state('cottage');
-  let tint = $state('#30a46c');
+  let tint = $state('#22407a');
   let error = $state('');
   let busy = $state(false);
   let video = $state(false);
