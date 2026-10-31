@@ -324,9 +324,9 @@
   .empty .log { flex: none; }
   .empty:has(.framed) { gap: var(--space-3); }
   .stage { display: flex; flex: none; justify-content: center; width: 100%; }
-  .framed { position: relative; max-width: var(--composer-width); aspect-ratio: 16 / 9; max-height: 52svh; padding: var(--space-5) var(--space-5) 0; overflow: hidden; border-radius: var(--radius-panel); }
-  .framed img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-  .framed .dock { position: relative; }
+  .framed { position: relative; max-width: var(--composer-width); aspect-ratio: 16 / 9; max-height: 52svh; border-radius: var(--radius-panel); }
+  .framed img { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: inherit; object-fit: cover; object-position: center 30%; }
+  .stage.framed .dock { position: absolute; right: var(--space-4); bottom: var(--space-4); left: var(--space-4); width: auto; padding: 0; margin: 0; }
   .caption { display: flex; justify-content: space-between; gap: var(--space-3); width: 100%; max-width: var(--composer-width); margin-top: calc(-1 * var(--space-1)); padding: 0 var(--space-1); color: var(--fg-muted); font-size: var(--text-meta); }
   .caption a { flex: none; }
   .caption a:hover { color: var(--fg); }
