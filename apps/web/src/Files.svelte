@@ -68,7 +68,9 @@
 </script>
 
 <Heading title="Files">
+  {#if !loaded || files.length}
   <Button small icon="plus" onclick={() => picker.click()} disabled={busy}>{busy ? 'Uploading…' : 'Add files'}</Button>
+  {/if}
   <input bind:this={picker} type="file" multiple hidden onchange={upload} />
 </Heading>
 <Filters bind:q>
@@ -86,7 +88,7 @@
         {/snippet}
       </DataTable>
     {:else if loaded}
-      {#if files.length}<Note>Nothing matches</Note>{:else}<Empty title="No files yet">Add a PDF, a photo or an email to get started.</Empty>{/if}
+      {#if files.length}<Note>Nothing matches</Note>{:else}<Empty title="No files yet">Add a PDF, a photo or an email to get started.{#snippet action()}<Button small icon="plus" onclick={() => picker.click()} disabled={busy}>{busy ? 'Uploading…' : 'Add files'}</Button>{/snippet}</Empty>{/if}
     {/if}
   </Sheet>
 </Filters>

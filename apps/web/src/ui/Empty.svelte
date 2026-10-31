@@ -2,13 +2,14 @@
   import { workspace } from '../api.js';
   import Bot from './Bot.svelte';
 
-  let { title, children } = $props();
+  let { title, children, action } = $props();
 </script>
 
 <div class="empty">
   <span class="who"><Bot seed={workspace()} size={110} bare /></span>
   <p class="title">{title}</p>
   {#if children}<p class="hint">{@render children()}</p>{/if}
+  {#if action}<div class="action">{@render action()}</div>{/if}
 </div>
 
 <style>
@@ -26,4 +27,5 @@
   .who { margin-bottom: var(--space-2); }
   .title { color: var(--fg); font: var(--weight-medium) var(--text-lg) / var(--leading-tight) var(--font-serif); }
   .hint { color: var(--fg-muted); }
+  .action { margin-top: var(--space-3); }
 </style>
