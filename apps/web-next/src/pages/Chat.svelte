@@ -12,7 +12,7 @@
   import EmptyState from '../components/EmptyState.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
   import { MessageSquareOff } from '@lucide/svelte';
-  import { app } from '../lib/app.svelte.js';
+  import { app, ws, copyLink } from '../lib/app.svelte.js';
   import { streamReply } from '../lib/data.js';
   import { duration } from '../lib/motion.js';
   import { toast } from '../lib/toast.svelte.js';
@@ -20,7 +20,7 @@
 
   let { id } = $props();
 
-  const chat = $derived(app.chats.find((c) => c.id === id));
+  const chat = $derived(ws().chats.find((c) => c.id === id));
 
   function fallback(c) {
     return c
@@ -31,7 +31,7 @@
       : [];
   }
 
-  const messages = $derived(app.conversations[id] ?? fallback(chat));
+  const messages = $derived(ws().conversations[id] ?? fallback(chat));
 
   let value = $state('');
   let streaming = $state(false);
@@ -63,8 +63,10 @@
   }
 
   async function send({ text, attachments }) {
-    if (!app.conversations[id]) app.conversations[id] = fallback(chat);
-    const list = app.conversations[id];
+    const conv = ws().conversations;
+    if (!conv[id]) conv[id] = fallback(chat);
+    const list = conv[id];
+    chat.updated = 'Just now';
     list.push({ id: uid('m'), role: 'user', text, attachments });
     toBottom(true);
     list.push({
@@ -121,20 +123,20 @@
     {#if chat}<ChatActions {chat} title />{/if}
   {/snippet}
   {#snippet trailing()}
-    <Button size="sm" icon={Share} onclick={() => toast('Link copied')}>Share</Button>
+    <Button size="sm" icon={Share} onclick={() => copyLink(`/chat/${id}`)}>Share</Button>
   {/snippet}
 </TopBar>
 
 {#if chat}
   <Page width="chat" bind:element={scroller}>
-    <Stack gap="10">
+    <Stack gap="8">
       {#each messages as message, i (message.id)}
-        <Message {message} streaming={streaming && i === messages.length - 1} />
+        <Message {message} streaming={streaming && i === messages.length - 1} onedit={(text) => { value = text; element?.focus(); }} />
       {/each}
     </Stack>
   </Page>
   <ComposerDock>
-    <Composer bind:value bind:element bind:model={app.model} placeholder="Reply to Archive" {streaming} onsend={send} onstop={stop} />
+    <Composer bind:value bind:element bind:model={app.model} bind:project={chat.project} placeholder="Reply to Archive" {streaming} onsend={send} onstop={stop} />
   </ComposerDock>
 {:else}
   <Page center>

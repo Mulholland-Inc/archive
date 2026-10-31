@@ -27,7 +27,9 @@
   import MobileMenu from '../components/MobileMenu.svelte';
   import { me } from '../lib/data.js';
   import { theme, setTheme, setChatFont } from '../lib/theme.svelte.js';
-  import { currentWorkspace } from '../lib/app.svelte.js';
+  import { app, ws, deleteWorkspace } from '../lib/app.svelte.js';
+  import WorkspaceIcon from '../components/WorkspaceIcon.svelte';
+  import LookPicker from '../components/LookPicker.svelte';
   import { toast } from '../lib/toast.svelte.js';
 
   let { section = 'profile' } = $props();
@@ -39,19 +41,46 @@
     { id: 'notifications', label: 'Notifications', icon: Bell, href: '#/settings/notifications' }
   ];
 
-  let name = $state(me.name);
-  let call = $state(me.first);
-  let work = $state('archivist');
-  let prefs = $state('Keep answers short. Use British spelling. When you quote a letter, keep the original spelling and punctuation.');
-  let wsName = $state(currentWorkspace().name);
-  let defaultRole = $state('viewer');
-  let region = $state('us-central1');
-  let invites = $state(true);
-  let sharing = $state(false);
-  let retention = $state('forever');
+  let name = $state(app.profile.name);
+  let call = $state(app.profile.first);
+  let work = $state(app.profile.work);
+  let prefs = $state(app.profile.prefs);
+  let tone = $state(app.profile.tone);
+  let wsName = $state(ws().name);
+  let look = $state({ ...ws().look });
   let deleting = $state(false);
-  let notify = $state({ done: true, mentions: true, digest: true, invites: false });
+  const settings = $derived(ws().settings);
   let chatFont = $state(theme.chatFont);
+
+  const profileDirty = $derived(name !== app.profile.name || call !== app.profile.first || work !== app.profile.work || prefs !== app.profile.prefs || tone !== app.profile.tone);
+  const wsDirty = $derived(wsName !== ws().name || look.icon !== ws().look.icon || look.tint !== ws().look.tint || look.type !== ws().look.type);
+
+  $effect(() => {
+    app.workspace;
+    wsName = ws().name;
+    look = { ...ws().look };
+  });
+
+  function saveProfile() {
+    Object.assign(app.profile, { name: name.trim() || app.profile.name, first: call.trim() || app.profile.first, work, prefs, tone });
+    toast('Profile saved', { tone: 'success' });
+  }
+
+  function resetProfile() {
+    name = app.profile.name;
+    call = app.profile.first;
+    work = app.profile.work;
+    prefs = app.profile.prefs;
+    tone = app.profile.tone;
+  }
+
+  function saveWorkspace() {
+    const w = ws();
+    w.name = wsName.trim() || w.name;
+    w.look = { ...look };
+    w.kind = { family: 'Family', business: 'Business', personal: 'Just you' }[look.type];
+    toast('Workspace saved', { tone: 'success' });
+  }
 
   const works = [
     { value: 'archivist', label: 'Family historian' },
@@ -93,10 +122,10 @@
           <Stack gap="8">
             <Section title="Profile" gap="lg">
               <Stack direction="row" gap="4" align="center">
-                <Avatar name={name} tone={me.tone} size="xl" />
+                <Avatar name={name} {tone} size="xl" />
                 <Stack direction="row" gap="2">
-                  <Button size="sm">Change photo</Button>
-                  <Button size="sm" variant="ghost">Remove</Button>
+                  <Button size="sm" onclick={() => (tone = (tone % 6) + 1)}>Change colour</Button>
+                  <Button size="sm" variant="ghost" disabled={tone === me.tone} onclick={() => (tone = me.tone)}>Reset</Button>
                 </Stack>
               </Stack>
               <Grid columns="2" gap="4">
@@ -106,8 +135,8 @@
               <Field label="What best describes your work?">{#snippet children(id)}<Select {id} bind:value={work} options={works} full />{/snippet}</Field>
               <Field label="Personal preferences">{#snippet children(id)}<Textarea {id} bind:value={prefs} rows={4} />{/snippet}</Field>
               <Stack direction="row" gap="2" justify="end">
-                <Button variant="ghost" onclick={() => { name = me.name; call = me.first; }}>Cancel</Button>
-                <Button variant="primary" onclick={() => toast('Profile saved', { tone: 'success' })}>Save changes</Button>
+                <Button variant="ghost" disabled={!profileDirty} onclick={resetProfile}>Cancel</Button>
+                <Button variant="primary" disabled={!profileDirty} onclick={saveProfile}>Save changes</Button>
               </Stack>
             </Section>
           </Stack>
@@ -126,24 +155,28 @@
           <Stack gap="8">
             <Section title="Workspace" gap="lg">
               <Stack direction="row" gap="4" align="center">
-                <Avatar name={wsName} tone={currentWorkspace().tone} square size="xl" />
-                <Button size="sm">Change icon</Button>
+                <WorkspaceIcon icon={look.icon} tint={look.tint} seed={ws().id} size="xxl" />
+                <Field label="Name">{#snippet children(id)}<Input {id} bind:value={wsName} />{/snippet}</Field>
               </Stack>
-              <Field label="Name">{#snippet children(id)}<Input {id} bind:value={wsName} />{/snippet}</Field>
+              <LookPicker bind:look />
+              <Stack direction="row" gap="2" justify="end">
+                <Button variant="ghost" disabled={!wsDirty} onclick={() => { wsName = ws().name; look = { ...ws().look }; }}>Cancel</Button>
+                <Button variant="primary" disabled={!wsDirty} onclick={saveWorkspace}>Save changes</Button>
+              </Stack>
+            </Section>
+            <Divider />
+            <Section title="Members and data" gap="lg">
               <Stack gap="0">
-                <SettingsRow label="Default role for new members"><Select bind:value={defaultRole} options={roles} size="sm" label="Default role" placement="bottom-end" /></SettingsRow>
-                <SettingsRow label="Editors can invite people"><Switch bind:checked={invites} label="Editors can invite people" /></SettingsRow>
-                <SettingsRow label="Allow public share links"><Switch bind:checked={sharing} label="Allow public share links" /></SettingsRow>
-                <SettingsRow label="Data region"><Select bind:value={region} options={regions} size="sm" label="Data region" placement="bottom-end" /></SettingsRow>
-                <SettingsRow label="Chat history"><Select bind:value={retention} options={retentions} size="sm" label="Chat history" placement="bottom-end" /></SettingsRow>
-              </Stack>
-              <Stack direction="row" justify="end">
-                <Button variant="primary" onclick={() => toast('Workspace saved', { tone: 'success' })}>Save changes</Button>
+                <SettingsRow label="Default role for new members"><Select bind:value={settings.defaultRole} options={roles} size="sm" label="Default role" placement="bottom-end" /></SettingsRow>
+                <SettingsRow label="Editors can invite people"><Switch bind:checked={settings.invites} label="Editors can invite people" /></SettingsRow>
+                <SettingsRow label="Allow public share links"><Switch bind:checked={settings.sharing} label="Allow public share links" /></SettingsRow>
+                <SettingsRow label="Data region"><Select bind:value={settings.region} options={regions} size="sm" label="Data region" placement="bottom-end" /></SettingsRow>
+                <SettingsRow label="Chat history"><Select bind:value={settings.retention} options={retentions} size="sm" label="Chat history" placement="bottom-end" /></SettingsRow>
               </Stack>
             </Section>
             <Divider />
             <Section title="Delete workspace">
-              <SettingsRow label={`Permanently delete ${wsName}`}>
+              <SettingsRow label={`Permanently delete ${ws().name}`}>
                 <Button variant="danger" icon={Trash2} onclick={() => (deleting = true)}>Delete</Button>
               </SettingsRow>
             </Section>
@@ -151,10 +184,10 @@
         {:else}
           <Section title="Notifications" gap="lg">
             <Stack gap="0">
-              <SettingsRow label="When a task finishes"><Switch bind:checked={notify.done} label="When a task finishes" /></SettingsRow>
-              <SettingsRow label="When someone mentions me"><Switch bind:checked={notify.mentions} label="When someone mentions me" /></SettingsRow>
-              <SettingsRow label="Weekly digest email"><Switch bind:checked={notify.digest} label="Weekly digest email" /></SettingsRow>
-              <SettingsRow label="When someone joins the workspace"><Switch bind:checked={notify.invites} label="When someone joins the workspace" /></SettingsRow>
+              <SettingsRow label="When a workflow run finishes"><Switch bind:checked={app.profile.notify.done} label="When a workflow run finishes" /></SettingsRow>
+              <SettingsRow label="When someone mentions me"><Switch bind:checked={app.profile.notify.mentions} label="When someone mentions me" /></SettingsRow>
+              <SettingsRow label="Weekly digest email"><Switch bind:checked={app.profile.notify.digest} label="Weekly digest email" /></SettingsRow>
+              <SettingsRow label="When someone joins the workspace"><Switch bind:checked={app.profile.notify.invites} label="When someone joins the workspace" /></SettingsRow>
             </Stack>
           </Section>
         {/if}
@@ -164,9 +197,9 @@
 </Page>
 
 <Dialog bind:open={deleting} title="Delete this workspace?" size="sm">
-  <Text as="p" tone="secondary">All chats, files and tasks in {wsName} will be deleted for everyone.</Text>
+  <Text as="p" tone="secondary">All chats, files and workflows in {ws().name} will be deleted for everyone.</Text>
   {#snippet footer({ close })}
     <Button variant="ghost" onclick={close}>Cancel</Button>
-    <Button variant="danger" onclick={() => { close(); toast('Deletion scheduled', { tone: 'danger' }); }}>Delete workspace</Button>
+    <Button variant="danger" onclick={() => { close(); deleteWorkspace(ws().id); }}>Delete workspace</Button>
   {/snippet}
 </Dialog>

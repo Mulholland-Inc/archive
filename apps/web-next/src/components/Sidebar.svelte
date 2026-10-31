@@ -76,10 +76,15 @@
       width: var(--sidebar-width);
       transform: translateX(-100%);
       box-shadow: none;
+      visibility: hidden;
+      transition:
+        transform var(--duration-slow) var(--ease-in-out),
+        visibility var(--duration-slow) var(--ease-in-out);
     }
 
     .drawer {
       transform: none;
+      visibility: visible;
       box-shadow: var(--shadow-lg);
     }
 

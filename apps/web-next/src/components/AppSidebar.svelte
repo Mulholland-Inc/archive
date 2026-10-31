@@ -1,5 +1,5 @@
 <script>
-  import { PanelLeft, Plus, Search, MessagesSquare, Library, FolderClosed, ListChecks, Users } from '@lucide/svelte';
+  import { PanelLeft, Plus, Search, MessagesSquare, Library, FolderClosed, Workflow, Plug, Users } from '@lucide/svelte';
   import Sidebar from './Sidebar.svelte';
   import SidebarItem from './SidebarItem.svelte';
   import SidebarSection from './SidebarSection.svelte';
@@ -8,21 +8,24 @@
   import IconButton from './IconButton.svelte';
   import ChatActions from './ChatActions.svelte';
   import Stack from './Stack.svelte';
-  import { app, toggleSidebar } from '../lib/app.svelte.js';
-  import { me, workspaces, chatGroups, tasks } from '../lib/data.js';
+  import { app, ws, closeDrawer, toggleSidebar, switchWorkspace, createWorkspace } from '../lib/app.svelte.js';
+  import { me, chatGroups } from '../lib/data.js';
   import { route, active, go } from '../lib/router.svelte.js';
-  import { toast } from '../lib/toast.svelte.js';
+  import NewWorkspaceDialog from './NewWorkspaceDialog.svelte';
 
-  const running = tasks.filter((t) => t.status === 'running' || t.status === 'waiting').length;
+  const running = $derived(ws().workflows.filter((w) => w.runs[0] && (w.runs[0].status === 'running' || w.runs[0].status === 'waiting')).length);
+  const visible = $derived(ws().chats.filter((c) => !c.hidden));
 
   const groups = $derived(
     chatGroups
       .map((name) => ({
         name,
-        chats: name === 'Starred' ? app.chats.filter((c) => c.starred) : app.chats.filter((c) => c.group === name && !c.starred)
+        chats: name === 'Starred' ? visible.filter((c) => c.starred) : visible.filter((c) => c.group === name && !c.starred)
       }))
       .filter((g) => g.chats.length)
   );
+
+  let creating = $state(false);
 
   const collapsed = $derived(app.collapsed && !app.drawer);
 
@@ -32,35 +35,31 @@
   });
 </script>
 
-<Sidebar collapsed={app.collapsed} drawer={app.drawer} onclose={() => (app.drawer = false)}>
+<Sidebar collapsed={app.collapsed} drawer={app.drawer} onclose={closeDrawer}>
   {#snippet header()}
-    <Stack direction="row" gap="1" align="center">
-      {#if collapsed}
-        <IconButton icon={PanelLeft} label="Open sidebar" placement="right" shortcut="⌘ ." onclick={toggleSidebar} />
-      {:else}
-        <WorkspaceSwitcher
-          {workspaces}
-          current={app.workspace}
-          email={me.email}
-          onselect={(id) => { app.workspace = id; toast(`Switched to ${workspaces.find((w) => w.id === id).name}`); }}
-          onsettings={() => go('/settings/workspace')}
-          oncreate={() => toast('New workspace created')}
-        />
-        <IconButton icon={PanelLeft} label="Close sidebar" shortcut="⌘ ." onclick={toggleSidebar} />
-      {/if}
+    <Stack direction={collapsed ? 'column' : 'row'} gap="1" align="center">
+      <WorkspaceSwitcher
+        workspaces={app.workspaces}
+        current={app.workspace}
+        onselect={switchWorkspace}
+        onsettings={() => go('/settings/workspace')}
+        oncreate={() => { app.drawer = false; creating = true; }}
+      />
+      <IconButton icon={PanelLeft} label={collapsed ? 'Open sidebar' : 'Close sidebar'} placement={collapsed ? 'right' : 'top'} shortcut="⌘ ." onclick={toggleSidebar} />
     </Stack>
   {/snippet}
 
   <SidebarSection>
     <SidebarItem icon={Plus} label="New chat" href="#/" accent shortcut="⌘ ⇧ O" />
-    <SidebarItem icon={Search} label="Search" shortcut="⌘ K" onclick={() => (app.palette = true)} />
+    <SidebarItem icon={Search} label="Search" shortcut="⌘ K" onclick={() => { app.drawer = false; app.palette = true; }} />
   </SidebarSection>
 
   <SidebarSection>
     <SidebarItem icon={MessagesSquare} label="Chats" href="#/chats" active={active('/chats')} />
     <SidebarItem icon={Library} label="Library" href="#/library" active={active('/library')} />
     <SidebarItem icon={FolderClosed} label="Projects" href="#/projects" active={active('/projects')} />
-    <SidebarItem icon={ListChecks} label="Tasks" href="#/tasks" active={active('/tasks')} badge={running ? String(running) : undefined} />
+    <SidebarItem icon={Workflow} label="Workflows" href="#/workflows" active={active('/workflows')} badge={running ? String(running) : undefined} />
+    <SidebarItem icon={Plug} label="Connectors" href="#/connectors" active={active('/connectors')} />
     <SidebarItem icon={Users} label="Users" href="#/users" active={active('/users')} />
   </SidebarSection>
 
@@ -77,6 +76,8 @@
   {/if}
 
   {#snippet footer()}
-    <AccountMenu user={me} />
+    <AccountMenu user={{ ...me, name: app.profile.name, tone: app.profile.tone }} />
   {/snippet}
 </Sidebar>
+
+<NewWorkspaceDialog bind:open={creating} oncreate={createWorkspace} />

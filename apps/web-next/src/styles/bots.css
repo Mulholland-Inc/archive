@@ -1,0 +1,563 @@
+.src-turn-archivist-0 {
+  --src: url('/bots/turn-archivist-0.webp');
+}
+
+.src-turn-archivist-1 {
+  --src: url('/bots/turn-archivist-1.webp');
+}
+
+.src-turn-archivist-2 {
+  --src: url('/bots/turn-archivist-2.webp');
+}
+
+.src-turn-archivist-3 {
+  --src: url('/bots/turn-archivist-3.webp');
+}
+
+.src-turn-bank-0 {
+  --src: url('/bots/turn-bank-0.webp');
+}
+
+.src-turn-bank-1 {
+  --src: url('/bots/turn-bank-1.webp');
+}
+
+.src-turn-bank-2 {
+  --src: url('/bots/turn-bank-2.webp');
+}
+
+.src-turn-bank-3 {
+  --src: url('/bots/turn-bank-3.webp');
+}
+
+.src-turn-bank-blue {
+  --src: url('/bots/turn-bank-blue.webp');
+}
+
+.src-turn-bank-lit {
+  --src: url('/bots/turn-bank-lit.webp');
+}
+
+.src-turn-bank-panel {
+  --src: url('/bots/turn-bank-panel.webp');
+}
+
+.src-turn-bank-red {
+  --src: url('/bots/turn-bank-red.webp');
+}
+
+.src-turn-baobab-0 {
+  --src: url('/bots/turn-baobab-0.webp');
+}
+
+.src-turn-baobab-1 {
+  --src: url('/bots/turn-baobab-1.webp');
+}
+
+.src-turn-baobab-2 {
+  --src: url('/bots/turn-baobab-2.webp');
+}
+
+.src-turn-baobab-3 {
+  --src: url('/bots/turn-baobab-3.webp');
+}
+
+.src-turn-bookcase-0 {
+  --src: url('/bots/turn-bookcase-0.webp');
+}
+
+.src-turn-bookcase-1 {
+  --src: url('/bots/turn-bookcase-1.webp');
+}
+
+.src-turn-bookcase-2 {
+  --src: url('/bots/turn-bookcase-2.webp');
+}
+
+.src-turn-bookcase-3 {
+  --src: url('/bots/turn-bookcase-3.webp');
+}
+
+.src-turn-bookcase-blue {
+  --src: url('/bots/turn-bookcase-blue.webp');
+}
+
+.src-turn-bookcase-lit {
+  --src: url('/bots/turn-bookcase-lit.webp');
+}
+
+.src-turn-bookcase-panel {
+  --src: url('/bots/turn-bookcase-panel.webp');
+}
+
+.src-turn-bookcase-red {
+  --src: url('/bots/turn-bookcase-red.webp');
+}
+
+.src-turn-cabinet-0 {
+  --src: url('/bots/turn-cabinet-0.webp');
+}
+
+.src-turn-cabinet-1 {
+  --src: url('/bots/turn-cabinet-1.webp');
+}
+
+.src-turn-cabinet-2 {
+  --src: url('/bots/turn-cabinet-2.webp');
+}
+
+.src-turn-cabinet-3 {
+  --src: url('/bots/turn-cabinet-3.webp');
+}
+
+.src-turn-cabinet-blue {
+  --src: url('/bots/turn-cabinet-blue.webp');
+}
+
+.src-turn-cabinet-lit {
+  --src: url('/bots/turn-cabinet-lit.webp');
+}
+
+.src-turn-cabinet-panel {
+  --src: url('/bots/turn-cabinet-panel.webp');
+}
+
+.src-turn-cabinet-red {
+  --src: url('/bots/turn-cabinet-red.webp');
+}
+
+.src-turn-capitol-0 {
+  --src: url('/bots/turn-capitol-0.webp');
+}
+
+.src-turn-capitol-1 {
+  --src: url('/bots/turn-capitol-1.webp');
+}
+
+.src-turn-capitol-2 {
+  --src: url('/bots/turn-capitol-2.webp');
+}
+
+.src-turn-capitol-3 {
+  --src: url('/bots/turn-capitol-3.webp');
+}
+
+.src-turn-castle-0 {
+  --src: url('/bots/turn-castle-0.webp');
+}
+
+.src-turn-castle-1 {
+  --src: url('/bots/turn-castle-1.webp');
+}
+
+.src-turn-castle-2 {
+  --src: url('/bots/turn-castle-2.webp');
+}
+
+.src-turn-castle-3 {
+  --src: url('/bots/turn-castle-3.webp');
+}
+
+.src-turn-chest-0 {
+  --src: url('/bots/turn-chest-0.webp');
+}
+
+.src-turn-chest-1 {
+  --src: url('/bots/turn-chest-1.webp');
+}
+
+.src-turn-chest-2 {
+  --src: url('/bots/turn-chest-2.webp');
+}
+
+.src-turn-chest-3 {
+  --src: url('/bots/turn-chest-3.webp');
+}
+
+.src-turn-cottage-0 {
+  --src: url('/bots/turn-cottage-0.webp');
+}
+
+.src-turn-cottage-1 {
+  --src: url('/bots/turn-cottage-1.webp');
+}
+
+.src-turn-cottage-2 {
+  --src: url('/bots/turn-cottage-2.webp');
+}
+
+.src-turn-cottage-3 {
+  --src: url('/bots/turn-cottage-3.webp');
+}
+
+.src-turn-cottage-blue {
+  --src: url('/bots/turn-cottage-blue.webp');
+}
+
+.src-turn-cottage-lit {
+  --src: url('/bots/turn-cottage-lit.webp');
+}
+
+.src-turn-cottage-panel {
+  --src: url('/bots/turn-cottage-panel.webp');
+}
+
+.src-turn-cottage-red {
+  --src: url('/bots/turn-cottage-red.webp');
+}
+
+.src-turn-face-0 {
+  --src: url('/bots/turn-face-0.webp');
+}
+
+.src-turn-face-1 {
+  --src: url('/bots/turn-face-1.webp');
+}
+
+.src-turn-face-2 {
+  --src: url('/bots/turn-face-2.webp');
+}
+
+.src-turn-face-3 {
+  --src: url('/bots/turn-face-3.webp');
+}
+
+.src-turn-face-blue {
+  --src: url('/bots/turn-face-blue.webp');
+}
+
+.src-turn-face-lit {
+  --src: url('/bots/turn-face-lit.webp');
+}
+
+.src-turn-face-panel {
+  --src: url('/bots/turn-face-panel.webp');
+}
+
+.src-turn-face-red {
+  --src: url('/bots/turn-face-red.webp');
+}
+
+.src-turn-factory-0 {
+  --src: url('/bots/turn-factory-0.webp');
+}
+
+.src-turn-factory-1 {
+  --src: url('/bots/turn-factory-1.webp');
+}
+
+.src-turn-factory-2 {
+  --src: url('/bots/turn-factory-2.webp');
+}
+
+.src-turn-factory-3 {
+  --src: url('/bots/turn-factory-3.webp');
+}
+
+.src-turn-factory-blue {
+  --src: url('/bots/turn-factory-blue.webp');
+}
+
+.src-turn-factory-lit {
+  --src: url('/bots/turn-factory-lit.webp');
+}
+
+.src-turn-factory-panel {
+  --src: url('/bots/turn-factory-panel.webp');
+}
+
+.src-turn-factory-red {
+  --src: url('/bots/turn-factory-red.webp');
+}
+
+.src-turn-farmhouse-0 {
+  --src: url('/bots/turn-farmhouse-0.webp');
+}
+
+.src-turn-farmhouse-1 {
+  --src: url('/bots/turn-farmhouse-1.webp');
+}
+
+.src-turn-farmhouse-2 {
+  --src: url('/bots/turn-farmhouse-2.webp');
+}
+
+.src-turn-farmhouse-3 {
+  --src: url('/bots/turn-farmhouse-3.webp');
+}
+
+.src-turn-farmhouse-blue {
+  --src: url('/bots/turn-farmhouse-blue.webp');
+}
+
+.src-turn-farmhouse-lit {
+  --src: url('/bots/turn-farmhouse-lit.webp');
+}
+
+.src-turn-farmhouse-panel {
+  --src: url('/bots/turn-farmhouse-panel.webp');
+}
+
+.src-turn-farmhouse-red {
+  --src: url('/bots/turn-farmhouse-red.webp');
+}
+
+.src-turn-float-0 {
+  --src: url('/bots/turn-float-0.webp');
+}
+
+.src-turn-float-1 {
+  --src: url('/bots/turn-float-1.webp');
+}
+
+.src-turn-float-2 {
+  --src: url('/bots/turn-float-2.webp');
+}
+
+.src-turn-float-3 {
+  --src: url('/bots/turn-float-3.webp');
+}
+
+.src-turn-float-blue {
+  --src: url('/bots/turn-float-blue.webp');
+}
+
+.src-turn-float-lit {
+  --src: url('/bots/turn-float-lit.webp');
+}
+
+.src-turn-float-panel {
+  --src: url('/bots/turn-float-panel.webp');
+}
+
+.src-turn-float-red {
+  --src: url('/bots/turn-float-red.webp');
+}
+
+.src-turn-ledger-0 {
+  --src: url('/bots/turn-ledger-0.webp');
+}
+
+.src-turn-ledger-1 {
+  --src: url('/bots/turn-ledger-1.webp');
+}
+
+.src-turn-ledger-2 {
+  --src: url('/bots/turn-ledger-2.webp');
+}
+
+.src-turn-ledger-3 {
+  --src: url('/bots/turn-ledger-3.webp');
+}
+
+.src-turn-oak-0 {
+  --src: url('/bots/turn-oak-0.webp');
+}
+
+.src-turn-oak-1 {
+  --src: url('/bots/turn-oak-1.webp');
+}
+
+.src-turn-oak-2 {
+  --src: url('/bots/turn-oak-2.webp');
+}
+
+.src-turn-oak-3 {
+  --src: url('/bots/turn-oak-3.webp');
+}
+
+.src-turn-pine-0 {
+  --src: url('/bots/turn-pine-0.webp');
+}
+
+.src-turn-pine-1 {
+  --src: url('/bots/turn-pine-1.webp');
+}
+
+.src-turn-pine-2 {
+  --src: url('/bots/turn-pine-2.webp');
+}
+
+.src-turn-pine-3 {
+  --src: url('/bots/turn-pine-3.webp');
+}
+
+.src-turn-pinecone-0 {
+  --src: url('/bots/turn-pinecone-0.webp');
+}
+
+.src-turn-pinecone-1 {
+  --src: url('/bots/turn-pinecone-1.webp');
+}
+
+.src-turn-pinecone-2 {
+  --src: url('/bots/turn-pinecone-2.webp');
+}
+
+.src-turn-pinecone-3 {
+  --src: url('/bots/turn-pinecone-3.webp');
+}
+
+.src-turn-pyramid-0 {
+  --src: url('/bots/turn-pyramid-0.webp');
+}
+
+.src-turn-pyramid-1 {
+  --src: url('/bots/turn-pyramid-1.webp');
+}
+
+.src-turn-pyramid-2 {
+  --src: url('/bots/turn-pyramid-2.webp');
+}
+
+.src-turn-pyramid-3 {
+  --src: url('/bots/turn-pyramid-3.webp');
+}
+
+.src-turn-robot-body {
+  --src: url('/bots/turn-robot-body.webp');
+}
+
+.src-turn-robot-head-0 {
+  --src: url('/bots/turn-robot-head-0.webp');
+}
+
+.src-turn-robot-head-1 {
+  --src: url('/bots/turn-robot-head-1.webp');
+}
+
+.src-turn-robot-head-2 {
+  --src: url('/bots/turn-robot-head-2.webp');
+}
+
+.src-turn-robot-head-3 {
+  --src: url('/bots/turn-robot-head-3.webp');
+}
+
+.src-turn-robot-head-blue {
+  --src: url('/bots/turn-robot-head-blue.webp');
+}
+
+.src-turn-robot-head-lit {
+  --src: url('/bots/turn-robot-head-lit.webp');
+}
+
+.src-turn-robot-head-panel {
+  --src: url('/bots/turn-robot-head-panel.webp');
+}
+
+.src-turn-robot-head-red {
+  --src: url('/bots/turn-robot-head-red.webp');
+}
+
+.src-turn-safe-0 {
+  --src: url('/bots/turn-safe-0.webp');
+}
+
+.src-turn-safe-1 {
+  --src: url('/bots/turn-safe-1.webp');
+}
+
+.src-turn-safe-2 {
+  --src: url('/bots/turn-safe-2.webp');
+}
+
+.src-turn-safe-3 {
+  --src: url('/bots/turn-safe-3.webp');
+}
+
+.src-turn-safe-blue {
+  --src: url('/bots/turn-safe-blue.webp');
+}
+
+.src-turn-safe-lit {
+  --src: url('/bots/turn-safe-lit.webp');
+}
+
+.src-turn-safe-panel {
+  --src: url('/bots/turn-safe-panel.webp');
+}
+
+.src-turn-safe-red {
+  --src: url('/bots/turn-safe-red.webp');
+}
+
+.src-turn-skyscraper-0 {
+  --src: url('/bots/turn-skyscraper-0.webp');
+}
+
+.src-turn-skyscraper-1 {
+  --src: url('/bots/turn-skyscraper-1.webp');
+}
+
+.src-turn-skyscraper-2 {
+  --src: url('/bots/turn-skyscraper-2.webp');
+}
+
+.src-turn-skyscraper-3 {
+  --src: url('/bots/turn-skyscraper-3.webp');
+}
+
+.src-turn-townhouse-0 {
+  --src: url('/bots/turn-townhouse-0.webp');
+}
+
+.src-turn-townhouse-1 {
+  --src: url('/bots/turn-townhouse-1.webp');
+}
+
+.src-turn-townhouse-2 {
+  --src: url('/bots/turn-townhouse-2.webp');
+}
+
+.src-turn-townhouse-3 {
+  --src: url('/bots/turn-townhouse-3.webp');
+}
+
+.src-turn-townhouse-blue {
+  --src: url('/bots/turn-townhouse-blue.webp');
+}
+
+.src-turn-townhouse-lit {
+  --src: url('/bots/turn-townhouse-lit.webp');
+}
+
+.src-turn-townhouse-panel {
+  --src: url('/bots/turn-townhouse-panel.webp');
+}
+
+.src-turn-townhouse-red {
+  --src: url('/bots/turn-townhouse-red.webp');
+}
+
+.src-turn-warehouse-0 {
+  --src: url('/bots/turn-warehouse-0.webp');
+}
+
+.src-turn-warehouse-1 {
+  --src: url('/bots/turn-warehouse-1.webp');
+}
+
+.src-turn-warehouse-2 {
+  --src: url('/bots/turn-warehouse-2.webp');
+}
+
+.src-turn-warehouse-3 {
+  --src: url('/bots/turn-warehouse-3.webp');
+}
+
+.src-turn-warehouse-blue {
+  --src: url('/bots/turn-warehouse-blue.webp');
+}
+
+.src-turn-warehouse-lit {
+  --src: url('/bots/turn-warehouse-lit.webp');
+}
+
+.src-turn-warehouse-panel {
+  --src: url('/bots/turn-warehouse-panel.webp');
+}
+
+.src-turn-warehouse-red {
+  --src: url('/bots/turn-warehouse-red.webp');
+}

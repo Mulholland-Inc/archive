@@ -13,12 +13,11 @@
   import ChatActions from '../components/ChatActions.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { app } from '../lib/app.svelte.js';
-  import { projects } from '../lib/data.js';
+  import { ws } from '../lib/app.svelte.js';
 
   let query = $state('');
-  const results = $derived(app.chats.filter((c) => c.title.toLowerCase().includes(query.trim().toLowerCase())));
-  const projectName = (pid) => projects.find((p) => p.id === pid)?.name;
+  const results = $derived(ws().chats.filter((c) => !c.hidden && c.title.toLowerCase().includes(query.trim().toLowerCase())));
+  const projectName = (pid) => ws().projects.find((p) => p.id === pid)?.name;
 </script>
 
 <TopBar>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>

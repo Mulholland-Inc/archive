@@ -42,7 +42,7 @@
   .prose {
     display: flex;
     flex-direction: column;
-    gap: var(--space-4);
+    gap: var(--space-prose);
     min-width: 0;
     font-family: var(--font-prose);
     font-size: var(--text-prose);
@@ -53,7 +53,7 @@
 
   h3 {
     font-family: var(--font-sans);
-    font-size: var(--text-base);
+    font-size: var(--text-prose-heading);
     font-weight: var(--weight-semibold);
     letter-spacing: var(--tracking-snug);
     line-height: var(--leading-snug);
@@ -67,8 +67,8 @@
   ol {
     display: flex;
     flex-direction: column;
-    gap: var(--space-1-5);
-    padding-inline-start: var(--space-6);
+    gap: var(--space-1);
+    padding-inline-start: var(--space-5);
   }
 
   ul {
@@ -92,7 +92,7 @@
     padding-inline-start: var(--space-4);
     box-shadow: inset var(--focus-width) 0 0 var(--color-border-strong);
     color: var(--color-text-secondary);
-    font: italic var(--weight-serif) var(--text-lg) / var(--leading-normal) var(--font-serif);
+    font: italic var(--weight-serif) var(--text-prose-quote) / var(--leading-normal) var(--font-serif);
   }
 
   .table {
@@ -104,7 +104,7 @@
   table {
     width: 100%;
     font-family: var(--font-sans);
-    font-size: var(--text-md);
+    font-size: var(--text-sm);
     line-height: var(--leading-snug);
     letter-spacing: var(--tracking-snug);
   }

@@ -1,5 +1,6 @@
 <script>
-  import { Upload, LayoutGrid, List as ListIcon, Ellipsis, Download, Pencil, MessageSquarePlus, Trash2, SearchX, FolderOpen, FileText, Image, AudioLines, FileSpreadsheet } from '@lucide/svelte';
+  import { onMount } from 'svelte';
+  import { Upload, LayoutGrid, List as ListIcon, Ellipsis, Download, Pencil, MessageSquarePlus, Trash2, SearchX, FolderPlus, FileText, Image, AudioLines, FileSpreadsheet, Inbox } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
   import PageHeader from '../components/PageHeader.svelte';
@@ -25,10 +26,9 @@
   import Spacer from '../components/Spacer.svelte';
   import SettingsRow from '../components/SettingsRow.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { library } from '../lib/data.js';
-  import { app, newChat } from '../lib/app.svelte.js';
-  import { go } from '../lib/router.svelte.js';
-  import { toast } from '../lib/toast.svelte.js';
+  import { ws, newChat, uploadFile, addFolder, renameFile, removeFile, downloadFile } from '../lib/app.svelte.js';
+  import { prompt } from '../lib/dialogs.svelte.js';
+  import { go, route } from '../lib/router.svelte.js';
 
   const kinds = [
     { value: 'all', label: 'All' },
@@ -58,41 +58,82 @@
 
   let query = $state('');
   let kind = $state('all');
+  let folder = $state('all');
   let sort = $state('recent');
   let view = $state('grid');
-  let open = $state(null);
-  let preview = $state(false);
+  let openId = $state(route.parts[1] ?? null);
+  let preview = $state(Boolean(route.parts[1]));
+  let search = $state();
 
+  const open = $derived(ws().library.find((f) => f.id === openId));
+  const folders = $derived([{ value: 'all', label: 'All folders' }, ...ws().folders.map((f) => ({ value: f, label: f }))]);
   const bytes = (s) => parseFloat(s) * (s.includes('MB') ? 1024 : 1);
   const files = $derived.by(() => {
     const q = query.trim().toLowerCase();
-    const out = library.filter((f) => (kind === 'all' || f.kind === kind) && (!q || f.name.toLowerCase().includes(q) || f.folder.toLowerCase().includes(q)));
+    const out = ws().library.filter(
+      (f) => (kind === 'all' || f.kind === kind) && (folder === 'all' || f.folder === folder) && (!q || f.name.toLowerCase().includes(q) || f.folder.toLowerCase().includes(q))
+    );
     if (sort === 'name') return [...out].sort((a, b) => a.name.localeCompare(b.name));
     if (sort === 'size') return [...out].sort((a, b) => bytes(b.size) - bytes(a.size));
     return out;
   });
 
   function show(file) {
-    open = file;
+    openId = file.id;
     preview = true;
   }
 
   function ask(file, close) {
     close?.();
-    const id = newChat(`About ${file.name}`);
-    app.pending = { id, text: `What is in ${file.name}?`, attachments: [{ id: file.id, name: file.name, kind: file.kind, size: file.size }] };
+    const id = newChat(`About ${file.name}`, { text: `What is in ${file.name}?`, attachments: [{ id: file.id, name: file.name, kind: file.kind, size: file.size, tone: file.tone }] });
     go(`/chat/${id}`);
   }
+
+  async function rename(file) {
+    const name = await prompt({ title: 'Rename file', label: 'Name', value: file.name });
+    if (name) renameFile(file.id, name);
+  }
+
+  async function newFolder() {
+    const name = await prompt({ title: 'New folder', label: 'Name', placeholder: 'Wedding, 1981', confirm: 'Create' });
+    if (name) {
+      addFolder(name);
+      folder = name;
+    }
+  }
+
+  function upload() {
+    const file = uploadFile(folder === 'all' ? undefined : folder);
+    if (kind !== 'all' && file.kind !== kind) kind = 'all';
+    query = '';
+  }
+
+  function clear() {
+    query = '';
+    kind = 'all';
+    folder = 'all';
+  }
+
+  onMount(() => {
+    const key = (event) => {
+      if (event.key === '/' && !event.metaKey && !event.ctrlKey && !/INPUT|TEXTAREA/.test(document.activeElement?.tagName ?? '')) {
+        event.preventDefault();
+        search?.focus();
+      }
+    };
+    addEventListener('keydown', key);
+    return () => removeEventListener('keydown', key);
+  });
 </script>
 
 {#snippet fileMenu(file)}
   <Menu placement="bottom-end" width="sm" label="File actions">
-    {#snippet trigger(props)}<IconButton icon={Ellipsis} label="More" size="sm" tooltip={false} {...props} />{/snippet}
+    {#snippet trigger(props)}<IconButton icon={Ellipsis} label={`Actions for ${file.name}`} size="sm" tooltip={false} {...props} />{/snippet}
     <MenuItem icon={MessageSquarePlus} onselect={() => ask(file)}>Ask about this</MenuItem>
-    <MenuItem icon={Pencil}>Rename</MenuItem>
-    <MenuItem icon={Download} onselect={() => toast(`Downloading ${file.name}`)}>Download</MenuItem>
+    <MenuItem icon={Pencil} onselect={() => rename(file)}>Rename</MenuItem>
+    <MenuItem icon={Download} onselect={() => downloadFile(file)}>Download</MenuItem>
     <MenuSeparator />
-    <MenuItem icon={Trash2} danger onselect={() => toast(`${file.name} moved to trash`)}>Move to trash</MenuItem>
+    <MenuItem icon={Trash2} danger onselect={() => removeFile(file.id)}>Move to trash</MenuItem>
   </Menu>
 {/snippet}
 
@@ -100,14 +141,15 @@
 <Page width="wide">
   <PageHeader title="Library">
     {#snippet actions()}
-      <Button icon={FolderOpen}>New folder</Button>
-      <Button variant="primary" icon={Upload} onclick={() => toast('3 files uploaded', { tone: 'success' })}>Upload</Button>
+      <IconButton icon={FolderPlus} label="New folder" variant="secondary" onclick={newFolder} />
+      <Button variant="primary" icon={Upload} onclick={upload}>Upload</Button>
     {/snippet}
   </PageHeader>
 
   <Stack gap="4">
     <Stack direction="row" gap="2" align="center" wrap>
-      <SearchField bind:value={query} placeholder="Search files and folders" shortcut="/" />
+      <SearchField bind:value={query} bind:element={search} placeholder="Search files and folders" shortcut="/" />
+      <Select bind:value={folder} options={folders} variant="ghost" label="Folder" />
     </Stack>
     <Stack direction="row" gap="2" align="center" wrap>
       {#each kinds as k (k.value)}
@@ -119,9 +161,14 @@
     </Stack>
   </Stack>
 
-  {#if !files.length}
-    <EmptyState icon={SearchX} title="Nothing matches that search">
-      <Button onclick={() => { query = ''; kind = 'all'; }}>Clear filters</Button>
+  {#if !ws().library.length}
+    <EmptyState icon={Inbox} title="No files yet">
+      <Button variant="primary" icon={Upload} onclick={upload}>Upload</Button>
+    </EmptyState>
+  {:else if !files.length}
+    <EmptyState icon={SearchX} title={folder !== 'all' && !query && kind === 'all' ? `${folder} is empty` : 'Nothing matches that search'}>
+      <Button onclick={clear}>Show all files</Button>
+      {#if folder !== 'all'}<Button variant="primary" icon={Upload} onclick={upload}>Upload here</Button>{/if}
     </EmptyState>
   {:else if view === 'grid'}
     <Grid min="tile" gap="2">
@@ -170,7 +217,8 @@
     </Grid>
   {/if}
   {#snippet footer({ close })}
-    <Button icon={Download} onclick={() => toast(`Downloading ${open.name}`)}>Download</Button>
+    <Button icon={Pencil} onclick={() => rename(open)}>Rename</Button>
+    <Button icon={Download} onclick={() => downloadFile(open)}>Download</Button>
     <Button variant="primary" icon={MessageSquarePlus} onclick={() => ask(open, close)}>Ask about this</Button>
   {/snippet}
 </Dialog>

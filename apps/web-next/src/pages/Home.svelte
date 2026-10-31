@@ -8,8 +8,9 @@
   import Chip from '../components/Chip.svelte';
   import IconButton from '../components/IconButton.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { me, suggestions } from '../lib/data.js';
+  import { suggestions } from '../lib/data.js';
   import { app, newChat } from '../lib/app.svelte.js';
+  import Badge from '../components/Badge.svelte';
   import { go } from '../lib/router.svelte.js';
 
   const icons = { files: FolderOpen, search: Search, timeline: CalendarRange, audio: AudioLines, workflow: Workflow };
@@ -21,9 +22,11 @@
     element?.focus();
   });
 
+  let project = $state();
+
   function send({ text, attachments }) {
-    const id = newChat(text.length > 48 ? text.slice(0, 46).trimEnd() + '…' : text || 'New chat');
-    app.pending = { id, text, attachments };
+    const title = text ? (text.length > 48 ? text.slice(0, 46).trimEnd() + '…' : text) : attachments[0]?.name ?? 'New chat';
+    const id = newChat(title, { project, attachments, text });
     go(`/chat/${id}`);
   }
 </script>
@@ -31,14 +34,17 @@
 <TopBar>
   {#snippet leading()}<MobileMenu />{/snippet}
   {#snippet trailing()}
-    <IconButton icon={Ghost} label="Incognito chat" placement="bottom" />
+    <IconButton icon={Ghost} label={app.incognito ? 'Leave incognito' : 'Incognito chat'} placement="bottom" pressed={app.incognito} onclick={() => (app.incognito = !app.incognito)} />
   {/snippet}
 </TopBar>
 <Page width="home" center>
   <Stack gap="8" align="stretch">
-    <Greeting name={me.first} />
+    <Stack gap="3" align="center">
+      {#if app.incognito}<Badge tone="accent" dot>Incognito · not saved to your history</Badge>{/if}
+      <Greeting name={app.profile.first} />
+    </Stack>
     <Stack gap="4" align="center">
-      <Composer bind:value bind:element bind:model={app.model} variant="home" onsend={send} />
+      <Composer bind:value bind:element bind:model={app.model} bind:project size="lg" onsend={send} />
       <Stack direction="row" gap="2" wrap justify="center">
         {#each suggestions as s (s.id)}
           <Chip icon={icons[s.icon]} onclick={() => { value = s.prompt; element?.focus(); }}>{s.label}</Chip>

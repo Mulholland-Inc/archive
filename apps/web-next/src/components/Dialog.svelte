@@ -14,6 +14,7 @@
   }
 
   function modal(node) {
+    const previous = document.activeElement;
     const target = () => node.querySelector('[data-autofocus], .body input:not([type="checkbox"]):not([type="radio"]), .body textarea') ?? node.querySelector('.panel');
     node.showModal();
     target()?.focus();
@@ -25,7 +26,12 @@
       close();
     };
     node.addEventListener('cancel', cancel);
-    return () => node.removeEventListener('cancel', cancel);
+    return () => {
+      node.removeEventListener('cancel', cancel);
+      requestAnimationFrame(() => {
+        if (previous?.isConnected && (!document.activeElement || document.activeElement === document.body)) previous.focus();
+      });
+    };
   }
 </script>
 

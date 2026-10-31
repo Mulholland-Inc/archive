@@ -3,12 +3,11 @@
   import { ChevronsUpDown, Plus, Settings } from '@lucide/svelte';
   import Menu from './Menu.svelte';
   import MenuItem from './MenuItem.svelte';
-  import MenuLabel from './MenuLabel.svelte';
   import MenuSeparator from './MenuSeparator.svelte';
-  import Avatar from './Avatar.svelte';
+  import WorkspaceIcon from './WorkspaceIcon.svelte';
   import Icon from './Icon.svelte';
 
-  let { workspaces = [], current, email, onselect, oncreate, onsettings } = $props();
+  let { workspaces = [], current, onselect, oncreate, onsettings } = $props();
   const sidebar = getContext('sidebar');
   const collapsed = $derived(sidebar?.collapsed ?? false);
   const active = $derived(workspaces.find((w) => w.id === current) ?? workspaces[0]);
@@ -17,18 +16,20 @@
 <Menu placement="bottom-start" width="lg" label="Workspaces">
   {#snippet trigger(props)}
     <button type="button" class={['switcher', { collapsed }]} aria-label={`Workspace: ${active?.name}`} {...props}>
-      <Avatar name={active?.name} tone={active?.tone} square size="sm" />
-      <span class="name">{active?.name}</span>
+      <WorkspaceIcon icon={active?.look.icon} tint={active?.look.tint} seed={active?.id} size="lg" />
+      <span class="lines">
+        <span class="name">{active?.name}</span>
+        <span class="sub">{active?.kind} · {active?.members.length} {active?.members.length === 1 ? 'member' : 'members'}</span>
+      </span>
       <span class="chev"><Icon icon={ChevronsUpDown} size="sm" /></span>
     </button>
   {/snippet}
-  {#if email}<MenuLabel>{email}</MenuLabel>{/if}
   {#each workspaces as w (w.id)}
     <MenuItem checked={w.id === current} onselect={() => onselect?.(w.id)}>
-      {#snippet leading()}<Avatar name={w.name} tone={w.tone} square size="sm" />{/snippet}
+      {#snippet leading()}<WorkspaceIcon icon={w.look.icon} tint={w.look.tint} seed={w.id} size="md" />{/snippet}
       <span class="ws">
         <span>{w.name}</span>
-        <span class="kind">{w.kind} · {w.members} {w.members === 1 ? 'member' : 'members'}</span>
+        <span class="kind">{w.kind} · {w.members.length} {w.members.length === 1 ? 'member' : 'members'}</span>
       </span>
     </MenuItem>
   {/each}
@@ -44,11 +45,39 @@
     gap: var(--space-2);
     width: 100%;
     min-width: 0;
-    height: var(--control-lg);
-    padding: var(--space-1-5);
-    border-radius: var(--radius-md);
+    gap: var(--space-3);
+    padding: var(--space-2);
+    border-radius: var(--radius-lg);
     text-align: start;
-    transition: background-color var(--duration-fast) var(--ease-out);
+    transition:
+      background-color var(--duration-fast) var(--ease-out),
+      transform var(--duration-instant) var(--ease-out);
+  }
+
+  .switcher:active {
+    transform: scale(var(--scale-press));
+  }
+
+  .collapsed {
+    padding: var(--space-0);
+    gap: var(--space-0);
+  }
+
+  .lines {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    line-height: var(--leading-snug);
+    transition: opacity var(--duration-normal) var(--ease-out);
+  }
+
+  .sub {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--color-text-tertiary);
+    font-size: var(--text-xs);
   }
 
   .switcher:hover,
@@ -57,14 +86,11 @@
   }
 
   .name {
-    flex: 1;
-    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: var(--text-md);
-    font-weight: var(--weight-semibold);
-    transition: opacity var(--duration-normal) var(--ease-out);
+    font-weight: var(--weight-medium);
   }
 
   .chev {
@@ -73,9 +99,9 @@
     transition: opacity var(--duration-normal) var(--ease-out);
   }
 
-  .collapsed .name,
+  .collapsed .lines,
   .collapsed .chev {
-    opacity: 0;
+    display: none;
   }
 
   .ws {

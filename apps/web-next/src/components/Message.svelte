@@ -7,7 +7,7 @@
   import Mark from './Mark.svelte';
   import { rise } from '../lib/motion.js';
 
-  let { message, streaming = false } = $props();
+  let { message, streaming = false, onedit } = $props();
 </script>
 
 {#if message.role === 'user'}
@@ -20,9 +20,11 @@
       </div>
     {/if}
     <div class="bubble">{message.text}</div>
-    <div class="actions">
-      <IconButton icon={Pencil} label="Edit" size="sm" />
-    </div>
+    {#if onedit}
+      <div class="actions">
+        <IconButton icon={Pencil} label="Edit message" size="sm" onclick={() => onedit(message.text)} />
+      </div>
+    {/if}
   </article>
 {:else}
   <article class="assistant" in:rise>
@@ -55,12 +57,13 @@
 
   .bubble {
     max-width: 85%;
-    padding: var(--space-3);
-    border-radius: var(--radius-xl);
+    padding: var(--space-2-5);
+    border-radius: var(--radius-lg);
     background: var(--color-bubble);
     color: var(--color-text);
-    font-size: var(--text-base);
-    line-height: var(--leading-normal);
+    font-size: var(--text-prose);
+    font-family: var(--font-prose);
+    line-height: var(--leading-prose);
     letter-spacing: var(--tracking-normal);
     white-space: pre-wrap;
     overflow-wrap: anywhere;

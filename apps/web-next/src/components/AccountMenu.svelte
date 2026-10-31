@@ -9,7 +9,8 @@
   import Avatar from './Avatar.svelte';
   import Icon from './Icon.svelte';
   import { theme, setTheme } from '../lib/theme.svelte.js';
-  import { toast } from '../lib/toast.svelte.js';
+  import { app } from '../lib/app.svelte.js';
+  import { go } from '../lib/router.svelte.js';
 
   let { user } = $props();
   const sidebar = getContext('sidebar');
@@ -35,10 +36,10 @@
     <MenuItem icon={Monitor} checked={theme.choice === 'system'} onselect={() => setTheme('system')}>System</MenuItem>
   </SubMenu>
   <MenuItem icon={Shapes} href="/specimen">Component specimen</MenuItem>
-  <MenuItem icon={Keyboard} shortcut="⌘ K" onselect={() => dispatchEvent(new CustomEvent('archivepalette'))}>Command palette</MenuItem>
-  <MenuItem icon={LifeBuoy}>Get help</MenuItem>
+  <MenuItem icon={Keyboard} shortcut="⌘ K" onselect={() => { app.drawer = false; app.palette = true; }}>Command palette</MenuItem>
+  <MenuItem icon={LifeBuoy} onselect={() => { app.drawer = false; app.help = true; }}>Keyboard shortcuts and help</MenuItem>
   <MenuSeparator />
-  <MenuItem icon={LogOut} onselect={() => toast('Signed out of this preview')}>Log out</MenuItem>
+  <MenuItem icon={LogOut} onselect={() => { app.signedOut = true; go('/'); }}>Log out</MenuItem>
 </Menu>
 
 <style>

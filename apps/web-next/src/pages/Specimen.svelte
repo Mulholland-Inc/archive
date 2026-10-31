@@ -59,7 +59,14 @@
   import Steps from '../components/Steps.svelte';
   import CodeBlock from '../components/CodeBlock.svelte';
   import StepPill from '../components/StepPill.svelte';
-  import TaskCard from '../components/TaskCard.svelte';
+  import WorkflowCard from '../components/WorkflowCard.svelte';
+  import WorkspaceIcon from '../components/WorkspaceIcon.svelte';
+  import LookPicker from '../components/LookPicker.svelte';
+  import ConnectorCard from '../components/ConnectorCard.svelte';
+  import TriggerLabel from '../components/TriggerLabel.svelte';
+  import { workflowSeed } from '../lib/workflows.js';
+  import { TYPES } from '../lib/looks.js';
+  import { catalog } from '../lib/connectors.js';
   import Mark from '../components/Mark.svelte';
   import Heading from '../components/Heading.svelte';
   import Text from '../components/Text.svelte';
@@ -73,7 +80,7 @@
   import Greeting from '../components/Greeting.svelte';
   import SpecimenFrame from '../components/SpecimenFrame.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { library, tasks, conversations, workspaces, members, me } from '../lib/data.js';
+  import { library, conversations, members, me } from '../lib/data.js';
   import { theme, setTheme } from '../lib/theme.svelte.js';
   import { toast } from '../lib/toast.svelte.js';
   import { app } from '../lib/app.svelte.js';
@@ -109,6 +116,7 @@
   let composer = $state('');
   let streaming = $state(false);
   let disclosure = $state(true);
+  let look = $state({ type: 'family', icon: 'castle', tint: 4 });
 
   const roles = [
     { value: 'viewer', label: 'Viewer' },
@@ -193,6 +201,19 @@
           <MotionSample duration="normal" easing="out" label="normal · ease-out" />
           <MotionSample duration="slow" easing="in-out" label="slow · ease-in-out" />
           <MotionSample duration="slower" easing="emphasized" label="slower · emphasized" />
+        </SpecimenBlock>
+        <SpecimenBlock title="Workspace icons, hover to wake">
+          {#each Object.entries(TYPES) as [type, t] (type)}
+            {#each t.icons as icon, i (icon)}
+              <WorkspaceIcon {icon} tint={i % 8} seed={type} size="xl" label={`${t.label}: ${icon}`} />
+            {/each}
+          {/each}
+        </SpecimenBlock>
+        <SpecimenBlock title="Workspace icon sizes">
+          <WorkspaceIcon icon="cottage" tint={0} size="xs" /><WorkspaceIcon icon="cottage" tint={0} size="sm" /><WorkspaceIcon icon="cottage" tint={0} /><WorkspaceIcon icon="cottage" tint={0} size="lg" /><WorkspaceIcon icon="cottage" tint={0} size="xl" /><WorkspaceIcon icon="robot" tint={3} size="xxl" />
+        </SpecimenBlock>
+        <SpecimenBlock title="Look picker" column>
+          <LookPicker bind:look />
         </SpecimenBlock>
         <SpecimenBlock title="Brand mark">
           <Mark size="sm" /><Mark /><Mark size="lg" /><Mark size="lg" active label="Working" />
@@ -476,7 +497,7 @@
           <Greeting name={me.first} />
         </SpecimenBlock>
         <SpecimenBlock title="Composer: home, chat, streaming" column>
-          <Composer bind:value={composer} variant="home" />
+          <Composer bind:value={composer} size="lg" />
           <Composer placeholder="Reply to Archive" />
           <Composer placeholder="Reply to Archive" streaming />
         </SpecimenBlock>
@@ -493,11 +514,21 @@
         <SpecimenBlock title="Code block" column>
           <CodeBlock lang="bash" code={'python3 -m pip install pillow\npython3 rename_scans.py --dry-run'} />
         </SpecimenBlock>
-        <SpecimenBlock title="Task cards">
+        <SpecimenBlock title="Workflow cards and triggers">
           <Grid min="card" gap="4">
-            <TaskCard task={tasks[0]} href="#/tasks/t-cassettes" />
-            <TaskCard task={tasks[3]} href="#/tasks/t-digest" />
-            <TaskCard task={tasks[5]} href="#/tasks/t-restore" />
+            <WorkflowCard workflow={workflowSeed.okafor[0]} href="#/workflows/wf-cassettes" />
+            <WorkflowCard workflow={workflowSeed.okafor[2]} href="#/workflows/wf-digest" />
+            <WorkflowCard workflow={workflowSeed.okafor[4]} href="#/workflows/wf-restore" />
+          </Grid>
+          <TriggerLabel trigger={{ kind: 'schedule', label: 'Every Sunday at 18:00' }} />
+          <TriggerLabel trigger={{ kind: 'file', label: 'When photos are added' }} />
+          <TriggerLabel trigger={{ kind: 'email', label: 'When an email arrives' }} />
+          <TriggerLabel trigger={{ kind: 'manual', label: 'Run by hand' }} />
+        </SpecimenBlock>
+        <SpecimenBlock title="Connectors">
+          <Grid min="card" gap="3">
+            <ConnectorCard connector={{ ...catalog[0], connected: true, account: 'nora.okafor@gmail.com' }} />
+            <ConnectorCard connector={{ ...catalog[8], connected: false }} onconnect={() => toast('Connect pressed')} />
           </Grid>
         </SpecimenBlock>
       </SpecimenSection>
@@ -506,7 +537,7 @@
         <SpecimenBlock title="Sidebar, open and collapsed">
           <SpecimenFrame>
             <Sidebar>
-              {#snippet header()}<WorkspaceSwitcher {workspaces} current="okafor" />{/snippet}
+              {#snippet header()}<WorkspaceSwitcher workspaces={app.workspaces} current={app.workspaces[0].id} />{/snippet}
               <SidebarSection>
                 <SidebarItem icon={Plus} label="New chat" accent href="#/specimen" />
                 <SidebarItem icon={Search} label="Search" shortcut="⌘ K" />
@@ -525,7 +556,7 @@
           </SpecimenFrame>
           <SpecimenFrame>
             <Sidebar collapsed>
-              {#snippet header()}<WorkspaceSwitcher {workspaces} current="hale" />{/snippet}
+              {#snippet header()}<WorkspaceSwitcher workspaces={app.workspaces} current={app.workspaces[1]?.id} />{/snippet}
               <SidebarSection>
                 <SidebarItem icon={Plus} label="New chat" accent href="#/specimen" />
                 <SidebarItem icon={Search} label="Search" />

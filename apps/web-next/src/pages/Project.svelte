@@ -25,29 +25,34 @@
   import EmptyState from '../components/EmptyState.svelte';
   import InviteDialog from '../components/InviteDialog.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { projects, library } from '../lib/data.js';
-  import { app, newChat } from '../lib/app.svelte.js';
+  import { app, ws, newChat, projectById, removeProject, addProjectFile } from '../lib/app.svelte.js';
+  import { prompt, confirmDialog } from '../lib/dialogs.svelte.js';
   import { go } from '../lib/router.svelte.js';
   import { toast } from '../lib/toast.svelte.js';
 
   let { id } = $props();
 
-  const project = projects.find((p) => p.id === id);
-  let starred = $state(project?.starred ?? false);
-  let instructions = $state(project?.instructions ?? '');
+  const project = $derived(projectById(id));
   let draft = $state('');
   let editing = $state(false);
   let inviting = $state(false);
   let value = $state('');
 
-  const chats = $derived(app.chats.filter((c) => c.project === id));
-  const files = library.slice(0, 5);
+  const chats = $derived(ws().chats.filter((c) => c.project === id && !c.hidden));
+  const files = $derived((project?.fileIds ?? []).map((fid) => ws().library.find((f) => f.id === fid)).filter(Boolean));
 
   function send({ text, attachments }) {
-    const cid = newChat(text.length > 48 ? text.slice(0, 46) + '…' : text);
-    app.chats[0].project = id;
-    app.pending = { id: cid, text, attachments };
+    const cid = newChat(text ? (text.length > 48 ? text.slice(0, 46) + '…' : text) : 'New chat', { project: id, text, attachments });
     go(`/chat/${cid}`);
+  }
+
+  async function rename() {
+    const name = await prompt({ title: 'Rename project', label: 'Name', value: project.name });
+    if (name) project.name = name;
+  }
+
+  async function remove() {
+    if (await confirmDialog({ title: 'Delete this project?', body: 'Chats in it stay in your history.' })) removeProject(id);
   }
 </script>
 
@@ -62,20 +67,20 @@
   <Page width="wide">
     <PageHeader title={project.name}>
       {#snippet actions()}
-        <IconButton icon={Star} label={starred ? 'Unstar' : 'Star'} pressed={starred} onclick={() => (starred = !starred)} />
+        <IconButton icon={Star} label={project.starred ? 'Unstar' : 'Star'} pressed={project.starred} onclick={() => (project.starred = !project.starred)} />
         <Menu placement="bottom-end" label="Project actions">
           {#snippet trigger(props)}<IconButton icon={Ellipsis} label="More" {...props} />{/snippet}
-          <MenuItem icon={Pencil}>Rename</MenuItem>
+          <MenuItem icon={Pencil} onselect={rename}>Rename</MenuItem>
           <MenuItem icon={UserPlus} onselect={() => (inviting = true)}>Invite people</MenuItem>
-          <MenuItem icon={ArchiveIcon} onselect={() => toast('Project archived')}>Archive</MenuItem>
+          <MenuItem icon={ArchiveIcon} onselect={() => removeProject(id, 'Project archived')}>Archive</MenuItem>
           <MenuSeparator />
-          <MenuItem icon={Trash2} danger onselect={() => toast('Project deleted')}>Delete</MenuItem>
+          <MenuItem icon={Trash2} danger onselect={remove}>Delete</MenuItem>
         </Menu>
       {/snippet}
     </PageHeader>
 
     <Split size="lg">
-      <Composer bind:value bind:model={app.model} variant="home" placeholder={`Start a chat in ${project.name}`} onsend={send} />
+      <Composer bind:value bind:model={app.model} size="lg" placeholder={`Start a chat in ${project.name}`} onsend={send} />
       <Section title="Chats">
         {#if chats.length}
           <List label="Project chats">
@@ -93,19 +98,19 @@
       {#snippet aside()}
         <Card padding="md" variant="filled">
           <Section title="Instructions">
-            {#snippet actions()}<IconButton icon={Pencil} label="Edit instructions" size="sm" onclick={() => { draft = instructions; editing = true; }} />{/snippet}
-            <Text as="p" size="sm" tone="secondary">{instructions}</Text>
+            {#snippet actions()}<IconButton icon={Pencil} label="Edit instructions" size="sm" onclick={() => { draft = project.instructions; editing = true; }} />{/snippet}
+            <Text as="p" size="sm" tone="secondary">{project.instructions || 'No instructions yet'}</Text>
           </Section>
         </Card>
         <Card padding="md" variant="filled">
           <Section title="Files">
-            {#snippet actions()}<IconButton icon={Plus} label="Add files" size="sm" onclick={() => toast('Files added', { tone: 'success' })} />{/snippet}
+            {#snippet actions()}<IconButton icon={Plus} label="Add files" size="sm" onclick={() => addProjectFile(id)} />{/snippet}
             <Stack gap="2">
               {#each files as f, i (f.id)}
-                <Attachment name={f.name} kind={f.kind} size={f.size} tone={(i % 4) + 1} />
+                <Attachment name={f.name} kind={f.kind} size={f.size} tone={(i % 4) + 1} href={`#/library/${f.id}`} />
               {/each}
             </Stack>
-            <Text size="xs" tone="tertiary">{project.files} files in total</Text>
+            {#if !files.length}<Text size="sm" tone="tertiary">No files yet</Text>{/if}
           </Section>
         </Card>
         <Card padding="md" variant="filled">
@@ -136,8 +141,8 @@
   <Textarea bind:value={draft} rows={6} aria-label="Instructions" />
   {#snippet footer({ close })}
     <Button variant="ghost" onclick={close}>Cancel</Button>
-    <Button variant="primary" onclick={() => { instructions = draft; close(); toast('Instructions saved', { tone: 'success' }); }}>Save</Button>
+    <Button variant="primary" onclick={() => { project.instructions = draft; close(); toast('Instructions saved', { tone: 'success' }); }}>Save</Button>
   {/snippet}
 </Dialog>
 
-<InviteDialog bind:open={inviting} />
+<InviteDialog bind:open={inviting} project={id} />

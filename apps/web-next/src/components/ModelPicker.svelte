@@ -6,13 +6,13 @@
   import Icon from './Icon.svelte';
   import { models } from '../lib/data.js';
 
-  let { model = $bindable('pro'), thinking = $bindable(true) } = $props();
+  let { model = $bindable('pro'), thinking = $bindable(true), size = 'md' } = $props();
   const current = $derived(models.find((m) => m.id === model));
 </script>
 
 <Menu placement="top-end" label="Model">
   {#snippet trigger(props)}
-    <button type="button" class="trigger" {...props}>
+    <button type="button" class={['trigger', size]} {...props}>
       <span class="name">{current?.name}</span>
       {#if thinking}<span class="mode">Extended</span>{/if}
       <Icon icon={ChevronDown} size="xs" />
@@ -36,6 +36,12 @@
     color: var(--color-text);
     font-size: var(--text-md);
     transition: background-color var(--duration-fast) var(--ease-out);
+  }
+
+  .sm {
+    height: var(--control-sm);
+    padding: var(--space-1-5);
+    font-size: var(--text-sm);
   }
 
   .trigger:hover,

@@ -1,12 +1,17 @@
 :root {
   --font-prose: var(--font-sans);
-  --text-prose: var(--text-base);
+  --text-prose: var(--text-md);
+  --text-prose-heading: var(--text-md);
+  --text-prose-quote: var(--text-base);
+  --text-code: var(--text-xs);
   --leading-prose: var(--leading-relaxed);
+  --space-prose: var(--space-3);
 }
 
 :root[data-chat-font='serif'] {
   --font-prose: var(--font-serif);
-  --text-prose: var(--text-lg);
+  --text-prose: var(--text-base);
+  --text-prose-quote: var(--text-base);
   --leading-prose: var(--leading-normal);
 }
 

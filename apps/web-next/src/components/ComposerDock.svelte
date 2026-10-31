@@ -14,7 +14,7 @@
     position: relative;
     flex: none;
     padding: var(--space-4);
-    padding-block-start: var(--space-0);
+    padding-block-start: var(--space-1);
   }
 
   .dock::before {

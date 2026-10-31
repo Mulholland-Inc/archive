@@ -17,11 +17,10 @@
   import EmptyState from '../components/EmptyState.svelte';
   import NewProjectDialog from '../components/NewProjectDialog.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { projects as seed, me } from '../lib/data.js';
-  import { toast } from '../lib/toast.svelte.js';
+  import { ws, createProject } from '../lib/app.svelte.js';
   import { go } from '../lib/router.svelte.js';
+  import { FolderPlus } from '@lucide/svelte';
 
-  let list = $state(seed.map((p) => ({ ...p })));
   let query = $state('');
   let sort = $state('activity');
   let creating = $state(false);
@@ -34,18 +33,16 @@
 
   const shown = $derived.by(() => {
     const q = query.trim().toLowerCase();
-    const out = list.filter((p) => p.name.toLowerCase().includes(q));
+    const out = ws().projects.filter((p) => p.name.toLowerCase().includes(q));
     if (sort === 'name') return [...out].sort((a, b) => a.name.localeCompare(b.name));
-    if (sort === 'files') return [...out].sort((a, b) => b.files - a.files);
+    if (sort === 'files') return [...out].sort((a, b) => b.fileIds.length - a.fileIds.length);
     return out;
   });
 
-  function create({ name, instructions }) {
-    const id = `p-${Date.now().toString(36)}`;
-    seed.unshift({ id, name, instructions, updated: 'Just now', files: 0, chats: 0, members: [me.name] });
-    list.unshift({ ...seed[0] });
-    toast(`Created ${name}`, { tone: 'success' });
-    go(`/projects/${id}`);
+  const chatCount = (id) => ws().chats.filter((c) => c.project === id).length;
+
+  function create(data) {
+    go(`/projects/${createProject(data)}`);
   }
 </script>
 
@@ -72,15 +69,19 @@
           <Stack direction="row" align="center" gap="4">
             <AvatarGroup names={p.members} size="xs" max={3} />
             <Spacer />
-            <Text size="xs" tone="tertiary"><Stack as="span" direction="row" gap="1" align="center"><Icon icon={FileText} size="xs" />{p.files}</Stack></Text>
-            <Text size="xs" tone="tertiary"><Stack as="span" direction="row" gap="1" align="center"><Icon icon={MessagesSquare} size="xs" />{p.chats}</Stack></Text>
+            <Text size="xs" tone="tertiary"><Stack as="span" direction="row" gap="1" align="center"><Icon icon={FileText} size="xs" />{p.fileIds.length}</Stack></Text>
+            <Text size="xs" tone="tertiary"><Stack as="span" direction="row" gap="1" align="center"><Icon icon={MessagesSquare} size="xs" />{chatCount(p.id)}</Stack></Text>
             <Text size="xs" tone="tertiary">{p.updated}</Text>
           </Stack>
         </Card>
       {/each}
     </Grid>
-  {:else}
+  {:else if query}
     <EmptyState icon={SearchX} title="No projects match your search" />
+  {:else}
+    <EmptyState icon={FolderPlus} title="No projects yet">
+      <Button variant="primary" icon={Plus} onclick={() => (creating = true)}>New project</Button>
+    </EmptyState>
   {/if}
 </Page>
 

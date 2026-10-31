@@ -6,15 +6,15 @@
   import Chip from './Chip.svelte';
   import Button from './Button.svelte';
   import Stack from './Stack.svelte';
-  import { groups } from '../lib/data.js';
-  import { toast } from '../lib/toast.svelte.js';
+  import { ws, invite } from '../lib/app.svelte.js';
 
-  let { open = $bindable(false) } = $props();
+  let { open = $bindable(false), project } = $props();
 
   let emails = $state('');
   let role = $state('viewer');
   let picked = $state([]);
-  const count = $derived(emails.split(/[\s,]+/).filter((e) => e.includes('@')).length);
+  const list = $derived(emails.split(/[\s,;]+/).filter((e) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)));
+  const count = $derived(list.length);
 
   const roles = [
     { value: 'viewer', label: 'Viewer' },
@@ -27,7 +27,7 @@
   }
 
   function send(close) {
-    toast(count === 1 ? 'Invitation sent' : `${count} invitations sent`, { tone: 'success' });
+    invite({ emails: list, role, groups: picked, project });
     emails = '';
     picked = [];
     close();
@@ -48,7 +48,7 @@
   <Field label="Groups">
     {#snippet children()}
       <Stack direction="row" gap="2" wrap>
-        {#each groups as g (g.id)}
+        {#each ws().groups as g (g.id)}
           <Chip selected={picked.includes(g.name)} onclick={() => toggle(g.name)}>{g.name}</Chip>
         {/each}
       </Stack>
