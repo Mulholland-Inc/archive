@@ -61,6 +61,15 @@ export function incoming(id) {
   return Object.keys(looks).flatMap((from) => Object.entries(looks[from].shares ?? {}).filter(([, to]) => to.includes(id)).map(([space]) => ({ from, space })));
 }
 
+// Local demo only: the same starting look in every browser, under anything set here.
+export async function seedLooks() {
+  try {
+    const seed = await (await fetch('/demo-looks.json')).json();
+    for (const [id, l] of Object.entries(seed)) looks[id] = { ...l, ...looks[id] };
+    persist();
+  } catch {}
+}
+
 export function setLook(id, patch) {
   looks[id] = { ...looks[id], ...patch };
   persist();

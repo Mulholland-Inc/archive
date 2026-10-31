@@ -13,7 +13,7 @@
   import Journal from './ui/Journal.svelte';
   import Machine from './ui/Machine.svelte';
   import Bot from './ui/Bot.svelte';
-  import { fullName, look, setLook, shortName } from './ui/looks.svelte.js';
+  import { fullName, look, seedLooks, setLook, shortName } from './ui/looks.svelte.js';
   import Library from './Library.svelte';
   import Heading from './ui/Heading.svelte';
   import NavItem from './ui/NavItem.svelte';
@@ -171,6 +171,7 @@
     location.assign('/');
   }
 
+  seedLooks();
   load();
 </script>
 
