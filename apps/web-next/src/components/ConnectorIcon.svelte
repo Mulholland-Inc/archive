@@ -22,44 +22,31 @@
     display: grid;
     place-items: center;
     flex: none;
-    width: var(--control-xl);
-    height: var(--control-xl);
-    border-radius: var(--radius-lg);
-    background: var(--color-surface-sunken);
-    box-shadow: var(--ring-subtle);
+    width: var(--icon-2xl);
+    height: var(--icon-2xl);
     color: var(--color-text);
   }
 
-  .sm {
-    width: var(--control-md);
-    height: var(--control-md);
-    border-radius: var(--radius-md);
+  .xs {
+    width: var(--icon-md);
+    height: var(--icon-md);
   }
 
-  .xs {
+  .sm {
     width: var(--icon-lg);
     height: var(--icon-lg);
-    border-radius: var(--radius-xs);
-    background: none;
-    box-shadow: none;
   }
 
   .lg {
-    width: var(--control-2xl);
-    height: var(--control-2xl);
+    width: var(--control-xl);
+    height: var(--control-xl);
   }
 
   svg,
   .glyph {
     display: block;
-    width: 50%;
-    height: 50%;
-  }
-
-  .xs svg,
-  .xs .glyph {
-    width: 80%;
-    height: 80%;
+    width: 100%;
+    height: 100%;
   }
 
   .glyph :global(svg) {
