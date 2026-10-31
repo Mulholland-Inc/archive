@@ -148,7 +148,7 @@
   });
 </script>
 
-<div class="tree" class:live class:far={t.k < FAR} bind:this={frame} role="group" aria-label="Family tree" onpointerdown={down} onpointermove={move} onpointerup={up} onpointercancel={up}>
+<div class="tree" class:live bind:this={frame} role="group" aria-label="Family tree" onpointerdown={down} onpointermove={move} onpointerup={up} onpointercancel={up}>
   <div class="world" style="transform: translate({t.x}px, {t.y}px) scale({t.k})">
     <svg class="lines" style="left: {box.x}px; top: {box.y}px" width={box.w} height={box.h} viewBox="{box.x} {box.y} {box.w} {box.h}" aria-hidden="true">
       {#each l.lines as ln (ln.key)}<path class={ln.kind} d={ln.d} />{/each}
@@ -179,46 +179,27 @@
 </div>
 
 <style>
-  .tree {
-    --canvas: #2d3048;
-    --line: #8a8fb2;
-    --chev: #464c6e;
-    --chev-hover: #5a6188;
-    position: relative;
-    flex: 1;
-    min-height: 0;
-    overflow: hidden;
-    border-radius: var(--radius-panel);
-    background: var(--canvas);
-    cursor: grab;
-    touch-action: none;
-    user-select: none;
-  }
+  .tree { position: relative; flex: 1; min-height: 0; overflow: hidden; border-radius: var(--radius-panel); background: var(--surface); cursor: grab; touch-action: none; user-select: none; }
   .tree:active { cursor: grabbing; }
   .tree:not(.live) .world { visibility: hidden; }
   .world { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
   .lines { position: absolute; max-width: none; overflow: visible; pointer-events: none; }
-  .lines path { fill: none; stroke: var(--line); stroke-width: 2; }
-  .lines .husband { stroke: #9db2ff; stroke-width: 3; }
-  .lines .wife { stroke: #eba591; stroke-width: 3; }
-  .label { position: absolute; width: max-content; max-width: 220px; padding: 2px 6px; transform: translate(-50%, -50%); background: var(--canvas); color: #e1e3f0; font: 700 17px / 20px var(--font-serif); text-align: center; pointer-events: none; }
-  .card { position: absolute; display: flex; flex-direction: column; align-items: center; box-sizing: border-box; width: 100px; height: 152px; padding: 6px 6px 0; border-radius: 3px; background: #fff; box-shadow: 0 1px 2px rgb(0 0 20 / 45%); color: #000080; text-align: center; }
-  .card.focus { box-shadow: 0 0 0 3px #e6e6fa, 0 2px 6px rgb(0 0 20 / 50%); }
-  .portrait { flex: none; width: 88px; height: 88px; overflow: hidden; border-radius: 2px; background: #ececf4; }
-  .portrait svg { display: block; width: 100%; height: 100%; fill: #9a9ab8; }
-  .m .portrait { background: #dfe5f6; }
-  .m .portrait svg { fill: #7f93c6; }
-  .f .portrait { background: #f6e3dc; }
-  .f .portrait svg { fill: #c27a62; }
-  .name { display: -webkit-box; margin-top: 6px; overflow: hidden; font: 700 14px / 15px var(--font-serif); overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-  .years { margin-top: 2px; color: #4a4a78; font: 13px / 15px var(--font-serif); white-space: nowrap; }
-  .far .name, .far .years, .far .label { font-family: var(--font-sans); }
-  .chev { position: absolute; display: grid; place-items: center; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; background: var(--chev); color: #f2f3fa; cursor: pointer; }
-  .chev:hover { background: var(--chev-hover); }
+  .lines path { fill: none; stroke: var(--fg-muted); stroke-opacity: 0.45; stroke-width: 1.5; }
+  .label { position: absolute; width: max-content; max-width: 220px; padding: 2px var(--space-2); transform: translate(-50%, -50%); border-radius: var(--radius-full); background: var(--surface); color: var(--fg-muted); font: var(--weight-medium) 13px / 18px var(--font-sans); text-align: center; pointer-events: none; }
+  .card { position: absolute; display: flex; flex-direction: column; align-items: center; box-sizing: border-box; width: 100px; height: 152px; padding: var(--space-1-5) var(--space-1-5) 0; border-radius: var(--radius-item); background: var(--surface-raised); color: var(--fg); text-align: center; transition: background var(--duration-fast), transform var(--duration-fast) var(--ease-out); }
+  .card:hover { transform: translateY(-2px); }
+  .card.focus { box-shadow: 0 0 0 2px var(--accent); }
+  .portrait { flex: none; width: 88px; height: 84px; overflow: hidden; border-radius: var(--radius-nav); background: var(--fill-faint); }
+  .portrait svg { display: block; width: 100%; height: 100%; fill: var(--fg-muted); opacity: 0.5; }
+  .name { display: -webkit-box; margin-top: var(--space-1-5); overflow: hidden; font: var(--weight-medium) 13px / 15px var(--font-sans); overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  .years { margin-top: 2px; color: var(--fg-muted); font: 12px / 15px var(--font-sans); white-space: nowrap; }
+  .chev { position: absolute; display: grid; place-items: center; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; background: var(--fill-strong); color: var(--fg); cursor: pointer; transition: background var(--duration-fast); }
+  .chev:hover { background: var(--fg-muted); }
   .chev::after { content: ''; position: absolute; inset: -9px; border-radius: 50%; }
   .chev svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   .switch { margin: -8px 0 0 -8px; }
-  .tools { position: absolute; right: var(--space-3); bottom: var(--space-3); display: flex; flex-direction: column; gap: var(--space-1); }
-  .tools button { display: grid; place-items: center; width: var(--size-control-lg); height: var(--size-control-lg); border-radius: var(--radius-nav); background: #fff; color: #000080; cursor: pointer; }
-  .tools button:hover { background: #ededf6; }
+  .tools { position: absolute; top: var(--space-3); right: var(--space-3); display: flex; flex-direction: column; gap: var(--space-1); }
+  .tools button { display: grid; place-items: center; width: var(--size-control); height: var(--size-control); border-radius: var(--radius-full); background: var(--surface-raised); color: var(--fg-soft); cursor: pointer; transition: background var(--duration-fast); }
+  .tools button:hover { background: var(--fill-strong); color: var(--fg); }
+  .tools :global(.icon) { width: 18px; height: 18px; }
 </style>
