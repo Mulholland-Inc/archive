@@ -4,10 +4,10 @@ export const TYPES = {
   family: { label: 'Family', icons: ['robot', 'cottage', 'castle', 'townhouse', 'farmhouse', 'oak', 'pine', 'baobab', 'pinecone'] },
   business: { label: 'Business', icons: ['robot', 'skyscraper', 'capitol', 'ledger', 'cabinet', 'bank', 'warehouse', 'factory'] },
 };
-// The colours of a national archive, as old metal and deep lacquer: maroon, gold, jungle, navy, steel, bronze and gunmetal.
-export const TINTS = ['#5e1724', '#b8963e', '#1f4a38', '#22407a', '#7f8a96', '#8a6a3d', '#2e333b'];
+// The colours of a national archive, as old metal and deep lacquer: maroon, gold, jungle, navy, royal purple, steel, bronze and gunmetal.
+export const TINTS = ['#5e1724', '#b8963e', '#1f4a38', '#22407a', '#7a3f8e', '#7f8a96', '#8a6a3d', '#2e333b'];
 export const KIND_TINTS = { business: '#22407a', family: '#5e1724', personal: '#b8963e' };
-const RETIRED = { '#e5484d': '#5e1724', '#f5a524': '#b8963e', '#30a46c': '#1f4a38', '#0091ff': '#22407a', '#8e4ec6': '#7f8a96', '#a0703c': '#8a6a3d', '#8a2433': '#5e1724', '#2f5d4e': '#1f4a38', '#5d7690': '#7f8a96', '#b5a27a': '#8a6a3d', '#20252d': '#2e333b' };
+const RETIRED = { '#e5484d': '#5e1724', '#f5a524': '#b8963e', '#30a46c': '#1f4a38', '#0091ff': '#22407a', '#8e4ec6': '#7a3f8e', '#a0703c': '#8a6a3d', '#8a2433': '#5e1724', '#2f5d4e': '#1f4a38', '#5d7690': '#7f8a96', '#b5a27a': '#8a6a3d', '#20252d': '#2e333b' };
 
 function load() {
   try {
@@ -27,12 +27,27 @@ function floating() {
   }
 }
 
-export const ui = $state({ floating: floating() });
+function sidebarIcons() {
+  try {
+    return localStorage.sidebarIcons !== 'off';
+  } catch {
+    return true;
+  }
+}
+
+export const ui = $state({ floating: floating(), sidebarIcons: sidebarIcons() });
 
 export function setFloating(on) {
   ui.floating = on;
   try {
     localStorage.floating = on ? 'on' : 'off';
+  } catch {}
+}
+
+export function setSidebarIcons(on) {
+  ui.sidebarIcons = on;
+  try {
+    localStorage.sidebarIcons = on ? 'on' : 'off';
   } catch {}
 }
 
