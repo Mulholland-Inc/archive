@@ -4227,3 +4227,15 @@ func TestServeOpensOtherWorkspacesOnlyWhenTheyAreUsed(t *testing.T) {
 		t.Errorf("bob's workspace on first use: %d %+v\n%s", st, info, srv.log)
 	}
 }
+
+func TestServeStartsWhenTheFirstUserHasNoMemberRow(t *testing.T) {
+	t.Parallel()
+	in := newInst(t)
+	in.must("user", "add", "alice@example.com")
+	in.must("user", "add", "bob@example.com", "-role", "owner")
+	in.psql("archive", "DELETE FROM archive.member WHERE email = 'alice@example.com'")
+	srv := in.serve()
+	if st, _ := e2eDo(t, "GET", srv.url+"/auth/me", map[string]string{"X-Forwarded-For": ""}, nil, nil); st != 403 {
+		t.Errorf("the first user without a member row on this machine: %d", st)
+	}
+}
