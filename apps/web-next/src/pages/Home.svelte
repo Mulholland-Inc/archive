@@ -40,7 +40,7 @@
 <Page width="home" center>
   <Stack gap="8" align="stretch">
     <Stack gap="3" align="center">
-      {#if app.incognito}<Badge tone="accent" dot>Incognito · not saved to your history</Badge>{/if}
+      {#if app.incognito}<Badge icon={Ghost}>Incognito · not saved to your history</Badge>{/if}
       <Greeting name={app.profile.first} look={ws().look} seed={ws().id} />
     </Stack>
     <Stack gap="4" align="center">

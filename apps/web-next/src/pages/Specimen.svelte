@@ -408,9 +408,8 @@
           <AvatarGroup names={members.map((m) => m.name)} size="md" max={5} />
         </SpecimenBlock>
         <SpecimenBlock title="Badges">
-          <Badge>Neutral</Badge><Badge tone="accent">Accent</Badge><Badge tone="success">Success</Badge><Badge tone="warning">Warning</Badge>
-          <Badge tone="danger">Danger</Badge><Badge tone="outline">Outline</Badge><Badge dot tone="success">With dot</Badge>
-          <StatusBadge status="running" /><StatusBadge status="waiting" /><StatusBadge status="completed" /><StatusBadge status="failed" /><StatusBadge status="scheduled" />
+          <Badge>Plain</Badge><Badge icon={Star}>With icon</Badge>
+          {#each ['running', 'waiting', 'succeeded', 'failed', 'stopped', 'paused', 'scheduled', 'off', 'idle', 'invited', 'connected'] as st (st)}<StatusBadge status={st} />{/each}
         </SpecimenBlock>
         <SpecimenBlock title="Cards">
           <Grid min="card" gap="4">

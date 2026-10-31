@@ -1,6 +1,6 @@
 <script>
   import ConnectorIcon from './ConnectorIcon.svelte';
-  import Badge from './Badge.svelte';
+  import StatusBadge from './StatusBadge.svelte';
   import Button from './Button.svelte';
 
   let { connector, onopen, onconnect } = $props();
@@ -14,7 +14,7 @@
     <span class="meta">{connector.connected ? connector.account : connector.category}</span>
   </div>
   {#if connector.connected}
-    <Badge tone="success" dot>Connected</Badge>
+    <StatusBadge status="connected" />
   {:else}
     <span class="action"><Button size="sm" onclick={onconnect}>Connect</Button></span>
   {/if}

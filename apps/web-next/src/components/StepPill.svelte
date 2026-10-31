@@ -35,11 +35,11 @@
 
   .glyph {
     display: inline-flex;
-    color: var(--color-success);
+    color: var(--color-text-tertiary);
   }
 
   .running {
-    color: var(--color-accent-text);
+    color: var(--color-text-secondary);
     animation: spin calc(var(--duration-slower) * 2) linear infinite;
   }
 

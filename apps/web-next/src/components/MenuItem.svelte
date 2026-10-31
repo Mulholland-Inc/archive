@@ -86,7 +86,7 @@
 
   .danger:hover,
   .danger:focus-visible {
-    background: var(--color-danger-subtle);
+    background: var(--color-fill);
   }
 
   .disabled {

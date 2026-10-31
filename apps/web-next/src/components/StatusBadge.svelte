@@ -1,22 +1,24 @@
 <script>
+  import { LoaderCircle, Hand, Check, X, Square, Pause, Clock, Power, Mail } from '@lucide/svelte';
   import Badge from './Badge.svelte';
 
   let { status } = $props();
   const map = {
-    running: { tone: 'accent', label: 'Running', pulse: true },
-    waiting: { tone: 'warning', label: 'Needs input' },
-    completed: { tone: 'success', label: 'Completed' },
-    succeeded: { tone: 'success', label: 'Succeeded' },
-    stopped: { tone: 'neutral', label: 'Stopped' },
-    paused: { tone: 'neutral', label: 'Paused' },
-    idle: { tone: 'neutral', label: 'Never run' },
-    off: { tone: 'neutral', label: 'Off' },
-    failed: { tone: 'danger', label: 'Failed' },
-    scheduled: { tone: 'neutral', label: 'Scheduled' },
-    invited: { tone: 'neutral', label: 'Invited' },
-    active: { tone: 'success', label: 'Active' }
+    running: { label: 'Running', icon: LoaderCircle, spin: true },
+    waiting: { label: 'Needs input', icon: Hand },
+    completed: { label: 'Completed', icon: Check },
+    succeeded: { label: 'Succeeded', icon: Check },
+    failed: { label: 'Failed', icon: X, danger: true },
+    stopped: { label: 'Stopped', icon: Square },
+    paused: { label: 'Paused', icon: Pause },
+    scheduled: { label: 'Scheduled', icon: Clock },
+    idle: { label: 'Never run' },
+    off: { label: 'Off', icon: Power },
+    invited: { label: 'Invited', icon: Mail },
+    connected: { label: 'Connected', icon: Check },
+    active: { label: 'Active' }
   };
-  const s = $derived(map[status] ?? { tone: 'neutral', label: status });
+  const s = $derived(map[status] ?? { label: status });
 </script>
 
-<Badge tone={s.tone} dot pulse={s.pulse}>{s.label}</Badge>
+<Badge icon={s.icon} spin={s.spin} danger={s.danger}>{s.label}</Badge>

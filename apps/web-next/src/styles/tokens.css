@@ -189,10 +189,6 @@
   --blue-600-50: rgba(0, 102, 197, 0.5);
   --blue-300-16: rgba(102, 174, 245, 0.16);
   --blue-300-55: rgba(102, 174, 245, 0.55);
-  --red-600-10: rgba(201, 48, 44, 0.1);
-  --red-300-14: rgba(255, 138, 138, 0.14);
-  --green-600-12: rgba(47, 158, 95, 0.12);
-  --orange-600-12: rgba(229, 99, 26, 0.12);
 
   --tint-0: #5e1724;
   --tint-1: #b8963e;
@@ -268,12 +264,9 @@
   --color-accent-contrast: var(--gray-0);
 
   --color-success: var(--green-600);
-  --color-success-subtle: var(--green-600-12);
   --color-warning: var(--orange-600);
-  --color-warning-subtle: var(--orange-600-12);
   --color-danger: var(--red-600);
   --color-danger-hover: var(--red-600);
-  --color-danger-subtle: var(--red-600-10);
   --color-danger-contrast: var(--gray-0);
 
   --color-focus: var(--blue-600-50);
@@ -339,12 +332,9 @@
   --color-accent-contrast: var(--gray-950);
 
   --color-success: var(--green-600);
-  --color-success-subtle: var(--green-600-12);
   --color-warning: var(--orange-600);
-  --color-warning-subtle: var(--orange-600-12);
   --color-danger: var(--red-300);
   --color-danger-hover: var(--red-300);
-  --color-danger-subtle: var(--red-300-14);
   --color-danger-contrast: var(--gray-950);
 
   --color-focus: var(--blue-300-55);

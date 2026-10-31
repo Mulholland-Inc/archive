@@ -102,19 +102,13 @@
     color: var(--color-text-secondary);
   }
 
-  .running .glyph {
-    background: var(--color-accent-subtle);
-    color: var(--color-accent-text);
+  .running .glyph,
+  .waiting .glyph {
+    color: var(--color-text);
   }
 
   .failed .glyph {
-    background: var(--color-danger-subtle);
     color: var(--color-danger);
-  }
-
-  .waiting .glyph {
-    background: var(--color-warning-subtle);
-    color: var(--color-warning);
   }
 
   .pending .glyph {

@@ -14,6 +14,7 @@
   import SettingsRow from '../components/SettingsRow.svelte';
   import Button from '../components/Button.svelte';
   import Badge from '../components/Badge.svelte';
+  import StatusBadge from '../components/StatusBadge.svelte';
   import Text from '../components/Text.svelte';
   import Icon from '../components/Icon.svelte';
   import EmptyState from '../components/EmptyState.svelte';
@@ -67,7 +68,7 @@
       <ConnectorIcon id={open.id} size="lg" />
       <Stack gap="1">
         <Text weight="medium">{open.category}</Text>
-        {#if open.connected}<Badge tone="success" dot>Connected</Badge>{:else}<Badge>Not connected</Badge>{/if}
+        {#if open.connected}<StatusBadge status="connected" />{:else}<Badge>Not connected</Badge>{/if}
       </Stack>
     </Stack>
     {#if open.connected}
