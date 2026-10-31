@@ -1,7 +1,7 @@
 <script>
   import Icon from '#kit/Icon.svelte';
   import Bot from './Bot.svelte';
-  import { look, shortName } from './looks.svelte.js';
+  import { look, shortName, ui } from './looks.svelte.js';
 
   let { workspaces = [], workspace = '', latest = '', canAdd = false, onpick, onedit, onadd } = $props();
 </script>
@@ -10,7 +10,7 @@
   {#each workspaces as w (w.id)}
     <div class="wrap">
       <button class="row" class:on={w.id === workspace} type="button" aria-current={w.id === workspace ? 'true' : undefined} onclick={() => onpick(w.id)}>
-        <Bot seed={w.id} />
+        {#if ui.sidebarIcons}<Bot seed={w.id} />{/if}
         <span class="text">
           <span class="name">{shortName(w.name, look(w.id).type)}</span>
           {#if w.id === workspace}<span class="sub">{latest || 'Ask me anything'}</span>{:else if look(w.id).shared}<span class="sub">Shared with you</span>{/if}
@@ -22,7 +22,7 @@
     </div>
   {/each}
   {#if canAdd}
-    <button class="row add" type="button" onclick={onadd}><span class="plus"><Icon name="plus" /></span><span>Add archive</span></button>
+    <button class="row add" type="button" onclick={onadd}>{#if ui.sidebarIcons}<span class="plus"><Icon name="plus" /></span>{/if}<span>Add archive</span></button>
   {/if}
 </div>
 

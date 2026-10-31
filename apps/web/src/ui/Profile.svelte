@@ -2,7 +2,7 @@
   import Icon from '#kit/Icon.svelte';
   import Avatar from './Avatar.svelte';
   import Theme from '#kit/Theme.svelte';
-  import { setFloating, ui } from './looks.svelte.js';
+  import { setFloating, setSidebarIcons, ui } from './looks.svelte.js';
 
   let { name, dev = false, ondev, onsignout, spaces = [], home, current = '', onpick, oncreate } = $props();
   let adding = $state(false);
@@ -82,6 +82,9 @@
       <div class="item plain"><span>Appearance</span><Theme /></div>
       <button class="item" role="menuitemcheckbox" aria-checked={ui.floating} onclick={() => setFloating(!ui.floating)}>
         <span>Floating icons</span>{#if ui.floating}<Icon name="check" />{/if}
+      </button>
+      <button class="item" role="menuitemcheckbox" aria-checked={ui.sidebarIcons} onclick={() => setSidebarIcons(!ui.sidebarIcons)}>
+        <span>Sidebar icons</span>{#if ui.sidebarIcons}<Icon name="check" />{/if}
       </button>
       <button class="item" role="menuitemcheckbox" aria-checked={dev} onclick={() => { open = false; ondev(); }}>
         <span>Developer mode</span>{#if dev}<Icon name="check" />{/if}
