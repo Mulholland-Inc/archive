@@ -56,7 +56,7 @@
 
 <h2 id="agent">The in-app agent</h2>
 <p>Archive calls an AI model only when someone in a workspace chats with its agent. The service then sends the conversation to Anthropic's API: the messages, the name and email address of the person chatting, the space they are working in, a description of the workspace's tables, and the results of the code the agent runs, which can include records and file contents from that space.</p>
-<p>The service uses Mulholland's Anthropic account, unless a workspace admin has added the workspace's own Anthropic key, in which case the request goes to the workspace's own account. Chats are kept in the workspace until they are deleted.</p>
+<p>The service always uses Mulholland's Anthropic account. Chats are kept in the workspace until they are deleted.</p>
 <p>When you connect your own AI app over MCP or the API, or write a workflow that calls another service, what it reads goes to that provider under your own account with them.</p>
 
 <h2 id="processors">Who else handles it</h2>

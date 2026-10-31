@@ -106,7 +106,7 @@ func (q *Queries) AdvisoryXactLock(ctx context.Context, key int64) error {
 }
 
 const allWorkspaces = `-- name: AllWorkspaces :many
-SELECT id, name, key, anthropic_key, created_at FROM archive.workspace ORDER BY created_at, id
+SELECT id, name, key, created_at FROM archive.workspace ORDER BY created_at, id
 `
 
 func (q *Queries) AllWorkspaces(ctx context.Context) ([]ArchiveWorkspace, error) {
@@ -122,7 +122,6 @@ func (q *Queries) AllWorkspaces(ctx context.Context) ([]ArchiveWorkspace, error)
 			&i.ID,
 			&i.Name,
 			&i.Key,
-			&i.AnthropicKey,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -574,7 +573,7 @@ func (q *Queries) CreateUserToken(ctx context.Context, arg CreateUserTokenParams
 
 const createWorkspace = `-- name: CreateWorkspace :one
 INSERT INTO archive.workspace (id, name, key) VALUES ($1, $2, $3)
-ON CONFLICT DO NOTHING RETURNING id, name, key, anthropic_key, created_at
+ON CONFLICT DO NOTHING RETURNING id, name, key, created_at
 `
 
 func (q *Queries) CreateWorkspace(ctx context.Context, iD uuid.UUID, name string, key []byte) (ArchiveWorkspace, error) {
@@ -584,7 +583,6 @@ func (q *Queries) CreateWorkspace(ctx context.Context, iD uuid.UUID, name string
 		&i.ID,
 		&i.Name,
 		&i.Key,
-		&i.AnthropicKey,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -939,7 +937,7 @@ func (q *Queries) FirstUser(ctx context.Context, workspace uuid.UUID) (ArchiveUs
 }
 
 const firstWorkspace = `-- name: FirstWorkspace :one
-SELECT id, name, key, anthropic_key, created_at FROM archive.workspace ORDER BY created_at, id LIMIT 1
+SELECT id, name, key, created_at FROM archive.workspace ORDER BY created_at, id LIMIT 1
 `
 
 func (q *Queries) FirstWorkspace(ctx context.Context) (ArchiveWorkspace, error) {
@@ -949,7 +947,6 @@ func (q *Queries) FirstWorkspace(ctx context.Context) (ArchiveWorkspace, error) 
 		&i.ID,
 		&i.Name,
 		&i.Key,
-		&i.AnthropicKey,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -1631,15 +1628,6 @@ func (q *Queries) SetWorkflowNext(ctx context.Context, iD uuid.UUID, trigger str
 	return err
 }
 
-const setWorkspaceAnthropicKey = `-- name: SetWorkspaceAnthropicKey :exec
-UPDATE archive.workspace SET anthropic_key = $2 WHERE id = $1
-`
-
-func (q *Queries) SetWorkspaceAnthropicKey(ctx context.Context, iD uuid.UUID, anthropicKey []byte) error {
-	_, err := q.db.Exec(ctx, setWorkspaceAnthropicKey, iD, anthropicKey)
-	return err
-}
-
 const signOut = `-- name: SignOut :exec
 DELETE FROM archive.token WHERE hash = $1 AND kind = 'session'
 `
@@ -2148,7 +2136,7 @@ func (q *Queries) Workflows(ctx context.Context, userID uuid.UUID) ([]ArchiveWor
 }
 
 const workspaceByID = `-- name: WorkspaceByID :one
-SELECT id, name, key, anthropic_key, created_at FROM archive.workspace WHERE id = $1
+SELECT id, name, key, created_at FROM archive.workspace WHERE id = $1
 `
 
 func (q *Queries) WorkspaceByID(ctx context.Context, id uuid.UUID) (ArchiveWorkspace, error) {
@@ -2158,7 +2146,6 @@ func (q *Queries) WorkspaceByID(ctx context.Context, id uuid.UUID) (ArchiveWorks
 		&i.ID,
 		&i.Name,
 		&i.Key,
-		&i.AnthropicKey,
 		&i.CreatedAt,
 	)
 	return i, err

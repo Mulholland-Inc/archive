@@ -972,12 +972,7 @@ func (h *Hub) createWorkspace(ctx context.Context, name, owner string) (generate
 	return row, nil
 }
 
-type WorkspaceInfo struct {
-	Workspace
-	AnthropicKey bool `json:"anthropic_key"`
-}
-
-func (a *Archive) Info(ctx context.Context) (*WorkspaceInfo, error) {
+func (a *Archive) Info(ctx context.Context) (*Workspace, error) {
 	if ActorFrom(ctx) == nil {
 		return nil, fmt.Errorf("not signed in: %w", ErrUnauthorized)
 	}
@@ -985,42 +980,24 @@ func (a *Archive) Info(ctx context.Context) (*WorkspaceInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &WorkspaceInfo{Workspace: workspaceOut(row), AnthropicKey: len(row.AnthropicKey) > 0}, nil
+	w := workspaceOut(row)
+	return &w, nil
 }
 
-func (a *Archive) SetInfo(ctx context.Context, name, anthropicKey *string) (*WorkspaceInfo, error) {
+func (a *Archive) SetInfo(ctx context.Context, name *string) (*Workspace, error) {
 	if _, err := a.workspaceAdmin(ctx); err != nil {
 		return nil, err
 	}
-	q := a.hub.q()
 	if name != nil {
 		n, err := workspaceName(*name)
 		if err != nil {
 			return nil, err
 		}
-		if err := q.RenameWorkspace(ctx, a.ws.ID, n); err != nil {
-			return nil, err
-		}
-	}
-	if anthropicKey != nil {
-		var sealed []byte
-		if k := strings.TrimSpace(*anthropicKey); k != "" {
-			sealed = a.secretBox(a.ws.ID, "anthropic", []byte(k))
-		}
-		if err := q.SetWorkspaceAnthropicKey(ctx, a.ws.ID, sealed); err != nil {
+		if err := a.hub.q().RenameWorkspace(ctx, a.ws.ID, n); err != nil {
 			return nil, err
 		}
 	}
 	return a.Info(ctx)
-}
-
-func (a *Archive) anthropicKey(ctx context.Context) string {
-	if row, err := a.hub.q().WorkspaceByID(ctx, a.ws.ID); err == nil && len(row.AnthropicKey) > 0 {
-		if b, err := a.secretOpen(a.ws.ID, "anthropic", row.AnthropicKey); err == nil {
-			return string(b)
-		}
-	}
-	return os.Getenv("ANTHROPIC_API_KEY")
 }
 
 func (a *Archive) slot(ctx context.Context) (func(), error) {
@@ -1063,13 +1040,12 @@ func (h *Hub) workspaceRoutes(authed func(string, func(http.ResponseWriter, *htt
 	})
 	authed("PATCH /auth/workspace", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		var body struct {
-			Name         *string `json:"name"`
-			AnthropicKey *string `json:"anthropic_key"`
+			Name *string `json:"name"`
 		}
 		if err := httpDecode(r, &body); err != nil {
 			return 0, nil, err
 		}
-		return ok(archiveFrom(r.Context()).SetInfo(r.Context(), body.Name, body.AnthropicKey))
+		return ok(archiveFrom(r.Context()).SetInfo(r.Context(), body.Name))
 	})
 	authed("GET /auth/workspaces", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		return ok(h.Workspaces(r.Context()))

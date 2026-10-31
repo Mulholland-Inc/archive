@@ -9,11 +9,10 @@ CREATE TABLE archive.space (
 );
 
 CREATE TABLE archive.workspace (
-    id            uuid PRIMARY KEY DEFAULT uuidv7(),
-    name          text NOT NULL,
-    key           bytea NOT NULL,
-    anthropic_key bytea,
-    created_at    timestamptz NOT NULL DEFAULT now()
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    name       text NOT NULL,
+    key        bytea NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE archive."user" (
@@ -658,9 +657,6 @@ SELECT rolname::text FROM pg_catalog.pg_roles WHERE starts_with(rolname, sqlc.ar
 
 -- name: RenameWorkspace :exec
 UPDATE archive.workspace SET name = $2 WHERE id = $1;
-
--- name: SetWorkspaceAnthropicKey :exec
-UPDATE archive.workspace SET anthropic_key = $2 WHERE id = $1;
 
 -- name: SoonDue :one
 WITH was AS (SELECT x.at FROM archive.due x WHERE x.workspace = sqlc.arg(workspace) AND x.kind = sqlc.arg(kind))

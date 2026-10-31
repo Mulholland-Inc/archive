@@ -4192,52 +4192,9 @@ func TestServeOpensOtherWorkspacesOnlyWhenTheyAreUsed(t *testing.T) {
 		t.Fatalf("serve opened workspace %s at startup:\n%s", ws, srv.log)
 	}
 	in.psqlIn("postgres", `ALTER DATABASE "archive_`+ws+`" ALLOW_CONNECTIONS true`)
-	var info WorkspaceInfo
+	var info Workspace
 	st, _ := call(t, "GET", srv.url+"/auth/workspace", bob, nil, &info)
 	if st != 200 || info.ID != ws {
 		t.Errorf("bob's workspace on first use: %d %+v\n%s", st, info, srv.log)
 	}
-}
-
-func TestChatUsesTheWorkspacesOwnAnthropicKey(t *testing.T) {
-	t.Parallel()
-	var mu sync.Mutex
-	var keys []string
-	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		keys = append(keys, r.Header.Get("x-api-key"))
-		mu.Unlock()
-		for _, ev := range []string{
-			`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
-			`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi."}}`,
-			`{"type":"content_block_stop","index":0}`,
-			`{"type":"message_delta","delta":{"stop_reason":"end_turn"}}`,
-		} {
-			fmt.Fprintf(w, "event: x\ndata: %s\n\n", ev)
-		}
-	}))
-	defer model.Close()
-	in := newInst(t, "ANTHROPIC_API_KEY=shared", "ANTHROPIC_BASE_URL="+model.URL)
-	in.must("user", "add", "alice@example.com")
-	ws := decode[Workspace](t, in.must("workspace", "add", "Bob Co", "bob@example.com")).ID
-	srv := in.serve()
-	bob := decode[Token](t, in.must("-workspace", ws, "-as", "bob@example.com", "token", "create", "-full")).Secret
-	chat := func(t *testing.T) int {
-		t.Helper()
-		st, _ := call(t, "POST", srv.url+"/api/chat", bob, map[string]string{"text": "hi"}, nil)
-		return st
-	}
-	wantStatus(t, chat(t), 200, "chat on the shared key")
-	var i WorkspaceInfo
-	st, _ := call(t, "PATCH", srv.url+"/auth/workspace", bob, map[string]string{"anthropic_key": "own-key"}, &i)
-	wantStatus(t, st, 200, "set the workspace's own Anthropic key")
-	if !i.AnthropicKey {
-		t.Errorf("workspace info after setting a key: %+v", i)
-	}
-	wantStatus(t, chat(t), 200, "chat on the workspace's own key")
-	mu.Lock()
-	if !slices.Equal(keys, []string{"shared", "own-key"}) {
-		t.Errorf("Anthropic keys used: %v", keys)
-	}
-	mu.Unlock()
 }

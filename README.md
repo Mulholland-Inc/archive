@@ -196,7 +196,7 @@ Every setting is an environment variable; `archive help` lists them all:
 | `ARCHIVE_MICROSOFT` | Sign-in with Microsoft, work and personal accounts: `https://<client id>:<client secret>@login.microsoftonline.com` |
 | `ARCHIVE_SLACK` | Sign-in with Slack: `https://<client id>:<client secret>@slack.com` |
 | `ARCHIVE_GITHUB` | Sign-in with GitHub: `https://<client id>:<client secret>@github.com` |
-| `ANTHROPIC_API_KEY` | Key of the in-app agent; a workspace can set its own |
+| `ANTHROPIC_API_KEY` | Key of the in-app agent, the one key for every workspace |
 
 On Cloud Run, Archive finds its Cloud Tasks queue, `projects/<project>/locations/<region>/queues/<service>`, and the service account the queue signs its calls to `/tasks` with, `<service>-tasks@<project>.iam.gserviceaccount.com`, from the metadata server. In development, `ARCHIVE_TASKS_URL` and `ARCHIVE_TASKS_ISSUER` point it at the emulator.
 
