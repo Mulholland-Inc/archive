@@ -86,6 +86,21 @@
   const archive = $derived(shortName(typed, kind));
   const fullTitle = $derived(fullName(typed, kind));
 
+  // Chats you've finished with leave the list but stay yours. Front end only for now, like the looks.
+  const RECENT = 5;
+  let moreChats = $state(false);
+  let seeAway = $state(false);
+  const away = $derived(me ? look(me.workspace).away : []);
+  const openChats = $derived(chats.filter((c) => !away.includes(c.id)));
+  const awayChats = $derived(chats.filter((c) => away.includes(c.id)));
+  const listed = $derived(dev ? chats : moreChats ? openChats : openChats.filter((c, i) => i < RECENT || c.id === route.second));
+
+  function putAway(id, on) {
+    setLook(me.workspace, { away: on ? [...away, id] : away.filter((a) => a !== id) });
+    if (on && route.second === id) go('/');
+    if (awayChats.length === 1 && !on) seeAway = false;
+  }
+
   async function loadChats() {
     try {
       chats = await api('/api/chats');
@@ -211,9 +226,14 @@
         {#if chats.length}
           <div class="chats">
             <hr />
-            {#each chats as c (c.id)}
-              <NavItem plain href="/chat/{c.id}" active={route.first === 'chat' && route.second === c.id}>{c.title || 'Untitled'}</NavItem>
-            {/each}
+            {#each listed as c (c.id)}{@render chat(c, true)}{/each}
+            {#if !dev && openChats.length > RECENT}
+              <button class="more" type="button" onclick={() => (moreChats = !moreChats)}>{moreChats ? 'Show fewer' : `Show all ${openChats.length}`}</button>
+            {/if}
+            {#if !dev && awayChats.length}
+              <button class="more" type="button" aria-expanded={seeAway} onclick={() => (seeAway = !seeAway)}>Put away ({awayChats.length})</button>
+              {#if seeAway}{#each awayChats as c (c.id)}{@render chat(c, false)}{/each}{/if}
+            {/if}
           </div>
         {/if}
         {#if dev && views.length}
@@ -288,6 +308,15 @@
   {#if connecting}<Connect workspace={me.workspace} onclose={() => (connecting = false)} />{/if}
 {/if}
 
+{#snippet chat(c, open)}
+  <div class="chat">
+    <NavItem plain href="/chat/{c.id}" active={route.first === 'chat' && route.second === c.id}>{c.title || 'Untitled'}</NavItem>
+    {#if !dev}
+      <button class="stow" type="button" title={open ? 'Put away' : 'Bring back'} aria-label="{open ? 'Put away' : 'Bring back'} {c.title || 'Untitled'}" onclick={() => putAway(c.id, open)}><Icon name={open ? 'archive' : 'archive-restore'} /></button>
+    {/if}
+  </div>
+{/snippet}
+
 <style>
   .shell {
     display: grid;
@@ -334,6 +363,14 @@
   .now span:last-child { font-weight: var(--weight-medium); }
   .stage main { flex: 1; }
   .chats { display: flex; flex: none; flex-direction: column; gap: var(--space-0-5); }
+  .chat { position: relative; min-width: 0; }
+  .stow { position: absolute; top: 50%; right: var(--space-1); display: grid; place-items: center; width: 24px; height: 24px; transform: translateY(-50%); border-radius: var(--radius-sm); background: var(--bg); color: var(--fg-muted); opacity: 0; transition: opacity var(--duration-fast); }
+  .stow :global(.icon) { width: 14px; height: 14px; }
+  .chat:hover .stow, .stow:focus-visible { opacity: 1; }
+  .stow:hover { color: var(--fg); }
+  @media (hover: none) { .stow { opacity: 1; } }
+  .more { padding: var(--space-1) var(--space-2); color: var(--fg-muted); font-size: var(--text-meta); text-align: left; }
+  .more:hover { color: var(--fg); }
   .brand { display: flex; flex: none; align-items: center; min-height: var(--size-control-lg); padding: var(--item-pad); color: var(--fg); }
   .brand :global(.word) { height: var(--text-lg); width: auto; fill: currentColor; }
   nav {

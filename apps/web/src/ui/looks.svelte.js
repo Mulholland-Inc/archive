@@ -41,7 +41,7 @@ function persist() {
 
 export function look(id = '') {
   const tint = TINTS[[...id].reduce((n, c) => n + c.charCodeAt(0), 0) % TINTS.length];
-  return { type: 'personal', icon: 'robot', tint, shared: false, locked: [], shares: {}, custodian: null, ...looks[id] };
+  return { type: 'personal', icon: 'robot', tint, shared: false, locked: [], shares: {}, custodian: null, away: [], ...looks[id] };
 }
 
 // What the sidebar and chat call an archive: you type a name, and the type finishes it.
