@@ -135,5 +135,8 @@
   .book:hover { color: var(--fg); }
   .book :global(.icon) { width: 15px; height: 15px; }
   .box { flex: none; padding: var(--space-2); }
-  @media (max-width: 767px) { .archivist { right: calc(var(--space-3) + 48px); } }
+  @media (max-width: 767px) {
+    .archivist { right: calc(var(--space-3) + 48px); }
+    .card { position: fixed; top: 64px; right: var(--space-3); left: var(--space-3); width: auto; }
+  }
 </style>

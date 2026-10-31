@@ -47,6 +47,7 @@
   let recording = $state(false);
   let writing = $state(false);
   let filing = $state(null);
+  let panel = $state(false);
   let path = $state(location.pathname);
   let chats = $state([]);
   let scope = $state(space());
@@ -137,6 +138,12 @@
     e.preventDefault();
     dropping = false;
     if (e.dataTransfer.files.length) keep([...e.dataTransfer.files]);
+  }
+
+  // On a phone there's no room for the right panel, so the archive's name opens it.
+  function openArchive() {
+    if (matchMedia('(max-width: 1023px)').matches) panel = true;
+    else go('/');
   }
 
   async function keep(files) {
@@ -283,7 +290,7 @@
     <div class="stage">
     <main class:asking>
       {#if catalogued && (!route.first || route.first === 'chat')}
-        <a class="now" href="/" aria-label="{archive} archive"><Bot seed={me.workspace} size={24} /><span>{archive}</span></a>
+        <button class="now" type="button" aria-label="{archive} archive" onclick={openArchive}><Bot seed={me.workspace} size={24} /><span>{archive}</span></button>
       {/if}
       {#key generation}
       {#if !route.first || route.first === 'chat'}
@@ -323,7 +330,7 @@
       {#if recording}<Recorder tint={look(me.workspace).tint} {kind} onsave={(f) => keep([f])} onclose={() => (recording = false)} />{/if}
     </main>
     {#if catalogued && !dev && (!route.first || route.first === 'chat')}
-      {#key generation}<Panel name={archive} seed={me.workspace} {views} archives={me.workspaces ?? []} spaces={me.spaces} home={me.home} current={scope} email={me.actor.email} onpick={pick} oncreate={create} />{/key}
+      {#key generation}<Panel name={archive} seed={me.workspace} {views} archives={me.workspaces ?? []} spaces={me.spaces} home={me.home} current={scope} email={me.actor.email} open={panel} onpick={(name) => ((panel = false), pick(name))} oncreate={create} onclose={() => (panel = false)} />{/key}
     {/if}
     </div>
   </div>
@@ -391,7 +398,8 @@
   .stage { display: flex; min-width: 0; }
   .now { position: absolute; top: var(--space-3); left: 50%; z-index: calc(var(--z-raised) + 1); display: flex; align-items: center; gap: var(--space-1-5); padding: var(--space-1) var(--space-3) var(--space-1) var(--space-1); transform: translateX(-50%); border-radius: var(--radius-full); background: var(--surface); white-space: nowrap; }
   main { position: relative; }
-  .now span:last-child { font-weight: var(--weight-medium); }
+  .now span:last-child { overflow: hidden; font-weight: var(--weight-medium); text-overflow: ellipsis; white-space: nowrap; }
+  @media (max-width: 767px) { .now { left: 52px; max-width: calc(100vw - 196px); transform: none; } }
   .stage main { flex: 1; }
   .chats { display: flex; flex: none; flex-direction: column; gap: var(--space-0-5); }
   .dropping { position: fixed; inset: var(--space-2); z-index: calc(var(--z-nav) + 3); display: grid; place-items: center; border: 2px dashed var(--primary); border-radius: var(--radius-panel); background: color-mix(in srgb, var(--bg) 82%, transparent); pointer-events: none; }

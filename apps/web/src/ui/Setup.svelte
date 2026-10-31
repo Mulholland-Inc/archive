@@ -52,4 +52,5 @@
   .hide:hover { opacity: 1; }
   .hide :global(.icon) { width: 13px; height: 13px; }
   @media (hover: none) { .hide { opacity: 0.7; } }
+  @media (max-width: 767px) { section { gap: var(--space-1) var(--space-4); padding: 0 var(--space-5); } }
 </style>
