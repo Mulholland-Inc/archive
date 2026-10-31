@@ -1,0 +1,171 @@
+.sheet {
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+}
+.sheet-scroll {
+	position: relative;
+	overflow: auto;
+	max-height: var(--sheet-max-height);
+	outline: 0;
+	overscroll-behavior: contain;
+}
+.sheet-grid {
+	position: relative;
+}
+.sheet-head {
+	position: sticky;
+	top: 0;
+	z-index: 3;
+	background: var(--background);
+}
+.sheet-row {
+	display: flex;
+	align-items: stretch;
+	height: var(--sheet-row-height);
+}
+.sheet-row-body {
+	position: absolute;
+	top: 0;
+	left: 0;
+	background: var(--background);
+	transition: background-color var(--duration-instant) var(--ease-out);
+}
+.sheet-row-body:hover {
+	background: var(--table-row-hover);
+}
+.sheet-body {
+	position: relative;
+}
+.sheet-cell {
+	position: relative;
+	flex: 0 0 auto;
+	display: flex;
+	align-items: center;
+	padding: 0 var(--sheet-cell-padding);
+	border-bottom: var(--hairline) solid var(--border);
+	border-right: var(--hairline) solid var(--border);
+	overflow: hidden;
+	white-space: nowrap;
+	cursor: cell;
+}
+.sheet-cell-head {
+	color: var(--table-head-foreground);
+	cursor: default;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.sheet-cell-spacer {
+	padding: 0;
+	border-right: 0;
+	cursor: default;
+}
+.sheet-cell-pin {
+	position: sticky;
+	z-index: 2;
+	background: inherit;
+}
+.sheet-end,
+.sheet-end .sheet-input {
+	justify-content: flex-end;
+	text-align: right;
+}
+
+.sheet-grow {
+	display: inline-grid;
+	align-items: center;
+	width: 100%;
+	height: 100%;
+}
+.sheet-grow::after {
+	content: attr(data-value) ' ';
+	visibility: hidden;
+	white-space: pre;
+	grid-area: 1 / 1;
+}
+.sheet-input {
+	grid-area: 1 / 1;
+	width: 100%;
+	min-width: 0;
+	height: 100%;
+	background: none;
+	border: 0;
+	padding: 0;
+	outline: 0;
+	color: var(--foreground);
+}
+.sheet-input::placeholder {
+	color: var(--input-placeholder);
+}
+.sheet-input:read-only {
+	color: var(--foreground-secondary);
+	cursor: default;
+}
+
+/* The cell with the caret lifts above the row and lets its box grow to the
+   words, so a long value is read in full while it is being written. */
+.sheet-cell:focus-within {
+	overflow: visible;
+	z-index: 4;
+}
+.sheet-cell:focus-within .sheet-grow {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	width: auto;
+	min-width: 100%;
+	padding: 0 var(--sheet-cell-padding);
+	background: var(--background);
+	outline: var(--ring-width) solid var(--ring);
+	outline-offset: calc(-1 * var(--ring-width));
+	border-radius: var(--radius-small);
+}
+.sheet-end:focus-within .sheet-grow {
+	left: auto;
+	right: 0;
+}
+
+.sheet-cell-caret:not(:focus-within)::before {
+	content: '';
+	position: absolute;
+	inset: 0;
+	border: var(--ring-width) solid var(--ring);
+	border-radius: var(--radius-small);
+	pointer-events: none;
+}
+.sheet-cell-picked {
+	background: var(--sheet-picked);
+}
+.sheet-cell-picked::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	border: 0 solid var(--ring);
+	pointer-events: none;
+}
+.sheet-t::after {
+	border-top-width: var(--ring-width);
+}
+.sheet-r::after {
+	border-right-width: var(--ring-width);
+}
+.sheet-b::after {
+	border-bottom-width: var(--ring-width);
+}
+.sheet-l::after {
+	border-left-width: var(--ring-width);
+}
+
+.sheet-add {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--control-gap);
+	height: var(--sheet-row-height);
+	padding: 0 var(--sheet-cell-padding);
+	color: var(--muted-foreground);
+	transition: color var(--duration-fast) var(--ease-out);
+}
+.sheet-add:hover {
+	color: var(--foreground);
+}

@@ -1,0 +1,19 @@
+.empty {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: var(--gap-sm);
+	padding: var(--inset-lg) 0;
+}
+.empty-glyph {
+	color: var(--muted-foreground);
+}
+.empty-title {
+	font-weight: var(--font-medium);
+}
+.empty-text {
+	color: var(--foreground-secondary);
+}
+.empty-action {
+	margin-top: var(--gap-sm);
+}

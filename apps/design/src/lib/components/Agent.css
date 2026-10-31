@@ -1,0 +1,182 @@
+.action {
+	display: flex;
+	align-items: center;
+	gap: var(--control-gap);
+	width: 100%;
+	min-height: var(--row-height);
+	color: var(--foreground-secondary);
+}
+.action-mark {
+	display: inline-flex;
+	color: var(--muted-foreground);
+}
+.action-failed .action-mark {
+	color: var(--danger);
+}
+.action-running .action-title {
+	color: var(--foreground);
+}
+.action-title {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.action-detail {
+	color: var(--muted-foreground);
+	white-space: nowrap;
+}
+.action-fold {
+	display: inline-flex;
+	color: var(--muted-foreground);
+}
+.action-body-fold {
+	overflow: hidden;
+}
+.actions {
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+}
+.actions-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--control-gap);
+	width: 100%;
+	min-height: var(--row-height);
+	color: var(--muted-foreground);
+	text-align: left;
+}
+.actions-head:hover {
+	color: var(--foreground-secondary);
+}
+.actions-summary {
+	flex-shrink: 0;
+}
+.actions-wave {
+	margin: 0 var(--space-1);
+}
+.actions-list {
+	display: flex;
+	flex-direction: column;
+	padding: var(--space-1) 0;
+}
+.thinking {
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+}
+.thinking-head {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--control-gap);
+	min-height: var(--row-height);
+	color: var(--muted-foreground);
+	text-align: left;
+}
+.thinking-body {
+	padding: var(--space-2) var(--space-3);
+	margin: var(--space-1) 0;
+	border-left: var(--stroke-2) solid var(--border);
+	color: var(--muted-foreground);
+}
+.ask {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--gap);
+	width: 100%;
+	padding: var(--inset-sm);
+	border-radius: var(--radius-large);
+	background: var(--warning-soft);
+}
+.ask-answered {
+	background: var(--muted);
+}
+.ask-text {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+.ask-title {
+	color: var(--foreground);
+}
+.ask-detail,
+.ask-outcome {
+	color: var(--muted-foreground);
+}
+.ask-actions {
+	display: inline-flex;
+	gap: var(--space-1);
+	flex-shrink: 0;
+}
+.plan {
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+}
+.plan-item {
+	display: flex;
+	align-items: center;
+	gap: var(--control-gap);
+	min-height: var(--row-height);
+	color: var(--foreground-secondary);
+}
+.plan-mark {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: var(--icon-size-sm);
+	height: var(--icon-size-sm);
+	color: var(--muted-foreground);
+}
+.plan-dash {
+	width: var(--space-2);
+	height: var(--stroke-2);
+	background: var(--border-strong);
+	border-radius: var(--radius-small);
+}
+.plan-doing {
+	color: var(--foreground);
+}
+.plan-done .plan-mark {
+	color: var(--success);
+}
+.plan-done .plan-text {
+	color: var(--muted-foreground);
+	text-decoration: line-through;
+}
+/* The agent's question, in the composer's place. */
+.elicit {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: var(--gap-sm);
+	width: 100%;
+	padding: var(--inset-sm);
+	background: var(--muted);
+	border-radius: var(--radius-large);
+}
+.elicit-message {
+	color: var(--foreground);
+}
+.elicit-field {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	width: 100%;
+}
+.elicit-label {
+	color: var(--muted-foreground);
+}
+.elicit-question {
+	color: var(--foreground);
+}
+.elicit-options,
+.elicit-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-1);
+}

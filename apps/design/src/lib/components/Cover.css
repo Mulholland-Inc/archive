@@ -1,0 +1,84 @@
+.cover {
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	background: var(--background);
+	container-type: inline-size;
+}
+/* The banner runs the full width of whatever holds it: a picture is a
+   picture, not an inset panel, so it takes no radius and leaves no ground
+   showing at either side. */
+.cover-band {
+	position: relative;
+	flex-shrink: 0;
+	width: 100%;
+	height: var(--cover-height);
+	background: var(--cover-tint);
+	background-size: cover;
+	background-position: center;
+}
+.cover-tools {
+	position: absolute;
+	top: var(--inset);
+	right: var(--inset);
+	display: flex;
+	gap: var(--space-1);
+}
+.cover-column {
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap);
+	width: 100%;
+	max-width: calc(var(--cover-measure) + 2 * var(--cover-inset));
+	margin: 0 auto;
+	padding: 0 var(--cover-inset) var(--cover-inset);
+}
+.cover-head {
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap);
+}
+/* The mark sits half over the banner's lower edge. */
+.cover-face {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: var(--cover-face);
+	height: var(--cover-face);
+	margin-top: calc(-1 * var(--cover-face) / 2);
+	border-radius: var(--radius-large);
+	transition: background-color var(--duration-fast) var(--ease-out);
+}
+button.cover-face:hover {
+	background: var(--muted);
+}
+.cover-face .emoji {
+	width: 100%;
+	height: 100%;
+	font-size: var(--cover-face-size);
+}
+.cover-title {
+	font-size: var(--text-3xl);
+	line-height: var(--leading-tight);
+	letter-spacing: var(--tracking-tight);
+	font-weight: var(--font-bold);
+	outline: 0;
+	overflow-wrap: anywhere;
+}
+.cover-title-empty::before {
+	content: attr(data-placeholder);
+	color: var(--input-placeholder);
+}
+
+/* Squeezed (a container query on the page's own width): the column pulls
+   in and the name comes down a size. */
+@container (max-width: 520px) {
+	.cover-column {
+		gap: var(--gap-sm);
+		padding: 0 var(--inset) var(--inset);
+	}
+	.cover-title {
+		font-size: var(--text-xl);
+	}
+}

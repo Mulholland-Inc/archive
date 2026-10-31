@@ -1,0 +1,94 @@
+/* Normal flow, not pre-wrap: the source's own newlines are nothing,
+   and blocks stand a small step apart. */
+.markdown {
+	min-width: 0;
+	white-space: normal;
+	overflow-wrap: anywhere;
+}
+.markdown > * {
+	margin: 0;
+}
+.markdown > * + * {
+	margin-top: var(--space-2);
+}
+.markdown li > * {
+	margin: 0;
+}
+.markdown li > * + * {
+	margin-top: var(--space-1);
+}
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+	font-size: inherit;
+	line-height: inherit;
+	font-weight: var(--font-medium);
+}
+.markdown strong {
+	font-weight: var(--font-medium);
+}
+.markdown ul,
+.markdown ol {
+	padding-left: var(--space-4);
+}
+.markdown code {
+	font-family: inherit;
+	padding: 0 var(--space-1);
+	border-radius: var(--radius-small);
+	background: var(--muted);
+}
+.markdown pre {
+	padding: var(--inset-sm);
+	border-radius: var(--radius);
+	background: var(--muted);
+	white-space: pre-wrap;
+}
+.markdown pre code {
+	padding: 0;
+	background: none;
+}
+.markdown blockquote {
+	padding-left: var(--space-3);
+	border-left: var(--stroke-2) solid var(--border);
+	color: var(--foreground-secondary);
+}
+.markdown a {
+	color: var(--primary);
+	text-decoration: underline;
+	text-underline-offset: var(--space-1);
+}
+.markdown hr {
+	height: var(--hairline);
+	border: 0;
+	background: var(--border);
+}
+/* A table is as wide as its words, up to the column; its cells wrap at
+   words, not anywhere, so a short column keeps its width. */
+.markdown table {
+	border-collapse: collapse;
+	width: auto;
+	max-width: 100%;
+}
+.markdown th,
+.markdown td {
+	padding: var(--space-1) var(--space-2);
+	border-bottom: var(--hairline) solid var(--border);
+	text-align: left;
+	vertical-align: top;
+	overflow-wrap: normal;
+}
+.markdown th:first-child,
+.markdown td:first-child {
+	padding-left: 0;
+}
+.markdown th {
+	font-weight: var(--font-medium);
+	color: var(--foreground-secondary);
+}
+.markdown img {
+	max-width: 100%;
+	border-radius: var(--radius);
+}

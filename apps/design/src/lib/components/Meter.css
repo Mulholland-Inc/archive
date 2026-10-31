@@ -1,0 +1,45 @@
+.meter {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--meter-gap);
+	height: var(--meter-height);
+}
+.meter-bar {
+	width: var(--meter-bar-width);
+	height: 100%;
+	border-radius: var(--radius-small);
+	background: var(--meter-off);
+	transition: background-color var(--duration-normal) var(--ease-out);
+	transition-delay: calc(var(--i) * var(--duration-instant) / 4);
+}
+.meter-bar-on {
+	background: var(--meter-on);
+}
+.meter-bar-head {
+	animation: meter-breathe var(--meter-breath) var(--ease-in-out) infinite;
+}
+.meter-running {
+	--meter-on: var(--amber-500);
+	--meter-off: var(--muted-hover);
+}
+.meter-done {
+	--meter-on: var(--green-500);
+	--meter-off: var(--muted-hover);
+}
+.meter-failed {
+	--meter-on: var(--red-500);
+	--meter-off: var(--muted-hover);
+}
+.meter-idle {
+	--meter-on: var(--foreground-secondary);
+	--meter-off: var(--muted-hover);
+}
+@keyframes meter-breathe {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.35;
+	}
+}

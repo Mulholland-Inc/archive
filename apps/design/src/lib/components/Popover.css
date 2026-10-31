@@ -1,0 +1,8 @@
+.popover {
+	min-width: var(--popover-min-width);
+	padding: var(--inset);
+	background: var(--popover);
+	color: var(--popover-foreground);
+	border: var(--hairline) solid var(--layer-border);
+	border-radius: var(--radius-large);
+}

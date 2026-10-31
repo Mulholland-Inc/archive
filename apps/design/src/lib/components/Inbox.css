@@ -1,0 +1,202 @@
+.inbox {
+	display: flex;
+	flex-direction: column;
+	gap: var(--inbox-row-gap);
+	width: 100%;
+}
+/* A row is a person and three lines: who and when, what, and the last
+   thing said. Roomy, on a tint when open, nothing outlined. */
+.talk {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--gap-md);
+	width: 100%;
+	padding: var(--space-2) var(--inset-sm);
+	border-radius: var(--radius);
+	color: var(--foreground-secondary);
+	text-align: left;
+}
+/* No fill, not on hover and not for the open one: the conversation on
+   the right says which it is, and the words go dark under the pointer. */
+.talk:hover .talk-last,
+.talk:hover .talk-title {
+	color: var(--foreground);
+}
+.talk-who {
+	position: relative;
+	display: inline-flex;
+	flex-shrink: 0;
+}
+.talk-corner {
+	display: none;
+	position: absolute;
+	right: calc(-1 * var(--space-1));
+	bottom: calc(-1 * var(--space-1));
+	padding: calc(var(--space-1) / 2);
+	border-radius: var(--radius-small);
+	background: var(--background);
+}
+.talk-text {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-width: 0;
+}
+/* The compact list: no words, the person and the channel at their corner. */
+@container (max-width: 160px) {
+	.inbox {
+		gap: var(--space-3);
+	}
+	.talk {
+		justify-content: center;
+		padding: 0;
+	}
+	.talk:active {
+		transform: none;
+	}
+	.talk-text {
+		display: none;
+	}
+	.talk-corner {
+		display: inline-flex;
+	}
+}
+.talk-head {
+	display: flex;
+	align-items: center;
+	gap: var(--gap-sm);
+}
+.talk-names {
+	flex: 1;
+	min-width: 0;
+	color: var(--foreground);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.talk-side {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--control-gap);
+	flex-shrink: 0;
+	color: var(--muted-foreground);
+}
+.talk-when {
+	white-space: nowrap;
+}
+.talk-title {
+	color: var(--foreground);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.talk-last {
+	color: var(--muted-foreground);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.talk-client {
+	color: var(--muted-foreground);
+	white-space: nowrap;
+}
+.talk-unread .talk-names,
+.talk-unread .talk-title {
+	font-weight: var(--font-medium);
+}
+.talk-unread .talk-last {
+	color: var(--foreground-secondary);
+}
+.channel {
+	display: inline-flex;
+	flex-shrink: 0;
+}
+
+.conversation {
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-lg);
+	width: 100%;
+	height: 100%;
+	min-height: 0;
+}
+.conversation-head {
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-sm);
+}
+.conversation-title-row {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: var(--gap);
+}
+.conversation-title {
+	font-size: var(--text-xl);
+	line-height: var(--leading-tight);
+	letter-spacing: var(--tracking-tight);
+	font-weight: var(--font-bold);
+}
+.conversation-actions {
+	display: inline-flex;
+	gap: var(--space-1);
+	flex-shrink: 0;
+}
+.conversation-meta {
+	display: flex;
+	align-items: center;
+	gap: var(--gap-sm);
+	color: var(--muted-foreground);
+}
+.conversation-body {
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-lg);
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+}
+.said {
+	display: flex;
+	gap: var(--gap-md);
+	align-items: flex-start;
+}
+.said-text {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	flex: 1;
+	min-width: 0;
+}
+.said-head {
+	display: flex;
+	align-items: center;
+	gap: var(--gap-sm);
+	min-height: var(--row-height);
+}
+.said-from {
+	font-weight: var(--font-medium);
+}
+.said-when {
+	color: var(--muted-foreground);
+}
+.said-body {
+	color: var(--foreground);
+	white-space: pre-wrap;
+	max-width: 64ch;
+}
+.said-mine .said-body {
+	color: var(--foreground-secondary);
+}
+.said-files {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-1);
+	padding-top: var(--space-1);
+}
+.conversation-foot {
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-sm);
+	margin-top: auto;
+}

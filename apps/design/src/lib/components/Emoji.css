@@ -1,0 +1,23 @@
+.emoji {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	width: var(--icon-size-lg);
+	height: var(--icon-size-lg);
+	font-family: var(--font-emoji);
+	font-size: var(--emoji-size);
+	line-height: 1;
+	user-select: none;
+	-webkit-user-select: none;
+}
+.emoji-sm {
+	width: var(--icon-size);
+	height: var(--icon-size);
+	font-size: var(--text-base);
+}
+.emoji-lg {
+	width: var(--control-height);
+	height: var(--control-height);
+	font-size: var(--text-xl);
+}

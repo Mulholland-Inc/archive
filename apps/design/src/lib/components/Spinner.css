@@ -1,0 +1,44 @@
+.spinner {
+	display: block;
+	flex-shrink: 0;
+	overflow: visible;
+	width: var(--spinner-width);
+	height: var(--spinner-height);
+}
+.spinner-sm {
+	width: var(--spinner-width-sm);
+	height: var(--spinner-height-sm);
+}
+.spinner-lg {
+	width: var(--spinner-width-lg);
+	height: var(--spinner-height-lg);
+}
+/* Stretched, it takes the room it is given and nothing from its own
+   drawing: a zero basis, grown by flex, and clipped where it ends. */
+.spinner-stretch {
+	flex: 1 1 0;
+	width: 0;
+	min-width: var(--spinner-width);
+	overflow: hidden;
+}
+.spinner-wave {
+	fill: none;
+	stroke: currentColor;
+	stroke-width: var(--spinner-stroke);
+	stroke-linecap: round;
+	vector-effect: non-scaling-stroke;
+	animation: spinner-roll var(--spinner-roll) linear infinite;
+}
+@keyframes spinner-roll {
+	from {
+		transform: translateX(0);
+	}
+	to {
+		transform: translateX(calc(var(--period) * 1px));
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.spinner-wave {
+		animation: none;
+	}
+}
