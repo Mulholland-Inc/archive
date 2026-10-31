@@ -98,7 +98,7 @@ Without subdomains, every request names its workspace, and secrets stay plain `a
 - **Terraform owns the app's Worker, CI deploys its files.** Terraform creates the Worker with a placeholder that answers 503, its custom domain, a Cloudflare token that may only edit Workers scripts in the account, and the repository's Actions secret and variables for it. After each API deploy on main, the image workflow builds the web app for the API's address and runs `wrangler deploy` with `apps/web/wrangler.jsonc`: API first, then app, so a new app never calls an older API. Terraform ignores the Worker's content after creating it, since its provider would otherwise hash a local build on every plan and roll the files back.
 - **The image comes through Artifact Registry.** Cloud Run cannot pull from ghcr.io, so a remote repository mirrors it. The ghcr.io package has to be public.
 - **Every image on main deploys itself.** The image workflow updates the service to that commit's image through workload identity federation. Terraform makes that identity and sets the repository's Actions variables naming it, and ignores the image after creating the service.
-- **Everything is in Terraform**, with its state kept locally where it runs. The Cloudflare account and zone are looked up from the zone's name.
+- **Everything is in Terraform**, with its state only in a versioned GCS bucket, `<project>-tfstate`, given at `terraform init`. The bucket is made with one `gcloud` command first, since the state can't live in a bucket the same state creates. The Cloudflare account and zone are looked up from the zone's name.
 
 ## How it was built
 
