@@ -2,7 +2,7 @@
   import Icon from '#kit/Icon.svelte';
   import { look, ui } from './looks.svelte.js';
 
-  let { seed = '', size = 40, icon = '', bare = false } = $props();
+  let { seed = '', size = 40, icon = '', tint = '', bare = false } = $props();
   const l = $derived(look(seed));
   const shown = $derived(icon || l.icon);
   const drawn = $derived(['robot', 'safe', 'bookcase', 'cottage', 'townhouse', 'farmhouse', 'cabinet', 'warehouse', 'factory', 'bank'].includes(shown));
@@ -22,7 +22,7 @@
   </span>
 {/snippet}
 
-<span class="bot" class:bare class:float class:building={drawn && !robot} style="--tint: {l.tint}; --size: {size}px">
+<span class="bot" class:bare class:float class:building={drawn && !robot} style="--tint: {tint || l.tint}; --size: {size}px">
   {#if drawn}
     <span class="art">
       {#if robot && bare}{@render layer('turn-robot-body')}{/if}

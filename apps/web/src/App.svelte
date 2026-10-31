@@ -9,6 +9,7 @@
   import Workspaces from './ui/Workspaces.svelte';
   import Panel from './ui/Panel.svelte';
   import Connect from './ui/Connect.svelte';
+  import NewArchive from './ui/NewArchive.svelte';
   import Recorder from './ui/Recorder.svelte';
   import Journal from './ui/Journal.svelte';
   import Machine from './ui/Machine.svelte';
@@ -39,6 +40,7 @@
   let dev = $state(devMode());
   let canAdd = $state(false);
   let connecting = $state(false);
+  let creating = $state(false);
   let recording = $state(false);
   let writing = $state(false);
   let notice = $state('');
@@ -122,9 +124,9 @@
     me = await api('/auth/me');
   }
 
-  async function addArchive(name, type) {
+  async function addArchive(name, details) {
     const w = await api('/auth/workspaces', { method: 'POST', body: { name, owner: me.actor.email }, workspace: me.workspaces[0].id });
-    setLook(w.id, { type });
+    setLook(w.id, details);
     switchTo(w.id);
   }
 
@@ -193,7 +195,7 @@
           <button class="side" type="button" aria-label="Sidebar" aria-expanded={open} onclick={toggle}><Icon name="panel-left" /></button>
         </span>
       </div>
-      <Workspaces workspaces={me.workspaces?.length ? me.workspaces : [{ id: me.workspace, name: 'Archive' }]} workspace={me.workspace} latest={chats[0]?.title} onpick={(id) => (id === me.workspace ? go('/') : switchTo(id))} {canAdd} onrename={renameArchive} onadd={addArchive} />
+      <Workspaces workspaces={me.workspaces?.length ? me.workspaces : [{ id: me.workspace, name: 'Archive' }]} workspace={me.workspace} latest={chats[0]?.title} onpick={(id) => (id === me.workspace ? go('/') : switchTo(id))} {canAdd} onrename={renameArchive} onadd={() => (creating = true)} />
       <nav>
         {#if dev}
           <NavItem href="/chat" icon="plus" active={route.first === 'chat' && !route.second}>New chat</NavItem>
@@ -283,6 +285,7 @@
   {#if catalogued}<Machine name={archive} seed={me.workspace} />{/if}
   {#if writing}<Journal seed={me.workspace} type={kind} onsave={(f) => keep([f])} onclose={() => (writing = false)} />{/if}
   {#if notice}<div class="notice" role="status">{notice}</div>{/if}
+  {#if creating}<NewArchive oncreate={addArchive} onclose={() => (creating = false)} />{/if}
   {#if connecting}<Connect workspace={me.workspace} onclose={() => (connecting = false)} />{/if}
 {/if}
 
