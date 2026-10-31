@@ -247,7 +247,7 @@ resource "google_cloud_run_v2_service" "this" {
         failure_threshold = 30
         period_seconds    = 10
         http_get {
-          path = "/healthz"
+          path = "/health"
         }
       }
 

@@ -573,7 +573,7 @@ func cliServe(ctx context.Context, h *Hub, a *Archive, addr string) error {
 	mux.HandleFunc("GET /files/{workspace}/{id}", h.inWorkspace((*Archive).fileSigned))
 	mux.HandleFunc("POST /hooks/run/{workspace}/{token}", h.inWorkspace((*Archive).workflowHook))
 	mux.Handle("/auth/", si.handler())
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("/mcp", h.mcp)
 	mux.HandleFunc("POST /tasks", h.tasksHTTP)
 	hs := &http.Server{Addr: addr, Handler: h.cors(mux), ReadHeaderTimeout: 10 * time.Second}
