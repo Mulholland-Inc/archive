@@ -29,3 +29,7 @@ button:disabled { cursor: default; }
 .app .icon-btn:hover { background: var(--fill-faint); color: var(--fg); }
 
 .app .btn, .app .btn-sm { font-size: var(--text-ui); }
+
+/* The app's own accent is federal navy. The kit's blue stays for the site. */
+:root { --primary: #22407a; --primary-hover: #2c4f92; }
+[data-theme="dark"] { --primary: #3a5f9e; --primary-hover: #4a70b0; }

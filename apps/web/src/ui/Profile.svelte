@@ -1,22 +1,16 @@
 <script>
   import Icon from '#kit/Icon.svelte';
   import Avatar from './Avatar.svelte';
+  import Theme from '#kit/Theme.svelte';
+  import { setFloating, ui } from './looks.svelte.js';
 
-  let { name, spaces = [], home, current = '', onpick, oncreate, workspaces = [], workspace = '', onworkspace } = $props();
-  let open = $state(false);
+  let { name, dev = false, ondev, onsignout, spaces = [], home, current = '', onpick, oncreate } = $props();
   let adding = $state(false);
   let draft = $state('');
   let failed = $state(false);
-  let root = $state();
 
   const label = (s) => (s.id === home ? 'Personal' : s.name.replaceAll('_', ' '));
   const here = $derived(spaces.find((s) => s.name === current));
-  const team = $derived(workspaces.length > 1 ? workspaces.find((w) => w.id === workspace) : null);
-
-  function choose(id) {
-    open = false;
-    if (id !== workspace) onworkspace(id);
-  }
 
   function pick(space) {
     open = false;
@@ -39,6 +33,9 @@
   $effect(() => {
     if (!open) adding = failed = false;
   });
+  let open = $state(false);
+  let root = $state();
+
 
   $effect(() => {
     if (!open) return;
@@ -54,38 +51,42 @@
 </script>
 
 <div class="profile" bind:this={root}>
-  <button class="me" type="button" aria-haspopup="menu" aria-expanded={open} aria-label="Switch space" onclick={() => (open = !open)}>
+  <button class="me" type="button" aria-haspopup="menu" aria-expanded={open} aria-label="Account" onclick={() => (open = !open)}>
     <Avatar {name} />
     <span class="text">
-      <span class="name">{name}</span>
-      <span class="space">{team ? `${team.name} · ` : ''}{here ? label(here) : 'All spaces'}</span>
+      <span class="name" title={name}>{name}</span>
+      {#if dev}<span class="space">{here ? label(here) : 'All spaces'}</span>{/if}
     </span>
-    <span class="updown"><Icon name="chevrons-up-down" /></span>
   </button>
   {#if open}
     <div class="menu" role="menu">
-      {#each workspaces as w (w.id)}
-        <button class="item workspace" role="menuitemradio" aria-checked={w.id === workspace} onclick={() => choose(w.id)}>
-          <span>{w.name}</span>{#if w.id === workspace}<Icon name="check" />{/if}
+      {#if dev}
+        <button class="item" role="menuitemradio" aria-checked={!current} onclick={() => pick('')}>
+          <span>All spaces</span>{#if !current}<Icon name="check" />{/if}
         </button>
-      {/each}
-      {#if workspaces.length}<hr />{/if}
-      <button class="item" role="menuitemradio" aria-checked={!current} onclick={() => pick('')}>
-        <span>All spaces</span>{#if !current}<Icon name="check" />{/if}
-      </button>
-      {#each spaces as s (s.id)}
-        <button class="item" role="menuitemradio" aria-checked={s.name === current} onclick={() => pick(s.name)}>
-          <span>{label(s)}</span>{#if s.name === current}<Icon name="check" />{/if}
-        </button>
-      {/each}
-      {#if adding}
-        <form class="item add" class:failed onsubmit={create}>
-          <Icon name="plus" />
-          <input bind:value={draft} placeholder="Space name" aria-label="Space name" {@attach (el) => el.focus()} oninput={() => (failed = false)} />
-        </form>
-      {:else}
-        <button class="item new" role="menuitem" onclick={() => (adding = true)}><Icon name="plus" /><span>New space</span></button>
+        {#each spaces as s (s.id)}
+          <button class="item" role="menuitemradio" aria-checked={s.name === current} onclick={() => pick(s.name)}>
+            <span>{label(s)}</span>{#if s.name === current}<Icon name="check" />{/if}
+          </button>
+        {/each}
+        {#if adding}
+          <form class="item add" class:failed onsubmit={create}>
+            <Icon name="plus" />
+            <input bind:value={draft} placeholder="Space name" aria-label="Space name" {@attach (el) => el.focus()} oninput={() => (failed = false)} />
+          </form>
+        {:else}
+          <button class="item new" role="menuitem" onclick={() => (adding = true)}><Icon name="plus" /><span>New space</span></button>
+        {/if}
+        <hr />
       {/if}
+      <div class="item plain"><span>Appearance</span><Theme /></div>
+      <button class="item" role="menuitemcheckbox" aria-checked={ui.floating} onclick={() => setFloating(!ui.floating)}>
+        <span>Floating icons</span>{#if ui.floating}<Icon name="check" />{/if}
+      </button>
+      <button class="item" role="menuitemcheckbox" aria-checked={dev} onclick={() => { open = false; ondev(); }}>
+        <span>Developer mode</span>{#if dev}<Icon name="check" />{/if}
+      </button>
+      <button class="item" role="menuitem" onclick={onsignout}><span>Log out</span></button>
     </div>
   {/if}
 </div>
@@ -105,10 +106,9 @@
   }
   .me:hover, .me[aria-expanded='true'] { background: var(--fill-faint); }
   .text { display: flex; flex: 1; flex-direction: column; min-width: 0; line-height: var(--leading-snug); }
-  .name, .space { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .name { color: var(--fg-soft); }
-  .space { color: var(--fg-muted); font-size: var(--text-meta); text-transform: capitalize; }
-  .updown { display: flex; color: var(--fg-muted); }
+  .space { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .name { display: -webkit-box; overflow: hidden; color: var(--fg); overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  .space { color: var(--fg-muted); font-size: var(--text-meta); }
   .menu {
     position: absolute;
     bottom: calc(100% + var(--space-1));
@@ -139,7 +139,8 @@
   }
   .item:hover, .item:focus-visible { outline: 0; background: var(--fill); color: var(--fg); }
   .item[aria-checked='true'] { color: var(--fg); }
-  .workspace { text-transform: none; }
+  .plain { padding-block: var(--space-0-5); }
+  .plain:hover { background: none; }
   .new, .add { justify-content: flex-start; color: var(--fg-muted); }
   hr { flex: none; min-height: var(--hairline); margin: var(--space-1); border: 0; }
   .add { background: var(--fill-faint); }

@@ -54,8 +54,12 @@
   import Stream from './ui/Stream.svelte';
   import RunCall from './ui/RunCall.svelte';
   import Note from './ui/Note.svelte';
+  import Setup from './ui/Setup.svelte';
+  import { keepsake } from './ui/keepsake.js';
+  import Capture from './ui/Capture.svelte';
+  import Dictate from './ui/Dictate.svelte';
 
-  let { id = '', name = '', onsaved } = $props();
+  let { id = '', name = '', email = '', family = '', short = '', tint = '', kind = 'family', onfiles, onsaved } = $props();
 
   let current = $state('');
   let title = $state('');
@@ -71,7 +75,12 @@
   let pinned = true;
 
   const empty = $derived(!current && !turns.length);
-  const hello = greeting(untrack(() => name));
+  let picture = $state(null);
+  $effect(() => {
+    if (kind === 'family') keepsake().then((p) => (picture = p)).catch(() => {});
+  });
+  const framed = $derived(empty && picture);
+  const hello = $derived(family || greeting(name));
 
   $effect(() => {
     const want = id;
@@ -242,7 +251,7 @@
     if (!confirm('Delete this chat?')) return;
     await api(`/api/chats/${current}`, { method: 'DELETE' });
     onsaved?.();
-    go('/chat');
+    go('/');
   }
 
   function segments(parts) {
@@ -256,11 +265,12 @@
   }
 </script>
 
-<Heading plain column="chat" title={empty ? '' : current ? title || 'Untitled' : 'New chat'} onrename={current ? rename : undefined}>
-  {#if current}<Button icon="trash" title="Delete chat" aria-label="Delete chat" onclick={remove} />{/if}
-</Heading>
-<div class="chat" class:empty bind:this={pane}>
-  {#if empty}<h2 class="hello">{hello}</h2>{/if}
+<Heading plain column="chat" title="" />
+{#if current}<span class="remove"><Button icon="trash" title="Delete chat" aria-label="Delete chat" onclick={remove} /></span>{/if}
+<div class="chat" class:empty style={tint ? `--primary: ${tint}; --primary-hover: ${tint}; --tint: ${tint}` : undefined} bind:this={pane}>
+  {#if empty}
+    <h2 class="hello">{hello}</h2>
+  {/if}
   <div class="log" class:idle={empty && !failed} bind:this={log} aria-live="polite">
     {#if failed}<Note error>{failed}</Note>{/if}
     {#each turns as turn, i (turn.key)}
@@ -293,16 +303,33 @@
     {/each}
     {#if loading}<div class="thinking" role="status" aria-label="Loading"><span></span><span></span><span></span></div>{/if}
   </div>
-  <div class="dock">
-    <Composer bind:value={draft} bind:field {busy} onsend={send} onstop={stop} placeholder="Ask anything" aria-label="Message" />
+  <div class="stage" class:framed>
+    {#if framed}<img src={picture.url} alt={picture.title} />{/if}
+    <div class="dock">
+    <Composer bind:value={draft} bind:field {busy} ontalk={() => dispatchEvent(new CustomEvent('capture-memory'))} onsend={send} onstop={stop} placeholder={short ? `Message ${short}` : 'Ask anything'} aria-label="Message">
+      {#snippet lead()}<Capture {onfiles} {kind} />{/snippet}
+      {#snippet tail()}<Dictate bind:value={draft} />{/snippet}
+    </Composer>
+    </div>
   </div>
+  {#if framed}<p class="caption"><span>From your archive: {picture.title}</span><a href="/library">All photos</a></p>{/if}
+  {#if empty}<Setup {email} />{/if}
 </div>
 
 <style>
   .chat { --text-table: var(--text-chat); display: flex; flex: 1; flex-direction: column; align-items: center; gap: var(--space-5); min-height: 0; padding: var(--gutter); overflow-y: var(--sheet-overflow); overscroll-behavior-y: none; font-size: var(--text-chat); }
-  .log { display: flex; flex: 1; flex-direction: column; gap: var(--space-6); width: 100%; max-width: var(--chat-width); min-width: 0; }
+  .remove { position: absolute; top: var(--space-2); right: var(--space-3); z-index: var(--z-raised); }
+  .log { display: flex; flex: 1; flex-direction: column; gap: var(--space-3); padding-top: var(--space-7, 40px); width: 100%; max-width: var(--chat-width); min-width: 0; }
   .empty { justify-content: center; gap: var(--space-6); }
   .empty .log { flex: none; }
+  .empty:has(.framed) { gap: var(--space-3); }
+  .stage { display: flex; flex: none; justify-content: center; width: 100%; }
+  .framed { position: relative; max-width: var(--composer-width); aspect-ratio: 16 / 9; max-height: 52svh; padding: var(--space-5) var(--space-5) 0; overflow: hidden; border-radius: var(--radius-panel); }
+  .framed img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .framed .dock { position: relative; }
+  .caption { display: flex; justify-content: space-between; gap: var(--space-3); width: 100%; max-width: var(--composer-width); margin-top: calc(-1 * var(--space-1)); padding: 0 var(--space-1); color: var(--fg-muted); font-size: var(--text-meta); }
+  .caption a { flex: none; }
+  .caption a:hover { color: var(--fg); }
   .log :global(.wrap) { margin-inline: 0; }
   .idle { display: none; }
   .hello {
@@ -315,13 +342,14 @@
   .user {
     align-self: flex-end;
     max-width: var(--bubble-width);
-    padding: var(--space-2);
-    border-radius: var(--radius-sm);
-    background: var(--fill);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-panel);
+    background: var(--tint, var(--fill));
+    color: #fff;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
-  .turn { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+  .turn { display: flex; flex-direction: column; gap: var(--space-3); align-self: flex-start; max-width: 100%; min-width: 0; padding: var(--space-3); border-radius: var(--radius-panel); background: var(--surface); }
   .fresh { animation: rise var(--duration-normal) var(--ease-out) both; }
   .problem { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
   .thinking { display: flex; gap: var(--space-1); padding: var(--space-2); align-self: flex-start; }

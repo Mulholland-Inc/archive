@@ -1,12 +1,15 @@
 <script>
   import { getContext, tick } from 'svelte';
   import Icon from '#kit/Icon.svelte';
+  import { devMode } from '../api.js';
 
   let { title, plain = false, column = '', onrename, children } = $props();
   let editing = $state(false);
   let draft = $state('');
   let field = $state();
   const side = getContext('side');
+  // A way back to where you were, on pages you reach from inside the app and not from the sidebar.
+  const back = !devMode() && history.state?.steps > 0 && !['/', '/library', '/users'].includes(location.pathname);
 
   async function edit() {
     draft = title;
@@ -30,6 +33,7 @@
 
 <header class={[column, !title && 'bare']}>
   {#if side}<button class="side" type="button" aria-label="Sidebar" aria-expanded={side.open} onclick={side.toggle}><Icon name="panel-left" /></button>{/if}
+  {#if back && title}<button class="back" type="button" aria-label="Back" title="Back" onclick={() => history.back()}><Icon name="arrow-left" /></button>{/if}
   {#if editing}
     <input class="title editable" bind:this={field} bind:value={draft} onblur={save} onkeydown={key} aria-label="Title" />
   {:else if onrename}
@@ -41,6 +45,9 @@
 </header>
 
 <style>
+  .back { display: grid; place-items: center; flex: none; width: 28px; height: 28px; margin-right: calc(-1 * var(--space-1)); border-radius: 50%; color: var(--fg-muted); transition: background var(--duration-fast), color var(--duration-fast); }
+  .back:hover { background: var(--fill); color: var(--fg); }
+  .back :global(.icon) { width: 18px; height: 18px; }
   .side { display: var(--narrow-only); flex: none; align-items: center; justify-content: center; width: var(--size-control-lg); height: var(--size-control-lg); color: var(--fg-muted); transition: color var(--duration-fast); }
   .side :global(.icon) { width: var(--size-icon-lg); height: var(--size-icon-lg); }
   .side:hover { color: var(--fg); }

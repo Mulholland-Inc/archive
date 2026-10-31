@@ -7,6 +7,7 @@
   import Heading from './ui/Heading.svelte';
   import Sheet from './ui/Sheet.svelte';
   import Note from './ui/Note.svelte';
+  import Empty from './ui/Empty.svelte';
   import { cycle, order, read } from './ui/filter.js';
 
   let files = $state([]);
@@ -31,6 +32,7 @@
     const hits = words.length ? rows.filter((f) => words.every((w) => f.name.toLowerCase().includes(w))) : rows;
     return order(hits, q.sort, columns);
   });
+
   const day = (v) => new Date(v).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 
   async function load() {
@@ -66,7 +68,9 @@
 </script>
 
 <Heading title="Files">
+  {#if !loaded || files.length}
   <Button small icon="plus" onclick={() => picker.click()} disabled={busy}>{busy ? 'Uploading…' : 'Add files'}</Button>
+  {/if}
   <input bind:this={picker} type="file" multiple hidden onchange={upload} />
 </Heading>
 <Filters bind:q>
@@ -84,7 +88,7 @@
         {/snippet}
       </DataTable>
     {:else if loaded}
-      <Note>{files.length ? 'Nothing matches' : 'No files yet'}</Note>
+      {#if files.length}<Note>Nothing matches</Note>{:else}<Empty title="No files yet">Add a PDF, a photo or an email to get started.{#snippet action()}<Button small icon="plus" onclick={() => picker.click()} disabled={busy}>{busy ? 'Uploading…' : 'Add files'}</Button>{/snippet}</Empty>{/if}
     {/if}
   </Sheet>
 </Filters>

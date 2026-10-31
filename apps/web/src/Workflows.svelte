@@ -50,6 +50,7 @@
   import DataTable from './ui/DataTable.svelte';
   import Heading from './ui/Heading.svelte';
   import Note from './ui/Note.svelte';
+  import Empty from './ui/Empty.svelte';
   import Sheet from './ui/Sheet.svelte';
 
   let flows = $state(null);
@@ -106,7 +107,7 @@
       {/snippet}
     </DataTable>
   {:else if flows}
-    <Note>No workflows yet</Note>
+    <Empty title="No workflows yet">Ask your AI to set one up, and it will show here.</Empty>
   {/if}
 </Sheet>
 

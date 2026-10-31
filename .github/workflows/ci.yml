@@ -39,3 +39,17 @@ jobs:
         working-directory: src
       - run: go test -count=1 -timeout 25m ./...
         working-directory: src
+  web:
+    name: web
+    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ${{ vars.CI_RUNNER || 'marzy-devbox' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+      - run: npm ci
+        working-directory: apps/web
+      - run: npm run build
+        working-directory: apps/web

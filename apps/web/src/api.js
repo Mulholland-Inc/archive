@@ -3,7 +3,7 @@ export class Unauthorized extends Error {}
 export const API = location.hostname.startsWith('app.') ? location.origin.replace('//app.', '//api.') : '';
 
 export function go(path) {
-  history.pushState(null, '', path);
+  history.pushState({ steps: (history.state?.steps ?? 0) + 1 }, '', path);
   dispatchEvent(new PopStateEvent('popstate'));
 }
 
@@ -97,9 +97,9 @@ export async function passkeyRegister(user) {
   rememberPasskey(user, 'yes');
 }
 
-async function send(path, { method = 'GET', body, raw, signal } = {}) {
+export async function send(path, { method = 'GET', body, raw, signal, workspace: named } = {}) {
   const init = { method, headers: {}, signal, credentials: 'include' };
-  if (workspace()) init.headers['Archive-Workspace'] = workspace();
+  if (named || workspace()) init.headers['Archive-Workspace'] = named || workspace();
   if (space()) init.headers['Archive-Space'] = space();
   if (raw !== undefined) init.body = raw;
   else if (body !== undefined) {
@@ -162,4 +162,41 @@ export function size(n) {
   if (n < 1024) return `${n} B`;
   if (n < 1 << 20) return `${(n / 1024).toFixed(0)} KB`;
   return `${(n / (1 << 20)).toFixed(1)} MB`;
+}
+
+export function setupHidden() {
+  try {
+    return localStorage[`setup:${workspace()}`] === 'hidden';
+  } catch {
+    return false;
+  }
+}
+
+export function hideSetup() {
+  try {
+    localStorage[`setup:${workspace()}`] = 'hidden';
+  } catch {}
+}
+
+export function devMode() {
+  try {
+    return localStorage.dev === 'on';
+  } catch {
+    return false;
+  }
+}
+
+export function setDevMode(on) {
+  try {
+    if (on) localStorage.dev = 'on';
+    else delete localStorage.dev;
+  } catch {}
+}
+
+export function connectedApps() {
+  try {
+    return JSON.parse(localStorage[`connected:${workspace()}`] ?? '[]');
+  } catch {
+    return [];
+  }
 }
