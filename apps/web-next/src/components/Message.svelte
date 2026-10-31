@@ -4,8 +4,6 @@
   import Steps from './Steps.svelte';
   import Attachment from './Attachment.svelte';
   import IconButton from './IconButton.svelte';
-  import VaultIcon from './VaultIcon.svelte';
-  import { ws } from '../lib/app.svelte.js';
   import { rise } from '../lib/motion.js';
 
   let { message, streaming = false, onedit } = $props();
@@ -34,9 +32,6 @@
     {/if}
     {#if message.blocks?.length}
       <Prose blocks={message.blocks} />
-    {/if}
-    {#if streaming}
-      <span class="working"><VaultIcon icon={ws().look.icon} tint={ws().look.tint} seed={ws().id} size="sm" active label="Working" /></span>
     {/if}
   </article>
 {/if}
@@ -86,10 +81,5 @@
   .user:hover .actions,
   .actions:focus-within {
     opacity: 1;
-  }
-
-  .working {
-    display: inline-flex;
-    color: var(--color-text-secondary);
   }
 </style>
