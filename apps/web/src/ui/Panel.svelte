@@ -2,6 +2,7 @@
   import { api } from '../api.js';
   import Icon from '#kit/Icon.svelte';
   import Bot from './Bot.svelte';
+  import Members from './Members.svelte';
   import { incoming, look, setLook, shortName, TINTS, TYPES } from './looks.svelte.js';
 
   let { name = '', seed = '', views = [], archives = [], spaces = [], home = '', current = '', email = '', onpick, oncreate } = $props();
@@ -27,15 +28,36 @@
 
   let who = $state('');
   let reach = $state('');
-  let sharing = $state('');
+  let people = $state(null);
+  let counts = $state({});
+  let menu = $state(null);
 
   const l = $derived(look(seed));
   const label = (s) => (s.id === home ? 'Personal' : s.name.replaceAll('_', ' '));
-  const isLocked = (s) => l.locked.includes(s.name);
+  // The engine hides a space from anyone outside it; a locked one just has a name for who's inside.
+  const shown = $derived(spaces.filter((s) => !(l.shared && l.locked.includes(s.name))));
+  const groupOf = (s) => l.groups[s.name] ?? '';
 
-  function lock(s) {
-    setLook(seed, { locked: isLocked(s) ? l.locked.filter((n) => n !== s.name) : [...l.locked, s.name] });
+  for (const s of spaces) {
+    if (s.id !== home) api(`/auth/spaces/${encodeURIComponent(s.name)}/members`).then((m) => (counts[s.name] = m?.length ?? 0)).catch(() => {});
   }
+
+  function openMenu(e, s) {
+    e.preventDefault();
+    menu = { space: s, x: Math.min(e.clientX, innerWidth - 200), y: Math.min(e.clientY, innerHeight - 100) };
+  }
+
+  $effect(() => {
+    if (!menu) return;
+    const close = () => (menu = null);
+    const esc = (e) => e.key === 'Escape' && close();
+    addEventListener('pointerdown', close);
+    addEventListener('keydown', esc);
+    return () => {
+      removeEventListener('pointerdown', close);
+      removeEventListener('keydown', esc);
+    };
+  });
 
   const nameOf = (id) => {
     const w = archives.find((a) => a.id === id);
@@ -48,11 +70,6 @@
   function share(s, id) {
     const to = sharedTo(s);
     setLook(seed, { shares: { ...l.shares, [s.name]: to.includes(id) ? to.filter((x) => x !== id) : [...to, id] } });
-  }
-
-  function choose(s) {
-    if (l.shared && isLocked(s)) return;
-    onpick(s.name);
   }
 
   function setType(type) {
@@ -121,31 +138,16 @@
     <div class="list">
       {@render help('Spaces', 'Rooms inside this archive. Share a room with someone without sharing the rest.')}
       <button class="link" class:on={!current} type="button" onclick={() => onpick('')}><Icon name="layers" /><span>Everything</span></button>
-      {#each spaces as s (s.id)}
-        {@const shut = isLocked(s)}
-        <div class="line">
-          <button class="link" class:on={s.name === current} class:shut={shut && l.shared} type="button" disabled={shut && l.shared} onclick={() => choose(s)}>
-            <Icon name={shut ? 'lock' : s.id === home ? 'user' : 'folder'} /><span>{label(s)}</span>
-            {#if shut && l.shared}<small>Locked</small>{/if}
-            {#if sharedTo(s).length}<span class="linked" title="Shared with {sharedTo(s).map(nameOf).join(', ')}"><Icon name="users-round" /></span>{/if}
+      {#each shown as s (s.id)}
+        <div class="line" role="group" oncontextmenu={(e) => s.id !== home && openMenu(e, s)}>
+          <button class="link" class:on={s.name === current} type="button" onclick={() => onpick(s.name)}>
+            <Icon name={groupOf(s) ? 'lock' : s.id === home ? 'user' : 'folder'} />
+            <span class="named">{label(s)}{#if groupOf(s)}<small>{groupOf(s)}</small>{/if}</span>
           </button>
-          {#if !l.shared && s.id !== home}
-            <span class="tools">
-              <button class="key" type="button" aria-label="Share {label(s)}" aria-expanded={sharing === s.id} title="Share with another archive" onclick={() => (sharing = sharing === s.id ? '' : s.id)}><Icon name="share-2" /></button>
-              <button class="key" type="button" aria-label="{shut ? 'Unlock' : 'Lock'} {label(s)}" title={shut ? 'Unlock' : 'Lock'} onclick={() => lock(s)}><Icon name={shut ? 'lock-open' : 'lock'} /></button>
-            </span>
+          {#if s.id !== home}
+            <button class="count" type="button" aria-label="People in {label(s)}" title="People" onclick={() => (people = s)}><Icon name="users-round" />{counts[s.name] ?? ''}</button>
           {/if}
         </div>
-        {#if sharedTo(s).length}<p class="with">Shared with {sharedTo(s).map(nameOf).join(', ')}</p>{/if}
-        {#if sharing === s.id}
-          <div class="to">
-            {#each others as a (a.id)}
-              <button type="button" aria-pressed={sharedTo(s).includes(a.id)} onclick={() => share(s, a.id)}>
-                <Bot seed={a.id} size={22} /><span>{nameOf(a.id)}</span>{#if sharedTo(s).includes(a.id)}<Icon name="check" />{/if}
-              </button>
-            {/each}
-          </div>
-        {/if}
       {/each}
       {#if adding}
         <form class="link" class:failed onsubmit={create}>
@@ -155,7 +157,6 @@
       {:else if admin && !l.shared}
         <button class="link quiet" type="button" onclick={() => (adding = true)}><Icon name="plus" /><span>Add space</span></button>
       {/if}
-      {#if l.shared && l.locked.length}<p class="note">Locked by the archive's owners. Ask them if you need access.</p>{/if}
     </div>
   {/if}
 
@@ -198,6 +199,17 @@
   {/if}
 </aside>
 
+{#if menu}
+  <div class="menu" role="menu" style="left: {menu.x}px; top: {menu.y}px" onpointerdown={(e) => e.stopPropagation()}>
+    <button type="button" role="menuitem" onclick={() => { onpick(menu.space.name); menu = null; }}><Icon name="folder-open" />Open</button>
+    <button type="button" role="menuitem" onclick={() => { people = menu.space; menu = null; }}><Icon name="users-round" />People and sharing</button>
+  </div>
+{/if}
+
+{#if people}
+  <Members space={people} title={label(people)} group={groupOf(people)} self={email} {others} sharedTo={sharedTo(people)} {nameOf} onshare={(id) => share(people, id)} ongroup={(g) => setLook(seed, { groups: { ...l.groups, [people.name]: g } })} onchange={(n) => (counts[people.name] = n)} onclose={() => (people = null)} />
+{/if}
+
 <style>
   .panel { display: flex; flex: none; flex-direction: column; align-items: center; gap: var(--space-3); width: 280px; max-height: 100svh; padding: var(--space-6) var(--space-4) calc(var(--space-6) + 40px); overflow-y: auto; }
   .avatar { position: relative; flex: none; }
@@ -219,29 +231,25 @@
   .tints .on { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--fg-muted); }
   .list { display: flex; flex: none; flex-direction: column; gap: var(--space-0-5); width: 100%; font-size: var(--text-table); }
   .line { position: relative; display: flex; }
+  .line .link { padding-right: 52px; }
+  .named { display: flex; flex-direction: column; min-width: 0; line-height: var(--leading-snug); }
+  .named small { color: var(--fg-muted); font-size: var(--text-meta); text-transform: none; }
+  .count { position: absolute; top: 50%; right: var(--space-1); display: flex; align-items: center; gap: 3px; padding: 2px var(--space-1); transform: translateY(-50%); border-radius: var(--radius-full); color: var(--fg-muted); font-size: var(--text-meta); }
+  .count:hover { background: var(--fill); color: var(--fg); }
+  .count :global(.icon) { width: 13px; height: 13px; }
+  .menu { position: fixed; z-index: var(--z-nav); display: flex; flex-direction: column; min-width: 180px; padding: var(--space-1); border-radius: var(--radius-item); background: var(--surface-raised); box-shadow: 0 8px 28px rgb(0 0 0 / 22%); }
+  .menu button { display: flex; align-items: center; gap: var(--space-1-5); padding: var(--space-1) var(--space-1-5); border-radius: var(--radius-sm); text-align: left; }
+  .menu button:hover { background: var(--fill); }
+  .menu :global(.icon) { width: 15px; height: 15px; }
   .link { display: flex; align-items: center; gap: var(--space-2); width: 100%; padding: var(--space-1-5); border-radius: var(--radius-nav); text-align: left; text-transform: capitalize; transition: background var(--duration-fast); }
   a.link:hover, button.link:hover:enabled { background: var(--fill-faint); }
   .link.on { background: var(--fill); }
-  .shut { color: var(--fg-muted); cursor: not-allowed; }
   small { margin-left: auto; font-size: var(--text-meta); }
-  .tools { position: absolute; top: 50%; right: var(--space-1); display: flex; transform: translateY(-50%); }
-  .key { display: grid; place-items: center; width: 26px; height: 26px; color: var(--fg-muted); opacity: 0; }
-  .line:hover .key, .key:focus-visible, .key[aria-expanded='true'] { opacity: 1; }
   .linked { display: grid; place-items: center; flex: none; width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: #fff; }
   .linked :global(.icon) { width: 12px; height: 12px; }
-  .link .linked { margin-left: auto; }
-  .line:hover .link .linked { visibility: hidden; }
-  .with { padding: 0 var(--space-1-5) var(--space-1) 36px; color: var(--fg-muted); font-size: var(--text-meta); }
-  .to { display: flex; flex-direction: column; gap: var(--space-0-5); padding: var(--space-1); border-radius: var(--radius-nav); background: var(--surface); }
-  .to button { display: flex; align-items: center; gap: var(--space-2); width: 100%; padding: var(--space-1); border-radius: var(--radius-nav); text-align: left; }
-  .to button:hover { background: var(--fill-faint); }
-  .to span:not(.bot) { flex: 1; min-width: 0; }
   .in { align-items: flex-start; }
   .in .linked { margin-left: 0; }
   .in small { display: block; margin: 0; color: var(--fg-muted); text-transform: none; }
-  .key:hover { color: var(--fg); }
-  @media (hover: none) { .key { opacity: 1; } }
-  .key :global(.icon) { width: var(--size-icon); height: var(--size-icon); }
   .quiet { color: var(--fg-muted); }
   .failed { color: var(--danger); }
   input { flex: 1; min-width: 0; padding: 0; color: var(--fg); outline: 0; }
