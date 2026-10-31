@@ -95,7 +95,7 @@
     <div class="card" role="dialog" aria-label="Ask a Mulholland archivist">
       <header>
         <Bot seed="archivist" icon="archivist" tint="#e8c39e" size={64} bare />
-        <div><h2>Ask a Mulholland archivist</h2><p>{HELP ? 'A real person on our team' : 'Demo'}</p></div>
+        <div><h2>Ask a Mulholland archivist</h2><p>{HELP ? 'Talk to a real person, 24/7' : 'Demo'}</p></div>
         <button class="close" type="button" aria-label="Close" onclick={() => (open = false)}><Icon name="x" /></button>
       </header>
       <div class="turns">
