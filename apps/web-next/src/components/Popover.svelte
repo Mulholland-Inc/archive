@@ -38,7 +38,7 @@
     padding: var(--space-4);
     border-radius: var(--radius-xl);
     background: var(--color-surface-raised);
-    box-shadow: var(--shadow-md);
+    box-shadow: var(--ring);
   }
 
   .sm {

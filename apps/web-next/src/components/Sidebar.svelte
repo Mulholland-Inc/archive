@@ -85,7 +85,7 @@
     .drawer {
       transform: none;
       visibility: visible;
-      box-shadow: var(--shadow-lg);
+      box-shadow: var(--ring-strong);
     }
 
     .scrim {

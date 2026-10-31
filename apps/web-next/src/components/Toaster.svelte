@@ -43,7 +43,7 @@
     border-radius: var(--radius-lg);
     background: var(--color-inverse);
     color: var(--color-text-inverse);
-    box-shadow: var(--shadow-lg);
+    box-shadow: var(--ring-strong);
     font-size: var(--text-md);
     pointer-events: auto;
   }

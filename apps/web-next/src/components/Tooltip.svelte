@@ -75,7 +75,7 @@
     font-weight: var(--weight-medium);
     line-height: var(--leading-snug);
     pointer-events: none;
-    box-shadow: var(--shadow-sm);
+    box-shadow: var(--ring);
   }
 
   .tip span {

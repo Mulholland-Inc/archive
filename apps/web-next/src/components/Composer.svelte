@@ -146,13 +146,13 @@
     padding: var(--composer-pad);
     border-radius: var(--composer-radius);
     background: var(--color-surface);
-    box-shadow: var(--shadow-composer);
+    box-shadow: var(--ring);
     cursor: text;
     transition: box-shadow var(--duration-normal) var(--ease-out);
   }
 
   .focused {
-    box-shadow: var(--shadow-composer-focus);
+    box-shadow: var(--ring-strong);
   }
 
   .atts {

@@ -99,7 +99,7 @@
   const sizes = ['text-4xl', 'text-3xl', 'text-2xl', 'text-xl', 'text-lg', 'text-base', 'text-md', 'text-sm', 'text-xs', 'text-2xs'];
   const spaces = ['space-1', 'space-2', 'space-3', 'space-4', 'space-5', 'space-6', 'space-8', 'space-10', 'space-12', 'space-16', 'space-20', 'space-24'];
   const radii = ['radius-xs', 'radius-sm', 'radius-md', 'radius-lg', 'radius-xl', 'radius-2xl', 'radius-full'];
-  const shadows = ['shadow-xs', 'shadow-sm', 'shadow-md', 'shadow-lg', 'shadow-composer'];
+  const shadows = ['ring-subtle', 'ring', 'ring-strong'];
 
   let text = $state('Leeds, winter 1974');
   let note = $state('');
@@ -190,7 +190,7 @@
         <SpecimenBlock title="Radii">
           <Grid min="tile" gap="4">{#each radii as r (r)}<Swatch token={r} />{/each}</Grid>
         </SpecimenBlock>
-        <SpecimenBlock title="Shadows">
+        <SpecimenBlock title="Rings">
           <Grid min="tile" gap="4">{#each shadows as s (s)}<Swatch token={s} />{/each}</Grid>
         </SpecimenBlock>
       </SpecimenSection>

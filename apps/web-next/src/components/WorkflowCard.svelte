@@ -44,7 +44,7 @@
   }
 
   .card:hover {
-    box-shadow: inset 0 0 0 var(--border-width) var(--color-border-strong), var(--shadow-sm);
+    box-shadow: inset 0 0 0 var(--border-width) var(--color-border-strong), var(--ring);
   }
 
   .off {

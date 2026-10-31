@@ -84,7 +84,7 @@
     padding: var(--space-6);
     border-radius: var(--radius-xl);
     background: var(--color-surface-raised);
-    box-shadow: var(--shadow-lg);
+    box-shadow: var(--ring-strong);
     outline: none;
   }
 

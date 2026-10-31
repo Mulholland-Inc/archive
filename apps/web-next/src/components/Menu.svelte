@@ -81,7 +81,7 @@
     padding: var(--space-1-5);
     border-radius: var(--radius-lg);
     background: var(--color-surface-raised);
-    box-shadow: var(--shadow-md);
+    box-shadow: var(--ring);
     font-size: var(--text-md);
     z-index: var(--z-popover);
   }

@@ -51,7 +51,7 @@
     height: var(--switch-knob);
     border-radius: var(--radius-full);
     background: var(--color-knob);
-    box-shadow: var(--shadow-xs);
+    box-shadow: var(--ring-subtle);
     transition: transform var(--duration-normal) var(--ease-emphasized);
   }
 

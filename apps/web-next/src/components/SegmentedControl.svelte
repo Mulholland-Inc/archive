@@ -89,7 +89,7 @@
   .on {
     background: var(--color-surface-raised);
     color: var(--color-text);
-    box-shadow: var(--shadow-xs), 0 0 0 var(--border-width) var(--color-border-subtle);
+    box-shadow: var(--ring-subtle), 0 0 0 var(--border-width) var(--color-border-subtle);
   }
 
   .sm .item {

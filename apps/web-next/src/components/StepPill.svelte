@@ -22,7 +22,7 @@
     padding: var(--space-3);
     border-radius: var(--radius-xl);
     background: var(--color-surface);
-    box-shadow: var(--shadow-composer);
+    box-shadow: var(--ring);
     color: var(--color-text-secondary);
     font-size: var(--text-md);
     text-align: start;
@@ -30,7 +30,7 @@
   }
 
   .pill:hover {
-    box-shadow: var(--shadow-composer-focus);
+    box-shadow: var(--ring-strong);
   }
 
   .glyph {

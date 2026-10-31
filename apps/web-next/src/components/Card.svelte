@@ -36,7 +36,7 @@
 
   .raised {
     background: var(--color-surface);
-    box-shadow: var(--shadow-sm), inset 0 0 0 var(--border-width) var(--color-border-subtle);
+    box-shadow: var(--ring), inset 0 0 0 var(--border-width) var(--color-border-subtle);
   }
 
   .full {
@@ -49,7 +49,7 @@
   .p-lg { padding: var(--space-6); }
 
   .interactive:hover {
-    box-shadow: inset 0 0 0 var(--border-width) var(--color-border-strong), var(--shadow-sm);
+    box-shadow: inset 0 0 0 var(--border-width) var(--color-border-strong), var(--ring);
   }
 
   .filled.interactive:hover {

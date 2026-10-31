@@ -149,7 +149,7 @@
     padding: var(--space-3);
     border-radius: var(--radius-sm) var(--radius-sm) 0 0;
     background: var(--color-surface);
-    box-shadow: var(--shadow-sm);
+    box-shadow: var(--ring);
   }
 
   .line {
@@ -178,7 +178,7 @@
     border-radius: var(--radius-sm);
     overflow: hidden;
     background: var(--color-border);
-    box-shadow: var(--shadow-sm);
+    box-shadow: var(--ring);
   }
 
   .sheet span {
@@ -225,7 +225,7 @@
     border-radius: var(--radius-full);
     background: var(--color-surface);
     color: var(--color-text);
-    box-shadow: var(--shadow-sm);
+    box-shadow: var(--ring);
   }
 
   .duration,

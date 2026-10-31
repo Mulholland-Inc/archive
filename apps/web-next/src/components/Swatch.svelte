@@ -73,11 +73,9 @@
   .color-avatar-4 { background: var(--color-avatar-4); }
   .color-avatar-5 { background: var(--color-avatar-5); }
   .color-avatar-6 { background: var(--color-avatar-6); }
-  .shadow-xs { background: var(--color-surface); box-shadow: var(--shadow-xs); }
-  .shadow-sm { background: var(--color-surface); box-shadow: var(--shadow-sm); }
-  .shadow-md { background: var(--color-surface); box-shadow: var(--shadow-md); }
-  .shadow-lg { background: var(--color-surface); box-shadow: var(--shadow-lg); }
-  .shadow-composer { background: var(--color-surface); box-shadow: var(--shadow-composer); }
+  .ring-subtle { background: var(--color-surface); box-shadow: var(--ring-subtle); }
+  .ring { background: var(--color-surface); box-shadow: var(--ring); }
+  .ring-strong { background: var(--color-surface); box-shadow: var(--ring-strong); }
   .radius-xs { background: var(--color-fill-strong); border-radius: var(--radius-xs); }
   .radius-sm { background: var(--color-fill-strong); border-radius: var(--radius-sm); }
   .radius-md { background: var(--color-fill-strong); border-radius: var(--radius-md); }
