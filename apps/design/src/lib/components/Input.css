@@ -1,0 +1,74 @@
+.input {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--control-gap);
+	height: var(--control-height);
+	padding: 0 var(--control-padding-x);
+	width: 100%;
+	background: var(--input-background);
+	border: var(--hairline) solid var(--input-border);
+	border-radius: var(--radius);
+	color: var(--foreground);
+	transition:
+		border-color var(--duration-fast) var(--ease-out),
+		box-shadow var(--duration-fast) var(--ease-out);
+}
+.input .icon {
+	color: var(--muted-foreground);
+}
+.input:focus-within {
+	border-color: var(--ring);
+	box-shadow: 0 0 0 var(--ring-width) var(--ring-soft);
+}
+.input-invalid {
+	border-color: var(--danger);
+}
+.input-invalid:focus-within {
+	border-color: var(--danger);
+	box-shadow: 0 0 0 var(--ring-width) var(--danger-soft);
+}
+.input-sm {
+	height: var(--control-height-sm);
+	padding: 0 var(--control-padding-x-sm);
+}
+.input-lg {
+	height: var(--control-height-lg);
+	padding: 0 var(--control-padding-x-lg);
+}
+.input-area {
+	height: auto;
+	padding: var(--control-padding-x);
+}
+.input-field {
+	flex: 1;
+	min-width: 0;
+	height: 100%;
+	background: none;
+	border: 0;
+	padding: 0;
+	outline: 0;
+	resize: none;
+	line-height: var(--leading-normal);
+}
+.input-field::placeholder {
+	color: var(--input-placeholder);
+}
+.input-field:disabled {
+	color: var(--foreground-disabled);
+}
+
+/* Quiet: reads as text until the pointer or the caret is on it. */
+.input-quiet {
+	border-color: transparent;
+	background: none;
+	padding: 0 var(--space-2);
+	margin: 0 calc(-1 * var(--space-2));
+	width: calc(100% + 2 * var(--space-2));
+}
+.input-quiet:hover {
+	background: var(--muted);
+}
+.input-quiet:focus-within {
+	background: var(--input-background);
+	border-color: var(--ring);
+}

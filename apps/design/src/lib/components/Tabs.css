@@ -1,0 +1,58 @@
+.tabs {
+	display: flex;
+	gap: var(--gap);
+	border-bottom: var(--hairline) solid var(--border);
+}
+.tab {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	gap: var(--control-gap);
+	height: var(--control-height-lg);
+	color: var(--foreground-secondary);
+	transition: color var(--duration-fast) var(--ease-out);
+}
+.tab:hover,
+.tab-active {
+	color: var(--foreground);
+}
+.tab-indicator {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: calc(-1 * var(--hairline));
+	height: var(--stroke-2);
+	background: var(--tab-indicator);
+}
+
+.segmented {
+	display: inline-flex;
+	padding: var(--toggle-inset);
+	gap: var(--toggle-inset);
+	background: var(--segment-track);
+	border-radius: var(--radius);
+}
+.segment {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	gap: var(--control-gap);
+	height: calc(var(--control-height-sm) - 2 * var(--toggle-inset));
+	padding: 0 var(--control-padding-x-sm);
+	color: var(--foreground-secondary);
+	transition: color var(--duration-fast) var(--ease-out);
+}
+.segment .icon,
+.segment-label {
+	position: relative;
+}
+.segment:hover,
+.segment-active {
+	color: var(--foreground);
+}
+.segment-thumb {
+	position: absolute;
+	inset: 0;
+	background: var(--segment-thumb);
+	border-radius: calc(var(--radius) - var(--toggle-inset));
+}

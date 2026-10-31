@@ -1,0 +1,61 @@
+.check {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--control-gap);
+	min-height: var(--row-height);
+	cursor: pointer;
+	position: relative;
+}
+.check-disabled {
+	cursor: default;
+	color: var(--foreground-disabled);
+}
+.check-input {
+	position: absolute;
+	opacity: 0;
+	width: 0;
+	height: 0;
+	margin: 0;
+}
+.check-box {
+	display: inline-flex;
+	width: var(--check-size);
+	height: var(--check-size);
+	border: var(--hairline) solid var(--input);
+	border-radius: var(--radius-small);
+	background: var(--input-background);
+	color: var(--primary-foreground);
+	transition:
+		background-color var(--duration-fast) var(--ease-out),
+		border-color var(--duration-fast) var(--ease-out);
+}
+.check-box svg {
+	width: 100%;
+	height: 100%;
+}
+.check-mark {
+	stroke-dasharray: 20;
+	stroke-dashoffset: 20;
+	transition: stroke-dashoffset var(--duration-normal) var(--ease-out);
+}
+.check:hover .check-box {
+	border-color: var(--border-strong);
+}
+.check-input:checked + .check-box,
+.check-input:indeterminate + .check-box,
+.check-box.check-mixed {
+	background: var(--primary);
+	border-color: var(--primary);
+}
+.check-input:checked + .check-box .check-mark,
+.check-box.check-mixed .check-mark {
+	stroke-dashoffset: 0;
+}
+.check-input:focus-visible + .check-box {
+	outline: var(--ring-width) solid var(--ring);
+	outline-offset: var(--ring-width);
+}
+.check-disabled .check-box {
+	background: var(--muted);
+	border-color: var(--border);
+}

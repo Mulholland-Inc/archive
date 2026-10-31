@@ -1,0 +1,4 @@
+.brand {
+	flex-shrink: 0;
+	display: block;
+}

@@ -1,0 +1,49 @@
+.toasts {
+	position: fixed;
+	right: var(--inset-lg);
+	bottom: var(--inset-lg);
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-sm);
+	width: var(--toast-width);
+	z-index: var(--z-toast);
+	pointer-events: none;
+}
+.toast {
+	display: flex;
+	align-items: center;
+	gap: var(--control-gap);
+	padding: var(--inset-sm);
+	background: var(--inverse);
+	color: var(--inverse-foreground);
+	border-radius: var(--radius-large);
+	pointer-events: auto;
+}
+.toast-glyph {
+	color: var(--inverse-foreground);
+}
+.toast-success .toast-glyph {
+	color: var(--success);
+}
+.toast-danger .toast-glyph {
+	color: var(--danger);
+}
+.toast-text {
+	flex: 1;
+}
+.toast-action {
+	color: var(--inverse-foreground);
+	font-weight: var(--font-medium);
+	opacity: 0.8;
+	transition: opacity var(--duration-fast) var(--ease-out);
+}
+.toast-action:hover,
+.toast-close:hover {
+	opacity: 1;
+}
+.toast-close {
+	display: inline-flex;
+	color: var(--inverse-foreground);
+	opacity: 0.6;
+	transition: opacity var(--duration-fast) var(--ease-out);
+}

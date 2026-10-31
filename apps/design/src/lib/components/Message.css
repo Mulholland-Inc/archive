@@ -1,0 +1,87 @@
+.thread {
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-lg);
+	width: 100%;
+	max-height: var(--thread-max-height);
+	overflow-y: auto;
+}
+/* The person's words keep to a width on the right; the agent's take the
+   whole column. */
+.message {
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-sm);
+}
+.message-user {
+	align-self: flex-end;
+	align-items: flex-end;
+	max-width: var(--message-width);
+}
+.message-agent {
+	align-self: stretch;
+	width: 100%;
+	min-width: 0;
+}
+.message-meta {
+	display: flex;
+	gap: var(--gap-sm);
+	color: var(--muted-foreground);
+}
+.message-author {
+	color: var(--foreground-secondary);
+}
+.message-body {
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-sm);
+	color: var(--foreground);
+	line-height: var(--leading-normal);
+	white-space: pre-wrap;
+}
+.message-user .message-body {
+	padding: var(--space-2) var(--space-3);
+	background: var(--message-user-background);
+	border-radius: var(--radius-large);
+	white-space: pre-wrap;
+}
+.message-meta-line {
+	color: var(--muted-foreground);
+}
+.message-pending {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--control-gap);
+	color: var(--muted-foreground);
+}
+.message-actions {
+	display: flex;
+	gap: var(--space-1);
+	opacity: 0;
+	transition: opacity var(--duration-fast) var(--ease-out);
+}
+.message:hover .message-actions,
+.message:focus-within .message-actions {
+	opacity: 1;
+}
+
+.step {
+	display: flex;
+	align-items: center;
+	gap: var(--control-gap);
+	height: var(--row-height);
+	color: var(--foreground-secondary);
+}
+.step-glyph {
+	display: inline-flex;
+	color: var(--muted-foreground);
+}
+.step-detail {
+	color: var(--muted-foreground);
+}
+.step-check {
+	color: var(--success);
+}
+.step-failed .step-label {
+	color: var(--danger-foreground);
+}

@@ -1,0 +1,179 @@
+.pipeline {
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	container-type: inline-size;
+}
+.pipeline-axis,
+.pipeline-row {
+	display: flex;
+	align-items: center;
+	gap: var(--gap-md);
+	min-height: var(--row-height-lg);
+	padding: var(--space-3);
+	border-bottom: var(--hairline) solid var(--border);
+}
+.pipeline-axis {
+	color: var(--table-head-foreground);
+}
+.pipeline-row {
+	transition: background-color var(--duration-fast) var(--ease-out);
+}
+.pipeline-row:last-child {
+	border-bottom: 0;
+}
+.pipeline-row:hover {
+	background: var(--background-subtle);
+}
+.pipeline-gutter {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	flex: 0 0 var(--pipeline-gutter);
+	min-width: 0;
+}
+.pipeline-name {
+	text-align: left;
+	color: var(--foreground);
+}
+.pipeline-town,
+.pipeline-where,
+.pipeline-span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+/* A name is never cut short; a long one takes a second line. */
+.pipeline-client,
+.pipeline-names {
+	min-width: 0;
+	overflow-wrap: break-word;
+}
+.pipeline-client {
+	font-weight: var(--font-medium);
+	line-height: var(--leading-tight);
+}
+.pipeline-town {
+	color: var(--muted-foreground);
+}
+.pipeline-where {
+	display: none;
+	color: var(--foreground-secondary);
+}
+.pipeline-track {
+	display: flex;
+	align-items: center;
+	gap: var(--space-1);
+	flex: 1;
+	min-width: 0;
+}
+.pipeline-stage {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.pipeline-step {
+	display: flex;
+	align-items: center;
+	gap: var(--stroke-2);
+	flex: 1;
+	min-width: 0;
+	height: var(--pipeline-step-height);
+	border-radius: var(--radius-small);
+	transition: filter var(--duration-fast) var(--ease-out);
+}
+.pipeline-step-ahead {
+	background: var(--pipeline-ahead);
+}
+.pipeline-step-behind {
+	background: var(--pipeline-now);
+}
+/* The stage it stands in is a bar filling as far as it has come. */
+.pipeline-step-now {
+	position: relative;
+	overflow: hidden;
+	background: var(--pipeline-ahead);
+}
+.pipeline-fill {
+	display: block;
+	height: 100%;
+	background: var(--pipeline-now);
+	border-radius: var(--radius-small);
+	transition: width var(--duration-slow) var(--ease-spring);
+}
+/* A stage we have been round more than once carries no fill of its own:
+   its slices are the fill, one a pass, and the row shows between them. */
+.pipeline-step-cut {
+	background: transparent;
+}
+.pipeline-slice {
+	flex: 1;
+	min-width: 0;
+	height: 100%;
+	background: var(--pipeline-now);
+	border-radius: var(--radius-small);
+	overflow: hidden;
+}
+/* The pass under way is the last slice, filled as far as it has come. */
+.pipeline-slice:last-child {
+	background: var(--pipeline-ahead);
+}
+button.pipeline-step:hover {
+	filter: brightness(0.96);
+}
+.pipeline-span {
+	flex: 0 0 var(--pipeline-span-width);
+	min-width: 0;
+	color: var(--foreground-secondary);
+}
+.pipeline-crew {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: var(--space-1);
+	flex: 0 0 var(--pipeline-crew-width);
+	min-width: 0;
+}
+/* The marks overlap, the names read under them. */
+.pipeline-people {
+	display: inline-flex;
+}
+.pipeline-person-behind {
+	margin-left: calc(-1 * var(--space-2));
+}
+.pipeline-names {
+	color: var(--foreground-secondary);
+	line-height: var(--leading-tight);
+}
+
+/* Squeezed (a container query on the pipeline's own width): the stage
+   labels no longer fit across the top, so the axis goes and each client
+   says in words where it stands, in place of its town. */
+@container (max-width: 560px) {
+	.pipeline-axis {
+		display: none;
+	}
+	.pipeline-town {
+		display: none;
+	}
+	.pipeline-where {
+		display: block;
+	}
+}
+
+/* Squeezed further: the row stacks, so the track runs the full width
+   under the client and the crew closes it. */
+@container (max-width: 400px) {
+	.pipeline-row {
+		flex-direction: column;
+		align-items: stretch;
+		gap: var(--space-2);
+	}
+	.pipeline-gutter,
+	.pipeline-span,
+	.pipeline-crew {
+		flex-basis: auto;
+	}
+}

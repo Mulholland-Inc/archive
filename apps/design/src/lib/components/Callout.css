@@ -1,0 +1,33 @@
+.callout {
+	display: flex;
+	gap: var(--control-gap);
+	padding: var(--inset-sm);
+	border-radius: var(--radius-large);
+	background: var(--callout-soft);
+	color: var(--foreground);
+}
+.callout-glyph {
+	margin-top: calc((var(--text-base) * var(--leading-normal) - var(--icon-size-lg)) / 2);
+}
+.callout-title {
+	font-weight: var(--font-medium);
+}
+.callout-text {
+	color: var(--foreground-secondary);
+}
+.callout-info {
+	--callout-soft: var(--info-soft);
+	--callout-hue: var(--info-foreground);
+}
+.callout-success {
+	--callout-soft: var(--success-soft);
+	--callout-hue: var(--success-foreground);
+}
+.callout-warning {
+	--callout-soft: var(--warning-soft);
+	--callout-hue: var(--warning-foreground);
+}
+.callout-danger {
+	--callout-soft: var(--danger-soft);
+	--callout-hue: var(--danger-foreground);
+}

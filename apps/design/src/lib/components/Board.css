@@ -1,0 +1,125 @@
+.board {
+	display: flex;
+	gap: var(--gap-sm);
+	width: 100%;
+	overflow-x: auto;
+	align-items: flex-start;
+}
+.lane {
+	display: flex;
+	flex-direction: column;
+	flex: 0 0 var(--lane-width);
+	max-height: var(--lane-max-height);
+	background: var(--muted);
+	border-radius: var(--radius-large);
+	transition: background-color var(--duration-fast) var(--ease-out);
+}
+.lane-over {
+	background: var(--muted-hover);
+}
+.lane-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	height: var(--row-height-lg);
+	padding: 0 var(--inset-sm);
+	color: var(--foreground-secondary);
+}
+.lane-label {
+	font-weight: var(--font-medium);
+}
+.lane-add {
+	display: inline-flex;
+	color: var(--muted-foreground);
+	opacity: 0;
+	transition:
+		opacity var(--duration-fast) var(--ease-out),
+		color var(--duration-fast) var(--ease-out);
+}
+.lane:hover .lane-add,
+.lane-add:focus-visible {
+	opacity: 1;
+}
+.lane-add:hover {
+	color: var(--foreground);
+}
+.lane-cards {
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-sm);
+	min-height: var(--row-height-lg);
+	padding: 0 var(--gap-sm) var(--gap-sm);
+	overflow-y: auto;
+}
+.card {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	padding: var(--inset-sm);
+	background: var(--card);
+	color: var(--card-foreground);
+	border-radius: var(--radius);
+	cursor: grab;
+	user-select: none;
+	-webkit-user-select: none;
+	touch-action: none;
+	transition: background-color var(--duration-fast) var(--ease-out);
+}
+.card:hover {
+	background: var(--background-subtle);
+}
+.card-ghost {
+	opacity: 0.3;
+}
+.card-lifted {
+	cursor: grabbing;
+	background: var(--card);
+	rotate: var(--card-lift-tilt);
+	scale: 1.02;
+	outline: var(--ring-width) solid var(--ring-soft);
+}
+.card-title {
+	font-weight: var(--font-medium);
+}
+.card-subtitle {
+	color: var(--muted-foreground);
+}
+.card-foot {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--gap-sm);
+	margin-top: var(--space-1);
+}
+
+/* Squeezed (a container query on the board's own width): the lanes
+   narrow and a card is its title alone; narrower still, the lanes stack
+   and the board reads as one list, a lane a group. */
+.board {
+	container-type: inline-size;
+}
+@container (max-width: 720px) {
+	.lane {
+		flex-basis: 180px;
+	}
+	.card-subtitle,
+	.card-foot {
+		display: none;
+	}
+	.card-title {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+}
+@container (max-width: 480px) {
+	.board {
+		flex-direction: column;
+		align-items: stretch;
+		overflow-x: visible;
+	}
+	.lane {
+		flex-basis: auto;
+		max-height: none;
+	}
+}

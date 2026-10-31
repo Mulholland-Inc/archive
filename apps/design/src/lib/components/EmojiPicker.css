@@ -1,0 +1,27 @@
+.emoji-picker {
+	padding: var(--space-1);
+	background: var(--popover);
+	color: var(--popover-foreground);
+	border: var(--hairline) solid var(--layer-border);
+	border-radius: var(--radius-large);
+}
+.emoji-grid {
+	display: grid;
+	grid-template-columns: repeat(8, var(--control-height));
+	gap: var(--space-1);
+}
+.emoji-pick {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: var(--control-height);
+	height: var(--control-height);
+	border-radius: var(--radius);
+	transition: background-color var(--duration-fast) var(--ease-out);
+}
+.emoji-pick:hover {
+	background: var(--muted);
+}
+.emoji-pick-on {
+	background: var(--primary-soft);
+}

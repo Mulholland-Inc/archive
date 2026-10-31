@@ -1,0 +1,89 @@
+.split {
+	display: flex;
+	flex: 1;
+	width: 100%;
+	min-width: 0;
+	min-height: 0;
+	container: split / inline-size;
+}
+.split-first {
+	display: flex;
+	flex: 0 0 var(--split-width);
+	min-width: 0;
+	min-height: 0;
+	container-type: inline-size;
+	transition: flex-basis var(--duration-spring) var(--ease-bounce);
+}
+.split-rest {
+	display: flex;
+	flex: 1;
+	min-width: 0;
+	min-height: 0;
+	container-type: inline-size;
+	transition: flex-basis var(--duration-spring) var(--ease-bounce);
+}
+/* Under the pointer the pane follows it; let go, it springs to where
+   it settles. */
+.split-dragging > .split-first,
+.split-dragging > .split-rest {
+	transition: none;
+}
+/* The width on the second pane instead. */
+.split-end > .split-first {
+	flex: 1;
+}
+.split-end > .split-rest {
+	flex: 0 0 var(--split-width);
+}
+.split-first > *,
+.split-rest > * {
+	flex: 1;
+	min-width: 0;
+}
+/* The seam is the hairline between the panes, widened invisibly so it
+   can be taken hold of; it darkens under the pointer and while dragging. */
+.split-seam {
+	position: relative;
+	flex: 0 0 var(--hairline);
+	background: var(--border);
+	cursor: col-resize;
+	transition: background-color var(--duration-fast) var(--ease-out);
+}
+.split-seam::before {
+	content: '';
+	position: absolute;
+	inset: 0 -4px;
+}
+.split-seam:hover,
+.split-dragging > .split-seam {
+	background: var(--muted-foreground);
+}
+.split-dragging {
+	cursor: col-resize;
+	user-select: none;
+	-webkit-user-select: none;
+}
+/* Stacked: under 480 of the split's own width (the named container,
+   so a pane's width never answers for it) the seam goes and the pane
+   that is shown fills the width; the other waits. A `split-back`
+   inside a pane is the way to the other one, and shows only then. */
+.split-back {
+	display: none;
+}
+@container split (max-width: 480px) {
+	.split-stack > .split-seam {
+		display: none;
+	}
+	.split-stack > .split-first .split-back,
+	.split-stack > .split-rest .split-back {
+		display: inline-flex;
+	}
+	.split-stack > .split-first,
+	.split-stack > .split-rest {
+		flex: 1;
+	}
+	.split-show-first > .split-rest,
+	.split-show-rest > .split-first {
+		display: none;
+	}
+}

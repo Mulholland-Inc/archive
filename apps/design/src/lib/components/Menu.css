@@ -1,0 +1,96 @@
+.menu {
+	display: flex;
+	flex-direction: column;
+	min-width: var(--popover-min-width);
+	max-width: var(--menu-max-width);
+	padding: var(--space-1);
+	background: var(--popover);
+	color: var(--popover-foreground);
+	border: var(--hairline) solid var(--layer-border);
+	border-radius: var(--radius-large);
+}
+/* The rows. A list without submenus stops at its height and scrolls; one
+   with submenus stays open, since they hang outside its box. */
+.menu-list {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+.menu-list-scroll {
+	max-height: var(--menu-max-height);
+	overflow-y: auto;
+}
+.menu-item {
+	display: flex;
+	align-items: center;
+	gap: var(--control-gap);
+	height: var(--menu-item-height);
+	padding: 0 var(--control-padding-x-sm);
+	border-radius: var(--radius);
+	color: var(--foreground);
+	text-align: left;
+	white-space: nowrap;
+	transition: background-color var(--duration-instant) var(--ease-out);
+}
+.menu-item .icon {
+	color: var(--foreground-secondary);
+}
+.menu-item-active:not(:disabled) {
+	background: var(--menu-item-hover);
+}
+.menu-item:disabled {
+	color: var(--foreground-disabled);
+	cursor: default;
+}
+.menu-item-label {
+	flex: 1;
+}
+.menu-item-hint {
+	color: var(--muted-foreground);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.menu-item-check {
+	margin-left: auto;
+	color: var(--foreground);
+}
+.menu-item-checked .menu-item-label {
+	color: var(--foreground);
+}
+.menu-item-danger,
+.menu-item-danger .icon {
+	color: var(--danger-foreground);
+}
+.menu-divider {
+	height: var(--hairline);
+	margin: var(--space-1) 0;
+	background: var(--border);
+}
+.menu-heading {
+	height: var(--menu-item-height);
+	line-height: var(--menu-item-height);
+	padding: 0 var(--control-padding-x-sm);
+	color: var(--muted-foreground);
+}
+.menu-item-more {
+	margin-left: auto;
+	color: var(--muted-foreground);
+}
+.menu-item-hint + .menu-item-more,
+.menu-item-check + .menu-item-more {
+	margin-left: 0;
+}
+.menu-sub-row {
+	display: block;
+}
+.menu-sub-row > .menu-item {
+	width: 100%;
+}
+.menu-sub-body {
+	display: flex;
+	flex-direction: column;
+}
+.menu .anchor-block {
+	display: block;
+}

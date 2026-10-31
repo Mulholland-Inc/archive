@@ -1,0 +1,68 @@
+.anchor {
+	position: relative;
+	display: inline-flex;
+}
+.anchor-block {
+	display: flex;
+	width: 100%;
+}
+.layer {
+	position: absolute;
+	z-index: var(--z-layer);
+}
+.layer-match {
+	min-width: 100%;
+}
+.layer-bottom-start {
+	top: calc(100% + var(--popover-offset));
+	left: 0;
+}
+.layer-bottom-end {
+	top: calc(100% + var(--popover-offset));
+	right: 0;
+}
+.layer-bottom {
+	top: calc(100% + var(--popover-offset));
+	left: 50%;
+	translate: -50% 0;
+}
+.layer-top-start {
+	bottom: calc(100% + var(--popover-offset));
+	left: 0;
+}
+.layer-top {
+	bottom: calc(100% + var(--popover-offset));
+	left: 50%;
+	translate: -50% 0;
+}
+.layer-right-start {
+	top: 0;
+	left: calc(100% + var(--popover-offset));
+}
+/* Beside the anchor and level with its middle. */
+.layer-right {
+	top: 50%;
+	left: calc(100% + var(--popover-offset));
+	translate: 0 -50%;
+}
+.layer-left {
+	top: 50%;
+	right: calc(100% + var(--popover-offset));
+	translate: 0 -50%;
+}
+.layer-top-end {
+	bottom: calc(100% + var(--popover-offset));
+	right: 0;
+}
+.layer-right-end {
+	bottom: 0;
+	left: calc(100% + var(--popover-offset));
+}
+.layer-left-start {
+	top: 0;
+	right: calc(100% + var(--popover-offset));
+}
+.layer-left-end {
+	bottom: 0;
+	right: calc(100% + var(--popover-offset));
+}

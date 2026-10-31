@@ -1,0 +1,56 @@
+.toolbar {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1);
+	height: var(--toolbar-height);
+	padding: 0 var(--space-1);
+	background: var(--card);
+	color: var(--card-foreground);
+	border-radius: var(--radius-large);
+}
+.tool {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: var(--space-1);
+	height: var(--control-height);
+	min-width: var(--control-height);
+	padding: 0 var(--space-2);
+	border-radius: var(--radius);
+	color: var(--foreground-secondary);
+	transition:
+		background-color var(--duration-fast) var(--ease-out),
+		color var(--duration-fast) var(--ease-out);
+}
+.tool:hover {
+	background: var(--muted);
+	color: var(--foreground);
+}
+.tool-active,
+.tool-active:hover {
+	background: var(--primary);
+	color: var(--primary-foreground);
+}
+.tool-divider {
+	width: var(--hairline);
+	height: var(--icon-size-lg);
+	margin: 0 var(--space-1);
+	background: var(--border);
+}
+.tool-field {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--control-gap);
+	padding: 0 var(--space-2);
+	color: var(--foreground-secondary);
+}
+.tool-value {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--control-gap);
+	height: var(--control-height);
+	padding: 0 var(--space-2);
+	border-radius: var(--radius);
+	background: var(--muted);
+	color: var(--foreground);
+}

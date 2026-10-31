@@ -1,0 +1,118 @@
+.login {
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-lg);
+	width: var(--login-width);
+	max-width: 100%;
+	padding: var(--inset-lg);
+	background: var(--card);
+	color: var(--card-foreground);
+	border-radius: var(--radius-xl);
+}
+.login-mark {
+	display: flex;
+	color: var(--foreground);
+}
+.login-steps {
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+}
+/* A fold is a one-row grid whose row is 0fr closed and 1fr open; the
+   browser eases the row, so the height moves without a measurement or a
+   transform. */
+.login-fold {
+	display: grid;
+	grid-template-rows: 0fr;
+	transition: grid-template-rows var(--duration-slow) var(--ease-in-out);
+}
+.login-fold-open {
+	grid-template-rows: 1fr;
+}
+.login-step {
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-lg);
+	min-height: 0;
+	overflow: hidden;
+	/* Room inside the clip for a row's tint to bleed past the text edge. */
+	padding: 0 var(--space-2);
+	margin: 0 calc(-1 * var(--space-2));
+}
+.login-slot {
+	display: grid;
+}
+.login-slot > * {
+	grid-area: 1 / 1;
+}
+.login-head {
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-sm);
+}
+.login-title {
+	font-size: var(--text-xl);
+	line-height: var(--leading-tight);
+	letter-spacing: var(--tracking-tight);
+	font-weight: var(--font-medium);
+}
+.login-text {
+	color: var(--foreground-secondary);
+}
+.login-doors {
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-sm);
+}
+.login-door {
+	width: 100%;
+	justify-content: flex-start;
+}
+.login-busy {
+	display: flex;
+	align-items: center;
+	gap: var(--gap-sm);
+	color: var(--foreground-secondary);
+	pointer-events: none;
+}
+.login-list {
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+}
+.login-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--gap-sm);
+	width: calc(100% + 2 * var(--space-2));
+	margin: 0 calc(-1 * var(--space-2));
+	height: var(--row-height-lg);
+	padding: 0 var(--space-2);
+	border-radius: var(--radius);
+	color: var(--foreground);
+	text-align: left;
+	transition: background-color var(--duration-fast) var(--ease-out);
+}
+.login-row:hover {
+	background: var(--muted);
+}
+.login-row-name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.login-row-app {
+	color: var(--muted-foreground);
+}
+.login-foot {
+	color: var(--muted-foreground);
+}
+.login-foot-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--gap-sm);
+}

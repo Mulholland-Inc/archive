@@ -1,0 +1,601 @@
+/* Tokens. Three tiers: primitives (raw values, named for what they are),
+   semantic (roles, aliases of primitives, the tier components use), and
+   component (only where a component departs from its semantic default).
+   Dark mode redefines the primitive tier only.
+
+   The palette is warm: the grays lean to paper, not to steel, and every
+   hue comes as a soft tint a tag sits on, a middle tone an icon wears,
+   and a deep tone for words on the tint. The one cold thing is the blue
+   that means "press this". */
+
+:root {
+	/* Primitives: color */
+	--white: #ffffff;
+	--black: #000000;
+	--cream: #f7f6f3;
+	--paper: #fffdfa;
+	--ink-50: #f7f7f5;
+	--ink-100: #f1f1ef;
+	--ink-200: #d9d8d5;
+	--ink-300: #a8a7a3;
+	--ink-400: #6f6e6a;
+	--ink-500: #4a4946;
+	--ink-600: #3a3937;
+	--ink-700: #2f2f2e;
+	--ink-800: #262626;
+	--ink-900: #202020;
+	--ink-950: #191919;
+	--brand-google-blue: #4285f4;
+	--brand-google-green: #34a853;
+	--brand-google-yellow: #fbbc05;
+	--brand-google-red: #ea4335;
+	--brand-microsoft-red: #f25022;
+	--brand-microsoft-green: #7fba00;
+	--brand-microsoft-blue: #00a4ef;
+	--brand-microsoft-yellow: #ffb900;
+	--navy-100: #dfe4ec;
+	--navy-500: #384060;
+	--navy-600: #2a3f5c;
+	--navy-800: #203850;
+
+	--gray-50: #f7f7f5;
+	--gray-100: #f1f1ef;
+	--gray-200: #e9e9e7;
+	--gray-300: #dcdcda;
+	--gray-400: #c4c3c0;
+	--gray-500: #9b9a97;
+	--gray-600: #787774;
+	--gray-700: #5f5e5b;
+	--gray-800: #37352f;
+	--gray-900: #2f2e2b;
+	--gray-950: #191919;
+
+	--azure-50: #e8f2fc;
+	--azure-100: #d0e5f9;
+	--azure-200: #a9cff4;
+	--azure-300: #7fb6ec;
+	--azure-400: #4e9ce7;
+	--azure-500: #2383e2;
+	--azure-600: #1a6fc6;
+	--azure-700: #155ba3;
+	--azure-800: #124a83;
+	--azure-900: #103c69;
+	--azure-950: #0a2542;
+
+	--blue-50: #d3e5ef;
+	--blue-100: #bfd8e6;
+	--blue-200: #a4c6da;
+	--blue-300: #86b1cc;
+	--blue-400: #5e97bd;
+	--blue-500: #337ea9;
+	--blue-600: #2b6d93;
+	--blue-700: #24597a;
+	--blue-800: #183347;
+	--blue-900: #12283a;
+	--blue-950: #0b1a26;
+
+	--green-50: #dbeddb;
+	--green-100: #c6e2c6;
+	--green-200: #a8d3a9;
+	--green-300: #86c08a;
+	--green-400: #62a36f;
+	--green-500: #448361;
+	--green-600: #397154;
+	--green-700: #2f5c45;
+	--green-800: #1c3829;
+	--green-900: #162d21;
+	--green-950: #0e1c15;
+
+	--amber-50: #fdecc8;
+	--amber-100: #fbe1a9;
+	--amber-200: #f6d081;
+	--amber-300: #eebb5c;
+	--amber-400: #dda43f;
+	--amber-500: #cb912f;
+	--amber-600: #b17a27;
+	--amber-700: #8f6220;
+	--amber-800: #402c1b;
+	--amber-900: #332316;
+	--amber-950: #20160e;
+
+	--red-50: #ffe2dd;
+	--red-100: #fdcfc8;
+	--red-200: #f8b3a9;
+	--red-300: #f0938a;
+	--red-400: #e46d66;
+	--red-500: #d44c47;
+	--red-600: #bb3f3a;
+	--red-700: #98322e;
+	--red-800: #5d1715;
+	--red-900: #4a1210;
+	--red-950: #2e0b0a;
+
+	--pink-50: #f5e0e9;
+	--pink-100: #f0cdde;
+	--pink-200: #e8b0cb;
+	--pink-300: #dd8fb5;
+	--pink-400: #d06a9e;
+	--pink-500: #c14c8a;
+	--pink-600: #a93f77;
+	--pink-700: #883262;
+	--pink-800: #4c2337;
+	--pink-900: #3d1c2c;
+	--pink-950: #26111c;
+
+	--purple-50: #e8deee;
+	--purple-100: #dccbe6;
+	--purple-200: #c9b0da;
+	--purple-300: #b393cb;
+	--purple-400: #a17abf;
+	--purple-500: #9065b0;
+	--purple-600: #7d559a;
+	--purple-700: #66467e;
+	--purple-800: #412454;
+	--purple-900: #341d43;
+	--purple-950: #21122b;
+
+	--teal-50: #d6ebe8;
+	--teal-100: #bfe1dc;
+	--teal-200: #9fd1ca;
+	--teal-300: #7cbfb6;
+	--teal-400: #58a89e;
+	--teal-500: #3d8f85;
+	--teal-600: #337a72;
+	--teal-700: #2a635d;
+	--teal-800: #1b3f3b;
+	--teal-900: #16322f;
+	--teal-950: #0d1f1d;
+
+	/* Primitives: dimension, a 4px step */
+	--space-1: 4px;
+	--space-2: 8px;
+	--space-3: 12px;
+	--space-4: 16px;
+	--space-5: 20px;
+	--space-6: 24px;
+	--space-7: 28px;
+	--space-8: 32px;
+	--space-9: 36px;
+	--space-10: 40px;
+	--space-11: 44px;
+	--space-12: 48px;
+	--space-16: 64px;
+	--space-20: 80px;
+	--space-24: 96px;
+	--radius-sm: 4px;
+	--radius-md: 6px;
+	--radius-lg: 8px;
+	--radius-xl: 12px;
+	--radius-full: 999px;
+	--hairline: 1px;
+	--stroke-2: 2px;
+
+	/* Primitives: type */
+	--font-emoji: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
+	--font-sans:
+		ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, 'Apple Color Emoji',
+		Arial, sans-serif, 'Segoe UI Emoji', 'Segoe UI Symbol';
+	--text-xs: 12px;
+	--text-sm: 13px;
+	--text-base: 14px;
+	--text-lg: 16px;
+	--text-xl: 24px;
+	--text-2xl: 30px;
+	--text-3xl: 40px;
+	--leading-tight: 1.25;
+	--leading-normal: 1.5;
+	--tracking: 0px;
+	--tracking-tight: -0.4px;
+	--font-normal: 400;
+	--font-medium: 500;
+	--font-semibold: 600;
+	--font-bold: 700;
+
+	/* Primitives: motion */
+	--duration-instant: 80ms;
+	--duration-fast: 120ms;
+	--duration-normal: 200ms;
+	--duration-slow: 320ms;
+	--ease-out: cubic-bezier(0.2, 0, 0, 1);
+	--ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+	--ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
+	--ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+	--duration-spring: 420ms;
+
+	/* Primitives: alpha */
+	--alpha-soft: 24%;
+	--alpha-faint: 12%;
+	--alpha-scrim: 40%;
+}
+
+:root {
+	/* Semantic: surfaces */
+	--background: var(--white);
+	--background-subtle: var(--gray-50);
+	--card: var(--white);
+	--card-foreground: var(--gray-800);
+	--popover: var(--white);
+	--popover-foreground: var(--gray-800);
+	--muted: var(--gray-100);
+	--muted-hover: var(--gray-200);
+	--muted-foreground: var(--gray-500);
+	--border: var(--gray-200);
+	--border-strong: var(--gray-300);
+	--layer-border: var(--gray-300);
+	--input: var(--gray-300);
+	--ring: var(--azure-500);
+	--scrim: color-mix(in srgb, var(--black) var(--alpha-scrim), transparent);
+
+	/* Semantic: text */
+	--foreground: var(--gray-800);
+	--foreground-secondary: var(--gray-600);
+	--foreground-disabled: var(--gray-400);
+
+	/* Semantic: intent */
+	--primary: var(--azure-500);
+	--primary-hover: var(--azure-600);
+	--primary-foreground: var(--white);
+	--primary-soft: var(--azure-50);
+	--secondary: var(--gray-100);
+	--secondary-hover: var(--gray-200);
+	--secondary-foreground: var(--gray-800);
+	--accent: var(--azure-500);
+	--accent-foreground: var(--white);
+	--destructive: var(--red-500);
+	--destructive-hover: var(--red-600);
+	--destructive-foreground: var(--white);
+	--destructive-soft: var(--red-50);
+	--inverse: var(--gray-800);
+	--inverse-foreground: var(--white);
+
+	/* Semantic: status */
+	--success: var(--green-500);
+	--success-foreground: var(--green-800);
+	--success-soft: var(--green-50);
+	--warning: var(--amber-500);
+	--warning-foreground: var(--amber-800);
+	--warning-soft: var(--amber-50);
+	--danger: var(--red-500);
+	--danger-foreground: var(--red-800);
+	--danger-soft: var(--red-50);
+	--info: var(--azure-500);
+	--info-foreground: var(--azure-800);
+	--info-soft: var(--azure-50);
+
+	/* Semantic: hues a group or a tag can wear. The hue itself is what an
+	   icon or a fill takes; -soft is the tint a tag sits on, -text the deep
+	   tone for words on that tint, -on the words on the hue itself. */
+	--hue-blue: var(--blue-500);
+	--hue-blue-soft: var(--blue-50);
+	--hue-blue-text: var(--blue-800);
+	--hue-blue-on: var(--white);
+	--hue-pink: var(--pink-500);
+	--hue-pink-soft: var(--pink-50);
+	--hue-pink-text: var(--pink-800);
+	--hue-pink-on: var(--white);
+	--hue-amber: var(--amber-500);
+	--hue-amber-soft: var(--amber-50);
+	--hue-amber-text: var(--amber-800);
+	--hue-amber-on: var(--white);
+	--hue-purple: var(--purple-500);
+	--hue-purple-soft: var(--purple-50);
+	--hue-purple-text: var(--purple-800);
+	--hue-purple-on: var(--white);
+	--hue-green: var(--green-500);
+	--hue-green-soft: var(--green-50);
+	--hue-green-text: var(--green-800);
+	--hue-green-on: var(--white);
+	--hue-teal: var(--teal-500);
+	--hue-teal-soft: var(--teal-50);
+	--hue-teal-text: var(--teal-800);
+	--hue-teal-on: var(--white);
+	--hue-red: var(--red-500);
+	--hue-red-soft: var(--red-50);
+	--hue-red-text: var(--red-800);
+	--hue-red-on: var(--white);
+	--hue-gray: var(--gray-600);
+	--hue-gray-soft: var(--gray-200);
+	--hue-gray-text: var(--gray-900);
+	--hue-gray-on: var(--white);
+	--hue-navy: var(--navy-600);
+	--hue-navy-soft: var(--navy-100);
+	--hue-navy-text: var(--navy-800);
+	--hue-navy-on: var(--white);
+	--hue-sky: var(--azure-400);
+	--hue-sky-soft: var(--azure-50);
+	--hue-sky-text: var(--azure-800);
+	--hue-sky-on: var(--white);
+
+	/* Semantic: shape and size */
+	--radius: var(--radius-md);
+	--radius-small: var(--radius-sm);
+	--radius-large: var(--radius-lg);
+	--radius-pill: var(--radius-full);
+	--control-height: 32px;
+	--control-height-sm: 28px;
+	--control-height-lg: 40px;
+	--control-padding-x: var(--space-3);
+	--control-padding-x-sm: var(--space-2);
+	--control-padding-x-lg: var(--space-4);
+	--control-gap: var(--space-2);
+	--icon-size: 16px;
+	--icon-size-sm: 14px;
+	--icon-size-lg: 20px;
+	--icon-stroke: 1.75;
+	--emoji-size: var(--text-lg);
+	--row-height: 28px;
+	--row-height-lg: 40px;
+	--ring-width: 2px;
+	--ring-soft: color-mix(in srgb, var(--ring) var(--alpha-soft), transparent);
+	--gap: var(--space-4);
+	--gap-sm: var(--space-2);
+	--gap-md: var(--space-3);
+	--gap-lg: var(--space-6);
+	--inset: var(--space-4);
+	--inset-sm: var(--space-3);
+	--inset-lg: var(--space-6);
+	--check-size: 16px;
+	--toggle-width: 28px;
+	--toggle-height: 16px;
+	--toggle-thumb: 12px;
+	--toggle-inset: 2px;
+	--popover-min-width: 120px;
+	--popover-offset: var(--space-1);
+	--layer-room: 240px;
+	--menu-max-height: 320px;
+	--menu-max-width: 480px;
+	--usage-width: 260px;
+	--dialog-width: 480px;
+	--toast-width: 320px;
+	--tooltip-delay: 400ms;
+	--progress-height: 4px;
+	--progress-wave-height: 12px;
+	--progress-stroke: 3px;
+	--progress-roll: 900ms;
+	--avatar-size: 32px;
+	--avatar-size-sm: 24px;
+	--avatar-size-lg: 40px;
+	--avatar-face: 18px;
+	--avatar-face-sm: 13px;
+	--avatar-face-lg: 22px;
+	--stage-min-height: 96px;
+	--composer-max-height: 240px;
+	--thread-max-height: 480px;
+}
+
+:root {
+	/* Component tier */
+	--button-radius: var(--radius);
+	--sidebar-width: 240px;
+	--sidebar-stage-height: 480px;
+	--sidebar-background: var(--background-subtle);
+	--sidebar-foreground: var(--foreground-secondary);
+	--sidebar-heading: var(--muted-foreground);
+	--sidebar-active: var(--muted);
+	--sidebar-hover: var(--muted);
+	--sidebar-row-height: var(--space-8);
+	--sidebar-row-gap: var(--space-1);
+	--sidebar-lights: var(--space-20);
+	--sidebar-lights-height: var(--space-9);
+	--sidebar-indent: var(--space-6);
+	--sidebar-inset: var(--space-2);
+	--sidebar-section-gap: var(--space-4);
+	--sidebar-icon: var(--icon-size-lg);
+	--table-row-height: var(--row-height-lg);
+	--table-head-foreground: var(--muted-foreground);
+	--table-row-hover: var(--background-subtle);
+	--input-background: var(--background-subtle);
+	--input-border: var(--input);
+	--input-placeholder: var(--muted-foreground);
+	--menu-item-height: var(--row-height);
+	--menu-item-hover: var(--muted);
+	--tab-indicator: var(--foreground);
+	--segment-thumb: var(--background);
+	--segment-track: var(--muted);
+	--spinner-width: 24px;
+	--spinner-height: 12px;
+	--spinner-width-sm: 20px;
+	--spinner-height-sm: 10px;
+	--spinner-width-lg: 40px;
+	--spinner-height-lg: 16px;
+	--spinner-stroke: 2px;
+	--spinner-roll: 700ms;
+	--stage-background: var(--background-subtle);
+	--message-width: 80%;
+	--message-user-background: var(--muted);
+	--sheet-row-height: var(--row-height-lg);
+	--sheet-cell-padding: var(--space-3);
+	--sheet-picked: var(--primary-soft);
+	--sheet-max-height: 480px;
+	--sheet-column-width: 160px;
+	--panel-width: 400px;
+	--record-width: 720px;
+	--login-width: 400px;
+	--chat-width: 440px;
+	--header-height: 44px;
+	--command-height: 360px;
+	--notes-width: 320px;
+	--editor-min-height: 240px;
+	/* A page someone made: the banner, the mark over its edge, the column
+	   under it. A document and a record share these. */
+	--cover-measure: 708px;
+	--cover-inset: clamp(var(--space-6), 8cqi, var(--space-24));
+	--cover-height: 200px;
+	--cover-face: 72px;
+	--cover-face-size: 60px;
+	--cover-tint: linear-gradient(135deg, var(--hue-sky-soft), var(--hue-purple-soft));
+	--editor-measure: 72ch;
+	--pipeline-gutter: 140px;
+	--pipeline-crew-width: 140px;
+	--pipeline-step-height: var(--row-height);
+	--pipeline-span-width: 72px;
+	--pipeline-ahead: var(--muted);
+	--pipeline-now: var(--accent);
+	--roadmap-gutter: 200px;
+	--roadmap-fill-alpha: 22%;
+	--crew-progress-width: 320px;
+	--mail-label-width: var(--space-16);
+	--mail-panel-width: 720px;
+	--mail-body-min-height: 160px;
+	--targets-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
+	--score-detail-width: 280px;
+	--call-height: 560px;
+	--call-background: var(--background);
+	--call-tile: var(--background-subtle);
+	--call-tile-camera: var(--muted);
+	--call-foreground: var(--foreground);
+	--call-secondary: var(--foreground-secondary);
+	--call-control: var(--muted);
+	--call-control-hover: var(--muted-hover);
+	--call-strip-width: 200px;
+	--call-chat-width: 280px;
+	--call-mark: 64px;
+	--inbox-list-width: 360px;
+	--inbox-row-gap: 0px;
+	--badge-height: var(--space-5);
+	--inbox-search-width: 240px;
+	--inbox-height: 640px;
+	--calendar-cell-height: 96px;
+	--calendar-week-height: 240px;
+	--meter-height: 14px;
+	--meter-bar-width: 3px;
+	--meter-gap: 2px;
+	--meter-breath: 1200ms;
+	--lane-width: 240px;
+	--lane-max-height: 560px;
+	--card-lift-tilt: 2deg;
+	--record-label-width: 160px;
+	--record-cover-height: 160px;
+	--record-cover: linear-gradient(135deg, var(--hue-teal-soft), var(--hue-green-soft));
+	--panel-radius: var(--radius-xl);
+	--tile-height: 120px;
+	--tile-art-width: 45%;
+	--thumb-size: 112px;
+	--swatch-control: 20px;
+	--swatch-name-width: var(--space-16);
+	--toolbar-height: var(--control-height-lg);
+	--z-layer: 50;
+	--z-dialog: 60;
+	--z-toast: 70;
+}
+
+[data-theme='dark'] {
+	--stage-background: var(--ink-800);
+	--white: #191919;
+	--black: #ffffff;
+	--cream: #202020;
+	--paper: #191919;
+
+	--gray-50: #202020;
+	--gray-100: #272727;
+	--gray-200: #2f2f2f;
+	--gray-300: #3a3a3a;
+	--gray-400: #505050;
+	--gray-500: #7f7d7a;
+	--gray-600: #9b9a97;
+	--gray-700: #bcbab6;
+	--gray-800: #e6e5e2;
+	--gray-900: #f0efed;
+	--gray-950: #ffffff;
+
+	--azure-50: #1d3650;
+	--azure-100: #1f4166;
+	--azure-200: #1d4f85;
+	--azure-300: #1f5ea3;
+	--azure-400: #2071c4;
+	--azure-500: #2383e2;
+	--azure-600: #4a9ae8;
+	--azure-700: #78b4ee;
+	--azure-800: #b3d3f6;
+	--azure-900: #d3e6fa;
+	--azure-950: #eaf3fd;
+
+	--blue-50: #28456c;
+	--blue-100: #2d4f7b;
+	--blue-200: #345c8f;
+	--blue-300: #3f6ca6;
+	--blue-400: #4d79b8;
+	--blue-500: #5e87c9;
+	--blue-600: #7a9dd4;
+	--blue-700: #9ab7e0;
+	--blue-800: #c9d9f0;
+	--blue-900: #dde8f6;
+	--blue-950: #eef3fb;
+
+	--green-50: #2b593f;
+	--green-100: #30654a;
+	--green-200: #377356;
+	--green-300: #3f8262;
+	--green-400: #48906b;
+	--green-500: #529e72;
+	--green-600: #6fb08a;
+	--green-700: #92c4a6;
+	--green-800: #c6e2d0;
+	--green-900: #dbeddf;
+	--green-950: #edf6ef;
+
+	--amber-50: #89632a;
+	--amber-100: #966d2e;
+	--amber-200: #a67932;
+	--amber-300: #b48437;
+	--amber-400: #c08c3a;
+	--amber-500: #c19138;
+	--amber-600: #cfa458;
+	--amber-700: #dcb97e;
+	--amber-800: #f0dcb6;
+	--amber-900: #f6e8cf;
+	--amber-950: #fbf3e6;
+
+	--red-50: #6e3630;
+	--red-100: #7d3d36;
+	--red-200: #90453d;
+	--red-300: #a54b44;
+	--red-400: #c2504a;
+	--red-500: #df5452;
+	--red-600: #e57370;
+	--red-700: #ec9593;
+	--red-800: #f7cbc9;
+	--red-900: #fadfde;
+	--red-950: #fdefee;
+
+	--pink-50: #69314c;
+	--pink-100: #773756;
+	--pink-200: #883f62;
+	--pink-300: #9c476f;
+	--pink-400: #b74f82;
+	--pink-500: #d15796;
+	--pink-600: #db76aa;
+	--pink-700: #e59ac2;
+	--pink-800: #f3cbe0;
+	--pink-900: #f8dfec;
+	--pink-950: #fcf0f6;
+
+	--purple-50: #492f64;
+	--purple-100: #543670;
+	--purple-200: #613e80;
+	--purple-300: #714892;
+	--purple-400: #8556b3;
+	--purple-500: #9d68d3;
+	--purple-600: #b084dc;
+	--purple-700: #c5a5e6;
+	--purple-800: #e1d0f2;
+	--purple-900: #ede2f7;
+	--purple-950: #f6f0fb;
+
+	--teal-50: #1f4a45;
+	--teal-100: #245650;
+	--teal-200: #2a645d;
+	--teal-300: #31746c;
+	--teal-400: #3a877e;
+	--teal-500: #45998f;
+	--teal-600: #64aca3;
+	--teal-700: #8cc4bd;
+	--teal-800: #c3e1dc;
+	--teal-900: #daece9;
+	--teal-950: #edf6f4;
+
+	--navy-100: #2a3f5c;
+	--navy-500: #9aa9c8;
+	--navy-600: #b0bdd8;
+	--navy-800: #dfe4ec;
+}
