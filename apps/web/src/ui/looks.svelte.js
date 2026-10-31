@@ -1,7 +1,7 @@
 // Front end only for now: how each archive looks, what is locked and who its custodian is live in this browser.
 export const TYPES = {
   personal: { label: 'Personal', icons: ['robot', 'safe', 'bookcase', 'pinecone'] },
-  family: { label: 'Family', icons: ['robot', 'cottage', 'townhouse', 'farmhouse', 'oak', 'pine', 'baobab', 'pinecone'] },
+  family: { label: 'Family', icons: ['robot', 'cottage', 'castle', 'townhouse', 'farmhouse', 'oak', 'pine', 'baobab', 'pinecone'] },
   business: { label: 'Business', icons: ['robot', 'skyscraper', 'capitol', 'ledger', 'cabinet', 'bank', 'warehouse', 'factory'] },
 };
 // The colours of a national archive, as old metal and deep lacquer: maroon, gold, jungle, navy, steel, bronze and gunmetal.
