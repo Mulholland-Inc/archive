@@ -15,6 +15,7 @@
   import Bot from './ui/Bot.svelte';
   import { fullName, look, seedLooks, setLook, shortName } from './ui/looks.svelte.js';
   import Library from './Library.svelte';
+  import Keys from './Keys.svelte';
   import Heading from './ui/Heading.svelte';
   import NavItem from './ui/NavItem.svelte';
   import SignIn from './SignIn.svelte';
@@ -56,6 +57,10 @@
   });
 
   addEventListener('popstate', () => (path = location.pathname));
+  // Developer mode opens where the app always did.
+  $effect(() => {
+    if (dev && !route.first) go('/files');
+  });
   addEventListener('connect', () => (connecting = true));
   addEventListener('capture-memory', () => (recording = true));
   addEventListener('capture-journal', () => (writing = true));
@@ -195,6 +200,7 @@
           <NavItem href="/files" icon="folder" active={route.first === 'files'}>Files</NavItem>
           <NavItem href="/workflows" icon="workflow" active={route.first === 'workflows'}>Workflows</NavItem>
           <NavItem href="/users" icon="users" active={route.first === 'users'}>Users</NavItem>
+          <NavItem href="/keys" icon="key-round" active={route.first === 'keys'}>API keys</NavItem>
         {:else}
           <NavItem href="/" icon="message-circle" active={!route.first || route.first === 'chat'}>Chat</NavItem>
           <NavItem href="/library" icon="library" active={route.first === 'library'}>Library</NavItem>
@@ -237,6 +243,8 @@
         {#if catalogued}
           <Chat id={route.second} name={me.actor.name} email={me.actor.email} family={fullTitle} short={kind === 'personal' ? '' : archive} seed={me.workspace} tint={look(me.workspace).tint} kind={kind} onfiles={keep} onsaved={loadChats} />
         {/if}
+      {:else if route.first === 'keys'}
+        <Keys />
       {:else if route.first === 'library'}
         {#if catalogued}<Library {views} {tables} seed={me.workspace} spaces={me.spaces} archives={me.workspaces ?? []} />{/if}
       {:else if route.first === 'files'}
@@ -267,7 +275,7 @@
       {#if asking}<Passkey user={me.actor.user_id} ondone={() => (asking = false)} />{/if}
       {#if recording}<Recorder tint={look(me.workspace).tint} {kind} onsave={(f) => keep([f])} onclose={() => (recording = false)} />{/if}
     </main>
-    {#if catalogued && (!route.first || route.first === 'chat')}
+    {#if catalogued && !dev && (!route.first || route.first === 'chat')}
       {#key generation}<Panel name={archive} seed={me.workspace} {views} archives={me.workspaces ?? []} spaces={me.spaces} home={me.home} current={scope} email={me.actor.email} onpick={pick} oncreate={create} />{/key}
     {/if}
     </div>
