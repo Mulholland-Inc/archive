@@ -234,7 +234,7 @@
       {#key generation}
       {#if !route.first || route.first === 'chat'}
         {#if catalogued}
-          <Chat id={route.second} name={me.actor.name} email={me.actor.email} family={fullTitle} short={kind === 'personal' ? '' : archive} seed={me.workspace} tint={look(me.workspace).tint} onfiles={keep} onsaved={loadChats} />
+          <Chat id={route.second} name={me.actor.name} email={me.actor.email} family={fullTitle} short={kind === 'personal' ? '' : archive} seed={me.workspace} tint={look(me.workspace).tint} kind={kind} onfiles={keep} onsaved={loadChats} />
         {/if}
       {:else if route.first === 'library'}
         {#if catalogued}<Library {views} {tables} seed={me.workspace} spaces={me.spaces} archives={me.workspaces ?? []} />{/if}
@@ -264,7 +264,7 @@
       {/if}
       {/key}
       {#if asking}<Passkey user={me.actor.user_id} ondone={() => (asking = false)} />{/if}
-      {#if recording}<Recorder tint={look(me.workspace).tint} onsave={(f) => keep([f])} onclose={() => (recording = false)} />{/if}
+      {#if recording}<Recorder tint={look(me.workspace).tint} {kind} onsave={(f) => keep([f])} onclose={() => (recording = false)} />{/if}
     </main>
     {#if catalogued && (!route.first || route.first === 'chat')}
       {#key generation}<Panel name={archive} seed={me.workspace} {views} archives={me.workspaces ?? []} spaces={me.spaces} home={me.home} current={scope} email={me.actor.email} onpick={pick} oncreate={create} />{/key}
@@ -272,7 +272,7 @@
     </div>
   </div>
   {#if catalogued}<Machine name={archive} seed={me.workspace} />{/if}
-  {#if writing}<Journal seed={me.workspace} onsave={(f) => keep([f])} onclose={() => (writing = false)} />{/if}
+  {#if writing}<Journal seed={me.workspace} type={kind} onsave={(f) => keep([f])} onclose={() => (writing = false)} />{/if}
   {#if notice}<div class="notice" role="status">{notice}</div>{/if}
   {#if connecting}<Connect workspace={me.workspace} onclose={() => (connecting = false)} />{/if}
 {/if}

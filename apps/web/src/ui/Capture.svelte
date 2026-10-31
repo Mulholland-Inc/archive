@@ -1,19 +1,28 @@
 <script>
   import Icon from '#kit/Icon.svelte';
 
-  let { onfiles } = $props();
+  let { onfiles, kind = 'family' } = $props();
   let open = $state(false);
   let root = $state();
   let inputs = $state({});
 
-  const items = [
-    { key: 'memory', icon: 'mic', title: 'Record a memory', hint: 'Capture a story out loud' },
-    { key: 'journal', icon: 'pen-line', title: 'Write it down', hint: 'A journal entry or an old story' },
-    { key: 'photo', icon: 'camera', title: 'Take a photo' },
-    { key: 'video', icon: 'video', title: 'Take a video' },
-    { key: 'media', icon: 'images', title: 'Photos and videos' },
-    { key: 'files', icon: 'paperclip', title: 'Files from your computer' },
-  ];
+  const items = $derived(kind === 'business'
+    ? [
+        { key: 'memory', icon: 'mic', title: 'Record a voice memo', hint: 'Capture a thought out loud' },
+        { key: 'journal', icon: 'pen-line', title: 'Write it down', hint: 'A memo, an idea or a report' },
+        { key: 'docs', icon: 'file-spreadsheet', title: 'Add a spreadsheet or doc', hint: 'Excel, Word, PDF or slides' },
+        { key: 'photo', icon: 'camera', title: 'Take a photo' },
+        { key: 'media', icon: 'images', title: 'Photos and videos' },
+        { key: 'files', icon: 'paperclip', title: 'Files from your computer' },
+      ]
+    : [
+        { key: 'memory', icon: 'mic', title: 'Record a memory', hint: 'Capture a story out loud' },
+        { key: 'journal', icon: 'pen-line', title: 'Write it down', hint: 'A journal entry or an old story' },
+        { key: 'photo', icon: 'camera', title: 'Take a photo' },
+        { key: 'video', icon: 'video', title: 'Take a video' },
+        { key: 'media', icon: 'images', title: 'Photos and videos' },
+        { key: 'files', icon: 'paperclip', title: 'Files from your computer' },
+      ]);
 
   function choose(key) {
     open = false;
@@ -44,6 +53,7 @@
   <input bind:this={inputs.video} type="file" accept="video/*" capture="environment" hidden onchange={picked} />
   <input bind:this={inputs.media} type="file" accept="image/*,video/*" multiple hidden onchange={picked} />
   <input bind:this={inputs.files} type="file" multiple hidden onchange={picked} />
+  <input bind:this={inputs.docs} type="file" accept=".xlsx,.xls,.csv,.docx,.doc,.pdf,.pptx,.ppt,.md,.txt" multiple hidden onchange={picked} />
   {#if open}
     <div class="menu" role="menu">
       {#each items as it (it.key)}

@@ -2,7 +2,7 @@
   import { onDestroy } from 'svelte';
   import Icon from '#kit/Icon.svelte';
 
-  let { tint = '#ffffff', onsave, onclose } = $props();
+  let { tint = '#ffffff', kind = 'family', onsave, onclose } = $props();
   let state = $state('starting');
   let seconds = $state(0);
   let problem = $state('');
@@ -11,6 +11,7 @@
   let input = $state('');
   let stream, recorder, audio, analyser, source, out, timer, frame;
   let chunks = [];
+  const noun = kind === 'business' ? 'memo' : 'memory';
 
   const clock = $derived(`${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`);
   const recording = $derived(state === 'recording');
@@ -85,7 +86,7 @@
     recorder.onstop = () => {
       const type = recorder.mimeType || 'audio/webm';
       const when = new Date().toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }).replaceAll(':', '.').replaceAll('/', '-');
-      if (keep) onsave(new File(chunks, `Memory ${when}.${type.includes('mp4') ? 'm4a' : 'webm'}`, { type }));
+      if (keep) onsave(new File(chunks, `${noun === 'memo' ? 'Memo' : 'Memory'} ${when}.${type.includes('mp4') ? 'm4a' : 'webm'}`, { type }));
       onclose();
     };
     recorder.stop();
@@ -101,7 +102,7 @@
   start();
 </script>
 
-<section class="recorder" aria-label="Recording a memory">
+<section class="recorder" aria-label="Recording a {noun}">
   <header>
     <button class="ghost" type="button" onclick={() => finish(false)}><Icon name="x" />Discard</button>
     {#if inputs.length}
@@ -125,7 +126,7 @@
     </div>
     <footer>
       <button class="round" type="button" disabled={state === 'starting'} aria-label={recording ? 'Pause' : 'Keep recording'} title={recording ? 'Pause' : 'Keep recording'} onclick={pause}><Icon name={recording ? 'pause' : 'mic'} /></button>
-      <button class="save" type="button" disabled={state === 'starting'} style="--tint: {tint}" onclick={() => finish(true)}><Icon name="check" />Save memory</button>
+      <button class="save" type="button" disabled={state === 'starting'} style="--tint: {tint}" onclick={() => finish(true)}><Icon name="check" />Save {noun}</button>
     </footer>
   {/if}
 </section>

@@ -2,12 +2,22 @@
   import Icon from '#kit/Icon.svelte';
   import Bot from './Bot.svelte';
 
-  let { seed = '', onsave, onclose } = $props();
-  let kind = $state('now');
+  let { seed = '', type = 'family', onsave, onclose } = $props();
+  const business = type === 'business';
+  const MODES = business
+    ? [
+        { key: 'memo', label: 'Memo', file: 'Memo', prompt: 'What does everyone need to know?', asks: [['to', 'Who is this for?', 'A person, a team, everyone'], ['subject', 'What is it about?', 'A short subject']] },
+        { key: 'idea', label: 'Idea', file: 'Idea', prompt: 'What is the idea?', asks: [['why', 'Why does it matter?', 'The problem it solves'], ['who', 'Who should look at this?', 'Names or a team']] },
+        { key: 'report', label: 'Report', file: 'Report', prompt: 'What happened, and what did you find?', asks: [['period', 'What period does it cover?', 'Last week, Q3, this project'], ['owner', 'Who is it from?', 'A person or a team']] },
+      ]
+    : [
+        { key: 'now', label: 'Today', file: 'Journal', prompt: 'What happened today?', asks: [] },
+        { key: 'old', label: 'An old story', file: 'Story', prompt: 'Tell the story, however you remember it', asks: [['when', 'When did this happen?', 'Summer 1978, or just roughly'], ['where', 'Where was it?', 'A town, a house, a street'], ['who', 'Who else was there?', 'Names, or who they were to you']] },
+      ];
+  let kind = $state(MODES[0].key);
+  const mode = $derived(MODES.find((m) => m.key === kind));
+  const answers = $state({});
   let text = $state('');
-  let when = $state('');
-  let where = $state('');
-  let who = $state('');
   let place = $state('');
   let finding = $state(false);
 
@@ -31,11 +41,13 @@
   }
 
   function save() {
-    const facts = kind === 'now'
-      ? [`Written: ${today}, ${clock}`, place && !place.startsWith('Location') ? `Location: ${place}` : '']
-      : [`When: ${when}`, `Where: ${where}`, `Who was there: ${who}`, `Written down: ${today}`];
+    const facts = [
+      ...mode.asks.map(([key, q]) => (answers[key]?.trim() ? `${q} ${answers[key].trim()}` : '')),
+      `Written: ${today}, ${clock}`,
+      kind === 'now' && place && !place.startsWith('Location') ? `Location: ${place}` : '',
+    ];
     const body = `${facts.filter(Boolean).join('\n')}\n\n${text.trim()}\n`;
-    const name = `${kind === 'now' ? 'Journal' : 'Story'} ${now.toLocaleDateString(undefined, { dateStyle: 'medium' }).replaceAll('/', '-')} ${clock.replaceAll(':', '.')}.md`;
+    const name = `${mode.file} ${now.toLocaleDateString(undefined, { dateStyle: 'medium' }).replaceAll('/', '-')} ${clock.replaceAll(':', '.')}.md`;
     onsave(new File([body], name, { type: 'text/markdown' }));
     onclose();
   }
@@ -49,8 +61,9 @@
 <div class="sheet" role="dialog" aria-modal="true" aria-label="Write it down">
   <header>
     <div class="kinds" role="tablist">
-      <button type="button" role="tab" aria-selected={kind === 'now'} onclick={() => (kind = 'now')}>Today</button>
-      <button type="button" role="tab" aria-selected={kind === 'old'} onclick={() => (kind = 'old')}>An old story</button>
+      {#each MODES as m (m.key)}
+        <button type="button" role="tab" aria-selected={kind === m.key} onclick={() => (kind = m.key)}>{m.label}</button>
+      {/each}
     </div>
     <button class="close" type="button" aria-label="Close" onclick={onclose}><Icon name="x" /></button>
   </header>
@@ -66,14 +79,14 @@
     </div>
   {/if}
 
-  <textarea bind:value={text} placeholder={kind === 'now' ? 'What happened today?' : 'Tell the story, however you remember it'} aria-label="Your entry" {@attach (el) => el.focus()}></textarea>
+  <textarea bind:value={text} placeholder={mode.prompt} aria-label="Your entry" {@attach (el) => el.focus()}></textarea>
 
-  {#if kind === 'old'}
+  {#if mode.asks.length}
     <div class="asks">
       <div class="asker"><Bot {seed} size={32} /><span>A few things will help me file this.</span></div>
-      <label><span>When did this happen?</span><input bind:value={when} placeholder="Summer 1978, or just roughly" /></label>
-      <label><span>Where was it?</span><input bind:value={where} placeholder="A town, a house, a street" /></label>
-      <label><span>Who else was there?</span><input bind:value={who} placeholder="Names, or who they were to you" /></label>
+      {#each mode.asks as [key, q, hint] (key)}
+        <label><span>{q}</span><input bind:value={answers[key]} placeholder={hint} /></label>
+      {/each}
     </div>
   {/if}
 

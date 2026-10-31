@@ -59,7 +59,7 @@
   import Dictate from './ui/Dictate.svelte';
   import Bot from './ui/Bot.svelte';
 
-  let { id = '', name = '', email = '', family = '', short = '', seed = '', tint = '', onfiles, onsaved } = $props();
+  let { id = '', name = '', email = '', family = '', short = '', seed = '', tint = '', kind = 'family', onfiles, onsaved } = $props();
 
   let current = $state('');
   let title = $state('');
@@ -301,7 +301,7 @@
   </div>
   <div class="dock">
     <Composer bind:value={draft} bind:field {busy} ontalk={() => dispatchEvent(new CustomEvent('capture-memory'))} onsend={send} onstop={stop} placeholder={short ? `Message ${short}` : 'Ask anything'} aria-label="Message">
-      {#snippet lead()}<Capture {onfiles} />{/snippet}
+      {#snippet lead()}<Capture {onfiles} {kind} />{/snippet}
       {#snippet tail()}<Dictate bind:value={draft} />{/snippet}
     </Composer>
   </div>

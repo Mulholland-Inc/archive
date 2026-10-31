@@ -26,7 +26,7 @@
   </div>
   {@render tail?.()}
   {#if !busy && !ready && ontalk}
-    <button class="send" type="button" title="Record a memory" aria-label="Record a memory" onclick={ontalk}><Icon name="audio-lines" /></button>
+    <button class="send" type="button" title="Record" aria-label="Record" onclick={ontalk}><Icon name="audio-lines" /></button>
   {:else}
     <button class="send" class:busy type="submit" disabled={!busy && !ready} title={busy ? 'Stop' : 'Send'} aria-label={busy ? 'Stop' : 'Send'}>
       <Icon name={busy ? 'square' : 'arrow-up'} />
