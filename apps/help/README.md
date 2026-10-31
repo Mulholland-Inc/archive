@@ -18,6 +18,8 @@ npx wrangler deploy
 
 `HELP_SECRET` is any long random string. Add the app's address to `ORIGINS`, and build the app with `VITE_HELP_URL` set to the worker's address. Without it, the chat stays a demo.
 
+`VITE_ARCHIVIST` sets the archivist's name, and `VITE_BOOK_URL` turns on Book a call with a scheduling link.
+
 ## Limits
 
 - The name, email and archive on a message come from the browser, so treat them as unverified.

@@ -326,7 +326,7 @@
     </div>
   </div>
   {#if catalogued}<Machine name={archive} seed={me.workspace} />{/if}
-  {#if catalogued && !dev}<Archivist name={me.actor.name} email={me.actor.email} archive={fullTitle} />{/if}
+  {#if catalogued && !dev}<Archivist name={me.actor.name} email={me.actor.email} archive={fullTitle} {kind} />{/if}
   {#if writing}<Journal seed={me.workspace} type={kind} onsave={(f) => keep([f])} onclose={() => (writing = false)} />{/if}
   {#if notice}<div class="notice" role="status">{notice}</div>{/if}
   {#if creating}<NewArchive oncreate={addArchive} onclose={() => (creating = false)} />{/if}
