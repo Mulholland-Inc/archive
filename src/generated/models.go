@@ -20,6 +20,12 @@ type ArchiveChat struct {
 	UpdatedAt time.Time
 }
 
+type ArchiveDue struct {
+	Workspace uuid.UUID
+	Kind      string
+	At        time.Time
+}
+
 type ArchiveUpload struct {
 	ID        uuid.UUID
 	Role      string

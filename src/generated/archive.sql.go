@@ -105,6 +105,30 @@ func (q *Queries) AdvisoryXactLock(ctx context.Context, key int64) error {
 	return err
 }
 
+const allDue = `-- name: AllDue :many
+SELECT workspace, kind, at FROM archive.due
+`
+
+func (q *Queries) AllDue(ctx context.Context) ([]ArchiveDue, error) {
+	rows, err := q.db.Query(ctx, allDue)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ArchiveDue
+	for rows.Next() {
+		var i ArchiveDue
+		if err := rows.Scan(&i.Workspace, &i.Kind, &i.At); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const allWorkspaces = `-- name: AllWorkspaces :many
 SELECT id, name, key, created_at FROM archive.workspace ORDER BY created_at, id
 `

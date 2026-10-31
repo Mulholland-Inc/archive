@@ -397,6 +397,9 @@ func (a *Archive) soon(ctx context.Context, kind string, at time.Time) error {
 }
 
 func hubTasksOpen() (*hubTasks, error) {
+	if os.Getenv("ARCHIVE_TASKS_URL") == "" && os.Getenv("K_SERVICE") == "" && os.Getenv("CLOUD_RUN_JOB") == "" {
+		return nil, nil
+	}
 	raw := coreEnv("ARCHIVE_TASKS_URL", "https://cloudtasks.googleapis.com")
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || u.Scheme != "https" && u.Scheme != "http" {
@@ -434,6 +437,14 @@ func (h *Hub) wake(ctx context.Context, ws uuid.UUID, kind string, at time.Time)
 	if limit := time.Now().Add(hubTaskMax); at.After(limit) {
 		at = limit
 	}
+	if t == nil {
+		time.AfterFunc(time.Until(at), func() {
+			if err := h.work(context.Background(), ws, kind); err != nil {
+				fmt.Fprintf(os.Stderr, "archive: workspace %s %ss: %v\n", ws, kind, err)
+			}
+		})
+		return nil
+	}
 	url := h.api + "/tasks"
 	body, _ := json.Marshal(map[string]string{"workspace": ws.String(), "work": kind + "s"})
 	sum := sha256.Sum256(fmt.Appendf(nil, "%s/%s/%d", ws, kind, at.UnixMilli()))
@@ -454,9 +465,6 @@ func (h *Hub) wake(ctx context.Context, ws uuid.UUID, kind string, at time.Time)
 
 func (t *gcpToken) queue(ctx context.Context) (string, error) {
 	name := cmp.Or(os.Getenv("K_SERVICE"), os.Getenv("CLOUD_RUN_JOB"))
-	if name == "" {
-		return "", errors.New("cloud tasks: K_SERVICE and CLOUD_RUN_JOB are unset, so this is not Cloud Run; in development set ARCHIVE_TASKS_URL to the emulator's queue, like http://localhost:8123/projects/dev/locations/here/queues/archive")
-	}
 	project, err := t.get(ctx, "project/project-id")
 	if err != nil {
 		return "", err
@@ -551,6 +559,10 @@ func (h *Hub) taskCaller(r *http.Request) error {
 }
 
 func (h *Hub) tasksHTTP(w http.ResponseWriter, r *http.Request) {
+	if h.tasks == nil {
+		http.NotFound(w, r)
+		return
+	}
 	if err := h.taskCaller(r); err != nil {
 		httpWrite(w, 0, nil, err)
 		return
@@ -568,21 +580,44 @@ func (h *Hub) tasksHTTP(w http.ResponseWriter, r *http.Request) {
 		httpWrite(w, 0, nil, fmt.Errorf("work: want workflows or files: %w", httpErrBadRequest))
 		return
 	}
-	ctx, q := r.Context(), h.q()
-	at, err := q.ClaimDueFor(ctx, time.Now().Add(runTimeout+workflowRetry), body.Workspace, kind)
-	if err == nil {
-		err = h.due(ctx, body.Workspace, kind, at)
-	} else if errors.Is(err, pgx.ErrNoRows) {
-		if at, err = q.DueAt(ctx, body.Workspace, kind); err == nil && at.After(time.Now()) {
-			err = h.wake(ctx, body.Workspace, kind, at)
-		} else if errors.Is(err, pgx.ErrNoRows) {
-			err = nil
-		}
-	}
+	err := h.work(r.Context(), body.Workspace, kind)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "archive: workspace %s %s: %v\n", body.Workspace, body.Work, err)
 	}
 	httpWrite(w, http.StatusNoContent, nil, err)
+}
+
+func (h *Hub) work(ctx context.Context, ws uuid.UUID, kind string) error {
+	q := h.q()
+	at, err := q.ClaimDueFor(ctx, time.Now().Add(runTimeout+workflowRetry), ws, kind)
+	if err == nil {
+		return h.due(ctx, ws, kind, at)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if at, err = q.DueAt(ctx, ws, kind); err == nil && at.After(time.Now()) {
+		return h.wake(ctx, ws, kind, at)
+	} else if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	return err
+}
+
+func (h *Hub) wakeAll(ctx context.Context) error {
+	if h.tasks != nil {
+		return nil
+	}
+	due, err := h.q().AllDue(ctx)
+	if err != nil {
+		return err
+	}
+	for _, d := range due {
+		if err := h.wake(ctx, d.Workspace, d.Kind, d.At); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (a *Archive) nextDue(ctx context.Context, kind string) (*time.Time, error) {
