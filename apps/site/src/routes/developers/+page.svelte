@@ -25,7 +25,7 @@
     ['Your AI agent', 'Claude, ChatGPT, Gemini, Cursor and others connect over MCP and run scripts for you'],
     ['The API', 'Records, files and search from your own apps and services'],
     ['The command line', 'Scripts, scheduled jobs and quick changes from your terminal'],
-    ['Terraform', 'Your structure, spaces and access keys kept with the rest of your setup'],
+    ['Terraform', 'Your structure, people and access keys kept with the rest of your setup'],
     ['Connectors', 'Mail, calendars, files, chat and business tools, kept up to date']
   ];
 

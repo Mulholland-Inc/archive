@@ -148,7 +148,7 @@ SELECT t.id, t.kind, t.name, coalesce(t.role, '')::text AS role, u.id AS user_id
     coalesce(t.workspace::text, '')::text AS workspace,
     ARRAY(SELECT w.id::text FROM archive.workspace w WHERE w.id = ANY(u.workspaces) ORDER BY array_position(u.workspaces, w.id))::text[] AS workspaces
 FROM archive.token t JOIN archive."user" u ON u.id = t.user_id
-WHERE t.hash = $1 AND t.kind IN ('api', 'session', 'user') AND (t.expires_at IS NULL OR t.expires_at > now())
+WHERE t.hash = $1 AND t.kind IN ('api', 'session') AND (t.expires_at IS NULL OR t.expires_at > now())
 `
 
 type AuthenticateRow struct {
@@ -180,17 +180,6 @@ func (q *Queries) Authenticate(ctx context.Context, hash string) (AuthenticateRo
 	return i, err
 }
 
-const canWrite = `-- name: CanWrite :one
-SELECT $1::uuid = ANY(archive.my_spaces('editor'))
-`
-
-func (q *Queries) CanWrite(ctx context.Context, space uuid.UUID) (bool, error) {
-	row := q.db.QueryRow(ctx, canWrite, space)
-	var column_1 bool
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
 const catalog = `-- name: Catalog :one
 WITH col AS (
     SELECT a.attrelid AS rel, a.attnum AS num, jsonb_build_object(
@@ -214,14 +203,18 @@ WITH col AS (
 SELECT jsonb_build_object(
     'tables', coalesce((SELECT jsonb_object_agg(c.relname, jsonb_build_object(
         'name', c.relname,
+        'schema', c.relnamespace::regnamespace::text,
         'kind', CASE c.relkind WHEN 'v' THEN 'view' ELSE 'table' END,
         'description', coalesce(obj_description(c.oid, 'pg_class'), ''),
         'rls', c.relrowsecurity,
         'force', c.relforcerowsecurity,
         'security_invoker', coalesce((SELECT o.option_value::bool FROM pg_options_to_table(c.reloptions) o WHERE o.option_name = 'security_invoker'), false),
-        'policies', (SELECT count(*) FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid),
+        'policy', coalesce((SELECT count(*) = 1 AND bool_and(p.polname = 'access' AND p.polcmd = '*' AND p.polpermissive AND p.polroles = '{0}'::oid[]
+            AND regexp_replace(pg_get_expr(p.polqual, p.polrelid), '^archive\.', '') = 'can(access)'
+            AND regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)')
+            FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid), false),
         'columns', (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid)))
-        FROM pg_catalog.pg_class c WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p', 'v')), '{}'),
+        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid = 'archive.member'::regclass) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
         'schema', t.typnamespace::regnamespace::text,
@@ -355,52 +348,6 @@ func (q *Queries) ClearSecrets(ctx context.Context, tbl string, rid uuid.UUID, c
 	return err
 }
 
-const countOwners = `-- name: CountOwners :one
-SELECT count(*) FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles r ON r.oid = m.roleid
-JOIN pg_catalog.pg_roles u ON u.oid = m.member WHERE r.rolname = $1::name AND starts_with(u.rolname, $2::text)
-`
-
-func (q *Queries) CountOwners(ctx context.Context, owner string, users string) (int64, error) {
-	row := q.db.QueryRow(ctx, countOwners, owner, users)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const createAPIToken = `-- name: CreateAPIToken :one
-INSERT INTO archive.token (id, user_id, workspace, kind, name, role, hash, expires_at) VALUES ($1, $2, $3, 'api', $4, $5, $6, $7) RETURNING created_at, expires_at
-`
-
-type CreateAPITokenParams struct {
-	ID        uuid.UUID
-	UserID    uuid.UUID
-	Workspace *uuid.UUID
-	Name      string
-	Role      *string
-	Hash      string
-	ExpiresAt *time.Time
-}
-
-type CreateAPITokenRow struct {
-	CreatedAt time.Time
-	ExpiresAt *time.Time
-}
-
-func (q *Queries) CreateAPIToken(ctx context.Context, arg CreateAPITokenParams) (CreateAPITokenRow, error) {
-	row := q.db.QueryRow(ctx, createAPIToken,
-		arg.ID,
-		arg.UserID,
-		arg.Workspace,
-		arg.Name,
-		arg.Role,
-		arg.Hash,
-		arg.ExpiresAt,
-	)
-	var i CreateAPITokenRow
-	err := row.Scan(&i.CreatedAt, &i.ExpiresAt)
-	return i, err
-}
-
 const createChat = `-- name: CreateChat :one
 INSERT INTO archive.chat (user_id, title) VALUES ($1, $2) RETURNING id, user_id, title, messages, created_at, updated_at
 `
@@ -420,16 +367,16 @@ func (q *Queries) CreateChat(ctx context.Context, userID uuid.UUID, title string
 }
 
 const createFile = `-- name: CreateFile :one
-INSERT INTO archive.file (hash, name, mime, size, space) VALUES ($1, $2, $3, $4, $5)
-RETURNING id, hash, name, mime, size, metadata, status, error, space, created_at
+INSERT INTO archive.file (hash, name, mime, size, access) VALUES ($1, $2, $3, $4, $5)
+RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at
 `
 
 type CreateFileParams struct {
-	Hash  string
-	Name  string
-	MIME  string
-	Size  int64
-	Space uuid.UUID
+	Hash   string
+	Name   string
+	MIME   string
+	Size   int64
+	Access *string
 }
 
 type CreateFileRow struct {
@@ -441,7 +388,7 @@ type CreateFileRow struct {
 	Metadata  map[string]any
 	Status    string
 	Error     string
-	Space     uuid.UUID
+	Access    *string
 	CreatedAt time.Time
 }
 
@@ -451,7 +398,7 @@ func (q *Queries) CreateFile(ctx context.Context, arg CreateFileParams) (CreateF
 		arg.Name,
 		arg.MIME,
 		arg.Size,
-		arg.Space,
+		arg.Access,
 	)
 	var i CreateFileRow
 	err := row.Scan(
@@ -463,14 +410,14 @@ func (q *Queries) CreateFile(ctx context.Context, arg CreateFileParams) (CreateF
 		&i.Metadata,
 		&i.Status,
 		&i.Error,
-		&i.Space,
+		&i.Access,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const createSecret = `-- name: CreateSecret :exec
-INSERT INTO archive.secret (id, table_name, row_id, column_name, type, value, space) VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO archive.secret (id, table_name, row_id, column_name, type, value, access) VALUES ($1, $2, $3, $4, $5, $6, $7)
 `
 
 type CreateSecretParams struct {
@@ -480,7 +427,7 @@ type CreateSecretParams struct {
 	ColumnName string
 	Type       string
 	Value      []byte
-	Space      uuid.UUID
+	Access     *string
 }
 
 func (q *Queries) CreateSecret(ctx context.Context, arg CreateSecretParams) error {
@@ -491,7 +438,7 @@ func (q *Queries) CreateSecret(ctx context.Context, arg CreateSecretParams) erro
 		arg.ColumnName,
 		arg.Type,
 		arg.Value,
-		arg.Space,
+		arg.Access,
 	)
 	return err
 }
@@ -505,25 +452,48 @@ func (q *Queries) CreateSession(ctx context.Context, userID uuid.UUID, hash stri
 	return err
 }
 
-const createSpace = `-- name: CreateSpace :one
-INSERT INTO archive.space (name, role, home) VALUES ($1, $2, $3) RETURNING id
+const createToken = `-- name: CreateToken :one
+INSERT INTO archive.token (id, user_id, workspace, kind, name, role, hash, expires_at) VALUES ($1, $2, $3, 'api', $4, $5, $6, $7) RETURNING created_at, expires_at
 `
 
-func (q *Queries) CreateSpace(ctx context.Context, name string, role string, home *uuid.UUID) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, createSpace, name, role, home)
-	var id uuid.UUID
-	err := row.Scan(&id)
-	return id, err
+type CreateTokenParams struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	Workspace *uuid.UUID
+	Name      string
+	Role      *string
+	Hash      string
+	ExpiresAt *time.Time
+}
+
+type CreateTokenRow struct {
+	CreatedAt time.Time
+	ExpiresAt *time.Time
+}
+
+func (q *Queries) CreateToken(ctx context.Context, arg CreateTokenParams) (CreateTokenRow, error) {
+	row := q.db.QueryRow(ctx, createToken,
+		arg.ID,
+		arg.UserID,
+		arg.Workspace,
+		arg.Name,
+		arg.Role,
+		arg.Hash,
+		arg.ExpiresAt,
+	)
+	var i CreateTokenRow
+	err := row.Scan(&i.CreatedAt, &i.ExpiresAt)
+	return i, err
 }
 
 const createUpload = `-- name: CreateUpload :exec
-INSERT INTO archive.upload (id, role, space, name, length) VALUES ($1, $2, $3, $4, $5)
+INSERT INTO archive.upload (id, role, access, name, length) VALUES ($1, $2, $3, $4, $5)
 `
 
 type CreateUploadParams struct {
 	ID     uuid.UUID
 	Role   string
-	Space  uuid.UUID
+	Access *string
 	Name   string
 	Length int64
 }
@@ -532,43 +502,11 @@ func (q *Queries) CreateUpload(ctx context.Context, arg CreateUploadParams) erro
 	_, err := q.db.Exec(ctx, createUpload,
 		arg.ID,
 		arg.Role,
-		arg.Space,
+		arg.Access,
 		arg.Name,
 		arg.Length,
 	)
 	return err
-}
-
-const createUserToken = `-- name: CreateUserToken :one
-INSERT INTO archive.token (id, user_id, workspace, kind, name, hash, expires_at) VALUES ($1, $2, $3, 'user', $4, $5, $6) RETURNING created_at, expires_at
-`
-
-type CreateUserTokenParams struct {
-	ID        uuid.UUID
-	UserID    uuid.UUID
-	Workspace *uuid.UUID
-	Name      string
-	Hash      string
-	ExpiresAt *time.Time
-}
-
-type CreateUserTokenRow struct {
-	CreatedAt time.Time
-	ExpiresAt *time.Time
-}
-
-func (q *Queries) CreateUserToken(ctx context.Context, arg CreateUserTokenParams) (CreateUserTokenRow, error) {
-	row := q.db.QueryRow(ctx, createUserToken,
-		arg.ID,
-		arg.UserID,
-		arg.Workspace,
-		arg.Name,
-		arg.Hash,
-		arg.ExpiresAt,
-	)
-	var i CreateUserTokenRow
-	err := row.Scan(&i.CreatedAt, &i.ExpiresAt)
-	return i, err
 }
 
 const createWorkspace = `-- name: CreateWorkspace :one
@@ -588,17 +526,6 @@ func (q *Queries) CreateWorkspace(ctx context.Context, iD uuid.UUID, name string
 	return i, err
 }
 
-const defaultSpace = `-- name: DefaultSpace :one
-SELECT id FROM archive.space WHERE id = ANY(archive.my_spaces('editor')) ORDER BY home IS NOT DISTINCT FROM $1::uuid DESC, id LIMIT 1
-`
-
-func (q *Queries) DefaultSpace(ctx context.Context, owner uuid.UUID) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, defaultSpace, owner)
-	var id uuid.UUID
-	err := row.Scan(&id)
-	return id, err
-}
-
 const deleteChat = `-- name: DeleteChat :execrows
 DELETE FROM archive.chat WHERE id = $1 AND user_id = $2
 `
@@ -609,33 +536,6 @@ func (q *Queries) DeleteChat(ctx context.Context, iD uuid.UUID, userID uuid.UUID
 		return 0, err
 	}
 	return result.RowsAffected(), nil
-}
-
-const deleteSpace = `-- name: DeleteSpace :exec
-DELETE FROM archive.space WHERE id = $1
-`
-
-func (q *Queries) DeleteSpace(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, deleteSpace, id)
-	return err
-}
-
-const deleteSpaceFiles = `-- name: DeleteSpaceFiles :exec
-DELETE FROM archive.file WHERE space = $1
-`
-
-func (q *Queries) DeleteSpaceFiles(ctx context.Context, space uuid.UUID) error {
-	_, err := q.db.Exec(ctx, deleteSpaceFiles, space)
-	return err
-}
-
-const deleteSpaceSecrets = `-- name: DeleteSpaceSecrets :exec
-DELETE FROM archive.secret WHERE space = $1
-`
-
-func (q *Queries) DeleteSpaceSecrets(ctx context.Context, space uuid.UUID) error {
-	_, err := q.db.Exec(ctx, deleteSpaceSecrets, space)
-	return err
 }
 
 const deleteUpload = `-- name: DeleteUpload :exec
@@ -699,31 +599,6 @@ func (q *Queries) DeleteWorkspaceTokens(ctx context.Context, userID uuid.UUID, w
 	return items, nil
 }
 
-const directRoles = `-- name: DirectRoles :many
-SELECT r.rolname::text FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles r ON r.oid = m.roleid JOIN pg_catalog.pg_roles u ON u.oid = m.member
-WHERE u.rolname = $1::name AND r.rolname = ANY($2::name[])
-`
-
-func (q *Queries) DirectRoles(ctx context.Context, member string, grps []string) ([]string, error) {
-	rows, err := q.db.Query(ctx, directRoles, member, grps)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []string
-	for rows.Next() {
-		var r_rolname string
-		if err := rows.Scan(&r_rolname); err != nil {
-			return nil, err
-		}
-		items = append(items, r_rolname)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const dueAt = `-- name: DueAt :one
 SELECT at FROM archive.due WHERE workspace = $1 AND kind = $2
 `
@@ -736,7 +611,7 @@ func (q *Queries) DueAt(ctx context.Context, workspace uuid.UUID, kind string) (
 }
 
 const fileByKey = `-- name: FileByKey :one
-SELECT id, hash, name, mime, size, metadata, status, error, space, created_at FROM archive.file WHERE space = $1 AND hash = $2 AND name = $3
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at FROM archive.file WHERE access IS NOT DISTINCT FROM $1 AND hash = $2 AND name = $3
 `
 
 type FileByKeyRow struct {
@@ -748,12 +623,12 @@ type FileByKeyRow struct {
 	Metadata  map[string]any
 	Status    string
 	Error     string
-	Space     uuid.UUID
+	Access    *string
 	CreatedAt time.Time
 }
 
-func (q *Queries) FileByKey(ctx context.Context, space uuid.UUID, hash string, name string) (FileByKeyRow, error) {
-	row := q.db.QueryRow(ctx, fileByKey, space, hash, name)
+func (q *Queries) FileByKey(ctx context.Context, access *string, hash string, name string) (FileByKeyRow, error) {
+	row := q.db.QueryRow(ctx, fileByKey, access, hash, name)
 	var i FileByKeyRow
 	err := row.Scan(
 		&i.ID,
@@ -764,7 +639,7 @@ func (q *Queries) FileByKey(ctx context.Context, space uuid.UUID, hash string, n
 		&i.Metadata,
 		&i.Status,
 		&i.Error,
-		&i.Space,
+		&i.Access,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -782,7 +657,7 @@ func (q *Queries) FileText(ctx context.Context, id uuid.UUID) (string, error) {
 }
 
 const fileWithText = `-- name: FileWithText :one
-SELECT id, hash, name, mime, size, metadata, status, error, space, created_at, text FROM archive.file WHERE id = $1
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, text FROM archive.file WHERE id = $1
 `
 
 type FileWithTextRow struct {
@@ -794,7 +669,7 @@ type FileWithTextRow struct {
 	Metadata  map[string]any
 	Status    string
 	Error     string
-	Space     uuid.UUID
+	Access    *string
 	CreatedAt time.Time
 	Text      string
 }
@@ -811,7 +686,7 @@ func (q *Queries) FileWithText(ctx context.Context, id uuid.UUID) (FileWithTextR
 		&i.Metadata,
 		&i.Status,
 		&i.Error,
-		&i.Space,
+		&i.Access,
 		&i.CreatedAt,
 		&i.Text,
 	)
@@ -819,8 +694,8 @@ func (q *Queries) FileWithText(ctx context.Context, id uuid.UUID) (FileWithTextR
 }
 
 const files = `-- name: Files :many
-SELECT id, hash, name, mime, size, metadata, status, error, space, created_at FROM archive.file
-WHERE id > $1 AND ($2::uuid IS NULL OR space = $2) ORDER BY id LIMIT $3
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at FROM archive.file
+WHERE id > $1 ORDER BY id LIMIT $2
 `
 
 type FilesRow struct {
@@ -832,12 +707,12 @@ type FilesRow struct {
 	Metadata  map[string]any
 	Status    string
 	Error     string
-	Space     uuid.UUID
+	Access    *string
 	CreatedAt time.Time
 }
 
-func (q *Queries) Files(ctx context.Context, after uuid.UUID, space *uuid.UUID, lim int32) ([]FilesRow, error) {
-	rows, err := q.db.Query(ctx, files, after, space, lim)
+func (q *Queries) Files(ctx context.Context, after uuid.UUID, lim int32) ([]FilesRow, error) {
+	rows, err := q.db.Query(ctx, files, after, lim)
 	if err != nil {
 		return nil, err
 	}
@@ -854,7 +729,7 @@ func (q *Queries) Files(ctx context.Context, after uuid.UUID, space *uuid.UUID, 
 			&i.Metadata,
 			&i.Status,
 			&i.Error,
-			&i.Space,
+			&i.Access,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -868,8 +743,8 @@ func (q *Queries) Files(ctx context.Context, after uuid.UUID, space *uuid.UUID, 
 }
 
 const filesWithText = `-- name: FilesWithText :many
-SELECT id, hash, name, mime, size, metadata, status, error, space, created_at, text FROM archive.file
-WHERE id > $1 AND ($2::uuid IS NULL OR space = $2) ORDER BY id LIMIT $3
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, text FROM archive.file
+WHERE id > $1 ORDER BY id LIMIT $2
 `
 
 type FilesWithTextRow struct {
@@ -881,13 +756,13 @@ type FilesWithTextRow struct {
 	Metadata  map[string]any
 	Status    string
 	Error     string
-	Space     uuid.UUID
+	Access    *string
 	CreatedAt time.Time
 	Text      string
 }
 
-func (q *Queries) FilesWithText(ctx context.Context, after uuid.UUID, space *uuid.UUID, lim int32) ([]FilesWithTextRow, error) {
-	rows, err := q.db.Query(ctx, filesWithText, after, space, lim)
+func (q *Queries) FilesWithText(ctx context.Context, after uuid.UUID, lim int32) ([]FilesWithTextRow, error) {
+	rows, err := q.db.Query(ctx, filesWithText, after, lim)
 	if err != nil {
 		return nil, err
 	}
@@ -904,7 +779,7 @@ func (q *Queries) FilesWithText(ctx context.Context, after uuid.UUID, space *uui
 			&i.Metadata,
 			&i.Status,
 			&i.Error,
-			&i.Space,
+			&i.Access,
 			&i.CreatedAt,
 			&i.Text,
 		); err != nil {
@@ -962,7 +837,7 @@ func (q *Queries) ForgetUser(ctx context.Context, id uuid.UUID) error {
 }
 
 const getFile = `-- name: GetFile :one
-SELECT id, hash, name, mime, size, metadata, status, error, space, created_at FROM archive.file WHERE id = $1
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at FROM archive.file WHERE id = $1
 `
 
 type GetFileRow struct {
@@ -974,7 +849,7 @@ type GetFileRow struct {
 	Metadata  map[string]any
 	Status    string
 	Error     string
-	Space     uuid.UUID
+	Access    *string
 	CreatedAt time.Time
 }
 
@@ -990,7 +865,7 @@ func (q *Queries) GetFile(ctx context.Context, id uuid.UUID) (GetFileRow, error)
 		&i.Metadata,
 		&i.Status,
 		&i.Error,
-		&i.Space,
+		&i.Access,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -1016,17 +891,6 @@ func (q *Queries) HasRole(ctx context.Context, member string, grp string) (bool,
 	var pg_has_role bool
 	err := row.Scan(&pg_has_role)
 	return pg_has_role, err
-}
-
-const homeSpace = `-- name: HomeSpace :one
-SELECT id FROM archive.space WHERE home = $1
-`
-
-func (q *Queries) HomeSpace(ctx context.Context, home *uuid.UUID) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, homeSpace, home)
-	var id uuid.UUID
-	err := row.Scan(&id)
-	return id, err
 }
 
 const inputErrors = `-- name: InputErrors :many
@@ -1133,7 +997,7 @@ func (q *Queries) LeaveWorkspace(ctx context.Context, workspace uuid.UUID, iD uu
 }
 
 const lockFile = `-- name: LockFile :one
-SELECT id, hash, name, mime, size, metadata, status, error, space, created_at FROM archive.file WHERE id = $1 FOR UPDATE
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at FROM archive.file WHERE id = $1 FOR UPDATE
 `
 
 type LockFileRow struct {
@@ -1145,7 +1009,7 @@ type LockFileRow struct {
 	Metadata  map[string]any
 	Status    string
 	Error     string
-	Space     uuid.UUID
+	Access    *string
 	CreatedAt time.Time
 }
 
@@ -1161,14 +1025,14 @@ func (q *Queries) LockFile(ctx context.Context, id uuid.UUID) (LockFileRow, erro
 		&i.Metadata,
 		&i.Status,
 		&i.Error,
-		&i.Space,
+		&i.Access,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const lockPendingFile = `-- name: LockPendingFile :one
-SELECT id, hash, name, mime, size, metadata, status, error, space, created_at FROM archive.file
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at FROM archive.file
 WHERE id = $1 AND status = 'pending' FOR UPDATE
 `
 
@@ -1181,7 +1045,7 @@ type LockPendingFileRow struct {
 	Metadata  map[string]any
 	Status    string
 	Error     string
-	Space     uuid.UUID
+	Access    *string
 	CreatedAt time.Time
 }
 
@@ -1197,14 +1061,14 @@ func (q *Queries) LockPendingFile(ctx context.Context, id uuid.UUID) (LockPendin
 		&i.Metadata,
 		&i.Status,
 		&i.Error,
-		&i.Space,
+		&i.Access,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const lockUpload = `-- name: LockUpload :one
-SELECT id, role, space, name, length, parts, created_at FROM archive.upload WHERE id = $1 FOR UPDATE
+SELECT id, role, access, name, length, parts, created_at FROM archive.upload WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) LockUpload(ctx context.Context, id uuid.UUID) (ArchiveUpload, error) {
@@ -1213,13 +1077,66 @@ func (q *Queries) LockUpload(ctx context.Context, id uuid.UUID) (ArchiveUpload, 
 	err := row.Scan(
 		&i.ID,
 		&i.Role,
-		&i.Space,
+		&i.Access,
 		&i.Name,
 		&i.Length,
 		&i.Parts,
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const memberByEmail = `-- name: MemberByEmail :one
+SELECT id, role::text AS role, groups FROM archive.member WHERE email = $1::text
+`
+
+type MemberByEmailRow struct {
+	ID     uuid.UUID
+	Role   string
+	Groups []string
+}
+
+func (q *Queries) MemberByEmail(ctx context.Context, email string) (MemberByEmailRow, error) {
+	row := q.db.QueryRow(ctx, memberByEmail, email)
+	var i MemberByEmailRow
+	err := row.Scan(&i.ID, &i.Role, &i.Groups)
+	return i, err
+}
+
+const members = `-- name: Members :many
+SELECT id, email::text AS email, role::text AS role, groups FROM archive.member ORDER BY email
+`
+
+type MembersRow struct {
+	ID     uuid.UUID
+	Email  string
+	Role   string
+	Groups []string
+}
+
+func (q *Queries) Members(ctx context.Context) ([]MembersRow, error) {
+	rows, err := q.db.Query(ctx, members)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MembersRow
+	for rows.Next() {
+		var i MembersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.Role,
+			&i.Groups,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const nameUser = `-- name: NameUser :exec
@@ -1232,7 +1149,7 @@ func (q *Queries) NameUser(ctx context.Context, iD uuid.UUID, name string) error
 }
 
 const nextPendingFile = `-- name: NextPendingFile :one
-SELECT id, hash, name, mime, size, metadata, status, error, space, created_at FROM archive.file
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at FROM archive.file
 WHERE status = 'pending' ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED
 `
 
@@ -1245,7 +1162,7 @@ type NextPendingFileRow struct {
 	Metadata  map[string]any
 	Status    string
 	Error     string
-	Space     uuid.UUID
+	Access    *string
 	CreatedAt time.Time
 }
 
@@ -1261,7 +1178,7 @@ func (q *Queries) NextPendingFile(ctx context.Context) (NextPendingFileRow, erro
 		&i.Metadata,
 		&i.Status,
 		&i.Error,
-		&i.Space,
+		&i.Access,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -1279,25 +1196,14 @@ func (q *Queries) NextWorkflowAt(ctx context.Context) (*time.Time, error) {
 }
 
 const noMembers = `-- name: NoMembers :one
-SELECT NOT EXISTS (SELECT FROM archive."user" WHERE workspaces @> ARRAY[$1::uuid])
+SELECT NOT EXISTS (SELECT FROM archive.member)
 `
 
-func (q *Queries) NoMembers(ctx context.Context, workspace uuid.UUID) (bool, error) {
-	row := q.db.QueryRow(ctx, noMembers, workspace)
+func (q *Queries) NoMembers(ctx context.Context) (bool, error) {
+	row := q.db.QueryRow(ctx, noMembers)
 	var not_exists bool
 	err := row.Scan(&not_exists)
 	return not_exists, err
-}
-
-const ontologyAdmin = `-- name: OntologyAdmin :one
-SELECT archive.ontology_admin()
-`
-
-func (q *Queries) OntologyAdmin(ctx context.Context) (bool, error) {
-	row := q.db.QueryRow(ctx, ontologyAdmin)
-	var ontology_admin bool
-	err := row.Scan(&ontology_admin)
-	return ontology_admin, err
 }
 
 const renameChat = `-- name: RenameChat :execrows
@@ -1314,7 +1220,7 @@ func (q *Queries) RenameChat(ctx context.Context, iD uuid.UUID, userID uuid.UUID
 
 const renameFile = `-- name: RenameFile :one
 UPDATE archive.file SET name = $2 WHERE id = $1
-RETURNING id, hash, name, mime, size, metadata, status, error, space, created_at
+RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at
 `
 
 type RenameFileRow struct {
@@ -1326,7 +1232,7 @@ type RenameFileRow struct {
 	Metadata  map[string]any
 	Status    string
 	Error     string
-	Space     uuid.UUID
+	Access    *string
 	CreatedAt time.Time
 }
 
@@ -1342,7 +1248,7 @@ func (q *Queries) RenameFile(ctx context.Context, iD uuid.UUID, name string) (Re
 		&i.Metadata,
 		&i.Status,
 		&i.Error,
-		&i.Space,
+		&i.Access,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -1359,7 +1265,7 @@ func (q *Queries) RenameWorkspace(ctx context.Context, iD uuid.UUID, name string
 
 const replaceFile = `-- name: ReplaceFile :one
 UPDATE archive.file SET hash = $2, size = $3, status = 'pending', text = '', error = '', metadata = '{}' WHERE id = $1
-RETURNING id, hash, name, mime, size, metadata, status, error, space, created_at
+RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at
 `
 
 type ReplaceFileRow struct {
@@ -1371,7 +1277,7 @@ type ReplaceFileRow struct {
 	Metadata  map[string]any
 	Status    string
 	Error     string
-	Space     uuid.UUID
+	Access    *string
 	CreatedAt time.Time
 }
 
@@ -1387,7 +1293,7 @@ func (q *Queries) ReplaceFile(ctx context.Context, iD uuid.UUID, hash string, si
 		&i.Metadata,
 		&i.Status,
 		&i.Error,
-		&i.Space,
+		&i.Access,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -1414,7 +1320,7 @@ func (q *Queries) Revision(ctx context.Context) (string, error) {
 }
 
 const revokeToken = `-- name: RevokeToken :one
-DELETE FROM archive.token WHERE id = $1 AND user_id = $2 AND workspace = $3 AND kind IN ('api', 'user') RETURNING coalesce(role, '')::text
+DELETE FROM archive.token WHERE id = $1 AND user_id = $2 AND workspace = $3 AND kind = 'api' RETURNING coalesce(role, '')::text
 `
 
 func (q *Queries) RevokeToken(ctx context.Context, iD uuid.UUID, userID uuid.UUID, workspace *uuid.UUID) (string, error) {
@@ -1656,166 +1562,15 @@ func (q *Queries) SoonDue(ctx context.Context, workspace uuid.UUID, kind string,
 	return i, err
 }
 
-const spaceByName = `-- name: SpaceByName :one
-SELECT id, role, home FROM archive.space WHERE name = $1
-`
-
-type SpaceByNameRow struct {
-	ID   uuid.UUID
-	Role string
-	Home *uuid.UUID
-}
-
-func (q *Queries) SpaceByName(ctx context.Context, name string) (SpaceByNameRow, error) {
-	row := q.db.QueryRow(ctx, spaceByName, name)
-	var i SpaceByNameRow
-	err := row.Scan(&i.ID, &i.Role, &i.Home)
-	return i, err
-}
-
-const spaceID = `-- name: SpaceID :one
-SELECT id FROM archive.space WHERE name = $1
-`
-
-func (q *Queries) SpaceID(ctx context.Context, name string) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, spaceID, name)
-	var id uuid.UUID
-	err := row.Scan(&id)
-	return id, err
-}
-
-const spaceRole = `-- name: SpaceRole :one
-SELECT role FROM archive.space WHERE name = $1
-`
-
-func (q *Queries) SpaceRole(ctx context.Context, name string) (string, error) {
-	row := q.db.QueryRow(ctx, spaceRole, name)
-	var role string
-	err := row.Scan(&role)
-	return role, err
-}
-
-const spaceRoleByID = `-- name: SpaceRoleByID :one
-SELECT role FROM archive.space WHERE id = $1
-`
-
-func (q *Queries) SpaceRoleByID(ctx context.Context, id uuid.UUID) (string, error) {
-	row := q.db.QueryRow(ctx, spaceRoleByID, id)
-	var role string
-	err := row.Scan(&role)
-	return role, err
-}
-
-const spaceRoles = `-- name: SpaceRoles :many
-SELECT name, role, home FROM archive.space ORDER BY name
-`
-
-type SpaceRolesRow struct {
-	Name string
-	Role string
-	Home *uuid.UUID
-}
-
-func (q *Queries) SpaceRoles(ctx context.Context) ([]SpaceRolesRow, error) {
-	rows, err := q.db.Query(ctx, spaceRoles)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []SpaceRolesRow
-	for rows.Next() {
-		var i SpaceRolesRow
-		if err := rows.Scan(&i.Name, &i.Role, &i.Home); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const spaceTaken = `-- name: SpaceTaken :one
-SELECT EXISTS (SELECT FROM archive.space WHERE name = $1)
-`
-
-func (q *Queries) SpaceTaken(ctx context.Context, name string) (bool, error) {
-	row := q.db.QueryRow(ctx, spaceTaken, name)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
-}
-
-const spaces = `-- name: Spaces :many
-SELECT id, name, CASE
-    WHEN pg_has_role(current_user, (role || '_owner')::name, 'USAGE') THEN 'owner'
-    WHEN pg_has_role(current_user, (role || '_admin')::name, 'USAGE') THEN 'admin'
-    WHEN pg_has_role(current_user, (role || '_editor')::name, 'USAGE') THEN 'editor'
-    ELSE 'viewer' END::text AS level
-FROM archive.space ORDER BY name
-`
-
-type SpacesRow struct {
-	ID    uuid.UUID
-	Name  string
-	Level string
-}
-
-func (q *Queries) Spaces(ctx context.Context) ([]SpacesRow, error) {
-	rows, err := q.db.Query(ctx, spaces)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []SpacesRow
-	for rows.Next() {
-		var i SpacesRow
-		if err := rows.Scan(&i.ID, &i.Name, &i.Level); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const tokenRoles = `-- name: TokenRoles :many
-SELECT coalesce(role, '')::text FROM archive.token WHERE user_id = $1 AND workspace = $2 AND role IS NOT NULL
-`
-
-func (q *Queries) TokenRoles(ctx context.Context, userID uuid.UUID, workspace *uuid.UUID) ([]string, error) {
-	rows, err := q.db.Query(ctx, tokenRoles, userID, workspace)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []string
-	for rows.Next() {
-		var column_1 string
-		if err := rows.Scan(&column_1); err != nil {
-			return nil, err
-		}
-		items = append(items, column_1)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const tokens = `-- name: Tokens :many
-SELECT id, name, coalesce(role, '')::text AS role, kind = 'user' AS full, expires_at, created_at FROM archive.token
-WHERE user_id = $1 AND workspace = $2 AND kind IN ('api', 'user') ORDER BY id
+SELECT id, name, (role IS NOT NULL)::bool AS viewer, expires_at, created_at FROM archive.token
+WHERE user_id = $1 AND workspace = $2 AND kind = 'api' ORDER BY id
 `
 
 type TokensRow struct {
 	ID        uuid.UUID
 	Name      string
-	Role      string
-	Full      bool
+	Viewer    bool
 	ExpiresAt *time.Time
 	CreatedAt time.Time
 }
@@ -1832,8 +1587,7 @@ func (q *Queries) Tokens(ctx context.Context, userID uuid.UUID, workspace *uuid.
 		if err := rows.Scan(
 			&i.ID,
 			&i.Name,
-			&i.Role,
-			&i.Full,
+			&i.Viewer,
 			&i.ExpiresAt,
 			&i.CreatedAt,
 		); err != nil {
@@ -1869,18 +1623,23 @@ func (q *Queries) TxNow(ctx context.Context) (time.Time, error) {
 }
 
 const txWrote = `-- name: TxWrote :one
-SELECT (pg_current_xact_id_if_assigned() IS NOT NULL)::bool
+SELECT (pg_current_xact_id_if_assigned() IS NOT NULL)::bool AS wrote, (coalesce(current_setting('archive.members', true), '') = '1')::bool AS members
 `
 
-func (q *Queries) TxWrote(ctx context.Context) (bool, error) {
+type TxWroteRow struct {
+	Wrote   bool
+	Members bool
+}
+
+func (q *Queries) TxWrote(ctx context.Context) (TxWroteRow, error) {
 	row := q.db.QueryRow(ctx, txWrote)
-	var column_1 bool
-	err := row.Scan(&column_1)
-	return column_1, err
+	var i TxWroteRow
+	err := row.Scan(&i.Wrote, &i.Members)
+	return i, err
 }
 
 const upload = `-- name: Upload :one
-SELECT id, role, space, name, length, parts, created_at FROM archive.upload WHERE id = $1
+SELECT id, role, access, name, length, parts, created_at FROM archive.upload WHERE id = $1
 `
 
 func (q *Queries) Upload(ctx context.Context, id uuid.UUID) (ArchiveUpload, error) {
@@ -1889,7 +1648,7 @@ func (q *Queries) Upload(ctx context.Context, id uuid.UUID) (ArchiveUpload, erro
 	err := row.Scan(
 		&i.ID,
 		&i.Role,
-		&i.Space,
+		&i.Access,
 		&i.Name,
 		&i.Length,
 		&i.Parts,
@@ -2146,24 +1905,6 @@ func (q *Queries) WorkspaceByID(ctx context.Context, id uuid.UUID) (ArchiveWorks
 		&i.ID,
 		&i.Name,
 		&i.Key,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const workspaceUser = `-- name: WorkspaceUser :one
-SELECT id, email, name, workspaces, signin, created_at FROM archive."user" WHERE email = $1 AND workspaces @> ARRAY[$2::uuid]
-`
-
-func (q *Queries) WorkspaceUser(ctx context.Context, email string, workspace uuid.UUID) (ArchiveUser, error) {
-	row := q.db.QueryRow(ctx, workspaceUser, email, workspace)
-	var i ArchiveUser
-	err := row.Scan(
-		&i.ID,
-		&i.Email,
-		&i.Name,
-		&i.Workspaces,
-		&i.Signin,
 		&i.CreatedAt,
 	)
 	return i, err

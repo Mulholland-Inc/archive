@@ -54,7 +54,7 @@ type runFile struct {
 	Metadata  map[string]any `json:"metadata"`
 	Status    string         `json:"status"`
 	Error     string         `json:"error,omitempty"`
-	Space     uuid.UUID      `json:"space"`
+	Access    *string        `json:"access"`
 	CreatedAt time.Time      `json:"created_at"`
 	Text      string         `json:"text"`
 }
@@ -643,7 +643,7 @@ func (r *runner) def(o *goja.Object, name string, f func(ctx context.Context, ca
 	})
 }
 
-var runReads = map[string]bool{"list": true, "get": true, "search": true, "tables": true, "files": true, "file": true, "spaces": true, "workflows": true, "runs": true}
+var runReads = map[string]bool{"list": true, "get": true, "search": true, "tables": true, "files": true, "file": true, "workflows": true, "runs": true}
 
 func (r *runner) call(read bool, f func(ctx context.Context) (any, error)) (any, error) {
 	t, ok := r.ctx.Value(storeTxKey{}).(storeTx)
@@ -688,7 +688,6 @@ func (r *runner) sdk() {
 			Where  map[string]any `json:"where"`
 			Limit  int            `json:"limit"`
 			After  string         `json:"after"`
-			Space  string         `json:"space"`
 			Reveal bool           `json:"reveal"`
 		}
 		if err := r.arg(call, 1, "list", "opts", &opts); err != nil {
@@ -698,7 +697,7 @@ func (r *runner) sdk() {
 		if err != nil {
 			return nil, err
 		}
-		rs, err := a.List(ctx, table, opts.Space, opts.Where, opts.Limit, after)
+		rs, err := a.List(ctx, table, opts.Where, opts.Limit, after)
 		if err == nil && opts.Reveal {
 			err = a.Reveal(ctx, table, rs...)
 		}
@@ -731,25 +730,22 @@ func (r *runner) sdk() {
 			return nil, err
 		}
 		var data map[string]any
-		var opts struct {
-			Space string `json:"space"`
-		}
 		if path.Ext(table) != "" {
+			var opts struct {
+				Access string `json:"access"`
+			}
 			if err := r.arg(call, 1, "create", "opts", &opts); err != nil {
 				return nil, err
 			}
-			return a.CreateDocument(ctx, opts.Space, table)
+			return a.CreateDocument(ctx, opts.Access, table)
 		}
 		if err := r.arg(call, 1, "create", "data", &data); err != nil {
-			return nil, err
-		}
-		if err := r.arg(call, 2, "create", "opts", &opts); err != nil {
 			return nil, err
 		}
 		if data == nil {
 			return nil, fmt.Errorf("archive.create: data must be an object: %w", httpErrBadRequest)
 		}
-		return a.Create(ctx, opts.Space, table, data)
+		return a.Create(ctx, table, data)
 	})
 	r.def(o, "update", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		table, err := r.str(call, 0, "update", "table")
@@ -787,7 +783,6 @@ func (r *runner) sdk() {
 		}
 		var opts struct {
 			Type  string `json:"type"`
-			Space string `json:"space"`
 			From  string `json:"from"`
 			To    string `json:"to"`
 			Limit int    `json:"limit"`
@@ -795,7 +790,7 @@ func (r *runner) sdk() {
 		if err := r.arg(call, 1, "search", "opts", &opts); err != nil {
 			return nil, err
 		}
-		return a.Search(ctx, text, SearchFilter{Type: opts.Type, Space: opts.Space, From: opts.From, To: opts.To, Limit: opts.Limit})
+		return a.Search(ctx, text, SearchFilter{Type: opts.Type, From: opts.From, To: opts.To, Limit: opts.Limit})
 	})
 	r.def(o, "schema", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		return a.SchemaFiles(ctx)
@@ -846,7 +841,6 @@ func (r *runner) sdk() {
 		var opts struct {
 			Limit int    `json:"limit"`
 			After string `json:"after"`
-			Space string `json:"space"`
 		}
 		if err := r.arg(call, 0, "files", "opts", &opts); err != nil {
 			return nil, err
@@ -855,7 +849,7 @@ func (r *runner) sdk() {
 		if err != nil {
 			return nil, err
 		}
-		return a.runFiles(ctx, opts.Space, opts.Limit, after)
+		return a.runFiles(ctx, opts.Limit, after)
 	})
 	r.def(o, "file", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		id, err := r.id(call, 0, "file")
@@ -891,9 +885,6 @@ func (r *runner) sdk() {
 			return nil, fmt.Errorf("archive.edit: %v: %w", err, httpErrBadRequest)
 		}
 		return a.EditDocument(ctx, id, ops)
-	})
-	r.def(o, "spaces", func(ctx context.Context, call goja.FunctionCall) (any, error) {
-		return a.Spaces(ctx)
 	})
 	r.workflowSDK(o)
 	r.vm.Set("archive", o)
@@ -963,20 +954,12 @@ func (a *Archive) runSQL(ctx context.Context, query string, params []any) ([]map
 	})
 }
 
-func (a *Archive) runFiles(ctx context.Context, space string, limit int, after uuid.UUID) ([]*runFile, error) {
+func (a *Archive) runFiles(ctx context.Context, limit int, after uuid.UUID) ([]*runFile, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
 	return coreDo(a, ctx, func(ctx context.Context) ([]*runFile, error) {
-		var sid *uuid.UUID
-		if space != "" {
-			id, err := a.coreSpace(ctx, space)
-			if err != nil {
-				return nil, err
-			}
-			sid = &id
-		}
-		rows, err := a.st.db(ctx).FilesWithText(ctx, after, sid, int32(limit))
+		rows, err := a.st.db(ctx).FilesWithText(ctx, after, int32(limit))
 		fs := make([]*runFile, len(rows))
 		for i := range rows {
 			fs[i] = (*runFile)(&rows[i])
@@ -1010,7 +993,7 @@ func (a *Archive) RunDocs(ctx context.Context) string {
 	return strings.ReplaceAll(runSDK, "{timeout}", runTimeout.String()) + "\n" + runTypes(a.Catalog())
 }
 
-var runStatic = []string{"Base", "Row", "Hit", "Plan", "Table", "StoredFile", "Space", "Tables", "FetchResponse", "RunResult", "Deployed", "WorkflowRun",
+var runStatic = []string{"Base", "Row", "Hit", "Plan", "Table", "StoredFile", "Tables", "FetchResponse", "RunResult", "Deployed", "WorkflowRun",
 	"Money", "Timestamp", "Time", "Interval", "Address", "Name", "Postcode", "Geo", "Quantity"}
 
 func runPascal(s string) string {
@@ -1167,7 +1150,11 @@ func runTypes(cat *Catalog) string {
 			if c.Generated {
 				gen = "Generated; read only"
 			}
-			b.WriteString(runDoc("    ", c.Description, ref, runFormat(c.Schema, c.Type), gen))
+			desc := c.Description
+			if c.Name == "access" && desc == "" && tb.Schema == "public" {
+				desc = "Group that sees the row, like hr; null is the whole workspace"
+			}
+			b.WriteString(runDoc("    ", desc, ref, runFormat(c.Schema, c.Type), gen))
 			opt := "?"
 			if c.required() {
 				opt = ""

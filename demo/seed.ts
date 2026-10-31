@@ -5,12 +5,12 @@ const pick = <T,>(a: T[]): T => a[Math.floor(rnd() * a.length)];
 const usd = (n: number) => ({ amount: Math.round(n * 100) / 100, currency: "USD" });
 const day = (d: Date) => d.toISOString().slice(0, 10);
 const addDays = (s: string, n: number) => { const d = new Date(s + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return day(d); };
-const fam = { space: "family" };
+const fam = { access: "family" };
 const at = (street: string, locality: string, state: string, postcode: string) => ({ lines: [street], locality, region: `US-${state}`, postcode, country: "US" });
 const bk = (street: string, postcode: string) => at(street, "Brooklyn", "NY", postcode);
 const ny = (street: string, postcode: string) => at(street, "New York", "NY", postcode);
 const c: Record<string, number> = {};
-const mk = async (t: string, d: any, o?: any) => { c[t] = (c[t] || 0) + 1; return (await archive.create(t as any, d, o)).id; };
+const mk = async (t: string, d: any, o?: any) => { c[t] = (c[t] || 0) + 1; return (await archive.create(t as any, { ...d, ...o })).id; };
 
 const home = bk("412 Union Street, Apt 3R", "11231");
 const parents = at("27 Valley Road", "Montclair", "NJ", "07042");

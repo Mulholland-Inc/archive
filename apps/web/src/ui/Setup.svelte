@@ -17,7 +17,7 @@
   api('/auth/tokens').then((t) => (tokens = t)).catch(() => (tokens = []));
   api('/auth/users').then((u) => (users = u)).catch(() => (users = []));
 
-  const admin = $derived(!!users?.find((u) => u.email === email)?.admin);
+  const admin = $derived(users?.find((u) => u.email === email)?.role === 'owner');
   const steps = $derived([
     { title: 'Add a file', href: '/files', done: files?.length > 0 },
     { title: 'Connect your apps and agents', connect: true, done: tokens?.length > 0 || connected.length > 0 },

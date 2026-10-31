@@ -1,6 +1,6 @@
 CREATE TABLE subscription (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
-    space      uuid NOT NULL REFERENCES archive.space,
+    access     text,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     name text NOT NULL,
@@ -15,8 +15,7 @@ CREATE TABLE subscription (
 CREATE INDEX subscription_search ON subscription USING gin (search);
 ALTER TABLE subscription ENABLE ROW LEVEL SECURITY;
 ALTER TABLE subscription FORCE ROW LEVEL SECURITY;
-CREATE POLICY viewer ON subscription FOR SELECT USING (space = ANY (archive.my_spaces()));
-CREATE POLICY editor ON subscription USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
+CREATE POLICY access ON subscription USING (archive.can(access)) WITH CHECK (archive.can(access));
 COMMENT ON TABLE subscription IS 'Something you pay for on a schedule
 icon: repeat';
 COMMENT ON COLUMN subscription.name IS 'Service name';

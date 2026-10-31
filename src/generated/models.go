@@ -23,7 +23,7 @@ type ArchiveChat struct {
 type ArchiveUpload struct {
 	ID        uuid.UUID
 	Role      string
-	Space     uuid.UUID
+	Access    *string
 	Name      string
 	Length    int64
 	Parts     []int64

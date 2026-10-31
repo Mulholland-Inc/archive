@@ -1,5 +1,6 @@
 <script>
   import { api, hidden, show } from './api.js';
+  import Access from './ui/Access.svelte';
   import DataTable from './ui/DataTable.svelte';
   import Filters from './ui/Filters.svelte';
   import Heading from './ui/Heading.svelte';
@@ -16,7 +17,7 @@
   let q = $state(read());
   let seq = 0;
   const types = $derived(given ?? fetched);
-  const columns = $derived(table.columns.filter((c) => !hidden.has(c.name)));
+  const columns = $derived([...table.columns.filter((c) => !hidden.has(c.name)), ...table.columns.filter((c) => c.name === 'access')]);
   const shown = $derived(order(keep(rows, q.values, columns, types), q.sort, columns, types));
   const query = $derived(q.query.trim());
 
@@ -49,7 +50,9 @@
 <Filters bind:q {columns} {types}>
   <Sheet tight>
     {#if error}<Note error>{error}</Note>{/if}
-    <DataTable fill {columns} rows={shown} cell={show} sort={q.sort} onsort={(col) => (q.sort = cycle(q.sort, col))} href={table.kind === 'table' ? (r) => `/${table.name}/${r.id}` : undefined} />
+    <DataTable fill {columns} rows={shown} cell={show} sort={q.sort} onsort={(col) => (q.sort = cycle(q.sort, col))} href={table.kind === 'table' ? (r) => `/${table.name}/${r.id}` : undefined}>
+      {#snippet td(r, c)}{#if c.name === 'access'}<Access value={r.access} />{:else}{show(r[c.name])}{/if}{/snippet}
+    </DataTable>
     {#if loaded && !shown.length && !error}{#if rows.length || q.query}<Note>Nothing matches</Note>{:else}<Empty title="Nothing here yet" />{/if}{/if}
   </Sheet>
 </Filters>

@@ -7,21 +7,6 @@ export function go(path) {
   dispatchEvent(new PopStateEvent('popstate'));
 }
 
-export function space() {
-  try {
-    return localStorage.space ?? '';
-  } catch {
-    return '';
-  }
-}
-
-export function setSpace(name) {
-  try {
-    if (name) localStorage.space = name;
-    else delete localStorage.space;
-  } catch {}
-}
-
 export function workspace() {
   try {
     return localStorage.workspace ?? '';
@@ -100,7 +85,6 @@ export async function passkeyRegister(user) {
 export async function send(path, { method = 'GET', body, raw, signal, workspace: named } = {}) {
   const init = { method, headers: {}, signal, credentials: 'include' };
   if (named || workspace()) init.headers['Archive-Workspace'] = named || workspace();
-  if (space()) init.headers['Archive-Space'] = space();
   if (raw !== undefined) init.body = raw;
   else if (body !== undefined) {
     init.body = JSON.stringify(body);
@@ -140,7 +124,7 @@ export async function run(code) {
   return out.result;
 }
 
-export const hidden = new Set(['id', 'space', 'created_at', 'updated_at', 'search']);
+export const hidden = new Set(['id', 'access', 'created_at', 'updated_at', 'search']);
 
 export function show(v) {
   if (v === null || v === undefined) return '';

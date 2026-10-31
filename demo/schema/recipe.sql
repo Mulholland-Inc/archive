@@ -1,6 +1,6 @@
 CREATE TABLE recipe (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
-    space      uuid NOT NULL REFERENCES archive.space,
+    access     text,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     name text NOT NULL,
@@ -16,8 +16,7 @@ CREATE TABLE recipe (
 CREATE INDEX recipe_search ON recipe USING gin (search);
 ALTER TABLE recipe ENABLE ROW LEVEL SECURITY;
 ALTER TABLE recipe FORCE ROW LEVEL SECURITY;
-CREATE POLICY viewer ON recipe FOR SELECT USING (space = ANY (archive.my_spaces()));
-CREATE POLICY editor ON recipe USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
+CREATE POLICY access ON recipe USING (archive.can(access)) WITH CHECK (archive.can(access));
 COMMENT ON TABLE recipe IS 'A recipe you cook
 icon: chef-hat';
 COMMENT ON COLUMN recipe.name IS 'Dish';

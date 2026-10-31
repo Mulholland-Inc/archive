@@ -369,6 +369,7 @@ func (a *Archive) afterOpen(ctx context.Context) {
 	err := a.st.System(ctx, func(ctx context.Context) error {
 		return a.st.db(ctx).ResetProcessing(ctx)
 	})
+	err = errors.Join(err, a.syncMembers(ctx, false))
 	for _, kind := range []string{"workflow", "file"} {
 		next, nerr := a.nextDue(ctx, kind)
 		if nerr == nil && next != nil {
@@ -741,12 +742,16 @@ func (h *Hub) enter(ctx context.Context, t generated.AuthenticateRow, want strin
 		release()
 		return nil, nil, nil, err
 	}
-	ac := a.userActor(&User{ID: t.UserID, Email: t.Email, Name: t.UserName})
+	ac, err := a.userActor(ctx, &User{ID: t.UserID, Email: t.Email, Name: t.UserName})
+	if err != nil {
+		release()
+		return nil, nil, nil, err
+	}
 	if t.Kind != "session" {
 		ac.TokenName = t.Name
 	}
 	if t.Kind == "api" {
-		ac.Role, ac.TokenID = t.Role, t.ID
+		ac.Role, ac.TokenID = cmp.Or(t.Role, ac.Role), t.ID
 	}
 	return a, ac, release, nil
 }
@@ -768,7 +773,6 @@ func (h *Hub) httpAuth(next func(a *Archive) http.Handler) http.Handler {
 			return
 		}
 		defer release()
-		ac.Space = r.Header.Get("Archive-Space")
 		next(a).ServeHTTP(w, r.WithContext(withArchive(WithActor(r.Context(), ac), a)))
 	})
 }
@@ -817,22 +821,13 @@ func (a *Archive) handler() http.Handler {
 	return a.api
 }
 
-func (a *Archive) isAdmin(ctx context.Context, ac *Actor) bool {
-	var ok bool
-	a.sys(ctx, func(ctx context.Context) error {
-		ok = a.has(ctx, ac.UserRole, a.prefix+"_admin")
-		return nil
-	})
-	return ok
-}
-
 func (a *Archive) workspaceAdmin(ctx context.Context) (*Actor, error) {
 	ac, err := authUser(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if !a.isAdmin(ctx, ac) {
-		return nil, fmt.Errorf("only admins of this workspace change it: %w", ErrForbidden)
+	if !a.owner(ctx, ac.UserRole) {
+		return nil, fmt.Errorf("only owners of this workspace change it: %w", ErrForbidden)
 	}
 	return ac, nil
 }
@@ -843,8 +838,8 @@ func (h *Hub) admin(ctx context.Context) error {
 		return err
 	}
 	a := archiveFrom(ctx)
-	if a == nil || a.ws.ID.String() != h.one || !a.isAdmin(ctx, ac) {
-		return fmt.Errorf("only instance admins, the admins of the first workspace, do this: %w", ErrForbidden)
+	if a == nil || a.ws.ID.String() != h.one || !a.owner(ctx, ac.UserRole) {
+		return fmt.Errorf("only instance admins, the owners of the first workspace, do this: %w", ErrForbidden)
 	}
 	return nil
 }
@@ -964,7 +959,7 @@ func (h *Hub) createWorkspace(ctx context.Context, name, owner string) (generate
 	if err != nil {
 		return fail(err)
 	}
-	_, err = a.AddUser(context.Background(), owner, "", true)
+	_, err = a.AddUser(context.Background(), owner, "", "owner")
 	release()
 	if err != nil {
 		return fail(err)

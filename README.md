@@ -57,7 +57,7 @@ return { count: unpaid.length, total };
 {"result": {"count": 3, "total": 6530}, "logs": [], "error": ""}
 ```
 
-All or nothing, only your spaces (even with raw SQL), and a 30 second limit. A small `fetch` calls other services. The `run` tool's description is the full SDK reference plus a type for each of your tables, so your agent writes against your real schema. Scripts can also search every table and file, and edit Word, Excel and PowerPoint files in place.
+All or nothing, only the rows you may see (even with raw SQL), and a 30 second limit. A small `fetch` calls other services. The `run` tool's description is the full SDK reference plus a type for each of your tables, so your agent writes against your real schema. Scripts can also search every table and file, and edit Word, Excel and PowerPoint files in place.
 
 Your agent can also save a script as a workflow that Archive runs on its own: on a schedule, when rows of a table are added or changed, or when its webhook URL is called. The first line says when:
 
@@ -80,16 +80,17 @@ The same data and the same permissions, whichever way in:
 | HTTP API at `/api` | Records, files, search and workflows from your own apps and services |
 | Webhooks at `/hooks/run/<workspace>/<secret>` | Other services starting a workflow with a POST |
 | The `archive` CLI | Scripts, scheduled jobs and quick changes from your terminal |
-| [Terraform provider](apps/terraform/provider) | Your schema, spaces, tokens and roles, kept with the rest of your setup |
+| [Terraform provider](apps/terraform/provider) | Your schema, members and tokens, kept with the rest of your setup |
 
 Upload any file and Archive pulls out its text, so one search covers every table and file you can see. Read-only connectors for mail, files, chat and business tools are designed in [ADR 0002](docs/adr/0002-connectors.md) and not built yet.
 
-Each team, client or project gets its own space, and people and their agents only see the spaces they are in. People, spaces and tokens are real Postgres roles, and every table has row-level security, so the database itself checks every row against who is asking. Roles are `viewer`, `editor`, `admin` and `owner`, and tokens only ever narrow what their owner can do. Archive is invite-only: an admin adds people by email on the Users page or with `archive user add`, and their first sign-in with Google, Microsoft, Slack or GitHub under that email, verified by the provider, links them. After that they can add a passkey to each device.
+Everyone in a workspace is a `viewer`, an `editor` or an `owner`. Viewers read, editors also write, and owners also change the schema, manage people and see everything. Put people in groups, like `finance`, and set a row's `access` to `finance` so only that group and the owners see it; rows with no access are seen by the whole workspace. People, roles and groups are real Postgres roles, and every table has row-level security, so the database itself checks every row against who is asking. Archive is invite-only: an owner adds people by email on the Users page or with `archive user add`, and their first sign-in with Google, Microsoft, Slack or GitHub under that email, verified by the provider, links them. After that they can add a passkey to each device.
 
 ```sh
-archive space add finance
-archive user add anna@example.com -name Anna   # Anna can now sign in
-archive space grant finance anna@example.com editor
+archive user add anna@example.com -name Anna -role editor   # Anna can now sign in
+archive list member email=anna@example.com
+archive set member <id> '{"groups":["finance"]}'
+archive create invoice '{"number":"1042","access":"finance"}'
 ```
 
 ## Open source. Make it yours.
@@ -107,7 +108,7 @@ archive token create -name "Claude Code"
 claude mcp add --transport http archive https://api.example.com/mcp --header "Authorization: Bearer <token>"
 ```
 
-With no `-space`, the token gets your role in every space you are in. Narrow it with `-space finance:viewer,ops:editor`.
+The token acts as you, with your role and groups. Add `-viewer` to make it read only: `archive token create -name Reports -viewer`.
 
 <details>
 <summary><b>Cursor, ChatGPT</b></summary>
@@ -134,7 +135,7 @@ With no `-space`, the token gets your role in every space you are in. Narrow it 
 | Where | How |
 |---|---|
 | **Google Cloud** | [Terraform](apps/terraform/gcp) (Cloud Run, Cloud SQL, Storage), applied as it is or called as a module from your own setup |
-| **As code** | the [`archive` Terraform provider](apps/terraform/provider) for your schema, spaces, tokens and roles |
+| **As code** | the [`archive` Terraform provider](apps/terraform/provider) for your schema, members and tokens |
 
 The API and the web app are always on addresses of their own: the `ghcr.io/mulholland-inc/archive` image serves the API, sign-in and MCP on Cloud Run, and the web app is static files on a Cloudflare Worker. The web app is on `app.<domain>` and the API on `api.<domain>`: the API is told `ARCHIVE_URL`, the web app's address, and the web app finds the API from its own.
 
@@ -175,11 +176,11 @@ It outputs `url`, `api_url`, `service`, `service_account`, `bucket`, `tasks_queu
 
 The API image holds only the binary, built with [ko](https://ko.build) on a minimal base, and it needs a Postgres 18 (`DATABASE_URL`). With nothing else set, it keeps its key and files in `./data`. Give it storage (`ARCHIVE_BLOB_URL`) and one `ARCHIVE_SECRET_KEY`, and it keeps nothing local, so you can run as many copies side by side as you like.
 
-One Archive serves any number of workspaces: one per organization, each its own Postgres database on the same server, with its own spaces, files and workflows, its own login role and its own data key. People are invited to workspaces (`archive user add`, or the Users page), and one sign-in reaches all of theirs. A new install starts with one. Instance admins (the admins of the first workspace) make and delete more, each with its first owner:
+One Archive serves any number of workspaces: one per organization, each its own Postgres database on the same server, with its own members, files and workflows, its own login role and its own data key. People are invited to workspaces (`archive user add`, or the Users page), and one sign-in reaches all of theirs. A new install starts with one. Instance admins (the owners of the first workspace) make and delete more, each with its first owner:
 
 ```sh
 gcloud run jobs execute archive --region us-central1 --wait --args=workspace,add,Acme,anna@acme.example
-gcloud run jobs execute archive --region us-central1 --wait --args=-workspace,<uuid>,space,list
+gcloud run jobs execute archive --region us-central1 --wait --args=-workspace,<uuid>,list,member
 ```
 
 A workspace's roles can reach only its own database, so workspaces stay isolated even where Postgres has no superuser, as on Cloud SQL. A token works in the one workspace it was made in, and the web app's one session switches between all of yours. [app.archive.dev](https://app.archive.dev) is this same image, deployed with [`apps/terraform/gcp`](apps/terraform/gcp) with `domain = "archive.dev"`.

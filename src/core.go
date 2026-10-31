@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/cipher"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -48,12 +47,19 @@ func (a *Archive) as(ctx context.Context, fn func(context.Context) error) error 
 	if t, ok := ctx.Value(storeTxKey{}).(storeTx); ok && t.role == ac.Role {
 		return fn(ctx)
 	}
-	return a.st.As(ctx, ac.Role, ac.Space, func(ctx context.Context) error {
+	return a.st.As(ctx, ac.Role, func(ctx context.Context) error {
 		if err := fn(ctx); err != nil {
 			return err
 		}
-		wrote, err := a.st.db(ctx).TxWrote(ctx)
-		if wrote {
+		tx, err := a.st.db(ctx).TxWrote(ctx)
+		if tx.Members {
+			storeAfter(ctx, func() {
+				if err := a.syncMembers(ctx, true); err != nil {
+					fmt.Fprintf(os.Stderr, "archive: workspace %s members: %v\n", a.ws.ID, err)
+				}
+			})
+		}
+		if tx.Wrote {
 			storeAfter(ctx, func() { a.wakeTables(context.WithValue(context.WithoutCancel(ctx), storeTxKey{}, nil)) })
 		}
 		return err
@@ -104,7 +110,7 @@ func (a *Archive) reload(ctx context.Context) error {
 	return err
 }
 
-func (a *Archive) List(ctx context.Context, typ, space string, where map[string]any, limit int, after uuid.UUID) ([]map[string]any, error) {
+func (a *Archive) List(ctx context.Context, typ string, where map[string]any, limit int, after uuid.UUID) ([]map[string]any, error) {
 	cat := a.Catalog()
 	tb, err := cat.table(typ)
 	if err != nil {
@@ -140,14 +146,6 @@ func (a *Archive) List(ctx context.Context, typ, space string, where map[string]
 		for _, k := range specKeys(norm) {
 			q += " AND t." + pgIdent(k) + " = w." + pgIdent(k)
 		}
-		if space != "" {
-			sid, err := a.coreSpace(ctx, space)
-			if err != nil {
-				return nil, err
-			}
-			args = append(args, sid)
-			q += fmt.Sprintf(" AND t.space = $%d", len(args))
-		}
 		args = append(args, limit)
 		return storeRows(ctx, a.st, q+fmt.Sprintf(" ORDER BY t.id LIMIT $%d", len(args)), args...)
 	})
@@ -172,36 +170,31 @@ func (a *Archive) coreGet(ctx context.Context, tb *Table, id uuid.UUID) (map[str
 	return rs[0], nil
 }
 
-func (a *Archive) Create(ctx context.Context, space, typ string, data map[string]any) (map[string]any, error) {
+func (a *Archive) Create(ctx context.Context, typ string, data map[string]any) (map[string]any, error) {
 	tb, err := a.Catalog().writable(typ)
 	if err != nil {
 		return nil, err
 	}
-	return coreDo(a, ctx, func(ctx context.Context) (map[string]any, error) {
-		sid, err := a.coreSpace(ctx, space)
-		if err != nil {
-			return nil, err
-		}
-		return a.coreCreate(ctx, tb, sid, data)
-	})
+	return coreDo(a, ctx, func(ctx context.Context) (map[string]any, error) { return a.coreCreate(ctx, tb, data) })
 }
 
-func (a *Archive) coreCreate(ctx context.Context, tb *Table, sid uuid.UUID, data map[string]any) (map[string]any, error) {
+func (a *Archive) coreCreate(ctx context.Context, tb *Table, data map[string]any) (map[string]any, error) {
 	out, seal, err := a.prepare(ctx, tb, data, true, nil)
 	if err != nil {
 		return nil, err
 	}
-	cols := specKeys(out)
-	q := `INSERT INTO ` + tb.ident() + ` AS t (space`
-	sel := ` SELECT $2`
-	for _, c := range cols {
+	var cols, sel []string
+	for _, c := range specKeys(out) {
 		if out[c] == nil && tb.col(c).Default {
 			continue
 		}
-		q += ", " + pgIdent(c)
-		sel += ", r." + pgIdent(c)
+		cols, sel = append(cols, pgIdent(c)), append(sel, "r."+pgIdent(c))
 	}
-	rs, err := storeRows(ctx, a.st, q+")"+sel+` FROM jsonb_populate_record(NULL::`+tb.ident()+`, $1) r RETURNING `+tb.rowSQL("t"), out, sid)
+	q := `INSERT INTO ` + tb.ident() + ` AS t (` + strings.Join(cols, ", ") + `) SELECT ` + strings.Join(sel, ", ") + ` FROM jsonb_populate_record(NULL::` + tb.ident() + `, $1) r`
+	if len(cols) == 0 {
+		q = `INSERT INTO ` + tb.ident() + ` AS t SELECT FROM jsonb_populate_record(NULL::` + tb.ident() + `, $1) r`
+	}
+	rs, err := storeRows(ctx, a.st, q+` RETURNING `+tb.rowSQL("t"), out)
 	if err != nil {
 		return nil, err
 	}
@@ -209,25 +202,11 @@ func (a *Archive) coreCreate(ctx context.Context, tb *Table, sid uuid.UUID, data
 	return row, a.secretsPut(ctx, tb, row, seal)
 }
 
-func (a *Archive) coreSpace(ctx context.Context, name string) (uuid.UUID, error) {
-	var id uuid.UUID
-	var err error
-	if name != "" {
-		id, err = a.st.db(ctx).SpaceID(ctx, name)
-	} else {
-		owner := uuid.Nil
-		if ac := ActorFrom(ctx); ac != nil {
-			owner = ac.UserID
-		}
-		id, err = a.st.db(ctx).DefaultSpace(ctx, owner)
+func coreAccess(v any) *string {
+	if s, ok := v.(string); ok && s != "" {
+		return &s
 	}
-	if errors.Is(err, pgx.ErrNoRows) {
-		if name == "" {
-			return id, fmt.Errorf("no space you can write to: %w", ErrForbidden)
-		}
-		return id, fmt.Errorf("space %q: %w", name, ErrNotFound)
-	}
-	return id, err
+	return nil
 }
 
 func (a *Archive) Replace(ctx context.Context, typ string, id uuid.UUID, data map[string]any) (map[string]any, error) {
@@ -248,13 +227,6 @@ func (a *Archive) coreWrite(ctx context.Context, typ string, id uuid.UUID, data 
 		if err != nil {
 			return nil, err
 		}
-		writable, err := a.st.db(ctx).CanWrite(ctx, coreUUID(old, "space"))
-		if err != nil {
-			return nil, err
-		}
-		if !writable {
-			return nil, fmt.Errorf("you cannot change objects in this space: %w", ErrForbidden)
-		}
 		out, seal, err := a.prepare(ctx, tb, data, full, old)
 		if err != nil {
 			return nil, err
@@ -268,7 +240,7 @@ func (a *Archive) coreWrite(ctx context.Context, typ string, id uuid.UUID, data 
 			return nil, err
 		}
 		if len(rs) == 0 {
-			return nil, fmt.Errorf("you cannot change objects in this space: %w", ErrForbidden)
+			return nil, fmt.Errorf("you cannot change this row: %w", ErrForbidden)
 		}
 		return rs[0], a.secretsPut(ctx, tb, rs[0], seal)
 	})
@@ -315,7 +287,7 @@ func (a *Archive) refCheck(ctx context.Context, tb *Table, out map[string]any) e
 	for _, k := range specKeys(out) {
 		col := tb.col(k)
 		target := col.target()
-		if target == "" || target == "archive.space" || out[k] == nil {
+		if target == "" || out[k] == nil {
 			continue
 		}
 		vals, path := []any{out[k]}, func(int) string { return k }
@@ -388,7 +360,7 @@ func (a *Archive) Delete(ctx context.Context, typ string, id uuid.UUID) error {
 			return storeErr(err)
 		}
 		if tag.RowsAffected() == 0 {
-			return fmt.Errorf("you cannot delete objects in this space: %w", ErrForbidden)
+			return fmt.Errorf("you cannot delete this row: %w", ErrForbidden)
 		}
 		return a.st.db(ctx).ClearSecrets(ctx, tb.Name, id, nil)
 	})
@@ -402,13 +374,14 @@ func (a *Archive) SchemaFiles(ctx context.Context) (map[string]string, error) {
 }
 
 func (a *Archive) schemaAdmin(ctx context.Context) error {
-	admin, err := coreDo(a, ctx, func(ctx context.Context) (bool, error) {
-		return a.st.db(ctx).OntologyAdmin(ctx)
-	})
-	if err == nil && !admin {
-		err = fmt.Errorf("only ontology admins change the schema: %w", ErrForbidden)
+	ac := ActorFrom(ctx)
+	if ac == nil {
+		return fmt.Errorf("not signed in: %w", ErrUnauthorized)
 	}
-	return err
+	if !a.owner(ctx, ac.Role) {
+		return fmt.Errorf("only owners change the schema: %w", ErrForbidden)
+	}
+	return nil
 }
 
 func (a *Archive) ApplySchema(ctx context.Context, files map[string]string, renames []string, allowDrop, dryRun bool) (*SchemaPlan, error) {
@@ -459,7 +432,6 @@ func coreHints(locale string) Hints {
 
 type SearchFilter struct {
 	Type  string
-	Space string
 	From  string
 	To    string
 	Limit int
@@ -469,15 +441,14 @@ type SearchHit struct {
 	ID      uuid.UUID       `json:"id"`
 	Kind    string          `json:"kind"`
 	Type    string          `json:"type"`
-	Space   uuid.UUID       `json:"space"`
 	Date    time.Time       `json:"date"`
 	Data    json.RawMessage `json:"data,omitempty"`
 	Snippet string          `json:"snippet,omitempty"`
 	Score   float64         `json:"score"`
 }
 
-const searchFile = `SELECT 'file' AS kind, 'file' AS type, f.id, f.space, f.created_at, jsonb_build_object('id', f.id, 'name', f.name, 'mime', f.mime,
-		'size', f.size, 'sha256', f.hash, 'space', f.space, 'created_at', f.created_at) AS data, ts_rank(f.search, q.q, 1) AS rank,
+const searchFile = `SELECT 'file' AS kind, 'file' AS type, f.id, f.created_at, jsonb_build_object('id', f.id, 'name', f.name, 'mime', f.mime,
+		'size', f.size, 'sha256', f.hash, 'access', f.access, 'created_at', f.created_at) AS data, ts_rank(f.search, q.q, 1) AS rank,
 		CASE WHEN f.text <> '' THEN ts_headline('simple', left(f.text, 100000), q.q, 'MaxFragments=1, MaxWords=30, MinWords=10, StartSel=**, StopSel=**') ELSE '' END AS snippet
 	FROM archive.file f, q WHERE f.search @@ q.q`
 
@@ -489,8 +460,8 @@ func (a *Archive) Search(ctx context.Context, query string, f SearchFilter) ([]*
 	var parts []string
 	for _, name := range cat.names() {
 		tb := cat.Tables[name]
-		if f.Type == name || f.Type == "" && tb.Kind == "table" {
-			parts = append(parts, `SELECT 'entity' AS kind, `+pgLiteral(name)+` AS type, t.id, t.space, t.created_at, `+tb.rowSQL("t")+` AS data, ts_rank(t.search, q.q, 1) AS rank, '' AS snippet
+		if tb.Schema == "public" && (f.Type == name || f.Type == "" && tb.Kind == "table") {
+			parts = append(parts, `SELECT 'entity' AS kind, `+pgLiteral(name)+` AS type, t.id, t.created_at, `+tb.rowSQL("t")+` AS data, ts_rank(t.search, q.q, 1) AS rank, '' AS snippet
 				FROM `+tb.ident()+` t, q WHERE t.search @@ q.q`)
 		}
 	}
@@ -513,25 +484,14 @@ func (a *Archive) Search(ctx context.Context, query string, f SearchFilter) ([]*
 		limit = 20
 	}
 	sql := `WITH q AS (SELECT search_query($1) AS q)
-		SELECT h.kind, h.type, h.id, h.space, h.created_at, h.data, h.rank, h.snippet FROM (` + strings.Join(parts, "\nUNION ALL\n") + `) h
-		WHERE ($2::uuid IS NULL OR h.space = $2) AND ($3::timestamptz IS NULL OR h.created_at >= $3) AND ($4::timestamptz IS NULL OR h.created_at < $4)
-		ORDER BY h.rank DESC, h.id LIMIT $5`
+		SELECT h.kind, h.type, h.id, h.created_at, h.data, h.rank, h.snippet FROM (` + strings.Join(parts, "\nUNION ALL\n") + `) h
+		WHERE ($2::timestamptz IS NULL OR h.created_at >= $2) AND ($3::timestamptz IS NULL OR h.created_at < $3)
+		ORDER BY h.rank DESC, h.id LIMIT $4`
 	return coreDo(a, ctx, func(ctx context.Context) ([]*SearchHit, error) {
-		q := a.st.Q(ctx)
-		var space any
-		if f.Space != "" {
-			id, err := a.st.db(ctx).SpaceID(ctx, f.Space)
-			if errors.Is(err, pgx.ErrNoRows) {
-				return nil, fmt.Errorf("space %q: %w", f.Space, ErrNotFound)
-			} else if err != nil {
-				return nil, err
-			}
-			space = id
-		}
-		rows, _ := q.Query(ctx, sql, query, space, from, to, limit)
+		rows, _ := a.st.Q(ctx).Query(ctx, sql, query, from, to, limit)
 		out := []*SearchHit{}
 		var h SearchHit
-		_, err := pgx.ForEachRow(rows, []any{&h.Kind, &h.Type, &h.ID, &h.Space, &h.Date, &h.Data, &h.Score, &h.Snippet}, func() error {
+		_, err := pgx.ForEachRow(rows, []any{&h.Kind, &h.Type, &h.ID, &h.Date, &h.Data, &h.Score, &h.Snippet}, func() error {
 			c := h
 			c.Data = append(json.RawMessage(nil), h.Data...)
 			out = append(out, &c)

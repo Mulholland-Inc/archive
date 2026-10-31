@@ -1,6 +1,6 @@
 CREATE TABLE note (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
-    space      uuid NOT NULL REFERENCES archive.space,
+    access     text,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     title text NOT NULL,
@@ -12,8 +12,7 @@ CREATE TABLE note (
 CREATE INDEX note_search ON note USING gin (search);
 ALTER TABLE note ENABLE ROW LEVEL SECURITY;
 ALTER TABLE note FORCE ROW LEVEL SECURITY;
-CREATE POLICY viewer ON note FOR SELECT USING (space = ANY (archive.my_spaces()));
-CREATE POLICY editor ON note USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
+CREATE POLICY access ON note USING (archive.can(access)) WITH CHECK (archive.can(access));
 COMMENT ON TABLE note IS 'A note, idea or piece of reference
 icon: sticky-note';
 COMMENT ON COLUMN note.title IS 'Title';

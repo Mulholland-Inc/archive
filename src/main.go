@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Mulholland-Inc/archive/generated"
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -52,37 +53,33 @@ Usage:
                                      run that plan; renames are not detected, so rename a table
                                      or column with ALTER ... RENAME in psql first
 
-  archive file add <path>... [-space s]
-                                     store files and extract their metadata and text
+  archive file add <path>... [-access group]
+                                     store files and extract their metadata and text; with -access
+                                     only that group and the owners see them
   archive file get <id> [-o path|-]  print the file's metadata, or with -o write its content
   archive file list [-limit n] [-after id]
 
   archive list <table> [-limit n] [-after id] [-reveal] [column=value ...]
-  archive get <table> <id> [-reveal] -reveal shows secret values you are granted
-  archive create <table> [-space s] [json]
-                                     json from the argument or stdin; default space is your own
+  archive get <table> <id> [-reveal] -reveal shows secret values, to owners
+  archive create <table> [json]      json from the argument or stdin; its access column says which
+                                     group sees the row, null for the whole workspace
   archive set <table> <id> [json]    set some columns; null clears a column
   archive update <table> <id> [json] replace the whole row
   archive delete <table> <id>
-  archive search <query> [-type t] [-space s] [-from date] [-to date] [-limit n]
+  archive search <query> [-type t] [-from date] [-to date] [-limit n]
                                      find rows and files by their words
 
-  archive user add <email> [-name n] [-admin]
-                                     invite someone to the workspace; their first sign-in with a
-                                     provider under that verified email links them, and one sign-in
-                                     reaches all of their workspaces
-  archive user remove <email>        take them out of the workspace, with their tokens and role
-  archive space add <name>
-  archive space list
-  archive space remove <space>       delete the space and everything in it; needs owner
-  archive space members <space>
-  archive space grant <space> <email> <owner|admin|editor|viewer|none>
-  archive token create [-name n] [-space s:role,...] [-expires 720h] [-full]
-                                     -full makes a token with all your rights, which can also
-                                     manage spaces, members and tokens, as Terraform needs
+  archive user add <email> [-name n] [-role viewer|editor|owner]
+                                     add a row to the member table, which invites them: their first
+                                     sign-in with a provider under that verified email links them,
+                                     and one sign-in reaches all of their workspaces; the first one
+                                     is an owner. Change roles and groups with archive set member
+  archive user remove <email>        delete their member row, which takes them out of the workspace
+                                     with their tokens and role; the last owner stays
+  archive token create [-name n] [-expires 720h] [-viewer]
+                                     a token acts as you; -viewer makes it read only
   archive token list
   archive token revoke <id>
-  archive secret grant|revoke <email> <type>
 
   archive workspace add <name> <owner email>
                                      create a workspace, with its own database, for someone else
@@ -175,11 +172,11 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	after := fs.String("after", "", "list objects after this id (list)")
 	as := fs.String("as", "", "act as this user")
 	name := fs.String("name", "", "name (user add, token create)")
-	admin := fs.Bool("admin", false, "instance admin (user add)")
-	full := fs.Bool("full", false, "token with all your rights (token create)")
-	space := fs.String("space", "", "space (create, file add); space:role,... (token create)")
+	role := fs.String("role", "", "viewer, editor or owner (user add)")
+	viewer := fs.Bool("viewer", false, "read-only token (token create)")
+	access := fs.String("access", "", "group that sees the files (file add)")
 	expires := fs.Duration("expires", 0, "token lifetime (token create)")
-	reveal := fs.Bool("reveal", false, "show granted secret values (list, get)")
+	reveal := fs.Bool("reveal", false, "show secret values, to owners (list, get)")
 	output := fs.String("o", "", "write the file content here, - for stdout (file get)")
 	docs := fs.Bool("docs", false, "print the SDK documentation (run)")
 	workspace := fs.String("workspace", "", "act in this workspace")
@@ -264,9 +261,9 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	case "schema":
 		return cliSchema(ctx, a, pos, *allowDrop, stdout, out)
 	case "file":
-		return cliFile(ctx, a, pos, *space, *output, *limit, *after, stdout, out)
-	case "user", "space", "token", "secret":
-		return cliAuth(ctx, a, cmd, pos, *name, *admin, *full, *space, *expires, out)
+		return cliFile(ctx, a, pos, *access, *output, *limit, *after, stdout, out)
+	case "user", "token":
+		return cliAuth(ctx, a, cmd, pos, *name, *role, *viewer, *expires, out)
 	case "workspace":
 		return cliWorkspace(ctx, h, cmd, pos, out)
 	case "list":
@@ -284,20 +281,20 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 				return fmt.Errorf("-after: %w", err)
 			}
 		}
-		rs, err := a.List(ctx, pos[0], "", where, *limit, aid)
+		rs, err := a.List(ctx, pos[0], where, *limit, aid)
 		if err == nil && *reveal {
 			err = a.Reveal(ctx, pos[0], rs...)
 		}
 		return out(rs, err)
 	case "search":
-		f := SearchFilter{Type: *typ, Space: *space, From: *from, To: *to, Limit: *limit}
+		f := SearchFilter{Type: *typ, From: *from, To: *to, Limit: *limit}
 		return out(a.Search(ctx, strings.Join(pos, " "), f))
 	case "create":
 		data, err := cliData(pos[1:], stdin)
 		if err != nil {
 			return err
 		}
-		return out(a.Create(ctx, *space, pos[0], data))
+		return out(a.Create(ctx, pos[0], data))
 	}
 
 	id, err := uuid.Parse(pos[1])
@@ -328,7 +325,7 @@ func cliCheckCommand(cmd string, pos []string) error {
 	n, ok := map[string]int{
 		"serve": 0, "mcp": 0, "types": 0, "run": 1, "schema": 1, "list": 1, "create": 1,
 		"get": 2, "delete": 2, "set": 2, "update": 2,
-		"user": 2, "space": 1, "token": 1, "secret": 3, "file": 1, "search": 1, "workspace": 1,
+		"user": 2, "token": 1, "file": 1, "search": 1, "workspace": 1,
 	}[cmd]
 	if !ok {
 		return fmt.Errorf("unknown command %q (see archive help)", cmd)
@@ -339,49 +336,14 @@ func cliCheckCommand(cmd string, pos []string) error {
 	return nil
 }
 
-func cliAuth(ctx context.Context, a *Archive, cmd string, pos []string, name string, admin, full bool, space string, expires time.Duration, out func(any, error) error) error {
+func cliAuth(ctx context.Context, a *Archive, cmd string, pos []string, name, role string, viewer bool, expires time.Duration, out func(any, error) error) error {
 	switch cmd + " " + pos[0] {
 	case "user add":
-		return out(a.AddUser(ctx, pos[1], name, admin))
+		return out(a.AddUser(ctx, pos[1], name, role))
 	case "user remove":
 		return a.RemoveUser(ctx, pos[1])
-	case "space add":
-		if len(pos) > 1 {
-			return out(a.AddSpace(ctx, pos[1]))
-		}
-	case "space list":
-		return out(a.Spaces(ctx))
-	case "space remove":
-		if len(pos) > 1 {
-			if err := a.DeleteSpace(ctx, pos[1]); err != nil {
-				return err
-			}
-			return out(a.Spaces(ctx))
-		}
-	case "space members":
-		if len(pos) > 1 {
-			return out(a.Members(ctx, pos[1]))
-		}
-	case "space grant":
-		if len(pos) > 3 {
-			if err := a.SetMember(ctx, pos[1], pos[2], pos[3]); err != nil {
-				return err
-			}
-			return out(a.Members(ctx, pos[1]))
-		}
 	case "token create":
-		spaces := map[string]string{}
-		for _, sr := range strings.Split(space, ",") {
-			if sr == "" {
-				continue
-			}
-			n, r, ok := strings.Cut(sr, ":")
-			if !ok {
-				return fmt.Errorf("-space %q: want space:role", sr)
-			}
-			spaces[n] = r
-		}
-		return out(a.CreateToken(ctx, name, spaces, expires, full))
+		return out(a.CreateToken(ctx, name, expires, viewer))
 	case "token list":
 		return out(a.Tokens(ctx))
 	case "token revoke":
@@ -392,8 +354,6 @@ func cliAuth(ctx context.Context, a *Archive, cmd string, pos []string, name str
 			}
 			return a.RevokeToken(ctx, id)
 		}
-	case "secret grant", "secret revoke":
-		return a.GrantSecret(ctx, pos[1], pos[2], pos[0] == "grant")
 	}
 	return cliErrUsage
 }
@@ -414,7 +374,7 @@ func cliWorkspace(ctx context.Context, h *Hub, cmd string, pos []string, out fun
 	return cliErrUsage
 }
 
-func cliFile(ctx context.Context, a *Archive, pos []string, space, output string, limit int, after string, stdout io.Writer, out func(any, error) error) error {
+func cliFile(ctx context.Context, a *Archive, pos []string, access, output string, limit int, after string, stdout io.Writer, out func(any, error) error) error {
 	if pos[0] == "list" {
 		var aid uuid.UUID
 		if after != "" {
@@ -423,7 +383,7 @@ func cliFile(ctx context.Context, a *Archive, pos []string, space, output string
 				return fmt.Errorf("-after: %w", err)
 			}
 		}
-		return out(a.Files(ctx, "", limit, aid))
+		return out(a.Files(ctx, limit, aid))
 	}
 	if len(pos) < 2 {
 		return cliErrUsage
@@ -436,7 +396,7 @@ func cliFile(ctx context.Context, a *Archive, pos []string, space, output string
 			if err != nil {
 				return err
 			}
-			f, err := a.AddFile(ctx, space, filepath.Base(p), fh)
+			f, err := a.AddFile(ctx, access, filepath.Base(p), fh)
 			fh.Close()
 			if err != nil {
 				return fmt.Errorf("%s: %w", p, err)
@@ -555,7 +515,7 @@ func cliServe(ctx context.Context, h *Hub, a *Archive, addr string) error {
 	if err != nil {
 		return err
 	}
-	if none, err := h.q().NoMembers(ctx, a.ws.ID); err != nil {
+	if none, err := generated.New(a.st.sys).NoMembers(ctx); err != nil {
 		return err
 	} else if none {
 		fmt.Fprintln(os.Stderr, "archive: no users yet; add the first owner with archive user add <email>")
@@ -607,13 +567,13 @@ func (h *Hub) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Vary", "Origin")
 		first, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
-		headers := "Authorization, Content-Type, Archive-Workspace, Archive-Space"
+		headers := "Authorization, Content-Type, Archive-Workspace"
 		switch origin := r.Header.Get("Origin"); {
 		case origin == "":
 		case split && origin == app && (first == "api" || first == "auth"):
 			w.Header().Set("Access-Control-Allow-Origin", app)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
-			headers = "Content-Type, Archive-Workspace, Archive-Space"
+			headers = "Content-Type, Archive-Workspace"
 		case !h.localApp():
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 		}
@@ -733,7 +693,7 @@ func httpHandler(a *Archive) http.Handler {
 	handle("GET /api/search", func(r *http.Request) (int, any, error) {
 		q := r.URL.Query()
 		limit, _ := strconv.Atoi(q.Get("limit"))
-		f := SearchFilter{Type: q.Get("type"), Space: q.Get("space"), From: q.Get("from"), To: q.Get("to"), Limit: limit}
+		f := SearchFilter{Type: q.Get("type"), From: q.Get("from"), To: q.Get("to"), Limit: limit}
 		return ok(a.Search(r.Context(), q.Get("q"), f))
 	})
 
@@ -749,11 +709,11 @@ func httpHandler(a *Archive) http.Handler {
 		}
 		where := map[string]any{}
 		for k, v := range q {
-			if k != "limit" && k != "after" && k != "reveal" && k != "space" {
+			if k != "limit" && k != "after" && k != "reveal" {
 				where[k] = v[0]
 			}
 		}
-		rs, err := a.List(r.Context(), r.PathValue("type"), q.Get("space"), where, limit, after)
+		rs, err := a.List(r.Context(), r.PathValue("type"), where, limit, after)
 		if err == nil && q.Get("reveal") == "true" {
 			err = a.Reveal(r.Context(), r.PathValue("type"), rs...)
 		}
@@ -764,7 +724,7 @@ func httpHandler(a *Archive) http.Handler {
 		if err := httpDecode(r, &data); err != nil {
 			return 0, nil, err
 		}
-		rec, err := a.Create(r.Context(), r.URL.Query().Get("space"), r.PathValue("type"), data)
+		rec, err := a.Create(r.Context(), r.PathValue("type"), data)
 		return http.StatusCreated, rec, err
 	})
 	object := func(f func(ctx context.Context, typ string, id uuid.UUID, r *http.Request) (any, error)) func(r *http.Request) (int, any, error) {

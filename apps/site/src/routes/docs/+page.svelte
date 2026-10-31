@@ -54,8 +54,8 @@
     [
       'Access',
       [
-        ['spaces', 'Spaces'],
         ['people', 'People and roles'],
+        ['groups', 'Groups'],
         ['secrets', 'Secret fields']
       ]
     ],
@@ -99,7 +99,7 @@
   });
 </script>
 
-<Meta title="Docs — Archive" description="How Archive works: your own Postgres types, live schema changes, code mode over MCP, the SDK, the HTTP API, files, Office documents, spaces and roles." />
+<Meta title="Docs — Archive" description="How Archive works: your own Postgres types, live schema changes, code mode over MCP, the SDK, the HTTP API, files, Office documents, roles and groups." />
 
 <Hero
   title="Everything, documented."
@@ -135,7 +135,7 @@
 <p>All three pass the same permissions before they touch a row or a file.</p>
 
 <h3 id="intro-postgres">Postgres underneath</h3>
-<p>Each type you define is a real Postgres table, and a row is one record. People, spaces and tokens are Postgres roles, and row-level security filters every query, so plain SQL sees exactly what the app sees.</p>
+<p>Each type you define is a real Postgres table, and a row is one record. People, roles, groups and tokens are Postgres roles, and row-level security filters every query, so plain SQL sees exactly what the app sees.</p>
 
 <h3 id="intro-agents">Your AI does the thinking</h3>
 <p>Archive calls no AI model on its own. Your assistant reads what is there, decides what to do, and sends Archive a short TypeScript script to run.</p>
@@ -143,8 +143,8 @@
 <h2 id="quickstart">Quick start</h2>
 <p>From your invite to your first answer in a few minutes. No card, no sales call.</p>
 <ol>
-<li>Get invited to a workspace by its admin, or ask <a href="https://mulholland.ai">Mulholland</a> for one.</li>
-<li>Sign in with Google, Microsoft, Slack or GitHub under the email you were invited with. You get a private space of your own.</li>
+<li>Get invited to a workspace by one of its owners, or ask <a href="https://mulholland.ai">Mulholland</a> for one.</li>
+<li>Sign in with Google, Microsoft, Slack or GitHub under the email you were invited with.</li>
 <li>Create a token (see <a href="#tokens">Tokens</a>) and keep it as <code>ARCHIVE_TOKEN</code>.</li>
 <li>Connect your AI (see <a href="#connect">Connect your AI</a>), or call the API straight away.</li>
 </ol>
@@ -221,7 +221,7 @@ Then tell me which tables and views I have, and what each one is for.</pre>
 </Code>
 
 <h2 id="tokens">Tokens</h2>
-<p>A token acts as you, and it can only narrow what you can do. Agents, scripts and CI each get their own.</p>
+<p>A token acts as you, with your role and groups, and never does more than you can. Agents, scripts and CI each get their own.</p>
 <Code tabs={['header']}>
 <pre>Authorization: Bearer $ARCHIVE_TOKEN</pre>
 </Code>
@@ -231,8 +231,8 @@ Then tell me which tables and views I have, and what each one is for.</pre>
 <Code tabs={['curl', 'response']}>
 <pre>curl https://your-workspace.archive.mulholland.ai/auth/tokens \
   -H <span class="s">"Authorization: Bearer $ARCHIVE_TOKEN"</span> \
-  -d <span class="s">'&#123;"name": "invoice-agent", "spaces": &#123;"finance": "editor"&#125;, "expires": "720h"&#125;'</span></pre>
-<pre hidden>201  &#123;"id": "0193…", "name": "invoice-agent", "spaces": &#123;"finance": "editor"&#125;, "expires_at": "2026-11-27T09:30:00Z", "created_at": "2026-10-28T09:30:00Z", "token": "…"&#125;</pre>
+  -d <span class="s">'&#123;"name": "invoice-agent", "expires": "720h"&#125;'</span></pre>
+<pre hidden>201  &#123;"id": "0193…", "name": "invoice-agent", "expires_at": "2026-11-27T09:30:00Z", "created_at": "2026-10-28T09:30:00Z", "token": "…"&#125;</pre>
 </Code>
 
 <h3 id="token-scope">Scope</h3>
@@ -240,26 +240,25 @@ Then tell me which tables and views I have, and what each one is for.</pre>
 <thead><tr><th>Field</th><th>What it does</th></tr></thead>
 <tbody>
 <tr><td><code>name</code></td><td>A label, so you know which token is which.</td></tr>
-<tr><td><code>spaces</code></td><td>Spaces and a role in each, like <code>&#123;"finance": "viewer"&#125;</code>. Never higher than your own role there. Left out, the token gets your current role in every space you are in.</td></tr>
 <tr><td><code>expires</code></td><td>A lifetime such as <code>"720h"</code>. Left out, the token does not expire.</td></tr>
-<tr><td><code>full</code></td><td>All your rights, including managing spaces, members and tokens, as Terraform needs. A full token takes no <code>spaces</code>.</td></tr>
+<tr><td><code>viewer</code></td><td><code>true</code> makes the token read only. It keeps your groups, and never sees more than you do.</td></tr>
 </tbody>
 </table>
 
 <h3 id="token-manage">List and revoke</h3>
-<p><code>GET /auth/tokens</code> lists your tokens without their values. <code>DELETE /auth/tokens/&#123;id&#125;</code> revokes one, and it stops working at once. When someone's role in a space goes down, their tokens for that space go down with it.</p>
+<p><code>GET /auth/tokens</code> lists your tokens without their values. <code>DELETE /auth/tokens/&#123;id&#125;</code> revokes one, and it stops working at once. When your role or groups change, your tokens change with them, and removing you from the workspace removes your tokens.</p>
 
 <h2 id="types">Your own types</h2>
 <p>Each kind of record is a real Postgres table in the <code>public</code> schema. The table is the type, a row is a record, and nothing else is stored about it.</p>
 
 <h3 id="types-needs">What every table needs</h3>
-<p>The columns <code>id</code>, <code>space</code>, <code>created_at</code>, <code>updated_at</code> and a <code>search</code> tsvector, a search index, and row-level security with policies. A plan without them is rejected. A complete file, <code>invoice.sql</code>:</p>
+<p>The columns <code>id</code>, <code>access</code>, <code>created_at</code>, <code>updated_at</code> and a <code>search</code> tsvector, a search index, and row-level security with the one <code>access</code> policy. A plan without them is rejected. A complete file, <code>invoice.sql</code>:</p>
 <Code tabs={['invoice.sql']}>
 <pre><span class="k">CREATE TYPE</span> invoice_status <span class="k">AS ENUM</span> (<span class="s">'draft'</span>, <span class="s">'unpaid'</span>, <span class="s">'paid'</span>);
 
 <span class="k">CREATE TABLE</span> invoice (
     id         uuid <span class="k">PRIMARY KEY DEFAULT</span> <span class="f">uuidv7</span>(),
-    space      uuid <span class="k">NOT NULL REFERENCES</span> archive.space,
+    access     text,
     created_at timestamptz <span class="k">NOT NULL DEFAULT</span> <span class="f">now</span>(),
     updated_at timestamptz <span class="k">NOT NULL DEFAULT</span> <span class="f">now</span>(),
     customer   text <span class="k">NOT NULL</span>,
@@ -271,14 +270,12 @@ Then tell me which tables and views I have, and what each one is for.</pre>
 <span class="k">CREATE INDEX</span> invoice_search <span class="k">ON</span> invoice <span class="k">USING</span> gin (search);
 <span class="k">ALTER TABLE</span> invoice <span class="k">ENABLE ROW LEVEL SECURITY</span>;
 <span class="k">ALTER TABLE</span> invoice <span class="k">FORCE ROW LEVEL SECURITY</span>;
-<span class="k">CREATE POLICY</span> viewer <span class="k">ON</span> invoice <span class="k">FOR SELECT USING</span> (space = <span class="k">ANY</span> (archive.<span class="f">my_spaces</span>()));
-<span class="k">CREATE POLICY</span> editor <span class="k">ON</span> invoice <span class="k">USING</span> (space = <span class="k">ANY</span> (archive.<span class="f">my_spaces</span>(<span class="s">'editor'</span>)))
-    <span class="k">WITH CHECK</span> (space = <span class="k">ANY</span> (archive.<span class="f">my_spaces</span>(<span class="s">'editor'</span>)));
+<span class="k">CREATE POLICY</span> access <span class="k">ON</span> invoice <span class="k">USING</span> (archive.<span class="f">can</span>(access)) <span class="k">WITH CHECK</span> (archive.<span class="f">can</span>(access));
 <span class="k">COMMENT ON TABLE</span> invoice <span class="k">IS</span> <span class="s">'An invoice you sent
 icon: receipt'</span>;
 <span class="k">COMMENT ON COLUMN</span> invoice.customer <span class="k">IS</span> <span class="s">'Who the invoice is for'</span>;</pre>
 </Code>
-<p>Archive sets <code>id</code>, <code>space</code>, <code>created_at</code> and <code>updated_at</code>. Columns marked <code>NOT NULL</code> without a default are required on create.</p>
+<p>Archive sets <code>id</code>, <code>created_at</code> and <code>updated_at</code>. <code>access</code> is null for the whole workspace, or a group such as <code>"hr"</code>; see <a href="#groups">Groups</a>. A table only one group sees uses <code>access text NOT NULL DEFAULT 'hr' CHECK (access = 'hr')</code>. Columns marked <code>NOT NULL</code> without a default are required on create.</p>
 
 <h3 id="types-comments">Settings in comments</h3>
 <p>The first lines of a table or view comment are its description. The last lines may be <code>key: value</code> settings. Any other key is an error, and so is an unknown icon, layout or column.</p>
@@ -360,7 +357,7 @@ files[<span class="s">"invoice.sql"</span>] += <span class="s">"\nALTER TABLE in
 <p>A statement that deletes data, such as dropping a table or a column, is blocked unless you pass <code>&#123; allowDrop: true &#125;</code>. Dropping a view is never blocked, since a view holds no data.</p>
 
 <h3 id="schema-who">Who can change it</h3>
-<p>Workspace admins, and admins of any space. Everyone else can read the schema but not apply it.</p>
+<p>Owners. Everyone else can read the schema but not apply it.</p>
 
 <h3 id="schema-git">Keep it in git</h3>
 <p><code>apply(await archive.schema())</code> always plans nothing, so you can pull the files, keep them in a repository and apply them back. Over HTTP, use <code>GET /api/schema</code> and <code>POST /api/schema/plan</code> or <code>/apply</code> with <code>&#123;"files": &#123;...&#125;, "renames": [...], "allow_drop": false&#125;</code>.</p>
@@ -407,8 +404,8 @@ icon: calendar'</span>;</pre>
 <p>Words match by prefix and ignore case and accents: "nort" finds "Northwind", and "cafe" finds "Café".</p>
 
 <h3 id="search-filters">Filters and results</h3>
-<p>Filter by <code>type</code> (a table name, or <code>"file"</code>), <code>space</code>, and <code>from</code> and <code>to</code> dates. You get 20 hits by default and up to 100 with <code>limit</code>.</p>
-<p>Each hit has <code>kind</code> (<code>"entity"</code> or <code>"file"</code>), <code>type</code>, <code>id</code>, <code>space</code>, <code>date</code>, <code>data</code> and <code>score</code>. File hits add a <code>snippet</code> with the matches in <strong>bold</strong>.</p>
+<p>Filter by <code>type</code> (a table name, or <code>"file"</code>), and <code>from</code> and <code>to</code> dates. You get 20 hits by default and up to 100 with <code>limit</code>.</p>
+<p>Each hit has <code>kind</code> (<code>"entity"</code> or <code>"file"</code>), <code>type</code>, <code>id</code>, <code>date</code>, <code>data</code> and <code>score</code>. File hits add a <code>snippet</code> with the matches in <strong>bold</strong>.</p>
 
 <h3 id="search-column">What gets searched</h3>
 <p>A row is found by the words in its <code>search</code> column, so put the columns people look for there: <code>archive.search_doc(customer, notes)</code>. A file is found by its name and extracted text.</p>
@@ -416,7 +413,7 @@ icon: calendar'</span>;</pre>
 <h2 id="files">Files</h2>
 <p>Upload any file. Archive pulls out its metadata and text before the upload returns, so search finds it right away.</p>
 <Code tabs={['curl']}>
-<pre>curl <span class="s">"https://your-workspace.archive.mulholland.ai/api/files?space=finance"</span> \
+<pre>curl <span class="s">"https://your-workspace.archive.mulholland.ai/api/files?access=finance"</span> \
   -H <span class="s">"Authorization: Bearer $ARCHIVE_TOKEN"</span> \
   -F file=@contract.pdf</pre>
 </Code>
@@ -547,12 +544,12 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <thead><tr><th>Call</th><th>Does</th></tr></thead>
 <tbody>
 <tr><td><code>sql(query, ...params): Row[]</code></td><td>Runs one SQL statement as you, with <code>$1</code>, <code>$2</code> bound to params.</td></tr>
-<tr><td><code>list(table, &#123; where?, limit?, after?, space?, reveal? &#125;): Tables[T][]</code></td><td>Rows oldest first. <code>where</code> matches exact, cleaned values. Page with <code>after</code> set to the last id.</td></tr>
+<tr><td><code>list(table, &#123; where?, limit?, after?, reveal? &#125;): Tables[T][]</code></td><td>Rows oldest first. <code>where</code> matches exact, cleaned values, <code>access</code> included. Page with <code>after</code> set to the last id.</td></tr>
 <tr><td><code>get(table, id, &#123; reveal? &#125;): Tables[T]</code></td><td>One row. Throws <code>not_found</code> if it does not exist or you cannot see it.</td></tr>
-<tr><td><code>create(table, data, &#123; space? &#125;): Tables[T]</code></td><td>Inserts a cleaned, validated row into <code>space</code> or your own space.</td></tr>
+<tr><td><code>create(table, data): Tables[T]</code></td><td>Inserts a cleaned, validated row. Set <code>access</code> in <code>data</code> to a group to keep it to that group.</td></tr>
 <tr><td><code>update(table, id, patch): Tables[T]</code></td><td>Changes only the fields given; <code>null</code> clears one.</td></tr>
 <tr><td><code>delete(table, id): void</code></td><td>Deletes a row.</td></tr>
-<tr><td><code>search(text, &#123; type?, space?, from?, to?, limit? &#125;): Hit[]</code></td><td>Full-text search over every table and file you can see.</td></tr>
+<tr><td><code>search(text, &#123; type?, from?, to?, limit? &#125;): Hit[]</code></td><td>Full-text search over every table and file you can see.</td></tr>
 </tbody>
 </table>
 
@@ -570,21 +567,16 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <table>
 <thead><tr><th>Call</th><th>Does</th></tr></thead>
 <tbody>
-<tr><td><code>files(&#123; limit?, after?, space? &#125;): StoredFile[]</code></td><td>Files you can see, oldest first, with their text.</td></tr>
+<tr><td><code>files(&#123; limit?, after? &#125;): StoredFile[]</code></td><td>Files you can see, oldest first, with their text.</td></tr>
 <tr><td><code>file(id): StoredFile</code></td><td>One file with its text.</td></tr>
-<tr><td><code>create(name, &#123; space? &#125;): StoredFile</code></td><td>An empty <code>.docx</code>, <code>.xlsx</code> or <code>.pptx</code>, by extension.</td></tr>
+<tr><td><code>create(name, &#123; access? &#125;): StoredFile</code></td><td>An empty <code>.docx</code>, <code>.xlsx</code> or <code>.pptx</code>, by extension, seen only by the <code>access</code> group if given.</td></tr>
 <tr><td><code>read(fileId): Model</code></td><td>The structure of an Office file.</td></tr>
 <tr><td><code>edit(fileId, edits): StoredFile</code></td><td>Applies edits and saves the file, all or nothing.</td></tr>
 </tbody>
 </table>
 
-<h3 id="sdk-spaces">Spaces</h3>
-<table>
-<thead><tr><th>Call</th><th>Does</th></tr></thead>
-<tbody>
-<tr><td><code>spaces(): Space[]</code></td><td>The spaces you can see, each with <code>id</code>, <code>name</code> and your <code>level</code>: owner, admin, editor or viewer.</td></tr>
-</tbody>
-</table>
+<h3 id="sdk-members">Members</h3>
+<p>People are rows of the <code>member</code> table, so the same calls manage them: <code>list("member")</code>, <code>create("member", &#123; email, role, groups &#125;)</code>, <code>update("member", id, &#123; groups: ["hr"] &#125;)</code> and <code>delete("member", id)</code>. Everyone can read it; only owners can change it.</p>
 
 <h3 id="sdk-values">Values</h3>
 <p>Rows are plain JSON. Dates are <code>"2026-10-27"</code>, instants are UTC like <code>"2026-10-27T09:30:00Z"</code>, references are id strings, arrays are lists and enums are one of their strings. Empty fields read back as <code>null</code>. The built-in composite types read back as objects:</p>
@@ -610,9 +602,9 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
   -H <span class="s">"Authorization: Bearer $ARCHIVE_TOKEN"</span>
 
 <span class="c"># 200 [&#123;"id": "0193…", "customer": "Northwind", "amount": &#123;"amount": 4200, "currency": "USD"&#125;, "status": "unpaid", …&#125;]</span></pre>
-<pre hidden>curl <span class="s">"https://your-workspace.archive.mulholland.ai/api/invoice?space=finance"</span> \
+<pre hidden>curl <span class="s">"https://your-workspace.archive.mulholland.ai/api/invoice"</span> \
   -H <span class="s">"Authorization: Bearer $ARCHIVE_TOKEN"</span> \
-  -d <span class="s">'&#123;"customer": "Hart", "amount": "$980"&#125;'</span>
+  -d <span class="s">'&#123;"customer": "Hart", "amount": "$980", "access": "finance"&#125;'</span>
 
 <span class="c"># 201 &#123;"id": "0193…", "customer": "Hart", "amount": &#123;"amount": 980, "currency": "USD"&#125;, …&#125;</span></pre>
 <pre hidden>curl -X PATCH https://your-workspace.archive.mulholland.ai/api/invoice/&lt;id&gt; \
@@ -631,7 +623,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <thead><tr><th>Endpoint</th><th>Does</th></tr></thead>
 <tbody>
 <tr><td><code>GET /api/&#123;table&#125;</code></td><td>Lists rows. Other query parameters filter by exact value.</td></tr>
-<tr><td><code>POST /api/&#123;table&#125;</code></td><td>Creates a row; <code>?space=</code> picks its space.</td></tr>
+<tr><td><code>POST /api/&#123;table&#125;</code></td><td>Creates a row; its <code>access</code> says which group sees it.</td></tr>
 <tr><td><code>GET /api/&#123;table&#125;/&#123;id&#125;</code></td><td>One row.</td></tr>
 <tr><td><code>PATCH /api/&#123;table&#125;/&#123;id&#125;</code></td><td>Changes only what you send.</td></tr>
 <tr><td><code>PUT /api/&#123;table&#125;/&#123;id&#125;</code></td><td>Replaces the whole row.</td></tr>
@@ -644,9 +636,8 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <thead><tr><th>Parameter</th><th>Does</th></tr></thead>
 <tbody>
 <tr><td><code>limit</code>, <code>after</code></td><td>Page size, and the last id you got for the next page.</td></tr>
-<tr><td><code>space</code></td><td>On create, the space to write to. On list, only that space.</td></tr>
-<tr><td><code>reveal=true</code></td><td>Shows secret values you are granted.</td></tr>
-<tr><td><code>column=value</code></td><td>Any other parameter filters rows by that column.</td></tr>
+<tr><td><code>reveal=true</code></td><td>Shows secret values, to owners.</td></tr>
+<tr><td><code>column=value</code></td><td>Any other parameter filters rows by that column, like <code>access=hr</code>.</td></tr>
 </tbody>
 </table>
 
@@ -657,7 +648,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <tr><td><code>GET /api/types</code></td><td>Your tables and views, with their columns.</td></tr>
 <tr><td><code>GET /api/schema</code></td><td>The DDL files.</td></tr>
 <tr><td><code>POST /api/schema/plan</code>, <code>/apply</code></td><td>Plan or apply <code>&#123;"files", "renames", "allow_drop"&#125;</code>.</td></tr>
-<tr><td><code>GET /api/search?q=</code></td><td>Search, with <code>type</code>, <code>space</code>, <code>from</code>, <code>to</code> and <code>limit</code>.</td></tr>
+<tr><td><code>GET /api/search?q=</code></td><td>Search, with <code>type</code>, <code>from</code>, <code>to</code> and <code>limit</code>.</td></tr>
 <tr><td><code>POST /api/run</code></td><td>Runs a script: <code>&#123;"code": "..."&#125;</code>.</td></tr>
 <tr><td><code>GET /api/run/docs</code></td><td>The SDK reference with your table types.</td></tr>
 <tr><td><code>/api/files…</code></td><td>Files, see <a href="#files-endpoints">Files</a>.</td></tr>
@@ -668,10 +659,10 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <table>
 <thead><tr><th>Endpoint</th><th>Does</th></tr></thead>
 <tbody>
-<tr><td><code>GET /auth/me</code></td><td>Who you are, your spaces and your own space.</td></tr>
-<tr><td><code>GET</code>, <code>POST /auth/spaces</code></td><td>List spaces, or create one with <code>&#123;"name"&#125;</code>.</td></tr>
-<tr><td><code>DELETE /auth/spaces/&#123;space&#125;</code></td><td>Delete a space and everything in it.</td></tr>
-<tr><td><code>GET</code>, <code>POST /auth/spaces/&#123;space&#125;/members</code></td><td>List members, or set one with <code>&#123;"email", "role"&#125;</code>.</td></tr>
+<tr><td><code>GET /auth/me</code></td><td>Who you are, your <code>role</code>, your <code>groups</code>, the current <code>workspace</code> and all your <code>workspaces</code>.</td></tr>
+<tr><td><code>GET</code>, <code>POST /auth/users</code></td><td>List the people here, or invite one with <code>&#123;"email", "name", "role"&#125;</code> (owners).</td></tr>
+<tr><td><code>DELETE /auth/users/&#123;email&#125;</code></td><td>Remove someone, with their tokens (owners).</td></tr>
+<tr><td><code>PATCH /api/member/&#123;id&#125;</code></td><td>Change someone's <code>role</code> or <code>groups</code> (owners).</td></tr>
 <tr><td><code>GET</code>, <code>POST /auth/tokens</code></td><td>List or create tokens.</td></tr>
 <tr><td><code>DELETE /auth/tokens/&#123;id&#125;</code></td><td>Revoke a token.</td></tr>
 </tbody>
@@ -697,11 +688,11 @@ archive schema pull ./schema &amp;&amp; archive schema plan ./schema</pre>
 <tbody>
 <tr><td><code>archive list &lt;table&gt; [-limit n] [-after id] [-reveal] [column=value …]</code></td><td>Lists rows.</td></tr>
 <tr><td><code>archive get &lt;table&gt; &lt;id&gt; [-reveal]</code></td><td>One row.</td></tr>
-<tr><td><code>archive create &lt;table&gt; [-space s] [json]</code></td><td>Creates a row from the argument or stdin.</td></tr>
+<tr><td><code>archive create &lt;table&gt; [json]</code></td><td>Creates a row from the argument or stdin, <code>access</code> included.</td></tr>
 <tr><td><code>archive set &lt;table&gt; &lt;id&gt; [json]</code></td><td>Sets some columns; <code>null</code> clears one.</td></tr>
 <tr><td><code>archive update &lt;table&gt; &lt;id&gt; [json]</code></td><td>Replaces the whole row.</td></tr>
 <tr><td><code>archive delete &lt;table&gt; &lt;id&gt;</code></td><td>Deletes a row.</td></tr>
-<tr><td><code>archive search &lt;query&gt; [-type t] [-space s] [-from d] [-to d] [-limit n]</code></td><td>Finds rows and files.</td></tr>
+<tr><td><code>archive search &lt;query&gt; [-type t] [-from d] [-to d] [-limit n]</code></td><td>Finds rows and files.</td></tr>
 </tbody>
 </table>
 <Note mark="!">On the command line, <code>set</code> changes some columns and <code>update</code> replaces the row. In the SDK, <code>update</code> changes only the fields you pass.</Note>
@@ -723,74 +714,72 @@ archive schema pull ./schema &amp;&amp; archive schema plan ./schema</pre>
 <table>
 <thead><tr><th>Command</th><th>Does</th></tr></thead>
 <tbody>
-<tr><td><code>archive file add &lt;path&gt;… [-space s]</code></td><td>Stores files and extracts their text.</td></tr>
+<tr><td><code>archive file add &lt;path&gt;… [-access group]</code></td><td>Stores files and extracts their text; with <code>-access</code>, only that group and the owners see them.</td></tr>
 <tr><td><code>archive file get &lt;id&gt; [-o path|-]</code></td><td>Prints metadata, or writes the content with <code>-o</code>.</td></tr>
 <tr><td><code>archive file list [-limit n] [-after id]</code></td><td>Lists files.</td></tr>
 </tbody>
 </table>
 
-<h3 id="cli-access">Spaces, people and tokens</h3>
+<h3 id="cli-access">People and tokens</h3>
 <table>
 <thead><tr><th>Command</th><th>Does</th></tr></thead>
 <tbody>
-<tr><td><code>archive space add|list|remove|members</code></td><td>Manages spaces.</td></tr>
-<tr><td><code>archive space grant &lt;space&gt; &lt;email&gt; &lt;role&gt;</code></td><td>Sets a role: owner, admin, editor, viewer or none.</td></tr>
-<tr><td><code>archive user add &lt;email&gt; [-name n] [-admin]</code></td><td>Invites a person to the workspace; they sign in with a provider under that email.</td></tr>
-<tr><td><code>archive token create [-name n] [-space s:role,…] [-expires 720h] [-full]</code></td><td>Creates a token.</td></tr>
+<tr><td><code>archive user add &lt;email&gt; [-name n] [-role viewer|editor|owner]</code></td><td>Invites a person to the workspace; they sign in with a provider under that email. The first one is an owner.</td></tr>
+<tr><td><code>archive user remove &lt;email&gt;</code></td><td>Takes them out of the workspace, with their tokens.</td></tr>
+<tr><td><code>archive list member</code></td><td>Lists the people here, with their role and groups.</td></tr>
+<tr><td><code>archive set member &lt;id&gt; '&#123;"role":"editor","groups":["hr"]&#125;'</code></td><td>Changes someone's role or groups.</td></tr>
+<tr><td><code>archive token create [-name n] [-expires 720h] [-viewer]</code></td><td>Creates a token that acts as you; <code>-viewer</code> makes it read only.</td></tr>
 <tr><td><code>archive token list</code>, <code>revoke &lt;id&gt;</code></td><td>Lists or revokes tokens.</td></tr>
-<tr><td><code>archive secret grant|revoke &lt;email&gt; &lt;type&gt;</code></td><td>Lets someone see a secret type.</td></tr>
 </tbody>
 </table>
 
-<h2 id="spaces">Spaces</h2>
-<p>A space is a shared box of rows and files. Every row and every file belongs to exactly one space, and people only see the spaces they are in.</p>
-
-<h3 id="spaces-personal">Your own space</h3>
-<p>Everyone gets a private space when they join. New rows and files go there unless you pick another, and it cannot be deleted.</p>
-
-<h3 id="spaces-shared">Shared spaces</h3>
-<p>Make one for a team, a client or a project. You become its owner.</p>
-<Code tabs={['curl', 'run.ts']}>
-<pre>curl https://your-workspace.archive.mulholland.ai/auth/spaces \
-  -H <span class="s">"Authorization: Bearer $ARCHIVE_TOKEN"</span> \
-  -d <span class="s">'&#123;"name": "finance"&#125;'</span></pre>
-<pre hidden><span class="k">await</span> archive.<span class="f">create</span>(<span class="s">"invoice"</span>, &#123; customer: <span class="s">"Hart"</span>, amount: <span class="s">"$980"</span> &#125;, &#123; space: <span class="s">"finance"</span> &#125;)
-
-<span class="k">return</span> archive.<span class="f">list</span>(<span class="s">"invoice"</span>, &#123; space: <span class="s">"finance"</span> &#125;)</pre>
-</Code>
-
-<h3 id="spaces-delete">Deleting a space</h3>
-<p>Only an owner can delete a space, and it takes every row and file in it along. Deleting cannot be undone.</p>
-
 <h2 id="people">People and roles</h2>
-<p>Give someone a role in a space and they see what is in it. Roles are Postgres roles, so the database itself enforces them.</p>
+<p>Everyone in a workspace has one role. Roles are Postgres roles, so the database itself enforces them.</p>
 <table>
 <thead><tr><th>Role</th><th>Can</th></tr></thead>
 <tbody>
 <tr><td>viewer</td><td>Read rows and files.</td></tr>
 <tr><td>editor</td><td>Also add, change and delete them.</td></tr>
-<tr><td>admin</td><td>Also manage members and change the schema.</td></tr>
-<tr><td>owner</td><td>Everything, including making owners and deleting the space.</td></tr>
+<tr><td>owner</td><td>Also change the schema, manage people, see every row and file whatever its access, and reveal secret fields.</td></tr>
 </tbody>
 </table>
 
 <h3 id="people-add">Adding people</h3>
-<p>A workspace admin invites the person by email on the Users page or with <code>archive user add</code>, and removes them there too. Then a space admin gives them a role in a space. Set the role to <code>none</code> to take them out of a space.</p>
-<Code tabs={['curl']}>
-<pre>curl https://your-workspace.archive.mulholland.ai/auth/spaces/finance/members \
+<p>An owner invites the person by email on the Users page or with <code>archive user add</code>, and removes them there too. People are rows of the <code>member</code> table, so changing a role is an update.</p>
+<Code tabs={['curl', 'run.ts']}>
+<pre>curl https://your-workspace.archive.mulholland.ai/auth/users \
   -H <span class="s">"Authorization: Bearer $ARCHIVE_TOKEN"</span> \
   -d <span class="s">'&#123;"email": "anna@example.com", "role": "editor"&#125;'</span></pre>
+<pre hidden><span class="k">const</span> [anna] = <span class="k">await</span> archive.<span class="f">list</span>(<span class="s">"member"</span>, &#123; where: &#123; email: <span class="s">"anna@example.com"</span> &#125; &#125;)
+
+<span class="k">return</span> archive.<span class="f">update</span>(<span class="s">"member"</span>, anna.id, &#123; role: <span class="s">"owner"</span> &#125;)</pre>
 </Code>
-<p>Making or removing an owner takes an owner, and a space always keeps at least one.</p>
+<p>A workspace always keeps at least one owner, and an email cannot change: remove the person and add the new address.</p>
 
 <h3 id="people-signin">Signing in</h3>
 <p>No passwords. Only invited people sign in: with Google, Microsoft, Slack or GitHub under the email they were invited with, as long as the provider says that email is verified. The first sign-in links that account, and the app then offers to add a passkey to the device.</p>
 
 <h3 id="people-security">Row-level security</h3>
-<p>Every table has a policy: only rows from your spaces. It applies to the web app, the API, your AI and raw SQL alike, so a bug in one surface cannot show another person's data.</p>
+<p>Every table has one policy, <code>access</code>, that checks each row with <code>archive.can(access)</code>. It applies to the web app, the API, your AI and raw SQL alike, so a bug in one surface cannot show another person's data.</p>
+
+<h2 id="groups">Groups</h2>
+<p>A group, like <code>hr</code> or <code>finance</code>, is a set of people. A row or file whose <code>access</code> is <code>hr</code> is seen only by the hr group and the owners. With no access, the whole workspace sees it.</p>
+
+<h3 id="groups-make">Making a group</h3>
+<p>Put someone in it. A group exists while at least one person is in it, and its name is up to 24 lowercase letters, digits or <code>_</code>.</p>
+<Code tabs={['terminal', 'run.ts']}>
+<pre>archive list member email=anna@example.com
+archive set member &lt;id&gt; <span class="s">'&#123;"groups":["finance"]&#125;'</span></pre>
+<pre hidden><span class="k">await</span> archive.<span class="f">create</span>(<span class="s">"invoice"</span>, &#123; customer: <span class="s">"Hart"</span>, amount: <span class="s">"$980"</span>, access: <span class="s">"finance"</span> &#125;)
+
+<span class="k">return</span> archive.<span class="f">list</span>(<span class="s">"invoice"</span>, &#123; where: &#123; access: <span class="s">"finance"</span> &#125; &#125;)</pre>
+</Code>
+
+<h3 id="groups-rules">Who can write what</h3>
+<p>Anyone but an owner can only write rows whose access is empty or one of their own groups. A table only one group should ever see uses <code>access text NOT NULL DEFAULT 'hr' CHECK (access = 'hr')</code>.</p>
 
 <h2 id="secrets">Secret fields</h2>
-<p>Some values should never sit in plain text. Columns of a secret type are encrypted, read back masked, and shown only to people granted that type.</p>
+<p>Some values should never sit in plain text. Columns of a secret type are encrypted, read back masked, and shown only to owners.</p>
 
 <h3 id="secrets-types">Secret types</h3>
 <table>
@@ -804,18 +793,15 @@ archive schema pull ./schema &amp;&amp; archive schema plan ./schema</pre>
 </table>
 
 <h3 id="secrets-reveal">Writing and reading</h3>
-<p>Write the real value as usual. Reads return it masked. Pass <code>&#123; reveal: true &#125;</code> to <code>list</code> or <code>get</code>, or <code>?reveal=true</code> over HTTP, to see it if you are granted.</p>
-
-<h3 id="secrets-grant">Granting</h3>
-<p>Workspace admins grant one secret type to one person at a time, with <code>archive secret grant anna@example.com passport</code>, and revoke it the same way.</p>
+<p>Write the real value as usual. Reads return it masked. Pass <code>&#123; reveal: true &#125;</code> to <code>list</code> or <code>get</code>, or <code>?reveal=true</code> over HTTP, to see it if you are an owner.</p>
 
 <h2 id="connectors">Connectors</h2>
-<p>Connectors bring a space's data in from the tools your team already uses. They are read-only, and they sync only what changed.</p>
+<p>Connectors bring a workspace's data in from the tools your team already uses. They are read-only, and they sync only what changed.</p>
 
 <h3 id="connectors-how">How they sync</h3>
 <ul>
 <li><strong>Read-only.</strong> Connectors ask for read scopes and never write back.</li>
-<li><strong>Per space.</strong> A connection belongs to one space, and what it syncs lands there under row-level security.</li>
+<li><strong>Per workspace.</strong> A connection belongs to one workspace, and what it syncs lands there under row-level security.</li>
 <li><strong>By delta cursor.</strong> Each connection keeps the provider's cursor and fetches only changes, woken by change notifications where the provider sends them.</li>
 <li><strong>Newest first.</strong> The first sync walks the full history once, newest first, so recent data is searchable soonest.</li>
 <li><strong>Deletes follow.</strong> Deleting something at the source deletes it in Archive.</li>

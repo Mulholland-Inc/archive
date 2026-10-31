@@ -1,7 +1,7 @@
 CREATE TYPE person_sex AS ENUM ('m', 'f', 'u');
 CREATE TABLE person (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
-    space      uuid NOT NULL REFERENCES archive.space,
+    access     text,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     name text NOT NULL,
@@ -18,8 +18,7 @@ CREATE TABLE person (
 CREATE INDEX person_search ON person USING gin (search);
 ALTER TABLE person ENABLE ROW LEVEL SECURITY;
 ALTER TABLE person FORCE ROW LEVEL SECURITY;
-CREATE POLICY viewer ON person FOR SELECT USING (space = ANY (archive.my_spaces()));
-CREATE POLICY editor ON person USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
+CREATE POLICY access ON person USING (archive.can(access)) WITH CHECK (archive.can(access));
 COMMENT ON TABLE person IS 'Someone in the family
 icon: user';
 COMMENT ON COLUMN person.name IS 'Full name';

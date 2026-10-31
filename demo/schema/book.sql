@@ -1,7 +1,7 @@
 CREATE TYPE book_status AS ENUM ('want', 'reading', 'read', 'abandoned');
 CREATE TABLE book (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
-    space      uuid NOT NULL REFERENCES archive.space,
+    access     text,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     title text NOT NULL,
@@ -16,8 +16,7 @@ CREATE TABLE book (
 CREATE INDEX book_search ON book USING gin (search);
 ALTER TABLE book ENABLE ROW LEVEL SECURITY;
 ALTER TABLE book FORCE ROW LEVEL SECURITY;
-CREATE POLICY viewer ON book FOR SELECT USING (space = ANY (archive.my_spaces()));
-CREATE POLICY editor ON book USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
+CREATE POLICY access ON book USING (archive.can(access)) WITH CHECK (archive.can(access));
 COMMENT ON TABLE book IS 'A book you read, are reading or want to read
 icon: book-open';
 COMMENT ON COLUMN book.title IS 'Title';

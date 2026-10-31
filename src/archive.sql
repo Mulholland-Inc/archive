@@ -1,13 +1,5 @@
 CREATE SCHEMA archive;
 
-CREATE TABLE archive.space (
-    id         uuid PRIMARY KEY DEFAULT uuidv7(),
-    name       text NOT NULL UNIQUE,
-    role       text NOT NULL UNIQUE,
-    home       uuid UNIQUE,
-    created_at timestamptz NOT NULL DEFAULT now()
-);
-
 CREATE TABLE archive.workspace (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     name       text NOT NULL,
@@ -113,10 +105,10 @@ CREATE TABLE archive.file (
     text       text NOT NULL DEFAULT '',
     status     text NOT NULL DEFAULT 'pending',
     error      text NOT NULL DEFAULT '',
-    space      uuid NOT NULL REFERENCES archive.space,
+    access     text,
     created_at timestamptz NOT NULL DEFAULT now(),
     search     tsvector GENERATED ALWAYS AS (setweight(archive.search_doc(name), 'A') || setweight(archive.search_doc(text), 'C')) STORED,
-    UNIQUE (space, hash, name)
+    UNIQUE NULLS NOT DISTINCT (access, hash, name)
 );
 CREATE INDEX file_pending_idx ON archive.file (id) WHERE status = 'pending';
 CREATE INDEX file_search_idx ON archive.file USING gin (search);
@@ -124,7 +116,7 @@ CREATE INDEX file_search_idx ON archive.file USING gin (search);
 CREATE TABLE archive.upload (
     id         uuid PRIMARY KEY,
     role       text NOT NULL,
-    space      uuid NOT NULL REFERENCES archive.space ON DELETE CASCADE,
+    access     text,
     name       text NOT NULL,
     length     bigint NOT NULL,
     parts      bigint[] NOT NULL DEFAULT '{}',
@@ -138,48 +130,9 @@ CREATE TABLE archive.secret (
     column_name text NOT NULL,
     type        text NOT NULL,
     value       bytea NOT NULL,
-    space       uuid NOT NULL REFERENCES archive.space,
+    access      text,
     UNIQUE (table_name, row_id, column_name)
 );
-CREATE INDEX secret_space_idx ON archive.secret (space);
-
-CREATE FUNCTION archive.my_spaces(lvl text DEFAULT 'viewer') RETURNS uuid[] LANGUAGE sql STABLE AS $$
-    SELECT coalesce(array_agg(id), '{}') FROM archive.space WHERE pg_has_role(current_user, (role || '_' || lvl)::name, 'USAGE')
-        AND coalesce(nullif(current_setting('archive.space', true), '') = name, true)
-$$;
-
-CREATE FUNCTION archive.ontology_admin() RETURNS bool LANGUAGE sql STABLE AS $$
-    SELECT pg_has_role(current_user, '{p}_admin', 'USAGE') OR cardinality(archive.my_spaces('admin')) > 0
-$$;
-
-CREATE FUNCTION archive.secret_granted(typ text) RETURNS bool LANGUAGE sql STABLE AS $$
-    SELECT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_secret_' || typ AND pg_has_role(current_user, oid, 'USAGE'))
-$$;
-
-CREATE FUNCTION archive.secret_clear(tbl text, rid uuid, col text) RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $$
-    DELETE FROM archive.secret s USING archive.space sp
-    WHERE s.table_name = tbl AND s.row_id = rid AND (col IS NULL OR s.column_name = col) AND sp.id = s.space
-      AND pg_has_role(current_setting('role')::name, (sp.role || '_editor')::name, 'USAGE')
-$$;
-
-GRANT USAGE ON SCHEMA archive TO "{p}_user";
-GRANT SELECT ON archive.space TO "{p}_user";
-GRANT SELECT, INSERT, UPDATE, DELETE ON archive.file, archive.secret TO "{p}_user";
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "{p}_user";
-
-ALTER TABLE archive.space ENABLE ROW LEVEL SECURITY;
-CREATE POLICY member ON archive.space FOR SELECT USING (pg_has_role(current_user, (role || '_viewer')::name, 'USAGE'));
-
-ALTER TABLE archive.file ENABLE ROW LEVEL SECURITY;
-CREATE POLICY viewer ON archive.file FOR SELECT USING (space = ANY (archive.my_spaces()));
-CREATE POLICY editor ON archive.file USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
-
-
-ALTER TABLE archive.secret ENABLE ROW LEVEL SECURITY;
-CREATE POLICY viewer ON archive.secret FOR SELECT USING (space = ANY (archive.my_spaces()) AND archive.secret_granted(type));
-CREATE POLICY editor_insert ON archive.secret FOR INSERT WITH CHECK (space = ANY (archive.my_spaces('editor')));
-CREATE POLICY editor_update ON archive.secret FOR UPDATE USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
-CREATE POLICY editor_delete ON archive.secret FOR DELETE USING (space = ANY (archive.my_spaces('editor')));
 
 CREATE DOMAIN archive.duration AS text CHECK (VALUE ~ '^P([0-9]+Y)?([0-9]+M)?([0-9]+D)?(T([0-9]+H)?([0-9]+M)?([0-9]+(\.[0-9]+)?S)?)?$');
 COMMENT ON DOMAIN archive.duration IS 'ISO 8601 duration';
@@ -266,57 +219,136 @@ CREATE TABLE archive.composite_use (
 );
 COMMENT ON TABLE archive.composite_use IS 'Always empty; it uses every built-in composite type, so pg-schema-diff sees them as used by a table before and after a user table starts using one';
 
+CREATE TYPE archive.level AS ENUM ('viewer', 'editor', 'owner');
+COMMENT ON TYPE archive.level IS 'What a member may do: a viewer reads, an editor also writes, an owner also changes the schema and the members and sees every row and secret';
+
+CREATE TABLE archive.member (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    email      archive.email NOT NULL UNIQUE,
+    role       archive.level NOT NULL DEFAULT 'viewer',
+    groups     text[] NOT NULL DEFAULT '{}',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE archive.member IS 'A person in this workspace. Owners add, change and remove members; adding an email invites that person
+icon: users';
+COMMENT ON COLUMN archive.member.email IS 'The address they sign in with; it cannot change';
+COMMENT ON COLUMN archive.member.groups IS 'Groups they are in, like hr; a row whose access is hr is seen only by the hr group and the owners';
+
+CREATE FUNCTION archive.can(g text) RETURNS bool LANGUAGE sql STABLE AS $$
+    SELECT g IS NULL OR pg_has_role(current_user, '{p}_owner', 'USAGE')
+        OR EXISTS (SELECT FROM pg_catalog.pg_roles r WHERE r.rolname = '{p}_g_' || g AND pg_has_role(current_user, r.oid, 'USAGE'))
+$$;
+
+CREATE FUNCTION archive.member_check() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    NEW.email := lower(btrim(NEW.email));
+    IF TG_OP = 'UPDATE' AND NEW.email <> OLD.email THEN
+        RAISE EXCEPTION 'an email cannot change; remove the member and add the new address' USING ERRCODE = '22023', TABLE = 'member', COLUMN = 'email';
+    END IF;
+    NEW.groups := ARRAY(SELECT DISTINCT g FROM unnest(NEW.groups) g WHERE g IS NOT NULL ORDER BY g);
+    IF EXISTS (SELECT FROM unnest(NEW.groups) g WHERE g !~ '^[a-z0-9][a-z0-9_]{0,23}$') THEN
+        RAISE EXCEPTION 'want group names of 1-24 lowercase letters, digits or _' USING ERRCODE = '22023', TABLE = 'member', COLUMN = 'groups';
+    END IF;
+    RETURN NEW;
+END $$;
+
+CREATE FUNCTION archive.member_roles() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE
+    rid   uuid;
+    u     text;
+    m     text;
+    g     text;
+    added text[] := '{}';
+    gone  text[] := '{}';
+BEGIN
+    PERFORM pg_advisory_xact_lock(7273);
+    IF TG_OP <> 'INSERT' AND OLD.role = 'owner' AND (TG_OP = 'DELETE' OR NEW.role <> 'owner')
+        AND NOT EXISTS (SELECT FROM archive.member x WHERE x.role = 'owner' AND x.id <> OLD.id) THEN
+        RAISE EXCEPTION '% is the last owner of this workspace', OLD.email USING ERRCODE = '23001';
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        rid := OLD.id;
+    ELSE
+        rid := NEW.id;
+    END IF;
+    u := '{p}_u' || translate(rtrim(encode(uuid_send(rid), 'base64'), '='), '+/', '-_');
+    m := '{p}_m' || translate(rtrim(encode(uuid_send(rid), 'base64'), '='), '+/', '-_');
+    IF TG_OP = 'DELETE' THEN
+        EXECUTE format('DROP ROLE IF EXISTS %I, %I', u, m);
+        gone := OLD.groups;
+    ELSE
+        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = u) THEN
+            EXECUTE format('CREATE ROLE %I NOLOGIN', u);
+        END IF;
+        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = m) THEN
+            EXECUTE format('CREATE ROLE %I NOLOGIN', m);
+        END IF;
+        IF TG_OP = 'INSERT' OR NEW.role <> OLD.role THEN
+            EXECUTE format('REVOKE %I, %I, %I FROM %I', '{p}_viewer', '{p}_editor', '{p}_owner', u);
+            EXECUTE format('GRANT %I TO %I', '{p}_' || NEW.role, u);
+        END IF;
+        EXECUTE format('GRANT %I TO %I', m, u);
+        EXECUTE format('GRANT %I TO %I', u, '{p}_authenticator');
+        IF TG_OP = 'INSERT' THEN
+            added := NEW.groups;
+        ELSE
+            added := ARRAY(SELECT unnest(NEW.groups) EXCEPT SELECT unnest(OLD.groups));
+            gone := ARRAY(SELECT unnest(OLD.groups) EXCEPT SELECT unnest(NEW.groups));
+        END IF;
+        FOREACH g IN ARRAY added LOOP
+            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_g_' || g) THEN
+                EXECUTE format('CREATE ROLE %I NOLOGIN', '{p}_g_' || g);
+            END IF;
+            EXECUTE format('GRANT %I TO %I', '{p}_g_' || g, m);
+        END LOOP;
+        FOREACH g IN ARRAY gone LOOP
+            EXECUTE format('REVOKE %I FROM %I', '{p}_g_' || g, m);
+        END LOOP;
+    END IF;
+    FOREACH g IN ARRAY gone LOOP
+        IF NOT EXISTS (SELECT FROM archive.member x WHERE g = ANY (x.groups)) THEN
+            EXECUTE format('DROP ROLE IF EXISTS %I', '{p}_g_' || g);
+        END IF;
+    END LOOP;
+    IF TG_OP <> 'UPDATE' THEN
+        PERFORM set_config('archive.members', '1', true);
+    END IF;
+    RETURN NULL;
+END $$;
+
+CREATE TRIGGER member_check BEFORE INSERT OR UPDATE ON archive.member FOR EACH ROW EXECUTE FUNCTION archive.member_check();
+CREATE TRIGGER member_roles AFTER INSERT OR UPDATE OR DELETE ON archive.member FOR EACH ROW EXECUTE FUNCTION archive.member_roles();
+
+CREATE FUNCTION archive.secret_clear(tbl text, rid uuid, col text) RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $$
+    DELETE FROM archive.secret s
+    WHERE s.table_name = tbl AND s.row_id = rid AND (col IS NULL OR s.column_name = col)
+      AND pg_has_role(current_setting('role')::name, '{p}_editor', 'USAGE')
+      AND (s.access IS NULL OR pg_has_role(current_setting('role')::name, '{p}_owner', 'USAGE')
+        OR EXISTS (SELECT FROM pg_catalog.pg_roles r WHERE r.rolname = '{p}_g_' || s.access AND pg_has_role(current_setting('role')::name, r.oid, 'USAGE')))
+$$;
+
+GRANT USAGE ON SCHEMA archive TO "{p}_viewer";
+GRANT SELECT ON archive.file, archive.member TO "{p}_viewer";
+GRANT INSERT, UPDATE, DELETE ON archive.file TO "{p}_editor";
+GRANT SELECT, INSERT, DELETE ON archive.secret TO "{p}_editor";
+GRANT INSERT, UPDATE, DELETE ON archive.member TO "{p}_owner";
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO "{p}_viewer";
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT, UPDATE, DELETE ON TABLES TO "{p}_editor";
+
+ALTER TABLE archive.file ENABLE ROW LEVEL SECURITY;
+CREATE POLICY access ON archive.file USING (archive.can(access)) WITH CHECK (archive.can(access));
+
+ALTER TABLE archive.secret ENABLE ROW LEVEL SECURITY;
+CREATE POLICY owner ON archive.secret FOR SELECT USING (pg_has_role(current_user, '{p}_owner', 'USAGE'));
+CREATE POLICY writer ON archive.secret FOR INSERT WITH CHECK (archive.can(access));
+CREATE POLICY owner_delete ON archive.secret FOR DELETE USING (pg_has_role(current_user, '{p}_owner', 'USAGE'));
+
 -- name: HasRole :one
 SELECT pg_has_role(sqlc.arg(member)::name, rolname, 'USAGE') FROM pg_catalog.pg_roles WHERE rolname = sqlc.arg(grp)::name;
 
 -- name: RoleExists :one
 SELECT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = sqlc.arg(role)::name);
-
--- name: DirectRoles :many
-SELECT r.rolname::text FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles r ON r.oid = m.roleid JOIN pg_catalog.pg_roles u ON u.oid = m.member
-WHERE u.rolname = sqlc.arg(member)::name AND r.rolname = ANY(sqlc.arg(grps)::name[]);
-
--- name: CountOwners :one
-SELECT count(*) FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles r ON r.oid = m.roleid
-JOIN pg_catalog.pg_roles u ON u.oid = m.member WHERE r.rolname = sqlc.arg(owner)::name AND starts_with(u.rolname, sqlc.arg(users)::text);
-
--- name: CreateSpace :one
-INSERT INTO archive.space (name, role, home) VALUES ($1, $2, $3) RETURNING id;
-
--- name: SpaceTaken :one
-SELECT EXISTS (SELECT FROM archive.space WHERE name = $1);
-
--- name: SpaceRole :one
-SELECT role FROM archive.space WHERE name = $1;
-
--- name: SpaceRoleByID :one
-SELECT role FROM archive.space WHERE id = $1;
-
--- name: SpaceByName :one
-SELECT id, role, home FROM archive.space WHERE name = $1;
-
--- name: SpaceRoles :many
-SELECT name, role, home FROM archive.space ORDER BY name;
-
--- name: HomeSpace :one
-SELECT id FROM archive.space WHERE home = $1;
-
--- name: Spaces :many
-SELECT id, name, CASE
-    WHEN pg_has_role(current_user, (role || '_owner')::name, 'USAGE') THEN 'owner'
-    WHEN pg_has_role(current_user, (role || '_admin')::name, 'USAGE') THEN 'admin'
-    WHEN pg_has_role(current_user, (role || '_editor')::name, 'USAGE') THEN 'editor'
-    ELSE 'viewer' END::text AS level
-FROM archive.space ORDER BY name;
-
--- name: DeleteSpaceSecrets :exec
-DELETE FROM archive.secret WHERE space = $1;
-
--- name: DeleteSpaceFiles :exec
-DELETE FROM archive.file WHERE space = $1;
-
--- name: DeleteSpace :exec
-DELETE FROM archive.space WHERE id = $1;
 
 -- name: UserByEmail :one
 SELECT * FROM archive."user" WHERE email = $1;
@@ -327,14 +359,17 @@ SELECT * FROM archive."user" WHERE id = $1;
 -- name: UserByOIDC :one
 SELECT * FROM archive."user" WHERE signin->'oidc' @> sqlc.arg(link)::jsonb;
 
--- name: WorkspaceUser :one
-SELECT * FROM archive."user" WHERE email = sqlc.arg(email) AND workspaces @> ARRAY[sqlc.arg(workspace)::uuid];
-
 -- name: FirstUser :one
 SELECT * FROM archive."user" WHERE workspaces @> ARRAY[sqlc.arg(workspace)::uuid] ORDER BY created_at, id LIMIT 1;
 
 -- name: NoMembers :one
-SELECT NOT EXISTS (SELECT FROM archive."user" WHERE workspaces @> ARRAY[sqlc.arg(workspace)::uuid]);
+SELECT NOT EXISTS (SELECT FROM archive.member);
+
+-- name: MemberByEmail :one
+SELECT id, role::text AS role, groups FROM archive.member WHERE email = sqlc.arg(email)::text;
+
+-- name: Members :many
+SELECT id, email::text AS email, role::text AS role, groups FROM archive.member ORDER BY email;
 
 -- name: WorkspaceUsers :many
 SELECT id, email, name FROM archive."user" WHERE workspaces @> ARRAY[sqlc.arg(workspace)::uuid] ORDER BY email;
@@ -361,7 +396,7 @@ SELECT t.id, t.kind, t.name, coalesce(t.role, '')::text AS role, u.id AS user_id
     coalesce(t.workspace::text, '')::text AS workspace,
     ARRAY(SELECT w.id::text FROM archive.workspace w WHERE w.id = ANY(u.workspaces) ORDER BY array_position(u.workspaces, w.id))::text[] AS workspaces
 FROM archive.token t JOIN archive."user" u ON u.id = t.user_id
-WHERE t.hash = $1 AND t.kind IN ('api', 'session', 'user') AND (t.expires_at IS NULL OR t.expires_at > now());
+WHERE t.hash = $1 AND t.kind IN ('api', 'session') AND (t.expires_at IS NULL OR t.expires_at > now());
 
 -- name: CreateSession :exec
 INSERT INTO archive.token (user_id, kind, hash, expires_at) VALUES ($1, 'session', $2, now() + interval '30 days');
@@ -369,21 +404,15 @@ INSERT INTO archive.token (user_id, kind, hash, expires_at) VALUES ($1, 'session
 -- name: SignOut :exec
 DELETE FROM archive.token WHERE hash = $1 AND kind = 'session';
 
--- name: TokenRoles :many
-SELECT coalesce(role, '')::text FROM archive.token WHERE user_id = $1 AND workspace = $2 AND role IS NOT NULL;
-
--- name: CreateUserToken :one
-INSERT INTO archive.token (id, user_id, workspace, kind, name, hash, expires_at) VALUES ($1, $2, $3, 'user', $4, $5, $6) RETURNING created_at, expires_at;
-
--- name: CreateAPIToken :one
+-- name: CreateToken :one
 INSERT INTO archive.token (id, user_id, workspace, kind, name, role, hash, expires_at) VALUES ($1, $2, $3, 'api', $4, $5, $6, $7) RETURNING created_at, expires_at;
 
 -- name: Tokens :many
-SELECT id, name, coalesce(role, '')::text AS role, kind = 'user' AS full, expires_at, created_at FROM archive.token
-WHERE user_id = $1 AND workspace = $2 AND kind IN ('api', 'user') ORDER BY id;
+SELECT id, name, (role IS NOT NULL)::bool AS viewer, expires_at, created_at FROM archive.token
+WHERE user_id = $1 AND workspace = $2 AND kind = 'api' ORDER BY id;
 
 -- name: RevokeToken :one
-DELETE FROM archive.token WHERE id = $1 AND user_id = $2 AND workspace = $3 AND kind IN ('api', 'user') RETURNING coalesce(role, '')::text;
+DELETE FROM archive.token WHERE id = $1 AND user_id = $2 AND workspace = $3 AND kind = 'api' RETURNING coalesce(role, '')::text;
 
 -- name: DeleteWorkspaceTokens :many
 DELETE FROM archive.token WHERE user_id = $1 AND workspace = $2 RETURNING coalesce(role, '')::text;
@@ -409,18 +438,6 @@ UPDATE archive.chat SET title = $3 WHERE id = $1 AND user_id = $2;
 -- name: DeleteChat :execrows
 DELETE FROM archive.chat WHERE id = $1 AND user_id = $2;
 
--- name: SpaceID :one
-SELECT id FROM archive.space WHERE name = $1;
-
--- name: DefaultSpace :one
-SELECT id FROM archive.space WHERE id = ANY(archive.my_spaces('editor')) ORDER BY home IS NOT DISTINCT FROM sqlc.arg(owner)::uuid DESC, id LIMIT 1;
-
--- name: CanWrite :one
-SELECT sqlc.arg(space)::uuid = ANY(archive.my_spaces('editor'));
-
--- name: OntologyAdmin :one
-SELECT archive.ontology_admin();
-
 -- name: InputErrors :many
 SELECT i::bigint AS i, e.message::text AS message
 FROM generate_subscripts(sqlc.arg(texts)::text[], 1) i, pg_input_error_info((sqlc.arg(texts)::text[])[i], (sqlc.arg(regs)::text[])[i]) e
@@ -430,48 +447,48 @@ WHERE e.message IS NOT NULL ORDER BY i;
 SELECT archive.secret_clear(sqlc.arg(tbl), sqlc.arg(rid), sqlc.narg(col));
 
 -- name: CreateSecret :exec
-INSERT INTO archive.secret (id, table_name, row_id, column_name, type, value, space) VALUES ($1, $2, $3, $4, $5, $6, $7);
+INSERT INTO archive.secret (id, table_name, row_id, column_name, type, value, access) VALUES ($1, $2, $3, $4, $5, $6, $7);
 
 -- name: Secrets :many
 SELECT id, row_id, column_name, type, value FROM archive.secret WHERE table_name = $1 AND row_id = ANY(sqlc.arg(ids)::uuid[]);
 
 -- name: FileByKey :one
-SELECT id, hash, name, mime, size, metadata, status, error, space, created_at FROM archive.file WHERE space = $1 AND hash = $2 AND name = $3;
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at FROM archive.file WHERE access IS NOT DISTINCT FROM $1 AND hash = $2 AND name = $3;
 
 -- name: CreateFile :one
-INSERT INTO archive.file (hash, name, mime, size, space) VALUES ($1, $2, $3, $4, $5)
-RETURNING id, hash, name, mime, size, metadata, status, error, space, created_at;
+INSERT INTO archive.file (hash, name, mime, size, access) VALUES ($1, $2, $3, $4, $5)
+RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at;
 
 -- name: Files :many
-SELECT id, hash, name, mime, size, metadata, status, error, space, created_at FROM archive.file
-WHERE id > sqlc.arg(after) AND (sqlc.narg(space)::uuid IS NULL OR space = sqlc.narg(space)) ORDER BY id LIMIT sqlc.arg(lim);
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at FROM archive.file
+WHERE id > sqlc.arg(after) ORDER BY id LIMIT sqlc.arg(lim);
 
 -- name: GetFile :one
-SELECT id, hash, name, mime, size, metadata, status, error, space, created_at FROM archive.file WHERE id = $1;
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at FROM archive.file WHERE id = $1;
 
 -- name: RenameFile :one
 UPDATE archive.file SET name = $2 WHERE id = $1
-RETURNING id, hash, name, mime, size, metadata, status, error, space, created_at;
+RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at;
 
 -- name: LockFile :one
-SELECT id, hash, name, mime, size, metadata, status, error, space, created_at FROM archive.file WHERE id = $1 FOR UPDATE;
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at FROM archive.file WHERE id = $1 FOR UPDATE;
 
 -- name: FileText :one
 SELECT text FROM archive.file WHERE id = $1;
 
 -- name: FileWithText :one
-SELECT id, hash, name, mime, size, metadata, status, error, space, created_at, text FROM archive.file WHERE id = $1;
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, text FROM archive.file WHERE id = $1;
 
 -- name: FilesWithText :many
-SELECT id, hash, name, mime, size, metadata, status, error, space, created_at, text FROM archive.file
-WHERE id > sqlc.arg(after) AND (sqlc.narg(space)::uuid IS NULL OR space = sqlc.narg(space)) ORDER BY id LIMIT sqlc.arg(lim);
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, text FROM archive.file
+WHERE id > sqlc.arg(after) ORDER BY id LIMIT sqlc.arg(lim);
 
 -- name: NextPendingFile :one
-SELECT id, hash, name, mime, size, metadata, status, error, space, created_at FROM archive.file
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at FROM archive.file
 WHERE status = 'pending' ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED;
 
 -- name: LockPendingFile :one
-SELECT id, hash, name, mime, size, metadata, status, error, space, created_at FROM archive.file
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at FROM archive.file
 WHERE id = $1 AND status = 'pending' FOR UPDATE;
 
 -- name: SetFileContent :exec
@@ -485,7 +502,7 @@ UPDATE archive.file SET status = 'pending' WHERE status = 'processing';
 
 -- name: ReplaceFile :one
 UPDATE archive.file SET hash = $2, size = $3, status = 'pending', text = '', error = '', metadata = '{}' WHERE id = $1
-RETURNING id, hash, name, mime, size, metadata, status, error, space, created_at;
+RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at;
 
 -- name: Upload :one
 SELECT * FROM archive.upload WHERE id = $1;
@@ -494,7 +511,7 @@ SELECT * FROM archive.upload WHERE id = $1;
 SELECT * FROM archive.upload WHERE id = $1 FOR UPDATE;
 
 -- name: CreateUpload :exec
-INSERT INTO archive.upload (id, role, space, name, length) VALUES ($1, $2, $3, $4, $5);
+INSERT INTO archive.upload (id, role, access, name, length) VALUES ($1, $2, $3, $4, $5);
 
 -- name: SetUploadParts :exec
 UPDATE archive.upload SET parts = $2 WHERE id = $1;
@@ -543,14 +560,18 @@ WITH col AS (
 SELECT jsonb_build_object(
     'tables', coalesce((SELECT jsonb_object_agg(c.relname, jsonb_build_object(
         'name', c.relname,
+        'schema', c.relnamespace::regnamespace::text,
         'kind', CASE c.relkind WHEN 'v' THEN 'view' ELSE 'table' END,
         'description', coalesce(obj_description(c.oid, 'pg_class'), ''),
         'rls', c.relrowsecurity,
         'force', c.relforcerowsecurity,
         'security_invoker', coalesce((SELECT o.option_value::bool FROM pg_options_to_table(c.reloptions) o WHERE o.option_name = 'security_invoker'), false),
-        'policies', (SELECT count(*) FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid),
+        'policy', coalesce((SELECT count(*) = 1 AND bool_and(p.polname = 'access' AND p.polcmd = '*' AND p.polpermissive AND p.polroles = '{0}'::oid[]
+            AND regexp_replace(pg_get_expr(p.polqual, p.polrelid), '^archive\.', '') = 'can(access)'
+            AND regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)')
+            FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid), false),
         'columns', (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid)))
-        FROM pg_catalog.pg_class c WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p', 'v')), '{}'),
+        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid = 'archive.member'::regclass) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
         'schema', t.typnamespace::regnamespace::text,
@@ -624,7 +645,7 @@ SELECT created_at FROM archive.workflow_run WHERE workflow = $1 AND created_at >
 SELECT now()::timestamptz;
 
 -- name: TxWrote :one
-SELECT (pg_current_xact_id_if_assigned() IS NOT NULL)::bool;
+SELECT (pg_current_xact_id_if_assigned() IS NOT NULL)::bool AS wrote, (coalesce(current_setting('archive.members', true), '') = '1')::bool AS members;
 
 -- name: WakeTableWorkflows :execrows
 UPDATE archive.workflow SET next_at = now() WHERE cursor_id IS NOT NULL AND next_at IS NULL;

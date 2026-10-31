@@ -46,8 +46,9 @@
 </script>
 
 <script>
-  import { untrack, tick } from 'svelte';
+  import { getContext, untrack, tick } from 'svelte';
   import { api, chat, go, Unauthorized } from './api.js';
+  import Access from './ui/Access.svelte';
   import Button from '#kit/Button.svelte';
   import Heading from './ui/Heading.svelte';
   import Composer from './ui/Composer.svelte';
@@ -62,6 +63,7 @@
 
   let { id = '', name = '', email = '', family = '', short = '', seed = '', tint = '', kind = 'family', onfiles, onsaved } = $props();
 
+  const access = getContext('access');
   let current = $state('');
   let title = $state('');
   let turns = $state([]);
@@ -309,7 +311,7 @@
     <div class="dock">
     <Composer bind:value={draft} bind:field {busy} ontalk={() => dispatchEvent(new CustomEvent('capture-memory'))} onsend={send} onstop={stop} placeholder={short ? `Message ${short}` : 'Ask anything'} aria-label="Message">
       {#snippet lead()}<Capture {onfiles} {kind} />{/snippet}
-      {#snippet tail()}<Dictate bind:value={draft} />{/snippet}
+      {#snippet tail()}<Access value={access.upload} onpick={(v) => (access.upload = v)} /><Dictate bind:value={draft} />{/snippet}
     </Composer>
     </div>
   </div>

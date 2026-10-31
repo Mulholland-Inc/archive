@@ -21,10 +21,10 @@
 
 <h2 id="accounts">Accounts and invites</h2>
 <ul>
-<li>The service is invite-only. Mulholland makes each workspace for a customer and names its first owner, and the workspace's admins invite everyone else by email.</li>
+<li>The service is invite-only. Mulholland makes each workspace for a customer and names its first owner, and the workspace's owners invite everyone else by email.</li>
 <li>You sign in with Google, Microsoft, Slack or GitHub under the email address you were invited with, or with a passkey.</li>
 <li>Keep your sign-in, passkeys and tokens safe. You are responsible for what is done with them, including by the agents, apps and workflows you connect or make. Tell us right away if you think one has been misused.</li>
-<li>Owners and admins are responsible for who they invite and the access they give.</li>
+<li>Owners are responsible for who they invite and the access they give.</li>
 </ul>
 
 <h2 id="content">Your content</h2>
@@ -57,7 +57,7 @@
 <p>To the fullest extent the law allows, Mulholland is not liable for any indirect, incidental, special, consequential or punitive damages, or for lost profits, revenue, data or goodwill, arising from the service or these terms. Our total liability for any claim is limited to the greater of what you paid us for the service in the 12 months before the claim, or $100.</p>
 
 <h2 id="termination">Termination</h2>
-<p>You can stop using the service at any time, and a workspace owner can ask us to delete their workspace. Admins can remove people from their workspace.</p>
+<p>You can stop using the service at any time, and a workspace owner can ask us to delete their workspace. Owners can remove people from their workspace.</p>
 <p>We may suspend or end your access if you break these terms, if we must to protect the service or others, or if the law requires it. Where we reasonably can, we tell you first and give you a chance to export your content. After that, content is deleted as the Privacy Policy describes. The sections on your content, no warranty, limitation of liability and general terms still apply after access ends.</p>
 
 <h2 id="general">General</h2>

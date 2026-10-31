@@ -13,7 +13,7 @@
         {#if ui.sidebarIcons}<Bot seed={w.id} />{/if}
         <span class="text">
           <span class="name">{shortName(w.name, look(w.id).type)}</span>
-          {#if w.id === workspace}<span class="sub">{latest || 'Ask me anything'}</span>{:else if look(w.id).shared}<span class="sub">Shared with you</span>{/if}
+          {#if w.id === workspace}<span class="sub">{latest || 'Ask me anything'}</span>{/if}
         </span>
       </button>
       {#if w.id === workspace}

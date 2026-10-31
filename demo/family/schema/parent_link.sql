@@ -1,7 +1,7 @@
 CREATE TYPE parent_link_kind AS ENUM ('birth', 'adopted', 'step', 'foster');
 CREATE TABLE parent_link (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
-    space      uuid NOT NULL REFERENCES archive.space,
+    access     text,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     child uuid NOT NULL REFERENCES person,
@@ -13,8 +13,7 @@ CREATE TABLE parent_link (
 CREATE INDEX parent_link_search ON parent_link USING gin (search);
 ALTER TABLE parent_link ENABLE ROW LEVEL SECURITY;
 ALTER TABLE parent_link FORCE ROW LEVEL SECURITY;
-CREATE POLICY viewer ON parent_link FOR SELECT USING (space = ANY (archive.my_spaces()));
-CREATE POLICY editor ON parent_link USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
+CREATE POLICY access ON parent_link USING (archive.can(access)) WITH CHECK (archive.can(access));
 COMMENT ON TABLE parent_link IS 'A child of a partnership
 icon: git-fork';
 COMMENT ON COLUMN parent_link.child IS 'The child';

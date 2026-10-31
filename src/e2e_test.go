@@ -89,15 +89,14 @@ func TestMain(m *testing.M) {
 func e2eTable(name, cols string) string {
 	return fmt.Sprintf(`CREATE TABLE %[1]s (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
-    space      uuid NOT NULL REFERENCES archive.space,
+    access     text,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
 %[2]s
 );
 ALTER TABLE %[1]s ENABLE ROW LEVEL SECURITY;
 ALTER TABLE %[1]s FORCE ROW LEVEL SECURITY;
-CREATE POLICY viewer ON %[1]s FOR SELECT USING (space = ANY (archive.my_spaces()));
-CREATE POLICY editor ON %[1]s USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
+CREATE POLICY access ON %[1]s USING (archive.can(access)) WITH CHECK (archive.can(access));
 `, name, cols)
 }
 
@@ -466,7 +465,13 @@ func (in *e2eInst) roundTrips() map[string]string {
 }
 
 func (in *e2eInst) role(email string) string {
-	return in.psql("archive", "SELECT w.id::text || '_u' || translate(rtrim(encode(uuid_send(u.id), 'base64'), '='), '+/', '-_') FROM archive.\"user\" u, archive.workspace w WHERE u.email = '"+email+"' AND w.id = (SELECT id FROM archive.workspace ORDER BY created_at LIMIT 1)")
+	return in.psql("archive", "SELECT w.id::text || '_u' || translate(rtrim(encode(uuid_send(m.id), 'base64'), '='), '+/', '-_') FROM archive.member m, archive.workspace w WHERE m.email = '"+email+"' AND w.id = (SELECT id FROM archive.workspace ORDER BY created_at LIMIT 1)")
+}
+
+func (in *e2eInst) groups(email string, groups ...string) {
+	in.t.Helper()
+	b, _ := json.Marshal(map[string][]string{"groups": append([]string{}, groups...)})
+	in.must("set", "member", id(decode[[]row](in.t, in.must("list", "member", "email="+email))[0]), string(b))
 }
 
 func (in *e2eInst) psql(user, sql string) string {
@@ -666,7 +671,7 @@ COMMENT ON COLUMN company.name IS 'Legal name';`}
 			t.Errorf("%s = %v, want %v", k, r[k], v)
 		}
 	}
-	if r["space"] == nil || r["created_at"] == nil || r["search"] != nil {
+	if _, ok := r["access"]; !ok || r["access"] != nil || r["created_at"] == nil || r["search"] != nil {
 		t.Errorf("row columns: %v", r)
 	}
 
@@ -719,7 +724,7 @@ COMMENT ON COLUMN company.name IS 'Legal name';`}
 	}
 
 	bad := map[string]string{"bad.sql": "CREATE TABLE loose (id uuid PRIMARY KEY, name text);"}
-	if errs := in.fails("schema", "apply", in.writeDir("bad", with(noTags, "bad.sql", bad["bad.sql"]))); !strings.Contains(errs, "loose.space: want space uuid NOT NULL REFERENCES archive.space") ||
+	if errs := in.fails("schema", "apply", in.writeDir("bad", with(noTags, "bad.sql", bad["bad.sql"]))); !strings.Contains(errs, "loose.access: want access text") ||
 		!strings.Contains(errs, "ROW LEVEL SECURITY") || !strings.Contains(errs, "loose.search") {
 		t.Errorf("table without the required columns: %s", errs)
 	}
@@ -751,8 +756,16 @@ func TestDemoVaultLoadsOnceWithLinkedRowsAndFiles(t *testing.T) {
 	if counts["person"] < 10 || counts["payment"] < 100 || counts["measurement"] < 100 || len(counts) != 18 {
 		t.Fatalf("demo counts: %v", counts)
 	}
-	if spaces := in.must("space", "list"); !strings.Contains(spaces, `"family"`) {
-		t.Errorf("family space missing: %s", spaces)
+	members := decode[[]struct {
+		Email, Role string
+		Groups      []string
+	}](t, in.must("list", "member"))
+	if len(members) != 2 || members[0].Email != "ann@example.com" || members[0].Role != "owner" || !slices.Equal(members[0].Groups, []string{"family"}) ||
+		members[1].Email != "sam@example.com" || members[1].Role != "editor" || !slices.Equal(members[1].Groups, []string{"family"}) {
+		t.Errorf("demo members: %+v", members)
+	}
+	if n := in.psql("archive", "SELECT count(*) FROM archive.file WHERE access = 'family'"); n != "11" {
+		t.Errorf("%s family files, want 11", n)
 	}
 	res, _, err := in.run(`return { files: (await archive.files({ limit: 100 })).length,
   receipts: (await archive.sql("SELECT count(*)::int AS n FROM payment WHERE receipt IS NOT NULL"))[0].n };`, "run", "-")
@@ -771,7 +784,7 @@ func TestDemoVaultLoadsOnceWithLinkedRowsAndFiles(t *testing.T) {
 	}
 }
 
-func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
+func TestUsersGroupsTokensAndSecretsAcrossEverySurface(t *testing.T) {
 	t.Parallel()
 	in := newInst(t, e2eGoogle(t)...)
 	in.must("user", "add", "alice@example.com")
@@ -779,21 +792,22 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 	api := srv.url + "/api"
 
 	added := decode[User](t, in.must("user", "add", "bob@example.com", "-name", "Bob"))
+	in.must("user", "add", "carl@example.com", "-role", "editor")
 	in.push(e2eSchema)
-	in.must("space", "add", "family")
-	in.must("space", "grant", "family", "bob@example.com", "viewer")
+	carlID := id(decode[[]row](t, in.must("list", "member", "email=carl@example.com"))[0])
+	in.must("set", "member", carlID, `{"groups":["hr"]}`)
 	aliceTok := decode[Token](t, in.must("token", "create", "-name", "Claude")).Secret
-	narrowTok := decode[Token](t, in.must("token", "create", "-name", "Narrow", "-space", "family:viewer")).Secret
+	aliceView := decode[Token](t, in.must("token", "create", "-name", "Reader", "-viewer")).Secret
 	bobTok := decode[Token](t, in.must("-as", "bob@example.com", "token", "create")).Secret
+	carlTok := decode[Token](t, in.must("-as", "carl@example.com", "token", "create")).Secret
+	carlView := decode[Token](t, in.must("-as", "carl@example.com", "token", "create", "-viewer")).Secret
 
-	var alicePriv, bobPriv, acme, fam row
-	st, _ := call(t, "POST", api+"/person", aliceTok, map[string]any{"name": "Alice private"}, &alicePriv)
-	wantStatus(t, st, 201, "alice creates in her space")
-	st, _ = call(t, "POST", api+"/person", bobTok, map[string]any{"name": "Bob private"}, &bobPriv)
-	wantStatus(t, st, 201, "bob creates in his space")
-	call(t, "POST", api+"/company", aliceTok, map[string]any{"name": "Acme"}, &acme)
-	st, _ = call(t, "POST", api+"/person?space=family", aliceTok, map[string]any{"name": "Family member", "ssn": "123-45-6789", "employer": id(acme), "friends": []string{id(alicePriv)}}, &fam)
-	wantStatus(t, st, 201, "alice creates in family")
+	var all, acme, hr row
+	st, _ := call(t, "POST", api+"/person", aliceTok, map[string]any{"name": "Everyone"}, &all)
+	wantStatus(t, st, 201, "alice creates a row for everyone")
+	call(t, "POST", api+"/company", aliceTok, map[string]any{"name": "Acme", "access": "hr"}, &acme)
+	st, _ = call(t, "POST", api+"/person", aliceTok, map[string]any{"name": "HR only", "access": "hr", "ssn": "123-45-6789", "employer": id(acme), "friends": []string{id(all)}}, &hr)
+	wantStatus(t, st, 201, "alice creates an hr row")
 
 	t.Run("UnauthenticatedRequestsGet401", func(t *testing.T) {
 		st, h := call(t, "GET", api+"/person", "", nil, nil)
@@ -809,137 +823,124 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 		wantStatus(t, st, 401, "me without session")
 	})
 
-	t.Run("UsersOnlySeeTheirOwnSpacesThroughAPI", func(t *testing.T) {
-		var a, b []row
+	t.Run("RowsFollowTheirAccessThroughAPI", func(t *testing.T) {
+		var a, b, c []row
 		call(t, "GET", api+"/person", aliceTok, nil, &a)
 		call(t, "GET", api+"/person", bobTok, nil, &b)
-		if names(a) != "Alice private,Family member" || names(b) != "Bob private,Family member" {
-			t.Fatalf("alice sees %q, bob sees %q", names(a), names(b))
+		call(t, "GET", api+"/person", carlTok, nil, &c)
+		if names(a) != "Everyone,HR only" || names(b) != "Everyone" || names(c) != "Everyone,HR only" {
+			t.Fatalf("alice sees %q, bob %q, carl %q", names(a), names(b), names(c))
 		}
-		st, _ := call(t, "GET", api+"/person/"+id(alicePriv), bobTok, nil, nil)
-		wantStatus(t, st, 404, "bob reads alice's private row")
-		st, _ = call(t, "DELETE", api+"/person/"+id(bobPriv), aliceTok, nil, nil)
-		wantStatus(t, st, 404, "alice deletes bob's private row")
+		st, _ := call(t, "GET", api+"/person/"+id(hr), bobTok, nil, nil)
+		wantStatus(t, st, 404, "bob reads the hr row")
+		st, _ = call(t, "DELETE", api+"/person/"+id(hr), bobTok, nil, nil)
+		wantStatus(t, st, 404, "bob deletes the hr row")
+		var only []row
+		call(t, "GET", api+"/person?access=hr", aliceTok, nil, &only)
+		if names(only) != "HR only" {
+			t.Errorf("filter on access: %q", names(only))
+		}
 		st, _ = call(t, "GET", api+"/nothing", aliceTok, nil, nil)
 		wantStatus(t, st, 404, "unknown table")
 	})
 
-	t.Run("UsersOnlySeeTheirOwnSpacesThroughCLIWhileServeRuns", func(t *testing.T) {
+	t.Run("RowsFollowTheirAccessThroughCLIWhileServeRuns", func(t *testing.T) {
 		in := in.on(t)
 		b := names(decode[[]row](t, in.must("-as", "bob@example.com", "list", "person")))
 		a := names(decode[[]row](t, in.must("list", "person")))
-		if a != "Alice private,Family member" || b != "Bob private,Family member" {
+		if a != "Everyone,HR only" || b != "Everyone" {
 			t.Fatalf("cli alice %q, bob %q", a, b)
 		}
 	})
 
 	t.Run("PlainPsqlAsTheUserRoleSeesWhatTheAppSees", func(t *testing.T) {
 		in := in.on(t)
-		role := in.role("bob@example.com")
-		in.psql("archive", "ALTER ROLE \""+role+"\" LOGIN")
-		defer in.psql("archive", "ALTER ROLE \""+role+"\" NOLOGIN")
-		if got := in.psql(role, "SELECT string_agg(name, ',' ORDER BY id) FROM person"); got != "Bob private,Family member" {
+		bob, carl := in.role("bob@example.com"), in.role("carl@example.com")
+		in.psql("archive", "ALTER ROLE \""+bob+"\" LOGIN; ALTER ROLE \""+carl+"\" LOGIN")
+		defer in.psql("archive", "ALTER ROLE \""+bob+"\" NOLOGIN; ALTER ROLE \""+carl+"\" NOLOGIN")
+		if got := in.psql(bob, "SELECT string_agg(name, ',' ORDER BY id) FROM person"); got != "Everyone" {
 			t.Fatalf("psql as bob: %q", got)
 		}
-		if n := in.psql(role, "SELECT count(*) FROM archive.secret"); n != "0" {
-			t.Errorf("psql as bob sees %s secrets", n)
+		if got := in.psql(carl, "SELECT string_agg(name, ',' ORDER BY id) FROM person"); got != "Everyone,HR only" {
+			t.Fatalf("psql as carl: %q", got)
 		}
-		out, err := exec.Command("psql", "-X", "-h", in.dir, "-U", role, "-d", "archive", "-Atc", "INSERT INTO person (name, space) SELECT 'x', id FROM archive.space WHERE name = 'family'").CombinedOutput()
+		if got := in.psql(bob, "SET archive.space = 'hr'; SET archive.members = '1'; SELECT count(*) FROM person"); !strings.HasSuffix(got, "\n1") {
+			t.Errorf("a session setting widens what bob sees: %q", got)
+		}
+		if n := in.psql(carl, "SELECT count(*) FROM archive.secret"); n != "0" {
+			t.Errorf("psql as carl sees %s secrets", n)
+		}
+		out, err := exec.Command("psql", "-X", "-h", in.dir, "-U", bob, "-d", "archive", "-Atc", "INSERT INTO person (name) VALUES ('x')").CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "permission denied") {
+			t.Errorf("psql insert as viewer: %v %s", err, out)
+		}
+		out, err = exec.Command("psql", "-X", "-h", in.dir, "-U", carl, "-d", "archive", "-Atc", "INSERT INTO person (name, access) VALUES ('x', 'finance')").CombinedOutput()
 		if err == nil || !strings.Contains(string(out), "row-level security") {
-			t.Errorf("psql insert into family as viewer: %v %s", err, out)
+			t.Errorf("psql insert into a group carl is not in: %v %s", err, out)
 		}
-		out, err = exec.Command("psql", "-X", "-h", in.dir, "-U", role, "-d", "archive", "-Atc", "INSERT INTO contact (name, email, space) SELECT 'x', 'not-an-email', id FROM archive.space").CombinedOutput()
+		out, err = exec.Command("psql", "-X", "-h", in.dir, "-U", carl, "-d", "archive", "-Atc", "INSERT INTO contact (name, email) VALUES ('x', 'not-an-email')").CombinedOutput()
 		if err == nil || !strings.Contains(string(out), "email_check") {
 			t.Errorf("psql insert of a bad email: %v %s", err, out)
 		}
+		out, err = exec.Command("psql", "-X", "-h", in.dir, "-U", carl, "-d", "archive", "-Atc", "UPDATE archive.member SET role = 'owner'").CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "permission denied") {
+			t.Errorf("psql editor promotes themselves: %v %s", err, out)
+		}
 	})
 
-	t.Run("ViewerCannotWrite", func(t *testing.T) {
+	t.Run("ViewerCannotWriteAndEditorsWriteOnlyTheirGroups", func(t *testing.T) {
 		in := in.on(t)
-		st, _ := call(t, "POST", api+"/person?space=family", bobTok, map[string]any{"name": "Intruder"}, nil)
+		st, _ := call(t, "POST", api+"/person", bobTok, map[string]any{"name": "Intruder"}, nil)
 		wantStatus(t, st, 403, "viewer creates")
-		st, _ = call(t, "PATCH", api+"/person/"+id(fam), bobTok, map[string]any{"name": "Changed"}, nil)
+		st, _ = call(t, "PATCH", api+"/person/"+id(all), bobTok, map[string]any{"name": "Changed"}, nil)
 		wantStatus(t, st, 403, "viewer patches")
-		st, _ = call(t, "DELETE", api+"/person/"+id(fam), bobTok, nil, nil)
+		st, _ = call(t, "DELETE", api+"/person/"+id(all), bobTok, nil, nil)
 		wantStatus(t, st, 403, "viewer deletes")
-		in.fails("-as", "bob@example.com", "create", "person", "-space", "family", `{"name":"x"}`)
+		in.fails("-as", "bob@example.com", "create", "person", `{"name":"x"}`)
+		st, _ = call(t, "POST", api+"/person", carlTok, map[string]any{"name": "Finance", "access": "finance"}, nil)
+		wantStatus(t, st, 403, "editor creates in a group they are not in")
+		var mine row
+		st, _ = call(t, "POST", api+"/person", carlTok, map[string]any{"name": "Carl's", "access": "hr"}, &mine)
+		wantStatus(t, st, 201, "editor creates in their group")
+		st, _ = call(t, "PATCH", api+"/person/"+id(mine), carlTok, map[string]any{"access": "finance"}, nil)
+		wantStatus(t, st, 403, "editor moves a row out of their groups")
+		st, _ = call(t, "DELETE", api+"/person/"+id(mine), carlTok, nil, nil)
+		wantStatus(t, st, 204, "editor deletes in their group")
 	})
 
-	t.Run("NarrowedTokenSeesOnlyItsSpace", func(t *testing.T) {
+	t.Run("ViewerOnlyTokenReadsAsItsOwnerAndFollowsTheirGroups", func(t *testing.T) {
 		in := in.on(t)
 		var rs []row
-		call(t, "GET", api+"/person", narrowTok, nil, &rs)
-		if names(rs) != "Family member" {
-			t.Fatalf("narrow token sees %q", names(rs))
+		call(t, "GET", api+"/person", carlView, nil, &rs)
+		if names(rs) != "Everyone,HR only" {
+			t.Fatalf("carl's viewer token sees %q", names(rs))
 		}
-		st, _ := call(t, "POST", api+"/person", narrowTok, map[string]any{"name": "x"}, nil)
-		wantStatus(t, st, 403, "narrow viewer token creates")
+		st, _ := call(t, "POST", api+"/person", carlView, map[string]any{"name": "x"}, nil)
+		wantStatus(t, st, 403, "viewer token creates")
 		var me struct {
-			Spaces []SpaceInfo `json:"spaces"`
+			Role   string   `json:"role"`
+			Groups []string `json:"groups"`
 		}
-		call(t, "GET", srv.url+"/auth/me", narrowTok, nil, &me)
-		if len(me.Spaces) != 1 || me.Spaces[0].Name != "family" || me.Spaces[0].Level != "viewer" {
-			t.Errorf("narrow token spaces: %+v", me.Spaces)
+		call(t, "GET", srv.url+"/auth/me", carlView, nil, &me)
+		if me.Role != "viewer" || !slices.Equal(me.Groups, []string{"hr"}) {
+			t.Errorf("viewer token me: %+v", me)
 		}
-		st, _ = call(t, "POST", srv.url+"/auth/tokens", narrowTok, map[string]any{"spaces": map[string]string{"family": "owner"}}, nil)
-		wantStatus(t, st, 403, "token mints a wider token")
-		st, _ = call(t, "POST", srv.url+"/auth/tokens", bobTok, nil, nil)
+		st, _ = call(t, "POST", srv.url+"/auth/tokens", carlView, map[string]any{"name": "wider"}, nil)
+		wantStatus(t, st, 403, "viewer token mints a token")
+		st, _ = call(t, "POST", srv.url+"/auth/tokens", carlTok, nil, nil)
 		wantStatus(t, st, 400, "token endpoint without a body")
-		in.fails("-as", "bob@example.com", "token", "create", "-space", "family:editor")
-	})
-
-	t.Run("ArchiveSpaceHeaderScopesARequestToOneSpace", func(t *testing.T) {
-		in := in.on(t)
-		scoped := func(method, path, tok, space string, body, out any) int {
-			t.Helper()
-			b, _ := json.Marshal(body)
-			req, _ := http.NewRequest(method, srv.url+path, bytes.NewReader(b))
-			req.Header.Set("Authorization", "Bearer "+tok)
-			req.Header.Set("Archive-Space", space)
-			resp, err := http.DefaultClient.Do(req)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer resp.Body.Close()
-			if out != nil {
-				json.NewDecoder(resp.Body).Decode(out)
-			}
-			return resp.StatusCode
+		in.must("set", "member", carlID, `{"groups":[]}`)
+		call(t, "GET", api+"/person", carlView, nil, &rs)
+		if names(rs) != "Everyone" {
+			t.Errorf("carl's viewer token after he left hr sees %q", names(rs))
 		}
-		home := ""
-		for _, sp := range decode[[]SpaceInfo](t, in.must("space", "list")) {
-			if sp.Name != "family" {
-				home = sp.Name
-			}
+		if n := in.psql("archive", "SELECT count(*) FROM pg_roles WHERE rolname LIKE '%\\_g\\_hr'"); n != "0" {
+			t.Errorf("the empty hr group keeps its role: %s", n)
 		}
-		for _, c := range []struct{ tok, space, want string }{
-			{aliceTok, "family", "Family member"}, {aliceTok, home, "Alice private"}, {bobTok, "family", "Family member"},
-			{bobTok, home, ""}, {aliceTok, "nope", ""}, {aliceTok, "", "Alice private,Family member"},
-		} {
-			var rs []row
-			if st := scoped("GET", "/api/person", c.tok, c.space, nil, &rs); st != 200 || names(rs) != c.want {
-				t.Errorf("space %q: %d %q, want %q", c.space, st, names(rs), c.want)
-			}
-		}
-		var out RunOutput
-		scoped("POST", "/api/run", aliceTok, "family", map[string]string{"code": `return { people: (await archive.list("person")).map(p => p.name), spaces: (await archive.spaces()).length }`}, &out)
-		if string(out.Result) != `{"people":["Family member"],"spaces":2}` {
-			t.Errorf("scoped run: %s %s", out.Result, out.Error)
-		}
-		var co row
-		if st := scoped("POST", "/api/company", aliceTok, "family", map[string]string{"name": "Scoped Co"}, &co); st != 201 || co["space"] != fam["space"] {
-			t.Errorf("create in the header's space: %d %v, want space %v", st, co, fam["space"])
-		}
-		if st := scoped("POST", "/api/company", bobTok, home, map[string]string{"name": "Intruder Co"}, nil); st < 400 {
-			t.Errorf("bob creates in alice's space through the header: %d", st)
-		}
-		if st := scoped("DELETE", "/api/company/"+id(co), aliceTok, "family", nil, nil); st != 204 {
-			t.Errorf("delete in the header's space: %d", st)
-		}
-		var sp []SpaceInfo
-		scoped("GET", "/auth/spaces", aliceTok, "family", nil, &sp)
-		if len(sp) != 2 {
-			t.Errorf("the spaces list ignores the header: %+v", sp)
+		in.must("set", "member", carlID, `{"groups":["hr"]}`)
+		call(t, "GET", api+"/person", carlView, nil, &rs)
+		if names(rs) != "Everyone,HR only" {
+			t.Errorf("carl's viewer token back in hr sees %q", names(rs))
 		}
 	})
 
@@ -956,8 +957,8 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 		st, _ := call(t, "GET", api+"/company/"+id(acme), bobTok, nil, nil)
 		wantStatus(t, st, 404, "bob reads the referenced company")
 		var ve ValidationError
-		st, _ = call(t, "POST", api+"/person", bobTok, map[string]any{"name": "Sneaky", "employer": id(acme), "friends": []string{id(fam), id(alicePriv)}}, &ve)
-		wantStatus(t, st, 422, "bob references alice's company")
+		st, _ = call(t, "POST", api+"/person", bobTok, map[string]any{"name": "Sneaky", "employer": id(acme), "friends": []string{id(all), id(hr)}}, &ve)
+		wantStatus(t, st, 422, "bob references hr rows")
 		if len(ve.Errors) != 2 || ve.Errors[0].Path != "employer" || ve.Errors[1].Path != "friends[1]" || !strings.HasPrefix(ve.Errors[1].Message, "no person") {
 			t.Errorf("reference errors: %+v", ve)
 		}
@@ -965,20 +966,17 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 		wantStatus(t, st, 409, "delete a referenced company")
 	})
 
-	t.Run("SecretIsMaskedAndUnreadableWithoutGrant", func(t *testing.T) {
+	t.Run("SecretsAreMaskedAndOnlyOwnersRevealThem", func(t *testing.T) {
 		in := in.on(t)
 		ssn := func(tok string) string {
 			var r row
-			call(t, "GET", api+"/person/"+id(fam)+"?reveal=true", tok, nil, &r)
+			call(t, "GET", api+"/person/"+id(hr)+"?reveal=true", tok, nil, &r)
 			return fmt.Sprint(r["ssn"])
 		}
 		var plain row
-		call(t, "GET", api+"/person/"+id(fam), aliceTok, nil, &plain)
+		call(t, "GET", api+"/person/"+id(hr), aliceTok, nil, &plain)
 		if plain["ssn"] != "***-**-6789" {
 			t.Fatalf("default ssn = %v", plain["ssn"])
-		}
-		if s := ssn(aliceTok); strings.Contains(s, "123456789") {
-			t.Fatalf("alice reveals without grant: %s", s)
 		}
 		if n := in.psql("archive", "SELECT count(*) FROM archive.secret WHERE position(convert_to('123456789', 'UTF8') in value) > 0"); n != "0" {
 			t.Fatalf("secret stored in plain text")
@@ -986,53 +984,59 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 		if n := in.psql("archive", "SELECT count(*) FROM person WHERE to_jsonb(person)::text LIKE '%123456789%'"); n != "0" {
 			t.Fatalf("secret leaked into the table")
 		}
-		in.fails("-as", "bob@example.com", "secret", "grant", "bob@example.com", "us_ssn")
-		in.fails("secret", "grant", "alice@example.com", "email")
-		in.must("secret", "grant", "alice@example.com", "us_ssn")
-		if s := in.must("get", "person", id(fam), "-reveal"); !strings.Contains(s, `"ssn": "123456789"`) {
+		if s := ssn(aliceTok); s != "123456789" {
+			t.Errorf("an owner's token reveals: %s", s)
+		}
+		if s := in.must("get", "person", id(hr), "-reveal"); !strings.Contains(s, `"ssn": "123456789"`) {
 			t.Errorf("cli reveal: %s", s)
 		}
-		if s := ssn(aliceTok); strings.Contains(s, "123456789") {
-			t.Errorf("token reveals although tokens get no secret grants: %s", s)
+		for who, tok := range map[string]string{"alice's viewer token": aliceView, "carl": carlTok, "carl's viewer token": carlView} {
+			if s := ssn(tok); strings.Contains(s, "123456789") {
+				t.Errorf("%s reveals: %s", who, s)
+			}
 		}
-		if s := ssn(bobTok); strings.Contains(s, "123456789") {
-			t.Fatalf("bob reveals: %s", s)
-		}
-		call(t, "PATCH", api+"/person/"+id(fam), aliceTok, map[string]any{"ssn": "078-05-1120"}, nil)
-		if n := in.psql("archive", "SELECT count(*) FROM archive.secret WHERE row_id = '"+id(fam)+"'"); n != "1" {
+		st, _ := call(t, "PATCH", api+"/person/"+id(hr), carlTok, map[string]any{"ssn": "078-05-1120"}, nil)
+		wantStatus(t, st, 200, "an editor in hr changes the secret")
+		if n := in.psql("archive", "SELECT count(*) FROM archive.secret WHERE row_id = '"+id(hr)+"' AND access = 'hr'"); n != "1" {
 			t.Errorf("old secret not replaced: %s rows", n)
 		}
 		var kept row
-		call(t, "GET", api+"/person/"+id(fam), aliceTok, nil, &kept)
-		st, _ := call(t, "PUT", api+"/person/"+id(fam), aliceTok, kept, nil)
+		call(t, "GET", api+"/person/"+id(hr), aliceTok, nil, &kept)
+		st, _ = call(t, "PUT", api+"/person/"+id(hr), aliceTok, kept, nil)
 		wantStatus(t, st, 200, "put the row back with its mask")
-		if s := in.must("get", "person", id(fam), "-reveal"); !strings.Contains(s, `"ssn": "078051120"`) {
+		if s := in.must("get", "person", id(hr), "-reveal"); !strings.Contains(s, `"ssn": "078051120"`) {
 			t.Errorf("mask round trip lost the secret: %s", s)
 		}
-		st, _ = call(t, "PATCH", api+"/person/"+id(fam), aliceTok, map[string]any{"ssn": "***-**-0000"}, nil)
+		st, _ = call(t, "PATCH", api+"/person/"+id(hr), aliceTok, map[string]any{"ssn": "***-**-0000"}, nil)
 		wantStatus(t, st, 422, "a mask that is not the current one")
-		call(t, "PATCH", api+"/person/"+id(fam), aliceTok, map[string]any{"ssn": nil}, nil)
-		if n := in.psql("archive", "SELECT count(*) FROM archive.secret WHERE row_id = '"+id(fam)+"'"); n != "0" {
+		call(t, "PATCH", api+"/person/"+id(hr), aliceTok, map[string]any{"ssn": nil}, nil)
+		if n := in.psql("archive", "SELECT count(*) FROM archive.secret WHERE row_id = '"+id(hr)+"'"); n != "0" {
 			t.Errorf("cleared secret kept: %s rows", n)
 		}
+		call(t, "PATCH", api+"/person/"+id(hr), aliceTok, map[string]any{"ssn": "123-45-6789"}, nil)
 	})
 
-	t.Run("SchemaChangesNeedAdmin", func(t *testing.T) {
+	t.Run("SchemaChangesNeedAnOwner", func(t *testing.T) {
 		files := with(e2eSchema, "company.sql", strings.Replace(e2eSchema["company.sql"], "    name       text NOT NULL,\n", "    name       text NOT NULL,\n    ein        archive.us_ein,\n", 1))
 		var plan SchemaPlan
-		st, _ := call(t, "POST", api+"/schema/plan", narrowTok, map[string]any{"files": files}, &plan)
+		st, _ := call(t, "POST", api+"/schema/plan", aliceView, map[string]any{"files": files}, &plan)
 		wantStatus(t, st, 200, "viewer token plans")
 		if len(plan.Statements) != 1 || !strings.Contains(plan.Statements[0].DDL, `ADD COLUMN "ein" archive.us_ein`) || plan.Applied {
 			t.Fatalf("plan: %+v", plan)
 		}
-		st, _ = call(t, "POST", api+"/schema/apply", narrowTok, map[string]any{"files": files}, nil)
-		wantStatus(t, st, 403, "viewer token applies")
+		st, _ = call(t, "POST", api+"/schema/apply", aliceView, map[string]any{"files": files}, nil)
+		wantStatus(t, st, 403, "an owner's viewer token applies")
+		st, _ = call(t, "POST", api+"/schema/apply", carlTok, map[string]any{"files": files}, nil)
+		wantStatus(t, st, 403, "an editor applies")
 		st, _ = call(t, "POST", api+"/schema/apply", aliceTok, map[string]any{"files": files}, &plan)
-		wantStatus(t, st, 200, "admin applies")
+		wantStatus(t, st, 200, "owner applies")
 		var cat Catalog
 		call(t, "GET", api+"/types", bobTok, nil, &cat)
-		if c := cat.Tables["company"]; c == nil || c.col("ein") == nil || c.col("ein").Type != "us_ein" || c.Description != "A company" || cat.Types["archive.email"] == nil {
+		if c := cat.Tables["company"]; c == nil || c.col("ein") == nil || c.col("ein").Type != "us_ein" || c.Description != "A company" || !c.Policy || c.Schema != "public" || cat.Types["archive.email"] == nil {
 			t.Fatalf("catalog after apply: %+v", cat.Tables["company"])
+		}
+		if m := cat.Tables["member"]; m == nil || m.Schema != "archive" || m.col("groups") == nil {
+			t.Errorf("member in the catalog: %+v", m)
 		}
 		var got struct {
 			Files map[string]string `json:"files"`
@@ -1058,15 +1062,16 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 			t.Fatalf("bob signs in with Google: %d %v", st, session)
 		}
 		var me struct {
-			Actor Actor `json:"actor"`
+			Actor Actor  `json:"actor"`
+			Role  string `json:"role"`
 		}
 		call(t, "GET", srv.url+"/auth/me", "", nil, &me, session)
-		if me.Actor.Email != "bob@example.com" || me.Actor.Name != "Bob" {
-			t.Fatalf("me = %+v", me.Actor)
+		if me.Actor.Email != "bob@example.com" || me.Actor.Name != "Bob" || me.Role != "viewer" {
+			t.Fatalf("me = %+v", me)
 		}
 		var rs []row
 		call(t, "GET", api+"/person", "", nil, &rs, session)
-		if !strings.Contains(names(rs), "Bob private,Family member") {
+		if names(rs) != "Everyone" {
 			t.Errorf("session lists %q", names(rs))
 		}
 		var opts struct {
@@ -1086,28 +1091,65 @@ func TestUsersSpacesTokensAndSecretsAcrossEverySurface(t *testing.T) {
 		wantStatus(t, st, 401, "me after sign out")
 	})
 
-	t.Run("MembershipAndTokenEndpoints", func(t *testing.T) {
+	t.Run("OwnersManageMembersAsRowsAndTheRolesFollow", func(t *testing.T) {
 		in := in.on(t)
-		var ms []Member
-		st, _ := call(t, "POST", srv.url+"/auth/spaces/family/members", bobTok, map[string]any{"email": "bob@example.com", "role": "owner"}, nil)
-		wantStatus(t, st, 403, "token changes membership")
-		in.must("space", "grant", "family", "bob@example.com", "editor")
-		bobNarrow := decode[Token](t, in.must("-as", "bob@example.com", "token", "create", "-space", "family:editor"))
-		st, _ = call(t, "POST", api+"/person?space=family", bobNarrow.Secret, map[string]any{"name": "Bob in family"}, nil)
-		wantStatus(t, st, 201, "editor token creates")
-		ms = decode[[]Member](t, in.must("space", "grant", "family", "bob@example.com", "none"))
-		if len(ms) != 1 || ms[0].Email != "alice@example.com" {
-			t.Errorf("members after removing bob: %+v", ms)
+		st, _ := call(t, "POST", api+"/member", bobTok, map[string]any{"email": "eve@example.com"}, nil)
+		wantStatus(t, st, 403, "a viewer adds a member")
+		st, _ = call(t, "PATCH", api+"/member/"+carlID, carlTok, map[string]any{"role": "owner"}, nil)
+		wantStatus(t, st, 403, "an editor promotes themselves")
+		var people []Person
+		st, _ = call(t, "POST", srv.url+"/auth/users", aliceTok, map[string]any{"email": "Dan@Example.com", "name": "Dan", "role": "editor"}, &people)
+		wantStatus(t, st, 201, "an owner's token invites dan")
+		i := slices.IndexFunc(people, func(p Person) bool { return p.Email == "dan@example.com" })
+		if i < 0 || people[i].Role != "editor" || people[i].Name != "Dan" || len(people) != 4 {
+			t.Fatalf("people after inviting dan: %+v", people)
 		}
-		var left []row
-		st, _ = call(t, "GET", api+"/person", bobNarrow.Secret, nil, &left)
-		wantStatus(t, st, 200, "token whose user left its only space")
-		if len(left) != 0 {
-			t.Errorf("token whose user left its only space sees %q", names(left))
+		dan := people[i]
+		st, _ = call(t, "POST", srv.url+"/auth/users", aliceTok, map[string]any{"email": "dan@example.com"}, nil)
+		wantStatus(t, st, 409, "invite dan twice")
+		st, _ = call(t, "POST", api+"/member", aliceTok, map[string]any{"email": "dan@example.com"}, nil)
+		wantStatus(t, st, 409, "add dan's row twice")
+		if got := in.psql("archive", "SELECT count(*) FROM archive.\"user\" WHERE email = 'dan@example.com' AND workspaces <> '{}'"); got != "1" {
+			t.Errorf("dan is not in the workspace in the main database: %s", got)
 		}
-		in.fails("space", "grant", "family", "alice@example.com", "editor")
-		in.must("-as", "bob@example.com", "token", "revoke", bobNarrow.ID.String())
-		st, _ = call(t, "GET", api+"/person", bobNarrow.Secret, nil, nil)
+		var m row
+		st, _ = call(t, "PATCH", api+"/member/"+dan.ID.String(), aliceTok, map[string]any{"groups": []string{"payroll", "hr", "hr"}}, &m)
+		if st != 200 || fmt.Sprint(m["groups"]) != "[hr payroll]" {
+			t.Errorf("dan's groups: %d %v", st, m)
+		}
+		role := in.role("dan@example.com")
+		if got := in.psql("archive", "SELECT pg_has_role('"+role+"', '"+strings.SplitN(role, "_u", 2)[0]+"_g_payroll', 'USAGE')"); got != "t" {
+			t.Errorf("dan's role is not in payroll: %s", got)
+		}
+		st, _ = call(t, "PATCH", api+"/member/"+dan.ID.String(), aliceTok, map[string]any{"email": "dan2@example.com"}, nil)
+		wantStatus(t, st, 422, "change an email")
+		st, _ = call(t, "PATCH", api+"/member/"+dan.ID.String(), aliceTok, map[string]any{"groups": []string{"Not ok"}}, nil)
+		wantStatus(t, st, 422, "a bad group name")
+		danTok := decode[Token](t, in.must("-as", "dan@example.com", "token", "create", "-viewer"))
+		st, _ = call(t, "GET", api+"/person", danTok.Secret, nil, nil)
+		wantStatus(t, st, 200, "dan's viewer token")
+		var aliceRow []row
+		call(t, "GET", api+"/member?email=alice@example.com", aliceTok, nil, &aliceRow)
+		st, _ = call(t, "PATCH", api+"/member/"+id(aliceRow[0]), aliceTok, map[string]any{"role": "editor"}, nil)
+		wantStatus(t, st, 409, "demote the last owner")
+		st, _ = call(t, "DELETE", srv.url+"/auth/users/alice@example.com", aliceTok, nil, nil)
+		wantStatus(t, st, 409, "remove the last owner")
+		in.must("set", "member", dan.ID.String(), `{"role":"owner"}`)
+		st, _ = call(t, "DELETE", srv.url+"/auth/users/dan@example.com", aliceTok, nil, &people)
+		if st != 200 || len(people) != 3 {
+			t.Fatalf("remove dan: %d %+v", st, people)
+		}
+		st, _ = call(t, "GET", api+"/person", danTok.Secret, nil, nil)
+		wantStatus(t, st, 401, "dan's token after he was removed")
+		if got := in.psql("archive", "SELECT (SELECT count(*) FROM archive.\"user\" WHERE email = 'dan@example.com' AND workspaces <> '{}') || ',' || (SELECT count(*) FROM archive.token t JOIN archive.\"user\" u ON u.id = t.user_id WHERE u.email = 'dan@example.com') || ',' || (SELECT count(*) FROM pg_roles WHERE rolname IN ('"+role+"', '"+strings.Replace(role, "_u", "_m", 1)+"') OR rolname LIKE '%\\_g\\_payroll')"); got != "0,0,0" {
+			t.Errorf("left after removing dan (workspaces, tokens, roles): %s", got)
+		}
+		for _, tk := range decode[[]Token](t, in.must("token", "list")) {
+			if tk.Name == "Reader" && tk.Viewer {
+				in.must("token", "revoke", tk.ID.String())
+			}
+		}
+		st, _ = call(t, "GET", api+"/person", aliceView, nil, nil)
 		wantStatus(t, st, 401, "revoked token")
 	})
 }
@@ -1171,61 +1213,37 @@ func TestOnThisMachineTheFirstOwnerIsSignedInWithoutLoggingIn(t *testing.T) {
 	}
 }
 
-func TestDeletingASpaceRemovesEverythingInItForOwnersOnly(t *testing.T) {
+func TestAnHROnlyTableIsSeenOnlyByTheHRGroupAndTheOwners(t *testing.T) {
 	t.Parallel()
 	in := newInst(t)
 	in.must("user", "add", "alice@example.com")
-	srv := in.serve()
-	in.must("user", "add", "bob@example.com", "-name", "Bob")
-	in.push(e2eSchema)
-	in.must("space", "add", "team")
-	in.must("space", "add", "scratch")
-	in.must("space", "grant", "team", "bob@example.com", "editor")
-	aliceTok := decode[Token](t, in.must("token", "create", "-name", "Claude")).Secret
-	full := decode[Token](t, in.must("token", "create", "-name", "Terraform", "-full")).Secret
-
-	acme := decode[row](t, in.must("create", "company", `{"name": "Acme"}`))
-	teamCo := decode[row](t, in.must("create", "company", "-space", "team", `{"name": "Team co"}`))
-	member := decode[row](t, in.must("create", "person", "-space", "team", `{"name": "Team member", "ssn": "123-45-6789", "employer": "`+id(teamCo)+`"}`))
-	errs := in.fails("-as", "bob@example.com", "space", "remove", "team")
-	if !strings.Contains(errs, "needs owner") {
-		t.Errorf("editor removes team: %s", errs)
+	in.must("user", "add", "hana@example.com", "-role", "editor")
+	in.must("user", "add", "bob@example.com", "-role", "editor")
+	in.must("set", "member", id(decode[[]row](t, in.must("list", "member", "email=hana@example.com"))[0]), `{"groups":["hr"]}`)
+	salary := strings.Replace(e2eTable("salary", `    who        text NOT NULL,
+    search     tsvector GENERATED ALWAYS AS (archive.search_doc(who)) STORED`), "    access     text,", "    access     text NOT NULL DEFAULT 'hr' CHECK (access = 'hr'),", 1)
+	in.push(with(e2eSchema, "salary.sql", salary))
+	r := decode[row](t, in.must("-as", "hana@example.com", "create", "salary", `{"who": "Bob"}`))
+	if r["access"] != "hr" {
+		t.Fatalf("an hr row without access: %v", r)
 	}
-	errs = in.fails("space", "remove", "alice_example_com")
-	if !strings.Contains(errs, "is a personal space") {
-		t.Errorf("owner removes her personal space: %s", errs)
+	if r := decode[row](t, in.must("-as", "hana@example.com", "create", "salary", `{"who": "Ann", "access": null}`)); r["access"] != "hr" {
+		t.Errorf("a null access on an hr table: %v", r)
 	}
-	errs = in.fails("-as", "bob@example.com", "space", "remove", "scratch")
-	if !strings.Contains(errs, "not found") {
-		t.Errorf("non-member removes scratch: %s", errs)
+	if errs := in.fails("create", "salary", `{"who": "Open", "access": "family"}`); !strings.Contains(errs, "salary_access_check") {
+		t.Errorf("an owner moves a salary out of hr: %s", errs)
 	}
-	st, _ := call(t, "DELETE", srv.url+"/auth/spaces/team", aliceTok, nil, nil)
-	wantStatus(t, st, 403, "scoped token deletes a space")
-
-	spaces := decode[[]SpaceInfo](t, in.must("space", "remove", "team"))
-	for _, s := range spaces {
-		if s.Name == "team" {
-			t.Fatalf("team still listed: %+v", spaces)
+	for who, want := range map[string]string{"alice@example.com": "Bob,Ann", "hana@example.com": "Bob,Ann", "bob@example.com": ""} {
+		if got := names2(decode[[]row](t, in.must("-as", who, "list", "salary")), "who"); got != want {
+			t.Errorf("%s sees salaries %q, want %q", who, got, want)
+		}
+		if got := in.must("-as", who, "search", "Bob"); strings.Contains(got, `"salary"`) != (want != "") {
+			t.Errorf("%s searching salaries: %s", who, got)
 		}
 	}
-	if got := in.psql("archive", "SELECT (SELECT count(*) FROM person WHERE id = '"+id(member)+"') + (SELECT count(*) FROM company WHERE id = '"+id(teamCo)+"')"); got != "0" {
-		t.Errorf("team rows survived: %s", got)
+	if errs := in.fails("-as", "bob@example.com", "create", "salary", `{"who": "Me"}`); !strings.Contains(errs, "forbidden") {
+		t.Errorf("bob writes a salary: %s", errs)
 	}
-	if got := in.psql("archive", "SELECT count(*) FROM archive.secret"); got != "0" {
-		t.Errorf("secrets left: %s", got)
-	}
-	if got := in.psql("archive", "SELECT count(*) FROM pg_roles WHERE rolname LIKE 'a\\_s\\_team\\_%'"); got != "0" {
-		t.Errorf("team roles left: %s", got)
-	}
-	if got := decode[row](t, in.must("get", "company", id(acme))); id(got) != id(acme) {
-		t.Errorf("company outside team: %+v", got)
-	}
-
-	st, _ = call(t, "DELETE", srv.url+"/auth/spaces/scratch", full, nil, nil)
-	wantStatus(t, st, 204, "full token deletes scratch")
-	st, _ = call(t, "DELETE", srv.url+"/auth/spaces/scratch", full, nil, nil)
-	wantStatus(t, st, 404, "delete scratch twice")
-	in.must("space", "add", "team")
 }
 
 func TestTheFirstOwnerIsAddedOnTheCLIAndSignsInWithAProvider(t *testing.T) {
@@ -1257,10 +1275,12 @@ func TestTheFirstOwnerIsAddedOnTheCLIAndSignsInWithAProvider(t *testing.T) {
 	if st != 303 || c == nil {
 		t.Fatalf("the first owner signs in with Google: %d", st)
 	}
-	var spaces []SpaceInfo
-	call(t, "GET", srv.url+"/auth/spaces", "", nil, &spaces, c)
-	if len(spaces) != 1 || spaces[0].Level != "owner" {
-		t.Errorf("spaces: %+v", spaces)
+	var me struct {
+		Role string `json:"role"`
+	}
+	call(t, "GET", srv.url+"/auth/me", "", nil, &me, c)
+	if me.Role != "owner" {
+		t.Errorf("the first person's role: %+v", me)
 	}
 }
 
@@ -1426,12 +1446,15 @@ func e2eTus(t *testing.T, method, url, tok string, body io.Reader, size int64, h
 func TestFilesUploadProcessShareAndReference(t *testing.T) {
 	t.Parallel()
 	in := newInst(t)
-	in.must("user", "add", "alice@example.com")
+	in.must("user", "add", "owner@example.com")
 	srv := in.serve()
 	api := srv.url + "/api"
-	in.must("user", "add", "bob@example.com")
+	in.must("user", "add", "alice@example.com", "-role", "editor")
+	in.must("user", "add", "bob@example.com", "-role", "editor")
+	in.groups("alice@example.com", "alice")
+	in.groups("bob@example.com", "bob")
 	in.push(e2eSchema)
-	aliceTok := decode[Token](t, in.must("token", "create", "-name", "Claude")).Secret
+	aliceTok := decode[Token](t, in.must("-as", "alice@example.com", "token", "create", "-name", "Claude")).Secret
 	bobTok := decode[Token](t, in.must("-as", "bob@example.com", "token", "create")).Secret
 
 	big := bytes.Repeat([]byte("archive keeps all your stuff. "), 100000)
@@ -1450,7 +1473,7 @@ func TestFilesUploadProcessShareAndReference(t *testing.T) {
 		resp.Body.Close()
 		wantStatus(t, resp.StatusCode, 412, "create without Tus-Resumable")
 
-		meta := "filename " + base64.StdEncoding.EncodeToString([]byte("big.txt"))
+		meta := "filename " + base64.StdEncoding.EncodeToString([]byte("big.txt")) + ",access " + base64.StdEncoding.EncodeToString([]byte("alice"))
 		resp, _ = e2eTus(t, "POST", tus, aliceTok, nil, 0, "Upload-Length", strconv.Itoa(len(big)), "Upload-Metadata", meta)
 		wantStatus(t, resp.StatusCode, 201, "create upload")
 		loc := srv.url + resp.Header.Get("Location")
@@ -1519,9 +1542,9 @@ func TestFilesUploadProcessShareAndReference(t *testing.T) {
 	})
 
 	t.Run("IdenticalContentIsStoredOnce", func(t *testing.T) {
-		st, again := e2eUpload(t, api+"/files", aliceTok, "big.txt", big)
+		st, again := e2eUpload(t, api+"/files?access=alice", aliceTok, "big.txt", big)
 		wantStatus(t, st, 201, "upload the same file again")
-		_, copied := e2eUpload(t, api+"/files", aliceTok, "copy.txt", big)
+		_, copied := e2eUpload(t, api+"/files?access=alice", aliceTok, "copy.txt", big)
 		_, bobs := e2eUpload(t, api+"/files", bobTok, "big.txt", big)
 		if again.ID != bigFile.ID || copied.ID == bigFile.ID || bobs.ID == bigFile.ID || copied.Hash != bigFile.Hash || bobs.Hash != bigFile.Hash {
 			t.Fatalf("same name %s, copy %s, bob %s, first %s", again.ID, copied.ID, bobs.ID, bigFile.ID)
@@ -1539,7 +1562,7 @@ func TestFilesUploadProcessShareAndReference(t *testing.T) {
 	photo := e2eJPEG(t)
 	var photoFile File
 	t.Run("PhotoMetadataThumbnailAndLocationMarkedPersonal", func(t *testing.T) {
-		st, f := e2eUpload(t, api+"/files", aliceTok, "photo.jpg", photo)
+		st, f := e2eUpload(t, api+"/files?access=alice", aliceTok, "photo.jpg", photo)
 		wantStatus(t, st, 201, "upload photo")
 		photoFile = e2eDoneFile(t, api, aliceTok, f.ID.String())
 		m := photoFile.Metadata
@@ -1604,7 +1627,7 @@ func TestFilesUploadProcessShareAndReference(t *testing.T) {
 
 	t.Run("TextExtractionAndRowsThatReferenceFiles", func(t *testing.T) {
 		in := in.on(t)
-		st, f := e2eUpload(t, api+"/files", aliceTok, "invoice.pdf", e2ePDF("Cover letter", "Invoice INV-9 total due"))
+		st, f := e2eUpload(t, api+"/files?access=alice", aliceTok, "invoice.pdf", e2ePDF("Cover letter", "Invoice INV-9 total due"))
 		wantStatus(t, st, 201, "upload pdf")
 		f = e2eDoneFile(t, api, aliceTok, f.ID.String())
 		if f.Status != "done" || fmt.Sprint(f.Metadata["pages"]) != "2" {
@@ -1620,7 +1643,7 @@ func TestFilesUploadProcessShareAndReference(t *testing.T) {
 		if inv["document"] != f.ID.String() {
 			t.Errorf("invoice: %v", inv)
 		}
-		_, bobs := e2eUpload(t, api+"/files", bobTok, "bob.txt", []byte("bob"))
+		_, bobs := e2eUpload(t, api+"/files?access=bob", bobTok, "bob.txt", []byte("bob"))
 		var ve ValidationError
 		st, _ = call(t, "POST", api+"/invoice", aliceTok, map[string]any{"number": "INV-10", "document": bobs.ID.String()}, &ve)
 		wantStatus(t, st, 422, "invoice that references bob's file")
@@ -1628,7 +1651,7 @@ func TestFilesUploadProcessShareAndReference(t *testing.T) {
 			t.Errorf("reference to a hidden file: %+v", ve)
 		}
 
-		_, page := e2eUpload(t, api+"/files", aliceTok, "order.html", []byte("<html><head><style>p{}</style><script>var INV = 1</script></head><body><p>Order</p><p>INV-5</p></body></html>"))
+		_, page := e2eUpload(t, api+"/files?access=alice", aliceTok, "order.html", []byte("<html><head><style>p{}</style><script>var INV = 1</script></head><body><p>Order</p><p>INV-5</p></body></html>"))
 		page = e2eDoneFile(t, api, aliceTok, page.ID.String())
 		resp, body := e2eGet(t, api+"/files/"+page.ID.String()+"/text", aliceTok)
 		if resp.StatusCode != 200 || string(body) != "Order INV-5" {
@@ -1842,7 +1865,7 @@ CREATE TRIGGER alpha_trim BEFORE INSERT ON alpha FOR EACH ROW EXECUTE FUNCTION a
 	if got := fresh.roundTrips(); !maps.Equal(got, files) {
 		t.Errorf("a fresh instance from the generated files pulls %v", got)
 	}
-	if got := fresh.psql("archive", "SELECT count(*) FROM pg_constraint WHERE contype = 'f' AND conrelid::regclass::text IN ('alpha', 'beta', 'gamma') AND confrelid <> 'archive.space'::regclass"); got != "4" {
+	if got := fresh.psql("archive", "SELECT count(*) FROM pg_constraint WHERE contype = 'f' AND conrelid::regclass::text IN ('alpha', 'beta', 'gamma')"); got != "4" {
 		t.Errorf("%s foreign keys between the tables on the fresh instance", got)
 	}
 	if errs := in.fails("schema", "plan", in.writeDir("ddl", with(cyclic, "gamma.sql", strings.Replace(cyclic["gamma.sql"], "REFERENCES alpha", "REFERENCES delta", 1)))); !strings.Contains(errs, "gamma.sql:") || !strings.Contains(errs, `"delta" does not exist`) {
@@ -1881,16 +1904,20 @@ func e2eTitles(hits []SearchHit) string {
 func TestFullTextSearchAcrossTablesFilesAndUsers(t *testing.T) {
 	t.Parallel()
 	in := newInst(t)
-	in.must("user", "add", "alice@example.com")
+	in.must("user", "add", "owner@example.com")
 	srv := in.serve()
+	in.must("user", "add", "alice@example.com", "-role", "editor")
 	api := srv.url + "/api"
-	in.must("user", "add", "bob@example.com")
+	in.must("user", "add", "bob@example.com", "-role", "editor")
+	in.groups("alice@example.com", "alice")
+	in.groups("bob@example.com", "bob")
 	files := with(e2eSchema, "note.sql", e2eNote+"CREATE INDEX note_title ON note (title);\n")
 	in.push(files)
-	aliceTok := decode[Token](t, in.must("token", "create")).Secret
+	aliceTok := decode[Token](t, in.must("-as", "alice@example.com", "token", "create")).Secret
 	bobTok := decode[Token](t, in.must("-as", "bob@example.com", "token", "create")).Secret
 	note := func(tok string, data map[string]any) {
 		t.Helper()
+		data["access"] = map[string]string{aliceTok: "alice", bobTok: "bob"}[tok]
 		st, _ := call(t, "POST", api+"/note", tok, data, nil)
 		wantStatus(t, st, 201, "create note")
 	}
@@ -1900,9 +1927,9 @@ func TestFullTextSearchAcrossTablesFilesAndUsers(t *testing.T) {
 	note(aliceTok, map[string]any{"title": "Café Grumpy", "body": "Coffee and apple pie"})
 	note(aliceTok, map[string]any{"title": "Tax return", "ssn": "111222333"})
 	note(bobTok, map[string]any{"title": "Bob rental agreement Brooklyn"})
-	call(t, "POST", api+"/company", aliceTok, map[string]any{"name": "Brooklyn Plumbing"}, nil)
-	_, txt := e2eUpload(t, api+"/files", aliceTok, "rental.txt", []byte("The landlord rents the apartment on Bedford Avenue to the tenant."))
-	_, pdf := e2eUpload(t, api+"/files", aliceTok, "policy.pdf", e2ePDF("Home insurance policy", "Covers water damage in the kitchen"))
+	call(t, "POST", api+"/company", aliceTok, map[string]any{"name": "Brooklyn Plumbing", "access": "alice"}, nil)
+	_, txt := e2eUpload(t, api+"/files?access=alice", aliceTok, "rental.txt", []byte("The landlord rents the apartment on Bedford Avenue to the tenant."))
+	_, pdf := e2eUpload(t, api+"/files?access=alice", aliceTok, "policy.pdf", e2ePDF("Home insurance policy", "Covers water damage in the kitchen"))
 	e2eDoneFile(t, api, aliceTok, txt.ID.String())
 	e2eDoneFile(t, api, aliceTok, pdf.ID.String())
 
@@ -1955,9 +1982,7 @@ func TestFullTextSearchAcrossTablesFilesAndUsers(t *testing.T) {
 		if n := len(e2eSearch(t, api, aliceTok, "rent", "to", time.Now().AddDate(0, 0, -1).Format(time.DateOnly))); n != 0 {
 			t.Errorf("to yesterday: %d hits", n)
 		}
-		st, _ := call(t, "GET", api+"/search?q=rent&space=family", aliceTok, nil, nil)
-		wantStatus(t, st, 404, "unknown space")
-		st, _ = call(t, "GET", api+"/search?q=rent&type=nothing", aliceTok, nil, nil)
+		st, _ := call(t, "GET", api+"/search?q=rent&type=nothing", aliceTok, nil, nil)
 		wantStatus(t, st, 404, "unknown type")
 		st, _ = call(t, "GET", api+"/search?q=rent&from=soon", aliceTok, nil, nil)
 		wantStatus(t, st, 422, "bad date")
@@ -1994,7 +2019,7 @@ func TestFullTextSearchAcrossTablesFilesAndUsers(t *testing.T) {
 		if got := in.must("-as", "bob@example.com", "search", "rental", "brooklyn"); !strings.Contains(got, "Bob rental") || strings.Contains(got, "apartment") {
 			t.Errorf("bob cli: %s", got)
 		}
-		if got := in.must("search", "rental", "-type", "note"); !strings.Contains(got, "apartment") || strings.Contains(got, "Bob") {
+		if got := in.must("-as", "alice@example.com", "search", "rental", "-type", "note"); !strings.Contains(got, "apartment") || strings.Contains(got, "Bob") {
 			t.Errorf("alice cli: %s", got)
 		}
 		role := in.role("bob@example.com")
@@ -2026,7 +2051,7 @@ func TestFullTextSearchAcrossTablesFilesAndUsers(t *testing.T) {
 	})
 }
 
-func TestViewsSchemaDropsAndFullTokensOverHTTP(t *testing.T) {
+func TestViewsSchemaDropsAndTokensOverHTTP(t *testing.T) {
 	t.Parallel()
 	in := newInst(t, e2eGoogle(t)...)
 	in.must("user", "add", "alice@example.com")
@@ -2034,8 +2059,7 @@ func TestViewsSchemaDropsAndFullTokensOverHTTP(t *testing.T) {
 	api := srv.url + "/api"
 	in.must("user", "add", "bob@example.com")
 	in.push(e2eSchema)
-	in.must("space", "add", "family")
-	in.must("space", "grant", "family", "bob@example.com", "viewer")
+	in.groups("bob@example.com", "family")
 	aliceTok := decode[Token](t, in.must("token", "create")).Secret
 	bobTok := decode[Token](t, in.must("-as", "bob@example.com", "token", "create")).Secret
 
@@ -2045,10 +2069,10 @@ func TestViewsSchemaDropsAndFullTokensOverHTTP(t *testing.T) {
 			"COMMENT ON VIEW people_board IS 'Everyone you know\nby employer\nlayout: board\nby: employer\nicon: users';\n"
 		in.push(with(e2eSchema, "people_board.sql", board))
 		var fam, solo row
-		st, _ := call(t, "POST", api+"/person?space=family", aliceTok, map[string]any{"name": "Fam"}, &fam)
+		st, _ := call(t, "POST", api+"/person", aliceTok, map[string]any{"name": "Fam", "access": "family"}, &fam)
 		wantStatus(t, st, 201, "person in family")
-		st, _ = call(t, "POST", api+"/person", aliceTok, map[string]any{"name": "Solo"}, &solo)
-		wantStatus(t, st, 201, "person in alice's space")
+		st, _ = call(t, "POST", api+"/person", aliceTok, map[string]any{"name": "Solo", "access": "solo"}, &solo)
+		wantStatus(t, st, 201, "person only owners see")
 
 		var cat Catalog
 		call(t, "GET", api+"/types", aliceTok, nil, &cat)
@@ -2066,7 +2090,7 @@ func TestViewsSchemaDropsAndFullTokensOverHTTP(t *testing.T) {
 		}
 		call(t, "GET", api+"/people_board", bobTok, nil, &rows)
 		if names(rows) != "Fam" {
-			t.Errorf("bob through the view sees %s, want only the family space", names(rows))
+			t.Errorf("bob through the view sees %s, want only the family group's", names(rows))
 		}
 		st, _ = call(t, "POST", api+"/people_board", aliceTok, map[string]any{"name": "Nope"}, nil)
 		wantStatus(t, st, 405, "create through a view")
@@ -2167,53 +2191,53 @@ return { made: made.applied, t1, rows1, changed: changed.applied, t2, rows2, dro
 		}
 	})
 
-	t.Run("FullTokenManagesMembersAndTokens", func(t *testing.T) {
+	t.Run("TokensActAsTheirOwnerAndManageMembersAndTokens", func(t *testing.T) {
 		in := in.on(t)
-		full := decode[Token](t, in.must("token", "create", "-name", "Terraform", "-full"))
-		if !full.Full || len(full.Spaces) != 0 || full.Secret == "" {
-			t.Fatalf("full token: %+v", full)
+		tf := decode[Token](t, in.must("token", "create", "-name", "Terraform"))
+		if tf.Viewer || tf.Secret == "" {
+			t.Fatalf("token: %+v", tf)
 		}
-		in.fails("token", "create", "-full", "-space", "family:viewer")
-		st, _ := call(t, "POST", srv.url+"/auth/spaces/family/members", aliceTok, map[string]any{"email": "bob@example.com", "role": "editor"}, nil)
-		wantStatus(t, st, 403, "scoped token changes membership")
-		st, _ = call(t, "POST", srv.url+"/auth/tokens", aliceTok, map[string]any{"full": true}, nil)
-		wantStatus(t, st, 403, "scoped token makes a full token")
-		var ms []Member
-		st, _ = call(t, "POST", srv.url+"/auth/spaces/family/members", full.Secret, map[string]any{"email": "bob@example.com", "role": "editor"}, &ms)
-		wantStatus(t, st, 200, "full token changes membership")
-		if len(ms) != 2 || ms[0].Email != "alice@example.com" || ms[1].Level != "editor" {
-			t.Errorf("members: %+v", ms)
+		var view Token
+		st, _ := call(t, "POST", srv.url+"/auth/tokens", tf.Secret, map[string]any{"name": "Agent", "viewer": true}, &view)
+		wantStatus(t, st, 201, "a token makes a viewer-only token")
+		st, _ = call(t, "POST", srv.url+"/auth/tokens", view.Secret, map[string]any{"name": "wider"}, nil)
+		wantStatus(t, st, 403, "a viewer-only token makes a token")
+		var bob []row
+		call(t, "GET", api+"/member?email=bob@example.com", view.Secret, nil, &bob)
+		st, _ = call(t, "PATCH", api+"/member/"+id(bob[0]), view.Secret, map[string]any{"role": "editor"}, nil)
+		wantStatus(t, st, 403, "a viewer-only token changes a member")
+		var m row
+		st, _ = call(t, "PATCH", api+"/member/"+id(bob[0]), tf.Secret, map[string]any{"role": "editor"}, &m)
+		if st != 200 || m["role"] != "editor" || fmt.Sprint(m["groups"]) != "[family]" {
+			t.Errorf("a token changes a member: %d %v", st, m)
 		}
-		var made Token
-		st, _ = call(t, "POST", srv.url+"/auth/tokens", full.Secret, map[string]any{"name": "Agent", "spaces": map[string]string{"family": "viewer"}}, &made)
-		wantStatus(t, st, 201, "full token makes a scoped token")
 		var ts []Token
-		call(t, "GET", srv.url+"/auth/tokens", full.Secret, nil, &ts)
-		var listed bool
-		for _, tk := range ts {
-			listed = listed || tk.ID == full.ID && tk.Full && tk.Secret == ""
-		}
-		if !listed || !slices.ContainsFunc(ts, func(tk Token) bool { return tk.ID == made.ID && tk.Spaces["family"] == "viewer" }) {
+		call(t, "GET", srv.url+"/auth/tokens", tf.Secret, nil, &ts)
+		if !slices.ContainsFunc(ts, func(tk Token) bool { return tk.ID == tf.ID && !tk.Viewer && tk.Secret == "" }) ||
+			!slices.ContainsFunc(ts, func(tk Token) bool { return tk.ID == view.ID && tk.Viewer }) {
 			t.Errorf("tokens: %+v", ts)
 		}
-		st, _ = call(t, "DELETE", srv.url+"/auth/tokens/"+full.ID.String(), full.Secret, nil, nil)
-		wantStatus(t, st, 204, "revoke full token")
-		st, _ = call(t, "GET", srv.url+"/auth/me", full.Secret, nil, nil)
-		wantStatus(t, st, 401, "revoked full token")
+		st, _ = call(t, "DELETE", srv.url+"/auth/tokens/"+tf.ID.String(), tf.Secret, nil, nil)
+		wantStatus(t, st, 204, "revoke the token")
+		st, _ = call(t, "GET", srv.url+"/auth/me", tf.Secret, nil, nil)
+		wantStatus(t, st, 401, "revoked token")
+		if n := in.psql("archive", "SELECT count(*) FROM pg_roles WHERE starts_with(rolname, (SELECT id::text FROM archive.workspace ORDER BY created_at LIMIT 1) || '_t')"); n != "1" {
+			t.Errorf("%s token roles, want the viewer-only one", n)
+		}
 	})
 
-	t.Run("CatalogAndSpaceFilters", func(t *testing.T) {
+	t.Run("CatalogAndAccessFilters", func(t *testing.T) {
 		var cat Catalog
 		call(t, "GET", api+"/types", bobTok, nil, &cat)
 		if cat.Tables["person"] == nil || cat.Tables["person"].col("employer").Ref != "public.company" || cat.Types["archive.money"] == nil || cat.Types["archive.money"].Kind != "c" {
 			t.Errorf("catalog: %+v", cat.Tables["person"])
 		}
 		var fam, own row
-		call(t, "POST", api+"/company?space=family", aliceTok, map[string]any{"name": "Family firm"}, &fam)
+		call(t, "POST", api+"/company", aliceTok, map[string]any{"name": "Family firm", "access": "family"}, &fam)
 		call(t, "POST", api+"/company", aliceTok, map[string]any{"name": "Own firm"}, &own)
 		var rs []row
-		st, _ := call(t, "GET", api+"/company?space=family", aliceTok, nil, &rs)
-		wantStatus(t, st, 200, "list one space")
+		st, _ := call(t, "GET", api+"/company?access=family", aliceTok, nil, &rs)
+		wantStatus(t, st, 200, "list one group's rows")
 		if len(rs) != 1 || id(rs[0]) != id(fam) {
 			t.Errorf("family companies: %+v", rs)
 		}
@@ -2221,14 +2245,15 @@ return { made: made.applied, t1, rows1, changed: changed.applied, t2, rows2, dro
 		if len(rs) != 2 {
 			t.Errorf("all companies: %+v", rs)
 		}
-		st, _ = call(t, "GET", api+"/company?space=nowhere", aliceTok, nil, nil)
-		wantStatus(t, st, 404, "list an unknown space")
-		e2eUpload(t, api+"/files?space=family", aliceTok, "family.txt", []byte("family notes"))
-		e2eUpload(t, api+"/files", aliceTok, "own.txt", []byte("own notes"))
+		_, ff := e2eUpload(t, api+"/files?access=family", aliceTok, "family.txt", []byte("family notes"))
+		_, of := e2eUpload(t, api+"/files?access=solo", aliceTok, "own.txt", []byte("own notes"))
+		if ff.Access == nil || *ff.Access != "family" || of.Access == nil || *of.Access != "solo" {
+			t.Errorf("uploaded files: %+v %+v", ff, of)
+		}
 		var fs []File
-		call(t, "GET", api+"/files?space=family", aliceTok, nil, &fs)
+		call(t, "GET", api+"/files", bobTok, nil, &fs)
 		if len(fs) != 1 || fs[0].Name != "family.txt" {
-			t.Errorf("family files: %+v", fs)
+			t.Errorf("bob's files: %+v", fs)
 		}
 		call(t, "GET", api+"/files", aliceTok, nil, &fs)
 		if len(fs) != 2 {
@@ -2257,7 +2282,7 @@ return { made: made.applied, t1, rows1, changed: changed.applied, t2, rows2, dro
 
 const e2eHouse = `CREATE TABLE house (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
-    space      uuid NOT NULL REFERENCES archive.space,
+    access     text,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     address    text NOT NULL,
@@ -2268,8 +2293,7 @@ const e2eHouse = `CREATE TABLE house (
 CREATE INDEX house_search ON house USING gin (search);
 ALTER TABLE house ENABLE ROW LEVEL SECURITY;
 ALTER TABLE house FORCE ROW LEVEL SECURITY;
-CREATE POLICY viewer ON house FOR SELECT USING (space = ANY (archive.my_spaces()));
-CREATE POLICY editor ON house USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
+CREATE POLICY access ON house USING (archive.can(access)) WITH CHECK (archive.can(access));
 COMMENT ON TABLE house IS 'A house you own or rent';
 COMMENT ON COLUMN house.price IS 'Asking price';
 `
@@ -2371,7 +2395,7 @@ return { before, blocked, applied: plan.applied, deferred: plan.deferred, still:
 			t.Errorf("content after rename: %q", body)
 		}
 		st, _ = call(t, "PATCH", api+"/files/"+note.ID.String(), bobTok, map[string]string{"name": "mine.txt"}, nil)
-		wantStatus(t, st, 404, "bob renames alice's file")
+		wantStatus(t, st, 403, "a viewer renames a file")
 		st, _ = call(t, "PATCH", api+"/files/"+note.ID.String(), tok, map[string]string{"name": " "}, nil)
 		wantStatus(t, st, 400, "empty name")
 	})
@@ -2384,7 +2408,7 @@ const done = await archive.apply({ ...files, "house.sql": house }, { confirm: tr
 const again = await archive.apply(await archive.schema());
 return { planned: plan.statements.length, before: plan.applied, applied: done.applied, after: again.statements.length,
   tables: (await archive.tables()).map(t => t.name + ":" + t.columns.filter(c => c.required).map(c => c.name).join("+")) };`)
-		if fmt.Sprintf("%v %v %v", got["before"], got["applied"], got["after"]) != "false true 0" || fmt.Sprint(got["planned"]) == "0" || fmt.Sprint(got["tables"]) != "[house:address]" {
+		if fmt.Sprintf("%v %v %v", got["before"], got["applied"], got["after"]) != "false true 0" || fmt.Sprint(got["planned"]) == "0" || fmt.Sprint(got["tables"]) != "[house:address member:email]" {
 			t.Errorf("apply: %v", got)
 		}
 		if files := in.must("schema", "pull"); !strings.Contains(files, "-- house.sql") {
@@ -2396,7 +2420,7 @@ return { planned: plan.statements.length, before: plan.applied, applied: done.ap
 		resp, body := e2eGet(t, api+"/run/docs", tok)
 		docs := string(body)
 		for _, want := range []string{"declare const archive", "sql(query: string, ...params: unknown[]): Promise<Row[]>", "interface Money { amount: number; currency: Currency }",
-			"/** A house you own or rent. */\ninterface House extends Base {\n    address: string;\n    /** Asking price. */\n    price?: Money;\n    sold?: boolean;\n}", "house: House;", "type Email = string;", "read(fileId: string): Promise<Model>;", "edit(fileId: string, edits: Edit[]): Promise<StoredFile>;"} {
+			"/** A house you own or rent. */\ninterface House extends Base {\n    /** Group that sees the row, like hr; null is the whole workspace. */\n    access?: string;\n    address: string;\n    /** Asking price. */\n    price?: Money;\n    sold?: boolean;\n}", "house: House;", "type Email = string;", "read(fileId: string): Promise<Model>;", "edit(fileId: string, edits: Edit[]): Promise<StoredFile>;"} {
 			if resp.StatusCode != 200 || !strings.Contains(docs, want) {
 				t.Errorf("docs lack %q:\n%s", want, docs)
 			}
@@ -2418,16 +2442,19 @@ const files = await archive.files();
 const file = await archive.file(files[0].id);
 console.log("made", { a: a.address });
 return { price: a.price, sold: b.sold, listed: listed.map(h => h.id === b.id), priced: priced.price?.amount, cleared: cleared.price,
-  hit: hits.find(h => h.type === "house")?.data.address, n, text: file.text, spaces: (await archive.spaces()).length };`)
+  hit: hits.find(h => h.type === "house")?.data.address, n, text: file.text, members: (await archive.list("member")).length };`)
 		want := map[string]string{"price": "map[amount:950000 currency:USD]", "sold": "false", "listed": "[true]", "priced": "500000", "cleared": "<nil>",
-			"hit": "12 Willow Street", "n": "1", "text": "Viewing on Friday at the canal house", "spaces": "1"}
+			"hit": "12 Willow Street", "n": "1", "text": "Viewing on Friday at the canal house", "members": "2"}
 		for k, v := range want {
 			if fmt.Sprint(got[k]) != v {
 				t.Errorf("%s = %v, want %s", k, got[k], v)
 			}
 		}
-		if out := run(t, bobTok, `return (await archive.list("house")).length + (await archive.sql("SELECT * FROM house")).length`); string(out.Result) != "0" || out.Error != "" {
-			t.Errorf("bob sees alice's houses: %+v", out)
+		if out := run(t, bobTok, `return (await archive.list("house")).length + (await archive.sql("SELECT * FROM house")).length`); string(out.Result) != "4" || out.Error != "" {
+			t.Errorf("bob, a viewer, reads the houses: %+v", out)
+		}
+		if out := run(t, bobTok, `await archive.create("house", { address: "1 Bob Lane" })`); !strings.Contains(out.Error, "permission denied") {
+			t.Errorf("bob, a viewer, adds a house: %+v", out)
 		}
 	})
 
@@ -2746,10 +2773,10 @@ func TestChatStreamsTheAgentLoopThroughRunAndKeepsEachUsersHistory(t *testing.T)
 			close(hung)
 		case first == "boom" && len(msgs) == 1:
 			tool(`{"code": "throw new Error(\"boom\")"}`)
-		case first == "how many spaces?" && len(msgs) == 1:
-			tool(`{"code": "return (await archive.spa`, `ces()).length * 7"}`)
+		case first == "how many members?" && len(msgs) == 1:
+			tool(`{"code": "return (await archive.list(\"mem`, `ber\")).length * 7"}`)
 		case answered:
-			text("You have ", "one space.")
+			text("You have ", "two members.")
 		default:
 			text("Hello again.")
 		}
@@ -2766,7 +2793,7 @@ func TestChatStreamsTheAgentLoopThroughRunAndKeepsEachUsersHistory(t *testing.T)
 	var chatID string
 
 	t.Run("StreamsTextCodeAndRunResultsThenSavesTheTurn", func(t *testing.T) {
-		st, evs := e2eChat(ctx, t, api, tok, map[string]any{"text": "how many spaces?"}, nil)
+		st, evs := e2eChat(ctx, t, api, tok, map[string]any{"text": "how many members?"}, nil)
 		wantStatus(t, st, 200, "chat")
 		chatID = fmt.Sprint(evs[0]["chat"].(map[string]any)["id"])
 		if got := e2eKinds(evs); got != "chat,thinking,tool,code,run,result,text,done" {
@@ -2780,12 +2807,12 @@ func TestChatStreamsTheAgentLoopThroughRunAndKeepsEachUsersHistory(t *testing.T)
 			case "text":
 				text = append(text, fmt.Sprint(ev["text"]))
 			case "result":
-				if fmt.Sprint(ev["result"]) != "7" || ev["error"] != "" || ev["id"] != "t1" {
+				if fmt.Sprint(ev["result"]) != "14" || ev["error"] != "" || ev["id"] != "t1" {
 					t.Errorf("result event: %v", ev)
 				}
 			}
 		}
-		if strings.Join(codes, "|") != "return (await archive.spa|return (await archive.spaces()).length * 7" || strings.Join(text, "") != "You have one space." {
+		if strings.Join(codes, "|") != `return (await archive.list("mem|return (await archive.list("member")).length * 7` || strings.Join(text, "") != "You have two members." {
 			t.Errorf("streamed code %q, text %q", codes, text)
 		}
 		mu.Lock()
@@ -2800,7 +2827,7 @@ func TestChatStreamsTheAgentLoopThroughRunAndKeepsEachUsersHistory(t *testing.T)
 		if sys := fmt.Sprint(first["system"]); !strings.Contains(sys, "Today is") || !strings.Contains(sys, "alice@example.com") {
 			t.Errorf("system: %s", sys)
 		}
-		if s, _ := json.Marshal(second["messages"]); len(second["messages"].([]any)) != 3 || !strings.Contains(string(s), `"signature":"sig"`) || !strings.Contains(string(s), `\"result\":7`) {
+		if s, _ := json.Marshal(second["messages"]); len(second["messages"].([]any)) != 3 || !strings.Contains(string(s), `"signature":"sig"`) || !strings.Contains(string(s), `\"result\":14`) {
 			t.Errorf("second model request: %s", s)
 		}
 	})
@@ -2808,7 +2835,7 @@ func TestChatStreamsTheAgentLoopThroughRunAndKeepsEachUsersHistory(t *testing.T)
 	t.Run("HistoryIsListedOpenedRenamedAndOnlyYours", func(t *testing.T) {
 		var list []Chat
 		call(t, "GET", api+"/chats", tok, nil, &list)
-		if len(list) != 1 || list[0].ID.String() != chatID || list[0].Title != "how many spaces?" || list[0].Messages != nil {
+		if len(list) != 1 || list[0].ID.String() != chatID || list[0].Title != "how many members?" || list[0].Messages != nil {
 			t.Fatalf("chats: %+v", list)
 		}
 		var c struct {
@@ -2823,9 +2850,9 @@ func TestChatStreamsTheAgentLoopThroughRunAndKeepsEachUsersHistory(t *testing.T)
 			t.Errorf("saved roles: %v", roles)
 		}
 		var renamed Chat
-		st, _ := call(t, "PATCH", api+"/chats/"+chatID, tok, map[string]string{"title": "  Counting   spaces "}, &renamed)
+		st, _ := call(t, "PATCH", api+"/chats/"+chatID, tok, map[string]string{"title": "  Counting   members "}, &renamed)
 		wantStatus(t, st, 200, "rename")
-		if renamed.Title != "Counting spaces" {
+		if renamed.Title != "Counting members" {
 			t.Errorf("renamed: %+v", renamed)
 		}
 		var bobs []Chat
@@ -2840,7 +2867,7 @@ func TestChatStreamsTheAgentLoopThroughRunAndKeepsEachUsersHistory(t *testing.T)
 			t.Errorf("bob lists %+v", bobs)
 		}
 		st, evs := e2eChat(ctx, t, api, tok, map[string]any{"chat": chatID, "text": "thanks"}, nil)
-		if st != 200 || e2eKinds(evs) != "chat,text,done" || fmt.Sprint(evs[0]["chat"].(map[string]any)["title"]) != "Counting spaces" {
+		if st != 200 || e2eKinds(evs) != "chat,text,done" || fmt.Sprint(evs[0]["chat"].(map[string]any)["title"]) != "Counting members" {
 			t.Errorf("follow-up: %d %v", st, evs)
 		}
 	})
@@ -3374,7 +3401,7 @@ func TestTwoWorkspacesInOneProcessSeeNothingOfEachOther(t *testing.T) {
 		if st != 200 || !strings.Contains(string(out.Result), `"db":"archive_`+ws+`"`) || !strings.Contains(string(out.Result), `"n":1`) {
 			t.Errorf("bob's raw SQL: %d %+v", st, out)
 		}
-		if _, out := e2eRun(t, api, bob, `return await archive.sql("SELECT set_config('role', '`+one+`_admin', true)")`); !strings.Contains(out.Error, "permission denied") {
+		if _, out := e2eRun(t, api, bob, `return await archive.sql("SELECT set_config('role', '`+one+`_owner', true)")`); !strings.Contains(out.Error, "permission denied") {
 			t.Errorf("bob takes on a role of workspace one: %+v", out)
 		}
 		if n := in.psql("archive", "SELECT count(*) FROM pg_roles WHERE rolname = '"+ws+"_authenticator'"); n != "1" {
@@ -3524,8 +3551,8 @@ func TestWorkspacesIsolateWhenArchiveIsNotASuperuser(t *testing.T) {
 		s, _, _ := in.run(code, "-workspace", b, "-as", "bob@bee.test", "run", "-")
 		return decode[RunOutput](t, s)
 	}
-	aAdmin := a + "_admin"
-	aUser := host.psqlIn("tenantmain", "SELECT '"+a+"' || '_u' || translate(rtrim(encode(uuid_send(id), 'base64'), '='), '+/', '-_') FROM archive.\"user\" WHERE email = 'alice@example.com'")
+	aAdmin := a + "_owner"
+	aUser := host.psqlIn("tenantmain", "SELECT '"+a+"' || '_u' || translate(rtrim(encode(uuid_send(id), 'base64'), '='), '+/', '-_') FROM archive.member WHERE email = 'alice@example.com'")
 
 	t.Run("BobRunsInHisOwnDatabase", func(t *testing.T) {
 		out := bob(`return await archive.sql("SELECT current_database() AS db")`)
@@ -3591,21 +3618,23 @@ func TestWorkspacesIsolateWhenArchiveIsNotASuperuser(t *testing.T) {
 			t.Errorf("alice cannot see her own file: %s", got)
 		}
 	})
-	t.Run("RemovingASpaceDeletesItsRowsFilesSecretsAndRoles", func(t *testing.T) {
+	t.Run("MembersAndGroupsBecomeRolesThatGoAwayWithThem", func(t *testing.T) {
 		in := in.on(t)
-		in.must("space", "add", "team")
-		base := host.psqlIn("tenantmain", "SELECT role FROM archive.space WHERE name = 'team'")
+		in.must("user", "add", "tess@example.com", "-role", "editor")
+		in.groups("tess@example.com", "team")
 		path := filepath.Join(in.dir, "team.txt")
 		os.WriteFile(path, []byte("team memo"), 0o644)
-		f := decode[File](t, in.must("file", "add", path, "-space", "team"))
-		in.must("create", "ledger", "-space", "team", `{"codename": "Team", "ssn": "123-45-6789", "document": "`+f.ID.String()+`"}`)
-		in.must("create", "ledger", `{"codename": "Home"}`)
-		in.must("space", "remove", "team")
-		got := host.psqlIn("tenantmain", "SELECT (SELECT count(*) FROM ledger WHERE codename = 'Team') || ',' || (SELECT count(*) FROM ledger WHERE codename = 'Home') || ',' || "+
-			"(SELECT count(*) FROM archive.secret) || ',' || (SELECT count(*) FROM archive.file WHERE id = '"+f.ID.String()+"') || ',' || "+
-			"(SELECT count(*) FROM archive.space WHERE name = 'team') || ',' || (SELECT count(*) FROM pg_roles WHERE starts_with(rolname, '"+base+"'))")
-		if got != "0,1,0,0,0,0" {
-			t.Errorf("after removing team (team rows, home rows, secrets, team file, team space, team roles): %s", got)
+		f := decode[File](t, in.must("-as", "tess@example.com", "file", "add", path, "-access", "team"))
+		in.must("-as", "tess@example.com", "create", "ledger", `{"codename": "Team", "access": "team", "document": "`+f.ID.String()+`"}`)
+		if got := names2(decode[[]row](t, in.must("-as", "tess@example.com", "list", "ledger")), "codename"); !strings.Contains(got, "Team") || !strings.Contains(got, "Zephyr") {
+			t.Errorf("tess's ledger: %s", got)
+		}
+		role := host.psqlIn("tenantmain", "SELECT '"+a+"' || '_u' || translate(rtrim(encode(uuid_send(id), 'base64'), '='), '+/', '-_') FROM archive.member WHERE email = 'tess@example.com'")
+		in.must("user", "remove", "tess@example.com")
+		got := host.psqlIn("tenantmain", "SELECT (SELECT count(*) FROM ledger WHERE codename = 'Team') || ',' || (SELECT count(*) FROM archive.file WHERE id = '"+f.ID.String()+"') || ',' || "+
+			"(SELECT count(*) FROM pg_roles WHERE rolname IN ('"+role+"', '"+strings.Replace(role, "_u", "_m", 1)+"', '"+a+"_g_team'))")
+		if got != "1,1,0" {
+			t.Errorf("after removing tess (her rows, her file, her roles): %s", got)
 		}
 		if n := host.psqlIn("tenantmain", "SELECT count(*) FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid JOIN pg_roles u ON u.oid = m.member WHERE u.rolname = 'cloudsql' AND m.set_option AND starts_with(r.rolname, '"+a+"')"); n != "0" {
 			t.Errorf("archive's role can still set %s workspace roles", n)
@@ -3699,29 +3728,29 @@ func TestInviteOnlySignInUsersAndSigningInToSeveralWorkspaces(t *testing.T) {
 	who := func(ps []Person) string {
 		var out []string
 		for _, p := range ps {
-			out = append(out, fmt.Sprintf("%s %s %v", p.Email, p.Name, p.Admin))
+			out = append(out, fmt.Sprintf("%s %s %s", p.Email, p.Name, p.Role))
 		}
 		return strings.Join(out, ",")
 	}
 	var people []Person
 	st, _ = e2eDo(t, "GET", srv.url+"/auth/users", nil, nil, &people, dave)
-	if want := "alice@example.com  true,dave@example.com Dave Day false,frank@example.com  false"; st != 200 || who(people) != want {
+	if want := "alice@example.com  owner,dave@example.com Dave Day viewer,frank@example.com  viewer"; st != 200 || who(people) != want {
 		t.Errorf("dave lists the people in the workspace: %d %s", st, who(people))
 	}
 	st, _ = call(t, "GET", srv.url+"/auth/users", "", nil, nil)
 	wantStatus(t, st, 401, "the people without signing in")
 	st, _ = e2eDo(t, "POST", srv.url+"/auth/users", nil, map[string]any{"email": "carol@example.com"}, nil, dave)
-	wantStatus(t, st, 403, "a non-admin invites someone")
+	wantStatus(t, st, 403, "a viewer invites someone")
 	st, _ = e2eDo(t, "DELETE", srv.url+"/auth/users/frank@example.com", nil, nil, nil, dave)
-	wantStatus(t, st, 403, "a non-admin removes someone")
-	scoped := decode[Token](t, in.must("token", "create")).Secret
+	wantStatus(t, st, 403, "a viewer removes someone")
+	scoped := decode[Token](t, in.must("token", "create", "-viewer")).Secret
 	st, _ = call(t, "POST", srv.url+"/auth/users", scoped, map[string]any{"email": "carol@example.com"}, nil)
-	wantStatus(t, st, 403, "a scoped token invites someone")
+	wantStatus(t, st, 403, "an owner's viewer-only token invites someone")
 	st, _ = e2eDo(t, "POST", srv.url+"/auth/users", nil, map[string]any{"email": "not an email"}, nil, alice)
 	wantStatus(t, st, 422, "inviting something that is not an email")
-	st, _ = e2eDo(t, "POST", srv.url+"/auth/users", nil, map[string]any{"email": " Carol@Example.com ", "admin": true}, &people, alice)
-	if want := "alice@example.com  true,carol@example.com  true,dave@example.com Dave Day false,frank@example.com  false"; st != 201 || who(people) != want {
-		t.Errorf("an admin invites carol as an admin: %d %s", st, who(people))
+	st, _ = e2eDo(t, "POST", srv.url+"/auth/users", nil, map[string]any{"email": " Carol@Example.com ", "role": "owner"}, &people, alice)
+	if want := "alice@example.com  owner,carol@example.com  owner,dave@example.com Dave Day viewer,frank@example.com  viewer"; st != 201 || who(people) != want {
+		t.Errorf("an owner invites carol as an owner: %d %s", st, who(people))
 	}
 	st, _ = e2eDo(t, "POST", srv.url+"/auth/users", nil, map[string]any{"email": "carol@example.com"}, nil, alice)
 	wantStatus(t, st, 409, "inviting carol twice")
@@ -3733,8 +3762,8 @@ func TestInviteOnlySignInUsersAndSigningInToSeveralWorkspaces(t *testing.T) {
 		t.Fatalf("carol's first Google sign-in: %+v", me)
 	}
 	st, _ = e2eDo(t, "DELETE", srv.url+"/auth/users/carol@example.com", nil, nil, &people, alice)
-	if want := "alice@example.com  true,dave@example.com Dave Day false,frank@example.com  false"; st != 200 || who(people) != want {
-		t.Errorf("an admin removes carol: %d %s", st, who(people))
+	if want := "alice@example.com  owner,dave@example.com Dave Day viewer,frank@example.com  viewer"; st != 200 || who(people) != want {
+		t.Errorf("an owner removes carol: %d %s", st, who(people))
 	}
 	if st, c := srv.oidc(t, "google", maps.Clone(carolID)); st != 403 || c != nil {
 		t.Errorf("carol signs in with Google after she was removed: %d", st)
@@ -3754,14 +3783,14 @@ func TestInviteOnlySignInUsersAndSigningInToSeveralWorkspaces(t *testing.T) {
 		t.Fatalf("carol's workspaces: %+v", me)
 	}
 	var out RunOutput
-	st, _ = e2eDo(t, "POST", srv.url+"/api/run", nil, map[string]string{"code": "return (await archive.spaces()).map((s) => s.level).join(',')"}, &out, carol)
+	st, _ = e2eDo(t, "POST", srv.url+"/api/run", nil, map[string]string{"code": "return (await archive.list('member')).map((m) => m.role).join(',')"}, &out, carol)
 	if st != 200 || string(out.Result) != `"owner"` {
 		t.Errorf("carol runs in her workspace: %d %+v", st, out)
 	}
 	st, _ = e2eDo(t, "POST", srv.url+"/auth/workspaces", nil, map[string]string{"name": "Mine", "owner": "carol@example.com"}, nil, carol)
 	wantStatus(t, st, 403, "a workspace owner creates a workspace for someone")
 
-	full := decode[Token](t, in.must("token", "create", "-full")).Secret
+	full := decode[Token](t, in.must("token", "create")).Secret
 	var second Workspace
 	st, _ = call(t, "POST", srv.url+"/auth/workspaces", full, map[string]string{"name": "Second", "owner": "alice@example.com"}, &second)
 	wantStatus(t, st, 201, "an instance admin creates a workspace")
@@ -3773,7 +3802,7 @@ func TestInviteOnlySignInUsersAndSigningInToSeveralWorkspaces(t *testing.T) {
 	if st != 200 || me.Workspace != second.ID {
 		t.Errorf("me in the workspace the header names: %d %+v", st, me)
 	}
-	st, _ = e2eDo(t, "POST", srv.url+"/api/run", map[string]string{"Archive-Workspace": second.ID}, map[string]string{"code": "return (await archive.spaces()).map((s) => s.level).join(',')"}, &out, alice)
+	st, _ = e2eDo(t, "POST", srv.url+"/api/run", map[string]string{"Archive-Workspace": second.ID}, map[string]string{"code": "return (await archive.list('member')).map((m) => m.role).join(',')"}, &out, alice)
 	if st != 200 || string(out.Result) != `"owner"` {
 		t.Errorf("alice runs in the second workspace with the same cookie: %d %+v", st, out)
 	}
@@ -3790,7 +3819,7 @@ func TestInviteOnlySignInUsersAndSigningInToSeveralWorkspaces(t *testing.T) {
 	wantStatus(t, st, 201, "carol makes a token in the second workspace")
 	st, _ = call(t, "GET", srv.url+"/api/types", tok.Secret, nil, nil)
 	wantStatus(t, st, 200, "carol's token in the second workspace")
-	if errs := in.fails("-workspace", second.ID, "-as", "carol@example.com", "user", "remove", "alice@example.com"); !strings.Contains(errs, "only admins") {
+	if errs := in.fails("-workspace", second.ID, "-as", "carol@example.com", "user", "remove", "alice@example.com"); !strings.Contains(errs, "forbidden") {
 		t.Errorf("carol removes alice: %s", errs)
 	}
 	in.must("-workspace", second.ID, "user", "remove", "carol@example.com")
@@ -3802,11 +3831,11 @@ func TestInviteOnlySignInUsersAndSigningInToSeveralWorkspaces(t *testing.T) {
 	if st != 200 || me.Workspace != made || len(me.All) != 1 {
 		t.Errorf("carol still in her own workspace: %d %+v", st, me)
 	}
-	if n := in.psql("archive", "SELECT count(*) FROM pg_roles WHERE starts_with(rolname, '"+second.ID+"_u') AND rolname <> '"+second.ID+"_user'"); n != "1" {
+	if n := in.psql("archive", "SELECT count(*) FROM pg_roles WHERE starts_with(rolname, '"+second.ID+"_u')"); n != "1" {
 		t.Errorf("%s user roles left in the second workspace, want alice's", n)
 	}
-	if got := decode[[]Member](t, in.must("-workspace", second.ID, "space", "members", "alice_example_com")); len(got) != 1 {
-		t.Errorf("members of alice's space in the second workspace: %+v", got)
+	if got := decode[[]row](t, in.must("-workspace", second.ID, "list", "member")); len(got) != 1 || got[0]["email"] != "alice@example.com" {
+		t.Errorf("members of the second workspace: %+v", got)
 	}
 
 	st, cs := e2eDo(t, "POST", srv.url+"/auth/signout", nil, nil, nil, alice)
@@ -3952,7 +3981,7 @@ func e2eFrom(t *testing.T, method, url, origin string, cookies ...*http.Cookie) 
 	req.Header.Set("X-Forwarded-For", "203.0.113.7")
 	if method == "OPTIONS" {
 		req.Header.Set("Access-Control-Request-Method", "PATCH")
-		req.Header.Set("Access-Control-Request-Headers", "content-type,archive-workspace,archive-space")
+		req.Header.Set("Access-Control-Request-Headers", "content-type,archive-workspace")
 	}
 	for _, c := range cookies {
 		req.AddCookie(c)
@@ -3973,7 +4002,7 @@ func TestTheWebAppOnItsOwnHostCallsTheAPIHostWithTheAPIsCookie(t *testing.T) {
 	st, hdr := e2eFrom(t, "OPTIONS", srv.url+"/api/chats", "https://app.test")
 	allowed := hdr.Get("Access-Control-Allow-Headers") + " " + hdr.Get("Access-Control-Allow-Methods")
 	if st != 204 || hdr.Get("Access-Control-Allow-Origin") != "https://app.test" || hdr.Get("Access-Control-Allow-Credentials") != "true" || hdr.Get("Access-Control-Max-Age") == "" ||
-		!strings.Contains(hdr.Get("Vary"), "Origin") || !strings.Contains(allowed, "Archive-Workspace") || !strings.Contains(allowed, "Archive-Space") || !strings.Contains(allowed, "Content-Type") || !strings.Contains(allowed, "PATCH") {
+		!strings.Contains(hdr.Get("Vary"), "Origin") || !strings.Contains(allowed, "Archive-Workspace") || strings.Contains(allowed, "Archive-Space") || !strings.Contains(allowed, "Content-Type") || !strings.Contains(allowed, "PATCH") {
 		t.Errorf("preflight from the app: %d %v", st, hdr)
 	}
 	if strings.Contains(allowed, "Authorization") {

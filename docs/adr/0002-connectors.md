@@ -6,7 +6,7 @@
 
 ## Summary
 
-Connectors bring a space's data in from the services a business already uses: mail, files, chat, docs, work tracking, CRM, support and finance. They are read-only. Each keeps a delta cursor per connection and syncs only what changed, woken by the provider's change notifications where it can send them and by polling the same delta endpoint where it cannot.
+Connectors bring a workspace's data in from the services a business already uses: mail, files, chat, docs, work tracking, CRM, support and finance. They are read-only. Each keeps a delta cursor per connection and syncs only what changed, woken by the provider's change notifications where it can send them and by polling the same delta endpoint where it cannot.
 
 Mulholland registers one app per provider and gets it approved once. The client ids ship in the binary, like Thunderbird or rclone ship theirs, so a self-hosted Archive connects without its owner registering anything. Every client id can be overridden for anyone who wants their own app, and services that issue API tokens can be connected with a pasted token and no app at all.
 
@@ -16,7 +16,7 @@ This replaces "polling connectors" in ADR 0001's "Not doing" list.
 
 - **Read-only**: connectors request read scopes only and never write back.
 - **In Archive, not in the agent**: syncing is plain Go in the binary with no LLM, like file processing. Agents read what landed and classify it, as in ADR 0001.
-- **Per space**: a connection belongs to one space, and what it syncs lands in that space under row-level security.
+- **Per workspace**: a connection belongs to one workspace, and what it syncs lands there under row-level security.
 - **One table**: `archive.connection` holds the provider, the account, the encrypted refresh token or API token (`ARCHIVE_SECRET_KEY`, like secret fields), the delta cursor, the change subscription and its expiry, and the last sync and error.
 - **Coordination through Postgres**: a sync takes its connection row with `SELECT … FOR UPDATE SKIP LOCKED`, so any number of instances share the work and a connection syncs on one at a time. A change notification only marks the connection due and returns.
 
@@ -53,7 +53,7 @@ The table shapes are decided per connector when it is built.
 
 ## Connectors
 
-The list a B2B space needs, by area. "Change feed" is what the connector syncs from; "Push" is how changes can wake it.
+The list a B2B workspace needs, by area. "Change feed" is what the connector syncs from; "Push" is how changes can wake it.
 
 ### Mail and calendar
 

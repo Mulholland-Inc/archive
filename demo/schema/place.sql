@@ -1,7 +1,7 @@
 CREATE TYPE place_kind AS ENUM ('home', 'restaurant', 'cafe', 'bar', 'shop', 'doctor', 'gym', 'park', 'museum', 'office', 'school', 'hotel', 'other');
 CREATE TABLE place (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
-    space      uuid NOT NULL REFERENCES archive.space,
+    access     text,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     name text NOT NULL,
@@ -16,8 +16,7 @@ CREATE TABLE place (
 CREATE INDEX place_search ON place USING gin (search);
 ALTER TABLE place ENABLE ROW LEVEL SECURITY;
 ALTER TABLE place FORCE ROW LEVEL SECURITY;
-CREATE POLICY viewer ON place FOR SELECT USING (space = ANY (archive.my_spaces()));
-CREATE POLICY editor ON place USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
+CREATE POLICY access ON place USING (archive.can(access)) WITH CHECK (archive.can(access));
 COMMENT ON TABLE place IS 'A place you go to or want to remember
 icon: map-pin';
 COMMENT ON COLUMN place.name IS 'Name of the place';

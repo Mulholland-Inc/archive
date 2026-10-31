@@ -31,7 +31,7 @@ Two Postgres schemas. Tables are named in the singular, and every id is a UUIDv7
 
 | Schema | Holds |
 |---|---|
-| `archive` | Archive's own tables: `space`, `user`, `token`, `chat`, `workflow`, `workflow_run`, `revision`, `file`, `upload` and `secret`. It also holds the built-in types, as domains (`archive.email`, `archive.us_ein`, `archive.phone`, …) and composite types (`archive.money`, `archive.address`, `archive.timestamp`, …) |
+| `archive` | Archive's own tables: `member`, `user`, `token`, `chat`, `workflow`, `workflow_run`, `revision`, `file`, `upload` and `secret`. It also holds the built-in types, as domains (`archive.email`, `archive.us_ein`, `archive.phone`, …) and composite types (`archive.money`, `archive.address`, `archive.timestamp`, …) |
 | `public` | One table per type, where the table is the type and a row is the entity, and the views over them |
 
 Each workspace (see [Workspaces](#workspaces)) has a database of its own with these two schemas. Only the main database's `user` and `token` are used, since people and their secrets are the instance's, not a workspace's; it also holds the instance's own tables: `workspace`, `due` and `setting`.
@@ -43,7 +43,7 @@ Every type table carries the same columns, row-level security and search column,
 ```sql
 CREATE TABLE house (
   id         uuid PRIMARY KEY DEFAULT uuidv7(),
-  space      uuid NOT NULL REFERENCES archive.space,
+  access     text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   address    text NOT NULL,
@@ -54,13 +54,13 @@ CREATE TABLE house (
 CREATE INDEX house_search ON house USING gin (search);
 ALTER TABLE house ENABLE ROW LEVEL SECURITY;
 ALTER TABLE house FORCE ROW LEVEL SECURITY;
-CREATE POLICY member ON house USING (space = ANY (archive.my_spaces()));
+CREATE POLICY access ON house USING (archive.can(access)) WITH CHECK (archive.can(access));
 COMMENT ON TABLE house IS 'A house you own or rent
 icon: house';
 ```
 
 - **Comments carry settings**: the first lines of a `COMMENT ON TABLE` or `COMMENT ON VIEW` are the description; trailing `key: value` lines are settings. `icon` (a Lucide icon name, checked against the list in `src/icons.json`) goes on tables and views; `layout` (`table`, `board` or `calendar`) and `by` (one of the view's columns) go on views. An unknown key, icon, layout or column fails the plan. The catalog (`GET /api/types`, `archive.tables()`, the code mode docs) shows the description without those lines, plus `kind`, `icon`, `layout` and `by`; the generated DDL keeps the whole comment. Parsing is `catalogComment` in `src/catalog.go`. Column comments may use the same convention later.
-- **Views** are Postgres views in `public`, written in the same DDL: a filtered, grouped or calendar way to look at a table, with its layout in its comment. Every view needs `WITH (security_invoker = true)`, so row-level security applies to whoever reads it, and an `id uuid` column. Views show in the catalog next to tables with `kind: "view"`; list, get and search read them, and writes to them fail with 405. They hold no space of their own: row-level security on the tables they read filters their rows.
+- **Views** are Postgres views in `public`, written in the same DDL: a filtered, grouped or calendar way to look at a table, with its layout in its comment. Every view needs `WITH (security_invoker = true)`, so row-level security applies to whoever reads it, and an `id uuid` column. Views show in the catalog next to tables with `kind: "view"`; list, get and search read them, and writes to them fail with 405. They hold no access of their own: row-level security on the tables they read filters their rows.
 
 ```sql
 CREATE VIEW task_board WITH (security_invoker = true) AS SELECT * FROM task;
@@ -72,7 +72,7 @@ icon: kanban';
 
 - **Built-in types**: Postgres enforces their format through domains. A Go normalizer per domain cleans messy input first, read as US input, so the same thing is stored the same way whatever source it came from.
 - **References** are foreign keys to the target table. **Lists** are arrays. There is no type inheritance.
-- **Across tables**: search and "everything in a space" are a `UNION ALL` over the `public` tables, which Archive generates from the catalog.
+- **Across tables**: search is a `UNION ALL` over the `public` tables, which Archive generates from the catalog.
 
 ## Schema changes
 
@@ -107,10 +107,9 @@ Agents get one MCP tool, `run`, which takes a TypeScript script and runs it insi
   - rows: `sql`, `list`, `get`, `create`, `update`, `delete`, `search`;
   - schema: `schema`, `apply`, `tables`;
   - files and documents: `files`, `file`, `read`, `edit`;
-  - workflows: `workflows`, `deploy`, `test`, `start`, `runs`;
-  - `spaces`.
+  - workflows: `workflows`, `deploy`, `test`, `start`, `runs`.
 
-  `create(table, data)` inserts a row; `create("Name.docx" | ".xlsx" | ".pptx")` makes an empty document. Writes clean input per domain in Go before Postgres checks it.
+  `create(table, data)` inserts a row, and members are rows too: `create("member", { email, role, groups })`; `create("Name.docx" | ".xlsx" | ".pptx")` makes an empty document. Writes clean input per domain in Go before Postgres checks it.
 - **Documentation**: the tool's description is the SDK's `sdk.d.ts`, plus an interface per table generated from the catalog, so agents write against the real schema.
 
 The same SDK runs from `POST /api/run` and `archive run script.ts`. The HTTP API offers the same operations as REST under `/api`. Every request carries a user's session or token.
@@ -142,21 +141,24 @@ Archive is listed in ChatGPT, Claude, Gemini and Grok as one remote MCP server. 
 
 ## Users and permissions
 
-- **Spaces**: every user gets a private space, and shared spaces can be made for a household or a team. Every row and file belongs to one space.
-- **Roles are Postgres roles**: users, space roles (`owner`, `admin`, `editor`, `viewer`) and tokens are real Postgres roles, prefixed by the workspace's UUID (`"<id>_…"`), and row-level security filters every query. A bug in one surface cannot leak another user's data, and plain SQL as a user role gets the same access as the app.
-- **One identity per person**: a user is one row of `archive.user` in the main database, with the workspaces they belong to. In each of those workspaces they have a Postgres role and a personal space, made when they are added (`archive user add`) and dropped when they are removed (`archive user remove`).
-- **Tokens** belong to a user and one workspace, and can only narrow that user's rights there. Agents get their own tokens. Tokens and sessions are `arc_<secret>`, kept as hashes in the main database's `archive.token`; a session belongs to the person and works in all their workspaces.
-- **Sign-in is invite-only**: Google, Microsoft and Slack (OpenID Connect) and GitHub (OAuth), each turned on by its one variable, `ARCHIVE_<PROVIDER>=https://<client id>:<client secret>@<provider host>` with the id and secret URL-escaped, plus passkeys. Archive sends no mail and makes no sign-in links. An admin invites someone by email (`archive user add`, or the Users page and `/auth/users`); their first provider sign-in under that email links the provider's account to them, and later sign-ins match that link. An invite only ever matches an email the provider says is verified: `email_verified` for Google, Slack and Microsoft (or Microsoft's `xms_edov`, which stops a tenant from claiming someone else's domain), and GitHub's primary address with `verified`. Anyone else, and anyone removed from every workspace, is refused. After a provider sign-in the web app offers to add a passkey to the device. The first owner is whoever is added first with `archive user add`; with no provider set, the server says in its log that nobody can sign in. One sign-in reaches every workspace the person is in.
-- **Secret fields**: values of secret types such as `card` or `us_ssn` are encrypted in `archive.secret` with the workspace's data key. They are hidden from anyone not granted that type.
+- **Roles**: each workspace has three, `viewer` (reads every table), `editor` (also writes) and `owner` (also changes the schema with `archive.apply`, manages members, sees every row whatever its access, and reveals secret fields). They are the Postgres roles `"<id>_viewer"`, `"<id>_editor"` and `"<id>_owner"`, each granted the one before. The owners of workspace one are the instance admins.
+- **Groups**: a group such as `hr` or `parents` is the Postgres role `"<id>_g_<name>"`, with a name of 1 to 24 lowercase letters, digits or `_`. It exists while at least one member is in it; there is nothing else to create or delete.
+- **Access**: every table has an `access text` column. Null means the whole workspace sees the row; `'hr'` means only the hr group and the owners do. Every table carries exactly one policy, `CREATE POLICY access ON <t> USING (archive.can(access)) WITH CHECK (archive.can(access))`, with row-level security enabled and forced, and a plan without it is rejected. `archive.can(g)` is true when `g` is null, when `current_user` is in group `g` (`pg_has_role`), or when `current_user` is an owner. It relies on role membership, never on a session setting, because people run raw SQL. So a non-owner writes only rows whose access is null or one of their groups, and a table only HR sees is `access text NOT NULL DEFAULT 'hr' CHECK (access = 'hr')`. Files have the same `access` column and policy.
+- **Members**: `archive.member` (email, role, groups) in each workspace database lists its people. It is the catalog type `member`, so the usual calls manage it: `list("member")`, `create("member", { email, role, groups })`, `update("member", id, { groups: ["hr"] })`, `delete("member", id)`, the same under `/api/member`, and `archive set member <id> '{"groups":["hr"]}'`. Everyone reads it and only owners write it. A `SECURITY DEFINER` trigger turns each change into `CREATE ROLE`, `GRANT` and `REVOKE`: a member's identity role `"<id>_u<member id>"` is granted exactly one of viewer, editor or owner, plus their member role `"<id>_m<member id>"`, which holds their groups. Adding or removing the person in the main database happens in Go after the transaction commits. The last owner cannot be removed or demoted, and an email cannot change.
+- **Real Postgres roles**: row-level security filters every query, so a bug in one surface cannot leak rows, and plain SQL as a member gets the same access as the app.
+- **One identity per person**: a user is one row of `archive.user` in the main database, with the workspaces they belong to. Adding a member row (`archive user add`, or the Users page and `/auth/users`) invites them to that workspace; deleting it (`archive user remove`) takes them out, with their tokens.
+- **Tokens** belong to a user and one workspace, and act as that user there. A token can be viewer-only: it gets a role of its own granted `"<id>_viewer"` and the user's member role `"<id>_m<member id>"`, so it keeps their groups as they change and never has more than they do. A viewer-only token cannot make or revoke tokens or manage workspaces. Agents get their own tokens. Tokens and sessions are `arc_<secret>`, kept as hashes in the main database's `archive.token`; a session belongs to the person and works in all their workspaces.
+- **Sign-in is invite-only**: Google, Microsoft and Slack (OpenID Connect) and GitHub (OAuth), each turned on by its one variable, `ARCHIVE_<PROVIDER>=https://<client id>:<client secret>@<provider host>` with the id and secret URL-escaped, plus passkeys. Archive sends no mail and makes no sign-in links. An owner invites someone by email; their first provider sign-in under that email links the provider's account to them, and later sign-ins match that link. An invite only ever matches an email the provider says is verified: `email_verified` for Google, Slack and Microsoft (or Microsoft's `xms_edov`, which stops a tenant from claiming someone else's domain), and GitHub's primary address with `verified`. Anyone else, and anyone removed from every workspace, is refused. After a provider sign-in the web app offers to add a passkey to the device. The first person added with `archive user add` is an owner; with no provider set, the server says in its log that nobody can sign in. One sign-in reaches every workspace the person is in.
+- **Secret fields**: values of secret types such as `card` or `us_ssn` are encrypted in `archive.secret` with the workspace's data key. Their columns read back masked, and only owners can reveal them.
 
 ## Workspaces
 
 Every install serves many workspaces ([ADR 0003](0003-hosting.md)). A workspace is one customer's Archive: its own Postgres database on the same server, named `archive_<id>` by its UUID, its roles prefixed by that UUID, and its own data key, wrapped by `ARCHIVE_SECRET_KEY` in `archive.workspace`. The main database (`DATABASE_URL`) is workspace one. A workspace's own login role (`"<id>_authenticator"`, password derived from its data key) can connect only to its own database, so no shared login crosses workspaces, and that works without a database superuser (as on Cloud SQL and AlloyDB); the archive tables the system writes use row-level security enabled but not forced, so the owning role bypasses it for background and admin work while tenant roles stay filtered.
 
 - **Opening**: `src/workspace.go` holds the process's `Hub`: the main pool, the root key, the blob store and the open workspaces. A workspace's `Archive` (its pools, catalog, data key and run slots) opens on first use and closes 10 minutes after its last use, on a timer of its own; pools are small (8 app, 4 system, 2 DDL connections) and close idle connections after a minute. Opening applies `archive.sql` under the advisory lock and revision check. Startup opens only the main database, so it takes the same time however many workspaces there are.
-- **Finding it**: an API token belongs to one workspace, and a request naming another is refused. The web app's one session cookie works in all of the person's workspaces, and each request names the current one in `Archive-Workspace`, the way `Archive-Space` names the space; the server checks that the person is in it. Webhooks and file links carry the workspace UUID in their path.
+- **Finding it**: an API token belongs to one workspace, and a request naming another is refused. The web app's one session cookie works in all of the person's workspaces, and each request names the current one in `Archive-Workspace`; the server checks that the person is in it. Webhooks and file links carry the workspace UUID in their path.
 - **Limits**: each workspace runs at most 8 scripts at once, and waits 10 s for a slot before answering 429.
-- **Admins**: nobody makes a workspace for themselves. Instance admins, the admins of workspace one, list, create and delete workspaces, each with its first owner (`archive workspace add|list|delete`, `/auth/workspaces`); deleting a workspace drops its database and roles.
+- **Admins**: nobody makes a workspace for themselves. Instance admins, the owners of workspace one, list, create and delete workspaces, each with its first owner (`archive workspace add|list|delete`, `/auth/workspaces`); deleting a workspace drops its database and roles.
 - **Anthropic key**: the chat agent in every workspace uses the one `ANTHROPIC_API_KEY`; a workspace cannot set its own.
 
 ## Files
@@ -218,7 +220,7 @@ The same image runs in two ways, each serving any number of workspaces.
   `DATABASE_URL` reaches Postgres directly, with no pooler in between, since schema changes and creating workspaces hold a session-level advisory lock. Archive sets each database's default `search_path` and `timezone`.
 
   It runs on request-based billing and scales to zero: no CPU is needed between requests. Cloud Tasks calls `/tasks` at each due time, from the queue named after the service in its project and region, signed as `<service>-tasks@`, all of which Archive reads from `K_SERVICE` or `CLOUD_RUN_JOB` and the metadata server, so scheduled and table-triggered workflows and pending files start an instance when they need one.
-- The **`archive` Terraform provider** (`apps/terraform`) manages schema DDL (tables and views), spaces, tokens and access rules as code. It compares configured DDL with the database through the plan endpoint, so normalized output never shows as drift.
+- The **`archive` Terraform provider** (`apps/terraform`) manages schema DDL (tables and views), members and tokens as code. It compares configured DDL with the database through the plan endpoint, so normalized output never shows as drift.
 
 Not verified yet: a managed Postgres without a true superuser (Cloud SQL's `cloudsqlsuperuser`), and GCS through its XML API.
 

@@ -1,7 +1,7 @@
 CREATE TYPE payment_category AS ENUM ('income', 'rent', 'groceries', 'eating_out', 'transport', 'utilities', 'insurance', 'subscriptions', 'shopping', 'health', 'travel', 'gifts', 'savings', 'taxes', 'other');
 CREATE TABLE payment (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
-    space      uuid NOT NULL REFERENCES archive.space,
+    access     text,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     booked date NOT NULL,
@@ -16,8 +16,7 @@ CREATE TABLE payment (
 CREATE INDEX payment_search ON payment USING gin (search);
 ALTER TABLE payment ENABLE ROW LEVEL SECURITY;
 ALTER TABLE payment FORCE ROW LEVEL SECURITY;
-CREATE POLICY viewer ON payment FOR SELECT USING (space = ANY (archive.my_spaces()));
-CREATE POLICY editor ON payment USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
+CREATE POLICY access ON payment USING (archive.can(access)) WITH CHECK (archive.can(access));
 COMMENT ON TABLE payment IS 'Money in or out of an account; negative amounts are spending
 icon: arrow-left-right';
 COMMENT ON COLUMN payment.booked IS 'Booking date';

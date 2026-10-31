@@ -25,7 +25,7 @@
   const MORE = [
     { art: 'tokens', title: 'Share links', items: ['Private links for downloads and previews that expire on their own', 'A day by default, or any time you choose', 'No sign-in needed to open one'] },
     { art: 'files', title: 'Photos', items: ['Size, camera and time taken, saved automatically', 'Previews made on upload', 'Location removed on download when you ask'] },
-    { art: 'search', title: 'Search', items: ['File names and the text inside, next to your records', 'Results show the matching words', 'Filter by kind of file, space and date'] }
+    { art: 'search', title: 'Search', items: ['File names and the text inside, next to your records', 'Results show the matching words', 'Filter by kind of file and date'] }
   ];
 </script>
 
@@ -47,7 +47,7 @@
   <Row flip art="security" alt="A vault whose drawers are labeled by fingerprints">
     <h2>Kept once, seen by the right people.</h2>
     <p>Upload the same file twice and Archive keeps just one copy, along with its name, size and text.</p>
-    <p>Every file belongs to a space, so only the right people see it, wherever they look.</p>
+    <p>A file can be kept to one group, so only the right people see it, wherever they look.</p>
   </Row>
   <Row art="office" alt="A document, a spreadsheet and a slide on a workbench, one tile being swapped">
     <h2>Office files, edited in place.</h2>

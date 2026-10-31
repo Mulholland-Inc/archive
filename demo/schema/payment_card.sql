@@ -1,6 +1,6 @@
 CREATE TABLE payment_card (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
-    space      uuid NOT NULL REFERENCES archive.space,
+    access     text,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     name text NOT NULL,
@@ -13,8 +13,7 @@ CREATE TABLE payment_card (
 CREATE INDEX payment_card_search ON payment_card USING gin (search);
 ALTER TABLE payment_card ENABLE ROW LEVEL SECURITY;
 ALTER TABLE payment_card FORCE ROW LEVEL SECURITY;
-CREATE POLICY viewer ON payment_card FOR SELECT USING (space = ANY (archive.my_spaces()));
-CREATE POLICY editor ON payment_card USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
+CREATE POLICY access ON payment_card USING (archive.can(access)) WITH CHECK (archive.can(access));
 COMMENT ON TABLE payment_card IS 'A debit or credit card
 icon: credit-card';
 COMMENT ON COLUMN payment_card.name IS 'Your name for the card';
