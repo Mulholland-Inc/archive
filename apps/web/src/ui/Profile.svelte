@@ -1,9 +1,10 @@
 <script>
   import Icon from '#kit/Icon.svelte';
   import Avatar from './Avatar.svelte';
+  import Theme from '#kit/Theme.svelte';
   import { setFloating, ui } from './looks.svelte.js';
 
-  let { name, email = '', dev = false, ondev, onsignout, spaces = [], home, current = '', onpick, oncreate } = $props();
+  let { name, dev = false, ondev, onsignout, spaces = [], home, current = '', onpick, oncreate } = $props();
   let adding = $state(false);
   let draft = $state('');
   let failed = $state(false);
@@ -53,10 +54,9 @@
   <button class="me" type="button" aria-haspopup="menu" aria-expanded={open} aria-label="Account" onclick={() => (open = !open)}>
     <Avatar {name} />
     <span class="text">
-      <span class="name">{name}</span>
-      <span class="space">{dev ? (here ? label(here) : 'All spaces') : email}</span>
+      <span class="name" title={name}>{name}</span>
+      {#if dev}<span class="space">{here ? label(here) : 'All spaces'}</span>{/if}
     </span>
-    <span class="updown"><Icon name="chevrons-up-down" /></span>
   </button>
   {#if open}
     <div class="menu" role="menu">
@@ -79,6 +79,7 @@
         {/if}
         <hr />
       {/if}
+      <div class="item plain"><span>Appearance</span><Theme /></div>
       <button class="item" role="menuitemcheckbox" aria-checked={ui.floating} onclick={() => setFloating(!ui.floating)}>
         <span>Floating icons</span>{#if ui.floating}<Icon name="check" />{/if}
       </button>
@@ -105,10 +106,9 @@
   }
   .me:hover, .me[aria-expanded='true'] { background: var(--fill-faint); }
   .text { display: flex; flex: 1; flex-direction: column; min-width: 0; line-height: var(--leading-snug); }
-  .name, .space { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .name { color: var(--fg-soft); }
+  .space { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .name { display: -webkit-box; overflow: hidden; color: var(--fg); overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
   .space { color: var(--fg-muted); font-size: var(--text-meta); }
-  .updown { display: flex; color: var(--fg-muted); }
   .menu {
     position: absolute;
     bottom: calc(100% + var(--space-1));
@@ -139,6 +139,8 @@
   }
   .item:hover, .item:focus-visible { outline: 0; background: var(--fill); color: var(--fg); }
   .item[aria-checked='true'] { color: var(--fg); }
+  .plain { padding-block: var(--space-0-5); }
+  .plain:hover { background: none; }
   .new, .add { justify-content: flex-start; color: var(--fg-muted); }
   hr { flex: none; min-height: var(--hairline); margin: var(--space-1); border: 0; }
   .add { background: var(--fill-faint); }

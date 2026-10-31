@@ -3,7 +3,6 @@
   import { api, devMode, go, passkeyAsked, passkeys, setDevMode, setSpace, setWorkspace, space, workspace, Unauthorized } from './api.js';
   import Button from '#kit/Button.svelte';
   import Icon from '#kit/Icon.svelte';
-  import Theme from '#kit/Theme.svelte';
   import Word from '#kit/Word.svelte';
   import Profile from './ui/Profile.svelte';
   import Workspaces from './ui/Workspaces.svelte';
@@ -230,9 +229,8 @@
         {/if}
       </nav>
       <footer>
-        <Profile name={who} email={me.actor.email} {dev} ondev={toggleDev} onsignout={signOut} spaces={me.spaces} home={me.home} current={scope} onpick={pick} oncreate={create} />
+        <Profile name={who} {dev} ondev={toggleDev} onsignout={signOut} spaces={me.spaces} home={me.home} current={scope} onpick={pick} oncreate={create} />
         <button class="apps" type="button" aria-label="Connect apps" title="Connect apps" onclick={() => (connecting = true)}><Icon name="grid-2x2-plus" /></button>
-        <Theme />
       </footer>
     </aside>
     <div class="stage">
@@ -322,8 +320,8 @@
   .side { display: var(--narrow-only); flex: none; align-items: center; justify-content: center; width: var(--size-control-lg); height: var(--size-control-lg); color: var(--fg-muted); transition: color var(--duration-fast); }
   .side :global(.icon) { width: var(--size-icon-lg); height: var(--size-icon-lg); }
   .side:hover { color: var(--fg); }
-  .apps { display: grid; place-items: center; flex: none; width: var(--size-control); height: var(--size-control); border-radius: var(--radius-full); color: var(--fg-muted); transition: color var(--duration-fast), background var(--duration-fast); }
-  .apps:hover { background: var(--fill-faint); color: var(--fg); }
+  .apps { display: grid; place-items: center; flex: none; width: var(--size-control); height: var(--size-control); border-radius: var(--radius-full); background: var(--fill-faint); color: var(--fg-soft); transition: color var(--duration-fast), background var(--duration-fast); }
+  .apps:hover { background: var(--fill); color: var(--fg); }
   .actions { display: flex; align-items: center; gap: var(--space-1); }
   .new { display: grid; place-items: center; width: var(--size-control-lg); height: var(--size-control-lg); border-radius: var(--radius-full); color: var(--fg-muted); transition: color var(--duration-fast), background var(--duration-fast); }
   .new:hover { background: var(--fill-faint); color: var(--fg); }
