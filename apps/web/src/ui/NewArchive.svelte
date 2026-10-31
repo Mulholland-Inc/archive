@@ -81,8 +81,8 @@
       <span><strong>How archives work</strong><small>Watch the tour</small></span>
     </button>
     {#if video}
-      <!-- svelte-ignore a11y_media_has_caption: the video is silent and carries its words on screen. -->
-      <video class="video" src="/tour.mp4" poster="/tour.jpg" controls autoplay muted playsinline {@attach (el) => el.scrollIntoView({ block: 'center', behavior: 'smooth' })}></video>
+      <!-- svelte-ignore a11y_media_has_caption: the sound is only music, and the words are on screen. -->
+      <video class="video" src="/tour.mp4" poster="/tour.jpg" controls autoplay playsinline {@attach (el) => el.scrollIntoView({ block: 'center', behavior: 'smooth' })}></video>
     {/if}
     {#if error}<p class="error">{error}</p>{/if}
   </div>
