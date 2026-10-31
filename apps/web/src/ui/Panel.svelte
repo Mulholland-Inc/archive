@@ -245,7 +245,7 @@
   a.link:hover, button.link:hover:enabled { background: var(--fill-faint); }
   .link.on { background: var(--fill); }
   small { margin-left: auto; font-size: var(--text-meta); }
-  .linked { display: grid; place-items: center; flex: none; width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: #fff; }
+  .linked { display: grid; place-items: center; flex: none; width: 20px; height: 20px; border-radius: 50%; background: var(--primary); color: #fff; }
   .linked :global(.icon) { width: 12px; height: 12px; }
   .in { align-items: flex-start; }
   .in .linked { margin-left: 0; }
