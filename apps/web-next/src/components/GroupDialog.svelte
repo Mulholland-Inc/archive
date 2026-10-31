@@ -25,7 +25,7 @@
 <Dialog bind:open title={group ?? 'Group'} size="sm">
   <Stack gap="3">
     {#each ws().members as m (m.id)}
-      <Checkbox bind:checked={picked[m.id]}>
+      <Checkbox checked={Boolean(picked[m.id])} onchange={(e) => (picked[m.id] = e.currentTarget.checked)}>
         <Stack as="span" direction="row" gap="2" align="center">
           <Avatar name={m.name} tone={m.tone} size="sm" />
           <Text>{m.name}</Text>

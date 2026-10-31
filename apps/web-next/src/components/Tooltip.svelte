@@ -31,13 +31,15 @@
     node.addEventListener('pointerdown', close);
     node.addEventListener('focusin', focus);
     node.addEventListener('focusout', close);
-    return () => {
-      clearTimeout(timer);
-      node.removeEventListener('pointerenter', open);
-      node.removeEventListener('pointerleave', close);
-      node.removeEventListener('pointerdown', close);
-      node.removeEventListener('focusin', focus);
-      node.removeEventListener('focusout', close);
+    return {
+      destroy() {
+        clearTimeout(timer);
+        node.removeEventListener('pointerenter', open);
+        node.removeEventListener('pointerleave', close);
+        node.removeEventListener('pointerdown', close);
+        node.removeEventListener('focusin', focus);
+        node.removeEventListener('focusout', close);
+      }
     };
   }
 </script>

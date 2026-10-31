@@ -9,7 +9,7 @@
   {#if src}
     <img {src} alt={name} />
   {:else}
-    <span aria-hidden="true">{size === 'xs' ? initials(name).slice(0, 1) : initials(name)}</span>
+    <span aria-hidden="true">{size === 'xs' || size === 'sm' ? initials(name).slice(0, 1) : initials(name)}</span>
     <span class="visually-hidden">{name}</span>
   {/if}
   {#if status}<span class={['status', status]}></span>{/if}

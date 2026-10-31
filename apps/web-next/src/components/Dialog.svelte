@@ -26,11 +26,13 @@
       close();
     };
     node.addEventListener('cancel', cancel);
-    return () => {
-      node.removeEventListener('cancel', cancel);
-      requestAnimationFrame(() => {
-        if (previous?.isConnected && (!document.activeElement || document.activeElement === document.body)) previous.focus();
-      });
+    return {
+      destroy() {
+        node.removeEventListener('cancel', cancel);
+        requestAnimationFrame(() => {
+          if (previous?.isConnected && (!document.activeElement || document.activeElement === document.body)) previous.focus();
+        });
+      }
     };
   }
 </script>

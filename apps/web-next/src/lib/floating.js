@@ -19,6 +19,7 @@ export function hide(node) {
 }
 
 export function focusables(root) {
+  if (!root) return [];
   const owner = root.closest('[role="menu"],[role="listbox"]') ?? root;
   return [...root.querySelectorAll('[role="menuitem"]:not([aria-disabled="true"]),[role="menuitemcheckbox"]:not([aria-disabled="true"]),[role="menuitemradio"]:not([aria-disabled="true"]),[role="option"]:not([aria-disabled="true"])')].filter(
     (el) => el.parentElement.closest('[role="menu"],[role="listbox"]') === owner
