@@ -55,11 +55,12 @@
   import RunCall from './ui/RunCall.svelte';
   import Note from './ui/Note.svelte';
   import Setup from './ui/Setup.svelte';
+  import Working from './ui/Working.svelte';
   import { keepsake } from './ui/keepsake.js';
   import Capture from './ui/Capture.svelte';
   import Dictate from './ui/Dictate.svelte';
 
-  let { id = '', name = '', email = '', family = '', short = '', tint = '', kind = 'family', onfiles, onsaved } = $props();
+  let { id = '', name = '', email = '', family = '', short = '', seed = '', tint = '', kind = 'family', onfiles, onsaved } = $props();
 
   let current = $state('');
   let title = $state('');
@@ -286,7 +287,7 @@
             {/if}
           {/each}
           {#if turn.status === 'live' && turn.pending}
-            <div class="thinking" role="status" aria-label="Thinking"><span></span><span></span><span></span></div>
+            <Working {seed} {kind} />
           {/if}
           {#if turn.status === 'error'}
             <div class="problem">
