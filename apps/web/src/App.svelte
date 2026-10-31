@@ -13,6 +13,7 @@
   import Journal from './ui/Journal.svelte';
   import Machine from './ui/Machine.svelte';
   import Archivist from './ui/Archivist.svelte';
+  import Filed from './ui/Filed.svelte';
   import Bot from './ui/Bot.svelte';
   import { fullName, look, seedLooks, setLook, settleType, shortName } from './ui/looks.svelte.js';
   import Library from './Library.svelte';
@@ -45,7 +46,7 @@
   let editing = $state(null);
   let recording = $state(false);
   let writing = $state(false);
-  let notice = $state('');
+  let filing = $state(null);
   let path = $state(location.pathname);
   let chats = $state([]);
   let scope = $state(space());
@@ -139,18 +140,19 @@
   }
 
   async function keep(files) {
-    notice = files.length > 1 ? `Saving ${files.length} files` : 'Saving';
+    const job = { key: Date.now(), files, ids: [], failed: false };
+    filing = job;
     try {
+      const ids = [];
       for (const file of files) {
         const form = new FormData();
         form.append('file', file);
-        await api('/api/files', { method: 'POST', raw: form });
+        ids.push((await api('/api/files', { method: 'POST', raw: form })).id);
       }
-      notice = `Saved to ${fullTitle}`;
-    } catch (e) {
-      notice = e.message;
+      filing = { ...job, ids };
+    } catch {
+      filing = { ...job, failed: true };
     }
-    setTimeout(() => (notice = ''), 4000);
   }
 
   async function saveArchive(name, details) {
@@ -328,7 +330,7 @@
   {#if catalogued}<Machine name={archive} seed={me.workspace} />{/if}
   {#if catalogued && !dev}<Archivist name={me.actor.name} email={me.actor.email} archive={fullTitle} {kind} />{/if}
   {#if writing}<Journal seed={me.workspace} type={kind} onsave={(f) => keep([f])} onclose={() => (writing = false)} />{/if}
-  {#if notice}<div class="notice" role="status">{notice}</div>{/if}
+  {#if filing}{#key filing.key}<Filed seed={me.workspace} files={filing.files} ids={filing.ids} failed={filing.failed} onclose={() => (filing = null)} />{/key}{/if}
   {#if creating}<NewArchive oncreate={addArchive} onclose={() => (creating = false)} />{/if}
   {#if editing}<NewArchive archive={editing} oncreate={saveArchive} onclose={() => (editing = null)} />{/if}
   {#if connecting}<Connect workspace={me.workspace} onclose={() => (connecting = false)} />{/if}
@@ -387,7 +389,6 @@
   .new:hover { background: var(--fill-faint); color: var(--fg); }
   .phone { display: var(--narrow-only); flex-direction: column; flex: none; gap: var(--space-0-5); }
   .stage { display: flex; min-width: 0; }
-  .notice { position: fixed; bottom: var(--space-5); left: 50%; z-index: calc(var(--z-nav) + 5); padding: var(--space-1-5) var(--space-3); transform: translateX(-50%); border-radius: var(--radius-full); background: var(--surface-inverse); color: #fff; }
   .now { position: absolute; top: var(--space-3); left: 50%; z-index: calc(var(--z-raised) + 1); display: flex; align-items: center; gap: var(--space-1-5); padding: var(--space-1) var(--space-3) var(--space-1) var(--space-1); transform: translateX(-50%); border-radius: var(--radius-full); background: var(--surface); white-space: nowrap; }
   main { position: relative; }
   .now span:last-child { font-weight: var(--weight-medium); }

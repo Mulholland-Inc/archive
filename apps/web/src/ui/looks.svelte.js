@@ -35,7 +35,15 @@ function sidebarIcons() {
   }
 }
 
-export const ui = $state({ floating: floating(), sidebarIcons: sidebarIcons() });
+function sounds() {
+  try {
+    return localStorage.sounds !== 'off';
+  } catch {
+    return true;
+  }
+}
+
+export const ui = $state({ floating: floating(), sidebarIcons: sidebarIcons(), sounds: sounds() });
 
 export function setFloating(on) {
   ui.floating = on;
@@ -48,6 +56,13 @@ export function setSidebarIcons(on) {
   ui.sidebarIcons = on;
   try {
     localStorage.sidebarIcons = on ? 'on' : 'off';
+  } catch {}
+}
+
+export function setSounds(on) {
+  ui.sounds = on;
+  try {
+    localStorage.sounds = on ? 'on' : 'off';
   } catch {}
 }
 
