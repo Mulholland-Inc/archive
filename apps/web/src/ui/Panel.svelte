@@ -164,10 +164,10 @@
           <Icon name="shield-check" /><span>{l.custodian.name}</span>
         </button>
       {:else if naming}
-        <form class="form" onsubmit={saveCustodian}>
+        <form class="form" onsubmit={saveCustodian} {@attach (el) => el.scrollIntoView({ block: 'center' })}>
           <input bind:value={who} placeholder="Their name" aria-label="Custodian name" {@attach (el) => el.focus()} />
           <input bind:value={reach} placeholder="Email or phone" aria-label="Custodian contact" />
-          <button type="submit">Save</button>
+          <div class="actions"><button type="button" onclick={() => (naming = false)}>Cancel</button><button class="save" type="submit">Save</button></div>
         </form>
       {:else}
         <button class="link quiet" type="button" onclick={() => (naming = true)}><Icon name="shield-plus" /><span>Add a custodian</span></button>
@@ -178,7 +178,7 @@
 </aside>
 
 <style>
-  .panel { display: flex; flex: none; flex-direction: column; align-items: center; gap: var(--space-3); width: 280px; padding: var(--space-6) var(--space-4) calc(var(--space-6) + 40px); overflow-y: auto; }
+  .panel { display: flex; flex: none; flex-direction: column; align-items: center; gap: var(--space-3); width: 280px; max-height: 100svh; padding: var(--space-6) var(--space-4) calc(var(--space-6) + 40px); overflow-y: auto; }
   .avatar { position: relative; flex: none; }
   .edit { position: absolute; right: -6px; bottom: -6px; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--surface); color: var(--fg-muted); box-shadow: 0 1px 3px rgb(0 0 0 / 20%); }
   .edit :global(.icon) { width: 13px; height: 13px; }
@@ -224,8 +224,11 @@
   .quiet { color: var(--fg-muted); }
   .failed { color: var(--danger); }
   input { flex: 1; min-width: 0; padding: 0; color: var(--fg); outline: 0; }
-  .form { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2); border-radius: var(--radius-nav); background: var(--surface); }
-  .form button { align-self: flex-end; padding: var(--space-1) var(--space-3); border-radius: var(--radius-full); background: var(--fill); }
+  .form { display: flex; flex-direction: column; gap: var(--space-1); }
+  .form input { flex: none; width: 100%; padding: var(--space-1-5) var(--space-2); border-radius: var(--radius-nav); background: var(--surface); }
+  .actions { display: flex; justify-content: flex-end; gap: var(--space-1); margin-top: var(--space-0-5); }
+  .actions button { padding: var(--space-1) var(--space-3); border-radius: var(--radius-full); color: var(--fg-muted); }
+  .actions .save { background: var(--primary); color: var(--on-primary); }
   h3 { padding: 0 var(--space-1-5); color: var(--fg-muted); font-size: var(--text-meta); font-weight: var(--weight-medium); }
   .note { padding: 0 var(--space-1-5); color: var(--fg-muted); font-size: var(--text-meta); line-height: var(--leading-snug); }
   @media (max-width: 1023px) { .panel { display: none; } }
