@@ -68,7 +68,6 @@
   import { workflowSeed } from '../lib/workflows.js';
   import { TYPES } from '../lib/looks.js';
   import { catalog } from '../lib/connectors.js';
-  import Mark from '../components/Mark.svelte';
   import Heading from '../components/Heading.svelte';
   import Text from '../components/Text.svelte';
   import Sidebar from '../components/Sidebar.svelte';
@@ -216,8 +215,8 @@
         <SpecimenBlock title="Look picker" column>
           <LookPicker bind:look />
         </SpecimenBlock>
-        <SpecimenBlock title="Brand mark">
-          <Mark size="sm" /><Mark /><Mark size="lg" /><Mark size="lg" active label="Working" />
+        <SpecimenBlock title="Working indicator">
+          <WorkspaceIcon icon="cottage" tint={0} size="sm" active label="Working" />
         </SpecimenBlock>
       </SpecimenSection>
 

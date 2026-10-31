@@ -1,7 +1,7 @@
 <script>
   import { PLAIN, PERSONALITIES, personality } from '../lib/looks.js';
 
-  let { icon = 'robot', tint = 0, seed = '', size = 'md', label } = $props();
+  let { icon = 'robot', tint = 0, seed = '', size = 'md', label, active = false, greet = false } = $props();
 
   const stem = $derived(icon === 'robot' ? 'turn-float' : `turn-${icon}`);
   const lights = $derived(!PLAIN.includes(icon));
@@ -47,7 +47,17 @@
   }
 
   $effect(() => {
-    if (matchMedia('(hover: none)').matches) return;
+    if (!active && !greet) return;
+    const t = setTimeout(wake, greet ? 300 : 0);
+    const back = greet && !active ? setTimeout(sleep, 3200) : null;
+    return () => {
+      clearTimeout(t);
+      clearTimeout(back);
+    };
+  });
+
+  $effect(() => {
+    if (active || matchMedia('(hover: none)').matches) return;
     const host = root.closest('button, a, [role="menuitem"], [role="menuitemcheckbox"]') ?? root;
     host.addEventListener('pointerenter', wake);
     host.addEventListener('pointerleave', sleep);

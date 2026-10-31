@@ -4,7 +4,8 @@
   import Steps from './Steps.svelte';
   import Attachment from './Attachment.svelte';
   import IconButton from './IconButton.svelte';
-  import Mark from './Mark.svelte';
+  import WorkspaceIcon from './WorkspaceIcon.svelte';
+  import { ws } from '../lib/app.svelte.js';
   import { rise } from '../lib/motion.js';
 
   let { message, streaming = false, onedit } = $props();
@@ -35,7 +36,7 @@
       <Prose blocks={message.blocks} />
     {/if}
     {#if streaming}
-      <span class="working"><Mark active size="md" /></span>
+      <span class="working"><WorkspaceIcon icon={ws().look.icon} tint={ws().look.tint} seed={ws().id} size="sm" active label="Working" /></span>
     {/if}
   </article>
 {/if}

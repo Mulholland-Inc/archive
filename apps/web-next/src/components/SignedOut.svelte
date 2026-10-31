@@ -1,5 +1,6 @@
 <script>
-  import Mark from './Mark.svelte';
+  import WorkspaceIcon from './WorkspaceIcon.svelte';
+  import { ws } from '../lib/app.svelte.js';
   import Button from './Button.svelte';
   import { app } from '../lib/app.svelte.js';
   import { fade } from '../lib/motion.js';
@@ -7,7 +8,7 @@
 
 <div class="screen" transition:fade={{ speed: 'normal' }}>
   <div class="card">
-    <span class="mark"><Mark size="lg" /></span>
+    <WorkspaceIcon icon={ws().look.icon} tint={ws().look.tint} seed={ws().id} size="xl" greet />
     <h1>You’re signed out</h1>
     <Button variant="primary" size="lg" onclick={() => (app.signedOut = false)}>Sign back in as {app.profile.name}</Button>
   </div>
@@ -30,11 +31,6 @@
     align-items: center;
     gap: var(--space-5);
     text-align: center;
-  }
-
-  .mark {
-    display: inline-flex;
-    color: var(--color-accent);
   }
 
   h1 {

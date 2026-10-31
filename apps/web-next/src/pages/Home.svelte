@@ -9,7 +9,7 @@
   import IconButton from '../components/IconButton.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
   import { suggestions } from '../lib/data.js';
-  import { app, newChat } from '../lib/app.svelte.js';
+  import { app, ws, newChat } from '../lib/app.svelte.js';
   import Badge from '../components/Badge.svelte';
   import { go } from '../lib/router.svelte.js';
 
@@ -41,7 +41,7 @@
   <Stack gap="8" align="stretch">
     <Stack gap="3" align="center">
       {#if app.incognito}<Badge tone="accent" dot>Incognito · not saved to your history</Badge>{/if}
-      <Greeting name={app.profile.first} />
+      <Greeting name={app.profile.first} look={ws().look} seed={ws().id} />
     </Stack>
     <Stack gap="4" align="center">
       <Composer bind:value bind:element bind:model={app.model} bind:project size="lg" onsend={send} />
