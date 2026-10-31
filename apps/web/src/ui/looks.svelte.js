@@ -6,6 +6,7 @@ export const TYPES = {
 };
 // The colours of a national archive, as old metal and deep lacquer: maroon, gold, jungle, navy, steel, bronze and gunmetal.
 export const TINTS = ['#5e1724', '#b8963e', '#1f4a38', '#22407a', '#7f8a96', '#8a6a3d', '#2e333b'];
+export const KIND_TINTS = { business: '#22407a', family: '#5e1724', personal: '#b8963e' };
 const RETIRED = { '#e5484d': '#5e1724', '#f5a524': '#b8963e', '#30a46c': '#1f4a38', '#0091ff': '#22407a', '#8e4ec6': '#7f8a96', '#a0703c': '#8a6a3d', '#8a2433': '#5e1724', '#2f5d4e': '#1f4a38', '#5d7690': '#7f8a96', '#b5a27a': '#8a6a3d', '#20252d': '#2e333b' };
 
 function load() {
@@ -42,8 +43,8 @@ function persist() {
 }
 
 export function look(id = '') {
-  const tint = TINTS[[...id].reduce((n, c) => n + c.charCodeAt(0), 0) % TINTS.length];
-  const l = { type: 'personal', icon: 'robot', tint, shared: false, locked: [], shares: {}, groups: {}, custodian: null, away: [], ...looks[id] };
+  const type = looks[id]?.type ?? 'personal';
+  const l = { type, icon: 'robot', tint: KIND_TINTS[type], shared: false, locked: [], shares: {}, groups: {}, custodian: null, away: [], ...looks[id] };
   return { ...l, tint: RETIRED[l.tint] ?? l.tint };
 }
 
@@ -75,7 +76,7 @@ export async function seedLooks() {
 
 // What an archive holds decides its type until someone picks one.
 export function settleType(id, type) {
-  if (!looks[id]?.type) setLook(id, { type, icon: TYPES[type].icons[1] });
+  if (!looks[id]?.type) setLook(id, { type, icon: TYPES[type].icons[1], tint: KIND_TINTS[type] });
 }
 
 export function setLook(id, patch) {

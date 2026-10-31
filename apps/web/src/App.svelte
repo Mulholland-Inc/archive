@@ -42,6 +42,7 @@
   let canAdd = $state(false);
   let connecting = $state(false);
   let creating = $state(false);
+  let editing = $state(null);
   let recording = $state(false);
   let writing = $state(false);
   let notice = $state('');
@@ -152,9 +153,13 @@
     setTimeout(() => (notice = ''), 4000);
   }
 
-  async function renameArchive(name) {
-    await api('/auth/workspace', { method: 'PATCH', body: { name } });
-    me = await api('/auth/me');
+  async function saveArchive(name, details) {
+    if (name !== editing.name) {
+      await api('/auth/workspace', { method: 'PATCH', body: { name } });
+      me = await api('/auth/me');
+    }
+    setLook(me.workspace, details);
+    editing = null;
   }
 
   async function addArchive(name, details) {
@@ -229,7 +234,7 @@
           <button class="side" type="button" aria-label="Sidebar" aria-expanded={open} onclick={toggle}><Icon name="panel-left" /></button>
         </span>
       </div>
-      <Workspaces workspaces={me.workspaces?.length ? me.workspaces : [{ id: me.workspace, name: 'Archive' }]} workspace={me.workspace} latest={chats[0]?.title} onpick={(id) => (id === me.workspace ? go('/') : switchTo(id))} {canAdd} onrename={renameArchive} onadd={() => (creating = true)} />
+      <Workspaces workspaces={me.workspaces?.length ? me.workspaces : [{ id: me.workspace, name: 'Archive' }]} workspace={me.workspace} latest={chats[0]?.title} onpick={(id) => (id === me.workspace ? go('/') : switchTo(id))} {canAdd} onedit={(w) => (editing = { name: w.name, ...look(w.id) })} onadd={() => (creating = true)} />
       <nav>
         {#if dev}
           <NavItem href="/chat" icon="plus" active={route.first === 'chat' && !route.second}>New chat</NavItem>
@@ -325,6 +330,7 @@
   {#if writing}<Journal seed={me.workspace} type={kind} onsave={(f) => keep([f])} onclose={() => (writing = false)} />{/if}
   {#if notice}<div class="notice" role="status">{notice}</div>{/if}
   {#if creating}<NewArchive oncreate={addArchive} onclose={() => (creating = false)} />{/if}
+  {#if editing}<NewArchive archive={editing} oncreate={saveArchive} onclose={() => (editing = null)} />{/if}
   {#if connecting}<Connect workspace={me.workspace} onclose={() => (connecting = false)} />{/if}
 {/if}
 

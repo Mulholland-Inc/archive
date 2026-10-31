@@ -3,61 +3,21 @@
   import Bot from './Bot.svelte';
   import { look, shortName } from './looks.svelte.js';
 
-  let { workspaces = [], workspace = '', latest = '', canAdd = false, onpick, onrename, onadd } = $props();
-  let editing = $state('');
-  let draft = $state('');
-  let error = $state('');
-
-  function reset() {
-    editing = '';
-    draft = '';
-    error = '';
-  }
-
-  function rename(w) {
-    reset();
-    editing = w.id;
-    draft = w.name;
-  }
-
-  async function save(e) {
-    e.preventDefault();
-    const name = draft.trim();
-    if (!name) return reset();
-    try {
-      if (name !== workspaces.find((w) => w.id === editing)?.name) await onrename(name);
-      reset();
-    } catch (err) {
-      error = err.status === 403 ? 'Ask your admin to do this.' : err.message;
-    }
-  }
-
-  const key = (e) => e.key === 'Escape' && reset();
+  let { workspaces = [], workspace = '', latest = '', canAdd = false, onpick, onedit, onadd } = $props();
 </script>
-
-{#snippet field(label)}
-  <form class="edit" onsubmit={save}>
-    <input bind:value={draft} placeholder="Name your archive" aria-label={label} onkeydown={key} onblur={() => !error && !draft.trim() && reset()} {@attach (el) => el.select()} />
-    {#if error}<span class="error">{error}</span>{/if}
-  </form>
-{/snippet}
 
 <div class="bots">
   {#each workspaces as w (w.id)}
     <div class="wrap">
-      {#if editing === w.id}
-        <div class="row on"><Bot seed={w.id} />{@render field('Archive name')}</div>
-      {:else}
-        <button class="row" class:on={w.id === workspace} type="button" aria-current={w.id === workspace ? 'true' : undefined} onclick={() => onpick(w.id)}>
-          <Bot seed={w.id} />
-          <span class="text">
-            <span class="name">{shortName(w.name, look(w.id).type)}</span>
-            {#if w.id === workspace}<span class="sub">{latest || 'Ask me anything'}</span>{:else if look(w.id).shared}<span class="sub">Shared with you</span>{/if}
-          </span>
-        </button>
-        {#if w.id === workspace}
-          <button class="pencil" type="button" aria-label="Rename {w.name}" title="Rename" onclick={() => rename(w)}><Icon name="pencil" /></button>
-        {/if}
+      <button class="row" class:on={w.id === workspace} type="button" aria-current={w.id === workspace ? 'true' : undefined} onclick={() => onpick(w.id)}>
+        <Bot seed={w.id} />
+        <span class="text">
+          <span class="name">{shortName(w.name, look(w.id).type)}</span>
+          {#if w.id === workspace}<span class="sub">{latest || 'Ask me anything'}</span>{:else if look(w.id).shared}<span class="sub">Shared with you</span>{/if}
+        </span>
+      </button>
+      {#if w.id === workspace}
+        <button class="pencil" type="button" aria-label="Edit {w.name}" title="Edit" onclick={() => onedit(w)}><Icon name="pencil" /></button>
       {/if}
     </div>
   {/each}
@@ -81,10 +41,6 @@
   .pencil:hover { color: var(--fg); }
   @media (hover: none) { .pencil { opacity: 1; } }
   .pencil :global(.icon) { width: var(--size-icon); height: var(--size-icon); }
-  .edit { display: flex; flex: 1; flex-direction: column; gap: var(--space-0-5); min-width: 0; }
-  input { width: 100%; padding: 0; color: var(--fg); font-weight: var(--weight-medium); outline: 0; }
-  input::placeholder { color: var(--fg-muted); font-weight: var(--weight-regular, 400); }
-  .error { color: var(--danger); font-size: var(--text-meta); }
   .add { color: var(--fg-muted); }
   .plus { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border: var(--hairline) dashed var(--fg-muted); border-radius: 30%; color: var(--fg-muted); }
 </style>

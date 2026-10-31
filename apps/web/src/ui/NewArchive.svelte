@@ -1,19 +1,20 @@
 <script>
   import Icon from '#kit/Icon.svelte';
   import Bot from './Bot.svelte';
-  import { fullName, TINTS, TYPES } from './looks.svelte.js';
+  import { fullName, KIND_TINTS, TINTS, TYPES } from './looks.svelte.js';
 
-  let { oncreate, onclose } = $props();
+  // With an archive it edits that one; without, it makes a new one.
+  let { archive = null, oncreate, onclose } = $props();
   const KINDS = [
     { key: 'business', hint: 'A company or team' },
     { key: 'family', hint: 'Shared with relatives' },
     { key: 'personal', hint: 'Just for you' },
   ];
 
-  let name = $state('');
-  let type = $state('family');
-  let icon = $state('cottage');
-  let tint = $state('#22407a');
+  let name = $state(archive?.name ?? '');
+  let type = $state(archive?.type ?? 'family');
+  let icon = $state(archive?.icon ?? 'cottage');
+  let tint = $state(archive?.tint ?? KIND_TINTS.family);
   let error = $state('');
   let busy = $state(false);
   let video = $state(false);
@@ -24,6 +25,7 @@
   function pick(key) {
     type = key;
     icon = TYPES[key].icons[1];
+    if (!archive) tint = KIND_TINTS[key];
   }
 
   async function create(e) {
@@ -33,7 +35,7 @@
     try {
       await oncreate(name.trim(), { type, icon, tint });
     } catch (err) {
-      error = err.status === 403 ? 'Ask your admin to add an archive.' : err.message;
+      error = err.status === 403 ? `Ask your admin to ${archive ? 'rename' : 'add'} this archive.` : err.message;
       busy = false;
     }
   }
@@ -44,9 +46,9 @@
 <svelte:window onkeydown={esc} />
 
 <button class="scrim" type="button" aria-label="Close" onclick={onclose}></button>
-<form class="sheet" role="dialog" aria-modal="true" aria-label="Create new archive" onsubmit={create}>
+<form class="sheet" role="dialog" aria-modal="true" aria-label={archive ? 'Edit archive' : 'Create new archive'} onsubmit={create}>
   <header>
-    <h2>Create new archive</h2>
+    <h2>{archive ? 'Edit archive' : 'Create new archive'}</h2>
     <button class="close" type="button" aria-label="Close" onclick={onclose}><Icon name="x" /></button>
   </header>
 
@@ -76,10 +78,12 @@
       <label class="any" title="Any colour"><input type="color" bind:value={tint} aria-label="Any colour" /></label>
     </div>
 
+    {#if !archive}
     <button class="help" type="button" aria-expanded={video} onclick={() => (video = !video)}>
       <span class="play"><Icon name="play" /></span>
       <span><strong>How archives work</strong><small>Watch the tour</small></span>
     </button>
+    {/if}
     {#if video}
       <!-- svelte-ignore a11y_media_has_caption: the sound is only music, and the words are on screen. -->
       <video class="video" src="/tour.mp4" poster="/tour.jpg" controls autoplay playsinline {@attach (el) => el.scrollIntoView({ block: 'center', behavior: 'smooth' })}></video>
@@ -89,7 +93,7 @@
 
   <footer>
     <button class="cancel" type="button" onclick={onclose}>Cancel</button>
-    <button class="create" type="submit" disabled={!ready}>{busy ? 'Creating' : 'Create'}</button>
+    <button class="create" type="submit" disabled={!ready}>{busy ? 'Saving' : archive ? 'Save' : 'Create'}</button>
   </footer>
 </form>
 
@@ -124,7 +128,7 @@
   .help span:nth-child(2) { display: flex; flex: 1; flex-direction: column; line-height: var(--leading-snug); }
   .help strong { font-weight: var(--weight-medium); }
   .help small { color: var(--fg-muted); font-size: var(--text-meta); }
-  .play { display: grid; place-items: center; flex: none; width: 34px; height: 34px; border-radius: 50%; background: #ff3b30; color: #fff; }
+  .play { display: grid; place-items: center; flex: none; width: 34px; height: 34px; border-radius: 50%; background: #5e1724; color: #fff; }
   .play :global(.icon) { width: 15px; height: 15px; fill: currentColor; }
   .video { flex: none; width: 100%; aspect-ratio: 16 / 9; border-radius: 12px; }
   .error { color: var(--danger); font-size: var(--text-table); }
