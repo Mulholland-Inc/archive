@@ -120,6 +120,23 @@
     location.assign('/');
   }
 
+  // Files dragged in from the computer land in this archive, wherever they're dropped.
+  let dropping = $state(false);
+  const carriesFiles = (e) => e.dataTransfer?.types.includes('Files');
+
+  function dragOver(e) {
+    if (dev || !carriesFiles(e)) return;
+    e.preventDefault();
+    dropping = true;
+  }
+
+  function drop(e) {
+    if (dev || !carriesFiles(e)) return;
+    e.preventDefault();
+    dropping = false;
+    if (e.dataTransfer.files.length) keep([...e.dataTransfer.files]);
+  }
+
   async function keep(files) {
     notice = files.length > 1 ? `Saving ${files.length} files` : 'Saving';
     try {
@@ -311,6 +328,10 @@
   {#if connecting}<Connect workspace={me.workspace} onclose={() => (connecting = false)} />{/if}
 {/if}
 
+<svelte:window ondragover={dragOver} ondragleave={(e) => !e.relatedTarget && (dropping = false)} ondrop={drop} />
+
+{#if dropping}<div class="dropping" aria-hidden="true"><p>Drop to add to {fullTitle}</p></div>{/if}
+
 {#snippet chat(c, open)}
   <div class="chat">
     <NavItem plain href="/chat/{c.id}" active={route.first === 'chat' && route.second === c.id}>{c.title || 'Untitled'}</NavItem>
@@ -366,6 +387,8 @@
   .now span:last-child { font-weight: var(--weight-medium); }
   .stage main { flex: 1; }
   .chats { display: flex; flex: none; flex-direction: column; gap: var(--space-0-5); }
+  .dropping { position: fixed; inset: var(--space-2); z-index: calc(var(--z-nav) + 3); display: grid; place-items: center; border: 2px dashed var(--primary); border-radius: var(--radius-panel); background: color-mix(in srgb, var(--bg) 82%, transparent); pointer-events: none; }
+  .dropping p { font: var(--weight-medium) var(--text-lg) / var(--leading-tight) var(--font-serif); }
   .chat { position: relative; min-width: 0; }
   .stow { position: absolute; top: 50%; right: var(--space-1); display: grid; place-items: center; width: 24px; height: 24px; transform: translateY(-50%); border-radius: var(--radius-sm); background: var(--bg); color: var(--fg-muted); opacity: 0; transition: opacity var(--duration-fast); }
   .stow :global(.icon) { width: 14px; height: 14px; }
