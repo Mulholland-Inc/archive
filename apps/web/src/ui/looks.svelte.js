@@ -4,9 +4,9 @@ export const TYPES = {
   family: { label: 'Family', icons: ['robot', 'cottage', 'townhouse', 'farmhouse'] },
   business: { label: 'Business', icons: ['robot', 'cabinet', 'warehouse', 'factory', 'bank'] },
 };
-// The colours of a national archive: oxblood, gold leaf, Treasury green, federal navy, slate, parchment and ink.
-export const TINTS = ['#8a2433', '#b8963e', '#2f5d4e', '#22407a', '#5d7690', '#b5a27a', '#20252d'];
-const RETIRED = { '#e5484d': '#8a2433', '#f5a524': '#b8963e', '#30a46c': '#2f5d4e', '#0091ff': '#22407a', '#8e4ec6': '#5d7690', '#a0703c': '#b5a27a' };
+// The colours of a national archive, as old metal and deep lacquer: maroon, gold, jungle, navy, steel, bronze and gunmetal.
+export const TINTS = ['#5e1724', '#b8963e', '#1f4a38', '#22407a', '#7f8a96', '#8a6a3d', '#2e333b'];
+const RETIRED = { '#e5484d': '#5e1724', '#f5a524': '#b8963e', '#30a46c': '#1f4a38', '#0091ff': '#22407a', '#8e4ec6': '#7f8a96', '#a0703c': '#8a6a3d', '#8a2433': '#5e1724', '#2f5d4e': '#1f4a38', '#5d7690': '#7f8a96', '#b5a27a': '#8a6a3d', '#20252d': '#2e333b' };
 
 function load() {
   try {

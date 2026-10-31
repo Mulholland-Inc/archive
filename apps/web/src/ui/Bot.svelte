@@ -112,7 +112,8 @@
   .building:not(.bare) .art { inset: -16%; }
   img, .layer { position: absolute; inset: 0; width: 100%; height: 100%; }
   .layer { isolation: isolate; }
-  i { position: absolute; inset: 0; background: var(--tint); mix-blend-mode: multiply; -webkit-mask: var(--src) center / 100% 100% no-repeat; mask: var(--src) center / 100% 100% no-repeat; }
+  /* A soft brushed sheen, so a colour reads as matte metal and not flat paint. */
+  i { position: absolute; inset: 0; background: linear-gradient(135deg, color-mix(in srgb, var(--tint) 74%, white) 0%, var(--tint) 46%, color-mix(in srgb, var(--tint) 80%, black) 100%); mix-blend-mode: multiply; -webkit-mask: var(--src) center / 100% 100% no-repeat; mask: var(--src) center / 100% 100% no-repeat; }
 
   /* One frame shows at a time; the script steps through them both ways. */
   .f { opacity: 0; }
