@@ -2,7 +2,7 @@
 export const TYPES = {
   personal: { label: 'Personal', icons: ['robot', 'safe', 'bookcase', 'pinecone'] },
   family: { label: 'Family', icons: ['robot', 'cottage', 'townhouse', 'farmhouse', 'oak', 'pine', 'baobab', 'pinecone'] },
-  business: { label: 'Business', icons: ['robot', 'skyscraper', 'ledger', 'cabinet', 'bank', 'warehouse', 'factory'] },
+  business: { label: 'Business', icons: ['robot', 'skyscraper', 'capitol', 'ledger', 'cabinet', 'bank', 'warehouse', 'factory'] },
 };
 // The colours of a national archive, as old metal and deep lacquer: maroon, gold, jungle, navy, steel, bronze and gunmetal.
 export const TINTS = ['#5e1724', '#b8963e', '#1f4a38', '#22407a', '#7f8a96', '#8a6a3d', '#2e333b'];
