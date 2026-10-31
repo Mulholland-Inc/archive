@@ -1,5 +1,5 @@
 <script>
-  import { Plus, ArrowUp, Square, Paperclip, Library, FolderPlus, Globe, Telescope, Camera, Mic } from '@lucide/svelte';
+  import { Plus, ArrowUp, Square, Paperclip, Library, Globe, Telescope, Camera, Mic } from '@lucide/svelte';
   import IconButton from './IconButton.svelte';
   import Menu from './Menu.svelte';
   import MenuItem from './MenuItem.svelte';
@@ -20,7 +20,6 @@
     size = 'md',
     streaming = false,
     model = $bindable('pro'),
-    project = $bindable(),
     onsend,
     onstop,
     element = $bindable()
@@ -41,7 +40,7 @@
       return;
     }
     if (!ready) return;
-    onsend?.({ text: value.trim(), attachments: [...attachments], model, research, project });
+    onsend?.({ text: value.trim(), attachments: [...attachments], model, research });
     value = '';
     attachments = [];
   }
@@ -72,11 +71,6 @@
     element?.focus();
   }
 
-  function pickProject(id) {
-    project = project === id ? undefined : id;
-    const p = ws().projects.find((x) => x.id === id);
-    toast(project ? `Added to ${p?.name}` : `Removed from ${p?.name}`);
-  }
 </script>
 
 <form class={['composer', size, { focused }]} onsubmit={(e) => { e.preventDefault(); send(); }}>
@@ -120,13 +114,6 @@
               {#snippet leading()}<ConnectorIcon id={c.id} size="xs" />{/snippet}
               {c.name}
             </MenuItem>
-          {/each}
-        </SubMenu>
-      {/if}
-      {#if ws().projects.length}
-        <SubMenu icon={FolderPlus} label="Add to project">
-          {#each ws().projects as p (p.id)}
-            <MenuItem checked={project === p.id || undefined} onselect={() => pickProject(p.id)}>{p.name}</MenuItem>
           {/each}
         </SubMenu>
       {/if}

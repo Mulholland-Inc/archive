@@ -22,11 +22,9 @@
     element?.focus();
   });
 
-  let project = $state();
-
   function send({ text, attachments }) {
     const title = text ? (text.length > 48 ? text.slice(0, 46).trimEnd() + '…' : text) : attachments[0]?.name ?? 'New chat';
-    const id = newChat(title, { project, attachments, text });
+    const id = newChat(title, { attachments, text });
     go(`/chat/${id}`);
   }
 </script>
@@ -44,7 +42,7 @@
       <Greeting name={app.profile.first} look={ws().look} seed={ws().id} />
     </Stack>
     <Stack gap="4" align="center">
-      <Composer bind:value bind:element bind:model={app.model} bind:project size="lg" onsend={send} />
+      <Composer bind:value bind:element bind:model={app.model} size="lg" onsend={send} />
       <Stack direction="row" gap="2" wrap justify="center">
         {#each suggestions as s (s.id)}
           <Chip icon={icons[s.icon]} onclick={() => { value = s.prompt; element?.focus(); }}>{s.label}</Chip>

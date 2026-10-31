@@ -332,7 +332,7 @@
           <SegmentedControl bind:value={seg2} size="lg" label="Theme" options={[{ value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }, { value: 'system', label: 'System' }]} />
         </SpecimenBlock>
         <SpecimenBlock title="Breadcrumbs">
-          <Breadcrumbs items={[{ label: 'Projects', href: '#/projects' }, { label: '1970s Letters', href: '#/projects/p-letters' }, { label: 'Adaeze to Obi, 2 Mar 1974' }]} />
+          <Breadcrumbs items={[{ label: 'Library', href: '#/library' }, { label: '1970s Letters', href: '#/library' }, { label: 'Adaeze to Obi, 2 Mar 1974' }]} />
         </SpecimenBlock>
         <SpecimenBlock title="Vertical nav">
           <VerticalNav label="Example" active="b" items={[{ id: 'a', label: 'Profile', href: '#/specimen' }, { id: 'b', label: 'Appearance', href: '#/specimen' }, { id: 'c', label: 'Vault', href: '#/specimen' }]} />
@@ -350,7 +350,7 @@
             <MenuItem icon={Settings} shortcut="⌘ ,">Settings</MenuItem>
             <MenuItem icon={Star} checked>Starred</MenuItem>
             <MenuItem icon={Bell} keepOpen toggle={toggles.a} onselect={() => (toggles.a = !toggles.a)}>Notifications</MenuItem>
-            <SubMenu icon={FolderOpen} label="Move to project">
+            <SubMenu icon={FolderOpen} label="Move to folder">
               <MenuItem>1970s Letters</MenuItem>
               <MenuItem>Photo albums</MenuItem>
               <MenuItem>Family tree</MenuItem>

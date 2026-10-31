@@ -17,7 +17,6 @@
 
   let query = $state('');
   const results = $derived(ws().chats.filter((c) => !c.hidden && c.title.toLowerCase().includes(query.trim().toLowerCase())));
-  const projectName = (pid) => ws().projects.find((p) => p.id === pid)?.name;
 </script>
 
 <TopBar>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
@@ -35,7 +34,6 @@
             {#snippet leading()}<Icon icon={chat.starred ? Star : MessagesSquare} size="md" />{/snippet}
             {#snippet meta()}
               <span>{chat.updated}</span>
-              {#if chat.project}<span>· {projectName(chat.project)}</span>{/if}
             {/snippet}
             {#snippet trailing()}<ChatActions {chat} placement="bottom-end" size="sm" />{/snippet}
           </ListItem>

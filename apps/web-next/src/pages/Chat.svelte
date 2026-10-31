@@ -144,7 +144,7 @@
     </Stack>
   </Page>
   <ComposerDock>
-    <Composer bind:value bind:element bind:model={app.model} bind:project={chat.project} placeholder="Reply to Archive" {streaming} onsend={send} onstop={stop} />
+    <Composer bind:value bind:element bind:model={app.model} placeholder="Reply to Archive" {streaming} onsend={send} onstop={stop} />
   </ComposerDock>
 {:else}
   <Page center>
