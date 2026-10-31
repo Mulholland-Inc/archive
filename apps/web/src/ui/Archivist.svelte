@@ -4,12 +4,18 @@
   import Bot from './Bot.svelte';
   import Composer from './Composer.svelte';
 
-  let { name = '', email = '', archive = '' } = $props();
+  let { name = '', email = '', archive = '', kind = 'personal' } = $props();
 
   // apps/help carries this to a Discord forum. Without its address the chat is a demo, and nobody answers.
   const HELP = import.meta.env.VITE_HELP_URL ?? '';
-  const HELLO = { mine: false, who: 'Mulholland', text: 'Hi, this is the archive team at Mulholland. A real person reads every message. Old photos, tangled family trees, what to keep: ask away.' };
-  const NOTED = { mine: false, who: 'Mulholland', text: 'Thanks. One of us will answer you right here.' };
+  const ARCHIVIST = import.meta.env.VITE_ARCHIVIST ?? 'Sam';
+  const BOOK = import.meta.env.VITE_BOOK_URL ?? '';
+  const ASK = {
+    family: 'Old photos, tangled family trees, what to keep: ask away.',
+    business: 'Your records, your contracts, what to keep and how: ask away.',
+    personal: 'Your papers, your photos, what to keep: ask away.',
+  };
+  const NOTED = { mine: false, who: ARCHIVIST, text: "Thanks. I'll answer you right here." };
   const key = `help:${workspace()}`;
 
   function read() {
@@ -27,7 +33,7 @@
   let unread = $state(false);
   let ticket = $state(saved.ticket ?? '');
   let after = saved.after ?? '';
-  let turns = $state(saved.turns ?? [HELLO]);
+  let turns = $state(saved.turns ?? []);
 
   function save() {
     try {
@@ -99,10 +105,12 @@
         <button class="close" type="button" aria-label="Close" onclick={() => (open = false)}><Icon name="x" /></button>
       </header>
       <div class="turns">
+        <p><small>{ARCHIVIST}</small>Hi, I'm {ARCHIVIST}, your Mulholland archivist. {ASK[kind] ?? ASK.personal}</p>
         {#each turns as t, i (i)}
           <p class:mine={t.mine}>{#if t.who}<small>{t.who}</small>{/if}{t.text}</p>
         {/each}
       </div>
+      {#if BOOK}<a class="book" href={BOOK} target="_blank" rel="noreferrer"><Icon name="video" />Book a call with {ARCHIVIST}</a>{/if}
       <div class="box"><Composer bind:value={draft} onsend={send} onstop={() => {}} placeholder="Ask anything" aria-label="Ask a Mulholland archivist" /></div>
     </div>
   {/if}
@@ -123,6 +131,9 @@
   .turns p { align-self: flex-start; max-width: 90%; line-height: var(--leading-snug); }
   .turns small { display: block; color: var(--fg-muted); font-size: var(--text-meta); }
   .turns .mine { align-self: flex-end; padding: var(--space-1) var(--space-2); border-radius: var(--radius-item); background: var(--fill); }
+  .book { display: flex; flex: none; align-items: center; gap: var(--space-1); margin: 0 var(--space-4); padding: var(--space-1) 0; color: var(--fg-muted); font-size: var(--text-meta); }
+  .book:hover { color: var(--fg); }
+  .book :global(.icon) { width: 15px; height: 15px; }
   .box { flex: none; padding: var(--space-2); }
   @media (max-width: 767px) { .archivist { right: calc(var(--space-3) + 48px); } }
 </style>
