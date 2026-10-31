@@ -97,7 +97,7 @@ export async function passkeyRegister(user) {
   rememberPasskey(user, 'yes');
 }
 
-async function send(path, { method = 'GET', body, raw, signal, workspace: named } = {}) {
+export async function send(path, { method = 'GET', body, raw, signal, workspace: named } = {}) {
   const init = { method, headers: {}, signal, credentials: 'include' };
   if (named || workspace()) init.headers['Archive-Workspace'] = named || workspace();
   if (space()) init.headers['Archive-Space'] = space();

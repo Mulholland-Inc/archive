@@ -55,6 +55,7 @@
   import RunCall from './ui/RunCall.svelte';
   import Note from './ui/Note.svelte';
   import Setup from './ui/Setup.svelte';
+  import { keepsake } from './ui/keepsake.js';
   import Capture from './ui/Capture.svelte';
   import Dictate from './ui/Dictate.svelte';
 
@@ -74,6 +75,11 @@
   let pinned = true;
 
   const empty = $derived(!current && !turns.length);
+  let picture = $state(null);
+  $effect(() => {
+    if (kind === 'family') keepsake().then((p) => (picture = p)).catch(() => {});
+  });
+  const framed = $derived(empty && picture);
   const hello = $derived(family || greeting(name));
 
   $effect(() => {
@@ -297,12 +303,16 @@
     {/each}
     {#if loading}<div class="thinking" role="status" aria-label="Loading"><span></span><span></span><span></span></div>{/if}
   </div>
-  <div class="dock">
+  <div class="stage" class:framed>
+    {#if framed}<img src={picture.url} alt={picture.title} />{/if}
+    <div class="dock">
     <Composer bind:value={draft} bind:field {busy} ontalk={() => dispatchEvent(new CustomEvent('capture-memory'))} onsend={send} onstop={stop} placeholder={short ? `Message ${short}` : 'Ask anything'} aria-label="Message">
       {#snippet lead()}<Capture {onfiles} {kind} />{/snippet}
       {#snippet tail()}<Dictate bind:value={draft} />{/snippet}
     </Composer>
+    </div>
   </div>
+  {#if framed}<p class="caption"><span>From your archive: {picture.title}</span><a href="/library">All photos</a></p>{/if}
   {#if empty}<Setup {email} />{/if}
 </div>
 
@@ -312,6 +322,14 @@
   .log { display: flex; flex: 1; flex-direction: column; gap: var(--space-3); padding-top: var(--space-7, 40px); width: 100%; max-width: var(--chat-width); min-width: 0; }
   .empty { justify-content: center; gap: var(--space-6); }
   .empty .log { flex: none; }
+  .empty:has(.framed) { gap: var(--space-3); }
+  .stage { display: flex; flex: none; justify-content: center; width: 100%; }
+  .framed { position: relative; max-width: var(--composer-width); aspect-ratio: 16 / 9; max-height: 52svh; padding: var(--space-5) var(--space-5) 0; overflow: hidden; border-radius: var(--radius-panel); }
+  .framed img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .framed .dock { position: relative; }
+  .caption { display: flex; justify-content: space-between; gap: var(--space-3); width: 100%; max-width: var(--composer-width); margin-top: calc(-1 * var(--space-1)); padding: 0 var(--space-1); color: var(--fg-muted); font-size: var(--text-meta); }
+  .caption a { flex: none; }
+  .caption a:hover { color: var(--fg); }
   .log :global(.wrap) { margin-inline: 0; }
   .idle { display: none; }
   .hello {
