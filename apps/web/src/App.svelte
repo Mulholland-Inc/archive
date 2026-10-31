@@ -12,7 +12,6 @@
   import Recorder from './ui/Recorder.svelte';
   import Journal from './ui/Journal.svelte';
   import Machine from './ui/Machine.svelte';
-  import Archivist from './ui/Archivist.svelte';
   import Filed from './ui/Filed.svelte';
   import Bot from './ui/Bot.svelte';
   import { fullName, look, seedLooks, setLook, settleType, shortName } from './ui/looks.svelte.js';
@@ -335,7 +334,6 @@
     </div>
   </div>
   {#if catalogued}<Machine name={archive} seed={me.workspace} />{/if}
-  {#if catalogued && !dev}<Archivist name={me.actor.name} email={me.actor.email} archive={fullTitle} {kind} />{/if}
   {#if writing}<Journal seed={me.workspace} type={kind} onsave={(f) => keep([f])} onclose={() => (writing = false)} />{/if}
   {#if filing}{#key filing.key}<Filed seed={me.workspace} files={filing.files} ids={filing.ids} failed={filing.failed} onclose={() => (filing = null)} />{/key}{/if}
   {#if creating}<NewArchive oncreate={addArchive} onclose={() => (creating = false)} />{/if}
