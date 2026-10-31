@@ -1,11 +1,11 @@
 #!/bin/sh
 set -eu
-pack=$(dirname "$0")
+family=$(dirname "$0")
 archive=${ARCHIVE_BIN:-archive}
 
 schema=$(mktemp -d)
 trap 'rm -rf "$schema"' EXIT
 $archive schema pull "$schema" >/dev/null
-cp "$pack"/schema/*.sql "$schema"
+cp "$family"/schema/*.sql "$schema"
 $archive schema apply "$schema" >/dev/null
-ARCHIVE_RUN_TIMEOUT=600s $archive run "$pack/seed.ts"
+ARCHIVE_RUN_TIMEOUT=600s $archive run "$family/seed.ts"
