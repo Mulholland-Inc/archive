@@ -5,7 +5,7 @@
   let { seed = '', size = 40, icon = '', tint = '', bare = false } = $props();
   const l = $derived(look(seed));
   const shown = $derived(icon || l.icon);
-  const drawn = $derived(['robot', 'safe', 'bookcase', 'cottage', 'townhouse', 'farmhouse', 'cabinet', 'warehouse', 'factory', 'bank', 'archivist', 'oak', 'pine', 'baobab', 'pinecone'].includes(shown));
+  const drawn = $derived(['robot', 'safe', 'bookcase', 'cottage', 'townhouse', 'farmhouse', 'cabinet', 'warehouse', 'factory', 'bank', 'archivist', 'oak', 'pine', 'baobab', 'pinecone', 'skyscraper', 'ledger'].includes(shown));
   const robot = $derived(shown === 'robot');
   // On a tile the robot is its portrait; on its own it stands, and only its head turns.
   const float = $derived(ui.floating && !bare);
@@ -89,7 +89,7 @@
     <span class="art">
       {#if robot && bare}{@render layer('turn-robot-body')}{/if}
       {#each [0, 1, 2, 3] as i (i)}{@render layer(`${stem}-${i}`, `f${frame === i ? ' show' : ''}`)}{/each}
-      {#if !['archivist', 'oak', 'pine', 'baobab', 'pinecone'].includes(shown)}
+      {#if !['archivist', 'oak', 'pine', 'baobab', 'pinecone', 'skyscraper', 'ledger'].includes(shown)}
         <img class="lit" src={src(`${stem}-lit`)} alt="" />
         <img class="panel" src={src(`${stem}-panel`)} alt="" />
         <i class="led red" style="--src: url({src(`${stem}-red`)})"></i>
