@@ -30,7 +30,7 @@ flowchart LR
 
 | Table | Holds |
 |---|---|
-| `archive.workspace` | id (a UUIDv7), name, data key (encrypted with `ARCHIVE_SECRET_KEY`), its own Anthropic key, created_at |
+| `archive.workspace` | id (a UUIDv7), name, data key (encrypted with `ARCHIVE_SECRET_KEY`), created_at |
 | `archive.user` | every person once: email, name, passkeys and OIDC links, and the workspaces they belong to (`workspaces uuid[]`, GIN-indexed) |
 | `archive.token` | sessions and API tokens, by hash; an API token also names its one workspace |
 | `archive.due` | the next time each workspace has background work |
@@ -81,7 +81,7 @@ Without subdomains, every request names its workspace, and secrets stay plain `a
 ## Invites
 
 - **Invite-only.** There is no signup. Instance admins create and delete workspaces for other people (`archive workspace add|delete`), naming each one's first owner; creating one makes the database, applies the schema, adds the `archive.workspace` row and adds the owner to it. Workspace admins invite the rest by email. A provider sign-in only finds people who were invited, by the verified email they were invited under. Deleting a workspace drops its database and its roles.
-- **AI keys**: the shared `ANTHROPIC_API_KEY` serves every workspace. A workspace can bring its own key in a setting.
+- **AI keys**: the shared `ANTHROPIC_API_KEY` serves every workspace. A workspace cannot bring its own key.
 
 ## Infrastructure
 

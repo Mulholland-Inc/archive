@@ -157,7 +157,7 @@ Every install serves many workspaces ([ADR 0003](0003-hosting.md)). A workspace 
 - **Finding it**: an API token belongs to one workspace, and a request naming another is refused. The web app's one session cookie works in all of the person's workspaces, and each request names the current one in `Archive-Workspace`, the way `Archive-Space` names the space; the server checks that the person is in it. Webhooks and file links carry the workspace UUID in their path.
 - **Limits**: each workspace runs at most 8 scripts at once, and waits 10 s for a slot before answering 429.
 - **Admins**: nobody makes a workspace for themselves. Instance admins, the admins of workspace one, list, create and delete workspaces, each with its first owner (`archive workspace add|list|delete`, `/auth/workspaces`); deleting a workspace drops its database and roles.
-- **Anthropic key**: a workspace may set its own (`PATCH /auth/workspace`), which the chat agent uses instead of `ANTHROPIC_API_KEY`.
+- **Anthropic key**: the chat agent in every workspace uses the one `ANTHROPIC_API_KEY`; a workspace cannot set its own.
 
 ## Files
 

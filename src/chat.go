@@ -178,9 +178,9 @@ func chatToolError(uses []chatBlock, msg string) *chatMessage {
 }
 
 func (a *Archive) chat(w http.ResponseWriter, r *http.Request) {
-	key := a.anthropicKey(r.Context())
+	key := os.Getenv("ANTHROPIC_API_KEY")
 	if key == "" {
-		httpWrite(w, http.StatusServiceUnavailable, map[string]string{"error": "the agent needs ANTHROPIC_API_KEY set on the server, or an Anthropic key in the workspace settings"}, nil)
+		httpWrite(w, http.StatusServiceUnavailable, map[string]string{"error": "the agent needs ANTHROPIC_API_KEY set on the server"}, nil)
 		return
 	}
 	var body struct {

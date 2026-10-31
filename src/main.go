@@ -112,8 +112,8 @@ Environment:
                      page when it is set, and its redirect URL is
                      <API>/auth/oidc/<google|microsoft|slack|github>/callback. Only invited people sign
                      in, matched on an email the provider says is verified
-  ANTHROPIC_API_KEY  key for the agent behind POST /api/chat, which can only call the run tool, for
-                     workspaces without a key of their own; ANTHROPIC_BASE_URL points it at another
+  ANTHROPIC_API_KEY  key for the agent behind POST /api/chat, which can only call the run tool, in
+                     every workspace; ANTHROPIC_BASE_URL points it at another
                      Messages API endpoint
 
 On Cloud Run, the Cloud Tasks queue projects/<project>/locations/<region>/queues/<service> calls

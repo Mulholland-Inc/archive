@@ -66,9 +66,8 @@ type ArchiveWorkflowRun struct {
 }
 
 type ArchiveWorkspace struct {
-	ID           uuid.UUID
-	Name         string
-	Key          []byte
-	AnthropicKey []byte
-	CreatedAt    time.Time
+	ID        uuid.UUID
+	Name      string
+	Key       []byte
+	CreatedAt time.Time
 }
