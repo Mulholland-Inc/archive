@@ -1,5 +1,5 @@
 <script>
-  import { Plus, MessagesSquare, Star, SearchX } from '@lucide/svelte';
+  import { Plus, MessagesSquare, Pin, SearchX } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
   import PageHeader from '../components/PageHeader.svelte';
@@ -13,10 +13,10 @@
   import ChatActions from '../components/ChatActions.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { ws } from '../lib/app.svelte.js';
+  import { ws, pinnedFirst } from '../lib/app.svelte.js';
 
   let query = $state('');
-  const results = $derived(ws().chats.filter((c) => !c.hidden && c.title.toLowerCase().includes(query.trim().toLowerCase())));
+  const results = $derived(pinnedFirst(ws().chats.filter((c) => !c.hidden && c.title.toLowerCase().includes(query.trim().toLowerCase()))));
 </script>
 
 <TopBar>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
@@ -31,7 +31,7 @@
       <List label="Chats">
         {#each results as chat (chat.id)}
           <ListItem href={`#/chat/${chat.id}`} title={chat.title}>
-            {#snippet leading()}<Icon icon={chat.starred ? Star : MessagesSquare} size="md" />{/snippet}
+            {#snippet leading()}<Icon icon={chat.pinned ? Pin : MessagesSquare} size="md" />{/snippet}
             {#snippet meta()}
               <span>{chat.updated}</span>
             {/snippet}

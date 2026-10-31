@@ -111,11 +111,15 @@ export function renameChat(id, title) {
   if (chat && title) chat.title = title;
 }
 
-export function toggleStar(id) {
+export function togglePin(id) {
   const chat = chatById(id);
   if (!chat) return;
-  chat.starred = !chat.starred;
-  toast(chat.starred ? 'Starred' : 'Removed from starred');
+  chat.pinned = !chat.pinned;
+  toast(chat.pinned ? 'Pinned' : 'Unpinned');
+}
+
+export function pinnedFirst(chats) {
+  return [...chats.filter((c) => c.pinned), ...chats.filter((c) => !c.pinned)];
 }
 
 export function removeChat(id) {

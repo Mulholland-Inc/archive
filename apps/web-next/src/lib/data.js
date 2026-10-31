@@ -29,10 +29,10 @@ export const suggestions = [
 ];
 
 export const chats = [
-  { id: 'letters-1974', title: "Transcribe Grandma Adaeze's 1974 letters", starred: true, updated: '12 min ago' },
+  { id: 'letters-1974', title: "Transcribe Grandma Adaeze's 1974 letters", pinned: true, updated: '12 min ago' },
   { id: 'mercer-timeline', title: 'Timeline for the Mercer lease dispute', updated: '1 hr ago' },
   { id: 'exif-rename', title: 'Rename scanned photos by EXIF date', updated: '3 hr ago' },
-  { id: 'linden-brief', title: 'Moodboard brief for the Linden rebrand', starred: true, updated: 'Yesterday' },
+  { id: 'linden-brief', title: 'Moodboard brief for the Linden rebrand', pinned: true, updated: 'Yesterday' },
   { id: 'c5', title: 'Who is in the Lagos wedding photos', updated: 'Yesterday' },
   { id: 'c6', title: 'Compare the two Enugu deeds', updated: 'Yesterday' },
   { id: 'c7', title: 'Recipe cards from Aunt Ifeoma', updated: 'Yesterday' },

@@ -1,5 +1,5 @@
 <script>
-  import { PanelLeft, Plus, Search, MessagesSquare, Library, Workflow, Plug, Users } from '@lucide/svelte';
+  import { PanelLeft, PinOff, Plus, Search, MessagesSquare, Library, Workflow, Plug, Users } from '@lucide/svelte';
   import Sidebar from './Sidebar.svelte';
   import SidebarItem from './SidebarItem.svelte';
   import SidebarSection from './SidebarSection.svelte';
@@ -8,13 +8,13 @@
   import IconButton from './IconButton.svelte';
   import ChatActions from './ChatActions.svelte';
   import Stack from './Stack.svelte';
-  import { app, ws, closeDrawer, toggleSidebar, switchVault, createVault } from '../lib/app.svelte.js';
+  import { app, ws, closeDrawer, toggleSidebar, togglePin, pinnedFirst, switchVault, createVault } from '../lib/app.svelte.js';
   import { me } from '../lib/data.js';
   import { route, active, go } from '../lib/router.svelte.js';
   import NewVaultDialog from './NewVaultDialog.svelte';
 
   const running = $derived(ws().workflows.filter((w) => w.runs[0] && (w.runs[0].status === 'running' || w.runs[0].status === 'waiting')).length);
-  const visible = $derived(ws().chats.filter((c) => !c.hidden));
+  const visible = $derived(pinnedFirst(ws().chats.filter((c) => !c.hidden)));
 
 
   let creating = $state(false);
@@ -58,7 +58,10 @@
     <SidebarSection title="Recents">
         {#each visible as chat (chat.id)}
         <SidebarItem label={chat.title} href={`#/chat/${chat.id}`} active={route.path === `/chat/${chat.id}`}>
-          {#snippet actions()}<ChatActions {chat} />{/snippet}
+          {#snippet actions()}
+            {#if chat.pinned}<IconButton icon={PinOff} label="Unpin" size="xs" tooltip={false} onclick={() => togglePin(chat.id)} />{/if}
+            <ChatActions {chat} />
+          {/snippet}
         </SidebarItem>
       {/each}
     </SidebarSection>
