@@ -66,7 +66,7 @@
 </script>
 
 <aside class="panel" aria-label={name}>
-  <button class="avatar" type="button" aria-label="Change icon and colour" aria-expanded={picking} title="Change icon and colour" onclick={() => (picking = !picking)}>
+  <button class="avatar" type="button" aria-label="Change type, icon and colour" aria-expanded={picking} title="Change type, icon and colour" onclick={() => (picking = !picking)}>
     <Bot {seed} size={72} /><span class="edit"><Icon name="pencil" /></span>
   </button>
   <h2>{name}</h2>

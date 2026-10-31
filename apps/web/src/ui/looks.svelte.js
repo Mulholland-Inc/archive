@@ -70,6 +70,11 @@ export async function seedLooks() {
   } catch {}
 }
 
+// What an archive holds decides its type until someone picks one.
+export function settleType(id, type) {
+  if (!looks[id]?.type) setLook(id, { type, icon: TYPES[type].icons[1] });
+}
+
 export function setLook(id, patch) {
   looks[id] = { ...looks[id], ...patch };
   persist();

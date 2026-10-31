@@ -13,7 +13,7 @@
   import Journal from './ui/Journal.svelte';
   import Machine from './ui/Machine.svelte';
   import Bot from './ui/Bot.svelte';
-  import { fullName, look, seedLooks, setLook, shortName } from './ui/looks.svelte.js';
+  import { fullName, look, seedLooks, setLook, settleType, shortName } from './ui/looks.svelte.js';
   import Library from './Library.svelte';
   import Keys from './Keys.svelte';
   import People from './People.svelte';
@@ -174,6 +174,7 @@
       types = cat.types;
       tables = all.filter((t) => t.kind === 'table');
       views = all.filter((t) => t.kind === 'view');
+      if (views.some(isTree)) settleType(me.workspace, 'family');
       catalogued = true;
       if (me.workspaces?.length) api('/auth/workspaces', { workspace: me.workspaces[0].id }).then(() => (canAdd = true)).catch(() => {});
     } catch (e) {
