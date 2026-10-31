@@ -3,7 +3,7 @@ export class Unauthorized extends Error {}
 export const API = location.hostname.startsWith('app.') ? location.origin.replace('//app.', '//api.') : '';
 
 export function go(path) {
-  history.pushState(null, '', path);
+  history.pushState({ steps: (history.state?.steps ?? 0) + 1 }, '', path);
   dispatchEvent(new PopStateEvent('popstate'));
 }
 

@@ -55,7 +55,7 @@ async function replies(request, env, reply) {
   });
   if (!res.ok) return reply({ error: 'could not reach Discord' }, 502);
   const messages = await res.json();
-  return reply(messages.filter((m) => !m.webhook_id && !m.author?.bot && m.content).reverse().map((m) => ({ id: m.id, text: m.content })));
+  return reply(messages.filter((m) => !m.webhook_id && !m.author?.bot && m.content).reverse().map((m) => ({ id: m.id, name: m.author?.global_name ?? m.author?.username ?? 'Mulholland', text: m.content })));
 }
 
 export default {

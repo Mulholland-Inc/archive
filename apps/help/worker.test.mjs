@@ -44,14 +44,14 @@ test('a later message joins the same post', async () => {
 test('replies come back in order, without the visitor’s own messages', async () => {
   const { ticket } = await (await send({ text: 'first' })).json();
   listed = [
-    { id: '903', content: 'Second reply', author: {} },
-    { id: '902', content: 'First reply', author: {} },
+    { id: '903', content: 'Second reply', author: { username: 'sam' } },
+    { id: '902', content: 'First reply', author: { global_name: 'Marijn' } },
     { id: '901', content: 'From the webhook', webhook_id: '1', author: { bot: true } },
   ];
   const res = await call(`/messages?ticket=${encodeURIComponent(ticket)}`);
-  assert.deepEqual(await res.json(), [{ id: '902', text: 'First reply' }, { id: '903', text: 'Second reply' }]);
+  assert.deepEqual(await res.json(), [{ id: '902', name: 'Marijn', text: 'First reply' }, { id: '903', name: 'sam', text: 'Second reply' }]);
   const later = await call(`/messages?ticket=${encodeURIComponent(ticket)}&after=902`);
-  assert.deepEqual(await later.json(), [{ id: '903', text: 'Second reply' }]);
+  assert.deepEqual(await later.json(), [{ id: '903', name: 'sam', text: 'Second reply' }]);
 });
 
 test('a forged ticket reads and writes nothing', async () => {
