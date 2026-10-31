@@ -11,6 +11,20 @@
   let failed = $state(false);
   let picking = $state(false);
   let naming = $state(false);
+  let asked = $state('');
+  // An explanation leaves as soon as you do anything else.
+  $effect(() => {
+    if (!asked) return;
+    const away = (e) => !e.target.closest('.asks') && (asked = '');
+    const esc = (e) => e.key === 'Escape' && (asked = '');
+    addEventListener('pointerdown', away);
+    addEventListener('keydown', esc);
+    return () => {
+      removeEventListener('pointerdown', away);
+      removeEventListener('keydown', esc);
+    };
+  });
+
   let who = $state('');
   let reach = $state('');
   let sharing = $state('');
@@ -65,6 +79,14 @@
   api('/auth/users').then((u) => (admin = !!u.find((p) => p.email === email)?.admin)).catch(() => {});
 </script>
 
+{#snippet help(title, text)}
+  <h3 class="asks">
+    {title}
+    <button type="button" aria-label="What does {title} mean?" title="What does {title} mean?" aria-expanded={asked === title} onclick={() => (asked = asked === title ? '' : title)}><Icon name="circle-question-mark" /></button>
+  </h3>
+  {#if asked === title}<p class="note">{text}</p>{/if}
+{/snippet}
+
 <aside class="panel" aria-label={name}>
   <button class="avatar" type="button" aria-label="Change type, icon and colour" aria-expanded={picking} title="Change type, icon and colour" onclick={() => (picking = !picking)}>
     <Bot {seed} size={72} /><span class="edit"><Icon name="pencil" /></span>
@@ -97,7 +119,7 @@
 
   {#if spaces.length > 1 || admin}
     <div class="list">
-      <h3>Spaces</h3>
+      {@render help('Spaces', 'Rooms inside this archive. Share a room with someone without sharing the rest.')}
       <button class="link" class:on={!current} type="button" onclick={() => onpick('')}><Icon name="layers" /><span>Everything</span></button>
       {#each spaces as s (s.id)}
         {@const shut = isLocked(s)}
@@ -158,7 +180,7 @@
 
   {#if !l.shared}
     <div class="list">
-      <h3>Custodian</h3>
+      {@render help('Custodian', 'Someone you trust, who can step in if something happens to you.')}
       {#if l.custodian && !naming}
         <button class="link" type="button" onclick={() => { who = l.custodian.name; reach = l.custodian.reach; naming = true; }}>
           <Icon name="shield-check" /><span>{l.custodian.name}</span>
@@ -172,7 +194,6 @@
       {:else}
         <button class="link quiet" type="button" onclick={() => (naming = true)}><Icon name="shield-plus" /><span>Add a custodian</span></button>
       {/if}
-      <p class="note">Someone you trust, who can step in if something happens to you.</p>
     </div>
   {/if}
 </aside>
@@ -230,6 +251,10 @@
   .actions button { padding: var(--space-1) var(--space-3); border-radius: var(--radius-full); color: var(--fg-muted); }
   .actions .save { background: var(--primary); color: var(--on-primary); }
   h3 { padding: 0 var(--space-1-5); color: var(--fg-muted); font-size: var(--text-meta); font-weight: var(--weight-medium); }
+  .asks { display: flex; align-items: center; gap: var(--space-1); }
+  .asks button { display: grid; place-items: center; width: 16px; height: 16px; color: var(--fg-muted); opacity: 0.7; transition: opacity var(--duration-fast); }
+  .asks button:hover, .asks [aria-expanded='true'] { opacity: 1; }
+  .asks :global(.icon) { width: 14px; height: 14px; }
   .note { padding: 0 var(--space-1-5); color: var(--fg-muted); font-size: var(--text-meta); line-height: var(--leading-snug); }
   @media (max-width: 1023px) { .panel { display: none; } }
 </style>
