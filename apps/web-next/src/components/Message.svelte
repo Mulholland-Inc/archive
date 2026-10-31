@@ -29,7 +29,7 @@
 {:else}
   <article class="assistant" in:rise>
     {#if message.steps?.length}
-      <Steps steps={message.steps} running={streaming && !message.blocks?.length} />
+      <Steps steps={message.steps} running={streaming && !message.blocks?.length} worked={message.worked} />
     {/if}
     {#if message.blocks?.length}
       <Prose blocks={message.blocks} />

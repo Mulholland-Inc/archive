@@ -1,4 +1,4 @@
-const done = (label, detail, time, tool) => ({ label, detail, status: 'done', time, tool });
+const done = (label, detail, time) => ({ label, detail, status: 'done', time });
 const at = (label, status = 'pending', detail = '', time = '') => ({ label, detail, status, time });
 
 function run(number, status, started, elapsed, steps) {
@@ -28,12 +28,12 @@ const okafor = [
     steps: ['Find untranscribed audio', 'Transcribe each side', 'Link speakers to the family tree', 'Save transcripts next to the audio'],
     runs: [
       run(7, 'running', '6 min ago', '6m 12s', [
-        done('Find untranscribed audio', '4 tapes, 8 sides, 3h 54m', '0:04', 'search'),
-        done('Transcribe cassette 5', 'Igbo and English, 2 speakers', '1:48', 'extract'),
-        done('Transcribe cassette 6', '3 speakers, music at the start of side B', '1:52', 'extract'),
-        at('Transcribe cassette 7', 'running', 'Side A, 18 of 31 minutes'),
-        at('Link speakers to the family tree'),
-        at('Save transcripts next to the audio')
+        done('Finding the tapes nobody has transcribed yet', '4 tapes, 8 sides, 3h 54m of audio', '0:04'),
+        done('Transcribing cassette 5', 'Igbo and English, two speakers', '1:48'),
+        done('Transcribing cassette 6', 'Three speakers, music at the start of side B', '1:52'),
+        at('Transcribing cassette 7', 'running', 'Side A, 18 of 31 minutes'),
+        at('Linking each speaker to the family tree'),
+        at('Saving the transcripts next to the audio')
       ]),
       finished(6, 'Oct 20', '22m 40s', ['Find untranscribed audio', 'Transcribe cassettes 1 to 4', 'Link speakers to the family tree', 'Save transcripts next to the audio'])
     ]
@@ -47,10 +47,10 @@ const okafor = [
     steps: ['Detect faces', 'Match faces to known people', 'Ask about unknown faces', 'Write tags to the photos'],
     runs: [
       run(12, 'waiting', '1 hr ago', '22m 40s', [
-        done('Detect faces in 212 photos', '640 faces', '4:10', 'vision'),
-        done('Match faces to known people', '588 matched', '17:52', 'tree'),
-        at('Ask about 52 unknown faces', 'waiting', 'Waiting for you'),
-        at('Write tags to the photos')
+        done('Finding faces in the 212 new photos', '640 faces', '4:10'),
+        done('Matching faces to people you have already named', '588 matched', '17:52'),
+        at('Asking you about 52 faces it doesn’t recognise', 'waiting', 'Waiting for you'),
+        at('Writing the names onto the photos')
       ]),
       finished(11, 'Oct 22', '3m 05s', ['Detect faces', 'Match faces to known people', 'Write tags to the photos'])
     ]
@@ -65,10 +65,10 @@ const okafor = [
     steps: ['Gather this week’s additions', 'Pick highlights', 'Write the digest', 'Email every member'],
     runs: [
       run(31, 'succeeded', 'Yesterday', '1m 48s', [
-        done('Gather this week’s additions', '38 new items', '0:20', 'search'),
-        done('Pick highlights', '5 items', '0:41'),
-        done('Write the digest', '420 words', '0:39'),
-        done('Email every member', '9 delivered', '0:08')
+        done('Gathering what was added this week', '38 new items', '0:20'),
+        done('Picking five highlights', '', '0:41'),
+        done('Writing the digest', '420 words', '0:39'),
+        done('Emailing it to everyone', '9 delivered', '0:08')
       ]),
       finished(30, 'Oct 19', '1m 52s', ['Gather this week’s additions', 'Pick highlights', 'Write the digest', 'Email every member']),
       finished(29, 'Oct 12', '2m 03s', ['Gather this week’s additions', 'Pick highlights', 'Write the digest', 'Email every member'])
@@ -83,9 +83,9 @@ const okafor = [
     steps: ['Read ledger scans', 'Normalize currencies', 'Update the ledger table'],
     runs: [
       run(2, 'succeeded', 'Oct 9', '38m 02s', [
-        done('Read 14 ledger scans', '1,120 rows', '21:30', 'extract'),
-        done('Normalize currencies', 'Pounds and naira', '6:12'),
-        done('Update the ledger table', '1,118 rows, 2 flagged', '10:20', 'files')
+        done('Reading the 14 ledger scans', '1,120 rows', '21:30'),
+        done('Converting pounds and naira to one currency', '', '6:12'),
+        done('Updating the ledger table', '1,118 rows, 2 flagged for you', '10:20')
       ])
     ]
   },
@@ -98,10 +98,10 @@ const okafor = [
     steps: ['Load scans', 'Restore in batches', 'Save restored copies'],
     runs: [
       run(1, 'failed', 'Oct 11', '3m 15s', [
-        done('Load 24 Polaroid scans', '24 images', '0:12', 'files'),
-        done('Restore batch 1', '12 images', '2:40', 'vision'),
-        at('Restore batch 2', 'failed', 'Scans are below 300 dpi', '0:23'),
-        at('Save restored copies')
+        done('Opening the 24 Polaroid scans', '', '0:12'),
+        done('Restoring the first 12', '', '2:40'),
+        at('Restoring the other 12', 'failed', 'These scans are below 300 dpi', '0:23'),
+        at('Saving the restored copies')
       ])
     ]
   },
@@ -127,10 +127,10 @@ const hale = [
     steps: ['Collect notices from the matter', 'Extract service method and date', 'Compare against the lease', 'Write the advice note'],
     runs: [
       run(4, 'running', '14 min ago', '14m 03s', [
-        done('Collect notices from the matter', '7 notices', '0:12', 'files'),
-        done('Extract service method and date', '7 of 7', '1:30', 'extract'),
-        at('Compare against clauses 9.3 and 22.1', 'running', 'Notice 4 of 7'),
-        at('Write the advice note')
+        done('Collecting every notice in the matter', '7 notices', '0:12'),
+        done('Pulling out how and when each was served', '7 of 7', '1:30'),
+        at('Checking each against clauses 9.3 and 22.1', 'running', 'Notice 4 of 7'),
+        at('Writing the advice note')
       ]),
       finished(3, 'Oct 30', '9m 12s', ['Collect notices from the matter', 'Extract service method and date', 'Compare against the lease', 'Write the advice note'])
     ]
@@ -144,7 +144,7 @@ const hale = [
     next: 'Nov 28, 09:00',
     steps: ['Read time entries', 'Group by matter', 'Write narratives'],
     runs: [
-      run(10, 'succeeded', 'Oct 31', '4m 10s', [done('Read time entries', '212 entries', '0:40'), done('Group by matter', '9 matters', '0:30'), done('Write narratives', '9 drafts', '3:00')])
+      run(10, 'succeeded', 'Oct 31', '4m 10s', [done('Reading 212 time entries', '', '0:40'), done('Grouping them by matter', '9 matters', '0:30'), done('Drafting a narrative for each', '9 drafts', '3:00')])
     ]
   }
 ];
@@ -159,9 +159,9 @@ const fieldnote = [
     steps: ['Read new images', 'Find enamel and cast lettering', 'Make a board'],
     runs: [
       run(5, 'running', '3 min ago', '3m 02s', [
-        done('Read new images', '64 images', '0:20', 'vision'),
-        at('Find enamel and cast lettering', 'running', '18 of 64'),
-        at('Make a board')
+        done('Looking at the 64 new images', '', '0:20'),
+        at('Picking out enamel and cast lettering', 'running', '18 of 64'),
+        at('Laying them out on a board')
       ])
     ]
   }

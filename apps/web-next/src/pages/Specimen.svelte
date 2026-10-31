@@ -130,9 +130,9 @@
     { key: 'active', label: 'Last active', muted: true, width: 'sm', align: 'end' }
   ];
   const runningSteps = [
-    { id: 'a', label: 'Read 3 images', detail: '3 of 3', tool: 'vision', status: 'done', time: '4s' },
-    { id: 'b', label: 'Searching the archive', detail: 'letters, photos', tool: 'search', status: 'running' },
-    { id: 'c', label: 'Write the summary', status: 'pending' }
+    { id: 'a', label: 'Reading the 214 scans in Family Photos', status: 'done', time: '4s' },
+    { id: 'b', label: 'Pulling the date each photo was taken', status: 'running' },
+    { id: 'c', label: 'Renaming 198 files and setting 16 aside without a date', status: 'pending' }
   ];
 </script>
 
@@ -506,9 +506,9 @@
           <Message message={conversations['letters-1974'][0]} />
           <Message message={conversations['letters-1974'][3]} />
         </SpecimenBlock>
-        <SpecimenBlock title="Agent steps: running and finished" column>
+        <SpecimenBlock title="Work disclosure: running and finished" column>
           <Steps steps={runningSteps} running open />
-          <Steps steps={conversations['mercer-timeline'][1].steps} />
+          <Steps steps={conversations['mercer-timeline'][1].steps} worked="25s" />
           <StepPill label="Transcribe cassette 7" done={3} total={6} running />
           <StepPill label="Email 9 members" done={4} total={4} />
         </SpecimenBlock>

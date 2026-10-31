@@ -83,10 +83,11 @@ export const conversations = {
     {
       id: 'm2',
       role: 'assistant',
+      worked: '7s',
       steps: [
-        { id: 's1', label: 'Read 3 images', detail: 'adaeze-letter-03.jpg, adaeze-letter-04.jpg, envelope-back.jpg', tool: 'vision', status: 'done', time: '4s' },
-        { id: 's2', label: 'Searched the archive for “Adaeze”', detail: '41 matches across letters, photos and the family tree', tool: 'search', status: 'done', time: '1s' },
-        { id: 's3', label: 'Matched names to the family tree', detail: '6 people linked, 1 unresolved', tool: 'tree', status: 'done', time: '2s' }
+        { id: 's1', label: 'Reading the handwriting in both letters and on the envelope', status: 'done', time: '4s' },
+        { id: 's2', label: 'Looking through 41 other items that mention Adaeze', status: 'done', time: '1s' },
+        { id: 's3', label: 'Matching six of the names to people in the family tree', status: 'done', time: '2s' }
       ],
       blocks: [
         { type: 'p', text: 'Both letters are in Adaeze’s handwriting and were written two weeks apart in **March 1974**, from Enugu to your grandfather in Leeds. The postmark reads **ENUGU 18 MR 74**, which matches the date at the top of the second letter.' },
@@ -125,9 +126,10 @@ export const conversations = {
     {
       id: 'm4',
       role: 'assistant',
+      worked: '1s',
       steps: [
-        { id: 's4', label: 'Created 2 documents in 1970s Letters', detail: 'Adaeze to Obi, 2 Mar 1974 · Adaeze to Obi, 16 Mar 1974', tool: 'files', status: 'done', time: '1s' },
-        { id: 's5', label: 'Linked transcripts to scans', detail: '2 links', tool: 'files', status: 'done', time: '0s' }
+        { id: 's4', label: 'Saving both transcripts to 1970s Letters', status: 'done', time: '1s' },
+        { id: 's5', label: 'Linking each transcript to its scan', status: 'done', time: '0s' }
       ],
       blocks: [
         { type: 'p', text: 'Done. Both transcripts now keep the original line breaks, with page turns marked as `— page 2 —`. They are saved next to the scans and show up in the letters timeline.' },
@@ -148,10 +150,11 @@ export const conversations = {
     {
       id: 'm2',
       role: 'assistant',
+      worked: '25s',
       steps: [
-        { id: 's1', label: 'Listed the Mercer matter folder', detail: '63 files · 18 emails, 22 PDFs, 9 letters, 14 notes', tool: 'files', status: 'done', time: '1s' },
-        { id: 's2', label: 'Extracted dates from 63 files', detail: '214 dated events found, 37 relevant', tool: 'extract', status: 'done', time: '18s' },
-        { id: 's3', label: 'Checked notices against lease §22', detail: 'Clause 22.1 requires written notice by recorded delivery', tool: 'review', status: 'done', time: '6s' }
+        { id: 's1', label: 'Opening the 63 files in the Mercer matter folder', status: 'done', time: '1s' },
+        { id: 's2', label: 'Pulling 214 dates out of the emails, letters and notes', status: 'done', time: '18s' },
+        { id: 's3', label: 'Checking each notice against clause 22.1 of the lease', status: 'done', time: '6s' }
       ],
       blocks: [
         { type: 'p', text: 'Here is the chronology, condensed to the events that matter for the notice question. Full citations are in the matter note I created.' },
@@ -245,7 +248,8 @@ for path in sorted(SOURCE.glob("*.jpg")):
     {
       id: 'm2',
       role: 'assistant',
-      steps: [{ id: 's1', label: 'Read Linden kickoff notes.pdf', detail: '6 pages', tool: 'files', status: 'done', time: '2s' }],
+      worked: '2s',
+      steps: [{ id: 's1', label: 'Reading the six pages of kickoff notes', status: 'done', time: '2s' }],
       blocks: [
         { type: 'h', text: 'Linden Library rebrand: moodboard brief' },
         { type: 'p', text: 'Linden is a 90-year-old public library becoming a neighbourhood workshop: tools, seeds and sewing machines alongside books. The identity should feel **civic, handmade and durable**, never nostalgic.' },

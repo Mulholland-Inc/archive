@@ -1,13 +1,20 @@
 <script>
-  import { Check, LoaderCircle, Search, Eye, FileText, GitBranch, ScanText, Scale, CircleAlert } from '@lucide/svelte';
+  import { Check, LoaderCircle, CircleAlert, Hand } from '@lucide/svelte';
   import Icon from './Icon.svelte';
   import Disclosure from './Disclosure.svelte';
   import { rise } from '../lib/motion.js';
 
-  let { steps = [], running = false, open = $bindable(false) } = $props();
+  let { steps = [], running = false, worked, open = $bindable(false) } = $props();
 
-  const icons = { search: Search, vision: Eye, files: FileText, tree: GitBranch, extract: ScanText, review: Scale };
-  const heading = $derived(running ? (steps.find((s) => s.status === 'running' || s.status === 'waiting')?.label ?? steps.at(-1)?.label ?? 'Working') : steps.length === 1 ? steps[0].label : `Used ${steps.length} tools`);
+  const heading = $derived(
+    running
+      ? (steps.find((s) => s.status === 'running' || s.status === 'waiting')?.label ?? steps.at(-1)?.label ?? 'Thinking')
+      : worked
+        ? `Worked for ${worked}`
+        : steps.some((s) => s.status === 'waiting')
+          ? 'Waiting for you'
+          : `${steps.filter((s) => s.status === 'done').length} of ${steps.length} steps done`
+  );
 </script>
 
 <Disclosure bind:open>
@@ -23,8 +30,10 @@
             <span class="spin"><Icon icon={LoaderCircle} size="sm" /></span>
           {:else if step.status === 'failed'}
             <Icon icon={CircleAlert} size="sm" />
-          {:else}
-            <Icon icon={icons[step.tool] ?? Check} size="sm" />
+          {:else if step.status === 'waiting'}
+            <Icon icon={Hand} size="sm" />
+          {:else if step.status === 'done'}
+            <Icon icon={Check} size="sm" />
           {/if}
         </span>
         <span class="body">
@@ -76,8 +85,8 @@
   .step:not(:last-child)::before {
     content: '';
     position: absolute;
-    inset-block: var(--control-sm) 0;
-    inset-inline-start: calc(var(--control-sm) / 2);
+    inset-block: var(--control-xs) 0;
+    inset-inline-start: calc(var(--control-xs) / 2);
     width: var(--border-width);
     background: var(--color-border);
   }
@@ -86,8 +95,8 @@
     display: grid;
     place-items: center;
     flex: none;
-    width: var(--control-sm);
-    height: var(--control-sm);
+    width: var(--control-xs);
+    height: var(--control-xs);
     border-radius: var(--radius-full);
     background: var(--color-fill);
     color: var(--color-text-secondary);
@@ -103,8 +112,12 @@
     color: var(--color-danger);
   }
 
-  .pending .glyph,
   .waiting .glyph {
+    background: var(--color-warning-subtle);
+    color: var(--color-warning);
+  }
+
+  .pending .glyph {
     background: none;
     box-shadow: inset 0 0 0 var(--border-width) var(--color-border-strong);
     color: var(--color-text-disabled);
@@ -116,7 +129,7 @@
     gap: var(--space-0-5);
     flex: 1;
     min-width: 0;
-    padding-block-start: var(--space-1);
+    padding-block-start: var(--space-0-5);
   }
 
   .title {
@@ -134,7 +147,7 @@
   }
 
   .time {
-    padding-block-start: var(--space-1);
+    padding-block-start: var(--space-0-5);
     color: var(--color-text-tertiary);
     font-size: var(--text-xs);
     font-variant-numeric: tabular-nums;

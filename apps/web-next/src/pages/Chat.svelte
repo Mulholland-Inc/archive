@@ -69,18 +69,26 @@
     chat.updated = 'Just now';
     list.push({ id: uid('m'), role: 'user', text, attachments });
     toBottom(true);
-    list.push({
-      id: uid('m'),
-      role: 'assistant',
-      steps: [{ id: 's1', label: 'Searching the archive', tool: 'search', status: 'running' }],
-      blocks: []
-    });
+    list.push({ id: uid('m'), role: 'assistant', steps: [], blocks: [] });
     const reply = list.at(-1);
     streaming = true;
     cancelled = false;
-    await wait(duration('slower') * 3);
+    const started = Date.now();
+    const plan = [
+      'Searching the archive for what you asked about',
+      'Reading the 14 letters and photos that match',
+      'Putting the results in order'
+    ];
+    for (const [i, label] of plan.entries()) {
+      if (cancelled) break;
+      if (i) reply.steps[i - 1].status = 'done';
+      reply.steps.push({ id: `s${i}`, label, status: 'running' });
+      toBottom();
+      await wait(duration('slower') * 2);
+    }
     if (!cancelled) {
-      reply.steps[0] = { id: 's1', label: 'Searched the archive', detail: '14 matches in 1970s Letters and Photo albums', tool: 'search', status: 'done', time: '1s' };
+      reply.steps.at(-1).status = 'done';
+      reply.worked = `${Math.max(1, Math.round((Date.now() - started) / 1000))}s`;
       for (const block of streamReply) {
         if (cancelled) break;
         if (block.type === 'ul' || block.type === 'ol') {
