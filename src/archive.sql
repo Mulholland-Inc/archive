@@ -693,6 +693,9 @@ RETURNING d.at;
 -- name: DueAt :one
 SELECT at FROM archive.due WHERE workspace = $1 AND kind = $2;
 
+-- name: AllDue :many
+SELECT workspace, kind, at FROM archive.due;
+
 -- name: SetDue :execrows
 UPDATE archive.due d SET at = sqlc.arg(next)::timestamptz FROM archive.workspace w
 WHERE w.id = d.workspace AND w.id = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND d.at = sqlc.arg(claimed)::timestamptz;

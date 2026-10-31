@@ -4052,6 +4052,40 @@ func TestTheWebAppOnItsOwnHostCallsTheAPIHostWithTheAPIsCookie(t *testing.T) {
 	}
 }
 
+func TestOffCloudRunServeRunsDueWorkItselfAndCatchesUpWhenItStarts(t *testing.T) {
+	t.Parallel()
+	in := newInst(t, "ARCHIVE_TASKS_URL=", "K_SERVICE=", "CLOUD_RUN_JOB=")
+	in.must("user", "add", "alice@example.com")
+	in.push(map[string]string{"house.sql": e2eHouse})
+	srv := in.serve()
+	tok := decode[Token](t, in.must("token", "create")).Secret
+	b, _ := json.Marshal(map[string]string{"sold.ts": "// on: house\nfor (const r of input.rows) await archive.update('house', r.id, { sold: true });\nreturn input.rows.map((r) => r.address).join(',');"})
+	if st, out := e2eRun(t, srv.url+"/api", tok, `await archive.deploy(`+string(b)+`); return true;`); st != 200 || out.Error != "" {
+		t.Fatalf("deploy: %d %+v", st, out)
+	}
+	sold := func(t *testing.T, api, address string) {
+		t.Helper()
+		for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
+			var rows []map[string]any
+			call(t, "GET", api+"/house?address="+url.QueryEscape(address), tok, nil, &rows)
+			if len(rows) == 1 && rows[0]["sold"] == true {
+				return
+			}
+		}
+		t.Fatalf("%s was never sold", address)
+	}
+	call(t, "POST", srv.url+"/api/house", tok, map[string]any{"address": "Canal 1"}, nil)
+	sold(t, srv.url+"/api", "Canal 1")
+
+	srv.stop()
+	in.must("create", "house", `{"address": "Canal 2"}`)
+	srv = in.serve()
+	sold(t, srv.url+"/api", "Canal 2")
+	if st, _ := e2eDo(t, "POST", srv.url+"/tasks", nil, map[string]string{"work": "workflows"}, nil); st != 404 {
+		t.Errorf("/tasks off Cloud Run: %d, want 404", st)
+	}
+}
+
 func TestCloudTasksWakeTheServiceAtEachDueTimeAndNothingRunsOnItsOwn(t *testing.T) {
 	t.Parallel()
 	google, forger := e2eIssuer(t), e2eIssuer(t)

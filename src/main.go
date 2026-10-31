@@ -115,9 +115,8 @@ Environment:
 
 On Cloud Run, the Cloud Tasks queue projects/<project>/locations/<region>/queues/<service> calls
 POST <API>/tasks at each time workflows or files are due, so serve can scale to zero, with the OIDC
-token of <service>-tasks@<project>.iam.gserviceaccount.com; /tasks refuses any other. In development,
-ARCHIVE_TASKS_URL is the emulator's queue, like
-http://localhost:8123/projects/dev/locations/here/queues/archive, and ARCHIVE_TASKS_ISSUER its issuer.
+token of <service>-tasks@<project>.iam.gserviceaccount.com; /tasks refuses any other. Anywhere else,
+serve runs that work itself when it is due, and picks up what was due while it was stopped when it starts.
 `
 
 var cliErrUsage = errors.New("usage")
@@ -526,6 +525,9 @@ func cliServe(ctx context.Context, h *Hub, a *Archive, addr string) error {
 		fmt.Fprintf(os.Stderr, "archive: %s is on this machine, so requests from this machine are signed in as the first owner\n", h.app)
 	} else if len(si.configs) == 0 {
 		fmt.Fprintln(os.Stderr, "archive: no sign-in provider is set, so nobody can sign in to the web app; set ARCHIVE_GOOGLE, ARCHIVE_MICROSOFT, ARCHIVE_SLACK or ARCHIVE_GITHUB (see archive help)")
+	}
+	if err := h.wakeAll(ctx); err != nil {
+		return err
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/api/", h.httpAuth((*Archive).handler))

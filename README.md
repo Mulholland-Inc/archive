@@ -199,7 +199,7 @@ Every setting is an environment variable; `archive help` lists them all:
 | `ARCHIVE_GITHUB` | Sign-in with GitHub: `https://<client id>:<client secret>@github.com` |
 | `ANTHROPIC_API_KEY` | Key of the in-app agent, the one key for every workspace |
 
-On Cloud Run, Archive finds its Cloud Tasks queue, `projects/<project>/locations/<region>/queues/<service>`, and the service account the queue signs its calls to `/tasks` with, `<service>-tasks@<project>.iam.gserviceaccount.com`, from the metadata server. In development, `ARCHIVE_TASKS_URL` and `ARCHIVE_TASKS_ISSUER` point it at the emulator.
+On Cloud Run, Archive finds its Cloud Tasks queue, `projects/<project>/locations/<region>/queues/<service>`, and the service account the queue signs its calls to `/tasks` with, `<service>-tasks@<project>.iam.gserviceaccount.com`, from the metadata server. Anywhere else, `archive serve` runs due work itself at its time, and when it starts it picks up what fell due while it was stopped.
 
 ## How it is built
 
@@ -224,17 +224,15 @@ flowchart LR
 
 ```sh
 docker compose up -d                  # Postgres 18 on localhost:5433
-go run github.com/aertje/cloud-tasks-emulator/v2/cmd/emulator@v2.0.0 -initial-queue projects/dev/locations/here/queues/archive -openid-issuer http://localhost:8980
 ```
 
 ```sh
 cd src
 go build -o archive .
-go test ./...                         # end-to-end tests; each starts its own Postgres 18 with initdb and postgres from PATH, and a fake Cloud Tasks
-export DATABASE_URL="postgres://archive:archive@localhost:5433/archive?sslmode=disable" \
-  ARCHIVE_TASKS_URL=http://localhost:8123/projects/dev/locations/here/queues/archive ARCHIVE_TASKS_ISSUER=http://localhost:8980
+go test ./...                         # end-to-end tests; each starts its own Postgres 18 with initdb and postgres from PATH
+export DATABASE_URL="postgres://archive:archive@localhost:5433/archive?sslmode=disable"
 ARCHIVE_BIN=./archive ../demo/load.sh you@example.com
-./archive serve                       # API, sign-in and MCP on :8080, key and files in ./data; the emulator calls /tasks when work is due
+./archive serve                       # API, sign-in and MCP on :8080, key and files in ./data; it runs workflows and files when they are due
 ```
 
 `ARCHIVE_BIN=./archive ../demo/family/load.sh` loads a made-up family, five generations deep, for the family tree. Load it instead of the demo, not alongside it: both have a `person` table.
