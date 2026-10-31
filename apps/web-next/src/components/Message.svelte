@@ -4,7 +4,7 @@
   import Steps from './Steps.svelte';
   import Attachment from './Attachment.svelte';
   import IconButton from './IconButton.svelte';
-  import WorkspaceIcon from './WorkspaceIcon.svelte';
+  import VaultIcon from './VaultIcon.svelte';
   import { ws } from '../lib/app.svelte.js';
   import { rise } from '../lib/motion.js';
 
@@ -36,7 +36,7 @@
       <Prose blocks={message.blocks} />
     {/if}
     {#if streaming}
-      <span class="working"><WorkspaceIcon icon={ws().look.icon} tint={ws().look.tint} seed={ws().id} size="sm" active label="Working" /></span>
+      <span class="working"><VaultIcon icon={ws().look.icon} tint={ws().look.tint} seed={ws().id} size="sm" active label="Working" /></span>
     {/if}
   </article>
 {/if}

@@ -27,8 +27,8 @@
   import MobileMenu from '../components/MobileMenu.svelte';
   import { me } from '../lib/data.js';
   import { theme, setTheme, setChatFont } from '../lib/theme.svelte.js';
-  import { app, ws, deleteWorkspace } from '../lib/app.svelte.js';
-  import WorkspaceIcon from '../components/WorkspaceIcon.svelte';
+  import { app, ws, deleteVault } from '../lib/app.svelte.js';
+  import VaultIcon from '../components/VaultIcon.svelte';
   import LookPicker from '../components/LookPicker.svelte';
   import { toast } from '../lib/toast.svelte.js';
 
@@ -37,7 +37,7 @@
   const nav = [
     { id: 'profile', label: 'Profile', icon: User, href: '#/settings/profile' },
     { id: 'appearance', label: 'Appearance', icon: Palette, href: '#/settings/appearance' },
-    { id: 'workspace', label: 'Workspace', icon: Building2, href: '#/settings/workspace' },
+    { id: 'vault', label: 'Vault', icon: Building2, href: '#/settings/vault' },
     { id: 'notifications', label: 'Notifications', icon: Bell, href: '#/settings/notifications' }
   ];
 
@@ -56,7 +56,7 @@
   const wsDirty = $derived(wsName !== ws().name || look.icon !== ws().look.icon || look.tint !== ws().look.tint || look.type !== ws().look.type);
 
   $effect(() => {
-    app.workspace;
+    app.vault;
     wsName = ws().name;
     look = { ...ws().look };
   });
@@ -74,12 +74,12 @@
     tone = app.profile.tone;
   }
 
-  function saveWorkspace() {
+  function saveVault() {
     const w = ws();
     w.name = wsName.trim() || w.name;
     w.look = { ...look };
     w.kind = { family: 'Family', business: 'Business', personal: 'Just you' }[look.type];
-    toast('Workspace saved', { tone: 'success' });
+    toast('Vault saved', { tone: 'success' });
   }
 
   const works = [
@@ -151,17 +151,17 @@
               <Card padding="lg" variant="filled"><Prose blocks={sample} /></Card>
             </Section>
           </Stack>
-        {:else if section === 'workspace'}
+        {:else if section === 'vault'}
           <Stack gap="8">
-            <Section title="Workspace" gap="lg">
+            <Section title="Vault" gap="lg">
               <Stack direction="row" gap="4" align="center">
-                <WorkspaceIcon icon={look.icon} tint={look.tint} seed={ws().id} size="xxl" />
+                <VaultIcon icon={look.icon} tint={look.tint} seed={ws().id} size="xxl" />
                 <Field label="Name">{#snippet children(id)}<Input {id} bind:value={wsName} />{/snippet}</Field>
               </Stack>
               <LookPicker bind:look />
               <Stack direction="row" gap="2" justify="end">
                 <Button variant="ghost" disabled={!wsDirty} onclick={() => { wsName = ws().name; look = { ...ws().look }; }}>Cancel</Button>
-                <Button variant="primary" disabled={!wsDirty} onclick={saveWorkspace}>Save changes</Button>
+                <Button variant="primary" disabled={!wsDirty} onclick={saveVault}>Save changes</Button>
               </Stack>
             </Section>
             <Divider />
@@ -175,7 +175,7 @@
               </Stack>
             </Section>
             <Divider />
-            <Section title="Delete workspace">
+            <Section title="Delete vault">
               <SettingsRow label={`Permanently delete ${ws().name}`}>
                 <Button variant="danger" icon={Trash2} onclick={() => (deleting = true)}>Delete</Button>
               </SettingsRow>
@@ -187,7 +187,7 @@
               <SettingsRow label="When a workflow run finishes"><Switch bind:checked={app.profile.notify.done} label="When a workflow run finishes" /></SettingsRow>
               <SettingsRow label="When someone mentions me"><Switch bind:checked={app.profile.notify.mentions} label="When someone mentions me" /></SettingsRow>
               <SettingsRow label="Weekly digest email"><Switch bind:checked={app.profile.notify.digest} label="Weekly digest email" /></SettingsRow>
-              <SettingsRow label="When someone joins the workspace"><Switch bind:checked={app.profile.notify.invites} label="When someone joins the workspace" /></SettingsRow>
+              <SettingsRow label="When someone joins the vault"><Switch bind:checked={app.profile.notify.invites} label="When someone joins the vault" /></SettingsRow>
             </Stack>
           </Section>
         {/if}
@@ -196,10 +196,10 @@
   </Split>
 </Page>
 
-<Dialog bind:open={deleting} title="Delete this workspace?" size="sm">
+<Dialog bind:open={deleting} title="Delete this vault?" size="sm">
   <Text as="p" tone="secondary">All chats, files and workflows in {ws().name} will be deleted for everyone.</Text>
   {#snippet footer({ close })}
     <Button variant="ghost" onclick={close}>Cancel</Button>
-    <Button variant="danger" onclick={() => { close(); deleteWorkspace(ws().id); }}>Delete workspace</Button>
+    <Button variant="danger" onclick={() => { close(); deleteVault(ws().id); }}>Delete vault</Button>
   {/snippet}
 </Dialog>

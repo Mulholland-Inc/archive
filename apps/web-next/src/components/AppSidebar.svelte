@@ -3,15 +3,15 @@
   import Sidebar from './Sidebar.svelte';
   import SidebarItem from './SidebarItem.svelte';
   import SidebarSection from './SidebarSection.svelte';
-  import WorkspaceSwitcher from './WorkspaceSwitcher.svelte';
+  import VaultSwitcher from './VaultSwitcher.svelte';
   import AccountMenu from './AccountMenu.svelte';
   import IconButton from './IconButton.svelte';
   import ChatActions from './ChatActions.svelte';
   import Stack from './Stack.svelte';
-  import { app, ws, closeDrawer, toggleSidebar, switchWorkspace, createWorkspace } from '../lib/app.svelte.js';
+  import { app, ws, closeDrawer, toggleSidebar, switchVault, createVault } from '../lib/app.svelte.js';
   import { me, chatGroups } from '../lib/data.js';
   import { route, active, go } from '../lib/router.svelte.js';
-  import NewWorkspaceDialog from './NewWorkspaceDialog.svelte';
+  import NewVaultDialog from './NewVaultDialog.svelte';
 
   const running = $derived(ws().workflows.filter((w) => w.runs[0] && (w.runs[0].status === 'running' || w.runs[0].status === 'waiting')).length);
   const visible = $derived(ws().chats.filter((c) => !c.hidden));
@@ -38,11 +38,11 @@
 <Sidebar collapsed={app.collapsed} drawer={app.drawer} onclose={closeDrawer}>
   {#snippet header()}
     <Stack direction={collapsed ? 'column' : 'row'} gap="1" align="center">
-      <WorkspaceSwitcher
-        workspaces={app.workspaces}
-        current={app.workspace}
-        onselect={switchWorkspace}
-        onsettings={() => go('/settings/workspace')}
+      <VaultSwitcher
+        vaults={app.vaults}
+        current={app.vault}
+        onselect={switchVault}
+        onsettings={() => go('/settings/vault')}
         oncreate={() => { app.drawer = false; creating = true; }}
       />
       <IconButton icon={PanelLeft} label={collapsed ? 'Open sidebar' : 'Close sidebar'} placement={collapsed ? 'right' : 'top'} shortcut="⌘ ." onclick={toggleSidebar} />
@@ -80,4 +80,4 @@
   {/snippet}
 </Sidebar>
 
-<NewWorkspaceDialog bind:open={creating} oncreate={createWorkspace} />
+<NewVaultDialog bind:open={creating} oncreate={createVault} />

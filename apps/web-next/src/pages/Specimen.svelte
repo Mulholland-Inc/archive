@@ -60,7 +60,7 @@
   import CodeBlock from '../components/CodeBlock.svelte';
   import StepPill from '../components/StepPill.svelte';
   import WorkflowCard from '../components/WorkflowCard.svelte';
-  import WorkspaceIcon from '../components/WorkspaceIcon.svelte';
+  import VaultIcon from '../components/VaultIcon.svelte';
   import LookPicker from '../components/LookPicker.svelte';
   import ConnectorCard from '../components/ConnectorCard.svelte';
   import ConnectorIcon from '../components/ConnectorIcon.svelte';
@@ -73,7 +73,7 @@
   import Sidebar from '../components/Sidebar.svelte';
   import SidebarItem from '../components/SidebarItem.svelte';
   import SidebarSection from '../components/SidebarSection.svelte';
-  import WorkspaceSwitcher from '../components/WorkspaceSwitcher.svelte';
+  import VaultSwitcher from '../components/VaultSwitcher.svelte';
   import ThemePicker from '../components/ThemePicker.svelte';
   import Disclosure from '../components/Disclosure.svelte';
   import SettingsRow from '../components/SettingsRow.svelte';
@@ -202,21 +202,21 @@
           <MotionSample duration="slow" easing="in-out" label="slow · ease-in-out" />
           <MotionSample duration="slower" easing="emphasized" label="slower · emphasized" />
         </SpecimenBlock>
-        <SpecimenBlock title="Workspace icons, hover to wake">
+        <SpecimenBlock title="Vault icons, hover to wake">
           {#each Object.entries(TYPES) as [type, t] (type)}
             {#each t.icons as icon, i (icon)}
-              <WorkspaceIcon {icon} tint={i % 8} seed={type} size="xl" label={`${t.label}: ${icon}`} />
+              <VaultIcon {icon} tint={i % 8} seed={type} size="xl" label={`${t.label}: ${icon}`} />
             {/each}
           {/each}
         </SpecimenBlock>
-        <SpecimenBlock title="Workspace icon sizes">
-          <WorkspaceIcon icon="cottage" tint={0} size="xs" /><WorkspaceIcon icon="cottage" tint={0} size="sm" /><WorkspaceIcon icon="cottage" tint={0} /><WorkspaceIcon icon="cottage" tint={0} size="lg" /><WorkspaceIcon icon="cottage" tint={0} size="xl" /><WorkspaceIcon icon="robot" tint={3} size="xxl" />
+        <SpecimenBlock title="Vault icon sizes">
+          <VaultIcon icon="cottage" tint={0} size="xs" /><VaultIcon icon="cottage" tint={0} size="sm" /><VaultIcon icon="cottage" tint={0} /><VaultIcon icon="cottage" tint={0} size="lg" /><VaultIcon icon="cottage" tint={0} size="xl" /><VaultIcon icon="robot" tint={3} size="xxl" />
         </SpecimenBlock>
         <SpecimenBlock title="Look picker" column>
           <LookPicker bind:look />
         </SpecimenBlock>
         <SpecimenBlock title="Working indicator">
-          <WorkspaceIcon icon="cottage" tint={0} size="sm" active label="Working" />
+          <VaultIcon icon="cottage" tint={0} size="sm" active label="Working" />
         </SpecimenBlock>
       </SpecimenSection>
 
@@ -335,7 +335,7 @@
           <Breadcrumbs items={[{ label: 'Projects', href: '#/projects' }, { label: '1970s Letters', href: '#/projects/p-letters' }, { label: 'Adaeze to Obi, 2 Mar 1974' }]} />
         </SpecimenBlock>
         <SpecimenBlock title="Vertical nav">
-          <VerticalNav label="Example" active="b" items={[{ id: 'a', label: 'Profile', href: '#/specimen' }, { id: 'b', label: 'Appearance', href: '#/specimen' }, { id: 'c', label: 'Workspace', href: '#/specimen' }]} />
+          <VerticalNav label="Example" active="b" items={[{ id: 'a', label: 'Profile', href: '#/specimen' }, { id: 'b', label: 'Appearance', href: '#/specimen' }, { id: 'c', label: 'Vault', href: '#/specimen' }]} />
         </SpecimenBlock>
         <SpecimenBlock title="Keyboard">
           <Kbd keys="⌘ K" /><Kbd keys="⇧ ⌘ O" /><Kbd keys="Esc" /><Kbd keys="↵" /><Kbd keys="⌘ ," subtle />
@@ -542,7 +542,7 @@
         <SpecimenBlock title="Sidebar, open and collapsed">
           <SpecimenFrame>
             <Sidebar>
-              {#snippet header()}<WorkspaceSwitcher workspaces={app.workspaces} current={app.workspaces[0].id} />{/snippet}
+              {#snippet header()}<VaultSwitcher vaults={app.vaults} current={app.vaults[0].id} />{/snippet}
               <SidebarSection>
                 <SidebarItem icon={Plus} label="New chat" accent href="#/specimen" />
                 <SidebarItem icon={Search} label="Search" shortcut="⌘ K" />
@@ -561,7 +561,7 @@
           </SpecimenFrame>
           <SpecimenFrame>
             <Sidebar collapsed>
-              {#snippet header()}<WorkspaceSwitcher workspaces={app.workspaces} current={app.workspaces[1]?.id} />{/snippet}
+              {#snippet header()}<VaultSwitcher vaults={app.vaults} current={app.vaults[1]?.id} />{/snippet}
               <SidebarSection>
                 <SidebarItem icon={Plus} label="New chat" accent href="#/specimen" />
                 <SidebarItem icon={Search} label="Search" />

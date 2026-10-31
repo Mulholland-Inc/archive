@@ -77,7 +77,7 @@ function settings() {
   return { defaultRole: 'viewer', invites: true, sharing: false, region: 'us-central1', retention: 'forever' };
 }
 
-function workspace(base) {
+function vault(base) {
   return {
     settings: settings(),
     chats: [],
@@ -115,7 +115,7 @@ export function seed() {
   const pc = pick(chats, personalChats).map((c) => ({ ...c, project: undefined }));
 
   return [
-    workspace({
+    vault({
       id: 'okafor',
       name: 'Okafor Family Archive',
       kind: 'Family',
@@ -130,7 +130,7 @@ export function seed() {
       members: members.map((m) => ({ ...m, groups: [...m.groups] })),
       groups: groups.map((g) => ({ ...g }))
     }),
-    workspace({
+    vault({
       id: 'hale',
       name: 'Hale & Whitcombe LLP',
       kind: 'Law firm',
@@ -148,7 +148,7 @@ export function seed() {
         { id: 'hg2', name: 'Litigation' }
       ]
     }),
-    workspace({
+    vault({
       id: 'fieldnote',
       name: 'Fieldnote Studio',
       kind: 'Studio',
@@ -166,7 +166,7 @@ export function seed() {
         { id: 'fg2', name: 'Research' }
       ]
     }),
-    workspace({
+    vault({
       id: 'personal',
       name: 'Personal',
       kind: 'Just you',
@@ -180,7 +180,7 @@ export function seed() {
   ];
 }
 
-export function blankWorkspace(id, name, look) {
+export function blankVault(id, name, look) {
   const kind = { family: 'Family', business: 'Business', personal: 'Just you' }[look.type];
-  return workspace({ id, name, kind, tone: (id.length % 6) + 1, look: { ...look } });
+  return vault({ id, name, kind, tone: (id.length % 6) + 1, look: { ...look } });
 }

@@ -154,7 +154,7 @@
               {/if}
               <MenuItem icon={UsersIcon} onselect={() => { tab = 'groups'; }}>Groups</MenuItem>
               <MenuSeparator />
-              <MenuItem icon={UserMinus} danger onselect={() => removeMember(row.id)}>{row.status === 'invited' ? 'Revoke invitation' : 'Remove from workspace'}</MenuItem>
+              <MenuItem icon={UserMinus} danger onselect={() => removeMember(row.id)}>{row.status === 'invited' ? 'Revoke invitation' : 'Remove from vault'}</MenuItem>
             </Menu>
           {/if}
         {/snippet}

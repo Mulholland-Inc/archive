@@ -21,9 +21,9 @@ const connected = {
 
 const syncs = ['2 min ago', '14 min ago', '1 hr ago', 'Yesterday'];
 
-export function connectorsFor(workspace) {
+export function connectorsFor(vault) {
   return catalog.map((c, i) => {
-    const account = connected[workspace]?.[c.id];
+    const account = connected[vault]?.[c.id];
     return { ...c, connected: Boolean(account), account: account ?? '', lastSync: account ? syncs[i % syncs.length] : '', items: account ? 40 + ((i * 137) % 900) : 0 };
   });
 }

@@ -1,5 +1,5 @@
 import { me, initials } from './data.js';
-import { seed, blankWorkspace } from './seed.js';
+import { seed, blankVault } from './seed.js';
 import { toast } from './toast.svelte.js';
 import { go, route } from './router.svelte.js';
 
@@ -7,8 +7,8 @@ let counter = 0;
 const nid = (prefix) => `${prefix}${Date.now().toString(36)}${(counter++).toString(36)}`;
 
 export const app = $state({
-  workspaces: seed(),
-  workspace: 'okafor',
+  vaults: seed(),
+  vault: 'okafor',
   collapsed: typeof localStorage !== 'undefined' && localStorage.getItem('archive.sidebar') === 'collapsed',
   drawer: false,
   palette: false,
@@ -21,10 +21,10 @@ export const app = $state({
 });
 
 export function ws() {
-  return app.workspaces.find((w) => w.id === app.workspace) ?? app.workspaces[0];
+  return app.vaults.find((w) => w.id === app.vault) ?? app.vaults[0];
 }
 
-export const currentWorkspace = ws;
+export const currentVault = ws;
 
 export function isNarrow() {
   return typeof matchMedia !== 'undefined' && matchMedia('(max-width: 56rem)').matches;
@@ -56,37 +56,37 @@ function removeAt(list, predicate, label, after) {
   return item;
 }
 
-export function switchWorkspace(id) {
-  if (id === app.workspace) return;
-  app.workspace = id;
+export function switchVault(id) {
+  if (id === app.vault) return;
+  app.vault = id;
   const head = route.parts[0];
   if (['chat', 'projects', 'workflows'].includes(head) && route.parts[1]) go(`/${head === 'chat' ? '' : head}`);
   toast(`Switched to ${ws().name}`);
 }
 
-export function createWorkspace(name, look) {
+export function createVault(name, look) {
   const id = nid('w');
-  app.workspaces.push(blankWorkspace(id, name, look));
-  app.workspace = id;
+  app.vaults.push(blankVault(id, name, look));
+  app.vault = id;
   go('/');
   toast(`Created ${name}`, { tone: 'success' });
 }
 
-export function deleteWorkspace(id) {
-  if (app.workspaces.length < 2) {
-    toast('You need at least one workspace', { tone: 'danger' });
+export function deleteVault(id) {
+  if (app.vaults.length < 2) {
+    toast('You need at least one vault', { tone: 'danger' });
     return;
   }
-  const i = app.workspaces.findIndex((w) => w.id === id);
-  const [gone] = app.workspaces.splice(i, 1);
-  app.workspace = app.workspaces[0].id;
+  const i = app.vaults.findIndex((w) => w.id === id);
+  const [gone] = app.vaults.splice(i, 1);
+  app.vault = app.vaults[0].id;
   go('/');
   toast(`${gone.name} deleted`, {
     action: {
       label: 'Undo',
       run: () => {
-        app.workspaces.splice(i, 0, gone);
-        app.workspace = gone.id;
+        app.vaults.splice(i, 0, gone);
+        app.vault = gone.id;
       }
     }
   });
@@ -367,7 +367,7 @@ function format(sec) {
 }
 
 function tick() {
-  for (const w of app.workspaces) {
+  for (const w of app.vaults) {
     for (const t of w.workflows.flatMap((f) => f.runs)) {
       if (t.status !== 'running' || t.paused) continue;
       t.seconds = (t.seconds ?? 0) + 2;

@@ -25,7 +25,7 @@
   import HelpDialog from './components/HelpDialog.svelte';
   import SignedOut from './components/SignedOut.svelte';
   import { Workflow as WorkflowIcon, Plug, User, Building2 } from '@lucide/svelte';
-  import { switchWorkspace } from './lib/app.svelte.js';
+  import { switchVault } from './lib/app.svelte.js';
 
   const key = $derived(['settings', 'library', 'users'].includes(route.parts[0]) ? route.parts[0] : route.parts.slice(0, 2).join('/') || 'home');
 
@@ -49,7 +49,7 @@
     ...ws().members.map((m) => ({ id: `u-${m.id}`, group: 'People', label: m.name, icon: User, meta: m.email, run: () => go(`/users/${m.id}`), searchOnly: true })),
     ...ws().projects.map((p) => ({ id: `pr-${p.id}`, group: 'Projects', label: p.name, icon: FolderClosed, run: () => go(`/projects/${p.id}`), searchOnly: true })),
     ...ws().workflows.map((w) => ({ id: `w-${w.id}`, group: 'Workflows', label: w.name, icon: WorkflowIcon, meta: w.trigger.label, run: () => go(`/workflows/${w.id}`), searchOnly: true })),
-    ...app.workspaces.filter((w) => w.id !== app.workspace).map((w) => ({ id: `ws-${w.id}`, group: 'Workspaces', label: `Switch to ${w.name}`, icon: Building2, run: () => switchWorkspace(w.id), searchOnly: true }))
+    ...app.vaults.filter((w) => w.id !== app.vault).map((w) => ({ id: `ws-${w.id}`, group: 'Vaults', label: `Switch to ${w.name}`, icon: Building2, run: () => switchVault(w.id), searchOnly: true }))
   ]);
 
   function onkeydown(event) {

@@ -1,5 +1,5 @@
 <script>
-  import WorkspaceIcon from './WorkspaceIcon.svelte';
+  import VaultIcon from './VaultIcon.svelte';
   import { rise } from '../lib/motion.js';
 
   let { name, look, seed } = $props();
@@ -10,7 +10,7 @@
 <div class="greeting" in:rise={{ speed: 'slower' }}>
   {#if look}
     {#key seed}
-      <span class="icon" in:rise={{ speed: 'slow' }}><WorkspaceIcon icon={look.icon} tint={look.tint} {seed} size="xxl" greet /></span>
+      <span class="icon" in:rise={{ speed: 'slow' }}><VaultIcon icon={look.icon} tint={look.tint} {seed} size="xxl" greet /></span>
     {/key}
   {/if}
   <h1>{part}, {name}</h1>

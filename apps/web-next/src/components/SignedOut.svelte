@@ -1,5 +1,5 @@
 <script>
-  import WorkspaceIcon from './WorkspaceIcon.svelte';
+  import VaultIcon from './VaultIcon.svelte';
   import { ws } from '../lib/app.svelte.js';
   import Button from './Button.svelte';
   import { app } from '../lib/app.svelte.js';
@@ -8,7 +8,7 @@
 
 <div class="screen" transition:fade={{ speed: 'normal' }}>
   <div class="card">
-    <WorkspaceIcon icon={ws().look.icon} tint={ws().look.tint} seed={ws().id} size="xl" greet />
+    <VaultIcon icon={ws().look.icon} tint={ws().look.tint} seed={ws().id} size="xl" greet />
     <h1>You’re signed out</h1>
     <Button variant="primary" size="lg" onclick={() => (app.signedOut = false)}>Sign back in as {app.profile.name}</Button>
   </div>

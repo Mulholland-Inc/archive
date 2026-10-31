@@ -4,19 +4,19 @@
   import Menu from './Menu.svelte';
   import MenuItem from './MenuItem.svelte';
   import MenuSeparator from './MenuSeparator.svelte';
-  import WorkspaceIcon from './WorkspaceIcon.svelte';
+  import VaultIcon from './VaultIcon.svelte';
   import Icon from './Icon.svelte';
 
-  let { workspaces = [], current, onselect, oncreate, onsettings } = $props();
+  let { vaults = [], current, onselect, oncreate, onsettings } = $props();
   const sidebar = getContext('sidebar');
   const collapsed = $derived(sidebar?.collapsed ?? false);
-  const active = $derived(workspaces.find((w) => w.id === current) ?? workspaces[0]);
+  const active = $derived(vaults.find((w) => w.id === current) ?? vaults[0]);
 </script>
 
-<Menu placement="bottom-start" width="lg" label="Workspaces">
+<Menu placement="bottom-start" width="lg" label="Vaults">
   {#snippet trigger(props)}
-    <button type="button" class={['switcher', { collapsed }]} aria-label={`Workspace: ${active?.name}`} {...props}>
-      <WorkspaceIcon icon={active?.look.icon} tint={active?.look.tint} seed={active?.id} size="lg" />
+    <button type="button" class={['switcher', { collapsed }]} aria-label={`Vault: ${active?.name}`} {...props}>
+      <VaultIcon icon={active?.look.icon} tint={active?.look.tint} seed={active?.id} size="lg" />
       <span class="lines">
         <span class="name">{active?.name}</span>
         <span class="sub">{active?.kind} · {active?.members.length} {active?.members.length === 1 ? 'member' : 'members'}</span>
@@ -24,9 +24,9 @@
       <span class="chev"><Icon icon={ChevronsUpDown} size="sm" /></span>
     </button>
   {/snippet}
-  {#each workspaces as w (w.id)}
+  {#each vaults as w (w.id)}
     <MenuItem checked={w.id === current} onselect={() => onselect?.(w.id)}>
-      {#snippet leading()}<WorkspaceIcon icon={w.look.icon} tint={w.look.tint} seed={w.id} size="md" />{/snippet}
+      {#snippet leading()}<VaultIcon icon={w.look.icon} tint={w.look.tint} seed={w.id} size="md" />{/snippet}
       <span class="ws">
         <span>{w.name}</span>
         <span class="kind">{w.kind} · {w.members.length} {w.members.length === 1 ? 'member' : 'members'}</span>
@@ -34,8 +34,8 @@
     </MenuItem>
   {/each}
   <MenuSeparator />
-  <MenuItem icon={Settings} onselect={onsettings}>Workspace settings</MenuItem>
-  <MenuItem icon={Plus} onselect={oncreate}>New workspace</MenuItem>
+  <MenuItem icon={Settings} onselect={onsettings}>Vault settings</MenuItem>
+  <MenuItem icon={Plus} onselect={oncreate}>New vault</MenuItem>
 </Menu>
 
 <style>
