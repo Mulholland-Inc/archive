@@ -211,9 +211,11 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 		return err
 	}
 	defer release()
-	ac, err := a.CLIActor(ctx, *as)
-	if err != nil {
-		return err
+	var ac *Actor
+	if cmd != "serve" {
+		if ac, err = a.CLIActor(ctx, *as); err != nil {
+			return err
+		}
 	}
 	if ac == nil && cmd != "serve" && cmd != "types" && cmd != "user" && (cmd != "schema" || pos[0] != "pull") {
 		return errors.New("no users yet: add the first owner with archive user add <email>")
