@@ -142,9 +142,12 @@ On Google Cloud, everything is in Terraform, in one `apply`. You need a project 
 
 ```sh
 gcloud auth application-default login
-cd apps/terraform/gcp && terraform init
+gcloud storage buckets create gs://<project>-tfstate --project <project> --location us-central1 --uniform-bucket-level-access --public-access-prevention && gcloud storage buckets update gs://<project>-tfstate --versioning
+cd apps/terraform/gcp && terraform init -backend-config=bucket=<project>-tfstate
 terraform apply -var project=<project> -var domain=example.com
 ```
+
+Terraform keeps its state only in that versioned bucket, never on disk. The bucket is the one thing made outside Terraform, since the state can't live in a bucket the same state creates.
 
 The Cloudflare account token goes in `CLOUDFLARE_API_TOKEN`. On the zone it needs DNS Write, Config Settings Write and Workers Routes Write; on the account it needs Workers Scripts Write and Account API Tokens Write. Terraform verifies the zone with Google, maps `api.<domain>` to the Cloud Run service behind Cloudflare's proxy, and makes the web app on `app.<domain>` a Worker of static files that calls the API on its own domain. The zone's own SSL settings don't matter: a Configuration Rule makes Cloudflare reach Google over verified TLS, and lets Google's certificate challenges through over HTTP.
 
