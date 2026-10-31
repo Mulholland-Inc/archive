@@ -3,6 +3,8 @@
 
   let { onfiles, kind = 'family' } = $props();
   let open = $state(false);
+  let below = $state(false);
+  let menu = $state();
   let root = $state();
   let inputs = $state({});
 
@@ -30,6 +32,11 @@
     else inputs[key].click();
   }
 
+  // The menu opens upward unless the window is too short for it, as on Home with the box mid-screen.
+  $effect(() => {
+    if (open) below = menu.offsetHeight > root.getBoundingClientRect().top - 16;
+  });
+
   function picked(e) {
     if (e.target.files.length) onfiles([...e.target.files]);
     e.target.value = '';
@@ -55,7 +62,7 @@
   <input bind:this={inputs.files} type="file" multiple hidden onchange={picked} />
   <input bind:this={inputs.docs} type="file" accept=".xlsx,.xls,.csv,.docx,.doc,.pdf,.pptx,.ppt,.md,.txt" multiple hidden onchange={picked} />
   {#if open}
-    <div class="menu" role="menu">
+    <div class="menu" class:below role="menu" bind:this={menu}>
       {#each items as it (it.key)}
         <button type="button" role="menuitem" onclick={() => choose(it.key)}>
           <span class="glyph"><Icon name={it.icon} /></span>
@@ -74,6 +81,7 @@
   .plus.open { transform: rotate(45deg); }
   .plus :global(.icon) { width: 22px; height: 22px; }
   .menu { position: absolute; bottom: calc(100% + var(--space-2)); left: 0; z-index: var(--z-nav); display: flex; flex-direction: column; gap: var(--space-0-5); width: min(300px, calc(100vw - 2 * var(--space-5))); padding: var(--space-1-5); border-radius: var(--radius-panel); background: var(--surface-raised); box-shadow: 0 8px 28px rgb(0 0 0 / 22%); }
+  .menu.below { top: calc(100% + var(--space-2)); bottom: auto; }
   .menu button { display: flex; align-items: center; gap: var(--space-3); width: 100%; padding: var(--space-1-5); border-radius: var(--radius-nav); text-align: left; transition: background var(--duration-fast); }
   .menu button:hover, .menu button:focus-visible { outline: 0; background: var(--fill); }
   .glyph { display: grid; place-items: center; flex: none; width: 36px; height: 36px; border-radius: 30%; background: var(--fill-faint); color: var(--fg); }

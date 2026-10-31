@@ -78,14 +78,11 @@
 
     <button class="help" type="button" aria-expanded={video} onclick={() => (video = !video)}>
       <span class="play"><Icon name="play" /></span>
-      <span><strong>How archives work</strong><small>Watch the 2 minute tour</small></span>
-      <em>Demo</em>
+      <span><strong>How archives work</strong><small>Watch the tour</small></span>
     </button>
     {#if video}
-      <div class="video" aria-label="Tutorial video placeholder">
-        <span class="big"><Icon name="play" /></span>
-        <small>Tutorial video goes here</small>
-      </div>
+      <!-- svelte-ignore a11y_media_has_caption: the video is silent and carries its words on screen. -->
+      <video class="video" src="/tour.mp4" poster="/tour.jpg" controls autoplay muted playsinline {@attach (el) => el.scrollIntoView({ block: 'center', behavior: 'smooth' })}></video>
     {/if}
     {#if error}<p class="error">{error}</p>{/if}
   </div>
@@ -127,12 +124,9 @@
   .help span:nth-child(2) { display: flex; flex: 1; flex-direction: column; line-height: var(--leading-snug); }
   .help strong { font-weight: var(--weight-medium); }
   .help small { color: var(--fg-muted); font-size: var(--text-meta); }
-  .help em { color: var(--fg-muted); font-size: var(--text-meta); font-style: normal; }
   .play { display: grid; place-items: center; flex: none; width: 34px; height: 34px; border-radius: 50%; background: #ff3b30; color: #fff; }
   .play :global(.icon) { width: 15px; height: 15px; fill: currentColor; }
-  .video { display: flex; flex-direction: column; flex: none; align-items: center; justify-content: center; gap: var(--space-2); width: 100%; aspect-ratio: 16 / 9; border-radius: 12px; background: #08090c; color: #9aa0ad; }
-  .big { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 50%; background: #ff3b30; color: #fff; }
-  .big :global(.icon) { width: 22px; height: 22px; fill: currentColor; }
+  .video { flex: none; width: 100%; aspect-ratio: 16 / 9; border-radius: 12px; }
   .error { color: var(--danger); font-size: var(--text-table); }
   .cancel, .create { padding: var(--space-1-5) var(--space-4); border-radius: var(--radius-full); }
   .cancel { background: var(--fill); }
