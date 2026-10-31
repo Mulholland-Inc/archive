@@ -37,8 +37,9 @@
   $effect(() => {
     if (!open) return;
     const box = root.getBoundingClientRect();
-    below = menu.offsetHeight > box.top - 16;
-    room = below ? innerHeight - box.bottom - 24 : 0;
+    const fits = menu.scrollHeight <= box.top - 16;
+    below = !fits;
+    room = fits ? 0 : innerHeight - box.bottom - 24;
   });
 
   function picked(e) {
