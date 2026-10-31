@@ -57,9 +57,8 @@
   import Setup from './ui/Setup.svelte';
   import Capture from './ui/Capture.svelte';
   import Dictate from './ui/Dictate.svelte';
-  import Bot from './ui/Bot.svelte';
 
-  let { id = '', name = '', email = '', family = '', short = '', seed = '', tint = '', kind = 'family', onfiles, onsaved } = $props();
+  let { id = '', name = '', email = '', family = '', short = '', tint = '', kind = 'family', onfiles, onsaved } = $props();
 
   let current = $state('');
   let title = $state('');
@@ -264,7 +263,6 @@
 {#if current}<span class="remove"><Button icon="trash" title="Delete chat" aria-label="Delete chat" onclick={remove} /></span>{/if}
 <div class="chat" class:empty style={tint ? `--primary: ${tint}; --primary-hover: ${tint}; --tint: ${tint}` : undefined} bind:this={pane}>
   {#if empty}
-    <span class="robot"><Bot {seed} size={150} bare /></span>
     <h2 class="hello">{hello}</h2>
   {/if}
   <div class="log" class:idle={empty && !failed} bind:this={log} aria-live="polite">
@@ -314,7 +312,6 @@
   .log { display: flex; flex: 1; flex-direction: column; gap: var(--space-3); padding-top: var(--space-7, 40px); width: 100%; max-width: var(--chat-width); min-width: 0; }
   .empty { justify-content: center; gap: var(--space-6); }
   .empty .log { flex: none; }
-  .robot { margin-bottom: var(--space-1); }
   .log :global(.wrap) { margin-inline: 0; }
   .idle { display: none; }
   .hello {
