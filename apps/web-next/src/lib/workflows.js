@@ -42,7 +42,7 @@ const okafor = [
     id: 'wf-faces',
     name: 'Tag people in new photos',
     agent: 'Photo tagger',
-    trigger: { kind: 'file', label: 'When photos are added to Photo albums' },
+    trigger: { kind: 'file', label: 'When photos arrive from iCloud Photos', connector: 'icloud' },
     enabled: true,
     steps: ['Detect faces', 'Match faces to known people', 'Ask about unknown faces', 'Write tags to the photos'],
     runs: [
@@ -122,7 +122,7 @@ const hale = [
     id: 'wf-notices',
     name: 'Check notices against the lease',
     agent: 'Paralegal',
-    trigger: { kind: 'email', label: 'When a notice arrives in the Mercer inbox' },
+    trigger: { kind: 'email', label: 'When a notice arrives in the Mercer inbox', connector: 'outlook' },
     enabled: true,
     steps: ['Collect notices from the matter', 'Extract service method and date', 'Compare against the lease', 'Write the advice note'],
     runs: [
@@ -154,7 +154,7 @@ const fieldnote = [
     id: 'wf-references',
     name: 'Collect references for moodboards',
     agent: 'Researcher',
-    trigger: { kind: 'file', label: 'When images are added to Linden moodboard' },
+    trigger: { kind: 'file', label: 'When images are added to the Linden folder in Google Drive', connector: 'gdrive' },
     enabled: true,
     steps: ['Read new images', 'Find enamel and cast lettering', 'Make a board'],
     runs: [

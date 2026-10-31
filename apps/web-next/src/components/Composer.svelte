@@ -8,6 +8,8 @@
   import ModelPicker from './ModelPicker.svelte';
   import Attachment from './Attachment.svelte';
   import Chip from './Chip.svelte';
+  import ConnectorIcon from './ConnectorIcon.svelte';
+  import { Plug } from '@lucide/svelte';
   import { ws } from '../lib/app.svelte.js';
   import { toast } from '../lib/toast.svelte.js';
   import { rise } from '../lib/motion.js';
@@ -108,6 +110,16 @@
         <SubMenu icon={Library} label="Add from library">
           {#each ws().library.slice(0, 8) as file (file.id)}
             <MenuItem checked={attachments.some((a) => a.id === file.id) || undefined} onselect={() => attach(file)}>{file.name}</MenuItem>
+          {/each}
+        </SubMenu>
+      {/if}
+      {#if ws().connectors.some((c) => c.connected)}
+        <SubMenu icon={Plug} label="Add from a connector">
+          {#each ws().connectors.filter((c) => c.connected) as c (c.id)}
+            <MenuItem onselect={() => attach({ id: `${c.id}-${Date.now()}`, name: `From ${c.name}`, kind: 'document', size: '1.1 MB', tone: 3 })}>
+              {#snippet leading()}<ConnectorIcon id={c.id} size="xs" />{/snippet}
+              {c.name}
+            </MenuItem>
           {/each}
         </SubMenu>
       {/if}

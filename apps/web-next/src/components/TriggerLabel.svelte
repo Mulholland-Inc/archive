@@ -1,13 +1,18 @@
 <script>
   import { CalendarClock, FilePlus, Mail, Hand } from '@lucide/svelte';
   import Icon from './Icon.svelte';
+  import ConnectorIcon from './ConnectorIcon.svelte';
 
   let { trigger } = $props();
   const icons = { schedule: CalendarClock, file: FilePlus, email: Mail, manual: Hand };
 </script>
 
 <span class="trigger">
-  <Icon icon={icons[trigger.kind] ?? Hand} size="sm" />
+  {#if trigger.connector}
+    <ConnectorIcon id={trigger.connector} size="xs" />
+  {:else}
+    <Icon icon={icons[trigger.kind] ?? Hand} size="sm" />
+  {/if}
   <span>{trigger.label}</span>
 </span>
 

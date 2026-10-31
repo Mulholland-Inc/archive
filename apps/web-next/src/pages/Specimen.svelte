@@ -63,6 +63,7 @@
   import WorkspaceIcon from '../components/WorkspaceIcon.svelte';
   import LookPicker from '../components/LookPicker.svelte';
   import ConnectorCard from '../components/ConnectorCard.svelte';
+  import ConnectorIcon from '../components/ConnectorIcon.svelte';
   import TriggerLabel from '../components/TriggerLabel.svelte';
   import { workflowSeed } from '../lib/workflows.js';
   import { TYPES } from '../lib/looks.js';
@@ -524,6 +525,12 @@
           <TriggerLabel trigger={{ kind: 'file', label: 'When photos are added' }} />
           <TriggerLabel trigger={{ kind: 'email', label: 'When an email arrives' }} />
           <TriggerLabel trigger={{ kind: 'manual', label: 'Run by hand' }} />
+        </SpecimenBlock>
+        <SpecimenBlock title="Connector icons">
+          {#each catalog as c (c.id)}<ConnectorIcon id={c.id} label={c.name} />{/each}
+        </SpecimenBlock>
+        <SpecimenBlock title="Connector icon sizes">
+          <ConnectorIcon id="github" size="xs" /><ConnectorIcon id="github" size="sm" /><ConnectorIcon id="github" /><ConnectorIcon id="github" size="lg" /><ConnectorIcon id="slack" size="lg" />
         </SpecimenBlock>
         <SpecimenBlock title="Connectors">
           <Grid min="card" gap="3">

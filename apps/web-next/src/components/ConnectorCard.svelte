@@ -1,5 +1,5 @@
 <script>
-  import ConnectorGlyph from './ConnectorGlyph.svelte';
+  import ConnectorIcon from './ConnectorIcon.svelte';
   import Badge from './Badge.svelte';
   import Button from './Button.svelte';
 
@@ -8,7 +8,7 @@
 
 <article class="card">
   <button type="button" class="hit" aria-label={`${connector.name} details`} onclick={onopen}></button>
-  <ConnectorGlyph icon={connector.icon} />
+  <ConnectorIcon id={connector.id} />
   <div class="text">
     <span class="name">{connector.name}</span>
     <span class="meta">{connector.connected ? connector.account : connector.category}</span>

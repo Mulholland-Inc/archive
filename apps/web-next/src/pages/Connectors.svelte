@@ -9,7 +9,7 @@
   import SearchField from '../components/SearchField.svelte';
   import Tabs from '../components/Tabs.svelte';
   import ConnectorCard from '../components/ConnectorCard.svelte';
-  import ConnectorGlyph from '../components/ConnectorGlyph.svelte';
+  import ConnectorIcon from '../components/ConnectorIcon.svelte';
   import Dialog from '../components/Dialog.svelte';
   import SettingsRow from '../components/SettingsRow.svelte';
   import Button from '../components/Button.svelte';
@@ -64,7 +64,7 @@
 <Dialog bind:open={detail} title={open?.name} size="sm">
   {#if open}
     <Stack direction="row" gap="3" align="center">
-      <ConnectorGlyph icon={open.icon} size="lg" />
+      <ConnectorIcon id={open.id} size="lg" />
       <Stack gap="1">
         <Text weight="medium">{open.category}</Text>
         {#if open.connected}<Badge tone="success" dot>Connected</Badge>{:else}<Badge>Not connected</Badge>{/if}
