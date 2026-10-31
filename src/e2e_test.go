@@ -562,7 +562,7 @@ func (in *e2eInst) serve() *e2eServer {
 	}
 	in.t.Cleanup(s.stop)
 	for deadline := time.Now().Add(60 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
-		if resp, err := http.Get(s.url + "/healthz"); err == nil {
+		if resp, err := http.Get(s.url + "/health"); err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusNoContent {
 				e2eCloudTasks.route(queue, s.url, strings.TrimRight(api, "/")+"/tasks")

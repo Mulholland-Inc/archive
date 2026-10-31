@@ -236,6 +236,8 @@ ARCHIVE_BIN=./archive ../demo/load.sh you@example.com
 ./archive serve                       # API, sign-in and MCP on :8080, key and files in ./data; the emulator calls /tasks when work is due
 ```
 
+`ARCHIVE_BIN=./archive ../demo/family/load.sh` loads a made-up family, five generations deep, for the family tree. Load it instead of the demo, not alongside it: both have a `person` table.
+
 ```sh
 cd apps/web && npm install && npm run dev   # web app with hot reload on :5173, calling the API on :8080
 ```
