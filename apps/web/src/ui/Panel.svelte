@@ -78,7 +78,7 @@
   .veil { display: none; }
   @media (max-width: 1023px) {
     .panel { display: none; }
-    .panel.open { position: fixed; top: 0; right: 0; bottom: 0; z-index: calc(var(--z-nav) + 2); display: flex; width: min(320px, calc(100vw - 56px)); max-height: none; border-radius: 20px 0 0 20px; background: var(--bg); box-shadow: -8px 0 32px rgb(0 0 0 / 16%); animation: slide var(--duration-normal) var(--ease-out); }
+    .panel.open { position: fixed; top: 0; right: 0; bottom: 0; z-index: calc(var(--z-nav) + 2); display: flex; width: min(320px, calc(100vw - 56px)); max-height: none; padding-top: calc(var(--space-6) + env(safe-area-inset-top)); border-radius: 20px 0 0 20px; background: var(--bg); box-shadow: -8px 0 32px rgb(0 0 0 / 16%); animation: slide var(--duration-normal) var(--ease-out); }
     .veil { position: fixed; inset: 0; z-index: calc(var(--z-nav) + 1); display: block; width: 100%; background: var(--scrim); }
   }
   @keyframes slide { from { transform: translateX(100%); } }

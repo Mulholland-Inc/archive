@@ -1,0 +1,9 @@
+{
+  "name": "Archive",
+  "short_name": "Archive",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#e4e7eb",
+  "theme_color": "#e4e7eb",
+  "icons": [{ "src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" }]
+}

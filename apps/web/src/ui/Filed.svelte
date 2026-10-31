@@ -102,7 +102,7 @@
 </div>
 
 <style>
-  .machine { --brass: #b8963e; --steel: #3a404a; --ink: #23262b; --sheet: #f2ebd9; position: fixed; bottom: var(--space-4); left: 50%; z-index: calc(var(--z-nav) + 5); display: flex; align-items: stretch; width: min(452px, calc(100vw - 2 * var(--space-3))); transform: translateX(-50%); border-radius: 14px; background: linear-gradient(160deg, #2e333b, #1c1f25); box-shadow: inset 0 0 0 1px rgb(255 255 255 / 7%), 0 16px 40px rgb(0 0 0 / 34%); animation: rise 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.1); }
+  .machine { --brass: #b8963e; --steel: #3a404a; --ink: #23262b; --sheet: #f2ebd9; position: fixed; bottom: calc(var(--space-4) + env(safe-area-inset-bottom)); left: 50%; z-index: calc(var(--z-nav) + 5); display: flex; align-items: stretch; width: min(452px, calc(100vw - 2 * var(--space-3))); transform: translateX(-50%); border-radius: 14px; background: linear-gradient(160deg, #2e333b, #1c1f25); box-shadow: inset 0 0 0 1px rgb(255 255 255 / 7%), 0 16px 40px rgb(0 0 0 / 34%); animation: rise 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.1); }
   .bay { position: relative; flex: none; align-self: flex-start; width: 96px; height: 96px; }
   .clerk { z-index: 1; }
   svg { position: absolute; inset: 0; width: 96px; height: 96px; }

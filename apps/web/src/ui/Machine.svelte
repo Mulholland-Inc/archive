@@ -46,7 +46,7 @@
 
 <style>
   .machine { position: fixed; right: var(--space-3); bottom: var(--space-3); z-index: var(--z-nav); }
-  @media (max-width: 767px) { .machine { top: var(--space-3); right: var(--space-3); bottom: auto; } .card { top: calc(100% + var(--space-2)); bottom: auto; } }
+  @media (max-width: 767px) { .machine { top: calc(var(--space-3) + env(safe-area-inset-top)); right: var(--space-3); bottom: auto; } .card { top: calc(100% + var(--space-2)); bottom: auto; } }
   button { display: grid; place-items: center; width: 32px; height: 32px; border-radius: var(--radius-full); background: var(--surface); color: var(--fg-muted); box-shadow: 0 1px 3px rgb(0 0 0 / 15%); transition: color var(--duration-fast); }
   button:hover { color: var(--fg); }
   button :global(.icon) { width: var(--size-icon); height: var(--size-icon); }
