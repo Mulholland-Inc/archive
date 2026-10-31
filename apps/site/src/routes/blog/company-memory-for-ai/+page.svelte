@@ -37,10 +37,10 @@
     <p>Giving an assistant access to company information raises a fair question: who else can now see it? In Archive, the assistant does not get a key to the whole building. It works as you.</p>
     <ul>
       <li><strong>Same access as the person asking.</strong> If you can't open the payroll records, neither can the assistant you are talking to. Two colleagues asking the same question can get different answers, because they are allowed to see different things.</li>
-      <li><strong>Shared spaces for teams.</strong> Everyone has a private space, and teams share spaces for the work they do together. Records belong to a space, and only its members can see them.</li>
-      <li><strong>Clear roles.</strong> Each person in a space can be an owner, an admin, an editor or a viewer, so you decide who can change things and who can only look.</li>
-      <li><strong>Sensitive details stay hidden.</strong> Fields like bank account numbers are stored locked away and stay hidden from anyone who hasn't been given access to them, assistants included.</li>
-      <li><strong>Separate keys for separate helpers.</strong> If you set up an assistant to do a recurring job, it gets its own access key that can only do less than you can, never more. Turn the key off and that helper stops, without touching anything else.</li>
+      <li><strong>Groups for teams.</strong> Put people in groups, like finance or HR, and keep a record to one group. Only that group and the owners can see it.</li>
+      <li><strong>Clear roles.</strong> Each person can be an owner, an editor or a viewer, so you decide who can change things and who can only look.</li>
+      <li><strong>Sensitive details stay hidden.</strong> Fields like bank account numbers are stored locked away and stay hidden from everyone but the owners, assistants included.</li>
+      <li><strong>Separate keys for separate helpers.</strong> If you set up an assistant to do a recurring job, it gets its own access key that never does more than you can, and can be made read only. Turn the key off and that helper stops, without touching anything else.</li>
     </ul>
     <p>These rules are enforced underneath everything, not added on top of one screen. So the same limits apply whether a person is clicking around the app or an assistant is answering a question.</p>
 

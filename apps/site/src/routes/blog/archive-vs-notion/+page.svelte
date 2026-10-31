@@ -20,7 +20,7 @@
   <h2>Your AI, working directly in your records</h2>
   <p>Archive works with the AI you already use: ChatGPT, Claude, Gemini and Grok. Add Archive once, and your assistant can read and change your lists and files directly, as you. It sees exactly what you are allowed to see, and nothing more.</p>
   <p>Rather than pressing a long chain of small buttons, the assistant writes a short piece of code and Archive runs it right next to your data. One request can search, update fifty records and write a summary. Changes are all-or-nothing: if something goes wrong halfway, nothing is saved, so you never end up with half an update to clean up.</p>
-  <p>Each assistant gets its own access key. You can narrow what it may touch, and switch one off without affecting the others.</p>
+  <p>Each assistant gets its own access key. You can make it read only, and switch one off without affecting the others.</p>
   <Pull>The question is not whether your AI can see your workspace. It is whether it can do real work there, safely.</Pull>
   <p>Notion connects to outside tools and assistants too, and Notion AI is genuinely useful for writing and summarizing. The difference is in what sits underneath: in Archive, every record your assistant touches lives in a database that checks every change and keeps everything in step.</p>
 

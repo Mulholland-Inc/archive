@@ -12,24 +12,30 @@
  * Transaction and access
  * - A run is one database transaction, as you. If it throws, times out or returns too much, everything rolls
  *   back and nothing is saved. A failed SDK call that you catch undoes only that call.
- * - Row-level security applies to everything, raw SQL included: you see and change only rows in your spaces.
- *   New rows go to your own space unless you pass { space: name }.
+ * - Your role in the workspace is viewer (reads), editor (also writes) or owner (also changes the schema and the
+ *   members, sees every row and reveals secrets). Each row's access column says who sees it: null is the whole
+ *   workspace, a group name like "hr" is only that group and the owners. Row-level security applies to
+ *   everything, raw SQL included, so you see and change only the rows you may. A new row is for everyone unless
+ *   you pass access: "hr" (a group you are in) or its table sets a default.
+ * - People are rows of the member table: { email, role, groups }. Owners add, change and remove them with
+ *   archive.create("member", { email: "ann@example.com", role: "editor", groups: ["hr"] }), archive.update and
+ *   archive.delete; adding an email invites that person, and the last owner cannot be removed or demoted.
  * - SDK errors are Error objects with code ('invalid', 'not_found', 'forbidden', 'conflict' or a SQLSTATE)
  *   and, when invalid, errors: [{ path, message }] with one entry per bad field.
  *
  * Data
  * - Each type is a table or a view in the public schema, and a row is a plain object (see Tables at the end).
  *   Views are read only: list, get and search them; create, update and delete go to their tables.
- *   Archive sets id, space, created_at and updated_at. Fields without ? are required on create; empty fields
+ *   Archive sets id, created_at and updated_at. Fields without ? are required on create; empty fields
  *   read back as null.
  * - Writes clean messy input before Postgres checks it, so pass what you have: "(415) 555-0123" becomes
  *   "+14155550123", "$1,234.50" becomes { amount: 1234.5, currency: "USD" }, "4/3/1990" becomes "1990-04-03".
  * - JSON values: date "2026-10-27"; timestamptz "2026-10-27T09:30:00Z" (UTC); numbers as numbers; uuid and
  *   references as id strings; arrays as lists; enums as one of their strings; the built-in composite types
  *   (Money, Address, ...) as the objects below. Secret types (Card, UsSsn, National, Passport)
- *   take the real value and read back masked; list and get with { reveal: true } show them if you are granted.
+ *   take the real value and read back masked; list and get with { reveal: true } show them to owners.
  *
- * Changing the schema (ontology admins)
+ * Changing the schema (owners)
  * - Types are the tables in the database, and nothing else is stored. archive.schema() generates their DDL from the
  *   database: one file per table or view, named <name>.sql, holding its CREATE TABLE, indexes, foreign keys, row-level
  *   security, policies, triggers, comments, and the enums, domains and functions only it uses (one used by no
@@ -41,8 +47,10 @@
  *   the tables and views it changes, including locks this run took by writing them or reading them with
  *   archive.sql (list, get and search hold no locks), so apply before those, or in a run of its own. After it,
  *   the new tables and views work in the same run.
- * - Every table needs id, space, created_at, updated_at and a search tsvector column, row-level security with
- *   policies, and should have COMMENT ON its table and columns: they become these docs. Use the built-in types
+ * - Every table needs id, access, created_at, updated_at and a search tsvector column, row-level security enabled
+ *   and forced with exactly one policy, CREATE POLICY access ON <table> USING (archive.can(access)) WITH CHECK
+ *   (archive.can(access)), and should have COMMENT ON its table and columns: they become these docs. A table
+ *   only the hr group sees has access text NOT NULL DEFAULT 'hr' CHECK (access = 'hr'). Use the built-in types
  *   (archive.email, archive.money, ...) to get their cleaning. A reference is `uuid REFERENCES other`; a list of
  *   references is `uuid[]` with a column comment starting 'references other'. Files load in any order, and a
  *   statement waits for the tables it needs; for tables that reference each other, add at least one of those
@@ -50,7 +58,7 @@
  *
  *     CREATE TABLE house (
  *         id         uuid PRIMARY KEY DEFAULT uuidv7(),
- *         space      uuid NOT NULL REFERENCES archive.space,
+ *         access     text,
  *         created_at timestamptz NOT NULL DEFAULT now(),
  *         updated_at timestamptz NOT NULL DEFAULT now(),
  *         address    text NOT NULL,
@@ -61,9 +69,7 @@
  *     CREATE INDEX house_search ON house USING gin (search);
  *     ALTER TABLE house ENABLE ROW LEVEL SECURITY;
  *     ALTER TABLE house FORCE ROW LEVEL SECURITY;
- *     CREATE POLICY viewer ON house FOR SELECT USING (space = ANY (archive.my_spaces()));
- *     CREATE POLICY editor ON house USING (space = ANY (archive.my_spaces('editor')))
- *         WITH CHECK (space = ANY (archive.my_spaces('editor')));
+ *     CREATE POLICY access ON house USING (archive.can(access)) WITH CHECK (archive.can(access));
  *     COMMENT ON TABLE house IS 'A house you own or rent
  *     icon: house';
  *     COMMENT ON COLUMN house.price IS 'Asking price';
@@ -172,19 +178,19 @@ declare const archive: {
     /** Run one SQL statement as you, with $1, $2, ... bound to params; returns its rows, or [] when it has none. */
     sql(query: string, ...params: unknown[]): Promise<Row[]>;
     /** Rows of a table, oldest first; where matches exact (cleaned) values; page with after = the last id. */
-    list<T extends keyof Tables>(table: T, opts?: { where?: Partial<Tables[T]>; limit?: number; after?: string; space?: string; reveal?: boolean }): Promise<Tables[T][]>;
+    list<T extends keyof Tables>(table: T, opts?: { where?: Partial<Tables[T]>; limit?: number; after?: string; reveal?: boolean }): Promise<Tables[T][]>;
     /** One row by id; throws not_found if it does not exist or you cannot see it. */
     get<T extends keyof Tables>(table: T, id: string, opts?: { reveal?: boolean }): Promise<Tables[T]>;
-    /** Insert a row, cleaned and validated per field, and return it; it goes to opts.space or your own space. */
-    create<T extends keyof Tables>(table: T, data: Partial<Tables[T]>, opts?: { space?: string }): Promise<Tables[T]>;
+    /** Insert a row, cleaned and validated per field, and return it; data.access says which group sees it, null for everyone. */
+    create<T extends keyof Tables>(table: T, data: Partial<Tables[T]>): Promise<Tables[T]>;
     /** Create an empty document named name, its type taken from the extension: .docx, .xlsx or .pptx; fill it with archive.edit (see Documents). */
-    create(name: `${string}.${"docx" | "xlsx" | "pptx"}`, opts?: { space?: string }): Promise<StoredFile>;
+    create(name: `${string}.${"docx" | "xlsx" | "pptx"}`, opts?: { access?: string }): Promise<StoredFile>;
     /** Change the given fields, null clears one, and return the row. */
     update<T extends keyof Tables>(table: T, id: string, patch: Partial<Tables[T]>): Promise<Tables[T]>;
     /** Delete a row. */
     delete(table: keyof Tables, id: string): Promise<void>;
     /** Full-text search over every table and file you can see, best first; words match by prefix, ignoring case and accents. */
-    search(text: string, opts?: { type?: keyof Tables | "file"; space?: string; from?: string; to?: string; limit?: number }): Promise<Hit[]>;
+    search(text: string, opts?: { type?: keyof Tables | "file"; from?: string; to?: string; limit?: number }): Promise<Hit[]>;
     /** DDL generated from the database: <name>.sql to SQL, one file per table or view (see the header). */
     schema(): Promise<Record<string, string>>;
     /** Plan the whole set of DDL files against the database; with confirm, apply the plan (see the header). */
@@ -192,15 +198,13 @@ declare const archive: {
     /** Every table and view with its columns, types, comments and references, as Postgres has them now. */
     tables(): Promise<Table[]>;
     /** Files you can see, oldest first, with their extracted text; page with after = the last id. */
-    files(opts?: { limit?: number; after?: string; space?: string }): Promise<StoredFile[]>;
+    files(opts?: { limit?: number; after?: string }): Promise<StoredFile[]>;
     /** One file with its extracted text. */
     file(id: string): Promise<StoredFile>;
     /** The structure of a docx, xlsx or pptx file: paragraphs with ids, cells, slides and shapes (see Documents). */
     read(fileId: string): Promise<Model>;
     /** Apply edits to a docx, xlsx or pptx file and save it as the file's new content; all or nothing (see Documents). */
     edit(fileId: string, edits: Edit[]): Promise<StoredFile>;
-    /** The spaces you can see, with your level in each. */
-    spaces(): Promise<Space[]>;
     /** Your workflows: <name>.ts to its TypeScript (see Workflows in the header). */
     workflows(): Promise<Record<string, string>>;
     /** Replace all your workflows with files; a file left out is deleted. Returns errors instead of throwing, and saves nothing when there are any. */
@@ -271,8 +275,6 @@ type Row = Record<string, any>;
 /** Columns every table has; Archive sets them. */
 interface Base {
     id: string;
-    /** Id of the space the row is in. */
-    space: string;
     created_at: string;
     updated_at: string;
 }
@@ -282,7 +284,6 @@ interface Hit {
     /** Table name, or "file". */
     type: string;
     id: string;
-    space: string;
     date: string;
     /** The row, or the file's metadata. */
     data: Row;
@@ -333,16 +334,11 @@ interface StoredFile {
     /** pending, done or error; text is ready when done. */
     status: string;
     error?: string;
-    space: string;
+    /** Group that sees the file, null for the whole workspace. */
+    access: string | null;
     created_at: string;
     /** Text extracted from PDF, HTML, email and plain text; "" when none. */
     text: string;
-}
-
-interface Space {
-    id: string;
-    name: string;
-    level: "owner" | "admin" | "editor" | "viewer";
 }
 
 /** Amount in major units with the currency's decimals: { amount: 1234.5, currency: "USD" }. Also takes "$1,234.50" or a number. */

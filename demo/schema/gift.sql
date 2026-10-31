@@ -1,7 +1,7 @@
 CREATE TYPE gift_status AS ENUM ('idea', 'bought', 'given', 'received');
 CREATE TABLE gift (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
-    space      uuid NOT NULL REFERENCES archive.space,
+    access     text,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     idea text NOT NULL,
@@ -15,8 +15,7 @@ CREATE TABLE gift (
 CREATE INDEX gift_search ON gift USING gin (search);
 ALTER TABLE gift ENABLE ROW LEVEL SECURITY;
 ALTER TABLE gift FORCE ROW LEVEL SECURITY;
-CREATE POLICY viewer ON gift FOR SELECT USING (space = ANY (archive.my_spaces()));
-CREATE POLICY editor ON gift USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
+CREATE POLICY access ON gift USING (archive.can(access)) WITH CHECK (archive.can(access));
 COMMENT ON TABLE gift IS 'A gift idea or a gift given or received
 icon: gift';
 COMMENT ON COLUMN gift.idea IS 'The gift';

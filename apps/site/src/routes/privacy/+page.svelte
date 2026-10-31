@@ -24,12 +24,12 @@
 <h2 id="scope">Who we are</h2>
 <p>Mulholland Inc. ("Mulholland", "we") is a US company. We run Archive as a hosted service at app.archive.dev and api.archive.dev (the "service"), and this site at archive.dev. This policy covers both.</p>
 <p>Archive is open-source software that anyone can run. If you use an Archive that you or someone else runs, this policy does not apply to it; whoever runs it decides how it handles your information.</p>
-<p>A workspace belongs to the customer it was made for, usually an organization. Its owners and admins decide who is invited, what goes in and when it is deleted. We handle what is in a workspace on the customer's behalf.</p>
+<p>A workspace belongs to the customer it was made for, usually an organization. Its owners decide who is invited, what goes in and when it is deleted. We handle what is in a workspace on the customer's behalf.</p>
 
 <h2 id="collect">What we collect</h2>
 <h3 id="collect-account">Your account</h3>
 <ul>
-<li><strong>Your invite</strong>: the email address a workspace admin invited you under.</li>
+<li><strong>Your invite</strong>: the email address a workspace owner invited you under.</li>
 <li><strong>Sign-in</strong>: when you sign in with Google, Microsoft, Slack or GitHub, we ask the provider for your email address and basic profile, and keep your email address, your name and the provider's id for your account. We use whether the provider has verified your email address to match you to your invite.</li>
 <li><strong>Passkeys</strong>: the public key of each passkey you add. The private key stays on your device.</li>
 <li><strong>Sessions and tokens</strong>: the session that keeps you signed in, and the API and agent tokens you make. We keep only a hash of each.</li>
@@ -43,7 +43,7 @@
 
 <h2 id="cookies">Cookies and browser storage</h2>
 <p>The service sets one session cookie on api.archive.dev when you sign in. It lasts up to 30 days and is only sent over HTTPS. Short-lived cookies hold a sign-in or passkey step while it is in progress. There are no advertising or tracking cookies.</p>
-<p>The web app keeps your current workspace and space, and which passkeys this device has, in your browser's local storage.</p>
+<p>The web app keeps your current workspace, and which passkeys this device has, in your browser's local storage.</p>
 
 <h2 id="use">How we use it</h2>
 <ul>
@@ -55,7 +55,7 @@
 <p>We do not sell personal information or customer content, and we do not use either for advertising. We share them only with the providers below, as needed to run the service, or when the law requires it.</p>
 
 <h2 id="agent">The in-app agent</h2>
-<p>Archive calls an AI model only when someone in a workspace chats with its agent. The service then sends the conversation to Anthropic's API: the messages, the name and email address of the person chatting, the space they are working in, a description of the workspace's tables, and the results of the code the agent runs, which can include records and file contents from that space.</p>
+<p>Archive calls an AI model only when someone in a workspace chats with its agent. The service then sends the conversation to Anthropic's API: the messages, the name and email address of the person chatting, their role and groups, a description of the workspace's tables, and the results of the code the agent runs, which can include any records and file contents that person can see.</p>
 <p>The service always uses Mulholland's Anthropic account. Chats are kept in the workspace until they are deleted.</p>
 <p>When you connect your own AI app over MCP or the API, or write a workflow that calls another service, what it reads goes to that provider under your own account with them.</p>
 
@@ -70,7 +70,7 @@
 <h2 id="security">Security</h2>
 <ul>
 <li>Each workspace has its own Postgres database and its own database login, which can reach only that database.</li>
-<li>Postgres roles and row-level security check every request, so each person, token and agent sees only the spaces they belong to.</li>
+<li>Postgres roles and row-level security check every request, so each person, token and agent sees only what their role and groups allow.</li>
 <li>Secret fields are encrypted with the workspace's own key, which is itself encrypted with a key kept in Google Secret Manager.</li>
 <li>Traffic is encrypted with TLS, from your browser to Cloudflare and from Cloudflare to Google.</li>
 <li>Anyone with a file's share link can open that file until the link expires.</li>
@@ -79,8 +79,8 @@
 
 <h2 id="retention">Keeping and deleting</h2>
 <ul>
-<li>Your content stays until you or your workspace's admins delete it, or the workspace is deleted.</li>
-<li>Removing someone from a workspace deletes their access, tokens, chats and workflows there. Their personal space is kept in case they come back.</li>
+<li>Your content stays until you or your workspace's owners delete it, or the workspace is deleted.</li>
+<li>Removing someone from a workspace deletes their access, tokens, chats and workflows there. The records and files they added stay.</li>
 <li>Deleting a workspace drops its database, with every record, chat, workflow and secret field in it. To have its files removed from storage too, write to us.</li>
 <li>Google Cloud keeps automatic database backups for a limited time, so deleted data can remain in a backup until it expires.</li>
 <li>Sessions end after 30 days. Tokens end when they expire or are deleted.</li>
@@ -88,7 +88,7 @@
 </ul>
 
 <h2 id="rights">Your choices and rights</h2>
-<p>You can read, change, export and delete your content in the app, the API and the CLI. You can also ask us for a copy of the personal information we hold about you, to correct it or to delete it. For content in an organization's workspace, we may ask its admins to act on your request. We will not treat you differently for asking.</p>
+<p>You can read, change, export and delete your content in the app, the API and the CLI. You can also ask us for a copy of the personal information we hold about you, to correct it or to delete it. For content in an organization's workspace, we may ask its owners to act on your request. We will not treat you differently for asking.</p>
 
 <h2 id="children">Children</h2>
 <p>The service is not meant for children under 13, and we do not knowingly collect their information.</p>

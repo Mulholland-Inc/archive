@@ -1,6 +1,6 @@
 CREATE TABLE partnership (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
-    space      uuid NOT NULL REFERENCES archive.space,
+    access     text,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     a uuid REFERENCES person,
@@ -11,8 +11,7 @@ CREATE TABLE partnership (
 CREATE INDEX partnership_search ON partnership USING gin (search);
 ALTER TABLE partnership ENABLE ROW LEVEL SECURITY;
 ALTER TABLE partnership FORCE ROW LEVEL SECURITY;
-CREATE POLICY viewer ON partnership FOR SELECT USING (space = ANY (archive.my_spaces()));
-CREATE POLICY editor ON partnership USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
+CREATE POLICY access ON partnership USING (archive.can(access)) WITH CHECK (archive.can(access));
 COMMENT ON TABLE partnership IS 'Two people who married or had children together
 icon: heart';
 COMMENT ON COLUMN partnership.a IS 'One partner, drawn on the left';

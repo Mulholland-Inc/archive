@@ -31,7 +31,7 @@
 
     <h2>Every person, and every AI you choose</h2>
     <p>Having everything in one place only helps if the right people can use it, and only the right people. Think of a small property manager. Owners should see their own buildings and nothing else. The maintenance contractor needs work orders, not rent ledgers. Finance needs the ledgers, not tenant chats.</p>
-    <p>In Archive, every record belongs to a space, and you decide who can see and change what in each one. Those rules hold everywhere: in the app, on a phone, and for every AI assistant you connect. An assistant working for the contractor sees exactly what the contractor sees.</p>
+    <p>In Archive, everyone has a role, and a record can be kept to a group, so you decide who can see and change what. Those rules hold everywhere: in the app, on a phone, and for every AI assistant you connect. An assistant working for the contractor sees exactly what the contractor sees.</p>
     <p>Which assistant is up to you. Archive works with ChatGPT, Claude, Gemini and Grok, and it does not lock you into one of them. If your team prefers a different assistant next year, the knowledge does not move. Only the assistant changes. And when an assistant makes changes, they are all-or-nothing, so nothing ends up half done.</p>
 
     <h2>Yours to take with you</h2>
@@ -53,7 +53,7 @@
     </ul>
     <p>Those are the terms. They are yours.</p>
 
-    <Figure art="security" alt="A secure records unit with locked compartments" caption="Every record belongs to a space, and only the right people, and the right AI, see it." />
+    <Figure art="security" alt="A secure records unit with locked compartments" caption="Every record has its rules, and only the right people, and the right AI, see it." />
 
     <h2>A foundation, not another tool</h2>
     <p>Most software adds one more place to look. We are trying to build the opposite: the place underneath, where your company's knowledge collects and stays useful. Your team works in it directly. Your AI assistants work in it on your behalf. And over time, everything your team files becomes something more: the examples you can use to train a small model that sorts new work the way you would.</p>

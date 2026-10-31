@@ -1,7 +1,7 @@
 CREATE TYPE account_kind AS ENUM ('checking', 'savings', 'credit', 'investment', 'retirement');
 CREATE TABLE bank_account (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
-    space      uuid NOT NULL REFERENCES archive.space,
+    access     text,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     name text NOT NULL,
@@ -16,8 +16,7 @@ CREATE TABLE bank_account (
 CREATE INDEX bank_account_search ON bank_account USING gin (search);
 ALTER TABLE bank_account ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bank_account FORCE ROW LEVEL SECURITY;
-CREATE POLICY viewer ON bank_account FOR SELECT USING (space = ANY (archive.my_spaces()));
-CREATE POLICY editor ON bank_account USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
+CREATE POLICY access ON bank_account USING (archive.can(access)) WITH CHECK (archive.can(access));
 COMMENT ON TABLE bank_account IS 'A bank, savings, credit or investment account
 icon: landmark';
 COMMENT ON COLUMN bank_account.name IS 'Your name for the account';

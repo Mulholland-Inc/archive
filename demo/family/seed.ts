@@ -1,4 +1,3 @@
-// The Quists of Gloamshire, a made-up family five generations deep. No real people or places.
 const people: [string, string, string, string | null, number | null, string | null, number | null, string | null][] = [
   ["I1","Mordant Quist","m","1832",1832,"1899",1899,"Gloamshire, Erewhon"],
   ["I2","Hesper Lanthorn","f","1836",1836,"1910",1910,"Gloamshire, Erewhon"],

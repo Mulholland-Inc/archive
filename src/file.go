@@ -47,7 +47,7 @@ type File struct {
 	Metadata  map[string]any `json:"metadata"`
 	Status    string         `json:"status"`
 	Error     string         `json:"error,omitempty"`
-	Space     uuid.UUID      `json:"space"`
+	Access    *string        `json:"access"`
 	CreatedAt time.Time      `json:"created_at"`
 }
 
@@ -80,15 +80,14 @@ func fileName(name, hash string) string {
 	return name
 }
 
-func (a *Archive) AddFile(ctx context.Context, space, name string, r io.Reader) (*File, error) {
-	sid, err := coreDo(a, ctx, func(ctx context.Context) (uuid.UUID, error) { return a.coreSpace(ctx, space) })
-	if err != nil {
-		return nil, err
+func (a *Archive) AddFile(ctx context.Context, access, name string, r io.Reader) (*File, error) {
+	if ActorFrom(ctx) == nil {
+		return nil, fmt.Errorf("not signed in: %w", ErrUnauthorized)
 	}
-	return a.fileAdd(ctx, sid, name, r)
+	return a.fileAdd(ctx, coreAccess(access), name, r)
 }
 
-func (a *Archive) fileAdd(ctx context.Context, sid uuid.UUID, name string, r io.Reader) (*File, error) {
+func (a *Archive) fileAdd(ctx context.Context, access *string, name string, r io.Reader) (*File, error) {
 	tmp, err := os.CreateTemp("", "archive-post-")
 	if err != nil {
 		return nil, err
@@ -101,10 +100,10 @@ func (a *Archive) fileAdd(ctx context.Context, sid uuid.UUID, name string, r io.
 	if err != nil {
 		return nil, err
 	}
-	return a.fileCommit(ctx, sid, name, func() (io.ReadCloser, error) { return os.Open(tmp.Name()) })
+	return a.fileCommit(ctx, access, name, func() (io.ReadCloser, error) { return os.Open(tmp.Name()) })
 }
 
-func (a *Archive) fileCommit(ctx context.Context, sid uuid.UUID, name string, open func() (io.ReadCloser, error)) (*File, error) {
+func (a *Archive) fileCommit(ctx context.Context, access *string, name string, open func() (io.ReadCloser, error)) (*File, error) {
 	r, err := open()
 	if err != nil {
 		return nil, err
@@ -131,11 +130,11 @@ func (a *Archive) fileCommit(ctx context.Context, sid uuid.UUID, name string, op
 		return nil, err
 	}
 	f, err := coreDo(a, ctx, func(ctx context.Context) (*File, error) {
-		f, err := fileOf(a.st.db(ctx).FileByKey(ctx, sid, hash, name))
+		f, err := fileOf(a.st.db(ctx).FileByKey(ctx, access, hash, name))
 		if !errors.Is(err, ErrNotFound) {
 			return f, err
 		}
-		return fileOf(a.st.db(ctx).CreateFile(ctx, generated.CreateFileParams{Hash: hash, Name: name, MIME: mt, Size: size, Space: sid}))
+		return fileOf(a.st.db(ctx).CreateFile(ctx, generated.CreateFileParams{Hash: hash, Name: name, MIME: mt, Size: size, Access: access}))
 	})
 	if err != nil {
 		return nil, err
@@ -162,20 +161,12 @@ func (a *Archive) fileReady(ctx context.Context, f *File) (*File, error) {
 	return a.ProcessFile(ctx, f.ID)
 }
 
-func (a *Archive) Files(ctx context.Context, space string, limit int, after uuid.UUID) ([]*File, error) {
+func (a *Archive) Files(ctx context.Context, limit int, after uuid.UUID) ([]*File, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
 	return coreDo(a, ctx, func(ctx context.Context) ([]*File, error) {
-		var sid *uuid.UUID
-		if space != "" {
-			id, err := a.coreSpace(ctx, space)
-			if err != nil {
-				return nil, err
-			}
-			sid = &id
-		}
-		rows, err := a.st.db(ctx).Files(ctx, after, sid, int32(limit))
+		rows, err := a.st.db(ctx).Files(ctx, after, int32(limit))
 		fs := make([]*File, len(rows))
 		for i := range rows {
 			fs[i] = (*File)(&rows[i])
@@ -206,7 +197,7 @@ func (a *Archive) RenameFile(ctx context.Context, id uuid.UUID, name string) (*F
 		case errors.Is(err, ErrNotFound):
 			return nil, fmt.Errorf("file %s: %w", id, ErrNotFound)
 		case errors.As(err, &pe) && pe.Code == "23505":
-			return nil, fmt.Errorf("a file named %q with the same content is already in this space: %w", name, ErrConflict)
+			return nil, fmt.Errorf("a file named %q with the same content is already here: %w", name, ErrConflict)
 		}
 		return f, err
 	})
@@ -312,7 +303,7 @@ func (a *Archive) fileRoutes(mux *http.ServeMux) {
 				return 0, nil, fmt.Errorf("after: %w", httpErrBadRequest)
 			}
 		}
-		fs, err := a.Files(r.Context(), r.URL.Query().Get("space"), limit, after)
+		fs, err := a.Files(r.Context(), limit, after)
 		return http.StatusOK, fs, err
 	})
 	handle("POST /api/files", func(r *http.Request) (int, any, error) {
@@ -327,7 +318,7 @@ func (a *Archive) fileRoutes(mux *http.ServeMux) {
 				return 0, nil, fmt.Errorf("no file part: %w", httpErrBadRequest)
 			}
 			if p.FormName() == "file" {
-				f, err := a.AddFile(r.Context(), r.URL.Query().Get("space"), p.FileName(), p)
+				f, err := a.AddFile(r.Context(), r.URL.Query().Get("access"), p.FileName(), p)
 				return http.StatusCreated, f, err
 			}
 		}
@@ -553,12 +544,10 @@ func (a *Archive) tusCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	meta := tusMetadata(r.Header.Get("Upload-Metadata"))
 	up := &tusUpload{ID: coreNewID(), Length: n, Name: cmp.Or(meta["filename"], meta["name"]), Role: ActorFrom(ctx).Role}
-	up.Space, err = coreDo(a, ctx, func(ctx context.Context) (uuid.UUID, error) { return a.coreSpace(ctx, meta["space"]) })
-	if err == nil {
-		err = a.st.System(ctx, func(ctx context.Context) error {
-			return a.st.db(ctx).CreateUpload(ctx, generated.CreateUploadParams{ID: up.ID, Role: up.Role, Space: up.Space, Name: up.Name, Length: up.Length})
-		})
-	}
+	up.Access = coreAccess(meta["access"])
+	err = a.st.System(ctx, func(ctx context.Context) error {
+		return a.st.db(ctx).CreateUpload(ctx, generated.CreateUploadParams{ID: up.ID, Role: up.Role, Access: up.Access, Name: up.Name, Length: up.Length})
+	})
 	var f *File
 	if err == nil && n == 0 {
 		err = a.tusLocked(ctx, up.ID, true, func(ctx context.Context, up *tusUpload) (err error) {
@@ -649,7 +638,7 @@ func (a *Archive) tusUpload(w http.ResponseWriter, r *http.Request, id uuid.UUID
 }
 
 func (a *Archive) tusFinish(ctx context.Context, up *tusUpload) (*File, error) {
-	f, err := a.fileCommit(ctx, up.Space, up.Name, func() (io.ReadCloser, error) { return &tusReader{a: a, ctx: ctx, up: up}, nil })
+	f, err := a.fileCommit(ctx, up.Access, up.Name, func() (io.ReadCloser, error) { return &tusReader{a: a, ctx: ctx, up: up}, nil })
 	if err != nil {
 		return nil, err
 	}

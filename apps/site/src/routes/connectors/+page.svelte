@@ -55,13 +55,13 @@
     ['Does Archive ever change anything in my tools?', 'No. Connectors only ask to read and never write back. To act on what came in, your assistants work in Archive.'],
     ['How up to date is it?', 'Most tools tell Archive the moment something changes. The rest are checked every minute while an account is busy, and up to once an hour when it goes quiet.'],
     ['What happens when I delete something at the source?', 'It is deleted in Archive too. Everything that came in follows the original.'],
-    ['Who can see what comes in?', 'The members of the space the connection belongs to, according to what each may see. The same rules apply to people and assistants alike.'],
+    ['Who can see what comes in?', 'The people in the workspace the connection belongs to, according to what each may see. The same rules apply to people and assistants alike.'],
     ['Can my assistants use it?', 'Yes. Mail, messages and events become records, and files stay files. Your assistants search and work with them like anything else.']
   ];
 
   const TRUST = [
     { art: 'security', title: 'Read-only', items: ['Permission to read, nothing more, on every tool', 'Archive never changes anything there', 'Sign-in details are stored encrypted'] },
-    { art: 'spaces', title: 'Per space', items: ['Each connection belongs to one space', 'Everything it brings in lands there', 'Only the right people see it'] },
+    { art: 'spaces', title: 'Per workspace', items: ['Each connection belongs to one workspace', 'Everything it brings in lands there', 'Only the right people see it'] },
     { art: 'office', title: 'Office files', items: ['Google Docs, Sheets and Slides as Word, Excel and PowerPoint', 'Drive files handled just like uploads', 'Assistants can open and read them'] }
   ];
 </script>
@@ -76,7 +76,7 @@
   links={[START, ['#all', 'See every connector']]}
 />
 
-<Section body="Each connection brings in only what is new and puts it in one space, where people and assistants can use it right away.">
+<Section body="Each connection brings in only what is new and puts it in your workspace, where people and assistants can use it right away.">
   {#snippet title()}Connect once. <em>Stay</em> up to date.{/snippet}
   <Scene name="harbor" alt="A harbor where barges of containers are unloaded into a warehouse" />
 </Section>

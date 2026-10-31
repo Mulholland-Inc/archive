@@ -29,7 +29,7 @@
   const ORGANIZE = [
     { art: 'delta', title: 'Change it anytime', items: ['Add a field or a new kind of record in seconds', 'See what a change will do before it happens', 'Rename anything and nothing gets lost'] },
     { art: 'views', title: 'Boards and calendars', items: ['See the same records as a board, a calendar or a list', 'Group them the way your team thinks', 'Everyone sees only what they are allowed to'] },
-    { art: 'security', title: 'Only the right people', items: ['Everything belongs to a space for a team or a person', 'Set who can see and change what', 'Your AI assistants never see more than you do'] }
+    { art: 'security', title: 'Only the right people', items: ['Everyone gets a role, and groups keep private things private', 'Set who can see and change what', 'Your AI assistants never see more than you do'] }
   ];
 
   const STEPS = [

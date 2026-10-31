@@ -2,8 +2,9 @@
 set -eu
 demo=$(dirname "$0")
 archive=${ARCHIVE_BIN:-archive}
+me=${1:-me@example.com}
 
-$archive space list >/dev/null 2>&1 || $archive user add "${1:-me@example.com}" -name "${2:-Me}" -admin >/dev/null
+$archive list member -limit 1 >/dev/null 2>&1 || $archive user add "$me" -name "${2:-Me}" >/dev/null
 if [ "$($archive list person -limit 1 2>/dev/null || echo '[]')" != "[]" ]; then
 	echo "demo: this archive already has people in it; load the demo into an empty one" >&2
 	exit 1
@@ -15,12 +16,13 @@ $archive schema pull "$schema" >/dev/null
 cp "$demo"/schema/*.sql "$schema"
 $archive schema apply "$schema" >/dev/null
 
-$archive space add family >/dev/null
-$archive user add sam@example.com -name "Sam Rivera" >/dev/null
-$archive space grant family sam@example.com editor >/dev/null
+member() { $archive list member email="$1" | sed -n 's/.*"id": "\([^"]*\)".*/\1/p'; }
+$archive user add sam@example.com -name "Sam Rivera" -role editor >/dev/null
+$archive set member "$(member "$me")" '{"groups":["family"]}' >/dev/null
+$archive set member "$(member sam@example.com)" '{"groups":["family"]}' >/dev/null
 
 $archive file add "$demo"/files/*.* >/dev/null
-$archive file add -space family "$demo"/files/family/* >/dev/null
+$archive file add -access family "$demo"/files/family/* >/dev/null
 
 $archive run "$demo/seed.ts"
 

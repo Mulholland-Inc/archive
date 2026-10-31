@@ -1,7 +1,7 @@
 CREATE TYPE document_kind AS ENUM ('passport', 'id_card', 'drivers_license', 'residence_permit', 'health_card');
 CREATE TABLE identity_document (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
-    space      uuid NOT NULL REFERENCES archive.space,
+    access     text,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     kind document_kind NOT NULL,
@@ -16,8 +16,7 @@ CREATE TABLE identity_document (
 CREATE INDEX identity_document_search ON identity_document USING gin (search);
 ALTER TABLE identity_document ENABLE ROW LEVEL SECURITY;
 ALTER TABLE identity_document FORCE ROW LEVEL SECURITY;
-CREATE POLICY viewer ON identity_document FOR SELECT USING (space = ANY (archive.my_spaces()));
-CREATE POLICY editor ON identity_document USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
+CREATE POLICY access ON identity_document USING (archive.can(access)) WITH CHECK (archive.can(access));
 COMMENT ON TABLE identity_document IS 'A passport, ID card, driver''s license or permit
 icon: id-card';
 COMMENT ON COLUMN identity_document.kind IS 'Type of document';

@@ -386,7 +386,10 @@ func (a *Archive) workflowActor(ctx context.Context, w generated.ArchiveWorkflow
 	if !slices.Contains(u.Workspaces, a.ws.ID) {
 		return nil, errors.New("the person who deployed this workflow left the workspace, so it cannot run")
 	}
-	ac := a.userActor(u)
+	ac, err := a.userActor(ctx, u)
+	if err != nil {
+		return nil, errors.New("the person who deployed this workflow left the workspace, so it cannot run")
+	}
 	if w.Role == ac.Role {
 		return ac, nil
 	}

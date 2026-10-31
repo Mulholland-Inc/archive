@@ -84,28 +84,4 @@ func errorMessage(b []byte) string {
 	return "invalid " + e.Type + ": " + strings.Join(parts, "; ")
 }
 
-type space struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	Level string `json:"level"`
-}
-
-func (c *client) spaces(ctx context.Context) ([]space, error) {
-	var out []space
-	return out, c.do(ctx, "GET", "/auth/spaces", nil, &out)
-}
-
-func (c *client) spaceName(ctx context.Context, id string) (string, error) {
-	sp, err := c.spaces(ctx)
-	if err != nil {
-		return "", err
-	}
-	for _, s := range sp {
-		if s.ID == id {
-			return s.Name, nil
-		}
-	}
-	return "", fmt.Errorf("archive: space %s is not visible to this token", id)
-}
-
 func esc(s string) string { return url.PathEscape(s) }

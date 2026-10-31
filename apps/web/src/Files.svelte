@@ -2,6 +2,7 @@
   import { API, api, size } from './api.js';
   import Button from '#kit/Button.svelte';
   import Icon from '#kit/Icon.svelte';
+  import Access from './ui/Access.svelte';
   import DataTable from './ui/DataTable.svelte';
   import Filters from './ui/Filters.svelte';
   import Heading from './ui/Heading.svelte';
@@ -15,12 +16,14 @@
   let error = $state('');
   let picker = $state();
   let loaded = $state(false);
+  let access = $state(null);
   let q = $state({ ...read(), values: {} });
   const columns = $derived([
     { name: 'name', type: 'text' },
     { name: 'type', type: 'text' },
     { name: 'size', type: 'int8' },
     { name: 'created_at', label: 'Added', type: 'timestamptz' },
+    { name: 'access', type: 'text' },
   ]);
   const rows = $derived(files.map((f) => ({
     ...f,
@@ -54,7 +57,7 @@
       for (const file of e.target.files) {
         const form = new FormData();
         form.append('file', file);
-        await api('/api/files', { method: 'POST', raw: form });
+        await api(`/api/files${access ? `?access=${encodeURIComponent(access)}` : ''}`, { method: 'POST', raw: form });
       }
       await load();
     } catch (err) {
@@ -68,6 +71,7 @@
 </script>
 
 <Heading title="Files">
+  <Access value={access} onpick={(v) => (access = v)} />
   {#if !loaded || files.length}
   <Button small icon="plus" onclick={() => picker.click()} disabled={busy}>{busy ? 'Uploading…' : 'Add files'}</Button>
   {/if}
@@ -84,7 +88,7 @@
               {#if r.mime.startsWith('image/')}<img src="{API}/api/files/{r.id}/thumbnail" alt="" loading="lazy" />{:else}<Icon name="file" />{/if}
               <span class="text">{r.name}</span>
             </span>
-          {:else if c.name === 'size'}{size(r.size)}{:else if c.name === 'created_at'}{day(r.created_at)}{:else}{r[c.name]}{/if}
+          {:else if c.name === 'size'}{size(r.size)}{:else if c.name === 'created_at'}{day(r.created_at)}{:else if c.name === 'access'}<Access value={r.access} />{:else}{r[c.name]}{/if}
         {/snippet}
       </DataTable>
     {:else if loaded}

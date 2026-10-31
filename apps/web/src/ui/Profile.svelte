@@ -4,38 +4,9 @@
   import Theme from '#kit/Theme.svelte';
   import { setFloating, setSidebarIcons, setSounds, ui } from './looks.svelte.js';
 
-  let { name, dev = false, ondev, onsignout, spaces = [], home, current = '', onpick, oncreate } = $props();
-  let adding = $state(false);
-  let draft = $state('');
-  let failed = $state(false);
-
-  const label = (s) => (s.id === home ? 'Personal' : s.name.replaceAll('_', ' '));
-  const here = $derived(spaces.find((s) => s.name === current));
-
-  function pick(space) {
-    open = false;
-    if (space !== current) onpick(space);
-  }
-
-  async function create(e) {
-    e.preventDefault();
-    const n = draft.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
-    if (!n) return;
-    try {
-      await oncreate(n);
-      open = adding = failed = false;
-      draft = '';
-    } catch {
-      failed = true;
-    }
-  }
-
-  $effect(() => {
-    if (!open) adding = failed = false;
-  });
+  let { name, dev = false, ondev, onsignout } = $props();
   let open = $state(false);
   let root = $state();
-
 
   $effect(() => {
     if (!open) return;
@@ -55,30 +26,10 @@
     <Avatar {name} />
     <span class="text">
       <span class="name" title={name}>{name}</span>
-      {#if dev}<span class="space">{here ? label(here) : 'All spaces'}</span>{/if}
     </span>
   </button>
   {#if open}
     <div class="menu" role="menu">
-      {#if dev}
-        <button class="item" role="menuitemradio" aria-checked={!current} onclick={() => pick('')}>
-          <span>All spaces</span>{#if !current}<Icon name="check" />{/if}
-        </button>
-        {#each spaces as s (s.id)}
-          <button class="item" role="menuitemradio" aria-checked={s.name === current} onclick={() => pick(s.name)}>
-            <span>{label(s)}</span>{#if s.name === current}<Icon name="check" />{/if}
-          </button>
-        {/each}
-        {#if adding}
-          <form class="item add" class:failed onsubmit={create}>
-            <Icon name="plus" />
-            <input bind:value={draft} placeholder="Space name" aria-label="Space name" {@attach (el) => el.focus()} oninput={() => (failed = false)} />
-          </form>
-        {:else}
-          <button class="item new" role="menuitem" onclick={() => (adding = true)}><Icon name="plus" /><span>New space</span></button>
-        {/if}
-        <hr />
-      {/if}
       <div class="item plain"><span>Appearance</span><Theme /></div>
       <button class="item" role="menuitemcheckbox" aria-checked={ui.floating} onclick={() => setFloating(!ui.floating)}>
         <span>Floating icons</span>{#if ui.floating}<Icon name="check" />{/if}
@@ -112,9 +63,7 @@
   }
   .me:hover, .me[aria-expanded='true'] { background: var(--fill-faint); }
   .text { display: flex; flex: 1; flex-direction: column; min-width: 0; line-height: var(--leading-snug); }
-  .space { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .name { display: -webkit-box; overflow: hidden; color: var(--fg); overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-  .space { color: var(--fg-muted); font-size: var(--text-meta); }
   .menu {
     position: absolute;
     bottom: calc(100% + var(--space-1));
@@ -147,12 +96,6 @@
   .item[aria-checked='true'] { color: var(--fg); }
   .plain { padding-block: var(--space-0-5); }
   .plain:hover { background: none; }
-  .new, .add { justify-content: flex-start; color: var(--fg-muted); }
-  hr { flex: none; min-height: var(--hairline); margin: var(--space-1); border: 0; }
-  .add { background: var(--fill-faint); }
-  .add.failed { color: var(--danger); }
-  .add input { flex: 1; min-width: 0; padding: 0; color: var(--fg); outline: 0; }
-  .add input::placeholder { color: var(--fg-muted); }
   @keyframes rise { from { opacity: 0; transform: translateY(var(--rise)); } }
   @media (prefers-reduced-motion: reduce) { .menu { animation: none; } }
 </style>

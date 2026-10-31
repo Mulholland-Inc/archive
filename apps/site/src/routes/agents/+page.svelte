@@ -24,12 +24,12 @@
     ['File', 'Files', 'One file, with the text read out of it'],
     ['Read', 'Documents', 'The layout of a Word document, spreadsheet or slide deck'],
     ['Edit', 'Documents', 'Make a list of edits to a document, all of them or none'],
-    ['Spaces', 'Access', 'The spaces you can see, and what you may do in each']
+    ['People', 'Access', 'Who is in your workspace, with their roles and groups']
   ];
 
   const FAQ = [
     ['Which AI apps can use Archive?', 'ChatGPT, Claude, Gemini and Grok, right from their connector lists. Coding tools like Claude Code and Cursor connect with an access key.'],
-    ["Can my assistant see things it shouldn't?", 'No. It sees exactly what the person who connected it can see, and its key can only narrow that, never widen it.'],
+    ["Can my assistant see things it shouldn't?", 'No. It sees exactly what the person who connected it can see, and its key can be made read only, never more.'],
     ['What if a job fails halfway?', 'Everything it changed is undone, so nothing ends up half done. The one exception is a change to how your information is organized, which sticks as soon as it succeeds.'],
     ['Can it reach other websites or apps?', 'Not while it works in Archive. Your assistant can look up what it needs first, then bring it along.'],
     ['How does my assistant know how my business is organized?', 'Archive tells it up front: every kind of record, its fields and the notes you wrote about them. When you change something, the next conversation sees it.']
@@ -71,7 +71,7 @@
   </Row>
   <Row flip art="tokens" alt="A ring of keys, each cut to open fewer doors">
     <h2>A key for each assistant.</h2>
-    <p>Every assistant gets its own access key, and it can only do less than you: fewer spaces, less say, an end date.</p>
+    <p>Every assistant gets its own access key, and it never does more than you can. Make it read only, or give it an end date.</p>
     <p>Turn off one key and only that assistant stops.</p>
   </Row>
 </Section>

@@ -2163,7 +2163,7 @@ func OfficeBlank(kind string) []byte {
 	return buf.Bytes()
 }
 
-func (a *Archive) CreateDocument(ctx context.Context, space, name string) (*File, error) {
+func (a *Archive) CreateDocument(ctx context.Context, access, name string) (*File, error) {
 	ext := strings.ToLower(path.Ext(name))
 	if strings.TrimSpace(strings.TrimSuffix(name, path.Ext(name))) == "" {
 		return nil, fmt.Errorf("archive.create: the file name before %s must not be empty: %w", ext, httpErrBadRequest)
@@ -2175,5 +2175,5 @@ func (a *Archive) CreateDocument(ctx context.Context, space, name string) (*File
 	default:
 		return nil, fmt.Errorf("archive.create: %q is not a document; end the name in .docx, .xlsx or .pptx: %w", name, httpErrBadRequest)
 	}
-	return a.AddFile(ctx, space, name, bytes.NewReader(b))
+	return a.AddFile(ctx, access, name, bytes.NewReader(b))
 }

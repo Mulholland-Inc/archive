@@ -23,6 +23,7 @@ type Catalog struct {
 
 type Table struct {
 	Name        string    `json:"name"`
+	Schema      string    `json:"schema"`
 	Kind        string    `json:"kind"`
 	Description string    `json:"description"`
 	Icon        string    `json:"icon"`
@@ -31,7 +32,7 @@ type Table struct {
 	RLS         bool      `json:"rls"`
 	Force       bool      `json:"force"`
 	Invoker     bool      `json:"security_invoker,omitempty"`
-	Policies    int       `json:"policies"`
+	Policy      bool      `json:"policy"`
 	Columns     []*Column `json:"columns"`
 	meta        [][2]string
 }
@@ -155,9 +156,9 @@ var catalogIcons = func() map[string]bool {
 var catalogLayouts = []string{"table", "board", "calendar"}
 
 var (
-	catalogSystem   = map[string]bool{"id": true, "space": true, "created_at": true, "updated_at": true}
+	catalogSystem   = map[string]bool{"id": true, "created_at": true, "updated_at": true}
 	catalogReserved = map[string]bool{"files": true, "views": true, "search": true, "schema": true, "types": true,
-		"space": true, "user": true, "token": true, "file": true, "upload": true, "secret": true, "revision": true, "run": true}
+		"member": true, "user": true, "token": true, "file": true, "upload": true, "secret": true, "revision": true, "run": true}
 	catalogNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 	catalogRefRe  = regexp.MustCompile(`(?i)^references\s+([a-z][a-z0-9_]*)\b[\s.;:,-]*`)
 )
@@ -233,7 +234,7 @@ func (t *Table) hidden() string {
 	return "'{" + strings.Join(out, ",") + "}'::text[]"
 }
 
-func (t *Table) ident() string { return pgIdent("public", t.Name) }
+func (t *Table) ident() string { return pgIdent(t.Schema, t.Name) }
 
 func (t *Table) rowSQL(alias string) string { return "to_jsonb(" + alias + ") - " + t.hidden() }
 
@@ -242,13 +243,16 @@ func (c *Catalog) Check() error {
 	bad := func(path, msg string) { ve.Errors = append(ve.Errors, FieldError{Path: path, Message: msg}) }
 	want := []struct{ name, typ, msg string }{
 		{"id", "uuid", "want id uuid PRIMARY KEY DEFAULT uuidv7()"},
-		{"space", "uuid", "want space uuid NOT NULL REFERENCES archive.space"},
+		{"access", "text", "want access text, null for rows the whole workspace sees, like access text, or access text NOT NULL DEFAULT 'hr' CHECK (access = 'hr') for a table only the hr group sees"},
 		{"created_at", "timestamptz", "want created_at timestamptz NOT NULL DEFAULT now()"},
 		{"updated_at", "timestamptz", "want updated_at timestamptz NOT NULL DEFAULT now()"},
 		{"search", "tsvector", "want a search tsvector column, like search tsvector GENERATED ALWAYS AS (archive.search_doc(name)) STORED"},
 	}
 	for _, name := range c.names() {
 		t := c.Tables[name]
+		if t.Schema != "public" {
+			continue
+		}
 		if !catalogNameRe.MatchString(name) || catalogReserved[name] {
 			bad(name, t.Kind+" names are lowercase letters, digits and _, and not one of "+strings.Join(specKeys(catalogReserved), ", "))
 		}
@@ -268,8 +272,6 @@ func (c *Catalog) Check() error {
 			switch w.name {
 			case "id":
 				ok = ok && col.PK && col.Default
-			case "space":
-				ok = ok && col.NotNull && col.Ref == "archive.space"
 			case "created_at", "updated_at":
 				ok = ok && col.NotNull && col.Default
 			}
@@ -277,8 +279,8 @@ func (c *Catalog) Check() error {
 				bad(name+"."+w.name, w.msg)
 			}
 		}
-		if !t.RLS || !t.Force || t.Policies == 0 {
-			bad(name, "want ENABLE and FORCE ROW LEVEL SECURITY and a policy, like CREATE POLICY viewer ON "+name+" FOR SELECT USING (space = ANY (archive.my_spaces()))")
+		if !t.RLS || !t.Force || !t.Policy {
+			bad(name, "want ENABLE and FORCE ROW LEVEL SECURITY and exactly one policy, CREATE POLICY access ON "+name+" USING (archive.can(access)) WITH CHECK (archive.can(access))")
 		}
 		for _, col := range t.Columns {
 			if tg := col.target(); col.Ref == "" && tg != "" && c.Tables[strings.TrimPrefix(tg, "public.")] == nil {

@@ -9,36 +9,33 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
 type tokenModel struct {
-	ID        types.String      `tfsdk:"id"`
-	Name      types.String      `tfsdk:"name"`
-	Spaces    map[string]string `tfsdk:"spaces"`
-	Full      types.Bool        `tfsdk:"full"`
-	Expires   types.String      `tfsdk:"expires"`
-	ExpiresAt types.String      `tfsdk:"expires_at"`
-	CreatedAt types.String      `tfsdk:"created_at"`
-	Token     types.String      `tfsdk:"token"`
+	ID        types.String `tfsdk:"id"`
+	Name      types.String `tfsdk:"name"`
+	Viewer    types.Bool   `tfsdk:"viewer"`
+	Expires   types.String `tfsdk:"expires"`
+	ExpiresAt types.String `tfsdk:"expires_at"`
+	CreatedAt types.String `tfsdk:"created_at"`
+	Token     types.String `tfsdk:"token"`
 }
 
 type apiToken struct {
-	ID        string            `json:"id"`
-	Name      string            `json:"name"`
-	Spaces    map[string]string `json:"spaces"`
-	Full      bool              `json:"full"`
-	ExpiresAt *time.Time        `json:"expires_at"`
-	CreatedAt time.Time         `json:"created_at"`
-	Token     string            `json:"token"`
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	Viewer    bool       `json:"viewer"`
+	ExpiresAt *time.Time `json:"expires_at"`
+	CreatedAt time.Time  `json:"created_at"`
+	Token     string     `json:"token"`
 }
 
 func (m *tokenModel) fill(t apiToken) {
-	m.ID, m.Name, m.Full = types.StringValue(t.ID), types.StringValue(t.Name), types.BoolValue(t.Full)
-	m.Spaces, m.CreatedAt, m.ExpiresAt = t.Spaces, types.StringValue(t.CreatedAt.UTC().Format(time.RFC3339)), types.StringNull()
+	m.ID, m.Name, m.Viewer = types.StringValue(t.ID), types.StringValue(t.Name), types.BoolValue(t.Viewer)
+	m.CreatedAt, m.ExpiresAt = types.StringValue(t.CreatedAt.UTC().Format(time.RFC3339)), types.StringNull()
 	if t.ExpiresAt != nil {
 		m.ExpiresAt = types.StringValue(t.ExpiresAt.UTC().Format(time.RFC3339))
 	}
@@ -57,16 +54,13 @@ func (r *tokenResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 	keep := []planmodifier.String{stringplanmodifier.UseStateForUnknown()}
 	replace := []planmodifier.String{stringplanmodifier.RequiresReplace()}
 	resp.Schema = schema.Schema{
-		Description: "A scoped API or agent token. It can only narrow the rights of the user it belongs to. Any change makes a new token.",
+		Description: "An API or agent token. It acts as the user it belongs to, with their role and groups, or read only with viewer. Any change makes a new token.",
 		Attributes: map[string]schema.Attribute{
 			"id":   schema.StringAttribute{Computed: true, PlanModifiers: keep},
 			"name": schema.StringAttribute{Required: true, PlanModifiers: replace},
-			"spaces": schema.MapAttribute{Optional: true, Computed: true, ElementType: types.StringType,
-				PlanModifiers: []planmodifier.Map{mapplanmodifier.RequiresReplace(), mapplanmodifier.UseStateForUnknown()},
-				Description:   "Role per space name: owner, admin, editor or viewer. Defaults to your role in every space."},
-			"full": schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false),
+			"viewer": schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false),
 				PlanModifiers: []planmodifier.Bool{boolplanmodifier.RequiresReplace()},
-				Description:   "A token with all your rights that can also manage spaces, members and tokens. Takes no spaces."},
+				Description:   "Read only: the token sees what you see and changes nothing."},
 			"expires":    schema.StringAttribute{Optional: true, PlanModifiers: replace, Description: "Lifetime from creation, like 720h."},
 			"expires_at": schema.StringAttribute{Computed: true, PlanModifiers: keep},
 			"created_at": schema.StringAttribute{Computed: true, PlanModifiers: keep},
@@ -82,8 +76,8 @@ func (r *tokenResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 	var t apiToken
-	err := r.c.do(ctx, "POST", "/auth/tokens", map[string]any{"name": m.Name.ValueString(), "spaces": m.Spaces,
-		"expires": m.Expires.ValueString(), "full": m.Full.ValueBool()}, &t)
+	err := r.c.do(ctx, "POST", "/auth/tokens", map[string]any{"name": m.Name.ValueString(),
+		"expires": m.Expires.ValueString(), "viewer": m.Viewer.ValueBool()}, &t)
 	if err != nil {
 		resp.Diagnostics.AddError("Creating the token failed", err.Error())
 		return

@@ -47,7 +47,7 @@
 
   const PARTS = [
     { art: 'types', title: 'Its own kinds of record', items: ['People, couples, parents, events and places', 'Stories and the sources behind each claim', 'Twelve kinds of document, from a bill to a keepsake'] },
-    { art: 'security', title: 'Private by default', items: ['A member’s files start in their own space', 'Family records stay closed until an approver opens them', 'Sharing is always on purpose'] },
+    { art: 'security', title: 'Private when it matters', items: ['Keep a file to the parents, or any group', 'Family records stay closed until an approver opens them', 'Sharing is always on purpose'] },
     { art: 'calendar', title: 'Dates that matter', items: ['Everything due, expiring or renewing in one calendar', 'A reminder by email or text, if you want one', 'A private calendar address for each member'] }
   ];
 </script>
@@ -86,7 +86,7 @@
   </div>
 </Section>
 
-<Section title="One module, the whole engine." body="Archive Family adds its own kinds of record and a few screens. Files, search, spaces, sharing and assistants all come from Archive, in one program.">
+<Section title="One module, the whole engine." body="Archive Family adds its own kinds of record and a few screens. Files, search, groups, sharing and assistants all come from Archive, in one program.">
   <Specs items={PARTS} />
 </Section>
 

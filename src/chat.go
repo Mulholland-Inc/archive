@@ -343,9 +343,6 @@ func chatSystem(ac *Actor) string {
 		who = ac.Name + " <" + ac.Email + ">"
 	}
 	s := "Today is " + time.Now().UTC().Format("Monday 2 January 2006") + ". You are the agent in Archive, talking with " + who + "."
-	if ac.Space != "" {
-		s += ` They are working in the space "` + ac.Space + `"; run only sees that space.`
-	}
 	return s + " The run tool is the only way to read or change their archive. Run calls and their results are folded away in the chat, so the answer itself presents what they need, as a short markdown table when that helps."
 }
 

@@ -19,7 +19,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -37,11 +36,6 @@ import (
 	"golang.org/x/oauth2/github"
 )
 
-var (
-	authLevels  = []string{"viewer", "editor", "admin", "owner"}
-	authSpaceRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_]{0,31}$`)
-)
-
 type Actor struct {
 	UserID    uuid.UUID `json:"user_id"`
 	Email     string    `json:"email"`
@@ -51,7 +45,7 @@ type Actor struct {
 	Label     string    `json:"acting_as"`
 	Role      string    `json:"-"`
 	UserRole  string    `json:"-"`
-	Space     string    `json:"-"`
+	member    uuid.UUID
 }
 
 func (ac *Actor) label() string {
@@ -85,48 +79,31 @@ type User struct {
 	CreatedAt  time.Time       `json:"created_at"`
 }
 
-type SpaceInfo struct {
-	ID    uuid.UUID `json:"id"`
-	Name  string    `json:"name"`
-	Level string    `json:"level"`
-}
-
-type Member struct {
-	Email string `json:"email"`
-	Name  string `json:"name"`
-	Level string `json:"level"`
-}
-
 type Person struct {
-	Email string `json:"email"`
-	Name  string `json:"name"`
-	Admin bool   `json:"admin"`
+	ID     uuid.UUID `json:"id"`
+	Email  string    `json:"email"`
+	Name   string    `json:"name"`
+	Role   string    `json:"role"`
+	Groups []string  `json:"groups"`
 }
 
 type Token struct {
-	ID        uuid.UUID         `json:"id"`
-	Name      string            `json:"name"`
-	Spaces    map[string]string `json:"spaces"`
-	Full      bool              `json:"full,omitempty"`
-	ExpiresAt *time.Time        `json:"expires_at,omitempty"`
-	CreatedAt time.Time         `json:"created_at"`
-	Secret    string            `json:"token,omitempty"`
+	ID        uuid.UUID  `json:"id"`
+	Name      string     `json:"name"`
+	Viewer    bool       `json:"viewer,omitempty"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	Secret    string     `json:"token,omitempty"`
 }
-
-func authLevel(s string) int { return slices.Index(authLevels, s) + 1 }
 
 func authIdent(s string) string { return pgx.Identifier{s}.Sanitize() }
 
 func authCreate(role string) string { return "CREATE ROLE " + authIdent(role) + " NOLOGIN" }
 
-func authDrop(role string) string { return "DROP ROLE " + authIdent(role) }
+func authDrop(role string) string { return "DROP ROLE IF EXISTS " + authIdent(role) }
 
 func authGrant(group, role string) string {
 	return "GRANT " + authIdent(group) + " TO " + authIdent(role)
-}
-
-func authRevoke(group, role string) string {
-	return "REVOKE " + authIdent(group) + " FROM " + authIdent(role)
 }
 
 func authHash(secret string) string {
@@ -171,87 +148,17 @@ func (a *Archive) sys(ctx context.Context, fn func(context.Context) error) error
 }
 
 func (a *Archive) has(ctx context.Context, role, group string) bool {
-	ok, err := a.st.db(ctx).HasRole(ctx, role, group)
-	return err == nil && ok
-}
-
-func (a *Archive) level(ctx context.Context, role, base string, direct bool) int {
-	if !direct {
-		for i := len(authLevels); i > 0; i-- {
-			if a.has(ctx, role, base+"_"+authLevels[i-1]) {
-				return i
-			}
-		}
-		return 0
-	}
-	names, _ := a.st.db(ctx).DirectRoles(ctx, role, []string{base + "_viewer", base + "_editor", base + "_admin", base + "_owner"})
-	n := 0
-	for _, s := range names {
-		n = max(n, authLevel(strings.TrimPrefix(s, base+"_")))
-	}
-	return n
-}
-
-func (a *Archive) setLevel(ctx context.Context, role, base string, lvl int) error {
-	for _, l := range authLevels {
-		if err := a.exec(ctx, authRevoke(base+"_"+l, role)); err != nil {
-			return err
-		}
-	}
-	if lvl == 0 {
+	var ok bool
+	a.sys(ctx, func(ctx context.Context) error {
+		r, err := a.st.db(ctx).HasRole(ctx, role, group)
+		ok = err == nil && r
 		return nil
-	}
-	return a.exec(ctx, authGrant(base+"_"+authLevels[lvl-1], role))
+	})
+	return ok
 }
 
-func (a *Archive) createSpace(ctx context.Context, name string, home *uuid.UUID) (uuid.UUID, error) {
-	var id uuid.UUID
-	if !authSpaceRe.MatchString(name) {
-		return id, &ValidationError{Type: "space", Errors: []FieldError{{Path: "name", Message: "want 1-32 lowercase letters, digits or _"}}}
-	}
-	b := make([]byte, 9)
-	rand.Read(b)
-	base := a.prefix + "_s" + base64.RawURLEncoding.EncodeToString(b)
-	id, err := a.st.db(ctx).CreateSpace(ctx, name, base, home)
-	if err != nil {
-		return id, err
-	}
-	for i, l := range authLevels {
-		if err := a.exec(ctx, authCreate(base+"_"+l)); err != nil {
-			return id, err
-		}
-		if i > 0 {
-			if err := a.exec(ctx, authGrant(base+"_"+authLevels[i-1], base+"_"+l)); err != nil {
-				return id, err
-			}
-		}
-	}
-	return id, nil
-}
-
-func (a *Archive) createRole(ctx context.Context, role string) error {
-	return a.exec(ctx, authCreate(role), authGrant(a.prefix+"_user", role), authGrant(role, a.prefix+"_authenticator"))
-}
-
-func (a *Archive) freeSpaceName(ctx context.Context, email string) string {
-	base := strings.Map(func(r rune) rune {
-		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
-			return r
-		}
-		return '_'
-	}, email)
-	base = strings.TrimLeft(base, "_")
-	if base == "" {
-		base = "user"
-	}
-	base = base[:min(len(base), 28)]
-	name := base
-	for i := 2; ; i++ {
-		if taken, _ := a.st.db(ctx).SpaceTaken(ctx, name); !taken {
-			return name
-		}
-		name = fmt.Sprintf("%s_%d", base, i)
-	}
+func (a *Archive) owner(ctx context.Context, role string) bool {
+	return a.has(ctx, role, a.prefix+"_owner")
 }
 
 func authUser(ctx context.Context) (*Actor, error) {
@@ -259,139 +166,155 @@ func authUser(ctx context.Context) (*Actor, error) {
 	if ac == nil {
 		return nil, fmt.Errorf("not signed in: %w", ErrUnauthorized)
 	}
-	if ac.TokenID != uuid.Nil {
-		return nil, fmt.Errorf("API tokens cannot manage users, spaces, tokens or grants: %w", ErrForbidden)
+	if ac.Role != ac.UserRole {
+		return nil, fmt.Errorf("a viewer-only token cannot manage tokens or workspaces: %w", ErrForbidden)
 	}
 	return ac, nil
 }
 
-func (a *Archive) AddUser(ctx context.Context, email, name string, admin bool) (*User, error) {
+func (a *Archive) memberOf(ctx context.Context, email string) (generated.MemberByEmailRow, error) {
+	var m generated.MemberByEmailRow
+	err := a.st.System(ctx, func(ctx context.Context) (err error) {
+		m, err = a.st.db(ctx).MemberByEmail(ctx, email)
+		return err
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = fmt.Errorf("you are not in this workspace: %w", ErrForbidden)
+	}
+	return m, err
+}
+
+func (a *Archive) AddUser(ctx context.Context, email, name, role string) (*User, error) {
 	email, err := authEmail(email)
 	if err != nil {
 		return nil, err
 	}
-	hq := a.hub.q()
-	var u *User
+	data := map[string]any{"email": email, "role": cmp.Or(role, "viewer")}
+	var first bool
 	err = a.sys(ctx, func(ctx context.Context) error {
 		q := a.st.db(ctx)
 		if err := q.AdvisoryXactLock(ctx, 7273); err != nil {
 			return err
 		}
-		first, err := hq.NoMembers(ctx, a.ws.ID)
+		if first, err = q.NoMembers(ctx); err != nil || !first {
+			return err
+		}
+		tb, err := a.Catalog().table("member")
 		if err != nil {
 			return err
 		}
-		if !first {
-			ac, err := authUser(ctx)
-			if err != nil {
-				return err
-			}
-			if !a.has(ctx, ac.UserRole, a.prefix+"_admin") {
-				return fmt.Errorf("only admins of this workspace add people: %w", ErrForbidden)
-			}
-		}
-		r, err := hq.JoinWorkspace(ctx, email, strings.TrimSpace(name), a.ws.ID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return fmt.Errorf("%s is in this workspace already: %w", email, ErrConflict)
-		}
-		if err != nil {
-			return err
-		}
-		u = (*User)(&r)
-		var bases []string
-		if first {
-			spaces, _ := q.SpaceRoles(ctx)
-			for _, sp := range spaces {
-				bases = append(bases, sp.Role)
-			}
-		}
-		home, err := q.HomeSpace(ctx, &u.ID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			home, err = a.createSpace(ctx, a.freeSpaceName(ctx, email), &u.ID)
-		}
-		if err != nil {
-			return err
-		}
-		role := a.roleID("u", u.ID)
-		if err := a.createRole(ctx, role); err != nil {
-			return err
-		}
-		homeRole, err := q.SpaceRoleByID(ctx, home)
-		if err != nil {
-			return err
-		}
-		for _, base := range append(bases, homeRole) {
-			if err := a.setLevel(ctx, role, base, authLevel("owner")); err != nil {
-				return err
-			}
-		}
-		if admin || first {
-			return a.exec(ctx, authGrant(a.prefix+"_admin", role))
-		}
-		return nil
+		data["role"] = "owner"
+		_, err = a.coreCreate(ctx, tb, data)
+		return err
 	})
-	if err != nil && u != nil {
-		hq.LeaveWorkspace(context.WithoutCancel(ctx), a.ws.ID, u.ID)
+	if err == nil && !first {
+		_, err = a.Create(ctx, "member", data)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return a.joined(ctx, email, name)
+}
+
+func (a *Archive) joined(ctx context.Context, email, name string) (*User, error) {
+	ctx = context.WithoutCancel(ctx)
+	hq, name := a.hub.q(), strings.TrimSpace(name)
+	if _, err := hq.JoinWorkspace(ctx, email, name, a.ws.ID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	u, err := userBy(ctx, a.hub, (*generated.Queries).UserByEmail, email)
+	if err == nil && name != "" && u.Name == "" {
+		if err = hq.NameUser(ctx, u.ID, name); err == nil {
+			u.Name = name
+		}
 	}
 	return u, err
 }
 
 func (a *Archive) RemoveUser(ctx context.Context, email string) error {
-	ac, err := authUser(ctx)
+	email, err := authEmail(email)
 	if err != nil {
 		return err
 	}
-	u, err := a.member(ctx, email)
+	people, err := a.People(ctx)
 	if err != nil {
 		return err
 	}
-	hq, role := a.hub.q(), a.roleID("u", u.ID)
-	return a.sys(ctx, func(ctx context.Context) error {
-		q := a.st.db(ctx)
-		if !a.has(ctx, ac.UserRole, a.prefix+"_admin") {
-			return fmt.Errorf("only admins of this workspace remove people: %w", ErrForbidden)
-		}
-		spaces, err := q.SpaceRoles(ctx)
-		if err != nil {
-			return err
-		}
-		for _, sp := range spaces {
-			if (sp.Home == nil || *sp.Home != u.ID) && a.level(ctx, role, sp.Role, true) == authLevel("owner") {
-				if owners, _ := q.CountOwners(ctx, sp.Role+"_owner", a.prefix+"_u"); owners <= 1 {
-					return fmt.Errorf("%s is the last owner of %s: %w", u.Email, sp.Name, ErrConflict)
-				}
+	i := slices.IndexFunc(people, func(p Person) bool { return p.Email == email })
+	if i < 0 {
+		return fmt.Errorf("user %s: %w", email, ErrNotFound)
+	}
+	return a.Delete(ctx, "member", people[i].ID)
+}
+
+func (a *Archive) syncMembers(ctx context.Context, removals bool) error {
+	ctx = context.WithValue(context.WithoutCancel(ctx), storeTxKey{}, nil)
+	hq := a.hub.q()
+	var ms []generated.MembersRow
+	if err := a.st.System(ctx, func(ctx context.Context) (err error) {
+		ms, err = a.st.db(ctx).Members(ctx)
+		return err
+	}); err != nil {
+		return err
+	}
+	users, err := hq.WorkspaceUsers(ctx, a.ws.ID)
+	if err != nil {
+		return err
+	}
+	in, keep := map[string]bool{}, map[string]bool{}
+	for _, u := range users {
+		in[u.Email] = true
+	}
+	for _, m := range ms {
+		keep[m.Email] = true
+		if !in[m.Email] {
+			if _, err := hq.JoinWorkspace(ctx, m.Email, "", a.ws.ID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return err
 			}
+		}
+	}
+	for _, u := range users {
+		if !removals || keep[u.Email] {
+			continue
 		}
 		roles, err := hq.DeleteWorkspaceTokens(ctx, u.ID, &a.ws.ID)
 		if err != nil {
 			return err
 		}
-		for _, r := range append(roles, role) {
-			if r != "" {
-				if err := a.exec(ctx, authDrop(r)); err != nil {
-					return err
+		if err := a.st.System(ctx, func(ctx context.Context) error {
+			for _, r := range roles {
+				if r != "" {
+					if err := a.exec(ctx, authDrop(r)); err != nil {
+						return err
+					}
 				}
 			}
-		}
-		if err := q.ForgetUser(ctx, u.ID); err != nil {
+			return a.st.db(ctx).ForgetUser(ctx, u.ID)
+		}); err != nil {
 			return err
 		}
-		return hq.LeaveWorkspace(ctx, a.ws.ID, u.ID)
-	})
+		if err := hq.LeaveWorkspace(ctx, a.ws.ID, u.ID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (a *Archive) People(ctx context.Context) ([]Person, error) {
-	if _, err := authUser(ctx); err != nil {
+	ms, err := coreDo(a, ctx, func(ctx context.Context) ([]generated.MembersRow, error) { return a.st.db(ctx).Members(ctx) })
+	if err != nil {
 		return nil, err
 	}
+	users, err := a.hub.q().WorkspaceUsers(ctx, a.ws.ID)
+	names := map[string]string{}
+	for _, u := range users {
+		names[u.Email] = u.Name
+	}
 	out := []Person{}
-	return out, a.sys(ctx, func(ctx context.Context) error {
-		users, err := a.hub.q().WorkspaceUsers(ctx, a.ws.ID)
-		for _, r := range users {
-			out = append(out, Person{Email: r.Email, Name: r.Name, Admin: a.has(ctx, a.roleID("u", r.ID), a.prefix+"_admin")})
-		}
-		return err
-	})
+	for _, m := range ms {
+		out = append(out, Person{ID: m.ID, Email: m.Email, Name: names[m.Email], Role: m.Role, Groups: m.Groups})
+	}
+	return out, err
 }
 
 func userBy[T any](ctx context.Context, h *Hub, get func(*generated.Queries, context.Context, T) (generated.ArchiveUser, error), arg T) (*User, error) {
@@ -402,21 +325,13 @@ func userBy[T any](ctx context.Context, h *Hub, get func(*generated.Queries, con
 	return (*User)(&r), err
 }
 
-func (a *Archive) member(ctx context.Context, email string) (*User, error) {
-	email, err := authEmail(email)
+func (a *Archive) userActor(ctx context.Context, u *User) (*Actor, error) {
+	m, err := a.memberOf(ctx, u.Email)
 	if err != nil {
 		return nil, err
 	}
-	r, err := a.hub.q().WorkspaceUser(ctx, email, a.ws.ID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, fmt.Errorf("user %s: %w", email, ErrNotFound)
-	}
-	return (*User)(&r), err
-}
-
-func (a *Archive) userActor(u *User) *Actor {
-	role := a.roleID("u", u.ID)
-	return &Actor{UserID: u.ID, Email: u.Email, Name: u.Name, Role: role, UserRole: role}
+	role := a.roleID("u", m.ID)
+	return &Actor{UserID: u.ID, Email: u.Email, Name: u.Name, Role: role, UserRole: role, member: m.ID}, nil
 }
 
 func (a *Archive) CLIActor(ctx context.Context, email string) (*Actor, error) {
@@ -428,243 +343,44 @@ func (a *Archive) CLIActor(ctx context.Context, email string) (*Actor, error) {
 		if err != nil {
 			return nil, err
 		}
-		return a.userActor(u), nil
+		return a.userActor(ctx, u)
 	}
-	u, err := a.member(ctx, email)
+	email, err := authEmail(email)
 	if err != nil {
 		return nil, err
 	}
-	return a.userActor(u), nil
+	u, err := userBy(ctx, a.hub, (*generated.Queries).UserByEmail, email)
+	if errors.Is(err, ErrNotFound) {
+		return nil, fmt.Errorf("user %s: %w", email, ErrNotFound)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return a.userActor(ctx, u)
 }
 
-func (a *Archive) Spaces(ctx context.Context) ([]SpaceInfo, error) {
-	return coreDo(a, ctx, func(ctx context.Context) ([]SpaceInfo, error) {
-		rows, err := a.st.db(ctx).Spaces(ctx)
-		out := make([]SpaceInfo, len(rows))
-		for i, r := range rows {
-			out[i] = SpaceInfo(r)
-		}
-		return out, err
-	})
-}
-
-func (a *Archive) AddSpace(ctx context.Context, name string) (*SpaceInfo, error) {
+func (a *Archive) CreateToken(ctx context.Context, name string, ttl time.Duration, viewer bool) (*Token, error) {
 	ac, err := authUser(ctx)
 	if err != nil {
 		return nil, err
 	}
-	sp := &SpaceInfo{Name: name, Level: "owner"}
-	return sp, a.sys(ctx, func(ctx context.Context) error {
-		if sp.ID, err = a.createSpace(ctx, name, nil); err != nil {
-			return err
-		}
-		base, err := a.st.db(ctx).SpaceRoleByID(ctx, sp.ID)
-		if err != nil {
-			return err
-		}
-		return a.setLevel(ctx, ac.UserRole, base, authLevel("owner"))
-	})
-}
-
-func (a *Archive) DeleteSpace(ctx context.Context, name string) error {
-	ac, err := authUser(ctx)
-	if err != nil {
-		return err
-	}
-	if _, err := coreDo(a, ctx, func(ctx context.Context) (string, error) { return a.spaceRole(ctx, name) }); err != nil {
-		return err
-	}
-	return a.sys(ctx, func(ctx context.Context) error {
-		q := a.st.db(ctx)
-		sp, err := q.SpaceByName(ctx, name)
-		if err != nil {
-			return fmt.Errorf("space %q: %w", name, ErrNotFound)
-		}
-		id, base := sp.ID, sp.Role
-		if !a.has(ctx, ac.UserRole, base+"_owner") {
-			return fmt.Errorf("deleting %s needs owner: %w", name, ErrForbidden)
-		}
-		if sp.Home != nil {
-			return fmt.Errorf("%s is a personal space: %w", name, ErrConflict)
-		}
-		if err := q.DeleteSpaceSecrets(ctx, id); err != nil {
-			return err
-		}
-		if err := a.exec(ctx, "GRANT "+authIdent(ac.UserRole)+" TO CURRENT_USER", "SET LOCAL ROLE "+authIdent(ac.UserRole)); err != nil {
-			return err
-		}
-		for _, t := range a.Catalog().deleteOrder() {
-			if _, err := a.st.Q(ctx).Exec(ctx, `DELETE FROM `+pgIdent("public", t)+` WHERE space = $1`, id); err != nil {
-				return err
-			}
-		}
-		if err := a.exec(ctx, "RESET ROLE", "REVOKE "+authIdent(ac.UserRole)+" FROM CURRENT_USER"); err != nil {
-			return err
-		}
-		if err := q.DeleteSpaceFiles(ctx, id); err != nil {
-			return err
-		}
-		if err := q.DeleteSpace(ctx, id); err != nil {
-			return err
-		}
-		for i := len(authLevels) - 1; i >= 0; i-- {
-			if err := a.exec(ctx, authDrop(base+"_"+authLevels[i])); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}
-
-func (a *Archive) spaceRoles(ctx context.Context) (map[string]string, error) {
-	rows, err := a.st.db(ctx).SpaceRoles(ctx)
-	all := map[string]string{}
-	for _, r := range rows {
-		all[r.Name] = r.Role
-	}
-	return all, err
-}
-
-func (a *Archive) spaceRole(ctx context.Context, name string) (string, error) {
-	role, err := a.st.db(ctx).SpaceRole(ctx, name)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", fmt.Errorf("space %q: %w", name, ErrNotFound)
-	}
-	return role, err
-}
-
-func (a *Archive) Members(ctx context.Context, space string) ([]Member, error) {
-	if _, err := coreDo(a, ctx, func(ctx context.Context) (string, error) { return a.spaceRole(ctx, space) }); err != nil {
-		return nil, err
-	}
-	var out []Member
-	return out, a.sys(ctx, func(ctx context.Context) error {
-		base, err := a.spaceRole(ctx, space)
-		if err != nil {
-			return err
-		}
-		users, err := a.hub.q().WorkspaceUsers(ctx, a.ws.ID)
-		for _, r := range users {
-			if l := a.level(ctx, a.roleID("u", r.ID), base, true); l > 0 {
-				out = append(out, Member{Email: r.Email, Name: r.Name, Level: authLevels[l-1]})
-			}
-		}
-		return err
-	})
-}
-
-func (a *Archive) SetMember(ctx context.Context, space, email, level string) error {
-	ac, err := authUser(ctx)
-	if err != nil {
-		return err
-	}
-	lvl := authLevel(level)
-	if lvl == 0 && level != "none" {
-		return &ValidationError{Type: "member", Errors: []FieldError{{Path: "role", Message: "want owner, admin, editor, viewer or none"}}}
-	}
-	u, err := a.member(ctx, email)
-	if err != nil {
-		return err
-	}
-	return a.sys(ctx, func(ctx context.Context) error {
-		q := a.st.db(ctx)
-		base, err := a.spaceRole(ctx, space)
-		if err != nil {
-			return err
-		}
-		role := a.roleID("u", u.ID)
-		cur := a.level(ctx, role, base, true)
-		need := "admin"
-		if max(lvl, cur) == authLevel("owner") {
-			need = "owner"
-		}
-		if !a.has(ctx, ac.UserRole, base+"_"+need) {
-			return fmt.Errorf("changing this membership needs %s in %s: %w", need, space, ErrForbidden)
-		}
-		if cur == authLevel("owner") && lvl != cur {
-			if owners, _ := q.CountOwners(ctx, base+"_owner", a.prefix+"_u"); owners <= 1 {
-				return fmt.Errorf("%s is the last owner of %s: %w", u.Email, space, ErrConflict)
-			}
-		}
-		if err := a.setLevel(ctx, role, base, lvl); err != nil {
-			return err
-		}
-		troles, err := a.hub.q().TokenRoles(ctx, u.ID, &a.ws.ID)
-		if err != nil {
-			return err
-		}
-		for _, tr := range troles {
-			if a.level(ctx, tr, base, true) > lvl {
-				if err := a.setLevel(ctx, tr, base, lvl); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	})
-}
-
-func (a *Archive) CreateToken(ctx context.Context, name string, spaces map[string]string, ttl time.Duration, full bool) (*Token, error) {
-	ac, err := authUser(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if full && len(spaces) > 0 {
-		return nil, &ValidationError{Type: "token", Errors: []FieldError{{Path: "spaces", Message: "a full token has all your rights, so it takes no spaces"}}}
-	}
-	t := &Token{ID: coreNewID(), Name: strings.TrimSpace(name), Spaces: map[string]string{}, Full: full, Secret: authNewSecret()}
-	role := a.roleID("t", t.ID)
+	t := &Token{ID: coreNewID(), Name: strings.TrimSpace(name), Viewer: viewer, Secret: authNewSecret()}
 	var exp *time.Time
 	if ttl > 0 {
 		e := time.Now().Add(ttl).UTC()
 		exp = &e
 	}
-	hq := a.hub.q()
 	return t, a.sys(ctx, func(ctx context.Context) error {
-		if full {
-			r, err := hq.CreateUserToken(ctx, generated.CreateUserTokenParams{ID: t.ID, UserID: ac.UserID, Workspace: &a.ws.ID, Name: t.Name, Hash: authHash(t.Secret), ExpiresAt: exp})
-			t.CreatedAt, t.ExpiresAt = r.CreatedAt, r.ExpiresAt
-			return err
-		}
-		all, err := a.spaceRoles(ctx)
-		if err != nil {
-			return err
-		}
-		if len(spaces) == 0 {
-			spaces = map[string]string{}
-			for n, base := range all {
-				if l := a.level(ctx, ac.UserRole, base, false); l > 0 {
-					spaces[n] = authLevels[l-1]
-				}
-			}
-		}
-		for n, lv := range spaces {
-			base, ok := all[n]
-			if !ok {
-				return fmt.Errorf("space %q: %w", n, ErrNotFound)
-			}
-			l := authLevel(lv)
-			if l == 0 {
-				return &ValidationError{Type: "token", Errors: []FieldError{{Path: "spaces." + n, Message: "want owner, admin, editor or viewer"}}}
-			}
-			if a.level(ctx, ac.UserRole, base, false) < l {
-				return fmt.Errorf("you are not %s in %s, so the token cannot be: %w", lv, n, ErrForbidden)
-			}
-			t.Spaces[n] = lv
-		}
-		if len(t.Spaces) == 0 {
-			return &ValidationError{Type: "token", Errors: []FieldError{{Path: "spaces", Message: "a token needs at least one space"}}}
-		}
-		if err := a.createRole(ctx, role); err != nil {
-			return err
-		}
-		for n, lv := range t.Spaces {
-			if err := a.setLevel(ctx, role, all[n], authLevel(lv)); err != nil {
+		var role *string
+		if viewer {
+			r := a.roleID("t", t.ID)
+			if err := a.exec(ctx, authCreate(r), authGrant(a.prefix+"_viewer", r), authGrant(a.roleID("m", ac.member), r), authGrant(r, a.prefix+"_authenticator")); err != nil {
 				return err
 			}
+			role = &r
 		}
-		r, err := hq.CreateAPIToken(ctx, generated.CreateAPITokenParams{ID: t.ID, UserID: ac.UserID, Workspace: &a.ws.ID, Name: t.Name, Role: &role, Hash: authHash(t.Secret), ExpiresAt: exp})
-		t.CreatedAt, t.ExpiresAt = r.CreatedAt, r.ExpiresAt
+		row, err := a.hub.q().CreateToken(ctx, generated.CreateTokenParams{ID: t.ID, UserID: ac.UserID, Workspace: &a.ws.ID, Name: t.Name, Role: role, Hash: authHash(t.Secret), ExpiresAt: exp})
+		t.CreatedAt, t.ExpiresAt = row.CreatedAt, row.ExpiresAt
 		return err
 	})
 }
@@ -674,24 +390,12 @@ func (a *Archive) Tokens(ctx context.Context) ([]*Token, error) {
 	if err != nil {
 		return nil, err
 	}
+	rows, err := a.hub.q().Tokens(ctx, ac.UserID, &a.ws.ID)
 	out := []*Token{}
-	return out, a.sys(ctx, func(ctx context.Context) error {
-		all, err := a.spaceRoles(ctx)
-		if err != nil {
-			return err
-		}
-		rows, err := a.hub.q().Tokens(ctx, ac.UserID, &a.ws.ID)
-		for _, r := range rows {
-			c := &Token{ID: r.ID, Name: r.Name, Spaces: map[string]string{}, Full: r.Full, ExpiresAt: r.ExpiresAt, CreatedAt: r.CreatedAt}
-			for n, base := range all {
-				if l := a.level(ctx, r.Role, base, true); l > 0 {
-					c.Spaces[n] = authLevels[l-1]
-				}
-			}
-			out = append(out, c)
-		}
-		return err
-	})
+	for _, r := range rows {
+		out = append(out, &Token{ID: r.ID, Name: r.Name, Viewer: r.Viewer, ExpiresAt: r.ExpiresAt, CreatedAt: r.CreatedAt})
+	}
+	return out, err
 }
 
 func (a *Archive) RevokeToken(ctx context.Context, id uuid.UUID) error {
@@ -711,35 +415,6 @@ func (a *Archive) RevokeToken(ctx context.Context, id uuid.UUID) error {
 	})
 }
 
-func (a *Archive) GrantSecret(ctx context.Context, email, typ string, grant bool) error {
-	ac, err := authUser(ctx)
-	if err != nil {
-		return err
-	}
-	if !semLib[typ].Secret {
-		return fmt.Errorf("%s is not a secret type: %w", typ, ErrNotFound)
-	}
-	u, err := a.member(ctx, email)
-	if err != nil {
-		return err
-	}
-	return a.sys(ctx, func(ctx context.Context) error {
-		if !a.has(ctx, ac.UserRole, a.prefix+"_admin") {
-			return fmt.Errorf("only admins of this workspace grant secret types: %w", ErrForbidden)
-		}
-		role, group := a.roleID("u", u.ID), a.prefix+"_secret_"+typ
-		if exists, _ := a.st.db(ctx).RoleExists(ctx, group); !exists {
-			if err := a.exec(ctx, authCreate(group)); err != nil {
-				return err
-			}
-		}
-		if grant {
-			return a.exec(ctx, authGrant(group, role))
-		}
-		return a.exec(ctx, authRevoke(group, role))
-	})
-}
-
 const (
 	signinCookie   = "archive_session"
 	signinCeremony = "archive_webauthn"
@@ -748,7 +423,7 @@ const (
 )
 
 var (
-	signinRefused  = fmt.Errorf("no Archive account for this sign-in; ask an admin to add you: %w", ErrForbidden)
+	signinRefused  = fmt.Errorf("no Archive account for this sign-in; ask an owner to add you: %w", ErrForbidden)
 	signinMismatch = fmt.Errorf("sign-in state does not match; start again: %w", ErrUnauthorized)
 	signinBuiltin  = []signinConfig{
 		{ID: "google", Name: "Google", base: "https://accounts.google.com"},
@@ -881,15 +556,13 @@ func (s *signin) handler() http.Handler {
 	})
 	authed("GET /auth/me", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		a, ac := archiveFrom(r.Context()), ActorFrom(r.Context())
-		sp, err := a.Spaces(r.Context())
+		m, err := a.memberOf(r.Context(), ac.Email)
 		if err != nil {
 			return 0, nil, err
 		}
-		var home uuid.UUID
-		a.sys(r.Context(), func(ctx context.Context) error {
-			home, _ = a.st.db(ctx).HomeSpace(ctx, &ac.UserID)
-			return nil
-		})
+		if ac.Role != ac.UserRole {
+			m.Role = "viewer"
+		}
 		rows, err := h.q().UserWorkspaces(r.Context(), ac.UserID)
 		all := []Workspace{}
 		for _, x := range rows {
@@ -897,7 +570,7 @@ func (s *signin) handler() http.Handler {
 				all = append(all, Workspace{ID: x.ID.String(), Name: x.Name})
 			}
 		}
-		return ok(map[string]any{"actor": ac, "spaces": sp, "home": home, "workspace": a.ws.ID.String(), "workspaces": all}, err)
+		return ok(map[string]any{"actor": ac, "role": m.Role, "groups": m.Groups, "workspace": a.ws.ID.String(), "workspaces": all}, err)
 	})
 	authed("GET /auth/users", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		return ok(archiveFrom(r.Context()).People(r.Context()))
@@ -906,13 +579,13 @@ func (s *signin) handler() http.Handler {
 		var body struct {
 			Email string `json:"email"`
 			Name  string `json:"name"`
-			Admin bool   `json:"admin"`
+			Role  string `json:"role"`
 		}
 		if err := httpDecode(r, &body); err != nil {
 			return 0, nil, err
 		}
 		a := archiveFrom(r.Context())
-		if _, err := a.AddUser(r.Context(), body.Email, body.Name, body.Admin); err != nil {
+		if _, err := a.AddUser(r.Context(), body.Email, body.Name, body.Role); err != nil {
 			return 0, nil, err
 		}
 		p, err := a.People(r.Context())
@@ -925,48 +598,14 @@ func (s *signin) handler() http.Handler {
 		}
 		return ok(a.People(r.Context()))
 	})
-	authed("GET /auth/spaces", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		return ok(archiveFrom(r.Context()).Spaces(r.Context()))
-	})
-	authed("POST /auth/spaces", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		var body struct {
-			Name string `json:"name"`
-		}
-		if err := httpDecode(r, &body); err != nil {
-			return 0, nil, err
-		}
-		sp, err := archiveFrom(r.Context()).AddSpace(r.Context(), body.Name)
-		return http.StatusCreated, sp, err
-	})
-	authed("DELETE /auth/spaces/{space}", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		return http.StatusNoContent, nil, archiveFrom(r.Context()).DeleteSpace(r.Context(), r.PathValue("space"))
-	})
-	authed("GET /auth/spaces/{space}/members", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		return ok(archiveFrom(r.Context()).Members(r.Context(), r.PathValue("space")))
-	})
-	authed("POST /auth/spaces/{space}/members", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		var body struct {
-			Email string `json:"email"`
-			Role  string `json:"role"`
-		}
-		if err := httpDecode(r, &body); err != nil {
-			return 0, nil, err
-		}
-		a := archiveFrom(r.Context())
-		if err := a.SetMember(r.Context(), r.PathValue("space"), body.Email, body.Role); err != nil {
-			return 0, nil, err
-		}
-		return ok(a.Members(r.Context(), r.PathValue("space")))
-	})
 	authed("GET /auth/tokens", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		return ok(archiveFrom(r.Context()).Tokens(r.Context()))
 	})
 	authed("POST /auth/tokens", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		var body struct {
-			Name    string            `json:"name"`
-			Spaces  map[string]string `json:"spaces"`
-			Expires string            `json:"expires"`
-			Full    bool              `json:"full"`
+			Name    string `json:"name"`
+			Expires string `json:"expires"`
+			Viewer  bool   `json:"viewer"`
 		}
 		if err := httpDecode(r, &body); err != nil {
 			return 0, nil, err
@@ -978,7 +617,7 @@ func (s *signin) handler() http.Handler {
 				return 0, nil, fmt.Errorf("expires: %v: %w", err, httpErrBadRequest)
 			}
 		}
-		t, err := archiveFrom(r.Context()).CreateToken(r.Context(), body.Name, body.Spaces, ttl, body.Full)
+		t, err := archiveFrom(r.Context()).CreateToken(r.Context(), body.Name, ttl, body.Viewer)
 		return http.StatusCreated, t, err
 	})
 	authed("DELETE /auth/tokens/{id}", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
@@ -1431,7 +1070,7 @@ func (a *Archive) secretOpen(id uuid.UUID, typ string, ct []byte) ([]byte, error
 }
 
 func (a *Archive) secretsPut(ctx context.Context, tb *Table, row map[string]any, seal map[string]any) error {
-	id, space := coreRowID(row), coreUUID(row, "space")
+	id, access := coreRowID(row), coreAccess(row["access"])
 	cat := a.Catalog()
 	for _, col := range specKeys(seal) {
 		q := a.st.db(ctx)
@@ -1449,7 +1088,7 @@ func (a *Archive) secretsPut(ctx context.Context, tb *Table, row map[string]any,
 		if cat.secret(tb.col(col)) == nil {
 			return fmt.Errorf("%s.%s is not a secret column", tb.Name, col)
 		}
-		if err := q.CreateSecret(ctx, generated.CreateSecretParams{ID: sid, TableName: tb.Name, RowID: id, ColumnName: col, Type: typ, Value: a.secretBox(sid, typ, b), Space: space}); err != nil {
+		if err := q.CreateSecret(ctx, generated.CreateSecretParams{ID: sid, TableName: tb.Name, RowID: id, ColumnName: col, Type: typ, Value: a.secretBox(sid, typ, b), Access: access}); err != nil {
 			return err
 		}
 	}

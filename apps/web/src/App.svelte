@@ -1,6 +1,6 @@
 <script>
   import { setContext } from 'svelte';
-  import { api, devMode, go, passkeyAsked, passkeys, setDevMode, setSpace, setWorkspace, space, workspace, Unauthorized } from './api.js';
+  import { api, devMode, go, passkeyAsked, passkeys, setDevMode, setWorkspace, workspace, Unauthorized } from './api.js';
   import Button from '#kit/Button.svelte';
   import Icon from '#kit/Icon.svelte';
   import Word from '#kit/Word.svelte';
@@ -27,7 +27,7 @@
   import { isTree } from './ui/FamilyTree.svelte';
   import Files from './Files.svelte';
   import Workflows from './Workflows.svelte';
-  import Users from './Users.svelte';
+  import Groups from './Groups.svelte';
   import Passkey from './Passkey.svelte';
   import Chat from './Chat.svelte';
 
@@ -49,7 +49,8 @@
   let panel = $state(false);
   let path = $state(location.pathname);
   let chats = $state([]);
-  let scope = $state(space());
+  let people = $state([]);
+  let filedAccess = $state(null);
   let generation = $state(0);
   let open = $state(false);
   const toggle = () => (open = !open);
@@ -61,8 +62,24 @@
     toggle
   });
 
+  const owner = $derived(me?.role === 'owner');
+  const allGroups = $derived([...new Set(people.flatMap((p) => p.groups ?? []))].sort());
+  setContext('access', {
+    get role() {
+      return me?.role;
+    },
+    get groups() {
+      return owner ? allGroups : (me?.groups ?? []);
+    },
+    get upload() {
+      return filedAccess;
+    },
+    set upload(v) {
+      filedAccess = v;
+    }
+  });
+
   addEventListener('popstate', () => (path = location.pathname));
-  // Developer mode opens where the app always did.
   $effect(() => {
     if (dev && !route.first) go('/files');
   });
@@ -89,19 +106,14 @@
   const archive = $derived(shortName(typed, kind));
   const fullTitle = $derived(fullName(typed, kind));
 
-  // Chats you've finished with leave the list but stay yours. Front end only for now, like the looks.
   const RECENT = 5;
   let moreChats = $state(false);
-  let seeAway = $state(false);
-  const away = $derived(me ? look(me.workspace).away : []);
-  const openChats = $derived(chats.filter((c) => !away.includes(c.id)));
-  const awayChats = $derived(chats.filter((c) => away.includes(c.id)));
-  const listed = $derived(dev ? chats : moreChats ? openChats : openChats.filter((c, i) => i < RECENT || c.id === route.second));
+  const listed = $derived(dev || moreChats ? chats : chats.filter((c, i) => i < RECENT || c.id === route.second));
 
-  function putAway(id, on) {
-    setLook(me.workspace, { away: on ? [...away, id] : away.filter((a) => a !== id) });
-    if (on && route.second === id) go('/');
-    if (awayChats.length === 1 && !on) seeAway = false;
+  async function loadPeople() {
+    try {
+      people = await api('/auth/users');
+    } catch {}
   }
 
   async function loadChats() {
@@ -110,19 +122,11 @@
     } catch {}
   }
 
-  async function create(name) {
-    const sp = await api('/auth/spaces', { method: 'POST', body: { name } });
-    me = await api('/auth/me');
-    pick(sp.name);
-  }
-
   function switchTo(id) {
     setWorkspace(id);
-    setSpace('');
     location.assign('/');
   }
 
-  // Files dragged in from the computer land in this archive, wherever they're dropped.
   let dropping = $state(false);
   const carriesFiles = (e) => e.dataTransfer?.types.includes('Files');
 
@@ -139,7 +143,6 @@
     if (e.dataTransfer.files.length) keep([...e.dataTransfer.files]);
   }
 
-  // On a phone there's no room for the right panel, so the archive's name opens it.
   function openArchive() {
     if (matchMedia('(max-width: 1023px)').matches) panel = true;
     else go('/');
@@ -153,7 +156,7 @@
       for (const file of files) {
         const form = new FormData();
         form.append('file', file);
-        ids.push((await api('/api/files', { method: 'POST', raw: form })).id);
+        ids.push((await api(`/api/files${filedAccess ? `?access=${encodeURIComponent(filedAccess)}` : ''}`, { method: 'POST', raw: form })).id);
       }
       filing = { ...job, ids };
     } catch {
@@ -181,12 +184,6 @@
     setDevMode(dev);
   }
 
-  function pick(name) {
-    setSpace(name);
-    scope = name;
-    generation++;
-  }
-
   const named = new URLSearchParams(location.search).get('workspace');
   if (named) {
     setWorkspace(named);
@@ -198,10 +195,10 @@
       me = await api('/auth/me');
       if (me.workspace !== workspace()) setWorkspace(me.workspace);
       asking = passkeys && !passkeyAsked(me.actor.user_id);
-      if (scope && !me.spaces.some((s) => s.name === scope)) pick('');
       loadChats();
+      loadPeople();
       const cat = await api('/api/types');
-      const all = Object.values(cat.tables).sort((a, b) => a.name.localeCompare(b.name));
+      const all = Object.values(cat.tables).filter((t) => t.schema === 'public').sort((a, b) => a.name.localeCompare(b.name));
       types = cat.types;
       tables = all.filter((t) => t.kind === 'table');
       views = all.filter((t) => t.kind === 'view');
@@ -221,7 +218,6 @@
   async function signOut() {
     await api('/auth/signout', { method: 'POST' });
     setWorkspace('');
-    setSpace('');
     location.assign('/');
   }
 
@@ -249,22 +245,20 @@
           <NavItem href="/files" icon="folder" active={route.first === 'files'}>Files</NavItem>
           <NavItem href="/workflows" icon="workflow" active={route.first === 'workflows'}>Workflows</NavItem>
           <NavItem href="/users" icon="users" active={route.first === 'users'}>Users</NavItem>
+          {#if owner}<NavItem href="/groups" icon="users-round" active={route.first === 'groups'}>Groups</NavItem>{/if}
           <NavItem href="/keys" icon="key-round" active={route.first === 'keys'}>API keys</NavItem>
         {:else}
           <NavItem href="/" icon="message-circle" active={!route.first || route.first === 'chat'}>Chat</NavItem>
           <NavItem href="/library" icon="library" active={route.first === 'library'}>Library</NavItem>
           <NavItem href="/users" icon="users" active={route.first === 'users'}>People</NavItem>
+          {#if owner}<NavItem href="/groups" icon="users-round" active={route.first === 'groups'}>Groups</NavItem>{/if}
         {/if}
         {#if chats.length}
           <div class="chats">
             <hr />
-            {#each listed as c (c.id)}{@render chat(c, true)}{/each}
-            {#if !dev && openChats.length > RECENT}
-              <button class="more" type="button" onclick={() => (moreChats = !moreChats)}>{moreChats ? 'Show fewer' : `Show all ${openChats.length}`}</button>
-            {/if}
-            {#if !dev && awayChats.length}
-              <button class="more" type="button" aria-expanded={seeAway} onclick={() => (seeAway = !seeAway)}>Put away ({awayChats.length})</button>
-              {#if seeAway}{#each awayChats as c (c.id)}{@render chat(c, false)}{/each}{/if}
+            {#each listed as c (c.id)}<NavItem plain href="/chat/{c.id}" active={route.first === 'chat' && route.second === c.id}>{c.title || 'Untitled'}</NavItem>{/each}
+            {#if !dev && chats.length > RECENT}
+              <button class="more" type="button" onclick={() => (moreChats = !moreChats)}>{moreChats ? 'Show fewer' : `Show all ${chats.length}`}</button>
             {/if}
           </div>
         {/if}
@@ -282,7 +276,7 @@
         {/if}
       </nav>
       <footer>
-        <Profile name={who} {dev} ondev={toggleDev} onsignout={signOut} spaces={me.spaces} home={me.home} current={scope} onpick={pick} oncreate={create} />
+        <Profile name={who} {dev} ondev={toggleDev} onsignout={signOut} />
         <button class="apps" type="button" aria-label="Connect apps" title="Connect apps" onclick={() => (connecting = true)}><Icon name="grid-2x2-plus" /></button>
       </footer>
     </aside>
@@ -299,13 +293,15 @@
       {:else if route.first === 'keys'}
         <Keys />
       {:else if route.first === 'library'}
-        {#if catalogued}<Library {views} {tables} seed={me.workspace} spaces={me.spaces} archives={me.workspaces ?? []} />{/if}
+        {#if catalogued}<Library {views} {tables} />{/if}
       {:else if route.first === 'files'}
         <Files />
       {:else if route.first === 'workflows'}
         <Workflows />
       {:else if route.first === 'users'}
-        {#if dev}<Users email={me.actor.email} />{:else}<People email={me.actor.email} archive={fullTitle} />{/if}
+        <People email={me.actor.email} {owner} {people} onchange={(p) => (people = p)} />
+      {:else if route.first === 'groups'}
+        <Groups {owner} {people} onchange={(p) => (people = p)} />
       {:else if route.first === 'views'}
         {@const v = views.find((x) => x.name === route.second)}
         {#if v}
@@ -329,7 +325,7 @@
       {#if recording}<Recorder tint={look(me.workspace).tint} {kind} onsave={(f) => keep([f])} onclose={() => (recording = false)} />{/if}
     </main>
     {#if catalogued && !dev && (!route.first || route.first === 'chat')}
-      {#key generation}<Panel name={archive} seed={me.workspace} {views} archives={me.workspaces ?? []} spaces={me.spaces} home={me.home} current={scope} email={me.actor.email} open={panel} onpick={(name) => ((panel = false), pick(name))} oncreate={create} onclose={() => (panel = false)} />{/key}
+      {#key generation}<Panel name={archive} seed={me.workspace} {views} open={panel} onclose={() => (panel = false)} />{/key}
     {/if}
     </div>
   </div>
@@ -344,15 +340,6 @@
 <svelte:window ondragover={dragOver} ondragleave={(e) => !e.relatedTarget && (dropping = false)} ondrop={drop} />
 
 {#if dropping}<div class="dropping" aria-hidden="true"><p>Drop to add to {fullTitle}</p></div>{/if}
-
-{#snippet chat(c, open)}
-  <div class="chat">
-    <NavItem plain href="/chat/{c.id}" active={route.first === 'chat' && route.second === c.id}>{c.title || 'Untitled'}</NavItem>
-    {#if !dev}
-      <button class="stow" type="button" title={open ? 'Put away' : 'Bring back'} aria-label="{open ? 'Put away' : 'Bring back'} {c.title || 'Untitled'}" onclick={() => putAway(c.id, open)}><Icon name={open ? 'archive' : 'archive-restore'} /></button>
-    {/if}
-  </div>
-{/snippet}
 
 <style>
   .shell {
@@ -402,12 +389,6 @@
   .chats { display: flex; flex: none; flex-direction: column; gap: var(--space-0-5); }
   .dropping { position: fixed; inset: var(--space-2); z-index: calc(var(--z-nav) + 3); display: grid; place-items: center; border: 2px dashed var(--primary); border-radius: var(--radius-panel); background: color-mix(in srgb, var(--bg) 82%, transparent); pointer-events: none; }
   .dropping p { font: var(--weight-medium) var(--text-lg) / var(--leading-tight) var(--font-serif); }
-  .chat { position: relative; min-width: 0; }
-  .stow { position: absolute; top: 50%; right: var(--space-1); display: grid; place-items: center; width: 24px; height: 24px; transform: translateY(-50%); border-radius: var(--radius-sm); background: var(--bg); color: var(--fg-muted); opacity: 0; transition: opacity var(--duration-fast); }
-  .stow :global(.icon) { width: 14px; height: 14px; }
-  .chat:hover .stow, .stow:focus-visible { opacity: 1; }
-  .stow:hover { color: var(--fg); }
-  @media (hover: none) { .stow { opacity: 1; } }
   .more { padding: var(--space-1) var(--space-2); color: var(--fg-muted); font-size: var(--text-meta); text-align: left; }
   .more:hover { color: var(--fg); }
   .brand { display: flex; flex: none; align-items: center; min-height: var(--size-control-lg); padding: var(--item-pad); color: var(--fg); }

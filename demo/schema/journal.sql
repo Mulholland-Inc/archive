@@ -1,6 +1,6 @@
 CREATE TABLE journal (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
-    space      uuid NOT NULL REFERENCES archive.space,
+    access     text,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     day date NOT NULL,
@@ -11,8 +11,7 @@ CREATE TABLE journal (
 CREATE INDEX journal_search ON journal USING gin (search);
 ALTER TABLE journal ENABLE ROW LEVEL SECURITY;
 ALTER TABLE journal FORCE ROW LEVEL SECURITY;
-CREATE POLICY viewer ON journal FOR SELECT USING (space = ANY (archive.my_spaces()));
-CREATE POLICY editor ON journal USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
+CREATE POLICY access ON journal USING (archive.can(access)) WITH CHECK (archive.can(access));
 COMMENT ON TABLE journal IS 'A diary entry for a day
 icon: notebook-pen';
 COMMENT ON COLUMN journal.day IS 'The day';

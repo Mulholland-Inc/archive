@@ -1,6 +1,6 @@
 CREATE TABLE trip (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
-    space      uuid NOT NULL REFERENCES archive.space,
+    access     text,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     name text NOT NULL,
@@ -16,8 +16,7 @@ CREATE TABLE trip (
 CREATE INDEX trip_search ON trip USING gin (search);
 ALTER TABLE trip ENABLE ROW LEVEL SECURITY;
 ALTER TABLE trip FORCE ROW LEVEL SECURITY;
-CREATE POLICY viewer ON trip FOR SELECT USING (space = ANY (archive.my_spaces()));
-CREATE POLICY editor ON trip USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
+CREATE POLICY access ON trip USING (archive.can(access)) WITH CHECK (archive.can(access));
 COMMENT ON TABLE trip IS 'A trip or vacation, past or planned
 icon: plane';
 COMMENT ON COLUMN trip.name IS 'Name of the trip';

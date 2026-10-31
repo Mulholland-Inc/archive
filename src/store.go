@@ -36,11 +36,14 @@ const storeRoles = `DO $$ BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_authenticator') THEN
         CREATE ROLE "{p}_authenticator" LOGIN NOINHERIT;
     END IF;
-    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_user') THEN
-        CREATE ROLE "{p}_user" NOLOGIN;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_viewer') THEN
+        CREATE ROLE "{p}_viewer" NOLOGIN;
     END IF;
-    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_admin') THEN
-        CREATE ROLE "{p}_admin" NOLOGIN;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_editor') THEN
+        CREATE ROLE "{p}_editor" NOLOGIN IN ROLE "{p}_viewer";
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_owner') THEN
+        CREATE ROLE "{p}_owner" NOLOGIN IN ROLE "{p}_editor";
     END IF;
     IF NOT EXISTS (SELECT FROM pg_db_role_setting s JOIN pg_database d ON d.oid = s.setdatabase WHERE d.datname = current_database() AND s.setrole = 0) THEN
         EXECUTE format('ALTER DATABASE %I SET search_path = archive, public', current_database());
@@ -227,7 +230,7 @@ func (s *pgStore) SchemaFiles(ctx context.Context) (map[string]string, error) {
 		return nil, fmt.Errorf("schema: %w", err)
 	}
 	owner := ` OWNER TO ` + pgIdent(s.cfg.User)
-	grant := regexp.MustCompile(`^GRANT (SELECT|INSERT|UPDATE|DELETE) ON \S+ TO ` + regexp.QuoteMeta(pgIdent(s.prefix+"_user")) + `$`)
+	grant := regexp.MustCompile(`^GRANT (SELECT|INSERT|UPDATE|DELETE) ON \S+ TO (` + regexp.QuoteMeta(pgIdent(s.prefix+"_viewer")) + `|` + regexp.QuoteMeta(pgIdent(s.prefix+"_editor")) + `)$`)
 	var ddl, subject []string
 	tables, views := map[string]bool{}, map[string]bool{}
 	for _, st := range plan.Statements {
@@ -289,7 +292,9 @@ func (s *pgStore) openDB(_ context.Context, name string) (*sql.DB, error) {
 	c := s.cfg.Copy()
 	c.Database = name
 	c.RuntimeParams["statement_timeout"] = "0"
-	return stdlib.OpenDB(*c), nil
+	db := stdlib.OpenDB(*c)
+	db.SetMaxOpenConns(storeDDLConns)
+	return db, nil
 }
 
 func (s *pgStore) Apply(ctx context.Context, files map[string]string, renames []string, allowDrop, dryRun bool) (*SchemaPlan, error) {
@@ -602,7 +607,7 @@ func (s *pgStore) Q(ctx context.Context) storeQ {
 
 func (s *pgStore) db(ctx context.Context) *generated.Queries { return generated.New(s.Q(ctx)) }
 
-func (s *pgStore) As(ctx context.Context, role, space string, fn func(context.Context) error) error {
+func (s *pgStore) As(ctx context.Context, role string, fn func(context.Context) error) error {
 	if t, ok := ctx.Value(storeTxKey{}).(storeTx); ok && t.role == role {
 		return fn(ctx)
 	}
@@ -610,11 +615,6 @@ func (s *pgStore) As(ctx context.Context, role, space string, fn func(context.Co
 	return storeCommitted(after, storeErr(pgx.BeginFunc(ctx, s.app, func(tx pgx.Tx) error {
 		if err := generated.New(tx).SetLocal(ctx, "role", role); err != nil {
 			return err
-		}
-		if space != "" {
-			if err := generated.New(tx).SetLocal(ctx, "archive.space", space); err != nil {
-				return err
-			}
 		}
 		return fn(context.WithValue(ctx, storeTxKey{}, storeTx{tx, role, after}))
 	})))
@@ -638,7 +638,7 @@ func storeErr(err error) error {
 	switch {
 	case pe.Code == "42501":
 		return fmt.Errorf("%s: %w", pe.Message, ErrForbidden)
-	case pe.Code == "23503":
+	case pe.Code == "23503" || pe.Code == "23001" || pe.Code == "23505":
 		return fmt.Errorf("%s: %w", cmp.Or(pe.Detail, pe.Message), ErrConflict)
 	case pe.Code == "23502" && pe.ColumnName != "":
 		return &ValidationError{Type: pe.TableName, Errors: []FieldError{{Path: pe.ColumnName, Message: "required"}}}

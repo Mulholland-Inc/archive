@@ -1,7 +1,7 @@
 CREATE TYPE measurement_kind AS ENUM ('weight', 'sleep', 'steps', 'resting_heart_rate', 'blood_pressure_systolic', 'blood_pressure_diastolic', 'run_distance');
 CREATE TABLE measurement (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
-    space      uuid NOT NULL REFERENCES archive.space,
+    access     text,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     taken date NOT NULL,
@@ -14,8 +14,7 @@ CREATE TABLE measurement (
 CREATE INDEX measurement_search ON measurement USING gin (search);
 ALTER TABLE measurement ENABLE ROW LEVEL SECURITY;
 ALTER TABLE measurement FORCE ROW LEVEL SECURITY;
-CREATE POLICY viewer ON measurement FOR SELECT USING (space = ANY (archive.my_spaces()));
-CREATE POLICY editor ON measurement USING (space = ANY (archive.my_spaces('editor'))) WITH CHECK (space = ANY (archive.my_spaces('editor')));
+CREATE POLICY access ON measurement USING (archive.can(access)) WITH CHECK (archive.can(access));
 COMMENT ON TABLE measurement IS 'A health or fitness measurement
 icon: activity';
 COMMENT ON COLUMN measurement.taken IS 'Day of the measurement';

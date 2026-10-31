@@ -8,8 +8,7 @@
   let draft = $state('');
   let field = $state();
   const side = getContext('side');
-  // A way back to where you were, on pages you reach from inside the app and not from the sidebar.
-  const back = !devMode() && history.state?.steps > 0 && !['/', '/library', '/users'].includes(location.pathname);
+  const back = !devMode() && history.state?.steps > 0 && !['/', '/library', '/users', '/groups'].includes(location.pathname);
 
   async function edit() {
     draft = title;
