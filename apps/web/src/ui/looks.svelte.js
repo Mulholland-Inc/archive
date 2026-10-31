@@ -44,7 +44,7 @@ export function look(id = '') {
   return { type: 'personal', icon: 'robot', tint, shared: false, locked: [], shares: {}, custodian: null, ...looks[id] };
 }
 
-// What the sidebar and chat call an archive: you type Brenner, and the type finishes it.
+// What the sidebar and chat call an archive: you type a name, and the type finishes it.
 export function shortName(name, type) {
   if (type !== 'family') return name;
   return /\bfamily\b/i.test(name) ? name.replace(/\bfamily\b/i, 'Family') : `${name} Family`;
