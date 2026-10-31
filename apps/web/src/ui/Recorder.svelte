@@ -62,7 +62,9 @@
     }
     const devices = await navigator.mediaDevices.enumerateDevices();
     inputs = devices.filter((d) => d.kind === 'audioinput' && d.deviceId !== 'default' && d.deviceId !== 'communications');
-    input = stream.getAudioTracks()[0]?.getSettings().deviceId ?? inputs[0]?.deviceId ?? '';
+    // Chrome calls the active microphone "default", which is not in the list.
+    const active = stream.getAudioTracks()[0];
+    input = (inputs.find((d) => d.deviceId === active?.getSettings().deviceId || d.label === active?.label) ?? inputs[0])?.deviceId ?? '';
     recorder = new MediaRecorder(out.stream);
     recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
     recorder.start(1000);
