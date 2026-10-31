@@ -5,7 +5,7 @@
   import Members from './Members.svelte';
   import { incoming, look, setLook, shortName, TINTS, TYPES } from './looks.svelte.js';
 
-  let { name = '', seed = '', views = [], archives = [], spaces = [], home = '', current = '', email = '', onpick, oncreate } = $props();
+  let { name = '', seed = '', views = [], archives = [], spaces = [], home = '', current = '', email = '', open = false, onpick, oncreate, onclose } = $props();
   let admin = $state(false);
   let adding = $state(false);
   let draft = $state('');
@@ -73,7 +73,7 @@
   }
 
   function setType(type) {
-    setLook(seed, { type, icon: 'robot' });
+    setLook(seed, { type, icon: TYPES[type].icons[1] });
   }
 
   function saveCustodian(e) {
@@ -104,7 +104,8 @@
   {#if asked === title}<p class="note">{text}</p>{/if}
 {/snippet}
 
-<aside class="panel" aria-label={name}>
+{#if open}<button class="veil" type="button" aria-label="Close" onclick={onclose}></button>{/if}
+<aside class="panel" class:open aria-label={name}>
   <button class="avatar" type="button" aria-label="Change type, icon and colour" aria-expanded={picking} title="Change type, icon and colour" onclick={() => (picking = !picking)}>
     <Bot {seed} size={72} /><span class="edit"><Icon name="pencil" /></span>
   </button>
@@ -221,7 +222,7 @@
   .types { display: flex; gap: var(--space-1); }
   .types button { flex: 1; padding: var(--space-1); border-radius: var(--radius-full); color: var(--fg-muted); font-size: var(--text-meta); }
   .types .on { background: var(--fill); color: var(--fg); }
-  .icons { display: flex; justify-content: center; gap: var(--space-1); }
+  .icons { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-1); }
   .icons button { display: grid; place-items: center; width: 52px; height: 52px; border-radius: var(--radius-nav); color: var(--fg-soft); }
   .icons .on { background: var(--fill-strong); color: var(--fg); }
   .tints { display: flex; justify-content: space-between; gap: 2px; }
@@ -264,5 +265,12 @@
   .asks button:hover, .asks [aria-expanded='true'] { opacity: 1; }
   .asks :global(.icon) { width: 14px; height: 14px; }
   .note { padding: 0 var(--space-1-5); color: var(--fg-muted); font-size: var(--text-meta); line-height: var(--leading-snug); }
-  @media (max-width: 1023px) { .panel { display: none; } }
+  .veil { display: none; }
+  @media (max-width: 1023px) {
+    .panel { display: none; }
+    .panel.open { position: fixed; top: 0; right: 0; bottom: 0; z-index: calc(var(--z-nav) + 2); display: flex; width: min(320px, calc(100vw - 48px)); max-height: none; background: var(--bg); box-shadow: -8px 0 32px rgb(0 0 0 / 24%); animation: slide var(--duration-normal) var(--ease-out); }
+    .veil { position: fixed; inset: 0; z-index: calc(var(--z-nav) + 1); display: block; width: 100%; background: var(--scrim); }
+  }
+  @keyframes slide { from { transform: translateX(100%); } }
+  @media (prefers-reduced-motion: reduce) { .panel.open { animation: none; } }
 </style>

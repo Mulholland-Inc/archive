@@ -66,6 +66,8 @@
   }
 
   $effect(() => {
+    // No hover on a touch screen, and iPhone Safari can swallow a tap that changes what's on screen.
+    if (matchMedia('(hover: none)').matches) return;
     const host = root.closest('.row, .avatar, .now, button') ?? root;
     host.addEventListener('pointerenter', wake);
     host.addEventListener('pointerleave', sleep);

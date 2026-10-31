@@ -74,7 +74,7 @@ function persist() {
 
 export function look(id = '') {
   const type = looks[id]?.type ?? 'personal';
-  const l = { type, icon: 'robot', tint: KIND_TINTS[type], shared: false, locked: [], shares: {}, groups: {}, custodian: null, away: [], ...looks[id] };
+  const l = { type, icon: type === 'personal' ? 'chest' : 'robot', tint: KIND_TINTS[type], shared: false, locked: [], shares: {}, groups: {}, custodian: null, away: [], ...looks[id] };
   return { ...l, tint: RETIRED[l.tint] ?? l.tint };
 }
 

@@ -314,6 +314,7 @@
     </div>
   </div>
   {#if framed}<p class="caption"><span>From your archive: {picture.title}</span><a href="/library">All photos</a></p>{/if}
+  {#if empty}<Capture row {onfiles} {kind} />{/if}
   {#if empty}<Setup {email} />{/if}
 </div>
 

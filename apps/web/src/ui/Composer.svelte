@@ -55,6 +55,7 @@
   }
   textarea { overflow: hidden; border: 0; background: none; color: var(--fg); resize: none; outline: 0; }
   textarea::placeholder { color: var(--fg-muted); }
+  textarea:placeholder-shown { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .send {
     display: grid;
     place-items: center;

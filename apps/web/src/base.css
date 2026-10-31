@@ -33,3 +33,5 @@ button:disabled { cursor: default; }
 /* The app's own accent is federal navy. The kit's blue stays for the site. */
 :root { --primary: #22407a; --primary-hover: #2c4f92; }
 [data-theme="dark"] { --primary: #3a5f9e; --primary-hover: #4a70b0; }
+
+a, button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
