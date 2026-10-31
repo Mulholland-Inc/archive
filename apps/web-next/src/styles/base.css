@@ -166,6 +166,11 @@ dialog::backdrop {
     display var(--duration-fast) var(--ease-out) allow-discrete;
 }
 
+[popover]:not(:popover-open),
+dialog:not([open]) {
+  display: none !important;
+}
+
 .floating:popover-open {
   opacity: 1;
   transform: none;
