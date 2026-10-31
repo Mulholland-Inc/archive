@@ -73,7 +73,7 @@
   }
 
   function setType(type) {
-    setLook(seed, { type, icon: 'robot' });
+    setLook(seed, { type, icon: TYPES[type].icons[1] });
   }
 
   function saveCustodian(e) {

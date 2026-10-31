@@ -1,7 +1,7 @@
 <script>
   import Icon from '#kit/Icon.svelte';
 
-  let { onfiles, kind = 'family' } = $props();
+  let { onfiles, kind = 'family', row = false } = $props();
   let open = $state(false);
   let below = $state(false);
   let room = $state(0);
@@ -26,6 +26,14 @@
         { key: 'media', icon: 'images', title: 'Photos and videos' },
         { key: 'files', icon: 'paperclip', title: 'Files from your computer' },
       ]);
+
+  // The four that matter most, for the home screen.
+  const quick = $derived([
+    { key: 'memory', icon: 'mic', title: 'Record' },
+    { key: 'photo', icon: 'camera', title: 'Photo' },
+    { key: 'journal', icon: 'pen-line', title: 'Write' },
+    { key: kind === 'business' ? 'docs' : 'files', icon: 'paperclip', title: 'File' },
+  ]);
 
   function choose(key) {
     open = false;
@@ -66,7 +74,13 @@
   <input bind:this={inputs.media} type="file" accept="image/*,video/*" multiple hidden onchange={picked} />
   <input bind:this={inputs.files} type="file" multiple hidden onchange={picked} />
   <input bind:this={inputs.docs} type="file" accept=".xlsx,.xls,.csv,.docx,.doc,.pdf,.pptx,.ppt,.md,.txt" multiple hidden onchange={picked} />
-  {#if open}
+  {#if row}
+    <div class="quick">
+      {#each quick as it (it.key)}
+        <button type="button" onclick={() => choose(it.key)}><span class="glyph"><Icon name={it.icon} /></span>{it.title}</button>
+      {/each}
+    </div>
+  {:else if open}
     <div class="menu" class:below role="menu" bind:this={menu} style={room ? `max-height: ${room}px` : undefined}>
       {#each items as it (it.key)}
         <button type="button" role="menuitem" onclick={() => choose(it.key)}>
@@ -76,11 +90,18 @@
       {/each}
     </div>
   {/if}
-  <button class="plus" class:open type="button" aria-label="Add to your archive" aria-expanded={open} aria-haspopup="menu" title="Add to your archive" onclick={() => (open = !open)}><Icon name="plus" /></button>
+  {#if !row}<button class="plus" class:open type="button" aria-label="Add to your archive" aria-expanded={open} aria-haspopup="menu" title="Add to your archive" onclick={() => (open = !open)}><Icon name="plus" /></button>{/if}
 </div>
 
 <style>
   .capture { position: relative; flex: none; align-self: flex-end; }
+  .capture:has(.quick) { align-self: center; width: 100%; max-width: var(--composer-width); }
+  .quick { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-2); }
+  .quick button { display: flex; flex-direction: column; align-items: center; gap: var(--space-1); padding: var(--space-2) 0; border-radius: var(--radius-item); color: var(--fg-muted); font-size: var(--text-meta); transition: color var(--duration-fast), transform var(--duration-fast) var(--ease-out); }
+  .quick button:hover { color: var(--fg); }
+  .quick button:active { transform: scale(var(--scale-press)); }
+  .quick .glyph { width: 52px; height: 52px; border-radius: 50%; background: var(--surface); color: var(--primary); }
+  .quick .glyph :global(.icon) { width: 22px; height: 22px; }
   .plus { display: grid; place-items: center; width: var(--composer-line); height: var(--composer-line); border-radius: var(--radius-full); background: var(--fill); color: var(--fg); transition: background var(--duration-fast), transform var(--duration-fast) var(--ease-out); }
   .plus:hover { background: var(--fill-strong); }
   .plus.open { transform: rotate(45deg); }
