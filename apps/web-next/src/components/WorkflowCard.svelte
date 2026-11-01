@@ -19,8 +19,8 @@
   </div>
   <TriggerLabel trigger={workflow.trigger} />
   <div class="now">
-    {#if live}{current?.label}{:else if run}Run #{run.number} · {run.started}{:else}No runs yet{/if}
-    {#if workflow.next && workflow.enabled} · next {workflow.next}{/if}
+    {#if live}{current?.label}{:else if run}Run #{run.number}, {run.started}{:else}No runs yet{/if}
+    {#if workflow.next && workflow.enabled}, next {workflow.next}{/if}
   </div>
   {#if run}
     <div class="foot">

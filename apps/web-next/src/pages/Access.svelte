@@ -86,11 +86,11 @@
   }
 </script>
 
-<TopBar>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
+<TopBar mobile>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
 <Page width="wide">
-  <PageHeader title="Users">
+  <PageHeader title="Access">
     {#snippet actions()}<Button variant="primary" icon={UserPlus} onclick={() => (inviting = true)}>Invite</Button>{/snippet}
-    <Tabs bind:value={tab} items={tabs} label="Users" />
+    <Tabs bind:value={tab} items={tabs} label="Access" />
   </PageHeader>
 
   {#if tab === 'groups'}

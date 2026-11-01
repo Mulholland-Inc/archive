@@ -11,7 +11,7 @@
   <VaultIcon icon={vault?.look.icon} tint={vault?.look.tint} seed={vault?.id} size="lg" label={collapsed ? vault?.name : undefined} />
   <span class="lines">
     <span class="name">{vault?.name}</span>
-    <span class="sub">{vault?.kind} · {vault?.members.length} {vault?.members.length === 1 ? 'member' : 'members'}</span>
+    <span class="sub">{vault?.kind}, {vault?.members.length} {vault?.members.length === 1 ? 'member' : 'members'}</span>
   </span>
 </div>
 

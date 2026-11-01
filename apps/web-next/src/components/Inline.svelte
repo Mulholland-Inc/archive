@@ -18,7 +18,7 @@
     padding: var(--space-0-5);
     border-radius: var(--radius-xs);
     background: var(--color-fill);
-    font-family: var(--font-mono);
+    font-family: var(--font-sans);
     font-size: 0.85em;
     letter-spacing: var(--tracking-normal);
   }

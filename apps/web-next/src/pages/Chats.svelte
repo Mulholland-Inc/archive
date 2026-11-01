@@ -19,7 +19,7 @@
   const results = $derived(pinnedFirst(ws().chats.filter((c) => !c.hidden && c.title.toLowerCase().includes(query.trim().toLowerCase()))));
 </script>
 
-<TopBar>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
+<TopBar mobile>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
 <Page>
   <PageHeader title="Chats">
     {#snippet actions()}<Button variant="primary" icon={Plus} href="#/">New chat</Button>{/snippet}

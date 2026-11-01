@@ -23,7 +23,7 @@
 
   code {
     color: var(--color-text-tertiary);
-    font-family: var(--font-mono);
+    font-family: var(--font-sans);
     font-size: var(--text-xs);
     letter-spacing: var(--tracking-normal);
   }
@@ -37,7 +37,6 @@
   }
 
   .serif { font-family: var(--font-serif); font-weight: var(--weight-serif); letter-spacing: var(--tracking-normal); }
-  .mono { font-family: var(--font-mono); letter-spacing: var(--tracking-normal); }
 
   .text-2xs { font-size: var(--text-2xs); }
   .text-xs { font-size: var(--text-xs); }

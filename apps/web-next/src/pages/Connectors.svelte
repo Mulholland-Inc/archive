@@ -45,7 +45,7 @@
   }
 </script>
 
-<TopBar>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
+<TopBar mobile>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
 <Page width="wide">
   <PageHeader title="Connectors">
     <Tabs bind:value={tab} items={tabs} label="Filter connectors" />

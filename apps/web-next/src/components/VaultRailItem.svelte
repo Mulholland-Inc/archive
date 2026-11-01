@@ -6,7 +6,7 @@
 
 <div class={['item', { active, add }]}>
   <span class="pill" aria-hidden="true"></span>
-  <Tooltip text={label} placement="right">
+  <Tooltip text={label} placement="right" size="md" instant>
     <button type="button" class="tile" aria-label={count ? `${label}, ${count} running` : label} aria-current={active ? 'true' : undefined} {onclick}>
       {@render children()}
       {#if count}<span class="badge" aria-hidden="true">{count}</span>{/if}

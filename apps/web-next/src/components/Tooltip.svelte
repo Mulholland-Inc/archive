@@ -4,7 +4,7 @@
   import { duration } from '../lib/motion.js';
   import Kbd from './Kbd.svelte';
 
-  let { text, shortcut, placement = 'top', block = false, children } = $props();
+  let { text, shortcut, placement = 'top', size = 'sm', instant = false, block = false, children } = $props();
 
   const id = uid('tip');
   let tip = $state();
@@ -13,7 +13,7 @@
 
   function open() {
     clearTimeout(timer);
-    timer = setTimeout(() => show(tip, anchor), duration('tooltip-delay'));
+    timer = setTimeout(() => show(tip, anchor), instant ? 0 : duration('tooltip-delay'));
   }
 
   function close() {
@@ -47,7 +47,7 @@
 <span class={['anchor', { block }]} bind:this={anchor} use:listen>
   {@render children()}
 </span>
-<span bind:this={tip} {id} popover="manual" role="tooltip" class="tip floating" data-placement={placement}>
+<span bind:this={tip} {id} popover="manual" role="tooltip" class={['tip', 'floating', size]} data-placement={placement}>
   <span>{text}</span>
   {#if shortcut}
     <Kbd keys={shortcut} subtle />
@@ -82,6 +82,12 @@
 
   .tip span {
     padding-inline: var(--space-0-5);
+  }
+
+  .md {
+    padding: var(--space-2);
+    border-radius: var(--radius-md);
+    font-size: var(--text-md);
   }
 
   .tip :global(kbd) {

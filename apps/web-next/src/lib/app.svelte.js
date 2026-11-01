@@ -182,7 +182,7 @@ export function removeFile(id) {
 }
 
 export function downloadFile(file) {
-  const blob = new Blob([`${file.name}\n${file.folder} · ${file.size}\n`], { type: 'text/plain' });
+  const blob = new Blob([`${file.name}\n${file.folder}, ${file.size}\n`], { type: 'text/plain' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = `${file.name}.txt`;

@@ -133,7 +133,7 @@ export const conversations = {
         { type: 'p', text: 'Done. Both transcripts now keep the original line breaks, with page turns marked as `— page 2 —`. They are saved next to the scans and show up in the letters timeline.' },
         {
           type: 'ul',
-          items: ['**Adaeze to Obi, 2 Mar 1974** · 3 pages, 412 words', '**Adaeze to Obi, 16 Mar 1974** · 2 pages, 268 words']
+          items: ['**Adaeze to Obi, 2 Mar 1974** (3 pages, 412 words)', '**Adaeze to Obi, 16 Mar 1974** (2 pages, 268 words)']
         },
         { type: 'p', text: 'I didn’t add Mama Ngozi to the tree yet, since only owners can change it. You can do that from the letter itself.' }
       ]

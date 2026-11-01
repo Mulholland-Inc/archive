@@ -1,7 +1,7 @@
 <script>
   import {
     Plus, ArrowRight, Download, Trash2, Settings, Pin, Share, Copy, Pencil, Ellipsis, Search, Mail, Bold, Italic, Underline,
-    LayoutGrid, List as ListIcon, Sun, Moon, Monitor, FolderOpen, FileText, MessagesSquare, Inbox, Bell, Info, Keyboard, Library, Users
+    LayoutGrid, List as ListIcon, Sun, Moon, Monitor, FolderOpen, FileText, MessagesSquare, Inbox, Bell, Info, Keyboard, Library, Lock
   } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
@@ -136,7 +136,7 @@
   ];
 </script>
 
-<TopBar>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
+<TopBar mobile>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
 <Page width="wide">
   <PageHeader title="Specimen" size="lg">
     {#snippet actions()}
@@ -164,7 +164,6 @@
         <SpecimenBlock title="Families" column>
           <TypeSample token="text-2xl" family="serif" label="EB Garamond">Letters from Enugu, 1974</TypeSample>
           <TypeSample token="text-xl" family="sans" label="Inter">Letters from Enugu, 1974</TypeSample>
-          <TypeSample token="text-lg" family="mono" label="Geist Mono">rename_scans.py --dry-run</TypeSample>
         </SpecimenBlock>
         <SpecimenBlock title="Serif scale" column>
           {#each sizes.slice(0, 5) as s (s)}<TypeSample token={s} family="serif">The archive remembers</TypeSample>{/each}
@@ -179,7 +178,7 @@
           <Heading level={3} size="md" serif={false}>Section heading</Heading>
           <Stack direction="row" gap="4" wrap>
             <Text>Default</Text><Text tone="secondary">Secondary</Text><Text tone="tertiary">Tertiary</Text><Text tone="accent">Accent</Text>
-            <Text tone="success">Success</Text><Text tone="warning">Warning</Text><Text tone="danger">Danger</Text><Text family="mono">Mono</Text>
+            <Text tone="success">Success</Text><Text tone="warning">Warning</Text><Text tone="danger">Danger</Text>
           </Stack>
         </SpecimenBlock>
       </SpecimenSection>
@@ -198,10 +197,10 @@
 
       <SpecimenSection id="s-motion" title="Motion">
         <SpecimenBlock title="Durations, click to play" column>
-          <MotionSample duration="fast" easing="out" label="fast · ease-out" />
-          <MotionSample duration="normal" easing="out" label="normal · ease-out" />
-          <MotionSample duration="slow" easing="in-out" label="slow · ease-in-out" />
-          <MotionSample duration="slower" easing="emphasized" label="slower · emphasized" />
+          <MotionSample duration="fast" easing="out" label="fast, ease-out" />
+          <MotionSample duration="normal" easing="out" label="normal, ease-out" />
+          <MotionSample duration="slow" easing="in-out" label="slow, ease-in-out" />
+          <MotionSample duration="slower" easing="emphasized" label="slower, emphasized" />
         </SpecimenBlock>
         <SpecimenBlock title="Vault icons, hover to wake">
           {#each Object.entries(TYPES) as [type, t] (type)}
@@ -564,7 +563,7 @@
               <SidebarSection>
                 <SidebarItem icon={MessagesSquare} label="Chats" href="#/specimen" active />
                 <SidebarItem icon={Library} label="Library" href="#/specimen" />
-                <SidebarItem icon={Users} label="Users" href="#/specimen" badge="3" />
+                <SidebarItem icon={Lock} label="Access" href="#/specimen" badge="3" />
               </SidebarSection>
               <SidebarSection title="Today">
                 <SidebarItem label="Rename scanned photos by EXIF date" href="#/specimen">

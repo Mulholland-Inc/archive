@@ -39,7 +39,7 @@
   }
 </script>
 
-<TopBar>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
+<TopBar mobile>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
 <Page width="wide">
   <PageHeader title="Workflows">
     {#snippet actions()}<Button variant="primary" icon={Plus} onclick={() => (creating = true)}>New workflow</Button>{/snippet}
