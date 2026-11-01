@@ -21,7 +21,6 @@ import (
 	"sync"
 	"time"
 	_ "time/tzdata"
-	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/nyaruka/phonenumbers"
@@ -35,12 +34,8 @@ import (
 )
 
 var semTransforms = map[string]func(string) (string, error){
-	"trim":         func(s string) (string, error) { return strings.TrimSpace(s), nil },
-	"lower":        func(s string) (string, error) { return strings.ToLower(s), nil },
-	"upper":        func(s string) (string, error) { return strings.ToUpper(s), nil },
-	"nfc":          func(s string) (string, error) { return norm.NFC.String(s), nil },
-	"strip_spaces": func(s string) (string, error) { return strings.Join(strings.FieldsFunc(s, unicode.IsSpace), ""), nil },
-
+	"upper":            func(s string) (string, error) { return strings.ToUpper(s), nil },
+	"nfc":              func(s string) (string, error) { return norm.NFC.String(s), nil },
 	"strip_separators": func(s string) (string, error) { return semStrip(s), nil },
 	"punycode":         semDomain,
 	"lower_domain": func(s string) (string, error) {
@@ -190,7 +185,6 @@ var semChecks = map[string]func(v any) error{
 	},
 	"lei":  semStrCheck("LEI check digits do not match", func(s string) bool { return semMod97(s) == 1 }),
 	"isin": semStrCheck("ISIN check digit does not match", semISIN),
-	"luhn": semStrCheck("Luhn check failed", semLuhn),
 	"aba": semStrCheck("not a valid ABA routing number", func(s string) bool {
 		p, _ := strconv.Atoi(s[:min(2, len(s))])
 		return semABACheck(s) && (p <= 12 || (p >= 21 && p <= 32) || (p >= 61 && p <= 72) || p == 80)
