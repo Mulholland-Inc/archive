@@ -95,6 +95,7 @@ type runner struct {
 	input     json.RawMessage
 	at        time.Time
 	depth     int
+	clock     *runClock
 	logBytes  int
 	stringify goja.Callable
 	parse     goja.Callable
@@ -149,12 +150,14 @@ func (a *Archive) run(ctx context.Context, code string, input json.RawMessage) (
 		return out, time.Now(), nil
 	}
 	limit := runTimeout
-	ctx, cancel := context.WithTimeout(ctx, limit)
-	defer cancel()
-	r := &runner{a: a, out: out, js: js, input: input, at: time.Now()}
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	clock := &runClock{t: time.AfterFunc(limit, func() { cancel(context.DeadlineExceeded) }), end: time.Now().Add(limit), browse: browseTimeout}
+	defer clock.t.Stop()
+	r := &runner{a: a, out: out, js: js, input: input, at: time.Now(), clock: clock}
 	err = a.as(ctx, r.run)
 	switch {
-	case err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded):
+	case err != nil && errors.Is(context.Cause(ctx), context.DeadlineExceeded):
 		out.Error = fmt.Sprintf("timed out after %s; nothing was saved", limit)
 	case err != nil && out.Error == "":
 		out.Error = runMessage(err)
@@ -185,7 +188,7 @@ func (r *runner) nested(ctx context.Context, code string, input json.RawMessage,
 		return nil, err
 	}
 	after := &[]func(){}
-	n := &runner{a: r.a, out: out, js: js, input: input, at: r.at, depth: r.depth + 1}
+	n := &runner{a: r.a, out: out, js: js, input: input, at: r.at, depth: r.depth + 1, clock: r.clock}
 	err = n.run(context.WithValue(ctx, storeTxKey{}, storeTx{sp, t.role, after, t.sch}))
 	switch {
 	case err != nil && ctx.Err() != nil:
@@ -619,19 +622,22 @@ func runAfter(fn, s string) (uuid.UUID, error) {
 
 func (r *runner) def(o *goja.Object, name string, f func(ctx context.Context, call goja.FunctionCall) (any, error)) {
 	o.Set(name, func(call goja.FunctionCall) goja.Value {
-		p, resolve, reject := r.vm.NewPromise()
-		v, err := r.call(runReads[name], func(ctx context.Context) (any, error) { return f(ctx, call) })
-		var jv goja.Value
-		if err == nil {
-			jv, err = r.toJS(v)
-		}
-		if err != nil {
-			reject(r.jsErr(err))
-		} else {
-			resolve(jv)
-		}
-		return r.vm.ToValue(p)
+		return r.promise(r.call(runReads[name], func(ctx context.Context) (any, error) { return f(ctx, call) }))
 	})
+}
+
+func (r *runner) promise(v any, err error) goja.Value {
+	p, resolve, reject := r.vm.NewPromise()
+	var jv goja.Value
+	if err == nil {
+		jv, err = r.toJS(v)
+	}
+	if err != nil {
+		reject(r.jsErr(err))
+	} else {
+		resolve(jv)
+	}
+	return r.vm.ToValue(p)
 }
 
 var runReads = map[string]bool{"schema": true, "revisions": true, "list": true, "get": true, "search": true, "tables": true, "files": true, "file": true, "workflows": true, "runs": true}
@@ -861,6 +867,7 @@ func (r *runner) sdk() {
 		return a.EditDocument(ctx, id, ops)
 	})
 	r.workflowSDK(o)
+	r.browseSDK(o)
 	r.vm.Set("archive", o)
 }
 
@@ -967,7 +974,7 @@ func (a *Archive) RunDocs(ctx context.Context) string {
 	return strings.ReplaceAll(runSDK, "{timeout}", runTimeout.String()) + "\n" + runTypes(a.Catalog())
 }
 
-var runStatic = []string{"Base", "Row", "Hit", "Migration", "Table", "StoredFile", "Tables", "FetchResponse", "RunResult", "Deployed", "WorkflowRun",
+var runStatic = []string{"Base", "Row", "Hit", "Migration", "Table", "StoredFile", "Tables", "FetchResponse", "RunResult", "BrowseResult", "Deployed", "WorkflowRun",
 	"Money", "Timestamp", "Time", "Interval", "Address", "Name", "Postcode", "Geo", "Quantity"}
 
 func runPascal(s string) string {
