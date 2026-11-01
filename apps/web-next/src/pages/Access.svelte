@@ -1,5 +1,5 @@
 <script>
-  import { UserPlus, Ellipsis, Mail, UserMinus, Shield, SearchX, Share as ShareIcon, Link, Ban, Settings2 } from '@lucide/svelte';
+  import { UserPlus, Ellipsis, UserMinus, Trash2, SearchX, Share as ShareIcon, Ban } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
   import StickyHeader from '../components/StickyHeader.svelte';
@@ -21,7 +21,7 @@
   import AvatarGroup from '../components/AvatarGroup.svelte';
   import Section from '../components/Section.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { ws, seedOf, removeMember, invite, shareItem, shareKinds, permissions, isExternal, openShare, stopSharing, removeGuest, copyLink } from '../lib/app.svelte.js';
+  import { ws, seedOf, removeMember, invite, shareItem, shareKinds, permissions, isExternal, openShare, stopSharing, removeGuest } from '../lib/app.svelte.js';
   import { toast } from '../lib/toast.svelte.js';
   import { route, go } from '../lib/router.svelte.js';
 
@@ -44,7 +44,6 @@
   const firstName = (name) => name.split(' ')[0];
   function accessOf(share) {
     const kinds = [...new Set(share.people.map((p) => p.permission))];
-    if (!kinds.length) return share.link === 'view' ? 'Can view' : '';
     return kinds.length === 1 ? permissionLabel(kinds[0]) : 'Mixed';
   }
 
@@ -87,9 +86,8 @@
   const shareColumns = $derived([
     { key: 'item', label: 'Item' },
     { key: 'kind', label: 'Kind', muted: true, width: 'sm' },
-    { key: 'people', label: 'Shared with', width: 'md', mobile: 'hidden' },
+    { key: 'people', label: 'Shared with', width: 'lg', mobile: 'hidden' },
     { key: 'access', label: 'Access', muted: true, width: 'sm', mobile: 'trailing' },
-    ...(shareRows.some((r) => r.share.link === 'view') ? [{ key: 'link', label: 'Link', muted: true, width: 'md', mobile: 'hidden' }] : []),
     { key: 'date', label: 'Shared', muted: true, width: 'sm', mobile: 'hidden' },
     { key: 'menu', label: '', width: 'xs', align: 'end' }
   ]);
@@ -129,33 +127,23 @@
 
   {#if tab === 'shares'}
     {#if shareRows.length}
-      <Table columns={shareColumns} rows={shareRows} label="Shares" cards>
+      <Table columns={shareColumns} rows={shareRows} label="Shares" cards onrowclick={(row) => openShare(row.share.kind, row.share.target)}>
         {#snippet cell(row, col)}
           {#if col.key === 'item'}
             <Text weight="medium" truncate>{row.item.name}</Text>
           {:else if col.key === 'kind'}
             {shareKinds[row.share.kind]}
           {:else if col.key === 'people'}
-            {#if row.share.people.length}
-              <Stack direction="row" gap="2" align="center" wrap>
-                <AvatarGroup people={row.share.people} size="md" max={3} />
-                <Text tone="secondary" truncate>{others(row.share.people.map((p) => firstName(p.name)), 1)}</Text>
-              </Stack>
-            {/if}
+            <Stack direction="row" gap="2" align="center">
+              <AvatarGroup people={row.share.people} size="md" max={3} />
+              <Text tone="secondary" truncate>{others(row.share.people.map((p) => firstName(p.name)), 1)}</Text>
+            </Stack>
           {:else if col.key === 'access'}
             {accessOf(row.share)}
-          {:else if col.key === 'link'}
-            {row.share.link === 'view' ? 'Anyone with the link' : ''}
           {:else if col.key === 'date'}
             {row.share.date}
           {:else if col.key === 'menu'}
-            <Menu placement="bottom-end" width="sm" label="Share actions">
-              {#snippet trigger(props)}<IconButton icon={Ellipsis} label={`Actions for ${row.item.name}`} size="sm" tooltip={false} {...props} />{/snippet}
-              <MenuItem icon={Settings2} onselect={() => openShare(row.share.kind, row.share.target)}>Manage sharing</MenuItem>
-              <MenuItem icon={Link} onselect={() => copyLink(row.item.path)}>Copy link</MenuItem>
-              <MenuSeparator />
-              <MenuItem icon={Ban} danger onselect={() => stopSharing(row.share.id)}>Stop sharing</MenuItem>
-            </Menu>
+            <IconButton icon={Ban} label={`Stop sharing ${row.item.name}`} size="sm" onclick={() => stopSharing(row.share.id)} />
           {/if}
         {/snippet}
       </Table>
@@ -175,17 +163,7 @@
           {:else if col.key === 'active'}
             {row.status === 'invited' ? 'Invited' : row.active}
           {:else if col.key === 'menu'}
-            <Menu placement="bottom-end" width="sm" label="Member actions">
-              {#snippet trigger(props)}<IconButton icon={Ellipsis} label={`Actions for ${row.name}`} size="sm" tooltip={false} {...props} />{/snippet}
-              {#if row.status === 'invited'}
-                <MenuItem icon={Mail} onselect={() => toast(`Invitation resent to ${row.email}`)}>Resend invite</MenuItem>
-              {/if}
-              {#if row.role !== 'owner'}
-                <MenuItem icon={Shield} onselect={() => changeRole(row, 'owner')}>Make owner</MenuItem>
-              {/if}
-              <MenuSeparator />
-              <MenuItem icon={UserMinus} danger onselect={() => removeMember(row.id)}>{row.status === 'invited' ? 'Revoke invitation' : 'Remove from vault'}</MenuItem>
-            </Menu>
+            <IconButton icon={Trash2} label={row.status === 'invited' ? `Revoke invitation for ${row.name}` : `Remove ${row.name} from vault`} size="sm" onclick={() => removeMember(row.id)} />
           {/if}
         {/snippet}
       </Table>

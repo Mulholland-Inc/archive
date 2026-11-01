@@ -141,13 +141,6 @@ export function removeChat(id) {
   removeAt(w.chats, (c) => c.id === id, 'Chat deleted', () => open && go('/'));
 }
 
-export async function copyLink(path) {
-  const url = `${location.origin}${location.pathname}#${path}`;
-  try {
-    await navigator.clipboard.writeText(url);
-  } catch {}
-  toast('Link copied');
-}
 
 const kinds = [
   { kind: 'image', ext: 'JPG', size: '2.3 MB', base: 'scan' },
@@ -224,9 +217,8 @@ export function removeMember(id) {
 }
 
 export const permissions = [
-  { value: 'view', label: 'Can view' },
-  { value: 'comment', label: 'Can comment' },
-  { value: 'edit', label: 'Can edit' }
+  { value: 'view', label: 'Viewer' },
+  { value: 'edit', label: 'Editor' }
 ];
 
 export const shareKinds = { file: 'File', folder: 'Folder', workflow: 'Workflow', table: 'Table' };
@@ -257,12 +249,12 @@ export function shareFor(kind, target) {
 
 function ensureShare(kind, target) {
   const w = ws();
-  if (!shareFor(kind, target)) w.shares.unshift({ id: nid('sh'), kind, target, link: 'off', by: app.profile.name, date: 'Just now', people: [] });
+  if (!shareFor(kind, target)) w.shares.unshift({ id: nid('sh'), kind, target, by: app.profile.name, date: 'Just now', people: [] });
   return shareFor(kind, target);
 }
 
 function prune(share) {
-  if (share.people.length || share.link !== 'off') return;
+  if (share.people.length) return;
   const w = ws();
   const i = w.shares.indexOf(share);
   if (i >= 0) w.shares.splice(i, 1);
@@ -272,14 +264,26 @@ export function openShare(kind, target) {
   Object.assign(app.share, { open: true, kind, target });
 }
 
+export function contacts(w = ws()) {
+  const out = new Map();
+  for (const m of w.members) {
+    if (m.status === 'active' && m.name !== app.profile.name) out.set(m.email, { id: m.id, user: m.user, name: m.name, email: m.email, tone: m.tone });
+  }
+  for (const s of w.shares) {
+    for (const p of s.people) if (!out.has(p.email)) out.set(p.email, { name: p.name, email: p.email, tone: p.tone, guest: true });
+  }
+  return [...out.values()];
+}
+
 export function addPeople(kind, target, emails, permission) {
   const share = ensureShare(kind, target);
+  const known = contacts();
   const added = [];
   for (const email of emails) {
     if (share.people.some((p) => p.email === email)) continue;
-    const member = ws().members.find((m) => m.email === email);
-    const name = member?.name ?? email.split('@')[0].replace(/[._-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-    share.people.push({ name, email, permission, tone: member?.tone ?? (email.length % 6) + 1 });
+    const person = known.find((p) => p.email === email);
+    const name = person?.name ?? email.split('@')[0].replace(/[._-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+    share.people.push({ name, email, permission, tone: person?.tone ?? (email.length % 6) + 1 });
     added.push(name);
   }
   if (added.length) toast(added.length === 1 ? `Shared with ${added[0]}` : `Shared with ${added.length} people`, { tone: 'success' });
@@ -296,13 +300,6 @@ export function unsharePerson(share, email) {
   if (i < 0) return;
   const [p] = share.people.splice(i, 1);
   toast(`${p.name} no longer has access`);
-  prune(share);
-}
-
-export function setLinkAccess(kind, target, link) {
-  const share = ensureShare(kind, target);
-  share.link = link;
-  toast(link === 'off' ? 'Link sharing turned off' : 'Anyone with the link can view');
   prune(share);
 }
 

@@ -22,7 +22,7 @@
     { label: 'Owners', names: named(['owner']) },
     { label: 'Editors', names: named(type.access.edit) },
     { label: 'Viewers', names: named(type.access.view) },
-    { label: 'Shared with', names: [...(share?.people.map((p) => p.name) ?? []), ...(share?.link === 'view' ? ['Anyone with the link'] : [])] }
+    { label: 'Shared with', names: share?.people.map((p) => p.name) ?? [] }
   ]);
   const shown = $derived(type.columns.filter((c) => c.name !== 'id' && c.name !== 'created_at').slice(0, 4));
   const sampleColumns = $derived(shown.map((c) => ({ key: c.name, label: c.name, muted: c !== shown[0] })));

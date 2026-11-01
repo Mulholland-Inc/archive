@@ -57,25 +57,25 @@ const fieldMembers = [
 const person = (name, email, permission, tone) => ({ name, email, permission, tone });
 
 const okaforShares = [
-  { id: 'sh1', kind: 'file', target: 'f1', link: 'off', by: 'Nora Okafor', date: 'Oct 28', people: [person('Margaret Ellis', 'm.ellis@leedsarchives.org', 'comment', 4), person('Ifeoma Nwosu', 'ifeoma.nwosu@mail.ng', 'edit', 5)] },
-  { id: 'sh3', kind: 'folder', target: 'Reunion book', link: 'view', by: 'Tobi Okafor', date: 'Oct 12', people: [person('Samuel Ibe', 'samuel.ibe@mail.com', 'view', 1)] },
-  { id: 'sh4', kind: 'table', target: 'person', link: 'off', by: 'Emeka Okafor', date: 'Sep 30', people: [person('Margaret Ellis', 'm.ellis@leedsarchives.org', 'view', 4), person('Ifeoma Nwosu', 'ifeoma.nwosu@mail.ng', 'edit', 5), person('Kelechi Nwosu', 'kelechi@nwosu.co.uk', 'view', 2), person('Samuel Ibe', 'samuel.ibe@mail.com', 'view', 1)] }
+  { id: 'sh1', kind: 'file', target: 'f1', by: 'Nora Okafor', date: 'Oct 28', people: [person('Margaret Ellis', 'm.ellis@leedsarchives.org', 'view', 4), person('Ifeoma Nwosu', 'ifeoma.nwosu@mail.ng', 'edit', 5)] },
+  { id: 'sh3', kind: 'folder', target: 'Reunion book', by: 'Tobi Okafor', date: 'Oct 12', people: [person('Samuel Ibe', 'samuel.ibe@mail.com', 'view', 1)] },
+  { id: 'sh4', kind: 'table', target: 'person', by: 'Emeka Okafor', date: 'Sep 30', people: [person('Margaret Ellis', 'm.ellis@leedsarchives.org', 'view', 4), person('Ifeoma Nwosu', 'ifeoma.nwosu@mail.ng', 'edit', 5), person('Kelechi Nwosu', 'kelechi@nwosu.co.uk', 'view', 2), person('Samuel Ibe', 'samuel.ibe@mail.com', 'view', 1)] }
 ];
 
 const haleShares = [
-  { id: 'sh5', kind: 'file', target: 'h1', link: 'off', by: 'Ruth Hale', date: 'Oct 30', people: [person('Alan Brooks', 'a.brooks@brightwaterlegal.com', 'view', 2), person('Fiona Grant', 'f.grant@brightwaterlegal.com', 'view', 6)] },
-  { id: 'sh6', kind: 'file', target: 'h3', link: 'off', by: 'Priya Raman', date: 'Oct 29', people: [person('James Mercer', 'james@mercerholdings.co.uk', 'comment', 3)] },
-  { id: 'sh7', kind: 'workflow', target: 'wf-billing', link: 'off', by: 'Daniel Whitcombe', date: 'Oct 3', people: [person('Tom Ashby', 'tom@halewhitcombe.law', 'edit', 2)] }
+  { id: 'sh5', kind: 'file', target: 'h1', by: 'Ruth Hale', date: 'Oct 30', people: [person('Alan Brooks', 'a.brooks@brightwaterlegal.com', 'view', 2), person('Fiona Grant', 'f.grant@brightwaterlegal.com', 'view', 6)] },
+  { id: 'sh6', kind: 'file', target: 'h3', by: 'Priya Raman', date: 'Oct 29', people: [person('James Mercer', 'james@mercerholdings.co.uk', 'view', 3)] },
+  { id: 'sh7', kind: 'workflow', target: 'wf-billing', by: 'Daniel Whitcombe', date: 'Oct 3', people: [person('Tom Ashby', 'tom@halewhitcombe.law', 'edit', 2)] }
 ];
 
 const fieldShares = [
-  { id: 'sh8', kind: 'folder', target: 'Linden moodboard', link: 'view', by: 'Lea Fontaine', date: 'Yesterday', people: [person('Helen Marsh', 'h.marsh@lindenlibrary.org', 'comment', 5)] },
-  { id: 'sh9', kind: 'file', target: 's7', link: 'off', by: 'Mika Sato', date: 'Sep 18', people: [person('Ravi Desai', 'ravi@signworks.nyc', 'view', 1)] },
-  { id: 'sh10', kind: 'table', target: 'brief', link: 'off', by: 'Jun Park', date: 'Oct 22', people: [person('Helen Marsh', 'h.marsh@lindenlibrary.org', 'view', 5), person('Lea Fontaine', 'lea@fieldnote.studio', 'edit', 4)] }
+  { id: 'sh8', kind: 'folder', target: 'Linden moodboard', by: 'Lea Fontaine', date: 'Yesterday', people: [person('Helen Marsh', 'h.marsh@lindenlibrary.org', 'view', 5)] },
+  { id: 'sh9', kind: 'file', target: 's7', by: 'Mika Sato', date: 'Sep 18', people: [person('Ravi Desai', 'ravi@signworks.nyc', 'view', 1)] },
+  { id: 'sh10', kind: 'table', target: 'brief', by: 'Jun Park', date: 'Oct 22', people: [person('Helen Marsh', 'h.marsh@lindenlibrary.org', 'view', 5), person('Lea Fontaine', 'lea@fieldnote.studio', 'edit', 4)] }
 ];
 
 function settings() {
-  return { defaultRole: 'viewer', invites: true, sharing: true, region: 'us-central1', retention: 'forever' };
+  return { defaultRole: 'viewer', invites: true, region: 'us-central1', retention: 'forever' };
 }
 
 function vault(base) {

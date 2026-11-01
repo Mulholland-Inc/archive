@@ -69,7 +69,6 @@
     <Stack gap="0">
       <SettingsRow label="Default role for new members"><Select bind:value={settings.defaultRole} options={roles} size="sm" label="Default role" placement="bottom-end" /></SettingsRow>
       <SettingsRow label="Editors can invite people"><Switch bind:checked={settings.invites} label="Editors can invite people" /></SettingsRow>
-      <SettingsRow label="Allow public share links"><Switch bind:checked={settings.sharing} label="Allow public share links" /></SettingsRow>
       <SettingsRow label="Data region"><Select bind:value={settings.region} options={regions} size="sm" label="Data region" placement="bottom-end" /></SettingsRow>
       <SettingsRow label="Chat history"><Select bind:value={settings.retention} options={retentions} size="sm" label="Chat history" placement="bottom-end" /></SettingsRow>
     </Stack>
