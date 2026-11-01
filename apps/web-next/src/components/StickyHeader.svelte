@@ -74,6 +74,10 @@
   }
 
   @media (max-width: 40rem) {
+    .sentinel {
+      margin-block-end: calc(var(--space-5) * -1);
+    }
+
     .search {
       flex-basis: 100%;
       order: 1;
