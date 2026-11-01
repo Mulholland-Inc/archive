@@ -98,8 +98,8 @@ func take(r *http.Request) (*chrome, net.Conn, error) {
 		select {
 		case <-c.ready:
 			err = c.err
-		case <-time.After(20 * time.Second):
-			err = errors.New("chrome did not start in 20s")
+		case <-time.After(time.Minute):
+			err = errors.New("chrome did not start in a minute")
 		case <-r.Context().Done():
 			next <- c
 			return nil, nil, r.Context().Err()
