@@ -41,7 +41,7 @@
   .w-semibold { font-weight: var(--weight-semibold); }
 
   .f-sans { font-family: var(--font-sans); }
-  .f-serif { font-family: var(--font-serif); letter-spacing: var(--tracking-normal); }
+  .f-serif { font-family: var(--font-serif); letter-spacing: var(--tracking-serif); }
 
   .truncate {
     overflow: hidden;

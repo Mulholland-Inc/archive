@@ -20,7 +20,7 @@
   .serif {
     font-family: var(--font-serif);
     font-weight: var(--weight-serif);
-    letter-spacing: var(--tracking-normal);
+    letter-spacing: var(--tracking-serif);
   }
 
   .s-sm { font-size: var(--text-md); }

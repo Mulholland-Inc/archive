@@ -42,7 +42,7 @@
     font-family: var(--font-serif);
     font-size: var(--text-xl);
     font-weight: var(--weight-serif);
-    letter-spacing: var(--tracking-normal);
+    letter-spacing: var(--tracking-serif);
     color: var(--color-text);
   }
 

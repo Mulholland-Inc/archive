@@ -34,7 +34,7 @@
     font-size: var(--text-3xl);
     font-weight: var(--weight-serif);
     line-height: var(--leading-tight);
-    letter-spacing: var(--tracking-tight);
+    letter-spacing: var(--tracking-serif);
     color: var(--color-text);
   }
 
