@@ -3,14 +3,15 @@
   import Sidebar from './Sidebar.svelte';
   import SidebarItem from './SidebarItem.svelte';
   import SidebarSection from './SidebarSection.svelte';
-  import VaultSwitcher from './VaultSwitcher.svelte';
+  import VaultHeader from './VaultHeader.svelte';
+  import VaultRail from './VaultRail.svelte';
   import AccountMenu from './AccountMenu.svelte';
   import IconButton from './IconButton.svelte';
   import ChatActions from './ChatActions.svelte';
   import Stack from './Stack.svelte';
   import { app, ws, closeDrawer, toggleSidebar, togglePin, pinnedFirst, switchVault, createVault } from '../lib/app.svelte.js';
   import { me } from '../lib/data.js';
-  import { route, active, go } from '../lib/router.svelte.js';
+  import { route, active } from '../lib/router.svelte.js';
   import NewVaultDialog from './NewVaultDialog.svelte';
 
   const running = $derived(ws().workflows.filter((w) => w.runs[0] && (w.runs[0].status === 'running' || w.runs[0].status === 'waiting')).length);
@@ -28,15 +29,12 @@
 </script>
 
 <Sidebar collapsed={app.collapsed} drawer={app.drawer} onclose={closeDrawer}>
+  {#snippet rail()}
+    <VaultRail vaults={app.vaults} current={app.vault} onselect={switchVault} oncreate={() => { app.drawer = false; creating = true; }} />
+  {/snippet}
   {#snippet header()}
     <Stack direction={collapsed ? 'column' : 'row'} gap="1" align="center">
-      <VaultSwitcher
-        vaults={app.vaults}
-        current={app.vault}
-        onselect={switchVault}
-        onsettings={() => go('/settings/vault')}
-        oncreate={() => { app.drawer = false; creating = true; }}
-      />
+      <VaultHeader vault={ws()} />
       <IconButton icon={PanelLeft} label={collapsed ? 'Open sidebar' : 'Close sidebar'} placement={collapsed ? 'right' : 'top'} shortcut="⌘ ." onclick={toggleSidebar} />
     </Stack>
   {/snippet}
