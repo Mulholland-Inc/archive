@@ -91,6 +91,13 @@ func (e *ValidationError) Error() string {
 	return "invalid " + e.Type + ": " + e.Errors[0].Path + ": " + e.Errors[0].Message
 }
 
+func (e *ValidationError) err() error {
+	if len(e.Errors) > 0 {
+		return e
+	}
+	return nil
+}
+
 var (
 	ErrNotFound     = errors.New("not found")
 	ErrConflict     = errors.New("conflict")
@@ -181,24 +188,6 @@ func (c *Catalog) writable(name string) (*Table, error) {
 
 func (c *Catalog) names() []string { return specKeys(c.Tables) }
 
-func (c *Catalog) deleteOrder() []string {
-	var out []string
-	left := slices.DeleteFunc(c.names(), func(n string) bool { return c.Tables[n].Kind == "view" })
-	refs := func(from, to string) bool {
-		return slices.ContainsFunc(c.Tables[from].Columns, func(col *Column) bool { return from != to && col.Ref == "public."+to })
-	}
-	for len(left) > 0 {
-		i := slices.IndexFunc(left, func(n string) bool {
-			return !slices.ContainsFunc(left, func(m string) bool { return refs(m, n) })
-		})
-		if i < 0 {
-			return append(out, left...)
-		}
-		out, left = append(out, left[i]), slices.Delete(left, i, i+1)
-	}
-	return out
-}
-
 func (t *Table) col(name string) *Column {
 	for _, c := range t.Columns {
 		if c.Name == name {
@@ -288,10 +277,7 @@ func (c *Catalog) Check() error {
 			}
 		}
 	}
-	if len(ve.Errors) > 0 {
-		return ve
-	}
-	return nil
+	return ve.err()
 }
 
 func (c *Catalog) checkMeta(t *Table, bad func(path, msg string)) {

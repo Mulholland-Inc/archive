@@ -282,10 +282,7 @@ func storeCheckFiles(files map[string]string) error {
 			ve.Errors = append(ve.Errors, FieldError{Path: name, Message: "want a file name like house.sql: lowercase letters, digits, _, . or -"})
 		}
 	}
-	if len(ve.Errors) > 0 {
-		return ve
-	}
-	return nil
+	return ve.err()
 }
 
 func (s *pgStore) openDB(_ context.Context, name string) (*sql.DB, error) {
@@ -419,10 +416,7 @@ func storeCheckRenames(renames []string) error {
 			ve.Errors = append(ve.Errors, FieldError{Path: fmt.Sprintf("renames[%d]", i), Message: "want one ALTER TABLE|TYPE|DOMAIN|INDEX <name> RENAME ... statement on a public object"})
 		}
 	}
-	if len(ve.Errors) > 0 {
-		return ve
-	}
-	return nil
+	return ve.err()
 }
 
 func (s *pgStore) plan(ctx context.Context, src sqldb.Queryable, files map[string]string, allowDrop, check bool) (*SchemaPlan, error) {

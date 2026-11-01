@@ -131,8 +131,8 @@ func (a *Archive) List(ctx context.Context, typ string, where map[string]any, li
 			}
 		}
 	}
-	if len(verr.Errors) > 0 {
-		return nil, verr
+	if err := verr.err(); err != nil {
+		return nil, err
 	}
 	if limit <= 0 || limit > 1000 {
 		limit = 100
@@ -311,10 +311,7 @@ func (a *Archive) refCheck(ctx context.Context, tb *Table, out map[string]any) e
 			}
 		}
 	}
-	if len(verr.Errors) > 0 {
-		return verr
-	}
-	return nil
+	return verr.err()
 }
 
 func (a *Archive) pgCheck(ctx context.Context, tb *Table, out map[string]any) error {
@@ -340,10 +337,7 @@ func (a *Archive) pgCheck(ctx context.Context, tb *Table, out map[string]any) er
 	for _, r := range rows {
 		verr.Errors = append(verr.Errors, FieldError{Path: ls[r.I-1].path, Message: r.Message})
 	}
-	if len(verr.Errors) > 0 {
-		return verr
-	}
-	return nil
+	return verr.err()
 }
 
 func (a *Archive) Delete(ctx context.Context, typ string, id uuid.UUID) error {
