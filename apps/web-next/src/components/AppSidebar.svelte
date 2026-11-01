@@ -1,5 +1,5 @@
 <script>
-  import { PanelLeft, PinOff, Plus, Search, MessagesSquare, Library, Workflow, Plug, Users } from '@lucide/svelte';
+  import { PinOff, Plus, Search, MessagesSquare, Library, Workflow, Plug, Users } from '@lucide/svelte';
   import Sidebar from './Sidebar.svelte';
   import SidebarItem from './SidebarItem.svelte';
   import SidebarSection from './SidebarSection.svelte';
@@ -8,8 +8,7 @@
   import AccountMenu from './AccountMenu.svelte';
   import IconButton from './IconButton.svelte';
   import ChatActions from './ChatActions.svelte';
-  import Stack from './Stack.svelte';
-  import { app, ws, closeDrawer, toggleSidebar, togglePin, pinnedFirst, switchVault, createVault } from '../lib/app.svelte.js';
+  import { app, ws, closeDrawer, togglePin, pinnedFirst, switchVault, createVault } from '../lib/app.svelte.js';
   import { me } from '../lib/data.js';
   import { route, active } from '../lib/router.svelte.js';
   import NewVaultDialog from './NewVaultDialog.svelte';
@@ -33,10 +32,7 @@
     <VaultRail vaults={app.vaults} current={app.vault} onselect={switchVault} oncreate={() => { app.drawer = false; creating = true; }} />
   {/snippet}
   {#snippet header()}
-    <Stack direction={collapsed ? 'column' : 'row'} gap="1" align="center">
-      <VaultHeader vault={ws()} />
-      <IconButton icon={PanelLeft} label={collapsed ? 'Open sidebar' : 'Close sidebar'} placement={collapsed ? 'right' : 'top'} shortcut="⌘ ." onclick={toggleSidebar} />
-    </Stack>
+    <VaultHeader vault={ws()} />
   {/snippet}
 
   <SidebarSection>
