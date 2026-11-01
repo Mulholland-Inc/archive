@@ -4,7 +4,6 @@
   import SearchField from './SearchField.svelte';
   import ConnectorCard from './ConnectorCard.svelte';
   import EmptyState from './EmptyState.svelte';
-  import Chip from './Chip.svelte';
   import Button from './Button.svelte';
   import IconButton from './IconButton.svelte';
   import Menu from './Menu.svelte';
@@ -29,7 +28,6 @@
     );
   });
   const narrowed = $derived(Boolean(query.trim() || categories.length));
-  const heading = $derived(narrowed ? 'Results' : 'Connectors');
 
   const flip = (list, value) => (list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);
 </script>
@@ -54,12 +52,6 @@
     </Menu>
   {/snippet}
   <div class="list">
-    <div class="head">
-      <div class="title">
-        <h3>{heading}</h3>
-        <Chip size="sm">{matches.length}</Chip>
-      </div>
-    </div>
     {#if matches.length}
       <div class="grid">
         {#each matches as c (c.id)}
@@ -83,25 +75,6 @@
     flex: 1 1 var(--col-sm);
     max-width: var(--col-lg);
     min-width: 0;
-  }
-
-  .head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
-    min-height: var(--control-md);
-  }
-
-  .title {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-
-  h3 {
-    font-size: var(--text-base);
-    font-weight: var(--weight-medium);
   }
 
   .grid {
