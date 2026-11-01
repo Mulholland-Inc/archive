@@ -18,6 +18,13 @@ export function go(path) {
   location.hash = path;
 }
 
+export function replace(path) {
+  history.replaceState(history.state, '', `#${path}`);
+  const next = parse();
+  route.path = next.path;
+  route.parts = next.parts;
+}
+
 export function href(path) {
   return `#${path}`;
 }

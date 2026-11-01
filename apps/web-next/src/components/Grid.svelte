@@ -24,4 +24,12 @@
   .g4 { gap: var(--space-4); }
   .g6 { gap: var(--space-6); }
   .g8 { gap: var(--space-8); }
+
+  @media (max-width: 40rem) {
+    .c2 { grid-template-columns: minmax(0, 1fr); }
+  }
+
+  @container (max-width: 34rem) {
+    .c2 { grid-template-columns: minmax(0, 1fr); }
+  }
 </style>

@@ -79,4 +79,8 @@
     letter-spacing: var(--tracking-normal);
     color: var(--color-text);
   }
+
+  code {
+    font: inherit;
+  }
 </style>

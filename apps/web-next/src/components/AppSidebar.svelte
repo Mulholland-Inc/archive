@@ -1,23 +1,23 @@
 <script>
-  import { PinOff, Plus, Search, MessagesSquare, Library, Workflow, Plug, Lock } from '@lucide/svelte';
+  import { Plus, Search, MessagesSquare, Library, Database, Workflow, Lock } from '@lucide/svelte';
   import Sidebar from './Sidebar.svelte';
   import SidebarItem from './SidebarItem.svelte';
   import SidebarSection from './SidebarSection.svelte';
   import VaultHeader from './VaultHeader.svelte';
   import VaultRail from './VaultRail.svelte';
   import AccountMenu from './AccountMenu.svelte';
-  import IconButton from './IconButton.svelte';
   import ChatActions from './ChatActions.svelte';
-  import { app, ws, closeDrawer, togglePin, pinnedFirst, switchVault, createVault } from '../lib/app.svelte.js';
+  import { app, ws, closeDrawer, pinnedFirst, switchVault, createVault, renameChat } from '../lib/app.svelte.js';
   import { me } from '../lib/data.js';
   import { route, active } from '../lib/router.svelte.js';
   import NewVaultDialog from './NewVaultDialog.svelte';
 
   const running = $derived(ws().workflows.filter((w) => w.runs[0] && (w.runs[0].status === 'running' || w.runs[0].status === 'waiting')).length);
-  const visible = $derived(pinnedFirst(ws().chats.filter((c) => !c.hidden)));
+  const visible = $derived(pinnedFirst(ws().chats));
 
 
   let creating = $state(false);
+  let renaming = $state(null);
 
   const collapsed = $derived(app.collapsed && !app.drawer);
 
@@ -43,18 +43,17 @@
   <SidebarSection>
     <SidebarItem icon={MessagesSquare} label="Chats" href="#/chats" active={active('/chats')} />
     <SidebarItem icon={Library} label="Library" href="#/library" active={active('/library')} />
+    <SidebarItem icon={Database} label="Database" href="#/database" active={active('/database')} />
     <SidebarItem icon={Workflow} label="Workflows" href="#/workflows" active={active('/workflows')} badge={running ? String(running) : undefined} />
-    <SidebarItem icon={Plug} label="Connectors" href="#/connectors" active={active('/connectors')} />
     <SidebarItem icon={Lock} label="Access" href="#/access" active={active('/access')} />
   </SidebarSection>
 
   {#if !collapsed && visible.length}
     <SidebarSection title="Recents">
         {#each visible as chat (chat.id)}
-        <SidebarItem label={chat.title} href={`#/chat/${chat.id}`} active={route.path === `/chat/${chat.id}`}>
+        <SidebarItem label={chat.title} href={`#/chat/${chat.id}`} active={route.path === `/chat/${chat.id}`} onrename={(title) => renameChat(chat.id, title)} bind:editing={() => renaming === chat.id, (on) => (renaming = on ? chat.id : null)}>
           {#snippet actions()}
-            {#if chat.pinned}<IconButton icon={PinOff} label="Unpin" size="xs" tooltip={false} onclick={() => togglePin(chat.id)} />{/if}
-            <ChatActions {chat} />
+            <ChatActions {chat} size="sm" inline />
           {/snippet}
         </SidebarItem>
       {/each}
@@ -62,7 +61,7 @@
   {/if}
 
   {#snippet footer()}
-    <AccountMenu user={{ ...me, name: app.profile.name, tone: app.profile.tone }} />
+    <AccountMenu user={{ ...me, name: app.profile.name }} />
   {/snippet}
 </Sidebar>
 

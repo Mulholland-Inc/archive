@@ -1,15 +1,15 @@
 export const catalog = [
-  { id: 'gdrive', name: 'Google Drive', category: 'Files', icon: 'drive', scopes: ['Read files you pick', 'Watch folders for new files'] },
-  { id: 'gmail', name: 'Gmail', category: 'Email', icon: 'mail', scopes: ['Read messages with a label you choose', 'Save attachments to the library'] },
-  { id: 'outlook', name: 'Outlook', category: 'Email', icon: 'inbox', scopes: ['Read messages in folders you choose', 'Save attachments to the library'] },
-  { id: 'gcal', name: 'Google Calendar', category: 'Calendar', icon: 'calendar', scopes: ['Read events', 'Create reminders'] },
-  { id: 'dropbox', name: 'Dropbox', category: 'Files', icon: 'package', scopes: ['Read files you pick', 'Watch folders for new files'] },
-  { id: 'onedrive', name: 'OneDrive', category: 'Files', icon: 'cloud', scopes: ['Read files you pick', 'Watch folders for new files'] },
-  { id: 'box', name: 'Box', category: 'Files', icon: 'archive', scopes: ['Read files you pick'] },
-  { id: 'icloud', name: 'iCloud Photos', category: 'Photos', icon: 'image', scopes: ['Read albums you share', 'Import new photos'] },
-  { id: 'slack', name: 'Slack', category: 'Messaging', icon: 'chat', scopes: ['Read channels you add Archive to', 'Post workflow results'] },
-  { id: 'notion', name: 'Notion', category: 'Docs', icon: 'notebook', scopes: ['Read pages you share', 'Create pages'] },
-  { id: 'github', name: 'GitHub', category: 'Code', icon: 'branch', scopes: ['Read repositories you pick', 'Open issues'] }
+  { id: 'gdrive', by: 'Google', description: 'Find and import documents, scans and photos from your Drive', name: 'Google Drive', category: 'Files', icon: 'drive', scopes: ['Read files you pick', 'Watch folders for new files'] },
+  { id: 'gmail', by: 'Google', description: 'Pull letters and attachments from labelled mail', name: 'Gmail', category: 'Email', icon: 'mail', scopes: ['Read messages with a label you choose', 'Save attachments to the library'] },
+  { id: 'outlook', by: 'Microsoft', description: 'Save attachments and notices from chosen folders', name: 'Outlook', category: 'Email', icon: 'inbox', scopes: ['Read messages in folders you choose', 'Save attachments to the library'] },
+  { id: 'gcal', by: 'Google', description: 'Read events and add reminders for deadlines', name: 'Google Calendar', category: 'Calendar', icon: 'calendar', scopes: ['Read events', 'Create reminders'] },
+  { id: 'dropbox', by: 'Dropbox', description: 'Import files and watch shared folders', name: 'Dropbox', category: 'Files', icon: 'package', scopes: ['Read files you pick', 'Watch folders for new files'] },
+  { id: 'onedrive', by: 'Microsoft', description: 'Import files and watch folders from OneDrive', name: 'OneDrive', category: 'Files', icon: 'cloud', scopes: ['Read files you pick', 'Watch folders for new files'] },
+  { id: 'box', by: 'Box', description: 'Bring in records and contracts stored in Box', name: 'Box', category: 'Files', icon: 'archive', scopes: ['Read files you pick'] },
+  { id: 'icloud', by: 'Apple', description: 'Import albums and new photos as they arrive', name: 'iCloud Photos', category: 'Photos', icon: 'image', scopes: ['Read albums you share', 'Import new photos'] },
+  { id: 'slack', by: 'Slack', description: 'Read channels and post workflow results', name: 'Slack', category: 'Messaging', icon: 'chat', scopes: ['Read channels you add Archive to', 'Post workflow results'] },
+  { id: 'notion', by: 'Notion', description: 'Read shared pages and create new ones', name: 'Notion', category: 'Docs', icon: 'notebook', scopes: ['Read pages you share', 'Create pages'] },
+  { id: 'github', by: 'GitHub', description: 'Read repositories and open issues', name: 'GitHub', category: 'Code', icon: 'branch', scopes: ['Read repositories you pick', 'Open issues'] }
 ];
 
 const connected = {

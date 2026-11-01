@@ -1,6 +1,7 @@
-import { chats, conversations, library, members, groups, me } from './data.js';
+import { chats, conversations, library, members, me } from './data.js';
 import { workflowSeed } from './workflows.js';
 import { connectorsFor } from './connectors.js';
+import { schemaFor } from './schema.js';
 
 const pick = (list, ids) => list.filter((x) => ids.includes(x.id));
 
@@ -36,25 +37,45 @@ const personalLibrary = [
 ];
 
 const haleMembers = [
-  { id: 'hm1', name: 'Ruth Hale', email: 'ruth@halewhitcombe.law', role: 'owner', groups: ['Partners'], active: 'Now', status: 'active', tone: 3 },
-  { id: 'hm2', name: 'Daniel Whitcombe', email: 'daniel@halewhitcombe.law', role: 'owner', groups: ['Partners'], active: '1 hr ago', status: 'active', tone: 1 },
-  { id: 'hm3', name: 'Priya Raman', email: 'priya@halewhitcombe.law', role: 'editor', groups: ['Litigation'], active: 'Today', status: 'active', tone: 5 },
-  { id: 'hm4', name: 'Tom Ashby', email: 'tom@halewhitcombe.law', role: 'editor', groups: ['Litigation'], active: 'Fri', status: 'active', tone: 2 },
-  { id: 'hm5', name: me.name, email: 'nora@halewhitcombe.law', role: 'editor', groups: ['Litigation'], active: 'Now', status: 'active', tone: me.tone },
-  { id: 'hm6', name: 'Grace Liu', email: 'grace@halewhitcombe.law', role: 'viewer', groups: [], active: 'Sep 20', status: 'active', tone: 4 },
-  { id: 'hm7', name: 'Owen Price', email: 'owen.price@mail.com', role: 'viewer', groups: [], active: '', status: 'invited', tone: 6 }
+  { id: 'hm1', name: 'Ruth Hale', email: 'ruth@halewhitcombe.law', role: 'owner', active: 'Now', status: 'active', tone: 3 },
+  { id: 'hm2', name: 'Daniel Whitcombe', email: 'daniel@halewhitcombe.law', role: 'owner', active: '1 hr ago', status: 'active', tone: 1 },
+  { id: 'hm3', name: 'Priya Raman', email: 'priya@halewhitcombe.law', role: 'editor', active: 'Today', status: 'active', tone: 5 },
+  { id: 'hm4', name: 'Tom Ashby', email: 'tom@halewhitcombe.law', role: 'editor', active: 'Fri', status: 'active', tone: 2 },
+  { id: 'hm5', user: me.id, name: me.name, email: 'nora@halewhitcombe.law', role: 'editor', active: 'Now', status: 'active', tone: me.tone },
+  { id: 'hm6', name: 'Grace Liu', email: 'grace@halewhitcombe.law', role: 'viewer', active: 'Sep 20', status: 'active', tone: 4 },
+  { id: 'hm7', name: 'Owen Price', email: 'owen.price@mail.com', role: 'viewer', active: '', status: 'invited', tone: 6 }
 ];
 
 const fieldMembers = [
-  { id: 'fm1', name: 'Jun Park', email: 'jun@fieldnote.studio', role: 'owner', groups: ['Design'], active: 'Now', status: 'active', tone: 2 },
-  { id: 'fm2', name: 'Lea Fontaine', email: 'lea@fieldnote.studio', role: 'editor', groups: ['Design'], active: 'Today', status: 'active', tone: 4 },
-  { id: 'fm3', name: 'Sam Ortiz', email: 'sam@fieldnote.studio', role: 'editor', groups: ['Research'], active: 'Mon', status: 'active', tone: 1 },
-  { id: 'fm4', name: me.name, email: 'nora@fieldnote.studio', role: 'editor', groups: ['Research'], active: 'Now', status: 'active', tone: me.tone },
-  { id: 'fm5', name: 'Mika Sato', email: 'mika@fieldnote.studio', role: 'viewer', groups: [], active: 'Sep 17', status: 'active', tone: 5 }
+  { id: 'fm1', name: 'Jun Park', email: 'jun@fieldnote.studio', role: 'owner', active: 'Now', status: 'active', tone: 2 },
+  { id: 'fm2', name: 'Lea Fontaine', email: 'lea@fieldnote.studio', role: 'editor', active: 'Today', status: 'active', tone: 4 },
+  { id: 'fm3', name: 'Sam Ortiz', email: 'sam@fieldnote.studio', role: 'editor', active: 'Mon', status: 'active', tone: 1 },
+  { id: 'fm4', user: me.id, name: me.name, email: 'nora@fieldnote.studio', role: 'editor', active: 'Now', status: 'active', tone: me.tone },
+  { id: 'fm5', name: 'Mika Sato', email: 'mika@fieldnote.studio', role: 'viewer', active: 'Sep 17', status: 'active', tone: 5 }
+];
+
+const person = (name, email, permission, tone) => ({ name, email, permission, tone });
+
+const okaforShares = [
+  { id: 'sh1', kind: 'file', target: 'f1', link: 'off', by: 'Nora Okafor', date: 'Oct 28', people: [person('Margaret Ellis', 'm.ellis@leedsarchives.org', 'comment', 4), person('Ifeoma Nwosu', 'ifeoma.nwosu@mail.ng', 'edit', 5)] },
+  { id: 'sh3', kind: 'folder', target: 'Reunion book', link: 'view', by: 'Tobi Okafor', date: 'Oct 12', people: [person('Samuel Ibe', 'samuel.ibe@mail.com', 'view', 1)] },
+  { id: 'sh4', kind: 'table', target: 'person', link: 'off', by: 'Emeka Okafor', date: 'Sep 30', people: [person('Margaret Ellis', 'm.ellis@leedsarchives.org', 'view', 4), person('Ifeoma Nwosu', 'ifeoma.nwosu@mail.ng', 'edit', 5), person('Kelechi Nwosu', 'kelechi@nwosu.co.uk', 'view', 2), person('Samuel Ibe', 'samuel.ibe@mail.com', 'view', 1)] }
+];
+
+const haleShares = [
+  { id: 'sh5', kind: 'file', target: 'h1', link: 'off', by: 'Ruth Hale', date: 'Oct 30', people: [person('Alan Brooks', 'a.brooks@brightwaterlegal.com', 'view', 2), person('Fiona Grant', 'f.grant@brightwaterlegal.com', 'view', 6)] },
+  { id: 'sh6', kind: 'file', target: 'h3', link: 'off', by: 'Priya Raman', date: 'Oct 29', people: [person('James Mercer', 'james@mercerholdings.co.uk', 'comment', 3)] },
+  { id: 'sh7', kind: 'workflow', target: 'wf-billing', link: 'off', by: 'Daniel Whitcombe', date: 'Oct 3', people: [person('Tom Ashby', 'tom@halewhitcombe.law', 'edit', 2)] }
+];
+
+const fieldShares = [
+  { id: 'sh8', kind: 'folder', target: 'Linden moodboard', link: 'view', by: 'Lea Fontaine', date: 'Yesterday', people: [person('Helen Marsh', 'h.marsh@lindenlibrary.org', 'comment', 5)] },
+  { id: 'sh9', kind: 'file', target: 's7', link: 'off', by: 'Mika Sato', date: 'Sep 18', people: [person('Ravi Desai', 'ravi@signworks.nyc', 'view', 1)] },
+  { id: 'sh10', kind: 'table', target: 'brief', link: 'off', by: 'Jun Park', date: 'Oct 22', people: [person('Helen Marsh', 'h.marsh@lindenlibrary.org', 'view', 5), person('Lea Fontaine', 'lea@fieldnote.studio', 'edit', 4)] }
 ];
 
 function settings() {
-  return { defaultRole: 'viewer', invites: true, sharing: false, region: 'us-central1', retention: 'forever' };
+  return { defaultRole: 'viewer', invites: true, sharing: true, region: 'us-central1', retention: 'forever' };
 }
 
 function vault(base) {
@@ -65,8 +86,9 @@ function vault(base) {
     library: [],
     folders: [],
     workflows: [],
-    members: [{ id: `m-${base.id}`, name: me.name, email: me.email, role: 'owner', groups: [], active: 'Now', status: 'active', tone: me.tone }],
-    groups: [],
+    members: [{ id: `m-${base.id}`, name: me.name, email: me.email, role: 'owner', active: 'Now', status: 'active', tone: me.tone }],
+   
+    schema: schemaFor(base.id),
     ...base,
     connectors: connectorsFor(base.id)
   };
@@ -102,8 +124,8 @@ export function seed() {
       library: okaforLibrary,
       folders: folderNames(okaforLibrary),
       workflows: structuredClone(workflowSeed.okafor),
-      members: members.map((m) => ({ ...m, groups: [...m.groups] })),
-      groups: groups.map((g) => ({ ...g }))
+      shares: structuredClone(okaforShares),
+      members: members.map((m) => ({ ...m }))
     }),
     vault({
       id: 'hale',
@@ -116,11 +138,8 @@ export function seed() {
       library: haleLibrary.map((f) => ({ ...f })),
       folders: folderNames(haleLibrary),
       workflows: structuredClone(workflowSeed.hale),
-      members: haleMembers.map((m) => ({ ...m, groups: [...m.groups] })),
-      groups: [
-        { id: 'hg1', name: 'Partners' },
-        { id: 'hg2', name: 'Litigation' }
-      ]
+      shares: structuredClone(haleShares),
+      members: haleMembers.map((m) => ({ ...m }))
     }),
     vault({
       id: 'fieldnote',
@@ -133,11 +152,8 @@ export function seed() {
       library: fieldLibrary.map((f) => ({ ...f })),
       folders: folderNames(fieldLibrary),
       workflows: structuredClone(workflowSeed.fieldnote),
-      members: fieldMembers.map((m) => ({ ...m, groups: [...m.groups] })),
-      groups: [
-        { id: 'fg1', name: 'Design' },
-        { id: 'fg2', name: 'Research' }
-      ]
+      shares: structuredClone(fieldShares),
+      members: fieldMembers.map((m) => ({ ...m }))
     }),
     vault({
       id: 'personal',

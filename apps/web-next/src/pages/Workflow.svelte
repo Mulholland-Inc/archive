@@ -1,5 +1,5 @@
 <script>
-  import { Pause, Play, Square, Bot, RotateCcw, ListX, Ellipsis, Pencil, Trash2, CircleCheck } from '@lucide/svelte';
+  import { Pause, Play, Square, Bot, RotateCcw, ListX, Ellipsis, Trash2, CircleCheck, Share } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
   import Breadcrumbs from '../components/Breadcrumbs.svelte';
@@ -14,9 +14,6 @@
   import ProgressBar from '../components/ProgressBar.svelte';
   import SettingsRow from '../components/SettingsRow.svelte';
   import TriggerLabel from '../components/TriggerLabel.svelte';
-  import Composer from '../components/Composer.svelte';
-  import ComposerDock from '../components/ComposerDock.svelte';
-  import StepPill from '../components/StepPill.svelte';
   import Button from '../components/Button.svelte';
   import IconButton from '../components/IconButton.svelte';
   import Switch from '../components/Switch.svelte';
@@ -29,13 +26,12 @@
   import Icon from '../components/Icon.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { app, workflowById, runWorkflow, toggleWorkflow, renameWorkflow, removeWorkflow, pauseRun, stopRun, resolveRun, steerRun } from '../lib/app.svelte.js';
-  import { prompt, confirmDialog } from '../lib/dialogs.svelte.js';
+  import { workflowById, runWorkflow, toggleWorkflow, renameWorkflow, removeWorkflow, openShare, pauseRun, stopRun, resolveRun } from '../lib/app.svelte.js';
+  import { confirmDialog } from '../lib/dialogs.svelte.js';
 
   let { id } = $props();
   const wf = $derived(workflowById(id));
   let selected = $state(null);
-  let value = $state('');
   let open = $state(true);
 
   const run = $derived(wf?.runs.find((r) => r.id === selected) ?? wf?.runs[0]);
@@ -57,11 +53,6 @@
   function start() {
     selected = runWorkflow(id);
     open = true;
-  }
-
-  async function rename() {
-    const name = await prompt({ title: 'Rename workflow', label: 'Name', value: wf.name });
-    if (name) renameWorkflow(id, name);
   }
 
   async function remove() {
@@ -87,18 +78,18 @@
 {#if wf}
   <Page width="wide">
     <Split size="lg" sticky>
-      <PageHeader title={wf.name}>
+      <PageHeader title={wf.name} renameLabel="Rename workflow" onrename={(name) => renameWorkflow(id, name)}>
         {#snippet actions()}
           <Menu placement="bottom-end" width="sm" label="Workflow actions">
             {#snippet trigger(props)}<IconButton icon={Ellipsis} label="Workflow actions" {...props} />{/snippet}
-            <MenuItem icon={Pencil} onselect={rename}>Rename</MenuItem>
             <MenuItem icon={Play} onselect={start}>Run now</MenuItem>
+            <MenuItem icon={Share} onselect={() => openShare('workflow', wf.id)}>Share</MenuItem>
             <MenuSeparator />
             <MenuItem icon={Trash2} danger onselect={remove}>Delete</MenuItem>
           </Menu>
         {/snippet}
         <Stack direction="row" gap="3" align="center" wrap>
-          {#if run}<StatusBadge status={run.paused ? 'paused' : run.status} />{/if}
+          {#if run}<StatusBadge status={run.paused ? 'paused' : run.status} plain />{/if}
           <TriggerLabel trigger={wf.trigger} />
         </Stack>
       </PageHeader>
@@ -146,11 +137,15 @@
         <Card padding="md" variant="filled">
           <Section title="Runs">
             {#if wf.runs.length}
-              <List label="Runs" divided={false} inset>
+              <List label="Runs">
                 {#each wf.runs as r (r.id)}
                   <ListItem title={`Run #${r.number}`} size="sm" active={r.id === run?.id} onclick={() => (selected = r.id)}>
-                    {#snippet meta()}{r.started}, {r.elapsed}{/snippet}
-                    {#snippet trailing()}<StatusBadge status={r.paused ? 'paused' : r.status} />{/snippet}
+                    {#snippet trailing()}
+                      <Stack direction="row" gap="3" align="center">
+                        <Text size="sm" tone="tertiary">{r.started}</Text>
+                        <StatusBadge status={r.paused ? 'paused' : r.status} plain />
+                      </Stack>
+                    {/snippet}
                   </ListItem>
                 {/each}
               </List>
@@ -162,14 +157,6 @@
       {/snippet}
     </Split>
   </Page>
-  {#if run}
-    <ComposerDock>
-      {#snippet above()}
-        {#if current}<StepPill label={current.label} {done} total={run.steps.length} running={live && !run.paused} onclick={() => (open = !open)} />{/if}
-      {/snippet}
-      <Composer bind:value bind:model={app.model} placeholder={live ? 'Steer this run' : 'Ask about this run'} onsend={({ text }) => text && steerRun(run, text)} />
-    </ComposerDock>
-  {/if}
 {:else}
   <Page center>
     <EmptyState icon={ListX} title="Workflow not found">

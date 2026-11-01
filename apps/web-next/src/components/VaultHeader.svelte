@@ -22,11 +22,13 @@
     gap: var(--space-3);
     width: 100%;
     min-width: 0;
-    padding: var(--space-2);
+    min-height: var(--vault-header);
+    padding: var(--space-3) var(--space-3);
   }
 
   .collapsed {
-    padding: var(--space-0);
+    justify-content: center;
+    padding: var(--space-3) var(--space-0);
     gap: var(--space-0);
   }
 
@@ -51,7 +53,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     color: var(--color-text-tertiary);
-    font-size: var(--text-xs);
+    font-size: var(--text-sm);
   }
 
   .collapsed .lines {

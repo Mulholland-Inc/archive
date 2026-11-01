@@ -4,7 +4,7 @@
   import { fade, pop } from '../lib/motion.js';
   import { uid } from '../lib/ids.js';
 
-  let { open = $bindable(false), title, size = 'md', bare = false, footer, children, onclose } = $props();
+  let { open = $bindable(false), title, label, size = 'md', bare = false, leading, footer, children, onclose } = $props();
 
   const titleId = uid('dlg');
 
@@ -38,12 +38,15 @@
 </script>
 
 {#if open}
-  <dialog use:modal class="dialog" aria-labelledby={title ? titleId : undefined}>
+  <dialog use:modal class="dialog" aria-labelledby={title ? titleId : undefined} aria-label={title ? undefined : label}>
     <button type="button" class="scrim" tabindex="-1" aria-label="Close dialog" onclick={close} transition:fade={{ speed: 'normal' }}></button>
     <div class={['panel', size, { bare }]} tabindex="-1" transition:pop>
       {#if title}
         <header>
-          <h2 id={titleId}>{title}</h2>
+          <div class="title">
+            {#if leading}{@render leading()}{/if}
+            <h2 id={titleId}>{title}</h2>
+          </div>
           <IconButton icon={X} label="Close" size="sm" tooltip={false} onclick={close} />
         </header>
       {/if}
@@ -62,6 +65,7 @@
     width: 100%;
     height: 100%;
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     place-items: center;
     padding: var(--space-6);
     overflow: hidden;
@@ -92,12 +96,21 @@
 
   .sm { max-width: var(--dialog-sm); }
   .lg { max-width: var(--dialog-lg); }
+  .tall { max-width: var(--dialog-lg); height: min(var(--type-dialog-height), calc(100vh - var(--space-12))); }
+  .tall .body { flex: 1; overflow: hidden; }
+  .xl { max-width: min(var(--dialog-xl), calc(100vw - var(--dialog-xl-margin))); height: min(var(--dialog-xl-height), calc(100vh - var(--dialog-xl-margin))); max-height: none; }
+  .xl .body { flex: 1; gap: var(--space-0); overflow: hidden; }
   .palette { max-width: var(--palette-width); align-self: start; margin-block-start: 12vh; }
 
   .bare {
     padding: var(--space-0);
     gap: var(--space-0);
     overflow: hidden;
+  }
+
+  @media (max-width: 56rem) {
+    .dialog:has(.xl) { padding: var(--space-0); }
+    .xl { max-width: none; height: 100%; max-height: none; border-radius: var(--radius-none); box-shadow: none; }
   }
 
   header {
@@ -107,10 +120,17 @@
     gap: var(--space-4);
   }
 
+  .title {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-width: 0;
+  }
+
   h2 {
-    font-family: var(--font-serif);
-    font-size: var(--text-xl);
-    font-weight: var(--weight-serif);
+    font-family: var(--font-sans);
+    font-size: var(--text-lg);
+    font-weight: var(--weight-semibold);
     line-height: var(--leading-tight);
     letter-spacing: var(--tracking-normal);
   }

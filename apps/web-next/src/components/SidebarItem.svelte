@@ -3,8 +3,9 @@
   import Icon from './Icon.svelte';
   import Tooltip from './Tooltip.svelte';
   import Kbd from './Kbd.svelte';
+  import InlineEdit from './InlineEdit.svelte';
 
-  let { href, icon, label, active = false, onclick, shortcut, accent = false, leading, actions, badge } = $props();
+  let { href, icon, label, active = false, onclick, shortcut, accent = false, leading, actions, badge, onrename, editing = $bindable(false) } = $props();
 
   const sidebar = getContext('sidebar');
   const collapsed = $derived(sidebar?.collapsed ?? false);
@@ -12,8 +13,10 @@
 
 {#snippet row()}
   <div class={['item', { active, collapsed, accent, hasActions: actions }]}>
-    {#if href}
-      <a class="hit" {href} aria-current={active ? 'page' : undefined} aria-label={collapsed ? label : undefined}>
+    {#if editing && onrename}
+      <InlineEdit value={label} label={`Rename ${label}`} onsave={(title) => { editing = false; onrename(title); }} oncancel={() => (editing = false)} />
+    {:else if href}
+      <a class="hit" {href} aria-current={active ? 'page' : undefined} aria-label={collapsed ? label : undefined} ondblclick={onrename ? (event) => { event.preventDefault(); editing = true; } : undefined}>
         {@render content()}
       </a>
     {:else}
@@ -21,7 +24,7 @@
         {@render content()}
       </button>
     {/if}
-    {#if actions && !collapsed}<span class="actions">{@render actions()}</span>{/if}
+    {#if actions && !collapsed && !editing}<span class="actions">{@render actions()}</span>{/if}
   </div>
 {/snippet}
 

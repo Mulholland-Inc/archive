@@ -1,105 +1,90 @@
 <script>
-  import { initials, toneFor } from '../lib/data.js';
+  import { avatarShape } from '../lib/avatarShape.js';
 
-  let { name = '', src, size = 'md', square = false, tone, ring = false, status } = $props();
-  const t = $derived(tone ?? toneFor(name));
+  let { name = '', seed, src, size = 'md' } = $props();
+  const small = $derived(size === 'xs' || size === 'sm');
+  const shape = $derived(avatarShape(seed || name, { small }));
+  const stroke = $derived({ xs: 2.6, sm: 2.3, md: 1.9, ml: 1.8, lg: 1.7, xl: 1.4 }[size] ?? 1.9);
 </script>
 
-<span class={['avatar', size, `t${t}`, { square, ring }]} title={name}>
+<span class={['avatar', size]} role="img" aria-label={name} title={name}>
   {#if src}
-    <img {src} alt={name} />
+    <img {src} alt="" />
   {:else}
-    <span aria-hidden="true">{size === 'xs' || size === 'sm' ? initials(name).slice(0, 1) : initials(name)}</span>
-    <span class="visually-hidden">{name}</span>
+    <svg viewBox="0 0 64 64" aria-hidden="true">
+      <circle class="disc" cx="32" cy="35" r="29" />
+      {#each shape.solids as s, i (i)}
+        {#each s.faces as f, j (j)}
+          <path d={f.d} fill={f.fill} fill-rule={f.evenodd ? 'evenodd' : undefined} />
+        {/each}
+        {#each s.edges as d, j (j)}
+          <path {d} class="ink" stroke-width={stroke * 0.8} />
+        {/each}
+        {#each s.outline as d, j (j)}
+          <path {d} class="ink" stroke-width={stroke} />
+        {/each}
+      {/each}
+    </svg>
   {/if}
-  {#if status}<span class={['status', status]}></span>{/if}
 </span>
 
 <style>
   .avatar {
-    position: relative;
     display: inline-grid;
     place-items: center;
     flex: none;
     width: var(--avatar-md);
     height: var(--avatar-md);
-    border-radius: var(--radius-full);
-    color: var(--color-avatar-text);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-semibold);
-    letter-spacing: var(--tracking-wide);
-    line-height: var(--leading-none);
     user-select: none;
+  }
+
+  svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
   }
 
   img {
     width: 100%;
     height: 100%;
-    border-radius: inherit;
+    border-radius: var(--radius-full);
     object-fit: cover;
+  }
+
+  .disc {
+    fill: var(--color-fill-strong);
+  }
+
+  .ink {
+    fill: none;
+    stroke: var(--color-avatar-ink);
+    stroke-linejoin: round;
+    stroke-linecap: round;
   }
 
   .xs {
     width: var(--avatar-xs);
     height: var(--avatar-xs);
-    font-size: var(--text-2xs);
-    letter-spacing: var(--tracking-normal);
   }
 
   .sm {
     width: var(--avatar-sm);
     height: var(--avatar-sm);
-    font-size: var(--text-2xs);
+  }
+
+  .ml {
+    width: var(--avatar-ml);
+    height: var(--avatar-ml);
   }
 
   .lg {
     width: var(--avatar-lg);
     height: var(--avatar-lg);
-    font-size: var(--text-md);
   }
 
   .xl {
     width: var(--avatar-xl);
     height: var(--avatar-xl);
-    font-size: var(--text-xl);
-  }
-
-  .square {
-    border-radius: var(--radius-md);
-  }
-
-  .square.xs,
-  .square.sm {
-    border-radius: var(--radius-sm);
-  }
-
-  .square.xl {
-    border-radius: var(--radius-xl);
-  }
-
-  .ring {
-    box-shadow: 0 0 0 var(--focus-width) var(--color-canvas);
-  }
-
-  .t1 { background: var(--color-avatar-1); }
-  .t2 { background: var(--color-avatar-2); }
-  .t3 { background: var(--color-avatar-3); }
-  .t4 { background: var(--color-avatar-4); }
-  .t5 { background: var(--color-avatar-5); }
-  .t6 { background: var(--color-avatar-6); }
-
-  .status {
-    position: absolute;
-    inset-inline-end: calc(var(--space-0-5) * -1);
-    inset-block-end: calc(var(--space-0-5) * -1);
-    width: var(--space-2);
-    height: var(--space-2);
-    border-radius: var(--radius-full);
-    box-shadow: 0 0 0 var(--focus-width) var(--color-canvas);
-    background: var(--color-text-tertiary);
-  }
-
-  .online {
-    background: var(--color-success);
   }
 </style>

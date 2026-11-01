@@ -13,25 +13,27 @@
 {#if drawer}
   <button type="button" class="scrim" aria-label="Close sidebar" tabindex="-1" onclick={onclose}></button>
 {/if}
-<aside class={['sidebar', { collapsed, drawer, railed: !!rail }]} aria-label="Sidebar">
+<aside class={['sidebar', { collapsed, drawer, railed: !!rail, docked: !!footer }]} aria-label="Sidebar">
   {@render rail?.()}
   <div class="column">
     <div class="head">{@render header?.()}</div>
     <nav class="body">{@render children()}</nav>
-    <div class="foot">{@render footer?.()}</div>
   </div>
+  {#if footer}<div class="foot">{@render footer()}</div>{/if}
 </aside>
 
 <style>
   .sidebar {
     position: relative;
     --rail-space: 0rem;
+    --dock-space: 0rem;
     z-index: var(--z-sidebar);
     display: flex;
     flex: none;
     width: calc(var(--sidebar-width) + var(--rail-space));
     height: 100%;
     background: var(--color-sidebar);
+    box-shadow: inset calc(var(--border-width) * -1) 0 0 var(--color-border-subtle);
     transition:
       width var(--duration-slow) var(--ease-in-out),
       transform var(--duration-slow) var(--ease-in-out),
@@ -41,6 +43,10 @@
 
   .railed {
     --rail-space: var(--vault-rail);
+  }
+
+  .docked {
+    --dock-space: calc(var(--dock-height) + var(--space-2));
   }
 
   .collapsed {
@@ -53,14 +59,20 @@
     flex: 1;
     min-width: 0;
     height: 100%;
+    padding-block-end: var(--dock-space);
   }
 
-  .head,
-  .foot {
+  .head {
     display: flex;
     flex-direction: column;
     gap: var(--space-px);
-    padding: var(--space-2);
+    box-shadow: inset 0 calc(var(--border-width) * -1) 0 var(--color-border-subtle);
+  }
+
+  .foot {
+    position: absolute;
+    inset-inline: var(--space-2);
+    inset-block-end: var(--space-2);
   }
 
   .body {
@@ -72,7 +84,6 @@
     padding: var(--space-2);
     overflow-y: auto;
     overflow-x: hidden;
-    mask-image: linear-gradient(to bottom, transparent, black var(--space-3), black calc(100% - var(--fade-size)), transparent);
   }
 
   .scrim {
@@ -86,7 +97,6 @@
       inset-inline-start: 0;
       width: calc(var(--sidebar-width) + var(--rail-space));
       transform: translateX(-100%);
-      box-shadow: none;
       visibility: hidden;
       transition:
         transform var(--duration-slow) var(--ease-in-out),
@@ -96,7 +106,7 @@
     .drawer {
       transform: none;
       visibility: visible;
-      box-shadow: var(--ring-strong);
+      box-shadow: var(--ring-strong), inset calc(var(--border-width) * -1) 0 0 var(--color-border-subtle);
     }
 
     .scrim {

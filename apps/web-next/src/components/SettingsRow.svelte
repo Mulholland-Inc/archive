@@ -12,9 +12,9 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-6);
+    gap: var(--space-4);
     min-height: var(--list-row);
-    padding-block: var(--space-2);
+    padding-block: var(--space-1-5);
   }
 
   .row + :global(.row) {
@@ -24,7 +24,7 @@
   .stacked {
     flex-direction: column;
     align-items: stretch;
-    gap: var(--space-3);
+    gap: var(--space-2);
   }
 
   .label {

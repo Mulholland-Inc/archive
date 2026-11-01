@@ -1,22 +1,24 @@
 <script>
+  import { Plus, Check, BadgeCheck } from '@lucide/svelte';
   import ConnectorIcon from './ConnectorIcon.svelte';
-  import StatusBadge from './StatusBadge.svelte';
-  import Button from './Button.svelte';
+  import IconButton from './IconButton.svelte';
+  import Icon from './Icon.svelte';
 
   let { connector, onopen, onconnect } = $props();
 </script>
 
 <article class="card">
   <button type="button" class="hit" aria-label={`${connector.name} details`} onclick={onopen}></button>
-  <ConnectorIcon id={connector.id} />
+  <span class="logo"><ConnectorIcon id={connector.id} /></span>
   <div class="text">
-    <span class="name">{connector.name}</span>
-    <span class="meta">{connector.connected ? connector.account : connector.category}</span>
+    <span class="name">{connector.name}<span class="verified" role="img" aria-label="Verified"><Icon icon={BadgeCheck} size="sm" /></span></span>
+    <p class="description">{connector.connected ? connector.account : connector.description}</p>
+    <span class="by">by {connector.by}</span>
   </div>
   {#if connector.connected}
-    <StatusBadge status="connected" />
+    <span class="done" role="img" aria-label="Connected"><Icon icon={Check} size="md" /></span>
   {:else}
-    <span class="action"><Button size="sm" onclick={onconnect}>Connect</Button></span>
+    <span class="action"><IconButton icon={Plus} label={`Connect ${connector.name}`} variant="subtle" tooltip={false} onclick={onconnect} /></span>
   {/if}
 </article>
 
@@ -24,18 +26,17 @@
   .card {
     position: relative;
     display: flex;
-    align-items: center;
-    gap: var(--space-3);
+    align-items: flex-start;
+    gap: var(--space-4);
     min-width: 0;
-    padding: var(--space-3);
-    border-radius: var(--radius-xl);
-    background: var(--color-surface);
-    box-shadow: inset 0 0 0 var(--border-width) var(--color-border);
-    transition: box-shadow var(--duration-normal) var(--ease-out);
+    padding: var(--space-4);
+    border-radius: var(--radius-lg);
+    background: var(--color-fill-subtle);
+    transition: background-color var(--duration-fast) var(--ease-out);
   }
 
   .card:hover {
-    box-shadow: inset 0 0 0 var(--border-width) var(--color-border-strong), var(--ring);
+    background: var(--color-fill);
   }
 
   .hit {
@@ -44,27 +45,73 @@
     border-radius: inherit;
   }
 
-  .action {
-    position: relative;
-    z-index: var(--z-raised);
+  .logo {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: var(--control-2xl);
+    height: var(--control-2xl);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    box-shadow: inset 0 0 0 var(--border-width) var(--color-border-subtle);
+  }
+
+  .logo :global(.tile) {
+    width: var(--icon-xl);
+    height: var(--icon-xl);
   }
 
   .text {
     display: flex;
     flex-direction: column;
+    gap: var(--space-1);
     flex: 1;
     min-width: 0;
   }
 
   .name {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1-5);
+    min-width: 0;
+    font-size: var(--text-base);
     font-weight: var(--weight-medium);
+    line-height: var(--leading-tight);
   }
 
-  .meta {
+  .verified {
+    display: flex;
+    color: var(--color-text-secondary);
+  }
+
+  .description {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
+    color: var(--color-text-secondary);
+    font-size: var(--text-md);
+  }
+
+  .by {
     color: var(--color-text-tertiary);
-    font-size: var(--text-sm);
+    font-size: var(--text-md);
+  }
+
+  .action {
+    position: relative;
+    z-index: var(--z-raised);
+  }
+
+  .done {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: var(--control-md);
+    height: var(--control-md);
+    border-radius: var(--radius-md);
+    color: var(--color-success);
   }
 </style>

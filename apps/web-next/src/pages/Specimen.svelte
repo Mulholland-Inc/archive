@@ -53,12 +53,19 @@
   import Divider from '../components/Divider.svelte';
   import ProgressBar from '../components/ProgressBar.svelte';
   import FileTile from '../components/FileTile.svelte';
+  import SchemaGraph from '../components/SchemaGraph.svelte';
+  import SchemaNode from '../components/SchemaNode.svelte';
+  import ZoomControls from '../components/ZoomControls.svelte';
+  import Art from '../components/Art.svelte';
+  import ServerSettings from '../components/ServerSettings.svelte';
+  import TypeDetail from '../components/TypeDetail.svelte';
+  import { schemaFor } from '../lib/schema.js';
   import Attachment from '../components/Attachment.svelte';
   import Composer from '../components/Composer.svelte';
   import Message from '../components/Message.svelte';
   import Steps from '../components/Steps.svelte';
   import CodeBlock from '../components/CodeBlock.svelte';
-  import StepPill from '../components/StepPill.svelte';
+  import RunProgress from '../components/RunProgress.svelte';
   import WorkflowCard from '../components/WorkflowCard.svelte';
   import VaultIcon from '../components/VaultIcon.svelte';
   import LookPicker from '../components/LookPicker.svelte';
@@ -75,16 +82,25 @@
   import SidebarItem from '../components/SidebarItem.svelte';
   import SidebarSection from '../components/SidebarSection.svelte';
   import VaultHeader from '../components/VaultHeader.svelte';
+  import AccountMenu from '../components/AccountMenu.svelte';
   import ThemePicker from '../components/ThemePicker.svelte';
   import Disclosure from '../components/Disclosure.svelte';
   import SettingsRow from '../components/SettingsRow.svelte';
   import Greeting from '../components/Greeting.svelte';
   import SpecimenFrame from '../components/SpecimenFrame.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
+  import SettingsNav from '../components/SettingsNav.svelte';
+  import SettingsPane from '../components/SettingsPane.svelte';
+  import NotificationSettings from '../components/NotificationSettings.svelte';
+  import ConnectorDetail from '../components/ConnectorDetail.svelte';
+  import { openSettings, openShare, ws } from '../lib/app.svelte.js';
+  import { User as UserIcon, Palette as PaletteIcon, Bell as BellIcon, Plug as PlugIcon } from '@lucide/svelte';
   import { library, conversations, members, me } from '../lib/data.js';
   import { theme, setTheme } from '../lib/theme.svelte.js';
   import { toast } from '../lib/toast.svelte.js';
   import { app } from '../lib/app.svelte.js';
+  const familySchema = schemaFor('okafor');
+  const avatarSeeds = Array.from({ length: 24 }, (_, i) => `user-${i + 1}`);
 
   const sections = [
     ['color', 'Color'], ['type', 'Typography'], ['space', 'Space and shape'], ['motion', 'Motion'],
@@ -118,6 +134,7 @@
   let streaming = $state(false);
   let disclosure = $state(true);
   let look = $state({ type: 'family', icon: 'castle', tint: 4 });
+  let settingsSection = $state('appearance');
 
   const roles = [
     { value: 'viewer', label: 'Viewer' },
@@ -370,7 +387,7 @@
             {#snippet trigger(props)}<Button icon={Share} {...props}>Share</Button>{/snippet}
             {#snippet children({ close })}
               <Stack gap="3">
-                <Text weight="medium">Share this chat</Text>
+                <Text weight="medium">Share this file</Text>
                 <Input size="sm" value="https://app.archive.dev/s/8f2k" readonly aria-label="Link" />
                 <Stack direction="row" gap="2" justify="end">
                   <Button size="sm" variant="ghost" onclick={close}>Close</Button>
@@ -381,6 +398,22 @@
           </Popover>
           <Tooltip text="Tooltips appear after a short delay"><Button variant="ghost" icon={Info}>Hover me</Button></Tooltip>
           <Tooltip text="With a shortcut" shortcut="⌘ K" placement="bottom"><Button variant="ghost" icon={Keyboard}>And me</Button></Tooltip>
+        </SpecimenBlock>
+        <SpecimenBlock title="Share dialog">
+          <Button icon={Share} onclick={() => openShare('table', ws().schema[0]?.id)}>Share a table</Button>
+          <Button icon={Share} onclick={() => openShare('file', ws().library[0]?.id)}>Share a file</Button>
+        </SpecimenBlock>
+        <SpecimenBlock title="Settings dialog">
+          <Button onclick={() => openSettings()}>Open settings</Button>
+          <Button onclick={() => openSettings('connectors')}>Open connectors</Button>
+          <Button onclick={() => openSettings('connectors', 'gdrive')}>Open a connector</Button>
+        </SpecimenBlock>
+        <SpecimenBlock title="Settings nav">
+          <SettingsNav active={settingsSection} onselect={(id) => (settingsSection = id)} items={[{ id: 'profile', label: 'Profile', icon: UserIcon }, { id: 'appearance', label: 'Appearance', icon: PaletteIcon }, { id: 'notifications', label: 'Notifications', icon: BellIcon }, { id: 'connectors', label: 'Connectors', icon: PlugIcon, group: 'Customize' }, { id: 'api', label: 'API keys', icon: PlugIcon, group: 'Platform', href: '#/specimen' }]} />
+        </SpecimenBlock>
+        <SpecimenBlock title="Settings pane" column>
+          <Card padding="none"><SettingsPane title="Notifications"><NotificationSettings /></SettingsPane></Card>
+          <Card padding="none"><SettingsPane title={catalog[0].name} onback={() => toast('Back pressed')}><ConnectorDetail connector={{ ...catalog[0], connected: true, account: 'nora.okafor@gmail.com', lastSync: '2 min ago', items: 412 }} /></SettingsPane></Card>
         </SpecimenBlock>
         <SpecimenBlock title="Dialog, toast and command palette">
           <Button onclick={() => (dialog = true)}>Open dialog</Button>
@@ -393,19 +426,17 @@
       </SpecimenSection>
 
       <SpecimenSection id="s-display" title="Data display">
-        <SpecimenBlock title="Avatars">
-          <Avatar name="Nora Okafor" size="xs" />
-          <Avatar name="Nora Okafor" size="sm" />
-          <Avatar name="Chidi Okafor" />
-          <Avatar name="Ruth Hale" size="lg" status="online" />
-          <Avatar name="Jun Park" size="xl" />
-          <Avatar name="Okafor Family Archive" square tone={1} />
-          <Avatar name="Fieldnote Studio" square size="lg" tone={2} />
+        <SpecimenBlock title="Avatars" column>
+          {#each ['xs', 'sm', 'md', 'lg', 'xl'] as size (size)}
+            <Stack direction="row" gap="2" align="center" wrap>
+              {#each avatarSeeds as id (id)}<Avatar name={id} seed={id} {size} />{/each}
+            </Stack>
+          {/each}
         </SpecimenBlock>
         <SpecimenBlock title="Avatar groups">
-          <AvatarGroup names={members.slice(0, 3).map((m) => m.name)} size="xs" />
-          <AvatarGroup names={members.map((m) => m.name)} />
-          <AvatarGroup names={members.map((m) => m.name)} size="md" max={5} />
+          <AvatarGroup people={members.slice(0, 3)} size="xs" />
+          <AvatarGroup people={members} />
+          <AvatarGroup people={members} size="md" max={5} />
         </SpecimenBlock>
         <SpecimenBlock title="Badges">
           <Badge>Plain</Badge><Badge icon={Pin}>With icon</Badge>
@@ -440,7 +471,7 @@
           <Table {columns} rows={members.slice(0, 4)} label="Members" onrowclick={(r) => toast(r.name)}>
             {#snippet cell(row, col)}
               {#if col.key === 'name'}
-                <Stack direction="row" gap="2" align="center"><Avatar name={row.name} size="sm" /><Text weight="medium">{row.name}</Text></Stack>
+                <Stack direction="row" gap="2" align="center"><Avatar name={row.name} seed={row.user ?? row.id} size="sm" /><Text weight="medium">{row.name}</Text></Stack>
               {:else if col.key === 'role'}
                 <Chip size="sm">{row.role}</Chip>
               {:else}{row[col.key]}{/if}
@@ -451,6 +482,22 @@
           <Grid min="tile" gap="2">
             {#each [library[0], library[1], library[2], library[4], library[5]] as f (f.id)}<FileTile file={f} />{/each}
           </Grid>
+        </SpecimenBlock>
+        <SpecimenBlock title="Schema node">
+          <SchemaNode type={familySchema[1]} names={Object.fromEntries(familySchema.map((t) => [t.id, t.name]))} />
+          <ZoomControls />
+        </SpecimenBlock>
+        <SpecimenBlock title="Schema graph" column>
+          <SpecimenFrame><SchemaGraph types={familySchema} /></SpecimenFrame>
+        </SpecimenBlock>
+        <SpecimenBlock title="Art">
+          <Art name="server" />
+        </SpecimenBlock>
+        <SpecimenBlock title="Server settings" column>
+          <ServerSettings />
+        </SpecimenBlock>
+        <SpecimenBlock title="Type detail" column>
+          <TypeDetail type={familySchema[0]} types={familySchema} />
         </SpecimenBlock>
         <SpecimenBlock title="Attachments">
           <Attachment name="adaeze-letter-03.jpg" kind="image" size="2.4 MB" tone={4} />
@@ -507,8 +554,8 @@
         <SpecimenBlock title="Work disclosure: running and finished" column>
           <Steps steps={runningSteps} running open />
           <Steps steps={conversations['mercer-timeline'][1].steps} worked="25s" />
-          <StepPill label="Transcribe cassette 7" done={3} total={6} running />
-          <StepPill label="Email 9 members" done={4} total={4} />
+          <RunProgress steps={[{ id: 'a', label: 'Find the cassette', status: 'done', time: '2s' }, { id: 'b', label: 'Transcribe cassette 7', status: 'running' }, { id: 'c', label: 'Save the transcript', status: 'pending' }]} />
+          <RunProgress steps={[{ id: 'a', label: 'Write the digest', status: 'done', time: '4s' }, { id: 'b', label: 'Email 9 members', status: 'done', time: '1s' }]} />
         </SpecimenBlock>
         <SpecimenBlock title="Code block" column>
           <CodeBlock lang="bash" code={'python3 -m pip install pillow\npython3 rename_scans.py --dry-run'} />
@@ -531,7 +578,7 @@
           <ConnectorIcon id="github" size="xs" /><ConnectorIcon id="github" size="sm" /><ConnectorIcon id="github" /><ConnectorIcon id="github" size="lg" /><ConnectorIcon id="slack" size="lg" />
         </SpecimenBlock>
         <SpecimenBlock title="Connectors">
-          <Grid min="card" gap="3">
+          <Grid columns="2" gap="3">
             <ConnectorCard connector={{ ...catalog[0], connected: true, account: 'nora.okafor@gmail.com' }} />
             <ConnectorCard connector={{ ...catalog[8], connected: false }} onconnect={() => toast('Connect pressed')} />
           </Grid>
@@ -556,6 +603,7 @@
           <SpecimenFrame>
             <Sidebar>
               {#snippet header()}<VaultHeader vault={app.vaults[0]} />{/snippet}
+              {#snippet footer()}<AccountMenu user={me} />{/snippet}
               <SidebarSection>
                 <SidebarItem icon={Plus} label="New chat" accent href="#/specimen" />
                 <SidebarItem icon={Search} label="Search" shortcut="⌘ K" />

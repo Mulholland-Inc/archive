@@ -48,6 +48,7 @@
   --space-20: 5rem;
   --space-24: 6rem;
 
+  --radius-none: 0;
   --radius-xs: 0.375rem;
   --radius-sm: 0.5rem;
   --radius-md: 0.75rem;
@@ -57,6 +58,7 @@
   --radius-full: 999px;
 
   --border-width: 1px;
+  --border-width-thick: 1.5px;
   --ring-subtle: 0 0 0 var(--border-width) var(--color-border-subtle);
   --ring: 0 0 0 var(--border-width) var(--color-border);
   --ring-strong: 0 0 0 var(--border-width) var(--color-border-strong);
@@ -81,6 +83,7 @@
   --avatar-xs: 1.25rem;
   --avatar-sm: 1.5rem;
   --avatar-md: 2rem;
+  --avatar-ml: 2.25rem;
   --avatar-lg: 2.5rem;
   --avatar-xl: 4rem;
 
@@ -89,13 +92,15 @@
   --switch-knob: 1rem;
   --check-size: 1rem;
 
-  --sidebar-width: 18rem;
+  --sidebar-width: 15rem;
   --sidebar-rail: 3.25rem;
   --vault-rail: 4.75rem;
+  --dock-height: 3.25rem;
   --vault-tile: 3.25rem;
   --vault-glyph: 2.875rem;
   --vault-pill: 0.25rem;
   --vault-badge: 1.125rem;
+  --vault-header: calc(var(--avatar-lg) + var(--space-3) * 2);
   --topbar-height: 3rem;
   --chat-width: 45rem;
   --composer-width: 48rem;
@@ -103,25 +108,33 @@
   --page-width: 60rem;
   --page-wide: 72rem;
   --settings-nav: 13.75rem;
+  --settings-dialog-nav: 15rem;
   --menu-min: 13.5rem;
   --menu-max: 20rem;
   --popover-width: 20rem;
   --dialog-sm: 26rem;
   --dialog-md: 32rem;
   --dialog-lg: 42rem;
+  --dialog-xl: 60rem;
+  --dialog-xl-height: 42.5rem;
+  --dialog-xl-margin: 4rem;
   --palette-width: 40rem;
   --tooltip-max: 16rem;
   --toast-width: 22rem;
   --tile-min: 13rem;
   --card-min: 17rem;
-  --row-height: 3rem;
+  --row-height: 2.5rem;
   --col-sm: 8rem;
   --col-md: 12rem;
   --col-lg: 18rem;
-  --list-row: 3.5rem;
+  --list-row: 2.5rem;
   --textarea-min: 6rem;
   --composer-max: 14rem;
   --code-max: 28rem;
+  --type-dialog-height: 40rem;
+  --settings-art: 11rem;
+  --schema-node: 15rem;
+  --opacity-dim: 0.35;
   --fade-size: 2rem;
   --thumb-ratio: 4 / 3;
 
@@ -293,7 +306,7 @@
   --color-avatar-4: #e3d6dc;
   --color-avatar-5: #d8d3ea;
   --color-avatar-6: #d0e1d8;
-  --color-avatar-text: var(--gray-950);
+  --color-avatar-ink: #0b0d12;
 
   --color-thumb-1: var(--gray-100);
   --color-thumb-2: #dfe7ee;
@@ -362,7 +375,7 @@
   --color-avatar-4: #4a3a44;
   --color-avatar-5: #3f3a58;
   --color-avatar-6: #2f4a3e;
-  --color-avatar-text: var(--gray-0);
+  --color-avatar-ink: #0b0d12;
 
   --color-thumb-1: var(--gray-800);
   --color-thumb-2: #1d2a33;

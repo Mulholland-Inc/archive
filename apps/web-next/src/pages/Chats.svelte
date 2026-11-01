@@ -1,5 +1,5 @@
 <script>
-  import { Plus, MessagesSquare, Pin, SearchX } from '@lucide/svelte';
+  import { Plus, SearchX } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
   import PageHeader from '../components/PageHeader.svelte';
@@ -9,14 +9,13 @@
   import ListItem from '../components/ListItem.svelte';
   import Button from '../components/Button.svelte';
   import Text from '../components/Text.svelte';
-  import Icon from '../components/Icon.svelte';
   import ChatActions from '../components/ChatActions.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
   import { ws, pinnedFirst } from '../lib/app.svelte.js';
 
   let query = $state('');
-  const results = $derived(pinnedFirst(ws().chats.filter((c) => !c.hidden && c.title.toLowerCase().includes(query.trim().toLowerCase()))));
+  const results = $derived(pinnedFirst(ws().chats.filter((c) => c.title.toLowerCase().includes(query.trim().toLowerCase()))));
 </script>
 
 <TopBar mobile>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
@@ -26,16 +25,16 @@
   </PageHeader>
   <Stack gap="4">
     <SearchField bind:value={query} placeholder="Search your chats" size="lg" />
-    <Text size="sm" tone="tertiary">{results.length} chats with Archive</Text>
     {#if results.length}
       <List label="Chats">
         {#each results as chat (chat.id)}
           <ListItem href={`#/chat/${chat.id}`} title={chat.title}>
-            {#snippet leading()}<Icon icon={chat.pinned ? Pin : MessagesSquare} size="md" />{/snippet}
-            {#snippet meta()}
-              <span>{chat.updated}</span>
+            {#snippet trailing()}
+              <Stack direction="row" gap="2" align="center">
+                <Text size="sm" tone="tertiary">{chat.updated}</Text>
+                <ChatActions {chat} placement="bottom-end" size="sm" />
+              </Stack>
             {/snippet}
-            {#snippet trailing()}<ChatActions {chat} placement="bottom-end" size="sm" />{/snippet}
           </ListItem>
         {/each}
       </List>

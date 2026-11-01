@@ -124,10 +124,12 @@ export const conversations = {
     {
       id: 'm4',
       role: 'assistant',
-      worked: '1s',
+      worked: '3s',
+      task: true,
       steps: [
-        { id: 's4', label: 'Saving both transcripts to 1970s Letters', status: 'done', time: '1s' },
-        { id: 's5', label: 'Linking each transcript to its scan', status: 'done', time: '0s' }
+        { id: 's4', label: 'Matching the line breaks of the originals', status: 'done', time: '2s' },
+        { id: 's5', label: 'Saving both transcripts to 1970s Letters', status: 'done', time: '1s' },
+        { id: 's6', label: 'Linking each transcript to its scan', status: 'done', time: '0s' }
       ],
       blocks: [
         { type: 'p', text: 'Done. Both transcripts now keep the original line breaks, with page turns marked as `— page 2 —`. They are saved next to the scans and show up in the letters timeline.' },
@@ -180,6 +182,23 @@ export const conversations = {
         { type: 'quote', text: 'Any notice under this Lease shall be in writing and served by hand or by recorded delivery to the registered office of the party to be served.' },
         { type: 'p', text: 'The second and third points are the strongest. Shall I draft a short advice note for the partner on the re-service timing?' }
       ]
+    },
+    {
+      id: 'm3',
+      role: 'user',
+      text: 'Yes, draft the advice note and check the tenant name change against Companies House.'
+    },
+    {
+      id: 'm4',
+      role: 'assistant',
+      task: true,
+      steps: [
+        { id: 's4', label: 'Collecting the two notices and the receipts', status: 'done', time: '2s' },
+        { id: 's5', label: 'Checking the tenant name at Companies House', status: 'done', time: '9s' },
+        { id: 's6', label: 'Counting the notice period under clause 9.3', status: 'running' },
+        { id: 's7', label: 'Writing the advice note for the partner', status: 'pending' }
+      ],
+      blocks: [{ type: 'p', text: 'The name change is confirmed: the tenant became **Mercer Holdings (UK) Ltd** on 11 March 2026. I’m working through the notice period now and will post the note here.' }]
     }
   ],
   'exif-rename': [
@@ -246,8 +265,13 @@ for path in sorted(SOURCE.glob("*.jpg")):
     {
       id: 'm2',
       role: 'assistant',
-      worked: '2s',
-      steps: [{ id: 's1', label: 'Reading the six pages of kickoff notes', status: 'done', time: '2s' }],
+      worked: '6s',
+      task: true,
+      steps: [
+        { id: 's1', label: 'Reading the six pages of kickoff notes', status: 'done', time: '2s' },
+        { id: 's2', label: 'Pulling out goals, audiences and deadlines', status: 'done', time: '3s' },
+        { id: 's3', label: 'Writing the one-page brief', status: 'done', time: '1s' }
+      ],
       blocks: [
         { type: 'h', text: 'Linden Library rebrand: moodboard brief' },
         { type: 'p', text: 'Linden is a 90-year-old public library becoming a neighbourhood workshop: tools, seeds and sewing machines alongside books. The identity should feel **civic, handmade and durable**, never nostalgic.' },
@@ -410,25 +434,16 @@ export const tasks = [
   }
 ];
 
-export const groups = [
-  { id: 'g1', name: 'Okafor siblings', members: 4 },
-  { id: 'g2', name: 'Nwosu cousins', members: 3 },
-  { id: 'g3', name: 'Archivists', members: 2 },
-  { id: 'g4', name: 'Guests', members: 2 }
-];
-
 export const members = [
-  { id: 'u1', name: 'Nora Okafor', email: 'nora@okafor.family', role: 'owner', groups: ['Okafor siblings', 'Archivists'], active: 'Now', status: 'active', tone: 1 },
-  { id: 'u2', name: 'Emeka Okafor', email: 'emeka@okafor.family', role: 'owner', groups: ['Okafor siblings'], active: '2 hr ago', status: 'active', tone: 3 },
-  { id: 'u3', name: 'Chidi Okafor', email: 'chidi.okafor@mail.ng', role: 'editor', groups: ['Okafor siblings'], active: 'Yesterday', status: 'active', tone: 2 },
-  { id: 'u4', name: 'Amara Okafor', email: 'amara@okafor.family', role: 'editor', groups: ['Okafor siblings', 'Archivists'], active: 'Today', status: 'active', tone: 4 },
-  { id: 'u5', name: 'Ifeoma Nwosu', email: 'ifeoma.nwosu@mail.ng', role: 'editor', groups: ['Nwosu cousins'], active: 'Mon', status: 'active', tone: 5 },
-  { id: 'u6', name: 'Tobi Okafor', email: 'tobi@okafor.family', role: 'viewer', groups: [], active: 'Oct 20', status: 'active', tone: 6 },
-  { id: 'u7', name: 'Kelechi Nwosu', email: 'kelechi@nwosu.co.uk', role: 'viewer', groups: ['Nwosu cousins'], active: 'Oct 14', status: 'active', tone: 2 },
-  { id: 'u8', name: 'Ada Nwosu', email: 'ada.nwosu@mail.com', role: 'viewer', groups: ['Nwosu cousins'], active: '', status: 'invited', tone: 3 },
-  { id: 'u9', name: 'Margaret Ellis', email: 'm.ellis@leedsarchives.org', role: 'viewer', groups: ['Guests'], active: 'Sep 30', status: 'active', tone: 4 },
-  { id: 'u10', name: 'Samuel Ibe', email: 'samuel.ibe@mail.com', role: 'viewer', groups: ['Guests'], active: '', status: 'invited', tone: 1 },
-  { id: 'u11', name: 'Uche Okafor', email: 'uche@okafor.family', role: 'editor', groups: ['Okafor siblings'], active: 'Oct 2', status: 'active', tone: 5 }
+  { id: 'u1', user: me.id, name: 'Nora Okafor', email: 'nora@okafor.family', role: 'owner', active: 'Now', status: 'active', tone: 1 },
+  { id: 'u2', name: 'Emeka Okafor', email: 'emeka@okafor.family', role: 'owner', active: '2 hr ago', status: 'active', tone: 3 },
+  { id: 'u3', name: 'Chidi Okafor', email: 'chidi.okafor@mail.ng', role: 'editor', active: 'Yesterday', status: 'active', tone: 2 },
+  { id: 'u4', name: 'Amara Okafor', email: 'amara@okafor.family', role: 'editor', active: 'Today', status: 'active', tone: 4 },
+  { id: 'u5', name: 'Ifeoma Nwosu', email: 'ifeoma.nwosu@mail.ng', role: 'editor', active: 'Mon', status: 'active', tone: 5 },
+  { id: 'u6', name: 'Tobi Okafor', email: 'tobi@okafor.family', role: 'viewer', active: 'Oct 20', status: 'active', tone: 6 },
+  { id: 'u7', name: 'Kelechi Nwosu', email: 'kelechi@nwosu.co.uk', role: 'viewer', active: 'Oct 14', status: 'active', tone: 2 },
+  { id: 'u8', name: 'Ada Nwosu', email: 'ada.nwosu@mail.com', role: 'viewer', active: '', status: 'invited', tone: 3 },
+  { id: 'u11', name: 'Uche Okafor', email: 'uche@okafor.family', role: 'editor', active: 'Oct 2', status: 'active', tone: 5 }
 ];
 
 export const people = ['Ruth Hale', 'Daniel Whitcombe', 'Priya Raman', 'Jun Park', 'Lea Fontaine', 'Chidi Okafor', 'Amara Okafor', 'Tobi Okafor', 'Emeka Okafor', 'Ifeoma Nwosu'];
@@ -440,10 +455,4 @@ export function initials(name = '') {
     .slice(0, 2)
     .map((w) => w[0].toUpperCase())
     .join('');
-}
-
-export function toneFor(name = '') {
-  let h = 0;
-  for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return (h % 6) + 1;
 }

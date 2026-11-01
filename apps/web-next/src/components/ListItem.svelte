@@ -33,7 +33,7 @@
   }
 
   .sm {
-    min-height: var(--control-xl);
+    min-height: var(--control-lg);
   }
 
   .interactive:hover,
@@ -53,13 +53,13 @@
     flex: 1;
     min-width: 0;
     align-self: stretch;
-    padding: var(--space-3);
+    padding: var(--space-1-5) var(--space-3);
     border-radius: inherit;
     text-align: start;
   }
 
   .sm .row {
-    padding: var(--space-2);
+    padding: var(--space-1) var(--space-2);
   }
 
   .leading {
@@ -99,7 +99,7 @@
     align-items: center;
     gap: var(--space-2);
     flex: none;
-    padding: var(--space-3);
+    padding: var(--space-1-5) var(--space-3);
     color: var(--color-text-tertiary);
     font-size: var(--text-sm);
   }
