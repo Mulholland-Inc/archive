@@ -1,5 +1,6 @@
 <script>
-  import { Plus, ArrowUp, Square, Paperclip, Library, Globe, Telescope, Camera, Mic } from '@lucide/svelte';
+  import { Plus, ArrowUp, Square, Paperclip, Library, Globe, Telescope, Camera, Mic, AudioLines } from '@lucide/svelte';
+  import { onDestroy } from 'svelte';
   import IconButton from './IconButton.svelte';
   import Menu from './Menu.svelte';
   import MenuItem from './MenuItem.svelte';
@@ -66,6 +67,43 @@
     element?.focus();
   }
 
+  // a real recording, kept as an attachment you can play before sending
+  let recorder = $state(null);
+  let seconds = $state(0);
+  let clock;
+  const elapsed = $derived(`${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`);
+
+  async function record() {
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      toast('Allow the microphone in your browser, then try again.');
+      return;
+    }
+    const chunks = [];
+    const r = new MediaRecorder(stream);
+    r.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    r.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      const blob = new Blob(chunks, { type: r.mimeType || 'audio/webm' });
+      const kb = blob.size / 1024;
+      attachments.push({ id: `rec-${Date.now()}`, name: `Recording ${elapsed}`, kind: 'recording', size: kb < 1024 ? `${Math.max(1, Math.round(kb))} KB` : `${(kb / 1024).toFixed(1)} MB`, tone: 2, href: URL.createObjectURL(blob) });
+      clearInterval(clock);
+      recorder = null;
+      element?.focus();
+    };
+    seconds = 0;
+    clock = setInterval(() => seconds++, 1000);
+    r.start(1000);
+    recorder = r;
+  }
+
+  onDestroy(() => {
+    clearInterval(clock);
+    if (recorder?.state === 'recording') recorder.stop();
+  });
+
   function dictate() {
     value = (value ? value + ' ' : '') + 'What did Grandma write about the harvest in 1974?';
     element?.focus();
@@ -78,7 +116,7 @@
     <div class="atts">
       {#each attachments as a (a.id)}
         <span in:rise={{ shift: '--shift-sm' }}>
-          <Attachment name={a.name} kind={a.kind} size={a.size} tone={a.tone} onremove={() => (attachments = attachments.filter((x) => x.id !== a.id))} />
+          <Attachment name={a.name} kind={a.kind} size={a.size} tone={a.tone} href={a.href} onremove={() => (attachments = attachments.filter((x) => x.id !== a.id))} />
         </span>
       {/each}
     </div>
@@ -130,12 +168,18 @@
     {/if}
     <span class="spacer"></span>
     <ModelPicker bind:model bind:thinking size={control} />
-    {#if streaming}
+    {#if recorder}
+      <span class="elapsed" aria-live="polite"><span class="dot"></span>{elapsed}</span>
+      <IconButton icon={Square} label="Stop recording" variant="inverse" round size={control} onclick={() => recorder.stop()} />
+    {:else if streaming}
       <IconButton icon={Square} label="Stop" variant="inverse" round size={control} type="submit" />
-    {:else if size === 'lg' && !ready}
-      <IconButton icon={Mic} label="Dictate" variant="ghost" round size={control} onclick={dictate} />
     {:else}
-      <IconButton icon={ArrowUp} label="Send" variant="primary" round size={control} disabled={!ready} type="submit" shortcut="↵" />
+      <IconButton icon={AudioLines} label="Record" variant="ghost" round size={control} onclick={record} />
+      {#if size === 'lg' && !ready}
+        <IconButton icon={Mic} label="Dictate" variant="ghost" round size={control} onclick={dictate} />
+      {:else}
+        <IconButton icon={ArrowUp} label="Send" variant="primary" round size={control} disabled={!ready} type="submit" shortcut="↵" />
+      {/if}
     {/if}
   </div>
 </form>
@@ -211,5 +255,27 @@
 
   .spacer {
     flex: 1;
+  }
+
+  .elapsed {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1-5);
+    padding-inline: var(--space-1);
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .dot {
+    width: var(--space-2);
+    height: var(--space-2);
+    border-radius: 50%;
+    background: var(--color-danger);
+    animation: beat 1.4s ease-in-out infinite;
+  }
+
+  @keyframes beat {
+    50% { opacity: 0.25; }
   }
 </style>
