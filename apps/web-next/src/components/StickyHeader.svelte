@@ -13,7 +13,7 @@
   }
 </script>
 
-<header class={['header', { compact, searchable: !!search }]} style:--top-height={`${height}px`}>
+<header class={['header', { compact }]} style:--top-height={`${height}px`}>
   <div class="top" bind:offsetHeight={height} {@attach watch}>
     <h1>{title}</h1>
     {#if actions}<div class="actions">{@render actions()}</div>{/if}
@@ -32,7 +32,7 @@
     z-index: var(--z-sticky);
     display: flex;
     flex-direction: column;
-    margin-block-end: calc(var(--space-8) * -1 + var(--space-4));
+    margin-block-end: calc(var(--space-8) * -1 + var(--space-5));
     background: var(--color-canvas);
   }
 
@@ -41,6 +41,7 @@
     align-items: center;
     gap: var(--space-4);
     min-height: var(--control-xl);
+    padding-block-end: var(--space-3);
   }
 
   h1 {
@@ -65,31 +66,13 @@
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    padding-block: var(--space-4);
+    min-height: var(--topbar-height);
   }
 
-  .header:not(.searchable) .bar {
-    padding-block: var(--space-0);
-  }
-
-  .compact:not(.searchable) .bar {
-    padding-block: var(--space-2);
-  }
-
-  .bar::after {
-    content: '';
-    position: absolute;
-    inset-inline: 0;
-    inset-block-start: 100%;
-    height: var(--space-4);
-    background: linear-gradient(var(--color-canvas), transparent);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity var(--duration-normal) var(--ease-out);
-  }
-
-  .compact .bar::after {
-    opacity: 1;
+  .compact .bar {
+    border-style: solid;
+    border-width: 0;
+    border-image: linear-gradient(var(--color-border-subtle), var(--color-border-subtle)) 1 / 0 0 var(--border-width) 0 / 0 100vw;
   }
 
   .mini {
@@ -97,7 +80,7 @@
     max-width: 0;
     overflow: hidden;
     font-family: var(--font-serif);
-    font-size: var(--text-lg);
+    font-size: var(--text-xl);
     font-weight: var(--weight-serif);
     letter-spacing: var(--tracking-serif);
     line-height: var(--leading-tight);
@@ -131,6 +114,12 @@
     max-width: var(--col-lg);
   }
 
+  .compact .search :global(.box) {
+    height: var(--control-md);
+    padding: var(--space-2);
+    border-radius: var(--radius-md);
+  }
+
   .bar .actions {
     margin-inline-start: auto;
     animation: actions-in var(--duration-normal) var(--ease-out);
@@ -146,10 +135,6 @@
   @media (max-width: 40rem) {
     .header {
       margin-block-end: calc(var(--space-5) * -1 + var(--space-3));
-    }
-
-    .bar {
-      padding-block: var(--space-3);
     }
 
     .search > :global(:first-child) {

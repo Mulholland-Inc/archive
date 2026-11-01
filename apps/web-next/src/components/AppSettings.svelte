@@ -27,6 +27,7 @@
   const current = $derived(s.section ?? 'profile');
   const connector = $derived(current === 'connectors' && s.sub ? ws().connectors.find((c) => c.id === s.sub) : null);
   const title = $derived(items.find((i) => i.id === current)?.label);
+  const trail = $derived(connector ? [{ label: title, onclick: () => (s.sub = null) }, { label: connector.name }] : [{ label: title }]);
   const back = () => (s.section = null);
 
   function select(id) {
@@ -36,13 +37,13 @@
   }
 </script>
 
-<SettingsDialog bind:open={s.open} bind:section={s.section} {items} onselect={select}>
+<SettingsDialog bind:open={s.open} bind:section={s.section} {items} {trail} onselect={select}>
   {#if connector}
-    <SettingsPane title={connector.name} onback={() => (s.sub = null)}><ConnectorDetail {connector} /></SettingsPane>
+    <SettingsPane onback={() => (s.sub = null)}><ConnectorDetail {connector} /></SettingsPane>
   {:else if current === 'connectors'}
     <ConnectorSettings onopen={(id) => (s.sub = id)} onback={back} backNarrow />
   {:else}
-    <SettingsPane {title} onback={back} backNarrow>
+    <SettingsPane onback={back} backNarrow>
       {#if current === 'appearance'}
         <AppearanceSettings />
       {:else if current === 'vault'}

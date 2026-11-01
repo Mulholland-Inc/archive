@@ -5,7 +5,7 @@
   import Kbd from './Kbd.svelte';
   import InlineEdit from './InlineEdit.svelte';
 
-  let { href, icon, label, active = false, onclick, shortcut, accent = false, leading, actions, badge, onrename, editing = $bindable(false) } = $props();
+  let { href, icon, label, active = false, onclick, shortcut, accent = false, leading, before, actions, badge, onrename, editing = $bindable(false) } = $props();
 
   const sidebar = getContext('sidebar');
   const collapsed = $derived(sidebar?.collapsed ?? false);
@@ -13,6 +13,7 @@
 
 {#snippet row()}
   <div class={['item', { active, collapsed, accent, hasActions: actions }]}>
+    {#if before && !collapsed}<span class="before">{@render before()}</span>{/if}
     {#if editing && onrename}
       <InlineEdit value={label} label={`Rename ${label}`} onsave={(title) => { editing = false; onrename(title); }} oncancel={() => (editing = false)} />
     {:else if href}
@@ -84,6 +85,16 @@
     text-align: start;
     font-size: var(--text-md);
     white-space: nowrap;
+  }
+
+  .before {
+    display: inline-flex;
+    flex: none;
+    padding-inline-start: var(--space-1);
+  }
+
+  .before + .hit {
+    padding-inline-start: var(--space-1);
   }
 
   .glyph {

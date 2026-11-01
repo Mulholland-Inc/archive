@@ -32,7 +32,7 @@
   const flip = (list, value) => (list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);
 </script>
 
-<SettingsPane title="Connectors" {onback} {backNarrow}>
+<SettingsPane {onback} {backNarrow}>
   {#snippet tools()}
     <div class="search"><SearchField bind:value={query} size="sm" placeholder="Search" label="Search connectors" /></div>
     <Menu label="Filter" placement="bottom-end">

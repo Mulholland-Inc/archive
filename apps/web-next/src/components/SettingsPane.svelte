@@ -6,12 +6,12 @@
 </script>
 
 <section class="pane">
-  <header>
+  <header class={{ narrow: !title && !tabs && !tools && (!onback || backNarrow) }}>
     <div class="lead">
       {#if onback}
         <span class={['back', { narrow: backNarrow }]}><IconButton icon={ChevronLeft} label="Back" tooltip={false} onclick={onback} /></span>
       {/if}
-      <h2>{title}</h2>
+      {#if title}<h2>{title}</h2>{/if}
       {#if tabs}{@render tabs()}{/if}
     </div>
     {#if tools}<div class="tools">{@render tools()}</div>{/if}
