@@ -162,6 +162,22 @@
  *   an object, which is sent as JSON. It returns { ok, status, statusText, url, headers, text(), json() } and
  *   throws when the address cannot be reached. It counts toward the run's {timeout}; responses over 5 MB fail.
  *   Nothing is undone outside Archive when the run fails: a request that was sent stays sent.
+ *
+ * Browsing
+ * - archive.browse(goal, { url }) has an agent use a real web browser for you: it opens url, or finds a site itself,
+ *   then clicks, types and scrolls until goal is reached, and returns { done, answer, url }: done says whether it got
+ *   there, answer is what it found or why it could not, and url is the page it ended on. Say what to find and how to
+ *   answer: "Find the price of the cheapest plan; answer with just the amount". Use fetch when an API or a plain page
+ *   has what you need; browse is for pages that need clicking, typing or JavaScript.
+ * - Each call starts a fresh browser with no cookies, sign-ins or other state, and keeps nothing after it, so pages
+ *   behind a sign-in are out of reach.
+ * - A call takes seconds to minutes. A run browses for at most 5 minutes in all, and that time does not count
+ *   toward its {timeout}.
+ * - Browse before you write: browse throws once the run has written or migrated, so browse first, then save:
+ *     const r = await archive.browse("Find the Saturday opening hours", { url: "https://example.com" });
+ *     if (!r.done) throw new Error("no hours: " + r.answer);
+ *     await archive.create("note", { text: r.answer, source: r.url });
+ * - What it does on a site is not undone when the run fails: a form it sent stays sent.
  */
 declare const archive: {
     /** Run one SQL statement as you, with $1, $2, ... bound to params; returns its rows, or [] when it has none. */
@@ -206,6 +222,8 @@ declare const archive: {
     start(name: string, input?: unknown): Promise<RunResult>;
     /** A workflow's recent runs, newest first; limit defaults to 20, at most 100. */
     runs(name: string, opts?: { limit?: number }): Promise<WorkflowRun[]>;
+    /** Have an agent use a fresh web browser to reach goal, starting at url; before any write, 5 minutes a run (see Browsing). */
+    browse(goal: string, opts?: { url?: string }): Promise<BrowseResult>;
 };
 
 /** What started this run: undefined for a plain run (see Workflows in the header). */
@@ -231,6 +249,15 @@ interface RunResult {
     logs: string[];
     /** "" when the run worked. */
     error: string;
+}
+
+interface BrowseResult {
+    /** Whether it reached the goal. */
+    done: boolean;
+    /** What it found, as the goal asked; or why it could not. */
+    answer: string;
+    /** The page it ended on. */
+    url: string;
 }
 
 interface Deployed {

@@ -589,7 +589,11 @@ func (h *Hub) tasksHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *Hub) work(ctx context.Context, ws uuid.UUID, kind string) error {
 	q := h.q()
-	at, err := q.ClaimDueFor(ctx, time.Now().Add(runTimeout+workflowRetry), ws, kind)
+	lease := runTimeout + workflowRetry
+	if kind == "workflow" {
+		lease += browseTimeout
+	}
+	at, err := q.ClaimDueFor(ctx, time.Now().Add(lease), ws, kind)
 	if err == nil {
 		return h.due(ctx, ws, kind, at)
 	}

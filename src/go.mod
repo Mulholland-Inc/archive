@@ -4,6 +4,8 @@ go 1.27.2
 
 require (
 	cloud.google.com/go/cloudtasks v1.21.1
+	github.com/chromedp/cdproto v0.157.8
+	github.com/chromedp/chromedp v0.21.0
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/dop251/goja v0.0.0-20261026132650-6b6a90e51946
 	github.com/evanw/esbuild v0.28.2
@@ -30,6 +32,7 @@ require (
 	github.com/dlclark/regexp2/v2 v2.8.1 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.4 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
+	github.com/go-json-experiment/json v0.0.0-20260213210345-44df1a37e875 // indirect
 	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/go-webauthn/x v0.3.1 // indirect

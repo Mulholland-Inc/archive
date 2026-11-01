@@ -85,6 +85,19 @@ variable "anthropic_api_key" {
   sensitive   = true
 }
 
+variable "typesafe_api_key" {
+  type        = string
+  description = "TypeSafe API key for archive.browse (TYPESAFE_API_KEY), kept in Secret Manager. Empty leaves browse off."
+  default     = ""
+  sensitive   = true
+}
+
+variable "browser_max_instances" {
+  type        = number
+  description = "Most instances of the archive-browser service, which runs one browser per instance at a time for archive.browse."
+  default     = 10
+}
+
 variable "min_instances" {
   type        = number
   description = "Cloud Run instances kept running. 0 scales to zero; Cloud Tasks starts one when a workflow or file is due."

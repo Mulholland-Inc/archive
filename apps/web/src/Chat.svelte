@@ -211,6 +211,8 @@
           calls[ev.id].code = ev.code;
         } else if (ev.type === 'run' && calls[ev.id]) {
           Object.assign(calls[ev.id], { code: ev.code, state: 'running' });
+        } else if (ev.type === 'browse' && calls[ev.id]) {
+          Object.assign(calls[ev.id], { frame: ev.frame, url: ev.url });
         } else if (ev.type === 'result' && calls[ev.id]) {
           Object.assign(calls[ev.id], { state: 'done', result: ev.result, logs: ev.logs ?? [], error: ev.error ?? '' });
           turn.pending = true;
