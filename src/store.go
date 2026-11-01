@@ -125,11 +125,24 @@ func storePool(ctx context.Context, base *pgx.ConnConfig, conns int32, fn func(*
 	return pgxpool.NewWithConfig(ctx, cfg)
 }
 
+// bootstrap makes the store's roles and sets the authenticator's password. Processes opening the same store at
+// once would race on those roles' catalog rows, so it holds the store lock while it does.
 func (s *pgStore) bootstrap(ctx context.Context, password string) error {
-	if _, err := s.sys.Exec(ctx, s.expand(storeRoles)); err != nil {
+	tx, err := s.sys.Begin(ctx)
+	if err != nil {
 		return err
 	}
-	if _, err := s.sys.Exec(ctx, "ALTER ROLE "+pgIdent(s.prefix+"_authenticator")+" PASSWORD '"+password+"'"); err != nil {
+	defer tx.Rollback(context.WithoutCancel(ctx))
+	if err := generated.New(tx).AdvisoryXactLock(ctx, storeLock); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, s.expand(storeRoles)); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, "ALTER ROLE "+pgIdent(s.prefix+"_authenticator")+" PASSWORD '"+password+"'"); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
 	rev, _ := generated.New(s.sys).Revision(ctx)

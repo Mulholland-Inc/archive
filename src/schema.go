@@ -36,6 +36,9 @@ type SchemaMigration struct {
 
 // schemaTx is the schema state of one transaction: once it migrated, its catalog is read from it, cached per
 // archive.schema setting, which a rolled back savepoint undoes along with the migration.
+// schemaTurnKey is the chat turn a run belongs to, a request's id.
+type schemaTurnKey struct{}
+
 type schemaTx struct {
 	n    int
 	cats map[string]*Catalog
@@ -103,8 +106,21 @@ func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string
 	if err != nil {
 		return nil, err
 	}
-	h := sha256.Sum256([]byte(strings.Join(stmts, ";\n") + "\x00" + s.hash() + "\x00" + before.hash()))
-	if out.Confirm = hex.EncodeToString(h[:]); confirm != "" && confirm != out.Confirm {
+	// In chat the confirm carries the turn of its dry run, so a migration that drops data is confirmed only in a
+	// later turn, after the person saw the drops; the turn is in the hash, so it cannot be changed.
+	turn, _ := ctx.Value(schemaTurnKey{}).(string)
+	from := turn
+	if confirm != "" {
+		from, _, _ = strings.Cut(confirm, ".")
+		if !strings.Contains(confirm, ".") {
+			from = ""
+		}
+	}
+	h := sha256.Sum256([]byte(strings.Join(stmts, ";\n") + "\x00" + s.hash() + "\x00" + before.hash() + "\x00" + from))
+	if out.Confirm = hex.EncodeToString(h[:]); from != "" {
+		out.Confirm = from + "." + out.Confirm
+	}
+	if confirm != "" && confirm != out.Confirm {
 		return nil, fmt.Errorf("the schema or this migration changed since its dry run; dry-run it again for a new confirm: %w", ErrConflict)
 	}
 	run := func(what, st string) error {
@@ -173,6 +189,13 @@ func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string
 	out.Changes, out.Drops = pgCompare(before.only("public"), after.only("public"))
 	if confirm == "" {
 		return out, nil
+	}
+	if len(out.Drops) > 0 && turn != "" && from == turn {
+		names := make([]string, len(out.Drops))
+		for i, d := range out.Drops {
+			names[i] = d.Kind + " " + d.Name
+		}
+		return nil, fmt.Errorf("this migration deletes or rewrites data (%s): tell the person what it drops and confirm it only after they agree, in a later turn: %w", strings.Join(names, ", "), ErrForbidden)
 	}
 	sj, _ := json.Marshal(out.Statements)
 	id, err := q.DDLRevision(ctx, generated.DDLRevisionParams{Key: key, Hash: s.hash(), Author: author, Name: name, Statements: sj})

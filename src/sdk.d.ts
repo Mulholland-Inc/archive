@@ -71,10 +71,16 @@
  *     await archive.migrate(sql, { confirm: plan.confirm });
  *
  * - Dropping a table or a column deletes its data, and changing a column's type rewrites it, so those are in
- *   drops: before you confirm one, show it to the people you work for and have them agree.
+ *   drops. Confirm a migration with drops only when the people you work for asked for exactly those drops or
+ *   agreed to them after you showed them: in chat, its confirm throws forbidden until a later turn, so dry-run
+ *   it, tell them what it deletes, and stop. Drop nothing they did not ask for, like a column you copied from.
  * - A migration you confirm is part of this run: if the run throws or times out afterwards, it is undone with
  *   everything else. Later calls in the run see the change at once, so you can move data between steps:
- *     const migrate = async (sql) => archive.migrate(sql, { confirm: (await archive.migrate(sql)).confirm });
+ *     const migrate = async (sql) => {
+ *       const plan = await archive.migrate(sql);
+ *       if (plan.drops.length > 0) throw new Error("drops " + plan.drops.map((d) => d.name).join(", "));
+ *       return archive.migrate(sql, { confirm: plan.confirm });
+ *     };
  *     await migrate("ALTER TABLE house ADD COLUMN rooms integer");
  *     for (const h of await archive.list("house")) await archive.update("house", h.id, { rooms: 1 });
  *     await migrate("ALTER TABLE house ALTER COLUMN rooms SET NOT NULL");
