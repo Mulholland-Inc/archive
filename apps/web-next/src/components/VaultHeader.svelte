@@ -8,7 +8,7 @@
 </script>
 
 <div class={['header', { collapsed }]}>
-  <VaultIcon icon={vault?.look.icon} tint={vault?.look.tint} seed={vault?.id} size="rail" label={collapsed ? vault?.name : undefined} />
+  <VaultIcon icon={vault?.look.icon} tint={vault?.look.tint} seed={vault?.id} size="lg" label={collapsed ? vault?.name : undefined} />
   <span class="lines">
     <span class="name">{vault?.name}</span>
     <span class="sub">{vault?.kind}, {vault?.members.length} {vault?.members.length === 1 ? 'member' : 'members'}</span>
@@ -23,12 +23,12 @@
     width: 100%;
     min-width: 0;
     min-height: var(--vault-header);
-    padding: var(--space-3) var(--space-4);
+    padding: var(--space-2) var(--space-3);
   }
 
   .collapsed {
     justify-content: center;
-    padding: var(--space-3) var(--space-0);
+    padding: var(--space-2) var(--space-0);
     gap: var(--space-0);
   }
 

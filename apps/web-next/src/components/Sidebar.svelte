@@ -84,7 +84,6 @@
     padding: var(--space-2);
     overflow-y: auto;
     overflow-x: hidden;
-    mask-image: linear-gradient(to bottom, transparent, black var(--space-3), black calc(100% - var(--fade-size)), transparent);
   }
 
   .scrim {

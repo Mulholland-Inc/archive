@@ -99,7 +99,7 @@
   --vault-glyph: 2.875rem;
   --vault-pill: 0.25rem;
   --vault-badge: 1.125rem;
-  --vault-header: calc(var(--vault-tile) + var(--space-3) * 2);
+  --vault-header: calc(var(--avatar-lg) + var(--space-2) * 2);
   --topbar-height: 3rem;
   --chat-width: 45rem;
   --composer-width: 48rem;
