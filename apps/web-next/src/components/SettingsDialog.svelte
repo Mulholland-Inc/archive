@@ -4,8 +4,9 @@
   import SettingsNav from './SettingsNav.svelte';
   import SearchField from './SearchField.svelte';
   import IconButton from './IconButton.svelte';
+  import Breadcrumbs from './Breadcrumbs.svelte';
 
-  let { open = $bindable(false), items = [], section = $bindable(null), onselect, children: pane } = $props();
+  let { open = $bindable(false), items = [], section = $bindable(null), trail = [], onselect, children: pane } = $props();
 
   let query = $state('');
   const current = $derived(section ?? items[0]?.id);
@@ -15,7 +16,7 @@
   {#snippet children({ close })}
     <div class={['layout', { listing: section === null }]}>
       <header class="bar">
-        <span class="brand">Settings</span>
+        <div class="brand"><Breadcrumbs items={[{ label: 'Settings', onclick: () => (section = null) }, ...trail]} /></div>
         <IconButton icon={X} label="Close" tooltip={false} onclick={close} />
       </header>
       <aside class="aside">
@@ -49,8 +50,7 @@
   }
 
   .brand {
-    font-family: var(--font-sans);
-    font-size: var(--text-base);
+    min-width: 0;
     font-weight: var(--weight-medium);
     line-height: var(--leading-tight);
   }
@@ -88,6 +88,10 @@
 
     .layout:not(.listing) .aside,
     .listing :global(.pane) {
+      display: none;
+    }
+
+    .listing .brand :global(li:not(:first-child)) {
       display: none;
     }
   }

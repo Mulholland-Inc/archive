@@ -1,5 +1,5 @@
 <script>
-  import { Ellipsis, Pin, PinOff, Pencil, Trash2 } from '@lucide/svelte';
+  import { Ellipsis, Pin, Pencil, Trash2 } from '@lucide/svelte';
   import Menu from './Menu.svelte';
   import MenuItem from './MenuItem.svelte';
   import MenuSeparator from './MenuSeparator.svelte';
@@ -21,14 +21,14 @@
 </script>
 
 {#if inline}
-  <IconButton icon={chat.pinned ? PinOff : Pin} label={chat.pinned ? 'Unpin' : 'Pin'} {size} pressed={chat.pinned} onclick={() => togglePin(chat.id)} />
+  {#if !chat.pinned}<IconButton icon={Pin} label="Pin" {size} onclick={() => togglePin(chat.id)} />{/if}
   <IconButton icon={Trash2} label="Delete chat" {size} onclick={remove} />
 {:else}
 <Menu {placement} label="Chat actions" width="sm">
   {#snippet trigger(props)}
     <IconButton icon={Ellipsis} label={`Actions for ${chat.title}`} {size} tooltip={false} {...props} />
   {/snippet}
-  <MenuItem icon={chat.pinned ? PinOff : Pin} onselect={() => togglePin(chat.id)}>{chat.pinned ? 'Unpin' : 'Pin'}</MenuItem>
+  {#if !chat.pinned}<MenuItem icon={Pin} onselect={() => togglePin(chat.id)}>Pin</MenuItem>{/if}
   {#if renamable}<MenuItem icon={Pencil} onselect={rename}>Rename</MenuItem>{/if}
   <MenuSeparator />
   <MenuItem icon={Trash2} danger onselect={remove}>Delete</MenuItem>

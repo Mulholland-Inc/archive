@@ -1,7 +1,8 @@
 <script>
   let { columns = [], rows = [], cell, leading, key = 'id', onrowclick, label, selected = [], cards = false } = $props();
 
-  const role = (col, i) => col.mobile ?? (i === 0 ? 'primary' : col.align === 'end' ? 'trailing' : 'secondary');
+  const link = $derived(columns.findIndex((c) => !c.control));
+  const role = (col, i) => col.mobile ?? (i === link ? 'primary' : col.align === 'end' ? 'trailing' : 'secondary');
 </script>
 
 {#snippet content(row, col, i)}
@@ -27,7 +28,7 @@
         <tr class={{ clickable: onrowclick, selected: selected.includes(row[key]), led: !!leading }}>
           {#each columns as col, i (col.key)}
             <td class={[col.align, col.width && `w-${col.width}`, col.muted && 'muted', `m-${role(col, i)}`, leading && i === 0 && 'haslead']}>
-              {#if onrowclick && i === 0}
+              {#if onrowclick && i === link}
                 <button type="button" class="rowlink" onclick={() => onrowclick(row)}>{@render content(row, col, i)}</button>
               {:else}{@render content(row, col, i)}{/if}
             </td>
@@ -84,6 +85,7 @@
     text-align: center;
   }
 
+  .w-icon { width: var(--control-md); padding-inline-end: var(--space-0); }
   .w-xs { width: var(--control-xl); }
   .w-sm { width: var(--col-sm); }
   .w-md { width: var(--col-md); }

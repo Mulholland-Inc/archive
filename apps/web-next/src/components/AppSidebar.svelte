@@ -7,6 +7,7 @@
   import VaultRail from './VaultRail.svelte';
   import AccountMenu from './AccountMenu.svelte';
   import ChatActions from './ChatActions.svelte';
+  import PinButton from './PinButton.svelte';
   import { app, ws, closeDrawer, pinnedFirst, switchVault, createVault, renameChat } from '../lib/app.svelte.js';
   import { me } from '../lib/data.js';
   import { route, active } from '../lib/router.svelte.js';
@@ -52,6 +53,9 @@
     <SidebarSection title="Recents">
         {#each visible as chat (chat.id)}
         <SidebarItem label={chat.title} href={`#/chat/${chat.id}`} active={route.path === `/chat/${chat.id}`} onrename={(title) => renameChat(chat.id, title)} bind:editing={() => renaming === chat.id, (on) => (renaming = on ? chat.id : null)}>
+          {#snippet before()}
+            {#if chat.pinned}<PinButton {chat} />{/if}
+          {/snippet}
           {#snippet actions()}
             <ChatActions {chat} size="sm" inline />
           {/snippet}

@@ -8,6 +8,7 @@
   import ComposerDock from '../components/ComposerDock.svelte';
   import RunProgress from '../components/RunProgress.svelte';
   import ChatActions from '../components/ChatActions.svelte';
+  import PinButton from '../components/PinButton.svelte';
   import Button from '../components/Button.svelte';
   import EditableTitle from '../components/EditableTitle.svelte';
   import EmptyState from '../components/EmptyState.svelte';
@@ -132,10 +133,11 @@
   });
 </script>
 
-<TopBar>
+<TopBar bordered>
   {#snippet leading()}
     <MobileMenu />
     {#if chat}
+      {#if chat.pinned}<PinButton {chat} size="sm" />{/if}
       <EditableTitle value={chat.title} label="Rename chat" onsave={(title) => renameChat(chat.id, title)} />
     {/if}
   {/snippet}

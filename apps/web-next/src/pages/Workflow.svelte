@@ -20,8 +20,7 @@
   import Menu from '../components/Menu.svelte';
   import MenuItem from '../components/MenuItem.svelte';
   import MenuSeparator from '../components/MenuSeparator.svelte';
-  import List from '../components/List.svelte';
-  import ListItem from '../components/ListItem.svelte';
+  import Table from '../components/Table.svelte';
   import Text from '../components/Text.svelte';
   import Icon from '../components/Icon.svelte';
   import EmptyState from '../components/EmptyState.svelte';
@@ -34,6 +33,11 @@
   let selected = $state(null);
   let open = $state(true);
 
+  const runColumns = [
+    { key: 'run', label: 'Run' },
+    { key: 'started', label: 'Started', muted: true },
+    { key: 'status', label: 'Status', align: 'end' }
+  ];
   const run = $derived(wf?.runs.find((r) => r.id === selected) ?? wf?.runs[0]);
   const done = $derived(run ? run.steps.filter((s) => s.status === 'done').length : 0);
   const current = $derived(run?.steps.find((s) => ['running', 'waiting', 'failed'].includes(s.status)) ?? run?.steps.at(-1));
@@ -63,7 +67,7 @@
 <TopBar>
   {#snippet leading()}
     <MobileMenu />
-    <Breadcrumbs items={[{ label: 'Workflows', href: '#/workflows' }, { label: wf?.name ?? 'Not found' }]} />
+    <Breadcrumbs inset items={[{ label: 'Workflows', href: '#/workflows' }, { label: wf?.name ?? 'Not found' }]} />
   {/snippet}
   {#snippet trailing()}
     {#if run && live}
@@ -137,18 +141,17 @@
         <Card padding="md" variant="filled">
           <Section title="Runs">
             {#if wf.runs.length}
-              <List label="Runs">
-                {#each wf.runs as r (r.id)}
-                  <ListItem title={`Run #${r.number}`} size="sm" active={r.id === run?.id} onclick={() => (selected = r.id)}>
-                    {#snippet trailing()}
-                      <Stack direction="row" gap="3" align="center">
-                        <Text size="sm" tone="tertiary">{r.started}</Text>
-                        <StatusBadge status={r.paused ? 'paused' : r.status} plain />
-                      </Stack>
-                    {/snippet}
-                  </ListItem>
-                {/each}
-              </List>
+              <Table columns={runColumns} rows={wf.runs} label="Runs" selected={run ? [run.id] : []} onrowclick={(r) => (selected = r.id)}>
+                {#snippet cell(r, col)}
+                  {#if col.key === 'run'}
+                    <Text weight="medium">Run #{r.number}</Text>
+                  {:else if col.key === 'started'}
+                    {r.started}
+                  {:else if col.key === 'status'}
+                    <StatusBadge status={r.paused ? 'paused' : r.status} plain />
+                  {/if}
+                {/snippet}
+              </Table>
             {:else}
               <Text size="sm" tone="tertiary">No runs yet</Text>
             {/if}

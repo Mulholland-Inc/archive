@@ -2,15 +2,17 @@
   import { ChevronRight } from '@lucide/svelte';
   import Icon from './Icon.svelte';
 
-  let { items = [] } = $props();
+  let { items = [], inset = false } = $props();
 </script>
 
 <nav aria-label="Breadcrumb">
-  <ol class="crumbs">
+  <ol class={['crumbs', { inset }]}>
     {#each items as item, i (i)}
       <li>
         {#if item.href && i < items.length - 1}
           <a href={item.href}>{item.label}</a>
+        {:else if item.onclick && i < items.length - 1}
+          <button type="button" class="link" onclick={item.onclick}>{item.label}</button>
         {:else}
           <span aria-current={i === items.length - 1 ? 'page' : undefined}>{item.label}</span>
         {/if}
@@ -38,12 +40,18 @@
     white-space: nowrap;
   }
 
-  a {
+  .inset {
+    padding-inline: var(--space-3);
+  }
+
+  a,
+  .link {
     border-radius: var(--radius-xs);
     transition: color var(--duration-fast) var(--ease-out);
   }
 
-  a:hover {
+  a:hover,
+  .link:hover {
     color: var(--color-text);
   }
 
