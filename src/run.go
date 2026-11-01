@@ -615,6 +615,15 @@ func (r *runner) id(call goja.FunctionCall, i int, fn string) (uuid.UUID, error)
 	return id, nil
 }
 
+func (r *runner) row(call goja.FunctionCall, fn string) (string, uuid.UUID, error) {
+	table, err := r.str(call, 0, fn, "table")
+	if err != nil {
+		return "", uuid.Nil, err
+	}
+	id, err := r.id(call, 1, fn)
+	return table, id, err
+}
+
 func runAfter(fn, s string) (uuid.UUID, error) {
 	if s == "" {
 		return uuid.Nil, nil
@@ -704,11 +713,7 @@ func (r *runner) sdk() {
 		return rs, err
 	})
 	r.def(o, "get", func(ctx context.Context, call goja.FunctionCall) (any, error) {
-		table, err := r.str(call, 0, "get", "table")
-		if err != nil {
-			return nil, err
-		}
-		id, err := r.id(call, 1, "get")
+		table, id, err := r.row(call, "get")
 		if err != nil {
 			return nil, err
 		}
@@ -748,11 +753,7 @@ func (r *runner) sdk() {
 		return a.Create(ctx, table, data)
 	})
 	r.def(o, "update", func(ctx context.Context, call goja.FunctionCall) (any, error) {
-		table, err := r.str(call, 0, "update", "table")
-		if err != nil {
-			return nil, err
-		}
-		id, err := r.id(call, 1, "update")
+		table, id, err := r.row(call, "update")
 		if err != nil {
 			return nil, err
 		}
@@ -766,11 +767,7 @@ func (r *runner) sdk() {
 		return a.Patch(ctx, table, id, patch)
 	})
 	r.def(o, "delete", func(ctx context.Context, call goja.FunctionCall) (any, error) {
-		table, err := r.str(call, 0, "delete", "table")
-		if err != nil {
-			return nil, err
-		}
-		id, err := r.id(call, 1, "delete")
+		table, id, err := r.row(call, "delete")
 		if err != nil {
 			return nil, err
 		}
