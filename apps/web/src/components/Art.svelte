@@ -18,6 +18,10 @@
     height: var(--settings-art);
   }
 
+  .lg {
+    height: min(var(--login-art), 35svh);
+  }
+
   .banner {
     width: 100%;
     height: 100%;
