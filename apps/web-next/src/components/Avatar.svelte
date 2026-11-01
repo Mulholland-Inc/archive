@@ -95,7 +95,7 @@
     width: var(--space-2);
     height: var(--space-2);
     border-radius: var(--radius-full);
-    box-shadow: 0 0 0 var(--focus-width) var(--color-canvas);
+    box-shadow: 0 0 0 var(--focus-width) var(--avatar-cutout, var(--color-canvas));
     background: var(--color-text-tertiary);
   }
 

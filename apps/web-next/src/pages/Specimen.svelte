@@ -82,6 +82,7 @@
   import SidebarItem from '../components/SidebarItem.svelte';
   import SidebarSection from '../components/SidebarSection.svelte';
   import VaultHeader from '../components/VaultHeader.svelte';
+  import AccountMenu from '../components/AccountMenu.svelte';
   import ThemePicker from '../components/ThemePicker.svelte';
   import Disclosure from '../components/Disclosure.svelte';
   import SettingsRow from '../components/SettingsRow.svelte';
@@ -603,6 +604,7 @@
           <SpecimenFrame>
             <Sidebar>
               {#snippet header()}<VaultHeader vault={app.vaults[0]} />{/snippet}
+              {#snippet footer()}<AccountMenu user={me} />{/snippet}
               <SidebarSection>
                 <SidebarItem icon={Plus} label="New chat" accent href="#/specimen" />
                 <SidebarItem icon={Search} label="Search" shortcut="⌘ K" />

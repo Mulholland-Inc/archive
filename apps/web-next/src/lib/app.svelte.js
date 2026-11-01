@@ -16,6 +16,7 @@ export const app = $state({
   model: 'pro',
   pending: null,
   signedOut: false,
+  muted: false,
   settings: { open: false, section: null, sub: null },
   share: { open: false, kind: null, target: null },
   profile: { name: me.name, first: me.first, work: 'archivist', prefs: 'Keep answers short. Use British spelling. When you quote a letter, keep the original spelling and punctuation.', tone: me.tone, notify: { done: true, mentions: true, digest: true, invites: false } }

@@ -13,19 +13,20 @@
 {#if drawer}
   <button type="button" class="scrim" aria-label="Close sidebar" tabindex="-1" onclick={onclose}></button>
 {/if}
-<aside class={['sidebar', { collapsed, drawer, railed: !!rail }]} aria-label="Sidebar">
+<aside class={['sidebar', { collapsed, drawer, railed: !!rail, docked: !!footer }]} aria-label="Sidebar">
   {@render rail?.()}
   <div class="column">
     <div class="head">{@render header?.()}</div>
     <nav class="body">{@render children()}</nav>
-    <div class="foot">{@render footer?.()}</div>
   </div>
+  {#if footer}<div class="foot">{@render footer()}</div>{/if}
 </aside>
 
 <style>
   .sidebar {
     position: relative;
     --rail-space: 0rem;
+    --dock-space: 0rem;
     z-index: var(--z-sidebar);
     display: flex;
     flex: none;
@@ -44,6 +45,10 @@
     --rail-space: var(--vault-rail);
   }
 
+  .docked {
+    --dock-space: calc(var(--dock-height) + var(--space-2));
+  }
+
   .collapsed {
     width: calc(var(--sidebar-rail) + var(--rail-space));
   }
@@ -54,19 +59,20 @@
     flex: 1;
     min-width: 0;
     height: 100%;
-  }
-
-  .head,
-  .foot {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-px);
-    padding: var(--space-2);
+    padding-block-end: var(--dock-space);
   }
 
   .head {
-    padding: var(--space-0);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-px);
     box-shadow: inset 0 calc(var(--border-width) * -1) 0 var(--color-border-subtle);
+  }
+
+  .foot {
+    position: absolute;
+    inset-inline: var(--space-2);
+    inset-block-end: var(--space-2);
   }
 
   .body {
