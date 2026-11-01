@@ -70,7 +70,8 @@
   // a real recording, kept as an attachment you can play before sending
   let recorder = $state(null);
   let seconds = $state(0);
-  let clock;
+  let wave = $state();
+  let clock, audio, frame;
   const elapsed = $derived(`${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`);
 
   async function record() {
@@ -83,6 +84,12 @@
     }
     const chunks = [];
     const r = new MediaRecorder(stream);
+    audio = new AudioContext();
+    const analyser = audio.createAnalyser();
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.7;
+    audio.createMediaStreamSource(stream).connect(analyser);
+    draw(analyser);
     r.ondataavailable = (e) => e.data.size && chunks.push(e.data);
     r.onstop = () => {
       stream.getTracks().forEach((t) => t.stop());
@@ -90,6 +97,9 @@
       const kb = blob.size / 1024;
       attachments.push({ id: `rec-${Date.now()}`, name: `Recording ${elapsed}`, kind: 'recording', size: kb < 1024 ? `${Math.max(1, Math.round(kb))} KB` : `${(kb / 1024).toFixed(1)} MB`, tone: 2, href: URL.createObjectURL(blob) });
       clearInterval(clock);
+      cancelAnimationFrame(frame);
+      audio?.close();
+      audio = null;
       recorder = null;
       element?.focus();
     };
@@ -99,8 +109,37 @@
     recorder = r;
   }
 
+  // the voice as it comes in: bars that rise with each frequency band, mirrored from the middle
+  function draw(analyser) {
+    frame = requestAnimationFrame(() => draw(analyser));
+    if (!wave) return;
+    const { width, height } = wave.getBoundingClientRect();
+    const scale = devicePixelRatio;
+    if (wave.width !== Math.round(width * scale)) wave.width = Math.round(width * scale);
+    if (wave.height !== Math.round(height * scale)) wave.height = Math.round(height * scale);
+    const c = wave.getContext('2d');
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    analyser.getByteFrequencyData(data);
+    c.clearRect(0, 0, wave.width, wave.height);
+    c.fillStyle = getComputedStyle(wave).color;
+    const bar = 3 * scale;
+    const gap = 3 * scale;
+    const bars = Math.floor(wave.width / (bar + gap));
+    for (let i = 0; i < bars; i++) {
+      const from = Math.abs(i - (bars - 1) / 2) / (bars / 2);
+      const v = data[Math.floor(from * data.length * 0.3)] / 255;
+      const h = Math.max(bar, v * wave.height);
+      c.beginPath();
+      c.roundRect(i * (bar + gap), (wave.height - h) / 2, bar, h, bar / 2);
+      c.fill();
+    }
+  }
+
   onDestroy(() => {
     clearInterval(clock);
+    cancelAnimationFrame(frame);
+    audio?.close();
+    audio = null;
     if (recorder?.state === 'recording') recorder.stop();
   });
 
@@ -166,8 +205,12 @@
     {#if research}
       <span in:rise={{ shift: '--shift-sm' }}><Chip icon={Telescope} size="sm" onremove={() => (research = false)}>Research</Chip></span>
     {/if}
-    <span class="spacer"></span>
-    <ModelPicker bind:model bind:thinking size={control} />
+    {#if recorder}
+      <canvas class="wave" bind:this={wave} aria-hidden="true"></canvas>
+    {:else}
+      <span class="spacer"></span>
+      <ModelPicker bind:model bind:thinking size={control} />
+    {/if}
     {#if recorder}
       <span class="elapsed" aria-live="polite"><span class="dot"></span>{elapsed}</span>
       <IconButton icon={Square} label="Stop recording" variant="inverse" round size={control} onclick={() => recorder.stop()} />
@@ -255,6 +298,13 @@
 
   .spacer {
     flex: 1;
+  }
+
+  .wave {
+    flex: 1;
+    min-width: 0;
+    height: var(--control-sm);
+    color: var(--color-danger);
   }
 
   .elapsed {
