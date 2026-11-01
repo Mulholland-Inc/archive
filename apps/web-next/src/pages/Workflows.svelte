@@ -15,8 +15,9 @@
   import StatusBadge from '../components/StatusBadge.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import Text from '../components/Text.svelte';
+  import InlineEdit from '../components/InlineEdit.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { ws, runWorkflow, removeWorkflow } from '../lib/app.svelte.js';
+  import { ws, runWorkflow, removeWorkflow, renameWorkflow } from '../lib/app.svelte.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
   import { go } from '../lib/router.svelte.js';
 
@@ -44,6 +45,7 @@
   let status = $state('all');
   let sort = $state('recent');
   let search = $state();
+  let editing = $state(null);
 
   const statusOf = (w) => (!w.enabled ? 'off' : w.runs[0] ? (w.runs[0].paused ? 'paused' : w.runs[0].status) : 'idle');
   const lastRun = (w) => (w.runs[0] ? (w.runs[0].status === 'stopped' ? 'failed' : w.runs[0].status) : 'idle');
@@ -102,9 +104,11 @@
       <Button onclick={clear}>Show all workflows</Button>
     </EmptyState>
   {:else}
-    <Table {columns} {rows} label="Workflows" onrowclick={(w) => go(`/workflows/${w.id}`)}>
+    <Table {columns} {rows} label="Workflows" onrowclick={(w) => go(`/workflows/${w.id}`)} onrowdblclick={(w) => (editing = w.id)} {editing}>
       {#snippet cell(row, col)}
-        {#if col.key === 'name'}
+        {#if col.key === 'name' && editing === row.id}
+          <Text weight="medium"><InlineEdit value={row.name} label="Rename workflow" variant="plain" onsave={(name) => { editing = null; renameWorkflow(row.id, name); }} oncancel={() => (editing = null)} /></Text>
+        {:else if col.key === 'name'}
           <Text weight="medium" truncate>{row.name}</Text>
         {:else if col.key === 'status'}
           <StatusBadge status={statusOf(row)} plain />

@@ -1,11 +1,13 @@
 <script>
-  let { title, size = 'md', leading, actions, children } = $props();
+  import EditableTitle from './EditableTitle.svelte';
+
+  let { title, size = 'md', leading, actions, onrename, renameLabel = 'Rename', children } = $props();
 </script>
 
 <header class={['header', size]}>
   {#if leading}<div class="leading">{@render leading()}</div>{/if}
   <div class="row">
-    <h1>{title}</h1>
+    <h1>{#if onrename}<EditableTitle value={title} label={renameLabel} variant="heading" onsave={onrename} />{:else}{title}{/if}</h1>
     {#if actions}<div class="actions">{@render actions()}</div>{/if}
   </div>
   {#if children}{@render children()}{/if}

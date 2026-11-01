@@ -1,5 +1,5 @@
 <script>
-  import { Pause, Play, Square, Bot, RotateCcw, ListX, Ellipsis, Pencil, Trash2, CircleCheck } from '@lucide/svelte';
+  import { Pause, Play, Square, Bot, RotateCcw, ListX, Ellipsis, Trash2, CircleCheck } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
   import Breadcrumbs from '../components/Breadcrumbs.svelte';
@@ -30,7 +30,7 @@
   import EmptyState from '../components/EmptyState.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
   import { app, workflowById, runWorkflow, toggleWorkflow, renameWorkflow, removeWorkflow, pauseRun, stopRun, resolveRun, steerRun } from '../lib/app.svelte.js';
-  import { prompt, confirmDialog } from '../lib/dialogs.svelte.js';
+  import { confirmDialog } from '../lib/dialogs.svelte.js';
 
   let { id } = $props();
   const wf = $derived(workflowById(id));
@@ -59,11 +59,6 @@
     open = true;
   }
 
-  async function rename() {
-    const name = await prompt({ title: 'Rename workflow', label: 'Name', value: wf.name });
-    if (name) renameWorkflow(id, name);
-  }
-
   async function remove() {
     if (await confirmDialog({ title: 'Delete this workflow?', body: `“${wf.name}” and its run history will be removed.` })) removeWorkflow(id);
   }
@@ -87,11 +82,10 @@
 {#if wf}
   <Page width="wide">
     <Split size="lg" sticky>
-      <PageHeader title={wf.name}>
+      <PageHeader title={wf.name} renameLabel="Rename workflow" onrename={(name) => renameWorkflow(id, name)}>
         {#snippet actions()}
           <Menu placement="bottom-end" width="sm" label="Workflow actions">
             {#snippet trigger(props)}<IconButton icon={Ellipsis} label="Workflow actions" {...props} />{/snippet}
-            <MenuItem icon={Pencil} onselect={rename}>Rename</MenuItem>
             <MenuItem icon={Play} onselect={start}>Run now</MenuItem>
             <MenuSeparator />
             <MenuItem icon={Trash2} danger onselect={remove}>Delete</MenuItem>

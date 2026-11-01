@@ -9,10 +9,11 @@
   import ComposerDock from '../components/ComposerDock.svelte';
   import ChatActions from '../components/ChatActions.svelte';
   import Button from '../components/Button.svelte';
+  import EditableTitle from '../components/EditableTitle.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
   import { MessageSquareOff } from '@lucide/svelte';
-  import { app, ws, copyLink } from '../lib/app.svelte.js';
+  import { app, ws, copyLink, renameChat } from '../lib/app.svelte.js';
   import { streamReply } from '../lib/data.js';
   import { duration } from '../lib/motion.js';
   import { toast } from '../lib/toast.svelte.js';
@@ -115,7 +116,7 @@
 
   onMount(() => {
     toBottom(true);
-    element?.focus();
+    if (!document.activeElement?.matches('input')) element?.focus();
     if (app.pending?.id === id) {
       const p = app.pending;
       app.pending = null;
@@ -128,7 +129,10 @@
 <TopBar>
   {#snippet leading()}
     <MobileMenu />
-    {#if chat}<ChatActions {chat} title />{/if}
+    {#if chat}
+      <EditableTitle value={chat.title} label="Rename chat" onsave={(title) => renameChat(chat.id, title)} />
+      <ChatActions {chat} size="sm" renamable={false} />
+    {/if}
   {/snippet}
   {#snippet trailing()}
     <Button size="sm" icon={Share} onclick={() => copyLink(`/chat/${id}`)}>Share</Button>
