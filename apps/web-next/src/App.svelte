@@ -1,5 +1,5 @@
 <script>
-  import { Plus, Sun, Moon, Monitor, Settings, Shapes, MessagesSquare, Library, FolderClosed, Users, PanelLeft, FileText, Palette } from '@lucide/svelte';
+  import { Plus, Sun, Moon, Monitor, Settings, Shapes, MessagesSquare, Library, Users, PanelLeft, FileText, Palette } from '@lucide/svelte';
   import Shell from './components/Shell.svelte';
   import AppSidebar from './components/AppSidebar.svelte';
   import View from './components/View.svelte';
@@ -9,8 +9,6 @@
   import Chat from './pages/Chat.svelte';
   import Chats from './pages/Chats.svelte';
   import LibraryPage from './pages/Library.svelte';
-  import Projects from './pages/Projects.svelte';
-  import Project from './pages/Project.svelte';
   import Workflows from './pages/Workflows.svelte';
   import Workflow from './pages/Workflow.svelte';
   import Connectors from './pages/Connectors.svelte';
@@ -38,7 +36,6 @@
     { id: 'sidebar', group: 'Actions', label: 'Toggle sidebar', icon: PanelLeft, shortcut: '⌘ .', run: toggleSidebar },
     { id: 'p-chats', group: 'Go to', label: 'Chats', icon: MessagesSquare, run: () => go('/chats') },
     { id: 'p-library', group: 'Go to', label: 'Library', icon: Library, run: () => go('/library') },
-    { id: 'p-projects', group: 'Go to', label: 'Projects', icon: FolderClosed, run: () => go('/projects') },
     { id: 'p-workflows', group: 'Go to', label: 'Workflows', icon: WorkflowIcon, run: () => go('/workflows') },
     { id: 'p-connectors', group: 'Go to', label: 'Connectors', icon: Plug, run: () => go('/connectors') },
     { id: 'p-users', group: 'Go to', label: 'Users', icon: Users, run: () => go('/users') },
@@ -47,7 +44,6 @@
     ...ws().chats.filter((c) => !c.hidden).map((c, i) => ({ id: `c-${c.id}`, group: 'Chats', label: c.title, icon: MessagesSquare, meta: c.updated, run: () => go(`/chat/${c.id}`), searchOnly: i >= 6 })),
     ...ws().library.map((f) => ({ id: `f-${f.id}`, group: 'Files', label: f.name, icon: FileText, meta: f.folder, run: () => go(`/library/${f.id}`), searchOnly: true })),
     ...ws().members.map((m) => ({ id: `u-${m.id}`, group: 'People', label: m.name, icon: User, meta: m.email, run: () => go(`/users/${m.id}`), searchOnly: true })),
-    ...ws().projects.map((p) => ({ id: `pr-${p.id}`, group: 'Projects', label: p.name, icon: FolderClosed, run: () => go(`/projects/${p.id}`), searchOnly: true })),
     ...ws().workflows.map((w) => ({ id: `w-${w.id}`, group: 'Workflows', label: w.name, icon: WorkflowIcon, meta: w.trigger.label, run: () => go(`/workflows/${w.id}`), searchOnly: true })),
     ...app.vaults.filter((w) => w.id !== app.vault).map((w) => ({ id: `ws-${w.id}`, group: 'Vaults', label: `Switch to ${w.name}`, icon: Building2, run: () => switchVault(w.id), searchOnly: true }))
   ]);
@@ -88,10 +84,6 @@
         <Chats />
       {:else if route.parts[0] === 'library'}
         <LibraryPage />
-      {:else if route.parts[0] === 'projects' && route.parts[1]}
-        <Project id={route.parts[1]} />
-      {:else if route.parts[0] === 'projects'}
-        <Projects />
       {:else if route.parts[0] === 'workflows' && route.parts[1]}
         <Workflow id={route.parts[1]} />
       {:else if route.parts[0] === 'workflows'}

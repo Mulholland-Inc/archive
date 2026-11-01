@@ -28,44 +28,42 @@ export const suggestions = [
   { id: 's5', label: 'Automate', icon: 'workflow', prompt: 'Every time a scan is added, tag the people in it' }
 ];
 
-export const chatGroups = ['Starred', 'Today', 'Yesterday', 'Previous 7 days', 'Previous 30 days', 'Earlier'];
-
 export const chats = [
-  { id: 'letters-1974', title: "Transcribe Grandma Adaeze's 1974 letters", group: 'Today', starred: true, project: 'p-letters', updated: '12 min ago' },
-  { id: 'mercer-timeline', title: 'Timeline for the Mercer lease dispute', group: 'Today', project: 'p-mercer', updated: '1 hr ago' },
-  { id: 'exif-rename', title: 'Rename scanned photos by EXIF date', group: 'Today', updated: '3 hr ago' },
-  { id: 'linden-brief', title: 'Moodboard brief for the Linden rebrand', group: 'Yesterday', starred: true, project: 'p-linden', updated: 'Yesterday' },
-  { id: 'c5', title: 'Who is in the Lagos wedding photos', group: 'Yesterday', project: 'p-photos', updated: 'Yesterday' },
-  { id: 'c6', title: 'Compare the two Enugu deeds', group: 'Yesterday', updated: 'Yesterday' },
-  { id: 'c7', title: 'Recipe cards from Aunt Ifeoma', group: 'Yesterday', updated: 'Yesterday' },
-  { id: 'c8', title: 'Clause 14.2 indemnity language', group: 'Previous 7 days', project: 'p-mercer', updated: 'Mon' },
-  { id: 'c9', title: 'Deposition prep checklist', group: 'Previous 7 days', updated: 'Mon' },
-  { id: 'c10', title: 'Tag faces in the 1988 album', group: 'Previous 7 days', project: 'p-photos', updated: 'Sun' },
-  { id: 'c11', title: 'Summarize the zoning board minutes', group: 'Previous 7 days', updated: 'Sun' },
-  { id: 'c12', title: 'Letterpress vendors in Rotterdam', group: 'Previous 7 days', project: 'p-linden', updated: 'Sat' },
-  { id: 'c13', title: 'Translate the Igbo proverbs notebook', group: 'Previous 7 days', updated: 'Sat' },
-  { id: 'c14', title: 'Billing narrative for October', group: 'Previous 7 days', updated: 'Fri' },
-  { id: 'c15', title: 'Type scale options for Linden', group: 'Previous 7 days', project: 'p-linden', updated: 'Fri' },
-  { id: 'c16', title: 'Family tree: the Nwosu side', group: 'Previous 30 days', updated: 'Oct 19' },
-  { id: 'c17', title: 'Discovery request: email retention', group: 'Previous 30 days', project: 'p-mercer', updated: 'Oct 18' },
-  { id: 'c18', title: 'Clean up the cassette transcripts', group: 'Previous 30 days', updated: 'Oct 16' },
-  { id: 'c19', title: 'Draft a thank-you to the archivist', group: 'Previous 30 days', updated: 'Oct 15' },
-  { id: 'c20', title: 'Brand voice principles, round two', group: 'Previous 30 days', project: 'p-linden', updated: 'Oct 14' },
-  { id: 'c21', title: 'Conflict check for Brightwater', group: 'Previous 30 days', updated: 'Oct 12' },
-  { id: 'c22', title: 'Restore water-damaged Polaroids', group: 'Previous 30 days', project: 'p-photos', updated: 'Oct 11' },
-  { id: 'c23', title: 'Index the 1960s ledgers', group: 'Previous 30 days', updated: 'Oct 9' },
-  { id: 'c24', title: 'Studio rate card for 2027', group: 'Previous 30 days', updated: 'Oct 8' },
-  { id: 'c25', title: "Grandpa Obi's service record", group: 'Previous 30 days', updated: 'Oct 6' },
-  { id: 'c26', title: 'Precedent search: quiet enjoyment', group: 'Previous 30 days', project: 'p-mercer', updated: 'Oct 4' },
-  { id: 'c27', title: 'Photo captions for the reunion book', group: 'Earlier', updated: 'Sep 28' },
-  { id: 'c28', title: 'Retainer agreement template', group: 'Earlier', updated: 'Sep 24' },
-  { id: 'c29', title: 'Digitize the VHS tapes plan', group: 'Earlier', updated: 'Sep 21' },
-  { id: 'c30', title: 'Signage wayfinding concepts', group: 'Earlier', updated: 'Sep 17' },
-  { id: 'c31', title: 'Explain probate in plain English', group: 'Earlier', updated: 'Sep 12' },
-  { id: 'c32', title: 'Naming ideas for the cookbook', group: 'Earlier', updated: 'Sep 9' },
-  { id: 'c33', title: 'Witness statement summary', group: 'Earlier', updated: 'Sep 3' },
-  { id: 'c34', title: 'Color study from the archive scans', group: 'Earlier', updated: 'Aug 30' },
-  { id: 'c35', title: 'Birth certificates checklist', group: 'Earlier', updated: 'Aug 22' }
+  { id: 'letters-1974', title: "Transcribe Grandma Adaeze's 1974 letters", pinned: true, updated: '12 min ago' },
+  { id: 'mercer-timeline', title: 'Timeline for the Mercer lease dispute', updated: '1 hr ago' },
+  { id: 'exif-rename', title: 'Rename scanned photos by EXIF date', updated: '3 hr ago' },
+  { id: 'linden-brief', title: 'Moodboard brief for the Linden rebrand', pinned: true, updated: 'Yesterday' },
+  { id: 'c5', title: 'Who is in the Lagos wedding photos', updated: 'Yesterday' },
+  { id: 'c6', title: 'Compare the two Enugu deeds', updated: 'Yesterday' },
+  { id: 'c7', title: 'Recipe cards from Aunt Ifeoma', updated: 'Yesterday' },
+  { id: 'c8', title: 'Clause 14.2 indemnity language', updated: 'Mon' },
+  { id: 'c9', title: 'Deposition prep checklist', updated: 'Mon' },
+  { id: 'c10', title: 'Tag faces in the 1988 album', updated: 'Sun' },
+  { id: 'c11', title: 'Summarize the zoning board minutes', updated: 'Sun' },
+  { id: 'c12', title: 'Letterpress vendors in Rotterdam', updated: 'Sat' },
+  { id: 'c13', title: 'Translate the Igbo proverbs notebook', updated: 'Sat' },
+  { id: 'c14', title: 'Billing narrative for October', updated: 'Fri' },
+  { id: 'c15', title: 'Type scale options for Linden', updated: 'Fri' },
+  { id: 'c16', title: 'Family tree: the Nwosu side', updated: 'Oct 19' },
+  { id: 'c17', title: 'Discovery request: email retention', updated: 'Oct 18' },
+  { id: 'c18', title: 'Clean up the cassette transcripts', updated: 'Oct 16' },
+  { id: 'c19', title: 'Draft a thank-you to the archivist', updated: 'Oct 15' },
+  { id: 'c20', title: 'Brand voice principles, round two', updated: 'Oct 14' },
+  { id: 'c21', title: 'Conflict check for Brightwater', updated: 'Oct 12' },
+  { id: 'c22', title: 'Restore water-damaged Polaroids', updated: 'Oct 11' },
+  { id: 'c23', title: 'Index the 1960s ledgers', updated: 'Oct 9' },
+  { id: 'c24', title: 'Studio rate card for 2027', updated: 'Oct 8' },
+  { id: 'c25', title: "Grandpa Obi's service record", updated: 'Oct 6' },
+  { id: 'c26', title: 'Precedent search: quiet enjoyment', updated: 'Oct 4' },
+  { id: 'c27', title: 'Photo captions for the reunion book', updated: 'Sep 28' },
+  { id: 'c28', title: 'Retainer agreement template', updated: 'Sep 24' },
+  { id: 'c29', title: 'Digitize the VHS tapes plan', updated: 'Sep 21' },
+  { id: 'c30', title: 'Signage wayfinding concepts', updated: 'Sep 17' },
+  { id: 'c31', title: 'Explain probate in plain English', updated: 'Sep 12' },
+  { id: 'c32', title: 'Naming ideas for the cookbook', updated: 'Sep 9' },
+  { id: 'c33', title: 'Witness statement summary', updated: 'Sep 3' },
+  { id: 'c34', title: 'Color study from the archive scans', updated: 'Aug 30' },
+  { id: 'c35', title: 'Birth certificates checklist', updated: 'Aug 22' }
 ];
 
 export const conversations = {
@@ -304,17 +302,6 @@ export const library = [
   { id: 'f22', name: 'School report, Amara 1984', kind: 'pdf', ext: 'PDF', size: '420 KB', modified: 'Oct 6', owner: 'Amara Okafor', folder: 'School', tone: 4 },
   { id: 'f23', name: 'Wedding speech draft', kind: 'document', ext: 'DOC', size: '12 KB', modified: 'Oct 2', owner: 'Tobi Okafor', folder: 'Speeches', tone: 1 },
   { id: 'f24', name: 'Harmattan, 1979', kind: 'image', ext: 'JPG', size: '2.0 MB', modified: 'Sep 29', owner: 'Nora Okafor', folder: 'Photo albums', tone: 2 }
-];
-
-export const projects = [
-  { id: 'p-letters', name: '1970s Letters', updated: '12 min ago', files: 86, chats: 14, members: ['Nora Okafor', 'Chidi Okafor', 'Amara Okafor'], instructions: 'Transcribe faithfully, keep original spelling, and mark unreadable passages with [brackets]. Link every person to the family tree.', starred: true },
-  { id: 'p-photos', name: 'Photo albums', updated: 'Yesterday', files: 1240, chats: 9, members: ['Nora Okafor', 'Tobi Okafor'], instructions: 'Date photos from their contents when there is no caption. Never guess names; ask.' },
-  { id: 'p-mercer', name: 'Mercer v. Brightwater', updated: '1 hr ago', files: 63, chats: 22, members: ['Ruth Hale', 'Daniel Whitcombe', 'Priya Raman', 'Nora Okafor'], instructions: 'Cite the source document for every fact. Use British spelling and the firm’s citation style.' },
-  { id: 'p-linden', name: 'Linden Library rebrand', updated: 'Yesterday', files: 212, chats: 17, members: ['Jun Park', 'Lea Fontaine', 'Nora Okafor'], instructions: 'Write in the studio voice: short, concrete, no superlatives.' },
-  { id: 'p-tree', name: 'Family tree', updated: 'Mon', files: 18, chats: 6, members: ['Nora Okafor', 'Emeka Okafor'], instructions: 'Only owners change the tree. Suggest edits as comments.' },
-  { id: 'p-cassettes', name: 'Cassette tapes', updated: 'Oct 20', files: 48, chats: 4, members: ['Nora Okafor'], instructions: 'Transcribe in both Igbo and English, side by side.' },
-  { id: 'p-recipes', name: 'Family cookbook', updated: 'Oct 12', files: 37, chats: 8, members: ['Ifeoma Nwosu', 'Nora Okafor', 'Amara Okafor'], instructions: 'Convert to metric and keep the original notes in italics.' },
-  { id: 'p-property', name: 'Enugu property', updated: 'Sep 30', files: 24, chats: 3, members: ['Emeka Okafor', 'Nora Okafor'], instructions: 'Summaries must be plain English for the whole family.' }
 ];
 
 export const tasks = [

@@ -60,7 +60,7 @@ export function switchVault(id) {
   if (id === app.vault) return;
   app.vault = id;
   const head = route.parts[0];
-  if (['chat', 'projects', 'workflows'].includes(head) && route.parts[1]) go(`/${head === 'chat' ? '' : head}`);
+  if (['chat', 'workflows'].includes(head) && route.parts[1]) go(`/${head === 'chat' ? '' : head}`);
   toast(`Switched to ${ws().name}`);
 }
 
@@ -92,10 +92,10 @@ export function deleteVault(id) {
   });
 }
 
-export function newChat(title, { project, attachments = [], text } = {}) {
+export function newChat(title, { attachments = [], text } = {}) {
   const id = nid('n');
   const w = ws();
-  const chat = { id, title: title || 'New chat', group: 'Today', updated: 'Just now', project, hidden: app.incognito };
+  const chat = { id, title: title || 'New chat', updated: 'Just now', hidden: app.incognito };
   w.chats.unshift(chat);
   w.conversations[id] = [];
   if (text !== undefined) app.pending = { id, text, attachments };
@@ -111,25 +111,21 @@ export function renameChat(id, title) {
   if (chat && title) chat.title = title;
 }
 
-export function toggleStar(id) {
+export function togglePin(id) {
   const chat = chatById(id);
   if (!chat) return;
-  chat.starred = !chat.starred;
-  toast(chat.starred ? 'Starred' : 'Removed from starred');
+  chat.pinned = !chat.pinned;
+  toast(chat.pinned ? 'Pinned' : 'Unpinned');
+}
+
+export function pinnedFirst(chats) {
+  return [...chats.filter((c) => c.pinned), ...chats.filter((c) => !c.pinned)];
 }
 
 export function removeChat(id) {
   const w = ws();
   const open = route.path === `/chat/${id}`;
   removeAt(w.chats, (c) => c.id === id, 'Chat deleted', () => open && go('/'));
-}
-
-export function moveChat(id, projectId) {
-  const chat = chatById(id);
-  if (!chat) return;
-  chat.project = chat.project === projectId ? undefined : projectId;
-  const p = ws().projects.find((x) => x.id === projectId);
-  toast(chat.project ? `Moved to ${p?.name}` : `Removed from ${p?.name}`);
 }
 
 export async function copyLink(path) {
@@ -194,29 +190,7 @@ export function downloadFile(file) {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
-export function createProject({ name, instructions }) {
-  const id = nid('p');
-  ws().projects.unshift({ id, name, instructions: instructions || '', updated: 'Just now', files: 0, chats: 0, members: [app.profile.name], fileIds: [] });
-  toast(`Created ${name}`, { tone: 'success' });
-  return id;
-}
-
-export function projectById(id) {
-  return ws().projects.find((p) => p.id === id);
-}
-
-export function removeProject(id, label = 'Project deleted') {
-  removeAt(ws().projects, (p) => p.id === id, label, () => go('/projects'));
-}
-
-export function addProjectFile(id) {
-  const p = projectById(id);
-  if (!p) return;
-  const file = uploadFile(p.name);
-  p.fileIds.unshift(file.id);
-}
-
-export function invite({ emails, role, groups = [], project }) {
+export function invite({ emails, role, groups = [] }) {
   const w = ws();
   const added = [];
   for (const email of emails) {
@@ -226,10 +200,6 @@ export function invite({ emails, role, groups = [], project }) {
     const m = { id: nid('u'), name, email, role, groups: [...groups], active: '', status: 'invited', tone: (w.members.length % 6) + 1 };
     w.members.push(m);
     added.push(m);
-  }
-  if (project) {
-    const p = projectById(project);
-    for (const m of added) if (p && !p.members.includes(m.name)) p.members.push(m.name);
   }
   toast(added.length === 1 ? `Invited ${added[0].email}` : `${added.length} people invited`, { tone: 'success' });
   return added;

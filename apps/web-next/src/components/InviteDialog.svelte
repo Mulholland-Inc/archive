@@ -8,7 +8,7 @@
   import Stack from './Stack.svelte';
   import { ws, invite } from '../lib/app.svelte.js';
 
-  let { open = $bindable(false), project } = $props();
+  let { open = $bindable(false) } = $props();
 
   let emails = $state('');
   let role = $state('viewer');
@@ -27,7 +27,7 @@
   }
 
   function send(close) {
-    invite({ emails: list, role, groups: picked, project });
+    invite({ emails: list, role, groups: picked });
     emails = '';
     picked = [];
     close();

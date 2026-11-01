@@ -1,4 +1,4 @@
-import { chats, conversations, library, projects, members, groups, me } from './data.js';
+import { chats, conversations, library, members, groups, me } from './data.js';
 import { workflowSeed } from './workflows.js';
 import { connectorsFor } from './connectors.js';
 
@@ -53,26 +53,6 @@ const fieldMembers = [
   { id: 'fm5', name: 'Mika Sato', email: 'mika@fieldnote.studio', role: 'viewer', groups: [], active: 'Sep 17', status: 'active', tone: 5 }
 ];
 
-const haleProjects = [
-  { ...projects.find((p) => p.id === 'p-mercer'), fileIds: ['h1', 'h2', 'h3', 'h7'], members: ['Ruth Hale', 'Daniel Whitcombe', 'Priya Raman', me.name] },
-  { id: 'p-bright', name: 'Brightwater conflicts', updated: 'Oct 12', files: 0, chats: 0, members: ['Ruth Hale', me.name], instructions: 'Flag any overlap with existing clients before drafting.', fileIds: ['h8'] },
-  { id: 'p-templates', name: 'Firm templates', updated: 'Sep 24', files: 0, chats: 0, members: ['Ruth Hale', 'Tom Ashby'], instructions: 'Keep the house style. Never remove the governing-law clause.', fileIds: ['h6'] }
-];
-
-const fieldProjects = [
-  { ...projects.find((p) => p.id === 'p-linden'), fileIds: ['s1', 's2', 's3', 's4', 's6'], members: ['Jun Park', 'Lea Fontaine', me.name] },
-  { id: 'p-signage', name: 'Civic signage study', updated: 'Sep 17', files: 0, chats: 0, members: ['Mika Sato', 'Jun Park'], instructions: 'Collect references with location and year.', fileIds: ['s7'] }
-];
-
-const okaforFiles = {
-  'p-letters': ['f1', 'f2', 'f4', 'f14'],
-  'p-photos': ['f4', 'f7', 'f10', 'f14', 'f17', 'f19', 'f24'],
-  'p-tree': ['f6'],
-  'p-cassettes': ['f3', 'f9', 'f15', 'f20'],
-  'p-recipes': ['f8'],
-  'p-property': ['f5', 'f21']
-};
-
 function settings() {
   return { defaultRole: 'viewer', invites: true, sharing: false, region: 'us-central1', retention: 'forever' };
 }
@@ -84,7 +64,6 @@ function vault(base) {
     conversations: {},
     library: [],
     folders: [],
-    projects: [],
     workflows: [],
     members: [{ id: `m-${base.id}`, name: me.name, email: me.email, role: 'owner', groups: [], active: 'Now', status: 'active', tone: me.tone }],
     groups: [],
@@ -107,12 +86,9 @@ export function seed() {
   const okaforIds = chats.map((c) => c.id).filter((id) => ![...haleChats, ...fieldChats, ...personalChats].includes(id));
   const okaforChats = pick(chats, okaforIds).map((c) => ({ ...c }));
   const okaforLibrary = library.map((f) => ({ ...f }));
-  const okaforProjects = projects
-    .filter((p) => okaforFiles[p.id])
-    .map((p) => ({ ...p, members: [...p.members], fileIds: [...okaforFiles[p.id]] }));
   const hc = pick(chats, haleChats).map((c) => ({ ...c }));
   const fc = pick(chats, fieldChats).map((c) => ({ ...c }));
-  const pc = pick(chats, personalChats).map((c) => ({ ...c, project: undefined }));
+  const pc = pick(chats, personalChats).map((c) => ({ ...c }));
 
   return [
     vault({
@@ -125,7 +101,6 @@ export function seed() {
       conversations: withConversations(okaforChats),
       library: okaforLibrary,
       folders: folderNames(okaforLibrary),
-      projects: okaforProjects,
       workflows: structuredClone(workflowSeed.okafor),
       members: members.map((m) => ({ ...m, groups: [...m.groups] })),
       groups: groups.map((g) => ({ ...g }))
@@ -140,7 +115,6 @@ export function seed() {
       conversations: withConversations(hc),
       library: haleLibrary.map((f) => ({ ...f })),
       folders: folderNames(haleLibrary),
-      projects: haleProjects.map((p) => ({ ...p, members: [...p.members], fileIds: [...p.fileIds] })),
       workflows: structuredClone(workflowSeed.hale),
       members: haleMembers.map((m) => ({ ...m, groups: [...m.groups] })),
       groups: [
@@ -158,7 +132,6 @@ export function seed() {
       conversations: withConversations(fc),
       library: fieldLibrary.map((f) => ({ ...f })),
       folders: folderNames(fieldLibrary),
-      projects: fieldProjects.map((p) => ({ ...p, members: [...p.members], fileIds: [...p.fileIds] })),
       workflows: structuredClone(workflowSeed.fieldnote),
       members: fieldMembers.map((m) => ({ ...m, groups: [...m.groups] })),
       groups: [

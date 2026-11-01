@@ -1,6 +1,6 @@
 <script>
   import {
-    Plus, ArrowRight, Download, Trash2, Settings, Star, Share, Copy, Pencil, Ellipsis, Search, Mail, Bold, Italic, Underline,
+    Plus, ArrowRight, Download, Trash2, Settings, Pin, Share, Copy, Pencil, Ellipsis, Search, Mail, Bold, Italic, Underline,
     LayoutGrid, List as ListIcon, Sun, Moon, Monitor, FolderOpen, FileText, MessagesSquare, Inbox, Bell, Info, Keyboard, Library, Users
   } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
@@ -250,7 +250,7 @@
         </SpecimenBlock>
         <SpecimenBlock title="Icon buttons">
           <IconButton icon={Settings} label="Ghost" />
-          <IconButton icon={Star} label="Pressed" pressed />
+          <IconButton icon={Pin} label="Pressed" pressed />
           <IconButton icon={Share} label="Subtle" variant="subtle" />
           <IconButton icon={Copy} label="Secondary" variant="secondary" />
           <IconButton icon={ArrowRight} label="Accent round" variant="accent" round />
@@ -332,7 +332,7 @@
           <SegmentedControl bind:value={seg2} size="lg" label="Theme" options={[{ value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }, { value: 'system', label: 'System' }]} />
         </SpecimenBlock>
         <SpecimenBlock title="Breadcrumbs">
-          <Breadcrumbs items={[{ label: 'Projects', href: '#/projects' }, { label: '1970s Letters', href: '#/projects/p-letters' }, { label: 'Adaeze to Obi, 2 Mar 1974' }]} />
+          <Breadcrumbs items={[{ label: 'Library', href: '#/library' }, { label: '1970s Letters', href: '#/library' }, { label: 'Adaeze to Obi, 2 Mar 1974' }]} />
         </SpecimenBlock>
         <SpecimenBlock title="Vertical nav">
           <VerticalNav label="Example" active="b" items={[{ id: 'a', label: 'Profile', href: '#/specimen' }, { id: 'b', label: 'Appearance', href: '#/specimen' }, { id: 'c', label: 'Vault', href: '#/specimen' }]} />
@@ -348,9 +348,9 @@
             {#snippet trigger(props)}<Button iconEnd={Ellipsis} {...props}>Open menu</Button>{/snippet}
             <MenuLabel>nora@okafor.family</MenuLabel>
             <MenuItem icon={Settings} shortcut="⌘ ,">Settings</MenuItem>
-            <MenuItem icon={Star} checked>Starred</MenuItem>
+            <MenuItem icon={Pin} checked>Pinned</MenuItem>
             <MenuItem icon={Bell} keepOpen toggle={toggles.a} onselect={() => (toggles.a = !toggles.a)}>Notifications</MenuItem>
-            <SubMenu icon={FolderOpen} label="Move to project">
+            <SubMenu icon={FolderOpen} label="Move to folder">
               <MenuItem>1970s Letters</MenuItem>
               <MenuItem>Photo albums</MenuItem>
               <MenuItem>Family tree</MenuItem>
@@ -408,7 +408,7 @@
           <AvatarGroup names={members.map((m) => m.name)} size="md" max={5} />
         </SpecimenBlock>
         <SpecimenBlock title="Badges">
-          <Badge>Plain</Badge><Badge icon={Star}>With icon</Badge>
+          <Badge>Plain</Badge><Badge icon={Pin}>With icon</Badge>
           {#each ['running', 'waiting', 'succeeded', 'failed', 'stopped', 'paused', 'scheduled', 'off', 'idle', 'invited', 'connected'] as st (st)}<StatusBadge status={st} />{/each}
         </SpecimenBlock>
         <SpecimenBlock title="Cards">
@@ -424,7 +424,7 @@
             <ListItem href="#/specimen" title="Transcribe Grandma Adaeze's 1974 letters">
               {#snippet leading()}<MessagesSquare size={16} />{/snippet}
               {#snippet meta()}Last message 12 min ago{/snippet}
-              {#snippet trailing()}<Badge>Starred</Badge>{/snippet}
+              {#snippet trailing()}<Badge>Pinned</Badge>{/snippet}
             </ListItem>
             <ListItem href="#/specimen" title="Timeline for the Mercer lease dispute" active>
               {#snippet leading()}<MessagesSquare size={16} />{/snippet}

@@ -118,21 +118,42 @@
     opacity: 0;
   }
 
-  .hasActions:hover .hit,
-  .hasActions:focus-within .hit {
-    mask-image: linear-gradient(to left, transparent var(--control-lg), black calc(var(--control-lg) + var(--space-6)));
+  .item {
+    --row-fill: transparent;
   }
 
-  .active.hasActions .hit {
-    mask-image: none;
+  .item:hover,
+  .item:focus-within {
+    --row-fill: var(--color-fill);
+  }
+
+  .active,
+  .active:hover {
+    --row-fill: var(--color-fill-strong);
   }
 
   .actions {
     position: absolute;
-    inset-inline-end: var(--space-0-5);
+    inset-block: 0;
+    inset-inline-end: 0;
     display: inline-flex;
+    align-items: center;
+    padding-inline: var(--space-0-5);
+    border-start-end-radius: inherit;
+    border-end-end-radius: inherit;
+    background: linear-gradient(var(--row-fill), var(--row-fill)), var(--color-sidebar);
     opacity: 0;
     transition: opacity var(--duration-fast) var(--ease-out);
+  }
+
+  .actions::before {
+    content: '';
+    position: absolute;
+    inset-block: 0;
+    inset-inline-end: 100%;
+    width: var(--space-6);
+    background: inherit;
+    mask-image: linear-gradient(to right, transparent, black);
   }
 
   .item:hover .actions,
