@@ -3,6 +3,7 @@
   import VaultRailItem from './VaultRailItem.svelte';
   import VaultIcon from './VaultIcon.svelte';
   import Icon from './Icon.svelte';
+  import { vaultItems } from '../lib/menus.js';
 
   let { vaults = [], current, onselect, oncreate } = $props();
 
@@ -12,7 +13,7 @@
 <nav class="rail" aria-label="Vaults">
   <div class="list">
   {#each vaults as w (w.id)}
-    <VaultRailItem label={w.name} active={w.id === current} count={running(w)} onclick={() => onselect?.(w.id)}>
+    <VaultRailItem label={w.name} active={w.id === current} count={running(w)} items={() => vaultItems(w)} onclick={() => onselect?.(w.id)}>
       <VaultIcon icon={w.look.icon} tint={w.look.tint} seed={w.id} size="rail" />
     </VaultRailItem>
   {/each}

@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { Upload, LayoutGrid, List as ListIcon, Ellipsis, Download, Pencil, MessageSquarePlus, Trash2, SearchX, FolderPlus, Share, FileText, Image, AudioLines, FileSpreadsheet, Inbox } from '@lucide/svelte';
+  import { Upload, LayoutGrid, List as ListIcon, Ellipsis, Download, Pencil, MessageSquarePlus, SearchX, FolderPlus, Share, FileText, Image, AudioLines, FileSpreadsheet, Inbox } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
   import StickyHeader from '../components/StickyHeader.svelte';
@@ -15,8 +15,7 @@
   import Button from '../components/Button.svelte';
   import IconButton from '../components/IconButton.svelte';
   import Menu from '../components/Menu.svelte';
-  import MenuItem from '../components/MenuItem.svelte';
-  import MenuSeparator from '../components/MenuSeparator.svelte';
+  import MenuItems from '../components/MenuItems.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import Dialog from '../components/Dialog.svelte';
   import Avatar from '../components/Avatar.svelte';
@@ -26,9 +25,10 @@
   import Spacer from '../components/Spacer.svelte';
   import SettingsRow from '../components/SettingsRow.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { ws, seedOf, newChat, uploadFile, addFolder, renameFile, removeFile, downloadFile, openShare } from '../lib/app.svelte.js';
+  import { ws, seedOf, uploadFile, addFolder, downloadFile, openShare } from '../lib/app.svelte.js';
   import { prompt } from '../lib/dialogs.svelte.js';
-  import { go, route } from '../lib/router.svelte.js';
+  import { route } from '../lib/router.svelte.js';
+  import { fileItems, askAboutFile, renameFilePrompt as rename } from '../lib/menus.js';
 
   const kinds = [
     { value: 'all', label: 'All' },
@@ -85,14 +85,10 @@
 
   function ask(file, close) {
     close?.();
-    const id = newChat(`About ${file.name}`, { text: `What is in ${file.name}?`, attachments: [{ id: file.id, name: file.name, kind: file.kind, size: file.size, tone: file.tone }] });
-    go(`/chat/${id}`);
+    askAboutFile(file);
   }
 
-  async function rename(file) {
-    const name = await prompt({ title: 'Rename file', label: 'Name', value: file.name });
-    if (name) renameFile(file.id, name);
-  }
+  const fileActions = (file) => fileItems(file, { onopen: show });
 
   async function newFolder() {
     const name = await prompt({ title: 'New folder', label: 'Name', placeholder: 'Wedding, 1981', confirm: 'Create' });
@@ -129,18 +125,13 @@
 {#snippet fileMenu(file)}
   <Menu placement="bottom-end" width="sm" label="File actions">
     {#snippet trigger(props)}<IconButton icon={Ellipsis} label={`Actions for ${file.name}`} size="sm" tooltip={false} {...props} />{/snippet}
-    <MenuItem icon={MessageSquarePlus} onselect={() => ask(file)}>Ask about this</MenuItem>
-    <MenuItem icon={Pencil} onselect={() => rename(file)}>Rename</MenuItem>
-    <MenuItem icon={Share} onselect={() => openShare('file', file.id)}>Share</MenuItem>
-    <MenuItem icon={Download} onselect={() => downloadFile(file)}>Download</MenuItem>
-    <MenuSeparator />
-    <MenuItem icon={Trash2} danger onselect={() => removeFile(file.id)}>Move to trash</MenuItem>
+    <MenuItems items={fileItems(file)} />
   </Menu>
 {/snippet}
 
 <TopBar mobile>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
 <Page width="wide">
-  <StickyHeader title="Library">
+  <StickyHeader title="Library" art="bg-library">
     {#snippet search()}
       <SearchField bind:value={query} bind:element={searchEl} placeholder="Search files and folders" shortcut="/" />
       <Select bind:value={folder} options={folders} variant="ghost" label="Folder" />
@@ -175,13 +166,13 @@
   {:else if view === 'grid'}
     <Grid min="tile" gap="2">
       {#each files as file (file.id)}
-        <FileTile {file} onclick={() => show(file)}>
+        <FileTile {file} onclick={() => show(file)} items={() => fileActions(file)}>
           {#snippet menu()}{@render fileMenu(file)}{/snippet}
         </FileTile>
       {/each}
     </Grid>
   {:else}
-    <Table {columns} rows={files} label="Files" onrowclick={show}>
+    <Table {columns} rows={files} label="Files" onrowclick={show} menu={fileActions}>
       {#snippet cell(row, col)}
         {#if col.key === 'name'}
           <Stack direction="row" gap="3" align="center">

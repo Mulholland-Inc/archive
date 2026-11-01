@@ -1,5 +1,5 @@
 <script>
-  import { UserPlus, Ellipsis, UserMinus, Trash2, SearchX, Share as ShareIcon, Ban } from '@lucide/svelte';
+  import { UserPlus, Ellipsis, Trash2, SearchX, Share as ShareIcon, Ban } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
   import StickyHeader from '../components/StickyHeader.svelte';
@@ -13,17 +13,17 @@
   import Button from '../components/Button.svelte';
   import IconButton from '../components/IconButton.svelte';
   import Menu from '../components/Menu.svelte';
-  import MenuItem from '../components/MenuItem.svelte';
-  import MenuSeparator from '../components/MenuSeparator.svelte';
+  import MenuItems from '../components/MenuItems.svelte';
   import Spacer from '../components/Spacer.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import InviteDialog from '../components/InviteDialog.svelte';
   import AvatarGroup from '../components/AvatarGroup.svelte';
   import Section from '../components/Section.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { ws, seedOf, removeMember, invite, shareItem, shareKinds, permissions, isExternal, openShare, stopSharing, removeGuest } from '../lib/app.svelte.js';
+  import { ws, seedOf, removeMember, shareItem, shareKinds, permissions, isExternal, openShare, stopSharing } from '../lib/app.svelte.js';
   import { toast } from '../lib/toast.svelte.js';
-  import { route, go } from '../lib/router.svelte.js';
+  import { route } from '../lib/router.svelte.js';
+  import { memberItems, guestItems, shareItems } from '../lib/menus.js';
 
   const focus = ws().members.find((m) => m.id === route.parts[1]);
   let tab = $state(focus?.status === 'invited' ? 'invitations' : 'members');
@@ -108,7 +108,7 @@
 
 <TopBar mobile>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
 <Page width="wide">
-  <StickyHeader title="Access">
+  <StickyHeader title="Access" art="bg-access">
     {#snippet search()}
       <SearchField bind:value={query} placeholder={tab === 'shares' ? 'Search items and people' : 'Search by name or email'} />
     {/snippet}
@@ -127,7 +127,7 @@
 
   {#if tab === 'shares'}
     {#if shareRows.length}
-      <Table columns={shareColumns} rows={shareRows} label="Shares" cards onrowclick={(row) => openShare(row.share.kind, row.share.target)}>
+      <Table columns={shareColumns} rows={shareRows} label="Shares" cards onrowclick={(row) => openShare(row.share.kind, row.share.target)} menu={(row) => shareItems(row.share, row.item)}>
         {#snippet cell(row, col)}
           {#if col.key === 'item'}
             <Text weight="medium" truncate>{row.item.name}</Text>
@@ -152,7 +152,7 @@
     {/if}
   {:else}
     {#if memberRows.length}
-      <Table columns={memberColumns} rows={memberRows} label="Members" leading={avatar} cards>
+      <Table columns={memberColumns} rows={memberRows} label="Members" leading={avatar} cards menu={(row) => memberItems(row, { roles, onrole: changeRole })}>
         {#snippet cell(row, col)}
           {#if col.key === 'name'}
             <Text weight="medium" truncate>{row.name}</Text>
@@ -172,7 +172,7 @@
     {/if}
     {#if tab === 'members' && roleFilter === 'all' && guestRows.length}
       <Section title="Guests">
-        <Table columns={guestColumns} rows={guestRows} label="Guests" leading={avatar} cards>
+        <Table columns={guestColumns} rows={guestRows} label="Guests" leading={avatar} cards menu={guestItems}>
           {#snippet cell(row, col)}
             {#if col.key === 'name'}
               <Text weight="medium" truncate>{row.name}</Text>
@@ -183,9 +183,7 @@
             {:else if col.key === 'menu'}
               <Menu placement="bottom-end" width="sm" label="Guest actions">
                 {#snippet trigger(props)}<IconButton icon={Ellipsis} label={`Actions for ${row.name}`} size="sm" tooltip={false} {...props} />{/snippet}
-                <MenuItem icon={UserPlus} onselect={() => invite({ emails: [row.email], role: 'viewer' })}>Invite to vault</MenuItem>
-                <MenuSeparator />
-                <MenuItem icon={UserMinus} danger onselect={() => removeGuest(row.email)}>Remove all access</MenuItem>
+                <MenuItems items={guestItems(row)} />
               </Menu>
             {/if}
           {/snippet}

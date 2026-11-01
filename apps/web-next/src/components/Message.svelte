@@ -5,12 +5,14 @@
   import Attachment from './Attachment.svelte';
   import IconButton from './IconButton.svelte';
   import { rise } from '../lib/motion.js';
+  import { contextmenu } from '../lib/contextmenu.svelte.js';
+  import { messageItems } from '../lib/menus.js';
 
   let { message, streaming = false, onedit } = $props();
 </script>
 
 {#if message.role === 'user'}
-  <article class="user" in:rise>
+  <article class="user" in:rise {@attach contextmenu(() => messageItems(message, { onedit }))}>
     {#if message.attachments?.length}
       <div class="atts">
         {#each message.attachments as a, i (a.id)}
@@ -26,7 +28,7 @@
     {/if}
   </article>
 {:else}
-  <article class="assistant" in:rise>
+  <article class="assistant" in:rise {@attach contextmenu(() => messageItems(message))}>
     {#if message.steps?.length}
       <Steps steps={message.steps} running={streaming && !message.blocks?.length} worked={message.worked} />
     {/if}

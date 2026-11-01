@@ -97,6 +97,7 @@
 
   .table {
     overflow-x: auto;
+    overscroll-behavior-y: auto;
     border-radius: var(--radius-lg);
     background: var(--color-surface);
     box-shadow: inset 0 0 0 var(--border-width) var(--color-border);

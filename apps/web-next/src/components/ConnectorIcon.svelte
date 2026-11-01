@@ -1,19 +1,17 @@
 <script>
-  import { Mail, Cloud, Hash, Plug } from '@lucide/svelte';
-  import { brands, isDark } from '../lib/brands.js';
+  import { Users, Plug } from '@lucide/svelte';
+  import { brandFor } from '../lib/brands.js';
 
   let { id, size = 'md', label } = $props();
-  const glyphs = { mail: Mail, cloud: Cloud, hash: Hash };
-  const brand = $derived(brands[id]);
-  const Glyph = $derived(glyphs[brand?.glyph] ?? Plug);
-  const dark = $derived(brand ? isDark(brand.hex) : false);
+  const brand = $derived(brandFor(id));
+  const Glyph = $derived(id === 'scim' ? Users : Plug);
 </script>
 
-<span class={['tile', size, { dark }]} role={label ? 'img' : undefined} aria-label={label} aria-hidden={label ? undefined : 'true'}>
-  {#if brand?.path}
-    <svg viewBox="0 0 24 24"><path d={brand.path} fill={`#${brand.hex}`} /></svg>
+<span class={['tile', size]} role={label ? 'img' : undefined} aria-label={label} aria-hidden={label ? undefined : 'true'}>
+  {#if brand}
+    <svg viewBox={brand[0]}>{@html brand[1]}</svg>
   {:else}
-    <span class="glyph"><Glyph color={brand ? `#${brand.hex}` : 'currentColor'} /></span>
+    <span class="glyph"><Glyph /></span>
   {/if}
 </span>
 
@@ -55,11 +53,4 @@
     stroke-width: var(--icon-stroke);
   }
 
-  :global([data-theme='dark']) .dark path {
-    fill: var(--color-text);
-  }
-
-  :global([data-theme='dark']) .dark .glyph :global(svg) {
-    stroke: var(--color-text);
-  }
 </style>

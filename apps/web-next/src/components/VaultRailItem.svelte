@@ -1,10 +1,11 @@
 <script>
   import Tooltip from './Tooltip.svelte';
+  import { contextmenu } from '../lib/contextmenu.svelte.js';
 
-  let { label, active = false, count = 0, add = false, onclick, children } = $props();
+  let { label, active = false, count = 0, add = false, onclick, items, children } = $props();
 </script>
 
-<div class={['item', { active, add }]}>
+<div class={['item', { active, add }]} {@attach items && contextmenu(items)}>
   <span class="pill" aria-hidden="true"></span>
   <Tooltip text={label} placement="right" size="md" instant>
     <button type="button" class="tile" aria-label={count ? `${label}, ${count} running` : label} aria-current={active ? 'true' : undefined} {onclick}>
@@ -38,7 +39,8 @@
       transform var(--duration-normal) var(--ease-out);
   }
 
-  .item:hover .pill {
+  .item:hover .pill,
+  .item:global([data-contextmenu]) .pill {
     height: var(--space-5);
     opacity: 1;
     transform: translate(0, -50%);

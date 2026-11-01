@@ -1,43 +1,36 @@
 <script>
-  import { Pause, Play, Square, Bot, RotateCcw, ListX, Ellipsis, Trash2, CircleCheck, Share } from '@lucide/svelte';
+  import { Pause, Play, Square, RotateCcw, ListX, Ellipsis, CircleCheck, Eye } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
   import Breadcrumbs from '../components/Breadcrumbs.svelte';
   import PageHeader from '../components/PageHeader.svelte';
   import Stack from '../components/Stack.svelte';
-  import Split from '../components/Split.svelte';
   import Card from '../components/Card.svelte';
-  import Section from '../components/Section.svelte';
   import Message from '../components/Message.svelte';
   import Steps from '../components/Steps.svelte';
   import StatusBadge from '../components/StatusBadge.svelte';
   import ProgressBar from '../components/ProgressBar.svelte';
-  import SettingsRow from '../components/SettingsRow.svelte';
   import TriggerLabel from '../components/TriggerLabel.svelte';
   import Button from '../components/Button.svelte';
   import IconButton from '../components/IconButton.svelte';
-  import Switch from '../components/Switch.svelte';
   import Menu from '../components/Menu.svelte';
-  import MenuItem from '../components/MenuItem.svelte';
-  import MenuSeparator from '../components/MenuSeparator.svelte';
-  import Table from '../components/Table.svelte';
+  import MenuItems from '../components/MenuItems.svelte';
   import Text from '../components/Text.svelte';
-  import Icon from '../components/Icon.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { workflowById, runWorkflow, toggleWorkflow, renameWorkflow, removeWorkflow, openShare, pauseRun, stopRun, resolveRun } from '../lib/app.svelte.js';
+  import RightSidebar from '../components/RightSidebar.svelte';
+  import DetailsButton from '../components/DetailsButton.svelte';
+  import SidebarSection from '../components/SidebarSection.svelte';
+  import SidebarItem from '../components/SidebarItem.svelte';
+  import { app, workflowById, runWorkflow, renameWorkflow, removeWorkflow, pauseRun, stopRun, resolveRun } from '../lib/app.svelte.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
+  import { workflowItems, runItems } from '../lib/menus.js';
 
   let { id } = $props();
   const wf = $derived(workflowById(id));
   let selected = $state(null);
   let open = $state(true);
 
-  const runColumns = [
-    { key: 'run', label: 'Run' },
-    { key: 'started', label: 'Started', muted: true },
-    { key: 'status', label: 'Status', align: 'end' }
-  ];
   const run = $derived(wf?.runs.find((r) => r.id === selected) ?? wf?.runs[0]);
   const done = $derived(run ? run.steps.filter((s) => s.status === 'done').length : 0);
   const current = $derived(run?.steps.find((s) => ['running', 'waiting', 'failed'].includes(s.status)) ?? run?.steps.at(-1));
@@ -54,6 +47,11 @@
     return null;
   });
 
+  function pick(r) {
+    selected = r.id;
+    app.details = false;
+  }
+
   function start() {
     selected = runWorkflow(id);
     open = true;
@@ -64,32 +62,33 @@
   }
 </script>
 
-<TopBar>
-  {#snippet leading()}
-    <MobileMenu />
-    <Breadcrumbs inset items={[{ label: 'Workflows', href: '#/workflows' }, { label: wf?.name ?? 'Not found' }]} />
-  {/snippet}
-  {#snippet trailing()}
-    {#if run && live}
-      <Button size="sm" icon={run.paused ? Play : Pause} onclick={() => pauseRun(run)}>{run.paused ? 'Resume' : 'Pause'}</Button>
-      <Button size="sm" variant="ghost" icon={Square} onclick={() => stopRun(run)}>Stop</Button>
-    {:else if wf}
-      <Button size="sm" variant="primary" icon={run?.status === 'failed' || run?.status === 'stopped' ? RotateCcw : Play} onclick={start}>{run?.status === 'failed' || run?.status === 'stopped' ? 'Run again' : 'Run now'}</Button>
-    {/if}
-  {/snippet}
-</TopBar>
+{#snippet topbar()}
+  <TopBar>
+    {#snippet leading()}
+      <MobileMenu />
+      <Breadcrumbs inset items={[{ label: 'Workflows', href: '#/workflows' }, { label: wf?.name ?? 'Not found' }]} />
+    {/snippet}
+    {#snippet trailing()}
+      {#if run && live}
+        <Button size="sm" icon={run.paused ? Play : Pause} onclick={() => pauseRun(run)}>{run.paused ? 'Resume' : 'Pause'}</Button>
+        <Button size="sm" variant="ghost" icon={Square} onclick={() => stopRun(run)}>Stop</Button>
+      {:else if wf}
+        <Button size="sm" variant="primary" icon={run?.status === 'failed' || run?.status === 'stopped' ? RotateCcw : Play} onclick={start}>{run?.status === 'failed' || run?.status === 'stopped' ? 'Run again' : 'Run now'}</Button>
+      {/if}
+      {#if wf}<DetailsButton />{/if}
+    {/snippet}
+  </TopBar>
+{/snippet}
 
 {#if wf}
-  <Page width="wide">
-    <Split size="lg" sticky>
+  <RightSidebar art="bg-workflows" label="Workflow details">
+    {@render topbar()}
+    <Page>
       <PageHeader title={wf.name} renameLabel="Rename workflow" onrename={(name) => renameWorkflow(id, name)}>
         {#snippet actions()}
           <Menu placement="bottom-end" width="sm" label="Workflow actions">
             {#snippet trigger(props)}<IconButton icon={Ellipsis} label="Workflow actions" {...props} />{/snippet}
-            <MenuItem icon={Play} onselect={start}>Run now</MenuItem>
-            <MenuItem icon={Share} onselect={() => openShare('workflow', wf.id)}>Share</MenuItem>
-            <MenuSeparator />
-            <MenuItem icon={Trash2} danger onselect={remove}>Delete</MenuItem>
+            <MenuItems items={workflowItems(wf, { open: false, onrun: start, ondelete: remove })} />
           </Menu>
         {/snippet}
         <Stack direction="row" gap="3" align="center" wrap>
@@ -118,52 +117,52 @@
           <Button variant="primary" icon={Play} onclick={start}>Run now</Button>
         </EmptyState>
       {/if}
+    </Page>
 
-      {#snippet aside()}
-        {#if run}
-          <Card padding="md" variant="filled">
-            <Section title={`Run #${run.number}`}>
-              {#snippet actions()}<Text size="sm" tone="tertiary" tabular>{done} of {run.steps.length}</Text>{/snippet}
-              <ProgressBar value={done / run.steps.length} {tone} />
-              <Text size="sm" tone="tertiary">Started {run.started}, {run.elapsed}</Text>
-            </Section>
-          </Card>
-        {/if}
-        <Card padding="md" variant="filled">
-          <Section title="Settings">
-            <Stack gap="0">
-              <SettingsRow label="On"><Switch checked={wf.enabled} label="Workflow on" onchange={() => toggleWorkflow(id)} /></SettingsRow>
-              <SettingsRow label="Agent"><Stack direction="row" gap="1-5" align="center"><Icon icon={Bot} size="sm" /><Text size="sm" tone="secondary">{wf.agent}</Text></Stack></SettingsRow>
-              {#if wf.next}<SettingsRow label="Next run"><Text size="sm" tone="secondary">{wf.enabled ? wf.next : 'Off'}</Text></SettingsRow>{/if}
-            </Stack>
-          </Section>
-        </Card>
-        <Card padding="md" variant="filled">
-          <Section title="Runs">
-            {#if wf.runs.length}
-              <Table columns={runColumns} rows={wf.runs} label="Runs" selected={run ? [run.id] : []} onrowclick={(r) => (selected = r.id)}>
-                {#snippet cell(r, col)}
-                  {#if col.key === 'run'}
-                    <Text weight="medium">Run #{r.number}</Text>
-                  {:else if col.key === 'started'}
-                    {r.started}
-                  {:else if col.key === 'status'}
-                    <StatusBadge status={r.paused ? 'paused' : r.status} plain />
-                  {/if}
-                {/snippet}
-              </Table>
-            {:else}
-              <Text size="sm" tone="tertiary">No runs yet</Text>
-            {/if}
-          </Section>
-        </Card>
-      {/snippet}
-    </Split>
-  </Page>
+    {#snippet side()}
+      {#if run}
+        <SidebarSection title={`Run #${run.number}`}>
+          {#snippet action()}<Text size="xs" tone="tertiary" tabular>{done} of {run.steps.length}</Text>{/snippet}
+          <div class="block">
+            <StatusBadge status={run.paused ? 'paused' : run.status} plain />
+            <ProgressBar value={done / run.steps.length} {tone} />
+            <Text size="sm" tone="tertiary">Started {run.started}{#if run.elapsed}, {run.elapsed}{/if}</Text>
+          </div>
+        </SidebarSection>
+      {/if}
+      <SidebarSection>
+        {#each wf.runs as r (r.id)}
+          <SidebarItem label={`Run #${r.number}`} badge={r.started} active={r.id === run?.id} onclick={() => pick(r)} items={() => [{ label: 'Open run', icon: Eye, onselect: () => pick(r) }, ...runItems(r, wf, { onrun: start })]}>
+            {#snippet leading()}<span class="glyph"><StatusBadge status={r.paused ? 'paused' : r.status} plain iconOnly /></span>{/snippet}
+          </SidebarItem>
+        {:else}
+          <div class="block"><Text size="sm" tone="tertiary">No runs yet</Text></div>
+        {/each}
+      </SidebarSection>
+    {/snippet}
+  </RightSidebar>
 {:else}
+  {@render topbar()}
   <Page center>
     <EmptyState icon={ListX} title="Workflow not found">
       <Button href="#/workflows">All workflows</Button>
     </EmptyState>
   </Page>
 {/if}
+
+<style>
+  .block {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-1-5);
+  }
+
+  .glyph {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: var(--icon-lg);
+    height: var(--icon-lg);
+  }
+</style>

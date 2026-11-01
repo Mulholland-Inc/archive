@@ -1,11 +1,13 @@
 <script>
   import StatusBadge from './StatusBadge.svelte';
   import WorkflowActions from './WorkflowActions.svelte';
+  import { contextmenu } from '../lib/contextmenu.svelte.js';
+  import { workflowItems } from '../lib/menus.js';
 
   let { workflow, status, onopen, ondelete } = $props();
 </script>
 
-<li class="item">
+<li class="item" {@attach contextmenu(() => workflowItems(workflow, { ondelete }))}>
   <button type="button" class="open" onclick={onopen}>
     <span class="title">{workflow.name}</span>
     <span class="meta">
