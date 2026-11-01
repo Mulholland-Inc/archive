@@ -64,6 +64,11 @@
     padding: var(--space-2);
   }
 
+  .head {
+    padding: var(--space-0);
+    box-shadow: inset 0 calc(var(--border-width) * -1) 0 var(--color-border-subtle);
+  }
+
   .body {
     display: flex;
     flex-direction: column;
