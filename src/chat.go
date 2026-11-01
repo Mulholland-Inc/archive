@@ -307,8 +307,7 @@ func (a *Archive) chat(w http.ResponseWriter, r *http.Request) {
 			default:
 				runs++
 				send(map[string]any{"type": "run", "id": id, "code": code})
-				frame := func(f, u string) { send(map[string]any{"type": "browse", "id": id, "frame": f, "url": u}) }
-				if o, err := a.Run(browseFrames(ctx, frame), code); err != nil {
+				if o, err := a.Run(ctx, code); err != nil {
 					out.Error = err.Error()
 				} else {
 					out = o
