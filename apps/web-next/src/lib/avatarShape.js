@@ -4,26 +4,29 @@ const RX = Math.sqrt(1.5);
 const RY = Math.SQRT1_2;
 
 const MATERIALS = {
-  white: '#F4F5F7',
-  sky: '#DCEBFC',
-  lilac: '#66AEF5',
-  lime: '#0066C5',
-  blue: '#1A40A1',
-  steel: '#C3C7CE',
-  paper: '#E6E8EA'
+  wine: '#5e1724',
+  gold: '#b8963e',
+  forest: '#1f4a38',
+  navy: '#22407a',
+  plum: '#7a3f8e',
+  slate: '#7f8a96',
+  bronze: '#8a6a3d',
+  cream: '#efe6d2'
 };
 
 const PAIRS = [
-  ['white', 'lime'],
-  ['sky', 'blue'],
-  ['lilac', 'white'],
-  ['lime', 'sky'],
-  ['blue', 'lilac'],
-  ['steel', 'lime'],
-  ['white', 'blue'],
-  ['paper', 'lilac'],
-  ['sky', 'lime'],
-  ['lilac', 'blue']
+  ['wine', 'gold'],
+  ['gold', 'forest'],
+  ['forest', 'cream'],
+  ['navy', 'gold'],
+  ['plum', 'cream'],
+  ['slate', 'wine'],
+  ['bronze', 'navy'],
+  ['cream', 'plum'],
+  ['gold', 'navy'],
+  ['forest', 'wine'],
+  ['plum', 'gold'],
+  ['wine', 'cream']
 ];
 
 export function hash(str) {
@@ -56,10 +59,16 @@ function shade(hex, k) {
   return `#${rgb.map((v) => v.toString(16).padStart(2, '0')).join('')}`;
 }
 
+function lighten(hex, k) {
+  const n = parseInt(hex.slice(1), 16);
+  const rgb = [n >> 16, (n >> 8) & 255, n & 255].map((v) => Math.round(v + (255 - v) * k));
+  return `#${rgb.map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+}
+
 function material(name) {
   const base = MATERIALS[name];
-  const dark = name === 'blue' || name === 'lime';
-  return { name, top: base, left: shade(base, dark ? 0.12 : 0.07), right: shade(base, dark ? 0.26 : 0.17) };
+  const light = name === 'cream';
+  return { name, top: light ? base : lighten(base, 0.22), left: light ? shade(base, 0.08) : base, right: shade(base, light ? 0.18 : 0.28) };
 }
 
 const P = (x, y, z) => [(x - y) * C, (x + y) / 2 - z];

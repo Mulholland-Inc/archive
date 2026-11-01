@@ -12,7 +12,7 @@
     <img {src} alt="" />
   {:else}
     <svg viewBox="0 0 64 64" aria-hidden="true">
-      <circle class="disc" cx="32" cy="40" r="24" />
+      <circle class="disc" cx="32" cy="35" r="29" />
       {#each shape.solids as s, i (i)}
         {#each s.faces as f, j (j)}
           <path d={f.d} fill={f.fill} fill-rule={f.evenodd ? 'evenodd' : undefined} />
