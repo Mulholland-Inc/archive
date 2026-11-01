@@ -73,7 +73,7 @@
     overflow: auto;
     padding: var(--space-4);
     padding-block-start: var(--space-0);
-    font-family: var(--font-mono);
+    font-family: var(--font-sans);
     font-size: var(--text-code);
     line-height: var(--leading-relaxed);
     letter-spacing: var(--tracking-normal);

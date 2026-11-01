@@ -164,7 +164,6 @@
         <SpecimenBlock title="Families" column>
           <TypeSample token="text-2xl" family="serif" label="EB Garamond">Letters from Enugu, 1974</TypeSample>
           <TypeSample token="text-xl" family="sans" label="Inter">Letters from Enugu, 1974</TypeSample>
-          <TypeSample token="text-lg" family="mono" label="Geist Mono">rename_scans.py --dry-run</TypeSample>
         </SpecimenBlock>
         <SpecimenBlock title="Serif scale" column>
           {#each sizes.slice(0, 5) as s (s)}<TypeSample token={s} family="serif">The archive remembers</TypeSample>{/each}
@@ -179,7 +178,7 @@
           <Heading level={3} size="md" serif={false}>Section heading</Heading>
           <Stack direction="row" gap="4" wrap>
             <Text>Default</Text><Text tone="secondary">Secondary</Text><Text tone="tertiary">Tertiary</Text><Text tone="accent">Accent</Text>
-            <Text tone="success">Success</Text><Text tone="warning">Warning</Text><Text tone="danger">Danger</Text><Text family="mono">Mono</Text>
+            <Text tone="success">Success</Text><Text tone="warning">Warning</Text><Text tone="danger">Danger</Text>
           </Stack>
         </SpecimenBlock>
       </SpecimenSection>
@@ -198,10 +197,10 @@
 
       <SpecimenSection id="s-motion" title="Motion">
         <SpecimenBlock title="Durations, click to play" column>
-          <MotionSample duration="fast" easing="out" label="fast · ease-out" />
-          <MotionSample duration="normal" easing="out" label="normal · ease-out" />
-          <MotionSample duration="slow" easing="in-out" label="slow · ease-in-out" />
-          <MotionSample duration="slower" easing="emphasized" label="slower · emphasized" />
+          <MotionSample duration="fast" easing="out" label="fast, ease-out" />
+          <MotionSample duration="normal" easing="out" label="normal, ease-out" />
+          <MotionSample duration="slow" easing="in-out" label="slow, ease-in-out" />
+          <MotionSample duration="slower" easing="emphasized" label="slower, emphasized" />
         </SpecimenBlock>
         <SpecimenBlock title="Vault icons, hover to wake">
           {#each Object.entries(TYPES) as [type, t] (type)}

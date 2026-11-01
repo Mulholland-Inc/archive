@@ -38,7 +38,7 @@
     <span class="kind"><Icon icon={icons[file.kind] ?? FileText} size="sm" /></span>
     <span class="text">
       <span class="name">{file.name}</span>
-      <span class="sub">{file.modified} · {file.size}</span>
+      <span class="sub">{file.modified}, {file.size}</span>
     </span>
     {#if menu}<span class="menu">{@render menu()}</span>{/if}
   </div>

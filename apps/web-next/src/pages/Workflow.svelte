@@ -130,7 +130,7 @@
             <Section title={`Run #${run.number}`}>
               {#snippet actions()}<Text size="sm" tone="tertiary" tabular>{done} of {run.steps.length}</Text>{/snippet}
               <ProgressBar value={done / run.steps.length} {tone} />
-              <Text size="sm" tone="tertiary">Started {run.started} · {run.elapsed}</Text>
+              <Text size="sm" tone="tertiary">Started {run.started}, {run.elapsed}</Text>
             </Section>
           </Card>
         {/if}
@@ -149,7 +149,7 @@
               <List label="Runs" divided={false} inset>
                 {#each wf.runs as r (r.id)}
                   <ListItem title={`Run #${r.number}`} size="sm" active={r.id === run?.id} onclick={() => (selected = r.id)}>
-                    {#snippet meta()}{r.started} · {r.elapsed}{/snippet}
+                    {#snippet meta()}{r.started}, {r.elapsed}{/snippet}
                     {#snippet trailing()}<StatusBadge status={r.paused ? 'paused' : r.status} />{/snippet}
                   </ListItem>
                 {/each}

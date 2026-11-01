@@ -41,7 +41,6 @@
   .w-semibold { font-weight: var(--weight-semibold); }
 
   .f-sans { font-family: var(--font-sans); }
-  .f-mono { font-family: var(--font-mono); letter-spacing: var(--tracking-normal); }
   .f-serif { font-family: var(--font-serif); letter-spacing: var(--tracking-normal); }
 
   .truncate {
