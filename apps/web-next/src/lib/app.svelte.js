@@ -17,6 +17,7 @@ export const app = $state({
   model: 'pro',
   pending: null,
   signedOut: false,
+  settings: { open: false, section: null, sub: null },
   profile: { name: me.name, first: me.first, work: 'archivist', prefs: 'Keep answers short. Use British spelling. When you quote a letter, keep the original spelling and punctuation.', tone: me.tone, notify: { done: true, mentions: true, digest: true, invites: false } }
 });
 
@@ -25,6 +26,10 @@ export function ws() {
 }
 
 export const currentVault = ws;
+
+export function openSettings(section = null, sub = null) {
+  Object.assign(app.settings, { open: true, section, sub });
+}
 
 export function isNarrow() {
   return typeof matchMedia !== 'undefined' && matchMedia('(max-width: 56rem)').matches;

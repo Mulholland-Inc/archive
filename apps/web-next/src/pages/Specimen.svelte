@@ -81,6 +81,12 @@
   import Greeting from '../components/Greeting.svelte';
   import SpecimenFrame from '../components/SpecimenFrame.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
+  import SettingsNav from '../components/SettingsNav.svelte';
+  import SettingsPane from '../components/SettingsPane.svelte';
+  import NotificationSettings from '../components/NotificationSettings.svelte';
+  import ConnectorDetail from '../components/ConnectorDetail.svelte';
+  import { openSettings } from '../lib/app.svelte.js';
+  import { User as UserIcon, Palette as PaletteIcon, Bell as BellIcon, Plug as PlugIcon } from '@lucide/svelte';
   import { library, conversations, members, me } from '../lib/data.js';
   import { theme, setTheme } from '../lib/theme.svelte.js';
   import { toast } from '../lib/toast.svelte.js';
@@ -118,6 +124,7 @@
   let streaming = $state(false);
   let disclosure = $state(true);
   let look = $state({ type: 'family', icon: 'castle', tint: 4 });
+  let settingsSection = $state('appearance');
 
   const roles = [
     { value: 'viewer', label: 'Viewer' },
@@ -382,6 +389,18 @@
           <Tooltip text="Tooltips appear after a short delay"><Button variant="ghost" icon={Info}>Hover me</Button></Tooltip>
           <Tooltip text="With a shortcut" shortcut="⌘ K" placement="bottom"><Button variant="ghost" icon={Keyboard}>And me</Button></Tooltip>
         </SpecimenBlock>
+        <SpecimenBlock title="Settings dialog">
+          <Button onclick={() => openSettings()}>Open settings</Button>
+          <Button onclick={() => openSettings('connectors')}>Open connectors</Button>
+          <Button onclick={() => openSettings('connectors', 'gdrive')}>Open a connector</Button>
+        </SpecimenBlock>
+        <SpecimenBlock title="Settings nav">
+          <SettingsNav active={settingsSection} onselect={(id) => (settingsSection = id)} items={[{ id: 'profile', label: 'Profile', icon: UserIcon }, { id: 'appearance', label: 'Appearance', icon: PaletteIcon }, { id: 'notifications', label: 'Notifications', icon: BellIcon }, { id: 'connectors', label: 'Connectors', icon: PlugIcon }]} />
+        </SpecimenBlock>
+        <SpecimenBlock title="Settings pane" column>
+          <Card padding="none"><SettingsPane title="Notifications" onclose={() => toast('Close pressed')}><NotificationSettings /></SettingsPane></Card>
+          <Card padding="none"><SettingsPane title={catalog[0].name} onback={() => toast('Back pressed')} onclose={() => toast('Close pressed')}><ConnectorDetail connector={{ ...catalog[0], connected: true, account: 'nora.okafor@gmail.com', lastSync: '2 min ago', items: 412 }} /></SettingsPane></Card>
+        </SpecimenBlock>
         <SpecimenBlock title="Dialog, toast and command palette">
           <Button onclick={() => (dialog = true)}>Open dialog</Button>
           <Button variant="danger" onclick={() => (confirm = true)}>Confirm dialog</Button>
@@ -531,7 +550,7 @@
           <ConnectorIcon id="github" size="xs" /><ConnectorIcon id="github" size="sm" /><ConnectorIcon id="github" /><ConnectorIcon id="github" size="lg" /><ConnectorIcon id="slack" size="lg" />
         </SpecimenBlock>
         <SpecimenBlock title="Connectors">
-          <Grid min="card" gap="3">
+          <Grid columns="2" gap="3">
             <ConnectorCard connector={{ ...catalog[0], connected: true, account: 'nora.okafor@gmail.com' }} />
             <ConnectorCard connector={{ ...catalog[8], connected: false }} onconnect={() => toast('Connect pressed')} />
           </Grid>

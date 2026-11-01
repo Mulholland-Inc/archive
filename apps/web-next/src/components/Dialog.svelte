@@ -4,7 +4,7 @@
   import { fade, pop } from '../lib/motion.js';
   import { uid } from '../lib/ids.js';
 
-  let { open = $bindable(false), title, size = 'md', bare = false, footer, children, onclose } = $props();
+  let { open = $bindable(false), title, label, size = 'md', bare = false, footer, children, onclose } = $props();
 
   const titleId = uid('dlg');
 
@@ -38,7 +38,7 @@
 </script>
 
 {#if open}
-  <dialog use:modal class="dialog" aria-labelledby={title ? titleId : undefined}>
+  <dialog use:modal class="dialog" aria-labelledby={title ? titleId : undefined} aria-label={title ? undefined : label}>
     <button type="button" class="scrim" tabindex="-1" aria-label="Close dialog" onclick={close} transition:fade={{ speed: 'normal' }}></button>
     <div class={['panel', size, { bare }]} tabindex="-1" transition:pop>
       {#if title}
@@ -92,12 +92,19 @@
 
   .sm { max-width: var(--dialog-sm); }
   .lg { max-width: var(--dialog-lg); }
+  .xl { max-width: min(var(--dialog-xl), calc(100vw - var(--dialog-xl-margin))); height: min(var(--dialog-xl-height), calc(100vh - var(--dialog-xl-margin))); max-height: none; }
+  .xl .body { flex: 1; gap: var(--space-0); overflow: hidden; }
   .palette { max-width: var(--palette-width); align-self: start; margin-block-start: 12vh; }
 
   .bare {
     padding: var(--space-0);
     gap: var(--space-0);
     overflow: hidden;
+  }
+
+  @media (max-width: 56rem) {
+    .dialog:has(.xl) { padding: var(--space-0); }
+    .xl { max-width: none; height: 100%; max-height: none; border-radius: var(--radius-none); box-shadow: none; }
   }
 
   header {

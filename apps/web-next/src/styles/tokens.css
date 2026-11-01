@@ -48,6 +48,7 @@
   --space-20: 5rem;
   --space-24: 6rem;
 
+  --radius-none: 0;
   --radius-xs: 0.375rem;
   --radius-sm: 0.5rem;
   --radius-md: 0.75rem;
@@ -103,12 +104,16 @@
   --page-width: 60rem;
   --page-wide: 72rem;
   --settings-nav: 13.75rem;
+  --settings-dialog-nav: 13rem;
   --menu-min: 13.5rem;
   --menu-max: 20rem;
   --popover-width: 20rem;
   --dialog-sm: 26rem;
   --dialog-md: 32rem;
   --dialog-lg: 42rem;
+  --dialog-xl: 56rem;
+  --dialog-xl-height: 40rem;
+  --dialog-xl-margin: 4rem;
   --palette-width: 40rem;
   --tooltip-max: 16rem;
   --toast-width: 22rem;

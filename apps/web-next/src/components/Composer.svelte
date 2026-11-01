@@ -10,7 +10,7 @@
   import Chip from './Chip.svelte';
   import ConnectorIcon from './ConnectorIcon.svelte';
   import { Plug } from '@lucide/svelte';
-  import { ws } from '../lib/app.svelte.js';
+  import { ws, openSettings } from '../lib/app.svelte.js';
   import { toast } from '../lib/toast.svelte.js';
   import { rise } from '../lib/motion.js';
 
@@ -115,7 +115,11 @@
               {c.name}
             </MenuItem>
           {/each}
+          <MenuSeparator />
+          <MenuItem icon={Plug} onselect={() => openSettings('connectors')}>Manage connectors</MenuItem>
         </SubMenu>
+      {:else}
+        <MenuItem icon={Plug} onselect={() => openSettings('connectors')}>Connect an app</MenuItem>
       {/if}
       <MenuSeparator />
       <MenuItem icon={Telescope} keepOpen toggle={research} onselect={() => (research = !research)}>Research</MenuItem>

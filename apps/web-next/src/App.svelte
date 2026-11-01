@@ -11,11 +11,10 @@
   import LibraryPage from './pages/Library.svelte';
   import Workflows from './pages/Workflows.svelte';
   import Workflow from './pages/Workflow.svelte';
-  import Connectors from './pages/Connectors.svelte';
   import AccessPage from './pages/Access.svelte';
-  import SettingsPage from './pages/Settings.svelte';
+  import AppSettings from './components/AppSettings.svelte';
   import Specimen from './pages/Specimen.svelte';
-  import { route, go } from './lib/router.svelte.js';
+  import { route, go, replace } from './lib/router.svelte.js';
   import { app, toggleSidebar, closeDrawer } from './lib/app.svelte.js';
   import { setTheme, toggleTheme } from './lib/theme.svelte.js';
   import { ws } from './lib/app.svelte.js';
@@ -23,9 +22,24 @@
   import HelpDialog from './components/HelpDialog.svelte';
   import SignedOut from './components/SignedOut.svelte';
   import { Workflow as WorkflowIcon, Plug, User, Building2 } from '@lucide/svelte';
-  import { switchVault } from './lib/app.svelte.js';
+  import { switchVault, openSettings } from './lib/app.svelte.js';
 
-  const key = $derived(['settings', 'library', 'access'].includes(route.parts[0]) ? route.parts[0] : route.parts.slice(0, 2).join('/') || 'home');
+  let last = '/';
+
+  $effect(() => {
+    const [head, a, b] = route.parts;
+    if (head === 'settings') {
+      openSettings(a ?? 'profile', a === 'connectors' ? (b ?? null) : null);
+      replace(last);
+    } else if (head === 'connectors') {
+      openSettings('connectors', a ?? null);
+      replace(last);
+    } else {
+      last = route.path;
+    }
+  });
+
+  const key = $derived(['library', 'access'].includes(route.parts[0]) ? route.parts[0] : route.parts.slice(0, 2).join('/') || 'home');
 
   const commands = $derived([
     { id: 'new', group: 'Actions', label: 'New chat', icon: Plus, shortcut: '⌘ ⇧ O', run: () => go('/') },
@@ -37,9 +51,9 @@
     { id: 'p-chats', group: 'Go to', label: 'Chats', icon: MessagesSquare, run: () => go('/chats') },
     { id: 'p-library', group: 'Go to', label: 'Library', icon: Library, run: () => go('/library') },
     { id: 'p-workflows', group: 'Go to', label: 'Workflows', icon: WorkflowIcon, run: () => go('/workflows') },
-    { id: 'p-connectors', group: 'Go to', label: 'Connectors', icon: Plug, run: () => go('/connectors') },
+    { id: 'p-connectors', group: 'Go to', label: 'Connectors', icon: Plug, run: () => openSettings('connectors') },
     { id: 'p-access', group: 'Go to', label: 'Access', icon: Lock, run: () => go('/access') },
-    { id: 'p-settings', group: 'Go to', label: 'Settings', icon: Settings, shortcut: '⌘ ,', run: () => go('/settings/profile') },
+    { id: 'p-settings', group: 'Go to', label: 'Settings', icon: Settings, shortcut: '⌘ ,', run: () => openSettings() },
     { id: 'p-specimen', group: 'Go to', label: 'Component specimen', icon: Shapes, run: () => go('/specimen') },
     ...ws().chats.filter((c) => !c.hidden).map((c, i) => ({ id: `c-${c.id}`, group: 'Chats', label: c.title, icon: MessagesSquare, meta: c.updated, run: () => go(`/chat/${c.id}`), searchOnly: i >= 6 })),
     ...ws().library.map((f) => ({ id: `f-${f.id}`, group: 'Files', label: f.name, icon: FileText, meta: f.folder, run: () => go(`/library/${f.id}`), searchOnly: true })),
@@ -64,7 +78,7 @@
       toggleSidebar();
     } else if (k === ',') {
       event.preventDefault();
-      go('/settings/profile');
+      if (!app.settings.open) openSettings();
     } else if (k === 'o' && event.shiftKey) {
       event.preventDefault();
       go('/');
@@ -88,12 +102,8 @@
         <Workflow id={route.parts[1]} />
       {:else if route.parts[0] === 'workflows'}
         <Workflows />
-      {:else if route.parts[0] === 'connectors'}
-        <Connectors />
       {:else if route.parts[0] === 'access'}
         <AccessPage />
-      {:else if route.parts[0] === 'settings'}
-        <SettingsPage section={route.parts[1] ?? 'profile'} />
       {:else if route.parts[0] === 'specimen'}
         <Specimen />
       {:else}
@@ -104,6 +114,7 @@
 </Shell>
 
 <CommandPalette bind:open={app.palette} {commands} />
+<AppSettings />
 <PromptHost />
 <HelpDialog bind:open={app.help} />
 {#if app.signedOut}<SignedOut />{/if}

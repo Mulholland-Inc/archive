@@ -9,7 +9,7 @@
   import Avatar from './Avatar.svelte';
   import Icon from './Icon.svelte';
   import { theme, setTheme } from '../lib/theme.svelte.js';
-  import { app } from '../lib/app.svelte.js';
+  import { app, openSettings } from '../lib/app.svelte.js';
   import { go } from '../lib/router.svelte.js';
 
   let { user } = $props();
@@ -29,7 +29,7 @@
     </button>
   {/snippet}
   <MenuLabel>{user.email}</MenuLabel>
-  <MenuItem icon={Settings} shortcut="⌘ ," href="/settings/profile">Settings</MenuItem>
+  <MenuItem icon={Settings} shortcut="⌘ ," onselect={() => openSettings()}>Settings</MenuItem>
   <SubMenu icon={Palette} label="Appearance">
     <MenuItem icon={Sun} checked={theme.choice === 'light'} onselect={() => setTheme('light')}>Light</MenuItem>
     <MenuItem icon={Moon} checked={theme.choice === 'dark'} onselect={() => setTheme('dark')}>Dark</MenuItem>
