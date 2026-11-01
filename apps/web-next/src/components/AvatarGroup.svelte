@@ -21,7 +21,11 @@
     display: inline-flex;
     align-items: center;
     flex: none;
-    gap: var(--space-0-5);
+    padding-inline-start: var(--space-1);
+  }
+
+  .group > :global(*) {
+    margin-inline-start: calc(var(--space-1) * -1);
   }
 
   .more {
@@ -30,7 +34,7 @@
     height: var(--avatar-sm);
     min-width: var(--avatar-sm);
     padding: var(--space-1);
-    border-radius: var(--radius-xs);
+    border-radius: var(--radius-full);
     background: var(--color-fill-strong);
     color: var(--color-text-secondary);
     font-size: var(--text-2xs);

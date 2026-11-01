@@ -59,7 +59,7 @@ function shade(hex, k) {
 function material(name) {
   const base = MATERIALS[name];
   const dark = name === 'blue' || name === 'lime';
-  return { top: base, left: shade(base, dark ? 0.12 : 0.07), right: shade(base, dark ? 0.26 : 0.17) };
+  return { name, top: base, left: shade(base, dark ? 0.12 : 0.07), right: shade(base, dark ? 0.26 : 0.17) };
 }
 
 const P = (x, y, z) => [(x - y) * C, (x + y) / 2 - z];
@@ -236,7 +236,7 @@ function washer(m, x, y, z, r, ri, t) {
   const half = Math.min(t, iy * 1.9) / 2;
   const xi = ix * Math.sqrt(1 - (half / iy) ** 2);
   const lens = [['M', T[0] - xi, T[1] + half], ['A', ix, iy, 0, 0, T[0] + xi, T[1] + half], ['A', ix, iy, 0, 0, T[0] - xi, T[1] + half], ['Z']];
-  s.faces.push({ d: lens, hole: true });
+  s.faces.push({ d: lens, fill: shade(MATERIALS[m.name], 0.45) });
   s.edges.push(lens);
   s.outline.push(outer, inner);
   return s;
@@ -307,19 +307,16 @@ export function avatarShape(seed, { small = false } = {}) {
   const hit = cache.get(key);
   if (hit) return hit;
   const rand = prng(hash(String(seed)));
-  const tile = 1 + Math.floor(rand() * 6);
   const [ma, mb] = pick(rand, PAIRS);
   const flip = rand() < 0.5;
   const solids = pick(rand, BUILDERS)(rand, material(flip ? mb : ma), material(flip ? ma : mb));
   const box4 = solids.reduce((b, s) => [Math.min(b[0], s.box[0]), Math.min(b[1], s.box[1]), Math.max(b[2], s.box[2]), Math.max(b[3], s.box[3])], [Infinity, Infinity, -Infinity, -Infinity]);
-  const room = small ? 50 : 44;
-  const k = room / Math.max(box4[2] - box4[0], box4[3] - box4[1]);
+  const k = Math.min((small ? 48 : 46) / (box4[2] - box4[0]), (small ? 58 : 56) / (box4[3] - box4[1]));
   const tx = 32 - ((box4[0] + box4[2]) / 2) * k;
-  const ty = 32 - ((box4[1] + box4[3]) / 2) * k;
+  const ty = (small ? 58 : 57) - box4[3] * k;
   const out = {
-    tile,
     solids: solids.map((s) => ({
-      faces: s.faces.map((f) => ({ d: serialize(f.d, k, tx, ty), fill: f.fill, hole: !!f.hole, evenodd: !!f.evenodd })),
+      faces: s.faces.map((f) => ({ d: serialize(f.d, k, tx, ty), fill: f.fill, evenodd: !!f.evenodd })),
       edges: small ? [] : s.edges.map((d) => serialize(d, k, tx, ty)),
       outline: s.outline.map((d) => serialize(d, k, tx, ty))
     }))
