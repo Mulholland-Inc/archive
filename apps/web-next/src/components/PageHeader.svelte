@@ -29,22 +29,21 @@
 
   .row {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
     gap: var(--space-4);
     min-height: var(--control-lg);
   }
 
   h1 {
+    flex: 1;
     min-width: 0;
     font-family: var(--font-serif);
     font-size: var(--text-2xl);
     font-weight: var(--weight-serif);
     line-height: var(--leading-tight);
     letter-spacing: var(--tracking-normal);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
   }
 
   .lg h1 {
@@ -57,5 +56,6 @@
     align-items: center;
     gap: var(--space-2);
     flex: none;
+    min-height: var(--control-lg);
   }
 </style>

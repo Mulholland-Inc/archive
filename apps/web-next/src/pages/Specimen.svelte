@@ -65,7 +65,7 @@
   import Message from '../components/Message.svelte';
   import Steps from '../components/Steps.svelte';
   import CodeBlock from '../components/CodeBlock.svelte';
-  import StepPill from '../components/StepPill.svelte';
+  import RunProgress from '../components/RunProgress.svelte';
   import WorkflowCard from '../components/WorkflowCard.svelte';
   import VaultIcon from '../components/VaultIcon.svelte';
   import LookPicker from '../components/LookPicker.svelte';
@@ -550,8 +550,8 @@
         <SpecimenBlock title="Work disclosure: running and finished" column>
           <Steps steps={runningSteps} running open />
           <Steps steps={conversations['mercer-timeline'][1].steps} worked="25s" />
-          <StepPill label="Transcribe cassette 7" done={3} total={6} running />
-          <StepPill label="Email 9 members" done={4} total={4} />
+          <RunProgress steps={[{ id: 'a', label: 'Find the cassette', status: 'done', time: '2s' }, { id: 'b', label: 'Transcribe cassette 7', status: 'running' }, { id: 'c', label: 'Save the transcript', status: 'pending' }]} />
+          <RunProgress steps={[{ id: 'a', label: 'Write the digest', status: 'done', time: '4s' }, { id: 'b', label: 'Email 9 members', status: 'done', time: '1s' }]} />
         </SpecimenBlock>
         <SpecimenBlock title="Code block" column>
           <CodeBlock lang="bash" code={'python3 -m pip install pillow\npython3 rename_scans.py --dry-run'} />

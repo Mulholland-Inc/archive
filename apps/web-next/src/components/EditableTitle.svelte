@@ -8,7 +8,7 @@
 </script>
 
 {#if editing}
-  <InlineEdit {value} {label} variant={variant === 'heading' ? 'plain' : 'title'} onsave={(next) => { editing = false; onsave(next); }} oncancel={() => (editing = false)} />
+  <InlineEdit {value} {label} variant={variant === 'heading' ? 'heading' : 'title'} onsave={(next) => { editing = false; onsave(next); }} oncancel={() => (editing = false)} />
 {:else if variant === 'heading'}
   <button type="button" class="heading" onclick={() => (editing = true)}>{value}</button>
 {:else}
@@ -18,13 +18,12 @@
 <style>
   .heading {
     display: block;
-    max-width: 100%;
-    overflow: hidden;
-    border-radius: var(--radius-xs);
+    margin: calc(var(--space-1) * -1) calc(var(--space-3) * -1);
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-md);
     font: inherit;
     text-align: start;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
     transition: background-color var(--duration-fast) var(--ease-out);
   }
 

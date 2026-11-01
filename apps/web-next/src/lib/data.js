@@ -124,10 +124,12 @@ export const conversations = {
     {
       id: 'm4',
       role: 'assistant',
-      worked: '1s',
+      worked: '3s',
+      task: true,
       steps: [
-        { id: 's4', label: 'Saving both transcripts to 1970s Letters', status: 'done', time: '1s' },
-        { id: 's5', label: 'Linking each transcript to its scan', status: 'done', time: '0s' }
+        { id: 's4', label: 'Matching the line breaks of the originals', status: 'done', time: '2s' },
+        { id: 's5', label: 'Saving both transcripts to 1970s Letters', status: 'done', time: '1s' },
+        { id: 's6', label: 'Linking each transcript to its scan', status: 'done', time: '0s' }
       ],
       blocks: [
         { type: 'p', text: 'Done. Both transcripts now keep the original line breaks, with page turns marked as `— page 2 —`. They are saved next to the scans and show up in the letters timeline.' },
@@ -180,6 +182,23 @@ export const conversations = {
         { type: 'quote', text: 'Any notice under this Lease shall be in writing and served by hand or by recorded delivery to the registered office of the party to be served.' },
         { type: 'p', text: 'The second and third points are the strongest. Shall I draft a short advice note for the partner on the re-service timing?' }
       ]
+    },
+    {
+      id: 'm3',
+      role: 'user',
+      text: 'Yes, draft the advice note and check the tenant name change against Companies House.'
+    },
+    {
+      id: 'm4',
+      role: 'assistant',
+      task: true,
+      steps: [
+        { id: 's4', label: 'Collecting the two notices and the receipts', status: 'done', time: '2s' },
+        { id: 's5', label: 'Checking the tenant name at Companies House', status: 'done', time: '9s' },
+        { id: 's6', label: 'Counting the notice period under clause 9.3', status: 'running' },
+        { id: 's7', label: 'Writing the advice note for the partner', status: 'pending' }
+      ],
+      blocks: [{ type: 'p', text: 'The name change is confirmed: the tenant became **Mercer Holdings (UK) Ltd** on 11 March 2026. I’m working through the notice period now and will post the note here.' }]
     }
   ],
   'exif-rename': [
@@ -246,8 +265,13 @@ for path in sorted(SOURCE.glob("*.jpg")):
     {
       id: 'm2',
       role: 'assistant',
-      worked: '2s',
-      steps: [{ id: 's1', label: 'Reading the six pages of kickoff notes', status: 'done', time: '2s' }],
+      worked: '6s',
+      task: true,
+      steps: [
+        { id: 's1', label: 'Reading the six pages of kickoff notes', status: 'done', time: '2s' },
+        { id: 's2', label: 'Pulling out goals, audiences and deadlines', status: 'done', time: '3s' },
+        { id: 's3', label: 'Writing the one-page brief', status: 'done', time: '1s' }
+      ],
       blocks: [
         { type: 'h', text: 'Linden Library rebrand: moodboard brief' },
         { type: 'p', text: 'Linden is a 90-year-old public library becoming a neighbourhood workshop: tools, seeds and sewing machines alongside books. The identity should feel **civic, handmade and durable**, never nostalgic.' },

@@ -1,9 +1,9 @@
 <script>
   import { onMount } from 'svelte';
-  import { Play, Trash2, SearchX, Workflow as WorkflowIcon } from '@lucide/svelte';
+  import { SearchX, Workflow as WorkflowIcon } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
-  import PageHeader from '../components/PageHeader.svelte';
+  import StickyHeader from '../components/StickyHeader.svelte';
   import Stack from '../components/Stack.svelte';
   import SearchField from '../components/SearchField.svelte';
   import Chip from '../components/Chip.svelte';
@@ -11,13 +11,14 @@
   import Spacer from '../components/Spacer.svelte';
   import Table from '../components/Table.svelte';
   import Button from '../components/Button.svelte';
-  import IconButton from '../components/IconButton.svelte';
+  import Adaptive from '../components/Adaptive.svelte';
+  import WorkflowActions from '../components/WorkflowActions.svelte';
+  import WorkflowItem from '../components/WorkflowItem.svelte';
   import StatusBadge from '../components/StatusBadge.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import Text from '../components/Text.svelte';
-  import InlineEdit from '../components/InlineEdit.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { ws, runWorkflow, removeWorkflow, renameWorkflow } from '../lib/app.svelte.js';
+  import { ws, removeWorkflow } from '../lib/app.svelte.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
   import { go } from '../lib/router.svelte.js';
 
@@ -44,8 +45,7 @@
   let query = $state('');
   let status = $state('all');
   let sort = $state('recent');
-  let search = $state();
-  let editing = $state(null);
+  let searchEl = $state();
 
   const statusOf = (w) => (!w.enabled ? 'off' : w.runs[0] ? (w.runs[0].paused ? 'paused' : w.runs[0].status) : 'idle');
   const lastRun = (w) => (w.runs[0] ? (w.runs[0].status === 'stopped' ? 'failed' : w.runs[0].status) : 'idle');
@@ -72,7 +72,7 @@
     const key = (event) => {
       if (event.key === '/' && !event.metaKey && !event.ctrlKey && !/INPUT|TEXTAREA/.test(document.activeElement?.tagName ?? '')) {
         event.preventDefault();
-        search?.focus();
+        searchEl?.focus();
       }
     };
     addEventListener('keydown', key);
@@ -82,12 +82,13 @@
 
 <TopBar mobile>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
 <Page width="wide">
-  <PageHeader title="Workflows" />
+  <StickyHeader title="Workflows">
+    {#snippet search()}
+      <SearchField bind:value={query} bind:element={searchEl} placeholder="Search workflows" shortcut="/" />
+    {/snippet}
+  </StickyHeader>
 
   <Stack gap="4">
-    <Stack direction="row" gap="2" align="center" wrap>
-      <SearchField bind:value={query} bind:element={search} placeholder="Search workflows" shortcut="/" />
-    </Stack>
     <Stack direction="row" gap="2" align="center" wrap>
       {#each statuses as s (s.value)}
         <Chip selected={status === s.value} onclick={() => (status = s.value)}>{s.label}</Chip>
@@ -104,23 +105,29 @@
       <Button onclick={clear}>Show all workflows</Button>
     </EmptyState>
   {:else}
-    <Table {columns} {rows} label="Workflows" onrowclick={(w) => go(`/workflows/${w.id}`)} onrowdblclick={(w) => (editing = w.id)} {editing}>
+    <Adaptive>
+      {#snippet wide()}
+    <Table {columns} {rows} label="Workflows" onrowclick={(w) => go(`/workflows/${w.id}`)}>
       {#snippet cell(row, col)}
-        {#if col.key === 'name' && editing === row.id}
-          <Text weight="medium"><InlineEdit value={row.name} label="Rename workflow" variant="plain" onsave={(name) => { editing = null; renameWorkflow(row.id, name); }} oncancel={() => (editing = null)} /></Text>
-        {:else if col.key === 'name'}
+        {#if col.key === 'name'}
           <Text weight="medium" truncate>{row.name}</Text>
         {:else if col.key === 'status'}
           <StatusBadge status={statusOf(row)} plain />
         {:else if col.key === 'last'}
           {row.runs[0]?.started ?? 'Never'}
         {:else if col.key === 'actions'}
-          <Stack direction="row" gap="1" align="center" justify="end">
-            <IconButton icon={Play} label={`Run ${row.name}`} size="sm" onclick={(e) => { e.stopPropagation(); runWorkflow(row.id); }} />
-            <IconButton icon={Trash2} label={`Delete ${row.name}`} size="sm" onclick={(e) => { e.stopPropagation(); remove(row); }} />
-          </Stack>
+          <WorkflowActions workflow={row} ondelete={() => remove(row)} />
         {/if}
       {/snippet}
     </Table>
+      {/snippet}
+      {#snippet narrow()}
+        <ul aria-label="Workflows">
+          {#each rows as row (row.id)}
+            <WorkflowItem workflow={row} status={statusOf(row)} onopen={() => go(`/workflows/${row.id}`)} ondelete={() => remove(row)} />
+          {/each}
+        </ul>
+      {/snippet}
+    </Adaptive>
   {/if}
 </Page>

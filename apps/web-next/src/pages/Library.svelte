@@ -3,7 +3,7 @@
   import { Upload, LayoutGrid, List as ListIcon, Ellipsis, Download, Pencil, MessageSquarePlus, Trash2, SearchX, FolderPlus, FileText, Image, AudioLines, FileSpreadsheet, Inbox } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
-  import PageHeader from '../components/PageHeader.svelte';
+  import StickyHeader from '../components/StickyHeader.svelte';
   import Stack from '../components/Stack.svelte';
   import Grid from '../components/Grid.svelte';
   import SearchField from '../components/SearchField.svelte';
@@ -63,7 +63,7 @@
   let view = $state('grid');
   let openId = $state(route.parts[1] ?? null);
   let preview = $state(Boolean(route.parts[1]));
-  let search = $state();
+  let searchEl = $state();
 
   const open = $derived(ws().library.find((f) => f.id === openId));
   const folders = $derived([{ value: 'all', label: 'All folders' }, ...ws().folders.map((f) => ({ value: f, label: f }))]);
@@ -118,7 +118,7 @@
     const key = (event) => {
       if (event.key === '/' && !event.metaKey && !event.ctrlKey && !/INPUT|TEXTAREA/.test(document.activeElement?.tagName ?? '')) {
         event.preventDefault();
-        search?.focus();
+        searchEl?.focus();
       }
     };
     addEventListener('keydown', key);
@@ -139,18 +139,18 @@
 
 <TopBar mobile>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
 <Page width="wide">
-  <PageHeader title="Library">
+  <StickyHeader title="Library">
+    {#snippet search()}
+      <SearchField bind:value={query} bind:element={searchEl} placeholder="Search files and folders" shortcut="/" />
+      <Select bind:value={folder} options={folders} variant="ghost" label="Folder" />
+    {/snippet}
     {#snippet actions()}
       <IconButton icon={FolderPlus} label="New folder" variant="secondary" onclick={newFolder} />
       <Button variant="primary" icon={Upload} onclick={upload}>Upload</Button>
     {/snippet}
-  </PageHeader>
+  </StickyHeader>
 
   <Stack gap="4">
-    <Stack direction="row" gap="2" align="center" wrap>
-      <SearchField bind:value={query} bind:element={search} placeholder="Search files and folders" shortcut="/" />
-      <Select bind:value={folder} options={folders} variant="ghost" label="Folder" />
-    </Stack>
     <Stack direction="row" gap="2" align="center" wrap>
       {#each kinds as k (k.value)}
         <Chip selected={kind === k.value} onclick={() => (kind = k.value)}>{k.label}</Chip>

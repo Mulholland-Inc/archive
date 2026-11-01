@@ -252,8 +252,28 @@ export function runWorkflow(id) {
   const wf = workflowById(id);
   if (!wf) return;
   wf.runs.unshift(freshRun(wf));
+  progress(wf.runs[0]);
   toast(`Run #${wf.runs[0].number} started`);
   return wf.runs[0].id;
+}
+
+function progress(run) {
+  setTimeout(() => {
+    if (run.status !== 'running') return;
+    if (!run.paused) {
+      run.seconds = (run.seconds ?? 0) + 3;
+      run.elapsed = `${run.seconds}s`;
+      const s = run.steps.find((x) => x.status === 'running');
+      if (s) {
+        s.status = 'done';
+        s.time = '3s';
+      }
+      const next = run.steps.find((x) => x.status === 'pending');
+      if (next) next.status = 'running';
+      else run.status = 'succeeded';
+    }
+    progress(run);
+  }, 3000);
 }
 
 export function createWorkflow({ name, trigger, steps, agent = 'Assistant' }) {
@@ -300,6 +320,7 @@ export function resolveRun(run) {
   const next = run.steps.find((x) => x.status === 'pending');
   if (next) next.status = 'running';
   run.status = next ? 'running' : 'succeeded';
+  if (next) progress(run);
 }
 
 export function steerRun(run, text) {

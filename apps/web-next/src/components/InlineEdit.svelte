@@ -13,7 +13,7 @@
   function finish(save, node) {
     if (done) return;
     done = true;
-    const next = node.value.trim();
+    const next = node.value.replace(/\s+/g, ' ').trim();
     if (save && next && next !== value) onsave(next);
     else oncancel();
   }
@@ -30,7 +30,11 @@
   }
 </script>
 
-<input class={['edit', variant]} type="text" {value} aria-label={label} use:focus {onkeydown} onblur={(event) => finish(true, event.currentTarget)} />
+{#if variant === 'heading'}
+  <textarea class={['edit', variant]} rows="1" {value} aria-label={label} use:focus {onkeydown} onblur={(event) => finish(true, event.currentTarget)}></textarea>
+{:else}
+  <input class={['edit', variant]} type="text" {value} aria-label={label} use:focus {onkeydown} onblur={(event) => finish(true, event.currentTarget)} />
+{/if}
 
 <style>
   .edit {
@@ -61,13 +65,18 @@
     line-height: var(--leading-none);
   }
 
-  .plain {
-    field-sizing: content;
-    max-width: 100%;
+  .heading {
+    display: block;
+    width: calc(100% + var(--space-3) * 2);
+    max-width: none;
     height: auto;
-    padding: 0;
-    border-radius: var(--radius-xs);
-    box-shadow: none;
-    background: var(--color-fill);
+    margin: calc(var(--space-1) * -1) calc(var(--space-3) * -1);
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-md);
+    field-sizing: content;
+    resize: none;
+    overflow: hidden;
+    line-height: inherit;
+    letter-spacing: inherit;
   }
 </style>

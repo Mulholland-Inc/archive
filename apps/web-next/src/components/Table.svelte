@@ -1,23 +1,5 @@
 <script>
-  let { columns = [], rows = [], cell, key = 'id', onrowclick, onrowdblclick, editing, label, selected = [] } = $props();
-
-  let pending;
-
-  function inLead(event) {
-    return event.detail > 0 && event.clientX < event.currentTarget.closest('td').getBoundingClientRect().right;
-  }
-
-  function click(event, row) {
-    clearTimeout(pending);
-    if (!onrowdblclick || !inLead(event)) return onrowclick(row);
-    if (event.detail === 1) pending = setTimeout(() => onrowclick(row), 250);
-  }
-
-  function dblclick(event, row) {
-    if (!onrowdblclick || !inLead(event)) return;
-    clearTimeout(pending);
-    onrowdblclick(row);
-  }
+  let { columns = [], rows = [], cell, key = 'id', onrowclick, label, selected = [] } = $props();
 </script>
 
 <div class="wrap">
@@ -34,8 +16,8 @@
         <tr class={{ clickable: onrowclick, selected: selected.includes(row[key]) }}>
           {#each columns as col, i (col.key)}
             <td class={[col.align, col.width && `w-${col.width}`, col.muted && 'muted']}>
-              {#if onrowclick && i === 0 && editing !== row[key]}
-                <button type="button" class="rowlink" onclick={(event) => click(event, row)} ondblclick={(event) => dblclick(event, row)}>
+              {#if onrowclick && i === 0}
+                <button type="button" class="rowlink" onclick={() => onrowclick(row)}>
                   {#if cell}{@render cell(row, col)}{:else}{row[col.key]}{/if}
                 </button>
               {:else if cell}{@render cell(row, col)}{:else}{row[col.key]}{/if}

@@ -14,9 +14,6 @@
   import ProgressBar from '../components/ProgressBar.svelte';
   import SettingsRow from '../components/SettingsRow.svelte';
   import TriggerLabel from '../components/TriggerLabel.svelte';
-  import Composer from '../components/Composer.svelte';
-  import ComposerDock from '../components/ComposerDock.svelte';
-  import StepPill from '../components/StepPill.svelte';
   import Button from '../components/Button.svelte';
   import IconButton from '../components/IconButton.svelte';
   import Switch from '../components/Switch.svelte';
@@ -29,13 +26,12 @@
   import Icon from '../components/Icon.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { app, workflowById, runWorkflow, toggleWorkflow, renameWorkflow, removeWorkflow, pauseRun, stopRun, resolveRun, steerRun } from '../lib/app.svelte.js';
+  import { workflowById, runWorkflow, toggleWorkflow, renameWorkflow, removeWorkflow, pauseRun, stopRun, resolveRun } from '../lib/app.svelte.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
 
   let { id } = $props();
   const wf = $derived(workflowById(id));
   let selected = $state(null);
-  let value = $state('');
   let open = $state(true);
 
   const run = $derived(wf?.runs.find((r) => r.id === selected) ?? wf?.runs[0]);
@@ -156,14 +152,6 @@
       {/snippet}
     </Split>
   </Page>
-  {#if run}
-    <ComposerDock>
-      {#snippet above()}
-        {#if current}<StepPill label={current.label} {done} total={run.steps.length} running={live && !run.paused} onclick={() => (open = !open)} />{/if}
-      {/snippet}
-      <Composer bind:value bind:model={app.model} placeholder={live ? 'Steer this run' : 'Ask about this run'} onsend={({ text }) => text && steerRun(run, text)} />
-    </ComposerDock>
-  {/if}
 {:else}
   <Page center>
     <EmptyState icon={ListX} title="Workflow not found">
