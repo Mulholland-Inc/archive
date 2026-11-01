@@ -21,7 +21,7 @@
 <Menu placement="top-start" label="Account">
   {#snippet trigger(props)}
     <button type="button" class="account" aria-label="Account" {...props}>
-      <Avatar name={user.name} tone={user.tone} size="md" status="online" />
+      <Avatar name={user.name} tone={user.tone} size="md" />
       <span class="who">
         <span class="name">{user.name}</span>
         <span class="status">{user.status || user.plan}</span>
@@ -52,7 +52,6 @@
 
 <style>
   .card {
-    --avatar-cutout: var(--color-surface-raised);
     display: flex;
     align-items: center;
     gap: var(--space-1);

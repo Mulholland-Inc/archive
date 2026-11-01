@@ -1,7 +1,7 @@
 <script>
   import { initials, toneFor } from '../lib/data.js';
 
-  let { name = '', src, size = 'md', square = false, tone, ring = false, status } = $props();
+  let { name = '', src, size = 'md', square = false, tone, ring = false } = $props();
   const t = $derived(tone ?? toneFor(name));
 </script>
 
@@ -12,12 +12,10 @@
     <span aria-hidden="true">{size === 'xs' || size === 'sm' ? initials(name).slice(0, 1) : initials(name)}</span>
     <span class="visually-hidden">{name}</span>
   {/if}
-  {#if status}<span class={['status', status]}></span>{/if}
 </span>
 
 <style>
   .avatar {
-    position: relative;
     display: inline-grid;
     place-items: center;
     flex: none;
@@ -88,18 +86,4 @@
   .t5 { background: var(--color-avatar-5); }
   .t6 { background: var(--color-avatar-6); }
 
-  .status {
-    position: absolute;
-    inset-inline-end: calc(var(--space-0-5) * -1);
-    inset-block-end: calc(var(--space-0-5) * -1);
-    width: var(--space-2);
-    height: var(--space-2);
-    border-radius: var(--radius-full);
-    box-shadow: 0 0 0 var(--focus-width) var(--avatar-cutout, var(--color-canvas));
-    background: var(--color-text-tertiary);
-  }
-
-  .online {
-    background: var(--color-success);
-  }
 </style>

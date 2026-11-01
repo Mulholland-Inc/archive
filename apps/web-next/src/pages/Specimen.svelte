@@ -429,7 +429,7 @@
           <Avatar name="Nora Okafor" size="xs" />
           <Avatar name="Nora Okafor" size="sm" />
           <Avatar name="Chidi Okafor" />
-          <Avatar name="Ruth Hale" size="lg" status="online" />
+          <Avatar name="Ruth Hale" size="lg" />
           <Avatar name="Jun Park" size="xl" />
           <Avatar name="Okafor Family Archive" square tone={1} />
           <Avatar name="Fieldnote Studio" square size="lg" tone={2} />
