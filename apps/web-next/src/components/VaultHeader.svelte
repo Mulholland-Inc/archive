@@ -44,7 +44,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: var(--text-base);
+    font-size: var(--text-md);
     font-weight: var(--weight-medium);
   }
 
