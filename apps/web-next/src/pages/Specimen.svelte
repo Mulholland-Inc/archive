@@ -54,6 +54,8 @@
   import ProgressBar from '../components/ProgressBar.svelte';
   import FileTile from '../components/FileTile.svelte';
   import TypeList from '../components/TypeList.svelte';
+  import Art from '../components/Art.svelte';
+  import ServerSettings from '../components/ServerSettings.svelte';
   import TypeArt from '../components/TypeArt.svelte';
   import TypeDetail from '../components/TypeDetail.svelte';
   import { schemaFor } from '../lib/schema.js';
@@ -481,6 +483,12 @@
         </SpecimenBlock>
         <SpecimenBlock title="Type art">
           {#each familySchema as t (t.id)}<TypeArt icon={t.icon} size="sm" />{/each}
+        </SpecimenBlock>
+        <SpecimenBlock title="Art">
+          <Art name="server" />
+        </SpecimenBlock>
+        <SpecimenBlock title="Server settings" column>
+          <ServerSettings />
         </SpecimenBlock>
         <SpecimenBlock title="Type detail" column>
           <TypeDetail type={familySchema[0]} types={familySchema} />

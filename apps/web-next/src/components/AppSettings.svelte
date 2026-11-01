@@ -1,11 +1,12 @@
 <script>
-  import { User, Palette, Bell, Building2, Lock, Workflow, Plug, KeyRound } from '@lucide/svelte';
+  import { User, Palette, Bell, Building2, Lock, Workflow, Plug, KeyRound, Server } from '@lucide/svelte';
   import SettingsDialog from './SettingsDialog.svelte';
   import SettingsPane from './SettingsPane.svelte';
   import ProfileSettings from './ProfileSettings.svelte';
   import AppearanceSettings from './AppearanceSettings.svelte';
   import VaultSettings from './VaultSettings.svelte';
   import NotificationSettings from './NotificationSettings.svelte';
+  import ServerSettings from './ServerSettings.svelte';
   import ConnectorSettings from './ConnectorSettings.svelte';
   import ConnectorDetail from './ConnectorDetail.svelte';
   import { app, ws } from '../lib/app.svelte.js';
@@ -18,6 +19,7 @@
     { id: 'access', label: 'Access', icon: Lock, group: 'Vault', href: '#/access' },
     { id: 'workflows', label: 'Workflows', icon: Workflow, group: 'Vault', href: '#/workflows' },
     { id: 'connectors', label: 'Connectors', icon: Plug, group: 'Customize' },
+    { id: 'server', label: 'Server', icon: Server, group: 'Platform' },
     { id: 'api', label: 'API keys', icon: KeyRound, group: 'Platform', href: 'https://archive.dev/docs/api', external: true }
   ];
 
@@ -45,6 +47,8 @@
         <AppearanceSettings />
       {:else if current === 'vault'}
         <VaultSettings />
+      {:else if current === 'server'}
+        <ServerSettings />
       {:else if current === 'notifications'}
         <NotificationSettings />
       {:else}

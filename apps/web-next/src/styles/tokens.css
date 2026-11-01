@@ -130,6 +130,7 @@
   --code-max: 28rem;
   --type-dialog-height: 40rem;
   --type-art: 5rem;
+  --settings-art: 11rem;
   --type-row-art: 2.5rem;
   --type-columns: var(--type-row-art) minmax(0, 1.4fr) var(--col-xs) var(--col-xs) minmax(0, 2fr) var(--col-sm) var(--icon-md);
   --type-columns-narrow: var(--type-row-art) minmax(0, 1fr) var(--col-xs) var(--icon-md);
