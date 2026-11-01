@@ -53,7 +53,7 @@
         {#each visible as chat (chat.id)}
         <SidebarItem label={chat.title} href={`#/chat/${chat.id}`} active={route.path === `/chat/${chat.id}`} onrename={(title) => renameChat(chat.id, title)} bind:editing={() => renaming === chat.id, (on) => (renaming = on ? chat.id : null)}>
           {#snippet actions()}
-            <ChatActions {chat} size="xs" inline />
+            <ChatActions {chat} size="sm" inline />
           {/snippet}
         </SidebarItem>
       {/each}

@@ -140,7 +140,7 @@
     {/if}
   {/snippet}
   {#snippet trailing()}
-    {#if chat}<ChatActions {chat} size="sm" inline />{/if}
+    {#if chat}<ChatActions {chat} size="md" inline />{/if}
   {/snippet}
 </TopBar>
 
