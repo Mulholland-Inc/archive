@@ -137,8 +137,10 @@
     <MobileMenu />
     {#if chat}
       <EditableTitle value={chat.title} label="Rename chat" onsave={(title) => renameChat(chat.id, title)} />
-      <ChatActions {chat} size="sm" renamable={false} />
     {/if}
+  {/snippet}
+  {#snippet trailing()}
+    {#if chat}<ChatActions {chat} size="sm" inline />{/if}
   {/snippet}
 </TopBar>
 

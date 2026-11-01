@@ -7,7 +7,7 @@
   import { togglePin, removeChat, renameChat } from '../lib/app.svelte.js';
   import { prompt, confirmDialog } from '../lib/dialogs.svelte.js';
 
-  let { chat, placement = 'bottom-start', size = 'xs', renamable = true, onrename } = $props();
+  let { chat, placement = 'bottom-start', size = 'xs', renamable = true, inline = false, onrename } = $props();
 
   async function rename() {
     if (onrename) return onrename();
@@ -20,6 +20,10 @@
   }
 </script>
 
+{#if inline}
+  <IconButton icon={chat.pinned ? PinOff : Pin} label={chat.pinned ? 'Unpin' : 'Pin'} {size} pressed={chat.pinned} onclick={() => togglePin(chat.id)} />
+  <IconButton icon={Trash2} label="Delete chat" {size} onclick={remove} />
+{:else}
 <Menu {placement} label="Chat actions" width="sm">
   {#snippet trigger(props)}
     <IconButton icon={Ellipsis} label={`Actions for ${chat.title}`} {size} tooltip={false} {...props} />
@@ -29,3 +33,4 @@
   <MenuSeparator />
   <MenuItem icon={Trash2} danger onselect={remove}>Delete</MenuItem>
 </Menu>
+{/if}
