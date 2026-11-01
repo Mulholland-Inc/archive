@@ -98,7 +98,7 @@
           </Menu>
         {/snippet}
         <Stack direction="row" gap="3" align="center" wrap>
-          {#if run}<StatusBadge status={run.paused ? 'paused' : run.status} />{/if}
+          {#if run}<StatusBadge status={run.paused ? 'paused' : run.status} plain />{/if}
           <TriggerLabel trigger={wf.trigger} />
         </Stack>
       </PageHeader>
@@ -150,7 +150,7 @@
                 {#each wf.runs as r (r.id)}
                   <ListItem title={`Run #${r.number}`} size="sm" active={r.id === run?.id} onclick={() => (selected = r.id)}>
                     {#snippet meta()}{r.started}, {r.elapsed}{/snippet}
-                    {#snippet trailing()}<StatusBadge status={r.paused ? 'paused' : r.status} />{/snippet}
+                    {#snippet trailing()}<StatusBadge status={r.paused ? 'paused' : r.status} plain />{/snippet}
                   </ListItem>
                 {/each}
               </List>

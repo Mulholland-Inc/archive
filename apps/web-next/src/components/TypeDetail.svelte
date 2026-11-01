@@ -3,7 +3,7 @@
   import Stack from './Stack.svelte';
   import SettingsRow from './SettingsRow.svelte';
   import Table from './Table.svelte';
-  import Badge from './Badge.svelte';
+  import Button from './Button.svelte';
   import Chip from './Chip.svelte';
   import Text from './Text.svelte';
   import CodeBlock from './CodeBlock.svelte';
@@ -83,11 +83,11 @@
             <Stack direction="row" gap="2" align="center">
               <Text weight="medium">{row.name}</Text>
               {#if row.to}
-                <Chip size="sm" onclick={() => onopen?.(row.to)}>{byId(row.to)?.name ?? row.to}</Chip>
+                <Button variant="link" size="sm" onclick={() => onopen?.(row.to)}>{byId(row.to)?.name ?? row.to}</Button>
               {/if}
             </Stack>
           {:else if col.key === 'type'}
-            <Badge>{typeLabels[row.type]}</Badge>
+            <Text tone="secondary">{typeLabels[row.type]}</Text>
           {:else if col.key === 'required'}
             {#if row.required}<Text tone="secondary">Yes</Text>{/if}
           {:else}
