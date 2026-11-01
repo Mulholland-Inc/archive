@@ -31,7 +31,6 @@
     align-items: center;
     gap: var(--space-2);
     padding: var(--space-4) var(--space-5);
-    border-block-end: var(--border-width) solid var(--color-border-subtle);
   }
 
   h2 {
@@ -40,9 +39,9 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-family: var(--font-serif);
-    font-size: var(--text-lg);
-    font-weight: var(--weight-serif);
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    font-weight: var(--weight-semibold);
     line-height: var(--leading-tight);
   }
 
