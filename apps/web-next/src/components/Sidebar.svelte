@@ -32,6 +32,7 @@
     width: calc(var(--sidebar-width) + var(--rail-space));
     height: 100%;
     background: var(--color-sidebar);
+    box-shadow: inset calc(var(--border-width) * -1) 0 0 var(--color-border-subtle);
     transition:
       width var(--duration-slow) var(--ease-in-out),
       transform var(--duration-slow) var(--ease-in-out),
@@ -86,7 +87,6 @@
       inset-inline-start: 0;
       width: calc(var(--sidebar-width) + var(--rail-space));
       transform: translateX(-100%);
-      box-shadow: none;
       visibility: hidden;
       transition:
         transform var(--duration-slow) var(--ease-in-out),
@@ -96,7 +96,7 @@
     .drawer {
       transform: none;
       visibility: visible;
-      box-shadow: var(--ring-strong);
+      box-shadow: var(--ring-strong), inset calc(var(--border-width) * -1) 0 0 var(--color-border-subtle);
     }
 
     .scrim {

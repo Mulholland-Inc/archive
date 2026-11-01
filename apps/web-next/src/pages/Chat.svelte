@@ -133,7 +133,7 @@
   });
 </script>
 
-<TopBar>
+<TopBar bordered>
   {#snippet leading()}
     <MobileMenu />
     {#if chat}
