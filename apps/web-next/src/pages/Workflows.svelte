@@ -107,7 +107,7 @@
         {#if col.key === 'name'}
           <Text weight="medium" truncate>{row.name}</Text>
         {:else if col.key === 'status'}
-          <StatusBadge status={statusOf(row)} />
+          <StatusBadge status={statusOf(row)} plain />
         {:else if col.key === 'last'}
           {row.runs[0]?.started ?? 'Never'}
         {:else if col.key === 'actions'}
