@@ -14,7 +14,6 @@
   import VaultIcon from './VaultIcon.svelte';
   import LookPicker from './LookPicker.svelte';
   import { app, ws, deleteVault } from '../lib/app.svelte.js';
-  import { toast } from '../lib/toast.svelte.js';
 
   let name = $state(ws().name);
   let look = $state({ ...ws().look });
@@ -33,7 +32,6 @@
     w.name = name.trim() || w.name;
     w.look = { ...look };
     w.kind = { family: 'Family', business: 'Business', personal: 'Just you' }[look.type];
-    toast('Vault saved', { tone: 'success' });
   }
 
   const roles = [

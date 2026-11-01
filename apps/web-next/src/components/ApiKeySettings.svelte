@@ -8,7 +8,6 @@
   import { app, ws, vaultKey, rotateKey, isVaultOwner } from '../lib/app.svelte.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
   import { apiPrompt } from '../lib/apiprompt.js';
-  import { toast } from '../lib/toast.svelte.js';
 
   let { scope = 'user', onback, backNarrow = true } = $props();
 
@@ -21,12 +20,10 @@
 
   async function copy() {
     await navigator.clipboard?.writeText(secret).catch(() => {});
-    toast('Copied');
   }
 
   async function copyPrompt() {
     await navigator.clipboard?.writeText(apiPrompt({ key: secret, vault: vault ? ws() : null })).catch(() => {});
-    toast('Prompt copied. Paste it into your AI assistant.');
   }
 
   async function rotate() {

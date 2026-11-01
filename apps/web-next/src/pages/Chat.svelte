@@ -17,7 +17,6 @@
   import { app, ws, renameChat } from '../lib/app.svelte.js';
   import { streamReply } from '../lib/data.js';
   import { duration } from '../lib/motion.js';
-  import { toast } from '../lib/toast.svelte.js';
   import { uid } from '../lib/ids.js';
 
   let { id } = $props();

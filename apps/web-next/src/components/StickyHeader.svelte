@@ -1,10 +1,16 @@
 <script>
   import Art from './Art.svelte';
+  import { pinned } from '../lib/pagetitle.svelte.js';
 
   let { title, art, search, actions } = $props();
 
   let height = $state(0);
   let compact = $state(false);
+
+  $effect(() => {
+    pinned.title = compact ? title : null;
+    return () => (pinned.title = null);
+  });
 
   function watch(node) {
     let root = node.parentElement;

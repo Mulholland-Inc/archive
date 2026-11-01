@@ -4,7 +4,6 @@
   import AppSidebar from './components/AppSidebar.svelte';
   import View from './components/View.svelte';
   import CommandPalette from './components/CommandPalette.svelte';
-  import Toaster from './components/Toaster.svelte';
   import ContextMenu from './components/ContextMenu.svelte';
   import Home from './pages/Home.svelte';
   import Chat from './pages/Chat.svelte';
@@ -143,5 +142,4 @@
 <HelpDialog bind:open={app.help} />
 <ShareDialog />
 {#if app.signedOut}<SignedOut />{/if}
-<Toaster />
 <ContextMenu />

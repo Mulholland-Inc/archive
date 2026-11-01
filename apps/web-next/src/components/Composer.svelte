@@ -12,7 +12,6 @@
   import ConnectorIcon from './ConnectorIcon.svelte';
   import { Plug } from '@lucide/svelte';
   import { ws, openSettings } from '../lib/app.svelte.js';
-  import { toast } from '../lib/toast.svelte.js';
   import { rise } from '../lib/motion.js';
 
   let {
@@ -82,7 +81,6 @@
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch {
-      toast('Allow the microphone in your browser, then try again.');
       return;
     }
     const chunks = [];
