@@ -485,17 +485,6 @@ func OfficeRead(b []byte, name string) (*OfficeModel, error) {
 	}
 }
 func OfficeEdit(b []byte, name string, ops []OfficeOp) ([]byte, error) {
-	p, err := OfficeEditPackage(b, name, ops)
-	if err != nil {
-		return nil, err
-	}
-	var out bytes.Buffer
-	if err := p.Save(&out); err != nil {
-		return nil, err
-	}
-	return out.Bytes(), nil
-}
-func OfficeEditPackage(b []byte, name string, ops []OfficeOp) (*OfficePackage, error) {
 	kind, err := OfficeKind(name)
 	if err != nil {
 		return nil, err
@@ -517,16 +506,20 @@ func OfficeEditPackage(b []byte, name string, ops []OfficeOp) (*OfficePackage, e
 		if err := officeApply(p, kind, op, st); err != nil {
 			return nil, fmt.Errorf("edit %d (%s): %v", i, op.Op, err)
 		}
-		if st != nil && !st.updated {
-			for _, ss := range p.Log[officeDocPart][n:] {
-				st.update(ss)
-			}
-		}
 		if st != nil {
+			if !st.updated {
+				for _, ss := range p.Log[officeDocPart][n:] {
+					st.update(ss)
+				}
+			}
 			st.updated = false
 		}
 	}
-	return p, nil
+	var out bytes.Buffer
+	if err := p.Save(&out); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
 }
 func officeApply(p *OfficePackage, kind string, op OfficeOp, st *officeIds) error {
 	types, ok := officeOpTypes[op.Op]
@@ -535,6 +528,9 @@ func officeApply(p *OfficePackage, kind string, op OfficeOp, st *officeIds) erro
 	}
 	if !strings.Contains(types, kind) {
 		return fmt.Errorf("op %s applies to %s files, not %s", op.Op, types, kind)
+	}
+	if op.Op == "replace_text" && op.Find == "" {
+		return fmt.Errorf("replace_text needs a non-empty \"find\"")
 	}
 	switch kind {
 	case "docx":
@@ -545,9 +541,6 @@ func officeApply(p *OfficePackage, kind string, op OfficeOp, st *officeIds) erro
 		w.ids = st
 		switch op.Op {
 		case "replace_text":
-			if op.Find == "" {
-				return fmt.Errorf("replace_text needs a non-empty \"find\"")
-			}
 			return w.replaceText(op)
 		case "insert_paragraph_after":
 			return w.insertParagraphAfter(op)
@@ -575,9 +568,6 @@ func officeApply(p *OfficePackage, kind string, op OfficeOp, st *officeIds) erro
 		}
 		if op.Op == "replace_shape_text" {
 			return d.replaceShapeText(op)
-		}
-		if op.Find == "" {
-			return fmt.Errorf("replace_text needs a non-empty \"find\"")
 		}
 		return d.replaceText(op)
 	}
