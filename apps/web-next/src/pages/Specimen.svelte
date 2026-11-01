@@ -71,9 +71,10 @@
   import Heading from '../components/Heading.svelte';
   import Text from '../components/Text.svelte';
   import Sidebar from '../components/Sidebar.svelte';
+  import VaultRail from '../components/VaultRail.svelte';
   import SidebarItem from '../components/SidebarItem.svelte';
   import SidebarSection from '../components/SidebarSection.svelte';
-  import VaultSwitcher from '../components/VaultSwitcher.svelte';
+  import VaultHeader from '../components/VaultHeader.svelte';
   import ThemePicker from '../components/ThemePicker.svelte';
   import Disclosure from '../components/Disclosure.svelte';
   import SettingsRow from '../components/SettingsRow.svelte';
@@ -539,10 +540,23 @@
       </SpecimenSection>
 
       <SpecimenSection id="s-shell" title="Shell">
+        <SpecimenBlock title="Vault rail">
+          <SpecimenFrame>
+            <Sidebar collapsed>
+              {#snippet rail()}<VaultRail vaults={app.vaults} current={app.vaults[0].id} onselect={(id) => toast(`Picked ${id}`)} oncreate={() => toast('New vault pressed')} />{/snippet}
+              {#snippet header()}<VaultHeader vault={app.vaults[0]} />{/snippet}
+              <SidebarSection>
+                <SidebarItem icon={Plus} label="New chat" accent href="#/specimen" />
+                <SidebarItem icon={Search} label="Search" />
+                <SidebarItem icon={MessagesSquare} label="Chats" href="#/specimen" active />
+              </SidebarSection>
+            </Sidebar>
+          </SpecimenFrame>
+        </SpecimenBlock>
         <SpecimenBlock title="Sidebar, open and collapsed">
           <SpecimenFrame>
             <Sidebar>
-              {#snippet header()}<VaultSwitcher vaults={app.vaults} current={app.vaults[0].id} />{/snippet}
+              {#snippet header()}<VaultHeader vault={app.vaults[0]} />{/snippet}
               <SidebarSection>
                 <SidebarItem icon={Plus} label="New chat" accent href="#/specimen" />
                 <SidebarItem icon={Search} label="Search" shortcut="⌘ K" />
@@ -561,7 +575,7 @@
           </SpecimenFrame>
           <SpecimenFrame>
             <Sidebar collapsed>
-              {#snippet header()}<VaultSwitcher vaults={app.vaults} current={app.vaults[1]?.id} />{/snippet}
+              {#snippet header()}<VaultHeader vault={app.vaults[1]} />{/snippet}
               <SidebarSection>
                 <SidebarItem icon={Plus} label="New chat" accent href="#/specimen" />
                 <SidebarItem icon={Search} label="Search" />

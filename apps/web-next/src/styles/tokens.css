@@ -92,6 +92,11 @@
 
   --sidebar-width: 18rem;
   --sidebar-rail: 3.25rem;
+  --vault-rail: 4.75rem;
+  --vault-tile: 3.25rem;
+  --vault-glyph: 2.875rem;
+  --vault-pill: 0.25rem;
+  --vault-badge: 1.125rem;
   --topbar-height: 3rem;
   --chat-width: 45rem;
   --composer-width: 48rem;
@@ -224,6 +229,16 @@
   color-scheme: light;
 
   --color-canvas: var(--gray-200);
+  --color-rail: var(--color-sidebar);
+  --color-rail-tile: var(--color-fill);
+  --color-rail-hover: var(--color-fill-strong);
+  --color-rail-pill: var(--color-text);
+  --color-rail-icon: var(--color-text-secondary);
+  --color-rail-accent: var(--color-accent);
+  --color-rail-on-accent: var(--color-accent-contrast);
+  --color-rail-badge: var(--color-accent);
+  --color-on-rail-badge: var(--color-accent-contrast);
+
   --color-sidebar: var(--gray-200);
   --color-surface: var(--gray-0);
   --color-surface-raised: var(--gray-0);
@@ -292,6 +307,7 @@
   color-scheme: dark;
 
   --color-canvas: var(--gray-950);
+
   --color-sidebar: var(--gray-950);
   --color-surface: var(--gray-700);
   --color-surface-raised: var(--gray-700);

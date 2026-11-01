@@ -1,7 +1,7 @@
 <script>
   import { setContext } from 'svelte';
 
-  let { collapsed = false, drawer = false, header, footer, children, onclose } = $props();
+  let { collapsed = false, drawer = false, rail, header, footer, children, onclose } = $props();
 
   setContext('sidebar', {
     get collapsed() {
@@ -13,20 +13,23 @@
 {#if drawer}
   <button type="button" class="scrim" aria-label="Close sidebar" tabindex="-1" onclick={onclose}></button>
 {/if}
-<aside class={['sidebar', { collapsed, drawer }]} aria-label="Sidebar">
-  <div class="head">{@render header?.()}</div>
-  <nav class="body">{@render children()}</nav>
-  <div class="foot">{@render footer?.()}</div>
+<aside class={['sidebar', { collapsed, drawer, railed: !!rail }]} aria-label="Sidebar">
+  {@render rail?.()}
+  <div class="column">
+    <div class="head">{@render header?.()}</div>
+    <nav class="body">{@render children()}</nav>
+    <div class="foot">{@render footer?.()}</div>
+  </div>
 </aside>
 
 <style>
   .sidebar {
     position: relative;
+    --rail-space: 0rem;
     z-index: var(--z-sidebar);
     display: flex;
-    flex-direction: column;
     flex: none;
-    width: var(--sidebar-width);
+    width: calc(var(--sidebar-width) + var(--rail-space));
     height: 100%;
     background: var(--color-sidebar);
     transition:
@@ -36,8 +39,20 @@
     overflow: hidden;
   }
 
+  .railed {
+    --rail-space: var(--vault-rail);
+  }
+
   .collapsed {
-    width: var(--sidebar-rail);
+    width: calc(var(--sidebar-rail) + var(--rail-space));
+  }
+
+  .column {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    height: 100%;
   }
 
   .head,
@@ -60,10 +75,6 @@
     mask-image: linear-gradient(to bottom, transparent, black var(--space-3), black calc(100% - var(--fade-size)), transparent);
   }
 
-  .foot {
-    box-shadow: inset 0 var(--border-width) 0 var(--color-border-subtle);
-  }
-
   .scrim {
     display: none;
   }
@@ -73,7 +84,7 @@
       position: fixed;
       inset-block: 0;
       inset-inline-start: 0;
-      width: var(--sidebar-width);
+      width: calc(var(--sidebar-width) + var(--rail-space));
       transform: translateX(-100%);
       box-shadow: none;
       visibility: hidden;
