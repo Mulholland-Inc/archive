@@ -4,14 +4,12 @@ import (
 	"cmp"
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -19,8 +17,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jackc/pgx/v5/stdlib"
-	"github.com/stripe/pg-schema-diff/pkg/tempdb"
 )
 
 //go:embed archive.sql
@@ -85,7 +81,6 @@ func storeCommitted(after *[]func(), err error) error {
 
 type pgStore struct {
 	app, sys *pgxpool.Pool
-	ddl      *sql.DB
 	cfg      *pgx.ConnConfig
 	prefix   string
 }
@@ -93,10 +88,7 @@ type pgStore struct {
 func OpenStore(ctx context.Context, pg *pgx.ConnConfig, prefix, password string) (*pgStore, error) {
 	cfg := pg.Copy()
 	cfg.RuntimeParams["search_path"] = "public"
-	db := stdlib.OpenDB(*cfg.Copy())
-	db.SetMaxOpenConns(storeDDLConns)
-	db.SetConnMaxIdleTime(storeIdle)
-	s := &pgStore{cfg: cfg, prefix: prefix, ddl: db}
+	s := &pgStore{cfg: cfg, prefix: prefix}
 	var err error
 	if s.sys, err = storePool(ctx, pg, storeSysConns, nil); err == nil {
 		err = s.bootstrap(ctx, password)
@@ -115,7 +107,6 @@ func OpenStore(ctx context.Context, pg *pgx.ConnConfig, prefix, password string)
 const (
 	storeAppConns = 8
 	storeSysConns = 4
-	storeDDLConns = 2
 	storeIdle     = time.Minute
 )
 
@@ -155,62 +146,12 @@ func (s *pgStore) hash() string {
 	return hex.EncodeToString(h[:])
 }
 
-const storeMinTimeout = time.Minute
-
 func storeUnquote(id string) string {
 	if strings.HasPrefix(id, `"`) {
 		return strings.ReplaceAll(id[1:len(id)-1], `""`, `"`)
 	}
 	return id
 }
-
-func (s *pgStore) withTemp(ctx context.Context, fn func(f tempdb.Factory, tmp *sql.DB) error) error {
-	f, err := tempdb.NewOnInstanceFactory(ctx, s.openDB, tempdb.WithRootDatabase(s.cfg.Database))
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	tmp, err := f.Create(ctx)
-	if err != nil {
-		return err
-	}
-	defer tmp.Close(context.WithoutCancel(ctx))
-	if _, err := tmp.ConnPool.ExecContext(ctx, s.expand(storeSchema)); err != nil {
-		return fmt.Errorf("archive.sql: %w", err)
-	}
-	return fn(f, tmp.ConnPool)
-}
-
-func (s *pgStore) openDB(_ context.Context, name string) (*sql.DB, error) {
-	c := s.cfg.Copy()
-	c.Database = name
-	c.RuntimeParams["statement_timeout"] = "0"
-	db := stdlib.OpenDB(*c)
-	db.SetMaxOpenConns(storeDDLConns)
-	return db, nil
-}
-
-type storeSQL struct {
-	x interface {
-		ExecContext(context.Context, string, ...any) (sql.Result, error)
-		QueryRowContext(context.Context, string, ...any) *sql.Row
-	}
-}
-
-func (s storeSQL) Exec(ctx context.Context, query string, args ...any) (pgconn.CommandTag, error) {
-	_, err := s.x.ExecContext(ctx, query, args...)
-	return pgconn.CommandTag{}, err
-}
-
-func (s storeSQL) Query(context.Context, string, ...any) (pgx.Rows, error) {
-	return nil, errors.ErrUnsupported
-}
-
-func (s storeSQL) QueryRow(ctx context.Context, query string, args ...any) pgx.Row {
-	return s.x.QueryRowContext(ctx, query, args...)
-}
-
-func storeMS(d time.Duration) string { return strconv.FormatInt(d.Milliseconds(), 10) }
 
 var (
 	storeDollarRe = regexp.MustCompile(`^\$([A-Za-z_][A-Za-z0-9_]*)?\$`)
@@ -290,7 +231,6 @@ func (s *pgStore) Close() {
 	if s.sys != nil {
 		s.sys.Close()
 	}
-	s.ddl.Close()
 }
 
 func (s *pgStore) Q(ctx context.Context) storeQ {
