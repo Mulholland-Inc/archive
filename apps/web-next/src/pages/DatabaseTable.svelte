@@ -20,7 +20,6 @@
   import EmptyState from '../components/EmptyState.svelte';
   import { ws, openShare } from '../lib/app.svelte.js';
   import { typeLabels, ddl } from '../lib/schema.js';
-  import { toast } from '../lib/toast.svelte.js';
   import { askAboutTable } from '../lib/menus.js';
 
   let { id } = $props();
@@ -59,7 +58,12 @@
   const ask = () => askAboutTable(type);
 
   function exportCsv() {
-    toast(`Exporting ${count(type.rows)} rows to ${type.id}.csv`, { tone: 'success' });
+    const keys = Object.keys(type.sample[0] ?? {});
+    const cell = (v) => `"${String(v ?? '').replaceAll('"', '""')}"`;
+    const csv = [keys.join(','), ...type.sample.map((r) => keys.map((k) => cell(r[k])).join(','))].join('\n');
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([csv], { type: 'text/csv' })), download: `${type.id}.csv` });
+    a.click();
+    URL.revokeObjectURL(a.href);
   }
 </script>
 

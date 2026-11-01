@@ -1,6 +1,5 @@
 import { me, initials } from './data.js';
 import { seed, blankVault } from './seed.js';
-import { toast } from './toast.svelte.js';
 import { integrationCatalog } from './integrations.js';
 import { go, route } from './router.svelte.js';
 
@@ -59,10 +58,9 @@ export function stepDone(id) {
   return app.onboarding.includes(id);
 }
 
-export function completeStep(id, message) {
+export function completeStep(id) {
   if (stepDone(id)) return;
   app.onboarding.push(id);
-  if (message) toast(message, { tone: 'success' });
 }
 
 export function toggleStep(id) {
@@ -122,14 +120,12 @@ export function connectIntegration(id) {
   const domain = vaultDomain();
   const account = c.id === 'slack' ? `${domain.split('.')[0]}.slack.com` : c.covers === 'domain' ? domain : ws().name;
   app.integrations.push({ vault: app.vault, id, account, by: app.profile.name, date: 'Today' });
-  toast(`${c.name} connected for everyone`, { tone: 'success' });
 }
 
 export function disconnectIntegration(id) {
   const i = app.integrations.findIndex((x) => x.vault === app.vault && x.id === id);
   if (i === -1 || !isVaultOwner()) return;
-  const [link] = app.integrations.splice(i, 1);
-  toast(`${integrationCatalog.find((c) => c.id === id)?.name} disconnected`, { action: { label: 'Undo', run: () => app.integrations.splice(i, 0, link) } });
+  app.integrations.splice(i, 1);
 }
 
 function mockKey(prefix) {
@@ -146,7 +142,6 @@ export function rotateKey(scope) {
   const fresh = { secret: mockKey(scope === 'vault' ? 'ak_vault_' : 'ak_live_'), date: 'Rotated just now' };
   if (scope === 'vault') app.vaultKeys[app.vault] = fresh;
   else app.apiKey = fresh;
-  toast('Key rotated. The old one no longer works.', { tone: 'success' });
 }
 
 export function isNarrow() {
@@ -170,12 +165,11 @@ export function toggleSidebar() {
   localStorage.setItem('archive.sidebar', app.collapsed ? 'collapsed' : 'open');
 }
 
-function removeAt(list, predicate, label, after) {
+function removeAt(list, predicate, after) {
   const i = list.findIndex(predicate);
   if (i < 0) return null;
   const [item] = list.splice(i, 1);
   after?.(item);
-  toast(label, { action: { label: 'Undo', run: () => list.splice(Math.min(i, list.length), 0, item) } });
   return item;
 }
 
@@ -184,7 +178,6 @@ export function switchVault(id) {
   app.vault = id;
   const head = route.parts[0];
   if (['chat', 'workflows'].includes(head) && route.parts[1]) go(`/${head === 'chat' ? '' : head}`);
-  toast(`Switched to ${ws().name}`);
 }
 
 export function createVault(name, look) {
@@ -193,27 +186,13 @@ export function createVault(name, look) {
   app.vaultKeys[id] = { secret: mockKey('ak_vault_'), date: 'Created today' };
   app.vault = id;
   go('/');
-  toast(`Created ${name}`, { tone: 'success' });
 }
 
 export function deleteVault(id) {
-  if (app.vaults.length < 2) {
-    toast('You need at least one vault', { tone: 'danger' });
-    return;
-  }
-  const i = app.vaults.findIndex((w) => w.id === id);
-  const [gone] = app.vaults.splice(i, 1);
+  if (app.vaults.length < 2) return;
+  app.vaults.splice(app.vaults.findIndex((w) => w.id === id), 1);
   app.vault = app.vaults[0].id;
   go('/');
-  toast(`${gone.name} deleted`, {
-    action: {
-      label: 'Undo',
-      run: () => {
-        app.vaults.splice(i, 0, gone);
-        app.vault = gone.id;
-      }
-    }
-  });
 }
 
 export function newChat(title, { attachments = [], text } = {}) {
@@ -239,7 +218,6 @@ export function togglePin(id) {
   const chat = chatById(id);
   if (!chat) return;
   chat.pinned = !chat.pinned;
-  toast(chat.pinned ? 'Pinned' : 'Unpinned');
 }
 
 export function pinnedFirst(chats) {
@@ -249,7 +227,7 @@ export function pinnedFirst(chats) {
 export function removeChat(id) {
   const w = ws();
   const open = route.path === `/chat/${id}`;
-  removeAt(w.chats, (c) => c.id === id, 'Chat deleted', () => open && go('/'));
+  removeAt(w.chats, (c) => c.id === id, () => open && go('/'));
 }
 
 
@@ -278,7 +256,6 @@ export function uploadFile(folder) {
   };
   if (!w.folders.includes(file.folder)) w.folders.push(file.folder);
   w.library.unshift(file);
-  toast(`Uploaded ${file.name}`, { tone: 'success' });
   completeStep('upload');
   return file;
 }
@@ -287,7 +264,6 @@ export function addFolder(name) {
   const w = ws();
   if (!name || w.folders.includes(name)) return;
   w.folders.push(name);
-  toast(`Folder “${name}” created`, { tone: 'success' });
 }
 
 export function renameFile(id, name) {
@@ -296,7 +272,7 @@ export function renameFile(id, name) {
 }
 
 export function removeFile(id) {
-  removeAt(ws().library, (f) => f.id === id, 'Moved to trash');
+  removeAt(ws().library, (f) => f.id === id);
 }
 
 export function downloadFile(file) {
@@ -319,14 +295,12 @@ export function invite({ emails, role }) {
     w.members.push(m);
     added.push(m);
   }
-  toast(added.length === 1 ? `Invited ${added[0].email}` : `${added.length} people invited`, { tone: 'success' });
   if (added.length) completeStep('invite');
   return added;
 }
 
 export function removeMember(id) {
-  const m = ws().members.find((x) => x.id === id);
-  removeAt(ws().members, (x) => x.id === id, m?.status === 'invited' ? 'Invitation revoked' : `${m?.name} removed`);
+  removeAt(ws().members, (x) => x.id === id);
 }
 
 export const permissions = [
@@ -399,8 +373,7 @@ export function addPeople(kind, target, emails, permission) {
     share.people.push({ name, email, permission, tone: person?.tone ?? (email.length % 6) + 1 });
     added.push(name);
   }
-  if (added.length) toast(added.length === 1 ? `Shared with ${added[0]}` : `Shared with ${added.length} people`, { tone: 'success' });
-  else prune(share);
+  if (!added.length) prune(share);
 }
 
 export function setPermission(share, email, permission) {
@@ -411,13 +384,12 @@ export function setPermission(share, email, permission) {
 export function unsharePerson(share, email) {
   const i = share.people.findIndex((x) => x.email === email);
   if (i < 0) return;
-  const [p] = share.people.splice(i, 1);
-  toast(`${p.name} no longer has access`);
+  share.people.splice(i, 1);
   prune(share);
 }
 
 export function stopSharing(id) {
-  removeAt(ws().shares, (s) => s.id === id, 'Stopped sharing');
+  removeAt(ws().shares, (s) => s.id === id);
 }
 
 export function removeGuest(email) {
@@ -426,7 +398,6 @@ export function removeGuest(email) {
     share.people = share.people.filter((p) => p.email !== email);
     prune(share);
   }
-  toast('Guest access removed');
 }
 
 export function workflowById(id) {
@@ -452,7 +423,6 @@ export function runWorkflow(id) {
   if (!wf) return;
   wf.runs.unshift(freshRun(wf));
   progress(wf.runs[0]);
-  toast(`Run #${wf.runs[0].number} started`);
   return wf.runs[0].id;
 }
 
@@ -478,7 +448,6 @@ function progress(run) {
 export function createWorkflow({ name, trigger, steps, agent = 'Assistant' }) {
   const id = nid('wf');
   ws().workflows.unshift({ id, name, agent, trigger, enabled: true, steps, runs: [] });
-  toast(`Created ${name}`, { tone: 'success' });
   completeStep('workflow');
   return id;
 }
@@ -487,7 +456,6 @@ export function toggleWorkflow(id) {
   const wf = workflowById(id);
   if (!wf) return;
   wf.enabled = !wf.enabled;
-  toast(wf.enabled ? `${wf.name} turned on` : `${wf.name} turned off`);
 }
 
 export function renameWorkflow(id, name) {
@@ -496,19 +464,17 @@ export function renameWorkflow(id, name) {
 }
 
 export function removeWorkflow(id) {
-  removeAt(ws().workflows, (w) => w.id === id, 'Workflow deleted', () => go('/workflows'));
+  removeAt(ws().workflows, (w) => w.id === id, () => go('/workflows'));
 }
 
 export function pauseRun(run) {
   run.paused = !run.paused;
-  toast(run.paused ? 'Run paused' : 'Run resumed');
 }
 
 export function stopRun(run) {
   run.status = 'stopped';
   run.paused = false;
   for (const s of run.steps) if (s.status === 'running' || s.status === 'waiting') s.status = 'failed';
-  toast('Run stopped');
 }
 
 export function resolveRun(run) {
@@ -535,18 +501,15 @@ export function connect(id) {
   c.account = app.profile.name.split(' ')[0].toLowerCase() + '@' + (c.category === 'Email' ? 'mail.com' : 'example.com');
   c.lastSync = 'Just now';
   c.items = 0;
-  toast(`${c.name} connected`, { tone: 'success' });
   completeStep('connect');
 }
 
 export function disconnect(id) {
   const c = ws().connectors.find((x) => x.id === id);
   if (!c) return;
-  const before = { ...c };
   c.connected = false;
   c.account = '';
   c.lastSync = '';
-  toast(`${c.name} disconnected`, { action: { label: 'Undo', run: () => Object.assign(c, before) } });
 }
 
 export function syncConnector(id) {
@@ -554,7 +517,6 @@ export function syncConnector(id) {
   if (!c) return;
   c.lastSync = 'Just now';
   c.items += 3;
-  toast(`${c.name} synced`);
 }
 
 function format(sec) {

@@ -94,11 +94,3 @@ export function slide(node, { speed = 'normal', axis = 'y' } = {}) {
   };
 }
 
-export function toastIn(node, { speed = 'slow' } = {}) {
-  const y = length('--shift-lg');
-  return {
-    duration: duration(speed),
-    easing: ease('emphasized'),
-    css: (t, u) => `opacity:${t};transform:translateY(${u * y}px) scale(${0.96 + 0.04 * t})`
-  };
-}

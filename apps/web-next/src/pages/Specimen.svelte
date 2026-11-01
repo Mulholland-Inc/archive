@@ -98,7 +98,6 @@
   import { User as UserIcon, Palette as PaletteIcon, Bell as BellIcon, Plug as PlugIcon } from '@lucide/svelte';
   import { library, conversations, members, me } from '../lib/data.js';
   import { theme, setTheme } from '../lib/theme.svelte.js';
-  import { toast } from '../lib/toast.svelte.js';
   import { contextmenu, SEPARATOR } from '../lib/contextmenu.svelte.js';
   import { app } from '../lib/app.svelte.js';
   const familySchema = schemaFor('okafor');
@@ -334,7 +333,7 @@
           <Chip>Static</Chip>
           <Chip icon={FolderOpen} onclick={() => {}}>Interactive</Chip>
           <Chip selected onclick={() => {}}>Selected</Chip>
-          <Chip onremove={() => toast('Removed')}>Removable</Chip>
+          <Chip onremove={() => {}}>Removable</Chip>
           <Chip size="sm">Small</Chip>
           <Chip size="sm" onremove={() => {}}>Small removable</Chip>
         </SpecimenBlock>
@@ -391,12 +390,12 @@
         <SpecimenBlock title="Context menu, right-click or Shift F10">
           <div class="target" tabindex="0" role="button" aria-label="Context menu target" {@attach contextmenu(() => [
             { heading: '1970s Letters' },
-            { label: 'Open', icon: FolderOpen, onselect: () => toast('Opened') },
-            { label: 'Rename', icon: Pencil, shortcut: '↵', onselect: () => toast('Rename') },
-            { label: 'Share', icon: Share, onselect: () => toast('Shared') },
+            { label: 'Open', icon: FolderOpen, onselect: () => {} },
+            { label: 'Rename', icon: Pencil, shortcut: '↵', onselect: () => {} },
+            { label: 'Share', icon: Share, onselect: () => {} },
             { label: 'Duplicate', icon: Copy, disabled: true },
             SEPARATOR,
-            { label: 'Delete', icon: Trash2, danger: true, onselect: () => toast('Deleted') }
+            { label: 'Delete', icon: Trash2, danger: true, onselect: () => {} }
           ])}>Right-click here</div>
         </SpecimenBlock>
         <SpecimenBlock title="Popover and tooltip">
@@ -408,7 +407,7 @@
                 <Input size="sm" value="https://app.archive.dev/s/8f2k" readonly aria-label="Link" />
                 <Stack direction="row" gap="2" justify="end">
                   <Button size="sm" variant="ghost" onclick={close}>Close</Button>
-                  <Button size="sm" variant="primary" icon={Copy} onclick={() => { close(); toast('Link copied'); }}>Copy link</Button>
+                  <Button size="sm" variant="primary" icon={Copy} onclick={() => close}>Copy link</Button>
                 </Stack>
               </Stack>
             {/snippet}
@@ -430,14 +429,11 @@
         </SpecimenBlock>
         <SpecimenBlock title="Settings pane" column>
           <Card padding="none"><SettingsPane title="Notifications"><NotificationSettings /></SettingsPane></Card>
-          <Card padding="none"><SettingsPane title={catalog[0].name} onback={() => toast('Back pressed')}><ConnectorDetail connector={{ ...catalog[0], connected: true, account: 'nora.okafor@gmail.com', lastSync: '2 min ago', items: 412 }} /></SettingsPane></Card>
+          <Card padding="none"><SettingsPane title={catalog[0].name} onback={() => {}}><ConnectorDetail connector={{ ...catalog[0], connected: true, account: 'nora.okafor@gmail.com', lastSync: '2 min ago', items: 412 }} /></SettingsPane></Card>
         </SpecimenBlock>
-        <SpecimenBlock title="Dialog, toast and command palette">
+        <SpecimenBlock title="Dialog and command palette">
           <Button onclick={() => (dialog = true)}>Open dialog</Button>
           <Button variant="danger" onclick={() => (confirm = true)}>Confirm dialog</Button>
-          <Button onclick={() => toast('Saved to 1970s Letters')}>Neutral toast</Button>
-          <Button onclick={() => toast('Invitation sent', { tone: 'success' })}>Success toast</Button>
-          <Button onclick={() => toast('Upload failed', { tone: 'danger', action: { label: 'Retry', run: () => {} } })}>Danger toast</Button>
           <Button icon={Search} onclick={() => (app.palette = true)}>Command palette</Button>
         </SpecimenBlock>
       </SpecimenSection>
@@ -485,7 +481,7 @@
           </List>
         </SpecimenBlock>
         <SpecimenBlock title="Table" column>
-          <Table {columns} rows={members.slice(0, 4)} label="Members" onrowclick={(r) => toast(r.name)}>
+          <Table {columns} rows={members.slice(0, 4)} label="Members" onrowclick={() => {}}>
             {#snippet cell(row, col)}
               {#if col.key === 'name'}
                 <Stack direction="row" gap="2" align="center"><Avatar name={row.name} seed={row.user ?? row.id} size="sm" /><Text weight="medium">{row.name}</Text></Stack>
@@ -597,7 +593,7 @@
         <SpecimenBlock title="Connectors">
           <Grid columns="2" gap="3">
             <ConnectorCard connector={{ ...catalog[0], connected: true, account: 'nora.okafor@gmail.com' }} />
-            <ConnectorCard connector={{ ...catalog[8], connected: false }} onconnect={() => toast('Connect pressed')} />
+            <ConnectorCard connector={{ ...catalog[8], connected: false }} onconnect={() => {}} />
           </Grid>
         </SpecimenBlock>
       </SpecimenSection>
@@ -606,7 +602,7 @@
         <SpecimenBlock title="Vault rail">
           <SpecimenFrame>
             <Sidebar collapsed>
-              {#snippet rail()}<VaultRail vaults={app.vaults} current={app.vaults[0].id} onselect={(id) => toast(`Picked ${id}`)} oncreate={() => toast('New vault pressed')} />{/snippet}
+              {#snippet rail()}<VaultRail vaults={app.vaults} current={app.vaults[0].id} onselect={() => {}} oncreate={() => {}} />{/snippet}
               {#snippet header()}<VaultHeader vault={app.vaults[0]} />{/snippet}
               <SidebarSection>
                 <SidebarItem icon={Plus} label="New chat" accent href="#/specimen" />
@@ -666,7 +662,7 @@
   <Text as="p" tone="secondary">This can’t be undone.</Text>
   {#snippet footer({ close })}
     <Button variant="ghost" onclick={close}>Cancel</Button>
-    <Button variant="danger" onclick={() => { close(); toast('Chat deleted'); }}>Delete</Button>
+    <Button variant="danger" onclick={() => close}>Delete</Button>
   {/snippet}
 </Dialog>
 

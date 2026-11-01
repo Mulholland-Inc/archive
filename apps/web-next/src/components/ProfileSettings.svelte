@@ -9,7 +9,6 @@
   import Button from './Button.svelte';
   import { me } from '../lib/data.js';
   import { app } from '../lib/app.svelte.js';
-  import { toast } from '../lib/toast.svelte.js';
 
   let name = $state(app.profile.name);
   let call = $state(app.profile.first);
@@ -28,7 +27,6 @@
 
   function save() {
     Object.assign(app.profile, { name: name.trim() || app.profile.name, first: call.trim() || app.profile.first, work, prefs });
-    toast('Profile saved', { tone: 'success' });
   }
 
   function reset() {

@@ -21,7 +21,6 @@
   import Section from '../components/Section.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
   import { ws, seedOf, removeMember, shareItem, shareKinds, permissions, isExternal, openShare, stopSharing } from '../lib/app.svelte.js';
-  import { toast } from '../lib/toast.svelte.js';
   import { route } from '../lib/router.svelte.js';
   import { memberItems, guestItems, shareItems } from '../lib/menus.js';
 
@@ -100,7 +99,6 @@
 
   function changeRole(row, role) {
     row.role = role;
-    toast(`${row.name} is now ${role === 'owner' ? 'an' : 'a'} ${role}`);
   }
 </script>
 

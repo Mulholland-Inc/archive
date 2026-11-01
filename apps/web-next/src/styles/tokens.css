@@ -122,7 +122,6 @@
   --dialog-xl-margin: 4rem;
   --palette-width: 40rem;
   --tooltip-max: 16rem;
-  --toast-width: 22rem;
   --tile-min: 13rem;
   --card-min: 17rem;
   --row-height: 2.5rem;
@@ -152,7 +151,6 @@
   --z-overlay: 40;
   --z-dialog: 50;
   --z-popover: 60;
-  --z-toast: 70;
   --z-tooltip: 80;
 
   --duration-instant: 80ms;

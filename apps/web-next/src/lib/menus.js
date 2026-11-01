@@ -2,16 +2,10 @@ import { Pin, PinOff, Pencil, Trash2, ExternalLink, MessageSquarePlus, Share, Do
 import { SEPARATOR } from './contextmenu.svelte.js';
 import { app, togglePin, removeChat, renameChat, newChat, renameFile, removeFile, downloadFile, openShare, runWorkflow, pauseRun, stopRun, removeWorkflow, removeMember, invite, stopSharing, removeGuest, switchVault, openVaultSettings, deleteVault } from './app.svelte.js';
 import { prompt, confirmDialog } from './dialogs.svelte.js';
-import { toast } from './toast.svelte.js';
 import { go } from './router.svelte.js';
 
-export async function copyText(text, label = 'Copied') {
-  try {
-    await navigator.clipboard.writeText(text);
-    toast(label);
-  } catch {
-    toast('Couldn’t copy', { tone: 'danger' });
-  }
+export async function copyText(text) {
+  await navigator.clipboard?.writeText(text).catch(() => {});
 }
 
 export async function renameChatPrompt(chat) {
@@ -65,7 +59,7 @@ export function tableItems(table) {
     { label: 'Ask about this', icon: MessageSquarePlus, onselect: () => askAboutTable(table) },
     SEPARATOR,
     { label: 'Share', icon: Share, onselect: () => openShare('table', table.id) },
-    { label: 'Copy name', icon: Copy, onselect: () => copyText(table.id, 'Table name copied') }
+    { label: 'Copy name', icon: Copy, onselect: () => copyText(table.id) }
   ];
 }
 
@@ -99,7 +93,7 @@ export function memberItems(member, { roles = [], onrole } = {}) {
     { heading: 'Role' },
     ...roles.map((r) => ({ label: r.label, checked: member.role === r.value, onselect: () => member.role !== r.value && onrole?.(member, r.value) })),
     SEPARATOR,
-    { label: 'Copy email', icon: Copy, onselect: () => copyText(member.email, 'Email copied') },
+    { label: 'Copy email', icon: Copy, onselect: () => copyText(member.email) },
     SEPARATOR,
     { label: invited ? 'Revoke invitation' : 'Remove from vault', icon: Trash2, danger: true, onselect: () => removeMember(member.id) }
   ];
@@ -108,7 +102,7 @@ export function memberItems(member, { roles = [], onrole } = {}) {
 export function guestItems(guest) {
   return [
     { label: 'Invite to vault', icon: UserPlus, onselect: () => invite({ emails: [guest.email], role: 'viewer' }) },
-    { label: 'Copy email', icon: Copy, onselect: () => copyText(guest.email, 'Email copied') },
+    { label: 'Copy email', icon: Copy, onselect: () => copyText(guest.email) },
     SEPARATOR,
     { label: 'Remove all access', icon: UserMinus, danger: true, onselect: () => removeGuest(guest.email) }
   ];

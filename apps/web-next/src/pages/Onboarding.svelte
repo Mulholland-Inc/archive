@@ -23,9 +23,9 @@
   const groups = [...new Set(onboardingSteps.map((s) => s.group))].map((g) => [g, onboardingSteps.filter((s) => s.group === g)]);
 
   const actions = {
-    msa: () => completeStep('msa', 'Master services agreement signed'),
-    dpa: () => completeStep('dpa', 'Data processing agreement signed'),
-    verify: () => completeStep('verify', 'Business details verified'),
+    msa: () => completeStep('msa'),
+    dpa: () => completeStep('dpa'),
+    verify: () => completeStep('verify'),
     invite: () => (inviting = true),
     connect: () => openSettings('connectors'),
     upload: () => go('/library'),

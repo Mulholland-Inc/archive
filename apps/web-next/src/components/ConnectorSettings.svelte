@@ -12,7 +12,6 @@
   import MenuLabel from './MenuLabel.svelte';
   import MenuSeparator from './MenuSeparator.svelte';
   import { ws, connect } from '../lib/app.svelte.js';
-  import { toast } from '../lib/toast.svelte.js';
 
   let { onopen, onback, backNarrow = false } = $props();
 
@@ -51,7 +50,7 @@
       <div class="end">
         <Menu label="Add" placement="bottom-end" width="sm">
           {#snippet trigger(props)}<Button variant="inverse" icon={Plus} iconEnd={ChevronDown} {...props}>Add</Button>{/snippet}
-          <MenuItem icon={Code} onselect={() => toast('Custom connectors are coming soon')}>Custom connector</MenuItem>
+          <MenuItem icon={Code} disabled>Custom connector, coming soon</MenuItem>
         </Menu>
       </div>
     {/snippet}
