@@ -21,6 +21,7 @@
   import Input from '../components/Input.svelte';
   import Textarea from '../components/Textarea.svelte';
   import Select from '../components/Select.svelte';
+  import PeoplePicker from '../components/PeoplePicker.svelte';
   import Checkbox from '../components/Checkbox.svelte';
   import Switch from '../components/Switch.svelte';
   import RadioGroup from '../components/RadioGroup.svelte';
@@ -93,7 +94,7 @@
   import SettingsPane from '../components/SettingsPane.svelte';
   import NotificationSettings from '../components/NotificationSettings.svelte';
   import ConnectorDetail from '../components/ConnectorDetail.svelte';
-  import { openSettings, openShare, ws } from '../lib/app.svelte.js';
+  import { openSettings, openShare, ws, contacts } from '../lib/app.svelte.js';
   import { User as UserIcon, Palette as PaletteIcon, Bell as BellIcon, Plug as PlugIcon } from '@lucide/svelte';
   import { library, conversations, members, me } from '../lib/data.js';
   import { theme, setTheme } from '../lib/theme.svelte.js';
@@ -121,6 +122,7 @@
   let text = $state('Leeds, winter 1974');
   let note = $state('');
   let select = $state('editor');
+  let picked = $state([]);
   let checks = $state({ a: true, b: false, c: false });
   let toggles = $state({ a: true, b: false });
   let radio = $state('month');
@@ -305,6 +307,9 @@
           <Select bind:value={select} options={roles} variant="ghost" label="Role" />
           <Select options={roles} placeholder="Pick a role" label="Role" />
           <Select options={roles} disabled placeholder="Disabled" label="Role" />
+        </SpecimenBlock>
+        <SpecimenBlock title="People picker">
+          <PeoplePicker bind:value={picked} people={contacts()} label="People" />
         </SpecimenBlock>
       </SpecimenSection>
 

@@ -1,15 +1,11 @@
 <script>
   import Avatar from './Avatar.svelte';
+  import { Trash2 } from '@lucide/svelte';
   import Select from './Select.svelte';
+  import IconButton from './IconButton.svelte';
   import { seedOf, permissions, isExternal, setPermission, unsharePerson } from '../lib/app.svelte.js';
 
-  let { person, share, size = 'md', fixed } = $props();
-  const options = [...permissions, { value: 'remove', label: 'Remove access' }];
-
-  function change(value) {
-    if (value === 'remove') unsharePerson(share, person.email);
-    else setPermission(share, person.email, value);
-  }
+  let { person, share, size = 'md' } = $props();
 </script>
 
 <div class={['person', size]}>
@@ -18,14 +14,11 @@
     <span class="name">{person.name}</span>
     <span class="meta">
       <span class="email">{person.email}</span>
-      {#if !fixed && isExternal(person.email)}<span>External</span>{/if}
+      {#if isExternal(person.email)}<span>External</span>{/if}
     </span>
   </span>
-  {#if fixed}
-    <span class="fixed">{fixed}</span>
-  {:else}
-    <Select value={person.permission} {options} size="sm" variant="ghost" placement="bottom-end" label={`Access for ${person.name}`} onchange={change} />
-  {/if}
+  <Select value={person.permission} options={permissions} size="sm" variant="ghost" placement="bottom-end" label={`Access for ${person.name}`} onchange={(v) => setPermission(share, person.email, v)} />
+  <IconButton icon={Trash2} label={`Remove ${person.name}`} size="sm" onclick={() => unsharePerson(share, person.email)} />
 </div>
 
 <style>
@@ -70,11 +63,5 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     min-width: 0;
-  }
-
-  .fixed {
-    padding-inline: var(--space-2);
-    color: var(--color-text-tertiary);
-    font-size: var(--text-sm);
   }
 </style>
