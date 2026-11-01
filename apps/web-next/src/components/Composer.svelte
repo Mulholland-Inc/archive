@@ -72,6 +72,9 @@
   let seconds = $state(0);
   let wave = $state();
   let clock, audio, frame;
+  let levels = [];
+  let sampled = 0;
+  const STEP = 70;
   const elapsed = $derived(`${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`);
 
   async function record() {
@@ -86,9 +89,9 @@
     const r = new MediaRecorder(stream);
     audio = new AudioContext();
     const analyser = audio.createAnalyser();
-    analyser.fftSize = 256;
-    analyser.smoothingTimeConstant = 0.7;
+    analyser.fftSize = 1024;
     audio.createMediaStreamSource(stream).connect(analyser);
+    levels = [];
     draw(analyser);
     r.ondataavailable = (e) => e.data.size && chunks.push(e.data);
     r.onstop = () => {
@@ -109,28 +112,37 @@
     recorder = r;
   }
 
-  // the voice as it comes in: bars that rise with each frequency band, mirrored from the middle
+  // the voice as it comes in, as Voice Memos draws it: one thin bar per moment, newest on the right,
+  // scrolling left as you talk and fading out at the far edge
   function draw(analyser) {
     frame = requestAnimationFrame(() => draw(analyser));
+    const now = performance.now();
+    if (now - sampled >= STEP) {
+      const data = new Float32Array(analyser.fftSize);
+      analyser.getFloatTimeDomainData(data);
+      let sum = 0;
+      for (const v of data) sum += v * v;
+      levels.push(Math.min(1, Math.sqrt(Math.sqrt(sum / data.length)) * 1.6));
+      if (levels.length > 400) levels.shift();
+      sampled = now;
+    }
     if (!wave) return;
     const { width, height } = wave.getBoundingClientRect();
     const scale = devicePixelRatio;
     if (wave.width !== Math.round(width * scale)) wave.width = Math.round(width * scale);
     if (wave.height !== Math.round(height * scale)) wave.height = Math.round(height * scale);
     const c = wave.getContext('2d');
-    const data = new Uint8Array(analyser.frequencyBinCount);
-    analyser.getByteFrequencyData(data);
     c.clearRect(0, 0, wave.width, wave.height);
     c.fillStyle = getComputedStyle(wave).color;
-    const bar = 3 * scale;
-    const gap = 3 * scale;
-    const bars = Math.floor(wave.width / (bar + gap));
-    for (let i = 0; i < bars; i++) {
-      const from = Math.abs(i - (bars - 1) / 2) / (bars / 2);
-      const v = data[Math.floor(from * data.length * 0.3)] / 255;
-      const h = Math.max(bar, v * wave.height);
+    const bar = 2 * scale;
+    const pitch = 5 * scale;
+    const slide = Math.min(1, (now - sampled) / STEP) * pitch;
+    for (let i = 0; i < levels.length; i++) {
+      const x = wave.width - (levels.length - i) * pitch - slide + pitch;
+      if (x < -bar) continue;
+      const h = Math.max(bar, levels[i] * wave.height * 0.9);
       c.beginPath();
-      c.roundRect(i * (bar + gap), (wave.height - h) / 2, bar, h, bar / 2);
+      c.roundRect(x, (wave.height - h) / 2, bar, h, bar / 2);
       c.fill();
     }
   }
@@ -304,7 +316,8 @@
     flex: 1;
     min-width: 0;
     height: var(--control-sm);
-    color: var(--color-danger);
+    color: var(--color-text);
+    mask-image: linear-gradient(to right, transparent, black 30%);
   }
 
   .elapsed {
