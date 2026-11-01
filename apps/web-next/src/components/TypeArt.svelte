@@ -19,7 +19,8 @@
   }
 
   .sm {
-    width: var(--control-xl);
-    height: var(--control-xl);
+    width: var(--type-art);
+    height: var(--type-art);
+    margin-block: calc(var(--space-4) * -1);
   }
 </style>
