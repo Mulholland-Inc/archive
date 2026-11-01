@@ -608,18 +608,6 @@ func semNormalize(s *semType, kind, name string, in any, h Hints) (any, error) {
 	return nil, cmp.Or(first, fmt.Errorf("not a valid %s", name))
 }
 
-func semFormat(s *semType, v any, locale string) (out string) {
-	if s.Format == "" {
-		return semPlain(v)
-	}
-	defer func() {
-		if recover() != nil {
-			out = semPlain(v)
-		}
-	}()
-	return semFormats[s.Format](v, locale)
-}
-
 func specBad(errs *[]FieldError, path string, err error) {
 	var ve *ValidationError
 	if errors.As(err, &ve) {

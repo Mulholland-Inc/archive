@@ -986,8 +986,6 @@ func (s *signin) oidcCallback(r *http.Request) (*User, error) {
 	return u, err
 }
 
-var secretMasks = map[string]bool{"card": true, "mask_ssn": true, "national": true, "passport": true}
-
 func secretLoadKey(dir string) ([]byte, error) {
 	if s := strings.TrimSpace(os.Getenv("ARCHIVE_SECRET_KEY")); s != "" {
 		for _, dec := range []func(string) ([]byte, error){hex.DecodeString, base64.StdEncoding.DecodeString, base64.RawURLEncoding.DecodeString} {
@@ -1044,11 +1042,17 @@ func secretDerive(key []byte, purpose string) []byte {
 
 func authPassword(key []byte) string { return hex.EncodeToString(secretDerive(key, "authenticator")) }
 
-func secretMask(s *semType, v any) string {
-	if secretMasks[s.Format] {
-		return semFormat(s, v, "")
+func secretMask(s *semType, v any) (out string) {
+	mask := semMasks[s.Mask]
+	if mask == nil {
+		return "****"
 	}
-	return "****"
+	defer func() {
+		if recover() != nil {
+			out = semPlain(v)
+		}
+	}()
+	return mask(v)
 }
 
 func (a *Archive) secretBox(id uuid.UUID, typ string, plain []byte) []byte {
