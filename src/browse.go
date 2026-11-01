@@ -3,14 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"image"
-	"image/color"
-	"image/draw"
-	"image/png"
 	"io"
 	"math/rand/v2"
 	"net/http"
@@ -19,20 +14,14 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/input"
-	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
 	"github.com/chromedp/chromedp/remote"
 	"github.com/dop251/goja"
-	"github.com/google/uuid"
-	"golang.org/x/image/font"
-	"golang.org/x/image/font/basicfont"
-	"golang.org/x/image/math/fixed"
 )
 
 const (
@@ -43,13 +32,6 @@ const (
 	browseJev     = "jev-1.14.0"
 )
 
-type browseFrameKey struct{}
-
-// browseFrames makes archive.browse in runs under ctx call fn with each screencast frame, a base64 JPEG.
-func browseFrames(ctx context.Context, fn func(frame, url string)) context.Context {
-	return context.WithValue(ctx, browseFrameKey{}, fn)
-}
-
 type BrowseResult struct {
 	Done   bool   `json:"done"`
 	Answer string `json:"answer"`
@@ -57,21 +39,41 @@ type BrowseResult struct {
 }
 
 type browseEl struct {
-	Tag  string  `json:"tag"`
-	Text string  `json:"text"`
-	X    float64 `json:"x"`
-	Y    float64 `json:"y"`
-	W    float64 `json:"w"`
-	H    float64 `json:"h"`
+	Tag   string  `json:"tag"`
+	Text  string  `json:"text"`
+	Href  string  `json:"href"`
+	Value string  `json:"value"`
+	X     float64 `json:"x"`
+	Y     float64 `json:"y"`
+	W     float64 `json:"w"`
+	H     float64 `json:"h"`
 }
 
-func (e browseEl) String() string { return e.Tag + " " + strconv.Quote(e.Text) }
+func (e browseEl) String() string {
+	s := e.Tag + " " + strconv.Quote(e.Text)
+	if e.Value != "" {
+		s += " value " + strconv.Quote(e.Value)
+	}
+	if e.Href != "" {
+		s += " to " + e.Href
+	}
+	return s
+}
 
 type browseView struct {
 	URL   string     `json:"url"`
 	Title string     `json:"title"`
+	Text  string     `json:"text"`
 	Els   []browseEl `json:"els"`
-	shot  []byte
+}
+
+// list numbers the elements as Jev and Claude see them.
+func (v *browseView) list() []string {
+	out := make([]string, len(v.Els))
+	for i, e := range v.Els {
+		out[i] = strconv.Itoa(i+1) + ". " + e.String()
+	}
+	return out
 }
 
 type browseAct struct {
@@ -89,7 +91,6 @@ type browser struct {
 	goal     string
 	jev, ant string
 	history  []string
-	url      atomic.Value
 }
 
 // runClock is a run's time budget: browse stops the run's clock and spends its own.
@@ -140,8 +141,7 @@ func (r *runner) browse(call goja.FunctionCall) (any, error) {
 	}()
 	ctx, cancel := context.WithTimeout(r.ctx, c.browse)
 	defer cancel()
-	frames, _ := r.ctx.Value(browseFrameKey{}).(func(frame, url string))
-	res, err := browseRun(ctx, addr, jev, ant, goal, opts.URL, frames)
+	res, err := browseRun(ctx, addr, jev, ant, goal, opts.URL)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "archive: browse failed after %s: %v\n", time.Since(start).Round(time.Millisecond), err)
 		return nil, fmt.Errorf("archive.browse: %w", err)
@@ -150,7 +150,7 @@ func (r *runner) browse(call goja.FunctionCall) (any, error) {
 	return res, nil
 }
 
-func browseRun(ctx context.Context, addr, jev, ant, goal, start string, frames func(frame, url string)) (*BrowseResult, error) {
+func browseRun(ctx context.Context, addr, jev, ant, goal, start string) (*BrowseResult, error) {
 	ws, h, err := browseDial(ctx, addr)
 	if err != nil {
 		return nil, err
@@ -163,10 +163,6 @@ func browseRun(ctx context.Context, addr, jev, ant, goal, start string, frames f
 		return nil, fmt.Errorf("could not start the browser: %w", err)
 	}
 	b := &browser{ctx: bctx, goal: goal, jev: jev, ant: ant}
-	b.url.Store(start)
-	if frames != nil {
-		defer b.cast(frames)()
-	}
 	if start != "" {
 		if err := b.do(chromedp.Navigate(start)); err != nil {
 			return nil, fmt.Errorf("could not open %s: %w", start, err)
@@ -240,39 +236,11 @@ func browseDial(ctx context.Context, addr string) (string, http.Header, error) {
 	return u.String(), h, nil
 }
 
-func browseCall[P, R any](ctx context.Context, c cdp.Command[P, R], p P) (R, error) {
-	return chromedp.Run(ctx, func(ctx context.Context, t *chromedp.Target) (R, error) { return cdp.Call(ctx, t, c, p) })
-}
-
 func (b *browser) do(a chromedp.Action[chromedp.Void]) error {
 	ctx, cancel := context.WithTimeout(b.ctx, 20*time.Second)
 	defer cancel()
 	_, err := chromedp.Run(ctx, a)
 	return err
-}
-
-func (b *browser) cast(send func(frame, url string)) func() {
-	ctx, cancel := context.WithCancel(b.ctx)
-	events := chromedp.Events(ctx, page.ScreencastFrame)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		var last time.Time
-		for ev, err := range events {
-			if err != nil {
-				return
-			}
-			browseCall(ctx, page.ScreencastFrameAck, page.ScreencastFrameAckParams{SessionID: ev.SessionID})
-			if time.Since(last) >= 400*time.Millisecond {
-				last = time.Now()
-				u, _ := b.url.Load().(string)
-				send(base64.StdEncoding.EncodeToString(ev.Data), u)
-			}
-		}
-	}()
-	q := int64(50)
-	browseCall(ctx, page.StartScreencast, page.StartScreencastParams{Format: page.StartScreencastFormatJpeg, Quality: &q, MaxWidth: 640, MaxHeight: 400, EveryNthFrame: 2})
-	return func() { cancel(); <-done }
 }
 
 const browseJS = `(() => {
@@ -287,14 +255,18 @@ const browseJS = `(() => {
     if (s.visibility === 'hidden' || +s.opacity === 0) continue;
     const hit = document.elementFromPoint(x + w / 2, y + h / 2);
     if (!hit || !(el.contains(hit) || hit.contains(el) || (el.labels && [...el.labels].some(l => l.contains(hit))))) continue;
-    const text = (el.getAttribute('aria-label') || el.innerText || el.value || el.placeholder || el.title || el.alt || el.name || '').replace(/\s+/g, ' ').trim().slice(0, 80);
-    let tag = el.tagName.toLowerCase();
+    const field = /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
+    const text = (el.getAttribute('aria-label') || (field ? '' : el.innerText) || el.placeholder || el.title || el.alt || el.name || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    let tag = el.getAttribute('role') || el.tagName.toLowerCase();
     if (tag === 'input') tag += ' ' + (el.type || 'text');
     else if (tag === 'a') tag = 'link';
-    els.push({ tag, text, x, y, w, h });
+    const href = el.href && !String(el.href).startsWith('javascript:') ? String(el.href).slice(0, 120) : '';
+    const value = field && el.type !== 'password' ? String(el.value || '').slice(0, 80) : '';
+    els.push({ tag, text, href, value, x, y, w, h });
     if (els.length >= 150) break;
   }
-  return { url: location.href, title: document.title, els };
+  const text = (document.body ? document.body.innerText : '').replace(/[ \t]+/g, ' ').replace(/\s*\n\s*/g, '\n').trim().slice(0, 4000);
+  return { url: location.href, title: document.title, text, els };
 })()`
 
 func (b *browser) look(ctx context.Context) (*browseView, error) {
@@ -309,44 +281,7 @@ func (b *browser) look(ctx context.Context) (*browseView, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading the page: %w", err)
 	}
-	b.url.Store(v.URL)
-	shot, err := chromedp.Run(ctx, chromedp.CaptureScreenshot())
-	if err != nil {
-		return nil, fmt.Errorf("screenshot: %w", err)
-	}
-	if v.shot, err = browseMark(shot, v.Els); err != nil {
-		return nil, fmt.Errorf("screenshot: %w", err)
-	}
 	return &v, nil
-}
-
-var browseColors = []color.RGBA{{220, 38, 38, 255}, {37, 99, 235, 255}, {22, 163, 74, 255}, {147, 51, 234, 255}, {234, 88, 12, 255}, {8, 145, 178, 255}}
-
-func browseMark(shot []byte, els []browseEl) ([]byte, error) {
-	src, err := png.Decode(bytes.NewReader(shot))
-	if err != nil {
-		return nil, err
-	}
-	img := image.NewRGBA(src.Bounds())
-	draw.Draw(img, img.Bounds(), src, image.Point{}, draw.Src)
-	for i, e := range els {
-		c := image.NewUniform(browseColors[i%len(browseColors)])
-		r := image.Rect(int(e.X), int(e.Y), int(e.X+e.W), int(e.Y+e.H)).Intersect(img.Bounds())
-		for _, edge := range []image.Rectangle{{r.Min, image.Pt(r.Max.X, r.Min.Y+2)}, {image.Pt(r.Min.X, r.Max.Y-2), r.Max}, {r.Min, image.Pt(r.Min.X+2, r.Max.Y)}, {image.Pt(r.Max.X-2, r.Min.Y), r.Max}} {
-			draw.Draw(img, edge, c, image.Point{}, draw.Src)
-		}
-		id := strconv.Itoa(i + 1)
-		lx, ly := r.Min.X, r.Min.Y-14
-		if ly < 0 {
-			ly = r.Min.Y
-		}
-		draw.Draw(img, image.Rect(lx, ly, lx+7*len(id)+4, ly+14), c, image.Point{}, draw.Src)
-		d := &font.Drawer{Dst: img, Src: image.White, Face: basicfont.Face7x13, Dot: fixed.P(lx+2, ly+11)}
-		d.DrawString(id)
-	}
-	var out bytes.Buffer
-	err = png.Encode(&out, img)
-	return out.Bytes(), err
 }
 
 type jevAnswer struct {
@@ -356,13 +291,13 @@ type jevAnswer struct {
 }
 
 var browseActions = map[string]string{
-	"click":        "Click one marked element: a link, button, tab, checkbox or menu item",
-	"type":         "Type into one marked input, search box or text area",
+	"click":        "Click one numbered element: a link, button, tab, checkbox or menu item",
+	"type":         "Type into one numbered input, search box or text area",
 	"scroll_down":  "Scroll down to see more of the page",
 	"scroll_up":    "Scroll back up",
 	"back":         "Go back to the previous page",
 	"key_enter":    "Press Enter to submit what was just typed",
-	"done":         "`goal` is achieved, or what it asks for is visible on `screen` now",
+	"done":         "`goal` is achieved, or what it asks for is on `page` now",
 	"need_planner": "None of these fits: the page is blocked or confusing, or `goal` needs another website",
 }
 
@@ -371,19 +306,17 @@ func (b *browser) next(ctx context.Context, v *browseView) (*browseAct, error) {
 	if len(v.Els) == 0 && (v.URL == "" || v.URL == "about:blank") {
 		return b.plan(ctx, v, "")
 	}
-	ref := "img-" + uuid.NewString()
-	marks := map[string]string{"none": "No marked element fits"}
-	for i, e := range v.Els {
-		marks[strconv.Itoa(i+1)] = e.String()
+	marks := map[string]any{"none": "No element fits"}
+	for i := range v.Els {
+		marks[strconv.Itoa(i+1)] = nil
 	}
 	a, err := b.ask(ctx, map[string]any{
-		"model":  browseJev,
-		"state":  map[string]any{"goal": b.goal, "page": v.Title + " " + v.URL, "history": b.history, "screen": ref},
-		"assets": map[string]any{ref: map[string]string{"type": "image", "format": "png", "data_base64": base64.StdEncoding.EncodeToString(v.shot)}},
+		"model": browseJev,
+		"state": map[string]any{"goal": b.goal, "history": b.history, "page": map[string]string{"title": v.Title, "url": v.URL, "text": v.Text}, "elements": v.list()},
 		"questions": map[string]any{
-			"next":   map[string]any{"type": "choice", "instructions": "`screen` is a browser screenshot with numbered marks on the elements that can be used. Given `history`, what is the single best next action toward `goal`?", "criteria": browseActions},
-			"target": map[string]any{"type": "choice", "instructions": "Which numbered mark in `screen` is the element to click or type into next, to make progress on `goal`?", "criteria": marks},
-			"done":   map[string]any{"type": "noul", "instructions": "`goal` is achieved, or the answer it asks for is visible on `screen`."},
+			"next":   map[string]any{"type": "choice", "instructions": "A browser shows `page`, and `elements` are the numbered elements on it that can be used. Given `history`, what is the single best next action toward `goal`?", "criteria": browseActions},
+			"target": map[string]any{"type": "choice", "instructions": "Which numbered element in `elements` is the one to click or type into next, to make progress on `goal`?", "criteria": marks},
+			"done":   map[string]any{"type": "noul", "instructions": "`goal` is achieved, or the answer it asks for is in `page`."},
 		},
 	})
 	if err != nil {
@@ -411,7 +344,6 @@ func (b *browser) ask(ctx context.Context, req map[string]any) (map[string]jevAn
 		hr, _ := http.NewRequestWithContext(cctx, "POST", "https://api.typesafe.ai/v1/systemone", bytes.NewReader(body))
 		hr.Header.Set("Authorization", "Bearer "+b.jev)
 		hr.Header.Set("Content-Type", "application/json")
-		hr.Header.Set("TypeSafe-Danger-Zone-Images", "true")
 		resp, err := http.DefaultClient.Do(hr)
 		var out struct {
 			Answers map[string]jevAnswer `json:"answers"`
@@ -436,8 +368,8 @@ func (b *browser) ask(ctx context.Context, req map[string]any) (map[string]jevAn
 	}
 }
 
-const browseSystem = `You drive a web browser for a script, to reach its goal. You see a screenshot of the page with numbered marks on the elements you can use, the list of those elements, and the page's text. History lists the actions already taken, oldest first, and the screenshot shows the page they led to. Pick the one next action with the act tool:
-- click or type use a mark number; type clicks the field itself, replaces its text, and with enter: true submits it.
+const browseSystem = `You drive a web browser for a script, to reach its goal. You get the page's text and the numbered elements on it that you can use. History lists the actions already taken, oldest first, and the page is where they led. Pick the one next action with the act tool:
+- click or type use an element number; type clicks the field itself, replaces its text, and with enter: true submits it.
 - goto opens an address, for a start or when this site is a dead end.
 - done ends: achieved says whether the goal was reached, and answer gives what the goal asks for, taken from the page, short and exact; when it cannot be reached, say why.`
 
@@ -448,7 +380,7 @@ var browseTool = map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"action":   map[string]any{"type": "string", "enum": []string{"click", "type", "scroll_down", "scroll_up", "back", "key_enter", "goto", "done"}},
-			"mark":     map[string]any{"type": "integer", "description": "For click and type: the numbered mark"},
+			"mark":     map[string]any{"type": "integer", "description": "For click and type: the element number"},
 			"text":     map[string]any{"type": "string", "description": "For type: the text to type"},
 			"enter":    map[string]any{"type": "boolean", "description": "For type: press Enter after typing"},
 			"url":      map[string]any{"type": "string", "description": "For goto: the address"},
@@ -461,27 +393,19 @@ var browseTool = map[string]any{
 
 // plan asks Claude for the next action, for text Jev cannot write and choices it is unsure of.
 func (b *browser) plan(ctx context.Context, v *browseView, hint string) (*browseAct, error) {
-	text, _ := chromedp.Run(ctx, chromedp.Evaluate[string](`(document.body ? document.body.innerText : '').replace(/\n\s*\n/g, '\n').slice(0, 6000)`))
 	var s strings.Builder
 	fmt.Fprintf(&s, "Goal: %s\nNow on: %s %s\nHistory:\n", b.goal, v.Title, v.URL)
 	for _, h := range b.history {
 		s.WriteString("- " + h + "\n")
 	}
-	s.WriteString("Marked elements:\n")
-	for i, e := range v.Els {
-		fmt.Fprintf(&s, "%d %s\n", i+1, e)
-	}
-	s.WriteString("Page text:\n" + text + "\n" + hint)
+	s.WriteString("Elements:\n" + strings.Join(v.list(), "\n") + "\nPage text:\n" + v.Text + "\n" + hint)
 	body, err := json.Marshal(map[string]any{
 		"model":       chatModel,
 		"max_tokens":  2048,
 		"system":      browseSystem,
 		"tools":       []any{browseTool},
 		"tool_choice": map[string]any{"type": "tool", "name": "act", "disable_parallel_tool_use": true},
-		"messages": []any{map[string]any{"role": "user", "content": []any{
-			map[string]any{"type": "image", "source": map[string]string{"type": "base64", "media_type": "image/png", "data": base64.StdEncoding.EncodeToString(v.shot)}},
-			map[string]any{"type": "text", "text": s.String()},
-		}}},
+		"messages":    []any{map[string]string{"role": "user", "content": s.String()}},
 	})
 	if err != nil {
 		return nil, err
@@ -519,7 +443,7 @@ func (b *browser) act(ctx context.Context, v *browseView, a *browseAct) {
 	switch a.Action {
 	case "click", "type":
 		if el == nil {
-			err = fmt.Errorf("there is no mark %d", a.Mark)
+			err = fmt.Errorf("there is no element %d", a.Mark)
 			break
 		}
 		err = b.do(chromedp.MouseClickXY(el.X+el.W/2, el.Y+el.H/2))
