@@ -98,7 +98,6 @@ type runner struct {
 	logBytes  int
 	stringify goja.Callable
 	parse     goja.Callable
-	later     []func(context.Context) error
 }
 
 var (
@@ -160,16 +159,6 @@ func (a *Archive) run(ctx context.Context, code string, input json.RawMessage) (
 	case err != nil && out.Error == "":
 		out.Error = runMessage(err)
 	}
-	if err == nil && out.Error == "" {
-		after, done := context.WithTimeout(context.WithoutCancel(ctx), limit)
-		for _, fn := range r.later {
-			if err := fn(after); err != nil {
-				out.Error = "the run was saved, but the schema change it left for after the run failed: " + runMessage(err)
-				break
-			}
-		}
-		done()
-	}
 	if out.Error != "" {
 		out.Result = json.RawMessage("null")
 	}
@@ -197,7 +186,7 @@ func (r *runner) nested(ctx context.Context, code string, input json.RawMessage,
 	}
 	after := &[]func(){}
 	n := &runner{a: r.a, out: out, js: js, input: input, at: r.at, depth: r.depth + 1}
-	err = n.run(context.WithValue(ctx, storeTxKey{}, storeTx{sp, t.role, after}))
+	err = n.run(context.WithValue(ctx, storeTxKey{}, storeTx{sp, t.role, after, t.sch}))
 	switch {
 	case err != nil && ctx.Err() != nil:
 		out.Error = "timed out; nothing it did was saved"
@@ -216,7 +205,6 @@ func (r *runner) nested(ctx context.Context, code string, input json.RawMessage,
 	if t.after != nil {
 		*t.after = append(*t.after, *after...)
 	}
-	r.later = append(r.later, n.later...)
 	return out, nil
 }
 
@@ -551,7 +539,7 @@ func runMessage(err error) string {
 	var pe *pgconn.PgError
 	if errors.As(err, &pe) {
 		s := pe.Message + " (SQLSTATE " + pe.Code + ")"
-		if p, _, ok := strings.Cut(err.Error(), pe.Message); ok && strings.HasPrefix(p, "renames[") {
+		if p, _, ok := strings.Cut(err.Error(), pe.Message); ok && strings.HasPrefix(p, "statement ") {
 			s = strings.TrimSuffix(p, "ERROR: ") + s
 		}
 		if pe.Detail != "" {
@@ -560,8 +548,11 @@ func runMessage(err error) string {
 		if pe.Hint != "" {
 			s += "; hint: " + pe.Hint
 		}
+		if pe.Code == "55P04" {
+			s += "; a value added to an enum in a run can be used only after that run: migrate in one run, use the value in the next"
+		}
 		if pe.Code == "55P03" {
-			s += "; another transaction, maybe this run, holds a lock on the table: apply before reading or writing the tables it changes"
+			s += "; another transaction holds a lock on the table; try again"
 		}
 		var qe *runQueryErr
 		if errors.As(err, &qe) && pe.Position > 0 {
@@ -643,7 +634,7 @@ func (r *runner) def(o *goja.Object, name string, f func(ctx context.Context, ca
 	})
 }
 
-var runReads = map[string]bool{"list": true, "get": true, "search": true, "tables": true, "files": true, "file": true, "workflows": true, "runs": true}
+var runReads = map[string]bool{"schema": true, "revisions": true, "list": true, "get": true, "search": true, "tables": true, "files": true, "file": true, "workflows": true, "runs": true}
 
 func (r *runner) call(read bool, f func(ctx context.Context) (any, error)) (any, error) {
 	t, ok := r.ctx.Value(storeTxKey{}).(storeTx)
@@ -654,7 +645,7 @@ func (r *runner) call(read bool, f func(ctx context.Context) (any, error)) (any,
 	if err != nil {
 		return nil, storeErr(err)
 	}
-	v, err := f(context.WithValue(r.ctx, storeTxKey{}, storeTx{sp, t.role, t.after}))
+	v, err := f(context.WithValue(r.ctx, storeTxKey{}, storeTx{sp, t.role, t.after, t.sch}))
 	if err != nil || read {
 		sp.Rollback(r.ctx)
 		return v, storeErr(err)
@@ -793,49 +784,32 @@ func (r *runner) sdk() {
 		return a.Search(ctx, text, SearchFilter{Type: opts.Type, From: opts.From, To: opts.To, Limit: opts.Limit})
 	})
 	r.def(o, "schema", func(ctx context.Context, call goja.FunctionCall) (any, error) {
-		return a.SchemaFiles(ctx)
+		return a.Schema(ctx)
 	})
-	r.def(o, "apply", func(ctx context.Context, call goja.FunctionCall) (any, error) {
-		var files map[string]string
-		var opts struct {
-			Confirm   bool     `json:"confirm"`
-			AllowDrop bool     `json:"allowDrop"`
-			Renames   []string `json:"renames"`
-		}
-		if err := r.arg(call, 0, "apply", "files", &files); err != nil {
-			return nil, err
-		}
-		if err := r.arg(call, 1, "apply", "opts", &opts); err != nil {
-			return nil, err
-		}
-		if files == nil {
-			return nil, fmt.Errorf("archive.apply: files must be an object of file name to SQL, like the one archive.schema() returns: %w", httpErrBadRequest)
-		}
-		if !opts.Confirm || !opts.AllowDrop {
-			return a.ApplySchema(ctx, files, opts.Renames, opts.AllowDrop, !opts.Confirm)
-		}
-		p, err := a.ApplySchema(ctx, files, opts.Renames, false, true)
+	r.def(o, "migrate", func(ctx context.Context, call goja.FunctionCall) (any, error) {
+		sql, err := r.str(call, 0, "migrate", "sql")
 		if err != nil {
-			return p, err
-		}
-		if len(p.blocked()) == 0 {
-			return a.ApplySchema(ctx, files, opts.Renames, true, false)
-		}
-		if err := a.schemaAdmin(ctx); err != nil {
 			return nil, err
 		}
-		for i := range p.Statements {
-			p.Statements[i].Blocked = false
+		var opts struct {
+			AllowDrop bool `json:"allowDrop"`
 		}
-		p.Deferred = true
-		r.later = append(r.later, func(ctx context.Context) error {
-			_, err := a.ApplySchema(ctx, files, opts.Renames, true, false)
-			return err
-		})
-		return p, nil
+		if err := r.arg(call, 1, "migrate", "opts", &opts); err != nil {
+			return nil, err
+		}
+		return a.Migrate(ctx, sql, "", opts.AllowDrop)
+	})
+	r.def(o, "revisions", func(ctx context.Context, call goja.FunctionCall) (any, error) {
+		var opts struct {
+			Limit int `json:"limit"`
+		}
+		if err := r.arg(call, 0, "revisions", "opts", &opts); err != nil {
+			return nil, err
+		}
+		return a.SchemaRevisions(ctx, opts.Limit)
 	})
 	r.def(o, "tables", func(ctx context.Context, call goja.FunctionCall) (any, error) {
-		return runTables(a.Catalog()), nil
+		return runTables(a.catalog(ctx)), nil
 	})
 	r.def(o, "files", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		var opts struct {
@@ -916,7 +890,7 @@ func (a *Archive) runSQL(ctx context.Context, query string, params []any) ([]map
 		if err != nil {
 			return nil, err
 		}
-		rows, err := storeRows(context.WithValue(ctx, storeTxKey{}, storeTx{sp, t.role, t.after}), a.st, runWrap+q+"\n) SELECT to_jsonb(q) FROM q", params...)
+		rows, err := storeRows(context.WithValue(ctx, storeTxKey{}, storeTx{sp, t.role, t.after, t.sch}), a.st, runWrap+q+"\n) SELECT to_jsonb(q) FROM q", params...)
 		if err == nil {
 			return rows, sp.Commit(ctx)
 		}
@@ -993,7 +967,7 @@ func (a *Archive) RunDocs(ctx context.Context) string {
 	return strings.ReplaceAll(runSDK, "{timeout}", runTimeout.String()) + "\n" + runTypes(a.Catalog())
 }
 
-var runStatic = []string{"Base", "Row", "Hit", "Plan", "Table", "StoredFile", "Tables", "FetchResponse", "RunResult", "Deployed", "WorkflowRun",
+var runStatic = []string{"Base", "Row", "Hit", "Migration", "Table", "StoredFile", "Tables", "FetchResponse", "RunResult", "Deployed", "WorkflowRun",
 	"Money", "Timestamp", "Time", "Interval", "Address", "Name", "Postcode", "Geo", "Quantity"}
 
 func runPascal(s string) string {

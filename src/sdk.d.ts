@@ -36,75 +36,64 @@
  *   take the real value and read back masked; list and get with { reveal: true } show them to owners.
  *
  * Changing the schema (owners)
- * - Types are the tables in the database, and nothing else is stored. archive.schema() generates their DDL from the
- *   database: one file per table or view, named <name>.sql, holding its CREATE TABLE, indexes, foreign keys, row-level
- *   security, policies, triggers, comments, and the enums, domains and functions only it uses (one used by no
- *   table gets its own <name>.sql). It is normalized: your layout, -- comments and statement order are not kept,
- *   COMMENT ON is. Change or add a file and pass the whole set to archive.apply(files): first without confirm to
- *   see the plan, then with { confirm: true }. A table in no file is dropped. apply(await archive.schema()) plans
- *   nothing.
- * - apply commits on its own as soon as it succeeds, even if the script throws later. It waits for locks on
- *   the tables and views it changes, including locks this run took by writing them or reading them with
- *   archive.sql (list, get and search hold no locks), so apply before those, or in a run of its own. After it,
- *   the new tables and views work in the same run.
- * - Every table needs id, access, created_at, updated_at and a search tsvector column, row-level security enabled
- *   and forced with exactly one policy, CREATE POLICY access ON <table> USING (archive.can(access)) WITH CHECK
- *   (archive.can(access)), and should have COMMENT ON its table and columns: they become these docs. A table
- *   only the hr group sees has access text NOT NULL DEFAULT 'hr' CHECK (access = 'hr'). Use the built-in types
- *   (archive.email, archive.money, ...) to get their cleaning. A reference is `uuid REFERENCES other`; a list of
- *   references is `uuid[]` with a column comment starting 'references other'. Files load in any order, and a
- *   statement waits for the tables it needs; for tables that reference each other, add at least one of those
- *   references with ALTER TABLE ... ADD FOREIGN KEY after the CREATE TABLE. A complete file, house.sql:
+ * - Types are the tables in the database, and nothing else is stored. archive.tables() lists them with their
+ *   columns; archive.schema() returns their DDL by name, with indexes, foreign keys, triggers and comments.
+ * - archive.migrate(sql) runs Postgres DDL: CREATE, ALTER or DROP of a TABLE, VIEW, INDEX, TYPE, DOMAIN,
+ *   FUNCTION, TRIGGER, SEQUENCE or POLICY, and COMMENT ON. The statements run in order, all or nothing, and it
+ *   returns them with what Archive added. Change rows with archive.sql, not in a migration.
+ * - Write only your own columns. Archive adds to every table what you leave out: id uuid PRIMARY KEY DEFAULT
+ *   uuidv7(), access text, created_at and updated_at timestamptz NOT NULL DEFAULT now(), a search column over its
+ *   text columns with a gin index, and row-level security with the access policy; it adds id right after each
+ *   CREATE TABLE, so a later REFERENCES or view can use it. When you add, drop or retype a text column, search
+ *   follows. Write one yourself only to make it different: a table only the hr group sees has access text NOT
+ *   NULL DEFAULT 'hr' CHECK (access = 'hr'). Use the built-in types (archive.email, archive.money, ...) to get
+ *   their cleaning. A reference is `uuid REFERENCES other`; a list of references is `uuid[]` with a column
+ *   comment starting 'references other'. Comment the table and its columns: they become these docs.
  *
- *     CREATE TABLE house (
- *         id         uuid PRIMARY KEY DEFAULT uuidv7(),
- *         access     text,
- *         created_at timestamptz NOT NULL DEFAULT now(),
- *         updated_at timestamptz NOT NULL DEFAULT now(),
- *         address    text NOT NULL,
- *         price      archive.money,
- *         owner      uuid REFERENCES person,
- *         search     tsvector GENERATED ALWAYS AS (archive.search_doc(address)) STORED
- *     );
- *     CREATE INDEX house_search ON house USING gin (search);
- *     ALTER TABLE house ENABLE ROW LEVEL SECURITY;
- *     ALTER TABLE house FORCE ROW LEVEL SECURITY;
- *     CREATE POLICY access ON house USING (archive.can(access)) WITH CHECK (archive.can(access));
- *     COMMENT ON TABLE house IS 'A house you own or rent
- *     icon: house';
- *     COMMENT ON COLUMN house.price IS 'Asking price';
+ *     await archive.migrate(`
+ *       CREATE TABLE house (
+ *           address text NOT NULL,
+ *           price   archive.money,
+ *           owner   uuid REFERENCES person
+ *       );
+ *       COMMENT ON TABLE house IS 'A house you own or rent
+ *       icon: house';
+ *       COMMENT ON COLUMN house.price IS 'Asking price';`);
  *
+ * - A migration is part of this run: if the run throws or times out afterwards, it is undone with everything
+ *   else, so to see what one does without keeping it, migrate and then throw. Later calls in the run see the
+ *   change at once, so you can move data between steps:
+ *     await archive.migrate("ALTER TABLE house ADD COLUMN rooms integer");
+ *     await archive.sql("UPDATE house SET rooms = 1");
+ *     await archive.migrate("ALTER TABLE house ALTER COLUMN rooms SET NOT NULL");
+ *   Rename with ALTER TABLE ... RENAME, and change a type with ALTER COLUMN ... TYPE ... USING: both keep the
+ *   data. Postgres lets a value added to an enum be used only once the run that added it is saved, so add the
+ *   value in one run and use it in the next. A migration waits up to 10s for locks on what it changes.
+ * - Dropping a table or a column deletes its data, so a migration that does throws, naming them, unless you pass
+ *   { allowDrop: true }. Dropping a view, index or comment needs nothing.
  * - Comments on tables and views: the first lines are the description; the last lines may be key: value
  *   settings. icon is a Lucide icon name in kebab-case (user, credit-card, square-check, ...; lucide.dev/icons),
  *   on tables and views. Views also take layout (table, board or calendar) and by (the column a board groups
  *   by, or the date a calendar places rows on). Any other key is an error.
+ * - archive.revisions() lists the migrations saved before this run, newest first, with who ran them and their
+ *   statements. To undo one, migrate the reverse.
  *
  * Views
- * - A view is a saved way to look at a table: a Postgres view in its own file, <view>.sql, with
- *   security_invoker = true so row-level security applies to whoever reads it, an id column, and a comment.
- *   A complete file, task_board.sql:
+ * - A view is a saved way to look at a table: a Postgres view with security_invoker = true so row-level security
+ *   applies to whoever reads it, an id column, and a comment:
  *
- *     CREATE VIEW task_board WITH (security_invoker = true) AS
- *         SELECT * FROM task WHERE status <> 'done';
- *     COMMENT ON VIEW task_board IS 'Open tasks by progress
- *     layout: board
- *     by: status
- *     icon: kanban';
+ *     await archive.migrate(`
+ *       CREATE VIEW task_board WITH (security_invoker = true) AS
+ *           SELECT * FROM task WHERE status <> 'done';
+ *       COMMENT ON VIEW task_board IS 'Open tasks by progress
+ *       layout: board
+ *       by: status
+ *       icon: kanban';`);
  *
- * - Create or change one: const files = await archive.schema(); files["task_board.sql"] = `...`;
- *   await archive.apply(files, { confirm: true }). Then archive.list("task_board") reads its rows, and
- *   archive.tables() shows its kind, description, layout, by and icon.
- * - Delete one: delete files["task_board.sql"] and apply. A view holds no data, so dropping it is never blocked.
- *
- * - A statement that deletes data (dropping a table or column, not a view) is blocked unless you pass { allowDrop: true }.
- *   A confirmed plan that deletes data runs right after this run commits, not during it, because the run holds
- *   locks on the tables it drops: apply returns the plan with deferred: true and applied: false, later calls in
- *   the same run still see the old tables, a run that throws drops nothing, and if the change fails the run's
- *   error says so.
- * - Renames are not detected: the plan would drop and re-add, losing data. Rename in the same call, and pass
- *   the files as they read after it: archive.apply(files, { confirm: true, renames:
- *   ["ALTER TABLE house RENAME COLUMN price TO asking_price"] }). The renames run first, in the same
- *   transaction, and are listed first in the plan, followed by your other changes.
+ * - Then archive.list("task_board") reads its rows, and archive.tables() shows its kind, description, layout, by
+ *   and icon. Change one with CREATE OR REPLACE VIEW, delete it with DROP VIEW. Postgres saves SELECT * as the
+ *   columns the table has then, so a view does not get columns added later, and a column a view selects cannot
+ *   be dropped until you change or drop the view.
  *
  * Workflows
  * - A workflow is a saved script, <name>.ts, that Archive runs by itself: on a schedule, when rows of a table
@@ -128,7 +117,7 @@
  *     webhook     { method, query, headers, body }: query and headers are objects of strings (header names in lower
  *                 case); body is the parsed JSON when it parses, otherwise the raw text, and null when empty.
  *     start, test the input you pass, or undefined.
- * - archive.deploy(files) replaces all your workflows with files, the way apply does with the schema: start from
+ * - archive.deploy(files) replaces all your workflows with files: start from
  *   archive.workflows(), change or add files, and pass the whole set; a file left out is deleted. It compiles each
  *   file and checks its name and // on: line, and if any is wrong it saves nothing and returns
  *   { deployed: false, errors: [{ file, message }] } instead of throwing. Otherwise it saves them at once, even if
@@ -136,7 +125,7 @@
  *   workflow's next run, url a webhook's address. Deploying a file again keeps its webhook URL and its place in
  *   the table it watches.
  * - archive.test(nameOrSource, input) runs a saved workflow, or a draft's source, now, against the real data, and
- *   then undoes everything it wrote (except archive.apply and archive.deploy, which save at once). It returns
+ *   then undoes everything it wrote (except archive.deploy, which saves at once). It returns
  *   { result, logs, error } like a run, error "" when it worked; compile errors come back there with their
  *   line:column. Test every workflow before you deploy it, with the input its trigger would pass, like
  *   { rows: await archive.list("invoice", { limit: 3 }) } for // on: invoice. The loop: write, test, read the
@@ -191,10 +180,12 @@ declare const archive: {
     delete(table: keyof Tables, id: string): Promise<void>;
     /** Full-text search over every table and file you can see, best first; words match by prefix, ignoring case and accents. */
     search(text: string, opts?: { type?: keyof Tables | "file"; from?: string; to?: string; limit?: number }): Promise<Hit[]>;
-    /** DDL generated from the database: <name>.sql to SQL, one file per table or view (see the header). */
+    /** The DDL of each table and view, by name, generated from the database. */
     schema(): Promise<Record<string, string>>;
-    /** Plan the whole set of DDL files against the database; with confirm, apply the plan (see the header). */
-    apply(files: Record<string, string>, opts?: { confirm?: boolean; allowDrop?: boolean; renames?: string[] }): Promise<Plan>;
+    /** Run DDL, as part of this run (see the header); dropping a table or column needs allowDrop. */
+    migrate(sql: string, opts?: { allowDrop?: boolean }): Promise<Migration>;
+    /** Migrations saved before this run, newest first. */
+    revisions(opts?: { limit?: number }): Promise<Revision[]>;
     /** Every table and view with its columns, types, comments and references, as Postgres has them now. */
     tables(): Promise<Table[]>;
     /** Files you can see, oldest first, with their extracted text; page with after = the last id. */
@@ -292,11 +283,20 @@ interface Hit {
     score: number;
 }
 
-interface Plan {
-    statements: { ddl: string; hazards?: { type: string; message: string }[]; blocked?: boolean }[];
-    applied: boolean;
-    /** True when the plan deletes data and runs after this run commits. */
-    deferred?: boolean;
+interface Migration {
+    /** The revision it saved, once the run is. */
+    revision: string;
+    /** Your statements, then what Archive added, in the order they ran. */
+    statements: string[];
+}
+
+interface Revision {
+    id: string;
+    /** When it ran, UTC. */
+    at: string;
+    /** The email of who ran it, and the token they used. */
+    author: string;
+    statements: string[];
 }
 
 interface Table {

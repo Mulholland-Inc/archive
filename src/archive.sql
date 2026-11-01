@@ -72,6 +72,15 @@ CREATE INDEX workflow_run_idx ON archive.workflow_run (workflow, created_at);
 CREATE TABLE archive.revision (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     hash       text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    author     text NOT NULL DEFAULT '',
+    name       text UNIQUE,
+    statements jsonb NOT NULL DEFAULT '[]'
+);
+
+CREATE TABLE archive.ddl_key (
+    key        text PRIMARY KEY,
+    pid        integer NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -328,6 +337,28 @@ CREATE FUNCTION archive.secret_clear(tbl text, rid uuid, col text) RETURNS void 
         OR EXISTS (SELECT FROM pg_catalog.pg_roles r WHERE r.rolname = '{p}_g_' || s.access AND pg_has_role(current_setting('role')::name, r.oid, 'USAGE')))
 $$;
 
+CREATE FUNCTION archive.ddl_allowed(k text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM archive.ddl_key d WHERE d.key = k AND d.pid = pg_backend_pid()) THEN
+        RAISE EXCEPTION 'only archive.migrate changes the schema' USING ERRCODE = '42501';
+    END IF;
+END $$;
+
+CREATE FUNCTION archive.ddl(k text, stmt text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+    PERFORM archive.ddl_allowed(k);
+    EXECUTE stmt;
+END $$;
+
+CREATE FUNCTION archive.ddl_revision(k text, hash text, author text, name text, statements jsonb) RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE
+    r uuid;
+BEGIN
+    PERFORM archive.ddl_allowed(k);
+    INSERT INTO archive.revision (hash, author, name, statements) VALUES (hash, author, nullif(name, ''), statements) RETURNING id INTO r;
+    RETURN r;
+END $$;
+
 GRANT USAGE ON SCHEMA archive TO "{p}_viewer";
 GRANT SELECT ON archive.file, archive.member TO "{p}_viewer";
 GRANT INSERT, UPDATE, DELETE ON archive.file TO "{p}_editor";
@@ -524,6 +555,28 @@ SELECT coalesce((SELECT id::text || ':' || hash FROM archive.revision ORDER BY c
 
 -- name: InsertRevision :exec
 INSERT INTO archive.revision (hash) VALUES ($1);
+
+-- name: Revisions :many
+SELECT id, created_at, author, coalesce(name, '')::text AS name, statements FROM archive.revision WHERE statements <> '[]' ORDER BY created_at DESC, id DESC LIMIT $1;
+
+-- name: RevisionNamed :one
+SELECT EXISTS (SELECT FROM archive.revision WHERE name = $1);
+
+-- name: AddDDLKey :exec
+WITH old AS (DELETE FROM archive.ddl_key WHERE created_at < now() - interval '1 hour')
+INSERT INTO archive.ddl_key (key, pid) VALUES ($1, $2);
+
+-- name: DeleteDDLKey :exec
+DELETE FROM archive.ddl_key WHERE key = $1;
+
+-- name: DDL :exec
+SELECT archive.ddl(sqlc.arg(key), sqlc.arg(stmt));
+
+-- name: DDLRevision :one
+SELECT archive.ddl_revision(sqlc.arg(key), sqlc.arg(hash), sqlc.arg(author), sqlc.arg(name), sqlc.arg(statements))::uuid AS id;
+
+-- name: BackendPID :one
+SELECT pg_backend_pid();
 
 -- name: SetLocal :exec
 SELECT set_config(sqlc.arg(name), sqlc.arg(value), true);
