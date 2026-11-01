@@ -1077,7 +1077,7 @@ func (tn officeTextNames) runs(para *OfficeNode) []string {
 	}
 	return out
 }
-func (tn officeTextNames) tElem(b []byte, t *OfficeNode, text string) []byte {
+func (tn officeTextNames) tElem(t *OfficeNode, text string) []byte {
 	name := OfficeQ(t.Prefix, t.Local)
 	if !tn.preserve {
 		return []byte("<" + name + ">" + OfficeEsc(text) + "</" + name + ">")
@@ -1136,13 +1136,13 @@ func (tn officeTextNames) replace(b []byte, para *OfficeNode, find, repl string)
 	prefix := segs[a].text[:i-starts[a]]
 	suffix := segs[z].text[end-starts[z]:]
 	if a == z {
-		return []OfficeSplice{{segs[a].t.Start, segs[a].t.End, tn.tElem(b, segs[a].t, prefix+repl+suffix)}}, nil
+		return []OfficeSplice{{segs[a].t.Start, segs[a].t.End, tn.tElem(segs[a].t, prefix+repl+suffix)}}, nil
 	}
-	ss := []OfficeSplice{{segs[a].t.Start, segs[a].t.End, tn.tElem(b, segs[a].t, prefix+repl)}}
+	ss := []OfficeSplice{{segs[a].t.Start, segs[a].t.End, tn.tElem(segs[a].t, prefix+repl)}}
 	gone := map[*OfficeNode]bool{}
 	for k := a + 1; k <= z; k++ {
 		if k == z && suffix != "" {
-			ss = append(ss, OfficeSplice{segs[z].t.Start, segs[z].t.End, tn.tElem(b, segs[z].t, suffix)})
+			ss = append(ss, OfficeSplice{segs[z].t.Start, segs[z].t.End, tn.tElem(segs[z].t, suffix)})
 		} else {
 			gone[segs[k].t] = true
 		}

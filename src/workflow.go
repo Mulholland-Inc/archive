@@ -514,7 +514,7 @@ func (a *Archive) workflowTable(ctx context.Context, w generated.ArchiveWorkflow
 	read := func() (rows []found, err error) {
 		err = a.as(WithActor(ctx, ac), func(ctx context.Context) error {
 			ts := "greatest(t.created_at, t.updated_at)"
-			res, err := a.st.Q(ctx).Query(ctx, `SELECT `+tb.rowSQL("t")+`, `+ts+`, t.id FROM `+tb.ident()+` t WHERE (`+ts+`, t.id) > ($1, $2) AND `+ts+` <> ALL ($3::timestamptz[]) ORDER BY 2, 3 LIMIT `+strconv.Itoa(workflowBatch), *w.CursorAt, *w.CursorID, own)
+			res, err := a.st.Q(ctx).Query(ctx, `SELECT `+tb.rowSQL()+`, `+ts+`, t.id FROM `+tb.ident()+` t WHERE (`+ts+`, t.id) > ($1, $2) AND `+ts+` <> ALL ($3::timestamptz[]) ORDER BY 2, 3 LIMIT `+strconv.Itoa(workflowBatch), *w.CursorAt, *w.CursorID, own)
 			if err != nil {
 				return err
 			}

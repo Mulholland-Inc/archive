@@ -89,10 +89,7 @@ func coreDo[T any](a *Archive, ctx context.Context, fn func(context.Context) (T,
 	return out, err
 }
 
-func (a *Archive) Close() error {
-	a.st.Close()
-	return nil
-}
+func (a *Archive) Close() { a.st.Close() }
 
 func (a *Archive) Catalog() *Catalog {
 	a.mu.RLock()
@@ -141,7 +138,7 @@ func (a *Archive) List(ctx context.Context, typ string, where map[string]any, li
 		if err := a.pgCheck(ctx, tb, norm); err != nil {
 			return nil, err
 		}
-		q := `SELECT ` + tb.rowSQL("t") + ` FROM ` + tb.ident() + ` t, jsonb_populate_record(NULL::` + tb.ident() + `, $1) w WHERE t.id > $2`
+		q := `SELECT ` + tb.rowSQL() + ` FROM ` + tb.ident() + ` t, jsonb_populate_record(NULL::` + tb.ident() + `, $1) w WHERE t.id > $2`
 		args := []any{norm, after}
 		for _, k := range specKeys(norm) {
 			q += " AND t." + pgIdent(k) + " = w." + pgIdent(k)
@@ -160,7 +157,7 @@ func (a *Archive) Get(ctx context.Context, typ string, id uuid.UUID) (map[string
 }
 
 func (a *Archive) coreGet(ctx context.Context, tb *Table, id uuid.UUID) (map[string]any, error) {
-	rs, err := storeRows(ctx, a.st, `SELECT `+tb.rowSQL("t")+` FROM `+tb.ident()+` t WHERE t.id = $1`, id)
+	rs, err := storeRows(ctx, a.st, `SELECT `+tb.rowSQL()+` FROM `+tb.ident()+` t WHERE t.id = $1`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +191,7 @@ func (a *Archive) coreCreate(ctx context.Context, tb *Table, data map[string]any
 	if len(cols) == 0 {
 		q = `INSERT INTO ` + tb.ident() + ` AS t SELECT FROM jsonb_populate_record(NULL::` + tb.ident() + `, $1) r`
 	}
-	rs, err := storeRows(ctx, a.st, q+` RETURNING `+tb.rowSQL("t"), out)
+	rs, err := storeRows(ctx, a.st, q+` RETURNING `+tb.rowSQL(), out)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +232,7 @@ func (a *Archive) coreWrite(ctx context.Context, typ string, id uuid.UUID, data 
 		for _, c := range specKeys(out) {
 			q += ", " + pgIdent(c) + " = r." + pgIdent(c)
 		}
-		rs, err := storeRows(ctx, a.st, q+` FROM jsonb_populate_record(NULL::`+tb.ident()+`, $2) r WHERE t.id = $1 RETURNING `+tb.rowSQL("t"), id, out)
+		rs, err := storeRows(ctx, a.st, q+` FROM jsonb_populate_record(NULL::`+tb.ident()+`, $2) r WHERE t.id = $1 RETURNING `+tb.rowSQL(), id, out)
 		if err != nil {
 			return nil, err
 		}
@@ -455,7 +452,7 @@ func (a *Archive) Search(ctx context.Context, query string, f SearchFilter) ([]*
 	for _, name := range cat.names() {
 		tb := cat.Tables[name]
 		if tb.Schema == "public" && (f.Type == name || f.Type == "" && tb.Kind == "table") {
-			parts = append(parts, `SELECT 'entity' AS kind, `+pgLiteral(name)+` AS type, t.id, t.created_at, `+tb.rowSQL("t")+` AS data, ts_rank(t.search, q.q, 1) AS rank, '' AS snippet
+			parts = append(parts, `SELECT 'entity' AS kind, `+pgLiteral(name)+` AS type, t.id, t.created_at, `+tb.rowSQL()+` AS data, ts_rank(t.search, q.q, 1) AS rank, '' AS snippet
 				FROM `+tb.ident()+` t, q WHERE t.search @@ q.q`)
 		}
 	}

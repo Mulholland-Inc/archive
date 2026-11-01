@@ -225,7 +225,7 @@ func (t *Table) hidden() string {
 
 func (t *Table) ident() string { return pgIdent(t.Schema, t.Name) }
 
-func (t *Table) rowSQL(alias string) string { return "to_jsonb(" + alias + ") - " + t.hidden() }
+func (t *Table) rowSQL() string { return "to_jsonb(t) - " + t.hidden() }
 
 func (c *Catalog) Check() error {
 	ve := &ValidationError{Type: "schema"}

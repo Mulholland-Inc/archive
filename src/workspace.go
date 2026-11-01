@@ -207,7 +207,7 @@ func (h *Hub) register(ctx context.Context) error {
 	return nil
 }
 
-func (h *Hub) Close() error {
+func (h *Hub) Close() {
 	h.mu.Lock()
 	for k, e := range h.open {
 		if e.a != nil {
@@ -219,7 +219,6 @@ func (h *Hub) Close() error {
 	if h.main != nil {
 		h.main.Close()
 	}
-	return nil
 }
 
 func (h *Hub) q() *generated.Queries { return generated.New(h.main) }
