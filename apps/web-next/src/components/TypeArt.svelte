@@ -18,6 +18,11 @@
     height: 72%;
   }
 
+  .xs {
+    width: var(--type-row-art);
+    height: var(--type-row-art);
+  }
+
   .sm {
     width: var(--type-art);
     height: var(--type-art);

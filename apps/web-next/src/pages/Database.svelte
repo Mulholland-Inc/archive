@@ -4,10 +4,8 @@
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
   import PageHeader from '../components/PageHeader.svelte';
-  import Stack from '../components/Stack.svelte';
-  import Grid from '../components/Grid.svelte';
   import SearchField from '../components/SearchField.svelte';
-  import TypeTile from '../components/TypeTile.svelte';
+  import TypeList from '../components/TypeList.svelte';
   import TypeArt from '../components/TypeArt.svelte';
   import TypeDetail from '../components/TypeDetail.svelte';
   import Button from '../components/Button.svelte';
@@ -57,18 +55,13 @@
 </script>
 
 <TopBar mobile>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
-<Page width="wide">
-  <PageHeader title="Database">
+<Page width="full" dense>
+  <PageHeader title="Database" sticky>
     {#snippet actions()}
+      <div class="search"><SearchField bind:value={query} bind:element={search} placeholder="Search tables and columns" shortcut="/" /></div>
       <Button variant="primary" icon={Plus} onclick={create}>New table</Button>
     {/snippet}
   </PageHeader>
-
-  <Stack gap="4">
-    <Stack direction="row" gap="2" align="center" wrap>
-      <SearchField bind:value={query} bind:element={search} placeholder="Search tables and columns" shortcut="/" />
-    </Stack>
-  </Stack>
 
   {#if !ws().schema.length}
     <EmptyState icon={Database} title="No tables yet">
@@ -79,11 +72,7 @@
       <Button onclick={() => (query = '')}>Show all tables</Button>
     </EmptyState>
   {:else}
-    <Grid min="tile" gap="2">
-      {#each types as type (type.id)}
-        <TypeTile {type} onclick={() => show(type.id)} />
-      {/each}
-    </Grid>
+    <TypeList {types} all={ws().schema} onopen={show} />
   {/if}
 </Page>
 
@@ -98,3 +87,10 @@
     <Button variant="primary" icon={MessageSquarePlus} onclick={() => ask(open, close)}>Ask about this</Button>
   {/snippet}
 </Dialog>
+
+<style>
+  .search {
+    flex: 0 1 var(--col-lg);
+    min-width: 0;
+  }
+</style>

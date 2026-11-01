@@ -53,7 +53,7 @@
   import Divider from '../components/Divider.svelte';
   import ProgressBar from '../components/ProgressBar.svelte';
   import FileTile from '../components/FileTile.svelte';
-  import TypeTile from '../components/TypeTile.svelte';
+  import TypeList from '../components/TypeList.svelte';
   import TypeArt from '../components/TypeArt.svelte';
   import TypeDetail from '../components/TypeDetail.svelte';
   import { schemaFor } from '../lib/schema.js';
@@ -476,10 +476,8 @@
             {#each [library[0], library[1], library[2], library[4], library[5]] as f (f.id)}<FileTile file={f} />{/each}
           </Grid>
         </SpecimenBlock>
-        <SpecimenBlock title="Type tiles">
-          <Grid min="tile" gap="2">
-            {#each familySchema.slice(0, 4) as t (t.id)}<TypeTile type={t} />{/each}
-          </Grid>
+        <SpecimenBlock title="Type list" column>
+          <TypeList types={familySchema.slice(0, 4)} all={familySchema} />
         </SpecimenBlock>
         <SpecimenBlock title="Type art">
           {#each familySchema as t (t.id)}<TypeArt icon={t.icon} size="sm" />{/each}
