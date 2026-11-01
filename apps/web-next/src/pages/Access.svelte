@@ -80,23 +80,23 @@
   const memberColumns = $derived([
     { key: 'name', label: 'Name' },
     { key: 'email', label: 'Email', muted: true, width: 'lg' },
-    { key: 'role', label: 'Role', width: 'sm' },
-    { key: 'active', label: tab === 'invitations' ? 'Status' : 'Last active', muted: true, width: 'sm' },
+    { key: 'role', label: 'Role', width: 'sm', mobile: 'trailing' },
+    { key: 'active', label: tab === 'invitations' ? 'Status' : 'Last active', muted: true, width: 'sm', mobile: 'hidden' },
     { key: 'menu', label: '', width: 'xs', align: 'end' }
   ]);
   const shareColumns = $derived([
     { key: 'item', label: 'Item' },
     { key: 'kind', label: 'Kind', muted: true, width: 'sm' },
-    { key: 'people', label: 'Shared with', width: 'md' },
-    { key: 'access', label: 'Access', muted: true, width: 'sm' },
-    ...(shareRows.some((r) => r.share.link === 'view') ? [{ key: 'link', label: 'Link', muted: true, width: 'md' }] : []),
-    { key: 'date', label: 'Shared', muted: true, width: 'sm' },
+    { key: 'people', label: 'Shared with', width: 'md', mobile: 'hidden' },
+    { key: 'access', label: 'Access', muted: true, width: 'sm', mobile: 'trailing' },
+    ...(shareRows.some((r) => r.share.link === 'view') ? [{ key: 'link', label: 'Link', muted: true, width: 'md', mobile: 'hidden' }] : []),
+    { key: 'date', label: 'Shared', muted: true, width: 'sm', mobile: 'hidden' },
     { key: 'menu', label: '', width: 'xs', align: 'end' }
   ]);
   const guestColumns = [
     { key: 'name', label: 'Name' },
     { key: 'email', label: 'Email', muted: true, width: 'lg' },
-    { key: 'items', label: 'Has access to', muted: true, width: 'lg' },
+    { key: 'items', label: 'Has access to', muted: true, width: 'lg', mobile: 'hidden' },
     { key: 'menu', label: '', width: 'xs', align: 'end' }
   ];
 
@@ -106,12 +106,7 @@
   }
 </script>
 
-{#snippet person(row)}
-  <Stack direction="row" gap="3" align="center">
-    <Avatar name={row.name} seed={seedOf(row)} size="md" />
-    <Text weight="medium" truncate>{row.name}</Text>
-  </Stack>
-{/snippet}
+{#snippet avatar(row)}<Avatar name={row.name} seed={seedOf(row)} size="md" />{/snippet}
 
 <TopBar mobile>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
 <Page width="wide">
@@ -142,7 +137,7 @@
             {shareKinds[row.share.kind]}
           {:else if col.key === 'people'}
             {#if row.share.people.length}
-              <Stack direction="row" gap="2" align="center">
+              <Stack direction="row" gap="2" align="center" wrap>
                 <AvatarGroup people={row.share.people} size="md" max={3} />
                 <Text tone="secondary" truncate>{others(row.share.people.map((p) => firstName(p.name)), 1)}</Text>
               </Stack>
@@ -169,10 +164,10 @@
     {/if}
   {:else}
     {#if memberRows.length}
-      <Table columns={memberColumns} rows={memberRows} label="Members" cards>
+      <Table columns={memberColumns} rows={memberRows} label="Members" leading={avatar} cards>
         {#snippet cell(row, col)}
           {#if col.key === 'name'}
-            {@render person(row)}
+            <Text weight="medium" truncate>{row.name}</Text>
           {:else if col.key === 'email'}
             {row.email}
           {:else if col.key === 'role'}
@@ -199,10 +194,10 @@
     {/if}
     {#if tab === 'members' && roleFilter === 'all' && guestRows.length}
       <Section title="Guests">
-        <Table columns={guestColumns} rows={guestRows} label="Guests" cards>
+        <Table columns={guestColumns} rows={guestRows} label="Guests" leading={avatar} cards>
           {#snippet cell(row, col)}
             {#if col.key === 'name'}
-              {@render person(row)}
+              <Text weight="medium" truncate>{row.name}</Text>
             {:else if col.key === 'email'}
               {row.email}
             {:else if col.key === 'items'}

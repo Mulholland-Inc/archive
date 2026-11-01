@@ -37,6 +37,7 @@
 
   @media (max-width: 40rem) {
     .inner {
+      gap: var(--space-5);
       padding: var(--space-4);
     }
   }

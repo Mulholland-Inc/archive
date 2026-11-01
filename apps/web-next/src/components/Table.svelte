@@ -1,6 +1,17 @@
 <script>
-  let { columns = [], rows = [], cell, key = 'id', onrowclick, label, selected = [], cards = false } = $props();
+  let { columns = [], rows = [], cell, leading, key = 'id', onrowclick, label, selected = [], cards = false } = $props();
+
+  const role = (col, i) => col.mobile ?? (i === 0 ? 'primary' : col.align === 'end' ? 'trailing' : 'secondary');
 </script>
+
+{#snippet content(row, col, i)}
+  {#if leading && i === 0}
+    <div class="person">
+      <div class="lead">{@render leading(row)}</div>
+      <div class="main">{#if cell}{@render cell(row, col)}{:else}{row[col.key]}{/if}</div>
+    </div>
+  {:else if cell}{@render cell(row, col)}{:else}{row[col.key]}{/if}
+{/snippet}
 
 <div class={['wrap', { cards }]}>
   <table aria-label={label}>
@@ -13,14 +24,12 @@
     </thead>
     <tbody>
       {#each rows as row (row[key])}
-        <tr class={{ clickable: onrowclick, selected: selected.includes(row[key]) }}>
+        <tr class={{ clickable: onrowclick, selected: selected.includes(row[key]), led: !!leading }}>
           {#each columns as col, i (col.key)}
-            <td class={[col.align, col.width && `w-${col.width}`, col.muted && 'muted']}>
+            <td class={[col.align, col.width && `w-${col.width}`, col.muted && 'muted', `m-${role(col, i)}`, leading && i === 0 && 'haslead']}>
               {#if onrowclick && i === 0}
-                <button type="button" class="rowlink" onclick={() => onrowclick(row)}>
-                  {#if cell}{@render cell(row, col)}{:else}{row[col.key]}{/if}
-                </button>
-              {:else if cell}{@render cell(row, col)}{:else}{row[col.key]}{/if}
+                <button type="button" class="rowlink" onclick={() => onrowclick(row)}>{@render content(row, col, i)}</button>
+              {:else}{@render content(row, col, i)}{/if}
             </td>
           {/each}
         </tr>
@@ -120,11 +129,26 @@
     border-end-end-radius: var(--radius-md);
   }
 
+  .person {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-width: 0;
+  }
+
+  .lead {
+    display: flex;
+    flex: none;
+  }
+
+  .main {
+    display: flex;
+    min-width: 0;
+  }
+
   @media (max-width: 40rem) {
     .cards table,
-    .cards tbody,
-    .cards tr,
-    .cards td {
+    .cards tbody {
       display: block;
     }
 
@@ -133,8 +157,12 @@
     }
 
     .cards tr {
-      position: relative;
-      padding-block: var(--space-3);
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      grid-template-rows: auto auto;
+      grid-auto-columns: auto;
+      align-items: center;
+      padding-block: var(--space-2-5);
       box-shadow: inset 0 calc(var(--border-width) * -1) 0 var(--color-border-subtle);
     }
 
@@ -145,28 +173,58 @@
     .cards td {
       width: auto;
       height: auto;
-      padding: var(--space-1) var(--space-0);
-      white-space: normal;
+      padding: var(--space-0);
       box-shadow: none;
     }
 
-    .cards td:empty {
+    .cards .m-hidden {
       display: none;
     }
 
-    .cards td.muted {
+    .cards .m-primary {
+      grid-column: 2;
+      grid-row: 1;
+      min-width: 0;
+    }
+
+    .cards .m-secondary {
+      grid-column: 2;
+      grid-row: 2;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: var(--color-text-secondary);
       font-size: var(--text-sm);
     }
 
-    .cards td:first-child {
-      padding-inline-end: var(--control-xl);
+    .cards .m-trailing {
+      grid-row: 1 / span 2;
+      padding-inline-start: var(--space-2);
+      color: var(--color-text-secondary);
     }
 
-    .cards td.end {
-      position: absolute;
-      inset-block-start: var(--space-3);
-      inset-inline-end: var(--space-0);
-      padding: var(--space-0);
+    .cards .m-trailing.end {
+      padding-inline-start: var(--space-1);
+    }
+
+    .cards tr:not(.led) :is(.m-primary, .m-secondary) {
+      grid-column: 1 / 3;
+    }
+
+    .cards .m-primary.haslead,
+    .cards .haslead .person {
+      display: contents;
+    }
+
+    .cards .haslead .lead {
+      grid-column: 1;
+      grid-row: 1 / span 2;
+      padding-inline-end: var(--space-3);
+    }
+
+    .cards .haslead .main {
+      grid-column: 2;
+      grid-row: 1;
     }
   }
 </style>
