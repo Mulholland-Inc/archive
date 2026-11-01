@@ -34,7 +34,7 @@
 
 <div class="screen" transition:fade={{ speed: 'normal' }}>
   <div class="card">
-    <Art name="library-cabinet" />
+    <Art name="cli" size="lg" />
     <h1>Sign in to Archive</h1>
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     <div class="methods">
