@@ -309,7 +309,7 @@
   <div class="stage" class:framed>
     {#if framed}<img src={picture.url} alt={picture.title} />{/if}
     <div class="dock">
-    <Composer bind:value={draft} bind:field {busy} ontalk={() => dispatchEvent(new CustomEvent('capture-memory'))} onsend={send} onstop={stop} placeholder={short ? `Message ${short}` : 'Ask anything'} aria-label="Message">
+    <Composer bind:value={draft} bind:field {busy} ontalk={() => dispatchEvent(new CustomEvent('capture-memory'))} talk={kind === 'business' ? 'Record a memo' : 'Record a story'} onsend={send} onstop={stop} placeholder={short ? `Message ${short}` : 'Ask anything'} aria-label="Message">
       {#snippet lead()}<Capture {onfiles} {kind} />{/snippet}
       {#snippet tail()}<Access value={access.upload} onpick={(v) => (access.upload = v)} /><Dictate bind:value={draft} />{/snippet}
     </Composer>

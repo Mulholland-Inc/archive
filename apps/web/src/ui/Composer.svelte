@@ -1,7 +1,7 @@
 <script>
   import Icon from '#kit/Icon.svelte';
 
-  let { value = $bindable(''), busy = false, onsend, onstop, field = $bindable(), lead, tail, ontalk, ...rest } = $props();
+  let { value = $bindable(''), busy = false, onsend, onstop, field = $bindable(), lead, tail, ontalk, talk = 'Record', ...rest } = $props();
 
   const ready = $derived(value.trim() !== '');
 
@@ -26,8 +26,9 @@
   </div>
   {@render tail?.()}
   {#if !busy && !ready && ontalk}
-    <button class="send" type="button" title="Record" aria-label="Record" onclick={ontalk}><Icon name="audio-lines" /></button>
+    <button class="send" type="button" title={talk} aria-label={talk} onclick={ontalk}><Icon name="audio-lines" /></button>
   {:else}
+    {#if ontalk}<button class="talk" type="button" title={talk} aria-label={talk} onclick={ontalk}><Icon name="audio-lines" /></button>{/if}
     <button class="send" class:busy type="submit" disabled={!busy && !ready} title={busy ? 'Stop' : 'Send'} aria-label={busy ? 'Stop' : 'Send'}>
       <Icon name={busy ? 'square' : 'arrow-up'} />
     </button>
@@ -68,6 +69,8 @@
     transition: background var(--duration-fast), transform var(--duration-fast) var(--ease-out);
   }
   .send:hover { background: var(--primary-hover); }
+  .talk { display: grid; place-items: center; flex: none; width: var(--composer-line); height: var(--composer-line); border-radius: var(--radius-full); color: var(--fg-muted); transition: color var(--duration-fast), background var(--duration-fast); }
+  .talk:hover { background: var(--fill-faint); color: var(--fg); }
   .send:active { transform: scale(var(--scale-press)); }
   .busy :global(.icon) { fill: currentColor; }
 </style>

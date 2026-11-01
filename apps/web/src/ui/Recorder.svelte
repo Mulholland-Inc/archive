@@ -1,6 +1,7 @@
 <script>
   import { onDestroy } from 'svelte';
   import Icon from '#kit/Icon.svelte';
+  import { allowed, day, here } from './moment.js';
 
   let { tint = '#ffffff', kind = 'family', onsave, onclose } = $props();
   let state = $state('starting');
@@ -12,6 +13,24 @@
   let stream, recorder, audio, analyser, source, out, timer, frame;
   let chunks = [];
   const noun = kind === 'business' ? 'memo' : 'memory';
+  // family and personal archives keep the moment a story is told, as a journal does
+  const told = $derived(kind !== 'business');
+  const today = day();
+  let moment = $state(null);
+  let finding = $state(false);
+  let missing = $state('');
+
+  async function locate() {
+    finding = true;
+    missing = '';
+    try {
+      moment = await here();
+    } catch (e) {
+      missing = e.message;
+    }
+    finding = false;
+  }
+
 
   const clock = $derived(`${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`);
   const recording = $derived(state === 'recording');
@@ -65,6 +84,7 @@
     // Chrome calls the active microphone "default", which is not in the list.
     const active = stream.getAudioTracks()[0];
     input = (inputs.find((d) => d.deviceId === active?.getSettings().deviceId || d.label === active?.label) ?? inputs[0])?.deviceId ?? '';
+    if (told) allowed().then((yes) => yes && locate());
     recorder = new MediaRecorder(out.stream);
     recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
     recorder.start(1000);
@@ -88,7 +108,8 @@
     recorder.onstop = () => {
       const type = recorder.mimeType || 'audio/webm';
       const when = new Date().toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }).replaceAll(':', '.').replaceAll('/', '-');
-      if (keep) onsave(new File(chunks, `${noun === 'memo' ? 'Memo' : 'Memory'} ${when}.${type.includes('mp4') ? 'm4a' : 'webm'}`, { type }));
+      const where = [moment?.place, moment?.weather].filter(Boolean).join(', ').replaceAll('/', '-');
+      if (keep) onsave(new File(chunks, `${noun === 'memo' ? 'Memo' : 'Memory'} ${when}${where ? `, ${where}` : ''}.${type.includes('mp4') ? 'm4a' : 'webm'}`, { type }));
       onclose();
     };
     recorder.stop();
@@ -124,6 +145,17 @@
     <div class="stage">
       <div class="status" aria-live="polite"><span class="dot" class:still={!recording}></span>{state === 'paused' ? 'Paused' : state === 'starting' ? 'Getting ready' : 'Recording'}</div>
       <div class="time">{clock}</div>
+      {#if told}
+        <div class="moment">
+          <span>{today}</span>
+          {#if moment}
+            {#if moment.place}<span class="fact"><Icon name="map-pin" />{moment.place}</span>{/if}
+            {#if moment.weather}<span class="fact"><Icon name={moment.icon} />{moment.weather}</span>{/if}
+          {:else}
+            <button class="fact" type="button" disabled={finding} onclick={locate}><Icon name="map-pin" />{finding ? 'Finding you' : missing || 'Add place and weather'}</button>
+          {/if}
+        </div>
+      {/if}
       <canvas bind:this={canvas} width="1120" height="240" aria-hidden="true"></canvas>
     </div>
     <footer>
@@ -146,6 +178,11 @@
   .dot { width: 9px; height: 9px; border-radius: 50%; background: #ff3b30; animation: beat 1.4s ease-in-out infinite; }
   .dot.still { animation: none; background: #4a4e59; }
   .time { font: var(--weight-medium) clamp(48px, 9vw, 76px) / 1 var(--font-serif); font-variant-numeric: tabular-nums; letter-spacing: var(--tracking-tight); }
+  .moment { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: var(--space-1) var(--space-3); max-width: 560px; color: #8f95a3; font-size: var(--text-table); text-align: center; }
+  .fact { display: inline-flex; align-items: center; gap: var(--space-1); color: #c9cdd6; }
+  button.fact { padding: var(--space-1) var(--space-2); border-radius: var(--radius-full); background: #17191f; transition: background var(--duration-fast); }
+  button.fact:hover { background: #24272f; }
+  .fact :global(.icon) { width: 14px; height: 14px; }
   canvas { width: min(560px, 100%); height: 120px; }
   footer { display: flex; align-items: center; justify-content: center; gap: var(--space-3); padding: var(--space-5) var(--space-3) var(--space-6); }
   .round { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 50%; background: #17191f; color: #fff; transition: background var(--duration-fast); }

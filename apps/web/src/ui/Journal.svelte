@@ -1,6 +1,7 @@
 <script>
   import Icon from '#kit/Icon.svelte';
   import Bot from './Bot.svelte';
+  import { allowed, day, here, time } from './moment.js';
 
   let { seed = '', type = 'family', onsave, onclose } = $props();
   const business = type === 'business';
@@ -18,33 +19,33 @@
   const mode = $derived(MODES.find((m) => m.key === kind));
   const answers = $state({});
   let text = $state('');
-  let place = $state('');
+  let moment = $state(null);
   let finding = $state(false);
+  let missing = $state('');
 
   const now = new Date();
-  const today = now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
-  const clock = now.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  const today = day(now);
+  const clock = time(now);
 
-  function locate() {
-    if (!navigator.geolocation) return (place = 'Location not available here');
+  async function locate() {
     finding = true;
-    navigator.geolocation.getCurrentPosition(
-      (p) => {
-        place = `${p.coords.latitude.toFixed(3)}, ${p.coords.longitude.toFixed(3)}`;
-        finding = false;
-      },
-      () => {
-        place = 'Location not allowed';
-        finding = false;
-      },
-    );
+    missing = '';
+    try {
+      moment = await here();
+    } catch (e) {
+      missing = e.message;
+    }
+    finding = false;
   }
+
+  if (!business) allowed().then((yes) => yes && locate());
 
   function save() {
     const facts = [
       ...mode.asks.map(([key, q]) => (answers[key]?.trim() ? `${q} ${answers[key].trim()}` : '')),
       `Written: ${today}, ${clock}`,
-      kind === 'now' && place && !place.startsWith('Location') ? `Location: ${place}` : '',
+      kind === 'now' && moment?.place ? `Place: ${moment.place}` : '',
+      kind === 'now' && moment?.weather ? `Weather: ${moment.weather}` : '',
     ];
     const body = `${facts.filter(Boolean).join('\n')}\n\n${text.trim()}\n`;
     const name = `${mode.file} ${now.toLocaleDateString(undefined, { dateStyle: 'medium' }).replaceAll('/', '-')} ${clock.replaceAll(':', '.')}.md`;
@@ -73,8 +74,12 @@
       <span class="today">{today}</span>
       <span class="chips">
         <span class="chip"><Icon name="clock" />{clock}</span>
-        <button class="chip" type="button" onclick={locate}><Icon name="map-pin" />{finding ? 'Finding you' : place || 'Add location'}</button>
-        <span class="chip" title="A demo: your archive would fill this in"><Icon name="cloud-sun" />68° Clear<em>Demo</em></span>
+        {#if moment}
+          {#if moment.place}<span class="chip"><Icon name="map-pin" />{moment.place}</span>{/if}
+          {#if moment.weather}<span class="chip"><Icon name={moment.icon} />{moment.weather}</span>{/if}
+        {:else}
+          <button class="chip" type="button" disabled={finding} onclick={locate}><Icon name="map-pin" />{finding ? 'Finding you' : missing || 'Add place and weather'}</button>
+        {/if}
       </span>
     </div>
   {/if}
@@ -106,7 +111,6 @@
   .chips { display: flex; flex-wrap: wrap; gap: var(--space-1); }
   .chip { display: inline-flex; align-items: center; gap: var(--space-1); padding: var(--space-1) var(--space-2); border-radius: var(--radius-full); background: var(--fill-faint); color: var(--fg-soft); font-size: var(--text-meta); }
   .chip :global(.icon) { width: 14px; height: 14px; }
-  em { color: var(--fg-muted); font-style: normal; }
   textarea { width: 100%; min-height: 200px; padding: 0; border: 0; background: none; color: var(--fg); font: var(--text-lg) / var(--leading-medium, 1.5) var(--font-serif); resize: none; outline: 0; }
   textarea::placeholder { color: var(--fg-muted); }
   .asks { display: flex; flex-direction: column; gap: var(--space-2); padding-top: var(--space-3); border-top: var(--hairline) solid var(--fill); }
