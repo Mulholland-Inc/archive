@@ -13,7 +13,6 @@ export const app = $state({
   drawer: false,
   palette: false,
   help: false,
-  incognito: false,
   model: 'pro',
   pending: null,
   signedOut: false,
@@ -101,7 +100,7 @@ export function deleteVault(id) {
 export function newChat(title, { attachments = [], text } = {}) {
   const id = nid('n');
   const w = ws();
-  const chat = { id, title: title || 'New chat', updated: 'Just now', hidden: app.incognito };
+  const chat = { id, title: title || 'New chat', updated: 'Just now' };
   w.chats.unshift(chat);
   w.conversations[id] = [];
   if (text !== undefined) app.pending = { id, text, attachments };

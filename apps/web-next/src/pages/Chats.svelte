@@ -15,7 +15,7 @@
   import { ws, pinnedFirst } from '../lib/app.svelte.js';
 
   let query = $state('');
-  const results = $derived(pinnedFirst(ws().chats.filter((c) => !c.hidden && c.title.toLowerCase().includes(query.trim().toLowerCase()))));
+  const results = $derived(pinnedFirst(ws().chats.filter((c) => c.title.toLowerCase().includes(query.trim().toLowerCase()))));
 </script>
 
 <TopBar mobile>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>

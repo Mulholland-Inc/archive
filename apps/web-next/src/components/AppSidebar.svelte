@@ -14,7 +14,7 @@
   import NewVaultDialog from './NewVaultDialog.svelte';
 
   const running = $derived(ws().workflows.filter((w) => w.runs[0] && (w.runs[0].status === 'running' || w.runs[0].status === 'waiting')).length);
-  const visible = $derived(pinnedFirst(ws().chats.filter((c) => !c.hidden)));
+  const visible = $derived(pinnedFirst(ws().chats));
 
 
   let creating = $state(false);
