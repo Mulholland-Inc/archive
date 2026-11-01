@@ -1,8 +1,8 @@
 <script>
-  let { columns = [], rows = [], cell, key = 'id', onrowclick, label, selected = [] } = $props();
+  let { columns = [], rows = [], cell, key = 'id', onrowclick, label, selected = [], cards = false } = $props();
 </script>
 
-<div class="wrap">
+<div class={['wrap', { cards }]}>
   <table aria-label={label}>
     <thead>
       <tr>
@@ -118,5 +118,55 @@
   .selected td:last-child {
     border-start-end-radius: var(--radius-md);
     border-end-end-radius: var(--radius-md);
+  }
+
+  @media (max-width: 40rem) {
+    .cards table,
+    .cards tbody,
+    .cards tr,
+    .cards td {
+      display: block;
+    }
+
+    .cards thead {
+      display: none;
+    }
+
+    .cards tr {
+      position: relative;
+      padding-block: var(--space-3);
+      box-shadow: inset 0 calc(var(--border-width) * -1) 0 var(--color-border-subtle);
+    }
+
+    .cards tr:last-child {
+      box-shadow: none;
+    }
+
+    .cards td {
+      width: auto;
+      height: auto;
+      padding: var(--space-1) var(--space-0);
+      white-space: normal;
+      box-shadow: none;
+    }
+
+    .cards td:empty {
+      display: none;
+    }
+
+    .cards td.muted {
+      font-size: var(--text-sm);
+    }
+
+    .cards td:first-child {
+      padding-inline-end: var(--control-xl);
+    }
+
+    .cards td.end {
+      position: absolute;
+      inset-block-start: var(--space-3);
+      inset-inline-end: var(--space-0);
+      padding: var(--space-0);
+    }
   }
 </style>

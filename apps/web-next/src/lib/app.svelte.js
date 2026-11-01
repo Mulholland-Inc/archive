@@ -18,6 +18,7 @@ export const app = $state({
   pending: null,
   signedOut: false,
   settings: { open: false, section: null, sub: null },
+  share: { open: false, kind: null, target: null },
   profile: { name: me.name, first: me.first, work: 'archivist', prefs: 'Keep answers short. Use British spelling. When you quote a letter, keep the original spelling and punctuation.', tone: me.tone, notify: { done: true, mentions: true, digest: true, invites: false } }
 });
 
@@ -195,14 +196,14 @@ export function downloadFile(file) {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
-export function invite({ emails, role, groups = [] }) {
+export function invite({ emails, role }) {
   const w = ws();
   const added = [];
   for (const email of emails) {
     if (w.members.some((m) => m.email === email)) continue;
     const local = email.split('@')[0].replace(/[._-]+/g, ' ');
     const name = local.replace(/\b\w/g, (c) => c.toUpperCase());
-    const m = { id: nid('u'), name, email, role, groups: [...groups], active: '', status: 'invited', tone: (w.members.length % 6) + 1 };
+    const m = { id: nid('u'), name, email, role, active: '', status: 'invited', tone: (w.members.length % 6) + 1 };
     w.members.push(m);
     added.push(m);
   }
@@ -215,19 +216,100 @@ export function removeMember(id) {
   removeAt(ws().members, (x) => x.id === id, m?.status === 'invited' ? 'Invitation revoked' : `${m?.name} removed`);
 }
 
-export function createGroup(name) {
-  const w = ws();
-  if (!name || w.groups.some((g) => g.name === name)) return;
-  w.groups.push({ id: nid('g'), name });
-  toast(`Group “${name}” created`, { tone: 'success' });
+export const permissions = [
+  { value: 'view', label: 'Can view' },
+  { value: 'comment', label: 'Can comment' },
+  { value: 'edit', label: 'Can edit' }
+];
+
+export const shareKinds = { file: 'File', folder: 'Folder', workflow: 'Workflow', table: 'Table' };
+
+export function shareItem(kind, target, w = ws()) {
+  if (kind === 'file') {
+    const f = w.library.find((x) => x.id === target);
+    return f && { name: f.name, path: `/library/${f.id}` };
+  }
+  if (kind === 'workflow') {
+    const f = w.workflows.find((x) => x.id === target);
+    return f && { name: f.name, path: `/workflows/${f.id}` };
+  }
+  if (kind === 'table') {
+    const t = w.schema.find((x) => x.id === target);
+    return t && { name: t.name, path: `/database/${t.id}` };
+  }
+  return w.folders.includes(target) ? { name: target, path: '/library' } : null;
 }
 
-export function setGroupMembers(groupName, ids) {
-  for (const m of ws().members) {
-    const has = m.groups.includes(groupName);
-    if (ids.includes(m.id) && !has) m.groups.push(groupName);
-    if (!ids.includes(m.id) && has) m.groups = m.groups.filter((g) => g !== groupName);
+export function isExternal(email) {
+  return !ws().members.some((m) => m.email === email);
+}
+
+export function shareFor(kind, target) {
+  return ws().shares.find((s) => s.kind === kind && s.target === target);
+}
+
+function ensureShare(kind, target) {
+  const w = ws();
+  if (!shareFor(kind, target)) w.shares.unshift({ id: nid('sh'), kind, target, link: 'off', by: app.profile.name, date: 'Just now', people: [] });
+  return shareFor(kind, target);
+}
+
+function prune(share) {
+  if (share.people.length || share.link !== 'off') return;
+  const w = ws();
+  const i = w.shares.indexOf(share);
+  if (i >= 0) w.shares.splice(i, 1);
+}
+
+export function openShare(kind, target) {
+  Object.assign(app.share, { open: true, kind, target });
+}
+
+export function addPeople(kind, target, emails, permission) {
+  const share = ensureShare(kind, target);
+  const added = [];
+  for (const email of emails) {
+    if (share.people.some((p) => p.email === email)) continue;
+    const member = ws().members.find((m) => m.email === email);
+    const name = member?.name ?? email.split('@')[0].replace(/[._-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+    share.people.push({ name, email, permission, tone: member?.tone ?? (email.length % 6) + 1 });
+    added.push(name);
   }
+  if (added.length) toast(added.length === 1 ? `Shared with ${added[0]}` : `Shared with ${added.length} people`, { tone: 'success' });
+  else prune(share);
+}
+
+export function setPermission(share, email, permission) {
+  const p = share.people.find((x) => x.email === email);
+  if (p) p.permission = permission;
+}
+
+export function unsharePerson(share, email) {
+  const i = share.people.findIndex((x) => x.email === email);
+  if (i < 0) return;
+  const [p] = share.people.splice(i, 1);
+  toast(`${p.name} no longer has access`);
+  prune(share);
+}
+
+export function setLinkAccess(kind, target, link) {
+  const share = ensureShare(kind, target);
+  share.link = link;
+  toast(link === 'off' ? 'Link sharing turned off' : 'Anyone with the link can view');
+  prune(share);
+}
+
+export function stopSharing(id) {
+  removeAt(ws().shares, (s) => s.id === id, 'Stopped sharing');
+}
+
+export function removeGuest(email) {
+  const w = ws();
+  for (const share of [...w.shares]) {
+    share.people = share.people.filter((p) => p.email !== email);
+    prune(share);
+  }
+  toast('Guest access removed');
 }
 
 export function workflowById(id) {

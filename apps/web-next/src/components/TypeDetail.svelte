@@ -9,7 +9,7 @@
   import CodeBlock from './CodeBlock.svelte';
   import { ddl, typeLabels } from '../lib/schema.js';
 
-  let { type, types = [], workflows = [], onopen, onworkflow } = $props();
+  let { type, types = [], workflows = [], members = [], share, onopen, onworkflow } = $props();
   let tab = $state('overview');
 
   const byId = (id) => types.find((t) => t.id === id);
@@ -17,10 +17,12 @@
   const outgoing = $derived([...new Set(type.links.map((l) => l.to))].filter((id) => id !== type.id && byId(id)).map(byId));
   const self = $derived(type.links.some((l) => l.to === type.id));
   const flows = $derived(type.workflows.map((name) => workflows.find((w) => w.name === name) ?? { name }));
-  const groups = $derived([
-    { label: 'Owners', names: type.access.owners },
-    { label: 'Editors', names: type.access.editors },
-    { label: 'Viewers', names: type.access.viewers }
+  const named = (roles) => members.filter((m) => m.status === 'active' && roles.includes(m.role)).map((m) => m.name);
+  const access = $derived([
+    { label: 'Owners', names: named(['owner']) },
+    { label: 'Editors', names: named(type.access.edit) },
+    { label: 'Viewers', names: named(type.access.view) },
+    { label: 'Shared with', names: [...(share?.people.map((p) => p.name) ?? []), ...(share?.link === 'view' ? ['Anyone with the link'] : [])] }
   ]);
   const shown = $derived(type.columns.filter((c) => c.name !== 'id' && c.name !== 'created_at').slice(0, 4));
   const sampleColumns = $derived(shown.map((c) => ({ key: c.name, label: c.name, muted: c !== shown[0] })));
@@ -61,12 +63,9 @@
             {#if !incoming.length}<Text tone="tertiary">None</Text>{/if}
           </Stack>
         </SettingsRow>
-        {#each groups as g (g.label)}
-          <SettingsRow label={g.label}>
-            <Stack direction="row" gap="1" wrap justify="end">
-              {#each g.names as n (n)}<Chip size="sm">{n}</Chip>{/each}
-              {#if !g.names.length}<Text tone="tertiary">None</Text>{/if}
-            </Stack>
+        {#each access as a (a.label)}
+          <SettingsRow label={a.label}>
+            <Text tone={a.names.length ? 'secondary' : 'tertiary'}>{a.names.length ? a.names.join(', ') : 'None'}</Text>
           </SettingsRow>
         {/each}
         <SettingsRow label="Workflows">

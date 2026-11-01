@@ -27,12 +27,12 @@ export function ddl(t) {
   return `create table ${t.id} (\n${lines.join(',\n')}\n);`;
 }
 
-const family = { owners: ['Archivists'], editors: ['Okafor siblings'], viewers: ['Nwosu cousins', 'Guests'] };
-const familyPrivate = { owners: ['Archivists'], editors: ['Okafor siblings'], viewers: [] };
-const firm = { owners: ['Partners'], editors: ['Litigation'], viewers: [] };
-const firmBilling = { owners: ['Partners'], editors: [], viewers: ['Litigation'] };
-const studio = { owners: ['Design'], editors: ['Research'], viewers: [] };
-const solo = { owners: ['You'], editors: [], viewers: [] };
+const family = { edit: ['editor'], view: ['viewer'] };
+const familyPrivate = { edit: ['editor'], view: [] };
+const firm = { edit: ['editor'], view: ['viewer'] };
+const firmBilling = { edit: [], view: ['editor'] };
+const studio = { edit: ['editor'], view: ['viewer'] };
+const solo = { edit: [], view: [] };
 
 const okafor = [
   table('person', 'Person', 'person', 214, 'Today', family, ['Tag who is in each new photo from iCloud Photos and ask when it isn\'t sure'], [
@@ -242,7 +242,7 @@ const fieldnote = [
     ['Signage brief v2', 'Harbor wayfinding', 'Sep 1', 'Mika Sato'],
     ['Site copy brief', 'Studio site', 'Dec 5', 'Lea Fontaine']
   ]),
-  table('invoice', 'Invoice', 'invoice', 412, 'Oct 31', { owners: ['Design'], editors: [], viewers: [] }, [], [
+  table('invoice', 'Invoice', 'invoice', 412, 'Oct 31', { edit: [], view: [] }, [], [
     c('number', 'text', true),
     c('project', 'link', true, '', 'project'),
     c('issued_on', 'date', true),

@@ -92,7 +92,7 @@
   import SettingsPane from '../components/SettingsPane.svelte';
   import NotificationSettings from '../components/NotificationSettings.svelte';
   import ConnectorDetail from '../components/ConnectorDetail.svelte';
-  import { openSettings } from '../lib/app.svelte.js';
+  import { openSettings, openShare, ws } from '../lib/app.svelte.js';
   import { User as UserIcon, Palette as PaletteIcon, Bell as BellIcon, Plug as PlugIcon } from '@lucide/svelte';
   import { library, conversations, members, me } from '../lib/data.js';
   import { theme, setTheme } from '../lib/theme.svelte.js';
@@ -385,7 +385,7 @@
             {#snippet trigger(props)}<Button icon={Share} {...props}>Share</Button>{/snippet}
             {#snippet children({ close })}
               <Stack gap="3">
-                <Text weight="medium">Share this chat</Text>
+                <Text weight="medium">Share this file</Text>
                 <Input size="sm" value="https://app.archive.dev/s/8f2k" readonly aria-label="Link" />
                 <Stack direction="row" gap="2" justify="end">
                   <Button size="sm" variant="ghost" onclick={close}>Close</Button>
@@ -396,6 +396,10 @@
           </Popover>
           <Tooltip text="Tooltips appear after a short delay"><Button variant="ghost" icon={Info}>Hover me</Button></Tooltip>
           <Tooltip text="With a shortcut" shortcut="⌘ K" placement="bottom"><Button variant="ghost" icon={Keyboard}>And me</Button></Tooltip>
+        </SpecimenBlock>
+        <SpecimenBlock title="Share dialog">
+          <Button icon={Share} onclick={() => openShare('table', ws().schema[0]?.id)}>Share a table</Button>
+          <Button icon={Share} onclick={() => openShare('file', ws().library[0]?.id)}>Share a file</Button>
         </SpecimenBlock>
         <SpecimenBlock title="Settings dialog">
           <Button onclick={() => openSettings()}>Open settings</Button>

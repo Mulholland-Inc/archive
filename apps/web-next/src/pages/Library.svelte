@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { Upload, LayoutGrid, List as ListIcon, Ellipsis, Download, Pencil, MessageSquarePlus, Trash2, SearchX, FolderPlus, FileText, Image, AudioLines, FileSpreadsheet, Inbox } from '@lucide/svelte';
+  import { Upload, LayoutGrid, List as ListIcon, Ellipsis, Download, Pencil, MessageSquarePlus, Trash2, SearchX, FolderPlus, Share, FileText, Image, AudioLines, FileSpreadsheet, Inbox } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
   import StickyHeader from '../components/StickyHeader.svelte';
@@ -26,7 +26,7 @@
   import Spacer from '../components/Spacer.svelte';
   import SettingsRow from '../components/SettingsRow.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { ws, newChat, uploadFile, addFolder, renameFile, removeFile, downloadFile } from '../lib/app.svelte.js';
+  import { ws, newChat, uploadFile, addFolder, renameFile, removeFile, downloadFile, openShare } from '../lib/app.svelte.js';
   import { prompt } from '../lib/dialogs.svelte.js';
   import { go, route } from '../lib/router.svelte.js';
 
@@ -131,6 +131,7 @@
     {#snippet trigger(props)}<IconButton icon={Ellipsis} label={`Actions for ${file.name}`} size="sm" tooltip={false} {...props} />{/snippet}
     <MenuItem icon={MessageSquarePlus} onselect={() => ask(file)}>Ask about this</MenuItem>
     <MenuItem icon={Pencil} onselect={() => rename(file)}>Rename</MenuItem>
+    <MenuItem icon={Share} onselect={() => openShare('file', file.id)}>Share</MenuItem>
     <MenuItem icon={Download} onselect={() => downloadFile(file)}>Download</MenuItem>
     <MenuSeparator />
     <MenuItem icon={Trash2} danger onselect={() => removeFile(file.id)}>Move to trash</MenuItem>
@@ -145,6 +146,7 @@
       <Select bind:value={folder} options={folders} variant="ghost" label="Folder" />
     {/snippet}
     {#snippet actions()}
+      {#if folder !== 'all'}<IconButton icon={Share} label={`Share ${folder}`} variant="secondary" onclick={() => openShare('folder', folder)} />{/if}
       <IconButton icon={FolderPlus} label="New folder" variant="secondary" onclick={newFolder} />
       <Button variant="primary" icon={Upload} onclick={upload}>Upload</Button>
     {/snippet}

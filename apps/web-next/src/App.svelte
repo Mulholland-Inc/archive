@@ -21,6 +21,7 @@
   import { ws } from './lib/app.svelte.js';
   import PromptHost from './components/PromptHost.svelte';
   import HelpDialog from './components/HelpDialog.svelte';
+  import ShareDialog from './components/ShareDialog.svelte';
   import SignedOut from './components/SignedOut.svelte';
   import { Workflow as WorkflowIcon, Plug, User, Building2 } from '@lucide/svelte';
   import { switchVault, openSettings } from './lib/app.svelte.js';
@@ -122,5 +123,6 @@
 <AppSettings />
 <PromptHost />
 <HelpDialog bind:open={app.help} />
+<ShareDialog />
 {#if app.signedOut}<SignedOut />{/if}
 <Toaster />

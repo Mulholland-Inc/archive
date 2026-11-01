@@ -1,5 +1,5 @@
 <script>
-  import { Pause, Play, Square, Bot, RotateCcw, ListX, Ellipsis, Trash2, CircleCheck } from '@lucide/svelte';
+  import { Pause, Play, Square, Bot, RotateCcw, ListX, Ellipsis, Trash2, CircleCheck, Share } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
   import Breadcrumbs from '../components/Breadcrumbs.svelte';
@@ -26,7 +26,7 @@
   import Icon from '../components/Icon.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { workflowById, runWorkflow, toggleWorkflow, renameWorkflow, removeWorkflow, pauseRun, stopRun, resolveRun } from '../lib/app.svelte.js';
+  import { workflowById, runWorkflow, toggleWorkflow, renameWorkflow, removeWorkflow, openShare, pauseRun, stopRun, resolveRun } from '../lib/app.svelte.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
 
   let { id } = $props();
@@ -83,6 +83,7 @@
           <Menu placement="bottom-end" width="sm" label="Workflow actions">
             {#snippet trigger(props)}<IconButton icon={Ellipsis} label="Workflow actions" {...props} />{/snippet}
             <MenuItem icon={Play} onselect={start}>Run now</MenuItem>
+            <MenuItem icon={Share} onselect={() => openShare('workflow', wf.id)}>Share</MenuItem>
             <MenuSeparator />
             <MenuItem icon={Trash2} danger onselect={remove}>Delete</MenuItem>
           </Menu>
@@ -136,11 +137,15 @@
         <Card padding="md" variant="filled">
           <Section title="Runs">
             {#if wf.runs.length}
-              <List label="Runs" divided={false} inset>
+              <List label="Runs">
                 {#each wf.runs as r (r.id)}
                   <ListItem title={`Run #${r.number}`} size="sm" active={r.id === run?.id} onclick={() => (selected = r.id)}>
-                    {#snippet meta()}{r.started}, {r.elapsed}{/snippet}
-                    {#snippet trailing()}<StatusBadge status={r.paused ? 'paused' : r.status} plain />{/snippet}
+                    {#snippet trailing()}
+                      <Stack direction="row" gap="3" align="center">
+                        <Text size="sm" tone="tertiary">{r.started}</Text>
+                        <StatusBadge status={r.paused ? 'paused' : r.status} plain />
+                      </Stack>
+                    {/snippet}
                   </ListItem>
                 {/each}
               </List>

@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte';
+  import { Share } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import PageHeader from '../components/PageHeader.svelte';
   import SearchField from '../components/SearchField.svelte';
@@ -9,7 +10,7 @@
   import EmptyState from '../components/EmptyState.svelte';
   import Dialog from '../components/Dialog.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { ws, newChat } from '../lib/app.svelte.js';
+  import { ws, newChat, openShare } from '../lib/app.svelte.js';
   import { go, route } from '../lib/router.svelte.js';
 
   let query = $state('');
@@ -62,10 +63,11 @@
 <Dialog bind:open={preview} title={open?.name} size="tall">
   {#if open}
     {#key open.id}
-      <TypeDetail type={open} types={ws().schema} workflows={ws().workflows} onopen={show} onworkflow={(id) => go(`/workflows/${id}`)} />
+      <TypeDetail type={open} members={ws().members} share={ws().shares.find((s) => s.kind === 'table' && s.target === open.id)} types={ws().schema} workflows={ws().workflows} onopen={show} onworkflow={(id) => go(`/workflows/${id}`)} />
     {/key}
   {/if}
   {#snippet footer({ close })}
+    <Button icon={Share} onclick={() => openShare('table', open.id)}>Share</Button>
     <Button variant="primary" onclick={() => ask(open, close)}>Ask about this</Button>
   {/snippet}
 </Dialog>

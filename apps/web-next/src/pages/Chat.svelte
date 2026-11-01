@@ -1,6 +1,5 @@
 <script>
   import { onMount, tick } from 'svelte';
-  import { Share } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
   import Stack from '../components/Stack.svelte';
@@ -14,7 +13,7 @@
   import EmptyState from '../components/EmptyState.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
   import { MessageSquareOff } from '@lucide/svelte';
-  import { app, ws, copyLink, renameChat } from '../lib/app.svelte.js';
+  import { app, ws, renameChat } from '../lib/app.svelte.js';
   import { streamReply } from '../lib/data.js';
   import { duration } from '../lib/motion.js';
   import { toast } from '../lib/toast.svelte.js';
@@ -140,9 +139,6 @@
       <EditableTitle value={chat.title} label="Rename chat" onsave={(title) => renameChat(chat.id, title)} />
       <ChatActions {chat} size="sm" renamable={false} />
     {/if}
-  {/snippet}
-  {#snippet trailing()}
-    <Button size="sm" icon={Share} onclick={() => copyLink(`/chat/${id}`)}>Share</Button>
   {/snippet}
 </TopBar>
 

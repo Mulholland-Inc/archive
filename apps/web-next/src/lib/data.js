@@ -434,25 +434,16 @@ export const tasks = [
   }
 ];
 
-export const groups = [
-  { id: 'g1', name: 'Okafor siblings', members: 4 },
-  { id: 'g2', name: 'Nwosu cousins', members: 3 },
-  { id: 'g3', name: 'Archivists', members: 2 },
-  { id: 'g4', name: 'Guests', members: 2 }
-];
-
 export const members = [
-  { id: 'u1', name: 'Nora Okafor', email: 'nora@okafor.family', role: 'owner', groups: ['Okafor siblings', 'Archivists'], active: 'Now', status: 'active', tone: 1 },
-  { id: 'u2', name: 'Emeka Okafor', email: 'emeka@okafor.family', role: 'owner', groups: ['Okafor siblings'], active: '2 hr ago', status: 'active', tone: 3 },
-  { id: 'u3', name: 'Chidi Okafor', email: 'chidi.okafor@mail.ng', role: 'editor', groups: ['Okafor siblings'], active: 'Yesterday', status: 'active', tone: 2 },
-  { id: 'u4', name: 'Amara Okafor', email: 'amara@okafor.family', role: 'editor', groups: ['Okafor siblings', 'Archivists'], active: 'Today', status: 'active', tone: 4 },
-  { id: 'u5', name: 'Ifeoma Nwosu', email: 'ifeoma.nwosu@mail.ng', role: 'editor', groups: ['Nwosu cousins'], active: 'Mon', status: 'active', tone: 5 },
-  { id: 'u6', name: 'Tobi Okafor', email: 'tobi@okafor.family', role: 'viewer', groups: [], active: 'Oct 20', status: 'active', tone: 6 },
-  { id: 'u7', name: 'Kelechi Nwosu', email: 'kelechi@nwosu.co.uk', role: 'viewer', groups: ['Nwosu cousins'], active: 'Oct 14', status: 'active', tone: 2 },
-  { id: 'u8', name: 'Ada Nwosu', email: 'ada.nwosu@mail.com', role: 'viewer', groups: ['Nwosu cousins'], active: '', status: 'invited', tone: 3 },
-  { id: 'u9', name: 'Margaret Ellis', email: 'm.ellis@leedsarchives.org', role: 'viewer', groups: ['Guests'], active: 'Sep 30', status: 'active', tone: 4 },
-  { id: 'u10', name: 'Samuel Ibe', email: 'samuel.ibe@mail.com', role: 'viewer', groups: ['Guests'], active: '', status: 'invited', tone: 1 },
-  { id: 'u11', name: 'Uche Okafor', email: 'uche@okafor.family', role: 'editor', groups: ['Okafor siblings'], active: 'Oct 2', status: 'active', tone: 5 }
+  { id: 'u1', name: 'Nora Okafor', email: 'nora@okafor.family', role: 'owner', active: 'Now', status: 'active', tone: 1 },
+  { id: 'u2', name: 'Emeka Okafor', email: 'emeka@okafor.family', role: 'owner', active: '2 hr ago', status: 'active', tone: 3 },
+  { id: 'u3', name: 'Chidi Okafor', email: 'chidi.okafor@mail.ng', role: 'editor', active: 'Yesterday', status: 'active', tone: 2 },
+  { id: 'u4', name: 'Amara Okafor', email: 'amara@okafor.family', role: 'editor', active: 'Today', status: 'active', tone: 4 },
+  { id: 'u5', name: 'Ifeoma Nwosu', email: 'ifeoma.nwosu@mail.ng', role: 'editor', active: 'Mon', status: 'active', tone: 5 },
+  { id: 'u6', name: 'Tobi Okafor', email: 'tobi@okafor.family', role: 'viewer', active: 'Oct 20', status: 'active', tone: 6 },
+  { id: 'u7', name: 'Kelechi Nwosu', email: 'kelechi@nwosu.co.uk', role: 'viewer', active: 'Oct 14', status: 'active', tone: 2 },
+  { id: 'u8', name: 'Ada Nwosu', email: 'ada.nwosu@mail.com', role: 'viewer', active: '', status: 'invited', tone: 3 },
+  { id: 'u11', name: 'Uche Okafor', email: 'uche@okafor.family', role: 'editor', active: 'Oct 2', status: 'active', tone: 5 }
 ];
 
 export const people = ['Ruth Hale', 'Daniel Whitcombe', 'Priya Raman', 'Jun Park', 'Lea Fontaine', 'Chidi Okafor', 'Amara Okafor', 'Tobi Okafor', 'Emeka Okafor', 'Ifeoma Nwosu'];
