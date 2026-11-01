@@ -60,6 +60,11 @@
     min-width: 0;
   }
 
+  .search > :global(:first-child) {
+    flex: 1;
+    max-width: var(--col-lg);
+  }
+
   .actions {
     display: flex;
     align-items: center;
@@ -72,6 +77,10 @@
     .search {
       flex-basis: 100%;
       order: 1;
+    }
+
+    .search > :global(:first-child) {
+      max-width: none;
     }
   }
 </style>

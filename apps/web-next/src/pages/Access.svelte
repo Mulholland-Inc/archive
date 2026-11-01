@@ -2,7 +2,7 @@
   import { UserPlus, Ellipsis, Mail, UserMinus, Shield, SearchX, Share as ShareIcon, Link, Ban, Settings2 } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
-  import PageHeader from '../components/PageHeader.svelte';
+  import StickyHeader from '../components/StickyHeader.svelte';
   import Tabs from '../components/Tabs.svelte';
   import Stack from '../components/Stack.svelte';
   import SearchField from '../components/SearchField.svelte';
@@ -15,7 +15,6 @@
   import Menu from '../components/Menu.svelte';
   import MenuItem from '../components/MenuItem.svelte';
   import MenuSeparator from '../components/MenuSeparator.svelte';
-  import StatusBadge from '../components/StatusBadge.svelte';
   import Spacer from '../components/Spacer.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import InviteDialog from '../components/InviteDialog.svelte';
@@ -78,15 +77,17 @@
     { value: 'invitations', label: 'Invitations', count: invited.length }
   ]);
 
-  const memberColumns = [
+  const memberColumns = $derived([
     { key: 'name', label: 'Name' },
+    { key: 'email', label: 'Email', muted: true, width: 'lg' },
     { key: 'role', label: 'Role', width: 'sm' },
-    { key: 'active', label: 'Last active', muted: true, width: 'sm' },
+    { key: 'active', label: tab === 'invitations' ? 'Status' : 'Last active', muted: true, width: 'sm' },
     { key: 'menu', label: '', width: 'xs', align: 'end' }
-  ];
+  ]);
   const shareColumns = $derived([
     { key: 'item', label: 'Item' },
-    { key: 'people', label: 'Shared with' },
+    { key: 'kind', label: 'Kind', muted: true, width: 'sm' },
+    { key: 'people', label: 'Shared with', width: 'md' },
     { key: 'access', label: 'Access', muted: true, width: 'sm' },
     ...(shareRows.some((r) => r.share.link === 'view') ? [{ key: 'link', label: 'Link', muted: true, width: 'md' }] : []),
     { key: 'date', label: 'Shared', muted: true, width: 'sm' },
@@ -94,7 +95,8 @@
   ]);
   const guestColumns = [
     { key: 'name', label: 'Name' },
-    { key: 'items', label: 'Has access to', muted: true },
+    { key: 'email', label: 'Email', muted: true, width: 'lg' },
+    { key: 'items', label: 'Has access to', muted: true, width: 'lg' },
     { key: 'menu', label: '', width: 'xs', align: 'end' }
   ];
 
@@ -106,23 +108,22 @@
 
 {#snippet person(row)}
   <Stack direction="row" gap="3" align="center">
-    <Avatar name={row.name} tone={row.tone} size="md" />
-    <Stack gap="0">
-      <Text weight="medium">{row.name}</Text>
-      <Text size="sm" tone="tertiary">{row.email}</Text>
-    </Stack>
+    <Avatar name={row.name} tone={row.tone} size="sm" />
+    <Text weight="medium" truncate>{row.name}</Text>
   </Stack>
 {/snippet}
 
 <TopBar mobile>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
 <Page width="wide">
-  <PageHeader title="Access">
+  <StickyHeader title="Access">
+    {#snippet search()}
+      <SearchField bind:value={query} placeholder={tab === 'shares' ? 'Search items and people' : 'Search by name or email'} />
+    {/snippet}
     {#snippet actions()}<Button variant="primary" icon={UserPlus} onclick={() => (inviting = true)}>Invite</Button>{/snippet}
-    <Tabs bind:value={tab} items={tabs} label="Access" />
-  </PageHeader>
+  </StickyHeader>
 
   <Stack direction="row" gap="2" align="center" wrap>
-    <SearchField bind:value={query} placeholder={tab === 'shares' ? 'Search items and people' : 'Search by name or email'} />
+    <Tabs bind:value={tab} items={tabs} label="Access" variant="pill" />
     <Spacer />
     {#if tab === 'shares'}
       <Select bind:value={kindFilter} options={kindFilters} variant="ghost" label="Kind" placement="bottom-end" />
@@ -136,15 +137,14 @@
       <Table columns={shareColumns} rows={shareRows} label="Shares" cards>
         {#snippet cell(row, col)}
           {#if col.key === 'item'}
-            <Stack gap="0">
-              <Text weight="medium">{row.item.name}</Text>
-              <Text size="sm" tone="tertiary">{shareKinds[row.share.kind]}</Text>
-            </Stack>
+            <Text weight="medium" truncate>{row.item.name}</Text>
+          {:else if col.key === 'kind'}
+            {shareKinds[row.share.kind]}
           {:else if col.key === 'people'}
             {#if row.share.people.length}
               <Stack direction="row" gap="2" align="center">
                 <AvatarGroup names={row.share.people.map((p) => p.name)} size="xs" max={3} />
-                <Text size="sm" tone="secondary">{others(row.share.people.map((p) => firstName(p.name)), 1)}</Text>
+                <Text tone="secondary" truncate>{others(row.share.people.map((p) => firstName(p.name)), 1)}</Text>
               </Stack>
             {/if}
           {:else if col.key === 'access'}
@@ -173,10 +173,12 @@
         {#snippet cell(row, col)}
           {#if col.key === 'name'}
             {@render person(row)}
+          {:else if col.key === 'email'}
+            {row.email}
           {:else if col.key === 'role'}
             <Select value={row.role} options={roles} size="sm" variant="ghost" label={`Role for ${row.name}`} onchange={(v) => changeRole(row, v)} />
           {:else if col.key === 'active'}
-            {#if row.status === 'invited'}<StatusBadge status="invited" plain />{:else}{row.active}{/if}
+            {row.status === 'invited' ? 'Invited' : row.active}
           {:else if col.key === 'menu'}
             <Menu placement="bottom-end" width="sm" label="Member actions">
               {#snippet trigger(props)}<IconButton icon={Ellipsis} label={`Actions for ${row.name}`} size="sm" tooltip={false} {...props} />{/snippet}
@@ -201,6 +203,8 @@
           {#snippet cell(row, col)}
             {#if col.key === 'name'}
               {@render person(row)}
+            {:else if col.key === 'email'}
+              {row.email}
             {:else if col.key === 'items'}
               {others(row.items.map((i) => i.name), 1)}
             {:else if col.key === 'menu'}
