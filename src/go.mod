@@ -3,7 +3,6 @@ module github.com/Mulholland-Inc/archive
 go 1.27.2
 
 require (
-	cloud.google.com/go/cloudtasks v1.21.1
 	github.com/chromedp/cdproto v0.157.8
 	github.com/chromedp/chromedp v0.21.0
 	github.com/coreos/go-oidc/v3 v3.21.0
@@ -22,13 +21,9 @@ require (
 	golang.org/x/net v0.61.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/text v0.43.0
-	google.golang.org/grpc v1.85.0
-	google.golang.org/protobuf v1.36.12
 )
 
 require (
-	cloud.google.com/go/iam v1.14.0 // indirect
-	cloud.google.com/go/longrunning v1.3.0 // indirect
 	github.com/dlclark/regexp2/v2 v2.8.1 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.4 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
@@ -64,9 +59,7 @@ require (
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
-	google.golang.org/genproto v0.0.0-20261012220534-4341edf3f941 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20261012220534-4341edf3f941 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20261012220534-4341edf3f941 // indirect
+	google.golang.org/protobuf v1.36.12 // indirect
 )
 
 replace github.com/stripe/pg-schema-diff => github.com/dilame/pg-schema-diff v1.0.6-0.20261004154459-eac5d91b7153
