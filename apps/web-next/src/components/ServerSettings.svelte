@@ -81,7 +81,7 @@
   ];
 </script>
 
-<Stack gap="8">
+<Stack gap="6">
   <Art name="server" />
   {#each sections as section, i (section.title)}
     {#if i}<Divider />{/if}

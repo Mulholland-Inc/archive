@@ -41,8 +41,8 @@
   }
 
   th {
-    height: var(--control-xl);
-    padding: var(--space-3);
+    height: var(--control-lg);
+    padding: var(--space-2) var(--space-3);
     color: var(--color-text-tertiary);
     font-size: var(--text-sm);
     font-weight: var(--weight-medium);
@@ -53,7 +53,7 @@
 
   td {
     height: var(--row-height);
-    padding: var(--space-3);
+    padding: var(--space-1-5) var(--space-3);
     white-space: nowrap;
     box-shadow: inset 0 calc(var(--border-width) * -1) 0 var(--color-border-subtle);
     transition: background-color var(--duration-fast) var(--ease-out);
