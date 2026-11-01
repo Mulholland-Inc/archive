@@ -72,6 +72,7 @@
   }
 
   .hit {
+    touch-action: manipulation;
     display: flex;
     align-items: center;
     gap: var(--space-2);
@@ -146,6 +147,7 @@
     border-end-end-radius: inherit;
     background: linear-gradient(var(--row-fill), var(--row-fill)), var(--color-sidebar);
     opacity: 0;
+    pointer-events: none;
     transition: opacity var(--duration-fast) var(--ease-out);
   }
 
@@ -163,6 +165,13 @@
   .item:focus-within .actions,
   .actions:has(:global([aria-expanded='true'])) {
     opacity: 1;
+    pointer-events: auto;
+  }
+
+  @media (hover: none) {
+    .actions {
+      display: none;
+    }
   }
 
   .badge {
