@@ -1,7 +1,7 @@
 <script>
   import {
     Plus, ArrowRight, Download, Trash2, Settings, Pin, Share, Copy, Pencil, Ellipsis, Search, Mail, Bold, Italic, Underline,
-    LayoutGrid, List as ListIcon, Sun, Moon, Monitor, FolderOpen, FileText, MessagesSquare, Inbox, Bell, Info, Keyboard, Library, Users
+    LayoutGrid, List as ListIcon, Sun, Moon, Monitor, FolderOpen, FileText, MessagesSquare, Inbox, Bell, Info, Keyboard, Library, Lock
   } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
@@ -563,7 +563,7 @@
               <SidebarSection>
                 <SidebarItem icon={MessagesSquare} label="Chats" href="#/specimen" active />
                 <SidebarItem icon={Library} label="Library" href="#/specimen" />
-                <SidebarItem icon={Users} label="Users" href="#/specimen" badge="3" />
+                <SidebarItem icon={Lock} label="Access" href="#/specimen" badge="3" />
               </SidebarSection>
               <SidebarSection title="Today">
                 <SidebarItem label="Rename scanned photos by EXIF date" href="#/specimen">

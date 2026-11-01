@@ -1,5 +1,5 @@
 <script>
-  import { Plus, Sun, Moon, Monitor, Settings, Shapes, MessagesSquare, Library, Users, PanelLeft, FileText, Palette } from '@lucide/svelte';
+  import { Plus, Sun, Moon, Monitor, Settings, Shapes, MessagesSquare, Library, Lock, PanelLeft, FileText, Palette } from '@lucide/svelte';
   import Shell from './components/Shell.svelte';
   import AppSidebar from './components/AppSidebar.svelte';
   import View from './components/View.svelte';
@@ -12,7 +12,7 @@
   import Workflows from './pages/Workflows.svelte';
   import Workflow from './pages/Workflow.svelte';
   import Connectors from './pages/Connectors.svelte';
-  import UsersPage from './pages/Users.svelte';
+  import AccessPage from './pages/Access.svelte';
   import SettingsPage from './pages/Settings.svelte';
   import Specimen from './pages/Specimen.svelte';
   import { route, go } from './lib/router.svelte.js';
@@ -25,7 +25,7 @@
   import { Workflow as WorkflowIcon, Plug, User, Building2 } from '@lucide/svelte';
   import { switchVault } from './lib/app.svelte.js';
 
-  const key = $derived(['settings', 'library', 'users'].includes(route.parts[0]) ? route.parts[0] : route.parts.slice(0, 2).join('/') || 'home');
+  const key = $derived(['settings', 'library', 'access'].includes(route.parts[0]) ? route.parts[0] : route.parts.slice(0, 2).join('/') || 'home');
 
   const commands = $derived([
     { id: 'new', group: 'Actions', label: 'New chat', icon: Plus, shortcut: '⌘ ⇧ O', run: () => go('/') },
@@ -38,12 +38,12 @@
     { id: 'p-library', group: 'Go to', label: 'Library', icon: Library, run: () => go('/library') },
     { id: 'p-workflows', group: 'Go to', label: 'Workflows', icon: WorkflowIcon, run: () => go('/workflows') },
     { id: 'p-connectors', group: 'Go to', label: 'Connectors', icon: Plug, run: () => go('/connectors') },
-    { id: 'p-users', group: 'Go to', label: 'Users', icon: Users, run: () => go('/users') },
+    { id: 'p-access', group: 'Go to', label: 'Access', icon: Lock, run: () => go('/access') },
     { id: 'p-settings', group: 'Go to', label: 'Settings', icon: Settings, shortcut: '⌘ ,', run: () => go('/settings/profile') },
     { id: 'p-specimen', group: 'Go to', label: 'Component specimen', icon: Shapes, run: () => go('/specimen') },
     ...ws().chats.filter((c) => !c.hidden).map((c, i) => ({ id: `c-${c.id}`, group: 'Chats', label: c.title, icon: MessagesSquare, meta: c.updated, run: () => go(`/chat/${c.id}`), searchOnly: i >= 6 })),
     ...ws().library.map((f) => ({ id: `f-${f.id}`, group: 'Files', label: f.name, icon: FileText, meta: f.folder, run: () => go(`/library/${f.id}`), searchOnly: true })),
-    ...ws().members.map((m) => ({ id: `u-${m.id}`, group: 'People', label: m.name, icon: User, meta: m.email, run: () => go(`/users/${m.id}`), searchOnly: true })),
+    ...ws().members.map((m) => ({ id: `u-${m.id}`, group: 'People', label: m.name, icon: User, meta: m.email, run: () => go(`/access/${m.id}`), searchOnly: true })),
     ...ws().workflows.map((w) => ({ id: `w-${w.id}`, group: 'Workflows', label: w.name, icon: WorkflowIcon, meta: w.trigger.label, run: () => go(`/workflows/${w.id}`), searchOnly: true })),
     ...app.vaults.filter((w) => w.id !== app.vault).map((w) => ({ id: `ws-${w.id}`, group: 'Vaults', label: `Switch to ${w.name}`, icon: Building2, run: () => switchVault(w.id), searchOnly: true }))
   ]);
@@ -90,8 +90,8 @@
         <Workflows />
       {:else if route.parts[0] === 'connectors'}
         <Connectors />
-      {:else if route.parts[0] === 'users'}
-        <UsersPage />
+      {:else if route.parts[0] === 'access'}
+        <AccessPage />
       {:else if route.parts[0] === 'settings'}
         <SettingsPage section={route.parts[1] ?? 'profile'} />
       {:else if route.parts[0] === 'specimen'}
