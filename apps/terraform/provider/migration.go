@@ -6,17 +6,15 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
 type migrationModel struct {
-	ID        types.String `tfsdk:"id"`
-	Name      types.String `tfsdk:"name"`
-	SQL       types.String `tfsdk:"sql"`
-	AllowDrop types.Bool   `tfsdk:"allow_drop"`
+	ID   types.String `tfsdk:"id"`
+	Name types.String `tfsdk:"name"`
+	SQL  types.String `tfsdk:"sql"`
 }
 
 type migrationResource struct{ configured }
@@ -31,9 +29,7 @@ func (r *migrationResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 		Attributes: map[string]schema.Attribute{
 			"id":   schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}, Description: "The revision it made."},
 			"name": schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}, Description: "Unique, like 2026_11_house; a migration with a name that already ran is skipped."},
-			"sql":  schema.StringAttribute{Required: true, Description: "CREATE, ALTER, DROP and COMMENT ON statements, run in one transaction."},
-			"allow_drop": schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false),
-				Description: "Let it drop tables and columns, which deletes their data."},
+			"sql":  schema.StringAttribute{Required: true, Description: "CREATE, ALTER, DROP and COMMENT ON statements, run in one transaction. Dropping a table or column deletes its data."},
 		},
 	}
 }
@@ -46,8 +42,15 @@ func (r *migrationResource) Create(ctx context.Context, req resource.CreateReque
 	}
 	var out struct {
 		Revision string `json:"revision"`
+		Confirm  string `json:"confirm"`
 	}
-	if err := r.c.do(ctx, "POST", "/api/schema/migrate", map[string]any{"sql": m.SQL.ValueString(), "name": m.Name.ValueString(), "allow_drop": m.AllowDrop.ValueBool()}, &out); err != nil {
+	body := map[string]any{"sql": m.SQL.ValueString(), "name": m.Name.ValueString()}
+	err := r.c.do(ctx, "POST", "/api/schema/migrate", body, &out)
+	if err == nil && out.Confirm != "" {
+		body["confirm"] = out.Confirm
+		err = r.c.do(ctx, "POST", "/api/schema/migrate", body, &out)
+	}
+	if err != nil {
 		resp.Diagnostics.AddError("The migration failed", err.Error())
 		return
 	}
@@ -78,11 +81,11 @@ func (r *migrationResource) Update(ctx context.Context, req resource.UpdateReque
 		resp.Diagnostics.AddAttributeError(path.Root("sql"), "A migration runs once", "Its SQL already ran; put the change in a new archive_migration.")
 		return
 	}
-	m.AllowDrop = plan.AllowDrop
 	resp.Diagnostics.Append(resp.State.Set(ctx, m)...)
 }
 
-func (r *migrationResource) Delete(context.Context, resource.DeleteRequest, *resource.DeleteResponse) {}
+func (r *migrationResource) Delete(context.Context, resource.DeleteRequest, *resource.DeleteResponse) {
+}
 
 func (r *migrationResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("name"), req.ID)...)

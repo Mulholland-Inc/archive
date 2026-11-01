@@ -3,6 +3,8 @@ package main
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -43,13 +45,15 @@ Usage:
                                      as MCP's run tool does, and print {result, logs, error}
   archive run -docs                  print the SDK documentation, with an interface per table
 
-  archive schema show                print the DDL of every table and view, generated from the database
-  archive schema migrate <file.sql|dir|-> [-allow-drop]
-                                     run DDL in one transaction; Archive adds to each table the id,
-                                     access, created_at, updated_at, search and row-level security
-                                     it leaves out; dropping a table or column needs -allow-drop.
-                                     A file runs once, by its name; a dir runs its *.sql files that
-                                     have not run, in name order
+  archive schema show [name]         print the DDL of every table and view, or of one, generated from
+                                     the database
+  archive schema migrate <file.sql|dir|-> [-confirm hash]
+                                     dry-run DDL in one transaction and print what it runs, what it
+                                     changes, what data it drops and a confirm; -confirm with that
+                                     confirm runs it. Archive adds to each table the id, access,
+                                     created_at, updated_at, search and row-level security it leaves
+                                     out. A file runs once, by its name; a dir runs its *.sql files
+                                     that have not run, in name order
   archive schema revisions           list the migrations, newest first
 
   archive file add <path>... [-access group]
@@ -164,7 +168,7 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	fs := flag.NewFlagSet("archive "+cmd, flag.ContinueOnError)
 	fs.Usage = func() { fmt.Fprint(fs.Output(), cliUsage) }
 	addr := fs.String("addr", ":8080", "listen address (serve)")
-	allowDrop := fs.Bool("allow-drop", false, "let a migration drop tables and columns (schema)")
+	confirm := fs.String("confirm", "", "run the migration whose dry run printed this confirm (schema migrate)")
 	typ := fs.String("type", "", "only this table, or file (search)")
 	limit := fs.Int("limit", 100, "page size (list)")
 	after := fs.String("after", "", "list objects after this id (list)")
@@ -259,7 +263,7 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 		}
 		return nil
 	case "schema":
-		return cliSchema(ctx, a, pos, *allowDrop, stdin, stdout, out)
+		return cliSchema(ctx, a, pos, *confirm, stdin, stdout, out)
 	case "file":
 		return cliFile(ctx, a, pos, *access, *output, *limit, *after, stdout, out)
 	case "user", "token":
@@ -466,14 +470,21 @@ func cliJSON(w io.Writer, v any) error {
 	return enc.Encode(v)
 }
 
-func cliSchema(ctx context.Context, a *Archive, pos []string, allowDrop bool, stdin io.Reader, stdout io.Writer, out func(any, error) error) error {
+func cliSchema(ctx context.Context, a *Archive, pos []string, confirm string, stdin io.Reader, stdout io.Writer, out func(any, error) error) error {
 	switch {
 	case pos[0] == "show":
 		ddl, err := a.st.Schema(ctx)
 		if err != nil {
 			return err
 		}
-		for _, name := range specKeys(ddl) {
+		names := specKeys(ddl)
+		if len(pos) > 1 {
+			if ddl[pos[1]] == "" {
+				return fmt.Errorf("no table, view, type or function %q; there are %s: %w", pos[1], strings.Join(names, ", "), ErrNotFound)
+			}
+			names = pos[1:2]
+		}
+		for _, name := range names {
 			fmt.Fprintf(stdout, "-- %s\n%s\n", name, strings.TrimRight(ddl[name], "\n"))
 		}
 		return nil
@@ -484,7 +495,11 @@ func cliSchema(ctx context.Context, a *Archive, pos []string, allowDrop bool, st
 		if err != nil {
 			return err
 		}
-		return out(a.Migrate(ctx, string(b), "", allowDrop))
+		ms, err := cliMigrate(ctx, a, [][2]string{{string(b), ""}}, confirm)
+		if err != nil {
+			return err
+		}
+		return out(ms[0], nil)
 	case pos[0] == "migrate" && len(pos) > 1:
 		paths := []string{pos[1]}
 		if st, err := os.Stat(pos[1]); err != nil {
@@ -495,21 +510,59 @@ func cliSchema(ctx context.Context, a *Archive, pos []string, allowDrop bool, st
 			}
 			slices.Sort(paths)
 		}
-		ran := []*SchemaMigration{}
+		var srcs [][2]string
 		for _, p := range paths {
 			b, err := os.ReadFile(p)
 			if err != nil {
 				return err
 			}
-			m, err := a.Migrate(ctx, string(b), filepath.Base(p), allowDrop)
-			if err != nil {
-				return fmt.Errorf("%s: %w", filepath.Base(p), err)
-			}
-			ran = append(ran, m)
+			srcs = append(srcs, [2]string{string(b), filepath.Base(p)})
 		}
-		return out(ran, nil)
+		return out(cliMigrate(ctx, a, srcs, confirm))
 	}
 	return cliErrUsage
+}
+
+// cliMigrate runs the migrations, each named or not, one after the other in one transaction, so each sees the
+// ones before, and rolls them all back unless confirm is theirs: one migration's own, or a hash of several.
+func cliMigrate(ctx context.Context, a *Archive, srcs [][2]string, confirm string) ([]*SchemaMigration, error) {
+	ms, sums, sum := []*SchemaMigration{}, []string{}, ""
+	errDry := errors.New("dry run")
+	err := a.as(ctx, func(ctx context.Context) error {
+		for _, src := range srcs {
+			m, err := a.Migrate(ctx, src[0], src[1], "")
+			if err == nil && !m.Skipped {
+				sums = append(sums, m.Confirm)
+				m, err = a.Migrate(ctx, src[0], src[1], m.Confirm)
+			}
+			if err != nil && src[1] != "" {
+				return fmt.Errorf("%s: %w", src[1], err)
+			} else if err != nil {
+				return err
+			}
+			ms = append(ms, m)
+		}
+		if sum = strings.Join(sums, ""); len(sums) > 1 {
+			h := sha256.Sum256([]byte(strings.Join(sums, "\n")))
+			sum = hex.EncodeToString(h[:])
+		}
+		if sum == "" || sum == confirm {
+			return nil
+		}
+		return errDry
+	})
+	if !errors.Is(err, errDry) {
+		return ms, err
+	}
+	if confirm != "" {
+		return nil, fmt.Errorf("the schema or the migrations changed since their dry run; dry-run them again for a new confirm: %w", ErrConflict)
+	}
+	for _, m := range ms {
+		if !m.Skipped {
+			m.Applied, m.Revision, m.Confirm = false, nil, sum
+		}
+	}
+	return ms, nil
 }
 
 func cliServe(ctx context.Context, h *Hub, a *Archive, addr string) error {
@@ -678,19 +731,18 @@ func httpHandler(a *Archive) http.Handler {
 		return ok(a.Catalog(), nil)
 	})
 	handle("GET /api/schema", func(r *http.Request) (int, any, error) {
-		ddl, err := a.Schema(r.Context())
-		return ok(map[string]any{"ddl": ddl}, err)
+		return ok(a.Schema(r.Context(), r.URL.Query().Get("name")))
 	})
 	handle("POST /api/schema/migrate", func(r *http.Request) (int, any, error) {
 		var body struct {
-			SQL       string `json:"sql"`
-			Name      string `json:"name"`
-			AllowDrop bool   `json:"allow_drop"`
+			SQL     string `json:"sql"`
+			Name    string `json:"name"`
+			Confirm string `json:"confirm"`
 		}
 		if err := httpDecode(r, &body); err != nil {
 			return 0, nil, err
 		}
-		return ok(a.Migrate(r.Context(), body.SQL, body.Name, body.AllowDrop))
+		return ok(a.Migrate(r.Context(), body.SQL, body.Name, body.Confirm))
 	})
 	handle("GET /api/schema/revisions", func(r *http.Request) (int, any, error) {
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))

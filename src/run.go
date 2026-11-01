@@ -67,6 +67,7 @@ type runTable struct {
 	Layout      string      `json:"layout,omitempty"`
 	By          string      `json:"by,omitempty"`
 	Columns     []runColumn `json:"columns"`
+	DDL         string      `json:"ddl"`
 }
 
 type runColumn struct {
@@ -640,7 +641,7 @@ func (r *runner) promise(v any, err error) goja.Value {
 	return r.vm.ToValue(p)
 }
 
-var runReads = map[string]bool{"schema": true, "revisions": true, "list": true, "get": true, "search": true, "tables": true, "files": true, "file": true, "workflows": true, "runs": true}
+var runReads = map[string]bool{"query": true, "schema": true, "revisions": true, "list": true, "get": true, "search": true, "files": true, "file": true, "workflows": true, "runs": true}
 
 func (r *runner) call(read bool, f func(ctx context.Context) (any, error)) (any, error) {
 	t, ok := r.ctx.Value(storeTxKey{}).(storeTx)
@@ -661,20 +662,20 @@ func (r *runner) call(read bool, f func(ctx context.Context) (any, error)) (any,
 
 func (r *runner) sdk() {
 	a, o := r.a, r.vm.NewObject()
-	r.def(o, "sql", func(ctx context.Context, call goja.FunctionCall) (any, error) {
-		q, err := r.str(call, 0, "sql", "query")
+	r.def(o, "query", func(ctx context.Context, call goja.FunctionCall) (any, error) {
+		q, err := r.str(call, 0, "query", "sql")
 		if err != nil {
 			return nil, err
 		}
 		params := make([]any, 0, len(call.Arguments))
 		for i := 1; i < len(call.Arguments); i++ {
 			var p any
-			if err := r.arg(call, i, "sql", fmt.Sprintf("param $%d", i), &p); err != nil {
+			if err := r.arg(call, i, "query", fmt.Sprintf("param $%d", i), &p); err != nil {
 				return nil, err
 			}
 			params = append(params, runParam(p))
 		}
-		return a.runSQL(ctx, q, params)
+		return a.runQuery(ctx, q, params)
 	})
 	r.def(o, "list", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		table, err := r.str(call, 0, "list", "table")
@@ -790,7 +791,14 @@ func (r *runner) sdk() {
 		return a.Search(ctx, text, SearchFilter{Type: opts.Type, From: opts.From, To: opts.To, Limit: opts.Limit})
 	})
 	r.def(o, "schema", func(ctx context.Context, call goja.FunctionCall) (any, error) {
-		return a.Schema(ctx)
+		name := ""
+		if v := call.Argument(0); !goja.IsUndefined(v) && !goja.IsNull(v) {
+			var err error
+			if name, err = r.str(call, 0, "schema", "name"); err != nil {
+				return nil, err
+			}
+		}
+		return a.Schema(ctx, name)
 	})
 	r.def(o, "migrate", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		sql, err := r.str(call, 0, "migrate", "sql")
@@ -798,12 +806,12 @@ func (r *runner) sdk() {
 			return nil, err
 		}
 		var opts struct {
-			AllowDrop bool `json:"allowDrop"`
+			Confirm string `json:"confirm"`
 		}
 		if err := r.arg(call, 1, "migrate", "opts", &opts); err != nil {
 			return nil, err
 		}
-		return a.Migrate(ctx, sql, "", opts.AllowDrop)
+		return a.Migrate(ctx, sql, "", opts.Confirm)
 	})
 	r.def(o, "revisions", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		var opts struct {
@@ -813,9 +821,6 @@ func (r *runner) sdk() {
 			return nil, err
 		}
 		return a.SchemaRevisions(ctx, opts.Limit)
-	})
-	r.def(o, "tables", func(ctx context.Context, call goja.FunctionCall) (any, error) {
-		return runTables(a.catalog(ctx)), nil
 	})
 	r.def(o, "files", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		var opts struct {
@@ -889,17 +894,34 @@ func runParam(v any) any {
 	return v
 }
 
-func (a *Archive) runSQL(ctx context.Context, query string, params []any) ([]map[string]any, error) {
+// runQuery runs one statement as the user, under row-level security, in a read-only savepoint that it rolls
+// back, so Postgres refuses any write.
+func (a *Archive) runQuery(ctx context.Context, query string, params []any) ([]map[string]any, error) {
 	q := strings.TrimRightFunc(strings.TrimSpace(query), func(r rune) bool { return r == ';' || unicode.IsSpace(r) })
+	fail := func(err error) error {
+		var pe *pgconn.PgError
+		if errors.As(err, &pe) && pe.Code == "25006" {
+			return fmt.Errorf("%s: archive.query only reads; change rows with archive.create, archive.update and archive.delete, and the schema with archive.migrate: %w", pe.Message, ErrForbidden)
+		}
+		return &runQueryErr{err, q}
+	}
 	return coreDo(a, ctx, func(ctx context.Context) ([]map[string]any, error) {
 		t, _ := ctx.Value(storeTxKey{}).(storeTx)
-		sp, err := t.tx.Begin(ctx)
+		ro, err := t.tx.Begin(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer ro.Rollback(context.WithoutCancel(ctx))
+		if err := generated.New(ro).SetLocal(ctx, "transaction_read_only", "on"); err != nil {
+			return nil, err
+		}
+		sp, err := ro.Begin(ctx)
 		if err != nil {
 			return nil, err
 		}
 		rows, err := storeRows(context.WithValue(ctx, storeTxKey{}, storeTx{sp, t.role, t.after, t.sch}), a.st, runWrap+q+"\n) SELECT to_jsonb(q) FROM q", params...)
 		if err == nil {
-			return rows, sp.Commit(ctx)
+			return rows, nil
 		}
 		sp.Rollback(ctx)
 		var pe *pgconn.PgError
@@ -909,11 +931,11 @@ func (a *Archive) runSQL(ctx context.Context, query string, params []any) ([]map
 			} else if pe != nil {
 				pe.Position = 0
 			}
-			return nil, &runQueryErr{err, q}
+			return nil, fail(err)
 		}
-		res, err := t.tx.Query(ctx, q, append([]any{pgx.QueryResultFormats{pgx.TextFormatCode}}, params...)...)
+		res, err := ro.Query(ctx, q, append([]any{pgx.QueryResultFormats{pgx.TextFormatCode}}, params...)...)
 		if err != nil {
-			return nil, &runQueryErr{err, q}
+			return nil, fail(err)
 		}
 		defer res.Close()
 		out := []map[string]any{}
@@ -929,7 +951,7 @@ func (a *Archive) runSQL(ctx context.Context, query string, params []any) ([]map
 			out = append(out, m)
 		}
 		if err := res.Err(); err != nil {
-			return nil, &runQueryErr{err, q}
+			return nil, fail(err)
 		}
 		return out, nil
 	})
@@ -974,7 +996,7 @@ func (a *Archive) RunDocs(ctx context.Context) string {
 	return strings.ReplaceAll(runSDK, "{timeout}", runTimeout.String()) + "\n" + runTypes(a.Catalog())
 }
 
-var runStatic = []string{"Base", "Row", "Hit", "Migration", "Table", "StoredFile", "Tables", "FetchResponse", "RunResult", "BrowseResult", "Deployed", "WorkflowRun",
+var runStatic = []string{"Base", "Row", "Hit", "Migration", "SchemaChange", "Table", "StoredFile", "Tables", "FetchResponse", "RunResult", "BrowseResult", "Deployed", "WorkflowRun",
 	"Money", "Timestamp", "Time", "Interval", "Address", "Name", "Postcode", "Geo", "Quantity"}
 
 func runPascal(s string) string {

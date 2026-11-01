@@ -374,17 +374,39 @@ func (a *Archive) Delete(ctx context.Context, typ string, id uuid.UUID) error {
 	})
 }
 
-// Schema is the DDL of the tables and views as the transaction in ctx sees them, by name.
-func (a *Archive) Schema(ctx context.Context) (map[string]string, error) {
+// Schema is each table and view of the public schema as the transaction in ctx sees it, with its columns and
+// DDL; with a name, only that one.
+func (a *Archive) Schema(ctx context.Context, name string) (any, error) {
 	if ActorFrom(ctx) == nil {
 		return nil, fmt.Errorf("not signed in: %w", ErrUnauthorized)
 	}
-	return a.st.Schema(ctx)
+	ddl, err := a.st.Schema(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cat := a.catalog(ctx)
+	out, names := []runTable{}, []string{}
+	for _, t := range runTables(cat) {
+		if cat.Tables[t.Name].Schema != "public" {
+			continue
+		}
+		if names = append(names, t.Name); name == "" || t.Name == name {
+			t.DDL = ddl[t.Name]
+			out = append(out, t)
+		}
+	}
+	switch {
+	case name == "":
+		return out, nil
+	case len(out) == 1:
+		return out[0], nil
+	}
+	return nil, fmt.Errorf("no table or view %q; there are %s: %w", name, strings.Join(names, ", "), ErrNotFound)
 }
 
-// Migrate runs a migration in the transaction in ctx or one of its own: a run that migrates and then fails
-// changes nothing. A named migration runs once.
-func (a *Archive) Migrate(ctx context.Context, sql, name string, allowDrop bool) (*SchemaMigration, error) {
+// Migrate dry-runs a migration, or with its dry run's confirm runs it, in the transaction in ctx or one of its
+// own: a run that migrates and then fails changes nothing. A named migration runs once.
+func (a *Archive) Migrate(ctx context.Context, sql, name, confirm string) (*SchemaMigration, error) {
 	ac := ActorFrom(ctx)
 	if ac == nil {
 		return nil, fmt.Errorf("not signed in: %w", ErrUnauthorized)
@@ -398,8 +420,8 @@ func (a *Archive) Migrate(ctx context.Context, sql, name string, allowDrop bool)
 	}
 	var m *SchemaMigration
 	err := a.as(ctx, func(ctx context.Context) (err error) {
-		m, err = a.st.Migrate(ctx, sql, name, author, allowDrop)
-		if err == nil && !m.Skipped {
+		m, err = a.st.Migrate(ctx, sql, name, author, confirm)
+		if err == nil && m.Applied {
 			storeAfter(ctx, func() { a.reload(context.WithoutCancel(ctx)) })
 		}
 		return err
