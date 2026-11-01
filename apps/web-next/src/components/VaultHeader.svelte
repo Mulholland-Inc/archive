@@ -23,12 +23,12 @@
     width: 100%;
     min-width: 0;
     min-height: var(--vault-header);
-    padding: var(--space-2) var(--space-3);
+    padding: var(--space-3) var(--space-3);
   }
 
   .collapsed {
     justify-content: center;
-    padding: var(--space-2) var(--space-0);
+    padding: var(--space-3) var(--space-0);
     gap: var(--space-0);
   }
 
