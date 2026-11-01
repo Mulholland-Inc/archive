@@ -169,14 +169,6 @@ func (a *Archive) workflowCheck(name, src string) (string, workflowOn, error) {
 	return on, w, err
 }
 
-func workflowUser(ctx context.Context) (*Actor, error) {
-	ac := ActorFrom(ctx)
-	if ac == nil {
-		return nil, fmt.Errorf("not signed in: %w", ErrUnauthorized)
-	}
-	return ac, nil
-}
-
 func (a *Archive) workflowOut(w generated.ArchiveWorkflow) Workflow {
 	out := Workflow{Name: w.Name, On: w.Trigger}
 	if on, err := a.workflowParse(w.Trigger); err == nil {
@@ -191,7 +183,7 @@ func (a *Archive) workflowOut(w generated.ArchiveWorkflow) Workflow {
 }
 
 func (a *Archive) Deploy(ctx context.Context, files map[string]string) (*WorkflowDeploy, error) {
-	ac, err := workflowUser(ctx)
+	ac, err := signedIn(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +252,7 @@ func workflowToken() string {
 }
 
 func (a *Archive) workflowRows(ctx context.Context) ([]generated.ArchiveWorkflow, error) {
-	ac, err := workflowUser(ctx)
+	ac, err := signedIn(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -281,7 +273,7 @@ func (a *Archive) WorkflowFiles(ctx context.Context) (map[string]string, error) 
 }
 
 func (a *Archive) Workflows(ctx context.Context) ([]Workflow, error) {
-	ac, err := workflowUser(ctx)
+	ac, err := signedIn(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -310,7 +302,7 @@ func (a *Archive) Workflows(ctx context.Context) ([]Workflow, error) {
 }
 
 func (a *Archive) workflow(ctx context.Context, name string) (generated.ArchiveWorkflow, error) {
-	ac, err := workflowUser(ctx)
+	ac, err := signedIn(ctx)
 	if err != nil {
 		return generated.ArchiveWorkflow{}, err
 	}

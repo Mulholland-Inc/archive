@@ -1002,8 +1002,8 @@ func (h *Hub) createWorkspace(ctx context.Context, name, owner string) (generate
 }
 
 func (a *Archive) Info(ctx context.Context) (*Workspace, error) {
-	if ActorFrom(ctx) == nil {
-		return nil, fmt.Errorf("not signed in: %w", ErrUnauthorized)
+	if _, err := signedIn(ctx); err != nil {
+		return nil, err
 	}
 	row, err := a.hub.q().WorkspaceByID(ctx, a.ws.ID)
 	if err != nil {

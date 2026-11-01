@@ -40,9 +40,9 @@ type Archive struct {
 }
 
 func (a *Archive) as(ctx context.Context, fn func(context.Context) error) error {
-	ac := ActorFrom(ctx)
-	if ac == nil {
-		return fmt.Errorf("not signed in: %w", ErrUnauthorized)
+	ac, err := signedIn(ctx)
+	if err != nil {
+		return err
 	}
 	if t, ok := ctx.Value(storeTxKey{}).(storeTx); ok && t.role == ac.Role {
 		return fn(ctx)
@@ -358,16 +358,16 @@ func (a *Archive) Delete(ctx context.Context, typ string, id uuid.UUID) error {
 }
 
 func (a *Archive) SchemaFiles(ctx context.Context) (map[string]string, error) {
-	if ActorFrom(ctx) == nil {
-		return nil, fmt.Errorf("not signed in: %w", ErrUnauthorized)
+	if _, err := signedIn(ctx); err != nil {
+		return nil, err
 	}
 	return a.st.SchemaFiles(ctx)
 }
 
 func (a *Archive) schemaAdmin(ctx context.Context) error {
-	ac := ActorFrom(ctx)
-	if ac == nil {
-		return fmt.Errorf("not signed in: %w", ErrUnauthorized)
+	ac, err := signedIn(ctx)
+	if err != nil {
+		return err
 	}
 	if !a.owner(ctx, ac.Role) {
 		return fmt.Errorf("only owners change the schema: %w", ErrForbidden)

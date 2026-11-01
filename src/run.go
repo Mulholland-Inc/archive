@@ -134,8 +134,8 @@ func (a *Archive) Run(ctx context.Context, code string) (*RunOutput, error) {
 }
 
 func (a *Archive) run(ctx context.Context, code string, input json.RawMessage) (*RunOutput, time.Time, error) {
-	if ActorFrom(ctx) == nil {
-		return nil, time.Time{}, fmt.Errorf("not signed in: %w", ErrUnauthorized)
+	if _, err := signedIn(ctx); err != nil {
+		return nil, time.Time{}, err
 	}
 	free, err := a.slot(ctx)
 	if err != nil {

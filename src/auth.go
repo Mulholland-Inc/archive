@@ -161,10 +161,17 @@ func (a *Archive) owner(ctx context.Context, role string) bool {
 	return a.has(ctx, role, a.prefix+"_owner")
 }
 
+func signedIn(ctx context.Context) (*Actor, error) {
+	if ac := ActorFrom(ctx); ac != nil {
+		return ac, nil
+	}
+	return nil, fmt.Errorf("not signed in: %w", ErrUnauthorized)
+}
+
 func authUser(ctx context.Context) (*Actor, error) {
-	ac := ActorFrom(ctx)
-	if ac == nil {
-		return nil, fmt.Errorf("not signed in: %w", ErrUnauthorized)
+	ac, err := signedIn(ctx)
+	if err != nil {
+		return nil, err
 	}
 	if ac.Role != ac.UserRole {
 		return nil, fmt.Errorf("a viewer-only token cannot manage tokens or workspaces: %w", ErrForbidden)
