@@ -1,7 +1,12 @@
 import { mount } from 'svelte';
-import '#kit/tokens.css';
-import '#kit/ui.css';
-import './base.css';
+import '@fontsource-variable/inter';
+import '@fontsource-variable/inter/wght-italic.css';
+import '@fontsource-variable/eb-garamond';
+import '@fontsource-variable/eb-garamond/wght-italic.css';
+import './styles/tokens.css';
+import './styles/base.css';
+import './styles/bots.css';
+import './lib/theme.svelte.js';
 import App from './App.svelte';
 
-mount(App, { target: document.getElementById('app') });
+export default mount(App, { target: document.getElementById('app') });
