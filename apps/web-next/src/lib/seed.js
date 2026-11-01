@@ -1,6 +1,7 @@
 import { chats, conversations, library, members, groups, me } from './data.js';
 import { workflowSeed } from './workflows.js';
 import { connectorsFor } from './connectors.js';
+import { schemaFor } from './schema.js';
 
 const pick = (list, ids) => list.filter((x) => ids.includes(x.id));
 
@@ -67,6 +68,7 @@ function vault(base) {
     workflows: [],
     members: [{ id: `m-${base.id}`, name: me.name, email: me.email, role: 'owner', groups: [], active: 'Now', status: 'active', tone: me.tone }],
     groups: [],
+    schema: schemaFor(base.id),
     ...base,
     connectors: connectorsFor(base.id)
   };

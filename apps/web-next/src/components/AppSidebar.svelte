@@ -1,5 +1,5 @@
 <script>
-  import { PinOff, Plus, Search, MessagesSquare, Library, Workflow, Lock } from '@lucide/svelte';
+  import { PinOff, Plus, Search, MessagesSquare, Library, Database, Workflow, Lock } from '@lucide/svelte';
   import Sidebar from './Sidebar.svelte';
   import SidebarItem from './SidebarItem.svelte';
   import SidebarSection from './SidebarSection.svelte';
@@ -43,6 +43,7 @@
   <SidebarSection>
     <SidebarItem icon={MessagesSquare} label="Chats" href="#/chats" active={active('/chats')} />
     <SidebarItem icon={Library} label="Library" href="#/library" active={active('/library')} />
+    <SidebarItem icon={Database} label="Database" href="#/database" active={active('/database')} />
     <SidebarItem icon={Workflow} label="Workflows" href="#/workflows" active={active('/workflows')} badge={running ? String(running) : undefined} />
     <SidebarItem icon={Lock} label="Access" href="#/access" active={active('/access')} />
   </SidebarSection>

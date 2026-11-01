@@ -1,0 +1,25 @@
+<script>
+  let { icon, size = 'lg' } = $props();
+  const src = $derived(`${import.meta.env.BASE_URL}types/type-${icon}.webp`);
+</script>
+
+<img class={['art', size]} {src} alt="" draggable="false" />
+
+<style>
+  .art {
+    display: block;
+    flex: none;
+    object-fit: contain;
+    user-select: none;
+  }
+
+  .lg {
+    width: 72%;
+    height: 72%;
+  }
+
+  .sm {
+    width: var(--control-xl);
+    height: var(--control-xl);
+  }
+</style>

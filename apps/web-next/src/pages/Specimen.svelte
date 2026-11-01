@@ -53,6 +53,10 @@
   import Divider from '../components/Divider.svelte';
   import ProgressBar from '../components/ProgressBar.svelte';
   import FileTile from '../components/FileTile.svelte';
+  import TypeTile from '../components/TypeTile.svelte';
+  import TypeArt from '../components/TypeArt.svelte';
+  import TypeDetail from '../components/TypeDetail.svelte';
+  import { schemaFor } from '../lib/schema.js';
   import Attachment from '../components/Attachment.svelte';
   import Composer from '../components/Composer.svelte';
   import Message from '../components/Message.svelte';
@@ -91,6 +95,7 @@
   import { theme, setTheme } from '../lib/theme.svelte.js';
   import { toast } from '../lib/toast.svelte.js';
   import { app } from '../lib/app.svelte.js';
+  const familySchema = schemaFor('okafor');
 
   const sections = [
     ['color', 'Color'], ['type', 'Typography'], ['space', 'Space and shape'], ['motion', 'Motion'],
@@ -470,6 +475,17 @@
           <Grid min="tile" gap="2">
             {#each [library[0], library[1], library[2], library[4], library[5]] as f (f.id)}<FileTile file={f} />{/each}
           </Grid>
+        </SpecimenBlock>
+        <SpecimenBlock title="Type tiles">
+          <Grid min="tile" gap="2">
+            {#each familySchema.slice(0, 4) as t (t.id)}<TypeTile type={t} />{/each}
+          </Grid>
+        </SpecimenBlock>
+        <SpecimenBlock title="Type art">
+          {#each familySchema as t (t.id)}<TypeArt icon={t.icon} size="sm" />{/each}
+        </SpecimenBlock>
+        <SpecimenBlock title="Type detail" column>
+          <TypeDetail type={familySchema[0]} types={familySchema} />
         </SpecimenBlock>
         <SpecimenBlock title="Attachments">
           <Attachment name="adaeze-letter-03.jpg" kind="image" size="2.4 MB" tone={4} />
