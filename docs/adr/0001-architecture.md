@@ -94,9 +94,9 @@ How a migration runs:
 **Archive's own schema** (`src/archive.sql`) is embedded in the binary. The same file holds Archive's sqlc queries after the DDL; sqlc generates `src/generated` from it, and only the part before the first `-- name:` line is the schema. At startup, under the same advisory lock, Archive does three things:
 - it creates its Postgres roles;
 - it drops tables of earlier versions;
-- if the hash of that schema differs from the last revision, it diffs the `archive` schema in a temp database loaded from `archive.sql` against the live one with pg-schema-diff and runs the plan.
+- if the hash of that schema differs from the last revision, it applies `archive.sql` to a scratch database on the same instance (a random name, dropped after, even on error), reads both with the snapshot reader in `src/pgschema.go`, and runs `pgPlan`'s difference in one transaction.
 
-The plan only touches Archive's own objects, and it is never allowed to delete data at startup: when it would, Archive says so and leaves the schema as it is. Instances starting at once take turns on the lock; the first migrates and the rest find nothing to do.
+The plan only touches Archive's own objects (the `archive` schema and the default privileges on `public`), and handles only what `archive.sql` uses: it creates what is missing, alters columns, domains (default, `NOT NULL`, constraints) and composite types, adds enum values, replaces functions and views, recreates changed constraints, indexes, triggers and policies, and sets comments and grants. It never drops and recreates a type or domain, since user tables use them, and refuses anything else with an error naming the object. It is never allowed to delete data at startup: a dropped table, column or attribute, or a type change that is not a safe widening, makes Archive say so and leave the schema as it is. `TestArchiveSQLMigratesFromEveryVersion` migrates every version of `archive.sql` in `src/testdata/archive_sql` to the next, and the first to the last, and checks the result matches a fresh apply; add each new version there. Instances starting at once take turns on the lock; the first migrates and the rest find nothing to do.
 
 ## Code mode
 

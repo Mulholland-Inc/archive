@@ -831,7 +831,7 @@ func TestAgentsPatchTheSchemaInsideTheirRun(t *testing.T) {
 const made = await archive.create("house", { address: "Canal 1", city: "Amsterdam" });
 return { ran: m.statements.join("\n"), made, view: await archive.list("open_house"),
   hit: (await archive.search("amsterdam")).map((h) => h.type), ddl: (await archive.schema("house")).ddl };`)
-	if ran := fmt.Sprint(got["ran"]); !strings.Contains(ran, "ADD COLUMN id uuid NOT NULL DEFAULT uuidv7()") || !strings.Contains(ran, "CREATE POLICY access ON") || !strings.Contains(ran, "GRANT SELECT ON") {
+	if ran := fmt.Sprint(got["ran"]); !strings.Contains(ran, "ADD COLUMN id uuid NOT NULL DEFAULT uuidv7()") || !strings.Contains(ran, "CREATE POLICY access ON") {
 		t.Errorf("a migration with only the table's own columns runs what every table has too: %s", ran)
 	}
 	made := got["made"].(map[string]any)

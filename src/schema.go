@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -19,8 +18,6 @@ import (
 	"github.com/Mulholland-Inc/archive/generated"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/stripe/pg-schema-diff/pkg/diff"
-	"github.com/stripe/pg-schema-diff/pkg/tempdb"
 )
 
 // SchemaMigration is a migration's report: its own statements, then what Archive added to the tables, and what
@@ -516,61 +513,90 @@ func (s *pgStore) Revisions(ctx context.Context, limit int) ([]SchemaRevision, e
 	return out, err
 }
 
-// migrate brings the archive schema to archive.sql at startup. It never deletes data: when it would, it
-// says so and leaves the schema as it is.
+// migrate brings the archive schema to archive.sql at startup: it applies the file to a scratch database and
+// runs what makes the live schema the same. It never deletes data: when it would, it says so and leaves the
+// schema as it is.
 func (s *pgStore) migrate(ctx context.Context) error {
-	conn, err := s.ddl.Conn(ctx)
+	conn, err := s.sys.Acquire(ctx)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
-	if err := generated.New(storeSQL{conn}).AdvisoryLock(ctx, storeLock); err != nil {
+	defer conn.Release()
+	q := generated.New(conn)
+	if err := q.AdvisoryLock(ctx, storeLock); err != nil {
 		return err
 	}
-	defer generated.New(storeSQL{conn}).AdvisoryUnlock(context.WithoutCancel(ctx), storeLock)
-	var plan diff.Plan
-	if err := s.withTemp(ctx, func(f tempdb.Factory, tmp *sql.DB) (err error) {
-		plan, err = diff.Generate(ctx, diff.DBSchemaSource(s.ddl), diff.DBSchemaSource(tmp), diff.WithTempDbFactory(f),
-			diff.WithIncludeSchemas("archive"), diff.WithNoConcurrentIndexOps(), diff.WithDisableCheckFunctionBodies())
-		return err
-	}); err != nil {
+	defer q.AdvisoryUnlock(context.WithoutCancel(ctx), storeLock)
+	want, err := s.scratch(ctx, s.expand(storeSchema))
+	if err != nil {
 		return fmt.Errorf("archive.sql: %w", err)
 	}
-	var drops []string
-	for _, st := range plan.Statements {
-		if slices.ContainsFunc(st.Hazards, func(h diff.MigrationHazard) bool { return h.Type == diff.MigrationHazardTypeDeletesData }) {
-			drops = append(drops, st.DDL)
+	return pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
+		lost, err := pgMigrate(ctx, tx, want, false)
+		if err != nil {
+			return fmt.Errorf("archive.sql: %w", err)
 		}
+		if len(lost) > 0 {
+			fmt.Fprintf(os.Stderr, "archive: archive.sql not applied at startup, it would delete data:\n  %s\n", strings.Join(lost, "\n  "))
+			return nil
+		}
+		return generated.New(tx).InsertRevision(ctx, s.hash())
+	})
+}
+
+// scratch is the snapshot of Archive's schema that sql makes in a new database, which it drops after.
+func (s *pgStore) scratch(ctx context.Context, sql string) (pgSchema, error) {
+	b := make([]byte, 8)
+	rand.Read(b)
+	name := "archive_scratch_" + hex.EncodeToString(b)
+	if _, err := s.sys.Exec(ctx, "CREATE DATABASE "+pgIdent(name)); err != nil {
+		return nil, err
 	}
-	if len(drops) > 0 {
-		fmt.Fprintf(os.Stderr, "archive: archive.sql not applied at startup, it would delete data:\n  %s\n", strings.Join(drops, "\n  "))
-		return nil
-	}
-	tx, err := conn.BeginTx(ctx, nil)
+	defer s.sys.Exec(context.WithoutCancel(ctx), "DROP DATABASE IF EXISTS "+pgIdent(name)+" WITH (FORCE)")
+	cfg := s.cfg.Copy()
+	cfg.Database = name
+	c, err := pgx.ConnectConfig(ctx, cfg)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer tx.Rollback()
-	q := generated.New(storeSQL{tx})
-	if err := q.SetLocal(ctx, "check_function_bodies", "off"); err != nil {
-		return err
-	}
-	for _, st := range plan.Statements {
-		if err := q.SetLocal(ctx, "statement_timeout", storeMS(max(st.Timeout, storeMinTimeout))); err != nil {
+	defer c.Close(context.WithoutCancel(ctx))
+	var sch pgSchema
+	return sch, pgx.BeginFunc(ctx, c, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, "SET LOCAL check_function_bodies = off"); err != nil {
 			return err
 		}
-		if err := q.SetLocal(ctx, "lock_timeout", storeMS(st.LockTimeout)); err != nil {
+		if _, err := tx.Exec(ctx, sql); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, st.DDL); err != nil {
-			return fmt.Errorf("archive.sql: %s: %w", st.DDL, err)
+		if _, err := tx.Exec(ctx, "SET LOCAL search_path = ''"); err != nil {
+			return err
+		}
+		sch, err = pgRead(ctx, tx, "archive", "public")
+		sch = sch.ours()
+		return err
+	})
+}
+
+// pgMigrate runs in tx what brings Archive's schema to want, unless that would lose data: then it returns
+// what and runs nothing. With drop, which only tests use, it runs it all.
+func pgMigrate(ctx context.Context, tx pgx.Tx, want pgSchema, drop bool) ([]string, error) {
+	for _, st := range []string{"SET LOCAL search_path = ''", "SET LOCAL check_function_bodies = off", "SET LOCAL lock_timeout = '1min'", "SET LOCAL statement_timeout = 0"} {
+		if _, err := tx.Exec(ctx, st); err != nil {
+			return nil, err
 		}
 	}
-	if err := q.SetLocal(ctx, "statement_timeout", "0"); err != nil {
-		return err
+	live, err := pgRead(ctx, tx, "archive", "public")
+	if err != nil {
+		return nil, err
 	}
-	if err := q.InsertRevision(ctx, s.hash()); err != nil {
-		return err
+	stmts, lost, err := pgPlan(live.ours(), want, drop)
+	if err != nil || len(lost) > 0 && !drop {
+		return lost, err
 	}
-	return tx.Commit()
+	for _, st := range stmts {
+		if _, err := tx.Exec(ctx, st); err != nil {
+			return nil, fmt.Errorf("%s: %w", st, err)
+		}
+	}
+	return lost, nil
 }
