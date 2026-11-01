@@ -1,98 +1,156 @@
 <script>
-  import { SearchX, ChevronDown } from '@lucide/svelte';
-  import Stack from './Stack.svelte';
-  import Grid from './Grid.svelte';
+  import { SearchX, ChevronDown, Plus, ListFilter, ArrowRight, Globe, Code } from '@lucide/svelte';
+  import SettingsPane from './SettingsPane.svelte';
+  import SegmentedControl from './SegmentedControl.svelte';
   import SearchField from './SearchField.svelte';
   import ConnectorCard from './ConnectorCard.svelte';
   import EmptyState from './EmptyState.svelte';
   import Chip from './Chip.svelte';
   import Button from './Button.svelte';
+  import IconButton from './IconButton.svelte';
+  import Icon from './Icon.svelte';
   import Menu from './Menu.svelte';
   import MenuItem from './MenuItem.svelte';
   import MenuLabel from './MenuLabel.svelte';
   import MenuSeparator from './MenuSeparator.svelte';
   import { ws, connect } from '../lib/app.svelte.js';
+  import { toast } from '../lib/toast.svelte.js';
 
-  let { onopen } = $props();
+  let { onopen, onback, backNarrow = false } = $props();
 
+  let tab = $state(ws().connectors.some((c) => c.connected) ? 'yours' : 'discover');
   let query = $state('');
-  let statuses = $state([]);
   let categories = $state([]);
-  let sort = $state('popular');
+  let all = $state(false);
 
-  const statusOptions = [
-    { value: 'connected', label: 'Connected' },
-    { value: 'available', label: 'Not connected' }
+  const views = [
+    { value: 'yours', label: 'Yours' },
+    { value: 'discover', label: 'Discover' }
   ];
-  const sorts = [
-    { value: 'popular', label: 'Popular' },
-    { value: 'name', label: 'Name' },
-    { value: 'connected', label: 'Connected first' }
-  ];
+  const top = 6;
   const allCategories = $derived([...new Set(ws().connectors.map((c) => c.category))].sort());
-  const active = $derived([...statuses.map((v) => ({ kind: 'status', value: v, label: statusOptions.find((o) => o.value === v).label })), ...categories.map((v) => ({ kind: 'category', value: v, label: v }))]);
 
-  const shown = $derived.by(() => {
+  const matches = $derived.by(() => {
     const q = query.trim().toLowerCase();
-    const list = ws().connectors.filter(
+    return ws().connectors.filter(
       (c) =>
-        (!statuses.length || statuses.includes(c.connected ? 'connected' : 'available')) &&
+        (tab === 'discover' || c.connected) &&
         (!categories.length || categories.includes(c.category)) &&
-        (!q || c.name.toLowerCase().includes(q) || c.category.toLowerCase().includes(q) || c.description.toLowerCase().includes(q))
+        (!q || [c.name, c.category, c.description, c.by].some((v) => v.toLowerCase().includes(q)))
     );
-    if (sort === 'name') return list.toSorted((a, b) => a.name.localeCompare(b.name));
-    if (sort === 'connected') return list.toSorted((a, b) => Number(b.connected) - Number(a.connected));
-    return list;
   });
+  const narrowed = $derived(Boolean(query.trim() || categories.length));
+  const capped = $derived(tab === 'discover' && !narrowed && !all && matches.length > top);
+  const shown = $derived(capped ? matches.slice(0, top) : matches);
+  const heading = $derived(narrowed ? 'Results' : tab === 'yours' ? 'Connected' : 'Top connectors');
 
   const flip = (list, value) => (list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);
-
-  function remove(filter) {
-    if (filter.kind === 'status') statuses = statuses.filter((v) => v !== filter.value);
-    else categories = categories.filter((v) => v !== filter.value);
-  }
 </script>
 
-<Stack gap="4">
-  <SearchField bind:value={query} placeholder="Search connectors" />
-  <Stack direction="row" gap="2" align="center" justify="between" wrap>
-    <Stack direction="row" gap="2" align="center" wrap>
-      {#if active.length}
-        {#each active as filter (filter.kind + filter.value)}
-          <Chip size="sm" onremove={() => remove(filter)}>{filter.label}</Chip>
-        {/each}
-      {:else}
-        <Chip size="sm">All connectors</Chip>
-      {/if}
-    </Stack>
-    <Stack direction="row" gap="2" align="center">
-      <Menu label="Filter by" placement="bottom-end">
-        {#snippet trigger(props)}<Button size="sm" iconEnd={ChevronDown} {...props}>Filter by</Button>{/snippet}
-        <MenuLabel>Status</MenuLabel>
-        {#each statusOptions as o (o.value)}
-          <MenuItem keepOpen checked={statuses.includes(o.value)} onselect={() => (statuses = flip(statuses, o.value))}>{o.label}</MenuItem>
-        {/each}
-        <MenuSeparator />
-        <MenuLabel>Category</MenuLabel>
-        {#each allCategories as c (c)}
-          <MenuItem keepOpen checked={categories.includes(c)} onselect={() => (categories = flip(categories, c))}>{c}</MenuItem>
-        {/each}
-      </Menu>
-      <Menu label="Sort by" placement="bottom-end" width="sm">
-        {#snippet trigger(props)}<Button size="sm" iconEnd={ChevronDown} {...props}>Sort by</Button>{/snippet}
-        {#each sorts as o (o.value)}
-          <MenuItem checked={sort === o.value} onselect={() => (sort = o.value)}>{o.label}</MenuItem>
-        {/each}
-      </Menu>
-    </Stack>
-  </Stack>
-  {#if shown.length}
-    <Grid columns="2" gap="3">
-      {#each shown as c (c.id)}
-        <ConnectorCard connector={c} onopen={() => onopen?.(c.id)} onconnect={() => connect(c.id)} />
+<SettingsPane title="Connectors" {onback} {backNarrow}>
+  {#snippet tabs()}
+    <SegmentedControl bind:value={tab} options={views} label="Connectors" onchange={() => (all = false)} />
+  {/snippet}
+  {#snippet tools()}
+    <div class="search"><SearchField bind:value={query} size="sm" placeholder="Search" label="Search connectors" /></div>
+    <Menu label="Filter" placement="bottom-end">
+      {#snippet trigger(props)}<IconButton icon={ListFilter} label="Filter" pressed={categories.length > 0} {...props} />{/snippet}
+      <MenuLabel>Category</MenuLabel>
+      {#each allCategories as c (c)}
+        <MenuItem keepOpen checked={categories.includes(c)} onselect={() => (categories = flip(categories, c))}>{c}</MenuItem>
       {/each}
-    </Grid>
-  {:else}
-    <EmptyState icon={SearchX} title="No connectors match" size="sm" />
-  {/if}
-</Stack>
+      {#if categories.length}
+        <MenuSeparator />
+        <MenuItem onselect={() => (categories = [])}>Clear filters</MenuItem>
+      {/if}
+    </Menu>
+    <Menu label="Add" placement="bottom-end" width="sm">
+      {#snippet trigger(props)}<Button variant="inverse" icon={Plus} iconEnd={ChevronDown} {...props}>Add</Button>{/snippet}
+      <MenuItem icon={Globe} onselect={() => { tab = 'discover'; all = true; }}>Browse connectors</MenuItem>
+      <MenuItem icon={Code} onselect={() => toast('Custom connectors are coming soon')}>Custom connector</MenuItem>
+    </Menu>
+  {/snippet}
+  <div class="list">
+    <div class="head">
+      <div class="title">
+        <h3>{heading}</h3>
+        <Chip size="sm">{matches.length}</Chip>
+      </div>
+      {#if capped}
+        <button type="button" class="more" onclick={() => (all = true)}>Show all <Icon icon={ArrowRight} size="sm" /></button>
+      {/if}
+    </div>
+    {#if shown.length}
+      <div class="grid">
+        {#each shown as c (c.id)}
+          <ConnectorCard connector={c} onopen={() => onopen?.(c.id)} onconnect={() => connect(c.id)} />
+        {/each}
+      </div>
+    {:else}
+      <EmptyState icon={SearchX} title={narrowed ? 'No connectors match' : 'No connectors yet'} size="sm" />
+    {/if}
+  </div>
+</SettingsPane>
+
+<style>
+  .list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+
+  .search {
+    flex: 1 1 var(--col-sm);
+    max-width: var(--col-lg);
+    min-width: 0;
+  }
+
+  .head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    min-height: var(--control-md);
+  }
+
+  .title {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  h3 {
+    font-size: var(--text-base);
+    font-weight: var(--weight-medium);
+  }
+
+  .more {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1-5);
+    color: var(--color-text);
+    font-size: var(--text-md);
+  }
+
+  .more:hover {
+    color: var(--color-text-secondary);
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-3);
+  }
+
+  @container (max-width: 36rem) {
+    .grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
+  @media (max-width: 56rem) {
+    .search {
+      max-width: none;
+    }
+  }
+</style>

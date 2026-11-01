@@ -395,11 +395,11 @@
           <Button onclick={() => openSettings('connectors', 'gdrive')}>Open a connector</Button>
         </SpecimenBlock>
         <SpecimenBlock title="Settings nav">
-          <SettingsNav active={settingsSection} onselect={(id) => (settingsSection = id)} items={[{ id: 'profile', label: 'Profile', icon: UserIcon }, { id: 'appearance', label: 'Appearance', icon: PaletteIcon }, { id: 'notifications', label: 'Notifications', icon: BellIcon }, { id: 'connectors', label: 'Connectors', icon: PlugIcon }]} />
+          <SettingsNav active={settingsSection} onselect={(id) => (settingsSection = id)} items={[{ id: 'profile', label: 'Profile', icon: UserIcon }, { id: 'appearance', label: 'Appearance', icon: PaletteIcon }, { id: 'notifications', label: 'Notifications', icon: BellIcon }, { id: 'connectors', label: 'Connectors', icon: PlugIcon, group: 'Customize' }, { id: 'api', label: 'API keys', icon: PlugIcon, group: 'Platform', href: '#/specimen' }]} />
         </SpecimenBlock>
         <SpecimenBlock title="Settings pane" column>
-          <Card padding="none"><SettingsPane title="Notifications" onclose={() => toast('Close pressed')}><NotificationSettings /></SettingsPane></Card>
-          <Card padding="none"><SettingsPane title={catalog[0].name} onback={() => toast('Back pressed')} onclose={() => toast('Close pressed')}><ConnectorDetail connector={{ ...catalog[0], connected: true, account: 'nora.okafor@gmail.com', lastSync: '2 min ago', items: 412 }} /></SettingsPane></Card>
+          <Card padding="none"><SettingsPane title="Notifications"><NotificationSettings /></SettingsPane></Card>
+          <Card padding="none"><SettingsPane title={catalog[0].name} onback={() => toast('Back pressed')}><ConnectorDetail connector={{ ...catalog[0], connected: true, account: 'nora.okafor@gmail.com', lastSync: '2 min ago', items: 412 }} /></SettingsPane></Card>
         </SpecimenBlock>
         <SpecimenBlock title="Dialog, toast and command palette">
           <Button onclick={() => (dialog = true)}>Open dialog</Button>

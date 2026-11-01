@@ -2,29 +2,29 @@
   import { X } from '@lucide/svelte';
   import Dialog from './Dialog.svelte';
   import SettingsNav from './SettingsNav.svelte';
-  import SettingsPane from './SettingsPane.svelte';
+  import SearchField from './SearchField.svelte';
   import IconButton from './IconButton.svelte';
-  import { uid } from '../lib/ids.js';
 
-  let { open = $bindable(false), items = [], section = $bindable(null), title, onback, onselect, children } = $props();
+  let { open = $bindable(false), items = [], section = $bindable(null), onselect, children: pane } = $props();
 
-  const titleId = uid('settings');
+  let query = $state('');
   const current = $derived(section ?? items[0]?.id);
 </script>
 
 <Dialog bind:open bare size="xl" label="Settings">
   {#snippet children({ close })}
     <div class={['layout', { listing: section === null }]}>
+      <header class="bar">
+        <span class="brand">Settings</span>
+        <IconButton icon={X} label="Close" tooltip={false} onclick={close} />
+      </header>
       <aside class="aside">
-        <div class="head">
-          <span class="brand">Settings</span>
-          <span class="close"><IconButton icon={X} label="Close" size="sm" tooltip={false} onclick={close} /></span>
+        <div class="search"><SearchField bind:value={query} size="sm" label="Search settings" /></div>
+        <div class="scroll">
+          <SettingsNav {items} {query} active={current} onselect={(id) => { if (!items.find((i) => i.id === id)?.href) section = id; onselect?.(id); }} />
         </div>
-        <SettingsNav {items} active={current} onselect={(id) => { section = id; onselect?.(id); }} />
       </aside>
-      <SettingsPane {title} {titleId} onback={onback ?? (() => (section = null))} backNarrow={!onback} onclose={close}>
-        {@render children()}
-      </SettingsPane>
+      {@render pane()}
     </div>
   {/snippet}
 </Dialog>
@@ -33,38 +33,44 @@
   .layout {
     display: grid;
     grid-template-columns: var(--settings-dialog-nav) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
     height: 100%;
     min-height: 0;
   }
 
-  .aside {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-    min-height: 0;
-    overflow-y: auto;
-    padding: var(--space-3) var(--space-2);
-    background: var(--color-surface-sunken);
-    border-inline-end: var(--border-width) solid var(--color-border-subtle);
-  }
-
-  .head {
+  .bar {
+    grid-column: 1 / -1;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    min-height: var(--control-md);
-    padding-inline: var(--space-2);
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-3) var(--space-3) var(--space-5);
+    border-block-end: var(--border-width) solid var(--color-border-subtle);
   }
 
   .brand {
     font-family: var(--font-sans);
     font-size: var(--text-base);
-    font-weight: var(--weight-semibold);
+    font-weight: var(--weight-medium);
     line-height: var(--leading-tight);
   }
 
-  .close {
-    display: none;
+  .aside {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    border-inline-end: var(--border-width) solid var(--color-border-subtle);
+  }
+
+  .search {
+    padding: var(--space-4) var(--space-3) var(--space-2);
+  }
+
+  .scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: var(--space-1) var(--space-3) var(--space-4);
   }
 
   @media (max-width: 56rem) {
@@ -72,18 +78,12 @@
       grid-template-columns: minmax(0, 1fr);
     }
 
+    .bar {
+      padding-inline-start: var(--space-4);
+    }
+
     .aside {
-      padding: var(--space-3) var(--space-2);
-      background: var(--color-surface-raised);
       border-inline-end: none;
-    }
-
-    .head {
-      padding-inline: var(--space-2) var(--space-0);
-    }
-
-    .close {
-      display: flex;
     }
 
     .layout:not(.listing) .aside,

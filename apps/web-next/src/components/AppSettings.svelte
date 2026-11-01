@@ -1,7 +1,7 @@
 <script>
-  import { User, Palette, Building2, Bell, Plug } from '@lucide/svelte';
+  import { User, Palette, Bell, Building2, Lock, Workflow, Plug, KeyRound } from '@lucide/svelte';
   import SettingsDialog from './SettingsDialog.svelte';
-  import Reveal from './Reveal.svelte';
+  import SettingsPane from './SettingsPane.svelte';
   import ProfileSettings from './ProfileSettings.svelte';
   import AppearanceSettings from './AppearanceSettings.svelte';
   import VaultSettings from './VaultSettings.svelte';
@@ -13,33 +13,43 @@
   const items = [
     { id: 'profile', label: 'Profile', icon: User },
     { id: 'appearance', label: 'Appearance', icon: Palette },
-    { id: 'vault', label: 'Vault', icon: Building2 },
     { id: 'notifications', label: 'Notifications', icon: Bell },
-    { id: 'connectors', label: 'Connectors', icon: Plug }
+    { id: 'vault', label: 'Vault', icon: Building2, group: 'Vault' },
+    { id: 'access', label: 'Access', icon: Lock, group: 'Vault', href: '#/access' },
+    { id: 'workflows', label: 'Workflows', icon: Workflow, group: 'Vault', href: '#/workflows' },
+    { id: 'connectors', label: 'Connectors', icon: Plug, group: 'Customize' },
+    { id: 'api', label: 'API keys', icon: KeyRound, group: 'Platform', href: 'https://archive.dev/docs/api', external: true }
   ];
 
   const s = app.settings;
   const current = $derived(s.section ?? 'profile');
   const connector = $derived(current === 'connectors' && s.sub ? ws().connectors.find((c) => c.id === s.sub) : null);
-  const title = $derived(connector?.name ?? items.find((i) => i.id === current)?.label);
+  const title = $derived(items.find((i) => i.id === current)?.label);
+  const back = () => (s.section = null);
+
+  function select(id) {
+    s.sub = null;
+    const item = items.find((i) => i.id === id);
+    if (item.href && !item.external) s.open = false;
+  }
 </script>
 
-<SettingsDialog bind:open={s.open} bind:section={s.section} {items} {title} onselect={() => (s.sub = null)} onback={connector ? () => (s.sub = null) : undefined}>
-  {#key current + (connector?.id ?? '')}
-    <Reveal>
-      {#if connector}
-        <ConnectorDetail {connector} />
-      {:else if current === 'appearance'}
+<SettingsDialog bind:open={s.open} bind:section={s.section} {items} onselect={select}>
+  {#if connector}
+    <SettingsPane title={connector.name} onback={() => (s.sub = null)}><ConnectorDetail {connector} /></SettingsPane>
+  {:else if current === 'connectors'}
+    <ConnectorSettings onopen={(id) => (s.sub = id)} onback={back} backNarrow />
+  {:else}
+    <SettingsPane {title} onback={back} backNarrow>
+      {#if current === 'appearance'}
         <AppearanceSettings />
       {:else if current === 'vault'}
         <VaultSettings />
       {:else if current === 'notifications'}
         <NotificationSettings />
-      {:else if current === 'connectors'}
-        <ConnectorSettings onopen={(id) => (s.sub = id)} />
       {:else}
         <ProfileSettings />
       {/if}
-    </Reveal>
-  {/key}
+    </SettingsPane>
+  {/if}
 </SettingsDialog>
