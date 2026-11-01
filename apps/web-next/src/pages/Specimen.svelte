@@ -53,10 +53,11 @@
   import Divider from '../components/Divider.svelte';
   import ProgressBar from '../components/ProgressBar.svelte';
   import FileTile from '../components/FileTile.svelte';
-  import TypeList from '../components/TypeList.svelte';
+  import SchemaGraph from '../components/SchemaGraph.svelte';
+  import SchemaNode from '../components/SchemaNode.svelte';
+  import ZoomControls from '../components/ZoomControls.svelte';
   import Art from '../components/Art.svelte';
   import ServerSettings from '../components/ServerSettings.svelte';
-  import TypeArt from '../components/TypeArt.svelte';
   import TypeDetail from '../components/TypeDetail.svelte';
   import { schemaFor } from '../lib/schema.js';
   import Attachment from '../components/Attachment.svelte';
@@ -478,11 +479,12 @@
             {#each [library[0], library[1], library[2], library[4], library[5]] as f (f.id)}<FileTile file={f} />{/each}
           </Grid>
         </SpecimenBlock>
-        <SpecimenBlock title="Type list" column>
-          <TypeList types={familySchema.slice(0, 4)} all={familySchema} />
+        <SpecimenBlock title="Schema node">
+          <SchemaNode type={familySchema[1]} names={Object.fromEntries(familySchema.map((t) => [t.id, t.name]))} />
+          <ZoomControls />
         </SpecimenBlock>
-        <SpecimenBlock title="Type art">
-          {#each familySchema as t (t.id)}<TypeArt icon={t.icon} size="sm" />{/each}
+        <SpecimenBlock title="Schema graph" column>
+          <SpecimenFrame><SchemaGraph types={familySchema} /></SpecimenFrame>
         </SpecimenBlock>
         <SpecimenBlock title="Art">
           <Art name="server" />

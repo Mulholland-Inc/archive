@@ -1,8 +1,8 @@
 <script>
-  let { title, size = 'md', sticky = false, leading, actions, children } = $props();
+  let { title, size = 'md', leading, actions, children } = $props();
 </script>
 
-<header class={['header', size, { sticky }]}>
+<header class={['header', size]}>
   {#if leading}<div class="leading">{@render leading()}</div>{/if}
   <div class="row">
     <h1>{title}</h1>
@@ -16,24 +16,6 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
-    min-width: 0;
-  }
-
-  .sticky {
-    position: sticky;
-    inset-block-start: 0;
-    z-index: var(--z-sticky);
-    padding-block: var(--space-3);
-    background: var(--color-canvas);
-  }
-
-  .sticky h1 {
-    flex: none;
-  }
-
-  .sticky .actions {
-    flex: 1;
-    justify-content: flex-end;
     min-width: 0;
   }
 

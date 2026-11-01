@@ -58,6 +58,7 @@
   --radius-full: 999px;
 
   --border-width: 1px;
+  --border-width-thick: 1.5px;
   --ring-subtle: 0 0 0 var(--border-width) var(--color-border-subtle);
   --ring: 0 0 0 var(--border-width) var(--color-border);
   --ring-strong: 0 0 0 var(--border-width) var(--color-border-strong);
@@ -120,7 +121,6 @@
   --tile-min: 13rem;
   --card-min: 17rem;
   --row-height: 3rem;
-  --col-xs: 5rem;
   --col-sm: 8rem;
   --col-md: 12rem;
   --col-lg: 18rem;
@@ -129,11 +129,9 @@
   --composer-max: 14rem;
   --code-max: 28rem;
   --type-dialog-height: 40rem;
-  --type-art: 5rem;
   --settings-art: 11rem;
-  --type-row-art: 2.5rem;
-  --type-columns: var(--type-row-art) minmax(0, 1.4fr) var(--col-xs) var(--col-xs) minmax(0, 2fr) var(--col-sm) var(--icon-md);
-  --type-columns-narrow: var(--type-row-art) minmax(0, 1fr) var(--col-xs) var(--icon-md);
+  --schema-node: 15rem;
+  --opacity-dim: 0.35;
   --fade-size: 2rem;
   --thumb-ratio: 4 / 3;
 

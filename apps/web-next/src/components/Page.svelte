@@ -1,9 +1,9 @@
 <script>
-  let { width = 'page', center = false, dense = false, children, element = $bindable() } = $props();
+  let { width = 'page', center = false, children, element = $bindable() } = $props();
 </script>
 
 <div class="scroll" bind:this={element}>
-  <div class={['inner', width, { center, dense }]}>
+  <div class={['inner', width, { center }]}>
     {@render children()}
   </div>
 </div>
@@ -30,11 +30,6 @@
   .wide { max-width: calc(var(--page-wide) + var(--space-16)); }
   .full { max-width: none; }
 
-  .dense {
-    gap: var(--space-1);
-    padding-block-start: var(--space-0);
-  }
-
   .center {
     min-height: 100%;
     justify-content: center;
@@ -43,10 +38,6 @@
   @media (max-width: 40rem) {
     .inner {
       padding: var(--space-4);
-    }
-
-    .dense {
-      padding-block-start: var(--space-0);
     }
   }
 </style>

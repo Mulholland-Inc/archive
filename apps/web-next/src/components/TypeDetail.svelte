@@ -1,12 +1,10 @@
 <script>
-  import { Check, Link, Workflow as WorkflowIcon } from '@lucide/svelte';
   import Tabs from './Tabs.svelte';
   import Stack from './Stack.svelte';
   import SettingsRow from './SettingsRow.svelte';
   import Table from './Table.svelte';
   import Badge from './Badge.svelte';
   import Chip from './Chip.svelte';
-  import Icon from './Icon.svelte';
   import Text from './Text.svelte';
   import CodeBlock from './CodeBlock.svelte';
   import { ddl, typeLabels } from '../lib/schema.js';
@@ -52,14 +50,14 @@
         <SettingsRow label="Last updated"><Text tone="secondary">{type.updated}</Text></SettingsRow>
         <SettingsRow label="Links to">
           <Stack direction="row" gap="1" wrap justify="end">
-            {#each outgoing as t (t.id)}<Chip size="sm" icon={Link} onclick={() => onopen?.(t.id)}>{t.name}</Chip>{/each}
-            {#if self}<Chip size="sm" icon={Link}>{type.name}</Chip>{/if}
+            {#each outgoing as t (t.id)}<Chip size="sm" onclick={() => onopen?.(t.id)}>{t.name}</Chip>{/each}
+            {#if self}<Chip size="sm">{type.name}</Chip>{/if}
             {#if !outgoing.length && !self}<Text tone="tertiary">None</Text>{/if}
           </Stack>
         </SettingsRow>
         <SettingsRow label="Linked from">
           <Stack direction="row" gap="1" wrap justify="end">
-            {#each incoming as t (t.id)}<Chip size="sm" icon={Link} onclick={() => onopen?.(t.id)}>{t.name}</Chip>{/each}
+            {#each incoming as t (t.id)}<Chip size="sm" onclick={() => onopen?.(t.id)}>{t.name}</Chip>{/each}
             {#if !incoming.length}<Text tone="tertiary">None</Text>{/if}
           </Stack>
         </SettingsRow>
@@ -73,7 +71,7 @@
         {/each}
         <SettingsRow label="Workflows">
           <Stack direction="row" gap="1" wrap justify="end">
-            {#each flows as w (w.name)}<Chip size="sm" icon={WorkflowIcon} onclick={w.id ? () => onworkflow?.(w.id) : undefined}>{w.name}</Chip>{/each}
+            {#each flows as w (w.name)}<Chip size="sm" onclick={w.id ? () => onworkflow?.(w.id) : undefined}>{w.name}</Chip>{/each}
             {#if !flows.length}<Text tone="tertiary">None</Text>{/if}
           </Stack>
         </SettingsRow>
@@ -85,13 +83,13 @@
             <Stack direction="row" gap="2" align="center">
               <Text weight="medium">{row.name}</Text>
               {#if row.to}
-                <Chip size="sm" icon={Link} onclick={() => onopen?.(row.to)}>{byId(row.to)?.name ?? row.to}</Chip>
+                <Chip size="sm" onclick={() => onopen?.(row.to)}>{byId(row.to)?.name ?? row.to}</Chip>
               {/if}
             </Stack>
           {:else if col.key === 'type'}
             <Badge>{typeLabels[row.type]}</Badge>
           {:else if col.key === 'required'}
-            {#if row.required}<Icon icon={Check} size="sm" />{/if}
+            {#if row.required}<Text tone="secondary">Yes</Text>{/if}
           {:else}
             {row[col.key]}
           {/if}

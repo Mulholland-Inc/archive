@@ -1,12 +1,9 @@
 <script>
   import { onMount } from 'svelte';
-  import { Plus, SearchX, Database, MessageSquarePlus } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
-  import Page from '../components/Page.svelte';
   import PageHeader from '../components/PageHeader.svelte';
   import SearchField from '../components/SearchField.svelte';
-  import TypeList from '../components/TypeList.svelte';
-  import TypeArt from '../components/TypeArt.svelte';
+  import SchemaGraph from '../components/SchemaGraph.svelte';
   import TypeDetail from '../components/TypeDetail.svelte';
   import Button from '../components/Button.svelte';
   import EmptyState from '../components/EmptyState.svelte';
@@ -21,10 +18,6 @@
   let search = $state();
 
   const open = $derived(ws().schema.find((t) => t.id === openId));
-  const types = $derived.by(() => {
-    const q = query.trim().toLowerCase();
-    return ws().schema.filter((t) => !q || t.name.toLowerCase().includes(q) || t.columns.some((c) => c.name.includes(q)));
-  });
 
   function show(id) {
     openId = id;
@@ -34,11 +27,6 @@
   function ask(type, close) {
     close?.();
     const id = newChat(`About ${type.name}`, { text: `What is in the ${type.name} table?` });
-    go(`/chat/${id}`);
-  }
-
-  function create() {
-    const id = newChat('New table', { text: 'Add a new table to this vault' });
     go(`/chat/${id}`);
   }
 
@@ -55,42 +43,47 @@
 </script>
 
 <TopBar mobile>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
-<Page width="full" dense>
-  <PageHeader title="Database" sticky>
+<div class="head">
+  <PageHeader title="Database">
     {#snippet actions()}
-      <div class="search"><SearchField bind:value={query} bind:element={search} placeholder="Search tables and columns" shortcut="/" /></div>
-      <Button variant="primary" icon={Plus} onclick={create}>New table</Button>
+      <div class="search"><SearchField bind:value={query} bind:element={search} icon={null} placeholder="Find a table or column" shortcut="/" /></div>
     {/snippet}
   </PageHeader>
+</div>
 
-  {#if !ws().schema.length}
-    <EmptyState icon={Database} title="No tables yet">
-      <Button variant="primary" icon={Plus} onclick={create}>New table</Button>
-    </EmptyState>
-  {:else if !types.length}
-    <EmptyState icon={SearchX} title="Nothing matches that search">
-      <Button onclick={() => (query = '')}>Show all tables</Button>
-    </EmptyState>
-  {:else}
-    <TypeList {types} all={ws().schema} onopen={show} />
-  {/if}
-</Page>
+{#if ws().schema.length}
+  {#key ws().id}
+    <SchemaGraph types={ws().schema} {query} onopen={show} />
+  {/key}
+{:else}
+  <EmptyState title="No tables yet" />
+{/if}
 
 <Dialog bind:open={preview} title={open?.name} size="tall">
-  {#snippet leading()}{#if open}<TypeArt icon={open.icon} size="sm" />{/if}{/snippet}
   {#if open}
     {#key open.id}
       <TypeDetail type={open} types={ws().schema} workflows={ws().workflows} onopen={show} onworkflow={(id) => go(`/workflows/${id}`)} />
     {/key}
   {/if}
   {#snippet footer({ close })}
-    <Button variant="primary" icon={MessageSquarePlus} onclick={() => ask(open, close)}>Ask about this</Button>
+    <Button variant="primary" onclick={() => ask(open, close)}>Ask about this</Button>
   {/snippet}
 </Dialog>
 
 <style>
+  .head {
+    flex: none;
+    padding: var(--space-4) var(--space-6) var(--space-0);
+  }
+
   .search {
     flex: 0 1 var(--col-lg);
     min-width: 0;
+  }
+
+  @media (max-width: 40rem) {
+    .head {
+      padding: var(--space-2) var(--space-4) var(--space-0);
+    }
   }
 </style>
