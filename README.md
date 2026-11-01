@@ -60,7 +60,7 @@ Your agent can also save a script as a workflow that Archive runs on its own: on
 
 ```ts
 // on: cron CRON_TZ=America/New_York 0 9 * * 1-5
-return await archive.sql("SELECT number, customer, due FROM invoice WHERE NOT paid AND due < current_date");
+return await archive.query("SELECT number, customer, due FROM invoice WHERE NOT paid AND due < current_date");
 ```
 
 The agent saves them with `archive.deploy(files)`, which returns compile and trigger errors instead of saving, and tries them on real data with `archive.test`, which undoes everything it wrote. A webhook workflow gets its own `https://api.<domain>/hooks/run/<workspace>/<secret>` address. Every run's result, logs and error show on the Workflows screen in the app.

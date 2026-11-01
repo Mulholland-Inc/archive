@@ -27,12 +27,12 @@ func TestBrowseNeedsTheBrowserAndComesBeforeWrites(t *testing.T) {
 return await archive.browse("Find the Learn more link")`); !strings.Contains(out.Error, "browse before you write") {
 		t.Errorf("after a write: %+v", out)
 	}
-	if out := run(on, `await archive.migrate("ALTER TABLE house ADD COLUMN rooms integer");
+	if out := run(on, e2eMigrate+`await migrate("ALTER TABLE house ADD COLUMN rooms integer");
 return await archive.browse("Find the Learn more link")`); !strings.Contains(out.Error, "browse before you write") {
 		t.Errorf("after a migration: %+v", out)
 	}
 	if out := run(on, `await archive.list("house");
-await archive.sql("SELECT count(*) FROM house");
+await archive.query("SELECT count(*) FROM house");
 return await archive.browse("Find the Learn more link")`); !strings.Contains(out.Error, "could not start the browser") {
 		t.Errorf("after reads: %+v", out)
 	}

@@ -3,13 +3,12 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
-	"database/sql/driver"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"maps"
 	"os"
 	"regexp"
@@ -21,17 +20,21 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/stripe/pg-schema-diff/pkg/diff"
-	"github.com/stripe/pg-schema-diff/pkg/sqldb"
 	"github.com/stripe/pg-schema-diff/pkg/tempdb"
 )
 
-// SchemaMigration is what a migration ran: its own statements, then what Archive added to the tables.
-// A named migration runs once; running it again skips it.
+// SchemaMigration is a migration's report: its own statements, then what Archive added to the tables, and what
+// they change and which of those changes lose data. Without confirm it is a dry run, which changes nothing;
+// applying it takes its confirm. A named migration runs once; running it again skips it.
 type SchemaMigration struct {
-	Revision   *uuid.UUID `json:"revision,omitempty"`
-	Name       string     `json:"name,omitempty"`
-	Statements []string   `json:"statements"`
-	Skipped    bool       `json:"skipped,omitempty"`
+	Applied    bool           `json:"applied"`
+	Confirm    string         `json:"confirm,omitempty"`
+	Revision   *uuid.UUID     `json:"revision,omitempty"`
+	Name       string         `json:"name,omitempty"`
+	Statements []string       `json:"statements"`
+	Changes    []SchemaChange `json:"changes"`
+	Drops      []SchemaChange `json:"drops"`
+	Skipped    bool           `json:"skipped,omitempty"`
 }
 
 // schemaTx is the schema state of one transaction: once it migrated, its catalog is read from it, cached per
@@ -49,9 +52,10 @@ type SchemaRevision struct {
 	Statements json.RawMessage `json:"statements"`
 }
 
-// Migrate runs src, DDL on the public schema, in the transaction in ctx, adds to each table what every table
-// has, and checks the result. It commits or rolls back with that transaction.
-func (s *pgStore) Migrate(ctx context.Context, src, name, author string, allowDrop bool) (*SchemaMigration, error) {
+// Migrate runs src, DDL on the public schema, in a savepoint of the transaction in ctx, adds to each table what
+// every table has, checks the result and reports what it changes. Without confirm it rolls back; with the
+// report's confirm it keeps the migration, which commits or rolls back with the transaction.
+func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string) (*SchemaMigration, error) {
 	stmts := storeSplit(src)
 	if err := schemaCheckSQL(stmts); err != nil {
 		return nil, err
@@ -98,9 +102,13 @@ func (s *pgStore) Migrate(ctx context.Context, src, name, author string, allowDr
 	if err := q.SetLocal(ctx, "search_path", "public"); err != nil {
 		return nil, err
 	}
-	before, err := schemaShapeOf(ctx, sp)
+	before, err := pgRead(ctx, sp, "archive", "public")
 	if err != nil {
 		return nil, err
+	}
+	h := sha256.Sum256([]byte(strings.Join(stmts, ";\n") + "\x00" + s.hash() + "\x00" + before.hash()))
+	if out.Confirm = hex.EncodeToString(h[:]); confirm != "" && confirm != out.Confirm {
+		return nil, fmt.Errorf("the schema or this migration changed since its dry run; dry-run it again for a new confirm: %w", ErrConflict)
 	}
 	run := func(what, st string) error {
 		if err := q.DDL(ctx, key, st); err != nil {
@@ -152,29 +160,29 @@ func (s *pgStore) Migrate(ctx context.Context, src, name, author string, allowDr
 			}
 		}
 	}
-	after, err := schemaShapeOf(ctx, sp)
+	if cat, err = derive(false); err != nil {
+		return nil, err
+	}
+	after, err := pgRead(ctx, sp, "archive", "public")
 	if err != nil {
 		return nil, err
 	}
-	if after.archive != before.archive {
-		return nil, fmt.Errorf("a migration changes only your own tables, views and types, not Archive's: %w", ErrForbidden)
-	}
-	if lost := before.lost(after); len(lost) > 0 && !allowDrop {
-		return nil, fmt.Errorf("this deletes data (%s); run it with allowDrop to delete it: %w", strings.Join(lost, ", "), ErrConflict)
-	}
-	cat, err = derive(false)
-	if err != nil {
-		return nil, err
+	if ours, _ := pgCompare(before.only("archive"), after.only("archive")); len(ours) > 0 {
+		return nil, fmt.Errorf("a migration changes only your own tables, views and types, not Archive's (%s %s): %w", ours[0].Kind, ours[0].Name, ErrForbidden)
 	}
 	if err := cat.Check(); err != nil {
 		return nil, err
+	}
+	out.Changes, out.Drops = pgCompare(before.only("public"), after.only("public"))
+	if confirm == "" {
+		return out, nil
 	}
 	sj, _ := json.Marshal(out.Statements)
 	id, err := q.DDLRevision(ctx, generated.DDLRevisionParams{Key: key, Hash: s.hash(), Author: author, Name: name, Statements: sj})
 	if err != nil {
 		return nil, err
 	}
-	out.Revision = &id
+	out.Applied, out.Revision = true, &id
 	t.sch.n++
 	if err := q.SetLocal(ctx, "archive.schema", strconv.Itoa(t.sch.n)); err != nil {
 		return nil, err
@@ -191,8 +199,8 @@ var (
 	schemaLangRe   = regexp.MustCompile(`(?i)\bLANGUAGE\s+'?([a-z_]+)`)
 )
 
-// schemaCheckSQL allows only DDL on the kinds of object a workspace has. Rows change through archive.sql,
-// which runs as the user, so row-level security applies.
+// schemaCheckSQL allows only DDL on the kinds of object a workspace has. Rows change through archive.create,
+// update and delete, which run as the user, so row-level security applies.
 func schemaCheckSQL(stmts []string) error {
 	ve := &ValidationError{Type: "schema"}
 	if len(stmts) == 0 {
@@ -203,7 +211,7 @@ func schemaCheckSQL(stmts []string) error {
 		path := fmt.Sprintf("sql[%d]", i)
 		switch {
 		case !schemaStmtRe.MatchString(st):
-			ve.Errors = append(ve.Errors, FieldError{Path: path, Message: "want CREATE, ALTER or DROP of a TABLE, VIEW, INDEX, TYPE, DOMAIN, FUNCTION, TRIGGER, SEQUENCE or POLICY, or COMMENT ON; change rows with archive.sql between migrations"})
+			ve.Errors = append(ve.Errors, FieldError{Path: path, Message: "want CREATE, ALTER or DROP of a TABLE, VIEW, INDEX, TYPE, DOMAIN, FUNCTION, TRIGGER, SEQUENCE or POLICY, or COMMENT ON; change rows with archive.create, archive.update and archive.delete between migrations"})
 		case strings.HasPrefix(strings.ToUpper(st), "COMMENT"):
 		case schemaBannedRe.MatchString(st):
 			ve.Errors = append(ve.Errors, FieldError{Path: path, Message: "SECURITY DEFINER, OWNER TO, SET SCHEMA and CREATE TABLE ... AS are not allowed"})
@@ -217,69 +225,6 @@ func schemaCheckSQL(stmts []string) error {
 		return ve
 	}
 	return nil
-}
-
-// schemaShape is what a migration may not lose without allowDrop, the columns of each table by number so a
-// rename keeps them, and a hash of Archive's own schema, which it may not change.
-type schemaShape struct {
-	tables  map[int64]string
-	cols    map[[2]int64]string
-	archive string
-}
-
-const schemaArchiveSQL = `SELECT md5(coalesce(string_agg(x, '|' ORDER BY x), '')) FROM (
-    SELECT concat_ws(',', 'c', c.oid, c.relname, c.relkind, c.relowner, c.relacl, c.relrowsecurity, c.relforcerowsecurity)
-        FROM pg_catalog.pg_class c WHERE c.relnamespace = 'archive'::regnamespace
-    UNION ALL SELECT concat_ws(',', 'a', a.attrelid, a.attname, a.atttypid, a.attnotnull) FROM pg_catalog.pg_attribute a
-        JOIN pg_catalog.pg_class c ON c.oid = a.attrelid WHERE c.relnamespace = 'archive'::regnamespace AND a.attnum > 0 AND NOT a.attisdropped
-    UNION ALL SELECT concat_ws(',', 'p', p.oid, p.proname, p.proowner, p.prosecdef, md5(p.prosrc), p.proconfig)
-        FROM pg_catalog.pg_proc p WHERE p.pronamespace = 'archive'::regnamespace
-    UNION ALL SELECT concat_ws(',', 't', t.oid, t.typname, t.typowner) FROM pg_catalog.pg_type t WHERE t.typnamespace = 'archive'::regnamespace
-    UNION ALL SELECT concat_ws(',', 'k', k.oid) FROM pg_catalog.pg_constraint k WHERE k.connamespace = 'archive'::regnamespace
-    UNION ALL SELECT concat_ws(',', 'g', g.oid) FROM pg_catalog.pg_trigger g JOIN pg_catalog.pg_class c ON c.oid = g.tgrelid
-        WHERE c.relnamespace = 'archive'::regnamespace AND NOT g.tgisinternal
-    UNION ALL SELECT concat_ws(',', 'o', o.oid) FROM pg_catalog.pg_policy o JOIN pg_catalog.pg_class c ON c.oid = o.polrelid WHERE c.relnamespace = 'archive'::regnamespace
-) s(x)`
-
-func schemaShapeOf(ctx context.Context, tx pgx.Tx) (*schemaShape, error) {
-	sh := &schemaShape{tables: map[int64]string{}, cols: map[[2]int64]string{}}
-	rows, err := tx.Query(ctx, `SELECT c.oid::int8, c.relname::text, coalesce(a.attnum, 0)::int8, coalesce(a.attname, '')::text
-        FROM pg_catalog.pg_class c LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped AND a.attname <> 'search'
-        WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p')`)
-	if err != nil {
-		return nil, err
-	}
-	var oid, num int64
-	var table, col string
-	if _, err := pgx.ForEachRow(rows, []any{&oid, &table, &num, &col}, func() error {
-		sh.tables[oid] = table
-		if num > 0 {
-			sh.cols[[2]int64{oid, num}] = table + "." + col
-		}
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-	return sh, tx.QueryRow(ctx, schemaArchiveSQL).Scan(&sh.archive)
-}
-
-// lost names the tables and columns in sh that are gone from now.
-func (sh *schemaShape) lost(now *schemaShape) []string {
-	var out []string
-	for oid, name := range sh.tables {
-		if _, ok := now.tables[oid]; !ok {
-			out = append(out, "table "+name)
-		}
-	}
-	for k, name := range sh.cols {
-		if _, ok := now.tables[k[0]]; ok {
-			if _, ok := now.cols[k]; !ok {
-				out = append(out, "column "+name)
-			}
-		}
-	}
-	slices.Sort(out)
-	return out
 }
 
 var (
@@ -538,22 +483,27 @@ func schemaCatalog(ctx context.Context, q generated.DBTX) (*Catalog, error) {
 }
 
 // Schema is the DDL of the public schema as the transaction in ctx sees it, by table or view: each with its
-// indexes, foreign keys, triggers and comments, and the types and functions only it uses.
+// constraints, indexes, policies, triggers and comments, and the types, functions and sequences only it uses.
 func (s *pgStore) Schema(ctx context.Context) (map[string]string, error) {
+	var b interface {
+		Begin(context.Context) (pgx.Tx, error)
+	} = s.sys
 	if t, ok := ctx.Value(storeTxKey{}).(storeTx); ok {
-		sp, err := t.tx.Begin(ctx)
-		if err != nil {
-			return nil, err
-		}
-		defer sp.Rollback(context.WithoutCancel(ctx))
-		if err := generated.New(sp).SetLocal(ctx, "search_path", "public"); err != nil {
-			return nil, err
-		}
-		db := schemaTxDB(sp)
-		defer db.Close()
-		return s.ddlOf(ctx, db)
+		b = t.tx
 	}
-	return s.ddlOf(ctx, s.ddl)
+	tx, err := b.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(context.WithoutCancel(ctx))
+	if err := generated.New(tx).SetLocal(ctx, "search_path", "public"); err != nil {
+		return nil, err
+	}
+	sch, err := pgRead(ctx, tx, "public")
+	if err != nil {
+		return nil, err
+	}
+	return sch.ddl("public"), nil
 }
 
 // Revisions are the migrations, newest first.
@@ -623,136 +573,4 @@ func (s *pgStore) migrate(ctx context.Context) error {
 		return err
 	}
 	return tx.Commit()
-}
-
-var (
-	schemaSubjectRe = regexp.MustCompile(`("(?:[^"]|"")+"|[a-z_][a-z0-9_$]*)\.("(?:[^"]|"")+"|[a-z_][a-z0-9_$]*)`)
-	schemaValidRe   = regexp.MustCompile(`^ALTER TABLE \S+ VALIDATE CONSTRAINT `)
-)
-
-// ddlOf generates the DDL of the public schema in src, by table or view; a type or function goes with the
-// first table that uses it, or on its own.
-func (s *pgStore) ddlOf(ctx context.Context, src sqldb.Queryable) (map[string]string, error) {
-	var plan diff.Plan
-	if err := s.withTemp(ctx, func(f tempdb.Factory, tmp *sql.DB) (err error) {
-		plan, err = diff.Generate(ctx, diff.DBSchemaSource(tmp), diff.DBSchemaSource(src), diff.WithTempDbFactory(f), diff.WithDoNotValidatePlan(),
-			diff.WithIncludeSchemas("archive", "public"), diff.WithNoConcurrentIndexOps(), diff.WithDisableCheckFunctionBodies())
-		return err
-	}); err != nil {
-		return nil, fmt.Errorf("schema: %w", err)
-	}
-	var ddl, subject []string
-	owner := map[string]string{}
-	for _, st := range plan.Statements {
-		m := schemaSubjectRe.FindStringSubmatch(st.DDL)
-		if m == nil || storeUnquote(m[1]) != "public" || s.noise(st.DDL) {
-			continue
-		}
-		name := storeUnquote(m[2])
-		if strings.HasPrefix(st.DDL, "CREATE TABLE ") || strings.HasPrefix(st.DDL, "CREATE VIEW ") {
-			owner[name] = name
-		}
-		ddl = append(ddl, strings.TrimSuffix(strings.ReplaceAll(strings.ReplaceAll(st.DDL, ` COLLATE "pg_catalog"."default"`, ""), " NOT VALID", ""), ";"))
-		subject = append(subject, name)
-	}
-	tables := maps.Clone(owner)
-	for i, name := range subject {
-		if owner[name] != "" {
-			continue
-		}
-		owner[name] = name
-		used := regexp.MustCompile(`(^|[^a-z0-9_$])` + regexp.QuoteMeta(name) + `($|[^a-z0-9_$])`)
-		for j, d := range ddl {
-			if j != i && tables[subject[j]] != "" && used.MatchString(d) {
-				owner[name] = subject[j]
-				break
-			}
-		}
-	}
-	out := map[string]string{}
-	for i, d := range ddl {
-		out[owner[subject[i]]] += d + ";\n"
-	}
-	return out, nil
-}
-
-// noise is DDL that every object gets and no one needs to read: its owner, the role grants, and the second
-// half of adding a foreign key.
-func (s *pgStore) noise(ddl string) bool {
-	return strings.HasSuffix(ddl, " OWNER TO "+pgIdent(s.cfg.User)) || schemaValidRe.MatchString(ddl) ||
-		strings.HasPrefix(ddl, "GRANT ") && (strings.HasSuffix(ddl, " TO "+pgIdent(s.prefix+"_viewer")) || strings.HasSuffix(ddl, " TO "+pgIdent(s.prefix+"_editor")))
-}
-
-// schemaTxDB is a database/sql handle on tx, for pg-schema-diff to read the schema the transaction sees.
-// It passes arguments to pgx as they are, so it encodes them for their parameter types, and asks for every
-// value back as text, which database/sql and pq.Array parse.
-func schemaTxDB(tx pgx.Tx) *sql.DB {
-	db := sql.OpenDB(schemaTxConn{tx})
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	return db
-}
-
-type schemaTxConn struct{ tx pgx.Tx }
-
-func (c schemaTxConn) Connect(context.Context) (driver.Conn, error) { return c, nil }
-func (c schemaTxConn) Driver() driver.Driver                        { return c }
-func (c schemaTxConn) Open(string) (driver.Conn, error)             { return c, nil }
-func (c schemaTxConn) Prepare(string) (driver.Stmt, error)          { return nil, errors.ErrUnsupported }
-func (c schemaTxConn) Close() error                                 { return nil }
-func (c schemaTxConn) Begin() (driver.Tx, error)                    { return nil, errors.ErrUnsupported }
-
-func (c schemaTxConn) CheckNamedValue(*driver.NamedValue) error { return nil }
-
-func (c schemaTxConn) args(args []driver.NamedValue) []any {
-	out := []any{pgx.QueryResultFormats{pgx.TextFormatCode}}
-	for _, a := range args {
-		out = append(out, a.Value)
-	}
-	return out
-}
-
-func (c schemaTxConn) ExecContext(ctx context.Context, q string, args []driver.NamedValue) (driver.Result, error) {
-	_, err := c.tx.Exec(ctx, q, c.args(args)[1:]...)
-	return driver.RowsAffected(0), err
-}
-
-func (c schemaTxConn) QueryContext(ctx context.Context, q string, args []driver.NamedValue) (driver.Rows, error) {
-	rows, err := c.tx.Query(ctx, q, c.args(args)...)
-	if err != nil {
-		return nil, err
-	}
-	return schemaTxRows{rows}, nil
-}
-
-type schemaTxRows struct{ rows pgx.Rows }
-
-func (r schemaTxRows) Columns() []string {
-	var out []string
-	for _, f := range r.rows.FieldDescriptions() {
-		out = append(out, f.Name)
-	}
-	return out
-}
-
-func (r schemaTxRows) Close() error {
-	r.rows.Close()
-	return r.rows.Err()
-}
-
-func (r schemaTxRows) Next(dest []driver.Value) error {
-	if !r.rows.Next() {
-		if err := r.rows.Err(); err != nil {
-			return err
-		}
-		return io.EOF
-	}
-	for i, b := range r.rows.RawValues() {
-		if b == nil {
-			dest[i] = nil
-		} else {
-			dest[i] = string(b)
-		}
-	}
-	return nil
 }

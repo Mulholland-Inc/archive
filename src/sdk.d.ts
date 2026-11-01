@@ -15,7 +15,7 @@
  * - Your role in the workspace is viewer (reads), editor (also writes) or owner (also changes the schema and the
  *   members, sees every row and reveals secrets). Each row's access column says who sees it: null is the whole
  *   workspace, a group name like "hr" is only that group and the owners. Row-level security applies to
- *   everything, raw SQL included, so you see and change only the rows you may. A new row is for everyone unless
+ *   everything, SQL included, so you see and change only the rows you may. A new row is for everyone unless
  *   you pass access: "hr" (a group you are in) or its table sets a default.
  * - People are rows of the member table: { email, role, groups }. Owners add, change and remove them with
  *   archive.create("member", { email: "ann@example.com", role: "editor", groups: ["hr"] }), archive.update and
@@ -34,13 +34,20 @@
  *   references as id strings; arrays as lists; enums as one of their strings; the built-in composite types
  *   (Money, Address, ...) as the objects below. Secret types (Card, UsSsn, National, Passport)
  *   take the real value and read back masked; list and get with { reveal: true } show them to owners.
+ * - archive.query(sql, ...params) reads with one SQL statement: joins, aggregates, anything list cannot. It only
+ *   reads: a write or DDL in it throws forbidden. Rows change through archive.create, update and delete.
  *
  * Changing the schema (owners)
- * - Types are the tables in the database, and nothing else is stored. archive.tables() lists them with their
- *   columns; archive.schema() returns their DDL by name, with indexes, foreign keys, triggers and comments.
- * - archive.migrate(sql) runs Postgres DDL: CREATE, ALTER or DROP of a TABLE, VIEW, INDEX, TYPE, DOMAIN,
- *   FUNCTION, TRIGGER, SEQUENCE or POLICY, and COMMENT ON. The statements run in order, all or nothing, and it
- *   returns them with what Archive added. Change rows with archive.sql, not in a migration.
+ * - Types are the tables in the database, and nothing else is stored. archive.schema() lists them with their
+ *   columns and DDL, with indexes, foreign keys, triggers, policies and comments; archive.schema("house") is one:
+ *     const { columns, ddl } = await archive.schema("house");
+ * - archive.migrate(sql) dry-runs Postgres DDL: CREATE, ALTER or DROP of a TABLE, VIEW, INDEX, TYPE, DOMAIN,
+ *   FUNCTION, TRIGGER, SEQUENCE or POLICY, and COMMENT ON. It runs the statements in order, all or nothing, undoes
+ *   them, and returns a report: the statements with what Archive added; changes, each object they create, alter
+ *   or drop with its definition before and after; drops, the changes that delete or rewrite data; and confirm.
+ *   archive.migrate(sql, { confirm }) with that confirm runs it for real. The confirm holds while the schema and
+ *   the sql stay the same; after any other migration it throws conflict, so dry-run again. Change rows with
+ *   archive.create, update and delete, not in a migration.
  * - Write only your own columns. Archive adds to every table what you leave out: id uuid PRIMARY KEY DEFAULT
  *   uuidv7(), access text, created_at and updated_at timestamptz NOT NULL DEFAULT now(), a search column over its
  *   text columns with a gin index, and row-level security with the access policy; it adds id right after each
@@ -50,7 +57,7 @@
  *   their cleaning. A reference is `uuid REFERENCES other`; a list of references is `uuid[]` with a column
  *   comment starting 'references other'. Comment the table and its columns: they become these docs.
  *
- *     await archive.migrate(`
+ *     const sql = `
  *       CREATE TABLE house (
  *           address text NOT NULL,
  *           price   archive.money,
@@ -58,19 +65,22 @@
  *       );
  *       COMMENT ON TABLE house IS 'A house you own or rent
  *       icon: house';
- *       COMMENT ON COLUMN house.price IS 'Asking price';`);
+ *       COMMENT ON COLUMN house.price IS 'Asking price';`;
+ *     const plan = await archive.migrate(sql);
+ *     if (plan.drops.length > 0) return plan;
+ *     await archive.migrate(sql, { confirm: plan.confirm });
  *
- * - A migration is part of this run: if the run throws or times out afterwards, it is undone with everything
- *   else, so to see what one does without keeping it, migrate and then throw. Later calls in the run see the
- *   change at once, so you can move data between steps:
- *     await archive.migrate("ALTER TABLE house ADD COLUMN rooms integer");
- *     await archive.sql("UPDATE house SET rooms = 1");
- *     await archive.migrate("ALTER TABLE house ALTER COLUMN rooms SET NOT NULL");
+ * - Dropping a table or a column deletes its data, and changing a column's type rewrites it, so those are in
+ *   drops: before you confirm one, show it to the people you work for and have them agree.
+ * - A migration you confirm is part of this run: if the run throws or times out afterwards, it is undone with
+ *   everything else. Later calls in the run see the change at once, so you can move data between steps:
+ *     const migrate = async (sql) => archive.migrate(sql, { confirm: (await archive.migrate(sql)).confirm });
+ *     await migrate("ALTER TABLE house ADD COLUMN rooms integer");
+ *     for (const h of await archive.list("house")) await archive.update("house", h.id, { rooms: 1 });
+ *     await migrate("ALTER TABLE house ALTER COLUMN rooms SET NOT NULL");
  *   Rename with ALTER TABLE ... RENAME, and change a type with ALTER COLUMN ... TYPE ... USING: both keep the
  *   data. Postgres lets a value added to an enum be used only once the run that added it is saved, so add the
  *   value in one run and use it in the next. A migration waits up to 10s for locks on what it changes.
- * - Dropping a table or a column deletes its data, so a migration that does throws, naming them, unless you pass
- *   { allowDrop: true }. Dropping a view, index or comment needs nothing.
  * - Comments on tables and views: the first lines are the description; the last lines may be key: value
  *   settings. icon is a Lucide icon name in kebab-case (user, credit-card, square-check, ...; lucide.dev/icons),
  *   on tables and views. Views also take layout (table, board or calendar) and by (the column a board groups
@@ -90,7 +100,7 @@
  *       by: status
  *       icon: kanban';`);
  *
- * - Then archive.list("task_board") reads its rows, and archive.tables() shows its kind, description, layout, by
+ * - Then archive.list("task_board") reads its rows, and archive.schema("task_board") shows its kind, description, layout, by
  *   and icon. Change one with CREATE OR REPLACE VIEW, delete it with DROP VIEW. Postgres saves SELECT * as the
  *   columns the table has then, so a view does not get columns added later, and a column a view selects cannot
  *   be dropped until you change or drop the view.
@@ -112,8 +122,8 @@
  *     cron        undefined
  *     <table>     { rows: [...] }: up to 100 rows, as archive.list returns them, oldest change first; when there are
  *                 more, the next run follows at once. A row counts as changed when its created_at or updated_at
- *                 moves past the last run: archive.create and archive.update set them, raw SQL does not unless it
- *                 sets updated_at = now(). Rows the workflow writes itself never trigger it again.
+ *                 moves past the last run, as archive.create and archive.update set them. Rows the workflow writes
+ *                 itself never trigger it again.
  *     webhook     { method, query, headers, body }: query and headers are objects of strings (header names in lower
  *                 case); body is the parsed JSON when it parses, otherwise the raw text, and null when empty.
  *     start, test the input you pass, or undefined.
@@ -133,7 +143,7 @@
  *
  *     const files = await archive.workflows();
  *     files["overdue-invoices.ts"] = `// on: cron CRON_TZ=America/New_York 0 9 * * 1-5
- *     const late = await archive.sql("SELECT id, number, due FROM invoice WHERE NOT paid AND due < current_date");
+ *     const late = await archive.query("SELECT id, number, due FROM invoice WHERE NOT paid AND due < current_date");
  *     console.log(late.length + " overdue");
  *     return late;`;
  *     files["add-invoice.ts"] = `// on: webhook
@@ -180,8 +190,8 @@
  * - What it does on a site is not undone when the run fails: a form it sent stays sent.
  */
 declare const archive: {
-    /** Run one SQL statement as you, with $1, $2, ... bound to params; returns its rows, or [] when it has none. */
-    sql(query: string, ...params: unknown[]): Promise<Row[]>;
+    /** Read with one SQL statement as you, with $1, $2, ... bound to params; returns its rows, or [] when it has none. Writes and DDL throw forbidden. */
+    query(sql: string, ...params: unknown[]): Promise<Row[]>;
     /** Rows of a table, oldest first; where matches exact (cleaned) values; page with after = the last id. */
     list<T extends keyof Tables>(table: T, opts?: { where?: Partial<Tables[T]>; limit?: number; after?: string; reveal?: boolean }): Promise<Tables[T][]>;
     /** One row by id; throws not_found if it does not exist or you cannot see it. */
@@ -196,14 +206,14 @@ declare const archive: {
     delete(table: keyof Tables, id: string): Promise<void>;
     /** Full-text search over every table and file you can see, best first; words match by prefix, ignoring case and accents. */
     search(text: string, opts?: { type?: keyof Tables | "file"; from?: string; to?: string; limit?: number }): Promise<Hit[]>;
-    /** The DDL of each table and view, by name, generated from the database. */
-    schema(): Promise<Record<string, string>>;
-    /** Run DDL, as part of this run (see the header); dropping a table or column needs allowDrop. */
-    migrate(sql: string, opts?: { allowDrop?: boolean }): Promise<Migration>;
+    /** Every table and view with its columns, types, comments, references and DDL, as Postgres has them now. */
+    schema(): Promise<Table[]>;
+    /** One table or view; throws not_found, naming the ones there are, when it does not exist. */
+    schema(name: keyof Tables): Promise<Table>;
+    /** Dry-run DDL and report what it changes; with the report's confirm, run it as part of this run (see the header). */
+    migrate(sql: string, opts?: { confirm?: string }): Promise<Migration>;
     /** Migrations saved before this run, newest first. */
     revisions(opts?: { limit?: number }): Promise<Revision[]>;
-    /** Every table and view with its columns, types, comments and references, as Postgres has them now. */
-    tables(): Promise<Table[]>;
     /** Files you can see, oldest first, with their extracted text; page with after = the last id. */
     files(opts?: { limit?: number; after?: string }): Promise<StoredFile[]>;
     /** One file with its extracted text. */
@@ -311,10 +321,30 @@ interface Hit {
 }
 
 interface Migration {
-    /** The revision it saved, once the run is. */
-    revision: string;
+    /** false for a dry run, which changed nothing. */
+    applied: boolean;
+    /** Pass it as { confirm } to run this migration for real. */
+    confirm: string;
+    /** The revision it saved, once the run is; only when applied. */
+    revision?: string;
     /** Your statements, then what Archive added, in the order they ran. */
     statements: string[];
+    /** What they create, alter or drop; a table created or dropped whole is one change, with its DDL. */
+    changes: SchemaChange[];
+    /** The changes that delete or rewrite data: dropped tables, columns and type attributes, and columns whose type changed. */
+    drops: SchemaChange[];
+}
+
+interface SchemaChange {
+    kind: "table" | "column" | "constraint" | "index" | "policy" | "trigger" | "view" | "type" | "attribute" | "domain" | "function" | "sequence";
+    /** Like house, house.rooms or touch(). */
+    name: string;
+    action: "create" | "alter" | "drop";
+    /** The name it had, when renamed. */
+    from?: string;
+    /** Its definition as Postgres renders it. */
+    before?: string;
+    after?: string;
 }
 
 interface Revision {
@@ -348,6 +378,9 @@ interface Table {
         /** The allowed values of an enum. */
         values?: string[];
     }[];
+    /** Its DDL, generated from the database: with its constraints, indexes, policies, triggers, comments, and the
+     * types and functions only it uses. */
+    ddl: string;
 }
 
 interface StoredFile {

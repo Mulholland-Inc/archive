@@ -156,7 +156,7 @@
 
 curl https://your-workspace.archive.mulholland.ai/api/run \
   -H <span class="s">"Authorization: Bearer $ARCHIVE_TOKEN"</span> \
-  -d <span class="s">'&#123;"code": "return await archive.tables()"&#125;'</span></pre>
+  -d <span class="s">'&#123;"code": "return await archive.schema()"&#125;'</span></pre>
 <pre hidden>&#123;"result": [&#123;"name": "invoice", "kind": "table", "description": "An invoice you sent", "icon": "receipt", "columns": [...]&#125;], "logs": [], "error": ""&#125;</pre>
 </Code>
 
@@ -214,7 +214,7 @@ curl https://your-workspace.archive.mulholland.ai/api/run \
 
 <h3 id="connect-check">Check the connection</h3>
 <Code tabs={['prompt']}>
-<pre>Call Archive's run tool with: return await archive.tables()
+<pre>Call Archive's run tool with: return await archive.schema()
 Then tell me which tables and views I have, and what each one is for.</pre>
 </Code>
 
@@ -304,27 +304,31 @@ icon: receipt'</span>;
 <p>The live database is the only source of truth. Your AI changes it with plain Postgres DDL, the way it would anywhere, and Archive fills in what every table needs.</p>
 
 <h3 id="schema-read">Read</h3>
-<p><code>archive.tables()</code> lists the tables and views with their columns. <code>archive.schema()</code> generates their DDL from the database, by name, with indexes, foreign keys, triggers and comments.</p>
+<p><code>archive.schema()</code> lists the tables and views with their columns and their DDL, generated from the database with indexes, foreign keys, triggers, policies and comments. <code>archive.schema("invoice")</code> returns one.</p>
 
 <h3 id="schema-migrate">Migrate</h3>
-<p><code>archive.migrate(sql)</code> runs <code>CREATE</code>, <code>ALTER</code> and <code>DROP</code> statements and <code>COMMENT ON</code>, in order, all or nothing. It returns them with what Archive added. Rows change with <code>archive.sql</code>, not in a migration. A migration is part of your run:</p>
+<p><code>archive.migrate(sql)</code> dry-runs <code>CREATE</code>, <code>ALTER</code> and <code>DROP</code> statements and <code>COMMENT ON</code>, in order, all or nothing, then undoes them. It returns a report: the statements with what Archive added, the <code>changes</code> to each table, column, view, index, type or function, the <code>drops</code> that delete or rewrite data, and a <code>confirm</code>. <code>archive.migrate(sql, &#123; confirm &#125;)</code> runs it for real, as long as the schema has not changed since the dry run. Rows change with <code>archive.create</code>, <code>update</code> and <code>delete</code>, not in a migration. A confirmed migration is part of your run:</p>
 <ul>
-<li>If the run throws or times out later, the migration is undone with everything else. To see what one would do without keeping it, migrate and then throw.</li>
-<li>Later calls in the run see the change at once, so one run can add a column, fill it with <code>archive.sql</code>, then make it <code>NOT NULL</code>.</li>
+<li>If the run throws or times out later, the migration is undone with everything else.</li>
+<li>Later calls in the run see the change at once, so one run can add a column, fill it with <code>archive.update</code>, then make it <code>NOT NULL</code>.</li>
 <li>Renames and type changes with <code>USING</code> keep the data, as in any Postgres.</li>
 </ul>
 <Code tabs={['run.ts', 'result']}>
-<pre><span class="k">await</span> archive.<span class="f">migrate</span>(<span class="s">"ALTER TABLE invoice ADD COLUMN paid_on date"</span>)
-<span class="k">await</span> archive.<span class="f">sql</span>(<span class="s">"UPDATE invoice SET paid_on = due WHERE status = 'paid'"</span>)
-<span class="k">return</span> archive.<span class="f">migrate</span>(<span class="s">"ALTER TABLE invoice RENAME COLUMN customer TO client"</span>)</pre>
+<pre><span class="k">const</span> sql = <span class="s">"ALTER TABLE invoice RENAME COLUMN customer TO client"</span>
+<span class="k">const</span> plan = <span class="k">await</span> archive.<span class="f">migrate</span>(sql)
+<span class="k">return</span> archive.<span class="f">migrate</span>(sql, &#123; confirm: plan.confirm &#125;)</pre>
 <pre hidden>&#123;
+  "applied": true,
+  "confirm": "9f3c…",
   "revision": "01a1…",
-  "statements": ["ALTER TABLE invoice RENAME COLUMN customer TO client"]
+  "statements": ["ALTER TABLE invoice RENAME COLUMN customer TO client"],
+  "changes": [&#123; "kind": "column", "name": "invoice.client", "action": "alter", "from": "invoice.customer" &#125;],
+  "drops": []
 &#125;</pre>
 </Code>
 
 <h3 id="schema-drops">Drops</h3>
-<p>A migration that drops a table or a column, which deletes its data, fails unless you pass <code>&#123; allowDrop: true &#125;</code>. Dropping a view, an index or a comment needs nothing.</p>
+<p>Dropping a table or a column deletes its data, and changing a column's type rewrites it. The dry run lists those in <code>drops</code>, so you see them before you confirm.</p>
 
 <h3 id="schema-history">History</h3>
 <p><code>archive.revisions()</code> lists every migration, newest first, with who ran it and its statements. To undo one, migrate the reverse. Data that was dropped stays gone.</p>
@@ -333,7 +337,7 @@ icon: receipt'</span>;
 <p>Owners. Everyone else can read the schema.</p>
 
 <h3 id="schema-git">Keep it in git</h3>
-<p>Keep migrations as <code>.sql</code> files and run them with <code>archive schema migrate &lt;dir&gt;</code>: it runs the files that have not run yet, in name order, each once by its name. Over HTTP, <code>POST /api/schema/migrate</code> takes <code>&#123;"sql", "name", "allow_drop"&#125;</code>, and the Terraform provider has an <code>archive_migration</code> resource.</p>
+<p>Keep migrations as <code>.sql</code> files and run them with <code>archive schema migrate &lt;dir&gt;</code>: it dry-runs the files that have not run yet, in name order, each once by its name, and <code>-confirm</code> with the hash it prints runs them. Over HTTP, <code>POST /api/schema/migrate</code> takes <code>&#123;"sql", "name", "confirm"&#125;</code>, and the Terraform provider has an <code>archive_migration</code> resource.</p>
 
 <h2 id="views">Views</h2>
 <p>A view is a saved way to look at a table: a real Postgres view, with its layout in its comment. Boards, calendars and filtered tables are all views.</p>
@@ -360,7 +364,7 @@ icon: calendar'</span>;</pre>
 </ul>
 
 <h3 id="views-read">Reading a view</h3>
-<p><code>list</code>, <code>get</code> and <code>search</code> read views like tables. Views are read only: create, update and delete go to their tables, and writes to a view over HTTP return 405. <code>archive.tables()</code> shows each view with <code>kind: "view"</code>, its layout and its <code>by</code> column.</p>
+<p><code>list</code>, <code>get</code> and <code>search</code> read views like tables. Views are read only: create, update and delete go to their tables, and writes to a view over HTTP return 405. <code>archive.schema()</code> shows each view with <code>kind: "view"</code>, its layout and its <code>by</code> column.</p>
 
 <h3 id="views-change">Add, change or remove one</h3>
 <p>Views are schema, so you change them with a migration: <code>CREATE VIEW</code>, <code>CREATE OR REPLACE VIEW</code> or <code>DROP VIEW</code>. Postgres saves <code>SELECT *</code> as the columns the table has then, so a view does not pick up columns added later.</p>
@@ -516,7 +520,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <table>
 <thead><tr><th>Call</th><th>Does</th></tr></thead>
 <tbody>
-<tr><td><code>sql(query, ...params): Row[]</code></td><td>Runs one SQL statement as you, with <code>$1</code>, <code>$2</code> bound to params.</td></tr>
+<tr><td><code>query(sql, ...params): Row[]</code></td><td>Reads with one SQL statement as you, with <code>$1</code>, <code>$2</code> bound to params; writes and DDL throw.</td></tr>
 <tr><td><code>list(table, &#123; where?, limit?, after?, reveal? &#125;): Tables[T][]</code></td><td>Rows oldest first. <code>where</code> matches exact, cleaned values, <code>access</code> included. Page with <code>after</code> set to the last id.</td></tr>
 <tr><td><code>get(table, id, &#123; reveal? &#125;): Tables[T]</code></td><td>One row. Throws <code>not_found</code> if it does not exist or you cannot see it.</td></tr>
 <tr><td><code>create(table, data): Tables[T]</code></td><td>Inserts a cleaned, validated row. Set <code>access</code> in <code>data</code> to a group to keep it to that group.</td></tr>
@@ -530,10 +534,9 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <table>
 <thead><tr><th>Call</th><th>Does</th></tr></thead>
 <tbody>
-<tr><td><code>schema(): Record&lt;string, string&gt;</code></td><td>The DDL of each table and view, by name, from the database.</td></tr>
-<tr><td><code>migrate(sql, &#123; allowDrop? &#125;): Migration</code></td><td>Runs DDL as part of the run; Archive adds what every table needs.</td></tr>
+<tr><td><code>schema(name?): Table[] | Table</code></td><td>Every table and view, or one, with its columns, types, comments, references and DDL.</td></tr>
+<tr><td><code>migrate(sql, &#123; confirm? &#125;): Migration</code></td><td>Dry-runs DDL and reports what it changes; with the confirm, runs it as part of the run.</td></tr>
 <tr><td><code>revisions(&#123; limit? &#125;): Revision[]</code></td><td>Migrations, newest first.</td></tr>
-<tr><td><code>tables(): Table[]</code></td><td>Every table and view with its columns, types, comments and references.</td></tr>
 </tbody>
 </table>
 
@@ -620,8 +623,8 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <thead><tr><th>Endpoint</th><th>Does</th></tr></thead>
 <tbody>
 <tr><td><code>GET /api/types</code></td><td>Your tables and views, with their columns.</td></tr>
-<tr><td><code>GET /api/schema</code></td><td>The DDL of each table and view.</td></tr>
-<tr><td><code>POST /api/schema/migrate</code></td><td>Runs <code>&#123;"sql", "name", "allow_drop"&#125;</code>; a named migration runs once.</td></tr>
+<tr><td><code>GET /api/schema</code></td><td>Each table and view with its columns and DDL; <code>?name=</code> for one.</td></tr>
+<tr><td><code>POST /api/schema/migrate</code></td><td>Dry-runs <code>&#123;"sql", "name"&#125;</code>, or runs it with <code>"confirm"</code>; a named migration runs once.</td></tr>
 <tr><td><code>GET /api/schema/revisions</code></td><td>Migrations, newest first.</td></tr>
 <tr><td><code>GET /api/search?q=</code></td><td>Search, with <code>type</code>, <code>from</code>, <code>to</code> and <code>limit</code>.</td></tr>
 <tr><td><code>POST /api/run</code></td><td>Runs a script: <code>&#123;"code": "..."&#125;</code>.</td></tr>
@@ -677,8 +680,8 @@ archive schema migrate ./migrations</pre>
 <thead><tr><th>Command</th><th>Does</th></tr></thead>
 <tbody>
 <tr><td><code>archive types</code></td><td>Tables, columns and the built-in types.</td></tr>
-<tr><td><code>archive schema show</code></td><td>Prints the DDL of every table and view.</td></tr>
-<tr><td><code>archive schema migrate &lt;file.sql|dir|-&gt; [-allow-drop]</code></td><td>Runs migrations: a file once by its name, a directory's files that have not run in name order.</td></tr>
+<tr><td><code>archive schema show [name]</code></td><td>Prints the DDL of every table and view, or of one.</td></tr>
+<tr><td><code>archive schema migrate &lt;file.sql|dir|-&gt; [-confirm hash]</code></td><td>Dry-runs migrations, or with the confirm runs them: a file once by its name, a directory's files that have not run in name order.</td></tr>
 <tr><td><code>archive schema revisions</code></td><td>Lists the migrations.</td></tr>
 <tr><td><code>archive run &lt;file.ts|-&gt;</code></td><td>Runs a script and prints <code>&#123;result, logs, error&#125;</code>.</td></tr>
 <tr><td><code>archive run -docs</code></td><td>Prints the SDK reference with your table types.</td></tr>
