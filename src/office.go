@@ -664,30 +664,22 @@ func officeOpenWord(p *OfficePackage) (*officeWord, error) {
 	}
 	return &officeWord{nil, p, b, doc, w, officeTextNames{w, "p", "r", "t", true}, doc.Find(w, "p"), doc.Find(w, "tbl")}, nil
 }
-func (x *officeWord) rows(tbl *OfficeNode) []*OfficeNode {
+
+// own returns the local elements under n whose nearest parent element is n,
+// skipping those inside a nested one: a table's own rows, a row's own cells.
+func (x *officeWord) own(n *OfficeNode, local, parent string) []*OfficeNode {
 	var out []*OfficeNode
-	for _, r := range tbl.Find(x.w, "tr") {
-		if r.Nearest(x.w, "tbl") == tbl {
-			out = append(out, r)
+	for _, k := range n.Find(x.w, local) {
+		if k.Nearest(x.w, parent) == n {
+			out = append(out, k)
 		}
 	}
 	return out
 }
-func (x *officeWord) cells(tr *OfficeNode) []*OfficeNode {
-	var out []*OfficeNode
-	for _, c := range tr.Find(x.w, "tc") {
-		if c.Nearest(x.w, "tr") == tr {
-			out = append(out, c)
-		}
-	}
-	return out
-}
+func (x *officeWord) rows(tbl *OfficeNode) []*OfficeNode { return x.own(tbl, "tr", "tbl") }
+func (x *officeWord) cells(tr *OfficeNode) []*OfficeNode { return x.own(tr, "tc", "tr") }
 func (x *officeWord) model() *OfficeModel {
 	m := &OfficeModel{Type: "docx"}
-	pid := map[*OfficeNode]int{}
-	for i, p := range x.ps {
-		pid[p] = i
-	}
 	tid := map[*OfficeNode]int{}
 	for i, t := range x.tbls {
 		tid[t] = i
@@ -728,10 +720,8 @@ func (x *officeWord) model() *OfficeModel {
 			var row []string
 			for _, c := range x.cells(r) {
 				var parts []string
-				for _, p := range c.Find(x.w, "p") {
-					if p.Nearest(x.w, "tc") == c {
-						parts = append(parts, x.tn.text(p))
-					}
+				for _, p := range x.own(c, "p", "tc") {
+					parts = append(parts, x.tn.text(p))
 				}
 				row = append(row, strings.Join(parts, "\n"))
 			}
@@ -816,7 +806,7 @@ func (x *officeWord) replaceText(e OfficeOp) error {
 		target = p
 	} else {
 		var hits []string
-		for i, p := range x.ps {
+		for _, p := range x.ps {
 			if strings.Contains(x.tn.text(p), e.Find) {
 				id := "new paragraph"
 				for k, off := range x.ids.start {
@@ -824,7 +814,6 @@ func (x *officeWord) replaceText(e OfficeOp) error {
 						id = "p" + strconv.Itoa(k)
 					}
 				}
-				_ = i
 				hits = append(hits, id)
 				target = p
 			}
@@ -919,19 +908,16 @@ func (x *officeWord) likeParagraph(p *OfficeNode) (string, string) {
 		b, _ := OfficeApply(x.b[n.Start:n.End], drop)
 		pPr = string(b)
 	}
-	for _, r := range p.Find(x.w, "r") {
-		if r.Nearest(x.w, "p") == p {
-			if n := r.Child(x.w, "rPr"); n != nil {
-				var drop []OfficeSplice
-				for _, k := range n.Kids {
-					if k.Local == "ins" || k.Local == "del" || k.Local == "rPrChange" {
-						drop = append(drop, OfficeSplice{k.Start - n.Start, k.End - n.Start, nil})
-					}
+	if rs := x.own(p, "r", "p"); len(rs) > 0 {
+		if n := rs[0].Child(x.w, "rPr"); n != nil {
+			var drop []OfficeSplice
+			for _, k := range n.Kids {
+				if k.Local == "ins" || k.Local == "del" || k.Local == "rPrChange" {
+					drop = append(drop, OfficeSplice{k.Start - n.Start, k.End - n.Start, nil})
 				}
-				b, _ := OfficeApply(x.b[n.Start:n.End], drop)
-				rPr = string(b)
 			}
-			break
+			b, _ := OfficeApply(x.b[n.Start:n.End], drop)
+			rPr = string(b)
 		}
 	}
 	return pPr, rPr
