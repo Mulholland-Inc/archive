@@ -22,7 +22,7 @@ variable "github_repository" {
 
 variable "image_tag" {
   type        = string
-  description = "Tag of ghcr.io/mulholland-inc/archive to run first; later deploys change the image outside Terraform."
+  description = "Tag of ghcr.io/mulholland-inc/archive to run first, and with a browser- prefix of the archive-browser service; later deploys change the images outside Terraform."
   default     = "latest"
 }
 

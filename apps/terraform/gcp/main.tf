@@ -214,7 +214,7 @@ resource "google_cloud_run_v2_service" "browser" {
     }
 
     containers {
-      image = "${var.region}-docker.pkg.dev/${var.project}/${google_artifact_registry_repository.ghcr.repository_id}/mulholland-inc/archive/browser:${var.image_tag}"
+      image = "${var.region}-docker.pkg.dev/${var.project}/${google_artifact_registry_repository.ghcr.repository_id}/mulholland-inc/archive:browser-${var.image_tag}"
 
       ports {
         container_port = 8080
@@ -230,8 +230,11 @@ resource "google_cloud_run_v2_service" "browser" {
       }
 
       startup_probe {
-        http_get {
-          path = "/health"
+        period_seconds    = 1
+        timeout_seconds   = 1
+        failure_threshold = 30
+        tcp_socket {
+          port = 8080
         }
       }
     }

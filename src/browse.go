@@ -18,6 +18,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -205,6 +206,13 @@ func browseRun(ctx context.Context, addr, jev, ant, goal, start string, frames f
 	return &BrowseResult{Done: act.Action == "done" && act.Achieved, Answer: act.Answer, URL: v.URL}, nil
 }
 
+// browseID caches the ID token for the browser service; Google's last an hour.
+var browseID struct {
+	sync.Mutex
+	tok string
+	exp time.Time
+}
+
 func browseDial(ctx context.Context, addr string) (string, http.Header, error) {
 	u, err := url.Parse(addr)
 	if err != nil {
@@ -212,11 +220,16 @@ func browseDial(ctx context.Context, addr string) (string, http.Header, error) {
 	}
 	h := http.Header{}
 	if host := u.Hostname(); u.Scheme == "https" && host != "localhost" && host != "127.0.0.1" {
-		tok, err := gcpMetadata().get(ctx, "instance/service-accounts/default/identity?audience="+url.QueryEscape(u.Scheme+"://"+u.Host))
-		if err != nil {
-			return "", nil, fmt.Errorf("browser identity token: %w", err)
+		browseID.Lock()
+		defer browseID.Unlock()
+		if browseID.tok == "" || time.Now().After(browseID.exp) {
+			tok, err := gcpMetadata().get(ctx, "instance/service-accounts/default/identity?audience="+url.QueryEscape(u.Scheme+"://"+u.Host))
+			if err != nil {
+				return "", nil, fmt.Errorf("browser identity token: %w", err)
+			}
+			browseID.tok, browseID.exp = tok, time.Now().Add(45*time.Minute)
 		}
-		h.Set("Authorization", "Bearer "+tok)
+		h.Set("Authorization", "Bearer "+browseID.tok)
 	}
 	switch u.Scheme {
 	case "https":

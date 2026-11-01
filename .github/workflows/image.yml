@@ -42,10 +42,10 @@ jobs:
 
       - working-directory: src
         run: |
-          image="ghcr.io/${GITHUB_REPOSITORY,,}/browser"
-          tags=("sha-${GITHUB_SHA::7}")
-          [ "$GITHUB_REF" = refs/heads/main ] && tags+=(latest)
-          case "$GITHUB_REF" in refs/tags/v*) tags+=("${GITHUB_REF#refs/tags/v}") ;; esac
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          tags=("browser-sha-${GITHUB_SHA::7}")
+          [ "$GITHUB_REF" = refs/heads/main ] && tags+=(browser-latest)
+          case "$GITHUB_REF" in refs/tags/v*) tags+=("browser-${GITHUB_REF#refs/tags/v}") ;; esac
           docker build --platform linux/amd64 -f browser/Dockerfile --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "${tags[@]/#/--tag=$image:}" .
           for t in "${tags[@]}"; do docker push "$image:$t"; done
 
@@ -66,7 +66,7 @@ jobs:
           gcloud run services update archive --project "$GCP_PROJECT" --region "$GCP_REGION" --image "$image"
           gcloud run jobs update archive --project "$GCP_PROJECT" --region "$GCP_REGION" --image "$image"
           if gcloud run services describe archive-browser --project "$GCP_PROJECT" --region "$GCP_REGION" >/dev/null 2>&1; then
-            gcloud run services update archive-browser --project "$GCP_PROJECT" --region "$GCP_REGION" --image "$GCP_REGION-docker.pkg.dev/$GCP_PROJECT/ghcr/${GITHUB_REPOSITORY,,}/browser:sha-${GITHUB_SHA::7}"
+            gcloud run services update archive-browser --project "$GCP_PROJECT" --region "$GCP_REGION" --image "$GCP_REGION-docker.pkg.dev/$GCP_PROJECT/ghcr/${GITHUB_REPOSITORY,,}:browser-sha-${GITHUB_SHA::7}"
           fi
         env:
           GCP_PROJECT: ${{ vars.GCP_PROJECT }}
