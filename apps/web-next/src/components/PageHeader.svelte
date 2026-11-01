@@ -42,7 +42,7 @@
     font-size: var(--text-2xl);
     font-weight: var(--weight-serif);
     line-height: var(--leading-tight);
-    letter-spacing: var(--tracking-normal);
+    letter-spacing: var(--tracking-serif);
     overflow-wrap: anywhere;
   }
 

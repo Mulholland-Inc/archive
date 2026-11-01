@@ -37,5 +37,6 @@
     font-family: var(--font-serif);
     font-size: var(--text-2xl);
     font-weight: var(--weight-serif);
+    letter-spacing: var(--tracking-serif);
   }
 </style>

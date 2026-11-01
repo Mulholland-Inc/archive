@@ -19,7 +19,7 @@
     font-family: var(--font-serif);
     font-size: var(--text-xl);
     font-weight: var(--weight-serif);
-    letter-spacing: var(--tracking-normal);
+    letter-spacing: var(--tracking-serif);
     padding-block-end: var(--space-3);
     box-shadow: inset 0 calc(var(--border-width) * -1) 0 var(--color-border-subtle);
   }

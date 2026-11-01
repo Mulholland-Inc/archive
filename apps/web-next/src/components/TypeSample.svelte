@@ -36,7 +36,7 @@
     line-height: var(--leading-tight);
   }
 
-  .serif { font-family: var(--font-serif); font-weight: var(--weight-serif); letter-spacing: var(--tracking-normal); }
+  .serif { font-family: var(--font-serif); font-weight: var(--weight-serif); letter-spacing: var(--tracking-serif); }
 
   .text-2xs { font-size: var(--text-2xs); }
   .text-xs { font-size: var(--text-xs); }
