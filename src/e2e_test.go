@@ -31,6 +31,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -4451,5 +4452,86 @@ func TestServeStartsWhenTheFirstUserHasNoMemberRow(t *testing.T) {
 	srv := in.serve()
 	if st, _ := e2eDo(t, "GET", srv.url+"/auth/me", map[string]string{"X-Forwarded-For": ""}, nil, nil); st != 403 {
 		t.Errorf("the first user without a member row on this machine: %d", st)
+	}
+}
+
+func TestProcessesOpeningOneStoreAtOnceAllSucceed(t *testing.T) {
+	in := newInst(t)
+	in.must("user", "add", "alice@example.com")
+	errs := make([]string, 8)
+	var wg sync.WaitGroup
+	for i := range errs {
+		wg.Go(func() {
+			if out, e, err := in.run("", "workspace", "list"); err != nil {
+				errs[i] = fmt.Sprint(err, out, e)
+			}
+		})
+	}
+	wg.Wait()
+	for _, e := range errs {
+		if e != "" {
+			t.Errorf("one of 8 processes opening the store at once: %s", e)
+		}
+	}
+}
+
+func TestChatConfirmsADropOnlyInALaterTurn(t *testing.T) {
+	t.Parallel()
+	tokenRe := regexp.MustCompile(`[0-9a-f-]{36}\.[0-9a-f]{64}`)
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		var req struct{ Messages []map[string]any }
+		json.Unmarshal(b, &req)
+		last, _ := json.Marshal(req.Messages[len(req.Messages)-1])
+		ev := func(s string) {
+			fmt.Fprintf(w, "event: x\ndata: %s\n\n", s)
+			w.(http.Flusher).Flush()
+		}
+		tool := func(code string) {
+			c, _ := json.Marshal(map[string]string{"code": code})
+			p, _ := json.Marshal(string(c))
+			ev(`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t` + strconv.Itoa(len(req.Messages)) + `","name":"run","input":{}}}`)
+			ev(`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":` + string(p) + `}}`)
+			ev(`{"type":"content_block_stop","index":0}`)
+			ev(`{"type":"message_delta","delta":{"stop_reason":"tool_use"}}`)
+		}
+		const sql = `const sql = "ALTER TABLE shed DROP COLUMN size";`
+		switch {
+		case strings.Contains(string(last), "tool_result"):
+			ev(`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":"ok"}}`)
+			ev(`{"type":"content_block_stop","index":0}`)
+			ev(`{"type":"message_delta","delta":{"stop_reason":"end_turn"}}`)
+		case len(req.Messages) == 1:
+			tool(sql + ` const p = await archive.migrate(sql); try { await archive.migrate(sql, { confirm: p.confirm }); return "applied"; } catch (e) { return e.code + " " + p.confirm; }`)
+		default:
+			tool(sql + ` return (await archive.migrate(sql, { confirm: "` + tokenRe.FindString(string(b)) + `" })).applied;`)
+		}
+	}))
+	defer fake.Close()
+	in := newInst(t, "ANTHROPIC_API_KEY=test", "ANTHROPIC_BASE_URL="+fake.URL)
+	in.must("user", "add", "alice@example.com")
+	in.push(map[string]string{"shed.sql": "CREATE TABLE shed (size integer);"})
+	srv := in.serve()
+	api := srv.url + "/api"
+	tok := decode[Token](t, in.must("token", "create")).Secret
+	result := func(evs []map[string]any) string {
+		for _, ev := range evs {
+			if ev["type"] == "result" {
+				return fmt.Sprint(ev["result"], ev["error"])
+			}
+		}
+		return ""
+	}
+	_, evs := e2eChat(context.Background(), t, api, tok, map[string]any{"text": "drop the size column"}, nil)
+	if got := result(evs); !strings.HasPrefix(got, "forbidden ") || !tokenRe.MatchString(got) {
+		t.Fatalf("confirming a drop in the turn of its dry run: %s", got)
+	}
+	chat := fmt.Sprint(evs[0]["chat"].(map[string]any)["id"])
+	_, evs = e2eChat(context.Background(), t, api, tok, map[string]any{"chat": chat, "text": "yes, drop it"}, nil)
+	if got := result(evs); got != "true" {
+		t.Fatalf("confirming it in the next turn: %s", got)
+	}
+	if out := in.must("schema", "show", "shed"); strings.Contains(out, "size") {
+		t.Errorf("the column is still there: %s", out)
 	}
 }
