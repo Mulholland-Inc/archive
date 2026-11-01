@@ -25,6 +25,10 @@
 </nav>
 
 <style>
+  nav {
+    min-width: 0;
+  }
+
   .crumbs {
     display: flex;
     align-items: center;
@@ -36,8 +40,13 @@
 
   li {
     display: inline-flex;
+    flex: none;
     min-width: 0;
     white-space: nowrap;
+  }
+
+  li:last-child {
+    flex: 0 1 auto;
   }
 
   .inset {

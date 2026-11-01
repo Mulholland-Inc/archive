@@ -3,7 +3,7 @@
   import Badge from './Badge.svelte';
   import Icon from './Icon.svelte';
 
-  let { status, plain = false } = $props();
+  let { status, plain = false, iconOnly = false } = $props();
   const map = {
     running: { label: 'Running', icon: LoaderCircle, spin: true },
     waiting: { label: 'Needs input', icon: Hand },
@@ -25,7 +25,7 @@
 {#if plain}
   <span class={['plain', { danger: s.danger, spin: s.spin }]}>
     {#if s.icon}<Icon icon={s.icon} size="sm" />{/if}
-    {s.label}
+    <span class={{ 'visually-hidden': iconOnly }}>{s.label}</span>
   </span>
 {:else}
   <Badge icon={s.icon} spin={s.spin} danger={s.danger}>{s.label}</Badge>

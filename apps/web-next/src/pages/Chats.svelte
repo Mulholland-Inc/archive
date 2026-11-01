@@ -13,6 +13,7 @@
   import MobileMenu from '../components/MobileMenu.svelte';
   import { ws, pinnedFirst } from '../lib/app.svelte.js';
   import { go } from '../lib/router.svelte.js';
+  import { chatItems } from '../lib/menus.js';
 
   let query = $state('');
   const columns = [
@@ -26,12 +27,12 @@
 
 <TopBar mobile>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
 <Page>
-  <StickyHeader title="Chats">
+  <StickyHeader title="Chats" art="bg-chats">
     {#snippet search()}<SearchField bind:value={query} placeholder="Search your chats" />{/snippet}
     {#snippet actions()}<Button variant="primary" icon={Plus} href="#/">New chat</Button>{/snippet}
   </StickyHeader>
   {#if results.length}
-    <Table {columns} rows={results} label="Chats" cards onrowclick={(chat) => go(`/chat/${chat.id}`)}>
+    <Table {columns} rows={results} label="Chats" cards onrowclick={(chat) => go(`/chat/${chat.id}`)} menu={(chat) => chatItems(chat)}>
       {#snippet cell(chat, col)}
         {#if col.key === 'pin'}
           {#if chat.pinned}<PinButton {chat} size="sm" />{/if}

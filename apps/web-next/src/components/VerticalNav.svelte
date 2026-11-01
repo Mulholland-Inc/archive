@@ -59,6 +59,7 @@
     .vnav {
       flex-direction: row;
       overflow-x: auto;
+      overscroll-behavior-y: auto;
     }
 
     .item {

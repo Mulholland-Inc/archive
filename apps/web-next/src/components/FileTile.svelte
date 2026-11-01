@@ -1,13 +1,14 @@
 <script>
   import { FileText, Image, AudioLines, FileSpreadsheet, Play, Ellipsis } from '@lucide/svelte';
   import Icon from './Icon.svelte';
+  import { contextmenu } from '../lib/contextmenu.svelte.js';
 
-  let { file, onclick, selected = false, menu } = $props();
+  let { file, onclick, selected = false, menu, items } = $props();
   const icons = { image: Image, recording: AudioLines, spreadsheet: FileSpreadsheet, pdf: FileText, document: FileText };
   const bars = [3, 6, 9, 5, 11, 7, 12, 8, 4, 10, 6, 9, 3, 7, 11, 5, 8, 12, 6, 4, 9, 7, 10, 5];
 </script>
 
-<article class={['tile', { selected }]}>
+<article class={['tile', { selected }]} {@attach items && contextmenu(items)}>
   <button type="button" class="hit" {onclick} aria-label={file.name}></button>
   <div class={['thumb', file.kind, `t${file.tone}`]}>
     {#if file.kind === 'image'}
@@ -57,7 +58,8 @@
   }
 
   .tile:hover,
-  .selected {
+  .selected,
+  .tile:global([data-contextmenu]) {
     background: var(--color-fill-subtle);
   }
 

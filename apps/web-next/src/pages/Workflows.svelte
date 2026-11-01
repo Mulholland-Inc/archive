@@ -18,8 +18,8 @@
   import EmptyState from '../components/EmptyState.svelte';
   import Text from '../components/Text.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { ws, removeWorkflow } from '../lib/app.svelte.js';
-  import { confirmDialog } from '../lib/dialogs.svelte.js';
+  import { ws } from '../lib/app.svelte.js';
+  import { workflowItems, deleteWorkflow as remove } from '../lib/menus.js';
   import { go } from '../lib/router.svelte.js';
 
   const statuses = [
@@ -59,10 +59,6 @@
     return out;
   });
 
-  async function remove(workflow) {
-    if (await confirmDialog({ title: 'Delete this workflow?', body: `“${workflow.name}” and its runs will be removed.`, confirm: 'Delete' })) removeWorkflow(workflow.id);
-  }
-
   function clear() {
     query = '';
     status = 'all';
@@ -82,7 +78,7 @@
 
 <TopBar mobile>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
 <Page width="wide">
-  <StickyHeader title="Workflows">
+  <StickyHeader title="Workflows" art="bg-workflows">
     {#snippet search()}
       <SearchField bind:value={query} bind:element={searchEl} placeholder="Search workflows" shortcut="/" />
     {/snippet}
@@ -107,7 +103,7 @@
   {:else}
     <Adaptive>
       {#snippet wide()}
-    <Table {columns} {rows} label="Workflows" onrowclick={(w) => go(`/workflows/${w.id}`)}>
+    <Table {columns} {rows} label="Workflows" onrowclick={(w) => go(`/workflows/${w.id}`)} menu={(w) => workflowItems(w)}>
       {#snippet cell(row, col)}
         {#if col.key === 'name'}
           <Text weight="medium" truncate>{row.name}</Text>

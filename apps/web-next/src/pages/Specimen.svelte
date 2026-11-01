@@ -99,6 +99,7 @@
   import { library, conversations, members, me } from '../lib/data.js';
   import { theme, setTheme } from '../lib/theme.svelte.js';
   import { toast } from '../lib/toast.svelte.js';
+  import { contextmenu, SEPARATOR } from '../lib/contextmenu.svelte.js';
   import { app } from '../lib/app.svelte.js';
   const familySchema = schemaFor('okafor');
   const avatarSeeds = Array.from({ length: 24 }, (_, i) => `user-${i + 1}`);
@@ -387,6 +388,17 @@
             <MenuItem icon={Share}>Share</MenuItem>
           </Menu>
         </SpecimenBlock>
+        <SpecimenBlock title="Context menu, right-click or Shift F10">
+          <div class="target" tabindex="0" role="button" aria-label="Context menu target" {@attach contextmenu(() => [
+            { heading: '1970s Letters' },
+            { label: 'Open', icon: FolderOpen, onselect: () => toast('Opened') },
+            { label: 'Rename', icon: Pencil, shortcut: '↵', onselect: () => toast('Rename') },
+            { label: 'Share', icon: Share, onselect: () => toast('Shared') },
+            { label: 'Duplicate', icon: Copy, disabled: true },
+            SEPARATOR,
+            { label: 'Delete', icon: Trash2, danger: true, onselect: () => toast('Deleted') }
+          ])}>Right-click here</div>
+        </SpecimenBlock>
         <SpecimenBlock title="Popover and tooltip">
           <Popover label="Share">
             {#snippet trigger(props)}<Button icon={Share} {...props}>Share</Button>{/snippet}
@@ -657,3 +669,21 @@
     <Button variant="danger" onclick={() => { close(); toast('Chat deleted'); }}>Delete</Button>
   {/snippet}
 </Dialog>
+
+<style>
+  .target {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    min-height: var(--space-24);
+    border-radius: var(--radius-lg);
+    box-shadow: inset 0 0 0 var(--border-width) var(--color-border);
+    color: var(--color-text-tertiary);
+    font-size: var(--text-sm);
+    user-select: none;
+  }
+
+  .target:global([data-contextmenu]) {
+    background: var(--color-fill-subtle);
+  }
+</style>

@@ -95,6 +95,7 @@
 
   --sidebar-width: 15rem;
   --sidebar-rail: 3.25rem;
+  --aside-width: 19rem;
   --vault-rail: 4.75rem;
   --dock-height: 3.25rem;
   --vault-tile: 3.25rem;
@@ -134,6 +135,11 @@
   --code-max: 28rem;
   --type-dialog-height: 40rem;
   --settings-art: 11rem;
+  --banner-height: 12rem;
+  --banner-height-sm: 8rem;
+  --aside-art: 8rem;
+  --pane-art: 7rem;
+  --art-zoom: 60rem;
   --schema-node: 15rem;
   --opacity-dim: 0.35;
   --fade-size: 2rem;

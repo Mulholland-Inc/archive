@@ -42,6 +42,7 @@
     gap: var(--space-1);
     min-width: 0;
     overflow-x: auto;
+    overscroll-behavior-y: auto;
   }
 
   .line {

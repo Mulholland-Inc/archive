@@ -5,6 +5,7 @@
   import View from './components/View.svelte';
   import CommandPalette from './components/CommandPalette.svelte';
   import Toaster from './components/Toaster.svelte';
+  import ContextMenu from './components/ContextMenu.svelte';
   import Home from './pages/Home.svelte';
   import Chat from './pages/Chat.svelte';
   import Chats from './pages/Chats.svelte';
@@ -12,9 +13,12 @@
   import DatabasePage from './pages/Database.svelte';
   import Workflows from './pages/Workflows.svelte';
   import Workflow from './pages/Workflow.svelte';
+  import DatabaseTable from './pages/DatabaseTable.svelte';
   import AccessPage from './pages/Access.svelte';
   import AppSettings from './components/AppSettings.svelte';
+  import VaultSettingsDialog from './components/VaultSettingsDialog.svelte';
   import Specimen from './pages/Specimen.svelte';
+  import Onboarding from './pages/Onboarding.svelte';
   import { route, go, replace } from './lib/router.svelte.js';
   import { app, toggleSidebar, closeDrawer } from './lib/app.svelte.js';
   import { setTheme, toggleTheme } from './lib/theme.svelte.js';
@@ -23,8 +27,8 @@
   import HelpDialog from './components/HelpDialog.svelte';
   import ShareDialog from './components/ShareDialog.svelte';
   import SignedOut from './components/SignedOut.svelte';
-  import { Workflow as WorkflowIcon, Plug, User, Building2 } from '@lucide/svelte';
-  import { switchVault, openSettings } from './lib/app.svelte.js';
+  import { Workflow as WorkflowIcon, Plug, User, Building2, ListChecks, Server, KeyRound, Blocks } from '@lucide/svelte';
+  import { switchVault, openSettings, openVaultSettings } from './lib/app.svelte.js';
 
   let last = '/';
 
@@ -32,6 +36,9 @@
     const [head, a, b] = route.parts;
     if (head === 'settings') {
       openSettings(a ?? 'profile', a === 'connectors' ? (b ?? null) : null);
+      replace(last);
+    } else if (head === 'vault') {
+      openVaultSettings(a ?? 'general', a === 'integrations' ? (b ?? null) : null);
       replace(last);
     } else if (head === 'connectors') {
       openSettings('connectors', a ?? null);
@@ -41,7 +48,7 @@
     }
   });
 
-  const key = $derived(['library', 'database', 'access'].includes(route.parts[0]) ? route.parts[0] : route.parts.slice(0, 2).join('/') || 'home');
+  const key = $derived(['library', 'access'].includes(route.parts[0]) ? route.parts[0] : route.parts.slice(0, 2).join('/') || 'home');
 
   const commands = $derived([
     { id: 'new', group: 'Actions', label: 'New chat', icon: Plus, shortcut: '⌘ ⇧ O', run: () => go('/') },
@@ -56,6 +63,12 @@
     { id: 'p-workflows', group: 'Go to', label: 'Workflows', icon: WorkflowIcon, run: () => go('/workflows') },
     { id: 'p-connectors', group: 'Go to', label: 'Connectors', icon: Plug, run: () => openSettings('connectors') },
     { id: 'p-access', group: 'Go to', label: 'Access', icon: Lock, run: () => go('/access') },
+    { id: 'p-onboarding', group: 'Go to', label: 'Onboarding', icon: ListChecks, run: () => go('/onboarding') },
+    { id: 'p-vault', group: 'Go to', label: 'Vault settings', icon: Building2, run: () => openVaultSettings() },
+    { id: 'p-server', group: 'Go to', label: 'Server', icon: Server, run: () => openVaultSettings('server'), searchOnly: true },
+    { id: 'p-integrations', group: 'Go to', label: 'Integrations', icon: Blocks, run: () => openVaultSettings('integrations'), searchOnly: true },
+    { id: 'p-keys', group: 'Go to', label: 'Vault API key', icon: KeyRound, run: () => openVaultSettings('api'), searchOnly: true },
+    { id: 'p-my-key', group: 'Go to', label: 'Your API key', icon: KeyRound, run: () => openSettings('api'), searchOnly: true },
     { id: 'p-settings', group: 'Go to', label: 'Settings', icon: Settings, shortcut: '⌘ ,', run: () => openSettings() },
     { id: 'p-specimen', group: 'Go to', label: 'Component specimen', icon: Shapes, run: () => go('/specimen') },
     ...ws().chats.map((c, i) => ({ id: `c-${c.id}`, group: 'Chats', label: c.title, icon: MessagesSquare, meta: c.updated, run: () => go(`/chat/${c.id}`), searchOnly: i >= 6 })),
@@ -102,6 +115,8 @@
         <Chats />
       {:else if route.parts[0] === 'library'}
         <LibraryPage />
+      {:else if route.parts[0] === 'database' && route.parts[1]}
+        <DatabaseTable id={route.parts[1]} />
       {:else if route.parts[0] === 'database'}
         <DatabasePage />
       {:else if route.parts[0] === 'workflows' && route.parts[1]}
@@ -110,6 +125,8 @@
         <Workflows />
       {:else if route.parts[0] === 'access'}
         <AccessPage />
+      {:else if route.parts[0] === 'onboarding'}
+        <Onboarding />
       {:else if route.parts[0] === 'specimen'}
         <Specimen />
       {:else}
@@ -121,8 +138,10 @@
 
 <CommandPalette bind:open={app.palette} {commands} />
 <AppSettings />
+<VaultSettingsDialog />
 <PromptHost />
 <HelpDialog bind:open={app.help} />
 <ShareDialog />
 {#if app.signedOut}<SignedOut />{/if}
 <Toaster />
+<ContextMenu />

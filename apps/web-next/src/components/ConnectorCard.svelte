@@ -9,15 +9,14 @@
 
 <article class="card">
   <button type="button" class="hit" aria-label={`${connector.name} details`} onclick={onopen}></button>
-  <span class="logo"><ConnectorIcon id={connector.id} /></span>
+  <span class="logo"><ConnectorIcon id={connector.brand ?? connector.id} /></span>
   <div class="text">
     <span class="name">{connector.name}<span class="verified" role="img" aria-label="Verified"><Icon icon={BadgeCheck} size="sm" /></span></span>
     <p class="description">{connector.connected ? connector.account : connector.description}</p>
-    <span class="by">by {connector.by}</span>
   </div>
   {#if connector.connected}
     <span class="done" role="img" aria-label="Connected"><Icon icon={Check} size="md" /></span>
-  {:else}
+  {:else if onconnect}
     <span class="action"><IconButton icon={Plus} label={`Connect ${connector.name}`} variant="subtle" tooltip={false} onclick={onconnect} /></span>
   {/if}
 </article>
@@ -49,16 +48,11 @@
     display: grid;
     place-items: center;
     flex: none;
-    width: var(--control-2xl);
-    height: var(--control-2xl);
-    border-radius: var(--radius-md);
-    background: var(--color-surface);
-    box-shadow: inset 0 0 0 var(--border-width) var(--color-border-subtle);
   }
 
   .logo :global(.tile) {
-    width: var(--icon-xl);
-    height: var(--icon-xl);
+    width: var(--icon-2xl);
+    height: var(--icon-2xl);
   }
 
   .text {
@@ -92,11 +86,6 @@
     overflow: hidden;
     overflow-wrap: anywhere;
     color: var(--color-text-secondary);
-    font-size: var(--text-md);
-  }
-
-  .by {
-    color: var(--color-text-tertiary);
     font-size: var(--text-md);
   }
 

@@ -78,8 +78,10 @@
   .body {
     flex: 1;
     min-height: 0;
+    --pane-pad: var(--space-6);
+    --pane-pad-top: var(--space-2);
     overflow-y: auto;
-    padding: var(--space-2) var(--space-6) var(--space-6);
+    padding: var(--pane-pad-top) var(--pane-pad) var(--pane-pad);
     container-type: inline-size;
   }
 
@@ -97,7 +99,7 @@
     }
 
     .body {
-      padding: var(--space-2) var(--space-4) var(--space-4);
+      --pane-pad: var(--space-4);
     }
   }
 </style>

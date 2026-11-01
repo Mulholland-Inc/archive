@@ -13,3 +13,4 @@
 *.tfstate.*
 *.tfvars
 *.tfplan
+/apps/kit/node_modules

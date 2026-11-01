@@ -4,15 +4,16 @@
   import Tooltip from './Tooltip.svelte';
   import Kbd from './Kbd.svelte';
   import InlineEdit from './InlineEdit.svelte';
+  import { contextmenu } from '../lib/contextmenu.svelte.js';
 
-  let { href, icon, label, active = false, onclick, shortcut, accent = false, leading, before, actions, badge, onrename, editing = $bindable(false) } = $props();
+  let { href, icon, label, active = false, onclick, shortcut, accent = false, leading, before, actions, badge, items, onrename, editing = $bindable(false) } = $props();
 
   const sidebar = getContext('sidebar');
   const collapsed = $derived(sidebar?.collapsed ?? false);
 </script>
 
 {#snippet row()}
-  <div class={['item', { active, collapsed, accent, hasActions: actions }]}>
+  <div class={['item', { active, collapsed, accent, hasActions: actions }]} {@attach items && !editing && contextmenu(items)}>
     {#if before && !collapsed}<span class="before">{@render before()}</span>{/if}
     {#if editing && onrename}
       <InlineEdit value={label} label={`Rename ${label}`} onsave={(title) => { editing = false; onrename(title); }} oncancel={() => (editing = false)} />
@@ -61,7 +62,8 @@
   }
 
   .item:hover,
-  .item:focus-within {
+  .item:focus-within,
+  .item:global([data-contextmenu]) {
     background: var(--color-fill);
     color: var(--color-text);
   }

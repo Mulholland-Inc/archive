@@ -1,5 +1,7 @@
 <script>
-  let { title, search, actions } = $props();
+  import Art from './Art.svelte';
+
+  let { title, art, search, actions } = $props();
 
   let height = $state(0);
   let compact = $state(false);
@@ -14,9 +16,12 @@
 </script>
 
 <header class={['header', { compact }]} style:--top-height={`${height}px`}>
-  <div class="top" bind:offsetHeight={height} {@attach watch}>
-    <h1>{title}</h1>
-    {#if actions}<div class="actions">{@render actions()}</div>{/if}
+  <div class="lead" bind:offsetHeight={height} {@attach watch}>
+    {#if art}<div class="banner"><Art name={art} size="banner" /></div>{/if}
+    <div class="top">
+      <h1>{title}</h1>
+      {#if actions}<div class="actions">{@render actions()}</div>{/if}
+    </div>
   </div>
   <div class="bar">
     <span class="mini" aria-hidden={!compact}>{title}</span>
@@ -36,7 +41,26 @@
     background: var(--color-canvas);
   }
 
+  .banner {
+    --page-pad: var(--space-8);
+    height: var(--banner-height);
+    margin-block: calc(var(--page-pad) * -1) calc(var(--space-12) * -1);
+    margin-inline: calc(50% - 50cqi);
+    background: var(--color-canvas);
+    mask-image: linear-gradient(to bottom, #000 25%, transparent 92%);
+    pointer-events: none;
+  }
+
+  .banner :global(.art) {
+    mix-blend-mode: multiply;
+  }
+
+  :global([data-theme='dark']) .banner :global(.art) {
+    mix-blend-mode: lighten;
+  }
+
   .top {
+    position: relative;
     display: flex;
     align-items: center;
     gap: var(--space-4);
@@ -135,6 +159,12 @@
   @media (max-width: 40rem) {
     .header {
       margin-block-end: calc(var(--space-5) * -1 + var(--space-3));
+    }
+
+    .banner {
+      --page-pad: var(--space-4);
+      height: var(--banner-height-sm);
+      margin-block-end: calc(var(--space-8) * -1);
     }
 
     .search > :global(:first-child) {

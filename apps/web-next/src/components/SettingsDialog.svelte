@@ -6,17 +6,17 @@
   import IconButton from './IconButton.svelte';
   import Breadcrumbs from './Breadcrumbs.svelte';
 
-  let { open = $bindable(false), items = [], section = $bindable(null), trail = [], onselect, children: pane } = $props();
+  let { open = $bindable(false), root = 'Settings', items = [], section = $bindable(null), trail = [], onselect, children: pane } = $props();
 
   let query = $state('');
   const current = $derived(section ?? items[0]?.id);
 </script>
 
-<Dialog bind:open bare size="xl" label="Settings">
+<Dialog bind:open bare size="xl" label={root}>
   {#snippet children({ close })}
     <div class={['layout', { listing: section === null }]}>
       <header class="bar">
-        <div class="brand"><Breadcrumbs items={[{ label: 'Settings', onclick: () => (section = null) }, ...trail]} /></div>
+        <div class="brand"><Breadcrumbs items={[{ label: root, onclick: () => (section = null) }, ...trail]} /></div>
         <IconButton icon={X} label="Close" tooltip={false} onclick={close} />
       </header>
       <aside class="aside">

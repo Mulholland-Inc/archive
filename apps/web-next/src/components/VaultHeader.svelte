@@ -1,19 +1,22 @@
 <script>
   import { getContext } from 'svelte';
+  import { Settings } from '@lucide/svelte';
   import VaultIcon from './VaultIcon.svelte';
+  import Icon from './Icon.svelte';
 
-  let { vault } = $props();
+  let { vault, onclick } = $props();
   const sidebar = getContext('sidebar');
   const collapsed = $derived(sidebar?.collapsed ?? false);
 </script>
 
-<div class={['header', { collapsed }]}>
-  <VaultIcon icon={vault?.look.icon} tint={vault?.look.tint} seed={vault?.id} size="lg" label={collapsed ? vault?.name : undefined} />
+<button type="button" class={['header', { collapsed }]} {onclick} aria-label={collapsed ? `${vault?.name} settings` : undefined}>
+  <VaultIcon icon={vault?.look.icon} tint={vault?.look.tint} seed={vault?.id} size="lg" />
   <span class="lines">
     <span class="name">{vault?.name}</span>
     <span class="sub">{vault?.kind}, {vault?.members.length} {vault?.members.length === 1 ? 'member' : 'members'}</span>
   </span>
-</div>
+  <span class="gear"><Icon icon={Settings} size="sm" /></span>
+</button>
 
 <style>
   .header {
@@ -24,6 +27,26 @@
     min-width: 0;
     min-height: var(--vault-header);
     padding: var(--space-3) var(--space-3);
+    border-radius: var(--radius-lg);
+    text-align: start;
+    transition: background-color var(--duration-fast) var(--ease-out);
+  }
+
+  .header:hover {
+    background: var(--color-fill);
+  }
+
+  .gear {
+    display: flex;
+    flex: none;
+    color: var(--color-text-tertiary);
+    opacity: 0;
+    transition: opacity var(--duration-fast) var(--ease-out);
+  }
+
+  .header:hover .gear,
+  .header:focus-visible .gear {
+    opacity: 1;
   }
 
   .collapsed {
@@ -56,7 +79,7 @@
     font-size: var(--text-sm);
   }
 
-  .collapsed .lines {
+  .collapsed :is(.lines, .gear) {
     display: none;
   }
 </style>

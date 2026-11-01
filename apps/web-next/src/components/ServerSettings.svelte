@@ -7,7 +7,7 @@
   import Button from './Button.svelte';
   import Chip from './Chip.svelte';
   import Text from './Text.svelte';
-  import Art from './Art.svelte';
+  import PaneHeader from './PaneHeader.svelte';
 
   const cloud = 'https://console.cloud.google.com/home/dashboard?project=mulholland-archive';
 
@@ -81,8 +81,8 @@
   ];
 </script>
 
+<PaneHeader title="Server" description="Where this vault runs, what it uses and how healthy it is right now." art="server" />
 <Stack gap="6">
-  <Art name="server" />
   {#each sections as section, i (section.title)}
     {#if i}<Divider />{/if}
     <Section title={section.title}>

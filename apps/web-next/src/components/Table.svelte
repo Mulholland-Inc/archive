@@ -1,5 +1,7 @@
 <script>
-  let { columns = [], rows = [], cell, leading, key = 'id', onrowclick, label, selected = [], cards = false } = $props();
+  import { contextmenu } from '../lib/contextmenu.svelte.js';
+
+  let { columns = [], rows = [], cell, leading, key = 'id', onrowclick, menu, label, selected = [], cards = false, flush = false } = $props();
 
   const link = $derived(columns.findIndex((c) => !c.control));
   const role = (col, i) => col.mobile ?? (i === link ? 'primary' : col.align === 'end' ? 'trailing' : 'secondary');
@@ -14,7 +16,7 @@
   {:else if cell}{@render cell(row, col)}{:else}{row[col.key]}{/if}
 {/snippet}
 
-<div class={['wrap', { cards }]}>
+<div class={['wrap', { cards, flush }]}>
   <table aria-label={label}>
     <thead>
       <tr>
@@ -25,7 +27,7 @@
     </thead>
     <tbody>
       {#each rows as row (row[key])}
-        <tr class={{ clickable: onrowclick, selected: selected.includes(row[key]), led: !!leading }}>
+        <tr class={{ clickable: onrowclick, selected: selected.includes(row[key]), led: !!leading }} {@attach menu && contextmenu(() => menu(row))}>
           {#each columns as col, i (col.key)}
             <td class={[col.align, col.width && `w-${col.width}`, col.muted && 'muted', `m-${role(col, i)}`, leading && i === 0 && 'haslead']}>
               {#if onrowclick && i === link}
@@ -43,6 +45,7 @@
   .wrap {
     min-width: 0;
     overflow-x: auto;
+    overscroll-behavior-y: auto;
   }
 
   table {
@@ -71,6 +74,14 @@
 
   tr:last-child td {
     box-shadow: none;
+  }
+
+  .flush :is(th, td):first-child {
+    padding-inline-start: var(--space-0);
+  }
+
+  .flush :is(th, td):last-child {
+    padding-inline-end: var(--space-0);
   }
 
   .muted {
@@ -115,18 +126,21 @@
   }
 
   .clickable:hover td,
-  .selected td {
+  .selected td,
+  tr:global([data-contextmenu]) td {
     background: var(--color-fill-subtle);
   }
 
   .clickable:hover td:first-child,
-  .selected td:first-child {
+  .selected td:first-child,
+  tr:global([data-contextmenu]) td:first-child {
     border-start-start-radius: var(--radius-md);
     border-end-start-radius: var(--radius-md);
   }
 
   .clickable:hover td:last-child,
-  .selected td:last-child {
+  .selected td:last-child,
+  tr:global([data-contextmenu]) td:last-child {
     border-start-end-radius: var(--radius-md);
     border-end-end-radius: var(--radius-md);
   }

@@ -8,10 +8,12 @@
   import AccountMenu from './AccountMenu.svelte';
   import ChatActions from './ChatActions.svelte';
   import PinButton from './PinButton.svelte';
-  import { app, ws, closeDrawer, pinnedFirst, switchVault, createVault, renameChat } from '../lib/app.svelte.js';
+  import { app, ws, openVaultSettings, closeDrawer, pinnedFirst, switchVault, createVault, renameChat } from '../lib/app.svelte.js';
   import { me } from '../lib/data.js';
   import { route, active } from '../lib/router.svelte.js';
   import NewVaultDialog from './NewVaultDialog.svelte';
+  import SetupCard from './SetupCard.svelte';
+  import { chatItems } from '../lib/menus.js';
 
   const running = $derived(ws().workflows.filter((w) => w.runs[0] && (w.runs[0].status === 'running' || w.runs[0].status === 'waiting')).length);
   const visible = $derived(pinnedFirst(ws().chats));
@@ -33,8 +35,10 @@
     <VaultRail vaults={app.vaults} current={app.vault} onselect={switchVault} oncreate={() => { app.drawer = false; creating = true; }} />
   {/snippet}
   {#snippet header()}
-    <VaultHeader vault={ws()} />
+    <VaultHeader vault={ws()} onclick={() => { app.drawer = false; openVaultSettings(); }} />
   {/snippet}
+
+  <SetupCard />
 
   <SidebarSection>
     <SidebarItem icon={Plus} label="New chat" href="#/" accent shortcut="⌘ ⇧ O" />
@@ -52,7 +56,7 @@
   {#if !collapsed && visible.length}
     <SidebarSection title="Recents">
         {#each visible as chat (chat.id)}
-        <SidebarItem label={chat.title} href={`#/chat/${chat.id}`} active={route.path === `/chat/${chat.id}`} onrename={(title) => renameChat(chat.id, title)} bind:editing={() => renaming === chat.id, (on) => (renaming = on ? chat.id : null)}>
+        <SidebarItem label={chat.title} href={`#/chat/${chat.id}`} active={route.path === `/chat/${chat.id}`} items={() => chatItems(chat, { open: false, rename: () => (renaming = chat.id) })} onrename={(title) => renameChat(chat.id, title)} bind:editing={() => renaming === chat.id, (on) => (renaming = on ? chat.id : null)}>
           {#snippet before()}
             {#if chat.pinned}<PinButton {chat} />{/if}
           {/snippet}
