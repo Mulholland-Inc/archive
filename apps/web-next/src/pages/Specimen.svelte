@@ -136,7 +136,7 @@
   ];
 </script>
 
-<TopBar>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
+<TopBar mobile>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
 <Page width="wide">
   <PageHeader title="Specimen" size="lg">
     {#snippet actions()}

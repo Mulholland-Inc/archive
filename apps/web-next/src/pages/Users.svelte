@@ -86,7 +86,7 @@
   }
 </script>
 
-<TopBar>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
+<TopBar mobile>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
 <Page width="wide">
   <PageHeader title="Users">
     {#snippet actions()}<Button variant="primary" icon={UserPlus} onclick={() => (inviting = true)}>Invite</Button>{/snippet}

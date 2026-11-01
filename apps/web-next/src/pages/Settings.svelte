@@ -110,7 +110,7 @@
   const sample = [{ type: 'p', text: 'The postmark reads **ENUGU 18 MR 74**, which matches the date at the top of the second letter.' }];
 </script>
 
-<TopBar>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
+<TopBar mobile>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
 <Page width="wide">
   <PageHeader title="Settings" />
   <Split side="start">
