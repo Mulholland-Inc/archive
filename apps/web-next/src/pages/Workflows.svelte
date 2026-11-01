@@ -20,12 +20,13 @@
   import { confirmDialog } from '../lib/dialogs.svelte.js';
   import { go } from '../lib/router.svelte.js';
 
-  const kinds = [
+  const statuses = [
     { value: 'all', label: 'All' },
-    { value: 'schedule', label: 'Scheduled' },
-    { value: 'file', label: 'New files' },
-    { value: 'email', label: 'Email' },
-    { value: 'manual', label: 'By hand' }
+    { value: 'running', label: 'Running' },
+    { value: 'waiting', label: 'Needs input' },
+    { value: 'succeeded', label: 'Succeeded' },
+    { value: 'failed', label: 'Failed' },
+    { value: 'idle', label: 'Never run' }
   ];
   const sorts = [
     { value: 'recent', label: 'Recently run' },
@@ -33,23 +34,23 @@
     { value: 'runs', label: 'Most runs' }
   ];
   const columns = [
-    { key: 'name', label: 'Name' },
-    { key: 'trigger', label: 'Trigger', muted: true, width: 'lg' },
-    { key: 'status', label: 'Status', width: 'sm' },
-    { key: 'last', label: 'Last run', muted: true, width: 'sm' },
+    { key: 'name', label: 'Workflow' },
+    { key: 'status', label: 'Last run', width: 'sm' },
+    { key: 'last', label: 'When', muted: true, width: 'sm' },
     { key: 'actions', label: '', width: 'sm', align: 'end' }
   ];
 
   let query = $state('');
-  let kind = $state('all');
+  let status = $state('all');
   let sort = $state('recent');
   let search = $state();
 
   const statusOf = (w) => (!w.enabled ? 'off' : w.runs[0] ? (w.runs[0].paused ? 'paused' : w.runs[0].status) : 'idle');
+  const lastRun = (w) => (w.runs[0] ? (w.runs[0].status === 'stopped' ? 'failed' : w.runs[0].status) : 'idle');
   const rows = $derived.by(() => {
     const q = query.trim().toLowerCase();
     const out = ws().workflows.filter(
-      (w) => (kind === 'all' || w.trigger.kind === kind) && (!q || w.name.toLowerCase().includes(q) || w.trigger.label.toLowerCase().includes(q))
+      (w) => (status === 'all' || lastRun(w) === status) && (!q || w.name.toLowerCase().includes(q))
     );
     if (sort === 'name') return [...out].sort((a, b) => a.name.localeCompare(b.name));
     if (sort === 'runs') return [...out].sort((a, b) => b.runs.length - a.runs.length);
@@ -62,7 +63,7 @@
 
   function clear() {
     query = '';
-    kind = 'all';
+    status = 'all';
   }
 
   onMount(() => {
@@ -86,8 +87,8 @@
       <SearchField bind:value={query} bind:element={search} placeholder="Search workflows" shortcut="/" />
     </Stack>
     <Stack direction="row" gap="2" align="center" wrap>
-      {#each kinds as k (k.value)}
-        <Chip selected={kind === k.value} onclick={() => (kind = k.value)}>{k.label}</Chip>
+      {#each statuses as s (s.value)}
+        <Chip selected={status === s.value} onclick={() => (status = s.value)}>{s.label}</Chip>
       {/each}
       <Spacer />
       <Select bind:value={sort} options={sorts} variant="ghost" label="Sort by" placement="bottom-end" />
@@ -105,8 +106,6 @@
       {#snippet cell(row, col)}
         {#if col.key === 'name'}
           <Text weight="medium" truncate>{row.name}</Text>
-        {:else if col.key === 'trigger'}
-          <Text tone="secondary" truncate>{row.trigger.label}</Text>
         {:else if col.key === 'status'}
           <StatusBadge status={statusOf(row)} />
         {:else if col.key === 'last'}

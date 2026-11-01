@@ -35,7 +35,7 @@ const studio = { owners: ['Design'], editors: ['Research'], viewers: [] };
 const solo = { owners: ['You'], editors: [], viewers: [] };
 
 const okafor = [
-  table('person', 'Person', 'person', 214, 'Today', family, ['Tag people in new photos'], [
+  table('person', 'Person', 'person', 214, 'Today', family, ['Tag who is in each new photo from iCloud Photos and ask when it isn\'t sure'], [
     c('full_name', 'text', true, 'As written on documents'),
     c('born', 'date', false, 'Year only is fine'),
     c('birthplace', 'link', false, '', 'place'),
@@ -47,7 +47,7 @@ const okafor = [
     ['Emeka Okafor', '1958', 'Lagos', 'Adaeze Okafor'],
     ['Ngozi Nwosu', '1962', 'Lagos', 'Adaeze Okafor']
   ]),
-  table('letter', 'Letter', 'letter', 386, 'Yesterday', family, ['Index scanned ledgers'], [
+  table('letter', 'Letter', 'letter', 386, 'Yesterday', family, ['Read the scanned ledgers and turn every entry into a searchable row'], [
     c('title', 'text', true),
     c('sender', 'link', true, '', 'person'),
     c('recipient', 'link', false, '', 'person'),
@@ -59,7 +59,7 @@ const okafor = [
     ['Wedding thanks', 'Ngozi Nwosu', 'Adaeze Okafor', 'Jun 1984'],
     ['News from London', 'Emeka Okafor', 'Adaeze Okafor', 'Nov 1981']
   ]),
-  table('photo', 'Photo', 'photo', 1842, '2 hr ago', family, ['Tag people in new photos', 'Restore damaged photos'], [
+  table('photo', 'Photo', 'photo', 1842, '2 hr ago', family, ['Tag who is in each new photo from iCloud Photos and ask when it isn\'t sure', 'Repair scratches and fading in old photos and keep the originals untouched'], [
     c('caption', 'text', true),
     c('taken_on', 'date'),
     c('place', 'link', false, '', 'place'),
@@ -71,7 +71,7 @@ const okafor = [
     ['Christmas at Enugu', '1975', 'Enugu', 'Christmas 1975'],
     ['First day of school', '1966', 'Enugu', '']
   ]),
-  table('recording', 'Recording', 'recording', 48, '6 min ago', family, ['Transcribe new cassettes'], [
+  table('recording', 'Recording', 'recording', 48, '6 min ago', family, ['Transcribe each recording added to Cassettes and file the transcript next to it'], [
     c('title', 'text', true),
     c('recorded_on', 'date'),
     c('length', 'text', false, 'Minutes and seconds'),
@@ -94,7 +94,7 @@ const okafor = [
     ['Surulere flat', 'Lagos', 'Nigeria', '1977'],
     ['Peckham terrace', 'London', 'United Kingdom', '1981']
   ]),
-  table('event', 'Event', 'event', 129, 'Sep 24', family, ['Weekly family digest'], [
+  table('event', 'Event', 'event', 129, 'Sep 24', family, ['Every Sunday evening, email the family a digest of what was added that week'], [
     c('name', 'text', true),
     c('happened_on', 'date', true),
     c('place', 'link', false, '', 'place'),
@@ -116,7 +116,7 @@ const okafor = [
     ['Egusi soup', 'Adaeze Okafor', '6', 'egusi.jpg'],
     ['Chin chin', 'Ngozi Nwosu', '12', '']
   ]),
-  table('document', 'Document', 'document', 512, 'Today', familyPrivate, ['Index scanned ledgers', 'Monthly export to cold storage'], [
+  table('document', 'Document', 'document', 512, 'Today', familyPrivate, ['Read the scanned ledgers and turn every entry into a searchable row', 'On the 1st of every month, export the whole archive to cold storage'], [
     c('title', 'text', true),
     c('kind', 'text', false, 'Deed, ledger, certificate'),
     c('dated', 'date'),
@@ -141,7 +141,7 @@ const hale = [
     ['Brightwater Ltd', 'ops@brightwater.co', 'Jan 2022', 'Daniel Whitcombe'],
     ['Cole Family Trust', 'j.cole@mail.com', 'Aug 2024', 'Ruth Hale']
   ]),
-  table('matter', 'Matter', 'folder', 318, '1 hr ago', firm, ['Check notices against the lease'], [
+  table('matter', 'Matter', 'folder', 318, '1 hr ago', firm, ['Check each notice that arrives in the Mercer inbox against the lease and flag conflicts'], [
     c('title', 'text', true),
     c('client', 'link', true, '', 'client'),
     c('opened_on', 'date', true),
@@ -152,7 +152,7 @@ const hale = [
     ['Brightwater lease review', 'Brightwater Ltd', 'Jul 2025', 'Closed'],
     ['Cole estate', 'Cole Family Trust', 'Sep 2026', 'Open']
   ]),
-  table('contract', 'Contract', 'document', 904, '1 hr ago', firm, ['Check notices against the lease'], [
+  table('contract', 'Contract', 'document', 904, '1 hr ago', firm, ['Check each notice that arrives in the Mercer inbox against the lease and flag conflicts'], [
     c('title', 'text', true),
     c('matter', 'link', true, '', 'matter'),
     c('signed_on', 'date'),
@@ -174,7 +174,7 @@ const hale = [
     ['Defence', 'Mercer v. Brightwater', 'Apr 2026', 'County Court'],
     ['Witness statement, J. Cole', 'Mercer v. Brightwater', 'Sep 2026', 'County Court']
   ]),
-  table('invoice', 'Invoice', 'invoice', 2214, 'Fri', firmBilling, ['Draft billing narratives'], [
+  table('invoice', 'Invoice', 'invoice', 2214, 'Fri', firmBilling, ['On the last Friday of the month, draft billing narratives from the month\'s time entries'], [
     c('number', 'text', true),
     c('matter', 'link', true, '', 'matter'),
     c('issued_on', 'date', true),
@@ -220,7 +220,7 @@ const fieldnote = [
     ['Port of Rotterdam', 'brand@port.nl', 'Rotterdam', '2025'],
     ['Fieldnote', 'hello@fieldnote.studio', 'Brooklyn', '2019']
   ]),
-  table('asset', 'Asset', 'box', 3120, 'Yesterday', studio, ['Collect references for moodboards'], [
+  table('asset', 'Asset', 'box', 3120, 'Yesterday', studio, ['Sort each image added to the Linden folder in Google Drive into the right moodboard'], [
     c('name', 'text', true),
     c('project', 'link', true, '', 'project'),
     c('kind', 'text', false, 'Photo, scan, type, sketch'),

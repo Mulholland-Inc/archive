@@ -21,7 +21,7 @@ function finished(number, started, elapsed, labels) {
 const okafor = [
   {
     id: 'wf-cassettes',
-    name: 'Transcribe new cassettes',
+    name: 'Transcribe each recording added to Cassettes and file the transcript next to it',
     agent: 'Transcriber',
     trigger: { kind: 'file', label: 'When audio is added to Cassettes' },
     enabled: true,
@@ -40,7 +40,7 @@ const okafor = [
   },
   {
     id: 'wf-faces',
-    name: 'Tag people in new photos',
+    name: 'Tag who is in each new photo from iCloud Photos and ask when it isn\'t sure',
     agent: 'Photo tagger',
     trigger: { kind: 'file', label: 'When photos arrive from iCloud Photos', connector: 'icloud' },
     enabled: true,
@@ -57,7 +57,7 @@ const okafor = [
   },
   {
     id: 'wf-digest',
-    name: 'Weekly family digest',
+    name: 'Every Sunday evening, email the family a digest of what was added that week',
     agent: 'Digest',
     trigger: { kind: 'schedule', label: 'Every Sunday at 18:00' },
     enabled: true,
@@ -76,7 +76,7 @@ const okafor = [
   },
   {
     id: 'wf-ledgers',
-    name: 'Index scanned ledgers',
+    name: 'Read the scanned ledgers and turn every entry into a searchable row',
     agent: 'Indexer',
     trigger: { kind: 'manual', label: 'Run by hand' },
     enabled: true,
@@ -91,7 +91,7 @@ const okafor = [
   },
   {
     id: 'wf-restore',
-    name: 'Restore damaged photos',
+    name: 'Repair scratches and fading in old photos and keep the originals untouched',
     agent: 'Restorer',
     trigger: { kind: 'manual', label: 'Run by hand' },
     enabled: true,
@@ -107,7 +107,7 @@ const okafor = [
   },
   {
     id: 'wf-export',
-    name: 'Monthly export to cold storage',
+    name: 'On the 1st of every month, export the whole archive to cold storage',
     agent: 'Exporter',
     trigger: { kind: 'schedule', label: '1st of every month, 02:00' },
     enabled: true,
@@ -120,7 +120,7 @@ const okafor = [
 const hale = [
   {
     id: 'wf-notices',
-    name: 'Check notices against the lease',
+    name: 'Check each notice that arrives in the Mercer inbox against the lease and flag conflicts',
     agent: 'Paralegal',
     trigger: { kind: 'email', label: 'When a notice arrives in the Mercer inbox', connector: 'outlook' },
     enabled: true,
@@ -137,7 +137,7 @@ const hale = [
   },
   {
     id: 'wf-billing',
-    name: 'Draft billing narratives',
+    name: 'On the last Friday of the month, draft billing narratives from the month\'s time entries',
     agent: 'Billing',
     trigger: { kind: 'schedule', label: 'Last Friday of every month' },
     enabled: true,
@@ -152,7 +152,7 @@ const hale = [
 const fieldnote = [
   {
     id: 'wf-references',
-    name: 'Collect references for moodboards',
+    name: 'Sort each image added to the Linden folder in Google Drive into the right moodboard',
     agent: 'Researcher',
     trigger: { kind: 'file', label: 'When images are added to the Linden folder in Google Drive', connector: 'gdrive' },
     enabled: true,
