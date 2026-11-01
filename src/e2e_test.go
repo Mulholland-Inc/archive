@@ -40,13 +40,8 @@ import (
 	"testing"
 	"time"
 
-	taskspb "cloud.google.com/go/cloudtasks/apiv2/cloudtaskspb"
 	"github.com/jackc/pgx/v4"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/status"
 )
 
 var e2eBin, e2eTemplate string
@@ -149,29 +144,23 @@ func newInst(t *testing.T, env ...string) *e2eInst {
 }
 
 type e2eTasks struct {
-	taskspb.UnimplementedCloudTasksServer
 	addr   string
 	hold   bool
 	issuer *httptest.Server
 	meta   *httptest.Server
-	grpc   *grpc.Server
+	srv    *httptest.Server
 
 	mu     sync.Mutex
 	names  map[string]bool
-	posted []*taskspb.Task
+	posted []hubTask
 	routes map[string]*e2eRoute
 }
 
 type e2eRoute struct{ url, aud string }
 
 func e2eTasksStart(hold bool) (*e2eTasks, error) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return nil, err
-	}
 	issuer, err := e2eIssuerServer()
 	if err != nil {
-		ln.Close()
 		return nil, err
 	}
 	meta := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -190,14 +179,14 @@ func e2eTasksStart(hold bool) (*e2eTasks, error) {
 			http.NotFound(w, r)
 		}
 	}))
-	f := &e2eTasks{addr: "http://" + ln.Addr().String(), hold: hold, issuer: issuer, meta: meta, grpc: grpc.NewServer(), names: map[string]bool{}, routes: map[string]*e2eRoute{}}
-	taskspb.RegisterCloudTasksServer(f.grpc, f)
-	go f.grpc.Serve(ln)
+	f := &e2eTasks{hold: hold, issuer: issuer, meta: meta, names: map[string]bool{}, routes: map[string]*e2eRoute{}}
+	f.srv = httptest.NewServer(http.HandlerFunc(f.createTask))
+	f.addr = f.srv.URL
 	return f, nil
 }
 
 func (f *e2eTasks) stop() {
-	f.grpc.Stop()
+	f.srv.Close()
 	f.issuer.Close()
 	f.meta.Close()
 }
@@ -223,29 +212,38 @@ func (f *e2eTasks) route(queue, url, aud string) {
 	}
 }
 
-func (f *e2eTasks) CreateTask(ctx context.Context, req *taskspb.CreateTaskRequest) (*taskspb.Task, error) {
+func (f *e2eTasks) createTask(w http.ResponseWriter, r *http.Request) {
+	fail := func(code int, msg string) {
+		w.WriteHeader(code)
+		json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"code": code, "message": msg}})
+	}
+	parent, ok := strings.CutSuffix(strings.TrimPrefix(r.URL.Path, "/v2/"), "/tasks")
+	var req struct{ Task hubTask }
+	if r.Method != "POST" || !ok || r.Header.Get("Content-Type") != "application/json" || json.NewDecoder(r.Body).Decode(&req) != nil {
+		fail(http.StatusBadRequest, "want POST /v2/<queue>/tasks with a JSON task")
+		return
+	}
+	tk := req.Task
+	if !strings.HasPrefix(tk.Name, parent+"/tasks/") || tk.HTTPRequest.URL == "" {
+		fail(http.StatusBadRequest, "want a named HTTP task in the queue")
+		return
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if md, _ := metadata.FromIncomingContext(ctx); !slices.Contains(md.Get("x-goog-request-params"), "parent="+req.GetParent()) {
-		return nil, status.Error(codes.InvalidArgument, `"x-goog-request-params" must contain "parent=`+req.GetParent()+`"`)
-	}
-	tk := req.GetTask()
-	if !strings.HasPrefix(tk.GetName(), req.GetParent()+"/tasks/") || tk.GetHttpRequest() == nil {
-		return nil, status.Error(codes.InvalidArgument, "want a named HTTP task in the queue")
-	}
 	f.posted = append(f.posted, tk)
-	if f.names[tk.GetName()] {
-		return nil, status.Error(codes.AlreadyExists, "task exists")
+	if f.names[tk.Name] {
+		fail(http.StatusConflict, "task exists")
+		return
 	}
-	f.names[tk.GetName()] = true
+	f.names[tk.Name] = true
 	if !f.hold {
-		go f.deliver(req.GetParent(), tk)
+		go f.deliver(parent, tk)
 	}
-	return tk, nil
+	json.NewEncoder(w).Encode(tk)
 }
 
-func (f *e2eTasks) deliver(queue string, tk *taskspb.Task) {
-	time.Sleep(time.Until(tk.GetScheduleTime().AsTime()))
+func (f *e2eTasks) deliver(queue string, tk hubTask) {
+	time.Sleep(time.Until(tk.ScheduleTime))
 	for wait := 50 * time.Millisecond; ; wait = min(2*wait, time.Second) {
 		f.mu.Lock()
 		r, ok := f.routes[queue]
@@ -258,8 +256,8 @@ func (f *e2eTasks) deliver(queue string, tk *taskspb.Task) {
 			return
 		}
 		if to.url != "" {
-			if tok, err := f.token(map[string]any{"aud": to.aud, "sub": "1", "email": tk.GetHttpRequest().GetOidcToken().GetServiceAccountEmail(), "email_verified": true}); err == nil {
-				req, _ := http.NewRequest("POST", to.url+"/tasks", bytes.NewReader(tk.GetHttpRequest().GetBody()))
+			if tok, err := f.token(map[string]any{"aud": to.aud, "sub": "1", "email": tk.HTTPRequest.OIDCToken.ServiceAccountEmail, "email_verified": true}); err == nil {
+				req, _ := http.NewRequest("POST", to.url+"/tasks", bytes.NewReader(tk.HTTPRequest.Body))
 				req.Header.Set("Content-Type", "application/json")
 				req.Header.Set("Authorization", "Bearer "+tok)
 				if resp, err := http.DefaultClient.Do(req); err == nil {
@@ -287,7 +285,7 @@ func (f *e2eTasks) token(claims map[string]any) (string, error) {
 	return out.IDToken, json.NewDecoder(resp.Body).Decode(&out)
 }
 
-func (f *e2eTasks) tasks() []*taskspb.Task {
+func (f *e2eTasks) tasks() []hubTask {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.posted)
@@ -4138,7 +4136,7 @@ func TestCloudTasksWakeTheServiceAtEachDueTimeAndNothingRunsOnItsOwn(t *testing.
 	api := srv.url + "/api"
 	one := in.psql("archive", "SELECT id FROM archive.workspace ORDER BY created_at LIMIT 1")
 	tok := decode[Token](t, in.must("token", "create")).Secret
-	last := func(t *testing.T) *taskspb.Task {
+	last := func(t *testing.T) hubTask {
 		t.Helper()
 		posted := fake.tasks()
 		if len(posted) == 0 {
@@ -4199,20 +4197,20 @@ func TestCloudTasksWakeTheServiceAtEachDueTimeAndNothingRunsOnItsOwn(t *testing.
 	next := deploy(t, map[string]string{"tick.ts": "// on: cron 0 9 * * *\nreturn 'tick';"})
 	want, _ := time.Parse(time.RFC3339Nano, fmt.Sprint(next["tick.ts"]))
 	tk := last(t)
-	hr := tk.GetHttpRequest()
+	hr := tk.HTTPRequest
 	var body map[string]string
-	json.Unmarshal(hr.GetBody(), &body)
-	if !tk.GetScheduleTime().AsTime().Equal(want) || !strings.HasPrefix(tk.GetName(), queue+"/tasks/") || hr.GetHttpMethod() != taskspb.HttpMethod_POST ||
-		hr.GetUrl() != "http://api.test/tasks" || hr.GetOidcToken().GetAudience() != hr.GetUrl() ||
-		hr.GetOidcToken().GetServiceAccountEmail() != acct || fmt.Sprint(body) != fmt.Sprint(work) {
+	json.Unmarshal(hr.Body, &body)
+	if !tk.ScheduleTime.Equal(want) || !strings.HasPrefix(tk.Name, queue+"/tasks/") || hr.HTTPMethod != "POST" ||
+		hr.URL != "http://api.test/tasks" || hr.OIDCToken.Audience != hr.URL ||
+		hr.OIDCToken.ServiceAccountEmail != acct || fmt.Sprint(body) != fmt.Sprint(work) {
 		t.Fatalf("the cron workflow's task: %+v %v, want it at %s", tk, body, want)
 	}
-	aud = hr.GetUrl()
+	aud = hr.URL
 
 	deploy(t, map[string]string{"tick.ts": "// on: cron 0 9 * * *\nreturn 'tick';",
 		"sold.ts": "// on: house\nfor (const r of input.rows) await archive.update('house', r.id, { sold: true });\nreturn input.rows.map((r) => r.address).join(',');"})
-	if tk := last(t); time.Until(tk.GetScheduleTime().AsTime()) > time.Second {
-		t.Errorf("a table workflow's first task is at %s, want now", tk.GetScheduleTime().AsTime())
+	if tk := last(t); time.Until(tk.ScheduleTime) > time.Second {
+		t.Errorf("a table workflow's first task is at %s, want now", tk.ScheduleTime)
 	}
 	call(t, "POST", api+"/house", tok, map[string]any{"address": "Canal 1"}, nil)
 	srv.stop()
@@ -4251,8 +4249,8 @@ func TestCloudTasksWakeTheServiceAtEachDueTimeAndNothingRunsOnItsOwn(t *testing.
 	if rs := runs(t, "sold"); len(rs) != 1 || string(rs[0].Result) != `"Canal 1"` || rs[0].Trigger != "table" {
 		t.Fatalf("the task's runs: %+v", rs)
 	}
-	if tk := last(t); !tk.GetScheduleTime().AsTime().Equal(want) {
-		t.Errorf("after the run the next task is at %s, want the cron time %s", tk.GetScheduleTime().AsTime(), want)
+	if tk := last(t); !tk.ScheduleTime.Equal(want) {
+		t.Errorf("after the run the next task is at %s, want the cron time %s", tk.ScheduleTime, want)
 	}
 	if at := in.psql("archive", "SELECT at = '"+want.Format(time.RFC3339Nano)+"' FROM archive.due WHERE kind = 'workflow'"); at != "t" {
 		t.Errorf("due after the run: %s", in.psql("archive", "SELECT at FROM archive.due"))
@@ -4260,8 +4258,8 @@ func TestCloudTasksWakeTheServiceAtEachDueTimeAndNothingRunsOnItsOwn(t *testing.
 
 	n := count()
 	st, out := e2eRun(t, api, tok, `const [h] = await archive.list("house"); await archive.update("house", h.id, { sold: false }); return 0;`)
-	if st != 200 || out.Error != "" || count() != n+1 || time.Until(last(t).GetScheduleTime().AsTime()) > time.Second || time.Since(last(t).GetScheduleTime().AsTime()) > 5*time.Second {
-		t.Fatalf("a write made %d tasks, the last at %s: %+v", count()-n, last(t).GetScheduleTime().AsTime(), out)
+	if st != 200 || out.Error != "" || count() != n+1 || time.Until(last(t).ScheduleTime) > time.Second || time.Since(last(t).ScheduleTime) > 5*time.Second {
+		t.Fatalf("a write made %d tasks, the last at %s: %+v", count()-n, last(t).ScheduleTime, out)
 	}
 	time.Sleep(time.Second)
 	if rs := runs(t, "sold"); len(rs) != 1 {
