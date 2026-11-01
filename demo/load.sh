@@ -10,11 +10,7 @@ if [ "$($archive list person -limit 1 2>/dev/null || echo '[]')" != "[]" ]; then
 	exit 1
 fi
 
-schema=$(mktemp -d)
-trap 'rm -rf "$schema"' EXIT
-$archive schema pull "$schema" >/dev/null
-cp "$demo"/schema/*.sql "$schema"
-$archive schema apply "$schema" >/dev/null
+$archive schema migrate "$demo/schema.sql" >/dev/null
 
 member() { $archive list member email="$1" | sed -n 's/.*"id": "\([^"]*\)".*/\1/p'; }
 $archive user add sam@example.com -name "Sam Rivera" -role editor >/dev/null

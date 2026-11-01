@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -42,16 +43,14 @@ Usage:
                                      as MCP's run tool does, and print {result, logs, error}
   archive run -docs                  print the SDK documentation, with an interface per table
 
-  archive schema pull [dir]          print DDL generated from the database, one <name>.sql file
-                                     per table or view, or write those files into dir; layout and
-                                     comments outside DDL are not kept, COMMENT ON is
-  archive schema plan <dir> [-allow-drop]
-                                     show the statements that bring the database to the *.sql
-                                     files in dir, the whole schema: a table in no file is dropped;
-                                     statements that delete data are blocked unless -allow-drop
-  archive schema apply <dir> [-allow-drop]
-                                     run that plan; renames are not detected, so rename a table
-                                     or column with ALTER ... RENAME in psql first
+  archive schema show                print the DDL of every table and view, generated from the database
+  archive schema migrate <file.sql|dir|-> [-allow-drop]
+                                     run DDL in one transaction; Archive adds to each table the id,
+                                     access, created_at, updated_at, search and row-level security
+                                     it leaves out; dropping a table or column needs -allow-drop.
+                                     A file runs once, by its name; a dir runs its *.sql files that
+                                     have not run, in name order
+  archive schema revisions           list the migrations, newest first
 
   archive file add <path>... [-access group]
                                      store files and extract their metadata and text; with -access
@@ -165,7 +164,7 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	fs := flag.NewFlagSet("archive "+cmd, flag.ContinueOnError)
 	fs.Usage = func() { fmt.Fprint(fs.Output(), cliUsage) }
 	addr := fs.String("addr", ":8080", "listen address (serve)")
-	allowDrop := fs.Bool("allow-drop", false, "apply statements that delete data (schema)")
+	allowDrop := fs.Bool("allow-drop", false, "let a migration drop tables and columns (schema)")
 	typ := fs.String("type", "", "only this table, or file (search)")
 	limit := fs.Int("limit", 100, "page size (list)")
 	after := fs.String("after", "", "list objects after this id (list)")
@@ -216,7 +215,7 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 			return err
 		}
 	}
-	if ac == nil && cmd != "serve" && cmd != "types" && cmd != "user" && (cmd != "schema" || pos[0] != "pull") {
+	if ac == nil && cmd != "serve" && cmd != "types" && cmd != "user" && (cmd != "schema" || pos[0] != "show") {
 		return errors.New("no users yet: add the first owner with archive user add <email>")
 	}
 	ctx = withArchive(WithActor(ctx, ac), a)
@@ -260,7 +259,7 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 		}
 		return nil
 	case "schema":
-		return cliSchema(ctx, a, pos, *allowDrop, stdout, out)
+		return cliSchema(ctx, a, pos, *allowDrop, stdin, stdout, out)
 	case "file":
 		return cliFile(ctx, a, pos, *access, *output, *limit, *after, stdout, out)
 	case "user", "token":
@@ -467,42 +466,48 @@ func cliJSON(w io.Writer, v any) error {
 	return enc.Encode(v)
 }
 
-func cliSchema(ctx context.Context, a *Archive, pos []string, allowDrop bool, stdout io.Writer, out func(any, error) error) error {
+func cliSchema(ctx context.Context, a *Archive, pos []string, allowDrop bool, stdin io.Reader, stdout io.Writer, out func(any, error) error) error {
 	switch {
-	case pos[0] == "pull":
-		files, err := a.st.SchemaFiles(ctx)
+	case pos[0] == "show":
+		ddl, err := a.st.Schema(ctx)
 		if err != nil {
 			return err
 		}
-		if len(pos) > 1 {
-			if err := os.MkdirAll(pos[1], 0o755); err != nil {
-				return err
-			}
-			for name, body := range files {
-				if err := os.WriteFile(filepath.Join(pos[1], name), []byte(body), 0o644); err != nil {
-					return err
-				}
-			}
-			return nil
-		}
-		for _, name := range specKeys(files) {
-			fmt.Fprintf(stdout, "-- %s\n%s\n", name, strings.TrimRight(files[name], "\n"))
+		for _, name := range specKeys(ddl) {
+			fmt.Fprintf(stdout, "-- %s\n%s\n", name, strings.TrimRight(ddl[name], "\n"))
 		}
 		return nil
-	case (pos[0] == "plan" || pos[0] == "apply") && len(pos) > 1:
-		paths, err := filepath.Glob(filepath.Join(pos[1], "*.sql"))
+	case pos[0] == "revisions":
+		return out(a.SchemaRevisions(ctx, 100))
+	case pos[0] == "migrate" && len(pos) > 1 && pos[1] == "-":
+		b, err := io.ReadAll(stdin)
 		if err != nil {
 			return err
 		}
-		files := map[string]string{}
+		return out(a.Migrate(ctx, string(b), "", allowDrop))
+	case pos[0] == "migrate" && len(pos) > 1:
+		paths := []string{pos[1]}
+		if st, err := os.Stat(pos[1]); err != nil {
+			return err
+		} else if st.IsDir() {
+			if paths, err = filepath.Glob(filepath.Join(pos[1], "*.sql")); err != nil {
+				return err
+			}
+			slices.Sort(paths)
+		}
+		ran := []*SchemaMigration{}
 		for _, p := range paths {
 			b, err := os.ReadFile(p)
 			if err != nil {
 				return err
 			}
-			files[filepath.Base(p)] = string(b)
+			m, err := a.Migrate(ctx, string(b), filepath.Base(p), allowDrop)
+			if err != nil {
+				return fmt.Errorf("%s: %w", filepath.Base(p), err)
+			}
+			ran = append(ran, m)
 		}
-		return out(a.ApplySchema(ctx, files, nil, allowDrop, pos[0] == "plan"))
+		return out(ran, nil)
 	}
 	return cliErrUsage
 }
@@ -673,24 +678,25 @@ func httpHandler(a *Archive) http.Handler {
 		return ok(a.Catalog(), nil)
 	})
 	handle("GET /api/schema", func(r *http.Request) (int, any, error) {
-		files, err := a.SchemaFiles(r.Context())
-		return ok(map[string]any{"files": files}, err)
+		ddl, err := a.Schema(r.Context())
+		return ok(map[string]any{"ddl": ddl}, err)
 	})
-	schema := func(dryRun bool) func(r *http.Request) (int, any, error) {
-		return func(r *http.Request) (int, any, error) {
-			var body struct {
-				Files     map[string]string `json:"files"`
-				Renames   []string          `json:"renames"`
-				AllowDrop bool              `json:"allow_drop"`
-			}
-			if err := httpDecode(r, &body); err != nil {
-				return 0, nil, err
-			}
-			return ok(a.ApplySchema(r.Context(), body.Files, body.Renames, body.AllowDrop, dryRun))
+	handle("POST /api/schema/migrate", func(r *http.Request) (int, any, error) {
+		var body struct {
+			SQL       string `json:"sql"`
+			Name      string `json:"name"`
+			AllowDrop bool   `json:"allow_drop"`
 		}
-	}
-	handle("POST /api/schema/plan", schema(true))
-	handle("POST /api/schema/apply", schema(false))
+		if err := httpDecode(r, &body); err != nil {
+			return 0, nil, err
+		}
+		return ok(a.Migrate(r.Context(), body.SQL, body.Name, body.AllowDrop))
+	})
+	handle("GET /api/schema/revisions", func(r *http.Request) (int, any, error) {
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		revs, err := a.SchemaRevisions(r.Context(), limit)
+		return ok(map[string]any{"revisions": revs}, err)
+	})
 
 	a.fileRoutes(mux)
 	a.workflowRoutes(mux)

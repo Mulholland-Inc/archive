@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"crypto/cipher"
 	"encoding/json"
@@ -32,7 +33,6 @@ type Archive struct {
 
 	mu  sync.RWMutex
 	cat *Catalog
-	wmu sync.Mutex
 
 	hmu  sync.Mutex
 	api  http.Handler
@@ -100,6 +100,14 @@ func (a *Archive) Catalog() *Catalog {
 	return a.cat
 }
 
+// catalog is the catalog the transaction in ctx sees: its own when it changed the schema.
+func (a *Archive) catalog(ctx context.Context) *Catalog {
+	if c := a.st.txCatalog(ctx); c != nil {
+		return c
+	}
+	return a.Catalog()
+}
+
 func (a *Archive) reload(ctx context.Context) error {
 	c, err := a.st.Catalog(ctx)
 	if err == nil {
@@ -111,7 +119,7 @@ func (a *Archive) reload(ctx context.Context) error {
 }
 
 func (a *Archive) List(ctx context.Context, typ string, where map[string]any, limit int, after uuid.UUID) ([]map[string]any, error) {
-	cat := a.Catalog()
+	cat := a.catalog(ctx)
 	tb, err := cat.table(typ)
 	if err != nil {
 		return nil, err
@@ -152,7 +160,7 @@ func (a *Archive) List(ctx context.Context, typ string, where map[string]any, li
 }
 
 func (a *Archive) Get(ctx context.Context, typ string, id uuid.UUID) (map[string]any, error) {
-	tb, err := a.Catalog().table(typ)
+	tb, err := a.catalog(ctx).table(typ)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +179,7 @@ func (a *Archive) coreGet(ctx context.Context, tb *Table, id uuid.UUID) (map[str
 }
 
 func (a *Archive) Create(ctx context.Context, typ string, data map[string]any) (map[string]any, error) {
-	tb, err := a.Catalog().writable(typ)
+	tb, err := a.catalog(ctx).writable(typ)
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +226,7 @@ func (a *Archive) Patch(ctx context.Context, typ string, id uuid.UUID, data map[
 }
 
 func (a *Archive) coreWrite(ctx context.Context, typ string, id uuid.UUID, data map[string]any, full bool) (map[string]any, error) {
-	tb, err := a.Catalog().writable(typ)
+	tb, err := a.catalog(ctx).writable(typ)
 	if err != nil {
 		return nil, err
 	}
@@ -247,7 +255,7 @@ func (a *Archive) coreWrite(ctx context.Context, typ string, id uuid.UUID, data 
 }
 
 func (a *Archive) prepare(ctx context.Context, tb *Table, data map[string]any, full bool, old map[string]any) (map[string]any, map[string]any, error) {
-	cat := a.Catalog()
+	cat := a.catalog(ctx)
 	in, keep := map[string]any{}, map[string]any{}
 	for k, v := range data {
 		if str, ok := v.(string); ok && old != nil && old[k] == str && tb.col(k) != nil && cat.secret(tb.col(k)) != nil {
@@ -318,7 +326,7 @@ func (a *Archive) refCheck(ctx context.Context, tb *Table, out map[string]any) e
 }
 
 func (a *Archive) pgCheck(ctx context.Context, tb *Table, out map[string]any) error {
-	cat := a.Catalog()
+	cat := a.catalog(ctx)
 	var ls []pgLeaf
 	for _, k := range specKeys(out) {
 		if col := tb.col(k); cat.secret(col) == nil {
@@ -347,7 +355,7 @@ func (a *Archive) pgCheck(ctx context.Context, tb *Table, out map[string]any) er
 }
 
 func (a *Archive) Delete(ctx context.Context, typ string, id uuid.UUID) error {
-	tb, err := a.Catalog().writable(typ)
+	tb, err := a.catalog(ctx).writable(typ)
 	if err != nil {
 		return err
 	}
@@ -366,37 +374,44 @@ func (a *Archive) Delete(ctx context.Context, typ string, id uuid.UUID) error {
 	})
 }
 
-func (a *Archive) SchemaFiles(ctx context.Context) (map[string]string, error) {
+// Schema is the DDL of the tables and views as the transaction in ctx sees them, by name.
+func (a *Archive) Schema(ctx context.Context) (map[string]string, error) {
 	if ActorFrom(ctx) == nil {
 		return nil, fmt.Errorf("not signed in: %w", ErrUnauthorized)
 	}
-	return a.st.SchemaFiles(ctx)
+	return a.st.Schema(ctx)
 }
 
-func (a *Archive) schemaAdmin(ctx context.Context) error {
+// Migrate runs a migration in the transaction in ctx or one of its own: a run that migrates and then fails
+// changes nothing. A named migration runs once.
+func (a *Archive) Migrate(ctx context.Context, sql, name string, allowDrop bool) (*SchemaMigration, error) {
 	ac := ActorFrom(ctx)
 	if ac == nil {
-		return fmt.Errorf("not signed in: %w", ErrUnauthorized)
+		return nil, fmt.Errorf("not signed in: %w", ErrUnauthorized)
 	}
 	if !a.owner(ctx, ac.Role) {
-		return fmt.Errorf("only owners change the schema: %w", ErrForbidden)
+		return nil, fmt.Errorf("only owners change the schema: %w", ErrForbidden)
 	}
-	return nil
+	author := ac.Email
+	if ac.TokenName != "" {
+		author += " (" + ac.TokenName + ")"
+	}
+	var m *SchemaMigration
+	err := a.as(ctx, func(ctx context.Context) (err error) {
+		m, err = a.st.Migrate(ctx, sql, name, author, allowDrop)
+		if err == nil && !m.Skipped {
+			storeAfter(ctx, func() { a.reload(context.WithoutCancel(ctx)) })
+		}
+		return err
+	})
+	return m, err
 }
 
-func (a *Archive) ApplySchema(ctx context.Context, files map[string]string, renames []string, allowDrop, dryRun bool) (*SchemaPlan, error) {
-	if !dryRun || len(renames) > 0 {
-		if err := a.schemaAdmin(ctx); err != nil {
-			return nil, err
-		}
+func (a *Archive) SchemaRevisions(ctx context.Context, limit int) ([]SchemaRevision, error) {
+	if ActorFrom(ctx) == nil {
+		return nil, fmt.Errorf("not signed in: %w", ErrUnauthorized)
 	}
-	a.wmu.Lock()
-	defer a.wmu.Unlock()
-	p, err := a.st.Apply(ctx, files, renames, allowDrop, dryRun)
-	if err != nil || dryRun {
-		return p, err
-	}
-	return p, a.reload(ctx)
+	return a.st.Revisions(ctx, cmp.Or(min(max(limit, 0), 100), 20))
 }
 
 func coreRowID(row map[string]any) uuid.UUID { return coreUUID(row, "id") }
@@ -456,7 +471,7 @@ func (a *Archive) Search(ctx context.Context, query string, f SearchFilter) ([]*
 	if strings.TrimSpace(query) == "" {
 		return nil, &ValidationError{Type: "search", Errors: []FieldError{{Path: "q", Message: "empty query"}}}
 	}
-	cat := a.Catalog()
+	cat := a.catalog(ctx)
 	var parts []string
 	for _, name := range cat.names() {
 		tb := cat.Tables[name]

@@ -43,7 +43,6 @@ import (
 	taskspb "cloud.google.com/go/cloudtasks/apiv2/cloudtaskspb"
 	"github.com/jackc/pgx/v4"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/stripe/pg-schema-diff/pkg/diff"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -433,35 +432,32 @@ func (in *e2eInst) writeDir(name string, files map[string]string) string {
 	return dir
 }
 
+// push migrates the files, in name order, as one migration.
 func (in *e2eInst) push(files map[string]string, args ...string) string {
 	in.t.Helper()
-	return in.must(append([]string{"schema", "apply", in.writeDir("ddl", files)}, args...)...)
+	var sql string
+	for _, name := range slices.Sorted(maps.Keys(files)) {
+		sql += files[name] + "\n"
+	}
+	return in.migrate(sql, args...)
 }
 
-func (in *e2eInst) pulled() map[string]string {
+func (in *e2eInst) migrate(sql string, args ...string) string {
 	in.t.Helper()
-	dir := filepath.Join(in.dir, "pulled")
-	os.RemoveAll(dir)
-	in.must("schema", "pull", dir)
-	paths, _ := filepath.Glob(filepath.Join(dir, "*"))
-	files := map[string]string{}
-	for _, p := range paths {
-		b, err := os.ReadFile(p)
-		if err != nil {
-			in.t.Fatal(err)
-		}
-		files[filepath.Base(p)] = string(b)
+	out, errs, err := in.run(sql, append([]string{"schema", "migrate", "-"}, args...)...)
+	if err != nil {
+		in.t.Fatalf("archive schema migrate: %v\n%s%s\n%s", err, out, errs, sql)
 	}
-	return files
+	return out
 }
 
-func (in *e2eInst) roundTrips() map[string]string {
+func (in *e2eInst) migrateFails(sql string, args ...string) string {
 	in.t.Helper()
-	files := in.pulled()
-	if p := decode[SchemaPlan](in.t, in.must("schema", "plan", in.writeDir("ddl", files))); len(p.Statements) != 0 {
-		in.t.Errorf("applying the pulled schema plans %d statements: %+v", len(p.Statements), p.Statements)
+	out, errs, err := in.run(sql, append([]string{"schema", "migrate", "-"}, args...)...)
+	if err == nil {
+		in.t.Fatalf("archive schema migrate succeeded, want an error:\n%s", out)
 	}
-	return files
+	return errs
 }
 
 func (in *e2eInst) role(email string) string {
@@ -635,33 +631,36 @@ func names(rs []row) string {
 
 func id(r row) string { return fmt.Sprint(r["id"]) }
 
-func TestSchemaPushNormalizesMessyInputAndBlocksDrops(t *testing.T) {
+func TestSchemaMigrationsNormalizeMessyInputAndBlockDrops(t *testing.T) {
 	t.Parallel()
 	in := newInst(t)
 	in.fails("list", "contact")
 	in.must("user", "add", "ann@example.com", "-name", "Ann")
-	plan := decode[SchemaPlan](t, in.push(e2eSchema))
-	if !plan.Applied || !slices.ContainsFunc(plan.Statements, func(s SchemaStatement) bool { return strings.Contains(s.DDL, `CREATE TABLE "public"."invoice"`) }) {
-		t.Fatalf("schema push: %+v", plan)
+	m := decode[SchemaMigration](t, in.push(e2eSchema))
+	if m.Revision == nil || !slices.ContainsFunc(m.Statements, func(s string) bool { return strings.HasPrefix(s, "CREATE TABLE invoice") }) {
+		t.Fatalf("schema migrate: %+v", m)
 	}
-	if files := in.roundTrips(); !slices.Equal(slices.Sorted(maps.Keys(files)), slices.Sorted(maps.Keys(e2eSchema))) || !strings.Contains(files["invoice.sql"], "CREATE TYPE \"public\".\"invoice_status\"") ||
-		!strings.Contains(files["contact.sql"], "CREATE DOMAIN \"public\".\"zip\"") || !strings.Contains(files["person.sql"], "REFERENCES company(id)") {
-		t.Errorf("schema pull: %v", files)
+	ddl := in.must("schema", "show")
+	for _, want := range []string{"-- invoice\n", `CREATE TYPE "public"."invoice_status"`, `CREATE DOMAIN "public"."zip"`, "REFERENCES company(id)"} {
+		if !strings.Contains(ddl, want) {
+			t.Errorf("schema show lacks %q:\n%s", want, ddl)
+		}
 	}
-	extra := map[string]string{"zz.sql": `CREATE INDEX person_name ON person (lower(name)) WHERE name <> '';
+	in.migrate(`CREATE INDEX person_name ON person (lower(name)) WHERE name <> '';
 CREATE FUNCTION touch() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.updated_at = now(); RETURN NEW; END $$;
 CREATE TRIGGER person_touch BEFORE UPDATE ON person FOR EACH ROW EXECUTE FUNCTION touch();
 CREATE TYPE mood AS ENUM ('good', 'bad');
 COMMENT ON TABLE person IS 'Someone''s record';
-COMMENT ON COLUMN company.name IS 'Legal name';`}
-	in.push(with(e2eSchema, "zz.sql", extra["zz.sql"]))
-	files := in.roundTrips()
-	if _, ok := files["zz.sql"]; ok || !strings.Contains(files["person.sql"], "EXECUTE FUNCTION touch()") || !strings.Contains(files["person.sql"], "FUNCTION public.touch()") ||
-		!strings.Contains(files["person.sql"], "person_name") || !strings.Contains(files["person.sql"], `'Someone''s record'`) || !strings.Contains(files["company.sql"], "'Legal name'") ||
-		!strings.Contains(files["mood.sql"], "CREATE TYPE") || strings.Contains(files["person.sql"], "OWNER TO") || strings.Contains(files["person.sql"], "GRANT") {
-		t.Errorf("schema pull with an index, trigger, unused enum and comments: %v", files)
+COMMENT ON COLUMN company.name IS 'Legal name';`)
+	ddl = in.must("schema", "show")
+	for _, want := range []string{"EXECUTE FUNCTION touch()", "FUNCTION public.touch()", "person_name", `'Someone''s record'`, "'Legal name'", "-- mood\n"} {
+		if !strings.Contains(ddl, want) {
+			t.Errorf("schema show with an index, trigger, unused enum and comments lacks %q", want)
+		}
 	}
-	in.push(e2eSchema)
+	if strings.Contains(ddl, "OWNER TO") || strings.Contains(ddl, "GRANT") {
+		t.Errorf("schema show has owners or grants:\n%s", ddl)
+	}
 
 	r := decode[row](t, in.must("create", "contact", `{"name":" Ann ","email":"Ann@EXAMPLE.com","phone":"(415) 555-0123","birthday":"4/3/1990","balance":"$1,234.50","tags":"vip","zip":"94105"}`))
 	want := map[string]string{"phone": "+14155550123", "birthday": "1990-04-03", "email": "Ann@example.com", "zip": "94105",
@@ -707,32 +706,149 @@ COMMENT ON COLUMN company.name IS 'Legal name';`}
 		t.Errorf("after update: %v", got)
 	}
 
-	noTags := with(e2eSchema, "contact.sql", strings.Replace(e2eSchema["contact.sql"], "    tags       text[],\n", "", 1))
-	out, errs, err := in.run("", "schema", "apply", in.writeDir("ddl", noTags))
-	if err == nil || !strings.Contains(errs, "deletes data") || !strings.Contains(errs, `DROP COLUMN "tags"`) {
-		t.Fatalf("drop without -allow-drop: %v %s%s", err, out, errs)
+	if errs := in.migrateFails("ALTER TABLE contact DROP COLUMN tags"); !strings.Contains(errs, "deletes data (column contact.tags)") {
+		t.Fatalf("drop without -allow-drop: %s", errs)
 	}
-	if pulled := in.must("schema", "pull"); !strings.Contains(pulled, "tags") {
-		t.Errorf("a blocked apply changed the schema")
+	if ddl := in.must("schema", "show"); !strings.Contains(ddl, "tags") {
+		t.Errorf("a blocked migration changed the schema")
 	}
-	plan = decode[SchemaPlan](t, in.push(noTags, "-allow-drop"))
-	if !plan.Applied || len(plan.Statements) != 1 || plan.Statements[0].Hazards[0].Type != "DELETES_DATA" {
-		t.Errorf("allowed drop: %+v", plan)
+	if m := decode[SchemaMigration](t, in.migrate("ALTER TABLE contact DROP COLUMN tags", "-allow-drop")); fmt.Sprint(m.Statements) != "[ALTER TABLE contact DROP COLUMN tags]" {
+		t.Errorf("allowed drop: %+v", m)
 	}
 	if got := decode[row](t, in.must("get", "contact", id(r))); got["tags"] != nil || got["name"] != "Ann B" {
 		t.Errorf("after the drop: %v", got)
 	}
 
-	bad := map[string]string{"bad.sql": "CREATE TABLE loose (id uuid PRIMARY KEY, name text);"}
-	if errs := in.fails("schema", "apply", in.writeDir("bad", with(noTags, "bad.sql", bad["bad.sql"]))); !strings.Contains(errs, "loose.access: want access text") ||
-		!strings.Contains(errs, "ROW LEVEL SECURITY") || !strings.Contains(errs, "loose.search") {
-		t.Errorf("table without the required columns: %s", errs)
+	if errs := in.migrateFails("CREATE TABLE loose (id uuid PRIMARY KEY, name text)"); !strings.Contains(errs, "loose.id: want id uuid PRIMARY KEY DEFAULT uuidv7()") ||
+		strings.Contains(errs, "loose.access") || strings.Contains(errs, "ROW LEVEL SECURITY") || strings.Contains(errs, "loose.search") {
+		t.Errorf("a table with its own id and nothing else gets the rest but not a default on its id: %s", errs)
 	}
-	if errs := in.fails("schema", "apply", in.writeDir("bad", with(noTags, "bad.sql", "CREATE TABLE oops ("))); !strings.Contains(errs, "bad.sql:") {
+	if errs := in.migrateFails("CREATE TABLE fine (name text);\nCREATE TABLE oops ("); !strings.Contains(errs, "statement 2 (CREATE TABLE oops (): ERROR: syntax error") {
 		t.Errorf("broken DDL: %s", errs)
 	}
-	if n := in.psql("archive", "SELECT count(*) FROM pg_tables WHERE tablename IN ('loose', 'oops')"); n != "0" {
+	for _, bad := range []struct{ sql, want string }{
+		{"UPDATE contact SET name = 'x'", "sql[0]: want CREATE, ALTER or DROP"},
+		{"DO $$ BEGIN END $$", "sql[0]: want CREATE, ALTER or DROP"},
+		{"CREATE ROLE sneaky", "sql[0]: want CREATE, ALTER or DROP"},
+		{"CREATE TABLE copy AS SELECT * FROM contact", "CREATE TABLE ... AS are not allowed"},
+		{"CREATE FUNCTION f() RETURNS int LANGUAGE sql SECURITY DEFINER AS 'SELECT 1'", "SECURITY DEFINER"},
+		{"CREATE TABLE archive.sneaky (x text)", "not Archive's"},
+		{"CREATE OR REPLACE FUNCTION archive.can(g text) RETURNS boolean LANGUAGE sql AS 'SELECT true'", "not Archive's"},
+	} {
+		if errs := in.migrateFails(bad.sql); !strings.Contains(errs, bad.want) {
+			t.Errorf("%s: %s", bad.sql, errs)
+		}
+	}
+	if n := in.psql("archive", "SELECT count(*) FROM pg_tables WHERE tablename IN ('loose', 'oops', 'fine', 'copy', 'sneaky')"); n != "0" {
 		t.Errorf("%s rejected tables created", n)
+	}
+
+	dir := in.writeDir("migrations", map[string]string{"001_note.sql": e2eNote})
+	first := decode[[]SchemaMigration](t, in.must("schema", "migrate", filepath.Join(dir, "001_note.sql")))
+	again := decode[[]SchemaMigration](t, in.must("schema", "migrate", dir))
+	if len(first) != 1 || first[0].Skipped || len(again) != 1 || !again[0].Skipped || again[0].Name != "001_note.sql" {
+		t.Errorf("a named migration runs once: %+v %+v", first, again)
+	}
+	revs := decode[[]SchemaRevision](t, in.must("schema", "revisions"))
+	if len(revs) != 4 || revs[0].Name != "001_note.sql" || revs[3].Author != "ann@example.com" {
+		t.Errorf("revisions: %+v", revs)
+	}
+}
+
+func TestAgentsPatchTheSchemaInsideTheirRun(t *testing.T) {
+	t.Parallel()
+	in := newInst(t)
+	in.must("user", "add", "ann@example.com", "-name", "Ann")
+	run := func(t *testing.T, code string) map[string]any {
+		t.Helper()
+		stdout, _, _ := in.run(code, "run", "-")
+		out := decode[RunOutput](t, stdout)
+		var got map[string]any
+		if out.Error != "" || json.Unmarshal(out.Result, &got) != nil {
+			t.Fatalf("run: %+v", out)
+		}
+		return got
+	}
+	fails := func(t *testing.T, code string) string {
+		t.Helper()
+		stdout, _, _ := in.run(code, "run", "-")
+		return decode[RunOutput](t, stdout).Error
+	}
+
+	got := run(t, `const m = await archive.migrate("CREATE TABLE house (address text NOT NULL, city text);\n" +
+  "COMMENT ON TABLE house IS 'A house';\n" +
+  "CREATE VIEW open_house WITH (security_invoker = true) AS SELECT * FROM house;\n" +
+  "COMMENT ON VIEW open_house IS 'Every house';");
+const made = await archive.create("house", { address: "Canal 1", city: "Amsterdam" });
+return { ran: m.statements.join("\n"), made, view: await archive.list("open_house"),
+  hit: (await archive.search("amsterdam")).map((h) => h.type), ddl: (await archive.schema()).house };`)
+	if ran := fmt.Sprint(got["ran"]); !strings.Contains(ran, "ADD COLUMN id uuid NOT NULL DEFAULT uuidv7()") || !strings.Contains(ran, "CREATE POLICY access ON") || !strings.Contains(ran, "GRANT SELECT ON") {
+		t.Errorf("a migration with only the table's own columns runs what every table has too: %s", ran)
+	}
+	made := got["made"].(map[string]any)
+	if made["id"] == nil || made["created_at"] == nil || fmt.Sprint(got["hit"]) != "[house]" || !strings.Contains(fmt.Sprint(got["view"]), fmt.Sprint(made["id"])) {
+		t.Errorf("a table and a view written without the boilerplate: %v", got)
+	}
+	if ddl := fmt.Sprint(got["ddl"]); !strings.Contains(ddl, `"id" uuid DEFAULT uuidv7() NOT NULL`) || !strings.Contains(ddl, `COMMENT ON TABLE "public"."house" IS 'A house'`) {
+		t.Errorf("schema() shows the whole table: %s", ddl)
+	}
+
+	got = run(t, `await archive.migrate("ALTER TABLE house ADD COLUMN street text");
+return { set: await archive.update("house", (await archive.list("house"))[0].id, { street: "Damrak" }), after: (await archive.search("damrak")).length,
+  view: (await archive.tables()).some((t) => t.name === "open_house") };`)
+	if got["after"] != 1.0 || got["view"] != true {
+		t.Errorf("adding a text column rederives search: %v", got)
+	}
+
+	got = run(t, `await archive.migrate("ALTER TABLE house ADD COLUMN rooms integer");
+await archive.sql("UPDATE house SET rooms = 3");
+await archive.migrate("ALTER TABLE house ALTER COLUMN rooms SET NOT NULL");
+return { rooms: (await archive.list("house"))[0].rooms, required: (await archive.tables()).find((t) => t.name === "house").columns.find((c) => c.name === "rooms").required };`)
+	if got["rooms"] != 3.0 || got["required"] != true {
+		t.Errorf("add, backfill, then require a column in one run: %v", got)
+	}
+	if e := fails(t, `await archive.migrate("ALTER TABLE house ADD COLUMN floors integer NOT NULL"); return {};`); !strings.Contains(e, "floors") {
+		t.Errorf("a required column without a default on a table with rows: %q", e)
+	}
+	if e := fails(t, `await archive.migrate("UPDATE house SET rooms = 4"); return {};`); !strings.Contains(e, "change rows with archive.sql") {
+		t.Errorf("rows through migrate: %q", e)
+	}
+
+	got = run(t, `const m = await archive.migrate("ALTER TABLE house RENAME COLUMN rooms TO bedrooms;\n" +
+  "ALTER TABLE house ALTER COLUMN bedrooms TYPE text USING bedrooms || ' rooms';");
+return { ran: m.statements, bedrooms: (await archive.list("house"))[0].bedrooms, hit: (await archive.search("rooms")).length };`)
+	if got["bedrooms"] != "3 rooms" || got["hit"] != 1.0 || !strings.Contains(fmt.Sprint(got["ran"]), `SET EXPRESSION AS (archive.search_doc(VARIADIC ARRAY["address"::text, "bedrooms"::text, "city"::text, "street"::text]))`) {
+		t.Errorf("a rename and a type change with USING keep the data and rederive search: %v", got)
+	}
+
+	if e := fails(t, `await archive.migrate("ALTER TABLE house DROP COLUMN street"); return {};`); !strings.Contains(e, "deletes data (column house.street)") || !strings.Contains(e, "allowDrop") {
+		t.Errorf("a drop without allowDrop: %q", e)
+	}
+	run(t, `await archive.migrate("ALTER TABLE house DROP COLUMN street", { allowDrop: true }); return {};`)
+	got = run(t, `const revs = await archive.revisions();
+return { n: revs.length, by: revs[revs.length - 1].author, last: revs[0].statements, hit: (await archive.search("Damrak")).length };`)
+	if got["n"] != 6.0 || got["by"] != "ann@example.com" || got["hit"] != 0.0 || !strings.Contains(fmt.Sprint(got["last"]), "DROP COLUMN street") {
+		t.Errorf("a dropped text column leaves search, and revisions: %v", got)
+	}
+
+	in.must("user", "add", "bob@example.com", "-name", "Bob", "-role", "viewer")
+	viewer := func(code string) RunOutput {
+		stdout, _, _ := in.run(code, "-as", "bob@example.com", "run", "-")
+		return decode[RunOutput](t, stdout)
+	}
+	if out := viewer(`await archive.migrate("CREATE TABLE barn (name text)")`); !strings.Contains(out.Error, "only owners change the schema") {
+		t.Errorf("a viewer migrates: %+v", out)
+	}
+	if out := viewer(`await archive.sql("SELECT archive.ddl('guess', 'DROP TABLE house')")`); !strings.Contains(out.Error, "only archive.migrate changes the schema") {
+		t.Errorf("calling archive.ddl without its key: %+v", out)
+	}
+	if e := fails(t, `await archive.migrate("CREATE TYPE kind AS ENUM ('flat')");
+await archive.migrate("ALTER TYPE kind ADD VALUE 'villa'");
+await archive.sql("SELECT 'villa'::kind"); return {};`); !strings.Contains(e, "migrate in one run, use the value in the next") {
+		t.Errorf("a new enum value in the run that adds it: %q", e)
+	}
+	if e := fails(t, `await archive.sql("ALTER TABLE house ADD COLUMN garden boolean"); return {};`); !strings.Contains(e, "must be owner of table house; change the schema with archive.migrate") {
+		t.Errorf("DDL through archive.sql: %q", e)
 	}
 }
 
@@ -776,8 +892,8 @@ func TestDemoVaultLoadsOnceWithLinkedRowsAndFiles(t *testing.T) {
 	if fmt.Sprint(got["files"]) != "35" || fmt.Sprint(got["receipts"]) == "0" {
 		t.Errorf("files and links: %v", got)
 	}
-	if files := in.roundTrips(); len(files) != 25 || !strings.Contains(files["task_board.sql"], "by: status") || !strings.Contains(files["payment_card.sql"], `"number" archive.card`) || !strings.Contains(files["payment_card.sql"], "REFERENCES person(id)") {
-		t.Errorf("demo schema pull: %v", slices.Sorted(maps.Keys(files)))
+	if ddl := in.must("schema", "show"); strings.Count(ddl, "\n-- ") != 24 || !strings.Contains(ddl, "by: status") || !strings.Contains(ddl, `"number" archive.card`) || !strings.Contains(ddl, "REFERENCES person(id)") {
+		t.Errorf("demo schema: %s", ddl)
 	}
 	if _, errs, err := load(); err == nil || !strings.Contains(errs, "already has people") {
 		t.Errorf("second load: %v %s", err, errs)
@@ -1017,19 +1133,17 @@ func TestUsersGroupsTokensAndSecretsAcrossEverySurface(t *testing.T) {
 	})
 
 	t.Run("SchemaChangesNeedAnOwner", func(t *testing.T) {
-		files := with(e2eSchema, "company.sql", strings.Replace(e2eSchema["company.sql"], "    name       text NOT NULL,\n", "    name       text NOT NULL,\n    ein        archive.us_ein,\n", 1))
-		var plan SchemaPlan
-		st, _ := call(t, "POST", api+"/schema/plan", aliceView, map[string]any{"files": files}, &plan)
-		wantStatus(t, st, 200, "viewer token plans")
-		if len(plan.Statements) != 1 || !strings.Contains(plan.Statements[0].DDL, `ADD COLUMN "ein" archive.us_ein`) || plan.Applied {
-			t.Fatalf("plan: %+v", plan)
+		body := map[string]any{"sql": "ALTER TABLE company ADD COLUMN ein archive.us_ein"}
+		st, _ := call(t, "POST", api+"/schema/migrate", aliceView, body, nil)
+		wantStatus(t, st, 403, "an owner's viewer token migrates")
+		st, _ = call(t, "POST", api+"/schema/migrate", carlTok, body, nil)
+		wantStatus(t, st, 403, "an editor migrates")
+		var m SchemaMigration
+		st, _ = call(t, "POST", api+"/schema/migrate", aliceTok, body, &m)
+		wantStatus(t, st, 200, "owner migrates")
+		if len(m.Statements) != 2 || !strings.Contains(m.Statements[1], `ARRAY["ein"::text, "name"::text]`) || m.Revision == nil {
+			t.Fatalf("migration: %+v", m)
 		}
-		st, _ = call(t, "POST", api+"/schema/apply", aliceView, map[string]any{"files": files}, nil)
-		wantStatus(t, st, 403, "an owner's viewer token applies")
-		st, _ = call(t, "POST", api+"/schema/apply", carlTok, map[string]any{"files": files}, nil)
-		wantStatus(t, st, 403, "an editor applies")
-		st, _ = call(t, "POST", api+"/schema/apply", aliceTok, map[string]any{"files": files}, &plan)
-		wantStatus(t, st, 200, "owner applies")
 		var cat Catalog
 		call(t, "GET", api+"/types", bobTok, nil, &cat)
 		if c := cat.Tables["company"]; c == nil || c.col("ein") == nil || c.col("ein").Type != "us_ein" || c.Description != "A company" || !c.Policy || c.Schema != "public" || cat.Types["archive.email"] == nil {
@@ -1039,11 +1153,11 @@ func TestUsersGroupsTokensAndSecretsAcrossEverySurface(t *testing.T) {
 			t.Errorf("member in the catalog: %+v", m)
 		}
 		var got struct {
-			Files map[string]string `json:"files"`
+			DDL map[string]string `json:"ddl"`
 		}
 		call(t, "GET", api+"/schema", bobTok, nil, &got)
-		if !strings.Contains(got.Files["company.sql"], "ein") || len(got.Files) != 4 {
-			t.Errorf("schema files: %v", got.Files)
+		if !strings.Contains(got.DDL["company"], "ein") || len(got.DDL) != 4 {
+			t.Errorf("schema: %v", got.DDL)
 		}
 		st, _ = call(t, "POST", api+"/company", aliceTok, map[string]any{"name": "Ein Co", "ein": "12 3456789"}, nil)
 		wantStatus(t, st, 201, "use the new column")
@@ -1756,10 +1870,10 @@ func TestTwoInstancesShareOnePostgresAndBlobStore(t *testing.T) {
 
 	t.Run("SchemaAppliedOnOneIsUsedOnTheOther", func(t *testing.T) {
 		var schema struct {
-			Files map[string]string `json:"files"`
+			DDL map[string]string `json:"ddl"`
 		}
 		call(t, "GET", srvB.url+"/api/schema", tok, nil, &schema)
-		if got := slices.Sorted(maps.Keys(schema.Files)); !slices.Equal(got, slices.Sorted(maps.Keys(e2eSchema))) {
+		if got := slices.Sorted(maps.Keys(schema.DDL)); fmt.Sprint(got) != "[company contact invoice person]" {
 			t.Fatalf("schema on b: %v", got)
 		}
 		st, _ := call(t, "POST", srvB.url+"/api/company", tok, map[string]any{"name": "Acme"}, nil)
@@ -1772,11 +1886,11 @@ func TestTwoInstancesShareOnePostgresAndBlobStore(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(a.dir, "schema")); err == nil {
 			t.Error("schema files written to the data directory")
 		}
-		st, _ = call(t, "POST", srvA.url+"/api/schema/apply", tok, map[string]any{"files": with(schema.Files, "note.sql", e2eNote)}, nil)
-		wantStatus(t, st, 200, "apply note on a")
+		st, _ = call(t, "POST", srvA.url+"/api/schema/migrate", tok, map[string]any{"sql": e2eNote}, nil)
+		wantStatus(t, st, 200, "migrate note on a")
 		call(t, "GET", srvB.url+"/api/schema", tok, nil, &schema)
-		if !strings.Contains(schema.Files["note.sql"], "CREATE INDEX note_search ON public.note USING gin (search)") {
-			t.Errorf("note.sql on b: %v", schema.Files)
+		if !strings.Contains(schema.DDL["note"], "CREATE INDEX note_search ON public.note USING gin (search)") {
+			t.Errorf("note on b: %v", schema.DDL)
 		}
 		st, _ = call(t, "POST", srvB.url+"/api/note", tok, map[string]any{"title": "Shared"}, nil)
 		wantStatus(t, st, 201, "create on b in a table applied on a")
@@ -1784,8 +1898,8 @@ func TestTwoInstancesShareOnePostgresAndBlobStore(t *testing.T) {
 
 	t.Run("AFreshContainerKeepsTheSchema", func(t *testing.T) {
 		c := a.twin()
-		if files := c.roundTrips(); !strings.Contains(files["invoice.sql"], "invoice_status") {
-			t.Fatalf("pull on a fresh container: %v", files)
+		if ddl := c.must("schema", "show"); !strings.Contains(ddl, "invoice_status") {
+			t.Fatalf("schema on a fresh container: %s", ddl)
 		}
 		if n := a.psql("archive", "SELECT count(*) FROM company"); n != "1" {
 			t.Errorf("%s companies after a fresh container started", n)
@@ -1831,44 +1945,29 @@ func TestTwoInstancesShareOnePostgresAndBlobStore(t *testing.T) {
 	})
 }
 
-func TestTablesThatReferenceEachOtherRoundTripAndRecreate(t *testing.T) {
+func TestTablesThatReferenceEachOther(t *testing.T) {
 	t.Parallel()
-	cols := func(refs string) string {
-		return "    name       text NOT NULL,\n" + refs + "    search     tsvector GENERATED ALWAYS AS (archive.search_doc(name)) STORED"
-	}
-	cyclic := map[string]string{
-		"alpha.sql": e2eTable("alpha", cols("    beta       uuid,\n")) + `ALTER TABLE alpha ADD FOREIGN KEY (beta) REFERENCES beta;
+	in := newInst(t)
+	in.must("user", "add", "ann@example.com")
+	in.migrate(`CREATE TABLE alpha (name text NOT NULL, beta uuid);
+CREATE TABLE beta (name text NOT NULL, alpha uuid REFERENCES alpha, gamma uuid);
+CREATE TABLE gamma (name text NOT NULL, alpha uuid REFERENCES alpha);
+ALTER TABLE alpha ADD FOREIGN KEY (beta) REFERENCES beta;
+ALTER TABLE beta ADD FOREIGN KEY (gamma) REFERENCES gamma;
 -- the name; trimmed
 CREATE FUNCTION alpha_trim() RETURNS trigger LANGUAGE plpgsql AS $body$ BEGIN NEW.name = trim(NEW.name); RETURN NEW; END $body$;
 CREATE TRIGGER alpha_trim BEFORE INSERT ON alpha FOR EACH ROW EXECUTE FUNCTION alpha_trim();
-`,
-		"beta.sql":  e2eTable("beta", cols("    alpha      uuid REFERENCES alpha,\n    gamma      uuid,\n")) + "ALTER TABLE beta ADD FOREIGN KEY (gamma) REFERENCES gamma;\n",
-		"gamma.sql": e2eTable("gamma", cols("    alpha      uuid,\n")) + "ALTER TABLE gamma ADD FOREIGN KEY (alpha) REFERENCES alpha;\nCOMMENT ON TABLE gamma IS E'one; two \\' three';\n",
-	}
-	in := newInst(t)
-	in.must("user", "add", "ann@example.com")
-	in.push(cyclic)
+COMMENT ON TABLE gamma IS E'one; two \' three';`)
 	a := decode[row](t, in.must("create", "alpha", `{"name":" A "}`))
 	in.must("create", "beta", `{"name":"B","alpha":"`+id(a)+`"}`)
-	files := in.roundTrips()
-	if !slices.Equal(slices.Sorted(maps.Keys(files)), []string{"alpha.sql", "beta.sql", "gamma.sql"}) || !strings.Contains(files["alpha.sql"], "REFERENCES beta(id)") ||
-		!strings.Contains(files["gamma.sql"], "REFERENCES alpha(id)") || !strings.Contains(files["gamma.sql"], "one; two '' three") || a["name"] != "A" {
-		t.Errorf("cyclic schema pull: %v %v", files, a)
+	ddl := in.must("schema", "show")
+	if !strings.Contains(ddl, "REFERENCES beta(id)") || !strings.Contains(ddl, "REFERENCES alpha(id)") || !strings.Contains(ddl, "one; two '' three") || a["name"] != "A" {
+		t.Errorf("tables that reference each other: %s %v", ddl, a)
 	}
-	if p := decode[SchemaPlan](t, in.must("schema", "plan", in.writeDir("ddl", cyclic))); len(p.Statements) != 0 {
-		t.Errorf("the hand-written files plan %+v", p.Statements)
+	if got := in.psql("archive", "SELECT count(*) FROM pg_constraint WHERE contype = 'f' AND conrelid::regclass::text IN ('alpha', 'beta', 'gamma')"); got != "4" {
+		t.Errorf("%s foreign keys between the tables", got)
 	}
-
-	fresh := newInst(t)
-	fresh.must("user", "add", "ann@example.com")
-	fresh.push(files)
-	if got := fresh.roundTrips(); !maps.Equal(got, files) {
-		t.Errorf("a fresh instance from the generated files pulls %v", got)
-	}
-	if got := fresh.psql("archive", "SELECT count(*) FROM pg_constraint WHERE contype = 'f' AND conrelid::regclass::text IN ('alpha', 'beta', 'gamma')"); got != "4" {
-		t.Errorf("%s foreign keys between the tables on the fresh instance", got)
-	}
-	if errs := in.fails("schema", "plan", in.writeDir("ddl", with(cyclic, "gamma.sql", strings.Replace(cyclic["gamma.sql"], "REFERENCES alpha", "REFERENCES delta", 1)))); !strings.Contains(errs, "gamma.sql:") || !strings.Contains(errs, `"delta" does not exist`) {
+	if errs := in.migrateFails("CREATE TABLE delta (name text, alpha uuid REFERENCES alpha);\nALTER TABLE delta ADD FOREIGN KEY (name) REFERENCES epsilon"); !strings.Contains(errs, "statement ") || !strings.Contains(errs, `"epsilon" does not exist`) {
 		t.Errorf("a reference to a missing table: %s", errs)
 	}
 }
@@ -2041,9 +2140,8 @@ func TestFullTextSearchAcrossTablesFilesAndUsers(t *testing.T) {
 		if rs := decode[[]row](t, in.must("list", "note", "title=Weekend away")); len(rs) != 1 {
 			t.Errorf("list by title: %+v", rs)
 		}
-		plan := decode[SchemaPlan](t, in.push(with(files, "note.sql", e2eNote)))
-		if !plan.Applied || len(plan.Statements) != 1 || plan.Statements[0].Blocked || !slices.ContainsFunc(plan.Statements[0].Hazards, func(h diff.MigrationHazard) bool { return h.Type == "INDEX_DROPPED" }) {
-			t.Errorf("drop index plan: %+v", plan)
+		if m := decode[SchemaMigration](t, in.migrate("DROP INDEX note_title")); len(m.Statements) != 1 {
+			t.Errorf("drop index: %+v", m)
 		}
 		if n := in.psql("archive", q); n != "0" {
 			t.Errorf("title index kept after it left the DDL: %s", n)
@@ -2067,7 +2165,7 @@ func TestViewsSchemaDropsAndTokensOverHTTP(t *testing.T) {
 		in := in.on(t)
 		board := "CREATE VIEW people_board WITH (security_invoker = true) AS SELECT * FROM person;\n" +
 			"COMMENT ON VIEW people_board IS 'Everyone you know\nby employer\nlayout: board\nby: employer\nicon: users';\n"
-		in.push(with(e2eSchema, "people_board.sql", board))
+		in.migrate(board)
 		var fam, solo row
 		st, _ := call(t, "POST", api+"/person", aliceTok, map[string]any{"name": "Fam", "access": "family"}, &fam)
 		wantStatus(t, st, 201, "person in family")
@@ -2097,14 +2195,9 @@ func TestViewsSchemaDropsAndTokensOverHTTP(t *testing.T) {
 		st, _ = call(t, "DELETE", api+"/people_board/"+id(fam), aliceTok, nil, nil)
 		wantStatus(t, st, 405, "delete through a view")
 
-		files := in.pulled()
-		if !strings.Contains(files["people_board.sql"], "security_invoker=true") || !strings.Contains(files["people_board.sql"], "icon: users';") || strings.Contains(files["people_board.sql"], ";;") {
-			t.Errorf("pulled view: %s", files["people_board.sql"])
-		}
-		in.roundTrips()
-		files["people_board.sql"] = strings.Replace(files["people_board.sql"], "icon: users", "icon: contact", 1)
-		if p := decode[SchemaPlan](t, in.must("schema", "plan", in.writeDir("ddl", files))); len(p.Statements) != 1 || !strings.HasPrefix(p.Statements[0].DDL, "COMMENT ON VIEW") {
-			t.Errorf("changing only the comment plans %+v", p.Statements)
+		ddl := in.must("schema", "show")
+		if !strings.Contains(ddl, "-- people_board\n") || !strings.Contains(ddl, "security_invoker=true") || !strings.Contains(ddl, "icon: users';") || strings.Contains(ddl, ";;") {
+			t.Errorf("view DDL: %s", ddl)
 		}
 
 		view := "CREATE VIEW bad WITH (security_invoker = true) AS SELECT * FROM person;\nCOMMENT ON VIEW bad IS 'x\n"
@@ -2116,30 +2209,25 @@ func TestViewsSchemaDropsAndTokensOverHTTP(t *testing.T) {
 			{view + "layout: calendar';", "needs a by:"},
 			{"CREATE VIEW bad WITH (security_invoker = true) AS SELECT name FROM person;", "want an id uuid column"},
 		} {
-			if e := in.fails("schema", "apply", in.writeDir("bad", with(e2eSchema, "bad.sql", bad.sql))); !strings.Contains(e, bad.want) {
+			if e := in.migrateFails(bad.sql); !strings.Contains(e, bad.want) {
 				t.Errorf("%s: %s", bad.sql, e)
 			}
 		}
-		company := strings.Replace(e2eSchema["company.sql"], "'A company'", "'A company\nlayout: board'", 1)
-		if e := in.fails("schema", "apply", in.writeDir("bad", with(e2eSchema, "company.sql", company))); !strings.Contains(e, "unknown key layout") {
+		if e := in.migrateFails("COMMENT ON TABLE company IS 'A company\nlayout: board'"); !strings.Contains(e, "unknown key layout") {
 			t.Errorf("layout on a table: %s", e)
 		}
 
-		code := `const files = await archive.schema();
-files["open_people.sql"] = "CREATE VIEW open_people WITH (security_invoker = true) AS SELECT * FROM person WHERE name <> 'Solo';\n" +
-  "COMMENT ON VIEW open_people IS 'People but Solo\nlayout: board\nby: employer\nicon: users';";
-const made = await archive.apply(files, { confirm: true });
+		code := `const made = await archive.migrate("CREATE VIEW open_people WITH (security_invoker = true) AS SELECT * FROM person WHERE name <> 'Solo';\n" +
+  "COMMENT ON VIEW open_people IS 'People but Solo\nlayout: board\nby: employer\nicon: users';");
 const t1 = (await archive.tables()).find((t) => t.name === "open_people");
 const rows1 = (await archive.list("open_people")).map((r) => r.name);
-files["open_people.sql"] = "CREATE VIEW open_people WITH (security_invoker = true) AS SELECT * FROM person WHERE name = 'Solo';\n" +
-  "COMMENT ON VIEW open_people IS 'Only Solo\nicon: user';";
-const changed = await archive.apply(files, { confirm: true });
+const changed = await archive.migrate("CREATE OR REPLACE VIEW open_people WITH (security_invoker = true) AS SELECT * FROM person WHERE name = 'Solo';\n" +
+  "COMMENT ON VIEW open_people IS 'Only Solo\nicon: user';");
 const t2 = (await archive.tables()).find((t) => t.name === "open_people");
 const rows2 = (await archive.list("open_people")).map((r) => r.name);
-delete files["open_people.sql"];
-const dropped = await archive.apply(files, { confirm: true });
+const dropped = await archive.migrate("DROP VIEW open_people");
 const gone = !(await archive.tables()).some((t) => t.name === "open_people");
-return { made: made.applied, t1, rows1, changed: changed.applied, t2, rows2, dropped: dropped.applied, gone };`
+return { made: !!made.revision, t1, rows1, changed: !!changed.revision, t2, rows2, dropped: !!dropped.revision, gone };`
 		var res struct {
 			Result struct {
 				Made, Changed, Dropped, Gone bool
@@ -2160,35 +2248,24 @@ return { made: made.applied, t1, rows1, changed: changed.applied, t2, rows2, dro
 		if r.T2.Layout != "table" || r.T2.By != "" || r.T2.Icon != "user" || r.T2.Description != "Only Solo" || strings.Join(r.Rows2, ",") != "Solo" {
 			t.Errorf("changed view: %+v %v", r.T2, r.Rows2)
 		}
-		in.push(e2eSchema)
+		in.migrate("DROP VIEW people_board")
 		if got := in.psql("archive", "SELECT count(*) FROM pg_views WHERE schemaname = 'public'"); got != "0" {
-			t.Errorf("%s views left after removing their files", got)
+			t.Errorf("%s views left after dropping them", got)
 		}
 	})
 
 	t.Run("DroppingATableIsBlockedUntilAllowed", func(t *testing.T) {
 		st, _ := call(t, "POST", api+"/invoice", aliceTok, map[string]any{"number": "INV-1"}, nil)
 		wantStatus(t, st, 201, "create invoice")
-		rest := with(e2eSchema, "invoice.sql", "")
-		var plan SchemaPlan
-		st, _ = call(t, "POST", api+"/schema/plan", aliceTok, map[string]any{"files": rest}, &plan)
-		wantStatus(t, st, 200, "plan the drop")
-		if !slices.ContainsFunc(plan.Statements, func(s SchemaStatement) bool {
-			return s.Blocked && strings.Contains(s.DDL, `DROP TABLE "public"."invoice"`)
-		}) {
-			t.Fatalf("drop plan: %+v", plan)
-		}
-		st, _ = call(t, "POST", api+"/schema/apply", aliceTok, map[string]any{"files": rest}, nil)
-		wantStatus(t, st, 409, "apply a drop without allow_drop")
+		var m SchemaMigration
+		st, _ = call(t, "POST", api+"/schema/migrate", aliceTok, map[string]any{"sql": "DROP TABLE invoice"}, nil)
+		wantStatus(t, st, 409, "a drop without allow_drop")
 		st, _ = call(t, "GET", api+"/invoice", aliceTok, nil, nil)
 		wantStatus(t, st, 200, "invoice after the blocked drop")
-		st, _ = call(t, "POST", api+"/schema/apply", aliceTok, map[string]any{"files": rest, "allow_drop": true}, &plan)
-		wantStatus(t, st, 200, "apply the drop")
+		st, _ = call(t, "POST", api+"/schema/migrate", aliceTok, map[string]any{"sql": "DROP TABLE invoice", "allow_drop": true}, &m)
+		wantStatus(t, st, 200, "the drop")
 		st, _ = call(t, "GET", api+"/invoice", aliceTok, nil, nil)
 		wantStatus(t, st, 404, "list a dropped table")
-		if _, err := os.Stat(filepath.Join(in.dir, "schema", "invoice.sql")); err == nil {
-			t.Error("invoice.sql is still a schema file")
-		}
 	})
 
 	t.Run("TokensActAsTheirOwnerAndManageMembersAndTokens", func(t *testing.T) {
@@ -2355,27 +2432,31 @@ func TestCodeModeRunsTypeScriptInOneTransactionOverHTTPMCPAndCLI(t *testing.T) {
 	_, note := e2eUpload(t, api+"/files", tok, "viewing.txt", []byte("Viewing on Friday at the canal house"))
 	e2eDoneFile(t, api, tok, note.ID.String())
 
-	t.Run("DroppingATableFromARunAppliesAfterTheRunCommits", func(t *testing.T) {
+	t.Run("SchemaChangesInARunAreUndoneWhenTheRunFails", func(t *testing.T) {
+		if out := run(t, tok, `await archive.migrate("CREATE TABLE barn (label text NOT NULL)");
+await archive.create("barn", { label: "hay" });
+throw new Error("not today");`); !strings.Contains(out.Error, "not today") {
+			t.Fatalf("rolled back run: %+v", out)
+		}
+		if gone := ok(t, `return { gone: !(await archive.tables()).some((t) => t.name === "barn") };`); gone["gone"] != true {
+			t.Errorf("a rolled back run still made the table: %v", gone)
+		}
 		shed := e2eTable("shed", "    label text NOT NULL,\n    search tsvector GENERATED ALWAYS AS (archive.search_doc(label)) STORED")
-		ok(t, `const files = await archive.schema();
-files["shed.sql"] = `+strconv.Quote(shed)+`;
-await archive.apply(files, { confirm: true });
+		ok(t, `await archive.migrate(`+strconv.Quote(shed)+`);
 await archive.create("shed", { label: "tools" });
 return {};`)
-		drop := `const files = await archive.schema(); delete files["shed.sql"]; await archive.apply(files, { confirm: true, allowDrop: true });`
+		drop := `await archive.migrate("DROP TABLE shed", { allowDrop: true });`
 		if out := run(t, tok, drop+` throw new Error("changed my mind");`); !strings.Contains(out.Error, "changed my mind") {
 			t.Fatalf("rolled back run: %+v", out)
 		}
 		if kept := ok(t, `return { kept: (await archive.tables()).some((t) => t.name === "shed") };`); kept["kept"] != true {
 			t.Errorf("a rolled back run still dropped the table: %v", kept)
 		}
-		got := ok(t, `const files = await archive.schema();
-const before = (await archive.list("shed")).length;
-delete files["shed.sql"];
-const blocked = await archive.apply(files, { confirm: true }).then(() => "", (e) => e.message);
-const plan = await archive.apply(files, { confirm: true, allowDrop: true });
-return { before, blocked, applied: plan.applied, deferred: plan.deferred, still: (await archive.tables()).some((t) => t.name === "shed") };`)
-		if fmt.Sprintf("%v %v %v %v", got["before"], got["applied"], got["deferred"], got["still"]) != "1 false true true" || !strings.Contains(fmt.Sprint(got["blocked"]), "allow_drop") {
+		got := ok(t, `const before = (await archive.list("shed")).length;
+const blocked = await archive.migrate("DROP TABLE shed").then(() => "", (e) => e.message);
+const m = await archive.migrate("DROP TABLE shed", { allowDrop: true });
+return { before, blocked, applied: !!m.revision, still: (await archive.tables()).some((t) => t.name === "shed") };`)
+		if fmt.Sprintf("%v %v %v", got["before"], got["applied"], got["still"]) != "1 true false" || !strings.Contains(fmt.Sprint(got["blocked"]), "allowDrop") {
 			t.Fatalf("drop in a run: %v", got)
 		}
 		if gone := ok(t, `return { gone: !(await archive.tables()).some((t) => t.name === "shed") };`); gone["gone"] != true {
@@ -2400,19 +2481,15 @@ return { before, blocked, applied: plan.applied, deferred: plan.deferred, still:
 		wantStatus(t, st, 400, "empty name")
 	})
 
-	t.Run("ApplyPlansThenConfirmsASchemaChange", func(t *testing.T) {
-		got := ok(t, `const files = await archive.schema();
-const house = `+strconv.Quote(e2eHouse)+`;
-const plan = await archive.apply({ ...files, "house.sql": house });
-const done = await archive.apply({ ...files, "house.sql": house }, { confirm: true });
-const again = await archive.apply(await archive.schema());
-return { planned: plan.statements.length, before: plan.applied, applied: done.applied, after: again.statements.length,
+	t.Run("MigrateTheSchema", func(t *testing.T) {
+		got := ok(t, `const done = await archive.migrate(`+strconv.Quote(e2eHouse)+`);
+return { planned: done.statements.length, applied: !!done.revision, plan: typeof archive.plan, apply: typeof archive.apply,
   tables: (await archive.tables()).map(t => t.name + ":" + t.columns.filter(c => c.required).map(c => c.name).join("+")) };`)
-		if fmt.Sprintf("%v %v %v", got["before"], got["applied"], got["after"]) != "false true 0" || fmt.Sprint(got["planned"]) == "0" || fmt.Sprint(got["tables"]) != "[house:address member:email]" {
-			t.Errorf("apply: %v", got)
+		if fmt.Sprintf("%v %v %v", got["plan"], got["apply"], got["applied"]) != "undefined undefined true" || fmt.Sprint(got["planned"]) == "0" || fmt.Sprint(got["tables"]) != "[house:address member:email]" {
+			t.Errorf("migrate: %v", got)
 		}
-		if files := in.must("schema", "pull"); !strings.Contains(files, "-- house.sql") {
-			t.Errorf("schema pull lacks the applied table: %s", files)
+		if ddl := in.must("schema", "show"); !strings.Contains(ddl, "-- house\n") {
+			t.Errorf("schema show lacks the migrated table: %s", ddl)
 		}
 	})
 
@@ -2658,24 +2735,17 @@ throw new Error("changed my mind");`)
 		}
 	})
 
-	t.Run("RenamesRunFirstAndKeepTheData", func(t *testing.T) {
-		got := ok(t, `const files = await archive.schema();
-files["house.sql"] = files["house.sql"].replaceAll("price", "asking_price");
-const plan = await archive.apply(files, { confirm: true, renames: ["ALTER TABLE house RENAME COLUMN price TO asking_price"] });
-return { ddl: plan.statements.map(s => s.ddl), price: (await archive.sql("SELECT (asking_price).amount FROM house WHERE asking_price IS NOT NULL"))[0].amount };`)
-		if fmt.Sprint(got["ddl"]) != `[ALTER TABLE house RENAME COLUMN price TO asking_price COMMENT ON COLUMN "public"."house"."asking_price" IS 'Asking asking_price']` || fmt.Sprint(got["price"]) != "500000" {
+	t.Run("RenamesKeepTheData", func(t *testing.T) {
+		got := ok(t, `const m = await archive.migrate("ALTER TABLE house RENAME COLUMN price TO asking_price");
+return { ran: m.statements, price: (await archive.sql("SELECT (asking_price).amount FROM house WHERE asking_price IS NOT NULL"))[0].amount };`)
+		if fmt.Sprint(got["ran"]) != `[ALTER TABLE house RENAME COLUMN price TO asking_price]` || fmt.Sprint(got["price"]) != "500000" {
 			t.Errorf("rename: %v", got)
 		}
-		dry := ok(t, `const files = await archive.schema();
-files["house.sql"] = files["house.sql"].replaceAll("asking_price", "list_price");
-const plan = await archive.apply(files, { renames: ["ALTER TABLE house RENAME COLUMN asking_price TO list_price;"] });
-const cols = await archive.sql("SELECT column_name FROM information_schema.columns WHERE table_name = 'house' AND column_name LIKE '%price'");
-return { ddl: plan.statements.map(s => s.ddl), applied: plan.applied, cols: cols.map(c => c.column_name) };`)
-		if fmt.Sprint(dry["ddl"]) != `[ALTER TABLE house RENAME COLUMN asking_price TO list_price COMMENT ON COLUMN "public"."house"."list_price" IS 'Asking list_price']` || dry["applied"] != false || fmt.Sprint(dry["cols"]) != "[asking_price]" {
-			t.Errorf("a dry run lists its renames and changes nothing: %v", dry)
-		}
-		if out := run(t, tok, `await archive.apply(await archive.schema(), { renames: ["DROP TABLE house"] })`); !strings.Contains(out.Error, "renames[0]: want one ALTER") {
-			t.Errorf("a rename that drops: %q", out.Error)
+		dry := run(t, tok, `const m = await archive.migrate("ALTER TABLE house RENAME COLUMN asking_price TO list_price");
+throw new Error(JSON.stringify(m.statements));`)
+		cols := ok(t, `return { cols: (await archive.sql("SELECT column_name FROM information_schema.columns WHERE table_name = 'house' AND column_name LIKE '%price'")).map(c => c.column_name) }`)["cols"]
+		if !strings.Contains(dry.Error, `RENAME COLUMN asking_price TO list_price`) || fmt.Sprint(cols) != "[asking_price]" {
+			t.Errorf("a migration then a throw shows the change and keeps nothing: %v %v", dry.Error, cols)
 		}
 	})
 }
@@ -4049,40 +4119,6 @@ func TestTheWebAppOnItsOwnHostCallsTheAPIHostWithTheAPIsCookie(t *testing.T) {
 	}
 	if st, _ := e2eFrom(t, "GET", srv.url+"/auth/me", "https://app.test", c); st != 401 {
 		t.Errorf("me after sign out: %d", st)
-	}
-}
-
-func TestOffCloudRunServeRunsDueWorkItselfAndCatchesUpWhenItStarts(t *testing.T) {
-	t.Parallel()
-	in := newInst(t, "ARCHIVE_TASKS_URL=", "K_SERVICE=", "CLOUD_RUN_JOB=")
-	in.must("user", "add", "alice@example.com")
-	in.push(map[string]string{"house.sql": e2eHouse})
-	srv := in.serve()
-	tok := decode[Token](t, in.must("token", "create")).Secret
-	b, _ := json.Marshal(map[string]string{"sold.ts": "// on: house\nfor (const r of input.rows) await archive.update('house', r.id, { sold: true });\nreturn input.rows.map((r) => r.address).join(',');"})
-	if st, out := e2eRun(t, srv.url+"/api", tok, `await archive.deploy(`+string(b)+`); return true;`); st != 200 || out.Error != "" {
-		t.Fatalf("deploy: %d %+v", st, out)
-	}
-	sold := func(t *testing.T, api, address string) {
-		t.Helper()
-		for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
-			var rows []map[string]any
-			call(t, "GET", api+"/house?address="+url.QueryEscape(address), tok, nil, &rows)
-			if len(rows) == 1 && rows[0]["sold"] == true {
-				return
-			}
-		}
-		t.Fatalf("%s was never sold", address)
-	}
-	call(t, "POST", srv.url+"/api/house", tok, map[string]any{"address": "Canal 1"}, nil)
-	sold(t, srv.url+"/api", "Canal 1")
-
-	srv.stop()
-	in.must("create", "house", `{"address": "Canal 2"}`)
-	srv = in.serve()
-	sold(t, srv.url+"/api", "Canal 2")
-	if st, _ := e2eDo(t, "POST", srv.url+"/tasks", nil, map[string]string{"work": "workflows"}, nil); st != 404 {
-		t.Errorf("/tasks off Cloud Run: %d, want 404", st)
 	}
 }
 

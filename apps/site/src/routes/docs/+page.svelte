@@ -161,12 +161,10 @@ curl https://your-workspace.archive.mulholland.ai/api/run \
 </Code>
 
 <h3 id="qs-first-type">Your first type</h3>
-<p>You rarely write DDL by hand. Ask your AI, and it plans the change before it applies it.</p>
+<p>You rarely write DDL by hand. Ask your AI.</p>
 <Code tabs={['prompt']}>
 <pre>In my Archive, add an invoice table with a customer, an amount of money, a status
-(draft, unpaid or paid) and a due date. Use the run tool: read the files with
-archive.schema(), add invoice.sql, and show me the plan from archive.apply(files).
-Only apply it with &#123; confirm: true &#125; after I say yes.</pre>
+(draft, unpaid or paid) and a due date.</pre>
 </Code>
 
 <h2 id="connect">Connect your AI</h2>
@@ -251,31 +249,22 @@ Then tell me which tables and views I have, and what each one is for.</pre>
 <h2 id="types">Your own types</h2>
 <p>Each kind of record is a real Postgres table in the <code>public</code> schema. The table is the type, a row is a record, and nothing else is stored about it.</p>
 
-<h3 id="types-needs">What every table needs</h3>
-<p>The columns <code>id</code>, <code>access</code>, <code>created_at</code>, <code>updated_at</code> and a <code>search</code> tsvector, a search index, and row-level security with the one <code>access</code> policy. A plan without them is rejected. A complete file, <code>invoice.sql</code>:</p>
-<Code tabs={['invoice.sql']}>
+<h3 id="types-needs">What every table has</h3>
+<p>Write only your own columns. Archive adds the rest to every table: <code>id</code>, <code>access</code>, <code>created_at</code>, <code>updated_at</code>, a <code>search</code> column over the text columns with its index, and row-level security with the <code>access</code> policy. A complete migration:</p>
+<Code tabs={['migration.sql']}>
 <pre><span class="k">CREATE TYPE</span> invoice_status <span class="k">AS ENUM</span> (<span class="s">'draft'</span>, <span class="s">'unpaid'</span>, <span class="s">'paid'</span>);
 
 <span class="k">CREATE TABLE</span> invoice (
-    id         uuid <span class="k">PRIMARY KEY DEFAULT</span> <span class="f">uuidv7</span>(),
-    access     text,
-    created_at timestamptz <span class="k">NOT NULL DEFAULT</span> <span class="f">now</span>(),
-    updated_at timestamptz <span class="k">NOT NULL DEFAULT</span> <span class="f">now</span>(),
-    customer   text <span class="k">NOT NULL</span>,
-    amount     archive.money,
-    status     invoice_status <span class="k">NOT NULL DEFAULT</span> <span class="s">'unpaid'</span>,
-    due        date,
-    search     tsvector <span class="k">GENERATED ALWAYS AS</span> (archive.<span class="f">search_doc</span>(customer)) <span class="k">STORED</span>
+    customer text <span class="k">NOT NULL</span>,
+    amount   archive.money,
+    status   invoice_status <span class="k">NOT NULL DEFAULT</span> <span class="s">'unpaid'</span>,
+    due      date
 );
-<span class="k">CREATE INDEX</span> invoice_search <span class="k">ON</span> invoice <span class="k">USING</span> gin (search);
-<span class="k">ALTER TABLE</span> invoice <span class="k">ENABLE ROW LEVEL SECURITY</span>;
-<span class="k">ALTER TABLE</span> invoice <span class="k">FORCE ROW LEVEL SECURITY</span>;
-<span class="k">CREATE POLICY</span> access <span class="k">ON</span> invoice <span class="k">USING</span> (archive.<span class="f">can</span>(access)) <span class="k">WITH CHECK</span> (archive.<span class="f">can</span>(access));
 <span class="k">COMMENT ON TABLE</span> invoice <span class="k">IS</span> <span class="s">'An invoice you sent
 icon: receipt'</span>;
 <span class="k">COMMENT ON COLUMN</span> invoice.customer <span class="k">IS</span> <span class="s">'Who the invoice is for'</span>;</pre>
 </Code>
-<p>Archive sets <code>id</code>, <code>created_at</code> and <code>updated_at</code>. <code>access</code> is null for the whole workspace, or a group such as <code>"hr"</code>; see <a href="#groups">Groups</a>. A table only one group sees uses <code>access text NOT NULL DEFAULT 'hr' CHECK (access = 'hr')</code>. Columns marked <code>NOT NULL</code> without a default are required on create.</p>
+<p>Write one of those parts yourself only to make it different. <code>access</code> is null for the whole workspace, or a group such as <code>"hr"</code>; see <a href="#groups">Groups</a>. A table only one group sees uses <code>access text NOT NULL DEFAULT 'hr' CHECK (access = 'hr')</code>. Your own search, like <code>search tsvector GENERATED ALWAYS AS (setweight(archive.search_doc(customer), 'A')) STORED</code>, stays as you wrote it. Columns marked <code>NOT NULL</code> without a default are required on create.</p>
 
 <h3 id="types-comments">Settings in comments</h3>
 <p>The first lines of a table or view comment are its description. The last lines may be <code>key: value</code> settings. Any other key is an error, and so is an unknown icon, layout or column.</p>
@@ -308,63 +297,47 @@ icon: receipt'</span>;
 <li>A reference is a foreign key: <code>customer uuid REFERENCES company</code>.</li>
 <li>A list of references is <code>uuid[]</code> with a column comment starting <code>references company</code>.</li>
 <li>Other lists are plain arrays, like <code>text[]</code>. There is no type inheritance.</li>
-<li>Files load in any order. For two tables that reference each other, add at least one of those references with <code>ALTER TABLE … ADD FOREIGN KEY</code> after its <code>CREATE TABLE</code>.</li>
+<li>For two tables that reference each other, create both, then add one of the references with <code>ALTER TABLE … ADD FOREIGN KEY</code>.</li>
 </ul>
 
 <h2 id="schema">Changing the schema</h2>
-<p>The live database is the only source of truth. Read it as files, change a file, see the plan, then apply it. No migrations to write.</p>
+<p>The live database is the only source of truth. Your AI changes it with plain Postgres DDL, the way it would anywhere, and Archive fills in what every table needs.</p>
 
 <h3 id="schema-read">Read</h3>
-<p><code>archive.schema()</code> generates the DDL from the database: one <code>&lt;name&gt;.sql</code> per table or view, with its indexes, foreign keys, row-level security, policies, triggers and comments. The text is normalized, so your layout and <code>--</code> comments are not kept; <code>COMMENT ON</code> is.</p>
+<p><code>archive.tables()</code> lists the tables and views with their columns. <code>archive.schema()</code> generates their DDL from the database, by name, with indexes, foreign keys, triggers and comments.</p>
 
-<h3 id="schema-plan">Plan</h3>
-<p>Pass the whole set of files to <code>archive.apply</code> without <code>confirm</code> to see the statements it would run, each with its hazards.</p>
-<Code tabs={['run.ts', 'plan']}>
-<pre><span class="k">const</span> files = <span class="k">await</span> archive.<span class="f">schema</span>()
-files[<span class="s">"invoice.sql"</span>] += <span class="s">"\nALTER TABLE invoice ADD COLUMN paid_on date;"</span>
-
-<span class="k">return</span> archive.<span class="f">apply</span>(files)</pre>
-<pre hidden>&#123;
-  "statements": [
-    &#123; "ddl": "ALTER TABLE \"public\".\"invoice\" ADD COLUMN \"paid_on\" date" &#125;
-  ],
-  "applied": false
-&#125;</pre>
-</Code>
-<Note mark="!">Plan and apply take the whole schema. A table in no file is dropped, so always start from <code>archive.schema()</code>.</Note>
-
-<h3 id="schema-apply">Apply</h3>
-<p>Call it again with <code>&#123; confirm: true &#125;</code>. Indexes are built concurrently, and foreign keys are added first and validated after, so tables stay usable while it runs.</p>
+<h3 id="schema-migrate">Migrate</h3>
+<p><code>archive.migrate(sql)</code> runs <code>CREATE</code>, <code>ALTER</code> and <code>DROP</code> statements and <code>COMMENT ON</code>, in order, all or nothing. It returns them with what Archive added. Rows change with <code>archive.sql</code>, not in a migration. A migration is part of your run:</p>
 <ul>
-<li>Apply commits on its own as soon as it succeeds, even if your script throws later.</li>
-<li>It waits for locks on what it changes, including locks your own run took by writing those tables. Apply first, or in a run of its own.</li>
-<li>New tables and views work in the same run, right after it.</li>
+<li>If the run throws or times out later, the migration is undone with everything else. To see what one would do without keeping it, migrate and then throw.</li>
+<li>Later calls in the run see the change at once, so one run can add a column, fill it with <code>archive.sql</code>, then make it <code>NOT NULL</code>.</li>
+<li>Renames and type changes with <code>USING</code> keep the data, as in any Postgres.</li>
 </ul>
-
-<h3 id="schema-renames">Renames</h3>
-<p>The diff cannot tell a rename from a drop and an add, which would lose data. Pass renames explicitly, along with the files as they read after the rename. They run first, in the same transaction.</p>
-<Code tabs={['run.ts']}>
-<pre><span class="k">const</span> files = <span class="k">await</span> archive.<span class="f">schema</span>()
-<span class="k">for</span> (<span class="k">const</span> name <span class="k">in</span> files) files[name] = files[name].<span class="f">replace</span>(<span class="s">/\bcustomer\b/g</span>, <span class="s">"client"</span>)
-
-<span class="k">return</span> archive.<span class="f">apply</span>(files, &#123;
-  confirm: <span class="k">true</span>,
-  renames: [<span class="s">"ALTER TABLE invoice RENAME COLUMN customer TO client"</span>],
-&#125;)</pre>
+<Code tabs={['run.ts', 'result']}>
+<pre><span class="k">await</span> archive.<span class="f">migrate</span>(<span class="s">"ALTER TABLE invoice ADD COLUMN paid_on date"</span>)
+<span class="k">await</span> archive.<span class="f">sql</span>(<span class="s">"UPDATE invoice SET paid_on = due WHERE status = 'paid'"</span>)
+<span class="k">return</span> archive.<span class="f">migrate</span>(<span class="s">"ALTER TABLE invoice RENAME COLUMN customer TO client"</span>)</pre>
+<pre hidden>&#123;
+  "revision": "01a1…",
+  "statements": ["ALTER TABLE invoice RENAME COLUMN customer TO client"]
+&#125;</pre>
 </Code>
 
 <h3 id="schema-drops">Drops</h3>
-<p>A statement that deletes data, such as dropping a table or a column, is blocked unless you pass <code>&#123; allowDrop: true &#125;</code>. Dropping a view is never blocked, since a view holds no data.</p>
+<p>A migration that drops a table or a column, which deletes its data, fails unless you pass <code>&#123; allowDrop: true &#125;</code>. Dropping a view, an index or a comment needs nothing.</p>
+
+<h3 id="schema-history">History</h3>
+<p><code>archive.revisions()</code> lists every migration, newest first, with who ran it and its statements. To undo one, migrate the reverse. Data that was dropped stays gone.</p>
 
 <h3 id="schema-who">Who can change it</h3>
-<p>Owners. Everyone else can read the schema but not apply it.</p>
+<p>Owners. Everyone else can read the schema.</p>
 
 <h3 id="schema-git">Keep it in git</h3>
-<p><code>apply(await archive.schema())</code> always plans nothing, so you can pull the files, keep them in a repository and apply them back. Over HTTP, use <code>GET /api/schema</code> and <code>POST /api/schema/plan</code> or <code>/apply</code> with <code>&#123;"files": &#123;...&#125;, "renames": [...], "allow_drop": false&#125;</code>.</p>
+<p>Keep migrations as <code>.sql</code> files and run them with <code>archive schema migrate &lt;dir&gt;</code>: it runs the files that have not run yet, in name order, each once by its name. Over HTTP, <code>POST /api/schema/migrate</code> takes <code>&#123;"sql", "name", "allow_drop"&#125;</code>, and the Terraform provider has an <code>archive_migration</code> resource.</p>
 
 <h2 id="views">Views</h2>
-<p>A view is a saved way to look at a table: a real Postgres view in its own file, with its layout in its comment. Boards, calendars and filtered tables are all views.</p>
-<Code tabs={['invoice_board.sql', 'invoice_due.sql']}>
+<p>A view is a saved way to look at a table: a real Postgres view, with its layout in its comment. Boards, calendars and filtered tables are all views.</p>
+<Code tabs={['board', 'calendar']}>
 <pre><span class="k">CREATE VIEW</span> invoice_board <span class="k">WITH</span> (security_invoker = <span class="k">true</span>) <span class="k">AS</span>
     <span class="k">SELECT</span> * <span class="k">FROM</span> invoice <span class="k">WHERE</span> status &lt;&gt; <span class="s">'draft'</span>;
 <span class="k">COMMENT ON VIEW</span> invoice_board <span class="k">IS</span> <span class="s">'Invoices by status
@@ -390,7 +363,7 @@ icon: calendar'</span>;</pre>
 <p><code>list</code>, <code>get</code> and <code>search</code> read views like tables. Views are read only: create, update and delete go to their tables, and writes to a view over HTTP return 405. <code>archive.tables()</code> shows each view with <code>kind: "view"</code>, its layout and its <code>by</code> column.</p>
 
 <h3 id="views-change">Add, change or remove one</h3>
-<p>Views are schema, so you change them like tables: set <code>files["invoice_board.sql"]</code> and apply, or delete that key and apply to remove it.</p>
+<p>Views are schema, so you change them with a migration: <code>CREATE VIEW</code>, <code>CREATE OR REPLACE VIEW</code> or <code>DROP VIEW</code>. Postgres saves <code>SELECT *</code> as the columns the table has then, so a view does not pick up columns added later.</p>
 
 <h2 id="search">Search</h2>
 <p>One search covers every table and file you can see, best match first.</p>
@@ -557,8 +530,9 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <table>
 <thead><tr><th>Call</th><th>Does</th></tr></thead>
 <tbody>
-<tr><td><code>schema(): Record&lt;string, string&gt;</code></td><td>DDL from the database, one <code>&lt;name&gt;.sql</code> per table or view.</td></tr>
-<tr><td><code>apply(files, &#123; confirm?, allowDrop?, renames? &#125;): Plan</code></td><td>Plans the whole set; with <code>confirm</code>, applies it.</td></tr>
+<tr><td><code>schema(): Record&lt;string, string&gt;</code></td><td>The DDL of each table and view, by name, from the database.</td></tr>
+<tr><td><code>migrate(sql, &#123; allowDrop? &#125;): Migration</code></td><td>Runs DDL as part of the run; Archive adds what every table needs.</td></tr>
+<tr><td><code>revisions(&#123; limit? &#125;): Revision[]</code></td><td>Migrations, newest first.</td></tr>
 <tr><td><code>tables(): Table[]</code></td><td>Every table and view with its columns, types, comments and references.</td></tr>
 </tbody>
 </table>
@@ -646,8 +620,9 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <thead><tr><th>Endpoint</th><th>Does</th></tr></thead>
 <tbody>
 <tr><td><code>GET /api/types</code></td><td>Your tables and views, with their columns.</td></tr>
-<tr><td><code>GET /api/schema</code></td><td>The DDL files.</td></tr>
-<tr><td><code>POST /api/schema/plan</code>, <code>/apply</code></td><td>Plan or apply <code>&#123;"files", "renames", "allow_drop"&#125;</code>.</td></tr>
+<tr><td><code>GET /api/schema</code></td><td>The DDL of each table and view.</td></tr>
+<tr><td><code>POST /api/schema/migrate</code></td><td>Runs <code>&#123;"sql", "name", "allow_drop"&#125;</code>; a named migration runs once.</td></tr>
+<tr><td><code>GET /api/schema/revisions</code></td><td>Migrations, newest first.</td></tr>
 <tr><td><code>GET /api/search?q=</code></td><td>Search, with <code>type</code>, <code>from</code>, <code>to</code> and <code>limit</code>.</td></tr>
 <tr><td><code>POST /api/run</code></td><td>Runs a script: <code>&#123;"code": "..."&#125;</code>.</td></tr>
 <tr><td><code>GET /api/run/docs</code></td><td>The SDK reference with your table types.</td></tr>
@@ -679,7 +654,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <Code tabs={['terminal']}>
 <pre>archive list invoice -limit <span class="n">5</span> status=unpaid
 archive search northwind -type invoice -from <span class="n">2026-01-01</span>
-archive schema pull ./schema &amp;&amp; archive schema plan ./schema</pre>
+archive schema migrate ./migrations</pre>
 </Code>
 
 <h3 id="cli-rows">Rows and search</h3>
@@ -702,9 +677,9 @@ archive schema pull ./schema &amp;&amp; archive schema plan ./schema</pre>
 <thead><tr><th>Command</th><th>Does</th></tr></thead>
 <tbody>
 <tr><td><code>archive types</code></td><td>Tables, columns and the built-in types.</td></tr>
-<tr><td><code>archive schema pull [dir]</code></td><td>Writes one <code>.sql</code> file per table or view.</td></tr>
-<tr><td><code>archive schema plan &lt;dir&gt; [-allow-drop]</code></td><td>Shows the plan for the files in <code>dir</code>.</td></tr>
-<tr><td><code>archive schema apply &lt;dir&gt; [-allow-drop]</code></td><td>Runs it.</td></tr>
+<tr><td><code>archive schema show</code></td><td>Prints the DDL of every table and view.</td></tr>
+<tr><td><code>archive schema migrate &lt;file.sql|dir|-&gt; [-allow-drop]</code></td><td>Runs migrations: a file once by its name, a directory's files that have not run in name order.</td></tr>
+<tr><td><code>archive schema revisions</code></td><td>Lists the migrations.</td></tr>
 <tr><td><code>archive run &lt;file.ts|-&gt;</code></td><td>Runs a script and prints <code>&#123;result, logs, error&#125;</code>.</td></tr>
 <tr><td><code>archive run -docs</code></td><td>Prints the SDK reference with your table types.</td></tr>
 </tbody>
