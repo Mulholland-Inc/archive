@@ -22,6 +22,13 @@ export const app = $state({
   profile: { name: me.name, first: me.first, work: 'archivist', prefs: 'Keep answers short. Use British spelling. When you quote a letter, keep the original spelling and punctuation.', tone: me.tone, notify: { done: true, mentions: true, digest: true, invites: false } }
 });
 
+export function seedOf(person) {
+  const p = typeof person === 'string' ? { name: person } : person;
+  if (p.user || p.id) return p.user ?? p.id;
+  const m = ws().members.find((x) => (p.email && x.email === p.email) || (!p.email && x.name === p.name));
+  return m?.user ?? m?.id ?? p.email ?? p.name ?? '';
+}
+
 export function ws() {
   return app.vaults.find((w) => w.id === app.vault) ?? app.vaults[0];
 }

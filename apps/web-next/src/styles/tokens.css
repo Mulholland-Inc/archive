@@ -83,6 +83,7 @@
   --avatar-xs: 1.25rem;
   --avatar-sm: 1.5rem;
   --avatar-md: 2rem;
+  --avatar-ml: 2.25rem;
   --avatar-lg: 2.5rem;
   --avatar-xl: 4rem;
 
@@ -299,13 +300,13 @@
   --color-selection: var(--blue-600);
   --color-on-selection: var(--gray-0);
 
-  --color-avatar-1: #d9dde4;
-  --color-avatar-2: #cfdbe8;
-  --color-avatar-3: #c9d6f0;
-  --color-avatar-4: #e3d6dc;
-  --color-avatar-5: #d8d3ea;
-  --color-avatar-6: #d0e1d8;
-  --color-avatar-text: var(--gray-950);
+  --color-avatar-1: #dcebfc;
+  --color-avatar-2: #e6e8ea;
+  --color-avatar-3: #cfe2fa;
+  --color-avatar-4: #dde1e6;
+  --color-avatar-5: #e4eefb;
+  --color-avatar-6: #d3d7dc;
+  --color-avatar-ink: #0b0d12;
 
   --color-thumb-1: var(--gray-100);
   --color-thumb-2: #dfe7ee;
@@ -368,13 +369,13 @@
   --color-selection: var(--blue-600);
   --color-on-selection: var(--gray-0);
 
-  --color-avatar-1: #3a404c;
-  --color-avatar-2: #2f4152;
-  --color-avatar-3: #313f5e;
-  --color-avatar-4: #4a3a44;
-  --color-avatar-5: #3f3a58;
-  --color-avatar-6: #2f4a3e;
-  --color-avatar-text: var(--gray-0);
+  --color-avatar-1: #4a5872;
+  --color-avatar-2: #555c69;
+  --color-avatar-3: #46608f;
+  --color-avatar-4: #5d6574;
+  --color-avatar-5: #4f6a96;
+  --color-avatar-6: #676e7b;
+  --color-avatar-ink: #0b0d12;
 
   --color-thumb-1: var(--gray-800);
   --color-thumb-2: #1d2a33;

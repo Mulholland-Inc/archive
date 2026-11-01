@@ -1,7 +1,7 @@
 <script>
   import Avatar from './Avatar.svelte';
   import Select from './Select.svelte';
-  import { permissions, isExternal, setPermission, unsharePerson } from '../lib/app.svelte.js';
+  import { seedOf, permissions, isExternal, setPermission, unsharePerson } from '../lib/app.svelte.js';
 
   let { person, share, size = 'md', fixed } = $props();
   const options = [...permissions, { value: 'remove', label: 'Remove access' }];
@@ -13,7 +13,7 @@
 </script>
 
 <div class={['person', size]}>
-  <Avatar name={person.name} tone={person.tone} size={size === 'sm' ? 'sm' : 'md'} />
+  <Avatar name={person.name} seed={seedOf(person)} size={size === 'sm' ? 'sm' : 'md'} />
   <span class="who">
     <span class="name">{person.name}</span>
     <span class="meta">

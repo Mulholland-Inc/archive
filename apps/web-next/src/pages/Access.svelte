@@ -21,7 +21,7 @@
   import AvatarGroup from '../components/AvatarGroup.svelte';
   import Section from '../components/Section.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { ws, removeMember, invite, shareItem, shareKinds, permissions, isExternal, openShare, stopSharing, removeGuest, copyLink } from '../lib/app.svelte.js';
+  import { ws, seedOf, removeMember, invite, shareItem, shareKinds, permissions, isExternal, openShare, stopSharing, removeGuest, copyLink } from '../lib/app.svelte.js';
   import { toast } from '../lib/toast.svelte.js';
   import { route, go } from '../lib/router.svelte.js';
 
@@ -108,7 +108,7 @@
 
 {#snippet person(row)}
   <Stack direction="row" gap="3" align="center">
-    <Avatar name={row.name} tone={row.tone} size="sm" />
+    <Avatar name={row.name} seed={seedOf(row)} size="md" />
     <Text weight="medium" truncate>{row.name}</Text>
   </Stack>
 {/snippet}
@@ -143,7 +143,7 @@
           {:else if col.key === 'people'}
             {#if row.share.people.length}
               <Stack direction="row" gap="2" align="center">
-                <AvatarGroup names={row.share.people.map((p) => p.name)} size="xs" max={3} />
+                <AvatarGroup people={row.share.people} size="md" max={3} />
                 <Text tone="secondary" truncate>{others(row.share.people.map((p) => firstName(p.name)), 1)}</Text>
               </Stack>
             {/if}

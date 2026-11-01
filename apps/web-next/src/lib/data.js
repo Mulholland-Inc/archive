@@ -435,7 +435,7 @@ export const tasks = [
 ];
 
 export const members = [
-  { id: 'u1', name: 'Nora Okafor', email: 'nora@okafor.family', role: 'owner', active: 'Now', status: 'active', tone: 1 },
+  { id: 'u1', user: me.id, name: 'Nora Okafor', email: 'nora@okafor.family', role: 'owner', active: 'Now', status: 'active', tone: 1 },
   { id: 'u2', name: 'Emeka Okafor', email: 'emeka@okafor.family', role: 'owner', active: '2 hr ago', status: 'active', tone: 3 },
   { id: 'u3', name: 'Chidi Okafor', email: 'chidi.okafor@mail.ng', role: 'editor', active: 'Yesterday', status: 'active', tone: 2 },
   { id: 'u4', name: 'Amara Okafor', email: 'amara@okafor.family', role: 'editor', active: 'Today', status: 'active', tone: 4 },
@@ -455,10 +455,4 @@ export function initials(name = '') {
     .slice(0, 2)
     .map((w) => w[0].toUpperCase())
     .join('');
-}
-
-export function toneFor(name = '') {
-  let h = 0;
-  for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return (h % 6) + 1;
 }

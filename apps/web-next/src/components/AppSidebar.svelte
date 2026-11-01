@@ -61,7 +61,7 @@
   {/if}
 
   {#snippet footer()}
-    <AccountMenu user={{ ...me, name: app.profile.name, tone: app.profile.tone }} />
+    <AccountMenu user={{ ...me, name: app.profile.name }} />
   {/snippet}
 </Sidebar>
 

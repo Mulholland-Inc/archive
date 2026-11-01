@@ -5,6 +5,7 @@
   import Select from './Select.svelte';
   import Button from './Button.svelte';
   import SharePerson from './SharePerson.svelte';
+  import { me as meUser } from '../lib/data.js';
   import { route } from '../lib/router.svelte.js';
   import { app, ws, permissions, shareItem, shareFor, addPeople, setLinkAccess, copyLink } from '../lib/app.svelte.js';
 
@@ -16,7 +17,7 @@
   const item = $derived(kind ? shareItem(kind, target) : null);
   const share = $derived(kind ? shareFor(kind, target) : null);
   const list = $derived(emails.split(/[\s,;]+/).filter((e) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)));
-  const me = $derived({ name: app.profile.name, email: ws().members.find((m) => m.name === app.profile.name)?.email ?? '', tone: app.profile.tone });
+  const me = $derived({ name: app.profile.name, email: ws().members.find((m) => m.name === app.profile.name)?.email ?? '', user: meUser.id });
   const general = $derived([
     { value: 'off', label: 'Restricted', icon: Lock },
     ...(ws().settings.sharing || share?.link === 'view' ? [{ value: 'view', label: 'Anyone with the link can view', icon: Globe }] : [])

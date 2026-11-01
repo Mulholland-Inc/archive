@@ -26,7 +26,7 @@
   import Spacer from '../components/Spacer.svelte';
   import SettingsRow from '../components/SettingsRow.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { ws, newChat, uploadFile, addFolder, renameFile, removeFile, downloadFile, openShare } from '../lib/app.svelte.js';
+  import { ws, seedOf, newChat, uploadFile, addFolder, renameFile, removeFile, downloadFile, openShare } from '../lib/app.svelte.js';
   import { prompt } from '../lib/dialogs.svelte.js';
   import { go, route } from '../lib/router.svelte.js';
 
@@ -190,7 +190,7 @@
           </Stack>
         {:else if col.key === 'owner'}
           <Stack direction="row" gap="2" align="center">
-            <Avatar name={row.owner} size="xs" />
+            <Avatar name={row.owner} seed={seedOf(row.owner)} size="xs" />
             <Text truncate>{row.owner}</Text>
           </Stack>
         {:else if col.key === 'menu'}
@@ -211,7 +211,7 @@
         <SettingsRow label="Kind"><Badge>{open.ext}</Badge></SettingsRow>
         <SettingsRow label="Folder"><Text tone="secondary">{open.folder}</Text></SettingsRow>
         <SettingsRow label="Owner">
-          <Stack direction="row" gap="2" align="center"><Avatar name={open.owner} size="xs" /><Text tone="secondary">{open.owner}</Text></Stack>
+          <Stack direction="row" gap="2" align="center"><Avatar name={open.owner} seed={seedOf(open.owner)} size="xs" /><Text tone="secondary">{open.owner}</Text></Stack>
         </SettingsRow>
         <SettingsRow label="Modified"><Text tone="secondary">{open.modified}</Text></SettingsRow>
         <SettingsRow label="Size"><Text tone="secondary">{open.size}</Text></SettingsRow>

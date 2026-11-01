@@ -100,6 +100,7 @@
   import { toast } from '../lib/toast.svelte.js';
   import { app } from '../lib/app.svelte.js';
   const familySchema = schemaFor('okafor');
+  const avatarSeeds = Array.from({ length: 24 }, (_, i) => `user-${i + 1}`);
 
   const sections = [
     ['color', 'Color'], ['type', 'Typography'], ['space', 'Space and shape'], ['motion', 'Motion'],
@@ -425,19 +426,17 @@
       </SpecimenSection>
 
       <SpecimenSection id="s-display" title="Data display">
-        <SpecimenBlock title="Avatars">
-          <Avatar name="Nora Okafor" size="xs" />
-          <Avatar name="Nora Okafor" size="sm" />
-          <Avatar name="Chidi Okafor" />
-          <Avatar name="Ruth Hale" size="lg" />
-          <Avatar name="Jun Park" size="xl" />
-          <Avatar name="Okafor Family Archive" square tone={1} />
-          <Avatar name="Fieldnote Studio" square size="lg" tone={2} />
+        <SpecimenBlock title="Avatars" column>
+          {#each ['xs', 'sm', 'md', 'lg', 'xl'] as size (size)}
+            <Stack direction="row" gap="2" align="center" wrap>
+              {#each avatarSeeds as id (id)}<Avatar name={id} seed={id} {size} />{/each}
+            </Stack>
+          {/each}
         </SpecimenBlock>
         <SpecimenBlock title="Avatar groups">
-          <AvatarGroup names={members.slice(0, 3).map((m) => m.name)} size="xs" />
-          <AvatarGroup names={members.map((m) => m.name)} />
-          <AvatarGroup names={members.map((m) => m.name)} size="md" max={5} />
+          <AvatarGroup people={members.slice(0, 3)} size="xs" />
+          <AvatarGroup people={members} />
+          <AvatarGroup people={members} size="md" max={5} />
         </SpecimenBlock>
         <SpecimenBlock title="Badges">
           <Badge>Plain</Badge><Badge icon={Pin}>With icon</Badge>
@@ -472,7 +471,7 @@
           <Table {columns} rows={members.slice(0, 4)} label="Members" onrowclick={(r) => toast(r.name)}>
             {#snippet cell(row, col)}
               {#if col.key === 'name'}
-                <Stack direction="row" gap="2" align="center"><Avatar name={row.name} size="sm" /><Text weight="medium">{row.name}</Text></Stack>
+                <Stack direction="row" gap="2" align="center"><Avatar name={row.name} seed={row.user ?? row.id} size="sm" /><Text weight="medium">{row.name}</Text></Stack>
               {:else if col.key === 'role'}
                 <Chip size="sm">{row.role}</Chip>
               {:else}{row[col.key]}{/if}

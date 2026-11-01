@@ -41,7 +41,7 @@ const haleMembers = [
   { id: 'hm2', name: 'Daniel Whitcombe', email: 'daniel@halewhitcombe.law', role: 'owner', active: '1 hr ago', status: 'active', tone: 1 },
   { id: 'hm3', name: 'Priya Raman', email: 'priya@halewhitcombe.law', role: 'editor', active: 'Today', status: 'active', tone: 5 },
   { id: 'hm4', name: 'Tom Ashby', email: 'tom@halewhitcombe.law', role: 'editor', active: 'Fri', status: 'active', tone: 2 },
-  { id: 'hm5', name: me.name, email: 'nora@halewhitcombe.law', role: 'editor', active: 'Now', status: 'active', tone: me.tone },
+  { id: 'hm5', user: me.id, name: me.name, email: 'nora@halewhitcombe.law', role: 'editor', active: 'Now', status: 'active', tone: me.tone },
   { id: 'hm6', name: 'Grace Liu', email: 'grace@halewhitcombe.law', role: 'viewer', active: 'Sep 20', status: 'active', tone: 4 },
   { id: 'hm7', name: 'Owen Price', email: 'owen.price@mail.com', role: 'viewer', active: '', status: 'invited', tone: 6 }
 ];
@@ -50,7 +50,7 @@ const fieldMembers = [
   { id: 'fm1', name: 'Jun Park', email: 'jun@fieldnote.studio', role: 'owner', active: 'Now', status: 'active', tone: 2 },
   { id: 'fm2', name: 'Lea Fontaine', email: 'lea@fieldnote.studio', role: 'editor', active: 'Today', status: 'active', tone: 4 },
   { id: 'fm3', name: 'Sam Ortiz', email: 'sam@fieldnote.studio', role: 'editor', active: 'Mon', status: 'active', tone: 1 },
-  { id: 'fm4', name: me.name, email: 'nora@fieldnote.studio', role: 'editor', active: 'Now', status: 'active', tone: me.tone },
+  { id: 'fm4', user: me.id, name: me.name, email: 'nora@fieldnote.studio', role: 'editor', active: 'Now', status: 'active', tone: me.tone },
   { id: 'fm5', name: 'Mika Sato', email: 'mika@fieldnote.studio', role: 'viewer', active: 'Sep 17', status: 'active', tone: 5 }
 ];
 

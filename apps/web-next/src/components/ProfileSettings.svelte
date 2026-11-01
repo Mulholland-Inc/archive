@@ -15,9 +15,8 @@
   let call = $state(app.profile.first);
   let work = $state(app.profile.work);
   let prefs = $state(app.profile.prefs);
-  let tone = $state(app.profile.tone);
 
-  const dirty = $derived(name !== app.profile.name || call !== app.profile.first || work !== app.profile.work || prefs !== app.profile.prefs || tone !== app.profile.tone);
+  const dirty = $derived(name !== app.profile.name || call !== app.profile.first || work !== app.profile.work || prefs !== app.profile.prefs);
 
   const works = [
     { value: 'archivist', label: 'Family historian' },
@@ -28,7 +27,7 @@
   ];
 
   function save() {
-    Object.assign(app.profile, { name: name.trim() || app.profile.name, first: call.trim() || app.profile.first, work, prefs, tone });
+    Object.assign(app.profile, { name: name.trim() || app.profile.name, first: call.trim() || app.profile.first, work, prefs });
     toast('Profile saved', { tone: 'success' });
   }
 
@@ -37,18 +36,11 @@
     call = app.profile.first;
     work = app.profile.work;
     prefs = app.profile.prefs;
-    tone = app.profile.tone;
   }
 </script>
 
 <Stack gap="6">
-  <Stack direction="row" gap="4" align="center">
-    <Avatar {name} {tone} size="xl" />
-    <Stack direction="row" gap="2">
-      <Button size="sm" onclick={() => (tone = (tone % 6) + 1)}>Change colour</Button>
-      <Button size="sm" variant="ghost" disabled={tone === me.tone} onclick={() => (tone = me.tone)}>Reset</Button>
-    </Stack>
-  </Stack>
+  <Avatar {name} seed={me.id} size="xl" />
   <Grid columns="2" gap="4">
     <Field label="Full name">{#snippet children(id)}<Input {id} bind:value={name} />{/snippet}</Field>
     <Field label="What should Archive call you?">{#snippet children(id)}<Input {id} bind:value={call} />{/snippet}</Field>
