@@ -43,10 +43,10 @@
 </Menu>
   <span class="actions">
     <span class="extra">
-      <IconButton icon={app.muted ? BellOff : Bell} label={app.muted ? 'Unmute notifications' : 'Mute notifications'} size="sm" pressed={app.muted} onclick={() => (app.muted = !app.muted)} />
-      <IconButton icon={theme.resolved === 'dark' ? Sun : Moon} label={theme.resolved === 'dark' ? 'Light mode' : 'Dark mode'} size="sm" onclick={toggleTheme} />
+      <IconButton icon={app.muted ? BellOff : Bell} label={app.muted ? 'Unmute notifications' : 'Mute notifications'} pressed={app.muted} onclick={() => (app.muted = !app.muted)} />
+      <IconButton icon={theme.resolved === 'dark' ? Sun : Moon} label={theme.resolved === 'dark' ? 'Light mode' : 'Dark mode'} onclick={toggleTheme} />
     </span>
-    <IconButton icon={Settings} label="Settings" shortcut="⌘ ," size="sm" onclick={() => openSettings()} />
+    <IconButton icon={Settings} label="Settings" shortcut="⌘ ," onclick={() => openSettings()} />
   </span>
 </div>
 
