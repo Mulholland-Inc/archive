@@ -26,15 +26,12 @@
     min-width: 0;
     padding: var(--space-2);
     border-radius: var(--radius-xl);
-    box-shadow: var(--ring);
-    transition: background-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
+    transition: background-color var(--duration-fast) var(--ease-out);
   }
 
   .tile:hover,
-  .tile:focus-within,
   .selected {
     background: var(--color-fill-subtle);
-    box-shadow: var(--ring-strong);
   }
 
   .hit {
