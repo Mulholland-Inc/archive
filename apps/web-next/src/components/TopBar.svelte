@@ -1,8 +1,8 @@
 <script>
-  let { leading, trailing, children, bordered = false, mobile = false } = $props();
+  let { leading, trailing, children, mobile = false } = $props();
 </script>
 
-<header class={['topbar', { bordered, mobile }]}>
+<header class={['topbar', { mobile }]}>
   <div class="side">{@render leading?.()}</div>
   <div class="center">{@render children?.()}</div>
   <div class="side end">{@render trailing?.()}</div>
@@ -20,17 +20,13 @@
     height: var(--topbar-height);
     padding: var(--space-2);
     background: var(--color-canvas);
-    transition: box-shadow var(--duration-normal) var(--ease-out), background-color var(--duration-normal) var(--ease-out);
+    transition: background-color var(--duration-normal) var(--ease-out);
   }
 
   @media (min-width: 56rem) {
     .mobile {
       display: none;
     }
-  }
-
-  .bordered {
-    box-shadow: inset 0 calc(var(--border-width) * -1) 0 var(--color-border-subtle);
   }
 
   .side {

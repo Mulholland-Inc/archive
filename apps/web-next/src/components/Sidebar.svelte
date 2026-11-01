@@ -66,7 +66,6 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-px);
-    box-shadow: inset 0 calc(var(--border-width) * -1) 0 var(--color-border-subtle);
   }
 
   .foot {
@@ -106,7 +105,6 @@
     .drawer {
       transform: none;
       visibility: visible;
-      box-shadow: var(--ring-strong), inset calc(var(--border-width) * -1) 0 0 var(--color-border-subtle);
     }
 
     .scrim {

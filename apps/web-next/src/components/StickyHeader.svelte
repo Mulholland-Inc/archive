@@ -1,19 +1,9 @@
 <script>
   let { title, search, actions } = $props();
-
-  let stuck = $state(false);
-
-  function watch(node) {
-    let root = node.parentElement;
-    while (root && !/(auto|scroll)/.test(getComputedStyle(root).overflowY)) root = root.parentElement;
-    const observer = new IntersectionObserver(([entry]) => (stuck = !entry.isIntersecting), { root });
-    observer.observe(node);
-    return () => observer.disconnect();
-  }
 </script>
 
-<div class="sentinel" {@attach watch}></div>
-<header class={['header', { stuck }]}>
+<div class="sentinel"></div>
+<header class="header">
   <h1>{title}</h1>
   {#if search}<div class="search">{@render search()}</div>{/if}
   {#if actions}<div class="actions">{@render actions()}</div>{/if}
@@ -34,13 +24,7 @@
     align-items: center;
     gap: var(--space-2) var(--space-4);
     padding-block: var(--space-2);
-    border-block-end: var(--border-width) solid transparent;
     background: var(--color-canvas);
-    transition: border-color var(--duration-normal) var(--ease-out);
-  }
-
-  .stuck {
-    border-block-end-color: var(--color-border-subtle);
   }
 
   h1 {
