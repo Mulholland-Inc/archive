@@ -1,5 +1,5 @@
 <script>
-  import { RefreshCw, Unplug, Plug, Check } from '@lucide/svelte';
+  import { Unplug, Plug, Check } from '@lucide/svelte';
   import Stack from './Stack.svelte';
   import Section from './Section.svelte';
   import ConnectorIcon from './ConnectorIcon.svelte';
@@ -9,7 +9,7 @@
   import StatusBadge from './StatusBadge.svelte';
   import Text from './Text.svelte';
   import Icon from './Icon.svelte';
-  import { connect, disconnect, syncConnector, connections } from '../lib/app.svelte.js';
+  import { connect, disconnect, connections } from '../lib/app.svelte.js';
 
   let { connector } = $props();
 
@@ -28,24 +28,18 @@
     <Stack direction="row" gap="2">
       {#if connector.connected}
         <Button variant="ghost" icon={Unplug} onclick={() => disconnect(connector.id)}>Disconnect</Button>
-        {#if !connector.real}<Button icon={RefreshCw} onclick={() => syncConnector(connector.id)}>Sync now</Button>{/if}
       {:else}
-        <Button variant="primary" icon={Plug} disabled={connector.real && !connector.ready} onclick={() => connect(connector.id)}>Connect</Button>
+        <Button variant="primary" icon={Plug} disabled={!connector.ready} onclick={() => connect(connector.id)}>Connect</Button>
       {/if}
     </Stack>
   </Stack>
-  {#if connector.real && !connector.ready}
+  {#if connector.ready === false}
     <Text as="p" size="md" tone="secondary">This server has no {connector.by} client set up for {connector.name} yet. Ask whoever runs it to set one up.</Text>
   {/if}
   {#if connector.connected}
     <Stack gap="0">
       <SettingsRow label="Account"><Text size="sm" tone="secondary">{connector.account}</Text></SettingsRow>
-      {#if connector.real}
-        {#if connector.error}<SettingsRow label="Problem"><Text size="sm" tone="danger">{connector.error}</Text></SettingsRow>{/if}
-      {:else}
-        <SettingsRow label="Last sync"><Text size="sm" tone="secondary">{connector.lastSync}</Text></SettingsRow>
-        <SettingsRow label="Items imported"><Text size="sm" tone="secondary" tabular>{connector.items}</Text></SettingsRow>
-      {/if}
+      {#if connector.error}<SettingsRow label="Problem"><Text size="sm" tone="danger">{connector.error}</Text></SettingsRow>{/if}
     </Stack>
   {/if}
   <Section title="Archive can">
