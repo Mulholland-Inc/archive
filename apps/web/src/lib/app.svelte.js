@@ -565,12 +565,6 @@ async function onIntegration(id, what, path, init) {
 
 export const disconnectIntegration = (id) => onIntegration(id, 'disconnect', '', { method: 'DELETE' });
 export const syncIntegration = (id) => onIntegration(id, 'sync', '/sync', { method: 'POST' });
-export const narrowIntegration = (id, access) => onIntegration(id, 'change who sees', '/access', { method: 'PUT', body: { access } });
-
-// The groups an integration can be narrowed to: those the archive's members are in.
-export function archiveGroups() {
-  return [...new Set((ws().members ?? []).flatMap((m) => m.groups ?? []))].sort();
-}
 
 // API keys. The archive key is a real API token of yours for this archive; its secret is shown once, when it is
 // made. "Your API key", one key across every archive, is MOCK: tokens belong to one workspace.
