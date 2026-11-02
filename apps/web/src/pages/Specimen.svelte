@@ -54,26 +54,18 @@
   import Divider from '../components/Divider.svelte';
   import ProgressBar from '../components/ProgressBar.svelte';
   import FileTile from '../components/FileTile.svelte';
-  import SchemaGraph from '../components/SchemaGraph.svelte';
-  import SchemaNode from '../components/SchemaNode.svelte';
-  import ZoomControls from '../components/ZoomControls.svelte';
   import Art from '../components/Art.svelte';
   import ServerSettings from '../components/ServerSettings.svelte';
-  import TypeDetail from '../components/TypeDetail.svelte';
-  import { schemaFor } from '../lib/mock/schema.js';
   import Attachment from '../components/Attachment.svelte';
   import Composer from '../components/Composer.svelte';
   import Message from '../components/Message.svelte';
   import Steps from '../components/Steps.svelte';
   import CodeBlock from '../components/CodeBlock.svelte';
-  import RunProgress from '../components/RunProgress.svelte';
-  import WorkflowCard from '../components/WorkflowCard.svelte';
   import ArchiveIcon from '../components/ArchiveIcon.svelte';
   import LookPicker from '../components/LookPicker.svelte';
   import ConnectorCard from '../components/ConnectorCard.svelte';
   import ConnectorIcon from '../components/ConnectorIcon.svelte';
   import TriggerLabel from '../components/TriggerLabel.svelte';
-  import { workflowSeed } from '../lib/mock/workflows.js';
   import { TYPES } from '../lib/looks.js';
   import { catalog } from '../lib/mock/connectors.js';
   import Heading from '../components/Heading.svelte';
@@ -89,6 +81,14 @@
   import SettingsRow from '../components/SettingsRow.svelte';
   import Greeting from '../components/Greeting.svelte';
   import SpecimenFrame from '../components/SpecimenFrame.svelte';
+  import SpecimenTarget from '../components/SpecimenTarget.svelte';
+  import Checklist from '../components/Checklist.svelte';
+  import ChecklistItem from '../components/ChecklistItem.svelte';
+  import ProgressCount from '../components/ProgressCount.svelte';
+  import Property from '../components/Property.svelte';
+  import Stats from '../components/Stats.svelte';
+  import SidebarBlock from '../components/SidebarBlock.svelte';
+  import TextLink from '../components/TextLink.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
   import SettingsNav from '../components/SettingsNav.svelte';
   import SettingsPane from '../components/SettingsPane.svelte';
@@ -100,7 +100,6 @@
   import { theme, setTheme } from '../lib/theme.svelte.js';
   import { contextmenu, SEPARATOR } from '../lib/contextmenu.svelte.js';
   import { app } from '../lib/app.svelte.js';
-  const familySchema = schemaFor('okafor');
   const avatarSeeds = Array.from({ length: 24 }, (_, i) => `user-${i + 1}`);
 
   const sections = [
@@ -191,7 +190,7 @@
           {#each sizes as s (s)}<TypeSample token={s}>The archive remembers everything you add</TypeSample>{/each}
         </SpecimenBlock>
         <SpecimenBlock title="Headings and text" column>
-          <Heading level={3} size="2xl">Display heading</Heading>
+          <Heading level={3} size="2xl" leading="none" tracking="tight">Display heading</Heading>
           <Heading level={3} size="xl">Page heading</Heading>
           <Heading level={3} size="lg">Dialog heading</Heading>
           <Heading level={3} size="md" serif={false}>Section heading</Heading>
@@ -388,7 +387,7 @@
           </Menu>
         </SpecimenBlock>
         <SpecimenBlock title="Context menu, right-click or Shift F10">
-          <div class="target" tabindex="0" role="button" aria-label="Context menu target" {@attach contextmenu(() => [
+          <SpecimenTarget label="Context menu target" {@attach contextmenu(() => [
             { heading: '1970s Letters' },
             { label: 'Open', icon: FolderOpen, onselect: () => {} },
             { label: 'Rename', icon: Pencil, shortcut: '↵', onselect: () => {} },
@@ -396,7 +395,7 @@
             { label: 'Duplicate', icon: Copy, disabled: true },
             SEPARATOR,
             { label: 'Delete', icon: Trash2, danger: true, onselect: () => {} }
-          ])}>Right-click here</div>
+          ])}>Right-click here</SpecimenTarget>
         </SpecimenBlock>
         <SpecimenBlock title="Popover and tooltip">
           <Popover label="Share">
@@ -465,20 +464,29 @@
         </SpecimenBlock>
         <SpecimenBlock title="List" column>
           <List label="Example list">
-            <ListItem href="/specimen" title="Transcribe Grandma Adaeze's 1974 letters">
-              {#snippet leading()}<MessagesSquare size={16} />{/snippet}
-              {#snippet meta()}Last message 12 min ago{/snippet}
-              {#snippet trailing()}<Badge>Pinned</Badge>{/snippet}
+            <ListItem href="/specimen" icon={ArrowRight}>
+              <span><Text weight="medium">sender</Text> <Text tone="secondary">points to</Text> <Text weight="medium">person</Text></span>
             </ListItem>
-            <ListItem href="/specimen" title="Timeline for the Mercer lease dispute" active>
-              {#snippet leading()}<MessagesSquare size={16} />{/snippet}
-              {#snippet meta()}Active row{/snippet}
-            </ListItem>
-            <ListItem title="Static row" size="sm">
-              {#snippet leading()}<FileText size={16} />{/snippet}
-              {#snippet trailing()}2.4 MB{/snippet}
-            </ListItem>
+            <ListItem href="/specimen" icon={MessagesSquare}><Text>Transcribe Grandma Adaeze's 1974 letters</Text></ListItem>
+            <ListItem icon={FileText}><Text>A row without a link</Text></ListItem>
           </List>
+        </SpecimenBlock>
+        <SpecimenBlock title="Properties, figures and links" column>
+          <Stack gap="0">
+            <Property label="Rows" icon={ListIcon}><Text tabular>386</Text></Property>
+            <Property label="Links to" icon={ArrowRight}><TextLink href="/specimen">person</TextLink></Property>
+          </Stack>
+          <Stats items={[{ label: 'Rows', value: '386' }, { label: 'Columns', value: 6 }, { label: 'Links', value: 2 }, { label: 'Updated', value: 'Oct 15' }]} />
+          <SidebarBlock><Text size="sm" tone="tertiary">Free text in a sidebar section</Text></SidebarBlock>
+        </SpecimenBlock>
+        <SpecimenBlock title="Checklist" column>
+          <ProgressCount done={1} total={2} />
+          <Checklist>
+            <ChecklistItem title="Invite your team" body="Add the people who should read, edit or own this archive." onchange={() => {}}>
+              {#snippet action()}<Button size="sm" variant="primary">Invite</Button>{/snippet}
+            </ChecklistItem>
+            <ChecklistItem title="Upload your first files" body="Scans, letters and recordings." checked onchange={() => {}} />
+          </Checklist>
         </SpecimenBlock>
         <SpecimenBlock title="Table" column>
           <Table {columns} rows={members.slice(0, 4)} label="Members" onrowclick={() => {}}>
@@ -496,21 +504,11 @@
             {#each [library[0], library[1], library[2], library[4], library[5]] as f (f.id)}<FileTile file={f} />{/each}
           </Grid>
         </SpecimenBlock>
-        <SpecimenBlock title="Schema node">
-          <SchemaNode type={familySchema[1]} names={Object.fromEntries(familySchema.map((t) => [t.id, t.name]))} />
-          <ZoomControls />
-        </SpecimenBlock>
-        <SpecimenBlock title="Schema graph" column>
-          <SpecimenFrame><SchemaGraph types={familySchema} /></SpecimenFrame>
-        </SpecimenBlock>
         <SpecimenBlock title="Art">
           <Art name="server" />
         </SpecimenBlock>
         <SpecimenBlock title="Server settings" column>
           <ServerSettings />
-        </SpecimenBlock>
-        <SpecimenBlock title="Type detail" column>
-          <TypeDetail type={familySchema[0]} types={familySchema} />
         </SpecimenBlock>
         <SpecimenBlock title="Attachments">
           <Attachment name="adaeze-letter-03.jpg" kind="image" size="2.4 MB" tone={4} />
@@ -567,18 +565,11 @@
         <SpecimenBlock title="Work disclosure: running and finished" column>
           <Steps steps={runningSteps} running open />
           <Steps steps={conversations['mercer-timeline'][1].steps} worked="25s" />
-          <RunProgress steps={[{ id: 'a', label: 'Find the cassette', status: 'done', time: '2s' }, { id: 'b', label: 'Transcribe cassette 7', status: 'running' }, { id: 'c', label: 'Save the transcript', status: 'pending' }]} />
-          <RunProgress steps={[{ id: 'a', label: 'Write the digest', status: 'done', time: '4s' }, { id: 'b', label: 'Email 9 members', status: 'done', time: '1s' }]} />
         </SpecimenBlock>
         <SpecimenBlock title="Code block" column>
           <CodeBlock lang="bash" code={'python3 -m pip install pillow\npython3 rename_scans.py --dry-run'} />
         </SpecimenBlock>
-        <SpecimenBlock title="Workflow cards and triggers">
-          <Grid min="card" gap="4">
-            <WorkflowCard workflow={workflowSeed.okafor[0]} href="/workflows/wf-cassettes" />
-            <WorkflowCard workflow={workflowSeed.okafor[2]} href="/workflows/wf-digest" />
-            <WorkflowCard workflow={workflowSeed.okafor[4]} href="/workflows/wf-restore" />
-          </Grid>
+        <SpecimenBlock title="Workflow triggers">
           <TriggerLabel trigger={{ kind: 'schedule', label: 'Every Sunday at 18:00' }} />
           <TriggerLabel trigger={{ kind: 'file', label: 'When photos are added' }} />
           <TriggerLabel trigger={{ kind: 'email', label: 'When an email arrives' }} />
@@ -665,21 +656,3 @@
     <Button variant="danger" onclick={() => close}>Delete</Button>
   {/snippet}
 </Dialog>
-
-<style>
-  .target {
-    display: grid;
-    place-items: center;
-    width: 100%;
-    min-height: var(--space-24);
-    border-radius: var(--radius-lg);
-    box-shadow: inset 0 0 0 var(--border-width) var(--color-border);
-    color: var(--color-text-tertiary);
-    font-size: var(--text-sm);
-    user-select: none;
-  }
-
-  .target:global([data-contextmenu]) {
-    background: var(--color-fill-subtle);
-  }
-</style>

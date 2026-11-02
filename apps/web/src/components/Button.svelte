@@ -71,7 +71,7 @@
   }
 
   .btn:disabled:not([aria-busy]) {
-    opacity: 0.45;
+    opacity: var(--opacity-disabled);
   }
 
   .label {
@@ -160,13 +160,13 @@
   }
 
   .danger:hover:not(:disabled) {
-    background: var(--color-danger-hover);
+    background: var(--color-danger);
   }
 
   .link {
     height: auto;
     padding: var(--space-0);
-    color: var(--color-accent-text);
+    color: var(--color-accent);
     border-radius: var(--radius-xs);
   }
 

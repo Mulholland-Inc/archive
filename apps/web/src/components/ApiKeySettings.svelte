@@ -3,6 +3,7 @@
   import SettingsPane from './SettingsPane.svelte';
   import OwnerNotice from './OwnerNotice.svelte';
   import Art from './Art.svelte';
+  import Heading from './Heading.svelte';
   import IconButton from './IconButton.svelte';
   import Button from './Button.svelte';
   import { app, ws, archiveKey, rotateKey, isArchiveOwner, tokens } from '../lib/app.svelte.js';
@@ -41,7 +42,7 @@
 <SettingsPane {onback} {backNarrow}>
   <div class="page">
     <div class="art"><Art name={archive ? 'security' : 'tokens'} /></div>
-    <h2>{archive ? 'Archive API key' : 'Your API key'}</h2>
+    <Heading size="xl" wrap="normal" step>{archive ? 'Archive API key' : 'Your API key'}</Heading>
     <p class="sub">{archive ? `Only for ${ws().name}, with your access. Archive shows it once, when it is made; rotate it to see a new one.` : 'Works across every archive you’re in, with your access. Treat it like a password.'}</p>
     {#if locked}<div class="notice"><OwnerNotice what="the archive API key" ask="if you need it" /></div>{/if}
     <div class="key">
@@ -78,16 +79,8 @@
     height: 100%;
   }
 
-  h2 {
-    font-family: var(--font-serif);
-    font-size: var(--text-2xl);
-    font-weight: var(--weight-serif);
-    line-height: var(--leading-tight);
-    letter-spacing: var(--tracking-serif);
-  }
-
   .sub {
-    max-width: 30rem;
+    max-width: var(--measure-sm);
     margin-block: var(--space-2) var(--space-6);
     color: var(--color-text-secondary);
     font-size: var(--text-md);
@@ -95,7 +88,7 @@
 
   .notice {
     width: 100%;
-    max-width: 30rem;
+    max-width: var(--measure-sm);
     text-align: start;
   }
 
@@ -104,7 +97,7 @@
     align-items: center;
     gap: var(--space-1);
     width: 100%;
-    max-width: 30rem;
+    max-width: var(--measure-sm);
     min-height: var(--control-xl);
     padding: var(--space-1) var(--space-1) var(--space-1) var(--space-4);
     border-radius: var(--radius-lg);
@@ -129,7 +122,7 @@
     flex-direction: column;
     align-items: center;
     gap: var(--space-2);
-    max-width: 24rem;
+    max-width: var(--measure-xs);
     margin-block-start: var(--space-5);
   }
 
@@ -139,13 +132,8 @@
   }
 
   @container (max-width: 32rem) {
-
     .art {
-      height: calc(var(--settings-art) * 0.7);
-    }
-
-    h2 {
-      font-size: var(--text-xl);
+      height: var(--settings-art-sm);
     }
   }
 </style>

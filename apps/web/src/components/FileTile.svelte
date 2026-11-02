@@ -132,38 +132,38 @@
 
   .sun {
     position: absolute;
-    inset-block-start: 22%;
-    inset-inline-end: 22%;
-    width: 14%;
+    inset-block-start: var(--tile-sun-inset);
+    inset-inline-end: var(--tile-sun-inset);
+    width: var(--tile-sun-size);
     aspect-ratio: 1;
     border-radius: var(--radius-full);
     background: var(--color-surface);
-    opacity: 0.7;
+    opacity: var(--opacity-soft);
   }
 
   .hill {
     position: absolute;
-    inset-inline: -10%;
-    inset-block-end: -30%;
-    height: 70%;
-    border-radius: 50%;
+    inset-inline: var(--tile-hill-inline);
+    inset-block-end: var(--tile-hill-block);
+    height: var(--tile-hill-height);
+    border-radius: var(--radius-round);
     background: var(--color-text);
-    opacity: 0.12;
+    opacity: var(--opacity-faint);
   }
 
   .hill.back {
-    inset-inline: 30% -30%;
-    inset-block-end: -20%;
-    opacity: 0.08;
+    inset-inline: var(--tile-hill-back-inline);
+    inset-block-end: var(--tile-hill-back-block);
+    opacity: var(--opacity-fainter);
   }
 
   .doc {
     display: flex;
     flex-direction: column;
     gap: var(--space-1-5);
-    width: 56%;
-    height: 78%;
-    margin-block-start: 22%;
+    width: var(--tile-doc-width);
+    height: var(--tile-doc-height);
+    margin-block-start: var(--tile-doc-top);
     padding: var(--space-3);
     border-radius: var(--radius-sm) var(--radius-sm) 0 0;
     background: var(--color-surface);
@@ -177,21 +177,21 @@
   }
 
   .line.h {
-    width: 60%;
+    width: var(--tile-line-heading);
     height: var(--space-1-5);
     background: var(--color-text-tertiary);
-    opacity: 0.5;
+    opacity: var(--opacity-half);
   }
 
   .line.short {
-    width: 70%;
+    width: var(--tile-line-short);
   }
 
   .sheet {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    width: 64%;
-    height: 64%;
+    width: var(--tile-sheet-size);
+    height: var(--tile-sheet-size);
     gap: var(--space-px);
     border-radius: var(--radius-sm);
     overflow: hidden;
@@ -211,26 +211,26 @@
     display: flex;
     align-items: center;
     gap: var(--space-0-5);
-    height: 40%;
+    height: var(--tile-wave-height);
   }
 
   .b {
     width: var(--space-0-5);
     border-radius: var(--radius-full);
     background: var(--color-text);
-    opacity: 0.35;
+    opacity: var(--opacity-dim);
   }
 
-  .b3 { height: 15%; }
-  .b4 { height: 22%; }
-  .b5 { height: 30%; }
-  .b6 { height: 38%; }
-  .b7 { height: 46%; }
-  .b8 { height: 54%; }
-  .b9 { height: 62%; }
-  .b10 { height: 72%; }
-  .b11 { height: 84%; }
-  .b12 { height: 100%; }
+  .b3 { height: var(--tile-bar-3); }
+  .b4 { height: var(--tile-bar-4); }
+  .b5 { height: var(--tile-bar-5); }
+  .b6 { height: var(--tile-bar-6); }
+  .b7 { height: var(--tile-bar-7); }
+  .b8 { height: var(--tile-bar-8); }
+  .b9 { height: var(--tile-bar-9); }
+  .b10 { height: var(--tile-bar-10); }
+  .b11 { height: var(--tile-bar-11); }
+  .b12 { height: var(--tile-bar-12); }
 
   .play {
     position: absolute;

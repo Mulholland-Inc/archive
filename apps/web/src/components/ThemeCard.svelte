@@ -62,7 +62,7 @@
   }
 
   .side {
-    width: 28%;
+    width: var(--preview-side);
   }
 
   .main {
@@ -75,17 +75,17 @@
 
   .bar {
     height: var(--space-1);
-    width: 70%;
+    width: var(--preview-line);
     border-radius: var(--radius-full);
   }
 
   .bar.short {
-    width: 45%;
+    width: var(--preview-line-short);
   }
 
   .box {
     margin-block-start: auto;
-    height: 28%;
+    height: var(--preview-box);
     border-radius: var(--radius-sm);
   }
 

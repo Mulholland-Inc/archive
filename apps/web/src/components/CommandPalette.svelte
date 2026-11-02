@@ -119,7 +119,7 @@
   .palette {
     display: flex;
     flex-direction: column;
-    max-height: 60vh;
+    max-height: var(--palette-max-height);
   }
 
   .search {

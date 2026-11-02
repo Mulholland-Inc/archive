@@ -13,7 +13,7 @@
     border-radius: var(--radius-full);
     border: var(--focus-width) solid var(--color-fill-strong);
     border-top-color: currentColor;
-    animation: spin calc(var(--duration-slower) * 2) linear infinite;
+    animation: spin var(--duration-spin) linear infinite;
   }
 
   .sm {
@@ -31,15 +31,9 @@
     height: var(--icon-2xl);
   }
 
-  @keyframes spin {
-    to {
-      transform: rotate(1turn);
-    }
-  }
-
   @media (prefers-reduced-motion: reduce) {
     .spinner {
-      animation-duration: 1.6s;
+      animation-duration: var(--duration-spin-still);
     }
   }
 </style>

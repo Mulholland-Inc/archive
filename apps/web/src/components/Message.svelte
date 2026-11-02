@@ -47,7 +47,7 @@
   }
 
   .bubble {
-    max-width: 85%;
+    max-width: var(--bubble-max);
     padding: var(--space-2-5);
     border-radius: var(--radius-lg);
     background: var(--color-bubble);

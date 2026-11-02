@@ -43,7 +43,7 @@
   }
 
   .switch:disabled {
-    opacity: 0.45;
+    opacity: var(--opacity-disabled);
   }
 
   .knob {

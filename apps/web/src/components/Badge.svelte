@@ -37,13 +37,7 @@
   }
 
   .spin {
-    animation: spin calc(var(--duration-slower) * 2) linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(1turn);
-    }
+    animation: spin var(--duration-spin) linear infinite;
   }
 
   @media (prefers-reduced-motion: reduce) {

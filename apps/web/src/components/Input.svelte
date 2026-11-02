@@ -66,7 +66,7 @@
   }
 
   .disabled {
-    opacity: 0.55;
+    opacity: var(--opacity-disabled-input);
     background: var(--color-surface-sunken);
   }
 

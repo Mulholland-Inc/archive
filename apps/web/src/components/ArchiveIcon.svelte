@@ -119,10 +119,10 @@
   .tint-6 { --tint: var(--tint-6); }
   .tint-7 { --tint: var(--tint-7); }
 
-  .mood-0 { --tilt: -3deg; --lift: -3%; }
-  .mood-1 { --tilt: 2.5deg; --lift: -6%; }
-  .mood-2 { --tilt: -1.5deg; --lift: -2%; }
-  .mood-3 { --tilt: 4deg; --lift: -4%; }
+  .mood-0 { --tilt: var(--bot-tilt-0); --lift: var(--bot-lift-0); }
+  .mood-1 { --tilt: var(--bot-tilt-1); --lift: var(--bot-lift-1); }
+  .mood-2 { --tilt: var(--bot-tilt-2); --lift: var(--bot-lift-2); }
+  .mood-3 { --tilt: var(--bot-tilt-3); --lift: var(--bot-lift-3); }
 
   .art {
     position: absolute;
@@ -131,7 +131,7 @@
   }
 
   .building .art {
-    inset: -10%;
+    inset: var(--bot-building-inset);
   }
 
   .awake .art {
@@ -154,7 +154,7 @@
   .sheen {
     position: absolute;
     inset: 0;
-    background: linear-gradient(135deg, color-mix(in srgb, var(--tint) 74%, white) 0%, var(--tint) 46%, color-mix(in srgb, var(--tint) 80%, black) 100%);
+    background: linear-gradient(var(--bot-sheen-angle), color-mix(in srgb, var(--tint) var(--bot-sheen-light), var(--tint-light)) 0%, var(--tint) var(--bot-sheen-mid), color-mix(in srgb, var(--tint) var(--bot-sheen-dark), var(--tint-dark)) 100%);
     mix-blend-mode: multiply;
     -webkit-mask: var(--src) center / 100% 100% no-repeat;
     mask: var(--src) center / 100% 100% no-repeat;

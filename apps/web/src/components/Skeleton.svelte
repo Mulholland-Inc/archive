@@ -23,9 +23,9 @@
   .sk {
     display: block;
     border-radius: var(--radius-sm);
-    background: linear-gradient(90deg, var(--color-fill) 0%, var(--color-fill-strong) 50%, var(--color-fill) 100%);
-    background-size: 300% 100%;
-    animation: shimmer calc(var(--duration-slower) * 4) var(--ease-in-out) infinite;
+    background: linear-gradient(var(--shimmer-angle), var(--color-fill) 0%, var(--color-fill-strong) 50%, var(--color-fill) 100%);
+    background-size: var(--shimmer-size);
+    animation: shimmer var(--duration-shimmer) var(--ease-in-out) infinite;
   }
 
   .text {
@@ -38,7 +38,7 @@
   }
 
   .last {
-    width: 60%;
+    width: var(--skeleton-last-line);
   }
 
   .circle {
@@ -69,7 +69,7 @@
       background-position: 100% 0;
     }
     to {
-      background-position: -200% 0;
+      background-position: var(--shimmer-end);
     }
   }
 

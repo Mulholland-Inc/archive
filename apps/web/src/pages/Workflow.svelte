@@ -22,6 +22,7 @@
   import DetailsButton from '../components/DetailsButton.svelte';
   import SidebarSection from '../components/SidebarSection.svelte';
   import SidebarItem from '../components/SidebarItem.svelte';
+  import SidebarBlock from '../components/SidebarBlock.svelte';
   import { app, workflowById, runWorkflow, renameWorkflow, removeWorkflow, workflows, runs } from '../lib/app.svelte.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
   import { workflowItems, runItems } from '../lib/menus.js';
@@ -115,20 +116,20 @@
       {#if run}
         <SidebarSection title={`Run #${run.number}`}>
           {#snippet action()}<Text size="xs" tone="tertiary" tabular>{done} of {run.steps.length}</Text>{/snippet}
-          <div class="block">
+          <SidebarBlock>
             <StatusBadge status={run.paused ? 'paused' : run.status} plain />
             <ProgressBar value={done / run.steps.length} {tone} />
             <Text size="sm" tone="tertiary">Started {run.started}{#if run.elapsed}, {run.elapsed}{/if}</Text>
-          </div>
+          </SidebarBlock>
         </SidebarSection>
       {/if}
       <SidebarSection>
         {#each wf.runs as r (r.id)}
           <SidebarItem label={`Run #${r.number}`} badge={r.started} active={r.id === run?.id} onclick={() => pick(r)} items={() => [{ label: 'Open run', icon: Eye, onselect: () => pick(r) }, ...runItems(r, wf, { onrun: start })]}>
-            {#snippet leading()}<span class="glyph"><StatusBadge status={r.paused ? 'paused' : r.status} plain iconOnly /></span>{/snippet}
+            {#snippet leading()}<StatusBadge status={r.paused ? 'paused' : r.status} plain iconOnly />{/snippet}
           </SidebarItem>
         {:else}
-          <div class="block"><Text size="sm" tone="tertiary">No runs yet</Text></div>
+          <SidebarBlock><Text size="sm" tone="tertiary">No runs yet</Text></SidebarBlock>
         {/each}
       </SidebarSection>
     {/snippet}
@@ -141,20 +142,3 @@
     </EmptyState>
   </Page>
 {/if}
-
-<style>
-  .block {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    padding: var(--space-1) var(--space-1-5);
-  }
-
-  .glyph {
-    display: grid;
-    place-items: center;
-    flex: none;
-    width: var(--icon-lg);
-    height: var(--icon-lg);
-  }
-</style>

@@ -47,7 +47,7 @@
   }
 
   .open .chev {
-    transform: rotate(90deg);
+    transform: rotate(var(--turn-quarter));
   }
 
   .content {

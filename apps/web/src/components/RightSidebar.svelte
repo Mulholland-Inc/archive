@@ -74,7 +74,7 @@
     height: var(--aside-art);
     margin-block-end: calc(var(--space-8) * -1);
     overflow: hidden;
-    mask-image: linear-gradient(to bottom, #000 35%, transparent);
+    mask-image: var(--fade-aside);
     pointer-events: none;
   }
 

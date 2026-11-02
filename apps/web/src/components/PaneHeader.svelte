@@ -1,5 +1,6 @@
 <script>
   import Art from './Art.svelte';
+  import Heading from './Heading.svelte';
 
   let { title, description, art, search } = $props();
 
@@ -19,7 +20,7 @@
   <div class="lead" bind:offsetHeight={height} {@attach watch}>
     {#if art}<div class="art"><Art name={art} /></div>{/if}
     <div class="text">
-      <h2>{title}</h2>
+      <Heading size="xl" wrap="normal" step>{title}</Heading>
       {#if description}<p>{description}</p>{/if}
     </div>
   </div>
@@ -62,7 +63,7 @@
   .art {
     display: flex;
     flex: none;
-    width: calc(var(--pane-art) * 1.4);
+    width: var(--pane-art-width);
     height: var(--pane-art);
   }
 
@@ -79,16 +80,8 @@
     min-width: 0;
   }
 
-  h2 {
-    font-family: var(--font-serif);
-    font-size: var(--text-2xl);
-    font-weight: var(--weight-serif);
-    line-height: var(--leading-tight);
-    letter-spacing: var(--tracking-serif);
-  }
-
   p {
-    max-width: 36rem;
+    max-width: var(--measure);
     color: var(--color-text-secondary);
     font-size: var(--text-md);
   }
@@ -142,11 +135,7 @@
 
     .art {
       width: var(--pane-art);
-      height: calc(var(--pane-art) * 0.75);
-    }
-
-    h2 {
-      font-size: var(--text-xl);
+      height: var(--pane-art-sm);
     }
 
     .compact .mini {

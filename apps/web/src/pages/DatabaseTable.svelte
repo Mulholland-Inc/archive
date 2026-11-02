@@ -14,7 +14,13 @@
   import Chip from '../components/Chip.svelte';
   import Button from '../components/Button.svelte';
   import Text from '../components/Text.svelte';
-  import Icon from '../components/Icon.svelte';
+  import Heading from '../components/Heading.svelte';
+  import Stack from '../components/Stack.svelte';
+  import Adaptive from '../components/Adaptive.svelte';
+  import List from '../components/List.svelte';
+  import ListItem from '../components/ListItem.svelte';
+  import TextLink from '../components/TextLink.svelte';
+  import Stats from '../components/Stats.svelte';
   import AvatarGroup from '../components/AvatarGroup.svelte';
   import CodeBlock from '../components/CodeBlock.svelte';
   import EmptyState from '../components/EmptyState.svelte';
@@ -100,7 +106,7 @@
     {/snippet}
     {#snippet trailing()}
       {#if type}
-        <span class="wide"><Button size="sm" variant="ghost" icon={Share} onclick={() => openShare('table', type.id)}>Share</Button></span>
+        <Adaptive inline>{#snippet wide()}<Button size="sm" variant="ghost" icon={Share} onclick={() => openShare('table', type.id)}>Share</Button>{/snippet}</Adaptive>
         <Button size="sm" variant="primary" icon={MessageSquare} onclick={ask}>Ask about this</Button>
         <DetailsButton />
       {/if}
@@ -112,12 +118,12 @@
   <RightSidebar art="bg-database" label="Table details">
     {@render topbar()}
     <Page>
-      <header class="head">
-        <h1>{type.name}</h1>
+      <Stack as="header" gap="3" align="start">
+        <Heading level={1} size="2xl" wrap="anywhere">{type.name}</Heading>
         <Text as="p" size="base" tone="secondary">{summary}</Text>
-      </header>
+      </Stack>
 
-      <div class="properties">
+      <Stack gap="0">
         <Property label="Rows" icon={Rows3}><Text tabular>{count(type.rows)}</Text></Property>
         <Property label="Columns" icon={Columns3}><Text tabular>{type.columns.length}</Text></Property>
         <Property label="Updated" icon={Clock}>{type.updated}</Property>
@@ -133,19 +139,19 @@
         <Property label="Shared with" icon={Users}>
           {#if share}<AvatarGroup people={share.people} /><Text tone="secondary">{share.people.length} people</Text>{:else}<Text tone="tertiary">Only archive members</Text>{/if}
         </Property>
-      </div>
+      </Stack>
 
       <Section title="Columns">
         <Table columns={columnColumns} rows={columnRows} label="Columns" cards flush>
           {#snippet cell(row, col)}
             {#if col.key === 'name'}
-              <span class="column">
+              <Stack as="span" direction="row" gap="2" align="baseline">
                 <Text weight="medium">{row.name}</Text>
                 {#if row.required}<Text size="sm" tone="tertiary">Required</Text>{/if}
-              </span>
+              </Stack>
             {:else if col.key === 'type'}
               {#if row.to && byId(row.to)}
-                <a class="link" href={`/database/${row.to}`}>{byId(row.to).name}</a>
+                <TextLink href={`/database/${row.to}`}>{byId(row.to).name}</TextLink>
               {:else}
                 <Text tone="secondary">{typeLabel(row)}</Text>
               {/if}
@@ -167,20 +173,18 @@
 
       <Section title="Relationships">
         {#if outgoing.length || incoming.length}
-          <ul class="list">
+          <List>
             {#each outgoing as l (`out-${l.column}`)}
-              <li><a class="row" href={`/database/${l.type.id}`}>
-                <Icon icon={ArrowRight} size="sm" />
+              <ListItem href={`/database/${l.type.id}`} icon={ArrowRight}>
                 <span><Text weight="medium">{l.column}</Text> <Text tone="secondary">points to</Text> <Text weight="medium">{l.type.name}</Text></span>
-              </a></li>
+              </ListItem>
             {/each}
             {#each incoming as l (`in-${l.type.id}-${l.column}`)}
-              <li><a class="row" href={`/database/${l.type.id}`}>
-                <Icon icon={ArrowLeft} size="sm" />
+              <ListItem href={`/database/${l.type.id}`} icon={ArrowLeft}>
                 <span><Text weight="medium">{l.type.name}</Text> <Text tone="secondary">points here through</Text> <Text weight="medium">{l.column}</Text></span>
-              </a></li>
+              </ListItem>
             {/each}
-          </ul>
+          </List>
         {:else}
           <Text tone="tertiary">This table doesn’t link to any other table.</Text>
         {/if}
@@ -188,37 +192,31 @@
 
       <Section title="Workflows">
         {#if flows.length}
-          <ul class="list">
+          <List>
             {#each flows as w (w.name)}
-              <li>
-                {#if w.id}
-                  <a class="row" href={`/workflows/${w.id}`}><Icon icon={Workflow} size="sm" /><Text>{w.name}</Text></a>
-                {:else}
-                  <span class="row"><Icon icon={Workflow} size="sm" /><Text>{w.name}</Text></span>
-                {/if}
-              </li>
+              <ListItem href={w.id ? `/workflows/${w.id}` : undefined} icon={Workflow}><Text>{w.name}</Text></ListItem>
             {/each}
-          </ul>
+          </List>
         {:else}
           <Text tone="tertiary">No workflow reads or writes this table.</Text>
         {/if}
       </Section>
 
       <Section title="Access">
-        <div class="properties">
+        <Stack gap="0">
           {#each access as a (a.label)}
             <Property label={a.label}>
               {#if a.people.length}
-                <span class="who">
+                <Stack as="span" direction="row" gap="2" align="center" grow>
                   <AvatarGroup people={a.people} />
                   <Text tone="secondary" truncate>{a.people.map((p) => p.name).join(', ')}</Text>
-                </span>
+                </Stack>
               {:else}
                 <Text tone="tertiary">Nobody</Text>
               {/if}
             </Property>
           {/each}
-        </div>
+        </Stack>
       </Section>
 
       <Section title="SQL">
@@ -227,12 +225,7 @@
     </Page>
 
     {#snippet side()}
-      <dl class="stats">
-        <div><dt>Rows</dt><dd>{count(type.rows)}</dd></div>
-        <div><dt>Columns</dt><dd>{type.columns.length}</dd></div>
-        <div><dt>Links</dt><dd>{related.length}</dd></div>
-        <div><dt>Updated</dt><dd>{type.updated}</dd></div>
-      </dl>
+      <Stats items={[{ label: 'Rows', value: count(type.rows) }, { label: 'Columns', value: type.columns.length }, { label: 'Links', value: related.length }, { label: 'Updated', value: type.updated }]} />
       <SidebarSection>
         <SidebarItem icon={MessageSquare} label="Ask about this" onclick={ask} />
         <SidebarItem icon={Share} label="Share" onclick={() => openShare('table', type.id)} />
@@ -255,102 +248,3 @@
     </EmptyState>
   </Page>
 {/if}
-
-<style>
-  .wide {
-    display: contents;
-  }
-
-  @media (max-width: 40rem) {
-    .wide {
-      display: none;
-    }
-  }
-
-  .head {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: var(--space-3);
-  }
-
-  h1 {
-    font-family: var(--font-serif);
-    font-size: var(--text-3xl);
-    font-weight: var(--weight-serif);
-    line-height: var(--leading-tight);
-    letter-spacing: var(--tracking-serif);
-    overflow-wrap: anywhere;
-  }
-
-  .properties {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .who {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    flex: 1;
-    min-width: 0;
-  }
-
-  .column {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-2);
-  }
-
-  .link {
-    color: var(--color-text);
-    text-decoration: underline;
-    text-decoration-color: var(--color-border);
-    text-underline-offset: 0.2em;
-  }
-
-  .link:hover {
-    text-decoration-color: currentColor;
-  }
-
-  .list {
-    display: flex;
-    flex-direction: column;
-    margin-inline: calc(var(--space-2) * -1);
-  }
-
-  .row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    min-height: var(--control-lg);
-    padding: var(--space-1-5) var(--space-2);
-    border-radius: var(--radius-md);
-    color: var(--color-text-tertiary);
-    font-size: var(--text-md);
-    transition: background-color var(--duration-fast) var(--ease-out);
-  }
-
-  a.row:hover {
-    background: var(--color-fill-subtle);
-  }
-
-  .stats {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: var(--space-4) var(--space-3);
-    padding: var(--space-1) var(--space-1-5);
-  }
-
-  dt {
-    color: var(--color-text-tertiary);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-medium);
-  }
-
-  dd {
-    font-size: var(--text-lg);
-    font-weight: var(--weight-medium);
-    font-variant-numeric: tabular-nums;
-  }
-</style>

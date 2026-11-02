@@ -336,7 +336,7 @@
     min-width: 0;
     height: var(--control-sm);
     color: var(--color-text);
-    mask-image: linear-gradient(to right, transparent, black 30%);
+    mask-image: var(--fade-start);
   }
 
   .elapsed {
@@ -354,10 +354,10 @@
     height: var(--space-2);
     border-radius: 50%;
     background: var(--color-danger);
-    animation: beat 1.4s ease-in-out infinite;
+    animation: beat var(--duration-pulse) var(--ease-pulse) infinite;
   }
 
   @keyframes beat {
-    50% { opacity: 0.25; }
+    50% { opacity: var(--opacity-pulse); }
   }
 </style>

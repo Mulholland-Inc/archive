@@ -45,13 +45,7 @@
   }
 
   .plain.spin :global(.icon) {
-    animation: spin 1s linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
+    animation: spin var(--duration-spin-status) linear infinite;
   }
 
   @media (prefers-reduced-motion: reduce) {

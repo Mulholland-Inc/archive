@@ -1,5 +1,6 @@
 <script>
   import { setContext } from 'svelte';
+  import MenuPanel from './MenuPanel.svelte';
   import { uid } from '../lib/ids.js';
   import { show, hide, roving, focusables } from '../lib/floating.js';
 
@@ -53,44 +54,6 @@
 
 {@render trigger?.({ onclick: toggle, onkeydown: triggerKey, 'aria-haspopup': 'menu', 'aria-expanded': open, 'aria-controls': id })}
 
-<div
-  bind:this={panel}
-  {id}
-  popover="auto"
-  role="menu"
-  tabindex="-1"
-  aria-label={label}
-  class={['menu', 'floating', width]}
-  data-placement={placement}
-  data-match={match || undefined}
-  {ontoggle}
-  {onkeydown}
->
+<MenuPanel bind:panel {id} {label} {width} data-placement={placement} data-match={match || undefined} {ontoggle} {onkeydown}>
   {@render children()}
-</div>
-
-<style>
-  .menu {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-px);
-    min-width: var(--menu-min);
-    max-width: var(--menu-max);
-    max-height: 70vh;
-    overflow-y: auto;
-    padding: var(--space-1-5);
-    border-radius: var(--radius-lg);
-    background: var(--color-surface-raised);
-    box-shadow: var(--ring);
-    font-size: var(--text-md);
-    z-index: var(--z-popover);
-  }
-
-  .sm {
-    min-width: calc(var(--menu-min) * 0.75);
-  }
-
-  .lg {
-    min-width: var(--popover-width);
-  }
-</style>
+</MenuPanel>

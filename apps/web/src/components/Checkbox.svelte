@@ -27,7 +27,7 @@
 
   .disabled {
     cursor: default;
-    opacity: 0.5;
+    opacity: var(--opacity-disabled-field);
   }
 
   .box {
@@ -70,14 +70,14 @@
     color: var(--color-accent-contrast);
     pointer-events: none;
     opacity: 0;
-    transform: scale(0.6);
+    transform: scale(var(--scale-check-hidden));
     transition:
       opacity var(--duration-fast) var(--ease-out),
       transform var(--duration-fast) var(--ease-emphasized);
   }
 
   .mark :global(svg) {
-    stroke-width: 3;
+    stroke-width: var(--icon-stroke-bold);
   }
 
   input:checked + .mark,

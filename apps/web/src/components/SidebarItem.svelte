@@ -32,7 +32,7 @@
 
 {#snippet content()}
   {#if leading}
-    {@render leading()}
+    <span class="glyph">{@render leading()}</span>
   {:else if icon}
     <span class="glyph"><Icon {icon} size="md" /></span>
   {/if}
@@ -171,7 +171,7 @@
     inset-inline-end: 100%;
     width: var(--space-6);
     background: inherit;
-    mask-image: linear-gradient(to right, transparent, black);
+    mask-image: var(--fade-end);
   }
 
   .item:hover .actions,

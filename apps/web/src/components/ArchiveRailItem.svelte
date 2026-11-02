@@ -102,8 +102,8 @@
     height: var(--archive-badge);
     padding-inline: var(--space-1);
     border-radius: var(--radius-full);
-    background: var(--color-rail-badge);
-    color: var(--color-on-rail-badge);
+    background: var(--color-rail-accent);
+    color: var(--color-rail-on-accent);
     font-size: var(--text-2xs);
     font-weight: var(--weight-semibold);
     line-height: var(--leading-none);

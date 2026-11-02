@@ -1,5 +1,6 @@
 <script>
   import Art from './Art.svelte';
+  import Heading from './Heading.svelte';
   import { pinned } from '../lib/pagetitle.svelte.js';
 
   let { title, art, search, actions } = $props();
@@ -25,7 +26,7 @@
   <div class="lead" bind:offsetHeight={height} {@attach watch}>
     {#if art}<div class="banner"><Art name={art} size="banner" /></div>{/if}
     <div class="top">
-      <h1>{title}</h1>
+      <Heading level={1} size="xl" wrap="normal" grow>{title}</Heading>
       {#if actions}<div class="actions">{@render actions()}</div>{/if}
     </div>
   </div>
@@ -53,7 +54,7 @@
     margin-block: calc(var(--page-pad) * -1) calc(var(--space-12) * -1);
     margin-inline: calc(50% - 50cqi);
     background: var(--color-canvas);
-    mask-image: linear-gradient(to bottom, #000 25%, transparent 92%);
+    mask-image: var(--fade-banner);
     pointer-events: none;
   }
 
@@ -72,16 +73,6 @@
     gap: var(--space-4);
     min-height: var(--control-xl);
     padding-block-end: var(--space-3);
-  }
-
-  h1 {
-    flex: 1;
-    min-width: 0;
-    font-family: var(--font-serif);
-    font-size: var(--text-2xl);
-    font-weight: var(--weight-serif);
-    line-height: var(--leading-tight);
-    letter-spacing: var(--tracking-serif);
   }
 
   .actions {

@@ -54,17 +54,17 @@
   }
 
   .shimmer {
-    background: linear-gradient(90deg, var(--color-text-tertiary) 0%, var(--color-text) 50%, var(--color-text-tertiary) 100%);
-    background-size: 200% 100%;
+    background: linear-gradient(var(--shimmer-angle), var(--color-text-tertiary) 0%, var(--color-text) 50%, var(--color-text-tertiary) 100%);
+    background-size: var(--shimmer-text-size);
     background-clip: text;
     -webkit-background-clip: text;
     color: transparent;
-    animation: shimmer calc(var(--duration-slower) * 5) linear infinite;
+    animation: shimmer var(--duration-shimmer-text) linear infinite;
   }
 
   .spin {
     display: inline-flex;
-    animation: spin calc(var(--duration-slower) * 2) linear infinite;
+    animation: spin var(--duration-spin) linear infinite;
   }
 
   .steps {
@@ -145,12 +145,6 @@
     color: var(--color-text-tertiary);
     font-size: var(--text-xs);
     font-variant-numeric: tabular-nums;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(1turn);
-    }
   }
 
   @keyframes shimmer {

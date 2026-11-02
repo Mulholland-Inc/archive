@@ -2,6 +2,7 @@
   import { getContext, setContext } from 'svelte';
   import { ChevronRight } from '@lucide/svelte';
   import Icon from './Icon.svelte';
+  import MenuPanel from './MenuPanel.svelte';
   import { uid } from '../lib/ids.js';
   import { show, hide, roving, focusables } from '../lib/floating.js';
   import { duration } from '../lib/motion.js';
@@ -75,20 +76,9 @@
   <Icon icon={ChevronRight} size="sm" />
 </button>
 
-<div
-  bind:this={panel}
-  {id}
-  popover="auto"
-  role="menu"
-  tabindex="-1"
-  aria-label={label}
-  class="menu floating"
-  data-placement="right-start"
-  ontoggle={(e) => (open = e.newState === 'open')}
-  onkeydown={panelKey}
->
+<MenuPanel bind:panel kind="sub" {id} {label} data-placement="right-start" ontoggle={(e) => (open = e.newState === 'open')} onkeydown={panelKey}>
   {@render children()}
-</div>
+</MenuPanel>
 
 <style>
   .item {
@@ -118,17 +108,5 @@
   .text {
     flex: 1;
     padding-inline: var(--space-0-5);
-  }
-
-  .menu {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-px);
-    min-width: var(--menu-min);
-    max-width: var(--menu-max);
-    padding: var(--space-1-5);
-    border-radius: var(--radius-lg);
-    background: var(--color-surface-raised);
-    box-shadow: var(--ring);
   }
 </style>

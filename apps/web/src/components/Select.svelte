@@ -1,6 +1,7 @@
 <script>
   import { Check, ChevronDown } from '@lucide/svelte';
   import Icon from './Icon.svelte';
+  import MenuPanel from './MenuPanel.svelte';
   import { uid } from '../lib/ids.js';
   import { show, hide, roving, focusables } from '../lib/floating.js';
 
@@ -65,14 +66,11 @@
   <Icon icon={ChevronDown} size="sm" />
 </button>
 
-<div
-  bind:this={panel}
+<MenuPanel
+  bind:panel
+  kind="listbox"
   id={listId}
-  popover="auto"
-  role="listbox"
-  tabindex="-1"
-  aria-label={label}
-  class="list floating"
+  {label}
   data-placement={placement}
   data-match
   ontoggle={(e) => (open = e.newState === 'open')}
@@ -92,7 +90,7 @@
       {#if option.value === value}<span class="check"><Icon icon={Check} size="md" /></span>{/if}
     </button>
   {/each}
-</div>
+</MenuPanel>
 
 <style>
   .trigger {
@@ -116,7 +114,7 @@
   }
 
   .trigger:disabled {
-    opacity: 0.5;
+    opacity: var(--opacity-disabled-field);
   }
 
   .open {
@@ -168,19 +166,6 @@
     color: var(--color-text-tertiary);
   }
 
-  .list {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-px);
-    min-width: var(--menu-min);
-    max-height: 50vh;
-    overflow-y: auto;
-    padding: var(--space-1-5);
-    border-radius: var(--radius-lg);
-    background: var(--color-surface-raised);
-    box-shadow: var(--ring);
-  }
-
   .option {
     display: flex;
     align-items: center;
@@ -209,6 +194,6 @@
 
   .check {
     display: inline-flex;
-    color: var(--color-accent-text);
+    color: var(--color-accent);
   }
 </style>

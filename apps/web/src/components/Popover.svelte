@@ -42,7 +42,7 @@
   }
 
   .sm {
-    width: calc(var(--popover-width) * 0.75);
+    width: var(--popover-width-sm);
   }
 
   .lg {

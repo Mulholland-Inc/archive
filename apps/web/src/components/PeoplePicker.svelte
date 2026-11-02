@@ -2,6 +2,7 @@
   import { Mail, X } from '@lucide/svelte';
   import Avatar from './Avatar.svelte';
   import Icon from './Icon.svelte';
+  import MenuPanel from './MenuPanel.svelte';
   import { uid } from '../lib/ids.js';
   import { show, hide } from '../lib/floating.js';
   import { seedOf } from '../lib/app.svelte.js';
@@ -132,7 +133,7 @@
   />
 </div>
 
-<div bind:this={panel} id={listId} popover="manual" role="listbox" aria-label={label} class="list floating" data-placement="bottom-start" data-match>
+<MenuPanel bind:panel kind="picker" popover="manual" id={listId} {label} data-placement="bottom-start" data-match>
   {#each options as person, i (person.email)}
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div
@@ -163,7 +164,7 @@
   {:else}
     <p class="empty">No one matches. Type a full email to invite someone new.</p>
   {/each}
-</div>
+</MenuPanel>
 
 <style>
   .box {
@@ -253,18 +254,6 @@
     }
   }
 
-  .list {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-px);
-    max-height: min(50vh, 20rem);
-    overflow-y: auto;
-    padding: var(--space-1-5);
-    border-radius: var(--radius-lg);
-    background: var(--color-surface-raised);
-    box-shadow: var(--ring);
-  }
-
   .option {
     display: flex;
     align-items: center;
@@ -286,7 +275,7 @@
     height: var(--avatar-md);
     border-radius: var(--radius-full);
     background: var(--color-accent-subtle);
-    color: var(--color-accent-text);
+    color: var(--color-accent);
   }
 
   .who {
@@ -316,7 +305,7 @@
 
   mark {
     background: none;
-    color: var(--color-accent-text);
+    color: var(--color-accent);
   }
 
   .tag {

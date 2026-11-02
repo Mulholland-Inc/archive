@@ -19,7 +19,7 @@
   }
 
   .lg {
-    height: min(var(--login-art), 35svh);
+    height: min(var(--login-art), var(--login-art-max));
   }
 
   .banner {
@@ -40,13 +40,13 @@
   }
 
   :global([data-theme='dark']) :is(.banner, .zoom) {
-    filter: invert(0.9) hue-rotate(180deg);
+    filter: var(--art-invert);
   }
 
   @keyframes art-in {
     from {
       opacity: 0;
-      transform: scale(1.03);
+      transform: scale(var(--scale-hover));
     }
   }
 </style>
