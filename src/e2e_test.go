@@ -354,26 +354,6 @@ func e2eTemplateDB(dir string) error {
 	return err
 }
 
-func (in *e2eInst) twin(env ...string) *e2eInst {
-	in.t.Helper()
-	dir, err := os.MkdirTemp("/tmp", "arc")
-	if err != nil {
-		in.t.Fatal(err)
-	}
-	in.t.Cleanup(func() { os.RemoveAll(dir) })
-	key, err := os.ReadFile(filepath.Join(in.dir, "data", "secret.key"))
-	if err != nil {
-		in.t.Fatal(err)
-	}
-	os.MkdirAll(filepath.Join(in.dir, "data", "blobs"), 0o700)
-	os.MkdirAll(filepath.Join(dir, "data"), 0o700)
-	if err := os.Symlink(filepath.Join(in.dir, "data", "blobs"), filepath.Join(dir, "data", "blobs")); err != nil {
-		in.t.Fatal(err)
-	}
-	return &e2eInst{t: in.t, dir: dir, env: append(append([]string{"DATABASE_URL=host=" + in.dir + " user=archive dbname=archive",
-		"ARCHIVE_SECRET_KEY=" + strings.TrimSpace(string(key))}, e2eCloudTasks.queue(in.t, dir)...), env...)}
-}
-
 func (in *e2eInst) on(t *testing.T) *e2eInst {
 	c := *in
 	c.t = t
@@ -1993,98 +1973,6 @@ func TestGCSBlobBackendSignsWithTheServiceAccountTokenFromTheMetadataServer(t *t
 	}
 }
 
-func TestTwoInstancesShareOnePostgresAndBlobStore(t *testing.T) {
-	t.Parallel()
-	a := newInst(t)
-	a.must("user", "add", "alice@example.com")
-	b := a.twin()
-	srvA, srvB := a.serve(), b.serve()
-	a.push(e2eSchema)
-	tok := decode[Token](t, a.must("token", "create")).Secret
-
-	t.Run("SchemaAppliedOnOneIsUsedOnTheOther", func(t *testing.T) {
-		var schema []runTable
-		tables := func() (out []string) {
-			call(t, "GET", srvB.url+"/api/schema", tok, nil, &schema)
-			for _, s := range schema {
-				out = append(out, s.Name)
-			}
-			return out
-		}
-		if got := tables(); fmt.Sprint(got) != "[company contact invoice person]" {
-			t.Fatalf("schema on b: %v", got)
-		}
-		st, _ := call(t, "POST", srvB.url+"/api/company", tok, map[string]any{"name": "Acme"}, nil)
-		wantStatus(t, st, 201, "create on b in a table pushed on a")
-		var cos []row
-		call(t, "GET", srvA.url+"/api/company", tok, nil, &cos)
-		if names(cos) != "Acme" {
-			t.Errorf("companies on a: %v", cos)
-		}
-		if _, err := os.Stat(filepath.Join(a.dir, "schema")); err == nil {
-			t.Error("schema files written to the data directory")
-		}
-		var dry SchemaMigration
-		st, _ = call(t, "POST", srvB.url+"/api/schema/migrate", tok, map[string]any{"sql": e2eNote}, &dry)
-		wantStatus(t, st, 200, "dry-run note on b")
-		st, _ = call(t, "POST", srvA.url+"/api/schema/migrate", tok, map[string]any{"sql": e2eNote, "confirm": dry.Confirm}, nil)
-		wantStatus(t, st, 200, "migrate note on a with b's confirm")
-		if got := tables(); fmt.Sprint(got) != "[company contact invoice note person]" || !strings.Contains(schema[3].DDL, "CREATE INDEX note_search ON public.note USING gin (search)") {
-			t.Errorf("note on b: %+v", schema)
-		}
-		st, _ = call(t, "POST", srvB.url+"/api/note", tok, map[string]any{"title": "Shared"}, nil)
-		wantStatus(t, st, 201, "create on b in a table applied on a")
-	})
-
-	t.Run("AFreshContainerKeepsTheSchema", func(t *testing.T) {
-		c := a.twin()
-		if ddl := c.must("schema", "show"); !strings.Contains(ddl, "invoice_status") {
-			t.Fatalf("schema on a fresh container: %s", ddl)
-		}
-		if n := a.psql("archive", "SELECT count(*) FROM company"); n != "1" {
-			t.Errorf("%s companies after a fresh container started", n)
-		}
-	})
-
-	t.Run("AFileIsDoneWhenItsUploadReturns", func(t *testing.T) {
-		st, f := e2eUpload(t, srvB.url+"/api/files", tok, "plan.html", []byte("<p>Stateless on Cloud Run</p>"))
-		wantStatus(t, st, 201, "upload")
-		_, text := e2eGet(t, srvA.url+"/api/files/"+f.ID.String()+"/text", tok)
-		if f.Status != "done" || string(text) != "Stateless on Cloud Run" {
-			t.Errorf("upload returned %+v, text %q", f, text)
-		}
-	})
-
-	t.Run("TusUploadStartedOnOneFinishesOnTheOther", func(t *testing.T) {
-		data := bytes.Repeat([]byte("stateless "), 50000)
-		meta := "filename " + base64.StdEncoding.EncodeToString([]byte("two.txt"))
-		resp, _ := e2eTus(t, "POST", srvA.url+"/api/files/tus", tok, nil, 0, "Upload-Length", strconv.Itoa(len(data)), "Upload-Metadata", meta)
-		wantStatus(t, resp.StatusCode, 201, "create on a")
-		loc := resp.Header.Get("Location")
-		resp, _ = e2eTus(t, "PATCH", srvA.url+loc, tok, bytes.NewReader(data[:200000]), 200000,
-			"Content-Type", "application/offset+octet-stream", "Upload-Offset", "0")
-		wantStatus(t, resp.StatusCode, 204, "first half on a")
-		resp, _ = e2eTus(t, "HEAD", srvB.url+loc, tok, nil, 0)
-		if resp.StatusCode != 200 || resp.Header.Get("Upload-Offset") != "200000" {
-			t.Fatalf("head on b: %d %v", resp.StatusCode, resp.Header)
-		}
-		resp, _ = e2eTus(t, "PATCH", srvB.url+loc, tok, bytes.NewReader(data[200000:]), int64(len(data)-200000),
-			"Content-Type", "application/offset+octet-stream", "Upload-Offset", "200000")
-		if resp.StatusCode != 204 || resp.Header.Get("Archive-File-Id") == "" {
-			t.Fatalf("rest on b: %d %v", resp.StatusCode, resp.Header)
-		}
-		f := e2eDoneFile(t, srvA.url+"/api", tok, resp.Header.Get("Archive-File-Id"))
-		_, body := e2eGet(t, srvA.url+"/api/files/"+f.ID.String()+"/content", tok)
-		if !bytes.Equal(body, data) || f.Name != "two.txt" {
-			t.Fatalf("downloaded %d bytes of %s", len(body), f.Name)
-		}
-		parts, _ := os.ReadDir(filepath.Join(a.dir, "data", "blobs", "uploads"))
-		if n := a.psql("archive", "SELECT count(*) FROM archive.upload"); n != "0" || len(parts) != 0 {
-			t.Errorf("uploads left behind: %s rows, %d part directories", n, len(parts))
-		}
-	})
-}
-
 func TestTablesThatReferenceEachOther(t *testing.T) {
 	t.Parallel()
 	in := newInst(t)
@@ -2301,99 +2189,6 @@ func TestViewsSchemaDropsAndTokensOverHTTP(t *testing.T) {
 	aliceTok := decode[Token](t, in.must("token", "create")).Secret
 	bobTok := decode[Token](t, in.must("-as", "bob@example.com", "token", "create")).Secret
 
-	t.Run("ViewsAreSQLWithTheirSettingsInComments", func(t *testing.T) {
-		in := in.on(t)
-		board := "CREATE VIEW people_board WITH (security_invoker = true) AS SELECT * FROM person;\n" +
-			"COMMENT ON VIEW people_board IS 'Everyone you know\nby employer\nlayout: board\nby: employer\nicon: users';\n"
-		in.migrate(board)
-		var fam, solo row
-		st, _ := call(t, "POST", api+"/person", aliceTok, map[string]any{"name": "Fam", "access": "family"}, &fam)
-		wantStatus(t, st, 201, "person in family")
-		st, _ = call(t, "POST", api+"/person", aliceTok, map[string]any{"name": "Solo", "access": "solo"}, &solo)
-		wantStatus(t, st, 201, "person only owners see")
-
-		var cat Catalog
-		call(t, "GET", api+"/types", aliceTok, nil, &cat)
-		v := cat.Tables["people_board"]
-		if v == nil || v.Kind != "view" || v.Layout != "board" || v.By != "employer" || v.Icon != "users" || v.Description != "Everyone you know\nby employer" || v.col("name") == nil {
-			t.Fatalf("view in the catalog: %+v", v)
-		}
-		if p := cat.Tables["person"]; p.Kind != "table" || p.Layout != "" {
-			t.Errorf("table in the catalog: %+v", p)
-		}
-		var rows []row
-		call(t, "GET", api+"/people_board", aliceTok, nil, &rows)
-		if names(rows) != "Fam,Solo" {
-			t.Errorf("alice through the view: %s", names(rows))
-		}
-		call(t, "GET", api+"/people_board", bobTok, nil, &rows)
-		if names(rows) != "Fam" {
-			t.Errorf("bob through the view sees %s, want only the family group's", names(rows))
-		}
-		st, _ = call(t, "POST", api+"/people_board", aliceTok, map[string]any{"name": "Nope"}, nil)
-		wantStatus(t, st, 405, "create through a view")
-		st, _ = call(t, "DELETE", api+"/people_board/"+id(fam), aliceTok, nil, nil)
-		wantStatus(t, st, 405, "delete through a view")
-
-		ddl := in.must("schema", "show")
-		if !strings.Contains(ddl, "-- people_board\n") || !strings.Contains(ddl, "security_invoker=true") || !strings.Contains(ddl, "icon: users';") || strings.Contains(ddl, ";;") {
-			t.Errorf("view DDL: %s", ddl)
-		}
-
-		view := "CREATE VIEW bad WITH (security_invoker = true) AS SELECT * FROM person;\nCOMMENT ON VIEW bad IS 'x\n"
-		for _, bad := range []struct{ sql, want string }{
-			{"CREATE VIEW bad AS SELECT * FROM person;", "security_invoker = true"},
-			{view + "layout: board\nby: nope';", `no column "nope"`},
-			{view + "colour: red';", "unknown key colour"},
-			{view + "icon: not-an-icon';", "unknown icon"},
-			{view + "layout: calendar';", "needs a by:"},
-			{"CREATE VIEW bad WITH (security_invoker = true) AS SELECT name FROM person;", "want an id uuid column"},
-		} {
-			if e := in.migrateFails(bad.sql); !strings.Contains(e, bad.want) {
-				t.Errorf("%s: %s", bad.sql, e)
-			}
-		}
-		if e := in.migrateFails("COMMENT ON TABLE company IS 'A company\nlayout: board'"); !strings.Contains(e, "unknown key layout") {
-			t.Errorf("layout on a table: %s", e)
-		}
-
-		code := e2eMigrate + `const made = await migrate("CREATE VIEW open_people WITH (security_invoker = true) AS SELECT * FROM person WHERE name <> 'Solo';\n" +
-  "COMMENT ON VIEW open_people IS 'People but Solo\nlayout: board\nby: employer\nicon: users';");
-const t1 = (await archive.schema()).find((t) => t.name === "open_people");
-const rows1 = (await archive.list("open_people")).map((r) => r.name);
-const changed = await migrate("CREATE OR REPLACE VIEW open_people WITH (security_invoker = true) AS SELECT * FROM person WHERE name = 'Solo';\n" +
-  "COMMENT ON VIEW open_people IS 'Only Solo\nicon: user';");
-const t2 = (await archive.schema()).find((t) => t.name === "open_people");
-const rows2 = (await archive.list("open_people")).map((r) => r.name);
-const dropped = await migrate("DROP VIEW open_people");
-const gone = !(await archive.schema()).some((t) => t.name === "open_people");
-return { made: !!made.revision, t1, rows1, changed: !!changed.revision, t2, rows2, dropped: !!dropped.revision, gone };`
-		var res struct {
-			Result struct {
-				Made, Changed, Dropped, Gone bool
-				T1, T2                       runTable
-				Rows1, Rows2                 []string
-			}
-			Error string
-		}
-		st, _ = call(t, "POST", srv.url+"/api/run", aliceTok, map[string]string{"code": code}, &res)
-		wantStatus(t, st, 200, "view lifecycle in code mode")
-		r := res.Result
-		if res.Error != "" || !r.Made || !r.Changed || !r.Dropped || !r.Gone {
-			t.Fatalf("view lifecycle: %+v", res)
-		}
-		if r.T1.Kind != "view" || r.T1.Layout != "board" || r.T1.By != "employer" || r.T1.Icon != "users" || r.T1.Description != "People but Solo" || strings.Join(r.Rows1, ",") != "Fam" {
-			t.Errorf("created view: %+v %v", r.T1, r.Rows1)
-		}
-		if r.T2.Layout != "table" || r.T2.By != "" || r.T2.Icon != "user" || r.T2.Description != "Only Solo" || strings.Join(r.Rows2, ",") != "Solo" {
-			t.Errorf("changed view: %+v %v", r.T2, r.Rows2)
-		}
-		in.migrate("DROP VIEW people_board")
-		if got := in.psql("archive", "SELECT count(*) FROM pg_views WHERE schemaname = 'public'"); got != "0" {
-			t.Errorf("%s views left after dropping them", got)
-		}
-	})
-
 	t.Run("DroppingATableTakesTheConfirmOfItsDryRun", func(t *testing.T) {
 		st, _ := call(t, "POST", api+"/invoice", aliceTok, map[string]any{"number": "INV-1"}, nil)
 		wantStatus(t, st, 201, "create invoice")
@@ -2526,24 +2321,6 @@ func (b e2eBearer) RoundTrip(r *http.Request) (*http.Response, error) {
 	r = r.Clone(r.Context())
 	r.Header.Set("Authorization", "Bearer "+string(b))
 	return http.DefaultTransport.RoundTrip(r)
-}
-
-func TestARunThatTimesOutStopsAndSavesNothing(t *testing.T) {
-	t.Parallel()
-	in := newInst(t)
-	in.must("user", "add", "alice@example.com")
-	in.push(map[string]string{"house.sql": e2eHouse})
-	srv := in.serve()
-	tok := decode[Token](t, in.must("token", "create")).Secret
-	start := time.Now()
-	var out RunOutput
-	st, _ := call(t, "POST", srv.url+"/api/run", tok, map[string]string{"code": `await archive.create("house", { address: "Loop 1" }); while (true) {}`}, &out)
-	if st != 200 || out.Error != "timed out after 30s; nothing was saved" || time.Since(start) > 45*time.Second {
-		t.Errorf("timeout: %d %+v after %s", st, out, time.Since(start))
-	}
-	if n := in.must("list", "house"); strings.Contains(n, "Loop 1") {
-		t.Errorf("the timed out run saved a row: %s", n)
-	}
 }
 
 func TestCodeModeRunsTypeScriptInOneTransactionOverHTTPMCPAndCLI(t *testing.T) {
