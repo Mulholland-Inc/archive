@@ -1,9 +1,11 @@
 <script>
   import { Copy, Check } from '@lucide/svelte';
   import Icon from './Icon.svelte';
+  import { highlight } from '../lib/highlight.js';
 
   let { code = '', lang = 'text' } = $props();
   let copied = $state(false);
+  const runs = $derived(highlight(code, lang));
 
   async function copy() {
     try {
@@ -22,7 +24,7 @@
       <span>{copied ? 'Copied' : 'Copy'}</span>
     </button>
   </figcaption>
-  <pre><code>{code}</code></pre>
+  <pre><code>{#each runs as r, i (i)}{#if r.kind}<span class={r.kind}>{r.text}</span>{:else}{r.text}{/if}{/each}</code></pre>
 </figure>
 
 <style>
@@ -83,5 +85,26 @@
 
   code {
     font: inherit;
+  }
+
+  .comment {
+    color: var(--color-text-tertiary);
+    font-style: italic;
+  }
+
+  .keyword {
+    color: var(--color-accent);
+  }
+
+  .string {
+    color: var(--color-success);
+  }
+
+  .number {
+    color: var(--color-warning);
+  }
+
+  .fn {
+    font-weight: var(--weight-medium);
   }
 </style>

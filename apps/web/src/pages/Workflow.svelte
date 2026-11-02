@@ -5,6 +5,7 @@
   import Breadcrumbs from '../components/Breadcrumbs.svelte';
   import PageHeader from '../components/PageHeader.svelte';
   import Stack from '../components/Stack.svelte';
+  import CodeBlock from '../components/CodeBlock.svelte';
   import Message from '../components/Message.svelte';
   import Steps from '../components/Steps.svelte';
   import StatusBadge from '../components/StatusBadge.svelte';
@@ -39,7 +40,6 @@
   const live = $derived(run && (run.status === 'running' || run.status === 'waiting'));
   const tone = $derived(run?.status === 'failed' ? 'danger' : run?.status === 'succeeded' ? 'success' : run?.status === 'stopped' ? 'neutral' : 'accent');
 
-  const intro = $derived(wf ? { id: 'u', role: 'user', text: `${wf.trigger.label}: ${wf.steps.join(', ').toLowerCase()}.` } : null);
   const outcome = $derived.by(() => {
     if (!run) return null;
     if (run.status === 'succeeded') return `Run #${run.number} finished in **${run.elapsed}**.`;
@@ -97,18 +97,18 @@
           <TriggerLabel trigger={wf.trigger} />
         </Stack>
       </PageHeader>
-      {#if run}
-        <Stack gap="8">
-          <Message message={intro} />
+      <Stack gap="8">
+        {#if wf.source}<CodeBlock code={wf.source} lang="typescript" />{/if}
+        {#if run}
           <Steps steps={run.steps} running={live && !run.paused} bind:open />
           {#if outcome}<Message message={{ id: 'o', role: 'assistant', blocks: [{ type: 'p', text: outcome }] }} />{/if}
           {#each run.log as m (m.id)}<Message message={m} />{/each}
-        </Stack>
-      {:else}
-        <EmptyState icon={Play} title="This workflow hasn’t run yet">
-          <Button variant="primary" icon={Play} onclick={start}>Run now</Button>
-        </EmptyState>
-      {/if}
+        {:else}
+          <EmptyState icon={Play} title="This workflow hasn’t run yet">
+            <Button variant="primary" icon={Play} onclick={start}>Run now</Button>
+          </EmptyState>
+        {/if}
+      </Stack>
     </Page>
 
     {#snippet side()}
