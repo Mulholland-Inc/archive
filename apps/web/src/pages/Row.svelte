@@ -89,7 +89,7 @@
         {#each fields.filter((c) => c !== title) as c (c.name)}
           <Property label={label(c.name)} icon={icons[c.type] ?? Type}>
             {#if empty(row[c.name])}<Text tone="tertiary">Empty</Text>
-            {:else if linkOf(view, c)}{#each refs(c) as l (l.id)}<Chip size="sm" icon={Box} href={`/database/${linkOf(view, c)}`}>{l.title}</Chip>{/each}
+            {:else if linkOf(view, c)}{#each refs(c) as l (l.id)}<Chip size="sm" icon={Box} href={`/view/${linkOf(view, c)}/${l.id}`}>{l.title}</Chip>{/each}
             {:else}<Text wrap="anywhere">{show(row[c.name])}</Text>{/if}
           </Property>
         {/each}
@@ -98,7 +98,7 @@
       {#each from as l (`${l.table}-${l.column}`)}
         <Section title={nameOf(l.table)}>
           <List>
-            {#each l.rows as r (r.id)}<ListItem href={`/database/${l.table}`} icon={ArrowLeft}><Text>{r.title}</Text></ListItem>{/each}
+            {#each l.rows as r (r.id)}<ListItem href={`/view/${l.table}/${r.id}`} icon={ArrowLeft}><Text>{r.title}</Text></ListItem>{/each}
           </List>
         </Section>
       {/each}
