@@ -1,6 +1,7 @@
 <script>
   import { setContext, tick } from 'svelte';
   import MenuItems from './MenuItems.svelte';
+  import MenuPanel from './MenuPanel.svelte';
   import { contextMenu, closeContextMenu } from '../lib/contextmenu.svelte.js';
   import { show, hide, roving, focusables } from '../lib/floating.js';
 
@@ -71,40 +72,6 @@
 <svelte:window onresize={dismiss} onblur={dismiss} onkeydowncapture={escape} />
 <svelte:document onscrollcapture={dismiss} onpointerdowncapture={dismiss} />
 
-<div
-  bind:this={panel}
-  popover="manual"
-  role="menu"
-  tabindex="-1"
-  aria-label="Context menu"
-  class="menu floating"
-  style:--menu-x={`${left}px`}
-  style:--menu-y={`${top}px`}
-  style:--menu-origin={origin}
-  oncontextmenu={(event) => event.preventDefault()}
-  {ontoggle}
-  {onkeydown}
->
+<MenuPanel bind:panel kind="context" width="sm" popover="manual" label="Context menu" x={left} y={top} {origin} oncontextmenu={(event) => event.preventDefault()} {ontoggle} {onkeydown}>
   <MenuItems items={contextMenu.items} />
-</div>
-
-<style>
-  .menu {
-    inset-inline-start: var(--menu-x);
-    inset-block-start: var(--menu-y);
-    transform-origin: var(--menu-origin);
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-px);
-    min-width: var(--menu-min-sm);
-    max-width: var(--menu-max);
-    max-height: calc(100vh - var(--space-4));
-    overflow-y: auto;
-    padding: var(--space-1-5);
-    border-radius: var(--radius-lg);
-    background: var(--color-surface-raised);
-    box-shadow: var(--ring);
-    font-size: var(--text-md);
-    z-index: var(--z-popover);
-  }
-</style>
+</MenuPanel>
