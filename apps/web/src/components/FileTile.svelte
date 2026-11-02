@@ -1,5 +1,5 @@
 <script>
-  import { FileText, Image, AudioLines, FileSpreadsheet, Play, Ellipsis } from '@lucide/svelte';
+  import { FileText, Image, AudioLines, FileSpreadsheet, Play } from '@lucide/svelte';
   import Icon from './Icon.svelte';
   import { contextmenu } from '../lib/contextmenu.svelte.js';
   import { blobURL } from '../lib/api.js';

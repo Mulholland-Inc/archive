@@ -14,7 +14,3 @@ export const catalog = [
   { id: 'sentry', by: 'Sentry', description: 'Look into issues, events and traces', name: 'Sentry', category: 'Code', icon: 'bug', scopes: ['Read your organization’s issues'] },
   { id: 'gusto', by: 'Gusto', description: 'Read the company, its people and its payrolls', name: 'Gusto', category: 'Payroll', icon: 'users', scopes: ['Read the company, employees, contractors and payrolls'] }
 ];
-
-export function connectorsFor() {
-  return catalog.map((c) => ({ ...c, connected: false, account: '' }));
-}

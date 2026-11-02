@@ -1,11 +1,10 @@
 <script>
-  import { Pause, Play, Square, RotateCcw, ListX, Ellipsis, CircleCheck, Eye } from '@lucide/svelte';
+  import { Play, RotateCcw, ListX, Ellipsis, Eye } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
   import Breadcrumbs from '../components/Breadcrumbs.svelte';
   import PageHeader from '../components/PageHeader.svelte';
   import Stack from '../components/Stack.svelte';
-  import Card from '../components/Card.svelte';
   import Message from '../components/Message.svelte';
   import Steps from '../components/Steps.svelte';
   import StatusBadge from '../components/StatusBadge.svelte';

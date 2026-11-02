@@ -8,13 +8,6 @@ export const me = {
   tone: 1
 };
 
-export const archives = [
-  { id: 'okafor', name: 'Okafor Family Archive', kind: 'Family', members: 9, tone: 1 },
-  { id: 'hale', name: 'Hale & Whitcombe LLP', kind: 'Law firm', members: 42, tone: 3 },
-  { id: 'fieldnote', name: 'Fieldnote Studio', kind: 'Studio', members: 14, tone: 2 },
-  { id: 'personal', name: 'Personal', kind: 'Just you', members: 1, tone: 5 }
-];
-
 export const models = [
   { id: 'pro', name: 'Archive 2 Pro' },
   { id: 'standard', name: 'Archive 2' },
@@ -27,44 +20,6 @@ export const suggestions = [
   { id: 's3', label: 'Timeline', icon: 'timeline', prompt: 'Build a timeline of the family moving to Leeds' },
   { id: 's4', label: 'Transcribe', icon: 'audio', prompt: 'Transcribe the interview with Uncle Chidi' },
   { id: 's5', label: 'Automate', icon: 'workflow', prompt: 'Every time a scan is added, tag the people in it' }
-];
-
-export const chats = [
-  { id: 'letters-1974', title: "Transcribe Grandma Adaeze's 1974 letters", pinned: true, updated: '12 min ago' },
-  { id: 'mercer-timeline', title: 'Timeline for the Mercer lease dispute', updated: '1 hr ago' },
-  { id: 'exif-rename', title: 'Rename scanned photos by EXIF date', updated: '3 hr ago' },
-  { id: 'linden-brief', title: 'Moodboard brief for the Linden rebrand', pinned: true, updated: 'Yesterday' },
-  { id: 'c5', title: 'Who is in the Lagos wedding photos', updated: 'Yesterday' },
-  { id: 'c6', title: 'Compare the two Enugu deeds', updated: 'Yesterday' },
-  { id: 'c7', title: 'Recipe cards from Aunt Ifeoma', updated: 'Yesterday' },
-  { id: 'c8', title: 'Clause 14.2 indemnity language', updated: 'Mon' },
-  { id: 'c9', title: 'Deposition prep checklist', updated: 'Mon' },
-  { id: 'c10', title: 'Tag faces in the 1988 album', updated: 'Sun' },
-  { id: 'c11', title: 'Summarize the zoning board minutes', updated: 'Sun' },
-  { id: 'c12', title: 'Letterpress vendors in Rotterdam', updated: 'Sat' },
-  { id: 'c13', title: 'Translate the Igbo proverbs notebook', updated: 'Sat' },
-  { id: 'c14', title: 'Billing narrative for October', updated: 'Fri' },
-  { id: 'c15', title: 'Type scale options for Linden', updated: 'Fri' },
-  { id: 'c16', title: 'Family tree: the Nwosu side', updated: 'Oct 19' },
-  { id: 'c17', title: 'Discovery request: email retention', updated: 'Oct 18' },
-  { id: 'c18', title: 'Clean up the cassette transcripts', updated: 'Oct 16' },
-  { id: 'c19', title: 'Draft a thank-you to the archivist', updated: 'Oct 15' },
-  { id: 'c20', title: 'Brand voice principles, round two', updated: 'Oct 14' },
-  { id: 'c21', title: 'Conflict check for Brightwater', updated: 'Oct 12' },
-  { id: 'c22', title: 'Restore water-damaged Polaroids', updated: 'Oct 11' },
-  { id: 'c23', title: 'Index the 1960s ledgers', updated: 'Oct 9' },
-  { id: 'c24', title: 'Studio rate card for 2027', updated: 'Oct 8' },
-  { id: 'c25', title: "Grandpa Obi's service record", updated: 'Oct 6' },
-  { id: 'c26', title: 'Precedent search: quiet enjoyment', updated: 'Oct 4' },
-  { id: 'c27', title: 'Photo captions for the reunion book', updated: 'Sep 28' },
-  { id: 'c28', title: 'Retainer agreement template', updated: 'Sep 24' },
-  { id: 'c29', title: 'Digitize the VHS tapes plan', updated: 'Sep 21' },
-  { id: 'c30', title: 'Signage wayfinding concepts', updated: 'Sep 17' },
-  { id: 'c31', title: 'Explain probate in plain English', updated: 'Sep 12' },
-  { id: 'c32', title: 'Naming ideas for the cookbook', updated: 'Sep 9' },
-  { id: 'c33', title: 'Witness statement summary', updated: 'Sep 3' },
-  { id: 'c34', title: 'Color study from the archive scans', updated: 'Aug 30' },
-  { id: 'c35', title: 'Birth certificates checklist', updated: 'Aug 22' }
 ];
 
 export const conversations = {
@@ -296,12 +251,6 @@ for path in sorted(SOURCE.glob("*.jpg")):
   ]
 };
 
-export const streamReply = [
-  { type: 'p', text: 'I looked through the archive for that. There are **14 items** that match, most of them from the 1970s letters and the Leeds photo album.' },
-  { type: 'ul', items: ['9 letters between Enugu and Leeds, 1973 to 1976', '4 photos with handwritten captions on the back', '1 cassette recording, partly transcribed'] },
-  { type: 'p', text: 'Would you like a short summary of each, or should I build a timeline from them?' }
-];
-
 export const library = [
   { id: 'f1', name: 'Adaeze to Obi, 2 Mar 1974', kind: 'document', ext: 'DOC', size: '18 KB', modified: '12 min ago', owner: 'Nora Okafor', folder: '1970s Letters', tone: 1 },
   { id: 'f2', name: 'adaeze-letter-03.jpg', kind: 'image', ext: 'JPG', size: '2.4 MB', modified: '12 min ago', owner: 'Nora Okafor', folder: '1970s Letters', tone: 4 },
@@ -329,112 +278,6 @@ export const library = [
   { id: 'f24', name: 'Harmattan, 1979', kind: 'image', ext: 'JPG', size: '2.0 MB', modified: 'Sep 29', owner: 'Nora Okafor', folder: 'Photo albums', tone: 2 }
 ];
 
-export const tasks = [
-  {
-    id: 't-cassettes',
-    title: 'Transcribe cassettes 5 to 8',
-    status: 'running',
-    started: '6 min ago',
-    elapsed: '6m 12s',
-    agent: 'Transcriber',
-    progress: 0.62,
-    steps: [
-      { id: 'a', label: 'Find untranscribed cassettes', detail: '4 tapes, 8 sides, 3h 54m of audio', status: 'done', time: '0:04' },
-      { id: 'b', label: 'Transcribe cassette 5', detail: 'Igbo and English, 2 speakers', status: 'done', time: '1:48' },
-      { id: 'c', label: 'Transcribe cassette 6', detail: '3 speakers, music at the start of side B', status: 'done', time: '1:52' },
-      { id: 'd', label: 'Transcribe cassette 7', detail: 'Side A, 18 of 31 minutes', status: 'running', time: '2:28' },
-      { id: 'e', label: 'Transcribe cassette 8', detail: '', status: 'pending', time: '' },
-      { id: 'f', label: 'Link speakers to the family tree', detail: '', status: 'pending', time: '' }
-    ]
-  },
-  {
-    id: 't-mercer',
-    title: 'Check every Mercer notice against the lease',
-    status: 'running',
-    started: '14 min ago',
-    elapsed: '14m 03s',
-    agent: 'Paralegal',
-    progress: 0.4,
-    steps: [
-      { id: 'a', label: 'Collect notices from the matter folder', detail: '7 notices', status: 'done', time: '0:12' },
-      { id: 'b', label: 'Extract service method and date', detail: '7 of 7', status: 'done', time: '1:30' },
-      { id: 'c', label: 'Compare against clauses 9.3 and 22.1', detail: 'Notice 4 of 7', status: 'running', time: '12:21' },
-      { id: 'd', label: 'Write the advice note', detail: '', status: 'pending', time: '' }
-    ]
-  },
-  {
-    id: 't-faces',
-    title: 'Tag people in the 1988 album',
-    status: 'waiting',
-    started: '1 hr ago',
-    elapsed: '22m 40s',
-    agent: 'Photo tagger',
-    progress: 0.8,
-    steps: [
-      { id: 'a', label: 'Detect faces in 212 photos', detail: '640 faces', status: 'done', time: '4:10' },
-      { id: 'b', label: 'Match faces to known people', detail: '588 matched', status: 'done', time: '17:52' },
-      { id: 'c', label: 'Ask about 52 unknown faces', detail: 'Waiting for Nora', status: 'waiting', time: '' },
-      { id: 'd', label: 'Write tags to the photos', detail: '', status: 'pending', time: '' }
-    ]
-  },
-  {
-    id: 't-digest',
-    title: 'Weekly digest for the family',
-    status: 'completed',
-    started: 'Yesterday',
-    elapsed: '1m 48s',
-    agent: 'Digest',
-    progress: 1,
-    steps: [
-      { id: 'a', label: 'Gather this week’s additions', detail: '38 new items', status: 'done', time: '0:20' },
-      { id: 'b', label: 'Pick highlights', detail: '5 items', status: 'done', time: '0:41' },
-      { id: 'c', label: 'Write the digest', detail: '420 words', status: 'done', time: '0:39' },
-      { id: 'd', label: 'Email 9 members', detail: 'Delivered', status: 'done', time: '0:08' }
-    ]
-  },
-  {
-    id: 't-ledger',
-    title: 'Index the 1960s household ledgers',
-    status: 'completed',
-    started: 'Oct 9',
-    elapsed: '38m 02s',
-    agent: 'Indexer',
-    progress: 1,
-    steps: [
-      { id: 'a', label: 'Read 14 ledger scans', detail: '1,120 rows', status: 'done', time: '21:30' },
-      { id: 'b', label: 'Normalize currencies', detail: 'Pounds and naira', status: 'done', time: '6:12' },
-      { id: 'c', label: 'Create the ledger table', detail: '1,118 rows, 2 flagged', status: 'done', time: '10:20' }
-    ]
-  },
-  {
-    id: 't-restore',
-    title: 'Restore water-damaged Polaroids',
-    status: 'failed',
-    started: 'Oct 11',
-    elapsed: '3m 15s',
-    agent: 'Restorer',
-    progress: 0.3,
-    steps: [
-      { id: 'a', label: 'Load 24 Polaroid scans', detail: '24 images', status: 'done', time: '0:12' },
-      { id: 'b', label: 'Restore batch 1', detail: '12 images', status: 'done', time: '2:40' },
-      { id: 'c', label: 'Restore batch 2', detail: 'Scans are below 300 dpi', status: 'failed', time: '0:23' }
-    ]
-  },
-  {
-    id: 't-backup',
-    title: 'Monthly export to cold storage',
-    status: 'scheduled',
-    started: 'Nov 1, 02:00',
-    elapsed: '',
-    agent: 'Exporter',
-    progress: 0,
-    steps: [
-      { id: 'a', label: 'Export everything added in October', detail: '', status: 'pending', time: '' },
-      { id: 'b', label: 'Verify checksums', detail: '', status: 'pending', time: '' }
-    ]
-  }
-];
-
 export const members = [
   { id: 'u1', user: me.id, name: 'Nora Okafor', email: 'nora@okafor.family', role: 'owner', active: 'Now', status: 'active', tone: 1 },
   { id: 'u2', name: 'Emeka Okafor', email: 'emeka@okafor.family', role: 'owner', active: '2 hr ago', status: 'active', tone: 3 },
@@ -446,8 +289,6 @@ export const members = [
   { id: 'u8', name: 'Ada Nwosu', email: 'ada.nwosu@mail.com', role: 'viewer', active: '', status: 'invited', tone: 3 },
   { id: 'u11', name: 'Uche Okafor', email: 'uche@okafor.family', role: 'editor', active: 'Oct 2', status: 'active', tone: 5 }
 ];
-
-export const people = ['Ruth Hale', 'Daniel Whitcombe', 'Priya Raman', 'Jun Park', 'Lea Fontaine', 'Chidi Okafor', 'Amara Okafor', 'Tobi Okafor', 'Emeka Okafor', 'Ifeoma Nwosu'];
 
 export function initials(name = '') {
   return name

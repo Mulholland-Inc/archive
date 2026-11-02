@@ -10,7 +10,6 @@
   import IconButton from './IconButton.svelte';
   import { theme, setTheme, toggleTheme } from '../lib/theme.svelte.js';
   import { app, openSettings, signOut } from '../lib/app.svelte.js';
-  import { go } from '../lib/router.svelte.js';
 
   let { user } = $props();
   const sidebar = getContext('sidebar');

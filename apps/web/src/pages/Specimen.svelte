@@ -1,8 +1,5 @@
 <script>
-  import {
-    Plus, ArrowRight, Download, Trash2, Settings, Pin, Share, Copy, Pencil, Ellipsis, Search, Mail, Bold, Italic, Underline,
-    LayoutGrid, List as ListIcon, Sun, Moon, Monitor, FolderOpen, FileText, MessagesSquare, Inbox, Bell, Info, Keyboard, Library, Lock
-  } from '@lucide/svelte';
+  import { Plus, ArrowRight, Download, Trash2, Settings, Pin, Share, Copy, Pencil, Ellipsis, Search, Mail, LayoutGrid, List as ListIcon, Sun, Moon, Monitor, FolderOpen, FileText, MessagesSquare, Inbox, Bell, Info, Keyboard, Library, Lock } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
   import PageHeader from '../components/PageHeader.svelte';
@@ -24,7 +21,6 @@
   import PeoplePicker from '../components/PeoplePicker.svelte';
   import Checkbox from '../components/Checkbox.svelte';
   import Switch from '../components/Switch.svelte';
-  import RadioGroup from '../components/RadioGroup.svelte';
   import Field from '../components/Field.svelte';
   import SearchField from '../components/SearchField.svelte';
   import Tabs from '../components/Tabs.svelte';
@@ -35,7 +31,6 @@
   import MenuLabel from '../components/MenuLabel.svelte';
   import MenuSeparator from '../components/MenuSeparator.svelte';
   import SubMenu from '../components/SubMenu.svelte';
-  import Popover from '../components/Popover.svelte';
   import Tooltip from '../components/Tooltip.svelte';
   import Dialog from '../components/Dialog.svelte';
   import Avatar from '../components/Avatar.svelte';
@@ -124,7 +119,6 @@
   let picked = $state([]);
   let checks = $state({ a: true, b: false, c: false });
   let toggles = $state({ a: true, b: false });
-  let radio = $state('month');
   let tab = $state('overview');
   let pills = $state('all');
   let seg = $state('grid');
@@ -325,9 +319,6 @@
           <Switch disabled label="Disabled" />
           <Switch checked disabled label="Disabled on" />
         </SpecimenBlock>
-        <SpecimenBlock title="Radio">
-          <RadioGroup bind:value={radio} label="Billing" direction="row" options={[{ value: 'month', label: 'Monthly' }, { value: 'year', label: 'Yearly' }, { value: 'life', label: 'Lifetime', disabled: true }]} />
-        </SpecimenBlock>
         <SpecimenBlock title="Chips">
           <Chip>Static</Chip>
           <Chip icon={FolderOpen} onclick={() => {}}>Interactive</Chip>
@@ -397,20 +388,7 @@
             { label: 'Delete', icon: Trash2, danger: true, onselect: () => {} }
           ])}>Right-click here</SpecimenTarget>
         </SpecimenBlock>
-        <SpecimenBlock title="Popover and tooltip">
-          <Popover label="Share">
-            {#snippet trigger(props)}<Button icon={Share} {...props}>Share</Button>{/snippet}
-            {#snippet children({ close })}
-              <Stack gap="3">
-                <Text weight="medium">Share this file</Text>
-                <Input size="sm" value="https://app.archive.dev/s/8f2k" readonly aria-label="Link" />
-                <Stack direction="row" gap="2" justify="end">
-                  <Button size="sm" variant="ghost" onclick={close}>Close</Button>
-                  <Button size="sm" variant="primary" icon={Copy} onclick={() => close}>Copy link</Button>
-                </Stack>
-              </Stack>
-            {/snippet}
-          </Popover>
+        <SpecimenBlock title="Tooltip">
           <Tooltip text="Tooltips appear after a short delay"><Button variant="ghost" icon={Info}>Hover me</Button></Tooltip>
           <Tooltip text="With a shortcut" shortcut="⌘ K" placement="bottom"><Button variant="ghost" icon={Keyboard}>And me</Button></Tooltip>
         </SpecimenBlock>
