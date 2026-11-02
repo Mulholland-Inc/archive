@@ -1,18 +1,16 @@
 <script>
-  import { Pencil } from '@lucide/svelte';
   import Prose from './Prose.svelte';
   import Steps from './Steps.svelte';
   import Attachment from './Attachment.svelte';
-  import IconButton from './IconButton.svelte';
   import { rise } from '../lib/motion.js';
   import { contextmenu } from '../lib/contextmenu.svelte.js';
   import { messageItems } from '../lib/menus.js';
 
-  let { message, streaming = false, onedit } = $props();
+  let { message, streaming = false } = $props();
 </script>
 
 {#if message.role === 'user'}
-  <article class="user" in:rise {@attach contextmenu(() => messageItems(message, { onedit }))}>
+  <article class="user" in:rise {@attach contextmenu(() => messageItems(message))}>
     {#if message.attachments?.length}
       <div class="atts">
         {#each message.attachments as a, i (a.id)}
@@ -20,14 +18,7 @@
         {/each}
       </div>
     {/if}
-    <div class="line">
-      {#if onedit}
-        <div class="actions">
-          <IconButton icon={Pencil} label="Edit message" size="sm" onclick={() => onedit(message.text)} />
-        </div>
-      {/if}
-      <div class="bubble">{message.text}</div>
-    </div>
+    <div class="bubble">{message.text}</div>
   </article>
 {:else}
   <article class="assistant" in:rise {@attach contextmenu(() => messageItems(message))}>
@@ -55,14 +46,6 @@
     gap: var(--space-2);
   }
 
-  .line {
-    display: flex;
-    justify-content: flex-end;
-    align-items: center;
-    gap: var(--space-1);
-    width: 100%;
-  }
-
   .bubble {
     max-width: 85%;
     padding: var(--space-2-5);
@@ -81,24 +64,5 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
-  }
-
-  .actions {
-    display: flex;
-    gap: var(--space-0-5);
-    opacity: 0;
-    transition: opacity var(--duration-normal) var(--ease-out);
-  }
-
-  .user:hover .actions,
-  .actions:focus-within {
-    opacity: 1;
-  }
-
-  /* No hover on phones: editing is in the long-press menu. */
-  @media (hover: none) {
-    .actions {
-      display: none;
-    }
   }
 </style>

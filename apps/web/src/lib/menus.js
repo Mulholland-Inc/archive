@@ -139,10 +139,9 @@ export function messageText(message) {
   return (message.blocks ?? []).map((b) => b.text ?? (b.items ?? []).map((i) => `- ${i}`).join('\n')).filter(Boolean).join('\n\n');
 }
 
-export function messageItems(message, { onedit } = {}) {
+export function messageItems(message) {
   const text = messageText(message);
   return [
-    text && { label: 'Copy text', icon: Copy, onselect: () => copyText(text) },
-    message.role === 'user' && onedit && { label: 'Edit', icon: Pencil, onselect: () => onedit(message.text) }
+    text && { label: 'Copy text', icon: Copy, onselect: () => copyText(text) }
   ];
 }
