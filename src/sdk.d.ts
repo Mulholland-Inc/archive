@@ -200,6 +200,20 @@
  *     if (!r.done) throw new Error("no hours: " + r.answer);
  *     await archive.create("note", { text: r.answer, source: r.url });
  * - What it does on a site is not undone when the run fails: a form it sent stays sent.
+ *
+ * Connected accounts
+ * - Each person connects their own accounts at other services, like their Gmail, Notion or QuickBooks, in
+ *   Settings, Connectors. Their connections are rows of the connection table, which only they see.
+ * - archive.action(name, input, opts?) does something with one of them, as its owner: name is
+ *   "<connector>.<action>", like archive.action("gmail.search", { query: "from:ann@example.com" }). Actions,
+ *   after the tables, lists the actions of the accounts you connected, with their input and what they return;
+ *   a run can use only its own runner's connections, and a workflow's runner is whoever saved it last.
+ * - With several accounts at one connector, pass { connection } with one's account, as the connection table
+ *   names it, or its id.
+ * - An action reaches outside Archive, like fetch: what it changes there is not undone when the run fails, and
+ *   it counts toward the run's {timeout}. A failed action throws an Error that names it and says what the
+ *   service answered, with code not_found, forbidden, invalid or unauthorized (connect the account again)
+ *   when it is one of those.
  */
 declare const archive: {
     /** Read with one SQL statement as you, with $1, $2, ... bound to params; returns its rows, or [] when it has none. Writes and DDL throw forbidden. */
@@ -238,6 +252,8 @@ declare const archive: {
     run(name: string, input?: unknown): Promise<RunResult>;
     /** Have an agent use a fresh web browser to reach goal, starting at url; before any write, 5 minutes a run (see Browsing). */
     browse(goal: string, opts?: { url?: string }): Promise<BrowseResult>;
+    /** Do the action name, like "gmail.search", with one of your connected accounts; connection picks one when you have several (see Connected accounts). */
+    action<A extends keyof Actions>(name: A, input: Actions[A]["input"], opts?: { connection?: string }): Promise<Actions[A]["output"]>;
 };
 
 /** What started this run (see Workflows in the header): undefined for a plain run, and what was passed for archive.run. */

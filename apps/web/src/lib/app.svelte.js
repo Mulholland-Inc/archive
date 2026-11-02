@@ -891,8 +891,8 @@ export function stopRun() {}
 export function resolveRun() {}
 export function steerRun() {}
 
-// Connectors. Those the API has (Gmail) are your real connections, read from /connect; the rest are
-// MOCK and kept in this tab.
+// Connectors. Those the API has are your real connections, read from /connect, and any it has that the
+// catalog lacks are added to it; the rest are MOCK and kept in this tab.
 
 // Your connected accounts, onto the connectors the API has. Connecting is the provider's consent page, which
 // sends the browser back to the connector here.
@@ -902,8 +902,12 @@ export const connections = resource({
     const v = ws();
     const out = await api('/connect', { workspace: v.id });
     for (const k of out?.connectors ?? []) {
-      const c = v.connectors.find((x) => x.id === k.id);
-      if (!c) continue;
+      let c = v.connectors.find((x) => x.id === k.id);
+      if (!c) {
+        c = { id: k.id, name: k.name, by: k.name, description: `Use your ${k.name} account`, category: 'Other', scopes: [], lastSync: '', items: 0 };
+        v.connectors.push(c);
+        c = v.connectors.at(-1);
+      }
       const mine = out.connections.filter((x) => x.provider === k.id);
       Object.assign(c, { real: true, ready: k.ready, connections: mine, connected: mine.length > 0, account: mine.map((x) => x.account).join(', '), error: mine.find((x) => x.error)?.error ?? '' });
     }

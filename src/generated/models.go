@@ -65,12 +65,12 @@ type ArchiveChat struct {
 	UpdatedAt time.Time
 }
 
-// One of your own accounts at another service that Archive reads for you, like your Gmail. Read only; connect and disconnect them in Settings, Connectors
+// One of your own accounts at another service that Archive reads for you, like your Gmail; archive.action uses it. Read only; connect and disconnect them in Settings, Connectors
 // icon: plug
 type ArchiveConnection struct {
 	ID     uuid.UUID
 	Member uuid.UUID
-	// Which service: gmail
+	// Which service, a connector: gmail, notion, quickbooks, ...
 	Provider string
 	// The account there, like the mailbox address
 	Account string
@@ -81,6 +81,8 @@ type ArchiveConnection struct {
 	Error     string
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	// What the service said about the account when it connected, like QuickBooks' realmId
+	Meta map[string]string
 }
 
 type ArchiveDue struct {

@@ -18,15 +18,28 @@ const gmailScope = "https://www.googleapis.com/auth/gmail.readonly"
 
 func env(kv map[string]string) func(string) string { return func(k string) string { return kv[k] } }
 
-// Every connector is declared whole, and Gmail asks for read-only mail with a refresh token on every consent.
+// Every connector is declared whole, as an API connector or an MCP one, and Gmail asks for read-only mail
+// with a refresh token on every consent.
 func TestConnectorsAreDeclaredWhole(t *testing.T) {
 	if len(All()) == 0 {
 		t.Fatal("no connectors")
 	}
 	for _, c := range All() {
-		if c.ID == "" || c.Name == "" || !regexp.MustCompile(`^ARCHIVE_[A-Z0-9_]+$`).MatchString(c.Env) || !strings.HasPrefix(c.Host, "https://") ||
-			c.Endpoint.AuthURL == "" || c.Endpoint.TokenURL == "" || len(c.Scopes) == 0 || c.Account == nil {
-			t.Errorf("connector %q is missing something: %+v", c.ID, c)
+		switch {
+		case !regexp.MustCompile(`^[a-z][a-z0-9]*$`).MatchString(c.ID) || c.Name == "":
+			t.Errorf("connector %q is not named: %+v", c.ID, c)
+		case c.MCP != "":
+			if !strings.HasPrefix(c.MCP, "https://") || c.Env != "" || c.Host != "" || c.Endpoint.AuthURL != "" || c.Revoke != "" || len(c.Actions) > 0 {
+				t.Errorf("MCP connector %q has what its server has: %+v", c.ID, c)
+			}
+		case !regexp.MustCompile(`^ARCHIVE_[A-Z0-9_]+$`).MatchString(c.Env) || !strings.HasPrefix(c.Host, "https://") ||
+			c.Endpoint.AuthURL == "" || c.Endpoint.TokenURL == "" || c.Account == nil || len(c.Actions) == 0:
+			t.Errorf("API connector %q is missing something: %+v", c.ID, c)
+		}
+		for name, a := range c.Actions {
+			if !regexp.MustCompile(`^[a-z][a-z_]*$`).MatchString(name) || a.Doc == "" || a.Input == nil || a.Input.Type != "object" || a.Do == nil {
+				t.Errorf("action %s.%s is not declared whole: %+v", c.ID, name, a)
+			}
 		}
 	}
 	g := registry["gmail"]
@@ -35,7 +48,8 @@ func TestConnectorsAreDeclaredWhole(t *testing.T) {
 	}
 }
 
-// Terraform makes a secret for every variable the service reads; a connector's must be among them.
+// Terraform makes a secret for every variable the service reads; an API connector's must be among them. An MCP
+// connector needs none.
 func TestTerraformHasEveryConnectorsVariable(t *testing.T) {
 	b, err := os.ReadFile("../../apps/terraform/gcp/main.tf")
 	if err != nil {
@@ -51,7 +65,7 @@ func TestTerraformHasEveryConnectorsVariable(t *testing.T) {
 		listed = append(listed, string(n[1]))
 	}
 	for _, c := range All() {
-		if !slices.Contains(listed, c.Env) {
+		if c.MCP == "" && !slices.Contains(listed, c.Env) {
 			t.Errorf("connector %s reads %s, which local.secrets in apps/terraform/gcp/main.tf does not list", c.ID, c.Env)
 		}
 	}
@@ -59,8 +73,9 @@ func TestTerraformHasEveryConnectorsVariable(t *testing.T) {
 
 // A connector is available only with a whole client, and moves onto the host its client names.
 func TestLoadReadsEachConnectorsClient(t *testing.T) {
-	if got, err := Load(env(nil)); err != nil || len(got) != 0 {
-		t.Errorf("no clients set: %v %v", got, err)
+	got, err := Load(env(nil))
+	if err != nil || slices.ContainsFunc(All(), func(c *Connector) bool { return (got[c.ID] != nil) != (c.MCP != "") }) {
+		t.Errorf("no clients set, and only the MCP connectors are available: %v %v", got, err)
 	}
 	if _, err := load(t, nil).Get("gmail"); err == nil || !strings.Contains(err.Error(), "Gmail is not set up on this server; it needs ARCHIVE_GOOGLE") {
 		t.Errorf("an unset connector: %v", err)
@@ -68,7 +83,7 @@ func TestLoadReadsEachConnectorsClient(t *testing.T) {
 	if _, err := load(t, nil).Get("fax"); err == nil {
 		t.Error("a connector there is none of")
 	}
-	if got, err := Load(env(map[string]string{"ARCHIVE_GOOGLE": "https://only-an-id@accounts.google.com"})); err != nil || len(got) != 0 {
+	if got, err := Load(env(map[string]string{"ARCHIVE_GOOGLE": "https://only-an-id@accounts.google.com"})); err != nil || got["gmail"] != nil {
 		t.Errorf("a client without its secret: %v %v", got, err)
 	}
 	if _, err := Load(env(map[string]string{"ARCHIVE_GOOGLE": "accounts.google.com"})); err == nil || !strings.Contains(err.Error(), "ARCHIVE_GOOGLE: want https://<client id>:<client secret>@accounts.google.com") {
@@ -131,5 +146,18 @@ func TestStatesAndTokensAreSealedForTheirPurpose(t *testing.T) {
 	}
 	if _, ok := OpenState(aead, string(box)); ok {
 		t.Error("a token opened as a state")
+	}
+}
+
+// The web app draws every connector's logo, by its id.
+func TestTheAppHasEveryConnectorsLogo(t *testing.T) {
+	b, err := os.ReadFile("../../apps/web/src/lib/brands.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range All() {
+		if !regexp.MustCompile(`(?m)^\s*` + c.ID + `: '`).Match(b) {
+			t.Errorf("apps/web/src/lib/brands.js names no logo for connector %s", c.ID)
+		}
 	}
 }

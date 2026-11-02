@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,6 +32,7 @@ type fakeGoogle struct {
 	access   map[string]string // access tokens, to their mailbox
 	rotate   bool              // a refresh replaces the refresh token
 	verifier string            // the last PKCE verifier a code came with
+	searched string            // the last search, q and maxResults
 	revoked  []string
 }
 
@@ -92,6 +94,26 @@ func newFakeGoogle(t *testing.T) *fakeGoogle {
 				return
 			}
 			json.NewEncoder(w).Encode(map[string]any{"emailAddress": mailbox, "historyId": "1"})
+		case "/gmail/v1/users/me/messages", "/gmail/v1/users/me/messages/m1", "/gmail/v1/users/me/messages/gone":
+			if _, ok := g.access[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")]; !ok {
+				refuse(401, "invalid_token")
+				return
+			}
+			switch {
+			case strings.HasSuffix(r.URL.Path, "/gone"):
+				w.WriteHeader(404)
+				w.Write([]byte(`{"error":{"code":404,"message":"Requested entity was not found.","status":"NOT_FOUND"}}`))
+			case strings.HasSuffix(r.URL.Path, "/messages"):
+				g.searched = r.Form.Get("q") + " " + r.Form.Get("maxResults")
+				json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]string{{"id": "m1", "threadId": "t1"}}, "nextPageToken": "p2"})
+			default:
+				part := func(mime, name, text string) map[string]any {
+					return map[string]any{"mimeType": mime, "filename": name, "body": map[string]any{"size": len(text), "data": base64.URLEncoding.EncodeToString([]byte(text))}}
+				}
+				json.NewEncoder(w).Encode(map[string]any{"id": "m1", "threadId": "t1", "labelIds": []string{"INBOX"}, "snippet": "Hello",
+					"payload": map[string]any{"mimeType": "multipart/mixed", "headers": []map[string]string{{"name": "From", "value": "Ann <ann@example.com>"}, {"name": "Subject", "value": "Hi"}},
+						"parts": []any{part("text/plain", "", "Hello Alice"), part("application/pdf", "a.pdf", "%PDF")}}})
+			}
 		case "/revoke":
 			g.revoked = append(g.revoked, r.Form.Get("token"))
 			delete(g.refresh, r.Form.Get("token"))
@@ -240,6 +262,24 @@ func TestGmailConnectsForWhoStartedItAndDisconnectsWithARevoke(t *testing.T) {
 	if cs := list(alice); len(cs.Connections) != 1 || cs.Connections[0].Error != "" {
 		t.Errorf("after a refresh that worked again: %+v", cs.Connections)
 	}
+
+	// archive.action reads her mail with the Gmail API, as her.
+	if st, out := e2eRun(t, srv.url+"/api", alice, `const found = await archive.action("gmail.search", { query: "from:ann", limit: 5 });
+		const m = await archive.action("gmail.message", { id: found.messages[0].id });
+		const gone = await archive.action("gmail.message", { id: "gone" }).catch((e) => e.code + " " + e.message);
+		const bad = await archive.action("gmail.search", { query: "x", limt: 5 }).catch((e) => e.code + " " + e.message);
+		return { found, text: m.text, attachments: m.attachments, gone, bad };`); st != 200 || out.Error != "" ||
+		string(out.Result) != `{"found":{"messages":[{"from":"Ann \u003cann@example.com\u003e","id":"m1","labelIds":["INBOX"],"snippet":"Hello","subject":"Hi","threadId":"t1"}],"next":"p2"},`+
+			`"text":"Hello Alice","attachments":[{"filename":"a.pdf","mimeType":"application/pdf","size":4}],`+
+			`"gone":"not_found archive.action gmail.message: Gmail refused: 404 Not Found: Requested entity was not found.",`+
+			`"bad":"invalid invalid archive.action gmail.search input: unexpected additional properties [\"limt\"]"}` {
+		t.Errorf("alice reads her Gmail with actions: %d %+v", st, out)
+	}
+	g.do(func() {
+		if g.searched != "from:ann 5" {
+			t.Errorf("searched Gmail for %q", g.searched)
+		}
+	})
 
 	if st, _ := call(t, "DELETE", srv.url+"/connect/"+id.String(), bob, nil, nil); st != 404 {
 		t.Errorf("bob disconnects alice's Gmail: %d", st)
