@@ -202,23 +202,28 @@
  * - What it does on a site is not undone when the run fails: a form it sent stays sent.
  *
  * Connected accounts
- * - Each person connects their own accounts at other services, like their Gmail, Notion or QuickBooks, in
- *   Settings, Connectors. Their connections are rows of the connection table, which only they see.
- * - archive.action(name, input, opts?) does something with one of them, as its owner: name is
- *   "<connector>.<action>", like archive.action("gmail.search", { query: "from:ann@example.com" }). Actions,
- *   after the tables, lists the actions of the accounts you connected, with their input and what they return;
- *   a run can use only its own runner's connections, and a workflow's runner is whoever saved it last.
+ * - Each person connects their own Gmail, Outlook, Google Drive and Notion in Settings, Connectors; those are
+ *   theirs alone. The archive's own accounts, like its QuickBooks, HubSpot, GitHub, Asana, Linear, Sentry,
+ *   Stripe or Gusto, are integrations: an owner connects each once for everyone in Archive settings,
+ *   Integrations, and may narrow one to a group. Both are rows of the connection table, integration true for
+ *   the archive's.
+ * - archive.action(name, input, opts?) does something with one of them: name is "<connector>.<action>", like
+ *   archive.action("gmail.search", { query: "from:ann@example.com" }). A personal connector's acts as you, with
+ *   your own account; an integration's acts with the archive's, for editors and owners, and only those in its
+ *   group when it has one. Actions, after the tables, lists the actions you can use, with their input and what
+ *   they return; a run can use only its own runner's, and a workflow's runner is whoever saved it last.
  * - With several accounts at one connector, pass { connection } with one's account, as the connection table
  *   names it, or its id.
  * - An action reaches outside Archive, like fetch: what it changes there is not undone when the run fails, and
  *   it counts toward the run's {timeout}. A failed action throws an Error that names it and says what the
  *   service answered, with code not_found, forbidden, invalid or unauthorized (connect the account again)
  *   when it is one of those.
- * - Archive also keeps a copy of what your connected accounts have, synced every few minutes, as rows of the
- *   record table, which only you see: a row for each thing, like a Gmail message, with its connection, its
- *   stream (messages), its source_id there, its data, deleted once it is gone there, and updated_at when it
- *   last changed. Streams, after Actions, says what each stream's data holds. Read them like any table,
- *   without calling the service:
+ * - Archive also keeps a copy of what these accounts have, synced when the service says something changed or
+ *   when you read them after 5 minutes without a sync, as rows of the record table: a personal account's only
+ *   you see, and an integration's everyone sees, or its group when an owner narrowed it (its access column).
+ *   A row is one thing, like a Gmail message, with its connection, its stream (messages), its source_id
+ *   there, its data, deleted once it is gone there, and updated_at when it last changed. Streams,
+ *   after Actions, says what each stream's data holds. Read them like any table, without calling the service:
  *     await archive.query("SELECT data->>'subject' AS subject FROM record WHERE stream = 'messages' AND NOT deleted ORDER BY updated_at DESC LIMIT 20");
  *   The connection table's synced_at says when one last caught up; disconnecting deletes its records.
  */

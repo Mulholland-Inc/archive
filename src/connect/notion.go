@@ -2,7 +2,6 @@ package connect
 
 import (
 	"regexp"
-	"time"
 )
 
 // Notion, through its hosted MCP server: search, read and write pages and databases as the person who
@@ -11,7 +10,7 @@ import (
 //
 // Its tools list no page by when it was edited: notion-search has no cursor and stops at 50, and sorts and
 // filters by edit time only on Business and Enterprise plans. So the streams are its lists of the sidebar's
-// pages, which page with a cursor but have no edit time either, listed whole every 6 hours; a page is its
+// pages, which page with a cursor but have no edit time either, listed whole each sync; a page is its
 // title, URL and icon, not its content, which notion-fetch reads.
 func init() {
 	Register(&Connector{ID: "notion", Name: "Notion", MCP: "https://mcp.notion.com/mcp", Account: mcpAccount("notion-get-self"),
@@ -22,9 +21,9 @@ func init() {
 }
 
 func notionPages(name, tool, what string) *Stream {
-	l := &mcpList{tool: tool, limit: "limit", max: 200, after: "cursor", key: notionID, relist: 6 * time.Hour}
-	return l.stream(name, what+", by the id in their URL: { type, url, title, icon }, from "+tool+", 200 a page, listed whole every 6 hours, "+
-		"so one gone is deleted; Notion says nothing of when a page was edited.", 6*time.Hour)
+	l := &mcpList{tool: tool, limit: "limit", max: 200, after: "cursor", key: notionID}
+	return l.stream(name, what+", by the id in their URL: { type, url, title, icon }, from "+tool+", 200 a page, listed whole each sync, "+
+		"so one gone is deleted; Notion says nothing of when a page was edited.")
 }
 
 var notionIDRe = regexp.MustCompile(`([0-9a-f]{32})(?:[?#].*)?$`)

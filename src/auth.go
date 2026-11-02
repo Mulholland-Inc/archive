@@ -584,6 +584,8 @@ func (s *signin) handler() http.Handler {
 		if ac.Role != ac.UserRole {
 			m.Role = "viewer"
 		}
+		// Opening the workspace catches up the syncs of whoever opens it.
+		a.syncCatchUp(r.Context(), m.ID)
 		rows, err := h.q().UserWorkspaces(r.Context(), ac.UserID)
 		all := []Workspace{}
 		for _, x := range rows {

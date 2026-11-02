@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	"golang.org/x/oauth2"
 )
@@ -17,7 +16,7 @@ import (
 // token it is when asked with the client's secret.
 func init() {
 	Register(&Connector{
-		ID: "hubspot", Name: "HubSpot", Env: "ARCHIVE_HUBSPOT", Host: "https://app.hubspot.com",
+		ID: "hubspot", Name: "HubSpot", Integration: true, Env: "ARCHIVE_HUBSPOT", Host: "https://app.hubspot.com",
 		Endpoint: oauth2.Endpoint{AuthURL: "https://app.hubspot.com/oauth/authorize", TokenURL: "https://api.hubspot.com/oauth/v3/token",
 			AuthStyle: oauth2.AuthStyleInParams},
 		RevokeWith: func(rv *Revocation) error {
@@ -94,6 +93,7 @@ func init() {
 					return out, err
 				}),
 		},
+		Push:    hubspotPush,
 		Streams: []*Stream{hubspotStream("contacts"), hubspotStream("companies"), hubspotStream("deals")},
 	})
 }
@@ -118,7 +118,7 @@ type hubspotCursor struct {
 // first time, and then those changed since. A search pages at most 10,000 deep, so one that would go further
 // searches again from the last change it read.
 func hubspotStream(typ string) *Stream {
-	return &Stream{Name: typ, Every: 10 * time.Minute, Doc: "Every one of your " + typ + " with " + strings.Join(hubspotProps[typ], ", ") +
+	return &Stream{Name: typ, Doc: "Every one of your " + typ + " with " + strings.Join(hubspotProps[typ], ", ") +
 		": { id, properties, createdAt, updatedAt }, by a search sorted by their last change, 100 a page, all the first time and then those changed since. " +
 		"The search does not see deleted ones, so they stay.",
 		Pull: func(c *Client, cursor string) (*Page, error) {

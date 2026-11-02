@@ -161,3 +161,19 @@ func TestTheAppHasEveryConnectorsLogo(t *testing.T) {
 		}
 	}
 }
+
+// The archive's connectors are integrations; a person's own mail, files and notes are theirs.
+func TestConnectorsAreIntegrationsOrPersonal(t *testing.T) {
+	var personal, integrations []string
+	for _, c := range All() {
+		if c.Integration {
+			integrations = append(integrations, c.ID)
+		} else {
+			personal = append(personal, c.ID)
+		}
+	}
+	if !slices.Equal(personal, []string{"gdrive", "gmail", "notion", "outlook"}) ||
+		!slices.Equal(integrations, []string{"asana", "github", "gusto", "hubspot", "linear", "quickbooks", "sentry", "stripe"}) {
+		t.Errorf("personal %v, integrations %v", personal, integrations)
+	}
+}

@@ -87,7 +87,8 @@ func init() {
 					return map[string]any{"id": raw.ID, "messages": msgs}, nil
 				}),
 		},
-		Streams: []*Stream{{Name: "messages", Every: 5 * time.Minute, Gap: 5 * time.Second, Pull: gmailMessages,
+		Push: gmailPush,
+		Streams: []*Stream{{Name: "messages", Gap: 5 * time.Second, Pull: gmailMessages,
 			Doc: "Every message but spam and trash, each as the message action returns it without its HTML, its text cut at 64 KB: " +
 				"listed whole the first time, 50 a page, and then the mailbox's history since, messages added, deleted or relabeled. " +
 				"A history Gmail no longer keeps, about a week's, lists the mailbox whole again."}},

@@ -11,18 +11,21 @@ import (
 
 // Asana, read only: workspaces, projects and tasks. It reads ARCHIVE_ASANA, an app of the Asana developer
 // console distributed to any workspace, whose redirect URLs list <API>/connect/asana/callback and whose OAuth
-// permission scopes include exactly the Scopes here. Asana's MCP server lets no client register itself, so
+// permission scopes include the Scopes here; with webhooks:read, webhooks:write and webhooks:delete too, and
+// ?push=1 on the variable, it asks for those, which its pushes need (pushers.go). An account connected without
+// them syncs only when asked. Asana's MCP server lets no client register itself, so
 // this is its REST API. Revoking takes the client's credentials with the refresh token.
 func init() {
 	Register(&Connector{
-		ID: "asana", Name: "Asana", Env: "ARCHIVE_ASANA", Host: "https://app.asana.com",
+		ID: "asana", Name: "Asana", Integration: true, Env: "ARCHIVE_ASANA", Host: "https://app.asana.com",
 		Endpoint: oauth2.Endpoint{AuthURL: "https://app.asana.com/-/oauth_authorize", TokenURL: "https://app.asana.com/-/oauth_token",
 			AuthStyle: oauth2.AuthStyleInParams},
 		RevokeWith: func(rv *Revocation) error {
 			id, secret := rv.Client()
 			return rv.Form("https://app.asana.com/-/oauth_revoke", nil, url.Values{"client_id": {id}, "client_secret": {secret}, "token": {rv.Refresh}})
 		},
-		Scopes: []string{"users:read", "workspaces:read", "projects:read", "tasks:read", "stories:read"},
+		Scopes:   []string{"users:read", "workspaces:read", "projects:read", "tasks:read", "stories:read"},
+		Optional: []string{"webhooks:read", "webhooks:write", "webhooks:delete"},
 		Account: func(c *Client) (string, error) {
 			var me struct {
 				Data struct {
@@ -83,13 +86,14 @@ func init() {
 					return map[string]any{"task": task, "comments": comments}, err
 				}),
 		},
+		Push: asanaPush,
 		Streams: []*Stream{
-			{Name: "workspaces", Every: 6 * time.Hour, Pull: asanaWorkspaces,
-				Doc: "The workspaces and organizations you are in, { gid, name }, listed whole every 6 hours."},
-			{Name: "projects", Every: 6 * time.Hour, Pull: asanaProjects,
-				Doc: "The projects of every workspace that are not archived, listed whole every 6 hours, so one archived or deleted is deleted: " +
+			{Name: "workspaces", Pull: asanaWorkspaces,
+				Doc: "The workspaces and organizations you are in, { gid, name }, listed whole each sync."},
+			{Name: "projects", Pull: asanaProjects,
+				Doc: "The projects of every workspace that are not archived, listed whole each sync, so one archived or deleted is deleted: " +
 					"{ gid, name, owner, due_on, start_on, archived, color, notes, created_at, modified_at, permalink_url, workspace, team }."},
-			{Name: "tasks", Every: 15 * time.Minute, Pull: asanaTasks,
+			{Name: "tasks", Pull: asanaTasks,
 				Doc: "The tasks of every project that is not archived, and those assigned to you in each workspace, done or not, with " + asanaTaskFields +
 					": all the first time and then those modified since, 100 a page. Asana does not say which were deleted, so they stay."},
 		},

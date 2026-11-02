@@ -82,7 +82,8 @@ func (a *Archive) connectionAccess(ctx context.Context, id uuid.UUID) (*oauth2.T
 	return tok, nil
 }
 
-// memberConnections are the connections of member, by connector and account.
+// memberConnections are the personal connections of member and the archive's integrations, by connector and
+// account.
 func (a *Archive) memberConnections(ctx context.Context, member uuid.UUID) ([]generated.ArchiveConnection, error) {
 	var out []generated.ArchiveConnection
 	err := a.st.System(ctx, func(ctx context.Context) (err error) {
@@ -139,6 +140,13 @@ func actionName(p *connect.Provider, tool string) string {
 	return tool
 }
 
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 // actionError is a failed action, as the script reads it: its message, and what kind of failure, for its
 // code.
 type actionError struct {
@@ -177,13 +185,24 @@ func (a *Archive) Action(ctx context.Context, name string, input any, pick strin
 	}
 	var mine []generated.ArchiveConnection
 	for _, c := range all {
-		if c.Provider == id && (pick == "" || pick == c.Account || pick == c.ID.String()) {
+		if c.Provider == id && c.Integration == p.Integration && (pick == "" || pick == c.Account || pick == c.ID.String()) {
 			mine = append(mine, c)
+		}
+	}
+	if p.Integration && len(mine) > 0 {
+		lvl, groups, err := a.level(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if !mayUse(mine[0], lvl, groups) {
+			return nil, fail(ErrForbidden, "only editors and owners use the archive's %s%s", p.Name, map[bool]string{true: ", and of the " + deref(mine[0].Access) + " group", false: ""}[mine[0].Access != nil])
 		}
 	}
 	switch {
 	case len(mine) == 0 && pick != "":
 		return nil, fail(ErrNotFound, "you have no %s connection %q", p.Name, pick)
+	case len(mine) == 0 && p.Integration:
+		return nil, fail(ErrNotFound, "this archive has not connected %s; an owner connects it in Archive settings, Integrations", p.Name)
 	case len(mine) == 0:
 		return nil, fail(ErrNotFound, "you have not connected %s; connect it in Settings, Connectors", p.Name)
 	case len(mine) > 1:
@@ -364,6 +383,11 @@ func (a *Archive) actionTypes(ctx context.Context) string {
 		if conns, err = a.memberConnections(ctx, ac.member); err != nil {
 			fmt.Fprintf(os.Stderr, "archive: workspace %s: the actions of %s: %v\n", a.ws.ID, ac.Email, err)
 		}
+		lvl, groups, _ := a.level(ctx)
+		conns = slices.DeleteFunc(conns, func(c generated.ArchiveConnection) bool {
+			k := connect.Get(c.Provider)
+			return k == nil || k.Integration != c.Integration || c.Integration && !mayUse(c, lvl, groups)
+		})
 	}
 	var yours []string
 	for _, c := range conns {

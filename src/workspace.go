@@ -408,7 +408,7 @@ func (a *Archive) afterOpen(ctx context.Context) {
 	err := a.st.System(ctx, func(ctx context.Context) error {
 		return a.st.db(ctx).ResetProcessing(ctx)
 	})
-	err = errors.Join(err, a.syncMembers(ctx, false), a.liveTables(ctx), a.workflowUpgrade(ctx))
+	err = errors.Join(err, a.syncMembers(ctx, false), a.liveTables(ctx), a.workflowUpgrade(ctx), a.connectionUpgrade(ctx))
 	for _, kind := range []string{"workflow", "file", "sync"} {
 		next, nerr := a.nextDue(ctx, kind)
 		if nerr == nil && next != nil {
@@ -564,11 +564,15 @@ func (t *gcpToken) access(ctx context.Context) (string, error) {
 	return t.token, nil
 }
 
-func (h *Hub) taskCaller(r *http.Request) error {
+func (h *Hub) taskCaller(r *http.Request) error { return h.googleCaller(r, "/tasks") }
+
+// googleCaller checks that r is a call Google signed for Archive's tasks account, with an OIDC token whose
+// audience is the API's path: Cloud Tasks' calls of /tasks, and Pub/Sub's pushes to /push/<connector>.
+func (h *Hub) googleCaller(r *http.Request, path string) error {
 	t := h.tasks
 	tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if !ok {
-		return fmt.Errorf("want the OIDC token Cloud Tasks sends: %w", ErrUnauthorized)
+		return fmt.Errorf("want the OIDC token Google sends: %w", ErrUnauthorized)
 	}
 	t.mu.Lock()
 	if t.verify == nil {
@@ -577,7 +581,7 @@ func (h *Hub) taskCaller(r *http.Request) error {
 			t.mu.Unlock()
 			return fmt.Errorf("google's signing keys: %w", err)
 		}
-		t.verify = p.Verifier(&oidc.Config{ClientID: h.api + "/tasks"})
+		t.verify = p.Verifier(&oidc.Config{SkipClientIDCheck: true})
 	}
 	v := t.verify
 	t.mu.Unlock()
@@ -585,12 +589,15 @@ func (h *Hub) taskCaller(r *http.Request) error {
 	if err != nil {
 		return fmt.Errorf("%v: %w", err, ErrUnauthorized)
 	}
+	if !slices.Contains(id.Audience, h.api+path) {
+		return fmt.Errorf("a token for %v, not %s: %w", id.Audience, h.api+path, ErrUnauthorized)
+	}
 	var c struct {
 		Email    string `json:"email"`
 		Verified bool   `json:"email_verified"`
 	}
 	if err := id.Claims(&c); err != nil || !c.Verified || c.Email != t.account {
-		return fmt.Errorf("only %s calls /tasks: %w", t.account, ErrForbidden)
+		return fmt.Errorf("only %s calls %s: %w", t.account, path, ErrForbidden)
 	}
 	return nil
 }
@@ -680,7 +687,9 @@ func (a *Archive) nextDue(ctx context.Context, kind string) (*time.Time, error) 
 		}
 		n, err := q.NextWorkflowAt(ctx)
 		if kind == "sync" {
-			n, err = q.NextSyncAt(ctx)
+			var t time.Time
+			t, err = q.NextSyncAt(ctx)
+			n = &t
 		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil

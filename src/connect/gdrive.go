@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
-	"time"
 
 	"golang.org/x/oauth2"
 )
@@ -102,7 +101,8 @@ func init() {
 					return map[string]any{"id": f.ID, "name": f.Name, "mimeType": f.MIMEType, "text": text}, err
 				}),
 		},
-		Streams: []*Stream{{Name: "files", Every: 5 * time.Minute, Pull: driveFiles,
+		Push: drivePush,
+		Streams: []*Stream{{Name: "files", Pull: driveFiles,
 			Doc: "Every file in My Drive, shared with you and in your shared drives, not trashed, as its details " +
 				"(id, name, mimeType, modifiedTime, size, webViewLink, owners, parents, createdTime, description, driveId), not its content: " +
 				"listed whole the first time, 1,000 a page, and then Drive's changes since, trashed and removed files deleted."}},

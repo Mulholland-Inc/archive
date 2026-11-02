@@ -927,6 +927,9 @@ func runParam(v any) any {
 // back, so Postgres refuses any write.
 func (a *Archive) runQuery(ctx context.Context, query string, params []any) ([]map[string]any, error) {
 	q := strings.TrimRightFunc(strings.TrimSpace(query), func(r rune) bool { return r == ';' || unicode.IsSpace(r) })
+	if runRecordRe.MatchString(q) {
+		a.syncOnRead(ctx)
+	}
 	fail := func(err error) error {
 		var pe *pgconn.PgError
 		if errors.As(err, &pe) && pe.Code == "25006" {
@@ -1217,6 +1220,9 @@ func runTypes(cat *Catalog) string {
 	}
 	return b.String()
 }
+
+// runRecordRe finds a query that may read record, whose syncs a read catches up.
+var runRecordRe = regexp.MustCompile(`(?i)\brecord\b`)
 
 var runIdentRe = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*$`)
 

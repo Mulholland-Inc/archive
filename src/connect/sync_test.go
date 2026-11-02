@@ -120,7 +120,7 @@ func has(t *testing.T, seen []string, want ...string) {
 	}
 }
 
-// Every stream is declared whole, with a schedule, and no connector has two of a name.
+// Every stream is declared whole, and no connector has two of a name.
 func TestStreamsAreDeclaredWhole(t *testing.T) {
 	for _, c := range All() {
 		if len(c.Streams) == 0 {
@@ -128,7 +128,7 @@ func TestStreamsAreDeclaredWhole(t *testing.T) {
 		}
 		names := map[string]bool{}
 		for _, s := range c.Streams {
-			if names[s.Name] || s.Name == "" || s.Doc == "" || s.Pull == nil || s.Every < time.Minute {
+			if names[s.Name] || s.Name == "" || s.Doc == "" || s.Pull == nil {
 				t.Errorf("%s stream %q is not declared whole: %+v", c.ID, s.Name, s)
 			}
 			names[s.Name] = true
@@ -423,7 +423,7 @@ func TestAsanaReadsEachProjectsTasks(t *testing.T) {
 }
 
 // An MCP stream reads what changed since when its tool takes a time, paging with the cursor the answer names;
-// lists whole every relist when it does not; and is skipped when the server has no tool for it.
+// lists whole when it does not; and is skipped when the server has no tool for it.
 func TestMCPListsFollowTheToolsSchema(t *testing.T) {
 	var calls []map[string]any
 	c := mcpStandIn(t, "linear", map[string]mcpTool{
@@ -455,9 +455,6 @@ func TestMCPListsFollowTheToolsSchema(t *testing.T) {
 	}
 	teams := pull(t, c, "teams", "")
 	wantPage(t, "a tool without a time", teams, "t1", false, true)
-	if teams.Every != 6*time.Hour {
-		t.Errorf("a tool without a time is listed whole every %v", teams.Every)
-	}
 	for name, why := range map[string]string{"documents": "Linear's MCP server has no tool list_documents", "projects": "answers in prose"} {
 		_, err := streamNamed(c, name).Pull(c, "")
 		if u := (*Unsupported)(nil); !asUnsupported(err, &u) || !strings.Contains(u.Reason, why) {
@@ -531,4 +528,14 @@ func asUnsupported(err error, u **Unsupported) bool {
 	v, ok := err.(*Unsupported)
 	*u = v
 	return ok
+}
+
+// Asana asks for the scopes its webhooks need only once its variable says its app has them.
+func TestAsanaAsksForWebhooksOnlyWhenItsAppHasThem(t *testing.T) {
+	for opts, want := range map[string]bool{"": false, "?push=1": true} {
+		u := provider(t, "asana", opts).AuthURL("https://api.example.com/cb", "st", "v")
+		if got := strings.Contains(u, "webhooks%3Awrite"); got != want {
+			t.Errorf("%q asks for webhooks:write: %v", opts, got)
+		}
+	}
 }

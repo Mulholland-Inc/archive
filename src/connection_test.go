@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Mulholland-Inc/archive/connect"
 	"github.com/google/uuid"
@@ -44,6 +45,11 @@ type fakeGoogle struct {
 	history []fakeChange
 	oldest  int
 	fail    int
+	// stuck makes history.list answer that there is more, from the page it was asked for. watched are the
+	// topics users.watch was asked for, and stops how many times users.stop was called.
+	stuck   bool
+	watched []string
+	stops   int
 }
 
 // fakeChange is a change of the mailbox's history: its historyId, the message, and what happened to it, as
@@ -139,6 +145,10 @@ func newFakeGoogle(t *testing.T) *fakeGoogle {
 				w.Write([]byte(`{"error":{"code":404,"message":"Requested entity was not found."}}`))
 				return
 			}
+			if g.stuck {
+				json.NewEncoder(w).Encode(map[string]any{"history": []any{}, "historyId": fmt.Sprint(g.hist), "nextPageToken": "same"})
+				return
+			}
 			var hs []map[string]any
 			for _, c := range g.history {
 				if c.h > start {
@@ -181,6 +191,21 @@ func newFakeGoogle(t *testing.T) *fakeGoogle {
 					"payload": map[string]any{"mimeType": "multipart/mixed", "headers": []map[string]string{{"name": "From", "value": "Ann <ann@example.com>"}, {"name": "Subject", "value": "Hi"}},
 						"parts": []any{part("text/plain", "", "Hello Alice"), part("application/pdf", "a.pdf", "%PDF")}}})
 			}
+		case "/gmail/v1/users/me/watch", "/gmail/v1/users/me/stop":
+			if g.serveMailbox(w, r) {
+				return
+			}
+			if strings.HasSuffix(r.URL.Path, "/stop") {
+				g.stops++
+				w.Write([]byte("{}"))
+				return
+			}
+			var body struct {
+				TopicName string `json:"topicName"`
+			}
+			json.NewDecoder(r.Body).Decode(&body)
+			g.watched = append(g.watched, body.TopicName)
+			json.NewEncoder(w).Encode(map[string]string{"historyId": fmt.Sprint(g.hist), "expiration": fmt.Sprint(time.Now().Add(7 * 24 * time.Hour).UnixMilli())})
 		case "/revoke":
 			g.revoked = append(g.revoked, r.Form.Get("token"))
 			delete(g.refresh, r.Form.Get("token"))
@@ -241,7 +266,7 @@ func TestGmailConnectsForWhoStartedItAndDisconnectsWithARevoke(t *testing.T) {
 	edge := &liveEdge{}
 	hs := httptest.NewServer(edge)
 	t.Cleanup(hs.Close)
-	in := newInst(t, g.env(), "ARCHIVE_LIVE_KEY=k3y", "ARCHIVE_LIVE_URL="+hs.URL)
+	in := newInst(t, g.env(), "ARCHIVE_LIVE_KEY=k3y", "ARCHIVE_LIVE_URL="+hs.URL, "ARCHIVE_ASANA=https://app:shh@app.asana.com")
 	in.must("user", "add", "alice@example.com")
 	in.must("user", "add", "bob@example.com")
 	srv := in.serve()
@@ -389,6 +414,8 @@ func TestGmailConnectsForWhoStartedItAndDisconnectsWithARevoke(t *testing.T) {
 	if n := in.psql("archive", "SELECT count(*) FROM archive.record"); n != "0" {
 		t.Errorf("disconnecting left %s records", n)
 	}
+	gmailPushesAfterDisconnect(t, in, srv, g)
+	asanaHandshakes(t, in, srv)
 	if cs := list(alice); len(cs.Connections) != 0 {
 		t.Errorf("a disconnected Gmail is still listed: %+v", cs.Connections)
 	}

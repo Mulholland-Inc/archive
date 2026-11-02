@@ -1,22 +1,18 @@
 package connect
 
-import (
-	"time"
-)
-
 // Sentry, through its hosted MCP server: organizations, projects, issues, events and traces. Its authorization
 // server registers any client (RFC 7591) and asks for the scopes its metadata lists. whoami names the user.
 //
-// Its organizations and projects page with a cursor, and are listed whole every 6 hours. Its issues are not
+// Its organizations and projects page with a cursor, and are listed whole each sync. Its issues are not
 // synced: search_issues answers in prose, has no cursor, stops at 100 and filters only by when an issue was
 // last seen, not changed.
 func init() {
-	Register(&Connector{ID: "sentry", Name: "Sentry", MCP: "https://mcp.sentry.dev/mcp", Account: mcpAccount("whoami"),
+	Register(&Connector{ID: "sentry", Name: "Sentry", Integration: true, MCP: "https://mcp.sentry.dev/mcp", Account: mcpAccount("whoami"),
 		Streams: []*Stream{
-			(&mcpList{tool: "find_organizations", after: "cursor", items: "organizations", id: "slug", relist: 6 * time.Hour}).stream("organizations",
-				"Your organizations, { slug, webUrl, regionUrl }, by slug, from find_organizations, listed whole every 6 hours.", 6*time.Hour),
-			{Name: "projects", Every: 6 * time.Hour, Pull: sentryProjects,
-				Doc: "The projects of each organization, by <organization>/<slug>, from find_projects, listed whole every 6 hours."},
+			(&mcpList{tool: "find_organizations", after: "cursor", items: "organizations", id: "slug"}).stream("organizations",
+				"Your organizations, { slug, webUrl, regionUrl }, by slug, from find_organizations, listed whole each sync."),
+			{Name: "projects", Pull: sentryProjects,
+				Doc: "The projects of each organization, by <organization>/<slug>, from find_projects, listed whole each sync."},
 		}})
 }
 

@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"slices"
 	"strings"
-	"time"
 
 	"golang.org/x/oauth2"
 )
@@ -99,11 +98,12 @@ func init() {
 					return out.Value, err
 				}),
 		},
+		Push: outlookPush,
 		Streams: []*Stream{
-			{Name: "folders", Every: time.Hour, Pull: outlookFolders,
+			{Name: "folders", Pull: outlookFolders,
 				Doc: "Every mail folder, at any depth: { id, displayName, parentFolderId, childFolderCount, totalItemCount, unreadItemCount }, " +
 					"from Graph's folder delta query, which says which were removed too."},
-			{Name: "messages", Every: 5 * time.Minute, Pull: outlookMessages,
+			{Name: "messages", Pull: outlookMessages,
 				Doc: "Every message of every folder, as the message action returns it with its body as text cut at 64 KB, by <folder id>/<message id> " +
 					"with immutable ids: a delta query of each folder, 50 a page, whole the first time and then what changed since, " +
 					"so a moved message is deleted in one folder and added in the other. A folder whose delta Graph no longer keeps is read whole again, " +

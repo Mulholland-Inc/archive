@@ -21,7 +21,8 @@ const names = {
   asana: 'Asana',
   linear: 'Linear',
   sentry: 'Sentry',
-  stripe: 'Stripe'
+  stripe: 'Stripe',
+  gusto: 'Gusto'
 };
 
 export const brandFor = (id) => BRANDS[names[id]];

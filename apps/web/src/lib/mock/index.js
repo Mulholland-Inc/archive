@@ -29,7 +29,6 @@ export function mockConnectors() {
   return catalog.map((c) => ({ ...c, connected: false, account: '' }));
 }
 
-export const mockIntegrations = () => [];
 
 export function mockKey(prefix, date) {
   const hex = () => Math.random().toString(16).slice(2, 10).padEnd(8, '0');

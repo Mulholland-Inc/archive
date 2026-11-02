@@ -5,7 +5,8 @@ package connect
 // the connection between pages: "" the first time, when it lists everything there is, and after that the
 // Cursor of the page before, which pages on or, once caught up, starts the next delta, the records changed
 // since. Each pull is one page of a provider's quota, so the caller runs them as tasks of their own, Gap
-// apart while one has more to come and Every apart once caught up.
+// apart, while one has more to come, and stops once it has caught up: what starts the next delta is the
+// account changing, as its connector's Push hears (push.go), or someone asking.
 
 import (
 	"cmp"
@@ -15,6 +16,7 @@ import (
 	"maps"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,8 +30,8 @@ type Stream struct {
 	Name string
 	// Doc says what it pulls and how, and what it cannot see, for the docs.
 	Doc string
-	// Every is how long after catching up it pulls again; Gap how long after a page with more to come.
-	Every, Gap time.Duration
+	// Gap is how long after a page with more to come the next one runs.
+	Gap time.Duration
 	// Pull is the page after cursor. An *Unsupported error skips the stream, a day at a time.
 	Pull func(c *Client, cursor string) (*Page, error)
 }
@@ -43,9 +45,6 @@ type Page struct {
 	// Full says the page is part of a listing of everything there is: once it ends, the records it did not
 	// list are deleted.
 	Full bool
-	// Every, when set, waits in place of the stream's Every once caught up, as a stream that could only
-	// list everything again does.
-	Every time.Duration
 }
 
 // Record is one thing a stream found, by its ID at the provider.
@@ -58,7 +57,8 @@ type Record struct {
 	Deleted bool
 }
 
-// Unsupported is a stream the account's provider has no way to pull, like an MCP server without its tool.
+// Unsupported is a stream the account's provider has no way to pull, like an MCP server without its tool; it
+// is skipped until the next sync.
 type Unsupported struct{ Reason string }
 
 func (u *Unsupported) Error() string { return u.Reason }
@@ -153,20 +153,22 @@ func (c *Client) tool(name string) (*mcp.Tool, error) {
 	return nil, unsupported("%s's MCP server has no tool %s", c.p.Name, name)
 }
 
-// takes is what tool's input schema says it takes, or nil when it says nothing: then it takes anything.
-func takes(t *mcp.Tool) map[string]bool {
+// takes is what tool's input schema says it takes, or nil when it says nothing: then it takes anything; and
+// what it says it needs.
+func takes(t *mcp.Tool) (map[string]bool, []string) {
 	var s struct {
 		Properties map[string]json.RawMessage `json:"properties"`
+		Required   []string                   `json:"required"`
 	}
 	b, _ := json.Marshal(t.InputSchema)
 	if json.Unmarshal(b, &s) != nil || len(s.Properties) == 0 {
-		return nil
+		return nil, s.Required
 	}
 	out := map[string]bool{}
 	for k := range s.Properties {
 		out[k] = true
 	}
-	return out
+	return out, s.Required
 }
 
 // answer is a tool's result as JSON: its structured content, or its text read as JSON. A tool that answers in
@@ -247,35 +249,39 @@ func str(v map[string]any, k string) string {
 // mcpList is a stream an MCP connector pulls with one of its server's list tools, with as much of it as the
 // tool's input schema, read from the server on every pull, says it takes: a page size, a cursor to the next
 // page, and a time to list only what changed since. A tool that takes a time is pulled for what changed since
-// the pull before began, and pages until it has it all; one that does not is listed whole every relist, and
-// what it no longer lists is deleted. A server without the tool, or whose tool does not take args, skips it.
+// the pull before began, and pages until it has it all; one that does not is listed whole each time, and what
+// it no longer lists is deleted. A server without the tool, or whose tool does not take args, skips it.
 type mcpList struct {
 	tool string
 	// args go with every call; opts too, those the schema does not name left out. in, when set, is the
 	// argument the page size, cursor and time go in, like Stripe's parameters, which the schema cannot say.
 	args, opts map[string]any
 	in         string
-	// limit is the argument of the page size, max; after the next page's cursor, the first of its names, comma
-	// separated, the schema has; since the time, ISO 8601.
-	limit, after, since string
-	max                 int
+	// limit is the argument of the page size, max; after the next page's cursor; page the next page's number,
+	// from 1, while a page comes back full; since the time, ISO 8601. Each is the first of its names, comma
+	// separated, that the schema has.
+	limit, after, page, since string
+	max                       int
 	// items is the key of the answer's array of records, "" for the first there is; id and updated the keys of
 	// a record's id and last change, id and updatedAt when empty, or key the record's id.
 	items, id, updated string
 	key                func(it map[string]any) string
 	// lastID pages with the last record's id as the cursor when the answer has none and the page is full.
 	lastID bool
-	relist time.Duration
 }
 
+// mcpCursor is where an mcpList is: since the time of its delta, after the next page's cursor or number,
+// start when this listing began, and first the first record of the page before, which a server that does not
+// page sends again.
 type mcpCursor struct {
 	Since string `json:"since,omitempty"`
 	After string `json:"after,omitempty"`
 	Start string `json:"start,omitempty"`
+	First string `json:"first,omitempty"`
 }
 
-func (l *mcpList) stream(name, doc string, every time.Duration) *Stream {
-	return &Stream{Name: name, Doc: doc, Every: every, Pull: l.pull}
+func (l *mcpList) stream(name, doc string) *Stream {
+	return &Stream{Name: name, Doc: doc, Pull: l.pull}
 }
 
 func (l *mcpList) pull(c *Client, cursor string) (*Page, error) {
@@ -287,7 +293,7 @@ func (l *mcpList) pull(c *Client, cursor string) (*Page, error) {
 	if err != nil {
 		return nil, err
 	}
-	props := takes(t)
+	props, need := takes(t)
 	has := func(k string) bool { return k != "" && (props == nil || props[k]) }
 	args, put := map[string]any{}, map[string]any{}
 	for k, v := range l.args {
@@ -311,23 +317,40 @@ func (l *mcpList) pull(c *Client, cursor string) (*Page, error) {
 	} else {
 		put = args
 	}
-	for _, a := range strings.Split(l.after, ",") {
-		if can(a) && after == "" {
-			after = a
+	first := func(names string) string {
+		for _, n := range strings.Split(names, ",") {
+			if can(n) {
+				return n
+			}
 		}
+		return ""
 	}
-	if can(l.limit) && l.max > 0 {
-		put[l.limit] = l.max
+	after, numbered := first(l.after), false
+	if after == "" {
+		after = first(l.page)
+		numbered = after != ""
+	}
+	if lim := first(l.limit); lim != "" && l.max > 0 {
+		put[lim] = l.max
 	}
 	if st.Start == "" {
 		st.Start = time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
 	}
-	delta := can(l.since)
+	since := first(l.since)
+	delta := since != ""
 	if delta && st.Since != "" {
-		put[l.since] = st.Since
+		put[since] = st.Since
 	}
 	if st.After != "" && after != "" {
 		put[after] = st.After
+		if numbered {
+			put[after], _ = strconv.Atoi(st.After)
+		}
+	}
+	for _, k := range need {
+		if _, ok := args[k]; !ok && l.in == "" {
+			return nil, unsupported("%s's tool %s needs %s, which Archive has nothing to give", c.p.Name, l.tool, k)
+		}
 	}
 	res, err := c.Call(t.Name, args)
 	if err != nil {
@@ -349,20 +372,27 @@ func (l *mcpList) pull(c *Client, cursor string) (*Page, error) {
 			page.Records = append(page.Records, Record{ID: rid, Data: it, Updated: stamp(str(it, updated))})
 		}
 	}
-	next := ""
-	if after != "" {
+	next, firstID := "", ""
+	if len(items) > 0 {
+		firstID = key(items[0])
+	}
+	full := len(items) > 0 && len(items) >= l.max
+	switch {
+	case numbered && full:
+		n, _ := strconv.Atoi(st.After)
+		next = strconv.Itoa(max(n, 1) + 1)
+	case after != "":
 		next = nextCursor(v, items, id)
-		if next == "" && l.lastID && len(items) > 0 && len(items) >= l.max {
+		if next == "" && l.lastID && full {
 			next = str(items[len(items)-1], id)
 		}
 	}
-	if next != "" && next != st.After {
-		st.After, page.More = next, true
+	// A next page that is the one before, or starts as it did, is a server that does not page: the listing
+	// ends there rather than read it forever.
+	if next != "" && next != st.After && (firstID == "" || firstID != st.First) {
+		st.After, st.First, page.More = next, firstID, true
 	} else {
 		st = mcpCursor{Since: st.Start}
-		if !delta {
-			page.Every = l.relist
-		}
 	}
 	page.Cursor = cursorFor(st)
 	return page, nil

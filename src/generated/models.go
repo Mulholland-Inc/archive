@@ -83,11 +83,18 @@ type ArchiveConnection struct {
 	UpdatedAt time.Time
 	// What the service said about the account when it connected, like QuickBooks' realmId
 	Meta map[string]string
-	// When Archive next reads what changed there into record; null while it does not, as after its grant was revoked, until you connect it again
+	// When Archive next reads what changed there into record; null once it has it all, until the service says something changed, you ask, or you read record
 	SyncAt *time.Time
 	// When Archive last had everything there in record
 	SyncedAt *time.Time
 	Cursor   json.RawMessage
+	AskedAt  time.Time
+	LeaseAt  *time.Time
+	Revoked  bool
+	// It is the archive's, like its QuickBooks, which an owner connects for everyone, not one person's own
+	Integration bool
+	// The group an integration and its records are narrowed to, like finance; null for everyone
+	Access *string
 }
 
 type ArchiveDue struct {
@@ -112,6 +119,17 @@ type ArchiveUser struct {
 	Name       string
 	Workspaces []uuid.UUID
 	Signin     json.RawMessage
+	CreatedAt  time.Time
+}
+
+type ArchiveWatch struct {
+	Provider   string
+	Key        string
+	Workspace  uuid.UUID
+	Connection uuid.UUID
+	Resource   string
+	Secret     []byte
+	ExpiresAt  *time.Time
 	CreatedAt  time.Time
 }
 
