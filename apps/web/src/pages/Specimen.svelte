@@ -54,26 +54,18 @@
   import Divider from '../components/Divider.svelte';
   import ProgressBar from '../components/ProgressBar.svelte';
   import FileTile from '../components/FileTile.svelte';
-  import SchemaGraph from '../components/SchemaGraph.svelte';
-  import SchemaNode from '../components/SchemaNode.svelte';
-  import ZoomControls from '../components/ZoomControls.svelte';
   import Art from '../components/Art.svelte';
   import ServerSettings from '../components/ServerSettings.svelte';
-  import TypeDetail from '../components/TypeDetail.svelte';
-  import { schemaFor } from '../lib/mock/schema.js';
   import Attachment from '../components/Attachment.svelte';
   import Composer from '../components/Composer.svelte';
   import Message from '../components/Message.svelte';
   import Steps from '../components/Steps.svelte';
   import CodeBlock from '../components/CodeBlock.svelte';
-  import RunProgress from '../components/RunProgress.svelte';
-  import WorkflowCard from '../components/WorkflowCard.svelte';
   import ArchiveIcon from '../components/ArchiveIcon.svelte';
   import LookPicker from '../components/LookPicker.svelte';
   import ConnectorCard from '../components/ConnectorCard.svelte';
   import ConnectorIcon from '../components/ConnectorIcon.svelte';
   import TriggerLabel from '../components/TriggerLabel.svelte';
-  import { workflowSeed } from '../lib/mock/workflows.js';
   import { TYPES } from '../lib/looks.js';
   import { catalog } from '../lib/mock/connectors.js';
   import Heading from '../components/Heading.svelte';
@@ -100,7 +92,6 @@
   import { theme, setTheme } from '../lib/theme.svelte.js';
   import { contextmenu, SEPARATOR } from '../lib/contextmenu.svelte.js';
   import { app } from '../lib/app.svelte.js';
-  const familySchema = schemaFor('okafor');
   const avatarSeeds = Array.from({ length: 24 }, (_, i) => `user-${i + 1}`);
 
   const sections = [
@@ -496,21 +487,11 @@
             {#each [library[0], library[1], library[2], library[4], library[5]] as f (f.id)}<FileTile file={f} />{/each}
           </Grid>
         </SpecimenBlock>
-        <SpecimenBlock title="Schema node">
-          <SchemaNode type={familySchema[1]} names={Object.fromEntries(familySchema.map((t) => [t.id, t.name]))} />
-          <ZoomControls />
-        </SpecimenBlock>
-        <SpecimenBlock title="Schema graph" column>
-          <SpecimenFrame><SchemaGraph types={familySchema} /></SpecimenFrame>
-        </SpecimenBlock>
         <SpecimenBlock title="Art">
           <Art name="server" />
         </SpecimenBlock>
         <SpecimenBlock title="Server settings" column>
           <ServerSettings />
-        </SpecimenBlock>
-        <SpecimenBlock title="Type detail" column>
-          <TypeDetail type={familySchema[0]} types={familySchema} />
         </SpecimenBlock>
         <SpecimenBlock title="Attachments">
           <Attachment name="adaeze-letter-03.jpg" kind="image" size="2.4 MB" tone={4} />
@@ -567,18 +548,11 @@
         <SpecimenBlock title="Work disclosure: running and finished" column>
           <Steps steps={runningSteps} running open />
           <Steps steps={conversations['mercer-timeline'][1].steps} worked="25s" />
-          <RunProgress steps={[{ id: 'a', label: 'Find the cassette', status: 'done', time: '2s' }, { id: 'b', label: 'Transcribe cassette 7', status: 'running' }, { id: 'c', label: 'Save the transcript', status: 'pending' }]} />
-          <RunProgress steps={[{ id: 'a', label: 'Write the digest', status: 'done', time: '4s' }, { id: 'b', label: 'Email 9 members', status: 'done', time: '1s' }]} />
         </SpecimenBlock>
         <SpecimenBlock title="Code block" column>
           <CodeBlock lang="bash" code={'python3 -m pip install pillow\npython3 rename_scans.py --dry-run'} />
         </SpecimenBlock>
-        <SpecimenBlock title="Workflow cards and triggers">
-          <Grid min="card" gap="4">
-            <WorkflowCard workflow={workflowSeed.okafor[0]} href="/workflows/wf-cassettes" />
-            <WorkflowCard workflow={workflowSeed.okafor[2]} href="/workflows/wf-digest" />
-            <WorkflowCard workflow={workflowSeed.okafor[4]} href="/workflows/wf-restore" />
-          </Grid>
+        <SpecimenBlock title="Workflow triggers">
           <TriggerLabel trigger={{ kind: 'schedule', label: 'Every Sunday at 18:00' }} />
           <TriggerLabel trigger={{ kind: 'file', label: 'When photos are added' }} />
           <TriggerLabel trigger={{ kind: 'email', label: 'When an email arrives' }} />

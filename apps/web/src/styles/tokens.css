@@ -171,7 +171,6 @@
   --pane-art-width: calc(var(--pane-art) * 1.4);
   --pane-art-sm: calc(var(--pane-art) * 0.75);
   --art-zoom: 60rem;
-  --schema-node: 15rem;
   --thumb-ratio: 4 / 3;
 
   --opacity-dim: 0.35;
