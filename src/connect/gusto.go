@@ -37,7 +37,7 @@ import (
 // payroll-blocker tools, time records, which only third-party time tracking keeps, and the earnings summary,
 // which payrolls add up to.
 func init() {
-	Register(&Connector{ID: "gusto", Name: "Gusto", Integration: true, MCP: "https://mcp.api.gusto.com",
+	Register(&Connector{ID: "gusto", Name: "Gusto", Integration: true, MCP: "https://mcp.api.gusto.com", Pace: 300 * time.Millisecond,
 		Scopes: []string{"public", "companies:read", "employees:read", "contractors:read", "departments:read", "jobs:read", "compensations:read",
 			"employments:read", "pay_schedules:read", "payrolls:read", "time_off_requests:read"},
 		Account: gustoAccount,
@@ -281,8 +281,8 @@ func merged(a, b map[string]any) map[string]any {
 
 // gustoListPull is a page of tool's list for args, with opts too where the tool takes them, 100 a page; key
 // is a record's id, its uuid when nil.
-func gustoListPull(c *Client, tool string, args, opts map[string]any, key func(args, it map[string]any) string, cursor string) (*Page, error) {
-	l := &mcpList{tool: tool, args: args, opts: opts, limit: "per,limit,page_size", max: 100, page: "page", after: "cursor,after",
+func gustoListPull(c *Client, tool string, per int, args, opts map[string]any, key func(args, it map[string]any) string, cursor string) (*Page, error) {
+	l := &mcpList{tool: tool, args: args, opts: opts, limit: "per,limit,page_size", max: per, page: "page", after: "cursor,after",
 		key: gustoID, id: "uuid", updated: "updated_at"}
 	if key != nil {
 		l.key = func(it map[string]any) string { return key(args, it) }
@@ -305,7 +305,7 @@ func gustoListPull(c *Client, tool string, args, opts map[string]any, key func(a
 func gustoList(name, tool, what string, each func(c *Client, st *gustoCursor) ([]map[string]any, error), every time.Duration,
 	key func(args, it map[string]any) string, table string, rows func(map[string]any) *Row) *Stream {
 	g := &gustoStream{each: each, pull: func(c *Client, st *gustoCursor, args map[string]any, cursor string) (*Page, error) {
-		return gustoListPull(c, tool, args, nil, key, cursor)
+		return gustoListPull(c, tool, 100, args, nil, key, cursor)
 	}}
 	doc := what + ", as " + tool + " answers, 100 a page, listed whole each sync, so one gone is deleted."
 	if every > 0 {
@@ -318,7 +318,7 @@ func gustoList(name, tool, what string, each func(c *Client, st *gustoCursor) ([
 // recent months after, in pages that delete nothing.
 func gustoYearList(name, tool, what string, every time.Duration, key func(args, it map[string]any) string, table string, rows func(map[string]any) *Row) *Stream {
 	g := &gustoStream{each: gustoYears, recent: true, pull: func(c *Client, st *gustoCursor, args map[string]any, cursor string) (*Page, error) {
-		return gustoListPull(c, tool, args, nil, key, cursor)
+		return gustoListPull(c, tool, 100, args, nil, key, cursor)
 	}}
 	doc := what + ", as " + tool + " answers, 100 a page: every year on the first sync, and from three months back to 90 days ahead after, which deletes nothing."
 	if every > 0 {
@@ -346,7 +346,8 @@ func gustoCompany(c *Client, st *gustoCursor, args map[string]any, cursor string
 // gustoEmployees is a page of a company's employees. One whose version is the one read before is the Same;
 // one new or changed is read with their employment history and work addresses, where the server has the tools.
 func gustoEmployees(c *Client, st *gustoCursor, args map[string]any, cursor string) (*Page, error) {
-	page, err := gustoListPull(c, "list_employees", args, map[string]any{"include": "all_compensations,all_home_addresses,custom_fields"}, nil, cursor)
+	// 20 a page: each new or changed one costs two calls more, which at Gusto's pace must fit in a page's time.
+	page, err := gustoListPull(c, "list_employees", 20, args, map[string]any{"include": "all_compensations,all_home_addresses,custom_fields"}, nil, cursor)
 	if err != nil {
 		return nil, err
 	}

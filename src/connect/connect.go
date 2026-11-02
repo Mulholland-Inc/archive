@@ -50,6 +50,9 @@ type Connector struct {
 	// connects it for everyone, an archive has one, and its records are every member's. Without it, each member
 	// connects their own, like their Gmail, and its records are theirs alone.
 	Integration bool
+	// Pace is the least time between two calls a Client makes to an MCP connector's server, for a provider
+	// that refuses calls that come faster, as Gusto does; zero for none.
+	Pace time.Duration
 	// Env is the environment variable that holds an API connector's OAuth client, https://<client id>:<client
 	// secret>@<host> with the id and secret URL-escaped, and maybe a query of options the connector reads with
 	// Client.Option; Host is the provider host it names by default. When Env names another host, every URL of
@@ -447,6 +450,8 @@ type Client struct {
 	sess *mcp.ClientSession
 	// tools are the MCP server's, as it listed them for a stream.
 	tools []*mcp.Tool
+	// last is when it last called a tool, which its connector's Pace waits from.
+	last time.Time
 }
 
 // Open is a Client of the account whose access token tok is, with the Meta its grant kept.
@@ -823,6 +828,14 @@ func (c *Client) Call(name string, args any) (*mcp.CallToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	if wait := time.Until(c.last.Add(c.p.Pace)); wait > 0 {
+		select {
+		case <-time.After(wait):
+		case <-c.ctx.Done():
+			return nil, c.ctx.Err()
+		}
+	}
+	c.last = time.Now()
 	res, err := s.CallTool(c.ctx, &mcp.CallToolParams{Name: name, Arguments: args})
 	if err != nil {
 		return nil, fmt.Errorf("%s %s: %w", c.p.Name, name, err)
@@ -831,6 +844,21 @@ func (c *Client) Call(name string, args any) (*mcp.CallToolResult, error) {
 		return nil, &Refusal{Provider: c.p.Name, Message: name + ": " + Text(res)}
 	}
 	return res, nil
+}
+
+// Busy says err is a provider that turned a call away for now, by rate limit or by being out of reach, rather
+// than one that will fail again: a sync keeps trying such a page, later and later, and never gives it up.
+func Busy(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	for _, w := range []string{"Too Many Requests", " 429", "could not be reached", " 502", " 503", " 504", "Service Unavailable", "Bad Gateway", "Gateway Timeout"} {
+		if strings.Contains(s, w) {
+			return true
+		}
+	}
+	return false
 }
 
 // Text is the text of a tool's result, its text parts on lines of their own.

@@ -553,6 +553,8 @@ const (
 	// A failed page is retried syncRetry later, doubling, syncTries times in a row at most.
 	syncRetry = time.Minute
 	syncTries = 5
+	// syncBusyWait is the longest a page a busy provider turned away waits before it is tried again.
+	syncBusyWait = 15 * time.Minute
 	// syncMaxPages is the most pages a stream reads for one ask, against a provider whose cursor goes round.
 	syncMaxPages = 100_000
 	// syncStale is how old a connection's last sync is before a read or an open asks for another.
@@ -751,7 +753,13 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 			cur.Fails++
 			cur.Error = fmt.Sprintf("syncing %s: %v", name, err)
 			cur.At = ptr(now.Add(syncRetry << min(cur.Fails-1, 16)))
-			if cur.Fails >= syncTries {
+			busy := connect.Busy(err)
+			if busy {
+				// A provider that is busy or out of reach is tried again, at most syncBusyWait apart, for as long
+				// as it takes; only a page that fails some other way waits for the next ask.
+				cur.At = ptr(now.Add(min(syncRetry<<min(cur.Fails-1, 16), syncBusyWait)))
+			}
+			if cur.Fails >= syncTries && !busy {
 				// It waits for the next ask, as one caught up does, with its error, and tries as many times then.
 				cur.At, cur.Done, cur.Fails = nil, &c.AskedAt, 0
 			}
