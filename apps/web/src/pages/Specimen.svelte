@@ -428,7 +428,7 @@
         </SpecimenBlock>
         <SpecimenBlock title="Settings pane" column>
           <Card padding="none"><SettingsPane title="Notifications"><NotificationSettings /></SettingsPane></Card>
-          <Card padding="none"><SettingsPane title={catalog[0].name} onback={() => {}}><ConnectorDetail connector={{ ...catalog[0], connected: true, account: 'nora.okafor@gmail.com', lastSync: '2 min ago', items: 412 }} /></SettingsPane></Card>
+          <Card padding="none"><SettingsPane title={catalog[0].name} onback={() => {}}><ConnectorDetail connector={{ ...catalog[0], connected: true, ready: true, account: 'nora.okafor@gmail.com' }} /></SettingsPane></Card>
         </SpecimenBlock>
         <SpecimenBlock title="Dialog and command palette">
           <Button onclick={() => (dialog = true)}>Open dialog</Button>

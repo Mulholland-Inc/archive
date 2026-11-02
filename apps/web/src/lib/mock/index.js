@@ -26,7 +26,7 @@ import { catalog } from './connectors.js';
 export { initials, models, suggestions } from './data.js';
 
 export function mockConnectors() {
-  return catalog.map((c) => ({ ...c, connected: false, account: '', lastSync: '', items: 0 }));
+  return catalog.map((c) => ({ ...c, connected: false, account: '' }));
 }
 
 export const mockIntegrations = () => [];

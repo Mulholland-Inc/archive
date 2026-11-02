@@ -389,7 +389,7 @@ export const onboardingSteps = [
   { id: 'dpa', group: 'Legal', title: 'Sign the data processing agreement', body: 'How we process personal data on your behalf under GDPR.', action: 'Review and sign' },
   { id: 'verify', group: 'Legal', title: 'Verify your business details', body: 'Confirm your legal name, address and VAT number for invoices.', action: 'Verify' },
   { id: 'invite', group: 'Your team', title: 'Invite your team', body: 'Add the people who should read, edit or own this archive.', action: 'Invite' },
-  { id: 'connect', group: 'Your data', title: 'Connect a source', body: 'Bring in files from Google Drive, Dropbox, email or iCloud Photos.', action: 'Connect' },
+  { id: 'connect', group: 'Your data', title: 'Connect a source', body: 'Bring in your Gmail, Google Drive, Notion and more.', action: 'Connect' },
   { id: 'upload', group: 'Your data', title: 'Upload your first files', body: 'Drop in scans, letters, recordings or spreadsheets.', action: 'Upload' },
   { id: 'workflow', group: 'Your data', title: 'Set up a workflow', body: 'Let an agent file, tag or transcribe new items as they arrive.', action: 'Create' },
   { id: 'region', group: 'Your data', title: 'Choose a data region and retention', body: 'Pick where your archive lives and how long deleted items are kept.', action: 'Choose' }
@@ -891,8 +891,7 @@ export function stopRun() {}
 export function resolveRun() {}
 export function steerRun() {}
 
-// Connectors. Those the API has are your real connections, read from /connect, and any it has that the
-// catalog lacks are added to it; the rest are MOCK and kept in this tab.
+// Connectors: only those the API has, with your connections to them, read from /connect.
 
 // Your connected accounts, onto the connectors the API has. Connecting is the provider's consent page, which
 // sends the browser back to the connector here.
@@ -901,54 +900,36 @@ export const connections = resource({
   load: async () => {
     const v = ws();
     const out = await api('/connect', { workspace: v.id });
+    const ids = new Set((out?.connectors ?? []).map((k) => k.id));
+    v.connectors = v.connectors.filter((c) => ids.has(c.id));
     for (const k of out?.connectors ?? []) {
       let c = v.connectors.find((x) => x.id === k.id);
       if (!c) {
-        c = { id: k.id, name: k.name, by: k.name, description: `Use your ${k.name} account`, category: 'Other', scopes: [], lastSync: '', items: 0 };
+        c = { id: k.id, name: k.name, by: k.name, description: `Use your ${k.name} account`, category: 'Other', scopes: [] };
         v.connectors.push(c);
         c = v.connectors.at(-1);
       }
       const mine = out.connections.filter((x) => x.provider === k.id);
-      Object.assign(c, { real: true, ready: k.ready, connections: mine, connected: mine.length > 0, account: mine.map((x) => x.account).join(', '), error: mine.find((x) => x.error)?.error ?? '' });
+      Object.assign(c, { ready: k.ready, connections: mine, connected: mine.length > 0, account: mine.map((x) => x.account).join(', '), error: mine.find((x) => x.error)?.error ?? '' });
     }
+    if (v.connectors.some((c) => c.connected)) completeStep('connect');
   }
 });
 
 export function connect(id) {
   const c = ws().connectors.find((x) => x.id === id);
-  if (!c) return;
-  if (c.real) {
-    if (c.ready) location.assign(`${API}/connect/${encodeURIComponent(id)}?workspace=${encodeURIComponent(app.archive)}`);
-    return;
-  }
-  c.connected = true;
-  c.account = app.user.email;
-  c.lastSync = 'Just now';
-  c.items = 0;
-  completeStep('connect');
+  if (c?.ready) location.assign(`${API}/connect/${encodeURIComponent(id)}?workspace=${encodeURIComponent(app.archive)}`);
 }
 
 export async function disconnect(id) {
   const c = ws().connectors.find((x) => x.id === id);
   if (!c) return;
-  if (c.real) {
-    try {
-      for (const x of c.connections) await call(`/connect/${x.id}`, { method: 'DELETE' });
-    } catch (e) {
-      complain(e, `Couldn’t disconnect ${c.name}`);
-    }
-    return connections.refresh();
+  try {
+    for (const x of c.connections ?? []) await call(`/connect/${x.id}`, { method: 'DELETE' });
+  } catch (e) {
+    complain(e, `Couldn’t disconnect ${c.name}`);
   }
-  c.connected = false;
-  c.account = '';
-  c.lastSync = '';
-}
-
-export function syncConnector(id) {
-  const c = ws().connectors.find((x) => x.id === id);
-  if (!c) return;
-  c.lastSync = 'Just now';
-  c.items += 3;
+  return connections.refresh();
 }
 
 export { initials };
