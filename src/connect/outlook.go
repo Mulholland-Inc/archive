@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"time"
 
 	"golang.org/x/oauth2"
 )
@@ -211,3 +212,63 @@ const (
 	graphAPI    = "https://graph.microsoft.com/v1.0"
 	outlookList = "id,conversationId,subject,from,toRecipients,receivedDateTime,bodyPreview,hasAttachments,isRead,webLink"
 )
+
+// outlookPush is a Graph subscription to every message of the mailbox, me/messages, with a clientState of
+// Archive's own, for 10,020 minutes, under the 10,080 Outlook allows; the first sync a day after renews it with
+// a PATCH, or makes another when Graph no longer has it. Graph checks the URL first by posting a
+// validationToken, which Archive answers as it came, in plain text.
+var outlookPush = &Push{Renew: 6 * 24 * time.Hour,
+	Watch: func(c *Client, h Hook, old []Watch) ([]Watch, error) {
+		until := time.Now().Add(10020 * time.Minute).UTC()
+		for _, o := range old {
+			var s struct {
+				Expiration string `json:"expirationDateTime"`
+			}
+			err := c.Do("PATCH", graphAPI+"/subscriptions/"+url.PathEscape(o.Key), map[string]string{"expirationDateTime": until.Format(time.RFC3339)}, &s)
+			if err == nil {
+				o.Expires = stamp(s.Expiration)
+				return []Watch{o}, nil
+			}
+			if r, ok := err.(*Refusal); !ok || r.Status != http.StatusNotFound {
+				return nil, err
+			}
+		}
+		state := nonce()[:32]
+		var s struct {
+			ID         string `json:"id"`
+			Expiration string `json:"expirationDateTime"`
+		}
+		if err := c.Do("POST", graphAPI+"/subscriptions", map[string]string{"changeType": "created,updated,deleted", "notificationUrl": h.URL(""),
+			"resource": "me/messages", "expirationDateTime": until.Format(time.RFC3339), "clientState": state}, &s); err != nil {
+			return nil, err
+		}
+		return []Watch{{Key: s.ID, Secret: state, Expires: stamp(s.Expiration)}}, nil
+	},
+	Unwatch: func(c *Client, w Watch) error {
+		return c.Do("DELETE", graphAPI+"/subscriptions/"+url.PathEscape(w.Key), nil, nil)
+	},
+	Hear: func(p *Provider, r *http.Request, at string, body []byte, secret func(string) string) (*Heard, error) {
+		if v := r.URL.Query().Get("validationToken"); v != "" {
+			return &Heard{Status: http.StatusOK, Header: http.Header{"Content-Type": {"text/plain; charset=utf-8"}}, Body: v}, nil
+		}
+		var n struct {
+			Value []struct {
+				SubscriptionID string `json:"subscriptionId"`
+				ClientState    string `json:"clientState"`
+			} `json:"value"`
+		}
+		if err := readJSON(body, &n); err != nil {
+			return nil, err
+		}
+		var keys []string
+		for _, v := range n.Value {
+			switch kept := secret(v.SubscriptionID); {
+			case kept == "":
+			case !same(kept, v.ClientState):
+				return nil, forged("subscription %s's clientState", v.SubscriptionID)
+			default:
+				keys = append(keys, v.SubscriptionID)
+			}
+		}
+		return &Heard{Keys: keysOf(keys...)}, nil
+	}}

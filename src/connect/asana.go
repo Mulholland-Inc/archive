@@ -2,6 +2,7 @@ package connect
 
 import (
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -252,4 +253,93 @@ func asanaData(c *Client, path string) (any, error) {
 func asList(v any) []any {
 	l, _ := v.([]any)
 	return l
+}
+
+// asanaPush is a webhook on each project of the account that is not archived, pushing to Archive's URL with a
+// key of the connection's, the project and a nonce, which only Asana learns. Asana creates one only once its
+// handshake, posted to that URL with X-Hook-Secret, is answered with the same header; Archive keeps that secret
+// by the key, and a push after is signed with it: X-Hook-Signature, the hex HMAC-SHA256 of the body. Asana
+// deletes a webhook that fails for a day, so the first sync a week after checks each is still there. A push
+// without events is Asana's heartbeat, and starts nothing.
+var asanaPush = &Push{Renew: 6 * 24 * time.Hour,
+	Watch: func(c *Client, h Hook, old []Watch) ([]Watch, error) {
+		have := map[string]Watch{}
+		for _, o := range old {
+			var w struct {
+				Data struct {
+					Active bool `json:"active"`
+				} `json:"data"`
+			}
+			if err := c.Get(asanaAPI+"/webhooks/"+url.PathEscape(o.Resource)+"?opt_fields=active", &w); err == nil && w.Data.Active {
+				o.Expires = time.Now().Add(7 * 24 * time.Hour)
+				have[asanaProject(o.Key)] = o
+			}
+		}
+		ws, err := asanaAll(c, "/workspaces?opt_fields=name")
+		if err != nil {
+			return nil, err
+		}
+		var out []Watch
+		for _, w := range ws {
+			ps, err := asanaAll(c, "/projects?archived=false&opt_fields=name&workspace="+url.QueryEscape(str(w, "gid")))
+			if err != nil {
+				return nil, err
+			}
+			for _, p := range ps {
+				gid := str(p, "gid")
+				if o, ok := have[gid]; ok {
+					out = append(out, o)
+					continue
+				}
+				key := h.ID + "/" + gid + "/" + nonce()[:16]
+				var made struct {
+					Data struct {
+						GID string `json:"gid"`
+					} `json:"data"`
+				}
+				if err := c.Do("POST", asanaAPI+"/webhooks", map[string]any{"data": map[string]string{"resource": gid, "target": h.URL(key)}}, &made); err != nil {
+					return out, err
+				}
+				out = append(out, Watch{Key: key, Resource: made.Data.GID, Expires: time.Now().Add(7 * 24 * time.Hour)})
+			}
+		}
+		return out, nil
+	},
+	Unwatch: func(c *Client, w Watch) error {
+		return c.Do("DELETE", asanaAPI+"/webhooks/"+url.PathEscape(w.Resource), nil, nil)
+	},
+	Hear: func(p *Provider, r *http.Request, at string, body []byte, secret func(string) string) (*Heard, error) {
+		key := r.URL.Query().Get("k")
+		if s := r.Header.Get("X-Hook-Secret"); s != "" {
+			if key == "" || secret(key) != "" {
+				return nil, forged("a handshake for a webhook that has one")
+			}
+			return &Heard{Status: http.StatusOK, Header: http.Header{"X-Hook-Secret": {s}}, Keep: map[string]string{key: s}}, nil
+		}
+		kept := secret(key)
+		if kept == "" {
+			return &Heard{}, nil
+		}
+		if !same(r.Header.Get("X-Hook-Signature"), hexMAC(kept, string(body))) {
+			return nil, forged("X-Hook-Signature")
+		}
+		var e struct {
+			Events []any `json:"events"`
+		}
+		if err := readJSON(body, &e); err != nil {
+			return nil, err
+		}
+		if len(e.Events) == 0 {
+			return &Heard{}, nil
+		}
+		return &Heard{Keys: []string{key}}, nil
+	}}
+
+// asanaProject is the project of an Asana watch's key, <connection>/<project>/<nonce>.
+func asanaProject(key string) string {
+	parts := strings.Split(key, "/")
+	if len(parts) != 3 {
+		return ""
+	}
+	return parts[1]
 }

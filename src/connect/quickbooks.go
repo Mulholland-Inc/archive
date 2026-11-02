@@ -220,3 +220,43 @@ func qboList(c *Client, entity string, where []string, order string, limit int) 
 	}
 	return []any{}, nil
 }
+
+// quickbooksPush is the Intuit app's webhooks, set up once for each of its environments: its endpoint
+// <API>/push/quickbooks, the entities QuickBooks streams, and its verifier token the hook option of
+// ARCHIVE_QUICKBOOKS. intuit-signature is the base64 HMAC-SHA256 of the body with the verifier token. A push is
+// an array of CloudEvents, each with intuitaccountid, the realmId of the company it is for; one of the format
+// before, { eventNotifications: [{ realmId }] }, is read too.
+var quickbooksPush = &Push{
+	Watch: func(c *Client, h Hook, old []Watch) ([]Watch, error) {
+		return []Watch{{Key: c.Meta["realmId"]}}, nil
+	},
+	Hear: func(p *Provider, r *http.Request, at string, body []byte, secret func(string) string) (*Heard, error) {
+		if p.HookSecret() == "" || !same(r.Header.Get("intuit-signature"), b64MAC(p.HookSecret(), string(body))) {
+			return nil, forged("intuit-signature")
+		}
+		var keys []string
+		if t := strings.TrimSpace(string(body)); strings.HasPrefix(t, "[") {
+			var events []struct {
+				Account string `json:"intuitaccountid"`
+			}
+			if err := readJSON(body, &events); err != nil {
+				return nil, err
+			}
+			for _, e := range events {
+				keys = append(keys, e.Account)
+			}
+		} else {
+			var n struct {
+				Notifications []struct {
+					RealmID string `json:"realmId"`
+				} `json:"eventNotifications"`
+			}
+			if err := readJSON(body, &n); err != nil {
+				return nil, err
+			}
+			for _, e := range n.Notifications {
+				keys = append(keys, e.RealmID)
+			}
+		}
+		return &Heard{Keys: keysOf(keys...)}, nil
+	}}

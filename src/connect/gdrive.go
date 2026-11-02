@@ -3,8 +3,11 @@ package connect
 import (
 	"cmp"
 	"fmt"
+	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/oauth2"
 )
@@ -203,3 +206,47 @@ var driveExports = map[string]string{
 	"application/vnd.google-apps.spreadsheet":  "text/csv",
 	"application/vnd.google-apps.presentation": "text/plain",
 }
+
+// drivePush is changes.watch, a channel of Archive's own id that pushes to Archive with its token, for a week
+// at most; the first sync a day after replaces it, and stops the one before. A push says its channel in
+// X-Goog-Channel-ID and its token in X-Goog-Channel-Token; the sync push of a new channel says nothing changed.
+var drivePush = &Push{Renew: 6 * 24 * time.Hour,
+	Watch: func(c *Client, h Hook, old []Watch) ([]Watch, error) {
+		var t struct {
+			Token string `json:"startPageToken"`
+		}
+		if err := c.Get(driveAPI+"/changes/startPageToken?supportsAllDrives=true", &t); err != nil {
+			return nil, err
+		}
+		id, token := "archive-"+nonce()[:32], nonce()
+		var ch struct {
+			ResourceID string `json:"resourceId"`
+			Expiration string `json:"expiration"`
+		}
+		q := url.Values{"pageToken": {t.Token}, "supportsAllDrives": {"true"}, "includeItemsFromAllDrives": {"true"}}
+		body := map[string]any{"id": id, "type": "web_hook", "address": h.URL(id), "token": token,
+			"expiration": strconv.FormatInt(time.Now().Add(7*24*time.Hour-time.Hour).UnixMilli(), 10)}
+		if err := c.Do("POST", driveAPI+"/changes/watch?"+q.Encode(), body, &ch); err != nil {
+			return nil, err
+		}
+		for _, o := range old {
+			c.Do("POST", driveAPI+"/channels/stop", map[string]string{"id": o.Key, "resourceId": o.Resource}, nil)
+		}
+		return []Watch{{Key: id, Resource: ch.ResourceID, Secret: token, Expires: stamp(ch.Expiration)}}, nil
+	},
+	Unwatch: func(c *Client, w Watch) error {
+		return c.Do("POST", driveAPI+"/channels/stop", map[string]string{"id": w.Key, "resourceId": w.Resource}, nil)
+	},
+	Hear: func(p *Provider, r *http.Request, at string, body []byte, secret func(string) string) (*Heard, error) {
+		id := r.Header.Get("X-Goog-Channel-ID")
+		kept := secret(id)
+		switch {
+		case kept == "":
+			return &Heard{}, nil
+		case !same(kept, r.Header.Get("X-Goog-Channel-Token")):
+			return nil, forged("channel %s's token", id)
+		case r.Header.Get("X-Goog-Resource-State") == "sync":
+			return &Heard{}, nil
+		}
+		return &Heard{Keys: []string{id}}, nil
+	}}

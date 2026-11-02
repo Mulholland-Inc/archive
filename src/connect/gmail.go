@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -320,3 +321,40 @@ func gmailData(s string) []byte {
 	}
 	return b
 }
+
+// gmailPush is users.watch to the Pub/Sub topic ARCHIVE_GMAIL_TOPIC names, which gmail-api-push@
+// system.gserviceaccount.com publishes to and a push subscription delivers to Archive, signed by the tasks
+// account. A watch lasts 7 days, and Google asks that it be renewed daily: the first sync a day after renews it.
+// A push's message is { emailAddress, historyId }, the mailbox it is for.
+var gmailPush = &Push{Env: "ARCHIVE_GMAIL_TOPIC", OIDC: true, Renew: 6 * 24 * time.Hour,
+	Watch: func(c *Client, h Hook, old []Watch) ([]Watch, error) {
+		var w struct {
+			Expiration string `json:"expiration"`
+		}
+		if err := c.Do("POST", gmailAPI+"/watch", map[string]any{"topicName": h.Target}, &w); err != nil {
+			return nil, err
+		}
+		return []Watch{{Key: strings.ToLower(h.Account), Expires: stamp(w.Expiration)}}, nil
+	},
+	Unwatch: func(c *Client, w Watch) error { return c.Do("POST", gmailAPI+"/stop", nil, nil) },
+	Hear: func(p *Provider, r *http.Request, at string, body []byte, secret func(string) string) (*Heard, error) {
+		var env struct {
+			Message struct {
+				Data string `json:"data"`
+			} `json:"message"`
+		}
+		if err := readJSON(body, &env); err != nil {
+			return nil, err
+		}
+		data, err := base64.StdEncoding.DecodeString(env.Message.Data)
+		if err != nil {
+			return nil, fmt.Errorf("a push whose data is not base64: %v", err)
+		}
+		var m struct {
+			EmailAddress string `json:"emailAddress"`
+		}
+		if err := readJSON(data, &m); err != nil {
+			return nil, err
+		}
+		return &Heard{Keys: keysOf(strings.ToLower(m.EmailAddress))}, nil
+	}}

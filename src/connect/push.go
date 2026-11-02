@@ -134,8 +134,6 @@ func readJSON(body []byte, v any) error {
 	return nil
 }
 
-func sha256Sum(b []byte) [32]byte { return sha256.Sum256(b) }
-
 // SealWatch is the secret of watch key of connector id, encrypted and bound to it, to keep.
 func SealWatch(aead cipher.AEAD, id, key, secret string) []byte {
 	return seal(aead, []byte(secret), "watch "+id+" "+key)

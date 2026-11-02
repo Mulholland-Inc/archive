@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/oauth2"
 )
@@ -187,3 +189,45 @@ func githubRepo(s string) string {
 	owner, name, _ := strings.Cut(s, "/")
 	return url.PathEscape(owner) + "/" + url.PathEscape(name)
 }
+
+// githubPush is the GitHub App's webhook, set up once on the app: its URL <API>/push/github, its secret the hook
+// option of ARCHIVE_GITHUB_APP, and its events Issues, Pull request and Repository. A push names the
+// installation it is for, and an account is the installations its token reaches, read again on a sync a day
+// after. X-Hub-Signature-256 is sha256= and the HMAC-SHA256 of the body with the secret, in hex.
+var githubPush = &Push{Renew: 24 * time.Hour,
+	Watch: func(c *Client, h Hook, old []Watch) ([]Watch, error) {
+		var out []Watch
+		for page := 1; ; page++ {
+			var in struct {
+				Installations []struct {
+					ID int64 `json:"id"`
+				} `json:"installations"`
+			}
+			if err := c.Get(fmt.Sprintf("%s/user/installations?per_page=100&page=%d", githubAPI, page), &in); err != nil {
+				return nil, err
+			}
+			for _, i := range in.Installations {
+				out = append(out, Watch{Key: strconv.FormatInt(i.ID, 10), Expires: time.Now().Add(48 * time.Hour)})
+			}
+			if len(in.Installations) < 100 {
+				return out, nil
+			}
+		}
+	},
+	Hear: func(p *Provider, r *http.Request, at string, body []byte, secret func(string) string) (*Heard, error) {
+		if p.HookSecret() == "" || !same(r.Header.Get("X-Hub-Signature-256"), "sha256="+hexMAC(p.HookSecret(), string(body))) {
+			return nil, forged("X-Hub-Signature-256")
+		}
+		var e struct {
+			Installation struct {
+				ID int64 `json:"id"`
+			} `json:"installation"`
+		}
+		if err := readJSON(body, &e); err != nil {
+			return nil, err
+		}
+		if e.Installation.ID == 0 {
+			return &Heard{}, nil
+		}
+		return &Heard{Keys: []string{strconv.FormatInt(e.Installation.ID, 10)}}, nil
+	}}
