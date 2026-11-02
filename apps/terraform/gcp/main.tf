@@ -17,7 +17,7 @@ locals {
     ARCHIVE_SLACK     = ["slack.com", var.slack_client_id, var.slack_client_secret]
     ARCHIVE_GITHUB    = ["github.com", var.github_client_id, var.github_client_secret]
   }
-  optional = merge({ ANTHROPIC_API_KEY = var.anthropic_api_key }, { for k, v in local.signin :
+  optional = merge({ ANTHROPIC_API_KEY = var.anthropic_api_key, TYPESAFE_API_KEY = var.typesafe_api_key }, { for k, v in local.signin :
     k => v[1] != "" && v[2] != "" ? "https://${replace(urlencode(v[1]), "+", "%20")}:${replace(urlencode(v[2]), "+", "%20")}@${v[0]}" : ""
   })
   secrets = merge(local.required, local.optional)
@@ -186,7 +186,70 @@ locals {
   env = {
     ARCHIVE_URL      = local.url
     ARCHIVE_BLOB_URL = "gs://${google_storage_bucket.this.name}"
+    ARCHIVE_BROWSER  = google_cloud_run_v2_service.browser.uri
   }
+}
+
+resource "google_service_account" "browser" {
+  account_id = "archive-browser"
+
+  depends_on = [google_project_service.this]
+}
+
+resource "google_cloud_run_v2_service" "browser" {
+  name                = "archive-browser"
+  location            = var.region
+  ingress             = "INGRESS_TRAFFIC_ALL"
+  deletion_protection = var.deletion_protection
+
+  template {
+    service_account                  = google_service_account.browser.email
+    timeout                          = "3600s"
+    execution_environment            = "EXECUTION_ENVIRONMENT_GEN2"
+    max_instance_request_concurrency = 1
+
+    scaling {
+      min_instance_count = 0
+      max_instance_count = var.browser_max_instances
+    }
+
+    containers {
+      image = "${var.region}-docker.pkg.dev/${var.project}/${google_artifact_registry_repository.ghcr.repository_id}/mulholland-inc/archive:browser-${var.image_tag}"
+
+      ports {
+        container_port = 8080
+      }
+
+      resources {
+        cpu_idle          = true
+        startup_cpu_boost = true
+        limits = {
+          cpu    = "2"
+          memory = "4Gi"
+        }
+      }
+
+      startup_probe {
+        period_seconds    = 1
+        timeout_seconds   = 1
+        failure_threshold = 30
+        tcp_socket {
+          port = 8080
+        }
+      }
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [template[0].containers[0].image, client, client_version]
+  }
+}
+
+resource "google_cloud_run_v2_service_iam_member" "browser" {
+  name     = google_cloud_run_v2_service.browser.name
+  location = var.region
+  role     = "roles/run.invoker"
+  member   = google_service_account.this.member
 }
 
 resource "google_cloud_run_v2_service" "this" {
@@ -276,6 +339,7 @@ resource "google_cloud_run_v2_service" "this" {
     google_secret_manager_secret_iam_member.this,
     google_secret_manager_secret_version.this,
     google_storage_bucket_iam_member.this,
+    google_cloud_run_v2_service_iam_member.browser,
   ]
 }
 
@@ -549,6 +613,21 @@ resource "google_artifact_registry_repository_iam_member" "deploy" {
   repository = google_artifact_registry_repository.ghcr.name
   role       = "roles/artifactregistry.reader"
   member     = google_service_account.deploy[0].member
+}
+
+resource "google_cloud_run_v2_service_iam_member" "deploy_browser" {
+  count    = var.github_repository != "" ? 1 : 0
+  name     = google_cloud_run_v2_service.browser.name
+  location = var.region
+  role     = "roles/run.developer"
+  member   = google_service_account.deploy[0].member
+}
+
+resource "google_service_account_iam_member" "deploy_runs_browser_as" {
+  count              = var.github_repository != "" ? 1 : 0
+  service_account_id = google_service_account.browser.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = google_service_account.deploy[0].member
 }
 
 resource "google_cloud_run_v2_job_iam_member" "deploy" {

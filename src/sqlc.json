@@ -60,6 +60,10 @@
               "go_type": "encoding/json.RawMessage"
             },
             {
+              "column": "archive.revision.statements",
+              "go_type": "encoding/json.RawMessage"
+            },
+            {
               "column": "archive.setting.value",
               "go_type": "encoding/json.RawMessage"
             },

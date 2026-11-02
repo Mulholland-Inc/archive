@@ -1,413 +1,164 @@
 <script>
-  import { setContext } from 'svelte';
-  import { api, devMode, go, passkeyAsked, passkeys, setDevMode, setWorkspace, workspace, Unauthorized } from './api.js';
-  import Button from '#kit/Button.svelte';
-  import Icon from '#kit/Icon.svelte';
-  import Word from '#kit/Word.svelte';
-  import Profile from './ui/Profile.svelte';
-  import Workspaces from './ui/Workspaces.svelte';
-  import Panel from './ui/Panel.svelte';
-  import Connect from './ui/Connect.svelte';
-  import NewArchive from './ui/NewArchive.svelte';
-  import Recorder from './ui/Recorder.svelte';
-  import Journal from './ui/Journal.svelte';
-  import Machine from './ui/Machine.svelte';
-  import Filed from './ui/Filed.svelte';
-  import Bot from './ui/Bot.svelte';
-  import { fullName, look, seedLooks, setLook, settleType, shortName } from './ui/looks.svelte.js';
-  import Library from './Library.svelte';
-  import Keys from './Keys.svelte';
-  import People from './People.svelte';
-  import Heading from './ui/Heading.svelte';
-  import NavItem from './ui/NavItem.svelte';
-  import SignIn from './SignIn.svelte';
-  import Table from './Table.svelte';
-  import View from './View.svelte';
-  import Record from './Record.svelte';
-  import { isTree } from './ui/FamilyTree.svelte';
-  import Files from './Files.svelte';
-  import Workflows from './Workflows.svelte';
-  import Groups from './Groups.svelte';
-  import Passkey from './Passkey.svelte';
-  import Chat from './Chat.svelte';
+  import { Plus, Sun, Moon, Monitor, Settings, Shapes, MessagesSquare, Library, Database, Lock, PanelLeft, FileText, Palette } from '@lucide/svelte';
+  import Shell from './components/Shell.svelte';
+  import AppSidebar from './components/AppSidebar.svelte';
+  import View from './components/View.svelte';
+  import CommandPalette from './components/CommandPalette.svelte';
+  import ContextMenu from './components/ContextMenu.svelte';
+  import Home from './pages/Home.svelte';
+  import Chat from './pages/Chat.svelte';
+  import Chats from './pages/Chats.svelte';
+  import LibraryPage from './pages/Library.svelte';
+  import DatabasePage from './pages/Database.svelte';
+  import Workflows from './pages/Workflows.svelte';
+  import Workflow from './pages/Workflow.svelte';
+  import DatabaseTable from './pages/DatabaseTable.svelte';
+  import AccessPage from './pages/Access.svelte';
+  import AppSettings from './components/AppSettings.svelte';
+  import VaultSettingsDialog from './components/VaultSettingsDialog.svelte';
+  import Specimen from './pages/Specimen.svelte';
+  import Onboarding from './pages/Onboarding.svelte';
+  import { route, go, replace } from './lib/router.svelte.js';
+  import { app, toggleSidebar, closeDrawer } from './lib/app.svelte.js';
+  import { setTheme, toggleTheme } from './lib/theme.svelte.js';
+  import { ws } from './lib/app.svelte.js';
+  import PromptHost from './components/PromptHost.svelte';
+  import HelpDialog from './components/HelpDialog.svelte';
+  import ShareDialog from './components/ShareDialog.svelte';
+  import SignIn from './components/SignIn.svelte';
+  import PasskeyPrompt from './components/PasskeyPrompt.svelte';
+  import Spinner from './components/Spinner.svelte';
+  import { Workflow as WorkflowIcon, Plug, User, Building2, ListChecks, Server, KeyRound, Blocks } from '@lucide/svelte';
+  import { switchVault, openSettings, openVaultSettings, boot } from './lib/app.svelte.js';
 
-  let me = $state(null);
-  let signedOut = $state(false);
-  let asking = $state(false);
-  let tables = $state([]);
-  let views = $state([]);
-  let types = $state({});
-  let catalogued = $state(false);
-  let dev = $state(devMode());
-  let canAdd = $state(false);
-  let connecting = $state(false);
-  let creating = $state(false);
-  let editing = $state(null);
-  let recording = $state(false);
-  let writing = $state(false);
-  let filing = $state(null);
-  let panel = $state(false);
-  let path = $state(location.pathname);
-  let chats = $state([]);
-  let people = $state([]);
-  let filedAccess = $state(null);
-  let generation = $state(0);
-  let open = $state(false);
-  const toggle = () => (open = !open);
+  boot();
 
-  setContext('side', {
-    get open() {
-      return open;
-    },
-    toggle
-  });
+  let last = '/';
 
-  const owner = $derived(me?.role === 'owner');
-  const allGroups = $derived([...new Set(people.flatMap((p) => p.groups ?? []))].sort());
-  setContext('access', {
-    get role() {
-      return me?.role;
-    },
-    get groups() {
-      return owner ? allGroups : (me?.groups ?? []);
-    },
-    get upload() {
-      return filedAccess;
-    },
-    set upload(v) {
-      filedAccess = v;
-    }
-  });
-
-  addEventListener('popstate', () => (path = location.pathname));
   $effect(() => {
-    if (dev && !route.first) go('/files');
+    const [head, a, b] = route.parts;
+    if (head === 'settings') {
+      openSettings(a ?? 'profile', a === 'connectors' ? (b ?? null) : null);
+      replace(last);
+    } else if (head === 'vault') {
+      openVaultSettings(a ?? 'general', a === 'integrations' ? (b ?? null) : null);
+      replace(last);
+    } else if (head === 'connectors') {
+      openSettings('connectors', a ?? null);
+      replace(last);
+    } else {
+      last = route.path;
+    }
   });
-  addEventListener('connect', () => (connecting = true));
-  addEventListener('capture-memory', () => (recording = true));
-  addEventListener('capture-journal', () => (writing = true));
-  addEventListener('click', (e) => {
-    const a = e.target.closest?.('a[href^="/"]');
-    if (!a || a.target || e.metaKey || e.ctrlKey || e.shiftKey || /^\/(api|auth)\//.test(a.getAttribute('href'))) return;
-    e.preventDefault();
-    open = false;
-    if (a.getAttribute('href') === '/') generation++;
-    go(a.getAttribute('href'));
-  });
 
-  const route = $derived.by(() => {
-    const [, first = '', second = ''] = path.split('/').map(decodeURIComponent);
-    return { first, second };
-  });
-  const table = (name) => tables.find((t) => t.name === name);
-  const who = $derived(me ? me.actor.name || me.actor.email : '');
-  const typed = $derived(me?.workspaces?.find((w) => w.id === me.workspace)?.name ?? 'Archive');
-  const kind = $derived(me ? look(me.workspace).type : 'personal');
-  const archive = $derived(shortName(typed, kind));
-  const fullTitle = $derived(fullName(typed, kind));
+  const key = $derived(['library', 'access'].includes(route.parts[0]) ? route.parts[0] : route.parts.slice(0, 2).join('/') || 'home');
 
-  const RECENT = 5;
-  let moreChats = $state(false);
-  const listed = $derived(dev || moreChats ? chats : chats.filter((c, i) => i < RECENT || c.id === route.second));
+  const commands = $derived(!ws() ? [] : [
+    { id: 'new', group: 'Actions', label: 'New chat', icon: Plus, shortcut: '⌘ ⇧ O', run: () => go('/') },
+    { id: 'theme', group: 'Actions', label: 'Toggle light and dark', icon: Palette, run: toggleTheme },
+    { id: 'light', group: 'Actions', label: 'Use light theme', icon: Sun, run: () => setTheme('light'), searchOnly: true },
+    { id: 'dark', group: 'Actions', label: 'Use dark theme', icon: Moon, run: () => setTheme('dark'), searchOnly: true },
+    { id: 'system', group: 'Actions', label: 'Use system theme', icon: Monitor, run: () => setTheme('system'), searchOnly: true },
+    { id: 'sidebar', group: 'Actions', label: 'Toggle sidebar', icon: PanelLeft, shortcut: '⌘ .', run: toggleSidebar },
+    { id: 'p-chats', group: 'Go to', label: 'Chats', icon: MessagesSquare, run: () => go('/chats') },
+    { id: 'p-library', group: 'Go to', label: 'Library', icon: Library, run: () => go('/library') },
+    { id: 'p-database', group: 'Go to', label: 'Database', icon: Database, run: () => go('/database') },
+    { id: 'p-workflows', group: 'Go to', label: 'Workflows', icon: WorkflowIcon, run: () => go('/workflows') },
+    { id: 'p-connectors', group: 'Go to', label: 'Connectors', icon: Plug, run: () => openSettings('connectors') },
+    { id: 'p-access', group: 'Go to', label: 'Access', icon: Lock, run: () => go('/access') },
+    { id: 'p-onboarding', group: 'Go to', label: 'Onboarding', icon: ListChecks, run: () => go('/onboarding') },
+    { id: 'p-vault', group: 'Go to', label: 'Vault settings', icon: Building2, run: () => openVaultSettings() },
+    { id: 'p-server', group: 'Go to', label: 'Server', icon: Server, run: () => openVaultSettings('server'), searchOnly: true },
+    { id: 'p-integrations', group: 'Go to', label: 'Integrations', icon: Blocks, run: () => openVaultSettings('integrations'), searchOnly: true },
+    { id: 'p-keys', group: 'Go to', label: 'Vault API key', icon: KeyRound, run: () => openVaultSettings('api'), searchOnly: true },
+    { id: 'p-my-key', group: 'Go to', label: 'Your API key', icon: KeyRound, run: () => openSettings('api'), searchOnly: true },
+    { id: 'p-settings', group: 'Go to', label: 'Settings', icon: Settings, shortcut: '⌘ ,', run: () => openSettings() },
+    { id: 'p-specimen', group: 'Go to', label: 'Component specimen', icon: Shapes, run: () => go('/specimen') },
+    ...ws().chats.map((c, i) => ({ id: `c-${c.id}`, group: 'Chats', label: c.title, icon: MessagesSquare, meta: c.updated, run: () => go(`/chat/${c.id}`), searchOnly: i >= 6 })),
+    ...ws().library.map((f) => ({ id: `f-${f.id}`, group: 'Files', label: f.name, icon: FileText, meta: f.folder, run: () => go(`/library/${f.id}`), searchOnly: true })),
+    ...ws().schema.map((t) => ({ id: `t-${t.id}`, group: 'Tables', label: t.name, icon: Database, meta: t.rows === null ? '' : `${t.rows.toLocaleString('en-US')} rows`, run: () => go(`/database/${t.id}`), searchOnly: true })),
+    ...ws().members.map((m) => ({ id: `u-${m.id}`, group: 'People', label: m.name, icon: User, meta: m.email, run: () => go(`/access/${m.id}`), searchOnly: true })),
+    ...ws().workflows.map((w) => ({ id: `w-${w.id}`, group: 'Workflows', label: w.name, icon: WorkflowIcon, meta: w.trigger.label, run: () => go(`/workflows/${w.id}`), searchOnly: true })),
+    ...app.vaults.filter((w) => w.id !== app.vault).map((w) => ({ id: `ws-${w.id}`, group: 'Vaults', label: `Switch to ${w.name}`, icon: Building2, run: () => switchVault(w.id), searchOnly: true }))
+  ]);
 
-  async function loadPeople() {
-    try {
-      people = await api('/auth/users');
-    } catch {}
-  }
-
-  async function loadChats() {
-    try {
-      chats = await api('/api/chats');
-    } catch {}
-  }
-
-  function switchTo(id) {
-    setWorkspace(id);
-    location.assign('/');
-  }
-
-  let dropping = $state(false);
-  const carriesFiles = (e) => e.dataTransfer?.types.includes('Files');
-
-  function dragOver(e) {
-    if (dev || !carriesFiles(e)) return;
-    e.preventDefault();
-    dropping = true;
-  }
-
-  function drop(e) {
-    if (dev || !carriesFiles(e)) return;
-    e.preventDefault();
-    dropping = false;
-    if (e.dataTransfer.files.length) keep([...e.dataTransfer.files]);
-  }
-
-  function openArchive() {
-    if (matchMedia('(max-width: 1023px)').matches) panel = true;
-    else go('/');
-  }
-
-  async function keep(files) {
-    const job = { key: Date.now(), files, ids: [], failed: false };
-    filing = job;
-    try {
-      const ids = [];
-      for (const file of files) {
-        const form = new FormData();
-        form.append('file', file);
-        ids.push((await api(`/api/files${filedAccess ? `?access=${encodeURIComponent(filedAccess)}` : ''}`, { method: 'POST', raw: form })).id);
-      }
-      filing = { ...job, ids };
-    } catch {
-      filing = { ...job, failed: true };
+  function onkeydown(event) {
+    if (event.key === 'Escape' && app.drawer && !document.querySelector('dialog[open], :popover-open')) {
+      closeDrawer();
+      return;
+    }
+    const mod = event.metaKey || event.ctrlKey;
+    if (!mod) return;
+    const k = event.key.toLowerCase();
+    if (k === 'k') {
+      event.preventDefault();
+      app.palette = !app.palette;
+    } else if (k === '.') {
+      event.preventDefault();
+      toggleSidebar();
+    } else if (k === ',') {
+      event.preventDefault();
+      if (!app.settings.open) openSettings();
+    } else if (k === 'o' && event.shiftKey) {
+      event.preventDefault();
+      go('/');
     }
   }
-
-  async function saveArchive(name, details) {
-    if (name !== editing.name) {
-      await api('/auth/workspace', { method: 'PATCH', body: { name } });
-      me = await api('/auth/me');
-    }
-    setLook(me.workspace, details);
-    editing = null;
-  }
-
-  async function addArchive(name, details) {
-    const w = await api('/auth/workspaces', { method: 'POST', body: { name, owner: me.actor.email }, workspace: me.workspaces[0].id });
-    setLook(w.id, details);
-    switchTo(w.id);
-  }
-
-  function toggleDev() {
-    dev = !dev;
-    setDevMode(dev);
-  }
-
-  const named = new URLSearchParams(location.search).get('workspace');
-  if (named) {
-    setWorkspace(named);
-    history.replaceState(null, '', location.pathname);
-  }
-
-  async function load() {
-    try {
-      me = await api('/auth/me');
-      if (me.workspace !== workspace()) setWorkspace(me.workspace);
-      asking = passkeys && !passkeyAsked(me.actor.user_id);
-      loadChats();
-      loadPeople();
-      const cat = await api('/api/types');
-      const all = Object.values(cat.tables).filter((t) => t.schema === 'public').sort((a, b) => a.name.localeCompare(b.name));
-      types = cat.types;
-      tables = all.filter((t) => t.kind === 'table');
-      views = all.filter((t) => t.kind === 'view');
-      if (views.some(isTree)) settleType(me.workspace, 'family');
-      catalogued = true;
-      if (me.workspaces?.length) api('/auth/workspaces', { workspace: me.workspaces[0].id }).then(() => (canAdd = true)).catch(() => {});
-    } catch (e) {
-      if (!(e instanceof Unauthorized) && e.status !== 403) throw e;
-      if (workspace() && !(e instanceof Unauthorized)) {
-        setWorkspace('');
-        return load();
-      }
-      signedOut = true;
-    }
-  }
-
-  async function signOut() {
-    await api('/auth/signout', { method: 'POST' });
-    setWorkspace('');
-    location.assign('/');
-  }
-
-  seedLooks();
-  load();
 </script>
 
-{#if signedOut}
+<svelte:window {onkeydown} />
+
+{#if app.status === 'signedOut'}
   <SignIn />
-{:else if me}
-  <div class="shell">
-    {#if open}<button class="scrim" type="button" aria-label="Close sidebar" onclick={toggle}></button>{/if}
-    <aside class:open>
-      <div class="top">
-        <a class="brand" href="/" aria-label="Archive"><Word /></a>
-        <span class="actions">
-          <a class="new" href="/" aria-label="New chat" title="New chat"><Icon name="plus" /></a>
-          <button class="side" type="button" aria-label="Sidebar" aria-expanded={open} onclick={toggle}><Icon name="panel-left" /></button>
-        </span>
-      </div>
-      <Workspaces workspaces={me.workspaces?.length ? me.workspaces : [{ id: me.workspace, name: 'Archive' }]} workspace={me.workspace} latest={chats[0]?.title} onpick={(id) => (id === me.workspace ? go('/') : switchTo(id))} {canAdd} onedit={(w) => (editing = { name: w.name, ...look(w.id) })} onadd={() => (creating = true)} />
-      <nav>
-        {#if dev}
-          <NavItem href="/chat" icon="plus" active={route.first === 'chat' && !route.second}>New chat</NavItem>
-          <NavItem href="/files" icon="folder" active={route.first === 'files'}>Files</NavItem>
-          <NavItem href="/workflows" icon="workflow" active={route.first === 'workflows'}>Workflows</NavItem>
-          <NavItem href="/users" icon="users" active={route.first === 'users'}>Users</NavItem>
-          {#if owner}<NavItem href="/groups" icon="users-round" active={route.first === 'groups'}>Groups</NavItem>{/if}
-          <NavItem href="/keys" icon="key-round" active={route.first === 'keys'}>API keys</NavItem>
-        {:else}
-          <NavItem href="/" icon="message-circle" active={!route.first || route.first === 'chat'}>Chat</NavItem>
-          <NavItem href="/library" icon="library" active={route.first === 'library'}>Library</NavItem>
-          <NavItem href="/users" icon="users" active={route.first === 'users'}>People</NavItem>
-          {#if owner}<NavItem href="/groups" icon="users-round" active={route.first === 'groups'}>Groups</NavItem>{/if}
-        {/if}
-        {#if chats.length}
-          <div class="chats">
-            <hr />
-            {#each listed as c (c.id)}<NavItem plain href="/chat/{c.id}" active={route.first === 'chat' && route.second === c.id}>{c.title || 'Untitled'}</NavItem>{/each}
-            {#if !dev && chats.length > RECENT}
-              <button class="more" type="button" onclick={() => (moreChats = !moreChats)}>{moreChats ? 'Show fewer' : `Show all ${chats.length}`}</button>
-            {/if}
-          </div>
-        {/if}
-        {#if dev && views.length}
-          <hr />
-          {#each views as v (v.name)}
-            <NavItem href="/views/{v.name}" icon={v.icon} active={route.first === 'views' && route.second === v.name}>{v.name.replaceAll('_', ' ')}</NavItem>
-          {/each}
-        {/if}
-        {#if dev && tables.length}
-          <hr />
-          {#each tables as t (t.name)}
-            <NavItem href="/{t.name}" icon={t.icon} active={route.first === t.name}>{t.name.replaceAll('_', ' ')}</NavItem>
-          {/each}
-        {/if}
-      </nav>
-      <footer>
-        <Profile name={who} {dev} ondev={toggleDev} onsignout={signOut} />
-        <button class="apps" type="button" aria-label="Connect apps" title="Connect apps" onclick={() => (connecting = true)}><Icon name="grid-2x2-plus" /></button>
-      </footer>
-    </aside>
-    <div class="stage">
-    <main class:asking>
-      {#if catalogued && (!route.first || route.first === 'chat')}
-        <button class="now" type="button" aria-label="{archive} archive" onclick={openArchive}><Bot seed={me.workspace} size={24} /><span>{archive}</span></button>
-      {/if}
-      {#key generation}
-      {#if !route.first || route.first === 'chat'}
-        {#if catalogued}
-          <Chat id={route.second} name={me.actor.name} email={me.actor.email} family={fullTitle} short={kind === 'personal' ? '' : archive} seed={me.workspace} tint={look(me.workspace).tint} kind={kind} onfiles={keep} onsaved={loadChats} />
-        {/if}
-      {:else if route.first === 'keys'}
-        <Keys />
-      {:else if route.first === 'library'}
-        {#if catalogued}<Library {views} {tables} />{/if}
-      {:else if route.first === 'files'}
-        <Files />
-      {:else if route.first === 'workflows'}
+{:else if app.status !== 'ready' || !ws()}
+  <div class="boot" aria-label="Loading"><Spinner /></div>
+{:else}
+<Shell>
+  {#snippet sidebar()}<AppSidebar />{/snippet}
+  {#key key}
+    <View>
+      {#if route.parts[0] === 'chat'}
+        <Chat id={route.parts[1]} />
+      {:else if route.parts[0] === 'chats'}
+        <Chats />
+      {:else if route.parts[0] === 'library'}
+        <LibraryPage />
+      {:else if route.parts[0] === 'database' && route.parts[1]}
+        <DatabaseTable id={route.parts[1]} />
+      {:else if route.parts[0] === 'database'}
+        <DatabasePage />
+      {:else if route.parts[0] === 'workflows' && route.parts[1]}
+        <Workflow id={route.parts[1]} />
+      {:else if route.parts[0] === 'workflows'}
         <Workflows />
-      {:else if route.first === 'users'}
-        <People email={me.actor.email} {owner} {people} onchange={(p) => (people = p)} />
-      {:else if route.first === 'groups'}
-        <Groups {owner} {people} onchange={(p) => (people = p)} />
-      {:else if route.first === 'views'}
-        {@const v = views.find((x) => x.name === route.second)}
-        {#if v}
-          {#key v.name}
-            <View view={v} {types} />
-          {/key}
-        {/if}
-      {:else if table(route.first) && route.second}
-        {#key path}
-          <Record table={table(route.first)} id={route.second} tree={route.first === 'person' ? views.find(isTree) : null} />
-        {/key}
-      {:else if table(route.first)}
-        {#key route.first}
-          <Table table={table(route.first)} />
-        {/key}
+      {:else if route.parts[0] === 'access'}
+        <AccessPage />
+      {:else if route.parts[0] === 'onboarding'}
+        <Onboarding />
+      {:else if route.parts[0] === 'specimen'}
+        <Specimen />
       {:else}
-        <Heading plain title="Not here" />
+        <Home />
       {/if}
-      {/key}
-      {#if asking}<Passkey user={me.actor.user_id} ondone={() => (asking = false)} />{/if}
-      {#if recording}<Recorder tint={look(me.workspace).tint} {kind} onsave={(f) => keep([f])} onclose={() => (recording = false)} />{/if}
-    </main>
-    {#if catalogued && !dev && (!route.first || route.first === 'chat')}
-      {#key generation}<Panel name={archive} seed={me.workspace} {views} open={panel} onclose={() => (panel = false)} />{/key}
-    {/if}
-    </div>
-  </div>
-  {#if catalogued}<Machine name={archive} seed={me.workspace} />{/if}
-  {#if writing}<Journal seed={me.workspace} type={kind} onsave={(f) => keep([f])} onclose={() => (writing = false)} />{/if}
-  {#if filing}{#key filing.key}<Filed seed={me.workspace} files={filing.files} ids={filing.ids} failed={filing.failed} onclose={() => (filing = null)} />{/key}{/if}
-  {#if creating}<NewArchive oncreate={addArchive} onclose={() => (creating = false)} />{/if}
-  {#if editing}<NewArchive archive={editing} oncreate={saveArchive} onclose={() => (editing = null)} />{/if}
-  {#if connecting}<Connect workspace={me.workspace} onclose={() => (connecting = false)} />{/if}
+    </View>
+  {/key}
+</Shell>
+
+<CommandPalette bind:open={app.palette} {commands} />
+<AppSettings />
+<VaultSettingsDialog />
+<PromptHost />
+<HelpDialog bind:open={app.help} />
+<ShareDialog />
+<ContextMenu />
+{#if app.askPasskey}<PasskeyPrompt />{/if}
 {/if}
 
-<svelte:window ondragover={dragOver} ondragleave={(e) => !e.relatedTarget && (dropping = false)} ondrop={drop} />
-
-{#if dropping}<div class="dropping" aria-hidden="true"><p>Drop to add to {fullTitle}</p></div>{/if}
-
 <style>
-  .shell {
+  .boot {
     display: grid;
-    grid-template-columns: var(--app-columns);
-    grid-template-rows: minmax(0, 1fr);
-    gap: var(--frame);
-    min-height: calc(100svh - 2 * var(--frame) - env(safe-area-inset-top));
+    place-items: center;
+    min-height: 100dvh;
+    color: var(--color-text-tertiary);
   }
-  aside {
-    position: var(--side-position);
-    top: var(--side-top);
-    bottom: var(--side-bottom);
-    left: 0;
-    z-index: var(--z-nav);
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    align-self: var(--side-align);
-    width: var(--sidebar-width);
-    min-width: 0;
-    height: var(--side-height);
-    padding: var(--side-pad-top) var(--side-pad) var(--side-pad-bottom);
-    background: var(--bg);
-    visibility: var(--side-visibility);
-    transform: var(--side-closed);
-    transition: transform var(--duration-normal) var(--ease-out), visibility var(--duration-normal);
-  }
-  aside.open { visibility: visible; transform: none; }
-  .scrim { display: var(--narrow-only); position: fixed; inset: 0; z-index: var(--z-nav); background: var(--scrim); animation: fade var(--duration-normal) var(--ease-out) both; }
-  .top { display: flex; flex: none; align-items: center; justify-content: space-between; }
-  .side { display: var(--narrow-only); flex: none; align-items: center; justify-content: center; width: var(--size-control-lg); height: var(--size-control-lg); color: var(--fg-muted); transition: color var(--duration-fast); }
-  .side :global(.icon) { width: var(--size-icon-lg); height: var(--size-icon-lg); }
-  .side:hover { color: var(--fg); }
-  .apps { display: grid; place-items: center; flex: none; width: var(--size-control); height: var(--size-control); border-radius: var(--radius-full); background: var(--fill-faint); color: var(--fg-soft); transition: color var(--duration-fast), background var(--duration-fast); }
-  .apps:hover { background: var(--fill); color: var(--fg); }
-  .actions { display: flex; align-items: center; gap: var(--space-1); }
-  .new { display: grid; place-items: center; width: var(--size-control-lg); height: var(--size-control-lg); border-radius: var(--radius-full); color: var(--fg-muted); transition: color var(--duration-fast), background var(--duration-fast); }
-  .new:hover { background: var(--fill-faint); color: var(--fg); }
-  .phone { display: var(--narrow-only); flex-direction: column; flex: none; gap: var(--space-0-5); }
-  .stage { display: flex; min-width: 0; }
-  .now { position: absolute; top: var(--space-3); left: 50%; z-index: calc(var(--z-raised) + 1); display: flex; align-items: center; gap: var(--space-1-5); padding: var(--space-1) var(--space-3) var(--space-1) var(--space-1); transform: translateX(-50%); border-radius: var(--radius-full); background: var(--surface); white-space: nowrap; }
-  main { position: relative; }
-  .now span:last-child { overflow: hidden; font-weight: var(--weight-medium); text-overflow: ellipsis; white-space: nowrap; }
-  @media (max-width: 767px) { .now { left: 52px; max-width: calc(100vw - 196px); transform: none; } }
-  .stage main { flex: 1; }
-  .chats { display: flex; flex: none; flex-direction: column; gap: var(--space-0-5); }
-  .dropping { position: fixed; inset: var(--space-2); z-index: calc(var(--z-nav) + 3); display: grid; place-items: center; border: 2px dashed var(--primary); border-radius: var(--radius-panel); background: color-mix(in srgb, var(--bg) 82%, transparent); pointer-events: none; }
-  .dropping p { font: var(--weight-medium) var(--text-lg) / var(--leading-tight) var(--font-serif); }
-  .more { padding: var(--space-1) var(--space-2); color: var(--fg-muted); font-size: var(--text-meta); text-align: left; }
-  .more:hover { color: var(--fg); }
-  .brand { display: flex; flex: none; align-items: center; min-height: var(--size-control-lg); padding: var(--item-pad); color: var(--fg); }
-  .brand :global(.word) { height: var(--text-lg); width: auto; fill: currentColor; }
-  nav {
-    display: flex;
-    flex: 1;
-    flex-direction: column;
-    gap: var(--space-0-5);
-    min-width: 0;
-    min-height: 0;
-    overflow: auto;
-    overscroll-behavior-y: none;
-  }
-  hr { flex: none; align-self: stretch; min-width: var(--hairline); min-height: var(--hairline); margin: var(--space-2); border: 0; }
-  footer { display: flex; flex: none; align-items: center; gap: var(--space-1); }
-  main { display: flex; flex-direction: column; min-width: 0; height: var(--main-height); }
-  main.asking { --dock-lift: var(--prompt-lift); }
-  main > :global(header) { position: sticky; top: 0; z-index: var(--z-raised); padding: var(--header-pad) var(--header-inset); background: var(--bg); }
-  @keyframes fade { from { opacity: 0; } }
-  @media (prefers-reduced-motion: reduce) { .scrim { animation: none; } }
 </style>

@@ -110,7 +110,7 @@ func workflowTrigger(src string) (string, error) {
 	return on, nil
 }
 
-func (a *Archive) workflowParse(on string) (workflowOn, error) {
+func (a *Archive) workflowParse(ctx context.Context, on string) (workflowOn, error) {
 	word, rest, _ := strings.Cut(on, " ")
 	switch strings.ToLower(word) {
 	case "":
@@ -130,7 +130,7 @@ func (a *Archive) workflowParse(on string) (workflowOn, error) {
 		}
 		return workflowOn{kind: "cron", sched: s}, nil
 	}
-	cat := a.Catalog()
+	cat := a.catalog(ctx)
 	var tables []string
 	for _, n := range cat.names() {
 		if cat.Tables[n].Kind != "view" {
@@ -151,7 +151,7 @@ func (a *Archive) workflowParse(on string) (workflowOn, error) {
 	return workflowOn{kind: "table", table: tb}, nil
 }
 
-func (a *Archive) workflowCheck(name, src string) (string, workflowOn, error) {
+func (a *Archive) workflowCheck(ctx context.Context, name, src string) (string, workflowOn, error) {
 	if !workflowNameRe.MatchString(name) {
 		return "", workflowOn{}, errors.New("the name must be letters, digits, - and _, ending in .ts, like overdue-invoices.ts")
 	}
@@ -165,13 +165,13 @@ func (a *Archive) workflowCheck(name, src string) (string, workflowOn, error) {
 	if _, err := runCompile(src); err != nil {
 		return "", workflowOn{}, err
 	}
-	w, err := a.workflowParse(on)
+	w, err := a.workflowParse(ctx, on)
 	return on, w, err
 }
 
-func (a *Archive) workflowOut(w generated.ArchiveWorkflow) Workflow {
+func (a *Archive) workflowOut(ctx context.Context, w generated.ArchiveWorkflow) Workflow {
 	out := Workflow{Name: w.Name, On: w.Trigger}
-	if on, err := a.workflowParse(w.Trigger); err == nil {
+	if on, err := a.workflowParse(ctx, w.Trigger); err == nil {
 		switch on.kind {
 		case "cron":
 			out.Next = workflowUTC(w.NextAt)
@@ -195,7 +195,7 @@ func (a *Archive) Deploy(ctx context.Context, files map[string]string) (*Workflo
 	ok := map[string]checked{}
 	res := &WorkflowDeploy{}
 	for _, n := range names {
-		on, w, err := a.workflowCheck(n, files[n])
+		on, w, err := a.workflowCheck(ctx, n, files[n])
 		if err != nil {
 			res.Errors = append(res.Errors, WorkflowError{File: n, Message: err.Error()})
 			continue
@@ -228,7 +228,7 @@ func (a *Archive) Deploy(ctx context.Context, files map[string]string) (*Workflo
 			if err != nil {
 				return err
 			}
-			res.Workflows = append(res.Workflows, a.workflowOut(w))
+			res.Workflows = append(res.Workflows, a.workflowOut(ctx, w))
 		}
 		return nil
 	})
@@ -289,7 +289,7 @@ func (a *Archive) Workflows(ctx context.Context) ([]Workflow, error) {
 			return err
 		}
 		for _, w := range ws {
-			o := a.workflowOut(w)
+			o := a.workflowOut(ctx, w)
 			if i := slices.IndexFunc(last, func(r generated.ArchiveWorkflowRun) bool { return r.Workflow == w.ID }); i >= 0 {
 				r := workflowRunOf(last[i])
 				r.Result, r.Logs = nil, nil
@@ -445,7 +445,7 @@ func (a *Archive) RunWorkflow(ctx context.Context, name string) (WorkflowRun, er
 func (a *Archive) workflowNext(ctx context.Context) (bool, error) {
 	var w generated.ArchiveWorkflow
 	err := a.sys(ctx, func(ctx context.Context) (err error) {
-		w, err = a.st.db(ctx).ClaimWorkflow(ctx, time.Now().Add(runTimeout+workflowRetry))
+		w, err = a.st.db(ctx).ClaimWorkflow(ctx, time.Now().Add(runTimeout+browseTimeout+workflowRetry))
 		return err
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -455,7 +455,7 @@ func (a *Archive) workflowNext(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	a.refresh(ctx)
-	on, perr := a.workflowParse(w.Trigger)
+	on, perr := a.workflowParse(ctx, w.Trigger)
 	var next *time.Time
 	switch {
 	case perr != nil:
@@ -665,7 +665,7 @@ func (r *runner) workflowSDK(o *goja.Object) {
 			src = w.Source
 		} else if on, err := workflowTrigger(src); err != nil {
 			return &RunOutput{Result: json.RawMessage("null"), Logs: []string{}, Error: err.Error()}, nil
-		} else if _, err := a.workflowParse(on); err != nil {
+		} else if _, err := a.workflowParse(ctx, on); err != nil {
 			return &RunOutput{Result: json.RawMessage("null"), Logs: []string{}, Error: err.Error()}, nil
 		}
 		return r.nested(ctx, src, in, false)

@@ -1,0 +1,265 @@
+:root {
+  --font-prose: var(--font-sans);
+  --text-prose: var(--text-md);
+  --text-prose-heading: var(--text-md);
+  --text-prose-quote: var(--text-base);
+  --text-code: var(--text-xs);
+  --leading-prose: var(--leading-relaxed);
+  --space-prose: var(--space-3);
+}
+
+:root[data-chat-font='serif'] {
+  --font-prose: var(--font-serif);
+  --text-prose: var(--text-base);
+  --text-prose-quote: var(--text-base);
+  --leading-prose: var(--leading-normal);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  overscroll-behavior: none;
+  scrollbar-width: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  tab-size: 4;
+  interpolate-size: allow-keywords;
+}
+
+html,
+body,
+#app {
+  height: var(--viewport-height, 100%);
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
+  letter-spacing: var(--tracking-snug);
+  font-feature-settings: 'cv11', 'ss01';
+  overflow: hidden;
+  transition:
+    background-color var(--duration-normal) var(--ease-out),
+    color var(--duration-normal) var(--ease-out);
+}
+
+::selection {
+  background: var(--color-selection);
+  color: var(--color-on-selection);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+  background: none;
+  border: 0;
+}
+
+button {
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:disabled {
+  cursor: default;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+img,
+svg,
+video {
+  display: block;
+  max-width: 100%;
+}
+
+ul,
+ol {
+  list-style-type: none;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+table {
+  border-collapse: collapse;
+  border-spacing: 0;
+}
+
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: var(--focus-width) solid var(--color-focus);
+  outline-offset: var(--focus-offset);
+}
+
+[popover] {
+  margin: 0;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: inherit;
+  overflow: visible;
+}
+
+dialog {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: inherit;
+  max-width: none;
+  max-height: none;
+}
+
+dialog::backdrop {
+  background: transparent;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.floating {
+  position: fixed;
+  inset: auto;
+  position-try-fallbacks: flip-block, flip-inline;
+  opacity: 0;
+  transform: translateY(calc(var(--shift-sm) * -1)) scale(var(--scale-enter));
+  transform-origin: top left;
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out),
+    overlay var(--duration-fast) var(--ease-out) allow-discrete,
+    display var(--duration-fast) var(--ease-out) allow-discrete;
+}
+
+[popover]:not(:popover-open),
+dialog:not([open]) {
+  display: none !important;
+}
+
+.floating:popover-open {
+  opacity: 1;
+  transform: none;
+}
+
+@starting-style {
+  .floating:popover-open {
+    opacity: 0;
+    transform: translateY(calc(var(--shift-sm) * -1)) scale(var(--scale-enter));
+  }
+}
+
+.floating[data-placement='bottom-start'] {
+  position-area: bottom span-right;
+  margin-block: var(--space-1);
+}
+
+.floating[data-placement='bottom-end'] {
+  position-area: bottom span-left;
+  margin-block: var(--space-1);
+  transform-origin: top right;
+}
+
+.floating[data-placement='bottom'] {
+  position-area: bottom;
+  margin-block: var(--space-1);
+  transform-origin: top center;
+}
+
+.floating[data-placement='top-start'] {
+  position-area: top span-right;
+  margin-block: var(--space-1);
+  transform-origin: bottom left;
+}
+
+.floating[data-placement='top-end'] {
+  position-area: top span-left;
+  margin-block: var(--space-1);
+  transform-origin: bottom right;
+}
+
+.floating[data-placement='top'] {
+  position-area: top;
+  margin-block: var(--space-1-5);
+  transform-origin: bottom center;
+}
+
+.floating[data-placement='right-start'] {
+  position-area: right span-bottom;
+  margin-inline: var(--space-1);
+}
+
+.floating[data-placement='right'] {
+  position-area: right;
+  margin-inline: var(--space-1-5);
+  transform-origin: center left;
+}
+
+.floating[data-placement='left'] {
+  position-area: left;
+  margin-inline: var(--space-1-5);
+  transform-origin: center right;
+}
+
+.floating[data-match] {
+  min-width: anchor-size(width);
+}
+
+@supports not (position-area: bottom) {
+  .floating {
+    inset: 0;
+    margin: auto;
+    height: fit-content;
+    width: fit-content;
+  }
+}
+
+/* Phones zoom the page in on any field under 16px when it gets focus. */
+@media (hover: none) and (pointer: coarse) {
+  input,
+  textarea,
+  select,
+  [contenteditable] {
+    font-size: max(1rem, 16px) !important;
+  }
+}

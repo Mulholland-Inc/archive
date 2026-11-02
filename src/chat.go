@@ -183,7 +183,7 @@ func (a *Archive) chat(w http.ResponseWriter, r *http.Request) {
 		httpWrite(w, 0, nil, err)
 		return
 	}
-	ctx := r.Context()
+	ctx := context.WithValue(r.Context(), schemaTurnKey{}, uuid.NewString())
 	ac := ActorFrom(ctx)
 	text := strings.TrimSpace(body.Text)
 	var c *Chat

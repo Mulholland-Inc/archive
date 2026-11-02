@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/cipher"
@@ -20,7 +21,6 @@ import (
 	"sync"
 	"time"
 
-	taskspb "cloud.google.com/go/cloudtasks/apiv2/cloudtaskspb"
 	"github.com/Mulholland-Inc/archive/generated"
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/google/uuid"
@@ -29,13 +29,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type Hub struct {
@@ -64,10 +57,27 @@ type hubEntry struct {
 
 type hubTasks struct {
 	queue, account, issuer string
-	client                 taskspb.CloudTasksClient
+	base                   string
+	meta                   *gcpToken
 
 	mu     sync.Mutex
 	verify *oidc.IDTokenVerifier
+}
+
+// hubTask is a Cloud Tasks task as its REST API takes it.
+type hubTask struct {
+	Name         string    `json:"name"`
+	ScheduleTime time.Time `json:"scheduleTime"`
+	HTTPRequest  struct {
+		HTTPMethod string            `json:"httpMethod"`
+		URL        string            `json:"url"`
+		Headers    map[string]string `json:"headers"`
+		Body       []byte            `json:"body"`
+		OIDCToken  struct {
+			ServiceAccountEmail string `json:"serviceAccountEmail"`
+			Audience            string `json:"audience"`
+		} `json:"oidcToken"`
+	} `json:"httpRequest"`
 }
 
 type gcpToken struct {
@@ -415,19 +425,10 @@ func hubTasksOpen() (*hubTasks, error) {
 		return nil, fmt.Errorf("cloud tasks queue %q: want projects/<p>/locations/<r>/queues/<q>", queue)
 	}
 	t := &hubTasks{queue: queue, account: p[5] + "-tasks@" + p[1] + ".iam.gserviceaccount.com", issuer: coreEnv("ARCHIVE_TASKS_ISSUER", "https://accounts.google.com")}
-	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
-	host := u.Host
+	t.base = u.Scheme + "://" + u.Host
 	if u.Scheme == "https" {
-		if u.Port() == "" {
-			host += ":443"
-		}
-		opts = []grpc.DialOption{grpc.WithTransportCredentials(credentials.NewTLS(nil)), grpc.WithPerRPCCredentials(meta)}
+		t.meta = meta
 	}
-	c, err := grpc.NewClient(host, opts...)
-	if err != nil {
-		return nil, fmt.Errorf("ARCHIVE_TASKS_URL: %w", err)
-	}
-	t.client = taskspb.NewCloudTasksClient(c)
 	return t, nil
 }
 
@@ -447,19 +448,36 @@ func (h *Hub) wake(ctx context.Context, ws uuid.UUID, kind string, at time.Time)
 	url := h.api + "/tasks"
 	body, _ := json.Marshal(map[string]string{"workspace": ws.String(), "work": kind + "s"})
 	sum := sha256.Sum256(fmt.Appendf(nil, "%s/%s/%d", ws, kind, at.UnixMilli()))
-	ctx, cancel := context.WithTimeout(metadata.AppendToOutgoingContext(ctx, "x-goog-request-params", "parent="+t.queue), 10*time.Second)
+	var tk hubTask
+	tk.Name, tk.ScheduleTime = t.queue+"/tasks/"+hex.EncodeToString(sum[:]), at.UTC()
+	r := &tk.HTTPRequest
+	r.HTTPMethod, r.URL, r.Headers, r.Body = "POST", url, map[string]string{"Content-Type": "application/json"}, body
+	r.OIDCToken.ServiceAccountEmail, r.OIDCToken.Audience = t.account, url
+	b, _ := json.Marshal(map[string]any{"task": tk})
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	_, err := t.client.CreateTask(ctx, &taskspb.CreateTaskRequest{Parent: t.queue, Task: &taskspb.Task{
-		Name:         t.queue + "/tasks/" + hex.EncodeToString(sum[:]),
-		ScheduleTime: timestamppb.New(at),
-		MessageType: &taskspb.Task_HttpRequest{HttpRequest: &taskspb.HttpRequest{HttpMethod: taskspb.HttpMethod_POST, Url: url,
-			Headers: map[string]string{"Content-Type": "application/json"}, Body: body,
-			AuthorizationHeader: &taskspb.HttpRequest_OidcToken{OidcToken: &taskspb.OidcToken{ServiceAccountEmail: t.account, Audience: url}}}},
-	}})
-	if err != nil && status.Code(err) != codes.AlreadyExists {
+	req, _ := http.NewRequestWithContext(ctx, "POST", t.base+"/v2/"+t.queue+"/tasks", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	if t.meta != nil {
+		tok, err := t.meta.access(ctx)
+		if err != nil {
+			return fmt.Errorf("cloud tasks: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	resp, err := hubHTTP.Do(req)
+	if err != nil {
 		return fmt.Errorf("cloud tasks: %w", err)
 	}
-	return nil
+	defer resp.Body.Close()
+	if resp.StatusCode/100 == 2 || resp.StatusCode == http.StatusConflict {
+		return nil
+	}
+	var e struct {
+		Error struct{ Message string } `json:"error"`
+	}
+	json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&e)
+	return fmt.Errorf("cloud tasks: %s", cmp.Or(e.Error.Message, resp.Status))
 }
 
 func (t *gcpToken) queue(ctx context.Context) (string, error) {
@@ -489,16 +507,6 @@ func (t *gcpToken) get(ctx context.Context, path string) (string, error) {
 	}
 	return "", fmt.Errorf("metadata server: no %s (%s)", path, resp.Status)
 }
-
-func (t *gcpToken) GetRequestMetadata(ctx context.Context, _ ...string) (map[string]string, error) {
-	tok, err := t.access(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]string{"authorization": "Bearer " + tok}, nil
-}
-
-func (t *gcpToken) RequireTransportSecurity() bool { return true }
 
 var hubHTTP = &http.Client{Timeout: 10 * time.Second}
 
@@ -588,7 +596,11 @@ func (h *Hub) tasksHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *Hub) work(ctx context.Context, ws uuid.UUID, kind string) error {
 	q := h.q()
-	at, err := q.ClaimDueFor(ctx, time.Now().Add(runTimeout+workflowRetry), ws, kind)
+	lease := runTimeout + workflowRetry
+	if kind == "workflow" {
+		lease += browseTimeout
+	}
+	at, err := q.ClaimDueFor(ctx, time.Now().Add(lease), ws, kind)
 	if err == nil {
 		return h.due(ctx, ws, kind, at)
 	}

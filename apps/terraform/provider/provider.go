@@ -29,7 +29,7 @@ func (p *archiveProvider) Metadata(_ context.Context, _ provider.MetadataRequest
 
 func (p *archiveProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manage what lives inside an Archive instance: its schema (tables and views), members and tokens.",
+		Description: "Manage what lives inside an Archive instance: its tables and views (as migrations), members and tokens.",
 		Attributes: map[string]schema.Attribute{
 			"endpoint": schema.StringAttribute{Optional: true, Description: "Base URL of the Archive API, like https://api.example.com. Defaults to ARCHIVE_URL, the web app's URL, with app. made api., so https://app.example.com calls https://api.example.com."},
 			"token":    schema.StringAttribute{Optional: true, Sensitive: true, Description: "Archive token. Defaults to ARCHIVE_TOKEN. Changing the schema and the members needs an owner's token that is not viewer-only; managing tokens needs a token that is not viewer-only."},
@@ -61,7 +61,7 @@ func (p *archiveProvider) Configure(ctx context.Context, req provider.ConfigureR
 
 func (p *archiveProvider) Resources(context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
-		func() resource.Resource { return &schemaResource{} },
+		func() resource.Resource { return &migrationResource{} },
 		func() resource.Resource { return &tokenResource{} },
 		func() resource.Resource { return &memberResource{} },
 	}

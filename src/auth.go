@@ -1082,7 +1082,7 @@ func (a *Archive) secretOpen(id uuid.UUID, typ string, ct []byte) ([]byte, error
 
 func (a *Archive) secretsPut(ctx context.Context, tb *Table, row map[string]any, seal map[string]any) error {
 	id, access := coreRowID(row), coreAccess(row["access"])
-	cat := a.Catalog()
+	cat := a.catalog(ctx)
 	for _, col := range specKeys(seal) {
 		q := a.st.db(ctx)
 		if err := q.ClearSecrets(ctx, tb.Name, id, &col); err != nil {

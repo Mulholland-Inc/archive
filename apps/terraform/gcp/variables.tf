@@ -22,7 +22,7 @@ variable "github_repository" {
 
 variable "image_tag" {
   type        = string
-  description = "Tag of ghcr.io/mulholland-inc/archive to run first; later deploys change the image outside Terraform."
+  description = "Tag of ghcr.io/mulholland-inc/archive to run first, and with a browser- prefix of the archive-browser service; later deploys change the images outside Terraform."
   default     = "latest"
 }
 
@@ -83,6 +83,19 @@ variable "anthropic_api_key" {
   description = "Anthropic API key for the in-app agent (ANTHROPIC_API_KEY), kept in Secret Manager. Empty leaves the agent off."
   default     = ""
   sensitive   = true
+}
+
+variable "typesafe_api_key" {
+  type        = string
+  description = "TypeSafe API key for archive.browse (TYPESAFE_API_KEY), kept in Secret Manager. Empty leaves browse off."
+  default     = ""
+  sensitive   = true
+}
+
+variable "browser_max_instances" {
+  type        = number
+  description = "Most instances of the archive-browser service, which runs one browser per instance at a time for archive.browse."
+  default     = 10
 }
 
 variable "min_instances" {

@@ -1,0 +1,756 @@
+// The app's state. A vault is one Archive workspace: its chats, files, tables, members and workflows come from
+// the API (see live.js for the mapping). What the API cannot do yet comes from mock/ and stays in this tab or
+// in localStorage; mock/index.js lists those pieces.
+
+import { api, blobURL, upload, setWorkspace, workspace, local, setLocal, signOut as apiSignOut, Unauthorized, passkeys, passkeyAsked } from './api.js';
+import { toFile, toChat, toMember, toWorkflow, toRun } from './live.js';
+import { toTables, countsQuery } from './schema.js';
+import { initials, mockConnectors, mockIntegrations, mockKey, mockProfile, mockSettings } from './mock/index.js';
+import { integrationCatalog } from './integrations.js';
+import { defaultLook } from './looks.js';
+import { notify } from './dialogs.svelte.js';
+import { go, route } from './router.svelte.js';
+
+let counter = 0;
+const nid = (prefix) => `${prefix}${Date.now().toString(36)}${(counter++).toString(36)}`;
+
+export const app = $state({
+  status: 'loading',
+  user: { id: '', name: '', first: '', email: '', plan: '', tone: 1 },
+  role: 'viewer',
+  canAdd: false,
+  askPasskey: false,
+  vaults: [],
+  vault: null,
+  collapsed: typeof localStorage !== 'undefined' && localStorage.getItem('archive.sidebar') === 'collapsed',
+  drawer: false,
+  details: false,
+  palette: false,
+  help: false,
+  model: 'pro',
+  pending: null,
+  muted: false,
+  settings: { open: false, section: null, sub: null },
+  vaultSettings: { open: false, section: null, sub: null },
+  integrations: mockIntegrations(),
+  apiKey: mockKey('ak_live_', 'Created today'),
+  vaultKeys: {},
+  share: { open: false, kind: null, target: null },
+  onboarding: [],
+  profile: mockProfile()
+});
+
+const kindOf = (type) => ({ family: 'Family', business: 'Business', personal: 'Just you' })[type] ?? 'Vault';
+
+function lookOf(id) {
+  return local(`archive.look:${id}`, null) ?? defaultLook('family');
+}
+
+function shell(w) {
+  const look = lookOf(w.id);
+  return {
+    id: w.id,
+    name: w.name,
+    kind: kindOf(look.type),
+    tone: (w.id.charCodeAt(w.id.length - 1) % 6) + 1,
+    look,
+    settings: mockSettings(),
+    chats: [],
+    conversations: {},
+    library: [],
+    folders: [],
+    workflows: [],
+    members: [],
+    schema: [],
+    shares: [],
+    connectors: mockConnectors(w.id),
+    loading: true
+  };
+}
+
+export function ws() {
+  return app.vaults.find((w) => w.id === app.vault) ?? app.vaults[0];
+}
+
+export const currentVault = ws;
+
+const call = (path, opts = {}) => api(path, { ...opts, workspace: opts.workspace ?? app.vault });
+
+async function complain(error, title = 'That didn’t work') {
+  if (error instanceof Unauthorized) {
+    app.status = 'signedOut';
+    return;
+  }
+  await notify({ title, body: error?.message ?? String(error) });
+}
+
+// Signing in and loading
+
+export async function boot() {
+  const named = new URLSearchParams(location.search).get('workspace');
+  if (named) {
+    setWorkspace(named);
+    history.replaceState(null, '', location.pathname + location.hash);
+  }
+  let me;
+  try {
+    me = await api('/auth/me');
+  } catch (e) {
+    if (!(e instanceof Unauthorized) && workspace() && e.status === 403) {
+      setWorkspace('');
+      return boot();
+    }
+    if (!(e instanceof Unauthorized)) throw e;
+    app.status = 'signedOut';
+    return;
+  }
+  setMe(me);
+  setWorkspace(me.workspace);
+  const list = me.workspaces?.length ? me.workspaces : [{ id: me.workspace, name: 'Archive' }];
+  app.vaults = list.map(shell);
+  app.vault = me.workspace;
+  app.onboarding = local(`archive.onboarding:${me.workspace}`, []);
+  app.askPasskey = passkeys && !passkeyAsked(me.actor.user_id);
+  app.status = 'ready';
+  loadVault(ws());
+  api('/auth/workspaces', { workspace: list[0].id })
+    .then(() => (app.canAdd = true))
+    .catch(() => (app.canAdd = false));
+}
+
+function setMe(me) {
+  const name = me.actor.name || me.actor.email;
+  app.user = { id: me.actor.user_id, name, first: name.split(/[\s@]+/)[0], email: me.actor.email, plan: me.role.charAt(0).toUpperCase() + me.role.slice(1), tone: 1 };
+  app.role = me.role;
+  Object.assign(app.profile, { name, first: app.user.first });
+}
+
+async function files(id) {
+  const all = [];
+  for (let after = ''; ; ) {
+    const next = await api(`/api/files?limit=500${after ? `&after=${after}` : ''}`, { workspace: id });
+    all.push(...next);
+    if (next.length < 500) break;
+    after = next.at(-1).id;
+  }
+  return all.reverse();
+}
+
+export async function loadVault(v = ws()) {
+  const id = v.id;
+  const pins = new Set(local(`archive.pins:${id}`, []));
+  v.loading = true;
+  const flows = api('/api/workflows', { workspace: id }).then((list) => list ?? []);
+  await Promise.allSettled([
+    api('/api/chats', { workspace: id }).then((list) => {
+      v.chats = (list ?? []).map((c) => toChat(c, pins.has(c.id)));
+    }),
+    files(id).then((list) => {
+      v.library = list.map((f) => toFile(f, v.name));
+      v.folders = [...new Set([...v.library.map((f) => f.folder), ...v.folders])];
+    }),
+    api('/auth/users', { workspace: id }).then((list) => {
+      v.members = (list ?? []).map((p) => toMember(p, { ...app.user, user_id: app.user.id }));
+    }),
+    flows.then((list) => {
+      v.workflows = list.map(toWorkflow);
+    }),
+    loadSchema(v, flows)
+  ]);
+  v.loading = false;
+}
+
+async function loadSchema(v, flows) {
+  const id = v.id;
+  const [catalog, schema, workflows] = await Promise.all([api('/api/types', { workspace: id }), api('/api/schema', { workspace: id }).catch(() => []), flows.catch(() => [])]);
+  v.schema = toTables(catalog, schema, {}, workflows);
+  const sql = countsQuery(catalog);
+  if (!sql) return;
+  try {
+    const rows = await api('/api/run', { method: 'POST', body: { code: `return await archive.query(${JSON.stringify(sql)})` }, workspace: id });
+    if (rows.error) return;
+    const counts = Object.fromEntries((rows.result ?? []).map((r) => [r.name, r]));
+    v.schema = toTables(catalog, schema, counts, workflows);
+  } catch {}
+}
+
+export async function previewTable(table, limit = 5) {
+  if (table.previewed) return;
+  table.previewed = true;
+  try {
+    table.sample = (await call(`/api/${encodeURIComponent(table.id)}?limit=${limit}`)) ?? [];
+  } catch {
+    table.sample = [];
+  }
+}
+
+export async function signOut() {
+  await apiSignOut();
+  app.status = 'signedOut';
+  app.vaults = [];
+  app.vault = null;
+  go('/');
+}
+
+// Settings dialogs
+
+export function openSettings(section = null, sub = null) {
+  app.vaultSettings.open = false;
+  Object.assign(app.settings, { open: true, section, sub });
+}
+
+export function openVaultSettings(section = null, sub = null) {
+  app.settings.open = false;
+  Object.assign(app.vaultSettings, { open: true, section, sub });
+}
+
+// Onboarding (MOCK: no API; kept per vault in localStorage)
+
+export const onboardingSteps = [
+  { id: 'msa', group: 'Legal', title: 'Sign the master services agreement', body: 'The terms for your vault, billing and support.', action: 'Review and sign' },
+  { id: 'dpa', group: 'Legal', title: 'Sign the data processing agreement', body: 'How we process personal data on your behalf under GDPR.', action: 'Review and sign' },
+  { id: 'verify', group: 'Legal', title: 'Verify your business details', body: 'Confirm your legal name, address and VAT number for invoices.', action: 'Verify' },
+  { id: 'invite', group: 'Your team', title: 'Invite your team', body: 'Add the people who should read, edit or own this vault.', action: 'Invite' },
+  { id: 'connect', group: 'Your data', title: 'Connect a source', body: 'Bring in files from Google Drive, Dropbox, email or iCloud Photos.', action: 'Connect' },
+  { id: 'upload', group: 'Your data', title: 'Upload your first files', body: 'Drop in scans, letters, recordings or spreadsheets.', action: 'Upload' },
+  { id: 'workflow', group: 'Your data', title: 'Set up a workflow', body: 'Let an agent file, tag or transcribe new items as they arrive.', action: 'Create' },
+  { id: 'region', group: 'Your data', title: 'Choose a data region and retention', body: 'Pick where your vault lives and how long deleted items are kept.', action: 'Choose' }
+];
+
+const saveSteps = () => setLocal(`archive.onboarding:${app.vault}`, app.onboarding);
+
+export function stepDone(id) {
+  return app.onboarding.includes(id);
+}
+
+export function completeStep(id) {
+  if (stepDone(id)) return;
+  app.onboarding.push(id);
+  saveSteps();
+}
+
+export function toggleStep(id) {
+  const i = app.onboarding.indexOf(id);
+  if (i === -1) app.onboarding.push(id);
+  else app.onboarding.splice(i, 1);
+  saveSteps();
+}
+
+// People
+
+export function seedOf(person) {
+  const p = typeof person === 'string' ? { name: person } : person;
+  if (p.user || p.id) return p.user ?? p.id;
+  const m = ws()?.members.find((x) => (p.email && x.email === p.email) || (!p.email && x.name === p.name));
+  return m?.user ?? m?.id ?? p.email ?? p.name ?? '';
+}
+
+export function isVaultOwner() {
+  return app.role === 'owner';
+}
+
+function vaultDomain() {
+  return (app.user.email ?? '').split('@')[1] ?? '';
+}
+
+export async function invite({ emails, role }) {
+  const w = ws();
+  const added = [];
+  for (const email of emails) {
+    if (w.members.some((m) => m.email === email)) continue;
+    try {
+      const people = await call('/auth/users', { method: 'POST', body: { email, role } });
+      w.members = people.map((p) => toMember(p, { ...app.user, user_id: app.user.id }));
+      added.push(w.members.find((m) => m.email === email));
+    } catch (e) {
+      await complain(e, `Couldn’t invite ${email}`);
+    }
+  }
+  if (added.length) completeStep('invite');
+  return added.filter(Boolean);
+}
+
+export async function removeMember(id) {
+  const w = ws();
+  const m = w.members.find((x) => x.id === id);
+  if (!m) return;
+  try {
+    const people = await call(`/auth/users/${encodeURIComponent(m.email)}`, { method: 'DELETE' });
+    w.members = people.map((p) => toMember(p, { ...app.user, user_id: app.user.id }));
+  } catch (e) {
+    complain(e, `Couldn’t remove ${m.name}`);
+  }
+}
+
+export async function setRole(member, role) {
+  const before = member.role;
+  member.role = role;
+  try {
+    await call(`/api/member/${member.id}`, { method: 'PATCH', body: { role } });
+  } catch (e) {
+    member.role = before;
+    complain(e, `Couldn’t change ${member.name}’s role`);
+  }
+}
+
+// Integrations (MOCK: SSO, SCIM and workspace apps have no API yet)
+
+export function vaultIntegrations() {
+  const active = ws().members.filter((m) => m.status === 'active');
+  return integrationCatalog.map((c) => {
+    const link = app.integrations.find((x) => x.vault === app.vault && x.id === c.id);
+    const domain = c.covers === 'domain' ? link?.account : null;
+    const members = link ? active.filter((m) => !domain || m.email.endsWith(`@${domain}`)) : [];
+    return { ...c, connected: Boolean(link), account: link?.account ?? '', connectedBy: link?.by ?? '', date: link?.date ?? '', members };
+  });
+}
+
+export function connectIntegration(id) {
+  const c = integrationCatalog.find((x) => x.id === id);
+  if (!c || !isVaultOwner() || app.integrations.some((x) => x.vault === app.vault && x.id === id)) return;
+  const domain = vaultDomain();
+  const account = c.id === 'slack' ? `${domain.split('.')[0]}.slack.com` : c.covers === 'domain' ? domain : ws().name;
+  app.integrations.push({ vault: app.vault, id, account, by: app.profile.name, date: 'Today' });
+}
+
+export function disconnectIntegration(id) {
+  const i = app.integrations.findIndex((x) => x.vault === app.vault && x.id === id);
+  if (i === -1 || !isVaultOwner()) return;
+  app.integrations.splice(i, 1);
+}
+
+// API keys. The vault key is a real API token of yours for this vault; its secret is shown once, when it is
+// made. "Your API key", one key across every vault, is MOCK: tokens belong to one workspace.
+
+const KEY_NAME = 'Vault API key';
+
+export function vaultKey() {
+  return app.vaultKeys[app.vault] ?? null;
+}
+
+export async function loadVaultKey() {
+  const id = app.vault;
+  try {
+    const tokens = (await call('/auth/tokens')) ?? [];
+    const t = tokens.filter((x) => x.name === KEY_NAME).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+    if (!app.vaultKeys[id]?.secret) app.vaultKeys[id] = t ? { id: t.id, secret: '', date: `Created ${new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` } : null;
+  } catch {}
+}
+
+export async function rotateKey(scope) {
+  if (scope !== 'vault') {
+    app.apiKey = mockKey('ak_live_', 'Rotated just now');
+    return;
+  }
+  if (!isVaultOwner()) return;
+  const id = app.vault;
+  try {
+    const old = (await call('/auth/tokens')).filter((x) => x.name === KEY_NAME);
+    const t = await call('/auth/tokens', { method: 'POST', body: { name: KEY_NAME } });
+    for (const o of old) await call(`/auth/tokens/${o.id}`, { method: 'DELETE' }).catch(() => {});
+    app.vaultKeys[id] = { id: t.id, secret: t.token, date: old.length ? 'Rotated just now' : 'Created just now' };
+  } catch (e) {
+    complain(e, 'Couldn’t make a new key');
+  }
+}
+
+// Layout
+
+export function isNarrow() {
+  return typeof matchMedia !== 'undefined' && matchMedia('(max-width: 56rem)').matches;
+}
+
+export function closeDrawer() {
+  if (!app.drawer) return;
+  const inside = document.activeElement?.closest?.('.sidebar');
+  app.drawer = false;
+  if (inside) requestAnimationFrame(() => document.querySelector('main button[aria-label="Open sidebar"]')?.focus());
+}
+
+export function toggleSidebar() {
+  if (isNarrow()) {
+    if (app.drawer) closeDrawer();
+    else app.drawer = true;
+    return;
+  }
+  app.collapsed = !app.collapsed;
+  localStorage.setItem('archive.sidebar', app.collapsed ? 'collapsed' : 'open');
+}
+
+function removeAt(list, predicate, after) {
+  const i = list.findIndex(predicate);
+  if (i < 0) return null;
+  const [item] = list.splice(i, 1);
+  after?.(item);
+  return item;
+}
+
+// Vaults
+
+export async function switchVault(id) {
+  if (id === app.vault || !app.vaults.some((v) => v.id === id)) return;
+  setWorkspace(id);
+  app.vault = id;
+  app.onboarding = local(`archive.onboarding:${id}`, []);
+  const head = route.parts[0];
+  if (['chat', 'workflows', 'database'].includes(head) && route.parts[1]) go(`/${head === 'chat' ? '' : head}`);
+  try {
+    setMe(await api('/auth/me', { workspace: id }));
+  } catch (e) {
+    if (e instanceof Unauthorized) return complain(e);
+  }
+  loadVault(ws());
+}
+
+export async function createVault(name, look) {
+  if (!app.canAdd) {
+    await notify({ title: 'Ask an admin for a new vault', body: 'Only the people who run this Archive can make vaults. They add one with archive workspace add and name you as its owner.' });
+    return;
+  }
+  try {
+    const w = await api('/auth/workspaces', { method: 'POST', body: { name, owner: app.user.email }, workspace: app.vaults[0].id });
+    setLocal(`archive.look:${w.id}`, look);
+    app.vaults.push(shell(w));
+    await switchVault(w.id);
+    go('/');
+  } catch (e) {
+    complain(e, 'Couldn’t make the vault');
+  }
+}
+
+export async function saveVault({ name, look }) {
+  const w = ws();
+  setLocal(`archive.look:${w.id}`, look);
+  w.look = { ...look };
+  w.kind = kindOf(look.type);
+  if (name && name !== w.name) {
+    const before = w.name;
+    w.name = name;
+    try {
+      await call('/auth/workspace', { method: 'PATCH', body: { name } });
+    } catch (e) {
+      w.name = before;
+      complain(e, 'Couldn’t rename the vault');
+    }
+  }
+}
+
+export async function deleteVault(id) {
+  if (app.vaults.length < 2) return;
+  try {
+    await api(`/auth/workspaces/${id}`, { method: 'DELETE', workspace: app.vaults.find((v) => v.id !== id).id });
+  } catch (e) {
+    return complain(e, 'Couldn’t delete the vault');
+  }
+  app.vaults.splice(app.vaults.findIndex((w) => w.id === id), 1);
+  if (app.vault === id) {
+    app.vault = null;
+    await switchVault(app.vaults[0].id);
+  }
+  go('/');
+}
+
+// Chats. Sending and streaming live in chat.svelte.js.
+
+export function newChat(title, { attachments = [], text } = {}) {
+  const id = nid('new-');
+  const w = ws();
+  w.chats.unshift({ id, title: title || 'New chat', updated: 'Just now', draft: true });
+  w.conversations[id] = [];
+  if (text !== undefined) app.pending = { id, text, attachments };
+  return id;
+}
+
+export function chatById(id) {
+  return ws()?.chats.find((c) => c.id === id);
+}
+
+export async function renameChat(id, title) {
+  const chat = chatById(id);
+  if (!chat || !title) return;
+  const before = chat.title;
+  chat.title = title;
+  if (chat.draft) return;
+  try {
+    chat.title = (await call(`/api/chats/${id}`, { method: 'PATCH', body: { title } })).title || title;
+  } catch (e) {
+    chat.title = before;
+    complain(e, 'Couldn’t rename the chat');
+  }
+}
+
+// Pins are MOCK: chats have no pinned flag in the API, so pins stay on this device.
+export function togglePin(id) {
+  const chat = chatById(id);
+  if (!chat) return;
+  chat.pinned = !chat.pinned;
+  setLocal(`archive.pins:${app.vault}`, ws().chats.filter((c) => c.pinned && !c.draft).map((c) => c.id));
+}
+
+export function pinnedFirst(chats) {
+  return [...chats.filter((c) => c.pinned), ...chats.filter((c) => !c.pinned)];
+}
+
+export async function removeChat(id) {
+  const w = ws();
+  const chat = chatById(id);
+  if (!chat) return;
+  const open = route.path === `/chat/${id}`;
+  if (!chat.draft) {
+    try {
+      await call(`/api/chats/${id}`, { method: 'DELETE' });
+    } catch (e) {
+      return complain(e, 'Couldn’t delete the chat');
+    }
+  }
+  removeAt(w.chats, (c) => c.id === id, () => open && go('/'));
+}
+
+// Library
+
+export async function uploadFiles(list, folder) {
+  const w = ws();
+  const groups = new Set(w.members.flatMap((m) => m.groups));
+  const access = folder && groups.has(folder) ? folder : undefined;
+  const added = [];
+  for (const file of list) {
+    try {
+      const f = toFile(await upload(file, access), w.name);
+      w.library.unshift(f);
+      if (!w.folders.includes(f.folder)) w.folders.push(f.folder);
+      added.push(f);
+    } catch (e) {
+      await complain(e, `Couldn’t upload ${file.name}`);
+    }
+  }
+  if (added.length) completeStep('upload');
+  return added;
+}
+
+// Folders are the access group a file is limited to ("Everyone" when it isn't). A new, empty one is MOCK
+// until a file is filed in it.
+export function addFolder(name) {
+  const w = ws();
+  if (!name || w.folders.includes(name)) return;
+  w.folders.push(name);
+}
+
+export async function renameFile(id, name) {
+  const f = ws().library.find((x) => x.id === id);
+  if (!f || !name) return;
+  const before = f.name;
+  f.name = name;
+  try {
+    await call(`/api/files/${id}`, { method: 'PATCH', body: { name } });
+  } catch (e) {
+    f.name = before;
+    complain(e, 'Couldn’t rename the file');
+  }
+}
+
+export async function removeFile() {
+  await notify({ title: 'Files can’t be deleted yet', body: 'Archive keeps every file for now. Deleting from the library comes with an API for it.' });
+}
+
+export async function downloadFile(file) {
+  try {
+    const href = await blobURL(`/api/files/${file.id}/content`, app.vault);
+    Object.assign(document.createElement('a'), { href, download: file.name }).click();
+  } catch (e) {
+    complain(e, `Couldn’t download ${file.name}`);
+  }
+}
+
+// Sharing (MOCK: there is no API for sharing one item with someone outside the vault; shares stay in this tab)
+
+export const permissions = [
+  { value: 'view', label: 'Viewer' },
+  { value: 'edit', label: 'Editor' }
+];
+
+export const shareKinds = { file: 'File', folder: 'Folder', workflow: 'Workflow', table: 'Table' };
+
+export function shareItem(kind, target, w = ws()) {
+  if (kind === 'file') {
+    const f = w.library.find((x) => x.id === target);
+    return f && { name: f.name, path: `/library/${f.id}` };
+  }
+  if (kind === 'workflow') {
+    const f = w.workflows.find((x) => x.id === target);
+    return f && { name: f.name, path: `/workflows/${f.id}` };
+  }
+  if (kind === 'table') {
+    const t = w.schema.find((x) => x.id === target);
+    return t && { name: t.name, path: `/database/${t.id}` };
+  }
+  return w.folders.includes(target) ? { name: target, path: '/library' } : null;
+}
+
+export function isExternal(email) {
+  return !ws().members.some((m) => m.email === email);
+}
+
+export function shareFor(kind, target) {
+  return ws().shares.find((s) => s.kind === kind && s.target === target);
+}
+
+function ensureShare(kind, target) {
+  const w = ws();
+  if (!shareFor(kind, target)) w.shares.unshift({ id: nid('sh'), kind, target, by: app.profile.name, date: 'Just now', people: [] });
+  return shareFor(kind, target);
+}
+
+function prune(share) {
+  if (share.people.length) return;
+  const w = ws();
+  const i = w.shares.indexOf(share);
+  if (i >= 0) w.shares.splice(i, 1);
+}
+
+export function openShare(kind, target) {
+  Object.assign(app.share, { open: true, kind, target });
+}
+
+export function contacts(w = ws()) {
+  const out = new Map();
+  for (const m of w.members) {
+    if (m.status === 'active' && m.email !== app.user.email) out.set(m.email, { id: m.id, user: m.user, name: m.name, email: m.email, tone: m.tone });
+  }
+  for (const s of w.shares) {
+    for (const p of s.people) if (!out.has(p.email)) out.set(p.email, { name: p.name, email: p.email, tone: p.tone, guest: true });
+  }
+  return [...out.values()];
+}
+
+export function addPeople(kind, target, emails, permission) {
+  const share = ensureShare(kind, target);
+  const known = contacts();
+  const added = [];
+  for (const email of emails) {
+    if (share.people.some((p) => p.email === email)) continue;
+    const person = known.find((p) => p.email === email);
+    const name = person?.name ?? email.split('@')[0].replace(/[._-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+    share.people.push({ name, email, permission, tone: person?.tone ?? (email.length % 6) + 1 });
+    added.push(name);
+  }
+  if (!added.length) prune(share);
+}
+
+export function setPermission(share, email, permission) {
+  const p = share.people.find((x) => x.email === email);
+  if (p) p.permission = permission;
+}
+
+export function unsharePerson(share, email) {
+  const i = share.people.findIndex((x) => x.email === email);
+  if (i < 0) return;
+  share.people.splice(i, 1);
+  prune(share);
+}
+
+export function stopSharing(id) {
+  removeAt(ws().shares, (s) => s.id === id);
+}
+
+export function removeGuest(email) {
+  const w = ws();
+  for (const share of [...w.shares]) {
+    share.people = share.people.filter((p) => p.email !== email);
+    prune(share);
+  }
+}
+
+// Workflows. A workflow is a script deployed in the vault; runs are synchronous, so there is no pausing or
+// stopping one, and the assistant writes new ones.
+
+export function workflowById(id) {
+  return ws()?.workflows.find((w) => w.id === id);
+}
+
+export async function loadRuns(id) {
+  const wf = workflowById(id);
+  if (!wf || wf.loaded) return;
+  wf.loaded = true;
+  try {
+    const runs = (await call(`/api/workflows/${encodeURIComponent(wf.file)}/runs?limit=50`)) ?? [];
+    wf.runs = runs.map((r, i) => toRun(r, runs.length - i));
+  } catch {}
+}
+
+export function runWorkflow(id) {
+  const wf = workflowById(id);
+  if (!wf || wf.runs[0]?.status === 'running') return;
+  const number = (wf.runs[0]?.number ?? 0) + 1;
+  const placeholder = { id: nid('r'), number, status: 'running', started: 'Just now', elapsed: '', seconds: 0, steps: [{ id: 's0', label: `Running ${wf.file}`, detail: '', status: 'running', time: '' }], log: [] };
+  wf.runs.unshift(placeholder);
+  const at = () => wf.runs.findIndex((x) => x.id === placeholder.id);
+  call(`/api/workflows/${encodeURIComponent(wf.file)}/run`, { method: 'POST' })
+    .then((r) => {
+      const done = toRun(r ?? { id: placeholder.id, at: new Date().toISOString(), ms: 0, error: '' }, number);
+      if (at() >= 0) wf.runs[at()] = { ...done, id: placeholder.id };
+    })
+    .catch((e) => {
+      if (at() >= 0) wf.runs[at()] = { ...placeholder, status: 'failed', steps: [{ ...placeholder.steps[0], status: 'failed', detail: e.message }] };
+    });
+  return placeholder.id;
+}
+
+export function createWorkflow({ name, trigger, steps }) {
+  completeStep('workflow');
+  const text = `Write and deploy a workflow called “${name}”.\nTrigger: ${trigger.label}.\nSteps:\n${steps.map((s) => `- ${s}`).join('\n')}`;
+  return `/chat/${newChat(name || 'New workflow', { text })}`;
+}
+
+export function toggleWorkflow(id) {
+  const wf = workflowById(id);
+  if (wf) wf.enabled = !wf.enabled;
+}
+
+export async function renameWorkflow() {
+  await notify({ title: 'Workflows are named by their file', body: 'Ask the assistant to rename the workflow’s file and deploy it again.' });
+}
+
+export async function removeWorkflow(id) {
+  const wf = workflowById(id);
+  if (!wf) return;
+  try {
+    await call(`/api/workflows/${encodeURIComponent(wf.file)}`, { method: 'DELETE' });
+    removeAt(ws().workflows, (w) => w.id === id, () => go('/workflows'));
+  } catch (e) {
+    complain(e, 'Couldn’t delete the workflow');
+  }
+}
+
+export function pauseRun() {}
+export function stopRun() {}
+export function resolveRun() {}
+export function steerRun() {}
+
+// Connectors (MOCK: per-person app connections have no API yet; kept in this tab)
+
+export function connect(id) {
+  const c = ws().connectors.find((x) => x.id === id);
+  if (!c) return;
+  c.connected = true;
+  c.account = app.user.email;
+  c.lastSync = 'Just now';
+  c.items = 0;
+  completeStep('connect');
+}
+
+export function disconnect(id) {
+  const c = ws().connectors.find((x) => x.id === id);
+  if (!c) return;
+  c.connected = false;
+  c.account = '';
+  c.lastSync = '';
+}
+
+export function syncConnector(id) {
+  const c = ws().connectors.find((x) => x.id === id);
+  if (!c) return;
+  c.lastSync = 'Just now';
+  c.items += 3;
+}
+
+export { initials };

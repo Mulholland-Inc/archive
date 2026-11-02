@@ -31,15 +31,12 @@ Archive never calls an AI model on its own. Your agent does the thinking and sen
 
 Tell your agent what you keep track of, like clients, invoices and projects, and how they link. Every kind of record becomes a real Postgres table. Built-in types such as `archive.money`, `archive.phone`, `archive.email` and `archive.address` clean messy US input before it is stored. Secret types like card and passport numbers are encrypted and read back masked.
 
-You see the plan before anything changes, and statements that delete data are blocked unless you allow them. The same flow works by hand:
+A table is just its own columns: Archive adds the id, timestamps, access control and full-text search. Your agent changes the schema with plain Postgres DDL, so renames, type changes and backfills work as they do anywhere. Dropping a table or column is blocked unless you allow it, and a migration is part of the agent's run, so it can add a column, fill it and make it required in one step, and a run that fails changes nothing. Every migration is kept with who ran it. The same works by hand:
 
 ```sh
-archive schema pull ./schema   # every table and view as a .sql file
-archive schema plan ./schema   # what would change
-archive schema apply ./schema  # do it
+archive schema show                        # every table and view as DDL
+archive schema migrate ./migrations        # run the .sql files that have not run, in name order
 ```
-
-The live database is the only source of truth, so there is no migrations folder. Pulling and applying straight back plans nothing, so the files can live in git.
 
 ## Your agent writes code. Archive runs it.
 
@@ -63,7 +60,7 @@ Your agent can also save a script as a workflow that Archive runs on its own: on
 
 ```ts
 // on: cron CRON_TZ=America/New_York 0 9 * * 1-5
-return await archive.sql("SELECT number, customer, due FROM invoice WHERE NOT paid AND due < current_date");
+return await archive.query("SELECT number, customer, due FROM invoice WHERE NOT paid AND due < current_date");
 ```
 
 The agent saves them with `archive.deploy(files)`, which returns compile and trigger errors instead of saving, and tries them on real data with `archive.test`, which undoes everything it wrote. A webhook workflow gets its own `https://api.<domain>/hooks/run/<workspace>/<secret>` address. Every run's result, logs and error show on the Workflows screen in the app.
@@ -80,7 +77,7 @@ The same data and the same permissions, whichever way in:
 | HTTP API at `/api` | Records, files, search and workflows from your own apps and services |
 | Webhooks at `/hooks/run/<workspace>/<secret>` | Other services starting a workflow with a POST |
 | The `archive` CLI | Scripts, scheduled jobs and quick changes from your terminal |
-| [Terraform provider](apps/terraform/provider) | Your schema, members and tokens, kept with the rest of your setup |
+| [Terraform provider](apps/terraform/provider) | Your migrations, members and tokens, kept with the rest of your setup |
 
 Upload any file and Archive pulls out its text, so one search covers every table and file you can see. Read-only connectors for mail, files, chat and business tools are designed in [ADR 0002](docs/adr/0002-connectors.md) and not built yet.
 
@@ -135,7 +132,7 @@ The token acts as you, with your role and groups. Add `-viewer` to make it read 
 | Where | How |
 |---|---|
 | **Google Cloud** | [Terraform](apps/terraform/gcp) (Cloud Run, Cloud SQL, Storage), applied as it is or called as a module from your own setup |
-| **As code** | the [`archive` Terraform provider](apps/terraform/provider) for your schema, members and tokens |
+| **As code** | the [`archive` Terraform provider](apps/terraform/provider) for your migrations, members and tokens |
 
 The API and the web app are always on addresses of their own: the `ghcr.io/mulholland-inc/archive` image serves the API, sign-in and MCP on Cloud Run, and the web app is static files on a Cloudflare Worker. The web app is on `app.<domain>` and the API on `api.<domain>`: the API is told `ARCHIVE_URL`, the web app's address, and the web app finds the API from its own.
 

@@ -13,6 +13,16 @@ import (
 	"github.com/google/uuid"
 )
 
+const addDDLKey = `-- name: AddDDLKey :exec
+WITH old AS (DELETE FROM archive.ddl_key WHERE created_at < now() - interval '1 hour')
+INSERT INTO archive.ddl_key (key, pid) VALUES ($1, $2)
+`
+
+func (q *Queries) AddDDLKey(ctx context.Context, key string, pid int32) error {
+	_, err := q.db.Exec(ctx, addDDLKey, key, pid)
+	return err
+}
+
 const addWorkflowRun = `-- name: AddWorkflowRun :one
 INSERT INTO archive.workflow_run (workflow, trigger, result, logs, error, ms, created_at)
 SELECT w.id, $1, $2, $3, $4, $5, $6
@@ -202,6 +212,17 @@ func (q *Queries) Authenticate(ctx context.Context, hash string) (AuthenticateRo
 		&i.Workspaces,
 	)
 	return i, err
+}
+
+const backendPID = `-- name: BackendPID :one
+SELECT pg_backend_pid()
+`
+
+func (q *Queries) BackendPID(ctx context.Context) (int32, error) {
+	row := q.db.QueryRow(ctx, backendPID)
+	var pg_backend_pid int32
+	err := row.Scan(&pg_backend_pid)
+	return pg_backend_pid, err
 }
 
 const catalog = `-- name: Catalog :one
@@ -550,6 +571,40 @@ func (q *Queries) CreateWorkspace(ctx context.Context, iD uuid.UUID, name string
 	return i, err
 }
 
+const dDL = `-- name: DDL :exec
+SELECT archive.ddl($1, $2)
+`
+
+func (q *Queries) DDL(ctx context.Context, key string, stmt string) error {
+	_, err := q.db.Exec(ctx, dDL, key, stmt)
+	return err
+}
+
+const dDLRevision = `-- name: DDLRevision :one
+SELECT archive.ddl_revision($1, $2, $3, $4, $5)::uuid AS id
+`
+
+type DDLRevisionParams struct {
+	Key        string
+	Hash       string
+	Author     string
+	Name       string
+	Statements []byte
+}
+
+func (q *Queries) DDLRevision(ctx context.Context, arg DDLRevisionParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, dDLRevision,
+		arg.Key,
+		arg.Hash,
+		arg.Author,
+		arg.Name,
+		arg.Statements,
+	)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const deleteChat = `-- name: DeleteChat :execrows
 DELETE FROM archive.chat WHERE id = $1 AND user_id = $2
 `
@@ -560,6 +615,15 @@ func (q *Queries) DeleteChat(ctx context.Context, iD uuid.UUID, userID uuid.UUID
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const deleteDDLKey = `-- name: DeleteDDLKey :exec
+DELETE FROM archive.ddl_key WHERE key = $1
+`
+
+func (q *Queries) DeleteDDLKey(ctx context.Context, key string) error {
+	_, err := q.db.Exec(ctx, deleteDDLKey, key)
+	return err
 }
 
 const deleteUpload = `-- name: DeleteUpload :exec
@@ -1341,6 +1405,55 @@ func (q *Queries) Revision(ctx context.Context) (string, error) {
 	var column_1 string
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const revisionNamed = `-- name: RevisionNamed :one
+SELECT EXISTS (SELECT FROM archive.revision WHERE name = $1)
+`
+
+func (q *Queries) RevisionNamed(ctx context.Context, name *string) (bool, error) {
+	row := q.db.QueryRow(ctx, revisionNamed, name)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const revisions = `-- name: Revisions :many
+SELECT id, created_at, author, coalesce(name, '')::text AS name, statements FROM archive.revision WHERE statements <> '[]' ORDER BY created_at DESC, id DESC LIMIT $1
+`
+
+type RevisionsRow struct {
+	ID         uuid.UUID
+	CreatedAt  time.Time
+	Author     string
+	Name       string
+	Statements json.RawMessage
+}
+
+func (q *Queries) Revisions(ctx context.Context, limit int32) ([]RevisionsRow, error) {
+	rows, err := q.db.Query(ctx, revisions, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RevisionsRow
+	for rows.Next() {
+		var i RevisionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.CreatedAt,
+			&i.Author,
+			&i.Name,
+			&i.Statements,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const revokeToken = `-- name: RevokeToken :one
