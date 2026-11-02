@@ -138,8 +138,11 @@ Environment:
                      every workspace; ANTHROPIC_BASE_URL points it at another
                      Messages API endpoint
 
+  ARCHIVE_SYNC       off keeps serve from syncing connections into record, though they are still scheduled
+                     to: for tests that sync by hand
+
 On Cloud Run, the Cloud Tasks queue projects/<project>/locations/<region>/queues/<service> calls
-POST <API>/tasks at each time workflows or files are due, so serve can scale to zero, with the OIDC
+POST <API>/tasks at each time workflows, files or connections' syncs are due, so serve can scale to zero, with the OIDC
 token of <service>-tasks@<project>.iam.gserviceaccount.com; /tasks refuses any other. Anywhere else,
 serve runs that work itself when it is due, and picks up what was due while it was stopped when it starts.
 `

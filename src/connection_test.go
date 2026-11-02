@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -34,10 +35,44 @@ type fakeGoogle struct {
 	verifier string            // the last PKCE verifier a code came with
 	searched string            // the last search, q and maxResults
 	revoked  []string
+
+	// A mailbox to sync: its messages, by id to their subject; its historyId, and the history of each id
+	// added, changed or deleted after the first that history still reaches. fail is how many Gmail API
+	// requests from now fail with a 500.
+	box     map[string]string
+	hist    int
+	history []fakeChange
+	oldest  int
+	fail    int
+}
+
+// fakeChange is a change of the mailbox's history: its historyId, the message, and what happened to it, as
+// the key history.list lists it under.
+type fakeChange struct {
+	h        int
+	id, kind string
+}
+
+// mail adds message id to the mailbox, or relabels it with a new subject, with its history.
+func (g *fakeGoogle) mail(id, subject string) {
+	kind := "messagesAdded"
+	if _, had := g.box[id]; had {
+		kind = "labelsAdded"
+	}
+	g.hist++
+	g.box[id] = subject
+	g.history = append(g.history, fakeChange{h: g.hist, id: id, kind: kind})
+}
+
+// unmail deletes message id from the mailbox, with its history.
+func (g *fakeGoogle) unmail(id string) {
+	g.hist++
+	delete(g.box, id)
+	g.history = append(g.history, fakeChange{h: g.hist, id: id, kind: "messagesDeleted"})
 }
 
 func newFakeGoogle(t *testing.T) *fakeGoogle {
-	g := &fakeGoogle{refresh: map[string]string{}, access: map[string]string{}}
+	g := &fakeGoogle{refresh: map[string]string{}, access: map[string]string{}, box: map[string]string{}, hist: 1}
 	g.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		g.mu.Lock()
 		defer g.mu.Unlock()
@@ -93,7 +128,24 @@ func newFakeGoogle(t *testing.T) *fakeGoogle {
 				refuse(401, "invalid_token")
 				return
 			}
-			json.NewEncoder(w).Encode(map[string]any{"emailAddress": mailbox, "historyId": "1"})
+			json.NewEncoder(w).Encode(map[string]any{"emailAddress": mailbox, "historyId": fmt.Sprint(g.hist)})
+		case "/gmail/v1/users/me/history":
+			if g.serveMailbox(w, r) {
+				return
+			}
+			start, _ := strconv.Atoi(r.Form.Get("startHistoryId"))
+			if start < g.oldest {
+				w.WriteHeader(404)
+				w.Write([]byte(`{"error":{"code":404,"message":"Requested entity was not found."}}`))
+				return
+			}
+			var hs []map[string]any
+			for _, c := range g.history {
+				if c.h > start {
+					hs = append(hs, map[string]any{"id": fmt.Sprint(c.h), c.kind: []any{map[string]any{"message": map[string]string{"id": c.id}}}})
+				}
+			}
+			json.NewEncoder(w).Encode(map[string]any{"history": hs, "historyId": fmt.Sprint(g.hist)})
 		case "/gmail/v1/users/me/messages", "/gmail/v1/users/me/messages/m1", "/gmail/v1/users/me/messages/gone":
 			if _, ok := g.access[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")]; !ok {
 				refuse(401, "invalid_token")
@@ -103,6 +155,21 @@ func newFakeGoogle(t *testing.T) *fakeGoogle {
 			case strings.HasSuffix(r.URL.Path, "/gone"):
 				w.WriteHeader(404)
 				w.Write([]byte(`{"error":{"code":404,"message":"Requested entity was not found.","status":"NOT_FOUND"}}`))
+			case r.Form.Get("q") == "" && strings.HasSuffix(r.URL.Path, "/messages"):
+				if g.serveMailbox(w, r) {
+					return
+				}
+				ids := slices.Sorted(maps.Keys(g.box))
+				from, _ := strconv.Atoi(r.Form.Get("pageToken"))
+				n, _ := strconv.Atoi(r.Form.Get("maxResults"))
+				out := map[string]any{"messages": []any{}}
+				for _, id := range ids[from:min(from+n, len(ids))] {
+					out["messages"] = append(out["messages"].([]any), map[string]string{"id": id, "threadId": "t-" + id})
+				}
+				if from+n < len(ids) {
+					out["nextPageToken"] = fmt.Sprint(from + n)
+				}
+				json.NewEncoder(w).Encode(out)
 			case strings.HasSuffix(r.URL.Path, "/messages"):
 				g.searched = r.Form.Get("q") + " " + r.Form.Get("maxResults")
 				json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]string{{"id": "m1", "threadId": "t1"}}, "nextPageToken": "p2"})
@@ -119,11 +186,41 @@ func newFakeGoogle(t *testing.T) *fakeGoogle {
 			delete(g.refresh, r.Form.Get("token"))
 			w.Write([]byte("{}"))
 		default:
-			http.NotFound(w, r)
+			id, ok := strings.CutPrefix(r.URL.Path, "/gmail/v1/users/me/messages/")
+			if !ok || g.serveMailbox(w, r) {
+				http.NotFound(w, r)
+				return
+			}
+			subject, ok := g.box[id]
+			if !ok {
+				w.WriteHeader(404)
+				w.Write([]byte(`{"error":{"code":404,"message":"Requested entity was not found."}}`))
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]any{"id": id, "threadId": "t-" + id, "labelIds": []string{"INBOX"}, "snippet": subject, "internalDate": "1767225600000",
+				"payload": map[string]any{"mimeType": "text/html", "headers": []map[string]string{{"name": "Subject", "value": subject}},
+					"body": map[string]any{"data": base64.URLEncoding.EncodeToString([]byte("<p>About " + subject + "</p>"))}}})
 		}
 	}))
 	t.Cleanup(g.srv.Close)
 	return g
+}
+
+// serveMailbox answers a request of the mailbox it cannot: one without a token the fake issued, or one of
+// the failures asked for.
+func (g *fakeGoogle) serveMailbox(w http.ResponseWriter, r *http.Request) bool {
+	switch _, ok := g.access[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")]; {
+	case !ok:
+		w.WriteHeader(401)
+		w.Write([]byte(`{"error":{"code":401,"message":"Invalid Credentials"}}`))
+	case g.fail > 0:
+		g.fail--
+		w.WriteHeader(500)
+		w.Write([]byte(`{"error":{"code":500,"message":"Backend Error"}}`))
+	default:
+		return false
+	}
+	return true
 }
 
 func (g *fakeGoogle) env() string {
@@ -137,7 +234,7 @@ func (g *fakeGoogle) do(fn func()) {
 }
 
 // Connecting Gmail keeps the mailbox for whoever started it, shows it only to them, renews it on a second
-// connect, and disconnecting revokes it.
+// connect, and syncs it into record; disconnecting revokes it and deletes the records.
 func TestGmailConnectsForWhoStartedItAndDisconnectsWithARevoke(t *testing.T) {
 	t.Parallel()
 	g := newFakeGoogle(t)
@@ -281,11 +378,16 @@ func TestGmailConnectsForWhoStartedItAndDisconnectsWithARevoke(t *testing.T) {
 		}
 	})
 
+	gmailSyncs(t, in, srv, g, id, alice, bob)
+
 	if st, _ := call(t, "DELETE", srv.url+"/connect/"+id.String(), bob, nil, nil); st != 404 {
 		t.Errorf("bob disconnects alice's Gmail: %d", st)
 	}
 	if st, _ := call(t, "DELETE", srv.url+"/connect/"+id.String(), alice, nil, nil); st != 204 {
 		t.Fatalf("alice disconnects her Gmail: %d", st)
+	}
+	if n := in.psql("archive", "SELECT count(*) FROM archive.record"); n != "0" {
+		t.Errorf("disconnecting left %s records", n)
 	}
 	if cs := list(alice); len(cs.Connections) != 0 {
 		t.Errorf("a disconnected Gmail is still listed: %+v", cs.Connections)
@@ -305,21 +407,7 @@ func TestGmailConnectsForWhoStartedItAndDisconnectsWithARevoke(t *testing.T) {
 func connectionRefreshes(t *testing.T, in *e2eInst, g *fakeGoogle, id uuid.UUID) {
 	t.Helper()
 	ctx := t.Context()
-	h, err := openHub(ctx, "host="+in.dir+" user=archive dbname=archive", filepath.Join(in.dir, "data"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer h.Close()
-	if h.connect, err = connect.Load(func(k string) string {
-		return map[string]string{"ARCHIVE_GOOGLE": strings.TrimPrefix(g.env(), "ARCHIVE_GOOGLE=")}[k]
-	}); err != nil {
-		t.Fatal(err)
-	}
-	a, release, err := h.acquire(ctx, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer release()
+	a := hubOn(t, in, map[string]string{"ARCHIVE_GOOGLE": strings.TrimPrefix(g.env(), "ARCHIVE_GOOGLE=")})
 	kept := func() (string, string) {
 		t.Helper()
 		var token []byte

@@ -1,5 +1,5 @@
 <script>
-  import { Unplug, Plug, Check } from '@lucide/svelte';
+  import { RefreshCw, Unplug, Plug, Check } from '@lucide/svelte';
   import Stack from './Stack.svelte';
   import Section from './Section.svelte';
   import ConnectorIcon from './ConnectorIcon.svelte';
@@ -9,7 +9,7 @@
   import StatusBadge from './StatusBadge.svelte';
   import Text from './Text.svelte';
   import Icon from './Icon.svelte';
-  import { connect, disconnect, connections } from '../lib/app.svelte.js';
+  import { connect, disconnect, syncNow, connections } from '../lib/app.svelte.js';
 
   let { connector } = $props();
 
@@ -28,6 +28,7 @@
     <Stack direction="row" gap="2">
       {#if connector.connected}
         <Button variant="ghost" icon={Unplug} onclick={() => disconnect(connector.id)}>Disconnect</Button>
+        <Button icon={RefreshCw} onclick={() => syncNow(connector.id)}>Sync now</Button>
       {:else}
         <Button variant="primary" icon={Plug} disabled={!connector.ready} onclick={() => connect(connector.id)}>Connect</Button>
       {/if}
@@ -39,6 +40,8 @@
   {#if connector.connected}
     <Stack gap="0">
       <SettingsRow label="Account"><Text size="sm" tone="secondary">{connector.account}</Text></SettingsRow>
+      <SettingsRow label="Last synced"><Text size="sm" tone="secondary">{connector.lastSync}</Text></SettingsRow>
+      <SettingsRow label="Records"><Text size="sm" tone="secondary" tabular>{(connector.items ?? 0).toLocaleString()}</Text></SettingsRow>
       {#if connector.error}<SettingsRow label="Problem"><Text size="sm" tone="danger">{connector.error}</Text></SettingsRow>{/if}
     </Stack>
   {/if}

@@ -214,6 +214,13 @@
  *   it counts toward the run's {timeout}. A failed action throws an Error that names it and says what the
  *   service answered, with code not_found, forbidden, invalid or unauthorized (connect the account again)
  *   when it is one of those.
+ * - Archive also keeps a copy of what your connected accounts have, synced every few minutes, as rows of the
+ *   record table, which only you see: a row for each thing, like a Gmail message, with its connection, its
+ *   stream (messages), its source_id there, its data, deleted once it is gone there, and updated_at when it
+ *   last changed. Streams, after Actions, says what each stream's data holds. Read them like any table,
+ *   without calling the service:
+ *     await archive.query("SELECT data->>'subject' AS subject FROM record WHERE stream = 'messages' AND NOT deleted ORDER BY updated_at DESC LIMIT 20");
+ *   The connection table's synced_at says when one last caught up; disconnecting deletes its records.
  */
 declare const archive: {
     /** Read with one SQL statement as you, with $1, $2, ... bound to params; returns its rows, or [] when it has none. Writes and DDL throw forbidden. */

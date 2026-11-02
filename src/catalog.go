@@ -137,6 +137,10 @@ func catalogParse(b []byte) (*Catalog, error) {
 		if t.Schema == "archive" && t.Name == "connection" {
 			catalogConnection(t)
 		}
+		if t.Schema == "archive" && t.Name == "record" {
+			t.internal = []string{"seen_at"}
+			t.Columns = slices.DeleteFunc(t.Columns, func(c *Column) bool { return c.Name == "seen_at" })
+		}
 	}
 	return c, nil
 }
@@ -155,9 +159,10 @@ func catalogWorkflow(t *Table) {
 		Description: "Its webhook URL, when on is { webhook: true }: anyone with it can POST to it, so give it only to the service that calls it"})
 }
 
-// catalogConnection shows archive.connection without whose it is and its sealed refresh token (connect.go).
+// catalogConnection shows archive.connection without whose it is, its sealed refresh token (connect.go) and
+// its sync's cursor (sync.go).
 func catalogConnection(t *Table) {
-	t.internal = []string{"member", "token"}
+	t.internal = []string{"member", "token", "cursor"}
 	t.Columns = slices.DeleteFunc(t.Columns, func(c *Column) bool { return slices.Contains(t.internal, c.Name) })
 }
 
@@ -222,6 +227,9 @@ func (c *Catalog) writable(name string) (*Table, error) {
 	}
 	if err == nil && t.Schema == "archive" && t.Name == "connection" {
 		return nil, fmt.Errorf("connection is read only: connect and disconnect your accounts in Settings, Connectors: %w", ErrReadOnly)
+	}
+	if err == nil && t.Schema == "archive" && t.Name == "record" {
+		return nil, fmt.Errorf("record is read only: Archive syncs it from your connections: %w", ErrReadOnly)
 	}
 	return t, err
 }

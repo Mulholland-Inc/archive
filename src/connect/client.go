@@ -29,6 +29,8 @@ type Client struct {
 	// Meta are the callback's parameters the connector keeps, like QuickBooks' realmId.
 	Meta map[string]string
 	sess *mcp.ClientSession
+	// tools are the MCP server's, as it listed them for a stream.
+	tools []*mcp.Tool
 }
 
 // Open is a Client of the account whose access token tok is, with the Meta its grant kept.

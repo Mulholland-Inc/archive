@@ -367,8 +367,14 @@ COMMENT ON COLUMN archive.workflow_run.created_at IS 'When it started';
 -- them. Go alone writes it (connection.go): connecting adds it, connecting the same account again renews it,
 -- and disconnecting deletes it. provider is a connector's id; token is its refresh token, sealed with the
 -- workspace key like a secret value, and stays out of the catalog with member. meta is what the provider's
--- callback said that calls need, like QuickBooks' realmId. error is why its last refresh failed, empty while
--- it works. Each member sees only their own (archive.mine), owners too.
+-- callback said that calls need, like QuickBooks' realmId. error is why its last refresh or sync failed,
+-- empty while it works. Each member sees only their own (archive.mine), owners too.
+--
+-- Its sync (sync.go) keeps a copy of what the account has in archive.record, a page at a time: sync_at is when
+-- its next page is due, from when it is added, null while it does not sync, as when its grant was revoked,
+-- until it connects again;
+-- synced_at when every stream last caught up; and cursor where each stream is, { <stream>: { cursor, at,
+-- more, since, skip, fails, error } }, which stays out of the catalog too.
 CREATE TABLE archive.connection (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     member     uuid NOT NULL REFERENCES archive.member ON DELETE CASCADE,
@@ -380,8 +386,12 @@ CREATE TABLE archive.connection (
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     meta       jsonb NOT NULL DEFAULT '{}',
+    sync_at    timestamptz DEFAULT now(),
+    synced_at  timestamptz,
+    cursor     jsonb NOT NULL DEFAULT '{}',
     UNIQUE (member, provider, account)
 );
+CREATE INDEX connection_sync_idx ON archive.connection (sync_at) WHERE sync_at IS NOT NULL;
 COMMENT ON TABLE archive.connection IS 'One of your own accounts at another service that Archive reads for you, like your Gmail; archive.action uses it. Read only; connect and disconnect them in Settings, Connectors
 icon: plug';
 COMMENT ON COLUMN archive.connection.provider IS 'Which service, a connector: gmail, notion, quickbooks, ...';
@@ -389,6 +399,36 @@ COMMENT ON COLUMN archive.connection.meta IS 'What the service said about the ac
 COMMENT ON COLUMN archive.connection.account IS 'The account there, like the mailbox address';
 COMMENT ON COLUMN archive.connection.scopes IS 'What Archive may do there, as the service granted it';
 COMMENT ON COLUMN archive.connection.error IS 'Why Archive last failed to reach it, like a revoked grant; empty while it works';
+COMMENT ON COLUMN archive.connection.sync_at IS 'When Archive next reads what changed there into record; null while it does not, as after its grant was revoked, until you connect it again';
+COMMENT ON COLUMN archive.connection.synced_at IS 'When Archive last had everything there in record';
+
+-- A record is a copy of one thing a connection's account has, like a Gmail message, kept by its sync
+-- (sync.go): one row for each source_id, its id at the provider, of each stream, a kind of thing a connector
+-- syncs (connect/sync.go). data is it as the stream reads it, updated_at when it last changed there, or when
+-- the sync saw it change, and deleted says it is gone there. seen_at is when a sync last read it, which a
+-- stream that can only list everything again compares, and stays out of the catalog. Only Go writes them;
+-- each member reads their own connections' records, and disconnecting deletes them.
+CREATE TABLE archive.record (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream     text NOT NULL,
+    source_id  text NOT NULL,
+    data       jsonb NOT NULL DEFAULT '{}',
+    deleted    boolean NOT NULL DEFAULT false,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    seen_at    timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (connection, stream, source_id)
+);
+CREATE INDEX record_updated_idx ON archive.record (connection, stream, updated_at);
+COMMENT ON TABLE archive.record IS 'A copy of one thing one of your connections has, like a Gmail message, which Archive keeps in step with it. Read only; Archive syncs them, and disconnecting deletes them
+icon: refresh-cw';
+COMMENT ON COLUMN archive.record.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.record.stream IS 'What kind of thing it is, a stream of the connection''s connector, like messages of gmail or issues of github';
+COMMENT ON COLUMN archive.record.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.record.data IS 'It, as the service has it, in the shape of its stream';
+COMMENT ON COLUMN archive.record.deleted IS 'It is gone there; the last data seen stays';
+COMMENT ON COLUMN archive.record.updated_at IS 'When it last changed there, or when Archive saw it change';
 
 -- An OAuth client Archive registered for itself at an MCP connector's authorization server (connect/mcp.go):
 -- one per connector, kept in the main database for every workspace, since the redirect URI is the server's.
@@ -480,6 +520,7 @@ GRANT INSERT, UPDATE, DELETE ON archive.member TO "{p}_owner";
 GRANT SELECT, INSERT, UPDATE, DELETE ON archive.workflow TO "{p}_viewer";
 GRANT SELECT ON archive.workflow_run TO "{p}_viewer";
 GRANT SELECT ON archive.connection TO "{p}_viewer";
+GRANT SELECT ON archive.record TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT, UPDATE, DELETE ON TABLES TO "{p}_editor";
 
@@ -499,6 +540,9 @@ CREATE POLICY mine ON archive.workflow_run FOR SELECT USING (EXISTS (SELECT FROM
 
 ALTER TABLE archive.connection ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.connection FOR SELECT USING (archive.mine(member));
+
+ALTER TABLE archive.record ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.record FOR SELECT USING (EXISTS (SELECT FROM archive.connection c WHERE c.id = record.connection));
 
 -- name: HasRole :one
 SELECT pg_has_role(sqlc.arg(member)::name, rolname, 'USAGE') FROM pg_catalog.pg_roles WHERE rolname = sqlc.arg(grp)::name;
@@ -749,7 +793,7 @@ SELECT jsonb_build_object(
             AND regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)')
             FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid), false),
         'columns', (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid)))
-        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.member'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass, 'archive.connection'::regclass)
+        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.member'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass, 'archive.connection'::regclass, 'archive.record'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -892,7 +936,9 @@ DELETE FROM archive.due d USING archive.workspace w
 WHERE w.id = d.workspace AND w.id = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND d.at = sqlc.arg(claimed)::timestamptz;
 
 -- name: Connections :many
-SELECT id, provider, account, scopes, error, created_at, updated_at FROM archive.connection WHERE member = $1 ORDER BY provider, account, id;
+SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_at, c.sync_at, c.synced_at,
+    (SELECT count(*) FROM archive.record r WHERE r.connection = c.id AND NOT r.deleted)::bigint AS records
+FROM archive.connection c WHERE c.member = $1 ORDER BY c.provider, c.account, c.id;
 
 -- name: Connection :one
 SELECT * FROM archive.connection WHERE id = $1;
@@ -902,7 +948,8 @@ SELECT id FROM archive.connection WHERE member = $1 AND provider = $2 AND accoun
 
 -- name: SaveConnection :exec
 INSERT INTO archive.connection (id, member, provider, account, token, scopes, meta) VALUES ($1, $2, $3, $4, $5, $6, $7)
-ON CONFLICT (id) DO UPDATE SET token = EXCLUDED.token, scopes = EXCLUDED.scopes, meta = EXCLUDED.meta, error = '', updated_at = now();
+ON CONFLICT (id) DO UPDATE SET token = EXCLUDED.token, scopes = EXCLUDED.scopes, meta = EXCLUDED.meta, error = '', updated_at = now(),
+    sync_at = now();
 
 -- name: ConnectionLocked :one
 SELECT * FROM archive.connection WHERE id = $1 FOR UPDATE;
@@ -928,3 +975,34 @@ UPDATE archive.connection SET error = $2, updated_at = now() WHERE id = $1 AND e
 
 -- name: DeleteConnection :one
 DELETE FROM archive.connection WHERE id = $1 AND member = $2 RETURNING *;
+
+-- name: ClaimSync :one
+UPDATE archive.connection SET sync_at = sqlc.arg(lease)::timestamptz
+WHERE id = (SELECT c.id FROM archive.connection c WHERE c.sync_at <= now() ORDER BY c.sync_at LIMIT 1 FOR UPDATE SKIP LOCKED)
+RETURNING *;
+
+-- name: NextSyncAt :one
+SELECT sync_at FROM archive.connection WHERE sync_at IS NOT NULL ORDER BY sync_at LIMIT 1;
+
+-- name: SaveSync :exec
+UPDATE archive.connection SET cursor = sqlc.arg(cursor), sync_at = sqlc.narg(sync_at), synced_at = coalesce(sqlc.narg(synced_at), synced_at),
+    error = sqlc.arg(error)
+WHERE id = sqlc.arg(id);
+
+-- name: AskSync :exec
+UPDATE archive.connection SET cursor = $2, sync_at = now() WHERE id = $1;
+
+-- name: SaveRecords :exec
+INSERT INTO archive.record (connection, stream, source_id, data, updated_at)
+SELECT sqlc.arg(connection), sqlc.arg(stream), r.id, r.data, coalesce(r.updated, now())
+FROM jsonb_to_recordset(sqlc.arg(records)::jsonb) AS r(id text, data jsonb, updated timestamptz)
+ON CONFLICT (connection, stream, source_id) DO UPDATE SET data = EXCLUDED.data, deleted = false, seen_at = now(),
+    updated_at = CASE WHEN archive.record.deleted OR archive.record.data IS DISTINCT FROM EXCLUDED.data THEN EXCLUDED.updated_at ELSE archive.record.updated_at END;
+
+-- name: DeleteRecords :exec
+UPDATE archive.record SET deleted = true, updated_at = now(), seen_at = now()
+WHERE connection = sqlc.arg(connection) AND stream = sqlc.arg(stream) AND source_id = ANY(sqlc.arg(ids)::text[]) AND NOT deleted;
+
+-- name: DeleteUnseenRecords :exec
+UPDATE archive.record SET deleted = true, updated_at = now()
+WHERE connection = sqlc.arg(connection) AND stream = sqlc.arg(stream) AND seen_at < sqlc.arg(since)::timestamptz AND NOT deleted;

@@ -46,6 +46,8 @@ type Hub struct {
 	live  *liveHub
 	// connect are the connectors this server has an OAuth client for (connection.go).
 	connect connect.Providers
+	// noSync is ARCHIVE_SYNC=off: connections are scheduled to sync, but none does (sync.go).
+	noSync bool
 
 	mu   sync.Mutex
 	open map[string]*hubEntry
@@ -166,7 +168,8 @@ func openHub(ctx context.Context, dsn, dir string) (*Hub, error) {
 	if err != nil {
 		return nil, err
 	}
-	h := &Hub{key: key, aead: aead, pg: pg, blobs: blobs, hints: coreHints("en-US"), tasks: tasks, connect: conns, open: map[string]*hubEntry{}}
+	h := &Hub{key: key, aead: aead, pg: pg, blobs: blobs, hints: coreHints("en-US"), tasks: tasks, connect: conns, open: map[string]*hubEntry{},
+		noSync: os.Getenv("ARCHIVE_SYNC") == "off"}
 	if err := h.urls("8080"); err != nil {
 		return nil, err
 	}
@@ -406,7 +409,7 @@ func (a *Archive) afterOpen(ctx context.Context) {
 		return a.st.db(ctx).ResetProcessing(ctx)
 	})
 	err = errors.Join(err, a.syncMembers(ctx, false), a.liveTables(ctx), a.workflowUpgrade(ctx))
-	for _, kind := range []string{"workflow", "file"} {
+	for _, kind := range []string{"workflow", "file", "sync"} {
 		next, nerr := a.nextDue(ctx, kind)
 		if nerr == nil && next != nil {
 			nerr = a.soon(ctx, kind, *next)
@@ -610,8 +613,8 @@ func (h *Hub) tasksHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	kind, ok := strings.CutSuffix(body.Work, "s")
-	if !ok || kind != "workflow" && kind != "file" {
-		httpWrite(w, 0, nil, fmt.Errorf("work: want workflows or files: %w", httpErrBadRequest))
+	if !ok || kind != "workflow" && kind != "file" && kind != "sync" {
+		httpWrite(w, 0, nil, fmt.Errorf("work: want workflows, files or syncs: %w", httpErrBadRequest))
 		return
 	}
 	err := h.work(r.Context(), body.Workspace, kind)
@@ -624,8 +627,13 @@ func (h *Hub) tasksHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *Hub) work(ctx context.Context, ws uuid.UUID, kind string) error {
 	q := h.q()
 	lease := runTimeout + workflowRetry
-	if kind == "workflow" {
+	switch {
+	case kind == "workflow":
 		lease += browseTimeout
+	case kind == "sync" && h.noSync:
+		return nil
+	case kind == "sync":
+		lease = syncBudget + syncRetry
 	}
 	at, err := q.ClaimDueFor(ctx, time.Now().Add(lease), ws, kind)
 	if err == nil {
@@ -671,6 +679,9 @@ func (a *Archive) nextDue(ctx context.Context, kind string) (*time.Time, error) 
 			return err
 		}
 		n, err := q.NextWorkflowAt(ctx)
+		if kind == "sync" {
+			n, err = q.NextSyncAt(ctx)
+		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -697,6 +708,7 @@ func (h *Hub) due(ctx context.Context, ws uuid.UUID, kind string, claimed time.T
 		return err
 	}
 	defer release()
+	start := time.Now()
 	for range hubBatch {
 		var ok bool
 		switch kind {
@@ -704,6 +716,9 @@ func (h *Hub) due(ctx context.Context, ws uuid.UUID, kind string, claimed time.T
 			ok, err = a.workflowNext(ctx)
 		case "file":
 			ok, err = a.fileProcess(ctx, uuid.Nil)
+		case "sync":
+			ok, err = a.syncNext(ctx)
+			ok = ok && time.Since(start) < syncBudget
 		}
 		if err != nil && ctx.Err() == nil {
 			fmt.Fprintf(os.Stderr, "archive: workspace %s %ss: %v\n", ws, kind, err)
