@@ -24,6 +24,21 @@
     gap: var(--space-5);
   }
 
+  /* sm: a quiet section, as in a side panel: small, dim title and little space. */
+  .sm {
+    gap: var(--space-1);
+  }
+
+  .sm .head {
+    min-height: var(--control-sm);
+  }
+
+  .sm h2 {
+    color: var(--color-text-tertiary);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+  }
+
   .head {
     display: flex;
     align-items: center;

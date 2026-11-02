@@ -190,7 +190,7 @@
               {#each items as r, i (r.id ?? i)}
                 <button type="button" class="card" onclick={() => pick(r)}>
                   <Text size="sm" weight="medium">{show(r[title?.name])}</Text>
-                  {#each shown.filter((c) => c !== title && c.name !== view.by && r[c.name] != null && r[c.name] !== '') as c (c.name)}
+                  {#each shown.filter((c) => c !== title && c.name !== view.by && !linkOf(view, c) && r[c.name] != null && r[c.name] !== '') as c (c.name)}
                     <Text size="sm" tone="secondary">{show(r[c.name])}</Text>
                   {/each}
                 </button>
@@ -221,9 +221,9 @@
 
     {#snippet side()}
       {#if open}
-        <Stack gap="6">
-          <Heading level={2} size="lg" wrap="anywhere">{show(open[title?.name]) || view.name}</Heading>
-          <Section title="Properties">
+        <Stack gap="5">
+          <div class="row-title"><Heading level={2} size="lg" wrap="anywhere">{show(open[title?.name]) || view.name}</Heading></div>
+          <Section gap="sm" title="Properties">
             <Stack gap="0">
               {#each shown.filter((c) => c !== title && !linkOf(view, c)) as c (c.name)}
                 <Property compact label={label(c)} icon={typeIcons[c.type] ?? Type}>
@@ -233,20 +233,20 @@
             </Stack>
           </Section>
           {#each relations.to as l (`to-${l.column}`)}
-            <Section title={label({ name: l.column })}>
+            <Section gap="sm" title={label({ name: l.column })}>
               <List>
                 {#each l.rows as r (r.id)}<ListItem href={`/database/${l.table}`} icon={ArrowUpRight}><Text size="sm">{r.title}</Text></ListItem>{/each}
               </List>
             </Section>
           {/each}
           {#each relations.from as l (`from-${l.table}-${l.column}`)}
-            <Section title={nameOf(l.table)}>
+            <Section gap="sm" title={nameOf(l.table)}>
               <List>
                 {#each l.rows as r (r.id)}<ListItem href={`/database/${l.table}`} icon={ArrowLeft}><Text size="sm">{r.title}</Text></ListItem>{/each}
               </List>
             </Section>
           {/each}
-          <Section title="Details">
+          <Section gap="sm" title="Details">
             <Stack gap="0">
               {#if open.created_at}<Property compact label="Created" icon={Clock}><Text size="sm" tone="secondary">{show(open.created_at)}</Text></Property>{/if}
               {#if open.updated_at}<Property compact label="Updated" icon={Clock}><Text size="sm" tone="secondary">{show(open.updated_at)}</Text></Property>{/if}
@@ -259,6 +259,16 @@
 {/if}
 
 <style>
+  /* Level with the page's title: the page pads its top more than the panel does, and its title sits in a
+     control-xl row. */
+  .row-title {
+    display: flex;
+    align-items: center;
+    min-height: var(--control-xl);
+    margin-block-start: calc(var(--space-8) - var(--space-3));
+    padding-inline-end: var(--space-8);
+  }
+
   .board {
     display: grid;
     min-width: 0;
