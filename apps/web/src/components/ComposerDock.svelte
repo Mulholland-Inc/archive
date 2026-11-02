@@ -17,16 +17,6 @@
     padding-block-start: var(--space-1);
   }
 
-  .dock::before {
-    content: '';
-    position: absolute;
-    inset-inline: 0;
-    inset-block-end: 100%;
-    height: var(--fade-size);
-    background: linear-gradient(to top, var(--color-canvas), transparent);
-    pointer-events: none;
-  }
-
   .inner {
     display: flex;
     flex-direction: column;
