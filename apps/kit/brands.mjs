@@ -50,7 +50,8 @@ const brands = {
   Trello: 'logos:trello',
   Figma: 'logos:figma',
   Zapier: 'logos:zapier-icon',
-  Sentry: 'logos:sentry-icon'
+  Sentry: 'logos:sentry-icon',
+  Gusto: 'logos:gusto'
 };
 
 const out = {};

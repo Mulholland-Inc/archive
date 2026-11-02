@@ -1,21 +1,26 @@
 package main
 
 // Syncs: Archive keeps a copy of what each connection's account has, as rows of archive.record, in the streams
-// its connector declares (connect/sync.go). A sync runs a page at a time, as tasks like the rest of Archive's
-// work (workspace.go): a connection's sync_at is when its next page is due, and the workspace's sync is due
-// at the earliest of them. A page claims one connection that is due, pulls the stream of it most due, and in
-// one transaction saves what it found and where the stream is now, so a page that fails leaves the cursor
-// where it was and the next resumes there. A stream with more to come is due again its Gap later, and one
-// caught up its Every later. A page that fails is the connection's error, and its stream backs off, a minute
-// doubling to 6 hours; a grant the provider refused stops the sync, until the member connects again or asks
-// for a sync. A stream the provider cannot pull is skipped, and looked at again a day later.
+// its connector declares (connect/sync.go). A sync runs only when something asks for one, and never on a
+// timer, so the service can sleep: connecting, Sync now (POST /connect/<id>/sync), a push from the provider
+// (push.go), or a member reading record or opening the workspace while a connection is stale (syncCatchUp).
+// Asking moves the connection's asked_at on, and each stream then catches up to it: it is due until a page of
+// it ends with nothing more to come after the ask, and then waits for the next.
 //
-// Connecting starts the first sync, and POST /connect/<id>/sync makes every stream of one due now. ARCHIVE_SYNC
-// off keeps serve from syncing at all, for tests that sync by hand.
+// A sync runs a page at a time, as tasks like the rest of Archive's work (workspace.go): a connection's
+// sync_at is when its next page is due, null once every stream has caught up, and the workspace's sync is due
+// at the earliest. A page leases one connection that is due, so a connection runs one page at a time however
+// many tasks or asks there are, pulls its stream most due, and in one transaction saves what it found and
+// where the stream is now: a page that fails leaves the cursor where it was, and the next resumes there. A
+// stream with more to come is due again its Gap later. A page that fails is the connection's error, and its
+// stream backs off, a minute doubling, for syncTries pages, and then waits for the next ask. A grant the
+// provider refused stops the sync until the member connects again or asks; a stream the provider cannot pull
+// is skipped until the next ask. A page renews its connection's watches as they near their end (syncWatch).
+//
+// ARCHIVE_SYNC off keeps serve from syncing at all, though asks are kept and queued: for tests that sync by hand.
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -32,30 +37,40 @@ import (
 )
 
 const (
-	// syncLease is how long a claimed page has before another may claim its connection; syncBudget how long
-	// one task pulls pages before it queues the rest.
+	// syncLease is how long a leased page has before another may take its connection over; syncBudget how
+	// long one task pulls pages before it queues the rest.
 	syncLease  = 10 * time.Minute
 	syncBudget = 2 * time.Minute
-	syncRetry  = time.Minute
-	syncMaxOff = 6 * time.Hour
-	syncSkip   = 24 * time.Hour
+	// A failed page is retried syncRetry later, doubling, syncTries times in a row at most.
+	syncRetry = time.Minute
+	syncTries = 5
+	// syncMaxPages is the most pages a stream reads for one ask, against a provider whose cursor goes round.
+	syncMaxPages = 100_000
+	// syncStale is how old a connection's last sync is before a read or an open asks for another.
+	syncStale = 5 * time.Minute
 )
 
 // errRevoked is a refresh the provider refused, which stops a connection's sync.
 var errRevoked = errors.New("revoked")
 
 // syncStream is where one stream of a connection is, in its cursor. At is when its next page is due, nil
-// now; Since when the full listing under way began, which the records it has not read since are older than;
-// Fails how many pages in a row failed, and Error why the last did.
+// now, while it is due; Done the ask it last caught up to; Since when the full listing under way began, which
+// the records it has not read since are older than; Pages how many pages it has read for this ask; Fails how
+// many in a row failed, and Error why the last did.
 type syncStream struct {
 	Cursor string     `json:"cursor,omitempty"`
 	At     *time.Time `json:"at,omitempty"`
+	Done   *time.Time `json:"done,omitempty"`
 	More   bool       `json:"more,omitempty"`
 	Since  *time.Time `json:"since,omitempty"`
 	Skip   string     `json:"skip,omitempty"`
+	Pages  int        `json:"pages,omitempty"`
 	Fails  int        `json:"fails,omitempty"`
 	Error  string     `json:"error,omitempty"`
 }
+
+// due says whether the stream has yet to catch up to the ask at asked.
+func (v *syncStream) due(asked time.Time) bool { return v.Done == nil || v.Done.Before(asked) }
 
 type syncState map[string]*syncStream
 
@@ -77,13 +92,18 @@ func (st syncState) of(name string) *syncStream {
 	return st[name]
 }
 
-// syncPick is the stream most due of streams: the one due first, the first declared of those due at once.
-func syncPick(streams []*connect.Stream, st syncState) *connect.Stream {
+// syncPick is the stream most due of streams for the ask at asked: of those that have yet to catch up to it,
+// the one due first, the first declared of those due at once; nil when all have.
+func syncPick(streams []*connect.Stream, st syncState, asked time.Time) *connect.Stream {
 	var pick *connect.Stream
 	var at time.Time
 	for _, s := range streams {
+		v := st.of(s.Name)
+		if !v.due(asked) {
+			continue
+		}
 		var t time.Time
-		if v := st[s.Name]; v != nil && v.At != nil {
+		if v.At != nil {
 			t = *v.At
 		}
 		if pick == nil || t.Before(at) {
@@ -93,7 +113,7 @@ func syncPick(streams []*connect.Stream, st syncState) *connect.Stream {
 	return pick
 }
 
-// syncNext pulls a page of a connection whose sync is due, and says whether there was one.
+// syncNext leases a connection whose sync is due and pulls a page of it, and says whether there was one.
 func (a *Archive) syncNext(ctx context.Context) (bool, error) {
 	var c generated.ArchiveConnection
 	err := a.sys(ctx, func(ctx context.Context) (err error) {
@@ -109,14 +129,14 @@ func (a *Archive) syncNext(ctx context.Context) (bool, error) {
 	return true, a.syncPage(ctx, c)
 }
 
-// syncPage pulls the page of c's stream most due, whether it is due or not, and saves it.
+// syncPage pulls the page of c's stream most due, whether it is due yet or not, saves it, and lets the lease go.
 func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) error {
 	p, gone := a.hub.connect.Get(c.Provider)
 	var streams []*connect.Stream
 	if gone == nil {
 		streams = p.Streams
 	}
-	s := syncPick(streams, syncStateOf(c.Cursor))
+	s := syncPick(streams, syncStateOf(c.Cursor), c.AskedAt)
 	var page *connect.Page
 	var err error
 	if s != nil {
@@ -124,9 +144,25 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 		var cl *connect.Client
 		if cl, err = a.connClient(ctx, c); err == nil {
 			page, err = s.Pull(cl, cur.Cursor)
+			if err == nil && page.More && page.Cursor == cur.Cursor {
+				err = fmt.Errorf("%s said there was more, but from where this page began", p.Name)
+			}
+			if err == nil {
+				a.syncWatch(ctx, c, p, cl)
+			}
 			cl.Close()
 		}
 	}
+	var next *time.Time
+	defer func() {
+		// A page that leaves its connection due queues the next itself, as an ask that came while it held the
+		// lease could not.
+		if next != nil {
+			if err := a.soon(ctx, "sync", *next); err != nil {
+				fmt.Fprintf(os.Stderr, "archive: workspace %s: queueing a sync: %v\n", a.ws.ID, err)
+			}
+		}
+	}()
 	return a.sys(context.WithoutCancel(ctx), func(ctx context.Context) error {
 		q := a.st.db(ctx)
 		now, err2 := q.TxNow(ctx)
@@ -145,65 +181,78 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 		save.Cursor, _ = json.Marshal(st)
 		switch {
 		case gone != nil:
-			// A connector this server has no client for waits for one.
-			save.SyncAt = ptr(now.Add(syncSkip))
+			// A connector this server has no client for waits for one, and an ask.
 			return q.SaveSync(ctx, save)
-		case s == nil || errors.Is(err, errRevoked):
+		case errors.Is(err, errRevoked):
+			save.Revoked = true
 			return q.SaveSync(ctx, save)
 		}
-		// A sync asked for while the page ran leaves the stream due now.
-		claimed, cur := syncStateOf(c.Cursor).of(s.Name), st.of(s.Name)
-		asked := cur.At == nil && claimed.At != nil
+		// With no stream picked, every stream has caught up to the ask, and only the connection is saved.
+		cur, name := &syncStream{}, ""
+		if s != nil {
+			cur, name = st.of(s.Name), s.Name
+		}
 		var unsup *connect.Unsupported
 		switch {
+		case s == nil:
 		case errors.As(err, &unsup):
-			cur.Skip, cur.More, cur.Since, cur.Fails, cur.Error = unsup.Reason, false, nil, 0, ""
-			cur.At = ptr(now.Add(syncSkip))
+			cur.Skip, cur.More, cur.Since, cur.Fails, cur.Error, cur.At, cur.Pages = unsup.Reason, false, nil, 0, "", nil, 0
+			cur.Done = &c.AskedAt
+		case err == nil && cur.Pages+1 >= syncMaxPages:
+			err = fmt.Errorf("%s had more after %d pages; it starts again on the next sync", p.Name, syncMaxPages)
+			cur.Cursor, cur.More, cur.Since, cur.Pages = "", false, nil, 0
+			fallthrough
 		case err != nil:
 			cur.Fails++
-			cur.Error = fmt.Sprintf("syncing %s: %v", s.Name, err)
-			cur.At = ptr(now.Add(min(syncRetry<<min(cur.Fails-1, 16), syncMaxOff)))
+			cur.Error = fmt.Sprintf("syncing %s: %v", name, err)
+			cur.At = ptr(now.Add(syncRetry << min(cur.Fails-1, 16)))
+			if cur.Fails >= syncTries {
+				// It waits for the next ask, as one caught up does, with its error, and tries as many times then.
+				cur.At, cur.Done, cur.Fails = nil, &c.AskedAt, 0
+			}
 		default:
-			if err := a.syncSave(ctx, q, c.ID, s.Name, page, cur, now); err != nil {
+			if err := a.syncSave(ctx, q, c.ID, name, page, cur, now); err != nil {
 				return err
 			}
-			cur.Cursor, cur.More, cur.Skip, cur.Fails, cur.Error = page.Cursor, page.More, "", 0, ""
-			wait := cmp.Or(page.Every, s.Every)
+			cur.Cursor, cur.More, cur.Skip, cur.Fails, cur.Error, cur.At = page.Cursor, page.More, "", 0, "", nil
+			cur.Pages++
 			if page.More {
-				wait = s.Gap
+				cur.At = ptr(now.Add(s.Gap))
+			} else {
+				cur.Done, cur.Pages = &c.AskedAt, 0
 			}
-			cur.At = ptr(now.Add(wait))
 		}
-		if asked {
-			cur.At = nil
-		}
-		// The connection is as its declared streams are: due at the first, failing while any is, and synced once
-		// none has more to come.
+		// The connection is as its declared streams are: due at the first of those that have yet to catch up to
+		// the latest ask, which may have come while this page ran; failing while any is; and synced once none
+		// is due.
 		var errs []string
-		caught := true
 		for _, d := range streams {
-			v, at := st.of(d.Name), now
+			v := st.of(d.Name)
+			if v.Error != "" {
+				errs = append(errs, v.Error)
+			}
+			if !v.due(c2.AskedAt) {
+				continue
+			}
+			at := now
 			if v.At != nil {
 				at = *v.At
 			}
 			if save.SyncAt == nil || at.Before(*save.SyncAt) {
 				save.SyncAt = &at
 			}
-			if v.Error != "" {
-				errs = append(errs, v.Error)
-			}
-			caught = caught && !v.More && v.Since == nil && v.Error == ""
 		}
 		for k := range st {
 			if !slices.ContainsFunc(streams, func(d *connect.Stream) bool { return d.Name == k }) {
 				delete(st, k)
 			}
 		}
-		if caught {
+		if save.SyncAt == nil && len(errs) == 0 {
 			save.SyncedAt = &now
 		}
 		save.Error = strings.Join(errs, "; ")
 		save.Cursor, _ = json.Marshal(st)
+		next = save.SyncAt
 		return q.SaveSync(ctx, save)
 	})
 }
@@ -302,7 +351,7 @@ func syncJSON(v any) ([]byte, error) {
 	return json.Marshal(scrub(back))
 }
 
-// SyncNow makes every stream of the caller's connection id due now, and queues its sync.
+// SyncNow asks for a sync of the caller's connection id now, past any backoff, and queues it.
 func (a *Archive) SyncNow(ctx context.Context, id uuid.UUID) error {
 	ac, err := authUser(ctx)
 	if err != nil {
@@ -337,6 +386,47 @@ func (a *Archive) SyncNow(ctx context.Context, id uuid.UUID) error {
 func (a *Archive) syncSoon(ctx context.Context) {
 	if err := a.soon(ctx, "sync", time.Now()); err != nil {
 		fmt.Fprintf(os.Stderr, "archive: workspace %s: queueing a sync: %v\n", a.ws.ID, err)
+	}
+}
+
+// syncWant asks for a sync of connection id, as a push does: it keeps a time it is already due at, or backing
+// off to, and leaves a connection whose grant was refused as it is. It says whether there is the connection.
+func (a *Archive) syncWant(ctx context.Context, id uuid.UUID) (bool, error) {
+	ctx = context.WithoutCancel(ctx)
+	var found bool
+	err := a.sys(ctx, func(ctx context.Context) error {
+		q := a.st.db(ctx)
+		if _, err := q.Connection(ctx, id); err != nil {
+			return err
+		}
+		found = true
+		_, err := q.WantSync(ctx, id)
+		return err
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return found, nil
+	}
+	if err != nil {
+		return found, err
+	}
+	return true, a.soon(ctx, "sync", time.Now())
+}
+
+// syncCatchUp asks for a sync of each of member's connections whose last is over syncStale old and that is not
+// syncing, as reading record or opening the workspace does. It does not wait for them: the read reads what
+// there is, and the next sees what they bring.
+func (a *Archive) syncCatchUp(ctx context.Context, member uuid.UUID) {
+	ctx = context.WithValue(context.WithoutCancel(ctx), storeTxKey{}, nil)
+	var asked []uuid.UUID
+	err := a.sys(ctx, func(ctx context.Context) (err error) {
+		asked, err = a.st.db(ctx).CatchUpSyncs(ctx, member, time.Now().Add(-syncStale))
+		return err
+	})
+	if err == nil && len(asked) > 0 {
+		err = a.soon(ctx, "sync", time.Now())
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "archive: workspace %s: catching up syncs: %v\n", a.ws.ID, err)
 	}
 }
 

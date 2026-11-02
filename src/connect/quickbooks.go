@@ -86,6 +86,7 @@ func init() {
 					return qboList(c, "Customer", where, "DisplayName", in.Limit)
 				}),
 		},
+		Push:    quickbooksPush,
 		Streams: qboStreams(),
 	})
 }
@@ -100,7 +101,7 @@ var qboEntities = []string{"Account", "Bill", "BillPayment", "CreditMemo", "Cust
 func qboStreams() []*Stream {
 	var out []*Stream
 	for _, e := range qboEntities {
-		out = append(out, &Stream{Name: strings.ToLower(e), Every: 15 * time.Minute, Pull: func(c *Client, cursor string) (*Page, error) { return qboPull(c, e, cursor) },
+		out = append(out, &Stream{Name: strings.ToLower(e), Pull: func(c *Client, cursor string) (*Page, error) { return qboPull(c, e, cursor) },
 			Doc: "Every " + e + " of the company, as QuickBooks has it: listed whole the first time, 1,000 a page, and then its change data capture " +
 				"since, deletions too; a sync stopped for over 30 days, as far back as that reaches, lists it whole again."})
 	}

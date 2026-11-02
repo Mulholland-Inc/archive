@@ -52,6 +52,9 @@ type Connector struct {
 	Revoke     string
 	RevokeWith func(rv *Revocation) error
 	Scopes     []string
+	// Optional are scopes an API connector asks for too, but connects without, like those its pushes need:
+	// asked for only once its variable has ?push=1, as its app may not have them yet.
+	Optional []string
 	// Params go on the authorization URL, like the ones that ask Google for a refresh token.
 	Params map[string]string
 	// Keep are parameters the provider adds to the callback that calls need later, like QuickBooks' realmId;
@@ -68,6 +71,9 @@ type Connector struct {
 	// Streams are what Archive keeps a copy of for each account (sync.go), pulled in this order when several
 	// are due at once.
 	Streams []*Stream
+	// Push is how the provider tells Archive an account changed (push.go); nil when it cannot, and then only
+	// connecting, asking and reading start a sync.
+	Push *Push
 }
 
 // MCPEnv is the environment variable that, when set, is another server for an MCP connector than its own: a
@@ -106,6 +112,8 @@ type Provider struct {
 	// server is an MCP connector's server, its own or a stand-in; resource is what its tokens are for, as
 	// RFC 8707 has the authorization server told.
 	server, resource string
+	// pushTo is the value of its Push's Env.
+	pushTo string
 }
 
 // Providers are the available connectors, by id.
@@ -130,7 +138,13 @@ func Load(getenv func(string) string) (Providers, error) {
 		secret, _ := u.User.Password()
 		if id := u.User.Username(); id != "" && secret != "" {
 			p := &Provider{Connector: c, clientID: id, secret: secret, base: strings.TrimRight(u.Scheme+"://"+u.Host+u.Path, "/"), opts: u.Query(), scopes: c.Scopes}
+			if u.Query().Get("push") != "" {
+				p.scopes = slices.Concat(c.Scopes, c.Optional)
+			}
 			p.endpoint = oauth2.Endpoint{AuthURL: p.at(c.Endpoint.AuthURL), TokenURL: p.at(c.Endpoint.TokenURL), AuthStyle: c.Endpoint.AuthStyle}
+			if c.Push != nil && c.Push.Env != "" {
+				p.pushTo = strings.TrimSpace(getenv(c.Push.Env))
+			}
 			if c.Revoke != "" {
 				p.revoke = p.at(c.Revoke)
 			}
@@ -214,7 +228,7 @@ func (p *Provider) Exchange(ctx context.Context, redirect string, q url.Values, 
 	switch {
 	case g.Refresh == "":
 		return nil, fmt.Errorf("%s sent no refresh token, so Archive could not keep reading it; connect it again", p.Name)
-	case p.MCP == "" && slices.ContainsFunc(p.scopes, func(s string) bool { return !granted(g.Scopes, s) }):
+	case p.MCP == "" && slices.ContainsFunc(p.Scopes, func(s string) bool { return !granted(g.Scopes, s) }):
 		return nil, fmt.Errorf("%s was connected without all the access Archive asked for; connect it again and allow it all", p.Name)
 	}
 	c := p.Open(ctx, tok, g.Meta)

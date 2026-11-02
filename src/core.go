@@ -128,6 +128,9 @@ func (a *Archive) List(ctx context.Context, typ string, where map[string]any, li
 	if err != nil {
 		return nil, err
 	}
+	if tb.Schema == "archive" && tb.Name == "record" {
+		a.syncOnRead(ctx)
+	}
 	verr := &ValidationError{Type: typ}
 	norm := map[string]any{}
 	for _, k := range specKeys(where) {

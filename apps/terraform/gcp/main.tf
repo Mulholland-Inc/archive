@@ -22,13 +22,13 @@ locals {
     ARCHIVE_SLACK      = "Sign-in with Slack, https://<client id>:<client secret>@slack.com. A space leaves it off."
     ARCHIVE_GITHUB     = "Sign-in with GitHub, https://<client id>:<client secret>@github.com. A space leaves it off."
     ARCHIVE_OUTLOOK    = "The Outlook connector's Entra app, https://<client id>:<client secret>@login.microsoftonline.com. A space leaves it off."
-    ARCHIVE_QUICKBOOKS = "The QuickBooks connector's Intuit app, https://<client id>:<client secret>@appcenter.intuit.com, ?sandbox=1 for development keys. A space leaves it off."
+    ARCHIVE_QUICKBOOKS = "The QuickBooks connector's Intuit app, https://<client id>:<client secret>@appcenter.intuit.com, ?sandbox=1 for development keys, &hook=<webhooks verifier token> for its pushes. A space leaves it off."
     ARCHIVE_HUBSPOT    = "The HubSpot connector's app, https://<client id>:<client secret>@app.hubspot.com. A space leaves it off."
-    ARCHIVE_GITHUB_APP = "The GitHub connector's GitHub App, https://<client id>:<client secret>@github.com. A space leaves it off."
-    ARCHIVE_ASANA      = "The Asana connector's app, https://<client id>:<client secret>@app.asana.com. A space leaves it off."
+    ARCHIVE_GITHUB_APP = "The GitHub connector's GitHub App, https://<client id>:<client secret>@github.com?hook=<webhook secret>. A space leaves it off."
+    ARCHIVE_ASANA      = "The Asana connector's app, https://<client id>:<client secret>@app.asana.com, ?push=1 once the app has the webhooks scopes. A space leaves it off."
   }
 
-  services = ["run.googleapis.com", "sqladmin.googleapis.com", "secretmanager.googleapis.com", "iam.googleapis.com", "storage.googleapis.com", "artifactregistry.googleapis.com", "iamcredentials.googleapis.com", "sts.googleapis.com", "cloudtasks.googleapis.com", "siteverification.googleapis.com"]
+  services = ["run.googleapis.com", "sqladmin.googleapis.com", "secretmanager.googleapis.com", "iam.googleapis.com", "storage.googleapis.com", "artifactregistry.googleapis.com", "iamcredentials.googleapis.com", "sts.googleapis.com", "cloudtasks.googleapis.com", "siteverification.googleapis.com", "pubsub.googleapis.com"]
 }
 
 resource "google_project_service" "this" {
@@ -79,6 +79,58 @@ resource "google_service_account_iam_member" "tasks" {
   service_account_id = google_service_account.tasks.name
   role               = "roles/iam.serviceAccountUser"
   member             = google_service_account.this.member
+}
+
+data "google_project" "this" {}
+
+# Gmail pushes a change of a connected mailbox to this topic (src/connect/pushers.go, users.watch), which only
+# Gmail's own account publishes to, and the subscription pushes it to the API, with the OIDC token of the
+# tasks account, which the API checks as it checks Cloud Tasks' calls. Pub/Sub's service agent mints that
+# token. A push is only a nudge: a sync reads what changed itself, so a push dropped loses nothing.
+resource "google_pubsub_topic" "gmail" {
+  name = "archive-gmail"
+
+  depends_on = [google_project_service.this]
+}
+
+resource "google_pubsub_topic_iam_member" "gmail" {
+  topic  = google_pubsub_topic.gmail.id
+  role   = "roles/pubsub.publisher"
+  member = "serviceAccount:gmail-api-push@system.gserviceaccount.com"
+}
+
+resource "google_service_account_iam_member" "pubsub_tokens" {
+  service_account_id = google_service_account.tasks.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:service-${data.google_project.this.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
+
+  depends_on = [google_project_service.this]
+}
+
+resource "google_pubsub_subscription" "gmail" {
+  name                       = "archive-gmail"
+  topic                      = google_pubsub_topic.gmail.id
+  ack_deadline_seconds       = 60
+  message_retention_duration = "86400s"
+
+  push_config {
+    push_endpoint = "${local.api_url}/push/gmail"
+    oidc_token {
+      service_account_email = google_service_account.tasks.email
+      audience              = "${local.api_url}/push/gmail"
+    }
+  }
+
+  expiration_policy {
+    ttl = ""
+  }
+
+  retry_policy {
+    minimum_backoff = "10s"
+    maximum_backoff = "600s"
+  }
+
+  depends_on = [google_service_account_iam_member.pubsub_tokens]
 }
 
 resource "google_cloud_tasks_queue" "this" {
@@ -198,9 +250,10 @@ resource "google_secret_manager_secret_iam_member" "this" {
 locals {
   image = "${var.region}-docker.pkg.dev/${var.project}/${google_artifact_registry_repository.ghcr.repository_id}/mulholland-inc/archive:${var.image_tag}"
   env = {
-    ARCHIVE_URL      = local.url
-    ARCHIVE_BLOB_URL = "gs://${google_storage_bucket.this.name}"
-    ARCHIVE_BROWSER  = google_cloud_run_v2_service.browser.uri
+    ARCHIVE_URL         = local.url
+    ARCHIVE_BLOB_URL    = "gs://${google_storage_bucket.this.name}"
+    ARCHIVE_BROWSER     = google_cloud_run_v2_service.browser.uri
+    ARCHIVE_GMAIL_TOPIC = google_pubsub_topic.gmail.id
   }
 }
 

@@ -370,11 +370,14 @@ COMMENT ON COLUMN archive.workflow_run.created_at IS 'When it started';
 -- callback said that calls need, like QuickBooks' realmId. error is why its last refresh or sync failed,
 -- empty while it works. Each member sees only their own (archive.mine), owners too.
 --
--- Its sync (sync.go) keeps a copy of what the account has in archive.record, a page at a time: sync_at is when
--- its next page is due, from when it is added, null while it does not sync, as when its grant was revoked,
--- until it connects again;
--- synced_at when every stream last caught up; and cursor where each stream is, { <stream>: { cursor, at,
--- more, since, skip, fails, error } }, which stays out of the catalog too.
+-- Its sync (sync.go) keeps a copy of what the account has in archive.record, a page at a time, and runs only
+-- when something asks: connecting, Sync now, a push from the provider, or a member reading record or opening
+-- the workspace while it is stale. asked_at is when something last asked, and each stream catches up to it;
+-- sync_at is when its next page is due, null once every stream has caught up, and lease_at when the page under
+-- way may be taken over, so a connection runs one page at a time. synced_at is when every stream last caught
+-- up, revoked says its grant was refused, which nothing but connecting again or Sync now retries, and cursor
+-- is where each stream is, { <stream>: { cursor, at, more, since, skip, fails, error, done } }, which stays out
+-- of the catalog too.
 CREATE TABLE archive.connection (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     member     uuid NOT NULL REFERENCES archive.member ON DELETE CASCADE,
@@ -389,6 +392,9 @@ CREATE TABLE archive.connection (
     sync_at    timestamptz DEFAULT now(),
     synced_at  timestamptz,
     cursor     jsonb NOT NULL DEFAULT '{}',
+    asked_at   timestamptz NOT NULL DEFAULT now(),
+    lease_at   timestamptz,
+    revoked    boolean NOT NULL DEFAULT false,
     UNIQUE (member, provider, account)
 );
 CREATE INDEX connection_sync_idx ON archive.connection (sync_at) WHERE sync_at IS NOT NULL;
@@ -399,7 +405,7 @@ COMMENT ON COLUMN archive.connection.meta IS 'What the service said about the ac
 COMMENT ON COLUMN archive.connection.account IS 'The account there, like the mailbox address';
 COMMENT ON COLUMN archive.connection.scopes IS 'What Archive may do there, as the service granted it';
 COMMENT ON COLUMN archive.connection.error IS 'Why Archive last failed to reach it, like a revoked grant; empty while it works';
-COMMENT ON COLUMN archive.connection.sync_at IS 'When Archive next reads what changed there into record; null while it does not, as after its grant was revoked, until you connect it again';
+COMMENT ON COLUMN archive.connection.sync_at IS 'When Archive next reads what changed there into record; null once it has it all, until the service says something changed, you ask, or you read record';
 COMMENT ON COLUMN archive.connection.synced_at IS 'When Archive last had everything there in record';
 
 -- A record is a copy of one thing a connection's account has, like a Gmail message, kept by its sync
@@ -438,6 +444,25 @@ CREATE TABLE archive.oauth_client (
     client     bytea NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- A watch is something a connector's provider pushes for a connection's account (connect/push.go): a Gmail
+-- users.watch, a Drive channel, a Graph subscription, an Asana webhook, or the key a push of the app's own
+-- webhook names it by, like a QuickBooks realmId. key is what a push names it by, resource what the provider
+-- calls it, secret what its pushes prove themselves with, sealed with ARCHIVE_SECRET_KEY, and expires_at when
+-- it lapses unless a sync renews it. Kept in the main database for every workspace, since a push says only
+-- the key; only Go reads it.
+CREATE TABLE archive.watch (
+    provider   text NOT NULL,
+    key        text NOT NULL,
+    workspace  uuid NOT NULL,
+    connection uuid NOT NULL,
+    resource   text NOT NULL DEFAULT '',
+    secret     bytea,
+    expires_at timestamptz,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (provider, key, connection)
+);
+CREATE INDEX watch_connection_idx ON archive.watch (connection);
 
 -- mine says whether the current role is the member m or one of their tokens, which are all in m's group role.
 CREATE FUNCTION archive.mine(m uuid) RETURNS bool LANGUAGE sql STABLE AS $$
@@ -949,7 +974,7 @@ SELECT id FROM archive.connection WHERE member = $1 AND provider = $2 AND accoun
 -- name: SaveConnection :exec
 INSERT INTO archive.connection (id, member, provider, account, token, scopes, meta) VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (id) DO UPDATE SET token = EXCLUDED.token, scopes = EXCLUDED.scopes, meta = EXCLUDED.meta, error = '', updated_at = now(),
-    sync_at = now();
+    sync_at = now(), asked_at = now(), revoked = false;
 
 -- name: ConnectionLocked :one
 SELECT * FROM archive.connection WHERE id = $1 FOR UPDATE;
@@ -977,20 +1002,55 @@ UPDATE archive.connection SET error = $2, updated_at = now() WHERE id = $1 AND e
 DELETE FROM archive.connection WHERE id = $1 AND member = $2 RETURNING *;
 
 -- name: ClaimSync :one
-UPDATE archive.connection SET sync_at = sqlc.arg(lease)::timestamptz
-WHERE id = (SELECT c.id FROM archive.connection c WHERE c.sync_at <= now() ORDER BY c.sync_at LIMIT 1 FOR UPDATE SKIP LOCKED)
+UPDATE archive.connection SET lease_at = sqlc.arg(lease)::timestamptz
+WHERE id = (SELECT c.id FROM archive.connection c WHERE c.sync_at <= now() AND (c.lease_at IS NULL OR c.lease_at < now())
+    ORDER BY c.sync_at LIMIT 1 FOR UPDATE SKIP LOCKED)
 RETURNING *;
 
 -- name: NextSyncAt :one
-SELECT sync_at FROM archive.connection WHERE sync_at IS NOT NULL ORDER BY sync_at LIMIT 1;
+SELECT greatest(sync_at, coalesce(lease_at, sync_at))::timestamptz FROM archive.connection WHERE sync_at IS NOT NULL ORDER BY 1 LIMIT 1;
 
 -- name: SaveSync :exec
 UPDATE archive.connection SET cursor = sqlc.arg(cursor), sync_at = sqlc.narg(sync_at), synced_at = coalesce(sqlc.narg(synced_at), synced_at),
-    error = sqlc.arg(error)
+    error = sqlc.arg(error), revoked = sqlc.arg(revoked), lease_at = NULL
 WHERE id = sqlc.arg(id);
 
 -- name: AskSync :exec
-UPDATE archive.connection SET cursor = $2, sync_at = now() WHERE id = $1;
+UPDATE archive.connection SET cursor = $2, sync_at = now(), asked_at = now(), revoked = false WHERE id = $1;
+
+-- A push asks for a sync: one already due, or backing off, keeps its time.
+-- name: WantSync :one
+UPDATE archive.connection SET asked_at = now(), sync_at = coalesce(sync_at, now()) WHERE id = $1 AND NOT revoked RETURNING id;
+
+-- name: CatchUpSyncs :many
+UPDATE archive.connection SET asked_at = now(), sync_at = now()
+WHERE member = sqlc.arg(member) AND sync_at IS NULL AND NOT revoked AND (synced_at IS NULL OR synced_at < sqlc.arg(stale)::timestamptz)
+RETURNING id;
+
+-- name: WatchesFor :many
+SELECT workspace, connection FROM archive.watch WHERE provider = $1 AND key = $2;
+
+-- name: WatchSecret :one
+SELECT secret FROM archive.watch WHERE provider = $1 AND key = $2 AND secret IS NOT NULL LIMIT 1;
+
+-- name: ConnectionWatches :many
+SELECT * FROM archive.watch WHERE connection = $1 ORDER BY key;
+
+-- name: SaveWatch :exec
+INSERT INTO archive.watch (provider, key, workspace, connection, resource, secret, expires_at)
+VALUES (sqlc.arg(provider), sqlc.arg(key), sqlc.arg(workspace), sqlc.arg(connection), sqlc.arg(resource), sqlc.narg(secret), sqlc.narg(expires_at))
+ON CONFLICT (provider, key, connection) DO UPDATE SET resource = EXCLUDED.resource, secret = coalesce(EXCLUDED.secret, archive.watch.secret),
+    expires_at = EXCLUDED.expires_at;
+
+-- A handshake's secret, kept by the key in the URL only it was sent: the first one wins.
+-- name: KeepWatchSecret :execrows
+INSERT INTO archive.watch (provider, key, workspace, connection, secret) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING;
+
+-- name: DropWatches :exec
+DELETE FROM archive.watch WHERE connection = sqlc.arg(connection) AND NOT key = ANY(sqlc.arg(keep)::text[]);
+
+-- name: TryLock :one
+SELECT pg_try_advisory_xact_lock(hashtextextended(sqlc.arg(name)::text, 0));
 
 -- name: SaveRecords :exec
 INSERT INTO archive.record (connection, stream, source_id, data, updated_at)

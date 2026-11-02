@@ -282,13 +282,27 @@ func (a *Archive) Disconnect(ctx context.Context, id uuid.UUID) error {
 		return err
 	}
 	a.conns.forget(c.ID)
+	ctx = context.WithoutCancel(ctx)
 	p, err := a.hub.provider(ctx, c.Provider, false)
 	var rt string
 	if err == nil {
 		rt, err = connect.OpenToken(a.aead, c.ID, c.Token)
 	}
 	if err == nil {
-		err = p.RevokeToken(context.WithoutCancel(ctx), rt)
+		// Its watches end first, while its grant still lets Archive end them.
+		var cl *connect.Client
+		if push, _ := p.PushOf(); push == nil || push.Unwatch == nil {
+		} else if tok, terr := p.Refresh(ctx, rt); terr == nil {
+			cl = p.Open(ctx, tok, c.Meta)
+			rt = tok.RefreshToken
+		}
+		if werr := a.unwatch(ctx, c, p, cl); werr != nil {
+			fmt.Fprintf(os.Stderr, "archive: workspace %s: disconnected %s, but did not end all it pushed: %v\n", a.ws.ID, id, werr)
+		}
+		if cl != nil {
+			cl.Close()
+		}
+		err = p.RevokeToken(ctx, rt)
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "archive: workspace %s: disconnected %s, but did not revoke it: %v\n", a.ws.ID, id, err)

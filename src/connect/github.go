@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"golang.org/x/oauth2"
 )
@@ -111,10 +110,11 @@ func init() {
 					return map[string]any{"path": f.Path, "sha": f.SHA, "size": f.Size, "text": string(text)}, nil
 				}),
 		},
+		Push: githubPush,
 		Streams: []*Stream{
-			{Name: "repos", Every: 6 * time.Hour, Pull: githubRepos,
-				Doc: "Every repository the app reaches for you, as GitHub lists it, listed whole every 6 hours, 100 a page, so one gone is deleted."},
-			{Name: "issues", Every: 10 * time.Minute, Pull: githubIssues,
+			{Name: "repos", Pull: githubRepos,
+				Doc: "Every repository the app reaches for you, as GitHub lists it, listed whole each sync, 100 a page, so one gone is deleted."},
+			{Name: "issues", Pull: githubIssues,
 				Doc: "Every issue and pull request you can see in the repositories the app reaches, open or closed, as GitHub lists them, " +
 					"without their comments: by their last update, 100 a page, all the first time and then those updated since. " +
 					"GitHub does not say which were deleted or moved away, so they stay."},
