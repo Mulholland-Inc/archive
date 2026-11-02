@@ -1196,9 +1196,13 @@ func (w *syncDB) write(ctx context.Context, s *connect.Stream, recs []syncRec) e
 // object is the columns of a row of table: cols, its people and organizations by their ids, each link by its
 // <column>_source, which links it once both are there, and its connection and access.
 func (w *syncDB) object(table string, row *connect.Row, people, orgs map[string]uuid.UUID) map[string]any {
-	o := maps.Clone(row.Cols)
-	if o == nil {
-		o = map[string]any{}
+	o := map[string]any{}
+	for col, v := range row.Cols {
+		// A value a provider left empty is none: '' is no email, date or amount, and their domains refuse it.
+		if v == "" {
+			v = nil
+		}
+		o[col] = v
 	}
 	for col, e := range row.People {
 		o[col] = people[e]
