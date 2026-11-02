@@ -2,7 +2,6 @@
   import { Table2, Settings2 } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
-  import Breadcrumbs from '../components/Breadcrumbs.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
   import Table from '../components/Table.svelte';
   import Button from '../components/Button.svelte';
@@ -69,7 +68,6 @@
 <TopBar>
   {#snippet leading()}
     <MobileMenu />
-    <Breadcrumbs inset items={[{ label: view?.name ?? 'Not found' }]} />
   {/snippet}
   {#snippet trailing()}
     {#if view}<Button size="sm" variant="ghost" icon={Settings2} href={`/database/${view.id}`}>Details</Button>{/if}
@@ -85,7 +83,7 @@
     <Stack gap="6">
       <Stack gap="1">
         <Heading level={1} size="2xl" wrap="anywhere">{view.name}</Heading>
-        {#if view.description}<Text tone="secondary">{view.description}</Text>{/if}
+        {#if view.description && view.description.toLowerCase() !== view.name.toLowerCase()}<Text tone="secondary">{view.description}</Text>{/if}
       </Stack>
 
       {#if !rows.length}
