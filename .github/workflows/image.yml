@@ -30,7 +30,8 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: src/go.mod
-          cache-dependency-path: src/go.sum
+          # The runner keeps Go's caches between jobs; restoring and saving them took two minutes.
+          cache: false
 
       - working-directory: src
         run: |
@@ -63,11 +64,14 @@ jobs:
 
       - run: |
           image="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT/ghcr/${GITHUB_REPOSITORY,,}:sha-${GITHUB_SHA::7}"
-          gcloud run services update archive --project "$GCP_PROJECT" --region "$GCP_REGION" --image "$image"
-          gcloud run jobs update archive --project "$GCP_PROJECT" --region "$GCP_REGION" --image "$image"
+          # All three at once; each wait fails the step if its update failed.
+          gcloud run services update archive --project "$GCP_PROJECT" --region "$GCP_REGION" --image "$image" & api=$!
+          gcloud run jobs update archive --project "$GCP_PROJECT" --region "$GCP_REGION" --image "$image" & job=$!
           if gcloud run services describe archive-browser --project "$GCP_PROJECT" --region "$GCP_REGION" >/dev/null 2>&1; then
             gcloud run services update archive-browser --project "$GCP_PROJECT" --region "$GCP_REGION" --image "$GCP_REGION-docker.pkg.dev/$GCP_PROJECT/ghcr/${GITHUB_REPOSITORY,,}:browser-sha-${GITHUB_SHA::7}"
           fi
+          wait $api
+          wait $job
         env:
           GCP_PROJECT: ${{ vars.GCP_PROJECT }}
           GCP_REGION: ${{ vars.GCP_REGION }}
@@ -81,11 +85,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: 26
-          cache: npm
-          cache-dependency-path: apps/web/package-lock.json
 
       - run: npm ci
 
