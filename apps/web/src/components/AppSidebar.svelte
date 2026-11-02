@@ -1,16 +1,21 @@
 <script>
-  import { Plus, Search, MessagesSquare, Library, Database, Workflow, Lock } from '@lucide/svelte';
+  import { Plus, Search, Library, Database, Workflow, Lock, Settings, Table2, Kanban, CalendarDays } from '@lucide/svelte';
   import Sidebar from './Sidebar.svelte';
   import SidebarItem from './SidebarItem.svelte';
   import SidebarSection from './SidebarSection.svelte';
   import ArchiveHeader from './ArchiveHeader.svelte';
+  import Menu from './Menu.svelte';
+  import Badge from './Badge.svelte';
+  import MenuItem from './MenuItem.svelte';
+  import MenuSeparator from './MenuSeparator.svelte';
   import ArchiveRail from './ArchiveRail.svelte';
   import AccountMenu from './AccountMenu.svelte';
   import ChatActions from './ChatActions.svelte';
   import PinButton from './PinButton.svelte';
-  import { app, ws, openArchiveSettings, closeDrawer, pinnedFirst, switchArchive, createArchive, renameChat, chats, workflows, members } from '../lib/app.svelte.js';
+  import { app, ws, openArchiveSettings, closeDrawer, pinnedFirst, switchArchive, createArchive, renameChat, chats, workflows, members, schema } from '../lib/app.svelte.js';
 
   chats.use();
+  schema.use();
   workflows.use();
   members.use();
   import { route, active } from '../lib/router.svelte.js';
@@ -20,6 +25,9 @@
 
   const running = $derived(ws().workflows.filter((w) => w.runs[0] && (w.runs[0].status === 'running' || w.runs[0].status === 'waiting')).length);
   const visible = $derived(pinnedFirst(ws().chats));
+  // Views are the archive's pages: Postgres views, each drawn the way its comment says.
+  const views = $derived((ws().schema ?? []).filter((t) => t.kind === 'view'));
+  const layoutIcons = { board: Kanban, calendar: CalendarDays };
 
 
   let creating = $state(false);
@@ -38,7 +46,18 @@
     <ArchiveRail archives={app.archives} current={app.archive} onselect={switchArchive} oncreate={() => { app.drawer = false; creating = true; }} />
   {/snippet}
   {#snippet header()}
-    <ArchiveHeader archive={ws()} onclick={() => { app.drawer = false; openArchiveSettings(); }} />
+    <Menu label={ws().name} width="md" match>
+      {#snippet trigger(props)}<ArchiveHeader archive={ws()} {...props} />{/snippet}
+      <MenuItem icon={Workflow} href="/workflows">
+        {#snippet end()}{#if running}<Badge>{running}</Badge>{/if}{/snippet}
+        Workflows
+      </MenuItem>
+      <MenuItem icon={Library} href="/library">Library</MenuItem>
+      <MenuItem icon={Database} href="/database">Database</MenuItem>
+      <MenuItem icon={Lock} href="/access">Access</MenuItem>
+      <MenuSeparator />
+      <MenuItem icon={Settings} onselect={() => { app.drawer = false; openArchiveSettings(); }}>Settings</MenuItem>
+    </Menu>
   {/snippet}
 
   <SetupCard />
@@ -48,16 +67,16 @@
     <SidebarItem icon={Search} label="Search" shortcut="⌘ K" onclick={() => { app.drawer = false; app.palette = true; }} />
   </SidebarSection>
 
-  <SidebarSection>
-    <SidebarItem icon={MessagesSquare} label="Chats" href="/chats" active={active('/chats')} />
-    <SidebarItem icon={Library} label="Library" href="/library" active={active('/library')} />
-    <SidebarItem icon={Database} label="Database" href="/database" active={active('/database')} />
-    <SidebarItem icon={Workflow} label="Workflows" href="/workflows" active={active('/workflows')} badge={running ? String(running) : undefined} />
-    <SidebarItem icon={Lock} label="Access" href="/access" active={active('/access')} />
-  </SidebarSection>
+  {#if views.length}
+    <SidebarSection title={collapsed ? undefined : 'Views'}>
+      {#each views as view (view.id)}
+        <SidebarItem icon={layoutIcons[view.layout] ?? Table2} label={view.name} href={`/view/${view.id}`} active={active(`/view/${view.id}`)} />
+      {/each}
+    </SidebarSection>
+  {/if}
 
   {#if !collapsed && visible.length}
-    <SidebarSection title="Recents">
+    <SidebarSection title="Chats">
         {#each visible as chat (chat.id)}
         <SidebarItem label={chat.title} href={`/chat/${chat.id}`} active={route.path === `/chat/${chat.id}`} items={() => chatItems(chat, { open: false, rename: () => (renaming = chat.id) })} onrename={(title) => renameChat(chat.id, title)} bind:editing={() => renaming === chat.id, (on) => (renaming = on ? chat.id : null)}>
           {#snippet before()}

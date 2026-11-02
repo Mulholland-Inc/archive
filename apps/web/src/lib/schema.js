@@ -53,6 +53,8 @@ export function toTables(catalog, schema = [], counts = {}, workflows = []) {
         name: t.name.replaceAll('_', ' ').replace(/^./, (s) => s.toUpperCase()),
         kind: t.kind,
         icon: t.icon,
+        layout: t.layout,
+        by: t.by,
         description: t.description,
         rows: counts[t.name]?.rows ?? null,
         updated: counts[t.name]?.updated ? relative(counts[t.name].updated) : '',
