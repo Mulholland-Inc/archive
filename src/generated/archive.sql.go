@@ -1822,11 +1822,14 @@ func (q *Queries) NextPendingFile(ctx context.Context) (NextPendingFileRow, erro
 }
 
 const nextSyncAt = `-- name: NextSyncAt :one
-SELECT greatest(sync_at, coalesce(lease_at, sync_at))::timestamptz FROM archive.connection WHERE sync_at IS NOT NULL ORDER BY 1 LIMIT 1
+SELECT greatest(sync_at, least(coalesce(lease_at, sync_at), $1::timestamptz))::timestamptz FROM archive.connection
+WHERE sync_at IS NOT NULL ORDER BY 1 LIMIT 1
 `
 
-func (q *Queries) NextSyncAt(ctx context.Context) (time.Time, error) {
-	row := q.db.QueryRow(ctx, nextSyncAt)
+// When a sync is next due: a connection whose page another task holds is looked at again shortly, not when its
+// lease runs out, since that task queues the next itself once its page is done (connection.go, syncLeaseCheck).
+func (q *Queries) NextSyncAt(ctx context.Context, soon time.Time) (time.Time, error) {
+	row := q.db.QueryRow(ctx, nextSyncAt, soon)
 	var column_1 time.Time
 	err := row.Scan(&column_1)
 	return column_1, err

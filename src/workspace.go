@@ -683,7 +683,7 @@ func (a *Archive) nextDue(ctx context.Context, kind string) (*time.Time, error) 
 		n, err := q.NextWorkflowAt(ctx)
 		if kind == "sync" {
 			var t time.Time
-			t, err = q.NextSyncAt(ctx)
+			t, err = q.NextSyncAt(ctx, time.Now().Add(syncLeaseCheck))
 			n = &t
 		}
 		if errors.Is(err, pgx.ErrNoRows) {

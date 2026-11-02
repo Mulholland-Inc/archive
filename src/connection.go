@@ -541,10 +541,15 @@ func (a *Archive) connectionToken(ctx context.Context, id uuid.UUID) (*oauth2.To
 // is skipped until the next ask. A page renews its connection's watches as they near their end (syncWatch).
 
 const (
-	// syncLease is how long a leased page has before another may take its connection over; syncBudget how
-	// long one task pulls pages before it queues the rest.
-	syncLease  = 10 * time.Minute
-	syncBudget = 2 * time.Minute
+	// syncPageTime is the most a page may take, and syncLease how long a leased page has before another may take
+	// its connection over: a little longer, so a page never outlives its lease, and short, so an instance that
+	// stops mid-page, as a deploy stops it, holds its connection up for minutes at most. syncLeaseCheck is how
+	// soon a task looks again at a connection another task's page holds, which wakes the queue itself once done.
+	// syncBudget is how long one task pulls pages before it queues the rest.
+	syncPageTime   = 2 * time.Minute
+	syncLease      = syncPageTime + time.Minute
+	syncLeaseCheck = 15 * time.Second
+	syncBudget     = 2 * time.Minute
 	// A failed page is retried syncRetry later, doubling, syncTries times in a row at most.
 	syncRetry = time.Minute
 	syncTries = 5
@@ -666,8 +671,9 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 	var account string
 	if s != nil {
 		cur := syncStateOf(c.Cursor).of(s.Name).fresh()
+		pctx, cancel := context.WithTimeout(ctx, syncPageTime)
 		var cl *connect.Client
-		if cl, err = a.connClient(ctx, c); err == nil {
+		if cl, err = a.connClient(pctx, c); err == nil {
 			page, err = s.Pull(cl, cur.Cursor)
 			if err == nil && page.More && page.Cursor == cur.Cursor {
 				err = fmt.Errorf("%s said there was more, but from where this page began", p.Name)
@@ -685,6 +691,10 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 			}
 			cl.Close()
 		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			err = fmt.Errorf("a page of %s took more than %s: %w", s.Name, syncPageTime, err)
+		}
+		cancel()
 	}
 	var next *time.Time
 	defer func() {
