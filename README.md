@@ -217,7 +217,7 @@ Every setting is an environment variable; `archive help` lists them all:
 | `DATABASE_URL` | Postgres 18, required, with CREATEROLE and CREATEDB (no superuser needed); `docker compose up -d` starts one for development. Each workspace gets its own database on the same server |
 | `ARCHIVE_SECRET_KEY` | 32-byte key for secret values; required with `DATABASE_URL`, the same on every copy |
 | `ARCHIVE_BLOB_URL` | `gs://bucket/prefix` for files in GCS as the Cloud Run service account, with no key |
-| `ARCHIVE_GOOGLE` | Sign-in with Google, as `https://<client id>:<client secret>@accounts.google.com` with the id and secret URL-escaped; each provider shows on the sign-in page when it is set, and its redirect URL is `https://api.<domain>/auth/oidc/<google\|microsoft\|slack\|github>/callback` |
+| `ARCHIVE_GOOGLE` | Sign-in with Google, as `https://<client id>:<client secret>@accounts.google.com` with the id and secret URL-escaped; each provider shows on the sign-in page when it is set, and its redirect URL is `https://api.<domain>/auth/oidc/<google\|microsoft\|slack\|github>/callback`. The Google client also connects Gmail (Settings, Connectors), read only: add `https://api.<domain>/connect/gmail/callback` to its redirect URLs and the `gmail.readonly` scope to its consent screen |
 | `ARCHIVE_MICROSOFT` | Sign-in with Microsoft, work and personal accounts: `https://<client id>:<client secret>@login.microsoftonline.com` |
 | `ARCHIVE_SLACK` | Sign-in with Slack: `https://<client id>:<client secret>@slack.com` |
 | `ARCHIVE_GITHUB` | Sign-in with GitHub: `https://<client id>:<client secret>@github.com` |

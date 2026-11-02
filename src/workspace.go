@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Mulholland-Inc/archive/connect"
 	"github.com/Mulholland-Inc/archive/generated"
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/google/uuid"
@@ -43,6 +44,8 @@ type Hub struct {
 	one   string
 	tasks *hubTasks
 	live  *liveHub
+	// connect are the connectors this server has an OAuth client for (connection.go).
+	connect connect.Providers
 
 	mu   sync.Mutex
 	open map[string]*hubEntry
@@ -132,8 +135,10 @@ func withArchive(ctx context.Context, a *Archive) context.Context {
 }
 
 func Open(ctx context.Context) (*Hub, error) {
-	dir := "./data"
-	dsn := os.Getenv("DATABASE_URL")
+	return openHub(ctx, os.Getenv("DATABASE_URL"), "./data")
+}
+
+func openHub(ctx context.Context, dsn, dir string) (*Hub, error) {
 	if dsn == "" {
 		return nil, errors.New("DATABASE_URL is required: a Postgres 18 role with CREATEROLE and CREATEDB, like the one docker compose up -d starts")
 	}
@@ -157,7 +162,11 @@ func Open(ctx context.Context) (*Hub, error) {
 	if err != nil {
 		return nil, fmt.Errorf("DATABASE_URL: %w", err)
 	}
-	h := &Hub{key: key, aead: aead, pg: pg, blobs: blobs, hints: coreHints("en-US"), tasks: tasks, open: map[string]*hubEntry{}}
+	conns, err := connect.Load(os.Getenv)
+	if err != nil {
+		return nil, err
+	}
+	h := &Hub{key: key, aead: aead, pg: pg, blobs: blobs, hints: coreHints("en-US"), tasks: tasks, connect: conns, open: map[string]*hubEntry{}}
 	if err := h.urls("8080"); err != nil {
 		return nil, err
 	}

@@ -262,7 +262,7 @@ SELECT jsonb_build_object(
             AND regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)')
             FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid), false),
         'columns', (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid)))
-        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.member'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass)
+        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.member'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass, 'archive.connection'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -397,6 +397,80 @@ SELECT archive.secret_clear($1, $2, $3)
 func (q *Queries) ClearSecrets(ctx context.Context, tbl string, rid uuid.UUID, col *string) error {
 	_, err := q.db.Exec(ctx, clearSecrets, tbl, rid, col)
 	return err
+}
+
+const connection = `-- name: Connection :one
+SELECT id, member, provider, account, token, scopes, error, created_at, updated_at FROM archive.connection WHERE id = $1
+`
+
+func (q *Queries) Connection(ctx context.Context, id uuid.UUID) (ArchiveConnection, error) {
+	row := q.db.QueryRow(ctx, connection, id)
+	var i ArchiveConnection
+	err := row.Scan(
+		&i.ID,
+		&i.Member,
+		&i.Provider,
+		&i.Account,
+		&i.Token,
+		&i.Scopes,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const connectionFor = `-- name: ConnectionFor :one
+SELECT id FROM archive.connection WHERE member = $1 AND provider = $2 AND account = $3 FOR UPDATE
+`
+
+func (q *Queries) ConnectionFor(ctx context.Context, member uuid.UUID, provider string, account string) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, connectionFor, member, provider, account)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const connections = `-- name: Connections :many
+SELECT id, provider, account, scopes, error, created_at, updated_at FROM archive.connection WHERE member = $1 ORDER BY provider, account, id
+`
+
+type ConnectionsRow struct {
+	ID        uuid.UUID
+	Provider  string
+	Account   string
+	Scopes    []string
+	Error     string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+func (q *Queries) Connections(ctx context.Context, member uuid.UUID) ([]ConnectionsRow, error) {
+	rows, err := q.db.Query(ctx, connections, member)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ConnectionsRow
+	for rows.Next() {
+		var i ConnectionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Provider,
+			&i.Account,
+			&i.Scopes,
+			&i.Error,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const createChat = `-- name: CreateChat :one
@@ -640,6 +714,27 @@ func (q *Queries) DeleteChat(ctx context.Context, iD uuid.UUID, userID uuid.UUID
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const deleteConnection = `-- name: DeleteConnection :one
+DELETE FROM archive.connection WHERE id = $1 AND member = $2 RETURNING id, member, provider, account, token, scopes, error, created_at, updated_at
+`
+
+func (q *Queries) DeleteConnection(ctx context.Context, iD uuid.UUID, member uuid.UUID) (ArchiveConnection, error) {
+	row := q.db.QueryRow(ctx, deleteConnection, iD, member)
+	var i ArchiveConnection
+	err := row.Scan(
+		&i.ID,
+		&i.Member,
+		&i.Provider,
+		&i.Account,
+		&i.Token,
+		&i.Scopes,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const deleteDDLKey = `-- name: DeleteDDLKey :exec
@@ -1611,6 +1706,32 @@ func (q *Queries) RolesWithPrefix(ctx context.Context, prefix string) ([]string,
 	return items, nil
 }
 
+const saveConnection = `-- name: SaveConnection :exec
+INSERT INTO archive.connection (id, member, provider, account, token, scopes) VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (id) DO UPDATE SET token = EXCLUDED.token, scopes = EXCLUDED.scopes, error = '', updated_at = now()
+`
+
+type SaveConnectionParams struct {
+	ID       uuid.UUID
+	Member   uuid.UUID
+	Provider string
+	Account  string
+	Token    []byte
+	Scopes   []string
+}
+
+func (q *Queries) SaveConnection(ctx context.Context, arg SaveConnectionParams) error {
+	_, err := q.db.Exec(ctx, saveConnection,
+		arg.ID,
+		arg.Member,
+		arg.Provider,
+		arg.Account,
+		arg.Token,
+		arg.Scopes,
+	)
+	return err
+}
+
 const secrets = `-- name: Secrets :many
 SELECT id, row_id, column_name, type, value FROM archive.secret WHERE table_name = $1 AND row_id = ANY($2::uuid[])
 `
@@ -1647,6 +1768,24 @@ func (q *Queries) Secrets(ctx context.Context, tableName string, ids []uuid.UUID
 		return nil, err
 	}
 	return items, nil
+}
+
+const setConnectionError = `-- name: SetConnectionError :exec
+UPDATE archive.connection SET error = $2, updated_at = now() WHERE id = $1 AND error <> $2
+`
+
+func (q *Queries) SetConnectionError(ctx context.Context, iD uuid.UUID, error string) error {
+	_, err := q.db.Exec(ctx, setConnectionError, iD, error)
+	return err
+}
+
+const setConnectionToken = `-- name: SetConnectionToken :exec
+UPDATE archive.connection SET token = $2, error = '', updated_at = now() WHERE id = $1
+`
+
+func (q *Queries) SetConnectionToken(ctx context.Context, iD uuid.UUID, token []byte) error {
+	_, err := q.db.Exec(ctx, setConnectionToken, iD, token)
+	return err
 }
 
 const setDue = `-- name: SetDue :execrows
