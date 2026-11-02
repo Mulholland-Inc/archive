@@ -53,7 +53,6 @@ export function toTables(catalog, schema = [], counts = {}, workflows = []) {
         id: t.name,
         name: t.name.replaceAll('_', ' ').replace(/^./, (s) => s.toUpperCase()),
         kind: t.kind,
-        icon: t.icon,
         layout: t.layout,
         by: t.by,
         description: t.description,
