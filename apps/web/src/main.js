@@ -7,6 +7,7 @@ import './styles/tokens.css';
 import './styles/base.css';
 import './styles/bots.css';
 import './lib/theme.svelte.js';
+import './lib/viewport.js';
 import App from './App.svelte';
 
 export default mount(App, { target: document.getElementById('app') });
