@@ -89,11 +89,11 @@
     flex: none;
   }
 
+  /* No gap: the hidden mini title would still take one and indent the search; it brings its own margin. */
   .bar {
     position: relative;
     display: flex;
     align-items: center;
-    gap: var(--space-2);
     min-height: var(--topbar-height);
   }
 
@@ -150,6 +150,7 @@
 
   .bar .actions {
     margin-inline-start: auto;
+    padding-inline-start: var(--space-2);
     animation: actions-in var(--duration-normal) var(--ease-out);
   }
 
