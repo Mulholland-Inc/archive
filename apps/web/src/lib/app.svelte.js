@@ -365,10 +365,24 @@ export const viewRows = resource({
 // What a row of view (or table) id links to, through its link columns, and what links to it: the rows of
 // other tables whose link columns point at the table the view reads, which its DDL names. Each is { table,
 // column, rows: [{ id, title }] }; a row's title is its table's first text column.
-// baseOf is the table a view reads, as its DDL names it after FROM, past the parentheses Postgres puts around
-// joins; a table is its own.
+// baseOf is the table a view reads, as its DDL names it after its own FROM, past the parentheses Postgres puts
+// around joins: not the FROM of a subquery in its select list, like a count of another table; a table is its own.
 export function baseOf(t) {
-  return t?.kind === 'view' ? (/\bfrom\s+[(\s]*(?:public\.)?"?(\w+)"?/i.exec(t.ddl ?? '')?.[1] ?? t.id) : t?.id;
+  if (t?.kind !== 'view') return t?.id;
+  const ddl = t.ddl ?? '';
+  let depth = 0;
+  let quoted = false;
+  for (let i = 0; i < ddl.length; i++) {
+    const ch = ddl[i];
+    if (ch === "'") quoted = !quoted;
+    if (quoted) continue;
+    if (ch === '(') depth++;
+    else if (ch === ')') depth--;
+    else if (depth === 0 && /^from\b/i.test(ddl.slice(i, i + 5)) && !/\w/.test(ddl[i - 1] ?? '')) {
+      return /^from\s+[(\s]*(?:public\.)?"?(\w+)"?/i.exec(ddl.slice(i))?.[1] ?? t.id;
+    }
+  }
+  return t.id;
 }
 
 // linkOf is the table a column links to; a view's columns have none of their own, so it is its table's.
