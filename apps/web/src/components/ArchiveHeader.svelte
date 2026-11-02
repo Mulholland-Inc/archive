@@ -2,12 +2,12 @@
   import { getContext } from 'svelte';
   import ArchiveIcon from './ArchiveIcon.svelte';
 
-  let { archive, onclick } = $props();
+  let { archive, ...rest } = $props();
   const sidebar = getContext('sidebar');
   const collapsed = $derived(sidebar?.collapsed ?? false);
 </script>
 
-<button type="button" class={['header', { collapsed }]} {onclick} aria-label={collapsed ? `${archive?.name} settings` : undefined}>
+<button type="button" class={['header', { collapsed }]} aria-label={collapsed ? archive?.name : undefined} {...rest}>
   <ArchiveIcon icon={archive?.look.icon} tint={archive?.look.tint} seed={archive?.id} size="lg" />
   <span class="lines">
     <span class="name">{archive?.name}</span>

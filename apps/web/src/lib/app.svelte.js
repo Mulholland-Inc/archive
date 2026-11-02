@@ -354,6 +354,17 @@ export const preview = resource({
   }
 });
 
+// A view's rows, as its page draws them: they move with any row of any table, since a view reads others.
+export const viewRows = resource({
+  tables: (c) => !c.table.startsWith('archive.'),
+  param: (c) => c.table,
+  load: async (id) => {
+    const v = ws();
+    const rows = (await call(`/api/${encodeURIComponent(id)}?limit=500`).catch(() => [])) ?? [];
+    v.viewRows = { ...v.viewRows, [id]: rows };
+  }
+});
+
 export async function loadArchive(v = ws()) {
   v.loading = true;
   await Promise.allSettled([chats.refresh(), library.refresh(), members.refresh(), workflows.refresh(), schema.refresh()]);
