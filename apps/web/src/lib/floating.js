@@ -1,7 +1,3 @@
-export function supportsAnchor() {
-  return typeof CSS !== 'undefined' && CSS.supports('position-area: bottom');
-}
-
 export function show(node, source) {
   try {
     node.showPopover({ source });

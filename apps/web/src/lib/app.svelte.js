@@ -80,8 +80,6 @@ export function ws() {
   return app.archives.find((w) => w.id === app.archive) ?? app.archives[0];
 }
 
-export const currentArchive = ws;
-
 const call = (path, opts = {}) => api(path, { ...opts, workspace: opts.workspace ?? app.archive });
 
 async function complain(error, title = 'That didn’t work') {
@@ -930,11 +928,6 @@ export function createWorkflow({ name, trigger, steps }) {
   return `/chat/${newChat(name || 'New workflow', { text })}`;
 }
 
-export function toggleWorkflow(id) {
-  const wf = workflowById(id);
-  if (wf) wf.enabled = !wf.enabled;
-}
-
 export async function renameWorkflow() {
   await notify({ title: 'Ask the assistant', body: 'Ask the assistant to rename the workflow; it keeps its runs, webhook and schedule.' });
 }
@@ -949,11 +942,6 @@ export async function removeWorkflow(id) {
     complain(e, 'Couldn’t delete the workflow');
   }
 }
-
-export function pauseRun() {}
-export function stopRun() {}
-export function resolveRun() {}
-export function steerRun() {}
 
 // Connectors: only those the API has, with your connections to them, read from /connect.
 

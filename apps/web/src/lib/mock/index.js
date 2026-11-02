@@ -20,7 +20,7 @@
 // - Composer screenshots and recordings: shown as attachments but not sent.
 // - Empty folders in the library: a folder is a file's access group, so a new one exists once a file is in it.
 // - Workflow pause, stop and "needs input": runs are synchronous in the API.
-// - The component specimen (/specimen) shows the whole design system with the made-up archives in seed.js.
+// - The component specimen (/specimen) shows the design system with made-up files, chats and members (data.js).
 
 import { catalog } from './connectors.js';
 export { initials, models, suggestions } from './data.js';
