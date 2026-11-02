@@ -1,5 +1,5 @@
 <script>
-  import { Table2, Settings2, SearchX, Type, AlignLeft, CalendarDays as DateIcon, Hash, CircleCheck, ArrowUpRight, Paperclip, AtSign, DollarSign, MapPin, CircleDot, Fingerprint } from '@lucide/svelte';
+  import { Table2, Settings2, SearchX, Type, AlignLeft, CalendarDays as DateIcon, Hash, CircleCheck, ArrowUpRight, Paperclip, AtSign, DollarSign, MapPin, CircleDot, Fingerprint, ArrowLeft, Clock } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
@@ -17,7 +17,10 @@
   import RightSidebar from '../components/RightSidebar.svelte';
   import Heading from '../components/Heading.svelte';
   import Property from '../components/Property.svelte';
-  import { app, ws, schema, viewRows } from '../lib/app.svelte.js';
+  import { app, ws, schema, viewRows, rowRelations, linkOf } from '../lib/app.svelte.js';
+  import Section from '../components/Section.svelte';
+  import List from '../components/List.svelte';
+  import ListItem from '../components/ListItem.svelte';
   import { show } from '../lib/live.js';
 
   // A view, drawn the way its comment says: a table, a board grouped by its by column, or a calendar by its
@@ -58,9 +61,27 @@
 
   // A row opens in the side panel, its fields as properties, each with its type's icon.
   const typeIcons = { text: Type, long: AlignLeft, date: DateIcon, number: Hash, money: DollarSign, yes: CircleCheck, link: ArrowUpRight, file: Paperclip, email: AtSign, place: MapPin, choice: CircleDot, id: Fingerprint };
+  let relations = $state({ to: [], from: [] });
   function pick(r) {
     open = r;
     app.details = true;
+    relations = { to: [], from: [] };
+    rowRelations(id, r).then((x) => open === r && (relations = x));
+  }
+  const nameOf = (tid) => ws().schema.find((x) => x.id === tid)?.name ?? tid;
+
+  // The board scrolls sideways; a vertical wheel over it scrolls the page, which the browser would otherwise
+  // keep from the page once the board, a scroller too, catches it.
+  function wheel(node) {
+    const on = (e) => {
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+      const page = node.closest('.scroll');
+      if (!page) return;
+      e.preventDefault();
+      page.scrollBy({ top: e.deltaY * (e.deltaMode === 1 ? 16 : 1) });
+    };
+    node.addEventListener('wheel', on, { passive: false });
+    return () => node.removeEventListener('wheel', on);
   }
 
   function clear() {
@@ -162,7 +183,7 @@
           <Button onclick={clear}>Show everything</Button>
         </EmptyState>
       {:else if layout === 'board' && view.by}
-        <div class="board">
+        <div class="board" {@attach wheel}>
           {#each lanes as [lane, items] (lane)}
             <section class="lane">
               <header><Text size="sm" weight="medium">{lane}</Text><Text size="sm" tone="tertiary" tabular>{items.length}</Text></header>
@@ -200,15 +221,37 @@
 
     {#snippet side()}
       {#if open}
-        <Stack gap="4">
+        <Stack gap="6">
           <Heading level={2} size="lg" wrap="anywhere">{show(open[title?.name]) || view.name}</Heading>
-          <Stack gap="0">
-            {#each shown.filter((c) => c !== title) as c (c.name)}
-              <Property compact label={label(c)} icon={typeIcons[c.type] ?? Type}>
-                {#if open[c.name] == null || open[c.name] === ''}<Text size="sm" tone="tertiary">Empty</Text>{:else}<Text size="sm" wrap="anywhere">{show(open[c.name])}</Text>{/if}
-              </Property>
-            {/each}
-          </Stack>
+          <Section title="Properties">
+            <Stack gap="0">
+              {#each shown.filter((c) => c !== title && !linkOf(view, c)) as c (c.name)}
+                <Property compact label={label(c)} icon={typeIcons[c.type] ?? Type}>
+                  {#if open[c.name] == null || open[c.name] === ''}<Text size="sm" tone="tertiary">Empty</Text>{:else}<Text size="sm" wrap="anywhere">{show(open[c.name])}</Text>{/if}
+                </Property>
+              {/each}
+            </Stack>
+          </Section>
+          {#each relations.to as l (`to-${l.column}`)}
+            <Section title={label({ name: l.column })}>
+              <List>
+                {#each l.rows as r (r.id)}<ListItem href={`/database/${l.table}`} icon={ArrowUpRight}><Text size="sm">{r.title}</Text></ListItem>{/each}
+              </List>
+            </Section>
+          {/each}
+          {#each relations.from as l (`from-${l.table}-${l.column}`)}
+            <Section title={nameOf(l.table)}>
+              <List>
+                {#each l.rows as r (r.id)}<ListItem href={`/database/${l.table}`} icon={ArrowLeft}><Text size="sm">{r.title}</Text></ListItem>{/each}
+              </List>
+            </Section>
+          {/each}
+          <Section title="Details">
+            <Stack gap="0">
+              {#if open.created_at}<Property compact label="Created" icon={Clock}><Text size="sm" tone="secondary">{show(open.created_at)}</Text></Property>{/if}
+              {#if open.updated_at}<Property compact label="Updated" icon={Clock}><Text size="sm" tone="secondary">{show(open.updated_at)}</Text></Property>{/if}
+            </Stack>
+          </Section>
         </Stack>
       {/if}
     {/snippet}

@@ -364,6 +364,45 @@ export const viewRows = resource({
   }
 });
 
+// What a row of view (or table) id links to, through its link columns, and what links to it: the rows of
+// other tables whose link columns point at the table the view reads, which its DDL names. Each is { table,
+// column, rows: [{ id, title }] }; a row's title is its table's first text column.
+// baseOf is the table a view reads, as its DDL names it after FROM; a table is its own.
+export function baseOf(t) {
+  return t?.kind === 'view' ? (/\bfrom\s+(?:public\.)?"?(\w+)"?/i.exec(t.ddl ?? '')?.[1] ?? t.id) : t?.id;
+}
+
+// linkOf is the table a column links to; a view's columns have none of their own, so it is its table's.
+export function linkOf(t, c) {
+  return c.to ?? ws().schema.find((x) => x.id === baseOf(t))?.columns.find((x) => x.name === c.name)?.to;
+}
+
+export async function rowRelations(id, row) {
+  const types = ws().schema;
+  const t = types.find((x) => x.id === id);
+  if (!t || !row?.id) return { to: [], from: [] };
+  const base = baseOf(t);
+  const titleOf = (tid, r) => {
+    const col = types.find((x) => x.id === tid)?.columns.find((c) => c.type === 'text' && !['id', 'access'].includes(c.name));
+    return String(r?.[col?.name] ?? r?.id ?? '');
+  };
+  const to = await Promise.all(
+    t.columns.filter((c) => linkOf(t, c) && row[c.name]).map(async (c) => {
+      const to = linkOf(t, c);
+      const ids = Array.isArray(row[c.name]) ? row[c.name] : [row[c.name]];
+      const rows = await Promise.all(ids.slice(0, 20).map((rid) => call(`/api/${encodeURIComponent(to)}/${rid}`).then((r) => ({ id: rid, title: titleOf(to, r) })).catch(() => null)));
+      return { table: to, column: c.name, rows: rows.filter(Boolean) };
+    })
+  );
+  const from = await Promise.all(
+    types.filter((x) => x.kind !== 'view').flatMap((x) => x.columns.filter((c) => c.to === base).map((c) => ({ x, c }))).map(async ({ x, c }) => {
+      const rows = (await call(`/api/${encodeURIComponent(x.id)}?${encodeURIComponent(c.name)}=${row.id}&limit=20`).catch(() => [])) ?? [];
+      return { table: x.id, column: c.name, rows: rows.map((r) => ({ id: r.id, title: titleOf(x.id, r) })) };
+    })
+  );
+  return { to: to.filter((l) => l.rows.length), from: from.filter((l) => l.rows.length) };
+}
+
 export async function loadArchive(v = ws()) {
   v.loading = true;
   await Promise.allSettled([chats.refresh(), library.refresh(), members.refresh(), workflows.refresh(), schema.refresh()]);
