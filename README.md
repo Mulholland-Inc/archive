@@ -186,9 +186,9 @@ gcloud run jobs execute archive --region us-central1 --wait --args=user,add,you@
 
 The same job runs any other `archive` command. The service scales to zero: Cloud Tasks wakes it at the moment a workflow or file is due, so nothing has to stay running.
 
-To deploy every image built on main, add `-var github_repository=owner/repo` with a `GITHUB_TOKEN` that can write that repository's Actions variables and secrets (`gh auth token` works for an admin). Apply before merging anything else, then run the image workflow once: until it runs, the app domain answers 503. It reads `ARCHIVE_LIVE_KEY` from Secret Manager, the one secret its identity may read, and sets it on the app Worker as `LIVE_KEY`.
+To deploy every image built on main, add `-var github_repository=owner/repo`, and set that repository's Actions variables from `terraform output github_variables`. Apply before merging anything else, then run the image workflow once: until it runs, the app domain answers 503. Its identity may read two secrets: the Worker deploy token Terraform makes, and `ARCHIVE_LIVE_KEY`, which it sets on the app Worker as `LIVE_KEY`.
 
-To add Archive to a Terraform setup you already have, call the same directory as a module. It sets up its own providers from `project` and `region`, with the same `CLOUDFLARE_API_TOKEN` and `GITHUB_TOKEN`, so it can't take `count`, `for_each` or `depends_on`:
+To add Archive to a Terraform setup you already have, call the same directory as a module. It sets up its own providers from `project` and `region`, with the same `CLOUDFLARE_API_TOKEN`, so it can't take `count`, `for_each` or `depends_on`:
 
 ```hcl
 module "archive" {
