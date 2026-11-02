@@ -262,29 +262,5 @@ func mcpAccount(tool string) func(c *Client) (string, error) {
 	}
 }
 
-// mcpName is an MCP connector's Account that calls tool, without arguments, and reads the first of keys in its
-// answer, at any depth.
-func mcpName(tool string, keys ...string) func(c *Client) (string, error) {
-	return func(c *Client) (string, error) {
-		res, err := c.Call(tool, map[string]any{})
-		if err != nil {
-			return "", err
-		}
-		var v any = res.StructuredContent
-		if v == nil {
-			json.Unmarshal([]byte(Text(res)), &v)
-		} else {
-			b, _ := json.Marshal(v)
-			json.Unmarshal(b, &v)
-		}
-		for _, k := range keys {
-			if s := strings.TrimSpace(find(v, k)); s != "" {
-				return s, nil
-			}
-		}
-		return "", fmt.Errorf("%s named no %s", tool, strings.Join(keys, " or "))
-	}
-}
-
 // ClientID is the OAuth client's id.
 func (p *Provider) ClientID() string { return p.clientID }

@@ -232,53 +232,75 @@ func TestWatchesAskTheirProviders(t *testing.T) {
 	}
 }
 
-// Gusto's company is one record, and its lists page by number while a page comes back full; a server that
-// sends the same page again ends the listing rather than read it forever.
-func TestGustoListsPageByNumber(t *testing.T) {
-	var pages []any
+// Gusto's sign-in reaches several companies, which get_token_info lists: every tool acts on the one
+// company_uuid names, so each stream walks them in turn, one listing of them all, and the account is named by
+// them. A company's list pages by number while a page comes back full; a server that sends the same page again
+// ends that company's listing rather than read it forever.
+func TestGustoWalksItsCompanies(t *testing.T) {
+	var pages []string
+	needs := func(props ...string) map[string]any {
+		s := schemaOf(append(props, "company_uuid")...)
+		s["required"] = []any{"company_uuid"}
+		return s
+	}
 	c := mcpStandIn(t, "gusto", map[string]mcpTool{
-		"get_company": {schemaOf(), func(map[string]any) any {
-			return map[string]any{"uuid": "co1", "name": "Acme Inc", "updated_at": "2026-01-01T00:00:00Z"}
+		"get_token_info": {schemaOf(), func(map[string]any) any {
+			return map[string]any{"accessible_resources": []any{
+				map[string]any{"resource_type": "Company", "uuid": "co1", "name": "Acme Inc"},
+				map[string]any{"resource_type": "Company", "uuid": "co2", "name": "Acme Labs"},
+			}}
 		}},
-		"list_employees": {schemaOf("page", "per"), func(args map[string]any) any {
-			pages = append(pages, args["page"])
-			n := 100
-			if args["page"] == 2.0 {
-				n = 3
+		"get_company": {needs(), func(args map[string]any) any {
+			return map[string]any{"uuid": args["company_uuid"], "name": "Acme", "updated_at": "2026-01-01T00:00:00Z"}
+		}},
+		"list_employees": {needs("page", "per"), func(args map[string]any) any {
+			pages = append(pages, fmt.Sprint(args["company_uuid"], "/", args["page"]))
+			n := 3
+			if args["company_uuid"] == "co1" && args["page"] == nil {
+				n = 100
 			}
 			var out []any
 			for i := range n {
-				out = append(out, map[string]any{"uuid": fmt.Sprintf("e%v-%d", args["page"], i)})
+				out = append(out, map[string]any{"uuid": fmt.Sprintf("%v-%v-%d", args["company_uuid"], args["page"], i)})
 			}
 			return out
 		}},
-		"list_contractors": {schemaOf("page", "per"), func(args map[string]any) any {
+		"get_contractors": {needs("page", "per"), func(args map[string]any) any {
 			var out []any
 			for i := range 100 {
-				out = append(out, map[string]any{"uuid": fmt.Sprint(i)})
+				out = append(out, map[string]any{"uuid": fmt.Sprint(args["company_uuid"], i)})
 			}
 			return out
 		}},
-		"list_payrolls": {map[string]any{"type": "object", "properties": map[string]any{"start_date": map[string]any{}}, "required": []any{"start_date"}},
-			func(map[string]any) any { return "[]" }},
+		"list_payrolls": {map[string]any{"type": "object", "properties": map[string]any{"company_uuid": map[string]any{}, "start_date": map[string]any{}},
+			"required": []any{"company_uuid", "start_date"}}, func(map[string]any) any { return "[]" }},
 	})
-	co := pull(t, c, "company", "")
-	wantPage(t, "the company", co, "co1", false, true)
-	if name, err := c.p.Account(c); err != nil || name != "Acme Inc" {
+	if name, err := c.p.Account(c); err != nil || name != "Acme Inc, Acme Labs" {
 		t.Errorf("the account: %q %v", name, err)
 	}
-	p := pull(t, c, "employees", "")
-	if len(p.Records) != 100 || !p.More || !p.Full {
-		t.Fatalf("the first page: %d %v", len(p.Records), p.More)
+	co := pull(t, c, "company", "")
+	wantPage(t, "the first company", co, "co1", true, true)
+	co = pull(t, c, "company", co.Cursor)
+	wantPage(t, "the second company", co, "co2", false, true)
+	if co.Cursor != "" {
+		t.Errorf("a finished listing leaves a cursor: %s", co.Cursor)
 	}
-	p = pull(t, c, "employees", p.Cursor)
-	if len(p.Records) != 3 || p.More || fmt.Sprint(pages) != "[<nil> 2]" {
-		t.Errorf("the last page: %d %v, pages asked %v", len(p.Records), p.More, pages)
+	var got []int
+	p := &Page{More: true}
+	for p.More {
+		p = pull(t, c, "employees", p.Cursor)
+		if !p.Full {
+			t.Fatalf("a page of employees is not part of a full listing")
+		}
+		got = append(got, len(p.Records))
+	}
+	if fmt.Sprint(got) != "[100 3 3]" || fmt.Sprint(pages) != "[co1/<nil> co1/2 co2/<nil>]" {
+		t.Errorf("the employees: pages of %v, asked for %v", got, pages)
 	}
 	p = pull(t, c, "contractors", "")
 	p = pull(t, c, "contractors", p.Cursor)
-	if p.More {
-		t.Errorf("a server that sends the same page again is read again: %s", p.Cursor)
+	if !p.More || p.Cursor != `{"companies":["co1","co2"],"at":1}` {
+		t.Errorf("a server that sends the same page again does not move on to the next company: %s", p.Cursor)
 	}
 	if _, err := streamNamed(c, "payrolls").Pull(c, ""); !asUnsupported(err, new(*Unsupported)) || !strings.Contains(err.Error(), "needs start_date") {
 		t.Errorf("a tool that needs what Archive has not: %v", err)
