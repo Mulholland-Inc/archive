@@ -31,7 +31,7 @@
   <span class="glyph"><Icon icon={KeyRound} size="md" /></span>
   <span class="text">
     <span class="title">Sign in faster on this device</span>
-    <span class="sub">{error || 'Add a passkey, then sign in with your fingerprint, face or PIN.'}</span>
+    {#if error}<span class="sub">{error}</span>{/if}
   </span>
   <Button size="sm" variant="ghost" onclick={later}>Not now</Button>
   <Button size="sm" variant="primary" loading={busy} onclick={add}>Add passkey</Button>
