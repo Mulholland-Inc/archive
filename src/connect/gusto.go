@@ -647,18 +647,13 @@ func gustoTimeOffRows(m map[string]any) *Row {
 	return r
 }
 
-// gustoBalanceRows is an employee's time-off balances, one a policy, in the first list of them it has.
+// gustoBalanceRows is an employee's time-off balances, one a policy: what is left, accrued, used and pending.
 func gustoBalanceRows(m map[string]any) *Row {
 	r := gustoRow(m, map[string]any{}).ref("worker", str(m, "employee_uuid"))
-	var policies []map[string]any
-	for _, k := range []string{"balances", "time_off_balances", "policies", "time_off_policies"} {
-		if policies = objects(m[k], ""); len(policies) > 0 {
-			break
-		}
-	}
-	for _, p := range policies {
-		r.child("payroll_time_off_policy", rowOf(map[string]any{"name": cmp.Or(str(p, "policy_name"), str(p, "name")), "policy_type": str(p, "policy_type"),
-			"hours": decimal(cmp.Or(num(p["balance"]), num(p["balance_hours"]), num(p["hours"]))), "policy_source": str(p, "policy_uuid")}))
+	for _, p := range objects(m["balances"], "") {
+		r.child("payroll_time_off_policy", rowOf(map[string]any{"name": str(p, "policy_name"), "policy_type": str(p, "policy_type"), "policy_source": str(p, "policy_uuid"),
+			"hours": decimal(p["balance_hours"]), "accrued_hours": decimal(p["accrued_hours"]), "used_hours": decimal(p["used_hours"]),
+			"pending_hours": decimal(p["pending_hours"])}))
 	}
 	return r
 }
@@ -741,7 +736,6 @@ func gustoPaymentGroupRows(m map[string]any) *Row {
 }
 
 func gustoTaskRows(m map[string]any) *Row {
-	return gustoRow(m, map[string]any{"title": cmp.Or(str(m, "title"), str(m, "name")), "description": str(m, "description"),
-		"due_on": day(cmp.Or(str(m, "due_date"), str(m, "due_on"))), "priority": str(m, "priority"), "category": str(m, "category"),
-		"status": str(m, "status"), "url": cmp.Or(str(m, "url"), str(m, "link"))})
+	return gustoRow(m, map[string]any{"title": str(m, "title"), "description": str(m, "message"), "due_on": day(str(m, "due_at")),
+		"priority": str(m, "priority"), "category": str(m, "category"), "status": str(m, "status"), "url": str(m, "deep_link")})
 }

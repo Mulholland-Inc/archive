@@ -1132,7 +1132,10 @@ CREATE TABLE archive.payroll_time_off_policy (
     policy_source text,
     name          text,
     policy_type   text,
-    hours         numeric
+    hours         numeric,
+    accrued_hours numeric,
+    used_hours    numeric,
+    pending_hours numeric
 );
 CREATE INDEX payroll_time_off_policy_balance_idx ON archive.payroll_time_off_policy (balance);
 CREATE INDEX payroll_time_off_policy_connection_idx ON archive.payroll_time_off_policy (connection);
@@ -1141,6 +1144,10 @@ icon: hourglass';
 COMMENT ON COLUMN archive.payroll_time_off_policy.balance IS 'references payroll_time_off_balance';
 COMMENT ON COLUMN archive.payroll_time_off_policy.policy_source IS 'The policy''s id there';
 COMMENT ON COLUMN archive.payroll_time_off_policy.policy_type IS 'Like vacation or sick';
+COMMENT ON COLUMN archive.payroll_time_off_policy.hours IS 'Hours left';
+COMMENT ON COLUMN archive.payroll_time_off_policy.accrued_hours IS 'Hours accrued';
+COMMENT ON COLUMN archive.payroll_time_off_policy.used_hours IS 'Hours used';
+COMMENT ON COLUMN archive.payroll_time_off_policy.pending_hours IS 'Hours asked for and not yet taken';
 COMMENT ON COLUMN archive.payroll_time_off_policy.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.payroll_run (
