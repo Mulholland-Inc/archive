@@ -20,12 +20,14 @@
         {/each}
       </div>
     {/if}
-    <div class="bubble">{message.text}</div>
-    {#if onedit}
-      <div class="actions">
-        <IconButton icon={Pencil} label="Edit message" size="sm" onclick={() => onedit(message.text)} />
-      </div>
-    {/if}
+    <div class="line">
+      {#if onedit}
+        <div class="actions">
+          <IconButton icon={Pencil} label="Edit message" size="sm" onclick={() => onedit(message.text)} />
+        </div>
+      {/if}
+      <div class="bubble">{message.text}</div>
+    </div>
   </article>
 {:else}
   <article class="assistant" in:rise {@attach contextmenu(() => messageItems(message))}>
@@ -51,6 +53,14 @@
     flex-wrap: wrap;
     justify-content: flex-end;
     gap: var(--space-2);
+  }
+
+  .line {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: var(--space-1);
+    width: 100%;
   }
 
   .bubble {
@@ -83,5 +93,12 @@
   .user:hover .actions,
   .actions:focus-within {
     opacity: 1;
+  }
+
+  /* No hover on phones: editing is in the long-press menu. */
+  @media (hover: none) {
+    .actions {
+      display: none;
+    }
   }
 </style>
