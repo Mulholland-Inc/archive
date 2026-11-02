@@ -17,10 +17,15 @@ locals {
     ARCHIVE_LIVE_KEY   = "Key the API announces live changes to the app Worker with; the image workflow sets it on the Worker as LIVE_KEY."
     ANTHROPIC_API_KEY  = "Key of the in-app agent and archive.browse. A space leaves the agent off."
     TYPESAFE_API_KEY   = "TypeSafe key of archive.browse. A space leaves browse off."
-    ARCHIVE_GOOGLE     = "Sign-in with Google, https://<client id>:<client secret>@accounts.google.com. A space leaves it off."
+    ARCHIVE_GOOGLE     = "Sign-in with Google and the Gmail and Google Drive connectors, https://<client id>:<client secret>@accounts.google.com. A space leaves it off."
     ARCHIVE_MICROSOFT  = "Sign-in with Microsoft, https://<client id>:<client secret>@login.microsoftonline.com. A space leaves it off."
     ARCHIVE_SLACK      = "Sign-in with Slack, https://<client id>:<client secret>@slack.com. A space leaves it off."
     ARCHIVE_GITHUB     = "Sign-in with GitHub, https://<client id>:<client secret>@github.com. A space leaves it off."
+    ARCHIVE_OUTLOOK    = "The Outlook connector's Entra app, https://<client id>:<client secret>@login.microsoftonline.com. A space leaves it off."
+    ARCHIVE_QUICKBOOKS = "The QuickBooks connector's Intuit app, https://<client id>:<client secret>@appcenter.intuit.com, ?sandbox=1 for development keys. A space leaves it off."
+    ARCHIVE_HUBSPOT    = "The HubSpot connector's app, https://<client id>:<client secret>@app.hubspot.com. A space leaves it off."
+    ARCHIVE_GITHUB_APP = "The GitHub connector's GitHub App, https://<client id>:<client secret>@github.com. A space leaves it off."
+    ARCHIVE_ASANA      = "The Asana connector's app, https://<client id>:<client secret>@app.asana.com. A space leaves it off."
   }
 
   services = ["run.googleapis.com", "sqladmin.googleapis.com", "secretmanager.googleapis.com", "iam.googleapis.com", "storage.googleapis.com", "artifactregistry.googleapis.com", "iamcredentials.googleapis.com", "sts.googleapis.com", "cloudtasks.googleapis.com", "siteverification.googleapis.com"]

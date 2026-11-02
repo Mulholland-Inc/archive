@@ -364,10 +364,11 @@ COMMENT ON COLUMN archive.workflow_run.ms IS 'How long it took, in milliseconds'
 COMMENT ON COLUMN archive.workflow_run.created_at IS 'When it started';
 
 -- A connection is one of a member's own accounts at another service, like their Gmail, that Archive reads for
--- them. Go alone writes it (connect.go): connecting adds it, connecting the same account again renews it, and
--- disconnecting deletes it. provider is a connector's id; token is its refresh token, sealed with the
--- workspace key like a secret value, and stays out of the catalog with member. error is why its last refresh
--- failed, empty while it works. Each member sees only their own (archive.mine), owners too.
+-- them. Go alone writes it (connection.go): connecting adds it, connecting the same account again renews it,
+-- and disconnecting deletes it. provider is a connector's id; token is its refresh token, sealed with the
+-- workspace key like a secret value, and stays out of the catalog with member. meta is what the provider's
+-- callback said that calls need, like QuickBooks' realmId. error is why its last refresh failed, empty while
+-- it works. Each member sees only their own (archive.mine), owners too.
 CREATE TABLE archive.connection (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     member     uuid NOT NULL REFERENCES archive.member ON DELETE CASCADE,
@@ -378,14 +379,25 @@ CREATE TABLE archive.connection (
     error      text NOT NULL DEFAULT '',
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
+    meta       jsonb NOT NULL DEFAULT '{}',
     UNIQUE (member, provider, account)
 );
-COMMENT ON TABLE archive.connection IS 'One of your own accounts at another service that Archive reads for you, like your Gmail. Read only; connect and disconnect them in Settings, Connectors
+COMMENT ON TABLE archive.connection IS 'One of your own accounts at another service that Archive reads for you, like your Gmail; archive.action uses it. Read only; connect and disconnect them in Settings, Connectors
 icon: plug';
-COMMENT ON COLUMN archive.connection.provider IS 'Which service: gmail';
+COMMENT ON COLUMN archive.connection.provider IS 'Which service, a connector: gmail, notion, quickbooks, ...';
+COMMENT ON COLUMN archive.connection.meta IS 'What the service said about the account when it connected, like QuickBooks'' realmId';
 COMMENT ON COLUMN archive.connection.account IS 'The account there, like the mailbox address';
 COMMENT ON COLUMN archive.connection.scopes IS 'What Archive may do there, as the service granted it';
 COMMENT ON COLUMN archive.connection.error IS 'Why Archive last failed to reach it, like a revoked grant; empty while it works';
+
+-- An OAuth client Archive registered for itself at an MCP connector's authorization server (connect/mcp.go):
+-- one per connector, kept in the main database for every workspace, since the redirect URI is the server's.
+-- client is the connect.Registration, its secret with it, sealed with ARCHIVE_SECRET_KEY. Only Go reads it.
+CREATE TABLE archive.oauth_client (
+    provider   text PRIMARY KEY,
+    client     bytea NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
 
 -- mine says whether the current role is the member m or one of their tokens, which are all in m's group role.
 CREATE FUNCTION archive.mine(m uuid) RETURNS bool LANGUAGE sql STABLE AS $$
@@ -889,8 +901,24 @@ SELECT * FROM archive.connection WHERE id = $1;
 SELECT id FROM archive.connection WHERE member = $1 AND provider = $2 AND account = $3 FOR UPDATE;
 
 -- name: SaveConnection :exec
-INSERT INTO archive.connection (id, member, provider, account, token, scopes) VALUES ($1, $2, $3, $4, $5, $6)
-ON CONFLICT (id) DO UPDATE SET token = EXCLUDED.token, scopes = EXCLUDED.scopes, error = '', updated_at = now();
+INSERT INTO archive.connection (id, member, provider, account, token, scopes, meta) VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (id) DO UPDATE SET token = EXCLUDED.token, scopes = EXCLUDED.scopes, meta = EXCLUDED.meta, error = '', updated_at = now();
+
+-- name: ConnectionLocked :one
+SELECT * FROM archive.connection WHERE id = $1 FOR UPDATE;
+
+-- name: MemberConnections :many
+SELECT * FROM archive.connection WHERE member = $1 ORDER BY provider, account, id;
+
+-- name: OAuthClient :one
+SELECT client FROM archive.oauth_client WHERE provider = $1;
+
+-- name: SetOAuthClient :exec
+INSERT INTO archive.oauth_client (provider, client) VALUES (sqlc.arg(provider), sqlc.arg(client))
+ON CONFLICT (provider) DO UPDATE SET client = EXCLUDED.client, created_at = now() WHERE archive.oauth_client.client = sqlc.narg(old);
+
+-- name: DeleteOAuthClient :exec
+DELETE FROM archive.oauth_client WHERE provider = $1 AND client = $2;
 
 -- name: SetConnectionToken :exec
 UPDATE archive.connection SET token = $2, error = '', updated_at = now() WHERE id = $1;

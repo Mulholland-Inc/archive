@@ -4,18 +4,22 @@ package main
 // connect package connected. This is the routes and the rows; connect has the connectors and OAuth.
 //
 // GET /connect/<id> sends the browser to the provider with a state naming the workspace, the user and their
-// member, sealed with ARCHIVE_SECRET_KEY. Its callback, GET /connect/<id>/callback, checks the same person is signed in, keeps the
-// grant's refresh token sealed with the workspace key, and sends the browser back to the connector in the app.
-// Only Go writes the rows; a member reads their own. connectionToken is how code that reads an account (a
-// sync, later) gets an access token for it.
+// member, sealed with ARCHIVE_SECRET_KEY; for an MCP connector it first registers Archive's own client at its
+// authorization server, once for every workspace, and keeps it in archive.oauth_client of the main database.
+// Its callback, GET /connect/<id>/callback, checks the same person is signed in, keeps the grant's refresh
+// token sealed with the workspace key, and sends the browser back to the connector in the app. Only Go writes
+// the rows; a member reads their own. connectionAccess is how code that uses an account (archive.action,
+// action.go) gets an access token for it.
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Mulholland-Inc/archive/connect"
@@ -31,6 +35,58 @@ func (h *Hub) connector(id string) (*connect.Provider, error) {
 		return nil, fmt.Errorf("%v: %w", err, ErrNotFound)
 	}
 	return p, nil
+}
+
+// provider is the connector id with its OAuth client: an API connector's from its variable, and an MCP
+// connector's from archive.oauth_client. With register, an MCP connector without one, or without one that
+// still fits, registers one now; a process that registered at the same time keeps the one that was first.
+func (h *Hub) provider(ctx context.Context, id string, register bool) (*connect.Provider, error) {
+	p, err := h.connector(id)
+	if err != nil || p.MCP == "" {
+		return p, err
+	}
+	redirect := h.connectRedirect(id)
+	kept := func() ([]byte, *connect.Registration, error) {
+		sealed, err := h.q().OAuthClient(ctx, id)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil, nil
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		r, err := connect.OpenClient(h.aead, id, sealed)
+		return sealed, r, err
+	}
+	sealed, r, err := kept()
+	switch {
+	case err != nil:
+		return nil, err
+	case r != nil && (!register || p.Fits(r, redirect)):
+		return p.Registered(r), nil
+	case !register:
+		return nil, fmt.Errorf("%s has no client on this server; connect it again: %w", p.Name, ErrUnauthorized)
+	}
+	fresh, err := p.Register(ctx, redirect)
+	if err != nil {
+		return nil, err
+	}
+	if err := h.q().SetOAuthClient(ctx, id, connect.SealClient(h.aead, id, fresh), sealed); err != nil {
+		return nil, err
+	}
+	if _, r, err = kept(); err != nil || r == nil {
+		return nil, cmp.Or(err, fmt.Errorf("%s: its client was not kept", p.Name))
+	}
+	return p.Registered(r), nil
+}
+
+// forgetClient drops p's client from archive.oauth_client when its authorization server no longer knows it, so
+// the next connect registers again; one another process registered since stays.
+func (h *Hub) forgetClient(ctx context.Context, p *connect.Provider) {
+	if sealed, err := h.q().OAuthClient(ctx, p.ID); err == nil {
+		if r, err := connect.OpenClient(h.aead, p.ID, sealed); err == nil && r.ClientID == p.ClientID() {
+			h.q().DeleteOAuthClient(ctx, p.ID, sealed)
+		}
+	}
 }
 
 // connectRedirect is the provider's redirect URI for connector id.
@@ -74,7 +130,8 @@ func (h *Hub) connectRoutes(mux *http.ServeMux) {
 	})
 }
 
-// connectStart sends the browser to consent to the connector in the path, for whoever is signed in.
+// connectStart sends the browser to consent to the connector in the path, for whoever is signed in, or back
+// to the connector in the app with ?error= when an MCP connector's server could not be set up.
 func (a *Archive) connectStart(w http.ResponseWriter, r *http.Request) {
 	ac, err := authUser(r.Context())
 	var p *connect.Provider
@@ -83,6 +140,10 @@ func (a *Archive) connectStart(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		httpWrite(w, 0, nil, err)
+		return
+	}
+	if p, err = a.hub.provider(r.Context(), p.ID, true); err != nil {
+		http.Redirect(w, r, a.hub.app+"/connectors/"+r.PathValue("id")+"?"+url.Values{"workspace": {a.ws.ID.String()}, "error": {err.Error()}}.Encode(), http.StatusSeeOther)
 		return
 	}
 	st := connect.State{Provider: p.ID, Workspace: a.ws.ID.String(), User: ac.UserID, Member: ac.member,
@@ -102,10 +163,13 @@ func (a *Archive) connectFinish(w http.ResponseWriter, r *http.Request, st conne
 		return
 	}
 	back := url.Values{"workspace": {st.Workspace}}
-	p, err := a.hub.connector(st.Provider)
+	p, err := a.hub.provider(r.Context(), st.Provider, false)
 	var g *connect.Grant
 	if err == nil {
 		g, err = p.Exchange(r.Context(), a.hub.connectRedirect(p.ID), r.URL.Query(), st.Verifier)
+		if err != nil && p.MCP != "" && strings.Contains(err.Error(), "invalid_client") {
+			a.hub.forgetClient(r.Context(), p)
+		}
 	}
 	if err == nil {
 		_, err = a.connectionSave(r.Context(), st.Member, p.ID, g)
@@ -119,6 +183,9 @@ func (a *Archive) connectFinish(w http.ResponseWriter, r *http.Request, st conne
 // connectionSave keeps g for member at provider, in the row they have for its account or a new one.
 func (a *Archive) connectionSave(ctx context.Context, member uuid.UUID, provider string, g *connect.Grant) (uuid.UUID, error) {
 	var id uuid.UUID
+	if g.Meta == nil {
+		g.Meta = map[string]string{}
+	}
 	return id, a.sys(ctx, func(ctx context.Context) error {
 		q := a.st.db(ctx)
 		var err error
@@ -129,7 +196,7 @@ func (a *Archive) connectionSave(ctx context.Context, member uuid.UUID, provider
 			return err
 		}
 		return q.SaveConnection(ctx, generated.SaveConnectionParams{ID: id, Member: member, Provider: provider, Account: g.Account,
-			Token: connect.SealToken(a.aead, id, g.Refresh), Scopes: g.Scopes})
+			Token: connect.SealToken(a.aead, id, g.Refresh), Scopes: g.Scopes, Meta: g.Meta})
 	})
 }
 
@@ -196,7 +263,8 @@ func (a *Archive) Disconnect(ctx context.Context, id uuid.UUID) error {
 	if err != nil {
 		return err
 	}
-	p, err := a.hub.connector(c.Provider)
+	a.conns.forget(c.ID)
+	p, err := a.hub.provider(ctx, c.Provider, false)
 	var rt string
 	if err == nil {
 		rt, err = connect.OpenToken(a.aead, c.ID, c.Token)
@@ -210,43 +278,46 @@ func (a *Archive) Disconnect(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// connectionToken is a fresh access token for the connection id, for code that reads the account it connects;
-// keep it while it lasts, since each call refreshes. A refresh that fails is the connection's error until one
-// works, and a refresh token the provider replaces is kept.
+// connectionToken is a fresh access token for the connection id; each call refreshes, so code that uses an
+// account calls connectionAccess, which keeps one while it lasts. It refreshes holding the connection's row,
+// so processes refreshing at once take turns, and each refreshes with the refresh token the one before kept:
+// providers that replace the refresh token on every refresh refuse an old one, some revoking the grant. A
+// refresh that fails is the connection's error until one works.
 func (a *Archive) connectionToken(ctx context.Context, id uuid.UUID) (*oauth2.Token, error) {
-	var c generated.ArchiveConnection
-	err := a.st.System(ctx, func(ctx context.Context) (err error) {
-		c, err = a.st.db(ctx).Connection(ctx, id)
-		return err
+	var tok *oauth2.Token
+	var refused error
+	err := a.st.System(ctx, func(ctx context.Context) error {
+		q := a.st.db(ctx)
+		c, err := q.ConnectionLocked(ctx, id)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("connection %s: %w", id, ErrNotFound)
+		}
+		if err != nil {
+			return err
+		}
+		p, err := a.hub.provider(ctx, c.Provider, false)
+		if err != nil {
+			return err
+		}
+		rt, err := connect.OpenToken(a.aead, c.ID, c.Token)
+		if err != nil {
+			return err
+		}
+		if tok, err = p.Refresh(ctx, rt); err != nil {
+			msg := fmt.Sprintf("%s refused to let Archive keep reading %s (%s); connect it again", p.Name, c.Account, connect.Reason(err))
+			refused = fmt.Errorf("connection %s: %s: %w", id, msg, ErrUnauthorized)
+			return q.SetConnectionError(ctx, id, msg)
+		}
+		if c.Error != "" || tok.RefreshToken != rt {
+			return q.SetConnectionToken(ctx, id, connect.SealToken(a.aead, id, tok.RefreshToken))
+		}
+		return nil
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, fmt.Errorf("connection %s: %w", id, ErrNotFound)
+	if err == nil {
+		err = refused
 	}
 	if err != nil {
 		return nil, err
-	}
-	p, err := a.hub.connector(c.Provider)
-	if err != nil {
-		return nil, err
-	}
-	rt, err := connect.OpenToken(a.aead, c.ID, c.Token)
-	if err != nil {
-		return nil, err
-	}
-	tok, err := p.Refresh(ctx, rt)
-	if err != nil {
-		msg := fmt.Sprintf("%s refused to let Archive keep reading %s (%s); connect it again", p.Name, c.Account, connect.Reason(err))
-		if serr := a.st.System(ctx, func(ctx context.Context) error { return a.st.db(ctx).SetConnectionError(ctx, id, msg) }); serr != nil {
-			return nil, serr
-		}
-		return nil, fmt.Errorf("connection %s: %s: %w", id, msg, ErrUnauthorized)
-	}
-	if c.Error != "" || tok.RefreshToken != rt {
-		if err := a.st.System(ctx, func(ctx context.Context) error {
-			return a.st.db(ctx).SetConnectionToken(ctx, id, connect.SealToken(a.aead, id, tok.RefreshToken))
-		}); err != nil {
-			return nil, err
-		}
 	}
 	return tok, nil
 }

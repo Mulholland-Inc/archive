@@ -20,6 +20,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/Mulholland-Inc/archive/connect"
 	"github.com/Mulholland-Inc/archive/generated"
 	"github.com/dop251/goja"
 	"github.com/evanw/esbuild/pkg/api"
@@ -98,6 +99,7 @@ type runner struct {
 	depth     int
 	clock     *runClock
 	logBytes  int
+	clients   map[uuid.UUID]*connect.Client
 	stringify goja.Callable
 	parse     goja.Callable
 }
@@ -240,6 +242,7 @@ func (r *runner) nested(ctx context.Context, code string, input json.RawMessage)
 
 func (r *runner) run(ctx context.Context) error {
 	r.ctx = ctx
+	defer r.closeClients()
 	if at, err := r.a.st.db(ctx).TxNow(ctx); err == nil {
 		r.at = at
 	}
@@ -541,6 +544,8 @@ func (r *runner) jsErr(err error) goja.Value {
 		code = "conflict"
 	case errors.Is(err, ErrUnauthorized):
 		code = "unauthorized"
+	case errors.Is(err, errActionInvalid):
+		code = "invalid"
 	case errors.As(err, &pe):
 		code = pe.Code
 	}
@@ -676,7 +681,7 @@ func (r *runner) promise(v any, err error) goja.Value {
 	return r.vm.ToValue(p)
 }
 
-var runReads = map[string]bool{"query": true, "schema": true, "revisions": true, "list": true, "get": true, "search": true, "files": true, "file": true}
+var runReads = map[string]bool{"action": true, "query": true, "schema": true, "revisions": true, "list": true, "get": true, "search": true, "files": true, "file": true}
 
 func (r *runner) call(read bool, f func(ctx context.Context) (any, error)) (any, error) {
 	t, ok := r.ctx.Value(storeTxKey{}).(storeTx)
@@ -896,6 +901,7 @@ func (r *runner) sdk() {
 	})
 	r.workflowSDK(o)
 	r.browseSDK(o)
+	r.actionSDK(o)
 	r.vm.Set("archive", o)
 }
 
@@ -1023,13 +1029,14 @@ func (a *Archive) RunDocs(ctx context.Context) string {
 // the chat's run tool, which it describes, is one prompt cache entry for all of them.
 var runDocs = strings.ReplaceAll(runSDK, "{timeout}", runTimeout.String())
 
-// RunTypes is the TypeScript of this workspace's types and tables, as the live database has them.
+// RunTypes is the TypeScript of this workspace's types and tables, as the live database has them, and of the
+// actions of the caller's connections.
 func (a *Archive) RunTypes(ctx context.Context) string {
 	a.refresh(ctx)
-	return runTypes(a.Catalog())
+	return runTypes(a.Catalog()) + a.actionTypes(ctx)
 }
 
-var runStatic = []string{"Base", "Row", "Hit", "Migration", "SchemaChange", "Table", "StoredFile", "Tables", "FetchResponse", "RunResult", "BrowseResult", "WorkflowOn", "CronInput", "TableInput", "WebhookInput",
+var runStatic = []string{"Actions", "Base", "Row", "Hit", "Migration", "SchemaChange", "Table", "StoredFile", "Tables", "FetchResponse", "RunResult", "BrowseResult", "WorkflowOn", "CronInput", "TableInput", "WebhookInput",
 	"Money", "Timestamp", "Time", "Interval", "Address", "Name", "Postcode", "Geo", "Quantity"}
 
 func runPascal(s string) string {

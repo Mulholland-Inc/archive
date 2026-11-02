@@ -400,7 +400,7 @@ func (q *Queries) ClearSecrets(ctx context.Context, tbl string, rid uuid.UUID, c
 }
 
 const connection = `-- name: Connection :one
-SELECT id, member, provider, account, token, scopes, error, created_at, updated_at FROM archive.connection WHERE id = $1
+SELECT id, member, provider, account, token, scopes, error, created_at, updated_at, meta FROM archive.connection WHERE id = $1
 `
 
 func (q *Queries) Connection(ctx context.Context, id uuid.UUID) (ArchiveConnection, error) {
@@ -416,6 +416,7 @@ func (q *Queries) Connection(ctx context.Context, id uuid.UUID) (ArchiveConnecti
 		&i.Error,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Meta,
 	)
 	return i, err
 }
@@ -429,6 +430,28 @@ func (q *Queries) ConnectionFor(ctx context.Context, member uuid.UUID, provider 
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const connectionLocked = `-- name: ConnectionLocked :one
+SELECT id, member, provider, account, token, scopes, error, created_at, updated_at, meta FROM archive.connection WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) ConnectionLocked(ctx context.Context, id uuid.UUID) (ArchiveConnection, error) {
+	row := q.db.QueryRow(ctx, connectionLocked, id)
+	var i ArchiveConnection
+	err := row.Scan(
+		&i.ID,
+		&i.Member,
+		&i.Provider,
+		&i.Account,
+		&i.Token,
+		&i.Scopes,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Meta,
+	)
+	return i, err
 }
 
 const connections = `-- name: Connections :many
@@ -717,7 +740,7 @@ func (q *Queries) DeleteChat(ctx context.Context, iD uuid.UUID, userID uuid.UUID
 }
 
 const deleteConnection = `-- name: DeleteConnection :one
-DELETE FROM archive.connection WHERE id = $1 AND member = $2 RETURNING id, member, provider, account, token, scopes, error, created_at, updated_at
+DELETE FROM archive.connection WHERE id = $1 AND member = $2 RETURNING id, member, provider, account, token, scopes, error, created_at, updated_at, meta
 `
 
 func (q *Queries) DeleteConnection(ctx context.Context, iD uuid.UUID, member uuid.UUID) (ArchiveConnection, error) {
@@ -733,6 +756,7 @@ func (q *Queries) DeleteConnection(ctx context.Context, iD uuid.UUID, member uui
 		&i.Error,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Meta,
 	)
 	return i, err
 }
@@ -743,6 +767,15 @@ DELETE FROM archive.ddl_key WHERE key = $1
 
 func (q *Queries) DeleteDDLKey(ctx context.Context, key string) error {
 	_, err := q.db.Exec(ctx, deleteDDLKey, key)
+	return err
+}
+
+const deleteOAuthClient = `-- name: DeleteOAuthClient :exec
+DELETE FROM archive.oauth_client WHERE provider = $1 AND client = $2
+`
+
+func (q *Queries) DeleteOAuthClient(ctx context.Context, provider string, client []byte) error {
+	_, err := q.db.Exec(ctx, deleteOAuthClient, provider, client)
 	return err
 }
 
@@ -1364,6 +1397,41 @@ func (q *Queries) MemberByEmail(ctx context.Context, email string) (MemberByEmai
 	return i, err
 }
 
+const memberConnections = `-- name: MemberConnections :many
+SELECT id, member, provider, account, token, scopes, error, created_at, updated_at, meta FROM archive.connection WHERE member = $1 ORDER BY provider, account, id
+`
+
+func (q *Queries) MemberConnections(ctx context.Context, member uuid.UUID) ([]ArchiveConnection, error) {
+	rows, err := q.db.Query(ctx, memberConnections, member)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ArchiveConnection
+	for rows.Next() {
+		var i ArchiveConnection
+		if err := rows.Scan(
+			&i.ID,
+			&i.Member,
+			&i.Provider,
+			&i.Account,
+			&i.Token,
+			&i.Scopes,
+			&i.Error,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Meta,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const members = `-- name: Members :many
 SELECT id, email::text AS email, role::text AS role, groups FROM archive.member ORDER BY email
 `
@@ -1465,6 +1533,17 @@ func (q *Queries) NoMembers(ctx context.Context) (bool, error) {
 	var not_exists bool
 	err := row.Scan(&not_exists)
 	return not_exists, err
+}
+
+const oAuthClient = `-- name: OAuthClient :one
+SELECT client FROM archive.oauth_client WHERE provider = $1
+`
+
+func (q *Queries) OAuthClient(ctx context.Context, provider string) ([]byte, error) {
+	row := q.db.QueryRow(ctx, oAuthClient, provider)
+	var client []byte
+	err := row.Scan(&client)
+	return client, err
 }
 
 const oldWorkflows = `-- name: OldWorkflows :many
@@ -1707,8 +1786,8 @@ func (q *Queries) RolesWithPrefix(ctx context.Context, prefix string) ([]string,
 }
 
 const saveConnection = `-- name: SaveConnection :exec
-INSERT INTO archive.connection (id, member, provider, account, token, scopes) VALUES ($1, $2, $3, $4, $5, $6)
-ON CONFLICT (id) DO UPDATE SET token = EXCLUDED.token, scopes = EXCLUDED.scopes, error = '', updated_at = now()
+INSERT INTO archive.connection (id, member, provider, account, token, scopes, meta) VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (id) DO UPDATE SET token = EXCLUDED.token, scopes = EXCLUDED.scopes, meta = EXCLUDED.meta, error = '', updated_at = now()
 `
 
 type SaveConnectionParams struct {
@@ -1718,6 +1797,7 @@ type SaveConnectionParams struct {
 	Account  string
 	Token    []byte
 	Scopes   []string
+	Meta     map[string]string
 }
 
 func (q *Queries) SaveConnection(ctx context.Context, arg SaveConnectionParams) error {
@@ -1728,6 +1808,7 @@ func (q *Queries) SaveConnection(ctx context.Context, arg SaveConnectionParams) 
 		arg.Account,
 		arg.Token,
 		arg.Scopes,
+		arg.Meta,
 	)
 	return err
 }
@@ -1837,6 +1918,16 @@ SELECT set_config($1, $2, true)
 
 func (q *Queries) SetLocal(ctx context.Context, name string, value string) error {
 	_, err := q.db.Exec(ctx, setLocal, name, value)
+	return err
+}
+
+const setOAuthClient = `-- name: SetOAuthClient :exec
+INSERT INTO archive.oauth_client (provider, client) VALUES ($1, $2)
+ON CONFLICT (provider) DO UPDATE SET client = EXCLUDED.client, created_at = now() WHERE archive.oauth_client.client = $3
+`
+
+func (q *Queries) SetOAuthClient(ctx context.Context, provider string, client []byte, old []byte) error {
+	_, err := q.db.Exec(ctx, setOAuthClient, provider, client, old)
 	return err
 }
 

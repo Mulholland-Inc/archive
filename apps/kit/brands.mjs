@@ -49,7 +49,8 @@ const brands = {
   Mailchimp: 'logos:mailchimp-icon',
   Trello: 'logos:trello',
   Figma: 'logos:figma',
-  Zapier: 'logos:zapier-icon'
+  Zapier: 'logos:zapier-icon',
+  Sentry: 'logos:sentry-icon'
 };
 
 const out = {};

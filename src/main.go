@@ -119,7 +119,17 @@ Environment:
                      page when it is set, and its redirect URL is
                      <API>/auth/oidc/<google|microsoft|slack|github>/callback. Only invited people sign
                      in, matched on an email the provider says is verified. ARCHIVE_GOOGLE also
-                     connects Gmail, read only, with the redirect URL <API>/connect/gmail/callback
+                     connects Gmail and Google Drive, read only, with the redirect URLs
+                     <API>/connect/gmail/callback and <API>/connect/gdrive/callback
+  ARCHIVE_OUTLOOK    https://<client id>:<client secret>@login.microsoftonline.com
+  ARCHIVE_QUICKBOOKS https://<client id>:<client secret>@appcenter.intuit.com, ?sandbox=1 for sandbox companies
+  ARCHIVE_HUBSPOT    https://<client id>:<client secret>@app.hubspot.com
+  ARCHIVE_GITHUB_APP https://<client id>:<client secret>@github.com, a GitHub App's
+  ARCHIVE_ASANA      https://<client id>:<client secret>@app.asana.com
+                     the OAuth clients of the API connectors members connect their own accounts at
+                     (src/connect), each with the redirect URL <API>/connect/<connector>/callback.
+                     The MCP connectors, like Notion and Linear, need none: Archive registers itself at
+                     their servers; ARCHIVE_MCP_<CONNECTOR> points one at another server
   ARCHIVE_LIVE_KEY   key the API announces live changes with to the app Worker on the API's /live/announce
                      (apps/web/worker.js), which tells every open web app what moved; unset, serve holds
                      the web app's /live sockets itself and other archive commands on this machine tell
@@ -248,7 +258,7 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	case "serve":
 		return cliServe(ctx, h, a, *addr)
 	case "mcp":
-		return mcpServer(a).Run(ctx, &mcp.StdioTransport{})
+		return mcpServer(a, ac).Run(ctx, &mcp.StdioTransport{})
 	case "types":
 		return cliJSON(stdout, a.Catalog())
 	case "run":
@@ -901,18 +911,23 @@ type mcpRunInput struct {
 	Code string `json:"code" jsonschema:"TypeScript to run inside Archive against the archive SDK in the tool description"`
 }
 
-func mcpServer(a *Archive) *mcp.Server {
+// mcpServer is the MCP server of the member ac, whose run tool's docs are the workspace's tables and their own
+// actions, made again on every tools/list that finds them changed.
+func mcpServer(a *Archive, ac *Actor) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "archive", Title: "Archive", Version: cliVersion}, nil)
 	var mu sync.Mutex
-	var seen *Catalog
+	var seen string
 	tool := func(ctx context.Context) {
 		mu.Lock()
 		defer mu.Unlock()
+		if ActorFrom(ctx) == nil && ac != nil {
+			ctx = WithActor(ctx, ac)
+		}
 		docs := a.RunDocs(ctx)
-		if a.Catalog() == seen {
+		if docs == seen {
 			return
 		}
-		seen = a.Catalog()
+		seen = docs
 		mcp.AddTool(s, &mcp.Tool{Name: "run", Title: "Run TypeScript in Archive", Description: docs}, func(ctx context.Context, req *mcp.CallToolRequest, in mcpRunInput) (*mcp.CallToolResult, any, error) {
 			if req.Extra != nil && req.Extra.TokenInfo != nil {
 				if ac, ok := req.Extra.TokenInfo.Extra["actor"].(*Actor); ok {

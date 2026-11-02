@@ -15,7 +15,13 @@ const names = {
   google: 'Google',
   okta: 'Okta',
   microsoft: 'Microsoft',
-  entra: 'Microsoft Entra'
+  entra: 'Microsoft Entra',
+  quickbooks: 'QuickBooks',
+  hubspot: 'HubSpot',
+  asana: 'Asana',
+  linear: 'Linear',
+  sentry: 'Sentry',
+  stripe: 'Stripe'
 };
 
 export const brandFor = (id) => BRANDS[names[id]];

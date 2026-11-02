@@ -15,6 +15,7 @@ import (
 	"github.com/Mulholland-Inc/archive/generated"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/text/currency"
 	"golang.org/x/text/language"
 )
@@ -37,6 +38,12 @@ type Archive struct {
 	hmu  sync.Mutex
 	api  http.Handler
 	mcph http.Handler
+	// mcps are the MCP servers of the members that called /mcp, each describing its run tool with their own
+	// actions.
+	mcps map[uuid.UUID]*mcp.Server
+
+	// conns are the access tokens and tools of connections that runs used (action.go).
+	conns archiveConns
 }
 
 func (a *Archive) as(ctx context.Context, fn func(context.Context) error) error {
