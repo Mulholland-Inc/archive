@@ -112,6 +112,10 @@ Environment:
                      page when it is set, and its redirect URL is
                      <API>/auth/oidc/<google|microsoft|slack|github>/callback. Only invited people sign
                      in, matched on an email the provider says is verified
+  ARCHIVE_LIVE_KEY   key the API announces live changes with to the app Worker on the API's /live/announce
+                     (apps/web/worker.js), which tells every open web app what moved; unset, serve holds
+                     the web app's /live sockets itself and other archive commands on this machine tell
+                     it; ARCHIVE_LIVE_URL sends the announces to another address, like wrangler dev's
   ANTHROPIC_API_KEY  key for the agent behind POST /api/chat, which can only call the run tool, in
                      every workspace; ANTHROPIC_BASE_URL points it at another
                      Messages API endpoint
@@ -598,7 +602,11 @@ func cliServe(ctx context.Context, h *Hub, a *Archive, addr string) error {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("/mcp", h.mcp)
 	mux.HandleFunc("POST /tasks", h.tasksHTTP)
-	hs := &http.Server{Addr: addr, Handler: h.cors(mux), ReadHeaderTimeout: 10 * time.Second}
+	h.live.serving()
+	mux.HandleFunc("GET /live", h.liveHTTP)
+	mux.HandleFunc("POST /live/announce", h.liveAnnounceHTTP)
+	mux.HandleFunc("GET /auth/live", h.liveCheckHTTP)
+	hs := &http.Server{Addr: addr, Handler: h.cors(h.live.after(mux)), ReadHeaderTimeout: 10 * time.Second}
 	errc := make(chan error, 1)
 	go func() { errc <- hs.ListenAndServe() }()
 	fmt.Fprintf(os.Stderr, "archive: serving the API on %s/api and MCP on %s/mcp, for the web app on %s\n", h.api, h.api, h.app)

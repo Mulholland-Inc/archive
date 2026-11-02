@@ -18,7 +18,9 @@
   import EmptyState from '../components/EmptyState.svelte';
   import Text from '../components/Text.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { ws } from '../lib/app.svelte.js';
+  import { ws, workflows } from '../lib/app.svelte.js';
+
+  workflows.use();
   import { workflowItems, deleteWorkflow as remove } from '../lib/menus.js';
   import { go } from '../lib/router.svelte.js';
 

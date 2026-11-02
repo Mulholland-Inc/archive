@@ -11,7 +11,9 @@
   import PinButton from '../components/PinButton.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { ws, pinnedFirst } from '../lib/app.svelte.js';
+  import { ws, pinnedFirst, chats } from '../lib/app.svelte.js';
+
+  chats.use();
   import { go } from '../lib/router.svelte.js';
   import { chatItems } from '../lib/menus.js';
 

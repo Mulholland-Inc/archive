@@ -85,17 +85,18 @@ type pgStore struct {
 	prefix   string
 }
 
-func OpenStore(ctx context.Context, pg *pgx.ConnConfig, prefix, password string) (*pgStore, error) {
+// OpenStore opens a workspace's store; moved hears what each of its transactions committed (livePool).
+func OpenStore(ctx context.Context, pg *pgx.ConnConfig, prefix, password string, moved func(table, id string)) (*pgStore, error) {
 	cfg := pg.Copy()
 	cfg.RuntimeParams["search_path"] = "public"
 	s := &pgStore{cfg: cfg, prefix: prefix}
 	var err error
-	if s.sys, err = storePool(ctx, pg, storeSysConns, nil); err == nil {
+	if s.sys, err = storePool(ctx, pg, storeSysConns, moved, nil); err == nil {
 		err = s.bootstrap(ctx, password)
 	}
 	if err == nil {
 		auth := prefix + "_authenticator"
-		s.app, err = storePool(ctx, pg, storeAppConns, func(c *pgx.ConnConfig) { c.User, c.Password = auth, password })
+		s.app, err = storePool(ctx, pg, storeAppConns, moved, func(c *pgx.ConnConfig) { c.User, c.Password = auth, password })
 	}
 	if err != nil {
 		s.Close()
@@ -110,7 +111,7 @@ const (
 	storeIdle     = time.Minute
 )
 
-func storePool(ctx context.Context, base *pgx.ConnConfig, conns int32, fn func(*pgx.ConnConfig)) (*pgxpool.Pool, error) {
+func storePool(ctx context.Context, base *pgx.ConnConfig, conns int32, moved func(table, id string), fn func(*pgx.ConnConfig)) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig("")
 	if err != nil {
 		return nil, err
@@ -121,6 +122,9 @@ func storePool(ctx context.Context, base *pgx.ConnConfig, conns int32, fn func(*
 	cfg.MaxConns, cfg.MinConns, cfg.MaxConnIdleTime = conns, 0, storeIdle
 	if fn != nil {
 		fn(cfg.ConnConfig)
+	}
+	if moved != nil {
+		livePool(cfg, moved)
 	}
 	return pgxpool.NewWithConfig(ctx, cfg)
 }

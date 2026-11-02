@@ -42,6 +42,7 @@ type Hub struct {
 	api   string
 	one   string
 	tasks *hubTasks
+	live  *liveHub
 
 	mu   sync.Mutex
 	open map[string]*hubEntry
@@ -148,7 +149,8 @@ func Open(ctx context.Context) (*Hub, error) {
 	if err := h.urls("8080"); err != nil {
 		return nil, err
 	}
-	if h.main, err = storePool(ctx, pg, storeSysConns, nil); err != nil {
+	h.live = newLive(h.api, h.localApp())
+	if h.main, err = storePool(ctx, pg, storeSysConns, nil, nil); err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
 	if err := h.register(ctx); err != nil {
@@ -229,6 +231,8 @@ func (h *Hub) Close() {
 	if h.main != nil {
 		h.main.Close()
 	}
+	// What the stores committed is held in memory; send it last, so closing is not held up by it.
+	h.live.settle(liveSettle)
 }
 
 func (h *Hub) q() *generated.Queries { return generated.New(h.main) }
@@ -262,7 +266,7 @@ func (h *Hub) openArchive(ctx context.Context, row generated.ArchiveWorkspace, k
 	id := row.ID.String()
 	cfg := h.pg.Copy()
 	cfg.Database = h.database(id)
-	st, err := OpenStore(ctx, cfg, id, authPassword(key))
+	st, err := OpenStore(ctx, cfg, id, authPassword(key), func(table, rid string) { h.live.moved(id, liveChange{Table: table, ID: rid}) })
 	if err != nil {
 		return nil, err
 	}
@@ -378,7 +382,7 @@ func (a *Archive) afterOpen(ctx context.Context) {
 	err := a.st.System(ctx, func(ctx context.Context) error {
 		return a.st.db(ctx).ResetProcessing(ctx)
 	})
-	err = errors.Join(err, a.syncMembers(ctx, false))
+	err = errors.Join(err, a.syncMembers(ctx, false), a.liveTables(ctx))
 	for _, kind := range []string{"workflow", "file"} {
 		next, nerr := a.nextDue(ctx, kind)
 		if nerr == nil && next != nil {
@@ -932,6 +936,7 @@ func (h *Hub) DeleteWorkspace(ctx context.Context, id string) error {
 	if id == h.one {
 		return fmt.Errorf("the first workspace holds the instance admins and cannot be deleted: %w", ErrConflict)
 	}
+	tell := h.liveMembers(ctx, ws)
 	h.forget(id)
 	bg := context.WithoutCancel(ctx)
 	roles, err := h.q().RolesWithPrefix(bg, id+"_")
@@ -947,7 +952,12 @@ func (h *Hub) DeleteWorkspace(ctx context.Context, id string) error {
 	} else {
 		return cerr
 	}
-	return h.q().DeleteWorkspace(bg, ws)
+	if err := h.q().DeleteWorkspace(bg, ws); err != nil {
+		return err
+	}
+	tell()
+	h.live.moved(id, liveChange{Table: "archive.workspace", ID: id})
+	return nil
 }
 
 func workspaceName(name string) (string, error) {
@@ -1037,6 +1047,8 @@ func (a *Archive) SetInfo(ctx context.Context, name *string) (*Workspace, error)
 		if err := a.hub.q().RenameWorkspace(ctx, a.ws.ID, n); err != nil {
 			return nil, err
 		}
+		a.moved(ctx, "archive.workspace", a.ws.ID.String())
+		a.hub.liveMembers(ctx, a.ws.ID)()
 	}
 	return a.Info(ctx)
 }

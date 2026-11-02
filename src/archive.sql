@@ -329,6 +329,30 @@ END $$;
 CREATE TRIGGER member_check BEFORE INSERT OR UPDATE ON archive.member FOR EACH ROW EXECUTE FUNCTION archive.member_check();
 CREATE TRIGGER member_roles AFTER INSERT OR UPDATE OR DELETE ON archive.member FOR EACH ROW EXECUTE FUNCTION archive.member_roles();
 
+-- moved says what a write moved to the session that wrote it, on a channel only that session listens on. A
+-- notification is sent only when its transaction commits and is dropped with a rolled-back savepoint, so Go
+-- hears exactly what committed (live.go). A public table names itself; an archive table its schema too and
+-- the row's id. Every public table gets the statement trigger archive_moved (schemaDerive).
+CREATE FUNCTION archive.moved() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    what text := CASE WHEN TG_TABLE_SCHEMA = 'public' THEN TG_TABLE_NAME ELSE TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME END;
+BEGIN
+    IF TG_LEVEL = 'ROW' AND TG_OP = 'DELETE' THEN
+        what := what || ' ' || OLD.id;
+    ELSIF TG_LEVEL = 'ROW' THEN
+        what := what || ' ' || NEW.id;
+    END IF;
+    PERFORM pg_notify('archive_moved_' || pg_backend_pid(), what);
+    RETURN NULL;
+END $$;
+
+CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.chat FOR EACH ROW EXECUTE FUNCTION archive.moved();
+CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.workflow FOR EACH ROW EXECUTE FUNCTION archive.moved();
+CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.workflow_run FOR EACH ROW EXECUTE FUNCTION archive.moved();
+CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.file FOR EACH ROW EXECUTE FUNCTION archive.moved();
+CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.member FOR EACH ROW EXECUTE FUNCTION archive.moved();
+CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.revision FOR EACH ROW EXECUTE FUNCTION archive.moved();
+
 CREATE FUNCTION archive.secret_clear(tbl text, rid uuid, col text) RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $$
     DELETE FROM archive.secret s
     WHERE s.table_name = tbl AND s.row_id = rid AND (col IS NULL OR s.column_name = col)

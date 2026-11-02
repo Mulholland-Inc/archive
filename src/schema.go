@@ -176,6 +176,9 @@ func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string
 	if cat, err = derive(false); err != nil {
 		return nil, err
 	}
+	if err := schemaMoved(ctx, sp, func(st string) error { return q.DDL(ctx, key, st) }); err != nil {
+		return nil, err
+	}
 	after, err := pgRead(ctx, sp, "archive", "public")
 	if err != nil {
 		return nil, err
@@ -447,6 +450,29 @@ func schemaDerive(ctx context.Context, tx pgx.Tx, cat *Catalog, derived map[stri
 		return nil
 	})
 	return out, err
+}
+
+// schemaMoved gives each public table that lacks it the trigger that tells Go what a write moved
+// (archive.moved), by running each statement. It is plumbing, like the row-level security every table has,
+// so schema show and a migration's changes leave it out (pgRead).
+func schemaMoved(ctx context.Context, q generated.DBTX, run func(string) error) error {
+	rows, err := q.Query(ctx, `SELECT c.relname::text FROM pg_catalog.pg_class c WHERE c.relnamespace = 'public'::regnamespace
+        AND c.relkind IN ('r', 'p') AND NOT c.relispartition
+        AND NOT EXISTS (SELECT FROM pg_catalog.pg_trigger g WHERE g.tgrelid = c.oid AND g.tgname = 'archive_moved') ORDER BY 1`)
+	if err != nil {
+		return err
+	}
+	names, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		if err := run("CREATE OR REPLACE TRIGGER archive_moved AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON " + pgIdent("public", name) +
+			" FOR EACH STATEMENT EXECUTE FUNCTION archive.moved()"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // schemaSettings reads the settings, for the returned func to set them back.

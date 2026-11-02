@@ -170,7 +170,7 @@ func chatToolError(uses []chatBlock, msg string) *chatMessage {
 }
 
 func (a *Archive) chat(w http.ResponseWriter, r *http.Request) {
-	key := os.Getenv("ANTHROPIC_API_KEY")
+	key := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY"))
 	if key == "" {
 		httpWrite(w, http.StatusServiceUnavailable, map[string]string{"error": "the agent needs ANTHROPIC_API_KEY set on the server"}, nil)
 		return

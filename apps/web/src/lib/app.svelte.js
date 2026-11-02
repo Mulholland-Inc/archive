@@ -2,7 +2,8 @@
 // the API (see live.js for the mapping). What the API cannot do yet comes from mock/ and stays in this tab or
 // in localStorage; mock/index.js lists those pieces.
 
-import { api, blobURL, upload, setWorkspace, workspace, local, setLocal, signOut as apiSignOut, Unauthorized, passkeys, passkeyAsked } from './api.js';
+import { api, blobURL, forgetBlobs, upload, setWorkspace, workspace, local, setLocal, signOut as apiSignOut, Unauthorized, passkeys, passkeyAsked } from './api.js';
+import { resource, listen, onChange, onRefused } from './stream.svelte.js';
 import { toFile, toChat, toMember, toWorkflow, toRun } from './live.js';
 import { toTables, countsQuery } from './schema.js';
 import { initials, mockConnectors, mockIntegrations, mockKey, mockProfile, mockSettings } from './mock/index.js';
@@ -64,6 +65,8 @@ function shell(w) {
     schema: [],
     shares: [],
     connectors: mockConnectors(w.id),
+    catalog: null,
+    counts: null,
     loading: true
   };
 }
@@ -96,7 +99,8 @@ export async function boot() {
   try {
     me = await api('/auth/me');
   } catch (e) {
-    if (!(e instanceof Unauthorized) && workspace() && e.status === 403) {
+    // The vault this device opened last may be gone; open your first one instead.
+    if (!(e instanceof Unauthorized) && workspace() && e.status >= 403) {
       setWorkspace('');
       return boot();
     }
@@ -112,11 +116,74 @@ export async function boot() {
   app.onboarding = local(`archive.onboarding:${me.workspace}`, []);
   app.askPasskey = passkeys && !passkeyAsked(me.actor.user_id);
   app.status = 'ready';
+  listen(app.vault);
+  account.seen();
   loadVault(ws());
-  api('/auth/workspaces', { workspace: list[0].id })
+  canAdd();
+}
+
+function canAdd() {
+  api('/auth/workspaces', { workspace: app.vaults[0]?.id })
     .then(() => (app.canAdd = true))
     .catch(() => (app.canAdd = false));
 }
+
+// Who you are and which vaults you have, read again when your account, a vault's name or your role moves,
+// in this tab or anywhere else. A vault you were removed from, or that was deleted, goes; one you were
+// added to arrives.
+async function loadMe() {
+  if (app.status !== 'ready') return;
+  let me;
+  let here = true;
+  try {
+    me = await api('/auth/me', { workspace: app.vault });
+  } catch (e) {
+    if (e instanceof Unauthorized) return leave();
+    // This vault cannot be read: you may have left it, or it was deleted. Ask who you are without it.
+    here = false;
+    setWorkspace('');
+    me = await api('/auth/me').catch((e) => (e instanceof Unauthorized ? leave() : null));
+    if (!me) return setWorkspace(app.vault);
+  }
+  if (here) setMe(me);
+  const list = me.workspaces?.length ? me.workspaces : [{ id: me.workspace, name: 'Archive' }];
+  const had = new Map(app.vaults.map((v) => [v.id, v]));
+  app.vaults = list.map((w) => {
+    const v = had.get(w.id) ?? shell(w);
+    v.name = w.name;
+    return v;
+  });
+  if (!app.vaults.some((v) => v.id === app.vault)) {
+    app.vault = null;
+    await switchVault(me.workspace);
+    go('/');
+  } else if (!here) setWorkspace(app.vault);
+  canAdd();
+}
+
+function leave() {
+  listen('');
+  app.status = 'signedOut';
+}
+
+export const account = resource({
+  tables: (c) => c.table === 'archive.workspace' || c.table === 'archive.member' || (c.table === 'archive.user' && (!c.id || c.id === app.user.id)),
+  load: loadMe
+});
+
+// A socket the vault refuses may mean you left it or it is gone.
+onRefused(() => app.status === 'ready' && account.refresh());
+
+// Another tab of this browser signing out signs this one out too.
+const tabs = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('archive') : null;
+tabs?.addEventListener('message', (e) => {
+  if (e.data === 'signedOut' && app.status === 'ready') {
+    leave();
+    app.vaults = [];
+    app.vault = null;
+    go('/');
+  }
+});
 
 function setMe(me) {
   const name = me.actor.name || me.actor.email;
@@ -136,56 +203,144 @@ async function files(id) {
   return all.reverse();
 }
 
-export async function loadVault(v = ws()) {
-  const id = v.id;
-  const pins = new Set(local(`archive.pins:${id}`, []));
-  v.loading = true;
-  const flows = api('/api/workflows', { workspace: id }).then((list) => list ?? []);
-  await Promise.allSettled([
-    api('/api/chats', { workspace: id }).then((list) => {
-      v.chats = (list ?? []).map((c) => toChat(c, pins.has(c.id)));
-    }),
-    files(id).then((list) => {
-      v.library = list.map((f) => toFile(f, v.name));
-      v.folders = [...new Set([...v.library.map((f) => f.folder), ...v.folders])];
-    }),
-    api('/auth/users', { workspace: id }).then((list) => {
-      v.members = (list ?? []).map((p) => toMember(p, { ...app.user, user_id: app.user.id }));
-    }),
-    flows.then((list) => {
-      v.workflows = list.map(toWorkflow);
-    }),
-    loadSchema(v, flows)
-  ]);
-  v.loading = false;
-}
+// What a vault shows, each read again when what it is read from moves (stream.svelte.js). Each reads into
+// the vault that is open when it starts.
 
-async function loadSchema(v, flows) {
-  const id = v.id;
-  const [catalog, schema, workflows] = await Promise.all([api('/api/types', { workspace: id }), api('/api/schema', { workspace: id }).catch(() => []), flows.catch(() => [])]);
-  v.schema = toTables(catalog, schema, {}, workflows);
-  const sql = countsQuery(catalog);
-  if (!sql) return;
-  try {
-    const rows = await api('/api/run', { method: 'POST', body: { code: `return await archive.query(${JSON.stringify(sql)})` }, workspace: id });
-    if (rows.error) return;
-    const counts = Object.fromEntries((rows.result ?? []).map((r) => [r.name, r]));
-    v.schema = toTables(catalog, schema, counts, workflows);
-  } catch {}
-}
-
-export async function previewTable(table, limit = 5) {
-  if (table.previewed) return;
-  table.previewed = true;
-  try {
-    table.sample = (await call(`/api/${encodeURIComponent(table.id)}?limit=${limit}`)) ?? [];
-  } catch {
-    table.sample = [];
+// The chats, newest first. A chat being written here and not saved yet stays at the top, and what this tab
+// knows of a chat (it is streaming, its messages are loaded) stays with it.
+export const chats = resource({
+  tables: ['archive.chat'],
+  load: async () => {
+    const v = ws();
+    const list = (await api('/api/chats', { workspace: v.id })) ?? [];
+    const pins = new Set(local(`archive.pins:${v.id}`, []));
+    const had = new Map(v.chats.map((c) => [c.id, c]));
+    const next = list.map((c) => {
+      const old = had.get(c.id);
+      const fresh = toChat(c, pins.has(c.id));
+      return old ? Object.assign(old, fresh, { updated: old.streaming ? old.updated : fresh.updated }) : fresh;
+    });
+    const ids = new Set(next.map((c) => c.id));
+    v.chats = [...v.chats.filter((c) => c.draft || (c.streaming && !ids.has(c.id))), ...next];
+    for (const id of Object.keys(v.conversations)) {
+      if (!ids.has(id) && !v.chats.some((c) => c.id === id)) delete v.conversations[id];
+    }
   }
+});
+
+// The library's files, and its folders: every access group a file is in, and the empty ones made here.
+export const library = resource({
+  tables: ['archive.file'],
+  load: async () => {
+    const v = ws();
+    const list = await files(v.id);
+    v.library = list.map((f) => toFile(f, v.name));
+    v.folders = [...new Set([...v.library.map((f) => f.folder), ...v.folders])];
+  }
+});
+
+// A file's bytes and thumbnail are cached as blobs; a file that moved has them fetched again.
+onChange((changes) => {
+  for (const c of changes) if (c.table === 'archive.file') forgetBlobs(c.id ? `/api/files/${c.id}/` : '/api/files/');
+});
+
+export const members = resource({
+  tables: ['archive.member', 'archive.user'],
+  load: async () => {
+    const v = ws();
+    const list = (await api('/auth/users', { workspace: v.id })) ?? [];
+    v.members = list.map((p) => toMember(p, { ...app.user, user_id: app.user.id }));
+  }
+});
+
+// The workflows, each with its last run. Runs already read for a workflow's page stay until runs reads them.
+export const workflows = resource({
+  tables: ['archive.workflow', 'archive.workflow_run'],
+  load: async () => {
+    const v = ws();
+    const list = (await api('/api/workflows', { workspace: v.id })) ?? [];
+    const had = new Map(v.workflows.map((w) => [w.id, w]));
+    v.workflows = list.map((w) => {
+      const fresh = toWorkflow(w);
+      const old = had.get(fresh.id);
+      return old?.loaded ? { ...fresh, runs: old.runs, loaded: true, enabled: old.enabled } : fresh;
+    });
+  }
+});
+
+// A workflow's runs, for its page.
+export const runs = resource({
+  tables: ['archive.workflow_run', 'archive.workflow'],
+  load: async (id) => {
+    const wf = workflowById(id);
+    if (!wf) return;
+    const list = (await call(`/api/workflows/${encodeURIComponent(wf.file)}/runs?limit=50`)) ?? [];
+    const now = workflowById(id) ?? wf;
+    const running = now.runs.filter((r) => r.status === 'running');
+    now.runs = [...running, ...list.map((r, i) => toRun(r, list.length - i))];
+    now.loaded = true;
+  }
+});
+
+// The tables and views, from the catalog and the DDL: they move with a migration. Which workflows a table
+// starts moves with the workflows.
+export const schema = resource({
+  tables: ['archive.revision', 'archive.workflow'],
+  load: async () => {
+    const v = ws();
+    const [catalog, ddl, flows] = await Promise.all([
+      api('/api/types', { workspace: v.id }),
+      api('/api/schema', { workspace: v.id }).catch(() => []),
+      api('/api/workflows', { workspace: v.id }).catch(() => [])
+    ]);
+    v.catalog = { catalog, ddl, flows: flows ?? [] };
+    tables(v);
+    await counts.refresh();
+  }
+});
+
+// Every table's row count and last change, in one read-only query: they move with any row of any table.
+export const counts = resource({
+  tables: (c) => !c.table.startsWith('archive.'),
+  load: async () => {
+    const v = ws();
+    const sql = v.catalog && countsQuery(v.catalog.catalog);
+    if (!sql) return;
+    const rows = await api('/api/run', { method: 'POST', body: { code: `return await archive.query(${JSON.stringify(sql)})` }, workspace: v.id });
+    if (rows.error) return;
+    v.counts = Object.fromEntries((rows.result ?? []).map((r) => [r.name, r]));
+    tables(v);
+  }
+});
+
+// The schema's tables from what was read last, keeping the rows each table's page read.
+function tables(v) {
+  if (!v.catalog) return;
+  const samples = new Map(v.schema.map((t) => [t.id, t.sample]));
+  v.schema = toTables(v.catalog.catalog, v.catalog.ddl, v.counts ?? {}, v.catalog.flows).map((t) => ({ ...t, sample: samples.get(t.id) ?? [] }));
+}
+
+// The first rows of a table, for its page; they move with any write to it.
+export const preview = resource({
+  tables: (c) => !c.table.startsWith('archive.'),
+  param: (c) => c.table,
+  load: async (id) => {
+    const rows = (await call(`/api/${encodeURIComponent(id)}?limit=5`).catch(() => [])) ?? [];
+    const t = ws().schema.find((x) => x.id === id);
+    if (t) t.sample = rows;
+  }
+});
+
+export async function loadVault(v = ws()) {
+  v.loading = true;
+  await Promise.allSettled([chats.refresh(), library.refresh(), members.refresh(), workflows.refresh(), schema.refresh()]);
+  v.loading = false;
 }
 
 export async function signOut() {
   await apiSignOut();
+  tabs?.postMessage('signedOut');
+  listen('');
   app.status = 'signedOut';
   app.vaults = [];
   app.vault = null;
@@ -328,14 +483,17 @@ export function vaultKey() {
   return app.vaultKeys[app.vault] ?? null;
 }
 
-export async function loadVaultKey() {
-  const id = app.vault;
-  try {
-    const tokens = (await call('/auth/tokens')) ?? [];
-    const t = tokens.filter((x) => x.name === KEY_NAME).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
-    if (!app.vaultKeys[id]?.secret) app.vaultKeys[id] = t ? { id: t.id, secret: '', date: `Created ${new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` } : null;
-  } catch {}
-}
+// Your tokens for the vault, read again when one is made or revoked, here or anywhere else.
+export const tokens = resource({
+  tables: ['archive.token'],
+  load: async () => {
+    const id = app.vault;
+    const list = (await call('/auth/tokens')) ?? [];
+    const t = list.filter((x) => x.name === KEY_NAME).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+    if (app.vaultKeys[id]?.secret && app.vaultKeys[id].id === t?.id) return;
+    app.vaultKeys[id] = t ? { id: t.id, secret: '', date: `Created ${new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` } : null;
+  }
+});
 
 export async function rotateKey(scope) {
   if (scope !== 'vault') {
@@ -394,11 +552,8 @@ export async function switchVault(id) {
   app.onboarding = local(`archive.onboarding:${id}`, []);
   const head = route.parts[0];
   if (['chat', 'workflows', 'database'].includes(head) && route.parts[1]) go(`/${head === 'chat' ? '' : head}`);
-  try {
-    setMe(await api('/auth/me', { workspace: id }));
-  } catch (e) {
-    if (e instanceof Unauthorized) return complain(e);
-  }
+  // Listening to the vault reads who you are in it (me) and what is on screen.
+  listen(id);
   loadVault(ws());
 }
 
@@ -410,7 +565,7 @@ export async function createVault(name, look) {
   try {
     const w = await api('/auth/workspaces', { method: 'POST', body: { name, owner: app.user.email }, workspace: app.vaults[0].id });
     setLocal(`archive.look:${w.id}`, look);
-    app.vaults.push(shell(w));
+    if (!app.vaults.some((v) => v.id === w.id)) app.vaults.push(shell(w));
     await switchVault(w.id);
     go('/');
   } catch (e) {
@@ -665,16 +820,6 @@ export function removeGuest(email) {
 
 export function workflowById(id) {
   return ws()?.workflows.find((w) => w.id === id);
-}
-
-export async function loadRuns(id) {
-  const wf = workflowById(id);
-  if (!wf || wf.loaded) return;
-  wf.loaded = true;
-  try {
-    const runs = (await call(`/api/workflows/${encodeURIComponent(wf.file)}/runs?limit=50`)) ?? [];
-    wf.runs = runs.map((r, i) => toRun(r, runs.length - i));
-  } catch {}
 }
 
 export function runWorkflow(id) {
