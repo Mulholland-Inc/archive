@@ -89,11 +89,12 @@ export async function sendMessage(id, { text = '', attachments = [] }) {
         segment = '';
       } else if (ev.type === 'tool') {
         segment = '';
-        calls[ev.id] = { id: ev.id, code: '', state: 'writing', logs: [], error: '' };
+        calls[ev.id] = { id: ev.id, description: '', code: '', state: 'writing', logs: [], error: '' };
         live.steps.push(step(calls[ev.id]));
       } else if (['code', 'run', 'result'].includes(ev.type) && calls[ev.id]) {
         const c = calls[ev.id];
         if (ev.code !== undefined) c.code = ev.code;
+        if (ev.description) c.description = ev.description;
         if (ev.type === 'run') c.state = 'running';
         if (ev.type === 'result') Object.assign(c, { state: 'done', logs: ev.logs ?? [], error: ev.error ?? '' });
         const i = live.steps.findIndex((s) => s.id === ev.id);

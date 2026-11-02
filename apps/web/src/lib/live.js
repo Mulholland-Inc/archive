@@ -168,11 +168,11 @@ export function markdown(src = '') {
   return blocks;
 }
 
-// A tool call the assistant made, as a step. The code's first comment, if any, says what it does.
+// A tool call the assistant made, as a step. Its description says what it does, or else the code's first comment.
 export function step(call) {
-  const said = call.code?.match(/^\s*\/\/\s*(.+)$/m)?.[1];
+  const said = call.description?.trim() || call.code?.match(/^\s*\/\/\s*(.+)$/m)?.[1];
   const failed = call.state === 'done' && call.error;
-  const label = said ?? (call.state === 'writing' ? 'Writing code' : call.state === 'running' ? 'Running code' : 'Ran code');
+  const label = said || (call.state === 'writing' ? 'Writing code' : call.state === 'running' ? 'Running code' : 'Ran code');
   return {
     id: call.id,
     label,
@@ -218,7 +218,7 @@ export function toMessages(messages = []) {
     if (!turn) reply();
     for (const b of content) {
       if (b.type === 'text' && b.text.trim()) turn.text += (turn.text ? '\n\n' : '') + b.text;
-      if (b.type === 'tool_use') turn.calls.push((calls[b.id] = { id: b.id, code: b.input?.code ?? '', state: 'done', logs: [], error: '' }));
+      if (b.type === 'tool_use') turn.calls.push((calls[b.id] = { id: b.id, description: b.input?.description ?? '', code: b.input?.code ?? '', state: 'done', logs: [], error: '' }));
     }
   }
   for (const m of out) {

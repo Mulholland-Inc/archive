@@ -2935,14 +2935,16 @@ func TestChatStreamsTheAgentLoopThroughRunAndKeepsEachUsersHistory(t *testing.T)
 	t.Parallel()
 	var mu sync.Mutex
 	var model []map[string]any
+	var bodies []string
 	var headers []http.Header
 	hung := make(chan struct{})
 	hangDone := false
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req map[string]any
-		json.NewDecoder(r.Body).Decode(&req)
+		raw, _ := io.ReadAll(r.Body)
+		json.Unmarshal(raw, &req)
 		mu.Lock()
-		model, headers = append(model, req), append(headers, r.Header.Clone())
+		model, bodies, headers = append(model, req), append(bodies, string(raw)), append(headers, r.Header.Clone())
 		mu.Unlock()
 		msgs := req["messages"].([]any)
 		first := fmt.Sprint(msgs[0].(map[string]any)["content"].([]any)[0].(map[string]any)["text"])
@@ -2989,7 +2991,7 @@ func TestChatStreamsTheAgentLoopThroughRunAndKeepsEachUsersHistory(t *testing.T)
 		case first == "boom" && len(msgs) == 1:
 			tool(`{"code": "throw new Error(\"boom\")"}`)
 		case first == "how many members?" && len(msgs) == 1:
-			tool(`{"code": "return (await archive.list(\"mem`, `ber\")).length * 7"}`)
+			tool(`{"description": "Counting mem`, `bers", "code": "return (await archive.list(\"mem`, `ber\")).length * 7"}`)
 		case answered:
 			text("You have ", "two members.")
 		default:
@@ -3014,11 +3016,16 @@ func TestChatStreamsTheAgentLoopThroughRunAndKeepsEachUsersHistory(t *testing.T)
 		if got := e2eKinds(evs); got != "chat,thinking,tool,code,run,result,text,done" {
 			t.Fatalf("events: %s\n%v", got, evs)
 		}
-		var codes, text []string
+		var codes, text, descs []string
 		for _, ev := range evs {
 			switch ev["type"] {
 			case "code":
 				codes = append(codes, fmt.Sprint(ev["code"]))
+				descs = append(descs, fmt.Sprint(ev["description"]))
+			case "run":
+				if ev["description"] != "Counting members" {
+					t.Errorf("run event: %v", ev)
+				}
 			case "text":
 				text = append(text, fmt.Sprint(ev["text"]))
 			case "result":
@@ -3027,14 +3034,20 @@ func TestChatStreamsTheAgentLoopThroughRunAndKeepsEachUsersHistory(t *testing.T)
 				}
 			}
 		}
-		if strings.Join(codes, "|") != `return (await archive.list("mem|return (await archive.list("member")).length * 7` || strings.Join(text, "") != "You have two members." {
+		if strings.Join(codes, "|") != `|return (await archive.list("mem|return (await archive.list("member")).length * 7` || strings.Join(text, "") != "You have two members." {
 			t.Errorf("streamed code %q, text %q", codes, text)
 		}
+		if strings.Join(descs, "|") != "Counting mem|Counting members|Counting members" {
+			t.Errorf("streamed descriptions %q", descs)
+		}
 		mu.Lock()
-		first, h := model[len(model)-2], headers[len(headers)-2]
+		first, h, body := model[len(model)-2], headers[len(headers)-2], bodies[len(bodies)-2]
 		second := model[len(model)-1]
 		mu.Unlock()
 		tool := first["tools"].([]any)[0].(map[string]any)
+		if !strings.Contains(body, `"properties":{"description":{"type":"string"`) || !strings.Contains(body, `"required":["description","code"]`) {
+			t.Errorf("the run tool's input schema, description first and required: %s", body[:min(len(body), 400)])
+		}
 		if first["model"] != "claude-haiku-5-5" || len(first["tools"].([]any)) != 1 || tool["name"] != "run" || tool["eager_input_streaming"] != true ||
 			!strings.Contains(fmt.Sprint(tool["description"]), "declare const archive") || h.Get("anthropic-version") != "2026-10-21" || h.Get("x-api-key") != "test" {
 			t.Errorf("model request: model %v, tool %v %v, version %q", first["model"], tool["name"], tool["eager_input_streaming"], h.Get("anthropic-version"))
@@ -3063,6 +3076,9 @@ func TestChatStreamsTheAgentLoopThroughRunAndKeepsEachUsersHistory(t *testing.T)
 		}
 		if strings.Join(roles, ",") != "user,assistant,user,assistant" {
 			t.Errorf("saved roles: %v", roles)
+		}
+		if b, _ := json.Marshal(c.Messages[1]); !strings.Contains(string(b), `"description":"Counting members"`) {
+			t.Errorf("the saved run call has no description: %s", b)
 		}
 		var renamed Chat
 		st, _ := call(t, "PATCH", api+"/chats/"+chatID, tok, map[string]string{"title": "  Counting   members "}, &renamed)
