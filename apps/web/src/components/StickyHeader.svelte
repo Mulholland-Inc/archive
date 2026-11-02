@@ -1,9 +1,10 @@
 <script>
   import Art from './Art.svelte';
   import Heading from './Heading.svelte';
+  import EditableTitle from './EditableTitle.svelte';
   import { pinned } from '../lib/pagetitle.svelte.js';
 
-  let { title, description, art, search, actions } = $props();
+  let { title, description, art, search, actions, onrename, renameLabel = 'Rename' } = $props();
 
   let height = $state(0);
   let compact = $state(false);
@@ -26,7 +27,7 @@
   <div class="lead" bind:offsetHeight={height} {@attach watch}>
     {#if art}<div class="banner"><Art name={art} size="banner" /></div>{/if}
     <div class="top">
-      <Heading level={1} size="xl" wrap="normal" grow>{title}</Heading>
+      <Heading level={1} size="xl" wrap="normal" grow>{#if onrename}<EditableTitle value={title} label={renameLabel} variant="heading" onsave={onrename} />{:else}{title}{/if}</Heading>
       {#if actions}<div class="actions">{@render actions()}</div>{/if}
     </div>
     {#if description}<p class="description">{description}</p>{/if}

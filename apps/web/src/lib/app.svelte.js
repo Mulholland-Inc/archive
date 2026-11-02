@@ -10,7 +10,7 @@ import { initials, mockConnectors, mockKey, mockProfile, mockSettings } from './
 import { catalog } from './mock/connectors.js';
 import { defaultLook, TYPES } from './looks.js';
 import { notify } from './dialogs.svelte.js';
-import { go, route } from './router.svelte.js';
+import { go, replace, route } from './router.svelte.js';
 
 let counter = 0;
 const nid = (prefix) => `${prefix}${Date.now().toString(36)}${(counter++).toString(36)}`;
@@ -565,12 +565,6 @@ async function onIntegration(id, what, path, init) {
 
 export const disconnectIntegration = (id) => onIntegration(id, 'disconnect', '', { method: 'DELETE' });
 export const syncIntegration = (id) => onIntegration(id, 'sync', '/sync', { method: 'POST' });
-export const narrowIntegration = (id, access) => onIntegration(id, 'change who sees', '/access', { method: 'PUT', body: { access } });
-
-// The groups an integration can be narrowed to: those the archive's members are in.
-export function archiveGroups() {
-  return [...new Set((ws().members ?? []).flatMap((m) => m.groups ?? []))].sort();
-}
 
 // API keys. The archive key is a real API token of yours for this archive; its secret is shown once, when it is
 // made. "Your API key", one key across every archive, is MOCK: tokens belong to one workspace.
@@ -941,6 +935,23 @@ export function createWorkflow({ name, trigger, steps }) {
   completeStep('workflow');
   const text = `Write and save a workflow called “${name}”.\nTrigger: ${trigger.label}.\nSteps:\n${steps.map((s) => `- ${s}`).join('\n')}`;
   return `/chat/${newChat(name || 'New workflow', { text })}`;
+}
+
+// renameView renames view id to name, as an owner changes the schema: a dry run, then the run it confirms. A
+// view's name is its Postgres name, so name becomes one, like "Client notes" client_notes; its page follows it.
+export async function renameView(id, name) {
+  const to = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  if (!to || to === id || !isArchiveOwner()) return;
+  if (!/^[a-z]/.test(to)) return complain(new Error('A view’s name starts with a letter.'), 'Couldn’t rename the view');
+  const sql = `ALTER VIEW public."${id}" RENAME TO "${to}"`;
+  try {
+    const dry = await call('/api/schema/migrate', { method: 'POST', body: { sql } });
+    await call('/api/schema/migrate', { method: 'POST', body: { sql, confirm: dry.confirm } });
+  } catch (e) {
+    return complain(e, 'Couldn’t rename the view');
+  }
+  await schema.refresh();
+  if (route.path.startsWith(`/view/${id}`)) replace(route.path.replace(`/view/${id}`, `/view/${to}`));
 }
 
 export async function renameWorkflow() {

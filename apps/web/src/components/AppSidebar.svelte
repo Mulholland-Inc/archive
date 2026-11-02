@@ -12,7 +12,7 @@
   import AccountMenu from './AccountMenu.svelte';
   import ChatActions from './ChatActions.svelte';
   import PinButton from './PinButton.svelte';
-  import { app, ws, openArchiveSettings, closeDrawer, pinnedFirst, switchArchive, createArchive, renameChat, chats, workflows, members, schema } from '../lib/app.svelte.js';
+  import { app, ws, openArchiveSettings, closeDrawer, pinnedFirst, switchArchive, createArchive, renameChat, renameView, isArchiveOwner, chats, workflows, members, schema } from '../lib/app.svelte.js';
 
   chats.use();
   schema.use();
@@ -70,7 +70,7 @@
   {#if views.length}
     <SidebarSection title={collapsed ? undefined : 'Views'}>
       {#each views as view (view.id)}
-        <SidebarItem icon={layoutIcons[view.layout] ?? Table2} label={view.name} href={`/view/${view.id}`} active={active(`/view/${view.id}`)} />
+        <SidebarItem icon={layoutIcons[view.layout] ?? Table2} label={view.name} href={`/view/${view.id}`} active={active(`/view/${view.id}`)} onrename={isArchiveOwner() ? (name) => renameView(view.id, name) : undefined} bind:editing={() => renaming === view.id, (on) => (renaming = on ? view.id : null)} />
       {/each}
     </SidebarSection>
   {/if}
