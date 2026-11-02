@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/httptest"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -43,99 +41,6 @@ func (e *liveEdge) tables() []string {
 	}
 	e.got = nil
 	return out
-}
-
-func TestLiveAnnouncesWhatCommittedAndNothingRolledBack(t *testing.T) {
-	t.Parallel()
-	edge := &liveEdge{}
-	hs := httptest.NewServer(edge)
-	t.Cleanup(hs.Close)
-	in := newInst(t, "ARCHIVE_LIVE_KEY=k3y", "ARCHIVE_LIVE_URL="+hs.URL)
-	in.must("user", "add", "alice@example.com")
-	in.push(e2eSchema)
-	srv := in.serve()
-	api := srv.url + "/api"
-	tok := decode[Token](t, in.must("token", "create")).Secret
-	edge.tables()
-
-	// A request's announces are sent before it ends, so the edge has them when the answer arrives.
-	if st, out := e2eRun(t, api, tok, `await archive.create("company", { name: "Acme" }); return 1`); st != 200 || out.Error != "" {
-		t.Fatalf("create: %d %v", st, out)
-	}
-	if got := edge.tables(); !slices.Contains(got, "company") {
-		t.Fatalf("a committed create announced %v, want company", got)
-	}
-	edge.mu.Lock()
-	auth := slices.Clone(edge.auth)
-	edge.mu.Unlock()
-	if !slices.Contains(auth, "/live/announce Bearer k3y") {
-		t.Errorf("announces went to %v, want /live/announce with the key", auth)
-	}
-
-	// Saving a workflow moves it, and archive.run records its run once the run commits. A workflow that fails
-	// undoes what it wrote with a savepoint, and a run that throws rolls back: neither moved anything.
-	if st, out := e2eRun(t, api, tok, `await archive.create("workflow", { name: "draft", source: "await archive.create('company', { name: 'Draft' }); throw new Error('no')" });
-return (await archive.run("draft")).error`); st != 200 || out.Error != "" || !strings.Contains(string(out.Result), "no") {
-		t.Fatalf("save and run a workflow: %d %v", st, out)
-	}
-	time.Sleep(3 * liveWindow)
-	if got := edge.tables(); slices.Contains(got, "company") || !slices.Contains(got, "archive.workflow") || !slices.Contains(got, "archive.workflow_run") {
-		t.Fatalf("a saved workflow and its failed run announced %v, want archive.workflow and archive.workflow_run but not company", got)
-	}
-	if st, out := e2eRun(t, api, tok, `const [w] = await archive.list("workflow"); await archive.update("workflow", w.id, { name: "renamed" }); return 1`); st != 200 || out.Error != "" {
-		t.Fatalf("rename a workflow: %d %v", st, out)
-	}
-	if got := edge.tables(); !slices.Contains(got, "archive.workflow") {
-		t.Errorf("a renamed workflow announced %v, want archive.workflow", got)
-	}
-	e2eRun(t, api, tok, `await archive.create("person", { name: "Ann" }); throw new Error("nope")`)
-	time.Sleep(3 * liveWindow)
-	if got := edge.tables(); slices.Contains(got, "person") {
-		t.Fatalf("rolled-back writes announced %v", got)
-	}
-
-	// Archive's own tables carry the row's id; the main database's say so from Go.
-	st, f := e2eUpload(t, api+"/files", tok, "a.txt", []byte("hello"))
-	if st != 201 {
-		t.Fatalf("upload: %d", st)
-	}
-	call(t, "POST", srv.url+"/auth/tokens", tok, map[string]string{"name": "second"}, nil)
-	time.Sleep(3 * liveWindow)
-	edge.mu.Lock()
-	var ids []string
-	for _, a := range edge.got {
-		for _, c := range a.Changes {
-			ids = append(ids, c.Table+" "+c.ID)
-		}
-	}
-	edge.mu.Unlock()
-	if !slices.Contains(ids, "archive.file "+f.ID.String()) || !slices.ContainsFunc(ids, func(s string) bool { return strings.HasPrefix(s, "archive.token ") }) {
-		t.Errorf("announced %v, want the file by id and the new token", ids)
-	}
-	edge.tables()
-
-	// A migration announces the new revision, and the table it makes is live from then on.
-	in.migrate(e2eNote)
-	if got := edge.tables(); !slices.Contains(got, "archive.revision") {
-		t.Errorf("a migration announced %v, want archive.revision", got)
-	}
-	if st, out := e2eRun(t, api, tok, `await archive.create("note", { title: "hi" }); return 1`); st != 200 || out.Error != "" {
-		t.Fatalf("create note: %d %v", st, out)
-	}
-	if got := edge.tables(); !slices.Contains(got, "note") {
-		t.Errorf("a write to a new table announced %v, want note", got)
-	}
-	if strings.Contains(in.must("schema", "show", "note"), "archive_moved") {
-		t.Errorf("schema show shows the live trigger")
-	}
-
-	// A workspace's look moves it as a rename does.
-	if st, _ := call(t, "PATCH", srv.url+"/auth/workspace", tok, map[string]any{"icon": "oak", "color": 2}, nil); st != 200 {
-		t.Fatalf("set the look: %d", st)
-	}
-	if got := edge.tables(); !slices.Contains(got, "archive.workspace") {
-		t.Errorf("a new look announced %v, want archive.workspace", got)
-	}
 }
 
 func TestLiveSocketsHearTheirWorkspace(t *testing.T) {

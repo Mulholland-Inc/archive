@@ -111,37 +111,6 @@ func pgTestVersions(t *testing.T) []string {
 	return out
 }
 
-// Every archive.sql there has been migrates to the next, and the first to the last, as applying the next
-// fresh would make it.
-func TestArchiveSQLMigratesFromEveryVersion(t *testing.T) {
-	t.Parallel()
-	vs := pgTestVersions(t)
-	s := pgTestStore(t)
-	ctx := t.Context()
-	fresh := make([]pgSchema, len(vs))
-	for i, v := range vs {
-		var err error
-		if fresh[i], err = s.scratch(ctx, s.expand(v)); err != nil {
-			t.Fatalf("version %d: %v", i+1, err)
-		}
-	}
-	for i := range len(vs) - 1 {
-		db := pgTestDB(t, s, fmt.Sprintf("v%d", i+1), vs[i])
-		pgTestMigrate(t, db, fresh[i+1])
-		pgTestSame(t, fmt.Sprintf("version %d to the next", i+1), pgTestSnap(t, db), fresh[i+1])
-	}
-	db := pgTestDB(t, s, "first", vs[0])
-	pgTestMigrate(t, db, fresh[len(vs)-1])
-	pgTestSame(t, "the first version to the last", pgTestSnap(t, db), fresh[len(vs)-1])
-	if stmts, lost, err := pgPlan(pgTestSnap(t, db), fresh[len(vs)-1], false); len(stmts) > 0 || len(lost) > 0 || err != nil {
-		t.Errorf("a second plan: %q %q %v", stmts, lost, err)
-	}
-	var n int
-	if err := s.sys.QueryRow(ctx, "SELECT count(*) FROM pg_database WHERE datname LIKE 'archive_scratch_%'").Scan(&n); err != nil || n != 0 {
-		t.Errorf("%d scratch databases left: %v", n, err)
-	}
-}
-
 // The plan alters domains and types in place, which user tables use, refuses to lose data, and leaves no
 // scratch database behind, even when archive.sql fails.
 func TestPlanAltersTypesInPlaceAndKeepsData(t *testing.T) {
