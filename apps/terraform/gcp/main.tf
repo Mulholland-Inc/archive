@@ -681,8 +681,42 @@ resource "github_actions_variable" "deploy" {
     GCP_SERVICE_ACCOUNT            = google_service_account.deploy[0].email
     GCP_WORKLOAD_IDENTITY_PROVIDER = google_iam_workload_identity_pool_provider.github[0].name
     CLOUDFLARE_ACCOUNT_ID          = data.cloudflare_zone.this.account.id
+    GCP_TERRAFORM_SERVICE_ACCOUNT  = google_service_account.terraform[0].email
+    ARCHIVE_DOMAIN                 = var.domain
   }) : {}
   repository    = split("/", var.github_repository)[1]
   variable_name = each.key
   value         = each.value
+}
+
+# Terraform applies itself on every push to main that changes it (.github/workflows/terraform.yml), as this
+# account, through the same workload identity pool as the deploy.
+resource "google_service_account" "terraform" {
+  count      = var.github_repository != "" ? 1 : 0
+  account_id = "archive-terraform"
+}
+
+resource "google_project_iam_member" "terraform" {
+  count   = var.github_repository != "" ? 1 : 0
+  project = var.project
+  role    = "roles/owner"
+  member  = google_service_account.terraform[0].member
+}
+
+resource "google_service_account_iam_member" "terraform" {
+  count              = var.github_repository != "" ? 1 : 0
+  service_account_id = google_service_account.terraform[0].name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github[0].name}/attribute.repository/${var.github_repository}"
+}
+
+# The Cloudflare token Terraform itself runs with, as CLOUDFLARE_API_TOKEN; seeded with gcloud like the others.
+resource "google_secret_manager_secret" "cloudflare" {
+  secret_id = "archive-cloudflare-api-token"
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.this]
 }
