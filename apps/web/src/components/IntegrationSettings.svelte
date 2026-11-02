@@ -11,15 +11,15 @@
   import MenuItem from './MenuItem.svelte';
   import MenuLabel from './MenuLabel.svelte';
   import MenuSeparator from './MenuSeparator.svelte';
-  import { vaultIntegrations, isVaultOwner } from '../lib/app.svelte.js';
+  import { archiveIntegrations, isArchiveOwner } from '../lib/app.svelte.js';
 
   let { onopen, onback } = $props();
 
   let query = $state('');
   let categories = $state([]);
   let status = $state('all');
-  const all = $derived(vaultIntegrations());
-  const owner = $derived(isVaultOwner());
+  const all = $derived(archiveIntegrations());
+  const owner = $derived(isArchiveOwner());
   const allCategories = $derived([...new Set(all.map((c) => c.category))]);
 
   const matches = $derived.by(() => {
@@ -37,7 +37,7 @@
 </script>
 
 <SettingsPane {onback} backNarrow>
-  <PaneHeader title="Integrations" description="Set up once for the whole vault, so everyone’s work and sign-in run through them. Only owners can add or change them." art="connectors">
+  <PaneHeader title="Integrations" description="Set up once for the whole archive, so everyone’s work and sign-in run through them. Only owners can add or change them." art="connectors">
     {#snippet search()}
       <div class="search"><SearchField bind:value={query} size="sm" placeholder="Search" label="Search integrations" /></div>
       <Menu label="Filter" placement="bottom-end">

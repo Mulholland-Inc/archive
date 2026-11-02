@@ -588,7 +588,7 @@ func (s *signin) handler() http.Handler {
 		all := []Workspace{}
 		for _, x := range rows {
 			if r.Header.Get("Authorization") == "" || x.ID == a.ws.ID {
-				all = append(all, Workspace{ID: x.ID.String(), Name: x.Name})
+				all = append(all, workspaceOut(x))
 			}
 		}
 		return ok(map[string]any{"actor": ac, "role": m.Role, "groups": m.Groups, "workspace": a.ws.ID.String(), "workspaces": all}, err)

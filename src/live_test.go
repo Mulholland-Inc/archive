@@ -117,6 +117,14 @@ func TestLiveAnnouncesWhatCommittedAndNothingRolledBack(t *testing.T) {
 	if strings.Contains(in.must("schema", "show", "note"), "archive_moved") {
 		t.Errorf("schema show shows the live trigger")
 	}
+
+	// A workspace's look moves it as a rename does.
+	if st, _ := call(t, "PATCH", srv.url+"/auth/workspace", tok, map[string]any{"icon": "oak", "color": 2}, nil); st != 200 {
+		t.Fatalf("set the look: %d", st)
+	}
+	if got := edge.tables(); !slices.Contains(got, "archive.workspace") {
+		t.Errorf("a new look announced %v, want archive.workspace", got)
+	}
 }
 
 func TestLiveSocketsHearTheirWorkspace(t *testing.T) {

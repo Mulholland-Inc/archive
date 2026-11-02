@@ -84,8 +84,10 @@ Usage:
   archive token list
   archive token revoke <id>
 
-  archive workspace add <name> <owner email>
-                                     create a workspace, with its own database, for someone else
+  archive workspace add <name> <owner email> [-type t] [-icon i] [-color 0-7]
+                                     create a workspace, with its own database, for someone else;
+                                     -type is personal (the default), family or business, and
+                                     -icon and -color are how the web app shows it
   archive workspace list
   archive workspace delete <uuid>    drop a workspace: its database and its roles
 
@@ -173,7 +175,9 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	fs.Usage = func() { fmt.Fprint(fs.Output(), cliUsage) }
 	addr := fs.String("addr", ":8080", "listen address (serve)")
 	confirm := fs.String("confirm", "", "run the migration whose dry run printed this confirm (schema migrate)")
-	typ := fs.String("type", "", "only this table, or file (search)")
+	typ := fs.String("type", "", "only this table, or file (search); personal, family or business (workspace add)")
+	icon := fs.String("icon", "", "one of the web app's icons, like chest or cottage (workspace add)")
+	color := fs.String("color", "", "one of the web app's tints, 0 to 7 (workspace add)")
 	limit := fs.Int("limit", 100, "page size (list)")
 	after := fs.String("after", "", "list objects after this id (list)")
 	as := fs.String("as", "", "act as this user")
@@ -273,7 +277,21 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	case "user", "token":
 		return cliAuth(ctx, a, cmd, pos, *name, *role, *viewer, *expires, out)
 	case "workspace":
-		return cliWorkspace(ctx, h, cmd, pos, out)
+		var look WorkspaceLook
+		if *typ != "" {
+			look.Type = typ
+		}
+		if *icon != "" {
+			look.Icon = icon
+		}
+		if *color != "" {
+			c, err := strconv.ParseInt(*color, 10, 16)
+			if err != nil {
+				return fmt.Errorf("-color %q: want a tint from 0 to 7", *color)
+			}
+			look.Color = new(int16(c))
+		}
+		return cliWorkspace(ctx, h, cmd, pos, look, out)
 	case "list":
 		where := map[string]any{}
 		for _, kv := range pos[1:] {
@@ -366,11 +384,11 @@ func cliAuth(ctx context.Context, a *Archive, cmd string, pos []string, name, ro
 	return cliErrUsage
 }
 
-func cliWorkspace(ctx context.Context, h *Hub, cmd string, pos []string, out func(any, error) error) error {
+func cliWorkspace(ctx context.Context, h *Hub, cmd string, pos []string, look WorkspaceLook, out func(any, error) error) error {
 	switch cmd + " " + pos[0] {
 	case "workspace add":
 		if len(pos) > 2 {
-			return out(h.AddWorkspace(ctx, pos[1], pos[2]))
+			return out(h.AddWorkspace(ctx, pos[1], pos[2], look))
 		}
 	case "workspace list":
 		return out(h.Workspaces(ctx))

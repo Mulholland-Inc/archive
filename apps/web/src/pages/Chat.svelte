@@ -99,7 +99,7 @@
 {:else}
   <Page center>
     <EmptyState icon={MessageSquareOff} title="This chat no longer exists">
-      <Button variant="primary" href="#/">New chat</Button>
+      <Button variant="primary" href="/">New chat</Button>
     </EmptyState>
   </Page>
 {/if}

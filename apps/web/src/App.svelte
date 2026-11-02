@@ -15,7 +15,7 @@
   import DatabaseTable from './pages/DatabaseTable.svelte';
   import AccessPage from './pages/Access.svelte';
   import AppSettings from './components/AppSettings.svelte';
-  import VaultSettingsDialog from './components/VaultSettingsDialog.svelte';
+  import ArchiveSettingsDialog from './components/ArchiveSettingsDialog.svelte';
   import Specimen from './pages/Specimen.svelte';
   import Onboarding from './pages/Onboarding.svelte';
   import { route, go, replace } from './lib/router.svelte.js';
@@ -29,11 +29,11 @@
   import PasskeyPrompt from './components/PasskeyPrompt.svelte';
   import Spinner from './components/Spinner.svelte';
   import { Workflow as WorkflowIcon, Plug, User, Building2, ListChecks, Server, KeyRound, Blocks } from '@lucide/svelte';
-  import { switchVault, openSettings, openVaultSettings, boot, account, chats, library, schema, members, workflows } from './lib/app.svelte.js';
+  import { switchArchive, openSettings, openArchiveSettings, boot, account, chats, library, schema, members, workflows } from './lib/app.svelte.js';
 
   boot();
 
-  // Who you are and your vaults are always on screen; the palette lists everything else while it is open.
+  // Who you are and your archives are always on screen; the palette lists everything else while it is open.
   account.use(() => app.status === 'ready');
   for (const r of [chats, library, schema, members, workflows]) r.use(() => app.status === 'ready' && app.palette);
 
@@ -44,8 +44,8 @@
     if (head === 'settings') {
       openSettings(a ?? 'profile', a === 'connectors' ? (b ?? null) : null);
       replace(last);
-    } else if (head === 'vault') {
-      openVaultSettings(a ?? 'general', a === 'integrations' ? (b ?? null) : null);
+    } else if (head === 'archive') {
+      openArchiveSettings(a ?? 'general', a === 'integrations' ? (b ?? null) : null);
       replace(last);
     } else if (head === 'connectors') {
       openSettings('connectors', a ?? null);
@@ -71,10 +71,10 @@
     { id: 'p-connectors', group: 'Go to', label: 'Connectors', icon: Plug, run: () => openSettings('connectors') },
     { id: 'p-access', group: 'Go to', label: 'Access', icon: Lock, run: () => go('/access') },
     { id: 'p-onboarding', group: 'Go to', label: 'Onboarding', icon: ListChecks, run: () => go('/onboarding') },
-    { id: 'p-vault', group: 'Go to', label: 'Vault settings', icon: Building2, run: () => openVaultSettings() },
-    { id: 'p-server', group: 'Go to', label: 'Server', icon: Server, run: () => openVaultSettings('server'), searchOnly: true },
-    { id: 'p-integrations', group: 'Go to', label: 'Integrations', icon: Blocks, run: () => openVaultSettings('integrations'), searchOnly: true },
-    { id: 'p-keys', group: 'Go to', label: 'Vault API key', icon: KeyRound, run: () => openVaultSettings('api'), searchOnly: true },
+    { id: 'p-archive', group: 'Go to', label: 'Archive settings', icon: Building2, run: () => openArchiveSettings() },
+    { id: 'p-server', group: 'Go to', label: 'Server', icon: Server, run: () => openArchiveSettings('server'), searchOnly: true },
+    { id: 'p-integrations', group: 'Go to', label: 'Integrations', icon: Blocks, run: () => openArchiveSettings('integrations'), searchOnly: true },
+    { id: 'p-keys', group: 'Go to', label: 'Archive API key', icon: KeyRound, run: () => openArchiveSettings('api'), searchOnly: true },
     { id: 'p-my-key', group: 'Go to', label: 'Your API key', icon: KeyRound, run: () => openSettings('api'), searchOnly: true },
     { id: 'p-settings', group: 'Go to', label: 'Settings', icon: Settings, shortcut: '⌘ ,', run: () => openSettings() },
     { id: 'p-specimen', group: 'Go to', label: 'Component specimen', icon: Shapes, run: () => go('/specimen') },
@@ -83,7 +83,7 @@
     ...ws().schema.map((t) => ({ id: `t-${t.id}`, group: 'Tables', label: t.name, icon: Database, meta: t.rows === null ? '' : `${t.rows.toLocaleString('en-US')} rows`, run: () => go(`/database/${t.id}`), searchOnly: true })),
     ...ws().members.map((m) => ({ id: `u-${m.id}`, group: 'People', label: m.name, icon: User, meta: m.email, run: () => go(`/access/${m.id}`), searchOnly: true })),
     ...ws().workflows.map((w) => ({ id: `w-${w.id}`, group: 'Workflows', label: w.name, icon: WorkflowIcon, meta: w.trigger.label, run: () => go(`/workflows/${w.id}`), searchOnly: true })),
-    ...app.vaults.filter((w) => w.id !== app.vault).map((w) => ({ id: `ws-${w.id}`, group: 'Vaults', label: `Switch to ${w.name}`, icon: Building2, run: () => switchVault(w.id), searchOnly: true }))
+    ...app.archives.filter((w) => w.id !== app.archive).map((w) => ({ id: `ws-${w.id}`, group: 'Archives', label: `Switch to ${w.name}`, icon: Building2, run: () => switchArchive(w.id), searchOnly: true }))
   ]);
 
   function onkeydown(event) {
@@ -150,7 +150,7 @@
 
 <CommandPalette bind:open={app.palette} {commands} />
 <AppSettings />
-<VaultSettingsDialog />
+<ArchiveSettingsDialog />
 <PromptHost />
 <HelpDialog bind:open={app.help} />
 <ShareDialog />

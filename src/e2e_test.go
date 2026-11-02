@@ -2935,14 +2935,16 @@ func TestChatStreamsTheAgentLoopThroughRunAndKeepsEachUsersHistory(t *testing.T)
 	t.Parallel()
 	var mu sync.Mutex
 	var model []map[string]any
+	var bodies []string
 	var headers []http.Header
 	hung := make(chan struct{})
 	hangDone := false
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req map[string]any
-		json.NewDecoder(r.Body).Decode(&req)
+		raw, _ := io.ReadAll(r.Body)
+		json.Unmarshal(raw, &req)
 		mu.Lock()
-		model, headers = append(model, req), append(headers, r.Header.Clone())
+		model, bodies, headers = append(model, req), append(bodies, string(raw)), append(headers, r.Header.Clone())
 		mu.Unlock()
 		msgs := req["messages"].([]any)
 		first := fmt.Sprint(msgs[0].(map[string]any)["content"].([]any)[0].(map[string]any)["text"])
@@ -2989,7 +2991,7 @@ func TestChatStreamsTheAgentLoopThroughRunAndKeepsEachUsersHistory(t *testing.T)
 		case first == "boom" && len(msgs) == 1:
 			tool(`{"code": "throw new Error(\"boom\")"}`)
 		case first == "how many members?" && len(msgs) == 1:
-			tool(`{"code": "return (await archive.list(\"mem`, `ber\")).length * 7"}`)
+			tool(`{"description": "Counting mem`, `bers", "code": "return (await archive.list(\"mem`, `ber\")).length * 7"}`)
 		case answered:
 			text("You have ", "two members.")
 		default:
@@ -3014,11 +3016,16 @@ func TestChatStreamsTheAgentLoopThroughRunAndKeepsEachUsersHistory(t *testing.T)
 		if got := e2eKinds(evs); got != "chat,thinking,tool,code,run,result,text,done" {
 			t.Fatalf("events: %s\n%v", got, evs)
 		}
-		var codes, text []string
+		var codes, text, descs []string
 		for _, ev := range evs {
 			switch ev["type"] {
 			case "code":
 				codes = append(codes, fmt.Sprint(ev["code"]))
+				descs = append(descs, fmt.Sprint(ev["description"]))
+			case "run":
+				if ev["description"] != "Counting members" {
+					t.Errorf("run event: %v", ev)
+				}
 			case "text":
 				text = append(text, fmt.Sprint(ev["text"]))
 			case "result":
@@ -3027,14 +3034,20 @@ func TestChatStreamsTheAgentLoopThroughRunAndKeepsEachUsersHistory(t *testing.T)
 				}
 			}
 		}
-		if strings.Join(codes, "|") != `return (await archive.list("mem|return (await archive.list("member")).length * 7` || strings.Join(text, "") != "You have two members." {
+		if strings.Join(codes, "|") != `|return (await archive.list("mem|return (await archive.list("member")).length * 7` || strings.Join(text, "") != "You have two members." {
 			t.Errorf("streamed code %q, text %q", codes, text)
 		}
+		if strings.Join(descs, "|") != "Counting mem|Counting members|Counting members" {
+			t.Errorf("streamed descriptions %q", descs)
+		}
 		mu.Lock()
-		first, h := model[len(model)-2], headers[len(headers)-2]
+		first, h, body := model[len(model)-2], headers[len(headers)-2], bodies[len(bodies)-2]
 		second := model[len(model)-1]
 		mu.Unlock()
 		tool := first["tools"].([]any)[0].(map[string]any)
+		if !strings.Contains(body, `"properties":{"description":{"type":"string"`) || !strings.Contains(body, `"required":["description","code"]`) {
+			t.Errorf("the run tool's input schema, description first and required: %s", body[:min(len(body), 400)])
+		}
 		if first["model"] != "claude-haiku-5-5" || len(first["tools"].([]any)) != 1 || tool["name"] != "run" || tool["eager_input_streaming"] != true ||
 			!strings.Contains(fmt.Sprint(tool["description"]), "declare const archive") || h.Get("anthropic-version") != "2026-10-21" || h.Get("x-api-key") != "test" {
 			t.Errorf("model request: model %v, tool %v %v, version %q", first["model"], tool["name"], tool["eager_input_streaming"], h.Get("anthropic-version"))
@@ -3063,6 +3076,9 @@ func TestChatStreamsTheAgentLoopThroughRunAndKeepsEachUsersHistory(t *testing.T)
 		}
 		if strings.Join(roles, ",") != "user,assistant,user,assistant" {
 			t.Errorf("saved roles: %v", roles)
+		}
+		if b, _ := json.Marshal(c.Messages[1]); !strings.Contains(string(b), `"description":"Counting members"`) {
+			t.Errorf("the saved run call has no description: %s", b)
 		}
 		var renamed Chat
 		st, _ := call(t, "PATCH", api+"/chats/"+chatID, tok, map[string]string{"title": "  Counting   members "}, &renamed)
@@ -4440,6 +4456,99 @@ func TestServeOpensOtherWorkspacesOnlyWhenTheyAreUsed(t *testing.T) {
 	st, _ := call(t, "GET", srv.url+"/auth/workspace", bob, nil, &info)
 	if st != 200 || info.ID != ws {
 		t.Errorf("bob's workspace on first use: %d %+v\n%s", st, info, srv.log)
+	}
+}
+
+// A workspace's type, icon and colour save with its name, come back from every endpoint that lists it, and
+// are only what the web app offers.
+func TestAWorkspacesTypeIconAndColorSaveAndComeBack(t *testing.T) {
+	t.Parallel()
+	in := newInst(t)
+	in.must("user", "add", "alice@example.com")
+	alice := decode[Token](t, in.must("token", "create")).Secret
+	srv := in.serve()
+	look := func(w Workspace) string {
+		icon, color := "null", "null"
+		if w.Icon != nil {
+			icon = *w.Icon
+		}
+		if w.Color != nil {
+			color = fmt.Sprint(*w.Color)
+		}
+		return w.Name + " " + w.Type + " " + icon + " " + color
+	}
+	var info Workspace
+	if st, _ := call(t, "GET", srv.url+"/auth/workspace", alice, nil, &info); st != 200 || look(info) != "Archive personal null null" {
+		t.Fatalf("a new workspace: %d %s", st, look(info))
+	}
+	if st, _ := call(t, "PATCH", srv.url+"/auth/workspace", alice, map[string]any{"type": "family", "icon": "cottage", "color": 3}, &info); st != 200 || look(info) != "Archive family cottage 3" {
+		t.Errorf("set its look: %d %s", st, look(info))
+	}
+	if st, _ := call(t, "PATCH", srv.url+"/auth/workspace", alice, map[string]any{"name": "Home"}, &info); st != 200 || look(info) != "Home family cottage 3" {
+		t.Errorf("a rename keeps its look: %d %s", st, look(info))
+	}
+	for _, body := range []map[string]any{{"type": "club"}, {"icon": "rocket"}, {"color": 8}, {"color": -1}, {"name": "Elsewhere", "icon": "rocket"}} {
+		var e struct {
+			Error string `json:"error"`
+		}
+		if st, _ := call(t, "PATCH", srv.url+"/auth/workspace", alice, body, &e); st != 422 {
+			t.Errorf("PATCH %v: %d %s", body, st, e.Error)
+		}
+	}
+	var me struct {
+		All []Workspace `json:"workspaces"`
+	}
+	if st, _ := call(t, "GET", srv.url+"/auth/me", alice, nil, &me); st != 200 || len(me.All) != 1 || look(me.All[0]) != "Home family cottage 3" {
+		t.Errorf("/auth/me after refused changes: %d %+v", st, me.All)
+	}
+	var made Workspace
+	if st, _ := call(t, "POST", srv.url+"/auth/workspaces", alice, map[string]any{"name": "Acme", "owner": "bob@acme.test", "type": "business", "icon": "bank", "color": 5}, &made); st != 201 || look(made) != "Acme business bank 5" {
+		t.Errorf("a new workspace with its look: %d %s", st, look(made))
+	}
+	if st, _ := call(t, "POST", srv.url+"/auth/workspaces", alice, map[string]any{"name": "Bad", "owner": "bob@acme.test", "icon": "rocket"}, nil); st != 422 {
+		t.Errorf("a new workspace with an icon the app has not: %d", st)
+	}
+	var all []Workspace
+	if st, _ := call(t, "GET", srv.url+"/auth/workspaces", alice, nil, &all); st != 200 || len(all) != 2 || look(all[0]) != "Home family cottage 3" || look(all[1]) != "Acme business bank 5" {
+		t.Errorf("/auth/workspaces: %d %+v", st, all)
+	}
+	if out := decode[[]Workspace](t, in.must("workspace", "list")); len(out) != 2 || look(out[1]) != "Acme business bank 5" {
+		t.Errorf("archive workspace list: %+v", out)
+	}
+	if w := decode[Workspace](t, in.must("workspace", "add", "Kin", "carol@example.com", "-type", "family", "-icon", "oak", "-color", "0")); look(w) != "Kin family oak 0" {
+		t.Errorf("archive workspace add with its look: %s", look(w))
+	}
+	if out, err := exec.Command("psql", "-X", "-h", in.dir, "-U", "archive", "-d", "archive", "-Atc", "UPDATE archive.workspace SET type = 'club'").CombinedOutput(); err == nil || !strings.Contains(string(out), `invalid input value for enum workspace_type: "club"`) {
+		t.Errorf("the type enum took club: %v %s", err, out)
+	}
+}
+
+// A main database from before workspaces had a type, icon and colour gets them at startup, its workspaces
+// personal with the default look, and serve starts on it.
+func TestWorkspacesFromBeforeTypesMigrateAtStartup(t *testing.T) {
+	t.Parallel()
+	in := newInst(t)
+	in.must("user", "add", "alice@example.com")
+	in.must("workspace", "add", "Acme", "bob@acme.test", "-icon", "bank")
+	in.psql("archive", `ALTER TABLE archive.workspace DROP COLUMN type, DROP COLUMN icon, DROP COLUMN color;
+DROP TYPE archive.workspace_type; INSERT INTO archive.revision (hash) VALUES ('before types')`)
+	all := decode[[]Workspace](t, in.must("workspace", "list"))
+	if len(all) != 2 || all[1].Name != "Acme" {
+		t.Fatalf("workspaces after the migration: %+v", all)
+	}
+	for _, w := range all {
+		if w.Type != "personal" || w.Icon != nil || w.Color != nil {
+			t.Errorf("workspace %s after the migration: %s %v %v", w.Name, w.Type, w.Icon, w.Color)
+		}
+	}
+	if got := in.psql("archive", "SELECT t.typnamespace::regnamespace::text || '.' || t.typname FROM pg_attribute a JOIN pg_type t ON t.oid = a.atttypid WHERE a.attrelid = 'archive.workspace'::regclass AND a.attname = 'type'"); got != "archive.workspace_type" {
+		t.Errorf("archive.workspace.type is %q", got)
+	}
+	alice := decode[Token](t, in.must("token", "create")).Secret
+	srv := in.serve()
+	var info Workspace
+	if st, _ := call(t, "PATCH", srv.url+"/auth/workspace", alice, map[string]any{"type": "business"}, &info); st != 200 || info.Type != "business" {
+		t.Errorf("a migrated workspace takes a type: %d %+v", st, info)
 	}
 }
 

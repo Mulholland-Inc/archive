@@ -108,7 +108,7 @@
   .lg { width: var(--avatar-lg); height: var(--avatar-lg); }
   .xl { width: var(--avatar-xl); height: var(--avatar-xl); }
   .xxl { width: var(--avatar-2xl); height: var(--avatar-2xl); }
-  .rail { width: var(--vault-glyph); height: var(--vault-glyph); }
+  .rail { width: var(--archive-glyph); height: var(--archive-glyph); }
 
   .tint-0 { --tint: var(--tint-0); }
   .tint-1 { --tint: var(--tint-1); }

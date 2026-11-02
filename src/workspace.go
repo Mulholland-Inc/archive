@@ -92,10 +92,22 @@ func gcpMetadata() *gcpToken {
 	return &gcpToken{meta: "http://" + coreEnv("GCE_METADATA_HOST", "metadata.google.internal")}
 }
 
+// Workspace is a workspace as its people see it. Type is personal, family or business; Icon is one of the web
+// app's icons and Color one of its 8 tints, by index; null is the default for the type.
 type Workspace struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
+	Type      string    `json:"type"`
+	Icon      *string   `json:"icon"`
+	Color     *int16    `json:"color"`
 	CreatedAt time.Time `json:"created_at,omitzero"`
+}
+
+// WorkspaceLook is what may change of a workspace besides its name; a field left out stays as it is.
+type WorkspaceLook struct {
+	Type  *string `json:"type"`
+	Icon  *string `json:"icon"`
+	Color *int16  `json:"color"`
 }
 
 const (
@@ -183,16 +195,18 @@ func storeUndefined(err error) bool {
 
 func (h *Hub) register(ctx context.Context) error {
 	q := h.q()
-	row, err := q.FirstWorkspace(ctx)
+	// The first workspace's store migrates the main database, so until it opened, read only what was always there.
+	first, err := q.FirstWorkspaceKey(ctx)
 	fresh := errors.Is(err, pgx.ErrNoRows) || storeUndefined(err)
 	if err != nil && !fresh {
 		return err
 	}
+	row := generated.ArchiveWorkspace{ID: first.ID, Name: first.Name, Key: first.Key, CreatedAt: first.CreatedAt, Type: generated.ArchiveWorkspaceTypePersonal}
 	var key []byte
 	if fresh {
 		key = make([]byte, 32)
 		rand.Read(key)
-		row = generated.ArchiveWorkspace{ID: coreNewID(), Name: "Archive"}
+		row = generated.ArchiveWorkspace{ID: coreNewID(), Name: "Archive", Type: generated.ArchiveWorkspaceTypePersonal}
 	} else if key, err = h.unwrap(row); err != nil {
 		return err
 	}
@@ -202,7 +216,7 @@ func (h *Hub) register(ctx context.Context) error {
 		return err
 	}
 	if fresh {
-		r, err := q.CreateWorkspace(ctx, row.ID, row.Name, h.wrap(h.one, key))
+		r, err := q.CreateWorkspace(ctx, generated.CreateWorkspaceParams{ID: row.ID, Name: row.Name, Key: h.wrap(h.one, key), Type: row.Type})
 		if errors.Is(err, pgx.ErrNoRows) {
 			r, err = q.FirstWorkspace(ctx)
 		}
@@ -895,7 +909,7 @@ func (h *Hub) admin(ctx context.Context) error {
 }
 
 func workspaceOut(r generated.ArchiveWorkspace) Workspace {
-	return Workspace{ID: r.ID.String(), Name: r.Name, CreatedAt: r.CreatedAt}
+	return Workspace{ID: r.ID.String(), Name: r.Name, Type: string(r.Type), Icon: r.Icon, Color: r.Color, CreatedAt: r.CreatedAt}
 }
 
 func (h *Hub) Workspaces(ctx context.Context) ([]Workspace, error) {
@@ -910,11 +924,11 @@ func (h *Hub) Workspaces(ctx context.Context) ([]Workspace, error) {
 	return out, err
 }
 
-func (h *Hub) AddWorkspace(ctx context.Context, name, owner string) (*Workspace, error) {
+func (h *Hub) AddWorkspace(ctx context.Context, name, owner string, look WorkspaceLook) (*Workspace, error) {
 	if err := h.admin(ctx); err != nil {
 		return nil, err
 	}
-	r, err := h.createWorkspace(ctx, name, owner)
+	r, err := h.createWorkspace(ctx, name, owner, look)
 	if err != nil {
 		return nil, err
 	}
@@ -968,12 +982,46 @@ func workspaceName(name string) (string, error) {
 	return name, nil
 }
 
-func (h *Hub) createWorkspace(ctx context.Context, name, owner string) (generated.ArchiveWorkspace, error) {
+// typ is the look's type, once the look is valid. The icons are archive.workspace's to check.
+func (l WorkspaceLook) typ() (*generated.ArchiveWorkspaceType, error) {
+	ve := &ValidationError{Type: "workspace"}
+	var out *generated.ArchiveWorkspaceType
+	if l.Type != nil {
+		switch t := generated.ArchiveWorkspaceType(*l.Type); t {
+		case generated.ArchiveWorkspaceTypePersonal, generated.ArchiveWorkspaceTypeFamily, generated.ArchiveWorkspaceTypeBusiness:
+			out = &t
+		default:
+			ve.Errors = append(ve.Errors, FieldError{Path: "type", Message: "want personal, family or business"})
+		}
+	}
+	if l.Color != nil && (*l.Color < 0 || *l.Color > 7) {
+		ve.Errors = append(ve.Errors, FieldError{Path: "color", Message: "want a tint from 0 to 7"})
+	}
+	return out, ve.err()
+}
+
+// workspaceErr says which field archive.workspace's checks refused.
+func workspaceErr(err error) error {
+	var pe *pgconn.PgError
+	if errors.As(err, &pe) && pe.Code == "23514" && pe.ConstraintName == "workspace_icon" {
+		return &ValidationError{Type: "workspace", Errors: []FieldError{{Path: "icon", Message: "want one of the web app's icons, like robot, chest or cottage"}}}
+	}
+	return storeErr(err)
+}
+
+func (h *Hub) createWorkspace(ctx context.Context, name, owner string, look WorkspaceLook) (generated.ArchiveWorkspace, error) {
 	var row generated.ArchiveWorkspace
 	id := coreNewID()
 	name, err := workspaceName(name)
 	if err != nil {
 		return row, err
+	}
+	typ, err := look.typ()
+	if err != nil {
+		return row, err
+	}
+	if typ == nil {
+		typ = new(generated.ArchiveWorkspaceTypePersonal)
 	}
 	if owner, err = authEmail(owner); err != nil {
 		return row, err
@@ -982,12 +1030,12 @@ func (h *Hub) createWorkspace(ctx context.Context, name, owner string) (generate
 	key := make([]byte, 32)
 	rand.Read(key)
 	q := h.q()
-	row, err = q.CreateWorkspace(ctx, id, name, h.wrap(short, key))
+	row, err = q.CreateWorkspace(ctx, generated.CreateWorkspaceParams{ID: id, Name: name, Key: h.wrap(short, key), Type: *typ, Icon: look.Icon, Color: look.Color})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return row, fmt.Errorf("workspace %s already exists: %w", short, ErrConflict)
 	}
 	if err != nil {
-		return row, err
+		return row, workspaceErr(err)
 	}
 	ctx = context.WithoutCancel(ctx)
 	fail := func(err error) (generated.ArchiveWorkspace, error) {
@@ -1035,17 +1083,25 @@ func (a *Archive) Info(ctx context.Context) (*Workspace, error) {
 	return &w, nil
 }
 
-func (a *Archive) SetInfo(ctx context.Context, name *string) (*Workspace, error) {
+// SetInfo renames the workspace and changes its look, what is given of them, all in one write.
+func (a *Archive) SetInfo(ctx context.Context, name *string, look WorkspaceLook) (*Workspace, error) {
 	if _, err := a.workspaceAdmin(ctx); err != nil {
 		return nil, err
 	}
-	if name != nil {
-		n, err := workspaceName(*name)
+	if name != nil || look != (WorkspaceLook{}) {
+		if name != nil {
+			n, err := workspaceName(*name)
+			if err != nil {
+				return nil, err
+			}
+			name = &n
+		}
+		typ, err := look.typ()
 		if err != nil {
 			return nil, err
 		}
-		if err := a.hub.q().RenameWorkspace(ctx, a.ws.ID, n); err != nil {
-			return nil, err
+		if err := a.hub.q().UpdateWorkspace(ctx, generated.UpdateWorkspaceParams{ID: a.ws.ID, Name: name, Type: typ, Icon: look.Icon, Color: look.Color}); err != nil {
+			return nil, workspaceErr(err)
 		}
 		a.moved(ctx, "archive.workspace", a.ws.ID.String())
 		a.hub.liveMembers(ctx, a.ws.ID)()
@@ -1094,11 +1150,12 @@ func (h *Hub) workspaceRoutes(authed func(string, func(http.ResponseWriter, *htt
 	authed("PATCH /auth/workspace", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		var body struct {
 			Name *string `json:"name"`
+			WorkspaceLook
 		}
 		if err := httpDecode(r, &body); err != nil {
 			return 0, nil, err
 		}
-		return ok(archiveFrom(r.Context()).SetInfo(r.Context(), body.Name))
+		return ok(archiveFrom(r.Context()).SetInfo(r.Context(), body.Name, body.WorkspaceLook))
 	})
 	authed("GET /auth/workspaces", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		return ok(h.Workspaces(r.Context()))
@@ -1107,11 +1164,12 @@ func (h *Hub) workspaceRoutes(authed func(string, func(http.ResponseWriter, *htt
 		var body struct {
 			Name  string `json:"name"`
 			Owner string `json:"owner"`
+			WorkspaceLook
 		}
 		if err := httpDecode(r, &body); err != nil {
 			return 0, nil, err
 		}
-		ws, err := h.AddWorkspace(r.Context(), body.Name, body.Owner)
+		ws, err := h.AddWorkspace(r.Context(), body.Name, body.Owner, body.WorkspaceLook)
 		return http.StatusCreated, ws, err
 	})
 	authed("DELETE /auth/workspaces/{id}", func(w http.ResponseWriter, r *http.Request) (int, any, error) {

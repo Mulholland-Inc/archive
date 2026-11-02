@@ -1,10 +1,10 @@
 import { API } from './api.js';
 
-// A prompt to paste into another assistant, so it can use this vault's API with the key.
-export function apiPrompt({ key, vault }) {
+// A prompt to paste into another assistant, so it can use this archive's API with the key.
+export function apiPrompt({ key, archive }) {
   const base = API || 'http://localhost:8080';
-  const scope = vault
-    ? `This key belongs to one vault, "${vault.name}" (workspace \`${vault.id}\`), and acts with my access there.`
+  const scope = archive
+    ? `This key belongs to one archive, "${archive.name}" (workspace \`${archive.id}\`), and acts with my access there.`
     : 'This key acts with my access.';
 
   return `You are helping me work with Archive, a database and file store for my records, through its HTTP API.

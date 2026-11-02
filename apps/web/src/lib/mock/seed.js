@@ -79,7 +79,7 @@ function settings() {
   return { defaultRole: 'viewer', invites: true, region: 'us-central1', retention: 'forever' };
 }
 
-function vault(base) {
+function archive(base) {
   return {
     settings: settings(),
     chats: [],
@@ -114,7 +114,7 @@ export function seed() {
   const pc = pick(chats, personalChats).map((c) => ({ ...c }));
 
   return [
-    vault({
+    archive({
       id: 'okafor',
       name: 'Okafor Family Archive',
       kind: 'Family',
@@ -128,7 +128,7 @@ export function seed() {
       shares: structuredClone(okaforShares),
       members: members.map((m) => ({ ...m }))
     }),
-    vault({
+    archive({
       id: 'hale',
       name: 'Hale & Whitcombe LLP',
       kind: 'Law firm',
@@ -142,7 +142,7 @@ export function seed() {
       shares: structuredClone(haleShares),
       members: haleMembers.map((m) => ({ ...m }))
     }),
-    vault({
+    archive({
       id: 'fieldnote',
       name: 'Fieldnote Studio',
       kind: 'Studio',
@@ -156,7 +156,7 @@ export function seed() {
       shares: structuredClone(fieldShares),
       members: fieldMembers.map((m) => ({ ...m }))
     }),
-    vault({
+    archive({
       id: 'personal',
       name: 'Personal',
       kind: 'Just you',
@@ -170,7 +170,7 @@ export function seed() {
   ];
 }
 
-export function blankVault(id, name, look) {
+export function blankArchive(id, name, look) {
   const kind = { family: 'Family', business: 'Business', personal: 'Just you' }[look.type];
-  return vault({ id, name, kind, tone: (id.length % 6) + 1, look: { ...look } });
+  return archive({ id, name, kind, tone: (id.length % 6) + 1, look: { ...look } });
 }

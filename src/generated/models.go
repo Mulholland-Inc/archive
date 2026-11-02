@@ -5,11 +5,56 @@
 package generated
 
 import (
+	"database/sql/driver"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+type ArchiveWorkspaceType string
+
+const (
+	ArchiveWorkspaceTypePersonal ArchiveWorkspaceType = "personal"
+	ArchiveWorkspaceTypeFamily   ArchiveWorkspaceType = "family"
+	ArchiveWorkspaceTypeBusiness ArchiveWorkspaceType = "business"
+)
+
+func (e *ArchiveWorkspaceType) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = ArchiveWorkspaceType(s)
+	case string:
+		*e = ArchiveWorkspaceType(s)
+	default:
+		return fmt.Errorf("unsupported scan type for ArchiveWorkspaceType: %T", src)
+	}
+	return nil
+}
+
+type NullArchiveWorkspaceType struct {
+	ArchiveWorkspaceType ArchiveWorkspaceType
+	Valid                bool // Valid is true if ArchiveWorkspaceType is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullArchiveWorkspaceType) Scan(value interface{}) error {
+	if value == nil {
+		ns.ArchiveWorkspaceType, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.ArchiveWorkspaceType.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullArchiveWorkspaceType) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.ArchiveWorkspaceType), nil
+}
 
 type ArchiveChat struct {
 	ID        uuid.UUID
@@ -76,4 +121,7 @@ type ArchiveWorkspace struct {
 	Name      string
 	Key       []byte
 	CreatedAt time.Time
+	Type      ArchiveWorkspaceType
+	Icon      *string
+	Color     *int16
 }

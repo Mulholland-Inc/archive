@@ -164,7 +164,7 @@
           {:else if col.key === 'active'}
             {row.status === 'invited' ? 'Invited' : row.active}
           {:else if col.key === 'menu'}
-            <IconButton icon={Trash2} label={row.status === 'invited' ? `Revoke invitation for ${row.name}` : `Remove ${row.name} from vault`} size="sm" onclick={() => removeMember(row.id)} />
+            <IconButton icon={Trash2} label={row.status === 'invited' ? `Revoke invitation for ${row.name}` : `Remove ${row.name} from archive`} size="sm" onclick={() => removeMember(row.id)} />
           {/if}
         {/snippet}
       </Table>

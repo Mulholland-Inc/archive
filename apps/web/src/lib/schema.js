@@ -35,7 +35,7 @@ function column(c, types) {
     type,
     label: c.list ? `List of ${(label ?? typeLabels[type]).toLowerCase()}` : label,
     required: Boolean(c.not_null && !c.default),
-    notes: own.has(c.name) ? 'Set by the vault' : c.description,
+    notes: own.has(c.name) ? 'Set by the archive' : c.description,
     to: ref && !ref.startsWith('archive.') ? ref : undefined
   };
 }

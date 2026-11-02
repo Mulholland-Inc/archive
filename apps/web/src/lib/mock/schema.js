@@ -3,7 +3,7 @@
 const c = (name, type, required = false, notes = '', to) => ({ name, type, required, notes, to });
 
 function table(id, name, icon, rows, updated, access, workflows, columns, sample) {
-  const all = [c('id', 'text', true, 'Set by the vault'), ...columns, c('created_at', 'date', true, 'Set by the vault')];
+  const all = [c('id', 'text', true, 'Set by the archive'), ...columns, c('created_at', 'date', true, 'Set by the archive')];
   return {
     id,
     name,

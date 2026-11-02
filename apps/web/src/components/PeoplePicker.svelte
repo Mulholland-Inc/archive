@@ -149,7 +149,7 @@
         <span class="glyph"><Icon icon={Mail} size="md" /></span>
         <span class="who">
           <span class="name">Invite {person.email}</span>
-          <span class="meta">Not in this vault yet</span>
+          <span class="meta">Not in this archive yet</span>
         </span>
       {:else}
         <Avatar name={person.name} seed={seedOf(person)} size="md" />

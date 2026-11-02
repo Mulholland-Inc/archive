@@ -11,15 +11,15 @@
   import StatusBadge from './StatusBadge.svelte';
   import Text from './Text.svelte';
   import Icon from './Icon.svelte';
-  import { connectIntegration, disconnectIntegration, isVaultOwner } from '../lib/app.svelte.js';
+  import { connectIntegration, disconnectIntegration, isArchiveOwner } from '../lib/app.svelte.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
 
   let { integration: c } = $props();
-  const owner = $derived(isVaultOwner());
-  const reach = $derived(c.covers === 'domain' ? 'Everyone in the vault with an address on the connected domain.' : 'Everyone in the vault, including people who join later.');
+  const owner = $derived(isArchiveOwner());
+  const reach = $derived(c.covers === 'domain' ? 'Everyone in the archive with an address on the connected domain.' : 'Everyone in the archive, including people who join later.');
 
   async function disconnect() {
-    if (await confirmDialog({ title: `Disconnect ${c.name}?`, body: `This turns it off for everyone in the vault. Workflows that rely on it will pause.`, confirm: 'Disconnect' })) disconnectIntegration(c.id);
+    if (await confirmDialog({ title: `Disconnect ${c.name}?`, body: `This turns it off for everyone in the archive. Workflows that rely on it will pause.`, confirm: 'Disconnect' })) disconnectIntegration(c.id);
   }
 </script>
 

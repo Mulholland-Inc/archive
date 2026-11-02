@@ -1,4 +1,4 @@
-// The app's state. A vault is one Archive workspace: its chats, files, tables, members and workflows come from
+// The app's state. An archive is one Archive workspace: its chats, files, tables, members and workflows come from
 // the API (see live.js for the mapping). What the API cannot do yet comes from mock/ and stays in this tab or
 // in localStorage; mock/index.js lists those pieces.
 
@@ -8,7 +8,7 @@ import { toFile, toChat, toMember, toWorkflow, toRun } from './live.js';
 import { toTables, countsQuery } from './schema.js';
 import { initials, mockConnectors, mockIntegrations, mockKey, mockProfile, mockSettings } from './mock/index.js';
 import { integrationCatalog } from './integrations.js';
-import { defaultLook } from './looks.js';
+import { defaultLook, TYPES } from './looks.js';
 import { notify } from './dialogs.svelte.js';
 import { go, route } from './router.svelte.js';
 
@@ -21,8 +21,8 @@ export const app = $state({
   role: 'viewer',
   canAdd: false,
   askPasskey: false,
-  vaults: [],
-  vault: null,
+  archives: [],
+  archive: null,
   collapsed: typeof localStorage !== 'undefined' && localStorage.getItem('archive.sidebar') === 'collapsed',
   drawer: false,
   details: false,
@@ -32,23 +32,29 @@ export const app = $state({
   pending: null,
   muted: false,
   settings: { open: false, section: null, sub: null },
-  vaultSettings: { open: false, section: null, sub: null },
+  archiveSettings: { open: false, section: null, sub: null },
   integrations: mockIntegrations(),
   apiKey: mockKey('ak_live_', 'Created today'),
-  vaultKeys: {},
+  archiveKeys: {},
   share: { open: false, kind: null, target: null },
   onboarding: [],
   profile: mockProfile()
 });
 
-const kindOf = (type) => ({ family: 'Family', business: 'Business', personal: 'Just you' })[type] ?? 'Vault';
+const kindOf = (type) => ({ family: 'Family', business: 'Business', personal: 'Just you' })[type] ?? 'Archive';
 
-function lookOf(id) {
-  return local(`archive.look:${id}`, null) ?? defaultLook('family');
+// An archive's look is its workspace's type, icon and colour, from the API; without an icon or a colour it has
+// its type's.
+function lookOf(w) {
+  const type = TYPES[w.type] ? w.type : 'personal';
+  const d = defaultLook(type);
+  return { type, icon: w.icon ?? d.icon, tint: w.color ?? d.tint };
 }
 
+const lookBody = (look) => ({ type: look.type, icon: look.icon, color: look.tint });
+
 function shell(w) {
-  const look = lookOf(w.id);
+  const look = lookOf(w);
   return {
     id: w.id,
     name: w.name,
@@ -72,12 +78,12 @@ function shell(w) {
 }
 
 export function ws() {
-  return app.vaults.find((w) => w.id === app.vault) ?? app.vaults[0];
+  return app.archives.find((w) => w.id === app.archive) ?? app.archives[0];
 }
 
-export const currentVault = ws;
+export const currentArchive = ws;
 
-const call = (path, opts = {}) => api(path, { ...opts, workspace: opts.workspace ?? app.vault });
+const call = (path, opts = {}) => api(path, { ...opts, workspace: opts.workspace ?? app.archive });
 
 async function complain(error, title = 'That didn’t work') {
   if (error instanceof Unauthorized) {
@@ -93,13 +99,13 @@ export async function boot() {
   const named = new URLSearchParams(location.search).get('workspace');
   if (named) {
     setWorkspace(named);
-    history.replaceState(null, '', location.pathname + location.hash);
+    history.replaceState(null, '', location.pathname);
   }
   let me;
   try {
     me = await api('/auth/me');
   } catch (e) {
-    // The vault this device opened last may be gone; open your first one instead.
+    // The archive this device opened last may be gone; open your first one instead.
     if (!(e instanceof Unauthorized) && workspace() && e.status >= 403) {
       setWorkspace('');
       return boot();
@@ -110,54 +116,54 @@ export async function boot() {
   }
   setMe(me);
   setWorkspace(me.workspace);
-  const list = me.workspaces?.length ? me.workspaces : [{ id: me.workspace, name: 'Archive' }];
-  app.vaults = list.map(shell);
-  app.vault = me.workspace;
+  const list = me.workspaces?.length ? me.workspaces : [{ id: me.workspace, name: 'Archive', type: 'personal' }];
+  app.archives = list.map(shell);
+  app.archive = me.workspace;
   app.onboarding = local(`archive.onboarding:${me.workspace}`, []);
   app.askPasskey = passkeys && !passkeyAsked(me.actor.user_id);
   app.status = 'ready';
-  listen(app.vault);
+  listen(app.archive);
   account.seen();
-  loadVault(ws());
+  loadArchive(ws());
   canAdd();
 }
 
 function canAdd() {
-  api('/auth/workspaces', { workspace: app.vaults[0]?.id })
+  api('/auth/workspaces', { workspace: app.archives[0]?.id })
     .then(() => (app.canAdd = true))
     .catch(() => (app.canAdd = false));
 }
 
-// Who you are and which vaults you have, read again when your account, a vault's name or your role moves,
-// in this tab or anywhere else. A vault you were removed from, or that was deleted, goes; one you were
+// Who you are and which archives you have, read again when your account, an archive's name or your role moves,
+// in this tab or anywhere else. An archive you were removed from, or that was deleted, goes; one you were
 // added to arrives.
 async function loadMe() {
   if (app.status !== 'ready') return;
   let me;
   let here = true;
   try {
-    me = await api('/auth/me', { workspace: app.vault });
+    me = await api('/auth/me', { workspace: app.archive });
   } catch (e) {
     if (e instanceof Unauthorized) return leave();
-    // This vault cannot be read: you may have left it, or it was deleted. Ask who you are without it.
+    // This archive cannot be read: you may have left it, or it was deleted. Ask who you are without it.
     here = false;
     setWorkspace('');
     me = await api('/auth/me').catch((e) => (e instanceof Unauthorized ? leave() : null));
-    if (!me) return setWorkspace(app.vault);
+    if (!me) return setWorkspace(app.archive);
   }
   if (here) setMe(me);
-  const list = me.workspaces?.length ? me.workspaces : [{ id: me.workspace, name: 'Archive' }];
-  const had = new Map(app.vaults.map((v) => [v.id, v]));
-  app.vaults = list.map((w) => {
+  const list = me.workspaces?.length ? me.workspaces : [{ id: me.workspace, name: 'Archive', type: 'personal' }];
+  const had = new Map(app.archives.map((v) => [v.id, v]));
+  app.archives = list.map((w) => {
     const v = had.get(w.id) ?? shell(w);
-    v.name = w.name;
+    Object.assign(v, { name: w.name, look: lookOf(w), kind: kindOf(w.type) });
     return v;
   });
-  if (!app.vaults.some((v) => v.id === app.vault)) {
-    app.vault = null;
-    await switchVault(me.workspace);
+  if (!app.archives.some((v) => v.id === app.archive)) {
+    app.archive = null;
+    await switchArchive(me.workspace);
     go('/');
-  } else if (!here) setWorkspace(app.vault);
+  } else if (!here) setWorkspace(app.archive);
   canAdd();
 }
 
@@ -171,7 +177,7 @@ export const account = resource({
   load: loadMe
 });
 
-// A socket the vault refuses may mean you left it or it is gone.
+// A socket the archive refuses may mean you left it or it is gone.
 onRefused(() => app.status === 'ready' && account.refresh());
 
 // Another tab of this browser signing out signs this one out too.
@@ -179,8 +185,8 @@ const tabs = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('arc
 tabs?.addEventListener('message', (e) => {
   if (e.data === 'signedOut' && app.status === 'ready') {
     leave();
-    app.vaults = [];
-    app.vault = null;
+    app.archives = [];
+    app.archive = null;
     go('/');
   }
 });
@@ -203,8 +209,8 @@ async function files(id) {
   return all.reverse();
 }
 
-// What a vault shows, each read again when what it is read from moves (stream.svelte.js). Each reads into
-// the vault that is open when it starts.
+// What an archive shows, each read again when what it is read from moves (stream.svelte.js). Each reads into
+// the archive that is open when it starts.
 
 // The chats, newest first. A chat being written here and not saved yet stays at the top, and what this tab
 // knows of a chat (it is streaming, its messages are loaded) stays with it.
@@ -331,7 +337,7 @@ export const preview = resource({
   }
 });
 
-export async function loadVault(v = ws()) {
+export async function loadArchive(v = ws()) {
   v.loading = true;
   await Promise.allSettled([chats.refresh(), library.refresh(), members.refresh(), workflows.refresh(), schema.refresh()]);
   v.loading = false;
@@ -342,37 +348,37 @@ export async function signOut() {
   tabs?.postMessage('signedOut');
   listen('');
   app.status = 'signedOut';
-  app.vaults = [];
-  app.vault = null;
+  app.archives = [];
+  app.archive = null;
   go('/');
 }
 
 // Settings dialogs
 
 export function openSettings(section = null, sub = null) {
-  app.vaultSettings.open = false;
+  app.archiveSettings.open = false;
   Object.assign(app.settings, { open: true, section, sub });
 }
 
-export function openVaultSettings(section = null, sub = null) {
+export function openArchiveSettings(section = null, sub = null) {
   app.settings.open = false;
-  Object.assign(app.vaultSettings, { open: true, section, sub });
+  Object.assign(app.archiveSettings, { open: true, section, sub });
 }
 
-// Onboarding (MOCK: no API; kept per vault in localStorage)
+// Onboarding (MOCK: no API; kept per archive in localStorage)
 
 export const onboardingSteps = [
-  { id: 'msa', group: 'Legal', title: 'Sign the master services agreement', body: 'The terms for your vault, billing and support.', action: 'Review and sign' },
+  { id: 'msa', group: 'Legal', title: 'Sign the master services agreement', body: 'The terms for your archive, billing and support.', action: 'Review and sign' },
   { id: 'dpa', group: 'Legal', title: 'Sign the data processing agreement', body: 'How we process personal data on your behalf under GDPR.', action: 'Review and sign' },
   { id: 'verify', group: 'Legal', title: 'Verify your business details', body: 'Confirm your legal name, address and VAT number for invoices.', action: 'Verify' },
-  { id: 'invite', group: 'Your team', title: 'Invite your team', body: 'Add the people who should read, edit or own this vault.', action: 'Invite' },
+  { id: 'invite', group: 'Your team', title: 'Invite your team', body: 'Add the people who should read, edit or own this archive.', action: 'Invite' },
   { id: 'connect', group: 'Your data', title: 'Connect a source', body: 'Bring in files from Google Drive, Dropbox, email or iCloud Photos.', action: 'Connect' },
   { id: 'upload', group: 'Your data', title: 'Upload your first files', body: 'Drop in scans, letters, recordings or spreadsheets.', action: 'Upload' },
   { id: 'workflow', group: 'Your data', title: 'Set up a workflow', body: 'Let an agent file, tag or transcribe new items as they arrive.', action: 'Create' },
-  { id: 'region', group: 'Your data', title: 'Choose a data region and retention', body: 'Pick where your vault lives and how long deleted items are kept.', action: 'Choose' }
+  { id: 'region', group: 'Your data', title: 'Choose a data region and retention', body: 'Pick where your archive lives and how long deleted items are kept.', action: 'Choose' }
 ];
 
-const saveSteps = () => setLocal(`archive.onboarding:${app.vault}`, app.onboarding);
+const saveSteps = () => setLocal(`archive.onboarding:${app.archive}`, app.onboarding);
 
 export function stepDone(id) {
   return app.onboarding.includes(id);
@@ -400,11 +406,11 @@ export function seedOf(person) {
   return m?.user ?? m?.id ?? p.email ?? p.name ?? '';
 }
 
-export function isVaultOwner() {
+export function isArchiveOwner() {
   return app.role === 'owner';
 }
 
-function vaultDomain() {
+function archiveDomain() {
   return (app.user.email ?? '').split('@')[1] ?? '';
 }
 
@@ -450,10 +456,10 @@ export async function setRole(member, role) {
 
 // Integrations (MOCK: SSO, SCIM and workspace apps have no API yet)
 
-export function vaultIntegrations() {
+export function archiveIntegrations() {
   const active = ws().members.filter((m) => m.status === 'active');
   return integrationCatalog.map((c) => {
-    const link = app.integrations.find((x) => x.vault === app.vault && x.id === c.id);
+    const link = app.integrations.find((x) => x.archive === app.archive && x.id === c.id);
     const domain = c.covers === 'domain' ? link?.account : null;
     const members = link ? active.filter((m) => !domain || m.email.endsWith(`@${domain}`)) : [];
     return { ...c, connected: Boolean(link), account: link?.account ?? '', connectedBy: link?.by ?? '', date: link?.date ?? '', members };
@@ -462,51 +468,51 @@ export function vaultIntegrations() {
 
 export function connectIntegration(id) {
   const c = integrationCatalog.find((x) => x.id === id);
-  if (!c || !isVaultOwner() || app.integrations.some((x) => x.vault === app.vault && x.id === id)) return;
-  const domain = vaultDomain();
+  if (!c || !isArchiveOwner() || app.integrations.some((x) => x.archive === app.archive && x.id === id)) return;
+  const domain = archiveDomain();
   const account = c.id === 'slack' ? `${domain.split('.')[0]}.slack.com` : c.covers === 'domain' ? domain : ws().name;
-  app.integrations.push({ vault: app.vault, id, account, by: app.profile.name, date: 'Today' });
+  app.integrations.push({ archive: app.archive, id, account, by: app.profile.name, date: 'Today' });
 }
 
 export function disconnectIntegration(id) {
-  const i = app.integrations.findIndex((x) => x.vault === app.vault && x.id === id);
-  if (i === -1 || !isVaultOwner()) return;
+  const i = app.integrations.findIndex((x) => x.archive === app.archive && x.id === id);
+  if (i === -1 || !isArchiveOwner()) return;
   app.integrations.splice(i, 1);
 }
 
-// API keys. The vault key is a real API token of yours for this vault; its secret is shown once, when it is
-// made. "Your API key", one key across every vault, is MOCK: tokens belong to one workspace.
+// API keys. The archive key is a real API token of yours for this archive; its secret is shown once, when it is
+// made. "Your API key", one key across every archive, is MOCK: tokens belong to one workspace.
 
-const KEY_NAME = 'Vault API key';
+const KEY_NAME = 'Archive API key';
 
-export function vaultKey() {
-  return app.vaultKeys[app.vault] ?? null;
+export function archiveKey() {
+  return app.archiveKeys[app.archive] ?? null;
 }
 
-// Your tokens for the vault, read again when one is made or revoked, here or anywhere else.
+// Your tokens for the archive, read again when one is made or revoked, here or anywhere else.
 export const tokens = resource({
   tables: ['archive.token'],
   load: async () => {
-    const id = app.vault;
+    const id = app.archive;
     const list = (await call('/auth/tokens')) ?? [];
     const t = list.filter((x) => x.name === KEY_NAME).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
-    if (app.vaultKeys[id]?.secret && app.vaultKeys[id].id === t?.id) return;
-    app.vaultKeys[id] = t ? { id: t.id, secret: '', date: `Created ${new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` } : null;
+    if (app.archiveKeys[id]?.secret && app.archiveKeys[id].id === t?.id) return;
+    app.archiveKeys[id] = t ? { id: t.id, secret: '', date: `Created ${new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` } : null;
   }
 });
 
 export async function rotateKey(scope) {
-  if (scope !== 'vault') {
+  if (scope !== 'archive') {
     app.apiKey = mockKey('ak_live_', 'Rotated just now');
     return;
   }
-  if (!isVaultOwner()) return;
-  const id = app.vault;
+  if (!isArchiveOwner()) return;
+  const id = app.archive;
   try {
     const old = (await call('/auth/tokens')).filter((x) => x.name === KEY_NAME);
     const t = await call('/auth/tokens', { method: 'POST', body: { name: KEY_NAME } });
     for (const o of old) await call(`/auth/tokens/${o.id}`, { method: 'DELETE' }).catch(() => {});
-    app.vaultKeys[id] = { id: t.id, secret: t.token, date: old.length ? 'Rotated just now' : 'Created just now' };
+    app.archiveKeys[id] = { id: t.id, secret: t.token, date: old.length ? 'Rotated just now' : 'Created just now' };
   } catch (e) {
     complain(e, 'Couldn’t make a new key');
   }
@@ -543,64 +549,60 @@ function removeAt(list, predicate, after) {
   return item;
 }
 
-// Vaults
+// Archives
 
-export async function switchVault(id) {
-  if (id === app.vault || !app.vaults.some((v) => v.id === id)) return;
+export async function switchArchive(id) {
+  if (id === app.archive || !app.archives.some((v) => v.id === id)) return;
   setWorkspace(id);
-  app.vault = id;
+  app.archive = id;
   app.onboarding = local(`archive.onboarding:${id}`, []);
   const head = route.parts[0];
   if (['chat', 'workflows', 'database'].includes(head) && route.parts[1]) go(`/${head === 'chat' ? '' : head}`);
-  // Listening to the vault reads who you are in it (me) and what is on screen.
+  // Listening to the archive reads who you are in it (me) and what is on screen.
   listen(id);
-  loadVault(ws());
+  loadArchive(ws());
 }
 
-export async function createVault(name, look) {
+export async function createArchive(name, look) {
   if (!app.canAdd) {
-    await notify({ title: 'Ask an admin for a new vault', body: 'Only the people who run this Archive can make vaults. They add one with archive workspace add and name you as its owner.' });
+    await notify({ title: 'Ask an admin for a new archive', body: 'Only the people who run this Archive can make archives. They add one with archive workspace add and name you as its owner.' });
     return;
   }
   try {
-    const w = await api('/auth/workspaces', { method: 'POST', body: { name, owner: app.user.email }, workspace: app.vaults[0].id });
-    setLocal(`archive.look:${w.id}`, look);
-    if (!app.vaults.some((v) => v.id === w.id)) app.vaults.push(shell(w));
-    await switchVault(w.id);
+    const w = await api('/auth/workspaces', { method: 'POST', body: { name, owner: app.user.email, ...lookBody(look) }, workspace: app.archives[0].id });
+    if (!app.archives.some((v) => v.id === w.id)) app.archives.push(shell(w));
+    await switchArchive(w.id);
     go('/');
   } catch (e) {
-    complain(e, 'Couldn’t make the vault');
+    complain(e, 'Couldn’t make the archive');
   }
 }
 
-export async function saveVault({ name, look }) {
+// Saves the archive's name and look in one PATCH, the one a rename makes, which tells every tab it moved.
+export async function saveArchive({ name, look }) {
   const w = ws();
-  setLocal(`archive.look:${w.id}`, look);
-  w.look = { ...look };
-  w.kind = kindOf(look.type);
-  if (name && name !== w.name) {
-    const before = w.name;
-    w.name = name;
-    try {
-      await call('/auth/workspace', { method: 'PATCH', body: { name } });
-    } catch (e) {
-      w.name = before;
-      complain(e, 'Couldn’t rename the vault');
-    }
+  const before = { name: w.name, look: w.look, kind: w.kind };
+  Object.assign(w, { name: name || w.name, look: { ...look }, kind: kindOf(look.type) });
+  try {
+    const saved = await call('/auth/workspace', { method: 'PATCH', body: { name: w.name, ...lookBody(look) } });
+    Object.assign(w, { name: saved.name, look: lookOf(saved), kind: kindOf(saved.type) });
+  } catch (e) {
+    Object.assign(w, before);
+    complain(e, 'Couldn’t save the archive');
   }
 }
 
-export async function deleteVault(id) {
-  if (app.vaults.length < 2) return;
+export async function deleteArchive(id) {
+  if (app.archives.length < 2) return;
   try {
-    await api(`/auth/workspaces/${id}`, { method: 'DELETE', workspace: app.vaults.find((v) => v.id !== id).id });
+    await api(`/auth/workspaces/${id}`, { method: 'DELETE', workspace: app.archives.find((v) => v.id !== id).id });
   } catch (e) {
-    return complain(e, 'Couldn’t delete the vault');
+    return complain(e, 'Couldn’t delete the archive');
   }
-  app.vaults.splice(app.vaults.findIndex((w) => w.id === id), 1);
-  if (app.vault === id) {
-    app.vault = null;
-    await switchVault(app.vaults[0].id);
+  app.archives.splice(app.archives.findIndex((w) => w.id === id), 1);
+  if (app.archive === id) {
+    app.archive = null;
+    await switchArchive(app.archives[0].id);
   }
   go('/');
 }
@@ -639,7 +641,7 @@ export function togglePin(id) {
   const chat = chatById(id);
   if (!chat) return;
   chat.pinned = !chat.pinned;
-  setLocal(`archive.pins:${app.vault}`, ws().chats.filter((c) => c.pinned && !c.draft).map((c) => c.id));
+  setLocal(`archive.pins:${app.archive}`, ws().chats.filter((c) => c.pinned && !c.draft).map((c) => c.id));
 }
 
 export function pinnedFirst(chats) {
@@ -709,14 +711,14 @@ export async function removeFile() {
 
 export async function downloadFile(file) {
   try {
-    const href = await blobURL(`/api/files/${file.id}/content`, app.vault);
+    const href = await blobURL(`/api/files/${file.id}/content`, app.archive);
     Object.assign(document.createElement('a'), { href, download: file.name }).click();
   } catch (e) {
     complain(e, `Couldn’t download ${file.name}`);
   }
 }
 
-// Sharing (MOCK: there is no API for sharing one item with someone outside the vault; shares stay in this tab)
+// Sharing (MOCK: there is no API for sharing one item with someone outside the archive; shares stay in this tab)
 
 export const permissions = [
   { value: 'view', label: 'Viewer' },
@@ -815,7 +817,7 @@ export function removeGuest(email) {
   }
 }
 
-// Workflows. A workflow is a script deployed in the vault; runs are synchronous, so there is no pausing or
+// Workflows. A workflow is a script deployed in the archive; runs are synchronous, so there is no pausing or
 // stopping one, and the assistant writes new ones.
 
 export function workflowById(id) {

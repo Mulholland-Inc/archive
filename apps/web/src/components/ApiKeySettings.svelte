@@ -5,45 +5,45 @@
   import Art from './Art.svelte';
   import IconButton from './IconButton.svelte';
   import Button from './Button.svelte';
-  import { app, ws, vaultKey, rotateKey, isVaultOwner, tokens } from '../lib/app.svelte.js';
+  import { app, ws, archiveKey, rotateKey, isArchiveOwner, tokens } from '../lib/app.svelte.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
   import { apiPrompt } from '../lib/apiprompt.js';
 
   let { scope = 'user', onback, backNarrow = true } = $props();
 
   let shown = $state(false);
-  const vault = $derived(scope === 'vault');
-  const key = $derived(vault ? vaultKey() : app.apiKey);
-  const locked = $derived(vault && !isVaultOwner());
+  const archive = $derived(scope === 'archive');
+  const key = $derived(archive ? archiveKey() : app.apiKey);
+  const locked = $derived(archive && !isArchiveOwner());
   const secret = $derived(key?.secret ?? '');
   // A real token's secret is only known right after it is made; before that the key shows as dots.
-  const hidden = $derived(vault && !secret);
+  const hidden = $derived(archive && !secret);
   const masked = $derived(secret ? `${secret.slice(0, secret.lastIndexOf('_') + 1)}${'•'.repeat(12)}${secret.slice(-4)}` : key ? `arc_${'•'.repeat(16)}` : 'No key yet');
 
-  tokens.use(() => vault && app.vault);
+  tokens.use(() => archive && app.archive);
 
   async function copy() {
     await navigator.clipboard?.writeText(secret).catch(() => {});
   }
 
   async function copyPrompt() {
-    await navigator.clipboard?.writeText(apiPrompt({ key: secret, vault: vault ? ws() : null })).catch(() => {});
+    await navigator.clipboard?.writeText(apiPrompt({ key: secret, archive: archive ? ws() : null })).catch(() => {});
   }
 
   async function rotate() {
     if (!key || (await confirmDialog({ title: 'Rotate this key?', body: 'The old key stops working right away.', confirm: 'Rotate' }))) {
       await rotateKey(scope);
-      shown = vault;
+      shown = archive;
     }
   }
 </script>
 
 <SettingsPane {onback} {backNarrow}>
   <div class="page">
-    <div class="art"><Art name={vault ? 'security' : 'tokens'} /></div>
-    <h2>{vault ? 'Vault API key' : 'Your API key'}</h2>
-    <p class="sub">{vault ? `Only for ${ws().name}, with your access. Archive shows it once, when it is made; rotate it to see a new one.` : 'Works across every vault you’re in, with your access. Treat it like a password.'}</p>
-    {#if locked}<div class="notice"><OwnerNotice what="the vault API key" ask="if you need it" /></div>{/if}
+    <div class="art"><Art name={archive ? 'security' : 'tokens'} /></div>
+    <h2>{archive ? 'Archive API key' : 'Your API key'}</h2>
+    <p class="sub">{archive ? `Only for ${ws().name}, with your access. Archive shows it once, when it is made; rotate it to see a new one.` : 'Works across every archive you’re in, with your access. Treat it like a password.'}</p>
+    {#if locked}<div class="notice"><OwnerNotice what="the archive API key" ask="if you need it" /></div>{/if}
     <div class="key">
       <span class="value" aria-label={shown ? 'API key' : 'API key, hidden'}>{shown && !locked && secret ? secret : masked}</span>
       <IconButton icon={shown ? EyeOff : Eye} label={shown ? 'Hide key' : 'Show key'} size="sm" disabled={locked || hidden} onclick={() => (shown = !shown)} />

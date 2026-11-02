@@ -1,25 +1,25 @@
 <script>
   import { Plus } from '@lucide/svelte';
-  import VaultRailItem from './VaultRailItem.svelte';
-  import VaultIcon from './VaultIcon.svelte';
+  import ArchiveRailItem from './ArchiveRailItem.svelte';
+  import ArchiveIcon from './ArchiveIcon.svelte';
   import Icon from './Icon.svelte';
-  import { vaultItems } from '../lib/menus.js';
+  import { archiveItems } from '../lib/menus.js';
 
-  let { vaults = [], current, onselect, oncreate } = $props();
+  let { archives = [], current, onselect, oncreate } = $props();
 
   const running = (w) => w.workflows.filter((f) => f.runs?.[0] && ['running', 'waiting'].includes(f.runs[0].status)).length;
 </script>
 
-<nav class="rail" aria-label="Vaults">
+<nav class="rail" aria-label="Archives">
   <div class="list">
-  {#each vaults as w (w.id)}
-    <VaultRailItem label={w.name} active={w.id === current} count={running(w)} items={() => vaultItems(w)} onclick={() => onselect?.(w.id)}>
-      <VaultIcon icon={w.look.icon} tint={w.look.tint} seed={w.id} size="rail" />
-    </VaultRailItem>
+  {#each archives as w (w.id)}
+    <ArchiveRailItem label={w.name} active={w.id === current} count={running(w)} items={() => archiveItems(w)} onclick={() => onselect?.(w.id)}>
+      <ArchiveIcon icon={w.look.icon} tint={w.look.tint} seed={w.id} size="rail" />
+    </ArchiveRailItem>
   {/each}
-  <VaultRailItem label="New vault" add onclick={oncreate}>
+  <ArchiveRailItem label="New archive" add onclick={oncreate}>
     <Icon icon={Plus} />
-  </VaultRailItem>
+  </ArchiveRailItem>
   </div>
 </nav>
 
@@ -28,7 +28,7 @@
     display: flex;
     flex-direction: column;
     flex: none;
-    width: var(--vault-rail);
+    width: var(--archive-rail);
     height: 100%;
     padding-block-end: var(--dock-space, var(--space-0));
     background: var(--color-rail);

@@ -27,7 +27,7 @@
     position: absolute;
     inset-inline-start: 0;
     top: 50%;
-    width: var(--vault-pill);
+    width: var(--archive-pill);
     height: var(--space-2);
     border-radius: 0 var(--radius-full) var(--radius-full) 0;
     background: var(--color-rail-pill);
@@ -61,8 +61,8 @@
     position: relative;
     display: grid;
     place-items: center;
-    width: var(--vault-tile);
-    height: var(--vault-tile);
+    width: var(--archive-tile);
+    height: var(--archive-tile);
     border-radius: var(--radius-full);
     background: var(--color-rail-tile);
     color: var(--color-rail-icon);
@@ -98,8 +98,8 @@
     inset-inline-end: calc(var(--space-0-5) * -1);
     display: grid;
     place-items: center;
-    min-width: var(--vault-badge);
-    height: var(--vault-badge);
+    min-width: var(--archive-badge);
+    height: var(--archive-badge);
     padding-inline: var(--space-1);
     border-radius: var(--radius-full);
     background: var(--color-rail-badge);

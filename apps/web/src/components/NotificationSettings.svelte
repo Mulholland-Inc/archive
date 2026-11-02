@@ -9,5 +9,5 @@
   <SettingsRow label="When a workflow run finishes"><Switch bind:checked={app.profile.notify.done} label="When a workflow run finishes" /></SettingsRow>
   <SettingsRow label="When someone mentions me"><Switch bind:checked={app.profile.notify.mentions} label="When someone mentions me" /></SettingsRow>
   <SettingsRow label="Weekly digest email"><Switch bind:checked={app.profile.notify.digest} label="Weekly digest email" /></SettingsRow>
-  <SettingsRow label="When someone joins the vault"><Switch bind:checked={app.profile.notify.invites} label="When someone joins the vault" /></SettingsRow>
+  <SettingsRow label="When someone joins the archive"><Switch bind:checked={app.profile.notify.invites} label="When someone joins the archive" /></SettingsRow>
 </Stack>

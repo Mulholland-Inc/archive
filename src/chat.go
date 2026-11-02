@@ -248,8 +248,8 @@ func (a *Archive) chat(w http.ResponseWriter, r *http.Request) {
 		"description": a.RunDocs(ctx),
 		"input_schema": map[string]any{
 			"type":                 "object",
-			"properties":           map[string]any{"code": map[string]any{"type": "string", "description": "TypeScript to run inside Archive against the archive SDK in this tool's description"}},
-			"required":             []string{"code"},
+			"properties":           chatRunProperties,
+			"required":             []string{"description", "code"},
 			"additionalProperties": false,
 		},
 		"eager_input_streaming": true,
@@ -290,6 +290,7 @@ func (a *Archive) chat(w http.ResponseWriter, r *http.Request) {
 		for _, u := range uses {
 			id, _ := u["id"].(string)
 			code, ok := chatCode(u["input"])
+			desc := chatDescription(u["input"])
 			out := &RunOutput{Result: json.RawMessage("null"), Logs: []string{}}
 			switch {
 			case !ok:
@@ -298,7 +299,7 @@ func (a *Archive) chat(w http.ResponseWriter, r *http.Request) {
 				out.Error = fmt.Sprintf("this answer already ran code %d times, the limit; answer with what you have", chatMaxRuns)
 			default:
 				runs++
-				send(map[string]any{"type": "run", "id": id, "code": code})
+				send(map[string]any{"type": "run", "id": id, "description": desc, "code": code})
 				if o, err := a.Run(ctx, code); err != nil {
 					out.Error = err.Error()
 				} else {
@@ -320,6 +321,16 @@ func (a *Archive) chat(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// chatRunProperties are the run tool's input, description first, so the step's label streams before its code.
+var chatRunProperties = json.RawMessage(`{"description":{"type":"string","description":"What this step does, in a few words, for the person watching: 'Finding unpaid invoices', 'Adding 3 rows to contacts'"},` +
+	`"code":{"type":"string","description":"TypeScript to run inside Archive against the archive SDK in this tool's description"}}`)
+
+func chatDescription(in any) string {
+	m, _ := in.(map[string]any)
+	d, _ := m["description"].(string)
+	return strings.TrimSpace(d)
+}
+
 func chatCode(in any) (string, bool) {
 	m, ok := in.(map[string]any)
 	if !ok {
@@ -335,15 +346,17 @@ func chatSystem(ac *Actor) string {
 		who = ac.Name + " <" + ac.Email + ">"
 	}
 	s := "Today is " + time.Now().UTC().Format("Monday 2 January 2006") + ". You are the agent in Archive, talking with " + who + "."
-	return s + " The run tool is the only way to read or change their archive. Run calls and their results are folded away in the chat, so the answer itself presents what they need, as a short markdown table when that helps."
+	return s + " The run tool is the only way to read or change their archive; give each call a description of what it does, in a few words, which they see while it runs. Run calls and their results are folded away in the chat, so the answer itself presents what they need, as a short markdown table when that helps."
 }
 
-func chatPartialCode(s string) string {
-	i := strings.Index(s, `"code"`)
+// chatPartial is what has streamed so far of the string at key in the tool input s, which is still being written.
+func chatPartial(s, key string) string {
+	k := `"` + key + `"`
+	i := strings.Index(s, k)
 	if i < 0 {
 		return ""
 	}
-	rest := strings.TrimLeft(s[i+len(`"code"`):], " \t\r\n")
+	rest := strings.TrimLeft(s[i+len(k):], " \t\r\n")
 	rest, ok := strings.CutPrefix(rest, ":")
 	if !ok {
 		return ""
@@ -478,10 +491,10 @@ func chatTurn(ctx context.Context, key string, tools []any, system string, msgs 
 			case "signature_delta":
 				blk["signature"] = str(blk, "signature") + str(ev.Delta, "signature")
 			case "input_json_delta":
-				before := chatPartialCode(partial[ev.Index])
+				desc, code := chatPartial(partial[ev.Index], "description"), chatPartial(partial[ev.Index], "code")
 				partial[ev.Index] += str(ev.Delta, "partial_json")
-				if code := chatPartialCode(partial[ev.Index]); code != before {
-					send(map[string]any{"type": "code", "id": blk["id"], "code": code})
+				if d, c := chatPartial(partial[ev.Index], "description"), chatPartial(partial[ev.Index], "code"); d != desc || c != code {
+					send(map[string]any{"type": "code", "id": blk["id"], "description": strings.TrimSpace(d), "code": c})
 				}
 			}
 		case "content_block_stop":

@@ -42,7 +42,7 @@
   }
 
   .railed {
-    --rail-space: var(--vault-rail);
+    --rail-space: var(--archive-rail);
   }
 
   .docked {

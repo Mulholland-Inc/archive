@@ -3,18 +3,18 @@
   import Sidebar from './Sidebar.svelte';
   import SidebarItem from './SidebarItem.svelte';
   import SidebarSection from './SidebarSection.svelte';
-  import VaultHeader from './VaultHeader.svelte';
-  import VaultRail from './VaultRail.svelte';
+  import ArchiveHeader from './ArchiveHeader.svelte';
+  import ArchiveRail from './ArchiveRail.svelte';
   import AccountMenu from './AccountMenu.svelte';
   import ChatActions from './ChatActions.svelte';
   import PinButton from './PinButton.svelte';
-  import { app, ws, openVaultSettings, closeDrawer, pinnedFirst, switchVault, createVault, renameChat, chats, workflows, members } from '../lib/app.svelte.js';
+  import { app, ws, openArchiveSettings, closeDrawer, pinnedFirst, switchArchive, createArchive, renameChat, chats, workflows, members } from '../lib/app.svelte.js';
 
   chats.use();
   workflows.use();
   members.use();
   import { route, active } from '../lib/router.svelte.js';
-  import NewVaultDialog from './NewVaultDialog.svelte';
+  import NewArchiveDialog from './NewArchiveDialog.svelte';
   import SetupCard from './SetupCard.svelte';
   import { chatItems } from '../lib/menus.js';
 
@@ -35,31 +35,31 @@
 
 <Sidebar collapsed={app.collapsed} drawer={app.drawer} onclose={closeDrawer}>
   {#snippet rail()}
-    <VaultRail vaults={app.vaults} current={app.vault} onselect={switchVault} oncreate={() => { app.drawer = false; creating = true; }} />
+    <ArchiveRail archives={app.archives} current={app.archive} onselect={switchArchive} oncreate={() => { app.drawer = false; creating = true; }} />
   {/snippet}
   {#snippet header()}
-    <VaultHeader vault={ws()} onclick={() => { app.drawer = false; openVaultSettings(); }} />
+    <ArchiveHeader archive={ws()} onclick={() => { app.drawer = false; openArchiveSettings(); }} />
   {/snippet}
 
   <SetupCard />
 
   <SidebarSection>
-    <SidebarItem icon={Plus} label="New chat" href="#/" accent shortcut="⌘ ⇧ O" />
+    <SidebarItem icon={Plus} label="New chat" href="/" accent shortcut="⌘ ⇧ O" />
     <SidebarItem icon={Search} label="Search" shortcut="⌘ K" onclick={() => { app.drawer = false; app.palette = true; }} />
   </SidebarSection>
 
   <SidebarSection>
-    <SidebarItem icon={MessagesSquare} label="Chats" href="#/chats" active={active('/chats')} />
-    <SidebarItem icon={Library} label="Library" href="#/library" active={active('/library')} />
-    <SidebarItem icon={Database} label="Database" href="#/database" active={active('/database')} />
-    <SidebarItem icon={Workflow} label="Workflows" href="#/workflows" active={active('/workflows')} badge={running ? String(running) : undefined} />
-    <SidebarItem icon={Lock} label="Access" href="#/access" active={active('/access')} />
+    <SidebarItem icon={MessagesSquare} label="Chats" href="/chats" active={active('/chats')} />
+    <SidebarItem icon={Library} label="Library" href="/library" active={active('/library')} />
+    <SidebarItem icon={Database} label="Database" href="/database" active={active('/database')} />
+    <SidebarItem icon={Workflow} label="Workflows" href="/workflows" active={active('/workflows')} badge={running ? String(running) : undefined} />
+    <SidebarItem icon={Lock} label="Access" href="/access" active={active('/access')} />
   </SidebarSection>
 
   {#if !collapsed && visible.length}
     <SidebarSection title="Recents">
         {#each visible as chat (chat.id)}
-        <SidebarItem label={chat.title} href={`#/chat/${chat.id}`} active={route.path === `/chat/${chat.id}`} items={() => chatItems(chat, { open: false, rename: () => (renaming = chat.id) })} onrename={(title) => renameChat(chat.id, title)} bind:editing={() => renaming === chat.id, (on) => (renaming = on ? chat.id : null)}>
+        <SidebarItem label={chat.title} href={`/chat/${chat.id}`} active={route.path === `/chat/${chat.id}`} items={() => chatItems(chat, { open: false, rename: () => (renaming = chat.id) })} onrename={(title) => renameChat(chat.id, title)} bind:editing={() => renaming === chat.id, (on) => (renaming = on ? chat.id : null)}>
           {#snippet before()}
             {#if chat.pinned}<PinButton {chat} />{/if}
           {/snippet}
@@ -76,4 +76,4 @@
   {/snippet}
 </Sidebar>
 
-<NewVaultDialog bind:open={creating} oncreate={createVault} />
+<NewArchiveDialog bind:open={creating} oncreate={createArchive} />

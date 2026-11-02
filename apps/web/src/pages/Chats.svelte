@@ -31,7 +31,7 @@
 <Page>
   <StickyHeader title="Chats" art="bg-chats">
     {#snippet search()}<SearchField bind:value={query} placeholder="Search your chats" />{/snippet}
-    {#snippet actions()}<Button variant="primary" icon={Plus} href="#/">New chat</Button>{/snippet}
+    {#snippet actions()}<Button variant="primary" icon={Plus} href="/">New chat</Button>{/snippet}
   </StickyHeader>
   {#if results.length}
     <Table {columns} rows={results} label="Chats" cards onrowclick={(chat) => go(`/chat/${chat.id}`)} menu={(chat) => chatItems(chat)}>

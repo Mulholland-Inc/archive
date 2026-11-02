@@ -1,6 +1,6 @@
 import { Pin, PinOff, Pencil, Trash2, ExternalLink, MessageSquarePlus, Share, Download, Eye, Play, RotateCcw, Copy, UserPlus, UserMinus, Users, Ban, Settings, ArrowRightLeft } from '@lucide/svelte';
 import { SEPARATOR } from './contextmenu.svelte.js';
-import { app, togglePin, removeChat, renameChat, newChat, renameFile, removeFile, downloadFile, openShare, runWorkflow, removeWorkflow, removeMember, invite, stopSharing, removeGuest, switchVault, openVaultSettings, deleteVault } from './app.svelte.js';
+import { app, togglePin, removeChat, renameChat, newChat, renameFile, removeFile, downloadFile, openShare, runWorkflow, removeWorkflow, removeMember, invite, stopSharing, removeGuest, switchArchive, openArchiveSettings, deleteArchive } from './app.svelte.js';
 import { prompt, confirmDialog } from './dialogs.svelte.js';
 import { go } from './router.svelte.js';
 
@@ -91,13 +91,13 @@ export function memberItems(member, { roles = [], onrole } = {}) {
     SEPARATOR,
     { label: 'Copy email', icon: Copy, onselect: () => copyText(member.email) },
     SEPARATOR,
-    { label: invited ? 'Revoke invitation' : 'Remove from vault', icon: Trash2, danger: true, onselect: () => removeMember(member.id) }
+    { label: invited ? 'Revoke invitation' : 'Remove from archive', icon: Trash2, danger: true, onselect: () => removeMember(member.id) }
   ];
 }
 
 export function guestItems(guest) {
   return [
-    { label: 'Invite to vault', icon: UserPlus, onselect: () => invite({ emails: [guest.email], role: 'viewer' }) },
+    { label: 'Invite to archive', icon: UserPlus, onselect: () => invite({ emails: [guest.email], role: 'viewer' }) },
     { label: 'Copy email', icon: Copy, onselect: () => copyText(guest.email) },
     SEPARATOR,
     { label: 'Remove all access', icon: UserMinus, danger: true, onselect: () => removeGuest(guest.email) }
@@ -113,24 +113,24 @@ export function shareItems(share, item) {
   ];
 }
 
-export async function deleteVaultConfirm(vault) {
-  if (await confirmDialog({ title: 'Delete this vault?', body: `“${vault.name}” and everything in it will be removed.`, confirm: 'Delete' })) deleteVault(vault.id);
+export async function deleteArchiveConfirm(archive) {
+  if (await confirmDialog({ title: 'Delete this archive?', body: `“${archive.name}” and everything in it will be removed.`, confirm: 'Delete' })) deleteArchive(archive.id);
 }
 
-export function vaultItems(vault) {
-  const current = vault.id === app.vault;
+export function archiveItems(archive) {
+  const current = archive.id === app.archive;
   return [
-    !current && { label: 'Switch to vault', icon: ArrowRightLeft, onselect: () => switchVault(vault.id) },
+    !current && { label: 'Switch to this archive', icon: ArrowRightLeft, onselect: () => switchArchive(archive.id) },
     {
-      label: 'Vault settings',
+      label: 'Archive settings',
       icon: Settings,
       onselect: () => {
-        switchVault(vault.id);
-        openVaultSettings();
+        switchArchive(archive.id);
+        openArchiveSettings();
       }
     },
     SEPARATOR,
-    { label: 'Delete vault', icon: Trash2, danger: true, disabled: app.vaults.length < 2, onselect: () => deleteVaultConfirm(vault) }
+    { label: 'Delete archive', icon: Trash2, danger: true, disabled: app.archives.length < 2, onselect: () => deleteArchiveConfirm(archive) }
   ];
 }
 
