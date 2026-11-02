@@ -1,5 +1,5 @@
 <script>
-  import VaultIcon from './VaultIcon.svelte';
+  import ArchiveIcon from './ArchiveIcon.svelte';
   import SegmentedControl from './SegmentedControl.svelte';
   import { TYPES, TINTS, ICON_LABELS, KIND_TINTS } from '../lib/looks.js';
 
@@ -17,7 +17,7 @@
   <div class="icons" role="radiogroup" aria-label="Icon">
     {#each TYPES[look.type].icons as icon (icon)}
       <button type="button" role="radio" aria-checked={look.icon === icon} aria-label={ICON_LABELS[icon]} title={ICON_LABELS[icon]} class={['choice', { on: look.icon === icon }]} onclick={() => (look = { ...look, icon })}>
-        <VaultIcon {icon} tint={look.tint} size="lg" />
+        <ArchiveIcon {icon} tint={look.tint} size="lg" />
       </button>
     {/each}
   </div>

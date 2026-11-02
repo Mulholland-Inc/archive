@@ -8,7 +8,7 @@ export const me = {
   tone: 1
 };
 
-export const vaults = [
+export const archives = [
   { id: 'okafor', name: 'Okafor Family Archive', kind: 'Family', members: 9, tone: 1 },
   { id: 'hale', name: 'Hale & Whitcombe LLP', kind: 'Law firm', members: 42, tone: 3 },
   { id: 'fieldnote', name: 'Fieldnote Studio', kind: 'Studio', members: 14, tone: 2 },

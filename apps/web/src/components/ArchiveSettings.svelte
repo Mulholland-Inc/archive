@@ -11,9 +11,9 @@
   import Button from './Button.svelte';
   import Dialog from './Dialog.svelte';
   import Text from './Text.svelte';
-  import VaultIcon from './VaultIcon.svelte';
+  import ArchiveIcon from './ArchiveIcon.svelte';
   import LookPicker from './LookPicker.svelte';
-  import { app, ws, deleteVault, saveVault } from '../lib/app.svelte.js';
+  import { app, ws, deleteArchive, saveArchive } from '../lib/app.svelte.js';
 
   let name = $state(ws().name);
   let look = $state({ ...ws().look });
@@ -22,13 +22,13 @@
   const dirty = $derived(name !== ws().name || look.icon !== ws().look.icon || look.tint !== ws().look.tint || look.type !== ws().look.type);
 
   $effect(() => {
-    app.vault;
+    app.archive;
     name = ws().name;
     look = { ...ws().look };
   });
 
   function save() {
-    saveVault({ name: name.trim() || ws().name, look: { ...look } });
+    saveArchive({ name: name.trim() || ws().name, look: { ...look } });
   }
 
   const roles = [
@@ -50,7 +50,7 @@
 <Stack gap="8">
   <Stack gap="6">
     <Stack direction="row" gap="4" align="center">
-      <VaultIcon icon={look.icon} tint={look.tint} seed={ws().id} size="xxl" />
+      <ArchiveIcon icon={look.icon} tint={look.tint} seed={ws().id} size="xxl" />
       <Field label="Name">{#snippet children(id)}<Input {id} bind:value={name} />{/snippet}</Field>
     </Stack>
     <LookPicker bind:look />
@@ -74,17 +74,17 @@
     </Stack>
   </Section>
   <Divider />
-  <Section title="Delete vault">
+  <Section title="Delete archive">
     <SettingsRow label={`Permanently delete ${ws().name}`}>
       <Button variant="danger" icon={Trash2} onclick={() => (deleting = true)}>Delete</Button>
     </SettingsRow>
   </Section>
 </Stack>
 
-<Dialog bind:open={deleting} title="Delete this vault?" size="sm">
+<Dialog bind:open={deleting} title="Delete this archive?" size="sm">
   <Text as="p" tone="secondary">All chats, files and workflows in {ws().name} will be deleted for everyone.</Text>
   {#snippet footer({ close })}
     <Button variant="ghost" onclick={close}>Cancel</Button>
-    <Button variant="danger" onclick={() => { close(); deleteVault(ws().id); }}>Delete vault</Button>
+    <Button variant="danger" onclick={() => { close(); deleteArchive(ws().id); }}>Delete archive</Button>
   {/snippet}
 </Dialog>

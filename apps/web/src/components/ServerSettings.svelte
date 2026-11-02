@@ -81,7 +81,7 @@
   ];
 </script>
 
-<PaneHeader title="Server" description="Where this vault runs, what it uses and how healthy it is right now." art="server" />
+<PaneHeader title="Server" description="Where this archive runs, what it uses and how healthy it is right now." art="server" />
 <Stack gap="6">
   {#each sections as section, i (section.title)}
     {#if i}<Divider />{/if}

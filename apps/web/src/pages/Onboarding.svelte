@@ -12,7 +12,7 @@
   import InviteDialog from '../components/InviteDialog.svelte';
   import NewWorkflowDialog from '../components/NewWorkflowDialog.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { app, onboardingSteps, stepDone, completeStep, toggleStep, openSettings, openVaultSettings, createWorkflow } from '../lib/app.svelte.js';
+  import { app, onboardingSteps, stepDone, completeStep, toggleStep, openSettings, openArchiveSettings, createWorkflow } from '../lib/app.svelte.js';
   import { go } from '../lib/router.svelte.js';
 
   let inviting = $state(false);
@@ -31,7 +31,7 @@
     upload: () => go('/library'),
     workflow: () => (creating = true),
     region: () => {
-      openVaultSettings('server');
+      openArchiveSettings('server');
       completeStep('region');
     }
   };

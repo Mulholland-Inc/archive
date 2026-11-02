@@ -94,7 +94,7 @@
   <TopBar>
     {#snippet leading()}
       <MobileMenu />
-      <Breadcrumbs inset items={[{ label: 'Database', href: '#/database' }, { label: type?.name ?? 'Not found' }]} />
+      <Breadcrumbs inset items={[{ label: 'Database', href: '/database' }, { label: type?.name ?? 'Not found' }]} />
     {/snippet}
     {#snippet trailing()}
       {#if type}
@@ -120,16 +120,16 @@
         <Property label="Columns" icon={Columns3}><Text tabular>{type.columns.length}</Text></Property>
         <Property label="Updated" icon={Clock}>{type.updated}</Property>
         <Property label="Links to" icon={ArrowRight}>
-          {#each [...new Set(outgoing.map((l) => l.type))] as t (t.id)}<Chip size="sm" icon={Box} href={`#/database/${t.id}`}>{t.name}</Chip>{:else}<Text tone="tertiary">None</Text>{/each}
+          {#each [...new Set(outgoing.map((l) => l.type))] as t (t.id)}<Chip size="sm" icon={Box} href={`/database/${t.id}`}>{t.name}</Chip>{:else}<Text tone="tertiary">None</Text>{/each}
         </Property>
         <Property label="Linked from" icon={ArrowLeft}>
-          {#each [...new Set(incoming.map((l) => l.type))] as t (t.id)}<Chip size="sm" icon={Box} href={`#/database/${t.id}`}>{t.name}</Chip>{:else}<Text tone="tertiary">None</Text>{/each}
+          {#each [...new Set(incoming.map((l) => l.type))] as t (t.id)}<Chip size="sm" icon={Box} href={`/database/${t.id}`}>{t.name}</Chip>{:else}<Text tone="tertiary">None</Text>{/each}
         </Property>
         <Property label="Used by" icon={Workflow}>
           {#if flows.length}<Text>{flows.length} {flows.length === 1 ? 'workflow' : 'workflows'}</Text>{:else}<Text tone="tertiary">No workflows</Text>{/if}
         </Property>
         <Property label="Shared with" icon={Users}>
-          {#if share}<AvatarGroup people={share.people} /><Text tone="secondary">{share.people.length} people</Text>{:else}<Text tone="tertiary">Only vault members</Text>{/if}
+          {#if share}<AvatarGroup people={share.people} /><Text tone="secondary">{share.people.length} people</Text>{:else}<Text tone="tertiary">Only archive members</Text>{/if}
         </Property>
       </div>
 
@@ -143,7 +143,7 @@
               </span>
             {:else if col.key === 'type'}
               {#if row.to && byId(row.to)}
-                <a class="link" href={`#/database/${row.to}`}>{byId(row.to).name}</a>
+                <a class="link" href={`/database/${row.to}`}>{byId(row.to).name}</a>
               {:else}
                 <Text tone="secondary">{typeLabel(row)}</Text>
               {/if}
@@ -167,13 +167,13 @@
         {#if outgoing.length || incoming.length}
           <ul class="list">
             {#each outgoing as l (`out-${l.column}`)}
-              <li><a class="row" href={`#/database/${l.type.id}`}>
+              <li><a class="row" href={`/database/${l.type.id}`}>
                 <Icon icon={ArrowRight} size="sm" />
                 <span><Text weight="medium">{l.column}</Text> <Text tone="secondary">points to</Text> <Text weight="medium">{l.type.name}</Text></span>
               </a></li>
             {/each}
             {#each incoming as l (`in-${l.type.id}-${l.column}`)}
-              <li><a class="row" href={`#/database/${l.type.id}`}>
+              <li><a class="row" href={`/database/${l.type.id}`}>
                 <Icon icon={ArrowLeft} size="sm" />
                 <span><Text weight="medium">{l.type.name}</Text> <Text tone="secondary">points here through</Text> <Text weight="medium">{l.column}</Text></span>
               </a></li>
@@ -190,7 +190,7 @@
             {#each flows as w (w.name)}
               <li>
                 {#if w.id}
-                  <a class="row" href={`#/workflows/${w.id}`}><Icon icon={Workflow} size="sm" /><Text>{w.name}</Text></a>
+                  <a class="row" href={`/workflows/${w.id}`}><Icon icon={Workflow} size="sm" /><Text>{w.name}</Text></a>
                 {:else}
                   <span class="row"><Icon icon={Workflow} size="sm" /><Text>{w.name}</Text></span>
                 {/if}
@@ -239,7 +239,7 @@
       {#if related.length}
         <SidebarSection title="Related tables">
           {#each related as t (t.id)}
-            <SidebarItem icon={Box} label={t.name} href={`#/database/${t.id}`} badge={count(t.rows)} />
+            <SidebarItem icon={Box} label={t.name} href={`/database/${t.id}`} badge={count(t.rows)} />
           {/each}
         </SidebarSection>
       {/if}
@@ -249,7 +249,7 @@
   {@render topbar()}
   <Page center>
     <EmptyState icon={Table2} title="Table not found">
-      <Button href="#/database">All tables</Button>
+      <Button href="/database">All tables</Button>
     </EmptyState>
   </Page>
 {/if}

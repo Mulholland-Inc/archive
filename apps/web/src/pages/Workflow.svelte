@@ -69,7 +69,7 @@
   <TopBar>
     {#snippet leading()}
       <MobileMenu />
-      <Breadcrumbs inset items={[{ label: 'Workflows', href: '#/workflows' }, { label: wf?.name ?? 'Not found' }]} />
+      <Breadcrumbs inset items={[{ label: 'Workflows', href: '/workflows' }, { label: wf?.name ?? 'Not found' }]} />
     {/snippet}
     {#snippet trailing()}
       {#if run && live}
@@ -138,7 +138,7 @@
   {@render topbar()}
   <Page center>
     <EmptyState icon={ListX} title="Workflow not found">
-      <Button href="#/workflows">All workflows</Button>
+      <Button href="/workflows">All workflows</Button>
     </EmptyState>
   </Page>
 {/if}

@@ -1,19 +1,19 @@
 <script>
   import { getContext } from 'svelte';
   import { Settings } from '@lucide/svelte';
-  import VaultIcon from './VaultIcon.svelte';
+  import ArchiveIcon from './ArchiveIcon.svelte';
   import Icon from './Icon.svelte';
 
-  let { vault, onclick } = $props();
+  let { archive, onclick } = $props();
   const sidebar = getContext('sidebar');
   const collapsed = $derived(sidebar?.collapsed ?? false);
 </script>
 
-<button type="button" class={['header', { collapsed }]} {onclick} aria-label={collapsed ? `${vault?.name} settings` : undefined}>
-  <VaultIcon icon={vault?.look.icon} tint={vault?.look.tint} seed={vault?.id} size="lg" />
+<button type="button" class={['header', { collapsed }]} {onclick} aria-label={collapsed ? `${archive?.name} settings` : undefined}>
+  <ArchiveIcon icon={archive?.look.icon} tint={archive?.look.tint} seed={archive?.id} size="lg" />
   <span class="lines">
-    <span class="name">{vault?.name}</span>
-    <span class="sub">{vault?.kind}, {vault?.members.length} {vault?.members.length === 1 ? 'member' : 'members'}</span>
+    <span class="name">{archive?.name}</span>
+    <span class="sub">{archive?.kind}, {archive?.members.length} {archive?.members.length === 1 ? 'member' : 'members'}</span>
   </span>
   <span class="gear"><Icon icon={Settings} size="sm" /></span>
 </button>
@@ -25,7 +25,7 @@
     gap: var(--space-3);
     width: 100%;
     min-width: 0;
-    min-height: var(--vault-header);
+    min-height: var(--archive-header);
     padding: var(--space-3) var(--space-3);
     border-radius: var(--radius-lg);
     text-align: start;

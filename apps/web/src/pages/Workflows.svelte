@@ -96,7 +96,7 @@
 
   {#if !ws().workflows.length}
     <EmptyState icon={WorkflowIcon} title={ws().loading ? 'Loading workflows' : 'No workflows yet'}>
-      {#if !ws().loading}<Button variant="primary" href="#/">Ask the assistant to write one</Button>{/if}
+      {#if !ws().loading}<Button variant="primary" href="/">Ask the assistant to write one</Button>{/if}
     </EmptyState>
   {:else if !rows.length}
     <EmptyState icon={SearchX} title="Nothing matches that search">

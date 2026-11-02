@@ -68,7 +68,7 @@
   import CodeBlock from '../components/CodeBlock.svelte';
   import RunProgress from '../components/RunProgress.svelte';
   import WorkflowCard from '../components/WorkflowCard.svelte';
-  import VaultIcon from '../components/VaultIcon.svelte';
+  import ArchiveIcon from '../components/ArchiveIcon.svelte';
   import LookPicker from '../components/LookPicker.svelte';
   import ConnectorCard from '../components/ConnectorCard.svelte';
   import ConnectorIcon from '../components/ConnectorIcon.svelte';
@@ -79,10 +79,10 @@
   import Heading from '../components/Heading.svelte';
   import Text from '../components/Text.svelte';
   import Sidebar from '../components/Sidebar.svelte';
-  import VaultRail from '../components/VaultRail.svelte';
+  import ArchiveRail from '../components/ArchiveRail.svelte';
   import SidebarItem from '../components/SidebarItem.svelte';
   import SidebarSection from '../components/SidebarSection.svelte';
-  import VaultHeader from '../components/VaultHeader.svelte';
+  import ArchiveHeader from '../components/ArchiveHeader.svelte';
   import AccountMenu from '../components/AccountMenu.svelte';
   import ThemePicker from '../components/ThemePicker.svelte';
   import Disclosure from '../components/Disclosure.svelte';
@@ -221,21 +221,21 @@
           <MotionSample duration="slow" easing="in-out" label="slow, ease-in-out" />
           <MotionSample duration="slower" easing="emphasized" label="slower, emphasized" />
         </SpecimenBlock>
-        <SpecimenBlock title="Vault icons, hover to wake">
+        <SpecimenBlock title="Archive icons, hover to wake">
           {#each Object.entries(TYPES) as [type, t] (type)}
             {#each t.icons as icon, i (icon)}
-              <VaultIcon {icon} tint={i % 8} seed={type} size="xl" label={`${t.label}: ${icon}`} />
+              <ArchiveIcon {icon} tint={i % 8} seed={type} size="xl" label={`${t.label}: ${icon}`} />
             {/each}
           {/each}
         </SpecimenBlock>
-        <SpecimenBlock title="Vault icon sizes">
-          <VaultIcon icon="cottage" tint={0} size="xs" /><VaultIcon icon="cottage" tint={0} size="sm" /><VaultIcon icon="cottage" tint={0} /><VaultIcon icon="cottage" tint={0} size="lg" /><VaultIcon icon="cottage" tint={0} size="xl" /><VaultIcon icon="robot" tint={3} size="xxl" />
+        <SpecimenBlock title="Archive icon sizes">
+          <ArchiveIcon icon="cottage" tint={0} size="xs" /><ArchiveIcon icon="cottage" tint={0} size="sm" /><ArchiveIcon icon="cottage" tint={0} /><ArchiveIcon icon="cottage" tint={0} size="lg" /><ArchiveIcon icon="cottage" tint={0} size="xl" /><ArchiveIcon icon="robot" tint={3} size="xxl" />
         </SpecimenBlock>
         <SpecimenBlock title="Look picker" column>
           <LookPicker bind:look />
         </SpecimenBlock>
         <SpecimenBlock title="Working indicator">
-          <VaultIcon icon="cottage" tint={0} size="sm" active label="Working" />
+          <ArchiveIcon icon="cottage" tint={0} size="sm" active label="Working" />
         </SpecimenBlock>
       </SpecimenSection>
 
@@ -354,10 +354,10 @@
           <SegmentedControl bind:value={seg2} size="lg" label="Theme" options={[{ value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }, { value: 'system', label: 'System' }]} />
         </SpecimenBlock>
         <SpecimenBlock title="Breadcrumbs">
-          <Breadcrumbs items={[{ label: 'Library', href: '#/library' }, { label: '1970s Letters', href: '#/library' }, { label: 'Adaeze to Obi, 2 Mar 1974' }]} />
+          <Breadcrumbs items={[{ label: 'Library', href: '/library' }, { label: '1970s Letters', href: '/library' }, { label: 'Adaeze to Obi, 2 Mar 1974' }]} />
         </SpecimenBlock>
         <SpecimenBlock title="Vertical nav">
-          <VerticalNav label="Example" active="b" items={[{ id: 'a', label: 'Profile', href: '#/specimen' }, { id: 'b', label: 'Appearance', href: '#/specimen' }, { id: 'c', label: 'Vault', href: '#/specimen' }]} />
+          <VerticalNav label="Example" active="b" items={[{ id: 'a', label: 'Profile', href: '/specimen' }, { id: 'b', label: 'Appearance', href: '/specimen' }, { id: 'c', label: 'Archive', href: '/specimen' }]} />
         </SpecimenBlock>
         <SpecimenBlock title="Keyboard">
           <Kbd keys="⌘ K" /><Kbd keys="⇧ ⌘ O" /><Kbd keys="Esc" /><Kbd keys="↵" /><Kbd keys="⌘ ," subtle />
@@ -425,7 +425,7 @@
           <Button onclick={() => openSettings('connectors', 'gdrive')}>Open a connector</Button>
         </SpecimenBlock>
         <SpecimenBlock title="Settings nav">
-          <SettingsNav active={settingsSection} onselect={(id) => (settingsSection = id)} items={[{ id: 'profile', label: 'Profile', icon: UserIcon }, { id: 'appearance', label: 'Appearance', icon: PaletteIcon }, { id: 'notifications', label: 'Notifications', icon: BellIcon }, { id: 'connectors', label: 'Connectors', icon: PlugIcon, group: 'Customize' }, { id: 'api', label: 'API keys', icon: PlugIcon, group: 'Platform', href: '#/specimen' }]} />
+          <SettingsNav active={settingsSection} onselect={(id) => (settingsSection = id)} items={[{ id: 'profile', label: 'Profile', icon: UserIcon }, { id: 'appearance', label: 'Appearance', icon: PaletteIcon }, { id: 'notifications', label: 'Notifications', icon: BellIcon }, { id: 'connectors', label: 'Connectors', icon: PlugIcon, group: 'Customize' }, { id: 'api', label: 'API keys', icon: PlugIcon, group: 'Platform', href: '/specimen' }]} />
         </SpecimenBlock>
         <SpecimenBlock title="Settings pane" column>
           <Card padding="none"><SettingsPane title="Notifications"><NotificationSettings /></SettingsPane></Card>
@@ -460,17 +460,17 @@
             <Card><Text weight="medium">Outline</Text><Text size="sm" tone="secondary">Default card surface.</Text></Card>
             <Card variant="filled"><Text weight="medium">Filled</Text><Text size="sm" tone="secondary">For asides and groups.</Text></Card>
             <Card variant="raised"><Text weight="medium">Raised</Text><Text size="sm" tone="secondary">For floating content.</Text></Card>
-            <Card href="#/specimen"><Text weight="medium">Interactive</Text><Text size="sm" tone="secondary">Hover and press states.</Text></Card>
+            <Card href="/specimen"><Text weight="medium">Interactive</Text><Text size="sm" tone="secondary">Hover and press states.</Text></Card>
           </Grid>
         </SpecimenBlock>
         <SpecimenBlock title="List" column>
           <List label="Example list">
-            <ListItem href="#/specimen" title="Transcribe Grandma Adaeze's 1974 letters">
+            <ListItem href="/specimen" title="Transcribe Grandma Adaeze's 1974 letters">
               {#snippet leading()}<MessagesSquare size={16} />{/snippet}
               {#snippet meta()}Last message 12 min ago{/snippet}
               {#snippet trailing()}<Badge>Pinned</Badge>{/snippet}
             </ListItem>
-            <ListItem href="#/specimen" title="Timeline for the Mercer lease dispute" active>
+            <ListItem href="/specimen" title="Timeline for the Mercer lease dispute" active>
               {#snippet leading()}<MessagesSquare size={16} />{/snippet}
               {#snippet meta()}Active row{/snippet}
             </ListItem>
@@ -575,9 +575,9 @@
         </SpecimenBlock>
         <SpecimenBlock title="Workflow cards and triggers">
           <Grid min="card" gap="4">
-            <WorkflowCard workflow={workflowSeed.okafor[0]} href="#/workflows/wf-cassettes" />
-            <WorkflowCard workflow={workflowSeed.okafor[2]} href="#/workflows/wf-digest" />
-            <WorkflowCard workflow={workflowSeed.okafor[4]} href="#/workflows/wf-restore" />
+            <WorkflowCard workflow={workflowSeed.okafor[0]} href="/workflows/wf-cassettes" />
+            <WorkflowCard workflow={workflowSeed.okafor[2]} href="/workflows/wf-digest" />
+            <WorkflowCard workflow={workflowSeed.okafor[4]} href="/workflows/wf-restore" />
           </Grid>
           <TriggerLabel trigger={{ kind: 'schedule', label: 'Every Sunday at 18:00' }} />
           <TriggerLabel trigger={{ kind: 'file', label: 'When photos are added' }} />
@@ -599,15 +599,15 @@
       </SpecimenSection>
 
       <SpecimenSection id="s-shell" title="Shell">
-        <SpecimenBlock title="Vault rail">
+        <SpecimenBlock title="Archive rail">
           <SpecimenFrame>
             <Sidebar collapsed>
-              {#snippet rail()}<VaultRail vaults={app.vaults} current={app.vaults[0].id} onselect={() => {}} oncreate={() => {}} />{/snippet}
-              {#snippet header()}<VaultHeader vault={app.vaults[0]} />{/snippet}
+              {#snippet rail()}<ArchiveRail archives={app.archives} current={app.archives[0].id} onselect={() => {}} oncreate={() => {}} />{/snippet}
+              {#snippet header()}<ArchiveHeader archive={app.archives[0]} />{/snippet}
               <SidebarSection>
-                <SidebarItem icon={Plus} label="New chat" accent href="#/specimen" />
+                <SidebarItem icon={Plus} label="New chat" accent href="/specimen" />
                 <SidebarItem icon={Search} label="Search" />
-                <SidebarItem icon={MessagesSquare} label="Chats" href="#/specimen" active />
+                <SidebarItem icon={MessagesSquare} label="Chats" href="/specimen" active />
               </SidebarSection>
             </Sidebar>
           </SpecimenFrame>
@@ -615,19 +615,19 @@
         <SpecimenBlock title="Sidebar, open and collapsed">
           <SpecimenFrame>
             <Sidebar>
-              {#snippet header()}<VaultHeader vault={app.vaults[0]} />{/snippet}
+              {#snippet header()}<ArchiveHeader archive={app.archives[0]} />{/snippet}
               {#snippet footer()}<AccountMenu user={me} />{/snippet}
               <SidebarSection>
-                <SidebarItem icon={Plus} label="New chat" accent href="#/specimen" />
+                <SidebarItem icon={Plus} label="New chat" accent href="/specimen" />
                 <SidebarItem icon={Search} label="Search" shortcut="⌘ K" />
               </SidebarSection>
               <SidebarSection>
-                <SidebarItem icon={MessagesSquare} label="Chats" href="#/specimen" active />
-                <SidebarItem icon={Library} label="Library" href="#/specimen" />
-                <SidebarItem icon={Lock} label="Access" href="#/specimen" badge="3" />
+                <SidebarItem icon={MessagesSquare} label="Chats" href="/specimen" active />
+                <SidebarItem icon={Library} label="Library" href="/specimen" />
+                <SidebarItem icon={Lock} label="Access" href="/specimen" badge="3" />
               </SidebarSection>
               <SidebarSection title="Today">
-                <SidebarItem label="Rename scanned photos by EXIF date" href="#/specimen">
+                <SidebarItem label="Rename scanned photos by EXIF date" href="/specimen">
                   {#snippet actions()}<IconButton icon={Ellipsis} label="More" size="xs" tooltip={false} />{/snippet}
                 </SidebarItem>
               </SidebarSection>
@@ -635,12 +635,12 @@
           </SpecimenFrame>
           <SpecimenFrame>
             <Sidebar collapsed>
-              {#snippet header()}<VaultHeader vault={app.vaults[1]} />{/snippet}
+              {#snippet header()}<ArchiveHeader archive={app.archives[1]} />{/snippet}
               <SidebarSection>
-                <SidebarItem icon={Plus} label="New chat" accent href="#/specimen" />
+                <SidebarItem icon={Plus} label="New chat" accent href="/specimen" />
                 <SidebarItem icon={Search} label="Search" />
-                <SidebarItem icon={MessagesSquare} label="Chats" href="#/specimen" active />
-                <SidebarItem icon={Library} label="Library" href="#/specimen" />
+                <SidebarItem icon={MessagesSquare} label="Chats" href="/specimen" active />
+                <SidebarItem icon={Library} label="Library" href="/specimen" />
               </SidebarSection>
             </Sidebar>
           </SpecimenFrame>
