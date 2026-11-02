@@ -233,15 +233,26 @@ func TestWatchesAskTheirProviders(t *testing.T) {
 }
 
 // Gusto's sign-in reaches several companies, which get_token_info lists: every tool acts on the one
-// company_uuid names, so each stream walks them in turn, one listing of them all, and the account is named by
-// them. A company's list pages by number while a page comes back full; a server that sends the same page again
-// ends that company's listing rather than read it forever.
+// company_uuid or employee_uuid names, so each stream walks them in turn, one listing of them all, and the
+// account is named by the companies. People are listed as they are and then those no longer active; payrolls a
+// year at a time, each processed one with every page of what get_payroll adds. A company's list pages by
+// number while a page comes back full; a server that sends the same page again ends that list.
 func TestGustoWalksItsCompanies(t *testing.T) {
-	var pages []string
-	needs := func(props ...string) map[string]any {
-		s := schemaOf(append(props, "company_uuid")...)
-		s["required"] = []any{"company_uuid"}
+	var asked []string
+	needs := func(key string, props ...string) map[string]any {
+		s := schemaOf(append(props, key)...)
+		s["required"] = []any{key}
 		return s
+	}
+	people := func(args map[string]any) []any {
+		var out []any
+		if args["terminated"] == true {
+			return append(out, map[string]any{"uuid": fmt.Sprint(args["company_uuid"], "-gone")})
+		}
+		for i := range 2 {
+			out = append(out, map[string]any{"uuid": fmt.Sprint(args["company_uuid"], "-", i)})
+		}
+		return out
 	}
 	c := mcpStandIn(t, "gusto", map[string]mcpTool{
 		"get_token_info": {schemaOf(), func(map[string]any) any {
@@ -250,59 +261,93 @@ func TestGustoWalksItsCompanies(t *testing.T) {
 				map[string]any{"resource_type": "Company", "uuid": "co2", "name": "Acme Labs"},
 			}}
 		}},
-		"get_company": {needs(), func(args map[string]any) any {
-			return map[string]any{"uuid": args["company_uuid"], "name": "Acme", "updated_at": "2026-01-01T00:00:00Z"}
+		"get_company": {needs("company_uuid"), func(args map[string]any) any {
+			return map[string]any{"uuid": args["company_uuid"], "name": "Acme", "join_date": "2025-06-01"}
 		}},
-		"list_employees": {needs("page", "per"), func(args map[string]any) any {
-			pages = append(pages, fmt.Sprint(args["company_uuid"], "/", args["page"]))
-			n := 3
-			if args["company_uuid"] == "co1" && args["page"] == nil {
-				n = 100
-			}
-			var out []any
-			for i := range n {
-				out = append(out, map[string]any{"uuid": fmt.Sprintf("%v-%v-%d", args["company_uuid"], args["page"], i)})
-			}
-			return out
+		"list_employees": {needs("company_uuid", "page", "per", "terminated", "include"), func(args map[string]any) any {
+			asked = append(asked, fmt.Sprint(args["company_uuid"], "/", args["terminated"], "/", args["include"]))
+			return people(args)
 		}},
-		"get_contractors": {needs("page", "per"), func(args map[string]any) any {
+		"get_contractors": {needs("company_uuid", "page", "per", "terminated"), func(args map[string]any) any {
 			var out []any
 			for i := range 100 {
 				out = append(out, map[string]any{"uuid": fmt.Sprint(args["company_uuid"], i)})
 			}
 			return out
 		}},
-		"list_payrolls": {map[string]any{"type": "object", "properties": map[string]any{"company_uuid": map[string]any{}, "start_date": map[string]any{}},
-			"required": []any{"company_uuid", "start_date"}}, func(map[string]any) any { return "[]" }},
+		"list_earning_types": {needs("company_uuid"), func(args map[string]any) any {
+			return map[string]any{"default": []any{map[string]any{"uuid": "reg"}}, "custom": []any{map[string]any{"uuid": "bonus"}}}
+		}},
+		"list_employee_employment_history": {needs("employee_uuid"), func(args map[string]any) any {
+			return []any{map[string]any{"hire_date": "2025-06-01"}}
+		}},
+		"list_payrolls": {needs("company_uuid", "start_date", "end_date", "page", "per"), func(args map[string]any) any {
+			if args["company_uuid"] != "co1" || args["start_date"] != "2025-06-01" {
+				return []any{}
+			}
+			return []any{map[string]any{"payroll_uuid": "p1", "processed": true, "totals": map[string]any{"gross_pay": "10"}},
+				map[string]any{"payroll_uuid": "p2", "processed": false}}
+		}},
+		"get_payroll": {needs("payroll_uuid", "company_uuid", "employee_compensations_page"), func(args map[string]any) any {
+			page := args["employee_compensations_page"]
+			return map[string]any{"payroll_uuid": "p1", "employee_compensations": []any{map[string]any{"employee_uuid": fmt.Sprint("e", page)}},
+				"employee_compensations_pagination": map[string]any{"has_more": page == 1.0}}
+		}},
 	})
 	if name, err := c.p.Account(c); err != nil || name != "Acme Inc, Acme Labs" {
 		t.Errorf("the account: %q %v", name, err)
 	}
-	co := pull(t, c, "company", "")
-	wantPage(t, "the first company", co, "co1", true, true)
-	co = pull(t, c, "company", co.Cursor)
-	wantPage(t, "the second company", co, "co2", false, true)
-	if co.Cursor != "" {
-		t.Errorf("a finished listing leaves a cursor: %s", co.Cursor)
+	all := func(stream string) (ids []string) {
+		p := &Page{More: true}
+		for n := 0; p.More && n < 100; n++ {
+			p = pull(t, c, stream, p.Cursor)
+			if !p.Full {
+				t.Fatalf("a page of %s is not part of a full listing", stream)
+			}
+			for _, r := range p.Records {
+				ids = append(ids, r.ID)
+			}
+		}
+		if p.Cursor != "" {
+			t.Errorf("a finished listing of %s leaves a cursor: %s", stream, p.Cursor)
+		}
+		return ids
 	}
-	var got []int
+	if got := fmt.Sprint(all("company")); got != "[co1 co2]" {
+		t.Errorf("the companies: %s", got)
+	}
+	if got := fmt.Sprint(all("employees")); got != "[co1-0 co1-1 co1-gone co2-0 co2-1 co2-gone]" {
+		t.Errorf("the employees: %s", got)
+	}
+	if !strings.Contains(asked[0], "all_compensations") {
+		t.Errorf("employees are not asked for their compensations: %v", asked)
+	}
+	if got := fmt.Sprint(all("earning_types")); got != "[reg bonus reg bonus]" {
+		t.Errorf("the earning types: %s", got)
+	}
+	if got := fmt.Sprint(all("employment_history")); got != "[co1-0/2025-06-01 co1-1/2025-06-01 co1-gone/2025-06-01 co2-0/2025-06-01 co2-1/2025-06-01 co2-gone/2025-06-01]" {
+		t.Errorf("the employment history: %s", got)
+	}
+	var payrolls []*Page
 	p := &Page{More: true}
 	for p.More {
-		p = pull(t, c, "employees", p.Cursor)
-		if !p.Full {
-			t.Fatalf("a page of employees is not part of a full listing")
-		}
-		got = append(got, len(p.Records))
+		p = pull(t, c, "payrolls", p.Cursor)
+		payrolls = append(payrolls, p)
 	}
-	if fmt.Sprint(got) != "[100 3 3]" || fmt.Sprint(pages) != "[co1/<nil> co1/2 co2/<nil>]" {
-		t.Errorf("the employees: pages of %v, asked for %v", got, pages)
+	var got []Record
+	for _, p := range payrolls {
+		got = append(got, p.Records...)
+	}
+	if len(got) != 2 || got[0].ID != "p1" || got[1].ID != "p2" {
+		t.Fatalf("the payrolls: %+v", got)
+	}
+	p1 := got[0].Data.(map[string]any)
+	if fmt.Sprint(p1["employee_compensations"]) != "[map[employee_uuid:e1] map[employee_uuid:e2]]" || p1["totals"] == nil || p1["employee_compensations_pagination"] != nil {
+		t.Errorf("a processed payroll: %v", p1)
 	}
 	p = pull(t, c, "contractors", "")
 	p = pull(t, c, "contractors", p.Cursor)
-	if !p.More || p.Cursor != `{"companies":["co1","co2"],"at":1}` {
-		t.Errorf("a server that sends the same page again does not move on to the next company: %s", p.Cursor)
-	}
-	if _, err := streamNamed(c, "payrolls").Pull(c, ""); !asUnsupported(err, new(*Unsupported)) || !strings.Contains(err.Error(), "needs start_date") {
-		t.Errorf("a tool that needs what Archive has not: %v", err)
+	if !p.More || !strings.Contains(p.Cursor, `"at":1`) {
+		t.Errorf("a server that sends the same page again does not move on: %s", p.Cursor)
 	}
 }
