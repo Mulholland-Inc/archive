@@ -12,10 +12,27 @@
 {:else if variant === 'heading'}
   <button type="button" class="heading" onclick={() => (editing = true)}>{value}</button>
 {:else}
-  <Button variant="ghost" onclick={() => (editing = true)}>{value}</Button>
+  <span class="title"><Button variant="ghost" title={value} onclick={() => (editing = true)}>{value}</Button></span>
 {/if}
 
 <style>
+  /* A long title ends in an ellipsis instead of pushing past the buttons beside it. */
+  .title {
+    display: flex;
+    min-width: 0;
+  }
+
+  .title :global(.btn) {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .title :global(.label) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
   .heading {
     display: block;
     margin: calc(var(--space-1) * -1) calc(var(--space-3) * -1);

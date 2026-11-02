@@ -79,6 +79,7 @@
   }
 
   .end {
+    flex: none;
     justify-content: flex-end;
   }
 </style>
