@@ -71,7 +71,7 @@
     const to = linkOf(view, c);
     const v = r?.[c.name];
     if (!to || v == null || v === '') return [];
-    return (Array.isArray(v) ? v : [v]).map((rid) => ({ id: rid, title: titles[to]?.[rid] ?? '…', href: `/database/${to}` }));
+    return (Array.isArray(v) ? v : [v]).map((rid) => ({ id: rid, title: titles[to]?.[rid] ?? '…', href: `/view/${to}/${rid}` }));
   };
 
   // The board scrolls sideways; a vertical wheel over it scrolls the page, which the browser would otherwise
@@ -191,12 +191,14 @@
             <section class="lane">
               <header><Text size="sm" weight="medium">{lane}</Text><Text size="sm" tone="tertiary" tabular>{items.length}</Text></header>
               {#each items as r, i (r.id ?? i)}
-                <button type="button" class="card" onclick={() => pick(r)}>
+                <!-- The card opens its row; its chips, above that, open the rows they name. -->
+                <div class="card">
+                  <button type="button" class="hit" aria-label={show(r[title?.name]) || 'Open'} onclick={() => pick(r)}></button>
                   <Text size="sm" weight="medium">{show(r[title?.name])}</Text>
                   {#each shown.filter((c) => c !== title && c.name !== view.by && r[c.name] != null && r[c.name] !== '') as c (c.name)}
-                    {#if linkOf(view, c)}<span class="chips">{#each refs(c, r) as l (l.id)}<Chip size="sm">{l.title}</Chip>{/each}</span>{:else}<Text size="sm" tone="secondary">{show(r[c.name])}</Text>{/if}
+                    {#if linkOf(view, c)}<span class="chips raised">{#each refs(c, r) as l (l.id)}<Chip size="sm" href={l.href}>{l.title}</Chip>{/each}</span>{:else}<Text size="sm" tone="secondary">{show(r[c.name])}</Text>{/if}
                   {/each}
-                </button>
+                </div>
               {/each}
             </section>
           {/each}
@@ -220,7 +222,7 @@
         <Table {columns} rows={cells} label={view.name} onrowclick={(c) => pick(c.row)}>
           {#snippet cell(row, col)}
             {@const c = shown.find((x) => x.name === col.key)}
-            {#if c && linkOf(view, c)}<span class="chips">{#each refs(c, row.row) as l (l.id)}<Chip size="sm">{l.title}</Chip>{/each}</span>{:else}{row[col.key]}{/if}
+            {#if c && linkOf(view, c)}<span class="chips">{#each refs(c, row.row) as l (l.id)}<Chip size="sm" href={l.href}>{l.title}</Chip>{/each}</span>{:else}{row[col.key]}{/if}
           {/snippet}
         </Table>
       {/if}
@@ -264,6 +266,7 @@
   }
 
   .card {
+    position: relative;
     display: flex;
     width: 100%;
     text-align: start;
@@ -275,6 +278,18 @@
     border-radius: var(--radius-md);
     background: var(--color-surface);
     box-shadow: inset 0 0 0 var(--border-width) var(--color-border-subtle);
+  }
+
+  .hit {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    cursor: pointer;
+  }
+
+  .raised {
+    position: relative;
+    z-index: var(--z-raised);
   }
 
   .calendar {
