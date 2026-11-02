@@ -306,6 +306,7 @@ export function toWorkflow(w) {
     id: w.id,
     name: pretty(w.name),
     file: w.name,
+    source: w.source ?? '',
     agent: 'Workflow',
     trigger: trigger(w.on),
     on: w.on,
