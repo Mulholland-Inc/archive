@@ -3,7 +3,7 @@
   import Heading from './Heading.svelte';
   import { pinned } from '../lib/pagetitle.svelte.js';
 
-  let { title, art, search, actions } = $props();
+  let { title, description, art, search, actions } = $props();
 
   let height = $state(0);
   let compact = $state(false);
@@ -29,6 +29,7 @@
       <Heading level={1} size="xl" wrap="normal" grow>{title}</Heading>
       {#if actions}<div class="actions">{@render actions()}</div>{/if}
     </div>
+    {#if description}<p class="description">{description}</p>{/if}
   </div>
   <div class="bar">
     <span class="mini" aria-hidden={!compact}>{title}</span>
@@ -64,6 +65,12 @@
 
   :global([data-theme='dark']) .banner :global(.art) {
     mix-blend-mode: lighten;
+  }
+
+  .description {
+    margin-block: calc(var(--space-2) * -1) var(--space-3);
+    color: var(--color-text-secondary);
+    font-size: var(--text-md);
   }
 
   .top {

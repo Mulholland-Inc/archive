@@ -121,7 +121,7 @@
   </Page>
 {:else}
   <Page width="wide">
-    <StickyHeader title={view.name}>
+    <StickyHeader title={view.name} description={view.description && view.description.toLowerCase() !== view.name.toLowerCase() ? view.description : ''}>
       {#snippet search()}
         <SearchField bind:value={query} bind:element={searchEl} placeholder={`Find in ${view.name.toLowerCase()}`} shortcut="/" />
       {/snippet}
