@@ -141,8 +141,6 @@ Environment:
   ARCHIVE_GMAIL_TOPIC projects/<project>/topics/<topic>, the Pub/Sub topic Gmail pushes a connected
                      mailbox's changes to, which a push subscription delivers to <API>/push/gmail with the
                      tasks account's OIDC token; unset, Gmail syncs only when asked
-  ARCHIVE_SYNC       off keeps serve from syncing connections into their tables, though asks are still kept and
-                     queued: for tests that sync by hand
 
 A connection syncs into its tables only when something asks: connecting, Sync now, a push of its provider to
 <API>/push/<connector>, or its member reading them or opening the workspace while it is over 5 minutes

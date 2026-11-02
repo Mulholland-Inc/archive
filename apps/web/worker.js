@@ -1,4 +1,5 @@
-// The app Worker: the web app's static files, and live data at the edge (docs/adr/0003-hosting.md).
+// The app Worker: the web app's static files, and live data at the edge, since a socket held open on Cloud Run
+// is an instance billed for holding it and would keep the API from ever scaling to zero.
 //
 // The Worker serves app.<domain> and, by a route Terraform makes, api.<domain>/live*, so the browser's socket
 // to api.<domain>/live carries the API's own session cookie. Two routes run here; everything else is the
@@ -91,8 +92,8 @@ export class WorkspaceStream {
   }
 }
 
-// The API's address: the request's own on api.<domain>, or app. made api. (ADR 0003). API_ORIGIN overrides
-// it, for wrangler dev.
+// The API's address: the request's own on api.<domain>, or app. made api., the one host that serves every
+// workspace. API_ORIGIN overrides it, for wrangler dev.
 function apiOrigin(url, env) {
   if (env.API_ORIGIN) return env.API_ORIGIN.replace(/\/$/, '');
   return url.hostname.startsWith('app.') ? url.origin.replace('//app.', '//api.') : url.origin;

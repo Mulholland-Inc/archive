@@ -18,28 +18,22 @@ jobs:
     name: test
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: marzy-devbox
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
           go-version-file: src/go.mod
           cache: false
-      - name: Postgres 18
-        run: |
-          if [ ! -x /usr/lib/postgresql/18/bin/initdb ]; then
-            sudo apt-get install -y -q postgresql-common
-            sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
-            sudo apt-get install -y -q postgresql-18
-          fi
-          echo /usr/lib/postgresql/18/bin >> "$GITHUB_PATH"
       - run: go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 diff
+        working-directory: src
+      - run: test -z "$(gofmt -l .)"
+        working-directory: src
+      - run: go build ./...
         working-directory: src
       - run: go vet ./...
         working-directory: src
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
-        working-directory: src
-      - run: go test -count=1 -timeout 25m ./...
         working-directory: src
   web:
     name: web

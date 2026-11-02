@@ -5,7 +5,7 @@
 // Object), or in development `archive serve`'s own /live through vite's proxy; both send the same frames:
 // {event:"ready"} once, then {event:"change", changes:[{table, id}]}, a table like "invoice" or "archive.chat"
 // and, for Archive's own rows, the row's id. They name what moved, never the rows: what is read again comes
-// through the API, so row-level security decides what this person sees (docs/adr/0001-architecture.md).
+// through the API, so row-level security decides what this person sees.
 //
 // A screen says what it shows with a resource:
 //

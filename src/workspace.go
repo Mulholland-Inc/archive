@@ -46,8 +46,6 @@ type Hub struct {
 	live  *liveHub
 	// connect are the connectors this server has an OAuth client for (connection.go).
 	connect connect.Providers
-	// noSync is ARCHIVE_SYNC=off: connections are scheduled to sync, but none does (sync.go).
-	noSync bool
 
 	mu   sync.Mutex
 	open map[string]*hubEntry
@@ -62,9 +60,9 @@ type hubEntry struct {
 }
 
 type hubTasks struct {
-	queue, account, issuer string
-	base                   string
-	meta                   *gcpToken
+	queue, account string
+	base           string
+	meta           *gcpToken
 
 	mu     sync.Mutex
 	verify *oidc.IDTokenVerifier
@@ -168,8 +166,7 @@ func openHub(ctx context.Context, dsn, dir string) (*Hub, error) {
 	if err != nil {
 		return nil, err
 	}
-	h := &Hub{key: key, aead: aead, pg: pg, blobs: blobs, hints: coreHints("en-US"), tasks: tasks, connect: conns, open: map[string]*hubEntry{},
-		noSync: os.Getenv("ARCHIVE_SYNC") == "off"}
+	h := &Hub{key: key, aead: aead, pg: pg, blobs: blobs, hints: coreHints("en-US"), tasks: tasks, connect: conns, open: map[string]*hubEntry{}}
 	if err := h.urls("8080"); err != nil {
 		return nil, err
 	}
@@ -454,7 +451,7 @@ func hubTasksOpen() (*hubTasks, error) {
 	if len(p) != 6 || p[0] != "projects" || p[2] != "locations" || p[4] != "queues" {
 		return nil, fmt.Errorf("cloud tasks queue %q: want projects/<p>/locations/<r>/queues/<q>", queue)
 	}
-	t := &hubTasks{queue: queue, account: p[5] + "-tasks@" + p[1] + ".iam.gserviceaccount.com", issuer: coreEnv("ARCHIVE_TASKS_ISSUER", "https://accounts.google.com")}
+	t := &hubTasks{queue: queue, account: p[5] + "-tasks@" + p[1] + ".iam.gserviceaccount.com"}
 	t.base = u.Scheme + "://" + u.Host
 	if u.Scheme == "https" {
 		t.meta = meta
@@ -576,7 +573,7 @@ func (h *Hub) googleCaller(r *http.Request, path string) error {
 	}
 	t.mu.Lock()
 	if t.verify == nil {
-		p, err := oidc.NewProvider(context.Background(), t.issuer)
+		p, err := oidc.NewProvider(context.Background(), "https://accounts.google.com")
 		if err != nil {
 			t.mu.Unlock()
 			return fmt.Errorf("google's signing keys: %w", err)
@@ -637,8 +634,6 @@ func (h *Hub) work(ctx context.Context, ws uuid.UUID, kind string) error {
 	switch {
 	case kind == "workflow":
 		lease += browseTimeout
-	case kind == "sync" && h.noSync:
-		return nil
 	case kind == "sync":
 		lease = syncBudget + syncRetry
 	}
