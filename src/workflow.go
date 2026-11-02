@@ -1,5 +1,12 @@
 package main
 
+// Workflows are rows of archive.workflow, which the catalog shows as the table workflow, and their runs rows of
+// archive.workflow_run, the read-only table workflow_run. archive.create, update and delete of a workflow go
+// through the write hook here, workflowSave and workflowDelete, which compile its source and check its name
+// and on before anything is saved, and keep what Archive owns: who it runs as, its webhook secret, when it is
+// due and the cursor of the table it watches. Reads are plain list, get and query, under row-level security:
+// each person sees their own workflows and their runs (archive.mine).
+
 import (
 	"context"
 	"crypto/rand"
@@ -9,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"regexp"
 	"slices"
 	"strconv"
@@ -31,19 +39,13 @@ const (
 )
 
 var (
-	workflowNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.ts$`)
+	workflowNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}(\.ts)?$`)
 	workflowOnRe   = regexp.MustCompile(`(?i)^//\s*on\s*:(.*)$`)
 	workflowLast   = uuid.Max
+	workflowEvents = []string{"created", "updated"}
 )
 
-type Workflow struct {
-	Name string       `json:"name"`
-	On   string       `json:"on"`
-	Next *time.Time   `json:"next,omitempty"`
-	URL  string       `json:"url,omitempty"`
-	Last *WorkflowRun `json:"last,omitempty"`
-}
-
+// WorkflowRun is one run as Archive records it.
 type WorkflowRun struct {
 	ID      uuid.UUID       `json:"id"`
 	At      time.Time       `json:"at"`
@@ -54,195 +56,63 @@ type WorkflowRun struct {
 	Error   string          `json:"error"`
 }
 
-type WorkflowError struct {
-	File    string `json:"file"`
-	Message string `json:"message"`
-}
-
-type WorkflowDeploy struct {
-	Deployed  bool            `json:"deployed"`
-	Errors    []WorkflowError `json:"errors,omitempty"`
-	Workflows []Workflow      `json:"workflows,omitempty"`
-}
-
+// workflowOn is a workflow's on: when it runs. Its JSON is what the on column holds.
 type workflowOn struct {
-	kind  string
-	table *Table
+	Cron    string   `json:"cron,omitempty"`
+	TZ      string   `json:"tz,omitempty"`
+	Table   string   `json:"table,omitempty"`
+	Events  []string `json:"events,omitempty"`
+	Webhook bool     `json:"webhook,omitempty"`
+
 	sched cron.Schedule
+	table *Table
+}
+
+func (o *workflowOn) kind() string {
+	switch {
+	case o == nil:
+		return ""
+	case o.Cron != "":
+		return "cron"
+	case o.Table != "":
+		return "table"
+	case o.Webhook:
+		return "webhook"
+	}
+	return ""
+}
+
+// trigger is on as Archive schedules it, in the trigger column: an edit that keeps it keeps the workflow's
+// place in its schedule and its table. It is the // on: line of before workflows were rows, without events.
+func (o *workflowOn) trigger() string {
+	switch o.kind() {
+	case "cron":
+		if o.TZ != "" {
+			return "cron CRON_TZ=" + o.TZ + " " + o.Cron
+		}
+		return "cron " + o.Cron
+	case "table":
+		return o.Table
+	case "webhook":
+		return "webhook"
+	}
+	return ""
+}
+
+func (o *workflowOn) json() []byte {
+	if o.kind() == "" {
+		return nil
+	}
+	b, _ := json.Marshal(o)
+	return b
+}
+
+func (o *workflowOn) wants(event string) bool {
+	return o.kind() == "table" && slices.Contains(o.Events, event)
 }
 
 func workflowRunOf(r generated.ArchiveWorkflowRun) WorkflowRun {
 	return WorkflowRun{ID: r.ID, At: r.CreatedAt.UTC(), Trigger: r.Trigger, MS: r.Ms, Result: r.Result, Logs: r.Logs, Error: r.Error}
-}
-
-func workflowUTC(t *time.Time) *time.Time {
-	if t == nil {
-		return nil
-	}
-	u := t.UTC()
-	return &u
-}
-
-func workflowName(s string) string {
-	s = strings.TrimSpace(s)
-	if !strings.HasSuffix(s, ".ts") {
-		s += ".ts"
-	}
-	return s
-}
-
-func workflowTrigger(src string) (string, error) {
-	lines := strings.Split(strings.TrimPrefix(src, "\ufeff"), "\n")
-	on := ""
-	for i, l := range lines {
-		m := workflowOnRe.FindStringSubmatch(strings.TrimSpace(l))
-		switch {
-		case m == nil:
-		case i > 0:
-			return "", fmt.Errorf("line %d: the // on: line must be the very first line of the file", i+1)
-		default:
-			on = strings.Join(strings.Fields(m[1]), " ")
-			if on == "" {
-				return "", errors.New("line 1: // on: is empty; write // on: cron 0 9 * * 1-5, // on: webhook or // on: <table>, or leave the line out for a workflow that runs only when started")
-			}
-		}
-	}
-	return on, nil
-}
-
-func (a *Archive) workflowParse(ctx context.Context, on string) (workflowOn, error) {
-	word, rest, _ := strings.Cut(on, " ")
-	switch strings.ToLower(word) {
-	case "":
-		return workflowOn{}, nil
-	case "webhook":
-		if rest != "" {
-			return workflowOn{}, fmt.Errorf("on: webhook takes nothing after it, got %q", rest)
-		}
-		return workflowOn{kind: "webhook"}, nil
-	case "cron":
-		if rest == "" {
-			return workflowOn{}, errors.New("on: cron needs a schedule, like // on: cron 0 9 * * 1-5 (minute hour day month weekday, UTC), // on: cron @every 15m or // on: cron CRON_TZ=America/New_York 0 9 * * *")
-		}
-		s, err := cron.ParseStandard(rest)
-		if err != nil {
-			return workflowOn{}, fmt.Errorf("on: cron %s: %v; want five fields, minute hour day month weekday, like cron 0 9 * * 1-5, or @every 15m, @hourly, @daily, @weekly", rest, err)
-		}
-		return workflowOn{kind: "cron", sched: s}, nil
-	}
-	cat := a.catalog(ctx)
-	var tables []string
-	for _, n := range cat.names() {
-		if cat.Tables[n].Kind != "view" {
-			tables = append(tables, n)
-		}
-	}
-	list := "there are no tables yet"
-	if len(tables) > 0 {
-		list = "the tables are " + strings.Join(tables, ", ")
-	}
-	tb, ok := cat.Tables[strings.TrimPrefix(word, "public.")]
-	switch {
-	case rest != "" || !ok:
-		return workflowOn{}, fmt.Errorf("on: %s: unknown trigger; want cron <schedule>, webhook, or a table name (%s); leave the line out for a workflow that runs only when started", on, list)
-	case tb.Kind == "view":
-		return workflowOn{}, fmt.Errorf("on: %s is a view; trigger on a table it reads from instead (%s)", word, list)
-	}
-	return workflowOn{kind: "table", table: tb}, nil
-}
-
-func (a *Archive) workflowCheck(ctx context.Context, name, src string) (string, workflowOn, error) {
-	if !workflowNameRe.MatchString(name) {
-		return "", workflowOn{}, errors.New("the name must be letters, digits, - and _, ending in .ts, like overdue-invoices.ts")
-	}
-	if len(src) > workflowMaxSize {
-		return "", workflowOn{}, fmt.Errorf("the file is %d KB, over the %d KB limit", len(src)>>10, workflowMaxSize>>10)
-	}
-	on, err := workflowTrigger(src)
-	if err != nil {
-		return "", workflowOn{}, err
-	}
-	if _, err := runCompile(src); err != nil {
-		return "", workflowOn{}, err
-	}
-	w, err := a.workflowParse(ctx, on)
-	return on, w, err
-}
-
-func (a *Archive) workflowOut(ctx context.Context, w generated.ArchiveWorkflow) Workflow {
-	out := Workflow{Name: w.Name, On: w.Trigger}
-	if on, err := a.workflowParse(ctx, w.Trigger); err == nil {
-		switch on.kind {
-		case "cron":
-			out.Next = workflowUTC(w.NextAt)
-		case "webhook":
-			out.URL = a.hub.api + "/hooks/run/" + a.ws.ID.String() + "/" + w.Hook
-		}
-	}
-	return out
-}
-
-func (a *Archive) Deploy(ctx context.Context, files map[string]string) (*WorkflowDeploy, error) {
-	ac, err := signedIn(ctx)
-	if err != nil {
-		return nil, err
-	}
-	names := specKeys(files)
-	type checked struct {
-		on string
-		w  workflowOn
-	}
-	ok := map[string]checked{}
-	res := &WorkflowDeploy{}
-	for _, n := range names {
-		on, w, err := a.workflowCheck(ctx, n, files[n])
-		if err != nil {
-			res.Errors = append(res.Errors, WorkflowError{File: n, Message: err.Error()})
-			continue
-		}
-		ok[n] = checked{on, w}
-	}
-	if len(res.Errors) > 0 {
-		return res, nil
-	}
-	err = a.sys(ctx, func(ctx context.Context) error {
-		q := a.st.db(ctx)
-		now, err := q.TxNow(ctx)
-		if err != nil {
-			return err
-		}
-		if err := q.DeleteWorkflowsExcept(ctx, ac.UserID, append([]string{}, names...)); err != nil {
-			return err
-		}
-		for _, n := range names {
-			c := ok[n]
-			p := generated.SaveWorkflowParams{UserID: ac.UserID, Role: ac.Role, Name: n, Source: files[n], Trigger: c.on, Hook: workflowToken()}
-			switch c.w.kind {
-			case "cron":
-				next := c.w.sched.Next(now.UTC())
-				p.NextAt = &next
-			case "table":
-				p.NextAt, p.CursorAt, p.CursorID = &now, &now, &workflowLast
-			}
-			w, err := q.SaveWorkflow(ctx, p)
-			if err != nil {
-				return err
-			}
-			res.Workflows = append(res.Workflows, a.workflowOut(ctx, w))
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	if err := a.scheduleWorkflows(ctx); err != nil {
-		return nil, err
-	}
-	res.Deployed = true
-	if res.Workflows == nil {
-		res.Workflows = []Workflow{}
-	}
-	return res, nil
 }
 
 func workflowToken() string {
@@ -251,103 +121,405 @@ func workflowToken() string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-func (a *Archive) workflowRows(ctx context.Context) ([]generated.ArchiveWorkflow, error) {
-	ac, err := signedIn(ctx)
-	if err != nil {
-		return nil, err
+// workflowTables are the tables a workflow may watch: the public ones and the members.
+func workflowTables(cat *Catalog) []string {
+	var out []string
+	for _, n := range cat.names() {
+		if t := cat.Tables[n]; t.Kind == "table" && (t.Schema == "public" || n == "member") {
+			out = append(out, n)
+		}
 	}
-	var ws []generated.ArchiveWorkflow
-	return ws, a.sys(ctx, func(ctx context.Context) (err error) {
-		ws, err = a.st.db(ctx).Workflows(ctx, ac.UserID)
-		return err
-	})
+	return out
 }
 
-func (a *Archive) WorkflowFiles(ctx context.Context) (map[string]string, error) {
-	ws, err := a.workflowRows(ctx)
-	out := map[string]string{}
-	for _, w := range ws {
-		out[w.Name] = w.Source
-	}
-	return out, err
-}
-
-func (a *Archive) Workflows(ctx context.Context) ([]Workflow, error) {
-	ac, err := signedIn(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := []Workflow{}
-	return out, a.sys(ctx, func(ctx context.Context) error {
-		q := a.st.db(ctx)
-		ws, err := q.Workflows(ctx, ac.UserID)
-		if err != nil {
-			return err
+// workflowParseOn checks an on value, as a write passes it or the column holds it, and cleans it: a table
+// workflow without events gets both. Each problem is one error, with its path.
+func (a *Archive) workflowParseOn(ctx context.Context, v any) (*workflowOn, []FieldError) {
+	if b, ok := v.(json.RawMessage); ok {
+		if len(b) == 0 {
+			return &workflowOn{}, nil
 		}
-		last, err := q.LastWorkflowRuns(ctx, ac.UserID)
-		if err != nil {
-			return err
+		v = nil
+		dec := json.NewDecoder(strings.NewReader(string(b)))
+		dec.UseNumber()
+		if err := dec.Decode(&v); err != nil {
+			return nil, []FieldError{{Path: "on", Message: "not JSON: " + err.Error()}}
 		}
-		for _, w := range ws {
-			o := a.workflowOut(ctx, w)
-			if i := slices.IndexFunc(last, func(r generated.ArchiveWorkflowRun) bool { return r.Workflow == w.ID }); i >= 0 {
-				r := workflowRunOf(last[i])
-				r.Result, r.Logs = nil, nil
-				o.Last = &r
+	}
+	if v == nil {
+		return &workflowOn{}, nil
+	}
+	m, ok := v.(map[string]any)
+	if !ok {
+		return nil, []FieldError{{Path: "on", Message: `want { cron: "0 9 * * 1-5", tz?: "Europe/Amsterdam" }, { table: "invoice", events: ["created", "updated"] }, { webhook: true }, or null for a workflow that runs only with archive.run`}}
+	}
+	var errs []FieldError
+	bad := func(path, msg string) { errs = append(errs, FieldError{Path: path, Message: msg}) }
+	str := func(k string) string {
+		s, ok := m[k].(string)
+		if m[k] != nil && !ok {
+			bad("on."+k, "must be a string")
+		}
+		return strings.TrimSpace(s)
+	}
+	o := &workflowOn{}
+	var kinds []string
+	for _, k := range specKeys(m) {
+		switch k {
+		case "cron", "table", "webhook":
+			kinds = append(kinds, k)
+		case "tz", "events":
+		default:
+			bad("on."+k, "unknown field; on takes cron and tz, table and events, or webhook")
+		}
+	}
+	if len(kinds) != 1 {
+		bad("on", "want exactly one of cron, table or webhook, like { cron: \"0 9 * * *\" }, { table: \"invoice\", events: [\"created\"] } or { webhook: true }")
+		return nil, errs
+	}
+	if kinds[0] != "cron" && m["tz"] != nil {
+		bad("on.tz", "only a cron workflow takes a time zone")
+	}
+	if kinds[0] != "table" && m["events"] != nil {
+		bad("on.events", "only a table workflow takes events")
+	}
+	switch kinds[0] {
+	case "cron":
+		o.Cron, o.TZ = strings.Join(strings.Fields(str("cron")), " "), str("tz")
+		spec := o.Cron
+		switch {
+		case o.Cron == "":
+			bad("on.cron", "want a schedule: five fields, minute hour day month weekday, like 0 9 * * 1-5, or @every 15m, @hourly, @daily, @weekly, @monthly")
+		case strings.Contains(o.Cron, "TZ="):
+			bad("on.cron", "put the time zone in tz, like { cron: \"0 9 * * *\", tz: \"America/New_York\" }")
+		}
+		if o.TZ != "" {
+			if _, err := time.LoadLocation(o.TZ); err != nil || o.TZ == "Local" {
+				bad("on.tz", fmt.Sprintf("unknown time zone %q; want an IANA name like Europe/Amsterdam or America/New_York", o.TZ))
+			} else {
+				spec = "CRON_TZ=" + o.TZ + " " + spec
 			}
-			out = append(out, o)
+		}
+		if len(errs) == 0 {
+			s, err := cron.ParseStandard(spec)
+			if err != nil {
+				bad("on.cron", fmt.Sprintf("%s: %v; want five fields, minute hour day month weekday, like 0 9 * * 1-5, or @every 15m, @hourly, @daily, @weekly, @monthly", o.Cron, err))
+			}
+			o.sched = s
+		}
+	case "table":
+		o.Table = strings.TrimPrefix(str("table"), "public.")
+		cat := a.catalog(ctx)
+		names := workflowTables(cat)
+		list := "there are no tables yet"
+		if len(names) > 0 {
+			list = "the tables are " + strings.Join(names, ", ")
+		}
+		switch tb := cat.Tables[o.Table]; {
+		case o.Table == "":
+			bad("on.table", "want the name of a table; "+list)
+		case tb != nil && tb.Kind == "view":
+			bad("on.table", o.Table+" is a view; watch a table it reads from instead ("+list+")")
+		case !slices.Contains(names, o.Table):
+			bad("on.table", "unknown table "+strconv.Quote(o.Table)+"; "+list)
+		default:
+			o.table = tb
+		}
+		switch ev := m["events"].(type) {
+		case nil:
+			o.Events = workflowEvents
+		case []any:
+			for i, e := range ev {
+				s, _ := e.(string)
+				if !slices.Contains(workflowEvents, s) {
+					bad(fmt.Sprintf("on.events[%d]", i), "want created or updated")
+				}
+			}
+			for _, e := range workflowEvents {
+				if slices.Contains(ev, any(e)) {
+					o.Events = append(o.Events, e)
+				}
+			}
+			if len(ev) == 0 {
+				bad("on.events", `want created, updated or both, like ["created", "updated"]`)
+			}
+		default:
+			bad("on.events", `want a list, like ["created", "updated"]`)
+		}
+	case "webhook":
+		if m["webhook"] != true {
+			bad("on.webhook", "want true; for a workflow that runs only with archive.run, set on to null")
+		}
+		o.Webhook = true
+	}
+	if len(errs) > 0 {
+		return nil, errs
+	}
+	return o, nil
+}
+
+// workflowOf is the on of a saved workflow, checked against the tables there are now.
+func (a *Archive) workflowOf(ctx context.Context, w generated.ArchiveWorkflow) (*workflowOn, error) {
+	b := w.On
+	if len(b) == 0 && w.Trigger != "" {
+		b = workflowLegacyOn(w.Trigger)
+	}
+	o, errs := a.workflowParseOn(ctx, json.RawMessage(b))
+	if len(errs) > 0 {
+		return nil, (&ValidationError{Type: "workflow", Errors: errs}).err()
+	}
+	return o, nil
+}
+
+// workflowLegacyOn is the on of a // on: line from before workflows were rows: cron <spec> with an optional
+// CRON_TZ= or TZ=, webhook, or a table name.
+func workflowLegacyOn(trigger string) []byte {
+	word, rest, _ := strings.Cut(strings.Join(strings.Fields(trigger), " "), " ")
+	var o workflowOn
+	switch strings.ToLower(word) {
+	case "":
+		return nil
+	case "webhook":
+		o.Webhook = true
+	case "cron":
+		o.Cron = rest
+		if z, spec, ok := strings.Cut(rest, " "); ok && (strings.HasPrefix(z, "CRON_TZ=") || strings.HasPrefix(z, "TZ=")) {
+			_, o.TZ, _ = strings.Cut(z, "=")
+			o.Cron = spec
+		}
+	default:
+		o.Table, o.Events = strings.TrimPrefix(word, "public."), workflowEvents
+		if rest != "" {
+			o.Table += " " + rest
+		}
+	}
+	b, _ := json.Marshal(o)
+	return b
+}
+
+// workflowStrip takes a // on: first line off a source from before workflows were rows.
+func workflowStrip(src string) string {
+	first, rest, _ := strings.Cut(src, "\n")
+	if workflowOnRe.MatchString(strings.TrimSpace(strings.TrimPrefix(first, "\ufeff"))) {
+		return rest
+	}
+	return src
+}
+
+// workflowUpgrade gives the workflows saved before they were rows what a row has: on, parsed from the
+// // on: line their source began with, which it takes off, and the member they belong to. It keeps their
+// names, webhook secrets, cursors and next times as they are, and runs each time the workspace opens, so a
+// workflow saved by an older instance in the meantime is upgraded too.
+func (a *Archive) workflowUpgrade(ctx context.Context) error {
+	ctx = context.WithValue(context.WithoutCancel(ctx), storeTxKey{}, nil)
+	return a.st.System(ctx, func(ctx context.Context) error {
+		q := a.st.db(ctx)
+		old, err := q.OldWorkflows(ctx)
+		if err != nil || len(old) == 0 {
+			return err
+		}
+		members := map[uuid.UUID]*uuid.UUID{}
+		for _, w := range old {
+			p := generated.UpgradeWorkflowParams{ID: w.ID, Member: w.Member, Source: w.Source, OnJson: w.On, Trigger: w.Trigger}
+			if len(w.On) == 0 && w.Trigger != "" {
+				p.OnJson, p.Source = workflowLegacyOn(w.Trigger), workflowStrip(w.Source)
+				var o workflowOn
+				json.Unmarshal(p.OnJson, &o)
+				p.Trigger = o.trigger()
+			}
+			if p.Member == nil {
+				m, ok := members[w.UserID]
+				if !ok {
+					if u, err := userBy(ctx, a.hub, (*generated.Queries).UserByID, w.UserID); err == nil {
+						if row, err := q.MemberByEmail(ctx, u.Email); err == nil {
+							m = &row.ID
+						}
+					}
+					members[w.UserID] = m
+				}
+				p.Member = m
+			}
+			if err := q.UpgradeWorkflow(ctx, p); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
 }
 
+// workflowSave is the write hook of archive.create and archive.update on workflow: it takes name, source and
+// on, refuses the write with every problem when one is wrong, and otherwise saves it as the person writing,
+// who it then runs as. With id it changes that workflow, and full replaces it whole.
+func (a *Archive) workflowSave(ctx context.Context, tb *Table, id uuid.UUID, data map[string]any, full bool) (map[string]any, error) {
+	ac, err := signedIn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return coreDo(a, ctx, func(ctx context.Context) (map[string]any, error) {
+		q := a.st.db(ctx)
+		var old *generated.ArchiveWorkflow
+		var name, source string
+		var on any
+		if id != uuid.Nil {
+			w, err := q.LockWorkflow(ctx, id)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, fmt.Errorf("workflow %s: %w", id, ErrNotFound)
+			}
+			if err != nil {
+				return nil, err
+			}
+			old = &w
+			if !full {
+				name, source, on = w.Name, w.Source, json.RawMessage(w.On)
+			}
+		}
+		verr := &ValidationError{Type: "workflow"}
+		bad := func(path, msg string) { verr.Errors = append(verr.Errors, FieldError{Path: path, Message: msg}) }
+		text := func(k string) string {
+			s, ok := data[k].(string)
+			if !ok {
+				bad(k, "must be a string")
+			}
+			return s
+		}
+		for _, k := range specKeys(data) {
+			switch k {
+			case "name":
+				name = strings.TrimSpace(text(k))
+			case "source":
+				source = text(k)
+			case "on":
+				on = data[k]
+			case "id", "created_at", "updated_at", "next_at", "url":
+			default:
+				bad(k, "unknown field; a workflow takes name, source and on")
+			}
+		}
+		switch {
+		case name == "":
+			bad("name", "required")
+		case !workflowNameRe.MatchString(name):
+			bad("name", "want letters, digits, - and _, starting with a letter or digit, at most 64, like overdue-invoices")
+		}
+		switch {
+		case strings.TrimSpace(source) == "":
+			bad("source", "required: the TypeScript it runs")
+		case len(source) > workflowMaxSize:
+			bad("source", fmt.Sprintf("%d KB, over the %d KB limit", len(source)>>10, workflowMaxSize>>10))
+		default:
+			if _, errs := runTransform(source); len(errs) > 0 {
+				for _, e := range errs {
+					verr.Errors = append(verr.Errors, FieldError{Path: "source", Message: e.text(), Line: e.line, Column: e.col})
+				}
+			}
+		}
+		o, errs := a.workflowParseOn(ctx, on)
+		verr.Errors = append(verr.Errors, errs...)
+		if err := verr.err(); err != nil {
+			return nil, err
+		}
+		now, err := q.TxNow(ctx)
+		if err != nil {
+			return nil, err
+		}
+		trig := o.trigger()
+		var next, cursorAt *time.Time
+		var cursorID *uuid.UUID
+		switch {
+		case old != nil && old.Trigger == trig:
+			next, cursorAt, cursorID = old.NextAt, old.CursorAt, old.CursorID
+			if o.kind() == "table" {
+				next = &now
+			}
+		case o.kind() == "cron":
+			t := o.sched.Next(now.UTC())
+			next = &t
+		case o.kind() == "table":
+			next, cursorAt, cursorID = &now, &now, &workflowLast
+		}
+		if old == nil {
+			id, err = q.InsertWorkflow(ctx, generated.InsertWorkflowParams{UserID: ac.UserID, Member: &ac.member, Role: ac.Role, Name: name, Source: source,
+				OnJson: o.json(), Trigger: trig, Hook: workflowToken(), NextAt: next, CursorAt: cursorAt, CursorID: cursorID})
+		} else {
+			_, err = q.UpdateWorkflow(ctx, generated.UpdateWorkflowParams{ID: id, Name: name, Source: source, OnJson: o.json(), Trigger: trig,
+				NextAt: next, CursorAt: cursorAt, CursorID: cursorID})
+		}
+		if err != nil {
+			return nil, storeErr(err)
+		}
+		storeAfter(ctx, func() { a.workflowSchedule(ctx) })
+		row, err := a.coreGet(ctx, tb, id)
+		a.workflowRows(row)
+		return row, err
+	})
+}
+
+// workflowDelete is the write hook of archive.delete on workflow: the workflow goes with its runs, its
+// schedule and its cursor.
+func (a *Archive) workflowDelete(ctx context.Context, id uuid.UUID) error {
+	return a.as(ctx, func(ctx context.Context) error {
+		n, err := a.st.db(ctx).DeleteWorkflow(ctx, id)
+		if err != nil {
+			return storeErr(err)
+		}
+		if n == 0 {
+			return fmt.Errorf("workflow %s: %w", id, ErrNotFound)
+		}
+		storeAfter(ctx, func() { a.workflowSchedule(ctx) })
+		return nil
+	})
+}
+
+func (a *Archive) workflowSchedule(ctx context.Context) {
+	if err := a.scheduleWorkflows(context.WithValue(context.WithoutCancel(ctx), storeTxKey{}, nil)); err != nil {
+		fmt.Fprintf(os.Stderr, "archive: workspace %s workflows: %v\n", a.ws.ID, err)
+	}
+}
+
+// workflowRows gives each workflow row read through the catalog its webhook URL in place of its secret.
+func (a *Archive) workflowRows(rows ...map[string]any) {
+	for _, r := range rows {
+		if r == nil {
+			continue
+		}
+		hook, _ := r["hook"].(string)
+		delete(r, "hook")
+		r["url"] = nil
+		if on, _ := r["on"].(map[string]any); on != nil && on["webhook"] == true && hook != "" {
+			r["url"] = a.hub.api + "/hooks/run/" + a.ws.ID.String() + "/" + hook
+		}
+	}
+}
+
+// workflow is the caller's workflow named name, or name.ts, as their transaction sees it.
 func (a *Archive) workflow(ctx context.Context, name string) (generated.ArchiveWorkflow, error) {
 	ac, err := signedIn(ctx)
 	if err != nil {
 		return generated.ArchiveWorkflow{}, err
 	}
-	name = workflowName(name)
+	name = strings.TrimSpace(name)
 	var w generated.ArchiveWorkflow
-	var all []generated.ArchiveWorkflow
-	err = a.sys(ctx, func(ctx context.Context) (err error) {
+	var all []string
+	err = a.as(ctx, func(ctx context.Context) (err error) {
 		q := a.st.db(ctx)
-		if w, err = q.WorkflowByName(ctx, ac.UserID, name); errors.Is(err, pgx.ErrNoRows) {
-			all, err = q.Workflows(ctx, ac.UserID)
-			if err == nil {
+		w, err = q.WorkflowByName(ctx, ac.UserID, name)
+		if errors.Is(err, pgx.ErrNoRows) && !strings.HasSuffix(name, ".ts") {
+			w, err = q.WorkflowByName(ctx, ac.UserID, name+".ts")
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			if all, err = q.WorkflowNames(ctx, ac.UserID); err == nil {
 				err = pgx.ErrNoRows
 			}
 		}
 		return err
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		var ns []string
-		for _, w := range all {
-			ns = append(ns, w.Name)
+		if len(all) == 0 {
+			return w, fmt.Errorf("workflow %s %w; you have none yet, save one with archive.create(\"workflow\", { name, source, on })", name, ErrNotFound)
 		}
-		if len(ns) == 0 {
-			return w, fmt.Errorf("workflow %s %w; you have none yet, save one with archive.deploy", name, ErrNotFound)
-		}
-		return w, fmt.Errorf("workflow %s %w; yours are %s", name, ErrNotFound, strings.Join(ns, ", "))
+		return w, fmt.Errorf("workflow %s %w; yours are %s", name, ErrNotFound, strings.Join(all, ", "))
 	}
 	return w, err
-}
-
-func (a *Archive) WorkflowRuns(ctx context.Context, name string, limit int) ([]WorkflowRun, error) {
-	w, err := a.workflow(ctx, name)
-	if err != nil {
-		return nil, err
-	}
-	if limit <= 0 || limit > 100 {
-		limit = 20
-	}
-	out := []WorkflowRun{}
-	return out, a.sys(ctx, func(ctx context.Context) error {
-		rs, err := a.st.db(ctx).WorkflowRuns(ctx, w.ID, int32(limit))
-		for _, r := range rs {
-			out = append(out, workflowRunOf(r))
-		}
-		return err
-	})
 }
 
 func (a *Archive) workflowRecord(ctx context.Context, id uuid.UUID, trigger string, at time.Time, out *RunOutput, d time.Duration) (WorkflowRun, error) {
@@ -376,11 +548,11 @@ func (a *Archive) workflowActor(ctx context.Context, w generated.ArchiveWorkflow
 		return nil, err
 	}
 	if !slices.Contains(u.Workspaces, a.ws.ID) {
-		return nil, errors.New("the person who deployed this workflow left the workspace, so it cannot run")
+		return nil, errors.New("the person who saved this workflow left the workspace, so it cannot run")
 	}
 	ac, err := a.userActor(ctx, u)
 	if err != nil {
-		return nil, errors.New("the person who deployed this workflow left the workspace, so it cannot run")
+		return nil, errors.New("the person who saved this workflow left the workspace, so it cannot run")
 	}
 	if w.Role == ac.Role {
 		return ac, nil
@@ -393,7 +565,7 @@ func (a *Archive) workflowActor(ctx context.Context, w generated.ArchiveWorkflow
 		return nil, err
 	}
 	if !ok {
-		return nil, errors.New("the token that deployed this workflow was revoked, so it cannot run; deploy it again")
+		return nil, errors.New("the token that saved this workflow was revoked, so it cannot run; save it again, with archive.update")
 	}
 	ac.Role = w.Role
 	return ac, nil
@@ -424,24 +596,6 @@ func (a *Archive) workflowExec(ctx context.Context, w generated.ArchiveWorkflow,
 	return a.workflowRecord(ctx, w.ID, trigger, at, out, time.Since(start))
 }
 
-func (a *Archive) DeleteWorkflow(ctx context.Context, name string) error {
-	w, err := a.workflow(ctx, name)
-	if err != nil {
-		return err
-	}
-	return a.sys(ctx, func(ctx context.Context) error {
-		return a.st.db(ctx).DeleteWorkflow(ctx, w.UserID, w.Name)
-	})
-}
-
-func (a *Archive) RunWorkflow(ctx context.Context, name string) (WorkflowRun, error) {
-	w, err := a.workflow(ctx, name)
-	if err != nil {
-		return WorkflowRun{}, err
-	}
-	return a.workflowExec(ctx, w, nil, "run", nil)
-}
-
 func (a *Archive) workflowNext(ctx context.Context) (bool, error) {
 	var w generated.ArchiveWorkflow
 	err := a.sys(ctx, func(ctx context.Context) (err error) {
@@ -455,25 +609,26 @@ func (a *Archive) workflowNext(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	a.refresh(ctx)
-	on, perr := a.workflowParse(ctx, w.Trigger)
+	on, perr := a.workflowOf(ctx, w)
 	var next *time.Time
 	switch {
 	case perr != nil:
-		_, err = a.workflowRecord(ctx, w.ID, "table", time.Now(), &RunOutput{Result: json.RawMessage("null"), Logs: []string{}, Error: perr.Error() + "; deploy it again with a trigger that exists"}, 0)
-	case on.kind == "cron":
-		_, err = a.workflowExec(ctx, w, nil, "cron", nil)
+		_, err = a.workflowRecord(ctx, w.ID, w.Trigger, time.Now(), &RunOutput{Result: json.RawMessage("null"), Logs: []string{}, Error: runMessage(perr) + "; change its on with archive.update"}, 0)
+	case on.kind() == "cron":
+		_, err = a.workflowExec(ctx, w, nil, "cron", map[string]any{"trigger": "cron", "at": time.Now().UTC().Format(time.RFC3339)})
 		t := on.sched.Next(time.Now().UTC())
 		next = &t
-	case on.kind == "table":
-		return true, a.workflowTable(ctx, w, on.table)
+	case on.kind() == "table":
+		return true, a.workflowTable(ctx, w, on)
 	}
 	return true, errors.Join(err, a.sys(context.WithoutCancel(ctx), func(ctx context.Context) error {
 		return a.st.db(ctx).SetWorkflowNext(ctx, w.ID, w.Trigger, next)
 	}))
 }
 
-func (a *Archive) workflowTable(ctx context.Context, w generated.ArchiveWorkflow, tb *Table) error {
+func (a *Archive) workflowTable(ctx context.Context, w generated.ArchiveWorkflow, on *workflowOn) error {
 	ctx = context.WithoutCancel(ctx)
+	tb := on.table
 	wait := func() error {
 		return a.sys(ctx, func(ctx context.Context) error { return a.st.db(ctx).SetWorkflowNext(ctx, w.ID, w.Trigger, nil) })
 	}
@@ -482,7 +637,7 @@ func (a *Archive) workflowTable(ctx context.Context, w generated.ArchiveWorkflow
 		return errors.Join(rerr, wait())
 	}
 	if w.CursorAt == nil || w.CursorID == nil {
-		return fail(errors.New("this workflow has no table cursor; deploy it again"))
+		return fail(errors.New("this workflow has no table cursor; save it again with archive.update"))
 	}
 	ac, err := a.workflowActor(ctx, w)
 	if err != nil {
@@ -498,21 +653,31 @@ func (a *Archive) workflowTable(ctx context.Context, w generated.ArchiveWorkflow
 	if own == nil {
 		own = []time.Time{}
 	}
+	// A row is created while its created_at and updated_at are the same, as archive.create leaves them, and
+	// updated once archive.update has moved updated_at on.
+	which := ""
+	switch {
+	case !on.wants("updated"):
+		which = " AND t.created_at = t.updated_at"
+	case !on.wants("created"):
+		which = " AND t.created_at <> t.updated_at"
+	}
 	type found struct {
-		row map[string]any
-		at  time.Time
-		id  uuid.UUID
+		row     map[string]any
+		at      time.Time
+		id      uuid.UUID
+		created bool
 	}
 	read := func() (rows []found, err error) {
 		err = a.as(WithActor(ctx, ac), func(ctx context.Context) error {
 			ts := "greatest(t.created_at, t.updated_at)"
-			res, err := a.st.Q(ctx).Query(ctx, `SELECT `+tb.rowSQL()+`, `+ts+`, t.id FROM `+tb.ident()+` t WHERE (`+ts+`, t.id) > ($1, $2) AND `+ts+` <> ALL ($3::timestamptz[]) ORDER BY 2, 3 LIMIT `+strconv.Itoa(workflowBatch), *w.CursorAt, *w.CursorID, own)
+			res, err := a.st.Q(ctx).Query(ctx, `SELECT `+tb.rowSQL()+`, `+ts+`, t.id, t.created_at = t.updated_at FROM `+tb.ident()+` t WHERE (`+ts+`, t.id) > ($1, $2) AND `+ts+` <> ALL ($3::timestamptz[])`+which+` ORDER BY 2, 3 LIMIT `+strconv.Itoa(workflowBatch), *w.CursorAt, *w.CursorID, own)
 			if err != nil {
 				return err
 			}
 			var b []byte
 			var f found
-			_, err = pgx.ForEachRow(res, []any{&b, &f.at, &f.id}, func() error {
+			_, err = pgx.ForEachRow(res, []any{&b, &f.at, &f.id, &f.created}, func() error {
 				r, err := rowDecode(b)
 				f.row = r
 				rows = append(rows, f)
@@ -536,11 +701,17 @@ func (a *Archive) workflowTable(ctx context.Context, w generated.ArchiveWorkflow
 		now := time.Now()
 		return a.sys(ctx, func(ctx context.Context) error { return a.st.db(ctx).SetWorkflowNext(ctx, w.ID, w.Trigger, &now) })
 	}
-	in := make([]map[string]any, len(rows))
-	for i, f := range rows {
-		in[i] = f.row
+	// rows is both, in order, as workflows from before created and updated read them.
+	created, updated, all := []map[string]any{}, []map[string]any{}, []map[string]any{}
+	for _, f := range rows {
+		if f.created {
+			created = append(created, f.row)
+		} else {
+			updated = append(updated, f.row)
+		}
+		all = append(all, f.row)
 	}
-	rec, err := a.workflowExec(ctx, w, ac, "table", map[string]any{"rows": in})
+	rec, err := a.workflowExec(ctx, w, ac, "table", map[string]any{"trigger": "table", "table": tb.Name, "created": created, "updated": updated, "rows": all})
 	if err != nil {
 		return errors.Join(err, wait())
 	}
@@ -587,7 +758,7 @@ func (a *Archive) workflowHook(rw http.ResponseWriter, r *http.Request) {
 	for k, v := range r.Header {
 		headers[strings.ToLower(k)] = strings.Join(v, ", ")
 	}
-	rec, err := a.workflowExec(context.WithoutCancel(r.Context()), w, nil, "webhook", map[string]any{"method": r.Method, "query": query, "headers": headers, "body": body})
+	rec, err := a.workflowExec(context.WithoutCancel(r.Context()), w, nil, "webhook", map[string]any{"trigger": "webhook", "method": r.Method, "query": query, "headers": headers, "body": body})
 	switch {
 	case err != nil:
 		httpWrite(rw, 0, nil, err)
@@ -601,108 +772,30 @@ func (a *Archive) workflowHook(rw http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (a *Archive) workflowRoutes(mux *http.ServeMux) {
-	handle := func(pattern string, f func(r *http.Request) (int, any, error)) { httpHandle(mux, pattern, f) }
-	handle("GET /api/workflows", func(r *http.Request) (int, any, error) {
-		ws, err := a.Workflows(r.Context())
-		return http.StatusOK, ws, err
-	})
-	handle("GET /api/workflows/{name}/runs", func(r *http.Request) (int, any, error) {
-		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-		rs, err := a.WorkflowRuns(r.Context(), r.PathValue("name"), limit)
-		return http.StatusOK, rs, err
-	})
-	handle("POST /api/workflows/{name}/run", func(r *http.Request) (int, any, error) {
-		rec, err := a.RunWorkflow(context.WithoutCancel(r.Context()), r.PathValue("name"))
-		return http.StatusOK, rec, err
-	})
-	handle("DELETE /api/workflows/{name}", func(r *http.Request) (int, any, error) {
-		return http.StatusNoContent, nil, a.DeleteWorkflow(r.Context(), r.PathValue("name"))
-	})
-}
-
 func (r *runner) workflowSDK(o *goja.Object) {
 	a := r.a
-	r.def(o, "workflows", func(ctx context.Context, call goja.FunctionCall) (any, error) {
-		return a.WorkflowFiles(ctx)
-	})
-	r.def(o, "deploy", func(ctx context.Context, call goja.FunctionCall) (any, error) {
-		var files map[string]string
-		if err := r.arg(call, 0, "deploy", "files", &files); err != nil {
-			return nil, err
-		}
-		if files == nil {
-			return nil, fmt.Errorf("archive.deploy: files must be an object of <name>.ts to TypeScript, like the one archive.workflows() returns: %w", httpErrBadRequest)
-		}
-		return a.Deploy(ctx, files)
-	})
-	input := func(call goja.FunctionCall, fn string) (json.RawMessage, error) {
-		v := call.Argument(1)
-		if goja.IsUndefined(v) {
-			return nil, nil
-		}
-		b, err := r.json(v)
-		if err != nil {
-			return nil, fmt.Errorf("archive.%s: input is not JSON: %v: %w", fn, err, httpErrBadRequest)
-		}
-		return b, nil
-	}
-	r.def(o, "test", func(ctx context.Context, call goja.FunctionCall) (any, error) {
-		s, err := r.str(call, 0, "test", "nameOrSource")
+	r.def(o, "run", func(ctx context.Context, call goja.FunctionCall) (any, error) {
+		name, err := r.str(call, 0, "run", "name")
 		if err != nil {
 			return nil, err
 		}
-		in, err := input(call, "test")
-		if err != nil {
-			return nil, err
-		}
-		src := s
-		if workflowNameRe.MatchString(workflowName(s)) && !strings.ContainsAny(s, " \n;(") {
-			w, err := a.workflow(ctx, s)
-			if err != nil {
-				return nil, err
+		var in json.RawMessage
+		if v := call.Argument(1); !goja.IsUndefined(v) {
+			if in, err = r.json(v); err != nil {
+				return nil, fmt.Errorf("archive.run: input is not JSON: %v: %w", err, httpErrBadRequest)
 			}
-			src = w.Source
-		} else if on, err := workflowTrigger(src); err != nil {
-			return &RunOutput{Result: json.RawMessage("null"), Logs: []string{}, Error: err.Error()}, nil
-		} else if _, err := a.workflowParse(ctx, on); err != nil {
-			return &RunOutput{Result: json.RawMessage("null"), Logs: []string{}, Error: err.Error()}, nil
-		}
-		return r.nested(ctx, src, in, false)
-	})
-	r.def(o, "start", func(ctx context.Context, call goja.FunctionCall) (any, error) {
-		name, err := r.str(call, 0, "start", "name")
-		if err != nil {
-			return nil, err
-		}
-		in, err := input(call, "start")
-		if err != nil {
-			return nil, err
 		}
 		w, err := a.workflow(ctx, name)
 		if err != nil {
 			return nil, err
 		}
 		start := time.Now()
-		out, err := r.nested(ctx, w.Source, in, true)
+		out, err := r.nested(ctx, w.Source, in)
 		if err != nil {
 			return nil, err
 		}
 		d, at := time.Since(start), r.at
-		storeAfter(ctx, func() { a.workflowRecord(context.WithoutCancel(ctx), w.ID, "start", at, out, d) })
+		storeAfter(ctx, func() { a.workflowRecord(context.WithoutCancel(ctx), w.ID, "run", at, out, d) })
 		return out, nil
-	})
-	r.def(o, "runs", func(ctx context.Context, call goja.FunctionCall) (any, error) {
-		name, err := r.str(call, 0, "runs", "name")
-		if err != nil {
-			return nil, err
-		}
-		var opts struct {
-			Limit int `json:"limit"`
-		}
-		if err := r.arg(call, 1, "runs", "opts", &opts); err != nil {
-			return nil, err
-		}
-		return a.WorkflowRuns(ctx, name, opts.Limit)
 	})
 }

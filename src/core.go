@@ -152,7 +152,11 @@ func (a *Archive) List(ctx context.Context, typ string, where map[string]any, li
 			q += " AND t." + pgIdent(k) + " = w." + pgIdent(k)
 		}
 		args = append(args, limit)
-		return storeRows(ctx, a.st, q+fmt.Sprintf(" ORDER BY t.id LIMIT $%d", len(args)), args...)
+		rs, err := storeRows(ctx, a.st, q+fmt.Sprintf(" ORDER BY t.id LIMIT $%d", len(args)), args...)
+		if tb.isWorkflow() {
+			a.workflowRows(rs...)
+		}
+		return rs, err
 	})
 }
 
@@ -161,7 +165,13 @@ func (a *Archive) Get(ctx context.Context, typ string, id uuid.UUID) (map[string
 	if err != nil {
 		return nil, err
 	}
-	return coreDo(a, ctx, func(ctx context.Context) (map[string]any, error) { return a.coreGet(ctx, tb, id) })
+	return coreDo(a, ctx, func(ctx context.Context) (map[string]any, error) {
+		row, err := a.coreGet(ctx, tb, id)
+		if tb.isWorkflow() {
+			a.workflowRows(row)
+		}
+		return row, err
+	})
 }
 
 func (a *Archive) coreGet(ctx context.Context, tb *Table, id uuid.UUID) (map[string]any, error) {
@@ -179,6 +189,9 @@ func (a *Archive) Create(ctx context.Context, typ string, data map[string]any) (
 	tb, err := a.catalog(ctx).writable(typ)
 	if err != nil {
 		return nil, err
+	}
+	if tb.isWorkflow() {
+		return a.workflowSave(ctx, tb, uuid.Nil, data, true)
 	}
 	return coreDo(a, ctx, func(ctx context.Context) (map[string]any, error) { return a.coreCreate(ctx, tb, data) })
 }
@@ -226,6 +239,9 @@ func (a *Archive) coreWrite(ctx context.Context, typ string, id uuid.UUID, data 
 	tb, err := a.catalog(ctx).writable(typ)
 	if err != nil {
 		return nil, err
+	}
+	if tb.isWorkflow() {
+		return a.workflowSave(ctx, tb, id, data, full)
 	}
 	return coreDo(a, ctx, func(ctx context.Context) (map[string]any, error) {
 		old, err := a.coreGet(ctx, tb, id)
@@ -349,6 +365,9 @@ func (a *Archive) Delete(ctx context.Context, typ string, id uuid.UUID) error {
 	tb, err := a.catalog(ctx).writable(typ)
 	if err != nil {
 		return err
+	}
+	if tb.isWorkflow() {
+		return a.workflowDelete(ctx, id)
 	}
 	return a.as(ctx, func(ctx context.Context) error {
 		if _, err := a.coreGet(ctx, tb, id); err != nil {

@@ -49,35 +49,6 @@ CREATE TABLE archive.chat (
 );
 CREATE INDEX chat_user_idx ON archive.chat (user_id, updated_at);
 
-CREATE TABLE archive.workflow (
-    id         uuid PRIMARY KEY DEFAULT uuidv7(),
-    user_id    uuid NOT NULL,
-    role       text NOT NULL,
-    name       text NOT NULL,
-    source     text NOT NULL,
-    trigger    text NOT NULL DEFAULT '',
-    hook       text NOT NULL UNIQUE,
-    next_at    timestamptz,
-    cursor_at  timestamptz,
-    cursor_id  uuid,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    UNIQUE (user_id, name)
-);
-CREATE INDEX workflow_next_idx ON archive.workflow (next_at) WHERE next_at IS NOT NULL;
-
-CREATE TABLE archive.workflow_run (
-    id         uuid PRIMARY KEY DEFAULT uuidv7(),
-    workflow   uuid NOT NULL REFERENCES archive.workflow ON DELETE CASCADE,
-    trigger    text NOT NULL,
-    result     jsonb NOT NULL DEFAULT 'null',
-    logs       jsonb NOT NULL DEFAULT '[]',
-    error      text NOT NULL DEFAULT '',
-    ms         integer NOT NULL DEFAULT 0,
-    created_at timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX workflow_run_idx ON archive.workflow_run (workflow, created_at);
-
 CREATE TABLE archive.revision (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     hash       text NOT NULL,
@@ -338,6 +309,78 @@ END $$;
 CREATE TRIGGER member_check BEFORE INSERT OR UPDATE ON archive.member FOR EACH ROW EXECUTE FUNCTION archive.member_check();
 CREATE TRIGGER member_roles AFTER INSERT OR UPDATE OR DELETE ON archive.member FOR EACH ROW EXECUTE FUNCTION archive.member_roles();
 
+-- A workflow is a row: a script Archive runs on its own, saved and changed with archive.create, update and
+-- delete like any other row, through a write hook in Go (workflow.go) that compiles source and checks on
+-- before anything is saved. Its owner reads and writes it: the member it belongs to and their tokens
+-- (archive.mine). role is who it runs as: whoever saved it last, set by workflow_saved, so a token never
+-- gains rights. trigger is on as Archive schedules it, hook its webhook secret, next_at when it is due, and
+-- cursor_at and cursor_id the last row of its table it has seen; Archive keeps them, and they survive an edit
+-- or a rename. member is null only on a workflow from before it had one, until Archive fills it in at open.
+CREATE TABLE archive.workflow (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    user_id    uuid NOT NULL,
+    role       text NOT NULL,
+    name       text NOT NULL,
+    source     text NOT NULL,
+    trigger    text NOT NULL DEFAULT '',
+    hook       text NOT NULL UNIQUE,
+    next_at    timestamptz,
+    cursor_at  timestamptz,
+    cursor_id  uuid,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    member     uuid REFERENCES archive.member ON DELETE CASCADE,
+    "on"       jsonb,
+    UNIQUE (user_id, name)
+);
+CREATE INDEX workflow_next_idx ON archive.workflow (next_at) WHERE next_at IS NOT NULL;
+COMMENT ON TABLE archive.workflow IS 'A script Archive runs on its own: on a schedule, when rows of a table are added or changed, when its webhook URL is called, or when run with archive.run. Each person sees and changes only their own
+icon: workflow';
+COMMENT ON COLUMN archive.workflow.name IS 'Letters, digits, - and _, like overdue-invoices; unique among yours';
+COMMENT ON COLUMN archive.workflow.source IS 'Its TypeScript, written like a run';
+COMMENT ON COLUMN archive.workflow."on" IS 'When it runs: { cron, tz? }, { table, events }, { webhook: true }, or null to run only with archive.run';
+COMMENT ON COLUMN archive.workflow.next_at IS 'When it runs next: a cron workflow''s next time, or now for a table workflow with rows waiting';
+
+-- A run of a workflow: what started it, what it returned, logged and threw, and how long it took. Archive
+-- writes them, keeping the last 100 of each workflow; everyone else only reads them, as the workflow's owner.
+CREATE TABLE archive.workflow_run (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    workflow   uuid NOT NULL REFERENCES archive.workflow ON DELETE CASCADE,
+    trigger    text NOT NULL,
+    result     jsonb NOT NULL DEFAULT 'null',
+    logs       jsonb NOT NULL DEFAULT '[]',
+    error      text NOT NULL DEFAULT '',
+    ms         integer NOT NULL DEFAULT 0,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX workflow_run_idx ON archive.workflow_run (workflow, created_at);
+COMMENT ON TABLE archive.workflow_run IS 'A run of one of your workflows, newest kept: the last 100 of each. Read only; Archive records them
+icon: list-checks';
+COMMENT ON COLUMN archive.workflow_run.trigger IS 'What started it: cron, table, webhook, or run (archive.run, or the Run button in the app; start in runs from before it was called run)';
+COMMENT ON COLUMN archive.workflow_run.result IS 'What it returned; null when it failed';
+COMMENT ON COLUMN archive.workflow_run.logs IS 'Its console lines';
+COMMENT ON COLUMN archive.workflow_run.error IS 'Why it failed; empty when it worked, and then everything it wrote was saved';
+COMMENT ON COLUMN archive.workflow_run.ms IS 'How long it took, in milliseconds';
+COMMENT ON COLUMN archive.workflow_run.created_at IS 'When it started';
+
+-- mine says whether the current role is the member m or one of their tokens, which are all in m's group role.
+CREATE FUNCTION archive.mine(m uuid) RETURNS bool LANGUAGE sql STABLE AS $$
+    SELECT EXISTS (SELECT FROM pg_catalog.pg_roles r WHERE r.rolname = '{p}_m' || translate(rtrim(encode(uuid_send(m), 'base64'), '='), '+/', '-_')
+        AND pg_has_role(current_user, r.oid, 'USAGE'))
+$$;
+
+-- workflow_saved makes a workflow run as whoever saved it last. Archive's own writes (scheduling, the cursor)
+-- run with no role set and leave it.
+CREATE FUNCTION archive.workflow_saved() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF current_setting('role') <> 'none' THEN
+        NEW.role := current_user;
+    END IF;
+    RETURN NEW;
+END $$;
+
+CREATE TRIGGER workflow_saved BEFORE INSERT OR UPDATE ON archive.workflow FOR EACH ROW EXECUTE FUNCTION archive.workflow_saved();
+
 -- moved says what a write moved to the session that wrote it, on a channel only that session listens on. A
 -- notification is sent only when its transaction commits and is dropped with a rolled-back savepoint, so Go
 -- hears exactly what committed (live.go). A public table names itself; an archive table its schema too and
@@ -397,6 +440,8 @@ GRANT SELECT ON archive.file, archive.member TO "{p}_viewer";
 GRANT INSERT, UPDATE, DELETE ON archive.file TO "{p}_editor";
 GRANT SELECT, INSERT, DELETE ON archive.secret TO "{p}_editor";
 GRANT INSERT, UPDATE, DELETE ON archive.member TO "{p}_owner";
+GRANT SELECT, INSERT, UPDATE, DELETE ON archive.workflow TO "{p}_viewer";
+GRANT SELECT ON archive.workflow_run TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT, UPDATE, DELETE ON TABLES TO "{p}_editor";
 
@@ -407,6 +452,12 @@ ALTER TABLE archive.secret ENABLE ROW LEVEL SECURITY;
 CREATE POLICY owner ON archive.secret FOR SELECT USING (pg_has_role(current_user, '{p}_owner', 'USAGE'));
 CREATE POLICY writer ON archive.secret FOR INSERT WITH CHECK (archive.can(access));
 CREATE POLICY owner_delete ON archive.secret FOR DELETE USING (pg_has_role(current_user, '{p}_owner', 'USAGE'));
+
+ALTER TABLE archive.workflow ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.workflow USING (archive.mine(member)) WITH CHECK (archive.mine(member));
+
+ALTER TABLE archive.workflow_run ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.workflow_run FOR SELECT USING (EXISTS (SELECT FROM archive.workflow w WHERE w.id = workflow_run.workflow));
 
 -- name: HasRole :one
 SELECT pg_has_role(sqlc.arg(member)::name, rolname, 'USAGE') FROM pg_catalog.pg_roles WHERE rolname = sqlc.arg(grp)::name;
@@ -657,7 +708,8 @@ SELECT jsonb_build_object(
             AND regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)')
             FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid), false),
         'columns', (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid)))
-        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid = 'archive.member'::regclass) AND c.relkind IN ('r', 'p', 'v')), '{}'),
+        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.member'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass)
+            AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
         'schema', t.typnamespace::regnamespace::text,
@@ -671,29 +723,39 @@ SELECT jsonb_build_object(
         WHERE t.typnamespace IN ('archive'::regnamespace, 'public'::regnamespace)
           AND (t.typtype IN ('d', 'e') OR t.typtype = 'c' AND r.relkind = 'c')), '{}'));
 
--- name: Workflows :many
-SELECT * FROM archive.workflow WHERE user_id = $1 ORDER BY name;
+-- name: WorkflowNames :many
+SELECT name FROM archive.workflow WHERE user_id = $1 ORDER BY name;
 
 -- name: WorkflowByName :one
 SELECT * FROM archive.workflow WHERE user_id = $1 AND name = $2;
 
+-- name: LockWorkflow :one
+SELECT * FROM archive.workflow WHERE id = $1 FOR UPDATE;
+
 -- name: WorkflowByHook :one
 SELECT * FROM archive.workflow WHERE hook = $1 AND trigger = 'webhook';
 
--- name: DeleteWorkflowsExcept :exec
-DELETE FROM archive.workflow WHERE user_id = $1 AND NOT (name = ANY (sqlc.arg(names)::text[]));
+-- name: InsertWorkflow :one
+INSERT INTO archive.workflow (user_id, member, role, name, source, "on", trigger, hook, next_at, cursor_at, cursor_id)
+VALUES (sqlc.arg(user_id), sqlc.arg(member), sqlc.arg(role), sqlc.arg(name), sqlc.arg(source), nullif(sqlc.arg(on_json)::jsonb, 'null'), sqlc.arg(trigger), sqlc.arg(hook),
+    sqlc.narg(next_at), sqlc.narg(cursor_at), sqlc.narg(cursor_id))
+RETURNING id;
 
--- name: DeleteWorkflow :exec
-DELETE FROM archive.workflow WHERE user_id = $1 AND name = $2;
+-- name: UpdateWorkflow :execrows
+UPDATE archive.workflow SET name = sqlc.arg(name), source = sqlc.arg(source), "on" = nullif(sqlc.arg(on_json)::jsonb, 'null'), trigger = sqlc.arg(trigger),
+    next_at = sqlc.narg(next_at), cursor_at = sqlc.narg(cursor_at), cursor_id = sqlc.narg(cursor_id), updated_at = now()
+WHERE id = sqlc.arg(id);
 
--- name: SaveWorkflow :one
-INSERT INTO archive.workflow (user_id, role, name, source, trigger, hook, next_at, cursor_at, cursor_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-ON CONFLICT (user_id, name) DO UPDATE SET role = EXCLUDED.role, source = EXCLUDED.source, trigger = EXCLUDED.trigger, next_at = EXCLUDED.next_at,
-    cursor_at = CASE WHEN archive.workflow.trigger = EXCLUDED.trigger THEN archive.workflow.cursor_at ELSE EXCLUDED.cursor_at END,
-    cursor_id = CASE WHEN archive.workflow.trigger = EXCLUDED.trigger THEN archive.workflow.cursor_id ELSE EXCLUDED.cursor_id END,
-    updated_at = now()
-RETURNING *;
+-- name: DeleteWorkflow :execrows
+DELETE FROM archive.workflow WHERE id = $1;
+
+-- Workflows from before they were rows: no member yet, or a trigger still in a // on: line of their source.
+-- name: OldWorkflows :many
+SELECT * FROM archive.workflow WHERE member IS NULL OR ("on" IS NULL AND trigger <> '');
+
+-- name: UpgradeWorkflow :exec
+UPDATE archive.workflow SET member = sqlc.narg(member), source = sqlc.arg(source), "on" = nullif(sqlc.arg(on_json)::jsonb, 'null'), trigger = sqlc.arg(trigger)
+WHERE id = sqlc.arg(id);
 
 -- name: ClaimWorkflow :one
 UPDATE archive.workflow SET next_at = sqlc.arg(lease)::timestamptz
@@ -716,13 +778,6 @@ RETURNING *;
 -- name: TrimWorkflowRuns :exec
 DELETE FROM archive.workflow_run d WHERE d.workflow = $1
     AND d.id NOT IN (SELECT r.id FROM archive.workflow_run r WHERE r.workflow = $1 ORDER BY r.created_at DESC, r.id DESC LIMIT 100);
-
--- name: WorkflowRuns :many
-SELECT * FROM archive.workflow_run WHERE workflow = $1 ORDER BY created_at DESC, id DESC LIMIT $2;
-
--- name: LastWorkflowRuns :many
-SELECT DISTINCT ON (r.workflow) r.* FROM archive.workflow_run r JOIN archive.workflow w ON w.id = r.workflow
-WHERE w.user_id = $1 ORDER BY r.workflow, r.created_at DESC, r.id DESC;
 
 -- name: WorkflowRunTimes :many
 SELECT created_at FROM archive.workflow_run WHERE workflow = $1 AND created_at >= sqlc.arg(since)::timestamptz;

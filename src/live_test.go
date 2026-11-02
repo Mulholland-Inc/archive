@@ -72,14 +72,25 @@ func TestLiveAnnouncesWhatCommittedAndNothingRolledBack(t *testing.T) {
 		t.Errorf("announces went to %v, want /live/announce with the key", auth)
 	}
 
-	// archive.test undoes what it wrote with a savepoint, and a run that throws rolls back: neither moved
-	// anything.
-	if st, out := e2eRun(t, api, tok, `return await archive.test("await archive.create('company', { name: 'Draft' }); return 1")`); st != 200 || out.Error != "" {
-		t.Fatalf("test: %d %v", st, out)
+	// Saving a workflow moves it, and archive.run records its run once the run commits. A workflow that fails
+	// undoes what it wrote with a savepoint, and a run that throws rolls back: neither moved anything.
+	if st, out := e2eRun(t, api, tok, `await archive.create("workflow", { name: "draft", source: "await archive.create('company', { name: 'Draft' }); throw new Error('no')" });
+return (await archive.run("draft")).error`); st != 200 || out.Error != "" || !strings.Contains(string(out.Result), "no") {
+		t.Fatalf("save and run a workflow: %d %v", st, out)
+	}
+	time.Sleep(3 * liveWindow)
+	if got := edge.tables(); slices.Contains(got, "company") || !slices.Contains(got, "archive.workflow") || !slices.Contains(got, "archive.workflow_run") {
+		t.Fatalf("a saved workflow and its failed run announced %v, want archive.workflow and archive.workflow_run but not company", got)
+	}
+	if st, out := e2eRun(t, api, tok, `const [w] = await archive.list("workflow"); await archive.update("workflow", w.id, { name: "renamed" }); return 1`); st != 200 || out.Error != "" {
+		t.Fatalf("rename a workflow: %d %v", st, out)
+	}
+	if got := edge.tables(); !slices.Contains(got, "archive.workflow") {
+		t.Errorf("a renamed workflow announced %v, want archive.workflow", got)
 	}
 	e2eRun(t, api, tok, `await archive.create("person", { name: "Ann" }); throw new Error("nope")`)
 	time.Sleep(3 * liveWindow)
-	if got := edge.tables(); slices.Contains(got, "company") || slices.Contains(got, "person") {
+	if got := edge.tables(); slices.Contains(got, "person") {
 		t.Fatalf("rolled-back writes announced %v", got)
 	}
 

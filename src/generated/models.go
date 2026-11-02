@@ -90,29 +90,45 @@ type ArchiveUser struct {
 	CreatedAt  time.Time
 }
 
+// A script Archive runs on its own: on a schedule, when rows of a table are added or changed, when its webhook URL is called, or when run with archive.run. Each person sees and changes only their own
+// icon: workflow
 type ArchiveWorkflow struct {
-	ID        uuid.UUID
-	UserID    uuid.UUID
-	Role      string
-	Name      string
-	Source    string
-	Trigger   string
-	Hook      string
+	ID     uuid.UUID
+	UserID uuid.UUID
+	Role   string
+	// Letters, digits, - and _, like overdue-invoices; unique among yours
+	Name string
+	// Its TypeScript, written like a run
+	Source  string
+	Trigger string
+	Hook    string
+	// When it runs next: a cron workflow's next time, or now for a table workflow with rows waiting
 	NextAt    *time.Time
 	CursorAt  *time.Time
 	CursorID  *uuid.UUID
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	Member    *uuid.UUID
+	// When it runs: { cron, tz? }, { table, events }, { webhook: true }, or null to run only with archive.run
+	On json.RawMessage
 }
 
+// A run of one of your workflows, newest kept: the last 100 of each. Read only; Archive records them
+// icon: list-checks
 type ArchiveWorkflowRun struct {
-	ID        uuid.UUID
-	Workflow  uuid.UUID
-	Trigger   string
-	Result    json.RawMessage
-	Logs      json.RawMessage
-	Error     string
-	Ms        int32
+	ID       uuid.UUID
+	Workflow uuid.UUID
+	// What started it: cron, table, webhook, or run (archive.run, or the Run button in the app; start in runs from before it was called run)
+	Trigger string
+	// What it returned; null when it failed
+	Result json.RawMessage
+	// Its console lines
+	Logs json.RawMessage
+	// Why it failed; empty when it worked, and then everything it wrote was saved
+	Error string
+	// How long it took, in milliseconds
+	Ms int32
+	// When it started
 	CreatedAt time.Time
 }
 

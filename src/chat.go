@@ -245,7 +245,7 @@ func (a *Archive) chat(w http.ResponseWriter, r *http.Request) {
 	fail := func(err error) { send(map[string]any{"type": "error", "error": err.Error()}) }
 	tools := []any{map[string]any{
 		"name":        "run",
-		"description": a.RunDocs(ctx),
+		"description": runDocs,
 		"input_schema": map[string]any{
 			"type":                 "object",
 			"properties":           chatRunProperties,
@@ -255,7 +255,7 @@ func (a *Archive) chat(w http.ResponseWriter, r *http.Request) {
 		"eager_input_streaming": true,
 		"cache_control":         map[string]string{"type": "ephemeral"},
 	}}
-	system := chatSystem(ac)
+	system := chatSystemBlocks(a.RunTypes(ctx), ac)
 	for runs := 0; ; {
 		msg, stop, err := chatTurn(ctx, key, tools, system, msgs, send)
 		if ctx.Err() != nil {
@@ -340,13 +340,26 @@ func chatCode(in any) (string, bool) {
 	return code, ok && strings.TrimSpace(code) != ""
 }
 
+// chatSystemBlocks is the system prompt: first the workspace's tables, which the SDK docs in the run tool end
+// with, as their own cache entry shared by everyone in the workspace; then, uncached, the date and who the
+// agent talks with. Ahead of both, the run tool's description is the same in every workspace (runDocs), so
+// with the conversation's own breakpoint a chat has three, all with the default lifetime.
+func chatSystemBlocks(types string, ac *Actor) []any {
+	return []any{
+		map[string]any{"type": "text", "text": "The tables of this archive, as TypeScript, which the SDK in the run tool's description reads and writes:\n\n" + types,
+			"cache_control": map[string]string{"type": "ephemeral"}},
+		map[string]any{"type": "text", "text": chatSystem(ac)},
+	}
+}
+
 func chatSystem(ac *Actor) string {
 	who := ac.Email
 	if ac.Name != "" {
 		who = ac.Name + " <" + ac.Email + ">"
 	}
 	s := "Today is " + time.Now().UTC().Format("Monday 2 January 2006") + ". You are the agent in Archive, talking with " + who + "."
-	return s + " The run tool is the only way to read or change their archive; give each call a description of what it does, in a few words, which they see while it runs. Run calls and their results are folded away in the chat, so the answer itself presents what they need, as a short markdown table when that helps."
+	return s + " The run tool is the only way to read or change their archive; give each call a description of what it does, in a few words, which they see while it runs. Run calls and their results are folded away in the chat, so the answer itself presents what they need, as a short markdown table when that helps." +
+		" A workflow is a row of the workflow table: save it with archive.create(\"workflow\", { name, source, on }), fix a refused save from its errors, try it with archive.run(name, input), read its result or the workflow_run table, and change it with archive.update."
 }
 
 // chatPartial is what has streamed so far of the string at key in the tool input s, which is still being written.
@@ -424,12 +437,12 @@ func chatPost(ctx context.Context, key string, body []byte) (*http.Response, err
 	}
 }
 
-func chatTurn(ctx context.Context, key string, tools []any, system string, msgs []chatMessage, send func(map[string]any)) (*chatMessage, string, error) {
+func chatTurn(ctx context.Context, key string, tools []any, system []any, msgs []chatMessage, send func(map[string]any)) (*chatMessage, string, error) {
 	b, err := json.Marshal(map[string]any{
 		"model":         chatModel,
 		"max_tokens":    chatMaxTokens,
 		"stream":        true,
-		"system":        []any{map[string]string{"type": "text", "text": system}},
+		"system":        system,
 		"tools":         tools,
 		"messages":      msgs,
 		"cache_control": map[string]string{"type": "ephemeral"},

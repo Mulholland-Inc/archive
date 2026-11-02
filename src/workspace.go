@@ -396,7 +396,7 @@ func (a *Archive) afterOpen(ctx context.Context) {
 	err := a.st.System(ctx, func(ctx context.Context) error {
 		return a.st.db(ctx).ResetProcessing(ctx)
 	})
-	err = errors.Join(err, a.syncMembers(ctx, false), a.liveTables(ctx))
+	err = errors.Join(err, a.syncMembers(ctx, false), a.liveTables(ctx), a.workflowUpgrade(ctx))
 	for _, kind := range []string{"workflow", "file"} {
 		next, nerr := a.nextDue(ctx, kind)
 		if nerr == nil && next != nil {

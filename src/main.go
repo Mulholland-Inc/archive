@@ -69,6 +69,11 @@ Usage:
   archive set <table> <id> [json]    set some columns; null clears a column
   archive update <table> <id> [json] replace the whole row
   archive delete <table> <id>
+                                     workflows are rows of the workflow table: archive create workflow
+                                     '{"name": "nightly", "source": "return 1", "on": {"cron": "0 9 * * *"}}'
+                                     saves one, or prints why not; set and delete change it, and
+                                     archive list workflow_run reads the runs. A script that archive
+                                     run runs calls one with archive.run(name, input)
   archive search <query> [-type t] [-from date] [-to date] [-limit n]
                                      find rows and files by their words
 
@@ -777,7 +782,6 @@ func httpHandler(a *Archive) http.Handler {
 	})
 
 	a.fileRoutes(mux)
-	a.workflowRoutes(mux)
 	handle("GET /api/search", func(r *http.Request) (int, any, error) {
 		q := r.URL.Query()
 		limit, _ := strconv.Atoi(q.Get("limit"))

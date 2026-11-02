@@ -3169,285 +3169,6 @@ func TestChatStreamsTheAgentLoopThroughRunAndKeepsEachUsersHistory(t *testing.T)
 	})
 }
 
-func TestWorkflowsDeployTestStartAndFireOnTheirOwn(t *testing.T) {
-	t.Parallel()
-	echo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/plain" {
-			io.WriteString(w, "hello")
-			return
-		}
-		b, _ := io.ReadAll(r.Body)
-		w.Header().Set("X-Reply", "done")
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]any{"method": r.Method, "body": string(b), "type": r.Header.Get("Content-Type"), "test": r.Header.Get("X-Test"), "x": r.URL.Query().Get("x")})
-	}))
-	defer echo.Close()
-	in := newInst(t)
-	in.must("user", "add", "alice@example.com")
-	in.push(map[string]string{"house.sql": e2eHouse})
-	srv := in.serve()
-	api := srv.url + "/api"
-	in.must("user", "add", "bob@example.com")
-	tok := decode[Token](t, in.must("token", "create")).Secret
-	bobTok := decode[Token](t, in.must("-as", "bob@example.com", "token", "create")).Secret
-	run := func(t *testing.T, tok, code string) map[string]any {
-		t.Helper()
-		var out RunOutput
-		st, _ := call(t, "POST", api+"/run", tok, map[string]string{"code": code}, &out)
-		wantStatus(t, st, 200, "run")
-		if out.Error != "" {
-			t.Fatalf("run: %s\nlogs: %v", out.Error, out.Logs)
-		}
-		return decode[map[string]any](t, "{\"v\":"+string(out.Result)+"}")
-	}
-	js := func(v any) string { b, _ := json.Marshal(v); return string(b) }
-	runs := func(t *testing.T, name string) []WorkflowRun {
-		t.Helper()
-		var rs []WorkflowRun
-		st, _ := call(t, "GET", api+"/workflows/"+name+"/runs?limit=100", tok, nil, &rs)
-		wantStatus(t, st, 200, "runs")
-		return rs
-	}
-	waitRuns := func(t *testing.T, name string, n int) []WorkflowRun {
-		t.Helper()
-		for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
-			if rs := runs(t, name); len(rs) >= n {
-				return rs
-			}
-		}
-		t.Fatalf("%s did not run %d times: %v", name, n, runs(t, name))
-		return nil
-	}
-	base := map[string]string{
-		"hook.ts":    "// on: webhook\nreturn { got: input.body, method: input.method, x: input.query.x ?? null, type: input.headers['content-type'] ?? null };",
-		"nightly.ts": "// on: cron CRON_TZ=America/New_York 0 9 * * 1-5\nreturn 1;",
-		"manual.ts":  "await archive.create('house', { address: input?.address ?? 'Manual 1' });\nconsole.log('made', input?.address);\nreturn 'made';",
-		"boom.ts":    "// on: webhook\nthrow new Error('bad input: ' + JSON.stringify(input.body));",
-	}
-	var hookURL string
-
-	t.Run("DeployReturnsEveryErrorAndSavesNothingThenSavesAndKeepsWebhookURLs", func(t *testing.T) {
-		got := run(t, tok, `const bad = await archive.deploy({
-  "broken.ts": "const x = ;",
-  "late.ts": "// on: cron 0 9 * *",
-  "where.ts": "// on: shed\nreturn 1",
-  "Bad Name.ts": "return 1",
-  "second.ts": "return 1\n// on: webhook",
-  "fine.ts": "return 1",
-});
-return { bad, after: await archive.workflows() };`)["v"].(map[string]any)
-		bad := got["bad"].(map[string]any)
-		errs := map[string]string{}
-		for _, e := range bad["errors"].([]any) {
-			m := e.(map[string]any)
-			errs[fmt.Sprint(m["file"])] = fmt.Sprint(m["message"])
-		}
-		for file, want := range map[string]string{"broken.ts": "compile error: line 1:11", "late.ts": "expected exactly 5 fields", "where.ts": "the tables are house",
-			"Bad Name.ts": "ending in .ts", "second.ts": "line 2: the // on: line must be the very first line"} {
-			if !strings.Contains(errs[file], want) {
-				t.Errorf("%s: %q, want %q", file, errs[file], want)
-			}
-		}
-		if bad["deployed"] != false || len(errs) != 5 || fmt.Sprint(got["after"]) != "map[]" {
-			t.Errorf("a bad deploy: %v", got)
-		}
-		done := run(t, tok, `return await archive.deploy(`+js(with(base, "temp.ts", "return 2"))+`);`)["v"].(map[string]any)
-		ws := map[string]map[string]any{}
-		for _, w := range done["workflows"].([]any) {
-			ws[fmt.Sprint(w.(map[string]any)["name"])] = w.(map[string]any)
-		}
-		hookURL = fmt.Sprint(ws["hook.ts"]["url"])
-		if done["deployed"] != true || len(ws) != 5 || !strings.Contains(hookURL, srv.url[strings.LastIndex(srv.url, ":"):]+"/hooks/run/") || len(hookURL) < 40 {
-			t.Fatalf("deploy: %v", done)
-		}
-		if ws["nightly.ts"]["next"] == nil || ws["nightly.ts"]["on"] != "cron CRON_TZ=America/New_York 0 9 * * 1-5" || ws["manual.ts"]["on"] != "" || ws["manual.ts"]["url"] != nil || ws["manual.ts"]["next"] != nil {
-			t.Errorf("deployed workflows: %v", ws)
-		}
-		again := run(t, tok, `const files = await archive.workflows();
-delete files["temp.ts"];
-const done = await archive.deploy(files);
-return { names: Object.keys(await archive.workflows()).join(","), url: done.workflows.find((w) => w.name === "hook.ts").url };`)["v"].(map[string]any)
-		if again["names"] != "boom.ts,hook.ts,manual.ts,nightly.ts" || again["url"] != hookURL {
-			t.Errorf("redeploy without temp.ts: %v, want the same url %s", again, hookURL)
-		}
-	})
-
-	t.Run("TestRollsBackItsWritesAndReturnsLogsResultsAndErrors", func(t *testing.T) {
-		got := run(t, tok, `const saved = await archive.test("manual", { address: "Test 1" });
-const draft = await archive.test("console.log('hi', { n: 1 }); await archive.create('house', { address: 'Draft 1' }); return input.n * 2;", { n: 21 });
-const broken = await archive.test("const = 1");
-const thrown = await archive.test("await archive.create('house', { address: 'Thrown 1' }); throw new Error('nope')");
-const badOn = await archive.test("// on: cron every day\nreturn 1");
-const missing = await archive.test("nosuch").then(() => "", (e) => e.code + ": " + e.message);
-const [{ n }] = await archive.query("SELECT count(*)::int AS n FROM house WHERE address IN ('Test 1', 'Draft 1', 'Thrown 1')");
-return { saved, draft, broken, thrown, badOn, missing, n };`)["v"].(map[string]any)
-		want := map[string]string{
-			"saved":   "map[error: logs:[made Test 1] result:made]",
-			"draft":   "map[error: logs:[hi {\"n\":1}] result:42]",
-			"missing": "not_found: workflow nosuch.ts not found; yours are boom.ts, hook.ts, manual.ts, nightly.ts",
-			"n":       "0",
-		}
-		for k, v := range want {
-			if fmt.Sprint(got[k]) != v {
-				t.Errorf("%s = %v, want %s", k, got[k], v)
-			}
-		}
-		for k, v := range map[string]string{"broken": "compile error: line 1:7", "thrown": "nope", "badOn": "on: cron every day"} {
-			if e := fmt.Sprint(got[k].(map[string]any)["error"]); !strings.Contains(e, v) {
-				t.Errorf("%s error %q, want %q", k, e, v)
-			}
-		}
-		if rs := runs(t, "manual"); len(rs) != 0 {
-			t.Errorf("test recorded runs: %v", rs)
-		}
-	})
-
-	t.Run("StartRunsForRealAndRecordsTheRun", func(t *testing.T) {
-		got := run(t, tok, `const out = await archive.start("manual.ts", { address: "Started 1" });
-const failed = await archive.start("boom", { body: { x: 1 } });
-return { out, failed: failed.error };`)["v"].(map[string]any)
-		if fmt.Sprint(got["out"]) != "map[error: logs:[made Started 1] result:made]" || got["failed"] != "bad input: {\"x\":1}\n  at: throw new Error(\"bad input: \" + JSON.stringify(input.body));" {
-			t.Errorf("start: %v", got)
-		}
-		later := run(t, tok, `return { runs: await archive.runs("manual"), n: (await archive.list("house", { where: { address: "Started 1" } })).length, boom: (await archive.runs("boom")).map((r) => r.trigger + ":" + r.error.split("\n")[0]) };`)["v"].(map[string]any)
-		rs := later["runs"].([]any)
-		if len(rs) != 1 || later["n"] != json.Number("1") || fmt.Sprint(later["boom"]) != `[start:bad input: {"x":1}]` {
-			t.Fatalf("after start: %v", later)
-		}
-		r := rs[0].(map[string]any)
-		if r["trigger"] != "start" || r["result"] != "made" || r["error"] != "" || fmt.Sprint(r["logs"]) != "[made Started 1]" || r["at"] == nil || r["ms"] == nil {
-			t.Errorf("recorded run: %v", r)
-		}
-	})
-
-	t.Run("FetchCallsOtherServicesSynchronously", func(t *testing.T) {
-		got := run(t, tok, `const res = await fetch(`+js(echo.URL+"/echo?x=1")+`, { method: "POST", headers: { "X-Test": "yes" }, body: { a: 1 } });
-const sent = await res.json();
-const text = await (await fetch(`+js(echo.URL+"/plain")+`)).text();
-const notJSON = await (await fetch(`+js(echo.URL+"/plain")+`)).json().then(() => "", (e) => e.message);
-const down = await fetch("http://127.0.0.1:1/").then(() => "", (e) => e.message);
-const metadata = await fetch("http://169.254.169.254/computeMetadata/v1/", { headers: { "Metadata-Flavor": "Google" } }).then(() => "", (e) => e.message);
-return { ok: res.ok, status: res.status, statusText: res.statusText, reply: res.headers.get("X-Reply"), raw: res.headers["x-reply"], sent, text, notJSON, down, metadata };`)["v"].(map[string]any)
-		want := map[string]string{"ok": "true", "status": "201", "statusText": "Created", "reply": "done", "raw": "done", "text": "hello",
-			"sent": `map[body:{"a":1} method:POST test:yes type:application/json x:1]`}
-		for k, v := range want {
-			if fmt.Sprint(got[k]) != v {
-				t.Errorf("%s = %v, want %s", k, got[k], v)
-			}
-		}
-		if !strings.Contains(fmt.Sprint(got["notJSON"]), `is not JSON: "hello"`) || !strings.Contains(fmt.Sprint(got["down"]), "connection refused") {
-			t.Errorf("fetch errors: %v", got)
-		}
-		if !strings.Contains(fmt.Sprint(got["metadata"]), "169.254.169.254 is an internal address, which scripts cannot reach") {
-			t.Errorf("fetch reached the cloud metadata address: %v", got["metadata"])
-		}
-	})
-
-	t.Run("CronAndTableWorkflowsFireOnTheirOwnAndIgnoreTheirOwnWrites", func(t *testing.T) {
-		files := with(base, "tick.ts", "// on: cron @every 1s\nreturn 'tick';",
-			"sold.ts", "// on: house\nfor (const r of input.rows) await archive.update('house', r.id, { sold: true });\nreturn input.rows.map((r) => r.address).join(',');")
-		done := run(t, tok, `const d = await archive.deploy(`+js(files)+`); return d.workflows.find((w) => w.name === "hook.ts").url;`)["v"]
-		if done != hookURL {
-			t.Errorf("redeploy changed the webhook url: %v, want %s", done, hookURL)
-		}
-		if rs := waitRuns(t, "tick", 2); rs[0].Trigger != "cron" || string(rs[0].Result) != `"tick"` || rs[0].Error != "" || !rs[0].At.After(rs[1].At) {
-			t.Errorf("cron runs: %+v", rs)
-		}
-		run(t, tok, `await archive.create("house", { address: "Canal 1" }); await archive.create("house", { address: "Canal 2" }); return 0;`)
-		rs := waitRuns(t, "sold", 1)
-		if rs[0].Trigger != "table" || string(rs[0].Result) != `"Canal 1,Canal 2"` || rs[0].Error != "" {
-			t.Fatalf("table run: %+v", rs)
-		}
-		if sold := run(t, tok, `return (await archive.list("house")).filter((h) => h.sold).map((h) => h.address).join(",");`)["v"]; sold != "Canal 1,Canal 2" {
-			t.Errorf("sold houses: %v", sold)
-		}
-		time.Sleep(3 * time.Second)
-		if rs := runs(t, "sold"); len(rs) != 1 {
-			t.Fatalf("the workflow's own updates triggered it again: %+v", rs)
-		}
-		run(t, tok, `const [h] = await archive.list("house", { where: { address: "Canal 2" } }); await archive.update("house", h.id, { sold: false }); return 0;`)
-		if rs := waitRuns(t, "sold", 2); string(rs[0].Result) != `"Canal 2"` {
-			t.Errorf("an update by someone else: %+v", rs)
-		}
-		run(t, tok, `await archive.deploy(`+js(with(files, "tick.ts", "", "sold.ts", ""))+`); return 0;`)
-	})
-
-	t.Run("WebhookPostRunsTheWorkflowAndReturnsItsResult", func(t *testing.T) {
-		post := func(url, ctype, body string) (int, string) {
-			resp, err := http.Post(url, ctype, strings.NewReader(body))
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer resp.Body.Close()
-			b, _ := io.ReadAll(resp.Body)
-			return resp.StatusCode, strings.TrimSpace(string(b))
-		}
-		if st, body := post(hookURL+"?x=7", "application/json", `{"a": 1}`); st != 200 || body != `{"got":{"a":1},"method":"POST","x":"7","type":"application/json"}` {
-			t.Errorf("json webhook: %d %s", st, body)
-		}
-		if st, body := post(hookURL, "text/plain", "just text"); st != 200 || body != `{"got":"just text","method":"POST","x":null,"type":"text/plain"}` {
-			t.Errorf("text webhook: %d %s", st, body)
-		}
-		boom := run(t, tok, `return (await archive.deploy(await archive.workflows())).workflows.find((w) => w.name === "boom.ts").url;`)["v"].(string)
-		if st, body := post(boom, "application/json", `[1]`); st != 500 || !strings.Contains(body, `"error":"bad input: [1]`) {
-			t.Errorf("failing webhook: %d %s", st, body)
-		}
-		if st, _ := post(srv.url+"/hooks/run/"+strings.Repeat("x", 32), "application/json", "{}"); st != 404 {
-			t.Errorf("unknown webhook token: %d", st)
-		}
-		if resp, err := http.Get(hookURL); err != nil || resp.StatusCode != 405 {
-			t.Errorf("GET on a webhook: %v %v", resp, err)
-		}
-		if rs := runs(t, "hook"); len(rs) != 2 || rs[0].Trigger != "webhook" || rs[1].Error != "" {
-			t.Errorf("webhook runs: %+v", rs)
-		}
-	})
-
-	t.Run("APIListsRunsAndRunsWorkflowsAndShowsOnlyYours", func(t *testing.T) {
-		var rec WorkflowRun
-		st, _ := call(t, "POST", api+"/workflows/manual/run", tok, nil, &rec)
-		if wantStatus(t, st, 200, "run"); rec.Trigger != "run" || string(rec.Result) != `"made"` || rec.Error != "" {
-			t.Errorf("run from the API: %+v", rec)
-		}
-		var ws []Workflow
-		st, _ = call(t, "GET", api+"/workflows", tok, nil, &ws)
-		wantStatus(t, st, 200, "workflows")
-		got := map[string]Workflow{}
-		for _, w := range ws {
-			got[w.Name] = w
-		}
-		if len(ws) != 4 || got["hook.ts"].URL != hookURL || got["nightly.ts"].Next == nil || got["manual.ts"].Last == nil || got["manual.ts"].Last.Trigger != "run" ||
-			got["boom.ts"].Last == nil || got["boom.ts"].Last.Error == "" || got["nightly.ts"].Last != nil {
-			t.Errorf("workflows: %+v", ws)
-		}
-		if rs := runs(t, "manual.ts"); len(rs) != 2 || rs[0].ID != rec.ID {
-			t.Errorf("runs: %+v", rs)
-		}
-		st, _ = call(t, "GET", api+"/workflows", bobTok, nil, &ws)
-		if wantStatus(t, st, 200, "bob's workflows"); len(ws) != 0 {
-			t.Errorf("bob sees alice's workflows: %+v", ws)
-		}
-		for _, c := range [][2]string{{"GET", "/workflows/manual/runs"}, {"POST", "/workflows/manual/run"}, {"DELETE", "/workflows/manual"}} {
-			st, _ = call(t, c[0], api+c[1], bobTok, nil, nil)
-			wantStatus(t, st, 404, "bob "+c[0]+" "+c[1])
-		}
-		bob := run(t, bobTok, `return { files: await archive.workflows(), test: await archive.test("manual").then(() => "", (e) => e.message), runs: await archive.runs("manual").then(() => "", (e) => e.code) };`)["v"]
-		if fmt.Sprint(bob) != "map[files:map[] runs:not_found test:workflow manual.ts not found; you have none yet, save one with archive.deploy]" {
-			t.Errorf("bob's SDK: %v", bob)
-		}
-		st, _ = call(t, "GET", api+"/workflows", "", nil, nil)
-		wantStatus(t, st, 401, "workflows without a token")
-		st, _ = call(t, "DELETE", api+"/workflows/manual", tok, nil, nil)
-		wantStatus(t, st, 204, "delete")
-		st, _ = call(t, "GET", api+"/workflows", tok, nil, &ws)
-		if wantStatus(t, st, 200, "workflows after delete"); len(ws) != 3 {
-			t.Errorf("after delete: %+v", ws)
-		}
-		st, _ = call(t, "DELETE", api+"/workflows/manual", tok, nil, nil)
-		wantStatus(t, st, 404, "delete again")
-	})
-}
-
 func (in *e2eInst) psqlIn(db, sql string) string {
 	in.t.Helper()
 	out, err := exec.Command("psql", "-X", "-h", in.dir, "-U", "archive", "-d", db, "-Atc", sql).CombinedOutput()
@@ -3668,7 +3389,7 @@ func TestTwoWorkspacesInOneProcessSeeNothingOfEachOther(t *testing.T) {
 	})
 
 	t.Run("WorkflowsWebhooksAndDueWork", func(t *testing.T) {
-		st, out := e2eRun(t, api, alice, `return (await archive.deploy({ "hook.ts": "// on: webhook\nreturn 'alpha';" })).workflows[0].url;`)
+		st, out := e2eRun(t, api, alice, `return (await archive.create("workflow", { name: "hook", source: "return 'alpha';", on: { webhook: true } })).url;`)
 		var hookURL string
 		json.Unmarshal(out.Result, &hookURL)
 		if st != 200 || !strings.Contains(hookURL, "/hooks/run/"+one+"/") {
@@ -3686,12 +3407,11 @@ func TestTwoWorkspacesInOneProcessSeeNothingOfEachOther(t *testing.T) {
 		st, _ = call(t, "POST", srv.url+"/hooks/run/nosuch/"+token, "", nil, nil)
 		wantStatus(t, st, 404, "a webhook in no workspace")
 
-		st, out = e2eRun(t, api, bob, `return (await archive.deploy({
-  "tick.ts": "// on: cron @every 1s\nawait archive.create('note', { title: 'tick' });",
-  "seen.ts": "// on: company\nfor (const r of input.rows) await archive.create('note', { title: 'saw ' + r.name });",
-})).deployed;`)
+		st, out = e2eRun(t, api, bob, `await archive.create("workflow", { name: "tick", source: "await archive.create('note', { title: 'tick' });", on: { cron: "@every 1s" } });
+await archive.create("workflow", { name: "seen", source: "for (const r of input.created) await archive.create('note', { title: 'saw ' + r.name });", on: { table: "company", events: ["created"] } });
+return true;`)
 		if st != 200 || string(out.Result) != "true" {
-			t.Fatalf("bob's deploy: %d %+v", st, out)
+			t.Fatalf("bob's workflows: %d %+v", st, out)
 		}
 		if n := in.psql("archive", "SELECT count(*) FROM archive.due d JOIN archive.workspace w ON w.id = d.workspace WHERE w.id::text = '"+ws+"' AND d.kind = 'workflow'"); n != "1" {
 			t.Errorf("%s due rows for bob's workflows", n)
@@ -3702,9 +3422,9 @@ func TestTwoWorkspacesInOneProcessSeeNothingOfEachOther(t *testing.T) {
 			call(t, "GET", api+"/note?limit=1000", bob, nil, &ns)
 			return strings.Contains(names2(ns, "title"), "tick") && strings.Contains(names2(ns, "title"), "saw Gamma")
 		})
-		var ws1 []Workflow
-		call(t, "GET", api+"/workflows", alice, nil, &ws1)
-		if len(ws1) != 1 || ws1[0].Name != "hook.ts" {
+		var ws1 []row
+		call(t, "GET", api+"/workflow", alice, nil, &ws1)
+		if len(ws1) != 1 || ws1[0]["name"] != "hook" {
 			t.Errorf("alice's workflows: %+v", ws1)
 		}
 		if n := in.psql("archive", "SELECT count(*) FROM archive.workflow_run"); n != "1" {
@@ -3884,8 +3604,8 @@ func TestWorkspacesIsolateWhenArchiveIsNotASuperuser(t *testing.T) {
 	})
 	t.Run("WorkflowsWriteAsTheirOwner", func(t *testing.T) {
 		in := in.on(t)
-		s, _, _ := in.run(`await archive.deploy({ "add.ts": "await archive.create('ledger', { codename: 'Flowed' });" });
-await archive.start("add.ts");
+		s, _, _ := in.run(`await archive.create("workflow", { name: "add", source: "await archive.create('ledger', { codename: 'Flowed' });" });
+await archive.run("add");
 return (await archive.list("ledger")).map((r) => r.codename).join(",");`, "run", "-")
 		out := decode[RunOutput](t, s)
 		if out.Error != "" || !strings.Contains(string(out.Result), "Flowed") {
@@ -4183,7 +3903,7 @@ func TestGeneratedURLsUseTheAPIAddress(t *testing.T) {
 	api := srv.url + "/api"
 	one := in.psql("archive", "SELECT id FROM archive.workspace ORDER BY created_at LIMIT 1")
 	tok := decode[Token](t, in.must("token", "create")).Secret
-	_, out := e2eRun(t, api, tok, `return (await archive.deploy({ "hook.ts": "// on: webhook\nreturn 1;" })).workflows[0].url;`)
+	_, out := e2eRun(t, api, tok, `return (await archive.create("workflow", { name: "hook", source: "return 1;", on: { webhook: true } })).url;`)
 	if !strings.HasPrefix(string(out.Result), `"http://api.test/hooks/run/`+one+`/`) {
 		t.Errorf("webhook URL: %+v", out)
 	}
@@ -4308,22 +4028,7 @@ func TestCloudTasksWakeTheServiceAtEachDueTimeAndNothingRunsOnItsOwn(t *testing.
 		return posted[len(posted)-1]
 	}
 	count := func() int { return len(fake.tasks()) }
-	deploy := func(t *testing.T, files map[string]string) map[string]any {
-		t.Helper()
-		b, _ := json.Marshal(files)
-		st, out := e2eRun(t, api, tok, `const d = await archive.deploy(`+string(b)+`); return Object.fromEntries(d.workflows.map((w) => [w.name, w.next ?? null]));`)
-		if st != 200 || out.Error != "" {
-			t.Fatalf("deploy: %d %+v", st, out)
-		}
-		return decode[map[string]any](t, string(out.Result))
-	}
-	runs := func(t *testing.T, name string) []WorkflowRun {
-		t.Helper()
-		var rs []WorkflowRun
-		st, _ := call(t, "GET", api+"/workflows/"+name+"/runs", tok, nil, &rs)
-		wantStatus(t, st, 200, "runs")
-		return rs
-	}
+	runs := func(t *testing.T, name string) []WorkflowRun { return e2eWorkflowRuns(t, api, tok, name) }
 	idToken := func(t *testing.T, iss *httptest.Server, claims map[string]any) string {
 		t.Helper()
 		code, _ := json.Marshal(claims)
@@ -4357,8 +4062,8 @@ func TestCloudTasksWakeTheServiceAtEachDueTimeAndNothingRunsOnItsOwn(t *testing.
 	}
 	work := map[string]string{"workspace": one, "work": "workflows"}
 
-	next := deploy(t, map[string]string{"tick.ts": "// on: cron 0 9 * * *\nreturn 'tick';"})
-	want, _ := time.Parse(time.RFC3339Nano, fmt.Sprint(next["tick.ts"]))
+	tick := e2eSave(t, api, tok, "tick", "return 'tick';", map[string]any{"cron": "0 9 * * *"})
+	want, _ := time.Parse(time.RFC3339Nano, fmt.Sprint(tick["next_at"]))
 	tk := last(t)
 	hr := tk.HTTPRequest
 	var body map[string]string
@@ -4370,8 +4075,7 @@ func TestCloudTasksWakeTheServiceAtEachDueTimeAndNothingRunsOnItsOwn(t *testing.
 	}
 	aud = hr.URL
 
-	deploy(t, map[string]string{"tick.ts": "// on: cron 0 9 * * *\nreturn 'tick';",
-		"sold.ts": "// on: house\nfor (const r of input.rows) await archive.update('house', r.id, { sold: true });\nreturn input.rows.map((r) => r.address).join(',');"})
+	e2eSave(t, api, tok, "sold", "const rows = [...input.created, ...input.updated];\nfor (const r of rows) await archive.update('house', r.id, { sold: true });\nreturn rows.map((r) => r.address).join(',');", map[string]any{"table": "house"})
 	if tk := last(t); time.Until(tk.ScheduleTime) > time.Second {
 		t.Errorf("a table workflow's first task is at %s, want now", tk.ScheduleTime)
 	}

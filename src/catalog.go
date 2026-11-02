@@ -35,6 +35,7 @@ type Table struct {
 	Policy      bool      `json:"policy"`
 	Columns     []*Column `json:"columns"`
 	meta        [][2]string
+	internal    []string
 }
 
 type Column struct {
@@ -77,6 +78,9 @@ type Candidate struct {
 type FieldError struct {
 	Path    string `json:"path"`
 	Message string `json:"message"`
+	// Line and Column place a compile error in a workflow's source.
+	Line   int `json:"line,omitempty"`
+	Column int `json:"column,omitempty"`
 }
 
 type ValidationError struct {
@@ -127,9 +131,29 @@ func catalogParse(b []byte) (*Catalog, error) {
 		if t.Kind == "view" && t.Layout == "" {
 			t.Layout = "table"
 		}
+		if t.isWorkflow() {
+			catalogWorkflow(t)
+		}
 	}
 	return c, nil
 }
+
+// catalogWorkflow shows archive.workflow as a person writes it: name, source and on, with its next time and
+// webhook URL to read. What Archive keeps of it (who it runs as, its trigger and cursor) stays out of list and
+// get, and its webhook secret becomes its URL (workflowRows).
+func catalogWorkflow(t *Table) {
+	internal := []string{"user_id", "member", "role", "trigger", "hook", "cursor_at", "cursor_id"}
+	t.Columns = slices.DeleteFunc(t.Columns, func(c *Column) bool { return slices.Contains(internal, c.Name) })
+	t.internal = slices.DeleteFunc(internal, func(n string) bool { return n == "hook" })
+	if c := t.col("next_at"); c != nil {
+		c.Generated = true
+	}
+	t.Columns = append(t.Columns, &Column{Name: "url", Type: "text", Schema: "pg_catalog", Reg: "text", Generated: true,
+		Description: "Its webhook URL, when on is { webhook: true }: anyone with it can POST to it, so give it only to the service that calls it"})
+}
+
+// isWorkflow says whether t is archive.workflow, whose writes go through its write hook (workflow.go).
+func (t *Table) isWorkflow() bool { return t.Schema == "archive" && t.Name == "workflow" }
 
 var catalogMetaRe = regexp.MustCompile(`^([a-z][a-z0-9_]*):[ \t]*(\S.*?)\s*$`)
 
@@ -165,7 +189,8 @@ var catalogLayouts = []string{"table", "board", "calendar"}
 var (
 	catalogSystem   = map[string]bool{"id": true, "created_at": true, "updated_at": true}
 	catalogReserved = map[string]bool{"files": true, "views": true, "search": true, "schema": true, "types": true,
-		"member": true, "user": true, "token": true, "file": true, "upload": true, "secret": true, "revision": true, "run": true}
+		"member": true, "user": true, "token": true, "file": true, "upload": true, "secret": true, "revision": true, "run": true,
+		"workflow": true, "workflow_run": true}
 	catalogNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 	catalogRefRe  = regexp.MustCompile(`(?i)^references\s+([a-z][a-z0-9_]*)\b[\s.;:,-]*`)
 )
@@ -182,6 +207,9 @@ func (c *Catalog) writable(name string) (*Table, error) {
 	t, err := c.table(name)
 	if err == nil && t.Kind == "view" {
 		return nil, fmt.Errorf("%s is a view, and views are read only; write to the tables it selects from: %w", name, ErrReadOnly)
+	}
+	if err == nil && t.Schema == "archive" && t.Name == "workflow_run" {
+		return nil, fmt.Errorf("workflow_run is read only: Archive records a run each time a workflow runs: %w", ErrReadOnly)
 	}
 	return t, err
 }
@@ -214,7 +242,7 @@ func (c *Column) target() string {
 }
 
 func (t *Table) hidden() string {
-	var out []string
+	out := slices.Clone(t.internal)
 	for _, c := range t.Columns {
 		if c.Type == "tsvector" {
 			out = append(out, c.Name)

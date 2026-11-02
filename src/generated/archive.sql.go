@@ -262,7 +262,8 @@ SELECT jsonb_build_object(
             AND regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)')
             FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid), false),
         'columns', (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid)))
-        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid = 'archive.member'::regclass) AND c.relkind IN ('r', 'p', 'v')), '{}'),
+        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.member'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass)
+            AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
         'schema', t.typnamespace::regnamespace::text,
@@ -354,7 +355,7 @@ func (q *Queries) ClaimDueFor(ctx context.Context, lease time.Time, iD uuid.UUID
 const claimWorkflow = `-- name: ClaimWorkflow :one
 UPDATE archive.workflow SET next_at = $1::timestamptz
 WHERE id = (SELECT w.id FROM archive.workflow w WHERE w.next_at <= now() ORDER BY w.next_at LIMIT 1 FOR UPDATE SKIP LOCKED)
-RETURNING id, user_id, role, name, source, trigger, hook, next_at, cursor_at, cursor_id, created_at, updated_at
+RETURNING id, user_id, role, name, source, trigger, hook, next_at, cursor_at, cursor_id, created_at, updated_at, member, "on"
 `
 
 func (q *Queries) ClaimWorkflow(ctx context.Context, lease time.Time) (ArchiveWorkflow, error) {
@@ -373,6 +374,8 @@ func (q *Queries) ClaimWorkflow(ctx context.Context, lease time.Time) (ArchiveWo
 		&i.CursorID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Member,
+		&i.On,
 	)
 	return i, err
 }
@@ -657,22 +660,16 @@ func (q *Queries) DeleteUpload(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
-const deleteWorkflow = `-- name: DeleteWorkflow :exec
-DELETE FROM archive.workflow WHERE user_id = $1 AND name = $2
+const deleteWorkflow = `-- name: DeleteWorkflow :execrows
+DELETE FROM archive.workflow WHERE id = $1
 `
 
-func (q *Queries) DeleteWorkflow(ctx context.Context, userID uuid.UUID, name string) error {
-	_, err := q.db.Exec(ctx, deleteWorkflow, userID, name)
-	return err
-}
-
-const deleteWorkflowsExcept = `-- name: DeleteWorkflowsExcept :exec
-DELETE FROM archive.workflow WHERE user_id = $1 AND NOT (name = ANY ($2::text[]))
-`
-
-func (q *Queries) DeleteWorkflowsExcept(ctx context.Context, userID uuid.UUID, names []string) error {
-	_, err := q.db.Exec(ctx, deleteWorkflowsExcept, userID, names)
-	return err
+func (q *Queries) DeleteWorkflow(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteWorkflow, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteWorkspace = `-- name: DeleteWorkspace :exec
@@ -1070,6 +1067,46 @@ func (q *Queries) InsertRevision(ctx context.Context, hash string) error {
 	return err
 }
 
+const insertWorkflow = `-- name: InsertWorkflow :one
+INSERT INTO archive.workflow (user_id, member, role, name, source, "on", trigger, hook, next_at, cursor_at, cursor_id)
+VALUES ($1, $2, $3, $4, $5, nullif($6::jsonb, 'null'), $7, $8,
+    $9, $10, $11)
+RETURNING id
+`
+
+type InsertWorkflowParams struct {
+	UserID   uuid.UUID
+	Member   *uuid.UUID
+	Role     string
+	Name     string
+	Source   string
+	OnJson   []byte
+	Trigger  string
+	Hook     string
+	NextAt   *time.Time
+	CursorAt *time.Time
+	CursorID *uuid.UUID
+}
+
+func (q *Queries) InsertWorkflow(ctx context.Context, arg InsertWorkflowParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, insertWorkflow,
+		arg.UserID,
+		arg.Member,
+		arg.Role,
+		arg.Name,
+		arg.Source,
+		arg.OnJson,
+		arg.Trigger,
+		arg.Hook,
+		arg.NextAt,
+		arg.CursorAt,
+		arg.CursorID,
+	)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const joinWorkspace = `-- name: JoinWorkspace :one
 INSERT INTO archive."user" (email, name, workspaces) VALUES ($1, $2, ARRAY[$3::uuid])
 ON CONFLICT (email) DO UPDATE SET workspaces = archive."user".workspaces || EXCLUDED.workspaces WHERE NOT archive."user".workspaces @> EXCLUDED.workspaces
@@ -1088,40 +1125,6 @@ func (q *Queries) JoinWorkspace(ctx context.Context, email string, name string, 
 		&i.CreatedAt,
 	)
 	return i, err
-}
-
-const lastWorkflowRuns = `-- name: LastWorkflowRuns :many
-SELECT DISTINCT ON (r.workflow) r.id, r.workflow, r.trigger, r.result, r.logs, r.error, r.ms, r.created_at FROM archive.workflow_run r JOIN archive.workflow w ON w.id = r.workflow
-WHERE w.user_id = $1 ORDER BY r.workflow, r.created_at DESC, r.id DESC
-`
-
-func (q *Queries) LastWorkflowRuns(ctx context.Context, userID uuid.UUID) ([]ArchiveWorkflowRun, error) {
-	rows, err := q.db.Query(ctx, lastWorkflowRuns, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ArchiveWorkflowRun
-	for rows.Next() {
-		var i ArchiveWorkflowRun
-		if err := rows.Scan(
-			&i.ID,
-			&i.Workflow,
-			&i.Trigger,
-			&i.Result,
-			&i.Logs,
-			&i.Error,
-			&i.Ms,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const leaveWorkspace = `-- name: LeaveWorkspace :exec
@@ -1219,6 +1222,32 @@ func (q *Queries) LockUpload(ctx context.Context, id uuid.UUID) (ArchiveUpload, 
 		&i.Length,
 		&i.Parts,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const lockWorkflow = `-- name: LockWorkflow :one
+SELECT id, user_id, role, name, source, trigger, hook, next_at, cursor_at, cursor_id, created_at, updated_at, member, "on" FROM archive.workflow WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) LockWorkflow(ctx context.Context, id uuid.UUID) (ArchiveWorkflow, error) {
+	row := q.db.QueryRow(ctx, lockWorkflow, id)
+	var i ArchiveWorkflow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Role,
+		&i.Name,
+		&i.Source,
+		&i.Trigger,
+		&i.Hook,
+		&i.NextAt,
+		&i.CursorAt,
+		&i.CursorID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Member,
+		&i.On,
 	)
 	return i, err
 }
@@ -1341,6 +1370,46 @@ func (q *Queries) NoMembers(ctx context.Context) (bool, error) {
 	var not_exists bool
 	err := row.Scan(&not_exists)
 	return not_exists, err
+}
+
+const oldWorkflows = `-- name: OldWorkflows :many
+SELECT id, user_id, role, name, source, trigger, hook, next_at, cursor_at, cursor_id, created_at, updated_at, member, "on" FROM archive.workflow WHERE member IS NULL OR ("on" IS NULL AND trigger <> '')
+`
+
+// Workflows from before they were rows: no member yet, or a trigger still in a // on: line of their source.
+func (q *Queries) OldWorkflows(ctx context.Context) ([]ArchiveWorkflow, error) {
+	rows, err := q.db.Query(ctx, oldWorkflows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ArchiveWorkflow
+	for rows.Next() {
+		var i ArchiveWorkflow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Role,
+			&i.Name,
+			&i.Source,
+			&i.Trigger,
+			&i.Hook,
+			&i.NextAt,
+			&i.CursorAt,
+			&i.CursorID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Member,
+			&i.On,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const renameChat = `-- name: RenameChat :execrows
@@ -1540,58 +1609,6 @@ func (q *Queries) RolesWithPrefix(ctx context.Context, prefix string) ([]string,
 		return nil, err
 	}
 	return items, nil
-}
-
-const saveWorkflow = `-- name: SaveWorkflow :one
-INSERT INTO archive.workflow (user_id, role, name, source, trigger, hook, next_at, cursor_at, cursor_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-ON CONFLICT (user_id, name) DO UPDATE SET role = EXCLUDED.role, source = EXCLUDED.source, trigger = EXCLUDED.trigger, next_at = EXCLUDED.next_at,
-    cursor_at = CASE WHEN archive.workflow.trigger = EXCLUDED.trigger THEN archive.workflow.cursor_at ELSE EXCLUDED.cursor_at END,
-    cursor_id = CASE WHEN archive.workflow.trigger = EXCLUDED.trigger THEN archive.workflow.cursor_id ELSE EXCLUDED.cursor_id END,
-    updated_at = now()
-RETURNING id, user_id, role, name, source, trigger, hook, next_at, cursor_at, cursor_id, created_at, updated_at
-`
-
-type SaveWorkflowParams struct {
-	UserID   uuid.UUID
-	Role     string
-	Name     string
-	Source   string
-	Trigger  string
-	Hook     string
-	NextAt   *time.Time
-	CursorAt *time.Time
-	CursorID *uuid.UUID
-}
-
-func (q *Queries) SaveWorkflow(ctx context.Context, arg SaveWorkflowParams) (ArchiveWorkflow, error) {
-	row := q.db.QueryRow(ctx, saveWorkflow,
-		arg.UserID,
-		arg.Role,
-		arg.Name,
-		arg.Source,
-		arg.Trigger,
-		arg.Hook,
-		arg.NextAt,
-		arg.CursorAt,
-		arg.CursorID,
-	)
-	var i ArchiveWorkflow
-	err := row.Scan(
-		&i.ID,
-		&i.UserID,
-		&i.Role,
-		&i.Name,
-		&i.Source,
-		&i.Trigger,
-		&i.Hook,
-		&i.NextAt,
-		&i.CursorAt,
-		&i.CursorID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
 }
 
 const secrets = `-- name: Secrets :many
@@ -1815,6 +1832,40 @@ func (q *Queries) TxWrote(ctx context.Context) (TxWroteRow, error) {
 	return i, err
 }
 
+const updateWorkflow = `-- name: UpdateWorkflow :execrows
+UPDATE archive.workflow SET name = $1, source = $2, "on" = nullif($3::jsonb, 'null'), trigger = $4,
+    next_at = $5, cursor_at = $6, cursor_id = $7, updated_at = now()
+WHERE id = $8
+`
+
+type UpdateWorkflowParams struct {
+	Name     string
+	Source   string
+	OnJson   []byte
+	Trigger  string
+	NextAt   *time.Time
+	CursorAt *time.Time
+	CursorID *uuid.UUID
+	ID       uuid.UUID
+}
+
+func (q *Queries) UpdateWorkflow(ctx context.Context, arg UpdateWorkflowParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateWorkflow,
+		arg.Name,
+		arg.Source,
+		arg.OnJson,
+		arg.Trigger,
+		arg.NextAt,
+		arg.CursorAt,
+		arg.CursorID,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const updateWorkspace = `-- name: UpdateWorkspace :exec
 UPDATE archive.workspace SET name = coalesce($1, name), type = coalesce($2, type),
     icon = coalesce($3, icon), color = coalesce($4, color) WHERE id = $5
@@ -1834,6 +1885,30 @@ func (q *Queries) UpdateWorkspace(ctx context.Context, arg UpdateWorkspaceParams
 		arg.Type,
 		arg.Icon,
 		arg.Color,
+		arg.ID,
+	)
+	return err
+}
+
+const upgradeWorkflow = `-- name: UpgradeWorkflow :exec
+UPDATE archive.workflow SET member = $1, source = $2, "on" = nullif($3::jsonb, 'null'), trigger = $4
+WHERE id = $5
+`
+
+type UpgradeWorkflowParams struct {
+	Member  *uuid.UUID
+	Source  string
+	OnJson  []byte
+	Trigger string
+	ID      uuid.UUID
+}
+
+func (q *Queries) UpgradeWorkflow(ctx context.Context, arg UpgradeWorkflowParams) error {
+	_, err := q.db.Exec(ctx, upgradeWorkflow,
+		arg.Member,
+		arg.Source,
+		arg.OnJson,
+		arg.Trigger,
 		arg.ID,
 	)
 	return err
@@ -1957,7 +2032,7 @@ func (q *Queries) WakeTableWorkflows(ctx context.Context) (int64, error) {
 }
 
 const workflowByHook = `-- name: WorkflowByHook :one
-SELECT id, user_id, role, name, source, trigger, hook, next_at, cursor_at, cursor_id, created_at, updated_at FROM archive.workflow WHERE hook = $1 AND trigger = 'webhook'
+SELECT id, user_id, role, name, source, trigger, hook, next_at, cursor_at, cursor_id, created_at, updated_at, member, "on" FROM archive.workflow WHERE hook = $1 AND trigger = 'webhook'
 `
 
 func (q *Queries) WorkflowByHook(ctx context.Context, hook string) (ArchiveWorkflow, error) {
@@ -1976,12 +2051,14 @@ func (q *Queries) WorkflowByHook(ctx context.Context, hook string) (ArchiveWorkf
 		&i.CursorID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Member,
+		&i.On,
 	)
 	return i, err
 }
 
 const workflowByName = `-- name: WorkflowByName :one
-SELECT id, user_id, role, name, source, trigger, hook, next_at, cursor_at, cursor_id, created_at, updated_at FROM archive.workflow WHERE user_id = $1 AND name = $2
+SELECT id, user_id, role, name, source, trigger, hook, next_at, cursor_at, cursor_id, created_at, updated_at, member, "on" FROM archive.workflow WHERE user_id = $1 AND name = $2
 `
 
 func (q *Queries) WorkflowByName(ctx context.Context, userID uuid.UUID, name string) (ArchiveWorkflow, error) {
@@ -2000,8 +2077,34 @@ func (q *Queries) WorkflowByName(ctx context.Context, userID uuid.UUID, name str
 		&i.CursorID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Member,
+		&i.On,
 	)
 	return i, err
+}
+
+const workflowNames = `-- name: WorkflowNames :many
+SELECT name FROM archive.workflow WHERE user_id = $1 ORDER BY name
+`
+
+func (q *Queries) WorkflowNames(ctx context.Context, userID uuid.UUID) ([]string, error) {
+	rows, err := q.db.Query(ctx, workflowNames, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		items = append(items, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const workflowRunTimes = `-- name: WorkflowRunTimes :many
@@ -2021,76 +2124,6 @@ func (q *Queries) WorkflowRunTimes(ctx context.Context, workflow uuid.UUID, sinc
 			return nil, err
 		}
 		items = append(items, created_at)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const workflowRuns = `-- name: WorkflowRuns :many
-SELECT id, workflow, trigger, result, logs, error, ms, created_at FROM archive.workflow_run WHERE workflow = $1 ORDER BY created_at DESC, id DESC LIMIT $2
-`
-
-func (q *Queries) WorkflowRuns(ctx context.Context, workflow uuid.UUID, limit int32) ([]ArchiveWorkflowRun, error) {
-	rows, err := q.db.Query(ctx, workflowRuns, workflow, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ArchiveWorkflowRun
-	for rows.Next() {
-		var i ArchiveWorkflowRun
-		if err := rows.Scan(
-			&i.ID,
-			&i.Workflow,
-			&i.Trigger,
-			&i.Result,
-			&i.Logs,
-			&i.Error,
-			&i.Ms,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const workflows = `-- name: Workflows :many
-SELECT id, user_id, role, name, source, trigger, hook, next_at, cursor_at, cursor_id, created_at, updated_at FROM archive.workflow WHERE user_id = $1 ORDER BY name
-`
-
-func (q *Queries) Workflows(ctx context.Context, userID uuid.UUID) ([]ArchiveWorkflow, error) {
-	rows, err := q.db.Query(ctx, workflows, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ArchiveWorkflow
-	for rows.Next() {
-		var i ArchiveWorkflow
-		if err := rows.Scan(
-			&i.ID,
-			&i.UserID,
-			&i.Role,
-			&i.Name,
-			&i.Source,
-			&i.Trigger,
-			&i.Hook,
-			&i.NextAt,
-			&i.CursorAt,
-			&i.CursorID,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
