@@ -117,7 +117,7 @@
   --archive-glyph: 2.875rem;
   --archive-pill: 0.25rem;
   --archive-badge: 1.125rem;
-  --archive-header: calc(var(--avatar-lg) + var(--space-3) * 2);
+  --archive-header: calc(var(--avatar-lg) + var(--space-2) * 2);
   --topbar-height: 3rem;
   --chat-width: 45rem;
   --composer-width: 48rem;

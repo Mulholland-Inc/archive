@@ -1,8 +1,6 @@
 <script>
   import { getContext } from 'svelte';
-  import { Settings } from '@lucide/svelte';
   import ArchiveIcon from './ArchiveIcon.svelte';
-  import Icon from './Icon.svelte';
 
   let { archive, onclick } = $props();
   const sidebar = getContext('sidebar');
@@ -15,7 +13,6 @@
     <span class="name">{archive?.name}</span>
     <span class="sub">{archive?.kind}, {archive?.members.length} {archive?.members.length === 1 ? 'member' : 'members'}</span>
   </span>
-  <span class="gear"><Icon icon={Settings} size="sm" /></span>
 </button>
 
 <style>
@@ -26,8 +23,8 @@
     width: 100%;
     min-width: 0;
     min-height: var(--archive-header);
-    padding: var(--space-3) var(--space-3);
-    border-radius: var(--radius-lg);
+    padding: var(--space-2);
+    border-radius: var(--radius-md);
     text-align: start;
     transition: background-color var(--duration-fast) var(--ease-out);
   }
@@ -36,22 +33,9 @@
     background: var(--color-fill);
   }
 
-  .gear {
-    display: flex;
-    flex: none;
-    color: var(--color-text-tertiary);
-    opacity: 0;
-    transition: opacity var(--duration-fast) var(--ease-out);
-  }
-
-  .header:hover .gear,
-  .header:focus-visible .gear {
-    opacity: 1;
-  }
-
   .collapsed {
     justify-content: center;
-    padding: var(--space-3) var(--space-0);
+    padding: var(--space-2) var(--space-0);
     gap: var(--space-0);
   }
 
@@ -79,7 +63,7 @@
     font-size: var(--text-sm);
   }
 
-  .collapsed :is(.lines, .gear) {
+  .collapsed .lines {
     display: none;
   }
 </style>
