@@ -91,6 +91,10 @@ type ArchiveConnection struct {
 	AskedAt  time.Time
 	LeaseAt  *time.Time
 	Revoked  bool
+	// It is the archive's, like its QuickBooks, which an owner connects for everyone, not one person's own
+	Integration bool
+	// The group an integration and its records are narrowed to, like finance; null for everyone
+	Access *string
 }
 
 type ArchiveDue struct {

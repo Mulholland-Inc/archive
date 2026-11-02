@@ -12,7 +12,7 @@ import "cmp"
 // number while a page comes back full. None lists by when a record changed, so each is listed whole on each
 // sync, and what it no longer lists is deleted.
 func init() {
-	Register(&Connector{ID: "gusto", Name: "Gusto", MCP: "https://mcp.api.gusto.com",
+	Register(&Connector{ID: "gusto", Name: "Gusto", Integration: true, MCP: "https://mcp.api.gusto.com",
 		Scopes: []string{"public", "companies:read", "employees:read", "contractors:read", "departments:read", "jobs:read", "compensations:read",
 			"employments:read", "pay_schedules:read", "payrolls:read", "time_off_requests:read"},
 		Account: mcpName("get_company", "name", "trade_name", "legal_name"),

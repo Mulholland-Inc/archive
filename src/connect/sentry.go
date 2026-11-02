@@ -7,7 +7,7 @@ package connect
 // synced: search_issues answers in prose, has no cursor, stops at 100 and filters only by when an issue was
 // last seen, not changed.
 func init() {
-	Register(&Connector{ID: "sentry", Name: "Sentry", MCP: "https://mcp.sentry.dev/mcp", Account: mcpAccount("whoami"),
+	Register(&Connector{ID: "sentry", Name: "Sentry", Integration: true, MCP: "https://mcp.sentry.dev/mcp", Account: mcpAccount("whoami"),
 		Streams: []*Stream{
 			(&mcpList{tool: "find_organizations", after: "cursor", items: "organizations", id: "slug"}).stream("organizations",
 				"Your organizations, { slug, webUrl, regionUrl }, by slug, from find_organizations, listed whole each sync."),

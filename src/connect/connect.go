@@ -40,6 +40,10 @@ import (
 // Connector is a service accounts can be connected at, as its file declares it.
 type Connector struct {
 	ID, Name string
+	// Integration says an account connected to it is the archive's, like its QuickBooks company: an owner
+	// connects it for everyone, an archive has one, and its records are every member's. Without it, each member
+	// connects their own, like their Gmail, and its records are theirs alone.
+	Integration bool
 	// Env is the environment variable that holds an API connector's OAuth client, https://<client id>:<client
 	// secret>@<host> with the id and secret URL-escaped, and maybe a query of options the connector reads with
 	// Client.Option; Host is the provider host it names by default. When Env names another host, every URL of
@@ -89,6 +93,9 @@ func Register(c *Connector) {
 	}
 	registry[c.ID] = c
 }
+
+// Get is connector id, or nil when there is none.
+func Get(id string) *Connector { return registry[id] }
 
 // All are the connectors, by id.
 func All() []*Connector {

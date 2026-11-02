@@ -18,7 +18,7 @@ import (
 // another. Intuit replaces the refresh token about once a day.
 func init() {
 	Register(&Connector{
-		ID: "quickbooks", Name: "QuickBooks", Env: "ARCHIVE_QUICKBOOKS", Host: "https://appcenter.intuit.com",
+		ID: "quickbooks", Name: "QuickBooks", Integration: true, Env: "ARCHIVE_QUICKBOOKS", Host: "https://appcenter.intuit.com",
 		Endpoint: oauth2.Endpoint{AuthURL: "https://appcenter.intuit.com/connect/oauth2", TokenURL: "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
 			AuthStyle: oauth2.AuthStyleInHeader},
 		RevokeWith: func(rv *Revocation) error {

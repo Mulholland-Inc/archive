@@ -6,8 +6,8 @@ import { API, api, blobURL, forgetBlobs, upload, setWorkspace, workspace, local,
 import { resource, listen, onChange, onRefused } from './stream.svelte.js';
 import { toFile, toChat, toMember, toWorkflow, toRun, relative } from './live.js';
 import { toTables, countsQuery } from './schema.js';
-import { initials, mockConnectors, mockIntegrations, mockKey, mockProfile, mockSettings } from './mock/index.js';
-import { integrationCatalog } from './integrations.js';
+import { initials, mockConnectors, mockKey, mockProfile, mockSettings } from './mock/index.js';
+import { catalog } from './mock/connectors.js';
 import { defaultLook, TYPES } from './looks.js';
 import { notify } from './dialogs.svelte.js';
 import { go, route } from './router.svelte.js';
@@ -33,7 +33,6 @@ export const app = $state({
   muted: false,
   settings: { open: false, section: null, sub: null },
   archiveSettings: { open: false, section: null, sub: null },
-  integrations: mockIntegrations(),
   apiKey: mockKey('ak_live_', 'Created today'),
   archiveKeys: {},
   share: { open: false, kind: null, target: null },
@@ -427,10 +426,6 @@ export function isArchiveOwner() {
   return app.role === 'owner';
 }
 
-function archiveDomain() {
-  return (app.user.email ?? '').split('@')[1] ?? '';
-}
-
 export async function invite({ emails, role }) {
   const w = ws();
   const added = [];
@@ -471,30 +466,35 @@ export async function setRole(member, role) {
   }
 }
 
-// Integrations (MOCK: SSO, SCIM and workspace apps have no API yet)
+// Integrations: the archive's connections, one to each integration the API has, which an owner connects for
+// everyone (src/connect). They are read with your own connectors, from /connect.
 
 export function archiveIntegrations() {
-  const active = ws().members.filter((m) => m.status === 'active');
-  return integrationCatalog.map((c) => {
-    const link = app.integrations.find((x) => x.archive === app.archive && x.id === c.id);
-    const domain = c.covers === 'domain' ? link?.account : null;
-    const members = link ? active.filter((m) => !domain || m.email.endsWith(`@${domain}`)) : [];
-    return { ...c, connected: Boolean(link), account: link?.account ?? '', connectedBy: link?.by ?? '', date: link?.date ?? '', members };
-  });
+  return ws().integrations ?? [];
 }
 
 export function connectIntegration(id) {
-  const c = integrationCatalog.find((x) => x.id === id);
-  if (!c || !isArchiveOwner() || app.integrations.some((x) => x.archive === app.archive && x.id === id)) return;
-  const domain = archiveDomain();
-  const account = c.id === 'slack' ? `${domain.split('.')[0]}.slack.com` : c.covers === 'domain' ? domain : ws().name;
-  app.integrations.push({ archive: app.archive, id, account, by: app.profile.name, date: 'Today' });
+  if (isArchiveOwner()) connect(id);
 }
 
-export function disconnectIntegration(id) {
-  const i = app.integrations.findIndex((x) => x.archive === app.archive && x.id === id);
-  if (i === -1 || !isArchiveOwner()) return;
-  app.integrations.splice(i, 1);
+async function onIntegration(id, what, path, init) {
+  const c = archiveIntegrations().find((x) => x.id === id);
+  if (!c?.connection || !isArchiveOwner()) return;
+  try {
+    await call(`/connect/${c.connection.id}${path}`, init);
+  } catch (e) {
+    complain(e, `Couldn’t ${what} ${c.name}`);
+  }
+  return connections.refresh();
+}
+
+export const disconnectIntegration = (id) => onIntegration(id, 'disconnect', '', { method: 'DELETE' });
+export const syncIntegration = (id) => onIntegration(id, 'sync', '/sync', { method: 'POST' });
+export const narrowIntegration = (id, access) => onIntegration(id, 'change who sees', '/access', { method: 'PUT', body: { access } });
+
+// The groups an integration can be narrowed to: those the archive's members are in.
+export function archiveGroups() {
+  return [...new Set((ws().members ?? []).flatMap((m) => m.groups ?? []))].sort();
 }
 
 // API keys. The archive key is a real API token of yours for this archive; its secret is shown once, when it is
@@ -900,16 +900,18 @@ export const connections = resource({
   load: async () => {
     const v = ws();
     const out = await api('/connect', { workspace: v.id });
-    const ids = new Set((out?.connectors ?? []).map((k) => k.id));
+    // Your own connectors are the personal ones; the archive's integrations are listed in its settings.
+    const ids = new Set((out?.connectors ?? []).filter((k) => !k.integration).map((k) => k.id));
     v.connectors = v.connectors.filter((c) => ids.has(c.id));
-    for (const k of out?.connectors ?? []) {
+    v.integrations = (out?.connectors ?? []).filter((k) => k.integration).map((k) => toIntegration(k, out.connections.find((x) => x.provider === k.id && x.integration)));
+    for (const k of (out?.connectors ?? []).filter((k) => !k.integration)) {
       let c = v.connectors.find((x) => x.id === k.id);
       if (!c) {
         c = { id: k.id, name: k.name, by: k.name, description: `Use your ${k.name} account`, category: 'Other', scopes: [] };
         v.connectors.push(c);
         c = v.connectors.at(-1);
       }
-      const mine = out.connections.filter((x) => x.provider === k.id);
+      const mine = out.connections.filter((x) => x.provider === k.id && !x.integration);
       // Synced is when every account last caught up: the earliest, and never while one has not yet.
       const synced = mine.every((x) => x.synced_at) ? mine.map((x) => x.synced_at).sort()[0] : '';
       Object.assign(c, {
@@ -918,13 +920,38 @@ export const connections = resource({
         connected: mine.length > 0,
         account: mine.map((x) => x.account).join(', '),
         error: mine.find((x) => x.error)?.error ?? '',
-        lastSync: synced ? relative(synced) : mine.some((x) => x.sync_at) ? 'Syncing…' : 'Stopped',
+        lastSync: synced ? relative(synced) : mine.some((x) => x.sync_at) ? 'Syncing…' : 'Not yet',
         items: mine.reduce((n, x) => n + (x.records ?? 0), 0)
       });
     }
     if (v.connectors.some((c) => c.connected)) completeStep('connect');
   }
 });
+
+// lastSyncOf is when a connection last caught up, as the app says it.
+function lastSyncOf(x) {
+  return x.synced_at ? relative(x.synced_at) : x.sync_at ? 'Syncing…' : 'Not yet';
+}
+
+// toIntegration is integration connector k as its settings show it, with the archive's connection x, if any.
+function toIntegration(k, x) {
+  const shown = catalog.find((c) => c.id === k.id) ?? { by: k.name, description: `Use the archive’s ${k.name} account`, category: 'Other', scopes: [] };
+  return {
+    ...shown,
+    id: k.id,
+    name: k.name,
+    ready: k.ready,
+    connected: Boolean(x),
+    connection: x ?? null,
+    account: x?.account ?? '',
+    connectedBy: x?.connected_by ?? '',
+    date: x ? relative(x.created_at) : '',
+    lastSync: x ? lastSyncOf(x) : '',
+    items: x?.records ?? 0,
+    error: x?.error ?? '',
+    access: x?.access ?? ''
+  };
+}
 
 export function connect(id) {
   const c = ws().connectors.find((x) => x.id === id);

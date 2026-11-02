@@ -17,7 +17,7 @@ import (
 // this is its REST API. Revoking takes the client's credentials with the refresh token.
 func init() {
 	Register(&Connector{
-		ID: "asana", Name: "Asana", Env: "ARCHIVE_ASANA", Host: "https://app.asana.com",
+		ID: "asana", Name: "Asana", Integration: true, Env: "ARCHIVE_ASANA", Host: "https://app.asana.com",
 		Endpoint: oauth2.Endpoint{AuthURL: "https://app.asana.com/-/oauth_authorize", TokenURL: "https://app.asana.com/-/oauth_token",
 			AuthStyle: oauth2.AuthStyleInParams},
 		RevokeWith: func(rv *Revocation) error {

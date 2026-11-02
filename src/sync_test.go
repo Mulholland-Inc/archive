@@ -522,3 +522,109 @@ func asanaHandshakes(t *testing.T, in *e2eInst, srv *e2eServer) {
 		t.Errorf("a signed event for a connection gone kept its watch")
 	}
 }
+
+// An integration is the archive's: only an owner connects, narrows, syncs and disconnects it, and the archive
+// has one; every member sees it and its records, while an owner has not narrowed it to a group they are not
+// in; and editors and owners in that group act with it. Connections of an integration from before there were
+// integrations become the archive's, the first of each.
+func TestIntegrationsAreTheArchives(t *testing.T) {
+	t.Parallel()
+	f := newFakeMCP(t)
+	in := newInst(t, "ARCHIVE_MCP_LINEAR="+f.srv.URL+"/mcp")
+	in.must("user", "add", "alice@example.com")
+	in.must("user", "add", "bob@example.com", "-role", "editor")
+	in.must("user", "add", "carol@example.com", "-role", "viewer")
+	carol := in.psql("archive", "SELECT id FROM archive.member WHERE email = 'carol@example.com'")
+	in.must("set", "member", carol, `{"groups":["finance"]}`)
+	srv := in.serve()
+	ws := in.psql("archive", "SELECT id FROM archive.workspace ORDER BY created_at LIMIT 1")
+	alice := decode[Token](t, in.must("token", "create")).Secret
+	bob := decode[Token](t, in.must("-as", "bob@example.com", "token", "create")).Secret
+	carolTok := decode[Token](t, in.must("-as", "carol@example.com", "token", "create")).Secret
+
+	st, hdr := call(t, "GET", srv.url+"/connect/linear?workspace="+ws, bob, nil, nil)
+	if to := hdr.Get("Location"); st != 303 || !strings.Contains(to, "/archive/integrations/linear?") || !strings.Contains(to, "only+an+owner+connects+Linear") {
+		t.Errorf("an editor connects the archive's Linear: %d %s", st, to)
+	}
+	st, hdr = call(t, "GET", srv.url+"/connect/linear?workspace="+ws, alice, nil, nil)
+	loc, _ := url.Parse(hdr.Get("Location"))
+	if st != 302 || loc.Path != "/authorize" {
+		t.Fatalf("an owner starts connecting Linear: %d %s", st, hdr.Get("Location"))
+	}
+	st, hdr = call(t, "GET", srv.url+"/connect/linear/callback?"+url.Values{"state": {loc.Query().Get("state")}, "code": {"alice@example.com"}}.Encode(), alice, nil, nil)
+	if to := hdr.Get("Location"); st != 303 || strings.Contains(to, "error") || !strings.Contains(to, "/archive/integrations/linear?") {
+		t.Fatalf("alice connects the archive's Linear: %d %s", st, to)
+	}
+	var cs Connections
+	call(t, "GET", srv.url+"/connect", bob, nil, &cs)
+	if len(cs.Connections) != 1 || !cs.Connections[0].Integration || cs.Connections[0].ConnectedBy != "alice@example.com" ||
+		!slices.Contains(cs.Connectors, Connector{ID: "linear", Name: "Linear", Ready: true, Integration: true}) {
+		t.Fatalf("bob's view of the archive's connections: %+v", cs)
+	}
+	id := cs.Connections[0].ID.String()
+	for _, req := range [][2]string{{"DELETE", "/connect/" + id}, {"POST", "/connect/" + id + "/sync"}, {"PUT", "/connect/" + id + "/access"}} {
+		if st, _ := call(t, req[0], srv.url+req[1], bob, map[string]string{"access": ""}, nil); st != 403 {
+			t.Errorf("an editor %s %s: %d", req[0], req[1], st)
+		}
+	}
+	in.psql("archive", "INSERT INTO archive.record (connection, stream, source_id, data) VALUES ('"+id+"', 'issues', 'i1', '{}'), ('"+id+"', 'issues', 'i2', '{}')")
+	sees := func(tok string) string {
+		t.Helper()
+		_, out := e2eRun(t, srv.url+"/api", tok, `const [{ n }] = await archive.query("SELECT count(*)::int AS n FROM record"); return n + " " + (await archive.list("connection")).length`)
+		return string(out.Result)
+	}
+	acts := func(tok string) string {
+		t.Helper()
+		_, out := e2eRun(t, srv.url+"/api", tok, `return await archive.action("linear.notion-search", { query: "plan" }).then(() => "acts", (e) => e.code)`)
+		return string(out.Result)
+	}
+	for who, tok := range map[string]string{"alice": alice, "bob": bob, "carol": carolTok} {
+		if got := sees(tok); got != `"2 1"` {
+			t.Errorf("%s sees %s of the archive's Linear, want all of it", who, got)
+		}
+	}
+	if got := acts(bob) + acts(carolTok); got != `"acts""forbidden"` {
+		t.Errorf("an editor and a viewer act with the archive's Linear: %s", got)
+	}
+
+	if st, _ := call(t, "PUT", srv.url+"/connect/"+id+"/access", alice, map[string]string{"access": "finance"}, nil); st != 204 {
+		t.Fatalf("alice narrows Linear to finance: %d", st)
+	}
+	for who, want := range map[string]string{alice: `"2 1"`, bob: `"0 0"`, carolTok: `"2 1"`} {
+		if got := sees(who); got != want {
+			t.Errorf("%s sees %s of Linear narrowed to finance, want %s", who[:6], got, want)
+		}
+	}
+	if got := acts(bob); got != `"forbidden"` {
+		t.Errorf("an editor out of finance acts with Linear narrowed to it: %s", got)
+	}
+	in.psql("archive", "INSERT INTO archive.record (connection, stream, source_id, data, access) VALUES ('"+id+"', 'issues', 'i3', '{}', 'finance')")
+	if st, _ := call(t, "PUT", srv.url+"/connect/"+id+"/access", alice, map[string]string{"access": "Fin ance"}, nil); st != 400 {
+		t.Errorf("a group that is no group: %d", st)
+	}
+
+	// Connecting another Linear account while the archive has one is refused.
+	a := hubOn(t, in, nil)
+	member := uuid.MustParse(in.psql("archive", "SELECT id FROM archive.member WHERE email = 'alice@example.com'"))
+	if _, err := a.connectionSave(t.Context(), member, connect.Get("linear"), &connect.Grant{Account: "Other", Refresh: "rt"}); !errors.Is(err, ErrConflict) ||
+		!strings.Contains(err.Error(), "this archive's Linear is Linear; disconnect it before connecting Other") {
+		t.Errorf("a second Linear account: %v", err)
+	}
+	if st, _ := call(t, "DELETE", srv.url+"/connect/"+id, alice, nil, nil); st != 204 {
+		t.Fatalf("alice disconnects Linear: %d", st)
+	}
+	if n := in.psql("archive", "SELECT count(*) FROM archive.record"); n != "0" {
+		t.Errorf("disconnecting the archive's Linear left %s records", n)
+	}
+
+	// Two members' Stripe from before integrations: the first becomes the archive's; the other stays its own.
+	in.psql("archive", `INSERT INTO archive.connection (member, provider, account, token, created_at)
+		SELECT id, 'stripe', email, '\x00', CASE WHEN email = 'bob@example.com' THEN now() - interval '1 day' ELSE now() END FROM archive.member WHERE email IN ('alice@example.com', 'bob@example.com');
+		INSERT INTO archive.connection (member, provider, account, token) SELECT id, 'gmail', email, '\x00' FROM archive.member WHERE email = 'carol@example.com'`)
+	if err := a.connectionUpgrade(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := in.psql("archive", "SELECT string_agg(provider || ' ' || account || ' ' || integration, ', ' ORDER BY provider, account) FROM archive.connection"); got != "gmail carol@example.com false, stripe alice@example.com false, stripe bob@example.com true" {
+		t.Errorf("after the upgrade: %s", got)
+	}
+}

@@ -296,7 +296,7 @@ func (q *Queries) Catalog(ctx context.Context) ([]byte, error) {
 
 const catchUpSyncs = `-- name: CatchUpSyncs :many
 UPDATE archive.connection SET asked_at = now(), sync_at = now()
-WHERE member = $1 AND sync_at IS NULL AND NOT revoked AND (synced_at IS NULL OR synced_at < $2::timestamptz)
+WHERE (member = $1 AND NOT integration OR integration) AND sync_at IS NULL AND NOT revoked AND (synced_at IS NULL OR synced_at < $2::timestamptz)
 RETURNING id
 `
 
@@ -391,7 +391,7 @@ const claimSync = `-- name: ClaimSync :one
 UPDATE archive.connection SET lease_at = $1::timestamptz
 WHERE id = (SELECT c.id FROM archive.connection c WHERE c.sync_at <= now() AND (c.lease_at IS NULL OR c.lease_at < now())
     ORDER BY c.sync_at LIMIT 1 FOR UPDATE SKIP LOCKED)
-RETURNING id, member, provider, account, token, scopes, error, created_at, updated_at, meta, sync_at, synced_at, cursor, asked_at, lease_at, revoked
+RETURNING id, member, provider, account, token, scopes, error, created_at, updated_at, meta, sync_at, synced_at, cursor, asked_at, lease_at, revoked, integration, access
 `
 
 func (q *Queries) ClaimSync(ctx context.Context, lease time.Time) (ArchiveConnection, error) {
@@ -414,6 +414,8 @@ func (q *Queries) ClaimSync(ctx context.Context, lease time.Time) (ArchiveConnec
 		&i.AskedAt,
 		&i.LeaseAt,
 		&i.Revoked,
+		&i.Integration,
+		&i.Access,
 	)
 	return i, err
 }
@@ -466,7 +468,7 @@ func (q *Queries) ClearSecrets(ctx context.Context, tbl string, rid uuid.UUID, c
 }
 
 const connection = `-- name: Connection :one
-SELECT id, member, provider, account, token, scopes, error, created_at, updated_at, meta, sync_at, synced_at, cursor, asked_at, lease_at, revoked FROM archive.connection WHERE id = $1
+SELECT id, member, provider, account, token, scopes, error, created_at, updated_at, meta, sync_at, synced_at, cursor, asked_at, lease_at, revoked, integration, access FROM archive.connection WHERE id = $1
 `
 
 func (q *Queries) Connection(ctx context.Context, id uuid.UUID) (ArchiveConnection, error) {
@@ -489,12 +491,14 @@ func (q *Queries) Connection(ctx context.Context, id uuid.UUID) (ArchiveConnecti
 		&i.AskedAt,
 		&i.LeaseAt,
 		&i.Revoked,
+		&i.Integration,
+		&i.Access,
 	)
 	return i, err
 }
 
 const connectionFor = `-- name: ConnectionFor :one
-SELECT id FROM archive.connection WHERE member = $1 AND provider = $2 AND account = $3 FOR UPDATE
+SELECT id FROM archive.connection WHERE member = $1 AND provider = $2 AND account = $3 AND NOT integration FOR UPDATE
 `
 
 func (q *Queries) ConnectionFor(ctx context.Context, member uuid.UUID, provider string, account string) (uuid.UUID, error) {
@@ -505,7 +509,7 @@ func (q *Queries) ConnectionFor(ctx context.Context, member uuid.UUID, provider 
 }
 
 const connectionLocked = `-- name: ConnectionLocked :one
-SELECT id, member, provider, account, token, scopes, error, created_at, updated_at, meta, sync_at, synced_at, cursor, asked_at, lease_at, revoked FROM archive.connection WHERE id = $1 FOR UPDATE
+SELECT id, member, provider, account, token, scopes, error, created_at, updated_at, meta, sync_at, synced_at, cursor, asked_at, lease_at, revoked, integration, access FROM archive.connection WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) ConnectionLocked(ctx context.Context, id uuid.UUID) (ArchiveConnection, error) {
@@ -528,6 +532,8 @@ func (q *Queries) ConnectionLocked(ctx context.Context, id uuid.UUID) (ArchiveCo
 		&i.AskedAt,
 		&i.LeaseAt,
 		&i.Revoked,
+		&i.Integration,
+		&i.Access,
 	)
 	return i, err
 }
@@ -567,21 +573,25 @@ func (q *Queries) ConnectionWatches(ctx context.Context, connection uuid.UUID) (
 
 const connections = `-- name: Connections :many
 SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_at, c.sync_at, c.synced_at,
-    (SELECT count(*) FROM archive.record r WHERE r.connection = c.id AND NOT r.deleted)::bigint AS records
-FROM archive.connection c WHERE c.member = $1 ORDER BY c.provider, c.account, c.id
+    (SELECT count(*) FROM archive.record r WHERE r.connection = c.id AND NOT r.deleted)::bigint AS records,
+    c.integration, coalesce(c.access, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
+FROM archive.connection c WHERE c.member = $1 AND NOT c.integration OR c.integration ORDER BY c.provider, c.account, c.id
 `
 
 type ConnectionsRow struct {
-	ID        uuid.UUID
-	Provider  string
-	Account   string
-	Scopes    []string
-	Error     string
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	SyncAt    *time.Time
-	SyncedAt  *time.Time
-	Records   int64
+	ID          uuid.UUID
+	Provider    string
+	Account     string
+	Scopes      []string
+	Error       string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	SyncAt      *time.Time
+	SyncedAt    *time.Time
+	Records     int64
+	Integration bool
+	Access      string
+	ConnectedBy string
 }
 
 func (q *Queries) Connections(ctx context.Context, member uuid.UUID) ([]ConnectionsRow, error) {
@@ -604,6 +614,9 @@ func (q *Queries) Connections(ctx context.Context, member uuid.UUID) ([]Connecti
 			&i.SyncAt,
 			&i.SyncedAt,
 			&i.Records,
+			&i.Integration,
+			&i.Access,
+			&i.ConnectedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -859,11 +872,11 @@ func (q *Queries) DeleteChat(ctx context.Context, iD uuid.UUID, userID uuid.UUID
 }
 
 const deleteConnection = `-- name: DeleteConnection :one
-DELETE FROM archive.connection WHERE id = $1 AND member = $2 RETURNING id, member, provider, account, token, scopes, error, created_at, updated_at, meta, sync_at, synced_at, cursor, asked_at, lease_at, revoked
+DELETE FROM archive.connection WHERE id = $1 RETURNING id, member, provider, account, token, scopes, error, created_at, updated_at, meta, sync_at, synced_at, cursor, asked_at, lease_at, revoked, integration, access
 `
 
-func (q *Queries) DeleteConnection(ctx context.Context, iD uuid.UUID, member uuid.UUID) (ArchiveConnection, error) {
-	row := q.db.QueryRow(ctx, deleteConnection, iD, member)
+func (q *Queries) DeleteConnection(ctx context.Context, id uuid.UUID) (ArchiveConnection, error) {
+	row := q.db.QueryRow(ctx, deleteConnection, id)
 	var i ArchiveConnection
 	err := row.Scan(
 		&i.ID,
@@ -882,6 +895,8 @@ func (q *Queries) DeleteConnection(ctx context.Context, iD uuid.UUID, member uui
 		&i.AskedAt,
 		&i.LeaseAt,
 		&i.Revoked,
+		&i.Integration,
+		&i.Access,
 	)
 	return i, err
 }
@@ -1389,6 +1404,22 @@ func (q *Queries) InsertWorkflow(ctx context.Context, arg InsertWorkflowParams) 
 	return id, err
 }
 
+const integrationFor = `-- name: IntegrationFor :one
+SELECT id, account FROM archive.connection WHERE provider = $1 AND integration FOR UPDATE
+`
+
+type IntegrationForRow struct {
+	ID      uuid.UUID
+	Account string
+}
+
+func (q *Queries) IntegrationFor(ctx context.Context, provider string) (IntegrationForRow, error) {
+	row := q.db.QueryRow(ctx, integrationFor, provider)
+	var i IntegrationForRow
+	err := row.Scan(&i.ID, &i.Account)
+	return i, err
+}
+
 const joinWorkspace = `-- name: JoinWorkspace :one
 INSERT INTO archive."user" (email, name, workspaces) VALUES ($1, $2, ARRAY[$3::uuid])
 ON CONFLICT (email) DO UPDATE SET workspaces = archive."user".workspaces || EXCLUDED.workspaces WHERE NOT archive."user".workspaces @> EXCLUDED.workspaces
@@ -1579,9 +1610,10 @@ func (q *Queries) MemberByEmail(ctx context.Context, email string) (MemberByEmai
 }
 
 const memberConnections = `-- name: MemberConnections :many
-SELECT id, member, provider, account, token, scopes, error, created_at, updated_at, meta, sync_at, synced_at, cursor, asked_at, lease_at, revoked FROM archive.connection WHERE member = $1 ORDER BY provider, account, id
+SELECT id, member, provider, account, token, scopes, error, created_at, updated_at, meta, sync_at, synced_at, cursor, asked_at, lease_at, revoked, integration, access FROM archive.connection WHERE member = $1 AND NOT integration OR integration ORDER BY provider, account, id
 `
 
+// A member's personal connections, and the archive's integrations.
 func (q *Queries) MemberConnections(ctx context.Context, member uuid.UUID) ([]ArchiveConnection, error) {
 	rows, err := q.db.Query(ctx, memberConnections, member)
 	if err != nil {
@@ -1608,6 +1640,8 @@ func (q *Queries) MemberConnections(ctx context.Context, member uuid.UUID) ([]Ar
 			&i.AskedAt,
 			&i.LeaseAt,
 			&i.Revoked,
+			&i.Integration,
+			&i.Access,
 		); err != nil {
 			return nil, err
 		}
@@ -1984,19 +2018,20 @@ func (q *Queries) RolesWithPrefix(ctx context.Context, prefix string) ([]string,
 }
 
 const saveConnection = `-- name: SaveConnection :exec
-INSERT INTO archive.connection (id, member, provider, account, token, scopes, meta) VALUES ($1, $2, $3, $4, $5, $6, $7)
-ON CONFLICT (id) DO UPDATE SET token = EXCLUDED.token, scopes = EXCLUDED.scopes, meta = EXCLUDED.meta, error = '', updated_at = now(),
+INSERT INTO archive.connection (id, member, provider, account, token, scopes, meta, integration) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT (id) DO UPDATE SET member = EXCLUDED.member, token = EXCLUDED.token, scopes = EXCLUDED.scopes, meta = EXCLUDED.meta, error = '', updated_at = now(),
     sync_at = now(), asked_at = now(), revoked = false
 `
 
 type SaveConnectionParams struct {
-	ID       uuid.UUID
-	Member   uuid.UUID
-	Provider string
-	Account  string
-	Token    []byte
-	Scopes   []string
-	Meta     map[string]string
+	ID          uuid.UUID
+	Member      uuid.UUID
+	Provider    string
+	Account     string
+	Token       []byte
+	Scopes      []string
+	Meta        map[string]string
+	Integration bool
 }
 
 func (q *Queries) SaveConnection(ctx context.Context, arg SaveConnectionParams) error {
@@ -2008,15 +2043,16 @@ func (q *Queries) SaveConnection(ctx context.Context, arg SaveConnectionParams) 
 		arg.Token,
 		arg.Scopes,
 		arg.Meta,
+		arg.Integration,
 	)
 	return err
 }
 
 const saveRecords = `-- name: SaveRecords :exec
-INSERT INTO archive.record (connection, stream, source_id, data, updated_at)
-SELECT $1, $2, r.id, r.data, coalesce(r.updated, now())
+INSERT INTO archive.record (connection, stream, source_id, data, updated_at, access)
+SELECT $1, $2, r.id, r.data, coalesce(r.updated, now()), (SELECT c.access FROM archive.connection c WHERE c.id = $1)
 FROM jsonb_to_recordset($3::jsonb) AS r(id text, data jsonb, updated timestamptz)
-ON CONFLICT (connection, stream, source_id) DO UPDATE SET data = EXCLUDED.data, deleted = false, seen_at = now(),
+ON CONFLICT (connection, stream, source_id) DO UPDATE SET data = EXCLUDED.data, deleted = false, seen_at = now(), access = EXCLUDED.access,
     updated_at = CASE WHEN archive.record.deleted OR archive.record.data IS DISTINCT FROM EXCLUDED.data THEN EXCLUDED.updated_at ELSE archive.record.updated_at END
 `
 
@@ -2118,6 +2154,16 @@ func (q *Queries) Secrets(ctx context.Context, tableName string, ids []uuid.UUID
 		return nil, err
 	}
 	return items, nil
+}
+
+const setConnectionAccess = `-- name: SetConnectionAccess :exec
+WITH r AS (UPDATE archive.record x SET access = $1::text WHERE x.connection = $2::uuid)
+UPDATE archive.connection c SET access = $1::text, updated_at = now() WHERE c.id = $2::uuid AND c.integration
+`
+
+func (q *Queries) SetConnectionAccess(ctx context.Context, access *string, conn uuid.UUID) error {
+	_, err := q.db.Exec(ctx, setConnectionAccess, access, conn)
+	return err
 }
 
 const setConnectionError = `-- name: SetConnectionError :exec
@@ -2398,6 +2444,23 @@ func (q *Queries) UpdateWorkspace(ctx context.Context, arg UpdateWorkspaceParams
 		arg.ID,
 	)
 	return err
+}
+
+const upgradeIntegrations = `-- name: UpgradeIntegrations :execrows
+UPDATE archive.connection c SET integration = true
+WHERE c.id IN (SELECT DISTINCT ON (x.provider) x.id FROM archive.connection x
+    WHERE x.provider = ANY($1::text[]) AND NOT x.integration
+      AND NOT EXISTS (SELECT FROM archive.connection y WHERE y.provider = x.provider AND y.integration)
+    ORDER BY x.provider, x.created_at, x.id)
+`
+
+// Connections from before integrations: the first of each integration's becomes the archive's, unless it has one.
+func (q *Queries) UpgradeIntegrations(ctx context.Context, providers []string) (int64, error) {
+	result, err := q.db.Exec(ctx, upgradeIntegrations, providers)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const upgradeWorkflow = `-- name: UpgradeWorkflow :exec

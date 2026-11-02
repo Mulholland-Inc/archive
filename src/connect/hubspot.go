@@ -16,7 +16,7 @@ import (
 // token it is when asked with the client's secret.
 func init() {
 	Register(&Connector{
-		ID: "hubspot", Name: "HubSpot", Env: "ARCHIVE_HUBSPOT", Host: "https://app.hubspot.com",
+		ID: "hubspot", Name: "HubSpot", Integration: true, Env: "ARCHIVE_HUBSPOT", Host: "https://app.hubspot.com",
 		Endpoint: oauth2.Endpoint{AuthURL: "https://app.hubspot.com/oauth/authorize", TokenURL: "https://api.hubspot.com/oauth/v3/token",
 			AuthStyle: oauth2.AuthStyleInParams},
 		RevokeWith: func(rv *Revocation) error {

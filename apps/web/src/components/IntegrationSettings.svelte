@@ -11,9 +11,10 @@
   import MenuItem from './MenuItem.svelte';
   import MenuLabel from './MenuLabel.svelte';
   import MenuSeparator from './MenuSeparator.svelte';
-  import { archiveIntegrations, isArchiveOwner } from '../lib/app.svelte.js';
+  import { archiveIntegrations, isArchiveOwner, connections } from '../lib/app.svelte.js';
 
   let { onopen, onback } = $props();
+  connections.use();
 
   let query = $state('');
   let categories = $state([]);
@@ -28,7 +29,7 @@
       (c) =>
         (!categories.length || categories.includes(c.category)) &&
         (status === 'all' || (status === 'connected') === c.connected) &&
-        (!q || [c.name, c.category, c.description, c.by, c.account].some((v) => v.toLowerCase().includes(q)))
+        (!q || [c.name, c.category, c.description, c.by, c.account].some((v) => (v ?? '').toLowerCase().includes(q)))
     );
   });
   const filtered = $derived(categories.length > 0 || status !== 'all');
@@ -37,7 +38,7 @@
 </script>
 
 <SettingsPane {onback} backNarrow>
-  <PaneHeader title="Integrations" description="Set up once for the whole archive, so everyone’s work and sign-in run through them. Only owners can add or change them." art="connectors">
+  <PaneHeader title="Integrations" description="The archive’s own accounts, like its QuickBooks or GitHub, connected once for everyone. Only owners can add or change them." art="connectors">
     {#snippet search()}
       <div class="search"><SearchField bind:value={query} size="sm" placeholder="Search" label="Search integrations" /></div>
       <Menu label="Filter" placement="bottom-end">

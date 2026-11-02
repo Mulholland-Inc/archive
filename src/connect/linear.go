@@ -7,7 +7,7 @@ package connect
 // list_projects and list_documents are pulled for what changed since, 250 a page, when their schema takes
 // updatedAt and a cursor, as third parties describe them, and listed whole each sync when not.
 func init() {
-	Register(&Connector{ID: "linear", Name: "Linear", MCP: "https://mcp.linear.app/mcp",
+	Register(&Connector{ID: "linear", Name: "Linear", Integration: true, MCP: "https://mcp.linear.app/mcp",
 		Streams: []*Stream{
 			linearList("teams", "list_teams", "Your teams"),
 			linearList("projects", "list_projects", "Every project"),

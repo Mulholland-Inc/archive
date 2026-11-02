@@ -10,7 +10,7 @@ package connect
 // are skipped when the schema the server lists has no stripe_api_operation_id. Stripe's objects have no time
 // of their last change to list by, so each is listed whole each sync, 100 a page, and one gone is deleted.
 func init() {
-	Register(&Connector{ID: "stripe", Name: "Stripe", MCP: "https://mcp.stripe.com", Account: mcpAccount("get_stripe_account_info"),
+	Register(&Connector{ID: "stripe", Name: "Stripe", Integration: true, MCP: "https://mcp.stripe.com", Account: mcpAccount("get_stripe_account_info"),
 		Streams: []*Stream{
 			stripeList("customers", "GetCustomers", nil),
 			stripeList("products", "GetProducts", nil),

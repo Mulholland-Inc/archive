@@ -351,20 +351,17 @@ func syncJSON(v any) ([]byte, error) {
 	return json.Marshal(scrub(back))
 }
 
-// SyncNow asks for a sync of the caller's connection id now, past any backoff, and queues it.
+// SyncNow asks for a sync of the caller's connection id, or an owner's of the archive's integration id, now,
+// past any backoff, and queues it.
 func (a *Archive) SyncNow(ctx context.Context, id uuid.UUID) error {
-	ac, err := authUser(ctx)
-	if err != nil {
+	if _, err := a.connectionMine(ctx, id); err != nil {
 		return err
 	}
-	err = a.sys(ctx, func(ctx context.Context) error {
+	err := a.sys(ctx, func(ctx context.Context) error {
 		q := a.st.db(ctx)
 		c, err := q.ConnectionLocked(ctx, id)
 		if err != nil {
 			return err
-		}
-		if c.Member != ac.member {
-			return pgx.ErrNoRows
 		}
 		st := syncStateOf(c.Cursor)
 		for _, v := range st {
