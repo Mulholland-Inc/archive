@@ -48,6 +48,9 @@ const (
 	syncMaxPages = 100_000
 	// syncStale is how old a connection's last sync is before a read or an open asks for another.
 	syncStale = 5 * time.Minute
+	// syncRename is how often a sync asks the provider again what its connection's account is called, as an
+	// account can change after it connects, like the companies a Gusto sign-in reaches.
+	syncRename = 24 * time.Hour
 )
 
 // errRevoked is a refresh the provider refused, which stops a connection's sync.
@@ -58,7 +61,8 @@ var errRevoked = errors.New("revoked")
 // way began, which the records it has not read since are older than; Pages how many pages it has read for
 // this ask; Fails how many in a row failed, and Error why the last did. Rows is the version of Archive's tables
 // (syncRows) its records from before were last written into, and RowsAfter the last record's source_id that
-// writing them again has reached (syncFill).
+// writing them again has reached (syncFill). Named, kept on a connector's first stream, is when the account's
+// name was last asked for (syncRename).
 type syncStream struct {
 	Cursor    string     `json:"cursor,omitempty"`
 	At        *time.Time `json:"at,omitempty"`
@@ -72,6 +76,7 @@ type syncStream struct {
 	Error     string     `json:"error,omitempty"`
 	Rows      int        `json:"rows,omitempty"`
 	RowsAfter string     `json:"rows_after,omitempty"`
+	Named     *time.Time `json:"named,omitempty"`
 }
 
 // due says whether the stream has yet to catch up to the ask at asked: one that pulls only every so often
@@ -150,6 +155,9 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 	s := syncPick(streams, syncStateOf(c.Cursor), c.AskedAt)
 	var page *connect.Page
 	var err error
+	// The first stream starting a listing asks again what the account is called, at most every syncRename.
+	var named bool
+	var account string
 	if gone == nil {
 		// Records synced before their tables are written into them first, a while at a time.
 		err = a.syncFill(ctx, c, streams, syncBudget/2)
@@ -164,6 +172,14 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 			}
 			if err == nil {
 				a.syncWatch(ctx, c, p, cl)
+			}
+			if err == nil && p.Account != nil && s == streams[0] && !cur.More && (cur.Named == nil || time.Since(*cur.Named) >= syncRename) {
+				named = true
+				name, err2 := p.Account(cl)
+				if err2 != nil {
+					fmt.Fprintf(os.Stderr, "archive: workspace %s: naming %s %s: %v\n", a.ws.ID, p.Name, c.Account, err2)
+				}
+				account = strings.TrimSpace(name)
 			}
 			cl.Close()
 		}
@@ -228,6 +244,14 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 		default:
 			if err := a.syncSave(ctx, q, c.ID, s, page, cur, now); err != nil {
 				return err
+			}
+			if named {
+				cur.Named = &now
+				if account != "" {
+					if err := q.RenameConnection(ctx, c.ID, account); err != nil {
+						return err
+					}
+				}
 			}
 			cur.Cursor, cur.More, cur.Skip, cur.Fails, cur.Error, cur.At = page.Cursor, page.More, "", 0, "", nil
 			cur.Pages++

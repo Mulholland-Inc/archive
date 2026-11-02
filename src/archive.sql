@@ -1244,6 +1244,13 @@ INSERT INTO archive.connection (id, member, provider, account, token, scopes, me
 ON CONFLICT (id) DO UPDATE SET member = EXCLUDED.member, token = EXCLUDED.token, scopes = EXCLUDED.scopes, meta = EXCLUDED.meta, error = '', updated_at = now(),
     sync_at = now(), asked_at = now(), revoked = false;
 
+-- A connection's account as its provider now calls it; not one that another of its member's own connections to
+-- the provider already has, as connecting again would renew that one.
+-- name: RenameConnection :exec
+UPDATE archive.connection c SET account = $2, updated_at = now()
+WHERE c.id = $1 AND c.account <> $2 AND NOT EXISTS (
+    SELECT FROM archive.connection o WHERE o.id <> c.id AND o.member = c.member AND o.provider = c.provider AND o.account = $2 AND NOT o.integration);
+
 -- name: ConnectionLocked :one
 SELECT * FROM archive.connection WHERE id = $1 FOR UPDATE;
 

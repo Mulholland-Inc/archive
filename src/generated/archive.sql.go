@@ -1920,6 +1920,19 @@ func (q *Queries) RenameChat(ctx context.Context, iD uuid.UUID, userID uuid.UUID
 	return result.RowsAffected(), nil
 }
 
+const renameConnection = `-- name: RenameConnection :exec
+UPDATE archive.connection c SET account = $2, updated_at = now()
+WHERE c.id = $1 AND c.account <> $2 AND NOT EXISTS (
+    SELECT FROM archive.connection o WHERE o.id <> c.id AND o.member = c.member AND o.provider = c.provider AND o.account = $2 AND NOT o.integration)
+`
+
+// A connection's account as its provider now calls it; not one that another of its member's own connections to
+// the provider already has, as connecting again would renew that one.
+func (q *Queries) RenameConnection(ctx context.Context, iD uuid.UUID, account string) error {
+	_, err := q.db.Exec(ctx, renameConnection, iD, account)
+	return err
+}
+
 const renameFile = `-- name: RenameFile :one
 UPDATE archive.file SET name = $2 WHERE id = $1
 RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at
