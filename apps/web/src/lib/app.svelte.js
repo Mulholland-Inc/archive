@@ -4,7 +4,7 @@
 
 import { API, api, blobURL, forgetBlobs, upload, setWorkspace, workspace, local, setLocal, signOut as apiSignOut, Unauthorized, passkeys, passkeyAsked } from './api.js';
 import { resource, listen, onChange, onRefused } from './stream.svelte.js';
-import { toFile, toChat, toMember, toWorkflow, toRun, relative } from './live.js';
+import { toFile, toChat, toMember, toWorkflow, toRun, relative, show } from './live.js';
 import { toTables, countsQuery } from './schema.js';
 import { initials, mockConnectors, mockKey, mockProfile, mockSettings } from './mock/index.js';
 import { catalog } from './mock/connectors.js';
@@ -399,7 +399,8 @@ export async function rowOf(table, id) {
 export async function titlesOf(table) {
   const col = ws().schema.find((x) => x.id === table)?.columns.find((c) => c.type === 'text' && !['id', 'access'].includes(c.name));
   const rows = (await call(`/api/${encodeURIComponent(table)}?limit=1000`).catch(() => [])) ?? [];
-  return Object.fromEntries(rows.map((r) => [r.id, String(r[col?.name] ?? r.id)]));
+  // A title is shown as a cell is: a name, an amount or a date, not the object the API answers with.
+  return Object.fromEntries(rows.map((r) => [r.id, show(r[col?.name]) || r.id]));
 }
 
 export async function rowRelations(id, row) {
@@ -409,7 +410,7 @@ export async function rowRelations(id, row) {
   const base = baseOf(t);
   const titleOf = (tid, r) => {
     const col = types.find((x) => x.id === tid)?.columns.find((c) => c.type === 'text' && !['id', 'access'].includes(c.name));
-    return String(r?.[col?.name] ?? r?.id ?? '');
+    return show(r?.[col?.name]) || r?.id || '';
   };
   const to = await Promise.all(
     t.columns.filter((c) => linkOf(t, c) && row[c.name]).map(async (c) => {
