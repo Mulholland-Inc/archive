@@ -561,7 +561,7 @@
         </SpecimenBlock>
         <SpecimenBlock title="Connectors">
           <Grid columns="2" gap="3">
-            <ConnectorCard connector={{ ...catalog[0], connected: true, account: 'nora.okafor@gmail.com' }} />
+            <ConnectorCard connector={{ ...catalog[0], connected: true}} />
             <ConnectorCard connector={{ ...catalog[8], connected: false }} onconnect={() => {}} />
           </Grid>
         </SpecimenBlock>

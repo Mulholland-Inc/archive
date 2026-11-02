@@ -12,7 +12,7 @@
   <span class="logo"><ConnectorIcon id={connector.brand ?? connector.id} /></span>
   <div class="text">
     <span class="name">{connector.name}<span class="verified" role="img" aria-label="Verified"><Icon icon={BadgeCheck} size="sm" /></span></span>
-    <p class="description">{connector.connected ? connector.account : connector.description}</p>
+    <p class="description">{connector.description}</p>
   </div>
   {#if connector.connected}
     <span class="done" role="img" aria-label="Connected"><Icon icon={Check} size="md" /></span>
