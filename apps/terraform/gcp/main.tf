@@ -579,11 +579,30 @@ resource "cloudflare_account_token" "app" {
   }]
 }
 
-resource "github_actions_secret" "app" {
+# The image workflow's Worker deploy token, which Terraform makes and so also writes; the deploy identity may read
+# it and the live key, and no other secret.
+resource "google_secret_manager_secret" "deploy" {
+  count     = var.github_repository != "" ? 1 : 0
+  secret_id = "archive-cloudflare-deploy-token"
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.this]
+}
+
+resource "google_secret_manager_secret_version" "deploy" {
   count       = var.github_repository != "" ? 1 : 0
-  repository  = split("/", var.github_repository)[1]
-  secret_name = "CLOUDFLARE_API_TOKEN"
-  value       = cloudflare_account_token.app[0].value
+  secret      = google_secret_manager_secret.deploy[0].id
+  secret_data = cloudflare_account_token.app[0].value
+}
+
+resource "google_secret_manager_secret_iam_member" "deploy" {
+  count     = var.github_repository != "" ? 1 : 0
+  secret_id = google_secret_manager_secret.deploy[0].id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = google_service_account.deploy[0].member
 }
 
 resource "google_iam_workload_identity_pool" "github" {
@@ -672,21 +691,6 @@ resource "google_service_account_iam_member" "deploy_runs_as" {
   service_account_id = google_service_account.this.name
   role               = "roles/iam.serviceAccountUser"
   member             = google_service_account.deploy[0].member
-}
-
-resource "github_actions_variable" "deploy" {
-  for_each = var.github_repository != "" ? tomap({
-    GCP_PROJECT                    = var.project
-    GCP_REGION                     = var.region
-    GCP_SERVICE_ACCOUNT            = google_service_account.deploy[0].email
-    GCP_WORKLOAD_IDENTITY_PROVIDER = google_iam_workload_identity_pool_provider.github[0].name
-    CLOUDFLARE_ACCOUNT_ID          = data.cloudflare_zone.this.account.id
-    GCP_TERRAFORM_SERVICE_ACCOUNT  = google_service_account.terraform[0].email
-    ARCHIVE_DOMAIN                 = var.domain
-  }) : {}
-  repository    = split("/", var.github_repository)[1]
-  variable_name = each.key
-  value         = each.value
 }
 
 # Terraform applies itself on every push to main that changes it (.github/workflows/terraform.yml), as this

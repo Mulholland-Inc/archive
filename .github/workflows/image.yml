@@ -93,13 +93,8 @@ jobs:
 
       - run: npm run build
 
-      - run: npx --yes wrangler@4 deploy
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-
-      # The key the API announces live changes with, seeded in Secret Manager (apps/terraform/gcp); the deploy
-      # identity may read only that secret.
+      # The Worker deploy token and the key the API announces live changes with, both in Secret Manager
+      # (apps/terraform/gcp); the deploy identity may read only those two.
       - uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -108,10 +103,12 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v3
 
       - run: |
+          export CLOUDFLARE_API_TOKEN=$(gcloud secrets versions access latest --secret archive-cloudflare-deploy-token --project "$GCP_PROJECT")
+          echo "::add-mask::$CLOUDFLARE_API_TOKEN"
+          npx --yes wrangler@4 deploy
           key=$(gcloud secrets versions access latest --secret archive-archive-live-key --project "$GCP_PROJECT")
           echo "::add-mask::$key"
           printf %s "$key" | npx --yes wrangler@4 secret put LIVE_KEY
         env:
           GCP_PROJECT: ${{ vars.GCP_PROJECT }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}

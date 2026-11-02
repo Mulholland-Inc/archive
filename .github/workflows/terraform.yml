@@ -30,13 +30,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # The GitHub provider sets the repository's Actions variables and secret.
-      - id: github
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: Iv23li7MnowhEXjkSkYu
-          private-key: ${{ secrets.MARZY_AGENT_PRIVATE_KEY }}
-
       - uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -48,9 +41,7 @@ jobs:
         with:
           terraform_wrapper: false
 
-      - env:
-          GITHUB_TOKEN: ${{ steps.github.outputs.token }}
-        run: |
+      - run: |
           export CLOUDFLARE_API_TOKEN=$(gcloud secrets versions access latest --secret archive-cloudflare-api-token --project "$TF_VAR_project")
           terraform init -input=false -backend-config=bucket="$TF_VAR_project-tfstate"
           terraform apply -input=false -auto-approve -target=google_secret_manager_secret.this

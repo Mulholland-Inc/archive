@@ -37,3 +37,16 @@ output "cli" {
   description = "Runs an archive command in the cloud: add the words after --args=, separated by commas, like user,add,you@example.com."
   value       = "gcloud run jobs execute ${google_cloud_run_v2_job.this.name} --project ${var.project} --region ${var.region} --wait --args="
 }
+
+output "github_variables" {
+  description = "The Actions variables the image and terraform workflows of github_repository read; set them once."
+  value = var.github_repository == "" ? {} : {
+    GCP_PROJECT                    = var.project
+    GCP_REGION                     = var.region
+    GCP_SERVICE_ACCOUNT            = google_service_account.deploy[0].email
+    GCP_TERRAFORM_SERVICE_ACCOUNT  = google_service_account.terraform[0].email
+    GCP_WORKLOAD_IDENTITY_PROVIDER = google_iam_workload_identity_pool_provider.github[0].name
+    CLOUDFLARE_ACCOUNT_ID          = data.cloudflare_zone.this.account.id
+    ARCHIVE_DOMAIN                 = var.domain
+  }
+}
