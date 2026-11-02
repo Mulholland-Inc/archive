@@ -162,6 +162,15 @@ func catalogConnection(t *Table) {
 	t.Columns = slices.DeleteFunc(t.Columns, func(c *Column) bool { return slices.Contains(t.internal, c.Name) })
 }
 
+// syncedTables are Archive's tables of what connections sync (archive.sql, tables.go), besides record.
+var syncedTables = []string{"known_person", "known_org", "mail_message", "mail_party", "doc_page", "payroll_company", "payroll_worker",
+	"payroll_run", "payroll_pay"}
+
+// synced says whether t is a table Archive syncs from connections: archive.record, or one of syncedTables.
+func (t *Table) synced() bool {
+	return t.Schema == "archive" && (t.Name == "record" || slices.Contains(syncedTables, t.Name))
+}
+
 // isWorkflow says whether t is archive.workflow, whose writes go through its write hook (workflow.go).
 func (t *Table) isWorkflow() bool { return t.Schema == "archive" && t.Name == "workflow" }
 
@@ -211,8 +220,8 @@ func (c *Catalog) writable(name string) (*Table, error) {
 	if err == nil && t.Schema == "archive" && t.Name == "connection" {
 		return nil, fmt.Errorf("connection is read only: connect and disconnect your accounts in Settings, Connectors: %w", ErrReadOnly)
 	}
-	if err == nil && t.Schema == "archive" && t.Name == "record" {
-		return nil, fmt.Errorf("record is read only: Archive syncs it from your connections: %w", ErrReadOnly)
+	if err == nil && t.synced() {
+		return nil, fmt.Errorf("%s is read only: Archive syncs it from your connections: %w", name, ErrReadOnly)
 	}
 	return t, err
 }

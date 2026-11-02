@@ -7,6 +7,12 @@ package connect
 // since. Each pull is one page of a provider's quota, so the caller runs them as tasks of their own, Gap
 // apart, while one has more to come, and stops once it has caught up: what starts the next delta is the
 // account changing, as its connector's Push hears (push.go), or someone asking.
+//
+// A provider with no change feed is listed whole, and three things keep that from costing a listing of
+// everything on every sync. The Cursor a stream ends a listing with is its memory: the next sync starts from
+// it, so it can say which ids it has read in full, the versions it saw, or that it has read what never
+// changes. A record it knows is as it was is Same, so it is neither read again nor deleted. And a stream that
+// changes seldom, like a company's departments, says Every, and is pulled no more often than that.
 
 import (
 	"cmp"
@@ -32,8 +38,14 @@ type Stream struct {
 	Doc string
 	// Gap is how long after a page with more to come the next one runs.
 	Gap time.Duration
+	// Every is how long after it last caught up the stream is pulled again; 0 is on every sync. Until then an
+	// ask leaves it as it is.
+	Every time.Duration
 	// Pull is the page after cursor. An *Unsupported error skips the stream, a day at a time.
 	Pull func(c *Client, cursor string) (*Page, error)
+	// Rows is what a record's data is in Archive's tables (tables.go), nil when it is nothing there; a stream
+	// without Rows lands in archive.record alone.
+	Rows func(data map[string]any) *Rows
 }
 
 // Page is what one pull found.
@@ -55,6 +67,9 @@ type Record struct {
 	Updated time.Time
 	// Deleted says it is gone there; its Data is not read.
 	Deleted bool
+	// Same says it is there as the stream last saved it, as the stream's memory knows: it is only seen, so a
+	// full listing keeps it, and not written again; its Data is not read.
+	Same bool
 }
 
 // Unsupported is a stream the account's provider has no way to pull, like an MCP server without its tool; it

@@ -53,7 +53,8 @@ func TestWorkflowsFromBeforeRowsKeepTheirURLsCursorsAndSchedules(t *testing.T) {
 	in.push(map[string]string{"house.sql": e2eHouse})
 	user := in.psql("archive", "SELECT id FROM archive.\"user\" WHERE email = 'alice@example.com'")
 	role := in.role("alice@example.com")
-	in.psql("archive", `DROP TABLE archive.record, archive.connection; DROP POLICY mine ON archive.workflow_run; DROP POLICY mine ON archive.workflow;
+	in.psql("archive", `DROP TABLE archive.mail_party, archive.mail_message, archive.doc_page, archive.payroll_pay, archive.payroll_run, archive.payroll_worker,
+  archive.payroll_company, archive.known_person, archive.known_org, archive.record, archive.connection; DROP FUNCTION archive.money_of(bigint, text); DROP POLICY mine ON archive.workflow_run; DROP POLICY mine ON archive.workflow;
 ALTER TABLE archive.workflow DISABLE ROW LEVEL SECURITY; ALTER TABLE archive.workflow_run DISABLE ROW LEVEL SECURITY;
 DROP TRIGGER workflow_saved ON archive.workflow; DROP FUNCTION archive.workflow_saved(); DROP FUNCTION archive.mine(uuid);
 REVOKE ALL ON archive.workflow, archive.workflow_run FROM "`+strings.Split(role, "_u")[0]+`_viewer";

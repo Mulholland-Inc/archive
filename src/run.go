@@ -1220,8 +1220,8 @@ func runTypes(cat *Catalog) string {
 	return b.String()
 }
 
-// runRecordRe finds a query that may read record, whose syncs a read catches up.
-var runRecordRe = regexp.MustCompile(`(?i)\brecord\b`)
+// runRecordRe finds a query that may read record, or a table synced with it, whose syncs a read catches up.
+var runRecordRe = regexp.MustCompile(`(?i)\b(record|known_person|known_org|mail_message|mail_party|doc_page|payroll_company|payroll_worker|payroll_run|payroll_pay)\b`)
 
 var runIdentRe = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*$`)
 

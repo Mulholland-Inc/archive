@@ -54,23 +54,34 @@ const (
 var errRevoked = errors.New("revoked")
 
 // syncStream is where one stream of a connection is, in its cursor. At is when its next page is due, nil
-// now, while it is due; Done the ask it last caught up to; Since when the full listing under way began, which
-// the records it has not read since are older than; Pages how many pages it has read for this ask; Fails how
-// many in a row failed, and Error why the last did.
+// now, while it is due; Done the ask it last caught up to, and Last when; Since when the full listing under
+// way began, which the records it has not read since are older than; Pages how many pages it has read for
+// this ask; Fails how many in a row failed, and Error why the last did. Rows is the version of Archive's tables
+// (syncRows) its records from before were last written into, and RowsAfter the last record's source_id that
+// writing them again has reached (syncFill).
 type syncStream struct {
-	Cursor string     `json:"cursor,omitempty"`
-	At     *time.Time `json:"at,omitempty"`
-	Done   *time.Time `json:"done,omitempty"`
-	More   bool       `json:"more,omitempty"`
-	Since  *time.Time `json:"since,omitempty"`
-	Skip   string     `json:"skip,omitempty"`
-	Pages  int        `json:"pages,omitempty"`
-	Fails  int        `json:"fails,omitempty"`
-	Error  string     `json:"error,omitempty"`
+	Cursor    string     `json:"cursor,omitempty"`
+	At        *time.Time `json:"at,omitempty"`
+	Done      *time.Time `json:"done,omitempty"`
+	Last      *time.Time `json:"last,omitempty"`
+	More      bool       `json:"more,omitempty"`
+	Since     *time.Time `json:"since,omitempty"`
+	Skip      string     `json:"skip,omitempty"`
+	Pages     int        `json:"pages,omitempty"`
+	Fails     int        `json:"fails,omitempty"`
+	Error     string     `json:"error,omitempty"`
+	Rows      int        `json:"rows,omitempty"`
+	RowsAfter string     `json:"rows_after,omitempty"`
 }
 
-// due says whether the stream has yet to catch up to the ask at asked.
-func (v *syncStream) due(asked time.Time) bool { return v.Done == nil || v.Done.Before(asked) }
+// due says whether the stream has yet to catch up to the ask at asked: one that pulls only every so often
+// counts as caught up while it last did within every of the ask, unless a listing of it is under way.
+func (v *syncStream) due(asked time.Time, every time.Duration) bool {
+	if v.Done != nil && !v.Done.Before(asked) {
+		return false
+	}
+	return every <= 0 || v.Last == nil || v.More || !asked.Before(v.Last.Add(every))
+}
 
 type syncState map[string]*syncStream
 
@@ -99,7 +110,7 @@ func syncPick(streams []*connect.Stream, st syncState, asked time.Time) *connect
 	var at time.Time
 	for _, s := range streams {
 		v := st.of(s.Name)
-		if !v.due(asked) {
+		if !v.due(asked, s.Every) {
 			continue
 		}
 		var t time.Time
@@ -139,7 +150,11 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 	s := syncPick(streams, syncStateOf(c.Cursor), c.AskedAt)
 	var page *connect.Page
 	var err error
-	if s != nil {
+	if gone == nil {
+		// Records synced before their tables are written into them first, a while at a time.
+		err = a.syncFill(ctx, c, streams, syncBudget/2)
+	}
+	if s != nil && err == nil {
 		cur := syncStateOf(c.Cursor).of(s.Name)
 		var cl *connect.Client
 		if cl, err = a.connClient(ctx, c); err == nil {
@@ -211,7 +226,7 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 				cur.At, cur.Done, cur.Fails = nil, &c.AskedAt, 0
 			}
 		default:
-			if err := a.syncSave(ctx, q, c.ID, name, page, cur, now); err != nil {
+			if err := a.syncSave(ctx, q, c.ID, s, page, cur, now); err != nil {
 				return err
 			}
 			cur.Cursor, cur.More, cur.Skip, cur.Fails, cur.Error, cur.At = page.Cursor, page.More, "", 0, "", nil
@@ -219,7 +234,7 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 			if page.More {
 				cur.At = ptr(now.Add(s.Gap))
 			} else {
-				cur.Done, cur.Pages = &c.AskedAt, 0
+				cur.Done, cur.Last, cur.Pages = &c.AskedAt, &now, 0
 			}
 		}
 		// The connection is as its declared streams are: due at the first of those that have yet to catch up to
@@ -231,7 +246,7 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 			if v.Error != "" {
 				errs = append(errs, v.Error)
 			}
-			if !v.due(c2.AskedAt) {
+			if !v.due(c2.AskedAt, d.Every) {
 				continue
 			}
 			at := now
@@ -242,9 +257,13 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 				save.SyncAt = &at
 			}
 		}
+		// A stream the connector no longer declares is gone, and so are its records.
 		for k := range st {
 			if !slices.ContainsFunc(streams, func(d *connect.Stream) bool { return d.Name == k }) {
 				delete(st, k)
+				if err := syncGone(ctx, q, c.ID, k); err != nil {
+					return err
+				}
 			}
 		}
 		if save.SyncAt == nil && len(errs) == 0 {
@@ -257,9 +276,10 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 	})
 }
 
-// syncSave writes the records of page of stream to connection id, in the transaction at now; a page that ends
-// a full listing deletes the records it began after and did not read.
-func (a *Archive) syncSave(ctx context.Context, q *generated.Queries, id uuid.UUID, stream string, page *connect.Page, cur *syncStream, now time.Time) error {
+// syncSave writes the records of page of stream s to connection id, and what they are in Archive's tables
+// (syncRows), in the transaction at now; a record the page says is the Same is only seen. A page that ends a
+// full listing deletes the records it began after and did not read.
+func (a *Archive) syncSave(ctx context.Context, q *generated.Queries, id uuid.UUID, s *connect.Stream, page *connect.Page, cur *syncStream, now time.Time) error {
 	if page.Full && cur.Since == nil {
 		cur.Since = &now
 	}
@@ -269,55 +289,84 @@ func (a *Archive) syncSave(ctx context.Context, q *generated.Queries, id uuid.UU
 		Updated *time.Time      `json:"updated"`
 	}
 	live, at := []rec{}, map[string]int{}
-	var gone []string
+	var gone, same []string
 	for _, r := range page.Records {
 		if r.ID == "" {
 			continue
 		}
-		if r.Deleted {
+		// A record twice in a page is as it was last.
+		if i, ok := at[r.ID]; ok {
+			live[i].ID = ""
+			delete(at, r.ID)
+		}
+		gone = slices.DeleteFunc(gone, func(g string) bool { return g == r.ID })
+		same = slices.DeleteFunc(same, func(g string) bool { return g == r.ID })
+		switch {
+		case r.Deleted:
 			gone = append(gone, r.ID)
-			if i, ok := at[r.ID]; ok {
-				live[i].ID = ""
-			}
+			continue
+		case r.Same:
+			same = append(same, r.ID)
 			continue
 		}
 		b, err := syncJSON(r.Data)
 		if err != nil {
-			return fmt.Errorf("record %s of %s: %w", r.ID, stream, err)
+			return fmt.Errorf("record %s of %s: %w", r.ID, s.Name, err)
 		}
 		v := rec{ID: r.ID, Data: b}
 		if !r.Updated.IsZero() {
 			v.Updated = &r.Updated
 		}
-		// A record twice in a page is as it was last.
-		if i, ok := at[r.ID]; ok {
-			live[i].ID = ""
-		}
 		at[r.ID] = len(live)
 		live = append(live, v)
-		gone = slices.DeleteFunc(gone, func(g string) bool { return g == r.ID })
 	}
 	live = slices.DeleteFunc(live, func(r rec) bool { return r.ID == "" })
 	if len(live) > 0 {
 		b, _ := json.Marshal(live)
-		if err := q.SaveRecords(ctx, id, stream, b); err != nil {
+		saved, err := q.SaveRecords(ctx, id, s.Name, b)
+		if err != nil {
+			return err
+		}
+		if s.Rows != nil {
+			byID := map[string]json.RawMessage{}
+			for _, r := range live {
+				byID[r.ID] = r.Data
+			}
+			rows := make([]syncRow, len(saved))
+			for i, r := range saved {
+				rows[i] = syncRow{Record: r.ID, SourceID: r.SourceID, Data: byID[r.SourceID]}
+			}
+			if err := syncRows(ctx, q, id, s, rows); err != nil {
+				return err
+			}
+		}
+	}
+	if len(same) > 0 {
+		if err := q.SeeRecords(ctx, id, s.Name, same); err != nil {
 			return err
 		}
 	}
 	if len(gone) > 0 {
-		if err := q.DeleteRecords(ctx, id, stream, gone); err != nil {
+		ids, err := q.DeleteRecords(ctx, id, s.Name, gone)
+		if err := syncCleared(ctx, q, ids, err); err != nil {
 			return err
 		}
 	}
 	switch {
 	case page.Full && !page.More:
-		err := q.DeleteUnseenRecords(ctx, id, stream, *cur.Since)
+		ids, err := q.DeleteUnseenRecords(ctx, id, s.Name, *cur.Since)
 		cur.Since = nil
-		return err
+		return syncCleared(ctx, q, ids, err)
 	case !page.Full:
 		cur.Since = nil
 	}
 	return nil
+}
+
+// syncGone deletes the records of a stream connection id's connector no longer declares.
+func syncGone(ctx context.Context, q *generated.Queries, id uuid.UUID, stream string) error {
+	ids, err := q.DeleteStreamRecords(ctx, id, stream)
+	return syncCleared(ctx, q, ids, err)
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -364,8 +413,9 @@ func (a *Archive) SyncNow(ctx context.Context, id uuid.UUID) error {
 			return err
 		}
 		st := syncStateOf(c.Cursor)
+		// Sync now pulls every stream, those that pull only every so often too.
 		for _, v := range st {
-			v.At, v.Fails = nil, 0
+			v.At, v.Fails, v.Last = nil, 0, nil
 		}
 		cursor, _ := json.Marshal(st)
 		return q.AskSync(ctx, id, cursor)

@@ -45,11 +45,28 @@ A hosted Archive could later run one relay for the one-URL providers. That is th
 
 ## Where data lands
 
-- **Mail and chat messages, calendar events, issues, CRM records, tickets and finance records** become rows in built-in type tables (`email`, `message`, `event`, …), created like any type table by `archive.sql`, so they are listed, searched and shown in the UI like the rest.
+- **Records**: every stream keeps a copy of what it syncs in `archive.record`, one row per thing, its data as the provider has it. Only Go writes it, and a record is seen by whoever sees its connection: a personal connection's member, and everyone an integration's `access` group lets in.
+- **Built-in tables by domain**: a stream's records also land as rows of tables `archive.sql` creates, the same for every connector of a domain, so two mail systems are one mail and two payroll providers one payroll. A connector's file maps its records into them (`Stream.Rows`, `connect/tables.go`) and knows nothing of SQL; a workspace cannot change them.
+  - Mail: `mail_message` and `mail_party`, who it is from and to.
+  - Docs: `doc_page`.
+  - Payroll: `payroll_company`, `payroll_worker` (employees and contractors), `payroll_run` and `payroll_pay` (what each was paid, in a payroll or on its own).
+  - People and organizations: `known_person`, by email address, and `known_org`, by EIN or domain, shared by every domain and connection, so a Gmail sender and a Gusto employee with one address are one person.
+- **Access**: a row of a domain table is seen with its record, so its connection's member or `access` decides. A person or organization row holds its key alone, and is seen only through a row that names it; their names stay on those rows. A member sees a person only as their own connections and the integrations they may see know them, and learns nothing of who else does.
+- **Deletes**: a record deleted at the source, or no longer listed by a full listing, deletes its rows; disconnecting deletes the connection's records and rows. A person or organization that nothing names any more is deleted with them.
+- **Records from before**: records synced before a stream had tables, or before a mapping changed (`syncRowsVersion`), are written into them again a batch at a time at the start of the next sync pages.
 - **Files** from Drive, SharePoint, OneDrive, Dropbox, Box and attachments become Archive files, processed and text-extracted as uploads are. Google Docs, Sheets and Slides are exported as docx, xlsx and pptx.
-- **Deletes** at the source delete the row or file in Archive.
 
-The table shapes are decided per connector when it is built.
+Gmail, Notion and Gusto map into the tables today; Outlook, QuickBooks and the rest keep to `record` until they are mapped. Calendar events, chat messages, issues, CRM records and tickets get tables of their own when the first connector of each is mapped.
+
+## Syncing without a change feed
+
+Providers with no delta API and no push Archive can receive (Notion, Gusto, Sentry, Stripe through MCP) are listed again, and three things keep that cheap:
+
+- **Memory**: the cursor a stream ends a listing with is where the next sync starts, so a stream can remember across syncs what it read: versions, ids it has read in full, that it has listed history.
+- **Same**: a record the stream knows is unchanged is the Same: it is seen, so a full listing keeps it, but neither fetched again nor rewritten.
+- **Every**: a stream that changes seldom says how often it is pulled; until then an ask leaves it caught up. Sync now pulls everything.
+
+Gusto uses all three: setup and what only changes with payrolls are pulled daily; an employee's history and work addresses are read only when their `version` changes; payroll history is listed once, and after that only three months back to 90 days ahead, in pages that never delete; and `get_payroll` reads each payroll once, when it is first seen processed, since Gusto corrects a processed payroll with another.
 
 ## Connectors
 

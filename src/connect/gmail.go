@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"strings"
 	"time"
@@ -89,7 +90,7 @@ func init() {
 				}),
 		},
 		Push: gmailPush,
-		Streams: []*Stream{{Name: "messages", Gap: 5 * time.Second, Pull: gmailMessages,
+		Streams: []*Stream{{Name: "messages", Gap: 5 * time.Second, Pull: gmailMessages, Rows: gmailRows,
 			Doc: "Every message but spam and trash, each as the message action returns it without its HTML, its text cut at 64 KB: " +
 				"listed whole the first time, 50 a page, and then the mailbox's history since, messages added, deleted or relabeled. " +
 				"A history Gmail no longer keeps, about a week's, lists the mailbox whole again."}},
@@ -246,6 +247,25 @@ func gmailRecords(c *Client, ids []string, gone map[string]bool) ([]Record, erro
 	return kept, nil
 }
 
+// gmailRows is a message as mail: its headers' addresses are its parties, and it was sent when its Date says,
+// or else when Gmail had it.
+func gmailRows(m map[string]any) *Rows {
+	sent, err := mail.ParseDate(str(m, "date"))
+	if err != nil {
+		sent = stamp(str(m, "internalDate"))
+	}
+	x := &Mail{Thread: str(m, "threadId"), Subject: str(m, "subject"), Snippet: str(m, "snippet"), Sent: sent.UTC(), Labels: strs(m["labelIds"])}
+	if atts, ok := m["attachments"].([]any); ok {
+		x.Attachments = len(atts)
+	}
+	for _, role := range []string{"from", "to", "cc", "bcc", "reply_to"} {
+		for _, a := range addresses(str(m, strings.ReplaceAll(role, "_", "-"))) {
+			x.Parties = append(x.Parties, MailParty{Role: role, Address: a})
+		}
+	}
+	return &Rows{Mail: x}
+}
+
 const gmailAPI = "https://gmail.googleapis.com/gmail/v1/users/me"
 
 // clamp is n within 1 and most, or def when it is not given.
@@ -286,7 +306,7 @@ type gmailPart struct {
 func (m gmailRaw) flat(body bool) map[string]any {
 	out := map[string]any{"id": m.ID, "threadId": m.ThreadID, "labelIds": m.LabelIDs, "snippet": m.Snippet}
 	for _, h := range m.Payload.Headers {
-		if k := strings.ToLower(h.Name); k == "from" || k == "to" || k == "cc" || k == "subject" || k == "date" {
+		if k := strings.ToLower(h.Name); k == "from" || k == "to" || k == "cc" || k == "bcc" || k == "reply-to" || k == "subject" || k == "date" {
 			out[k] = h.Value
 		}
 	}

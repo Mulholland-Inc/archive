@@ -449,6 +449,228 @@ COMMENT ON COLUMN archive.record.deleted IS 'It is gone there; the last data see
 COMMENT ON COLUMN archive.record.updated_at IS 'When it last changed there, or when Archive saw it change';
 COMMENT ON COLUMN archive.record.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
+-- What records are in the domains they belong to: mail, docs and payroll, in tables every connector of a domain
+-- shares, as its file maps its records (connect/tables.go), so Gmail and Outlook are one mail and two payroll
+-- providers one payroll. Only Go writes them (tables.go), with the records they are from, and each row goes
+-- with its record: a record deleted there, or its connection disconnected, deletes it. Each is seen by whoever
+-- sees its record, as record's policy has it.
+--
+-- People and organizations are shared by every domain and every connection, by a key that is the same wherever
+-- they are seen: known_person is an email address, known_org an EIN or a domain. A row of one holds that key
+-- alone, and is seen by whoever sees a row that names it; the rest, like a name, stays on the rows of the
+-- records that said it. So a member sees a person only as their own connections and the integrations they may
+-- see know them, and learns nothing of who else knows them.
+CREATE TABLE archive.known_person (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    email      archive.email NOT NULL UNIQUE,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE archive.known_person IS 'A person your connections know, by their email address: one row however many connections know them, like a Gmail sender who is also a Gusto employee. Read only; Archive syncs them, and their names are where they were seen, like mail_party and payroll_worker
+icon: contact';
+COMMENT ON COLUMN archive.known_person.email IS 'Their address, lowercase: what makes them one person everywhere';
+
+CREATE TABLE archive.known_org (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    ein        archive.us_ein UNIQUE,
+    domain     archive.domain UNIQUE,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT known_org_key CHECK (ein IS NOT NULL OR domain IS NOT NULL)
+);
+COMMENT ON TABLE archive.known_org IS 'An organization your connections know, by its EIN or its web domain: one row however many connections know it. Read only; Archive syncs them, and their names are where they were seen, like payroll_company
+icon: building-2';
+COMMENT ON COLUMN archive.known_org.ein IS 'Its US employer identification number';
+COMMENT ON COLUMN archive.known_org.domain IS 'Its web domain, like example.com';
+
+CREATE TABLE archive.mail_message (
+    id          uuid PRIMARY KEY DEFAULT uuidv7(),
+    record      uuid NOT NULL UNIQUE REFERENCES archive.record ON DELETE CASCADE,
+    connection  uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    thread      text NOT NULL DEFAULT '',
+    subject     text NOT NULL DEFAULT '',
+    snippet     text NOT NULL DEFAULT '',
+    sent_at     timestamptz,
+    labels      text[] NOT NULL DEFAULT '{}',
+    attachments integer NOT NULL DEFAULT 0
+);
+CREATE INDEX mail_message_sent_idx ON archive.mail_message (connection, sent_at);
+COMMENT ON TABLE archive.mail_message IS 'A message of a mailbox you connected, like your Gmail; who it is from and to is in mail_party, and its text in its record. Read only; Archive syncs them
+icon: mail';
+COMMENT ON COLUMN archive.mail_message.record IS 'references record; the copy of it Archive keeps, whose data has its text';
+COMMENT ON COLUMN archive.mail_message.connection IS 'references connection; the mailbox it is in';
+COMMENT ON COLUMN archive.mail_message.thread IS 'The conversation it is part of, its id there';
+COMMENT ON COLUMN archive.mail_message.sent_at IS 'When it was sent, as its Date says, or else when it arrived';
+COMMENT ON COLUMN archive.mail_message.labels IS 'Its labels or folders there, like INBOX';
+COMMENT ON COLUMN archive.mail_message.attachments IS 'How many files it has attached';
+
+CREATE TABLE archive.mail_party (
+    id      uuid PRIMARY KEY DEFAULT uuidv7(),
+    message uuid NOT NULL REFERENCES archive.mail_message ON DELETE CASCADE,
+    person  uuid NOT NULL REFERENCES archive.known_person ON DELETE CASCADE,
+    role    text NOT NULL CONSTRAINT mail_party_role CHECK (role IN ('from', 'to', 'cc', 'bcc', 'reply_to')),
+    name    archive.name,
+    UNIQUE (message, role, person)
+);
+CREATE INDEX mail_party_person_idx ON archive.mail_party (person);
+COMMENT ON TABLE archive.mail_party IS 'Someone a message is from or to. Read only; Archive syncs them
+icon: at-sign';
+COMMENT ON COLUMN archive.mail_party.message IS 'references mail_message';
+COMMENT ON COLUMN archive.mail_party.person IS 'references known_person; who, by their address';
+COMMENT ON COLUMN archive.mail_party.role IS 'from, to, cc, bcc or reply_to';
+COMMENT ON COLUMN archive.mail_party.name IS 'The name the message gives them';
+
+CREATE TABLE archive.doc_page (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    record     uuid NOT NULL UNIQUE REFERENCES archive.record ON DELETE CASCADE,
+    connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    kind       text NOT NULL DEFAULT 'page',
+    title      text NOT NULL DEFAULT '',
+    url        archive.url,
+    icon       text NOT NULL DEFAULT '',
+    edited_at  timestamptz
+);
+CREATE INDEX doc_page_connection_idx ON archive.doc_page (connection);
+COMMENT ON TABLE archive.doc_page IS 'A page of docs or a wiki you connected, like Notion; its content stays there. Read only; Archive syncs them
+icon: file-text';
+COMMENT ON COLUMN archive.doc_page.record IS 'references record; the copy of it Archive keeps';
+COMMENT ON COLUMN archive.doc_page.connection IS 'references connection; the account it is in';
+COMMENT ON COLUMN archive.doc_page.kind IS 'What it is there, like page or database';
+COMMENT ON COLUMN archive.doc_page.edited_at IS 'When it was last edited, when the service says';
+
+CREATE TABLE archive.payroll_company (
+    id          uuid PRIMARY KEY DEFAULT uuidv7(),
+    record      uuid NOT NULL UNIQUE REFERENCES archive.record ON DELETE CASCADE,
+    connection  uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    source_id   text NOT NULL,
+    org         uuid REFERENCES archive.known_org ON DELETE SET NULL,
+    name        text NOT NULL DEFAULT '',
+    trade_name  text NOT NULL DEFAULT '',
+    entity_type text NOT NULL DEFAULT '',
+    UNIQUE (connection, source_id)
+);
+CREATE INDEX payroll_company_org_idx ON archive.payroll_company (org);
+COMMENT ON TABLE archive.payroll_company IS 'A company a payroll you connected pays people for, like one in Gusto. Read only; Archive syncs them
+icon: landmark';
+COMMENT ON COLUMN archive.payroll_company.record IS 'references record; the copy of it Archive keeps';
+COMMENT ON COLUMN archive.payroll_company.connection IS 'references connection; the payroll it is in';
+COMMENT ON COLUMN archive.payroll_company.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.payroll_company.org IS 'references known_org; the organization it is, by its EIN';
+COMMENT ON COLUMN archive.payroll_company.trade_name IS 'The name it does business as';
+COMMENT ON COLUMN archive.payroll_company.entity_type IS 'What kind of company it is, like LLC';
+
+CREATE TABLE archive.payroll_worker (
+    id             uuid PRIMARY KEY DEFAULT uuidv7(),
+    record         uuid NOT NULL UNIQUE REFERENCES archive.record ON DELETE CASCADE,
+    connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    source_id      text NOT NULL,
+    kind           text NOT NULL CONSTRAINT payroll_worker_kind CHECK (kind IN ('employee', 'contractor')),
+    company        uuid REFERENCES archive.payroll_company ON DELETE SET NULL,
+    company_source text NOT NULL DEFAULT '',
+    person         uuid REFERENCES archive.known_person ON DELETE SET NULL,
+    name           archive.name,
+    business_name  text NOT NULL DEFAULT '',
+    email          archive.email,
+    personal_email archive.email,
+    title          text NOT NULL DEFAULT '',
+    hired_on       date,
+    terminated_on  date,
+    active         boolean NOT NULL DEFAULT true,
+    pay_rate       archive.money,
+    pay_per        text NOT NULL DEFAULT '',
+    UNIQUE (connection, source_id)
+);
+CREATE INDEX payroll_worker_person_idx ON archive.payroll_worker (person);
+CREATE INDEX payroll_worker_company_idx ON archive.payroll_worker (company);
+COMMENT ON TABLE archive.payroll_worker IS 'Someone a payroll you connected pays: an employee or a contractor, the ones who left too. Read only; Archive syncs them
+icon: id-card';
+COMMENT ON COLUMN archive.payroll_worker.record IS 'references record; the copy of them Archive keeps';
+COMMENT ON COLUMN archive.payroll_worker.connection IS 'references connection; the payroll they are in';
+COMMENT ON COLUMN archive.payroll_worker.source_id IS 'Their id there';
+COMMENT ON COLUMN archive.payroll_worker.kind IS 'employee or contractor';
+COMMENT ON COLUMN archive.payroll_worker.company IS 'references payroll_company; who they work for';
+COMMENT ON COLUMN archive.payroll_worker.company_source IS 'The id there of who they work for';
+COMMENT ON COLUMN archive.payroll_worker.person IS 'references known_person; who they are, by their work email, or else their own';
+COMMENT ON COLUMN archive.payroll_worker.business_name IS 'A contractor''s business';
+COMMENT ON COLUMN archive.payroll_worker.email IS 'The address they are known by: their work email, or else their own';
+COMMENT ON COLUMN archive.payroll_worker.personal_email IS 'Their own address, when they have a work email too';
+COMMENT ON COLUMN archive.payroll_worker.title IS 'Their job title';
+COMMENT ON COLUMN archive.payroll_worker.hired_on IS 'When they started';
+COMMENT ON COLUMN archive.payroll_worker.terminated_on IS 'When they left, when they did';
+COMMENT ON COLUMN archive.payroll_worker.active IS 'They work there now';
+COMMENT ON COLUMN archive.payroll_worker.pay_rate IS 'What they are paid, per pay_per';
+COMMENT ON COLUMN archive.payroll_worker.pay_per IS 'What pay_rate is for, like Hour, Year or Paycheck';
+
+CREATE TABLE archive.payroll_run (
+    id             uuid PRIMARY KEY DEFAULT uuidv7(),
+    record         uuid NOT NULL UNIQUE REFERENCES archive.record ON DELETE CASCADE,
+    connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    source_id      text NOT NULL,
+    company        uuid REFERENCES archive.payroll_company ON DELETE SET NULL,
+    company_source text NOT NULL DEFAULT '',
+    period_start   date,
+    period_end     date,
+    check_date     date,
+    processed      boolean NOT NULL DEFAULT false,
+    off_cycle      boolean NOT NULL DEFAULT false,
+    external       boolean NOT NULL DEFAULT false,
+    gross_pay      archive.money,
+    net_pay        archive.money,
+    employee_taxes archive.money,
+    employer_taxes archive.money,
+    UNIQUE (connection, source_id)
+);
+CREATE INDEX payroll_run_company_idx ON archive.payroll_run (company, check_date);
+COMMENT ON TABLE archive.payroll_run IS 'A payroll: a company paying its people for a pay period, on its check date; what each was paid is in payroll_pay. Read only; Archive syncs them
+icon: banknote';
+COMMENT ON COLUMN archive.payroll_run.record IS 'references record; the copy of it Archive keeps';
+COMMENT ON COLUMN archive.payroll_run.connection IS 'references connection; the payroll it is in';
+COMMENT ON COLUMN archive.payroll_run.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.payroll_run.company IS 'references payroll_company';
+COMMENT ON COLUMN archive.payroll_run.company_source IS 'The id there of its company';
+COMMENT ON COLUMN archive.payroll_run.check_date IS 'When its people are paid';
+COMMENT ON COLUMN archive.payroll_run.processed IS 'It was run; until then its amounts may change';
+COMMENT ON COLUMN archive.payroll_run.off_cycle IS 'It is off its schedule, like a bonus or a correction';
+COMMENT ON COLUMN archive.payroll_run.external IS 'It was paid outside the payroll provider and recorded there';
+COMMENT ON COLUMN archive.payroll_run.employee_taxes IS 'The taxes withheld from its people';
+COMMENT ON COLUMN archive.payroll_run.employer_taxes IS 'The taxes the company pays on top';
+
+CREATE TABLE archive.payroll_pay (
+    id             uuid PRIMARY KEY DEFAULT uuidv7(),
+    record         uuid NOT NULL REFERENCES archive.record ON DELETE CASCADE,
+    connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    run            uuid REFERENCES archive.payroll_run ON DELETE CASCADE,
+    worker         uuid REFERENCES archive.payroll_worker ON DELETE SET NULL,
+    worker_source  text NOT NULL,
+    paid_on        date,
+    gross_pay      archive.money,
+    net_pay        archive.money,
+    deductions     archive.money,
+    employee_taxes archive.money,
+    employer_taxes archive.money,
+    payment_method text NOT NULL DEFAULT '',
+    UNIQUE (record, worker_source)
+);
+CREATE INDEX payroll_pay_run_idx ON archive.payroll_pay (run);
+CREATE INDEX payroll_pay_worker_idx ON archive.payroll_pay (connection, worker_source);
+COMMENT ON TABLE archive.payroll_pay IS 'What one person was paid: in a payroll, or on its own, like a contractor payment. Read only; Archive syncs them
+icon: receipt';
+COMMENT ON COLUMN archive.payroll_pay.record IS 'references record; the copy Archive keeps of the payroll or payment it is in';
+COMMENT ON COLUMN archive.payroll_pay.connection IS 'references connection; the payroll it is in';
+COMMENT ON COLUMN archive.payroll_pay.run IS 'references payroll_run; the payroll it is part of, none for a payment on its own';
+COMMENT ON COLUMN archive.payroll_pay.worker IS 'references payroll_worker; who was paid';
+COMMENT ON COLUMN archive.payroll_pay.worker_source IS 'The id there of who was paid';
+COMMENT ON COLUMN archive.payroll_pay.paid_on IS 'When it was paid';
+COMMENT ON COLUMN archive.payroll_pay.gross_pay IS 'What they earned, before taxes and deductions';
+COMMENT ON COLUMN archive.payroll_pay.net_pay IS 'What they took home';
+COMMENT ON COLUMN archive.payroll_pay.deductions IS 'What was taken off for benefits, garnishments and the like';
+COMMENT ON COLUMN archive.payroll_pay.employee_taxes IS 'The taxes withheld from them';
+COMMENT ON COLUMN archive.payroll_pay.employer_taxes IS 'The taxes the company paid on top';
+COMMENT ON COLUMN archive.payroll_pay.payment_method IS 'How they were paid, like Direct Deposit or Check';
+
+-- money_of is an amount in minor units in currency as archive.money, null when there is no amount.
+CREATE FUNCTION archive.money_of(minor bigint, currency text) RETURNS archive.money LANGUAGE sql IMMUTABLE AS $$
+    SELECT CASE WHEN minor IS NOT NULL THEN ROW(minor, currency)::archive.money END
+$$;
+
 -- An OAuth client Archive registered for itself at an MCP connector's authorization server (connect/mcp.go):
 -- one per connector, kept in the main database for every workspace, since the redirect URI is the server's.
 -- client is the connect.Registration, its secret with it, sealed with ARCHIVE_SECRET_KEY. Only Go reads it.
@@ -559,6 +781,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON archive.workflow TO "{p}_viewer";
 GRANT SELECT ON archive.workflow_run TO "{p}_viewer";
 GRANT SELECT ON archive.connection TO "{p}_viewer";
 GRANT SELECT ON archive.record TO "{p}_viewer";
+GRANT SELECT ON archive.known_person, archive.known_org, archive.mail_message, archive.mail_party, archive.doc_page, archive.payroll_company,
+    archive.payroll_worker, archive.payroll_run, archive.payroll_pay TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT, UPDATE, DELETE ON TABLES TO "{p}_editor";
 
@@ -581,6 +805,28 @@ CREATE POLICY mine ON archive.connection FOR SELECT USING (archive.mine(member) 
 
 ALTER TABLE archive.record ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.record FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = record.connection));
+
+-- A row of a record's domain is seen with its record. A person or an organization is seen with a row that names
+-- it, and with nothing else, so it says no more than what a member could already see.
+ALTER TABLE archive.mail_message ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.mail_message FOR SELECT USING (EXISTS (SELECT FROM archive.record r WHERE r.id = mail_message.record));
+ALTER TABLE archive.doc_page ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.doc_page FOR SELECT USING (EXISTS (SELECT FROM archive.record r WHERE r.id = doc_page.record));
+ALTER TABLE archive.payroll_company ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.payroll_company FOR SELECT USING (EXISTS (SELECT FROM archive.record r WHERE r.id = payroll_company.record));
+ALTER TABLE archive.payroll_worker ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.payroll_worker FOR SELECT USING (EXISTS (SELECT FROM archive.record r WHERE r.id = payroll_worker.record));
+ALTER TABLE archive.payroll_run ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.payroll_run FOR SELECT USING (EXISTS (SELECT FROM archive.record r WHERE r.id = payroll_run.record));
+ALTER TABLE archive.payroll_pay ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.payroll_pay FOR SELECT USING (EXISTS (SELECT FROM archive.record r WHERE r.id = payroll_pay.record));
+ALTER TABLE archive.mail_party ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.mail_party FOR SELECT USING (EXISTS (SELECT FROM archive.mail_message m WHERE m.id = mail_party.message));
+ALTER TABLE archive.known_person ENABLE ROW LEVEL SECURITY;
+CREATE POLICY seen ON archive.known_person FOR SELECT USING (EXISTS (SELECT FROM archive.mail_party p WHERE p.person = known_person.id)
+    OR EXISTS (SELECT FROM archive.payroll_worker w WHERE w.person = known_person.id));
+ALTER TABLE archive.known_org ENABLE ROW LEVEL SECURITY;
+CREATE POLICY seen ON archive.known_org FOR SELECT USING (EXISTS (SELECT FROM archive.payroll_company c WHERE c.org = known_org.id));
 
 -- name: HasRole :one
 SELECT pg_has_role(sqlc.arg(member)::name, rolname, 'USAGE') FROM pg_catalog.pg_roles WHERE rolname = sqlc.arg(grp)::name;
@@ -834,7 +1080,9 @@ SELECT jsonb_build_object(
             AND regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)')
             FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid), false),
         'columns', (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid)))
-        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.member'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass, 'archive.connection'::regclass, 'archive.record'::regclass)
+        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.member'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass, 'archive.connection'::regclass, 'archive.record'::regclass,
+            'archive.known_person'::regclass, 'archive.known_org'::regclass, 'archive.mail_message'::regclass, 'archive.mail_party'::regclass, 'archive.doc_page'::regclass,
+            'archive.payroll_company'::regclass, 'archive.payroll_worker'::regclass, 'archive.payroll_run'::regclass, 'archive.payroll_pay'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -1085,17 +1333,145 @@ DELETE FROM archive.watch WHERE connection = sqlc.arg(connection) AND NOT key = 
 -- name: TryLock :one
 SELECT pg_try_advisory_xact_lock(hashtextextended(sqlc.arg(name)::text, 0));
 
--- name: SaveRecords :exec
+-- name: SaveRecords :many
 INSERT INTO archive.record (connection, stream, source_id, data, updated_at, access)
 SELECT sqlc.arg(connection), sqlc.arg(stream), r.id, r.data, coalesce(r.updated, now()), (SELECT c.access FROM archive.connection c WHERE c.id = sqlc.arg(connection))
 FROM jsonb_to_recordset(sqlc.arg(records)::jsonb) AS r(id text, data jsonb, updated timestamptz)
 ON CONFLICT (connection, stream, source_id) DO UPDATE SET data = EXCLUDED.data, deleted = false, seen_at = now(), access = EXCLUDED.access,
-    updated_at = CASE WHEN archive.record.deleted OR archive.record.data IS DISTINCT FROM EXCLUDED.data THEN EXCLUDED.updated_at ELSE archive.record.updated_at END;
+    updated_at = CASE WHEN archive.record.deleted OR archive.record.data IS DISTINCT FROM EXCLUDED.data THEN EXCLUDED.updated_at ELSE archive.record.updated_at END
+RETURNING id, source_id;
 
--- name: DeleteRecords :exec
-UPDATE archive.record SET deleted = true, updated_at = now(), seen_at = now()
+-- name: SeeRecords :exec
+UPDATE archive.record SET seen_at = now()
 WHERE connection = sqlc.arg(connection) AND stream = sqlc.arg(stream) AND source_id = ANY(sqlc.arg(ids)::text[]) AND NOT deleted;
 
--- name: DeleteUnseenRecords :exec
+-- name: DeleteRecords :many
+UPDATE archive.record SET deleted = true, updated_at = now(), seen_at = now()
+WHERE connection = sqlc.arg(connection) AND stream = sqlc.arg(stream) AND source_id = ANY(sqlc.arg(ids)::text[]) AND NOT deleted
+RETURNING id;
+
+-- name: DeleteUnseenRecords :many
 UPDATE archive.record SET deleted = true, updated_at = now()
-WHERE connection = sqlc.arg(connection) AND stream = sqlc.arg(stream) AND seen_at < sqlc.arg(since)::timestamptz AND NOT deleted;
+WHERE connection = sqlc.arg(connection) AND stream = sqlc.arg(stream) AND seen_at < sqlc.arg(since)::timestamptz AND NOT deleted
+RETURNING id;
+
+-- name: DeleteStreamRecords :many
+UPDATE archive.record SET deleted = true, updated_at = now()
+WHERE connection = sqlc.arg(connection) AND stream = sqlc.arg(stream) AND NOT deleted
+RETURNING id;
+
+-- The records of a stream from after, by source_id, that are not deleted, to write into Archive's tables.
+-- name: StreamRecords :many
+SELECT id, source_id, data FROM archive.record
+WHERE connection = sqlc.arg(connection) AND stream = sqlc.arg(stream) AND source_id > sqlc.arg(after)::text AND NOT deleted
+ORDER BY source_id LIMIT sqlc.arg(n);
+
+-- name: SaveSyncCursor :exec
+UPDATE archive.connection SET cursor = $2 WHERE id = $1;
+
+-- What records are in Archive's tables (tables.go): each statement writes one table from rows, a JSON array.
+
+-- name: ClearRecordRows :exec
+WITH m AS (DELETE FROM archive.mail_message x WHERE x.record = ANY(sqlc.arg(ids)::uuid[])),
+    d AS (DELETE FROM archive.doc_page x WHERE x.record = ANY(sqlc.arg(ids)::uuid[])),
+    c AS (DELETE FROM archive.payroll_company x WHERE x.record = ANY(sqlc.arg(ids)::uuid[])),
+    w AS (DELETE FROM archive.payroll_worker x WHERE x.record = ANY(sqlc.arg(ids)::uuid[])),
+    r AS (DELETE FROM archive.payroll_run x WHERE x.record = ANY(sqlc.arg(ids)::uuid[]))
+DELETE FROM archive.payroll_pay x WHERE x.record = ANY(sqlc.arg(ids)::uuid[]);
+
+-- People and organizations nothing names any more go.
+-- name: DeleteUnknown :exec
+WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM archive.mail_party x WHERE x.person = k.id)
+    AND NOT EXISTS (SELECT FROM archive.payroll_worker x WHERE x.person = k.id))
+DELETE FROM archive.known_org o WHERE NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.org = o.id);
+
+-- name: SaveKnownPeople :exec
+INSERT INTO archive.known_person (email) SELECT DISTINCT e FROM unnest(sqlc.arg(emails)::text[]) e ORDER BY e ON CONFLICT (email) DO NOTHING;
+
+-- name: SaveKnownOrgs :exec
+INSERT INTO archive.known_org (ein) SELECT DISTINCT e FROM unnest(sqlc.arg(eins)::text[]) e ORDER BY e ON CONFLICT (ein) DO NOTHING;
+
+-- name: SaveMail :many
+INSERT INTO archive.mail_message (record, connection, thread, subject, snippet, sent_at, labels, attachments)
+SELECT r.record, sqlc.arg(connection), r.thread, r.subject, r.snippet, r.sent_at, coalesce(r.labels, '{}'), r.attachments
+FROM jsonb_to_recordset(sqlc.arg(batch)::jsonb) AS r(record uuid, thread text, subject text, snippet text, sent_at timestamptz, labels text[], attachments int)
+ON CONFLICT (record) DO UPDATE SET thread = EXCLUDED.thread, subject = EXCLUDED.subject, snippet = EXCLUDED.snippet, sent_at = EXCLUDED.sent_at,
+    labels = EXCLUDED.labels, attachments = EXCLUDED.attachments
+RETURNING id, record;
+
+-- The parties of each of messages are those of batch, and only those.
+-- name: SaveMailParties :exec
+WITH gone AS (DELETE FROM archive.mail_party p WHERE p.message = ANY(sqlc.arg(messages)::uuid[])
+    AND NOT EXISTS (SELECT FROM jsonb_to_recordset(sqlc.arg(batch)::jsonb) AS g(message uuid, email text, role text) JOIN archive.known_person k ON k.email = g.email
+        WHERE g.message = p.message AND g.role = p.role AND k.id = p.person))
+INSERT INTO archive.mail_party (message, person, role, name)
+SELECT DISTINCT ON (r.message, r.role, k.id) r.message, k.id, r.role, CASE WHEN r.name <> '' THEN ROW(r.name, NULL, NULL, NULL)::archive.name END
+FROM jsonb_to_recordset(sqlc.arg(batch)::jsonb) AS r(message uuid, email text, role text, name text) JOIN archive.known_person k ON k.email = r.email
+ON CONFLICT (message, role, person) DO UPDATE SET name = EXCLUDED.name;
+
+-- name: SaveDocPages :exec
+INSERT INTO archive.doc_page (record, connection, kind, title, url, icon, edited_at)
+SELECT r.record, sqlc.arg(connection), coalesce(nullif(r.kind, ''), 'page'), r.title, nullif(r.url, ''), r.icon, r.edited_at
+FROM jsonb_to_recordset(sqlc.arg(batch)::jsonb) AS r(record uuid, kind text, title text, url text, icon text, edited_at timestamptz)
+ON CONFLICT (record) DO UPDATE SET kind = EXCLUDED.kind, title = EXCLUDED.title, url = EXCLUDED.url, icon = EXCLUDED.icon, edited_at = EXCLUDED.edited_at;
+
+-- A company written links the workers and payrolls of the connection that came before it.
+-- name: SavePayrollCompanies :exec
+WITH c AS (
+    INSERT INTO archive.payroll_company (record, connection, source_id, org, name, trade_name, entity_type)
+    SELECT r.record, sqlc.arg(connection), r.source_id, (SELECT o.id FROM archive.known_org o WHERE o.ein = r.ein), r.name, r.trade_name, r.entity_type
+    FROM jsonb_to_recordset(sqlc.arg(batch)::jsonb) AS r(record uuid, source_id text, ein text, name text, trade_name text, entity_type text)
+    ON CONFLICT (record) DO UPDATE SET source_id = EXCLUDED.source_id, org = EXCLUDED.org, name = EXCLUDED.name, trade_name = EXCLUDED.trade_name,
+        entity_type = EXCLUDED.entity_type
+    RETURNING id, source_id
+), w AS (UPDATE archive.payroll_worker x SET company = c.id FROM c WHERE x.connection = sqlc.arg(connection) AND x.company_source = c.source_id AND x.company IS DISTINCT FROM c.id)
+UPDATE archive.payroll_run x SET company = c.id FROM c WHERE x.connection = sqlc.arg(connection) AND x.company_source = c.source_id AND x.company IS DISTINCT FROM c.id;
+
+-- A worker written links the pays of the connection that came before them.
+-- name: SavePayrollWorkers :exec
+WITH w AS (
+    INSERT INTO archive.payroll_worker (record, connection, source_id, kind, company, company_source, person, name, business_name, email, personal_email,
+        title, hired_on, terminated_on, active, pay_rate, pay_per)
+    SELECT r.record, sqlc.arg(connection), r.source_id, r.kind,
+        (SELECT c.id FROM archive.payroll_company c WHERE c.connection = sqlc.arg(connection) AND c.source_id = r.company_source), coalesce(r.company_source, ''),
+        (SELECT k.id FROM archive.known_person k WHERE k.email = r.email),
+        CASE WHEN r.full_name <> '' THEN ROW(r.full_name, nullif(r.given, ''), nullif(r.family, ''), NULL)::archive.name END, coalesce(r.business_name, ''),
+        nullif(r.email, ''), nullif(r.personal_email, ''), coalesce(r.title, ''), r.hired_on, r.terminated_on, r.active,
+        archive.money_of(r.rate, r.currency), coalesce(r.pay_per, '')
+    FROM jsonb_to_recordset(sqlc.arg(batch)::jsonb) AS r(record uuid, source_id text, kind text, company_source text, email text, personal_email text,
+        full_name text, given text, family text, business_name text, title text, hired_on date, terminated_on date, active bool, rate bigint, currency text, pay_per text)
+    ON CONFLICT (record) DO UPDATE SET source_id = EXCLUDED.source_id, kind = EXCLUDED.kind, company = EXCLUDED.company, company_source = EXCLUDED.company_source,
+        person = EXCLUDED.person, name = EXCLUDED.name, business_name = EXCLUDED.business_name, email = EXCLUDED.email, personal_email = EXCLUDED.personal_email,
+        title = EXCLUDED.title, hired_on = EXCLUDED.hired_on, terminated_on = EXCLUDED.terminated_on, active = EXCLUDED.active, pay_rate = EXCLUDED.pay_rate,
+        pay_per = EXCLUDED.pay_per
+    RETURNING id, source_id
+)
+UPDATE archive.payroll_pay x SET worker = w.id FROM w WHERE x.connection = sqlc.arg(connection) AND x.worker_source = w.source_id AND x.worker IS DISTINCT FROM w.id;
+
+-- name: SavePayrollRuns :exec
+INSERT INTO archive.payroll_run (record, connection, source_id, company, company_source, period_start, period_end, check_date, processed, off_cycle, external,
+    gross_pay, net_pay, employee_taxes, employer_taxes)
+SELECT r.record, sqlc.arg(connection), r.source_id, (SELECT c.id FROM archive.payroll_company c WHERE c.connection = sqlc.arg(connection) AND c.source_id = r.company_source),
+    coalesce(r.company_source, ''), r.period_start, r.period_end, r.check_date, r.processed, r.off_cycle, r.external,
+    archive.money_of(r.gross, r.currency), archive.money_of(r.net, r.currency), archive.money_of(r.taxes, r.currency), archive.money_of(r.employer_taxes, r.currency)
+FROM jsonb_to_recordset(sqlc.arg(batch)::jsonb) AS r(record uuid, source_id text, company_source text, period_start date, period_end date, check_date date,
+    processed bool, off_cycle bool, external bool, gross bigint, net bigint, taxes bigint, employer_taxes bigint, currency text)
+ON CONFLICT (record) DO UPDATE SET source_id = EXCLUDED.source_id, company = EXCLUDED.company, company_source = EXCLUDED.company_source,
+    period_start = EXCLUDED.period_start, period_end = EXCLUDED.period_end, check_date = EXCLUDED.check_date, processed = EXCLUDED.processed,
+    off_cycle = EXCLUDED.off_cycle, external = EXCLUDED.external, gross_pay = EXCLUDED.gross_pay, net_pay = EXCLUDED.net_pay,
+    employee_taxes = EXCLUDED.employee_taxes, employer_taxes = EXCLUDED.employer_taxes;
+
+-- The pays of each of records are those of batch, and only those.
+-- name: SavePayrollPays :exec
+WITH gone AS (DELETE FROM archive.payroll_pay p WHERE p.record = ANY(sqlc.arg(records)::uuid[])
+    AND NOT EXISTS (SELECT FROM jsonb_to_recordset(sqlc.arg(batch)::jsonb) AS g(record uuid, worker_source text) WHERE g.record = p.record AND g.worker_source = p.worker_source))
+INSERT INTO archive.payroll_pay (record, connection, run, worker, worker_source, paid_on, gross_pay, net_pay, deductions, employee_taxes, employer_taxes, payment_method)
+SELECT r.record, sqlc.arg(connection), (SELECT u.id FROM archive.payroll_run u WHERE u.record = r.record),
+    (SELECT w.id FROM archive.payroll_worker w WHERE w.connection = sqlc.arg(connection) AND w.source_id = r.worker_source), r.worker_source, r.paid_on,
+    archive.money_of(r.gross, r.currency), archive.money_of(r.net, r.currency), archive.money_of(r.deductions, r.currency), archive.money_of(r.taxes, r.currency),
+    archive.money_of(r.employer_taxes, r.currency), coalesce(r.payment_method, '')
+FROM jsonb_to_recordset(sqlc.arg(batch)::jsonb) AS r(record uuid, worker_source text, paid_on date, gross bigint, net bigint,
+    deductions bigint, taxes bigint, employer_taxes bigint, currency text, payment_method text)
+ON CONFLICT (record, worker_source) DO UPDATE SET run = EXCLUDED.run, worker = EXCLUDED.worker, paid_on = EXCLUDED.paid_on, gross_pay = EXCLUDED.gross_pay,
+    net_pay = EXCLUDED.net_pay, deductions = EXCLUDED.deductions, employee_taxes = EXCLUDED.employee_taxes, employer_taxes = EXCLUDED.employer_taxes,
+    payment_method = EXCLUDED.payment_method;

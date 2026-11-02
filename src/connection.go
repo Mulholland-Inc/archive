@@ -356,8 +356,12 @@ func (a *Archive) Disconnect(ctx context.Context, id uuid.UUID) error {
 		return err
 	}
 	err = a.sys(ctx, func(ctx context.Context) (err error) {
-		c, err = a.st.db(ctx).DeleteConnection(ctx, c.ID)
-		return err
+		q := a.st.db(ctx)
+		if c, err = q.DeleteConnection(ctx, c.ID); err != nil {
+			return err
+		}
+		// Its records took their rows with them; the people and organizations only they named go too.
+		return q.DeleteUnknown(ctx)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("connection %s: %w", id, ErrNotFound)
