@@ -5,7 +5,7 @@
 </script>
 
 <span class="mobile">
-  <IconButton icon={MenuIcon} label="Open sidebar" tooltip={false} onclick={() => (app.drawer = true)} />
+  <IconButton icon={MenuIcon} label="Open sidebar" size="xl" tooltip={false} onclick={() => (app.drawer = true)} />
 </span>
 
 <style>

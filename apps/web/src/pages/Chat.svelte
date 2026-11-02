@@ -87,7 +87,7 @@
         <EmptyState icon={MessageSquareOff} title="This chat didn’t load">{chat.error}</EmptyState>
       {/if}
       {#each messages as message, i (message.id)}
-        <Message {message} streaming={streaming && i === messages.length - 1} onedit={(text) => { value = text; element?.focus(); }} />
+        <Message {message} streaming={streaming && i === messages.length - 1} />
       {/each}
     </Stack>
   </Page>

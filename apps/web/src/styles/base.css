@@ -46,7 +46,7 @@ html {
 html,
 body,
 #app {
-  height: 100%;
+  height: var(--viewport-height, 100%);
 }
 
 body {
@@ -251,5 +251,15 @@ dialog:not([open]) {
     margin: auto;
     height: fit-content;
     width: fit-content;
+  }
+}
+
+/* Phones zoom the page in on any field under 16px when it gets focus. */
+@media (hover: none) and (pointer: coarse) {
+  input,
+  textarea,
+  select,
+  [contenteditable] {
+    font-size: max(1rem, 16px) !important;
   }
 }

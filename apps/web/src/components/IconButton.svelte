@@ -17,7 +17,7 @@
     ...rest
   } = $props();
 
-  const iconSize = $derived(size === 'lg' ? 'lg' : size === 'xs' ? 'xs' : size === 'sm' ? 'sm' : 'md');
+  const iconSize = $derived(size === 'xl' ? 'xl' : size === 'lg' ? 'lg' : size === 'xs' ? 'xs' : size === 'sm' ? 'sm' : 'md');
 </script>
 
 {#snippet control()}
@@ -79,6 +79,11 @@
   .lg {
     width: var(--control-lg);
     height: var(--control-lg);
+  }
+
+  .xl {
+    width: var(--control-xl);
+    height: var(--control-xl);
   }
 
   .round {

@@ -23,6 +23,7 @@
     width: 100%;
     margin-inline: auto;
     padding: var(--space-8);
+    padding-block-end: calc(var(--space-8) + var(--dock-height, 0px));
   }
 
   .chat { max-width: calc(var(--chat-width) + var(--space-16)); }
@@ -40,6 +41,7 @@
     .inner {
       gap: var(--space-5);
       padding: var(--space-4);
+      padding-block-end: calc(var(--space-4) + var(--dock-height, 0px));
     }
   }
 </style>

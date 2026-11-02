@@ -485,17 +485,6 @@ func OfficeRead(b []byte, name string) (*OfficeModel, error) {
 	}
 }
 func OfficeEdit(b []byte, name string, ops []OfficeOp) ([]byte, error) {
-	p, err := OfficeEditPackage(b, name, ops)
-	if err != nil {
-		return nil, err
-	}
-	var out bytes.Buffer
-	if err := p.Save(&out); err != nil {
-		return nil, err
-	}
-	return out.Bytes(), nil
-}
-func OfficeEditPackage(b []byte, name string, ops []OfficeOp) (*OfficePackage, error) {
 	kind, err := OfficeKind(name)
 	if err != nil {
 		return nil, err
@@ -517,16 +506,20 @@ func OfficeEditPackage(b []byte, name string, ops []OfficeOp) (*OfficePackage, e
 		if err := officeApply(p, kind, op, st); err != nil {
 			return nil, fmt.Errorf("edit %d (%s): %v", i, op.Op, err)
 		}
-		if st != nil && !st.updated {
-			for _, ss := range p.Log[officeDocPart][n:] {
-				st.update(ss)
-			}
-		}
 		if st != nil {
+			if !st.updated {
+				for _, ss := range p.Log[officeDocPart][n:] {
+					st.update(ss)
+				}
+			}
 			st.updated = false
 		}
 	}
-	return p, nil
+	var out bytes.Buffer
+	if err := p.Save(&out); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
 }
 func officeApply(p *OfficePackage, kind string, op OfficeOp, st *officeIds) error {
 	types, ok := officeOpTypes[op.Op]
@@ -535,6 +528,9 @@ func officeApply(p *OfficePackage, kind string, op OfficeOp, st *officeIds) erro
 	}
 	if !strings.Contains(types, kind) {
 		return fmt.Errorf("op %s applies to %s files, not %s", op.Op, types, kind)
+	}
+	if op.Op == "replace_text" && op.Find == "" {
+		return fmt.Errorf("replace_text needs a non-empty \"find\"")
 	}
 	switch kind {
 	case "docx":
@@ -545,9 +541,6 @@ func officeApply(p *OfficePackage, kind string, op OfficeOp, st *officeIds) erro
 		w.ids = st
 		switch op.Op {
 		case "replace_text":
-			if op.Find == "" {
-				return fmt.Errorf("replace_text needs a non-empty \"find\"")
-			}
 			return w.replaceText(op)
 		case "insert_paragraph_after":
 			return w.insertParagraphAfter(op)
@@ -575,9 +568,6 @@ func officeApply(p *OfficePackage, kind string, op OfficeOp, st *officeIds) erro
 		}
 		if op.Op == "replace_shape_text" {
 			return d.replaceShapeText(op)
-		}
-		if op.Find == "" {
-			return fmt.Errorf("replace_text needs a non-empty \"find\"")
 		}
 		return d.replaceText(op)
 	}
@@ -674,30 +664,22 @@ func officeOpenWord(p *OfficePackage) (*officeWord, error) {
 	}
 	return &officeWord{nil, p, b, doc, w, officeTextNames{w, "p", "r", "t", true}, doc.Find(w, "p"), doc.Find(w, "tbl")}, nil
 }
-func (x *officeWord) rows(tbl *OfficeNode) []*OfficeNode {
+
+// own returns the local elements under n whose nearest parent element is n,
+// skipping those inside a nested one: a table's own rows, a row's own cells.
+func (x *officeWord) own(n *OfficeNode, local, parent string) []*OfficeNode {
 	var out []*OfficeNode
-	for _, r := range tbl.Find(x.w, "tr") {
-		if r.Nearest(x.w, "tbl") == tbl {
-			out = append(out, r)
+	for _, k := range n.Find(x.w, local) {
+		if k.Nearest(x.w, parent) == n {
+			out = append(out, k)
 		}
 	}
 	return out
 }
-func (x *officeWord) cells(tr *OfficeNode) []*OfficeNode {
-	var out []*OfficeNode
-	for _, c := range tr.Find(x.w, "tc") {
-		if c.Nearest(x.w, "tr") == tr {
-			out = append(out, c)
-		}
-	}
-	return out
-}
+func (x *officeWord) rows(tbl *OfficeNode) []*OfficeNode { return x.own(tbl, "tr", "tbl") }
+func (x *officeWord) cells(tr *OfficeNode) []*OfficeNode { return x.own(tr, "tc", "tr") }
 func (x *officeWord) model() *OfficeModel {
 	m := &OfficeModel{Type: "docx"}
-	pid := map[*OfficeNode]int{}
-	for i, p := range x.ps {
-		pid[p] = i
-	}
 	tid := map[*OfficeNode]int{}
 	for i, t := range x.tbls {
 		tid[t] = i
@@ -738,10 +720,8 @@ func (x *officeWord) model() *OfficeModel {
 			var row []string
 			for _, c := range x.cells(r) {
 				var parts []string
-				for _, p := range c.Find(x.w, "p") {
-					if p.Nearest(x.w, "tc") == c {
-						parts = append(parts, x.tn.text(p))
-					}
+				for _, p := range x.own(c, "p", "tc") {
+					parts = append(parts, x.tn.text(p))
 				}
 				row = append(row, strings.Join(parts, "\n"))
 			}
@@ -826,7 +806,7 @@ func (x *officeWord) replaceText(e OfficeOp) error {
 		target = p
 	} else {
 		var hits []string
-		for i, p := range x.ps {
+		for _, p := range x.ps {
 			if strings.Contains(x.tn.text(p), e.Find) {
 				id := "new paragraph"
 				for k, off := range x.ids.start {
@@ -834,7 +814,6 @@ func (x *officeWord) replaceText(e OfficeOp) error {
 						id = "p" + strconv.Itoa(k)
 					}
 				}
-				_ = i
 				hits = append(hits, id)
 				target = p
 			}
@@ -929,19 +908,16 @@ func (x *officeWord) likeParagraph(p *OfficeNode) (string, string) {
 		b, _ := OfficeApply(x.b[n.Start:n.End], drop)
 		pPr = string(b)
 	}
-	for _, r := range p.Find(x.w, "r") {
-		if r.Nearest(x.w, "p") == p {
-			if n := r.Child(x.w, "rPr"); n != nil {
-				var drop []OfficeSplice
-				for _, k := range n.Kids {
-					if k.Local == "ins" || k.Local == "del" || k.Local == "rPrChange" {
-						drop = append(drop, OfficeSplice{k.Start - n.Start, k.End - n.Start, nil})
-					}
+	if rs := x.own(p, "r", "p"); len(rs) > 0 {
+		if n := rs[0].Child(x.w, "rPr"); n != nil {
+			var drop []OfficeSplice
+			for _, k := range n.Kids {
+				if k.Local == "ins" || k.Local == "del" || k.Local == "rPrChange" {
+					drop = append(drop, OfficeSplice{k.Start - n.Start, k.End - n.Start, nil})
 				}
-				b, _ := OfficeApply(x.b[n.Start:n.End], drop)
-				rPr = string(b)
 			}
-			break
+			b, _ := OfficeApply(x.b[n.Start:n.End], drop)
+			rPr = string(b)
 		}
 	}
 	return pPr, rPr
@@ -1077,7 +1053,7 @@ func (tn officeTextNames) runs(para *OfficeNode) []string {
 	}
 	return out
 }
-func (tn officeTextNames) tElem(b []byte, t *OfficeNode, text string) []byte {
+func (tn officeTextNames) tElem(t *OfficeNode, text string) []byte {
 	name := OfficeQ(t.Prefix, t.Local)
 	if !tn.preserve {
 		return []byte("<" + name + ">" + OfficeEsc(text) + "</" + name + ">")
@@ -1136,13 +1112,13 @@ func (tn officeTextNames) replace(b []byte, para *OfficeNode, find, repl string)
 	prefix := segs[a].text[:i-starts[a]]
 	suffix := segs[z].text[end-starts[z]:]
 	if a == z {
-		return []OfficeSplice{{segs[a].t.Start, segs[a].t.End, tn.tElem(b, segs[a].t, prefix+repl+suffix)}}, nil
+		return []OfficeSplice{{segs[a].t.Start, segs[a].t.End, tn.tElem(segs[a].t, prefix+repl+suffix)}}, nil
 	}
-	ss := []OfficeSplice{{segs[a].t.Start, segs[a].t.End, tn.tElem(b, segs[a].t, prefix+repl)}}
+	ss := []OfficeSplice{{segs[a].t.Start, segs[a].t.End, tn.tElem(segs[a].t, prefix+repl)}}
 	gone := map[*OfficeNode]bool{}
 	for k := a + 1; k <= z; k++ {
 		if k == z && suffix != "" {
-			ss = append(ss, OfficeSplice{segs[z].t.Start, segs[z].t.End, tn.tElem(b, segs[z].t, suffix)})
+			ss = append(ss, OfficeSplice{segs[z].t.Start, segs[z].t.End, tn.tElem(segs[z].t, suffix)})
 		} else {
 			gone[segs[k].t] = true
 		}

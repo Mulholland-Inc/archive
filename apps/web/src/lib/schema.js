@@ -2,8 +2,8 @@
 
 import { relative } from './live.js';
 
-const sql = { text: 'text', long: 'text', date: 'date', money: 'numeric(12,2)', number: 'integer', link: 'uuid', file: 'uuid', email: 'text', yes: 'boolean', place: 'text' };
-export const typeLabels = { text: 'Text', long: 'Long text', date: 'Date', money: 'Money', number: 'Number', link: 'Link', file: 'File', email: 'Email', yes: 'Yes or no', place: 'Place', choice: 'Choice' };
+const sql = { id: 'uuid', text: 'text', long: 'text', date: 'date', money: 'numeric(12,2)', number: 'integer', link: 'uuid', file: 'uuid', email: 'text', yes: 'boolean', place: 'text' };
+export const typeLabels = { id: 'ID', text: 'Text', long: 'Long text', date: 'Date', money: 'Money', number: 'Number', link: 'Link', file: 'File', email: 'Email', yes: 'Yes or no', place: 'Place', choice: 'Choice' };
 
 export const typeLabel = (col) => col.label ?? typeLabels[col.type] ?? col.type;
 
@@ -17,7 +17,7 @@ export function ddl(t) {
 }
 
 const kinds = {
-  text: 'text', citext: 'text', varchar: 'text', bpchar: 'text', richtext: 'long', uuid: 'text',
+  text: 'text', citext: 'text', varchar: 'text', bpchar: 'text', richtext: 'long', uuid: 'id',
   date: 'date', timestamptz: 'date', timestamp: 'date', time: 'date', interval: 'text',
   int2: 'number', int4: 'number', int8: 'number', float4: 'number', float8: 'number', numeric: 'number',
   bool: 'yes', money: 'money', email: 'email', address: 'place', geo: 'place', country: 'place'

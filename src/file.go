@@ -81,8 +81,8 @@ func fileName(name, hash string) string {
 }
 
 func (a *Archive) AddFile(ctx context.Context, access, name string, r io.Reader) (*File, error) {
-	if ActorFrom(ctx) == nil {
-		return nil, fmt.Errorf("not signed in: %w", ErrUnauthorized)
+	if _, err := signedIn(ctx); err != nil {
+		return nil, err
 	}
 	return a.fileAdd(ctx, coreAccess(access), name, r)
 }
