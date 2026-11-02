@@ -19,12 +19,12 @@
     border-radius: var(--radius-xs);
     background: var(--color-fill);
     font-family: var(--font-sans);
-    font-size: 0.85em;
+    font-size: var(--text-inline-code);
     letter-spacing: var(--tracking-normal);
   }
 
   a {
-    color: var(--color-accent-text);
+    color: var(--color-accent);
     text-decoration: underline;
     text-decoration-color: var(--color-accent-subtle);
     text-underline-offset: var(--space-0-5);

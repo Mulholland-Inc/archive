@@ -78,9 +78,9 @@
   tabindex="-1"
   aria-label="Context menu"
   class="menu floating"
-  style:left={`${left}px`}
-  style:top={`${top}px`}
-  style:transform-origin={origin}
+  style:--menu-x={`${left}px`}
+  style:--menu-y={`${top}px`}
+  style:--menu-origin={origin}
   oncontextmenu={(event) => event.preventDefault()}
   {ontoggle}
   {onkeydown}
@@ -90,10 +90,13 @@
 
 <style>
   .menu {
+    inset-inline-start: var(--menu-x);
+    inset-block-start: var(--menu-y);
+    transform-origin: var(--menu-origin);
     display: flex;
     flex-direction: column;
     gap: var(--space-px);
-    min-width: calc(var(--menu-min) * 0.75);
+    min-width: var(--menu-min-sm);
     max-width: var(--menu-max);
     max-height: calc(100vh - var(--space-4));
     overflow-y: auto;

@@ -37,7 +37,7 @@
   }
 
   .spin {
-    animation: spin calc(var(--duration-slower) * 2) linear infinite;
+    animation: spin var(--duration-spin) linear infinite;
   }
 
   @keyframes spin {

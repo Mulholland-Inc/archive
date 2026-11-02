@@ -45,12 +45,12 @@
   }
 
   .plain.spin :global(.icon) {
-    animation: spin 1s linear infinite;
+    animation: spin var(--duration-spin-status) linear infinite;
   }
 
   @keyframes spin {
     to {
-      transform: rotate(360deg);
+      transform: rotate(var(--turn-full));
     }
   }
 

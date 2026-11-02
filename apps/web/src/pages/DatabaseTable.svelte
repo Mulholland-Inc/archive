@@ -306,7 +306,7 @@
     color: var(--color-text);
     text-decoration: underline;
     text-decoration-color: var(--color-border);
-    text-underline-offset: 0.2em;
+    text-underline-offset: var(--underline-offset);
   }
 
   .link:hover {

@@ -26,7 +26,7 @@
     height: var(--space-3);
     border-radius: var(--radius-xs);
     background: var(--color-accent);
-    opacity: 0.7;
+    opacity: var(--opacity-soft);
   }
 
   .space-1 { width: var(--space-1); }

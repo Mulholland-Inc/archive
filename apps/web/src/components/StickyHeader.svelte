@@ -53,7 +53,7 @@
     margin-block: calc(var(--page-pad) * -1) calc(var(--space-12) * -1);
     margin-inline: calc(50% - 50cqi);
     background: var(--color-canvas);
-    mask-image: linear-gradient(to bottom, #000 25%, transparent 92%);
+    mask-image: var(--fade-banner);
     pointer-events: none;
   }
 

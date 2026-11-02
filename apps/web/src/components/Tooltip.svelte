@@ -92,6 +92,6 @@
 
   .tip :global(kbd) {
     color: var(--color-text-inverse);
-    opacity: 0.6;
+    opacity: var(--opacity-muted);
   }
 </style>

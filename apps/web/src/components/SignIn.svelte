@@ -77,7 +77,7 @@
     align-items: center;
     gap: var(--space-5);
     width: 100%;
-    max-width: 22rem;
+    max-width: var(--measure-signin);
     text-align: center;
   }
 

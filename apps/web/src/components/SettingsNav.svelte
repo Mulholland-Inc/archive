@@ -112,7 +112,7 @@
 
   @media (max-width: 56rem) {
     .item {
-      height: var(--list-row);
+      height: var(--row-height);
     }
 
     .on {

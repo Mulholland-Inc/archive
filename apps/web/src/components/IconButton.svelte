@@ -61,7 +61,7 @@
   }
 
   .ib:disabled {
-    opacity: 0.4;
+    opacity: var(--opacity-disabled-icon);
   }
 
   .xs {

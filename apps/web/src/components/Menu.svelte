@@ -76,7 +76,7 @@
     gap: var(--space-px);
     min-width: var(--menu-min);
     max-width: var(--menu-max);
-    max-height: 70vh;
+    max-height: var(--menu-max-height);
     overflow-y: auto;
     padding: var(--space-1-5);
     border-radius: var(--radius-lg);
@@ -87,7 +87,7 @@
   }
 
   .sm {
-    min-width: calc(var(--menu-min) * 0.75);
+    min-width: var(--menu-min-sm);
   }
 
   .lg {

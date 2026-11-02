@@ -116,7 +116,7 @@
   }
 
   .trigger:disabled {
-    opacity: 0.5;
+    opacity: var(--opacity-disabled-field);
   }
 
   .open {
@@ -173,7 +173,7 @@
     flex-direction: column;
     gap: var(--space-px);
     min-width: var(--menu-min);
-    max-height: 50vh;
+    max-height: var(--listbox-max-height);
     overflow-y: auto;
     padding: var(--space-1-5);
     border-radius: var(--radius-lg);
@@ -209,6 +209,6 @@
 
   .check {
     display: inline-flex;
-    color: var(--color-accent-text);
+    color: var(--color-accent);
   }
 </style>

@@ -58,6 +58,6 @@
   }
 
   .interactive:active {
-    transform: scale(0.995);
+    transform: scale(var(--scale-press-subtle));
   }
 </style>

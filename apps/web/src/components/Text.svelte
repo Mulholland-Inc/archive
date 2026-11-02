@@ -31,7 +31,7 @@
   .t-default { color: var(--color-text); }
   .t-secondary { color: var(--color-text-secondary); }
   .t-tertiary { color: var(--color-text-tertiary); }
-  .t-accent { color: var(--color-accent-text); }
+  .t-accent { color: var(--color-accent); }
   .t-success { color: var(--color-success); }
   .t-warning { color: var(--color-warning); }
   .t-danger { color: var(--color-danger); }

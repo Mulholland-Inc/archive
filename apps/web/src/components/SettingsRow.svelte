@@ -13,7 +13,7 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-4);
-    min-height: var(--list-row);
+    min-height: var(--row-height);
     padding-block: var(--space-1-5);
   }
 

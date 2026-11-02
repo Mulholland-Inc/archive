@@ -257,7 +257,7 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-px);
-    max-height: min(50vh, 20rem);
+    max-height: var(--picker-max-height);
     overflow-y: auto;
     padding: var(--space-1-5);
     border-radius: var(--radius-lg);
@@ -286,7 +286,7 @@
     height: var(--avatar-md);
     border-radius: var(--radius-full);
     background: var(--color-accent-subtle);
-    color: var(--color-accent-text);
+    color: var(--color-accent);
   }
 
   .who {
@@ -316,7 +316,7 @@
 
   mark {
     background: none;
-    color: var(--color-accent-text);
+    color: var(--color-accent);
   }
 
   .tag {

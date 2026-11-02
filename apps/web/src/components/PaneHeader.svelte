@@ -62,7 +62,7 @@
   .art {
     display: flex;
     flex: none;
-    width: calc(var(--pane-art) * 1.4);
+    width: var(--pane-art-width);
     height: var(--pane-art);
   }
 
@@ -88,7 +88,7 @@
   }
 
   p {
-    max-width: 36rem;
+    max-width: var(--measure);
     color: var(--color-text-secondary);
     font-size: var(--text-md);
   }
@@ -142,7 +142,7 @@
 
     .art {
       width: var(--pane-art);
-      height: calc(var(--pane-art) * 0.75);
+      height: var(--pane-art-sm);
     }
 
     h2 {

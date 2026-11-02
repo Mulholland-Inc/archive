@@ -87,7 +87,7 @@
   }
 
   .sub {
-    max-width: 30rem;
+    max-width: var(--measure-sm);
     margin-block: var(--space-2) var(--space-6);
     color: var(--color-text-secondary);
     font-size: var(--text-md);
@@ -95,7 +95,7 @@
 
   .notice {
     width: 100%;
-    max-width: 30rem;
+    max-width: var(--measure-sm);
     text-align: start;
   }
 
@@ -104,7 +104,7 @@
     align-items: center;
     gap: var(--space-1);
     width: 100%;
-    max-width: 30rem;
+    max-width: var(--measure-sm);
     min-height: var(--control-xl);
     padding: var(--space-1) var(--space-1) var(--space-1) var(--space-4);
     border-radius: var(--radius-lg);
@@ -129,7 +129,7 @@
     flex-direction: column;
     align-items: center;
     gap: var(--space-2);
-    max-width: 24rem;
+    max-width: var(--measure-xs);
     margin-block-start: var(--space-5);
   }
 
@@ -141,7 +141,7 @@
   @container (max-width: 32rem) {
 
     .art {
-      height: calc(var(--settings-art) * 0.7);
+      height: var(--settings-art-sm);
     }
 
     h2 {

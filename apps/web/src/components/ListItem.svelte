@@ -27,7 +27,7 @@
     position: relative;
     display: flex;
     align-items: center;
-    min-height: var(--list-row);
+    min-height: var(--row-height);
     border-radius: var(--radius-lg);
     transition: background-color var(--duration-fast) var(--ease-out);
   }

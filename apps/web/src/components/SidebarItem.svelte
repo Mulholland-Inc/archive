@@ -171,7 +171,7 @@
     inset-inline-end: 100%;
     width: var(--space-6);
     background: inherit;
-    mask-image: linear-gradient(to right, transparent, black);
+    mask-image: var(--fade-end);
   }
 
   .item:hover .actions,
