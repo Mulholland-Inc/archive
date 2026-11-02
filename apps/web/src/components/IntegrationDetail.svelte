@@ -61,7 +61,4 @@
       {/each}
     </Stack>
   </Section>
-  <Section title="Who it covers">
-    <Text as="p" size="md" tone="secondary">It is the archive’s, not one person’s: everyone in the archive reads what it syncs, and editors act with it. Only owners connect and disconnect it. Each person’s own Gmail, Outlook, Drive and Notion stay theirs, in their own settings.</Text>
-  </Section>
 </Stack>
