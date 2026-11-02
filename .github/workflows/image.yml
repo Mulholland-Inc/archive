@@ -59,12 +59,10 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
 
-      # Pinned and kept in the runner's tool cache, so it downloads once per runner host, not every run.
+      # Not from the runner's tool cache: this job and app unpack it at once on the same host, and a cache one
+      # is still writing breaks the other's gcloud.
       - if: env.DEPLOY == 'true'
         uses: google-github-actions/setup-gcloud@v3
-        with:
-          version: 591.0.0
-          cache: true
 
       - if: env.DEPLOY == 'true'
         run: |
@@ -107,9 +105,6 @@ jobs:
           service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
 
       - uses: google-github-actions/setup-gcloud@v3
-        with:
-          version: 591.0.0
-          cache: true
 
       # LIVE_KEY goes up with the deploy itself (--secrets-file), so a rotated key lands on the next deploy
       # without a second Worker version. JSON, not dotenv, so nothing in the key expands.
