@@ -96,10 +96,20 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
 
-      # The key the API announces live changes with; Terraform makes it and puts it in this secret.
+      # The key the API announces live changes with, seeded in Secret Manager (apps/terraform/gcp); the deploy
+      # identity may read only that secret.
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
       - run: |
-          if [ -n "$ARCHIVE_LIVE_KEY" ]; then printf %s "$ARCHIVE_LIVE_KEY" | npx --yes wrangler@4 secret put LIVE_KEY; fi
+          key=$(gcloud secrets versions access latest --secret archive-archive-live-key --project "$GCP_PROJECT")
+          echo "::add-mask::$key"
+          printf %s "$key" | npx --yes wrangler@4 secret put LIVE_KEY
         env:
-          ARCHIVE_LIVE_KEY: ${{ secrets.ARCHIVE_LIVE_KEY }}
+          GCP_PROJECT: ${{ vars.GCP_PROJECT }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}

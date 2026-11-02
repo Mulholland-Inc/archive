@@ -522,7 +522,7 @@ func newSignin(h *Hub) (*signin, error) {
 	}
 	for _, c := range signinBuiltin {
 		env := "ARCHIVE_" + strings.ToUpper(c.ID)
-		raw := os.Getenv(env)
+		raw := strings.TrimSpace(os.Getenv(env))
 		if raw == "" {
 			continue
 		}

@@ -37,9 +37,3 @@ output "cli" {
   description = "Runs an archive command in the cloud: add the words after --args=, separated by commas, like user,add,you@example.com."
   value       = "gcloud run jobs execute ${google_cloud_run_v2_job.this.name} --project ${var.project} --region ${var.region} --wait --args="
 }
-
-output "live_key" {
-  description = "Key the API announces live changes to the app Worker with. CI sets it on the Worker as LIVE_KEY; without github_repository, set it yourself with wrangler secret put LIVE_KEY in apps/web."
-  value       = random_password.live.result
-  sensitive   = true
-}
