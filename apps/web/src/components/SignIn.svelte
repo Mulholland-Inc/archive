@@ -1,6 +1,7 @@
 <script>
   import { KeyRound } from '@lucide/svelte';
   import Art from './Art.svelte';
+  import Heading from './Heading.svelte';
   import Button from './Button.svelte';
   import ConnectorIcon from './ConnectorIcon.svelte';
   import Text from './Text.svelte';
@@ -35,7 +36,7 @@
 <div class="screen" transition:fade={{ speed: 'normal' }}>
   <div class="card">
     <Art name="cli" size="lg" />
-    <h1>Sign in to Archive</h1>
+    <Heading level={1} size="xl" leading="inherit" wrap="normal">Sign in to Archive</Heading>
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     <div class="methods">
       {#if passkeys && first}
@@ -79,13 +80,6 @@
     width: 100%;
     max-width: var(--measure-signin);
     text-align: center;
-  }
-
-  h1 {
-    font-family: var(--font-serif);
-    font-size: var(--text-2xl);
-    font-weight: var(--weight-serif);
-    letter-spacing: var(--tracking-serif);
   }
 
   .methods {

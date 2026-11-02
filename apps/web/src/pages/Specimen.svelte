@@ -182,7 +182,7 @@
           {#each sizes as s (s)}<TypeSample token={s}>The archive remembers everything you add</TypeSample>{/each}
         </SpecimenBlock>
         <SpecimenBlock title="Headings and text" column>
-          <Heading level={3} size="2xl">Display heading</Heading>
+          <Heading level={3} size="2xl" leading="none" tracking="tight">Display heading</Heading>
           <Heading level={3} size="xl">Page heading</Heading>
           <Heading level={3} size="lg">Dialog heading</Heading>
           <Heading level={3} size="md" serif={false}>Section heading</Heading>
