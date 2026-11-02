@@ -131,8 +131,6 @@
     </StickyHeader>
 
     <Stack gap="6">
-      {#if view.description && view.description.toLowerCase() !== view.name.toLowerCase()}<Text tone="secondary">{view.description}</Text>{/if}
-
       <Stack direction="row" gap="2" align="center" wrap>
         {#if values.length > 1}
           <Chip selected={!filter} onclick={() => (filter = null)}>All</Chip>
