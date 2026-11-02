@@ -1,6 +1,7 @@
 package connect
 
 import (
+	"cmp"
 	"regexp"
 )
 
@@ -22,8 +23,20 @@ func init() {
 
 func notionPages(name, tool, what string) *Stream {
 	l := &mcpList{tool: tool, limit: "limit", max: 200, after: "cursor", key: notionID}
-	return l.stream(name, what+", by the id in their URL: { type, url, title, icon }, from "+tool+", 200 a page, listed whole each sync, "+
+	s := l.stream(name, what+", by the id in their URL: { type, url, title, icon }, from "+tool+", 200 a page, listed whole each sync, "+
 		"so one gone is deleted; Notion says nothing of when a page was edited.")
+	s.Table, s.Rows = "doc_page", notionRows
+	return s
+}
+
+// notionRows is a page as a page of docs: what it is, its title, URL and icon, an emoji or an image's URL.
+func notionRows(m map[string]any) *Row {
+	icon := str(m, "icon")
+	if i, ok := m["icon"].(map[string]any); ok {
+		icon = cmp.Or(str(i, "emoji"), str(i, "url"))
+	}
+	return rowOf(map[string]any{"kind": cmp.Or(str(m, "type"), "page"), "title": str(m, "title"), "url": str(m, "url"), "icon": icon,
+		"edited_at": instant(str(m, "last_edited_time"))})
 }
 
 var notionIDRe = regexp.MustCompile(`([0-9a-f]{32})(?:[?#].*)?$`)

@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/oauth2"
 )
@@ -18,6 +20,7 @@ import (
 // requests, all read-only, with its callback URL <API>/connect/github/callback and "Expire user
 // authorization tokens" on. A GitHub App has no scopes; it reads the repositories its installations reach,
 // so a person installs it on their account or organization too. A grant is revoked with an access token.
+// It syncs nothing until its issues are mapped into the tables of archive.sql; its push waits for that too.
 func init() {
 	Register(&Connector{
 		ID: "github", Name: "GitHub", Integration: true, Env: "ARCHIVE_GITHUB_APP", Host: "https://github.com",
@@ -111,73 +114,7 @@ func init() {
 				}),
 		},
 		Push: githubPush,
-		Streams: []*Stream{
-			{Name: "repos", Pull: githubRepos,
-				Doc: "Every repository the app reaches for you, as GitHub lists it, listed whole each sync, 100 a page, so one gone is deleted."},
-			{Name: "issues", Pull: githubIssues,
-				Doc: "Every issue and pull request you can see in the repositories the app reaches, open or closed, as GitHub lists them, " +
-					"without their comments: by their last update, 100 a page, all the first time and then those updated since. " +
-					"GitHub does not say which were deleted or moved away, so they stay."},
-		},
 	})
-}
-
-// githubRepos lists the repositories whole, page by page.
-func githubRepos(c *Client, cursor string) (*Page, error) {
-	n := 1
-	fmt.Sscan(cursor, &n)
-	var repos []map[string]any
-	if err := c.Get(fmt.Sprintf("%s/user/repos?per_page=100&sort=full_name&page=%d", githubAPI, n), &repos); err != nil {
-		return nil, err
-	}
-	page := &Page{Full: true, More: len(repos) == 100}
-	for _, r := range repos {
-		page.Records = append(page.Records, Record{ID: str(r, "id"), Data: r, Updated: stamp(str(r, "updated_at"))})
-	}
-	if page.More {
-		page.Cursor = fmt.Sprint(n + 1)
-	}
-	return page, nil
-}
-
-// githubCursor is where the issues stream is: Since is the last update it read, which the next page starts at,
-// and Page the page of those updated at Since when a whole page had the same time.
-type githubCursor struct {
-	Since string `json:"since,omitempty"`
-	Page  int    `json:"page,omitempty"`
-}
-
-// githubIssues reads the issues by their last update, oldest first, each page from the last update the one
-// before read, so an issue updated while it pages moves after it, not past it.
-func githubIssues(c *Client, cursor string) (*Page, error) {
-	var cur githubCursor
-	if err := cursorOf(cursor, &cur); err != nil {
-		return nil, err
-	}
-	q := url.Values{"filter": {"all"}, "state": {"all"}, "sort": {"updated"}, "direction": {"asc"}, "per_page": {"100"}, "page": {fmt.Sprint(max(cur.Page, 1))}}
-	if cur.Since != "" {
-		q.Set("since", cur.Since)
-	}
-	var issues []map[string]any
-	if err := c.Get(githubAPI+"/issues?"+q.Encode(), &issues); err != nil {
-		return nil, err
-	}
-	page := &Page{More: len(issues) == 100}
-	last := cur.Since
-	for _, is := range issues {
-		page.Records = append(page.Records, Record{ID: str(is, "id"), Data: is, Updated: stamp(str(is, "updated_at"))})
-		last = str(is, "updated_at")
-	}
-	switch {
-	case !page.More:
-		cur = githubCursor{Since: last}
-	case last == cur.Since:
-		cur.Page = max(cur.Page, 1) + 1
-	default:
-		cur = githubCursor{Since: last}
-	}
-	page.Cursor = cursorFor(cur)
-	return page, nil
 }
 
 const githubAPI = "https://api.github.com"
@@ -187,3 +124,45 @@ func githubRepo(s string) string {
 	owner, name, _ := strings.Cut(s, "/")
 	return url.PathEscape(owner) + "/" + url.PathEscape(name)
 }
+
+// githubPush is the GitHub App's webhook, set up once on the app: its URL <API>/push/github, its secret the hook
+// option of ARCHIVE_GITHUB_APP, and its events Issues, Pull request and Repository. A push names the
+// installation it is for, and an account is the installations its token reaches, read again on a sync a day
+// after. X-Hub-Signature-256 is sha256= and the HMAC-SHA256 of the body with the secret, in hex.
+var githubPush = &Push{Renew: 24 * time.Hour,
+	Watch: func(c *Client, h Hook, old []Watch) ([]Watch, error) {
+		var out []Watch
+		for page := 1; ; page++ {
+			var in struct {
+				Installations []struct {
+					ID int64 `json:"id"`
+				} `json:"installations"`
+			}
+			if err := c.Get(fmt.Sprintf("%s/user/installations?per_page=100&page=%d", githubAPI, page), &in); err != nil {
+				return nil, err
+			}
+			for _, i := range in.Installations {
+				out = append(out, Watch{Key: strconv.FormatInt(i.ID, 10), Expires: time.Now().Add(48 * time.Hour)})
+			}
+			if len(in.Installations) < 100 {
+				return out, nil
+			}
+		}
+	},
+	Hear: func(p *Provider, r *http.Request, at string, body []byte, secret func(string) string) (*Heard, error) {
+		if p.HookSecret() == "" || !same(r.Header.Get("X-Hub-Signature-256"), "sha256="+hexMAC(p.HookSecret(), string(body))) {
+			return nil, forged("X-Hub-Signature-256")
+		}
+		var e struct {
+			Installation struct {
+				ID int64 `json:"id"`
+			} `json:"installation"`
+		}
+		if err := readJSON(body, &e); err != nil {
+			return nil, err
+		}
+		if e.Installation.ID == 0 {
+			return &Heard{}, nil
+		}
+		return &Heard{Keys: []string{strconv.FormatInt(e.Installation.ID, 10)}}, nil
+	}}

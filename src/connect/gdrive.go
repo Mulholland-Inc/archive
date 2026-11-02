@@ -1,16 +1,19 @@
 package connect
 
 import (
-	"cmp"
 	"fmt"
+	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/oauth2"
 )
 
 // Google Drive, read only, with ARCHIVE_GOOGLE like Gmail: the client's authorized redirect URIs list
 // <API>/connect/gdrive/callback, and its consent screen asks for drive.readonly, a restricted scope.
+// It syncs nothing until its files are mapped into the tables of archive.sql; its push waits for that too.
 func init() {
 	Register(&Connector{
 		ID: "gdrive", Name: "Google Drive", Env: "ARCHIVE_GOOGLE", Host: "https://accounts.google.com",
@@ -102,95 +105,7 @@ func init() {
 				}),
 		},
 		Push: drivePush,
-		Streams: []*Stream{{Name: "files", Pull: driveFiles,
-			Doc: "Every file in My Drive, shared with you and in your shared drives, not trashed, as its details " +
-				"(id, name, mimeType, modifiedTime, size, webViewLink, owners, parents, createdTime, description, driveId), not its content: " +
-				"listed whole the first time, 1,000 a page, and then Drive's changes since, trashed and removed files deleted."}},
 	})
-}
-
-// driveCursor is where the files stream is: Start is the changes page token taken before a listing began, the
-// changes to read once it ends, and Page the listing's next page; without Page, Start is the delta's.
-type driveCursor struct {
-	Start   string `json:"s"`
-	Page    string `json:"p,omitempty"`
-	Listing bool   `json:"l,omitempty"`
-}
-
-const driveSync = driveFields + ",parents,trashed,createdTime,description,driveId"
-
-func driveFiles(c *Client, cursor string) (*Page, error) {
-	var cur driveCursor
-	if err := cursorOf(cursor, &cur); err != nil {
-		return nil, err
-	}
-	all := url.Values{"supportsAllDrives": {"true"}, "includeItemsFromAllDrives": {"true"}, "pageSize": {"1000"}}
-	if cur.Start == "" {
-		var t struct {
-			Token string `json:"startPageToken"`
-		}
-		if err := c.Get(driveAPI+"/changes/startPageToken?supportsAllDrives=true", &t); err != nil {
-			return nil, err
-		}
-		cur = driveCursor{Start: t.Token, Listing: true}
-	}
-	if cur.Listing {
-		q := all
-		q.Set("q", "trashed = false")
-		q.Set("corpora", "allDrives")
-		q.Set("fields", "nextPageToken,files("+driveSync+")")
-		if cur.Page != "" {
-			q.Set("pageToken", cur.Page)
-		}
-		var out struct {
-			Files []map[string]any `json:"files"`
-			Next  string           `json:"nextPageToken"`
-		}
-		if err := c.Get(driveAPI+"/files?"+q.Encode(), &out); err != nil {
-			return nil, err
-		}
-		page := &Page{Full: true, More: out.Next != ""}
-		for _, f := range out.Files {
-			page.Records = append(page.Records, driveRecord(f, false))
-		}
-		cur.Page, cur.Listing = out.Next, out.Next != ""
-		page.Cursor = cursorFor(cur)
-		return page, nil
-	}
-	q := all
-	q.Set("pageToken", cur.Start)
-	q.Set("includeRemoved", "true")
-	q.Set("fields", "nextPageToken,newStartPageToken,changes(changeType,fileId,removed,file("+driveSync+"))")
-	var out struct {
-		Changes []struct {
-			Type    string         `json:"changeType"`
-			FileID  string         `json:"fileId"`
-			Removed bool           `json:"removed"`
-			File    map[string]any `json:"file"`
-		} `json:"changes"`
-		Next     string `json:"nextPageToken"`
-		NewStart string `json:"newStartPageToken"`
-	}
-	if err := c.Get(driveAPI+"/changes?"+q.Encode(), &out); err != nil {
-		return nil, err
-	}
-	page := &Page{More: out.Next != ""}
-	for _, ch := range out.Changes {
-		switch {
-		case ch.Type == "drive":
-		case ch.Removed || ch.File == nil:
-			page.Records = append(page.Records, Record{ID: ch.FileID, Deleted: true})
-		default:
-			page.Records = append(page.Records, driveRecord(ch.File, ch.File["trashed"] == true))
-		}
-	}
-	cur.Start = cmp.Or(out.Next, out.NewStart)
-	page.Cursor = cursorFor(cur)
-	return page, nil
-}
-
-func driveRecord(f map[string]any, deleted bool) Record {
-	return Record{ID: str(f, "id"), Data: f, Updated: stamp(str(f, "modifiedTime")), Deleted: deleted}
 }
 
 const (
@@ -203,3 +118,47 @@ var driveExports = map[string]string{
 	"application/vnd.google-apps.spreadsheet":  "text/csv",
 	"application/vnd.google-apps.presentation": "text/plain",
 }
+
+// drivePush is changes.watch, a channel of Archive's own id that pushes to Archive with its token, for a week
+// at most; the first sync a day after replaces it, and stops the one before. A push says its channel in
+// X-Goog-Channel-ID and its token in X-Goog-Channel-Token; the sync push of a new channel says nothing changed.
+var drivePush = &Push{Renew: 6 * 24 * time.Hour,
+	Watch: func(c *Client, h Hook, old []Watch) ([]Watch, error) {
+		var t struct {
+			Token string `json:"startPageToken"`
+		}
+		if err := c.Get(driveAPI+"/changes/startPageToken?supportsAllDrives=true", &t); err != nil {
+			return nil, err
+		}
+		id, token := "archive-"+nonce()[:32], nonce()
+		var ch struct {
+			ResourceID string `json:"resourceId"`
+			Expiration string `json:"expiration"`
+		}
+		q := url.Values{"pageToken": {t.Token}, "supportsAllDrives": {"true"}, "includeItemsFromAllDrives": {"true"}}
+		body := map[string]any{"id": id, "type": "web_hook", "address": h.URL(id), "token": token,
+			"expiration": strconv.FormatInt(time.Now().Add(7*24*time.Hour-time.Hour).UnixMilli(), 10)}
+		if err := c.Do("POST", driveAPI+"/changes/watch?"+q.Encode(), body, &ch); err != nil {
+			return nil, err
+		}
+		for _, o := range old {
+			c.Do("POST", driveAPI+"/channels/stop", map[string]string{"id": o.Key, "resourceId": o.Resource}, nil)
+		}
+		return []Watch{{Key: id, Resource: ch.ResourceID, Secret: token, Expires: stamp(ch.Expiration)}}, nil
+	},
+	Unwatch: func(c *Client, w Watch) error {
+		return c.Do("POST", driveAPI+"/channels/stop", map[string]string{"id": w.Key, "resourceId": w.Resource}, nil)
+	},
+	Hear: func(p *Provider, r *http.Request, at string, body []byte, secret func(string) string) (*Heard, error) {
+		id := r.Header.Get("X-Goog-Channel-ID")
+		kept := secret(id)
+		switch {
+		case kept == "":
+			return &Heard{}, nil
+		case !same(kept, r.Header.Get("X-Goog-Channel-Token")):
+			return nil, forged("channel %s's token", id)
+		case r.Header.Get("X-Goog-Resource-State") == "sync":
+			return &Heard{}, nil
+		}
+		return &Heard{Keys: []string{id}}, nil
+	}}

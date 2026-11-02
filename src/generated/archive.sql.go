@@ -271,7 +271,17 @@ SELECT jsonb_build_object(
             AND regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)')
             FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid), false),
         'columns', (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid)))
-        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.member'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass, 'archive.connection'::regclass, 'archive.record'::regclass)
+        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.member'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass, 'archive.connection'::regclass, 'archive.known_person'::regclass, 'archive.known_org'::regclass, 'archive.mail_message'::regclass,
+            'archive.mail_party'::regclass, 'archive.mail_attachment'::regclass, 'archive.doc_page'::regclass, 'archive.payroll_company'::regclass,
+            'archive.payroll_department'::regclass, 'archive.payroll_location'::regclass, 'archive.payroll_schedule'::regclass,
+            'archive.payroll_worker'::regclass, 'archive.payroll_job'::regclass, 'archive.payroll_compensation'::regclass,
+            'archive.payroll_address'::regclass, 'archive.payroll_employment'::regclass, 'archive.payroll_custom_field'::regclass,
+            'archive.payroll_custom_value'::regclass, 'archive.payroll_department_member'::regclass, 'archive.payroll_schedule_assignment'::regclass,
+            'archive.payroll_schedule_member'::regclass, 'archive.payroll_earning_type'::regclass, 'archive.payroll_time_off_request'::regclass,
+            'archive.payroll_time_off_day'::regclass, 'archive.payroll_time_off_balance'::regclass, 'archive.payroll_time_off_policy'::regclass,
+            'archive.payroll_run'::regclass, 'archive.payroll_pay'::regclass, 'archive.payroll_pay_line'::regclass,
+            'archive.payroll_pay_period'::regclass, 'archive.payroll_contractor_payment'::regclass,
+            'archive.payroll_contractor_payment_group'::regclass, 'archive.payroll_task'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -573,7 +583,23 @@ func (q *Queries) ConnectionWatches(ctx context.Context, connection uuid.UUID) (
 
 const connections = `-- name: Connections :many
 SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_at, c.sync_at, c.synced_at,
-    (SELECT count(*) FROM archive.record r WHERE r.connection = c.id AND NOT r.deleted)::bigint AS records,
+    ((SELECT count(*) FROM archive.mail_message x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.doc_page x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_company x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_department x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_location x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_schedule x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_worker x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_custom_field x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_schedule_assignment x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_earning_type x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_time_off_request x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_time_off_balance x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_run x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_pay_period x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_contractor_payment x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_contractor_payment_group x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_task x WHERE x.connection = c.id))::bigint AS items,
     c.integration, coalesce(c.access, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
 FROM archive.connection c WHERE c.member = $1 AND NOT c.integration OR c.integration ORDER BY c.provider, c.account, c.id
 `
@@ -588,7 +614,7 @@ type ConnectionsRow struct {
 	UpdatedAt   time.Time
 	SyncAt      *time.Time
 	SyncedAt    *time.Time
-	Records     int64
+	Items       int64
 	Integration bool
 	Access      string
 	ConnectedBy string
@@ -613,7 +639,7 @@ func (q *Queries) Connections(ctx context.Context, member uuid.UUID) ([]Connecti
 			&i.UpdatedAt,
 			&i.SyncAt,
 			&i.SyncedAt,
-			&i.Records,
+			&i.Items,
 			&i.Integration,
 			&i.Access,
 			&i.ConnectedBy,
@@ -921,23 +947,16 @@ func (q *Queries) DeleteOAuthClient(ctx context.Context, provider string, client
 	return err
 }
 
-const deleteRecords = `-- name: DeleteRecords :exec
-UPDATE archive.record SET deleted = true, updated_at = now(), seen_at = now()
-WHERE connection = $1 AND stream = $2 AND source_id = ANY($3::text[]) AND NOT deleted
+const deleteUnknown = `-- name: DeleteUnknown :exec
+WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM archive.mail_party x WHERE x.person = k.id)
+    AND NOT EXISTS (SELECT FROM archive.payroll_worker x WHERE x.person = k.id)
+    AND NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.admin = k.id OR x.signatory = k.id))
+DELETE FROM archive.known_org o WHERE NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.org = o.id)
 `
 
-func (q *Queries) DeleteRecords(ctx context.Context, connection uuid.UUID, stream string, ids []string) error {
-	_, err := q.db.Exec(ctx, deleteRecords, connection, stream, ids)
-	return err
-}
-
-const deleteUnseenRecords = `-- name: DeleteUnseenRecords :exec
-UPDATE archive.record SET deleted = true, updated_at = now()
-WHERE connection = $1 AND stream = $2 AND seen_at < $3::timestamptz AND NOT deleted
-`
-
-func (q *Queries) DeleteUnseenRecords(ctx context.Context, connection uuid.UUID, stream string, since time.Time) error {
-	_, err := q.db.Exec(ctx, deleteUnseenRecords, connection, stream, since)
+// People nothing names any more go, and organizations too.
+func (q *Queries) DeleteUnknown(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, deleteUnknown)
 	return err
 }
 
@@ -1469,6 +1488,72 @@ func (q *Queries) KeepWatchSecret(ctx context.Context, arg KeepWatchSecretParams
 	return result.RowsAffected(), nil
 }
 
+const knownOrgs = `-- name: KnownOrgs :many
+WITH added AS (INSERT INTO archive.known_org (ein) SELECT DISTINCT e FROM unnest($1::text[]) e ORDER BY e ON CONFLICT (ein) DO NOTHING
+    RETURNING id, ein)
+SELECT a.id, a.ein::text AS ein FROM added a
+UNION ALL SELECT o.id, o.ein::text FROM archive.known_org o WHERE o.ein = ANY($1::text[])
+`
+
+type KnownOrgsRow struct {
+	ID  uuid.UUID
+	Ein string
+}
+
+// The organizations of eins, each added unless there is one.
+func (q *Queries) KnownOrgs(ctx context.Context, eins []string) ([]KnownOrgsRow, error) {
+	rows, err := q.db.Query(ctx, knownOrgs, eins)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []KnownOrgsRow
+	for rows.Next() {
+		var i KnownOrgsRow
+		if err := rows.Scan(&i.ID, &i.Ein); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const knownPeople = `-- name: KnownPeople :many
+WITH added AS (INSERT INTO archive.known_person (email) SELECT DISTINCT e FROM unnest($1::text[]) e ORDER BY e ON CONFLICT (email) DO NOTHING
+    RETURNING id, email)
+SELECT a.id, a.email::text AS email FROM added a
+UNION ALL SELECT k.id, k.email::text FROM archive.known_person k WHERE k.email = ANY($1::text[])
+`
+
+type KnownPeopleRow struct {
+	ID    uuid.UUID
+	Email string
+}
+
+// The people of emails, each added unless there is one.
+func (q *Queries) KnownPeople(ctx context.Context, emails []string) ([]KnownPeopleRow, error) {
+	rows, err := q.db.Query(ctx, knownPeople, emails)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []KnownPeopleRow
+	for rows.Next() {
+		var i KnownPeopleRow
+		if err := rows.Scan(&i.ID, &i.Email); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const leaveWorkspace = `-- name: LeaveWorkspace :exec
 UPDATE archive."user" SET workspaces = array_remove(workspaces, $1::uuid) WHERE id = $2
 `
@@ -1832,6 +1917,19 @@ func (q *Queries) RenameChat(ctx context.Context, iD uuid.UUID, userID uuid.UUID
 	return result.RowsAffected(), nil
 }
 
+const renameConnection = `-- name: RenameConnection :exec
+UPDATE archive.connection c SET account = $2, updated_at = now()
+WHERE c.id = $1 AND c.account <> $2 AND NOT EXISTS (
+    SELECT FROM archive.connection o WHERE o.id <> c.id AND o.member = c.member AND o.provider = c.provider AND o.account = $2 AND NOT o.integration)
+`
+
+// A connection's account as its provider now calls it; not one that another of its member's own connections to
+// the provider already has, as connecting again would renew that one.
+func (q *Queries) RenameConnection(ctx context.Context, iD uuid.UUID, account string) error {
+	_, err := q.db.Exec(ctx, renameConnection, iD, account)
+	return err
+}
+
 const renameFile = `-- name: RenameFile :one
 UPDATE archive.file SET name = $2 WHERE id = $1
 RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at
@@ -2050,19 +2148,6 @@ func (q *Queries) SaveConnection(ctx context.Context, arg SaveConnectionParams) 
 	return err
 }
 
-const saveRecords = `-- name: SaveRecords :exec
-INSERT INTO archive.record (connection, stream, source_id, data, updated_at, access)
-SELECT $1, $2, r.id, r.data, coalesce(r.updated, now()), (SELECT c.access FROM archive.connection c WHERE c.id = $1)
-FROM jsonb_to_recordset($3::jsonb) AS r(id text, data jsonb, updated timestamptz)
-ON CONFLICT (connection, stream, source_id) DO UPDATE SET data = EXCLUDED.data, deleted = false, seen_at = now(), access = EXCLUDED.access,
-    updated_at = CASE WHEN archive.record.deleted OR archive.record.data IS DISTINCT FROM EXCLUDED.data THEN EXCLUDED.updated_at ELSE archive.record.updated_at END
-`
-
-func (q *Queries) SaveRecords(ctx context.Context, connection uuid.UUID, stream string, records []byte) error {
-	_, err := q.db.Exec(ctx, saveRecords, connection, stream, records)
-	return err
-}
-
 const saveSync = `-- name: SaveSync :exec
 UPDATE archive.connection SET cursor = $1, sync_at = $2, synced_at = coalesce($3, synced_at),
     error = $4, revoked = $5, lease_at = NULL
@@ -2159,7 +2244,6 @@ func (q *Queries) Secrets(ctx context.Context, tableName string, ids []uuid.UUID
 }
 
 const setConnectionAccess = `-- name: SetConnectionAccess :exec
-WITH r AS (UPDATE archive.record x SET access = $1::text WHERE x.connection = $2::uuid)
 UPDATE archive.connection c SET access = $1::text, updated_at = now() WHERE c.id = $2::uuid AND c.integration
 `
 

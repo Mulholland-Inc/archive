@@ -259,7 +259,7 @@ func (g *fakeGoogle) do(fn func()) {
 }
 
 // Connecting Gmail keeps the mailbox for whoever started it, shows it only to them, renews it on a second
-// connect, and syncs it into record; disconnecting revokes it and deletes the records.
+// connect, and syncs it into mail_message; disconnecting revokes it and deletes the messages.
 func TestGmailConnectsForWhoStartedItAndDisconnectsWithARevoke(t *testing.T) {
 	t.Parallel()
 	g := newFakeGoogle(t)
@@ -411,8 +411,8 @@ func TestGmailConnectsForWhoStartedItAndDisconnectsWithARevoke(t *testing.T) {
 	if st, _ := call(t, "DELETE", srv.url+"/connect/"+id.String(), alice, nil, nil); st != 204 {
 		t.Fatalf("alice disconnects her Gmail: %d", st)
 	}
-	if n := in.psql("archive", "SELECT count(*) FROM archive.record"); n != "0" {
-		t.Errorf("disconnecting left %s records", n)
+	if n := in.psql("archive", "SELECT count(*) FROM archive.mail_message"); n != "0" {
+		t.Errorf("disconnecting left %s messages", n)
 	}
 	gmailPushesAfterDisconnect(t, in, srv, g)
 	asanaHandshakes(t, in, srv)

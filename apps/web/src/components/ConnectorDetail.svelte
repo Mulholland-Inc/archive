@@ -41,7 +41,7 @@
     <Stack gap="0">
       <SettingsRow label="Account"><Text size="sm" tone="secondary">{connector.account}</Text></SettingsRow>
       <SettingsRow label="Last synced"><Text size="sm" tone="secondary">{connector.lastSync}</Text></SettingsRow>
-      <SettingsRow label="Records"><Text size="sm" tone="secondary" tabular>{(connector.items ?? 0).toLocaleString()}</Text></SettingsRow>
+      <SettingsRow label="Items synced"><Text size="sm" tone="secondary" tabular>{(connector.items ?? 0).toLocaleString()}</Text></SettingsRow>
       {#if connector.error}<SettingsRow label="Problem"><Text size="sm" tone="danger">{connector.error}</Text></SettingsRow>{/if}
     </Stack>
   {/if}

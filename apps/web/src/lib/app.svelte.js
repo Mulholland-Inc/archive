@@ -999,7 +999,7 @@ export const connections = resource({
         account: mine.map((x) => x.account).join(', '),
         error: mine.find((x) => x.error)?.error ?? '',
         lastSync: synced ? relative(synced) : mine.some((x) => x.sync_at) ? 'Syncing…' : 'Not yet',
-        items: mine.reduce((n, x) => n + (x.records ?? 0), 0)
+        items: mine.reduce((n, x) => n + (x.items ?? 0), 0)
       });
     }
     if (v.connectors.some((c) => c.connected)) completeStep('connect');
@@ -1025,7 +1025,7 @@ function toIntegration(k, x) {
     connectedBy: x?.connected_by ?? '',
     date: x ? relative(x.created_at) : '',
     lastSync: x ? lastSyncOf(x) : '',
-    items: x?.records ?? 0,
+    items: x?.items ?? 0,
     error: x?.error ?? '',
     access: x?.access ?? ''
   };

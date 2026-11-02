@@ -50,7 +50,7 @@
       <SettingsRow label="Account"><Text size="sm" tone="secondary" truncate>{c.account}</Text></SettingsRow>
       <SettingsRow label="Connected by"><Text size="sm" tone="secondary">{c.connectedBy}, {c.date}</Text></SettingsRow>
       <SettingsRow label="Last synced"><Text size="sm" tone="secondary">{c.lastSync}</Text></SettingsRow>
-      <SettingsRow label="Records"><Text size="sm" tone="secondary" tabular>{c.items.toLocaleString()}</Text></SettingsRow>
+      <SettingsRow label="Items synced"><Text size="sm" tone="secondary" tabular>{c.items.toLocaleString()}</Text></SettingsRow>
       {#if c.error}<SettingsRow label="Problem"><Text size="sm" tone="danger">{c.error}</Text></SettingsRow>{/if}
     </Stack>
   {/if}

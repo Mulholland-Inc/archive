@@ -4,6 +4,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/mail"
 	"net/url"
 	"strings"
 	"time"
@@ -88,7 +90,7 @@ func init() {
 				}),
 		},
 		Push: gmailPush,
-		Streams: []*Stream{{Name: "messages", Gap: 5 * time.Second, Pull: gmailMessages,
+		Streams: []*Stream{{Name: "messages", Gap: 5 * time.Second, Pull: gmailMessages, Table: "mail_message", Rows: gmailRows,
 			Doc: "Every message but spam and trash, each as the message action returns it without its HTML, its text cut at 64 KB: " +
 				"listed whole the first time, 50 a page, and then the mailbox's history since, messages added, deleted or relabeled. " +
 				"A history Gmail no longer keeps, about a week's, lists the mailbox whole again."}},
@@ -245,6 +247,26 @@ func gmailRecords(c *Client, ids []string, gone map[string]bool) ([]Record, erro
 	return kept, nil
 }
 
+// gmailRows is a message as mail: its text, its headers' addresses as its parties, and its attachments. It was
+// sent when its Date says, or else when Gmail had it.
+func gmailRows(m map[string]any) *Row {
+	sent := instant(str(m, "internalDate"))
+	if t, err := mail.ParseDate(str(m, "date")); err == nil {
+		sent = t.UTC().Format(time.RFC3339)
+	}
+	r := rowOf(map[string]any{"thread": str(m, "threadId"), "subject": str(m, "subject"), "snippet": str(m, "snippet"), "text": str(m, "text"),
+		"sent_at": sent, "received_at": instant(str(m, "internalDate")), "labels": strs(m["labelIds"])})
+	for _, role := range []string{"from", "to", "cc", "bcc", "reply_to"} {
+		for _, a := range addresses(str(m, strings.ReplaceAll(role, "_", "-"))) {
+			r.child("mail_party", rowOf(map[string]any{"role": role, "name": a.Name}).person("person", a.Address))
+		}
+	}
+	for _, f := range objects(m["attachments"], "") {
+		r.child("mail_attachment", rowOf(map[string]any{"filename": str(f, "filename"), "mime": str(f, "mimeType"), "size": decimal(f["size"])}))
+	}
+	return r
+}
+
 const gmailAPI = "https://gmail.googleapis.com/gmail/v1/users/me"
 
 // clamp is n within 1 and most, or def when it is not given.
@@ -285,7 +307,7 @@ type gmailPart struct {
 func (m gmailRaw) flat(body bool) map[string]any {
 	out := map[string]any{"id": m.ID, "threadId": m.ThreadID, "labelIds": m.LabelIDs, "snippet": m.Snippet}
 	for _, h := range m.Payload.Headers {
-		if k := strings.ToLower(h.Name); k == "from" || k == "to" || k == "cc" || k == "subject" || k == "date" {
+		if k := strings.ToLower(h.Name); k == "from" || k == "to" || k == "cc" || k == "bcc" || k == "reply-to" || k == "subject" || k == "date" {
 			out[k] = h.Value
 		}
 	}
@@ -320,3 +342,40 @@ func gmailData(s string) []byte {
 	}
 	return b
 }
+
+// gmailPush is users.watch to the Pub/Sub topic ARCHIVE_GMAIL_TOPIC names, which gmail-api-push@
+// system.gserviceaccount.com publishes to and a push subscription delivers to Archive, signed by the tasks
+// account. A watch lasts 7 days, and Google asks that it be renewed daily: the first sync a day after renews it.
+// A push's message is { emailAddress, historyId }, the mailbox it is for.
+var gmailPush = &Push{Env: "ARCHIVE_GMAIL_TOPIC", OIDC: true, Renew: 6 * 24 * time.Hour,
+	Watch: func(c *Client, h Hook, old []Watch) ([]Watch, error) {
+		var w struct {
+			Expiration string `json:"expiration"`
+		}
+		if err := c.Do("POST", gmailAPI+"/watch", map[string]any{"topicName": h.Target}, &w); err != nil {
+			return nil, err
+		}
+		return []Watch{{Key: strings.ToLower(h.Account), Expires: stamp(w.Expiration)}}, nil
+	},
+	Unwatch: func(c *Client, w Watch) error { return c.Do("POST", gmailAPI+"/stop", nil, nil) },
+	Hear: func(p *Provider, r *http.Request, at string, body []byte, secret func(string) string) (*Heard, error) {
+		var env struct {
+			Message struct {
+				Data string `json:"data"`
+			} `json:"message"`
+		}
+		if err := readJSON(body, &env); err != nil {
+			return nil, err
+		}
+		data, err := base64.StdEncoding.DecodeString(env.Message.Data)
+		if err != nil {
+			return nil, fmt.Errorf("a push whose data is not base64: %v", err)
+		}
+		var m struct {
+			EmailAddress string `json:"emailAddress"`
+		}
+		if err := readJSON(data, &m); err != nil {
+			return nil, err
+		}
+		return &Heard{Keys: keysOf(strings.ToLower(m.EmailAddress))}, nil
+	}}

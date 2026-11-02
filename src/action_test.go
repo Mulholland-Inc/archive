@@ -34,6 +34,8 @@ type fakeMCP struct {
 	revoked    []url.Values      // the revocations
 	pages      map[string]string // the private pages notion-list-private-pages lists, by id to title
 	fail       bool              // the next list fails
+	companies  []string          // the companies Gusto's get_token_info lists, by name, once gustoTools added it
+	tools      *mcp.Server
 }
 
 func newFakeMCP(t *testing.T) *fakeMCP {
@@ -60,6 +62,7 @@ func newFakeMCP(t *testing.T) *fakeMCP {
 			return nil, searchOut{Results: []map[string]string{{"title": "Page about " + in.Query, "by": f.who(req.Extra.Header.Get("Authorization"))}}}, nil
 		})
 	notionListTool(f, tools)
+	f.tools = tools
 	served := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return tools }, nil)
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		base := "http://" + r.Host
@@ -149,7 +152,7 @@ func (f *fakeMCP) do(fn func()) {
 // registers itself there once, connects with PKCE for the resource, and archive.action calls the server's
 // tools with the account's token, refreshed with the registered client, which the run tool's docs list for
 // whoever connected it alone; its sync lists its pages with them; disconnecting revokes with that client and
-// deletes the records.
+// deletes what it synced.
 func TestAnMCPConnectorRegistersConnectsAndActs(t *testing.T) {
 	t.Parallel()
 	f := newFakeMCP(t)
@@ -286,8 +289,8 @@ func TestAnMCPConnectorRegistersConnectsAndActs(t *testing.T) {
 	if st, _ := call(t, "DELETE", srv.url+"/connect/"+id.String(), alice, nil, nil); st != 204 {
 		t.Fatalf("alice disconnects her Notion: %d", st)
 	}
-	if n := in.psql("archive", "SELECT count(*) FROM archive.record"); n != "0" {
-		t.Errorf("disconnecting left %s records", n)
+	if n := in.psql("archive", "SELECT count(*) FROM archive.doc_page"); n != "0" {
+		t.Errorf("disconnecting left %s pages", n)
 	}
 	f.do(func() {
 		if len(f.revoked) != 1 || !strings.HasPrefix(f.revoked[0].Get("token"), "rt-") || f.revoked[0].Get("client_id") != "client-1" || f.revoked[0].Get("client_secret") != "secret-1" {
@@ -297,4 +300,30 @@ func TestAnMCPConnectorRegistersConnectsAndActs(t *testing.T) {
 			t.Errorf("refresh tokens left live: %v", f.refresh)
 		}
 	})
+}
+
+// gustoTools adds Gusto's get_token_info and get_company to f's tools: its companies, as co0, co1 and so on.
+func (f *fakeMCP) gustoTools(companies ...string) {
+	f.companies = companies
+	tools := f.tools
+	tools.AddTool(&mcp.Tool{Name: "get_token_info", InputSchema: map[string]any{"type": "object"}},
+		func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			var cos []map[string]string
+			for i, name := range f.companies {
+				cos = append(cos, map[string]string{"resource_type": "Company", "uuid": fmt.Sprint("co", i), "name": name})
+			}
+			b, _ := json.Marshal(map[string]any{"accessible_resources": cos})
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, nil
+		})
+	tools.AddTool(&mcp.Tool{Name: "get_company", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"company_uuid": map[string]any{"type": "string"}}}},
+		func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			var in struct {
+				Company string `json:"company_uuid"`
+			}
+			json.Unmarshal(req.Params.Arguments, &in)
+			b, _ := json.Marshal(map[string]any{"uuid": in.Company, "name": "Acme", "ein": "12-3456789"})
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, nil
+		})
 }

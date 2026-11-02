@@ -2,6 +2,7 @@ package connect
 
 import (
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -12,8 +13,8 @@ import (
 // Asana, read only: workspaces, projects and tasks. It reads ARCHIVE_ASANA, an app of the Asana developer
 // console distributed to any workspace, whose redirect URLs list <API>/connect/asana/callback and whose OAuth
 // permission scopes include the Scopes here; with webhooks:read, webhooks:write and webhooks:delete too, and
-// ?push=1 on the variable, it asks for those, which its pushes need (pushers.go). An account connected without
-// them syncs only when asked. Asana's MCP server lets no client register itself, so
+// ?push=1 on the variable, it asks for those, which its pushes need (asanaPush). It syncs nothing until its
+// tasks have tables in archive.sql. Asana's MCP server lets no client register itself, so
 // this is its REST API. Revoking takes the client's credentials with the refresh token.
 func init() {
 	Register(&Connector{
@@ -87,21 +88,8 @@ func init() {
 				}),
 		},
 		Push: asanaPush,
-		Streams: []*Stream{
-			{Name: "workspaces", Pull: asanaWorkspaces,
-				Doc: "The workspaces and organizations you are in, { gid, name }, listed whole each sync."},
-			{Name: "projects", Pull: asanaProjects,
-				Doc: "The projects of every workspace that are not archived, listed whole each sync, so one archived or deleted is deleted: " +
-					"{ gid, name, owner, due_on, start_on, archived, color, notes, created_at, modified_at, permalink_url, workspace, team }."},
-			{Name: "tasks", Pull: asanaTasks,
-				Doc: "The tasks of every project that is not archived, and those assigned to you in each workspace, done or not, with " + asanaTaskFields +
-					": all the first time and then those modified since, 100 a page. Asana does not say which were deleted, so they stay."},
-		},
 	})
 }
-
-const asanaTaskFields = "name,notes,assignee.name,assignee.email,due_on,due_at,start_on,completed,completed_at,created_at,modified_at,permalink_url," +
-	"projects.name,parent.name,tags.name,memberships.section.name,workspace.name"
 
 // asanaPage is a page of a list of Asana's: its data, and the offset of the next.
 type asanaPage struct {
@@ -137,107 +125,6 @@ func asanaAll(c *Client, path string) ([]map[string]any, error) {
 	}
 }
 
-func asanaRecords(rows []map[string]any) []Record {
-	out := make([]Record, 0, len(rows))
-	for _, r := range rows {
-		if n, ok := r["notes"].(string); ok {
-			r["notes"] = clip(n, maxText)
-		}
-		out = append(out, Record{ID: str(r, "gid"), Data: r, Updated: stamp(str(r, "modified_at"))})
-	}
-	return out
-}
-
-func asanaWorkspaces(c *Client, cursor string) (*Page, error) {
-	ws, err := asanaAll(c, "/workspaces?opt_fields=name")
-	return &Page{Full: true, Records: asanaRecords(ws)}, err
-}
-
-// asanaProjects lists the projects whole, a workspace a page.
-func asanaProjects(c *Client, cursor string) (*Page, error) {
-	var todo []string
-	if err := cursorOf(cursor, &todo); err != nil {
-		return nil, err
-	}
-	if len(todo) == 0 {
-		ws, err := asanaAll(c, "/workspaces?opt_fields=name")
-		if err != nil {
-			return nil, err
-		}
-		for _, w := range ws {
-			todo = append(todo, str(w, "gid"))
-		}
-		if len(todo) == 0 {
-			return &Page{Full: true}, nil
-		}
-	}
-	ps, err := asanaAll(c, "/projects?archived=false&opt_fields=name,owner.name,due_on,start_on,archived,color,notes,created_at,modified_at,permalink_url,workspace.name,team.name&workspace="+url.QueryEscape(todo[0]))
-	if err != nil {
-		return nil, err
-	}
-	page := &Page{Full: true, More: len(todo) > 1, Records: asanaRecords(ps)}
-	if page.More {
-		page.Cursor = cursorFor(todo[1:])
-	}
-	return page, nil
-}
-
-// asanaCursor is where the tasks stream is: Since is when the round before began, for the tasks modified since,
-// and Start this round's; Todo the lists this round has left, the first under way at Offset.
-type asanaCursor struct {
-	Since  string   `json:"since,omitempty"`
-	Start  string   `json:"start,omitempty"`
-	Todo   []string `json:"todo,omitempty"`
-	Offset string   `json:"offset,omitempty"`
-}
-
-func asanaTasks(c *Client, cursor string) (*Page, error) {
-	var cur asanaCursor
-	if err := cursorOf(cursor, &cur); err != nil {
-		return nil, err
-	}
-	if len(cur.Todo) == 0 {
-		cur.Start = time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
-		ws, err := asanaAll(c, "/workspaces?opt_fields=name")
-		if err != nil {
-			return nil, err
-		}
-		for _, w := range ws {
-			ps, err := asanaAll(c, "/projects?archived=false&opt_fields=name&workspace="+url.QueryEscape(str(w, "gid")))
-			if err != nil {
-				return nil, err
-			}
-			for _, p := range ps {
-				cur.Todo = append(cur.Todo, "project="+url.QueryEscape(str(p, "gid")))
-			}
-			cur.Todo = append(cur.Todo, "assignee=me&workspace="+url.QueryEscape(str(w, "gid")))
-		}
-		if len(cur.Todo) == 0 {
-			return &Page{Cursor: cursorFor(asanaCursor{Since: cur.Start})}, nil
-		}
-	}
-	u := asanaAPI + "/tasks?" + cur.Todo[0] + "&limit=100&opt_fields=" + asanaTaskFields
-	if cur.Since != "" {
-		u += "&modified_since=" + url.QueryEscape(cur.Since)
-	}
-	if cur.Offset != "" {
-		u += "&offset=" + url.QueryEscape(cur.Offset)
-	}
-	var p asanaPage
-	if err := c.Get(u, &p); err != nil {
-		return nil, err
-	}
-	page := &Page{Records: asanaRecords(p.Data)}
-	if cur.Offset = p.next(); cur.Offset == "" {
-		cur.Todo = cur.Todo[1:]
-	}
-	if page.More = len(cur.Todo) > 0; !page.More {
-		cur = asanaCursor{Since: cur.Start}
-	}
-	page.Cursor = cursorFor(cur)
-	return page, nil
-}
-
 const asanaAPI = "https://app.asana.com/api/1.0"
 
 // asanaData is the data of an answer of Asana's API.
@@ -252,4 +139,93 @@ func asanaData(c *Client, path string) (any, error) {
 func asList(v any) []any {
 	l, _ := v.([]any)
 	return l
+}
+
+// asanaPush is a webhook on each project of the account that is not archived, pushing to Archive's URL with a
+// key of the connection's, the project and a nonce, which only Asana learns. Asana creates one only once its
+// handshake, posted to that URL with X-Hook-Secret, is answered with the same header; Archive keeps that secret
+// by the key, and a push after is signed with it: X-Hook-Signature, the hex HMAC-SHA256 of the body. Asana
+// deletes a webhook that fails for a day, so the first sync a week after checks each is still there. A push
+// without events is Asana's heartbeat, and starts nothing.
+var asanaPush = &Push{Renew: 6 * 24 * time.Hour,
+	Watch: func(c *Client, h Hook, old []Watch) ([]Watch, error) {
+		have := map[string]Watch{}
+		for _, o := range old {
+			var w struct {
+				Data struct {
+					Active bool `json:"active"`
+				} `json:"data"`
+			}
+			if err := c.Get(asanaAPI+"/webhooks/"+url.PathEscape(o.Resource)+"?opt_fields=active", &w); err == nil && w.Data.Active {
+				o.Expires = time.Now().Add(7 * 24 * time.Hour)
+				have[asanaProject(o.Key)] = o
+			}
+		}
+		ws, err := asanaAll(c, "/workspaces?opt_fields=name")
+		if err != nil {
+			return nil, err
+		}
+		var out []Watch
+		for _, w := range ws {
+			ps, err := asanaAll(c, "/projects?archived=false&opt_fields=name&workspace="+url.QueryEscape(str(w, "gid")))
+			if err != nil {
+				return nil, err
+			}
+			for _, p := range ps {
+				gid := str(p, "gid")
+				if o, ok := have[gid]; ok {
+					out = append(out, o)
+					continue
+				}
+				key := h.ID + "/" + gid + "/" + nonce()[:16]
+				var made struct {
+					Data struct {
+						GID string `json:"gid"`
+					} `json:"data"`
+				}
+				if err := c.Do("POST", asanaAPI+"/webhooks", map[string]any{"data": map[string]string{"resource": gid, "target": h.URL(key)}}, &made); err != nil {
+					return out, err
+				}
+				out = append(out, Watch{Key: key, Resource: made.Data.GID, Expires: time.Now().Add(7 * 24 * time.Hour)})
+			}
+		}
+		return out, nil
+	},
+	Unwatch: func(c *Client, w Watch) error {
+		return c.Do("DELETE", asanaAPI+"/webhooks/"+url.PathEscape(w.Resource), nil, nil)
+	},
+	Hear: func(p *Provider, r *http.Request, at string, body []byte, secret func(string) string) (*Heard, error) {
+		key := r.URL.Query().Get("k")
+		if s := r.Header.Get("X-Hook-Secret"); s != "" {
+			if key == "" || secret(key) != "" {
+				return nil, forged("a handshake for a webhook that has one")
+			}
+			return &Heard{Status: http.StatusOK, Header: http.Header{"X-Hook-Secret": {s}}, Keep: map[string]string{key: s}}, nil
+		}
+		kept := secret(key)
+		if kept == "" {
+			return &Heard{}, nil
+		}
+		if !same(r.Header.Get("X-Hook-Signature"), hexMAC(kept, string(body))) {
+			return nil, forged("X-Hook-Signature")
+		}
+		var e struct {
+			Events []any `json:"events"`
+		}
+		if err := readJSON(body, &e); err != nil {
+			return nil, err
+		}
+		if len(e.Events) == 0 {
+			return &Heard{}, nil
+		}
+		return &Heard{Keys: []string{key}}, nil
+	}}
+
+// asanaProject is the project of an Asana watch's key, <connection>/<project>/<nonce>.
+func asanaProject(key string) string {
+	parts := strings.Split(key, "/")
+	if len(parts) != 3 {
+		return ""
+	}
+	return parts[1]
 }

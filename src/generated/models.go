@@ -83,9 +83,9 @@ type ArchiveConnection struct {
 	UpdatedAt time.Time
 	// What the service said about the account when it connected, like QuickBooks' realmId
 	Meta map[string]string
-	// When Archive next reads what changed there into record; null once it has it all, until the service says something changed, you ask, or you read record
+	// When Archive next reads what changed there; null once it has it all, until the service says something changed, you ask, or you read what it syncs
 	SyncAt *time.Time
-	// When Archive last had everything there in record
+	// When Archive last had everything there
 	SyncedAt *time.Time
 	Cursor   json.RawMessage
 	AskedAt  time.Time
@@ -93,7 +93,7 @@ type ArchiveConnection struct {
 	Revoked  bool
 	// It is the archive's, like its QuickBooks, which an owner connects for everyone, not one person's own
 	Integration bool
-	// The group an integration and its records are narrowed to, like finance; null for everyone
+	// The group an integration and what it syncs are narrowed to, like finance; null for everyone
 	Access *string
 }
 
