@@ -1,10 +1,10 @@
 <script>
   import Icon from './Icon.svelte';
 
-  let { label, icon, compact = false, children } = $props();
+  let { label, icon, children } = $props();
 </script>
 
-<div class={['property', { compact }]}>
+<div class="property">
   <span class="label">{#if icon}<Icon {icon} size="sm" />{/if}{label}</span>
   <div class="value">{@render children()}</div>
 </div>
@@ -36,14 +36,6 @@
     min-width: 0;
     min-height: var(--control-sm);
     color: var(--color-text);
-  }
-
-  .compact {
-    grid-template-columns: var(--col-sm) minmax(0, 1fr);
-    gap: var(--space-3);
-    min-height: var(--control-sm);
-    padding-block: var(--space-1);
-    font-size: var(--text-sm);
   }
 
   @media (max-width: 40rem) {
