@@ -73,7 +73,6 @@
   --radius-round: 50%;
 
   --border-width: 1px;
-  --border-width-thick: 1.5px;
   --ring-subtle: 0 0 0 var(--border-width) var(--color-border-subtle);
   --ring: 0 0 0 var(--border-width) var(--color-border);
   --ring-strong: 0 0 0 var(--border-width) var(--color-border-strong);

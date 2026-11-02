@@ -1,10 +1,10 @@
 <script>
   // A heading at any level. size picks the type step (sm text-md, md text-base, lg text-xl, xl text-2xl,
   // 2xl text-3xl, 3xl text-4xl); serif headings are the archive's voice, sans ones label sections.
-  // leading="none" and tracking="tight" set a display heading, leading="inherit" keeps the line height
-  // around it; wrap="anywhere" lets a long name break, wrap="normal" breaks it as text does,
-  // instead of balancing its lines; grow fills the row it sits in; step steps it down to lg in
-  // a container under 32rem.
+  // leading="none" and tracking="tight" set a display heading, and leading="inherit" keeps the line height
+  // around it. Lines are balanced unless wrap="normal" breaks them as text does or wrap="anywhere" also
+  // breaks a long name mid-word. grow fills the row it sits in; step steps it down to lg in a container
+  // under 32rem.
   let { level = 2, size = 'lg', serif = true, leading = 'tight', tracking, wrap = 'balance', grow = false, step = false, children, ...rest } = $props();
 </script>
 
