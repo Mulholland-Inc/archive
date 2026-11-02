@@ -255,7 +255,8 @@ func (a *Archive) chat(w http.ResponseWriter, r *http.Request) {
 		"eager_input_streaming": true,
 		"cache_control":         map[string]string{"type": "ephemeral"},
 	}}
-	system := chatSystemBlocks(a.RunTypes(ctx), ac)
+	role, _, _ := a.level(ctx)
+	system := chatSystemBlocks(a.RunTypes(ctx), ac, role)
 	for runs := 0; ; {
 		msg, stop, err := chatTurn(ctx, key, tools, system, msgs, send)
 		if ctx.Err() != nil {
@@ -344,20 +345,28 @@ func chatCode(in any) (string, bool) {
 // with, as their own cache entry shared by everyone in the workspace; then, uncached, the date and who the
 // agent talks with. Ahead of both, the run tool's description is the same in every workspace (runDocs), so
 // with the conversation's own breakpoint a chat has three, all with the default lifetime.
-func chatSystemBlocks(types string, ac *Actor) []any {
+func chatSystemBlocks(types string, ac *Actor, role string) []any {
 	return []any{
 		map[string]any{"type": "text", "text": "The tables of this archive, as TypeScript, which the SDK in the run tool's description reads and writes:\n\n" + types,
 			"cache_control": map[string]string{"type": "ephemeral"}},
-		map[string]any{"type": "text", "text": chatSystem(ac)},
+		map[string]any{"type": "text", "text": chatSystem(ac, role)},
 	}
 }
 
-func chatSystem(ac *Actor) string {
+// chatSystem says who the agent is talking with, and their role in the workspace, which is what they may do:
+// a viewer reads, an editor also writes rows, an owner also changes the schema, views among it.
+func chatSystem(ac *Actor, role string) string {
 	who := ac.Email
 	if ac.Name != "" {
 		who = ac.Name + " <" + ac.Email + ">"
 	}
 	s := "Today is " + time.Now().UTC().Format("Monday 2 January 2006") + ". You are the agent in Archive, talking with " + who + "."
+	switch role {
+	case "owner", "editor":
+		s += " They are an " + role + " of this workspace."
+	case "viewer":
+		s += " They are a viewer of this workspace."
+	}
 	return s + " The run tool is the only way to read or change their archive; give each call a description of what it does, in a few words, which they see while it runs. Run calls and their results are folded away in the chat, so the answer itself presents what they need, as a short markdown table when that helps." +
 		" A workflow is a row of the workflow table: save it with archive.create(\"workflow\", { name, source, on }), fix a refused save from its errors, try it with archive.run(name, input), read its result or the workflow_run table, and change it with archive.update."
 }

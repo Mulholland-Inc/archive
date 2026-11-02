@@ -73,3 +73,15 @@ func TestChatSharesTheSDKPromptAcrossWorkspaces(t *testing.T) {
 		}
 	}
 }
+
+func TestTheAgentKnowsTheUsersRole(t *testing.T) {
+	ac := &Actor{Email: "sam@example.com", Name: "Sam"}
+	for role, want := range map[string]string{"owner": "They are an owner of this workspace.", "editor": "They are an editor of this workspace.", "viewer": "They are a viewer of this workspace."} {
+		if s := chatSystem(ac, role); !strings.Contains(s, want) {
+			t.Errorf("%s: %s", role, s)
+		}
+	}
+	if s := chatSystem(ac, ""); strings.Contains(s, "They are") {
+		t.Errorf("no role: %s", s)
+	}
+}
