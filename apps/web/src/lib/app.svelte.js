@@ -1006,8 +1006,9 @@ function toIntegration(k, x) {
   };
 }
 
+// connect sends the browser to connect connector id: one of your own, or an integration an owner connects for everyone.
 export function connect(id) {
-  const c = ws().connectors.find((x) => x.id === id);
+  const c = [...ws().connectors, ...archiveIntegrations()].find((x) => x.id === id);
   if (c?.ready) location.assign(`${API}/connect/${encodeURIComponent(id)}?workspace=${encodeURIComponent(app.archive)}`);
 }
 
