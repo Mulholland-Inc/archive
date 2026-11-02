@@ -2878,6 +2878,21 @@ throw new Error("changed my mind");`)
 		if err != nil || !res.IsError || !strings.Contains(res.Content[0].(*mcp.TextContent).Text, `not a uuid`) {
 			t.Errorf("mcp error: %v %+v", err, res)
 		}
+
+		// Stateless: a call needs no initialize first and gets no session back, so any instance can answer it.
+		body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"run","arguments":{"code":"return 1 + 1"}}}`
+		req, _ := http.NewRequestWithContext(ctx, "POST", srv.url+"/mcp", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		resp, err := (&http.Client{Transport: e2eBearer(tok)}).Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 || resp.Header.Get("Mcp-Session-Id") != "" || !strings.HasPrefix(resp.Header.Get("Content-Type"), "application/json") || !strings.Contains(string(raw), `\"result\":2`) {
+			t.Errorf("stateless call: %d session %q %s: %s", resp.StatusCode, resp.Header.Get("Mcp-Session-Id"), resp.Header.Get("Content-Type"), raw)
+		}
 	})
 
 	t.Run("RenamesKeepTheData", func(t *testing.T) {
