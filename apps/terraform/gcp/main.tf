@@ -444,7 +444,8 @@ resource "google_service_account" "verify" {
 resource "google_service_account_iam_member" "verify" {
   service_account_id = google_service_account.verify.name
   role               = "roles/iam.serviceAccountTokenCreator"
-  member             = "${endswith(data.google_client_openid_userinfo.me.email, ".gserviceaccount.com") ? "serviceAccount" : "user"}:${data.google_client_openid_userinfo.me.email}"
+  # Whoever applies: the terraform account once CI applies, else the account running it.
+  member = var.github_repository != "" ? google_service_account.terraform[0].member : "${endswith(data.google_client_openid_userinfo.me.email, ".gserviceaccount.com") ? "serviceAccount" : "user"}:${data.google_client_openid_userinfo.me.email}"
 }
 
 resource "google_project_iam_member" "verify" {
