@@ -58,8 +58,8 @@ variable "memory" {
 
 variable "db_tier" {
   type        = string
-  description = "Cloud SQL machine tier."
-  default     = "db-f1-micro"
+  description = "Cloud SQL machine tier. db-custom-1-3840 is 1 dedicated vCPU and 3.75 GB, with room for about 100 connections; db-f1-micro allows only 25, which an instance per revision of a deploy runs out of."
+  default     = "db-custom-1-3840"
 }
 
 variable "db_max_connections" {

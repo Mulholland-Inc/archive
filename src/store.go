@@ -105,9 +105,11 @@ func OpenStore(ctx context.Context, pg *pgx.ConnConfig, prefix, password string,
 	return s, nil
 }
 
+// A process holds the hub's pool and, per open workspace, its system and app pools, and two revisions overlap
+// while a deploy rolls out: these keep that well inside the database's connections.
 const (
-	storeAppConns = 8
-	storeSysConns = 4
+	storeAppConns = 6
+	storeSysConns = 3
 	storeIdle     = time.Minute
 )
 
