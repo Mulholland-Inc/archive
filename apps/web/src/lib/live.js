@@ -230,7 +230,7 @@ export function toMessages(messages = []) {
   return out;
 }
 
-// Workflows: the file name is the id; its trigger is the `on` it exports.
+// Workflows: rows of the workflow table, each with its last run; on says when it runs.
 
 const days = { '*': 'Every day', '1-5': 'Weekdays', 'MON-FRI': 'Weekdays', '0,6': 'Weekends', '6,0': 'Weekends', 'SAT,SUN': 'Weekends', 0: 'Sundays', 7: 'Sundays', 1: 'Mondays', 2: 'Tuesdays', 3: 'Wednesdays', 4: 'Thursdays', 5: 'Fridays', 6: 'Saturdays', SUN: 'Sundays', MON: 'Mondays', TUE: 'Tuesdays', WED: 'Wednesdays', THU: 'Thursdays', FRI: 'Fridays', SAT: 'Saturdays' };
 const named = { '@hourly': ['Every hour'], '@daily': ['Every day', '0', '0'], '@midnight': ['Every day', '0', '0'], '@weekly': ['Sundays', '0', '0'], '@monthly': ['On the 1st of every month', '0', '0'], '@yearly': ['Every January 1st', '0', '0'], '@annually': ['Every January 1st', '0', '0'] };
@@ -257,12 +257,15 @@ function schedule(spec) {
   return 'On a schedule';
 }
 
+// on is { cron, tz? }, { table, events }, { webhook: true } or null.
 export function trigger(on) {
   if (!on) return { kind: 'manual', label: 'Run by hand' };
-  if (on === 'webhook') return { kind: 'webhook', label: 'When its webhook is called' };
-  if (on.startsWith('cron ')) return { kind: 'schedule', label: schedule(on.slice(5).trim()) };
-  const t = on.replaceAll('_', ' ');
-  return { kind: on === 'file' ? 'file' : 'table', table: on, label: `When ${/^[aeiou]/i.test(t) ? 'an' : 'a'} ${t} is added or changed` };
+  if (on.webhook) return { kind: 'webhook', label: 'When its webhook is called' };
+  if (on.cron) return { kind: 'schedule', label: schedule((on.tz ? `CRON_TZ=${on.tz} ` : '') + on.cron) };
+  const t = on.table.replaceAll('_', ' ');
+  const events = on.events ?? ['created', 'updated'];
+  const what = events.length === 1 ? (events[0] === 'created' ? 'added' : 'changed') : 'added or changed';
+  return { kind: on.table === 'file' ? 'file' : 'table', table: on.table, label: `When ${/^[aeiou]/i.test(t) ? 'an' : 'a'} ${t} is ${what}` };
 }
 
 export const pretty = (name) => {
@@ -297,16 +300,17 @@ export function toRun(r, number) {
   };
 }
 
+// w is a workflow row with its last run, as last.
 export function toWorkflow(w) {
   return {
-    id: w.name,
+    id: w.id,
     name: pretty(w.name),
     file: w.name,
     agent: 'Workflow',
     trigger: trigger(w.on),
     on: w.on,
     url: w.url ?? '',
-    next: w.next ? new Date(w.next).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '',
+    next: w.on?.cron && w.next_at ? new Date(w.next_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '',
     enabled: true,
     steps: [`run ${w.name}`],
     runs: w.last ? [toRun(w.last, 1)] : [],

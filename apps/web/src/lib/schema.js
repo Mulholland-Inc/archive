@@ -57,7 +57,7 @@ export function toTables(catalog, schema = [], counts = {}, workflows = []) {
         rows: counts[t.name]?.rows ?? null,
         updated: counts[t.name]?.updated ? relative(counts[t.name].updated) : '',
         access: { edit: ['editor'], view: ['viewer'] },
-        workflows: workflows.filter((w) => w.on === t.name).map((w) => w.name),
+        workflows: workflows.filter((w) => w.on?.table === t.name).map((w) => w.name),
         columns,
         links: columns.filter((x) => x.to).map((x) => ({ column: x.name, to: x.to })),
         sample: [],
