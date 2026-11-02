@@ -377,6 +377,11 @@ export function linkOf(t, c) {
   return c.to ?? ws().schema.find((x) => x.id === baseOf(t))?.columns.find((x) => x.name === c.name)?.to;
 }
 
+// rowOf is one row of a table or view, as its member may read it.
+export async function rowOf(table, id) {
+  return call(`/api/${encodeURIComponent(table)}/${encodeURIComponent(id)}`);
+}
+
 // titlesOf is every row's title of table, by id, for showing links by name: its first text column.
 export async function titlesOf(table) {
   const col = ws().schema.find((x) => x.id === table)?.columns.find((c) => c.type === 'text' && !['id', 'access'].includes(c.name));

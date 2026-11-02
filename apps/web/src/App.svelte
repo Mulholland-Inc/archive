@@ -14,6 +14,7 @@
   import Workflow from './pages/Workflow.svelte';
   import DatabaseTable from './pages/DatabaseTable.svelte';
   import ViewPage from './pages/View.svelte';
+  import RowPage from './pages/Row.svelte';
   import AccessPage from './pages/Access.svelte';
   import AppSettings from './components/AppSettings.svelte';
   import ArchiveSettingsDialog from './components/ArchiveSettingsDialog.svelte';
@@ -128,6 +129,8 @@
         <Chats />
       {:else if route.parts[0] === 'library'}
         <LibraryPage />
+      {:else if route.parts[0] === 'view' && route.parts[2]}
+        <RowPage view={route.parts[1]} id={route.parts[2]} />
       {:else if route.parts[0] === 'view' && route.parts[1]}
         <ViewPage id={route.parts[1]} />
       {:else if route.parts[0] === 'database' && route.parts[1]}

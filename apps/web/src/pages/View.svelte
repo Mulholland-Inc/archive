@@ -1,5 +1,6 @@
 <script>
-  import { Table2, Settings2, SearchX, Type, AlignLeft, CalendarDays as DateIcon, Hash, CircleCheck, ArrowUpRight, Paperclip, AtSign, DollarSign, MapPin, CircleDot, Fingerprint, ArrowLeft, Clock } from '@lucide/svelte';
+  import { Table2, Settings2, SearchX } from '@lucide/svelte';
+  import { go } from '../lib/router.svelte.js';
   import { onMount } from 'svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
@@ -14,13 +15,7 @@
   import Chip from '../components/Chip.svelte';
   import Select from '../components/Select.svelte';
   import Spacer from '../components/Spacer.svelte';
-  import RightSidebar from '../components/RightSidebar.svelte';
-  import Heading from '../components/Heading.svelte';
-  import Property from '../components/Property.svelte';
-  import { app, ws, schema, viewRows, rowRelations, linkOf, titlesOf } from '../lib/app.svelte.js';
-  import Section from '../components/Section.svelte';
-  import List from '../components/List.svelte';
-  import ListItem from '../components/ListItem.svelte';
+  import { ws, schema, viewRows, linkOf, titlesOf } from '../lib/app.svelte.js';
   import { show } from '../lib/live.js';
 
   // A view, drawn the way its comment says: a table, a board grouped by its by column, or a calendar by its
@@ -42,7 +37,6 @@
   let query = $state('');
   let filter = $state(null);
   let sort = $state('');
-  let open = $state(null);
   let searchEl = $state();
 
   const facet = $derived.by(() => {
@@ -59,15 +53,8 @@
     return [...out].sort((a, b) => String(a[sort] ?? '').localeCompare(String(b[sort] ?? ''), undefined, { numeric: true }));
   });
 
-  // A row opens in the side panel, its fields as properties, each with its type's icon.
-  const typeIcons = { text: Type, long: AlignLeft, date: DateIcon, number: Hash, money: DollarSign, yes: CircleCheck, link: ArrowUpRight, file: Paperclip, email: AtSign, place: MapPin, choice: CircleDot, id: Fingerprint };
-  let relations = $state({ to: [], from: [] });
-  function pick(r) {
-    open = r;
-    app.details = true;
-    relations = { to: [], from: [] };
-    rowRelations(id, r).then((x) => open === r && (relations = x));
-  }
+  // A row opens its own page, like a table's.
+  const pick = (r) => r.id && go(`/view/${id}/${r.id}`);
   // Linked rows show as chips with their names, read once per linked table.
   let titles = $state({});
   const linked = $derived([...new Set(shown.map((c) => linkOf(view, c)).filter(Boolean))]);
@@ -80,7 +67,6 @@
     if (!to || v == null || v === '') return [];
     return (Array.isArray(v) ? v : [v]).map((rid) => ({ id: rid, title: titles[to]?.[rid] ?? '…', href: `/database/${to}` }));
   };
-  const nameOf = (tid) => ws().schema.find((x) => x.id === tid)?.name ?? tid;
 
   // The board scrolls sideways; a vertical wheel over it scrolls the page, which the browser would otherwise
   // keep from the page once the board, a scroller too, catches it.
@@ -164,7 +150,6 @@
     <EmptyState icon={Table2} title="View not found" />
   </Page>
 {:else}
-  <RightSidebar label="Row details" toggle>
   {@render topbar()}
   <Page width="wide">
     <StickyHeader title={view.name} description={view.description && view.description.toLowerCase() !== view.name.toLowerCase() ? view.description : ''}>
@@ -236,51 +221,9 @@
     </Stack>
   </Page>
 
-    {#snippet side()}
-      {#if open}
-        <Stack gap="5">
-          <div class="row-title"><Heading level={2} size="lg" wrap="anywhere">{show(open[title?.name]) || view.name}</Heading></div>
-          <Section gap="sm" title="Properties">
-            <Stack gap="0">
-              {#each shown.filter((c) => c !== title) as c (c.name)}
-                <Property compact label={label(c)} icon={typeIcons[c.type] ?? Type}>
-                  {#if open[c.name] == null || open[c.name] === '' || (Array.isArray(open[c.name]) && !open[c.name].length)}<Text size="sm" tone="tertiary">Empty</Text>
-                  {:else if linkOf(view, c)}{#each refs(c, open) as l (l.id)}<Chip size="sm" href={l.href}>{l.title}</Chip>{/each}
-                  {:else}<Text size="sm" wrap="anywhere">{show(open[c.name])}</Text>{/if}
-                </Property>
-              {/each}
-            </Stack>
-          </Section>
-          {#each relations.from as l (`from-${l.table}-${l.column}`)}
-            <Section gap="sm" title={nameOf(l.table)}>
-              <List>
-                {#each l.rows as r (r.id)}<ListItem href={`/database/${l.table}`} icon={ArrowLeft}><Text size="sm">{r.title}</Text></ListItem>{/each}
-              </List>
-            </Section>
-          {/each}
-          <Section gap="sm" title="Details">
-            <Stack gap="0">
-              {#if open.created_at}<Property compact label="Created" icon={Clock}><Text size="sm" tone="secondary">{show(open.created_at)}</Text></Property>{/if}
-              {#if open.updated_at}<Property compact label="Updated" icon={Clock}><Text size="sm" tone="secondary">{show(open.updated_at)}</Text></Property>{/if}
-            </Stack>
-          </Section>
-        </Stack>
-      {/if}
-    {/snippet}
-  </RightSidebar>
 {/if}
 
 <style>
-  /* Level with the page's title: the page pads its top more than the panel does, and its title sits in a
-     control-xl row. */
-  .row-title {
-    display: flex;
-    align-items: center;
-    min-height: var(--control-xl);
-    margin-block-start: calc(var(--space-8) - var(--space-3));
-    padding-inline-end: var(--space-8);
-  }
-
   .chips {
     display: flex;
     flex-wrap: wrap;
