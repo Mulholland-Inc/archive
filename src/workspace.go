@@ -878,7 +878,10 @@ func (h *Hub) mcp(w http.ResponseWriter, r *http.Request) {
 	if a.mcph == nil {
 		srv := mcpServer(a)
 		a.mcph = auth.RequireBearerToken(a.mcpVerify, &auth.RequireBearerTokenOptions{AllowMissingExpiration: true})(
-			mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil))
+			mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv },
+				// Stateless: no Mcp-Session-Id, so any instance answers any request and a redeploy drops nothing.
+				// run needs nothing from the client mid-call, so plain JSON replies are enough.
+				&mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, PropagateRequestCancellation: true}))
 	}
 	hd := a.mcph
 	a.hmu.Unlock()
