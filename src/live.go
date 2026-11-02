@@ -6,7 +6,7 @@ package main
 // it moved with pg_notify on a channel named for the writing session, archive_moved_<pid>. Every pooled
 // connection listens on its own channel only (livePool), so Postgres hands each session back exactly what it
 // committed: a notification is delivered when its transaction commits, never for one that rolls back, and is
-// dropped with a rolled-back savepoint (archive.test). It arrives on the same connection, inside the COMMIT
+// dropped with a rolled-back savepoint (a failed archive.run). It arrives on the same connection, inside the COMMIT
 // it follows, in the goroutine that committed. So every write path (archive.create, files, chats, workflows,
 // members, migrations, background work) is live with no code of its own, and a new table is too: Migrate
 // gives every public table the trigger (schemaMoved). The rows of archive.user, archive.token and

@@ -259,12 +259,26 @@ export const members = resource({
   }
 });
 
+// Workflows are rows of the workflow table and their runs of workflow_run, read through a run as any rows are.
+const runCode = async (code, workspace) => {
+  const out = await api('/api/run', { method: 'POST', body: { code }, workspace: workspace ?? app.archive });
+  if (out?.error) throw new Error(out.error);
+  return out?.result;
+};
+const workflowList = (workspace) =>
+  runCode(
+    `const ws = await archive.list("workflow", { limit: 1000 });
+const last = await archive.query("SELECT DISTINCT ON (workflow) id, workflow, created_at AS at, trigger, ms, error FROM workflow_run ORDER BY workflow, created_at DESC, id DESC");
+return ws.map((w) => ({ ...w, last: last.find((r) => r.workflow === w.id) ?? null }));`,
+    workspace
+  );
+
 // The workflows, each with its last run. Runs already read for a workflow's page stay until runs reads them.
 export const workflows = resource({
   tables: ['archive.workflow', 'archive.workflow_run'],
   load: async () => {
     const v = ws();
-    const list = (await api('/api/workflows', { workspace: v.id })) ?? [];
+    const list = (await workflowList(v.id)) ?? [];
     const had = new Map(v.workflows.map((w) => [w.id, w]));
     v.workflows = list.map((w) => {
       const fresh = toWorkflow(w);
@@ -280,7 +294,7 @@ export const runs = resource({
   load: async (id) => {
     const wf = workflowById(id);
     if (!wf) return;
-    const list = (await call(`/api/workflows/${encodeURIComponent(wf.file)}/runs?limit=50`)) ?? [];
+    const list = (await runCode(`return await archive.query("SELECT id, created_at AS at, trigger, ms, result, logs, error FROM workflow_run WHERE workflow = $1 ORDER BY created_at DESC, id DESC LIMIT 50", ${JSON.stringify(wf.id)});`)) ?? [];
     const now = workflowById(id) ?? wf;
     const running = now.runs.filter((r) => r.status === 'running');
     now.runs = [...running, ...list.map((r, i) => toRun(r, list.length - i))];
@@ -297,7 +311,7 @@ export const schema = resource({
     const [catalog, ddl, flows] = await Promise.all([
       api('/api/types', { workspace: v.id }),
       api('/api/schema', { workspace: v.id }).catch(() => []),
-      api('/api/workflows', { workspace: v.id }).catch(() => [])
+      workflowList(v.id).catch(() => [])
     ]);
     v.catalog = { catalog, ddl, flows: flows ?? [] };
     tables(v);
@@ -817,7 +831,7 @@ export function removeGuest(email) {
   }
 }
 
-// Workflows. A workflow is a script deployed in the archive; runs are synchronous, so there is no pausing or
+// Workflows. A workflow is a script saved in the archive's workflow table; runs are synchronous, so there is no pausing or
 // stopping one, and the assistant writes new ones.
 
 export function workflowById(id) {
@@ -830,21 +844,22 @@ export function runWorkflow(id) {
   const number = (wf.runs[0]?.number ?? 0) + 1;
   const placeholder = { id: nid('r'), number, status: 'running', started: 'Just now', elapsed: '', seconds: 0, steps: [{ id: 's0', label: `Running ${wf.file}`, detail: '', status: 'running', time: '' }], log: [] };
   wf.runs.unshift(placeholder);
-  const at = () => wf.runs.findIndex((x) => x.id === placeholder.id);
-  call(`/api/workflows/${encodeURIComponent(wf.file)}/run`, { method: 'POST' })
+  const index = () => wf.runs.findIndex((x) => x.id === placeholder.id);
+  const at = new Date();
+  runCode(`return await archive.run(${JSON.stringify(wf.file)});`)
     .then((r) => {
-      const done = toRun(r ?? { id: placeholder.id, at: new Date().toISOString(), ms: 0, error: '' }, number);
-      if (at() >= 0) wf.runs[at()] = { ...done, id: placeholder.id };
+      const done = toRun({ id: placeholder.id, at: at.toISOString(), ms: Date.now() - at, trigger: 'run', ...r }, number);
+      if (index() >= 0) wf.runs[index()] = { ...done, id: placeholder.id };
     })
     .catch((e) => {
-      if (at() >= 0) wf.runs[at()] = { ...placeholder, status: 'failed', steps: [{ ...placeholder.steps[0], status: 'failed', detail: e.message }] };
+      if (index() >= 0) wf.runs[index()] = { ...placeholder, status: 'failed', steps: [{ ...placeholder.steps[0], status: 'failed', detail: e.message }] };
     });
   return placeholder.id;
 }
 
 export function createWorkflow({ name, trigger, steps }) {
   completeStep('workflow');
-  const text = `Write and deploy a workflow called “${name}”.\nTrigger: ${trigger.label}.\nSteps:\n${steps.map((s) => `- ${s}`).join('\n')}`;
+  const text = `Write and save a workflow called “${name}”.\nTrigger: ${trigger.label}.\nSteps:\n${steps.map((s) => `- ${s}`).join('\n')}`;
   return `/chat/${newChat(name || 'New workflow', { text })}`;
 }
 
@@ -854,14 +869,14 @@ export function toggleWorkflow(id) {
 }
 
 export async function renameWorkflow() {
-  await notify({ title: 'Workflows are named by their file', body: 'Ask the assistant to rename the workflow’s file and deploy it again.' });
+  await notify({ title: 'Ask the assistant', body: 'Ask the assistant to rename the workflow; it keeps its runs, webhook and schedule.' });
 }
 
 export async function removeWorkflow(id) {
   const wf = workflowById(id);
   if (!wf) return;
   try {
-    await call(`/api/workflows/${encodeURIComponent(wf.file)}`, { method: 'DELETE' });
+    await call(`/api/workflow/${encodeURIComponent(wf.id)}`, { method: 'DELETE' });
     removeAt(ws().workflows, (w) => w.id === id, () => go('/workflows'));
   } catch (e) {
     complain(e, 'Couldn’t delete the workflow');

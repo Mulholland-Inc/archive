@@ -56,14 +56,18 @@ return { count: unpaid.length, total };
 
 All or nothing, only the rows you may see (even with raw SQL), and a 30 second limit. A small `fetch` calls other services. The `run` tool's description is the full SDK reference plus a type for each of your tables, so your agent writes against your real schema. Scripts can also search every table and file, and edit Word, Excel and PowerPoint files in place.
 
-Your agent can also save a script as a workflow that Archive runs on its own: on a schedule, when rows of a table are added or changed, or when its webhook URL is called. The first line says when:
+Your agent can also save a script as a workflow that Archive runs on its own: on a schedule, when rows of a table are added or changed, or when its webhook URL is called. A workflow is a row of the `workflow` table, saved like any other row, and its `on` says when it runs:
 
 ```ts
-// on: cron CRON_TZ=America/New_York 0 9 * * 1-5
-return await archive.query("SELECT number, customer, due FROM invoice WHERE NOT paid AND due < current_date");
+const w = await archive.create("workflow", {
+  name: "overdue-invoices",
+  source: `return await archive.query("SELECT number, customer, due FROM invoice WHERE NOT paid AND due < current_date");`,
+  on: { cron: "0 9 * * 1-5", tz: "America/New_York" },
+});
+return await archive.run("overdue-invoices");
 ```
 
-The agent saves them with `archive.deploy(files)`, which returns compile and trigger errors instead of saving, and tries them on real data with `archive.test`, which undoes everything it wrote. A webhook workflow gets its own `https://api.<domain>/hooks/run/<workspace>/<secret>` address. Every run's result, logs and error show on the Workflows screen in the app.
+A save that does not compile, or whose `on` is wrong, is refused with its errors (line and column for the code) and saves nothing; the agent fixes it with `archive.update("workflow", w.id, { source })`, tries it with `archive.run(name, input)`, and reads every run's result, logs and error from the read-only `workflow_run` table. `on` is `{ cron, tz? }`, `{ table, events }` (rows created, updated or both), `{ webhook: true }`, or null for one that only runs when run. A webhook workflow gets its own `https://api.<domain>/hooks/run/<workspace>/<secret>` address, which stays through edits and renames. Every run shows on the Workflows screen in the app.
 
 ## Connect it to everything else
 

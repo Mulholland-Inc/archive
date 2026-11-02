@@ -113,17 +113,44 @@ func (a *Archive) refresh(ctx context.Context) {
 	}
 }
 
-func runCompile(code string) (string, error) {
+type runCompileErr struct {
+	line, col int
+	msg, src  string
+}
+
+func (e runCompileErr) text() string {
+	if e.line == 0 {
+		return e.msg
+	}
+	return fmt.Sprintf("line %d:%d: %s", e.line, e.col, e.msg)
+}
+
+// runTransform strips the TypeScript in code down to JavaScript with esbuild, as the body of an async function;
+// that is all the checking code gets. Its errors give the line and column in code.
+func runTransform(code string) (string, []runCompileErr) {
 	res := api.Transform("(async () => {\n"+code+"\n})()", api.TransformOptions{Loader: api.LoaderTS, Target: api.ES2020, Sourcefile: "script.ts"})
-	if len(res.Errors) == 0 {
-		return string(res.Code), nil
+	var errs []runCompileErr
+	for _, m := range res.Errors {
+		e := runCompileErr{msg: m.Text}
+		if l := m.Location; l != nil {
+			e.line, e.col, e.src = max(l.Line-1, 1), l.Column+1, strings.TrimSpace(l.LineText)
+		}
+		errs = append(errs, e)
+	}
+	return string(res.Code), errs
+}
+
+func runCompile(code string) (string, error) {
+	js, errs := runTransform(code)
+	if len(errs) == 0 {
+		return js, nil
 	}
 	var msgs []string
-	for _, m := range res.Errors {
-		if l := m.Location; l != nil {
-			msgs = append(msgs, fmt.Sprintf("line %d:%d: %s\n  %s", max(l.Line-1, 1), l.Column+1, m.Text, strings.TrimSpace(l.LineText)))
+	for _, e := range errs {
+		if e.line > 0 {
+			msgs = append(msgs, e.text()+"\n  "+e.src)
 		} else {
-			msgs = append(msgs, m.Text)
+			msgs = append(msgs, e.msg)
 		}
 	}
 	return "", errors.New("compile error: " + strings.Join(msgs, "\n"))
@@ -169,10 +196,11 @@ func (a *Archive) run(ctx context.Context, code string, input json.RawMessage) (
 	return out, r.at, nil
 }
 
-func (r *runner) nested(ctx context.Context, code string, input json.RawMessage, keep bool) (*RunOutput, error) {
+// nested runs a saved workflow inside this run, in a savepoint it rolls back when the workflow fails.
+func (r *runner) nested(ctx context.Context, code string, input json.RawMessage) (*RunOutput, error) {
 	out := &RunOutput{Result: json.RawMessage("null"), Logs: []string{}}
 	if r.depth >= workflowDepth {
-		out.Error = fmt.Sprintf("workflows can test or start other workflows only %d deep; this one would be deeper", workflowDepth)
+		out.Error = fmt.Sprintf("workflows can run other workflows only %d deep; this one would be deeper", workflowDepth)
 		return out, nil
 	}
 	js, err := runCompile(code)
@@ -197,10 +225,8 @@ func (r *runner) nested(ctx context.Context, code string, input json.RawMessage,
 	case err != nil && out.Error == "":
 		out.Error = runMessage(err)
 	}
-	if out.Error != "" || !keep {
-		if out.Error != "" {
-			out.Result = json.RawMessage("null")
-		}
+	if out.Error != "" {
+		out.Result = json.RawMessage("null")
 		return out, sp.Rollback(ctx)
 	}
 	if err := sp.Commit(ctx); err != nil {
@@ -650,7 +676,7 @@ func (r *runner) promise(v any, err error) goja.Value {
 	return r.vm.ToValue(p)
 }
 
-var runReads = map[string]bool{"query": true, "schema": true, "revisions": true, "list": true, "get": true, "search": true, "files": true, "file": true, "workflows": true, "runs": true}
+var runReads = map[string]bool{"query": true, "schema": true, "revisions": true, "list": true, "get": true, "search": true, "files": true, "file": true}
 
 func (r *runner) call(read bool, f func(ctx context.Context) (any, error)) (any, error) {
 	t, ok := r.ctx.Value(storeTxKey{}).(storeTx)
@@ -988,12 +1014,22 @@ func runTables(cat *Catalog) []runTable {
 	return out
 }
 
+// RunDocs is the SDK's documentation with an interface per table of this workspace: runDocs, then RunTypes.
 func (a *Archive) RunDocs(ctx context.Context) string {
-	a.refresh(ctx)
-	return strings.ReplaceAll(runSDK, "{timeout}", runTimeout.String()) + "\n" + runTypes(a.Catalog())
+	return runDocs + "\n" + a.RunTypes(ctx)
 }
 
-var runStatic = []string{"Base", "Row", "Hit", "Migration", "SchemaChange", "Table", "StoredFile", "Tables", "FetchResponse", "RunResult", "BrowseResult", "Deployed", "WorkflowRun",
+// runDocs is the SDK's documentation without this workspace's tables: the same bytes in every workspace, so
+// the chat's run tool, which it describes, is one prompt cache entry for all of them.
+var runDocs = strings.ReplaceAll(runSDK, "{timeout}", runTimeout.String())
+
+// RunTypes is the TypeScript of this workspace's types and tables, as the live database has them.
+func (a *Archive) RunTypes(ctx context.Context) string {
+	a.refresh(ctx)
+	return runTypes(a.Catalog())
+}
+
+var runStatic = []string{"Base", "Row", "Hit", "Migration", "SchemaChange", "Table", "StoredFile", "Tables", "FetchResponse", "RunResult", "BrowseResult", "WorkflowOn", "CronInput", "TableInput", "WebhookInput",
 	"Money", "Timestamp", "Time", "Interval", "Address", "Name", "Postcode", "Geo", "Quantity"}
 
 func runPascal(s string) string {
@@ -1159,7 +1195,16 @@ func runTypes(cat *Catalog) string {
 			if c.required() {
 				opt = ""
 			}
-			fmt.Fprintf(&b, "    %s%s: %s;\n", runProp(c.Name), opt, n.ts(c.Schema, c.Type, c.List))
+			ts := n.ts(c.Schema, c.Type, c.List)
+			switch {
+			case tb.isWorkflow() && c.Name == "on":
+				ts = "WorkflowOn | null"
+			case tb.Schema == "archive" && tb.Name == "workflow_run" && c.Name == "logs":
+				ts = "string[]"
+			case tb.Schema == "archive" && tb.Name == "workflow_run" && c.Name == "result":
+				ts = "any"
+			}
+			fmt.Fprintf(&b, "    %s%s: %s;\n", runProp(c.Name), opt, ts)
 		}
 		b.WriteString("}\n")
 	}
