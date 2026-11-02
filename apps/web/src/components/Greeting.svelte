@@ -1,16 +1,15 @@
 <script>
   import ArchiveIcon from './ArchiveIcon.svelte';
-  import { rise } from '../lib/motion.js';
 
   let { name, look, seed } = $props();
   const hour = new Date().getHours();
   const part = hour < 5 ? 'Up late' : hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
 </script>
 
-<div class="greeting" in:rise={{ speed: 'slower' }}>
+<div class="greeting">
   {#if look}
     {#key seed}
-      <span class="icon" in:rise={{ speed: 'slow' }}><ArchiveIcon icon={look.icon} tint={look.tint} {seed} size="xxl" greet /></span>
+      <span class="icon"><ArchiveIcon icon={look.icon} tint={look.tint} {seed} size="xxl" greet /></span>
     {/key}
   {/if}
   <h1>{part}, {name}</h1>

@@ -27,8 +27,9 @@ const own = new Set(['id', 'access', 'created_at', 'updated_at', 'search']);
 
 function column(c, types) {
   const enumType = types[`${c.schema}.${c.type}`]?.enum?.length;
-  // A list of ids links through its comment, "references <table>", as Postgres has no foreign key for arrays.
-  const ref = c.ref?.replace(/^public\./, '') || (c.list && c.type === 'uuid' ? /^references\s+([a-z][a-z0-9_]*)/i.exec(c.description ?? '')?.[1] : undefined);
+  // An id or a list of ids can also link through its comment, "references <table>": Postgres has no foreign
+  // key for arrays, and the agent sometimes writes the comment without one.
+  const ref = c.ref?.replace(/^public\./, '') || (c.type === 'uuid' ? /^references\s+([a-z][a-z0-9_]*)/i.exec(c.description ?? '')?.[1] : undefined);
   const type = c.ref === 'archive.file' ? 'file' : ref ? 'link' : enumType ? 'choice' : (kinds[c.type] ?? 'text');
   const label = !ref && !enumType && !kinds[c.type] && c.schema === 'archive' ? c.type.charAt(0).toUpperCase() + c.type.slice(1).replaceAll('_', ' ') : undefined;
   return {

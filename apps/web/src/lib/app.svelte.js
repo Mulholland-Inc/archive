@@ -365,9 +365,10 @@ export const viewRows = resource({
 // What a row of view (or table) id links to, through its link columns, and what links to it: the rows of
 // other tables whose link columns point at the table the view reads, which its DDL names. Each is { table,
 // column, rows: [{ id, title }] }; a row's title is its table's first text column.
-// baseOf is the table a view reads, as its DDL names it after FROM; a table is its own.
+// baseOf is the table a view reads, as its DDL names it after FROM, past the parentheses Postgres puts around
+// joins; a table is its own.
 export function baseOf(t) {
-  return t?.kind === 'view' ? (/\bfrom\s+(?:public\.)?"?(\w+)"?/i.exec(t.ddl ?? '')?.[1] ?? t.id) : t?.id;
+  return t?.kind === 'view' ? (/\bfrom\s+[(\s]*(?:public\.)?"?(\w+)"?/i.exec(t.ddl ?? '')?.[1] ?? t.id) : t?.id;
 }
 
 // linkOf is the table a column links to; a view's columns have none of their own, so it is its table's.
