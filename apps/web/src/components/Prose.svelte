@@ -20,7 +20,7 @@
     {:else if block.type === 'quote'}
       <blockquote><Inline text={block.text} /></blockquote>
     {:else if block.type === 'code'}
-      <CodeBlock code={block.code} lang={block.lang} />
+      <CodeBlock code={block.code} lang={block.lang} full={block.full} />
     {:else if block.type === 'table'}
       <div class="table">
         <table>

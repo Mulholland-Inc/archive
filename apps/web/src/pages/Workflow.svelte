@@ -7,9 +7,7 @@
   import Stack from '../components/Stack.svelte';
   import CodeBlock from '../components/CodeBlock.svelte';
   import Message from '../components/Message.svelte';
-  import Steps from '../components/Steps.svelte';
   import StatusBadge from '../components/StatusBadge.svelte';
-  import ProgressBar from '../components/ProgressBar.svelte';
   import TriggerLabel from '../components/TriggerLabel.svelte';
   import Button from '../components/Button.svelte';
   import IconButton from '../components/IconButton.svelte';
@@ -32,13 +30,10 @@
   workflows.use();
   runs.use(() => wf && id);
   let selected = $state(null);
-  let open = $state(true);
 
   const run = $derived(wf?.runs.find((r) => r.id === selected) ?? wf?.runs[0]);
-  const done = $derived(run ? run.steps.filter((s) => s.status === 'done').length : 0);
   const current = $derived(run?.steps.find((s) => ['running', 'waiting', 'failed'].includes(s.status)) ?? run?.steps.at(-1));
   const live = $derived(run && (run.status === 'running' || run.status === 'waiting'));
-  const tone = $derived(run?.status === 'failed' ? 'danger' : run?.status === 'succeeded' ? 'success' : run?.status === 'stopped' ? 'neutral' : 'accent');
 
   const outcome = $derived.by(() => {
     if (!run) return null;
@@ -56,7 +51,6 @@
 
   function start() {
     selected = runWorkflow(id);
-    open = true;
   }
 
   async function remove() {
@@ -98,9 +92,8 @@
         </Stack>
       </PageHeader>
       <Stack gap="8">
-        {#if wf.source}<CodeBlock code={wf.source} lang="typescript" />{/if}
+        {#if wf.source}<CodeBlock code={wf.source} lang="typescript" size="body" full />{/if}
         {#if run}
-          <Steps steps={run.steps} running={live && !run.paused} bind:open />
           {#if outcome}<Message message={{ id: 'o', role: 'assistant', blocks: [{ type: 'p', text: outcome }] }} />{/if}
           {#each run.log as m (m.id)}<Message message={m} />{/each}
         {:else}
@@ -114,10 +107,8 @@
     {#snippet side()}
       {#if run}
         <SidebarSection title={`Run #${run.number}`}>
-          {#snippet action()}<Text size="xs" tone="tertiary" tabular>{done} of {run.steps.length}</Text>{/snippet}
           <SidebarBlock>
             <StatusBadge status={run.paused ? 'paused' : run.status} plain />
-            <ProgressBar value={done / run.steps.length} {tone} />
             <Text size="sm" tone="tertiary">Started {run.started}{#if run.elapsed}, {run.elapsed}{/if}</Text>
           </SidebarBlock>
         </SidebarSection>
