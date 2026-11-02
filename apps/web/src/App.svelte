@@ -27,7 +27,7 @@
   import ShareDialog from './components/ShareDialog.svelte';
   import SignIn from './components/SignIn.svelte';
   import PasskeyPrompt from './components/PasskeyPrompt.svelte';
-  import Spinner from './components/Spinner.svelte';
+  import Loading from './components/Loading.svelte';
   import { Workflow as WorkflowIcon, Plug, User, Building2, ListChecks, Server, KeyRound, Blocks } from '@lucide/svelte';
   import { switchArchive, openSettings, openArchiveSettings, boot, account, chats, library, schema, members, workflows } from './lib/app.svelte.js';
 
@@ -115,7 +115,7 @@
 {#if app.status === 'signedOut'}
   <SignIn />
 {:else if app.status !== 'ready' || !ws()}
-  <div class="boot" aria-label="Loading"><Spinner /></div>
+  <Loading />
 {:else}
 <Shell>
   {#snippet sidebar()}<AppSidebar />{/snippet}
@@ -157,12 +157,3 @@
 <ContextMenu />
 {#if app.askPasskey}<PasskeyPrompt />{/if}
 {/if}
-
-<style>
-  .boot {
-    display: grid;
-    place-items: center;
-    min-height: 100dvh;
-    color: var(--color-text-tertiary);
-  }
-</style>

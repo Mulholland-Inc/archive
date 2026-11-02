@@ -81,6 +81,7 @@
   import SettingsRow from '../components/SettingsRow.svelte';
   import Greeting from '../components/Greeting.svelte';
   import SpecimenFrame from '../components/SpecimenFrame.svelte';
+  import SpecimenTarget from '../components/SpecimenTarget.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
   import SettingsNav from '../components/SettingsNav.svelte';
   import SettingsPane from '../components/SettingsPane.svelte';
@@ -379,7 +380,7 @@
           </Menu>
         </SpecimenBlock>
         <SpecimenBlock title="Context menu, right-click or Shift F10">
-          <div class="target" tabindex="0" role="button" aria-label="Context menu target" {@attach contextmenu(() => [
+          <SpecimenTarget label="Context menu target" {@attach contextmenu(() => [
             { heading: '1970s Letters' },
             { label: 'Open', icon: FolderOpen, onselect: () => {} },
             { label: 'Rename', icon: Pencil, shortcut: '↵', onselect: () => {} },
@@ -387,7 +388,7 @@
             { label: 'Duplicate', icon: Copy, disabled: true },
             SEPARATOR,
             { label: 'Delete', icon: Trash2, danger: true, onselect: () => {} }
-          ])}>Right-click here</div>
+          ])}>Right-click here</SpecimenTarget>
         </SpecimenBlock>
         <SpecimenBlock title="Popover and tooltip">
           <Popover label="Share">
@@ -456,19 +457,11 @@
         </SpecimenBlock>
         <SpecimenBlock title="List" column>
           <List label="Example list">
-            <ListItem href="/specimen" title="Transcribe Grandma Adaeze's 1974 letters">
-              {#snippet leading()}<MessagesSquare size={16} />{/snippet}
-              {#snippet meta()}Last message 12 min ago{/snippet}
-              {#snippet trailing()}<Badge>Pinned</Badge>{/snippet}
+            <ListItem href="/specimen" icon={ArrowRight}>
+              <span><Text weight="medium">sender</Text> <Text tone="secondary">points to</Text> <Text weight="medium">person</Text></span>
             </ListItem>
-            <ListItem href="/specimen" title="Timeline for the Mercer lease dispute" active>
-              {#snippet leading()}<MessagesSquare size={16} />{/snippet}
-              {#snippet meta()}Active row{/snippet}
-            </ListItem>
-            <ListItem title="Static row" size="sm">
-              {#snippet leading()}<FileText size={16} />{/snippet}
-              {#snippet trailing()}2.4 MB{/snippet}
-            </ListItem>
+            <ListItem href="/specimen" icon={MessagesSquare}><Text>Transcribe Grandma Adaeze's 1974 letters</Text></ListItem>
+            <ListItem icon={FileText}><Text>A row without a link</Text></ListItem>
           </List>
         </SpecimenBlock>
         <SpecimenBlock title="Table" column>
@@ -639,21 +632,3 @@
     <Button variant="danger" onclick={() => close}>Delete</Button>
   {/snippet}
 </Dialog>
-
-<style>
-  .target {
-    display: grid;
-    place-items: center;
-    width: 100%;
-    min-height: var(--space-24);
-    border-radius: var(--radius-lg);
-    box-shadow: inset 0 0 0 var(--border-width) var(--color-border);
-    color: var(--color-text-tertiary);
-    font-size: var(--text-sm);
-    user-select: none;
-  }
-
-  .target:global([data-contextmenu]) {
-    background: var(--color-fill-subtle);
-  }
-</style>

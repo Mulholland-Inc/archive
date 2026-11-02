@@ -108,10 +108,10 @@
     <Table {columns} {rows} label="Tables" cards onrowclick={(t) => go(`/database/${t.id}`)} menu={tableItems}>
       {#snippet cell(row, col)}
         {#if col.key === 'name'}
-          <span class="name">
-            <span class="icon"><Icon icon={Box} size="md" /></span>
+          <Stack as="span" direction="row" gap="3" align="center">
+            <Icon icon={Box} size="md" tone="tertiary" />
             <Text weight="medium" truncate>{row.name}</Text>
-          </span>
+          </Stack>
         {:else if col.key === 'rows'}
           <Text tabular>{row.rows?.toLocaleString('en-US') ?? '—'}</Text>
         {:else if col.key === 'columns'}
@@ -125,19 +125,3 @@
     </Table>
   {/if}
 </Page>
-
-
-<style>
-  .name {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    min-width: 0;
-  }
-
-  .icon {
-    display: flex;
-    flex: none;
-    color: var(--color-text-tertiary);
-  }
-</style>

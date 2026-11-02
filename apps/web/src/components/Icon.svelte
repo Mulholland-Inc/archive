@@ -1,8 +1,8 @@
 <script>
-  let { icon: Glyph, size = 'md', label } = $props();
+  let { icon: Glyph, size = 'md', tone, label } = $props();
 </script>
 
-<span class={['icon', size]} role={label ? 'img' : undefined} aria-label={label} aria-hidden={label ? undefined : 'true'}>
+<span class={['icon', size, tone && `t-${tone}`]} role={label ? 'img' : undefined} aria-label={label} aria-hidden={label ? undefined : 'true'}>
   <Glyph />
 </span>
 
@@ -43,5 +43,9 @@
   .xxl {
     width: var(--icon-2xl);
     height: var(--icon-2xl);
+  }
+
+  .t-tertiary {
+    color: var(--color-text-tertiary);
   }
 </style>

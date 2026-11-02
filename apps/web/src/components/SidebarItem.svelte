@@ -32,7 +32,7 @@
 
 {#snippet content()}
   {#if leading}
-    {@render leading()}
+    <span class="glyph">{@render leading()}</span>
   {:else if icon}
     <span class="glyph"><Icon {icon} size="md" /></span>
   {/if}

@@ -25,6 +25,7 @@
   import Spacer from '../components/Spacer.svelte';
   import SettingsRow from '../components/SettingsRow.svelte';
   import Skeleton from '../components/Skeleton.svelte';
+  import FileInput from '../components/FileInput.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
   import { ws, seedOf, uploadFiles, addFolder, downloadFile, openShare, library, members } from '../lib/app.svelte.js';
 
@@ -151,7 +152,7 @@
 {/snippet}
 
 <svelte:window ondragover={(e) => e.dataTransfer?.types.includes('Files') && e.preventDefault()} ondrop={dropped} />
-<input class="picker" type="file" multiple bind:this={picker} onchange={picked} tabindex="-1" aria-hidden="true" />
+<FileInput multiple bind:element={picker} onchange={picked} />
 
 <TopBar mobile>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
 <Page width="wide">
@@ -239,9 +240,3 @@
     <Button variant="primary" icon={MessageSquarePlus} onclick={() => ask(open, close)}>Ask about this</Button>
   {/snippet}
 </Dialog>
-
-<style>
-  .picker {
-    display: none;
-  }
-</style>
