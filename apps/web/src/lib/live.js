@@ -287,7 +287,7 @@ export function toRun(r, number) {
   const failed = Boolean(r.error);
   const log = [];
   if (logs.length) log.push({ id: `${r.id}-logs`, role: 'assistant', blocks: [{ type: 'h', text: 'Logs' }, { type: 'code', code: logs.map(json).join('\n'), lang: 'text' }] });
-  if (r.result !== null && r.result !== undefined) log.push({ id: `${r.id}-result`, role: 'assistant', blocks: [{ type: 'h', text: 'Result' }, { type: 'code', code: json(r.result), lang: 'json' }] });
+  if (r.result !== null && r.result !== undefined) log.push({ id: `${r.id}-result`, role: 'assistant', blocks: [{ type: 'h', text: 'Result' }, { type: 'code', code: json(r.result), lang: 'json', full: true }] });
   return {
     id: r.id,
     number,

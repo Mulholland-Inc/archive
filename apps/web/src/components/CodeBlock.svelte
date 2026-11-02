@@ -1,11 +1,13 @@
 <script>
   import { Copy, Check } from '@lucide/svelte';
   import Icon from './Icon.svelte';
-  import { highlight } from '../lib/highlight.js';
+  import { highlighted } from '../lib/syntax.js';
 
-  let { code = '', lang = 'text' } = $props();
+  // full shows all of it, with no scrolling inside; size body sets it at the page's text size, not code's.
+  let { code = '', lang = 'text', full = false, size = 'code' } = $props();
   let copied = $state(false);
-  const runs = $derived(highlight(code, lang));
+  // Blank lines before the first line and after the last are left out of the view, not the copy.
+  const html = $derived(highlighted(code.replace(/^(\s*\n)+/, '').trimEnd(), lang));
 
   async function copy() {
     try {
@@ -24,7 +26,7 @@
       <span>{copied ? 'Copied' : 'Copy'}</span>
     </button>
   </figcaption>
-  <pre><code>{#each runs as r, i (i)}{#if r.kind}<span class={r.kind}>{r.text}</span>{:else}{r.text}{/if}{/each}</code></pre>
+  <pre class={{ full, body: size === 'body' }}><code>{@html html}</code></pre>
 </figure>
 
 <style>
@@ -83,28 +85,37 @@
     color: var(--color-text);
   }
 
+  pre.full {
+    max-height: none;
+  }
+
+  pre.body {
+    font-size: var(--text-md);
+  }
+
   code {
     font: inherit;
   }
 
-  .comment {
+  /* highlight.js's classes, in Archive's colours. */
+  code :global(.hljs-comment) {
     color: var(--color-text-tertiary);
     font-style: italic;
   }
 
-  .keyword {
+  code :global(:is(.hljs-keyword, .hljs-literal, .hljs-built_in, .hljs-type)) {
     color: var(--color-accent);
   }
 
-  .string {
+  code :global(:is(.hljs-string, .hljs-regexp, .hljs-subst .hljs-string)) {
     color: var(--color-success);
   }
 
-  .number {
+  code :global(.hljs-number) {
     color: var(--color-warning);
   }
 
-  .fn {
+  code :global(:is(.hljs-title, .hljs-attr)) {
     font-weight: var(--weight-medium);
   }
 </style>
