@@ -82,6 +82,13 @@
   import Greeting from '../components/Greeting.svelte';
   import SpecimenFrame from '../components/SpecimenFrame.svelte';
   import SpecimenTarget from '../components/SpecimenTarget.svelte';
+  import Checklist from '../components/Checklist.svelte';
+  import ChecklistItem from '../components/ChecklistItem.svelte';
+  import ProgressCount from '../components/ProgressCount.svelte';
+  import Property from '../components/Property.svelte';
+  import Stats from '../components/Stats.svelte';
+  import SidebarBlock from '../components/SidebarBlock.svelte';
+  import TextLink from '../components/TextLink.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
   import SettingsNav from '../components/SettingsNav.svelte';
   import SettingsPane from '../components/SettingsPane.svelte';
@@ -463,6 +470,23 @@
             <ListItem href="/specimen" icon={MessagesSquare}><Text>Transcribe Grandma Adaeze's 1974 letters</Text></ListItem>
             <ListItem icon={FileText}><Text>A row without a link</Text></ListItem>
           </List>
+        </SpecimenBlock>
+        <SpecimenBlock title="Properties, figures and links" column>
+          <Stack gap="0">
+            <Property label="Rows" icon={ListIcon}><Text tabular>386</Text></Property>
+            <Property label="Links to" icon={ArrowRight}><TextLink href="/specimen">person</TextLink></Property>
+          </Stack>
+          <Stats items={[{ label: 'Rows', value: '386' }, { label: 'Columns', value: 6 }, { label: 'Links', value: 2 }, { label: 'Updated', value: 'Oct 15' }]} />
+          <SidebarBlock><Text size="sm" tone="tertiary">Free text in a sidebar section</Text></SidebarBlock>
+        </SpecimenBlock>
+        <SpecimenBlock title="Checklist" column>
+          <ProgressCount done={1} total={2} />
+          <Checklist>
+            <ChecklistItem title="Invite your team" body="Add the people who should read, edit or own this archive." onchange={() => {}}>
+              {#snippet action()}<Button size="sm" variant="primary">Invite</Button>{/snippet}
+            </ChecklistItem>
+            <ChecklistItem title="Upload your first files" body="Scans, letters and recordings." checked onchange={() => {}} />
+          </Checklist>
         </SpecimenBlock>
         <SpecimenBlock title="Table" column>
           <Table {columns} rows={members.slice(0, 4)} label="Members" onrowclick={() => {}}>

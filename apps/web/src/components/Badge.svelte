@@ -40,12 +40,6 @@
     animation: spin var(--duration-spin) linear infinite;
   }
 
-  @keyframes spin {
-    to {
-      transform: rotate(1turn);
-    }
-  }
-
   @media (prefers-reduced-motion: reduce) {
     .spin {
       animation: none;

@@ -31,12 +31,6 @@
     height: var(--icon-2xl);
   }
 
-  @keyframes spin {
-    to {
-      transform: rotate(1turn);
-    }
-  }
-
   @media (prefers-reduced-motion: reduce) {
     .spinner {
       animation-duration: var(--duration-spin-still);

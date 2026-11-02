@@ -141,6 +141,13 @@ dialog::backdrop {
   white-space: nowrap;
 }
 
+/* The one spin every spinner, running badge and running step turns with. */
+@keyframes spin {
+  to {
+    transform: rotate(var(--turn-full));
+  }
+}
+
 .floating {
   position: fixed;
   inset: auto;

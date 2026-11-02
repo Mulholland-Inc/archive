@@ -147,12 +147,6 @@
     font-variant-numeric: tabular-nums;
   }
 
-  @keyframes spin {
-    to {
-      transform: rotate(1turn);
-    }
-  }
-
   @keyframes shimmer {
     from {
       background-position: 100% 0;

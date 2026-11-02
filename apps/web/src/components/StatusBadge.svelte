@@ -48,12 +48,6 @@
     animation: spin var(--duration-spin-status) linear infinite;
   }
 
-  @keyframes spin {
-    to {
-      transform: rotate(var(--turn-full));
-    }
-  }
-
   @media (prefers-reduced-motion: reduce) {
     .plain.spin :global(.icon) {
       animation: none;
