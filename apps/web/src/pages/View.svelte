@@ -15,7 +15,7 @@
   import Chip from '../components/Chip.svelte';
   import Select from '../components/Select.svelte';
   import Spacer from '../components/Spacer.svelte';
-  import { ws, schema, viewRows, linkOf, titlesOf } from '../lib/app.svelte.js';
+  import { ws, schema, viewRows, linkOf, titlesOf, renameView, isArchiveOwner } from '../lib/app.svelte.js';
   import { show } from '../lib/live.js';
 
   // A view, drawn the way its comment says: a table, a board grouped by its by column, or a calendar by its
@@ -33,16 +33,22 @@
   const label = (c) => c.name.replaceAll('_', ' ').replace(/^./, (x) => x.toUpperCase());
 
   // Search reads every shown column; the chips are the values of the column the view groups by, or failing
-  // that its first column of few values; sort is by any shown column.
+  // that its first column of few values that repeat: one whose rows each have their own, like an id from
+  // another service, filters nothing. Sort is by any shown column.
   let query = $state('');
   let filter = $state(null);
   let sort = $state('');
   let searchEl = $state();
 
   const facet = $derived.by(() => {
-    const few = (c) => new Set(all.map((r) => show(r[c.name])).filter(Boolean)).size;
+    const vals = (c) => all.map((r) => show(r[c.name])).filter(Boolean);
+    const few = (c) => {
+      const v = vals(c);
+      const n = new Set(v).size;
+      return n > 1 && n <= 8 && n < v.length;
+    };
     const by = shown.find((c) => c.name === view?.by && c.type !== 'date');
-    return by ?? shown.find((c) => (c.type === 'choice' || c.type === 'text') && c !== title && few(c) > 1 && few(c) <= 8);
+    return by ?? shown.find((c) => (c.type === 'choice' || c.type === 'text') && c !== title && few(c));
   });
   const values = $derived(facet ? [...new Set(all.map((r) => show(r[facet.name])).filter(Boolean))].sort() : []);
   const sorts = $derived([{ value: '', label: 'Default order' }, ...shown.map((c) => ({ value: c.name, label: label(c) }))]);
@@ -152,7 +158,7 @@
 {:else}
   {@render topbar()}
   <Page width="wide">
-    <StickyHeader title={view.name} description={view.description && view.description.toLowerCase() !== view.name.toLowerCase() ? view.description : ''}>
+    <StickyHeader title={view.name} renameLabel="Rename view" onrename={isArchiveOwner() ? (name) => renameView(view.id, name) : undefined} description={view.description && view.description.toLowerCase() !== view.name.toLowerCase() ? view.description : ''}>
       {#snippet search()}
         <SearchField bind:value={query} bind:element={searchEl} placeholder={`Find in ${view.name.toLowerCase()}`} shortcut="/" />
       {/snippet}
@@ -302,9 +308,10 @@
     width: 100%;
     text-align: start;
     cursor: pointer;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    /* A long name wraps onto more lines rather than end in an ellipsis: the day is narrow, and the name is the
+       only thing an entry shows. */
+    overflow-wrap: anywhere;
+    line-height: var(--leading-tight);
     padding: var(--space-0-5) var(--space-1);
     border-radius: var(--radius-sm);
     background: var(--color-fill-strong);
