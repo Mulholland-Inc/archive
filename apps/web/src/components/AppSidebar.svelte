@@ -8,7 +8,11 @@
   import AccountMenu from './AccountMenu.svelte';
   import ChatActions from './ChatActions.svelte';
   import PinButton from './PinButton.svelte';
-  import { app, ws, openArchiveSettings, closeDrawer, pinnedFirst, switchArchive, createArchive, renameChat } from '../lib/app.svelte.js';
+  import { app, ws, openArchiveSettings, closeDrawer, pinnedFirst, switchArchive, createArchive, renameChat, chats, workflows, members } from '../lib/app.svelte.js';
+
+  chats.use();
+  workflows.use();
+  members.use();
   import { route, active } from '../lib/router.svelte.js';
   import NewArchiveDialog from './NewArchiveDialog.svelte';
   import SetupCard from './SetupCard.svelte';

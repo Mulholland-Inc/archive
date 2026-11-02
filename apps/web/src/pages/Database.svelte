@@ -15,7 +15,11 @@
   import Button from '../components/Button.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { ws } from '../lib/app.svelte.js';
+  import { ws, schema, counts, workflows } from '../lib/app.svelte.js';
+
+  schema.use();
+  counts.use();
+  workflows.use();
   import { go } from '../lib/router.svelte.js';
   import { tableItems } from '../lib/menus.js';
 

@@ -18,7 +18,7 @@
   import AvatarGroup from '../components/AvatarGroup.svelte';
   import CodeBlock from '../components/CodeBlock.svelte';
   import EmptyState from '../components/EmptyState.svelte';
-  import { ws, openShare, previewTable } from '../lib/app.svelte.js';
+  import { ws, openShare, schema, counts, preview, members, workflows } from '../lib/app.svelte.js';
   import { typeLabel, ddl } from '../lib/schema.js';
   import { api } from '../lib/api.js';
   import { show } from '../lib/live.js';
@@ -34,9 +34,11 @@
   const related = $derived([...new Map([...outgoing, ...incoming].filter((l) => l.type.id !== type?.id).map((l) => [l.type.id, l.type])).values()]);
   const flows = $derived(type ? type.workflows.map((name) => ws().workflows.find((w) => w.file === name || w.name === name) ?? { name }) : []);
 
-  $effect(() => {
-    if (type) previewTable(type);
-  });
+  schema.use();
+  counts.use();
+  members.use();
+  workflows.use();
+  preview.use(() => type?.id);
   const share = $derived(type && ws().shares.find((s) => s.kind === 'table' && s.target === type.id));
   const people = (roles) => ws().members.filter((m) => m.status === 'active' && roles.includes(m.role));
   const access = $derived(type ? [

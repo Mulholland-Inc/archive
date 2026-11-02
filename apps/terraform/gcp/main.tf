@@ -7,23 +7,21 @@ locals {
   url     = "https://app.${var.domain}"
   api_url = "https://api.${var.domain}"
 
-  required = {
-    DATABASE_URL       = "host=/cloudsql/${google_sql_database_instance.this.connection_name} user=${google_sql_user.this.name} password=${random_password.db.result} dbname=${google_sql_database.this.name}"
-    ARCHIVE_SECRET_KEY = random_id.secret_key.hex
+  # Every secret env var of the service and the job, by name. Terraform makes each one's Secret Manager secret,
+  # archive-<name in kebab case>, and hands it to Cloud Run at version latest, but never holds a value: each is
+  # seeded with gcloud (README, "Secrets"), and Cloud Run won't start a revision until all of them have a version.
+  # A feature that is not used is seeded with a single space, which Archive reads as unset.
+  secrets = {
+    DATABASE_URL       = "Postgres as the archive user: host=/cloudsql/<connection name> user=archive password=<password> dbname=archive."
+    ARCHIVE_SECRET_KEY = "32 random bytes, hex or base64, wrapping every workspace's data key."
+    ARCHIVE_LIVE_KEY   = "Key the API announces live changes to the app Worker with; the image workflow sets it on the Worker as LIVE_KEY."
+    ANTHROPIC_API_KEY  = "Key of the in-app agent and archive.browse. A space leaves the agent off."
+    TYPESAFE_API_KEY   = "TypeSafe key of archive.browse. A space leaves browse off."
+    ARCHIVE_GOOGLE     = "Sign-in with Google, https://<client id>:<client secret>@accounts.google.com. A space leaves it off."
+    ARCHIVE_MICROSOFT  = "Sign-in with Microsoft, https://<client id>:<client secret>@login.microsoftonline.com. A space leaves it off."
+    ARCHIVE_SLACK      = "Sign-in with Slack, https://<client id>:<client secret>@slack.com. A space leaves it off."
+    ARCHIVE_GITHUB     = "Sign-in with GitHub, https://<client id>:<client secret>@github.com. A space leaves it off."
   }
-  signin = {
-    ARCHIVE_GOOGLE    = ["accounts.google.com", var.google_client_id, var.google_client_secret]
-    ARCHIVE_MICROSOFT = ["login.microsoftonline.com", var.microsoft_client_id, var.microsoft_client_secret]
-    ARCHIVE_SLACK     = ["slack.com", var.slack_client_id, var.slack_client_secret]
-    ARCHIVE_GITHUB    = ["github.com", var.github_client_id, var.github_client_secret]
-  }
-  optional = merge({ ANTHROPIC_API_KEY = var.anthropic_api_key, TYPESAFE_API_KEY = var.typesafe_api_key }, { for k, v in local.signin :
-    k => v[1] != "" && v[2] != "" ? "https://${replace(urlencode(v[1]), "+", "%20")}:${replace(urlencode(v[2]), "+", "%20")}@${v[0]}" : ""
-  })
-  secrets = merge(local.required, local.optional)
-  secret_names = setunion(toset(keys(local.required)), toset([
-    for k, v in local.optional : k if nonsensitive(v != "")
-  ]))
 
   services = ["run.googleapis.com", "sqladmin.googleapis.com", "secretmanager.googleapis.com", "iam.googleapis.com", "storage.googleapis.com", "artifactregistry.googleapis.com", "iamcredentials.googleapis.com", "sts.googleapis.com", "cloudtasks.googleapis.com", "siteverification.googleapis.com"]
 }
@@ -52,15 +50,6 @@ resource "google_artifact_registry_repository" "ghcr" {
   }
 
   depends_on = [google_project_service.this]
-}
-
-resource "random_password" "db" {
-  length  = 32
-  special = false
-}
-
-resource "random_id" "secret_key" {
-  byte_length = 32
 }
 
 resource "google_service_account" "this" {
@@ -140,7 +129,11 @@ resource "google_sql_database" "this" {
 resource "google_sql_user" "this" {
   name     = "archive"
   instance = google_sql_database_instance.this.name
-  password = random_password.db.result
+
+  # Its password is set with gcloud sql users set-password and kept only in DATABASE_URL (README, "Secrets").
+  lifecycle {
+    ignore_changes = [password]
+  }
 }
 
 resource "google_storage_bucket" "this" {
@@ -158,7 +151,7 @@ resource "google_storage_bucket_iam_member" "this" {
 }
 
 resource "google_secret_manager_secret" "this" {
-  for_each  = local.secret_names
+  for_each  = local.secrets
   secret_id = "archive-${replace(lower(each.key), "_", "-")}"
 
   replication {
@@ -168,10 +161,26 @@ resource "google_secret_manager_secret" "this" {
   depends_on = [google_project_service.this]
 }
 
-resource "google_secret_manager_secret_version" "this" {
-  for_each    = google_secret_manager_secret.this
-  secret      = each.value.id
-  secret_data = local.secrets[each.key]
+# Terraform once wrote the secrets' values; it forgets those versions, and the generated values, and keeps them.
+removed {
+  from = google_secret_manager_secret_version.this
+  lifecycle {
+    destroy = false
+  }
+}
+
+removed {
+  from = random_password.db
+  lifecycle {
+    destroy = false
+  }
+}
+
+removed {
+  from = random_id.secret_key
+  lifecycle {
+    destroy = false
+  }
 }
 
 resource "google_secret_manager_secret_iam_member" "this" {
@@ -337,7 +346,6 @@ resource "google_cloud_run_v2_service" "this" {
     google_cloud_tasks_queue_iam_member.this,
     google_service_account_iam_member.tasks,
     google_secret_manager_secret_iam_member.this,
-    google_secret_manager_secret_version.this,
     google_storage_bucket_iam_member.this,
     google_cloud_run_v2_service_iam_member.browser,
   ]
@@ -410,7 +418,6 @@ resource "google_cloud_run_v2_job" "this" {
     google_cloud_tasks_queue_iam_member.this,
     google_service_account_iam_member.tasks,
     google_secret_manager_secret_iam_member.this,
-    google_secret_manager_secret_version.this,
     google_storage_bucket_iam_member.this,
   ]
 }
@@ -542,6 +549,15 @@ resource "cloudflare_workers_custom_domain" "app" {
   service    = cloudflare_workers_script.app.script_name
 }
 
+# The browser's live-data socket is api.<domain>/live, so it carries the API's own session cookie; this route sends
+# it, and the API's announces to /live/announce, to the app Worker, which hands them to the workspace's Durable
+# Object. Every other path on api.<domain> still reaches Cloud Run.
+resource "cloudflare_workers_route" "live" {
+  zone_id = data.cloudflare_zone.this.zone_id
+  pattern = "api.${var.domain}/live*"
+  script  = cloudflare_workers_script.app.script_name
+}
+
 data "cloudflare_account_api_token_permission_groups_list" "this" {
   count      = var.github_repository != "" ? 1 : 0
   account_id = data.cloudflare_zone.this.account.id
@@ -628,6 +644,14 @@ resource "google_service_account_iam_member" "deploy_runs_browser_as" {
   service_account_id = google_service_account.browser.name
   role               = "roles/iam.serviceAccountUser"
   member             = google_service_account.deploy[0].member
+}
+
+# The image workflow reads the live key at deploy time and sets it on the app Worker as LIVE_KEY.
+resource "google_secret_manager_secret_iam_member" "deploy_live" {
+  count     = var.github_repository != "" ? 1 : 0
+  secret_id = google_secret_manager_secret.this["ARCHIVE_LIVE_KEY"].id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = google_service_account.deploy[0].member
 }
 
 resource "google_cloud_run_v2_job_iam_member" "deploy" {

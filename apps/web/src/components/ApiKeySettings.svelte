@@ -5,7 +5,7 @@
   import Art from './Art.svelte';
   import IconButton from './IconButton.svelte';
   import Button from './Button.svelte';
-  import { app, ws, archiveKey, rotateKey, isArchiveOwner, loadArchiveKey } from '../lib/app.svelte.js';
+  import { app, ws, archiveKey, rotateKey, isArchiveOwner, tokens } from '../lib/app.svelte.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
   import { apiPrompt } from '../lib/apiprompt.js';
 
@@ -20,10 +20,7 @@
   const hidden = $derived(archive && !secret);
   const masked = $derived(secret ? `${secret.slice(0, secret.lastIndexOf('_') + 1)}${'•'.repeat(12)}${secret.slice(-4)}` : key ? `arc_${'•'.repeat(16)}` : 'No key yet');
 
-  $effect(() => {
-    app.archive;
-    if (archive) loadArchiveKey();
-  });
+  tokens.use(() => archive && app.archive);
 
   async function copy() {
     await navigator.clipboard?.writeText(secret).catch(() => {});

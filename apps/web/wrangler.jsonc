@@ -1,7 +1,21 @@
+// The app Worker (worker.js): the web app's static files, and live data. Terraform creates it with a
+// placeholder, its app.<domain> domain and its api.<domain>/live* route; the image workflow deploys this and
+// sets the LIVE_KEY secret, the key the API announces with (docs/adr/0003-hosting.md).
 {
   "name": "archive-app",
+  "main": "worker.js",
   "compatibility_date": "2026-10-01",
   "workers_dev": false,
   "preview_urls": false,
-  "assets": { "directory": "dist", "not_found_handling": "single-page-application" }
+  "assets": {
+    "directory": "dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/live", "/live/*"]
+  },
+  // One WorkspaceStream per workspace, by the workspace's id.
+  "durable_objects": {
+    "bindings": [{ "name": "WORKSPACE_STREAM", "class_name": "WorkspaceStream" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["WorkspaceStream"] }]
 }

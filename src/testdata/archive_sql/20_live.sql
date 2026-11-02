@@ -1,19 +1,10 @@
 CREATE SCHEMA archive;
 
--- What a workspace is for, which picks the icons the web app offers it.
-CREATE TYPE archive.workspace_type AS ENUM ('personal', 'family', 'business');
-
--- icon and color are how the web app shows the workspace: one of its icons, and one of its 8 tints by index;
--- null is the default for its type.
 CREATE TABLE archive.workspace (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     name       text NOT NULL,
     key        bytea NOT NULL,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    type       archive.workspace_type NOT NULL DEFAULT 'personal',
-    icon       text CONSTRAINT workspace_icon CHECK (icon IN ('robot', 'chest', 'safe', 'bookcase', 'pinecone', 'cottage', 'castle',
-        'townhouse', 'farmhouse', 'oak', 'pine', 'baobab', 'skyscraper', 'capitol', 'pyramid', 'ledger', 'cabinet', 'bank', 'warehouse', 'factory')),
-    color      smallint CONSTRAINT workspace_color CHECK (color BETWEEN 0 AND 7)
+    created_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE archive."user" (
@@ -337,6 +328,30 @@ END $$;
 
 CREATE TRIGGER member_check BEFORE INSERT OR UPDATE ON archive.member FOR EACH ROW EXECUTE FUNCTION archive.member_check();
 CREATE TRIGGER member_roles AFTER INSERT OR UPDATE OR DELETE ON archive.member FOR EACH ROW EXECUTE FUNCTION archive.member_roles();
+
+-- moved says what a write moved to the session that wrote it, on a channel only that session listens on. A
+-- notification is sent only when its transaction commits and is dropped with a rolled-back savepoint, so Go
+-- hears exactly what committed (live.go). A public table names itself; an archive table its schema too and
+-- the row's id. Every public table gets the statement trigger archive_moved (schemaDerive).
+CREATE FUNCTION archive.moved() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    what text := CASE WHEN TG_TABLE_SCHEMA = 'public' THEN TG_TABLE_NAME ELSE TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME END;
+BEGIN
+    IF TG_LEVEL = 'ROW' AND TG_OP = 'DELETE' THEN
+        what := what || ' ' || OLD.id;
+    ELSIF TG_LEVEL = 'ROW' THEN
+        what := what || ' ' || NEW.id;
+    END IF;
+    PERFORM pg_notify('archive_moved_' || pg_backend_pid(), what);
+    RETURN NULL;
+END $$;
+
+CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.chat FOR EACH ROW EXECUTE FUNCTION archive.moved();
+CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.workflow FOR EACH ROW EXECUTE FUNCTION archive.moved();
+CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.workflow_run FOR EACH ROW EXECUTE FUNCTION archive.moved();
+CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.file FOR EACH ROW EXECUTE FUNCTION archive.moved();
+CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.member FOR EACH ROW EXECUTE FUNCTION archive.moved();
+CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.revision FOR EACH ROW EXECUTE FUNCTION archive.moved();
 
 CREATE FUNCTION archive.secret_clear(tbl text, rid uuid, col text) RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $$
     DELETE FROM archive.secret s

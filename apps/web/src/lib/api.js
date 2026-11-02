@@ -86,6 +86,15 @@ export const fileURL = (id, part = 'content') => `${API}/api/files/${id}/${part}
 
 // An <img> or a link can't send Archive-Workspace, so file bytes are fetched with it and shown from a blob.
 const blobs = new Map();
+// Drop the cached blobs whose path starts with prefix, in every workspace, for a file whose bytes moved.
+export function forgetBlobs(prefix) {
+  for (const [key, p] of blobs) {
+    if (!key.slice(key.indexOf(':') + 1).startsWith(prefix)) continue;
+    blobs.delete(key);
+    p.then((u) => URL.revokeObjectURL(u)).catch(() => {});
+  }
+}
+
 export function blobURL(path, named) {
   const key = `${named || workspace()}:${path}`;
   if (!blobs.has(key)) {

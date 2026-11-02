@@ -23,7 +23,7 @@ if (typeof window !== 'undefined') {
     const a = event.target.closest?.('a[href]');
     if (!a || (a.target && a.target !== '_self') || a.hasAttribute('download')) return;
     const url = new URL(a.href, location.href);
-    if (!url.protocol.startsWith('http') || url.origin !== location.origin || /^\/(api|auth|mcp|files|hooks)(\/|$)/.test(url.pathname)) return;
+    if (!url.protocol.startsWith('http') || url.origin !== location.origin || /^\/(api|auth|live|mcp|files|hooks)(\/|$)/.test(url.pathname)) return;
     event.preventDefault();
     if (url.pathname + url.search + url.hash !== location.pathname + location.search + location.hash) go(url.pathname + url.search + url.hash);
   });

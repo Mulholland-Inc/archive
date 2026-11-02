@@ -136,14 +136,37 @@ The token acts as you, with your role and groups. Add `-viewer` to make it read 
 
 The API and the web app are always on addresses of their own: the `ghcr.io/mulholland-inc/archive` image serves the API, sign-in and MCP on Cloud Run, and the web app is static files on a Cloudflare Worker. The web app is on `app.<domain>` and the API on `api.<domain>`: the API is told `ARCHIVE_URL`, the web app's address, and the web app finds the API from its own.
 
-On Google Cloud, everything is in Terraform, in one `apply`. You need a project with billing, Owner on it, Terraform 1.9 or later, and a domain on Cloudflare: the web app gets `app.<domain>` and the API `api.<domain>`.
+On Google Cloud, everything is in Terraform except the secrets' values, which you seed with `gcloud` between two applies. You need a project with billing, Owner on it, Terraform 1.9 or later, and a domain on Cloudflare: the web app gets `app.<domain>` and the API `api.<domain>`.
 
 ```sh
 gcloud auth application-default login
 gcloud storage buckets create gs://<project>-tfstate --project <project> --location us-central1 --uniform-bucket-level-access --public-access-prevention && gcloud storage buckets update gs://<project>-tfstate --versioning
 cd apps/terraform/gcp && terraform init -backend-config=bucket=<project>-tfstate
+terraform apply -var project=<project> -var domain=example.com -target=google_secret_manager_secret.this -target=google_sql_user.this
+# seed every secret, as below
 terraform apply -var project=<project> -var domain=example.com
 ```
+
+Terraform declares every secret the service reads, by name, and wires each into Cloud Run at version `latest`, but never holds a value: no `.tfvars` file can change or delete one. The first apply above makes the empty secrets and the database user; Cloud Run won't start until each secret has a version, so seed them all before the second. A feature you don't use is seeded with a single space, which Archive reads as unset. To change a value later, add a version the same way and deploy a new revision (`gcloud run services update archive --region us-central1`, or the next image).
+
+```sh
+p=<project>
+seed() { gcloud secrets versions add "archive-$(echo "$1" | tr _ - | tr '[:upper:]' '[:lower:]')" --data-file=- --project "$p"; }
+enc() { python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1"; }
+
+pw=$(openssl rand -hex 24) && gcloud sql users set-password archive --instance archive --password "$pw" --project "$p"
+printf %s "host=/cloudsql/$p:us-central1:archive user=archive password=$pw dbname=archive" | seed DATABASE_URL
+openssl rand -hex 32 | tr -d '\n' | seed ARCHIVE_SECRET_KEY     # never change it: it wraps every workspace's data key
+openssl rand -base64 32 | tr -d '\n' | seed ARCHIVE_LIVE_KEY    # the image workflow sets it on the app Worker as LIVE_KEY
+printf %s "$ANTHROPIC_KEY" | seed ANTHROPIC_API_KEY   # the agent and archive.browse
+printf %s "$TYPESAFE_KEY" | seed TYPESAFE_API_KEY     # archive.browse
+printf %s "https://$(enc "$ID"):$(enc "$SECRET")@accounts.google.com" | seed ARCHIVE_GOOGLE
+printf %s "https://$(enc "$ID"):$(enc "$SECRET")@login.microsoftonline.com" | seed ARCHIVE_MICROSOFT
+printf ' ' | seed ARCHIVE_SLACK                       # off; on: https://<id>:<secret>@slack.com, escaped the same way
+printf ' ' | seed ARCHIVE_GITHUB                      # off; on: https://<id>:<secret>@github.com
+```
+
+The secrets are `archive-<name in kebab case>`, like `archive-anthropic-api-key`, and the list is `local.secrets` in `main.tf`; the variables table below says what each one does.
 
 Terraform keeps its state only in that versioned bucket, never on disk. The bucket is the one thing made outside Terraform, since the state can't live in a bucket the same state creates.
 
@@ -157,7 +180,7 @@ gcloud run jobs execute archive --region us-central1 --wait --args=user,add,you@
 
 The same job runs any other `archive` command. The service scales to zero: Cloud Tasks wakes it at the moment a workflow or file is due, so nothing has to stay running.
 
-To deploy every image built on main, add `-var github_repository=owner/repo` with a `GITHUB_TOKEN` that can write that repository's Actions variables and secrets (`gh auth token` works for an admin). Apply before merging anything else, then run the image workflow once: until it runs, the app domain answers 503.
+To deploy every image built on main, add `-var github_repository=owner/repo` with a `GITHUB_TOKEN` that can write that repository's Actions variables and secrets (`gh auth token` works for an admin). Apply before merging anything else, then run the image workflow once: until it runs, the app domain answers 503. It reads `ARCHIVE_LIVE_KEY` from Secret Manager, the one secret its identity may read, and sets it on the app Worker as `LIVE_KEY`.
 
 To add Archive to a Terraform setup you already have, call the same directory as a module. It sets up its own providers from `project` and `region`, with the same `CLOUDFLARE_API_TOKEN` and `GITHUB_TOKEN`, so it can't take `count`, `for_each` or `depends_on`:
 
@@ -195,6 +218,8 @@ Every setting is an environment variable; `archive help` lists them all:
 | `ARCHIVE_SLACK` | Sign-in with Slack: `https://<client id>:<client secret>@slack.com` |
 | `ARCHIVE_GITHUB` | Sign-in with GitHub: `https://<client id>:<client secret>@github.com` |
 | `ANTHROPIC_API_KEY` | Key of the in-app agent, the one key for every workspace |
+| `TYPESAFE_API_KEY` | TypeSafe key for `archive.browse`, with `ANTHROPIC_API_KEY` and `ARCHIVE_BROWSER`, the browser service's URL |
+| `ARCHIVE_LIVE_KEY` | Key the API announces live changes to the app Worker with, the Worker's `LIVE_KEY`; without it, `archive serve` holds `/live` itself, and on Cloud Run live data is off |
 
 On Cloud Run, Archive finds its Cloud Tasks queue, `projects/<project>/locations/<region>/queues/<service>`, and the service account the queue signs its calls to `/tasks` with, `<service>-tasks@<project>.iam.gserviceaccount.com`, from the metadata server. Anywhere else, `archive serve` runs due work itself at its time, and when it starts it picks up what fell due while it was stopped.
 

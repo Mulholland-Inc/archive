@@ -11,7 +11,9 @@
   import Chip from './Chip.svelte';
   import ConnectorIcon from './ConnectorIcon.svelte';
   import { Plug } from '@lucide/svelte';
-  import { ws, openSettings, uploadFiles } from '../lib/app.svelte.js';
+  import { ws, openSettings, uploadFiles, library } from '../lib/app.svelte.js';
+
+  library.use();
   import { rise } from '../lib/motion.js';
 
   let {

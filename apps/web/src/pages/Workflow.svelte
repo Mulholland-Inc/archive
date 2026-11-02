@@ -22,15 +22,14 @@
   import DetailsButton from '../components/DetailsButton.svelte';
   import SidebarSection from '../components/SidebarSection.svelte';
   import SidebarItem from '../components/SidebarItem.svelte';
-  import { app, workflowById, runWorkflow, renameWorkflow, removeWorkflow, loadRuns } from '../lib/app.svelte.js';
+  import { app, workflowById, runWorkflow, renameWorkflow, removeWorkflow, workflows, runs } from '../lib/app.svelte.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
   import { workflowItems, runItems } from '../lib/menus.js';
 
   let { id } = $props();
   const wf = $derived(workflowById(id));
-  $effect(() => {
-    if (wf) loadRuns(id);
-  });
+  workflows.use();
+  runs.use(() => wf && id);
   let selected = $state(null);
   let open = $state(true);
 

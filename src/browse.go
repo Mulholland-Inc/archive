@@ -115,7 +115,7 @@ func (r *runner) browse(call goja.FunctionCall) (any, error) {
 	if err := r.arg(call, 1, "browse", "opts", &opts); err != nil {
 		return nil, err
 	}
-	addr, jev, ant := os.Getenv("ARCHIVE_BROWSER"), os.Getenv("TYPESAFE_API_KEY"), os.Getenv("ANTHROPIC_API_KEY")
+	addr, jev, ant := os.Getenv("ARCHIVE_BROWSER"), strings.TrimSpace(os.Getenv("TYPESAFE_API_KEY")), strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY"))
 	if addr == "" || jev == "" || ant == "" {
 		return nil, errors.New("archive.browse: browse is not configured on this server; it needs ARCHIVE_BROWSER, TYPESAFE_API_KEY and ANTHROPIC_API_KEY")
 	}

@@ -20,7 +20,9 @@
   import AvatarGroup from '../components/AvatarGroup.svelte';
   import Section from '../components/Section.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { ws, seedOf, setRole, removeMember, shareItem, shareKinds, permissions, isExternal, openShare, stopSharing } from '../lib/app.svelte.js';
+  import { ws, seedOf, setRole, removeMember, shareItem, shareKinds, permissions, isExternal, openShare, stopSharing, members } from '../lib/app.svelte.js';
+
+  members.use();
   import { route } from '../lib/router.svelte.js';
   import { memberItems, guestItems, shareItems } from '../lib/menus.js';
 

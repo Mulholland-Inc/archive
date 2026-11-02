@@ -26,7 +26,10 @@
   import SettingsRow from '../components/SettingsRow.svelte';
   import Skeleton from '../components/Skeleton.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { ws, seedOf, uploadFiles, addFolder, downloadFile, openShare } from '../lib/app.svelte.js';
+  import { ws, seedOf, uploadFiles, addFolder, downloadFile, openShare, library, members } from '../lib/app.svelte.js';
+
+  library.use();
+  members.use();
   import { prompt } from '../lib/dialogs.svelte.js';
   import { route } from '../lib/router.svelte.js';
   import { fileItems, askAboutFile, renameFilePrompt as rename } from '../lib/menus.js';
