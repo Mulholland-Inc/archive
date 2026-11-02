@@ -32,7 +32,9 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -50,8 +52,8 @@ type Connector struct {
 	// connects it for everyone, an archive has one, and its records are every member's. Without it, each member
 	// connects their own, like their Gmail, and its records are theirs alone.
 	Integration bool
-	// Pace is the least time between two calls a Client makes to an MCP connector's server, for a provider
-	// that refuses calls that come faster, as Gusto does; zero for none.
+	// Pace is the least time between two requests this server sends the provider, every account's and every
+	// page's together, for a provider that refuses requests that come faster, as Gusto does; zero for none.
 	Pace time.Duration
 	// Env is the environment variable that holds an API connector's OAuth client, https://<client id>:<client
 	// secret>@<host> with the id and secret URL-escaped, and maybe a query of options the connector reads with
@@ -450,13 +452,15 @@ type Client struct {
 	sess *mcp.ClientSession
 	// tools are the MCP server's, as it listed them for a stream.
 	tools []*mcp.Tool
-	// last is when it last called a tool, which its connector's Pace waits from.
-	last time.Time
 }
 
 // Open is a Client of the account whose access token tok is, with the Meta its grant kept.
 func (p *Provider) Open(ctx context.Context, tok *oauth2.Token, meta map[string]string) *Client {
-	hc := &http.Client{Timeout: client.Timeout, Transport: &oauth2.Transport{Source: oauth2.StaticTokenSource(tok)}}
+	var rt http.RoundTripper = &oauth2.Transport{Source: oauth2.StaticTokenSource(tok)}
+	if p.Pace > 0 {
+		rt = &paced{base: rt, p: pacerOf(p.ID, p.Pace)}
+	}
+	hc := &http.Client{Timeout: client.Timeout, Transport: rt}
 	return &Client{ctx: ctx, p: p, http: hc, tok: tok, Meta: meta}
 }
 
@@ -828,14 +832,6 @@ func (c *Client) Call(name string, args any) (*mcp.CallToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	if wait := time.Until(c.last.Add(c.p.Pace)); wait > 0 {
-		select {
-		case <-time.After(wait):
-		case <-c.ctx.Done():
-			return nil, c.ctx.Err()
-		}
-	}
-	c.last = time.Now()
 	res, err := s.CallTool(c.ctx, &mcp.CallToolParams{Name: name, Arguments: args})
 	if err != nil {
 		return nil, fmt.Errorf("%s %s: %w", c.p.Name, name, err)
@@ -846,6 +842,68 @@ func (c *Client) Call(name string, args any) (*mcp.CallToolResult, error) {
 	return res, nil
 }
 
+// pacer spaces the requests this server sends one provider at least pace apart, and holds them all back when
+// the provider says it had too many: until its Retry-After, or pacerRest when it names none.
+type pacer struct {
+	mu   sync.Mutex
+	pace time.Duration
+	next time.Time
+}
+
+const pacerRest = 30 * time.Second
+
+var pacers sync.Map
+
+func pacerOf(id string, pace time.Duration) *pacer {
+	p, _ := pacers.LoadOrStore(id, &pacer{pace: pace})
+	return p.(*pacer)
+}
+
+// slot is when the next request may go, which it reserves.
+func (p *pacer) slot() time.Time {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	at := time.Now()
+	if p.next.After(at) {
+		at = p.next
+	}
+	p.next = at.Add(p.pace)
+	return at
+}
+
+func (p *pacer) rest(d time.Duration) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if until := time.Now().Add(d); until.After(p.next) {
+		p.next = until
+	}
+}
+
+// paced is a transport that sends each request in its pacer's next slot.
+type paced struct {
+	base http.RoundTripper
+	p    *pacer
+}
+
+func (t *paced) RoundTrip(r *http.Request) (*http.Response, error) {
+	if wait := time.Until(t.p.slot()); wait > 0 {
+		select {
+		case <-time.After(wait):
+		case <-r.Context().Done():
+			return nil, r.Context().Err()
+		}
+	}
+	res, err := t.base.RoundTrip(r)
+	if err == nil && res.StatusCode == http.StatusTooManyRequests {
+		rest := pacerRest
+		if s, e := strconv.Atoi(res.Header.Get("Retry-After")); e == nil && s > 0 {
+			rest = time.Duration(s) * time.Second
+		}
+		t.p.rest(rest)
+	}
+	return res, err
+}
+
 // Busy says err is a provider that turned a call away for now, by rate limit or by being out of reach, rather
 // than one that will fail again: a sync keeps trying such a page, later and later, and never gives it up.
 func Busy(err error) bool {
@@ -853,7 +911,8 @@ func Busy(err error) bool {
 		return false
 	}
 	s := err.Error()
-	for _, w := range []string{"Too Many Requests", " 429", "could not be reached", " 502", " 503", " 504", "Service Unavailable", "Bad Gateway", "Gateway Timeout"} {
+	for _, w := range []string{"Too Many Requests", " 429", "could not be reached", " 502", " 503", " 504", "Service Unavailable", "Bad Gateway", "Gateway Timeout",
+		"Quota exceeded", "rateLimitExceeded", "userRateLimitExceeded", "Rate Limit Exceeded"} {
 		if strings.Contains(s, w) {
 			return true
 		}

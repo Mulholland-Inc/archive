@@ -37,7 +37,7 @@ import (
 // payroll-blocker tools, time records, which only third-party time tracking keeps, and the earnings summary,
 // which payrolls add up to.
 func init() {
-	Register(&Connector{ID: "gusto", Name: "Gusto", Integration: true, MCP: "https://mcp.api.gusto.com", Pace: 300 * time.Millisecond,
+	Register(&Connector{ID: "gusto", Name: "Gusto", Integration: true, MCP: "https://mcp.api.gusto.com", Pace: 500 * time.Millisecond,
 		Scopes: []string{"public", "companies:read", "employees:read", "contractors:read", "departments:read", "jobs:read", "compensations:read",
 			"employments:read", "pay_schedules:read", "payrolls:read", "time_off_requests:read"},
 		Account: gustoAccount,

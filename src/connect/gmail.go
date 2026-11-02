@@ -20,6 +20,9 @@ import (
 func init() {
 	Register(&Connector{
 		ID: "gmail", Name: "Gmail", Env: "ARCHIVE_GOOGLE", Host: "https://accounts.google.com",
+		// Gmail allows each user 6,000 units of query cost a minute, and reading a whole message costs a lot of
+		// them: 300 requests a minute stay under it, which reads a 5,000-message mailbox in about 17 minutes.
+		Pace: 200 * time.Millisecond,
 		Endpoint: oauth2.Endpoint{AuthURL: "https://accounts.google.com/o/oauth2/v2/auth", TokenURL: "https://oauth2.googleapis.com/token",
 			AuthStyle: oauth2.AuthStyleInParams},
 		Revoke: "https://oauth2.googleapis.com/revoke",
