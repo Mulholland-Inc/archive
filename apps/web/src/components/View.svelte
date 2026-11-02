@@ -1,10 +1,9 @@
 <script>
-  import { rise } from '../lib/motion.js';
-
+  // A page shows at once: no entrance, which made every navigation feel slow and flash.
   let { children } = $props();
 </script>
 
-<div class="view" in:rise={{ shift: '--shift-sm', speed: 'slow' }}>
+<div class="view">
   {@render children()}
 </div>
 
