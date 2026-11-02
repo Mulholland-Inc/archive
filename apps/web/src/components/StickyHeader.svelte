@@ -153,6 +153,12 @@
     }
   }
 
+  @media (max-width: 56rem) {
+    .search > :global(:first-child) {
+      max-width: none;
+    }
+  }
+
   @media (max-width: 40rem) {
     .header {
       margin-block-end: calc(var(--space-5) * -1 + var(--space-3));
@@ -162,10 +168,6 @@
       --page-pad: var(--space-4);
       height: var(--banner-height-sm);
       margin-block-end: calc(var(--space-8) * -1);
-    }
-
-    .search > :global(:first-child) {
-      max-width: none;
     }
 
     .compact .mini,
