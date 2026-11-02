@@ -96,8 +96,9 @@
  *   statements. To undo one, migrate the reverse.
  *
  * Views
- * - The app's sidebar lists every view under Views, each its own page drawn the way its comment says, so making,
- *   changing or dropping a view is how you change what the sidebar shows.
+ * - The app's sidebar lists views only, never tables: each view under Views is its own page drawn the way its
+ *   comment says. Making, changing or dropping a view is how you change what the sidebar shows; to put a table's
+ *   rows there, make a view of it.
  * - A view is a saved way to look at a table: a Postgres view with security_invoker = true so row-level security
  *   applies to whoever reads it, an id column, and a comment:
  *
