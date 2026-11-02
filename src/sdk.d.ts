@@ -64,8 +64,7 @@
  *           price   archive.money,
  *           owner   uuid REFERENCES person
  *       );
- *       COMMENT ON TABLE house IS 'A house you own or rent
- *       icon: house';
+ *       COMMENT ON TABLE house IS 'A house you own or rent';
  *       COMMENT ON COLUMN house.price IS 'Asking price';`;
  *     const plan = await archive.migrate(sql);
  *     if (plan.drops.length > 0) return plan;
@@ -88,10 +87,9 @@
  *   Rename with ALTER TABLE ... RENAME, and change a type with ALTER COLUMN ... TYPE ... USING: both keep the
  *   data. Postgres lets a value added to an enum be used only once the run that added it is saved, so add the
  *   value in one run and use it in the next. A migration waits up to 10s for locks on what it changes.
- * - Comments on tables and views: the first lines are the description; the last lines may be key: value
- *   settings. icon is a Lucide icon name in kebab-case (user, credit-card, square-check, ...; lucide.dev/icons),
- *   on tables and views. Views also take layout (table, board or calendar) and by (the column a board groups
- *   by, or the date a calendar places rows on). Any other key is an error.
+ * - A table's comment is its description. A view's comment is its description, then key: value lines: layout
+ *   (table, board or calendar) and by (the column a board groups by, or the date a calendar places rows on).
+ *   Any other key is an error.
  * - archive.revisions() lists the migrations saved before this run, newest first, with who ran them and their
  *   statements. To undo one, migrate the reverse.
  *
@@ -107,11 +105,10 @@
  *           SELECT * FROM task WHERE status <> 'done';
  *       COMMENT ON VIEW task_board IS 'Open tasks by progress
  *       layout: board
- *       by: status
- *       icon: kanban';`);
+ *       by: status';`);
  *
- * - Then archive.list("task_board") reads its rows, and archive.schema("task_board") shows its kind, description, layout, by
- *   and icon. Change one with CREATE OR REPLACE VIEW, delete it with DROP VIEW. Postgres saves SELECT * as the
+ * - Then archive.list("task_board") reads its rows, and archive.schema("task_board") shows its kind, description, layout and
+ *   by. Change one with CREATE OR REPLACE VIEW, delete it with DROP VIEW. Postgres saves SELECT * as the
  *   columns the table has then, so a view does not get columns added later, and a column a view selects cannot
  *   be dropped until you change or drop the view.
  *
@@ -401,8 +398,6 @@ interface Table {
     kind: "table" | "view";
     /** The comment without its key: value lines. */
     description: string;
-    /** Lucide icon name from the comment's icon: line. */
-    icon?: string;
     /** A view's layout: and by: lines. */
     layout?: "table" | "board" | "calendar";
     by?: string;

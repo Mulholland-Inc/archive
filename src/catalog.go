@@ -2,7 +2,6 @@ package main
 
 import (
 	"cmp"
-	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,7 +25,6 @@ type Table struct {
 	Schema      string    `json:"schema"`
 	Kind        string    `json:"kind"`
 	Description string    `json:"description"`
-	Icon        string    `json:"icon"`
 	Layout      string    `json:"layout,omitempty"`
 	By          string    `json:"by,omitempty"`
 	RLS         bool      `json:"rls"`
@@ -120,8 +118,6 @@ func catalogParse(b []byte) (*Catalog, error) {
 		t.Description, t.meta = catalogComment(t.Description)
 		for _, kv := range t.meta {
 			switch kv[0] {
-			case "icon":
-				t.Icon = kv[1]
 			case "layout":
 				t.Layout = kv[1]
 			case "by":
@@ -184,19 +180,6 @@ func catalogComment(s string) (string, [][2]string) {
 	}
 	return strings.TrimSpace(strings.Join(lines, "\n")), meta
 }
-
-//go:embed icons.json
-var catalogIconsJSON []byte
-
-var catalogIcons = func() map[string]bool {
-	var names []string
-	json.Unmarshal(catalogIconsJSON, &names)
-	out := map[string]bool{}
-	for _, n := range names {
-		out[n] = true
-	}
-	return out
-}()
 
 var catalogLayouts = []string{"table", "board", "calendar"}
 
@@ -329,20 +312,22 @@ func (c *Catalog) Check() error {
 }
 
 func (c *Catalog) checkMeta(t *Table, bad func(path, msg string)) {
-	keys, what := []string{"icon"}, "COMMENT ON TABLE "+t.Name
+	keys, what := []string{}, "COMMENT ON TABLE "+t.Name
 	if t.Kind == "view" {
-		keys, what = []string{"icon", "layout", "by"}, "COMMENT ON VIEW "+t.Name
+		keys, what = []string{"layout", "by"}, "COMMENT ON VIEW "+t.Name
 	}
 	seen := map[string]bool{}
 	for _, kv := range t.meta {
 		k, v, path := kv[0], kv[1], t.Name+"."+kv[0]
 		switch {
+		case k == "icon":
+			// Tables and views had icons once; an icon: line from then is ignored.
+		case !slices.Contains(keys, k) && len(keys) == 0:
+			bad(path, "unknown key "+k+" in the last line of "+what+"; a table's comment is only its description")
 		case !slices.Contains(keys, k):
 			bad(path, "unknown key "+k+" in the last lines of "+what+"; want description lines, then key: value lines with "+strings.Join(keys, ", "))
 		case seen[k]:
 			bad(path, k+" is set twice in "+what)
-		case k == "icon" && !catalogIcons[v]:
-			bad(path, "unknown icon "+strconv.Quote(v)+"; want a Lucide icon name in kebab-case, like user, credit-card or square-check (see lucide.dev/icons)")
 		case k == "layout" && !slices.Contains(catalogLayouts, v):
 			bad(path, "unknown layout "+strconv.Quote(v)+"; want "+strings.Join(catalogLayouts, ", "))
 		case k == "by" && t.col(v) == nil:
