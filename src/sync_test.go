@@ -63,10 +63,10 @@ func syncPages(t *testing.T, a *Archive, id uuid.UUID, n int) {
 	}
 }
 
-// syncSummary is connection id's live and deleted records, whether it caught up, and its error, like
-// "50+0 false ".
+// syncSummary is how many messages and pages connection id has, whether it caught up, and its error, like
+// "50 false ".
 func syncSummary(in *e2eInst, id uuid.UUID) string {
-	return in.psql("archive", `SELECT (SELECT count(*) FILTER (WHERE NOT r.deleted) || '+' || count(*) FILTER (WHERE r.deleted) FROM archive.record r WHERE r.connection = c.id)
+	return in.psql("archive", `SELECT ((SELECT count(*) FROM archive.mail_message r WHERE r.connection = c.id) + (SELECT count(*) FROM archive.doc_page r WHERE r.connection = c.id))
 		|| ' ' || (c.synced_at IS NOT NULL) || ' ' || c.error FROM archive.connection c WHERE c.id = '`+id.String()+`'`)
 }
 
@@ -89,13 +89,13 @@ func gmailPush(t *testing.T, in *e2eInst, srv *e2eServer, email string, claims m
 	return st
 }
 
-// gmailSyncs checks, in a hub of its own on in, that alice's Gmail id, just connected, syncs into record a page
+// gmailSyncs checks, in a hub of its own on in, that alice's Gmail id, just connected, syncs into mail_message a page
 // at a time, one page of a connection at a time: the mailbox whole the first time, 50 messages a page, from
 // where a failed page left off, with nothing more due once it has caught up. It watches the mailbox once, and
 // a push signed by the tasks account asks for the history since, with a message added, one relabeled and one
 // deleted; one signed otherwise is refused. A history that says there is more from where it began fails rather
 // than read forever; one Gmail no longer has lists the mailbox whole again. A watch near its end is renewed by
-// the next page, unless another is renewing it. Only alice reads the records; reading them or opening the
+// the next page, unless another is renewing it. Only alice reads its messages; reading them or opening the
 // workspace while they are stale asks for a sync; Sync now does; a refused grant stops it, and pushes do not
 // start it again.
 func gmailSyncs(t *testing.T, in *e2eInst, srv *e2eServer, g *fakeGoogle, id uuid.UUID, alice, bob string) {
@@ -151,7 +151,7 @@ func gmailSyncs(t *testing.T, in *e2eInst, srv *e2eServer, g *fakeGoogle, id uui
 	if err := a.syncPage(ctx, first); err != nil {
 		t.Fatal(err)
 	}
-	want("the first page", "50+0 false ")
+	want("the first page", "50 false ")
 	if got := field("lease_at IS NULL"); got != "t" {
 		t.Errorf("a page done keeps its lease")
 	}
@@ -167,7 +167,7 @@ func gmailSyncs(t *testing.T, in *e2eInst, srv *e2eServer, g *fakeGoogle, id uui
 	cursor := field("cursor->'messages'->>'cursor'")
 	g.do(func() { g.fail = 1 })
 	syncPages(t, a, id, 1)
-	want("a page that failed", "50+0 false syncing messages: Gmail refused: 500 Internal Server Error: Backend Error")
+	want("a page that failed", "50 false syncing messages: Gmail refused: 500 Internal Server Error: Backend Error")
 	if later := field("sync_at > now() + interval '50 seconds'"); later != "t" {
 		t.Errorf("a page that failed is retried at once")
 	}
@@ -175,9 +175,9 @@ func gmailSyncs(t *testing.T, in *e2eInst, srv *e2eServer, g *fakeGoogle, id uui
 		t.Errorf("a page that failed moved the cursor from %s to %s", cursor, got)
 	}
 	syncPages(t, a, id, 1)
-	want("the page after, from where it failed", "60+0 true ")
-	if text := in.psql("archive", "SELECT data->>'subject' || ': ' || (data->>'text') FROM archive.record WHERE source_id = 'a07'"); text != "Mail 7: About Mail 7" {
-		t.Errorf("a message's record: %q", text)
+	want("the page after, from where it failed", "60 true ")
+	if text := in.psql("archive", "SELECT subject || ': ' || text FROM archive.mail_message WHERE source_id = 'a07'"); text != "Mail 7: About Mail 7" {
+		t.Errorf("a message: %q", text)
 	}
 	if idle := field("sync_at IS NULL"); idle != "t" {
 		t.Fatalf("a sync that caught up is still due: nothing may wake the service until something asks")
@@ -189,7 +189,7 @@ func gmailSyncs(t *testing.T, in *e2eInst, srv *e2eServer, g *fakeGoogle, id uui
 		g.unmail("a02")
 	})
 	syncPages(t, a, id, 1)
-	want("a page nothing asked for", "60+0 true ")
+	want("a page nothing asked for", "60 true ")
 	for what, claims := range map[string]map[string]any{
 		"unsigned": {"email": ""}, "for another URL": {"aud": "http://localhost:1/push/gmail"}, "by another account": {"email": "eve@e2e.iam.gserviceaccount.com"},
 	} {
@@ -205,8 +205,8 @@ func gmailSyncs(t *testing.T, in *e2eInst, srv *e2eServer, g *fakeGoogle, id uui
 		t.Fatalf("a push did not ask for a sync: %q", due)
 	}
 	syncPages(t, a, id, 1)
-	want("the history since", "60+1 true ")
-	if got := in.psql("archive", "SELECT string_agg(source_id || ' ' || (data->>'subject') || ' ' || deleted, ', ' ORDER BY source_id) FROM archive.record WHERE source_id IN ('a01', 'a02', 'a60')"); got != "a01 Mail 1, labeled false, a02 Mail 2 true, a60 Mail 60 false" {
+	want("the history since", "60 true ")
+	if got := in.psql("archive", "SELECT string_agg(source_id || ' ' || subject, ', ' ORDER BY source_id) FROM archive.mail_message WHERE source_id IN ('a01', 'a02', 'a60')"); got != "a01 Mail 1, labeled, a60 Mail 60" {
 		t.Errorf("after the history: %q", got)
 	}
 
@@ -218,7 +218,7 @@ func gmailSyncs(t *testing.T, in *e2eInst, srv *e2eServer, g *fakeGoogle, id uui
 	}
 	g.do(func() { g.stuck = false })
 	syncPages(t, a, id, 1)
-	want("once it moves on again", "60+1 true ")
+	want("once it moves on again", "60 true ")
 
 	// A stream that keeps failing backs off syncTries times, then waits for the next ask, which tries again.
 	g.do(func() { g.fail = syncTries })
@@ -229,7 +229,7 @@ func gmailSyncs(t *testing.T, in *e2eInst, srv *e2eServer, g *fakeGoogle, id uui
 	}
 	pushed("Gmail back")
 	syncPages(t, a, id, 1)
-	want("asked again once Gmail is back", "60+1 true ")
+	want("asked again once Gmail is back", "60 true ")
 
 	g.do(func() {
 		g.hist++
@@ -238,7 +238,7 @@ func gmailSyncs(t *testing.T, in *e2eInst, srv *e2eServer, g *fakeGoogle, id uui
 	})
 	pushed("a history Gmail no longer has")
 	syncPages(t, a, id, 3)
-	want("listed whole again", "59+2 true ")
+	want("listed whole again", "59 true ")
 	g.do(func() {
 		if len(g.watched) != 1 {
 			t.Errorf("a watch far from its end was renewed: %q", g.watched)
@@ -280,19 +280,19 @@ func gmailSyncs(t *testing.T, in *e2eInst, srv *e2eServer, g *fakeGoogle, id uui
 	}
 
 	for tok, n := range map[string]string{alice: "59", bob: "0"} {
-		if st, out := e2eRun(t, srv.url+"/api", tok, `const [r] = await archive.list("record", { where: { source_id: "a01" } });
-			const [{ n }] = await archive.query("SELECT count(*)::int AS n FROM record WHERE stream = 'messages' AND NOT deleted");
-			return n + " " + (r ? r.data.subject : "none")`); st != 200 || out.Error != "" || !strings.HasPrefix(string(out.Result), `"`+n+" ") {
-			t.Errorf("reading the records, %s want %s: %d %+v", tok[:6], n, st, out)
+		if st, out := e2eRun(t, srv.url+"/api", tok, `const [r] = await archive.list("mail_message", { where: { source_id: "a01" } });
+			const [{ n }] = await archive.query("SELECT count(*)::int AS n FROM mail_message WHERE stream = 'messages'");
+			return n + " " + (r ? r.subject : "none")`); st != 200 || out.Error != "" || !strings.HasPrefix(string(out.Result), `"`+n+" ") {
+			t.Errorf("reading the messages, %s want %s: %d %+v", tok[:6], n, st, out)
 		}
 	}
 	var cs Connections
 	call(t, "GET", srv.url+"/connect", alice, nil, &cs)
-	if len(cs.Connections) != 1 || cs.Connections[0].Records != 59 || cs.Connections[0].SyncedAt == nil || cs.Connections[0].SyncAt != nil {
+	if len(cs.Connections) != 1 || cs.Connections[0].Items != 59 || cs.Connections[0].SyncedAt == nil || cs.Connections[0].SyncAt != nil {
 		t.Errorf("the connection's sync, as listed: %+v", cs.Connections)
 	}
 
-	// Reading record, or opening the workspace, asks for a stale sync, and nothing else does.
+	// Reading mail, or opening the workspace, asks for a stale sync, and nothing else does.
 	stale := func() {
 		in.psql("archive", "UPDATE archive.connection SET synced_at = now() - interval '10 minutes' WHERE id = "+conn)
 	}
@@ -302,15 +302,15 @@ func gmailSyncs(t *testing.T, in *e2eInst, srv *e2eServer, g *fakeGoogle, id uui
 	}
 	call(t, "GET", srv.url+"/connect", alice, nil, nil)
 	if idle := field("sync_at IS NULL"); idle != "t" {
-		t.Errorf("reading something other than record asked for a sync")
+		t.Errorf("reading something other than what syncs asked for a sync")
 	}
-	e2eRun(t, srv.url+"/api", bob, `return await archive.query("SELECT count(*) FROM record")`)
+	e2eRun(t, srv.url+"/api", bob, `return await archive.query("SELECT count(*) FROM mail_message")`)
 	if idle := field("sync_at IS NULL"); idle != "t" {
-		t.Errorf("bob reading record asked for alice's sync")
+		t.Errorf("bob reading mail asked for alice's sync")
 	}
-	e2eRun(t, srv.url+"/api", alice, `return await archive.query("SELECT count(*) FROM record")`)
+	e2eRun(t, srv.url+"/api", alice, `return await archive.query("SELECT count(*) FROM mail_message")`)
 	if due := field("sync_at <= now()"); due != "t" {
-		t.Errorf("alice reading record did not ask for her stale sync")
+		t.Errorf("alice reading mail did not ask for her stale sync")
 	}
 	syncPages(t, a, id, 1)
 	stale()
@@ -374,7 +374,7 @@ func gmailPushesAfterDisconnect(t *testing.T, in *e2eInst, srv *e2eServer, g *fa
 	}
 }
 
-// notionSyncs checks, in a hub of its own on in, that alice's Notion id syncs into record with its server's
+// notionSyncs checks, in a hub of its own on in, that alice's Notion id syncs into doc_page with its server's
 // tools: its private pages listed whole, two a page as the server pages them, from where a failed page left
 // off, with its shared pages skipped as the server has no tool for them; and listed whole again, adding a
 // page, changing one and deleting the one no longer listed, once something asks.
@@ -393,15 +393,15 @@ func notionSyncs(t *testing.T, in *e2eInst, f *fakeMCP, id uuid.UUID) {
 		}
 	}
 	syncPages(t, a, id, 2)
-	want("the first page, and the shared pages skipped", "2+0 false ")
+	want("the first page, and the shared pages skipped", "2 false ")
 	if skip := in.psql("archive", "SELECT cursor->'shared_pages'->>'skip' FROM archive.connection WHERE id = '"+id.String()+"'"); skip != "Notion's MCP server has no tool notion-list-shared-pages" {
 		t.Errorf("the shared pages: %q", skip)
 	}
 	f.do(func() { f.fail = true })
 	syncPages(t, a, id, 1)
-	want("a page that failed", "2+0 false syncing private_pages: Notion said: notion-list-private-pages: the list is down")
+	want("a page that failed", "2 false syncing private_pages: Notion said: notion-list-private-pages: the list is down")
 	syncPages(t, a, id, 2)
-	want("the pages after", "5+0 true ")
+	want("the pages after", "5 true ")
 	if err := func() error { _, err := a.syncWant(t.Context(), id); return err }(); err != nil {
 		t.Fatal(err)
 	}
@@ -411,8 +411,8 @@ func notionSyncs(t *testing.T, in *e2eInst, f *fakeMCP, id uuid.UUID) {
 		delete(f.pages, fmt.Sprintf("%032x", 2))
 	})
 	syncPages(t, a, id, 4)
-	want("listed whole again, and the shared pages looked for again", "5+1 true ")
-	if got := in.psql("archive", "SELECT string_agg(right(source_id, 1) || ' ' || (data->>'title') || ' ' || deleted, ', ' ORDER BY source_id) FROM archive.record"); got != "1 Page 1, renamed false, 2 Page 2 true, 3 Page 3 false, 4 Page 4 false, 5 Page 5 false, 6 Page 6 false" {
+	want("listed whole again, and the shared pages looked for again", "5 true ")
+	if got := in.psql("archive", "SELECT string_agg(right(source_id, 1) || ' ' || title, ', ' ORDER BY source_id) FROM archive.doc_page"); got != "1 Page 1, renamed, 3 Page 3, 4 Page 4, 5 Page 5, 6 Page 6" {
 		t.Errorf("after listing whole again: %q", got)
 	}
 }
@@ -524,7 +524,7 @@ func asanaHandshakes(t *testing.T, in *e2eInst, srv *e2eServer) {
 }
 
 // An integration is the archive's: only an owner connects, narrows, syncs and disconnects it, and the archive
-// has one; every member sees it and its records, while an owner has not narrowed it to a group they are not
+// has one; every member sees it and what it syncs, while an owner has not narrowed it to a group they are not
 // in; and editors and owners in that group act with it. Connections of an integration from before there were
 // integrations become the archive's, the first of each.
 func TestIntegrationsAreTheArchives(t *testing.T) {
@@ -567,10 +567,10 @@ func TestIntegrationsAreTheArchives(t *testing.T) {
 			t.Errorf("an editor %s %s: %d", req[0], req[1], st)
 		}
 	}
-	in.psql("archive", "INSERT INTO archive.record (connection, stream, source_id, data) VALUES ('"+id+"', 'issues', 'i1', '{}'), ('"+id+"', 'issues', 'i2', '{}')")
+	in.psql("archive", "INSERT INTO archive.doc_page (connection, stream, source_id) VALUES ('"+id+"', 'documents', 'i1'), ('"+id+"', 'documents', 'i2')")
 	sees := func(tok string) string {
 		t.Helper()
-		_, out := e2eRun(t, srv.url+"/api", tok, `const [{ n }] = await archive.query("SELECT count(*)::int AS n FROM record"); return n + " " + (await archive.list("connection")).length`)
+		_, out := e2eRun(t, srv.url+"/api", tok, `const [{ n }] = await archive.query("SELECT count(*)::int AS n FROM doc_page"); return n + " " + (await archive.list("connection")).length`)
 		return string(out.Result)
 	}
 	acts := func(tok string) string {
@@ -598,7 +598,7 @@ func TestIntegrationsAreTheArchives(t *testing.T) {
 	if got := acts(bob); got != `"forbidden"` {
 		t.Errorf("an editor out of finance acts with Linear narrowed to it: %s", got)
 	}
-	in.psql("archive", "INSERT INTO archive.record (connection, stream, source_id, data, access) VALUES ('"+id+"', 'issues', 'i3', '{}', 'finance')")
+	in.psql("archive", "INSERT INTO archive.doc_page (connection, stream, source_id, access) VALUES ('"+id+"', 'documents', 'i3', 'finance')")
 	if st, _ := call(t, "PUT", srv.url+"/connect/"+id+"/access", alice, map[string]string{"access": "Fin ance"}, nil); st != 400 {
 		t.Errorf("a group that is no group: %d", st)
 	}
@@ -613,8 +613,8 @@ func TestIntegrationsAreTheArchives(t *testing.T) {
 	if st, _ := call(t, "DELETE", srv.url+"/connect/"+id, alice, nil, nil); st != 204 {
 		t.Fatalf("alice disconnects Linear: %d", st)
 	}
-	if n := in.psql("archive", "SELECT count(*) FROM archive.record"); n != "0" {
-		t.Errorf("disconnecting the archive's Linear left %s records", n)
+	if n := in.psql("archive", "SELECT count(*) FROM archive.doc_page"); n != "0" {
+		t.Errorf("disconnecting the archive's Linear left %s pages", n)
 	}
 
 	// Two members' Stripe from before integrations: the first becomes the archive's; the other stays its own.

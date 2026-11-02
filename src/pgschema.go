@@ -441,9 +441,20 @@ const (
 	phases
 )
 
+// pgDropped are the tables and columns archive.sql deletes on purpose, data and all, by kind and qualified
+// name, like "table archive.record": pgPlan drops them as it finds them gone from archive.sql, where it refuses
+// to drop anything else that has data. Each stays listed, so a database that still has one drops it whenever
+// it opens next.
+var pgDropped = map[string]bool{
+	// What connections synced is in the tables of its domain now, and syncs start from scratch to fill them
+	// (syncRowsVersion).
+	"table archive.record": true,
+}
+
 // pgPlan is the DDL that brings live to want, both read with an empty search_path, for Archive's own schema: it
 // does what archive.sql needs and refuses the rest. Types and domains are altered, never dropped and created,
-// since user tables use them. lost is what would lose data; the plan leaves it out, unless drop, for tests.
+// since user tables use them. lost is what would lose data; the plan leaves it out, unless drop, for tests, or
+// pgDropped names it.
 func pgPlan(live, want pgSchema, drop bool) (stmts, lost []string, err error) {
 	var ph [phases][]string
 	add := func(p int, st string) { ph[p] = append(ph[p], st) }
@@ -521,8 +532,10 @@ func pgPlan(live, want pgSchema, drop bool) (stmts, lost []string, err error) {
 		case n == nil:
 			switch o.Kind {
 			case "table", "column", "attribute":
-				lost = append(lost, o.Kind+" "+o.qname())
-				if drop {
+				if !pgDropped[o.key()] {
+					lost = append(lost, o.Kind+" "+o.qname())
+				}
+				if drop || pgDropped[o.key()] {
 					add(map[bool]int{true: phRemoves, false: phTables}[o.Kind == "table"], live.drop(o)+" CASCADE")
 				}
 			case "constraint", "trigger", "policy", "index", "view":

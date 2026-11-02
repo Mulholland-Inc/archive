@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"golang.org/x/oauth2"
 )
@@ -16,6 +15,7 @@ import (
 // so com.intuit.quickbooks.accounting is all of it, and the actions only read. The callback names the
 // company, realmId, which every call needs; a person connects one company at a time, and connects again for
 // another. Intuit replaces the refresh token about once a day.
+// It syncs nothing until its entities are mapped into the tables of archive.sql; its push waits for that too.
 func init() {
 	Register(&Connector{
 		ID: "quickbooks", Name: "QuickBooks", Integration: true, Env: "ARCHIVE_QUICKBOOKS", Host: "https://appcenter.intuit.com",
@@ -86,106 +86,8 @@ func init() {
 					return qboList(c, "Customer", where, "DisplayName", in.Limit)
 				}),
 		},
-		Push:    quickbooksPush,
-		Streams: qboStreams(),
+		Push: quickbooksPush,
 	})
-}
-
-// qboEntities are the entities QuickBooks streams, one stream each, named for it in lowercase.
-var qboEntities = []string{"Account", "Bill", "BillPayment", "CreditMemo", "Customer", "Deposit", "Employee", "Estimate", "Invoice",
-	"Item", "JournalEntry", "Payment", "Purchase", "PurchaseOrder", "SalesReceipt", "Vendor"}
-
-// qboStreams are a stream of each of qboEntities: listed whole the first time, 1,000 a page by Id, and then
-// its change data capture since, which says what was deleted too, but reaches back only 30 days, so a sync
-// stopped for longer lists it whole again.
-func qboStreams() []*Stream {
-	var out []*Stream
-	for _, e := range qboEntities {
-		out = append(out, &Stream{Name: strings.ToLower(e), Pull: func(c *Client, cursor string) (*Page, error) { return qboPull(c, e, cursor) },
-			Doc: "Every " + e + " of the company, as QuickBooks has it: listed whole the first time, 1,000 a page, and then its change data capture " +
-				"since, deletions too; a sync stopped for over 30 days, as far back as that reaches, lists it whole again."})
-	}
-	return out
-}
-
-// qboCursor is where an entity's stream is: Since is when its listing began, or its last change data capture,
-// less a minute, and Start the listing's next STARTPOSITION.
-type qboCursor struct {
-	Since string `json:"since"`
-	Start int    `json:"start,omitempty"`
-}
-
-const qboPage = 1000
-
-func qboPull(c *Client, entity, cursor string) (*Page, error) {
-	var cur qboCursor
-	if err := cursorOf(cursor, &cur); err != nil {
-		return nil, err
-	}
-	now := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
-	since, _ := time.Parse(time.RFC3339, cur.Since)
-	if cur.Since == "" || cur.Start == 0 && time.Since(since) > 29*24*time.Hour {
-		cur = qboCursor{Since: now, Start: 1}
-	}
-	if cur.Start > 0 {
-		var out struct {
-			QueryResponse map[string]any
-		}
-		q := fmt.Sprintf("SELECT * FROM %s ORDERBY Id STARTPOSITION %d MAXRESULTS %d", entity, cur.Start, qboPage)
-		if err := c.Get(qbo(c, "/query?query="+url.QueryEscape(q)), &out); err != nil {
-			return nil, err
-		}
-		rows := qboRecords(out.QueryResponse[entity])
-		page := &Page{Full: true, More: len(rows) == qboPage, Records: rows}
-		if page.More {
-			cur.Start += qboPage
-		} else {
-			cur.Start = 0
-		}
-		page.Cursor = cursorFor(cur)
-		return page, nil
-	}
-	var out struct {
-		CDCResponse []struct {
-			QueryResponse []map[string]any
-		}
-	}
-	if err := c.Get(qbo(c, "/cdc?entities="+entity+"&changedSince="+url.QueryEscape(cur.Since)), &out); err != nil {
-		return nil, err
-	}
-	page := &Page{}
-	for _, r := range out.CDCResponse {
-		for _, qr := range r.QueryResponse {
-			page.Records = append(page.Records, qboRecords(qr[entity])...)
-		}
-	}
-	cur.Since = now
-	// Change data capture answers at most 1,000 of an entity; with that many, the next starts from the last.
-	if len(page.Records) >= qboPage {
-		last := since
-		for _, r := range page.Records {
-			if r.Updated.After(last) {
-				last = r.Updated
-			}
-		}
-		cur.Since, page.More = last.UTC().Format(time.RFC3339), true
-	}
-	page.Cursor = cursorFor(cur)
-	return page, nil
-}
-
-// qboRecords are the entities rows, as QuickBooks answers them; one whose status is Deleted is deleted.
-func qboRecords(rows any) []Record {
-	var out []Record
-	for _, r := range asList(rows) {
-		m, _ := r.(map[string]any)
-		if m == nil || str(m, "Id") == "" {
-			continue
-		}
-		meta, _ := m["MetaData"].(map[string]any)
-		out = append(out, Record{ID: str(m, "Id"), Data: m, Updated: stamp(str(meta, "LastUpdatedTime")), Deleted: m["status"] == "Deleted"})
-	}
-	return out
 }
 
 // qbo is the URL of path in the company the client is for, in the minor version of the API the actions read.

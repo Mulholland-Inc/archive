@@ -133,7 +133,7 @@ func catalogParse(b []byte) (*Catalog, error) {
 		if t.Schema == "archive" && t.Name == "connection" {
 			catalogConnection(t)
 		}
-		if t.Schema == "archive" && t.Name == "record" {
+		if t.synced() {
 			t.internal = []string{"seen_at"}
 			t.Columns = slices.DeleteFunc(t.Columns, func(c *Column) bool { return c.Name == "seen_at" })
 		}
@@ -162,13 +162,11 @@ func catalogConnection(t *Table) {
 	t.Columns = slices.DeleteFunc(t.Columns, func(c *Column) bool { return slices.Contains(t.internal, c.Name) })
 }
 
-// syncedTables are Archive's tables of what connections sync (archive.sql, tables.go), besides record.
-var syncedTables = []string{"known_person", "known_org", "mail_message", "mail_party", "doc_page", "payroll_company", "payroll_worker",
-	"payroll_run", "payroll_pay"}
-
-// synced says whether t is a table Archive syncs from connections: archive.record, or one of syncedTables.
+// synced says whether t is a table Archive syncs from connections (tables.go): one of syncSchema, or the
+// people and organizations they name.
 func (t *Table) synced() bool {
-	return t.Schema == "archive" && (t.Name == "record" || slices.Contains(syncedTables, t.Name))
+	_, ok := syncSchema[t.Name]
+	return t.Schema == "archive" && (ok || t.Name == "known_person" || t.Name == "known_org")
 }
 
 // isWorkflow says whether t is archive.workflow, whose writes go through its write hook (workflow.go).

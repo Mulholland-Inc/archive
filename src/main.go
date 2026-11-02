@@ -141,11 +141,11 @@ Environment:
   ARCHIVE_GMAIL_TOPIC projects/<project>/topics/<topic>, the Pub/Sub topic Gmail pushes a connected
                      mailbox's changes to, which a push subscription delivers to <API>/push/gmail with the
                      tasks account's OIDC token; unset, Gmail syncs only when asked
-  ARCHIVE_SYNC       off keeps serve from syncing connections into record, though asks are still kept and
+  ARCHIVE_SYNC       off keeps serve from syncing connections into their tables, though asks are still kept and
                      queued: for tests that sync by hand
 
-A connection syncs into record only when something asks: connecting, Sync now, a push of its provider to
-<API>/push/<connector>, or its member reading record or opening the workspace while it is over 5 minutes
+A connection syncs into its tables only when something asks: connecting, Sync now, a push of its provider to
+<API>/push/<connector>, or its member reading them or opening the workspace while it is over 5 minutes
 old. Nothing syncs on a timer. The GitHub App, HubSpot app and Intuit app push for every account once their
 webhooks are set up to that URL; GitHub's secret and Intuit's verifier token are the hook option of their
 variable, like ?hook=<secret>. Asana's webhooks need ?push=1 on ARCHIVE_ASANA, once its app has their scopes.

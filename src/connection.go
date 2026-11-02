@@ -251,7 +251,7 @@ func (a *Archive) mayConnect(ctx context.Context, c *connect.Connector) error {
 
 // mayUse says whether a member at level lvl in groups may use the archive's integration c, with
 // archive.action: editors and owners, and of an integration narrowed to a group, only its members and the
-// owners. Everyone who sees its records reads them; acting on the archive's account writes, as an editor does.
+// owners. Everyone who sees its rows reads them; acting on the archive's account writes, as an editor does.
 func mayUse(c generated.ArchiveConnection, lvl string, groups []string) bool {
 	return lvl == "owner" || lvl == "editor" && (c.Access == nil || slices.Contains(groups, *c.Access))
 }
@@ -301,10 +301,10 @@ type Connection struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	// SyncAt is when its next sync page is due, nil while it does not sync; SyncedAt when it last caught up;
-	// Records how many of its records are not deleted.
+	// Items how many things of it Archive has, the rows of its streams' tables.
 	SyncAt   *time.Time `json:"sync_at"`
 	SyncedAt *time.Time `json:"synced_at"`
-	Records  int64      `json:"records"`
+	Items    int64      `json:"items"`
 	// Integration says it is the archive's; Access is the group it is narrowed to, "" for everyone; and
 	// ConnectedBy who connected it last.
 	Integration bool   `json:"integration"`
@@ -348,7 +348,7 @@ func (a *Archive) Connections(ctx context.Context) (*Connections, error) {
 }
 
 // Disconnect deletes the caller's connection id, or, for an owner, the archive's integration id, with its
-// records, and revokes its refresh token at the provider where it can. A revoke that fails leaves the grant at
+// rows, and revokes its refresh token at the provider where it can. A revoke that fails leaves the grant at
 // the provider, where the person can still remove it; the connection is gone either way.
 func (a *Archive) Disconnect(ctx context.Context, id uuid.UUID) error {
 	c, err := a.connectionMine(ctx, id)
@@ -360,7 +360,7 @@ func (a *Archive) Disconnect(ctx context.Context, id uuid.UUID) error {
 		if c, err = q.DeleteConnection(ctx, c.ID); err != nil {
 			return err
 		}
-		// Its records took their rows with them; the people and organizations only they named go too.
+		// Its rows went with it; the people and organizations only they named go too.
 		return q.DeleteUnknown(ctx)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -423,7 +423,7 @@ func (a *Archive) connectionMine(ctx context.Context, id uuid.UUID) (generated.A
 	return c, nil
 }
 
-// SetAccess narrows the archive's integration id, and its records, to the members of group, or opens them to
+// SetAccess narrows the archive's integration id, and its rows, to the members of group, or opens them to
 // everyone with "", as an owner does.
 func (a *Archive) SetAccess(ctx context.Context, id uuid.UUID, group string) error {
 	c, err := a.connectionMine(ctx, id)
@@ -439,7 +439,12 @@ func (a *Archive) SetAccess(ctx context.Context, id uuid.UUID, group string) err
 	if group != "" {
 		access = &group
 	}
-	return a.sys(ctx, func(ctx context.Context) error { return a.st.db(ctx).SetConnectionAccess(ctx, access, id) })
+	return a.sys(ctx, func(ctx context.Context) error {
+		if err := a.st.db(ctx).SetConnectionAccess(ctx, access, id); err != nil {
+			return err
+		}
+		return syncNarrow(ctx, a.st.Q(ctx), id, access)
+	})
 }
 
 var connectionGroupRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_]{0,23}$`)

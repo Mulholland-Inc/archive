@@ -53,8 +53,14 @@ func TestWorkflowsFromBeforeRowsKeepTheirURLsCursorsAndSchedules(t *testing.T) {
 	in.push(map[string]string{"house.sql": e2eHouse})
 	user := in.psql("archive", "SELECT id FROM archive.\"user\" WHERE email = 'alice@example.com'")
 	role := in.role("alice@example.com")
-	in.psql("archive", `DROP TABLE archive.mail_party, archive.mail_message, archive.doc_page, archive.payroll_pay, archive.payroll_run, archive.payroll_worker,
-  archive.payroll_company, archive.known_person, archive.known_org, archive.record, archive.connection; DROP FUNCTION archive.money_of(bigint, text); DROP POLICY mine ON archive.workflow_run; DROP POLICY mine ON archive.workflow;
+	synced := []string{"archive.known_person", "archive.known_org"}
+	for name := range syncSchema {
+		synced = append(synced, "archive."+name)
+	}
+	// Before workflows were rows, connections synced into archive.record, which archive.sql drops (pgDropped).
+	in.psql("archive", `DROP TABLE `+strings.Join(synced, ", ")+`, archive.connection;
+CREATE TABLE archive.record (id uuid PRIMARY KEY DEFAULT uuidv7(), connection uuid NOT NULL, stream text NOT NULL, data jsonb NOT NULL DEFAULT '{}');
+INSERT INTO archive.record (connection, stream) VALUES (uuidv7(), 'messages'); DROP POLICY mine ON archive.workflow_run; DROP POLICY mine ON archive.workflow;
 ALTER TABLE archive.workflow DISABLE ROW LEVEL SECURITY; ALTER TABLE archive.workflow_run DISABLE ROW LEVEL SECURITY;
 DROP TRIGGER workflow_saved ON archive.workflow; DROP FUNCTION archive.workflow_saved(); DROP FUNCTION archive.mine(uuid);
 REVOKE ALL ON archive.workflow, archive.workflow_run FROM "`+strings.Split(role, "_u")[0]+`_viewer";
@@ -71,6 +77,9 @@ INSERT INTO archive.workflow (user_id, role, name, source, trigger, hook, next_a
    '2026-01-01T00:00:01Z', 'ffffffff-ffff-ffff-ffff-ffffffffffff');
 INSERT INTO archive.revision (hash) VALUES ('before workflow rows')`)
 	srv := in.serve()
+	if gone := in.psql("archive", "SELECT to_regclass('archive.record') IS NULL AND to_regclass('archive.mail_message') IS NOT NULL"); gone != "t" {
+		t.Errorf("archive.record is still there, or the tables of what syncs are not")
+	}
 	api := srv.url + "/api"
 	tok := decode[Token](t, in.must("token", "create")).Secret
 	got := in.psql("archive", `SELECT string_agg(name || '|' || coalesce("on"::text, 'null') || '|' || source || '|' || trigger || '|' || hook || '|' || coalesce(cursor_at::text, '') || '|' || coalesce(next_at::text, '') || '|' || (member IS NOT NULL), E'\n' ORDER BY name) FROM archive.workflow WHERE name <> 'tick.ts'`)

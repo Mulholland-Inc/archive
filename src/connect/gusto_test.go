@@ -1,6 +1,8 @@
 package connect
 
 import (
+	"cmp"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
@@ -334,39 +336,75 @@ func TestGustoRows(t *testing.T) {
 	g := newGustoStandIn(1, 3)
 	c := g.client(t)
 	recs := gustoSync(t, c, map[string]string{}, func(*Stream) bool { return false })
-	rows := func(stream, id string) *Rows {
+	row := func(stream, id string) *Row {
+		t.Helper()
 		for _, s := range c.p.Streams {
 			for _, r := range recs[stream] {
 				if s.Name == stream && r.ID == id {
-					return s.Rows(r.Data.(map[string]any))
+					b, _ := json.Marshal(r.Data)
+					return s.RowOf(b)
 				}
 			}
 		}
 		t.Fatalf("no %s %s", stream, id)
 		return nil
 	}
-	if co := rows("company", "co0").Company; *co != (PayrollCompany{Name: "Acme", TradeName: "Acme Co", EntityType: "LLC", EIN: "12-3456789"}) {
-		t.Errorf("the company: %+v", co)
+	// cols are the columns of r named, as JSON, with its people, orgs and links.
+	cols := func(r *Row, names ...string) string {
+		var out []string
+		for _, n := range names {
+			b, _ := json.Marshal(r.Cols[n])
+			if v := cmp.Or(r.People[n], r.Orgs[n], r.Refs[n]); v != "" {
+				b = []byte(v)
+			}
+			out = append(out, n+"="+string(b))
+		}
+		return strings.Join(out, " ")
 	}
-	w := rows("employees", "co0-e0").Worker
-	if w.Kind != "employee" || w.Company != "co0" || w.Email != "Ann.co0.0@Acme.example" || w.PersonalEmail != "ann0@home.example" || w.Active ||
-		w.Terminated != "2024-06-30" || w.Hired != "2019-03-01" || w.Title != "Engineer" || *w.Rate.Minor != 12000000 || w.Per != "Year" {
-		t.Errorf("a terminated employee: %+v", w)
+	if got := cols(row("company", "co0"), "name", "trade_name", "entity_type", "org"); got != `name="Acme" trade_name="Acme Co" entity_type="LLC" org=12-3456789` {
+		t.Errorf("the company: %s", got)
 	}
-	if w := rows("contractors", "co0-c0").Worker; w.Kind != "contractor" || !w.Active || *w.Rate.Minor != 8000 || w.Per != "Hour" {
-		t.Errorf("a contractor: %+v", w)
+	w := row("employees", "co0-e0")
+	if got := cols(w, "kind", "company", "person", "email", "personal_email", "active", "terminated_on", "hired_on", "title", "pay_rate", "pay_per"); got != `kind="employee" company=co0 `+
+		`person=ann.co0.0@acme.example email="ann.co0.0@acme.example" personal_email="ann0@home.example" active=false terminated_on="2024-06-30" hired_on="2019-03-01" `+
+		`title="Engineer" pay_rate={"amount":12000000,"currency":"USD"} pay_per="Year"` {
+		t.Errorf("a terminated employee: %s", got)
 	}
-	r := rows("payrolls", "co0-p000")
-	if r.Run.Check != "2018-01-05" || r.Run.Start != "2017-12-18" || !r.Run.Processed || *r.Run.Net.Minor != 150050 || *r.Run.EmployerTaxes.Minor != 15025 ||
-		len(r.Pays) != 2 || r.Pays[0].Worker != "co0-e1" || *r.Pays[0].Deductions.Minor != 6250 || *r.Pays[0].Taxes.Minor != 15000 ||
-		*r.Pays[0].EmployerTaxes.Minor != 7650 || r.Pays[0].Paid != "2018-01-05" {
-		t.Errorf("a payroll: %+v %+v", r.Run, r.Pays)
+	var kids []string
+	for _, k := range w.Children {
+		kids = append(kids, k.Table)
+	}
+	if fmt.Sprint(kids) != "[payroll_job payroll_address payroll_employment]" {
+		t.Errorf("the rows of an employee: %v", kids)
+	}
+	if got := cols(row("contractors", "co0-c0"), "kind", "active", "pay_rate", "pay_per"); got != `kind="contractor" active=true pay_rate={"amount":8000,"currency":"USD"} pay_per="Hour"` {
+		t.Errorf("a contractor: %s", got)
+	}
+	r := row("payrolls", "co0-p000")
+	if got := cols(r, "check_date", "period_start", "processed", "net_pay", "employer_taxes"); got != `check_date="2018-01-05" period_start="2017-12-18" processed=true `+
+		`net_pay={"amount":150050,"currency":"USD"} employer_taxes={"amount":15025,"currency":"USD"}` {
+		t.Errorf("a payroll: %s", got)
+	}
+	var pays, lines []string
+	for _, k := range r.Children {
+		switch k.Table {
+		case "payroll_pay":
+			pays = append(pays, cols(&k.Row, "worker", "deductions", "employee_taxes", "employer_taxes"))
+		case "payroll_pay_line":
+			lines = append(lines, cols(&k.Row, "kind", "name", "employer"))
+		}
+	}
+	if len(pays) != 2 || pays[0] != `worker=co0-e1 deductions={"amount":6250,"currency":"USD"} employee_taxes={"amount":15000,"currency":"USD"} employer_taxes={"amount":7650,"currency":"USD"}` {
+		t.Errorf("what each was paid: %v", pays)
+	}
+	if len(lines) != 8 || lines[2] != `kind="tax" name="Federal" employer=false` {
+		t.Errorf("the lines: %v", lines)
 	}
 	var cp string
 	for _, x := range recs["contractor_payments"] {
 		cp = x.ID
 	}
-	if p := rows("contractor_payments", cp).Pays; len(p) != 1 || p[0].Worker != "co0-c0" || *p[0].Gross.Minor != 80000 || *p[0].Net.Minor != 82000 {
-		t.Errorf("a contractor payment: %+v", p)
+	if got := cols(row("contractor_payments", cp), "worker", "wage_total", "reimbursement"); got != `worker=co0-c0 wage_total={"amount":80000,"currency":"USD"} reimbursement={"amount":2000,"currency":"USD"}` {
+		t.Errorf("a contractor payment: %s", got)
 	}
 }

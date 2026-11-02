@@ -1,9 +1,10 @@
 package main
 
-// Syncs: Archive keeps a copy of what each connection's account has, as rows of archive.record, in the streams
-// its connector declares (connect/sync.go). A sync runs only when something asks for one, and never on a
+// Syncs: Archive keeps a copy of what each connection's account has, as rows of the tables of its domain
+// (tables.go), in the streams its connector declares (connect/sync.go). A sync runs only when something asks for one, and never on a
 // timer, so the service can sleep: connecting, Sync now (POST /connect/<id>/sync), a push from the provider
-// (push.go), or a member reading record or opening the workspace while a connection is stale (syncCatchUp).
+// (push.go), or a member reading what it syncs or opening the workspace while a connection is stale
+// (syncCatchUp).
 // Asking moves the connection's asked_at on, and each stream then catches up to it: it is due until a page of
 // it ends with nothing more to come after the ask, and then waits for the next.
 //
@@ -58,30 +59,32 @@ var errRevoked = errors.New("revoked")
 
 // syncStream is where one stream of a connection is, in its cursor. At is when its next page is due, nil
 // now, while it is due; Done the ask it last caught up to, and Last when; Since when the full listing under
-// way began, which the records it has not read since are older than; Pages how many pages it has read for
-// this ask; Fails how many in a row failed, and Error why the last did. Rows is the version of Archive's tables
-// (syncRows) its records from before were last written into, and RowsAfter the last record's source_id that
-// writing them again has reached (syncFill). Named, kept on a connector's first stream, is when the account's
-// name was last asked for (syncRename).
+// way began, which the rows it has not read since are older than; Pages how many pages it has read for this
+// ask; Fails how many in a row failed, and Error why the last did. Rows is the version of Archive's tables its
+// rows are in (syncRowsVersion): a stream of an older one is due, and starts from scratch. Named, kept on a
+// connector's first stream, is when the account's name was last asked for (syncRename).
 type syncStream struct {
-	Cursor    string     `json:"cursor,omitempty"`
-	At        *time.Time `json:"at,omitempty"`
-	Done      *time.Time `json:"done,omitempty"`
-	Last      *time.Time `json:"last,omitempty"`
-	More      bool       `json:"more,omitempty"`
-	Since     *time.Time `json:"since,omitempty"`
-	Skip      string     `json:"skip,omitempty"`
-	Pages     int        `json:"pages,omitempty"`
-	Fails     int        `json:"fails,omitempty"`
-	Error     string     `json:"error,omitempty"`
-	Rows      int        `json:"rows,omitempty"`
-	RowsAfter string     `json:"rows_after,omitempty"`
-	Named     *time.Time `json:"named,omitempty"`
+	Cursor string     `json:"cursor,omitempty"`
+	At     *time.Time `json:"at,omitempty"`
+	Done   *time.Time `json:"done,omitempty"`
+	Last   *time.Time `json:"last,omitempty"`
+	More   bool       `json:"more,omitempty"`
+	Since  *time.Time `json:"since,omitempty"`
+	Skip   string     `json:"skip,omitempty"`
+	Pages  int        `json:"pages,omitempty"`
+	Fails  int        `json:"fails,omitempty"`
+	Error  string     `json:"error,omitempty"`
+	Rows   int        `json:"rows,omitempty"`
+	Named  *time.Time `json:"named,omitempty"`
 }
 
 // due says whether the stream has yet to catch up to the ask at asked: one that pulls only every so often
-// counts as caught up while it last did within every of the ask, unless a listing of it is under way.
+// counts as caught up while it last did within every of the ask, unless a listing of it is under way. One whose
+// rows are in older tables is due until it starts again.
 func (v *syncStream) due(asked time.Time, every time.Duration) bool {
+	if v.Rows < syncRowsVersion {
+		return true
+	}
 	if v.Done != nil && !v.Done.Before(asked) {
 		return false
 	}
@@ -158,12 +161,8 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 	// The first stream starting a listing asks again what the account is called, at most every syncRename.
 	var named bool
 	var account string
-	if gone == nil {
-		// Records synced before their tables are written into them first, a while at a time.
-		err = a.syncFill(ctx, c, streams, syncBudget/2)
-	}
-	if s != nil && err == nil {
-		cur := syncStateOf(c.Cursor).of(s.Name)
+	if s != nil {
+		cur := syncStateOf(c.Cursor).of(s.Name).fresh()
 		var cl *connect.Client
 		if cl, err = a.connClient(ctx, c); err == nil {
 			page, err = s.Pull(cl, cur.Cursor)
@@ -221,7 +220,9 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 		// With no stream picked, every stream has caught up to the ask, and only the connection is saved.
 		cur, name := &syncStream{}, ""
 		if s != nil {
-			cur, name = st.of(s.Name), s.Name
+			// A stream of older tables starts again from here, whatever this page did.
+			cur, name = st.of(s.Name).fresh(), s.Name
+			cur.Rows, st[s.Name] = syncRowsVersion, cur
 		}
 		var unsup *connect.Unsupported
 		switch {
@@ -242,7 +243,8 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 				cur.At, cur.Done, cur.Fails = nil, &c.AskedAt, 0
 			}
 		default:
-			if err := a.syncSave(ctx, q, c.ID, s, page, cur, now); err != nil {
+			w := &syncDB{q: q, db: a.st.Q(ctx), id: c.ID, acc: c2.Access, now: now}
+			if err := syncSave(ctx, w, s, page, cur); err != nil {
 				return err
 			}
 			if named {
@@ -281,11 +283,12 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 				save.SyncAt = &at
 			}
 		}
-		// A stream the connector no longer declares is gone, and so are its records.
+		// A stream the connector no longer declares is gone, and so are its rows.
 		for k := range st {
 			if !slices.ContainsFunc(streams, func(d *connect.Stream) bool { return d.Name == k }) {
 				delete(st, k)
-				if err := syncGone(ctx, q, c.ID, k); err != nil {
+				w := &syncDB{q: q, db: a.st.Q(ctx), id: c.ID, now: now}
+				if err := w.stream(ctx, k); err != nil {
 					return err
 				}
 			}
@@ -300,19 +303,23 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 	})
 }
 
-// syncSave writes the records of page of stream s to connection id, and what they are in Archive's tables
-// (syncRows), in the transaction at now; a record the page says is the Same is only seen. A page that ends a
-// full listing deletes the records it began after and did not read.
-func (a *Archive) syncSave(ctx context.Context, q *generated.Queries, id uuid.UUID, s *connect.Stream, page *connect.Page, cur *syncStream, now time.Time) error {
+// fresh is v, or where a stream whose rows are in older tables starts again: from scratch, its cursor and memory
+// forgotten, with only when the account was named kept.
+func (v *syncStream) fresh() *syncStream {
+	if v.Rows >= syncRowsVersion {
+		return v
+	}
+	return &syncStream{Named: v.Named}
+}
+
+// syncSave writes the records of page of stream s into its table with w, in the transaction at w.now; a record
+// the page says is the Same is only seen. A page that ends a full listing deletes the rows it began after and
+// did not read.
+func syncSave(ctx context.Context, w *syncDB, s *connect.Stream, page *connect.Page, cur *syncStream) error {
 	if page.Full && cur.Since == nil {
-		cur.Since = &now
+		cur.Since = &w.now
 	}
-	type rec struct {
-		ID      string          `json:"id"`
-		Data    json.RawMessage `json:"data"`
-		Updated *time.Time      `json:"updated"`
-	}
-	live, at := []rec{}, map[string]int{}
+	live, at := []syncRec{}, map[string]int{}
 	var gone, same []string
 	for _, r := range page.Records {
 		if r.ID == "" {
@@ -337,60 +344,34 @@ func (a *Archive) syncSave(ctx context.Context, q *generated.Queries, id uuid.UU
 		if err != nil {
 			return fmt.Errorf("record %s of %s: %w", r.ID, s.Name, err)
 		}
-		v := rec{ID: r.ID, Data: b}
-		if !r.Updated.IsZero() {
-			v.Updated = &r.Updated
-		}
 		at[r.ID] = len(live)
-		live = append(live, v)
+		live = append(live, syncRec{ID: r.ID, Data: b, Updated: r.Updated})
 	}
-	live = slices.DeleteFunc(live, func(r rec) bool { return r.ID == "" })
+	live = slices.DeleteFunc(live, func(r syncRec) bool { return r.ID == "" })
 	if len(live) > 0 {
-		b, _ := json.Marshal(live)
-		saved, err := q.SaveRecords(ctx, id, s.Name, b)
-		if err != nil {
+		if err := w.write(ctx, s, live); err != nil {
 			return err
-		}
-		if s.Rows != nil {
-			byID := map[string]json.RawMessage{}
-			for _, r := range live {
-				byID[r.ID] = r.Data
-			}
-			rows := make([]syncRow, len(saved))
-			for i, r := range saved {
-				rows[i] = syncRow{Record: r.ID, SourceID: r.SourceID, Data: byID[r.SourceID]}
-			}
-			if err := syncRows(ctx, q, id, s, rows); err != nil {
-				return err
-			}
 		}
 	}
 	if len(same) > 0 {
-		if err := q.SeeRecords(ctx, id, s.Name, same); err != nil {
+		if err := w.see(ctx, s, same); err != nil {
 			return err
 		}
 	}
 	if len(gone) > 0 {
-		ids, err := q.DeleteRecords(ctx, id, s.Name, gone)
-		if err := syncCleared(ctx, q, ids, err); err != nil {
+		if err := w.delete(ctx, s, gone); err != nil {
 			return err
 		}
 	}
 	switch {
 	case page.Full && !page.More:
-		ids, err := q.DeleteUnseenRecords(ctx, id, s.Name, *cur.Since)
+		err := w.unseen(ctx, s, *cur.Since)
 		cur.Since = nil
-		return syncCleared(ctx, q, ids, err)
+		return err
 	case !page.Full:
 		cur.Since = nil
 	}
 	return nil
-}
-
-// syncGone deletes the records of a stream connection id's connector no longer declares.
-func syncGone(ctx context.Context, q *generated.Queries, id uuid.UUID, stream string) error {
-	ids, err := q.DeleteStreamRecords(ctx, id, stream)
-	return syncCleared(ctx, q, ids, err)
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -484,7 +465,7 @@ func (a *Archive) syncWant(ctx context.Context, id uuid.UUID) (bool, error) {
 }
 
 // syncCatchUp asks for a sync of each of member's connections whose last is over syncStale old and that is not
-// syncing, as reading record or opening the workspace does. It does not wait for them: the read reads what
+// syncing, as reading what connections sync or opening the workspace does. It does not wait for them: the read reads what
 // there is, and the next sees what they bring.
 func (a *Archive) syncCatchUp(ctx context.Context, member uuid.UUID) {
 	ctx = context.WithValue(context.WithoutCancel(ctx), storeTxKey{}, nil)
@@ -502,14 +483,14 @@ func (a *Archive) syncCatchUp(ctx context.Context, member uuid.UUID) {
 }
 
 // streamTypes is the TypeScript the run tool's docs end with: a Streams interface of what the caller's
-// connections sync into record, by "<connector>.<stream>", each with what its data holds.
+// connections sync, by "<connector>.<stream>", each with what it pulls and the table it lands in.
 func (a *Archive) streamTypes(ctx context.Context) string {
 	var b strings.Builder
 	var conns []generated.ArchiveConnection
 	if ac := ActorFrom(ctx); ac != nil {
 		conns, _ = a.memberConnections(ctx, ac.member)
 	}
-	b.WriteString("\n" + runDoc("", `What record holds of the accounts you connected, by "<connector>.<stream>": its stream column is the part after the dot, and its connection column the connection's id (see Connected accounts in the header)`) + "interface Streams {\n")
+	b.WriteString("\n" + runDoc("", `What Archive syncs of the accounts you connected, by "<connector>.<stream>", and the table each lands in: its rows' stream column is the part after the dot, and their connection column the connection's id (see Connected accounts in the header)`) + "interface Streams {\n")
 	done := map[string]bool{}
 	for _, c := range conns {
 		p, err := a.hub.connector(c.Provider)
@@ -519,7 +500,7 @@ func (a *Archive) streamTypes(ctx context.Context) string {
 		done[p.ID] = true
 		for _, s := range p.Streams {
 			b.WriteString(runDoc("    ", p.Name+": "+s.Doc))
-			fmt.Fprintf(&b, "    %q: any;\n", p.ID+"."+s.Name)
+			fmt.Fprintf(&b, "    %q: %q;\n", p.ID+"."+s.Name, s.Table)
 		}
 	}
 	b.WriteString("}\n")

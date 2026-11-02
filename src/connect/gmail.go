@@ -90,7 +90,7 @@ func init() {
 				}),
 		},
 		Push: gmailPush,
-		Streams: []*Stream{{Name: "messages", Gap: 5 * time.Second, Pull: gmailMessages, Rows: gmailRows,
+		Streams: []*Stream{{Name: "messages", Gap: 5 * time.Second, Pull: gmailMessages, Table: "mail_message", Rows: gmailRows,
 			Doc: "Every message but spam and trash, each as the message action returns it without its HTML, its text cut at 64 KB: " +
 				"listed whole the first time, 50 a page, and then the mailbox's history since, messages added, deleted or relabeled. " +
 				"A history Gmail no longer keeps, about a week's, lists the mailbox whole again."}},
@@ -247,23 +247,24 @@ func gmailRecords(c *Client, ids []string, gone map[string]bool) ([]Record, erro
 	return kept, nil
 }
 
-// gmailRows is a message as mail: its headers' addresses are its parties, and it was sent when its Date says,
-// or else when Gmail had it.
-func gmailRows(m map[string]any) *Rows {
-	sent, err := mail.ParseDate(str(m, "date"))
-	if err != nil {
-		sent = stamp(str(m, "internalDate"))
+// gmailRows is a message as mail: its text, its headers' addresses as its parties, and its attachments. It was
+// sent when its Date says, or else when Gmail had it.
+func gmailRows(m map[string]any) *Row {
+	sent := instant(str(m, "internalDate"))
+	if t, err := mail.ParseDate(str(m, "date")); err == nil {
+		sent = t.UTC().Format(time.RFC3339)
 	}
-	x := &Mail{Thread: str(m, "threadId"), Subject: str(m, "subject"), Snippet: str(m, "snippet"), Sent: sent.UTC(), Labels: strs(m["labelIds"])}
-	if atts, ok := m["attachments"].([]any); ok {
-		x.Attachments = len(atts)
-	}
+	r := rowOf(map[string]any{"thread": str(m, "threadId"), "subject": str(m, "subject"), "snippet": str(m, "snippet"), "text": str(m, "text"),
+		"sent_at": sent, "received_at": instant(str(m, "internalDate")), "labels": strs(m["labelIds"])})
 	for _, role := range []string{"from", "to", "cc", "bcc", "reply_to"} {
 		for _, a := range addresses(str(m, strings.ReplaceAll(role, "_", "-"))) {
-			x.Parties = append(x.Parties, MailParty{Role: role, Address: a})
+			r.child("mail_party", rowOf(map[string]any{"role": role, "name": a.Name}).person("person", a.Address))
 		}
 	}
-	return &Rows{Mail: x}
+	for _, f := range objects(m["attachments"], "") {
+		r.child("mail_attachment", rowOf(map[string]any{"filename": str(f, "filename"), "mime": str(f, "mimeType"), "size": decimal(f["size"])}))
+	}
+	return r
 }
 
 const gmailAPI = "https://gmail.googleapis.com/gmail/v1/users/me"

@@ -1,8 +1,8 @@
 package connect
 
-// A connector's Streams are what Archive keeps a copy of for each account connected to it: the kinds of record
-// it pulls, like Gmail's messages. A stream pulls a page at a time from a cursor, which the caller keeps with
-// the connection between pages: "" the first time, when it lists everything there is, and after that the
+// A connector's Streams are what Archive keeps a copy of for each account connected to it, in its tables: the
+// kinds of record it pulls, like Gmail's messages. A stream pulls a page at a time from a cursor, which the
+// caller keeps with the connection between pages: "" the first time, when it lists everything there is, and after that the
 // Cursor of the page before, which pages on or, once caught up, starts the next delta, the records changed
 // since. Each pull is one page of a provider's quota, so the caller runs them as tasks of their own, Gap
 // apart, while one has more to come, and stops once it has caught up: what starts the next delta is the
@@ -32,7 +32,7 @@ import (
 
 // Stream is a kind of record a connector syncs.
 type Stream struct {
-	// Name is the record's stream in archive.record, like messages.
+	// Name is the stream, like messages, which its rows keep in their stream column.
 	Name string
 	// Doc says what it pulls and how, and what it cannot see, for the docs.
 	Doc string
@@ -43,9 +43,10 @@ type Stream struct {
 	Every time.Duration
 	// Pull is the page after cursor. An *Unsupported error skips the stream, a day at a time.
 	Pull func(c *Client, cursor string) (*Page, error)
-	// Rows is what a record's data is in Archive's tables (tables.go), nil when it is nothing there; a stream
-	// without Rows lands in archive.record alone.
-	Rows func(data map[string]any) *Rows
+	// Table is the table of archive.sql its records land in, and Rows the row a record's data is there
+	// (tables.go); nil leaves the record out.
+	Table string
+	Rows  func(data map[string]any) *Row
 }
 
 // Page is what one pull found.

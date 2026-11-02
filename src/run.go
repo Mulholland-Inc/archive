@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"path"
@@ -926,7 +927,7 @@ func runParam(v any) any {
 // back, so Postgres refuses any write.
 func (a *Archive) runQuery(ctx context.Context, query string, params []any) ([]map[string]any, error) {
 	q := strings.TrimRightFunc(strings.TrimSpace(query), func(r rune) bool { return r == ';' || unicode.IsSpace(r) })
-	if runRecordRe.MatchString(q) {
+	if runSyncedRe.MatchString(q) {
 		a.syncOnRead(ctx)
 	}
 	fail := func(err error) error {
@@ -1210,7 +1211,7 @@ func runTypes(cat *Catalog) string {
 				ts = "WorkflowOn | null"
 			case tb.Schema == "archive" && tb.Name == "workflow_run" && c.Name == "logs":
 				ts = "string[]"
-			case tb.Schema == "archive" && (tb.Name == "workflow_run" && c.Name == "result" || tb.Name == "record" && c.Name == "data"):
+			case tb.Schema == "archive" && tb.Name == "workflow_run" && c.Name == "result":
 				ts = "any"
 			}
 			fmt.Fprintf(&b, "    %s%s: %s;\n", runProp(c.Name), opt, ts)
@@ -1220,8 +1221,8 @@ func runTypes(cat *Catalog) string {
 	return b.String()
 }
 
-// runRecordRe finds a query that may read record, or a table synced with it, whose syncs a read catches up.
-var runRecordRe = regexp.MustCompile(`(?i)\b(record|known_person|known_org|mail_message|mail_party|doc_page|payroll_company|payroll_worker|payroll_run|payroll_pay)\b`)
+// runSyncedRe finds a query that may read a table Archive syncs from connections, whose syncs a read catches up.
+var runSyncedRe = regexp.MustCompile(`(?i)\b(known_person|known_org|` + strings.Join(slices.Sorted(maps.Keys(syncSchema)), "|") + `)\b`)
 
 var runIdentRe = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*$`)
 

@@ -13,8 +13,8 @@ import (
 // Asana, read only: workspaces, projects and tasks. It reads ARCHIVE_ASANA, an app of the Asana developer
 // console distributed to any workspace, whose redirect URLs list <API>/connect/asana/callback and whose OAuth
 // permission scopes include the Scopes here; with webhooks:read, webhooks:write and webhooks:delete too, and
-// ?push=1 on the variable, it asks for those, which its pushes need (pushers.go). An account connected without
-// them syncs only when asked. Asana's MCP server lets no client register itself, so
+// ?push=1 on the variable, it asks for those, which its pushes need (asanaPush). It syncs nothing until its
+// tasks have tables in archive.sql. Asana's MCP server lets no client register itself, so
 // this is its REST API. Revoking takes the client's credentials with the refresh token.
 func init() {
 	Register(&Connector{
@@ -88,21 +88,8 @@ func init() {
 				}),
 		},
 		Push: asanaPush,
-		Streams: []*Stream{
-			{Name: "workspaces", Pull: asanaWorkspaces,
-				Doc: "The workspaces and organizations you are in, { gid, name }, listed whole each sync."},
-			{Name: "projects", Pull: asanaProjects,
-				Doc: "The projects of every workspace that are not archived, listed whole each sync, so one archived or deleted is deleted: " +
-					"{ gid, name, owner, due_on, start_on, archived, color, notes, created_at, modified_at, permalink_url, workspace, team }."},
-			{Name: "tasks", Pull: asanaTasks,
-				Doc: "The tasks of every project that is not archived, and those assigned to you in each workspace, done or not, with " + asanaTaskFields +
-					": all the first time and then those modified since, 100 a page. Asana does not say which were deleted, so they stay."},
-		},
 	})
 }
-
-const asanaTaskFields = "name,notes,assignee.name,assignee.email,due_on,due_at,start_on,completed,completed_at,created_at,modified_at,permalink_url," +
-	"projects.name,parent.name,tags.name,memberships.section.name,workspace.name"
 
 // asanaPage is a page of a list of Asana's: its data, and the offset of the next.
 type asanaPage struct {
@@ -136,107 +123,6 @@ func asanaAll(c *Client, path string) ([]map[string]any, error) {
 			return out, nil
 		}
 	}
-}
-
-func asanaRecords(rows []map[string]any) []Record {
-	out := make([]Record, 0, len(rows))
-	for _, r := range rows {
-		if n, ok := r["notes"].(string); ok {
-			r["notes"] = clip(n, maxText)
-		}
-		out = append(out, Record{ID: str(r, "gid"), Data: r, Updated: stamp(str(r, "modified_at"))})
-	}
-	return out
-}
-
-func asanaWorkspaces(c *Client, cursor string) (*Page, error) {
-	ws, err := asanaAll(c, "/workspaces?opt_fields=name")
-	return &Page{Full: true, Records: asanaRecords(ws)}, err
-}
-
-// asanaProjects lists the projects whole, a workspace a page.
-func asanaProjects(c *Client, cursor string) (*Page, error) {
-	var todo []string
-	if err := cursorOf(cursor, &todo); err != nil {
-		return nil, err
-	}
-	if len(todo) == 0 {
-		ws, err := asanaAll(c, "/workspaces?opt_fields=name")
-		if err != nil {
-			return nil, err
-		}
-		for _, w := range ws {
-			todo = append(todo, str(w, "gid"))
-		}
-		if len(todo) == 0 {
-			return &Page{Full: true}, nil
-		}
-	}
-	ps, err := asanaAll(c, "/projects?archived=false&opt_fields=name,owner.name,due_on,start_on,archived,color,notes,created_at,modified_at,permalink_url,workspace.name,team.name&workspace="+url.QueryEscape(todo[0]))
-	if err != nil {
-		return nil, err
-	}
-	page := &Page{Full: true, More: len(todo) > 1, Records: asanaRecords(ps)}
-	if page.More {
-		page.Cursor = cursorFor(todo[1:])
-	}
-	return page, nil
-}
-
-// asanaCursor is where the tasks stream is: Since is when the round before began, for the tasks modified since,
-// and Start this round's; Todo the lists this round has left, the first under way at Offset.
-type asanaCursor struct {
-	Since  string   `json:"since,omitempty"`
-	Start  string   `json:"start,omitempty"`
-	Todo   []string `json:"todo,omitempty"`
-	Offset string   `json:"offset,omitempty"`
-}
-
-func asanaTasks(c *Client, cursor string) (*Page, error) {
-	var cur asanaCursor
-	if err := cursorOf(cursor, &cur); err != nil {
-		return nil, err
-	}
-	if len(cur.Todo) == 0 {
-		cur.Start = time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
-		ws, err := asanaAll(c, "/workspaces?opt_fields=name")
-		if err != nil {
-			return nil, err
-		}
-		for _, w := range ws {
-			ps, err := asanaAll(c, "/projects?archived=false&opt_fields=name&workspace="+url.QueryEscape(str(w, "gid")))
-			if err != nil {
-				return nil, err
-			}
-			for _, p := range ps {
-				cur.Todo = append(cur.Todo, "project="+url.QueryEscape(str(p, "gid")))
-			}
-			cur.Todo = append(cur.Todo, "assignee=me&workspace="+url.QueryEscape(str(w, "gid")))
-		}
-		if len(cur.Todo) == 0 {
-			return &Page{Cursor: cursorFor(asanaCursor{Since: cur.Start})}, nil
-		}
-	}
-	u := asanaAPI + "/tasks?" + cur.Todo[0] + "&limit=100&opt_fields=" + asanaTaskFields
-	if cur.Since != "" {
-		u += "&modified_since=" + url.QueryEscape(cur.Since)
-	}
-	if cur.Offset != "" {
-		u += "&offset=" + url.QueryEscape(cur.Offset)
-	}
-	var p asanaPage
-	if err := c.Get(u, &p); err != nil {
-		return nil, err
-	}
-	page := &Page{Records: asanaRecords(p.Data)}
-	if cur.Offset = p.next(); cur.Offset == "" {
-		cur.Todo = cur.Todo[1:]
-	}
-	if page.More = len(cur.Todo) > 0; !page.More {
-		cur = asanaCursor{Since: cur.Start}
-	}
-	page.Cursor = cursorFor(cur)
-	return page, nil
 }
 
 const asanaAPI = "https://app.asana.com/api/1.0"

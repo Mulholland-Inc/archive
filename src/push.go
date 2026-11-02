@@ -242,7 +242,7 @@ func (a *Archive) unwatch(ctx context.Context, c generated.ArchiveConnection, p 
 	return errors.Join(append(errs, a.hub.q().DropWatches(ctx, c.ID, []string{}))...)
 }
 
-// syncOnRead catches up the caller's syncs, as reading record does.
+// syncOnRead catches up the caller's syncs, as reading what they sync does.
 func (a *Archive) syncOnRead(ctx context.Context) {
 	if ac := ActorFrom(ctx); ac != nil && ac.member != uuid.Nil {
 		a.syncCatchUp(ctx, ac.member)
