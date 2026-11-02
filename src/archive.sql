@@ -2121,8 +2121,11 @@ WHERE id = (SELECT c.id FROM archive.connection c WHERE c.sync_at <= now() AND (
     ORDER BY c.sync_at LIMIT 1 FOR UPDATE SKIP LOCKED)
 RETURNING *;
 
+-- When a sync is next due: a connection whose page another task holds is looked at again shortly, not when its
+-- lease runs out, since that task queues the next itself once its page is done (connection.go, syncLeaseCheck).
 -- name: NextSyncAt :one
-SELECT greatest(sync_at, coalesce(lease_at, sync_at))::timestamptz FROM archive.connection WHERE sync_at IS NOT NULL ORDER BY 1 LIMIT 1;
+SELECT greatest(sync_at, least(coalesce(lease_at, sync_at), sqlc.arg(soon)::timestamptz))::timestamptz FROM archive.connection
+WHERE sync_at IS NOT NULL ORDER BY 1 LIMIT 1;
 
 -- name: SaveSync :exec
 UPDATE archive.connection SET cursor = sqlc.arg(cursor), sync_at = sqlc.narg(sync_at), synced_at = coalesce(sqlc.narg(synced_at), synced_at),
