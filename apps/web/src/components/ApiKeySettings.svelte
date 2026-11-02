@@ -5,7 +5,7 @@
   import Art from './Art.svelte';
   import IconButton from './IconButton.svelte';
   import Button from './Button.svelte';
-  import { app, ws, vaultKey, rotateKey, isVaultOwner, loadVaultKey } from '../lib/app.svelte.js';
+  import { app, ws, vaultKey, rotateKey, isVaultOwner, tokens } from '../lib/app.svelte.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
   import { apiPrompt } from '../lib/apiprompt.js';
 
@@ -20,10 +20,7 @@
   const hidden = $derived(vault && !secret);
   const masked = $derived(secret ? `${secret.slice(0, secret.lastIndexOf('_') + 1)}${'•'.repeat(12)}${secret.slice(-4)}` : key ? `arc_${'•'.repeat(16)}` : 'No key yet');
 
-  $effect(() => {
-    app.vault;
-    if (vault) loadVaultKey();
-  });
+  tokens.use(() => vault && app.vault);
 
   async function copy() {
     await navigator.clipboard?.writeText(secret).catch(() => {});

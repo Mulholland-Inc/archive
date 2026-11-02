@@ -14,8 +14,8 @@
   import Skeleton from '../components/Skeleton.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
   import { MessageSquareOff } from '@lucide/svelte';
-  import { app, ws, renameChat } from '../lib/app.svelte.js';
-  import { openChat, sendMessage, stopChat } from '../lib/chat.svelte.js';
+  import { app, ws, renameChat, chats } from '../lib/app.svelte.js';
+  import { conversation, sendMessage, stopChat } from '../lib/chat.svelte.js';
 
   let { id } = $props();
 
@@ -49,8 +49,10 @@
     toBottom(true);
   }
 
+  chats.use();
+  conversation.use(() => chat && !chat.draft && id);
   $effect(() => {
-    if (chat && !chat.draft && !chat.loaded) openChat(id).then(() => toBottom(true));
+    if (chat?.loaded) toBottom(true);
   });
 
   onMount(() => {

@@ -112,7 +112,7 @@ SELECT 'trigger', n.nspname::text, c.relname::text, g.tgname::text, 'g' || g.oid
         WHEN 'A' THEN format(E';\nALTER TABLE %s ENABLE ALWAYS TRIGGER %I', g.tgrelid::regclass, g.tgname) ELSE '' END,
     '', coalesce(obj_description(g.oid, 'pg_trigger'), ''), '', false, false, 0, 0, '{}'
 FROM pg_trigger g JOIN pg_class c ON c.oid = g.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE n.nspname = ANY($1) AND NOT g.tgisinternal AND g.tgparentid = 0
+WHERE n.nspname = ANY($1) AND NOT g.tgisinternal AND g.tgparentid = 0 AND NOT (n.nspname = 'public' AND g.tgname = 'archive_moved')
 UNION ALL
 SELECT 'policy', n.nspname::text, c.relname::text, p.polname::text, 'o' || p.oid, concat_ws(' ', CASE WHEN NOT p.polpermissive THEN 'AS RESTRICTIVE' END,
         CASE p.polcmd WHEN 'r' THEN 'FOR SELECT' WHEN 'a' THEN 'FOR INSERT' WHEN 'w' THEN 'FOR UPDATE' WHEN 'd' THEN 'FOR DELETE' END,

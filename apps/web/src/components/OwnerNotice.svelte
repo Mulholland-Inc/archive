@@ -1,7 +1,9 @@
 <script>
   import { Lock } from '@lucide/svelte';
   import Icon from './Icon.svelte';
-  import { ws } from '../lib/app.svelte.js';
+  import { ws, members } from '../lib/app.svelte.js';
+
+  members.use();
 
   let { what = 'this', ask = 'to connect or change one' } = $props();
   const owners = $derived(ws().members.filter((m) => m.role === 'owner' && m.status === 'active').map((m) => m.name));

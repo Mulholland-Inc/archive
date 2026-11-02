@@ -10,6 +10,9 @@ locals {
   required = {
     DATABASE_URL       = "host=/cloudsql/${google_sql_database_instance.this.connection_name} user=${google_sql_user.this.name} password=${random_password.db.result} dbname=${google_sql_database.this.name}"
     ARCHIVE_SECRET_KEY = random_id.secret_key.hex
+    # The key the API announces live changes to the app Worker with (apps/web/worker.js); CI sets it on the
+    # Worker as LIVE_KEY.
+    ARCHIVE_LIVE_KEY = random_password.live.result
   }
   signin = {
     ARCHIVE_GOOGLE    = ["accounts.google.com", var.google_client_id, var.google_client_secret]
@@ -56,6 +59,11 @@ resource "google_artifact_registry_repository" "ghcr" {
 
 resource "random_password" "db" {
   length  = 32
+  special = false
+}
+
+resource "random_password" "live" {
+  length  = 48
   special = false
 }
 
@@ -542,6 +550,15 @@ resource "cloudflare_workers_custom_domain" "app" {
   service    = cloudflare_workers_script.app.script_name
 }
 
+# The browser's live-data socket is api.<domain>/live, so it carries the API's own session cookie; this route sends
+# it, and the API's announces to /live/announce, to the app Worker, which hands them to the workspace's Durable
+# Object. Every other path on api.<domain> still reaches Cloud Run.
+resource "cloudflare_workers_route" "live" {
+  zone_id = data.cloudflare_zone.this.zone_id
+  pattern = "api.${var.domain}/live*"
+  script  = cloudflare_workers_script.app.script_name
+}
+
 data "cloudflare_account_api_token_permission_groups_list" "this" {
   count      = var.github_repository != "" ? 1 : 0
   account_id = data.cloudflare_zone.this.account.id
@@ -563,6 +580,13 @@ resource "github_actions_secret" "app" {
   repository  = split("/", var.github_repository)[1]
   secret_name = "CLOUDFLARE_API_TOKEN"
   value       = cloudflare_account_token.app[0].value
+}
+
+resource "github_actions_secret" "live" {
+  count       = var.github_repository != "" ? 1 : 0
+  repository  = split("/", var.github_repository)[1]
+  secret_name = "ARCHIVE_LIVE_KEY"
+  value       = random_password.live.result
 }
 
 resource "google_iam_workload_identity_pool" "github" {

@@ -95,3 +95,11 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+
+      # The key the API announces live changes with; Terraform makes it and puts it in this secret.
+      - run: |
+          if [ -n "$ARCHIVE_LIVE_KEY" ]; then printf %s "$ARCHIVE_LIVE_KEY" | npx --yes wrangler@4 secret put LIVE_KEY; fi
+        env:
+          ARCHIVE_LIVE_KEY: ${{ secrets.ARCHIVE_LIVE_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}

@@ -228,6 +228,9 @@ func (a *Archive) joined(ctx context.Context, email, name string) (*User, error)
 			u.Name = name
 		}
 	}
+	if err == nil {
+		a.hub.liveUser(ctx, u.ID)
+	}
 	return u, err
 }
 
@@ -268,8 +271,12 @@ func (a *Archive) syncMembers(ctx context.Context, removals bool) error {
 	for _, m := range ms {
 		keep[m.Email] = true
 		if !in[m.Email] {
-			if _, err := hq.JoinWorkspace(ctx, m.Email, "", a.ws.ID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			u, err := hq.JoinWorkspace(ctx, m.Email, "", a.ws.ID)
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return err
+			}
+			if err == nil {
+				a.hub.liveUser(ctx, u.ID)
 			}
 		}
 	}
@@ -296,6 +303,9 @@ func (a *Archive) syncMembers(ctx context.Context, removals bool) error {
 		if err := hq.LeaveWorkspace(ctx, a.ws.ID, u.ID); err != nil {
 			return err
 		}
+		a.hub.live.drop(a.ws.ID.String(), u.ID.String())
+		a.hub.live.moved(a.ws.ID.String(), liveChange{Table: "archive.token"})
+		a.hub.liveUser(ctx, u.ID)
 	}
 	return nil
 }
@@ -381,6 +391,7 @@ func (a *Archive) CreateToken(ctx context.Context, name string, ttl time.Duratio
 		}
 		row, err := a.hub.q().CreateToken(ctx, generated.CreateTokenParams{ID: t.ID, UserID: ac.UserID, Workspace: &a.ws.ID, Name: t.Name, Role: role, Hash: authHash(t.Secret), ExpiresAt: exp})
 		t.CreatedAt, t.ExpiresAt = row.CreatedAt, row.ExpiresAt
+		a.moved(ctx, "archive.token", t.ID.String())
 		return err
 	})
 }
@@ -407,6 +418,9 @@ func (a *Archive) RevokeToken(ctx context.Context, id uuid.UUID) error {
 		role, err := a.hub.q().RevokeToken(ctx, id, ac.UserID, &a.ws.ID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("token %s: %w", id, ErrNotFound)
+		}
+		if err == nil {
+			a.moved(ctx, "archive.token", id.String())
 		}
 		if err != nil || role == "" {
 			return err

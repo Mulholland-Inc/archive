@@ -29,9 +29,13 @@
   import PasskeyPrompt from './components/PasskeyPrompt.svelte';
   import Spinner from './components/Spinner.svelte';
   import { Workflow as WorkflowIcon, Plug, User, Building2, ListChecks, Server, KeyRound, Blocks } from '@lucide/svelte';
-  import { switchVault, openSettings, openVaultSettings, boot } from './lib/app.svelte.js';
+  import { switchVault, openSettings, openVaultSettings, boot, account, chats, library, schema, members, workflows } from './lib/app.svelte.js';
 
   boot();
+
+  // Who you are and your vaults are always on screen; the palette lists everything else while it is open.
+  account.use(() => app.status === 'ready');
+  for (const r of [chats, library, schema, members, workflows]) r.use(() => app.status === 'ready' && app.palette);
 
   let last = '/';
 

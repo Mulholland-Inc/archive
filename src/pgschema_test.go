@@ -21,7 +21,7 @@ func pgTestStore(t *testing.T) *pgStore {
 		t.Fatal(err)
 	}
 	s := &pgStore{cfg: cfg, prefix: "x"}
-	if s.sys, err = storePool(t.Context(), cfg, 4, nil); err != nil {
+	if s.sys, err = storePool(t.Context(), cfg, 4, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.sys.Close)
@@ -39,7 +39,7 @@ func pgTestDB(t *testing.T, s *pgStore, name string, sqls ...string) *pgxpool.Po
 	}
 	cfg := s.cfg.Copy()
 	cfg.Database = name
-	db, err := storePool(t.Context(), cfg, 2, nil)
+	db, err := storePool(t.Context(), cfg, 2, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

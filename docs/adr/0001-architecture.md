@@ -127,6 +127,30 @@ A workflow is a saved script, `<name>.ts`, that Archive runs by itself. Clients 
 - **Webhooks**: `POST /hooks/run/<workspace>/<token>` on the API sits beside the connectors' `/hooks/<provider>` (ADR 0002), outside the authenticated `/api` mux. The token is the only credential. The body is passed as parsed JSON or raw text with the method, query and headers, and the response is the run's result as JSON, or 500 with the error.
 - **API**: `GET /api/workflows`, `GET /api/workflows/{name}/runs` and `POST /api/workflows/{name}/run`; the app's Workflows screen lists them in plain words, with their runs and webhook URL, and never shows code.
 
+## Live data
+
+Everything the web app shows updates by itself when it changes anywhere: another tab, another person, the assistant, a workflow run, MCP, the CLI or the HTTP API. Nothing polls. A write says what it moved, and every app looking at that workspace reads that data again through the API.
+
+```mermaid
+flowchart LR
+  W[Any write in a transaction] -- trigger: pg_notify on the session's own channel --> G[Go, inside COMMIT]
+  G -- "{workspace, changes: [{table, id}]}" --> E[app Worker /live/announce]
+  E --> D[(Durable Object, one per workspace)]
+  D -- "{event: change, changes}" --> B1[Browser]
+  D --> B2[Browser]
+  B1 -- re-reads --> API[HTTP API, row-level security]
+```
+
+- **Where it starts: Postgres.** Every table a workspace writes has an `AFTER` trigger, `archive.moved()`. Archive's own tables (`chat`, `file`, `member`, `workflow`, `workflow_run`, `revision`) fire it per row and name the row's id; every public table gets a statement trigger, `archive_moved`, which `archive.migrate` adds to new tables and a workspace adds to older ones when it opens. It is plumbing, like row-level security, so `schema show` and a migration's changes leave it out. The trigger calls `pg_notify('archive_moved_<pid>', '<table> <id>')`: a channel named for the writing session, which only that session listens on (every pooled connection runs `LISTEN` on its own channel when it connects). Postgres delivers a notification only when its transaction commits, drops it with a rolled-back savepoint (so `archive.test` announces nothing), and folds repeats within a transaction into one. The notification comes back on the connection that wrote, inside the `COMMIT`, in the goroutine that committed. So every write path is live with no code of its own, and a new table or feature is too. Writes from outside Archive (psql) are not heard.
+- **The main database's rows** (`archive.user`, `archive.token`, `archive.workspace`) are shared by every workspace and written outside a workspace's store, so those few writes announce themselves from Go: a token made or revoked, a person added or removed (who is also told on every workspace they are in, since their list of workspaces moved), a workspace renamed or deleted (told to all its members, once the deletion is done).
+- **What it carries**: the table that moved (`invoice`, or `archive.chat` for Archive's own) and, for Archive's own rows, the id. Never row data, so a frame tells a reader nothing it could not read anyway; a browser reads again through the API, so row-level security decides what each person sees.
+- **Coalescing**: Go holds changes per workspace for 100 ms and sends them as one announce, at most 20 ids per table (past that, the table alone). Every request sends what it moved before it ends, after its answer, because Cloud Run takes the CPU away once a request is done; a long request (a chat answer, a run) sends every 100 ms as it goes.
+- **Where it goes**: with `ARCHIVE_LIVE_KEY`, one authenticated POST to the app Worker's `/live/announce`, which relays it to the workspace's Durable Object and on to every socket there ([ADR 0003](0003-hosting.md#live-data-at-the-edge)). Without it, `archive serve` is its own edge: it holds the sockets in process at `/live` with the same frames, and other `archive` commands on the machine (the CLI) POST their announces to it. On Cloud Run without a key, live data is off rather than holding sockets that keep instances awake.
+- **The protocol**: a WebSocket to `<API>/live?workspace=<id>`, authenticated by the session cookie. The server sends `{"event":"ready","workspace":…}` once, then `{"event":"change","changes":[{"table":…,"id":…}]}` per announce; the client may send `ping`, answered `pong`. A person removed from the workspace has their sockets closed (code 4003). Frames from the client beyond `ping` are reserved for presence and drafts later.
+- **WebSockets, not server-sent events**: the Durable Object accepts sockets through the WebSocket hibernation API, so a socket with nothing to hear costs nothing and the object sleeps between announces; an open SSE response would keep the object awake, and billed, for as long as any tab is open. A WebSocket also lets the browser send frames later (presence, typing, drafts) on the same connection.
+- **The client** (`apps/web/src/lib/stream.svelte.js`): one socket per tab for the open workspace, and one primitive, `resource({tables, load})`. A screen declares the data it shows with `r.use()` (or `r.use(() => id)` for one chat, one workflow's runs, one table's rows). While it is mounted, a change to one of its tables reads it again; data nobody has on screen is only marked stale and read when a screen next uses it; a hidden tab marks what it shows stale and reads it when it is shown. A change naming a row reads only the resource for that row. Switching workspace closes the socket and opens the new one; signing out closes it.
+- **Reconnecting**: backoff from 1 s doubling to 30 s, jittered, forgiven only after a socket held for 10 s, so a socket that opens and drops cannot become a reconnect loop. A socket that comes back may have missed changes, so what is on screen is read once more, at most once every 15 s, and the rest is marked stale. That is the only read a reconnect causes; there is no sweep on a timer and no re-read of everything on connect.
+
 ## Agent workflows
 
 These run in the agent, as code against the SDK. The ones that recur can be saved as workflows that Archive runs on its own.

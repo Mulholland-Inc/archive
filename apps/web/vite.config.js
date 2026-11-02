@@ -7,5 +7,5 @@ const kit = new URL('../kit', import.meta.url).pathname;
 export default defineConfig({
   plugins: [svelte()],
   resolve: { alias: { '#kit': kit } },
-  server: { port: 5173, strictPort: true, fs: { allow: ['.', kit] }, proxy: { '/api': archive, '/auth': archive } }
+  server: { port: 5173, strictPort: true, fs: { allow: ['.', kit] }, proxy: { '/api': archive, '/auth': archive, '/live': { target: process.env.ARCHIVE_LIVE_DEV ?? archive, ws: true } } }
 });
