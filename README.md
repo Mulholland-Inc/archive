@@ -15,8 +15,7 @@
   <a href="https://archive.us.org">Website</a> ·
   <a href="https://archive.us.org/docs">Docs</a> ·
   <a href="#connect-your-agent">Connect your agent</a> ·
-  <a href="#run-it-anywhere">Run it anywhere</a> ·
-  <a href="docs/adr/0001-architecture.md">Architecture</a>
+  <a href="#run-it-anywhere">Run it anywhere</a>
 </p>
 
 ---
@@ -83,7 +82,7 @@ The same data and the same permissions, whichever way in:
 | The `archive` CLI | Scripts, scheduled jobs and quick changes from your terminal |
 | [Terraform provider](apps/terraform/provider) | Your migrations, members and tokens, kept with the rest of your setup |
 
-Upload any file and Archive pulls out its text, so one search covers every table and file you can see. Each person connects their own Gmail, Google Drive, Outlook and Notion in Settings, Connectors, and an owner connects the archive's QuickBooks, HubSpot, GitHub, Asana, Linear, Sentry, Stripe and Gusto once for everyone in Archive settings, Integrations; Archive syncs a copy of Gmail, Notion and Gusto into built-in tables of their domain, like `mail_message`, `doc_page` and `payroll_run`, shared by connectors of one domain and matched across them by email address and EIN, when the service says something changed, when they ask, and when someone reads it after a while, never on a timer: what a person's connection syncs is theirs alone, and an integration's everyone's, or one group's. The other connectors connect and act, and sync once their tables are built. Scripts act on the accounts with `archive.action`. What each connector syncs, and how, is in its file in [src/connect](src/connect); [ADR 0002](docs/adr/0002-connectors.md) is the design.
+Upload any file and Archive pulls out its text, so one search covers every table and file you can see. Each person connects their own Gmail, Google Drive, Outlook and Notion in Settings, Connectors, and an owner connects the archive's QuickBooks, HubSpot, GitHub, Asana, Linear, Sentry, Stripe and Gusto once for everyone in Archive settings, Integrations; Archive syncs a copy of Gmail, Notion and Gusto into built-in tables of their domain, like `mail_message`, `doc_page` and `payroll_run`, shared by connectors of one domain and matched across them by email address and EIN, when the service says something changed, when they ask, and when someone reads it after a while, never on a timer: what a person's connection syncs is theirs alone, and an integration's everyone's, or one group's. The other connectors connect and act, and sync once their tables are built. Scripts act on the accounts with `archive.action`. What each connector syncs, and how, is in its file in [src/connect](src/connect).
 
 Everyone in a workspace is a `viewer`, an `editor` or an `owner`. Viewers read, editors also write, and owners also change the schema, manage people and see everything. Put people in groups, like `finance`, and set a row's `access` to `finance` so only that group and the owners see it; rows with no access are seen by the whole workspace. People, roles and groups are real Postgres roles, and every table has row-level security, so the database itself checks every row against who is asking. Archive is invite-only: an owner adds people by email on the Users page or with `archive user add`, and their first sign-in with Google, Microsoft, Slack or GitHub under that email, verified by the provider, links them. After that they can add a passkey to each device.
 
@@ -245,8 +244,6 @@ flowchart LR
 | [`apps/web`](apps/web) | The Svelte 5 web app |
 | [`apps/site`](apps/site) | [archive.us.org](https://archive.us.org) and the docs |
 | [`apps/terraform`](apps/terraform) | The Google Cloud setup and the Terraform provider |
-| [`demo`](demo) | A made-up personal archive: 18 tables, about 820 rows and 35 files to try it with |
-| [`docs/adr`](docs/adr) | Architecture decisions |
 
 ## Develop
 
@@ -257,13 +254,10 @@ docker compose up -d                  # Postgres 18 on localhost:5433
 ```sh
 cd src
 go build -o archive .
-go test ./...                         # end-to-end tests; each starts its own Postgres 18 with initdb and postgres from PATH
 export DATABASE_URL="postgres://archive:archive@localhost:5433/archive?sslmode=disable"
-ARCHIVE_BIN=./archive ../demo/load.sh you@example.com
+./archive user add you@example.com   # the first member is an owner
 ./archive serve                       # API, sign-in and MCP on :8080, key and files in ./data; it runs workflows and files when they are due
 ```
-
-`ARCHIVE_BIN=./archive ../demo/family/load.sh` loads a made-up family, five generations deep, for the family tree. Load it instead of the demo, not alongside it: both have a `person` table.
 
 ```sh
 cd apps/web && npm install && npm run dev   # web app with hot reload on :5173, calling the API on :8080

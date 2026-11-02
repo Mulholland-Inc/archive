@@ -1,6 +1,6 @@
 // The HTTP API. On app.<domain> it is api.<domain>; anywhere else (vite dev on :5173) it is the same origin,
 // which vite proxies to `archive serve` on :8080. The session is the API host's own cookie, and the current
-// workspace goes along in the Archive-Workspace header (docs/adr/0003-hosting.md).
+// workspace goes along in the Archive-Workspace header, since one API host serves every workspace.
 
 export class Unauthorized extends Error {}
 

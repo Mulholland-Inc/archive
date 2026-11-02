@@ -17,8 +17,6 @@ package main
 // stream backs off, a minute doubling, for syncTries pages, and then waits for the next ask. A grant the
 // provider refused stops the sync until the member connects again or asks; a stream the provider cannot pull
 // is skipped until the next ask. A page renews its connection's watches as they near their end (syncWatch).
-//
-// ARCHIVE_SYNC off keeps serve from syncing at all, though asks are kept and queued: for tests that sync by hand.
 
 import (
 	"bytes"
