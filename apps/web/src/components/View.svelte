@@ -10,6 +10,7 @@
 
 <style>
   .view {
+    position: relative;
     display: flex;
     flex-direction: column;
     flex: 1;
