@@ -17,7 +17,7 @@
   import RightSidebar from '../components/RightSidebar.svelte';
   import Heading from '../components/Heading.svelte';
   import Property from '../components/Property.svelte';
-  import { app, ws, schema, viewRows, rowRelations, linkOf } from '../lib/app.svelte.js';
+  import { app, ws, schema, viewRows, rowRelations, linkOf, titlesOf } from '../lib/app.svelte.js';
   import Section from '../components/Section.svelte';
   import List from '../components/List.svelte';
   import ListItem from '../components/ListItem.svelte';
@@ -68,6 +68,18 @@
     relations = { to: [], from: [] };
     rowRelations(id, r).then((x) => open === r && (relations = x));
   }
+  // Linked rows show as chips with their names, read once per linked table.
+  let titles = $state({});
+  const linked = $derived([...new Set(shown.map((c) => linkOf(view, c)).filter(Boolean))]);
+  $effect(() => {
+    for (const t of linked) if (!titles[t]) titlesOf(t).then((m) => (titles = { ...titles, [t]: m }));
+  });
+  const refs = (c, r) => {
+    const to = linkOf(view, c);
+    const v = r?.[c.name];
+    if (!to || v == null || v === '') return [];
+    return (Array.isArray(v) ? v : [v]).map((rid) => ({ id: rid, title: titles[to]?.[rid] ?? '…', href: `/database/${to}` }));
+  };
   const nameOf = (tid) => ws().schema.find((x) => x.id === tid)?.name ?? tid;
 
   // The board scrolls sideways; a vertical wheel over it scrolls the page, which the browser would otherwise
@@ -190,8 +202,8 @@
               {#each items as r, i (r.id ?? i)}
                 <button type="button" class="card" onclick={() => pick(r)}>
                   <Text size="sm" weight="medium">{show(r[title?.name])}</Text>
-                  {#each shown.filter((c) => c !== title && c.name !== view.by && !linkOf(view, c) && r[c.name] != null && r[c.name] !== '') as c (c.name)}
-                    <Text size="sm" tone="secondary">{show(r[c.name])}</Text>
+                  {#each shown.filter((c) => c !== title && c.name !== view.by && r[c.name] != null && r[c.name] !== '') as c (c.name)}
+                    {#if linkOf(view, c)}<span class="chips">{#each refs(c, r) as l (l.id)}<Chip size="sm">{l.title}</Chip>{/each}</span>{:else}<Text size="sm" tone="secondary">{show(r[c.name])}</Text>{/if}
                   {/each}
                 </button>
               {/each}
@@ -214,7 +226,12 @@
           </div>
         </Stack>
       {:else}
-        <Table {columns} rows={cells} label={view.name} onrowclick={(c) => pick(c.row)} />
+        <Table {columns} rows={cells} label={view.name} onrowclick={(c) => pick(c.row)}>
+          {#snippet cell(row, col)}
+            {@const c = shown.find((x) => x.name === col.key)}
+            {#if c && linkOf(view, c)}<span class="chips">{#each refs(c, row.row) as l (l.id)}<Chip size="sm">{l.title}</Chip>{/each}</span>{:else}{row[col.key]}{/if}
+          {/snippet}
+        </Table>
       {/if}
     </Stack>
   </Page>
@@ -225,20 +242,15 @@
           <div class="row-title"><Heading level={2} size="lg" wrap="anywhere">{show(open[title?.name]) || view.name}</Heading></div>
           <Section gap="sm" title="Properties">
             <Stack gap="0">
-              {#each shown.filter((c) => c !== title && !linkOf(view, c)) as c (c.name)}
+              {#each shown.filter((c) => c !== title) as c (c.name)}
                 <Property compact label={label(c)} icon={typeIcons[c.type] ?? Type}>
-                  {#if open[c.name] == null || open[c.name] === ''}<Text size="sm" tone="tertiary">Empty</Text>{:else}<Text size="sm" wrap="anywhere">{show(open[c.name])}</Text>{/if}
+                  {#if open[c.name] == null || open[c.name] === '' || (Array.isArray(open[c.name]) && !open[c.name].length)}<Text size="sm" tone="tertiary">Empty</Text>
+                  {:else if linkOf(view, c)}{#each refs(c, open) as l (l.id)}<Chip size="sm" href={l.href}>{l.title}</Chip>{/each}
+                  {:else}<Text size="sm" wrap="anywhere">{show(open[c.name])}</Text>{/if}
                 </Property>
               {/each}
             </Stack>
           </Section>
-          {#each relations.to as l (`to-${l.column}`)}
-            <Section gap="sm" title={label({ name: l.column })}>
-              <List>
-                {#each l.rows as r (r.id)}<ListItem href={`/database/${l.table}`} icon={ArrowUpRight}><Text size="sm">{r.title}</Text></ListItem>{/each}
-              </List>
-            </Section>
-          {/each}
           {#each relations.from as l (`from-${l.table}-${l.column}`)}
             <Section gap="sm" title={nameOf(l.table)}>
               <List>
@@ -267,6 +279,12 @@
     min-height: var(--control-xl);
     margin-block-start: calc(var(--space-8) - var(--space-3));
     padding-inline-end: var(--space-8);
+  }
+
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
   }
 
   .board {

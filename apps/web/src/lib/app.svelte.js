@@ -377,6 +377,13 @@ export function linkOf(t, c) {
   return c.to ?? ws().schema.find((x) => x.id === baseOf(t))?.columns.find((x) => x.name === c.name)?.to;
 }
 
+// titlesOf is every row's title of table, by id, for showing links by name: its first text column.
+export async function titlesOf(table) {
+  const col = ws().schema.find((x) => x.id === table)?.columns.find((c) => c.type === 'text' && !['id', 'access'].includes(c.name));
+  const rows = (await call(`/api/${encodeURIComponent(table)}?limit=1000`).catch(() => [])) ?? [];
+  return Object.fromEntries(rows.map((r) => [r.id, String(r[col?.name] ?? r.id)]));
+}
+
 export async function rowRelations(id, row) {
   const types = ws().schema;
   const t = types.find((x) => x.id === id);
