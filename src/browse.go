@@ -468,7 +468,17 @@ func (b *browser) act(ctx context.Context, v *browseView, a *browseAct) {
 		if a.Action == "scroll_up" {
 			dy = -dy
 		}
-		err = b.do(chromedp.MouseEvent(input.DispatchMouseEventTypeMouseWheel, 640, 400, func(p *input.DispatchMouseEventParams) { p.DeltaY = dy }))
+		// Scrolled in the page, not with a wheel event: cdproto drops a zero deltaX, which Chrome's mouseWheel
+		// requires, so every wheel failed. It scrolls what is under the middle of the viewport if that scrolls,
+		// else the page.
+		err = b.do(chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+			_, err := chromedp.Evaluate[any](fmt.Sprintf(`(() => {
+  let s = document.elementFromPoint(640, 400);
+  while (s && s !== document.body && s !== document.documentElement && !(s.scrollHeight > s.clientHeight && /(auto|scroll)/.test(getComputedStyle(s).overflowY))) s = s.parentElement;
+  (s && s !== document.body && s !== document.documentElement ? s : window).scrollBy(0, %g);
+})()`, dy))(ctx, t)
+			return err
+		}))
 	case "back":
 		err = b.do(chromedp.NavigateBack())
 	case "key_enter":
