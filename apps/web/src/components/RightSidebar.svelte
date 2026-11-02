@@ -4,7 +4,8 @@
   import IconButton from './IconButton.svelte';
   import { app } from '../lib/app.svelte.js';
 
-  let { art, label = 'Details', side, children } = $props();
+  // toggle: on wide screens too, the side shows only while app.details is on, like a row's details in a view.
+  let { art, label = 'Details', side, children, toggle = false } = $props();
 
   let aside = $state();
   let previous = null;
@@ -29,8 +30,8 @@
 <svelte:window {onkeydown} />
 
 <div class="layout">
-  <div class="content" inert={app.details}>{@render children()}</div>
-  <aside class={['side', { open: app.details }]} aria-label={label} bind:this={aside}>
+  <div class="content" inert={app.details && !toggle}>{@render children()}</div>
+  <aside class={['side', { open: app.details, toggle }]} aria-label={label} bind:this={aside}>
     {#if art}<div class="art"><Art name={art} size="zoom" /></div>{/if}
     <span class="close"><IconButton icon={X} label="Close details" tooltip={false} onclick={() => (app.details = false)} /></span>
     <div class="body">{@render side()}</div>
@@ -65,6 +66,14 @@
     background: var(--color-sidebar);
     box-shadow: inset var(--border-width) 0 0 var(--color-border-subtle);
     transition: background-color var(--duration-normal) var(--ease-out);
+  }
+
+  .toggle:not(.open) {
+    display: none;
+  }
+
+  .toggle .close {
+    display: flex;
   }
 
   .art {

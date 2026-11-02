@@ -1,5 +1,5 @@
 <script>
-  import { Table2, Settings2, SearchX } from '@lucide/svelte';
+  import { Table2, Settings2, SearchX, Type, AlignLeft, CalendarDays as DateIcon, Hash, CircleCheck, ArrowUpRight, Paperclip, AtSign, DollarSign, MapPin, CircleDot, Fingerprint } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
@@ -14,9 +14,10 @@
   import Chip from '../components/Chip.svelte';
   import Select from '../components/Select.svelte';
   import Spacer from '../components/Spacer.svelte';
-  import Dialog from '../components/Dialog.svelte';
+  import RightSidebar from '../components/RightSidebar.svelte';
+  import Heading from '../components/Heading.svelte';
   import Property from '../components/Property.svelte';
-  import { ws, schema, viewRows } from '../lib/app.svelte.js';
+  import { app, ws, schema, viewRows } from '../lib/app.svelte.js';
   import { show } from '../lib/live.js';
 
   // A view, drawn the way its comment says: a table, a board grouped by its by column, or a calendar by its
@@ -54,6 +55,13 @@
     if (!sort) return out;
     return [...out].sort((a, b) => String(a[sort] ?? '').localeCompare(String(b[sort] ?? ''), undefined, { numeric: true }));
   });
+
+  // A row opens in the side panel, its fields as properties, each with its type's icon.
+  const typeIcons = { text: Type, long: AlignLeft, date: DateIcon, number: Hash, money: DollarSign, yes: CircleCheck, link: ArrowUpRight, file: Paperclip, email: AtSign, place: MapPin, choice: CircleDot, id: Fingerprint };
+  function pick(r) {
+    open = r;
+    app.details = true;
+  }
 
   function clear() {
     query = '';
@@ -111,15 +119,20 @@
   });
 </script>
 
-<TopBar mobile>
-  {#snippet leading()}<MobileMenu />{/snippet}
-</TopBar>
+{#snippet topbar()}
+  <TopBar mobile>
+    {#snippet leading()}<MobileMenu />{/snippet}
+  </TopBar>
+{/snippet}
 
 {#if !view}
+  {@render topbar()}
   <Page center>
     <EmptyState icon={Table2} title="View not found" />
   </Page>
 {:else}
+  <RightSidebar label="Row details" toggle>
+  {@render topbar()}
   <Page width="wide">
     <StickyHeader title={view.name} description={view.description && view.description.toLowerCase() !== view.name.toLowerCase() ? view.description : ''}>
       {#snippet search()}
@@ -154,7 +167,7 @@
             <section class="lane">
               <header><Text size="sm" weight="medium">{lane}</Text><Text size="sm" tone="tertiary" tabular>{items.length}</Text></header>
               {#each items as r, i (r.id ?? i)}
-                <button type="button" class="card" onclick={() => (open = r)}>
+                <button type="button" class="card" onclick={() => pick(r)}>
                   <Text size="sm" weight="medium">{show(r[title?.name])}</Text>
                   {#each shown.filter((c) => c !== title && c.name !== view.by && r[c.name] != null && r[c.name] !== '') as c (c.name)}
                     <Text size="sm" tone="secondary">{show(r[c.name])}</Text>
@@ -173,34 +186,41 @@
               <div class={['day', { other: d.getMonth() !== month.getMonth() }]}>
                 <Text size="sm" tone="tertiary" tabular>{d.getDate()}</Text>
                 {#each onDay.get(key(d)) ?? [] as r, i (r.id ?? i)}
-                  <button type="button" class="event" onclick={() => (open = r)}>{show(r[title?.name])}</button>
+                  <button type="button" class="event" onclick={() => pick(r)}>{show(r[title?.name])}</button>
                 {/each}
               </div>
             {/each}
           </div>
         </Stack>
       {:else}
-        <Table {columns} rows={cells} label={view.name} onrowclick={(c) => (open = c.row)} />
+        <Table {columns} rows={cells} label={view.name} onrowclick={(c) => pick(c.row)} />
       {/if}
     </Stack>
   </Page>
 
-  <Dialog open={!!open} size="sm" title={open ? show(open[title?.name]) || view.name : ''} onclose={() => (open = null)}>
-    {#if open}
-      <Stack gap="0">
-        {#each shown.filter((c) => c !== title) as c (c.name)}
-          <Property label={label(c)}>
-            {#if open[c.name] == null || open[c.name] === ''}<Text tone="tertiary">Empty</Text>{:else}<Text wrap="anywhere">{show(open[c.name])}</Text>{/if}
-          </Property>
-        {/each}
-      </Stack>
-    {/if}
-  </Dialog>
+    {#snippet side()}
+      {#if open}
+        <Stack gap="4">
+          <Heading level={2} size="lg" wrap="anywhere">{show(open[title?.name]) || view.name}</Heading>
+          <Stack gap="0">
+            {#each shown.filter((c) => c !== title) as c (c.name)}
+              <Property compact label={label(c)} icon={typeIcons[c.type] ?? Type}>
+                {#if open[c.name] == null || open[c.name] === ''}<Text size="sm" tone="tertiary">Empty</Text>{:else}<Text size="sm" wrap="anywhere">{show(open[c.name])}</Text>{/if}
+              </Property>
+            {/each}
+          </Stack>
+        </Stack>
+      {/if}
+    {/snippet}
+  </RightSidebar>
 {/if}
 
 <style>
   .board {
     display: grid;
+    min-width: 0;
+    max-width: 100%;
+    padding-block-end: var(--space-2);
     grid-auto-flow: column;
     grid-auto-columns: minmax(14rem, 1fr);
     gap: var(--space-3);
