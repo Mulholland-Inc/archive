@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { Box, Database as DatabaseIcon, SearchX } from '@lucide/svelte';
+  import { Box, Database as DatabaseIcon, SearchX, Table2, Kanban, CalendarDays } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
   import StickyHeader from '../components/StickyHeader.svelte';
@@ -25,6 +25,8 @@
 
   const filters = [
     { value: 'all', label: 'All' },
+    { value: 'tables', label: 'Tables' },
+    { value: 'views', label: 'Views' },
     { value: 'linked', label: 'Linked' },
     { value: 'automated', label: 'Used by workflows' },
     { value: 'shared', label: 'Shared' }
@@ -50,9 +52,13 @@
   const types = $derived(ws().schema);
   const nameOf = (id) => types.find((t) => t.id === id)?.name ?? id;
   const linksOf = (t) => [...new Set(t.links.map((l) => l.to))].map(nameOf);
+  // A view shows as its layout, like in the sidebar; a table as a box.
+  const iconOf = (t) => (t.kind !== 'view' ? Box : ({ board: Kanban, calendar: CalendarDays })[t.layout] ?? Table2);
   const shared = (t) => ws().shares.some((s) => s.kind === 'table' && s.target === t.id);
   const keep = {
     all: () => true,
+    tables: (t) => t.kind !== 'view',
+    views: (t) => t.kind === 'view',
     linked: (t) => t.links.length || types.some((o) => o.links.some((l) => l.to === t.id)),
     automated: (t) => t.workflows.length,
     shared
@@ -109,7 +115,7 @@
       {#snippet cell(row, col)}
         {#if col.key === 'name'}
           <Stack as="span" direction="row" gap="3" align="center">
-            <Icon icon={Box} size="md" tone="tertiary" />
+            <Icon icon={iconOf(row)} size="md" tone="tertiary" />
             <Text weight="medium" truncate>{row.name}</Text>
           </Stack>
         {:else if col.key === 'rows'}

@@ -525,7 +525,9 @@ export const tokens = resource({
     const list = (await call('/auth/tokens')) ?? [];
     const t = list.filter((x) => x.name === KEY_NAME).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
     if (app.archiveKeys[id]?.secret && app.archiveKeys[id].id === t?.id) return;
-    app.archiveKeys[id] = t ? { id: t.id, secret: '', date: `Created ${new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` } : null;
+    // Archive keeps the key sealed, so it can be read again; a key made before that has no secret to read.
+    const secret = t ? ((await call(`/auth/tokens/${t.id}/secret`).catch(() => null))?.secret ?? '') : '';
+    app.archiveKeys[id] = t ? { id: t.id, secret, date: `Created ${new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` } : null;
   }
 });
 
