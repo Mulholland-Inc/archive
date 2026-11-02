@@ -459,7 +459,20 @@ func hubTasksOpen() (*hubTasks, error) {
 	return t, nil
 }
 
+// wake queues a task that does ws's work of kind at at. A task's name dedupes it: Cloud Tasks takes one name
+// once, and refuses it for an hour after its task ran. Most wakes are named for when they were asked for too,
+// so a wake for a time a task already woke for is a new task, not refused and lost; repeats within a second
+// are one. A claimed wake, the one a task queues for when another task's claim runs out, is named for that
+// time alone, which only that claim has, so tasks that found the work claimed queue one between them.
 func (h *Hub) wake(ctx context.Context, ws uuid.UUID, kind string, at time.Time) error {
+	return h.queue(ctx, ws, kind, at, time.Now().Unix())
+}
+
+func (h *Hub) wakeClaimed(ctx context.Context, ws uuid.UUID, kind string, at time.Time) error {
+	return h.queue(ctx, ws, kind, at, 0)
+}
+
+func (h *Hub) queue(ctx context.Context, ws uuid.UUID, kind string, at time.Time, asked int64) error {
 	t := h.tasks
 	if limit := time.Now().Add(hubTaskMax); at.After(limit) {
 		at = limit
@@ -474,7 +487,7 @@ func (h *Hub) wake(ctx context.Context, ws uuid.UUID, kind string, at time.Time)
 	}
 	url := h.api + "/tasks"
 	body, _ := json.Marshal(map[string]string{"workspace": ws.String(), "work": kind + "s"})
-	sum := sha256.Sum256(fmt.Appendf(nil, "%s/%s/%d", ws, kind, at.UnixMilli()))
+	sum := sha256.Sum256(fmt.Appendf(nil, "%s/%s/%d/%d", ws, kind, at.UnixMilli(), asked))
 	var tk hubTask
 	tk.Name, tk.ScheduleTime = t.queue+"/tasks/"+hex.EncodeToString(sum[:]), at.UTC()
 	r := &tk.HTTPRequest
@@ -645,7 +658,7 @@ func (h *Hub) work(ctx context.Context, ws uuid.UUID, kind string) error {
 		return err
 	}
 	if at, err = q.DueAt(ctx, ws, kind); err == nil && at.After(time.Now()) {
-		return h.wake(ctx, ws, kind, at)
+		return h.wakeClaimed(ctx, ws, kind, at)
 	} else if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
