@@ -4443,6 +4443,99 @@ func TestServeOpensOtherWorkspacesOnlyWhenTheyAreUsed(t *testing.T) {
 	}
 }
 
+// A workspace's type, icon and colour save with its name, come back from every endpoint that lists it, and
+// are only what the web app offers.
+func TestAWorkspacesTypeIconAndColorSaveAndComeBack(t *testing.T) {
+	t.Parallel()
+	in := newInst(t)
+	in.must("user", "add", "alice@example.com")
+	alice := decode[Token](t, in.must("token", "create")).Secret
+	srv := in.serve()
+	look := func(w Workspace) string {
+		icon, color := "null", "null"
+		if w.Icon != nil {
+			icon = *w.Icon
+		}
+		if w.Color != nil {
+			color = fmt.Sprint(*w.Color)
+		}
+		return w.Name + " " + w.Type + " " + icon + " " + color
+	}
+	var info Workspace
+	if st, _ := call(t, "GET", srv.url+"/auth/workspace", alice, nil, &info); st != 200 || look(info) != "Archive personal null null" {
+		t.Fatalf("a new workspace: %d %s", st, look(info))
+	}
+	if st, _ := call(t, "PATCH", srv.url+"/auth/workspace", alice, map[string]any{"type": "family", "icon": "cottage", "color": 3}, &info); st != 200 || look(info) != "Archive family cottage 3" {
+		t.Errorf("set its look: %d %s", st, look(info))
+	}
+	if st, _ := call(t, "PATCH", srv.url+"/auth/workspace", alice, map[string]any{"name": "Home"}, &info); st != 200 || look(info) != "Home family cottage 3" {
+		t.Errorf("a rename keeps its look: %d %s", st, look(info))
+	}
+	for _, body := range []map[string]any{{"type": "club"}, {"icon": "rocket"}, {"color": 8}, {"color": -1}, {"name": "Elsewhere", "icon": "rocket"}} {
+		var e struct {
+			Error string `json:"error"`
+		}
+		if st, _ := call(t, "PATCH", srv.url+"/auth/workspace", alice, body, &e); st != 422 {
+			t.Errorf("PATCH %v: %d %s", body, st, e.Error)
+		}
+	}
+	var me struct {
+		All []Workspace `json:"workspaces"`
+	}
+	if st, _ := call(t, "GET", srv.url+"/auth/me", alice, nil, &me); st != 200 || len(me.All) != 1 || look(me.All[0]) != "Home family cottage 3" {
+		t.Errorf("/auth/me after refused changes: %d %+v", st, me.All)
+	}
+	var made Workspace
+	if st, _ := call(t, "POST", srv.url+"/auth/workspaces", alice, map[string]any{"name": "Acme", "owner": "bob@acme.test", "type": "business", "icon": "bank", "color": 5}, &made); st != 201 || look(made) != "Acme business bank 5" {
+		t.Errorf("a new workspace with its look: %d %s", st, look(made))
+	}
+	if st, _ := call(t, "POST", srv.url+"/auth/workspaces", alice, map[string]any{"name": "Bad", "owner": "bob@acme.test", "icon": "rocket"}, nil); st != 422 {
+		t.Errorf("a new workspace with an icon the app has not: %d", st)
+	}
+	var all []Workspace
+	if st, _ := call(t, "GET", srv.url+"/auth/workspaces", alice, nil, &all); st != 200 || len(all) != 2 || look(all[0]) != "Home family cottage 3" || look(all[1]) != "Acme business bank 5" {
+		t.Errorf("/auth/workspaces: %d %+v", st, all)
+	}
+	if out := decode[[]Workspace](t, in.must("workspace", "list")); len(out) != 2 || look(out[1]) != "Acme business bank 5" {
+		t.Errorf("archive workspace list: %+v", out)
+	}
+	if w := decode[Workspace](t, in.must("workspace", "add", "Kin", "carol@example.com", "-type", "family", "-icon", "oak", "-color", "0")); look(w) != "Kin family oak 0" {
+		t.Errorf("archive workspace add with its look: %s", look(w))
+	}
+	if out, err := exec.Command("psql", "-X", "-h", in.dir, "-U", "archive", "-d", "archive", "-Atc", "UPDATE archive.workspace SET type = 'club'").CombinedOutput(); err == nil || !strings.Contains(string(out), `invalid input value for enum workspace_type: "club"`) {
+		t.Errorf("the type enum took club: %v %s", err, out)
+	}
+}
+
+// A main database from before workspaces had a type, icon and colour gets them at startup, its workspaces
+// personal with the default look, and serve starts on it.
+func TestWorkspacesFromBeforeTypesMigrateAtStartup(t *testing.T) {
+	t.Parallel()
+	in := newInst(t)
+	in.must("user", "add", "alice@example.com")
+	in.must("workspace", "add", "Acme", "bob@acme.test", "-icon", "bank")
+	in.psql("archive", `ALTER TABLE archive.workspace DROP COLUMN type, DROP COLUMN icon, DROP COLUMN color;
+DROP TYPE archive.workspace_type; INSERT INTO archive.revision (hash) VALUES ('before types')`)
+	all := decode[[]Workspace](t, in.must("workspace", "list"))
+	if len(all) != 2 || all[1].Name != "Acme" {
+		t.Fatalf("workspaces after the migration: %+v", all)
+	}
+	for _, w := range all {
+		if w.Type != "personal" || w.Icon != nil || w.Color != nil {
+			t.Errorf("workspace %s after the migration: %s %v %v", w.Name, w.Type, w.Icon, w.Color)
+		}
+	}
+	if got := in.psql("archive", "SELECT t.typnamespace::regnamespace::text || '.' || t.typname FROM pg_attribute a JOIN pg_type t ON t.oid = a.atttypid WHERE a.attrelid = 'archive.workspace'::regclass AND a.attname = 'type'"); got != "archive.workspace_type" {
+		t.Errorf("archive.workspace.type is %q", got)
+	}
+	alice := decode[Token](t, in.must("token", "create")).Secret
+	srv := in.serve()
+	var info Workspace
+	if st, _ := call(t, "PATCH", srv.url+"/auth/workspace", alice, map[string]any{"type": "business"}, &info); st != 200 || info.Type != "business" {
+		t.Errorf("a migrated workspace takes a type: %d %+v", st, info)
+	}
+}
+
 func TestServeStartsWhenTheFirstUserHasNoMemberRow(t *testing.T) {
 	t.Parallel()
 	in := newInst(t)

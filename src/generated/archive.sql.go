@@ -140,7 +140,7 @@ func (q *Queries) AllDue(ctx context.Context) ([]ArchiveDue, error) {
 }
 
 const allWorkspaces = `-- name: AllWorkspaces :many
-SELECT id, name, key, created_at FROM archive.workspace ORDER BY created_at, id
+SELECT id, name, key, created_at, type, icon, color FROM archive.workspace ORDER BY created_at, id
 `
 
 func (q *Queries) AllWorkspaces(ctx context.Context) ([]ArchiveWorkspace, error) {
@@ -157,6 +157,9 @@ func (q *Queries) AllWorkspaces(ctx context.Context) ([]ArchiveWorkspace, error)
 			&i.Name,
 			&i.Key,
 			&i.CreatedAt,
+			&i.Type,
+			&i.Icon,
+			&i.Color,
 		); err != nil {
 			return nil, err
 		}
@@ -555,18 +558,37 @@ func (q *Queries) CreateUpload(ctx context.Context, arg CreateUploadParams) erro
 }
 
 const createWorkspace = `-- name: CreateWorkspace :one
-INSERT INTO archive.workspace (id, name, key) VALUES ($1, $2, $3)
-ON CONFLICT DO NOTHING RETURNING id, name, key, created_at
+INSERT INTO archive.workspace (id, name, key, type, icon, color) VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT DO NOTHING RETURNING id, name, key, created_at, type, icon, color
 `
 
-func (q *Queries) CreateWorkspace(ctx context.Context, iD uuid.UUID, name string, key []byte) (ArchiveWorkspace, error) {
-	row := q.db.QueryRow(ctx, createWorkspace, iD, name, key)
+type CreateWorkspaceParams struct {
+	ID    uuid.UUID
+	Name  string
+	Key   []byte
+	Type  ArchiveWorkspaceType
+	Icon  *string
+	Color *int16
+}
+
+func (q *Queries) CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams) (ArchiveWorkspace, error) {
+	row := q.db.QueryRow(ctx, createWorkspace,
+		arg.ID,
+		arg.Name,
+		arg.Key,
+		arg.Type,
+		arg.Icon,
+		arg.Color,
+	)
 	var i ArchiveWorkspace
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
 		&i.Key,
 		&i.CreatedAt,
+		&i.Type,
+		&i.Icon,
+		&i.Color,
 	)
 	return i, err
 }
@@ -900,12 +922,39 @@ func (q *Queries) FirstUser(ctx context.Context, workspace uuid.UUID) (ArchiveUs
 }
 
 const firstWorkspace = `-- name: FirstWorkspace :one
-SELECT id, name, key, created_at FROM archive.workspace ORDER BY created_at, id LIMIT 1
+SELECT id, name, key, created_at, type, icon, color FROM archive.workspace ORDER BY created_at, id LIMIT 1
 `
 
 func (q *Queries) FirstWorkspace(ctx context.Context) (ArchiveWorkspace, error) {
 	row := q.db.QueryRow(ctx, firstWorkspace)
 	var i ArchiveWorkspace
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Key,
+		&i.CreatedAt,
+		&i.Type,
+		&i.Icon,
+		&i.Color,
+	)
+	return i, err
+}
+
+const firstWorkspaceKey = `-- name: FirstWorkspaceKey :one
+SELECT id, name, key, created_at FROM archive.workspace ORDER BY created_at, id LIMIT 1
+`
+
+type FirstWorkspaceKeyRow struct {
+	ID        uuid.UUID
+	Name      string
+	Key       []byte
+	CreatedAt time.Time
+}
+
+// The first workspace before its store migrated the main database, so only the columns it always had.
+func (q *Queries) FirstWorkspaceKey(ctx context.Context) (FirstWorkspaceKeyRow, error) {
+	row := q.db.QueryRow(ctx, firstWorkspaceKey)
+	var i FirstWorkspaceKeyRow
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
@@ -1342,15 +1391,6 @@ func (q *Queries) RenameFile(ctx context.Context, iD uuid.UUID, name string) (Re
 	return i, err
 }
 
-const renameWorkspace = `-- name: RenameWorkspace :exec
-UPDATE archive.workspace SET name = $2 WHERE id = $1
-`
-
-func (q *Queries) RenameWorkspace(ctx context.Context, iD uuid.UUID, name string) error {
-	_, err := q.db.Exec(ctx, renameWorkspace, iD, name)
-	return err
-}
-
 const replaceFile = `-- name: ReplaceFile :one
 UPDATE archive.file SET hash = $2, size = $3, status = 'pending', text = '', error = '', metadata = '{}' WHERE id = $1
 RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at
@@ -1775,6 +1815,30 @@ func (q *Queries) TxWrote(ctx context.Context) (TxWroteRow, error) {
 	return i, err
 }
 
+const updateWorkspace = `-- name: UpdateWorkspace :exec
+UPDATE archive.workspace SET name = coalesce($1, name), type = coalesce($2, type),
+    icon = coalesce($3, icon), color = coalesce($4, color) WHERE id = $5
+`
+
+type UpdateWorkspaceParams struct {
+	Name  *string
+	Type  *ArchiveWorkspaceType
+	Icon  *string
+	Color *int16
+	ID    uuid.UUID
+}
+
+func (q *Queries) UpdateWorkspace(ctx context.Context, arg UpdateWorkspaceParams) error {
+	_, err := q.db.Exec(ctx, updateWorkspace,
+		arg.Name,
+		arg.Type,
+		arg.Icon,
+		arg.Color,
+		arg.ID,
+	)
+	return err
+}
+
 const upload = `-- name: Upload :one
 SELECT id, role, access, name, length, parts, created_at FROM archive.upload WHERE id = $1
 `
@@ -1849,24 +1913,27 @@ func (q *Queries) UserByOIDC(ctx context.Context, link []byte) (ArchiveUser, err
 }
 
 const userWorkspaces = `-- name: UserWorkspaces :many
-SELECT w.id, w.name FROM archive.workspace w JOIN archive."user" u ON w.id = ANY(u.workspaces) WHERE u.id = $1 ORDER BY array_position(u.workspaces, w.id)
+SELECT w.id, w.name, w.key, w.created_at, w.type, w.icon, w.color FROM archive.workspace w JOIN archive."user" u ON w.id = ANY(u.workspaces) WHERE u.id = $1 ORDER BY array_position(u.workspaces, w.id)
 `
 
-type UserWorkspacesRow struct {
-	ID   uuid.UUID
-	Name string
-}
-
-func (q *Queries) UserWorkspaces(ctx context.Context, id uuid.UUID) ([]UserWorkspacesRow, error) {
+func (q *Queries) UserWorkspaces(ctx context.Context, id uuid.UUID) ([]ArchiveWorkspace, error) {
 	rows, err := q.db.Query(ctx, userWorkspaces, id)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []UserWorkspacesRow
+	var items []ArchiveWorkspace
 	for rows.Next() {
-		var i UserWorkspacesRow
-		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+		var i ArchiveWorkspace
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Key,
+			&i.CreatedAt,
+			&i.Type,
+			&i.Icon,
+			&i.Color,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -2032,7 +2099,7 @@ func (q *Queries) Workflows(ctx context.Context, userID uuid.UUID) ([]ArchiveWor
 }
 
 const workspaceByID = `-- name: WorkspaceByID :one
-SELECT id, name, key, created_at FROM archive.workspace WHERE id = $1
+SELECT id, name, key, created_at, type, icon, color FROM archive.workspace WHERE id = $1
 `
 
 func (q *Queries) WorkspaceByID(ctx context.Context, id uuid.UUID) (ArchiveWorkspace, error) {
@@ -2043,6 +2110,9 @@ func (q *Queries) WorkspaceByID(ctx context.Context, id uuid.UUID) (ArchiveWorks
 		&i.Name,
 		&i.Key,
 		&i.CreatedAt,
+		&i.Type,
+		&i.Icon,
+		&i.Color,
 	)
 	return i, err
 }

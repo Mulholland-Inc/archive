@@ -1,10 +1,19 @@
 CREATE SCHEMA archive;
 
+-- What a workspace is for, which picks the icons the web app offers it.
+CREATE TYPE archive.workspace_type AS ENUM ('personal', 'family', 'business');
+
+-- icon and color are how the web app shows the workspace: one of its icons, and one of its 8 tints by index;
+-- null is the default for its type.
 CREATE TABLE archive.workspace (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     name       text NOT NULL,
     key        bytea NOT NULL,
-    created_at timestamptz NOT NULL DEFAULT now()
+    created_at timestamptz NOT NULL DEFAULT now(),
+    type       archive.workspace_type NOT NULL DEFAULT 'personal',
+    icon       text CONSTRAINT workspace_icon CHECK (icon IN ('robot', 'chest', 'safe', 'bookcase', 'pinecone', 'cottage', 'castle',
+        'townhouse', 'farmhouse', 'oak', 'pine', 'baobab', 'skyscraper', 'capitol', 'pyramid', 'ledger', 'cabinet', 'bank', 'warehouse', 'factory')),
+    color      smallint CONSTRAINT workspace_color CHECK (color BETWEEN 0 AND 7)
 );
 
 CREATE TABLE archive."user" (
@@ -406,7 +415,7 @@ SELECT id, email::text AS email, role::text AS role, groups FROM archive.member 
 SELECT id, email, name FROM archive."user" WHERE workspaces @> ARRAY[sqlc.arg(workspace)::uuid] ORDER BY email;
 
 -- name: UserWorkspaces :many
-SELECT w.id, w.name FROM archive.workspace w JOIN archive."user" u ON w.id = ANY(u.workspaces) WHERE u.id = $1 ORDER BY array_position(u.workspaces, w.id);
+SELECT w.* FROM archive.workspace w JOIN archive."user" u ON w.id = ANY(u.workspaces) WHERE u.id = $1 ORDER BY array_position(u.workspaces, w.id);
 
 -- name: JoinWorkspace :one
 INSERT INTO archive."user" (email, name, workspaces) VALUES (sqlc.arg(email), sqlc.arg(name), ARRAY[sqlc.arg(workspace)::uuid])
@@ -712,6 +721,10 @@ SELECT EXISTS (SELECT FROM archive.file WHERE status = 'pending');
 -- name: FirstWorkspace :one
 SELECT * FROM archive.workspace ORDER BY created_at, id LIMIT 1;
 
+-- The first workspace before its store migrated the main database, so only the columns it always had.
+-- name: FirstWorkspaceKey :one
+SELECT id, name, key, created_at FROM archive.workspace ORDER BY created_at, id LIMIT 1;
+
 -- name: WorkspaceByID :one
 SELECT * FROM archive.workspace WHERE id = $1;
 
@@ -719,7 +732,7 @@ SELECT * FROM archive.workspace WHERE id = $1;
 SELECT * FROM archive.workspace ORDER BY created_at, id;
 
 -- name: CreateWorkspace :one
-INSERT INTO archive.workspace (id, name, key) VALUES ($1, $2, $3)
+INSERT INTO archive.workspace (id, name, key, type, icon, color) VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT DO NOTHING RETURNING *;
 
 -- name: DeleteWorkspace :exec
@@ -729,8 +742,9 @@ DELETE FROM archive.workspace w WHERE w.id = sqlc.arg(id)::uuid;
 -- name: RolesWithPrefix :many
 SELECT rolname::text FROM pg_catalog.pg_roles WHERE starts_with(rolname, sqlc.arg(prefix)::text);
 
--- name: RenameWorkspace :exec
-UPDATE archive.workspace SET name = $2 WHERE id = $1;
+-- name: UpdateWorkspace :exec
+UPDATE archive.workspace SET name = coalesce(sqlc.narg(name), name), type = coalesce(sqlc.narg(type), type),
+    icon = coalesce(sqlc.narg(icon), icon), color = coalesce(sqlc.narg(color), color) WHERE id = sqlc.arg(id);
 
 -- name: SoonDue :one
 WITH was AS (SELECT x.at FROM archive.due x WHERE x.workspace = sqlc.arg(workspace) AND x.kind = sqlc.arg(kind))
