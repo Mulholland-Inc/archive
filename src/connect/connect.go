@@ -7,7 +7,7 @@
 //     and its Actions, Go funcs over the provider's API. Load reads every connector's variable, and one
 //     whose variable is unset is unavailable: listed, but not offered.
 //   - An MCP connector names only its MCP server. Its OAuth client is Archive's own, which Discover and
-//     Register get from the server's authorization server the first time anyone connects (mcp.go), and the
+//     Register get from the server's authorization server the first time anyone connects (below), and the
 //     caller keeps; its actions are the server's tools.
 //
 // Connecting is OAuth's authorization code flow with PKCE. AuthURL sends the browser to the provider with a
@@ -17,6 +17,7 @@
 package connect
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/cipher"
@@ -25,6 +26,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -33,7 +35,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/google/uuid"
+	"github.com/modelcontextprotocol/go-sdk/auth"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/modelcontextprotocol/go-sdk/oauthex"
 	"golang.org/x/oauth2"
 )
 
@@ -47,7 +53,7 @@ type Connector struct {
 	// Env is the environment variable that holds an API connector's OAuth client, https://<client id>:<client
 	// secret>@<host> with the id and secret URL-escaped, and maybe a query of options the connector reads with
 	// Client.Option; Host is the provider host it names by default. When Env names another host, every URL of
-	// the connector moves onto it: a stand-in for the provider, as in the tests.
+	// the connector moves onto it, so another server that speaks the provider's API can stand in for it.
 	Env, Host string
 	Endpoint  oauth2.Endpoint
 	// Revoke is where a refresh token is revoked on disconnect, posted as token=, as RFC 7009 has it; empty
@@ -75,13 +81,13 @@ type Connector struct {
 	// Streams are what Archive keeps a copy of for each account (sync.go), pulled in this order when several
 	// are due at once.
 	Streams []*Stream
-	// Push is how the provider tells Archive an account changed (push.go); nil when it cannot, and then only
+	// Push is how the provider tells Archive an account changed (sync.go); nil when it cannot, and then only
 	// connecting, asking and reading start a sync.
 	Push *Push
 }
 
-// MCPEnv is the environment variable that, when set, is another server for an MCP connector than its own: a
-// stand-in, as in the tests. Unlike Env, nothing needs it.
+// MCPEnv is the environment variable that, when set, is another server for an MCP connector than its own, one
+// that stands in for it. Unlike Env, nothing needs it.
 func (c *Connector) MCPEnv() string { return "ARCHIVE_MCP_" + strings.ToUpper(c.ID) }
 
 var registry = map[string]*Connector{}
@@ -116,7 +122,7 @@ type Provider struct {
 	endpoint               oauth2.Endpoint
 	revoke                 string
 	scopes                 []string
-	// server is an MCP connector's server, its own or a stand-in; resource is what its tokens are for, as
+	// server is an MCP connector's server, its own or one standing in; resource is what its tokens are for, as
 	// RFC 8707 has the authorization server told.
 	server, resource string
 	// pushTo is the value of its Push's Env.
@@ -425,3 +431,454 @@ func open(aead cipher.AEAD, ct []byte, purpose string) ([]byte, error) {
 	}
 	return aead.Open(nil, ct[:n], ct[n:], []byte(purpose))
 }
+
+// maxBody is the most of a provider's answer a Client reads, like fetch's limit in a run.
+const maxBody = 5 << 20
+
+// Client is a connected account at work, for an Account or an Action: requests to the provider's API as the
+// account, or calls to its MCP server's tools. Close it when done.
+type Client struct {
+	ctx  context.Context
+	p    *Provider
+	http *http.Client
+	tok  *oauth2.Token
+	// Meta are the callback's parameters the connector keeps, like QuickBooks' realmId.
+	Meta map[string]string
+	sess *mcp.ClientSession
+	// tools are the MCP server's, as it listed them for a stream.
+	tools []*mcp.Tool
+}
+
+// Open is a Client of the account whose access token tok is, with the Meta its grant kept.
+func (p *Provider) Open(ctx context.Context, tok *oauth2.Token, meta map[string]string) *Client {
+	hc := &http.Client{Timeout: client.Timeout, Transport: &oauth2.Transport{Source: oauth2.StaticTokenSource(tok)}}
+	return &Client{ctx: ctx, p: p, http: hc, tok: tok, Meta: meta}
+}
+
+// Context is what the Client's requests run in.
+func (c *Client) Context() context.Context { return c.ctx }
+
+// Option is the option k in the query of the connector's variable, like ?sandbox=1.
+func (c *Client) Option(k string) string { return c.p.opts.Get(k) }
+
+// Token is the access token, for a provider that wants it somewhere other than the Authorization header.
+func (c *Client) Token() string { return c.tok.AccessToken }
+
+// Credentials are the OAuth client's id and secret, for a provider that wants them with a request.
+func (c *Client) Credentials() (id, secret string) { return c.p.clientID, c.p.secret }
+
+// Get reads the provider's URL u as JSON into v.
+func (c *Client) Get(u string, v any) error { return c.Do("GET", u, nil, v) }
+
+// Do sends body to the provider's URL u, as a form when it is url.Values, as it is when a string and JSON
+// otherwise, and reads the answer as JSON into v; into a *string or *[]byte it is the answer as it came. A
+// 4xx or 5xx is a *Refusal.
+func (c *Client) Do(method, u string, body, v any) error { return c.Send(method, u, nil, body, v) }
+
+// Send is Do with the headers hdr too.
+func (c *Client) Send(method, u string, hdr http.Header, body, v any) error {
+	req, err := request(c.ctx, method, c.p.at(u), body)
+	if err != nil {
+		return err
+	}
+	for k, vs := range hdr {
+		req.Header[k] = vs
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		var re *oauth2.RetrieveError
+		if errors.As(err, &re) {
+			return err
+		}
+		return fmt.Errorf("%s could not be reached: %w", c.p.Name, errors.Unwrap(err))
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return refusal(c.p.Name, resp)
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
+	switch {
+	case err != nil:
+		return err
+	case len(b) > maxBody:
+		return fmt.Errorf("%s answered with over %d MB; ask for less", c.p.Name, maxBody>>20)
+	}
+	switch v := v.(type) {
+	case nil:
+		return nil
+	case *string:
+		*v = string(b)
+		return nil
+	case *[]byte:
+		*v = b
+		return nil
+	}
+	if err := json.Unmarshal(b, v); err != nil {
+		return fmt.Errorf("%s answered with what is not JSON: %v", c.p.Name, err)
+	}
+	return nil
+}
+
+func request(ctx context.Context, method, u string, body any) (*http.Request, error) {
+	var r io.Reader
+	ct := ""
+	switch b := body.(type) {
+	case nil:
+	case url.Values:
+		r, ct = strings.NewReader(b.Encode()), "application/x-www-form-urlencoded"
+	case string:
+		r = strings.NewReader(b)
+	default:
+		j, err := json.Marshal(b)
+		if err != nil {
+			return nil, err
+		}
+		r, ct = bytes.NewReader(j), "application/json"
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u, r)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	if ct != "" {
+		req.Header.Set("Content-Type", ct)
+	}
+	return req, nil
+}
+
+// Refusal is a provider answering a request with a 4xx or 5xx, or a tool's result marked as an error, with
+// no Status.
+type Refusal struct {
+	Provider string
+	Status   int
+	// Message is what it said why, as it said it.
+	Message string
+}
+
+func (r *Refusal) Error() string {
+	if r.Status == 0 {
+		return r.Provider + " said: " + r.Message
+	}
+	s := fmt.Sprintf("%s refused: %d %s", r.Provider, r.Status, http.StatusText(r.Status))
+	if r.Message != "" {
+		s += ": " + r.Message
+	}
+	return s
+}
+
+func refusal(provider string, resp *http.Response) *Refusal {
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	return &Refusal{Provider: provider, Status: resp.StatusCode, Message: reasonIn(b)}
+}
+
+// reasonIn is the message in a provider's error body: the first of the keys providers put it under, at any
+// depth, like Google's error.message, QuickBooks' Fault.Error[0].Detail or OAuth's error_description; or the
+// body itself, cut short.
+func reasonIn(b []byte) string {
+	var v any
+	if json.Unmarshal(b, &v) != nil {
+		s := strings.Join(strings.Fields(string(b)), " ")
+		if len(s) > 300 {
+			s = s[:300] + "..."
+		}
+		return s
+	}
+	for _, k := range []string{"message", "error_description", "Detail", "Message", "detail", "error"} {
+		if s := find(v, k); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func find(v any, key string) string {
+	switch v := v.(type) {
+	case map[string]any:
+		if s, ok := v[key].(string); ok && s != "" {
+			return s
+		}
+		for _, e := range v {
+			if s := find(e, key); s != "" {
+				return s
+			}
+		}
+	case []any:
+		for _, e := range v {
+			if s := find(e, key); s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+// Action is something a script does with a connected account of an API connector, as
+// archive.action("<connector>.<name>", input). Its input is checked against Input before Do sees it.
+type Action struct {
+	// Doc says what it does and returns, for the run tool's docs.
+	Doc   string
+	Input *jsonschema.Schema
+	Do    func(c *Client, in json.RawMessage) (any, error)
+}
+
+// Act is an Action whose input is In, a struct: its fields' json names are the input's keys, required unless
+// omitempty, and their jsonschema tags describe them.
+func Act[In any](doc string, do func(c *Client, in In) (any, error)) *Action {
+	s, err := jsonschema.For[In](nil)
+	if err != nil {
+		panic(err)
+	}
+	return &Action{Doc: doc, Input: s, Do: func(c *Client, raw json.RawMessage) (any, error) {
+		var in In
+		if err := json.Unmarshal(raw, &in); err != nil {
+			return nil, err
+		}
+		return do(c, in)
+	}}
+}
+
+// An MCP connector's OAuth client is Archive's own, registered at its server's authorization server: Register
+// finds that server as the MCP authorization spec has it, with the protected resource's metadata (RFC 9728)
+// and then the authorization server's (RFC 8414), and registers a client there with Dynamic Client
+// Registration (RFC 7591). The caller keeps the Registration, one per connector and server, and hands it to
+// Registered for every later connect, refresh and revoke.
+
+// Registration is the client Archive registered at an MCP connector's authorization server, with what it
+// needs of that server's metadata.
+type Registration struct {
+	// Server is the MCP server it is for, and Redirect the redirect URI it registered: a change of either
+	// registers again.
+	Server   string `json:"server"`
+	Redirect string `json:"redirect"`
+	// Resource is the server's resource identifier, which goes with every authorization and code (RFC 8707).
+	Resource string `json:"resource"`
+	AuthURL  string `json:"auth_url"`
+	TokenURL string `json:"token_url"`
+	Revoke   string `json:"revoke,omitempty"`
+	ClientID string `json:"client_id"`
+	Secret   string `json:"secret,omitempty"`
+	// Method is how the client authenticates at the token endpoint: client_secret_basic, client_secret_post
+	// or none, PKCE alone.
+	Method string   `json:"method"`
+	Scopes []string `json:"scopes,omitempty"`
+	// Expires is when the secret expires; zero when it does not.
+	Expires time.Time `json:"expires,omitzero"`
+}
+
+// Fits says whether r is still the client for p and redirect.
+func (p *Provider) Fits(r *Registration, redirect string) bool {
+	return r != nil && r.Server == p.server && r.Redirect == redirect && (r.Expires.IsZero() || time.Until(r.Expires) > TTL)
+}
+
+// Registered is p with the client r.
+func (p *Provider) Registered(r *Registration) *Provider {
+	q := *p
+	q.clientID, q.secret, q.scopes, q.resource, q.revoke = r.ClientID, r.Secret, r.Scopes, r.Resource, r.Revoke
+	q.endpoint = oauth2.Endpoint{AuthURL: r.AuthURL, TokenURL: r.TokenURL, AuthStyle: oauth2.AuthStyleInParams}
+	if r.Method == "client_secret_basic" {
+		q.endpoint.AuthStyle = oauth2.AuthStyleInHeader
+	}
+	return &q
+}
+
+// Register finds the authorization server of p's MCP server and registers Archive there as a client that
+// comes back to redirect. It fails, saying so, when the server does not let clients register themselves.
+func (p *Provider) Register(ctx context.Context, redirect string) (*Registration, error) {
+	fail := func(format string, a ...any) error {
+		return fmt.Errorf("%s could not be set up: %s", p.Name, fmt.Sprintf(format, a...))
+	}
+	su, err := url.Parse(p.server)
+	if err != nil {
+		return nil, fail("%v", err)
+	}
+	origin := su.Scheme + "://" + su.Host
+	// The server's 401 names its metadata and the scopes to ask for; without one, the well-known places do.
+	var metaURLs []string
+	challenged := ""
+	if req, err := http.NewRequestWithContext(ctx, "GET", p.server, nil); err == nil {
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		if resp, err := client.Do(req); err == nil {
+			resp.Body.Close()
+			cs, _ := oauthex.ParseWWWAuthenticate(resp.Header.Values("WWW-Authenticate"))
+			for _, c := range cs {
+				if c.Scheme == "bearer" && c.Params["resource_metadata"] != "" {
+					metaURLs = append(metaURLs, c.Params["resource_metadata"])
+					challenged = c.Params["scope"]
+				}
+			}
+		}
+	}
+	if path := strings.TrimRight(su.Path, "/"); path != "" {
+		metaURLs = append(metaURLs, origin+"/.well-known/oauth-protected-resource"+path)
+	}
+	metaURLs = append(metaURLs, origin+"/.well-known/oauth-protected-resource")
+	var prm *oauthex.ProtectedResourceMetadata
+	for _, u := range metaURLs {
+		if prm, err = oauthex.GetProtectedResourceMetadata(ctx, u, p.server, client); err == nil {
+			break
+		}
+	}
+	// A server without that metadata is its own authorization server, as the MCP spec once had it.
+	issuer, resource, scopes := origin, p.server, strings.Fields(challenged)
+	if prm != nil {
+		if len(prm.AuthorizationServers) > 0 {
+			issuer = prm.AuthorizationServers[0]
+		}
+		resource = prm.Resource
+		if len(scopes) == 0 {
+			scopes = prm.ScopesSupported
+		}
+	}
+	if len(p.Scopes) > 0 {
+		scopes = p.Scopes
+	}
+	asm, err := auth.GetAuthServerMetadata(ctx, issuer, client)
+	switch {
+	case err != nil:
+		return nil, fail("its authorization server %s: %v", issuer, err)
+	case asm == nil:
+		return nil, fail("its authorization server %s publishes no metadata", issuer)
+	case asm.RegistrationEndpoint == "":
+		return nil, fail("its authorization server %s does not let Archive register itself (no Dynamic Client Registration)", issuer)
+	case !slices.Contains(asm.CodeChallengeMethodsSupported, "S256"):
+		return nil, fail("its authorization server %s does not take PKCE with S256", issuer)
+	}
+	// A secret where the server takes one, as the confidential client Archive is; PKCE alone where it does not.
+	method := "none"
+	for _, m := range []string{"client_secret_post", "client_secret_basic"} {
+		if slices.Contains(asm.TokenEndpointAuthMethodsSupported, m) {
+			method = m
+			break
+		}
+	}
+	reg, err := oauthex.RegisterClient(ctx, asm.RegistrationEndpoint, &oauthex.ClientRegistrationMetadata{
+		ClientName: "Archive", ClientURI: "https://archive.dev", RedirectURIs: []string{redirect}, TokenEndpointAuthMethod: method,
+		GrantTypes: []string{"authorization_code", "refresh_token"}, ResponseTypes: []string{"code"}, Scope: strings.Join(scopes, " "),
+	}, client)
+	if err != nil {
+		var re *oauthex.ClientRegistrationError
+		if errors.As(err, &re) {
+			return nil, fail("it refused to register Archive: %s", strings.TrimSuffix(re.ErrorCode+": "+re.ErrorDescription, ": "))
+		}
+		return nil, fail("registering Archive: %v", err)
+	}
+	return &Registration{Server: p.server, Redirect: redirect, Resource: resource, AuthURL: asm.AuthorizationEndpoint, TokenURL: asm.TokenEndpoint,
+		Revoke: asm.RevocationEndpoint, ClientID: reg.ClientID, Secret: reg.ClientSecret, Method: cmp.Or(reg.TokenEndpointAuthMethod, method),
+		Scopes: scopes, Expires: reg.ClientSecretExpiresAt}, nil
+}
+
+// SealClient is r encrypted and bound to connector id, to keep.
+func SealClient(aead cipher.AEAD, id string, r *Registration) []byte {
+	b, _ := json.Marshal(r)
+	return seal(aead, b, "client "+id)
+}
+
+// OpenClient is the Registration SealClient sealed for connector id.
+func OpenClient(aead cipher.AEAD, id string, sealed []byte) (*Registration, error) {
+	b, err := open(aead, sealed, "client "+id)
+	if err != nil {
+		return nil, fmt.Errorf("the client of %s does not open: %w", id, err)
+	}
+	var r Registration
+	return &r, json.Unmarshal(b, &r)
+}
+
+// session is the Client's session with the MCP server, opened on first use.
+func (c *Client) session() (*mcp.ClientSession, error) {
+	if c.sess != nil {
+		return c.sess, nil
+	}
+	if c.p.server == "" {
+		return nil, fmt.Errorf("%s has no MCP server", c.p.Name)
+	}
+	cl := mcp.NewClient(&mcp.Implementation{Name: "archive", Title: "Archive", Version: "1"}, nil)
+	s, err := cl.Connect(c.ctx, &mcp.StreamableClientTransport{Endpoint: c.p.server, HTTPClient: c.http, MaxRetries: -1, DisableStandaloneSSE: true}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%s's MCP server could not be reached: %w", c.p.Name, err)
+	}
+	c.sess = s
+	return s, nil
+}
+
+// Tools are the tools of the MCP server, every page of them.
+func (c *Client) Tools() ([]*mcp.Tool, error) {
+	s, err := c.session()
+	if err != nil {
+		return nil, err
+	}
+	var out []*mcp.Tool
+	for t, err := range s.Tools(c.ctx, nil) {
+		if err != nil {
+			return nil, fmt.Errorf("%s did not list its tools: %w", c.p.Name, err)
+		}
+		out = append(out, t)
+	}
+	return out, nil
+}
+
+// Call calls the MCP server's tool name with args. A result the tool marks as an error is an error, with
+// what the tool said.
+func (c *Client) Call(name string, args any) (*mcp.CallToolResult, error) {
+	s, err := c.session()
+	if err != nil {
+		return nil, err
+	}
+	res, err := s.CallTool(c.ctx, &mcp.CallToolParams{Name: name, Arguments: args})
+	if err != nil {
+		return nil, fmt.Errorf("%s %s: %w", c.p.Name, name, err)
+	}
+	if res.IsError {
+		return nil, &Refusal{Provider: c.p.Name, Message: name + ": " + Text(res)}
+	}
+	return res, nil
+}
+
+// Text is the text of a tool's result, its text parts on lines of their own.
+func Text(res *mcp.CallToolResult) string {
+	var parts []string
+	for _, c := range res.Content {
+		if t, ok := c.(*mcp.TextContent); ok {
+			parts = append(parts, t.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+// Close ends the Client's MCP session, if it opened one.
+func (c *Client) Close() {
+	if c.sess != nil {
+		c.sess.Close()
+		c.sess = nil
+	}
+}
+
+// mcpAccount is an MCP connector's Account that calls tool, without arguments, and reads its answer: the
+// first email, then the first name, in its JSON; or its first line.
+func mcpAccount(tool string) func(c *Client) (string, error) {
+	return func(c *Client) (string, error) {
+		res, err := c.Call(tool, map[string]any{})
+		if err != nil {
+			return "", err
+		}
+		v := res.StructuredContent
+		text := Text(res)
+		if v == nil {
+			json.Unmarshal([]byte(text), &v)
+		}
+		for _, k := range []string{"email", "emailAddress", "name", "display_name", "displayName"} {
+			if s := strings.TrimSpace(find(v, k)); s != "" && strings.Contains(s, "@") {
+				return strings.ToLower(s), nil
+			} else if s != "" {
+				return s, nil
+			}
+		}
+		line, _, _ := strings.Cut(strings.TrimSpace(text), "\n")
+		if line = strings.TrimSpace(line); line == "" || len(line) > 120 {
+			return "", fmt.Errorf("%s did not name an account", tool)
+		}
+		return line, nil
+	}
+}
+
+// ClientID is the OAuth client's id.
+func (p *Provider) ClientID() string { return p.clientID }

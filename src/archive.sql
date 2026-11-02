@@ -375,7 +375,7 @@ COMMENT ON COLUMN archive.workflow_run.created_at IS 'When it started';
 -- callback said that calls need, like QuickBooks' realmId. error is why its last refresh or sync failed,
 -- empty while it works. Each member sees their own personal connections (archive.mine), owners too.
 --
--- Its sync (sync.go) keeps a copy of what the account has in Archive's tables of its domain, a page at a time,
+-- Its sync (connection.go) keeps a copy of what the account has in Archive's tables of its domain, a page at a time,
 -- and runs only when something asks: connecting, Sync now, a push from the provider, or a member reading what
 -- it syncs or opening the workspace while it is stale. asked_at is when something last asked, and each stream catches up to it;
 -- sync_at is when its next page is due, null once every stream has caught up, and lease_at when the page under
@@ -419,13 +419,13 @@ COMMENT ON COLUMN archive.connection.integration IS 'It is the archive''s, like 
 COMMENT ON COLUMN archive.connection.access IS 'The group an integration and what it syncs are narrowed to, like finance; null for everyone';
 
 -- What connections sync lands in tables of the domains it belongs to: mail, docs and payroll, which every
--- connector of a domain shares, as its file maps its records (connect/tables.go), so Gmail and Outlook are one
+-- connector of a domain shares, as its file maps its records (connect/sync.go), so Gmail and Outlook are one
 -- mail and two payroll providers one payroll. A table a stream lands in has a row for each source_id, its id
 -- at the provider, of each stream of each connection; seen_at is when a sync last read it, which a full
 -- listing compares, and updated_at when it last changed. Its other tables are rows that belong to one of
 -- those, like a message's parties, and are written again with it. A row that names another row of its
 -- connection keeps that row's id there in <column>_source, so it links once both are there. Only Go writes
--- them (tables.go): a row gone there is deleted, and disconnecting deletes the connection's. Every row has its
+-- them (connection.go): a row gone there is deleted, and disconnecting deletes the connection's. Every row has its
 -- connection's access, and is seen as the connection is: a personal connection's by its member, and an
 -- integration's by everyone archive.can its access.
 --
@@ -1400,7 +1400,7 @@ COMMENT ON COLUMN archive.payroll_task.source_id IS 'Its id there';
 COMMENT ON COLUMN archive.payroll_task.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.payroll_task.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
--- An OAuth client Archive registered for itself at an MCP connector's authorization server (connect/mcp.go):
+-- An OAuth client Archive registered for itself at an MCP connector's authorization server (connect/connect.go):
 -- one per connector, kept in the main database for every workspace, since the redirect URI is the server's.
 -- client is the connect.Registration, its secret with it, sealed with ARCHIVE_SECRET_KEY. Only Go reads it.
 CREATE TABLE archive.oauth_client (
@@ -1409,7 +1409,7 @@ CREATE TABLE archive.oauth_client (
     created_at timestamptz NOT NULL DEFAULT now()
 );
 
--- A watch is something a connector's provider pushes for a connection's account (connect/push.go): a Gmail
+-- A watch is something a connector's provider pushes for a connection's account (connect/sync.go): a Gmail
 -- users.watch, a Drive channel, a Graph subscription, an Asana webhook, or the key a push of the app's own
 -- webhook names it by, like a QuickBooks realmId. key is what a push names it by, resource what the provider
 -- calls it, secret what its pushes prove themselves with, sealed with ARCHIVE_SECRET_KEY, and expires_at when
