@@ -4,7 +4,7 @@
   import Icon from './Icon.svelte';
   import Kbd from './Kbd.svelte';
   import Switch from './Switch.svelte';
-  import { go } from '../lib/router.svelte.js';
+  import { go, preload } from '../lib/router.svelte.js';
 
   let { icon, shortcut, danger = false, checked, toggle, disabled = false, href, onselect, keepOpen = false, leading, end, children } = $props();
 
@@ -27,6 +27,8 @@
   tabindex="-1"
   class={['item', { danger, disabled }]}
   onclick={activate}
+  onpointerenter={href ? () => preload(href) : undefined}
+  onfocus={href ? () => preload(href) : undefined}
 >
   {#if leading}
     {@render leading()}

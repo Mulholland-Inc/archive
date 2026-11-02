@@ -84,6 +84,11 @@ export function resource({ tables, load, byId = false, param: which = byId ? (c)
 
   const r = {
     refresh,
+    // Read it now if it is stale, before a screen uses it: a link about to be followed (preload.js).
+    prefetch(param = true) {
+      if (param === null || param === undefined || param === false || param === '') return;
+      if (stale(keyOf(param))) refresh(param);
+    },
     // What was just read some other way is fresh.
     seen(param = true) {
       fresh.set(keyOf(param), gen);
