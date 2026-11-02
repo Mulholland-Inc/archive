@@ -241,10 +241,7 @@ func schemaCheckSQL(stmts []string) error {
 			}
 		}
 	}
-	if len(ve.Errors) > 0 {
-		return ve
-	}
-	return nil
+	return ve.err()
 }
 
 var (

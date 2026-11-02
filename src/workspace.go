@@ -217,7 +217,7 @@ func (h *Hub) register(ctx context.Context) error {
 	return nil
 }
 
-func (h *Hub) Close() error {
+func (h *Hub) Close() {
 	h.mu.Lock()
 	for k, e := range h.open {
 		if e.a != nil {
@@ -229,7 +229,6 @@ func (h *Hub) Close() error {
 	if h.main != nil {
 		h.main.Close()
 	}
-	return nil
 }
 
 func (h *Hub) q() *generated.Queries { return generated.New(h.main) }
@@ -1015,8 +1014,8 @@ func (h *Hub) createWorkspace(ctx context.Context, name, owner string) (generate
 }
 
 func (a *Archive) Info(ctx context.Context) (*Workspace, error) {
-	if ActorFrom(ctx) == nil {
-		return nil, fmt.Errorf("not signed in: %w", ErrUnauthorized)
+	if _, err := signedIn(ctx); err != nil {
+		return nil, err
 	}
 	row, err := a.hub.q().WorkspaceByID(ctx, a.ws.ID)
 	if err != nil {

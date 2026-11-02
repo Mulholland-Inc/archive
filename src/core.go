@@ -40,9 +40,9 @@ type Archive struct {
 }
 
 func (a *Archive) as(ctx context.Context, fn func(context.Context) error) error {
-	ac := ActorFrom(ctx)
-	if ac == nil {
-		return fmt.Errorf("not signed in: %w", ErrUnauthorized)
+	ac, err := signedIn(ctx)
+	if err != nil {
+		return err
 	}
 	if t, ok := ctx.Value(storeTxKey{}).(storeTx); ok && t.role == ac.Role {
 		return fn(ctx)
@@ -89,10 +89,7 @@ func coreDo[T any](a *Archive, ctx context.Context, fn func(context.Context) (T,
 	return out, err
 }
 
-func (a *Archive) Close() error {
-	a.st.Close()
-	return nil
-}
+func (a *Archive) Close() { a.st.Close() }
 
 func (a *Archive) Catalog() *Catalog {
 	a.mu.RLock()
@@ -139,8 +136,8 @@ func (a *Archive) List(ctx context.Context, typ string, where map[string]any, li
 			}
 		}
 	}
-	if len(verr.Errors) > 0 {
-		return nil, verr
+	if err := verr.err(); err != nil {
+		return nil, err
 	}
 	if limit <= 0 || limit > 1000 {
 		limit = 100
@@ -149,7 +146,7 @@ func (a *Archive) List(ctx context.Context, typ string, where map[string]any, li
 		if err := a.pgCheck(ctx, tb, norm); err != nil {
 			return nil, err
 		}
-		q := `SELECT ` + tb.rowSQL("t") + ` FROM ` + tb.ident() + ` t, jsonb_populate_record(NULL::` + tb.ident() + `, $1) w WHERE t.id > $2`
+		q := `SELECT ` + tb.rowSQL() + ` FROM ` + tb.ident() + ` t, jsonb_populate_record(NULL::` + tb.ident() + `, $1) w WHERE t.id > $2`
 		args := []any{norm, after}
 		for _, k := range specKeys(norm) {
 			q += " AND t." + pgIdent(k) + " = w." + pgIdent(k)
@@ -168,7 +165,7 @@ func (a *Archive) Get(ctx context.Context, typ string, id uuid.UUID) (map[string
 }
 
 func (a *Archive) coreGet(ctx context.Context, tb *Table, id uuid.UUID) (map[string]any, error) {
-	rs, err := storeRows(ctx, a.st, `SELECT `+tb.rowSQL("t")+` FROM `+tb.ident()+` t WHERE t.id = $1`, id)
+	rs, err := storeRows(ctx, a.st, `SELECT `+tb.rowSQL()+` FROM `+tb.ident()+` t WHERE t.id = $1`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +199,7 @@ func (a *Archive) coreCreate(ctx context.Context, tb *Table, data map[string]any
 	if len(cols) == 0 {
 		q = `INSERT INTO ` + tb.ident() + ` AS t SELECT FROM jsonb_populate_record(NULL::` + tb.ident() + `, $1) r`
 	}
-	rs, err := storeRows(ctx, a.st, q+` RETURNING `+tb.rowSQL("t"), out)
+	rs, err := storeRows(ctx, a.st, q+` RETURNING `+tb.rowSQL(), out)
 	if err != nil {
 		return nil, err
 	}
@@ -243,7 +240,7 @@ func (a *Archive) coreWrite(ctx context.Context, typ string, id uuid.UUID, data 
 		for _, c := range specKeys(out) {
 			q += ", " + pgIdent(c) + " = r." + pgIdent(c)
 		}
-		rs, err := storeRows(ctx, a.st, q+` FROM jsonb_populate_record(NULL::`+tb.ident()+`, $2) r WHERE t.id = $1 RETURNING `+tb.rowSQL("t"), id, out)
+		rs, err := storeRows(ctx, a.st, q+` FROM jsonb_populate_record(NULL::`+tb.ident()+`, $2) r WHERE t.id = $1 RETURNING `+tb.rowSQL(), id, out)
 		if err != nil {
 			return nil, err
 		}
@@ -319,10 +316,7 @@ func (a *Archive) refCheck(ctx context.Context, tb *Table, out map[string]any) e
 			}
 		}
 	}
-	if len(verr.Errors) > 0 {
-		return verr
-	}
-	return nil
+	return verr.err()
 }
 
 func (a *Archive) pgCheck(ctx context.Context, tb *Table, out map[string]any) error {
@@ -348,10 +342,7 @@ func (a *Archive) pgCheck(ctx context.Context, tb *Table, out map[string]any) er
 	for _, r := range rows {
 		verr.Errors = append(verr.Errors, FieldError{Path: ls[r.I-1].path, Message: r.Message})
 	}
-	if len(verr.Errors) > 0 {
-		return verr
-	}
-	return nil
+	return verr.err()
 }
 
 func (a *Archive) Delete(ctx context.Context, typ string, id uuid.UUID) error {
@@ -377,8 +368,8 @@ func (a *Archive) Delete(ctx context.Context, typ string, id uuid.UUID) error {
 // Schema is each table and view of the public schema as the transaction in ctx sees it, with its columns and
 // DDL; with a name, only that one.
 func (a *Archive) Schema(ctx context.Context, name string) (any, error) {
-	if ActorFrom(ctx) == nil {
-		return nil, fmt.Errorf("not signed in: %w", ErrUnauthorized)
+	if _, err := signedIn(ctx); err != nil {
+		return nil, err
 	}
 	ddl, err := a.st.Schema(ctx)
 	if err != nil {
@@ -407,9 +398,9 @@ func (a *Archive) Schema(ctx context.Context, name string) (any, error) {
 // Migrate dry-runs a migration, or with its dry run's confirm runs it, in the transaction in ctx or one of its
 // own: a run that migrates and then fails changes nothing. A named migration runs once.
 func (a *Archive) Migrate(ctx context.Context, sql, name, confirm string) (*SchemaMigration, error) {
-	ac := ActorFrom(ctx)
-	if ac == nil {
-		return nil, fmt.Errorf("not signed in: %w", ErrUnauthorized)
+	ac, err := signedIn(ctx)
+	if err != nil {
+		return nil, err
 	}
 	if !a.owner(ctx, ac.Role) {
 		return nil, fmt.Errorf("only owners change the schema: %w", ErrForbidden)
@@ -419,7 +410,7 @@ func (a *Archive) Migrate(ctx context.Context, sql, name, confirm string) (*Sche
 		author += " (" + ac.TokenName + ")"
 	}
 	var m *SchemaMigration
-	err := a.as(ctx, func(ctx context.Context) (err error) {
+	err = a.as(ctx, func(ctx context.Context) (err error) {
 		m, err = a.st.Migrate(ctx, sql, name, author, confirm)
 		if err == nil && m.Applied {
 			storeAfter(ctx, func() { a.reload(context.WithoutCancel(ctx)) })
@@ -430,8 +421,8 @@ func (a *Archive) Migrate(ctx context.Context, sql, name, confirm string) (*Sche
 }
 
 func (a *Archive) SchemaRevisions(ctx context.Context, limit int) ([]SchemaRevision, error) {
-	if ActorFrom(ctx) == nil {
-		return nil, fmt.Errorf("not signed in: %w", ErrUnauthorized)
+	if _, err := signedIn(ctx); err != nil {
+		return nil, err
 	}
 	return a.st.Revisions(ctx, cmp.Or(min(max(limit, 0), 100), 20))
 }
@@ -498,7 +489,7 @@ func (a *Archive) Search(ctx context.Context, query string, f SearchFilter) ([]*
 	for _, name := range cat.names() {
 		tb := cat.Tables[name]
 		if tb.Schema == "public" && (f.Type == name || f.Type == "" && tb.Kind == "table") {
-			parts = append(parts, `SELECT 'entity' AS kind, `+pgLiteral(name)+` AS type, t.id, t.created_at, `+tb.rowSQL("t")+` AS data, ts_rank(t.search, q.q, 1) AS rank, '' AS snippet
+			parts = append(parts, `SELECT 'entity' AS kind, `+pgLiteral(name)+` AS type, t.id, t.created_at, `+tb.rowSQL()+` AS data, ts_rank(t.search, q.q, 1) AS rank, '' AS snippet
 				FROM `+tb.ident()+` t, q WHERE t.search @@ q.q`)
 		}
 	}

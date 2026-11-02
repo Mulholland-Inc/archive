@@ -21,7 +21,6 @@ import (
 	"sync"
 	"time"
 	_ "time/tzdata"
-	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/nyaruka/phonenumbers"
@@ -35,12 +34,8 @@ import (
 )
 
 var semTransforms = map[string]func(string) (string, error){
-	"trim":         func(s string) (string, error) { return strings.TrimSpace(s), nil },
-	"lower":        func(s string) (string, error) { return strings.ToLower(s), nil },
-	"upper":        func(s string) (string, error) { return strings.ToUpper(s), nil },
-	"nfc":          func(s string) (string, error) { return norm.NFC.String(s), nil },
-	"strip_spaces": func(s string) (string, error) { return strings.Join(strings.FieldsFunc(s, unicode.IsSpace), ""), nil },
-
+	"upper":            func(s string) (string, error) { return strings.ToUpper(s), nil },
+	"nfc":              func(s string) (string, error) { return norm.NFC.String(s), nil },
 	"strip_separators": func(s string) (string, error) { return semStrip(s), nil },
 	"punycode":         semDomain,
 	"lower_domain": func(s string) (string, error) {
@@ -190,7 +185,6 @@ var semChecks = map[string]func(v any) error{
 	},
 	"lei":  semStrCheck("LEI check digits do not match", func(s string) bool { return semMod97(s) == 1 }),
 	"isin": semStrCheck("ISIN check digit does not match", semISIN),
-	"luhn": semStrCheck("Luhn check failed", semLuhn),
 	"aba": semStrCheck("not a valid ABA routing number", func(s string) bool {
 		p, _ := strconv.Atoi(s[:min(2, len(s))])
 		return semABACheck(s) && (p <= 12 || (p >= 21 && p <= 32) || (p >= 61 && p <= 72) || p == 80)
@@ -291,103 +285,19 @@ var semChecks = map[string]func(v any) error{
 	}),
 }
 
-var semFormats = map[string]func(v any, locale string) string{
-	"date": func(v any, locale string) string {
-		d, _ := time.Parse(time.DateOnly, v.(string))
-		return d.Format(semDateLayout(locale))
-	},
-	"timestamp": func(v any, locale string) string {
-		m := v.(map[string]any)
-		ts, _ := semParseUTC(m["utc"].(string))
-		ts = ts.In(semLoc(m["zone"].(string)))
-		return ts.Format(semDateLayout(locale) + " " + semClockLayout(locale, ts.Second() != 0) + " MST")
-	},
-	"time": func(v any, locale string) string {
-		p, _ := time.Parse(time.TimeOnly, v.(map[string]any)["time"].(string))
-		return p.Format(semClockLayout(locale, p.Second() != 0))
-	},
-	"interval": func(v any, locale string) string {
-		m := v.(map[string]any)
-		part := func(k string) string {
-			s, _ := m[k].(string)
-			if s == "" {
-				return "…"
-			}
-			p, _ := semEndpoint(s)
-			if len(s) == 10 {
-				return p.Format(semDateLayout(locale))
-			}
-			return p.Format(semDateLayout(locale) + " " + semClockLayout(locale, false) + " MST")
-		}
-		return part("start") + " – " + part("end")
-	},
-	"money": func(v any, locale string) string {
-		m := v.(map[string]any)
-		a, c := m["amount"].(string), m["currency"].(string)
-		sign := ""
-		if strings.HasPrefix(a, "-") {
-			sign, a = "-", a[1:]
-		}
-		num := semFormatDec(a, locale, 0)
-		u, _ := currency.ParseISO(c)
-		sym := fmt.Sprint(currency.NarrowSymbol(u))
-		if sym == "" || strings.IndexFunc(sym, func(r rune) bool { return r < 'A' || r > 'z' }) < 0 {
-			return sign + c + " " + num
-		}
-		return sign + sym + num
-	},
-	"percentage": func(v any, locale string) string {
-		d, _ := semNumStr(v)
-		return semFormatDec(semShift(d, 2), locale, 0) + "%"
-	},
-	"number": func(v any, locale string) string {
-		d, ok := v.(string)
-		if !ok {
-			d, _ = semNumStr(v)
-		}
-		return semFormatDec(d, locale, 0)
-	},
-	"card": func(v any, _ string) string {
+var semMasks = map[string]func(v any) string{
+	"card": func(v any) string {
 		m := v.(map[string]any)
 		return m["brand"].(string) + " **** " + m["last4"].(string)
 	},
-	"mask_ssn": func(v any, _ string) string { return "***-**-" + v.(string)[5:] },
-	"national": func(v any, _ string) string {
+	"mask_ssn": func(v any) string { return "***-**-" + v.(string)[5:] },
+	"national": func(v any) string {
 		m := v.(map[string]any)
 		return m["country"].(string) + " " + m["scheme"].(string) + " " + semMask(m["value"].(string), 4)
 	},
-	"passport": func(v any, _ string) string {
+	"passport": func(v any) string {
 		m := v.(map[string]any)
 		return m["country"].(string) + " " + semMask(m["number"].(string), 3)
-	},
-	"email": func(v any, _ string) string {
-		s := v.(string)
-		at := strings.LastIndex(s, "@")
-		return s[:at] + "@" + semDomainDisplay(s[at+1:])
-	},
-	"domain": func(v any, _ string) string { return semDomainDisplay(v.(string)) },
-	"phone": func(v any, locale string) string {
-		n, _ := phonenumbers.Parse(v.(string), "")
-		if r := semLocaleRegion(locale); r != "" && r == phonenumbers.GetRegionCodeForNumber(n) {
-			return phonenumbers.Format(n, phonenumbers.NATIONAL)
-		}
-		return phonenumbers.Format(n, phonenumbers.INTERNATIONAL)
-	},
-	"address": semFormatAddress,
-	"name":    func(v any, _ string) string { return v.(map[string]any)["full"].(string) },
-	"country": func(v any, locale string) string { return semCountryName(v.(string), locale) },
-	"postcode": func(v any, _ string) string {
-		return v.(map[string]any)["code"].(string)
-	},
-	"geo": func(v any, _ string) string {
-		m := v.(map[string]any)
-		return strconv.FormatFloat(m["lat"].(float64), 'f', -1, 64) + ", " + strconv.FormatFloat(m["lon"].(float64), 'f', -1, 64)
-	},
-	"quantity": func(v any, locale string) string {
-		m := v.(map[string]any)
-		u := semUnits[m["original_unit"].(string)]
-		d, _ := semNumStr(semRound12((m["value"].(float64) - u.offset) / u.factor))
-		return semFormatDec(d, locale, 0) + " " + u.disp
 	},
 }
 
@@ -522,14 +432,6 @@ func semLocaleRegion(locale string) string {
 	return r.String()
 }
 
-func semLocaleTag(locale string) language.Tag {
-	t, err := language.Parse(strings.ReplaceAll(locale, "_", "-"))
-	if err != nil {
-		return language.Und
-	}
-	return t
-}
-
 var semSepCache sync.Map
 
 func semSeps(t language.Tag) (group, dec string) {
@@ -588,29 +490,6 @@ func semShift(d string, n int) string {
 	}
 	out, _ := semDec(sign + digits[:point] + "." + digits[point:])
 	return out
-}
-
-func semFormatDec(d, locale string, minFrac int) string {
-	group, dec := semSeps(semLocaleTag(locale))
-	sign := ""
-	if strings.HasPrefix(d, "-") {
-		sign, d = "-", d[1:]
-	}
-	i, f, _ := strings.Cut(d, ".")
-	for len(f) < minFrac {
-		f += "0"
-	}
-	var b strings.Builder
-	for k, r := range i {
-		if k > 0 && (len(i)-k)%3 == 0 {
-			b.WriteString(group)
-		}
-		b.WriteRune(r)
-	}
-	if f != "" {
-		b.WriteString(dec + f)
-	}
-	return sign + b.String()
 }
 
 var semNumChars = regexp.MustCompile(`^[0-9.,]+$`)
@@ -833,32 +712,6 @@ func semLoc(zone string) *time.Location {
 		return l
 	}
 	return time.UTC
-}
-
-func semDateLayout(locale string) string {
-	switch semLocaleRegion(locale) {
-	case "US":
-		return "1/2/2006"
-	case "DE", "AT", "CH":
-		return "02.01.2006"
-	case "GB", "FR", "BE", "IT", "ES", "IE", "AU", "NZ", "IN", "BR", "PT":
-		return "02/01/2006"
-	}
-	return time.DateOnly
-}
-
-func semClockLayout(locale string, withSec bool) string {
-	l := "15:04"
-	if semLocaleRegion(locale) == "US" {
-		l = "3:04"
-	}
-	if withSec {
-		l += ":05"
-	}
-	if semLocaleRegion(locale) == "US" {
-		l += " PM"
-	}
-	return l
 }
 
 func semUTC(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
@@ -1403,13 +1256,6 @@ func semDomain(s string) (string, error) {
 	return a, nil
 }
 
-func semDomainDisplay(s string) string {
-	if u, err := idna.Lookup.ToUnicode(s); err == nil {
-		return u
-	}
-	return s
-}
-
 func semParsePhone(in any, h Hints) ([]Candidate, error) {
 	s, ok := in.(string)
 	if !ok {
@@ -1479,34 +1325,6 @@ func semParseAddress(in any, h Hints) ([]Candidate, error) {
 		"lines": lines, "locality": semNull(semFirst(m, "locality", "city", "town")),
 		"region": semNull(region), "postcode": semNull(postcode), "country": c,
 	}, Confidence: 1}}, nil
-}
-
-func semFormatAddress(v any, locale string) string {
-	m := v.(map[string]any)
-	var out []string
-	for _, l := range m["lines"].([]any) {
-		out = append(out, l.(string))
-	}
-	loc, pc, reg, c := semS(m, "locality"), semS(m, "postcode"), semS(m, "region"), semS(m, "country")
-	switch c {
-	case "US":
-		_, st, _ := strings.Cut(reg, "-")
-		out = append(out, strings.TrimSpace(strings.TrimSpace(loc+", "+st)+" "+pc))
-	case "GB":
-		out = append(out, loc, pc)
-	default:
-		out = append(out, strings.TrimSpace(pc+" "+loc))
-	}
-	if semLocaleRegion(locale) != c {
-		out = append(out, semCountryName(c, locale))
-	}
-	var keep []string
-	for _, l := range out {
-		if l = strings.Trim(l, ", "); l != "" {
-			keep = append(keep, l)
-		}
-	}
-	return strings.Join(keep, "\n")
 }
 
 var semParticles = map[string]bool{"van": true, "von": true, "der": true, "den": true, "de": true, "del": true, "della": true, "di": true, "da": true, "du": true, "la": true, "le": true, "zu": true, "dos": true, "das": true}
@@ -1624,17 +1442,6 @@ func semCountry(s string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("%q is not an ISO 3166-1 country", s)
-}
-
-func semCountryName(c, locale string) string {
-	r, err := language.ParseRegion(c)
-	if err != nil {
-		return c
-	}
-	if n := display.Regions(semLocaleTag(locale)).Name(r); n != "" {
-		return n
-	}
-	return display.English.Regions().Name(r)
 }
 
 var semSubdivisions = map[string]string{
@@ -1860,7 +1667,7 @@ type semType struct {
 	Normalize []string
 	Parse     string
 	Check     string
-	Format    string
+	Mask      string
 	Secret    bool
 }
 
@@ -1872,45 +1679,45 @@ var semBase = map[string]string{
 var semLib = map[string]semType{
 	"text":       {Normalize: []string{"nfc"}},
 	"richtext":   {Normalize: []string{"nfc"}},
-	"integer":    {Parse: "number", Format: "number"},
-	"number":     {Parse: "number", Format: "number"},
-	"decimal":    {Parse: "decimal", Format: "number"},
+	"integer":    {Parse: "number"},
+	"number":     {Parse: "number"},
+	"decimal":    {Parse: "decimal"},
 	"boolean":    {Parse: "boolean"},
-	"date":       {Parse: "date", Check: "date", Format: "date"},
+	"date":       {Parse: "date", Check: "date"},
 	"instant":    {Parse: "instant", Check: "instant"},
 	"uuid":       {Normalize: []string{"uuid"}},
-	"timestamp":  {Parse: "timestamp", Check: "timestamp", Format: "timestamp"},
-	"time":       {Parse: "time", Check: "time", Format: "time"},
+	"timestamp":  {Parse: "timestamp", Check: "timestamp"},
+	"time":       {Parse: "time", Check: "time"},
 	"duration":   {Parse: "duration", Check: "duration"},
-	"interval":   {Parse: "interval", Check: "interval", Format: "interval"},
+	"interval":   {Parse: "interval", Check: "interval"},
 	"timezone":   {Normalize: []string{"timezone"}},
 	"recurrence": {Normalize: []string{"rrule"}},
-	"money":      {Parse: "money", Check: "money", Format: "money"},
+	"money":      {Parse: "money", Check: "money"},
 	"currency":   {Parse: "currency", Check: "currency"},
-	"percentage": {Parse: "percentage", Format: "percentage"},
+	"percentage": {Parse: "percentage"},
 	"bic":        {Normalize: []string{"strip_separators", "upper", "bic"}},
-	"card":       {Parse: "card", Format: "card", Secret: true},
+	"card":       {Parse: "card", Mask: "card", Secret: true},
 	"us_routing": {Normalize: []string{"strip_separators"}, Check: "aba"},
 	"lei":        {Normalize: []string{"strip_separators", "upper"}, Check: "lei"},
 	"isin":       {Normalize: []string{"strip_separators", "upper"}, Check: "isin"},
 	"us_ein":     {Normalize: []string{"strip_separators", "ein_dash"}},
-	"us_ssn":     {Normalize: []string{"strip_separators"}, Check: "ssn_ranges", Format: "mask_ssn", Secret: true},
-	"national":   {Parse: "national", Check: "national", Format: "national", Secret: true},
-	"passport":   {Parse: "passport", Check: "passport", Format: "passport", Secret: true},
-	"email":      {Normalize: []string{"mail_address", "lower_domain"}, Format: "email"},
-	"phone":      {Parse: "phone", Check: "phone", Format: "phone"},
-	"address":    {Parse: "address", Check: "address", Format: "address"},
-	"name":       {Parse: "name", Check: "name", Format: "name"},
+	"us_ssn":     {Normalize: []string{"strip_separators"}, Check: "ssn_ranges", Mask: "mask_ssn", Secret: true},
+	"national":   {Parse: "national", Check: "national", Mask: "national", Secret: true},
+	"passport":   {Parse: "passport", Check: "passport", Mask: "passport", Secret: true},
+	"email":      {Normalize: []string{"mail_address", "lower_domain"}},
+	"phone":      {Parse: "phone", Check: "phone"},
+	"address":    {Parse: "address", Check: "address"},
+	"name":       {Parse: "name", Check: "name"},
 	"url":        {Parse: "url", Check: "url"},
-	"country":    {Normalize: []string{"country"}, Format: "country"},
+	"country":    {Normalize: []string{"country"}},
 	"region":     {Parse: "region", Check: "region"},
-	"postcode":   {Parse: "postcode", Check: "postcode", Format: "postcode"},
-	"geo":        {Parse: "geo", Check: "geo", Format: "geo"},
+	"postcode":   {Parse: "postcode", Check: "postcode"},
+	"geo":        {Parse: "geo", Check: "geo"},
 	"locale":     {Normalize: []string{"locale"}},
-	"quantity":   {Parse: "quantity", Check: "quantity", Format: "quantity"},
+	"quantity":   {Parse: "quantity", Check: "quantity"},
 	"gtin":       {Normalize: []string{"strip_separators", "gtin14"}, Check: "gtin"},
 	"isbn":       {Normalize: []string{"strip_separators", "upper", "isbn13"}, Check: "isbn"},
 	"ip":         {Normalize: []string{"ip"}},
-	"domain":     {Normalize: []string{"punycode"}, Format: "domain"},
+	"domain":     {Normalize: []string{"punycode"}},
 	"mime":       {Normalize: []string{"mime"}},
 }

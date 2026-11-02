@@ -169,14 +169,6 @@ func (a *Archive) workflowCheck(ctx context.Context, name, src string) (string, 
 	return on, w, err
 }
 
-func workflowUser(ctx context.Context) (*Actor, error) {
-	ac := ActorFrom(ctx)
-	if ac == nil {
-		return nil, fmt.Errorf("not signed in: %w", ErrUnauthorized)
-	}
-	return ac, nil
-}
-
 func (a *Archive) workflowOut(ctx context.Context, w generated.ArchiveWorkflow) Workflow {
 	out := Workflow{Name: w.Name, On: w.Trigger}
 	if on, err := a.workflowParse(ctx, w.Trigger); err == nil {
@@ -191,7 +183,7 @@ func (a *Archive) workflowOut(ctx context.Context, w generated.ArchiveWorkflow) 
 }
 
 func (a *Archive) Deploy(ctx context.Context, files map[string]string) (*WorkflowDeploy, error) {
-	ac, err := workflowUser(ctx)
+	ac, err := signedIn(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +252,7 @@ func workflowToken() string {
 }
 
 func (a *Archive) workflowRows(ctx context.Context) ([]generated.ArchiveWorkflow, error) {
-	ac, err := workflowUser(ctx)
+	ac, err := signedIn(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -281,7 +273,7 @@ func (a *Archive) WorkflowFiles(ctx context.Context) (map[string]string, error) 
 }
 
 func (a *Archive) Workflows(ctx context.Context) ([]Workflow, error) {
-	ac, err := workflowUser(ctx)
+	ac, err := signedIn(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -310,7 +302,7 @@ func (a *Archive) Workflows(ctx context.Context) ([]Workflow, error) {
 }
 
 func (a *Archive) workflow(ctx context.Context, name string) (generated.ArchiveWorkflow, error) {
-	ac, err := workflowUser(ctx)
+	ac, err := signedIn(ctx)
 	if err != nil {
 		return generated.ArchiveWorkflow{}, err
 	}
@@ -514,7 +506,7 @@ func (a *Archive) workflowTable(ctx context.Context, w generated.ArchiveWorkflow
 	read := func() (rows []found, err error) {
 		err = a.as(WithActor(ctx, ac), func(ctx context.Context) error {
 			ts := "greatest(t.created_at, t.updated_at)"
-			res, err := a.st.Q(ctx).Query(ctx, `SELECT `+tb.rowSQL("t")+`, `+ts+`, t.id FROM `+tb.ident()+` t WHERE (`+ts+`, t.id) > ($1, $2) AND `+ts+` <> ALL ($3::timestamptz[]) ORDER BY 2, 3 LIMIT `+strconv.Itoa(workflowBatch), *w.CursorAt, *w.CursorID, own)
+			res, err := a.st.Q(ctx).Query(ctx, `SELECT `+tb.rowSQL()+`, `+ts+`, t.id FROM `+tb.ident()+` t WHERE (`+ts+`, t.id) > ($1, $2) AND `+ts+` <> ALL ($3::timestamptz[]) ORDER BY 2, 3 LIMIT `+strconv.Itoa(workflowBatch), *w.CursorAt, *w.CursorID, own)
 			if err != nil {
 				return err
 			}

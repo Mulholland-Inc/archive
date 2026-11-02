@@ -37,14 +37,6 @@ type Chat struct {
 
 const chatModel = "claude-haiku-5-5"
 
-func chatUser(ctx context.Context) (uuid.UUID, error) {
-	ac := ActorFrom(ctx)
-	if ac == nil {
-		return uuid.Nil, fmt.Errorf("not signed in: %w", ErrUnauthorized)
-	}
-	return ac.UserID, nil
-}
-
 func chatFound(id uuid.UUID, err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("chat %s: %w", id, ErrNotFound)
@@ -53,13 +45,13 @@ func chatFound(id uuid.UUID, err error) error {
 }
 
 func (a *Archive) Chats(ctx context.Context) ([]Chat, error) {
-	uid, err := chatUser(ctx)
+	ac, err := signedIn(ctx)
 	if err != nil {
 		return nil, err
 	}
 	out := []Chat{}
 	return out, a.sys(ctx, func(ctx context.Context) error {
-		rows, err := a.st.db(ctx).Chats(ctx, uid)
+		rows, err := a.st.db(ctx).Chats(ctx, ac.UserID)
 		for _, r := range rows {
 			out = append(out, Chat{ID: r.ID, Title: r.Title, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt})
 		}
@@ -68,13 +60,13 @@ func (a *Archive) Chats(ctx context.Context) ([]Chat, error) {
 }
 
 func (a *Archive) Chat(ctx context.Context, id uuid.UUID) (*Chat, error) {
-	uid, err := chatUser(ctx)
+	ac, err := signedIn(ctx)
 	if err != nil {
 		return nil, err
 	}
 	var c generated.ArchiveChat
 	err = a.sys(ctx, func(ctx context.Context) (err error) {
-		c, err = a.st.db(ctx).ChatByID(ctx, id, uid)
+		c, err = a.st.db(ctx).ChatByID(ctx, id, ac.UserID)
 		return err
 	})
 	if err != nil {
@@ -84,7 +76,7 @@ func (a *Archive) Chat(ctx context.Context, id uuid.UUID) (*Chat, error) {
 }
 
 func (a *Archive) RenameChat(ctx context.Context, id uuid.UUID, title string) (*Chat, error) {
-	uid, err := chatUser(ctx)
+	ac, err := signedIn(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +86,7 @@ func (a *Archive) RenameChat(ctx context.Context, id uuid.UUID, title string) (*
 	}
 	var n int64
 	if err := a.sys(ctx, func(ctx context.Context) (err error) {
-		n, err = a.st.db(ctx).RenameChat(ctx, id, uid, title)
+		n, err = a.st.db(ctx).RenameChat(ctx, id, ac.UserID, title)
 		return err
 	}); err != nil {
 		return nil, err
@@ -110,13 +102,13 @@ func (a *Archive) RenameChat(ctx context.Context, id uuid.UUID, title string) (*
 }
 
 func (a *Archive) DeleteChat(ctx context.Context, id uuid.UUID) error {
-	uid, err := chatUser(ctx)
+	ac, err := signedIn(ctx)
 	if err != nil {
 		return err
 	}
 	var n int64
 	if err := a.sys(ctx, func(ctx context.Context) (err error) {
-		n, err = a.st.db(ctx).DeleteChat(ctx, id, uid)
+		n, err = a.st.db(ctx).DeleteChat(ctx, id, ac.UserID)
 		return err
 	}); err != nil {
 		return err
