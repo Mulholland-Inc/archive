@@ -9,5 +9,6 @@ import './styles/bots.css';
 import './lib/theme.svelte.js';
 import './lib/viewport.js';
 import App from './App.svelte';
+import './lib/preload.js';
 
 export default mount(App, { target: document.getElementById('app') });
