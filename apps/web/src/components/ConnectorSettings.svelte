@@ -11,9 +11,11 @@
   import MenuItem from './MenuItem.svelte';
   import MenuLabel from './MenuLabel.svelte';
   import MenuSeparator from './MenuSeparator.svelte';
-  import { ws, connect } from '../lib/app.svelte.js';
+  import { ws, connect, connections } from '../lib/app.svelte.js';
 
   let { onopen, onback, backNarrow = false } = $props();
+
+  connections.use();
 
   let query = $state('');
   let categories = $state([]);

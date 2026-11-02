@@ -2,8 +2,9 @@
 // ../live.js and ../app.svelte.js); each piece here can be swapped for an API call on its own.
 //
 // Still mocked, and what would replace it:
-// - Connectors (Settings > Connectors, the composer's "Add from a connector"): per-person app connections.
-//   Needs connector endpoints (ADR 0002): list, connect (OAuth), disconnect, sync.
+// - Connectors other than Gmail (Settings > Connectors, the composer's "Add from a connector"), and syncing
+//   any of them. Gmail connects and disconnects for real (/connect); each other connector needs its
+//   file in src/connect.
 // - Integrations (Archive settings > Integrations: SSO, SCIM, workspace apps). Needs per-workspace
 //   integration endpoints.
 // - Sharing one file, folder, table or workflow with people (Share dialog, Access > Shares and guests).

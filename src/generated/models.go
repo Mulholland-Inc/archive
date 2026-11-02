@@ -65,6 +65,24 @@ type ArchiveChat struct {
 	UpdatedAt time.Time
 }
 
+// One of your own accounts at another service that Archive reads for you, like your Gmail. Read only; connect and disconnect them in Settings, Connectors
+// icon: plug
+type ArchiveConnection struct {
+	ID     uuid.UUID
+	Member uuid.UUID
+	// Which service: gmail
+	Provider string
+	// The account there, like the mailbox address
+	Account string
+	Token   []byte
+	// What Archive may do there, as the service granted it
+	Scopes []string
+	// Why Archive last failed to reach it, like a revoked grant; empty while it works
+	Error     string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 type ArchiveDue struct {
 	Workspace uuid.UUID
 	Kind      string

@@ -134,6 +134,9 @@ func catalogParse(b []byte) (*Catalog, error) {
 		if t.isWorkflow() {
 			catalogWorkflow(t)
 		}
+		if t.Schema == "archive" && t.Name == "connection" {
+			catalogConnection(t)
+		}
 	}
 	return c, nil
 }
@@ -150,6 +153,12 @@ func catalogWorkflow(t *Table) {
 	}
 	t.Columns = append(t.Columns, &Column{Name: "url", Type: "text", Schema: "pg_catalog", Reg: "text", Generated: true,
 		Description: "Its webhook URL, when on is { webhook: true }: anyone with it can POST to it, so give it only to the service that calls it"})
+}
+
+// catalogConnection shows archive.connection without whose it is and its sealed refresh token (connect.go).
+func catalogConnection(t *Table) {
+	t.internal = []string{"member", "token"}
+	t.Columns = slices.DeleteFunc(t.Columns, func(c *Column) bool { return slices.Contains(t.internal, c.Name) })
 }
 
 // isWorkflow says whether t is archive.workflow, whose writes go through its write hook (workflow.go).
@@ -190,7 +199,7 @@ var (
 	catalogSystem   = map[string]bool{"id": true, "created_at": true, "updated_at": true}
 	catalogReserved = map[string]bool{"files": true, "views": true, "search": true, "schema": true, "types": true,
 		"member": true, "user": true, "token": true, "file": true, "upload": true, "secret": true, "revision": true, "run": true,
-		"workflow": true, "workflow_run": true}
+		"workflow": true, "workflow_run": true, "connection": true}
 	catalogNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 	catalogRefRe  = regexp.MustCompile(`(?i)^references\s+([a-z][a-z0-9_]*)\b[\s.;:,-]*`)
 )
@@ -210,6 +219,9 @@ func (c *Catalog) writable(name string) (*Table, error) {
 	}
 	if err == nil && t.Schema == "archive" && t.Name == "workflow_run" {
 		return nil, fmt.Errorf("workflow_run is read only: Archive records a run each time a workflow runs: %w", ErrReadOnly)
+	}
+	if err == nil && t.Schema == "archive" && t.Name == "connection" {
+		return nil, fmt.Errorf("connection is read only: connect and disconnect your accounts in Settings, Connectors: %w", ErrReadOnly)
 	}
 	return t, err
 }

@@ -1,7 +1,7 @@
 // MOCK: made-up data; see index.js for what is still mocked.
 export const catalog = [
   { id: 'gdrive', by: 'Google', description: 'Find and import documents, scans and photos from your Drive', name: 'Google Drive', category: 'Files', icon: 'drive', scopes: ['Read files you pick', 'Watch folders for new files'] },
-  { id: 'gmail', by: 'Google', description: 'Pull letters and attachments from labelled mail', name: 'Gmail', category: 'Email', icon: 'mail', scopes: ['Read messages with a label you choose', 'Save attachments to the library'] },
+  { id: 'gmail', by: 'Google', description: 'Read your mail and attachments, never send or change it', name: 'Gmail', category: 'Email', icon: 'mail', scopes: ['Read your mail and its attachments'] },
   { id: 'outlook', by: 'Microsoft', description: 'Save attachments and notices from chosen folders', name: 'Outlook', category: 'Email', icon: 'inbox', scopes: ['Read messages in folders you choose', 'Save attachments to the library'] },
   { id: 'gcal', by: 'Google', description: 'Read events and add reminders for deadlines', name: 'Google Calendar', category: 'Calendar', icon: 'calendar', scopes: ['Read events', 'Create reminders'] },
   { id: 'dropbox', by: 'Dropbox', description: 'Import files and watch shared folders', name: 'Dropbox', category: 'Files', icon: 'package', scopes: ['Read files you pick', 'Watch folders for new files'] },

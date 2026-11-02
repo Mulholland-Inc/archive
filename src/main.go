@@ -118,7 +118,8 @@ Environment:
                      sign-in providers, with the id and secret URL-escaped; each shows on the sign-in
                      page when it is set, and its redirect URL is
                      <API>/auth/oidc/<google|microsoft|slack|github>/callback. Only invited people sign
-                     in, matched on an email the provider says is verified
+                     in, matched on an email the provider says is verified. ARCHIVE_GOOGLE also
+                     connects Gmail, read only, with the redirect URL <API>/connect/gmail/callback
   ARCHIVE_LIVE_KEY   key the API announces live changes with to the app Worker on the API's /live/announce
                      (apps/web/worker.js), which tells every open web app what moved; unset, serve holds
                      the web app's /live sockets itself and other archive commands on this machine tell
@@ -622,6 +623,7 @@ func cliServe(ctx context.Context, h *Hub, a *Archive, addr string) error {
 	mux.HandleFunc("GET /files/{workspace}/{id}", h.inWorkspace((*Archive).fileSigned))
 	mux.HandleFunc("POST /hooks/run/{workspace}/{token}", h.inWorkspace((*Archive).workflowHook))
 	mux.Handle("/auth/", si.handler())
+	h.connectRoutes(mux)
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("/mcp", h.mcp)
 	mux.HandleFunc("POST /tasks", h.tasksHTTP)
@@ -663,7 +665,7 @@ func (h *Hub) cors(next http.Handler) http.Handler {
 		headers := "Authorization, Content-Type, Archive-Workspace"
 		switch origin := r.Header.Get("Origin"); {
 		case origin == "":
-		case split && origin == app && (first == "api" || first == "auth"):
+		case split && origin == app && (first == "api" || first == "auth" || first == "connect"):
 			w.Header().Set("Access-Control-Allow-Origin", app)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			headers = "Content-Type, Archive-Workspace"

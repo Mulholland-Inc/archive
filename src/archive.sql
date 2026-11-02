@@ -363,6 +363,30 @@ COMMENT ON COLUMN archive.workflow_run.error IS 'Why it failed; empty when it wo
 COMMENT ON COLUMN archive.workflow_run.ms IS 'How long it took, in milliseconds';
 COMMENT ON COLUMN archive.workflow_run.created_at IS 'When it started';
 
+-- A connection is one of a member's own accounts at another service, like their Gmail, that Archive reads for
+-- them. Go alone writes it (connect.go): connecting adds it, connecting the same account again renews it, and
+-- disconnecting deletes it. provider is a connector's id; token is its refresh token, sealed with the
+-- workspace key like a secret value, and stays out of the catalog with member. error is why its last refresh
+-- failed, empty while it works. Each member sees only their own (archive.mine), owners too.
+CREATE TABLE archive.connection (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    member     uuid NOT NULL REFERENCES archive.member ON DELETE CASCADE,
+    provider   text NOT NULL,
+    account    text NOT NULL,
+    token      bytea NOT NULL,
+    scopes     text[] NOT NULL DEFAULT '{}',
+    error      text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (member, provider, account)
+);
+COMMENT ON TABLE archive.connection IS 'One of your own accounts at another service that Archive reads for you, like your Gmail. Read only; connect and disconnect them in Settings, Connectors
+icon: plug';
+COMMENT ON COLUMN archive.connection.provider IS 'Which service: gmail';
+COMMENT ON COLUMN archive.connection.account IS 'The account there, like the mailbox address';
+COMMENT ON COLUMN archive.connection.scopes IS 'What Archive may do there, as the service granted it';
+COMMENT ON COLUMN archive.connection.error IS 'Why Archive last failed to reach it, like a revoked grant; empty while it works';
+
 -- mine says whether the current role is the member m or one of their tokens, which are all in m's group role.
 CREATE FUNCTION archive.mine(m uuid) RETURNS bool LANGUAGE sql STABLE AS $$
     SELECT EXISTS (SELECT FROM pg_catalog.pg_roles r WHERE r.rolname = '{p}_m' || translate(rtrim(encode(uuid_send(m), 'base64'), '='), '+/', '-_')
@@ -401,6 +425,7 @@ END $$;
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.chat FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.workflow FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.workflow_run FOR EACH ROW EXECUTE FUNCTION archive.moved();
+CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.connection FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.file FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.member FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.revision FOR EACH ROW EXECUTE FUNCTION archive.moved();
@@ -442,6 +467,7 @@ GRANT SELECT, INSERT, DELETE ON archive.secret TO "{p}_editor";
 GRANT INSERT, UPDATE, DELETE ON archive.member TO "{p}_owner";
 GRANT SELECT, INSERT, UPDATE, DELETE ON archive.workflow TO "{p}_viewer";
 GRANT SELECT ON archive.workflow_run TO "{p}_viewer";
+GRANT SELECT ON archive.connection TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT, UPDATE, DELETE ON TABLES TO "{p}_editor";
 
@@ -458,6 +484,9 @@ CREATE POLICY mine ON archive.workflow USING (archive.mine(member)) WITH CHECK (
 
 ALTER TABLE archive.workflow_run ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.workflow_run FOR SELECT USING (EXISTS (SELECT FROM archive.workflow w WHERE w.id = workflow_run.workflow));
+
+ALTER TABLE archive.connection ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.connection FOR SELECT USING (archive.mine(member));
 
 -- name: HasRole :one
 SELECT pg_has_role(sqlc.arg(member)::name, rolname, 'USAGE') FROM pg_catalog.pg_roles WHERE rolname = sqlc.arg(grp)::name;
@@ -708,7 +737,7 @@ SELECT jsonb_build_object(
             AND regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)')
             FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid), false),
         'columns', (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid)))
-        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.member'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass)
+        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.member'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass, 'archive.connection'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -850,3 +879,24 @@ WHERE w.id = d.workspace AND w.id = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND
 DELETE FROM archive.due d USING archive.workspace w
 WHERE w.id = d.workspace AND w.id = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND d.at = sqlc.arg(claimed)::timestamptz;
 
+-- name: Connections :many
+SELECT id, provider, account, scopes, error, created_at, updated_at FROM archive.connection WHERE member = $1 ORDER BY provider, account, id;
+
+-- name: Connection :one
+SELECT * FROM archive.connection WHERE id = $1;
+
+-- name: ConnectionFor :one
+SELECT id FROM archive.connection WHERE member = $1 AND provider = $2 AND account = $3 FOR UPDATE;
+
+-- name: SaveConnection :exec
+INSERT INTO archive.connection (id, member, provider, account, token, scopes) VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (id) DO UPDATE SET token = EXCLUDED.token, scopes = EXCLUDED.scopes, error = '', updated_at = now();
+
+-- name: SetConnectionToken :exec
+UPDATE archive.connection SET token = $2, error = '', updated_at = now() WHERE id = $1;
+
+-- name: SetConnectionError :exec
+UPDATE archive.connection SET error = $2, updated_at = now() WHERE id = $1 AND error <> $2;
+
+-- name: DeleteConnection :one
+DELETE FROM archive.connection WHERE id = $1 AND member = $2 RETURNING *;
