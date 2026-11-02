@@ -66,6 +66,11 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-px);
+    padding: var(--space-2) var(--space-2) var(--space-0);
+  }
+
+  .collapsed .head {
+    padding-inline: var(--space-0-5);
   }
 
   .foot {
