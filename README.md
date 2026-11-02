@@ -172,6 +172,8 @@ printf ' ' | seed ARCHIVE_GITHUB                      # off; on: https://<id>:<s
 
 The secrets are `archive-<name in kebab case>`, like `archive-anthropic-api-key`, and the list is `local.secrets` in `main.tf`; the variables table below says what each one does.
 
+After that first apply, Terraform applies itself on every push to main that changes it (`.github/workflows/terraform.yml`), as the `archive-terraform` service account, with its Cloudflare token from the `archive-cloudflare-api-token` secret: nothing about it lives on a laptop. A secret it adds starts as a single space, so the service keeps starting, until you seed its value.
+
 Terraform keeps its state only in that versioned bucket, never on disk. The bucket is the one thing made outside Terraform, since the state can't live in a bucket the same state creates.
 
 The Cloudflare account token goes in `CLOUDFLARE_API_TOKEN`. On the zone it needs DNS Write, Config Settings Write and Workers Routes Write; on the account it needs Workers Scripts Write and Account API Tokens Write. Terraform verifies the zone with Google, maps `api.<domain>` to the Cloud Run service behind Cloudflare's proxy, and makes the web app on `app.<domain>` a Worker of static files that calls the API on its own domain. The zone's own SSL settings don't matter: a Configuration Rule makes Cloudflare reach Google over verified TLS, and lets Google's certificate challenges through over HTTP.
