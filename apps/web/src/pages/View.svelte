@@ -1,14 +1,21 @@
 <script>
-  import { Table2, Settings2 } from '@lucide/svelte';
+  import { Table2, Settings2, SearchX } from '@lucide/svelte';
+  import { onMount } from 'svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
   import Table from '../components/Table.svelte';
   import Button from '../components/Button.svelte';
-  import Heading from '../components/Heading.svelte';
   import Text from '../components/Text.svelte';
   import Stack from '../components/Stack.svelte';
   import EmptyState from '../components/EmptyState.svelte';
+  import StickyHeader from '../components/StickyHeader.svelte';
+  import SearchField from '../components/SearchField.svelte';
+  import Chip from '../components/Chip.svelte';
+  import Select from '../components/Select.svelte';
+  import Spacer from '../components/Spacer.svelte';
+  import Dialog from '../components/Dialog.svelte';
+  import Property from '../components/Property.svelte';
   import { ws, schema, viewRows } from '../lib/app.svelte.js';
   import { show } from '../lib/live.js';
 
@@ -20,13 +27,52 @@
   viewRows.use(() => id);
 
   const view = $derived(ws().schema.find((t) => t.id === id));
-  const rows = $derived(ws().viewRows?.[id] ?? []);
+  const all = $derived(ws().viewRows?.[id] ?? []);
   const shown = $derived((view?.columns ?? []).filter((c) => !['id', 'access', 'created_at', 'updated_at'].includes(c.name)));
   const title = $derived(shown.find((c) => c.type === 'text') ?? shown[0]);
   const layout = $derived(view?.layout ?? 'table');
+  const label = (c) => c.name.replaceAll('_', ' ').replace(/^./, (x) => x.toUpperCase());
 
-  const columns = $derived(shown.map((c) => ({ key: c.name, label: c.name.replaceAll('_', ' ').replace(/^./, (s) => s.toUpperCase()) })));
-  const cells = $derived(rows.map((r, i) => ({ id: r.id ?? i, ...Object.fromEntries(shown.map((c) => [c.name, show(r[c.name])])) })));
+  // Search reads every shown column; the chips are the values of the column the view groups by, or failing
+  // that its first column of few values; sort is by any shown column.
+  let query = $state('');
+  let filter = $state(null);
+  let sort = $state('');
+  let open = $state(null);
+  let searchEl = $state();
+
+  const facet = $derived.by(() => {
+    const few = (c) => new Set(all.map((r) => show(r[c.name])).filter(Boolean)).size;
+    const by = shown.find((c) => c.name === view?.by && c.type !== 'date');
+    return by ?? shown.find((c) => (c.type === 'choice' || c.type === 'text') && c !== title && few(c) > 1 && few(c) <= 8);
+  });
+  const values = $derived(facet ? [...new Set(all.map((r) => show(r[facet.name])).filter(Boolean))].sort() : []);
+  const sorts = $derived([{ value: '', label: 'Default order' }, ...shown.map((c) => ({ value: c.name, label: label(c) }))]);
+  const rows = $derived.by(() => {
+    const q = query.trim().toLowerCase();
+    const out = all.filter((r) => (!filter || show(r[facet?.name]) === filter) && (!q || shown.some((c) => show(r[c.name]).toLowerCase().includes(q))));
+    if (!sort) return out;
+    return [...out].sort((a, b) => String(a[sort] ?? '').localeCompare(String(b[sort] ?? ''), undefined, { numeric: true }));
+  });
+
+  function clear() {
+    query = '';
+    filter = null;
+  }
+
+  onMount(() => {
+    const key = (event) => {
+      if (event.key === '/' && !event.metaKey && !event.ctrlKey && !/INPUT|TEXTAREA/.test(document.activeElement?.tagName ?? '')) {
+        event.preventDefault();
+        searchEl?.focus();
+      }
+    };
+    addEventListener('keydown', key);
+    return () => removeEventListener('keydown', key);
+  });
+
+  const columns = $derived(shown.map((c) => ({ key: c.name, label: label(c) })));
+  const cells = $derived(rows.map((r, i) => ({ id: r.id ?? i, row: r, ...Object.fromEntries(shown.map((c) => [c.name, show(r[c.name])])) })));
 
   const lanes = $derived.by(() => {
     const by = view?.by;
@@ -65,13 +111,8 @@
   });
 </script>
 
-<TopBar>
-  {#snippet leading()}
-    <MobileMenu />
-  {/snippet}
-  {#snippet trailing()}
-    {#if view}<Button size="sm" variant="ghost" icon={Settings2} href={`/database/${view.id}`}>Details</Button>{/if}
-  {/snippet}
+<TopBar mobile>
+  {#snippet leading()}<MobileMenu />{/snippet}
 </TopBar>
 
 {#if !view}
@@ -80,26 +121,47 @@
   </Page>
 {:else}
   <Page width="wide">
+    <StickyHeader title={view.name}>
+      {#snippet search()}
+        <SearchField bind:value={query} bind:element={searchEl} placeholder={`Find in ${view.name.toLowerCase()}`} shortcut="/" />
+      {/snippet}
+      {#snippet actions()}
+        <Button size="sm" variant="ghost" icon={Settings2} href={`/database/${view.id}`}>Details</Button>
+      {/snippet}
+    </StickyHeader>
+
     <Stack gap="6">
-      <Stack gap="1">
-        <Heading level={1} size="2xl" wrap="anywhere">{view.name}</Heading>
-        {#if view.description && view.description.toLowerCase() !== view.name.toLowerCase()}<Text tone="secondary">{view.description}</Text>{/if}
+      {#if view.description && view.description.toLowerCase() !== view.name.toLowerCase()}<Text tone="secondary">{view.description}</Text>{/if}
+
+      <Stack direction="row" gap="2" align="center" wrap>
+        {#if values.length > 1}
+          <Chip selected={!filter} onclick={() => (filter = null)}>All</Chip>
+          {#each values as v (v)}
+            <Chip selected={filter === v} onclick={() => (filter = filter === v ? null : v)}>{v}</Chip>
+          {/each}
+        {/if}
+        <Spacer />
+        <Select bind:value={sort} options={sorts} variant="ghost" label="Sort by" placement="bottom-end" />
       </Stack>
 
-      {#if !rows.length}
+      {#if !all.length}
         <EmptyState icon={Table2} title="Nothing here yet" />
+      {:else if !rows.length}
+        <EmptyState icon={SearchX} title="Nothing matches that search">
+          <Button onclick={clear}>Show everything</Button>
+        </EmptyState>
       {:else if layout === 'board' && view.by}
         <div class="board">
           {#each lanes as [lane, items] (lane)}
             <section class="lane">
               <header><Text size="sm" weight="medium">{lane}</Text><Text size="sm" tone="tertiary" tabular>{items.length}</Text></header>
               {#each items as r, i (r.id ?? i)}
-                <article class="card">
+                <button type="button" class="card" onclick={() => (open = r)}>
                   <Text size="sm" weight="medium">{show(r[title?.name])}</Text>
                   {#each shown.filter((c) => c !== title && c.name !== view.by && r[c.name] != null && r[c.name] !== '') as c (c.name)}
                     <Text size="sm" tone="secondary">{show(r[c.name])}</Text>
                   {/each}
-                </article>
+                </button>
               {/each}
             </section>
           {/each}
@@ -113,17 +175,29 @@
               <div class={['day', { other: d.getMonth() !== month.getMonth() }]}>
                 <Text size="sm" tone="tertiary" tabular>{d.getDate()}</Text>
                 {#each onDay.get(key(d)) ?? [] as r, i (r.id ?? i)}
-                  <span class="event">{show(r[title?.name])}</span>
+                  <button type="button" class="event" onclick={() => (open = r)}>{show(r[title?.name])}</button>
                 {/each}
               </div>
             {/each}
           </div>
         </Stack>
       {:else}
-        <Table {columns} rows={cells} label={view.name} />
+        <Table {columns} rows={cells} label={view.name} onrowclick={(c) => (open = c.row)} />
       {/if}
     </Stack>
   </Page>
+
+  <Dialog open={!!open} size="sm" title={open ? show(open[title?.name]) || view.name : ''} onclose={() => (open = null)}>
+    {#if open}
+      <Stack gap="0">
+        {#each shown.filter((c) => c !== title) as c (c.name)}
+          <Property label={label(c)}>
+            {#if open[c.name] == null || open[c.name] === ''}<Text tone="tertiary">Empty</Text>{:else}<Text wrap="anywhere">{show(open[c.name])}</Text>{/if}
+          </Property>
+        {/each}
+      </Stack>
+    {/if}
+  </Dialog>
 {/if}
 
 <style>
@@ -153,6 +227,10 @@
 
   .card {
     display: flex;
+    width: 100%;
+    text-align: start;
+    cursor: pointer;
+    transition: background-color var(--duration-fast) var(--ease-out);
     flex-direction: column;
     gap: var(--space-1);
     padding: var(--space-3);
@@ -182,7 +260,16 @@
     opacity: 0.5;
   }
 
+  .card:hover {
+    background: var(--color-surface-raised);
+    box-shadow: inset 0 0 0 var(--border-width) var(--color-border);
+  }
+
   .event {
+    display: block;
+    width: 100%;
+    text-align: start;
+    cursor: pointer;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

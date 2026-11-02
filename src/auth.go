@@ -396,11 +396,43 @@ func (a *Archive) CreateToken(ctx context.Context, name string, ttl time.Duratio
 			}
 			role = &r
 		}
-		row, err := a.hub.q().CreateToken(ctx, generated.CreateTokenParams{ID: t.ID, UserID: ac.UserID, Workspace: &a.ws.ID, Name: t.Name, Role: role, Hash: authHash(t.Secret), ExpiresAt: exp})
+		row, err := a.hub.q().CreateToken(ctx, generated.CreateTokenParams{ID: t.ID, UserID: ac.UserID, Workspace: &a.ws.ID, Name: t.Name, Role: role, Hash: authHash(t.Secret), Sealed: a.sealToken(t.ID, t.Secret), ExpiresAt: exp})
 		t.CreatedAt, t.ExpiresAt = row.CreatedAt, row.ExpiresAt
 		a.moved(ctx, "archive.token", t.ID.String())
 		return err
 	})
+}
+
+// sealToken is an API token's secret sealed with the server's key, for TokenSecret to open again.
+func (a *Archive) sealToken(id uuid.UUID, secret string) []byte {
+	nonce := make([]byte, a.hub.aead.NonceSize())
+	rand.Read(nonce)
+	return a.hub.aead.Seal(nonce, nonce, []byte(secret), []byte("token "+id.String()))
+}
+
+// TokenSecret is the secret of the caller's API token id, so they can copy it whenever they need it; a token
+// made before secrets were kept has none, and is ErrNotFound.
+func (a *Archive) TokenSecret(ctx context.Context, id uuid.UUID) (string, error) {
+	ac, err := authUser(ctx)
+	if err != nil {
+		return "", err
+	}
+	sealed, err := a.hub.q().TokenSealed(ctx, id, ac.UserID, &a.ws.ID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	n := a.hub.aead.NonceSize()
+	if len(sealed) < n {
+		return "", ErrNotFound
+	}
+	plain, err := a.hub.aead.Open(nil, sealed[:n], sealed[n:], []byte("token "+id.String()))
+	if err != nil {
+		return "", fmt.Errorf("token %s does not open: %w", id, err)
+	}
+	return string(plain), nil
 }
 
 func (a *Archive) Tokens(ctx context.Context) ([]*Token, error) {
@@ -640,6 +672,14 @@ func (s *signin) handler() http.Handler {
 		}
 		t, err := archiveFrom(r.Context()).CreateToken(r.Context(), body.Name, ttl, body.Viewer)
 		return http.StatusCreated, t, err
+	})
+	authed("GET /auth/tokens/{id}/secret", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
+		id, err := httpID(r)
+		if err != nil {
+			return 0, nil, err
+		}
+		secret, err := archiveFrom(r.Context()).TokenSecret(r.Context(), id)
+		return http.StatusOK, map[string]string{"secret": secret}, err
 	})
 	authed("DELETE /auth/tokens/{id}", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		id, err := httpID(r)

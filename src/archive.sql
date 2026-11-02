@@ -34,6 +34,8 @@ CREATE TABLE archive.token (
     name       text NOT NULL DEFAULT '',
     role       text UNIQUE,
     hash       text NOT NULL UNIQUE,
+    -- An API token's secret, sealed with the server's key, so its owner can copy it again; null for others.
+    sealed     bytea,
     expires_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now()
 );
@@ -605,7 +607,10 @@ INSERT INTO archive.token (user_id, kind, hash, expires_at) VALUES ($1, 'session
 DELETE FROM archive.token WHERE hash = $1 AND kind = 'session';
 
 -- name: CreateToken :one
-INSERT INTO archive.token (id, user_id, workspace, kind, name, role, hash, expires_at) VALUES ($1, $2, $3, 'api', $4, $5, $6, $7) RETURNING created_at, expires_at;
+INSERT INTO archive.token (id, user_id, workspace, kind, name, role, hash, sealed, expires_at) VALUES ($1, $2, $3, 'api', $4, $5, $6, $7, $8) RETURNING created_at, expires_at;
+
+-- name: TokenSealed :one
+SELECT sealed FROM archive.token WHERE id = $1 AND user_id = $2 AND workspace = $3 AND kind = 'api' AND sealed IS NOT NULL;
 
 -- name: Tokens :many
 SELECT id, name, (role IS NOT NULL)::bool AS viewer, expires_at, created_at FROM archive.token

@@ -651,7 +651,7 @@ func (q *Queries) CreateSession(ctx context.Context, userID uuid.UUID, hash stri
 }
 
 const createToken = `-- name: CreateToken :one
-INSERT INTO archive.token (id, user_id, workspace, kind, name, role, hash, expires_at) VALUES ($1, $2, $3, 'api', $4, $5, $6, $7) RETURNING created_at, expires_at
+INSERT INTO archive.token (id, user_id, workspace, kind, name, role, hash, sealed, expires_at) VALUES ($1, $2, $3, 'api', $4, $5, $6, $7, $8) RETURNING created_at, expires_at
 `
 
 type CreateTokenParams struct {
@@ -661,6 +661,7 @@ type CreateTokenParams struct {
 	Name      string
 	Role      *string
 	Hash      string
+	Sealed    []byte
 	ExpiresAt *time.Time
 }
 
@@ -677,6 +678,7 @@ func (q *Queries) CreateToken(ctx context.Context, arg CreateTokenParams) (Creat
 		arg.Name,
 		arg.Role,
 		arg.Hash,
+		arg.Sealed,
 		arg.ExpiresAt,
 	)
 	var i CreateTokenRow
@@ -2110,6 +2112,17 @@ func (q *Queries) SoonDue(ctx context.Context, workspace uuid.UUID, kind string,
 	var i SoonDueRow
 	err := row.Scan(&i.At, &i.Changed)
 	return i, err
+}
+
+const tokenSealed = `-- name: TokenSealed :one
+SELECT sealed FROM archive.token WHERE id = $1 AND user_id = $2 AND workspace = $3 AND kind = 'api' AND sealed IS NOT NULL
+`
+
+func (q *Queries) TokenSealed(ctx context.Context, iD uuid.UUID, userID uuid.UUID, workspace *uuid.UUID) ([]byte, error) {
+	row := q.db.QueryRow(ctx, tokenSealed, iD, userID, workspace)
+	var sealed []byte
+	err := row.Scan(&sealed)
+	return sealed, err
 }
 
 const tokens = `-- name: Tokens :many

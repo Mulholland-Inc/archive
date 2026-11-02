@@ -2020,6 +2020,13 @@ func TestViewsSchemaDropsAndTokensOverHTTP(t *testing.T) {
 			!slices.ContainsFunc(ts, func(tk Token) bool { return tk.ID == view.ID && tk.Viewer }) {
 			t.Errorf("tokens: %+v", ts)
 		}
+		var again struct{ Secret string }
+		st, _ = call(t, "GET", srv.url+"/auth/tokens/"+view.ID.String()+"/secret", tf.Secret, nil, &again)
+		if st != 200 || again.Secret != view.Secret {
+			t.Errorf("the owner reads a token's secret again: %d", st)
+		}
+		st, _ = call(t, "GET", srv.url+"/auth/tokens/"+view.ID.String()+"/secret", bobTok, nil, nil)
+		wantStatus(t, st, 404, "another member reads a token's secret")
 		st, _ = call(t, "DELETE", srv.url+"/auth/tokens/"+tf.ID.String(), tf.Secret, nil, nil)
 		wantStatus(t, st, 204, "revoke the token")
 		st, _ = call(t, "GET", srv.url+"/auth/me", tf.Secret, nil, nil)
