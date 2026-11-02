@@ -83,6 +83,11 @@ type ArchiveConnection struct {
 	UpdatedAt time.Time
 	// What the service said about the account when it connected, like QuickBooks' realmId
 	Meta map[string]string
+	// When Archive next reads what changed there into record; null while it does not, as after its grant was revoked, until you connect it again
+	SyncAt *time.Time
+	// When Archive last had everything there in record
+	SyncedAt *time.Time
+	Cursor   json.RawMessage
 }
 
 type ArchiveDue struct {

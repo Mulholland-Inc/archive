@@ -32,10 +32,12 @@ type fakeMCP struct {
 	access     map[string]string // access tokens, to their account
 	asked      []url.Values      // the token requests
 	revoked    []url.Values      // the revocations
+	pages      map[string]string // the private pages notion-list-private-pages lists, by id to title
+	fail       bool              // the next list fails
 }
 
 func newFakeMCP(t *testing.T) *fakeMCP {
-	f := &fakeMCP{clients: map[string]string{}, refresh: map[string]string{}, access: map[string]string{}}
+	f := &fakeMCP{clients: map[string]string{}, refresh: map[string]string{}, access: map[string]string{}, pages: map[string]string{}}
 	tools := mcp.NewServer(&mcp.Implementation{Name: "wiki", Version: "1"}, nil)
 	tools.AddTool(&mcp.Tool{Name: "notion-get-self", Description: "Who you are.", InputSchema: map[string]any{"type": "object"}},
 		func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -57,6 +59,7 @@ func newFakeMCP(t *testing.T) *fakeMCP {
 			}
 			return nil, searchOut{Results: []map[string]string{{"title": "Page about " + in.Query, "by": f.who(req.Extra.Header.Get("Authorization"))}}}, nil
 		})
+	notionListTool(f, tools)
 	served := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return tools }, nil)
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		base := "http://" + r.Host
@@ -145,7 +148,8 @@ func (f *fakeMCP) do(fn func()) {
 // An MCP connector connects with no client of its own: Archive finds the server's authorization server,
 // registers itself there once, connects with PKCE for the resource, and archive.action calls the server's
 // tools with the account's token, refreshed with the registered client, which the run tool's docs list for
-// whoever connected it alone; disconnecting revokes with that client.
+// whoever connected it alone; its sync lists its pages with them; disconnecting revokes with that client and
+// deletes the records.
 func TestAnMCPConnectorRegistersConnectsAndActs(t *testing.T) {
 	t.Parallel()
 	f := newFakeMCP(t)
@@ -224,7 +228,7 @@ func TestAnMCPConnectorRegistersConnectsAndActs(t *testing.T) {
 	for code, want := range map[string]string{
 		`archive.action("notion.search", {})`:                                  `invalid invalid archive.action notion.search input: `,
 		`archive.action("notion.search", { query: "boom" })`:                   `undefined archive.action notion.search: Notion said: notion-search: the search index is down`,
-		`archive.action("notion.edit", {})`:                                    `not_found archive.action notion.edit: Notion has no action edit; it has get-self, search`,
+		`archive.action("notion.edit", {})`:                                    `not_found archive.action notion.edit: Notion has no action edit; it has get-self, list-private-pages, search`,
 		`archive.action("notion.search", { query: "x" }, { connection: "z" })`: `not_found archive.action notion.search: you have no Notion connection "z"`,
 		`archive.action("gmail.search", { query: "x" })`:                       `not_found archive.action gmail.search: Gmail is not set up on this server; it needs ARCHIVE_GOOGLE`,
 		`archive.action("search", {})`:                                         `invalid archive.action search: name is "<connector>.<action>"`,
@@ -278,8 +282,12 @@ func TestAnMCPConnectorRegistersConnectsAndActs(t *testing.T) {
 	}
 
 	id := cs.Connections[0].ID
+	notionSyncs(t, in, f, id)
 	if st, _ := call(t, "DELETE", srv.url+"/connect/"+id.String(), alice, nil, nil); st != 204 {
 		t.Fatalf("alice disconnects her Notion: %d", st)
+	}
+	if n := in.psql("archive", "SELECT count(*) FROM archive.record"); n != "0" {
+		t.Errorf("disconnecting left %s records", n)
 	}
 	f.do(func() {
 		if len(f.revoked) != 1 || !strings.HasPrefix(f.revoked[0].Get("token"), "rt-") || f.revoked[0].Get("client_id") != "client-1" || f.revoked[0].Get("client_secret") != "secret-1" {

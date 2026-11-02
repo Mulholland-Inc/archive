@@ -1,9 +1,11 @@
 package connect
 
 import (
+	"cmp"
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	"golang.org/x/oauth2"
 )
@@ -100,7 +102,95 @@ func init() {
 					return map[string]any{"id": f.ID, "name": f.Name, "mimeType": f.MIMEType, "text": text}, err
 				}),
 		},
+		Streams: []*Stream{{Name: "files", Every: 5 * time.Minute, Pull: driveFiles,
+			Doc: "Every file in My Drive, shared with you and in your shared drives, not trashed, as its details " +
+				"(id, name, mimeType, modifiedTime, size, webViewLink, owners, parents, createdTime, description, driveId), not its content: " +
+				"listed whole the first time, 1,000 a page, and then Drive's changes since, trashed and removed files deleted."}},
 	})
+}
+
+// driveCursor is where the files stream is: Start is the changes page token taken before a listing began, the
+// changes to read once it ends, and Page the listing's next page; without Page, Start is the delta's.
+type driveCursor struct {
+	Start   string `json:"s"`
+	Page    string `json:"p,omitempty"`
+	Listing bool   `json:"l,omitempty"`
+}
+
+const driveSync = driveFields + ",parents,trashed,createdTime,description,driveId"
+
+func driveFiles(c *Client, cursor string) (*Page, error) {
+	var cur driveCursor
+	if err := cursorOf(cursor, &cur); err != nil {
+		return nil, err
+	}
+	all := url.Values{"supportsAllDrives": {"true"}, "includeItemsFromAllDrives": {"true"}, "pageSize": {"1000"}}
+	if cur.Start == "" {
+		var t struct {
+			Token string `json:"startPageToken"`
+		}
+		if err := c.Get(driveAPI+"/changes/startPageToken?supportsAllDrives=true", &t); err != nil {
+			return nil, err
+		}
+		cur = driveCursor{Start: t.Token, Listing: true}
+	}
+	if cur.Listing {
+		q := all
+		q.Set("q", "trashed = false")
+		q.Set("corpora", "allDrives")
+		q.Set("fields", "nextPageToken,files("+driveSync+")")
+		if cur.Page != "" {
+			q.Set("pageToken", cur.Page)
+		}
+		var out struct {
+			Files []map[string]any `json:"files"`
+			Next  string           `json:"nextPageToken"`
+		}
+		if err := c.Get(driveAPI+"/files?"+q.Encode(), &out); err != nil {
+			return nil, err
+		}
+		page := &Page{Full: true, More: out.Next != ""}
+		for _, f := range out.Files {
+			page.Records = append(page.Records, driveRecord(f, false))
+		}
+		cur.Page, cur.Listing = out.Next, out.Next != ""
+		page.Cursor = cursorFor(cur)
+		return page, nil
+	}
+	q := all
+	q.Set("pageToken", cur.Start)
+	q.Set("includeRemoved", "true")
+	q.Set("fields", "nextPageToken,newStartPageToken,changes(changeType,fileId,removed,file("+driveSync+"))")
+	var out struct {
+		Changes []struct {
+			Type    string         `json:"changeType"`
+			FileID  string         `json:"fileId"`
+			Removed bool           `json:"removed"`
+			File    map[string]any `json:"file"`
+		} `json:"changes"`
+		Next     string `json:"nextPageToken"`
+		NewStart string `json:"newStartPageToken"`
+	}
+	if err := c.Get(driveAPI+"/changes?"+q.Encode(), &out); err != nil {
+		return nil, err
+	}
+	page := &Page{More: out.Next != ""}
+	for _, ch := range out.Changes {
+		switch {
+		case ch.Type == "drive":
+		case ch.Removed || ch.File == nil:
+			page.Records = append(page.Records, Record{ID: ch.FileID, Deleted: true})
+		default:
+			page.Records = append(page.Records, driveRecord(ch.File, ch.File["trashed"] == true))
+		}
+	}
+	cur.Start = cmp.Or(out.Next, out.NewStart)
+	page.Cursor = cursorFor(cur)
+	return page, nil
+}
+
+func driveRecord(f map[string]any, deleted bool) Record {
+	return Record{ID: str(f, "id"), Data: f, Updated: stamp(str(f, "modifiedTime")), Deleted: deleted}
 }
 
 const (

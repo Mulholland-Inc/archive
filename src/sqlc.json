@@ -72,6 +72,10 @@
               "go_type": "encoding/json.RawMessage"
             },
             {
+              "column": "archive.connection.cursor",
+              "go_type": "encoding/json.RawMessage"
+            },
+            {
               "column": "archive.connection.meta",
               "go_type": {
                 "type": "map[string]string"

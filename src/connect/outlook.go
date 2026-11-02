@@ -1,10 +1,14 @@
 package connect
 
 import (
+	"cmp"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
+	"time"
 
 	"golang.org/x/oauth2"
 )
@@ -95,7 +99,112 @@ func init() {
 					return out.Value, err
 				}),
 		},
+		Streams: []*Stream{
+			{Name: "folders", Every: time.Hour, Pull: outlookFolders,
+				Doc: "Every mail folder, at any depth: { id, displayName, parentFolderId, childFolderCount, totalItemCount, unreadItemCount }, " +
+					"from Graph's folder delta query, which says which were removed too."},
+			{Name: "messages", Every: 5 * time.Minute, Pull: outlookMessages,
+				Doc: "Every message of every folder, as the message action returns it with its body as text cut at 64 KB, by <folder id>/<message id> " +
+					"with immutable ids: a delta query of each folder, 50 a page, whole the first time and then what changed since, " +
+					"so a moved message is deleted in one folder and added in the other. A folder whose delta Graph no longer keeps is read whole again, " +
+					"and what was deleted from it in between is not seen."},
+		},
 	})
+}
+
+// outlookPrefer are the headers of a delta query of messages: 50 a page, ids that stay when a message moves,
+// and bodies as text.
+var outlookPrefer = http.Header{"Prefer": {"odata.maxpagesize=50", `IdType="ImmutableId"`, `outlook.body-content-type="text"`}}
+
+const outlookSync = outlookList + ",ccRecipients,body,parentFolderId,lastModifiedDateTime,sentDateTime,categories,flag,internetMessageId"
+
+// outlookDelta is a page of a delta query.
+type outlookDelta struct {
+	Value []map[string]any `json:"value"`
+	Next  string           `json:"@odata.nextLink"`
+	Delta string           `json:"@odata.deltaLink"`
+}
+
+func outlookFolders(c *Client, cursor string) (*Page, error) {
+	u := cmp.Or(cursor, graphAPI+"/me/mailFolders/delta?$select=displayName,parentFolderId,childFolderCount,totalItemCount,unreadItemCount")
+	var d outlookDelta
+	if err := c.Send("GET", u, nil, nil, &d); err != nil {
+		return nil, err
+	}
+	page := &Page{More: d.Next != "", Cursor: cmp.Or(d.Next, d.Delta)}
+	for _, f := range d.Value {
+		_, removed := f["@removed"]
+		page.Records = append(page.Records, Record{ID: str(f, "id"), Data: f, Deleted: removed})
+	}
+	return page, nil
+}
+
+// outlookCursor is where the messages stream is: each folder's deltaLink, by its id, the folders this round
+// has left with the first under way, and the nextLink of that one.
+type outlookCursor struct {
+	Links map[string]string `json:"links,omitempty"`
+	Todo  []string          `json:"todo,omitempty"`
+	Next  string            `json:"next,omitempty"`
+}
+
+func outlookMessages(c *Client, cursor string) (*Page, error) {
+	var cur outlookCursor
+	if err := cursorOf(cursor, &cur); err != nil {
+		return nil, err
+	}
+	if len(cur.Todo) == 0 {
+		// A round reads every folder there is now; a folder gone takes its deltaLink with it.
+		for u := graphAPI + "/me/mailFolders/delta?$select=id"; u != ""; {
+			var d outlookDelta
+			if err := c.Get(u, &d); err != nil {
+				return nil, err
+			}
+			for _, f := range d.Value {
+				if _, removed := f["@removed"]; !removed {
+					cur.Todo = append(cur.Todo, str(f, "id"))
+				}
+			}
+			u = d.Next
+		}
+		for id := range cur.Links {
+			if !slices.Contains(cur.Todo, id) {
+				delete(cur.Links, id)
+			}
+		}
+		if len(cur.Todo) == 0 {
+			return &Page{Cursor: cursorFor(cur)}, nil
+		}
+	}
+	f := cur.Todo[0]
+	u := cmp.Or(cur.Next, cur.Links[f], graphAPI+"/me/mailFolders/"+url.PathEscape(f)+"/messages/delta?$select="+outlookSync)
+	var d outlookDelta
+	if err := c.Send("GET", u, outlookPrefer, nil, &d); err != nil {
+		if r := (*Refusal)(nil); errors.As(err, &r) && r.Status == http.StatusGone {
+			delete(cur.Links, f)
+			cur.Next = ""
+			return &Page{More: true, Cursor: cursorFor(cur)}, nil
+		}
+		return nil, err
+	}
+	page := &Page{}
+	for _, m := range d.Value {
+		_, removed := m["@removed"]
+		if b, ok := m["body"].(map[string]any); ok {
+			if t, ok := b["content"].(string); ok {
+				b["content"] = clip(t, maxText)
+			}
+		}
+		page.Records = append(page.Records, Record{ID: f + "/" + str(m, "id"), Data: m, Updated: stamp(str(m, "lastModifiedDateTime")), Deleted: removed})
+	}
+	if cur.Next = d.Next; d.Next == "" {
+		if cur.Links == nil {
+			cur.Links = map[string]string{}
+		}
+		cur.Links[f], cur.Todo = d.Delta, cur.Todo[1:]
+	}
+	page.More = len(cur.Todo) > 0
+	page.Cursor = cursorFor(cur)
+	return page, nil
 }
 
 const (

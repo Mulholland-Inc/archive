@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"golang.org/x/oauth2"
 )
@@ -110,7 +111,73 @@ func init() {
 					return map[string]any{"path": f.Path, "sha": f.SHA, "size": f.Size, "text": string(text)}, nil
 				}),
 		},
+		Streams: []*Stream{
+			{Name: "repos", Every: 6 * time.Hour, Pull: githubRepos,
+				Doc: "Every repository the app reaches for you, as GitHub lists it, listed whole every 6 hours, 100 a page, so one gone is deleted."},
+			{Name: "issues", Every: 10 * time.Minute, Pull: githubIssues,
+				Doc: "Every issue and pull request you can see in the repositories the app reaches, open or closed, as GitHub lists them, " +
+					"without their comments: by their last update, 100 a page, all the first time and then those updated since. " +
+					"GitHub does not say which were deleted or moved away, so they stay."},
+		},
 	})
+}
+
+// githubRepos lists the repositories whole, page by page.
+func githubRepos(c *Client, cursor string) (*Page, error) {
+	n := 1
+	fmt.Sscan(cursor, &n)
+	var repos []map[string]any
+	if err := c.Get(fmt.Sprintf("%s/user/repos?per_page=100&sort=full_name&page=%d", githubAPI, n), &repos); err != nil {
+		return nil, err
+	}
+	page := &Page{Full: true, More: len(repos) == 100}
+	for _, r := range repos {
+		page.Records = append(page.Records, Record{ID: str(r, "id"), Data: r, Updated: stamp(str(r, "updated_at"))})
+	}
+	if page.More {
+		page.Cursor = fmt.Sprint(n + 1)
+	}
+	return page, nil
+}
+
+// githubCursor is where the issues stream is: Since is the last update it read, which the next page starts at,
+// and Page the page of those updated at Since when a whole page had the same time.
+type githubCursor struct {
+	Since string `json:"since,omitempty"`
+	Page  int    `json:"page,omitempty"`
+}
+
+// githubIssues reads the issues by their last update, oldest first, each page from the last update the one
+// before read, so an issue updated while it pages moves after it, not past it.
+func githubIssues(c *Client, cursor string) (*Page, error) {
+	var cur githubCursor
+	if err := cursorOf(cursor, &cur); err != nil {
+		return nil, err
+	}
+	q := url.Values{"filter": {"all"}, "state": {"all"}, "sort": {"updated"}, "direction": {"asc"}, "per_page": {"100"}, "page": {fmt.Sprint(max(cur.Page, 1))}}
+	if cur.Since != "" {
+		q.Set("since", cur.Since)
+	}
+	var issues []map[string]any
+	if err := c.Get(githubAPI+"/issues?"+q.Encode(), &issues); err != nil {
+		return nil, err
+	}
+	page := &Page{More: len(issues) == 100}
+	last := cur.Since
+	for _, is := range issues {
+		page.Records = append(page.Records, Record{ID: str(is, "id"), Data: is, Updated: stamp(str(is, "updated_at"))})
+		last = str(is, "updated_at")
+	}
+	switch {
+	case !page.More:
+		cur = githubCursor{Since: last}
+	case last == cur.Since:
+		cur.Page = max(cur.Page, 1) + 1
+	default:
+		cur = githubCursor{Since: last}
+	}
+	page.Cursor = cursorFor(cur)
+	return page, nil
 }
 
 const githubAPI = "https://api.github.com"

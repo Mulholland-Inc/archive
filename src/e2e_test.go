@@ -57,6 +57,8 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 	os.Setenv("ARCHIVE_E2E_MAIN", "1")
+	// Tests sync by hand, a page at a time (sync_test.go), in serve and in hubs of their own.
+	os.Setenv("ARCHIVE_SYNC", "off")
 	var err error
 	if e2eBin, err = os.Executable(); err != nil {
 		panic(err)
@@ -367,7 +369,7 @@ func (in *e2eInst) cmd(args ...string) *exec.Cmd {
 }
 
 func (in *e2eInst) environ() []string {
-	return append([]string{"ARCHIVE_E2E_MAIN=1", "PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "TMPDIR=" + os.TempDir()}, in.env...)
+	return append([]string{"ARCHIVE_E2E_MAIN=1", "ARCHIVE_SYNC=off", "PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "TMPDIR=" + os.TempDir()}, in.env...)
 }
 
 func (in *e2eInst) run(stdin string, args ...string) (string, string, error) {

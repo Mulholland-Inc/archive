@@ -4,7 +4,7 @@
 
 import { API, api, blobURL, forgetBlobs, upload, setWorkspace, workspace, local, setLocal, signOut as apiSignOut, Unauthorized, passkeys, passkeyAsked } from './api.js';
 import { resource, listen, onChange, onRefused } from './stream.svelte.js';
-import { toFile, toChat, toMember, toWorkflow, toRun } from './live.js';
+import { toFile, toChat, toMember, toWorkflow, toRun, relative } from './live.js';
 import { toTables, countsQuery } from './schema.js';
 import { initials, mockConnectors, mockIntegrations, mockKey, mockProfile, mockSettings } from './mock/index.js';
 import { integrationCatalog } from './integrations.js';
@@ -910,7 +910,17 @@ export const connections = resource({
         c = v.connectors.at(-1);
       }
       const mine = out.connections.filter((x) => x.provider === k.id);
-      Object.assign(c, { ready: k.ready, connections: mine, connected: mine.length > 0, account: mine.map((x) => x.account).join(', '), error: mine.find((x) => x.error)?.error ?? '' });
+      // Synced is when every account last caught up: the earliest, and never while one has not yet.
+      const synced = mine.every((x) => x.synced_at) ? mine.map((x) => x.synced_at).sort()[0] : '';
+      Object.assign(c, {
+        ready: k.ready,
+        connections: mine,
+        connected: mine.length > 0,
+        account: mine.map((x) => x.account).join(', '),
+        error: mine.find((x) => x.error)?.error ?? '',
+        lastSync: synced ? relative(synced) : mine.some((x) => x.sync_at) ? 'Syncing…' : 'Stopped',
+        items: mine.reduce((n, x) => n + (x.records ?? 0), 0)
+      });
     }
     if (v.connectors.some((c) => c.connected)) completeStep('connect');
   }
@@ -919,6 +929,18 @@ export const connections = resource({
 export function connect(id) {
   const c = ws().connectors.find((x) => x.id === id);
   if (c?.ready) location.assign(`${API}/connect/${encodeURIComponent(id)}?workspace=${encodeURIComponent(app.archive)}`);
+}
+
+// syncNow asks for a sync of each of your accounts at connector id now, which the API queues.
+export async function syncNow(id) {
+  const c = ws().connectors.find((x) => x.id === id);
+  if (!c) return;
+  try {
+    for (const x of c.connections ?? []) await call(`/connect/${x.id}/sync`, { method: 'POST' });
+  } catch (e) {
+    complain(e, `Couldn’t sync ${c.name}`);
+  }
+  return connections.refresh();
 }
 
 export async function disconnect(id) {

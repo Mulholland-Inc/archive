@@ -95,7 +95,8 @@ func (h *Hub) connectRedirect(id string) string { return h.api + "/connect/" + i
 // connectRoutes are /connect, like sign-in's /auth/oidc: GET /connect/<id> starts connecting one and sends the
 // browser to the provider, and the provider sends it back to GET /connect/<id>/callback. A navigation sends no
 // Archive-Workspace header, so the start takes the workspace from ?workspace= and the callback from its state.
-// GET /connect lists the connectors and your connections, and DELETE /connect/<connection id> disconnects one.
+// GET /connect lists the connectors and your connections, DELETE /connect/<connection id> disconnects one, and
+// POST /connect/<connection id>/sync asks for its sync now (sync.go).
 func (h *Hub) connectRoutes(mux *http.ServeMux) {
 	authed := func(pattern string, f func(a *Archive, w http.ResponseWriter, r *http.Request)) {
 		mux.Handle(pattern, h.httpAuth(func(a *Archive) http.Handler {
@@ -110,6 +111,13 @@ func (h *Hub) connectRoutes(mux *http.ServeMux) {
 		id, err := httpID(r)
 		if err == nil {
 			err = a.Disconnect(r.Context(), id)
+		}
+		httpWrite(w, http.StatusNoContent, nil, err)
+	})
+	authed("POST /connect/{id}/sync", func(a *Archive, w http.ResponseWriter, r *http.Request) {
+		id, err := httpID(r)
+		if err == nil {
+			err = a.SyncNow(r.Context(), id)
 		}
 		httpWrite(w, http.StatusNoContent, nil, err)
 	})
@@ -180,13 +188,14 @@ func (a *Archive) connectFinish(w http.ResponseWriter, r *http.Request, st conne
 	http.Redirect(w, r, a.hub.app+"/connectors/"+st.Provider+"?"+back.Encode(), http.StatusSeeOther)
 }
 
-// connectionSave keeps g for member at provider, in the row they have for its account or a new one.
+// connectionSave keeps g for member at provider, in the row they have for its account or a new one, and
+// queues its sync, which is due now.
 func (a *Archive) connectionSave(ctx context.Context, member uuid.UUID, provider string, g *connect.Grant) (uuid.UUID, error) {
 	var id uuid.UUID
 	if g.Meta == nil {
 		g.Meta = map[string]string{}
 	}
-	return id, a.sys(ctx, func(ctx context.Context) error {
+	err := a.sys(ctx, func(ctx context.Context) error {
 		q := a.st.db(ctx)
 		var err error
 		if id, err = q.ConnectionFor(ctx, member, provider, g.Account); errors.Is(err, pgx.ErrNoRows) {
@@ -198,6 +207,10 @@ func (a *Archive) connectionSave(ctx context.Context, member uuid.UUID, provider
 		return q.SaveConnection(ctx, generated.SaveConnectionParams{ID: id, Member: member, Provider: provider, Account: g.Account,
 			Token: connect.SealToken(a.aead, id, g.Refresh), Scopes: g.Scopes, Meta: g.Meta})
 	})
+	if err == nil {
+		a.syncSoon(ctx)
+	}
+	return id, err
 }
 
 // Connection is one of a member's connected accounts, as the API shows it: never its token.
@@ -209,6 +222,11 @@ type Connection struct {
 	Error     string    `json:"error"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// SyncAt is when its next sync page is due, nil while it does not sync; SyncedAt when it last caught up;
+	// Records how many of its records are not deleted.
+	SyncAt   *time.Time `json:"sync_at"`
+	SyncedAt *time.Time `json:"synced_at"`
+	Records  int64      `json:"records"`
 }
 
 // Connector is a service accounts can be connected at; Ready says this server has its OAuth client.
@@ -282,7 +300,8 @@ func (a *Archive) Disconnect(ctx context.Context, id uuid.UUID) error {
 // account calls connectionAccess, which keeps one while it lasts. It refreshes holding the connection's row,
 // so processes refreshing at once take turns, and each refreshes with the refresh token the one before kept:
 // providers that replace the refresh token on every refresh refuse an old one, some revoking the grant. A
-// refresh that fails is the connection's error until one works.
+// refresh that fails is the connection's error until one works; one the provider refused is errRevoked too,
+// which stops its sync.
 func (a *Archive) connectionToken(ctx context.Context, id uuid.UUID) (*oauth2.Token, error) {
 	var tok *oauth2.Token
 	var refused error
@@ -306,6 +325,9 @@ func (a *Archive) connectionToken(ctx context.Context, id uuid.UUID) (*oauth2.To
 		if tok, err = p.Refresh(ctx, rt); err != nil {
 			msg := fmt.Sprintf("%s refused to let Archive keep reading %s (%s); connect it again", p.Name, c.Account, connect.Reason(err))
 			refused = fmt.Errorf("connection %s: %s: %w", id, msg, ErrUnauthorized)
+			if re := (*oauth2.RetrieveError)(nil); errors.As(err, &re) && re.Response != nil && re.Response.StatusCode/100 == 4 {
+				refused = fmt.Errorf("%w%w", refused, errRevoked)
+			}
 			return q.SetConnectionError(ctx, id, msg)
 		}
 		if c.Error != "" || tok.RefreshToken != rt {

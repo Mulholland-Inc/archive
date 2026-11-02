@@ -65,6 +65,9 @@ type Connector struct {
 	Account func(c *Client) (string, error)
 	// Actions are an API connector's actions, by name; an MCP connector's are its server's tools.
 	Actions map[string]*Action
+	// Streams are what Archive keeps a copy of for each account (sync.go), pulled in this order when several
+	// are due at once.
+	Streams []*Stream
 }
 
 // MCPEnv is the environment variable that, when set, is another server for an MCP connector than its own: a

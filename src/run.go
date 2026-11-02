@@ -1030,13 +1030,13 @@ func (a *Archive) RunDocs(ctx context.Context) string {
 var runDocs = strings.ReplaceAll(runSDK, "{timeout}", runTimeout.String())
 
 // RunTypes is the TypeScript of this workspace's types and tables, as the live database has them, and of the
-// actions of the caller's connections.
+// actions and synced streams of the caller's connections.
 func (a *Archive) RunTypes(ctx context.Context) string {
 	a.refresh(ctx)
-	return runTypes(a.Catalog()) + a.actionTypes(ctx)
+	return runTypes(a.Catalog()) + a.actionTypes(ctx) + a.streamTypes(ctx)
 }
 
-var runStatic = []string{"Actions", "Base", "Row", "Hit", "Migration", "SchemaChange", "Table", "StoredFile", "Tables", "FetchResponse", "RunResult", "BrowseResult", "WorkflowOn", "CronInput", "TableInput", "WebhookInput",
+var runStatic = []string{"Actions", "Streams", "Base", "Row", "Hit", "Migration", "SchemaChange", "Table", "StoredFile", "Tables", "FetchResponse", "RunResult", "BrowseResult", "WorkflowOn", "CronInput", "TableInput", "WebhookInput",
 	"Money", "Timestamp", "Time", "Interval", "Address", "Name", "Postcode", "Geo", "Quantity"}
 
 func runPascal(s string) string {
@@ -1208,7 +1208,7 @@ func runTypes(cat *Catalog) string {
 				ts = "WorkflowOn | null"
 			case tb.Schema == "archive" && tb.Name == "workflow_run" && c.Name == "logs":
 				ts = "string[]"
-			case tb.Schema == "archive" && tb.Name == "workflow_run" && c.Name == "result":
+			case tb.Schema == "archive" && (tb.Name == "workflow_run" && c.Name == "result" || tb.Name == "record" && c.Name == "data"):
 				ts = "any"
 			}
 			fmt.Fprintf(&b, "    %s%s: %s;\n", runProp(c.Name), opt, ts)

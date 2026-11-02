@@ -180,6 +180,15 @@ func (q *Queries) AppendChat(ctx context.Context, messages []byte, iD uuid.UUID)
 	return err
 }
 
+const askSync = `-- name: AskSync :exec
+UPDATE archive.connection SET cursor = $2, sync_at = now() WHERE id = $1
+`
+
+func (q *Queries) AskSync(ctx context.Context, iD uuid.UUID, cursor json.RawMessage) error {
+	_, err := q.db.Exec(ctx, askSync, iD, cursor)
+	return err
+}
+
 const authenticate = `-- name: Authenticate :one
 SELECT t.id, t.kind, t.name, coalesce(t.role, '')::text AS role, u.id AS user_id, u.email, u.name AS user_name,
     coalesce(t.workspace::text, '')::text AS workspace,
@@ -262,7 +271,7 @@ SELECT jsonb_build_object(
             AND regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)')
             FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid), false),
         'columns', (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid)))
-        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.member'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass, 'archive.connection'::regclass)
+        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.member'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass, 'archive.connection'::regclass, 'archive.record'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -352,6 +361,33 @@ func (q *Queries) ClaimDueFor(ctx context.Context, lease time.Time, iD uuid.UUID
 	return at, err
 }
 
+const claimSync = `-- name: ClaimSync :one
+UPDATE archive.connection SET sync_at = $1::timestamptz
+WHERE id = (SELECT c.id FROM archive.connection c WHERE c.sync_at <= now() ORDER BY c.sync_at LIMIT 1 FOR UPDATE SKIP LOCKED)
+RETURNING id, member, provider, account, token, scopes, error, created_at, updated_at, meta, sync_at, synced_at, cursor
+`
+
+func (q *Queries) ClaimSync(ctx context.Context, lease time.Time) (ArchiveConnection, error) {
+	row := q.db.QueryRow(ctx, claimSync, lease)
+	var i ArchiveConnection
+	err := row.Scan(
+		&i.ID,
+		&i.Member,
+		&i.Provider,
+		&i.Account,
+		&i.Token,
+		&i.Scopes,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Meta,
+		&i.SyncAt,
+		&i.SyncedAt,
+		&i.Cursor,
+	)
+	return i, err
+}
+
 const claimWorkflow = `-- name: ClaimWorkflow :one
 UPDATE archive.workflow SET next_at = $1::timestamptz
 WHERE id = (SELECT w.id FROM archive.workflow w WHERE w.next_at <= now() ORDER BY w.next_at LIMIT 1 FOR UPDATE SKIP LOCKED)
@@ -400,7 +436,7 @@ func (q *Queries) ClearSecrets(ctx context.Context, tbl string, rid uuid.UUID, c
 }
 
 const connection = `-- name: Connection :one
-SELECT id, member, provider, account, token, scopes, error, created_at, updated_at, meta FROM archive.connection WHERE id = $1
+SELECT id, member, provider, account, token, scopes, error, created_at, updated_at, meta, sync_at, synced_at, cursor FROM archive.connection WHERE id = $1
 `
 
 func (q *Queries) Connection(ctx context.Context, id uuid.UUID) (ArchiveConnection, error) {
@@ -417,6 +453,9 @@ func (q *Queries) Connection(ctx context.Context, id uuid.UUID) (ArchiveConnecti
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Meta,
+		&i.SyncAt,
+		&i.SyncedAt,
+		&i.Cursor,
 	)
 	return i, err
 }
@@ -433,7 +472,7 @@ func (q *Queries) ConnectionFor(ctx context.Context, member uuid.UUID, provider 
 }
 
 const connectionLocked = `-- name: ConnectionLocked :one
-SELECT id, member, provider, account, token, scopes, error, created_at, updated_at, meta FROM archive.connection WHERE id = $1 FOR UPDATE
+SELECT id, member, provider, account, token, scopes, error, created_at, updated_at, meta, sync_at, synced_at, cursor FROM archive.connection WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) ConnectionLocked(ctx context.Context, id uuid.UUID) (ArchiveConnection, error) {
@@ -450,12 +489,17 @@ func (q *Queries) ConnectionLocked(ctx context.Context, id uuid.UUID) (ArchiveCo
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Meta,
+		&i.SyncAt,
+		&i.SyncedAt,
+		&i.Cursor,
 	)
 	return i, err
 }
 
 const connections = `-- name: Connections :many
-SELECT id, provider, account, scopes, error, created_at, updated_at FROM archive.connection WHERE member = $1 ORDER BY provider, account, id
+SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_at, c.sync_at, c.synced_at,
+    (SELECT count(*) FROM archive.record r WHERE r.connection = c.id AND NOT r.deleted)::bigint AS records
+FROM archive.connection c WHERE c.member = $1 ORDER BY c.provider, c.account, c.id
 `
 
 type ConnectionsRow struct {
@@ -466,6 +510,9 @@ type ConnectionsRow struct {
 	Error     string
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	SyncAt    *time.Time
+	SyncedAt  *time.Time
+	Records   int64
 }
 
 func (q *Queries) Connections(ctx context.Context, member uuid.UUID) ([]ConnectionsRow, error) {
@@ -485,6 +532,9 @@ func (q *Queries) Connections(ctx context.Context, member uuid.UUID) ([]Connecti
 			&i.Error,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SyncAt,
+			&i.SyncedAt,
+			&i.Records,
 		); err != nil {
 			return nil, err
 		}
@@ -740,7 +790,7 @@ func (q *Queries) DeleteChat(ctx context.Context, iD uuid.UUID, userID uuid.UUID
 }
 
 const deleteConnection = `-- name: DeleteConnection :one
-DELETE FROM archive.connection WHERE id = $1 AND member = $2 RETURNING id, member, provider, account, token, scopes, error, created_at, updated_at, meta
+DELETE FROM archive.connection WHERE id = $1 AND member = $2 RETURNING id, member, provider, account, token, scopes, error, created_at, updated_at, meta, sync_at, synced_at, cursor
 `
 
 func (q *Queries) DeleteConnection(ctx context.Context, iD uuid.UUID, member uuid.UUID) (ArchiveConnection, error) {
@@ -757,6 +807,9 @@ func (q *Queries) DeleteConnection(ctx context.Context, iD uuid.UUID, member uui
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Meta,
+		&i.SyncAt,
+		&i.SyncedAt,
+		&i.Cursor,
 	)
 	return i, err
 }
@@ -776,6 +829,26 @@ DELETE FROM archive.oauth_client WHERE provider = $1 AND client = $2
 
 func (q *Queries) DeleteOAuthClient(ctx context.Context, provider string, client []byte) error {
 	_, err := q.db.Exec(ctx, deleteOAuthClient, provider, client)
+	return err
+}
+
+const deleteRecords = `-- name: DeleteRecords :exec
+UPDATE archive.record SET deleted = true, updated_at = now(), seen_at = now()
+WHERE connection = $1 AND stream = $2 AND source_id = ANY($3::text[]) AND NOT deleted
+`
+
+func (q *Queries) DeleteRecords(ctx context.Context, connection uuid.UUID, stream string, ids []string) error {
+	_, err := q.db.Exec(ctx, deleteRecords, connection, stream, ids)
+	return err
+}
+
+const deleteUnseenRecords = `-- name: DeleteUnseenRecords :exec
+UPDATE archive.record SET deleted = true, updated_at = now()
+WHERE connection = $1 AND stream = $2 AND seen_at < $3::timestamptz AND NOT deleted
+`
+
+func (q *Queries) DeleteUnseenRecords(ctx context.Context, connection uuid.UUID, stream string, since time.Time) error {
+	_, err := q.db.Exec(ctx, deleteUnseenRecords, connection, stream, since)
 	return err
 }
 
@@ -1398,7 +1471,7 @@ func (q *Queries) MemberByEmail(ctx context.Context, email string) (MemberByEmai
 }
 
 const memberConnections = `-- name: MemberConnections :many
-SELECT id, member, provider, account, token, scopes, error, created_at, updated_at, meta FROM archive.connection WHERE member = $1 ORDER BY provider, account, id
+SELECT id, member, provider, account, token, scopes, error, created_at, updated_at, meta, sync_at, synced_at, cursor FROM archive.connection WHERE member = $1 ORDER BY provider, account, id
 `
 
 func (q *Queries) MemberConnections(ctx context.Context, member uuid.UUID) ([]ArchiveConnection, error) {
@@ -1421,6 +1494,9 @@ func (q *Queries) MemberConnections(ctx context.Context, member uuid.UUID) ([]Ar
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Meta,
+			&i.SyncAt,
+			&i.SyncedAt,
+			&i.Cursor,
 		); err != nil {
 			return nil, err
 		}
@@ -1511,6 +1587,17 @@ func (q *Queries) NextPendingFile(ctx context.Context) (NextPendingFileRow, erro
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const nextSyncAt = `-- name: NextSyncAt :one
+SELECT sync_at FROM archive.connection WHERE sync_at IS NOT NULL ORDER BY sync_at LIMIT 1
+`
+
+func (q *Queries) NextSyncAt(ctx context.Context) (*time.Time, error) {
+	row := q.db.QueryRow(ctx, nextSyncAt)
+	var sync_at *time.Time
+	err := row.Scan(&sync_at)
+	return sync_at, err
 }
 
 const nextWorkflowAt = `-- name: NextWorkflowAt :one
@@ -1787,7 +1874,8 @@ func (q *Queries) RolesWithPrefix(ctx context.Context, prefix string) ([]string,
 
 const saveConnection = `-- name: SaveConnection :exec
 INSERT INTO archive.connection (id, member, provider, account, token, scopes, meta) VALUES ($1, $2, $3, $4, $5, $6, $7)
-ON CONFLICT (id) DO UPDATE SET token = EXCLUDED.token, scopes = EXCLUDED.scopes, meta = EXCLUDED.meta, error = '', updated_at = now()
+ON CONFLICT (id) DO UPDATE SET token = EXCLUDED.token, scopes = EXCLUDED.scopes, meta = EXCLUDED.meta, error = '', updated_at = now(),
+    sync_at = now()
 `
 
 type SaveConnectionParams struct {
@@ -1809,6 +1897,44 @@ func (q *Queries) SaveConnection(ctx context.Context, arg SaveConnectionParams) 
 		arg.Token,
 		arg.Scopes,
 		arg.Meta,
+	)
+	return err
+}
+
+const saveRecords = `-- name: SaveRecords :exec
+INSERT INTO archive.record (connection, stream, source_id, data, updated_at)
+SELECT $1, $2, r.id, r.data, coalesce(r.updated, now())
+FROM jsonb_to_recordset($3::jsonb) AS r(id text, data jsonb, updated timestamptz)
+ON CONFLICT (connection, stream, source_id) DO UPDATE SET data = EXCLUDED.data, deleted = false, seen_at = now(),
+    updated_at = CASE WHEN archive.record.deleted OR archive.record.data IS DISTINCT FROM EXCLUDED.data THEN EXCLUDED.updated_at ELSE archive.record.updated_at END
+`
+
+func (q *Queries) SaveRecords(ctx context.Context, connection uuid.UUID, stream string, records []byte) error {
+	_, err := q.db.Exec(ctx, saveRecords, connection, stream, records)
+	return err
+}
+
+const saveSync = `-- name: SaveSync :exec
+UPDATE archive.connection SET cursor = $1, sync_at = $2, synced_at = coalesce($3, synced_at),
+    error = $4
+WHERE id = $5
+`
+
+type SaveSyncParams struct {
+	Cursor   json.RawMessage
+	SyncAt   *time.Time
+	SyncedAt *time.Time
+	Error    string
+	ID       uuid.UUID
+}
+
+func (q *Queries) SaveSync(ctx context.Context, arg SaveSyncParams) error {
+	_, err := q.db.Exec(ctx, saveSync,
+		arg.Cursor,
+		arg.SyncAt,
+		arg.SyncedAt,
+		arg.Error,
+		arg.ID,
 	)
 	return err
 }
