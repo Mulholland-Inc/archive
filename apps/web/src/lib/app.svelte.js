@@ -1310,36 +1310,13 @@ export function connect(id) {
   if (c?.ready) location.assign(`${API}/connect/${encodeURIComponent(id)}?workspace=${encodeURIComponent(app.archive)}`);
 }
 
-// syncNow asks for a sync of each of your accounts at connector id now, which the API queues.
-export async function syncNow(id) {
-  const c = ws().connectors.find((x) => x.id === id);
-  if (!c) return;
-  try {
-    for (const x of c.connections ?? []) await call(`/connect/${x.id}/sync`, { method: 'POST' });
-  } catch (e) {
-    complain(e, `Couldn’t sync ${c.name}`);
-  }
-  return connections.refresh();
-}
-
-export async function disconnect(id) {
-  const c = ws().connectors.find((x) => x.id === id);
-  if (!c) return;
-  try {
-    for (const x of c.connections ?? []) await call(`/connect/${x.id}`, { method: 'DELETE' });
-  } catch (e) {
-    complain(e, `Couldn’t disconnect ${c.name}`);
-  }
-  return connections.refresh();
-}
-
 // Your own accounts in every archive you are in, from /connect/mine: each stays in the archive it was connected
 // in, and is synced and disconnected there, as its member.
 export const ownConnections = resource({
   tables: ['archive.connection'],
   load: async () => {
     const out = await call('/connect/mine');
-    app.ownConnections = (out?.connections ?? []).map((x) => ({ ...x, look: lookOf(x.workspace), lastSync: lastSyncOf(x) }));
+    app.ownConnections = (out?.connections ?? []).map((x) => ({ ...x, look: lookOf(x.workspace) }));
   }
 });
 

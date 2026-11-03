@@ -4,17 +4,18 @@
   import Stack from './Stack.svelte';
   import Button from './Button.svelte';
   import Text from './Text.svelte';
-  import ConnectorIcon from './ConnectorIcon.svelte';
   import ArchiveIcon from './ArchiveIcon.svelte';
-  import { app, ws, ownConnections, syncOwnConnection, disconnectOwnConnection } from '../lib/app.svelte.js';
+  import { app, ownConnections, syncOwnConnection, disconnectOwnConnection } from '../lib/app.svelte.js';
   import { relative } from '../lib/live.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
 
-  // Your own accounts in every archive you are in, each labelled with the archive it is connected in, where it
-  // is synced and disconnected.
+  // Your own accounts at connector in every archive you are in, each labelled with the archive it is connected
+  // in, where it is synced and disconnected.
+  let { connector } = $props();
+
   ownConnections.use();
 
-  const nameOf = (x) => ws()?.connectors.find((c) => c.id === x.provider)?.name ?? x.provider;
+  const accounts = $derived(app.ownConnections.filter((x) => x.provider === connector.id));
 
   function synced(x) {
     if (x.error) return x.error;
@@ -23,22 +24,21 @@
   }
 
   async function remove(x) {
-    if (await confirmDialog({ title: `Disconnect ${x.account}?`, body: `This disconnects your ${nameOf(x)} from ${x.workspace.name} and deletes what Archive synced from it there.`, confirm: 'Disconnect' }))
+    if (await confirmDialog({ title: `Disconnect ${x.account}?`, body: `This disconnects your ${connector.name} from ${x.workspace.name} and deletes what Archive synced from it there.`, confirm: 'Disconnect' }))
       disconnectOwnConnection(x);
   }
 </script>
 
-{#if app.ownConnections.length}
-  <Section title="Your accounts">
+{#if accounts.length}
+  <Section title={accounts.length > 1 ? 'Accounts' : 'Account'}>
     <ul class="accounts">
-      {#each app.ownConnections as x (x.id)}
+      {#each accounts as x (x.id)}
         <li class="account">
-          <ConnectorIcon id={x.provider} />
           <Stack gap="0-5" grow>
             <Text weight="medium" truncate>{x.account}</Text>
             <Stack direction="row" gap="1-5" align="center">
               <ArchiveIcon icon={x.look.icon} tint={x.look.tint} seed={x.workspace.id} size="xs" />
-              <Text size="sm" tone="secondary" truncate>{nameOf(x)} in {x.workspace.name}</Text>
+              <Text size="sm" tone="secondary" truncate>{x.workspace.name}</Text>
             </Stack>
             <Text size="sm" tone={x.error ? 'danger' : 'tertiary'}>{synced(x)}</Text>
           </Stack>
