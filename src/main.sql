@@ -57,8 +57,11 @@ CREATE TABLE archive.token (
 );
 CREATE INDEX token_user_idx ON archive.token (user_id);
 
+-- When a workspace's work of a kind is next due (workspace.go): its workflows, files or syncs. The personal
+-- store's syncs (personal.go) are due as the nil workspace's, 00000000-0000-0000-0000-000000000000, which no
+-- workspace is; deleting a workspace deletes its own.
 CREATE TABLE archive.due (
-    workspace uuid NOT NULL REFERENCES archive.workspace ON DELETE CASCADE,
+    workspace uuid NOT NULL,
     kind      text NOT NULL,
     at        timestamptz NOT NULL,
     PRIMARY KEY (workspace, kind)
@@ -194,7 +197,8 @@ INSERT INTO archive.workspace (id, name, key, type, icon, color) VALUES ($1, $2,
 ON CONFLICT DO NOTHING RETURNING *;
 
 -- name: DeleteWorkspace :exec
-WITH gone AS (UPDATE archive."user" u SET workspaces = array_remove(u.workspaces, sqlc.arg(id)::uuid) WHERE u.workspaces @> ARRAY[sqlc.arg(id)::uuid])
+WITH gone AS (UPDATE archive."user" u SET workspaces = array_remove(u.workspaces, sqlc.arg(id)::uuid) WHERE u.workspaces @> ARRAY[sqlc.arg(id)::uuid]),
+    due AS (DELETE FROM archive.due d WHERE d.workspace = sqlc.arg(id)::uuid)
 DELETE FROM archive.workspace w WHERE w.id = sqlc.arg(id)::uuid;
 
 -- name: RolesWithPrefix :many
@@ -221,13 +225,15 @@ SELECT at FROM archive.due WHERE workspace = $1 AND kind = $2;
 -- name: AllDue :many
 SELECT workspace, kind, at FROM archive.due;
 
+-- The work of a workspace that is gone, or of the personal store's nil one, is never due again.
 -- name: SetDue :execrows
-UPDATE archive.due d SET at = sqlc.arg(next)::timestamptz FROM archive.workspace w
-WHERE w.id = d.workspace AND w.id = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND d.at = sqlc.arg(claimed)::timestamptz;
+UPDATE archive.due d SET at = sqlc.arg(next)::timestamptz
+WHERE d.workspace = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND d.at = sqlc.arg(claimed)::timestamptz
+    AND (d.workspace = '00000000-0000-0000-0000-000000000000' OR EXISTS (SELECT FROM archive.workspace w WHERE w.id = d.workspace));
 
 -- name: ClearDue :exec
-DELETE FROM archive.due d USING archive.workspace w
-WHERE w.id = d.workspace AND w.id = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND d.at = sqlc.arg(claimed)::timestamptz;
+DELETE FROM archive.due d
+WHERE d.workspace = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND d.at = sqlc.arg(claimed)::timestamptz;
 
 -- name: OAuthClient :one
 SELECT client FROM archive.oauth_client WHERE provider = $1;

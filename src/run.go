@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	_ "embed"
 	"encoding/json"
@@ -937,7 +938,14 @@ func (a *Archive) runQuery(ctx context.Context, query string, params []any) ([]m
 		}
 		return &runQueryErr{err, q}
 	}
-	return coreDo(a, ctx, func(ctx context.Context) ([]map[string]any, error) {
+	// A query of the caller's own tables reads the personal store, and any other the workspace (personal.go).
+	do := coreDo[[]map[string]any]
+	if personalQueryRe.MatchString(q) {
+		do = selfDo[[]map[string]any]
+		inner := fail
+		fail = func(err error) error { return cmp.Or(personalMixed(err), inner(err)) }
+	}
+	return do(a, ctx, func(ctx context.Context) ([]map[string]any, error) {
 		t, _ := ctx.Value(storeTxKey{}).(storeTx)
 		ro, err := t.tx.Begin(ctx)
 		if err != nil {

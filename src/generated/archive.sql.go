@@ -731,6 +731,16 @@ func (q *Queries) DeleteUnknown(ctx context.Context) error {
 	return err
 }
 
+const deleteUnknownPeople = `-- name: DeleteUnknownPeople :exec
+DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM archive.mail_party x WHERE x.person = k.id)
+`
+
+// People nothing names any more go from the personal store of the main database, where only mail names them.
+func (q *Queries) DeleteUnknownPeople(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, deleteUnknownPeople)
+	return err
+}
+
 const deleteUpload = `-- name: DeleteUpload :exec
 DELETE FROM archive.upload WHERE id = $1
 `
@@ -1501,6 +1511,66 @@ func (q *Queries) OldWorkflows(ctx context.Context) ([]ArchiveWorkflow, error) {
 			&i.CursorID,
 			&i.Member,
 			&i.On,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const personalConnections = `-- name: PersonalConnections :many
+SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_at, c.sync_at, c.synced_at,
+    ((SELECT count(*) FROM archive.mail_message x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.doc_page x WHERE x.connection = c.id))::bigint AS items,
+    c.integration, ''::text AS access, ''::text AS connected_by
+FROM archive.connection c WHERE c.member = $1 AND NOT c.integration ORDER BY c.provider, c.account, c.id
+`
+
+type PersonalConnectionsRow struct {
+	ID          uuid.UUID
+	Provider    string
+	Account     string
+	Scopes      []string
+	Error       string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	SyncAt      *time.Time
+	SyncedAt    *time.Time
+	Items       int64
+	Integration bool
+	Access      string
+	ConnectedBy string
+}
+
+// A person's own connections in the personal store of the main database (personal.sql), whose member is the
+// person, with how many things of each it has.
+func (q *Queries) PersonalConnections(ctx context.Context, member uuid.UUID) ([]PersonalConnectionsRow, error) {
+	rows, err := q.db.Query(ctx, personalConnections, member)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PersonalConnectionsRow
+	for rows.Next() {
+		var i PersonalConnectionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Provider,
+			&i.Account,
+			&i.Scopes,
+			&i.Error,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SyncAt,
+			&i.SyncedAt,
+			&i.Items,
+			&i.Integration,
+			&i.Access,
+			&i.ConnectedBy,
 		); err != nil {
 			return nil, err
 		}

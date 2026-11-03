@@ -38,6 +38,7 @@
     <Text as="p" size="md" tone="secondary">This server has no {connector.by} client set up for {connector.name} yet. Ask whoever runs it to set one up.</Text>
   {/if}
   {#if connector.connected}
+    <Text as="p" size="md" tone="secondary">This is yours in every archive you are in, with what it syncs, and only you see it. Disconnecting it here disconnects it everywhere.</Text>
     <Stack gap="0">
       <SettingsRow label="Account"><Text size="sm" tone="secondary">{connector.account}</Text></SettingsRow>
       <SettingsRow label="Last synced"><Text size="sm" tone="secondary">{connector.lastSync}</Text></SettingsRow>
