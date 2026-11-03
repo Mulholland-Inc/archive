@@ -1,7 +1,7 @@
 <script>
   import { titleOf } from '../lib/app.svelte.js';
   import { fill } from './fill.js';
-  import { label, day } from './format.js';
+  import { label, day, short } from './format.js';
 
   // A timeline: each row its name, its two dates and a bar between them over the months they span, for projects
   // and the like. A row starts on the view's by date and ends on the first date column after it; one with no end
@@ -34,8 +34,6 @@
   });
   const now = new Date();
   const today = $derived(range && now >= range[0] && now < range[1] ? place(now) : null);
-  const thisYear = now.getFullYear();
-  const short = (d) => (d ? d.toLocaleDateString(undefined, d.getFullYear() === thisYear ? { month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric', year: 'numeric' }) : '');
   // A bar reaches to the end of its last day.
   const span = (r) => `${((endOf(r) - startOf(r) + 864e5) / (range[1] - range[0])) * 100}%`;
 </script>

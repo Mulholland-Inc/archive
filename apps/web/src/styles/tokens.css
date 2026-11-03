@@ -178,6 +178,13 @@
   --view-tree-row: 2.75rem;
   --view-tree-name: 16rem;
   --view-tree-detail: 12rem;
+  --view-stack-width: 40rem;
+  --view-stack-floor: 3.25rem;
+  --view-stack-gap: var(--space-0-5);
+  --view-swatch: 0.625rem;
+  --view-year-width: 44rem;
+  --view-year-gap: 0.1875rem;
+  --view-square-round: calc(var(--radius-xs) / 2);
   --bubble-max: 85%;
   --settings-art: 11rem;
   --settings-art-sm: calc(var(--settings-art) * 0.7);
@@ -272,6 +279,12 @@
 
   --green-600: #2f9e5f;
   --orange-600: #e5631a;
+
+  /* The chart series after blue: the reference palette's orange and aqua, a step for each theme. */
+  --orange-chart: #eb6834;
+  --orange-chart-dark: #d95926;
+  --aqua-chart: #1baf7a;
+  --aqua-chart-dark: #199e70;
 
   --ink-5: rgba(11, 13, 18, 0.045);
   --ink-8: rgba(11, 13, 18, 0.08);
@@ -431,6 +444,14 @@
   --color-accent-subtle: var(--blue-600-10);
   --color-accent-contrast: var(--gray-0);
   --color-chart: var(--blue-600);
+  --color-chart-2: var(--orange-chart);
+  --color-chart-3: var(--aqua-chart);
+  --color-on-chart: var(--gray-0);
+  /* A count's shade, from a little to a lot: the chart's blue mixed into the page. */
+  --color-chart-step-1: color-mix(in oklab, var(--color-chart) 40%, var(--color-canvas));
+  --color-chart-step-2: color-mix(in oklab, var(--color-chart) 60%, var(--color-canvas));
+  --color-chart-step-3: color-mix(in oklab, var(--color-chart) 80%, var(--color-canvas));
+  --color-chart-step-4: var(--color-chart);
 
   --color-success: var(--green-600);
   --color-warning: var(--orange-600);
@@ -498,6 +519,8 @@
   --color-accent-contrast: var(--gray-950);
   /* The accent's lighter step is too light to mark data on the dark canvas; its middle one is not. */
   --color-chart: var(--blue-500);
+  --color-chart-2: var(--orange-chart-dark);
+  --color-chart-3: var(--aqua-chart-dark);
 
   --color-success: #43a25a;
   --color-warning: #f0b232;
