@@ -143,6 +143,19 @@ func (h *Hub) connectRoutes(mux *http.ServeMux) {
 		}
 		httpWrite(w, http.StatusNoContent, nil, err)
 	})
+	authed("PUT /connect/{id}/type", func(a *Archive, w http.ResponseWriter, r *http.Request) {
+		id, err := httpID(r)
+		var body struct {
+			Type string `json:"type"`
+		}
+		if err == nil {
+			err = httpDecode(r, &body)
+		}
+		if err == nil {
+			err = a.SetType(r.Context(), id, body.Type)
+		}
+		httpWrite(w, http.StatusNoContent, nil, err)
+	})
 	authed("POST /connect/{id}/sync", func(a *Archive, w http.ResponseWriter, r *http.Request) {
 		id, err := httpID(r)
 		if err == nil {
@@ -186,8 +199,14 @@ func (a *Archive) connectStart(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, a.hub.app+connectBack(r.PathValue("id"))+"?"+url.Values{"workspace": {a.ws.ID.String()}, "error": {err.Error()}}.Encode(), http.StatusSeeOther)
 		return
 	}
+	// A person's own connection is connected into the archives of a type they pick first.
+	typ := r.URL.Query().Get("type")
+	if !p.Integration && !connType(typ) {
+		http.Redirect(w, r, a.hub.app+connectBack(r.PathValue("id"))+"?"+url.Values{"workspace": {a.ws.ID.String()}, "error": {"pick which archives it is for: personal, family or business"}}.Encode(), http.StatusSeeOther)
+		return
+	}
 	st := connect.State{Provider: p.ID, Workspace: a.ws.ID.String(), User: ac.UserID, Member: ac.member,
-		Verifier: oauth2.GenerateVerifier(), Exp: time.Now().Add(connect.TTL).Unix()}
+		Verifier: oauth2.GenerateVerifier(), Exp: time.Now().Add(connect.TTL).Unix(), Type: typ}
 	http.Redirect(w, r, p.AuthURL(a.hub.connectRedirect(p.ID), connect.SealState(a.hub.aead, st), st.Verifier), http.StatusFound)
 }
 
@@ -215,10 +234,10 @@ func (a *Archive) connectFinish(w http.ResponseWriter, r *http.Request, st conne
 		}
 	}
 	if err == nil && p.Integration {
-		_, err = a.connectionSave(r.Context(), st.Member, p.Connector, g)
+		_, err = a.connectionSave(r.Context(), st.Member, p.Connector, g, "")
 	} else if err == nil {
-		// A person's own is theirs in every workspace they are in.
-		_, err = a.hub.self.connectionSave(r.Context(), st.User, p.Connector, g)
+		// A person's own is theirs in every workspace they are in of the type they picked.
+		_, err = a.hub.self.connectionSave(r.Context(), st.User, p.Connector, g, st.Type)
 	}
 	if err != nil {
 		back.Set("error", err.Error())
@@ -274,10 +293,13 @@ func mayUse(c generated.ArchiveConnection, lvl string, groups []uuid.UUID) bool 
 // connectionSave keeps g for member at provider: in the row they have for its account, or the archive's for an
 // integration, or a new one; and queues its sync, which is due now. An integration connected to another
 // account is disconnected first. In the personal store, member is the person's id.
-func (a *Archive) connectionSave(ctx context.Context, member uuid.UUID, c *connect.Connector, g *connect.Grant) (uuid.UUID, error) {
+func (a *Archive) connectionSave(ctx context.Context, member uuid.UUID, c *connect.Connector, g *connect.Grant, typ string) (uuid.UUID, error) {
 	var id uuid.UUID
 	if g.Meta == nil {
 		g.Meta = map[string]string{}
+	}
+	if a.personal && !connType(typ) {
+		return id, fmt.Errorf("type: want personal, family or business: %w", httpErrBadRequest)
 	}
 	err := a.sys(ctx, func(ctx context.Context) error {
 		q := a.st.db(ctx)
@@ -297,8 +319,17 @@ func (a *Archive) connectionSave(ctx context.Context, member uuid.UUID, c *conne
 		if err != nil {
 			return err
 		}
+		token := connect.SealToken(a.aead, id, g.Refresh)
+		if a.personal {
+			// The personal store's connections have a type, which connecting again sets to the one picked.
+			_, err := a.st.Q(ctx).Exec(ctx, `INSERT INTO archive.connection (id, member, provider, account, token, scopes, meta, type)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT (id) DO UPDATE SET token = EXCLUDED.token, scopes = EXCLUDED.scopes, meta = EXCLUDED.meta, type = EXCLUDED.type, error = '',
+    updated_at = now(), sync_at = now(), asked_at = now(), revoked = false`, id, member, c.ID, g.Account, token, g.Scopes, g.Meta, typ)
+			return err
+		}
 		return q.SaveConnection(ctx, generated.SaveConnectionParams{ID: id, Member: member, Provider: c.ID, Account: g.Account,
-			Token: connect.SealToken(a.aead, id, g.Refresh), Scopes: g.Scopes, Meta: g.Meta, Integration: c.Integration})
+			Token: token, Scopes: g.Scopes, Meta: g.Meta, Integration: c.Integration})
 	})
 	if err == nil {
 		a.syncSoon(ctx)
@@ -328,6 +359,14 @@ type Connection struct {
 	Integration bool   `json:"integration"`
 	Access      string `json:"access"`
 	ConnectedBy string `json:"connected_by"`
+	// Type is which archives a person's own is in: personal, family or business; "" for an integration.
+	Type string `json:"type,omitempty"`
+}
+
+func connectionOf(r generated.ConnectionsRow, typ string) Connection {
+	return Connection{ID: r.ID, Provider: r.Provider, Account: r.Account, Scopes: r.Scopes, Error: r.Error, CreatedAt: r.CreatedAt,
+		UpdatedAt: r.UpdatedAt, SyncAt: r.SyncAt, SyncedAt: r.SyncedAt, Items: r.Items, Integration: r.Integration, Access: r.Access,
+		ConnectedBy: r.ConnectedBy, Type: typ}
 }
 
 // Connector is a service accounts can be connected at; Ready says this server has its OAuth client, and
@@ -367,13 +406,18 @@ func (a *Archive) Connections(ctx context.Context) (*Connections, error) {
 			return err
 		})
 	}
+	// All of the caller's own, whatever their type, so they manage them all from any archive.
+	var types map[uuid.UUID]string
+	if err == nil {
+		types, err = a.hub.selfTypes(ctx, ac.UserID)
+	}
 	for _, r := range own {
-		out.Connections = append(out.Connections, Connection(r))
+		out.Connections = append(out.Connections, connectionOf(generated.ConnectionsRow(r), types[r.ID]))
 	}
 	for _, r := range rows {
 		// A personal connection still in the workspace has yet to move to the personal store (personalMove).
 		if r.Integration || !connPersonal(r.Provider) {
-			out.Connections = append(out.Connections, Connection(r))
+			out.Connections = append(out.Connections, connectionOf(r, ""))
 		}
 	}
 	slices.SortStableFunc(out.Connections, func(x, y Connection) int {
@@ -508,6 +552,31 @@ func (a *Archive) SetAccess(ctx context.Context, id uuid.UUID, group string) err
 		}
 		return syncNarrow(ctx, a.st.Q(ctx), id, access)
 	})
+}
+
+// connType says whether typ is a type of archive, which a person's own connection is in: personal, family or
+// business.
+func connType(typ string) bool {
+	return slices.Contains([]string{"personal", "family", "business"}, typ)
+}
+
+// SetType puts the caller's own connection id in the archives of type typ, personal, family or business, and
+// takes it out of the others, with everything it synced.
+func (a *Archive) SetType(ctx context.Context, id uuid.UUID, typ string) error {
+	o, c, err := a.connectionMine(ctx, id)
+	switch {
+	case err != nil:
+		return err
+	case o != a.hub.self:
+		return fmt.Errorf("only a person's own connection has a type; an integration is its archive's: %w", httpErrBadRequest)
+	case !connType(typ):
+		return fmt.Errorf("type: want personal, family or business: %w", httpErrBadRequest)
+	}
+	if _, err := a.hub.main.Exec(ctx, "UPDATE archive.connection SET type = $2, updated_at = now() WHERE id = $1", id, typ); err != nil {
+		return err
+	}
+	a.hub.selfMoved(ctx, c.Member, append([]string{"connection"}, personalTables...)...)
+	return nil
 }
 
 // connectionUpgrade makes the first connection of each integration from before there were integrations the
@@ -1738,6 +1807,12 @@ func (a *Archive) memberConnections(ctx context.Context, ac *Actor) ([]generated
 			return err
 		})
 	}
+	// Of the caller's own, only those of this archive's type act here.
+	var mine map[uuid.UUID]bool
+	if err == nil {
+		mine, err = a.hub.selfOfType(ctx, ac.UserID, a.ws.Type)
+	}
+	own = slices.DeleteFunc(own, func(c generated.ArchiveConnection) bool { return !mine[c.ID] })
 	out = append(out, own...)
 	slices.SortStableFunc(out, func(x, y generated.ArchiveConnection) int {
 		return cmp.Or(strings.Compare(x.Provider, y.Provider), strings.Compare(x.Account, y.Account))

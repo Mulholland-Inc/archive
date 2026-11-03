@@ -61,6 +61,7 @@ CREATE TABLE archive.connection (
     revoked    boolean NOT NULL DEFAULT false,
     integration boolean NOT NULL DEFAULT false CONSTRAINT connection_personal CHECK (NOT integration),
     name       text NOT NULL DEFAULT '',
+    type       archive.workspace_type NOT NULL,
     UNIQUE (member, provider, account)
 ) INHERITS (archive.object);
 CREATE INDEX connection_sync_idx ON archive.connection (sync_at) WHERE sync_at IS NOT NULL;
@@ -73,6 +74,7 @@ COMMENT ON COLUMN archive.connection.scopes IS 'What Archive may do there, as th
 COMMENT ON COLUMN archive.connection.error IS 'Why Archive last failed to reach it, like a revoked grant; empty while it works';
 COMMENT ON COLUMN archive.connection.sync_at IS 'When Archive next reads what changed there; null once it has it all, until the service says something changed, you ask, or you read what it syncs';
 COMMENT ON COLUMN archive.connection.synced_at IS 'When Archive last had everything there';
+COMMENT ON COLUMN archive.connection.type IS 'Which archives it is in: only those of this type, personal, family or business, read what it syncs and act with it. A connection takes the type of the archive it was connected in, and its person changes it in Settings, Connectors';
 COMMENT ON COLUMN archive.connection.integration IS 'It is the archive''s, like its QuickBooks, which an owner connects for everyone, not one person''s own';
 
 CREATE TABLE archive.known_person (
@@ -182,12 +184,20 @@ COMMENT ON COLUMN archive.doc_page.stream IS 'What its connector syncs it as, li
 COMMENT ON COLUMN archive.doc_page.source_id IS 'Its id there';
 COMMENT ON COLUMN archive.doc_page.updated_at IS 'When Archive last saw it change';
 
--- me is the person a read of the store is for: archive.person, <their id>.<its signature>, when it is signed with
--- personal_key, and null otherwise.
+-- me is the person a read of the store is for, and my_type the type of the archive they read it in: archive.person,
+-- <their id>.<the type>.<its signature>, when it is signed with personal_key, and null otherwise.
 CREATE FUNCTION archive.me() RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
     SELECT s.who::uuid FROM (SELECT split_part(current_setting('archive.person', true), '.', 1) AS who,
-        split_part(current_setting('archive.person', true), '.', 2) AS sig) s, archive.personal_key k
-    WHERE s.sig = encode(sha256(convert_to(k.key || s.who, 'UTF8')), 'hex')
+        split_part(current_setting('archive.person', true), '.', 2) AS typ,
+        split_part(current_setting('archive.person', true), '.', 3) AS sig) s, archive.personal_key k
+    WHERE s.sig = encode(sha256(convert_to(k.key || s.who || '.' || s.typ, 'UTF8')), 'hex')
+$$;
+
+CREATE FUNCTION archive.my_type() RETURNS archive.workspace_type LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
+    SELECT s.typ::archive.workspace_type FROM (SELECT split_part(current_setting('archive.person', true), '.', 1) AS who,
+        split_part(current_setting('archive.person', true), '.', 2) AS typ,
+        split_part(current_setting('archive.person', true), '.', 3) AS sig) s, archive.personal_key k
+    WHERE s.sig = encode(sha256(convert_to(k.key || s.who || '.' || s.typ, 'UTF8')), 'hex')
 $$;
 
 -- object_name is archive.sql's, for the tables here.
@@ -221,7 +231,8 @@ GRANT SELECT ON archive.connection, archive.known_person, archive.mail_message, 
 -- row-level security and no policy, so a read past its grants still sees nothing.
 ALTER TABLE archive.personal_key ENABLE ROW LEVEL SECURITY;
 ALTER TABLE archive.connection ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.connection FOR SELECT USING (member = archive.me());
+-- A connection, and so everything it synced, shows only in archives of its type.
+CREATE POLICY mine ON archive.connection FOR SELECT USING (member = archive.me() AND type = archive.my_type());
 ALTER TABLE archive.mail_message ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.mail_message FOR SELECT USING (EXISTS (SELECT FROM archive.connection c WHERE c.id = mail_message.connection));
 ALTER TABLE archive.mail_party ENABLE ROW LEVEL SECURITY;

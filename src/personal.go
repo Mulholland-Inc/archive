@@ -100,10 +100,39 @@ func (h *Hub) archiveOf(ctx context.Context, ws uuid.UUID) (*Archive, func(), er
 // selfKey is personal_key, the secret archive.person is signed with.
 func (h *Hub) selfKey() string { return hex.EncodeToString(secretDerive(h.key, "personal")) }
 
-// selfWho is archive.person for a read of person's own: their id, signed.
-func (h *Hub) selfWho(person uuid.UUID) string {
-	sum := sha256.Sum256([]byte(h.selfKey() + person.String()))
-	return person.String() + "." + hex.EncodeToString(sum[:])
+// selfWho is archive.person for a read of person's own in an archive of type typ: their id and typ, signed, so
+// what they read shows only their connections of that type.
+func (h *Hub) selfWho(person uuid.UUID, typ generated.ArchiveWorkspaceType) string {
+	who := person.String() + "." + string(typ)
+	sum := sha256.Sum256([]byte(h.selfKey() + who))
+	return who + "." + hex.EncodeToString(sum[:])
+}
+
+// selfOfType are person's own connections of type typ, the ones an archive of that type uses.
+func (h *Hub) selfOfType(ctx context.Context, person uuid.UUID, typ generated.ArchiveWorkspaceType) (map[uuid.UUID]bool, error) {
+	rows, err := h.main.Query(ctx, "SELECT id FROM archive.connection WHERE member = $1 AND type = $2", person, string(typ))
+	if err != nil {
+		return nil, err
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	out := map[uuid.UUID]bool{}
+	for _, id := range ids {
+		out[id] = true
+	}
+	return out, err
+}
+
+// selfTypes are the types of person's own connections, by id.
+func (h *Hub) selfTypes(ctx context.Context, person uuid.UUID) (map[uuid.UUID]string, error) {
+	rows, err := h.main.Query(ctx, "SELECT id, type::text FROM archive.connection WHERE member = $1", person)
+	if err != nil {
+		return nil, err
+	}
+	out := map[uuid.UUID]string{}
+	var id uuid.UUID
+	var typ string
+	_, err = pgx.ForEachRow(rows, []any{&id, &typ}, func() error { out[id] = typ; return nil })
+	return out, err
 }
 
 // connPersonal says whether provider is a personal connector, whose connections are in the personal store.
@@ -143,7 +172,7 @@ func selfDo[T any](a *Archive, ctx context.Context, fn func(context.Context) (T,
 	if err != nil {
 		return out, err
 	}
-	s, role, who := a.hub.self.st, a.hub.mainPrefix()+"_personal", a.hub.selfWho(ac.UserID)
+	s, role, who := a.hub.self.st, a.hub.mainPrefix()+"_personal", a.hub.selfWho(ac.UserID, a.ws.Type)
 	if t, ok := ctx.Value(storeTxKey{}).(storeTx); ok && t.role == role+" "+who {
 		return fn(ctx)
 	}
@@ -344,6 +373,8 @@ func (h *Hub) personalMove(ctx context.Context, ws generated.ArchiveWorkspace) e
 				return fmt.Errorf("connection %s is in the personal store already, as another account than %s %s", c.id, c.provider, c.account)
 			}
 			c.data["member"], c.data["token"], c.data["lease_at"] = u.ID, `\x`+hex.EncodeToString(connect.SealToken(h.aead, c.id, rt)), nil
+			// It is of the type of the archive it was connected in.
+			c.data["type"] = string(ws.Type)
 			if _, err := mtx.Exec(ctx, "INSERT INTO archive.connection SELECT (jsonb_populate_record(NULL::archive.connection, $1)).*", c.data); err != nil {
 				return fmt.Errorf("connection %s: %w", c.id, err)
 			}
