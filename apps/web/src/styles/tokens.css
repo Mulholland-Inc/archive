@@ -158,6 +158,16 @@
   --composer-max: 14rem;
   --code-max: 28rem;
   --type-dialog-height: 40rem;
+
+  /* View layouts (src/layouts). */
+  --view-list-width: 40rem;
+  --view-lane-width: 14rem;
+  --view-day-height: 6rem;
+  --view-map-aside: 34rem;
+  --view-map-tile: 256px;
+  --view-pin-tip: var(--space-2);
+  --view-pin-dot: 0.875rem;
+  --view-pin-popup: 15rem;
   --bubble-max: 85%;
   --settings-art: 11rem;
   --settings-art-sm: calc(var(--settings-art) * 0.7);

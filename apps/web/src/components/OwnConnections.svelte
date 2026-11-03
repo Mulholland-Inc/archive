@@ -19,8 +19,10 @@
 
   function synced(x) {
     if (x.error) return x.error;
-    const when = x.synced_at ? `Synced ${relative(x.synced_at).toLowerCase()}` : x.sync_at ? 'Syncing…' : 'Not synced yet';
-    return `${when} · ${(x.items ?? 0).toLocaleString()} items`;
+    // "synced 5 min ago", "synced yesterday", but "synced on Sun" and "synced on Nov 1".
+    const r = x.synced_at && relative(x.synced_at);
+    if (r) return `${(x.items ?? 0).toLocaleString()} items synced ${/^(Just|Today|Yesterday|\d)/.test(r) ? r.toLowerCase() : `on ${r}`}`;
+    return x.sync_at ? 'Syncing…' : 'Not synced yet';
   }
 
   async function remove(x) {
