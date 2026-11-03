@@ -361,7 +361,6 @@ BEGIN
             EXECUTE format('GRANT %I TO %I', '{p}_' || NEW.role, u);
         END IF;
         EXECUTE format('GRANT %I TO %I', m, u);
-        EXECUTE format('GRANT %I TO %I', u, '{p}_authenticator');
         IF TG_OP = 'INSERT' THEN
             added := NEW.groups;
         ELSE

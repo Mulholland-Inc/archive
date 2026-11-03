@@ -406,7 +406,7 @@ func (a *Archive) CreateToken(ctx context.Context, name string, ttl time.Duratio
 		var role *string
 		if viewer {
 			r := a.roleID("t", t.ID)
-			if err := a.exec(ctx, authCreate(r), authGrant(a.prefix+"_viewer", r), authGrant(a.roleID("m", ac.member), r), authGrant(r, a.prefix+"_authenticator")); err != nil {
+			if err := a.exec(ctx, authCreate(r), authGrant(a.prefix+"_viewer", r), authGrant(a.roleID("m", ac.member), r)); err != nil {
 				return err
 			}
 			role = &r
