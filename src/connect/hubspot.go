@@ -129,6 +129,9 @@ type hubspotCursor struct {
 	Mode   string `json:"mode,omitempty"`
 	Began  int64  `json:"began,omitempty"`
 	After  string `json:"after,omitempty"`
+	// Mark is where a search pages from: the last change it read, so a record that changes while it pages, and
+	// moves to the end, moves no other out of reach.
+	Mark int64 `json:"mark,omitempty"`
 }
 
 // hubspotStream is the stream of the object type obj, with props, into table, its delta searched by changed,
@@ -144,7 +147,7 @@ func hubspotStream(name, obj, changed, table string, rows func(map[string]any) *
 			}
 			now := time.Now().Add(-time.Minute).UnixMilli()
 			if cur.Mode == "" {
-				cur.Mode, cur.Began, cur.After = "search", now, ""
+				cur.Mode, cur.Began, cur.After, cur.Mark = "search", now, "", 0
 				if cur.Since == 0 || time.Since(time.UnixMilli(cur.Listed)) > hubspotRelist {
 					cur.Mode = "list"
 				}
@@ -175,8 +178,9 @@ func hubspotStream(name, obj, changed, table string, rows func(map[string]any) *
 					page.More, page.Cursor = true, cursorFor(cur)
 					return page, nil
 				}
+				mark := max(cur.Mark, cur.Since)
 				body := map[string]any{"limit": 100, "properties": strings.Split(props, ","),
-					"filterGroups": []map[string]any{{"filters": []map[string]any{{"propertyName": changed, "operator": "GTE", "value": strconv.FormatInt(cur.Since, 10)}}}},
+					"filterGroups": []map[string]any{{"filters": []map[string]any{{"propertyName": changed, "operator": "GTE", "value": strconv.FormatInt(mark, 10)}}}},
 					"sorts":        []map[string]string{{"propertyName": changed, "direction": "ASCENDING"}}}
 				if cur.After != "" {
 					body["after"] = cur.After
@@ -200,6 +204,13 @@ func hubspotStream(name, obj, changed, table string, rows func(map[string]any) *
 			}
 			if res.Paging.Next.After != "" {
 				cur.After, page.More = res.Paging.Next.After, true
+				// A search goes on from the last change it read, unless every record of the page changed at once,
+				// and then by offset, as before.
+				if n := len(res.Results); cur.Mode == "search" && n > 0 {
+					if last := stamp(str(obj(res.Results[n-1], "properties"), changed)).UnixMilli(); last > max(cur.Mark, cur.Since) {
+						cur.Mark, cur.After = last, ""
+					}
+				}
 			} else {
 				if cur.Mode == "list" {
 					cur.Listed = cur.Began

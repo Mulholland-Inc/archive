@@ -62,7 +62,10 @@ type Connector struct {
 	// Client.Option; Host is the provider host it names by default. When Env names another host, every URL of
 	// the connector moves onto it, so another server that speaks the provider's API can stand in for it.
 	Env, Host string
-	Endpoint  oauth2.Endpoint
+	// Hosts, when given, are the only hosts whose URLs move onto the one Env names, like Salesforce's login
+	// server, whose sandbox is another, while each org's API stays on its own host.
+	Hosts    []string
+	Endpoint oauth2.Endpoint
 	// Revoke is where a refresh token is revoked on disconnect, posted as token=, as RFC 7009 has it; empty
 	// when the provider has nowhere. RevokeWith, when set, revokes in its place, for a provider that does it
 	// another way.
@@ -200,7 +203,7 @@ var client = &http.Client{Timeout: 30 * time.Second}
 // at is the provider's URL u, on the host its client names.
 func (p *Provider) at(u string) string {
 	pu, err := url.Parse(u)
-	if p.base == "" || p.base == p.Host || err != nil {
+	if p.base == "" || p.base == p.Host || err != nil || len(p.Hosts) > 0 && !slices.Contains(p.Hosts, pu.Scheme+"://"+pu.Host) {
 		return u
 	}
 	return p.base + pu.RequestURI()

@@ -122,6 +122,9 @@ func init() {
 // qboPage is the most a query answers, and CDC too.
 const qboPage = 1000
 
+// qboOverlap is how many records of a page a listing's next page reads again.
+const qboOverlap = 50
+
 // qboCDC is how far back CDC reaches: 30 days, less a day to spare.
 const qboCDC = 29 * 24 * time.Hour
 
@@ -178,7 +181,10 @@ func qboStream(name, entity, what, table string, rows func(map[string]any) *Row)
 			var v any
 			err := qboGet(c, entity, "/query?query="+url.QueryEscape(q+" ORDERBY Id"+page), &v)
 			if u := (*Unsupported)(nil); errors.As(err, &u) {
-				v, err = nil, qboGet(c, entity, "/query?query="+url.QueryEscape(q+page), &v)
+				// Not v, err = nil, qboGet(…): that reads into v and only then empties it, and an empty page of a
+				// listing deletes every row.
+				v = nil
+				err = qboGet(c, entity, "/query?query="+url.QueryEscape(q+page), &v)
 			}
 			if err != nil {
 				return nil, err
@@ -186,7 +192,9 @@ func qboStream(name, entity, what, table string, rows func(map[string]any) *Row)
 			items := objects(v, entity)
 			out := &Page{Full: true, Records: qboRecords(entity, items), More: len(items) >= qboPage}
 			if out.More {
-				cur.At += len(items)
+				// Pages overlap by qboOverlap, so a record deleted while the listing runs, which moves the ones after
+				// it a place back, skips none of them; those read twice are written once.
+				cur.At += len(items) - qboOverlap
 			} else {
 				cur = qboCursor{Since: cur.Began}
 			}

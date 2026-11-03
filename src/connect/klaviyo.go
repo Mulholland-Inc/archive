@@ -89,7 +89,7 @@ func init() {
 const (
 	klaviyoAPI = "https://a.klaviyo.com/api"
 	// klaviyoRevision is the version of Klaviyo's API the connector reads, which every request names.
-	klaviyoRevision = "2024-10-15"
+	klaviyoRevision = "2025-07-15"
 )
 
 // klaviyoGet reads u, a Klaviyo API URL, into v, with the revision it is read at.
