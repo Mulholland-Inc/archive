@@ -45,7 +45,6 @@
   .wrap {
     min-width: 0;
     overflow-x: auto;
-    overscroll-behavior-y: auto;
   }
 
   table {

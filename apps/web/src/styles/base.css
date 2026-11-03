@@ -7,7 +7,6 @@
 * {
   margin: 0;
   padding: 0;
-  overscroll-behavior: none;
   scrollbar-width: none;
 }
 
@@ -30,6 +29,12 @@ html,
 body,
 #app {
   height: var(--viewport-height, 100%);
+}
+
+/* The window itself never bounces; any scroller in it hands a scroll on to the one around it when it ends. */
+html,
+body {
+  overscroll-behavior: none;
 }
 
 body {
