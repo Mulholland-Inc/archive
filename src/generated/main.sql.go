@@ -117,7 +117,7 @@ SELECT t.id, t.kind, t.name, coalesce(t.role, '')::text AS role, u.id AS user_id
     coalesce(t.workspace::text, '')::text AS workspace,
     ARRAY(SELECT w.id::text FROM archive.workspace w WHERE w.id = ANY(u.workspaces) ORDER BY array_position(u.workspaces, w.id))::text[] AS workspaces
 FROM archive.token t JOIN archive."user" u ON u.id = t.user_id
-WHERE t.hash = $1 AND t.kind IN ('api', 'session') AND (t.expires_at IS NULL OR t.expires_at > now())
+WHERE t.hash = $1 AND t.kind = ANY($2::text[]) AND (t.expires_at IS NULL OR t.expires_at > now())
 `
 
 type AuthenticateRow struct {
@@ -132,8 +132,8 @@ type AuthenticateRow struct {
 	Workspaces []string
 }
 
-func (q *Queries) Authenticate(ctx context.Context, hash string) (AuthenticateRow, error) {
-	row := q.db.QueryRow(ctx, authenticate, hash)
+func (q *Queries) Authenticate(ctx context.Context, hash string, kinds []string) (AuthenticateRow, error) {
+	row := q.db.QueryRow(ctx, authenticate, hash, kinds)
 	var i AuthenticateRow
 	err := row.Scan(
 		&i.ID,
@@ -203,6 +203,85 @@ func (q *Queries) ConnectionWatches(ctx context.Context, connection uuid.UUID) (
 		return nil, err
 	}
 	return items, nil
+}
+
+const createMCPClient = `-- name: CreateMCPClient :one
+INSERT INTO archive.mcp_client (name, redirect_uris, secret) VALUES ($1, $2, $3) RETURNING id, created_at
+`
+
+type CreateMCPClientRow struct {
+	ID        uuid.UUID
+	CreatedAt time.Time
+}
+
+func (q *Queries) CreateMCPClient(ctx context.Context, name string, redirectUris []string, secret *string) (CreateMCPClientRow, error) {
+	row := q.db.QueryRow(ctx, createMCPClient, name, redirectUris, secret)
+	var i CreateMCPClientRow
+	err := row.Scan(&i.ID, &i.CreatedAt)
+	return i, err
+}
+
+const createMCPCode = `-- name: CreateMCPCode :exec
+WITH old AS (DELETE FROM archive.mcp_code c WHERE c.expires_at < now() - interval '1 hour')
+INSERT INTO archive.mcp_code (hash, client, user_id, workspace, redirect_uri, challenge, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6, now() + interval '1 minute')
+`
+
+type CreateMCPCodeParams struct {
+	Hash        string
+	Client      uuid.UUID
+	UserID      uuid.UUID
+	Workspace   uuid.UUID
+	RedirectUri string
+	Challenge   string
+}
+
+// A new code; codes that lapsed a while ago go, while a used one is kept long enough to catch its reuse.
+func (q *Queries) CreateMCPCode(ctx context.Context, arg CreateMCPCodeParams) error {
+	_, err := q.db.Exec(ctx, createMCPCode,
+		arg.Hash,
+		arg.Client,
+		arg.UserID,
+		arg.Workspace,
+		arg.RedirectUri,
+		arg.Challenge,
+	)
+	return err
+}
+
+const createMCPToken = `-- name: CreateMCPToken :exec
+WITH old AS (DELETE FROM archive.token x WHERE x.kind = 'mcp' AND x.refresh_expires_at < now())
+INSERT INTO archive.token (id, user_id, workspace, kind, name, hash, expires_at, client, refresh, refresh_expires_at)
+VALUES ($1, $2, $3, 'mcp', $4, $5, $6,
+    $7, $8, $9)
+`
+
+type CreateMCPTokenParams struct {
+	ID               uuid.UUID
+	UserID           uuid.UUID
+	Workspace        *uuid.UUID
+	Name             string
+	Hash             string
+	ExpiresAt        *time.Time
+	Client           *uuid.UUID
+	Refresh          *string
+	RefreshExpiresAt *time.Time
+}
+
+// A grant's first tokens; grants whose refresh token lapsed go.
+func (q *Queries) CreateMCPToken(ctx context.Context, arg CreateMCPTokenParams) error {
+	_, err := q.db.Exec(ctx, createMCPToken,
+		arg.ID,
+		arg.UserID,
+		arg.Workspace,
+		arg.Name,
+		arg.Hash,
+		arg.ExpiresAt,
+		arg.Client,
+		arg.Refresh,
+		arg.RefreshExpiresAt,
+	)
+	return err
 }
 
 const createSession = `-- name: CreateSession :exec
@@ -284,6 +363,17 @@ func (q *Queries) CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams
 		&i.Color,
 	)
 	return i, err
+}
+
+const deleteMCPToken = `-- name: DeleteMCPToken :one
+DELETE FROM archive.token WHERE id = $1 AND kind = 'mcp' RETURNING workspace
+`
+
+func (q *Queries) DeleteMCPToken(ctx context.Context, id uuid.UUID) (*uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, deleteMCPToken, id)
+	var workspace *uuid.UUID
+	err := row.Scan(&workspace)
+	return workspace, err
 }
 
 const deleteOAuthClient = `-- name: DeleteOAuthClient :exec
@@ -473,6 +563,23 @@ func (q *Queries) LeaveWorkspace(ctx context.Context, workspace uuid.UUID, iD uu
 	return err
 }
 
+const mCPClient = `-- name: MCPClient :one
+SELECT id, name, redirect_uris, secret, created_at FROM archive.mcp_client WHERE id = $1
+`
+
+func (q *Queries) MCPClient(ctx context.Context, id uuid.UUID) (ArchiveMcpClient, error) {
+	row := q.db.QueryRow(ctx, mCPClient, id)
+	var i ArchiveMcpClient
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.RedirectUris,
+		&i.Secret,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const mainRevision = `-- name: MainRevision :one
 SELECT coalesce((SELECT hash FROM archive.main_revision ORDER BY created_at DESC, id DESC LIMIT 1), '')::text
 `
@@ -516,8 +623,60 @@ func (q *Queries) OAuthClient(ctx context.Context, provider string) ([]byte, err
 	return client, err
 }
 
+const refreshMCPToken = `-- name: RefreshMCPToken :one
+UPDATE archive.token SET hash = $1, expires_at = $2, refresh = $3, refresh_expires_at = $4
+WHERE refresh = $5 AND client = $6 AND kind = 'mcp' AND refresh_expires_at > now()
+RETURNING id, workspace
+`
+
+type RefreshMCPTokenParams struct {
+	Hash             string
+	ExpiresAt        *time.Time
+	Next             *string
+	RefreshExpiresAt *time.Time
+	Refresh          *string
+	Client           *uuid.UUID
+}
+
+type RefreshMCPTokenRow struct {
+	ID        uuid.UUID
+	Workspace *uuid.UUID
+}
+
+// A refresh turns the grant's refresh token into a new access token and a new refresh token, once.
+func (q *Queries) RefreshMCPToken(ctx context.Context, arg RefreshMCPTokenParams) (RefreshMCPTokenRow, error) {
+	row := q.db.QueryRow(ctx, refreshMCPToken,
+		arg.Hash,
+		arg.ExpiresAt,
+		arg.Next,
+		arg.RefreshExpiresAt,
+		arg.Refresh,
+		arg.Client,
+	)
+	var i RefreshMCPTokenRow
+	err := row.Scan(&i.ID, &i.Workspace)
+	return i, err
+}
+
+const revokeMCPToken = `-- name: RevokeMCPToken :one
+DELETE FROM archive.token WHERE kind = 'mcp' AND client = $1 AND (hash = $2 OR refresh = $2) RETURNING id, workspace
+`
+
+type RevokeMCPTokenRow struct {
+	ID        uuid.UUID
+	Workspace *uuid.UUID
+}
+
+// Revoking either of a grant's tokens, by its client, ends the grant.
+func (q *Queries) RevokeMCPToken(ctx context.Context, client *uuid.UUID, hash string) (RevokeMCPTokenRow, error) {
+	row := q.db.QueryRow(ctx, revokeMCPToken, client, hash)
+	var i RevokeMCPTokenRow
+	err := row.Scan(&i.ID, &i.Workspace)
+	return i, err
+}
+
 const revokeToken = `-- name: RevokeToken :one
-DELETE FROM archive.token WHERE id = $1 AND user_id = $2 AND workspace = $3 AND kind = 'api' RETURNING coalesce(role, '')::text
+DELETE FROM archive.token WHERE id = $1 AND user_id = $2 AND workspace = $3 AND kind IN ('api', 'mcp') RETURNING coalesce(role, '')::text
 `
 
 func (q *Queries) RevokeToken(ctx context.Context, iD uuid.UUID, userID uuid.UUID, workspace *uuid.UUID) (string, error) {
@@ -689,18 +848,22 @@ func (q *Queries) TokenSealed(ctx context.Context, iD uuid.UUID, userID uuid.UUI
 }
 
 const tokens = `-- name: Tokens :many
-SELECT id, name, (role IS NOT NULL)::bool AS viewer, expires_at, created_at FROM archive.token
-WHERE user_id = $1 AND workspace = $2 AND kind = 'api' ORDER BY id
+SELECT id, name, (role IS NOT NULL)::bool AS viewer, expires_at, refresh_expires_at, created_at, (kind = 'mcp')::bool AS app
+FROM archive.token
+WHERE user_id = $1 AND workspace = $2 AND kind IN ('api', 'mcp') ORDER BY id
 `
 
 type TokensRow struct {
-	ID        uuid.UUID
-	Name      string
-	Viewer    bool
-	ExpiresAt *time.Time
-	CreatedAt time.Time
+	ID               uuid.UUID
+	Name             string
+	Viewer           bool
+	ExpiresAt        *time.Time
+	RefreshExpiresAt *time.Time
+	CreatedAt        time.Time
+	App              bool
 }
 
+// Your API tokens and MCP grants in a workspace; a grant lapses when its refresh token does.
 func (q *Queries) Tokens(ctx context.Context, userID uuid.UUID, workspace *uuid.UUID) ([]TokensRow, error) {
 	rows, err := q.db.Query(ctx, tokens, userID, workspace)
 	if err != nil {
@@ -715,7 +878,9 @@ func (q *Queries) Tokens(ctx context.Context, userID uuid.UUID, workspace *uuid.
 			&i.Name,
 			&i.Viewer,
 			&i.ExpiresAt,
+			&i.RefreshExpiresAt,
 			&i.CreatedAt,
+			&i.App,
 		); err != nil {
 			return nil, err
 		}
@@ -749,6 +914,39 @@ func (q *Queries) UpdateWorkspace(ctx context.Context, arg UpdateWorkspaceParams
 		arg.ID,
 	)
 	return err
+}
+
+const useMCPCode = `-- name: UseMCPCode :one
+UPDATE archive.mcp_code SET token = $1 WHERE hash = $2 AND token IS NULL AND expires_at > now() RETURNING hash, client, user_id, workspace, redirect_uri, challenge, token, expires_at, created_at
+`
+
+// A code is used once, by naming the token it becomes: a code used before, or lapsed, is no row.
+func (q *Queries) UseMCPCode(ctx context.Context, token *uuid.UUID, hash string) (ArchiveMcpCode, error) {
+	row := q.db.QueryRow(ctx, useMCPCode, token, hash)
+	var i ArchiveMcpCode
+	err := row.Scan(
+		&i.Hash,
+		&i.Client,
+		&i.UserID,
+		&i.Workspace,
+		&i.RedirectUri,
+		&i.Challenge,
+		&i.Token,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const usedMCPCode = `-- name: UsedMCPCode :one
+SELECT token FROM archive.mcp_code WHERE hash = $1 AND token IS NOT NULL
+`
+
+func (q *Queries) UsedMCPCode(ctx context.Context, hash string) (*uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, usedMCPCode, hash)
+	var token *uuid.UUID
+	err := row.Scan(&token)
+	return token, err
 }
 
 const userByEmail = `-- name: UserByEmail :one

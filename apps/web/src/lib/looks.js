@@ -29,3 +29,11 @@ export function personality(seed) {
 export function defaultLook(type = 'personal') {
   return { type, icon: TYPES[type].icons[1], tint: KIND_TINTS[type] };
 }
+
+// An archive's look is its workspace's type, icon and colour, from the API; without an icon or a colour it has
+// its type's.
+export function lookOf(w) {
+  const type = TYPES[w.type] ? w.type : 'personal';
+  const d = defaultLook(type);
+  return { type, icon: w.icon ?? d.icon, tint: w.color ?? d.tint };
+}

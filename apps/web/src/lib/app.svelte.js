@@ -8,7 +8,7 @@ import { toFile, toChat, toMember, toWorkflow, toRun, relative, show } from './l
 import { toTables, countsQuery } from './schema.js';
 import { initials, mockConnectors, mockKey, mockProfile, mockSettings } from './mock/index.js';
 import { catalog } from './mock/connectors.js';
-import { defaultLook, TYPES } from './looks.js';
+import { lookOf } from './looks.js';
 import { notify } from './dialogs.svelte.js';
 import { go, replace, route } from './router.svelte.js';
 
@@ -35,20 +35,13 @@ export const app = $state({
   archiveSettings: { open: false, section: null, sub: null },
   apiKey: mockKey('ak_live_', 'Created today'),
   archiveKeys: {},
+  archiveApps: {},
   share: { open: false, kind: null, target: null },
   onboarding: [],
   profile: mockProfile()
 });
 
 const kindOf = (type) => ({ family: 'Family', business: 'Business', personal: 'Just you' })[type] ?? 'Archive';
-
-// An archive's look is its workspace's type, icon and colour, from the API; without an icon or a colour it has
-// its type's.
-function lookOf(w) {
-  const type = TYPES[w.type] ? w.type : 'personal';
-  const d = defaultLook(type);
-  return { type, icon: w.icon ?? d.icon, tint: w.color ?? d.tint };
-}
 
 const lookBody = (look) => ({ type: look.type, icon: look.icon, color: look.tint });
 
@@ -824,13 +817,31 @@ export const tokens = resource({
   load: async () => {
     const id = app.archive;
     const list = (await call('/auth/tokens')) ?? [];
-    const t = list.filter((x) => x.name === KEY_NAME).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+    // The apps you let in over MCP (src/mcp.go), each a grant you can revoke.
+    app.archiveApps[id] = list.filter((x) => x.app).sort((a, b) => b.created_at.localeCompare(a.created_at));
+    const t = list.filter((x) => x.name === KEY_NAME && !x.app).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
     if (app.archiveKeys[id]?.secret && app.archiveKeys[id].id === t?.id) return;
     // Archive keeps the key sealed, so it can be read again; a key made before that has no secret to read.
     const secret = t ? ((await call(`/auth/tokens/${t.id}/secret`).catch(() => null))?.secret ?? '') : '';
     app.archiveKeys[id] = t ? { id: t.id, secret, date: `Created ${new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` } : null;
   }
 });
+
+export function archiveApps() {
+  return app.archiveApps[app.archive] ?? [];
+}
+
+// Revoking an app ends its access and refresh tokens at once.
+export async function revokeApp(id) {
+  const before = app.archiveApps[app.archive];
+  app.archiveApps[app.archive] = archiveApps().filter((x) => x.id !== id);
+  try {
+    await call(`/auth/tokens/${id}`, { method: 'DELETE' });
+  } catch (e) {
+    app.archiveApps[app.archive] = before;
+    complain(e, 'Couldn’t disconnect it');
+  }
+}
 
 export async function rotateKey(scope) {
   if (scope !== 'archive') {

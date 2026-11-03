@@ -40,7 +40,7 @@ Usage:
                                      workspace (default the oldest one), and the workspace and admin
                                      commands as an admin of this Archive (default the first one)
 
-  archive serve [-addr :8080]        serve the HTTP API (/api), sign-in (/auth) and MCP (/mcp) for the web app
+  archive serve [-addr :8080]        serve the HTTP API (/api), sign-in (/auth) and MCP (/mcp, and all of mcp.<domain>)
   archive mcp                        serve MCP over stdio
   archive types                      print the tables, their columns and the built-in types
   archive run <file.ts|->            run TypeScript against the archive SDK in one transaction,
@@ -730,17 +730,31 @@ func cliServe(ctx context.Context, h *Hub, addr string) error {
 	mux.Handle("/auth/", si.handler())
 	h.connectRoutes(mux)
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	mux.HandleFunc("/mcp", h.mcp)
+	h.mcpRoutes(mux, false)
 	mux.HandleFunc("POST /tasks", h.tasksHTTP)
 	mux.HandleFunc("POST /push/{id}", h.pushHTTP)
 	h.live.serving()
 	mux.HandleFunc("GET /live", h.liveHTTP)
 	mux.HandleFunc("POST /live/announce", h.liveAnnounceHTTP)
 	mux.HandleFunc("GET /auth/live", h.liveCheckHTTP)
-	hs := &http.Server{Addr: addr, Handler: h.cors(h.live.after(mux)), ReadHeaderTimeout: 10 * time.Second}
+	// MCP's own host is the same service, and serves MCP and its OAuth and nothing else (mcp.go).
+	own := http.NewServeMux()
+	h.mcpRoutes(own, true)
+	api, mcpOwn := h.cors(mux), mcpCORS(own)
+	hs := &http.Server{Addr: addr, ReadHeaderTimeout: 10 * time.Second, Handler: h.live.after(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h.mcpHost(r) {
+			mcpOwn.ServeHTTP(w, r)
+		} else {
+			api.ServeHTTP(w, r)
+		}
+	}))}
 	errc := make(chan error, 1)
 	go func() { errc <- hs.ListenAndServe() }()
-	fmt.Fprintf(os.Stderr, "archive: serving the API on %s/api and MCP on %s/mcp, for the web app on %s\n", h.api, h.api, h.app)
+	at := h.mcpURL
+	if at == h.api {
+		at += "/mcp"
+	}
+	fmt.Fprintf(os.Stderr, "archive: serving the API on %s/api and MCP on %s, for the web app on %s\n", h.api, at, h.app)
 	select {
 	case err := <-errc:
 		return err
@@ -765,9 +779,15 @@ func (h *Hub) cors(next http.Handler) http.Handler {
 	if h.localApp() && !split {
 		return next
 	}
+	mcp := mcpCORS(next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Vary", "Origin")
 		first, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
+		// MCP and its OAuth take bearer tokens from anywhere, and never a cookie.
+		if first == "mcp" || first == "oauth" || first == ".well-known" {
+			mcp.ServeHTTP(w, r)
+			return
+		}
 		headers := "Authorization, Content-Type, Archive-Workspace"
 		switch origin := r.Header.Get("Origin"); {
 		case origin == "":

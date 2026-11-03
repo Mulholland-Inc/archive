@@ -41,8 +41,10 @@ type Hub struct {
 	hints Hints
 	app   string
 	api   string
-	tasks *hubTasks
-	live  *liveHub
+	// mcpURL is MCP's own host, mcp.<domain>, and the issuer of its OAuth (mcp.go); the API's in development.
+	mcpURL string
+	tasks  *hubTasks
+	live   *liveHub
 	// connect are the connectors this server has an OAuth client for (connection.go).
 	connect connect.Providers
 	// self is the personal store, of everyone's own connections (personal.go).
@@ -195,8 +197,10 @@ func (h *Hub) urls(port string) error {
 		return fmt.Errorf("ARCHIVE_URL %q is not a URL", h.app)
 	case h.localApp():
 		h.api = "http://localhost:" + port
+		h.mcpURL = h.api
 	case strings.HasPrefix(u.Host, "app."):
 		h.api = u.Scheme + "://api." + strings.TrimPrefix(u.Host, "app.")
+		h.mcpURL = u.Scheme + "://mcp." + strings.TrimPrefix(u.Host, "app.")
 	default:
 		return fmt.Errorf("ARCHIVE_URL %q: want https://app.<domain>, whose API is https://api.<domain>, or http://localhost:<port> in development", h.app)
 	}
@@ -829,8 +833,14 @@ func (h *Hub) secret(r *http.Request) (string, error) {
 	return "", fmt.Errorf("sign in or send a bearer token: %w", ErrUnauthorized)
 }
 
-func (h *Hub) authenticate(ctx context.Context, secret, want string) (*Archive, *Actor, func(), error) {
-	t, err := h.q().Authenticate(ctx, authHash(secret))
+// authenticate enters the workspace secret is a token for, of one of kinds: by default the API's, a session or
+// an API token. MCP takes API tokens and MCP clients' (Hub.mcp), and an MCP client's is for MCP alone, the
+// resource it was issued for.
+func (h *Hub) authenticate(ctx context.Context, secret, want string, kinds ...string) (*Archive, *Actor, func(), error) {
+	if len(kinds) == 0 {
+		kinds = []string{"api", "session"}
+	}
+	t, err := h.q().Authenticate(ctx, authHash(secret), kinds)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil, nil, fmt.Errorf("invalid or expired token: %w", ErrUnauthorized)
 	}
@@ -909,7 +919,7 @@ func (h *Hub) enter(ctx context.Context, t generated.AuthenticateRow, want strin
 	if t.Kind != "session" {
 		ac.TokenName = t.Name
 	}
-	if t.Kind == "api" {
+	if t.Kind == "api" || t.Kind == "mcp" {
 		ac.Role, ac.TokenID = cmp.Or(t.Role, ac.Role), t.ID
 	}
 	return a, ac, release, nil
@@ -952,11 +962,20 @@ func (h *Hub) inWorkspace(f func(a *Archive, w http.ResponseWriter, r *http.Requ
 	}
 }
 
+// mcp serves MCP to a bearer token: an API token, or an MCP client's from OAuth (mcp.go), which acts in the one
+// workspace it was granted for. Archive-Workspace, if a client sends it, must be that workspace. It takes no
+// session, by cookie or as a bearer, so no sign-in to the web app ever reaches it.
 func (h *Hub) mcp(w http.ResponseWriter, r *http.Request) {
-	tok, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	a, ac, release, err := h.authenticate(r.Context(), strings.TrimSpace(tok), "")
+	scheme, tok, _ := strings.Cut(r.Header.Get("Authorization"), " ")
+	err := fmt.Errorf("send Authorization: Bearer <token>, from OAuth or an API token: %w", ErrUnauthorized)
+	var a *Archive
+	var ac *Actor
+	var release func()
+	if strings.EqualFold(scheme, "Bearer") && strings.TrimSpace(tok) != "" {
+		a, ac, release, err = h.authenticate(r.Context(), strings.TrimSpace(tok), r.Header.Get("Archive-Workspace"), "api", "mcp")
+	}
 	if err != nil {
-		httpWrite(w, 0, nil, err)
+		h.mcpRefuse(w, r, err)
 		return
 	}
 	defer release()

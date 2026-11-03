@@ -11,7 +11,7 @@ variable "region" {
 
 variable "domain" {
   type        = string
-  description = "Cloudflare zone of Archive, like archive.dev: the web app is on app.<domain> (ARCHIVE_URL), static files on a Worker of its own that the image workflow deploys, and the API, sign-in, MCP, webhooks and OAuth redirects on api.<domain>, a Cloud Run domain mapping behind Cloudflare's proxy. The zone is verified with Google as the archive-verify service account. Its token goes in CLOUDFLARE_API_TOKEN; the README lists the permissions it needs."
+  description = "Cloudflare zone of Archive, like archive.dev: the web app is on app.<domain> (ARCHIVE_URL), static files on a Worker of its own that the image workflow deploys, and the API, sign-in, MCP, webhooks and OAuth redirects on api.<domain>, with MCP and its OAuth on mcp.<domain> too, each a Cloud Run domain mapping behind Cloudflare's proxy. The zone is verified with Google as the archive-verify service account. Its token goes in CLOUDFLARE_API_TOKEN; the README lists the permissions it needs."
 }
 
 variable "github_repository" {
