@@ -118,62 +118,6 @@ func (q *Queries) AdvisoryXactLock(ctx context.Context, key int64) error {
 	return err
 }
 
-const allDue = `-- name: AllDue :many
-SELECT workspace, kind, at FROM archive.due
-`
-
-func (q *Queries) AllDue(ctx context.Context) ([]ArchiveDue, error) {
-	rows, err := q.db.Query(ctx, allDue)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ArchiveDue
-	for rows.Next() {
-		var i ArchiveDue
-		if err := rows.Scan(&i.Workspace, &i.Kind, &i.At); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const allWorkspaces = `-- name: AllWorkspaces :many
-SELECT id, name, key, created_at, type, icon, color FROM archive.workspace ORDER BY created_at, id
-`
-
-func (q *Queries) AllWorkspaces(ctx context.Context) ([]ArchiveWorkspace, error) {
-	rows, err := q.db.Query(ctx, allWorkspaces)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ArchiveWorkspace
-	for rows.Next() {
-		var i ArchiveWorkspace
-		if err := rows.Scan(
-			&i.ID,
-			&i.Name,
-			&i.Key,
-			&i.CreatedAt,
-			&i.Type,
-			&i.Icon,
-			&i.Color,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const appendChat = `-- name: AppendChat :exec
 UPDATE archive.chat SET messages = messages || $1::jsonb, updated_at = now() WHERE id = $2
 `
@@ -190,43 +134,6 @@ UPDATE archive.connection SET cursor = $2, sync_at = now(), asked_at = now(), re
 func (q *Queries) AskSync(ctx context.Context, iD uuid.UUID, cursor json.RawMessage) error {
 	_, err := q.db.Exec(ctx, askSync, iD, cursor)
 	return err
-}
-
-const authenticate = `-- name: Authenticate :one
-SELECT t.id, t.kind, t.name, coalesce(t.role, '')::text AS role, u.id AS user_id, u.email, u.name AS user_name,
-    coalesce(t.workspace::text, '')::text AS workspace,
-    ARRAY(SELECT w.id::text FROM archive.workspace w WHERE w.id = ANY(u.workspaces) ORDER BY array_position(u.workspaces, w.id))::text[] AS workspaces
-FROM archive.token t JOIN archive."user" u ON u.id = t.user_id
-WHERE t.hash = $1 AND t.kind IN ('api', 'session') AND (t.expires_at IS NULL OR t.expires_at > now())
-`
-
-type AuthenticateRow struct {
-	ID         uuid.UUID
-	Kind       string
-	Name       string
-	Role       string
-	UserID     uuid.UUID
-	Email      string
-	UserName   string
-	Workspace  string
-	Workspaces []string
-}
-
-func (q *Queries) Authenticate(ctx context.Context, hash string) (AuthenticateRow, error) {
-	row := q.db.QueryRow(ctx, authenticate, hash)
-	var i AuthenticateRow
-	err := row.Scan(
-		&i.ID,
-		&i.Kind,
-		&i.Name,
-		&i.Role,
-		&i.UserID,
-		&i.Email,
-		&i.UserName,
-		&i.Workspace,
-		&i.Workspaces,
-	)
-	return i, err
 }
 
 const backendPID = `-- name: BackendPID :one
@@ -389,19 +296,6 @@ func (q *Queries) Chats(ctx context.Context, userID uuid.UUID) ([]ChatsRow, erro
 	return items, nil
 }
 
-const claimDueFor = `-- name: ClaimDueFor :one
-UPDATE archive.due d SET at = $1::timestamptz
-WHERE d.workspace = $2 AND d.kind = $3 AND d.at <= now()
-RETURNING d.at
-`
-
-func (q *Queries) ClaimDueFor(ctx context.Context, lease time.Time, iD uuid.UUID, kind string) (time.Time, error) {
-	row := q.db.QueryRow(ctx, claimDueFor, lease, iD, kind)
-	var at time.Time
-	err := row.Scan(&at)
-	return at, err
-}
-
 const claimSync = `-- name: ClaimSync :one
 UPDATE archive.connection SET lease_at = $1::timestamptz
 WHERE id = (SELECT c.id FROM archive.connection c WHERE c.sync_at <= now() AND (c.lease_at IS NULL OR c.lease_at < now())
@@ -463,16 +357,6 @@ func (q *Queries) ClaimWorkflow(ctx context.Context, lease time.Time) (ArchiveWo
 		&i.On,
 	)
 	return i, err
-}
-
-const clearDue = `-- name: ClearDue :exec
-DELETE FROM archive.due d USING archive.workspace w
-WHERE w.id = d.workspace AND w.id = $1 AND d.kind = $2 AND d.at = $3::timestamptz
-`
-
-func (q *Queries) ClearDue(ctx context.Context, iD uuid.UUID, kind string, claimed time.Time) error {
-	_, err := q.db.Exec(ctx, clearDue, iD, kind, claimed)
-	return err
 }
 
 const clearSecrets = `-- name: ClearSecrets :exec
@@ -555,39 +439,6 @@ func (q *Queries) ConnectionLocked(ctx context.Context, id uuid.UUID) (ArchiveCo
 		&i.Integration,
 	)
 	return i, err
-}
-
-const connectionWatches = `-- name: ConnectionWatches :many
-SELECT provider, key, workspace, connection, resource, secret, expires_at, created_at FROM archive.watch WHERE connection = $1 ORDER BY key
-`
-
-func (q *Queries) ConnectionWatches(ctx context.Context, connection uuid.UUID) ([]ArchiveWatch, error) {
-	rows, err := q.db.Query(ctx, connectionWatches, connection)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ArchiveWatch
-	for rows.Next() {
-		var i ArchiveWatch
-		if err := rows.Scan(
-			&i.Provider,
-			&i.Key,
-			&i.Workspace,
-			&i.Connection,
-			&i.Resource,
-			&i.Secret,
-			&i.ExpiresAt,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const connections = `-- name: Connections :many
@@ -758,51 +609,6 @@ func (q *Queries) CreateSecret(ctx context.Context, arg CreateSecretParams) erro
 	return err
 }
 
-const createSession = `-- name: CreateSession :exec
-INSERT INTO archive.token (user_id, kind, hash, expires_at) VALUES ($1, 'session', $2, now() + interval '30 days')
-`
-
-func (q *Queries) CreateSession(ctx context.Context, userID uuid.UUID, hash string) error {
-	_, err := q.db.Exec(ctx, createSession, userID, hash)
-	return err
-}
-
-const createToken = `-- name: CreateToken :one
-INSERT INTO archive.token (id, user_id, workspace, kind, name, role, hash, sealed, expires_at) VALUES ($1, $2, $3, 'api', $4, $5, $6, $7, $8) RETURNING created_at, expires_at
-`
-
-type CreateTokenParams struct {
-	ID        uuid.UUID
-	UserID    uuid.UUID
-	Workspace *uuid.UUID
-	Name      string
-	Role      *string
-	Hash      string
-	Sealed    []byte
-	ExpiresAt *time.Time
-}
-
-type CreateTokenRow struct {
-	CreatedAt time.Time
-	ExpiresAt *time.Time
-}
-
-func (q *Queries) CreateToken(ctx context.Context, arg CreateTokenParams) (CreateTokenRow, error) {
-	row := q.db.QueryRow(ctx, createToken,
-		arg.ID,
-		arg.UserID,
-		arg.Workspace,
-		arg.Name,
-		arg.Role,
-		arg.Hash,
-		arg.Sealed,
-		arg.ExpiresAt,
-	)
-	var i CreateTokenRow
-	err := row.Scan(&i.CreatedAt, &i.ExpiresAt)
-	return i, err
-}
-
 const createUpload = `-- name: CreateUpload :exec
 INSERT INTO archive.upload (id, role, access, name, length) VALUES ($1, $2, $3, $4, $5)
 `
@@ -824,42 +630,6 @@ func (q *Queries) CreateUpload(ctx context.Context, arg CreateUploadParams) erro
 		arg.Length,
 	)
 	return err
-}
-
-const createWorkspace = `-- name: CreateWorkspace :one
-INSERT INTO archive.workspace (id, name, key, type, icon, color) VALUES ($1, $2, $3, $4, $5, $6)
-ON CONFLICT DO NOTHING RETURNING id, name, key, created_at, type, icon, color
-`
-
-type CreateWorkspaceParams struct {
-	ID    uuid.UUID
-	Name  string
-	Key   []byte
-	Type  ArchiveWorkspaceType
-	Icon  *string
-	Color *int16
-}
-
-func (q *Queries) CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams) (ArchiveWorkspace, error) {
-	row := q.db.QueryRow(ctx, createWorkspace,
-		arg.ID,
-		arg.Name,
-		arg.Key,
-		arg.Type,
-		arg.Icon,
-		arg.Color,
-	)
-	var i ArchiveWorkspace
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Key,
-		&i.CreatedAt,
-		&i.Type,
-		&i.Icon,
-		&i.Color,
-	)
-	return i, err
 }
 
 const dDL = `-- name: DDL :exec
@@ -948,15 +718,6 @@ func (q *Queries) DeleteDDLKey(ctx context.Context, key string) error {
 	return err
 }
 
-const deleteOAuthClient = `-- name: DeleteOAuthClient :exec
-DELETE FROM archive.oauth_client WHERE provider = $1 AND client = $2
-`
-
-func (q *Queries) DeleteOAuthClient(ctx context.Context, provider string, client []byte) error {
-	_, err := q.db.Exec(ctx, deleteOAuthClient, provider, client)
-	return err
-}
-
 const deleteUnknown = `-- name: DeleteUnknown :exec
 WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM archive.mail_party x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.payroll_worker x WHERE x.person = k.id)
@@ -989,60 +750,6 @@ func (q *Queries) DeleteWorkflow(ctx context.Context, id uuid.UUID) (int64, erro
 		return 0, err
 	}
 	return result.RowsAffected(), nil
-}
-
-const deleteWorkspace = `-- name: DeleteWorkspace :exec
-WITH gone AS (UPDATE archive."user" u SET workspaces = array_remove(u.workspaces, $1::uuid) WHERE u.workspaces @> ARRAY[$1::uuid])
-DELETE FROM archive.workspace w WHERE w.id = $1::uuid
-`
-
-func (q *Queries) DeleteWorkspace(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, deleteWorkspace, id)
-	return err
-}
-
-const deleteWorkspaceTokens = `-- name: DeleteWorkspaceTokens :many
-DELETE FROM archive.token WHERE user_id = $1 AND workspace = $2 RETURNING coalesce(role, '')::text
-`
-
-func (q *Queries) DeleteWorkspaceTokens(ctx context.Context, userID uuid.UUID, workspace *uuid.UUID) ([]string, error) {
-	rows, err := q.db.Query(ctx, deleteWorkspaceTokens, userID, workspace)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []string
-	for rows.Next() {
-		var column_1 string
-		if err := rows.Scan(&column_1); err != nil {
-			return nil, err
-		}
-		items = append(items, column_1)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const dropWatches = `-- name: DropWatches :exec
-DELETE FROM archive.watch WHERE connection = $1 AND NOT key = ANY($2::text[])
-`
-
-func (q *Queries) DropWatches(ctx context.Context, connection uuid.UUID, keep []string) error {
-	_, err := q.db.Exec(ctx, dropWatches, connection, keep)
-	return err
-}
-
-const dueAt = `-- name: DueAt :one
-SELECT at FROM archive.due WHERE workspace = $1 AND kind = $2
-`
-
-func (q *Queries) DueAt(ctx context.Context, workspace uuid.UUID, kind string) (time.Time, error) {
-	row := q.db.QueryRow(ctx, dueAt, workspace, kind)
-	var at time.Time
-	err := row.Scan(&at)
-	return at, err
 }
 
 const fileByKey = `-- name: FileByKey :one
@@ -1228,67 +935,6 @@ func (q *Queries) FilesWithText(ctx context.Context, after uuid.UUID, lim int32)
 	return items, nil
 }
 
-const firstUser = `-- name: FirstUser :one
-SELECT id, email, name, workspaces, signin, created_at FROM archive."user" WHERE workspaces @> ARRAY[$1::uuid] ORDER BY created_at, id LIMIT 1
-`
-
-func (q *Queries) FirstUser(ctx context.Context, workspace uuid.UUID) (ArchiveUser, error) {
-	row := q.db.QueryRow(ctx, firstUser, workspace)
-	var i ArchiveUser
-	err := row.Scan(
-		&i.ID,
-		&i.Email,
-		&i.Name,
-		&i.Workspaces,
-		&i.Signin,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const firstWorkspace = `-- name: FirstWorkspace :one
-SELECT id, name, key, created_at, type, icon, color FROM archive.workspace ORDER BY created_at, id LIMIT 1
-`
-
-func (q *Queries) FirstWorkspace(ctx context.Context) (ArchiveWorkspace, error) {
-	row := q.db.QueryRow(ctx, firstWorkspace)
-	var i ArchiveWorkspace
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Key,
-		&i.CreatedAt,
-		&i.Type,
-		&i.Icon,
-		&i.Color,
-	)
-	return i, err
-}
-
-const firstWorkspaceKey = `-- name: FirstWorkspaceKey :one
-SELECT id, name, key, created_at FROM archive.workspace ORDER BY created_at, id LIMIT 1
-`
-
-type FirstWorkspaceKeyRow struct {
-	ID        uuid.UUID
-	Name      string
-	Key       []byte
-	CreatedAt time.Time
-}
-
-// The first workspace before its store migrated the main database, so only the columns it always had.
-func (q *Queries) FirstWorkspaceKey(ctx context.Context) (FirstWorkspaceKeyRow, error) {
-	row := q.db.QueryRow(ctx, firstWorkspaceKey)
-	var i FirstWorkspaceKeyRow
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Key,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const forgetUser = `-- name: ForgetUser :exec
 WITH gone AS (DELETE FROM archive.chat c WHERE c.user_id = $1::uuid) DELETE FROM archive.workflow w WHERE w.user_id = $1::uuid
 `
@@ -1462,53 +1108,6 @@ func (q *Queries) IntegrationFor(ctx context.Context, provider string) (Integrat
 	return i, err
 }
 
-const joinWorkspace = `-- name: JoinWorkspace :one
-INSERT INTO archive."user" (email, name, workspaces) VALUES ($1, $2, ARRAY[$3::uuid])
-ON CONFLICT (email) DO UPDATE SET workspaces = archive."user".workspaces || EXCLUDED.workspaces WHERE NOT archive."user".workspaces @> EXCLUDED.workspaces
-RETURNING id, email, name, workspaces, signin, created_at
-`
-
-func (q *Queries) JoinWorkspace(ctx context.Context, email string, name string, workspace uuid.UUID) (ArchiveUser, error) {
-	row := q.db.QueryRow(ctx, joinWorkspace, email, name, workspace)
-	var i ArchiveUser
-	err := row.Scan(
-		&i.ID,
-		&i.Email,
-		&i.Name,
-		&i.Workspaces,
-		&i.Signin,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const keepWatchSecret = `-- name: KeepWatchSecret :execrows
-INSERT INTO archive.watch (provider, key, workspace, connection, secret) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING
-`
-
-type KeepWatchSecretParams struct {
-	Provider   string
-	Key        string
-	Workspace  uuid.UUID
-	Connection uuid.UUID
-	Secret     []byte
-}
-
-// A handshake's secret, kept by the key in the URL only it was sent: the first one wins.
-func (q *Queries) KeepWatchSecret(ctx context.Context, arg KeepWatchSecretParams) (int64, error) {
-	result, err := q.db.Exec(ctx, keepWatchSecret,
-		arg.Provider,
-		arg.Key,
-		arg.Workspace,
-		arg.Connection,
-		arg.Secret,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const knownOrgs = `-- name: KnownOrgs :many
 WITH added AS (INSERT INTO archive.known_org (ein) SELECT DISTINCT e FROM unnest($1::text[]) e ORDER BY e ON CONFLICT (ein) DO NOTHING
     RETURNING id, ein)
@@ -1573,15 +1172,6 @@ func (q *Queries) KnownPeople(ctx context.Context, emails []string) ([]KnownPeop
 		return nil, err
 	}
 	return items, nil
-}
-
-const leaveWorkspace = `-- name: LeaveWorkspace :exec
-UPDATE archive."user" SET workspaces = array_remove(workspaces, $1::uuid) WHERE id = $2
-`
-
-func (q *Queries) LeaveWorkspace(ctx context.Context, workspace uuid.UUID, iD uuid.UUID) error {
-	_, err := q.db.Exec(ctx, leaveWorkspace, workspace, iD)
-	return err
 }
 
 const lockFile = `-- name: LockFile :one
@@ -1809,15 +1399,6 @@ func (q *Queries) NameMembers(ctx context.Context, emails []string, names []stri
 	return err
 }
 
-const nameUser = `-- name: NameUser :exec
-UPDATE archive."user" SET name = $2 WHERE id = $1 AND name = ''
-`
-
-func (q *Queries) NameUser(ctx context.Context, iD uuid.UUID, name string) error {
-	_, err := q.db.Exec(ctx, nameUser, iD, name)
-	return err
-}
-
 const nextPendingFile = `-- name: NextPendingFile :one
 SELECT id, hash, name, mime, size, metadata, status, error, access, created_at FROM archive.file
 WHERE status = 'pending' ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED
@@ -1888,17 +1469,6 @@ func (q *Queries) NoMembers(ctx context.Context) (bool, error) {
 	var not_exists bool
 	err := row.Scan(&not_exists)
 	return not_exists, err
-}
-
-const oAuthClient = `-- name: OAuthClient :one
-SELECT client FROM archive.oauth_client WHERE provider = $1
-`
-
-func (q *Queries) OAuthClient(ctx context.Context, provider string) ([]byte, error) {
-	row := q.db.QueryRow(ctx, oAuthClient, provider)
-	var client []byte
-	err := row.Scan(&client)
-	return client, err
 }
 
 const oldWorkflows = `-- name: OldWorkflows :many
@@ -2108,17 +1678,6 @@ func (q *Queries) Revisions(ctx context.Context, limit int32) ([]RevisionsRow, e
 	return items, nil
 }
 
-const revokeToken = `-- name: RevokeToken :one
-DELETE FROM archive.token WHERE id = $1 AND user_id = $2 AND workspace = $3 AND kind = 'api' RETURNING coalesce(role, '')::text
-`
-
-func (q *Queries) RevokeToken(ctx context.Context, iD uuid.UUID, userID uuid.UUID, workspace *uuid.UUID) (string, error) {
-	row := q.db.QueryRow(ctx, revokeToken, iD, userID, workspace)
-	var column_1 string
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
 const roleExists = `-- name: RoleExists :one
 SELECT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = $1::name)
 `
@@ -2128,30 +1687,6 @@ func (q *Queries) RoleExists(ctx context.Context, role string) (bool, error) {
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
-}
-
-const rolesWithPrefix = `-- name: RolesWithPrefix :many
-SELECT rolname::text FROM pg_catalog.pg_roles WHERE starts_with(rolname, $1::text)
-`
-
-func (q *Queries) RolesWithPrefix(ctx context.Context, prefix string) ([]string, error) {
-	rows, err := q.db.Query(ctx, rolesWithPrefix, prefix)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []string
-	for rows.Next() {
-		var rolname string
-		if err := rows.Scan(&rolname); err != nil {
-			return nil, err
-		}
-		items = append(items, rolname)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const saveConnection = `-- name: SaveConnection :exec
@@ -2208,36 +1743,6 @@ func (q *Queries) SaveSync(ctx context.Context, arg SaveSyncParams) error {
 		arg.Error,
 		arg.Revoked,
 		arg.ID,
-	)
-	return err
-}
-
-const saveWatch = `-- name: SaveWatch :exec
-INSERT INTO archive.watch (provider, key, workspace, connection, resource, secret, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-ON CONFLICT (provider, key, connection) DO UPDATE SET resource = EXCLUDED.resource, secret = coalesce(EXCLUDED.secret, archive.watch.secret),
-    expires_at = EXCLUDED.expires_at
-`
-
-type SaveWatchParams struct {
-	Provider   string
-	Key        string
-	Workspace  uuid.UUID
-	Connection uuid.UUID
-	Resource   string
-	Secret     []byte
-	ExpiresAt  *time.Time
-}
-
-func (q *Queries) SaveWatch(ctx context.Context, arg SaveWatchParams) error {
-	_, err := q.db.Exec(ctx, saveWatch,
-		arg.Provider,
-		arg.Key,
-		arg.Workspace,
-		arg.Connection,
-		arg.Resource,
-		arg.Secret,
-		arg.ExpiresAt,
 	)
 	return err
 }
@@ -2307,31 +1812,6 @@ func (q *Queries) SetConnectionToken(ctx context.Context, iD uuid.UUID, token []
 	return err
 }
 
-const setDue = `-- name: SetDue :execrows
-UPDATE archive.due d SET at = $1::timestamptz FROM archive.workspace w
-WHERE w.id = d.workspace AND w.id = $2 AND d.kind = $3 AND d.at = $4::timestamptz
-`
-
-type SetDueParams struct {
-	Next    time.Time
-	ID      uuid.UUID
-	Kind    string
-	Claimed time.Time
-}
-
-func (q *Queries) SetDue(ctx context.Context, arg SetDueParams) (int64, error) {
-	result, err := q.db.Exec(ctx, setDue,
-		arg.Next,
-		arg.ID,
-		arg.Kind,
-		arg.Claimed,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const setFileAccess = `-- name: SetFileAccess :one
 UPDATE archive.file SET access = $1::uuid WHERE id = $2::uuid
 RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at
@@ -2395,25 +1875,6 @@ func (q *Queries) SetLocal(ctx context.Context, name string, value string) error
 	return err
 }
 
-const setOAuthClient = `-- name: SetOAuthClient :exec
-INSERT INTO archive.oauth_client (provider, client) VALUES ($1, $2)
-ON CONFLICT (provider) DO UPDATE SET client = EXCLUDED.client, created_at = now() WHERE archive.oauth_client.client = $3
-`
-
-func (q *Queries) SetOAuthClient(ctx context.Context, provider string, client []byte, old []byte) error {
-	_, err := q.db.Exec(ctx, setOAuthClient, provider, client, old)
-	return err
-}
-
-const setSignin = `-- name: SetSignin :exec
-UPDATE archive."user" SET signin = $2 WHERE id = $1
-`
-
-func (q *Queries) SetSignin(ctx context.Context, iD uuid.UUID, signin json.RawMessage) error {
-	_, err := q.db.Exec(ctx, setSignin, iD, signin)
-	return err
-}
-
 const setUploadParts = `-- name: SetUploadParts :exec
 UPDATE archive.upload SET parts = $2 WHERE id = $1
 `
@@ -2430,84 +1891,6 @@ UPDATE archive.workflow SET next_at = $3 WHERE id = $1 AND trigger = $2
 func (q *Queries) SetWorkflowNext(ctx context.Context, iD uuid.UUID, trigger string, nextAt *time.Time) error {
 	_, err := q.db.Exec(ctx, setWorkflowNext, iD, trigger, nextAt)
 	return err
-}
-
-const signOut = `-- name: SignOut :exec
-DELETE FROM archive.token WHERE hash = $1 AND kind = 'session'
-`
-
-func (q *Queries) SignOut(ctx context.Context, hash string) error {
-	_, err := q.db.Exec(ctx, signOut, hash)
-	return err
-}
-
-const soonDue = `-- name: SoonDue :one
-WITH was AS (SELECT x.at FROM archive.due x WHERE x.workspace = $1 AND x.kind = $2)
-INSERT INTO archive.due (workspace, kind, at) VALUES ($1, $2, $3)
-ON CONFLICT (workspace, kind) DO UPDATE SET at = least(archive.due.at, EXCLUDED.at)
-RETURNING at, (at IS DISTINCT FROM (SELECT was.at FROM was))::bool AS changed
-`
-
-type SoonDueRow struct {
-	At      time.Time
-	Changed bool
-}
-
-func (q *Queries) SoonDue(ctx context.Context, workspace uuid.UUID, kind string, at time.Time) (SoonDueRow, error) {
-	row := q.db.QueryRow(ctx, soonDue, workspace, kind, at)
-	var i SoonDueRow
-	err := row.Scan(&i.At, &i.Changed)
-	return i, err
-}
-
-const tokenSealed = `-- name: TokenSealed :one
-SELECT sealed FROM archive.token WHERE id = $1 AND user_id = $2 AND workspace = $3 AND kind = 'api' AND sealed IS NOT NULL
-`
-
-func (q *Queries) TokenSealed(ctx context.Context, iD uuid.UUID, userID uuid.UUID, workspace *uuid.UUID) ([]byte, error) {
-	row := q.db.QueryRow(ctx, tokenSealed, iD, userID, workspace)
-	var sealed []byte
-	err := row.Scan(&sealed)
-	return sealed, err
-}
-
-const tokens = `-- name: Tokens :many
-SELECT id, name, (role IS NOT NULL)::bool AS viewer, expires_at, created_at FROM archive.token
-WHERE user_id = $1 AND workspace = $2 AND kind = 'api' ORDER BY id
-`
-
-type TokensRow struct {
-	ID        uuid.UUID
-	Name      string
-	Viewer    bool
-	ExpiresAt *time.Time
-	CreatedAt time.Time
-}
-
-func (q *Queries) Tokens(ctx context.Context, userID uuid.UUID, workspace *uuid.UUID) ([]TokensRow, error) {
-	rows, err := q.db.Query(ctx, tokens, userID, workspace)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []TokensRow
-	for rows.Next() {
-		var i TokensRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.Name,
-			&i.Viewer,
-			&i.ExpiresAt,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const trimWorkflowRuns = `-- name: TrimWorkflowRuns :exec
@@ -2592,30 +1975,6 @@ func (q *Queries) UpdateWorkflow(ctx context.Context, arg UpdateWorkflowParams) 
 	return result.RowsAffected(), nil
 }
 
-const updateWorkspace = `-- name: UpdateWorkspace :exec
-UPDATE archive.workspace SET name = coalesce($1, name), type = coalesce($2, type),
-    icon = coalesce($3, icon), color = coalesce($4, color) WHERE id = $5
-`
-
-type UpdateWorkspaceParams struct {
-	Name  *string
-	Type  *ArchiveWorkspaceType
-	Icon  *string
-	Color *int16
-	ID    uuid.UUID
-}
-
-func (q *Queries) UpdateWorkspace(ctx context.Context, arg UpdateWorkspaceParams) error {
-	_, err := q.db.Exec(ctx, updateWorkspace,
-		arg.Name,
-		arg.Type,
-		arg.Icon,
-		arg.Color,
-		arg.ID,
-	)
-	return err
-}
-
 const upgradeIntegrations = `-- name: UpgradeIntegrations :execrows
 UPDATE archive.connection c SET integration = true
 WHERE c.id IN (SELECT DISTINCT ON (x.provider) x.id FROM archive.connection x
@@ -2676,92 +2035,6 @@ func (q *Queries) Upload(ctx context.Context, id uuid.UUID) (ArchiveUpload, erro
 	return i, err
 }
 
-const userByEmail = `-- name: UserByEmail :one
-SELECT id, email, name, workspaces, signin, created_at FROM archive."user" WHERE email = $1
-`
-
-func (q *Queries) UserByEmail(ctx context.Context, email string) (ArchiveUser, error) {
-	row := q.db.QueryRow(ctx, userByEmail, email)
-	var i ArchiveUser
-	err := row.Scan(
-		&i.ID,
-		&i.Email,
-		&i.Name,
-		&i.Workspaces,
-		&i.Signin,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const userByID = `-- name: UserByID :one
-SELECT id, email, name, workspaces, signin, created_at FROM archive."user" WHERE id = $1
-`
-
-func (q *Queries) UserByID(ctx context.Context, id uuid.UUID) (ArchiveUser, error) {
-	row := q.db.QueryRow(ctx, userByID, id)
-	var i ArchiveUser
-	err := row.Scan(
-		&i.ID,
-		&i.Email,
-		&i.Name,
-		&i.Workspaces,
-		&i.Signin,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const userByOIDC = `-- name: UserByOIDC :one
-SELECT id, email, name, workspaces, signin, created_at FROM archive."user" WHERE signin->'oidc' @> $1::jsonb
-`
-
-func (q *Queries) UserByOIDC(ctx context.Context, link []byte) (ArchiveUser, error) {
-	row := q.db.QueryRow(ctx, userByOIDC, link)
-	var i ArchiveUser
-	err := row.Scan(
-		&i.ID,
-		&i.Email,
-		&i.Name,
-		&i.Workspaces,
-		&i.Signin,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const userWorkspaces = `-- name: UserWorkspaces :many
-SELECT w.id, w.name, w.key, w.created_at, w.type, w.icon, w.color FROM archive.workspace w JOIN archive."user" u ON w.id = ANY(u.workspaces) WHERE u.id = $1 ORDER BY array_position(u.workspaces, w.id)
-`
-
-func (q *Queries) UserWorkspaces(ctx context.Context, id uuid.UUID) ([]ArchiveWorkspace, error) {
-	rows, err := q.db.Query(ctx, userWorkspaces, id)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ArchiveWorkspace
-	for rows.Next() {
-		var i ArchiveWorkspace
-		if err := rows.Scan(
-			&i.ID,
-			&i.Name,
-			&i.Key,
-			&i.CreatedAt,
-			&i.Type,
-			&i.Icon,
-			&i.Color,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const wakeTableWorkflows = `-- name: WakeTableWorkflows :execrows
 UPDATE archive.workflow SET next_at = now() WHERE cursor_id IS NOT NULL AND next_at IS NULL
 `
@@ -2784,46 +2057,6 @@ func (q *Queries) WantSync(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
 	var id_2 uuid.UUID
 	err := row.Scan(&id_2)
 	return id_2, err
-}
-
-const watchSecret = `-- name: WatchSecret :one
-SELECT secret FROM archive.watch WHERE provider = $1 AND key = $2 AND secret IS NOT NULL LIMIT 1
-`
-
-func (q *Queries) WatchSecret(ctx context.Context, provider string, key string) ([]byte, error) {
-	row := q.db.QueryRow(ctx, watchSecret, provider, key)
-	var secret []byte
-	err := row.Scan(&secret)
-	return secret, err
-}
-
-const watchesFor = `-- name: WatchesFor :many
-SELECT workspace, connection FROM archive.watch WHERE provider = $1 AND key = $2
-`
-
-type WatchesForRow struct {
-	Workspace  uuid.UUID
-	Connection uuid.UUID
-}
-
-func (q *Queries) WatchesFor(ctx context.Context, provider string, key string) ([]WatchesForRow, error) {
-	rows, err := q.db.Query(ctx, watchesFor, provider, key)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []WatchesForRow
-	for rows.Next() {
-		var i WatchesForRow
-		if err := rows.Scan(&i.Workspace, &i.Connection); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const workflowByHook = `-- name: WorkflowByHook :one
@@ -2921,55 +2154,6 @@ func (q *Queries) WorkflowRunTimes(ctx context.Context, workflow uuid.UUID, sinc
 			return nil, err
 		}
 		items = append(items, created_at)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const workspaceByID = `-- name: WorkspaceByID :one
-SELECT id, name, key, created_at, type, icon, color FROM archive.workspace WHERE id = $1
-`
-
-func (q *Queries) WorkspaceByID(ctx context.Context, id uuid.UUID) (ArchiveWorkspace, error) {
-	row := q.db.QueryRow(ctx, workspaceByID, id)
-	var i ArchiveWorkspace
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Key,
-		&i.CreatedAt,
-		&i.Type,
-		&i.Icon,
-		&i.Color,
-	)
-	return i, err
-}
-
-const workspaceUsers = `-- name: WorkspaceUsers :many
-SELECT id, email, name FROM archive."user" WHERE workspaces @> ARRAY[$1::uuid] ORDER BY email
-`
-
-type WorkspaceUsersRow struct {
-	ID    uuid.UUID
-	Email string
-	Name  string
-}
-
-func (q *Queries) WorkspaceUsers(ctx context.Context, workspace uuid.UUID) ([]WorkspaceUsersRow, error) {
-	rows, err := q.db.Query(ctx, workspaceUsers, workspace)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []WorkspaceUsersRow
-	for rows.Next() {
-		var i WorkspaceUsersRow
-		if err := rows.Scan(&i.ID, &i.Email, &i.Name); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

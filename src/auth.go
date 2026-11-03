@@ -77,6 +77,7 @@ type User struct {
 	Workspaces []uuid.UUID     `json:"-"`
 	Signin     json.RawMessage `json:"-"`
 	CreatedAt  time.Time       `json:"created_at"`
+	Admin      bool            `json:"admin"`
 }
 
 type Person struct {
@@ -220,14 +221,20 @@ func (a *Archive) AddUser(ctx context.Context, email, name, role string) (*User,
 	if err != nil {
 		return nil, err
 	}
-	return a.joined(ctx, email, name)
+	return a.joined(ctx, email, name, first)
 }
 
-func (a *Archive) joined(ctx context.Context, email, name string) (*User, error) {
+// joined adds the member with the email to the workspace's users; the first member of a workspace while this
+// Archive has no admin, as on a new install, becomes its admin.
+func (a *Archive) joined(ctx context.Context, email, name string, first bool) (*User, error) {
 	ctx = context.WithoutCancel(ctx)
 	hq, name := a.hub.q(), strings.TrimSpace(name)
-	if _, err := hq.JoinWorkspace(ctx, email, name, a.ws.ID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	if r, err := hq.JoinWorkspace(ctx, email, name, a.ws.ID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
+	} else if err == nil && first {
+		if err := hq.AdminIfNone(ctx, r.ID); err != nil {
+			return nil, err
+		}
 	}
 	u, err := userBy(ctx, a.hub, (*generated.Queries).UserByEmail, email)
 	if err == nil && name != "" && u.Name == "" {
@@ -633,7 +640,9 @@ func (s *signin) handler() http.Handler {
 				all = append(all, workspaceOut(x))
 			}
 		}
-		return ok(map[string]any{"actor": ac, "role": m.Role, "groups": m.Groups, "workspace": a.ws.ID.String(), "workspaces": all}, err)
+		// admin says whether they may make and delete workspaces (Hub.admin).
+		admin := err == nil && h.admin(r.Context()) == nil
+		return ok(map[string]any{"actor": ac, "role": m.Role, "groups": m.Groups, "workspace": a.ws.ID.String(), "workspaces": all, "admin": admin}, err)
 	})
 	authed("GET /auth/users", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		return ok(archiveFrom(r.Context()).People(r.Context()))

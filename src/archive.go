@@ -593,12 +593,29 @@ func searchTime(name, s string, end bool) (*time.Time, error) {
 	return &t, nil
 }
 
-// storeSQLFile is Archive's own schema and, after it, the sqlc queries; only the schema is applied.
+// storeSQLFile is Archive's own schema of a workspace and, after it, the sqlc queries; only the schema is applied.
 //
 //go:embed archive.sql
 var storeSQLFile string
 
 var storeSchema, _, _ = strings.Cut(storeSQLFile, "\n-- name:")
+
+// mainSQLFile is the main database's schema and, after it, the Hub's sqlc queries (Hub.migrate).
+//
+//go:embed main.sql
+var mainSQLFile string
+
+var mainSchema, _, _ = strings.Cut(mainSQLFile, "\n-- name:")
+
+// mainNames are the tables and types of main.sql, by name in the archive schema. No workspace has them: a
+// workspace made before they moved to the main database drops its empty copies of them (storeShed).
+var mainNames = func() map[string]bool {
+	out := map[string]bool{}
+	for _, m := range regexp.MustCompile(`(?m)^CREATE (TABLE|TYPE) archive\.("?)(\w+)("?)`).FindAllStringSubmatch(mainSchema, -1) {
+		out[m[3]] = true
+	}
+	return out
+}()
 
 const storeRoles = `DO $$ BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_authenticator') THEN

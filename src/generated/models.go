@@ -124,6 +124,7 @@ type ArchiveUser struct {
 	Workspaces []uuid.UUID
 	Signin     json.RawMessage
 	CreatedAt  time.Time
+	Admin      bool
 }
 
 type ArchiveWatch struct {

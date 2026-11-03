@@ -178,7 +178,7 @@ Terraform keeps its state only in that versioned bucket, never on disk. The buck
 
 The Cloudflare account token goes in `CLOUDFLARE_API_TOKEN`. On the zone it needs DNS Write, Config Settings Write and Workers Routes Write; on the account it needs Workers Scripts Write and Account API Tokens Write. Terraform verifies the zone with Google, maps `api.<domain>` to the Cloud Run service behind Cloudflare's proxy, and makes the web app on `app.<domain>` a Worker of static files that calls the API on its own domain. The zone's own SSL settings don't matter: a Configuration Rule makes Cloudflare reach Google over verified TLS, and lets Google's certificate challenges through over HTTP.
 
-The first apply takes about 15 minutes, nearly all of it Cloud SQL, and Google's certificate for `api.<domain>` 15 minutes or more after that. Then add yourself as the first owner with the `archive` command, which Terraform also sets up as a Cloud Run job (`terraform output cli` prints its prefix):
+The first apply takes about 15 minutes, nearly all of it Cloud SQL, and Google's certificate for `api.<domain>` 15 minutes or more after that. Then add yourself as the first owner, who is also this Archive's first admin, with the `archive` command, which Terraform also sets up as a Cloud Run job (`terraform output cli` prints its prefix):
 
 ```sh
 gcloud run jobs execute archive --region us-central1 --wait --args=user,add,you@example.com
@@ -202,12 +202,15 @@ It outputs `url`, `api_url`, `service`, `service_account`, `bucket`, `tasks_queu
 
 The API image holds only the binary, built with [ko](https://ko.build) on a minimal base, and it needs a Postgres 18 (`DATABASE_URL`). With nothing else set, it keeps its key and files in `./data`. Give it storage (`ARCHIVE_BLOB_URL`) and one `ARCHIVE_SECRET_KEY`, and it keeps nothing local, so you can run as many copies side by side as you like.
 
-One Archive serves any number of workspaces: one per organization, each its own Postgres database on the same server, with its own members, files and workflows, its own login role and its own data key. People are invited to workspaces (`archive user add`, or the Users page), and one sign-in reaches all of theirs. A new install starts with one. Instance admins (the owners of the first workspace) make and delete more, each with its first owner:
+One Archive serves any number of workspaces: one per organization, each its own Postgres database on the same server, `archive_<id>`, with its own members, files and workflows, its own login role and its own data key. The database in `DATABASE_URL` is the main one, and no workspace's: it holds only what they share, the workspaces and their wrapped keys, the people who sign in, their tokens and who is an admin. People are invited to workspaces (`archive user add`, or the Users page), and one sign-in reaches all of theirs. A new install starts with one workspace, and the first person added to it is an admin. Admins run the Archive, whichever workspaces they are in: they make and delete workspaces, each with its first owner, and name other admins:
 
 ```sh
 gcloud run jobs execute archive --region us-central1 --wait --args=workspace,add,Acme,anna@acme.example
 gcloud run jobs execute archive --region us-central1 --wait --args=-workspace,<uuid>,list,member
+gcloud run jobs execute archive --region us-central1 --wait --args=admin,add,anna@acme.example
 ```
+
+An Archive from before the main database kept its first workspace in it. The first start of a version with it moves that workspace out to `archive_<id>`, once, before anything opens: it copies every object and row with the workspace's tables locked, checks the copy object for object and row for row, and only then, in the same transaction, drops the workspace from the main database and makes its owners the admins. Anything that fails leaves the main database as it was, and the next start tries again.
 
 A workspace's roles can reach only its own database, so workspaces stay isolated even where Postgres has no superuser, as on Cloud SQL. A token works in the one workspace it was made in, and the web app's one session switches between all of yours. [app.archive.dev](https://app.archive.dev) is this same image, deployed with [`apps/terraform/gcp`](apps/terraform/gcp) with `domain = "archive.dev"`.
 
@@ -216,7 +219,7 @@ Every setting is an environment variable; `archive help` lists them all:
 | Variable | What it does |
 |---|---|
 | `ARCHIVE_URL` | Public base URL of the web app, for passkeys and where sign-in returns (default `http://localhost:5173`, the web app in development). The API, sign-in, MCP, webhooks, file links and OAuth redirects are on the same URL with `app.` made `api.`, or on `http://localhost:8080` while it is `http://localhost`; `/api` and `/auth` allow the web app's origin over CORS |
-| `DATABASE_URL` | Postgres 18, required, with CREATEROLE and CREATEDB (no superuser needed); `docker compose up -d` starts one for development. Each workspace gets its own database on the same server |
+| `DATABASE_URL` | Postgres 18, required, with CREATEROLE and CREATEDB (no superuser needed); `docker compose up -d` starts one for development. Its database is the main one, with what every workspace shares; each workspace gets a database of its own on the same server |
 | `ARCHIVE_SECRET_KEY` | 32-byte key for secret values; required with `DATABASE_URL`, the same on every copy |
 | `ARCHIVE_BLOB_URL` | `gs://bucket/prefix` for files in GCS as the Cloud Run service account, with no key |
 | `ARCHIVE_GOOGLE` | Sign-in with Google, as `https://<client id>:<client secret>@accounts.google.com` with the id and secret URL-escaped; each provider shows on the sign-in page when it is set, and its redirect URL is `https://api.<domain>/auth/oidc/<google\|microsoft\|slack\|github>/callback`. The Google client also connects Gmail (Settings, Connectors), read only: add `https://api.<domain>/connect/gmail/callback` to its redirect URLs and the `gmail.readonly` scope to its consent screen |
@@ -235,13 +238,14 @@ On Cloud Run, Archive finds its Cloud Tasks queue, `projects/<project>/locations
 flowchart LR
   Apps[ChatGPT, Claude, Gemini, Cursor] <--> MCP[MCP: run code] --> Core[Go core]
   Clients[Web app, CLI, Terraform] <--> API[HTTP API] --> Core
-  Core --> PG[(Postgres: archive + public)]
+  Core --> Main[(Postgres: the main database)]
+  Core --> PG[(Postgres: a database per workspace)]
   Core --> Files[(Files: disk or GCS)]
 ```
 
 | Path | What lives there |
 |---|---|
-| [`src`](src) | The Go server and CLI: API, MCP, sign-in, schema, search, files, Office editing. `archive.sql` holds Archive's own schema and, after it, the sqlc queries; `generated` is the code sqlc makes from them |
+| [`src`](src) | The Go server and CLI: API, MCP, sign-in, schema, search, files, Office editing. `archive.sql` holds a workspace's own schema and `main.sql` the main database's, each followed by its sqlc queries; `generated` is the code sqlc makes from them |
 | [`apps/web`](apps/web) | The Svelte 5 web app |
 | [`apps/site`](apps/site) | [archive.us.org](https://archive.us.org) and the docs |
 | [`apps/terraform`](apps/terraform) | The Google Cloud setup and the Terraform provider |
@@ -256,7 +260,7 @@ docker compose up -d                  # Postgres 18 on localhost:5433
 cd src
 go build -o archive .
 export DATABASE_URL="postgres://archive:archive@localhost:5433/archive?sslmode=disable"
-./archive user add you@example.com   # the first member is an owner
+./archive user add you@example.com   # the first member is an owner, and this Archive's admin
 ./archive serve                       # API, sign-in and MCP on :8080, key and files in ./data; it runs workflows and files when they are due
 ```
 
@@ -264,6 +268,6 @@ export DATABASE_URL="postgres://archive:archive@localhost:5433/archive?sslmode=d
 cd apps/web && npm install && npm run dev   # web app with hot reload on :5173, calling the API on :8080
 ```
 
-While `ARCHIVE_URL` is `http://localhost…` (the default), requests from the same machine are signed in as the first owner, so local development needs no sign-in provider. Anything that arrives through a proxy, or for another host name, still signs in.
+While `ARCHIVE_URL` is `http://localhost…` (the default), requests from the same machine are signed in as the first admin, so local development needs no sign-in provider. Anything that arrives through a proxy, or for another host name, still signs in.
 
 <p align="center"><sub>Made by <a href="https://mulholland.ai">Mulholland</a>.</sub></p>
