@@ -27,7 +27,7 @@ const addWorkflowRun = `-- name: AddWorkflowRun :one
 INSERT INTO archive.workflow_run (workflow, trigger, result, logs, error, ms, created_at)
 SELECT w.id, $1, $2, $3, $4, $5, $6
 FROM archive.workflow w WHERE w.id = $7
-RETURNING id, workflow, trigger, result, logs, error, ms, created_at
+RETURNING id, name, access, created_at, updated_at, workflow, trigger, result, logs, error, ms
 `
 
 type AddWorkflowRunParams struct {
@@ -53,13 +53,16 @@ func (q *Queries) AddWorkflowRun(ctx context.Context, arg AddWorkflowRunParams) 
 	var i ArchiveWorkflowRun
 	err := row.Scan(
 		&i.ID,
+		&i.Name,
+		&i.Access,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 		&i.Workflow,
 		&i.Trigger,
 		&i.Result,
 		&i.Logs,
 		&i.Error,
 		&i.Ms,
-		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -266,6 +269,8 @@ SELECT jsonb_build_object(
         'rls', c.relrowsecurity,
         'force', c.relforcerowsecurity,
         'security_invoker', coalesce((SELECT o.option_value::bool FROM pg_options_to_table(c.reloptions) o WHERE o.option_name = 'security_invoker'), false),
+        'object', EXISTS (SELECT FROM pg_catalog.pg_inherits i WHERE i.inhrelid = c.oid AND i.inhparent = 'archive.object'::regclass),
+        'partitioned', c.relkind = 'p' OR c.relispartition,
         'policy', coalesce((SELECT count(*) = 1 AND bool_and(p.polname = 'access' AND p.polcmd = '*' AND p.polpermissive AND p.polroles = '{0}'::oid[]
             AND regexp_replace(pg_get_expr(p.polqual, p.polrelid), '^archive\.', '') = 'can(access)'
             AND regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)')
@@ -401,7 +406,7 @@ const claimSync = `-- name: ClaimSync :one
 UPDATE archive.connection SET lease_at = $1::timestamptz
 WHERE id = (SELECT c.id FROM archive.connection c WHERE c.sync_at <= now() AND (c.lease_at IS NULL OR c.lease_at < now())
     ORDER BY c.sync_at LIMIT 1 FOR UPDATE SKIP LOCKED)
-RETURNING id, member, provider, account, token, scopes, error, created_at, updated_at, meta, sync_at, synced_at, cursor, asked_at, lease_at, revoked, integration, access
+RETURNING id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, asked_at, lease_at, revoked, integration
 `
 
 func (q *Queries) ClaimSync(ctx context.Context, lease time.Time) (ArchiveConnection, error) {
@@ -409,14 +414,16 @@ func (q *Queries) ClaimSync(ctx context.Context, lease time.Time) (ArchiveConnec
 	var i ArchiveConnection
 	err := row.Scan(
 		&i.ID,
+		&i.Name,
+		&i.Access,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 		&i.Member,
 		&i.Provider,
 		&i.Account,
 		&i.Token,
 		&i.Scopes,
 		&i.Error,
-		&i.CreatedAt,
-		&i.UpdatedAt,
 		&i.Meta,
 		&i.SyncAt,
 		&i.SyncedAt,
@@ -425,7 +432,6 @@ func (q *Queries) ClaimSync(ctx context.Context, lease time.Time) (ArchiveConnec
 		&i.LeaseAt,
 		&i.Revoked,
 		&i.Integration,
-		&i.Access,
 	)
 	return i, err
 }
@@ -433,7 +439,7 @@ func (q *Queries) ClaimSync(ctx context.Context, lease time.Time) (ArchiveConnec
 const claimWorkflow = `-- name: ClaimWorkflow :one
 UPDATE archive.workflow SET next_at = $1::timestamptz
 WHERE id = (SELECT w.id FROM archive.workflow w WHERE w.next_at <= now() ORDER BY w.next_at LIMIT 1 FOR UPDATE SKIP LOCKED)
-RETURNING id, user_id, role, name, source, trigger, hook, next_at, cursor_at, cursor_id, created_at, updated_at, member, "on"
+RETURNING id, name, access, created_at, updated_at, user_id, role, source, trigger, hook, next_at, cursor_at, cursor_id, member, "on"
 `
 
 func (q *Queries) ClaimWorkflow(ctx context.Context, lease time.Time) (ArchiveWorkflow, error) {
@@ -441,17 +447,18 @@ func (q *Queries) ClaimWorkflow(ctx context.Context, lease time.Time) (ArchiveWo
 	var i ArchiveWorkflow
 	err := row.Scan(
 		&i.ID,
+		&i.Name,
+		&i.Access,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 		&i.UserID,
 		&i.Role,
-		&i.Name,
 		&i.Source,
 		&i.Trigger,
 		&i.Hook,
 		&i.NextAt,
 		&i.CursorAt,
 		&i.CursorID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
 		&i.Member,
 		&i.On,
 	)
@@ -478,7 +485,7 @@ func (q *Queries) ClearSecrets(ctx context.Context, tbl string, rid uuid.UUID, c
 }
 
 const connection = `-- name: Connection :one
-SELECT id, member, provider, account, token, scopes, error, created_at, updated_at, meta, sync_at, synced_at, cursor, asked_at, lease_at, revoked, integration, access FROM archive.connection WHERE id = $1
+SELECT id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, asked_at, lease_at, revoked, integration FROM archive.connection WHERE id = $1
 `
 
 func (q *Queries) Connection(ctx context.Context, id uuid.UUID) (ArchiveConnection, error) {
@@ -486,14 +493,16 @@ func (q *Queries) Connection(ctx context.Context, id uuid.UUID) (ArchiveConnecti
 	var i ArchiveConnection
 	err := row.Scan(
 		&i.ID,
+		&i.Name,
+		&i.Access,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 		&i.Member,
 		&i.Provider,
 		&i.Account,
 		&i.Token,
 		&i.Scopes,
 		&i.Error,
-		&i.CreatedAt,
-		&i.UpdatedAt,
 		&i.Meta,
 		&i.SyncAt,
 		&i.SyncedAt,
@@ -502,7 +511,6 @@ func (q *Queries) Connection(ctx context.Context, id uuid.UUID) (ArchiveConnecti
 		&i.LeaseAt,
 		&i.Revoked,
 		&i.Integration,
-		&i.Access,
 	)
 	return i, err
 }
@@ -519,7 +527,7 @@ func (q *Queries) ConnectionFor(ctx context.Context, member uuid.UUID, provider 
 }
 
 const connectionLocked = `-- name: ConnectionLocked :one
-SELECT id, member, provider, account, token, scopes, error, created_at, updated_at, meta, sync_at, synced_at, cursor, asked_at, lease_at, revoked, integration, access FROM archive.connection WHERE id = $1 FOR UPDATE
+SELECT id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, asked_at, lease_at, revoked, integration FROM archive.connection WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) ConnectionLocked(ctx context.Context, id uuid.UUID) (ArchiveConnection, error) {
@@ -527,14 +535,16 @@ func (q *Queries) ConnectionLocked(ctx context.Context, id uuid.UUID) (ArchiveCo
 	var i ArchiveConnection
 	err := row.Scan(
 		&i.ID,
+		&i.Name,
+		&i.Access,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 		&i.Member,
 		&i.Provider,
 		&i.Account,
 		&i.Token,
 		&i.Scopes,
 		&i.Error,
-		&i.CreatedAt,
-		&i.UpdatedAt,
 		&i.Meta,
 		&i.SyncAt,
 		&i.SyncedAt,
@@ -543,7 +553,6 @@ func (q *Queries) ConnectionLocked(ctx context.Context, id uuid.UUID) (ArchiveCo
 		&i.LeaseAt,
 		&i.Revoked,
 		&i.Integration,
-		&i.Access,
 	)
 	return i, err
 }
@@ -900,7 +909,7 @@ func (q *Queries) DeleteChat(ctx context.Context, iD uuid.UUID, userID uuid.UUID
 }
 
 const deleteConnection = `-- name: DeleteConnection :one
-DELETE FROM archive.connection WHERE id = $1 RETURNING id, member, provider, account, token, scopes, error, created_at, updated_at, meta, sync_at, synced_at, cursor, asked_at, lease_at, revoked, integration, access
+DELETE FROM archive.connection WHERE id = $1 RETURNING id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, asked_at, lease_at, revoked, integration
 `
 
 func (q *Queries) DeleteConnection(ctx context.Context, id uuid.UUID) (ArchiveConnection, error) {
@@ -908,14 +917,16 @@ func (q *Queries) DeleteConnection(ctx context.Context, id uuid.UUID) (ArchiveCo
 	var i ArchiveConnection
 	err := row.Scan(
 		&i.ID,
+		&i.Name,
+		&i.Access,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 		&i.Member,
 		&i.Provider,
 		&i.Account,
 		&i.Token,
 		&i.Scopes,
 		&i.Error,
-		&i.CreatedAt,
-		&i.UpdatedAt,
 		&i.Meta,
 		&i.SyncAt,
 		&i.SyncedAt,
@@ -924,7 +935,6 @@ func (q *Queries) DeleteConnection(ctx context.Context, id uuid.UUID) (ArchiveCo
 		&i.LeaseAt,
 		&i.Revoked,
 		&i.Integration,
-		&i.Access,
 	)
 	return i, err
 }
@@ -1654,7 +1664,7 @@ func (q *Queries) LockUpload(ctx context.Context, id uuid.UUID) (ArchiveUpload, 
 }
 
 const lockWorkflow = `-- name: LockWorkflow :one
-SELECT id, user_id, role, name, source, trigger, hook, next_at, cursor_at, cursor_id, created_at, updated_at, member, "on" FROM archive.workflow WHERE id = $1 FOR UPDATE
+SELECT id, name, access, created_at, updated_at, user_id, role, source, trigger, hook, next_at, cursor_at, cursor_id, member, "on" FROM archive.workflow WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) LockWorkflow(ctx context.Context, id uuid.UUID) (ArchiveWorkflow, error) {
@@ -1662,17 +1672,18 @@ func (q *Queries) LockWorkflow(ctx context.Context, id uuid.UUID) (ArchiveWorkfl
 	var i ArchiveWorkflow
 	err := row.Scan(
 		&i.ID,
+		&i.Name,
+		&i.Access,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 		&i.UserID,
 		&i.Role,
-		&i.Name,
 		&i.Source,
 		&i.Trigger,
 		&i.Hook,
 		&i.NextAt,
 		&i.CursorAt,
 		&i.CursorID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
 		&i.Member,
 		&i.On,
 	)
@@ -1697,7 +1708,7 @@ func (q *Queries) MemberByEmail(ctx context.Context, email string) (MemberByEmai
 }
 
 const memberConnections = `-- name: MemberConnections :many
-SELECT id, member, provider, account, token, scopes, error, created_at, updated_at, meta, sync_at, synced_at, cursor, asked_at, lease_at, revoked, integration, access FROM archive.connection WHERE member = $1 AND NOT integration OR integration ORDER BY provider, account, id
+SELECT id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, asked_at, lease_at, revoked, integration FROM archive.connection WHERE member = $1 AND NOT integration OR integration ORDER BY provider, account, id
 `
 
 // A member's personal connections, and the archive's integrations.
@@ -1712,14 +1723,16 @@ func (q *Queries) MemberConnections(ctx context.Context, member uuid.UUID) ([]Ar
 		var i ArchiveConnection
 		if err := rows.Scan(
 			&i.ID,
+			&i.Name,
+			&i.Access,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 			&i.Member,
 			&i.Provider,
 			&i.Account,
 			&i.Token,
 			&i.Scopes,
 			&i.Error,
-			&i.CreatedAt,
-			&i.UpdatedAt,
 			&i.Meta,
 			&i.SyncAt,
 			&i.SyncedAt,
@@ -1728,7 +1741,6 @@ func (q *Queries) MemberConnections(ctx context.Context, member uuid.UUID) ([]Ar
 			&i.LeaseAt,
 			&i.Revoked,
 			&i.Integration,
-			&i.Access,
 		); err != nil {
 			return nil, err
 		}
@@ -1774,6 +1786,16 @@ func (q *Queries) Members(ctx context.Context) ([]MembersRow, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const nameMembers = `-- name: NameMembers :exec
+UPDATE archive.member m SET name = u.name FROM (SELECT unnest($1::text[]) AS email, unnest($2::text[]) AS name) u
+WHERE m.email = u.email AND u.name <> '' AND m.name IS DISTINCT FROM u.name AND (m.name = '' OR m.name = m.email::text)
+`
+
+func (q *Queries) NameMembers(ctx context.Context, emails []string, names []string) error {
+	_, err := q.db.Exec(ctx, nameMembers, emails, names)
+	return err
 }
 
 const nameUser = `-- name: NameUser :exec
@@ -1869,7 +1891,7 @@ func (q *Queries) OAuthClient(ctx context.Context, provider string) ([]byte, err
 }
 
 const oldWorkflows = `-- name: OldWorkflows :many
-SELECT id, user_id, role, name, source, trigger, hook, next_at, cursor_at, cursor_id, created_at, updated_at, member, "on" FROM archive.workflow WHERE member IS NULL OR ("on" IS NULL AND trigger <> '')
+SELECT id, name, access, created_at, updated_at, user_id, role, source, trigger, hook, next_at, cursor_at, cursor_id, member, "on" FROM archive.workflow WHERE member IS NULL OR ("on" IS NULL AND trigger <> '')
 `
 
 // Workflows from before they were rows: no member yet, or a trigger still in a // on: line of their source.
@@ -1884,17 +1906,18 @@ func (q *Queries) OldWorkflows(ctx context.Context) ([]ArchiveWorkflow, error) {
 		var i ArchiveWorkflow
 		if err := rows.Scan(
 			&i.ID,
+			&i.Name,
+			&i.Access,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 			&i.UserID,
 			&i.Role,
-			&i.Name,
 			&i.Source,
 			&i.Trigger,
 			&i.Hook,
 			&i.NextAt,
 			&i.CursorAt,
 			&i.CursorID,
-			&i.CreatedAt,
-			&i.UpdatedAt,
 			&i.Member,
 			&i.On,
 		); err != nil {
@@ -2757,7 +2780,7 @@ func (q *Queries) WatchesFor(ctx context.Context, provider string, key string) (
 }
 
 const workflowByHook = `-- name: WorkflowByHook :one
-SELECT id, user_id, role, name, source, trigger, hook, next_at, cursor_at, cursor_id, created_at, updated_at, member, "on" FROM archive.workflow WHERE hook = $1 AND trigger = 'webhook'
+SELECT id, name, access, created_at, updated_at, user_id, role, source, trigger, hook, next_at, cursor_at, cursor_id, member, "on" FROM archive.workflow WHERE hook = $1 AND trigger = 'webhook'
 `
 
 func (q *Queries) WorkflowByHook(ctx context.Context, hook string) (ArchiveWorkflow, error) {
@@ -2765,17 +2788,18 @@ func (q *Queries) WorkflowByHook(ctx context.Context, hook string) (ArchiveWorkf
 	var i ArchiveWorkflow
 	err := row.Scan(
 		&i.ID,
+		&i.Name,
+		&i.Access,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 		&i.UserID,
 		&i.Role,
-		&i.Name,
 		&i.Source,
 		&i.Trigger,
 		&i.Hook,
 		&i.NextAt,
 		&i.CursorAt,
 		&i.CursorID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
 		&i.Member,
 		&i.On,
 	)
@@ -2783,7 +2807,7 @@ func (q *Queries) WorkflowByHook(ctx context.Context, hook string) (ArchiveWorkf
 }
 
 const workflowByName = `-- name: WorkflowByName :one
-SELECT id, user_id, role, name, source, trigger, hook, next_at, cursor_at, cursor_id, created_at, updated_at, member, "on" FROM archive.workflow WHERE user_id = $1 AND name = $2
+SELECT id, name, access, created_at, updated_at, user_id, role, source, trigger, hook, next_at, cursor_at, cursor_id, member, "on" FROM archive.workflow WHERE user_id = $1 AND name = $2
 `
 
 func (q *Queries) WorkflowByName(ctx context.Context, userID uuid.UUID, name string) (ArchiveWorkflow, error) {
@@ -2791,17 +2815,18 @@ func (q *Queries) WorkflowByName(ctx context.Context, userID uuid.UUID, name str
 	var i ArchiveWorkflow
 	err := row.Scan(
 		&i.ID,
+		&i.Name,
+		&i.Access,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 		&i.UserID,
 		&i.Role,
-		&i.Name,
 		&i.Source,
 		&i.Trigger,
 		&i.Hook,
 		&i.NextAt,
 		&i.CursorAt,
 		&i.CursorID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
 		&i.Member,
 		&i.On,
 	)

@@ -73,6 +73,47 @@ CREATE TABLE archive.due (
     PRIMARY KEY (workspace, kind)
 );
 
+-- object is what every row is: every table of the public schema inherits it, and so does each of Archive's own
+-- that the catalog shows, so every row has an id, a name, an access and when it was made and last changed.
+-- Its name is the title every screen shows a row by, and a link by: '' until something names it, never its id.
+-- What Postgres does not pass on to a child, its primary key, foreign keys, indexes and row-level security,
+-- each table has of its own (schemaDerive). A read of object itself would read every child's rows under
+-- object's policies, not theirs, so no role may read it, and it has row-level security with no policy.
+CREATE TABLE archive.object (
+    id         uuid NOT NULL DEFAULT uuidv7(),
+    name       text NOT NULL DEFAULT '',
+    access     text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE archive.object ENABLE ROW LEVEL SECURITY;
+ALTER TABLE archive.object FORCE ROW LEVEL SECURITY;
+COMMENT ON TABLE archive.object IS 'What every row is: its id, name, access and when it was made and changed. Every table inherits it; it is read through them, never itself';
+COMMENT ON COLUMN archive.object.name IS 'The row''s title, which every screen shows it and its links by';
+
+-- name_follows keeps a table's name made of other columns of its row, named by the trigger's arguments and
+-- joined by spaces, like name_follows('first_name', 'last_name'), or of a field of one, like 'full_name.full',
+-- until a write sets name itself: a row whose name is not what its columns make keeps it. A table that had no
+-- name when it began inheriting object gets one, over the columns its name was filled from (objectUpgrade).
+CREATE FUNCTION archive.name_follows() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    made text;
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        SELECT coalesce(string_agg(btrim(r.v), ' ' ORDER BY r.n), '') INTO made
+        FROM unnest(TG_ARGV) WITH ORDINALITY a(c, n), LATERAL (SELECT to_jsonb(OLD) #>> string_to_array(a.c, '.') AS v, a.n AS n) r WHERE btrim(r.v) <> '';
+        IF NEW.name IS DISTINCT FROM OLD.name OR OLD.name <> made THEN
+            RETURN NEW;
+        END IF;
+    ELSIF coalesce(NEW.name, '') <> '' THEN
+        RETURN NEW;
+    END IF;
+    SELECT coalesce(string_agg(btrim(r.v), ' ' ORDER BY r.n), '') INTO made
+    FROM unnest(TG_ARGV) WITH ORDINALITY a(c, n), LATERAL (SELECT to_jsonb(NEW) #>> string_to_array(a.c, '.') AS v, a.n AS n) r WHERE btrim(r.v) <> '';
+    NEW.name := made;
+    RETURN NEW;
+END $$;
+
 CREATE FUNCTION archive.search_fold(t text) RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
     SELECT translate(replace(replace(replace(lower(regexp_replace(regexp_replace(normalize(coalesce(t, ''), NFD),
         '[̀-ͯ]', '', 'g'), '[._/\\]+', ' ', 'g')), 'ß', 'ss'), 'æ', 'ae'), 'œ', 'oe'), 'øłđ', 'old')
@@ -219,8 +260,10 @@ CREATE TABLE archive.member (
     role       archive.level NOT NULL DEFAULT 'viewer',
     groups     text[] NOT NULL DEFAULT '{}',
     created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now()
-);
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    name       text NOT NULL DEFAULT '',
+    access     text
+) INHERITS (archive.object);
 COMMENT ON TABLE archive.member IS 'A person in this workspace. Owners add, change and remove members; adding an email invites that person
 icon: users';
 COMMENT ON COLUMN archive.member.email IS 'The address they sign in with; it cannot change';
@@ -322,7 +365,7 @@ CREATE TABLE archive.workflow (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     user_id    uuid NOT NULL,
     role       text NOT NULL,
-    name       text NOT NULL,
+    name       text NOT NULL DEFAULT '',
     source     text NOT NULL,
     trigger    text NOT NULL DEFAULT '',
     hook       text NOT NULL UNIQUE,
@@ -331,10 +374,11 @@ CREATE TABLE archive.workflow (
     cursor_id  uuid,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
+    access     text,
     member     uuid REFERENCES archive.member ON DELETE CASCADE,
     "on"       jsonb,
     UNIQUE (user_id, name)
-);
+) INHERITS (archive.object);
 CREATE INDEX workflow_next_idx ON archive.workflow (next_at) WHERE next_at IS NOT NULL;
 COMMENT ON TABLE archive.workflow IS 'A script Archive runs on its own: on a schedule, when rows of a table are added or changed, when its webhook URL is called, or when run with archive.run. Each person sees and changes only their own
 icon: workflow';
@@ -353,8 +397,11 @@ CREATE TABLE archive.workflow_run (
     logs       jsonb NOT NULL DEFAULT '[]',
     error      text NOT NULL DEFAULT '',
     ms         integer NOT NULL DEFAULT 0,
-    created_at timestamptz NOT NULL DEFAULT now()
-);
+    created_at timestamptz NOT NULL DEFAULT now(),
+    name       text NOT NULL DEFAULT '',
+    access     text,
+    updated_at timestamptz NOT NULL DEFAULT now()
+) INHERITS (archive.object);
 CREATE INDEX workflow_run_idx ON archive.workflow_run (workflow, created_at);
 COMMENT ON TABLE archive.workflow_run IS 'A run of one of your workflows, newest kept: the last 100 of each. Read only; Archive records them
 icon: list-checks';
@@ -402,8 +449,9 @@ CREATE TABLE archive.connection (
     revoked    boolean NOT NULL DEFAULT false,
     integration boolean NOT NULL DEFAULT false,
     access     text,
+    name       text NOT NULL DEFAULT '',
     UNIQUE (member, provider, account)
-);
+) INHERITS (archive.object);
 CREATE UNIQUE INDEX connection_integration_idx ON archive.connection (provider) WHERE integration;
 CREATE INDEX connection_sync_idx ON archive.connection (sync_at) WHERE sync_at IS NOT NULL;
 COMMENT ON TABLE archive.connection IS 'One of your own accounts at another service that Archive reads for you, like your Gmail; archive.action uses it. Read only; connect and disconnect them in Settings, Connectors
@@ -437,8 +485,11 @@ COMMENT ON COLUMN archive.connection.access IS 'The group an integration and wha
 CREATE TABLE archive.known_person (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     email      archive.email NOT NULL UNIQUE,
-    created_at timestamptz NOT NULL DEFAULT now()
-);
+    created_at timestamptz NOT NULL DEFAULT now(),
+    name       text NOT NULL DEFAULT '',
+    access     text,
+    updated_at timestamptz NOT NULL DEFAULT now()
+) INHERITS (archive.object);
 COMMENT ON TABLE archive.known_person IS 'A person your connections know, by their email address: one row however many connections know them, like a Gmail sender who is also a Gusto employee. Read only; Archive syncs them, and their names are where they were seen, like mail_party and payroll_worker
 icon: contact';
 COMMENT ON COLUMN archive.known_person.email IS 'Their address, lowercase: what makes them one person everywhere';
@@ -448,8 +499,11 @@ CREATE TABLE archive.known_org (
     ein        archive.us_ein UNIQUE,
     domain     archive.domain UNIQUE,
     created_at timestamptz NOT NULL DEFAULT now(),
+    name       text NOT NULL DEFAULT '',
+    access     text,
+    updated_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT known_org_key CHECK (ein IS NOT NULL OR domain IS NOT NULL)
-);
+) INHERITS (archive.object);
 COMMENT ON TABLE archive.known_org IS 'An organization your connections know, by its EIN or its web domain: one row however many connections know it. Read only; Archive syncs them, and their names are where they were seen, like payroll_company
 icon: building-2';
 COMMENT ON COLUMN archive.known_org.ein IS 'Its US employer identification number';
@@ -463,6 +517,7 @@ CREATE TABLE archive.mail_message (
     access      text,
     created_at  timestamptz NOT NULL DEFAULT now(),
     updated_at  timestamptz NOT NULL DEFAULT now(),
+    name        text NOT NULL DEFAULT '',
     seen_at     timestamptz NOT NULL DEFAULT now(),
     thread      text,
     subject     text,
@@ -472,7 +527,7 @@ CREATE TABLE archive.mail_message (
     received_at timestamptz,
     labels      text[],
     UNIQUE (connection, stream, source_id)
-);
+) INHERITS (archive.object);
 COMMENT ON TABLE archive.mail_message IS 'A message of a mailbox you connected, like your Gmail; who it is from and to is in mail_party, and its files in mail_attachment. Read only; Archive syncs them
 icon: mail';
 COMMENT ON COLUMN archive.mail_message.thread IS 'The conversation it is part of, its id there';
@@ -494,8 +549,10 @@ CREATE TABLE archive.mail_party (
     message    uuid NOT NULL REFERENCES archive.mail_message ON DELETE CASCADE,
     person     uuid NOT NULL REFERENCES archive.known_person ON DELETE CASCADE,
     role       text NOT NULL CONSTRAINT mail_party_role CHECK (role IN ('from', 'to', 'cc', 'bcc', 'reply_to')),
-    name       text
-);
+    name       text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+) INHERITS (archive.object);
 CREATE INDEX mail_party_message_idx ON archive.mail_party (message);
 CREATE INDEX mail_party_person_idx ON archive.mail_party (person);
 CREATE INDEX mail_party_connection_idx ON archive.mail_party (connection);
@@ -511,11 +568,14 @@ CREATE TABLE archive.mail_attachment (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
     access     text,
+    name       text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
     message    uuid NOT NULL REFERENCES archive.mail_message ON DELETE CASCADE,
     filename   text,
     mime       text,
     size       bigint
-);
+) INHERITS (archive.object);
 CREATE INDEX mail_attachment_message_idx ON archive.mail_attachment (message);
 CREATE INDEX mail_attachment_connection_idx ON archive.mail_attachment (connection);
 COMMENT ON TABLE archive.mail_attachment IS 'A file attached to a message; its content stays in the mailbox. Read only; Archive syncs them
@@ -533,6 +593,7 @@ CREATE TABLE archive.doc_page (
     access     text,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
+    name       text NOT NULL DEFAULT '',
     seen_at    timestamptz NOT NULL DEFAULT now(),
     kind       text,
     title      text,
@@ -540,7 +601,7 @@ CREATE TABLE archive.doc_page (
     icon       text,
     edited_at  timestamptz,
     UNIQUE (connection, stream, source_id)
-);
+) INHERITS (archive.object);
 COMMENT ON TABLE archive.doc_page IS 'A page of docs or a wiki you connected, like Notion; its content stays there. Read only; Archive syncs them
 icon: file-text';
 COMMENT ON COLUMN archive.doc_page.kind IS 'What it is there, like page or database';
@@ -562,7 +623,7 @@ CREATE TABLE archive.payroll_company (
     updated_at     timestamptz NOT NULL DEFAULT now(),
     seen_at        timestamptz NOT NULL DEFAULT now(),
     org            uuid REFERENCES archive.known_org ON DELETE SET NULL,
-    name           text,
+    name           text NOT NULL DEFAULT '',
     trade_name     text,
     entity_type    text,
     status         text,
@@ -574,7 +635,7 @@ CREATE TABLE archive.payroll_company (
     signatory      uuid REFERENCES archive.known_person ON DELETE SET NULL,
     signatory_name text,
     UNIQUE (connection, stream, source_id)
-);
+) INHERITS (archive.object);
 CREATE INDEX payroll_company_org_idx ON archive.payroll_company (org);
 CREATE INDEX payroll_company_admin_idx ON archive.payroll_company (admin);
 CREATE INDEX payroll_company_signatory_idx ON archive.payroll_company (signatory);
@@ -605,12 +666,13 @@ CREATE TABLE archive.payroll_department (
     access         text,
     created_at     timestamptz NOT NULL DEFAULT now(),
     updated_at     timestamptz NOT NULL DEFAULT now(),
+    name           text NOT NULL DEFAULT '',
     seen_at        timestamptz NOT NULL DEFAULT now(),
     company        uuid REFERENCES archive.payroll_company ON DELETE SET NULL,
     company_source text,
     title          text,
     UNIQUE (connection, stream, source_id)
-);
+) INHERITS (archive.object);
 CREATE INDEX payroll_department_company_idx ON archive.payroll_department (company);
 COMMENT ON TABLE archive.payroll_department IS 'A department of a company in a payroll you connected; who is in it is in payroll_department_member. Read only; Archive syncs them
 icon: network';
@@ -630,6 +692,7 @@ CREATE TABLE archive.payroll_location (
     access          text,
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now(),
+    name            text NOT NULL DEFAULT '',
     seen_at         timestamptz NOT NULL DEFAULT now(),
     company         uuid REFERENCES archive.payroll_company ON DELETE SET NULL,
     company_source  text,
@@ -644,7 +707,7 @@ CREATE TABLE archive.payroll_location (
     mailing_address boolean,
     filing_address  boolean,
     UNIQUE (connection, stream, source_id)
-);
+) INHERITS (archive.object);
 CREATE INDEX payroll_location_company_idx ON archive.payroll_location (company);
 COMMENT ON TABLE archive.payroll_location IS 'A place a company in a payroll you connected works from or files at. Read only; Archive syncs them
 icon: map-pin';
@@ -669,7 +732,7 @@ CREATE TABLE archive.payroll_schedule (
     seen_at           timestamptz NOT NULL DEFAULT now(),
     company           uuid REFERENCES archive.payroll_company ON DELETE SET NULL,
     company_source    text,
-    name              text,
+    name              text NOT NULL DEFAULT '',
     frequency         text,
     anchor_pay_date   date,
     anchor_period_end date,
@@ -678,7 +741,7 @@ CREATE TABLE archive.payroll_schedule (
     auto_pilot        boolean,
     active            boolean,
     UNIQUE (connection, stream, source_id)
-);
+) INHERITS (archive.object);
 CREATE INDEX payroll_schedule_company_idx ON archive.payroll_schedule (company);
 COMMENT ON TABLE archive.payroll_schedule IS 'A pay schedule of a company in a payroll you connected: how often and when it pays. Read only; Archive syncs them
 icon: calendar-clock';
@@ -709,7 +772,7 @@ CREATE TABLE archive.payroll_worker (
     company_source    text,
     kind              text NOT NULL CONSTRAINT payroll_worker_kind CHECK (kind IN ('employee', 'contractor')),
     person            uuid REFERENCES archive.known_person ON DELETE SET NULL,
-    name              text,
+    name              text NOT NULL DEFAULT '',
     first_name        text,
     middle_initial    text,
     last_name         text,
@@ -737,7 +800,7 @@ CREATE TABLE archive.payroll_worker (
     flsa_status       text,
     wage_type         text,
     UNIQUE (connection, stream, source_id)
-);
+) INHERITS (archive.object);
 CREATE INDEX payroll_worker_company_idx ON archive.payroll_worker (company);
 CREATE INDEX payroll_worker_person_idx ON archive.payroll_worker (person);
 CREATE INDEX payroll_worker_department_idx ON archive.payroll_worker (department);
@@ -779,6 +842,9 @@ CREATE TABLE archive.payroll_job (
     id              uuid PRIMARY KEY DEFAULT uuidv7(),
     connection      uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
     access          text,
+    name            text NOT NULL DEFAULT '',
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    updated_at      timestamptz NOT NULL DEFAULT now(),
     worker          uuid NOT NULL REFERENCES archive.payroll_worker ON DELETE CASCADE,
     source_id       text,
     title           text,
@@ -788,7 +854,7 @@ CREATE TABLE archive.payroll_job (
     primary_job     boolean,
     location        uuid REFERENCES archive.payroll_location ON DELETE SET NULL,
     location_source text
-);
+) INHERITS (archive.object);
 CREATE INDEX payroll_job_worker_idx ON archive.payroll_job (worker);
 CREATE INDEX payroll_job_location_idx ON archive.payroll_job (location);
 CREATE INDEX payroll_job_connection_idx ON archive.payroll_job (connection);
@@ -806,13 +872,16 @@ CREATE TABLE archive.payroll_compensation (
     id           uuid PRIMARY KEY DEFAULT uuidv7(),
     connection   uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
     access       text,
+    name         text NOT NULL DEFAULT '',
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    updated_at   timestamptz NOT NULL DEFAULT now(),
     worker       uuid NOT NULL REFERENCES archive.payroll_worker ON DELETE CASCADE,
     job_source   text,
     rate         archive.money,
     pay_per      text,
     flsa_status  text,
     effective_on date
-);
+) INHERITS (archive.object);
 CREATE INDEX payroll_compensation_worker_idx ON archive.payroll_compensation (worker);
 CREATE INDEX payroll_compensation_connection_idx ON archive.payroll_compensation (connection);
 COMMENT ON TABLE archive.payroll_compensation IS 'What a job paid from a date on: every change of someone''s pay. Read only; Archive syncs them
@@ -826,6 +895,9 @@ CREATE TABLE archive.payroll_address (
     id              uuid PRIMARY KEY DEFAULT uuidv7(),
     connection      uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
     access          text,
+    name            text NOT NULL DEFAULT '',
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    updated_at      timestamptz NOT NULL DEFAULT now(),
     worker          uuid NOT NULL REFERENCES archive.payroll_worker ON DELETE CASCADE,
     kind            text NOT NULL CONSTRAINT payroll_address_kind CHECK (kind IN ('home', 'work')),
     street_1        text,
@@ -838,7 +910,7 @@ CREATE TABLE archive.payroll_address (
     effective_on    date,
     location        uuid REFERENCES archive.payroll_location ON DELETE SET NULL,
     location_source text
-);
+) INHERITS (archive.object);
 CREATE INDEX payroll_address_worker_idx ON archive.payroll_address (worker);
 CREATE INDEX payroll_address_location_idx ON archive.payroll_address (location);
 CREATE INDEX payroll_address_connection_idx ON archive.payroll_address (connection);
@@ -856,11 +928,14 @@ CREATE TABLE archive.payroll_employment (
     id            uuid PRIMARY KEY DEFAULT uuidv7(),
     connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
     access        text,
+    name          text NOT NULL DEFAULT '',
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
     worker        uuid NOT NULL REFERENCES archive.payroll_worker ON DELETE CASCADE,
     hired_on      date,
     terminated_on date,
     status        text
-);
+) INHERITS (archive.object);
 CREATE INDEX payroll_employment_worker_idx ON archive.payroll_employment (worker);
 CREATE INDEX payroll_employment_connection_idx ON archive.payroll_employment (connection);
 COMMENT ON TABLE archive.payroll_employment IS 'A span of someone''s employment: when they were hired, and left. Read only; Archive syncs them
@@ -880,12 +955,12 @@ CREATE TABLE archive.payroll_custom_field (
     seen_at        timestamptz NOT NULL DEFAULT now(),
     company        uuid REFERENCES archive.payroll_company ON DELETE SET NULL,
     company_source text,
-    name           text,
+    name           text NOT NULL DEFAULT '',
     type           text,
     description    text,
     options        text[],
     UNIQUE (connection, stream, source_id)
-);
+) INHERITS (archive.object);
 CREATE INDEX payroll_custom_field_company_idx ON archive.payroll_custom_field (company);
 COMMENT ON TABLE archive.payroll_custom_field IS 'A custom field a company in a payroll you connected keeps of its people. Read only; Archive syncs them
 icon: list-plus';
@@ -906,9 +981,11 @@ CREATE TABLE archive.payroll_custom_value (
     worker       uuid NOT NULL REFERENCES archive.payroll_worker ON DELETE CASCADE,
     field        uuid REFERENCES archive.payroll_custom_field ON DELETE SET NULL,
     field_source text,
-    name         text,
+    name         text NOT NULL DEFAULT '',
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    updated_at   timestamptz NOT NULL DEFAULT now(),
     value        text
-);
+) INHERITS (archive.object);
 CREATE INDEX payroll_custom_value_worker_idx ON archive.payroll_custom_value (worker);
 CREATE INDEX payroll_custom_value_field_idx ON archive.payroll_custom_value (field);
 CREATE INDEX payroll_custom_value_connection_idx ON archive.payroll_custom_value (connection);
@@ -924,10 +1001,13 @@ CREATE TABLE archive.payroll_department_member (
     id            uuid PRIMARY KEY DEFAULT uuidv7(),
     connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
     access        text,
+    name          text NOT NULL DEFAULT '',
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
     department    uuid NOT NULL REFERENCES archive.payroll_department ON DELETE CASCADE,
     worker        uuid REFERENCES archive.payroll_worker ON DELETE SET NULL,
     worker_source text
-);
+) INHERITS (archive.object);
 CREATE INDEX payroll_department_member_department_idx ON archive.payroll_department_member (department);
 CREATE INDEX payroll_department_member_worker_idx ON archive.payroll_department_member (worker);
 CREATE INDEX payroll_department_member_connection_idx ON archive.payroll_department_member (connection);
@@ -946,6 +1026,7 @@ CREATE TABLE archive.payroll_schedule_assignment (
     access                   text,
     created_at               timestamptz NOT NULL DEFAULT now(),
     updated_at               timestamptz NOT NULL DEFAULT now(),
+    name                     text NOT NULL DEFAULT '',
     seen_at                  timestamptz NOT NULL DEFAULT now(),
     company                  uuid REFERENCES archive.payroll_company ON DELETE SET NULL,
     company_source           text,
@@ -957,7 +1038,7 @@ CREATE TABLE archive.payroll_schedule_assignment (
     salaried_schedule        uuid REFERENCES archive.payroll_schedule ON DELETE SET NULL,
     salaried_schedule_source text,
     UNIQUE (connection, stream, source_id)
-);
+) INHERITS (archive.object);
 CREATE INDEX payroll_schedule_assignment_company_idx ON archive.payroll_schedule_assignment (company);
 CREATE INDEX payroll_schedule_assignment_default_schedule_idx ON archive.payroll_schedule_assignment (default_schedule);
 CREATE INDEX payroll_schedule_assignment_hourly_schedule_idx ON archive.payroll_schedule_assignment (hourly_schedule);
@@ -983,6 +1064,9 @@ CREATE TABLE archive.payroll_schedule_member (
     id                uuid PRIMARY KEY DEFAULT uuidv7(),
     connection        uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
     access            text,
+    name              text NOT NULL DEFAULT '',
+    created_at        timestamptz NOT NULL DEFAULT now(),
+    updated_at        timestamptz NOT NULL DEFAULT now(),
     assignment        uuid NOT NULL REFERENCES archive.payroll_schedule_assignment ON DELETE CASCADE,
     worker            uuid REFERENCES archive.payroll_worker ON DELETE SET NULL,
     worker_source     text,
@@ -990,7 +1074,7 @@ CREATE TABLE archive.payroll_schedule_member (
     department_source text,
     schedule          uuid REFERENCES archive.payroll_schedule ON DELETE SET NULL,
     schedule_source   text
-);
+) INHERITS (archive.object);
 CREATE INDEX payroll_schedule_member_assignment_idx ON archive.payroll_schedule_member (assignment);
 CREATE INDEX payroll_schedule_member_worker_idx ON archive.payroll_schedule_member (worker);
 CREATE INDEX payroll_schedule_member_department_idx ON archive.payroll_schedule_member (department);
@@ -1018,10 +1102,10 @@ CREATE TABLE archive.payroll_earning_type (
     seen_at        timestamptz NOT NULL DEFAULT now(),
     company        uuid REFERENCES archive.payroll_company ON DELETE SET NULL,
     company_source text,
-    name           text,
+    name           text NOT NULL DEFAULT '',
     kind           text,
     UNIQUE (connection, stream, source_id)
-);
+) INHERITS (archive.object);
 CREATE INDEX payroll_earning_type_company_idx ON archive.payroll_earning_type (company);
 COMMENT ON TABLE archive.payroll_earning_type IS 'A kind of earning a company in a payroll you connected pays, like Regular hours or Bonus. Read only; Archive syncs them
 icon: coins';
@@ -1042,6 +1126,7 @@ CREATE TABLE archive.payroll_time_off_request (
     access          text,
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now(),
+    name            text NOT NULL DEFAULT '',
     seen_at         timestamptz NOT NULL DEFAULT now(),
     company         uuid REFERENCES archive.payroll_company ON DELETE SET NULL,
     company_source  text,
@@ -1059,7 +1144,7 @@ CREATE TABLE archive.payroll_time_off_request (
     approver_source text,
     approver_name   text,
     UNIQUE (connection, stream, source_id)
-);
+) INHERITS (archive.object);
 CREATE INDEX payroll_time_off_request_company_idx ON archive.payroll_time_off_request (company);
 CREATE INDEX payroll_time_off_request_worker_idx ON archive.payroll_time_off_request (worker);
 CREATE INDEX payroll_time_off_request_approver_idx ON archive.payroll_time_off_request (approver);
@@ -1084,10 +1169,13 @@ CREATE TABLE archive.payroll_time_off_day (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
     access     text,
+    name       text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
     request    uuid NOT NULL REFERENCES archive.payroll_time_off_request ON DELETE CASCADE,
     on_date    date,
     hours      numeric
-);
+) INHERITS (archive.object);
 CREATE INDEX payroll_time_off_day_request_idx ON archive.payroll_time_off_day (request);
 CREATE INDEX payroll_time_off_day_connection_idx ON archive.payroll_time_off_day (connection);
 COMMENT ON TABLE archive.payroll_time_off_day IS 'A day of a time-off request, with its hours. Read only; Archive syncs them
@@ -1103,13 +1191,14 @@ CREATE TABLE archive.payroll_time_off_balance (
     access         text,
     created_at     timestamptz NOT NULL DEFAULT now(),
     updated_at     timestamptz NOT NULL DEFAULT now(),
+    name           text NOT NULL DEFAULT '',
     seen_at        timestamptz NOT NULL DEFAULT now(),
     company        uuid REFERENCES archive.payroll_company ON DELETE SET NULL,
     company_source text,
     worker         uuid REFERENCES archive.payroll_worker ON DELETE SET NULL,
     worker_source  text,
     UNIQUE (connection, stream, source_id)
-);
+) INHERITS (archive.object);
 CREATE INDEX payroll_time_off_balance_company_idx ON archive.payroll_time_off_balance (company);
 CREATE INDEX payroll_time_off_balance_worker_idx ON archive.payroll_time_off_balance (worker);
 COMMENT ON TABLE archive.payroll_time_off_balance IS 'Someone''s time-off balances; each policy''s is in payroll_time_off_policy. Read only; Archive syncs them
@@ -1130,13 +1219,15 @@ CREATE TABLE archive.payroll_time_off_policy (
     access        text,
     balance       uuid NOT NULL REFERENCES archive.payroll_time_off_balance ON DELETE CASCADE,
     policy_source text,
-    name          text,
+    name          text NOT NULL DEFAULT '',
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
     policy_type   text,
     hours         numeric,
     accrued_hours numeric,
     used_hours    numeric,
     pending_hours numeric
-);
+) INHERITS (archive.object);
 CREATE INDEX payroll_time_off_policy_balance_idx ON archive.payroll_time_off_policy (balance);
 CREATE INDEX payroll_time_off_policy_connection_idx ON archive.payroll_time_off_policy (connection);
 COMMENT ON TABLE archive.payroll_time_off_policy IS 'The hours someone has left of one time-off policy. Read only; Archive syncs them
@@ -1158,6 +1249,7 @@ CREATE TABLE archive.payroll_run (
     access           text,
     created_at       timestamptz NOT NULL DEFAULT now(),
     updated_at       timestamptz NOT NULL DEFAULT now(),
+    name             text NOT NULL DEFAULT '',
     seen_at          timestamptz NOT NULL DEFAULT now(),
     company          uuid REFERENCES archive.payroll_company ON DELETE SET NULL,
     company_source   text,
@@ -1182,7 +1274,7 @@ CREATE TABLE archive.payroll_run (
     check_amount     archive.money,
     company_debit    archive.money,
     UNIQUE (connection, stream, source_id)
-);
+) INHERITS (archive.object);
 CREATE INDEX payroll_run_company_idx ON archive.payroll_run (company);
 CREATE INDEX payroll_run_schedule_idx ON archive.payroll_run (schedule);
 COMMENT ON TABLE archive.payroll_run IS 'A payroll: a company paying its people for a pay period, on its check date; what each was paid is in payroll_pay, line by line in payroll_pay_line. Read only; Archive syncs them
@@ -1206,6 +1298,9 @@ CREATE TABLE archive.payroll_pay (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
     connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
     access         text,
+    name           text NOT NULL DEFAULT '',
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    updated_at     timestamptz NOT NULL DEFAULT now(),
     run            uuid NOT NULL REFERENCES archive.payroll_run ON DELETE CASCADE,
     worker         uuid REFERENCES archive.payroll_worker ON DELETE SET NULL,
     worker_source  text,
@@ -1217,7 +1312,7 @@ CREATE TABLE archive.payroll_pay (
     employer_taxes archive.money,
     hours          numeric,
     payment_method text
-);
+) INHERITS (archive.object);
 CREATE INDEX payroll_pay_run_idx ON archive.payroll_pay (run);
 CREATE INDEX payroll_pay_worker_idx ON archive.payroll_pay (worker);
 CREATE INDEX payroll_pay_connection_idx ON archive.payroll_pay (connection);
@@ -1238,11 +1333,13 @@ CREATE TABLE archive.payroll_pay_line (
     worker        uuid REFERENCES archive.payroll_worker ON DELETE SET NULL,
     worker_source text,
     kind          text,
-    name          text,
+    name          text NOT NULL DEFAULT '',
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
     amount        archive.money,
     hours         numeric,
     employer      boolean
-);
+) INHERITS (archive.object);
 CREATE INDEX payroll_pay_line_run_idx ON archive.payroll_pay_line (run);
 CREATE INDEX payroll_pay_line_worker_idx ON archive.payroll_pay_line (worker);
 CREATE INDEX payroll_pay_line_connection_idx ON archive.payroll_pay_line (connection);
@@ -1263,6 +1360,7 @@ CREATE TABLE archive.payroll_pay_period (
     access          text,
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now(),
+    name            text NOT NULL DEFAULT '',
     seen_at         timestamptz NOT NULL DEFAULT now(),
     company         uuid REFERENCES archive.payroll_company ON DELETE SET NULL,
     company_source  text,
@@ -1277,7 +1375,7 @@ CREATE TABLE archive.payroll_pay_period (
     processed       boolean,
     payroll_type    text,
     UNIQUE (connection, stream, source_id)
-);
+) INHERITS (archive.object);
 CREATE INDEX payroll_pay_period_company_idx ON archive.payroll_pay_period (company);
 CREATE INDEX payroll_pay_period_schedule_idx ON archive.payroll_pay_period (schedule);
 CREATE INDEX payroll_pay_period_run_idx ON archive.payroll_pay_period (run);
@@ -1304,6 +1402,7 @@ CREATE TABLE archive.payroll_contractor_payment (
     access         text,
     created_at     timestamptz NOT NULL DEFAULT now(),
     updated_at     timestamptz NOT NULL DEFAULT now(),
+    name           text NOT NULL DEFAULT '',
     seen_at        timestamptz NOT NULL DEFAULT now(),
     company        uuid REFERENCES archive.payroll_company ON DELETE SET NULL,
     company_source text,
@@ -1320,7 +1419,7 @@ CREATE TABLE archive.payroll_contractor_payment (
     payment_method text,
     status         text,
     UNIQUE (connection, stream, source_id)
-);
+) INHERITS (archive.object);
 CREATE INDEX payroll_contractor_payment_company_idx ON archive.payroll_contractor_payment (company);
 CREATE INDEX payroll_contractor_payment_worker_idx ON archive.payroll_contractor_payment (worker);
 COMMENT ON TABLE archive.payroll_contractor_payment IS 'A payment to a contractor. Read only; Archive syncs them
@@ -1344,6 +1443,7 @@ CREATE TABLE archive.payroll_contractor_payment_group (
     access         text,
     created_at     timestamptz NOT NULL DEFAULT now(),
     updated_at     timestamptz NOT NULL DEFAULT now(),
+    name           text NOT NULL DEFAULT '',
     seen_at        timestamptz NOT NULL DEFAULT now(),
     company        uuid REFERENCES archive.payroll_company ON DELETE SET NULL,
     company_source text,
@@ -1355,7 +1455,7 @@ CREATE TABLE archive.payroll_contractor_payment_group (
     wages          archive.money,
     reimbursements archive.money,
     UNIQUE (connection, stream, source_id)
-);
+) INHERITS (archive.object);
 CREATE INDEX payroll_contractor_payment_group_company_idx ON archive.payroll_contractor_payment_group (company);
 COMMENT ON TABLE archive.payroll_contractor_payment_group IS 'A batch of contractor payments paid together. Read only; Archive syncs them
 icon: wallet';
@@ -1376,6 +1476,7 @@ CREATE TABLE archive.payroll_task (
     access         text,
     created_at     timestamptz NOT NULL DEFAULT now(),
     updated_at     timestamptz NOT NULL DEFAULT now(),
+    name           text NOT NULL DEFAULT '',
     seen_at        timestamptz NOT NULL DEFAULT now(),
     company        uuid REFERENCES archive.payroll_company ON DELETE SET NULL,
     company_source text,
@@ -1387,7 +1488,7 @@ CREATE TABLE archive.payroll_task (
     status         text,
     url            text,
     UNIQUE (connection, stream, source_id)
-);
+) INHERITS (archive.object);
 CREATE INDEX payroll_task_company_idx ON archive.payroll_task (company);
 COMMENT ON TABLE archive.payroll_task IS 'A to-do of a company in a payroll you connected, like a payroll blocker or a document to sign. Read only; Archive syncs them
 icon: list-todo';
@@ -1462,6 +1563,99 @@ BEGIN
     PERFORM pg_notify('archive_moved_' || pg_backend_pid(), what);
     RETURN NULL;
 END $$;
+
+-- object_name names a row of Archive's own tables as it is written, from what the row says: a message by its
+-- subject, a worker by their name, a payroll by its check date, a pay by whose it is. A row the service named
+-- keeps that name. It runs on every write, so a sync, a link or a rename moves the name with them; a person
+-- or an organization is named by its address or domain alone, since anything more is where it was seen.
+CREATE FUNCTION archive.object_name() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    r jsonb := to_jsonb(NEW);
+    own text := nullif(btrim(NEW.name), '');
+    who text;
+BEGIN
+    IF r->>'worker' IS NOT NULL THEN
+        SELECT nullif(btrim(w.name), '') INTO who FROM archive.payroll_worker w WHERE w.id = (r->>'worker')::uuid;
+    END IF;
+    NEW.name := coalesce(nullif(btrim(CASE TG_TABLE_NAME
+        WHEN 'member' THEN coalesce(own, r->>'email')
+        WHEN 'workflow' THEN own
+        WHEN 'workflow_run' THEN concat_ws(' · ', (SELECT w.name FROM archive.workflow w WHERE w.id = (r->>'workflow')::uuid),
+            to_char((r->>'created_at')::timestamptz AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI'))
+        WHEN 'connection' THEN concat_ws(' · ', nullif(r->>'account', ''), r->>'provider')
+        WHEN 'known_person' THEN r->>'email'
+        WHEN 'known_org' THEN coalesce(r->>'domain', r->>'ein')
+        WHEN 'mail_message' THEN coalesce(nullif(btrim(r->>'subject'), ''), nullif(left(btrim(r->>'snippet'), 120), ''), 'No subject')
+        WHEN 'mail_party' THEN coalesce(own, (SELECT p.email FROM archive.known_person p WHERE p.id = (r->>'person')::uuid))
+        WHEN 'mail_attachment' THEN r->>'filename'
+        WHEN 'doc_page' THEN r->>'title'
+        WHEN 'payroll_company' THEN coalesce(own, r->>'trade_name')
+        WHEN 'payroll_department' THEN r->>'title'
+        WHEN 'payroll_location' THEN concat_ws(', ', nullif(r->>'street_1', ''), nullif(r->>'city', ''), nullif(r->>'state', ''))
+        WHEN 'payroll_schedule' THEN coalesce(own, r->>'frequency')
+        WHEN 'payroll_worker' THEN coalesce(own, nullif(concat_ws(' ', coalesce(nullif(r->>'preferred_name', ''), nullif(r->>'first_name', '')),
+            nullif(r->>'last_name', '')), ''), nullif(r->>'business_name', ''), r->>'email')
+        WHEN 'payroll_job' THEN concat_ws(' · ', who, nullif(r->>'title', ''))
+        WHEN 'payroll_compensation' THEN concat_ws(' · ', who, r->>'effective_on')
+        WHEN 'payroll_address' THEN concat_ws(', ', nullif(r->>'street_1', ''), nullif(r->>'city', ''), nullif(r->>'state', ''))
+        WHEN 'payroll_employment' THEN concat_ws(' · ', who, r->>'hired_on')
+        WHEN 'payroll_custom_field' THEN own
+        WHEN 'payroll_custom_value' THEN own
+        WHEN 'payroll_department_member' THEN who
+        WHEN 'payroll_schedule_assignment' THEN r->>'type'
+        WHEN 'payroll_schedule_member' THEN coalesce(who, (SELECT d.title FROM archive.payroll_department d WHERE d.id = (r->>'department')::uuid))
+        WHEN 'payroll_earning_type' THEN own
+        WHEN 'payroll_time_off_request' THEN concat_ws(' · ', coalesce(who, nullif(r->>'employee_name', '')), nullif(r->>'policy', ''), r->>'starts_on')
+        WHEN 'payroll_time_off_day' THEN r->>'on_date'
+        WHEN 'payroll_time_off_balance' THEN who
+        WHEN 'payroll_time_off_policy' THEN own
+        WHEN 'payroll_run' THEN concat_ws(' · ', 'Payroll', coalesce(r->>'check_date', r->>'period_end'))
+        WHEN 'payroll_pay' THEN who
+        WHEN 'payroll_pay_line' THEN coalesce(own, r->>'kind')
+        WHEN 'payroll_pay_period' THEN concat_ws(' – ', r->>'starts_on', r->>'ends_on')
+        WHEN 'payroll_contractor_payment' THEN concat_ws(' · ', who, r->>'paid_on')
+        WHEN 'payroll_contractor_payment_group' THEN concat_ws(' · ', 'Contractor payments', r->>'check_date')
+        WHEN 'payroll_task' THEN r->>'title'
+        ELSE own END), ''), '');
+    RETURN NEW;
+END $$;
+
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.member FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.workflow FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.workflow_run FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.connection FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.known_person FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.known_org FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.mail_message FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.mail_party FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.mail_attachment FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.doc_page FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_company FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_department FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_location FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_schedule FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_worker FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_job FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_compensation FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_address FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_employment FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_custom_field FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_custom_value FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_department_member FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_schedule_assignment FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_schedule_member FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_earning_type FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_time_off_request FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_time_off_day FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_time_off_balance FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_time_off_policy FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_run FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_pay FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_pay_line FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_pay_period FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_contractor_payment FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_contractor_payment_group FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_task FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.chat FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.workflow FOR EACH ROW EXECUTE FUNCTION archive.moved();
@@ -1660,6 +1854,10 @@ SELECT id, email::text AS email, role::text AS role, groups FROM archive.member 
 
 -- name: WorkspaceUsers :many
 SELECT id, email, name FROM archive."user" WHERE workspaces @> ARRAY[sqlc.arg(workspace)::uuid] ORDER BY email;
+
+-- name: NameMembers :exec
+UPDATE archive.member m SET name = u.name FROM (SELECT unnest(sqlc.arg(emails)::text[]) AS email, unnest(sqlc.arg(names)::text[]) AS name) u
+WHERE m.email = u.email AND u.name <> '' AND m.name IS DISTINCT FROM u.name AND (m.name = '' OR m.name = m.email::text);
 
 -- name: UserWorkspaces :many
 SELECT w.* FROM archive.workspace w JOIN archive."user" u ON w.id = ANY(u.workspaces) WHERE u.id = $1 ORDER BY array_position(u.workspaces, w.id);
@@ -1878,6 +2076,8 @@ SELECT jsonb_build_object(
         'rls', c.relrowsecurity,
         'force', c.relforcerowsecurity,
         'security_invoker', coalesce((SELECT o.option_value::bool FROM pg_options_to_table(c.reloptions) o WHERE o.option_name = 'security_invoker'), false),
+        'object', EXISTS (SELECT FROM pg_catalog.pg_inherits i WHERE i.inhrelid = c.oid AND i.inhparent = 'archive.object'::regclass),
+        'partitioned', c.relkind = 'p' OR c.relispartition,
         'policy', coalesce((SELECT count(*) = 1 AND bool_and(p.polname = 'access' AND p.polcmd = '*' AND p.polpermissive AND p.polroles = '{0}'::oid[]
             AND regexp_replace(pg_get_expr(p.polqual, p.polrelid), '^archive\.', '') = 'can(access)'
             AND regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)')

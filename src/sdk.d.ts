@@ -27,7 +27,9 @@
  * - Each type is a table or a view in the public schema, or one of Archive's own: member, workflow and
  *   workflow_run (see Workflows). A row is a plain object (see Tables, after this SDK).
  *   Views are read only: list, get and search them; create, update and delete go to their tables.
- *   Archive sets id, created_at and updated_at. Fields without ? are required on create; empty fields
+ *   Archive sets id, created_at and updated_at. Every row also has a name: the title the app shows it by,
+ *   and every link to it, in every table, view and list. Set it on every create, like { name: "Acme" }; a row
+ *   without one shows as Untitled, never as its id. Fields without ? are required on create; empty fields
  *   read back as null.
  * - Writes clean messy input before Postgres checks it, so pass what you have: "(415) 555-0123" becomes
  *   "+14155550123", "$1,234.50" becomes { amount: 1234.5, currency: "USD" }, "4/3/1990" becomes "1990-04-03".
@@ -49,21 +51,29 @@
  *   archive.migrate(sql, { confirm }) with that confirm runs it for real. The confirm holds while the schema and
  *   the sql stay the same; after any other migration it throws conflict, so dry-run again. Change rows with
  *   archive.create, update and delete, not in a migration.
- * - Write only your own columns. Archive adds to every table what you leave out: id uuid PRIMARY KEY DEFAULT
- *   uuidv7(), access text, created_at and updated_at timestamptz NOT NULL DEFAULT now(), a search column over its
- *   text columns with a gin index, and row-level security with the access policy; it adds id right after each
- *   CREATE TABLE, so a later REFERENCES or view can use it. When you add, drop or retype a text column, search
- *   follows. Write one yourself only to make it different: a table only the hr group sees has access text NOT
+ * - Every table inherits archive.object: write CREATE TABLE house (<its own columns>) INHERITS (archive.object).
+ *   object gives it id uuid DEFAULT uuidv7(), name text NOT NULL DEFAULT '', access text, and created_at and
+ *   updated_at timestamptz NOT NULL DEFAULT now(). Archive adds what Postgres does not pass on: the primary key
+ *   on id, a search column over its text columns (name too) with a gin index, and row-level security with the
+ *   access policy; it adds them right after each CREATE TABLE, so a later REFERENCES or view can use them. A table
+ *   made without INHERITS gets it the same way, when its columns allow. When you add, drop or retype a text
+ *   column, search follows. name is the row's title, so keep the title there, not in a column like title of its
+ *   own. Where a name is made of other columns, keep it so with a trigger rather than set it on every write:
+ *   CREATE TRIGGER name_follows BEFORE INSERT OR UPDATE ON person FOR EACH ROW EXECUTE FUNCTION
+ *   archive.name_follows('first_name', 'last_name') joins them with spaces until a write sets name itself, and
+ *   name_follows('full_name.full') takes the full name of an archive.name column full_name. Write one of
+ *   object's columns yourself only to make it different: a table only the hr group sees has access text NOT
  *   NULL DEFAULT 'hr' CHECK (access = 'hr'). Use the built-in types (archive.email, archive.money, ...) to get
  *   their cleaning. A reference is `uuid REFERENCES other`; a list of references is `uuid[]` with a column
- *   comment starting 'references other'. Comment the table and its columns: they become these docs.
+ *   comment starting 'references other'; the app shows each as a link with the name of the row it names.
+ *   Comment the table and its columns: they become these docs.
  *
  *     const sql = `
  *       CREATE TABLE house (
  *           address text NOT NULL,
  *           price   archive.money,
  *           owner   uuid REFERENCES person
- *       );
+ *       ) INHERITS (archive.object);
  *       COMMENT ON TABLE house IS 'A house you own or rent';
  *       COMMENT ON COLUMN house.price IS 'Asking price';`;
  *     const plan = await archive.migrate(sql);
@@ -98,7 +108,8 @@
  *   comment says. Making, changing or dropping a view is how you change what the sidebar shows; to put a table's
  *   rows there, make a view of it.
  * - A view is a saved way to look at a table: a Postgres view with security_invoker = true so row-level security
- *   applies to whoever reads it, an id column, and a comment:
+ *   applies to whoever reads it, an id column, a name column (the title of each row; SELECT * has its table's),
+ *   and a comment:
  *
  *     await archive.migrate(`
  *       CREATE VIEW task_board WITH (security_invoker = true) AS
@@ -163,7 +174,7 @@
  *     const hook = await save("add-invoice", `
  *       const b = input.body;
  *       if (!b || !b.number) throw new Error("send JSON like { number, total, due }");
- *       const inv = await archive.create("invoice", { number: b.number, total: b.total, due: b.due });
+ *       const inv = await archive.create("invoice", { name: `Invoice ${b.number}`, number: b.number, total: b.total, due: b.due });
  *       return { id: inv.id };`, { webhook: true });
  *     const late = await archive.run("overdue-invoices", { trigger: "cron", at: new Date().toISOString() });
  *     const added = await archive.run("add-invoice", { trigger: "webhook", method: "POST", query: {}, headers: {},
@@ -198,7 +209,7 @@
  * - Browse before you write: browse throws once the run has written or migrated, so browse first, then save:
  *     const r = await archive.browse("Find the Saturday opening hours", { url: "https://example.com" });
  *     if (!r.done) throw new Error("no hours: " + r.answer);
- *     await archive.create("note", { text: r.answer, source: r.url });
+ *     await archive.create("note", { name: "Saturday opening hours", text: r.answer, source: r.url });
  * - What it does on a site is not undone when the run fails: a form it sent stays sent.
  *
  * Connected accounts

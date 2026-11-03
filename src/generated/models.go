@@ -68,8 +68,16 @@ type ArchiveChat struct {
 // One of your own accounts at another service that Archive reads for you, like your Gmail; archive.action uses it. Read only; connect and disconnect them in Settings, Connectors
 // icon: plug
 type ArchiveConnection struct {
-	ID     uuid.UUID
-	Member uuid.UUID
+	ID uuid.UUID
+	// The field's name
+	Name string
+	// Group that sees it, its connection's: null for everyone who sees the connection
+	Access *string
+	// When it started
+	CreatedAt time.Time
+	// When Archive last saw it change
+	UpdatedAt time.Time
+	Member    uuid.UUID
 	// Which service, a connector: gmail, notion, quickbooks, ...
 	Provider string
 	// The account there, like the mailbox address
@@ -78,9 +86,7 @@ type ArchiveConnection struct {
 	// What Archive may do there, as the service granted it
 	Scopes []string
 	// Why Archive last failed to reach it, like a revoked grant; empty while it works
-	Error     string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	Error string
 	// What the service said about the account when it connected, like QuickBooks' realmId
 	Meta map[string]string
 	// When Archive next reads what changed there; null once it has it all, until the service says something changed, you ask, or you read what it syncs
@@ -93,8 +99,6 @@ type ArchiveConnection struct {
 	Revoked  bool
 	// It is the archive's, like its QuickBooks, which an owner connects for everyone, not one person's own
 	Integration bool
-	// The group an integration and what it syncs are narrowed to, like finance; null for everyone
-	Access *string
 }
 
 type ArchiveDue struct {
@@ -136,22 +140,26 @@ type ArchiveWatch struct {
 // A script Archive runs on its own: on a schedule, when rows of a table are added or changed, when its webhook URL is called, or when run with archive.run. Each person sees and changes only their own
 // icon: workflow
 type ArchiveWorkflow struct {
-	ID     uuid.UUID
-	UserID uuid.UUID
-	Role   string
-	// Letters, digits, - and _, like overdue-invoices; unique among yours
+	ID uuid.UUID
+	// The field's name
 	Name string
+	// Group that sees it, its connection's: null for everyone who sees the connection
+	Access *string
+	// When it started
+	CreatedAt time.Time
+	// When Archive last saw it change
+	UpdatedAt time.Time
+	UserID    uuid.UUID
+	Role      string
 	// Its TypeScript, written like a run
 	Source  string
 	Trigger string
 	Hook    string
 	// When it runs next: a cron workflow's next time, or now for a table workflow with rows waiting
-	NextAt    *time.Time
-	CursorAt  *time.Time
-	CursorID  *uuid.UUID
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	Member    *uuid.UUID
+	NextAt   *time.Time
+	CursorAt *time.Time
+	CursorID *uuid.UUID
+	Member   *uuid.UUID
 	// When it runs: { cron, tz? }, { table, events }, { webhook: true }, or null to run only with archive.run
 	On json.RawMessage
 }
@@ -159,8 +167,16 @@ type ArchiveWorkflow struct {
 // A run of one of your workflows, newest kept: the last 100 of each. Read only; Archive records them
 // icon: list-checks
 type ArchiveWorkflowRun struct {
-	ID       uuid.UUID
-	Workflow uuid.UUID
+	ID uuid.UUID
+	// The field's name
+	Name string
+	// Group that sees it, its connection's: null for everyone who sees the connection
+	Access *string
+	// When it started
+	CreatedAt time.Time
+	// When Archive last saw it change
+	UpdatedAt time.Time
+	Workflow  uuid.UUID
 	// What started it: cron, table, webhook, or run (archive.run, or the Run button in the app; start in runs from before it was called run)
 	Trigger string
 	// What it returned; null when it failed
@@ -171,8 +187,6 @@ type ArchiveWorkflowRun struct {
 	Error string
 	// How long it took, in milliseconds
 	Ms int32
-	// When it started
-	CreatedAt time.Time
 }
 
 type ArchiveWorkspace struct {

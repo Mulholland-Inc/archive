@@ -68,6 +68,8 @@ function shell(w) {
     workflows: [],
     members: [],
     schema: [],
+    archiveTables: [],
+    names: {},
     shares: [],
     connectors: mockConnectors(w.id),
     catalog: null,
@@ -338,6 +340,7 @@ function tables(v) {
   if (!v.catalog) return;
   const samples = new Map(v.schema.map((t) => [t.id, t.sample]));
   v.schema = toTables(v.catalog.catalog, v.catalog.ddl, v.counts ?? {}, v.catalog.flows).map((t) => ({ ...t, sample: samples.get(t.id) ?? [] }));
+  v.archiveTables = toTables(v.catalog.catalog, [], {}, [], true);
 }
 
 // The first rows of a table, for its page; they move with any write to it.
@@ -362,32 +365,63 @@ export const viewRows = resource({
   }
 });
 
-// What a row of view (or table) id links to, through its link columns, and what links to it: the rows of
-// other tables whose link columns point at the table the view reads, which its DDL names. Each is { table,
-// column, rows: [{ id, title }] }; a row's title is its table's first text column.
-// baseOf is the table a view reads, as its DDL names it after its own FROM, past the parentheses Postgres puts
-// around joins: not the FROM of a subquery in its select list, like a count of another table; a table is its own.
-export function baseOf(t) {
-  if (t?.kind !== 'view') return t?.id;
-  const ddl = t.ddl ?? '';
-  let depth = 0;
-  let quoted = false;
-  for (let i = 0; i < ddl.length; i++) {
-    const ch = ddl[i];
-    if (ch === "'") quoted = !quoted;
-    if (quoted) continue;
-    if (ch === '(') depth++;
-    else if (ch === ')') depth--;
-    else if (depth === 0 && /^from\b/i.test(ddl.slice(i, i + 5)) && !/\w/.test(ddl[i - 1] ?? '')) {
-      return /^from\s+[(\s]*(?:public\.)?"?(\w+)"?/i.exec(ddl.slice(i))?.[1] ?? t.id;
-    }
-  }
-  return t.id;
+// tableOf is a table or view of the workspace, or one of Archive's own that a link names, by its id.
+export function tableOf(id, v = ws()) {
+  return v?.schema.find((x) => x.id === id) ?? v?.archiveTables?.find((x) => x.id === id);
 }
 
-// linkOf is the table a column links to; a view's columns have none of their own, so it is its table's.
-export function linkOf(t, c) {
-  return c.to ?? ws().schema.find((x) => x.id === baseOf(t))?.columns.find((x) => x.name === c.name)?.to;
+// baseOf is the table a view reads, as its DDL names it after its own FROM, past the parentheses Postgres puts
+// around joins: not the FROM of a subquery in its select list, like a count of another table; a table is its own.
+// A view whose FROM is a subquery, as one given its name column reads (objectUpgrade), reads what that reads.
+export function baseOf(t) {
+  if (t?.kind !== 'view') return t?.id;
+  const from = (ddl) => {
+    let depth = 0;
+    let quoted = false;
+    for (let i = 0; i < ddl.length; i++) {
+      const ch = ddl[i];
+      if (ch === "'") quoted = !quoted;
+      if (quoted) continue;
+      if (ch === '(') depth++;
+      else if (ch === ')') depth--;
+      else if (depth === 0 && /^from\b/i.test(ddl.slice(i, i + 5)) && !/\w/.test(ddl[i - 1] ?? '')) {
+        const rest = ddl.slice(i + 4);
+        const sub = /^\s*\(\s*select\b/i.exec(rest);
+        if (!sub) return /^\s+[(\s]*(?:public\.)?"?(\w+)"?/i.exec(rest)?.[1];
+        const open = rest.indexOf('(');
+        let d = 0;
+        for (let j = open; j < rest.length; j++) {
+          if (rest[j] === '(') d++;
+          else if (rest[j] === ')' && --d === 0) return from(rest.slice(open + 1, j).replace(/^\s*select\b/i, ' '));
+        }
+        return undefined;
+      }
+    }
+  };
+  return from(t.ddl ?? '') ?? t.id;
+}
+
+// linkOf is the table a column links to; a view's columns have none of their own, so it is its table's, or that
+// of the view it reads.
+export function linkOf(t, c, depth = 0) {
+  if (c.to || t?.kind !== 'view' || depth > 4) return c.to;
+  const base = tableOf(baseOf(t));
+  const col = base !== t && base?.columns.find((x) => x.name === c.name);
+  return col ? linkOf(base, col, depth + 1) : undefined;
+}
+
+// shownOf is the columns of t a screen shows a row by, past its name: not what Archive keeps of every row, and
+// not an id that names no table the app knows, which would read as a bare UUID; nor, of Archive's own tables,
+// the ids a row has at the service it came from.
+export function shownOf(t) {
+  const own = ['id', 'name', 'access', 'created_at', 'updated_at', 'search'];
+  const archive = Boolean(t) && !ws()?.schema.includes(t);
+  return (t?.columns ?? []).filter(
+    (c) =>
+      !own.includes(c.name) &&
+      (linkOf(t, c) || !['id', 'link', 'file'].includes(c.type)) &&
+      !(archive && (c.name === 'source_id' || c.name === 'stream' || c.name.endsWith('_source')))
+  );
 }
 
 // rowOf is one row of a table or view, as its member may read it.
@@ -395,38 +429,114 @@ export async function rowOf(table, id) {
   return call(`/api/${encodeURIComponent(table)}/${encodeURIComponent(id)}`);
 }
 
-// titlesOf is every row's title of table, by id, for showing links by name: its first text column.
-export async function titlesOf(table) {
-  const col = ws().schema.find((x) => x.id === table)?.columns.find((c) => c.type === 'text' && !['id', 'access'].includes(c.name));
-  const rows = (await call(`/api/${encodeURIComponent(table)}?limit=1000`).catch(() => [])) ?? [];
-  // A title is shown as a cell is: a name, an amount or a date, not the object the API answers with.
-  return Object.fromEntries(rows.map((r) => [r.id, show(r[col?.name]) || r.id]));
+// titleOf is what a row is called: its name, shown as a cell is, or Untitled; never its id.
+export function titleOf(row) {
+  return show(row?.name).trim() || 'Untitled';
 }
 
+// Row names, for links: by table and id in each workspace's names, a name, or null for a row the member
+// cannot see. A link asks for its row's name; what is asked at once is read in one query, as the member may
+// read it, and read again when its table moves.
+const asked = new Map();
+let askTimer = null;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const reading = new Set();
+
+function ask(v, table, id) {
+  reading.add(`${v.id}\n${table}\n${id}`);
+  const key = `${v.id}\n${table}`;
+  if (!asked.has(key)) asked.set(key, { v, table, ids: new Set() });
+  asked.get(key).ids.add(id);
+  askTimer ??= setTimeout(readNames);
+}
+
+async function readNames() {
+  askTimer = null;
+  const batch = [...asked.values()];
+  asked.clear();
+  for (const v of new Set(batch.map((b) => b.v))) {
+    const mine = batch.filter((b) => b.v === v);
+    const tables = v.catalog?.catalog?.tables ?? {};
+    const parts = [];
+    const params = [];
+    for (const b of mine) {
+      const t = b.table === 'archive.file' ? { schema: 'archive', name: 'file' } : tables[b.table];
+      if (!t) continue;
+      params.push([...b.ids]);
+      const ident = `"${t.schema}"."${t.name.replaceAll('"', '""')}"`;
+      parts.push(`SELECT '${b.table.replaceAll("'", "''")}' AS t, id::text AS id, name::text AS name FROM ${ident} WHERE id = ANY($${params.length}::uuid[])`);
+    }
+    const code = `return await archive.query(${JSON.stringify(parts.join(' UNION ALL '))}, ...${JSON.stringify(params)});`;
+    const rows = parts.length ? await runCode(code, v.id).catch(() => []) : [];
+    const got = new Map((rows ?? []).map((r) => [`${r.t}\n${r.id}`, r.name ?? '']));
+    for (const b of mine) {
+      v.names[b.table] ??= {};
+      for (const id of b.ids) {
+        v.names[b.table][id] = got.get(`${b.table}\n${id}`) ?? null;
+        reading.delete(`${v.id}\n${b.table}\n${id}`);
+      }
+    }
+  }
+}
+
+// The names of a table that moved are read again; until then its links show the names they had.
+onChange((changes, sweep) => {
+  for (const v of app.archives) {
+    for (const table of Object.keys(v.names ?? {})) {
+      if (sweep || changes.some((c) => c.table === table || c.table === `archive.${table}`)) {
+        for (const id of Object.keys(v.names[table])) ask(v, table, id);
+      }
+    }
+  }
+});
+
+// nameOf is the name of the row id of table, for a link to it: undefined while it is read, null when the
+// member cannot see it.
+export function nameOf(table, id, v = ws()) {
+  if (!v || !table || typeof id !== 'string' || !UUID.test(id)) return null;
+  const got = v.names?.[table]?.[id];
+  if (got === undefined && !reading.has(`${v.id}\n${table}\n${id}`)) ask(v, table, id);
+  return got;
+}
+
+// linkTitle is how a link to a row reads: its name, Untitled, or why there is none to show.
+export function linkTitle(table, id) {
+  const name = nameOf(table, id);
+  return name === undefined ? '…' : name === null ? 'Not found' : name.trim() || 'Untitled';
+}
+
+// linkHref is the page of the row a link names: its row's page, or the file's in the library.
+export function linkHref(table, id) {
+  return table === 'archive.file' ? `/library/${id}` : `/view/${table}/${id}`;
+}
+
+// cellText is a cell as text, for search, filters, groups and sorting: a link by the names of its rows.
+export function cellText(t, c, row) {
+  const v = row?.[c.name];
+  const to = linkOf(t, c);
+  if (!to || v == null || v === '') return show(v);
+  return (Array.isArray(v) ? v : [v]).map((id) => linkTitle(to, id)).join(', ');
+}
+
+// What links to a row of view (or table) id: the rows of other tables whose link columns point at the table
+// the view reads, which its DDL names. Each is { table, column, rows: [{ id, title }] }.
 export async function rowRelations(id, row) {
-  const types = ws().schema;
-  const t = types.find((x) => x.id === id);
-  if (!t || !row?.id) return { to: [], from: [] };
+  const v = ws();
+  const t = tableOf(id, v);
+  if (!t || !row?.id) return { from: [] };
   const base = baseOf(t);
-  const titleOf = (tid, r) => {
-    const col = types.find((x) => x.id === tid)?.columns.find((c) => c.type === 'text' && !['id', 'access'].includes(c.name));
-    return show(r?.[col?.name]) || r?.id || '';
-  };
-  const to = await Promise.all(
-    t.columns.filter((c) => linkOf(t, c) && row[c.name]).map(async (c) => {
-      const to = linkOf(t, c);
-      const ids = Array.isArray(row[c.name]) ? row[c.name] : [row[c.name]];
-      const rows = await Promise.all(ids.slice(0, 20).map((rid) => call(`/api/${encodeURIComponent(to)}/${rid}`).then((r) => ({ id: rid, title: titleOf(to, r) })).catch(() => null)));
-      return { table: to, column: c.name, rows: rows.filter(Boolean) };
-    })
-  );
+  const types = [...v.schema, ...v.archiveTables];
   const from = await Promise.all(
-    types.filter((x) => x.kind !== 'view').flatMap((x) => x.columns.filter((c) => c.to === base).map((c) => ({ x, c }))).map(async ({ x, c }) => {
-      const rows = (await call(`/api/${encodeURIComponent(x.id)}?${encodeURIComponent(c.name)}=${row.id}&limit=20`).catch(() => [])) ?? [];
-      return { table: x.id, column: c.name, rows: rows.map((r) => ({ id: r.id, title: titleOf(x.id, r) })) };
-    })
+    types
+      .filter((x) => x.kind !== 'view')
+      .flatMap((x) => x.columns.filter((c) => c.to === base).map((c) => ({ x, c })))
+      .map(async ({ x, c }) => {
+        const rows = (await call(`/api/${encodeURIComponent(x.id)}?${encodeURIComponent(c.name)}=${row.id}&limit=20`).catch(() => [])) ?? [];
+        return { table: x.id, column: c.name, rows: rows.map((r) => ({ id: r.id, title: titleOf(r) })) };
+      })
   );
-  return { to: to.filter((l) => l.rows.length), from: from.filter((l) => l.rows.length) };
+  return { from: from.filter((l) => l.rows.length) };
 }
 
 export async function loadArchive(v = ws()) {

@@ -24,7 +24,8 @@
   import AvatarGroup from '../components/AvatarGroup.svelte';
   import CodeBlock from '../components/CodeBlock.svelte';
   import EmptyState from '../components/EmptyState.svelte';
-  import { ws, openShare, schema, counts, preview, members, workflows } from '../lib/app.svelte.js';
+  import RowLink from '../components/RowLink.svelte';
+  import { ws, openShare, schema, counts, preview, members, workflows, shownOf, titleOf, cellText, linkOf, tableOf } from '../lib/app.svelte.js';
   import { typeLabel, ddl } from '../lib/schema.js';
   import { api } from '../lib/api.js';
   import { show } from '../lib/live.js';
@@ -67,10 +68,10 @@
     { key: 'notes', label: 'Notes', muted: true, mobile: 'secondary' }
   ];
   const columnRows = $derived(type ? type.columns.map((c) => ({ ...c, id: c.name })) : []);
-  const own = ['id', 'access', 'created_at', 'updated_at'];
-  const shownColumns = $derived(type ? type.columns.filter((c) => !own.includes(c.name)).slice(0, 4) : []);
-  const sampleColumns = $derived(shownColumns.map((c, i) => ({ key: c.name, label: c.name, muted: i > 0 })));
-  const sampleRows = $derived(type ? type.sample.map((r, i) => ({ id: r.id ?? i, ...Object.fromEntries(shownColumns.map((c) => [c.name, show(r[c.name])])) })) : []);
+  // A sample row is shown by its name, then its first few columns, its links by the names of their rows.
+  const shownColumns = $derived(type ? shownOf(type).slice(0, 3) : []);
+  const sampleColumns = $derived([{ key: 'name', label: 'name' }, ...shownColumns.map((c) => ({ key: c.name, label: c.name, muted: true }))]);
+  const sampleRows = $derived(type ? type.sample.map((r, i) => ({ id: r.id ?? i, row: r, name: titleOf(r), ...Object.fromEntries(shownColumns.map((c) => [c.name, cellText(type, c, r)])) })) : []);
 
   const ask = () => askAboutTable(type);
 
@@ -153,7 +154,7 @@
               {#if row.to && byId(row.to)}
                 <TextLink href={`/database/${row.to}`}>{byId(row.to).name}</TextLink>
               {:else}
-                <Text tone="secondary">{typeLabel(row)}</Text>
+                <Text tone="secondary">{(row.to && tableOf(row.to)?.name) || (row.to === 'archive.file' ? 'File' : typeLabel(row))}</Text>
               {/if}
             {:else}
               {row.notes}
@@ -165,7 +166,12 @@
       <Section title="Preview">
         {#snippet actions()}<Text size="sm" tone="tertiary">{sampleRows.length} of {count(type.rows)} rows</Text>{/snippet}
         {#if sampleRows.length}
-          <Table columns={sampleColumns} rows={sampleRows} label="Sample rows" flush />
+          <Table columns={sampleColumns} rows={sampleRows} label="Sample rows" flush>
+            {#snippet cell(row, col)}
+              {@const c = shownColumns.find((x) => x.name === col.key)}
+              {#if c && linkOf(type, c)}<RowLink table={linkOf(type, c)} value={row.row[c.name]} />{:else}{row[col.key]}{/if}
+            {/snippet}
+          </Table>
         {:else}
           <Text tone="tertiary">No rows yet</Text>
         {/if}

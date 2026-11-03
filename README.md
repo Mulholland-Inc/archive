@@ -30,7 +30,7 @@ Archive never calls an AI model on its own. Your agent does the thinking and sen
 
 Tell your agent what you keep track of, like clients, invoices and projects, and how they link. Every kind of record becomes a real Postgres table. Built-in types such as `archive.money`, `archive.phone`, `archive.email` and `archive.address` clean messy US input before it is stored. Secret types like card and passport numbers are encrypted and read back masked.
 
-A table is just its own columns: Archive adds the id, timestamps, access control and full-text search. Your agent changes the schema with plain Postgres DDL, so renames, type changes and backfills work as they do anywhere. Dropping a table or column is blocked unless you allow it, and a migration is part of the agent's run, so it can add a column, fill it and make it required in one step, and a run that fails changes nothing. Every migration is kept with who ran it. The same works by hand:
+A table is just its own columns, `INHERITS (archive.object)`: every row has an id, a name, access control and timestamps, and Archive adds full-text search. The name is what the web app titles a row by everywhere, and every link to it, so a link reads "Acme", never a UUID. Your agent changes the schema with plain Postgres DDL, so renames, type changes and backfills work as they do anywhere. Dropping a table or column is blocked unless you allow it, and a migration is part of the agent's run, so it can add a column, fill it and make it required in one step, and a run that fails changes nothing. Every migration is kept with who ran it. The same works by hand:
 
 ```sh
 archive schema show                        # every table and view as DDL

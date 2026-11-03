@@ -272,8 +272,16 @@ func (a *Archive) syncMembers(ctx context.Context, removals bool) error {
 		return err
 	}
 	in, keep := map[string]bool{}, map[string]bool{}
+	var emails, names []string
 	for _, u := range users {
 		in[u.Email] = true
+		emails, names = append(emails, u.Email), append(names, u.Name)
+	}
+	// A member is named as they sign in, unless an owner named them otherwise.
+	if err := a.st.System(ctx, func(ctx context.Context) error {
+		return a.st.db(ctx).NameMembers(ctx, emails, names)
+	}); err != nil {
+		return err
 	}
 	for _, m := range ms {
 		keep[m.Email] = true
