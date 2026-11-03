@@ -16,16 +16,18 @@ import (
 // Outlook: the mail of a Microsoft 365 work or school account, or a personal Outlook.com one, read only through
 // Microsoft Graph. It reads ARCHIVE_OUTLOOK, an app registration in Microsoft Entra for accounts in any
 // directory and personal accounts, whose web redirect URIs list <API>/connect/outlook/callback, with the
-// delegated Graph permissions User.Read and Mail.Read. offline_access asks for the refresh token, which
+// delegated Graph permissions User.Read, Mail.Read and Calendars.Read. offline_access asks for the refresh token, which
 // Microsoft replaces on every refresh. There is no endpoint that revokes one grant: a person removes Archive
 // at myapps.microsoft.com, or account.live.com/consent for a personal account.
-// It syncs the mailbox into mail, as Gmail does, folder by folder with Graph's delta of each.
+// It syncs the mailbox into mail, as Gmail does, folder by folder with Graph's delta of each, and the calendar
+// into calendar_event. An account connected before it asked for Calendars.Read syncs its mail alone until it
+// connects again.
 func init() {
 	Register(&Connector{
 		ID: "outlook", Name: "Outlook", Env: "ARCHIVE_OUTLOOK", Host: "https://login.microsoftonline.com",
 		Endpoint: oauth2.Endpoint{AuthURL: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
 			TokenURL: "https://login.microsoftonline.com/common/oauth2/v2.0/token", AuthStyle: oauth2.AuthStyleInParams},
-		Scopes: []string{"offline_access", "User.Read", "Mail.Read"},
+		Scopes: []string{"offline_access", "User.Read", "Mail.Read", "Calendars.Read"},
 		Params: map[string]string{"prompt": "select_account"},
 		Account: func(c *Client) (string, error) {
 			var me struct {
@@ -105,7 +107,11 @@ func init() {
 			Doc: "Every message of every folder but Junk Email and Deleted Items, with its text, cut at 64 KB, its attachments' names, and the " +
 				"words of each PDF, Word, Excel, PowerPoint or text attachment up to 25 MB: " +
 				"listed whole the first time, 50 a page and a folder at a time, and then each folder's delta since, messages added, changed, " +
-				"moved or deleted. A folder made since is listed whole; one gone, or a delta Graph no longer keeps, lists the mailbox whole again."}},
+				"moved or deleted. A folder made since is listed whole; one gone, or a delta Graph no longer keeps, lists the mailbox whole again."},
+			{Name: "events", Gap: time.Second, Pull: outlookEvents.pull, Table: "calendar_event", Rows: outlookEventRows,
+				Doc: "Every event of your calendar from a year back to a year ahead, each occurrence of a series on its own, with its attendees " +
+					"and their answers and its text, cut at 64 KB: listed whole, 50 a page, and then Graph's delta since; the window moves a " +
+					"month at a time, which lists it whole again."}},
 	})
 }
 
@@ -116,6 +122,89 @@ const (
 	outlookSync = "id,conversationId,subject,from,toRecipients,ccRecipients,bccRecipients,replyTo,receivedDateTime,sentDateTime," +
 		"bodyPreview,body,hasAttachments,categories,isDraft,lastModifiedDateTime"
 )
+
+// outlookEvents walks the calendar's view from a year back to a year ahead, which is one part named by the
+// month it starts in, so a new month is a part gone, and lists the view whole again over the moved window. Times
+// come in UTC.
+var outlookEvents = &graphWalk{
+	hdr:   http.Header{"Prefer": {"odata.maxpagesize=50", `outlook.timezone="UTC"`, `outlook.body-content-type="text"`}},
+	parts: outlookCalendar,
+	records: func(c *Client, p graphPart, items []map[string]any) ([]Record, error) {
+		out := make([]Record, 0, len(items))
+		for _, m := range items {
+			if _, gone := m["@removed"]; gone {
+				out = append(out, Record{ID: str(m, "id"), Deleted: true})
+				continue
+			}
+			m["description"] = clip(str(obj(m, "body"), "content"), maxText)
+			delete(m, "body")
+			out = append(out, Record{ID: str(m, "id"), Data: m, Updated: stamp(str(m, "lastModifiedDateTime"))})
+		}
+		return out, nil
+	},
+}
+
+// outlookCalendar is the one part outlookEvents walks; an account that did not allow Archive its calendar has
+// none to walk until it connects again.
+func outlookCalendar(c *Client) ([]graphPart, error) {
+	if err := c.Get(graphAPI+"/me/calendar?$select=id", nil); err != nil {
+		if r := (*Refusal)(nil); errors.As(err, &r) && (r.Status == http.StatusForbidden || r.Status == http.StatusUnauthorized) {
+			return nil, unsupported("Outlook did not allow Archive the calendar; connect Outlook again to sync it")
+		}
+		return nil, err
+	}
+	now := time.Now().UTC()
+	from := time.Date(now.Year()-1, now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	q := url.Values{"startDateTime": {from.Format(time.RFC3339)}, "endDateTime": {from.AddDate(2, 1, 0).Format(time.RFC3339)}}
+	return []graphPart{{ID: "calendar " + from.Format("2006-01"), Name: "Calendar", Start: graphAPI + "/me/calendarView/delta?" + q.Encode()}}, nil
+}
+
+// graphTime is a Graph dateTimeTimeZone, like { dateTime: "2026-11-03T15:00:00.0000000", timeZone: "UTC" }, as an
+// instant; nil when it is none. Graph sends UTC when asked to, so another zone is read as UTC too, as near as
+// Archive gets without its zone database.
+func graphTime(v map[string]any) any {
+	s := str(v, "dateTime")
+	if s == "" {
+		return nil
+	}
+	if t, err := time.Parse("2006-01-02T15:04:05", clip(s, 19)); err == nil {
+		return t.UTC().Format(time.RFC3339)
+	}
+	return instant(s)
+}
+
+// outlookEventRows is an event of the calendar: who organizes it and who is invited, with what they answered.
+func outlookEventRows(m map[string]any) *Row {
+	status := "confirmed"
+	if m["isCancelled"] == true {
+		status = "cancelled"
+	} else if str(m, "showAs") == "tentative" {
+		status = "tentative"
+	}
+	recurrence := ""
+	if p := obj(obj(m, "recurrence"), "pattern"); str(p, "type") != "" {
+		recurrence = fmt.Sprintf("%s, every %s", str(p, "type"), cmp.Or(str(p, "interval"), "1"))
+		if days := strs(p["daysOfWeek"]); len(days) > 0 {
+			recurrence += " on " + strings.Join(days, ", ")
+		}
+	}
+	org := obj(obj(m, "organizer"), "emailAddress")
+	r := rowOf(map[string]any{"calendar": "Calendar", "title": str(m, "subject"), "description": str(m, "description"),
+		"location": str(obj(m, "location"), "displayName"), "starts_at": graphTime(obj(m, "start")), "ends_at": graphTime(obj(m, "end")),
+		"all_day": flag(m, "isAllDay"), "status": status, "recurrence": recurrence, "organizer_name": str(org, "name"), "url": str(m, "webLink"),
+		"meeting_url": str(obj(m, "onlineMeeting"), "joinUrl"), "edited_at": instant(str(m, "lastModifiedDateTime"))}).
+		ref("series", str(m, "seriesMasterId")).person("organizer", str(org, "address"))
+	responses := map[string]string{"accepted": "accepted", "declined": "declined", "tentativelyAccepted": "tentative", "organizer": "accepted"}
+	for _, a := range objects(m["attendees"], "") {
+		e := obj(a, "emailAddress")
+		if Email(str(e, "address")) == "" {
+			continue
+		}
+		r.child("calendar_attendee", rowOf(map[string]any{"name": str(e, "name"), "role": str(a, "type"),
+			"response": cmp.Or(responses[str(obj(a, "status"), "response")], "none")}).person("person", str(e, "address")))
+	}
+	return r
+}
 
 // outlookMessages walks each folder's delta of messages. Its text comes as text, not HTML, and 50 a page; a
 // moved message is a new id in its new folder and gone from its old one, so neither folder needs the other.
@@ -361,36 +450,51 @@ func (g *graphWalk) pull(c *Client, cursor string) (*Page, error) {
 	return page, nil
 }
 
-// outlookPush is a Graph subscription to every message of the mailbox, me/messages, with a clientState of
-// Archive's own, for 10,020 minutes, under the 10,080 Outlook allows; the first sync a day after renews it with
-// a PATCH, or makes another when Graph no longer has it. Graph checks the URL first by posting a
+// outlookPush is a Graph subscription to every message of the mailbox, me/messages, and one to every event of
+// the calendar, me/events, each with a clientState of Archive's own, for 10,020 minutes, under the 10,080 Outlook
+// allows; the first sync a day after renews them with a PATCH, or makes another when Graph no longer has one. An
+// account that did not allow Archive its calendar has the mail's alone. Graph checks the URL first by posting a
 // validationToken, which Archive answers as it came, in plain text.
 var outlookPush = &Push{Renew: 6 * 24 * time.Hour,
 	Watch: func(c *Client, h Hook, old []Watch) ([]Watch, error) {
-		until := time.Now().Add(10020 * time.Minute).UTC()
+		until := time.Now().Add(10020 * time.Minute).UTC().Format(time.RFC3339)
+		had := map[string]Watch{}
 		for _, o := range old {
+			// A watch from before it named its resource is the mail's.
+			had[cmp.Or(o.Resource, "me/messages")] = o
+		}
+		var out []Watch
+		for _, res := range []string{"me/messages", "me/events"} {
+			if o, ok := had[res]; ok {
+				var s struct {
+					Expiration string `json:"expirationDateTime"`
+				}
+				err := c.Do("PATCH", graphAPI+"/subscriptions/"+url.PathEscape(o.Key), map[string]string{"expirationDateTime": until}, &s)
+				if err == nil {
+					o.Resource, o.Expires = res, stamp(s.Expiration)
+					out = append(out, o)
+					continue
+				}
+				if r := (*Refusal)(nil); !errors.As(err, &r) || r.Status != http.StatusNotFound {
+					return nil, err
+				}
+			}
+			state := nonce()[:32]
 			var s struct {
+				ID         string `json:"id"`
 				Expiration string `json:"expirationDateTime"`
 			}
-			err := c.Do("PATCH", graphAPI+"/subscriptions/"+url.PathEscape(o.Key), map[string]string{"expirationDateTime": until.Format(time.RFC3339)}, &s)
-			if err == nil {
-				o.Expires = stamp(s.Expiration)
-				return []Watch{o}, nil
+			err := c.Do("POST", graphAPI+"/subscriptions", map[string]string{"changeType": "created,updated,deleted", "notificationUrl": h.URL(""),
+				"resource": res, "expirationDateTime": until, "clientState": state}, &s)
+			if r := (*Refusal)(nil); res == "me/events" && errors.As(err, &r) && (r.Status == http.StatusForbidden || r.Status == http.StatusUnauthorized) {
+				continue
 			}
-			if r, ok := err.(*Refusal); !ok || r.Status != http.StatusNotFound {
+			if err != nil {
 				return nil, err
 			}
+			out = append(out, Watch{Key: s.ID, Resource: res, Secret: state, Expires: stamp(s.Expiration)})
 		}
-		state := nonce()[:32]
-		var s struct {
-			ID         string `json:"id"`
-			Expiration string `json:"expirationDateTime"`
-		}
-		if err := c.Do("POST", graphAPI+"/subscriptions", map[string]string{"changeType": "created,updated,deleted", "notificationUrl": h.URL(""),
-			"resource": "me/messages", "expirationDateTime": until.Format(time.RFC3339), "clientState": state}, &s); err != nil {
-			return nil, err
-		}
-		return []Watch{{Key: s.ID, Secret: state, Expires: stamp(s.Expiration)}}, nil
+		return out, nil
 	},
 	Unwatch: func(c *Client, w Watch) error {
 		return c.Do("DELETE", graphAPI+"/subscriptions/"+url.PathEscape(w.Key), nil, nil)
