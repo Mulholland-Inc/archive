@@ -35,9 +35,9 @@
   const text = (c, r) => cellText(view, c, r);
   const label = (c) => c.name.replaceAll('_', ' ').replace(/^./, (x) => x.toUpperCase());
 
-  // Search reads every shown column; the chips are the values of the column the view groups by, or failing
-  // that its first column of few values that repeat: one whose rows each have their own, like an id from
-  // another service, filters nothing. Sort is by any shown column.
+  // Search reads every shown column; the chips are the values of the column the view groups by, unless it is a
+  // date, place or number, or failing that its first column of few values that repeat: one whose rows each have
+  // their own, like an id from another service, filters nothing. Sort is by any shown column.
   let query = $state('');
   let filter = $state(null);
   let sort = $state('');
@@ -50,7 +50,7 @@
       const n = new Set(v).size;
       return n > 1 && n <= 8 && n < v.length;
     };
-    const by = shown.find((c) => c.name === view?.by && c.type !== 'date' && c.type !== 'place');
+    const by = shown.find((c) => c.name === view?.by && !['date', 'place', 'number', 'money'].includes(c.type));
     return by ?? shown.find((c) => (c.type === 'choice' || c.type === 'text') && few(c));
   });
   const values = $derived(facet ? [...new Set(all.map((r) => text(facet, r)).filter(Boolean))].sort() : []);

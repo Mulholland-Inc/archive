@@ -1,7 +1,7 @@
 <script>
   import Table from '../components/Table.svelte';
   import { fill } from './fill.js';
-  import { label, money, number, day } from './format.js';
+  import { label, money, number, day, steps } from './format.js';
 
   // A chart: for each value of the view's by column, the total of its first money column, or failing that its
   // first number, or else how many rows have it, as columns over a baseline, with the same totals in a table
@@ -53,14 +53,8 @@
     return kept.map(([k, value]) => ({ key: k, short: k, long: k, value }));
   });
 
-  // The axis runs from 0 to a round number past the largest total, in four or five steps of 1, 2, 2.5 or 5.
-  const ticks = $derived.by(() => {
-    const max = Math.max(0, ...bars.map((b) => b.value));
-    if (!max) return [0, 1];
-    const p = 10 ** Math.floor(Math.log10(max / 4));
-    const step = [1, 2, 2.5, 5, 10].map((m) => m * p).find((s) => s >= max / 4);
-    return Array.from({ length: Math.ceil(max / step) + 1 }, (_, i) => i * step);
-  });
+  // The axis runs from 0 to a round number past the largest total.
+  const ticks = $derived(steps(0, Math.max(0, ...bars.map((b) => b.value))));
   const top = $derived(ticks.at(-1));
 
   let width = $state(0);

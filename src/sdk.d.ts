@@ -112,7 +112,13 @@
  *   is a date, else per value, largest first; a timeline is a bar for each row from its by date, which must be
  *   a date, to the first date column after it in the view, for projects; a tree nests each row under the row
  *   its by column links to, a uuid referencing the view's own table, for an org chart, a family, folders or
- *   categories, with rows whose by is null as its roots. Any other key is an error.
+ *   categories, with rows whose by is null as its roots; a stack is a building's stacking plan, a band for each
+ *   floor of its by number, highest on top, each row a box on it as wide as its share of the floor's first
+ *   other number (its square feet), shaded by its first column of few repeating values such as a status; a
+ *   scatter is a dot for each row, across by its by number or money and up by its first other money or number,
+ *   for comparable sales of price against size; a year is a square for each day of the last twelve months,
+ *   darker the more rows fall on its by date that day, for habits, workouts, journal entries and deals
+ *   closed. Any other key is an error.
  * - archive.revisions() lists the migrations saved before this run, newest first, with who ran them and their
  *   statements. To undo one, migrate the reverse.
  *
@@ -426,7 +432,8 @@ interface Table {
     /** The comment without its key: value lines. */
     description: string;
     /** A view's layout: and by: lines. */
-    layout?: "table" | "board" | "calendar" | "list" | "map" | "gallery" | "chart" | "timeline" | "tree";
+    layout?: "table" | "board" | "calendar" | "list" | "map" | "gallery" | "chart" | "timeline" | "tree" | "stack"
+        | "scatter" | "year";
     by?: string;
     columns: {
         name: string;

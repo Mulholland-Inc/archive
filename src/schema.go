@@ -211,7 +211,7 @@ func catalogComment(s string) (string, [][2]string) {
 	return strings.TrimSpace(strings.Join(lines, "\n")), meta
 }
 
-var catalogLayouts = []string{"table", "board", "calendar", "list", "map", "gallery", "chart", "timeline", "tree"}
+var catalogLayouts = []string{"table", "board", "calendar", "list", "map", "gallery", "chart", "timeline", "tree", "stack", "scatter", "year"}
 
 var (
 	catalogSystem   = map[string]bool{"id": true, "created_at": true, "updated_at": true}
@@ -376,21 +376,30 @@ func (c *Catalog) checkMeta(t *Table, bad func(path, msg string)) {
 		}
 		seen[k] = true
 	}
-	if (t.Layout == "board" || t.Layout == "calendar" || t.Layout == "map" || t.Layout == "chart" || t.Layout == "timeline" || t.Layout == "tree") && t.By == "" {
+	if slices.Contains([]string{"board", "calendar", "map", "chart", "timeline", "tree", "stack", "scatter", "year"}, t.Layout) && t.By == "" {
 		bad(t.Name+".by", "a "+t.Layout+" view needs a by: <column> line in "+what)
 	}
 	if c := t.col(t.By); t.Layout == "map" && c != nil && (c.Schema != "archive" || c.Type != "geo") {
 		bad(t.Name+".by", "a map view's by: is the archive.geo column it places rows at, not "+strconv.Quote(t.By))
 	}
-	if col := t.col(t.By); t.Layout == "timeline" && col != nil {
+	dates := map[string]string{"timeline": "the date column its rows start on", "year": "the date column it counts its rows on"}
+	if col := t.col(t.By); dates[t.Layout] != "" && col != nil {
 		s := c.sem(col.Schema, col.Type)
 		dated := (col.Schema == "pg_catalog" && col.Type == "timestamp") || (s != nil && (s.Parse == "date" || s.Parse == "instant" || s.Parse == "timestamp"))
 		if col.List || !dated {
-			bad(t.Name+".by", "a timeline view's by: is the date column its rows start on, not "+strconv.Quote(t.By))
+			bad(t.Name+".by", "a "+t.Layout+" view's by: is "+dates[t.Layout]+", not "+strconv.Quote(t.By))
 		}
 	}
 	if col := t.col(t.By); t.Layout == "tree" && col != nil && (col.Schema != "pg_catalog" || col.Type != "uuid" || col.List) {
 		bad(t.Name+".by", "a tree view's by: is the uuid column that links each row to the row it is under, not "+strconv.Quote(t.By))
+	}
+	numbers := map[string]string{"stack": "the number column of each row's floor", "scatter": "the number or archive.money column its dots run across by"}
+	if col := t.col(t.By); numbers[t.Layout] != "" && col != nil {
+		number := col.Schema == "pg_catalog" && c.kind(col.Schema, col.Type) == "number"
+		money := t.Layout == "scatter" && col.Schema == "archive" && col.Type == "money"
+		if col.List || !number && !money {
+			bad(t.Name+".by", "a "+t.Layout+" view's by: is "+numbers[t.Layout]+", not "+strconv.Quote(t.By))
+		}
 	}
 }
 
