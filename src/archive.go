@@ -607,17 +607,7 @@ var mainSQLFile string
 
 var mainSchema, _, _ = strings.Cut(mainSQLFile, "\n-- name:")
 
-// mainNames are the tables and types of main.sql, by name in the archive schema. No workspace has them: a
-// workspace made before they moved to the main database drops its empty copies of them (storeShed).
-var mainNames = func() map[string]bool {
-	out := map[string]bool{}
-	for _, m := range regexp.MustCompile(`(?m)^CREATE (TABLE|TYPE) archive\.("?)(\w+)("?)`).FindAllStringSubmatch(mainSchema, -1) {
-		out[m[3]] = true
-	}
-	return out
-}()
-
-const storeRoles = `DO $$ DECLARE r name; BEGIN
+const storeRoles = `DO $$ BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_authenticator') THEN
         CREATE ROLE "{p}_authenticator" LOGIN NOINHERIT;
     END IF;
@@ -640,11 +630,6 @@ const storeRoles = `DO $$ DECLARE r name; BEGIN
     IF NOT has_database_privilege('{p}_viewer', current_database(), 'CONNECT') THEN
         EXECUTE format('GRANT CONNECT ON DATABASE %I TO "{p}_viewer"', current_database());
     END IF;
-    -- Each request logs in as its own role (pgStore.As); the authenticator becomes none, so nothing it runs can.
-    FOR r IN SELECT g.rolname FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles g ON g.oid = m.roleid
-        WHERE m.member = '"{p}_authenticator"'::regrole LOOP
-        EXECUTE format('REVOKE %I FROM "{p}_authenticator"', r);
-    END LOOP;
 END $$`
 
 const storeLock = 7271

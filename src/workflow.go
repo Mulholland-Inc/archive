@@ -42,7 +42,6 @@ const (
 
 var (
 	workflowNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}(\.ts)?$`)
-	workflowOnRe   = regexp.MustCompile(`(?i)^//\s*on\s*:(.*)$`)
 	workflowLast   = uuid.Max
 	workflowEvents = []string{"created", "updated"}
 )
@@ -270,91 +269,11 @@ func (a *Archive) workflowParseOn(ctx context.Context, v any) (*workflowOn, []Fi
 
 // workflowOf is the on of a saved workflow, checked against the tables there are now.
 func (a *Archive) workflowOf(ctx context.Context, w generated.ArchiveWorkflow) (*workflowOn, error) {
-	b := w.On
-	if len(b) == 0 && w.Trigger != "" {
-		b = workflowLegacyOn(w.Trigger)
-	}
-	o, errs := a.workflowParseOn(ctx, json.RawMessage(b))
+	o, errs := a.workflowParseOn(ctx, json.RawMessage(w.On))
 	if len(errs) > 0 {
 		return nil, (&ValidationError{Type: "workflow", Errors: errs}).err()
 	}
 	return o, nil
-}
-
-// workflowLegacyOn is the on of a // on: line from before workflows were rows: cron <spec> with an optional
-// CRON_TZ= or TZ=, webhook, or a table name.
-func workflowLegacyOn(trigger string) []byte {
-	word, rest, _ := strings.Cut(strings.Join(strings.Fields(trigger), " "), " ")
-	var o workflowOn
-	switch strings.ToLower(word) {
-	case "":
-		return nil
-	case "webhook":
-		o.Webhook = true
-	case "cron":
-		o.Cron = rest
-		if z, spec, ok := strings.Cut(rest, " "); ok && (strings.HasPrefix(z, "CRON_TZ=") || strings.HasPrefix(z, "TZ=")) {
-			_, o.TZ, _ = strings.Cut(z, "=")
-			o.Cron = spec
-		}
-	default:
-		o.Table, o.Events = strings.TrimPrefix(word, "public."), workflowEvents
-		if rest != "" {
-			o.Table += " " + rest
-		}
-	}
-	b, _ := json.Marshal(o)
-	return b
-}
-
-// workflowStrip takes a // on: first line off a source from before workflows were rows.
-func workflowStrip(src string) string {
-	first, rest, _ := strings.Cut(src, "\n")
-	if workflowOnRe.MatchString(strings.TrimSpace(strings.TrimPrefix(first, "\ufeff"))) {
-		return rest
-	}
-	return src
-}
-
-// workflowUpgrade gives the workflows saved before they were rows what a row has: on, parsed from the
-// // on: line their source began with, which it takes off, and the member they belong to. It keeps their
-// names, webhook secrets, cursors and next times as they are, and runs each time the workspace opens, so a
-// workflow saved by an older instance in the meantime is upgraded too.
-func (a *Archive) workflowUpgrade(ctx context.Context) error {
-	ctx = context.WithValue(context.WithoutCancel(ctx), storeTxKey{}, nil)
-	return a.st.System(ctx, func(ctx context.Context) error {
-		q := a.st.db(ctx)
-		old, err := q.OldWorkflows(ctx)
-		if err != nil || len(old) == 0 {
-			return err
-		}
-		members := map[uuid.UUID]*uuid.UUID{}
-		for _, w := range old {
-			p := generated.UpgradeWorkflowParams{ID: w.ID, Member: w.Member, Source: w.Source, OnJson: w.On, Trigger: w.Trigger}
-			if len(w.On) == 0 && w.Trigger != "" {
-				p.OnJson, p.Source = workflowLegacyOn(w.Trigger), workflowStrip(w.Source)
-				var o workflowOn
-				json.Unmarshal(p.OnJson, &o)
-				p.Trigger = o.trigger()
-			}
-			if p.Member == nil {
-				m, ok := members[w.UserID]
-				if !ok {
-					if u, err := userBy(ctx, a.hub, (*generated.Queries).UserByID, w.UserID); err == nil {
-						if row, err := q.MemberByEmail(ctx, u.Email); err == nil {
-							m = &row.ID
-						}
-					}
-					members[w.UserID] = m
-				}
-				p.Member = m
-			}
-			if err := q.UpgradeWorkflow(ctx, p); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
 }
 
 // workflowSave is the write hook of archive.create and archive.update on workflow: it takes name, source, on
@@ -728,7 +647,7 @@ func (a *Archive) workflowTable(ctx context.Context, w generated.ArchiveWorkflow
 		now := time.Now()
 		return a.sys(ctx, func(ctx context.Context) error { return a.st.db(ctx).SetWorkflowNext(ctx, w.ID, w.Trigger, &now) })
 	}
-	// rows is both, in order, as workflows from before created and updated read them.
+	// rows is both, in order.
 	created, updated, all := []map[string]any{}, []map[string]any{}, []map[string]any{}
 	for _, f := range rows {
 		if f.created {
@@ -753,8 +672,8 @@ func (a *Archive) workflowTable(ctx context.Context, w generated.ArchiveWorkflow
 
 func (a *Archive) workflowHook(rw http.ResponseWriter, r *http.Request) {
 	var w generated.ArchiveWorkflow
-	// A URL is the hook and its signature. One from before URLs were signed, the hook alone, still runs a
-	// workflow no group sees, whose hook no one else reads.
+	// A URL is the hook and its signature, or the hook alone for a workflow no group sees, whose hook no one
+	// else reads.
 	hook, sig, signed := strings.Cut(r.PathValue("token"), ".")
 	err := a.sys(r.Context(), func(ctx context.Context) (err error) {
 		w, err = a.st.db(ctx).WorkflowByHook(ctx, hook)

@@ -324,21 +324,6 @@ func (h *Hub) liveMembers(ctx context.Context, ws uuid.UUID) func() {
 	return func() { h.liveUser(ctx, ids...) }
 }
 
-// liveTables gives tables made before archive.moved existed its trigger, once per workspace, when it opens.
-func (a *Archive) liveTables(ctx context.Context) error {
-	return a.st.System(ctx, func(ctx context.Context) error {
-		q := a.st.db(ctx)
-		if err := q.AdvisoryXactLock(ctx, storeLock); err != nil {
-			return err
-		}
-		tx := a.st.Q(ctx)
-		return schemaMoved(ctx, tx, func(st string) error {
-			_, err := tx.Exec(ctx, st)
-			return err
-		})
-	})
-}
-
 // The sockets archive serve holds itself, when no edge holds them. The frames are the Durable Object's:
 // {"event":"ready","workspace":...} once, then {"event":"change","changes":[{table, id}]} per send; a client
 // may send "ping" and is answered "pong". A user who leaves the workspace has their sockets closed.

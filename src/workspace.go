@@ -204,10 +204,8 @@ func (h *Hub) urls(port string) error {
 // start at once do it one at a time.
 const mainLock = 7274
 
-// migrate brings the main database to main.sql at startup, before any workspace opens. An Archive from before
-// the main database held only what every workspace shares still has its first workspace there, which moves
-// out to a database of its own first (moveFirst). A new install, with no one and no workspace yet, starts with
-// one workspace, whose first member becomes the admin.
+// migrate brings the main database to main.sql at startup, before any workspace opens. A new install, with no
+// one and no workspace yet, starts with one workspace, whose first member becomes the admin.
 func (h *Hub) migrate(ctx context.Context) error {
 	conn, err := h.main.Acquire(ctx)
 	if err != nil {
@@ -219,12 +217,6 @@ func (h *Hub) migrate(ctx context.Context) error {
 		return err
 	}
 	defer q.AdvisoryUnlock(context.WithoutCancel(ctx), mainLock)
-	if err := h.moveFirst(ctx, conn.Conn()); err != nil {
-		return err
-	}
-	if err := h.moveBack(ctx, conn.Conn()); err != nil {
-		return err
-	}
 	at, err := q.MainRevision(ctx)
 	if err != nil && !storeUndefined(err) {
 		return err
@@ -234,13 +226,7 @@ func (h *Hub) migrate(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("main.sql: %w", err)
 		}
-		// archive.moved said which workspace moved out (moveFirst); what it holds is not kept.
-		if err := pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
-			if _, err := tx.Exec(ctx, "DROP TABLE IF EXISTS archive.moved"); err != nil {
-				return err
-			}
-			return mainMigrate(ctx, tx, want)
-		}); err != nil {
+		if err := pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error { return mainMigrate(ctx, tx, want) }); err != nil {
 			return err
 		}
 	}
@@ -434,7 +420,7 @@ func (a *Archive) afterOpen(ctx context.Context) {
 	err := a.st.System(ctx, func(ctx context.Context) error {
 		return a.st.db(ctx).ResetProcessing(ctx)
 	})
-	err = errors.Join(err, a.objectUpgrade(ctx), a.syncMembers(ctx, false), a.liveTables(ctx), a.workflowUpgrade(ctx), a.connectionUpgrade(ctx))
+	err = errors.Join(err, a.syncMembers(ctx, false))
 	for _, kind := range []string{"workflow", "file", "sync"} {
 		next, nerr := a.nextDue(ctx, kind)
 		if nerr == nil && next != nil {

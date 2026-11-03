@@ -521,21 +521,6 @@ func (a *Archive) SetAccess(ctx context.Context, id uuid.UUID, group string) err
 	})
 }
 
-// connectionUpgrade makes the first connection of each integration from before there were integrations the
-// archive's; any other stays its member's own, as it was.
-func (a *Archive) connectionUpgrade(ctx context.Context) error {
-	var ids []string
-	for _, c := range connect.All() {
-		if c.Integration {
-			ids = append(ids, c.ID)
-		}
-	}
-	return a.sys(ctx, func(ctx context.Context) error {
-		_, err := a.st.db(ctx).UpgradeIntegrations(ctx, ids)
-		return err
-	})
-}
-
 // connectionToken is a fresh access token for the connection id; each call refreshes, so code that uses an
 // account calls connectionAccess, which keeps one while it lasts. It refreshes holding the connection's row,
 // so processes refreshing at once take turns, and each refreshes with the refresh token the one before kept:
