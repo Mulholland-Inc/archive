@@ -1664,7 +1664,6 @@ COMMENT ON TABLE archive.calendar_attendee IS 'Someone invited to an event, and 
 icon: user-check';
 COMMENT ON COLUMN archive.calendar_attendee.event IS 'references calendar_event';
 COMMENT ON COLUMN archive.calendar_attendee.person IS 'references known_person; who, by their address';
-COMMENT ON COLUMN archive.calendar_attendee.name IS 'The name the event gives them';
 COMMENT ON COLUMN archive.calendar_attendee.role IS 'required, optional or resource, like a room';
 COMMENT ON COLUMN archive.calendar_attendee.response IS 'What they answered: accepted, declined, tentative or none';
 COMMENT ON COLUMN archive.calendar_attendee.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
