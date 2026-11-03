@@ -12,6 +12,14 @@ CREATE TABLE archive.main_revision (
     created_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- The first workspace of an Archive from before this database held only what every workspace shares, moved
+-- out to a database of its own (moveFirst), and when. Once it says so, nothing moves or drops that database
+-- again, whatever comes back into this one.
+CREATE TABLE archive.moved (
+    workspace  uuid PRIMARY KEY,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
 -- What a workspace is for, which picks the icons the web app offers it.
 CREATE TYPE archive.workspace_type AS ENUM ('personal', 'family', 'business');
 
