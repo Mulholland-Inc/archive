@@ -211,7 +211,7 @@ func catalogComment(s string) (string, [][2]string) {
 	return strings.TrimSpace(strings.Join(lines, "\n")), meta
 }
 
-var catalogLayouts = []string{"table", "board", "calendar", "list", "map", "gallery", "chart", "timeline"}
+var catalogLayouts = []string{"table", "board", "calendar", "list", "map", "gallery", "chart", "timeline", "tree"}
 
 var (
 	catalogSystem   = map[string]bool{"id": true, "created_at": true, "updated_at": true}
@@ -376,7 +376,7 @@ func (c *Catalog) checkMeta(t *Table, bad func(path, msg string)) {
 		}
 		seen[k] = true
 	}
-	if (t.Layout == "board" || t.Layout == "calendar" || t.Layout == "map" || t.Layout == "chart" || t.Layout == "timeline") && t.By == "" {
+	if (t.Layout == "board" || t.Layout == "calendar" || t.Layout == "map" || t.Layout == "chart" || t.Layout == "timeline" || t.Layout == "tree") && t.By == "" {
 		bad(t.Name+".by", "a "+t.Layout+" view needs a by: <column> line in "+what)
 	}
 	if c := t.col(t.By); t.Layout == "map" && c != nil && (c.Schema != "archive" || c.Type != "geo") {
@@ -388,6 +388,9 @@ func (c *Catalog) checkMeta(t *Table, bad func(path, msg string)) {
 		if col.List || !dated {
 			bad(t.Name+".by", "a timeline view's by: is the date column its rows start on, not "+strconv.Quote(t.By))
 		}
+	}
+	if col := t.col(t.By); t.Layout == "tree" && col != nil && (col.Schema != "pg_catalog" || col.Type != "uuid" || col.List) {
+		bad(t.Name+".by", "a tree view's by: is the uuid column that links each row to the row it is under, not "+strconv.Quote(t.By))
 	}
 }
 
