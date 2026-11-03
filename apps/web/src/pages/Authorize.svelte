@@ -161,12 +161,14 @@
     transition: background-color var(--duration-fast) var(--ease-out);
   }
 
+  /* Picked as a sidebar item is active: a neutral fill, a stronger one when picked. */
   .archive:hover {
-    background: var(--color-fill-subtle);
+    background: var(--color-fill);
   }
 
-  .archive.on {
-    background: var(--color-accent-subtle);
+  .archive.on,
+  .archive.on:hover {
+    background: var(--color-fill-strong);
   }
 
   .archive:has(input:focus-visible) {
@@ -193,8 +195,8 @@
     width: var(--avatar-xs);
     height: var(--avatar-xs);
     border-radius: 50%;
-    color: var(--color-accent-contrast);
-    background: var(--color-accent);
+    color: var(--color-text-inverse);
+    background: var(--color-inverse);
     opacity: 0;
     transition: opacity var(--duration-fast) var(--ease-out);
   }

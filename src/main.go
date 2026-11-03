@@ -742,6 +742,10 @@ func cliServe(ctx context.Context, h *Hub, addr string) error {
 	h.mcpRoutes(own, true)
 	api, mcpOwn := h.cors(mux), mcpCORS(own)
 	hs := &http.Server{Addr: addr, ReadHeaderTimeout: 10 * time.Second, Handler: h.live.after(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Nothing the API serves is for a frame, so no other site can lay sign-in or an MCP client's grant
+		// (/auth/oauth/*) under a decoy; the web app's own pages say the same (apps/web/public/_headers).
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'")
 		if h.mcpHost(r) {
 			mcpOwn.ServeHTTP(w, r)
 		} else {

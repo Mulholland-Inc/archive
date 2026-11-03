@@ -1,4 +1,4 @@
-#pragma frame {"size":[800,640],"center":[0.2,0.75,0.0],"zoom":250,"bounds":[[-1.0,-0.1,-1.4],[1.6,2.0,1.4]]}
+#pragma frame {"size":[800,640],"center":[0.05,0.6,0.1],"zoom":250,"bounds":[[-1.0,-0.1,-1.0],[1.0,1.4,1.4]]}
 
 vec2 handle(vec3 q) {
   vec2 r = M(sdRoundBox(q - vec3(0.0, 0.05, 0.0), vec3(0.12, 0.016, 0.022), 0.012), STEEL);
@@ -70,27 +70,10 @@ vec2 tag(vec3 p) {
   return r;
 }
 
-vec2 bubble(vec3 p) {
-  vec3 b = p - vec3(0.0, 0.42, 0.0);
-  float d2 = sdRect(b.xy, vec2(0.32, 0.2), 0.17);
-  vec2 a = vec2(0.04, -0.1), t = vec2(0.24, -0.35), q = b.xy - a, ta = t - a;
-  float h = clamp(dot(q, ta) / dot(ta, ta), 0.0, 1.0);
-  d2 = smin(d2, length(q - ta * h) - mix(0.08, 0.018, h), 0.04);
-  vec2 r = M(max(d2, abs(b.z) - 0.07), LILAC);
-  vec3 f = vec3(repC(b.x, 0.16, 3.0), abs(b.z) - 0.07, b.y);
-  r = U(r, M(extrude(length(f.xz) - 0.04, f.y - 0.012, 0.012), WHITE + ROUND));
-  return r;
-}
-
 vec2 map(vec3 p) {
   vec2 r = M(1e9, 0.0);
   if (near(p - vec3(0.0, 0.6, 0.0), vec3(0.46, 0.62, 0.45), r.x)) r = U(r, cabinet(p));
   if (near(p - vec3(0.2, 0.88, 0.7), vec3(0.25, 0.25, 0.3), r.x)) r = U(r, lock(p));
   if (near(p - vec3(0.2, 0.58, 0.75), vec3(0.15, 0.25, 0.1), r.x)) r = U(r, tag(p));
-  vec3 bq = rotY(p - vec3(0.5, 1.28, -0.42), -PI * 0.75) / 0.8;
-  if (near(bq - vec3(0.0, 0.42, 0.0), vec3(0.45, 0.45, 0.12), r.x / 0.8)) {
-    vec2 bb = bubble(bq);
-    r = U(r, vec2(bb.x * 0.8, bb.y));
-  }
   return r;
 }
