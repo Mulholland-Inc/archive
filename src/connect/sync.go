@@ -541,8 +541,9 @@ type Row struct {
 	// 3339, lists, and Money. One left out is null.
 	Cols map[string]any
 	// People are its columns that are a known_person, by their email address; Orgs those that are a known_org,
-	// by EIN. Refs are its columns that are another row of the connection, by that row's id there: the column's
-	// table says which table, and <column>_source keeps the id, so it links once that row is there too.
+	// by EIN or web domain. Refs are its columns that are another row of the connection, by that row's id there:
+	// the column's table says which table, and <column>_source keeps the id, so it links once that row is there
+	// too.
 	People, Orgs, Refs map[string]string
 	// Children are the rows of other tables that belong to it, like a message's parties: written again with it,
 	// all of them, each time it is.
@@ -703,6 +704,34 @@ func EIN(s string) string {
 		return ""
 	}
 	return d[:2] + "-" + d[2:]
+}
+
+// domainRe is a domain name as archive.domain has one, with at least one dot.
+var domainRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9\-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9\-]*[a-z0-9])?)+$`)
+
+// Domain is the web domain of s, a domain or a URL like https://www.example.com/about, lowercase and without
+// www., or "" when it has none.
+func Domain(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if i := strings.Index(s, "://"); i >= 0 {
+		s = s[i+3:]
+	}
+	if i := strings.IndexAny(s, "/?#:"); i >= 0 {
+		s = s[:i]
+	}
+	s = strings.TrimSuffix(strings.TrimPrefix(s, "www."), ".")
+	if !domainRe.MatchString(s) {
+		return ""
+	}
+	return s
+}
+
+// org makes column col the organization of the web domain d, when it is one.
+func (r *Row) org(col, d string) *Row {
+	if d = Domain(d); d != "" {
+		r.Orgs[col] = d
+	}
+	return r
 }
 
 // day is s cut to its date, YYYY-MM-DD, or nil when it does not start with one, for a date column.

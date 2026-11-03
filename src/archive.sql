@@ -1589,6 +1589,142 @@ COMMENT ON COLUMN archive.drive_file.source_id IS 'Its id there';
 COMMENT ON COLUMN archive.drive_file.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.drive_file.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
+-- CRM: the companies, contacts and deals of a CRM you connected, like HubSpot. A company is the organization of
+-- its web domain, a contact the person of their email address, so they meet the same people and organizations
+-- in mail, calendars and books.
+CREATE TABLE archive.crm_company (
+    id             uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream         text NOT NULL,
+    source_id      text NOT NULL,
+    access         uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    updated_at     timestamptz NOT NULL DEFAULT now(),
+    name           text NOT NULL DEFAULT '',
+    seen_at        timestamptz NOT NULL DEFAULT now(),
+    title          text,
+    domain         text,
+    org            uuid REFERENCES archive.known_org ON DELETE SET NULL,
+    industry       text,
+    stage          text,
+    phone          text,
+    city           text,
+    state          text,
+    country        text,
+    employees      numeric,
+    revenue        archive.money,
+    description    text,
+    made_at        timestamptz,
+    edited_at      timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX crm_company_org_idx ON archive.crm_company (org);
+COMMENT ON TABLE archive.crm_company IS 'A company of a CRM you connected, like HubSpot. Read only; Archive syncs them
+icon: building';
+COMMENT ON COLUMN archive.crm_company.title IS 'Its name';
+COMMENT ON COLUMN archive.crm_company.domain IS 'Its web domain, like example.com';
+COMMENT ON COLUMN archive.crm_company.org IS 'references known_org; the organization it is, by its domain';
+COMMENT ON COLUMN archive.crm_company.stage IS 'Its lifecycle stage, like lead or customer';
+COMMENT ON COLUMN archive.crm_company.employees IS 'How many people work there, as the CRM says';
+COMMENT ON COLUMN archive.crm_company.revenue IS 'Its annual revenue, as the CRM says';
+COMMENT ON COLUMN archive.crm_company.made_at IS 'When it was added there';
+COMMENT ON COLUMN archive.crm_company.edited_at IS 'When it last changed there';
+COMMENT ON COLUMN archive.crm_company.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.crm_company.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.crm_company.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.crm_company.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.crm_company.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.crm_contact (
+    id             uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream         text NOT NULL,
+    source_id      text NOT NULL,
+    access         uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    updated_at     timestamptz NOT NULL DEFAULT now(),
+    name           text NOT NULL DEFAULT '',
+    seen_at        timestamptz NOT NULL DEFAULT now(),
+    first_name     text,
+    last_name      text,
+    email          archive.email,
+    person         uuid REFERENCES archive.known_person ON DELETE SET NULL,
+    phone          text,
+    job_title      text,
+    company        uuid REFERENCES archive.crm_company ON DELETE SET NULL,
+    company_source text,
+    company_name   text,
+    stage          text,
+    lead_status    text,
+    city           text,
+    state          text,
+    country        text,
+    made_at        timestamptz,
+    edited_at      timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX crm_contact_person_idx ON archive.crm_contact (person);
+CREATE INDEX crm_contact_company_idx ON archive.crm_contact (company);
+COMMENT ON TABLE archive.crm_contact IS 'A contact of a CRM you connected, like HubSpot. Read only; Archive syncs them
+icon: contact';
+COMMENT ON COLUMN archive.crm_contact.person IS 'references known_person; who they are, by their email';
+COMMENT ON COLUMN archive.crm_contact.company IS 'references crm_company; the company they are with';
+COMMENT ON COLUMN archive.crm_contact.company_source IS 'The id there of the company they are with';
+COMMENT ON COLUMN archive.crm_contact.company_name IS 'The company they are with, as they gave it';
+COMMENT ON COLUMN archive.crm_contact.stage IS 'Their lifecycle stage, like lead or customer';
+COMMENT ON COLUMN archive.crm_contact.lead_status IS 'Where they are as a lead, like NEW or IN_PROGRESS';
+COMMENT ON COLUMN archive.crm_contact.made_at IS 'When they were added there';
+COMMENT ON COLUMN archive.crm_contact.edited_at IS 'When they last changed there';
+COMMENT ON COLUMN archive.crm_contact.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.crm_contact.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.crm_contact.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.crm_contact.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.crm_contact.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.crm_deal (
+    id             uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream         text NOT NULL,
+    source_id      text NOT NULL,
+    access         uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    updated_at     timestamptz NOT NULL DEFAULT now(),
+    name           text NOT NULL DEFAULT '',
+    seen_at        timestamptz NOT NULL DEFAULT now(),
+    title          text,
+    amount         archive.money,
+    pipeline       text,
+    stage          text,
+    closed         boolean,
+    won            boolean,
+    close_on       date,
+    company        uuid REFERENCES archive.crm_company ON DELETE SET NULL,
+    company_source text,
+    description    text,
+    made_at        timestamptz,
+    edited_at      timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX crm_deal_company_idx ON archive.crm_deal (company);
+COMMENT ON TABLE archive.crm_deal IS 'A deal of a CRM you connected, like HubSpot: what it is worth, where it is and with which company. Read only; Archive syncs them
+icon: handshake';
+COMMENT ON COLUMN archive.crm_deal.title IS 'Its name';
+COMMENT ON COLUMN archive.crm_deal.amount IS 'What it is worth';
+COMMENT ON COLUMN archive.crm_deal.pipeline IS 'The pipeline it is in, by name';
+COMMENT ON COLUMN archive.crm_deal.stage IS 'Its stage in the pipeline, by name, like Contract sent';
+COMMENT ON COLUMN archive.crm_deal.closed IS 'It is closed, won or lost';
+COMMENT ON COLUMN archive.crm_deal.won IS 'It closed won';
+COMMENT ON COLUMN archive.crm_deal.close_on IS 'When it closed, or is expected to';
+COMMENT ON COLUMN archive.crm_deal.company IS 'references crm_company; the company it is with';
+COMMENT ON COLUMN archive.crm_deal.company_source IS 'The id there of the company it is with';
+COMMENT ON COLUMN archive.crm_deal.made_at IS 'When it was added there';
+COMMENT ON COLUMN archive.crm_deal.edited_at IS 'When it last changed there';
+COMMENT ON COLUMN archive.crm_deal.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.crm_deal.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.crm_deal.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.crm_deal.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.crm_deal.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
 -- Calendars: an event of a calendar you connected, like Google Calendar or Outlook's, a recurring one as its
 -- series and each occurrence that differs from it, and who is invited.
 CREATE TABLE archive.calendar_event (
@@ -1973,6 +2109,9 @@ BEGIN
         WHEN 'payroll_contractor_payment_group' THEN concat_ws(' · ', 'Contractor payments', r->>'check_date')
         WHEN 'payroll_task' THEN r->>'title'
         WHEN 'drive_file' THEN r->>'title'
+        WHEN 'crm_company' THEN coalesce(nullif(btrim(r->>'title'), ''), r->>'domain')
+        WHEN 'crm_contact' THEN coalesce(nullif(btrim(concat_ws(' ', nullif(r->>'first_name', ''), nullif(r->>'last_name', ''))), ''), r->>'email')
+        WHEN 'crm_deal' THEN r->>'title'
         WHEN 'calendar_event' THEN coalesce(nullif(btrim(r->>'title'), ''), 'Busy')
         WHEN 'calendar_attendee' THEN coalesce(own, (SELECT p.email FROM archive.known_person p WHERE p.id = (r->>'person')::uuid))
         WHEN 'ledger_account' THEN coalesce(nullif(r->>'full_name', ''), r->>'title')
@@ -2021,6 +2160,9 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_contractor
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_contractor_payment_group FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_task FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.drive_file FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.crm_company FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.crm_contact FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.crm_deal FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.calendar_event FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.calendar_attendee FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_account FOR EACH ROW EXECUTE FUNCTION archive.object_name();
@@ -2109,6 +2251,9 @@ GRANT SELECT ON archive.payroll_contractor_payment TO "{p}_viewer";
 GRANT SELECT ON archive.payroll_contractor_payment_group TO "{p}_viewer";
 GRANT SELECT ON archive.payroll_task TO "{p}_viewer";
 GRANT SELECT ON archive.drive_file TO "{p}_viewer";
+GRANT SELECT ON archive.crm_company TO "{p}_viewer";
+GRANT SELECT ON archive.crm_contact TO "{p}_viewer";
+GRANT SELECT ON archive.crm_deal TO "{p}_viewer";
 GRANT SELECT ON archive.calendar_event TO "{p}_viewer";
 GRANT SELECT ON archive.calendar_attendee TO "{p}_viewer";
 GRANT SELECT ON archive.ledger_account TO "{p}_viewer";
@@ -2203,6 +2348,12 @@ ALTER TABLE archive.payroll_task ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.payroll_task FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_task.connection));
 ALTER TABLE archive.drive_file ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.drive_file FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = drive_file.connection));
+ALTER TABLE archive.crm_company ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.crm_company FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = crm_company.connection));
+ALTER TABLE archive.crm_contact ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.crm_contact FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = crm_contact.connection));
+ALTER TABLE archive.crm_deal ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.crm_deal FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = crm_deal.connection));
 ALTER TABLE archive.calendar_event ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.calendar_event FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = calendar_event.connection));
 ALTER TABLE archive.calendar_attendee ENABLE ROW LEVEL SECURITY;
@@ -2224,9 +2375,11 @@ CREATE POLICY seen ON archive.known_person FOR SELECT USING (EXISTS (SELECT FROM
     OR EXISTS (SELECT FROM archive.drive_file f WHERE f.owner = known_person.id OR f.editor = known_person.id)
     OR EXISTS (SELECT FROM archive.ledger_contact l WHERE l.person = known_person.id)
     OR EXISTS (SELECT FROM archive.calendar_event e WHERE e.organizer = known_person.id)
-    OR EXISTS (SELECT FROM archive.calendar_attendee a WHERE a.person = known_person.id));
+    OR EXISTS (SELECT FROM archive.calendar_attendee a WHERE a.person = known_person.id)
+    OR EXISTS (SELECT FROM archive.crm_contact x WHERE x.person = known_person.id));
 ALTER TABLE archive.known_org ENABLE ROW LEVEL SECURITY;
-CREATE POLICY seen ON archive.known_org FOR SELECT USING (EXISTS (SELECT FROM archive.payroll_company c WHERE c.org = known_org.id));
+CREATE POLICY seen ON archive.known_org FOR SELECT USING (EXISTS (SELECT FROM archive.payroll_company c WHERE c.org = known_org.id)
+    OR EXISTS (SELECT FROM archive.crm_company x WHERE x.org = known_org.id));
 
 -- name: HasRole :one
 SELECT pg_has_role(sqlc.arg(member)::name, rolname, 'USAGE') FROM pg_catalog.pg_roles WHERE rolname = sqlc.arg(grp)::name;
@@ -2442,7 +2595,7 @@ SELECT jsonb_build_object(
             'archive.payroll_contractor_payment_group'::regclass, 'archive.payroll_task'::regclass, 'archive.drive_file'::regclass,
             'archive.ledger_account'::regclass, 'archive.ledger_contact'::regclass, 'archive.ledger_item'::regclass,
             'archive.ledger_entry'::regclass, 'archive.ledger_line'::regclass, 'archive.calendar_event'::regclass,
-            'archive.calendar_attendee'::regclass)
+            'archive.calendar_attendee'::regclass, 'archive.crm_company'::regclass, 'archive.crm_contact'::regclass, 'archive.crm_deal'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -2547,7 +2700,10 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.ledger_contact x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.ledger_item x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.ledger_entry x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.calendar_event x WHERE x.connection = c.id))::bigint AS items,
+        + (SELECT count(*) FROM archive.calendar_event x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.crm_company x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.crm_contact x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.crm_deal x WHERE x.connection = c.id))::bigint AS items,
     c.integration, coalesce(c.access::text, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
 FROM archive.connection c WHERE c.member = $1 AND NOT c.integration OR c.integration ORDER BY c.provider, c.account, c.id;
 
@@ -2634,8 +2790,10 @@ WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM arch
     AND NOT EXISTS (SELECT FROM archive.drive_file x WHERE x.owner = k.id OR x.editor = k.id)
     AND NOT EXISTS (SELECT FROM archive.ledger_contact x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.calendar_event x WHERE x.organizer = k.id)
-    AND NOT EXISTS (SELECT FROM archive.calendar_attendee x WHERE x.person = k.id))
-DELETE FROM archive.known_org o WHERE NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.org = o.id);
+    AND NOT EXISTS (SELECT FROM archive.calendar_attendee x WHERE x.person = k.id)
+    AND NOT EXISTS (SELECT FROM archive.crm_contact x WHERE x.person = k.id))
+DELETE FROM archive.known_org o WHERE NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.org = o.id)
+    AND NOT EXISTS (SELECT FROM archive.crm_company x WHERE x.org = o.id);
 
 -- The people of emails, each added unless there is one.
 -- name: KnownPeople :many
@@ -2650,3 +2808,10 @@ WITH added AS (INSERT INTO archive.known_org (ein) SELECT DISTINCT e FROM unnest
     RETURNING id, ein)
 SELECT a.id, a.ein::text AS ein FROM added a
 UNION ALL SELECT o.id, o.ein::text FROM archive.known_org o WHERE o.ein = ANY(sqlc.arg(eins)::text[]);
+
+-- The organizations of domains, each added unless there is one.
+-- name: KnownDomains :many
+WITH added AS (INSERT INTO archive.known_org (domain) SELECT DISTINCT d FROM unnest(sqlc.arg(domains)::text[]) d ORDER BY d ON CONFLICT (domain) DO NOTHING
+    RETURNING id, domain)
+SELECT a.id, a.domain::text AS domain FROM added a
+UNION ALL SELECT o.id, o.domain::text FROM archive.known_org o WHERE o.domain = ANY(sqlc.arg(domains)::text[]);

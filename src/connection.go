@@ -1134,6 +1134,9 @@ var syncSchema = map[string]syncTable{
 	"drive_file":                       {links: map[string]string{"folder": "drive_file"}},
 	"calendar_event":                   {links: map[string]string{"series": "calendar_event"}},
 	"calendar_attendee":                {parent: "calendar_event", of: "event"},
+	"crm_company":                      {},
+	"crm_contact":                      {links: map[string]string{"company": "crm_company"}},
+	"crm_deal":                         {links: map[string]string{"company": "crm_company"}},
 	"ledger_account":                   {links: map[string]string{"parent": "ledger_account"}},
 	"ledger_contact":                   {},
 	"ledger_item":                      {links: map[string]string{"income_account": "ledger_account", "expense_account": "ledger_account"}},
@@ -1290,13 +1293,20 @@ func (w *syncDB) object(table string, row *connect.Row, people, orgs map[string]
 	return o
 }
 
-// known are the people and organizations rows name, by address and EIN, each added unless there is one.
+// known are the people and organizations rows name, by address, and by EIN or web domain, each added unless
+// there is one. An EIN never has a dot, and a domain always does.
 func (w *syncDB) known(ctx context.Context, rows []*connect.Row) (map[string]uuid.UUID, map[string]uuid.UUID, error) {
-	var emails, eins []string
+	var emails, eins, domains []string
 	for _, r := range rows {
 		for _, x := range append([]connect.Row{*r}, children(r)...) {
 			emails = append(emails, slices.Collect(maps.Values(x.People))...)
-			eins = append(eins, slices.Collect(maps.Values(x.Orgs))...)
+			for _, k := range x.Orgs {
+				if strings.Contains(k, ".") {
+					domains = append(domains, k)
+				} else {
+					eins = append(eins, k)
+				}
+			}
 		}
 	}
 	people, orgs := map[string]uuid.UUID{}, map[string]uuid.UUID{}
@@ -1316,6 +1326,15 @@ func (w *syncDB) known(ctx context.Context, rows []*connect.Row) (map[string]uui
 		}
 		for _, o := range got {
 			orgs[o.Ein] = o.ID
+		}
+	}
+	if len(domains) > 0 {
+		got, err := w.q.KnownDomains(ctx, domains)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, o := range got {
+			orgs[o.Domain] = o.ID
 		}
 	}
 	return people, orgs, nil

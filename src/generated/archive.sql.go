@@ -196,7 +196,7 @@ SELECT jsonb_build_object(
             'archive.payroll_contractor_payment_group'::regclass, 'archive.payroll_task'::regclass, 'archive.drive_file'::regclass,
             'archive.ledger_account'::regclass, 'archive.ledger_contact'::regclass, 'archive.ledger_item'::regclass,
             'archive.ledger_entry'::regclass, 'archive.ledger_line'::regclass, 'archive.calendar_event'::regclass,
-            'archive.calendar_attendee'::regclass)
+            'archive.calendar_attendee'::regclass, 'archive.crm_company'::regclass, 'archive.crm_contact'::regclass, 'archive.crm_deal'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -468,7 +468,10 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.ledger_contact x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.ledger_item x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.ledger_entry x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.calendar_event x WHERE x.connection = c.id))::bigint AS items,
+        + (SELECT count(*) FROM archive.calendar_event x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.crm_company x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.crm_contact x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.crm_deal x WHERE x.connection = c.id))::bigint AS items,
     c.integration, coalesce(c.access::text, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
 FROM archive.connection c WHERE c.member = $1 AND NOT c.integration OR c.integration ORDER BY c.provider, c.account, c.id
 `
@@ -734,8 +737,10 @@ WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM arch
     AND NOT EXISTS (SELECT FROM archive.drive_file x WHERE x.owner = k.id OR x.editor = k.id)
     AND NOT EXISTS (SELECT FROM archive.ledger_contact x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.calendar_event x WHERE x.organizer = k.id)
-    AND NOT EXISTS (SELECT FROM archive.calendar_attendee x WHERE x.person = k.id))
+    AND NOT EXISTS (SELECT FROM archive.calendar_attendee x WHERE x.person = k.id)
+    AND NOT EXISTS (SELECT FROM archive.crm_contact x WHERE x.person = k.id))
 DELETE FROM archive.known_org o WHERE NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.org = o.id)
+    AND NOT EXISTS (SELECT FROM archive.crm_company x WHERE x.org = o.id)
 `
 
 // People nothing names any more go, and organizations too.
@@ -1121,6 +1126,39 @@ func (q *Queries) IntegrationFor(ctx context.Context, provider string) (Integrat
 	var i IntegrationForRow
 	err := row.Scan(&i.ID, &i.Account)
 	return i, err
+}
+
+const knownDomains = `-- name: KnownDomains :many
+WITH added AS (INSERT INTO archive.known_org (domain) SELECT DISTINCT d FROM unnest($1::text[]) d ORDER BY d ON CONFLICT (domain) DO NOTHING
+    RETURNING id, domain)
+SELECT a.id, a.domain::text AS domain FROM added a
+UNION ALL SELECT o.id, o.domain::text FROM archive.known_org o WHERE o.domain = ANY($1::text[])
+`
+
+type KnownDomainsRow struct {
+	ID     uuid.UUID
+	Domain string
+}
+
+// The organizations of domains, each added unless there is one.
+func (q *Queries) KnownDomains(ctx context.Context, domains []string) ([]KnownDomainsRow, error) {
+	rows, err := q.db.Query(ctx, knownDomains, domains)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []KnownDomainsRow
+	for rows.Next() {
+		var i KnownDomainsRow
+		if err := rows.Scan(&i.ID, &i.Domain); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const knownOrgs = `-- name: KnownOrgs :many
