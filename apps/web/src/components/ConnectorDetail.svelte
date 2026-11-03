@@ -21,7 +21,7 @@
     <Stack direction="row" gap="3" align="center">
       <ConnectorIcon id={connector.id} size="lg" />
       <Stack gap="1">
-        <Text weight="medium">{connector.category}</Text>
+        <Text weight="medium">{connector.name}</Text>
         {#if connector.connected}<StatusBadge status="connected" />{:else}<Badge>Not connected</Badge>{/if}
       </Stack>
     </Stack>
