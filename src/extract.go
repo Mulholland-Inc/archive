@@ -22,10 +22,18 @@ var officeMIME = map[string]string{
 	"application/vnd.ms-powerpoint.presentation.macroenabled.12":                "pptm",
 }
 
+// byExt are the types mediaText reads, by the extension of a file whose type is not given.
+var byExt = map[string]string{".pdf": "application/pdf", ".txt": "text/plain", ".csv": "text/csv", ".md": "text/markdown",
+	".html": "text/html", ".htm": "text/html", ".json": "application/json"}
+
 // mediaText is the text of b, a file named name of media type mime: "" for a kind it has no text of, or one
 // it cannot read.
 func mediaText(name, mime string, b []byte) string {
 	mime = strings.ToLower(mime)
+	// Mail often names an attachment's type only generally: its name says what it is.
+	if mime == "" || mime == "application/octet-stream" {
+		mime = byExt[strings.ToLower(path.Ext(name))]
+	}
 	top, _, _ := strings.Cut(mime, "/")
 	if ext, ok := officeMIME[mime]; ok {
 		return officeText(b, "file."+ext)

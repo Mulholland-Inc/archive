@@ -17,7 +17,7 @@ import (
 // <API>/connect/gcal/callback, and its consent screen asks for calendar.readonly, a sensitive scope, not a
 // restricted one like Gmail's, so Google verifies it without a security assessment.
 //
-// It syncs every event of each calendar the account owns or can edit into calendar_event, the past and the
+// It syncs every event of each calendar on the account's list, shared and hidden ones too, into calendar_event, the past and the
 // future, a series as one event with its rule and each occurrence that differs from it as another: listed whole
 // the first time, and then each calendar's sync token, which says what changed, deleted too. Holidays and the
 // birthdays of contacts are left out. A calendar it watches pushes, through a channel of its own.
@@ -77,7 +77,7 @@ func init() {
 		},
 		Push: gcalPush,
 		Streams: []*Stream{{Name: "events", Gap: time.Second, Pull: gcalEvents, Table: "calendar_event", Rows: gcalRows,
-			Doc: "Every event of each calendar you own or can edit, past and future, by <calendar id>/<event id>: a series as one event with " +
+			Doc: "Every event of each calendar on your list, shared, subscribed and hidden ones too, past and future, by <calendar id>/<event id>: a series as one event with " +
 				"its rule, and each occurrence that differs from it as another, with its attendees and their answers and its description, cut " +
 				"at 64 KB. Listed whole the first time, 250 a page and a calendar at a time, and then each calendar's changes since; a calendar " +
 				"gone, or a sync token Google no longer keeps, lists them all again."}},
@@ -102,11 +102,11 @@ type gcalCursor struct {
 	Listing bool      `json:"l,omitempty"`
 }
 
-// gcalCalendars are the calendars of the account's list it owns or can edit, but holidays and the birthdays of
-// contacts, which are Google's.
+// gcalCalendars are every calendar of the account's list, those it only reads and those it hid too, but holidays
+// and the birthdays of contacts, which are Google's.
 func gcalCalendars(c *Client) ([]gcalCal, error) {
 	var out []gcalCal
-	q := url.Values{"maxResults": {"250"}, "minAccessRole": {"writer"}, "fields": {"nextPageToken,items(id,summary,summaryOverride)"}}
+	q := url.Values{"maxResults": {"250"}, "showHidden": {"true"}, "fields": {"nextPageToken,items(id,summary,summaryOverride)"}}
 	for {
 		var list struct {
 			Items []struct {

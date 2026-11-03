@@ -65,7 +65,8 @@ func init() {
 		},
 		Streams: []*Stream{
 			{Name: "campaigns", Gap: time.Second, Pull: metaCampaigns, Table: "marketing_campaign", Rows: metaCampaignRows,
-				Doc: "Every campaign of the ad account, deleted ones aside, with its name, objective, status and when it runs: listed whole each sync."},
+				Doc: "Every campaign of the ad account, with its name, objective, status and when it runs: listed each sync; one archived or " +
+					"deleted there, which Meta stops listing, is kept, as its days of results name it."},
 			{Name: "daily", Gap: time.Second, Pull: metaDaily, Table: "ad_metric", Rows: metaDailyRows,
 				Doc: "Each campaign's results of each day, by <campaign id>/<day>: spend, impressions, reach, clicks, and the purchases, their " +
 					"value and the leads Meta credits it with. Three years of days the first time, a month at a time, and then the last 28 days " +
@@ -75,12 +76,25 @@ func init() {
 }
 
 // metaAPI is the version of Meta's Graph API the connector reads.
-const metaAPI = "https://graph.facebook.com/v21.0"
+const metaAPI = "https://graph.facebook.com/v23.0"
 
 // metaAccount is the ad account the keys name, as act_<id>.
 func metaAccount(c *Client) string {
 	id := strings.TrimPrefix(strings.TrimSpace(c.Key("account")), "act_")
 	return metaAPI + "/act_" + url.PathEscape(id)
+}
+
+// metaNext is a Graph list's next page without the access token Graph writes into it, which a cursor would
+// keep in the clear; the client signs each request with it again.
+func metaNext(u string) string {
+	p, err := url.Parse(u)
+	if u == "" || err != nil {
+		return ""
+	}
+	q := p.Query()
+	q.Del("access_token")
+	p.RawQuery = q.Encode()
+	return p.String()
 }
 
 // metaPage is a page of a Graph list.
@@ -103,7 +117,10 @@ func metaCampaigns(c *Client, cursor string) (*Page, error) {
 	if err := c.Get(u, &res); err != nil {
 		return nil, err
 	}
-	page := &Page{Full: true, More: res.Paging.Next != "", Cursor: res.Paging.Next}
+	// Campaigns archived or deleted there are no longer listed: a listing keeps the rows it does not see, as
+	// their days of results still name them.
+	next := metaNext(res.Paging.Next)
+	page := &Page{More: next != "", Cursor: next}
 	for _, m := range res.Data {
 		page.Records = append(page.Records, Record{ID: str(m, "id"), Data: m, Updated: stamp(str(m, "updated_time"))})
 	}
@@ -156,7 +173,7 @@ func metaDaily(c *Client, cursor string) (*Page, error) {
 	}
 	switch {
 	case res.Paging.Next != "":
-		cur.Next = res.Paging.Next
+		cur.Next = metaNext(res.Paging.Next)
 	case to.Before(today):
 		cur = metaCursor{Done: cur.Done, From: to.AddDate(0, 0, 1).Format(time.DateOnly)}
 	default:

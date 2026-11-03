@@ -350,11 +350,15 @@ func outlookRows(m map[string]any) *Row {
 }
 
 // A graphWalk is a stream over Microsoft Graph's deltas, which Graph keeps per part, not per account: per mail
-// folder, and per drive. A sync lists the parts again, keeps the delta link each ended at last time, and reads
-// each part's delta from there, a page at a time, then the next part's. The first walk reads every part
-// whole, as a full listing; so does one after a part has gone, as what it held is gone from the walk, and
-// one after Graph answers 410 Gone, a delta it no longer keeps. A part that is new lists itself whole as its
-// delta, and needs nothing else.
+// folder, per drive and per channel. A sync lists the parts again, keeps the delta link each ended at last time,
+// and reads each part's delta from there, a page at a time, then the next part's. The first walk reads every part
+// whole, as a full listing, and so does one after Graph answers 410 Gone, or 400 for a sync state it no longer
+// keeps. A part that is new lists itself whole as its delta, and needs nothing else.
+//
+// A part is gone only when two walks in a row miss it, as a site search or a team's channels can leave one out
+// now and then: then the walk after reads every part whole, which deletes what was in it. A walk that finds no
+// parts where the one before found some is an error, not an empty account. A part Graph refuses, 403 or 404, like
+// a channel shared from another team, is skipped this walk, its delta kept.
 type graphWalk struct {
 	// parts are what there is to walk now, each with the first URL of its delta.
 	parts func(c *Client) ([]graphPart, error)
@@ -373,13 +377,24 @@ type graphPart struct {
 	Delta string `json:"d,omitempty"`
 }
 
-// graphCursor is where a graphWalk is: the parts, the one under way, the next page of it, and whether the walk
-// reads every part whole.
+// graphCursor is where a graphWalk is: the parts, the one under way, the next page of it, whether the walk
+// reads every part whole, and the parts the walk before missed, with their delta links.
 type graphCursor struct {
 	Parts   []graphPart `json:"parts,omitempty"`
 	At      int         `json:"at,omitempty"`
 	Next    string      `json:"next,omitempty"`
 	Listing bool        `json:"l,omitempty"`
+	Missed  []graphPart `json:"missed,omitempty"`
+}
+
+// graphResync says Graph no longer keeps where a delta was: 410 Gone, or a 400 that says so, as mail does.
+func graphResync(err error) bool {
+	r := (*Refusal)(nil)
+	if !errors.As(err, &r) {
+		return false
+	}
+	return r.Status == http.StatusGone || r.Status == http.StatusBadRequest &&
+		(strings.Contains(r.Message, "SyncState") || strings.Contains(r.Message, "resyncRequired") || strings.Contains(strings.ToLower(r.Message), "sync state"))
 }
 
 func (g *graphWalk) pull(c *Client, cursor string) (*Page, error) {
@@ -396,12 +411,27 @@ func (g *graphWalk) pull(c *Client, cursor string) (*Page, error) {
 		if err != nil {
 			return nil, err
 		}
+		if len(parts) == 0 && len(cur.Parts) > 0 && !cur.Listing {
+			return nil, errors.New("Microsoft listed none of what it listed before; Archive keeps what it has and asks again next sync")
+		}
 		ended := map[string]string{}
-		for _, p := range cur.Parts {
+		for _, p := range append(cur.Missed, cur.Parts...) {
 			ended[p.ID] = p.Delta
 		}
+		has := func(ps []graphPart, id string) bool {
+			return slices.ContainsFunc(ps, func(q graphPart) bool { return q.ID == id })
+		}
+		var missed []graphPart
 		for _, p := range cur.Parts {
-			if !slices.ContainsFunc(parts, func(q graphPart) bool { return q.ID == p.ID }) {
+			if !has(parts, p.ID) {
+				if has(cur.Missed, p.ID) {
+					cur.Listing = true
+				}
+				missed = append(missed, p)
+			}
+		}
+		for _, p := range cur.Missed {
+			if !has(parts, p.ID) && !has(missed, p.ID) {
 				cur.Listing = true
 			}
 		}
@@ -410,11 +440,14 @@ func (g *graphWalk) pull(c *Client, cursor string) (*Page, error) {
 				parts[i].Delta = ended[parts[i].ID]
 			}
 		}
-		cur.Parts = parts
+		cur.Parts, cur.Missed = parts, nil
+		if !cur.Listing {
+			cur.Missed = missed
+		}
 	}
 	page := &Page{Full: cur.Listing}
 	if cur.At >= len(cur.Parts) {
-		page.Cursor = cursorFor(graphCursor{Parts: cur.Parts})
+		page.Cursor = cursorFor(graphCursor{Parts: cur.Parts, Missed: cur.Missed})
 		return page, nil
 	}
 	p := &cur.Parts[cur.At]
@@ -423,23 +456,37 @@ func (g *graphWalk) pull(c *Client, cursor string) (*Page, error) {
 		Next  string           `json:"@odata.nextLink"`
 		Delta string           `json:"@odata.deltaLink"`
 	}
-	if err := c.Send("GET", cmp.Or(cur.Next, p.Delta, p.Start), g.hdr, nil, &res); err != nil {
-		if r := (*Refusal)(nil); errors.As(err, &r) && r.Status == http.StatusGone {
-			page.More, page.Cursor = true, cursorFor(graphCursor{Listing: true})
-			return page, nil
-		}
-		return nil, err
-	}
-	recs, err := g.records(c, *p, res.Value)
-	if err != nil {
-		return nil, err
-	}
-	page.Records = recs
-	if res.Next != "" {
-		cur.Next = res.Next
-	} else {
-		p.Delta, cur.Next = res.Delta, ""
+	err := c.Send("GET", cmp.Or(cur.Next, p.Delta, p.Start), g.hdr, nil, &res)
+	switch r := (*Refusal)(nil); {
+	case err == nil:
+	case graphResync(err):
+		page.More, page.Cursor = true, cursorFor(graphCursor{Listing: true})
+		return page, nil
+	case errors.As(err, &r) && (r.Status == http.StatusForbidden || r.Status == http.StatusNotFound):
+		// A part refused this walk keeps its delta for the next; a listing that skips one deletes nothing.
+		cur.Next = ""
 		cur.At++
+		page.Full = false
+		if cur.Listing {
+			cur.Listing = false
+			cur.Missed = append(cur.Missed, *p)
+		}
+		res.Value = nil
+	default:
+		return nil, err
+	}
+	if err == nil {
+		recs, err := g.records(c, *p, res.Value)
+		if err != nil {
+			return nil, err
+		}
+		page.Records = recs
+		if res.Next != "" {
+			cur.Next = res.Next
+		} else {
+			p.Delta, cur.Next = res.Delta, ""
+			cur.At++
+		}
 	}
 	if cur.At < len(cur.Parts) {
 		page.More = true

@@ -23,7 +23,7 @@ import (
 //
 // It syncs the messages of every chat the account is in, and the posts of every channel of every team it is in,
 // into chat_message, each sender as the person of their address. Graph keeps no delta of a person's chats, so a
-// sync reads only the chats changed since the one before, and of each the messages changed since; a channel it
+// sync asks each chat for the messages changed since it last read it; a channel it
 // reads by Graph's delta of it, as Outlook reads a folder. Graph's delta of a channel holds its posts, not their
 // replies. Graph pushes chats and channels only to subscriptions that need resource data encrypted, so it pushes
 // nothing yet: connecting, asking and reading start a sync.
@@ -110,8 +110,8 @@ func init() {
 		Streams: []*Stream{
 			{Name: "chats", Gap: time.Second, Pull: teamsChats, Table: "chat_message", Rows: teamsRows,
 				Doc: "Every message of every chat you are in, one-on-one, group or meeting, with its text, cut at 64 KB, the names of the files it " +
-					"shares and who sent it, by <chat id>/<message id>: each sync reads the chats changed since the one before, and of each the " +
-					"messages changed since, 50 a page; a message deleted there is deleted."},
+					"shares and who sent it, by <chat id>/<message id>: each sync asks each chat for the messages changed since it last read it, " +
+					"50 a page; a message deleted there is deleted."},
 			{Name: "channels", Gap: time.Second, Pull: teamsPosts.pull, Table: "chat_message", Rows: teamsRows,
 				Doc: "Every post of every channel of every team you are in, as chats are, by <channel id>/<message id>: listed whole the first " +
 					"time, a channel at a time, and then each channel's delta since; replies to a post are not in it. A channel gone, or a delta " +
@@ -201,7 +201,6 @@ func teamsChats(c *Client, cursor string) (*Page, error) {
 				Value []struct {
 					ID      string `json:"id"`
 					Topic   string `json:"topic"`
-					Updated string `json:"lastUpdatedDateTime"`
 					Members []struct {
 						Name string `json:"displayName"`
 					} `json:"members"`
@@ -211,11 +210,10 @@ func teamsChats(c *Client, cursor string) (*Page, error) {
 			if err := c.Get(u, &list); err != nil {
 				return nil, err
 			}
+			// A chat's lastUpdatedDateTime moves with its name and members, not its messages, so every chat is
+			// asked, each for the messages changed since it was last read, which is one cheap call.
 			for _, ch := range list.Value {
 				since := cur.Read[ch.ID]
-				if since != "" && !stamp(ch.Updated).After(stamp(since)) {
-					continue
-				}
 				name := ch.Topic
 				if name == "" {
 					var names []string

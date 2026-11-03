@@ -112,7 +112,8 @@ func init() {
 		Streams: []*Stream{{Name: "files", Gap: 2 * time.Second, Pull: driveFiles, Table: "drive_file", Rows: driveRows,
 			Doc: "Every file and folder in My Drive, shared with you and in your shared drives, but those in the trash: its name, type, size, " +
 				"folder, owner, who changed it last and when, and its words, cut at 64 KB: a Google Doc, Sheet (its first sheet) or Slides " +
-				"deck's, and a PDF, Word, Excel, PowerPoint or text file's up to 25 MB; other content stays in Drive. Listed whole the first time, 100 a page, and then Drive's changes since."}},
+				"deck's, every sheet of a Sheet, and a PDF, Word, Excel, PowerPoint or text file's up to 25 MB; other content stays in Drive. " +
+				"A listing Drive says may have left files out deletes none. Listed whole the first time, 100 a page, and then Drive's changes since."}},
 	})
 }
 
@@ -126,6 +127,9 @@ type driveCursor struct {
 	Token   string `json:"t"`
 	Page    string `json:"p,omitempty"`
 	Listing bool   `json:"l,omitempty"`
+	// Partial says Drive said a page of this listing may have left files out (incompleteSearch), so it deletes
+	// nothing.
+	Partial bool `json:"partial,omitempty"`
 }
 
 func driveFiles(c *Client, cursor string) (*Page, error) {
@@ -145,21 +149,26 @@ func driveFiles(c *Client, cursor string) (*Page, error) {
 	drives := map[string]string{}
 	if cur.Listing {
 		v := url.Values{"q": {"trashed = false"}, "pageSize": {"100"}, "corpora": {"allDrives"}, "supportsAllDrives": {"true"},
-			"includeItemsFromAllDrives": {"true"}, "fields": {"nextPageToken,files(" + driveSync + ")"}}
+			"includeItemsFromAllDrives": {"true"}, "fields": {"nextPageToken,incompleteSearch,files(" + driveSync + ")"}}
 		if cur.Page != "" {
 			v.Set("pageToken", cur.Page)
 		}
 		var list struct {
-			Files []map[string]any `json:"files"`
-			Next  string           `json:"nextPageToken"`
+			Files      []map[string]any `json:"files"`
+			Next       string           `json:"nextPageToken"`
+			Incomplete bool             `json:"incompleteSearch"`
 		}
 		if err := c.Get(driveAPI+"/files?"+v.Encode(), &list); err != nil {
 			return nil, err
 		}
-		page := &Page{Full: true, More: list.Next != ""}
+		cur.Partial = cur.Partial || list.Incomplete
+		page := &Page{Full: !cur.Partial, More: list.Next != ""}
 		var err error
 		page.Records, err = driveRecords(c, list.Files, drives)
 		cur.Page, cur.Listing = list.Next, list.Next != ""
+		if !cur.Listing {
+			cur.Partial = false
+		}
 		page.Cursor = cursorFor(cur)
 		return page, err
 	}
@@ -240,6 +249,13 @@ func driveRecords(c *Client, files []map[string]any, drives map[string]string) (
 // Only a busy Drive is an error.
 func driveText(c *Client, f map[string]any) (string, error) {
 	id, mime := url.PathEscape(str(f, "id")), str(f, "mimeType")
+	// A Sheet reads whole as an Excel workbook, every sheet of it, where its CSV is its first sheet alone.
+	if mime == "application/vnd.google-apps.spreadsheet" {
+		text, err := c.fileText(driveAPI+"/files/"+id+"/export?mimeType="+url.QueryEscape(xlsxMIME), str(f, "name")+".xlsx", xlsxMIME, 0)
+		if err != nil || text != "" {
+			return text, err
+		}
+	}
 	if as := driveExports[mime]; as != "" {
 		var text string
 		if err := c.Get(driveAPI+"/files/"+id+"/export?mimeType="+url.QueryEscape(as), &text); err != nil {
@@ -281,6 +297,8 @@ const (
 	driveAPI    = "https://www.googleapis.com/drive/v3"
 	driveFields = "id,name,mimeType,modifiedTime,size,webViewLink,owners(displayName,emailAddress)"
 )
+
+const xlsxMIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 var driveExports = map[string]string{
 	"application/vnd.google-apps.document":     "text/plain",

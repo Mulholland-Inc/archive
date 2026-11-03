@@ -27,7 +27,7 @@ func init() {
 			{Name: "shop", Label: "Store address", Help: "Your store's myshopify.com address, like acme.myshopify.com"},
 			{Name: "token", Label: "Admin API access token", Secret: true,
 				Help: "In your Shopify admin, Settings, Apps and sales channels, Develop apps: make an app with the Admin API scopes read_orders, " +
-					"read_products and read_customers, install it, and copy its Admin API access token, which starts with shpat_"},
+					"read_all_orders, read_products and read_customers, install it, and copy its Admin API access token, which starts with shpat_"},
 		},
 		Authorize: func(r *http.Request, c *Client) { r.Header.Set("X-Shopify-Access-Token", c.Key("token")) },
 		Account: func(c *Client) (string, error) {
@@ -60,14 +60,15 @@ func init() {
 				"Every product, with its vendor, type, status, tags, lowest price, stock and description, cut at 64 KB"),
 			shopifyStream("customers", "customers", "CustomerSortKeys", 100, shopifyCustomerFields, "crm_contact", shopifyCustomerRows,
 				"Every customer, with their name, email, phone and address"),
-			shopifyStream("orders", "orders", "OrderSortKeys", 15, shopifyOrderFields, "commerce_order", shopifyOrderRows,
-				"Every order, with its customer, totals, payment and shipping status, tags and note, and up to 50 of its lines"),
+			shopifyStream("orders", "orders", "OrderSortKeys", 5, shopifyOrderFields, "commerce_order", shopifyOrderRows,
+				"Every order, with its customer, totals, payment and shipping status, tags and note, and up to 25 of its lines; without "+
+					"read_all_orders Shopify lists only the last 60 days, so a listing deletes no order"),
 		},
 	})
 }
 
 // shopifyVersion is the version of the Admin API the connector reads.
-const shopifyVersion = "2025-07"
+const shopifyVersion = "2025-10"
 
 // shopifyURL is the GraphQL Admin API of the store the client's keys name, given as its address or a URL of it.
 func shopifyURL(c *Client) string {
@@ -109,6 +110,26 @@ func shopifyQL(c *Client, query string, vars map[string]any, out any) error {
 		return nil
 	}
 	return json.Unmarshal(res.Data, out)
+}
+
+// shopifyAllOrders says whether the store's app may read every order, not only the last 60 days'.
+func shopifyAllOrders(c *Client) bool {
+	var out struct {
+		App struct {
+			Scopes []struct {
+				Handle string `json:"handle"`
+			} `json:"accessScopes"`
+		} `json:"currentAppInstallation"`
+	}
+	if shopifyQL(c, "{ currentAppInstallation { accessScopes { handle } } }", nil, &out) != nil {
+		return false
+	}
+	for _, s := range out.App.Scopes {
+		if s.Handle == "read_all_orders" {
+			return true
+		}
+	}
+	return false
 }
 
 // shopifyCursor is where a stream is: Since when the sync its records are as of began, Listed when its last
@@ -164,7 +185,9 @@ func shopifyStream(name, field, sortKeys string, size int, fields, table string,
 				return nil, err
 			}
 			got := out[field]
-			page := &Page{Full: cur.Mode == "list"}
+			// Without read_all_orders, Shopify lists only the last 60 days of orders: such a listing is no listing of
+			// them all, and deletes nothing.
+			page := &Page{Full: cur.Mode == "list" && (field != "orders" || shopifyAllOrders(c))}
 			for _, m := range got.Nodes {
 				page.Records = append(page.Records, Record{ID: str(m, "id"), Data: m, Updated: stamp(str(m, "updatedAt"))})
 			}
@@ -191,7 +214,7 @@ const (
 		"customer { displayName } shippingAddress { city provinceCode countryCodeV2 } " +
 		"totalPriceSet { " + shopifyMoney + " } subtotalPriceSet { " + shopifyMoney + " } totalTaxSet { " + shopifyMoney + " } " +
 		"totalShippingPriceSet { " + shopifyMoney + " } totalDiscountsSet { " + shopifyMoney + " } totalRefundedSet { " + shopifyMoney + " } " +
-		"lineItems(first: 50) { nodes { title variantTitle sku quantity product { id } originalUnitPriceSet { " + shopifyMoney + " } " +
+		"lineItems(first: 25) { nodes { title variantTitle sku quantity product { id } originalUnitPriceSet { " + shopifyMoney + " } " +
 		"discountedTotalSet { " + shopifyMoney + " } } }"
 )
 

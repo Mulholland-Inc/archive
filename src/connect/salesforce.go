@@ -26,6 +26,7 @@ import (
 func init() {
 	Register(&Connector{
 		ID: "salesforce", Name: "Salesforce", Integration: true, Env: "ARCHIVE_SALESFORCE", Host: "https://login.salesforce.com",
+		Hosts: []string{"https://login.salesforce.com"},
 		Endpoint: oauth2.Endpoint{AuthURL: "https://login.salesforce.com/services/oauth2/authorize",
 			TokenURL: "https://login.salesforce.com/services/oauth2/token", AuthStyle: oauth2.AuthStyleInParams},
 		Revoke: "https://login.salesforce.com/services/oauth2/revoke",
@@ -177,6 +178,10 @@ func sfStream(name, obj, fields, table string, rows func(map[string]any) *Row) *
 				Next    string           `json:"nextRecordsUrl"`
 			}
 			if err := c.Get(u, &res); err != nil {
+				// A query's next page lasts about 15 minutes idle; one gone starts the sync again.
+				if r := (*Refusal)(nil); errors.As(err, &r) && cur.Next != "" && (r.Status == http.StatusBadRequest || r.Status == http.StatusNotFound) {
+					return &Page{More: true, Cursor: cursorFor(sfCursor{Since: cur.Since, Listed: cur.Listed})}, nil
+				}
 				if r := (*Refusal)(nil); errors.As(err, &r) && r.Status == http.StatusBadRequest {
 					return nil, unsupported("Salesforce does not let Archive read %s in this org: %s", obj, r.Message)
 				}
