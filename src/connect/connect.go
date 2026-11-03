@@ -2,13 +2,15 @@
 // Gmail, so Archive can read them for them, and the actions a script takes with those accounts.
 //
 // A connector is one file of this package, <id>.go, that declares a Connector and adds it with Register in
-// its init. Nothing else names it. It speaks one of two protocols, and a member never sees which:
+// its init. Nothing else names it. It speaks one of three protocols, and a member never sees which:
 //   - An API connector names the environment variable that holds its OAuth client, its endpoints and scopes,
 //     and its Actions, Go funcs over the provider's API. Load reads every connector's variable, and one
 //     whose variable is unset is unavailable: listed, but not offered.
 //   - An MCP connector names only its MCP server. Its OAuth client is Archive's own, which Discover and
 //     Register get from the server's authorization server the first time anyone connects (below), and the
 //     caller keeps; its actions are the server's tools.
+//   - A key connector has no sign-in: a person pastes in what the service gave them, like an API key and the
+//     address of their store, as its Keys say (keys.go). Its Authorize puts them on each request.
 //
 // Connecting is OAuth's authorization code flow with PKCE. AuthURL sends the browser to the provider with a
 // State sealed by SealState; Exchange trades the code it comes back with for a Grant, the account and its
@@ -89,6 +91,10 @@ type Connector struct {
 	// Push is how the provider tells Archive an account changed (sync.go); nil when it cannot, and then only
 	// connecting, asking and reading start a sync.
 	Push *Push
+	// Keys are what a key connector asks a person for in place of a sign-in, and Authorize puts them on a request
+	// (keys.go). Its Env, when set, is a client of the server's own its requests need too, like a developer key.
+	Keys      []Key
+	Authorize func(req *http.Request, c *Client)
 }
 
 // MCPEnv is the environment variable that, when set, is another server for an MCP connector than its own, one
@@ -141,6 +147,12 @@ type Providers map[string]*Provider
 func Load(getenv func(string) string) (Providers, error) {
 	out := Providers{}
 	for _, c := range All() {
+		if len(c.Keys) > 0 {
+			if p, ok := keyProvider(c, getenv); ok {
+				out[c.ID] = p
+			}
+			continue
+		}
 		if c.MCP != "" {
 			out[c.ID] = &Provider{Connector: c, server: cmp.Or(strings.TrimSpace(getenv(c.MCPEnv())), c.MCP)}
 			continue
@@ -280,6 +292,9 @@ func granted(scopes []string, want string) bool {
 // Refresh is a fresh access token for the refresh token rt. Its RefreshToken is the one to keep from now on:
 // rt, or the one the provider replaced it with.
 func (p *Provider) Refresh(ctx context.Context, rt string) (*oauth2.Token, error) {
+	if len(p.Keys) > 0 {
+		return &oauth2.Token{AccessToken: rt, RefreshToken: rt}, nil
+	}
 	tok, err := p.config("").TokenSource(context.WithValue(ctx, oauth2.HTTPClient, client), &oauth2.Token{RefreshToken: rt}).Token()
 	if err != nil {
 		return nil, err
@@ -294,6 +309,8 @@ func (p *Provider) Refresh(ctx context.Context, rt string) (*oauth2.Token, error
 func (p *Provider) RevokeToken(ctx context.Context, rt string) error {
 	rv := &Revocation{Refresh: rt, ctx: ctx, p: p}
 	switch {
+	case len(p.Keys) > 0:
+		return nil
 	case p.RevokeWith != nil:
 		return rv.p.RevokeWith(rv)
 	case p.revoke == "":
@@ -452,10 +469,15 @@ type Client struct {
 	sess *mcp.ClientSession
 	// tools are the MCP server's, as it listed them for a stream.
 	tools []*mcp.Tool
+	// keys are a key connector's, by name.
+	keys map[string]string
 }
 
 // Open is a Client of the account whose access token tok is, with the Meta its grant kept.
 func (p *Provider) Open(ctx context.Context, tok *oauth2.Token, meta map[string]string) *Client {
+	if len(p.Keys) > 0 {
+		return p.openKeys(ctx, keysFrom(tok.AccessToken), meta)
+	}
 	var rt http.RoundTripper = &oauth2.Transport{Source: oauth2.StaticTokenSource(tok)}
 	if p.Pace > 0 {
 		rt = &paced{base: rt, p: pacerOf(p.ID, p.Pace)}
@@ -471,7 +493,12 @@ func (c *Client) Context() context.Context { return c.ctx }
 func (c *Client) Option(k string) string { return c.p.opts.Get(k) }
 
 // Token is the access token, for a provider that wants it somewhere other than the Authorization header.
-func (c *Client) Token() string { return c.tok.AccessToken }
+func (c *Client) Token() string {
+	if c.tok == nil {
+		return ""
+	}
+	return c.tok.AccessToken
+}
 
 // Credentials are the OAuth client's id and secret, for a provider that wants them with a request.
 func (c *Client) Credentials() (id, secret string) { return c.p.clientID, c.p.secret }

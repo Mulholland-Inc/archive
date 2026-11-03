@@ -110,7 +110,8 @@ func (h *Hub) connectRedirect(id string) string { return h.api + "/connect/" + i
 // GET /connect lists the connectors and your connections, GET /connect/mine your own in every archive you are
 // in, DELETE /connect/<connection id> disconnects one, and
 // POST /connect/<connection id>/sync asks for its sync now (below), and PUT /connect/<connection id>/access
-// narrows an integration to a group. A person connects, disconnects and syncs their own connections; only an
+// narrows an integration to a group. A key connector, which has no sign-in, connects with POST
+// /connect/<id>/keys and the keys it asks for, { keys: { <name>: <value> } }. A person connects, disconnects and syncs their own connections; only an
 // owner, the archive's integrations.
 func (h *Hub) connectRoutes(mux *http.ServeMux) {
 	authed := func(pattern string, f func(a *Archive, w http.ResponseWriter, r *http.Request)) {
@@ -143,6 +144,16 @@ func (h *Hub) connectRoutes(mux *http.ServeMux) {
 		}
 		if err == nil {
 			err = a.SetAccess(r.Context(), id, body.Access)
+		}
+		httpWrite(w, http.StatusNoContent, nil, err)
+	})
+	authed("POST /connect/{id}/keys", func(a *Archive, w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Keys map[string]string `json:"keys"`
+		}
+		err := httpDecode(r, &body)
+		if err == nil {
+			err = a.connectKeys(r.Context(), r.PathValue("id"), body.Keys)
 		}
 		httpWrite(w, http.StatusNoContent, nil, err)
 	})
@@ -182,7 +193,10 @@ func (a *Archive) connectStart(w http.ResponseWriter, r *http.Request) {
 		httpWrite(w, 0, nil, err)
 		return
 	}
-	if err = a.mayConnect(r.Context(), p.Connector); err == nil {
+	if err = a.mayConnect(r.Context(), p.Connector); err == nil && len(p.Keys) > 0 {
+		err = fmt.Errorf("%s connects with keys, not by signing in", p.Name)
+	}
+	if err == nil {
 		p, err = a.hub.provider(r.Context(), p.ID, true)
 	}
 	if err != nil {
@@ -224,6 +238,31 @@ func (a *Archive) connectFinish(w http.ResponseWriter, r *http.Request, st conne
 		back.Set("error", err.Error())
 	}
 	http.Redirect(w, r, a.hub.app+connectBack(st.Provider)+"?"+back.Encode(), http.StatusSeeOther)
+}
+
+// connectKeys connects the key connector id with keys, for whoever is signed in, or for the archive when it
+// is an integration, once the service says whose account they are.
+func (a *Archive) connectKeys(ctx context.Context, id string, keys map[string]string) error {
+	ac, err := authUser(ctx)
+	if err != nil {
+		return err
+	}
+	p, err := a.hub.connector(id)
+	if err != nil {
+		return err
+	}
+	if len(p.Keys) == 0 {
+		return fmt.Errorf("%s connects by signing in, not with keys: %w", p.Name, httpErrBadRequest)
+	}
+	if err := a.mayConnect(ctx, p.Connector); err != nil {
+		return err
+	}
+	g, err := p.KeyGrant(ctx, keys)
+	if err != nil {
+		return fmt.Errorf("%w: %w", err, httpErrBadRequest)
+	}
+	_, err = a.connectionSave(ctx, ac.member, p.Connector, g)
+	return err
 }
 
 // connectBack is where the app shows connector id: the archive's integrations in its settings, and a person's
@@ -328,12 +367,14 @@ type Connection struct {
 }
 
 // Connector is a service accounts can be connected at; Ready says this server has its OAuth client, and
-// Integration that an account of it is the archive's, not a person's.
+// Integration that an account of it is the archive's, not a person's. Keys are what a key connector asks for in
+// place of a sign-in.
 type Connector struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Ready       bool   `json:"ready"`
-	Integration bool   `json:"integration"`
+	ID          string        `json:"id"`
+	Name        string        `json:"name"`
+	Ready       bool          `json:"ready"`
+	Integration bool          `json:"integration"`
+	Keys        []connect.Key `json:"keys,omitempty"`
 }
 
 type Connections struct {
@@ -349,7 +390,7 @@ func (a *Archive) Connections(ctx context.Context) (*Connections, error) {
 	}
 	out := &Connections{Connectors: []Connector{}, Connections: []Connection{}}
 	for _, c := range connect.All() {
-		out.Connectors = append(out.Connectors, Connector{ID: c.ID, Name: c.Name, Ready: a.hub.connect[c.ID] != nil, Integration: c.Integration})
+		out.Connectors = append(out.Connectors, Connector{ID: c.ID, Name: c.Name, Ready: a.hub.connect[c.ID] != nil, Integration: c.Integration, Keys: c.Keys})
 	}
 	var rows []generated.ConnectionsRow
 	err = a.st.System(ctx, func(ctx context.Context) (err error) {
@@ -1139,6 +1180,11 @@ var syncSchema = map[string]syncTable{
 	"crm_deal":                         {links: map[string]string{"company": "crm_company"}},
 	"chat_message":                     {},
 	"marketing_campaign":               {},
+	"work_item":                        {},
+	"commerce_product":                 {},
+	"commerce_order":                   {},
+	"ad_metric":                        {links: map[string]string{"campaign": "marketing_campaign"}},
+	"commerce_line":                    {parent: "commerce_order", of: "purchase", links: map[string]string{"product": "commerce_product"}},
 	"ledger_account":                   {links: map[string]string{"parent": "ledger_account"}},
 	"ledger_contact":                   {},
 	"ledger_item":                      {links: map[string]string{"income_account": "ledger_account", "expense_account": "ledger_account"}},

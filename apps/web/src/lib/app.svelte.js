@@ -1265,6 +1265,7 @@ export const connections = resource({
       const synced = mine.every((x) => x.synced_at) ? mine.map((x) => x.synced_at).sort()[0] : '';
       Object.assign(c, {
         ready: k.ready,
+        keys: k.keys ?? [],
         connections: mine,
         connected: mine.length > 0,
         account: mine.map((x) => x.account).join(', '),
@@ -1290,6 +1291,7 @@ function toIntegration(k, x) {
     id: k.id,
     name: k.name,
     ready: k.ready,
+    keys: k.keys ?? [],
     connected: Boolean(x),
     connection: x ?? null,
     account: x?.account ?? '',
@@ -1306,6 +1308,19 @@ function toIntegration(k, x) {
 export function connect(id) {
   const c = [...ws().connectors, ...archiveIntegrations()].find((x) => x.id === id);
   if (c?.ready) location.assign(`${API}/connect/${encodeURIComponent(id)}?workspace=${encodeURIComponent(app.archive)}`);
+}
+
+// connectKeys connects connector id, which has no sign-in, with the keys a person pasted, by their names: one of
+// your own, or an integration an owner connects for everyone. It says whether it connected.
+export async function connectKeys(id, keys) {
+  try {
+    await call(`/connect/${encodeURIComponent(id)}/keys`, { method: 'POST', body: { keys } });
+  } catch (e) {
+    complain(e, 'Couldn’t connect');
+    return false;
+  }
+  await connections.refresh();
+  return true;
 }
 
 // Your own accounts in every archive you are in, from /connect/mine: each stays in the archive it was connected
