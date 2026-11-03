@@ -88,10 +88,13 @@ type Person struct {
 	Groups []uuid.UUID `json:"groups"`
 }
 
+// Token is an API token, or, with App, an MCP client's grant (mcp.go), named for the client; a grant's
+// ExpiresAt is when its refresh token lapses unless the client uses it.
 type Token struct {
 	ID        uuid.UUID  `json:"id"`
 	Name      string     `json:"name"`
 	Viewer    bool       `json:"viewer,omitempty"`
+	App       bool       `json:"app,omitempty"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
 	Secret    string     `json:"token,omitempty"`
@@ -458,7 +461,11 @@ func (a *Archive) Tokens(ctx context.Context) ([]*Token, error) {
 	rows, err := a.hub.q().Tokens(ctx, ac.UserID, &a.ws.ID)
 	out := []*Token{}
 	for _, r := range rows {
-		out = append(out, &Token{ID: r.ID, Name: r.Name, Viewer: r.Viewer, ExpiresAt: r.ExpiresAt, CreatedAt: r.CreatedAt})
+		t := &Token{ID: r.ID, Name: r.Name, Viewer: r.Viewer, App: r.App, ExpiresAt: r.ExpiresAt, CreatedAt: r.CreatedAt}
+		if r.App {
+			t.ExpiresAt = r.RefreshExpiresAt
+		}
+		out = append(out, t)
 	}
 	return out, err
 }
@@ -553,6 +560,8 @@ type signinState struct {
 	Verifier string `json:"v"`
 	Bind     string `json:"b"`
 	Exp      int64  `json:"x"`
+	// Next is the app's path to come back to, like an MCP client's /authorize; its home if none.
+	Next string `json:"t,omitempty"`
 }
 
 type signinUser struct {
@@ -793,13 +802,17 @@ func (s *signin) handler() http.Handler {
 			return
 		}
 		bind := authNewSecret()
-		st := signinState{Nonce: authNewSecret(), Verifier: oauth2.GenerateVerifier(), Bind: authHash(bind), Exp: time.Now().Add(10 * time.Minute).Unix()}
+		st := signinState{Nonce: authNewSecret(), Verifier: oauth2.GenerateVerifier(), Bind: authHash(bind), Exp: time.Now().Add(10 * time.Minute).Unix(), Next: signinNext(r.URL.Query().Get("next"))}
 		http.SetCookie(w, s.cookie(signinOIDC, bind, "/auth/oidc/", 600))
 		http.Redirect(w, r, p.cfg.AuthCodeURL(s.seal(st), oidc.Nonce(st.Nonce), oauth2.S256ChallengeOption(st.Verifier)), http.StatusFound)
 	})
 	mux.HandleFunc("GET /auth/oidc/{provider}/callback", func(w http.ResponseWriter, r *http.Request) {
 		http.SetCookie(w, s.cookie(signinOIDC, "", "/auth/oidc/", -1))
 		u, err := s.oidcCallback(r)
+		next := "/"
+		if st, _ := s.unseal(r.URL.Query().Get("state")); st != nil && st.Next != "" {
+			next = st.Next
+		}
 		if err == nil {
 			_, err = s.signedIn(w, r, u)
 		}
@@ -807,9 +820,10 @@ func (s *signin) handler() http.Handler {
 			httpWrite(w, 0, nil, err)
 			return
 		}
-		http.Redirect(w, r, h.app+"/", http.StatusSeeOther)
+		http.Redirect(w, r, h.app+next, http.StatusSeeOther)
 	})
 	h.workspaceRoutes(authed)
+	h.mcpRoutesSignin(open)
 	return mux
 }
 
@@ -1065,6 +1079,15 @@ func (s *signin) oidcCallback(r *http.Request) (*User, error) {
 		return nil, signinRefused
 	}
 	return u, err
+}
+
+// signinNext is next if it is a path of the app's own to come back to after signing in, and "" if not: never
+// another site, as //evil.example or /\evil.example would be.
+func signinNext(next string) string {
+	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || strings.ContainsAny(next, "\\\r\n") || len(next) > 4096 {
+		return ""
+	}
+	return next
 }
 
 func secretLoadKey(dir string) ([]byte, error) {

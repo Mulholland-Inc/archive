@@ -42,6 +42,22 @@ CREATE TABLE archive."user" (
 );
 CREATE INDEX user_workspaces_idx ON archive."user" USING gin (workspaces);
 
+-- An MCP client, like Claude or ChatGPT, that registered itself with this Archive's authorization server (mcp.go)
+-- so its people can let it into one of their workspaces. Anyone may register one, as MCP's authorization spec
+-- has it: name is only what the client calls itself, and redirect_uris the only places a code of it goes. secret
+-- is the hash of a confidential client's secret; a public client has none and proves itself with PKCE alone.
+CREATE TABLE archive.mcp_client (
+    id            uuid PRIMARY KEY DEFAULT uuidv7(),
+    name          text NOT NULL,
+    redirect_uris text[] NOT NULL,
+    secret        text,
+    created_at    timestamptz NOT NULL DEFAULT now()
+);
+
+-- A token is a sign-in's session, an API token (kind api) or an MCP client's (kind mcp), each by its secret's
+-- hash. An MCP token is one grant: a person let the client into one workspace, as them. It is named for the
+-- client, and has a refresh token, by its hash, that lapses at refresh_expires_at unless used; each refresh
+-- gives the grant a new access token and a new refresh token, so revoking the grant ends both.
 CREATE TABLE archive.token (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     user_id    uuid NOT NULL REFERENCES archive."user" ON DELETE CASCADE,
@@ -53,9 +69,27 @@ CREATE TABLE archive.token (
     -- An API token's secret, sealed with the server's key, so its owner can copy it again; null for others.
     sealed     bytea,
     expires_at timestamptz,
-    created_at timestamptz NOT NULL DEFAULT now()
+    created_at timestamptz NOT NULL DEFAULT now(),
+    client     uuid REFERENCES archive.mcp_client ON DELETE CASCADE,
+    refresh    text UNIQUE,
+    refresh_expires_at timestamptz
 );
 CREATE INDEX token_user_idx ON archive.token (user_id);
+
+-- An authorization code, by its hash: who let which client into which workspace, for which redirect_uri and
+-- PKCE challenge (S256). It is good once, for a minute; token is the token it became, which a second use of
+-- the code revokes, as OAuth asks.
+CREATE TABLE archive.mcp_code (
+    hash         text PRIMARY KEY,
+    client       uuid NOT NULL REFERENCES archive.mcp_client ON DELETE CASCADE,
+    user_id      uuid NOT NULL REFERENCES archive."user" ON DELETE CASCADE,
+    workspace    uuid NOT NULL REFERENCES archive.workspace ON DELETE CASCADE,
+    redirect_uri text NOT NULL,
+    challenge    text NOT NULL,
+    token        uuid,
+    expires_at   timestamptz NOT NULL,
+    created_at   timestamptz NOT NULL DEFAULT now()
+);
 
 -- When a workspace's work of a kind is next due (workspace.go): its workflows, files or syncs. The personal
 -- store's syncs (personal.go) are due as the nil workspace's, 00000000-0000-0000-0000-000000000000, which no
@@ -159,7 +193,7 @@ SELECT t.id, t.kind, t.name, coalesce(t.role, '')::text AS role, u.id AS user_id
     coalesce(t.workspace::text, '')::text AS workspace,
     ARRAY(SELECT w.id::text FROM archive.workspace w WHERE w.id = ANY(u.workspaces) ORDER BY array_position(u.workspaces, w.id))::text[] AS workspaces
 FROM archive.token t JOIN archive."user" u ON u.id = t.user_id
-WHERE t.hash = $1 AND t.kind IN ('api', 'session') AND (t.expires_at IS NULL OR t.expires_at > now());
+WHERE t.hash = $1 AND t.kind = ANY(sqlc.arg(kinds)::text[]) AND (t.expires_at IS NULL OR t.expires_at > now());
 
 -- name: CreateSession :exec
 INSERT INTO archive.token (user_id, kind, hash, expires_at) VALUES ($1, 'session', $2, now() + interval '30 days');
@@ -173,12 +207,53 @@ INSERT INTO archive.token (id, user_id, workspace, kind, name, role, hash, seale
 -- name: TokenSealed :one
 SELECT sealed FROM archive.token WHERE id = $1 AND user_id = $2 AND workspace = $3 AND kind = 'api' AND sealed IS NOT NULL;
 
+-- Your API tokens and MCP grants in a workspace; a grant lapses when its refresh token does.
 -- name: Tokens :many
-SELECT id, name, (role IS NOT NULL)::bool AS viewer, expires_at, created_at FROM archive.token
-WHERE user_id = $1 AND workspace = $2 AND kind = 'api' ORDER BY id;
+SELECT id, name, (role IS NOT NULL)::bool AS viewer, expires_at, refresh_expires_at, created_at, (kind = 'mcp')::bool AS app
+FROM archive.token
+WHERE user_id = $1 AND workspace = $2 AND kind IN ('api', 'mcp') ORDER BY id;
 
 -- name: RevokeToken :one
-DELETE FROM archive.token WHERE id = $1 AND user_id = $2 AND workspace = $3 AND kind = 'api' RETURNING coalesce(role, '')::text;
+DELETE FROM archive.token WHERE id = $1 AND user_id = $2 AND workspace = $3 AND kind IN ('api', 'mcp') RETURNING coalesce(role, '')::text;
+
+-- name: CreateMCPClient :one
+INSERT INTO archive.mcp_client (name, redirect_uris, secret) VALUES ($1, $2, $3) RETURNING id, created_at;
+
+-- name: MCPClient :one
+SELECT * FROM archive.mcp_client WHERE id = $1;
+
+-- A new code; codes that lapsed a while ago go, while a used one is kept long enough to catch its reuse.
+-- name: CreateMCPCode :exec
+WITH old AS (DELETE FROM archive.mcp_code c WHERE c.expires_at < now() - interval '1 hour')
+INSERT INTO archive.mcp_code (hash, client, user_id, workspace, redirect_uri, challenge, expires_at)
+VALUES (sqlc.arg(hash), sqlc.arg(client), sqlc.arg(user_id), sqlc.arg(workspace), sqlc.arg(redirect_uri), sqlc.arg(challenge), now() + interval '1 minute');
+
+-- A code is used once, by naming the token it becomes: a code used before, or lapsed, is no row.
+-- name: UseMCPCode :one
+UPDATE archive.mcp_code SET token = sqlc.arg(token) WHERE hash = sqlc.arg(hash) AND token IS NULL AND expires_at > now() RETURNING *;
+
+-- name: UsedMCPCode :one
+SELECT token FROM archive.mcp_code WHERE hash = $1 AND token IS NOT NULL;
+
+-- A grant's first tokens; grants whose refresh token lapsed go.
+-- name: CreateMCPToken :exec
+WITH old AS (DELETE FROM archive.token x WHERE x.kind = 'mcp' AND x.refresh_expires_at < now())
+INSERT INTO archive.token (id, user_id, workspace, kind, name, hash, expires_at, client, refresh, refresh_expires_at)
+VALUES (sqlc.arg(id), sqlc.arg(user_id), sqlc.arg(workspace), 'mcp', sqlc.arg(name), sqlc.arg(hash), sqlc.arg(expires_at),
+    sqlc.arg(client), sqlc.arg(refresh), sqlc.arg(refresh_expires_at));
+
+-- A refresh turns the grant's refresh token into a new access token and a new refresh token, once.
+-- name: RefreshMCPToken :one
+UPDATE archive.token SET hash = sqlc.arg(hash), expires_at = sqlc.arg(expires_at), refresh = sqlc.arg(next), refresh_expires_at = sqlc.arg(refresh_expires_at)
+WHERE refresh = sqlc.arg(refresh) AND client = sqlc.arg(client) AND kind = 'mcp' AND refresh_expires_at > now()
+RETURNING id, workspace;
+
+-- Revoking either of a grant's tokens, by its client, ends the grant.
+-- name: RevokeMCPToken :one
+DELETE FROM archive.token WHERE kind = 'mcp' AND client = $1 AND (hash = $2 OR refresh = $2) RETURNING id, workspace;
+
+-- name: DeleteMCPToken :one
+DELETE FROM archive.token WHERE id = $1 AND kind = 'mcp' RETURNING workspace;
 
 -- name: DeleteWorkspaceTokens :many
 DELETE FROM archive.token WHERE user_id = $1 AND workspace = $2 RETURNING coalesce(role, '')::text;

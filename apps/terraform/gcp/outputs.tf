@@ -4,8 +4,13 @@ output "url" {
 }
 
 output "api_url" {
-  description = "Public URL of the API, MCP, webhooks and OAuth redirects."
+  description = "Public URL of the API, webhooks and OAuth redirects; MCP is at /mcp too."
   value       = local.api_url
+}
+
+output "mcp_url" {
+  description = "Public URL of the MCP server, for MCP clients like Claude and ChatGPT, which sign in with OAuth."
+  value       = local.mcp_url
 }
 
 output "bucket" {

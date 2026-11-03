@@ -6,7 +6,7 @@
   import Heading from './Heading.svelte';
   import IconButton from './IconButton.svelte';
   import Button from './Button.svelte';
-  import { app, ws, archiveKey, rotateKey, isArchiveOwner, tokens } from '../lib/app.svelte.js';
+  import { app, ws, archiveKey, rotateKey, isArchiveOwner, tokens, archiveApps, revokeApp } from '../lib/app.svelte.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
   import { apiPrompt } from '../lib/apiprompt.js';
 
@@ -35,6 +35,12 @@
     await navigator.clipboard?.writeText(apiPrompt({ key: await current(), archive: archive ? ws() : null })).catch(() => {});
   }
 
+  const since = (t) => `Connected ${new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+
+  async function disconnect(t) {
+    if (await confirmDialog({ title: `Disconnect ${t.name}?`, body: `It loses access to ${ws().name} right away.`, confirm: 'Disconnect' })) await revokeApp(t.id);
+  }
+
   async function rotate() {
     if (!key || (await confirmDialog({ title: 'Rotate this key?', body: 'The old key stops working right away.', confirm: 'Rotate' }))) {
       await rotateKey(scope);
@@ -58,6 +64,17 @@
     <div class="setup">
       <Button variant="primary" icon={Sparkles} disabled={locked} onclick={copyPrompt}>Copy setup prompt</Button>
     </div>
+    {#if archive && archiveApps().length}
+      <div class="apps">
+        <Heading level={3} size="sm" serif={false}>Connected apps</Heading>
+        {#each archiveApps() as t (t.id)}
+          <div class="app">
+            <span class="app-name">{t.name}<small>{since(t)}, as you</small></span>
+            <Button size="sm" variant="ghost" onclick={() => disconnect(t)}>Disconnect</Button>
+          </div>
+        {/each}
+      </div>
+    {/if}
   </div>
 </SettingsPane>
 
@@ -127,6 +144,43 @@
     gap: var(--space-2);
     max-width: var(--measure-xs);
     margin-block-start: var(--space-5);
+  }
+
+  .apps {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    width: 100%;
+    max-width: var(--measure-sm);
+    margin-block-start: var(--space-8);
+    text-align: start;
+  }
+
+  .app {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-height: var(--control-xl);
+    padding-block: var(--space-1);
+  }
+
+  .app + .app {
+    box-shadow: inset 0 var(--border-width) 0 var(--color-border-subtle);
+  }
+
+  .app-name {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
+  }
+
+  .app-name small {
+    color: var(--color-text-tertiary);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-regular);
   }
 
   @container (max-width: 32rem) {

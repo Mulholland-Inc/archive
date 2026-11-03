@@ -6,6 +6,8 @@ resource "google_project_service" "crm" {
 locals {
   url     = "https://app.${var.domain}"
   api_url = "https://api.${var.domain}"
+  # MCP's own host: the same service, which serves only MCP and its OAuth there (src/mcp.go).
+  mcp_url = "https://mcp.${var.domain}"
 
   # Every secret env var of the service and the job, by name. Terraform makes each one's Secret Manager secret,
   # archive-<name in kebab case>, and hands it to Cloud Run at version latest, but never holds a value: each is
@@ -572,19 +574,46 @@ resource "cloudflare_dns_record" "run" {
   ttl     = 1
 }
 
+# mcp.<domain> is the same Cloud Run service as api.<domain>, mapped and proxied the same way; requests that
+# come to it by that host reach only MCP and its OAuth.
+resource "google_cloud_run_domain_mapping" "mcp" {
+  provider = google.verify
+  name     = "mcp.${var.domain}"
+  location = var.region
+
+  metadata {
+    namespace = var.project
+  }
+
+  spec {
+    route_name = google_cloud_run_v2_service.this.name
+  }
+
+  depends_on = [google_site_verification_web_resource.this]
+}
+
+resource "cloudflare_dns_record" "mcp" {
+  zone_id = data.cloudflare_zone.this.zone_id
+  name    = "mcp.${var.domain}"
+  type    = "CNAME"
+  content = "ghs.googlehosted.com"
+  proxied = true
+  ttl     = 1
+}
+
 resource "cloudflare_ruleset" "run" {
   zone_id = data.cloudflare_zone.this.zone_id
   name    = "archive origin TLS"
   kind    = "zone"
   phase   = "http_config_settings"
   rules = [{
-    description       = "api.${var.domain} reaches Google over verified TLS"
-    expression        = "http.host eq \"api.${var.domain}\""
+    description       = "api.${var.domain} and mcp.${var.domain} reach Google over verified TLS"
+    expression        = "http.host in {\"api.${var.domain}\" \"mcp.${var.domain}\"}"
     action            = "set_config"
     action_parameters = { ssl = "strict" }
     }, {
     description       = "Google's certificate challenges reach it over HTTP, before it has a certificate"
-    expression        = "http.host eq \"api.${var.domain}\" and starts_with(http.request.uri.path, \"/.well-known/acme-challenge/\")"
+    expression        = "http.host in {\"api.${var.domain}\" \"mcp.${var.domain}\"} and starts_with(http.request.uri.path, \"/.well-known/acme-challenge/\")"
     action            = "set_config"
     action_parameters = { ssl = "flexible" }
   }]

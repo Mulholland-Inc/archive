@@ -107,6 +107,26 @@ type ArchiveDue struct {
 	At        time.Time
 }
 
+type ArchiveMcpClient struct {
+	ID           uuid.UUID
+	Name         string
+	RedirectUris []string
+	Secret       *string
+	CreatedAt    time.Time
+}
+
+type ArchiveMcpCode struct {
+	Hash        string
+	Client      uuid.UUID
+	UserID      uuid.UUID
+	Workspace   uuid.UUID
+	RedirectUri string
+	Challenge   string
+	Token       *uuid.UUID
+	ExpiresAt   time.Time
+	CreatedAt   time.Time
+}
+
 type ArchiveUpload struct {
 	ID        uuid.UUID
 	Role      string

@@ -1,2 +1,7 @@
+# No page of the app may be framed, so no other site can lay /authorize under a decoy and have you click Allow.
+/*
+  X-Frame-Options: DENY
+  Content-Security-Policy: frame-ancestors 'none'
+
 /assets/*
   Cache-Control: public, max-age=31536000, immutable

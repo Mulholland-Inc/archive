@@ -76,7 +76,7 @@ The same data and the same permissions, whichever way in:
 
 | Way in | Good for |
 |---|---|
-| MCP at `/mcp` | Claude, ChatGPT, Gemini, Cursor and other agents, through one tool: `run` |
+| MCP at `mcp.<domain>`, and `/mcp` on the API | Claude, ChatGPT, Gemini, Cursor and other agents, through one tool: `run` |
 | HTTP API at `/api` | Records, files, search and workflows from your own apps and services |
 | Webhooks at `/hooks/run/<workspace>/<secret>` | Other services starting a workflow with a POST |
 | The `archive` CLI | Scripts, scheduled jobs and quick changes from your terminal |
@@ -102,7 +102,9 @@ Run Archive in your own Google Cloud account, and keep your data where you want 
 
 ## Connect your agent
 
-Make a token, then add Archive to Claude Code with its secret:
+Add `https://mcp.example.com` as a connector in Claude, ChatGPT or any MCP client that signs in with OAuth. It sends you to Archive to sign in, pick one of your archives and allow it; it then acts as you in that archive only, until you disconnect it under Archive API key in that archive's settings.
+
+Or make a token, and add Archive to Claude Code with its secret:
 
 ```sh
 archive token create -name "Claude Code"
@@ -127,7 +129,7 @@ The token acts as you, with your role and groups. Add `-viewer` to make it read 
 }
 ```
 
-**ChatGPT and claude.ai** need a connector that can send the bearer header. Archive has no OAuth sign-in yet.
+**ChatGPT and claude.ai** connect to `https://mcp.example.com` with OAuth, as above.
 
 </details>
 
@@ -176,7 +178,7 @@ After that first apply, Terraform applies itself on every push to main that chan
 
 Terraform keeps its state only in that versioned bucket, never on disk. The bucket is the one thing made outside Terraform, since the state can't live in a bucket the same state creates.
 
-The Cloudflare account token goes in `CLOUDFLARE_API_TOKEN`. On the zone it needs DNS Write, Config Settings Write and Workers Routes Write; on the account it needs Workers Scripts Write and Account API Tokens Write. Terraform verifies the zone with Google, maps `api.<domain>` to the Cloud Run service behind Cloudflare's proxy, and makes the web app on `app.<domain>` a Worker of static files that calls the API on its own domain. The zone's own SSL settings don't matter: a Configuration Rule makes Cloudflare reach Google over verified TLS, and lets Google's certificate challenges through over HTTP.
+The Cloudflare account token goes in `CLOUDFLARE_API_TOKEN`. On the zone it needs DNS Write, Config Settings Write and Workers Routes Write; on the account it needs Workers Scripts Write and Account API Tokens Write. Terraform verifies the zone with Google, maps `api.<domain>` and `mcp.<domain>` to the Cloud Run service behind Cloudflare's proxy, and makes the web app on `app.<domain>` a Worker of static files that calls the API on its own domain. The zone's own SSL settings don't matter: a Configuration Rule makes Cloudflare reach Google over verified TLS, and lets Google's certificate challenges through over HTTP.
 
 The first apply takes about 15 minutes, nearly all of it Cloud SQL, and Google's certificate for `api.<domain>` 15 minutes or more after that. Then add yourself as the first owner, who is also this Archive's first admin, with the `archive` command, which Terraform also sets up as a Cloud Run job (`terraform output cli` prints its prefix):
 

@@ -9,6 +9,10 @@
   import { boot } from '../lib/app.svelte.js';
   import { fade } from '../lib/motion.js';
 
+  // The sign-in screen. Elsewhere than the app itself, like an MCP client's /authorize, it says what signing in
+  // is for, comes back to next after a provider's sign-in, and calls done after a passkey's.
+  let { title = 'Sign in to Archive', art = 'cli', next = '', done = boot } = $props();
+
   let error = $state('');
   let busy = $state(false);
   let providers = $state([]);
@@ -25,7 +29,7 @@
     busy = true;
     try {
       await passkeyLogin();
-      await boot();
+      await done();
     } catch (err) {
       if (err.name !== 'NotAllowedError' && err.name !== 'AbortError') error = err.message;
     }
@@ -35,15 +39,15 @@
 
 <div class="screen" transition:fade={{ speed: 'normal' }}>
   <div class="card">
-    <Art name="cli" size="lg" />
-    <Heading level={1} size="xl" leading="inherit" wrap="normal">Sign in to Archive</Heading>
+    <Art name={art} size="lg" />
+    <Heading level={1} size="xl" leading="inherit" wrap="normal">{title}</Heading>
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     <div class="methods">
       {#if passkeys && first}
         <Button variant="primary" size="lg" icon={KeyRound} full loading={busy} onclick={passkey}>Use a passkey</Button>
       {/if}
       {#each providers as p (p.id)}
-        <a class="provider" href="{API}/auth/oidc/{encodeURIComponent(p.id)}">
+        <a class="provider" href="{API}/auth/oidc/{encodeURIComponent(p.id)}{next ? `?next=${encodeURIComponent(next)}` : ''}">
           <ConnectorIcon id={p.id} size="xs" />
           <span>Continue with {p.name}</span>
         </a>
