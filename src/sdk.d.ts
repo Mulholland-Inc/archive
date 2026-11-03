@@ -110,7 +110,9 @@
  *   for listings, recipes and products; a chart is a column for each value of its by column, the total of the
  *   row's first money or else first number, or the count of rows, by month (or by day within one month) when by
  *   is a date, else per value, largest first; a timeline is a bar for each row from its by date, which must be
- *   a date, to the first date column after it in the view, for projects. Any other key is an error.
+ *   a date, to the first date column after it in the view, for projects; a tree nests each row under the row
+ *   its by column links to, a uuid referencing the view's own table, for an org chart, a family, folders or
+ *   categories, with rows whose by is null as its roots. Any other key is an error.
  * - archive.revisions() lists the migrations saved before this run, newest first, with who ran them and their
  *   statements. To undo one, migrate the reverse.
  *
@@ -424,7 +426,7 @@ interface Table {
     /** The comment without its key: value lines. */
     description: string;
     /** A view's layout: and by: lines. */
-    layout?: "table" | "board" | "calendar" | "list" | "map" | "gallery" | "chart" | "timeline";
+    layout?: "table" | "board" | "calendar" | "list" | "map" | "gallery" | "chart" | "timeline" | "tree";
     by?: string;
     columns: {
         name: string;

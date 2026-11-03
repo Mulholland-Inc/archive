@@ -173,6 +173,11 @@
   --view-timeline-name: 16rem;
   --view-timeline-date: 6rem;
   --view-timeline-bar: 0.75rem;
+  --view-tree-indent: var(--space-10);
+  --view-tree-line: var(--space-2);
+  --view-tree-row: 2.75rem;
+  --view-tree-name: 16rem;
+  --view-tree-detail: 12rem;
   --bubble-max: 85%;
   --settings-art: 11rem;
   --settings-art-sm: calc(var(--settings-art) * 0.7);
