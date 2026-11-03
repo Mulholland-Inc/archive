@@ -227,7 +227,13 @@ func (h *Hub) migrate(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("main.sql: %w", err)
 		}
-		if err := pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error { return mainMigrate(ctx, tx, want) }); err != nil {
+		// archive.moved said which workspace moved out (moveFirst); what it holds is not kept.
+		if err := pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
+			if _, err := tx.Exec(ctx, "DROP TABLE IF EXISTS archive.moved"); err != nil {
+				return err
+			}
+			return mainMigrate(ctx, tx, want)
+		}); err != nil {
 			return err
 		}
 	}
