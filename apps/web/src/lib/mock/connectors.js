@@ -16,6 +16,7 @@ export const catalog = [
   { id: 'karbon', by: 'Karbon', description: 'Read the firm’s clients, people and work items', name: 'Karbon', category: 'Practice', icon: 'list', scopes: ['Read contacts, organizations and work with the firm’s API keys'] },
   { id: 'shopify', by: 'Shopify', description: 'Read the store’s orders, products and customers', name: 'Shopify', category: 'Commerce', icon: 'card', scopes: ['Read orders, products and customers with the store’s app token'] },
   { id: 'meta_ads', by: 'Meta', description: 'Read an ad account’s campaigns and what they spent and got each day', name: 'Meta Ads', category: 'Marketing', icon: 'users', scopes: ['Read the ad account’s campaigns and results'] },
+  { id: 'opendental', by: 'Open Dental', description: 'Read the practice’s patients, appointments, procedures and payments', name: 'Open Dental', category: 'Dental', icon: 'users', scopes: ['Read practice data with the practice’s customer key'] },
   { id: 'hubspot', by: 'HubSpot', description: 'Read contacts, companies and deals', name: 'HubSpot', category: 'CRM', icon: 'users', scopes: ['Read contacts, companies and deals'] },
   { id: 'asana', by: 'Asana', description: 'Read workspaces, projects and tasks', name: 'Asana', category: 'Projects', icon: 'list', scopes: ['Read projects, tasks and comments'] },
   { id: 'linear', by: 'Linear', description: 'Search and work with issues, projects and cycles', name: 'Linear', category: 'Projects', icon: 'list', scopes: ['Read and write issues as you'] },

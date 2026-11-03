@@ -2027,6 +2027,231 @@ COMMENT ON COLUMN archive.ad_metric.source_id IS 'Its id there';
 COMMENT ON COLUMN archive.ad_metric.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.ad_metric.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
+-- Dental: the practice data of a dental practice management system you connected, like Open Dental: its
+-- providers, patients, appointments, procedures and payments. It is health information, which only the
+-- people who need it should see: an owner narrows the connection to a group, and its rows follow. Times are the
+-- practice's own, local, as the system keeps them.
+CREATE TABLE archive.dental_provider (
+    id              uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection      uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream          text NOT NULL,
+    source_id       text NOT NULL,
+    access          uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    updated_at      timestamptz NOT NULL DEFAULT now(),
+    name            text NOT NULL DEFAULT '',
+    seen_at         timestamptz NOT NULL DEFAULT now(),
+    abbr            text,
+    first_name      text,
+    last_name       text,
+    suffix          text,
+    specialty       text,
+    npi             text,
+    hidden          boolean,
+    edited_at       timestamp,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+COMMENT ON TABLE archive.dental_provider IS 'A dentist, hygienist or other provider of a dental practice you connected, like one in Open Dental. Read only; Archive syncs them
+icon: stethoscope';
+COMMENT ON COLUMN archive.dental_provider.abbr IS 'The short name the practice knows them by';
+COMMENT ON COLUMN archive.dental_provider.suffix IS 'Like DDS or RDH';
+COMMENT ON COLUMN archive.dental_provider.specialty IS 'Their specialty there';
+COMMENT ON COLUMN archive.dental_provider.npi IS 'Their US National Provider Identifier';
+COMMENT ON COLUMN archive.dental_provider.hidden IS 'Hidden there, as one who left';
+COMMENT ON COLUMN archive.dental_provider.edited_at IS 'When it last changed there, in the practice''s local time';
+COMMENT ON COLUMN archive.dental_provider.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.dental_provider.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.dental_provider.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.dental_provider.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.dental_provider.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.dental_patient (
+    id              uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection      uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream          text NOT NULL,
+    source_id       text NOT NULL,
+    access          uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    updated_at      timestamptz NOT NULL DEFAULT now(),
+    name            text NOT NULL DEFAULT '',
+    seen_at         timestamptz NOT NULL DEFAULT now(),
+    first_name      text,
+    last_name       text,
+    middle_initial  text,
+    preferred_name  text,
+    status          text,
+    gender          text,
+    birthdate       date,
+    email           archive.email,
+    person          uuid REFERENCES archive.known_person ON DELETE SET NULL,
+    mobile_phone    text,
+    home_phone      text,
+    work_phone      text,
+    address         text,
+    city            text,
+    state           text,
+    zip             text,
+    provider        uuid REFERENCES archive.dental_provider ON DELETE SET NULL,
+    provider_source text,
+    first_visit_on  date,
+    balance         numeric,
+    edited_at       timestamp,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX dental_patient_person_idx ON archive.dental_patient (person);
+CREATE INDEX dental_patient_provider_idx ON archive.dental_patient (provider);
+COMMENT ON TABLE archive.dental_patient IS 'A patient of a dental practice you connected, like Open Dental: health information, so narrow who sees it. Read only; Archive syncs them
+icon: heart-pulse';
+COMMENT ON COLUMN archive.dental_patient.preferred_name IS 'The name they go by';
+COMMENT ON COLUMN archive.dental_patient.status IS 'Like Patient, NonPatient, Inactive, Archived or Deceased';
+COMMENT ON COLUMN archive.dental_patient.person IS 'references known_person; who they are, by their email';
+COMMENT ON COLUMN archive.dental_patient.address IS 'Their street address';
+COMMENT ON COLUMN archive.dental_patient.provider IS 'references dental_provider; their primary provider';
+COMMENT ON COLUMN archive.dental_patient.provider_source IS 'The id there of their primary provider';
+COMMENT ON COLUMN archive.dental_patient.first_visit_on IS 'When they first came';
+COMMENT ON COLUMN archive.dental_patient.balance IS 'What their family owes in all, as the practice reckons it';
+COMMENT ON COLUMN archive.dental_patient.edited_at IS 'When it last changed there, in the practice''s local time';
+COMMENT ON COLUMN archive.dental_patient.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.dental_patient.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.dental_patient.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.dental_patient.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.dental_patient.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.dental_appointment (
+    id              uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection      uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream          text NOT NULL,
+    source_id       text NOT NULL,
+    access          uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    updated_at      timestamptz NOT NULL DEFAULT now(),
+    name            text NOT NULL DEFAULT '',
+    seen_at         timestamptz NOT NULL DEFAULT now(),
+    patient         uuid REFERENCES archive.dental_patient ON DELETE SET NULL,
+    patient_source  text,
+    provider        uuid REFERENCES archive.dental_provider ON DELETE SET NULL,
+    provider_source text,
+    hygienist       uuid REFERENCES archive.dental_provider ON DELETE SET NULL,
+    hygienist_source text,
+    starts_at       timestamp,
+    minutes         integer,
+    status          text,
+    confirmed       text,
+    procedures      text,
+    note            text,
+    new_patient     boolean,
+    operatory       text,
+    edited_at       timestamp,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX dental_appointment_patient_idx ON archive.dental_appointment (patient);
+CREATE INDEX dental_appointment_provider_idx ON archive.dental_appointment (provider);
+CREATE INDEX dental_appointment_hygienist_idx ON archive.dental_appointment (hygienist);
+COMMENT ON TABLE archive.dental_appointment IS 'An appointment of a dental practice you connected, like Open Dental: health information. Read only; Archive syncs them
+icon: calendar-clock';
+COMMENT ON COLUMN archive.dental_appointment.patient IS 'references dental_patient';
+COMMENT ON COLUMN archive.dental_appointment.patient_source IS 'The id there of the patient';
+COMMENT ON COLUMN archive.dental_appointment.provider IS 'references dental_provider; the dentist';
+COMMENT ON COLUMN archive.dental_appointment.provider_source IS 'The id there of the dentist';
+COMMENT ON COLUMN archive.dental_appointment.hygienist IS 'references dental_provider; the hygienist';
+COMMENT ON COLUMN archive.dental_appointment.hygienist_source IS 'The id there of the hygienist';
+COMMENT ON COLUMN archive.dental_appointment.starts_at IS 'When it starts, in the practice''s local time';
+COMMENT ON COLUMN archive.dental_appointment.minutes IS 'How long it takes';
+COMMENT ON COLUMN archive.dental_appointment.status IS 'Like Scheduled, Complete, UnschedList, Broken or Planned';
+COMMENT ON COLUMN archive.dental_appointment.confirmed IS 'Whether the patient confirmed it, as the practice says';
+COMMENT ON COLUMN archive.dental_appointment.procedures IS 'What is to be done, as the practice describes it';
+COMMENT ON COLUMN archive.dental_appointment.new_patient IS 'It is the patient''s first';
+COMMENT ON COLUMN archive.dental_appointment.operatory IS 'The chair or room, by its id there';
+COMMENT ON COLUMN archive.dental_appointment.edited_at IS 'When it last changed there, in the practice''s local time';
+COMMENT ON COLUMN archive.dental_appointment.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.dental_appointment.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.dental_appointment.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.dental_appointment.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.dental_appointment.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.dental_procedure (
+    id              uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection      uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream          text NOT NULL,
+    source_id       text NOT NULL,
+    access          uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    updated_at      timestamptz NOT NULL DEFAULT now(),
+    name            text NOT NULL DEFAULT '',
+    seen_at         timestamptz NOT NULL DEFAULT now(),
+    patient         uuid REFERENCES archive.dental_patient ON DELETE SET NULL,
+    patient_source  text,
+    appointment     uuid REFERENCES archive.dental_appointment ON DELETE SET NULL,
+    appointment_source text,
+    provider        uuid REFERENCES archive.dental_provider ON DELETE SET NULL,
+    provider_source text,
+    code            text,
+    description     text,
+    status          text,
+    on_date         date,
+    fee             numeric,
+    tooth           text,
+    surface         text,
+    edited_at       timestamp,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX dental_procedure_patient_idx ON archive.dental_procedure (patient);
+CREATE INDEX dental_procedure_appointment_idx ON archive.dental_procedure (appointment);
+CREATE INDEX dental_procedure_provider_idx ON archive.dental_procedure (provider);
+COMMENT ON TABLE archive.dental_procedure IS 'A procedure of a dental practice you connected, planned, done or existing, like one in Open Dental: health information. Read only; Archive syncs them
+icon: clipboard-list';
+COMMENT ON COLUMN archive.dental_procedure.patient IS 'references dental_patient';
+COMMENT ON COLUMN archive.dental_procedure.patient_source IS 'The id there of the patient';
+COMMENT ON COLUMN archive.dental_procedure.appointment IS 'references dental_appointment; the appointment it is part of';
+COMMENT ON COLUMN archive.dental_procedure.appointment_source IS 'The id there of the appointment';
+COMMENT ON COLUMN archive.dental_procedure.provider IS 'references dental_provider';
+COMMENT ON COLUMN archive.dental_procedure.provider_source IS 'The id there of the provider';
+COMMENT ON COLUMN archive.dental_procedure.code IS 'Its procedure code, like D1110';
+COMMENT ON COLUMN archive.dental_procedure.status IS 'Like TP (planned), C (complete), EC or EO (existing), R (referred) or D (deleted)';
+COMMENT ON COLUMN archive.dental_procedure.on_date IS 'When it was or is to be done';
+COMMENT ON COLUMN archive.dental_procedure.fee IS 'What it costs';
+COMMENT ON COLUMN archive.dental_procedure.tooth IS 'The tooth, or teeth';
+COMMENT ON COLUMN archive.dental_procedure.surface IS 'The surfaces, like MODL';
+COMMENT ON COLUMN archive.dental_procedure.edited_at IS 'When it last changed there, in the practice''s local time';
+COMMENT ON COLUMN archive.dental_procedure.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.dental_procedure.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.dental_procedure.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.dental_procedure.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.dental_procedure.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.dental_payment (
+    id              uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection      uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream          text NOT NULL,
+    source_id       text NOT NULL,
+    access          uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    updated_at      timestamptz NOT NULL DEFAULT now(),
+    name            text NOT NULL DEFAULT '',
+    seen_at         timestamptz NOT NULL DEFAULT now(),
+    patient         uuid REFERENCES archive.dental_patient ON DELETE SET NULL,
+    patient_source  text,
+    paid_on         date,
+    amount          numeric,
+    type            text,
+    check_number    text,
+    note            text,
+    entered_on      date,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX dental_payment_patient_idx ON archive.dental_payment (patient);
+COMMENT ON TABLE archive.dental_payment IS 'A payment a dental practice you connected took, like one in Open Dental. Read only; Archive syncs them
+icon: banknote';
+COMMENT ON COLUMN archive.dental_payment.patient IS 'references dental_patient; whose account it is on';
+COMMENT ON COLUMN archive.dental_payment.patient_source IS 'The id there of the patient';
+COMMENT ON COLUMN archive.dental_payment.type IS 'How it was paid, by its type there';
+COMMENT ON COLUMN archive.dental_payment.entered_on IS 'When it was entered';
+COMMENT ON COLUMN archive.dental_payment.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.dental_payment.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.dental_payment.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.dental_payment.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.dental_payment.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
 -- Calendars: an event of a calendar you connected, like Google Calendar or Outlook's, a recurring one as its
 -- series and each occurrence that differs from it, and who is invited.
 CREATE TABLE archive.calendar_event (
@@ -2411,6 +2636,11 @@ BEGIN
         WHEN 'payroll_contractor_payment_group' THEN concat_ws(' · ', 'Contractor payments', r->>'check_date')
         WHEN 'payroll_task' THEN r->>'title'
         WHEN 'drive_file' THEN r->>'title'
+        WHEN 'dental_provider' THEN coalesce(nullif(btrim(concat_ws(' ', nullif(r->>'first_name', ''), nullif(r->>'last_name', ''), nullif(r->>'suffix', ''))), ''), r->>'abbr')
+        WHEN 'dental_patient' THEN btrim(concat_ws(' ', coalesce(nullif(r->>'preferred_name', ''), nullif(r->>'first_name', '')), nullif(r->>'last_name', '')))
+        WHEN 'dental_appointment' THEN concat_ws(' · ', (SELECT btrim(concat_ws(' ', p.first_name, p.last_name)) FROM archive.dental_patient p WHERE p.id = (r->>'patient')::uuid), r->>'starts_at')
+        WHEN 'dental_procedure' THEN concat_ws(' · ', nullif(r->>'code', ''), nullif(r->>'description', ''), r->>'on_date')
+        WHEN 'dental_payment' THEN concat_ws(' · ', 'Payment', r->>'paid_on')
         WHEN 'ad_metric' THEN concat_ws(' · ', nullif(r->>'campaign_name', ''), r->>'on_date')
         WHEN 'work_item' THEN concat_ws(' · ', nullif(r->>'title', ''), nullif(r->>'client_name', ''))
         WHEN 'commerce_product' THEN r->>'title'
@@ -2469,6 +2699,11 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_contractor
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_contractor_payment_group FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_task FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.drive_file FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.dental_provider FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.dental_patient FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.dental_appointment FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.dental_procedure FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.dental_payment FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ad_metric FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.work_item FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.commerce_product FOR EACH ROW EXECUTE FUNCTION archive.object_name();
@@ -2567,6 +2802,11 @@ GRANT SELECT ON archive.payroll_contractor_payment TO "{p}_viewer";
 GRANT SELECT ON archive.payroll_contractor_payment_group TO "{p}_viewer";
 GRANT SELECT ON archive.payroll_task TO "{p}_viewer";
 GRANT SELECT ON archive.drive_file TO "{p}_viewer";
+GRANT SELECT ON archive.dental_provider TO "{p}_viewer";
+GRANT SELECT ON archive.dental_patient TO "{p}_viewer";
+GRANT SELECT ON archive.dental_appointment TO "{p}_viewer";
+GRANT SELECT ON archive.dental_procedure TO "{p}_viewer";
+GRANT SELECT ON archive.dental_payment TO "{p}_viewer";
 GRANT SELECT ON archive.ad_metric TO "{p}_viewer";
 GRANT SELECT ON archive.work_item TO "{p}_viewer";
 GRANT SELECT ON archive.commerce_product TO "{p}_viewer";
@@ -2671,6 +2911,16 @@ ALTER TABLE archive.payroll_task ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.payroll_task FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_task.connection));
 ALTER TABLE archive.drive_file ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.drive_file FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = drive_file.connection));
+ALTER TABLE archive.dental_provider ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.dental_provider FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = dental_provider.connection));
+ALTER TABLE archive.dental_patient ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.dental_patient FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = dental_patient.connection));
+ALTER TABLE archive.dental_appointment ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.dental_appointment FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = dental_appointment.connection));
+ALTER TABLE archive.dental_procedure ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.dental_procedure FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = dental_procedure.connection));
+ALTER TABLE archive.dental_payment ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.dental_payment FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = dental_payment.connection));
 ALTER TABLE archive.ad_metric ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.ad_metric FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = ad_metric.connection));
 ALTER TABLE archive.work_item ENABLE ROW LEVEL SECURITY;
@@ -2716,7 +2966,8 @@ CREATE POLICY seen ON archive.known_person FOR SELECT USING (EXISTS (SELECT FROM
     OR EXISTS (SELECT FROM archive.crm_contact x WHERE x.person = known_person.id)
     OR EXISTS (SELECT FROM archive.chat_message x WHERE x.sender = known_person.id)
     OR EXISTS (SELECT FROM archive.work_item x WHERE x.assignee = known_person.id)
-    OR EXISTS (SELECT FROM archive.commerce_order x WHERE x.customer = known_person.id));
+    OR EXISTS (SELECT FROM archive.commerce_order x WHERE x.customer = known_person.id)
+    OR EXISTS (SELECT FROM archive.dental_patient x WHERE x.person = known_person.id));
 ALTER TABLE archive.known_org ENABLE ROW LEVEL SECURITY;
 CREATE POLICY seen ON archive.known_org FOR SELECT USING (EXISTS (SELECT FROM archive.payroll_company c WHERE c.org = known_org.id)
     OR EXISTS (SELECT FROM archive.crm_company x WHERE x.org = known_org.id));
@@ -2938,7 +3189,8 @@ SELECT jsonb_build_object(
             'archive.calendar_attendee'::regclass, 'archive.crm_company'::regclass, 'archive.crm_contact'::regclass, 'archive.crm_deal'::regclass,
             'archive.chat_message'::regclass, 'archive.marketing_campaign'::regclass, 'archive.work_item'::regclass,
             'archive.commerce_product'::regclass, 'archive.commerce_order'::regclass, 'archive.commerce_line'::regclass,
-            'archive.ad_metric'::regclass)
+            'archive.ad_metric'::regclass, 'archive.dental_provider'::regclass, 'archive.dental_patient'::regclass,
+            'archive.dental_appointment'::regclass, 'archive.dental_procedure'::regclass, 'archive.dental_payment'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -3052,7 +3304,12 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.work_item x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.commerce_product x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.commerce_order x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.ad_metric x WHERE x.connection = c.id))::bigint AS items,
+        + (SELECT count(*) FROM archive.ad_metric x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.dental_provider x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.dental_patient x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.dental_appointment x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.dental_procedure x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.dental_payment x WHERE x.connection = c.id))::bigint AS items,
     c.integration, coalesce(c.access::text, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
 FROM archive.connection c WHERE c.member = $1 AND NOT c.integration OR c.integration ORDER BY c.provider, c.account, c.id;
 
@@ -3143,7 +3400,8 @@ WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM arch
     AND NOT EXISTS (SELECT FROM archive.crm_contact x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.chat_message x WHERE x.sender = k.id)
     AND NOT EXISTS (SELECT FROM archive.work_item x WHERE x.assignee = k.id)
-    AND NOT EXISTS (SELECT FROM archive.commerce_order x WHERE x.customer = k.id))
+    AND NOT EXISTS (SELECT FROM archive.commerce_order x WHERE x.customer = k.id)
+    AND NOT EXISTS (SELECT FROM archive.dental_patient x WHERE x.person = k.id))
 DELETE FROM archive.known_org o WHERE NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.org = o.id)
     AND NOT EXISTS (SELECT FROM archive.crm_company x WHERE x.org = o.id);
 
