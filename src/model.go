@@ -24,6 +24,8 @@ const (
 	modelTimeout = 10 * time.Minute
 	modelCall    = 2 * time.Minute
 	modelMaxFile = 20 << 20
+	modelMaxAll  = 40 << 20
+	modelMaxN    = 10
 	modelTokens  = 16000
 )
 
@@ -76,6 +78,9 @@ func (r *runner) model(call goja.FunctionCall) (any, error) {
 	if req.Model == "" || req.Prompt == "" {
 		return nil, fmt.Errorf("archive.model: model and prompt are required: %w", httpErrBadRequest)
 	}
+	if strings.Trim(req.Model, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-") != "" {
+		return nil, fmt.Errorf("archive.model: %q is not a model name: %w", req.Model, httpErrBadRequest)
+	}
 	if req.Effort != "" && req.Effort != "none" {
 		return nil, fmt.Errorf("archive.model: effort must be \"none\" or left out: %w", httpErrBadRequest)
 	}
@@ -108,7 +113,10 @@ func (r *runner) model(call goja.FunctionCall) (any, error) {
 
 // modelFiles loads each file the caller may read, whole or one PDF page, within the size and type limits.
 func (r *runner) modelFiles(files []modelFile) ([]modelPart, error) {
-	parts := make([]modelPart, 0, len(files))
+	if len(files) > modelMaxN {
+		return nil, fmt.Errorf("%d files; a model reads at most %d a call: %w", len(files), modelMaxN, httpErrBadRequest)
+	}
+	parts, total := make([]modelPart, 0, len(files)), 0
 	for _, mf := range files {
 		f, rc, err := r.a.OpenFile(r.ctx, mf.ID)
 		if err != nil {
@@ -122,10 +130,13 @@ func (r *runner) modelFiles(files []modelFile) ([]modelPart, error) {
 			rc.Close()
 			return nil, fmt.Errorf("file %s is %d MB, over the %d MB a model reads: %w", mf.ID, f.Size>>20, modelMaxFile>>20, httpErrBadRequest)
 		}
-		data, err := io.ReadAll(rc)
+		data, err := io.ReadAll(io.LimitReader(rc, modelMaxFile+1))
 		rc.Close()
 		if err != nil {
 			return nil, err
+		}
+		if total += len(data); len(data) > modelMaxFile || total > modelMaxAll {
+			return nil, fmt.Errorf("the files run over the %d MB a model reads in one call: %w", modelMaxAll>>20, httpErrBadRequest)
 		}
 		if mf.Page != 0 {
 			if f.MIME != "application/pdf" {
