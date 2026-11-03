@@ -75,7 +75,6 @@
   pre {
     max-height: var(--code-max);
     overflow: auto;
-    overscroll-behavior-y: auto;
     padding: var(--space-4);
     padding-block-start: var(--space-0);
     font-family: var(--font-sans);
