@@ -9,9 +9,13 @@
   import Text from './Text.svelte';
   import Icon from './Icon.svelte';
   import OwnConnections from './OwnConnections.svelte';
+  import KeysDialog from './KeysDialog.svelte';
   import { connect, connections } from '../lib/app.svelte.js';
 
   let { connector } = $props();
+  let keying = $state(false);
+  // A connector with keys has no sign-in: Connect asks for them.
+  const start = () => (connector.keys?.length ? (keying = true) : connect(connector.id));
 
   connections.use();
 </script>
@@ -27,7 +31,7 @@
     </Stack>
     <Stack direction="row" gap="2">
       {#if !connector.connected}
-        <Button variant="primary" icon={Plug} disabled={!connector.ready} onclick={() => connect(connector.id)}>Connect</Button>
+        <Button variant="primary" icon={Plug} disabled={!connector.ready} onclick={start}>Connect</Button>
       {/if}
     </Stack>
   </Stack>
@@ -43,3 +47,4 @@
     </Stack>
   </Section>
 </Stack>
+<KeysDialog bind:open={keying} {connector} />

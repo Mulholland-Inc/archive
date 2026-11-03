@@ -1805,6 +1805,228 @@ COMMENT ON COLUMN archive.marketing_campaign.source_id IS 'Its id there';
 COMMENT ON COLUMN archive.marketing_campaign.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.marketing_campaign.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
+-- Work: a job a practice-management or project tool you connected tracks, like a Karbon work item: whose it is,
+-- for which client, where it is and when it is due.
+CREATE TABLE archive.work_item (
+    id             uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream         text NOT NULL,
+    source_id      text NOT NULL,
+    access         uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    updated_at     timestamptz NOT NULL DEFAULT now(),
+    name           text NOT NULL DEFAULT '',
+    seen_at        timestamptz NOT NULL DEFAULT now(),
+    title          text,
+    type           text,
+    status         text,
+    client_name    text,
+    client_source  text,
+    assignee       uuid REFERENCES archive.known_person ON DELETE SET NULL,
+    assignee_name  text,
+    starts_on      date,
+    due_on         date,
+    done_on        date,
+    description    text,
+    url            archive.url,
+    made_at        timestamptz,
+    edited_at      timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX work_item_assignee_idx ON archive.work_item (assignee);
+CREATE INDEX work_item_due_on_idx ON archive.work_item (due_on);
+COMMENT ON TABLE archive.work_item IS 'A job a practice-management or project tool you connected tracks, like a Karbon work item. Read only; Archive syncs them
+icon: briefcase';
+COMMENT ON COLUMN archive.work_item.title IS 'What it is';
+COMMENT ON COLUMN archive.work_item.type IS 'What kind of work it is, like Tax Return or Bookkeeping';
+COMMENT ON COLUMN archive.work_item.status IS 'Where it is, like Ready To Start, In Progress or Completed';
+COMMENT ON COLUMN archive.work_item.client_name IS 'The client it is for, by name';
+COMMENT ON COLUMN archive.work_item.client_source IS 'The id there of the client it is for';
+COMMENT ON COLUMN archive.work_item.assignee IS 'references known_person; who it is assigned to, by their address';
+COMMENT ON COLUMN archive.work_item.assignee_name IS 'Who it is assigned to, by name';
+COMMENT ON COLUMN archive.work_item.starts_on IS 'When it is to start';
+COMMENT ON COLUMN archive.work_item.due_on IS 'When it is due';
+COMMENT ON COLUMN archive.work_item.done_on IS 'When it was done';
+COMMENT ON COLUMN archive.work_item.url IS 'Where it opens there';
+COMMENT ON COLUMN archive.work_item.made_at IS 'When it was made there';
+COMMENT ON COLUMN archive.work_item.edited_at IS 'When it last changed there';
+COMMENT ON COLUMN archive.work_item.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.work_item.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.work_item.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.work_item.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.work_item.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+-- Commerce: the orders and products of a store you connected, like Shopify, each order with its lines and its
+-- customer as the person of their email.
+CREATE TABLE archive.commerce_product (
+    id             uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream         text NOT NULL,
+    source_id      text NOT NULL,
+    access         uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    updated_at     timestamptz NOT NULL DEFAULT now(),
+    name           text NOT NULL DEFAULT '',
+    seen_at        timestamptz NOT NULL DEFAULT now(),
+    title          text,
+    vendor         text,
+    type           text,
+    status         text,
+    tags           text[],
+    price          archive.money,
+    inventory      numeric,
+    description    text,
+    url            archive.url,
+    made_at        timestamptz,
+    edited_at      timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+COMMENT ON TABLE archive.commerce_product IS 'A product of a store you connected, like Shopify. Read only; Archive syncs them
+icon: package';
+COMMENT ON COLUMN archive.commerce_product.title IS 'Its name';
+COMMENT ON COLUMN archive.commerce_product.vendor IS 'Who makes or supplies it';
+COMMENT ON COLUMN archive.commerce_product.type IS 'Its product type there';
+COMMENT ON COLUMN archive.commerce_product.status IS 'Like ACTIVE, DRAFT or ARCHIVED';
+COMMENT ON COLUMN archive.commerce_product.price IS 'Its lowest price';
+COMMENT ON COLUMN archive.commerce_product.inventory IS 'How many are in stock, all variants and places together';
+COMMENT ON COLUMN archive.commerce_product.description IS 'What it says of itself, as text, up to 64 KB';
+COMMENT ON COLUMN archive.commerce_product.url IS 'Where it is sold online';
+COMMENT ON COLUMN archive.commerce_product.made_at IS 'When it was added there';
+COMMENT ON COLUMN archive.commerce_product.edited_at IS 'When it last changed there';
+COMMENT ON COLUMN archive.commerce_product.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.commerce_product.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.commerce_product.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.commerce_product.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.commerce_product.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.commerce_order (
+    id             uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream         text NOT NULL,
+    source_id      text NOT NULL,
+    access         uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    updated_at     timestamptz NOT NULL DEFAULT now(),
+    name           text NOT NULL DEFAULT '',
+    seen_at        timestamptz NOT NULL DEFAULT now(),
+    number         text,
+    customer       uuid REFERENCES archive.known_person ON DELETE SET NULL,
+    customer_name  text,
+    email          archive.email,
+    total          archive.money,
+    subtotal       archive.money,
+    tax            archive.money,
+    shipping       archive.money,
+    discounts      archive.money,
+    refunded       archive.money,
+    paid           text,
+    fulfilled      text,
+    cancelled_at   timestamptz,
+    city           text,
+    state          text,
+    country        text,
+    tags           text[],
+    note           text,
+    placed_at      timestamptz,
+    edited_at      timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX commerce_order_customer_idx ON archive.commerce_order (customer);
+CREATE INDEX commerce_order_placed_at_idx ON archive.commerce_order (placed_at);
+COMMENT ON TABLE archive.commerce_order IS 'An order of a store you connected, like Shopify; what was in it is in commerce_line. Read only; Archive syncs them
+icon: shopping-cart';
+COMMENT ON COLUMN archive.commerce_order.number IS 'Its number, like #1001';
+COMMENT ON COLUMN archive.commerce_order.customer IS 'references known_person; who placed it, by their address';
+COMMENT ON COLUMN archive.commerce_order.customer_name IS 'Who placed it, by name';
+COMMENT ON COLUMN archive.commerce_order.email IS 'The address it was placed with';
+COMMENT ON COLUMN archive.commerce_order.total IS 'What it came to, with tax and shipping, less discounts';
+COMMENT ON COLUMN archive.commerce_order.refunded IS 'What of it was refunded';
+COMMENT ON COLUMN archive.commerce_order.paid IS 'Where its payment is, like PAID, PENDING or REFUNDED';
+COMMENT ON COLUMN archive.commerce_order.fulfilled IS 'Where its shipping is, like FULFILLED or UNFULFILLED';
+COMMENT ON COLUMN archive.commerce_order.cancelled_at IS 'When it was cancelled, when it was';
+COMMENT ON COLUMN archive.commerce_order.city IS 'Where it ships to';
+COMMENT ON COLUMN archive.commerce_order.placed_at IS 'When it was placed';
+COMMENT ON COLUMN archive.commerce_order.edited_at IS 'When it last changed there';
+COMMENT ON COLUMN archive.commerce_order.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.commerce_order.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.commerce_order.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.commerce_order.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.commerce_order.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.commerce_line (
+    id             uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    access         uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    name           text NOT NULL DEFAULT '',
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    updated_at     timestamptz NOT NULL DEFAULT now(),
+    purchase       uuid NOT NULL REFERENCES archive.commerce_order ON DELETE CASCADE,
+    product        uuid REFERENCES archive.commerce_product ON DELETE SET NULL,
+    product_source text,
+    title          text,
+    variant        text,
+    sku            text,
+    quantity       numeric,
+    price          archive.money,
+    total          archive.money
+) INHERITS (archive.object);
+CREATE INDEX commerce_line_purchase_idx ON archive.commerce_line (purchase);
+CREATE INDEX commerce_line_product_idx ON archive.commerce_line (product);
+CREATE INDEX commerce_line_connection_idx ON archive.commerce_line (connection);
+COMMENT ON TABLE archive.commerce_line IS 'A line of an order: what was bought, how many and for how much. Read only; Archive syncs them
+icon: list';
+COMMENT ON COLUMN archive.commerce_line.purchase IS 'references commerce_order; the order it is a line of';
+COMMENT ON COLUMN archive.commerce_line.product IS 'references commerce_product; what it is';
+COMMENT ON COLUMN archive.commerce_line.product_source IS 'The id there of what it is';
+COMMENT ON COLUMN archive.commerce_line.variant IS 'Which of the product, like Large / Blue';
+COMMENT ON COLUMN archive.commerce_line.price IS 'What one cost';
+COMMENT ON COLUMN archive.commerce_line.total IS 'What they cost together, less discounts';
+COMMENT ON COLUMN archive.commerce_line.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.ad_metric (
+    id              uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection      uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream          text NOT NULL,
+    source_id       text NOT NULL,
+    access          uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    updated_at      timestamptz NOT NULL DEFAULT now(),
+    name            text NOT NULL DEFAULT '',
+    seen_at         timestamptz NOT NULL DEFAULT now(),
+    on_date         date,
+    campaign        uuid REFERENCES archive.marketing_campaign ON DELETE SET NULL,
+    campaign_source text,
+    campaign_name   text,
+    spend           archive.money,
+    impressions     numeric,
+    reach           numeric,
+    clicks          numeric,
+    purchases       numeric,
+    purchase_value  archive.money,
+    leads           numeric,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX ad_metric_campaign_idx ON archive.ad_metric (campaign);
+CREATE INDEX ad_metric_on_date_idx ON archive.ad_metric (on_date);
+COMMENT ON TABLE archive.ad_metric IS 'What an ad campaign you connected spent and got in a day, like one of Meta''s. Read only; Archive syncs them
+icon: chart-line';
+COMMENT ON COLUMN archive.ad_metric.on_date IS 'The day';
+COMMENT ON COLUMN archive.ad_metric.campaign IS 'references marketing_campaign; the campaign';
+COMMENT ON COLUMN archive.ad_metric.campaign_source IS 'The id there of the campaign';
+COMMENT ON COLUMN archive.ad_metric.campaign_name IS 'The campaign, by name';
+COMMENT ON COLUMN archive.ad_metric.spend IS 'What it spent that day';
+COMMENT ON COLUMN archive.ad_metric.impressions IS 'How many times its ads were shown';
+COMMENT ON COLUMN archive.ad_metric.reach IS 'How many people saw them';
+COMMENT ON COLUMN archive.ad_metric.clicks IS 'How many clicks they got';
+COMMENT ON COLUMN archive.ad_metric.purchases IS 'How many purchases they are credited with';
+COMMENT ON COLUMN archive.ad_metric.purchase_value IS 'What those purchases came to';
+COMMENT ON COLUMN archive.ad_metric.leads IS 'How many leads they are credited with';
+COMMENT ON COLUMN archive.ad_metric.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.ad_metric.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.ad_metric.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.ad_metric.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.ad_metric.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
 -- Calendars: an event of a calendar you connected, like Google Calendar or Outlook's, a recurring one as its
 -- series and each occurrence that differs from it, and who is invited.
 CREATE TABLE archive.calendar_event (
@@ -2189,6 +2411,11 @@ BEGIN
         WHEN 'payroll_contractor_payment_group' THEN concat_ws(' · ', 'Contractor payments', r->>'check_date')
         WHEN 'payroll_task' THEN r->>'title'
         WHEN 'drive_file' THEN r->>'title'
+        WHEN 'ad_metric' THEN concat_ws(' · ', nullif(r->>'campaign_name', ''), r->>'on_date')
+        WHEN 'work_item' THEN concat_ws(' · ', nullif(r->>'title', ''), nullif(r->>'client_name', ''))
+        WHEN 'commerce_product' THEN r->>'title'
+        WHEN 'commerce_order' THEN concat_ws(' · ', coalesce(nullif(r->>'number', ''), 'Order'), nullif(r->>'customer_name', ''))
+        WHEN 'commerce_line' THEN concat_ws(' · ', nullif(r->>'title', ''), nullif(r->>'variant', ''))
         WHEN 'marketing_campaign' THEN r->>'title'
         WHEN 'chat_message' THEN coalesce(nullif(left(btrim(r->>'text'), 120), ''), r->>'sender_name')
         WHEN 'crm_company' THEN coalesce(nullif(btrim(r->>'title'), ''), r->>'domain')
@@ -2242,6 +2469,11 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_contractor
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_contractor_payment_group FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_task FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.drive_file FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ad_metric FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.work_item FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.commerce_product FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.commerce_order FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.commerce_line FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.marketing_campaign FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.chat_message FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.crm_company FOR EACH ROW EXECUTE FUNCTION archive.object_name();
@@ -2335,6 +2567,11 @@ GRANT SELECT ON archive.payroll_contractor_payment TO "{p}_viewer";
 GRANT SELECT ON archive.payroll_contractor_payment_group TO "{p}_viewer";
 GRANT SELECT ON archive.payroll_task TO "{p}_viewer";
 GRANT SELECT ON archive.drive_file TO "{p}_viewer";
+GRANT SELECT ON archive.ad_metric TO "{p}_viewer";
+GRANT SELECT ON archive.work_item TO "{p}_viewer";
+GRANT SELECT ON archive.commerce_product TO "{p}_viewer";
+GRANT SELECT ON archive.commerce_order TO "{p}_viewer";
+GRANT SELECT ON archive.commerce_line TO "{p}_viewer";
 GRANT SELECT ON archive.marketing_campaign TO "{p}_viewer";
 GRANT SELECT ON archive.chat_message TO "{p}_viewer";
 GRANT SELECT ON archive.crm_company TO "{p}_viewer";
@@ -2434,6 +2671,16 @@ ALTER TABLE archive.payroll_task ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.payroll_task FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_task.connection));
 ALTER TABLE archive.drive_file ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.drive_file FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = drive_file.connection));
+ALTER TABLE archive.ad_metric ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.ad_metric FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = ad_metric.connection));
+ALTER TABLE archive.work_item ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.work_item FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = work_item.connection));
+ALTER TABLE archive.commerce_product ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.commerce_product FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = commerce_product.connection));
+ALTER TABLE archive.commerce_order ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.commerce_order FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = commerce_order.connection));
+ALTER TABLE archive.commerce_line ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.commerce_line FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = commerce_line.connection));
 ALTER TABLE archive.marketing_campaign ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.marketing_campaign FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = marketing_campaign.connection));
 ALTER TABLE archive.chat_message ENABLE ROW LEVEL SECURITY;
@@ -2467,7 +2714,9 @@ CREATE POLICY seen ON archive.known_person FOR SELECT USING (EXISTS (SELECT FROM
     OR EXISTS (SELECT FROM archive.calendar_event e WHERE e.organizer = known_person.id)
     OR EXISTS (SELECT FROM archive.calendar_attendee a WHERE a.person = known_person.id)
     OR EXISTS (SELECT FROM archive.crm_contact x WHERE x.person = known_person.id)
-    OR EXISTS (SELECT FROM archive.chat_message x WHERE x.sender = known_person.id));
+    OR EXISTS (SELECT FROM archive.chat_message x WHERE x.sender = known_person.id)
+    OR EXISTS (SELECT FROM archive.work_item x WHERE x.assignee = known_person.id)
+    OR EXISTS (SELECT FROM archive.commerce_order x WHERE x.customer = known_person.id));
 ALTER TABLE archive.known_org ENABLE ROW LEVEL SECURITY;
 CREATE POLICY seen ON archive.known_org FOR SELECT USING (EXISTS (SELECT FROM archive.payroll_company c WHERE c.org = known_org.id)
     OR EXISTS (SELECT FROM archive.crm_company x WHERE x.org = known_org.id));
@@ -2687,7 +2936,9 @@ SELECT jsonb_build_object(
             'archive.ledger_account'::regclass, 'archive.ledger_contact'::regclass, 'archive.ledger_item'::regclass,
             'archive.ledger_entry'::regclass, 'archive.ledger_line'::regclass, 'archive.calendar_event'::regclass,
             'archive.calendar_attendee'::regclass, 'archive.crm_company'::regclass, 'archive.crm_contact'::regclass, 'archive.crm_deal'::regclass,
-            'archive.chat_message'::regclass, 'archive.marketing_campaign'::regclass)
+            'archive.chat_message'::regclass, 'archive.marketing_campaign'::regclass, 'archive.work_item'::regclass,
+            'archive.commerce_product'::regclass, 'archive.commerce_order'::regclass, 'archive.commerce_line'::regclass,
+            'archive.ad_metric'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -2797,7 +3048,11 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.crm_contact x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.crm_deal x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.chat_message x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.marketing_campaign x WHERE x.connection = c.id))::bigint AS items,
+        + (SELECT count(*) FROM archive.marketing_campaign x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.work_item x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.commerce_product x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.commerce_order x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.ad_metric x WHERE x.connection = c.id))::bigint AS items,
     c.integration, coalesce(c.access::text, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
 FROM archive.connection c WHERE c.member = $1 AND NOT c.integration OR c.integration ORDER BY c.provider, c.account, c.id;
 
@@ -2886,7 +3141,9 @@ WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM arch
     AND NOT EXISTS (SELECT FROM archive.calendar_event x WHERE x.organizer = k.id)
     AND NOT EXISTS (SELECT FROM archive.calendar_attendee x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.crm_contact x WHERE x.person = k.id)
-    AND NOT EXISTS (SELECT FROM archive.chat_message x WHERE x.sender = k.id))
+    AND NOT EXISTS (SELECT FROM archive.chat_message x WHERE x.sender = k.id)
+    AND NOT EXISTS (SELECT FROM archive.work_item x WHERE x.assignee = k.id)
+    AND NOT EXISTS (SELECT FROM archive.commerce_order x WHERE x.customer = k.id))
 DELETE FROM archive.known_org o WHERE NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.org = o.id)
     AND NOT EXISTS (SELECT FROM archive.crm_company x WHERE x.org = o.id);
 

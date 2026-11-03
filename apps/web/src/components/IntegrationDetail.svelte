@@ -10,11 +10,13 @@
   import StatusBadge from './StatusBadge.svelte';
   import Text from './Text.svelte';
   import Icon from './Icon.svelte';
+  import KeysDialog from './KeysDialog.svelte';
   import { connectIntegration, disconnectIntegration, syncIntegration, isArchiveOwner, connections } from '../lib/app.svelte.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
 
   let { integration: c } = $props();
   const owner = $derived(isArchiveOwner());
+  let keying = $state(false);
   connections.use();
 
   async function disconnect() {
@@ -37,7 +39,7 @@
         <Button icon={RefreshCw} disabled={!owner} onclick={() => syncIntegration(c.id)}>Sync now</Button>
       </Stack>
     {:else}
-      <Button variant="primary" icon={Plug} disabled={!owner || !c.ready} onclick={() => connectIntegration(c.id)}>Connect</Button>
+      <Button variant="primary" icon={Plug} disabled={!owner || !c.ready} onclick={() => (c.keys?.length ? (keying = true) : connectIntegration(c.id))}>Connect</Button>
     {/if}
   </Stack>
   {#if !owner}<OwnerNotice what="integrations" />{/if}
@@ -62,3 +64,4 @@
     </Stack>
   </Section>
 </Stack>
+<KeysDialog bind:open={keying} connector={c} />
