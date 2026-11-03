@@ -61,7 +61,7 @@
     {#if matches.length}
       <div class="grid">
         {#each matches as c (c.id)}
-          <ConnectorCard connector={c} onopen={() => onopen?.(c.id)} onconnect={() => connect(c.id)} />
+          <ConnectorCard connector={c} types onopen={() => onopen?.(c.id)} onconnect={(type) => connect(c.id, type)} />
         {/each}
       </div>
     {:else}

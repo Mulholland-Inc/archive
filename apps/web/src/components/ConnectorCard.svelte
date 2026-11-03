@@ -2,9 +2,13 @@
   import { Plus, Check, BadgeCheck } from '@lucide/svelte';
   import ConnectorIcon from './ConnectorIcon.svelte';
   import IconButton from './IconButton.svelte';
+  import Menu from './Menu.svelte';
+  import MenuItems from './MenuItems.svelte';
+  import { connectionTypes } from '../lib/app.svelte.js';
   import Icon from './Icon.svelte';
 
-  let { connector, onopen, onconnect } = $props();
+  // onconnect connects, with types the type of archive picked first when it takes one: (type) => ...
+  let { connector, onopen, onconnect, types = false } = $props();
 </script>
 
 <article class="card">
@@ -12,10 +16,17 @@
   <span class="logo"><ConnectorIcon id={connector.brand ?? connector.id} /></span>
   <div class="text">
     <span class="name">{connector.name}<span class="verified" role="img" aria-label="Verified"><Icon icon={BadgeCheck} size="sm" /></span></span>
-    <p class="description">{connector.description}</p>
+    <p class="description">{connector.connected ? connector.account : connector.description}</p>
   </div>
   {#if connector.connected}
-    <span class="done" role="img" aria-label="Connected"><Icon icon={Check} size="md" /></span>
+    <span class="done" role="img" aria-label={(connector.connections?.length ?? 1) > 1 ? `${connector.connections.length} accounts connected` : 'Connected'}><Icon icon={Check} size="md" /></span>
+  {:else if onconnect && types}
+    <span class="action">
+      <Menu placement="bottom-end" width="sm" label={`Connect ${connector.name}`}>
+        {#snippet trigger(props)}<IconButton icon={Plus} label={`Connect ${connector.name}`} variant="subtle" tooltip={false} {...props} />{/snippet}
+        <MenuItems items={[{ heading: 'For your archives that are' }, ...connectionTypes.map((t) => ({ label: t.label, onselect: () => onconnect(t.value) }))]} />
+      </Menu>
+    </span>
   {:else if onconnect}
     <span class="action"><IconButton icon={Plus} label={`Connect ${connector.name}`} variant="subtle" tooltip={false} onclick={onconnect} /></span>
   {/if}

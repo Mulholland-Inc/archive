@@ -242,6 +242,19 @@ func (h *Hub) migrate(ctx context.Context) error {
 			if _, err := tx.Exec(ctx, "DROP TABLE IF EXISTS archive.moved"); err != nil {
 				return err
 			}
+			// A person's own connection from before connections had a type takes their oldest archive's, the one
+			// it moved from (personalMove), before main.sql's diff sees the column.
+			if _, err := tx.Exec(ctx, `DO $$ BEGIN
+    IF to_regclass('archive.connection') IS NOT NULL AND NOT EXISTS (SELECT FROM pg_catalog.pg_attribute
+        WHERE attrelid = 'archive.connection'::regclass AND attname = 'type' AND NOT attisdropped) THEN
+        ALTER TABLE archive.connection ADD COLUMN type archive.workspace_type NOT NULL DEFAULT 'personal';
+        UPDATE archive.connection c SET type = w.type FROM archive."user" u, LATERAL (SELECT x.type FROM archive.workspace x
+            WHERE x.id = ANY (u.workspaces) ORDER BY x.created_at, x.id LIMIT 1) w WHERE u.id = c.member;
+        ALTER TABLE archive.connection ALTER COLUMN type DROP DEFAULT;
+    END IF;
+END $$`); err != nil {
+				return err
+			}
 			return h.mainMigrate(ctx, tx, want)
 		}); err != nil {
 			return err

@@ -1291,10 +1291,19 @@ function toIntegration(k, x) {
   };
 }
 
-// connect sends the browser to connect connector id: one of your own, or an integration an owner connects for everyone.
-export function connect(id) {
-  const c = [...ws().connectors, ...archiveIntegrations()].find((x) => x.id === id);
-  if (c?.ready) location.assign(`${API}/connect/${encodeURIComponent(id)}?workspace=${encodeURIComponent(app.archive)}`);
+// The types of archive one of your own connections is in, which you pick before connecting it: only archives of
+// its type read what it syncs and act with it.
+export const connectionTypes = [
+  { value: 'personal', label: 'Personal' },
+  { value: 'family', label: 'Family' },
+  { value: 'business', label: 'Business' }
+];
+
+// connect sends the browser to connect an account of your own at connector id, into your archives of type.
+export function connect(id, type) {
+  const c = ws().connectors.find((x) => x.id === id);
+  if (!c?.ready || !connectionTypes.some((t) => t.value === type)) return;
+  location.assign(`${API}/connect/${encodeURIComponent(id)}?${new URLSearchParams({ workspace: app.archive, type })}`);
 }
 
 // syncNow asks for a sync of each of your accounts at connector id now, which the API queues.
@@ -1305,6 +1314,40 @@ export async function syncNow(id) {
     for (const x of c.connections ?? []) await call(`/connect/${x.id}/sync`, { method: 'POST' });
   } catch (e) {
     complain(e, `Couldn’t sync ${c.name}`);
+  }
+  return connections.refresh();
+}
+
+// syncAccount asks for a sync of your one account connection now.
+export async function syncAccount(connection) {
+  try {
+    await call(`/connect/${connection.id}/sync`, { method: 'POST' });
+  } catch (e) {
+    complain(e, `Couldn’t sync ${connection.account}`);
+  }
+  return connections.refresh();
+}
+
+// setConnectionType puts your one account connection in your archives of type, personal, family or business, and
+// out of the others, with what it synced.
+export async function setConnectionType(connection, type) {
+  const before = connection.type;
+  connection.type = type;
+  try {
+    await call(`/connect/${connection.id}/type`, { method: 'PUT', body: { type } });
+  } catch (e) {
+    connection.type = before;
+    complain(e, `Couldn’t move ${connection.account}`);
+  }
+  return connections.refresh();
+}
+
+// disconnectAccount disconnects your one account connection, in every archive you are in, with what it synced.
+export async function disconnectAccount(connection) {
+  try {
+    await call(`/connect/${connection.id}`, { method: 'DELETE' });
+  } catch (e) {
+    complain(e, `Couldn’t disconnect ${connection.account}`);
   }
   return connections.refresh();
 }
