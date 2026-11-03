@@ -11,7 +11,7 @@
   import StatusBadge from './StatusBadge.svelte';
   import Text from './Text.svelte';
   import Icon from './Icon.svelte';
-  import { ws, connect, connectionTypes, syncNow, syncAccount, disconnectAccount, setConnectionType, connections } from '../lib/app.svelte.js';
+  import { connect, connectionTypes, syncNow, syncAccount, disconnectAccount, setConnectionType, connections } from '../lib/app.svelte.js';
   import { relative } from '../lib/live.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
 
@@ -35,7 +35,6 @@
 
   // Which archives an account is in: only those of its type read what it syncs and act with it. You pick it
   // before you connect one.
-  const here = $derived(connectionTypes.find((t) => t.value === ws()?.look?.type)?.label.toLowerCase() ?? 'personal');
   const pick = connectionTypes.map((t) => ({ label: t.label, onselect: () => connect(connector.id, t.value) }));
 </script>
 
@@ -70,7 +69,6 @@
   {/if}
   {#if accounts.length}
     <Section title={accounts.length > 1 ? 'Accounts' : 'Account'}>
-      <Text as="p" size="md" tone="secondary">Only you see them. Each shows, with what it syncs, in your archives of its type; this one is {here}. To add another, sign in to it with Add account.</Text>
       <ul class="accounts">
         {#each accounts as x (x.id)}
           <li class="account">
