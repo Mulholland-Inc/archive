@@ -787,6 +787,12 @@ func (a *Archive) media(ctx context.Context, f *File) (map[string]any, string, e
 		return meta, "", err
 	}
 	top, _, _ := strings.Cut(f.MIME, "/")
+	if _, office := officeMIME[strings.ToLower(f.MIME)]; office {
+		return meta, mediaText(f.Name, f.MIME, b), nil
+	}
+	if _, err := OfficeKind(f.Name); err == nil {
+		return meta, mediaText(f.Name, f.MIME, b), nil
+	}
 	switch {
 	case f.MIME == "application/pdf":
 		text, pages, err := mediaPDF(b)

@@ -21,9 +21,8 @@ import (
 // myapps.microsoft.com.
 //
 // It syncs every file and folder of every library into drive_file, each library with Graph's delta of it, as
-// Outlook syncs each folder: the text of a text file is kept, and the content of the rest, like a Word file,
-// stays in SharePoint. Graph pushes a library's changes only to a subscription of each library, so it pushes
-// nothing yet: connecting, asking and reading start a sync.
+// Outlook syncs each folder, with the words of each PDF, Word, Excel, PowerPoint or text file up to 25 MB.
+// Graph pushes a library's changes only to a subscription of each library (below).
 func init() {
 	Register(&Connector{
 		ID: "sharepoint", Name: "SharePoint", Env: "ARCHIVE_OUTLOOK", Host: "https://login.microsoftonline.com",
@@ -127,7 +126,7 @@ func init() {
 					}
 					return out, nil
 				}),
-			"file": Act("One file's details, and its text when it is a text file up to 5 MB: { id, name, webUrl, size, file, parentReference, createdBy, "+
+			"file": Act("One file's details, and its words when it is a PDF, Word, Excel, PowerPoint or text file up to 25 MB: { id, name, webUrl, size, file, parentReference, createdBy, "+
 				"lastModifiedBy, lastModifiedDateTime, text }",
 				func(c *Client, in struct {
 					Drive string `json:"drive" jsonschema:"The library's id, the driveId from search"`
@@ -142,10 +141,11 @@ func init() {
 					return f, err
 				}),
 		},
+		Push: spPush,
 		Streams: []*Stream{{Name: "files", Gap: time.Second, Pull: spFiles.pull, Table: "drive_file", Rows: spRows,
 			Doc: "Every file and folder of your OneDrive and of each document library of each SharePoint site you can reach: its name, type, size, " +
-				"folder, library, who made it and changed it last and when, and the text of a text file, cut at 64 KB; the content of the rest, " +
-				"like a Word file, stays in SharePoint. Listed whole the first time, a library at a time, by <library id>/<item id>, and then each " +
+				"folder, library, who made it and changed it last and when, and the words of a PDF, Word, Excel, PowerPoint or text " +
+				"file up to 25 MB, cut at 64 KB; other content stays in SharePoint. Listed whole the first time, a library at a time, by <library id>/<item id>, and then each " +
 				"library's delta since. A library made since is listed whole; one gone, or a delta Graph no longer keeps, lists them all again."}},
 	})
 }
@@ -277,23 +277,15 @@ func spRecords(c *Client, p graphPart, items []map[string]any) ([]Record, error)
 	return append(out, got...), err
 }
 
-// spText is the text of f in the library drive when it is a text file up to 5 MB, and "" for any other; only a
-// busy Graph is an error.
+// spText is the words of f in the library drive, downloaded up to 25 MB when it is a PDF, a Word, Excel or
+// PowerPoint file or a text file; "" for the rest. Only a busy Graph is an error.
 func spText(c *Client, drive string, f map[string]any) (string, error) {
-	mime := str(obj(f, "file"), "mimeType")
+	if f["file"] == nil {
+		return "", nil
+	}
 	size, _ := f["size"].(float64)
-	if !(strings.HasPrefix(mime, "text/") || mime == "application/json") || size > maxBody {
-		return "", nil
-	}
-	var text string
-	err := c.Get(graphAPI+"/drives/"+url.PathEscape(drive)+"/items/"+url.PathEscape(str(f, "id"))+"/content", &text)
-	if err != nil {
-		if Busy(err) {
-			return "", err
-		}
-		return "", nil
-	}
-	return text, nil
+	return c.fileText(graphAPI+"/drives/"+url.PathEscape(drive)+"/items/"+url.PathEscape(str(f, "id"))+"/content", str(f, "name"),
+		str(obj(f, "file"), "mimeType"), int64(size))
 }
 
 // spRows is an item of a library as a file of a drive: its folder is its parent, which links unless it is the
@@ -311,4 +303,65 @@ func spRows(m map[string]any) *Row {
 		r.ref("folder", cmp.Or(str(parent, "driveId"), str(m, "driveId"))+"/"+str(parent, "id"))
 	}
 	return r.person("owner", str(made, "email")).person("editor", str(edited, "email"))
+}
+
+// spPush is a Graph subscription to the top of each library, which tells of a change anywhere in it, with a
+// clientState of Archive's own, for 42,000 minutes, under the 42,300 Graph allows a drive's: the first sync
+// after a library's comes within 27 days of ending renews it, one for a library made since is made, and one for a
+// library gone is deleted. A library Graph will not subscribe to, as some system libraries are, is left to the
+// syncs that start otherwise. Its pushes are Outlook's, read the same way.
+var spPush = &Push{Renew: 27 * 24 * time.Hour,
+	Watch: func(c *Client, h Hook, old []Watch) ([]Watch, error) {
+		libs, err := spLibraries(c)
+		if err != nil {
+			return nil, err
+		}
+		until := time.Now().Add(42000 * time.Minute).UTC().Format(time.RFC3339)
+		had := map[string]Watch{}
+		for _, o := range old {
+			had[o.Resource] = o
+		}
+		var out []Watch
+		for _, l := range libs {
+			if o, ok := had[l.ID]; ok {
+				delete(had, l.ID)
+				var s struct {
+					Expiration string `json:"expirationDateTime"`
+				}
+				err := c.Do("PATCH", graphAPI+"/subscriptions/"+url.PathEscape(o.Key), map[string]string{"expirationDateTime": until}, &s)
+				if err == nil {
+					o.Expires = stamp(s.Expiration)
+					out = append(out, o)
+					continue
+				}
+				if r := (*Refusal)(nil); !errors.As(err, &r) || r.Status != http.StatusNotFound {
+					return nil, err
+				}
+			}
+			state := nonce()[:32]
+			var s struct {
+				ID         string `json:"id"`
+				Expiration string `json:"expirationDateTime"`
+			}
+			err := c.Do("POST", graphAPI+"/subscriptions", map[string]string{"changeType": "updated", "notificationUrl": h.URL(""),
+				"resource": "/drives/" + l.ID + "/root", "expirationDateTime": until, "clientState": state}, &s)
+			if err != nil {
+				if Busy(err) {
+					return nil, err
+				}
+				continue
+			}
+			out = append(out, Watch{Key: s.ID, Resource: l.ID, Secret: state, Expires: stamp(s.Expiration)})
+		}
+		for _, o := range had {
+			c.Do("DELETE", graphAPI+"/subscriptions/"+url.PathEscape(o.Key), nil, nil)
+		}
+		return out, nil
+	},
+	Unwatch: func(c *Client, w Watch) error {
+		return c.Do("DELETE", graphAPI+"/subscriptions/"+url.PathEscape(w.Key), nil, nil)
+	},
+	Hear: func(p *Provider, r *http.Request, at string, body []byte, secret func(string) string) (*Heard, error) {
+		return outlookPush.Hear(p, r, at, body, secret)
+	},
 }

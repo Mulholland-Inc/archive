@@ -2,9 +2,10 @@
 // lists that is not here still shows, plainly.
 export const catalog = [
   { id: 'gdrive', by: 'Google', description: 'Search and read your files, never change them', name: 'Google Drive', category: 'Files', icon: 'drive', scopes: ['Read your files and documents'] },
+  { id: 'gcal', by: 'Google', description: 'Read your calendars’ events and who is invited, never change them', name: 'Google Calendar', category: 'Calendar', icon: 'calendar', scopes: ['Read your calendars and events'] },
   { id: 'gmail', by: 'Google', description: 'Read your mail and attachments, never send or change it', name: 'Gmail', category: 'Email', icon: 'mail', scopes: ['Read your mail and its attachments'] },
   { id: 'sharepoint', by: 'Microsoft', description: 'Search and read the files of your SharePoint sites and OneDrive, never change them', name: 'SharePoint', category: 'Files', icon: 'drive', scopes: ['Read files in every site and library you can read'] },
-  { id: 'outlook', by: 'Microsoft', description: 'Read your Microsoft 365 or Outlook.com mail, never send or change it', name: 'Outlook', category: 'Email', icon: 'inbox', scopes: ['Read your mail and its attachments'] },
+  { id: 'outlook', by: 'Microsoft', description: 'Read your Microsoft 365 or Outlook.com mail and calendar, never send or change them', name: 'Outlook', category: 'Email', icon: 'inbox', scopes: ['Read your mail and its attachments', 'Read your calendar'] },
   { id: 'notion', by: 'Notion', description: 'Search, read and write the pages and databases you allow', name: 'Notion', category: 'Docs', icon: 'notebook', scopes: ['Read and write pages you allow'] },
   { id: 'github', by: 'GitHub', description: 'Read issues, pull requests and files of your repositories', name: 'GitHub', category: 'Code', icon: 'branch', scopes: ['Read repositories you install Archive on'] },
   { id: 'quickbooks', by: 'Intuit', description: 'Read your company’s invoices, customers and books', name: 'QuickBooks', category: 'Finance', icon: 'ledger', scopes: ['Read one company’s accounting'] },

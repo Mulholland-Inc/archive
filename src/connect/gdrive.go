@@ -111,8 +111,8 @@ func init() {
 		Push: drivePush,
 		Streams: []*Stream{{Name: "files", Gap: 2 * time.Second, Pull: driveFiles, Table: "drive_file", Rows: driveRows,
 			Doc: "Every file and folder in My Drive, shared with you and in your shared drives, but those in the trash: its name, type, size, " +
-				"folder, owner, who changed it last and when, and the text of a Google Doc, Sheet (its first sheet) or Slides deck or a text file, " +
-				"cut at 64 KB; other content stays in Drive. Listed whole the first time, 100 a page, and then Drive's changes since."}},
+				"folder, owner, who changed it last and when, and its words, cut at 64 KB: a Google Doc, Sheet (its first sheet) or Slides " +
+				"deck's, and a PDF, Word, Excel, PowerPoint or text file's up to 25 MB; other content stays in Drive. Listed whole the first time, 100 a page, and then Drive's changes since."}},
 	})
 }
 
@@ -235,27 +235,26 @@ func driveRecords(c *Client, files []map[string]any, drives map[string]string) (
 	return out, err
 }
 
-// driveText is the text of f, a Google Doc, Sheet or Slides deck as export has it, or a text file up to 5 MB;
-// "" for any other file, or one Drive will not export, like one too big. Only a busy Drive is an error.
+// driveText is the words of f: a Google Doc, Sheet or Slides deck as export has it, and any other file Archive
+// reads, like a PDF or a Word file, downloaded up to 25 MB; "" for the rest, or one Drive will not hand over.
+// Only a busy Drive is an error.
 func driveText(c *Client, f map[string]any) (string, error) {
 	id, mime := url.PathEscape(str(f, "id")), str(f, "mimeType")
-	var text string
-	var err error
-	switch size, _ := strconv.ParseInt(str(f, "size"), 10, 64); {
-	case driveExports[mime] != "":
-		err = c.Get(driveAPI+"/files/"+id+"/export?mimeType="+url.QueryEscape(driveExports[mime]), &text)
-	case (strings.HasPrefix(mime, "text/") || mime == "application/json") && size <= maxBody:
-		err = c.Get(driveAPI+"/files/"+id+"?alt=media&supportsAllDrives=true", &text)
-	default:
-		return "", nil
-	}
-	if err != nil {
-		if Busy(err) {
-			return "", err
+	if as := driveExports[mime]; as != "" {
+		var text string
+		if err := c.Get(driveAPI+"/files/"+id+"/export?mimeType="+url.QueryEscape(as), &text); err != nil {
+			if Busy(err) {
+				return "", err
+			}
+			return "", nil
 		}
+		return text, nil
+	}
+	if strings.HasPrefix(mime, "application/vnd.google-apps.") {
 		return "", nil
 	}
-	return text, nil
+	size, _ := strconv.ParseInt(str(f, "size"), 10, 64)
+	return c.fileText(driveAPI+"/files/"+id+"?alt=media&supportsAllDrives=true", str(f, "name"), mime, size)
 }
 
 // driveRows is a file as a file of a drive: its folder is its first parent, and its owner the first of them,

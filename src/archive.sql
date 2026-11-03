@@ -604,15 +604,17 @@ CREATE TABLE archive.mail_attachment (
     message    uuid NOT NULL REFERENCES archive.mail_message ON DELETE CASCADE,
     filename   text,
     mime       text,
-    size       bigint
+    size       bigint,
+    text       text
 ) INHERITS (archive.object);
 CREATE INDEX mail_attachment_message_idx ON archive.mail_attachment (message);
 CREATE INDEX mail_attachment_connection_idx ON archive.mail_attachment (connection);
-COMMENT ON TABLE archive.mail_attachment IS 'A file attached to a message; its content stays in the mailbox. Read only; Archive syncs them
+COMMENT ON TABLE archive.mail_attachment IS 'A file attached to a message, with its words when it is a document Archive reads, like a PDF; its content stays in the mailbox. Read only; Archive syncs them
 icon: paperclip';
 COMMENT ON COLUMN archive.mail_attachment.message IS 'references mail_message';
 COMMENT ON COLUMN archive.mail_attachment.mime IS 'Its media type, like application/pdf';
 COMMENT ON COLUMN archive.mail_attachment.size IS 'Its size in bytes';
+COMMENT ON COLUMN archive.mail_attachment.text IS 'Its words, up to 64 KB, when it is a PDF, Word, Excel, PowerPoint or text file Archive read';
 COMMENT ON COLUMN archive.mail_attachment.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.doc_page (
@@ -1564,7 +1566,7 @@ CREATE TABLE archive.drive_file (
 CREATE INDEX drive_file_folder_idx ON archive.drive_file (folder);
 CREATE INDEX drive_file_owner_idx ON archive.drive_file (owner);
 CREATE INDEX drive_file_editor_idx ON archive.drive_file (editor);
-COMMENT ON TABLE archive.drive_file IS 'A file or folder of a drive you connected, like Google Drive or SharePoint; the text of a Google Doc, Sheet or Slides deck or a text file is kept, and other content stays there. Read only; Archive syncs them
+COMMENT ON TABLE archive.drive_file IS 'A file or folder of a drive you connected, like Google Drive or SharePoint, with its words when it is a document Archive reads, like a Google Doc, a PDF or a Word file; other content stays there. Read only; Archive syncs them
 icon: folder-open';
 COMMENT ON COLUMN archive.drive_file.kind IS 'file or folder';
 COMMENT ON COLUMN archive.drive_file.title IS 'Its name there';
@@ -1580,12 +1582,91 @@ COMMENT ON COLUMN archive.drive_file.editor IS 'references known_person; who cha
 COMMENT ON COLUMN archive.drive_file.editor_name IS 'Who changed it last, by name';
 COMMENT ON COLUMN archive.drive_file.made_at IS 'When it was made there';
 COMMENT ON COLUMN archive.drive_file.edited_at IS 'When it last changed there';
-COMMENT ON COLUMN archive.drive_file.text IS 'Its text, for a Google Doc, Sheet (its first sheet, as CSV) or Slides deck, or a text file, up to 64 KB';
+COMMENT ON COLUMN archive.drive_file.text IS 'Its words, up to 64 KB: a Google Doc''s, Sheet''s (its first sheet, as CSV) or Slides deck''s, or a PDF, Word, Excel, PowerPoint or text file''s up to 25 MB';
 COMMENT ON COLUMN archive.drive_file.connection IS 'references connection; the account it is from';
 COMMENT ON COLUMN archive.drive_file.stream IS 'What its connector syncs it as, like messages';
 COMMENT ON COLUMN archive.drive_file.source_id IS 'Its id there';
 COMMENT ON COLUMN archive.drive_file.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.drive_file.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+-- Calendars: an event of a calendar you connected, like Google Calendar or Outlook's, a recurring one as its
+-- series and each occurrence that differs from it, and who is invited.
+CREATE TABLE archive.calendar_event (
+    id             uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream         text NOT NULL,
+    source_id      text NOT NULL,
+    access         uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    updated_at     timestamptz NOT NULL DEFAULT now(),
+    name           text NOT NULL DEFAULT '',
+    seen_at        timestamptz NOT NULL DEFAULT now(),
+    calendar       text,
+    title          text,
+    description    text,
+    location       text,
+    starts_at      timestamptz,
+    ends_at        timestamptz,
+    all_day        boolean,
+    status         text,
+    recurrence     text,
+    series         uuid REFERENCES archive.calendar_event ON DELETE SET NULL,
+    series_source  text,
+    organizer      uuid REFERENCES archive.known_person ON DELETE SET NULL,
+    organizer_name text,
+    url            archive.url,
+    meeting_url    archive.url,
+    edited_at      timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX calendar_event_series_idx ON archive.calendar_event (series);
+CREATE INDEX calendar_event_organizer_idx ON archive.calendar_event (organizer);
+CREATE INDEX calendar_event_starts_at_idx ON archive.calendar_event (starts_at);
+COMMENT ON TABLE archive.calendar_event IS 'An event of a calendar you connected, like Google Calendar or Outlook''s; who is invited is in calendar_attendee. Read only; Archive syncs them
+icon: calendar';
+COMMENT ON COLUMN archive.calendar_event.calendar IS 'The calendar it is on, by name';
+COMMENT ON COLUMN archive.calendar_event.title IS 'Its title';
+COMMENT ON COLUMN archive.calendar_event.description IS 'What it says, as text, up to 64 KB';
+COMMENT ON COLUMN archive.calendar_event.starts_at IS 'When it starts; the start of its first day, in UTC, for an all-day event';
+COMMENT ON COLUMN archive.calendar_event.ends_at IS 'When it ends; the start of the day after its last, in UTC, for an all-day event';
+COMMENT ON COLUMN archive.calendar_event.all_day IS 'It takes whole days';
+COMMENT ON COLUMN archive.calendar_event.status IS 'Like confirmed, tentative or cancelled';
+COMMENT ON COLUMN archive.calendar_event.recurrence IS 'How it repeats, for a series, like RRULE:FREQ=WEEKLY;BYDAY=MO';
+COMMENT ON COLUMN archive.calendar_event.series IS 'references calendar_event; the series it is an occurrence of';
+COMMENT ON COLUMN archive.calendar_event.series_source IS 'The id there of the series it is an occurrence of';
+COMMENT ON COLUMN archive.calendar_event.organizer IS 'references known_person; who organizes it, by their address';
+COMMENT ON COLUMN archive.calendar_event.organizer_name IS 'Who organizes it, by name';
+COMMENT ON COLUMN archive.calendar_event.url IS 'Where it opens there';
+COMMENT ON COLUMN archive.calendar_event.meeting_url IS 'Where to join it online, like a Meet or Teams link';
+COMMENT ON COLUMN archive.calendar_event.edited_at IS 'When it last changed there';
+COMMENT ON COLUMN archive.calendar_event.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.calendar_event.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.calendar_event.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.calendar_event.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.calendar_event.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.calendar_attendee (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    name       text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    event      uuid NOT NULL REFERENCES archive.calendar_event ON DELETE CASCADE,
+    person     uuid NOT NULL REFERENCES archive.known_person ON DELETE CASCADE,
+    role       text,
+    response   text
+) INHERITS (archive.object);
+CREATE INDEX calendar_attendee_event_idx ON archive.calendar_attendee (event);
+CREATE INDEX calendar_attendee_person_idx ON archive.calendar_attendee (person);
+CREATE INDEX calendar_attendee_connection_idx ON archive.calendar_attendee (connection);
+COMMENT ON TABLE archive.calendar_attendee IS 'Someone invited to an event, and what they answered. Read only; Archive syncs them
+icon: user-check';
+COMMENT ON COLUMN archive.calendar_attendee.event IS 'references calendar_event';
+COMMENT ON COLUMN archive.calendar_attendee.person IS 'references known_person; who, by their address';
+COMMENT ON COLUMN archive.calendar_attendee.role IS 'required, optional or resource, like a room';
+COMMENT ON COLUMN archive.calendar_attendee.response IS 'What they answered: accepted, declined, tentative or none';
+COMMENT ON COLUMN archive.calendar_attendee.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 -- Books: the accounting of a company you connected, like its QuickBooks: its chart of accounts, the customers,
 -- vendors and employees it deals with, what it sells and buys, and every transaction with its lines. A row's
@@ -1892,6 +1973,8 @@ BEGIN
         WHEN 'payroll_contractor_payment_group' THEN concat_ws(' · ', 'Contractor payments', r->>'check_date')
         WHEN 'payroll_task' THEN r->>'title'
         WHEN 'drive_file' THEN r->>'title'
+        WHEN 'calendar_event' THEN coalesce(nullif(btrim(r->>'title'), ''), 'Busy')
+        WHEN 'calendar_attendee' THEN coalesce(own, (SELECT p.email FROM archive.known_person p WHERE p.id = (r->>'person')::uuid))
         WHEN 'ledger_account' THEN coalesce(nullif(r->>'full_name', ''), r->>'title')
         WHEN 'ledger_contact' THEN coalesce(nullif(r->>'title', ''), nullif(r->>'company', ''), r->>'email')
         WHEN 'ledger_item' THEN r->>'title'
@@ -1938,6 +2021,8 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_contractor
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_contractor_payment_group FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_task FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.drive_file FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.calendar_event FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.calendar_attendee FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_account FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_contact FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_item FOR EACH ROW EXECUTE FUNCTION archive.object_name();
@@ -2024,6 +2109,8 @@ GRANT SELECT ON archive.payroll_contractor_payment TO "{p}_viewer";
 GRANT SELECT ON archive.payroll_contractor_payment_group TO "{p}_viewer";
 GRANT SELECT ON archive.payroll_task TO "{p}_viewer";
 GRANT SELECT ON archive.drive_file TO "{p}_viewer";
+GRANT SELECT ON archive.calendar_event TO "{p}_viewer";
+GRANT SELECT ON archive.calendar_attendee TO "{p}_viewer";
 GRANT SELECT ON archive.ledger_account TO "{p}_viewer";
 GRANT SELECT ON archive.ledger_contact TO "{p}_viewer";
 GRANT SELECT ON archive.ledger_item TO "{p}_viewer";
@@ -2116,6 +2203,10 @@ ALTER TABLE archive.payroll_task ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.payroll_task FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_task.connection));
 ALTER TABLE archive.drive_file ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.drive_file FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = drive_file.connection));
+ALTER TABLE archive.calendar_event ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.calendar_event FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = calendar_event.connection));
+ALTER TABLE archive.calendar_attendee ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.calendar_attendee FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = calendar_attendee.connection));
 ALTER TABLE archive.ledger_account ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.ledger_account FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = ledger_account.connection));
 ALTER TABLE archive.ledger_contact ENABLE ROW LEVEL SECURITY;
@@ -2131,7 +2222,9 @@ CREATE POLICY seen ON archive.known_person FOR SELECT USING (EXISTS (SELECT FROM
     OR EXISTS (SELECT FROM archive.payroll_worker w WHERE w.person = known_person.id)
     OR EXISTS (SELECT FROM archive.payroll_company c WHERE c.admin = known_person.id OR c.signatory = known_person.id)
     OR EXISTS (SELECT FROM archive.drive_file f WHERE f.owner = known_person.id OR f.editor = known_person.id)
-    OR EXISTS (SELECT FROM archive.ledger_contact l WHERE l.person = known_person.id));
+    OR EXISTS (SELECT FROM archive.ledger_contact l WHERE l.person = known_person.id)
+    OR EXISTS (SELECT FROM archive.calendar_event e WHERE e.organizer = known_person.id)
+    OR EXISTS (SELECT FROM archive.calendar_attendee a WHERE a.person = known_person.id));
 ALTER TABLE archive.known_org ENABLE ROW LEVEL SECURITY;
 CREATE POLICY seen ON archive.known_org FOR SELECT USING (EXISTS (SELECT FROM archive.payroll_company c WHERE c.org = known_org.id));
 
@@ -2348,7 +2441,8 @@ SELECT jsonb_build_object(
             'archive.payroll_pay_period'::regclass, 'archive.payroll_contractor_payment'::regclass,
             'archive.payroll_contractor_payment_group'::regclass, 'archive.payroll_task'::regclass, 'archive.drive_file'::regclass,
             'archive.ledger_account'::regclass, 'archive.ledger_contact'::regclass, 'archive.ledger_item'::regclass,
-            'archive.ledger_entry'::regclass, 'archive.ledger_line'::regclass)
+            'archive.ledger_entry'::regclass, 'archive.ledger_line'::regclass, 'archive.calendar_event'::regclass,
+            'archive.calendar_attendee'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -2452,7 +2546,8 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.ledger_account x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.ledger_contact x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.ledger_item x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.ledger_entry x WHERE x.connection = c.id))::bigint AS items,
+        + (SELECT count(*) FROM archive.ledger_entry x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.calendar_event x WHERE x.connection = c.id))::bigint AS items,
     c.integration, coalesce(c.access::text, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
 FROM archive.connection c WHERE c.member = $1 AND NOT c.integration OR c.integration ORDER BY c.provider, c.account, c.id;
 
@@ -2537,7 +2632,9 @@ WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM arch
     AND NOT EXISTS (SELECT FROM archive.payroll_worker x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.admin = k.id OR x.signatory = k.id)
     AND NOT EXISTS (SELECT FROM archive.drive_file x WHERE x.owner = k.id OR x.editor = k.id)
-    AND NOT EXISTS (SELECT FROM archive.ledger_contact x WHERE x.person = k.id))
+    AND NOT EXISTS (SELECT FROM archive.ledger_contact x WHERE x.person = k.id)
+    AND NOT EXISTS (SELECT FROM archive.calendar_event x WHERE x.organizer = k.id)
+    AND NOT EXISTS (SELECT FROM archive.calendar_attendee x WHERE x.person = k.id))
 DELETE FROM archive.known_org o WHERE NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.org = o.id);
 
 -- The people of emails, each added unless there is one.

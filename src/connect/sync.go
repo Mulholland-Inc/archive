@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"math/big"
 	"net/http"
@@ -158,6 +159,71 @@ func htmlText(s string) string {
 	s = tagRe.ReplaceAllString(s, " ")
 	s = strings.NewReplacer("&nbsp;", " ", "&amp;", "&", "&lt;", "<", "&gt;", ">", "&quot;", `"`, "&#39;", "'").Replace(s)
 	return strings.Join(strings.Fields(s), " ")
+}
+
+// Extract is the words of a file's content b, named name, of media type mime, as Archive reads an upload's: a
+// PDF's, a Word, Excel or PowerPoint file's, HTML's or plain text's; "" for a kind it has none of. The server
+// sets it, as this package cannot import it.
+var Extract func(name, mime string, b []byte) string
+
+// maxFile is the largest file a stream downloads to read its words; a bigger one keeps only its name.
+const maxFile = 25 << 20
+
+// textual says whether a file named name of media type mime is a kind Extract reads.
+func textual(name, mime string) bool {
+	mime = strings.ToLower(mime)
+	switch ext := strings.ToLower(name[strings.LastIndex(name, ".")+1:]); {
+	case strings.HasPrefix(mime, "text/"), mime == "application/json", mime == "application/pdf", strings.Contains(mime, "openxmlformats-officedocument"),
+		strings.Contains(mime, "macroenabled"):
+		return true
+	case strings.Contains(name, "."):
+		return slices.Contains([]string{"pdf", "docx", "docm", "xlsx", "xlsm", "pptx", "pptm", "txt", "csv", "md", "html", "json"}, ext)
+	}
+	return false
+}
+
+// bytesText is the words of b, a file named name of media type mime, as fileText reads them.
+func bytesText(name, mime string, b []byte) string {
+	if Extract == nil || !textual(name, mime) {
+		return ""
+	}
+	return clip(strings.ToValidUTF8(Extract(name, mime, b), ""), maxText)
+}
+
+// fileText is the words of the file at the provider's URL u, named name, of media type mime and size bytes,
+// downloaded whole and read with Extract, cut at maxText: "" for a kind Extract does not read, one over maxFile,
+// or one the provider will not hand over or that does not come in time. Only a provider turning Archive away
+// for now is an error, which the sync tries again later.
+func (c *Client) fileText(u, name, mime string, size int64) (string, error) {
+	if Extract == nil || !textual(name, mime) || size > maxFile {
+		return "", nil
+	}
+	req, err := request(c.ctx, "GET", c.p.at(u), nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "*/*")
+	hc := *c.http
+	hc.Timeout = 2 * time.Minute
+	resp, err := hc.Do(req)
+	if err != nil {
+		if c.ctx.Err() != nil {
+			return "", c.ctx.Err()
+		}
+		return "", nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		if r := refusal(c.p.Name, resp); Busy(r) {
+			return "", r
+		}
+		return "", nil
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxFile+1))
+	if err != nil || len(b) > maxFile {
+		return "", nil
+	}
+	return bytesText(name, mime, b), nil
 }
 
 // tool is the MCP server's tool name, from its list, which the Client keeps; a server without it makes the
