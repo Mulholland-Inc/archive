@@ -211,6 +211,30 @@ func (a *Archive) run(ctx context.Context, code string, input json.RawMessage) (
 	return out, r.at, nil
 }
 
+// runClock is a run's time budget: browse, model and do stop the run's clock and spend budgets of their own.
+type runClock struct {
+	t                 *time.Timer
+	end               time.Time
+	browse, model, do time.Duration
+}
+
+// pause stops the run's clock while a call spends from budget, limit in all per run; resume charges the budget
+// what the call took and restarts the clock with the time the run had left.
+func (c *runClock) pause(budget *time.Duration, limit time.Duration, what string) (resume func(), err error) {
+	if *budget <= 0 {
+		return nil, fmt.Errorf("this run already %s for %s, its limit", what, limit)
+	}
+	if !c.t.Stop() {
+		return nil, errors.New("the run timed out")
+	}
+	left, start := time.Until(c.end), time.Now()
+	return func() {
+		*budget -= time.Since(start)
+		c.end = time.Now().Add(left)
+		c.t.Reset(left)
+	}, nil
+}
+
 // nested runs a saved workflow inside this run, in a savepoint it rolls back when the workflow fails.
 func (r *runner) nested(ctx context.Context, code string, input json.RawMessage) (*RunOutput, error) {
 	out := &RunOutput{Result: json.RawMessage("null"), Logs: []string{}}
