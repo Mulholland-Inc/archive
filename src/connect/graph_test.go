@@ -281,6 +281,24 @@ func TestGraphSyncStateResyncs(t *testing.T) {
 	}
 }
 
+// A resync after which Graph lists no folders is an error, not a listing of none: the resync keeps the folders
+// it had. Before, it forgot them, so the guard against an empty walk could not fire, and the listing of nothing
+// deleted the whole mailbox.
+func TestGraphResyncThenNoFoldersIsAnError(t *testing.T) {
+	g := &graphParts{listed: []string{"A", "B"}}
+	w := outlookWalks(t, g)
+	w.walk()
+	g.refuse = map[string]graphRefusal{"A": {http.StatusGone, "resyncRequired"}}
+	p, err := w.s.Pull(w.c, w.cursor)
+	if err != nil || !p.More {
+		t.Fatalf("A gone is More %v, %v; want a resync", p != nil && p.More, err)
+	}
+	g.refuse, g.listed = nil, nil
+	if p, err := w.s.Pull(w.c, p.Cursor); err == nil {
+		t.Errorf("a resync that finds no folders is Full %v, More %v; want an error", p.Full, p.More)
+	}
+}
+
 // A 400 that is not about a sync state is an error, not a resync that lists the mailbox whole.
 func TestGraphBadRequestIsNoResync(t *testing.T) {
 	g := &graphParts{listed: []string{"A"}}

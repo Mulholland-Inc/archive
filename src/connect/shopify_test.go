@@ -12,6 +12,13 @@ import (
 // shopifyFake is a store whose app has scopes, and whose every connection lists two pages of nodes, 1 and 2
 // then 3, by after and endCursor as the Admin API pages them. The queries it was asked are in asked.
 func shopifyFake(t *testing.T, scopes []string, asked *[]string) *fake {
+	return shopifyFakeScopes(t, func(int) ([]string, bool) { return scopes, true }, asked)
+}
+
+// shopifyFakeScopes is shopifyFake whose app's scopes are scopes(n) at the nth ask of them, from 1, or, when it
+// says not ok, Shopify's THROTTLED.
+func shopifyFakeScopes(t *testing.T, scopes func(n int) ([]string, bool), asked *[]string) *fake {
+	checks := 0
 	return newFake(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" || !strings.HasPrefix(r.URL.Path, "/admin/api/") || !strings.HasSuffix(r.URL.Path, "/graphql.json") {
 			t.Errorf("asked %s %s", r.Method, r.URL.Path)
@@ -27,6 +34,12 @@ func shopifyFake(t *testing.T, scopes []string, asked *[]string) *fake {
 		}
 		json.NewDecoder(r.Body).Decode(&in)
 		if strings.Contains(in.Query, "currentAppInstallation") {
+			checks++
+			scopes, ok := scopes(checks)
+			if !ok {
+				writeJSON(w, map[string]any{"errors": []any{map[string]any{"message": "Throttled", "extensions": map[string]any{"code": "THROTTLED"}}}})
+				return
+			}
 			var hs []any
 			for _, s := range scopes {
 				hs = append(hs, map[string]any{"handle": s})
@@ -89,6 +102,33 @@ func TestShopifyOrdersWithAllOrdersIsFull(t *testing.T) {
 		if !p.Full {
 			t.Errorf("page %d of an all-orders listing is not Full", i+1)
 		}
+	}
+}
+
+// The app's scopes are asked once a listing of orders, so one ask Shopify throttles in the middle cannot make
+// a page not Full. Before, each page asked: a throttled ask made its page not Full, which started the deleting
+// after it, and the listing's end deleted the orders the pages before had read.
+func TestShopifyOrdersAskScopesOnceAListing(t *testing.T) {
+	var asked []string
+	f := shopifyFakeScopes(t, func(n int) ([]string, bool) { return []string{"read_all_orders"}, n == 1 }, &asked)
+	pages, _ := pull(t, shopifyOpen(t, f), stream(t, "shopify", "orders"), "")
+	if len(pages) < 2 {
+		t.Fatalf("%d pages, want a listing of more than one", len(pages))
+	}
+	for i, p := range pages {
+		if !p.Full {
+			t.Errorf("page %d of an all-orders listing is not Full", i+1)
+		}
+	}
+}
+
+// A listing whose ask of the app's scopes Shopify throttles fails, for the sync to try again, and is no page
+// that deletes nothing either way.
+func TestShopifyOrdersThrottledScopesFail(t *testing.T) {
+	var asked []string
+	f := shopifyFakeScopes(t, func(int) ([]string, bool) { return nil, false }, &asked)
+	if p, err := stream(t, "shopify", "orders").Pull(shopifyOpen(t, f), ""); err == nil {
+		t.Errorf("a throttled ask of the scopes is Full %v; want an error", p.Full)
 	}
 }
 
