@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -54,6 +55,8 @@ type Archive struct {
 
 	// conns are the access tokens and tools of connections that runs used (connection.go).
 	conns archiveConns
+	// personal says it is the personal store of the main database (personal.go), not a workspace.
+	personal bool
 }
 
 func (a *Archive) as(ctx context.Context, fn func(context.Context) error) error {
@@ -162,7 +165,7 @@ func (a *Archive) List(ctx context.Context, typ string, where map[string]any, li
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
-	return coreDo(a, ctx, func(ctx context.Context) ([]map[string]any, error) {
+	read := func(ctx context.Context) ([]map[string]any, error) {
 		if err := a.pgCheck(ctx, tb, norm); err != nil {
 			return nil, err
 		}
@@ -177,7 +180,25 @@ func (a *Archive) List(ctx context.Context, typ string, where map[string]any, li
 			a.workflowRows(rs...)
 		}
 		return rs, err
-	})
+	}
+	// The caller's own connections and what they sync are in the personal store (personal.go).
+	switch personalWhere(tb) {
+	case "self":
+		return selfDo(a, ctx, read)
+	case "both":
+		rs, err := coreDo(a, ctx, read)
+		if err != nil {
+			return nil, err
+		}
+		own, err := selfDo(a, ctx, read)
+		if err != nil {
+			return nil, err
+		}
+		rs = append(rs, own...)
+		slices.SortFunc(rs, func(x, y map[string]any) int { return cmp.Compare(fmt.Sprint(x["id"]), fmt.Sprint(y["id"])) })
+		return rs[:min(len(rs), limit)], nil
+	}
+	return coreDo(a, ctx, read)
 }
 
 func (a *Archive) Get(ctx context.Context, typ string, id uuid.UUID) (map[string]any, error) {
@@ -185,13 +206,24 @@ func (a *Archive) Get(ctx context.Context, typ string, id uuid.UUID) (map[string
 	if err != nil {
 		return nil, err
 	}
-	return coreDo(a, ctx, func(ctx context.Context) (map[string]any, error) {
+	read := func(ctx context.Context) (map[string]any, error) {
 		row, err := a.coreGet(ctx, tb, id)
 		if tb.isWorkflow() {
 			a.workflowRows(row)
 		}
 		return row, err
-	})
+	}
+	switch personalWhere(tb) {
+	case "self":
+		return selfDo(a, ctx, read)
+	case "both":
+		row, err := coreDo(a, ctx, read)
+		if errors.Is(err, ErrNotFound) {
+			return selfDo(a, ctx, read)
+		}
+		return row, err
+	}
+	return coreDo(a, ctx, read)
 }
 
 func (a *Archive) coreGet(ctx context.Context, tb *Table, id uuid.UUID) (map[string]any, error) {
@@ -606,6 +638,12 @@ var storeSchema, _, _ = strings.Cut(storeSQLFile, "\n-- name:")
 var mainSQLFile string
 
 var mainSchema, _, _ = strings.Cut(mainSQLFile, "\n-- name:")
+
+// personalSQL is the personal store of the main database (personal.go), which Hub.migrate applies after main.sql,
+// with {p} its roles' prefix (Hub.mainPrefix).
+//
+//go:embed personal.sql
+var personalSQL string
 
 // mainNames are the tables and types of main.sql, by name in the archive schema. No workspace has them: a
 // workspace made before they moved to the main database drops its empty copies of them (storeShed).

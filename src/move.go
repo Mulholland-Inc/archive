@@ -171,7 +171,7 @@ func (h *Hub) moveOnce(ctx context.Context, conn *pgx.Conn) (err error) {
 	}
 	id := ws.String()
 	db := h.database(id)
-	want, err := pgScratch(ctx, h.main, h.pg, mainSchema)
+	want, err := pgScratch(ctx, h.main, h.pg, h.mainSQL())
 	if err != nil {
 		return fmt.Errorf("main.sql: %w", err)
 	}
@@ -306,7 +306,7 @@ func (h *Hub) moveOnce(ctx context.Context, conn *pgx.Conn) (err error) {
 	if !maps.Equal(left, mainRows) {
 		return fmt.Errorf("dropping the workspace changed the main tables, from %v to %v", mainRows, left)
 	}
-	if err := mainMigrate(ctx, tx, want); err != nil {
+	if err := h.mainMigrate(ctx, tx, want); err != nil {
 		return err
 	}
 	tag, err := tx.Exec(ctx, `UPDATE archive."user" SET admin = true WHERE email = ANY($1)`, owners)

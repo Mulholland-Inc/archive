@@ -45,6 +45,8 @@ type Hub struct {
 	live  *liveHub
 	// connect are the connectors this server has an OAuth client for (connection.go).
 	connect connect.Providers
+	// self is the personal store, of everyone's own connections (personal.go).
+	self *Archive
 
 	mu   sync.Mutex
 	open map[string]*hubEntry
@@ -177,6 +179,11 @@ func openHub(ctx context.Context, dsn, dir string) (*Hub, error) {
 		h.Close()
 		return nil, fmt.Errorf("main database: %w", err)
 	}
+	if err := h.openSelf(ctx); err != nil {
+		h.Close()
+		return nil, fmt.Errorf("the personal store: %w", err)
+	}
+	h.personalMoveAll(ctx)
 	return h, nil
 }
 
@@ -215,6 +222,9 @@ func (h *Hub) migrate(ctx context.Context) error {
 		return err
 	}
 	defer q.AdvisoryUnlock(context.WithoutCancel(ctx), mainLock)
+	if err := h.mainRolesMake(ctx, conn); err != nil {
+		return err
+	}
 	if err := h.moveFirst(ctx, conn.Conn()); err != nil {
 		return err
 	}
@@ -222,8 +232,8 @@ func (h *Hub) migrate(ctx context.Context) error {
 	if err != nil && !storeUndefined(err) {
 		return err
 	}
-	if at != mainHash() {
-		want, err := pgScratch(ctx, h.main, h.pg, mainSchema)
+	if at != h.mainHash() {
+		want, err := pgScratch(ctx, h.main, h.pg, h.mainSQL())
 		if err != nil {
 			return fmt.Errorf("main.sql: %w", err)
 		}
@@ -232,7 +242,7 @@ func (h *Hub) migrate(ctx context.Context) error {
 			if _, err := tx.Exec(ctx, "DROP TABLE IF EXISTS archive.moved"); err != nil {
 				return err
 			}
-			return mainMigrate(ctx, tx, want)
+			return h.mainMigrate(ctx, tx, want)
 		}); err != nil {
 			return err
 		}
@@ -247,7 +257,7 @@ func (h *Hub) migrate(ctx context.Context) error {
 
 // mainMigrate brings the main database to want, main.sql's snapshot, in tx, and stamps it with main.sql's hash.
 // It runs nothing that would delete data, and says what instead.
-func mainMigrate(ctx context.Context, tx pgx.Tx, want pgSchema) error {
+func (h *Hub) mainMigrate(ctx context.Context, tx pgx.Tx, want pgSchema) error {
 	lost, err := pgMigrate(ctx, tx, want)
 	if err != nil {
 		return fmt.Errorf("main.sql: %w", err)
@@ -255,12 +265,17 @@ func mainMigrate(ctx context.Context, tx pgx.Tx, want pgSchema) error {
 	if len(lost) > 0 {
 		return fmt.Errorf("main.sql not applied, it would delete data:\n  %s", strings.Join(lost, "\n  "))
 	}
-	return generated.New(tx).InsertMainRevision(ctx, mainHash())
+	return generated.New(tx).InsertMainRevision(ctx, h.mainHash())
 }
 
-func mainHash() string {
-	h := sha256.Sum256([]byte(mainSchema))
-	return hex.EncodeToString(h[:])
+// mainSQL is the main database's schema: main.sql's, and the personal store's.
+func (h *Hub) mainSQL() string {
+	return mainSchema + "\n" + strings.ReplaceAll(personalSQL, "{p}", h.mainPrefix())
+}
+
+func (h *Hub) mainHash() string {
+	sum := sha256.Sum256([]byte(h.mainSQL()))
+	return hex.EncodeToString(sum[:])
 }
 
 func storeUndefined(err error) bool {
@@ -277,6 +292,9 @@ func (h *Hub) Close() {
 		delete(h.open, k)
 	}
 	h.mu.Unlock()
+	if h.self != nil {
+		h.self.st.app.Close()
+	}
 	if h.main != nil {
 		h.main.Close()
 	}
@@ -424,6 +442,7 @@ func (h *Hub) forget(short string) {
 }
 
 func (a *Archive) afterOpen(ctx context.Context) {
+	a.hub.personalMoveLogged(ctx, a.ws)
 	err := a.st.System(ctx, func(ctx context.Context) error {
 		return a.st.db(ctx).ResetProcessing(ctx)
 	})
@@ -715,11 +734,14 @@ func (a *Archive) nextDue(ctx context.Context, kind string) (*time.Time, error) 
 			}
 			return err
 		}
-		n, err := q.NextWorkflowAt(ctx)
+		var n *time.Time
+		var err error
 		if kind == "sync" {
 			var t time.Time
 			t, err = q.NextSyncAt(ctx, time.Now().Add(syncLeaseCheck))
 			n = &t
+		} else {
+			n, err = q.NextWorkflowAt(ctx)
 		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
@@ -739,7 +761,7 @@ func (a *Archive) scheduleWorkflows(ctx context.Context) error {
 
 func (h *Hub) due(ctx context.Context, ws uuid.UUID, kind string, claimed time.Time) error {
 	bg := context.WithoutCancel(ctx)
-	a, release, err := h.acquire(ctx, ws.String())
+	a, release, err := h.archiveOf(ctx, ws)
 	if errors.Is(err, ErrNotFound) {
 		return h.q().ClearDue(bg, ws, kind, claimed)
 	}

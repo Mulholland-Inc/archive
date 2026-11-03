@@ -163,8 +163,8 @@ func (q *Queries) ClaimDueFor(ctx context.Context, lease time.Time, iD uuid.UUID
 }
 
 const clearDue = `-- name: ClearDue :exec
-DELETE FROM archive.due d USING archive.workspace w
-WHERE w.id = d.workspace AND w.id = $1 AND d.kind = $2 AND d.at = $3::timestamptz
+DELETE FROM archive.due d
+WHERE d.workspace = $1 AND d.kind = $2 AND d.at = $3::timestamptz
 `
 
 func (q *Queries) ClearDue(ctx context.Context, iD uuid.UUID, kind string, claimed time.Time) error {
@@ -296,7 +296,8 @@ func (q *Queries) DeleteOAuthClient(ctx context.Context, provider string, client
 }
 
 const deleteWorkspace = `-- name: DeleteWorkspace :exec
-WITH gone AS (UPDATE archive."user" u SET workspaces = array_remove(u.workspaces, $1::uuid) WHERE u.workspaces @> ARRAY[$1::uuid])
+WITH gone AS (UPDATE archive."user" u SET workspaces = array_remove(u.workspaces, $1::uuid) WHERE u.workspaces @> ARRAY[$1::uuid]),
+    due AS (DELETE FROM archive.due d WHERE d.workspace = $1::uuid)
 DELETE FROM archive.workspace w WHERE w.id = $1::uuid
 `
 
@@ -603,8 +604,9 @@ func (q *Queries) SetAdmin(ctx context.Context, admin bool, email string) (Archi
 }
 
 const setDue = `-- name: SetDue :execrows
-UPDATE archive.due d SET at = $1::timestamptz FROM archive.workspace w
-WHERE w.id = d.workspace AND w.id = $2 AND d.kind = $3 AND d.at = $4::timestamptz
+UPDATE archive.due d SET at = $1::timestamptz
+WHERE d.workspace = $2 AND d.kind = $3 AND d.at = $4::timestamptz
+    AND (d.workspace = '00000000-0000-0000-0000-000000000000' OR EXISTS (SELECT FROM archive.workspace w WHERE w.id = d.workspace))
 `
 
 type SetDueParams struct {
@@ -614,6 +616,7 @@ type SetDueParams struct {
 	Claimed time.Time
 }
 
+// The work of a workspace that is gone, or of the personal store's nil one, is never due again.
 func (q *Queries) SetDue(ctx context.Context, arg SetDueParams) (int64, error) {
 	result, err := q.db.Exec(ctx, setDue,
 		arg.Next,

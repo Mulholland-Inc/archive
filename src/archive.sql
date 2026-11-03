@@ -441,9 +441,12 @@ COMMENT ON COLUMN archive.workflow_run.error IS 'Why it failed; empty when it wo
 COMMENT ON COLUMN archive.workflow_run.ms IS 'How long it took, in milliseconds';
 COMMENT ON COLUMN archive.workflow_run.created_at IS 'When it started';
 
--- A connection is an account at another service that Archive reads: a member's own, like their Gmail, or, for
+-- A connection is an account at another service that Archive reads: a person's own, like their Gmail, or, for
 -- an integration, the archive's, like its QuickBooks company, which a connector's file says it is
--- (connect.Connector.Integration). An archive has at most one connection to each integration, which an owner
+-- (connect.Connector.Integration). A person's own are not here but in the personal store of the main database
+-- (personal.sql), once for every workspace they are in; one a workspace still has from before is its member's
+-- until it moves there (personalMove), as is an extra one of an integration from before integrations, which
+-- stays. An archive has at most one connection to each integration, which an owner
 -- connects; member is then who connected it last, and every member sees it, and what it syncs, while archive.can
 -- their access, the group it is narrowed to, null for everyone, as rows of a user table are. Go alone writes it
 -- (connection.go): connecting adds it, connecting the same account again renews it, and disconnecting deletes it. provider is a connector's id; token is its refresh token, sealed with the
@@ -483,7 +486,7 @@ CREATE TABLE archive.connection (
 ) INHERITS (archive.object);
 CREATE UNIQUE INDEX connection_integration_idx ON archive.connection (provider) WHERE integration;
 CREATE INDEX connection_sync_idx ON archive.connection (sync_at) WHERE sync_at IS NOT NULL;
-COMMENT ON TABLE archive.connection IS 'One of your own accounts at another service that Archive reads for you, like your Gmail; archive.action uses it. Read only; connect and disconnect them in Settings, Connectors
+COMMENT ON TABLE archive.connection IS 'An account at another service that Archive reads: one of your own, like your Gmail, connected once for every archive you are in, or one of the archive''s integrations, like its QuickBooks; archive.action uses it. Read only; connect and disconnect your own in Settings, Connectors, and the archive''s in Archive settings, Integrations
 icon: plug';
 COMMENT ON COLUMN archive.connection.provider IS 'Which service, a connector: gmail, notion, quickbooks, ...';
 COMMENT ON COLUMN archive.connection.meta IS 'What the service said about the account when it connected, like QuickBooks'' realmId';
@@ -503,8 +506,10 @@ COMMENT ON COLUMN archive.connection.access IS 'The id of the group an integrati
 -- those, like a message's parties, and are written again with it. A row that names another row of its
 -- connection keeps that row's id there in <column>_source, so it links once both are there. Only Go writes
 -- them (connection.go): a row gone there is deleted, and disconnecting deletes the connection's. Every row has its
--- connection's access, and is seen as the connection is: a personal connection's by its member, and an
--- integration's by everyone archive.can its access.
+-- connection's access, and is seen as the connection is: an integration's by everyone archive.can its access.
+-- Only personal connectors sync mail and docs, into the personal store (personal.sql), so a workspace's
+-- mail_message, mail_party, mail_attachment and doc_page are empty, and list, get and archive.query of them
+-- read the store.
 --
 -- People and organizations are shared by every domain and every connection, by a key that is the same wherever
 -- they are seen: known_person is an email address, known_org an EIN or a domain. A row of one holds that key
@@ -2149,6 +2154,15 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
     c.integration, coalesce(c.access::text, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
 FROM archive.connection c WHERE c.member = $1 AND NOT c.integration OR c.integration ORDER BY c.provider, c.account, c.id;
 
+-- A person's own connections in the personal store of the main database (personal.sql), whose member is the
+-- person, with how many things of each it has.
+-- name: PersonalConnections :many
+SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_at, c.sync_at, c.synced_at,
+    ((SELECT count(*) FROM archive.mail_message x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.doc_page x WHERE x.connection = c.id))::bigint AS items,
+    c.integration, ''::text AS access, ''::text AS connected_by
+FROM archive.connection c WHERE c.member = $1 AND NOT c.integration ORDER BY c.provider, c.account, c.id;
+
 -- name: Connection :one
 SELECT * FROM archive.connection WHERE id = $1;
 
@@ -2238,6 +2252,10 @@ WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM arch
     AND NOT EXISTS (SELECT FROM archive.payroll_worker x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.admin = k.id OR x.signatory = k.id))
 DELETE FROM archive.known_org o WHERE NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.org = o.id);
+
+-- People nothing names any more go from the personal store of the main database, where only mail names them.
+-- name: DeleteUnknownPeople :exec
+DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM archive.mail_party x WHERE x.person = k.id);
 
 -- The people of emails, each added unless there is one.
 -- name: KnownPeople :many
