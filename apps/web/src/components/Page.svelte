@@ -23,10 +23,10 @@
     width: 100%;
     margin-inline: auto;
     padding: var(--space-8);
-    padding-block-end: calc(var(--space-8) + var(--dock-height, 0px));
   }
 
-  .chat { max-width: calc(var(--chat-width) + var(--space-16)); }
+  /* Only a chat has the composer dock floating over its end, so only a chat keeps room for it. */
+  .chat { max-width: calc(var(--chat-width) + var(--space-16)); padding-block-end: calc(var(--space-8) + var(--dock-height)); }
   .home { max-width: calc(var(--home-width) + var(--space-16)); }
   .page { max-width: calc(var(--page-width) + var(--space-16)); }
   .wide { max-width: calc(var(--page-wide) + var(--space-16)); }
@@ -41,7 +41,10 @@
     .inner {
       gap: var(--space-5);
       padding: var(--space-4);
-      padding-block-end: calc(var(--space-4) + var(--dock-height, 0px));
+    }
+
+    .chat {
+      padding-block-end: calc(var(--space-4) + var(--dock-height));
     }
   }
 </style>
