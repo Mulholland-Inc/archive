@@ -1138,6 +1138,7 @@ var syncSchema = map[string]syncTable{
 	"crm_contact":                      {links: map[string]string{"company": "crm_company"}},
 	"crm_deal":                         {links: map[string]string{"company": "crm_company"}},
 	"chat_message":                     {},
+	"marketing_campaign":               {},
 	"ledger_account":                   {links: map[string]string{"parent": "ledger_account"}},
 	"ledger_contact":                   {},
 	"ledger_item":                      {links: map[string]string{"income_account": "ledger_account", "expense_account": "ledger_account"}},

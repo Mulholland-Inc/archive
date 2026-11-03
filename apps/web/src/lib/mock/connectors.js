@@ -11,6 +11,8 @@ export const catalog = [
   { id: 'github', by: 'GitHub', description: 'Read issues, pull requests and files of your repositories', name: 'GitHub', category: 'Code', icon: 'branch', scopes: ['Read repositories you install Archive on'] },
   { id: 'quickbooks', by: 'Intuit', description: 'Read your company’s invoices, customers and books', name: 'QuickBooks', category: 'Finance', icon: 'ledger', scopes: ['Read one company’s accounting'] },
   { id: 'stripe', by: 'Stripe', description: 'Look up customers, payments, invoices and subscriptions', name: 'Stripe', category: 'Finance', icon: 'card', scopes: ['Use your Stripe account as you allow'] },
+  { id: 'salesforce', by: 'Salesforce', description: 'Read accounts, contacts, leads and opportunities', name: 'Salesforce', category: 'CRM', icon: 'users', scopes: ['Read your org’s records through the API'] },
+  { id: 'klaviyo', by: 'Klaviyo', description: 'Read profiles, lists and campaigns', name: 'Klaviyo', category: 'Marketing', icon: 'mail', scopes: ['Read profiles, lists, campaigns and metrics'] },
   { id: 'hubspot', by: 'HubSpot', description: 'Read contacts, companies and deals', name: 'HubSpot', category: 'CRM', icon: 'users', scopes: ['Read contacts, companies and deals'] },
   { id: 'asana', by: 'Asana', description: 'Read workspaces, projects and tasks', name: 'Asana', category: 'Projects', icon: 'list', scopes: ['Read projects, tasks and comments'] },
   { id: 'linear', by: 'Linear', description: 'Search and work with issues, projects and cycles', name: 'Linear', category: 'Projects', icon: 'list', scopes: ['Read and write issues as you'] },
