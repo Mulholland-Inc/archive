@@ -1200,6 +1200,12 @@ func runTypes(cat *Catalog) string {
 			if c.Name == "access" && desc == "" && tb.Schema == "public" {
 				desc = "Group that sees the row, like hr; null is the whole workspace"
 			}
+			if c.Name == "name" && desc == "" {
+				desc = "The row's title, which the app shows it and every link to it by"
+				if tb.Schema == "public" && tb.Kind == "table" {
+					desc += "; set it on every create"
+				}
+			}
 			b.WriteString(runDoc("    ", desc, ref, runFormat(c.Schema, c.Type), gen))
 			opt := "?"
 			if c.required() {

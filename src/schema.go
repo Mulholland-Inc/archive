@@ -43,6 +43,8 @@ type Table struct {
 	Force       bool      `json:"force"`
 	Invoker     bool      `json:"security_invoker,omitempty"`
 	Policy      bool      `json:"policy"`
+	Object      bool      `json:"object"`
+	Partitioned bool      `json:"partitioned,omitempty"`
 	Columns     []*Column `json:"columns"`
 	meta        [][2]string
 	internal    []string
@@ -148,6 +150,12 @@ func catalogParse(b []byte) (*Catalog, error) {
 		if t.synced() {
 			t.internal = []string{"seen_at"}
 			t.Columns = slices.DeleteFunc(t.Columns, func(c *Column) bool { return c.Name == "seen_at" })
+		}
+		// These of Archive's tables are seen by whose they are, not by a group: the access every object has
+		// says nothing of them.
+		if t.Schema == "archive" && slices.Contains([]string{"member", "workflow", "workflow_run", "known_person", "known_org"}, t.Name) {
+			t.internal = append(t.internal, "access")
+			t.Columns = slices.DeleteFunc(t.Columns, func(c *Column) bool { return c.Name == "access" })
 		}
 	}
 	return c, nil
@@ -282,6 +290,7 @@ func (c *Catalog) Check() error {
 	bad := func(path, msg string) { ve.Errors = append(ve.Errors, FieldError{Path: path, Message: msg}) }
 	want := []struct{ name, typ, msg string }{
 		{"id", "uuid", "want id uuid PRIMARY KEY DEFAULT uuidv7()"},
+		{"name", "text", "want name text NOT NULL, the title every screen shows a row and its links by, which CREATE TABLE ... INHERITS (archive.object) gives it; fill it on every create, or keep it made of other columns with CREATE TRIGGER name_follows BEFORE INSERT OR UPDATE ON <table> FOR EACH ROW EXECUTE FUNCTION archive.name_follows('first_name', 'last_name')"},
 		{"access", "text", "want access text, null for rows the whole workspace sees, like access text, or access text NOT NULL DEFAULT 'hr' CHECK (access = 'hr') for a table only the hr group sees"},
 		{"created_at", "timestamptz", "want created_at timestamptz NOT NULL DEFAULT now()"},
 		{"updated_at", "timestamptz", "want updated_at timestamptz NOT NULL DEFAULT now()"},
@@ -303,7 +312,13 @@ func (c *Catalog) Check() error {
 			if col := t.col("id"); col == nil || col.Type != "uuid" || col.List {
 				bad(name+".id", "want an id uuid column, like CREATE VIEW "+name+" WITH (security_invoker = true) AS SELECT * FROM <table>")
 			}
+			if col := t.col("name"); col == nil || col.List {
+				bad(name+".name", "want a name column, the title the app shows each row by, like CREATE VIEW "+name+" WITH (security_invoker = true) AS SELECT * FROM <table>, whose name every table has, or SELECT ..., <expression> AS name")
+			}
 			continue
+		}
+		if !t.Object && !t.Partitioned {
+			bad(name, "want CREATE TABLE "+name+" (<its own columns>) INHERITS (archive.object), which gives it id, name, access, created_at and updated_at; for a table that exists, ALTER TABLE "+name+" INHERIT archive.object")
 		}
 		for _, w := range want {
 			col := t.col(w.name)
@@ -313,6 +328,8 @@ func (c *Catalog) Check() error {
 				ok = ok && col.PK && col.Default
 			case "created_at", "updated_at":
 				ok = ok && col.NotNull && col.Default
+			case "name":
+				ok = ok && col.NotNull
 			}
 			if !ok {
 				bad(name+"."+w.name, w.msg)
@@ -1045,10 +1062,11 @@ func (c *Catalog) texty(schema, name string) bool {
 	return false
 }
 
-// schemaDerive is what each public table lacks of what every table has: the id, access, created_at,
-// updated_at and search columns, the search index, row-level security with the access policy, and the
-// grants to the viewer and editor roles; and a derived search that no longer covers its text columns.
-// With cols, only the columns.
+// schemaDerive is what each public table lacks of what every table has: archive.object (object.go) and its
+// id, name, access, created_at and updated_at columns, the primary key on id that INHERITS does not pass on,
+// the search column and index, row-level security with the access policy, and the grants to the viewer and
+// editor roles; and a derived search that no longer covers its text columns. With cols, only the columns
+// and object.
 func schemaDerive(ctx context.Context, tx pgx.Tx, cat *Catalog, derived map[string]bool, prefix string, cols bool) ([]string, error) {
 	policed := map[string]bool{}
 	rows, err := tx.Query(ctx, `SELECT c.relname::text FROM pg_catalog.pg_class c WHERE c.relnamespace = 'public'::regnamespace
@@ -1072,11 +1090,25 @@ func schemaDerive(ctx context.Context, tx pgx.Tx, cat *Catalog, derived map[stri
 		}
 		id := pgIdent("public", name)
 		var add, after []string
-		if t.col("id") == nil {
+		if c := t.col("id"); c == nil {
 			add = append(add, "ADD COLUMN id uuid NOT NULL DEFAULT uuidv7()", "ADD CONSTRAINT "+pgIdent(name+"_pkey")+" PRIMARY KEY (id)")
+		} else if c.Type == "uuid" && !c.List && !c.PK && !t.Partitioned {
+			// INHERITS gives a table its parent's columns, not its primary key.
+			add = append(add, "ADD CONSTRAINT "+pgIdent(name+"_pkey")+" PRIMARY KEY (id)")
+		}
+		if c := t.col("name"); c == nil {
+			add = append(add, "ADD COLUMN name text NOT NULL DEFAULT ''")
+		} else if !t.Object && objectText(c) && !c.NotNull {
+			if !c.Default {
+				add = append(add, "ALTER COLUMN name SET DEFAULT ''")
+			}
+			add = append(add, "ALTER COLUMN name SET NOT NULL")
 		}
 		if t.col("access") == nil {
 			add = append(add, "ADD COLUMN access text")
+		}
+		if !t.Object && !t.Partitioned && objectFits(t) {
+			after = append(after, "ALTER TABLE "+id+" INHERIT archive.object")
 		}
 		for _, c := range []string{"created_at", "updated_at"} {
 			if t.col(c) == nil {
@@ -1315,6 +1347,23 @@ func pgMigrate(ctx context.Context, tx pgx.Tx, want pgSchema) ([]string, error) 
 	stmts, lost, err := pgPlan(live.ours(), want)
 	if err != nil || len(lost) > 0 {
 		return lost, err
+	}
+	// A table that gains its object_name trigger names the rows it has as the trigger would have; the tables
+	// whose names others take theirs from go first.
+	named := []string{}
+	for _, k := range slices.Sorted(maps.Keys(want)) {
+		if o := want[k]; o.Kind == "trigger" && o.Name == "object_name" && live[k] == nil && live["table "+o.Schema+"."+o.Of] != nil {
+			named = append(named, o.Of)
+		}
+	}
+	first := func(t string) bool {
+		return slices.Contains([]string{"workflow", "known_person", "payroll_department", "payroll_worker"}, t)
+	}
+	slices.SortStableFunc(named, func(a, b string) int {
+		return cmp.Compare(map[bool]int{true: 0, false: 1}[first(a)], map[bool]int{true: 0, false: 1}[first(b)])
+	})
+	for _, t := range named {
+		stmts = append(stmts, "UPDATE "+pgIdent("archive", t)+" SET name = name")
 	}
 	for _, st := range stmts {
 		if _, err := tx.Exec(ctx, st); err != nil {
@@ -1737,6 +1786,7 @@ const (
 	phFunctions
 	phDomains
 	phTables
+	phChildren
 	phViews
 	phKeys
 	phIndexes
@@ -1803,12 +1853,17 @@ func pgPlan(live, want pgSchema) (stmts, lost []string, err error) {
 			case "schema":
 				add(phSchemas, "CREATE SCHEMA "+pgIdent(n.Name))
 			case "table", "type":
-				add(phase[n.Kind], strings.SplitN(want.render(n), ";\n", 2)[0])
+				// A table that inherits another is made once the tables it inherits are.
+				p := phase[n.Kind]
+				if parents, _ := pgInherits(n.Def); n.Kind == "table" && len(parents) > 0 {
+					p = phChildren
+				}
+				add(p, strings.SplitN(want.render(n), ";\n", 2)[0])
 				if n.RLS {
-					add(phTables, "ALTER TABLE "+pgIdent(n.Schema, n.Name)+" ENABLE ROW LEVEL SECURITY")
+					add(p, "ALTER TABLE "+pgIdent(n.Schema, n.Name)+" ENABLE ROW LEVEL SECURITY")
 				}
 				if n.Force {
-					add(phTables, "ALTER TABLE "+pgIdent(n.Schema, n.Name)+" FORCE ROW LEVEL SECURITY")
+					add(p, "ALTER TABLE "+pgIdent(n.Schema, n.Name)+" FORCE ROW LEVEL SECURITY")
 				}
 			case "domain":
 				add(phTypes, "CREATE DOMAIN "+pgIdent(n.Schema, n.Name)+" AS "+n.Def)
@@ -1873,7 +1928,22 @@ func pgPlan(live, want pgSchema) (stmts, lost []string, err error) {
 					add(part(n), want.create(n))
 				case "table":
 					if o.Def != n.Def {
-						fail(n, "changing it from "+o.Def+" to "+n.Def)
+						// A table begins or stops inheriting once its columns are its parent's: after the tables.
+						was, rest := pgInherits(o.Def)
+						now, nrest := pgInherits(n.Def)
+						if rest != nrest {
+							fail(n, "changing it from "+o.Def+" to "+n.Def)
+						}
+						for _, p := range now {
+							if !slices.Contains(was, p) {
+								add(phKeys, "ALTER TABLE "+pgIdent(n.Schema, n.Name)+" INHERIT "+p)
+							}
+						}
+						for _, p := range was {
+							if !slices.Contains(now, p) {
+								add(phKeys, "ALTER TABLE "+pgIdent(n.Schema, n.Name)+" NO INHERIT "+p)
+							}
+						}
 					}
 					if o.RLS != n.RLS {
 						add(phTables, "ALTER TABLE "+pgIdent(n.Schema, n.Name)+map[bool]string{true: " ENABLE", false: " DISABLE"}[n.RLS]+" ROW LEVEL SECURITY")
@@ -1930,7 +2000,19 @@ func pgPlan(live, want pgSchema) (stmts, lost []string, err error) {
 	return stmts, lost, err
 }
 
+var pgInheritsRe = regexp.MustCompile(`INHERITS \(([^)]*)\)\s*`)
+
+// pgInherits is the parents a table's definition names, and the rest of it.
+func pgInherits(def string) ([]string, string) {
+	m := pgInheritsRe.FindStringSubmatch(def)
+	if m == nil {
+		return nil, strings.TrimSpace(def)
+	}
+	return strings.Split(m[1], ", "), strings.TrimSpace(pgInheritsRe.ReplaceAllString(def, ""))
+}
+
 // pgAlter alters a domain, column or attribute o into n: its type, when no data is lost, default and NOT NULL.
+// A column made NOT NULL with a default takes its default where it was null first.
 func pgAlter(want pgSchema, o, n *pgObject, add func(int, string), fail func(*pgObject, string), lost *[]string) {
 	p, alter := phTables, want.alter(n)+" ALTER "+strings.ToUpper(n.Kind)+" "+pgIdent(n.Name)
 	if n.Kind == "domain" {
@@ -1967,6 +2049,9 @@ func pgAlter(want pgSchema, o, n *pgObject, add func(int, string), fail func(*pg
 		add(p, alter+" SET DEFAULT "+n.Items[0])
 	}
 	if o.Items[1] != n.Items[1] {
+		if n.Kind == "column" && n.Items[1] == "true" && n.Items[0] != "" && (len(n.Items) < 3 || n.Items[2] == "") {
+			add(p, "UPDATE "+pgIdent(n.Schema, n.Of)+" SET "+pgIdent(n.Name)+" = "+n.Items[0]+" WHERE "+pgIdent(n.Name)+" IS NULL")
+		}
 		add(p, alter+map[string]string{"true": " SET", "false": " DROP"}[n.Items[1]]+" NOT NULL")
 	}
 }

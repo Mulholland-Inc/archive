@@ -250,7 +250,7 @@ Then tell me which tables and views I have, and what each one is for.</pre>
 <p>Each kind of record is a real Postgres table in the <code>public</code> schema. The table is the type, a row is a record, and nothing else is stored about it.</p>
 
 <h3 id="types-needs">What every table has</h3>
-<p>Write only your own columns. Archive adds the rest to every table: <code>id</code>, <code>access</code>, <code>created_at</code>, <code>updated_at</code>, a <code>search</code> column over the text columns with its index, and row-level security with the <code>access</code> policy. A complete migration:</p>
+<p>Write only your own columns, and inherit <code>archive.object</code>: it gives every table <code>id</code>, <code>name</code>, <code>access</code>, <code>created_at</code> and <code>updated_at</code>. Archive adds the rest: the primary key, a <code>search</code> column over the text columns with its index, and row-level security with the <code>access</code> policy. <code>name</code> is the row's title: the app shows every row, and every link to it, by its name, never its id, so set it on every create, or keep it made of other columns with <code>CREATE TRIGGER name_follows BEFORE INSERT OR UPDATE ON person FOR EACH ROW EXECUTE FUNCTION archive.name_follows('first_name', 'last_name')</code>. A view has a <code>name</code> column too; <code>SELECT *</code> has its table's. A complete migration:</p>
 <Code tabs={['migration.sql']}>
 <pre><span class="k">CREATE TYPE</span> invoice_status <span class="k">AS ENUM</span> (<span class="s">'draft'</span>, <span class="s">'unpaid'</span>, <span class="s">'paid'</span>);
 
@@ -259,7 +259,7 @@ Then tell me which tables and views I have, and what each one is for.</pre>
     amount   archive.money,
     status   invoice_status <span class="k">NOT NULL DEFAULT</span> <span class="s">'unpaid'</span>,
     due      date
-);
+) <span class="k">INHERITS</span> (archive.object);
 <span class="k">COMMENT ON TABLE</span> invoice <span class="k">IS</span> <span class="s">'An invoice you sent
 icon: receipt'</span>;
 <span class="k">COMMENT ON COLUMN</span> invoice.customer <span class="k">IS</span> <span class="s">'Who the invoice is for'</span>;</pre>

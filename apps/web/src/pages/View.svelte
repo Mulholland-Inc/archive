@@ -15,21 +15,24 @@
   import Chip from '../components/Chip.svelte';
   import Select from '../components/Select.svelte';
   import Spacer from '../components/Spacer.svelte';
-  import { ws, schema, viewRows, linkOf, titlesOf, renameView, isArchiveOwner } from '../lib/app.svelte.js';
-  import { show } from '../lib/live.js';
+  import RowLink from '../components/RowLink.svelte';
+  import { ws, schema, viewRows, linkOf, tableOf, shownOf, titleOf, cellText, renameView, isArchiveOwner } from '../lib/app.svelte.js';
 
   // A view, drawn the way its comment says: a table, a board grouped by its by column, or a calendar by its
-  // by date. The rows are the view's own, as row-level security lets the member see them.
+  // by date. The rows are the view's own, as row-level security lets the member see them. Each row is called
+  // by its name, and each link by the name of the row it names, never by an id.
   let { id } = $props();
 
   schema.use();
   viewRows.use(() => id);
 
-  const view = $derived(ws().schema.find((t) => t.id === id));
+  const view = $derived(tableOf(id));
   const all = $derived(ws().viewRows?.[id] ?? []);
-  const shown = $derived((view?.columns ?? []).filter((c) => !['id', 'access', 'created_at', 'updated_at'].includes(c.name)));
-  const title = $derived(shown.find((c) => c.type === 'text') ?? shown[0]);
+  const shown = $derived(shownOf(view));
   const layout = $derived(view?.layout ?? 'table');
+  // Archive's own tables are shown as views are, but they are Archive's: not renamed, and with no page of DDL.
+  const mine = $derived(Boolean(view) && ws().schema.includes(view));
+  const text = (c, r) => cellText(view, c, r);
   const label = (c) => c.name.replaceAll('_', ' ').replace(/^./, (x) => x.toUpperCase());
 
   // Search reads every shown column; the chips are the values of the column the view groups by, or failing
@@ -41,38 +44,27 @@
   let searchEl = $state();
 
   const facet = $derived.by(() => {
-    const vals = (c) => all.map((r) => show(r[c.name])).filter(Boolean);
+    const vals = (c) => all.map((r) => text(c, r)).filter(Boolean);
     const few = (c) => {
       const v = vals(c);
       const n = new Set(v).size;
       return n > 1 && n <= 8 && n < v.length;
     };
     const by = shown.find((c) => c.name === view?.by && c.type !== 'date');
-    return by ?? shown.find((c) => (c.type === 'choice' || c.type === 'text') && c !== title && few(c));
+    return by ?? shown.find((c) => (c.type === 'choice' || c.type === 'text') && few(c));
   });
-  const values = $derived(facet ? [...new Set(all.map((r) => show(r[facet.name])).filter(Boolean))].sort() : []);
-  const sorts = $derived([{ value: '', label: 'Default order' }, ...shown.map((c) => ({ value: c.name, label: label(c) }))]);
+  const values = $derived(facet ? [...new Set(all.map((r) => text(facet, r)).filter(Boolean))].sort() : []);
+  const sorts = $derived([{ value: '', label: 'Default order' }, { value: 'name', label: 'Name' }, ...shown.map((c) => ({ value: c.name, label: label(c) }))]);
   const rows = $derived.by(() => {
     const q = query.trim().toLowerCase();
-    const out = all.filter((r) => (!filter || show(r[facet?.name]) === filter) && (!q || shown.some((c) => show(r[c.name]).toLowerCase().includes(q))));
+    const out = all.filter((r) => (!filter || text(facet, r) === filter) && (!q || titleOf(r).toLowerCase().includes(q) || shown.some((c) => text(c, r).toLowerCase().includes(q))));
     if (!sort) return out;
-    return [...out].sort((a, b) => String(a[sort] ?? '').localeCompare(String(b[sort] ?? ''), undefined, { numeric: true }));
+    const key = (r) => (sort === 'name' ? titleOf(r) : text(shown.find((c) => c.name === sort), r));
+    return [...out].sort((a, b) => key(a).localeCompare(key(b), undefined, { numeric: true }));
   });
 
   // A row opens its own page, like a table's.
   const pick = (r) => r.id && go(`/view/${id}/${r.id}`);
-  // Linked rows show as chips with their names, read once per linked table.
-  let titles = $state({});
-  const linked = $derived([...new Set(shown.map((c) => linkOf(view, c)).filter(Boolean))]);
-  $effect(() => {
-    for (const t of linked) if (!titles[t]) titlesOf(t).then((m) => (titles = { ...titles, [t]: m }));
-  });
-  const refs = (c, r) => {
-    const to = linkOf(view, c);
-    const v = r?.[c.name];
-    if (!to || v == null || v === '') return [];
-    return (Array.isArray(v) ? v : [v]).map((rid) => ({ id: rid, title: titles[to]?.[rid] ?? '…', href: `/view/${to}/${rid}` }));
-  };
 
   // The board scrolls sideways; a vertical wheel over it scrolls the page, which the browser would otherwise
   // keep from the page once the board, a scroller too, catches it.
@@ -104,14 +96,15 @@
     return () => removeEventListener('keydown', key);
   });
 
-  const columns = $derived(shown.map((c) => ({ key: c.name, label: label(c) })));
-  const cells = $derived(rows.map((r, i) => ({ id: r.id ?? i, row: r, ...Object.fromEntries(shown.map((c) => [c.name, show(r[c.name])])) })));
+  const columns = $derived([{ key: 'name', label: 'Name' }, ...shown.map((c) => ({ key: c.name, label: label(c) }))]);
+  const cells = $derived(rows.map((r, i) => ({ id: r.id ?? i, row: r, name: titleOf(r), ...Object.fromEntries(shown.map((c) => [c.name, text(c, r)])) })));
+  const byCol = $derived(shown.find((c) => c.name === view?.by));
 
   const lanes = $derived.by(() => {
     const by = view?.by;
     const out = new Map();
     for (const r of rows) {
-      const k = r[by] == null || r[by] === '' ? 'None' : show(r[by]);
+      const k = r[by] == null || r[by] === '' ? 'None' : byCol ? text(byCol, r) : String(r[by]);
       if (!out.has(k)) out.set(k, []);
       out.get(k).push(r);
     }
@@ -158,12 +151,12 @@
 {:else}
   {@render topbar()}
   <Page width="wide">
-    <StickyHeader title={view.name} renameLabel="Rename view" onrename={isArchiveOwner() ? (name) => renameView(view.id, name) : undefined} description={view.description && view.description.toLowerCase() !== view.name.toLowerCase() ? view.description : ''}>
+    <StickyHeader title={view.name} renameLabel="Rename view" onrename={mine && isArchiveOwner() ? (name) => renameView(view.id, name) : undefined} description={view.description && view.description.toLowerCase() !== view.name.toLowerCase() ? view.description : ''}>
       {#snippet search()}
         <SearchField bind:value={query} bind:element={searchEl} placeholder={`Find in ${view.name.toLowerCase()}`} shortcut="/" />
       {/snippet}
       {#snippet actions()}
-        <Button size="sm" variant="ghost" icon={Settings2} href={`/database/${view.id}`}>Details</Button>
+        {#if mine}<Button size="sm" variant="ghost" icon={Settings2} href={`/database/${view.id}`}>Details</Button>{/if}
       {/snippet}
     </StickyHeader>
 
@@ -193,10 +186,10 @@
               {#each items as r, i (r.id ?? i)}
                 <!-- The card opens its row; its chips, above that, open the rows they name. -->
                 <div class="card">
-                  <button type="button" class="hit" aria-label={show(r[title?.name]) || 'Open'} onclick={() => pick(r)}></button>
-                  <Text size="sm" weight="medium">{show(r[title?.name])}</Text>
-                  {#each shown.filter((c) => c !== title && c.name !== view.by && r[c.name] != null && r[c.name] !== '') as c (c.name)}
-                    {#if linkOf(view, c)}<span class="chips raised">{#each refs(c, r) as l (l.id)}<Chip size="sm" href={l.href}>{l.title}</Chip>{/each}</span>{:else}<Text size="sm" tone="secondary">{show(r[c.name])}</Text>{/if}
+                  <button type="button" class="hit" aria-label={titleOf(r)} onclick={() => pick(r)}></button>
+                  <Text size="sm" weight="medium">{titleOf(r)}</Text>
+                  {#each shown.filter((c) => c.name !== view.by && r[c.name] != null && r[c.name] !== '') as c (c.name)}
+                    {#if linkOf(view, c)}<span class="chips raised"><RowLink table={linkOf(view, c)} value={r[c.name]} /></span>{:else}<Text size="sm" tone="secondary">{text(c, r)}</Text>{/if}
                   {/each}
                 </div>
               {/each}
@@ -212,7 +205,7 @@
               <div class={['day', { other: d.getMonth() !== month.getMonth() }]}>
                 <Text size="sm" tone="tertiary" tabular>{d.getDate()}</Text>
                 {#each onDay.get(key(d)) ?? [] as r, i (r.id ?? i)}
-                  <button type="button" class="event" onclick={() => pick(r)}>{show(r[title?.name])}</button>
+                  <button type="button" class="event" onclick={() => pick(r)}>{titleOf(r)}</button>
                 {/each}
               </div>
             {/each}
@@ -222,7 +215,7 @@
         <Table {columns} rows={cells} label={view.name} onrowclick={(c) => pick(c.row)}>
           {#snippet cell(row, col)}
             {@const c = shown.find((x) => x.name === col.key)}
-            {#if c && linkOf(view, c)}<span class="chips">{#each refs(c, row.row) as l (l.id)}<Chip size="sm" href={l.href}>{l.title}</Chip>{/each}</span>{:else}{row[col.key]}{/if}
+            {#if c && linkOf(view, c)}<span class="chips"><RowLink table={linkOf(view, c)} value={row.row[c.name]} /></span>{:else}{row[col.key]}{/if}
           {/snippet}
         </Table>
       {/if}

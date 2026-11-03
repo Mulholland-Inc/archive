@@ -25,11 +25,21 @@ const kinds = {
 
 const own = new Set(['id', 'access', 'created_at', 'updated_at', 'search']);
 
-function column(c, types) {
+// linkTo is the table a link names, as the app knows it: a table or view of the workspace by its name, one of
+// Archive's own the catalog shows (member, mail_message, ...) by its name too, or archive.file for a file.
+function linkTo(ref, tables) {
+  if (!ref) return undefined;
+  if (ref === 'archive.file') return ref;
+  const [schema, name] = ref.includes('.') ? ref.split('.') : ['public', ref];
+  return tables[name]?.schema === schema ? name : undefined;
+}
+
+function column(c, types, tables) {
   const enumType = types[`${c.schema}.${c.type}`]?.enum?.length;
   // An id or a list of ids can also link through its comment, "references <table>": Postgres has no foreign
   // key for arrays, and the agent sometimes writes the comment without one.
   const ref = c.ref?.replace(/^public\./, '') || (c.type === 'uuid' ? /^references\s+([a-z][a-z0-9_]*)/i.exec(c.description ?? '')?.[1] : undefined);
+  const to = linkTo(c.ref || ref, tables);
   const type = c.ref === 'archive.file' ? 'file' : ref ? 'link' : enumType ? 'choice' : (kinds[c.type] ?? 'text');
   const label = !ref && !enumType && !kinds[c.type] && c.schema === 'archive' ? c.type.charAt(0).toUpperCase() + c.type.slice(1).replaceAll('_', ' ') : undefined;
   return {
@@ -37,19 +47,20 @@ function column(c, types) {
     type,
     label: c.list ? `List of ${(label ?? typeLabels[type]).toLowerCase()}` : label,
     required: Boolean(c.not_null && !c.default),
-    notes: own.has(c.name) ? 'Set by the archive' : c.description,
-    to: ref && !ref.startsWith('archive.') ? ref : undefined
+    notes: own.has(c.name) ? 'Set by the archive' : c.name === 'name' && !c.description ? 'The title the row and every link to it show' : c.description,
+    to
   };
 }
 
 // counts: { [table]: { rows, updated } }, from one query; workflows: the real workflows, to say which
-// tables start one.
-export function toTables(catalog, schema = [], counts = {}, workflows = []) {
+// tables start one. With archive, Archive's own tables the catalog shows instead, which links name: a row of
+// one has its page as a row of a table does.
+export function toTables(catalog, schema = [], counts = {}, workflows = [], archive = false) {
   const ddls = Object.fromEntries(schema.map((s) => [s.name, s.ddl]));
   return Object.values(catalog.tables ?? {})
-    .filter((t) => t.schema === 'public')
+    .filter((t) => (t.schema === 'archive') === archive)
     .map((t) => {
-      const columns = t.columns.filter((c) => c.type !== 'tsvector').map((c) => column(c, catalog.types ?? {}));
+      const columns = t.columns.filter((c) => c.type !== 'tsvector').map((c) => column(c, catalog.types ?? {}, catalog.tables ?? {}));
       return {
         id: t.name,
         name: t.name.replaceAll('_', ' ').replace(/^./, (s) => s.toUpperCase()),
