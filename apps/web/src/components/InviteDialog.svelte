@@ -4,12 +4,23 @@
   import Textarea from './Textarea.svelte';
   import Select from './Select.svelte';
   import Button from './Button.svelte';
-  import { invite } from '../lib/app.svelte.js';
+  import Chip from './Chip.svelte';
+  import Stack from './Stack.svelte';
+  import { Plus } from '@lucide/svelte';
+  import { invite, ws } from '../lib/app.svelte.js';
+  import { newGroupPrompt } from '../lib/menus.js';
 
   let { open = $bindable(false) } = $props();
 
   let emails = $state('');
   let role = $state('viewer');
+  let picked = $state([]);
+  const pick = (id) => (picked = picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id]);
+
+  async function newGroup() {
+    const g = await newGroupPrompt();
+    if (g) picked = [...picked, g.id];
+  }
   const list = $derived(emails.split(/[\s,;]+/).filter((e) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)));
   const count = $derived(list.length);
 
@@ -20,8 +31,9 @@
   ];
 
   function send(close) {
-    invite({ emails: list, role });
+    invite({ emails: list, role, groups: picked });
     emails = '';
+    picked = [];
     close();
   }
 </script>
@@ -35,6 +47,14 @@
   <Field label="Role">
     {#snippet children(id)}
       <Select {id} bind:value={role} options={roles} full />
+    {/snippet}
+  </Field>
+  <Field label="Groups">
+    {#snippet children()}
+      <Stack direction="row" gap="1-5" wrap>
+        {#each ws().groups as g (g.id)}<Chip selected={picked.includes(g.id)} onclick={() => pick(g.id)}>{g.name}</Chip>{/each}
+        <Chip icon={Plus} onclick={newGroup}>New group</Chip>
+      </Stack>
     {/snippet}
   </Field>
   {#snippet footer({ close })}

@@ -14,12 +14,17 @@
  *   back and nothing is saved. A failed SDK call that you catch undoes only that call.
  * - Your role in the workspace is viewer (reads), editor (also writes) or owner (also changes the schema and the
  *   members, sees every row and reveals secrets). Each row's access column says who sees it: null is the whole
- *   workspace, a group name like "hr" is only that group and the owners. Row-level security applies to
- *   everything, SQL included, so you see and change only the rows you may. A new row is for everyone unless
- *   you pass access: "hr" (a group you are in) or its table sets a default.
- * - People are rows of the member table: { email, role, groups }. Owners add, change and remove them with
- *   archive.create("member", { email: "ann@example.com", role: "editor", groups: ["hr"] }), archive.update and
- *   archive.delete; adding an email invites that person, and the last owner cannot be removed or demoted.
+ *   workspace, a group's id is only that group and the owners. Row-level security applies to everything, SQL
+ *   included, so you see and change only the rows you may. A new row is for everyone unless you pass access, a
+ *   group you are in by its id or its name, like access: "hr", or its table sets a default. Reads give the id.
+ * - Groups are rows of the group table: { name, description }. Owners make one with
+ *   archive.create("group", { name: "hr", description: "People and payroll" }), rename or describe it with
+ *   archive.update, and remove it with archive.delete, which throws conflict while any row's access is the
+ *   group, saying where: give those rows other access first. Query it as "group", quoted: it is an SQL keyword.
+ * - People are rows of the member table: { email, role, groups }, groups the ids of theirs. Owners add, change
+ *   and remove them with archive.create("member", { email: "ann@example.com", role: "editor", groups: ["hr"] }),
+ *   archive.update and archive.delete, naming groups by id or name, where a name no group has yet makes it;
+ *   adding an email invites that person, and the last owner cannot be removed or demoted.
  * - SDK errors are Error objects with code ('invalid', 'not_found', 'forbidden', 'conflict' or a SQLSTATE)
  *   and, when invalid, errors: [{ path, message }] with one entry per bad field.
  *
@@ -52,9 +57,9 @@
  *   the sql stay the same; after any other migration it throws conflict, so dry-run again. Change rows with
  *   archive.create, update and delete, not in a migration.
  * - Every table inherits archive.object: write CREATE TABLE house (<its own columns>) INHERITS (archive.object).
- *   object gives it id uuid DEFAULT uuidv7(), name text NOT NULL DEFAULT '', access text, and created_at and
+ *   object gives it id uuid DEFAULT uuidv7(), name text NOT NULL DEFAULT '', access uuid, and created_at and
  *   updated_at timestamptz NOT NULL DEFAULT now(). Archive adds what Postgres does not pass on: the primary key
- *   on id, a search column over its text columns (name too) with a gin index, and row-level security with the
+ *   on id, the foreign key access uuid REFERENCES archive."group" ON DELETE RESTRICT, a search column over its text columns (name too) with a gin index, and row-level security with the
  *   access policy; it adds them right after each CREATE TABLE, so a later REFERENCES or view can use them. A table
  *   made without INHERITS gets it the same way, when its columns allow. When you add, drop or retype a text
  *   column, search follows. name is the row's title, so keep the title there, not in a column like title of its
@@ -62,8 +67,8 @@
  *   CREATE TRIGGER name_follows BEFORE INSERT OR UPDATE ON person FOR EACH ROW EXECUTE FUNCTION
  *   archive.name_follows('first_name', 'last_name') joins them with spaces until a write sets name itself, and
  *   name_follows('full_name.full') takes the full name of an archive.name column full_name. Write one of
- *   object's columns yourself only to make it different: a table only the hr group sees has access text NOT
- *   NULL DEFAULT 'hr' CHECK (access = 'hr'). Use the built-in types (archive.email, archive.money, ...) to get
+ *   object's columns yourself only to make it different: a table only the hr group sees has access uuid NOT
+ *   NULL DEFAULT '<hr's id>' CHECK (access = '<hr's id>'), with the id from archive.list("group"). Use the built-in types (archive.email, archive.money, ...) to get
  *   their cleaning. A reference is `uuid REFERENCES other`; a list of references is `uuid[]` with a column
  *   comment starting 'references other'; the app shows each as a link with the name of the row it names.
  *   Comment the table and its columns: they become these docs.
@@ -440,7 +445,7 @@ interface StoredFile {
     /** pending, done or error; text is ready when done. */
     status: string;
     error?: string;
-    /** Group that sees the file, null for the whole workspace. */
+    /** The id of the group that sees the file, null for the whole workspace. */
     access: string | null;
     created_at: string;
     /** Text extracted from PDF, HTML, email and plain text; "" when none. */

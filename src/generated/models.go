@@ -72,7 +72,7 @@ type ArchiveConnection struct {
 	// The field's name
 	Name string
 	// Group that sees it, its connection's: null for everyone who sees the connection
-	Access *string
+	Access *uuid.UUID
 	// When it started
 	CreatedAt time.Time
 	// When Archive last saw it change
@@ -110,7 +110,7 @@ type ArchiveDue struct {
 type ArchiveUpload struct {
 	ID        uuid.UUID
 	Role      string
-	Access    *string
+	Access    *uuid.UUID
 	Name      string
 	Length    int64
 	Parts     []int64
@@ -144,7 +144,7 @@ type ArchiveWorkflow struct {
 	// The field's name
 	Name string
 	// Group that sees it, its connection's: null for everyone who sees the connection
-	Access *string
+	Access *uuid.UUID
 	// When it started
 	CreatedAt time.Time
 	// When Archive last saw it change
@@ -171,7 +171,7 @@ type ArchiveWorkflowRun struct {
 	// The field's name
 	Name string
 	// Group that sees it, its connection's: null for everyone who sees the connection
-	Access *string
+	Access *uuid.UUID
 	// When it started
 	CreatedAt time.Time
 	// When Archive last saw it change

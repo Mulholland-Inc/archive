@@ -13,6 +13,6 @@
   {:else if item.heading}
     <MenuLabel>{item.heading}</MenuLabel>
   {:else}
-    <MenuItem icon={item.icon} shortcut={item.shortcut} danger={item.danger} disabled={item.disabled} checked={item.checked} href={item.href} onselect={item.onselect}>{item.label}</MenuItem>
+    <MenuItem icon={item.icon} shortcut={item.shortcut} danger={item.danger} disabled={item.disabled} checked={item.checked} keepOpen={item.keepOpen} href={item.href} onselect={item.onselect}>{item.label}</MenuItem>
   {/if}
 {/each}

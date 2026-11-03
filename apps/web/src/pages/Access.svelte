@@ -1,5 +1,5 @@
 <script>
-  import { UserPlus, Ellipsis, Trash2, SearchX, Share as ShareIcon, Ban } from '@lucide/svelte';
+  import { UserPlus, Ellipsis, SearchX, Share as ShareIcon, Ban, UsersRound, Plus } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
   import StickyHeader from '../components/StickyHeader.svelte';
@@ -20,18 +20,23 @@
   import AvatarGroup from '../components/AvatarGroup.svelte';
   import Section from '../components/Section.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { ws, seedOf, setRole, removeMember, shareItem, shareKinds, permissions, isExternal, openShare, stopSharing, members } from '../lib/app.svelte.js';
+  import Chip from '../components/Chip.svelte';
+  import GroupDialog from '../components/GroupDialog.svelte';
+  import { ws, seedOf, setRole, shareItem, shareKinds, permissions, isExternal, openShare, stopSharing, members, groups, groupById, isArchiveOwner } from '../lib/app.svelte.js';
 
   members.use();
-  import { route } from '../lib/router.svelte.js';
-  import { memberItems, guestItems, shareItems } from '../lib/menus.js';
+  groups.use();
+  import { route, go } from '../lib/router.svelte.js';
+  import { memberItems, guestItems, shareItems, groupItems } from '../lib/menus.js';
 
   const focus = ws().members.find((m) => m.id === route.parts[1]);
-  let tab = $state(focus?.status === 'invited' ? 'invitations' : 'members');
+  let tab = $state(route.parts[1] === 'groups' ? 'groups' : focus?.status === 'invited' ? 'invitations' : 'members');
   let query = $state(focus?.name ?? '');
   let roleFilter = $state('all');
   let kindFilter = $state('all');
   let inviting = $state(false);
+  let creating = $state(false);
+  const owner = $derived(isArchiveOwner());
 
   const roles = [
     { value: 'viewer', label: 'Viewer' },
@@ -71,8 +76,15 @@
   });
   const guestRows = $derived(guests.filter((g) => matches(g.name, g.email, ...g.items.map((i) => i.name))));
 
+  const groupRows = $derived(
+    ws()
+      .groups.map((g) => ({ group: g, id: g.id, people: ws().members.filter((m) => m.groups.includes(g.id)) }))
+      .filter((r) => matches(r.group.name, r.group.description, ...r.people.flatMap((p) => [p.name, p.email])))
+  );
+
   const tabs = $derived([
     { value: 'members', label: 'Members', count: active.length },
+    { value: 'groups', label: 'Groups', count: ws().groups.length },
     { value: 'shares', label: 'Shares', count: shares.length },
     { value: 'invitations', label: 'Invitations', count: invited.length }
   ]);
@@ -81,6 +93,7 @@
     { key: 'name', label: 'Name' },
     { key: 'email', label: 'Email', muted: true, width: 'lg' },
     { key: 'role', label: 'Role', width: 'sm', mobile: 'trailing' },
+    { key: 'groups', label: 'Groups', width: 'md', mobile: 'hidden' },
     { key: 'active', label: tab === 'invitations' ? 'Status' : 'Last active', muted: true, width: 'sm', mobile: 'hidden' },
     { key: 'menu', label: '', width: 'xs', align: 'end' }
   ]);
@@ -92,6 +105,13 @@
     { key: 'date', label: 'Shared', muted: true, width: 'sm', mobile: 'hidden' },
     { key: 'menu', label: '', width: 'xs', align: 'end' }
   ]);
+  const groupColumns = $derived([
+    { key: 'name', label: 'Name' },
+    { key: 'description', label: 'Description', muted: true, width: 'lg', mobile: 'hidden' },
+    { key: 'people', label: 'Members', width: 'lg' },
+    ...(owner ? [{ key: 'menu', label: '', width: 'xs', align: 'end' }] : [])
+  ]);
+  const groupsOf = (m) => m.groups.map((id) => groupById(id)).filter(Boolean);
   const guestColumns = [
     { key: 'name', label: 'Name' },
     { key: 'email', label: 'Email', muted: true, width: 'lg' },
@@ -111,9 +131,15 @@
 <Page width="wide">
   <StickyHeader title="Access" art="bg-access">
     {#snippet search()}
-      <SearchField bind:value={query} placeholder={tab === 'shares' ? 'Search items and people' : 'Search by name or email'} />
+      <SearchField bind:value={query} placeholder={tab === 'shares' ? 'Search items and people' : tab === 'groups' ? 'Search groups and members' : 'Search by name or email'} />
     {/snippet}
-    {#snippet actions()}<Button variant="primary" icon={UserPlus} onclick={() => (inviting = true)}>Invite</Button>{/snippet}
+    {#snippet actions()}
+      {#if tab === 'groups' && owner}
+        <Button variant="primary" icon={Plus} onclick={() => (creating = true)}>New group</Button>
+      {:else}
+        <Button variant="primary" icon={UserPlus} onclick={() => (inviting = true)}>Invite</Button>
+      {/if}
+    {/snippet}
   </StickyHeader>
 
   <Stack direction="row" gap="2" align="center" wrap>
@@ -121,12 +147,44 @@
     <Spacer />
     {#if tab === 'shares'}
       <Select bind:value={kindFilter} options={kindFilters} variant="ghost" label="Kind" placement="bottom-end" />
-    {:else}
+    {:else if tab !== 'groups'}
       <Select bind:value={roleFilter} options={roleFilters} variant="ghost" label="Role" placement="bottom-end" />
     {/if}
   </Stack>
 
-  {#if tab === 'shares'}
+  {#if tab === 'groups'}
+    {#if groupRows.length}
+      <Table columns={groupColumns} rows={groupRows} label="Groups" cards onrowclick={(row) => go(`/access/groups/${row.id}`)} menu={owner ? (row) => groupItems(row.group) : undefined}>
+        {#snippet cell(row, col)}
+          {#if col.key === 'name'}
+            <Text weight="medium" truncate>{row.group.name}</Text>
+          {:else if col.key === 'description'}
+            {row.group.description}
+          {:else if col.key === 'people'}
+            {#if row.people.length}
+              <Stack direction="row" gap="2" align="center">
+                <AvatarGroup people={row.people} size="md" max={3} />
+                <Text tone="secondary" truncate>{row.people.length === 1 ? '1 member' : `${row.people.length} members`}</Text>
+              </Stack>
+            {:else}
+              <Text tone="tertiary">No members</Text>
+            {/if}
+          {:else if col.key === 'menu'}
+            <Menu placement="bottom-end" width="sm" label="Group actions">
+              {#snippet trigger(props)}<IconButton icon={Ellipsis} label={`Actions for ${row.group.name}`} size="sm" tooltip={false} {...props} />{/snippet}
+              <MenuItems items={groupItems(row.group)} />
+            </Menu>
+          {/if}
+        {/snippet}
+      </Table>
+    {:else if q}
+      <EmptyState icon={SearchX} title="No group matches that search" size="sm" />
+    {:else}
+      <EmptyState icon={UsersRound} title={owner ? 'No groups yet. A row limited to a group is seen only by its members and the owners' : 'No groups yet'} size="sm">
+        {#if owner}<Button icon={Plus} onclick={() => (creating = true)}>New group</Button>{/if}
+      </EmptyState>
+    {/if}
+  {:else if tab === 'shares'}
     {#if shareRows.length}
       <Table columns={shareColumns} rows={shareRows} label="Shares" cards onrowclick={(row) => openShare(row.share.kind, row.share.target)} menu={(row) => shareItems(row.share, row.item)}>
         {#snippet cell(row, col)}
@@ -161,10 +219,15 @@
             {row.email}
           {:else if col.key === 'role'}
             <Select value={row.role} options={roles} size="sm" variant="ghost" label={`Role for ${row.name}`} onchange={(v) => changeRole(row, v)} />
+          {:else if col.key === 'groups'}
+            <span class="groups">{#each groupsOf(row) as g (g.id)}<Chip size="sm" href={`/access/groups/${g.id}`}>{g.name}</Chip>{:else}<Text tone="tertiary">None</Text>{/each}</span>
           {:else if col.key === 'active'}
             {row.status === 'invited' ? 'Invited' : row.active}
           {:else if col.key === 'menu'}
-            <IconButton icon={Trash2} label={row.status === 'invited' ? `Revoke invitation for ${row.name}` : `Remove ${row.name} from archive`} size="sm" onclick={() => removeMember(row.id)} />
+            <Menu placement="bottom-end" width="sm" label="Member actions">
+              {#snippet trigger(props)}<IconButton icon={Ellipsis} label={`Actions for ${row.name}`} size="sm" tooltip={false} {...props} />{/snippet}
+              <MenuItems items={memberItems(row, { roles, onrole: changeRole })} />
+            </Menu>
           {/if}
         {/snippet}
       </Table>
@@ -195,3 +258,14 @@
 </Page>
 
 <InviteDialog bind:open={inviting} />
+<GroupDialog bind:open={creating} />
+
+<style>
+  .groups {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    max-width: 100%;
+    overflow: hidden;
+  }
+</style>

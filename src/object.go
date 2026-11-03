@@ -31,7 +31,7 @@ func objectFits(t *Table) bool {
 	for _, w := range []struct {
 		name, typ string
 		notNull   bool
-	}{{"id", "uuid", true}, {"name", "text", false}, {"access", "text", false}, {"created_at", "timestamptz", true}, {"updated_at", "timestamptz", true}} {
+	}{{"id", "uuid", true}, {"name", "text", false}, {"access", "uuid", false}, {"created_at", "timestamptz", true}, {"updated_at", "timestamptz", true}} {
 		c := t.col(w.name)
 		if c != nil && (c.Schema != "pg_catalog" || c.Type != w.typ || c.List || c.Generated || w.notNull && !c.NotNull) {
 			return false

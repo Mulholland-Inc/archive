@@ -240,9 +240,12 @@ func (a *Archive) coreCreate(ctx context.Context, tb *Table, data map[string]any
 	return row, a.secretsPut(ctx, tb, row, seal)
 }
 
-func coreAccess(v any) *string {
-	if s, ok := v.(string); ok && s != "" {
-		return &s
+// coreAccess is a row's access, the id of the group that sees it; nil for the whole workspace.
+func coreAccess(v any) *uuid.UUID {
+	if s, ok := v.(string); ok {
+		if id, err := uuid.Parse(s); err == nil {
+			return &id
+		}
 	}
 	return nil
 }
@@ -296,6 +299,9 @@ func (a *Archive) prepare(ctx context.Context, tb *Table, data map[string]any, f
 			continue
 		}
 		in[k] = v
+	}
+	if err := a.groupNames(ctx, tb, in); err != nil {
+		return nil, nil, err
 	}
 	out, err := cat.Normalize(tb, in, a.hints, full)
 	if err != nil {

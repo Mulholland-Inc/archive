@@ -1,7 +1,7 @@
-import { Pin, PinOff, Pencil, Trash2, ExternalLink, MessageSquarePlus, Share, Download, Eye, Play, RotateCcw, Copy, UserPlus, UserMinus, Users, Ban, Settings, ArrowRightLeft } from '@lucide/svelte';
+import { Pin, PinOff, Pencil, Trash2, Plus, ExternalLink, MessageSquarePlus, Share, Download, Eye, Play, RotateCcw, Copy, UserPlus, UserMinus, Users, Ban, Settings, ArrowRightLeft } from '@lucide/svelte';
 import { SEPARATOR } from './contextmenu.svelte.js';
-import { app, togglePin, removeChat, renameChat, newChat, renameFile, removeFile, downloadFile, openShare, runWorkflow, removeWorkflow, removeMember, invite, stopSharing, removeGuest, switchArchive, openArchiveSettings, deleteArchive } from './app.svelte.js';
-import { prompt, confirmDialog } from './dialogs.svelte.js';
+import { app, deleteGroup, groupUses, updateGroup, toggleGroup, createGroup, isArchiveOwner, ws, togglePin, removeChat, renameChat, newChat, renameFile, removeFile, downloadFile, openShare, runWorkflow, removeWorkflow, removeMember, invite, stopSharing, removeGuest, switchArchive, openArchiveSettings, deleteArchive } from './app.svelte.js';
+import { prompt, confirmDialog, notify } from './dialogs.svelte.js';
 import { go } from './router.svelte.js';
 
 export async function copyText(text) {
@@ -89,9 +89,60 @@ export function memberItems(member, { roles = [], onrole } = {}) {
     { heading: 'Role' },
     ...roles.map((r) => ({ label: r.label, checked: member.role === r.value, onselect: () => member.role !== r.value && onrole?.(member, r.value) })),
     SEPARATOR,
+    ...memberGroupItems(member),
+    SEPARATOR,
     { label: 'Copy email', icon: Copy, onselect: () => copyText(member.email) },
     SEPARATOR,
     { label: invited ? 'Revoke invitation' : 'Remove from archive', icon: Trash2, danger: true, onselect: () => removeMember(member.id) }
+  ];
+}
+
+// usesText says where a group is used, like 3 rows in invoice and 1 in file.
+export function usesText(uses) {
+  return uses.map((u, i) => `${u.rows} ${i === 0 ? (u.rows === 1 ? 'row' : 'rows') + ' ' : ''}in ${u.table}`).join(', ');
+}
+
+// deleteGroupConfirm deletes group once you confirm, and only when no row's access is it: a row whose group went
+// would be seen by everyone, so Archive refuses, and this says where it is used instead.
+export async function deleteGroupConfirm(group) {
+  const uses = await groupUses(group.id).catch(() => []);
+  if (uses.length) {
+    await notify({ title: `${group.name} is in use`, body: `It is the access of ${usesText(uses)}. Give them other access, then delete it.` });
+    return false;
+  }
+  const people = ws().members.filter((m) => m.groups.includes(group.id));
+  const left = people.length ? ` ${people.length === 1 ? '1 member leaves it.' : `Its ${people.length} members leave it.`}` : '';
+  if (!(await confirmDialog({ title: `Delete ${group.name}?`, body: `No rows use it.${left}`, confirm: 'Delete group' }))) return false;
+  return deleteGroup(group);
+}
+
+export async function renameGroupPrompt(group) {
+  const name = await prompt({ title: 'Rename group', label: 'Name', value: group.name });
+  if (name && name !== group.name) updateGroup(group, { name });
+}
+
+export async function newGroupPrompt(people = []) {
+  const name = await prompt({ title: 'New group', label: 'Name', placeholder: 'finance', confirm: 'Create' });
+  return name ? createGroup({ name, people }) : null;
+}
+
+export function groupItems(group) {
+  return [
+    { label: 'Open', icon: ExternalLink, onselect: () => go(`/access/groups/${group.id}`) },
+    { label: 'Rename', icon: Pencil, onselect: () => renameGroupPrompt(group) },
+    SEPARATOR,
+    { label: 'Delete', icon: Trash2, danger: true, onselect: () => deleteGroupConfirm(group) }
+  ];
+}
+
+// memberGroupItems are the groups a member can be in, checked when they are, for an owner to toggle, and a new
+// one to make with them in it.
+export function memberGroupItems(member) {
+  if (!isArchiveOwner()) return [];
+  return [
+    { heading: 'Groups' },
+    ...ws().groups.map((g) => ({ label: g.name, checked: member.groups.includes(g.id), keepOpen: true, onselect: () => toggleGroup(member, g.id) })),
+    { label: 'New group…', icon: Plus, onselect: () => newGroupPrompt([member.id]) }
   ];
 }
 

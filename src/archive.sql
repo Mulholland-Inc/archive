@@ -82,7 +82,7 @@ CREATE TABLE archive.due (
 CREATE TABLE archive.object (
     id         uuid NOT NULL DEFAULT uuidv7(),
     name       text NOT NULL DEFAULT '',
-    access     text,
+    access     uuid,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -90,6 +90,97 @@ ALTER TABLE archive.object ENABLE ROW LEVEL SECURITY;
 ALTER TABLE archive.object FORCE ROW LEVEL SECURITY;
 COMMENT ON TABLE archive.object IS 'What every row is: its id, name, access and when it was made and changed. Every table inherits it; it is read through them, never itself';
 COMMENT ON COLUMN archive.object.name IS 'The row''s title, which every screen shows it and its links by';
+
+-- A group is a row: a set of members, like finance. A row's access is the id of the group that sees it, a
+-- foreign key to its row, null for the whole workspace; each table has its own, since Postgres does not pass
+-- foreign keys on (schemaDerive). Its members hold its Postgres role, named by its id (group_role), which
+-- archive.can checks, so a rename changes the row alone. group_roles makes the role with the row, and drops it
+-- with the row after taking the group out of every member's groups. A group lasts, empty or not, until an
+-- owner deletes it, which group_check refuses while any row's access is the group, saying where
+-- (group_uses): a row is never opened to everyone because its group went.
+CREATE TABLE archive."group" (
+    id          uuid PRIMARY KEY DEFAULT uuidv7(),
+    name        text NOT NULL,
+    description text NOT NULL DEFAULT '',
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    updated_at  timestamptz NOT NULL DEFAULT now(),
+    access      uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    UNIQUE (name)
+) INHERITS (archive.object);
+COMMENT ON TABLE archive."group" IS 'A group of members, like finance: a row whose access is a group''s id is seen only by its members and the owners. Owners add, rename, describe and delete groups, and put members in them with member.groups; a group cannot be deleted while rows use it
+icon: users-round';
+COMMENT ON COLUMN archive."group".name IS '1-24 lowercase letters, digits or _, like finance; unique';
+COMMENT ON COLUMN archive."group".description IS 'What the group is for, or who is in it';
+
+CREATE FUNCTION archive.group_role(g uuid) RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+    SELECT '{p}_g' || translate(rtrim(encode(uuid_send(g), 'base64'), '='), '+/', '-_')
+$$;
+
+CREATE FUNCTION archive.can(g uuid) RETURNS bool LANGUAGE sql STABLE AS $$
+    SELECT g IS NULL OR pg_has_role(current_user, '{p}_owner', 'USAGE')
+        OR EXISTS (SELECT FROM pg_catalog.pg_roles r WHERE r.rolname = archive.group_role(g) AND pg_has_role(current_user, r.oid, 'USAGE'))
+$$;
+
+-- group_uses is each table where rows the current role sees have the group g as their access, or as another
+-- column that references groups, with how many.
+CREATE FUNCTION archive.group_uses(g uuid) RETURNS TABLE ("table" text, "rows" bigint) LANGUAGE plpgsql STABLE AS $$
+DECLARE
+    r record;
+    n bigint;
+BEGIN
+    FOR r IN SELECT c.oid::regclass AS rel, c.relname::text AS name, a.attname::text AS col
+        FROM pg_catalog.pg_constraint k JOIN pg_catalog.pg_class c ON c.oid = k.conrelid
+        JOIN pg_catalog.pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = k.conkey[1]
+        WHERE k.contype = 'f' AND k.confrelid = 'archive."group"'::regclass AND cardinality(k.conkey) = 1 AND c.oid <> 'archive."group"'::regclass
+          AND has_table_privilege(c.oid, 'SELECT')
+        ORDER BY 2, 3 LOOP
+        EXECUTE format('SELECT count(*) FROM %s WHERE %I = $1', r.rel, r.col) INTO n USING g;
+        IF n > 0 THEN
+            "table" := r.name;
+            "rows" := n;
+            RETURN NEXT;
+        END IF;
+    END LOOP;
+END $$;
+
+CREATE FUNCTION archive.group_check() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    used text;
+    total bigint;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        SELECT string_agg(u."rows" || ' in ' || u."table", ', '), sum(u."rows") INTO used, total FROM archive.group_uses(OLD.id) u;
+        IF total > 0 THEN
+            RAISE EXCEPTION '% is the access of % %: %; give them other access first', OLD.name, total, CASE WHEN total = 1 THEN 'row' ELSE 'rows' END, used
+                USING ERRCODE = '23503', TABLE = 'group';
+        END IF;
+        RETURN OLD;
+    END IF;
+    NEW.name := lower(btrim(NEW.name));
+    IF NEW.name !~ '^[a-z0-9][a-z0-9_]{0,23}$' THEN
+        RAISE EXCEPTION 'want a group name of 1-24 lowercase letters, digits or _' USING ERRCODE = '22023', TABLE = 'group', COLUMN = 'name';
+    END IF;
+    NEW.description := btrim(NEW.description);
+    NEW.access := NULL;
+    RETURN NEW;
+END $$;
+
+CREATE FUNCTION archive.group_roles() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(7273);
+    IF TG_OP = 'INSERT' THEN
+        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = archive.group_role(NEW.id)) THEN
+            EXECUTE format('CREATE ROLE %I NOLOGIN', archive.group_role(NEW.id));
+        END IF;
+    ELSE
+        UPDATE archive.member SET groups = array_remove(groups, OLD.id) WHERE OLD.id = ANY (groups);
+        EXECUTE format('DROP ROLE IF EXISTS %I', archive.group_role(OLD.id));
+    END IF;
+    RETURN NULL;
+END $$;
+
+CREATE TRIGGER group_check BEFORE INSERT OR UPDATE OR DELETE ON archive."group" FOR EACH ROW EXECUTE FUNCTION archive.group_check();
+CREATE TRIGGER group_roles AFTER INSERT OR DELETE ON archive."group" FOR EACH ROW EXECUTE FUNCTION archive.group_roles();
 
 -- name_follows keeps a table's name made of other columns of its row, named by the trigger's arguments and
 -- joined by spaces, like name_follows('first_name', 'last_name'), or of a field of one, like 'full_name.full',
@@ -137,7 +228,7 @@ CREATE TABLE archive.file (
     text       text NOT NULL DEFAULT '',
     status     text NOT NULL DEFAULT 'pending',
     error      text NOT NULL DEFAULT '',
-    access     text,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
     created_at timestamptz NOT NULL DEFAULT now(),
     search     tsvector GENERATED ALWAYS AS (setweight(archive.search_doc(name), 'A') || setweight(archive.search_doc(text), 'C')) STORED,
     UNIQUE NULLS NOT DISTINCT (access, hash, name)
@@ -148,7 +239,7 @@ CREATE INDEX file_search_idx ON archive.file USING gin (search);
 CREATE TABLE archive.upload (
     id         uuid PRIMARY KEY,
     role       text NOT NULL,
-    access     text,
+    access     uuid,
     name       text NOT NULL,
     length     bigint NOT NULL,
     parts      bigint[] NOT NULL DEFAULT '{}',
@@ -162,7 +253,7 @@ CREATE TABLE archive.secret (
     column_name text NOT NULL,
     type        text NOT NULL,
     value       bytea NOT NULL,
-    access      text,
+    access      uuid,
     UNIQUE (table_name, row_id, column_name)
 );
 
@@ -258,21 +349,16 @@ CREATE TABLE archive.member (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     email      archive.email NOT NULL UNIQUE,
     role       archive.level NOT NULL DEFAULT 'viewer',
-    groups     text[] NOT NULL DEFAULT '{}',
+    groups     uuid[] NOT NULL DEFAULT '{}',
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     name       text NOT NULL DEFAULT '',
-    access     text
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT
 ) INHERITS (archive.object);
 COMMENT ON TABLE archive.member IS 'A person in this workspace. Owners add, change and remove members; adding an email invites that person
 icon: users';
 COMMENT ON COLUMN archive.member.email IS 'The address they sign in with; it cannot change';
-COMMENT ON COLUMN archive.member.groups IS 'Groups they are in, like hr; a row whose access is hr is seen only by the hr group and the owners';
-
-CREATE FUNCTION archive.can(g text) RETURNS bool LANGUAGE sql STABLE AS $$
-    SELECT g IS NULL OR pg_has_role(current_user, '{p}_owner', 'USAGE')
-        OR EXISTS (SELECT FROM pg_catalog.pg_roles r WHERE r.rolname = '{p}_g_' || g AND pg_has_role(current_user, r.oid, 'USAGE'))
-$$;
+COMMENT ON COLUMN archive.member.groups IS 'The ids of the groups they are in; a row whose access is a group is seen only by its members and the owners';
 
 CREATE FUNCTION archive.member_check() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -281,8 +367,9 @@ BEGIN
         RAISE EXCEPTION 'an email cannot change; remove the member and add the new address' USING ERRCODE = '22023', TABLE = 'member', COLUMN = 'email';
     END IF;
     NEW.groups := ARRAY(SELECT DISTINCT g FROM unnest(NEW.groups) g WHERE g IS NOT NULL ORDER BY g);
-    IF EXISTS (SELECT FROM unnest(NEW.groups) g WHERE g !~ '^[a-z0-9][a-z0-9_]{0,23}$') THEN
-        RAISE EXCEPTION 'want group names of 1-24 lowercase letters, digits or _' USING ERRCODE = '22023', TABLE = 'member', COLUMN = 'groups';
+    IF EXISTS (SELECT FROM unnest(NEW.groups) g WHERE NOT EXISTS (SELECT FROM archive."group" x WHERE x.id = g)) THEN
+        RAISE EXCEPTION 'no group %', (SELECT g FROM unnest(NEW.groups) g WHERE NOT EXISTS (SELECT FROM archive."group" x WHERE x.id = g) LIMIT 1)
+            USING ERRCODE = '22023', TABLE = 'member', COLUMN = 'groups';
     END IF;
     RETURN NEW;
 END $$;
@@ -292,9 +379,9 @@ DECLARE
     rid   uuid;
     u     text;
     m     text;
-    g     text;
-    added text[] := '{}';
-    gone  text[] := '{}';
+    g     uuid;
+    added uuid[] := '{}';
+    gone  uuid[] := '{}';
 BEGIN
     PERFORM pg_advisory_xact_lock(7273);
     IF TG_OP <> 'INSERT' AND OLD.role = 'owner' AND (TG_OP = 'DELETE' OR NEW.role <> 'owner')
@@ -310,7 +397,6 @@ BEGIN
     m := '{p}_m' || translate(rtrim(encode(uuid_send(rid), 'base64'), '='), '+/', '-_');
     IF TG_OP = 'DELETE' THEN
         EXECUTE format('DROP ROLE IF EXISTS %I, %I', u, m);
-        gone := OLD.groups;
     ELSE
         IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = u) THEN
             EXECUTE format('CREATE ROLE %I NOLOGIN', u);
@@ -331,20 +417,12 @@ BEGIN
             gone := ARRAY(SELECT unnest(OLD.groups) EXCEPT SELECT unnest(NEW.groups));
         END IF;
         FOREACH g IN ARRAY added LOOP
-            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_g_' || g) THEN
-                EXECUTE format('CREATE ROLE %I NOLOGIN', '{p}_g_' || g);
-            END IF;
-            EXECUTE format('GRANT %I TO %I', '{p}_g_' || g, m);
+            EXECUTE format('GRANT %I TO %I', archive.group_role(g), m);
         END LOOP;
         FOREACH g IN ARRAY gone LOOP
-            EXECUTE format('REVOKE %I FROM %I', '{p}_g_' || g, m);
+            EXECUTE format('REVOKE %I FROM %I', archive.group_role(g), m);
         END LOOP;
     END IF;
-    FOREACH g IN ARRAY gone LOOP
-        IF NOT EXISTS (SELECT FROM archive.member x WHERE g = ANY (x.groups)) THEN
-            EXECUTE format('DROP ROLE IF EXISTS %I', '{p}_g_' || g);
-        END IF;
-    END LOOP;
     IF TG_OP <> 'UPDATE' THEN
         PERFORM set_config('archive.members', '1', true);
     END IF;
@@ -374,7 +452,7 @@ CREATE TABLE archive.workflow (
     cursor_id  uuid,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
-    access     text,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
     member     uuid REFERENCES archive.member ON DELETE CASCADE,
     "on"       jsonb,
     UNIQUE (user_id, name)
@@ -399,7 +477,7 @@ CREATE TABLE archive.workflow_run (
     ms         integer NOT NULL DEFAULT 0,
     created_at timestamptz NOT NULL DEFAULT now(),
     name       text NOT NULL DEFAULT '',
-    access     text,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
     updated_at timestamptz NOT NULL DEFAULT now()
 ) INHERITS (archive.object);
 CREATE INDEX workflow_run_idx ON archive.workflow_run (workflow, created_at);
@@ -448,7 +526,7 @@ CREATE TABLE archive.connection (
     lease_at   timestamptz,
     revoked    boolean NOT NULL DEFAULT false,
     integration boolean NOT NULL DEFAULT false,
-    access     text,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
     name       text NOT NULL DEFAULT '',
     UNIQUE (member, provider, account)
 ) INHERITS (archive.object);
@@ -464,7 +542,7 @@ COMMENT ON COLUMN archive.connection.error IS 'Why Archive last failed to reach 
 COMMENT ON COLUMN archive.connection.sync_at IS 'When Archive next reads what changed there; null once it has it all, until the service says something changed, you ask, or you read what it syncs';
 COMMENT ON COLUMN archive.connection.synced_at IS 'When Archive last had everything there';
 COMMENT ON COLUMN archive.connection.integration IS 'It is the archive''s, like its QuickBooks, which an owner connects for everyone, not one person''s own';
-COMMENT ON COLUMN archive.connection.access IS 'The group an integration and what it syncs are narrowed to, like finance; null for everyone';
+COMMENT ON COLUMN archive.connection.access IS 'The id of the group an integration and what it syncs are narrowed to; null for everyone';
 
 -- What connections sync lands in tables of the domains it belongs to: mail, docs and payroll, which every
 -- connector of a domain shares, as its file maps its records (connect/sync.go), so Gmail and Outlook are one
@@ -487,7 +565,7 @@ CREATE TABLE archive.known_person (
     email      archive.email NOT NULL UNIQUE,
     created_at timestamptz NOT NULL DEFAULT now(),
     name       text NOT NULL DEFAULT '',
-    access     text,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
     updated_at timestamptz NOT NULL DEFAULT now()
 ) INHERITS (archive.object);
 COMMENT ON TABLE archive.known_person IS 'A person your connections know, by their email address: one row however many connections know them, like a Gmail sender who is also a Gusto employee. Read only; Archive syncs them, and their names are where they were seen, like mail_party and payroll_worker
@@ -500,7 +578,7 @@ CREATE TABLE archive.known_org (
     domain     archive.domain UNIQUE,
     created_at timestamptz NOT NULL DEFAULT now(),
     name       text NOT NULL DEFAULT '',
-    access     text,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
     updated_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT known_org_key CHECK (ein IS NOT NULL OR domain IS NOT NULL)
 ) INHERITS (archive.object);
@@ -514,7 +592,7 @@ CREATE TABLE archive.mail_message (
     connection  uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
     stream      text NOT NULL,
     source_id   text NOT NULL,
-    access      text,
+    access      uuid REFERENCES archive."group" ON DELETE RESTRICT,
     created_at  timestamptz NOT NULL DEFAULT now(),
     updated_at  timestamptz NOT NULL DEFAULT now(),
     name        text NOT NULL DEFAULT '',
@@ -545,7 +623,7 @@ COMMENT ON COLUMN archive.mail_message.access IS 'Group that sees it, its connec
 CREATE TABLE archive.mail_party (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
-    access     text,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
     message    uuid NOT NULL REFERENCES archive.mail_message ON DELETE CASCADE,
     person     uuid NOT NULL REFERENCES archive.known_person ON DELETE CASCADE,
     role       text NOT NULL CONSTRAINT mail_party_role CHECK (role IN ('from', 'to', 'cc', 'bcc', 'reply_to')),
@@ -567,7 +645,7 @@ COMMENT ON COLUMN archive.mail_party.access IS 'Group that sees it, its connecti
 CREATE TABLE archive.mail_attachment (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
-    access     text,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
     name       text NOT NULL DEFAULT '',
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
@@ -590,7 +668,7 @@ CREATE TABLE archive.doc_page (
     connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
     stream     text NOT NULL,
     source_id  text NOT NULL,
-    access     text,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     name       text NOT NULL DEFAULT '',
@@ -618,7 +696,7 @@ CREATE TABLE archive.payroll_company (
     connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
     stream         text NOT NULL,
     source_id      text NOT NULL,
-    access         text,
+    access         uuid REFERENCES archive."group" ON DELETE RESTRICT,
     created_at     timestamptz NOT NULL DEFAULT now(),
     updated_at     timestamptz NOT NULL DEFAULT now(),
     seen_at        timestamptz NOT NULL DEFAULT now(),
@@ -663,7 +741,7 @@ CREATE TABLE archive.payroll_department (
     connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
     stream         text NOT NULL,
     source_id      text NOT NULL,
-    access         text,
+    access         uuid REFERENCES archive."group" ON DELETE RESTRICT,
     created_at     timestamptz NOT NULL DEFAULT now(),
     updated_at     timestamptz NOT NULL DEFAULT now(),
     name           text NOT NULL DEFAULT '',
@@ -689,7 +767,7 @@ CREATE TABLE archive.payroll_location (
     connection      uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
     stream          text NOT NULL,
     source_id       text NOT NULL,
-    access          text,
+    access          uuid REFERENCES archive."group" ON DELETE RESTRICT,
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now(),
     name            text NOT NULL DEFAULT '',
@@ -726,7 +804,7 @@ CREATE TABLE archive.payroll_schedule (
     connection        uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
     stream            text NOT NULL,
     source_id         text NOT NULL,
-    access            text,
+    access            uuid REFERENCES archive."group" ON DELETE RESTRICT,
     created_at        timestamptz NOT NULL DEFAULT now(),
     updated_at        timestamptz NOT NULL DEFAULT now(),
     seen_at           timestamptz NOT NULL DEFAULT now(),
@@ -764,7 +842,7 @@ CREATE TABLE archive.payroll_worker (
     connection        uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
     stream            text NOT NULL,
     source_id         text NOT NULL,
-    access            text,
+    access            uuid REFERENCES archive."group" ON DELETE RESTRICT,
     created_at        timestamptz NOT NULL DEFAULT now(),
     updated_at        timestamptz NOT NULL DEFAULT now(),
     seen_at           timestamptz NOT NULL DEFAULT now(),
@@ -841,7 +919,7 @@ COMMENT ON COLUMN archive.payroll_worker.access IS 'Group that sees it, its conn
 CREATE TABLE archive.payroll_job (
     id              uuid PRIMARY KEY DEFAULT uuidv7(),
     connection      uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
-    access          text,
+    access          uuid REFERENCES archive."group" ON DELETE RESTRICT,
     name            text NOT NULL DEFAULT '',
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now(),
@@ -871,7 +949,7 @@ COMMENT ON COLUMN archive.payroll_job.access IS 'Group that sees it, its connect
 CREATE TABLE archive.payroll_compensation (
     id           uuid PRIMARY KEY DEFAULT uuidv7(),
     connection   uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
-    access       text,
+    access       uuid REFERENCES archive."group" ON DELETE RESTRICT,
     name         text NOT NULL DEFAULT '',
     created_at   timestamptz NOT NULL DEFAULT now(),
     updated_at   timestamptz NOT NULL DEFAULT now(),
@@ -894,7 +972,7 @@ COMMENT ON COLUMN archive.payroll_compensation.access IS 'Group that sees it, it
 CREATE TABLE archive.payroll_address (
     id              uuid PRIMARY KEY DEFAULT uuidv7(),
     connection      uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
-    access          text,
+    access          uuid REFERENCES archive."group" ON DELETE RESTRICT,
     name            text NOT NULL DEFAULT '',
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now(),
@@ -927,7 +1005,7 @@ COMMENT ON COLUMN archive.payroll_address.access IS 'Group that sees it, its con
 CREATE TABLE archive.payroll_employment (
     id            uuid PRIMARY KEY DEFAULT uuidv7(),
     connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
-    access        text,
+    access        uuid REFERENCES archive."group" ON DELETE RESTRICT,
     name          text NOT NULL DEFAULT '',
     created_at    timestamptz NOT NULL DEFAULT now(),
     updated_at    timestamptz NOT NULL DEFAULT now(),
@@ -949,7 +1027,7 @@ CREATE TABLE archive.payroll_custom_field (
     connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
     stream         text NOT NULL,
     source_id      text NOT NULL,
-    access         text,
+    access         uuid REFERENCES archive."group" ON DELETE RESTRICT,
     created_at     timestamptz NOT NULL DEFAULT now(),
     updated_at     timestamptz NOT NULL DEFAULT now(),
     seen_at        timestamptz NOT NULL DEFAULT now(),
@@ -977,7 +1055,7 @@ COMMENT ON COLUMN archive.payroll_custom_field.access IS 'Group that sees it, it
 CREATE TABLE archive.payroll_custom_value (
     id           uuid PRIMARY KEY DEFAULT uuidv7(),
     connection   uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
-    access       text,
+    access       uuid REFERENCES archive."group" ON DELETE RESTRICT,
     worker       uuid NOT NULL REFERENCES archive.payroll_worker ON DELETE CASCADE,
     field        uuid REFERENCES archive.payroll_custom_field ON DELETE SET NULL,
     field_source text,
@@ -1000,7 +1078,7 @@ COMMENT ON COLUMN archive.payroll_custom_value.access IS 'Group that sees it, it
 CREATE TABLE archive.payroll_department_member (
     id            uuid PRIMARY KEY DEFAULT uuidv7(),
     connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
-    access        text,
+    access        uuid REFERENCES archive."group" ON DELETE RESTRICT,
     name          text NOT NULL DEFAULT '',
     created_at    timestamptz NOT NULL DEFAULT now(),
     updated_at    timestamptz NOT NULL DEFAULT now(),
@@ -1023,7 +1101,7 @@ CREATE TABLE archive.payroll_schedule_assignment (
     connection               uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
     stream                   text NOT NULL,
     source_id                text NOT NULL,
-    access                   text,
+    access                   uuid REFERENCES archive."group" ON DELETE RESTRICT,
     created_at               timestamptz NOT NULL DEFAULT now(),
     updated_at               timestamptz NOT NULL DEFAULT now(),
     name                     text NOT NULL DEFAULT '',
@@ -1063,7 +1141,7 @@ COMMENT ON COLUMN archive.payroll_schedule_assignment.access IS 'Group that sees
 CREATE TABLE archive.payroll_schedule_member (
     id                uuid PRIMARY KEY DEFAULT uuidv7(),
     connection        uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
-    access            text,
+    access            uuid REFERENCES archive."group" ON DELETE RESTRICT,
     name              text NOT NULL DEFAULT '',
     created_at        timestamptz NOT NULL DEFAULT now(),
     updated_at        timestamptz NOT NULL DEFAULT now(),
@@ -1096,7 +1174,7 @@ CREATE TABLE archive.payroll_earning_type (
     connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
     stream         text NOT NULL,
     source_id      text NOT NULL,
-    access         text,
+    access         uuid REFERENCES archive."group" ON DELETE RESTRICT,
     created_at     timestamptz NOT NULL DEFAULT now(),
     updated_at     timestamptz NOT NULL DEFAULT now(),
     seen_at        timestamptz NOT NULL DEFAULT now(),
@@ -1123,7 +1201,7 @@ CREATE TABLE archive.payroll_time_off_request (
     connection      uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
     stream          text NOT NULL,
     source_id       text NOT NULL,
-    access          text,
+    access          uuid REFERENCES archive."group" ON DELETE RESTRICT,
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now(),
     name            text NOT NULL DEFAULT '',
@@ -1168,7 +1246,7 @@ COMMENT ON COLUMN archive.payroll_time_off_request.access IS 'Group that sees it
 CREATE TABLE archive.payroll_time_off_day (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
-    access     text,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
     name       text NOT NULL DEFAULT '',
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
@@ -1188,7 +1266,7 @@ CREATE TABLE archive.payroll_time_off_balance (
     connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
     stream         text NOT NULL,
     source_id      text NOT NULL,
-    access         text,
+    access         uuid REFERENCES archive."group" ON DELETE RESTRICT,
     created_at     timestamptz NOT NULL DEFAULT now(),
     updated_at     timestamptz NOT NULL DEFAULT now(),
     name           text NOT NULL DEFAULT '',
@@ -1216,7 +1294,7 @@ COMMENT ON COLUMN archive.payroll_time_off_balance.access IS 'Group that sees it
 CREATE TABLE archive.payroll_time_off_policy (
     id            uuid PRIMARY KEY DEFAULT uuidv7(),
     connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
-    access        text,
+    access        uuid REFERENCES archive."group" ON DELETE RESTRICT,
     balance       uuid NOT NULL REFERENCES archive.payroll_time_off_balance ON DELETE CASCADE,
     policy_source text,
     name          text NOT NULL DEFAULT '',
@@ -1246,7 +1324,7 @@ CREATE TABLE archive.payroll_run (
     connection       uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
     stream           text NOT NULL,
     source_id        text NOT NULL,
-    access           text,
+    access           uuid REFERENCES archive."group" ON DELETE RESTRICT,
     created_at       timestamptz NOT NULL DEFAULT now(),
     updated_at       timestamptz NOT NULL DEFAULT now(),
     name             text NOT NULL DEFAULT '',
@@ -1297,7 +1375,7 @@ COMMENT ON COLUMN archive.payroll_run.access IS 'Group that sees it, its connect
 CREATE TABLE archive.payroll_pay (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
     connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
-    access         text,
+    access         uuid REFERENCES archive."group" ON DELETE RESTRICT,
     name           text NOT NULL DEFAULT '',
     created_at     timestamptz NOT NULL DEFAULT now(),
     updated_at     timestamptz NOT NULL DEFAULT now(),
@@ -1328,7 +1406,7 @@ COMMENT ON COLUMN archive.payroll_pay.access IS 'Group that sees it, its connect
 CREATE TABLE archive.payroll_pay_line (
     id            uuid PRIMARY KEY DEFAULT uuidv7(),
     connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
-    access        text,
+    access        uuid REFERENCES archive."group" ON DELETE RESTRICT,
     run           uuid NOT NULL REFERENCES archive.payroll_run ON DELETE CASCADE,
     worker        uuid REFERENCES archive.payroll_worker ON DELETE SET NULL,
     worker_source text,
@@ -1357,7 +1435,7 @@ CREATE TABLE archive.payroll_pay_period (
     connection      uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
     stream          text NOT NULL,
     source_id       text NOT NULL,
-    access          text,
+    access          uuid REFERENCES archive."group" ON DELETE RESTRICT,
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now(),
     name            text NOT NULL DEFAULT '',
@@ -1399,7 +1477,7 @@ CREATE TABLE archive.payroll_contractor_payment (
     connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
     stream         text NOT NULL,
     source_id      text NOT NULL,
-    access         text,
+    access         uuid REFERENCES archive."group" ON DELETE RESTRICT,
     created_at     timestamptz NOT NULL DEFAULT now(),
     updated_at     timestamptz NOT NULL DEFAULT now(),
     name           text NOT NULL DEFAULT '',
@@ -1440,7 +1518,7 @@ CREATE TABLE archive.payroll_contractor_payment_group (
     connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
     stream         text NOT NULL,
     source_id      text NOT NULL,
-    access         text,
+    access         uuid REFERENCES archive."group" ON DELETE RESTRICT,
     created_at     timestamptz NOT NULL DEFAULT now(),
     updated_at     timestamptz NOT NULL DEFAULT now(),
     name           text NOT NULL DEFAULT '',
@@ -1473,7 +1551,7 @@ CREATE TABLE archive.payroll_task (
     connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
     stream         text NOT NULL,
     source_id      text NOT NULL,
-    access         text,
+    access         uuid REFERENCES archive."group" ON DELETE RESTRICT,
     created_at     timestamptz NOT NULL DEFAULT now(),
     updated_at     timestamptz NOT NULL DEFAULT now(),
     name           text NOT NULL DEFAULT '',
@@ -1663,6 +1741,7 @@ CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.workflow_run FO
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.connection FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.file FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.member FOR EACH ROW EXECUTE FUNCTION archive.moved();
+CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive."group" FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.revision FOR EACH ROW EXECUTE FUNCTION archive.moved();
 
 CREATE FUNCTION archive.secret_clear(tbl text, rid uuid, col text) RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $$
@@ -1670,7 +1749,7 @@ CREATE FUNCTION archive.secret_clear(tbl text, rid uuid, col text) RETURNS void 
     WHERE s.table_name = tbl AND s.row_id = rid AND (col IS NULL OR s.column_name = col)
       AND pg_has_role(current_setting('role')::name, '{p}_editor', 'USAGE')
       AND (s.access IS NULL OR pg_has_role(current_setting('role')::name, '{p}_owner', 'USAGE')
-        OR EXISTS (SELECT FROM pg_catalog.pg_roles r WHERE r.rolname = '{p}_g_' || s.access AND pg_has_role(current_setting('role')::name, r.oid, 'USAGE')))
+        OR EXISTS (SELECT FROM pg_catalog.pg_roles r WHERE r.rolname = archive.group_role(s.access) AND pg_has_role(current_setting('role')::name, r.oid, 'USAGE')))
 $$;
 
 CREATE FUNCTION archive.ddl_allowed(k text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
@@ -1696,10 +1775,10 @@ BEGIN
 END $$;
 
 GRANT USAGE ON SCHEMA archive TO "{p}_viewer";
-GRANT SELECT ON archive.file, archive.member TO "{p}_viewer";
+GRANT SELECT ON archive.file, archive.member, archive."group" TO "{p}_viewer";
 GRANT INSERT, UPDATE, DELETE ON archive.file TO "{p}_editor";
 GRANT SELECT, INSERT, DELETE ON archive.secret TO "{p}_editor";
-GRANT INSERT, UPDATE, DELETE ON archive.member TO "{p}_owner";
+GRANT INSERT, UPDATE, DELETE ON archive.member, archive."group" TO "{p}_owner";
 GRANT SELECT, INSERT, UPDATE, DELETE ON archive.workflow TO "{p}_viewer";
 GRANT SELECT ON archive.workflow_run TO "{p}_viewer";
 GRANT SELECT ON archive.connection TO "{p}_viewer";
@@ -1958,6 +2037,10 @@ SELECT id, hash, name, mime, size, metadata, status, error, access, created_at F
 UPDATE archive.file SET name = $2 WHERE id = $1
 RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at;
 
+-- name: SetFileAccess :one
+UPDATE archive.file SET access = sqlc.narg(access)::uuid WHERE id = sqlc.arg(id)::uuid
+RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at;
+
 -- name: LockFile :one
 SELECT id, hash, name, mime, size, metadata, status, error, access, created_at FROM archive.file WHERE id = $1 FOR UPDATE;
 
@@ -2083,7 +2166,7 @@ SELECT jsonb_build_object(
             AND regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)')
             FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid), false),
         'columns', (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid)))
-        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.member'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass, 'archive.connection'::regclass, 'archive.known_person'::regclass, 'archive.known_org'::regclass, 'archive.mail_message'::regclass,
+        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.member'::regclass, 'archive."group"'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass, 'archive.connection'::regclass, 'archive.known_person'::regclass, 'archive.known_org'::regclass, 'archive.mail_message'::regclass,
             'archive.mail_party'::regclass, 'archive.mail_attachment'::regclass, 'archive.doc_page'::regclass, 'archive.payroll_company'::regclass,
             'archive.payroll_department'::regclass, 'archive.payroll_location'::regclass, 'archive.payroll_schedule'::regclass,
             'archive.payroll_worker'::regclass, 'archive.payroll_job'::regclass, 'archive.payroll_compensation'::regclass,
@@ -2254,7 +2337,7 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.payroll_contractor_payment x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.payroll_contractor_payment_group x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.payroll_task x WHERE x.connection = c.id))::bigint AS items,
-    c.integration, coalesce(c.access, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
+    c.integration, coalesce(c.access::text, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
 FROM archive.connection c WHERE c.member = $1 AND NOT c.integration OR c.integration ORDER BY c.provider, c.account, c.id;
 
 -- name: Connection :one
@@ -2304,8 +2387,11 @@ UPDATE archive.connection SET error = $2, updated_at = now() WHERE id = $1 AND e
 -- name: DeleteConnection :one
 DELETE FROM archive.connection WHERE id = $1 RETURNING *;
 
+-- name: GroupByName :one
+SELECT id FROM archive."group" WHERE name = lower(btrim(sqlc.arg(name)::text));
+
 -- name: SetConnectionAccess :exec
-UPDATE archive.connection c SET access = sqlc.narg(access)::text, updated_at = now() WHERE c.id = sqlc.arg(conn)::uuid AND c.integration;
+UPDATE archive.connection c SET access = sqlc.narg(access)::uuid, updated_at = now() WHERE c.id = sqlc.arg(conn)::uuid AND c.integration;
 
 -- Connections from before integrations: the first of each integration's becomes the archive's, unless it has one.
 -- name: UpgradeIntegrations :execrows

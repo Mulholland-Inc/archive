@@ -58,14 +58,17 @@ Usage:
 
   archive file add <path>... [-access group]
                                      store files and extract their metadata and text; with -access
-                                     only that group and the owners see them
+                                     only that group, by its name or id, and the owners see them
   archive file get <id> [-o path|-]  print the file's metadata, or with -o write its content
   archive file list [-limit n] [-after id]
 
   archive list <table> [-limit n] [-after id] [-reveal] [column=value ...]
   archive get <table> <id> [-reveal] -reveal shows secret values, to owners
   archive create <table> [json]      json from the argument or stdin; its access column says which
-                                     group sees the row, null for the whole workspace
+                                     group sees the row, by its id or name, null for the whole
+                                     workspace. Groups are rows of the group table: archive create
+                                     group '{"name": "finance"}' makes one, and archive delete group
+                                     <id> removes it once no row's access is it
   archive set <table> <id> [json]    set some columns; null clears a column
   archive update <table> <id> [json] replace the whole row
   archive delete <table> <id>

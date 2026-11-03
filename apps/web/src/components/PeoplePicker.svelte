@@ -7,7 +7,7 @@
   import { show, hide } from '../lib/floating.js';
   import { seedOf } from '../lib/app.svelte.js';
 
-  let { value = $bindable([]), people = [], placeholder = 'Add people by name or email', label = 'People', limit = 6 } = $props();
+  let { value = $bindable([]), people = [], placeholder = 'Add people by name or email', label = 'People', limit = 6, invite = true } = $props();
 
   const listId = uid('people');
   let box = $state();
@@ -21,7 +21,7 @@
   const q = $derived(query.trim().toLowerCase());
   const taken = $derived(new Set(value.map((p) => p.email)));
   const matches = $derived(people.filter((p) => !taken.has(p.email) && (!q || p.name.toLowerCase().includes(q) || p.email.toLowerCase().includes(q))).slice(0, limit));
-  const fresh = $derived(isEmail(q) && !taken.has(q) && !people.some((p) => p.email.toLowerCase() === q) ? { name: q, email: q, fresh: true } : null);
+  const fresh = $derived(invite && isEmail(q) && !taken.has(q) && !people.some((p) => p.email.toLowerCase() === q) ? { name: q, email: q, fresh: true } : null);
   const options = $derived(fresh ? [fresh, ...matches] : matches);
   const shown = $derived(opened && (options.length > 0 || q.length > 0));
 
@@ -68,7 +68,7 @@
     } else if (event.key === 'Enter' && shown && options[active]) {
       event.preventDefault();
       pick(options[active]);
-    } else if ((event.key === ',' || event.key === ';' || event.key === ' ') && isEmail(q)) {
+    } else if (invite && (event.key === ',' || event.key === ';' || event.key === ' ') && isEmail(q)) {
       event.preventDefault();
       pick(byEmail(q));
     } else if (event.key === 'Backspace' && !query && value.length) {
@@ -83,7 +83,7 @@
 
   function paste(event) {
     const found = (event.clipboardData?.getData('text') ?? '').split(/[\s,;]+/).filter(isEmail);
-    if (found.length < 2) return;
+    if (!invite || found.length < 2) return;
     event.preventDefault();
     const add = [...new Set(found.map((e) => e.toLowerCase()))].filter((e) => !taken.has(e)).map(byEmail);
     value = [...value, ...add];
@@ -162,7 +162,7 @@
       {/if}
     </div>
   {:else}
-    <p class="empty">No one matches. Type a full email to invite someone new.</p>
+    <p class="empty">{invite ? 'No one matches. Type a full email to invite someone new.' : 'No one in this archive matches.'}</p>
   {/each}
 </MenuPanel>
 

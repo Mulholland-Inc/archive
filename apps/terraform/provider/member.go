@@ -35,14 +35,33 @@ func (m *memberModel) body(ctx context.Context) (map[string]any, diag.Diagnostic
 	return map[string]any{"email": m.Email.ValueString(), "role": m.Role.ValueString(), "groups": groups}, diags
 }
 
-func (m *memberModel) fill(a apiMember) diag.Diagnostics {
+// fill keeps a in m, with its groups by their names: the API names a member's groups by id, and takes either.
+func (r *memberResource) fill(ctx context.Context, m *memberModel, a apiMember) diag.Diagnostics {
+	var diags diag.Diagnostics
+	names := map[string]string{}
+	if len(a.Groups) > 0 {
+		var groups []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}
+		if err := r.c.do(ctx, "GET", "/api/group?limit=1000", nil, &groups); err != nil {
+			diags.AddError("Reading the groups failed", err.Error())
+			return diags
+		}
+		for _, g := range groups {
+			names[g.ID] = g.Name
+		}
+	}
 	vals := []attr.Value{}
 	for _, g := range a.Groups {
+		if n, ok := names[g]; ok {
+			g = n
+		}
 		vals = append(vals, types.StringValue(g))
 	}
-	set, diags := types.SetValue(types.StringType, vals)
+	set, d := types.SetValue(types.StringType, vals)
 	m.ID, m.Email, m.Role, m.Groups = types.StringValue(a.ID), types.StringValue(a.Email), types.StringValue(a.Role), set
-	return diags
+	return append(diags, d...)
 }
 
 type memberResource struct{ configured }
@@ -59,7 +78,7 @@ func (r *memberResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			"email": schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}, Description: "The address they sign in with, in lowercase. It cannot change."},
 			"role":  schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("viewer"), Description: "viewer, editor or owner."},
 			"groups": schema.SetAttribute{Optional: true, Computed: true, ElementType: types.StringType, Default: setdefault.StaticValue(types.SetValueMust(types.StringType, []attr.Value{})),
-				Description: "Groups they are in, like hr. A row whose access is hr is seen only by the hr group and the owners."},
+				Description: "The names of the groups they are in, like hr; one no group has yet is made. A row whose access is the hr group is seen only by its members and the owners."},
 		},
 	}
 }
@@ -77,7 +96,7 @@ func (r *memberResource) Create(ctx context.Context, req resource.CreateRequest,
 		resp.Diagnostics.AddError("Adding the member failed", err.Error())
 		return
 	}
-	resp.Diagnostics.Append(m.fill(a)...)
+	resp.Diagnostics.Append(r.fill(ctx, &m, a)...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, m)...)
 }
 
@@ -97,7 +116,7 @@ func (r *memberResource) Read(ctx context.Context, req resource.ReadRequest, res
 		resp.Diagnostics.AddError("Reading the member failed", err.Error())
 		return
 	}
-	resp.Diagnostics.Append(m.fill(a)...)
+	resp.Diagnostics.Append(r.fill(ctx, &m, a)...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, m)...)
 }
 
@@ -115,7 +134,7 @@ func (r *memberResource) Update(ctx context.Context, req resource.UpdateRequest,
 		resp.Diagnostics.AddError("Changing the member failed", err.Error())
 		return
 	}
-	resp.Diagnostics.Append(m.fill(a)...)
+	resp.Diagnostics.Append(r.fill(ctx, &m, a)...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, m)...)
 }
 
