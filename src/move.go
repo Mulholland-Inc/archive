@@ -28,15 +28,15 @@ import (
 // every sequence where it was. Then it checks the copy: every object of both, as Postgres renders it, is the
 // same (moveFingerprint), and every table has the same rows (moveRows). Only then, in the same transaction, it
 // drops the workspace from the main database, brings that to main.sql and makes the workspace's owners its
-// admins, and records in archive.moved that the workspace moved. Until that commits, the main database is as it
+// admins. Until that commits, the main database is as it
 // was: a failure, or a process killed, rolls it back, and the next start drops the half-made copy and begins
 // again. A start after it committed finds no workspace in the main database and does nothing.
 //
 // Nothing here ever drops a workspace that is real. The copy says it is half made, by a schema archive_move of
 // its own, from the moment it is created until the main database has committed the move; a database archive_<id>
-// that exists without it and is not empty is never dropped, and stops the move. And once archive.moved says the
-// workspace moved, workspace tables that come back into the main database, as an older Archive started against
-// it or old SQL could bring them, stop the start: Archive moves nothing, drops nothing, and says so.
+// that exists without it and is not empty is never dropped, and stops the move, so workspace tables that come
+// back into the main database after it moved, as an older Archive started against it could bring them, stop
+// the start and drop nothing.
 //
 // The workspace's roles are the cluster's, not a database's, so they stay as they are: its grants and policies
 // name them in the copy as they did. Its files are kept by the workspace's id (blobPrefixed), not its database,
@@ -53,9 +53,6 @@ func (h *Hub) moveFirst(ctx context.Context, conn *pgx.Conn) error {
 	for try := 1; ; try++ {
 		var there bool
 		if err := conn.QueryRow(ctx, "SELECT to_regclass('archive.member') IS NOT NULL").Scan(&there); err != nil || !there {
-			return err
-		}
-		if err := moveDone(ctx, conn); err != nil {
 			return err
 		}
 		err := h.moveOnce(ctx, conn)
@@ -77,27 +74,6 @@ func (h *Hub) moveFirst(ctx context.Context, conn *pgx.Conn) error {
 			return ctx.Err()
 		}
 	}
-}
-
-// moveDone stops a start whose main database has workspace tables again after archive.moved says the first
-// workspace moved out: what is in the main database now is not the workspace, which lives in its own database.
-func moveDone(ctx context.Context, conn *pgx.Conn) error {
-	var recorded bool
-	if err := conn.QueryRow(ctx, "SELECT to_regclass('archive.moved') IS NOT NULL").Scan(&recorded); err != nil || !recorded {
-		return err
-	}
-	var ws uuid.UUID
-	var at time.Time
-	err := conn.QueryRow(ctx, "SELECT workspace, created_at FROM archive.moved ORDER BY created_at LIMIT 1").Scan(&ws, &at)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	return fmt.Errorf("the main database has workspace tables again, like archive.member, but the first workspace %s moved out of it into archive_%s on %s "+
-		"(archive.moved): Archive moves and drops nothing; archive_%s is the workspace. Find what brought them back, like an older Archive started "+
-		"against this database, and drop them from the main database by hand once you have checked they hold nothing to keep", ws, ws, at.UTC().Format(time.RFC3339), ws)
 }
 
 // moveMark is the schema that says a workspace's database is a copy still being made (moveOnce).
@@ -210,7 +186,7 @@ func (h *Hub) moveOnce(ctx context.Context, conn *pgx.Conn) (err error) {
 		// The copy goes with a failure, unless the main database has moved on without the workspace, as it does
 		// when a commit went through but its answer was lost.
 		var there bool
-		if err == nil || !made || h.main.QueryRow(bg, "SELECT to_regclass('archive.member') IS NOT NULL AND to_regclass('archive.moved') IS NULL").Scan(&there) != nil || !there {
+		if err == nil || !made || h.main.QueryRow(bg, "SELECT to_regclass('archive.member') IS NOT NULL").Scan(&there) != nil || !there {
 			return
 		}
 		if h.moveLeftover(bg, db) == nil {
@@ -340,15 +316,12 @@ func (h *Hub) moveOnce(ctx context.Context, conn *pgx.Conn) (err error) {
 	if tag.RowsAffected() == 0 {
 		fmt.Fprintf(os.Stderr, "archive: the first workspace's owners %v have no users, so this Archive has no admin; add one with archive admin add <email>\n", owners)
 	}
-	if _, err := tx.Exec(ctx, "INSERT INTO archive.moved (workspace) VALUES ($1)", ws); err != nil {
-		return err
-	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	// The copy is the workspace now. Were this not to run, archive.moved still keeps anything from dropping it.
+	// The copy is the workspace now, so it stops saying it is being made.
 	if _, err := t.Exec(bg, "DROP SCHEMA "+moveMark); err != nil {
-		fmt.Fprintf(os.Stderr, "archive: %s moved, but its schema %s, which says it was being made, stays: %v\n", db, moveMark, err)
+		fmt.Fprintf(os.Stderr, "archive: %s moved, but its schema %s, which says it was being made, stays; drop it by hand: %v\n", db, moveMark, err)
 	}
 	fmt.Fprintf(os.Stderr, "archive: moved the first workspace %s out of the main database into %s, %d tables and %d rows, checked, in %s; its owners %v are this Archive's admins\n",
 		id, db, len(had), rows, time.Since(start).Round(time.Millisecond), owners)
