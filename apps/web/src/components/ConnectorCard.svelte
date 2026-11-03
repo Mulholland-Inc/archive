@@ -24,7 +24,7 @@
     <span class="action">
       <Menu placement="bottom-end" width="sm" label={`Connect ${connector.name}`}>
         {#snippet trigger(props)}<IconButton icon={Plus} label={`Connect ${connector.name}`} variant="subtle" tooltip={false} {...props} />{/snippet}
-        <MenuItems items={[{ heading: 'For your archives that are' }, ...connectionTypes.map((t) => ({ label: t.label, onselect: () => onconnect(t.value) }))]} />
+        <MenuItems items={connectionTypes.map((t) => ({ label: t.label, onselect: () => onconnect(t.value) }))} />
       </Menu>
     </span>
   {:else if onconnect}
