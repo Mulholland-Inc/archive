@@ -11,6 +11,7 @@
   import MenuItem from './MenuItem.svelte';
   import MenuLabel from './MenuLabel.svelte';
   import MenuSeparator from './MenuSeparator.svelte';
+  import OwnConnections from './OwnConnections.svelte';
   import { ws, connect, connections } from '../lib/app.svelte.js';
 
   let { onopen, onback, backNarrow = false } = $props();
@@ -35,7 +36,7 @@
 </script>
 
 <SettingsPane {onback} {backNarrow}>
-  <PaneHeader title="Connectors" description="Your own accounts that Archive can read from and act in. You connect each once, and it is connected in every archive you are in. Only you can use them." art="api">
+  <PaneHeader title="Connectors" description="Your own accounts that Archive can read from and act in, each in the archive you connect it in. Only you can use them." art="api">
     {#snippet search()}
       <div class="search"><SearchField bind:value={query} size="sm" placeholder="Search" label="Search connectors" /></div>
       <Menu label="Filter" placement="bottom-end">
@@ -58,10 +59,11 @@
     {/snippet}
   </PaneHeader>
   <div class="list">
+    {#if !narrowed}<OwnConnections />{/if}
     {#if matches.length}
       <div class="grid">
         {#each matches as c (c.id)}
-          <ConnectorCard connector={c} types onopen={() => onopen?.(c.id)} onconnect={(type) => connect(c.id, type)} />
+          <ConnectorCard connector={c} onopen={() => onopen?.(c.id)} onconnect={() => connect(c.id)} />
         {/each}
       </div>
     {:else}

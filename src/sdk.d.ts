@@ -43,8 +43,7 @@
  *   (Money, Address, ...) as the objects below. Secret types (Card, UsSsn, National, Passport)
  *   take the real value and read back masked; list and get with { reveal: true } show them to owners.
  * - archive.query(sql, ...params) reads with one SQL statement: joins, aggregates, anything list cannot. It only
- *   reads: a write or DDL in it throws forbidden. Rows change through archive.create, update and delete. A query
- *   reads either this archive's tables or your own (see Connected accounts), never both at once.
+ *   reads: a write or DDL in it throws forbidden. Rows change through archive.create, update and delete.
  *
  * Changing the schema (owners)
  * - Types are the tables in the database, and nothing else is stored. archive.schema() lists them with their
@@ -222,11 +221,10 @@
  *
  * Connected accounts
  * - Each person connects their own Gmail, Outlook, Google Drive and Notion in Settings, Connectors; those are
- *   theirs alone, connected once for every archive they are in: connecting or disconnecting one in any archive
- *   does it in all of them. The archive's own accounts, like its QuickBooks, HubSpot, GitHub, Asana, Linear,
- *   Sentry, Stripe or Gusto, are integrations: an owner connects each once for everyone in Archive settings,
- *   Integrations, and may narrow one to a group; another archive has its own. Both are rows of the connection
- *   table, integration true for the archive's.
+ *   theirs alone, and connected in this archive only; another archive they are in has its own. The archive's
+ *   own accounts, like its QuickBooks, HubSpot, GitHub, Asana, Linear, Sentry, Stripe or Gusto, are
+ *   integrations: an owner connects each once for everyone in Archive settings, Integrations, and may narrow
+ *   one to a group. Both are rows of the connection table, integration true for the archive's.
  * - archive.action(name, input, opts?) does something with one of them: name is "<connector>.<action>", like
  *   archive.action("gmail.search", { query: "from:ann@example.com" }). A personal connector's acts as you, with
  *   your own account; an integration's acts with the archive's, for editors and owners, and only those in its
@@ -243,16 +241,9 @@
  *   mail_party and mail_attachment, doc_page, and the payroll_ tables, with the people and organizations they
  *   name in known_person and known_org. Each row has its connection, its stream (like messages) and its
  *   source_id there, and updated_at when it last changed; Streams, after Actions, says which stream lands in
- *   which table. Read them like any table, without calling the service.
- * - What your own accounts sync is kept once, for you alone, apart from every archive: mail_message,
- *   mail_party, mail_attachment and doc_page are yours in whichever archive you read them, and nobody else's,
- *   owners and admins too. An integration's is the archive's, and everyone in it sees it, or its group when an
- *   owner narrowed it. list and get of connection and known_person read both. archive.query reads your own
- *   when it names mail_message, mail_party, mail_attachment or doc_page, and then connection and known_person
- *   are yours alone; otherwise it reads this archive's, and connection and known_person are its own. A query
- *   of both, like one joining mail_message to a table of the archive, throws invalid: query each on its own and
- *   join them in the script:
- *     const mail = await archive.query("SELECT m.subject, k.email FROM mail_message m JOIN mail_party p ON p.message = m.id JOIN known_person k ON k.id = p.person WHERE p.role = 'from' ORDER BY m.sent_at DESC LIMIT 20");
+ *   which table. A personal account's rows only you see, and an integration's everyone sees, or its group when
+ *   an owner narrowed it (its access column). Read them like any table, without calling the service:
+ *     await archive.query("SELECT m.subject, k.email FROM mail_message m JOIN mail_party p ON p.message = m.id JOIN known_person k ON k.id = p.person WHERE p.role = 'from' ORDER BY m.sent_at DESC LIMIT 20");
  *   The connection table's synced_at says when one last caught up; disconnecting deletes what it synced.
  */
 declare const archive: {

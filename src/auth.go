@@ -642,7 +642,6 @@ func (s *signin) handler() http.Handler {
 		}
 		// Opening the workspace catches up the syncs of whoever opens it.
 		a.syncCatchUp(r.Context(), m.ID)
-		h.self.syncCatchUp(r.Context(), ac.UserID)
 		rows, err := h.q().UserWorkspaces(r.Context(), ac.UserID)
 		all := []Workspace{}
 		for _, x := range rows {

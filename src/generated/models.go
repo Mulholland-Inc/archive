@@ -65,7 +65,7 @@ type ArchiveChat struct {
 	UpdatedAt time.Time
 }
 
-// An account at another service that Archive reads: one of your own, like your Gmail, connected once for every archive you are in, or one of the archive's integrations, like its QuickBooks; archive.action uses it. Read only; connect and disconnect your own in Settings, Connectors, and the archive's in Archive settings, Integrations
+// One of your own accounts at another service that Archive reads for you, like your Gmail; archive.action uses it. Read only; connect and disconnect them in Settings, Connectors
 // icon: plug
 type ArchiveConnection struct {
 	ID uuid.UUID

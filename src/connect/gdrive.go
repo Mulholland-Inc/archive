@@ -21,7 +21,7 @@ func init() {
 			AuthStyle: oauth2.AuthStyleInParams},
 		Revoke: "https://oauth2.googleapis.com/revoke",
 		Scopes: []string{"https://www.googleapis.com/auth/drive.readonly"},
-		Params: map[string]string{"access_type": "offline", "prompt": "consent select_account"},
+		Params: map[string]string{"access_type": "offline", "prompt": "consent"},
 		Account: func(c *Client) (string, error) {
 			var a struct {
 				User struct {
