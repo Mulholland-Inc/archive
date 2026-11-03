@@ -36,7 +36,7 @@
   // Which archives an account is in: only those of its type read what it syncs and act with it. You pick it
   // before you connect one.
   const here = $derived(connectionTypes.find((t) => t.value === ws()?.look?.type)?.label.toLowerCase() ?? 'personal');
-  const pick = [{ heading: 'For your archives that are' }, ...connectionTypes.map((t) => ({ label: t.label, onselect: () => connect(connector.id, t.value) }))];
+  const pick = connectionTypes.map((t) => ({ label: t.label, onselect: () => connect(connector.id, t.value) }));
 </script>
 
 <Stack gap="6">
