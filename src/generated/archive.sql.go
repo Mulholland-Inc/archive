@@ -197,7 +197,7 @@ SELECT jsonb_build_object(
             'archive.ledger_account'::regclass, 'archive.ledger_contact'::regclass, 'archive.ledger_item'::regclass,
             'archive.ledger_entry'::regclass, 'archive.ledger_line'::regclass, 'archive.calendar_event'::regclass,
             'archive.calendar_attendee'::regclass, 'archive.crm_company'::regclass, 'archive.crm_contact'::regclass, 'archive.crm_deal'::regclass,
-            'archive.chat_message'::regclass)
+            'archive.chat_message'::regclass, 'archive.marketing_campaign'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -473,7 +473,8 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.crm_company x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.crm_contact x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.crm_deal x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.chat_message x WHERE x.connection = c.id))::bigint AS items,
+        + (SELECT count(*) FROM archive.chat_message x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.marketing_campaign x WHERE x.connection = c.id))::bigint AS items,
     c.integration, coalesce(c.access::text, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
 FROM archive.connection c WHERE c.member = $1 AND NOT c.integration OR c.integration ORDER BY c.provider, c.account, c.id
 `

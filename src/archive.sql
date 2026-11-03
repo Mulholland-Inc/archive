@@ -1769,6 +1769,42 @@ COMMENT ON COLUMN archive.crm_deal.source_id IS 'Its id there';
 COMMENT ON COLUMN archive.crm_deal.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.crm_deal.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
+CREATE TABLE archive.marketing_campaign (
+    id           uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection   uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream       text NOT NULL,
+    source_id    text NOT NULL,
+    access       uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    updated_at   timestamptz NOT NULL DEFAULT now(),
+    name         text NOT NULL DEFAULT '',
+    seen_at      timestamptz NOT NULL DEFAULT now(),
+    title        text,
+    channel      text,
+    status       text,
+    archived     boolean,
+    scheduled_at timestamptz,
+    sent_at      timestamptz,
+    made_at      timestamptz,
+    edited_at    timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+COMMENT ON TABLE archive.marketing_campaign IS 'A campaign of a marketing tool you connected, like an email or SMS campaign in Klaviyo. Read only; Archive syncs them
+icon: megaphone';
+COMMENT ON COLUMN archive.marketing_campaign.title IS 'Its name';
+COMMENT ON COLUMN archive.marketing_campaign.channel IS 'How it reaches people, like email or sms';
+COMMENT ON COLUMN archive.marketing_campaign.status IS 'Where it is, like Draft, Scheduled or Sent';
+COMMENT ON COLUMN archive.marketing_campaign.archived IS 'It is archived there';
+COMMENT ON COLUMN archive.marketing_campaign.scheduled_at IS 'When it is set to send';
+COMMENT ON COLUMN archive.marketing_campaign.sent_at IS 'When it was sent';
+COMMENT ON COLUMN archive.marketing_campaign.made_at IS 'When it was made there';
+COMMENT ON COLUMN archive.marketing_campaign.edited_at IS 'When it last changed there';
+COMMENT ON COLUMN archive.marketing_campaign.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.marketing_campaign.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.marketing_campaign.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.marketing_campaign.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.marketing_campaign.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
 -- Calendars: an event of a calendar you connected, like Google Calendar or Outlook's, a recurring one as its
 -- series and each occurrence that differs from it, and who is invited.
 CREATE TABLE archive.calendar_event (
@@ -2153,6 +2189,7 @@ BEGIN
         WHEN 'payroll_contractor_payment_group' THEN concat_ws(' · ', 'Contractor payments', r->>'check_date')
         WHEN 'payroll_task' THEN r->>'title'
         WHEN 'drive_file' THEN r->>'title'
+        WHEN 'marketing_campaign' THEN r->>'title'
         WHEN 'chat_message' THEN coalesce(nullif(left(btrim(r->>'text'), 120), ''), r->>'sender_name')
         WHEN 'crm_company' THEN coalesce(nullif(btrim(r->>'title'), ''), r->>'domain')
         WHEN 'crm_contact' THEN coalesce(nullif(btrim(concat_ws(' ', nullif(r->>'first_name', ''), nullif(r->>'last_name', ''))), ''), r->>'email')
@@ -2205,6 +2242,7 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_contractor
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_contractor_payment_group FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_task FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.drive_file FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.marketing_campaign FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.chat_message FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.crm_company FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.crm_contact FOR EACH ROW EXECUTE FUNCTION archive.object_name();
@@ -2297,6 +2335,7 @@ GRANT SELECT ON archive.payroll_contractor_payment TO "{p}_viewer";
 GRANT SELECT ON archive.payroll_contractor_payment_group TO "{p}_viewer";
 GRANT SELECT ON archive.payroll_task TO "{p}_viewer";
 GRANT SELECT ON archive.drive_file TO "{p}_viewer";
+GRANT SELECT ON archive.marketing_campaign TO "{p}_viewer";
 GRANT SELECT ON archive.chat_message TO "{p}_viewer";
 GRANT SELECT ON archive.crm_company TO "{p}_viewer";
 GRANT SELECT ON archive.crm_contact TO "{p}_viewer";
@@ -2395,6 +2434,8 @@ ALTER TABLE archive.payroll_task ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.payroll_task FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_task.connection));
 ALTER TABLE archive.drive_file ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.drive_file FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = drive_file.connection));
+ALTER TABLE archive.marketing_campaign ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.marketing_campaign FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = marketing_campaign.connection));
 ALTER TABLE archive.chat_message ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.chat_message FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = chat_message.connection));
 ALTER TABLE archive.crm_company ENABLE ROW LEVEL SECURITY;
@@ -2646,7 +2687,7 @@ SELECT jsonb_build_object(
             'archive.ledger_account'::regclass, 'archive.ledger_contact'::regclass, 'archive.ledger_item'::regclass,
             'archive.ledger_entry'::regclass, 'archive.ledger_line'::regclass, 'archive.calendar_event'::regclass,
             'archive.calendar_attendee'::regclass, 'archive.crm_company'::regclass, 'archive.crm_contact'::regclass, 'archive.crm_deal'::regclass,
-            'archive.chat_message'::regclass)
+            'archive.chat_message'::regclass, 'archive.marketing_campaign'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -2755,7 +2796,8 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.crm_company x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.crm_contact x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.crm_deal x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.chat_message x WHERE x.connection = c.id))::bigint AS items,
+        + (SELECT count(*) FROM archive.chat_message x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.marketing_campaign x WHERE x.connection = c.id))::bigint AS items,
     c.integration, coalesce(c.access::text, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
 FROM archive.connection c WHERE c.member = $1 AND NOT c.integration OR c.integration ORDER BY c.provider, c.account, c.id;
 
