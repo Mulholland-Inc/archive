@@ -437,8 +437,8 @@
 [data-theme='dark'] {
   color-scheme: dark;
 
-  /* Discord's dark theme, sampled from its app: near-black greys with a hint of violet, blurple for what to do
-     next, and its red, green and amber for status. */
+  /* Discord's dark theme, sampled from its app: near-black greys with a hint of violet, and its red, green and
+     amber for status. What to do next stays Archive's own blue, the marketing site's. */
   --color-canvas: #1a1a1e;
 
   --color-sidebar: #121214;
@@ -467,23 +467,23 @@
   --color-inverse-hover: #dbdce0;
   --color-knob: #ffffff;
 
-  --color-primary: #5865f2;
-  --color-primary-hover: #4752c4;
-  --color-on-primary: #ffffff;
+  --color-primary: var(--blue-600);
+  --color-primary-hover: var(--blue-500);
+  --color-on-primary: var(--gray-0);
 
-  --color-accent: #949cf7;
-  --color-accent-hover: #a8aefa;
-  --color-accent-subtle: rgb(88 101 242 / 24%);
-  --color-accent-contrast: #121214;
+  --color-accent: var(--blue-300);
+  --color-accent-hover: var(--blue-300);
+  --color-accent-subtle: var(--blue-300-16);
+  --color-accent-contrast: var(--gray-950);
 
   --color-success: #43a25a;
   --color-warning: #f0b232;
   --color-danger: #da373c;
   --color-danger-contrast: #ffffff;
 
-  --color-focus: rgb(0 168 252 / 55%);
-  --color-selection: #5865f2;
-  --color-on-selection: #ffffff;
+  --color-focus: var(--blue-300-55);
+  --color-selection: var(--blue-600);
+  --color-on-selection: var(--gray-0);
 
   --color-avatar-1: var(--deep-1);
   --color-avatar-2: var(--deep-2);
