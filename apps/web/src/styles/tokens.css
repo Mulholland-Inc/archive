@@ -437,14 +437,16 @@
 [data-theme='dark'] {
   color-scheme: dark;
 
-  --color-canvas: var(--gray-950);
+  /* Discord's dark theme, sampled from its app: near-black greys with a hint of violet, blurple for what to do
+     next, and its red, green and amber for status. */
+  --color-canvas: #1a1a1e;
 
-  --color-sidebar: var(--gray-975);
-  --color-surface: var(--gray-700);
-  --color-surface-raised: var(--gray-700);
-  --color-surface-sunken: var(--gray-800);
-  --color-bubble: var(--gray-900);
-  --color-code: var(--gray-900);
+  --color-sidebar: #121214;
+  --color-surface: #242429;
+  --color-surface-raised: #242429;
+  --color-surface-sunken: #121214;
+  --color-bubble: #242429;
+  --color-code: #1f2130;
   --color-overlay: var(--black-50);
 
   --color-fill-subtle: var(--white-5);
@@ -455,33 +457,33 @@
   --color-border: var(--white-10);
   --color-border-strong: var(--white-16);
 
-  --color-text: var(--gray-0);
-  --color-text-secondary: var(--white-85);
-  --color-text-tertiary: var(--white-65);
-  --color-text-disabled: var(--white-32);
-  --color-text-inverse: var(--gray-950);
+  --color-text: #f2f3f5;
+  --color-text-secondary: #b3b2b8;
+  --color-text-tertiary: #8e8d93;
+  --color-text-disabled: #6d6c72;
+  --color-text-inverse: #121214;
 
-  --color-inverse: var(--gray-0);
-  --color-inverse-hover: var(--gray-100);
-  --color-knob: var(--gray-0);
+  --color-inverse: #f2f3f5;
+  --color-inverse-hover: #dbdce0;
+  --color-knob: #ffffff;
 
-  --color-primary: var(--blue-600);
-  --color-primary-hover: var(--blue-500);
-  --color-on-primary: var(--gray-0);
+  --color-primary: #5865f2;
+  --color-primary-hover: #4752c4;
+  --color-on-primary: #ffffff;
 
-  --color-accent: var(--blue-300);
-  --color-accent-hover: var(--blue-300);
-  --color-accent-subtle: var(--blue-300-16);
-  --color-accent-contrast: var(--gray-950);
+  --color-accent: #949cf7;
+  --color-accent-hover: #a8aefa;
+  --color-accent-subtle: rgb(88 101 242 / 24%);
+  --color-accent-contrast: #121214;
 
-  --color-success: var(--green-600);
-  --color-warning: var(--orange-600);
-  --color-danger: var(--red-300);
-  --color-danger-contrast: var(--gray-950);
+  --color-success: #43a25a;
+  --color-warning: #f0b232;
+  --color-danger: #da373c;
+  --color-danger-contrast: #ffffff;
 
-  --color-focus: var(--blue-300-55);
-  --color-selection: var(--blue-600);
-  --color-on-selection: var(--gray-0);
+  --color-focus: rgb(0 168 252 / 55%);
+  --color-selection: #5865f2;
+  --color-on-selection: #ffffff;
 
   --color-avatar-1: var(--deep-1);
   --color-avatar-2: var(--deep-2);
