@@ -135,8 +135,10 @@
  *   write like any other: archive.create("workflow", { name, source, on }), archive.update("workflow", id, patch)
  *   and archive.delete("workflow", id), and read with list, get and query. source is written like the code you
  *   run now, and each of its runs is a run like this one: one transaction, {timeout}, the same SDK, plus input.
- *   It runs as whoever saved it last. You see and change only your own workflows; the people you work for see
- *   theirs in the app (they never read the code).
+ *   It runs as whoever saved it last. You see and change only your own workflows, and see those whose access
+ *   is a group you are in: set access to a group's id to let that group see it and its runs, or null for only
+ *   you. Only whose it is (member) changes, runs or deletes it, and only they get its webhook URL. The people
+ *   you work for see theirs in the app (they never read the code).
  * - on says when it runs:
  *     { cron: "0 9 * * 1-5" }                          five fields, minute hour day month weekday, in UTC
  *     { cron: "0 9 * * *", tz: "America/New_York" }    the same in a time zone: 9:00 New York time, every day

@@ -177,7 +177,7 @@ func (a *Archive) List(ctx context.Context, typ string, where map[string]any, li
 		args = append(args, limit)
 		rs, err := storeRows(ctx, a.st, q+fmt.Sprintf(" ORDER BY t.id LIMIT $%d", len(args)), args...)
 		if tb.isWorkflow() {
-			a.workflowRows(rs...)
+			a.workflowRows(ctx, rs...)
 		}
 		return rs, err
 	}
@@ -209,7 +209,7 @@ func (a *Archive) Get(ctx context.Context, typ string, id uuid.UUID) (map[string
 	read := func(ctx context.Context) (map[string]any, error) {
 		row, err := a.coreGet(ctx, tb, id)
 		if tb.isWorkflow() {
-			a.workflowRows(row)
+			a.workflowRows(ctx, row)
 		}
 		return row, err
 	}

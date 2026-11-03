@@ -1063,9 +1063,9 @@ func (q *Queries) InsertRevision(ctx context.Context, hash string) error {
 }
 
 const insertWorkflow = `-- name: InsertWorkflow :one
-INSERT INTO archive.workflow (user_id, member, role, name, source, "on", trigger, hook, next_at, cursor_at, cursor_id)
+INSERT INTO archive.workflow (user_id, member, role, name, source, "on", trigger, hook, next_at, cursor_at, cursor_id, access)
 VALUES ($1, $2, $3, $4, $5, nullif($6::jsonb, 'null'), $7, $8,
-    $9, $10, $11)
+    $9, $10, $11, $12)
 RETURNING id
 `
 
@@ -1081,6 +1081,7 @@ type InsertWorkflowParams struct {
 	NextAt   *time.Time
 	CursorAt *time.Time
 	CursorID *uuid.UUID
+	Access   *uuid.UUID
 }
 
 func (q *Queries) InsertWorkflow(ctx context.Context, arg InsertWorkflowParams) (uuid.UUID, error) {
@@ -1096,6 +1097,7 @@ func (q *Queries) InsertWorkflow(ctx context.Context, arg InsertWorkflowParams) 
 		arg.NextAt,
 		arg.CursorAt,
 		arg.CursorID,
+		arg.Access,
 	)
 	var id uuid.UUID
 	err := row.Scan(&id)
@@ -2013,8 +2015,8 @@ func (q *Queries) TxWrote(ctx context.Context) (TxWroteRow, error) {
 
 const updateWorkflow = `-- name: UpdateWorkflow :execrows
 UPDATE archive.workflow SET name = $1, source = $2, "on" = nullif($3::jsonb, 'null'), trigger = $4,
-    next_at = $5, cursor_at = $6, cursor_id = $7, updated_at = now()
-WHERE id = $8
+    next_at = $5, cursor_at = $6, cursor_id = $7, access = $8, updated_at = now()
+WHERE id = $9
 `
 
 type UpdateWorkflowParams struct {
@@ -2025,6 +2027,7 @@ type UpdateWorkflowParams struct {
 	NextAt   *time.Time
 	CursorAt *time.Time
 	CursorID *uuid.UUID
+	Access   *uuid.UUID
 	ID       uuid.UUID
 }
 
@@ -2037,6 +2040,7 @@ func (q *Queries) UpdateWorkflow(ctx context.Context, arg UpdateWorkflowParams) 
 		arg.NextAt,
 		arg.CursorAt,
 		arg.CursorID,
+		arg.Access,
 		arg.ID,
 	)
 	if err != nil {

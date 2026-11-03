@@ -311,6 +311,8 @@ export function toWorkflow(w) {
     trigger: trigger(w.on),
     on: w.on,
     url: w.url ?? '',
+    access: w.access ?? null,
+    member: w.member ?? null,
     next: w.on?.cron && w.next_at ? new Date(w.next_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '',
     enabled: true,
     steps: [`run ${w.name}`],

@@ -138,7 +138,7 @@ type ArchiveWatch struct {
 	CreatedAt  time.Time
 }
 
-// A script Archive runs on its own: on a schedule, when rows of a table are added or changed, when its webhook URL is called, or when run with archive.run. Each person sees and changes only their own
+// A script Archive runs on its own: on a schedule, when rows of a table are added or changed, when its webhook URL is called, or when run with archive.run. Each person sees and changes only their own, and those whose access is a group they are in, which they see
 // icon: workflow
 type ArchiveWorkflow struct {
 	ID uuid.UUID
@@ -160,7 +160,8 @@ type ArchiveWorkflow struct {
 	NextAt   *time.Time
 	CursorAt *time.Time
 	CursorID *uuid.UUID
-	Member   *uuid.UUID
+	// references member; whose it is, who alone changes, runs or deletes it
+	Member *uuid.UUID
 	// When it runs: { cron, tz? }, { table, events }, { webhook: true }, or null to run only with archive.run
 	On json.RawMessage
 }

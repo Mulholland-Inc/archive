@@ -162,15 +162,17 @@ func catalogParse(b []byte) (*Catalog, error) {
 	return c, nil
 }
 
-// catalogWorkflow shows archive.workflow as a person writes it: name, source and on, with its next time and
-// webhook URL to read. What Archive keeps of it (who it runs as, its trigger and cursor) stays out of list and
-// get, and its webhook secret becomes its URL (workflowRows).
+// catalogWorkflow shows archive.workflow as a person writes it: name, source, on and access, with whose it is,
+// its next time and webhook URL to read. What Archive keeps of it (who it runs as, its trigger and cursor) stays
+// out of list and get, and its webhook secret becomes its URL (workflowRows).
 func catalogWorkflow(t *Table) {
-	internal := []string{"user_id", "member", "role", "trigger", "hook", "cursor_at", "cursor_id"}
+	internal := []string{"user_id", "role", "trigger", "hook", "cursor_at", "cursor_id"}
 	t.Columns = slices.DeleteFunc(t.Columns, func(c *Column) bool { return slices.Contains(internal, c.Name) })
 	t.internal = slices.DeleteFunc(internal, func(n string) bool { return n == "hook" })
-	if c := t.col("next_at"); c != nil {
-		c.Generated = true
+	for _, n := range []string{"next_at", "member"} {
+		if c := t.col(n); c != nil {
+			c.Generated = true
+		}
 	}
 	t.Columns = append(t.Columns, &Column{Name: "url", Type: "text", Schema: "pg_catalog", Reg: "text", Generated: true,
 		Description: "Its webhook URL, when on is { webhook: true }: anyone with it can POST to it, so give it only to the service that calls it"})
