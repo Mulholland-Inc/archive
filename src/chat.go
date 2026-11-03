@@ -454,10 +454,13 @@ func modelPost(ctx context.Context, url string, header http.Header, body []byte)
 	}
 }
 
-// chatUsage is what one turn cost: message_start carries the input tokens, message_delta the output tokens.
+// chatUsage is what one turn cost: message_start carries the input tokens, split by the prompt cache, and
+// message_delta the output tokens.
 type chatUsage struct {
-	In  int `json:"input_tokens"`
-	Out int `json:"output_tokens"`
+	In      int `json:"input_tokens"`
+	Out     int `json:"output_tokens"`
+	Cached  int `json:"cache_read_input_tokens"`
+	Written int `json:"cache_creation_input_tokens"`
 }
 
 func chatTurn(ctx context.Context, key, model string, tools []any, system []any, msgs []chatMessage, send func(map[string]any)) (*chatMessage, string, chatUsage, error) {
@@ -507,7 +510,8 @@ func chatTurn(ctx context.Context, key, model string, tools []any, system []any,
 		}
 		switch ev.Type {
 		case "message_start":
-			usage.In = ev.Message.Usage.In
+			u := ev.Message.Usage
+			usage.In = u.In + u.Cached + u.Written
 		case "content_block_start":
 			for len(blocks) <= ev.Index {
 				blocks, partial = append(blocks, nil), append(partial, "")
