@@ -52,7 +52,7 @@
 
   const linked = $derived(view ? [...new Set(fields.map((c) => linkOf(view, c)).filter(Boolean))] : []);
   const empty = (v) => v == null || v === '' || (Array.isArray(v) && !v.length);
-  const name = $derived(row ? titleOf(row) : '');
+  const name = $derived(row ? titleOf(row, view) : '');
 </script>
 
 {#snippet topbar()}

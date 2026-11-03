@@ -57,9 +57,9 @@
   const sorts = $derived([{ value: '', label: 'Default order' }, { value: 'name', label: 'Name' }, ...shown.map((c) => ({ value: c.name, label: label(c) }))]);
   const rows = $derived.by(() => {
     const q = query.trim().toLowerCase();
-    const out = all.filter((r) => (!filter || text(facet, r) === filter) && (!q || titleOf(r).toLowerCase().includes(q) || shown.some((c) => text(c, r).toLowerCase().includes(q))));
+    const out = all.filter((r) => (!filter || text(facet, r) === filter) && (!q || titleOf(r, view).toLowerCase().includes(q) || shown.some((c) => text(c, r).toLowerCase().includes(q))));
     if (!sort) return out;
-    const key = (r) => (sort === 'name' ? titleOf(r) : text(shown.find((c) => c.name === sort), r));
+    const key = (r) => (sort === 'name' ? titleOf(r, view) : text(shown.find((c) => c.name === sort), r));
     return [...out].sort((a, b) => key(a).localeCompare(key(b), undefined, { numeric: true }));
   });
 
@@ -97,7 +97,7 @@
   });
 
   const columns = $derived([{ key: 'name', label: 'Name' }, ...shown.map((c) => ({ key: c.name, label: label(c) }))]);
-  const cells = $derived(rows.map((r, i) => ({ id: r.id ?? i, row: r, name: titleOf(r), ...Object.fromEntries(shown.map((c) => [c.name, text(c, r)])) })));
+  const cells = $derived(rows.map((r, i) => ({ id: r.id ?? i, row: r, name: titleOf(r, view), ...Object.fromEntries(shown.map((c) => [c.name, text(c, r)])) })));
   const byCol = $derived(shown.find((c) => c.name === view?.by));
 
   const lanes = $derived.by(() => {
@@ -186,8 +186,8 @@
               {#each items as r, i (r.id ?? i)}
                 <!-- The card opens its row; its chips, above that, open the rows they name. -->
                 <div class="card">
-                  <button type="button" class="hit" aria-label={titleOf(r)} onclick={() => pick(r)}></button>
-                  <Text size="sm" weight="medium">{titleOf(r)}</Text>
+                  <button type="button" class="hit" aria-label={titleOf(r, view)} onclick={() => pick(r)}></button>
+                  <Text size="sm" weight="medium">{titleOf(r, view)}</Text>
                   {#each shown.filter((c) => c.name !== view.by && r[c.name] != null && r[c.name] !== '') as c (c.name)}
                     {#if linkOf(view, c)}<span class="chips raised"><RowLink table={linkOf(view, c)} value={r[c.name]} /></span>{:else}<Text size="sm" tone="secondary">{text(c, r)}</Text>{/if}
                   {/each}
@@ -205,7 +205,7 @@
               <div class={['day', { other: d.getMonth() !== month.getMonth() }]}>
                 <Text size="sm" tone="tertiary" tabular>{d.getDate()}</Text>
                 {#each onDay.get(key(d)) ?? [] as r, i (r.id ?? i)}
-                  <button type="button" class="event" onclick={() => pick(r)}>{titleOf(r)}</button>
+                  <button type="button" class="event" onclick={() => pick(r)}>{titleOf(r, view)}</button>
                 {/each}
               </div>
             {/each}
