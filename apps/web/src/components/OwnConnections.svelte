@@ -34,13 +34,13 @@
     <ul class="accounts">
       {#each accounts as x (x.id)}
         <li class="account">
-          <Stack gap="0-5" grow>
+          <Stack gap="0-5">
             <Text weight="medium" truncate>{x.account}</Text>
-            <Stack direction="row" gap="1-5" align="center">
-              <ArchiveIcon icon={x.look.icon} tint={x.look.tint} seed={x.workspace.id} size="xs" />
-              <Text size="sm" tone="secondary" truncate>{x.workspace.name}</Text>
-            </Stack>
             <Text size="sm" tone={x.error ? 'danger' : 'tertiary'}>{synced(x)}</Text>
+          </Stack>
+          <Stack direction="row" gap="1-5" align="center">
+            <ArchiveIcon icon={x.look.icon} tint={x.look.tint} seed={x.workspace.id} size="xs" />
+            <Text size="sm" tone="secondary" truncate>{x.workspace.name}</Text>
           </Stack>
           <div class="controls">
             <Button size="sm" variant="ghost" icon={RefreshCw} onclick={() => syncOwnConnection(x)}>Sync</Button>
@@ -61,10 +61,12 @@
     list-style: none;
   }
 
+  /* Columns: the account and its sync, the archive it is connected in, then its buttons. */
   .account {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, var(--col-md)) auto;
     align-items: center;
-    gap: var(--space-3);
+    gap: var(--space-4);
     min-height: var(--row-height);
     padding-block: var(--space-2);
   }
@@ -83,7 +85,8 @@
 
   @container (max-width: 36rem) {
     .account {
-      flex-wrap: wrap;
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-2);
     }
 
     .controls {
