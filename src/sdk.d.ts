@@ -103,8 +103,10 @@
  *   data. Postgres lets a value added to an enum be used only once the run that added it is saved, so add the
  *   value in one run and use it in the next. A migration waits up to 10s for locks on what it changes.
  * - A table's comment is its description. A view's comment is its description, then key: value lines: layout
- *   (table, board or calendar) and by (the column a board groups by, or the date a calendar places rows on).
- *   Any other key is an error.
+ *   and by. A table shows every column; a board groups rows by its by column; a calendar places them on its
+ *   by date; a list is one narrow column of rows by name, each with the start of its longest text and when it
+ *   changed, for notes and the like; a map pins rows at its by place, an archive.geo, beside a list of them,
+ *   each pin showing the row's first money or number. Any other key is an error.
  * - archive.revisions() lists the migrations saved before this run, newest first, with who ran them and their
  *   statements. To undo one, migrate the reverse.
  *
@@ -418,7 +420,7 @@ interface Table {
     /** The comment without its key: value lines. */
     description: string;
     /** A view's layout: and by: lines. */
-    layout?: "table" | "board" | "calendar";
+    layout?: "table" | "board" | "calendar" | "list" | "map";
     by?: string;
     columns: {
         name: string;

@@ -211,7 +211,7 @@ func catalogComment(s string) (string, [][2]string) {
 	return strings.TrimSpace(strings.Join(lines, "\n")), meta
 }
 
-var catalogLayouts = []string{"table", "board", "calendar"}
+var catalogLayouts = []string{"table", "board", "calendar", "list", "map"}
 
 var (
 	catalogSystem   = map[string]bool{"id": true, "created_at": true, "updated_at": true}
@@ -376,8 +376,11 @@ func (c *Catalog) checkMeta(t *Table, bad func(path, msg string)) {
 		}
 		seen[k] = true
 	}
-	if (t.Layout == "board" || t.Layout == "calendar") && t.By == "" {
+	if (t.Layout == "board" || t.Layout == "calendar" || t.Layout == "map") && t.By == "" {
 		bad(t.Name+".by", "a "+t.Layout+" view needs a by: <column> line in "+what)
+	}
+	if c := t.col(t.By); t.Layout == "map" && c != nil && (c.Schema != "archive" || c.Type != "geo") {
+		bad(t.Name+".by", "a map view's by: is the archive.geo column it places rows at, not "+strconv.Quote(t.By))
 	}
 }
 

@@ -1,5 +1,6 @@
 <script>
-  import { Plus, Search, Library, Database, Workflow, Lock, Settings, Table2, Kanban, CalendarDays } from '@lucide/svelte';
+  import { Plus, Search, Library, Database, Workflow, Lock, Settings } from '@lucide/svelte';
+  import { layoutOf } from '../layouts/index.js';
   import Sidebar from './Sidebar.svelte';
   import SidebarItem from './SidebarItem.svelte';
   import SidebarSection from './SidebarSection.svelte';
@@ -27,7 +28,6 @@
   const visible = $derived(pinnedFirst(ws().chats));
   // Views are the archive's pages: Postgres views, each drawn the way its comment says.
   const views = $derived((ws().schema ?? []).filter((t) => t.kind === 'view'));
-  const layoutIcons = { board: Kanban, calendar: CalendarDays };
 
 
   let creating = $state(false);
@@ -70,7 +70,7 @@
   {#if views.length}
     <SidebarSection title={collapsed ? undefined : 'Views'}>
       {#each views as view (view.id)}
-        <SidebarItem icon={layoutIcons[view.layout] ?? Table2} label={view.name} href={`/view/${view.id}`} active={active(`/view/${view.id}`)} onrename={isArchiveOwner() ? (name) => renameView(view.id, name) : undefined} bind:editing={() => renaming === view.id, (on) => (renaming = on ? view.id : null)} />
+        <SidebarItem icon={layoutOf(view).icon} label={view.name} href={`/view/${view.id}`} active={active(`/view/${view.id}`)} onrename={isArchiveOwner() ? (name) => renameView(view.id, name) : undefined} bind:editing={() => renaming === view.id, (on) => (renaming = on ? view.id : null)} />
       {/each}
     </SidebarSection>
   {/if}
