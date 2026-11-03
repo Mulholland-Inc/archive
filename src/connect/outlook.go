@@ -1,9 +1,12 @@
 package connect
 
 import (
+	"cmp"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -16,7 +19,7 @@ import (
 // delegated Graph permissions User.Read and Mail.Read. offline_access asks for the refresh token, which
 // Microsoft replaces on every refresh. There is no endpoint that revokes one grant: a person removes Archive
 // at myapps.microsoft.com, or account.live.com/consent for a personal account.
-// It syncs nothing until its mail are mapped into the tables of archive.sql; its push waits for that too.
+// It syncs the mailbox into mail, as Gmail does, folder by folder with Graph's delta of each.
 func init() {
 	Register(&Connector{
 		ID: "outlook", Name: "Outlook", Env: "ARCHIVE_OUTLOOK", Host: "https://login.microsoftonline.com",
@@ -98,13 +101,252 @@ func init() {
 				}),
 		},
 		Push: outlookPush,
+		Streams: []*Stream{{Name: "messages", Gap: time.Second, Pull: outlookMessages.pull, Table: "mail_message", Rows: outlookRows,
+			Doc: "Every message of every folder but Junk Email and Deleted Items, with its text, cut at 64 KB, and its attachments' names: " +
+				"listed whole the first time, 50 a page and a folder at a time, and then each folder's delta since, messages added, changed, " +
+				"moved or deleted. A folder made since is listed whole; one gone, or a delta Graph no longer keeps, lists the mailbox whole again."}},
 	})
 }
 
 const (
 	graphAPI    = "https://graph.microsoft.com/v1.0"
 	outlookList = "id,conversationId,subject,from,toRecipients,receivedDateTime,bodyPreview,hasAttachments,isRead,webLink"
+	// outlookSync is what the messages stream reads of a message.
+	outlookSync = "id,conversationId,subject,from,toRecipients,ccRecipients,bccRecipients,replyTo,receivedDateTime,sentDateTime," +
+		"bodyPreview,body,hasAttachments,categories,isDraft,lastModifiedDateTime"
 )
+
+// outlookMessages walks each folder's delta of messages. Its text comes as text, not HTML, and 50 a page; a
+// moved message is a new id in its new folder and gone from its old one, so neither folder needs the other.
+var outlookMessages = &graphWalk{
+	hdr:     http.Header{"Prefer": {"odata.maxpagesize=50", `outlook.body-content-type="text"`}},
+	parts:   outlookFolders,
+	records: outlookRecords,
+}
+
+// outlookFolders are every mail folder of the mailbox, the folders in folders too, but Junk Email and Deleted
+// Items and what is in them, as Gmail leaves out spam and trash.
+func outlookFolders(c *Client) ([]graphPart, error) {
+	skip := map[string]bool{}
+	for _, wk := range []string{"junkemail", "deleteditems"} {
+		var f struct {
+			ID string `json:"id"`
+		}
+		if err := c.Get(graphAPI+"/me/mailFolders/"+wk+"?$select=id", &f); err == nil {
+			skip[f.ID] = true
+		} else if r := (*Refusal)(nil); !errors.As(err, &r) || r.Status != http.StatusNotFound {
+			return nil, err
+		}
+	}
+	var out []graphPart
+	var walk func(u string) error
+	walk = func(u string) error {
+		for u != "" {
+			var list struct {
+				Value []struct {
+					ID       string `json:"id"`
+					Name     string `json:"displayName"`
+					Children int    `json:"childFolderCount"`
+				} `json:"value"`
+				Next string `json:"@odata.nextLink"`
+			}
+			if err := c.Get(u, &list); err != nil {
+				return err
+			}
+			for _, f := range list.Value {
+				if skip[f.ID] {
+					continue
+				}
+				out = append(out, graphPart{ID: f.ID, Name: f.Name,
+					Start: graphAPI + "/me/mailFolders/" + url.PathEscape(f.ID) + "/messages/delta?$select=" + outlookSync})
+				if f.Children > 0 {
+					if err := walk(graphAPI + "/me/mailFolders/" + url.PathEscape(f.ID) + "/childFolders?$top=100&$select=id,displayName,childFolderCount"); err != nil {
+						return err
+					}
+				}
+			}
+			u = list.Next
+		}
+		return nil
+	}
+	err := walk(graphAPI + "/me/mailFolders?$top=100&$select=id,displayName,childFolderCount")
+	return out, err
+}
+
+// outlookRecords are a page of a folder's delta: a message removed is gone, and the rest are kept with the
+// folder they are in and the names of their attachments, which the delta leaves out.
+func outlookRecords(c *Client, p graphPart, items []map[string]any) ([]Record, error) {
+	out := make([]Record, len(items))
+	err := each(len(items), 4, func(i int) error {
+		m := items[i]
+		id := str(m, "id")
+		if _, gone := m["@removed"]; gone {
+			out[i] = Record{ID: id, Deleted: true}
+			return nil
+		}
+		body := obj(m, "body")
+		text := str(body, "content")
+		if strings.EqualFold(str(body, "contentType"), "html") {
+			text = htmlText(text)
+		}
+		m["text"], m["folder"] = clip(text, maxText), p.Name
+		delete(m, "body")
+		if m["hasAttachments"] == true {
+			var atts struct {
+				Value []map[string]any `json:"value"`
+			}
+			err := c.Get(graphAPI+"/me/messages/"+url.PathEscape(id)+"/attachments?$select=name,contentType,size", &atts)
+			if r := (*Refusal)(nil); errors.As(err, &r) && r.Status == http.StatusNotFound {
+				out[i] = Record{ID: id, Deleted: true}
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			m["attachments"] = atts.Value
+		}
+		out[i] = Record{ID: id, Data: m, Updated: stamp(str(m, "lastModifiedDateTime"))}
+		return nil
+	})
+	return out, err
+}
+
+// outlookRows is a message as mail: its text, its senders and recipients as its parties, its folder and
+// categories as its labels, and its attachments.
+func outlookRows(m map[string]any) *Row {
+	labels := []string{}
+	if f := str(m, "folder"); f != "" {
+		labels = append(labels, f)
+	}
+	labels = append(labels, strs(m["categories"])...)
+	sent := instant(str(m, "sentDateTime"))
+	if sent == nil {
+		sent = instant(str(m, "receivedDateTime"))
+	}
+	r := rowOf(map[string]any{"thread": str(m, "conversationId"), "subject": str(m, "subject"), "snippet": str(m, "bodyPreview"), "text": str(m, "text"),
+		"sent_at": sent, "received_at": instant(str(m, "receivedDateTime")), "labels": labels})
+	party := func(role string, v any) {
+		if one, ok := v.(map[string]any); ok {
+			v = []any{one}
+		}
+		for _, p := range objects(v, "") {
+			a := obj(p, "emailAddress")
+			if e := Email(str(a, "address")); e != "" {
+				r.child("mail_party", rowOf(map[string]any{"role": role, "name": str(a, "name")}).person("person", e))
+			}
+		}
+	}
+	party("from", m["from"])
+	party("to", m["toRecipients"])
+	party("cc", m["ccRecipients"])
+	party("bcc", m["bccRecipients"])
+	party("reply_to", m["replyTo"])
+	for _, f := range objects(m["attachments"], "") {
+		r.child("mail_attachment", rowOf(map[string]any{"filename": str(f, "name"), "mime": str(f, "contentType"), "size": decimal(f["size"])}))
+	}
+	return r
+}
+
+// A graphWalk is a stream over Microsoft Graph's deltas, which Graph keeps per part, not per account: per mail
+// folder, and per drive. A sync lists the parts again, keeps the delta link each ended at last time, and reads
+// each part's delta from there, a page at a time, then the next part's. The first walk reads every part
+// whole, as a full listing; so does one after a part has gone, as what it held is gone from the walk, and
+// one after Graph answers 410 Gone, a delta it no longer keeps. A part that is new lists itself whole as its
+// delta, and needs nothing else.
+type graphWalk struct {
+	// parts are what there is to walk now, each with the first URL of its delta.
+	parts func(c *Client) ([]graphPart, error)
+	// hdr goes with every page, like the page size Graph is asked for.
+	hdr http.Header
+	// records are the records of a page of part p's delta.
+	records func(c *Client, p graphPart, items []map[string]any) ([]Record, error)
+}
+
+// graphPart is a part of a graphWalk: its id and name there, the first URL of its delta, and Delta the delta
+// link it ended at, where the next walk starts.
+type graphPart struct {
+	ID    string `json:"id"`
+	Name  string `json:"n,omitempty"`
+	Start string `json:"s"`
+	Delta string `json:"d,omitempty"`
+}
+
+// graphCursor is where a graphWalk is: the parts, the one under way, the next page of it, and whether the walk
+// reads every part whole.
+type graphCursor struct {
+	Parts   []graphPart `json:"parts,omitempty"`
+	At      int         `json:"at,omitempty"`
+	Next    string      `json:"next,omitempty"`
+	Listing bool        `json:"l,omitempty"`
+}
+
+func (g *graphWalk) pull(c *Client, cursor string) (*Page, error) {
+	var cur graphCursor
+	if err := cursorOf(cursor, &cur); err != nil {
+		return nil, err
+	}
+	if cursor == "" {
+		cur.Listing = true
+	}
+	// A walk begins with the parts there are now, each where it ended before.
+	if cur.At == 0 && cur.Next == "" {
+		parts, err := g.parts(c)
+		if err != nil {
+			return nil, err
+		}
+		ended := map[string]string{}
+		for _, p := range cur.Parts {
+			ended[p.ID] = p.Delta
+		}
+		for _, p := range cur.Parts {
+			if !slices.ContainsFunc(parts, func(q graphPart) bool { return q.ID == p.ID }) {
+				cur.Listing = true
+			}
+		}
+		for i := range parts {
+			if !cur.Listing {
+				parts[i].Delta = ended[parts[i].ID]
+			}
+		}
+		cur.Parts = parts
+	}
+	page := &Page{Full: cur.Listing}
+	if cur.At >= len(cur.Parts) {
+		page.Cursor = cursorFor(graphCursor{Parts: cur.Parts})
+		return page, nil
+	}
+	p := &cur.Parts[cur.At]
+	var res struct {
+		Value []map[string]any `json:"value"`
+		Next  string           `json:"@odata.nextLink"`
+		Delta string           `json:"@odata.deltaLink"`
+	}
+	if err := c.Send("GET", cmp.Or(cur.Next, p.Delta, p.Start), g.hdr, nil, &res); err != nil {
+		if r := (*Refusal)(nil); errors.As(err, &r) && r.Status == http.StatusGone {
+			page.More, page.Cursor = true, cursorFor(graphCursor{Listing: true})
+			return page, nil
+		}
+		return nil, err
+	}
+	recs, err := g.records(c, *p, res.Value)
+	if err != nil {
+		return nil, err
+	}
+	page.Records = recs
+	if res.Next != "" {
+		cur.Next = res.Next
+	} else {
+		p.Delta, cur.Next = res.Delta, ""
+		cur.At++
+	}
+	if cur.At < len(cur.Parts) {
+		page.More = true
+	} else {
+		cur.At, cur.Listing = 0, false
+	}
+	page.Cursor = cursorFor(cur)
+	return page, nil
+}
 
 // outlookPush is a Graph subscription to every message of the mailbox, me/messages, with a clientState of
 // Archive's own, for 10,020 minutes, under the 10,080 Outlook allows; the first sync a day after renews it with

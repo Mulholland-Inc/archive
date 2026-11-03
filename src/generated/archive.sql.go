@@ -193,7 +193,9 @@ SELECT jsonb_build_object(
             'archive.payroll_time_off_day'::regclass, 'archive.payroll_time_off_balance'::regclass, 'archive.payroll_time_off_policy'::regclass,
             'archive.payroll_run'::regclass, 'archive.payroll_pay'::regclass, 'archive.payroll_pay_line'::regclass,
             'archive.payroll_pay_period'::regclass, 'archive.payroll_contractor_payment'::regclass,
-            'archive.payroll_contractor_payment_group'::regclass, 'archive.payroll_task'::regclass)
+            'archive.payroll_contractor_payment_group'::regclass, 'archive.payroll_task'::regclass, 'archive.drive_file'::regclass,
+            'archive.ledger_account'::regclass, 'archive.ledger_contact'::regclass, 'archive.ledger_item'::regclass,
+            'archive.ledger_entry'::regclass, 'archive.ledger_line'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -459,7 +461,12 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.payroll_pay_period x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.payroll_contractor_payment x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.payroll_contractor_payment_group x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_task x WHERE x.connection = c.id))::bigint AS items,
+        + (SELECT count(*) FROM archive.payroll_task x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.drive_file x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.ledger_account x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.ledger_contact x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.ledger_item x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.ledger_entry x WHERE x.connection = c.id))::bigint AS items,
     c.integration, coalesce(c.access::text, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
 FROM archive.connection c WHERE c.member = $1 AND NOT c.integration OR c.integration ORDER BY c.provider, c.account, c.id
 `
@@ -721,7 +728,9 @@ func (q *Queries) DeleteDDLKey(ctx context.Context, key string) error {
 const deleteUnknown = `-- name: DeleteUnknown :exec
 WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM archive.mail_party x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.payroll_worker x WHERE x.person = k.id)
-    AND NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.admin = k.id OR x.signatory = k.id))
+    AND NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.admin = k.id OR x.signatory = k.id)
+    AND NOT EXISTS (SELECT FROM archive.drive_file x WHERE x.owner = k.id OR x.editor = k.id)
+    AND NOT EXISTS (SELECT FROM archive.ledger_contact x WHERE x.person = k.id))
 DELETE FROM archive.known_org o WHERE NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.org = o.id)
 `
 

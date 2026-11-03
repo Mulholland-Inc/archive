@@ -1531,6 +1531,279 @@ COMMENT ON COLUMN archive.payroll_task.source_id IS 'Its id there';
 COMMENT ON COLUMN archive.payroll_task.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.payroll_task.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
+-- Files: a file or folder of a drive you connected, like Google Drive or SharePoint, by its id there. Its folder
+-- links once that folder is synced too; the text of what reads as text, like a Google Doc, is kept so search
+-- finds it, and the rest of its content stays there.
+CREATE TABLE archive.drive_file (
+    id            uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream        text NOT NULL,
+    source_id     text NOT NULL,
+    access        uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
+    name          text NOT NULL DEFAULT '',
+    seen_at       timestamptz NOT NULL DEFAULT now(),
+    kind          text CONSTRAINT drive_file_kind CHECK (kind IN ('file', 'folder')),
+    title         text,
+    mime          text,
+    size          bigint,
+    url           archive.url,
+    drive         text,
+    folder        uuid REFERENCES archive.drive_file ON DELETE SET NULL,
+    folder_source text,
+    owner         uuid REFERENCES archive.known_person ON DELETE SET NULL,
+    owner_name    text,
+    editor        uuid REFERENCES archive.known_person ON DELETE SET NULL,
+    editor_name   text,
+    made_at       timestamptz,
+    edited_at     timestamptz,
+    text          text,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX drive_file_folder_idx ON archive.drive_file (folder);
+CREATE INDEX drive_file_owner_idx ON archive.drive_file (owner);
+CREATE INDEX drive_file_editor_idx ON archive.drive_file (editor);
+COMMENT ON TABLE archive.drive_file IS 'A file or folder of a drive you connected, like Google Drive or SharePoint; the text of a Google Doc, Sheet or Slides deck or a text file is kept, and other content stays there. Read only; Archive syncs them
+icon: folder-open';
+COMMENT ON COLUMN archive.drive_file.kind IS 'file or folder';
+COMMENT ON COLUMN archive.drive_file.title IS 'Its name there';
+COMMENT ON COLUMN archive.drive_file.mime IS 'Its media type, like application/pdf';
+COMMENT ON COLUMN archive.drive_file.size IS 'Its size in bytes';
+COMMENT ON COLUMN archive.drive_file.url IS 'Where it opens there';
+COMMENT ON COLUMN archive.drive_file.drive IS 'The drive it is in, like My Drive, a shared drive or a SharePoint site''s library';
+COMMENT ON COLUMN archive.drive_file.folder IS 'references drive_file; the folder it is in';
+COMMENT ON COLUMN archive.drive_file.folder_source IS 'The id there of the folder it is in';
+COMMENT ON COLUMN archive.drive_file.owner IS 'references known_person; who owns or made it, by their address';
+COMMENT ON COLUMN archive.drive_file.owner_name IS 'Who owns or made it, by name';
+COMMENT ON COLUMN archive.drive_file.editor IS 'references known_person; who changed it last, by their address';
+COMMENT ON COLUMN archive.drive_file.editor_name IS 'Who changed it last, by name';
+COMMENT ON COLUMN archive.drive_file.made_at IS 'When it was made there';
+COMMENT ON COLUMN archive.drive_file.edited_at IS 'When it last changed there';
+COMMENT ON COLUMN archive.drive_file.text IS 'Its text, for a Google Doc, Sheet (its first sheet, as CSV) or Slides deck, or a text file, up to 64 KB';
+COMMENT ON COLUMN archive.drive_file.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.drive_file.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.drive_file.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.drive_file.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.drive_file.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+-- Books: the accounting of a company you connected, like its QuickBooks: its chart of accounts, the customers,
+-- vendors and employees it deals with, what it sells and buys, and every transaction with its lines. A row's
+-- kind says what it is there, like Invoice or Bill, since one table holds them all.
+CREATE TABLE archive.ledger_account (
+    id            uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream        text NOT NULL,
+    source_id     text NOT NULL,
+    access        uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
+    name          text NOT NULL DEFAULT '',
+    seen_at       timestamptz NOT NULL DEFAULT now(),
+    number        text,
+    title         text,
+    full_name     text,
+    type          text,
+    subtype       text,
+    class         text,
+    balance       archive.money,
+    active        boolean,
+    parent        uuid REFERENCES archive.ledger_account ON DELETE SET NULL,
+    parent_source text,
+    edited_at     timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX ledger_account_parent_idx ON archive.ledger_account (parent);
+COMMENT ON TABLE archive.ledger_account IS 'An account of the chart of accounts of books you connected, like QuickBooks. Read only; Archive syncs them
+icon: book-open';
+COMMENT ON COLUMN archive.ledger_account.number IS 'Its account number';
+COMMENT ON COLUMN archive.ledger_account.title IS 'Its name';
+COMMENT ON COLUMN archive.ledger_account.full_name IS 'Its name with its parents'', like Utilities:Gas';
+COMMENT ON COLUMN archive.ledger_account.type IS 'What kind of account it is, like Bank, Expense or Accounts Receivable';
+COMMENT ON COLUMN archive.ledger_account.subtype IS 'Its detail type, like Checking';
+COMMENT ON COLUMN archive.ledger_account.class IS 'Asset, Liability, Equity, Revenue or Expense';
+COMMENT ON COLUMN archive.ledger_account.balance IS 'Its balance now, its subaccounts'' with it';
+COMMENT ON COLUMN archive.ledger_account.parent IS 'references ledger_account; the account it is a subaccount of';
+COMMENT ON COLUMN archive.ledger_account.parent_source IS 'The id there of the account it is a subaccount of';
+COMMENT ON COLUMN archive.ledger_account.edited_at IS 'When it last changed there';
+COMMENT ON COLUMN archive.ledger_account.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.ledger_account.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.ledger_account.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.ledger_account.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.ledger_account.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.ledger_contact (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream     text NOT NULL,
+    source_id  text NOT NULL,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    name       text NOT NULL DEFAULT '',
+    seen_at    timestamptz NOT NULL DEFAULT now(),
+    kind       text NOT NULL CONSTRAINT ledger_contact_kind CHECK (kind IN ('customer', 'vendor', 'employee')),
+    title      text,
+    company    text,
+    person     uuid REFERENCES archive.known_person ON DELETE SET NULL,
+    email      archive.email,
+    phone      text,
+    address    text,
+    balance    archive.money,
+    active     boolean,
+    edited_at  timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX ledger_contact_person_idx ON archive.ledger_contact (person);
+COMMENT ON TABLE archive.ledger_contact IS 'A customer, vendor or employee of books you connected, like QuickBooks. Read only; Archive syncs them
+icon: contact-round';
+COMMENT ON COLUMN archive.ledger_contact.kind IS 'customer, vendor or employee';
+COMMENT ON COLUMN archive.ledger_contact.title IS 'The name it goes by there';
+COMMENT ON COLUMN archive.ledger_contact.company IS 'Its company''s name';
+COMMENT ON COLUMN archive.ledger_contact.person IS 'references known_person; who it is, by its email';
+COMMENT ON COLUMN archive.ledger_contact.address IS 'Its billing address, on one line';
+COMMENT ON COLUMN archive.ledger_contact.balance IS 'What it owes, or is owed, now';
+COMMENT ON COLUMN archive.ledger_contact.edited_at IS 'When it last changed there';
+COMMENT ON COLUMN archive.ledger_contact.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.ledger_contact.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.ledger_contact.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.ledger_contact.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.ledger_contact.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.ledger_item (
+    id                     uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection             uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream                 text NOT NULL,
+    source_id              text NOT NULL,
+    access                 uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at             timestamptz NOT NULL DEFAULT now(),
+    updated_at             timestamptz NOT NULL DEFAULT now(),
+    name                   text NOT NULL DEFAULT '',
+    seen_at                timestamptz NOT NULL DEFAULT now(),
+    title                  text,
+    sku                    text,
+    type                   text,
+    description            text,
+    price                  archive.money,
+    cost                   archive.money,
+    quantity               numeric,
+    active                 boolean,
+    income_account         uuid REFERENCES archive.ledger_account ON DELETE SET NULL,
+    income_account_source  text,
+    expense_account        uuid REFERENCES archive.ledger_account ON DELETE SET NULL,
+    expense_account_source text,
+    edited_at              timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX ledger_item_income_account_idx ON archive.ledger_item (income_account);
+CREATE INDEX ledger_item_expense_account_idx ON archive.ledger_item (expense_account);
+COMMENT ON TABLE archive.ledger_item IS 'A product or service books you connected sell or buy, like an item in QuickBooks. Read only; Archive syncs them
+icon: package';
+COMMENT ON COLUMN archive.ledger_item.title IS 'Its name';
+COMMENT ON COLUMN archive.ledger_item.type IS 'Like Service, Inventory or NonInventory';
+COMMENT ON COLUMN archive.ledger_item.price IS 'What it sells for';
+COMMENT ON COLUMN archive.ledger_item.cost IS 'What it is bought for';
+COMMENT ON COLUMN archive.ledger_item.quantity IS 'How many are on hand, for inventory';
+COMMENT ON COLUMN archive.ledger_item.income_account IS 'references ledger_account; where its sales go';
+COMMENT ON COLUMN archive.ledger_item.income_account_source IS 'The id there of where its sales go';
+COMMENT ON COLUMN archive.ledger_item.expense_account IS 'references ledger_account; where its purchases go';
+COMMENT ON COLUMN archive.ledger_item.expense_account_source IS 'The id there of where its purchases go';
+COMMENT ON COLUMN archive.ledger_item.edited_at IS 'When it last changed there';
+COMMENT ON COLUMN archive.ledger_item.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.ledger_item.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.ledger_item.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.ledger_item.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.ledger_item.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.ledger_entry (
+    id             uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream         text NOT NULL,
+    source_id      text NOT NULL,
+    access         uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    updated_at     timestamptz NOT NULL DEFAULT now(),
+    name           text NOT NULL DEFAULT '',
+    seen_at        timestamptz NOT NULL DEFAULT now(),
+    kind           text NOT NULL,
+    number         text,
+    txn_on         date,
+    due_on         date,
+    contact        uuid REFERENCES archive.ledger_contact ON DELETE SET NULL,
+    contact_source text,
+    contact_name   text,
+    account        uuid REFERENCES archive.ledger_account ON DELETE SET NULL,
+    account_source text,
+    total          archive.money,
+    balance        archive.money,
+    memo           text,
+    status         text,
+    edited_at      timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX ledger_entry_contact_idx ON archive.ledger_entry (contact);
+CREATE INDEX ledger_entry_account_idx ON archive.ledger_entry (account);
+CREATE INDEX ledger_entry_txn_on_idx ON archive.ledger_entry (txn_on);
+COMMENT ON TABLE archive.ledger_entry IS 'A transaction of books you connected, like a QuickBooks invoice, bill, payment, expense or journal entry; its lines are in ledger_line. Read only; Archive syncs them
+icon: receipt';
+COMMENT ON COLUMN archive.ledger_entry.kind IS 'What it is there, like Invoice, Bill, Payment, BillPayment, Purchase, SalesReceipt, CreditMemo, Estimate, Deposit, Transfer or JournalEntry';
+COMMENT ON COLUMN archive.ledger_entry.number IS 'Its number, like an invoice''s';
+COMMENT ON COLUMN archive.ledger_entry.txn_on IS 'The day it is dated';
+COMMENT ON COLUMN archive.ledger_entry.due_on IS 'When it is due, for an invoice or a bill';
+COMMENT ON COLUMN archive.ledger_entry.contact IS 'references ledger_contact; the customer, vendor or employee it is with';
+COMMENT ON COLUMN archive.ledger_entry.contact_source IS 'The id there of who it is with';
+COMMENT ON COLUMN archive.ledger_entry.contact_name IS 'Who it is with, by name';
+COMMENT ON COLUMN archive.ledger_entry.account IS 'references ledger_account; the account it pays from or into, like the bank account of a payment';
+COMMENT ON COLUMN archive.ledger_entry.account_source IS 'The id there of the account it pays from or into';
+COMMENT ON COLUMN archive.ledger_entry.total IS 'Its total';
+COMMENT ON COLUMN archive.ledger_entry.balance IS 'What is left to pay of it, for an invoice or a bill';
+COMMENT ON COLUMN archive.ledger_entry.memo IS 'Its private note, and the note to the customer';
+COMMENT ON COLUMN archive.ledger_entry.status IS 'Where it is there, like an estimate''s Accepted or Pending, or a purchase order''s Open or Closed';
+COMMENT ON COLUMN archive.ledger_entry.edited_at IS 'When it last changed there';
+COMMENT ON COLUMN archive.ledger_entry.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.ledger_entry.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.ledger_entry.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.ledger_entry.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.ledger_entry.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.ledger_line (
+    id             uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    access         uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    name           text NOT NULL DEFAULT '',
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    updated_at     timestamptz NOT NULL DEFAULT now(),
+    entry          uuid NOT NULL REFERENCES archive.ledger_entry ON DELETE CASCADE,
+    position       integer,
+    kind           text,
+    description    text,
+    amount         archive.money,
+    posting        text,
+    account        uuid REFERENCES archive.ledger_account ON DELETE SET NULL,
+    account_source text,
+    item           uuid REFERENCES archive.ledger_item ON DELETE SET NULL,
+    item_source    text,
+    quantity       numeric,
+    unit_price     numeric
+) INHERITS (archive.object);
+CREATE INDEX ledger_line_entry_idx ON archive.ledger_line (entry);
+CREATE INDEX ledger_line_account_idx ON archive.ledger_line (account);
+CREATE INDEX ledger_line_item_idx ON archive.ledger_line (item);
+CREATE INDEX ledger_line_connection_idx ON archive.ledger_line (connection);
+COMMENT ON TABLE archive.ledger_line IS 'A line of a transaction: what it is for, how much, and the account or item it goes to. Read only; Archive syncs them
+icon: list';
+COMMENT ON COLUMN archive.ledger_line.entry IS 'references ledger_entry';
+COMMENT ON COLUMN archive.ledger_line.position IS 'Where it is among its transaction''s lines, from 1';
+COMMENT ON COLUMN archive.ledger_line.kind IS 'What kind of line it is there, like SalesItemLineDetail or AccountBasedExpenseLineDetail';
+COMMENT ON COLUMN archive.ledger_line.amount IS 'Its amount';
+COMMENT ON COLUMN archive.ledger_line.posting IS 'Debit or Credit, for a journal entry''s line';
+COMMENT ON COLUMN archive.ledger_line.account IS 'references ledger_account; the account it goes to';
+COMMENT ON COLUMN archive.ledger_line.account_source IS 'The id there of the account it goes to';
+COMMENT ON COLUMN archive.ledger_line.item IS 'references ledger_item; the product or service it is for';
+COMMENT ON COLUMN archive.ledger_line.item_source IS 'The id there of the product or service it is for';
+COMMENT ON COLUMN archive.ledger_line.unit_price IS 'What one of it costs';
+COMMENT ON COLUMN archive.ledger_line.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
 -- mine says whether the current role is the member m or one of their tokens, which are all in m's group role.
 CREATE FUNCTION archive.mine(m uuid) RETURNS bool LANGUAGE sql STABLE AS $$
     SELECT EXISTS (SELECT FROM pg_catalog.pg_roles r WHERE r.rolname = '{p}_m' || translate(rtrim(encode(uuid_send(m), 'base64'), '='), '+/', '-_')
@@ -1618,6 +1891,12 @@ BEGIN
         WHEN 'payroll_contractor_payment' THEN concat_ws(' · ', who, r->>'paid_on')
         WHEN 'payroll_contractor_payment_group' THEN concat_ws(' · ', 'Contractor payments', r->>'check_date')
         WHEN 'payroll_task' THEN r->>'title'
+        WHEN 'drive_file' THEN r->>'title'
+        WHEN 'ledger_account' THEN coalesce(nullif(r->>'full_name', ''), r->>'title')
+        WHEN 'ledger_contact' THEN coalesce(nullif(r->>'title', ''), nullif(r->>'company', ''), r->>'email')
+        WHEN 'ledger_item' THEN r->>'title'
+        WHEN 'ledger_entry' THEN concat_ws(' · ', regexp_replace(r->>'kind', '([a-z])([A-Z])', '\1 \2', 'g'), nullif(r->>'number', ''), r->>'txn_on')
+        WHEN 'ledger_line' THEN coalesce(nullif(btrim(r->>'description'), ''), r->>'kind')
         ELSE own END), ''), '');
     RETURN NEW;
 END $$;
@@ -1658,6 +1937,12 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_pay_period
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_contractor_payment FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_contractor_payment_group FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_task FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.drive_file FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_account FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_contact FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_item FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_entry FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_line FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.chat FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.workflow FOR EACH ROW EXECUTE FUNCTION archive.moved();
@@ -1738,6 +2023,12 @@ GRANT SELECT ON archive.payroll_pay_period TO "{p}_viewer";
 GRANT SELECT ON archive.payroll_contractor_payment TO "{p}_viewer";
 GRANT SELECT ON archive.payroll_contractor_payment_group TO "{p}_viewer";
 GRANT SELECT ON archive.payroll_task TO "{p}_viewer";
+GRANT SELECT ON archive.drive_file TO "{p}_viewer";
+GRANT SELECT ON archive.ledger_account TO "{p}_viewer";
+GRANT SELECT ON archive.ledger_contact TO "{p}_viewer";
+GRANT SELECT ON archive.ledger_item TO "{p}_viewer";
+GRANT SELECT ON archive.ledger_entry TO "{p}_viewer";
+GRANT SELECT ON archive.ledger_line TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT, UPDATE, DELETE ON TABLES TO "{p}_editor";
 
@@ -1823,10 +2114,24 @@ ALTER TABLE archive.payroll_contractor_payment_group ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.payroll_contractor_payment_group FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_contractor_payment_group.connection));
 ALTER TABLE archive.payroll_task ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.payroll_task FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_task.connection));
+ALTER TABLE archive.drive_file ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.drive_file FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = drive_file.connection));
+ALTER TABLE archive.ledger_account ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.ledger_account FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = ledger_account.connection));
+ALTER TABLE archive.ledger_contact ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.ledger_contact FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = ledger_contact.connection));
+ALTER TABLE archive.ledger_item ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.ledger_item FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = ledger_item.connection));
+ALTER TABLE archive.ledger_entry ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.ledger_entry FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = ledger_entry.connection));
+ALTER TABLE archive.ledger_line ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.ledger_line FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = ledger_line.connection));
 ALTER TABLE archive.known_person ENABLE ROW LEVEL SECURITY;
 CREATE POLICY seen ON archive.known_person FOR SELECT USING (EXISTS (SELECT FROM archive.mail_party p WHERE p.person = known_person.id)
     OR EXISTS (SELECT FROM archive.payroll_worker w WHERE w.person = known_person.id)
-    OR EXISTS (SELECT FROM archive.payroll_company c WHERE c.admin = known_person.id OR c.signatory = known_person.id));
+    OR EXISTS (SELECT FROM archive.payroll_company c WHERE c.admin = known_person.id OR c.signatory = known_person.id)
+    OR EXISTS (SELECT FROM archive.drive_file f WHERE f.owner = known_person.id OR f.editor = known_person.id)
+    OR EXISTS (SELECT FROM archive.ledger_contact l WHERE l.person = known_person.id));
 ALTER TABLE archive.known_org ENABLE ROW LEVEL SECURITY;
 CREATE POLICY seen ON archive.known_org FOR SELECT USING (EXISTS (SELECT FROM archive.payroll_company c WHERE c.org = known_org.id));
 
@@ -2041,7 +2346,9 @@ SELECT jsonb_build_object(
             'archive.payroll_time_off_day'::regclass, 'archive.payroll_time_off_balance'::regclass, 'archive.payroll_time_off_policy'::regclass,
             'archive.payroll_run'::regclass, 'archive.payroll_pay'::regclass, 'archive.payroll_pay_line'::regclass,
             'archive.payroll_pay_period'::regclass, 'archive.payroll_contractor_payment'::regclass,
-            'archive.payroll_contractor_payment_group'::regclass, 'archive.payroll_task'::regclass)
+            'archive.payroll_contractor_payment_group'::regclass, 'archive.payroll_task'::regclass, 'archive.drive_file'::regclass,
+            'archive.ledger_account'::regclass, 'archive.ledger_contact'::regclass, 'archive.ledger_item'::regclass,
+            'archive.ledger_entry'::regclass, 'archive.ledger_line'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -2140,7 +2447,12 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.payroll_pay_period x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.payroll_contractor_payment x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.payroll_contractor_payment_group x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_task x WHERE x.connection = c.id))::bigint AS items,
+        + (SELECT count(*) FROM archive.payroll_task x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.drive_file x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.ledger_account x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.ledger_contact x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.ledger_item x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.ledger_entry x WHERE x.connection = c.id))::bigint AS items,
     c.integration, coalesce(c.access::text, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
 FROM archive.connection c WHERE c.member = $1 AND NOT c.integration OR c.integration ORDER BY c.provider, c.account, c.id;
 
@@ -2223,7 +2535,9 @@ SELECT pg_try_advisory_xact_lock(hashtextextended(sqlc.arg(name)::text, 0));
 -- name: DeleteUnknown :exec
 WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM archive.mail_party x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.payroll_worker x WHERE x.person = k.id)
-    AND NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.admin = k.id OR x.signatory = k.id))
+    AND NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.admin = k.id OR x.signatory = k.id)
+    AND NOT EXISTS (SELECT FROM archive.drive_file x WHERE x.owner = k.id OR x.editor = k.id)
+    AND NOT EXISTS (SELECT FROM archive.ledger_contact x WHERE x.person = k.id))
 DELETE FROM archive.known_org o WHERE NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.org = o.id);
 
 -- The people of emails, each added unless there is one.

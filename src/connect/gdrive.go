@@ -1,6 +1,7 @@
 package connect
 
 import (
+	"cmp"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -13,10 +14,13 @@ import (
 
 // Google Drive, read only, with ARCHIVE_GOOGLE like Gmail: the client's authorized redirect URIs list
 // <API>/connect/gdrive/callback, and its consent screen asks for drive.readonly, a restricted scope.
-// It syncs nothing until its files are mapped into the tables of archive.sql; its push waits for that too.
+// It syncs every file the account can see into drive_file, with the text of Google's own documents, from
+// Drive's changes feed, which pushes too.
 func init() {
 	Register(&Connector{
 		ID: "gdrive", Name: "Google Drive", Env: "ARCHIVE_GOOGLE", Host: "https://accounts.google.com",
+		// Drive allows each user 12,000 requests a minute, and each file read for its text is one more of them.
+		Pace: 50 * time.Millisecond,
 		Endpoint: oauth2.Endpoint{AuthURL: "https://accounts.google.com/o/oauth2/v2/auth", TokenURL: "https://oauth2.googleapis.com/token",
 			AuthStyle: oauth2.AuthStyleInParams},
 		Revoke: "https://oauth2.googleapis.com/revoke",
@@ -105,7 +109,173 @@ func init() {
 				}),
 		},
 		Push: drivePush,
+		Streams: []*Stream{{Name: "files", Gap: 2 * time.Second, Pull: driveFiles, Table: "drive_file", Rows: driveRows,
+			Doc: "Every file and folder in My Drive, shared with you and in your shared drives, but those in the trash: its name, type, size, " +
+				"folder, owner, who changed it last and when, and the text of a Google Doc, Sheet (its first sheet) or Slides deck or a text file, " +
+				"cut at 64 KB; other content stays in Drive. Listed whole the first time, 100 a page, and then Drive's changes since."}},
 	})
+}
+
+// driveSync is what the files stream reads of a file.
+const driveSync = "id,name,mimeType,size,webViewLink,parents,driveId,ownedByMe,createdTime,modifiedTime,trashed," +
+	"owners(displayName,emailAddress),lastModifyingUser(displayName,emailAddress)"
+
+// driveCursor is where the files stream is: Token is the changes' page token its listing began at, or its
+// delta starts from, Page the next page of either, and Listing says a listing is under way.
+type driveCursor struct {
+	Token   string `json:"t"`
+	Page    string `json:"p,omitempty"`
+	Listing bool   `json:"l,omitempty"`
+}
+
+func driveFiles(c *Client, cursor string) (*Page, error) {
+	var cur driveCursor
+	if err := cursorOf(cursor, &cur); err != nil {
+		return nil, err
+	}
+	if cur.Token == "" {
+		var t struct {
+			Token string `json:"startPageToken"`
+		}
+		if err := c.Get(driveAPI+"/changes/startPageToken?supportsAllDrives=true", &t); err != nil {
+			return nil, err
+		}
+		cur = driveCursor{Token: t.Token, Listing: true}
+	}
+	drives := map[string]string{}
+	if cur.Listing {
+		v := url.Values{"q": {"trashed = false"}, "pageSize": {"100"}, "corpora": {"allDrives"}, "supportsAllDrives": {"true"},
+			"includeItemsFromAllDrives": {"true"}, "fields": {"nextPageToken,files(" + driveSync + ")"}}
+		if cur.Page != "" {
+			v.Set("pageToken", cur.Page)
+		}
+		var list struct {
+			Files []map[string]any `json:"files"`
+			Next  string           `json:"nextPageToken"`
+		}
+		if err := c.Get(driveAPI+"/files?"+v.Encode(), &list); err != nil {
+			return nil, err
+		}
+		page := &Page{Full: true, More: list.Next != ""}
+		var err error
+		page.Records, err = driveRecords(c, list.Files, drives)
+		cur.Page, cur.Listing = list.Next, list.Next != ""
+		page.Cursor = cursorFor(cur)
+		return page, err
+	}
+	v := url.Values{"pageToken": {cmp.Or(cur.Page, cur.Token)}, "pageSize": {"100"}, "includeRemoved": {"true"}, "supportsAllDrives": {"true"},
+		"includeItemsFromAllDrives": {"true"}, "fields": {"nextPageToken,newStartPageToken,changes(fileId,removed,file(" + driveSync + "))"}}
+	var ch struct {
+		Changes []struct {
+			FileID  string         `json:"fileId"`
+			Removed bool           `json:"removed"`
+			File    map[string]any `json:"file"`
+		} `json:"changes"`
+		Next  string `json:"nextPageToken"`
+		Start string `json:"newStartPageToken"`
+	}
+	if err := c.Get(driveAPI+"/changes?"+v.Encode(), &ch); err != nil {
+		return nil, err
+	}
+	page := &Page{More: ch.Next != ""}
+	var live []map[string]any
+	for _, x := range ch.Changes {
+		switch {
+		case x.FileID == "":
+		case x.Removed || x.File == nil || x.File["trashed"] == true:
+			page.Records = append(page.Records, Record{ID: x.FileID, Deleted: true})
+		default:
+			live = append(live, x.File)
+		}
+	}
+	got, err := driveRecords(c, live, drives)
+	page.Records = append(page.Records, got...)
+	if ch.Next != "" {
+		cur.Page = ch.Next
+	} else {
+		cur = driveCursor{Token: cmp.Or(ch.Start, cur.Token)}
+	}
+	page.Cursor = cursorFor(cur)
+	return page, err
+}
+
+// driveRecords are files as records, each with the drive it is in by name, and the text of those that read as
+// text, four at a time; drives keeps the names of shared drives the page has looked up.
+func driveRecords(c *Client, files []map[string]any, drives map[string]string) ([]Record, error) {
+	for _, f := range files {
+		switch id := str(f, "driveId"); {
+		case id != "":
+			if _, ok := drives[id]; !ok {
+				var d struct {
+					Name string `json:"name"`
+				}
+				if err := c.Get(driveAPI+"/drives/"+url.PathEscape(id)+"?fields=name", &d); err != nil && Busy(err) {
+					return nil, err
+				}
+				drives[id] = cmp.Or(d.Name, "Shared drive")
+			}
+			f["drive"] = drives[id]
+		case f["ownedByMe"] == true:
+			f["drive"] = "My Drive"
+		default:
+			f["drive"] = "Shared with me"
+		}
+	}
+	out := make([]Record, len(files))
+	err := each(len(files), 4, func(i int) error {
+		f := files[i]
+		text, err := driveText(c, f)
+		if err != nil {
+			return err
+		}
+		f["text"] = clip(text, maxText)
+		out[i] = Record{ID: str(f, "id"), Data: f, Updated: stamp(str(f, "modifiedTime"))}
+		return nil
+	})
+	return out, err
+}
+
+// driveText is the text of f, a Google Doc, Sheet or Slides deck as export has it, or a text file up to 5 MB;
+// "" for any other file, or one Drive will not export, like one too big. Only a busy Drive is an error.
+func driveText(c *Client, f map[string]any) (string, error) {
+	id, mime := url.PathEscape(str(f, "id")), str(f, "mimeType")
+	var text string
+	var err error
+	switch size, _ := strconv.ParseInt(str(f, "size"), 10, 64); {
+	case driveExports[mime] != "":
+		err = c.Get(driveAPI+"/files/"+id+"/export?mimeType="+url.QueryEscape(driveExports[mime]), &text)
+	case (strings.HasPrefix(mime, "text/") || mime == "application/json") && size <= maxBody:
+		err = c.Get(driveAPI+"/files/"+id+"?alt=media&supportsAllDrives=true", &text)
+	default:
+		return "", nil
+	}
+	if err != nil {
+		if Busy(err) {
+			return "", err
+		}
+		return "", nil
+	}
+	return text, nil
+}
+
+// driveRows is a file as a file of a drive: its folder is its first parent, and its owner the first of them,
+// or for a file of a shared drive, which has none, nobody.
+func driveRows(m map[string]any) *Row {
+	kind := "file"
+	if str(m, "mimeType") == "application/vnd.google-apps.folder" {
+		kind = "folder"
+	}
+	owner, editor := map[string]any{}, obj(m, "lastModifyingUser")
+	if owners := objects(m["owners"], ""); len(owners) > 0 {
+		owner = owners[0]
+	}
+	r := rowOf(map[string]any{"kind": kind, "title": str(m, "name"), "mime": str(m, "mimeType"), "size": decimal(m["size"]), "url": str(m, "webViewLink"),
+		"drive": str(m, "drive"), "owner_name": str(owner, "displayName"), "editor_name": str(editor, "displayName"),
+		"made_at": instant(str(m, "createdTime")), "edited_at": instant(str(m, "modifiedTime")), "text": str(m, "text")})
+	if ps := strs(m["parents"]); len(ps) > 0 {
+		r.ref("folder", ps[0])
+	}
+	return r.person("owner", str(owner, "emailAddress")).person("editor", str(editor, "emailAddress"))
 }
 
 const (

@@ -1131,6 +1131,12 @@ var syncSchema = map[string]syncTable{
 	"payroll_contractor_payment":       {links: map[string]string{"company": "payroll_company", "worker": "payroll_worker"}},
 	"payroll_contractor_payment_group": {links: map[string]string{"company": "payroll_company"}},
 	"payroll_task":                     {links: map[string]string{"company": "payroll_company"}},
+	"drive_file":                       {links: map[string]string{"folder": "drive_file"}},
+	"ledger_account":                   {links: map[string]string{"parent": "ledger_account"}},
+	"ledger_contact":                   {},
+	"ledger_item":                      {links: map[string]string{"income_account": "ledger_account", "expense_account": "ledger_account"}},
+	"ledger_entry":                     {links: map[string]string{"contact": "ledger_contact", "account": "ledger_account"}},
+	"ledger_line":                      {parent: "ledger_entry", of: "entry", links: map[string]string{"account": "ledger_account", "item": "ledger_item"}},
 }
 
 // syncRec is a record of a page to write, its data as JSON.

@@ -252,8 +252,8 @@
  *   when it is one of those.
  * - Archive also keeps a copy of what these accounts have, synced when the service says something changed or
  *   when you read them after 5 minutes without a sync, as rows of the tables of their domain: mail_message,
- *   mail_party and mail_attachment, doc_page, and the payroll_ tables, with the people and organizations they
- *   name in known_person and known_org. Each row has its connection, its stream (like messages) and its
+ *   mail_party and mail_attachment, doc_page, drive_file, the ledger_ tables of books and the payroll_ tables,
+ *   with the people and organizations they name in known_person and known_org. Each row has its connection, its stream (like messages) and its
  *   source_id there, and updated_at when it last changed; Streams, after Actions, says which stream lands in
  *   which table. A personal account's rows only you see, and an integration's everyone sees, or its group when
  *   an owner narrowed it (its access column). Read them like any table, without calling the service:
