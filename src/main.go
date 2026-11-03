@@ -40,7 +40,7 @@ Usage:
                                      workspace (default the oldest one), and the workspace and admin
                                      commands as an admin of this Archive (default the first one)
 
-  archive serve [-addr :8080]        serve the HTTP API (/api), sign-in (/auth) and MCP (/mcp, and all of mcp.<domain>)
+  archive serve [-addr :8080]        serve the HTTP API (/api) and sign-in (/auth), and MCP on mcp.<domain>
   archive mcp                        serve MCP over stdio
   archive types                      print the tables, their columns and the built-in types
   archive run <file.ts|->            run TypeScript against the archive SDK in one transaction,
@@ -754,11 +754,7 @@ func cliServe(ctx context.Context, h *Hub, addr string) error {
 	}))}
 	errc := make(chan error, 1)
 	go func() { errc <- hs.ListenAndServe() }()
-	at := h.mcpURL
-	if at == h.api {
-		at += "/mcp"
-	}
-	fmt.Fprintf(os.Stderr, "archive: serving the API on %s/api and MCP on %s, for the web app on %s\n", h.api, at, h.app)
+	fmt.Fprintf(os.Stderr, "archive: serving the API on %s/api and MCP on %s, for the web app on %s\n", h.api, h.mcpAt(), h.app)
 	select {
 	case err := <-errc:
 		return err

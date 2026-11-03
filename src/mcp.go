@@ -79,7 +79,7 @@ func (h *Hub) mcpHost(r *http.Request) bool {
 	return err == nil && strings.EqualFold(host, u.Hostname())
 }
 
-// mcpBase is the origin r's MCP is at: MCP's own host, or the API's, whose MCP is at /mcp.
+// mcpBase is the origin r's MCP is at: MCP's own host, or in development, where there is none, the API's.
 func (h *Hub) mcpBase(r *http.Request) string {
 	if h.mcpHost(r) {
 		return h.mcpURL
@@ -87,17 +87,26 @@ func (h *Hub) mcpBase(r *http.Request) string {
 	return h.api
 }
 
-// mcpRoutes adds MCP to mux: own is MCP's host, with MCP at the root too; the authorization server is on MCP's
-// host, or on the API in development, where they are one.
+// mcpAt is where MCP is: the root of its own host, or /mcp on the API in development, where they are one host.
+func (h *Hub) mcpAt() string {
+	if h.mcpURL == h.api {
+		return h.api + "/mcp"
+	}
+	return h.mcpURL
+}
+
+// mcpRoutes adds MCP and its authorization server to mux: own is MCP's host, which serves them at its root. The
+// API's host serves them only in development, at /mcp, where it is MCP's host too; otherwise it has no MCP.
 func (h *Hub) mcpRoutes(mux *http.ServeMux, own bool) {
-	mux.HandleFunc("/mcp", h.mcp)
-	mux.HandleFunc("GET /.well-known/oauth-protected-resource/mcp", h.mcpResource)
-	if own {
+	switch {
+	case own:
 		mux.HandleFunc("/{$}", h.mcp)
 		mux.HandleFunc("GET /.well-known/oauth-protected-resource", h.mcpResource)
 		mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	}
-	if !own && h.mcpURL != h.api {
+	case h.mcpURL == h.api:
+		mux.HandleFunc("/mcp", h.mcp)
+		mux.HandleFunc("GET /.well-known/oauth-protected-resource/mcp", h.mcpResource)
+	default:
 		return
 	}
 	mux.HandleFunc("GET /.well-known/oauth-authorization-server", h.mcpServerMeta)
@@ -192,7 +201,7 @@ func (h *Hub) mcpServerMeta(w http.ResponseWriter, r *http.Request) {
 // mcpResourceOK says whether resource (RFC 8707), if a client names one, is this Archive's MCP.
 func (h *Hub) mcpResourceOK(resource string) bool {
 	resource = strings.TrimSuffix(resource, "/")
-	return resource == "" || resource == h.mcpURL || resource == h.mcpURL+"/mcp" || resource == h.api+"/mcp"
+	return resource == "" || resource == h.mcpAt()
 }
 
 // mcpRedirectValid says whether a client may register s as a redirect URI: https, http to this machine (a

@@ -76,7 +76,7 @@ The same data and the same permissions, whichever way in:
 
 | Way in | Good for |
 |---|---|
-| MCP at `mcp.<domain>`, and `/mcp` on the API | Claude, ChatGPT, Gemini, Cursor and other agents, through one tool: `run` |
+| MCP at `mcp.<domain>` | Claude, ChatGPT, Gemini, Cursor and other agents, through one tool: `run` |
 | HTTP API at `/api` | Records, files, search and workflows from your own apps and services |
 | Webhooks at `/hooks/run/<workspace>/<secret>` | Other services starting a workflow with a POST |
 | The `archive` CLI | Scripts, scheduled jobs and quick changes from your terminal |
@@ -108,7 +108,7 @@ Or make a token, and add Archive to Claude Code with its secret:
 
 ```sh
 archive token create -name "Claude Code"
-claude mcp add --transport http archive https://api.example.com/mcp --header "Authorization: Bearer <token>"
+claude mcp add --transport http archive https://mcp.example.com --header "Authorization: Bearer <token>"
 ```
 
 The token acts as you, with your role and groups. Add `-viewer` to make it read only: `archive token create -name Reports -viewer`.
@@ -122,7 +122,7 @@ The token acts as you, with your role and groups. Add `-viewer` to make it read 
 {
   "mcpServers": {
     "archive": {
-      "url": "https://api.example.com/mcp",
+      "url": "https://mcp.example.com",
       "headers": { "Authorization": "Bearer <token>" }
     }
   }
