@@ -429,7 +429,7 @@ func (a *Archive) sealToken(id uuid.UUID, secret string) []byte {
 }
 
 // TokenSecret is the secret of the caller's API token id, so they can copy it whenever they need it; a token
-// made before secrets were kept has none, and is ErrNotFound.
+// with no secret kept is ErrNotFound.
 func (a *Archive) TokenSecret(ctx context.Context, id uuid.UUID) (string, error) {
 	ac, err := authUser(ctx)
 	if err != nil {

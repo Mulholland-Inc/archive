@@ -212,10 +212,6 @@ gcloud run jobs execute archive --region us-central1 --wait --args=-workspace,<u
 gcloud run jobs execute archive --region us-central1 --wait --args=admin,add,anna@acme.example
 ```
 
-An Archive from before the main database kept its first workspace in it. The first start of a version with it moves that workspace out to `archive_<id>`, once, before anything opens: it copies every object and row with the workspace's tables locked, checks the copy object for object and row for row, and only then, in the same transaction, drops the workspace from the main database and makes its owners the admins. Anything that fails leaves the main database as it was, and the next start tries again.
-
-For a while, a person's own connections were kept once in the main database for every archive they were in. A start of a version from after moves each back into its person's oldest archive, before anything opens: with the tables locked in both databases, it copies the connection, its token sealed again with that archive's key, and every row it synced, checks the copy row for row, and only once the archive has committed deletes them from the main database. Then it drops what is left of that store, and its roles, from the main database. Anything that does not match leaves both databases as they were, and the start fails saying why.
-
 A workspace's roles can reach only its own database, so workspaces stay isolated even where Postgres has no superuser, as on Cloud SQL. A token works in the one workspace it was made in, and the web app's one session switches between all of yours. [app.archive.dev](https://app.archive.dev) is this same image, deployed with [`apps/terraform/gcp`](apps/terraform/gcp) with `domain = "archive.dev"`.
 
 Every setting is an environment variable; `archive help` lists them all:

@@ -1,7 +1,7 @@
 package main
 
-// MCP has a host of its own, mcp.<domain>, where the stateless MCP server is at the root (and at /mcp, as on the
-// API), and where MCP clients like Claude or ChatGPT connect with OAuth 2.1, as MCP's authorization spec has it:
+// MCP has a host of its own, mcp.<domain>, where the stateless MCP server is at the root, and where MCP clients
+// like Claude or ChatGPT connect with OAuth 2.1, as MCP's authorization spec has it:
 //
 //   - a 401 from MCP names its protected resource metadata (RFC 9728), which names this authorization server;
 //   - its metadata (RFC 8414) names the endpoints below;

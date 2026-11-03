@@ -136,8 +136,7 @@ CREATE TRIGGER group_roles AFTER INSERT OR DELETE ON archive."group" FOR EACH RO
 
 -- name_follows keeps a table's name made of other columns of its row, named by the trigger's arguments and
 -- joined by spaces, like name_follows('first_name', 'last_name'), or of a field of one, like 'full_name.full',
--- until a write sets name itself: a row whose name is not what its columns make keeps it. A table that had no
--- name when it began inheriting object gets one, over the columns its name was filled from (objectUpgrade).
+-- until a write sets name itself: a row whose name is not what its columns make keeps it.
 CREATE FUNCTION archive.name_follows() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
     made text;
@@ -389,7 +388,7 @@ CREATE TRIGGER member_roles AFTER INSERT OR UPDATE OR DELETE ON archive.member F
 -- (archive.mine). role is who it runs as: whoever saved it last, set by workflow_saved, so a token never
 -- gains rights. trigger is on as Archive schedules it, hook its webhook secret, next_at when it is due, and
 -- cursor_at and cursor_id the last row of its table it has seen; Archive keeps them, and they survive an edit
--- or a rename. member is null only on a workflow from before it had one, until Archive fills it in at open.
+-- or a rename.
 CREATE TABLE archive.workflow (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     user_id    uuid NOT NULL,
@@ -2083,14 +2082,6 @@ WHERE id = sqlc.arg(id);
 -- name: DeleteWorkflow :execrows
 DELETE FROM archive.workflow WHERE id = $1;
 
--- Workflows from before they were rows: no member yet, or a trigger still in a // on: line of their source.
--- name: OldWorkflows :many
-SELECT * FROM archive.workflow WHERE member IS NULL OR ("on" IS NULL AND trigger <> '');
-
--- name: UpgradeWorkflow :exec
-UPDATE archive.workflow SET member = sqlc.narg(member), source = sqlc.arg(source), "on" = nullif(sqlc.arg(on_json)::jsonb, 'null'), trigger = sqlc.arg(trigger)
-WHERE id = sqlc.arg(id);
-
 -- name: ClaimWorkflow :one
 UPDATE archive.workflow SET next_at = sqlc.arg(lease)::timestamptz
 WHERE id = (SELECT w.id FROM archive.workflow w WHERE w.next_at <= now() ORDER BY w.next_at LIMIT 1 FOR UPDATE SKIP LOCKED)
@@ -2195,14 +2186,6 @@ SELECT id FROM archive."group" WHERE name = lower(btrim(sqlc.arg(name)::text));
 
 -- name: SetConnectionAccess :exec
 UPDATE archive.connection c SET access = sqlc.narg(access)::uuid, updated_at = now() WHERE c.id = sqlc.arg(conn)::uuid AND c.integration;
-
--- Connections from before integrations: the first of each integration's becomes the archive's, unless it has one.
--- name: UpgradeIntegrations :execrows
-UPDATE archive.connection c SET integration = true
-WHERE c.id IN (SELECT DISTINCT ON (x.provider) x.id FROM archive.connection x
-    WHERE x.provider = ANY(sqlc.arg(providers)::text[]) AND NOT x.integration
-      AND NOT EXISTS (SELECT FROM archive.connection y WHERE y.provider = x.provider AND y.integration)
-    ORDER BY x.provider, x.created_at, x.id);
 
 -- name: ClaimSync :one
 UPDATE archive.connection SET lease_at = sqlc.arg(lease)::timestamptz

@@ -309,7 +309,7 @@ interface TableInput {
     created: Row[];
     /** Rows changed since the last run, oldest first; up to 100 rows with created. */
     updated: Row[];
-    /** created and updated together, oldest change first, for workflows written before they were split. */
+    /** created and updated together, oldest change first. */
     rows: Row[];
 }
 

@@ -1281,7 +1281,7 @@ func (s *pgStore) Revisions(ctx context.Context, limit int) ([]SchemaRevision, e
 
 // migrate brings the archive schema to archive.sql at startup: it applies the file to a scratch database and
 // runs what makes the live schema the same. It never deletes data: when it would, it says so and leaves the
-// schema as it is. A workspace from before groups were rows is brought to them first (groupUpgrade).
+// schema as it is.
 func (s *pgStore) migrate(ctx context.Context) error {
 	conn, err := s.sys.Acquire(ctx)
 	if err != nil {
@@ -1300,19 +1300,6 @@ func (s *pgStore) migrate(ctx context.Context) error {
 	return pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
 		for _, st := range []string{"SET LOCAL search_path = ''", "SET LOCAL check_function_bodies = off"} {
 			if _, err := tx.Exec(ctx, st); err != nil {
-				return err
-			}
-		}
-		ran, err := groupUpgrade(ctx, tx, s.expand(storeSchema), s.prefix)
-		if err != nil {
-			return fmt.Errorf("groups: %w", err)
-		}
-		if err := storeShed(ctx, tx); err != nil {
-			return fmt.Errorf("main tables: %w", err)
-		}
-		if len(ran) > 0 {
-			sj, _ := json.Marshal(ran)
-			if _, err := tx.Exec(ctx, "INSERT INTO archive.revision (hash, author, statements) VALUES ($1, 'archive', $2)", s.hash(), sj); err != nil {
 				return err
 			}
 		}
@@ -1366,31 +1353,6 @@ func pgScratch(ctx context.Context, sys *pgxpool.Pool, base *pgx.ConnConfig, sql
 	})
 }
 
-// storeShed drops the tables of the main database that a workspace made before they moved there still has,
-// while they are empty, as they are in every workspace but the first; a table with rows stays, so archive.sql
-// is not applied until someone looks.
-func storeShed(ctx context.Context, tx pgx.Tx) error {
-	for _, name := range slices.Sorted(maps.Keys(mainNames)) {
-		q := pgIdent("archive", name)
-		var table, rows bool
-		if err := tx.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", q).Scan(&table); err != nil || !table {
-			if err != nil {
-				return err
-			}
-			continue
-		}
-		if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT FROM ONLY "+q+")").Scan(&rows); err != nil {
-			return err
-		}
-		if !rows {
-			if _, err := tx.Exec(ctx, "DROP TABLE "+q+" CASCADE"); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
 // pgMigrate runs in tx what brings Archive's schema to want, unless that would lose data: then it returns
 // what and runs nothing.
 func pgMigrate(ctx context.Context, tx pgx.Tx, want pgSchema) ([]string, error) {
@@ -1406,23 +1368,6 @@ func pgMigrate(ctx context.Context, tx pgx.Tx, want pgSchema) ([]string, error) 
 	stmts, lost, err := pgPlan(live.ours(), want)
 	if err != nil || len(lost) > 0 {
 		return lost, err
-	}
-	// A table that gains its object_name trigger names the rows it has as the trigger would have; the tables
-	// whose names others take theirs from go first.
-	named := []string{}
-	for _, k := range slices.Sorted(maps.Keys(want)) {
-		if o := want[k]; o.Kind == "trigger" && o.Name == "object_name" && live[k] == nil && live["table "+o.Schema+"."+o.Of] != nil {
-			named = append(named, o.Of)
-		}
-	}
-	first := func(t string) bool {
-		return slices.Contains([]string{"workflow", "known_person", "payroll_department", "payroll_worker"}, t)
-	}
-	slices.SortStableFunc(named, func(a, b string) int {
-		return cmp.Compare(map[bool]int{true: 0, false: 1}[first(a)], map[bool]int{true: 0, false: 1}[first(b)])
-	})
-	for _, t := range named {
-		stmts = append(stmts, "UPDATE "+pgIdent("archive", t)+" SET name = name")
 	}
 	for _, st := range stmts {
 		if _, err := tx.Exec(ctx, st); err != nil {

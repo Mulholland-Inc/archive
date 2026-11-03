@@ -2,11 +2,6 @@
 // ../live.js and ../app.svelte.js); each piece here can be swapped for an API call on its own.
 //
 // Still mocked, and what would replace it:
-// - Connectors other than Gmail (Settings > Connectors, the composer's "Add from a connector"), and syncing
-//   any of them. Gmail connects and disconnects for real (/connect); each other connector needs its
-//   file in src/connect.
-// - Integrations (Archive settings > Integrations: SSO, SCIM, workspace apps). Needs per-workspace
-//   integration endpoints.
 // - Sharing one file, folder, table or workflow with people (Share dialog, Access > Shares and guests).
 //   Needs a sharing API; today access is by role and access group only.
 // - Pinned chats: kept on this device. Needs a pinned flag on /api/chats.
@@ -22,13 +17,7 @@
 // - Workflow pause, stop and "needs input": runs are synchronous in the API.
 // - The component specimen (/specimen) shows the design system with made-up files, chats and members (data.js).
 
-import { catalog } from './connectors.js';
-export { initials, models, suggestions } from './data.js';
-
-export function mockConnectors() {
-  return catalog.map((c) => ({ ...c, connected: false, account: '' }));
-}
-
+export { initials } from './data.js';
 
 export function mockKey(prefix, date) {
   const hex = () => Math.random().toString(16).slice(2, 10).padEnd(8, '0');

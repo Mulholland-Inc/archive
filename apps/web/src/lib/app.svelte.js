@@ -6,7 +6,7 @@ import { API, api, blobURL, forgetBlobs, upload, setWorkspace, workspace, local,
 import { resource, listen, onChange, onRefused } from './stream.svelte.js';
 import { toFile, toChat, toMember, toWorkflow, toRun, relative, show } from './live.js';
 import { toTables, countsQuery } from './schema.js';
-import { initials, mockConnectors, mockKey, mockProfile, mockSettings } from './mock/index.js';
+import { initials, mockKey, mockProfile, mockSettings } from './mock/index.js';
 import { catalog } from './mock/connectors.js';
 import { lookOf } from './looks.js';
 import { notify } from './dialogs.svelte.js';
@@ -68,7 +68,7 @@ function shell(w) {
     archiveTables: [],
     names: {},
     shares: [],
-    connectors: mockConnectors(w.id),
+    connectors: [],
     catalog: null,
     counts: null,
     loading: true
@@ -115,8 +115,7 @@ export async function boot() {
   }
   setMe(me);
   setWorkspace(me.workspace);
-  const list = me.workspaces?.length ? me.workspaces : [{ id: me.workspace, name: 'Archive', type: 'personal' }];
-  app.archives = list.map(shell);
+  app.archives = me.workspaces.map(shell);
   app.archive = me.workspace;
   app.onboarding = local(`archive.onboarding:${me.workspace}`, []);
   app.askPasskey = passkeys && !passkeyAsked(me.actor.user_id);
@@ -144,9 +143,8 @@ async function loadMe() {
     if (!me) return setWorkspace(app.archive);
   }
   if (here) setMe(me);
-  const list = me.workspaces?.length ? me.workspaces : [{ id: me.workspace, name: 'Archive', type: 'personal' }];
   const had = new Map(app.archives.map((v) => [v.id, v]));
-  app.archives = list.map((w) => {
+  app.archives = me.workspaces.map((w) => {
     const v = had.get(w.id) ?? shell(w);
     Object.assign(v, { name: w.name, look: lookOf(w), kind: kindOf(w.type) });
     return v;
@@ -387,7 +385,7 @@ export function tableOf(id, v = ws()) {
 // baseOf is the table a view reads, as its DDL names it after its own FROM, past the parentheses Postgres puts
 // around joins and past its schema, archive's as the workspace's: not the FROM of a subquery in its select list,
 // like a count of another table; a table is its own.
-// A view whose FROM is a subquery, as one given its name column reads (objectUpgrade), reads what that reads.
+// A view whose FROM is a subquery, like SELECT q.*, ... AS name FROM (...) q, reads what that reads.
 export function baseOf(t) {
   if (t?.kind !== 'view') return t?.id;
   const from = (ddl) => {
@@ -823,7 +821,7 @@ export const tokens = resource({
     app.archiveApps[id] = list.filter((x) => x.app).sort((a, b) => b.created_at.localeCompare(a.created_at));
     const t = list.filter((x) => x.name === KEY_NAME && !x.app).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
     if (app.archiveKeys[id]?.secret && app.archiveKeys[id].id === t?.id) return;
-    // Archive keeps the key sealed, so it can be read again; a key made before that has no secret to read.
+    // Archive keeps the key sealed, so it can be read again.
     const secret = t ? ((await call(`/auth/tokens/${t.id}/secret`).catch(() => null))?.secret ?? '') : '';
     app.archiveKeys[id] = t ? { id: t.id, secret, date: `Created ${new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` } : null;
   }
@@ -1258,7 +1256,7 @@ export const connections = resource({
     for (const k of (out?.connectors ?? []).filter((k) => !k.integration)) {
       let c = v.connectors.find((x) => x.id === k.id);
       if (!c) {
-        c = { id: k.id, name: k.name, by: k.name, description: `Use your ${k.name} account`, category: 'Other', scopes: [] };
+        c = { id: k.id, name: k.name, by: k.name, description: `Use your ${k.name} account`, category: 'Other', scopes: [], ...catalog.find((x) => x.id === k.id) };
         v.connectors.push(c);
         c = v.connectors.at(-1);
       }

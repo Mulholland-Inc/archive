@@ -1473,47 +1473,6 @@ func (q *Queries) NoMembers(ctx context.Context) (bool, error) {
 	return not_exists, err
 }
 
-const oldWorkflows = `-- name: OldWorkflows :many
-SELECT id, name, access, created_at, updated_at, user_id, role, source, trigger, hook, next_at, cursor_at, cursor_id, member, "on" FROM archive.workflow WHERE member IS NULL OR ("on" IS NULL AND trigger <> '')
-`
-
-// Workflows from before they were rows: no member yet, or a trigger still in a // on: line of their source.
-func (q *Queries) OldWorkflows(ctx context.Context) ([]ArchiveWorkflow, error) {
-	rows, err := q.db.Query(ctx, oldWorkflows)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ArchiveWorkflow
-	for rows.Next() {
-		var i ArchiveWorkflow
-		if err := rows.Scan(
-			&i.ID,
-			&i.Name,
-			&i.Access,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.UserID,
-			&i.Role,
-			&i.Source,
-			&i.Trigger,
-			&i.Hook,
-			&i.NextAt,
-			&i.CursorAt,
-			&i.CursorID,
-			&i.Member,
-			&i.On,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const renameChat = `-- name: RenameChat :execrows
 UPDATE archive.chat SET title = $3 WHERE id = $1 AND user_id = $2
 `
@@ -1977,47 +1936,6 @@ func (q *Queries) UpdateWorkflow(ctx context.Context, arg UpdateWorkflowParams) 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
-}
-
-const upgradeIntegrations = `-- name: UpgradeIntegrations :execrows
-UPDATE archive.connection c SET integration = true
-WHERE c.id IN (SELECT DISTINCT ON (x.provider) x.id FROM archive.connection x
-    WHERE x.provider = ANY($1::text[]) AND NOT x.integration
-      AND NOT EXISTS (SELECT FROM archive.connection y WHERE y.provider = x.provider AND y.integration)
-    ORDER BY x.provider, x.created_at, x.id)
-`
-
-// Connections from before integrations: the first of each integration's becomes the archive's, unless it has one.
-func (q *Queries) UpgradeIntegrations(ctx context.Context, providers []string) (int64, error) {
-	result, err := q.db.Exec(ctx, upgradeIntegrations, providers)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
-const upgradeWorkflow = `-- name: UpgradeWorkflow :exec
-UPDATE archive.workflow SET member = $1, source = $2, "on" = nullif($3::jsonb, 'null'), trigger = $4
-WHERE id = $5
-`
-
-type UpgradeWorkflowParams struct {
-	Member  *uuid.UUID
-	Source  string
-	OnJson  []byte
-	Trigger string
-	ID      uuid.UUID
-}
-
-func (q *Queries) UpgradeWorkflow(ctx context.Context, arg UpgradeWorkflowParams) error {
-	_, err := q.db.Exec(ctx, upgradeWorkflow,
-		arg.Member,
-		arg.Source,
-		arg.OnJson,
-		arg.Trigger,
-		arg.ID,
-	)
-	return err
 }
 
 const upload = `-- name: Upload :one
