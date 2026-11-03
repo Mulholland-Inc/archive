@@ -605,9 +605,15 @@ func (r *Refusal) Error() string {
 	return s
 }
 
+// refusal is resp as a Refusal. Intuit names each response with intuit_tid, which its support asks for, so a
+// refusal that has one keeps it.
 func refusal(provider string, resp *http.Response) *Refusal {
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-	return &Refusal{Provider: provider, Status: resp.StatusCode, Message: reasonIn(b)}
+	msg := reasonIn(b)
+	if tid := resp.Header.Get("intuit_tid"); tid != "" {
+		msg = strings.TrimPrefix(msg+" (intuit_tid "+tid+")", " ")
+	}
+	return &Refusal{Provider: provider, Status: resp.StatusCode, Message: msg}
 }
 
 // reasonIn is the message in a provider's error body: the first of the keys providers put it under, at any
