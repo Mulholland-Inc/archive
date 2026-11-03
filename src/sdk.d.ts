@@ -233,6 +233,15 @@
  *     await archive.create("note", { name: "Saturday opening hours", text: r.answer, source: r.url });
  * - What it does on a site is not undone when the run fails: a form it sent stays sent.
  *
+ * Models
+ * - archive.model({ model, prompt, system, files, schema, effort }) asks a model once and returns { text, json,
+ *   tokens_in, tokens_out }: model is a gemini- or claude- name, like "gemini-3.1-flash" or "claude-haiku-5-5"; files
+ *   are PDFs and images from archive.files, each { id } whole or { id, page } for one page of a PDF (1-based), up
+ *   to 20 MB each; with schema, a JSON schema, json is the answer parsed and text its raw form; effort "none" turns
+ *   thinking off where the model has it. Use it to read a document, classify rows or draft text inside a run.
+ * - The keys live on the server (GEMINI_API_KEY, ANTHROPIC_API_KEY); a model whose key is not set throws. Each call
+ *   has 2 minutes, and a run calls models for at most 10 minutes in all, time that does not count toward its {timeout}.
+ *
  * Connected accounts
  * - Each person connects their own Gmail, Outlook, Google Drive and Notion in Settings, Connectors; those are
  *   theirs alone, and connected in this archive only; another archive they are in has its own. The archive's
@@ -310,6 +319,8 @@ declare const archive: {
     run(name: string, input?: unknown): Promise<RunResult>;
     /** Have an agent use a fresh web browser to reach goal, starting at url; before any write, 5 minutes a run (see Browsing). */
     browse(goal: string, opts?: { url?: string }): Promise<BrowseResult>;
+    /** Ask a gemini- or claude- model once, with files (a PDF page with page) and a JSON schema for json; 10 minutes a run (see Models). */
+    model(req: { model: string; prompt: string; system?: string; files?: { id: string; page?: number }[]; schema?: object; effort?: "none" }): Promise<ModelResult>;
     /** Do the action name, like "gmail.search", with one of your connected accounts; connection picks one when you have several (see Connected accounts). */
     action<A extends keyof Actions>(name: A, input: Actions[A]["input"], opts?: { connection?: string }): Promise<Actions[A]["output"]>;
 };
@@ -379,6 +390,15 @@ interface BrowseResult {
     answer: string;
     /** The page it ended on. */
     url: string;
+}
+
+interface ModelResult {
+    /** The answer as text; with a schema, the JSON as a string. */
+    text: string;
+    /** The answer parsed, when a schema was given. */
+    json?: any;
+    tokens_in: number;
+    tokens_out: number;
 }
 
 type Row = Record<string, any>;

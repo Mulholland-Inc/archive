@@ -195,7 +195,7 @@ func (a *Archive) run(ctx context.Context, code string, input json.RawMessage) (
 	limit := runTimeout
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	clock := &runClock{t: time.AfterFunc(limit, func() { cancel(context.DeadlineExceeded) }), end: time.Now().Add(limit), browse: browseTimeout}
+	clock := &runClock{t: time.AfterFunc(limit, func() { cancel(context.DeadlineExceeded) }), end: time.Now().Add(limit), browse: browseTimeout, model: modelTimeout}
 	defer clock.t.Stop()
 	r := &runner{a: a, out: out, js: js, input: input, at: time.Now(), clock: clock}
 	err = a.as(ctx, r.run)
@@ -987,6 +987,7 @@ func (r *runner) sdk() {
 	})
 	r.workflowSDK(o)
 	r.browseSDK(o)
+	r.modelSDK(o)
 	r.actionSDK(o)
 	r.vm.Set("archive", o)
 }
@@ -1125,7 +1126,7 @@ func (a *Archive) RunTypes(ctx context.Context) string {
 	return runTypes(a.Catalog()) + a.actionTypes(ctx) + a.streamTypes(ctx)
 }
 
-var runStatic = []string{"Actions", "Streams", "Base", "Row", "Hit", "Migration", "SchemaChange", "Table", "StoredFile", "Tables", "FetchResponse", "RunResult", "BrowseResult", "WorkflowOn", "CronInput", "TableInput", "WebhookInput",
+var runStatic = []string{"Actions", "Streams", "Base", "Row", "Hit", "Migration", "SchemaChange", "Table", "StoredFile", "Tables", "FetchResponse", "RunResult", "BrowseResult", "ModelResult", "WorkflowOn", "CronInput", "TableInput", "WebhookInput",
 	"Money", "Timestamp", "Time", "Interval", "Address", "Name", "Postcode", "Geo", "Quantity"}
 
 func runPascal(s string) string {

@@ -411,13 +411,19 @@ func chatPartial(s, key string) string {
 }
 
 func chatPost(ctx context.Context, key string, body []byte) (*http.Response, error) {
+	url := strings.TrimRight(cmp.Or(os.Getenv("ANTHROPIC_BASE_URL"), "https://api.anthropic.com"), "/") + "/v1/messages"
+	return modelPost(ctx, url, http.Header{"x-api-key": {key}, "anthropic-version": {chatAPIVersion}}, body)
+}
+
+// modelPost posts JSON to a model API, trying three times on 429 and 5xx; Anthropic and Gemini both answer an
+// error as {"error": {"message"}}.
+func modelPost(ctx context.Context, url string, header http.Header, body []byte) (*http.Response, error) {
 	for try := 0; ; try++ {
-		req, err := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(cmp.Or(os.Getenv("ANTHROPIC_BASE_URL"), "https://api.anthropic.com"), "/")+"/v1/messages", bytes.NewReader(body))
+		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 		if err != nil {
 			return nil, err
 		}
-		req.Header.Set("x-api-key", key)
-		req.Header.Set("anthropic-version", chatAPIVersion)
+		req.Header = header.Clone()
 		req.Header.Set("content-type", "application/json")
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
