@@ -21,7 +21,9 @@
   import SidebarSection from '../components/SidebarSection.svelte';
   import SidebarItem from '../components/SidebarItem.svelte';
   import SidebarBlock from '../components/SidebarBlock.svelte';
-  import { app, workflowById, runWorkflow, renameWorkflow, removeWorkflow, workflows, runs } from '../lib/app.svelte.js';
+  import Select from '../components/Select.svelte';
+  import Chip from '../components/Chip.svelte';
+  import { app, ws, groups, members, groupById, setAccess, workflowById, runWorkflow, renameWorkflow, removeWorkflow, workflows, runs } from '../lib/app.svelte.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
   import { workflowItems, runItems } from '../lib/menus.js';
 
@@ -29,7 +31,18 @@
   const wf = $derived(workflowById(id));
   workflows.use();
   runs.use(() => wf && id);
+  groups.use();
+  members.use();
   let selected = $state(null);
+
+  // A workflow is its author's: only they run, change or delete it. Its access is a group that sees it too.
+  const me = $derived(ws()?.members.find((m) => m.email === app.user.email));
+  const mine = $derived(Boolean(wf) && (!wf.member || wf.member === me?.id));
+  const group = $derived(wf?.access ? groupById(wf.access) : null);
+  const accessOptions = $derived([
+    { value: '', label: 'Only you' },
+    ...(ws()?.groups ?? []).filter((g) => app.role === 'owner' || me?.groups.includes(g.id) || g.id === wf?.access).map((g) => ({ value: g.id, label: g.name }))
+  ]);
 
   const run = $derived(wf?.runs.find((r) => r.id === selected) ?? wf?.runs[0]);
   const current = $derived(run?.steps.find((s) => ['running', 'waiting', 'failed'].includes(s.status)) ?? run?.steps.at(-1));
@@ -67,7 +80,7 @@
     {#snippet trailing()}
       {#if run && live}
         <Button size="sm" loading disabled>Running</Button>
-      {:else if wf}
+      {:else if wf && mine}
         <Button size="sm" variant="primary" icon={run?.status === 'failed' || run?.status === 'stopped' ? RotateCcw : Play} onclick={start}>{run?.status === 'failed' || run?.status === 'stopped' ? 'Run again' : 'Run now'}</Button>
       {/if}
       {#if wf}<DetailsButton />{/if}
@@ -79,12 +92,12 @@
   <RightSidebar art="bg-workflows" label="Workflow details">
     {@render topbar()}
     <Page>
-      <PageHeader title={wf.name} renameLabel="Rename workflow" onrename={(name) => renameWorkflow(id, name)}>
+      <PageHeader title={wf.name} renameLabel="Rename workflow" onrename={mine ? (name) => renameWorkflow(id, name) : undefined}>
         {#snippet actions()}
-          <Menu placement="bottom-end" width="sm" label="Workflow actions">
+          {#if mine}<Menu placement="bottom-end" width="sm" label="Workflow actions">
             {#snippet trigger(props)}<IconButton icon={Ellipsis} label="Workflow actions" {...props} />{/snippet}
             <MenuItems items={workflowItems(wf, { open: false, onrun: start, ondelete: remove })} />
-          </Menu>
+          </Menu>{/if}
         {/snippet}
         <Stack direction="row" gap="3" align="center" wrap>
           {#if run}<StatusBadge status={run.paused ? 'paused' : run.status} plain />{/if}
@@ -98,13 +111,22 @@
           {#each run.log as m (m.id)}<Message message={m} />{/each}
         {:else}
           <EmptyState icon={Play} title="This workflow hasn’t run yet">
-            <Button variant="primary" icon={Play} onclick={start}>Run now</Button>
+            {#if mine}<Button variant="primary" icon={Play} onclick={start}>Run now</Button>{/if}
           </EmptyState>
         {/if}
       </Stack>
     </Page>
 
     {#snippet side()}
+      <SidebarSection title="Who sees it">
+        <SidebarBlock>
+          {#if mine}
+            <Select value={wf.access ?? ''} options={accessOptions} size="sm" label="Who sees it" full onchange={(v) => setAccess('workflow', wf, v || null)} />
+          {:else if group}
+            <Chip size="sm" href={`/access/groups/${group.id}`}>{group.name}</Chip>
+          {/if}
+        </SidebarBlock>
+      </SidebarSection>
       {#if run}
         <SidebarSection title={`Run #${run.number}`}>
           <SidebarBlock>

@@ -9,7 +9,9 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -119,6 +121,14 @@ func workflowToken() string {
 	b := make([]byte, 24)
 	rand.Read(b)
 	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+// hookSign is the signature a webhook URL carries after its hook: whoever can read a workflow, like the group
+// it is shared with, reads its hook, but only the server can sign it, so only whose it is has the URL.
+func (a *Archive) hookSign(hook string) string {
+	m := hmac.New(sha256.New, secretDerive(a.hub.key, "workflow hook "+a.ws.ID.String()))
+	m.Write([]byte(hook))
+	return base64.RawURLEncoding.EncodeToString(m.Sum(nil)[:18])
 }
 
 // workflowTables are the tables a workflow may watch: the public ones and the members.
@@ -347,8 +357,8 @@ func (a *Archive) workflowUpgrade(ctx context.Context) error {
 	})
 }
 
-// workflowSave is the write hook of archive.create and archive.update on workflow: it takes name, source and
-// on, refuses the write with every problem when one is wrong, and otherwise saves it as the person writing,
+// workflowSave is the write hook of archive.create and archive.update on workflow: it takes name, source, on
+// and access, refuses the write with every problem when one is wrong, and otherwise saves it as the person writing,
 // who it then runs as. With id it changes that workflow, and full replaces it whole.
 func (a *Archive) workflowSave(ctx context.Context, tb *Table, id uuid.UUID, data map[string]any, full bool) (map[string]any, error) {
 	ac, err := signedIn(ctx)
@@ -360,6 +370,7 @@ func (a *Archive) workflowSave(ctx context.Context, tb *Table, id uuid.UUID, dat
 		var old *generated.ArchiveWorkflow
 		var name, source string
 		var on any
+		var access *uuid.UUID
 		if id != uuid.Nil {
 			w, err := q.LockWorkflow(ctx, id)
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -370,7 +381,7 @@ func (a *Archive) workflowSave(ctx context.Context, tb *Table, id uuid.UUID, dat
 			}
 			old = &w
 			if !full {
-				name, source, on = w.Name, w.Source, json.RawMessage(w.On)
+				name, source, on, access = w.Name, w.Source, json.RawMessage(w.On), w.Access
 			}
 		}
 		verr := &ValidationError{Type: "workflow"}
@@ -390,9 +401,20 @@ func (a *Archive) workflowSave(ctx context.Context, tb *Table, id uuid.UUID, dat
 				source = text(k)
 			case "on":
 				on = data[k]
-			case "id", "created_at", "updated_at", "next_at", "url":
+			case "access":
+				access = nil
+				if data[k] != nil {
+					s, _ := data[k].(string)
+					g, err := uuid.Parse(s)
+					if err != nil {
+						bad(k, "want a group's id, or null for only you")
+						continue
+					}
+					access = &g
+				}
+			case "id", "created_at", "updated_at", "next_at", "url", "member":
 			default:
-				bad(k, "unknown field; a workflow takes name, source and on")
+				bad(k, "unknown field; a workflow takes name, source, on and access")
 			}
 		}
 		switch {
@@ -439,17 +461,17 @@ func (a *Archive) workflowSave(ctx context.Context, tb *Table, id uuid.UUID, dat
 		}
 		if old == nil {
 			id, err = q.InsertWorkflow(ctx, generated.InsertWorkflowParams{UserID: ac.UserID, Member: &ac.member, Role: ac.Role, Name: name, Source: source,
-				OnJson: o.json(), Trigger: trig, Hook: workflowToken(), NextAt: next, CursorAt: cursorAt, CursorID: cursorID})
+				OnJson: o.json(), Trigger: trig, Hook: workflowToken(), NextAt: next, CursorAt: cursorAt, CursorID: cursorID, Access: access})
 		} else {
 			_, err = q.UpdateWorkflow(ctx, generated.UpdateWorkflowParams{ID: id, Name: name, Source: source, OnJson: o.json(), Trigger: trig,
-				NextAt: next, CursorAt: cursorAt, CursorID: cursorID})
+				NextAt: next, CursorAt: cursorAt, CursorID: cursorID, Access: access})
 		}
 		if err != nil {
 			return nil, storeErr(err)
 		}
 		storeAfter(ctx, func() { a.workflowSchedule(ctx) })
 		row, err := a.coreGet(ctx, tb, id)
-		a.workflowRows(row)
+		a.workflowRows(ctx, row)
 		return row, err
 	})
 }
@@ -477,7 +499,11 @@ func (a *Archive) workflowSchedule(ctx context.Context) {
 }
 
 // workflowRows gives each workflow row read through the catalog its webhook URL in place of its secret.
-func (a *Archive) workflowRows(rows ...map[string]any) {
+func (a *Archive) workflowRows(ctx context.Context, rows ...map[string]any) {
+	var me string
+	if ac := ActorFrom(ctx); ac != nil {
+		me = ac.member.String()
+	}
 	for _, r := range rows {
 		if r == nil {
 			continue
@@ -485,8 +511,9 @@ func (a *Archive) workflowRows(rows ...map[string]any) {
 		hook, _ := r["hook"].(string)
 		delete(r, "hook")
 		r["url"] = nil
-		if on, _ := r["on"].(map[string]any); on != nil && on["webhook"] == true && hook != "" {
-			r["url"] = a.hub.api + "/hooks/run/" + a.ws.ID.String() + "/" + hook
+		// The webhook runs it as whose it is, so only they have its URL, not the group it is shared with.
+		if on, _ := r["on"].(map[string]any); on != nil && on["webhook"] == true && hook != "" && fmt.Sprint(r["member"]) == me {
+			r["url"] = a.hub.api + "/hooks/run/" + a.ws.ID.String() + "/" + hook + "." + a.hookSign(hook)
 		}
 	}
 }
@@ -726,10 +753,16 @@ func (a *Archive) workflowTable(ctx context.Context, w generated.ArchiveWorkflow
 
 func (a *Archive) workflowHook(rw http.ResponseWriter, r *http.Request) {
 	var w generated.ArchiveWorkflow
+	// A URL is the hook and its signature. One from before URLs were signed, the hook alone, still runs a
+	// workflow no group sees, whose hook no one else reads.
+	hook, sig, signed := strings.Cut(r.PathValue("token"), ".")
 	err := a.sys(r.Context(), func(ctx context.Context) (err error) {
-		w, err = a.st.db(ctx).WorkflowByHook(ctx, r.PathValue("token"))
+		w, err = a.st.db(ctx).WorkflowByHook(ctx, hook)
 		return err
 	})
+	if err == nil && (signed && !hmac.Equal([]byte(sig), []byte(a.hookSign(hook))) || !signed && w.Access != nil) {
+		err = pgx.ErrNoRows
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		httpWrite(rw, http.StatusNotFound, map[string]string{"error": "no workflow has this webhook URL"}, nil)
 		return

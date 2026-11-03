@@ -409,11 +409,13 @@ CREATE TABLE archive.workflow (
     UNIQUE (user_id, name)
 ) INHERITS (archive.object);
 CREATE INDEX workflow_next_idx ON archive.workflow (next_at) WHERE next_at IS NOT NULL;
-COMMENT ON TABLE archive.workflow IS 'A script Archive runs on its own: on a schedule, when rows of a table are added or changed, when its webhook URL is called, or when run with archive.run. Each person sees and changes only their own
+COMMENT ON TABLE archive.workflow IS 'A script Archive runs on its own: on a schedule, when rows of a table are added or changed, when its webhook URL is called, or when run with archive.run. Each person sees and changes only their own, and those whose access is a group they are in, which they see
 icon: workflow';
 COMMENT ON COLUMN archive.workflow.name IS 'Letters, digits, - and _, like overdue-invoices; unique among yours';
 COMMENT ON COLUMN archive.workflow.source IS 'Its TypeScript, written like a run';
 COMMENT ON COLUMN archive.workflow."on" IS 'When it runs: { cron, tz? }, { table, events }, { webhook: true }, or null to run only with archive.run';
+COMMENT ON COLUMN archive.workflow.member IS 'references member; whose it is, who alone changes, runs or deletes it';
+COMMENT ON COLUMN archive.workflow.access IS 'Group that sees it and its runs too; null for only you. Only you change, run or delete it';
 COMMENT ON COLUMN archive.workflow.next_at IS 'When it runs next: a cron workflow''s next time, or now for a table workflow with rows waiting';
 
 -- A run of a workflow: what started it, what it returned, logged and threw, and how long it took. Archive
@@ -1754,7 +1756,9 @@ CREATE POLICY writer ON archive.secret FOR INSERT WITH CHECK (archive.can(access
 CREATE POLICY owner_delete ON archive.secret FOR DELETE USING (pg_has_role(current_user, '{p}_owner', 'USAGE'));
 
 ALTER TABLE archive.workflow ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.workflow USING (archive.mine(member)) WITH CHECK (archive.mine(member));
+CREATE POLICY mine ON archive.workflow USING (archive.mine(member)) WITH CHECK (archive.mine(member) AND (access IS NULL OR archive.can(access)));
+-- A workflow with access is seen, with its runs, by that group too; only whose it is changes, runs or deletes it.
+CREATE POLICY shared ON archive.workflow FOR SELECT USING (access IS NOT NULL AND archive.can(access));
 
 ALTER TABLE archive.workflow_run ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.workflow_run FOR SELECT USING (EXISTS (SELECT FROM archive.workflow w WHERE w.id = workflow_run.workflow));
@@ -2071,14 +2075,14 @@ SELECT * FROM archive.workflow WHERE id = $1 FOR UPDATE;
 SELECT * FROM archive.workflow WHERE hook = $1 AND trigger = 'webhook';
 
 -- name: InsertWorkflow :one
-INSERT INTO archive.workflow (user_id, member, role, name, source, "on", trigger, hook, next_at, cursor_at, cursor_id)
+INSERT INTO archive.workflow (user_id, member, role, name, source, "on", trigger, hook, next_at, cursor_at, cursor_id, access)
 VALUES (sqlc.arg(user_id), sqlc.arg(member), sqlc.arg(role), sqlc.arg(name), sqlc.arg(source), nullif(sqlc.arg(on_json)::jsonb, 'null'), sqlc.arg(trigger), sqlc.arg(hook),
-    sqlc.narg(next_at), sqlc.narg(cursor_at), sqlc.narg(cursor_id))
+    sqlc.narg(next_at), sqlc.narg(cursor_at), sqlc.narg(cursor_id), sqlc.narg(access))
 RETURNING id;
 
 -- name: UpdateWorkflow :execrows
 UPDATE archive.workflow SET name = sqlc.arg(name), source = sqlc.arg(source), "on" = nullif(sqlc.arg(on_json)::jsonb, 'null'), trigger = sqlc.arg(trigger),
-    next_at = sqlc.narg(next_at), cursor_at = sqlc.narg(cursor_at), cursor_id = sqlc.narg(cursor_id), updated_at = now()
+    next_at = sqlc.narg(next_at), cursor_at = sqlc.narg(cursor_at), cursor_id = sqlc.narg(cursor_id), access = sqlc.narg(access), updated_at = now()
 WHERE id = sqlc.arg(id);
 
 -- name: DeleteWorkflow :execrows
