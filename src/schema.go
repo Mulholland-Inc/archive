@@ -153,7 +153,7 @@ func catalogParse(b []byte) (*Catalog, error) {
 		}
 		// These of Archive's tables are seen by whose they are, not by a group: the access every object has
 		// says nothing of them.
-		if t.Schema == "archive" && slices.Contains([]string{"member", "workflow", "workflow_run", "known_person", "known_org"}, t.Name) {
+		if t.Schema == "archive" && slices.Contains([]string{"member", "group", "workflow", "workflow_run", "known_person", "known_org"}, t.Name) {
 			t.internal = append(t.internal, "access")
 			t.Columns = slices.DeleteFunc(t.Columns, func(c *Column) bool { return c.Name == "access" })
 		}
@@ -213,7 +213,7 @@ var catalogLayouts = []string{"table", "board", "calendar"}
 var (
 	catalogSystem   = map[string]bool{"id": true, "created_at": true, "updated_at": true}
 	catalogReserved = map[string]bool{"files": true, "views": true, "search": true, "schema": true, "types": true,
-		"member": true, "user": true, "token": true, "file": true, "upload": true, "secret": true, "revision": true, "run": true,
+		"member": true, "group": true, "user": true, "token": true, "file": true, "upload": true, "secret": true, "revision": true, "run": true,
 		"workflow": true, "workflow_run": true, "connection": true}
 	catalogNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 	catalogRefRe  = regexp.MustCompile(`(?i)^references\s+([a-z][a-z0-9_]*)\b[\s.;:,-]*`)
@@ -291,7 +291,7 @@ func (c *Catalog) Check() error {
 	want := []struct{ name, typ, msg string }{
 		{"id", "uuid", "want id uuid PRIMARY KEY DEFAULT uuidv7()"},
 		{"name", "text", "want name text NOT NULL, the title every screen shows a row and its links by, which CREATE TABLE ... INHERITS (archive.object) gives it; fill it on every create, or keep it made of other columns with CREATE TRIGGER name_follows BEFORE INSERT OR UPDATE ON <table> FOR EACH ROW EXECUTE FUNCTION archive.name_follows('first_name', 'last_name')"},
-		{"access", "text", "want access text, null for rows the whole workspace sees, like access text, or access text NOT NULL DEFAULT 'hr' CHECK (access = 'hr') for a table only the hr group sees"},
+		{"access", "uuid", "want access uuid REFERENCES archive.\"group\" ON DELETE RESTRICT, the id of the group that sees the row, null for the whole workspace, which CREATE TABLE ... INHERITS (archive.object) and Archive give it; a table only one group sees has access uuid NOT NULL DEFAULT '<its id>' CHECK (access = '<its id>')"},
 		{"created_at", "timestamptz", "want created_at timestamptz NOT NULL DEFAULT now()"},
 		{"updated_at", "timestamptz", "want updated_at timestamptz NOT NULL DEFAULT now()"},
 		{"search", "tsvector", "want a search tsvector column, like search tsvector GENERATED ALWAYS AS (archive.search_doc(name)) STORED"},
@@ -330,6 +330,8 @@ func (c *Catalog) Check() error {
 				ok = ok && col.NotNull && col.Default
 			case "name":
 				ok = ok && col.NotNull
+			case "access":
+				ok = ok && col.Ref == "archive.group"
 			}
 			if !ok {
 				bad(name+"."+w.name, w.msg)
@@ -1063,7 +1065,8 @@ func (c *Catalog) texty(schema, name string) bool {
 }
 
 // schemaDerive is what each public table lacks of what every table has: archive.object (object.go) and its
-// id, name, access, created_at and updated_at columns, the primary key on id that INHERITS does not pass on,
+// id, name, access, created_at and updated_at columns, the primary key on id and the foreign key on access to
+// archive."group" that INHERITS does not pass on,
 // the search column and index, row-level security with the access policy, and the grants to the viewer and
 // editor roles; and a derived search that no longer covers its text columns. With cols, only the columns
 // and object.
@@ -1104,11 +1107,16 @@ func schemaDerive(ctx context.Context, tx pgx.Tx, cat *Catalog, derived map[stri
 			}
 			add = append(add, "ALTER COLUMN name SET NOT NULL")
 		}
-		if t.col("access") == nil {
-			add = append(add, "ADD COLUMN access text")
+		access := t.col("access")
+		if access == nil {
+			add = append(add, "ADD COLUMN access uuid")
 		}
 		if !t.Object && !t.Partitioned && objectFits(t) {
 			after = append(after, "ALTER TABLE "+id+" INHERIT archive.object")
+		}
+		// Postgres passes no foreign key on: each table's access references the group that sees its rows.
+		if access == nil || access.Type == "uuid" && !access.List && access.Ref == "" {
+			after = append(after, "ALTER TABLE "+id+" ADD CONSTRAINT "+pgIdent(name+"_access_fkey")+` FOREIGN KEY (access) REFERENCES archive."group"(id) ON DELETE RESTRICT`)
 		}
 		for _, c := range []string{"created_at", "updated_at"} {
 			if t.col(c) == nil {
@@ -1270,7 +1278,7 @@ func (s *pgStore) Revisions(ctx context.Context, limit int) ([]SchemaRevision, e
 
 // migrate brings the archive schema to archive.sql at startup: it applies the file to a scratch database and
 // runs what makes the live schema the same. It never deletes data: when it would, it says so and leaves the
-// schema as it is.
+// schema as it is. A workspace from before groups were rows is brought to them first (groupUpgrade).
 func (s *pgStore) migrate(ctx context.Context) error {
 	conn, err := s.sys.Acquire(ctx)
 	if err != nil {
@@ -1287,6 +1295,21 @@ func (s *pgStore) migrate(ctx context.Context) error {
 		return fmt.Errorf("archive.sql: %w", err)
 	}
 	return pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
+		for _, st := range []string{"SET LOCAL search_path = ''", "SET LOCAL check_function_bodies = off"} {
+			if _, err := tx.Exec(ctx, st); err != nil {
+				return err
+			}
+		}
+		ran, err := groupUpgrade(ctx, tx, s.expand(storeSchema), s.prefix)
+		if err != nil {
+			return fmt.Errorf("groups: %w", err)
+		}
+		if len(ran) > 0 {
+			sj, _ := json.Marshal(ran)
+			if _, err := tx.Exec(ctx, "INSERT INTO archive.revision (hash, author, statements) VALUES ($1, 'archive', $2)", s.hash(), sj); err != nil {
+				return err
+			}
+		}
 		lost, err := pgMigrate(ctx, tx, want)
 		if err != nil {
 			return fmt.Errorf("archive.sql: %w", err)

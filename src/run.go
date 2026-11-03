@@ -56,7 +56,7 @@ type runFile struct {
 	Metadata  map[string]any `json:"metadata"`
 	Status    string         `json:"status"`
 	Error     string         `json:"error,omitempty"`
-	Access    *string        `json:"access"`
+	Access    *uuid.UUID     `json:"access"`
 	CreatedAt time.Time      `json:"created_at"`
 	Text      string         `json:"text"`
 }
@@ -1198,7 +1198,7 @@ func runTypes(cat *Catalog) string {
 			}
 			desc := c.Description
 			if c.Name == "access" && desc == "" && tb.Schema == "public" {
-				desc = "Group that sees the row, like hr; null is the whole workspace"
+				desc = "The id of the group that sees the row, null for the whole workspace; a write may name the group instead, like hr"
 			}
 			if c.Name == "name" && desc == "" {
 				desc = "The row's title, which the app shows it and every link to it by"

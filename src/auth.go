@@ -80,11 +80,11 @@ type User struct {
 }
 
 type Person struct {
-	ID     uuid.UUID `json:"id"`
-	Email  string    `json:"email"`
-	Name   string    `json:"name"`
-	Role   string    `json:"role"`
-	Groups []string  `json:"groups"`
+	ID     uuid.UUID   `json:"id"`
+	Email  string      `json:"email"`
+	Name   string      `json:"name"`
+	Role   string      `json:"role"`
+	Groups []uuid.UUID `json:"groups"`
 }
 
 type Token struct {

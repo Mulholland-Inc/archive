@@ -16,6 +16,7 @@
   import ViewPage from './pages/View.svelte';
   import RowPage from './pages/Row.svelte';
   import AccessPage from './pages/Access.svelte';
+  import GroupPage from './pages/Group.svelte';
   import AppSettings from './components/AppSettings.svelte';
   import ArchiveSettingsDialog from './components/ArchiveSettingsDialog.svelte';
   import Specimen from './pages/Specimen.svelte';
@@ -57,7 +58,7 @@
     }
   });
 
-  const key = $derived(['library', 'access'].includes(route.parts[0]) ? route.parts[0] : route.parts.slice(0, 2).join('/') || 'home');
+  const key = $derived(route.parts[0] === 'access' && route.parts[2] ? route.parts.slice(0, 3).join('/') : ['library', 'access'].includes(route.parts[0]) ? route.parts[0] : route.parts.slice(0, 2).join('/') || 'home');
 
   const commands = $derived(!ws() ? [] : [
     { id: 'new', group: 'Actions', label: 'New chat', icon: Plus, shortcut: '⌘ ⇧ O', run: () => go('/') },
@@ -141,6 +142,8 @@
         <Workflow id={route.parts[1]} />
       {:else if route.parts[0] === 'workflows'}
         <Workflows />
+      {:else if route.parts[0] === 'access' && route.parts[1] === 'groups' && route.parts[2]}
+        <GroupPage id={route.parts[2]} />
       {:else if route.parts[0] === 'access'}
         <AccessPage />
       {:else if route.parts[0] === 'onboarding'}

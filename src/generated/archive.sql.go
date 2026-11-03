@@ -276,7 +276,7 @@ SELECT jsonb_build_object(
             AND regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)')
             FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid), false),
         'columns', (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid)))
-        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.member'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass, 'archive.connection'::regclass, 'archive.known_person'::regclass, 'archive.known_org'::regclass, 'archive.mail_message'::regclass,
+        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.member'::regclass, 'archive."group"'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass, 'archive.connection'::regclass, 'archive.known_person'::regclass, 'archive.known_org'::regclass, 'archive.mail_message'::regclass,
             'archive.mail_party'::regclass, 'archive.mail_attachment'::regclass, 'archive.doc_page'::regclass, 'archive.payroll_company'::regclass,
             'archive.payroll_department'::regclass, 'archive.payroll_location'::regclass, 'archive.payroll_schedule'::regclass,
             'archive.payroll_worker'::regclass, 'archive.payroll_job'::regclass, 'archive.payroll_compensation'::regclass,
@@ -609,7 +609,7 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.payroll_contractor_payment x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.payroll_contractor_payment_group x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.payroll_task x WHERE x.connection = c.id))::bigint AS items,
-    c.integration, coalesce(c.access, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
+    c.integration, coalesce(c.access::text, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
 FROM archive.connection c WHERE c.member = $1 AND NOT c.integration OR c.integration ORDER BY c.provider, c.account, c.id
 `
 
@@ -691,7 +691,7 @@ type CreateFileParams struct {
 	Name   string
 	MIME   string
 	Size   int64
-	Access *string
+	Access *uuid.UUID
 }
 
 type CreateFileRow struct {
@@ -703,7 +703,7 @@ type CreateFileRow struct {
 	Metadata  map[string]any
 	Status    string
 	Error     string
-	Access    *string
+	Access    *uuid.UUID
 	CreatedAt time.Time
 }
 
@@ -742,7 +742,7 @@ type CreateSecretParams struct {
 	ColumnName string
 	Type       string
 	Value      []byte
-	Access     *string
+	Access     *uuid.UUID
 }
 
 func (q *Queries) CreateSecret(ctx context.Context, arg CreateSecretParams) error {
@@ -810,7 +810,7 @@ INSERT INTO archive.upload (id, role, access, name, length) VALUES ($1, $2, $3, 
 type CreateUploadParams struct {
 	ID     uuid.UUID
 	Role   string
-	Access *string
+	Access *uuid.UUID
 	Name   string
 	Length int64
 }
@@ -1058,11 +1058,11 @@ type FileByKeyRow struct {
 	Metadata  map[string]any
 	Status    string
 	Error     string
-	Access    *string
+	Access    *uuid.UUID
 	CreatedAt time.Time
 }
 
-func (q *Queries) FileByKey(ctx context.Context, access *string, hash string, name string) (FileByKeyRow, error) {
+func (q *Queries) FileByKey(ctx context.Context, access *uuid.UUID, hash string, name string) (FileByKeyRow, error) {
 	row := q.db.QueryRow(ctx, fileByKey, access, hash, name)
 	var i FileByKeyRow
 	err := row.Scan(
@@ -1104,7 +1104,7 @@ type FileWithTextRow struct {
 	Metadata  map[string]any
 	Status    string
 	Error     string
-	Access    *string
+	Access    *uuid.UUID
 	CreatedAt time.Time
 	Text      string
 }
@@ -1142,7 +1142,7 @@ type FilesRow struct {
 	Metadata  map[string]any
 	Status    string
 	Error     string
-	Access    *string
+	Access    *uuid.UUID
 	CreatedAt time.Time
 }
 
@@ -1191,7 +1191,7 @@ type FilesWithTextRow struct {
 	Metadata  map[string]any
 	Status    string
 	Error     string
-	Access    *string
+	Access    *uuid.UUID
 	CreatedAt time.Time
 	Text      string
 }
@@ -1311,7 +1311,7 @@ type GetFileRow struct {
 	Metadata  map[string]any
 	Status    string
 	Error     string
-	Access    *string
+	Access    *uuid.UUID
 	CreatedAt time.Time
 }
 
@@ -1331,6 +1331,17 @@ func (q *Queries) GetFile(ctx context.Context, id uuid.UUID) (GetFileRow, error)
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const groupByName = `-- name: GroupByName :one
+SELECT id FROM archive."group" WHERE name = lower(btrim($1::text))
+`
+
+func (q *Queries) GroupByName(ctx context.Context, name string) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, groupByName, name)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const hasPendingFiles = `-- name: HasPendingFiles :one
@@ -1586,7 +1597,7 @@ type LockFileRow struct {
 	Metadata  map[string]any
 	Status    string
 	Error     string
-	Access    *string
+	Access    *uuid.UUID
 	CreatedAt time.Time
 }
 
@@ -1622,7 +1633,7 @@ type LockPendingFileRow struct {
 	Metadata  map[string]any
 	Status    string
 	Error     string
-	Access    *string
+	Access    *uuid.UUID
 	CreatedAt time.Time
 }
 
@@ -1697,7 +1708,7 @@ SELECT id, role::text AS role, groups FROM archive.member WHERE email = $1::text
 type MemberByEmailRow struct {
 	ID     uuid.UUID
 	Role   string
-	Groups []string
+	Groups []uuid.UUID
 }
 
 func (q *Queries) MemberByEmail(ctx context.Context, email string) (MemberByEmailRow, error) {
@@ -1760,7 +1771,7 @@ type MembersRow struct {
 	ID     uuid.UUID
 	Email  string
 	Role   string
-	Groups []string
+	Groups []uuid.UUID
 }
 
 func (q *Queries) Members(ctx context.Context) ([]MembersRow, error) {
@@ -1821,7 +1832,7 @@ type NextPendingFileRow struct {
 	Metadata  map[string]any
 	Status    string
 	Error     string
-	Access    *string
+	Access    *uuid.UUID
 	CreatedAt time.Time
 }
 
@@ -1970,7 +1981,7 @@ type RenameFileRow struct {
 	Metadata  map[string]any
 	Status    string
 	Error     string
-	Access    *string
+	Access    *uuid.UUID
 	CreatedAt time.Time
 }
 
@@ -2006,7 +2017,7 @@ type ReplaceFileRow struct {
 	Metadata  map[string]any
 	Status    string
 	Error     string
-	Access    *string
+	Access    *uuid.UUID
 	CreatedAt time.Time
 }
 
@@ -2270,10 +2281,10 @@ func (q *Queries) Secrets(ctx context.Context, tableName string, ids []uuid.UUID
 }
 
 const setConnectionAccess = `-- name: SetConnectionAccess :exec
-UPDATE archive.connection c SET access = $1::text, updated_at = now() WHERE c.id = $2::uuid AND c.integration
+UPDATE archive.connection c SET access = $1::uuid, updated_at = now() WHERE c.id = $2::uuid AND c.integration
 `
 
-func (q *Queries) SetConnectionAccess(ctx context.Context, access *string, conn uuid.UUID) error {
+func (q *Queries) SetConnectionAccess(ctx context.Context, access *uuid.UUID, conn uuid.UUID) error {
 	_, err := q.db.Exec(ctx, setConnectionAccess, access, conn)
 	return err
 }
@@ -2319,6 +2330,42 @@ func (q *Queries) SetDue(ctx context.Context, arg SetDueParams) (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const setFileAccess = `-- name: SetFileAccess :one
+UPDATE archive.file SET access = $1::uuid WHERE id = $2::uuid
+RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at
+`
+
+type SetFileAccessRow struct {
+	ID        uuid.UUID
+	Hash      string
+	Name      string
+	MIME      string
+	Size      int64
+	Metadata  map[string]any
+	Status    string
+	Error     string
+	Access    *uuid.UUID
+	CreatedAt time.Time
+}
+
+func (q *Queries) SetFileAccess(ctx context.Context, access *uuid.UUID, iD uuid.UUID) (SetFileAccessRow, error) {
+	row := q.db.QueryRow(ctx, setFileAccess, access, iD)
+	var i SetFileAccessRow
+	err := row.Scan(
+		&i.ID,
+		&i.Hash,
+		&i.Name,
+		&i.MIME,
+		&i.Size,
+		&i.Metadata,
+		&i.Status,
+		&i.Error,
+		&i.Access,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const setFileContent = `-- name: SetFileContent :exec

@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -47,7 +48,7 @@ type File struct {
 	Metadata  map[string]any `json:"metadata"`
 	Status    string         `json:"status"`
 	Error     string         `json:"error,omitempty"`
-	Access    *string        `json:"access"`
+	Access    *uuid.UUID     `json:"access"`
 	CreatedAt time.Time      `json:"created_at"`
 }
 
@@ -58,7 +59,7 @@ const (
 )
 
 type fileRow interface {
-	generated.FileByKeyRow | generated.CreateFileRow | generated.GetFileRow | generated.RenameFileRow | generated.LockFileRow | generated.NextPendingFileRow | generated.LockPendingFileRow | generated.ReplaceFileRow
+	generated.FileByKeyRow | generated.CreateFileRow | generated.GetFileRow | generated.RenameFileRow | generated.LockFileRow | generated.NextPendingFileRow | generated.LockPendingFileRow | generated.ReplaceFileRow | generated.SetFileAccessRow
 }
 
 func fileOf[R fileRow](r R, err error) (*File, error) {
@@ -80,14 +81,31 @@ func fileName(name, hash string) string {
 	return name
 }
 
+// AddFile stores a file that the group access sees, by its id or its name, or everyone with "".
 func (a *Archive) AddFile(ctx context.Context, access, name string, r io.Reader) (*File, error) {
 	if _, err := signedIn(ctx); err != nil {
 		return nil, err
 	}
-	return a.fileAdd(ctx, coreAccess(access), name, r)
+	g, err := a.fileGroup(ctx, access)
+	if err != nil {
+		return nil, err
+	}
+	return a.fileAdd(ctx, g, name, r)
 }
 
-func (a *Archive) fileAdd(ctx context.Context, access *string, name string, r io.Reader) (*File, error) {
+// fileGroup is the id of the group access names, by its id or its name; nil for "".
+func (a *Archive) fileGroup(ctx context.Context, access string) (g *uuid.UUID, err error) {
+	if access == "" {
+		return nil, nil
+	}
+	err = a.sys(ctx, func(ctx context.Context) error {
+		g, err = a.groupID(ctx, access, false)
+		return err
+	})
+	return g, err
+}
+
+func (a *Archive) fileAdd(ctx context.Context, access *uuid.UUID, name string, r io.Reader) (*File, error) {
 	tmp, err := os.CreateTemp("", "archive-post-")
 	if err != nil {
 		return nil, err
@@ -103,7 +121,7 @@ func (a *Archive) fileAdd(ctx context.Context, access *string, name string, r io
 	return a.fileCommit(ctx, access, name, func() (io.ReadCloser, error) { return os.Open(tmp.Name()) })
 }
 
-func (a *Archive) fileCommit(ctx context.Context, access *string, name string, open func() (io.ReadCloser, error)) (*File, error) {
+func (a *Archive) fileCommit(ctx context.Context, access *uuid.UUID, name string, open func() (io.ReadCloser, error)) (*File, error) {
 	r, err := open()
 	if err != nil {
 		return nil, err
@@ -198,6 +216,26 @@ func (a *Archive) RenameFile(ctx context.Context, id uuid.UUID, name string) (*F
 			return nil, fmt.Errorf("file %s: %w", id, ErrNotFound)
 		case errors.As(err, &pe) && pe.Code == "23505":
 			return nil, fmt.Errorf("a file named %q with the same content is already here: %w", name, ErrConflict)
+		}
+		return f, err
+	})
+}
+
+// SetFileAccess gives file id to the group access, by its id or its name, or to everyone with "", as an editor
+// in both groups, or an owner, does.
+func (a *Archive) SetFileAccess(ctx context.Context, id uuid.UUID, access string) (*File, error) {
+	g, err := a.fileGroup(ctx, access)
+	if err != nil {
+		return nil, err
+	}
+	return coreDo(a, ctx, func(ctx context.Context) (*File, error) {
+		f, err := fileOf(a.st.db(ctx).SetFileAccess(ctx, g, id))
+		var pe *pgconn.PgError
+		switch {
+		case errors.Is(err, ErrNotFound):
+			return nil, fmt.Errorf("file %s: %w", id, ErrNotFound)
+		case errors.As(err, &pe) && pe.Code == "23505":
+			return nil, fmt.Errorf("a file by that name with the same content is already there: %w", ErrConflict)
 		}
 		return f, err
 	})
@@ -333,12 +371,28 @@ func (a *Archive) fileRoutes(mux *http.ServeMux) {
 			return 0, nil, err
 		}
 		var body struct {
-			Name string `json:"name"`
+			Name   *string         `json:"name"`
+			Access json.RawMessage `json:"access"`
 		}
 		if err := httpDecode(r, &body); err != nil {
 			return 0, nil, err
 		}
-		f, err := a.RenameFile(r.Context(), id, body.Name)
+		var f *File
+		if body.Name != nil {
+			if f, err = a.RenameFile(r.Context(), id, *body.Name); err != nil {
+				return 0, nil, err
+			}
+		}
+		if len(body.Access) > 0 {
+			var g *string
+			if err := json.Unmarshal(body.Access, &g); err != nil {
+				return 0, nil, fmt.Errorf("access: want a group's id or name, or null for everyone: %w", httpErrBadRequest)
+			}
+			f, err = a.SetFileAccess(r.Context(), id, deref(g))
+		}
+		if f == nil && err == nil {
+			f, err = a.GetFile(r.Context(), id)
+		}
 		return http.StatusOK, f, err
 	})
 	handle("POST /api/files/{id}/link", func(r *http.Request) (int, any, error) {
@@ -544,7 +598,11 @@ func (a *Archive) tusCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	meta := tusMetadata(r.Header.Get("Upload-Metadata"))
 	up := &tusUpload{ID: coreNewID(), Length: n, Name: cmp.Or(meta["filename"], meta["name"]), Role: ActorFrom(ctx).Role}
-	up.Access = coreAccess(meta["access"])
+	up.Access, err = a.fileGroup(ctx, meta["access"])
+	if err != nil {
+		httpWrite(w, 0, nil, err)
+		return
+	}
 	err = a.st.System(ctx, func(ctx context.Context) error {
 		return a.st.db(ctx).CreateUpload(ctx, generated.CreateUploadParams{ID: up.ID, Role: up.Role, Access: up.Access, Name: up.Name, Length: up.Length})
 	})

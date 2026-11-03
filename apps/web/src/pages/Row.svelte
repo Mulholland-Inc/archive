@@ -1,5 +1,5 @@
 <script>
-  import { Table2, Type, AlignLeft, CalendarDays, Hash, CircleCheck, ArrowUpRight, Paperclip, AtSign, DollarSign, MapPin, CircleDot, Fingerprint, ArrowLeft, Box } from '@lucide/svelte';
+  import { Table2, Type, AlignLeft, CalendarDays, Hash, CircleCheck, ArrowUpRight, Paperclip, AtSign, DollarSign, MapPin, CircleDot, Fingerprint, ArrowLeft, Box, Lock } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
   import Breadcrumbs from '../components/Breadcrumbs.svelte';
@@ -18,7 +18,9 @@
   import Stats from '../components/Stats.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import RowLink from '../components/RowLink.svelte';
-  import { ws, schema, rowOf, rowRelations, linkOf, tableOf, shownOf, titleOf } from '../lib/app.svelte.js';
+  import Chip from '../components/Chip.svelte';
+  import Select from '../components/Select.svelte';
+  import { ws, schema, groups, members, rowOf, rowRelations, linkOf, tableOf, baseOf, shownOf, titleOf, groupById, mayLimit, accessOptions, setAccess } from '../lib/app.svelte.js';
   import { show, relative } from '../lib/live.js';
 
   // One row of a view, a table or one of Archive's own, laid out like a table's page: its name, its fields as
@@ -26,6 +28,8 @@
   let { view: vid, id } = $props();
 
   schema.use();
+  groups.use();
+  members.use();
 
   const view = $derived(tableOf(vid));
   const fields = $derived(shownOf(view));
@@ -53,6 +57,10 @@
   const linked = $derived(view ? [...new Set(fields.map((c) => linkOf(view, c)).filter(Boolean))] : []);
   const empty = (v) => v == null || v === '' || (Array.isArray(v) && !v.length);
   const name = $derived(row ? titleOf(row, view) : '');
+  // Who sees the row: the group its access is, which is set on the table a view reads, one of the workspace's.
+  const base = $derived(tableOf(baseOf(view)));
+  const limited = $derived(Boolean(base?.columns.some((c) => c.name === 'access')) && ws().schema.includes(base));
+  const group = $derived(row?.access ? groupById(row.access) : null);
 </script>
 
 {#snippet topbar()}
@@ -75,6 +83,17 @@
       </Stack>
 
       <Stack gap="0">
+        {#if limited}
+          <Property label="Who sees it" icon={Lock}>
+            {#if mayLimit(row.access)}
+              <Select value={row.access ?? ''} options={accessOptions(row.access)} size="sm" variant="ghost" label="Who sees it" onchange={(v) => setAccess(base.id, row, v || null)} />
+            {:else if group}
+              <Chip size="sm" href={`/access/groups/${group.id}`}>{group.name}</Chip>
+            {:else}
+              <Text>Everyone</Text>
+            {/if}
+          </Property>
+        {/if}
         {#each fields as c (c.name)}
           <Property label={label(c.name)} icon={icons[c.type] ?? Type}>
             {#if empty(row[c.name])}<Text tone="tertiary">Empty</Text>

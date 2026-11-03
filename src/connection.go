@@ -232,7 +232,7 @@ func connectBack(id string) string {
 
 // level is what the caller may do in the archive: their member's level, viewer through a viewer-only token,
 // and their groups.
-func (a *Archive) level(ctx context.Context) (string, []string, error) {
+func (a *Archive) level(ctx context.Context) (string, []uuid.UUID, error) {
 	ac, err := signedIn(ctx)
 	if err != nil {
 		return "", nil, err
@@ -262,7 +262,7 @@ func (a *Archive) mayConnect(ctx context.Context, c *connect.Connector) error {
 // mayUse says whether a member at level lvl in groups may use the archive's integration c, with
 // archive.action: editors and owners, and of an integration narrowed to a group, only its members and the
 // owners. Everyone who sees its rows reads them; acting on the archive's account writes, as an editor does.
-func mayUse(c generated.ArchiveConnection, lvl string, groups []string) bool {
+func mayUse(c generated.ArchiveConnection, lvl string, groups []uuid.UUID) bool {
 	return lvl == "owner" || lvl == "editor" && (c.Access == nil || slices.Contains(groups, *c.Access))
 }
 
@@ -315,7 +315,7 @@ type Connection struct {
 	SyncAt   *time.Time `json:"sync_at"`
 	SyncedAt *time.Time `json:"synced_at"`
 	Items    int64      `json:"items"`
-	// Integration says it is the archive's; Access is the group it is narrowed to, "" for everyone; and
+	// Integration says it is the archive's; Access is the id of the group it is narrowed to, "" for everyone; and
 	// ConnectedBy who connected it last.
 	Integration bool   `json:"integration"`
 	Access      string `json:"access"`
@@ -433,8 +433,8 @@ func (a *Archive) connectionMine(ctx context.Context, id uuid.UUID) (generated.A
 	return c, nil
 }
 
-// SetAccess narrows the archive's integration id, and its rows, to the members of group, or opens them to
-// everyone with "", as an owner does.
+// SetAccess narrows the archive's integration id, and its rows, to the members of group, by its id or its
+// name, or opens them to everyone with "", as an owner does.
 func (a *Archive) SetAccess(ctx context.Context, id uuid.UUID, group string) error {
 	c, err := a.connectionMine(ctx, id)
 	switch {
@@ -442,22 +442,18 @@ func (a *Archive) SetAccess(ctx context.Context, id uuid.UUID, group string) err
 		return err
 	case !c.Integration:
 		return fmt.Errorf("only an integration is narrowed to a group; a personal connection is its owner's alone: %w", httpErrBadRequest)
-	case group != "" && !connectionGroupRe.MatchString(group):
-		return fmt.Errorf("access: want a group of 1-24 lowercase letters, digits or _, like finance: %w", httpErrBadRequest)
-	}
-	var access *string
-	if group != "" {
-		access = &group
 	}
 	return a.sys(ctx, func(ctx context.Context) error {
+		access, err := a.groupID(ctx, group, false)
+		if err != nil {
+			return err
+		}
 		if err := a.st.db(ctx).SetConnectionAccess(ctx, access, id); err != nil {
 			return err
 		}
 		return syncNarrow(ctx, a.st.Q(ctx), id, access)
 	})
 }
-
-var connectionGroupRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_]{0,23}$`)
 
 // connectionUpgrade makes the first connection of each integration from before there were integrations the
 // archive's; any other stays its member's own, as it was.
@@ -1098,7 +1094,7 @@ type syncDB struct {
 	q   *generated.Queries
 	db  generated.DBTX
 	id  uuid.UUID
-	acc *string
+	acc *uuid.UUID
 	now time.Time
 }
 
@@ -1331,7 +1327,7 @@ func (w *syncDB) gone(ctx context.Context, sql string, args ...any) error {
 }
 
 // syncNarrow gives every row connection id synced the access its connection now has.
-func syncNarrow(ctx context.Context, db generated.DBTX, id uuid.UUID, access *string) error {
+func syncNarrow(ctx context.Context, db generated.DBTX, id uuid.UUID, access *uuid.UUID) error {
 	for _, t := range slices.Sorted(maps.Keys(syncSchema)) {
 		if _, err := db.Exec(ctx, "UPDATE archive."+t+" SET access = $2 WHERE connection = $1 AND access IS DISTINCT FROM $2", id, access); err != nil {
 			return err
@@ -1769,7 +1765,7 @@ func (a *Archive) Action(ctx context.Context, name string, input any, pick strin
 			return nil, err
 		}
 		if !mayUse(mine[0], lvl, groups) {
-			return nil, fail(ErrForbidden, "only editors and owners use the archive's %s%s", p.Name, map[bool]string{true: ", and of the " + deref(mine[0].Access) + " group", false: ""}[mine[0].Access != nil])
+			return nil, fail(ErrForbidden, "only editors and owners use the archive's %s%s", p.Name, map[bool]string{true: ", and of the group it is narrowed to", false: ""}[mine[0].Access != nil])
 		}
 	}
 	switch {

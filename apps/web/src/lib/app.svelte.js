@@ -67,6 +67,8 @@ function shell(w) {
     folders: [],
     workflows: [],
     members: [],
+    groups: [],
+    usage: {},
     schema: [],
     archiveTables: [],
     names: {},
@@ -236,13 +238,14 @@ export const chats = resource({
   }
 });
 
-// The library's files, and its folders: every access group a file is in, and the empty ones made here.
+// The library's files, and its folders: the name of every group a file is limited to, and the empty ones made
+// here.
 export const library = resource({
-  tables: ['archive.file'],
+  tables: ['archive.file', 'archive.group'],
   load: async () => {
     const v = ws();
-    const list = await files(v.id);
-    v.library = list.map((f) => toFile(f, v.name));
+    const [list] = await Promise.all([files(v.id), groups.refresh()]);
+    v.library = list.map((f) => filed(toFile(f, v.name), v));
     v.folders = [...new Set([...v.library.map((f) => f.folder), ...v.folders])];
   }
 });
@@ -258,6 +261,27 @@ export const members = resource({
     const v = ws();
     const list = (await api('/auth/users', { workspace: v.id })) ?? [];
     v.members = list.map((p) => toMember(p, { ...app.user, user_id: app.user.id }));
+  }
+});
+
+// The groups, by name: rows of the group table, which everyone reads and owners write. Who is in one is each
+// member's groups, so they move with the members too.
+export const groups = resource({
+  tables: ['archive.group', 'archive.member'],
+  load: async () => {
+    const v = ws();
+    const list = (await api('/api/group?limit=1000', { workspace: v.id })) ?? [];
+    v.groups = list.map((g) => ({ id: g.id, name: g.name, description: g.description ?? '' })).sort((a, b) => a.name.localeCompare(b.name));
+  }
+});
+
+// Where a group is used, for its page: each table with how many rows have it as their access. It moves with any
+// row of any table that can have one.
+export const usage = resource({
+  tables: (c) => !c.table.startsWith('archive.') || !['archive.chat', 'archive.workflow_run', 'archive.revision', 'archive.token', 'archive.user', 'archive.workspace'].includes(c.table),
+  load: async (id) => {
+    const v = ws();
+    v.usage = { ...v.usage, [id]: await groupUses(id) };
   }
 });
 
@@ -547,7 +571,7 @@ export async function rowRelations(id, row) {
 
 export async function loadArchive(v = ws()) {
   v.loading = true;
-  await Promise.allSettled([chats.refresh(), library.refresh(), members.refresh(), workflows.refresh(), schema.refresh()]);
+  await Promise.allSettled([chats.refresh(), library.refresh(), members.refresh(), groups.refresh(), workflows.refresh(), schema.refresh()]);
   v.loading = false;
 }
 
@@ -618,7 +642,7 @@ export function isArchiveOwner() {
   return app.role === 'owner';
 }
 
-export async function invite({ emails, role }) {
+export async function invite({ emails, role, groups: ids = [] }) {
   const w = ws();
   const added = [];
   for (const email of emails) {
@@ -626,7 +650,9 @@ export async function invite({ emails, role }) {
     try {
       const people = await call('/auth/users', { method: 'POST', body: { email, role } });
       w.members = people.map((p) => toMember(p, { ...app.user, user_id: app.user.id }));
-      added.push(w.members.find((m) => m.email === email));
+      const m = w.members.find((x) => x.email === email);
+      if (m && ids.length) await setGroups(m, ids);
+      added.push(m);
     } catch (e) {
       await complain(e, `Couldn’t invite ${email}`);
     }
@@ -655,6 +681,111 @@ export async function setRole(member, role) {
   } catch (e) {
     member.role = before;
     complain(e, `Couldn’t change ${member.name}’s role`);
+  }
+}
+
+// Groups. A group is a row of the group table: an owner makes one, even empty, renames, describes and deletes
+// it. A member's groups are the ids of theirs, a column of their row; a row's access is the id of the group
+// that sees it, or null for everyone.
+
+export function groupById(id, w = ws()) {
+  return w?.groups.find((g) => g.id === id);
+}
+
+export const groupName = (id) => (id ? (groupById(id)?.name ?? 'Unknown group') : 'Everyone');
+
+export async function setGroups(member, next) {
+  const before = member.groups;
+  member.groups = [...new Set(next)];
+  try {
+    await call(`/api/member/${member.id}`, { method: 'PATCH', body: { groups: member.groups } });
+    return true;
+  } catch (e) {
+    member.groups = before;
+    complain(e, `Couldn’t change ${member.name}’s groups`);
+    return false;
+  }
+}
+
+// mayLimit says whether you may change who sees a row or file whose access is current: an editor in its group,
+// or of one everyone sees, or an owner. accessOptions are what you may give it to: everyone, and the groups you
+// are in, or every group for an owner.
+export function mayLimit(current) {
+  if (app.role === 'owner') return true;
+  const me = ws().members.find((m) => m.email === app.user.email);
+  return app.role === 'editor' && (!current || Boolean(me?.groups.includes(current)));
+}
+
+export function accessOptions(current) {
+  const me = ws().members.find((m) => m.email === app.user.email);
+  const mine = ws().groups.filter((g) => app.role === 'owner' || me?.groups.includes(g.id) || g.id === current);
+  return [{ value: '', label: 'Everyone' }, ...mine.map((g) => ({ value: g.id, label: g.name }))];
+}
+
+export const toggleGroup = (member, id) => setGroups(member, member.groups.includes(id) ? member.groups.filter((g) => g !== id) : [...member.groups, id]);
+
+// createGroup makes the group name, described, with the members whose ids are people in it; it is the group, or
+// null when it could not be made.
+export async function createGroup({ name, description = '', people = [] }) {
+  const w = ws();
+  let g;
+  try {
+    g = await call('/api/group', { method: 'POST', body: { name, description } });
+  } catch (e) {
+    complain(e, `Couldn’t make ${name || 'the group'}`);
+    return null;
+  }
+  const group = { id: g.id, name: g.name, description: g.description ?? '' };
+  if (!w.groups.some((x) => x.id === group.id)) w.groups = [...w.groups, group].sort((a, b) => a.name.localeCompare(b.name));
+  for (const m of w.members) if (people.includes(m.id)) await setGroups(m, [...m.groups, group.id]);
+  return group;
+}
+
+export async function updateGroup(group, change) {
+  const before = { name: group.name, description: group.description };
+  Object.assign(group, change);
+  try {
+    const g = await call(`/api/group/${group.id}`, { method: 'PATCH', body: change });
+    Object.assign(group, { name: g.name, description: g.description ?? '' });
+    return true;
+  } catch (e) {
+    Object.assign(group, before);
+    complain(e, `Couldn’t change ${before.name}`);
+    return false;
+  }
+}
+
+export async function deleteGroup(group) {
+  try {
+    await call(`/api/group/${group.id}`, { method: 'DELETE' });
+  } catch (e) {
+    complain(e, `Couldn’t delete ${group.name}`);
+    return false;
+  }
+  const w = ws();
+  w.groups = w.groups.filter((g) => g.id !== group.id);
+  for (const m of w.members) m.groups = m.groups.filter((g) => g !== group.id);
+  return true;
+}
+
+// groupUses is where the group id is a row's access: each table, as the catalog names it, with how many rows
+// you see there, and the connections narrowed to it. While it has any, it cannot be deleted.
+export async function groupUses(id) {
+  const rows = (await runCode(`return await archive.query("select * from archive.group_uses($1)", ${JSON.stringify(id)});`)) ?? [];
+  return rows.map((r) => ({ table: r.table, rows: Number(r.rows) }));
+}
+
+// setAccess gives the row id of table to the group access, or to everyone with null.
+export async function setAccess(table, row, access) {
+  const before = row.access;
+  row.access = access;
+  try {
+    await call(`/api/${encodeURIComponent(table)}/${row.id}`, { method: 'PATCH', body: { access } });
+    return true;
+  } catch (e) {
+    row.access = before;
+    complain(e, 'Couldn’t change who sees it');
+    return false;
   }
 }
 
@@ -872,12 +1003,11 @@ export async function removeChat(id) {
 
 export async function uploadFiles(list, folder) {
   const w = ws();
-  const groups = new Set(w.members.flatMap((m) => m.groups));
-  const access = folder && groups.has(folder) ? folder : undefined;
+  const access = w.groups.find((g) => g.name === folder)?.id;
   const added = [];
   for (const file of list) {
     try {
-      const f = toFile(await upload(file, access), w.name);
+      const f = filed(toFile(await upload(file, access), w.name), w);
       w.library.unshift(f);
       if (!w.folders.includes(f.folder)) w.folders.push(f.folder);
       added.push(f);
@@ -889,7 +1019,25 @@ export async function uploadFiles(list, folder) {
   return added;
 }
 
-// Folders are the access group a file is limited to ("Everyone" when it isn't). A new, empty one is MOCK
+// A file's folder is the name of the group it is limited to, or Everyone.
+function filed(f, w) {
+  f.folder = f.access ? (groupById(f.access, w)?.name ?? 'Unknown group') : 'Everyone';
+  return f;
+}
+
+// setFileAccess limits file to the group access, or opens it to everyone with null.
+export async function setFileAccess(file, access) {
+  const w = ws();
+  try {
+    const f = filed(toFile(await call(`/api/files/${file.id}`, { method: 'PATCH', body: { access } }), w.name), w);
+    Object.assign(file, { access: f.access, folder: f.folder });
+    if (!w.folders.includes(f.folder)) w.folders.push(f.folder);
+  } catch (e) {
+    complain(e, `Couldn’t change who sees ${file.name}`);
+  }
+}
+
+// Folders are the group a file is limited to ("Everyone" when it isn't). A new, empty one is MOCK
 // until a file is filed in it.
 export function addFolder(name) {
   const w = ws();

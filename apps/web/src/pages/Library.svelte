@@ -27,10 +27,11 @@
   import Skeleton from '../components/Skeleton.svelte';
   import FileInput from '../components/FileInput.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { ws, seedOf, uploadFiles, addFolder, downloadFile, openShare, library, members } from '../lib/app.svelte.js';
+  import { ws, seedOf, uploadFiles, addFolder, downloadFile, openShare, library, members, groups, mayLimit, accessOptions, setFileAccess } from '../lib/app.svelte.js';
 
   library.use();
   members.use();
+  groups.use();
   import { prompt } from '../lib/dialogs.svelte.js';
   import { route } from '../lib/router.svelte.js';
   import { fileItems, askAboutFile, renameFilePrompt as rename } from '../lib/menus.js';
@@ -227,7 +228,13 @@
       <FileTile file={open} />
       <Stack gap="0">
         <SettingsRow label="Kind"><Badge>{open.ext}</Badge></SettingsRow>
-        <SettingsRow label="Folder"><Text tone="secondary">{open.folder}</Text></SettingsRow>
+        <SettingsRow label="Who sees it">
+          {#if mayLimit(open.access)}
+            <Select value={open.access ?? ''} options={accessOptions(open.access)} size="sm" variant="ghost" label={`Who sees ${open.name}`} onchange={(v) => setFileAccess(open, v || null)} />
+          {:else}
+            <Text tone="secondary">{open.folder}</Text>
+          {/if}
+        </SettingsRow>
         <SettingsRow label="Added"><Text tone="secondary">{open.created ? new Date(open.created).toLocaleString() : open.modified}</Text></SettingsRow>
         {#if open.status && open.status !== 'done'}<SettingsRow label="Status"><Text tone="secondary">{open.status === 'pending' ? 'Still reading it' : open.status}</Text></SettingsRow>{/if}
         <SettingsRow label="Size"><Text tone="secondary">{open.size}</Text></SettingsRow>
