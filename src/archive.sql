@@ -604,15 +604,17 @@ CREATE TABLE archive.mail_attachment (
     message    uuid NOT NULL REFERENCES archive.mail_message ON DELETE CASCADE,
     filename   text,
     mime       text,
-    size       bigint
+    size       bigint,
+    text       text
 ) INHERITS (archive.object);
 CREATE INDEX mail_attachment_message_idx ON archive.mail_attachment (message);
 CREATE INDEX mail_attachment_connection_idx ON archive.mail_attachment (connection);
-COMMENT ON TABLE archive.mail_attachment IS 'A file attached to a message; its content stays in the mailbox. Read only; Archive syncs them
+COMMENT ON TABLE archive.mail_attachment IS 'A file attached to a message, with its words when it is a document Archive reads, like a PDF; its content stays in the mailbox. Read only; Archive syncs them
 icon: paperclip';
 COMMENT ON COLUMN archive.mail_attachment.message IS 'references mail_message';
 COMMENT ON COLUMN archive.mail_attachment.mime IS 'Its media type, like application/pdf';
 COMMENT ON COLUMN archive.mail_attachment.size IS 'Its size in bytes';
+COMMENT ON COLUMN archive.mail_attachment.text IS 'Its words, up to 64 KB, when it is a PDF, Word, Excel, PowerPoint or text file Archive read';
 COMMENT ON COLUMN archive.mail_attachment.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.doc_page (
@@ -1564,7 +1566,7 @@ CREATE TABLE archive.drive_file (
 CREATE INDEX drive_file_folder_idx ON archive.drive_file (folder);
 CREATE INDEX drive_file_owner_idx ON archive.drive_file (owner);
 CREATE INDEX drive_file_editor_idx ON archive.drive_file (editor);
-COMMENT ON TABLE archive.drive_file IS 'A file or folder of a drive you connected, like Google Drive or SharePoint; the text of a Google Doc, Sheet or Slides deck or a text file is kept, and other content stays there. Read only; Archive syncs them
+COMMENT ON TABLE archive.drive_file IS 'A file or folder of a drive you connected, like Google Drive or SharePoint, with its words when it is a document Archive reads, like a Google Doc, a PDF or a Word file; other content stays there. Read only; Archive syncs them
 icon: folder-open';
 COMMENT ON COLUMN archive.drive_file.kind IS 'file or folder';
 COMMENT ON COLUMN archive.drive_file.title IS 'Its name there';
@@ -1580,7 +1582,7 @@ COMMENT ON COLUMN archive.drive_file.editor IS 'references known_person; who cha
 COMMENT ON COLUMN archive.drive_file.editor_name IS 'Who changed it last, by name';
 COMMENT ON COLUMN archive.drive_file.made_at IS 'When it was made there';
 COMMENT ON COLUMN archive.drive_file.edited_at IS 'When it last changed there';
-COMMENT ON COLUMN archive.drive_file.text IS 'Its text, for a Google Doc, Sheet (its first sheet, as CSV) or Slides deck, or a text file, up to 64 KB';
+COMMENT ON COLUMN archive.drive_file.text IS 'Its words, up to 64 KB: a Google Doc''s, Sheet''s (its first sheet, as CSV) or Slides deck''s, or a PDF, Word, Excel, PowerPoint or text file''s up to 25 MB';
 COMMENT ON COLUMN archive.drive_file.connection IS 'references connection; the account it is from';
 COMMENT ON COLUMN archive.drive_file.stream IS 'What its connector syncs it as, like messages';
 COMMENT ON COLUMN archive.drive_file.source_id IS 'Its id there';

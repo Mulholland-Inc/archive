@@ -102,7 +102,8 @@ func init() {
 		},
 		Push: outlookPush,
 		Streams: []*Stream{{Name: "messages", Gap: time.Second, Pull: outlookMessages.pull, Table: "mail_message", Rows: outlookRows,
-			Doc: "Every message of every folder but Junk Email and Deleted Items, with its text, cut at 64 KB, and its attachments' names: " +
+			Doc: "Every message of every folder but Junk Email and Deleted Items, with its text, cut at 64 KB, its attachments' names, and the " +
+				"words of each PDF, Word, Excel, PowerPoint or text attachment up to 25 MB: " +
 				"listed whole the first time, 50 a page and a folder at a time, and then each folder's delta since, messages added, changed, " +
 				"moved or deleted. A folder made since is listed whole; one gone, or a delta Graph no longer keeps, lists the mailbox whole again."}},
 	})
@@ -195,13 +196,25 @@ func outlookRecords(c *Client, p graphPart, items []map[string]any) ([]Record, e
 			var atts struct {
 				Value []map[string]any `json:"value"`
 			}
-			err := c.Get(graphAPI+"/me/messages/"+url.PathEscape(id)+"/attachments?$select=name,contentType,size", &atts)
+			err := c.Get(graphAPI+"/me/messages/"+url.PathEscape(id)+"/attachments?$select=id,name,contentType,size,isInline", &atts)
 			if r := (*Refusal)(nil); errors.As(err, &r) && r.Status == http.StatusNotFound {
 				out[i] = Record{ID: id, Deleted: true}
 				return nil
 			}
 			if err != nil {
 				return err
+			}
+			for _, a := range atts.Value {
+				if str(a, "@odata.type") != "#microsoft.graph.fileAttachment" {
+					continue
+				}
+				size, _ := a["size"].(float64)
+				text, err := c.fileText(graphAPI+"/me/messages/"+url.PathEscape(id)+"/attachments/"+url.PathEscape(str(a, "id"))+"/$value",
+					str(a, "name"), str(a, "contentType"), int64(size))
+				if err != nil {
+					return err
+				}
+				a["text"] = text
 			}
 			m["attachments"] = atts.Value
 		}
@@ -242,7 +255,7 @@ func outlookRows(m map[string]any) *Row {
 	party("bcc", m["bccRecipients"])
 	party("reply_to", m["replyTo"])
 	for _, f := range objects(m["attachments"], "") {
-		r.child("mail_attachment", rowOf(map[string]any{"filename": str(f, "name"), "mime": str(f, "contentType"), "size": decimal(f["size"])}))
+		r.child("mail_attachment", rowOf(map[string]any{"filename": str(f, "name"), "mime": str(f, "contentType"), "size": decimal(f["size"]), "text": str(f, "text")}))
 	}
 	return r
 }

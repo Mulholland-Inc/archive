@@ -94,7 +94,8 @@ func init() {
 		},
 		Push: gmailPush,
 		Streams: []*Stream{{Name: "messages", Gap: 5 * time.Second, Pull: gmailMessages, Table: "mail_message", Rows: gmailRows,
-			Doc: "Every message but spam and trash, each as the message action returns it without its HTML, its text cut at 64 KB: " +
+			Doc: "Every message but spam and trash, each as the message action returns it without its HTML, its text cut at 64 KB, " +
+				"with the words of each PDF, Word, Excel, PowerPoint or text attachment up to 3 MB: " +
 				"listed whole the first time, 50 a page, and then the mailbox's history since, messages added, deleted or relabeled. " +
 				"A history Gmail no longer keeps, about a week's, lists the mailbox whole again."}},
 	})
@@ -235,6 +236,9 @@ func gmailRecords(c *Client, ids []string, gone map[string]bool) ([]Record, erro
 		m["text"] = clip(m["text"].(string), maxText)
 		delete(m, "html")
 		m["internalDate"], m["historyId"] = raw.InternalDate, raw.HistoryID
+		if err := gmailAttachmentText(c, raw.ID, m["attachments"].([]map[string]any)); err != nil {
+			return err
+		}
 		out[i] = Record{ID: raw.ID, Data: m}
 		return nil
 	})
@@ -248,6 +252,32 @@ func gmailRecords(c *Client, ids []string, gone map[string]bool) ([]Record, erro
 		}
 	}
 	return kept, nil
+}
+
+// gmailAttached is the largest attachment the messages stream reads the words of: what fits in the 5 MB a
+// Client reads, as Gmail sends it in base64.
+const gmailAttached = 3 << 20
+
+// gmailAttachmentText adds to each attachment of message id that Archive reads, like a PDF, its words.
+func gmailAttachmentText(c *Client, id string, atts []map[string]any) error {
+	for _, a := range atts {
+		name, mime, aid := str(a, "filename"), str(a, "mimeType"), str(a, "attachmentId")
+		size, _ := a["size"].(int)
+		if aid == "" || size > gmailAttached || Extract == nil || !textual(name, mime) {
+			continue
+		}
+		var body struct {
+			Data string `json:"data"`
+		}
+		err := c.Get(gmailAPI+"/messages/"+url.PathEscape(id)+"/attachments/"+url.PathEscape(aid), &body)
+		if Busy(err) {
+			return err
+		}
+		if err == nil {
+			a["text"] = bytesText(name, mime, gmailData(body.Data))
+		}
+	}
+	return nil
 }
 
 // gmailRows is a message as mail: its text, its headers' addresses as its parties, and its attachments. It was
@@ -265,7 +295,7 @@ func gmailRows(m map[string]any) *Row {
 		}
 	}
 	for _, f := range objects(m["attachments"], "") {
-		r.child("mail_attachment", rowOf(map[string]any{"filename": str(f, "filename"), "mime": str(f, "mimeType"), "size": decimal(f["size"])}))
+		r.child("mail_attachment", rowOf(map[string]any{"filename": str(f, "filename"), "mime": str(f, "mimeType"), "size": decimal(f["size"]), "text": str(f, "text")}))
 	}
 	return r
 }
@@ -299,8 +329,9 @@ type gmailPart struct {
 		Value string `json:"value"`
 	} `json:"headers"`
 	Body struct {
-		Size int    `json:"size"`
-		Data string `json:"data"`
+		Size         int    `json:"size"`
+		Data         string `json:"data"`
+		AttachmentID string `json:"attachmentId"`
 	} `json:"body"`
 	Parts []gmailPart `json:"parts"`
 }
@@ -323,7 +354,7 @@ func (m gmailRaw) flat(body bool) map[string]any {
 	walk = func(p gmailPart) {
 		switch {
 		case p.Filename != "":
-			atts = append(atts, map[string]any{"filename": p.Filename, "mimeType": p.MIMEType, "size": p.Body.Size})
+			atts = append(atts, map[string]any{"filename": p.Filename, "mimeType": p.MIMEType, "size": p.Body.Size, "attachmentId": p.Body.AttachmentID})
 		case p.MIMEType == "text/plain":
 			text.Write(gmailData(p.Body.Data))
 		case p.MIMEType == "text/html":
