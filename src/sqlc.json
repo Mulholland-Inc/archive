@@ -3,8 +3,8 @@
   "sql": [
     {
       "engine": "postgresql",
-      "schema": "archive.sql",
-      "queries": "archive.sql",
+      "schema": ["archive.sql", "main.sql"],
+      "queries": ["archive.sql", "main.sql"],
       "gen": {
         "go": {
           "package": "generated",

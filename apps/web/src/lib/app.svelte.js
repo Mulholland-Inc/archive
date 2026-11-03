@@ -129,13 +129,6 @@ export async function boot() {
   listen(app.archive);
   account.seen();
   loadArchive(ws());
-  canAdd();
-}
-
-function canAdd() {
-  api('/auth/workspaces', { workspace: app.archives[0]?.id })
-    .then(() => (app.canAdd = true))
-    .catch(() => (app.canAdd = false));
 }
 
 // Who you are and which archives you have, read again when your account, an archive's name or your role moves,
@@ -168,7 +161,7 @@ async function loadMe() {
     await switchArchive(me.workspace);
     go('/');
   } else if (!here) setWorkspace(app.archive);
-  canAdd();
+  app.canAdd = !!me.admin;
 }
 
 function leave() {
@@ -199,6 +192,8 @@ function setMe(me) {
   const name = me.actor.name || me.actor.email;
   app.user = { id: me.actor.user_id, name, first: name.split(/[\s@]+/)[0], email: me.actor.email, plan: me.role.charAt(0).toUpperCase() + me.role.slice(1), tone: 1 };
   app.role = me.role;
+  // Admins of this Archive make and delete archives, whichever archive they are in.
+  app.canAdd = !!me.admin;
   Object.assign(app.profile, { name, first: app.user.first });
 }
 

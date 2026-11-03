@@ -21,6 +21,7 @@ import (
 	"github.com/Mulholland-Inc/archive/generated"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // The schema: the Catalog is the tables and types a workspace has, read from Postgres, with what each column
@@ -1304,6 +1305,9 @@ func (s *pgStore) migrate(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("groups: %w", err)
 		}
+		if err := storeShed(ctx, tx); err != nil {
+			return fmt.Errorf("main tables: %w", err)
+		}
 		if len(ran) > 0 {
 			sj, _ := json.Marshal(ran)
 			if _, err := tx.Exec(ctx, "INSERT INTO archive.revision (hash, author, statements) VALUES ($1, 'archive', $2)", s.hash(), sj); err != nil {
@@ -1324,14 +1328,19 @@ func (s *pgStore) migrate(ctx context.Context) error {
 
 // scratch is the snapshot of Archive's schema that sql makes in a new database, which it drops after.
 func (s *pgStore) scratch(ctx context.Context, sql string) (pgSchema, error) {
+	return pgScratch(ctx, s.sys, s.cfg, sql)
+}
+
+// pgScratch is the snapshot of the schema that sql makes in a new database on sys's server, which it drops after.
+func pgScratch(ctx context.Context, sys *pgxpool.Pool, base *pgx.ConnConfig, sql string) (pgSchema, error) {
 	b := make([]byte, 8)
 	rand.Read(b)
 	name := "archive_scratch_" + hex.EncodeToString(b)
-	if _, err := s.sys.Exec(ctx, "CREATE DATABASE "+pgIdent(name)); err != nil {
+	if _, err := sys.Exec(ctx, "CREATE DATABASE "+pgIdent(name)); err != nil {
 		return nil, err
 	}
-	defer s.sys.Exec(context.WithoutCancel(ctx), "DROP DATABASE IF EXISTS "+pgIdent(name)+" WITH (FORCE)")
-	cfg := s.cfg.Copy()
+	defer sys.Exec(context.WithoutCancel(ctx), "DROP DATABASE IF EXISTS "+pgIdent(name)+" WITH (FORCE)")
+	cfg := base.Copy()
 	cfg.Database = name
 	c, err := pgx.ConnectConfig(ctx, cfg)
 	if err != nil {
@@ -1353,6 +1362,31 @@ func (s *pgStore) scratch(ctx context.Context, sql string) (pgSchema, error) {
 		sch = sch.ours()
 		return err
 	})
+}
+
+// storeShed drops the tables of the main database that a workspace made before they moved there still has,
+// while they are empty, as they are in every workspace but the first; a table with rows stays, so archive.sql
+// is not applied until someone looks.
+func storeShed(ctx context.Context, tx pgx.Tx) error {
+	for _, name := range slices.Sorted(maps.Keys(mainNames)) {
+		q := pgIdent("archive", name)
+		var table, rows bool
+		if err := tx.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", q).Scan(&table); err != nil || !table {
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT FROM ONLY "+q+")").Scan(&rows); err != nil {
+			return err
+		}
+		if !rows {
+			if _, err := tx.Exec(ctx, "DROP TABLE "+q+" CASCADE"); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // pgMigrate runs in tx what brings Archive's schema to want, unless that would lose data: then it returns

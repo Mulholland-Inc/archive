@@ -25,6 +25,7 @@ import (
 
 	"github.com/Mulholland-Inc/archive/generated"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -36,7 +37,8 @@ const cliUsage = `archive keeps all your stuff in one place, in Postgres tables 
 Usage:
   archive [-as email] [-workspace uuid] <command> ...
                                      every command acts as a user (default the first owner) of a
-                                     workspace (default the first one)
+                                     workspace (default the oldest one), and the workspace and admin
+                                     commands as an admin of this Archive (default the first one)
 
   archive serve [-addr :8080]        serve the HTTP API (/api), sign-in (/auth) and MCP (/mcp) for the web app
   archive mcp                        serve MCP over stdio
@@ -84,7 +86,8 @@ Usage:
                                      add a row to the member table, which invites them: their first
                                      sign-in with a provider under that verified email links them,
                                      and one sign-in reaches all of their workspaces; the first one
-                                     is an owner. Change roles and groups with archive set member
+                                     is an owner, and on a new install this Archive's admin too.
+                                     Change roles and groups with archive set member
   archive user remove <email>        delete their member row, which takes them out of the workspace
                                      with their tokens and role; the last owner stays
   archive token create [-name n] [-expires 720h] [-viewer]
@@ -98,12 +101,17 @@ Usage:
                                      -icon and -color are how the web app shows it
   archive workspace list
   archive workspace delete <uuid>    drop a workspace: its database and its roles
+  archive admin add <email>          make a user an admin of this Archive: admins make and delete
+                                     workspaces, whichever workspaces they are in
+  archive admin remove <email>       take that away; the last admin stays
+  archive admin list
 
 Environment:
   DATABASE_URL       Postgres 18, required, as a role with CREATEROLE and CREATEDB, like the one
                      docker compose up -d starts; several instances can share one when they
-                     share ARCHIVE_SECRET_KEY and ARCHIVE_BLOB_URL; every other workspace gets its own
-                     database on the same server
+                     share ARCHIVE_SECRET_KEY and ARCHIVE_BLOB_URL. Its database is the main one, with
+                     what every workspace shares: the workspaces, users, admins and tokens; each
+                     workspace gets a database of its own, archive_<id>, on the same server
   ARCHIVE_SECRET_KEY 32-byte key (hex or base64) for secret values and the Postgres role password,
                      the same on every instance; unset uses ./data/secret.key, for one instance
   ARCHIVE_URL        public base URL of the web app, which runs on its own as static files,
@@ -111,7 +119,7 @@ Environment:
                      sign-in, MCP, webhooks, file links and OAuth redirects are on the same URL with
                      app. made api., like https://api.archive.dev for https://app.archive.dev, or on
                      http://localhost:<port> while it is http://localhost, when requests from this
-                     machine are signed in as the first owner
+                     machine are signed in as the first admin
   ARCHIVE_BLOB_URL   gs://bucket/prefix for GCS as the service account of the Google Cloud metadata server;
                      unset stores files in ./data/blobs
   ARCHIVE_GOOGLE     https://<client id>:<client secret>@accounts.google.com
@@ -245,31 +253,66 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 		return err
 	}
 	defer h.Close()
-	a, release, err := h.acquire(ctx, *workspace)
-	if err != nil {
-		return err
-	}
-	defer release()
-	var ac *Actor
-	if cmd != "serve" {
-		if ac, err = a.CLIActor(ctx, *as); err != nil {
-			return err
-		}
-	}
-	if ac == nil && cmd != "serve" && cmd != "types" && cmd != "user" && (cmd != "schema" || pos[0] != "show") {
-		return errors.New("no users yet: add the first owner with archive user add <email>")
-	}
-	ctx = withArchive(WithActor(ctx, ac), a)
 	out := func(v any, err error) error {
 		if err != nil {
 			return err
 		}
 		return cliJSON(stdout, v)
 	}
-
 	switch cmd {
 	case "serve":
-		return cliServe(ctx, h, a, *addr)
+		return cliServe(ctx, h, *addr)
+	case "workspace", "admin":
+		// These are this Archive's, not a workspace's: they act as an admin, the first one unless -as says.
+		ac, err := cliAdmin(ctx, h, *as, cmd+" "+pos[0])
+		if err != nil {
+			return err
+		}
+		ctx = WithActor(ctx, ac)
+		if cmd == "admin" {
+			return cliAdmins(ctx, h, pos, out)
+		}
+		var look WorkspaceLook
+		if *typ != "" {
+			look.Type = typ
+		}
+		if *icon != "" {
+			look.Icon = icon
+		}
+		if *color != "" {
+			c, err := strconv.ParseInt(*color, 10, 16)
+			if err != nil {
+				return fmt.Errorf("-color %q: want a tint from 0 to 7", *color)
+			}
+			look.Color = new(int16(c))
+		}
+		return cliWorkspace(ctx, h, cmd, pos, look, out)
+	}
+	if *workspace == "" {
+		w, err := h.q().FirstWorkspace(ctx)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errors.New("no workspaces: an admin adds one with archive workspace add <name> <owner email>")
+		}
+		if err != nil {
+			return err
+		}
+		*workspace = w.ID.String()
+	}
+	a, release, err := h.acquire(ctx, *workspace)
+	if err != nil {
+		return err
+	}
+	defer release()
+	ac, err := a.CLIActor(ctx, *as)
+	if err != nil {
+		return err
+	}
+	if ac == nil && cmd != "types" && cmd != "user" && (cmd != "schema" || pos[0] != "show") {
+		return errors.New("no users yet: add the first owner with archive user add <email>")
+	}
+	ctx = withArchive(WithActor(ctx, ac), a)
+
+	switch cmd {
 	case "mcp":
 		return mcpServer(a, ac).Run(ctx, &mcp.StdioTransport{})
 	case "types":
@@ -305,22 +348,6 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 		return cliFile(ctx, a, pos, *access, *output, *limit, *after, stdout, out)
 	case "user", "token":
 		return cliAuth(ctx, a, cmd, pos, *name, *role, *viewer, *expires, out)
-	case "workspace":
-		var look WorkspaceLook
-		if *typ != "" {
-			look.Type = typ
-		}
-		if *icon != "" {
-			look.Icon = icon
-		}
-		if *color != "" {
-			c, err := strconv.ParseInt(*color, 10, 16)
-			if err != nil {
-				return fmt.Errorf("-color %q: want a tint from 0 to 7", *color)
-			}
-			look.Color = new(int16(c))
-		}
-		return cliWorkspace(ctx, h, cmd, pos, look, out)
 	case "list":
 		where := map[string]any{}
 		for _, kv := range pos[1:] {
@@ -380,7 +407,7 @@ func cliCheckCommand(cmd string, pos []string) error {
 	n, ok := map[string]int{
 		"serve": 0, "mcp": 0, "types": 0, "run": 1, "schema": 1, "list": 1, "create": 1,
 		"get": 2, "delete": 2, "set": 2, "update": 2,
-		"user": 2, "token": 1, "file": 1, "search": 1, "workspace": 1,
+		"user": 2, "token": 1, "file": 1, "search": 1, "workspace": 1, "admin": 1,
 	}[cmd]
 	if !ok {
 		return fmt.Errorf("unknown command %q (see archive help)", cmd)
@@ -409,6 +436,61 @@ func cliAuth(ctx context.Context, a *Archive, cmd string, pos []string, name, ro
 			}
 			return a.RevokeToken(ctx, id)
 		}
+	}
+	return cliErrUsage
+}
+
+// cliAdmin is who an instance command acts as: the user with the email, or the first admin. While this Archive
+// has no admin, as when its first workspace's owners had no users when it moved, archive admin add makes one,
+// since the command line already has the database.
+func cliAdmin(ctx context.Context, h *Hub, email, cmd string) (*Actor, error) {
+	var u generated.ArchiveUser
+	var err error
+	if email == "" {
+		u, err = h.q().FirstAdmin(ctx)
+	} else if email, err = authEmail(email); err == nil {
+		u, err = h.q().UserByEmail(ctx, email)
+	}
+	if errors.Is(err, pgx.ErrNoRows) && email == "" {
+		if cmd != "admin add" {
+			return nil, errors.New("this Archive has no admin yet: add the first owner with archive user add <email>, or name one with archive admin add <email>")
+		}
+		return nil, nil
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("user %s: %w", email, ErrNotFound)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &Actor{UserID: u.ID, Email: u.Email, Name: u.Name}, nil
+}
+
+func cliAdmins(ctx context.Context, h *Hub, pos []string, out func(any, error) error) error {
+	switch {
+	case pos[0] == "list":
+		return out(h.Admins(ctx))
+	case len(pos) < 2:
+	case pos[0] == "add" && ActorFrom(ctx) == nil:
+		email, err := authEmail(pos[1])
+		if err != nil {
+			return err
+		}
+		u, err := h.q().UserByEmail(ctx, email)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("user %s: %w; add them to a workspace first", email, ErrNotFound)
+		}
+		if err == nil {
+			err = h.q().AdminIfNone(ctx, u.ID)
+		}
+		if err != nil {
+			return err
+		}
+		return out(userBy(ctx, h, (*generated.Queries).UserByID, u.ID))
+	case pos[0] == "add":
+		return out(h.SetAdmin(ctx, pos[1], true))
+	case pos[0] == "remove":
+		return out(h.SetAdmin(ctx, pos[1], false))
 	}
 	return cliErrUsage
 }
@@ -616,7 +698,7 @@ func cliMigrate(ctx context.Context, a *Archive, srcs [][2]string, confirm strin
 	return ms, nil
 }
 
-func cliServe(ctx context.Context, h *Hub, a *Archive, addr string) error {
+func cliServe(ctx context.Context, h *Hub, addr string) error {
 	_, port, _ := net.SplitHostPort(addr)
 	if err := h.urls(cmp.Or(port, "80")); err != nil {
 		return err
@@ -625,13 +707,13 @@ func cliServe(ctx context.Context, h *Hub, a *Archive, addr string) error {
 	if err != nil {
 		return err
 	}
-	if none, err := generated.New(a.st.sys).NoMembers(ctx); err != nil {
+	if _, err := h.q().FirstAdmin(ctx); errors.Is(err, pgx.ErrNoRows) {
+		fmt.Fprintln(os.Stderr, "archive: no users yet; add the first owner, who is this Archive's admin, with archive user add <email>")
+	} else if err != nil {
 		return err
-	} else if none {
-		fmt.Fprintln(os.Stderr, "archive: no users yet; add the first owner with archive user add <email>")
 	}
 	if h.localApp() {
-		fmt.Fprintf(os.Stderr, "archive: %s is on this machine, so requests from this machine are signed in as the first owner\n", h.app)
+		fmt.Fprintf(os.Stderr, "archive: %s is on this machine, so requests from this machine are signed in as the first admin\n", h.app)
 	} else if len(si.configs) == 0 {
 		fmt.Fprintln(os.Stderr, "archive: no sign-in provider is set, so nobody can sign in to the web app; set ARCHIVE_GOOGLE, ARCHIVE_MICROSOFT, ARCHIVE_SLACK or ARCHIVE_GITHUB (see archive help)")
 	}

@@ -41,7 +41,6 @@ type Hub struct {
 	hints Hints
 	app   string
 	api   string
-	one   string
 	tasks *hubTasks
 	live  *liveHub
 	// connect are the connectors this server has an OAuth client for (connection.go).
@@ -174,9 +173,9 @@ func openHub(ctx context.Context, dsn, dir string) (*Hub, error) {
 	if h.main, err = storePool(ctx, pg, storeSysConns, nil, nil); err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
-	if err := h.register(ctx); err != nil {
+	if err := h.migrate(ctx); err != nil {
 		h.Close()
-		return nil, fmt.Errorf("open store: %w", err)
+		return nil, fmt.Errorf("main database: %w", err)
 	}
 	return h, nil
 }
@@ -197,49 +196,70 @@ func (h *Hub) urls(port string) error {
 	return nil
 }
 
-func storeUndefined(err error) bool {
-	var pe *pgconn.PgError
-	return errors.As(err, &pe) && (pe.Code == "42P01" || pe.Code == "3F000")
-}
+// mainLock is the lock a process holds on the main database while it brings it to main.sql, so processes that
+// start at once do it one at a time.
+const mainLock = 7274
 
-func (h *Hub) register(ctx context.Context) error {
-	q := h.q()
-	// The first workspace's store migrates the main database, so until it opened, read only what was always there.
-	first, err := q.FirstWorkspaceKey(ctx)
-	fresh := errors.Is(err, pgx.ErrNoRows) || storeUndefined(err)
-	if err != nil && !fresh {
-		return err
-	}
-	row := generated.ArchiveWorkspace{ID: first.ID, Name: first.Name, Key: first.Key, CreatedAt: first.CreatedAt, Type: generated.ArchiveWorkspaceTypePersonal}
-	var key []byte
-	if fresh {
-		key = make([]byte, 32)
-		rand.Read(key)
-		row = generated.ArchiveWorkspace{ID: coreNewID(), Name: "Archive", Type: generated.ArchiveWorkspaceTypePersonal}
-	} else if key, err = h.unwrap(row); err != nil {
-		return err
-	}
-	h.one = row.ID.String()
-	a, err := h.openArchive(ctx, row, key)
+// migrate brings the main database to main.sql at startup, before any workspace opens. An Archive from before
+// the main database held only what every workspace shares still has its first workspace there, which moves
+// out to a database of its own first (moveFirst). A new install, with no one and no workspace yet, starts with
+// one workspace, whose first member becomes the admin.
+func (h *Hub) migrate(ctx context.Context) error {
+	conn, err := h.main.Acquire(ctx)
 	if err != nil {
 		return err
 	}
-	if fresh {
-		r, err := q.CreateWorkspace(ctx, generated.CreateWorkspaceParams{ID: row.ID, Name: row.Name, Key: h.wrap(h.one, key), Type: row.Type})
-		if errors.Is(err, pgx.ErrNoRows) {
-			r, err = q.FirstWorkspace(ctx)
-		}
+	defer conn.Release()
+	q := generated.New(conn)
+	if err := q.AdvisoryLock(ctx, mainLock); err != nil {
+		return err
+	}
+	defer q.AdvisoryUnlock(context.WithoutCancel(ctx), mainLock)
+	if err := h.moveFirst(ctx, conn.Conn()); err != nil {
+		return err
+	}
+	at, err := q.MainRevision(ctx)
+	if err != nil && !storeUndefined(err) {
+		return err
+	}
+	if at != mainHash() {
+		want, err := pgScratch(ctx, h.main, h.pg, mainSchema)
 		if err != nil {
-			a.Close()
+			return fmt.Errorf("main.sql: %w", err)
+		}
+		if err := pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error { return mainMigrate(ctx, tx, want) }); err != nil {
 			return err
 		}
-		a.ws = r
 	}
-	ready := make(chan struct{})
-	close(ready)
-	h.open[h.one] = &hubEntry{ready: ready, a: a}
-	a.afterOpen(ctx)
-	return nil
+	fresh, err := q.NoUsers(ctx)
+	if err != nil || !fresh {
+		return err
+	}
+	_, err = h.createWorkspace(ctx, "Archive", "", WorkspaceLook{})
+	return err
+}
+
+// mainMigrate brings the main database to want, main.sql's snapshot, in tx, and stamps it with main.sql's hash.
+// It runs nothing that would delete data, and says what instead.
+func mainMigrate(ctx context.Context, tx pgx.Tx, want pgSchema) error {
+	lost, err := pgMigrate(ctx, tx, want)
+	if err != nil {
+		return fmt.Errorf("main.sql: %w", err)
+	}
+	if len(lost) > 0 {
+		return fmt.Errorf("main.sql not applied, it would delete data:\n  %s", strings.Join(lost, "\n  "))
+	}
+	return generated.New(tx).InsertMainRevision(ctx, mainHash())
+}
+
+func mainHash() string {
+	h := sha256.Sum256([]byte(mainSchema))
+	return hex.EncodeToString(h[:])
+}
+
+func storeUndefined(err error) bool {
+	var pe *pgconn.PgError
+	return errors.As(err, &pe) && (pe.Code == "42P01" || pe.Code == "3F000")
 }
 
 func (h *Hub) Close() {
@@ -278,12 +298,9 @@ func (h *Hub) unwrap(row generated.ArchiveWorkspace) ([]byte, error) {
 	return k, nil
 }
 
-func (h *Hub) database(id string) string {
-	if id == h.one {
-		return h.pg.Database
-	}
-	return "archive_" + id
-}
+// database is the name of a workspace's database, on the main database's server. The main database is no
+// workspace's.
+func (h *Hub) database(id string) string { return "archive_" + id }
 
 func (h *Hub) openArchive(ctx context.Context, row generated.ArchiveWorkspace, key []byte) (*Archive, error) {
 	id := row.ID.String()
@@ -308,7 +325,6 @@ func (h *Hub) openArchive(ctx context.Context, row generated.ArchiveWorkspace, k
 }
 
 func (h *Hub) acquire(ctx context.Context, short string) (*Archive, func(), error) {
-	short = cmp.Or(short, h.one)
 	if _, err := uuid.Parse(short); err != nil {
 		return nil, nil, fmt.Errorf("workspace %q: %w", short, ErrNotFound)
 	}
@@ -351,7 +367,7 @@ func (h *Hub) acquire(ctx context.Context, short string) (*Archive, func(), erro
 func (h *Hub) done(short string, e *hubEntry) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if e.users--; e.users > 0 || short == h.one || e.a == nil {
+	if e.users--; e.users > 0 || e.a == nil {
 		return
 	}
 	e.idle = time.AfterFunc(hubIdle, func() {
@@ -805,12 +821,9 @@ func localHost(host string) bool {
 	return host == "localhost" || ip != nil && ip.IsLoopback()
 }
 
+// localUser signs a request from this machine in as the first admin, while the web app is on localhost.
 func (h *Hub) localUser(ctx context.Context, want string) (*Archive, *Actor, func(), error) {
-	one, err := uuid.Parse(h.one)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	u, err := h.q().FirstUser(ctx, one)
+	u, err := h.q().FirstAdmin(ctx)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil, nil, fmt.Errorf("no users yet; add the first owner with archive user add <email>: %w", ErrUnauthorized)
 	}
@@ -950,16 +963,55 @@ func (a *Archive) workspaceAdmin(ctx context.Context) (*Actor, error) {
 	return ac, nil
 }
 
+// admin says whether whoever asks is an admin of this Archive, by their user in the main database, in whichever
+// workspace they ask from. A read-only token is never one.
 func (h *Hub) admin(ctx context.Context) error {
 	ac, err := authUser(ctx)
 	if err != nil {
 		return err
 	}
-	a := archiveFrom(ctx)
-	if a == nil || a.ws.ID.String() != h.one || !a.owner(ctx, ac.UserRole) {
-		return fmt.Errorf("only instance admins, the owners of the first workspace, do this: %w", ErrForbidden)
+	u, err := h.q().UserByID(ctx, ac.UserID)
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && !u.Admin {
+		return fmt.Errorf("only admins of this Archive do this: %w", ErrForbidden)
 	}
-	return nil
+	return err
+}
+
+// Admins are the people who run this Archive.
+func (h *Hub) Admins(ctx context.Context) ([]User, error) {
+	if err := h.admin(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := h.q().Admins(ctx)
+	out := []User{}
+	for _, r := range rows {
+		out = append(out, User(r))
+	}
+	return out, err
+}
+
+// SetAdmin makes the person with the email an admin, or no longer one; the last admin stays one.
+func (h *Hub) SetAdmin(ctx context.Context, email string, admin bool) (*User, error) {
+	if err := h.admin(ctx); err != nil {
+		return nil, err
+	}
+	email, err := authEmail(email)
+	if err != nil {
+		return nil, err
+	}
+	r, err := h.q().SetAdmin(ctx, admin, email)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if _, err := h.q().UserByEmail(ctx, email); err != nil {
+			return nil, fmt.Errorf("user %s: %w", email, ErrNotFound)
+		}
+		return nil, fmt.Errorf("%s is the last admin of this Archive: %w", email, ErrConflict)
+	}
+	if err != nil {
+		return nil, err
+	}
+	u := User(r)
+	h.liveUser(ctx, u.ID)
+	return &u, nil
 }
 
 func workspaceOut(r generated.ArchiveWorkspace) Workspace {
@@ -982,6 +1034,9 @@ func (h *Hub) AddWorkspace(ctx context.Context, name, owner string, look Workspa
 	if err := h.admin(ctx); err != nil {
 		return nil, err
 	}
+	if _, err := authEmail(owner); err != nil {
+		return nil, err
+	}
 	r, err := h.createWorkspace(ctx, name, owner, look)
 	if err != nil {
 		return nil, err
@@ -1000,9 +1055,6 @@ func (h *Hub) DeleteWorkspace(ctx context.Context, id string) error {
 	}
 	if err != nil {
 		return fmt.Errorf("workspace %q: %w", id, ErrNotFound)
-	}
-	if id == h.one {
-		return fmt.Errorf("the first workspace holds the instance admins and cannot be deleted: %w", ErrConflict)
 	}
 	tell := h.liveMembers(ctx, ws)
 	h.forget(id)
@@ -1077,8 +1129,11 @@ func (h *Hub) createWorkspace(ctx context.Context, name, owner string, look Work
 	if typ == nil {
 		typ = new(generated.ArchiveWorkspaceTypePersonal)
 	}
-	if owner, err = authEmail(owner); err != nil {
-		return row, err
+	// A new install's first workspace has no owner yet: the first archive user add is.
+	if owner != "" {
+		if owner, err = authEmail(owner); err != nil {
+			return row, err
+		}
 	}
 	short := id.String()
 	key := make([]byte, 32)
@@ -1117,7 +1172,9 @@ func (h *Hub) createWorkspace(ctx context.Context, name, owner string, look Work
 	if err != nil {
 		return fail(err)
 	}
-	_, err = a.AddUser(context.Background(), owner, "", "owner")
+	if owner != "" {
+		_, err = a.AddUser(context.Background(), owner, "", "owner")
+	}
 	release()
 	if err != nil {
 		return fail(err)
