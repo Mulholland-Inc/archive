@@ -1,10 +1,13 @@
 package connect
 
 import (
+	"cmp"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"golang.org/x/oauth2"
 )
@@ -15,7 +18,12 @@ import (
 // so com.intuit.quickbooks.accounting is all of it, and the actions only read. The callback names the
 // company, realmId, which every call needs; a person connects one company at a time, and connects again for
 // another. Intuit replaces the refresh token about once a day.
-// It syncs nothing until its entities are mapped into the tables of archive.sql; its push waits for that too.
+//
+// It syncs the books into the ledger tables: the chart of accounts, customers, vendors, employees, items, and
+// every kind of transaction with its lines, a stream each. Each is listed whole the first time, 1000 a page,
+// the inactive too; after that Intuit's change data capture (CDC) says what changed since the last sync began,
+// deleted too, as long as that was within 30 days, and a stream whose last sync is older, or which changed
+// more than CDC answers at once, is listed whole again. Its pushes say which company changed.
 func init() {
 	Register(&Connector{
 		ID: "quickbooks", Name: "QuickBooks", Integration: true, Env: "ARCHIVE_QUICKBOOKS", Host: "https://appcenter.intuit.com",
@@ -87,7 +95,227 @@ func init() {
 				}),
 		},
 		Push: quickbooksPush,
+		Streams: []*Stream{
+			qboStream("accounts", "Account", "The chart of accounts", "ledger_account", qboAccountRows),
+			qboStream("customers", "Customer", "Every customer", "ledger_contact", qboContactRows),
+			qboStream("vendors", "Vendor", "Every vendor", "ledger_contact", qboContactRows),
+			qboStream("employees", "Employee", "Every employee", "ledger_contact", qboContactRows),
+			qboStream("items", "Item", "Every product and service", "ledger_item", qboItemRows),
+			qboStream("invoices", "Invoice", "Every invoice", "ledger_entry", qboEntryRows),
+			qboStream("payments", "Payment", "Every payment a customer made", "ledger_entry", qboEntryRows),
+			qboStream("sales_receipts", "SalesReceipt", "Every sales receipt", "ledger_entry", qboEntryRows),
+			qboStream("credit_memos", "CreditMemo", "Every credit memo", "ledger_entry", qboEntryRows),
+			qboStream("refund_receipts", "RefundReceipt", "Every refund receipt", "ledger_entry", qboEntryRows),
+			qboStream("estimates", "Estimate", "Every estimate", "ledger_entry", qboEntryRows),
+			qboStream("bills", "Bill", "Every bill", "ledger_entry", qboEntryRows),
+			qboStream("bill_payments", "BillPayment", "Every bill payment", "ledger_entry", qboEntryRows),
+			qboStream("vendor_credits", "VendorCredit", "Every vendor credit", "ledger_entry", qboEntryRows),
+			qboStream("purchases", "Purchase", "Every expense, check and credit card charge", "ledger_entry", qboEntryRows),
+			qboStream("purchase_orders", "PurchaseOrder", "Every purchase order", "ledger_entry", qboEntryRows),
+			qboStream("deposits", "Deposit", "Every bank deposit", "ledger_entry", qboEntryRows),
+			qboStream("transfers", "Transfer", "Every transfer between accounts", "ledger_entry", qboEntryRows),
+			qboStream("journal_entries", "JournalEntry", "Every journal entry", "ledger_entry", qboEntryRows),
+		},
 	})
+}
+
+// qboPage is the most a query answers, and CDC too.
+const qboPage = 1000
+
+// qboCDC is how far back CDC reaches: 30 days, less a day to spare.
+const qboCDC = 29 * 24 * time.Hour
+
+// qboNamed are the entities a query lists only the active of unless asked for the inactive too.
+var qboNamed = map[string]bool{"Account": true, "Customer": true, "Vendor": true, "Employee": true, "Item": true}
+
+// qboKeyed are the entities whose ids are only theirs, kept with the entity's name before them, like
+// Customer:12, as a customer and a vendor may have one id and share a table.
+var qboKeyed = map[string]bool{"Customer": true, "Vendor": true, "Employee": true}
+
+// qboCursor is where a stream is: Since when the sync its records are as of began, which the next asks CDC
+// from, and while a listing is under way, At its next start position and Began when it began.
+type qboCursor struct {
+	Since string `json:"since,omitempty"`
+	At    int    `json:"at,omitempty"`
+	Began string `json:"began,omitempty"`
+}
+
+// qboStream is a stream of entity into table, listed whole and then by CDC.
+func qboStream(name, entity, what, table string, rows func(map[string]any) *Row) *Stream {
+	return &Stream{Name: name, Gap: time.Second, Table: table, Rows: rows,
+		Doc: what + ", as a query of " + entity + " answers, the inactive too: listed whole the first time, 1000 a page, and then what " +
+			"CDC says changed since the sync before, deleted too, or listed whole again when that was over 29 days before.",
+		Pull: func(c *Client, cursor string) (*Page, error) {
+			var cur qboCursor
+			if err := cursorOf(cursor, &cur); err != nil {
+				return nil, err
+			}
+			now := time.Now().Add(-time.Minute).UTC()
+			if since := stamp(cur.Since); cur.Began == "" && !since.IsZero() && now.Sub(since) < qboCDC {
+				var v any
+				q := url.Values{"entities": {entity}, "changedSince": {since.Format(time.RFC3339)}}
+				if err := qboGet(c, entity, "/cdc?"+q.Encode(), &v); err != nil {
+					return nil, err
+				}
+				items := objects(v, entity)
+				// CDC answers at most 1000: more changed than that is listed whole instead.
+				if len(items) < qboPage {
+					page := &Page{Records: qboRecords(entity, items)}
+					page.Cursor = cursorFor(qboCursor{Since: now.Format(time.RFC3339)})
+					return page, nil
+				}
+			}
+			if cur.Began == "" {
+				cur = qboCursor{At: 1, Began: now.Format(time.RFC3339)}
+			}
+			q := "SELECT * FROM " + entity
+			if qboNamed[entity] {
+				q += " WHERE Active IN (true, false)"
+			}
+			// Pages are in the order of ids, so a record made while the listing runs comes last; a company that
+			// does not sort an entity by id lists it in its own order.
+			page := fmt.Sprintf(" STARTPOSITION %d MAXRESULTS %d", cur.At, qboPage)
+			var v any
+			err := qboGet(c, entity, "/query?query="+url.QueryEscape(q+" ORDERBY Id"+page), &v)
+			if u := (*Unsupported)(nil); errors.As(err, &u) {
+				v, err = nil, qboGet(c, entity, "/query?query="+url.QueryEscape(q+page), &v)
+			}
+			if err != nil {
+				return nil, err
+			}
+			items := objects(v, entity)
+			out := &Page{Full: true, Records: qboRecords(entity, items), More: len(items) >= qboPage}
+			if out.More {
+				cur.At += len(items)
+			} else {
+				cur = qboCursor{Since: cur.Began}
+			}
+			out.Cursor = cursorFor(cur)
+			return out, nil
+		}}
+}
+
+// qboGet reads path of the company into v. A 400 is an entity the company's plan does not have, like purchase
+// orders without QuickBooks Plus, which skips its stream.
+func qboGet(c *Client, entity, path string, v any) error {
+	err := c.Get(qbo(c, path), v)
+	if r := (*Refusal)(nil); errors.As(err, &r) && r.Status == http.StatusBadRequest {
+		return unsupported("QuickBooks does not list %s for this company: %s", entity, r.Message)
+	}
+	return err
+}
+
+// qboRecords are entities as records, each with its entity's name as its kind; one CDC says is deleted is gone.
+func qboRecords(entity string, items []map[string]any) []Record {
+	out := make([]Record, 0, len(items))
+	for _, it := range items {
+		id := str(it, "Id")
+		if id == "" {
+			continue
+		}
+		if qboKeyed[entity] {
+			id = entity + ":" + id
+		}
+		if strings.EqualFold(str(it, "status"), "Deleted") {
+			out = append(out, Record{ID: id, Deleted: true})
+			continue
+		}
+		it["kind"] = entity
+		out = append(out, Record{ID: id, Data: it, Updated: stamp(str(obj(it, "MetaData"), "LastUpdatedTime"))})
+	}
+	return out
+}
+
+// qboRef is the id a reference like CustomerRef names, "" when it names none.
+func qboRef(m map[string]any, k string) string { return str(obj(m, k), "value") }
+
+// qboCurrency is the currency of an entity, US dollars when it names none, as a company with one currency does
+// not.
+func qboCurrency(m map[string]any) string {
+	return cmp.Or(qboRef(m, "CurrencyRef"), "USD")
+}
+
+func qboEdited(m map[string]any) any { return instant(str(obj(m, "MetaData"), "LastUpdatedTime")) }
+
+func qboAccountRows(m map[string]any) *Row {
+	cur := qboCurrency(m)
+	return rowOf(map[string]any{"number": str(m, "AcctNum"), "title": str(m, "Name"), "full_name": str(m, "FullyQualifiedName"),
+		"type": str(m, "AccountType"), "subtype": str(m, "AccountSubType"), "class": str(m, "Classification"),
+		"balance": money(m["CurrentBalanceWithSubAccounts"], cur), "active": flag(m, "Active"), "edited_at": qboEdited(m)}).
+		ref("parent", qboRef(m, "ParentRef"))
+}
+
+// qboContactRows is a customer, vendor or employee as a contact, who is the person of its email, with its
+// billing address, or an employee's own, on one line.
+func qboContactRows(m map[string]any) *Row {
+	addr := obj(m, "BillAddr")
+	if len(addr) == 0 {
+		addr = obj(m, "PrimaryAddr")
+	}
+	var parts []string
+	for _, k := range []string{"Line1", "Line2", "Line3", "City", "CountrySubDivisionCode", "PostalCode", "Country"} {
+		if v := strings.TrimSpace(str(addr, k)); v != "" {
+			parts = append(parts, v)
+		}
+	}
+	email := Email(str(obj(m, "PrimaryEmailAddr"), "Address"))
+	return rowOf(map[string]any{"kind": strings.ToLower(str(m, "kind")), "title": str(m, "DisplayName"), "company": str(m, "CompanyName"),
+		"email": email, "phone": str(obj(m, "PrimaryPhone"), "FreeFormNumber"), "address": strings.Join(parts, ", "),
+		"balance": money(m["Balance"], qboCurrency(m)), "active": flag(m, "Active"), "edited_at": qboEdited(m)}).person("person", email)
+}
+
+func qboItemRows(m map[string]any) *Row {
+	cur := qboCurrency(m)
+	return rowOf(map[string]any{"title": str(m, "Name"), "sku": str(m, "Sku"), "type": str(m, "Type"), "description": str(m, "Description"),
+		"price": money(m["UnitPrice"], cur), "cost": money(m["PurchaseCost"], cur), "quantity": decimal(m["QtyOnHand"]), "active": flag(m, "Active"),
+		"edited_at": qboEdited(m)}).ref("income_account", qboRef(m, "IncomeAccountRef")).ref("expense_account", qboRef(m, "ExpenseAccountRef"))
+}
+
+// qboEntryRows is a transaction as an entry of the books, with its lines but the subtotals, which add up others.
+// Who it is with is its customer, its vendor, or the entity it names, which says which; the account it pays
+// from or into is the first it names of those that say so.
+func qboEntryRows(m map[string]any) *Row {
+	cur := qboCurrency(m)
+	contact, name := "", ""
+	switch {
+	case qboRef(m, "CustomerRef") != "":
+		contact, name = "Customer:"+qboRef(m, "CustomerRef"), str(obj(m, "CustomerRef"), "name")
+	case qboRef(m, "VendorRef") != "":
+		contact, name = "Vendor:"+qboRef(m, "VendorRef"), str(obj(m, "VendorRef"), "name")
+	case qboRef(m, "EntityRef") != "":
+		e := obj(m, "EntityRef")
+		contact, name = cmp.Or(str(e, "type"), "Customer")+":"+str(e, "value"), str(e, "name")
+	}
+	account := cmp.Or(qboRef(m, "DepositToAccountRef"), qboRef(m, "AccountRef"), qboRef(obj(m, "CheckPayment"), "BankAccountRef"),
+		qboRef(obj(m, "CreditCardPayment"), "CCAccountRef"), qboRef(m, "FromAccountRef"), qboRef(m, "APAccountRef"), qboRef(m, "ARAccountRef"))
+	var memo []string
+	for _, s := range []string{str(m, "PrivateNote"), str(obj(m, "CustomerMemo"), "value"), str(m, "Memo")} {
+		if s = strings.TrimSpace(s); s != "" {
+			memo = append(memo, s)
+		}
+	}
+	total := m["TotalAmt"]
+	if total == nil {
+		total = m["Amount"]
+	}
+	r := rowOf(map[string]any{"kind": str(m, "kind"), "number": str(m, "DocNumber"), "txn_on": day(str(m, "TxnDate")), "due_on": day(str(m, "DueDate")),
+		"contact_name": name, "total": money(total, cur), "balance": money(m["Balance"], cur), "memo": strings.Join(memo, "\n\n"),
+		"status": cmp.Or(str(m, "TxnStatus"), str(m, "POStatus")), "edited_at": qboEdited(m)}).ref("contact", contact).ref("account", account)
+	for i, l := range objects(m["Line"], "") {
+		kind := str(l, "DetailType")
+		if kind == "SubTotalLineDetail" {
+			continue
+		}
+		d := obj(l, kind)
+		pos := decimal(l["LineNum"])
+		if pos == nil {
+			pos = i + 1
+		}
+		r.child("ledger_line", rowOf(map[string]any{"position": pos, "kind": kind, "description": str(l, "Description"), "amount": money(l["Amount"], cur),
+			"posting": str(d, "PostingType"), "quantity": decimal(d["Qty"]), "unit_price": decimal(d["UnitPrice"])}).
+			ref("account", qboRef(d, "AccountRef")).ref("item", qboRef(d, "ItemRef")))
+	}
+	return r
 }
 
 // qbo is the URL of path in the company the client is for, in the minor version of the API the actions read.
