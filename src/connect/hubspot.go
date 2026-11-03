@@ -207,7 +207,8 @@ func hubspotStream(name, obj, changed, table string, rows func(map[string]any) *
 				// A search goes on from the last change it read, unless every record of the page changed at once,
 				// and then by offset, as before.
 				if n := len(res.Results); cur.Mode == "search" && n > 0 {
-					if last := stamp(str(obj(res.Results[n-1], "properties"), changed)).UnixMilli(); last > max(cur.Mark, cur.Since) {
+					ps, _ := res.Results[n-1]["properties"].(map[string]any)
+					if last := stamp(str(ps, changed)).UnixMilli(); last > max(cur.Mark, cur.Since) {
 						cur.Mark, cur.After = last, ""
 					}
 				}
