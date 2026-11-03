@@ -45,7 +45,7 @@
     flex-direction: column;
     gap: var(--space-3);
     padding: var(--space-4);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-sm);
     background: var(--color-surface);
     box-shadow: inset 0 0 0 var(--border-width) var(--color-border-subtle);
     transition: box-shadow var(--duration-fast) var(--ease-out);
