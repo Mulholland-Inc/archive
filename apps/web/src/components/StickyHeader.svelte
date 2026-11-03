@@ -112,8 +112,9 @@
     font-size: var(--text-xl);
     font-weight: var(--weight-serif);
     letter-spacing: var(--tracking-serif);
-    line-height: var(--leading-tight);
+    line-height: var(--leading-snug);
     white-space: nowrap;
+    text-overflow: ellipsis;
     opacity: 0;
     transform: translateY(var(--shift-sm));
     transition:
@@ -123,8 +124,9 @@
       transform var(--duration-normal) var(--ease-out);
   }
 
+  /* A share of the bar, not a fixed width, so a long name ends in an ellipsis rather than mid-word. */
   .compact .mini {
-    max-width: var(--col-sm);
+    max-width: 40%;
     margin-inline-end: var(--space-2);
     opacity: 1;
     transform: none;
