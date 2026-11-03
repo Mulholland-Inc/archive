@@ -38,8 +38,8 @@
             <Text weight="medium" truncate>{x.account}</Text>
             <Text size="sm" tone={x.error ? 'danger' : 'tertiary'}>{synced(x)}</Text>
           </Stack>
-          <Stack direction="row" gap="1-5" align="center">
-            <ArchiveIcon icon={x.look.icon} tint={x.look.tint} seed={x.workspace.id} size="xs" />
+          <Stack direction="row" gap="3" align="center">
+            <ArchiveIcon icon={x.look.icon} tint={x.look.tint} seed={x.workspace.id} size="lg" />
             <Text size="sm" tone="secondary" truncate>{x.workspace.name}</Text>
           </Stack>
           <div class="controls">
