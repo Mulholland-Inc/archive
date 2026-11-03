@@ -104,9 +104,13 @@
  *   value in one run and use it in the next. A migration waits up to 10s for locks on what it changes.
  * - A table's comment is its description. A view's comment is its description, then key: value lines: layout
  *   and by. A table shows every column; a board groups rows by its by column; a calendar places them on its
- *   by date; a list is one narrow column of rows by name, each with the start of its longest text and when it
- *   changed, for notes and the like; a map pins rows at its by place, an archive.geo, beside a list of them,
- *   each pin showing the row's first money or number. Any other key is an error.
+ *   by date; a list is one narrow column of rows by name, each with a line of its longest text, for notes and
+ *   the like; a map pins rows at its by place, an archive.geo, beside a table of them, each pin showing the
+ *   row's first money or number; a gallery is a card for each row with its name over up to four other columns,
+ *   for listings, recipes and products; a chart is a column for each value of its by column, the total of the
+ *   row's first money or else first number, or the count of rows, by month (or by day within one month) when by
+ *   is a date, else per value, largest first; a timeline is a bar for each row from its by date, which must be
+ *   a date, to the first date column after it in the view, for projects. Any other key is an error.
  * - archive.revisions() lists the migrations saved before this run, newest first, with who ran them and their
  *   statements. To undo one, migrate the reverse.
  *
@@ -420,7 +424,7 @@ interface Table {
     /** The comment without its key: value lines. */
     description: string;
     /** A view's layout: and by: lines. */
-    layout?: "table" | "board" | "calendar" | "list" | "map";
+    layout?: "table" | "board" | "calendar" | "list" | "map" | "gallery" | "chart" | "timeline";
     by?: string;
     columns: {
         name: string;

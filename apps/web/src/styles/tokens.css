@@ -168,6 +168,11 @@
   --view-pin-tip: var(--space-2);
   --view-pin-dot: 0.875rem;
   --view-pin-popup: 15rem;
+  --view-card-width: 15rem;
+  --view-chart-height: 18rem;
+  --view-timeline-name: 16rem;
+  --view-timeline-date: 6rem;
+  --view-timeline-bar: 0.75rem;
   --bubble-max: 85%;
   --settings-art: 11rem;
   --settings-art-sm: calc(var(--settings-art) * 0.7);
@@ -420,6 +425,7 @@
   --color-accent-hover: var(--blue-500);
   --color-accent-subtle: var(--blue-600-10);
   --color-accent-contrast: var(--gray-0);
+  --color-chart: var(--blue-600);
 
   --color-success: var(--green-600);
   --color-warning: var(--orange-600);
@@ -485,6 +491,8 @@
   --color-accent-hover: var(--blue-300);
   --color-accent-subtle: var(--blue-300-16);
   --color-accent-contrast: var(--gray-950);
+  /* The accent's lighter step is too light to mark data on the dark canvas; its middle one is not. */
+  --color-chart: var(--blue-500);
 
   --color-success: #43a25a;
   --color-warning: #f0b232;
