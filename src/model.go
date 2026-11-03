@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dop251/goja"
@@ -18,6 +20,7 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"golang.org/x/oauth2/google"
 )
 
 const (
@@ -188,7 +191,7 @@ func modelDecode(resp *http.Response, v any) error {
 }
 
 func modelGemini(ctx context.Context, req *modelReq, parts []modelPart) (*ModelResult, error) {
-	key, err := modelKey("GEMINI_API_KEY")
+	url, header, err := geminiEndpoint(ctx, req.Model)
 	if err != nil {
 		return nil, err
 	}
@@ -211,8 +214,7 @@ func modelGemini(ctx context.Context, req *modelReq, parts []modelPart) (*ModelR
 	if err != nil {
 		return nil, err
 	}
-	url := "https://generativelanguage.googleapis.com/v1beta/models/" + req.Model + ":generateContent"
-	resp, err := modelPost(ctx, url, http.Header{"x-goog-api-key": {key}}, b)
+	resp, err := modelPost(ctx, url, header, b)
 	if err != nil {
 		return nil, err
 	}
@@ -247,6 +249,44 @@ func modelGemini(ctx context.Context, req *modelReq, parts []modelPart) (*ModelR
 		res.JSON = json.RawMessage(res.Text)
 	}
 	return res, nil
+}
+
+// geminiEndpoint is the Gemini API with GEMINI_API_KEY, else Vertex in GOOGLE_CLOUD_PROJECT as the machine's own
+// Google credentials (gcloud's on a laptop, the service account on Cloud Run), in VERTEX_LOCATION, us by default.
+func geminiEndpoint(ctx context.Context, model string) (string, http.Header, error) {
+	if key := strings.TrimSpace(os.Getenv("GEMINI_API_KEY")); key != "" {
+		return "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent", http.Header{"x-goog-api-key": {key}}, nil
+	}
+	project := os.Getenv("GOOGLE_CLOUD_PROJECT")
+	if project == "" {
+		return "", nil, errors.New("this model is not configured on this server; it needs GEMINI_API_KEY, or GOOGLE_CLOUD_PROJECT for Vertex")
+	}
+	geminiCreds.Do(func() {
+		geminiCreds.c, geminiCreds.err = google.FindDefaultCredentials(context.WithoutCancel(ctx), "https://www.googleapis.com/auth/cloud-platform")
+	})
+	if geminiCreds.err != nil {
+		return "", nil, fmt.Errorf("vertex: %w", geminiCreds.err)
+	}
+	tok, err := geminiCreds.c.TokenSource.Token()
+	if err != nil {
+		return "", nil, fmt.Errorf("vertex: %w", err)
+	}
+	loc := cmp.Or(os.Getenv("VERTEX_LOCATION"), "us")
+	host := loc + "-aiplatform.googleapis.com"
+	switch loc {
+	case "global":
+		host = "aiplatform.googleapis.com"
+	case "us", "eu":
+		host = "aiplatform." + loc + ".rep.googleapis.com"
+	}
+	return fmt.Sprintf("https://%s/v1beta1/projects/%s/locations/%s/publishers/google/models/%s:generateContent", host, project, loc, model),
+		http.Header{"Authorization": {"Bearer " + tok.AccessToken}}, nil
+}
+
+var geminiCreds struct {
+	sync.Once
+	c   *google.Credentials
+	err error
 }
 
 // modelBlock is a file as an Anthropic content block: a document for a PDF, an image otherwise.

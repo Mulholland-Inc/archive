@@ -24,6 +24,7 @@ require (
 )
 
 require (
+	cloud.google.com/go/compute/metadata v0.3.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/dlclark/regexp2/v2 v2.8.1 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.4 // indirect

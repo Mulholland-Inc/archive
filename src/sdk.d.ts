@@ -239,7 +239,8 @@
  *   are PDFs and images from archive.files, each { id } whole or { id, page } for one page of a PDF (1-based), up
  *   to 20 MB each and 10 a call; with schema, a JSON schema, json is the answer parsed and text its raw form; effort
  *   "none" turns thinking off where the model has it. Use it to read a document, classify rows or draft text inside a run.
- * - The keys live on the server (GEMINI_API_KEY, ANTHROPIC_API_KEY); a model whose key is not set throws. Each call
+ * - The keys live on the server: GEMINI_API_KEY, or GOOGLE_CLOUD_PROJECT for Vertex as the server itself, and
+ *   ANTHROPIC_API_KEY; a model whose key is not set throws. Each call
  *   has 2 minutes, and a run calls models for at most 10 minutes in all, time that does not count toward its {timeout}.
  *   The run's transaction stays open while a model answers, so read with models first and write after when you can.
  * - archive.do(goal, { model, instructions, files, maxRuns }) hands goal to an agent like the one in chat, which writes
