@@ -1,41 +1,19 @@
 <script>
-  import { RefreshCw, Unplug, Plug, Plus, Check, ChevronDown } from '@lucide/svelte';
+  import { Plug, Check } from '@lucide/svelte';
   import Stack from './Stack.svelte';
   import Section from './Section.svelte';
   import ConnectorIcon from './ConnectorIcon.svelte';
   import Button from './Button.svelte';
-  import SegmentedControl from './SegmentedControl.svelte';
-  import Menu from './Menu.svelte';
-  import MenuItems from './MenuItems.svelte';
   import Badge from './Badge.svelte';
   import StatusBadge from './StatusBadge.svelte';
   import Text from './Text.svelte';
   import Icon from './Icon.svelte';
-  import { connect, connectionTypes, syncNow, disconnectAccount, setConnectionType, connections } from '../lib/app.svelte.js';
-  import { relative } from '../lib/live.js';
-  import { confirmDialog } from '../lib/dialogs.svelte.js';
+  import OwnConnections from './OwnConnections.svelte';
+  import { connect, connections } from '../lib/app.svelte.js';
 
   let { connector } = $props();
 
   connections.use();
-
-  // Each account you connected at this connector, one row of archive.connection each.
-  const accounts = $derived(connector.connections ?? []);
-
-  function synced(x) {
-    if (x.error) return x.error;
-    const when = x.synced_at ? `Synced ${relative(x.synced_at).toLowerCase()}` : x.sync_at ? 'Syncing…' : 'Not synced yet';
-    return `${when} · ${(x.items ?? 0).toLocaleString()} items`;
-  }
-
-  async function remove(x) {
-    if (await confirmDialog({ title: `Disconnect ${x.account}?`, body: `It is disconnected in every archive you are in, and what it synced goes with it. Your other ${connector.name} accounts stay.`, confirm: 'Disconnect' }))
-      disconnectAccount(x);
-  }
-
-  // Which archives an account is in: only those of its type read what it syncs and act with it. You pick it
-  // before you connect one.
-  const pick = connectionTypes.map((t) => ({ label: t.label, onselect: () => connect(connector.id, t.value) }));
 </script>
 
 <Stack gap="6">
@@ -44,47 +22,19 @@
       <ConnectorIcon id={connector.id} size="lg" />
       <Stack gap="1">
         <Text weight="medium">{connector.category}</Text>
-        {#if accounts.length}
-          <Stack direction="row" gap="2" align="center"><StatusBadge status="connected" />{#if accounts.length > 1}<Badge>{accounts.length} accounts</Badge>{/if}</Stack>
-        {:else}<Badge>Not connected</Badge>{/if}
+        {#if connector.connected}<StatusBadge status="connected" />{:else}<Badge>Not connected</Badge>{/if}
       </Stack>
     </Stack>
     <Stack direction="row" gap="2">
-      {#if accounts.length}
-        <Button variant="ghost" icon={RefreshCw} onclick={() => syncNow(connector.id)}>Sync</Button>
-        <Menu placement="bottom-end" width="sm" label="Add account">
-          {#snippet trigger(props)}<Button icon={Plus} iconEnd={ChevronDown} disabled={!connector.ready} {...props}>Add account</Button>{/snippet}
-          <MenuItems items={pick} />
-        </Menu>
-      {:else}
-        <Menu placement="bottom-end" width="sm" label="Connect">
-          {#snippet trigger(props)}<Button variant="primary" icon={Plug} iconEnd={ChevronDown} disabled={!connector.ready} {...props}>Connect</Button>{/snippet}
-          <MenuItems items={pick} />
-        </Menu>
+      {#if !connector.connected}
+        <Button variant="primary" icon={Plug} disabled={!connector.ready} onclick={() => connect(connector.id)}>Connect</Button>
       {/if}
     </Stack>
   </Stack>
   {#if connector.ready === false}
     <Text as="p" size="md" tone="secondary">This server has no {connector.by} client set up for {connector.name} yet. Ask whoever runs it to set one up.</Text>
   {/if}
-  {#if accounts.length}
-    <Section title={accounts.length > 1 ? 'Accounts' : 'Account'}>
-      <ul class="accounts">
-        {#each accounts as x (x.id)}
-          <li class="account">
-            <Stack gap="0-5" grow>
-              <Text weight="medium" truncate>{x.account}</Text>
-              <Text size="sm" tone={x.error ? 'danger' : 'tertiary'}>{synced(x)}</Text>
-            </Stack>
-            <div class="controls">
-              <SegmentedControl value={x.type} options={connectionTypes} size="sm" label={`Archives ${x.account} is in`} onchange={(t) => setConnectionType(x, t)} />
-              <Button size="sm" variant="ghost" icon={Unplug} onclick={() => remove(x)}>Disconnect</Button>
-            </div>
-          </li>
-        {/each}
-      </ul>
-    </Section>
-  {/if}
+  <OwnConnections {connector} />
   <Section title="Archive can">
     <Stack gap="2">
       {#each connector.scopes as scope (scope)}
@@ -93,44 +43,3 @@
     </Stack>
   </Section>
 </Stack>
-
-<style>
-  .accounts {
-    display: flex;
-    flex-direction: column;
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-
-  .account {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    min-height: var(--row-height);
-    padding-block: var(--space-2);
-  }
-
-  .controls {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: flex-end;
-    gap: var(--space-2);
-  }
-
-  @container (max-width: 36rem) {
-    .account {
-      flex-direction: column;
-      align-items: stretch;
-    }
-
-    .controls {
-      justify-content: flex-start;
-    }
-  }
-
-  .account + .account {
-    box-shadow: inset 0 var(--border-width) 0 var(--color-border-subtle);
-  }
-</style>

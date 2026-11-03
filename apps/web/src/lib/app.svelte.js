@@ -38,6 +38,8 @@ export const app = $state({
   archiveApps: {},
   share: { open: false, kind: null, target: null },
   onboarding: [],
+  // Your own connected accounts in every archive you are in (ownConnections).
+  ownConnections: [],
   profile: mockProfile()
 });
 
@@ -1302,66 +1304,34 @@ function toIntegration(k, x) {
   };
 }
 
-// The types of archive one of your own connections is in, which you pick before connecting it: only archives of
-// its type read what it syncs and act with it.
-export const connectionTypes = [
-  { value: 'personal', label: 'Personal' },
-  { value: 'family', label: 'Family' },
-  { value: 'business', label: 'Business' }
-];
-
-// connect sends the browser to connect an account of your own at connector id, into your archives of type.
-export function connect(id, type) {
-  const c = ws().connectors.find((x) => x.id === id);
-  if (!c?.ready || !connectionTypes.some((t) => t.value === type)) return;
-  location.assign(`${API}/connect/${encodeURIComponent(id)}?${new URLSearchParams({ workspace: app.archive, type })}`);
+// connect sends the browser to connect connector id: one of your own, or an integration an owner connects for everyone.
+export function connect(id) {
+  const c = [...ws().connectors, ...archiveIntegrations()].find((x) => x.id === id);
+  if (c?.ready) location.assign(`${API}/connect/${encodeURIComponent(id)}?workspace=${encodeURIComponent(app.archive)}`);
 }
 
-// syncNow asks for a sync of each of your accounts at connector id now, which the API queues.
-export async function syncNow(id) {
-  const c = ws().connectors.find((x) => x.id === id);
-  if (!c) return;
-  try {
-    for (const x of c.connections ?? []) await call(`/connect/${x.id}/sync`, { method: 'POST' });
-  } catch (e) {
-    complain(e, `Couldn’t sync ${c.name}`);
+// Your own accounts in every archive you are in, from /connect/mine: each stays in the archive it was connected
+// in, and is synced and disconnected there, as its member.
+export const ownConnections = resource({
+  tables: ['archive.connection'],
+  load: async () => {
+    const out = await call('/connect/mine');
+    app.ownConnections = (out?.connections ?? []).map((x) => ({ ...x, look: lookOf(x.workspace) }));
   }
-  return connections.refresh();
+});
+
+// onOwnConnection does what path says to your connection x, in the archive it is in.
+async function onOwnConnection(x, path, init, failed) {
+  try {
+    await call(`/connect/${encodeURIComponent(x.id)}${path}`, { ...init, workspace: x.workspace.id });
+  } catch (e) {
+    complain(e, failed);
+  }
+  if (x.workspace.id === app.archive) connections.refresh();
+  return ownConnections.refresh();
 }
 
-// setConnectionType puts your one account connection in your archives of type, personal, family or business, and
-// out of the others, with what it synced.
-export async function setConnectionType(connection, type) {
-  const before = connection.type;
-  connection.type = type;
-  try {
-    await call(`/connect/${connection.id}/type`, { method: 'PUT', body: { type } });
-  } catch (e) {
-    connection.type = before;
-    complain(e, `Couldn’t move ${connection.account}`);
-  }
-  return connections.refresh();
-}
-
-// disconnectAccount disconnects your one account connection, in every archive you are in, with what it synced.
-export async function disconnectAccount(connection) {
-  try {
-    await call(`/connect/${connection.id}`, { method: 'DELETE' });
-  } catch (e) {
-    complain(e, `Couldn’t disconnect ${connection.account}`);
-  }
-  return connections.refresh();
-}
-
-export async function disconnect(id) {
-  const c = ws().connectors.find((x) => x.id === id);
-  if (!c) return;
-  try {
-    for (const x of c.connections ?? []) await call(`/connect/${x.id}`, { method: 'DELETE' });
-  } catch (e) {
-    complain(e, `Couldn’t disconnect ${c.name}`);
-  }
-  return connections.refresh();
-}
+export const syncOwnConnection = (x) => onOwnConnection(x, '/sync', { method: 'POST' }, `Couldn’t sync ${x.account}`);
+export const disconnectOwnConnection = (x) => onOwnConnection(x, '', { method: 'DELETE' }, `Couldn’t disconnect ${x.account}`);
 
 export { initials };

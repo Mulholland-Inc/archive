@@ -387,8 +387,6 @@ type State struct {
 	Member    uuid.UUID `json:"m"`
 	Verifier  string    `json:"v"`
 	Exp       int64     `json:"x"`
-	// Type is which archives a person's own connection is to be in: personal, family or business.
-	Type string `json:"t,omitempty"`
 }
 
 // TTL is how long a person has to consent.

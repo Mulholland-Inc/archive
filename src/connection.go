@@ -30,18 +30,16 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Connections: the rows of archive.connection, each an account that a connector of the connect package
-// connected: a person's own, like their Gmail, in the personal store of the main database, which every workspace
-// they are in shares (personal.go), or a workspace's integration, like its QuickBooks, in the workspace. This is
-// the routes and the rows; connect has the connectors and OAuth.
+// Connections: the rows of archive.connection, each one of a member's own accounts that a connector of the
+// connect package connected. This is the routes and the rows; connect has the connectors and OAuth.
 //
 // GET /connect/<id> sends the browser to the provider with a state naming the workspace, the user and their
 // member, sealed with ARCHIVE_SECRET_KEY; for an MCP connector it first registers Archive's own client at its
 // authorization server, once for every workspace, and keeps it in archive.oauth_client of the main database.
 // Its callback, GET /connect/<id>/callback, checks the same person is signed in, keeps the grant's refresh
-// token sealed, with ARCHIVE_SECRET_KEY in the personal store and the workspace key in a workspace, and sends
-// the browser back to the connector in the app. Only Go writes the rows; a person reads their own.
-// connectionAccess is how code that uses an account (archive.action, below) gets an access token for it.
+// token sealed with the workspace key, and sends the browser back to the connector in the app. Only Go writes
+// the rows; a member reads their own. connectionAccess is how code that uses an account (archive.action,
+// below) gets an access token for it.
 
 func (h *Hub) connector(id string) (*connect.Provider, error) {
 	p, err := h.connect.Get(id)
@@ -109,7 +107,8 @@ func (h *Hub) connectRedirect(id string) string { return h.api + "/connect/" + i
 // connectRoutes are /connect, like sign-in's /auth/oidc: GET /connect/<id> starts connecting one and sends the
 // browser to the provider, and the provider sends it back to GET /connect/<id>/callback. A navigation sends no
 // Archive-Workspace header, so the start takes the workspace from ?workspace= and the callback from its state.
-// GET /connect lists the connectors and your connections, DELETE /connect/<connection id> disconnects one, and
+// GET /connect lists the connectors and your connections, GET /connect/mine your own in every archive you are
+// in, DELETE /connect/<connection id> disconnects one, and
 // POST /connect/<connection id>/sync asks for its sync now (below), and PUT /connect/<connection id>/access
 // narrows an integration to a group. A person connects, disconnects and syncs their own connections; only an
 // owner, the archive's integrations.
@@ -122,6 +121,10 @@ func (h *Hub) connectRoutes(mux *http.ServeMux) {
 	authed("GET /connect", func(a *Archive, w http.ResponseWriter, r *http.Request) {
 		c, err := a.Connections(r.Context())
 		httpWrite(w, http.StatusOK, c, err)
+	})
+	authed("GET /connect/mine", func(a *Archive, w http.ResponseWriter, r *http.Request) {
+		c, err := a.hub.OwnConnections(r.Context(), a)
+		httpWrite(w, http.StatusOK, map[string]any{"connections": c}, err)
 	})
 	authed("DELETE /connect/{id}", func(a *Archive, w http.ResponseWriter, r *http.Request) {
 		id, err := httpID(r)
@@ -140,19 +143,6 @@ func (h *Hub) connectRoutes(mux *http.ServeMux) {
 		}
 		if err == nil {
 			err = a.SetAccess(r.Context(), id, body.Access)
-		}
-		httpWrite(w, http.StatusNoContent, nil, err)
-	})
-	authed("PUT /connect/{id}/type", func(a *Archive, w http.ResponseWriter, r *http.Request) {
-		id, err := httpID(r)
-		var body struct {
-			Type string `json:"type"`
-		}
-		if err == nil {
-			err = httpDecode(r, &body)
-		}
-		if err == nil {
-			err = a.SetType(r.Context(), id, body.Type)
 		}
 		httpWrite(w, http.StatusNoContent, nil, err)
 	})
@@ -199,14 +189,8 @@ func (a *Archive) connectStart(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, a.hub.app+connectBack(r.PathValue("id"))+"?"+url.Values{"workspace": {a.ws.ID.String()}, "error": {err.Error()}}.Encode(), http.StatusSeeOther)
 		return
 	}
-	// A person's own connection is connected into the archives of a type they pick first.
-	typ := r.URL.Query().Get("type")
-	if !p.Integration && !connType(typ) {
-		http.Redirect(w, r, a.hub.app+connectBack(r.PathValue("id"))+"?"+url.Values{"workspace": {a.ws.ID.String()}, "error": {"pick which archives it is for: personal, family or business"}}.Encode(), http.StatusSeeOther)
-		return
-	}
 	st := connect.State{Provider: p.ID, Workspace: a.ws.ID.String(), User: ac.UserID, Member: ac.member,
-		Verifier: oauth2.GenerateVerifier(), Exp: time.Now().Add(connect.TTL).Unix(), Type: typ}
+		Verifier: oauth2.GenerateVerifier(), Exp: time.Now().Add(connect.TTL).Unix()}
 	http.Redirect(w, r, p.AuthURL(a.hub.connectRedirect(p.ID), connect.SealState(a.hub.aead, st), st.Verifier), http.StatusFound)
 }
 
@@ -233,11 +217,8 @@ func (a *Archive) connectFinish(w http.ResponseWriter, r *http.Request, st conne
 			a.hub.forgetClient(r.Context(), p)
 		}
 	}
-	if err == nil && p.Integration {
-		_, err = a.connectionSave(r.Context(), st.Member, p.Connector, g, "")
-	} else if err == nil {
-		// A person's own is theirs in every workspace they are in of the type they picked.
-		_, err = a.hub.self.connectionSave(r.Context(), st.User, p.Connector, g, st.Type)
+	if err == nil {
+		_, err = a.connectionSave(r.Context(), st.Member, p.Connector, g)
 	}
 	if err != nil {
 		back.Set("error", err.Error())
@@ -292,14 +273,11 @@ func mayUse(c generated.ArchiveConnection, lvl string, groups []uuid.UUID) bool 
 
 // connectionSave keeps g for member at provider: in the row they have for its account, or the archive's for an
 // integration, or a new one; and queues its sync, which is due now. An integration connected to another
-// account is disconnected first. In the personal store, member is the person's id.
-func (a *Archive) connectionSave(ctx context.Context, member uuid.UUID, c *connect.Connector, g *connect.Grant, typ string) (uuid.UUID, error) {
+// account is disconnected first.
+func (a *Archive) connectionSave(ctx context.Context, member uuid.UUID, c *connect.Connector, g *connect.Grant) (uuid.UUID, error) {
 	var id uuid.UUID
 	if g.Meta == nil {
 		g.Meta = map[string]string{}
-	}
-	if a.personal && !connType(typ) {
-		return id, fmt.Errorf("type: want personal, family or business: %w", httpErrBadRequest)
 	}
 	err := a.sys(ctx, func(ctx context.Context) error {
 		q := a.st.db(ctx)
@@ -319,23 +297,11 @@ func (a *Archive) connectionSave(ctx context.Context, member uuid.UUID, c *conne
 		if err != nil {
 			return err
 		}
-		token := connect.SealToken(a.aead, id, g.Refresh)
-		if a.personal {
-			// The personal store's connections have a type, which connecting again sets to the one picked.
-			_, err := a.st.Q(ctx).Exec(ctx, `INSERT INTO archive.connection (id, member, provider, account, token, scopes, meta, type)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-ON CONFLICT (id) DO UPDATE SET token = EXCLUDED.token, scopes = EXCLUDED.scopes, meta = EXCLUDED.meta, type = EXCLUDED.type, error = '',
-    updated_at = now(), sync_at = now(), asked_at = now(), revoked = false`, id, member, c.ID, g.Account, token, g.Scopes, g.Meta, typ)
-			return err
-		}
 		return q.SaveConnection(ctx, generated.SaveConnectionParams{ID: id, Member: member, Provider: c.ID, Account: g.Account,
-			Token: token, Scopes: g.Scopes, Meta: g.Meta, Integration: c.Integration})
+			Token: connect.SealToken(a.aead, id, g.Refresh), Scopes: g.Scopes, Meta: g.Meta, Integration: c.Integration})
 	})
 	if err == nil {
 		a.syncSoon(ctx)
-		if a.personal {
-			a.hub.selfMoved(ctx, member, "connection")
-		}
 	}
 	return id, err
 }
@@ -359,14 +325,6 @@ type Connection struct {
 	Integration bool   `json:"integration"`
 	Access      string `json:"access"`
 	ConnectedBy string `json:"connected_by"`
-	// Type is which archives a person's own is in: personal, family or business; "" for an integration.
-	Type string `json:"type,omitempty"`
-}
-
-func connectionOf(r generated.ConnectionsRow, typ string) Connection {
-	return Connection{ID: r.ID, Provider: r.Provider, Account: r.Account, Scopes: r.Scopes, Error: r.Error, CreatedAt: r.CreatedAt,
-		UpdatedAt: r.UpdatedAt, SyncAt: r.SyncAt, SyncedAt: r.SyncedAt, Items: r.Items, Integration: r.Integration, Access: r.Access,
-		ConnectedBy: r.ConnectedBy, Type: typ}
 }
 
 // Connector is a service accounts can be connected at; Ready says this server has its OAuth client, and
@@ -383,8 +341,7 @@ type Connections struct {
 	Connections []Connection `json:"connections"`
 }
 
-// Connections are the connectors, the caller's own connected accounts, from the personal store, and the
-// archive's integrations.
+// Connections are the connectors, the caller's own connected accounts and the archive's integrations.
 func (a *Archive) Connections(ctx context.Context) (*Connections, error) {
 	ac, err := signedIn(ctx)
 	if err != nil {
@@ -395,58 +352,92 @@ func (a *Archive) Connections(ctx context.Context) (*Connections, error) {
 		out.Connectors = append(out.Connectors, Connector{ID: c.ID, Name: c.Name, Ready: a.hub.connect[c.ID] != nil, Integration: c.Integration})
 	}
 	var rows []generated.ConnectionsRow
-	var own []generated.PersonalConnectionsRow
 	err = a.st.System(ctx, func(ctx context.Context) (err error) {
 		rows, err = a.st.db(ctx).Connections(ctx, ac.member)
 		return err
 	})
-	if err == nil {
-		err = a.hub.self.st.System(ctx, func(ctx context.Context) (err error) {
-			own, err = a.hub.self.st.db(ctx).PersonalConnections(ctx, ac.UserID)
-			return err
-		})
-	}
-	// All of the caller's own, whatever their type, so they manage them all from any archive.
-	var types map[uuid.UUID]string
-	if err == nil {
-		types, err = a.hub.selfTypes(ctx, ac.UserID)
-	}
-	for _, r := range own {
-		out.Connections = append(out.Connections, connectionOf(generated.ConnectionsRow(r), types[r.ID]))
-	}
 	for _, r := range rows {
-		// A personal connection still in the workspace has yet to move to the personal store (personalMove).
-		if r.Integration || !connPersonal(r.Provider) {
-			out.Connections = append(out.Connections, connectionOf(r, ""))
+		out.Connections = append(out.Connections, Connection(r))
+	}
+	return out, err
+}
+
+// OwnConnection is one of a person's own connections, with the archive it is connected in.
+type OwnConnection struct {
+	Connection
+	Workspace Workspace `json:"workspace"`
+}
+
+// OwnConnections are the caller's own connections in every archive they are in, so they see them all in one
+// place: each read in its own archive, as them, where it stays, and is synced and disconnected there. A token
+// reaches one archive, and reads only its own there.
+func (h *Hub) OwnConnections(ctx context.Context, here *Archive) ([]OwnConnection, error) {
+	ac, err := authUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	all := []uuid.UUID{here.ws.ID}
+	if ac.TokenID == uuid.Nil && ac.TokenName == "" {
+		u, err := h.q().UserByID(ctx, ac.UserID)
+		if err != nil {
+			return nil, err
+		}
+		all = u.Workspaces
+	}
+	out := []OwnConnection{}
+	for _, ws := range all {
+		a, release, err := h.acquire(ctx, ws.String())
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		rows, err := a.ownConnections(ctx, ac)
+		release()
+		if errors.Is(err, ErrForbidden) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("workspace %s: %w", ws, err)
+		}
+		for _, r := range rows {
+			out = append(out, OwnConnection{Connection: Connection(r), Workspace: workspaceOut(a.ws)})
 		}
 	}
-	slices.SortStableFunc(out.Connections, func(x, y Connection) int {
-		return cmp.Or(strings.Compare(x.Provider, y.Provider), strings.Compare(x.Account, y.Account))
+	slices.SortStableFunc(out, func(x, y OwnConnection) int {
+		return cmp.Or(strings.Compare(x.Provider, y.Provider), strings.Compare(x.Account, y.Account), strings.Compare(x.Workspace.Name, y.Workspace.Name))
 	})
-	return out, err
+	return out, nil
+}
+
+// ownConnections are the person ac's own connections in a, read as their member there.
+func (a *Archive) ownConnections(ctx context.Context, ac *Actor) ([]generated.ConnectionsRow, error) {
+	me, err := a.userActor(ctx, &User{ID: ac.UserID, Email: ac.Email, Name: ac.Name})
+	if err != nil {
+		return nil, err
+	}
+	rows, err := coreDo(a, withArchive(WithActor(ctx, me), a), func(ctx context.Context) ([]generated.ConnectionsRow, error) {
+		return a.st.db(ctx).Connections(ctx, me.member)
+	})
+	return slices.DeleteFunc(rows, func(r generated.ConnectionsRow) bool { return r.Integration }), err
 }
 
 // Disconnect deletes the caller's connection id, or, for an owner, the archive's integration id, with its
 // rows, and revokes its refresh token at the provider where it can. A revoke that fails leaves the grant at
-// the provider, where the person can still remove it; the connection is gone either way. A person's own goes
-// from every workspace they are in, since there is one.
+// the provider, where the person can still remove it; the connection is gone either way.
 func (a *Archive) Disconnect(ctx context.Context, id uuid.UUID) error {
-	o, c, err := a.connectionMine(ctx, id)
+	c, err := a.connectionMine(ctx, id)
 	if err != nil {
 		return err
 	}
-	return o.disconnect(ctx, c)
-}
-
-func (a *Archive) disconnect(ctx context.Context, c generated.ArchiveConnection) error {
-	id := c.ID
-	err := a.sys(ctx, func(ctx context.Context) (err error) {
+	err = a.sys(ctx, func(ctx context.Context) (err error) {
 		q := a.st.db(ctx)
 		if c, err = q.DeleteConnection(ctx, c.ID); err != nil {
 			return err
 		}
 		// Its rows went with it; the people and organizations only they named go too.
-		return a.forgetUnknown(ctx, q)
+		return q.DeleteUnknown(ctx)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("connection %s: %w", id, ErrNotFound)
@@ -455,9 +446,6 @@ func (a *Archive) disconnect(ctx context.Context, c generated.ArchiveConnection)
 		return err
 	}
 	a.conns.forget(c.ID)
-	if a.personal {
-		a.hub.selfMoved(ctx, c.Member, append([]string{"connection"}, personalTables...)...)
-	}
 	ctx = context.WithoutCancel(ctx)
 	p, err := a.hub.provider(ctx, c.Provider, false)
 	var rt string
@@ -486,56 +474,35 @@ func (a *Archive) disconnect(ctx context.Context, c generated.ArchiveConnection)
 	return nil
 }
 
-// connectionMine is the connection id, with where it is, when the caller may connect, disconnect and sync it:
-// their own, in the personal store, or the archive's integration for an owner; not found for anyone else.
-func (a *Archive) connectionMine(ctx context.Context, id uuid.UUID) (*Archive, generated.ArchiveConnection, error) {
+// connectionMine is the connection id, when the caller may connect, disconnect and sync it: their own, or the
+// archive's integration for an owner; not found for anyone else.
+func (a *Archive) connectionMine(ctx context.Context, id uuid.UUID) (generated.ArchiveConnection, error) {
 	ac, err := authUser(ctx)
 	if err != nil {
-		return nil, generated.ArchiveConnection{}, err
+		return generated.ArchiveConnection{}, err
 	}
 	var c generated.ArchiveConnection
-	self := a.hub.self
-	err = self.st.System(ctx, func(ctx context.Context) (err error) {
-		c, err = self.st.db(ctx).Connection(ctx, id)
-		return err
-	})
-	switch {
-	case err == nil && c.Member == ac.UserID:
-		return self, c, nil
-	case err == nil:
-		return nil, c, fmt.Errorf("connection %s: %w", id, ErrNotFound)
-	case !errors.Is(err, pgx.ErrNoRows):
-		return nil, c, err
-	}
 	err = a.st.System(ctx, func(ctx context.Context) (err error) {
 		c, err = a.st.db(ctx).Connection(ctx, id)
 		return err
 	})
 	switch {
 	case errors.Is(err, pgx.ErrNoRows), err == nil && !c.Integration && c.Member != ac.member:
-		return nil, c, fmt.Errorf("connection %s: %w", id, ErrNotFound)
+		return c, fmt.Errorf("connection %s: %w", id, ErrNotFound)
 	case err != nil:
-		return nil, c, err
+		return c, err
 	case c.Integration:
 		if lvl, _, err := a.level(ctx); err != nil || lvl != "owner" {
-			return nil, c, cmp.Or(err, fmt.Errorf("only an owner changes the archive's %s: %w", c.Provider, ErrForbidden))
+			return c, cmp.Or(err, fmt.Errorf("only an owner changes the archive's %s: %w", c.Provider, ErrForbidden))
 		}
 	}
-	return a, c, nil
-}
-
-// forgetUnknown deletes the people and organizations nothing a connection synced names any more.
-func (a *Archive) forgetUnknown(ctx context.Context, q *generated.Queries) error {
-	if a.personal {
-		return q.DeleteUnknownPeople(ctx)
-	}
-	return q.DeleteUnknown(ctx)
+	return c, nil
 }
 
 // SetAccess narrows the archive's integration id, and its rows, to the members of group, by its id or its
 // name, or opens them to everyone with "", as an owner does.
 func (a *Archive) SetAccess(ctx context.Context, id uuid.UUID, group string) error {
-	_, c, err := a.connectionMine(ctx, id)
+	c, err := a.connectionMine(ctx, id)
 	switch {
 	case err != nil:
 		return err
@@ -552,31 +519,6 @@ func (a *Archive) SetAccess(ctx context.Context, id uuid.UUID, group string) err
 		}
 		return syncNarrow(ctx, a.st.Q(ctx), id, access)
 	})
-}
-
-// connType says whether typ is a type of archive, which a person's own connection is in: personal, family or
-// business.
-func connType(typ string) bool {
-	return slices.Contains([]string{"personal", "family", "business"}, typ)
-}
-
-// SetType puts the caller's own connection id in the archives of type typ, personal, family or business, and
-// takes it out of the others, with everything it synced.
-func (a *Archive) SetType(ctx context.Context, id uuid.UUID, typ string) error {
-	o, c, err := a.connectionMine(ctx, id)
-	switch {
-	case err != nil:
-		return err
-	case o != a.hub.self:
-		return fmt.Errorf("only a person's own connection has a type; an integration is its archive's: %w", httpErrBadRequest)
-	case !connType(typ):
-		return fmt.Errorf("type: want personal, family or business: %w", httpErrBadRequest)
-	}
-	if _, err := a.hub.main.Exec(ctx, "UPDATE archive.connection SET type = $2, updated_at = now() WHERE id = $1", id, typ); err != nil {
-		return err
-	}
-	a.hub.selfMoved(ctx, c.Member, append([]string{"connection"}, personalTables...)...)
-	return nil
 }
 
 // connectionUpgrade makes the first connection of each integration from before there were integrations the
@@ -820,9 +762,6 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 	}
 	var next *time.Time
 	defer func() {
-		if a.personal && s != nil {
-			a.hub.selfMoved(ctx, c.Member, "connection", s.Table)
-		}
 		// A page that leaves its connection due queues the next itself, as an ask that came while it held the
 		// lease could not.
 		if next != nil {
@@ -887,7 +826,7 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 				cur.At, cur.Done, cur.Fails = nil, &c.AskedAt, 0
 			}
 		default:
-			w := &syncDB{q: q, db: a.st.Q(ctx), id: c.ID, acc: c2.Access, now: now, own: a.personal}
+			w := &syncDB{q: q, db: a.st.Q(ctx), id: c.ID, acc: c2.Access, now: now}
 			if err := syncSave(ctx, w, s, page, cur); err != nil {
 				return err
 			}
@@ -931,7 +870,7 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 		for k := range st {
 			if !slices.ContainsFunc(streams, func(d *connect.Stream) bool { return d.Name == k }) {
 				delete(st, k)
-				w := &syncDB{q: q, db: a.st.Q(ctx), id: c.ID, now: now, own: a.personal}
+				w := &syncDB{q: q, db: a.st.Q(ctx), id: c.ID, now: now}
 				if err := w.stream(ctx, k); err != nil {
 					return err
 				}
@@ -1052,14 +991,9 @@ func syncJSON(v any) ([]byte, error) {
 // SyncNow asks for a sync of the caller's connection id, or an owner's of the archive's integration id, now,
 // past any backoff, and queues it.
 func (a *Archive) SyncNow(ctx context.Context, id uuid.UUID) error {
-	o, _, err := a.connectionMine(ctx, id)
-	if err != nil {
+	if _, err := a.connectionMine(ctx, id); err != nil {
 		return err
 	}
-	return o.syncNow(ctx, id)
-}
-
-func (a *Archive) syncNow(ctx context.Context, id uuid.UUID) error {
 	err := a.sys(ctx, func(ctx context.Context) error {
 		q := a.st.db(ctx)
 		c, err := q.ConnectionLocked(ctx, id)
@@ -1137,7 +1071,7 @@ func (a *Archive) streamTypes(ctx context.Context) string {
 	var b strings.Builder
 	var conns []generated.ArchiveConnection
 	if ac := ActorFrom(ctx); ac != nil {
-		conns, _ = a.memberConnections(ctx, ac)
+		conns, _ = a.memberConnections(ctx, ac.member)
 	}
 	b.WriteString("\n" + runDoc("", `What Archive syncs of the accounts you connected, by "<connector>.<stream>", and the table each lands in: its rows' stream column is the part after the dot, and their connection column the connection's id (see Connected accounts in the header)`) + "interface Streams {\n")
 	done := map[string]bool{}
@@ -1228,8 +1162,6 @@ type syncDB struct {
 	id  uuid.UUID
 	acc *uuid.UUID
 	now time.Time
-	// own says it writes the personal store's tables.
-	own bool
 }
 
 // write writes recs of stream s into its table, with the rows that belong to each, and links what they name.
@@ -1457,9 +1389,6 @@ func (w *syncDB) gone(ctx context.Context, sql string, args ...any) error {
 	if err != nil || tag.RowsAffected() == 0 {
 		return err
 	}
-	if w.own {
-		return w.q.DeleteUnknownPeople(ctx)
-	}
 	return w.q.DeleteUnknown(ctx)
 }
 
@@ -1592,7 +1521,7 @@ func (h *Hub) pushHTTP(w http.ResponseWriter, r *http.Request) {
 // pushAsk asks for the sync of connection conn of workspace ws, which a push named; a connection or workspace
 // gone since takes its watches with it.
 func (h *Hub) pushAsk(ctx context.Context, ws, conn uuid.UUID) error {
-	a, release, err := h.archiveOf(ctx, ws)
+	a, release, err := h.acquire(ctx, ws.String())
 	if errors.Is(err, ErrNotFound) {
 		return h.q().DropWatches(context.WithoutCancel(ctx), conn, []string{})
 	}
@@ -1610,7 +1539,7 @@ func (h *Hub) pushAsk(ctx context.Context, ws, conn uuid.UUID) error {
 // pushConnection says whether workspace ws has connection conn, to connector id: a handshake is kept only
 // for one.
 func (h *Hub) pushConnection(ctx context.Context, ws, conn uuid.UUID, id string) bool {
-	a, release, err := h.archiveOf(ctx, ws)
+	a, release, err := h.acquire(ctx, ws.String())
 	if err != nil {
 		return false
 	}
@@ -1722,12 +1651,10 @@ func (a *Archive) unwatch(ctx context.Context, c generated.ArchiveConnection, p 
 	return errors.Join(append(errs, a.hub.q().DropWatches(ctx, c.ID, []string{}))...)
 }
 
-// syncOnRead catches up the caller's syncs, as reading what they sync does: the archive's integrations, and
-// their own in the personal store.
+// syncOnRead catches up the caller's syncs, as reading what they sync does.
 func (a *Archive) syncOnRead(ctx context.Context) {
 	if ac := ActorFrom(ctx); ac != nil && ac.member != uuid.Nil {
 		a.syncCatchUp(ctx, ac.member)
-		a.hub.self.syncCatchUp(ctx, ac.UserID)
 	}
 }
 
@@ -1791,41 +1718,15 @@ func (a *Archive) connectionAccess(ctx context.Context, id uuid.UUID) (*oauth2.T
 	return tok, nil
 }
 
-// memberConnections are the caller's own connections, from the personal store, and the archive's integrations,
-// by connector and account. A connection of a personal connector still in the workspace is not one of them
-// until it moves (personalMove).
-func (a *Archive) memberConnections(ctx context.Context, ac *Actor) ([]generated.ArchiveConnection, error) {
-	var out, own []generated.ArchiveConnection
+// memberConnections are the personal connections of member and the archive's integrations, by connector and
+// account.
+func (a *Archive) memberConnections(ctx context.Context, member uuid.UUID) ([]generated.ArchiveConnection, error) {
+	var out []generated.ArchiveConnection
 	err := a.st.System(ctx, func(ctx context.Context) (err error) {
-		out, err = a.st.db(ctx).MemberConnections(ctx, ac.member)
+		out, err = a.st.db(ctx).MemberConnections(ctx, member)
 		return err
 	})
-	out = slices.DeleteFunc(out, func(c generated.ArchiveConnection) bool { return !c.Integration && connPersonal(c.Provider) })
-	if err == nil {
-		err = a.hub.self.st.System(ctx, func(ctx context.Context) (err error) {
-			own, err = a.hub.self.st.db(ctx).MemberConnections(ctx, ac.UserID)
-			return err
-		})
-	}
-	// Of the caller's own, only those of this archive's type act here.
-	var mine map[uuid.UUID]bool
-	if err == nil {
-		mine, err = a.hub.selfOfType(ctx, ac.UserID, a.ws.Type)
-	}
-	own = slices.DeleteFunc(own, func(c generated.ArchiveConnection) bool { return !mine[c.ID] })
-	out = append(out, own...)
-	slices.SortStableFunc(out, func(x, y generated.ArchiveConnection) int {
-		return cmp.Or(strings.Compare(x.Provider, y.Provider), strings.Compare(x.Account, y.Account))
-	})
 	return out, err
-}
-
-// connOwner is where the connection c of memberConnections is: the personal store for a personal connector's.
-func (a *Archive) connOwner(c generated.ArchiveConnection) *Archive {
-	if !c.Integration && connPersonal(c.Provider) {
-		return a.hub.self
-	}
-	return a
 }
 
 // connClient is a client of the connection c.
@@ -1914,7 +1815,7 @@ func (a *Archive) Action(ctx context.Context, name string, input any, pick strin
 	if err != nil {
 		return nil, fail(ErrNotFound, "%v", err)
 	}
-	all, err := a.memberConnections(ctx, ac)
+	all, err := a.memberConnections(ctx, ac.member)
 	if err != nil {
 		return nil, err
 	}
@@ -1959,7 +1860,7 @@ func (a *Archive) Action(ctx context.Context, name string, input any, pick strin
 	json.Unmarshal(raw, &in)
 	cl := clients[c.ID]
 	if cl == nil {
-		if cl, err = a.connOwner(c).connClient(ctx, c); err != nil {
+		if cl, err = a.connClient(ctx, c); err != nil {
 			return nil, actionFailed(fail, err)
 		}
 		clients[c.ID] = cl
@@ -1978,7 +1879,7 @@ func (a *Archive) Action(ctx context.Context, name string, input any, pick strin
 		}
 		return out, nil
 	}
-	tools, err := a.connOwner(c).connTools(ctx, c)
+	tools, err := a.connTools(ctx, c)
 	if err != nil {
 		return nil, actionFailed(fail, err)
 	}
@@ -2115,7 +2016,7 @@ func (a *Archive) actionTypes(ctx context.Context) string {
 	var conns []generated.ArchiveConnection
 	if ac := ActorFrom(ctx); ac != nil {
 		var err error
-		if conns, err = a.memberConnections(ctx, ac); err != nil {
+		if conns, err = a.memberConnections(ctx, ac.member); err != nil {
 			fmt.Fprintf(os.Stderr, "archive: workspace %s: the actions of %s: %v\n", a.ws.ID, ac.Email, err)
 		}
 		lvl, groups, _ := a.level(ctx)
@@ -2151,7 +2052,7 @@ func (a *Archive) actionTypes(ctx context.Context) string {
 			}
 			continue
 		}
-		tools, err := a.connOwner(c).connTools(ctx, c)
+		tools, err := a.connTools(ctx, c)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "archive: workspace %s: the tools of %s %s: %v\n", a.ws.ID, p.Name, c.Account, err)
 			continue

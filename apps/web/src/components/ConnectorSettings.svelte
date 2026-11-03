@@ -35,7 +35,7 @@
 </script>
 
 <SettingsPane {onback} {backNarrow}>
-  <PaneHeader title="Connectors" description="Your own accounts that Archive can read from and act in. You connect each once, and it is connected in every archive you are in. Only you can use them." art="api">
+  <PaneHeader title="Connectors" description="Your own accounts that Archive can read from and act in. Only you can use them." art="api">
     {#snippet search()}
       <div class="search"><SearchField bind:value={query} size="sm" placeholder="Search" label="Search connectors" /></div>
       <Menu label="Filter" placement="bottom-end">
@@ -61,7 +61,7 @@
     {#if matches.length}
       <div class="grid">
         {#each matches as c (c.id)}
-          <ConnectorCard connector={c} types onopen={() => onopen?.(c.id)} onconnect={(type) => connect(c.id, type)} />
+          <ConnectorCard connector={c} onopen={() => onopen?.(c.id)} onconnect={() => connect(c.id)} />
         {/each}
       </div>
     {:else}
