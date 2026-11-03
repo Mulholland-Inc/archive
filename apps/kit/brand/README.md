@@ -2,6 +2,7 @@
 
 | File | Use it for |
 |---|---|
+| `icon-100.png` | Intuit Developer: app settings, Basic app info, App logo |
 | `icon-120.png` | Google Cloud: OAuth consent screen, App logo |
 | `icon-215.png` | Microsoft Entra: App registration, Branding & properties, Logo |
 | `icon-512.png` | Slack app icon, GitHub OAuth app logo |
