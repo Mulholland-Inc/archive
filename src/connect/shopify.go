@@ -113,7 +113,7 @@ func shopifyQL(c *Client, query string, vars map[string]any, out any) error {
 }
 
 // shopifyAllOrders says whether the store's app may read every order, not only the last 60 days'.
-func shopifyAllOrders(c *Client) bool {
+func shopifyAllOrders(c *Client) (bool, error) {
 	var out struct {
 		App struct {
 			Scopes []struct {
@@ -121,26 +121,28 @@ func shopifyAllOrders(c *Client) bool {
 			} `json:"accessScopes"`
 		} `json:"currentAppInstallation"`
 	}
-	if shopifyQL(c, "{ currentAppInstallation { accessScopes { handle } } }", nil, &out) != nil {
-		return false
+	if err := shopifyQL(c, "{ currentAppInstallation { accessScopes { handle } } }", nil, &out); err != nil {
+		return false, err
 	}
 	for _, s := range out.App.Scopes {
 		if s.Handle == "read_all_orders" {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // shopifyCursor is where a stream is: Since when the sync its records are as of began, Listed when its last
-// full listing began, and while a sync is under way, Mode list or delta, Began when it began and After the
-// cursor of its next page.
+// full listing began, and while a sync is under way, Mode list or delta, Began when it began, After the
+// cursor of its next page, and for a listing of orders, All, whether the app may read them all, as asked once
+// when it began.
 type shopifyCursor struct {
 	Since  string `json:"since,omitempty"`
 	Listed string `json:"listed,omitempty"`
 	Mode   string `json:"mode,omitempty"`
 	Began  string `json:"began,omitempty"`
 	After  string `json:"after,omitempty"`
+	All    *bool  `json:"all,omitempty"`
 }
 
 // shopifyStream is the stream of the store's connection field, size a page, each node with fields, into table.
@@ -186,8 +188,17 @@ func shopifyStream(name, field, sortKeys string, size int, fields, table string,
 			}
 			got := out[field]
 			// Without read_all_orders, Shopify lists only the last 60 days of orders: such a listing is no listing of
-			// them all, and deletes nothing.
-			page := &Page{Full: cur.Mode == "list" && (field != "orders" || shopifyAllOrders(c))}
+			// them all, and deletes nothing. It is asked once a listing, not a page: a page not Full in the middle of
+			// a listing, as one whose ask failed would be, starts its deleting after it, which deletes what the pages
+			// before it read. An ask that fails fails the page, which the sync tries again.
+			if field == "orders" && cur.Mode == "list" && cur.All == nil {
+				all, err := shopifyAllOrders(c)
+				if err != nil {
+					return nil, err
+				}
+				cur.All = &all
+			}
+			page := &Page{Full: cur.Mode == "list" && (field != "orders" || *cur.All)}
 			for _, m := range got.Nodes {
 				page.Records = append(page.Records, Record{ID: str(m, "id"), Data: m, Updated: stamp(str(m, "updatedAt"))})
 			}

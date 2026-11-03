@@ -411,7 +411,8 @@ func (g *graphWalk) pull(c *Client, cursor string) (*Page, error) {
 		if err != nil {
 			return nil, err
 		}
-		if len(parts) == 0 && len(cur.Parts) > 0 && !cur.Listing {
+		// A listing too: one of no parts is Full, and would delete every row.
+		if len(parts) == 0 && len(cur.Parts) > 0 {
 			return nil, errors.New("Microsoft listed none of what it listed before; Archive keeps what it has and asks again next sync")
 		}
 		ended := map[string]string{}
@@ -460,7 +461,8 @@ func (g *graphWalk) pull(c *Client, cursor string) (*Page, error) {
 	switch r := (*Refusal)(nil); {
 	case err == nil:
 	case graphResync(err):
-		page.More, page.Cursor = true, cursorFor(graphCursor{Listing: true})
+		// The walk starts again as a listing that keeps its parts, so a listing of none is still refused above.
+		page.More, page.Cursor = true, cursorFor(graphCursor{Parts: cur.Parts, Listing: true})
 		return page, nil
 	case errors.As(err, &r) && (r.Status == http.StatusForbidden || r.Status == http.StatusNotFound):
 		// A part refused this walk keeps its delta for the next; a listing that skips one deletes nothing.
