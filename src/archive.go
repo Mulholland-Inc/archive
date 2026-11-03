@@ -617,7 +617,7 @@ var mainNames = func() map[string]bool {
 	return out
 }()
 
-const storeRoles = `DO $$ BEGIN
+const storeRoles = `DO $$ DECLARE r name; BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_authenticator') THEN
         CREATE ROLE "{p}_authenticator" LOGIN NOINHERIT;
     END IF;
@@ -637,6 +637,14 @@ const storeRoles = `DO $$ BEGIN
     IF NOT has_database_privilege('{p}_authenticator', current_database(), 'CONNECT') THEN
         EXECUTE format('GRANT CONNECT ON DATABASE %I TO "{p}_authenticator"', current_database());
     END IF;
+    IF NOT has_database_privilege('{p}_viewer', current_database(), 'CONNECT') THEN
+        EXECUTE format('GRANT CONNECT ON DATABASE %I TO "{p}_viewer"', current_database());
+    END IF;
+    -- Each request logs in as its own role (pgStore.As); the authenticator becomes none, so nothing it runs can.
+    FOR r IN SELECT g.rolname FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles g ON g.oid = m.roleid
+        WHERE m.member = '"{p}_authenticator"'::regrole LOOP
+        EXECUTE format('REVOKE %I FROM "{p}_authenticator"', r);
+    END LOOP;
 END $$`
 
 const storeLock = 7271
@@ -672,17 +680,25 @@ func storeCommitted(after *[]func(), err error) error {
 	return err
 }
 
+// A request runs as its caller's role, logged in as it (pgStore.As), so what it runs cannot become another role:
+// Postgres lets a session set only the roles its login is a member of. The authenticator, which app logs in
+// as, is a member of none.
 type pgStore struct {
 	app, sys *pgxpool.Pool
 	cfg      *pgx.ConnConfig
 	prefix   string
+	password string
+	base     *pgx.ConnConfig
+	moved    func(table, id string)
+	mu       sync.Mutex
+	roles    map[string]*pgxpool.Pool
 }
 
 // OpenStore opens a workspace's store; moved hears what each of its transactions committed (livePool).
 func OpenStore(ctx context.Context, pg *pgx.ConnConfig, prefix, password string, moved func(table, id string)) (*pgStore, error) {
 	cfg := pg.Copy()
 	cfg.RuntimeParams["search_path"] = "public"
-	s := &pgStore{cfg: cfg, prefix: prefix}
+	s := &pgStore{cfg: cfg, prefix: prefix, password: password, base: pg, moved: moved, roles: map[string]*pgxpool.Pool{}}
 	var err error
 	if s.sys, err = storePool(ctx, pg, storeSysConns, moved, nil); err == nil {
 		err = s.bootstrap(ctx, password)
@@ -701,9 +717,10 @@ func OpenStore(ctx context.Context, pg *pgx.ConnConfig, prefix, password string,
 // A process holds the hub's pool and, per open workspace, its system and app pools, and two revisions overlap
 // while a deploy rolls out: these keep that well inside the database's connections.
 const (
-	storeAppConns = 6
-	storeSysConns = 3
-	storeIdle     = time.Minute
+	storeAppConns  = 6
+	storeSysConns  = 3
+	storeRoleConns = 2
+	storeIdle      = time.Minute
 )
 
 func storePool(ctx context.Context, base *pgx.ConnConfig, conns int32, moved func(table, id string), fn func(*pgx.ConnConfig)) (*pgxpool.Pool, error) {
@@ -837,6 +854,11 @@ func (s *pgStore) Catalog(ctx context.Context) (*Catalog, error) {
 }
 
 func (s *pgStore) Close() {
+	s.mu.Lock()
+	for _, p := range s.roles {
+		p.Close()
+	}
+	s.mu.Unlock()
 	if s.app != nil {
 		s.app.Close()
 	}
@@ -858,13 +880,54 @@ func (s *pgStore) As(ctx context.Context, role string, fn func(context.Context) 
 	if t, ok := ctx.Value(storeTxKey{}).(storeTx); ok && t.role == role {
 		return fn(ctx)
 	}
+	pool, err := s.rolePool(ctx, role)
+	if err != nil {
+		return err
+	}
 	after := &[]func(){}
-	return storeCommitted(after, storeErr(pgx.BeginFunc(ctx, s.app, func(tx pgx.Tx) error {
+	return storeCommitted(after, storeErr(pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+		// The role it is already, said so, as the SQL that asks which role is writing reads it.
 		if err := generated.New(tx).SetLocal(ctx, "role", role); err != nil {
 			return err
 		}
 		return fn(context.WithValue(ctx, storeTxKey{}, storeTx{tx, role, after, &schemaTx{}}))
 	})))
+}
+
+// rolePool is the pool that logs in as role, made the first time this process runs as it: the role may log in
+// from then on, with a password only this Archive's key makes.
+func (s *pgStore) rolePool(ctx context.Context, role string) (*pgxpool.Pool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if p := s.roles[role]; p != nil {
+		return p, nil
+	}
+	if !strings.HasPrefix(role, s.prefix+"_") {
+		return nil, fmt.Errorf("role %s is not this workspace's: %w", role, ErrForbidden)
+	}
+	password := s.rolePassword(role)
+	err := pgx.BeginFunc(ctx, s.sys, func(tx pgx.Tx) error {
+		if err := generated.New(tx).AdvisoryXactLock(ctx, storeLock); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, "ALTER ROLE "+pgIdent(role)+" LOGIN PASSWORD '"+password+"'")
+		return err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("logging in as %s: %w", role, err)
+	}
+	p, err := storePool(ctx, s.base, storeRoleConns, s.moved, func(c *pgx.ConnConfig) { c.User, c.Password = role, password })
+	if err != nil {
+		return nil, err
+	}
+	s.roles[role] = p
+	return p, nil
+}
+
+// rolePassword is role's password, from the authenticator's, which the Archive's key makes.
+func (s *pgStore) rolePassword(role string) string {
+	sum := sha256.Sum256([]byte(s.password + "\x00" + role))
+	return hex.EncodeToString(sum[:])
 }
 
 func (s *pgStore) System(ctx context.Context, fn func(context.Context) error) error {
