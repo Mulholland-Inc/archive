@@ -11,7 +11,7 @@
   import StatusBadge from './StatusBadge.svelte';
   import Text from './Text.svelte';
   import Icon from './Icon.svelte';
-  import { connect, connectionTypes, syncNow, syncAccount, disconnectAccount, setConnectionType, connections } from '../lib/app.svelte.js';
+  import { connect, connectionTypes, syncNow, disconnectAccount, setConnectionType, connections } from '../lib/app.svelte.js';
   import { relative } from '../lib/live.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
 
@@ -51,7 +51,7 @@
     </Stack>
     <Stack direction="row" gap="2">
       {#if accounts.length}
-        {#if accounts.length > 1}<Button variant="ghost" icon={RefreshCw} onclick={() => syncNow(connector.id)}>Sync all</Button>{/if}
+        <Button variant="ghost" icon={RefreshCw} onclick={() => syncNow(connector.id)}>Sync</Button>
         <Menu placement="bottom-end" width="sm" label="Add account">
           {#snippet trigger(props)}<Button icon={Plus} iconEnd={ChevronDown} disabled={!connector.ready} {...props}>Add account</Button>{/snippet}
           <MenuItems items={pick} />
@@ -78,7 +78,6 @@
             </Stack>
             <div class="controls">
               <SegmentedControl value={x.type} options={connectionTypes} size="sm" label={`Archives ${x.account} is in`} onchange={(t) => setConnectionType(x, t)} />
-              <Button size="sm" variant="ghost" icon={RefreshCw} onclick={() => syncAccount(x)}>Sync</Button>
               <Button size="sm" variant="ghost" icon={Unplug} onclick={() => remove(x)}>Disconnect</Button>
             </div>
           </li>
