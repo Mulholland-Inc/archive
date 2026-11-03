@@ -41,7 +41,7 @@
 <p>You can connect accounts you hold at other services so that Archive can read them for you and your workspace. Each person connects their own mail, calendar and files, and only an owner connects an organization's accounts, like its accounting, for the workspace. Archive asks each service for read-only access wherever it offers it, and reads only what you allow on that service's own consent screen.</p>
 <ul>
 <li><strong>Google</strong>: with your consent, Gmail messages and attachments (read only), Google Calendar events and attendees (read only), and Google Drive files and their contents (read only), with your email address to name the account.</li>
-<li><strong>Microsoft</strong>: with your consent, Outlook mail and attachments, your Outlook calendar, and the files of the SharePoint sites and OneDrive you can open, all read only, with your email address to name the account.</li>
+<li><strong>Microsoft</strong>: with your consent, Outlook mail and attachments, your Outlook calendar, the files of the SharePoint sites and OneDrive you can open, and your Microsoft Teams chats and the posts of your teams' channels, with the email addresses of who sent them, all read only, with your email address to name the account.</li>
 <li><strong>Intuit QuickBooks</strong>: with an owner's consent, one company's books: its chart of accounts, customers, vendors, employees, products and services, and transactions such as invoices, bills, payments and journal entries. Intuit offers no read-only access, so Archive asks for its accounting access and only reads with it.</li>
 <li><strong>Others</strong>, like Notion, Gusto, HubSpot, GitHub, Asana, Linear, Sentry and Stripe, are read and acted on only as you allow when you connect them.</li>
 </ul>

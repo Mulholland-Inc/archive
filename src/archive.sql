@@ -1589,6 +1589,50 @@ COMMENT ON COLUMN archive.drive_file.source_id IS 'Its id there';
 COMMENT ON COLUMN archive.drive_file.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.drive_file.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
+-- Chat: a message of a chat or a channel you connected, like Microsoft Teams, with who sent it as the person of
+-- their email address.
+CREATE TABLE archive.chat_message (
+    id          uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection  uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream      text NOT NULL,
+    source_id   text NOT NULL,
+    access      uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    updated_at  timestamptz NOT NULL DEFAULT now(),
+    name        text NOT NULL DEFAULT '',
+    seen_at     timestamptz NOT NULL DEFAULT now(),
+    channel     text,
+    kind        text CONSTRAINT chat_message_kind CHECK (kind IN ('chat', 'channel')),
+    thread      text,
+    sender      uuid REFERENCES archive.known_person ON DELETE SET NULL,
+    sender_name text,
+    text        text,
+    files       text[],
+    sent_at     timestamptz,
+    edited_at   timestamptz,
+    url         archive.url,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX chat_message_sender_idx ON archive.chat_message (sender);
+CREATE INDEX chat_message_sent_at_idx ON archive.chat_message (sent_at);
+COMMENT ON TABLE archive.chat_message IS 'A message of a chat or channel you connected, like Microsoft Teams. Read only; Archive syncs them
+icon: message-square';
+COMMENT ON COLUMN archive.chat_message.channel IS 'The chat or channel it is in, by name, like Finance / General';
+COMMENT ON COLUMN archive.chat_message.kind IS 'chat, between people, or channel, of a team';
+COMMENT ON COLUMN archive.chat_message.thread IS 'The conversation it is part of, its id there: its chat, or the post it replies to';
+COMMENT ON COLUMN archive.chat_message.sender IS 'references known_person; who sent it, by their address';
+COMMENT ON COLUMN archive.chat_message.sender_name IS 'Who sent it, by name';
+COMMENT ON COLUMN archive.chat_message.text IS 'Its text, up to 64 KB';
+COMMENT ON COLUMN archive.chat_message.files IS 'The names of the files it shares';
+COMMENT ON COLUMN archive.chat_message.sent_at IS 'When it was sent';
+COMMENT ON COLUMN archive.chat_message.edited_at IS 'When it last changed there';
+COMMENT ON COLUMN archive.chat_message.url IS 'Where it opens there';
+COMMENT ON COLUMN archive.chat_message.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.chat_message.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.chat_message.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.chat_message.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.chat_message.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
 -- CRM: the companies, contacts and deals of a CRM you connected, like HubSpot. A company is the organization of
 -- its web domain, a contact the person of their email address, so they meet the same people and organizations
 -- in mail, calendars and books.
@@ -2109,6 +2153,7 @@ BEGIN
         WHEN 'payroll_contractor_payment_group' THEN concat_ws(' · ', 'Contractor payments', r->>'check_date')
         WHEN 'payroll_task' THEN r->>'title'
         WHEN 'drive_file' THEN r->>'title'
+        WHEN 'chat_message' THEN coalesce(nullif(left(btrim(r->>'text'), 120), ''), r->>'sender_name')
         WHEN 'crm_company' THEN coalesce(nullif(btrim(r->>'title'), ''), r->>'domain')
         WHEN 'crm_contact' THEN coalesce(nullif(btrim(concat_ws(' ', nullif(r->>'first_name', ''), nullif(r->>'last_name', ''))), ''), r->>'email')
         WHEN 'crm_deal' THEN r->>'title'
@@ -2160,6 +2205,7 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_contractor
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_contractor_payment_group FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_task FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.drive_file FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.chat_message FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.crm_company FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.crm_contact FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.crm_deal FOR EACH ROW EXECUTE FUNCTION archive.object_name();
@@ -2251,6 +2297,7 @@ GRANT SELECT ON archive.payroll_contractor_payment TO "{p}_viewer";
 GRANT SELECT ON archive.payroll_contractor_payment_group TO "{p}_viewer";
 GRANT SELECT ON archive.payroll_task TO "{p}_viewer";
 GRANT SELECT ON archive.drive_file TO "{p}_viewer";
+GRANT SELECT ON archive.chat_message TO "{p}_viewer";
 GRANT SELECT ON archive.crm_company TO "{p}_viewer";
 GRANT SELECT ON archive.crm_contact TO "{p}_viewer";
 GRANT SELECT ON archive.crm_deal TO "{p}_viewer";
@@ -2348,6 +2395,8 @@ ALTER TABLE archive.payroll_task ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.payroll_task FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_task.connection));
 ALTER TABLE archive.drive_file ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.drive_file FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = drive_file.connection));
+ALTER TABLE archive.chat_message ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.chat_message FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = chat_message.connection));
 ALTER TABLE archive.crm_company ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.crm_company FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = crm_company.connection));
 ALTER TABLE archive.crm_contact ENABLE ROW LEVEL SECURITY;
@@ -2376,7 +2425,8 @@ CREATE POLICY seen ON archive.known_person FOR SELECT USING (EXISTS (SELECT FROM
     OR EXISTS (SELECT FROM archive.ledger_contact l WHERE l.person = known_person.id)
     OR EXISTS (SELECT FROM archive.calendar_event e WHERE e.organizer = known_person.id)
     OR EXISTS (SELECT FROM archive.calendar_attendee a WHERE a.person = known_person.id)
-    OR EXISTS (SELECT FROM archive.crm_contact x WHERE x.person = known_person.id));
+    OR EXISTS (SELECT FROM archive.crm_contact x WHERE x.person = known_person.id)
+    OR EXISTS (SELECT FROM archive.chat_message x WHERE x.sender = known_person.id));
 ALTER TABLE archive.known_org ENABLE ROW LEVEL SECURITY;
 CREATE POLICY seen ON archive.known_org FOR SELECT USING (EXISTS (SELECT FROM archive.payroll_company c WHERE c.org = known_org.id)
     OR EXISTS (SELECT FROM archive.crm_company x WHERE x.org = known_org.id));
@@ -2595,7 +2645,8 @@ SELECT jsonb_build_object(
             'archive.payroll_contractor_payment_group'::regclass, 'archive.payroll_task'::regclass, 'archive.drive_file'::regclass,
             'archive.ledger_account'::regclass, 'archive.ledger_contact'::regclass, 'archive.ledger_item'::regclass,
             'archive.ledger_entry'::regclass, 'archive.ledger_line'::regclass, 'archive.calendar_event'::regclass,
-            'archive.calendar_attendee'::regclass, 'archive.crm_company'::regclass, 'archive.crm_contact'::regclass, 'archive.crm_deal'::regclass)
+            'archive.calendar_attendee'::regclass, 'archive.crm_company'::regclass, 'archive.crm_contact'::regclass, 'archive.crm_deal'::regclass,
+            'archive.chat_message'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -2703,7 +2754,8 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.calendar_event x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.crm_company x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.crm_contact x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.crm_deal x WHERE x.connection = c.id))::bigint AS items,
+        + (SELECT count(*) FROM archive.crm_deal x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.chat_message x WHERE x.connection = c.id))::bigint AS items,
     c.integration, coalesce(c.access::text, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
 FROM archive.connection c WHERE c.member = $1 AND NOT c.integration OR c.integration ORDER BY c.provider, c.account, c.id;
 
@@ -2791,7 +2843,8 @@ WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM arch
     AND NOT EXISTS (SELECT FROM archive.ledger_contact x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.calendar_event x WHERE x.organizer = k.id)
     AND NOT EXISTS (SELECT FROM archive.calendar_attendee x WHERE x.person = k.id)
-    AND NOT EXISTS (SELECT FROM archive.crm_contact x WHERE x.person = k.id))
+    AND NOT EXISTS (SELECT FROM archive.crm_contact x WHERE x.person = k.id)
+    AND NOT EXISTS (SELECT FROM archive.chat_message x WHERE x.sender = k.id))
 DELETE FROM archive.known_org o WHERE NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.org = o.id)
     AND NOT EXISTS (SELECT FROM archive.crm_company x WHERE x.org = o.id);
 
