@@ -1318,16 +1318,6 @@ export async function syncNow(id) {
   return connections.refresh();
 }
 
-// syncAccount asks for a sync of your one account connection now.
-export async function syncAccount(connection) {
-  try {
-    await call(`/connect/${connection.id}/sync`, { method: 'POST' });
-  } catch (e) {
-    complain(e, `Couldn’t sync ${connection.account}`);
-  }
-  return connections.refresh();
-}
-
 // setConnectionType puts your one account connection in your archives of type, personal, family or business, and
 // out of the others, with what it synced.
 export async function setConnectionType(connection, type) {

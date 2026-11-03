@@ -17,7 +17,7 @@
     flex: none;
     width: fit-content;
     height: var(--avatar-xs);
-    padding: var(--space-1);
+    padding: var(--space-1) var(--space-1-5);
     border-radius: var(--radius-sm);
     background: var(--color-fill);
     color: var(--color-text);
@@ -25,6 +25,11 @@
     font-weight: var(--weight-medium);
     line-height: var(--leading-none);
     white-space: nowrap;
+  }
+
+  /* The icon brings its own room on the left; the text needs it on the right. */
+  .badge:has(.glyph) {
+    padding-inline-start: var(--space-1);
   }
 
   .glyph {
