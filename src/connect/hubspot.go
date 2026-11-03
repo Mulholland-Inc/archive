@@ -17,7 +17,11 @@ import (
 // developer account whose redirect URLs list <API>/connect/hubspot/callback and whose required scopes are
 // exactly the Scopes here. HubSpot's own v3 token endpoint takes the client in the form, and says whose
 // token it is when asked with the client's secret.
-// It syncs nothing until its contacts, companies and deals are mapped into the tables of archive.sql; its push waits for that too.
+//
+// It syncs companies, contacts and deals into the crm tables: a company as the organization of its web domain, a
+// contact as the person of their email, and a deal with its pipeline and stage by name and the company it is
+// with. Each is listed whole the first time and a week after it last was, which deletes what HubSpot no longer
+// has, and in between searched for what changed since the sync before, as its pushes say.
 func init() {
 	Register(&Connector{
 		ID: "hubspot", Name: "HubSpot", Integration: true, Env: "ARCHIVE_HUBSPOT", Host: "https://app.hubspot.com",
@@ -98,7 +102,238 @@ func init() {
 				}),
 		},
 		Push: hubspotPush,
+		Streams: []*Stream{
+			hubspotStream("companies", "companies", "hs_lastmodifieddate", "crm_company", hubspotCompanyRows,
+				"name,domain,website,industry,lifecyclestage,phone,city,state,country,numberofemployees,annualrevenue,description,createdate,hs_lastmodifieddate"),
+			hubspotStream("contacts", "contacts", "lastmodifieddate", "crm_contact", hubspotContactRows,
+				"firstname,lastname,email,phone,jobtitle,company,associatedcompanyid,lifecyclestage,hs_lead_status,city,state,country,createdate,lastmodifieddate"),
+			hubspotStream("deals", "deals", "hs_lastmodifieddate", "crm_deal", hubspotDealRows,
+				"dealname,amount,deal_currency_code,pipeline,dealstage,closedate,hs_is_closed,hs_is_closed_won,description,createdate,hs_lastmodifieddate"),
+		},
 	})
+}
+
+// hubspotRelist is how long after a full listing the next lists whole again, to see what was deleted.
+const hubspotRelist = 7 * 24 * time.Hour
+
+// hubspotSearchMost is how far a search pages: HubSpot answers no more than 10,000 of one, so a delta bigger
+// than that lists whole instead.
+const hubspotSearchMost = 10000
+
+// hubspotCursor is where a stream is: Since when the sync its records are as of began, in Unix milliseconds,
+// Listed when its last full listing began, and while a sync is under way, Mode list or search, Began when it
+// began and After the next page.
+type hubspotCursor struct {
+	Since  int64  `json:"since,omitempty"`
+	Listed int64  `json:"listed,omitempty"`
+	Mode   string `json:"mode,omitempty"`
+	Began  int64  `json:"began,omitempty"`
+	After  string `json:"after,omitempty"`
+}
+
+// hubspotStream is the stream of the object type obj, with props, into table, its delta searched by changed,
+// the property of when a record last changed.
+func hubspotStream(name, obj, changed, table string, rows func(map[string]any) *Row, props string) *Stream {
+	return &Stream{Name: name, Gap: time.Second, Table: table, Rows: rows,
+		Doc: "Every one of HubSpot's " + obj + ", by id, with " + strings.ReplaceAll(props, ",", ", ") + ": listed whole the first time and a week " +
+			"after, 100 a page, which deletes those HubSpot no longer has, and searched in between for those changed since the sync before.",
+		Pull: func(c *Client, cursor string) (*Page, error) {
+			var cur hubspotCursor
+			if err := cursorOf(cursor, &cur); err != nil {
+				return nil, err
+			}
+			now := time.Now().Add(-time.Minute).UnixMilli()
+			if cur.Mode == "" {
+				cur.Mode, cur.Began, cur.After = "search", now, ""
+				if cur.Since == 0 || time.Since(time.UnixMilli(cur.Listed)) > hubspotRelist {
+					cur.Mode = "list"
+				}
+			}
+			var res struct {
+				Results []map[string]any `json:"results"`
+				Paging  struct {
+					Next struct {
+						After string `json:"after"`
+					} `json:"next"`
+				} `json:"paging"`
+			}
+			page := &Page{Full: cur.Mode == "list"}
+			if cur.Mode == "list" {
+				q := url.Values{"limit": {"100"}, "properties": {props}}
+				if obj == "deals" {
+					q.Set("associations", "companies")
+				}
+				if cur.After != "" {
+					q.Set("after", cur.After)
+				}
+				if err := c.Get(hubspotAPI+"/crm/v3/objects/"+obj+"?"+q.Encode(), &res); err != nil {
+					return nil, err
+				}
+			} else {
+				if n, _ := strconv.Atoi(cur.After); n >= hubspotSearchMost-100 {
+					cur = hubspotCursor{Since: cur.Since, Listed: cur.Listed, Mode: "list", Began: cur.Began}
+					page.More, page.Cursor = true, cursorFor(cur)
+					return page, nil
+				}
+				body := map[string]any{"limit": 100, "properties": strings.Split(props, ","),
+					"filterGroups": []map[string]any{{"filters": []map[string]any{{"propertyName": changed, "operator": "GTE", "value": strconv.FormatInt(cur.Since, 10)}}}},
+					"sorts":        []map[string]string{{"propertyName": changed, "direction": "ASCENDING"}}}
+				if cur.After != "" {
+					body["after"] = cur.After
+				}
+				if err := c.Do("POST", hubspotAPI+"/crm/v3/objects/"+obj+"/search", body, &res); err != nil {
+					return nil, err
+				}
+				if obj == "deals" {
+					if err := hubspotDealCompanies(c, res.Results); err != nil {
+						return nil, err
+					}
+				}
+			}
+			if obj == "deals" {
+				if err := hubspotStages(c, res.Results); err != nil {
+					return nil, err
+				}
+			}
+			for _, m := range res.Results {
+				page.Records = append(page.Records, Record{ID: str(m, "id"), Data: m, Updated: stamp(str(m, "updatedAt"))})
+			}
+			if res.Paging.Next.After != "" {
+				cur.After, page.More = res.Paging.Next.After, true
+			} else {
+				if cur.Mode == "list" {
+					cur.Listed = cur.Began
+				}
+				cur = hubspotCursor{Since: cur.Began, Listed: cur.Listed}
+			}
+			page.Cursor = cursorFor(cur)
+			return page, nil
+		}}
+}
+
+// hubspotDealCompanies adds to each deal the id of the first company it is associated with, as a search does
+// not say, from one batch read of the associations of them all.
+func hubspotDealCompanies(c *Client, deals []map[string]any) error {
+	if len(deals) == 0 {
+		return nil
+	}
+	inputs := make([]map[string]string, len(deals))
+	for i, d := range deals {
+		inputs[i] = map[string]string{"id": str(d, "id")}
+	}
+	var res struct {
+		Results []struct {
+			From struct {
+				ID string `json:"id"`
+			} `json:"from"`
+			To []struct {
+				ID hubspotID `json:"toObjectId"`
+			} `json:"to"`
+		} `json:"results"`
+	}
+	if err := c.Do("POST", hubspotAPI+"/crm/v4/associations/deals/companies/batch/read", map[string]any{"inputs": inputs}, &res); err != nil {
+		return err
+	}
+	company := map[string]string{}
+	for _, r := range res.Results {
+		if len(r.To) > 0 {
+			company[r.From.ID] = string(r.To[0].ID)
+		}
+	}
+	for _, d := range deals {
+		d["companyId"] = company[str(d, "id")]
+	}
+	return nil
+}
+
+// hubspotID is an id HubSpot sends as a number or a string, as its digits.
+type hubspotID string
+
+func (n *hubspotID) UnmarshalJSON(b []byte) error {
+	*n = hubspotID(strings.Trim(string(b), `"`))
+	return nil
+}
+
+// hubspotStages adds to each deal the names of its pipeline and stage, which it names by id. A HubSpot that
+// will not list its pipelines leaves the names out.
+func hubspotStages(c *Client, deals []map[string]any) error {
+	var res struct {
+		Results []struct {
+			ID     string `json:"id"`
+			Label  string `json:"label"`
+			Stages []struct {
+				ID    string `json:"id"`
+				Label string `json:"label"`
+			} `json:"stages"`
+		} `json:"results"`
+	}
+	if err := c.Get(hubspotAPI+"/crm/v3/pipelines/deals", &res); err != nil {
+		if Busy(err) {
+			return err
+		}
+		return nil
+	}
+	pipes, stages := map[string]string{}, map[string]string{}
+	for _, p := range res.Results {
+		pipes[p.ID] = p.Label
+		for _, st := range p.Stages {
+			stages[p.ID+"/"+st.ID] = st.Label
+		}
+	}
+	for _, d := range deals {
+		ps := obj(d, "properties")
+		d["pipelineLabel"] = cmp.Or(pipes[str(ps, "pipeline")], str(ps, "pipeline"))
+		d["stageLabel"] = cmp.Or(stages[str(ps, "pipeline")+"/"+str(ps, "dealstage")], str(ps, "dealstage"))
+	}
+	return nil
+}
+
+// hubspotBool is a HubSpot property that is true or false, as it sends them as text.
+func hubspotBool(ps map[string]any, k string) any {
+	switch str(ps, k) {
+	case "true":
+		return true
+	case "false":
+		return false
+	}
+	return nil
+}
+
+// hubspotCompanyRows is a company, the organization of its domain, or else of its website's.
+func hubspotCompanyRows(m map[string]any) *Row {
+	ps := obj(m, "properties")
+	domain := cmp.Or(Domain(str(ps, "domain")), Domain(str(ps, "website")))
+	return rowOf(map[string]any{"title": str(ps, "name"), "domain": domain, "industry": str(ps, "industry"), "stage": str(ps, "lifecyclestage"),
+		"phone": str(ps, "phone"), "city": str(ps, "city"), "state": str(ps, "state"), "country": str(ps, "country"),
+		"employees": decimal(ps["numberofemployees"]), "revenue": money(ps["annualrevenue"], "USD"), "description": clip(str(ps, "description"), maxText),
+		"made_at": instant(str(ps, "createdate")), "edited_at": instant(cmp.Or(str(ps, "hs_lastmodifieddate"), str(m, "updatedAt")))}).org("org", domain)
+}
+
+// hubspotContactRows is a contact, the person of their email, with the company HubSpot holds them to be with.
+func hubspotContactRows(m map[string]any) *Row {
+	ps := obj(m, "properties")
+	email := Email(str(ps, "email"))
+	return rowOf(map[string]any{"first_name": str(ps, "firstname"), "last_name": str(ps, "lastname"), "email": email, "phone": str(ps, "phone"),
+		"job_title": str(ps, "jobtitle"), "company_name": str(ps, "company"), "stage": str(ps, "lifecyclestage"), "lead_status": str(ps, "hs_lead_status"),
+		"city": str(ps, "city"), "state": str(ps, "state"), "country": str(ps, "country"), "made_at": instant(str(ps, "createdate")),
+		"edited_at": instant(cmp.Or(str(ps, "lastmodifieddate"), str(m, "updatedAt")))}).
+		person("person", email).ref("company", str(ps, "associatedcompanyid"))
+}
+
+// hubspotDealRows is a deal with its pipeline and stage by name, and the company it is with: the one a search
+// found, or the first a listing names.
+func hubspotDealRows(m map[string]any) *Row {
+	ps := obj(m, "properties")
+	company := str(m, "companyId")
+	if company == "" {
+		if cs := objects(obj(obj(m, "associations"), "companies")["results"], ""); len(cs) > 0 {
+			company = str(cs[0], "id")
+		}
+	}
+	return rowOf(map[string]any{"title": str(ps, "dealname"), "amount": money(ps["amount"], cmp.Or(str(ps, "deal_currency_code"), "USD")),
+		"pipeline": str(m, "pipelineLabel"), "stage": str(m, "stageLabel"), "closed": hubspotBool(ps, "hs_is_closed"), "won": hubspotBool(ps, "hs_is_closed_won"),
+		"close_on": day(str(ps, "closedate")), "description": clip(str(ps, "description"), maxText), "made_at": instant(str(ps, "createdate")),
+		"edited_at": instant(cmp.Or(str(ps, "hs_lastmodifieddate"), str(m, "updatedAt")))}).ref("company", company)
 }
 
 const hubspotAPI = "https://api.hubapi.com"
