@@ -371,7 +371,8 @@ export function tableOf(id, v = ws()) {
 }
 
 // baseOf is the table a view reads, as its DDL names it after its own FROM, past the parentheses Postgres puts
-// around joins: not the FROM of a subquery in its select list, like a count of another table; a table is its own.
+// around joins and past its schema, archive's as the workspace's: not the FROM of a subquery in its select list,
+// like a count of another table; a table is its own.
 // A view whose FROM is a subquery, as one given its name column reads (objectUpgrade), reads what that reads.
 export function baseOf(t) {
   if (t?.kind !== 'view') return t?.id;
@@ -387,7 +388,7 @@ export function baseOf(t) {
       else if (depth === 0 && /^from\b/i.test(ddl.slice(i, i + 5)) && !/\w/.test(ddl[i - 1] ?? '')) {
         const rest = ddl.slice(i + 4);
         const sub = /^\s*\(\s*select\b/i.exec(rest);
-        if (!sub) return /^\s+[(\s]*(?:public\.)?"?(\w+)"?/i.exec(rest)?.[1];
+        if (!sub) return /^\s+[(\s]*(?:"?\w+"?\.)?"?(\w+)"?/i.exec(rest)?.[1];
         const open = rest.indexOf('(');
         let d = 0;
         for (let j = open; j < rest.length; j++) {
@@ -412,10 +413,11 @@ export function linkOf(t, c, depth = 0) {
 
 // shownOf is the columns of t a screen shows a row by, past its name: not what Archive keeps of every row, and
 // not an id that names no table the app knows, which would read as a bare UUID; nor, of Archive's own tables,
-// the ids a row has at the service it came from.
+// the ids a row has at the service it came from, nor of a view of one.
 export function shownOf(t) {
   const own = ['id', 'name', 'access', 'created_at', 'updated_at', 'search'];
-  const archive = Boolean(t) && !ws()?.schema.includes(t);
+  const base = tableOf(baseOf(t));
+  const archive = Boolean(base) && !ws()?.schema.includes(base);
   return (t?.columns ?? []).filter(
     (c) =>
       !own.includes(c.name) &&
@@ -429,9 +431,13 @@ export async function rowOf(table, id) {
   return call(`/api/${encodeURIComponent(table)}/${encodeURIComponent(id)}`);
 }
 
-// titleOf is what a row is called: its name, shown as a cell is, or Untitled; never its id.
-export function titleOf(row) {
-  return show(row?.name).trim() || 'Untitled';
+// titleOf is what a row of t is called: its name, shown as a cell is; for a row of a view with none, the name
+// of the row of the table it reads; or Untitled; never its id.
+export function titleOf(row, t) {
+  const own = show(row?.name).trim();
+  if (own || t?.kind !== 'view') return own || 'Untitled';
+  const base = baseOf(t);
+  return (base !== t.id && tableOf(base) && nameOf(base, row?.id)?.trim()) || 'Untitled';
 }
 
 // Row names, for links: by table and id in each workspace's names, a name, or null for a row the member

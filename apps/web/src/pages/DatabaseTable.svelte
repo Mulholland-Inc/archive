@@ -71,7 +71,7 @@
   // A sample row is shown by its name, then its first few columns, its links by the names of their rows.
   const shownColumns = $derived(type ? shownOf(type).slice(0, 3) : []);
   const sampleColumns = $derived([{ key: 'name', label: 'name' }, ...shownColumns.map((c) => ({ key: c.name, label: c.name, muted: true }))]);
-  const sampleRows = $derived(type ? type.sample.map((r, i) => ({ id: r.id ?? i, row: r, name: titleOf(r), ...Object.fromEntries(shownColumns.map((c) => [c.name, cellText(type, c, r)])) })) : []);
+  const sampleRows = $derived(type ? type.sample.map((r, i) => ({ id: r.id ?? i, row: r, name: titleOf(r, type), ...Object.fromEntries(shownColumns.map((c) => [c.name, cellText(type, c, r)])) })) : []);
 
   const ask = () => askAboutTable(type);
 

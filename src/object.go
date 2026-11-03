@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -293,21 +294,28 @@ func objectAttach(ctx context.Context, tx pgx.Tx, cat *Catalog, t *Table, derive
 
 type objectView struct{ name, ddl string }
 
-// objectViewsSQL is each public view without a name column, oldest first, so a view of a view comes after it:
-// its definition, options, whether it has an id, and the tables and views it reads that have an id and a name.
+// objectViewsSQL is each public view without a name column, or with the empty one objectViews gave a view whose
+// tables had no name it could read, oldest first, so a view of a view comes after it: its definition, options,
+// whether it has an id and a name, and the tables and views it reads, of the workspace or Archive's own, that
+// have an id and a name.
 const objectViewsSQL = `SELECT v.relname::text, rtrim(pg_get_viewdef(v.oid, true), ';'), coalesce(array_to_string(v.reloptions, ', '), ''),
     EXISTS (SELECT FROM pg_attribute a WHERE a.attrelid = v.oid AND a.attname = 'id' AND NOT a.attisdropped),
-    coalesce((SELECT array_agg(DISTINCT r.relname::text ORDER BY r.relname::text) FROM pg_rewrite w JOIN pg_depend d ON d.classid = 'pg_rewrite'::regclass AND d.objid = w.oid
+    EXISTS (SELECT FROM pg_attribute a WHERE a.attrelid = v.oid AND a.attname = 'name' AND NOT a.attisdropped),
+    coalesce((SELECT array_agg(DISTINCT format('%I.%I', r.relnamespace::regnamespace::text, r.relname)) FROM pg_rewrite w JOIN pg_depend d ON d.classid = 'pg_rewrite'::regclass AND d.objid = w.oid
         JOIN pg_class r ON r.oid = d.refobjid AND d.refclassid = 'pg_class'::regclass
-        WHERE w.ev_class = v.oid AND r.oid <> v.oid AND r.relnamespace = 'public'::regnamespace AND r.relkind IN ('r', 'p', 'v')
+        WHERE w.ev_class = v.oid AND r.oid <> v.oid AND r.relnamespace IN ('public'::regnamespace, 'archive'::regnamespace) AND r.relkind IN ('r', 'p', 'v')
           AND EXISTS (SELECT FROM pg_attribute a WHERE a.attrelid = r.oid AND a.attname = 'id' AND NOT a.attisdropped)
           AND EXISTS (SELECT FROM pg_attribute a WHERE a.attrelid = r.oid AND a.attname = 'name' AND NOT a.attisdropped)), '{}')
 FROM pg_class v WHERE v.relnamespace = 'public'::regnamespace AND v.relkind = 'v'
-    AND NOT EXISTS (SELECT FROM pg_attribute a WHERE a.attrelid = v.oid AND a.attname = 'name' AND NOT a.attisdropped)
 ORDER BY v.oid`
+
+// objectEmpty is where a view objectViews gave an empty name says so, after its other columns, and the end of
+// the definition it wrapped.
+var objectEmpty = regexp.MustCompile(`(?s)^\s*SELECT .*?,\s*''::text AS name\s+FROM \((.*)\)\s*q$`)
 
 // objectViews are the statements that give each view without a name column one, after its other columns: the
 // name of the row of a table or view it reads whose id is the view's row's id, or an empty one when there is none.
+// A view given an empty one gets the name it reads when it reads one now.
 func objectViews(ctx context.Context, tx pgx.Tx) ([]objectView, error) {
 	rows, err := tx.Query(ctx, objectViewsSQL)
 	if err != nil {
@@ -315,14 +323,21 @@ func objectViews(ctx context.Context, tx pgx.Tx) ([]objectView, error) {
 	}
 	var out []objectView
 	var name, def, opts string
-	var hasID bool
+	var hasID, hasName bool
 	var reads []string
-	_, err = pgx.ForEachRow(rows, []any{&name, &def, &opts, &hasID, &reads}, func() error {
+	_, err = pgx.ForEachRow(rows, []any{&name, &def, &opts, &hasID, &hasName, &reads}, func() error {
+		if hasName {
+			m := objectEmpty.FindStringSubmatch(def)
+			if m == nil || !hasID || len(reads) == 0 {
+				return nil
+			}
+			def = m[1]
+		}
 		expr := "''::text"
 		if hasID && len(reads) > 0 {
 			parts := make([]string, len(reads))
 			for i, r := range reads {
-				parts[i] = "(SELECT o.name::text FROM " + pgIdent("public", r) + " o WHERE o.id = q.id)"
+				parts[i] = "(SELECT o.name::text FROM " + r + " o WHERE o.id = q.id)"
 			}
 			expr = "coalesce(" + strings.Join(parts, ", ") + ", ''::text)"
 		}
