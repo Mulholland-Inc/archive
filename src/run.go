@@ -195,7 +195,7 @@ func (a *Archive) run(ctx context.Context, code string, input json.RawMessage) (
 	limit := runTimeout
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	clock := &runClock{t: time.AfterFunc(limit, func() { cancel(context.DeadlineExceeded) }), end: time.Now().Add(limit), browse: browseTimeout, model: modelTimeout}
+	clock := &runClock{t: time.AfterFunc(limit, func() { cancel(context.DeadlineExceeded) }), end: time.Now().Add(limit), browse: browseTimeout, model: modelTimeout, do: doTimeout}
 	defer clock.t.Stop()
 	r := &runner{a: a, out: out, js: js, input: input, at: time.Now(), clock: clock}
 	err = a.as(ctx, r.run)
@@ -216,22 +216,31 @@ type runClock struct {
 	t                 *time.Timer
 	end               time.Time
 	browse, model, do time.Duration
+	paused            int
+	left              time.Duration
 }
 
 // pause stops the run's clock while a call spends from budget, limit in all per run; resume charges the budget
-// what the call took and restarts the clock with the time the run had left.
+// what the call took and, once no call is paused, restarts the clock with the time the run had left. A run an
+// agent makes inside archive.do pauses again while the clock is already stopped.
 func (c *runClock) pause(budget *time.Duration, limit time.Duration, what string) (resume func(), err error) {
 	if *budget <= 0 {
 		return nil, fmt.Errorf("this run already %s for %s, its limit", what, limit)
 	}
-	if !c.t.Stop() {
-		return nil, errors.New("the run timed out")
+	if c.paused == 0 {
+		if !c.t.Stop() {
+			return nil, errors.New("the run timed out")
+		}
+		c.left = time.Until(c.end)
 	}
-	left, start := time.Until(c.end), time.Now()
+	c.paused++
+	start := time.Now()
 	return func() {
 		*budget -= time.Since(start)
-		c.end = time.Now().Add(left)
-		c.t.Reset(left)
+		if c.paused--; c.paused == 0 {
+			c.end = time.Now().Add(c.left)
+			c.t.Reset(c.left)
+		}
 	}, nil
 }
 
@@ -988,6 +997,7 @@ func (r *runner) sdk() {
 	r.workflowSDK(o)
 	r.browseSDK(o)
 	r.modelSDK(o)
+	r.doSDK(o)
 	r.actionSDK(o)
 	r.vm.Set("archive", o)
 }
@@ -1126,7 +1136,7 @@ func (a *Archive) RunTypes(ctx context.Context) string {
 	return runTypes(a.Catalog()) + a.actionTypes(ctx) + a.streamTypes(ctx)
 }
 
-var runStatic = []string{"Actions", "Streams", "Base", "Row", "Hit", "Migration", "SchemaChange", "Table", "StoredFile", "Tables", "FetchResponse", "RunResult", "BrowseResult", "ModelResult", "WorkflowOn", "CronInput", "TableInput", "WebhookInput",
+var runStatic = []string{"Actions", "Streams", "Base", "Row", "Hit", "Migration", "SchemaChange", "Table", "StoredFile", "Tables", "FetchResponse", "RunResult", "BrowseResult", "ModelResult", "DoResult", "WorkflowOn", "CronInput", "TableInput", "WebhookInput",
 	"Money", "Timestamp", "Time", "Interval", "Address", "Name", "Postcode", "Geo", "Quantity"}
 
 func runPascal(s string) string {

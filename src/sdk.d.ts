@@ -241,6 +241,11 @@
  *   thinking off where the model has it. Use it to read a document, classify rows or draft text inside a run.
  * - The keys live on the server (GEMINI_API_KEY, ANTHROPIC_API_KEY); a model whose key is not set throws. Each call
  *   has 2 minutes, and a run calls models for at most 10 minutes in all, time that does not count toward its {timeout}.
+ * - archive.do(goal, { model, instructions, files, maxRuns }) hands goal to an agent like the one in chat, which writes
+ *   and runs scripts against this same SDK until it is done, and returns { answer, runs, tokens_in, tokens_out }. Its
+ *   runs join this run's transaction: what it writes is saved with your run and undone when your run fails. files are
+ *   given as for archive.model; maxRuns caps its scripts (25 by default, 50 at most). Say what to do and how to answer.
+ * - A run's agents work for at most 10 minutes in all, outside its {timeout}. The key is the server's ANTHROPIC_API_KEY.
  *
  * Connected accounts
  * - Each person connects their own Gmail, Outlook, Google Drive and Notion in Settings, Connectors; those are
@@ -321,6 +326,8 @@ declare const archive: {
     browse(goal: string, opts?: { url?: string }): Promise<BrowseResult>;
     /** Ask a gemini- or claude- model once, with files (a PDF page with page) and a JSON schema for json; 10 minutes a run (see Models). */
     model(req: { model: string; prompt: string; system?: string; files?: { id: string; page?: number }[]; schema?: object; effort?: "none" }): Promise<ModelResult>;
+    /** Have an agent reach goal by writing and running scripts inside this run's transaction, and return its answer; 10 minutes a run (see Models). */
+    do(goal: string, opts?: { model?: string; instructions?: string; files?: { id: string; page?: number }[]; maxRuns?: number }): Promise<DoResult>;
     /** Do the action name, like "gmail.search", with one of your connected accounts; connection picks one when you have several (see Connected accounts). */
     action<A extends keyof Actions>(name: A, input: Actions[A]["input"], opts?: { connection?: string }): Promise<Actions[A]["output"]>;
 };
@@ -397,6 +404,15 @@ interface ModelResult {
     text: string;
     /** The answer parsed, when a schema was given. */
     json?: any;
+    tokens_in: number;
+    tokens_out: number;
+}
+
+interface DoResult {
+    /** The agent's final answer, as the goal asked. */
+    answer: string;
+    /** How many scripts it ran. */
+    runs: number;
     tokens_in: number;
     tokens_out: number;
 }
