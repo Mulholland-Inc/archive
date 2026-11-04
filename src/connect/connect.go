@@ -75,7 +75,10 @@ type Connector struct {
 	// another way.
 	Revoke     string
 	RevokeWith func(rv *Revocation) error
-	Scopes     []string
+	// Lasts says the provider's access token never expires and comes without a refresh token, as Mailchimp's
+	// does: the grant keeps the access token in its place, and refreshing it is the token itself.
+	Lasts  bool
+	Scopes []string
 	// Optional are scopes an API connector asks for too, but connects without, like those its pushes need:
 	// asked for only once its variable has ?push=1, as its app may not have them yet.
 	Optional []string
@@ -326,6 +329,9 @@ func (p *Provider) Exchange(ctx context.Context, redirect string, q url.Values, 
 		return nil, fmt.Errorf("%s was not connected: %s", p.Name, Reason(err))
 	}
 	g := &Grant{Refresh: tok.RefreshToken, Scopes: p.scopes, Meta: meta}
+	if p.Lasts {
+		g.Refresh = cmp.Or(g.Refresh, tok.AccessToken)
+	}
 	if s, _ := tok.Extra("scope").(string); s != "" {
 		g.Scopes = strings.Fields(s)
 	}
@@ -366,7 +372,7 @@ func granted(scopes []string, want string) bool {
 // Refresh is a fresh access token for the refresh token rt of the grant that kept meta. Its RefreshToken is the
 // one to keep from now on: rt, or the one the provider replaced it with.
 func (p *Provider) Refresh(ctx context.Context, rt string, meta map[string]string) (*oauth2.Token, error) {
-	if len(p.Keys) > 0 && p.Trade == nil {
+	if len(p.Keys) > 0 && p.Trade == nil || p.Lasts {
 		return &oauth2.Token{AccessToken: rt, RefreshToken: rt}, nil
 	}
 	if len(p.Keys) > 0 {
