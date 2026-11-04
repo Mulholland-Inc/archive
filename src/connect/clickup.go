@@ -16,9 +16,9 @@ import (
 // as its type. Spaces, folders, lists and comments have no table, so the actions read them.
 //
 // It pushes through a webhook on each workspace, pushing to Archive's URL with a key of the connection's, the
-// workspace and a nonce, which only ClickUp learns and which proves the push; ClickUp signs it too, X-Signature with
-// the webhook's own secret, which the engine does not keep yet. ClickUp suspends a webhook that fails
-// too often, so the first sync a week after sets each active again, and one gone is made anew.
+// workspace and a nonce, which only ClickUp learns, and signing the body with X-Signature, the hex HMAC-SHA256 keyed
+// by the webhook's own secret, which ClickUp answers with as it makes or renews one. ClickUp suspends a webhook that
+// fails too often, so the first sync a week after sets each active again, and one gone is made anew.
 func init() {
 	Register(&Connector{
 		ID: "clickup", Name: "ClickUp", Integration: true,
@@ -75,8 +75,10 @@ func init() {
 				Steps: []Step{{Req: Req{Method: POST, URL: "/task/{id}/comment", Body: Obj{"comment_text": "{text}", "notify_all": "{notify|false}"}}}},
 			}),
 		},
-		Listen: &Listen{Renew: 6 * 24 * time.Hour, Lasts: 7 * 24 * time.Hour, Over: clickupWorkspaces, Secret: true,
+		Listen: &Listen{Renew: 6 * 24 * time.Hour, Lasts: 7 * 24 * time.Hour, Over: clickupWorkspaces,
 			Mint:     "{conn}/{part}/{nonce}",
+			Keep:     "{answer/webhook/secret}",
+			Signs:    []Sign{{Header: "X-Signature", Kept: true, Enc: Hex, Of: "{body}"}},
 			Watch:    Req{Method: POST, URL: "/team/{part}/webhook", Body: Obj{"endpoint": "{hook}", "events": clickupEvents}},
 			Resource: "{answer/id}",
 			OfPart:   &Reads{Of: "{key}", Find: `^[^/]*/([^/]*)/`},

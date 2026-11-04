@@ -759,8 +759,9 @@ const (
 // once. Ask comes first, and Watch reads its answer as {ask}, with {account}, {client}, {token}, {conn} the connection,
 // a fresh {nonce} and {secret}, and {until} and {until_ms} the time Until from now. Mint is a key made before asking,
 // as {key}, which goes on {hook}, where the provider pushes; else Key is the template of what they name it by, with
-// the answer at {answer}. Resource is what it is called there, and Secret keeps {secret} to check pushes with. It ends
-// at Expires in the answer, or Lasts from now, and Renew is how long before that a sync renews it.
+// the answer at {answer}. Resource is what it is called there, and Secret keeps {secret} to check pushes with, or Keep
+// the secret the provider answers with, a template of {answer} that Extend's answer renews. It ends at Expires in the
+// answer, or Lasts from now, and Renew is how long before that a sync renews it.
 //
 // Renewing: OfPart says which of Over an old watch is on, reading {key}, {resource}. Extend keeps such a watch, its
 // answer passing Alive if it says, which a 404 or anything else with Alive replaces. Replace makes new watches and
@@ -782,6 +783,7 @@ type Listen struct {
 	Until    time.Duration
 	Resource string
 	Secret   bool
+	Keep     string
 	Expires  Path
 	Lasts    time.Duration
 	Unwatch  *Req
@@ -3191,6 +3193,9 @@ func (l *Listen) watch(c *Connector) func(cl *Client, h Hook, old []Watch) ([]Wa
 					if t := l.ends(ans); !t.IsZero() {
 						o.Expires = t
 					}
+					if s := l.kept(sc, ans); s != "" {
+						o.Secret = s
+					}
 					out = append(out, o)
 					continue
 				}
@@ -3261,7 +3266,20 @@ func (l *Listen) make(cl *Client, c *Connector, h Hook, base map[string]any, par
 	if l.Secret {
 		w.Secret = text(sc["secret"])
 	}
+	if s := l.kept(sc, ans); s != "" {
+		w.Secret = s
+	}
 	return w, nil
+}
+
+// kept is the secret Keep reads from a watch's answer, if any.
+func (l *Listen) kept(sc map[string]any, ans any) string {
+	if l.Keep == "" {
+		return ""
+	}
+	sc["answer"] = ans
+	s, _ := fillStr(l.Keep, sc)
+	return text(s)
 }
 
 // ends is when a watch its answer is of ends.
