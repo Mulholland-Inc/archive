@@ -281,14 +281,18 @@ dialog:not([open]) {
   clip-path: inset(calc(100% - var(--h) - 1px) calc(100% - var(--w) - 1px) -1px -1px round var(--morph-radius));
 }
 
-.floating[data-morph]:popover-open {
+/* These hold while the card folds back, or the trigger inside it jumps. */
+.floating[data-morph][popover] {
   padding: 0;
   border-radius: var(--morph-radius);
-  clip-path: inset(-1px -1px -1px -1px round var(--morph-radius));
 }
 
-.floating[data-morph='down']:popover-open {
+.floating[data-morph='down'][popover] {
   background: var(--color-canvas);
+}
+
+.floating[data-morph]:popover-open {
+  clip-path: inset(-1px -1px -1px -1px round var(--morph-radius));
 }
 
 @starting-style {
