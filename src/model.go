@@ -21,15 +21,19 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"golang.org/x/oauth2/google"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
-	modelTimeout = 10 * time.Minute
-	modelCall    = 2 * time.Minute
-	modelMaxFile = 20 << 20
-	modelMaxAll  = 40 << 20
-	modelMaxN    = 10
-	modelTokens  = 16000
+	modelTimeout  = 10 * time.Minute
+	modelCall     = 2 * time.Minute
+	modelMaxFile  = 20 << 20
+	modelMaxAll   = 40 << 20
+	modelMaxN     = 10
+	modelTokens   = 16000
+	modelParallel = 8
+	modelMaxList  = 64
+	modelMaxHeld  = 200 << 20
 )
 
 type ModelResult struct {
@@ -59,10 +63,12 @@ type modelPart struct {
 	data []byte
 }
 
+type modelProvider = func(ctx context.Context, req *modelReq, parts []modelPart) (*ModelResult, error)
+
 var modelMIMEs = map[string]bool{"application/pdf": true, "image/png": true, "image/jpeg": true, "image/webp": true, "image/gif": true}
 
 // modelProviders maps a model name's prefix to the provider that serves it.
-var modelProviders = map[string]func(ctx context.Context, req *modelReq, parts []modelPart) (*ModelResult, error){
+var modelProviders = map[string]modelProvider{
 	"gemini-": modelGemini,
 	"claude-": modelClaude,
 }
@@ -73,32 +79,53 @@ func (r *runner) modelSDK(o *goja.Object) {
 	o.Set("model", func(call goja.FunctionCall) goja.Value { return r.promise(r.model(call)) })
 }
 
+// model takes one request or a list. A list runs at once, modelParallel at a time, and fails on its first error.
 func (r *runner) model(call goja.FunctionCall) (any, error) {
-	var req modelReq
-	if err := r.arg(call, 0, "model", "req", &req); err != nil {
+	reqs, list := []modelReq{{}}, false
+	if _, list = call.Argument(0).Export().([]any); list {
+		reqs = nil
+		if err := r.arg(call, 0, "model", "reqs", &reqs); err != nil {
+			return nil, err
+		}
+	} else if err := r.arg(call, 0, "model", "req", &reqs[0]); err != nil {
 		return nil, err
 	}
-	if req.Model == "" || req.Prompt == "" {
-		return nil, fmt.Errorf("archive.model: model and prompt are required: %w", httpErrBadRequest)
-	}
-	if strings.Trim(req.Model, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-") != "" {
-		return nil, fmt.Errorf("archive.model: %q is not a model name: %w", req.Model, httpErrBadRequest)
-	}
-	if req.Effort != "" && req.Effort != "none" {
-		return nil, fmt.Errorf("archive.model: effort must be \"none\" or left out: %w", httpErrBadRequest)
-	}
-	var provider func(context.Context, *modelReq, []modelPart) (*ModelResult, error)
-	for prefix, p := range modelProviders {
-		if strings.HasPrefix(req.Model, prefix) {
-			provider = p
+	providers, files := make([]modelProvider, len(reqs)), make([][]modelPart, len(reqs))
+	for i, req := range reqs {
+		if req.Model == "" || req.Prompt == "" {
+			return nil, fmt.Errorf("archive.model: model and prompt are required: %w", httpErrBadRequest)
+		}
+		if strings.Trim(req.Model, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-") != "" {
+			return nil, fmt.Errorf("archive.model: %q is not a model name: %w", req.Model, httpErrBadRequest)
+		}
+		if req.Effort != "" && req.Effort != "none" {
+			return nil, fmt.Errorf("archive.model: effort must be \"none\" or left out: %w", httpErrBadRequest)
+		}
+		for prefix, p := range modelProviders {
+			if strings.HasPrefix(req.Model, prefix) {
+				providers[i] = p
+			}
+		}
+		if providers[i] == nil {
+			return nil, fmt.Errorf("archive.model: %q is not a model this server can call; use a gemini- or claude- model: %w", req.Model, httpErrBadRequest)
 		}
 	}
-	if provider == nil {
-		return nil, fmt.Errorf("archive.model: %q is not a model this server can call; use a gemini- or claude- model: %w", req.Model, httpErrBadRequest)
+	if len(reqs) > modelMaxList {
+		return nil, fmt.Errorf("archive.model: %d requests is more than the %d one call takes: %w", len(reqs), modelMaxList, httpErrBadRequest)
 	}
-	parts, err := r.modelFiles(req.Files)
-	if err != nil {
-		return nil, fmt.Errorf("archive.model: %w", err)
+	// Files open through the run's transaction, which only this goroutine may use; the whole list is held in
+	// memory while it runs, so it is bounded as a whole too.
+	held := 0
+	for i, req := range reqs {
+		var err error
+		if files[i], err = r.modelFiles(req.Files); err != nil {
+			return nil, fmt.Errorf("archive.model: %w", err)
+		}
+		for _, part := range files[i] {
+			if held += len(part.data); held > modelMaxHeld {
+				return nil, fmt.Errorf("archive.model: the list's files run over the %d MB one call holds: %w", modelMaxHeld>>20, httpErrBadRequest)
+			}
+		}
 	}
 	resume, err := r.clock.pause(&r.clock.model, modelTimeout, "called models")
 	if err != nil {
@@ -107,11 +134,22 @@ func (r *runner) model(call goja.FunctionCall) (any, error) {
 	defer resume()
 	ctx, cancel := context.WithTimeout(r.ctx, min(modelCall, r.clock.model))
 	defer cancel()
-	res, err := provider(ctx, &req, parts)
-	if err != nil {
+	results := make([]*ModelResult, len(reqs))
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(modelParallel)
+	for i := range reqs {
+		g.Go(func() (err error) {
+			results[i], err = providers[i](ctx, &reqs[i], files[i])
+			return err
+		})
+	}
+	if err := g.Wait(); err != nil {
 		return nil, fmt.Errorf("archive.model: %w", err)
 	}
-	return res, nil
+	if !list {
+		return results[0], nil
+	}
+	return results, nil
 }
 
 // modelFiles loads each file the caller may read, whole or one PDF page, within the size and type limits.

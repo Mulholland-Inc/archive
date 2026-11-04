@@ -241,6 +241,7 @@
  *   are PDFs and images from archive.files, each { id } whole or { id, page } for one page of a PDF (1-based), up
  *   to 20 MB each and 10 a call; with schema, a JSON schema, json is the answer parsed and text its raw form; effort
  *   "none" turns thinking off where the model has it. Use it to read a document, classify rows or draft text inside a run.
+ *   Give a list of requests to get a list of results: they run at once, eight at a time, in order, and fail together.
  * - The keys live on the server: GEMINI_API_KEY, or GOOGLE_CLOUD_PROJECT for Vertex as the server itself, and
  *   ANTHROPIC_API_KEY; a model whose key is not set throws. Each call
  *   has 2 minutes, and a run calls models for at most 10 minutes in all, time that does not count toward its {timeout}.
@@ -329,7 +330,9 @@ declare const archive: {
     /** Have an agent use a fresh web browser to reach goal, starting at url; before any write, 5 minutes a run (see Browsing). */
     browse(goal: string, opts?: { url?: string }): Promise<BrowseResult>;
     /** Ask a gemini- or claude- model once, with files (a PDF page with page) and a JSON schema for json; 10 minutes a run (see Models). */
-    model(req: { model: string; prompt: string; system?: string; files?: { id: string; page?: number }[]; schema?: object; effort?: "none" }): Promise<ModelResult>;
+    model(req: ModelReq): Promise<ModelResult>;
+    /** Ask several models at once, eight at a time; the results come in the order of reqs and the first error fails them all (see Models). */
+    model(reqs: ModelReq[]): Promise<ModelResult[]>;
     /** Have an agent reach goal by writing and running scripts inside this run's transaction, and return its answer; 10 minutes a run (see Models). */
     do(goal: string, opts?: { model?: string; instructions?: string; files?: { id: string; page?: number }[]; maxRuns?: number }): Promise<DoResult>;
     /** Do the action name, like "gmail.search", with one of your connected accounts; connection picks one when you have several (see Connected accounts). */
@@ -401,6 +404,15 @@ interface BrowseResult {
     answer: string;
     /** The page it ended on. */
     url: string;
+}
+
+interface ModelReq {
+    model: string;
+    prompt: string;
+    system?: string;
+    files?: { id: string; page?: number }[];
+    schema?: object;
+    effort?: "none";
 }
 
 interface ModelResult {

@@ -20,6 +20,7 @@ require (
 	golang.org/x/image v0.47.0
 	golang.org/x/net v0.62.0
 	golang.org/x/oauth2 v0.37.0
+	golang.org/x/sync v0.24.0
 	golang.org/x/text v0.43.0
 )
 
@@ -49,7 +50,6 @@ require (
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
-	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
