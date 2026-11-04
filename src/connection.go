@@ -1268,6 +1268,7 @@ var syncSchema = map[string]syncTable{
 	"chat_message":                     {},
 	"marketing_campaign":               {},
 	"work_item":                        {},
+	"code_project":                     {},
 	"compliance":                       {},
 	"commerce_product":                 {},
 	"commerce_order":                   {},

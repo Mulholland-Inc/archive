@@ -21,6 +21,9 @@ import "time"
 // what was added, changed and removed since. A removed transaction is only its ids. A change while a sync pages
 // (TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION, a 400) starts it again from where it began. Plaid's webhooks,
 // signed with a JWS, name the item_id, and SYNC_UPDATES_AVAILABLE among them is new transactions.
+//
+// Its actions only read, from what Plaid already holds and does not charge for by the call: the login's state, its
+// accounts, and transactions between two dates. None asks Plaid to refresh anything.
 func init() {
 	Register(&Connector{
 		ID: "plaid", Name: "Plaid", Integration: true, Env: "ARCHIVE_PLAID", Host: "https://production.plaid.com",
@@ -44,6 +47,26 @@ func init() {
 		Listen: &Listen{Key: "{meta/item_id}", Keys: []Path{"item_id"},
 			Signs: []Sign{{Header: "Plaid-Verification", Digest: SHA256, Enc: Hex, Of: "{body}", JWK: "key", Claim: "request_body_sha256",
 				Key: &Req{Method: POST, Read: true, URL: "/webhook_verification_key/get", Body: Obj{"key_id": "{kid}"}}}}},
+		Actions: map[string]*Action{
+			"item": Call[struct{}, plaidItem](Plan{
+				Doc:   "The bank login: { institution, products, consent_expires, error, status: { transactions: { last_successful_update, last_failed_update } } }",
+				Steps: []Step{{As: "got", Req: Req{Method: POST, Read: true, URL: "/item/get", Body: plaidLogin}}},
+				Out:   Obj{"institution": "{got/item/institution_name}", "products": "{got/item/products|[]}", "consent_expires": "{got/item/consent_expiration_time}", "error": "{got/item/error}", "status": "{got/status}"},
+			}),
+			"accounts": Call[struct{}, []map[string]any](Plan{
+				Doc:   "The login's accounts, with their balances as Plaid last refreshed them: [{ account_id, name, official_name, mask, type, subtype, balances: { current, available, limit, iso_currency_code } }]",
+				Steps: []Step{{As: "got", Req: Req{Method: POST, Read: true, URL: "/accounts/get", Body: plaidLogin}}},
+				Out:   "{got/accounts|[]}",
+			}),
+			"transactions": Call[plaidFind, plaidFound](Plan{
+				Doc: "Transactions between two dates, newest first, maybe only of some accounts, up to 500 a page: { total, transactions: [{ transaction_id, account_id, date, amount, " +
+					"iso_currency_code, name, merchant_name, original_description, pending, ... }] } (a positive amount leaves the account; pass offset for more, until total)",
+				Clamp: map[string][2]int{"count": {100, 500}, "offset": {0, 1 << 30}},
+				Steps: []Step{{As: "got", Req: Req{Method: POST, Read: true, URL: "/transactions/get", Body: Obj{"access_token": "{key/access_token}", "start_date": "{start}", "end_date": "{end}",
+					"options": Obj{"count": "{count}", "offset": "{offset}", "account_ids": "{accounts}", "include_original_description": true}}}}},
+				Out: Obj{"total": "{got/total_transactions|0}", "transactions": "{got/transactions|[]}"},
+			}),
+		},
 		Sync: []*Sync{
 			{Name: "accounts", Gap: time.Second, Req: Req{Method: POST, Read: true, URL: "/accounts/get", Body: plaidLogin}, Items: "accounts", ID: "account_id",
 				Doc: "Every account of the bank login, with its balances as Plaid last refreshed them, by its account_id: listed whole each sync.",
@@ -82,4 +105,25 @@ var (
 		Body: Obj{"access_token": "{key/access_token}", "cursor": "{page}", "count": 500, "options": Obj{"include_original_description": true}}}
 	plaidDelta = Req{Method: POST, Read: true, URL: "/transactions/sync",
 		Body: Obj{"access_token": "{key/access_token}", "cursor": "{page;token}", "count": 500, "options": Obj{"include_original_description": true}}}
+)
+
+type (
+	plaidItem struct {
+		Institution    string   `json:"institution,omitempty"`
+		Products       []string `json:"products"`
+		ConsentExpires string   `json:"consent_expires,omitempty"`
+		Error          any      `json:"error,omitempty"`
+		Status         any      `json:"status,omitempty"`
+	}
+	plaidFind struct {
+		Start    string   `json:"start" jsonschema:"The first date, YYYY-MM-DD"`
+		End      string   `json:"end" jsonschema:"The last date, YYYY-MM-DD"`
+		Count    int      `json:"count,omitempty" jsonschema:"At most this many, 1 to 500; 100 when left out"`
+		Offset   int      `json:"offset,omitempty" jsonschema:"How many to skip, for the next page"`
+		Accounts []string `json:"accounts,omitempty" jsonschema:"Only these account_ids, from accounts"`
+	}
+	plaidFound struct {
+		Total        int              `json:"total"`
+		Transactions []map[string]any `json:"transactions"`
+	}
 )

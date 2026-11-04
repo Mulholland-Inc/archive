@@ -197,6 +197,12 @@ func Register(c *Connector) {
 	if err := c.compile(); err != nil {
 		panic("connect: " + c.ID + ": " + err.Error())
 	}
+	if len(c.Sync) == 0 {
+		panic("connect: " + c.ID + " has no stream")
+	}
+	if len(c.Actions) == 0 && c.MCP == "" {
+		panic("connect: " + c.ID + " has no action")
+	}
 	registry[c.ID] = c
 }
 
