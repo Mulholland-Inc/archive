@@ -26,10 +26,7 @@
 <style>
   .card {
     position: relative;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-    padding: var(--space-3);
+    padding-inline: var(--space-3);
     border-radius: var(--radius-lg);
   }
 
