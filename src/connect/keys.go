@@ -20,8 +20,12 @@ import (
 // workspace key, so they are never shown again. A key that is not Secret, like a store's address, is kept as the
 // connection's Meta too. A key never refreshes, and Archive revokes it only where the connector has RevokeBy:
 // otherwise the person ends it where they made it, and connects again with a new one. Keys that are an OAuth client
-// of the account's own, like Vanta's, are traded for an access token whenever the last has run out (Trade); the token
-// is never kept.
+// of the account's own, like Vanta's, are traded for an access token whenever the last has run out (Trade), and others
+// that sign nothing as they are make what does (Mint); neither is ever kept.
+
+// mintLasts is how long what a connector's Mint made is used, short of the hour such tokens last, so that one a client
+// has just been handed outlives its requests.
+const mintLasts = 50 * time.Minute
 
 // Key is something a key connector asks for.
 type Key struct {
@@ -144,9 +148,9 @@ func (p *Provider) KeyGrant(ctx context.Context, keys map[string]string) (*Grant
 			return nil, fmt.Errorf("%s could not be connected: %w", p.Name, err)
 		}
 	}
-	// Keys that are a client are tried by trading them, which refuses them with a 400 or 401.
+	// Keys that are a client are tried by trading them, which refuses them with a 400 or 401, and others by minting.
 	open, err := kept, error(nil)
-	if p.Trade != nil {
+	if p.Trade != nil || p.Mint != nil {
 		if open, _, err = p.trade(ctx, kept); err != nil {
 			var r *Refusal
 			if errors.As(err, &r) && r.Status/100 == 4 {
@@ -173,12 +177,22 @@ func (p *Provider) KeyGrant(ctx context.Context, keys map[string]string) (*Grant
 	return &Grant{Account: account, Refresh: string(b), Meta: meta}, nil
 }
 
-// trade is keys with the access token their Trade answers with, as access, and when that token ends: zero when
-// it does not say. The request goes unsigned, with the keys as {key/...}, and {basic} the keys client_id and
+// trade is keys with what its Mint makes, or the access token their Trade answers with, as access, and when that ends:
+// zero when it does not say. The request goes unsigned, with the keys as {key/...}, and {basic} the keys client_id and
 // client_secret as HTTP Basic, for a token endpoint that takes the client only so.
 func (p *Provider) trade(ctx context.Context, keys map[string]string) (map[string]string, time.Time, error) {
 	c := &Client{ctx: ctx, p: p, http: client, keys: keys}
 	sc := c.scope()
+	if p.Mint != nil {
+		if _, err := runSteps(c, p.Mint, sc); err != nil {
+			return nil, time.Time{}, err
+		}
+		out := maps.Clone(keys)
+		for k, v := range sc["key"].(map[string]any) {
+			out[k] = text(v)
+		}
+		return out, time.Now().Add(mintLasts), nil
+	}
 	sc["basic"] = basic(keys["client_id"], keys["client_secret"])
 	ans, err := c.req(*p.Trade, sc)
 	if err != nil {

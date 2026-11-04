@@ -11,7 +11,7 @@
 //     Register get from the server's authorization server the first time anyone connects (below), and the
 //     caller keeps; its actions are the server's tools.
 //   - A key connector has no sign-in: a person pastes in what the service gave them, like an API key and the
-//     address of their store, as its Keys say (keys.go). Its Authorize puts them on each request.
+//     address of their store, as its Keys say (keys.go). Its Sign puts them on each request.
 //
 // Connecting is OAuth's authorization code flow with PKCE. AuthURL sends the browser to the provider with a
 // State sealed by SealState; Exchange trades the code it comes back with for a Grant, the account and its
@@ -132,14 +132,19 @@ type Connector struct {
 	// Push is how the provider tells Archive an account changed (sync.go); nil when it cannot, and then only
 	// connecting, asking and reading start a sync.
 	Push *Push
-	// Keys are what a key connector asks a person for in place of a sign-in, and Authorize puts them on a request
-	// (keys.go). Its Env, when set, is a client of the server's own its requests need too, like a developer key.
+	// Keys are what a key connector asks a person for in place of a sign-in, and Authorize, which compile makes of
+	// Sign, Basic and Pin, puts them on a request (keys.go). Its Env, when set, is a client of the server's own its
+	// requests need too, like a developer key.
 	Keys      []Key
 	Authorize func(req *http.Request, c *Client)
 	// Trade, for a key connector whose keys are an OAuth client of the account's own, like Vanta's, is the request
 	// that trades them for an access token, its answer's access_token, which lasts expires_in seconds: each request
 	// reads it as {key/access}, and Refresh trades again (keys.go).
 	Trade *Req
+	// Mint, for a key connector whose keys sign nothing as they are, like Snowflake's private key, is steps that make
+	// what does, each As key/<name> a key its requests read as {key/<name>}. They read {key/...}, {client/...} and
+	// {option/...}, and go unsigned. Keys that fail them do not connect, and they run again every mintLasts (keys.go).
+	Mint []Step
 	// Link, when set, is the provider's widget a key connector's keys come from (keys.go).
 	Link *Link
 	// Info is how it shows. Options says what else its Env's value takes or does, for the docs of that variable.
@@ -147,11 +152,13 @@ type Connector struct {
 	Options string
 	// API is the base of the requests of a connector that is only data (def.go): its Env is ARCHIVE_<ID> unless it
 	// says, and its Host that of its Endpoint. Sign are the headers of its keys' requests, and Basic the names of the
-	// keys that are their HTTP Basic user and password, as Business Central on premises takes them. Who is its Account,
+	// keys that are their HTTP Basic user and password, as Business Central on premises takes them. Pin goes on the query of
+	// every request, over whatever it asked, for keys that are good for one tenant of a shared API. Who is its Account,
 	// RevokeBy its RevokeWith, Listen its Push and Sync its Streams.
 	API      string
 	Sign     map[string]string
 	Basic    [2]string
+	Pin      Q
 	Who      *Who
 	RevokeBy *Req
 	Listen   *Listen
@@ -495,7 +502,7 @@ func granted(scopes []string, want string) bool {
 // Refresh is a fresh access token for the refresh token rt of the grant that kept meta. Its RefreshToken is the
 // one to keep from now on: rt, or the one the provider replaced it with.
 func (p *Provider) Refresh(ctx context.Context, rt string, meta map[string]string) (*oauth2.Token, error) {
-	if len(p.Keys) > 0 && p.Trade == nil || p.Lasts || p.was(rt) != nil {
+	if len(p.Keys) > 0 && p.Trade == nil && p.Mint == nil || p.Lasts || p.was(rt) != nil {
 		return &oauth2.Token{AccessToken: rt, RefreshToken: rt}, nil
 	}
 	if len(p.Keys) > 0 {
