@@ -39,6 +39,7 @@ func (r *runner) do(call goja.FunctionCall) (any, error) {
 		Instructions string      `json:"instructions"`
 		Files        []modelFile `json:"files"`
 		MaxRuns      int         `json:"maxRuns"`
+		Tables       []string    `json:"tables"`
 	}
 	if err := r.arg(call, 1, "do", "opts", &opts); err != nil {
 		return nil, err
@@ -56,7 +57,11 @@ func (r *runner) do(call goja.FunctionCall) (any, error) {
 	for _, p := range parts {
 		first.Content = append(first.Content, modelBlock(p))
 	}
-	system := chatSystemBlocks(r.a.RunTypes(r.ctx), strings.TrimSpace(opts.Instructions+"\n\n"+
+	types, err := r.a.RunTypesFor(r.ctx, opts.Tables)
+	if err != nil {
+		return nil, fmt.Errorf("archive.do: %w", err)
+	}
+	system := chatSystemBlocks(types, strings.TrimSpace(opts.Instructions+"\n\n"+
 		"The run tool runs inside the transaction of the script that called you, so what it writes is saved or undone with that script, and your final text answer is returned to that script."))
 	resume, err := r.clock.pause(&r.clock.do, doTimeout, "run agents")
 	if err != nil {
