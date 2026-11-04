@@ -1,7 +1,6 @@
 <script>
   import { getContext } from 'svelte';
   import Art from './Art.svelte';
-  import Button from './Button.svelte';
   import ProgressBar from './ProgressBar.svelte';
   import { app, onboardingSteps } from '../lib/app.svelte.js';
   import { href } from '../lib/router.svelte.js';
@@ -21,7 +20,6 @@
         <ProgressBar value={done / total} size="sm" label="Setup progress" />
       </div>
     </div>
-    <Button size="sm" variant="primary" full href={href('/onboarding')} tabindex="-1">Continue</Button>
   </div>
 {/if}
 
@@ -75,9 +73,5 @@
     color: var(--color-text-secondary);
     font-size: var(--text-sm);
     font-variant-numeric: tabular-nums;
-  }
-
-  .card > :global(.btn) {
-    position: relative;
   }
 </style>
