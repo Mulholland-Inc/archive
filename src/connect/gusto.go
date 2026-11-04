@@ -46,7 +46,7 @@ func init() {
 					EINs:   map[string]SQL{"org": "data->>'ein'"}}},
 			// 20 a page: each new or changed one costs two calls more, which at Gusto's pace must fit in a page's time.
 			{Name: "employees", Parts: gustoStatuses, Items: "**", Key: gustoKey, Updated: "updated_at", Set: gustoCompany, Memo: "{version}",
-				Req:  Req{Tool: "list_employees", Need: gustoNeed, Body: Obj{"company_uuid": "{in/company}", "terminated": "{in/terminated}", "include": "all_compensations,all_home_addresses,custom_fields"}},
+				Req:  Req{Tool: "list_employees", Need: gustoStatus, Body: Obj{"company_uuid": "{in/company}", "terminated": "{in/terminated}", "include": "all_compensations,all_home_addresses,custom_fields"}},
 				Page: ToolPage{Limit: "per,limit,page_size", Max: 20, Page: "page", After: "cursor,after"},
 				Hydrate: []Hydrate{
 					Fetch{Req: Req{Tool: "list_employee_employment_history", Body: Obj{"employee_uuid": "{uuid;id}"}}, Items: "**", As: "employment_history", Bare: true},
@@ -79,7 +79,7 @@ func init() {
 						{Table: "payroll_custom_value", From: "archive.sync_list(data->'custom_fields') f", Cols: map[string]SQL{"name": "f->>'name'", "value": "f->>'value'"}, Refs: map[string]SQL{"field": "f->>'company_custom_field_id'"}},
 					}}},
 			{Name: "contractors", Parts: gustoStatuses, Items: "**", Key: gustoKey, Updated: "updated_at", Set: gustoCompany, Page: gustoPage,
-				Req: Req{Tool: "get_contractors", Need: gustoNeed, Body: Obj{"company_uuid": "{in/company}", "terminated": "{in/terminated}"}},
+				Req: Req{Tool: "get_contractors", Need: gustoStatus, Body: Obj{"company_uuid": "{in/company}", "terminated": "{in/terminated}"}},
 				Doc: "Every contractor, the terminated too, as get_contractors answers, 100 a page, listed whole each sync, so one gone is deleted.",
 				To: Map{Table: "payroll_worker",
 					Cols: map[string]SQL{"kind": "'contractor'", "name": gustoName, "first_name": "data->>'first_name'", "last_name": "data->>'last_name'", "business_name": "data->>'business_name'",
@@ -217,6 +217,7 @@ const (
 
 var (
 	gustoNeed       = []string{"company_uuid"}
+	gustoStatus     = []string{"company_uuid", "terminated"} // a tool that took no terminated would list active staff twice, and delete the rest
 	gustoOf         = Obj{"company_uuid": "{in/company}"}
 	gustoSpan       = Obj{"company_uuid": "{in/company}", "start_date": "{in/start}", "end_date": "{in/end}"}
 	gustoKey        = []Reads{{Of: "{uuid;id}"}}

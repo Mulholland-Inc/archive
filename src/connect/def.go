@@ -1117,6 +1117,10 @@ func (s *Sync) pull(c *Client, cursor string) (*Page, error) {
 		if st.Page != "" && slices.Contains(s.Restart, r.Status) {
 			return &Page{More: true, Cursor: st.over().cursor()}, nil
 		}
+		// A listing's next page can expire as a position does, and a cursor kept on it would fail for good.
+		if ch, ok := s.Change.(Resume); ok && st.Page != "" && (slices.Contains(ch.Expired, r.Status) || slices.ContainsFunc(ch.Stale, func(d Deny) bool { return d.is(r) })) {
+			return st.listing(), nil
+		}
 		for _, d := range s.Deny {
 			if d.is(r) {
 				x := maps.Clone(s.Vars)
@@ -1439,13 +1443,14 @@ func (s *Sync) read(c *Client, req Req, st *flow, sc map[string]any) (any, []Rec
 }
 
 // itemsOf is the list at at in ans. An answer without it is refused, so a listing never ends empty by accident and
-// deletes what it did not read, unless the stream declares what an answer with nothing has in its place.
+// deletes what it did not read, unless the stream declares what an answer with nothing has in its place. A stream
+// whose answer is its records, each with its ID, is refused any answer but a list.
 func (s *Sync) itemsOf(c *Client, ans any, at Path, sc map[string]any) (any, error) {
 	if t, _ := fillStr(string(at), sc); strings.Contains(string(at), "{") {
 		at = Path(text(t))
 	}
 	items := pick(ans, at)
-	if items != nil {
+	if _, list := items.([]any); items != nil && (at != "" || s.ID == "" || list) {
 		return items, nil
 	}
 	if s.Absent != "" && pick(ans, s.Absent) != nil {

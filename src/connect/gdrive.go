@@ -105,8 +105,9 @@ func init() {
 				Fetch{If: Test{At: "driveId"}, Once: "{driveId}", Soft: true, Req: Req{URL: "/drives/{driveId}?fields=name"}, As: "shared"},
 				// A Sheet reads whole as an Excel workbook, every sheet of it, where its CSV is its first sheet alone.
 				Download{If: Test{At: "mimeType", Is: driveSheet}, Req: Req{URL: "/files/{id}/export", Query: Q{"mimeType": driveXLSX}}, Name: "{name}.xlsx", Mime: driveXLSX, As: "text", Par: 4},
-				Download{If: Test{At: "mimeType", Is: driveSheet}, Req: Req{URL: "/files/{id}/export", Query: Q{"mimeType": "text/csv"}}, Name: "{name}", Mime: "text/csv", As: "text", Par: 4},
-				Download{If: Test{At: "mimeType", Re: `^application/vnd\.google-apps\.(document|presentation)$`}, Req: Req{URL: "/files/{id}/export", Query: Q{"mimeType": "text/plain"}}, Name: "{name}", Mime: "text/plain", As: "text", Par: 4},
+				// An export is named for what it is, not its title: a Doc titled Report.docx is text here, and no Word file.
+				Download{If: Test{At: "mimeType", Is: driveSheet}, Req: Req{URL: "/files/{id}/export", Query: Q{"mimeType": "text/csv"}}, Name: "export.csv", Mime: "text/csv", As: "text", Par: 4},
+				Download{If: Test{At: "mimeType", Re: `^application/vnd\.google-apps\.(document|presentation)$`}, Req: Req{URL: "/files/{id}/export", Query: Q{"mimeType": "text/plain"}}, Name: "export.txt", Mime: "text/plain", As: "text", Par: 4},
 				Download{If: Test{At: "mimeType", Re: `^application/vnd\.google-apps\.`, Off: true}, Req: Req{URL: "/files/{id}?alt=media&supportsAllDrives=true"}, Name: "{name}", Mime: "{mimeType}", Size: "size", As: "text", Par: 4},
 			},
 			Doc: "Every file and folder in My Drive, shared with you and in your shared drives, but those in the trash: its name, type, size, " +
