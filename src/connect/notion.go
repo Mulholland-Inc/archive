@@ -1,10 +1,5 @@
 package connect
 
-import (
-	"cmp"
-	"regexp"
-)
-
 // Notion, through its hosted MCP server: search, read and write pages and databases as the person who
 // connects, in the workspaces they allow. Its authorization server registers any client (RFC 7591), and
 // replaces the refresh token on every refresh. notion-get-self names the user.
@@ -14,41 +9,21 @@ import (
 // pages, which page with a cursor but have no edit time either, listed whole each sync; a page is its
 // title, URL and icon, not its content, which notion-fetch reads.
 func init() {
-	Register(&Connector{ID: "notion", Name: "Notion", MCP: "https://mcp.notion.com/mcp", Account: mcpAccount("notion-get-self"),
-		Streams: []*Stream{
-			notionPages("private_pages", "notion-list-private-pages", "The pages of your Private section"),
-			notionPages("shared_pages", "notion-list-shared-pages", "The pages shared with you"),
+	Register(&Connector{ID: "notion", Name: "Notion", MCP: "https://mcp.notion.com/mcp", Who: &Who{Tool: "notion-get-self"}, Busy: ToolBusy,
+		Info: Info{By: "Notion", Description: "Search, read and write the pages and databases you allow", Category: CatDocs, Icon: IconNotebook, Scopes: []string{"Read and write pages you allow"}},
+		Sync: []*Sync{
+			{Name: "private_pages", Req: Req{Tool: "notion-list-private-pages"}, Items: "**", Key: notionKey, Page: notionPage, To: notionPages,
+				Doc: "The pages of your Private section, by the id in their URL: { type, url, title, icon }, from notion-list-private-pages, 200 a page, listed whole each sync, so one gone is deleted; Notion says nothing of when a page was edited."},
+			{Name: "shared_pages", Req: Req{Tool: "notion-list-shared-pages"}, Items: "**", Key: notionKey, Page: notionPage, To: notionPages,
+				Doc: "The pages shared with you, by the id in their URL: { type, url, title, icon }, from notion-list-shared-pages, 200 a page, listed whole each sync, so one gone is deleted; Notion says nothing of when a page was edited."},
 		}})
 }
 
-func notionPages(name, tool, what string) *Stream {
-	l := &mcpList{tool: tool, limit: "limit", max: 200, after: "cursor", key: notionID}
-	s := l.stream(name, what+", by the id in their URL: { type, url, title, icon }, from "+tool+", 200 a page, listed whole each sync, "+
-		"so one gone is deleted; Notion says nothing of when a page was edited.")
-	s.Table, s.Rows = "doc_page", notionRows
-	return s
-}
-
-// notionRows is a page as a page of docs: what it is, its title, URL and icon, an emoji or an image's URL.
-func notionRows(m map[string]any) *Row {
-	icon := str(m, "icon")
-	if i, ok := m["icon"].(map[string]any); ok {
-		icon = cmp.Or(str(i, "emoji"), str(i, "url"))
-	}
-	return rowOf(map[string]any{"kind": cmp.Or(str(m, "type"), "page"), "title": str(m, "title"), "url": str(m, "url"), "icon": icon,
-		"edited_at": instant(str(m, "last_edited_time"))})
-}
-
-var notionIDRe = regexp.MustCompile(`([0-9a-f]{32})(?:[?#].*)?$`)
-
-// notionID is the id of a page in its URL, or the URL.
-func notionID(it map[string]any) string {
-	if id := str(it, "id"); id != "" {
-		return id
-	}
-	u := str(it, "url")
-	if m := notionIDRe.FindStringSubmatch(u); m != nil {
-		return m[1]
-	}
-	return u
-}
+var (
+	notionPage  = ToolPage{Limit: "limit", Max: 200, After: "cursor"}
+	notionKey   = []Reads{{Of: "{id}"}, {Of: "{url}", Find: `([0-9a-f]{32})(?:[?#].*)?$`}, {Of: "{url}"}}
+	notionPages = Map{Table: "doc_page",
+		Cols: map[string]SQL{"kind": "coalesce(nullif(data->>'type', ''), 'page')", "title": "data->>'title'", "url": "data->>'url'",
+			"icon":      "CASE jsonb_typeof(data->'icon') WHEN 'object' THEN coalesce(nullif(data#>>'{icon,emoji}', ''), data#>>'{icon,url}') ELSE data->>'icon' END",
+			"edited_at": "archive.sync_at(data->>'last_edited_time')"}}
+)

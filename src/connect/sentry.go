@@ -5,5 +5,6 @@ package connect
 //
 // It syncs nothing until its projects have tables in archive.sql; its actions are the server's tools.
 func init() {
-	Register(&Connector{ID: "sentry", Name: "Sentry", Integration: true, MCP: "https://mcp.sentry.dev/mcp", Account: mcpAccount("whoami")})
+	Register(&Connector{ID: "sentry", Name: "Sentry", Integration: true, MCP: "https://mcp.sentry.dev/mcp", Who: &Who{Tool: "whoami"},
+		Info: Info{By: "Sentry", Description: "Look into issues, events and traces", Category: CatCode, Icon: IconBug, Scopes: []string{"Read your organization’s issues"}}})
 }
