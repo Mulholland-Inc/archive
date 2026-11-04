@@ -1914,6 +1914,63 @@ COMMENT ON COLUMN archive.work_item.source_id IS 'Its id there';
 COMMENT ON COLUMN archive.work_item.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.work_item.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
+-- Compliance: what a compliance tool you connected, like Vanta, tracks toward an audit: each framework and how far
+-- along it is, its controls, the automated tests and their status, and the vendors, people, policies and
+-- documents it checks, one row each, its kind saying which.
+CREATE TABLE archive.compliance (
+    id           uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection   uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream       text NOT NULL,
+    source_id    text NOT NULL,
+    access       uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    updated_at   timestamptz NOT NULL DEFAULT now(),
+    name         text NOT NULL DEFAULT '',
+    seen_at      timestamptz NOT NULL DEFAULT now(),
+    kind         text,
+    code         text,
+    title        text,
+    status       text,
+    category     text,
+    risk         text,
+    owner        uuid REFERENCES archive.known_person ON DELETE SET NULL,
+    owner_name   text,
+    passing      numeric,
+    total        numeric,
+    due_on       date,
+    checked_at   timestamptz,
+    description  text,
+    url          archive.url,
+    made_at      timestamptz,
+    edited_at    timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX compliance_owner_idx ON archive.compliance (owner);
+CREATE INDEX compliance_kind_status_idx ON archive.compliance (kind, status);
+COMMENT ON TABLE archive.compliance IS 'A framework, control, test, vendor, person, policy or document a compliance tool you connected tracks, like Vanta. Read only; Archive syncs them
+icon: shield-check';
+COMMENT ON COLUMN archive.compliance.kind IS 'What it is: framework, control, test, vendor, person, policy or document';
+COMMENT ON COLUMN archive.compliance.code IS 'Its short name there, like SOC 2 or a control''s CC6.1';
+COMMENT ON COLUMN archive.compliance.title IS 'Its name';
+COMMENT ON COLUMN archive.compliance.status IS 'Where it stands, as the tool says it: a test''s OK or NEEDS_ATTENTION, a person''s OVERDUE or COMPLETE tasks, a policy''s APPROVED or EXPIRED, a document''s Needs document or OK';
+COMMENT ON COLUMN archive.compliance.category IS 'Its group there, like a test''s Computers, a control''s domains, a vendor''s category or a person''s employment status';
+COMMENT ON COLUMN archive.compliance.risk IS 'A vendor''s risk, like HIGH: what is left after its controls, or else before them';
+COMMENT ON COLUMN archive.compliance.owner IS 'references known_person; who owns it, by their address, or for a person, who they are';
+COMMENT ON COLUMN archive.compliance.owner_name IS 'Who owns it, or who they are, by name';
+COMMENT ON COLUMN archive.compliance.passing IS 'A framework''s controls done';
+COMMENT ON COLUMN archive.compliance.total IS 'A framework''s controls in all';
+COMMENT ON COLUMN archive.compliance.due_on IS 'When it is due: a failing test''s fix, a person''s tasks or a vendor''s next review';
+COMMENT ON COLUMN archive.compliance.checked_at IS 'When it was last tested, reviewed, approved or uploaded';
+COMMENT ON COLUMN archive.compliance.description IS 'What it is, and for a test what failed and how to fix it';
+COMMENT ON COLUMN archive.compliance.url IS 'Where it opens there, or a vendor''s website';
+COMMENT ON COLUMN archive.compliance.made_at IS 'When it was made there, or a person started';
+COMMENT ON COLUMN archive.compliance.edited_at IS 'When it last changed there, or a test last flipped';
+COMMENT ON COLUMN archive.compliance.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.compliance.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.compliance.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.compliance.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.compliance.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
 -- Commerce: the orders and products of a store you connected, like Shopify, each order with its lines and its
 -- customer as the person of their email.
 CREATE TABLE archive.commerce_product (
@@ -2701,6 +2758,7 @@ BEGIN
         WHEN 'dental_payment' THEN concat_ws(' · ', 'Payment', r->>'paid_on')
         WHEN 'ad_metric' THEN concat_ws(' · ', nullif(r->>'campaign_name', ''), r->>'on_date')
         WHEN 'work_item' THEN concat_ws(' · ', nullif(r->>'title', ''), nullif(r->>'client_name', ''))
+        WHEN 'compliance' THEN concat_ws(' · ', nullif(r->>'code', ''), coalesce(nullif(r->>'title', ''), r->>'owner_name'))
         WHEN 'commerce_product' THEN r->>'title'
         WHEN 'commerce_order' THEN concat_ws(' · ', coalesce(nullif(r->>'number', ''), 'Order'), nullif(r->>'customer_name', ''))
         WHEN 'commerce_line' THEN concat_ws(' · ', nullif(r->>'title', ''), nullif(r->>'variant', ''))
@@ -2764,6 +2822,7 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.dental_procedure F
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.dental_payment FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ad_metric FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.work_item FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.compliance FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.commerce_product FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.commerce_order FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.commerce_line FOR EACH ROW EXECUTE FUNCTION archive.object_name();
@@ -2867,6 +2926,7 @@ GRANT SELECT ON archive.dental_procedure TO "{p}_viewer";
 GRANT SELECT ON archive.dental_payment TO "{p}_viewer";
 GRANT SELECT ON archive.ad_metric TO "{p}_viewer";
 GRANT SELECT ON archive.work_item TO "{p}_viewer";
+GRANT SELECT ON archive.compliance TO "{p}_viewer";
 GRANT SELECT ON archive.commerce_product TO "{p}_viewer";
 GRANT SELECT ON archive.commerce_order TO "{p}_viewer";
 GRANT SELECT ON archive.commerce_line TO "{p}_viewer";
@@ -2983,6 +3043,8 @@ ALTER TABLE archive.ad_metric ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.ad_metric FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = ad_metric.connection));
 ALTER TABLE archive.work_item ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.work_item FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = work_item.connection));
+ALTER TABLE archive.compliance ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.compliance FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = compliance.connection));
 ALTER TABLE archive.commerce_product ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.commerce_product FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = commerce_product.connection));
 ALTER TABLE archive.commerce_order ENABLE ROW LEVEL SECURITY;
@@ -3024,6 +3086,7 @@ CREATE POLICY seen ON archive.known_person FOR SELECT USING (EXISTS (SELECT FROM
     OR EXISTS (SELECT FROM archive.crm_contact x WHERE x.person = known_person.id)
     OR EXISTS (SELECT FROM archive.chat_message x WHERE x.sender = known_person.id)
     OR EXISTS (SELECT FROM archive.work_item x WHERE x.assignee = known_person.id)
+    OR EXISTS (SELECT FROM archive.compliance x WHERE x.owner = known_person.id)
     OR EXISTS (SELECT FROM archive.commerce_order x WHERE x.customer = known_person.id)
     OR EXISTS (SELECT FROM archive.dental_patient x WHERE x.person = known_person.id));
 ALTER TABLE archive.known_org ENABLE ROW LEVEL SECURITY;
@@ -3245,7 +3308,7 @@ SELECT jsonb_build_object(
             'archive.ledger_account'::regclass, 'archive.ledger_contact'::regclass, 'archive.ledger_item'::regclass,
             'archive.ledger_entry'::regclass, 'archive.ledger_line'::regclass, 'archive.calendar_event'::regclass,
             'archive.calendar_attendee'::regclass, 'archive.crm_company'::regclass, 'archive.crm_contact'::regclass, 'archive.crm_deal'::regclass,
-            'archive.chat_message'::regclass, 'archive.marketing_campaign'::regclass, 'archive.work_item'::regclass,
+            'archive.chat_message'::regclass, 'archive.marketing_campaign'::regclass, 'archive.work_item'::regclass, 'archive.compliance'::regclass,
             'archive.commerce_product'::regclass, 'archive.commerce_order'::regclass, 'archive.commerce_line'::regclass,
             'archive.ad_metric'::regclass, 'archive.dental_provider'::regclass, 'archive.dental_patient'::regclass,
             'archive.dental_appointment'::regclass, 'archive.dental_procedure'::regclass, 'archive.dental_payment'::regclass)
@@ -3360,6 +3423,7 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.chat_message x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.marketing_campaign x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.work_item x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.compliance x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.commerce_product x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.commerce_order x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.ad_metric x WHERE x.connection = c.id)
@@ -3458,6 +3522,7 @@ WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM arch
     AND NOT EXISTS (SELECT FROM archive.crm_contact x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.chat_message x WHERE x.sender = k.id)
     AND NOT EXISTS (SELECT FROM archive.work_item x WHERE x.assignee = k.id)
+    AND NOT EXISTS (SELECT FROM archive.compliance x WHERE x.owner = k.id)
     AND NOT EXISTS (SELECT FROM archive.commerce_order x WHERE x.customer = k.id)
     AND NOT EXISTS (SELECT FROM archive.dental_patient x WHERE x.person = k.id))
 DELETE FROM archive.known_org o WHERE NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.org = o.id)

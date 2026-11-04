@@ -99,6 +99,10 @@ type Connector struct {
 	// (keys.go). Its Env, when set, is a client of the server's own its requests need too, like a developer key.
 	Keys      []Key
 	Authorize func(req *http.Request, c *Client)
+	// Trade, for a key connector whose keys are an OAuth client of the account's own, like Vanta's, is the request
+	// that trades them for an access token, its answer's access_token, which lasts expires_in seconds: each request
+	// reads it as {key/access}, and Refresh trades again (keys.go).
+	Trade *Req
 	// Info is how it shows. Options says what else its Env's value takes or does, for the docs of that variable.
 	Info    Info
 	Options string
@@ -328,8 +332,16 @@ func granted(scopes []string, want string) bool {
 // Refresh is a fresh access token for the refresh token rt. Its RefreshToken is the one to keep from now on:
 // rt, or the one the provider replaced it with.
 func (p *Provider) Refresh(ctx context.Context, rt string) (*oauth2.Token, error) {
-	if len(p.Keys) > 0 {
+	if len(p.Keys) > 0 && p.Trade == nil {
 		return &oauth2.Token{AccessToken: rt, RefreshToken: rt}, nil
+	}
+	if len(p.Keys) > 0 {
+		keys, end, err := p.trade(ctx, keysFrom(rt))
+		if err != nil {
+			return nil, err
+		}
+		b, _ := json.Marshal(keys)
+		return &oauth2.Token{AccessToken: string(b), RefreshToken: rt, Expiry: end}, nil
 	}
 	tok, err := p.config("").TokenSource(context.WithValue(ctx, oauth2.HTTPClient, client), &oauth2.Token{RefreshToken: rt}).Token()
 	if err != nil {
