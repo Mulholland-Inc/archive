@@ -24,12 +24,16 @@ import (
 	"cmp"
 	"context"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -39,6 +43,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/google/uuid"
@@ -82,8 +87,28 @@ type Connector struct {
 	// Optional are scopes an API connector asks for too, but connects without, like those its pushes need:
 	// asked for only once its variable has ?push=1, as its app may not have them yet.
 	Optional []string
-	// Params go on the authorization URL, like the ones that ask Google for a refresh token.
+	// Extra are scopes asked for too, by the option of its variable that asks for them, like Shopify's
+	// read_all_orders once it has ?all_orders=1, as the provider must approve the app for them first; it connects
+	// without them.
+	Extra map[string][]string
+	// Comma says the authorization URL joins its scopes with commas, as Shopify's does, not spaces.
+	Comma bool
+	// Params go on the authorization URL, like the ones that ask Google for a refresh token, and Trades on the
+	// request that trades its code, like the one that asks Shopify for an access token that expires.
 	Params map[string]string
+	Trades map[string]string
+	// Ask, for a provider whose sign-in is on each account's own host, like a Shopify store's, is what a person
+	// names before signing in, as a key is asked for; AskOf reads it. It is kept as the grant's {meta/<name>},
+	// which the Endpoint's AuthURL and TokenURL may read, and the callback must come back with the same as its
+	// own parameter of that name.
+	Ask *Key
+	// Signed is the parameter of the callback that signs the rest, as Shopify's hmac does: the hex HMAC-SHA256,
+	// keyed with the client secret, of its other parameters sorted and joined as a query, unescaped. A callback
+	// without it, or signed otherwise, fails.
+	Signed string
+	// Was is the id of the key connector this one connected as before it had a sign-in, like Shopify's pasted
+	// app token: a grant of that one's keys, kept under this connector's id, still opens as that one does.
+	Was string
 	// Keep are parameters the provider adds to the callback, or else to its token's answer, that calls need later,
 	// like QuickBooks' realmId or Zoho's api_domain; the Grant keeps them as its Meta. Allow are the only values one
 	// of them may have, by its name, like the servers Zoho's accounts-server names, which its tokens are sent to: a
@@ -216,6 +241,10 @@ func Load(getenv func(string) string) (Providers, error) {
 		}
 		raw := strings.TrimSpace(getenv(c.Env))
 		if raw == "" {
+			// Without its client, one that a key connector's grants are kept as still opens them, and signs in nobody.
+			if c.Was != "" {
+				out[c.ID] = &Provider{Connector: c}
+			}
 			continue
 		}
 		u, err := url.Parse(raw)
@@ -227,6 +256,11 @@ func Load(getenv func(string) string) (Providers, error) {
 			p := &Provider{Connector: c, clientID: id, secret: secret, base: strings.TrimRight(u.Scheme+"://"+u.Host+u.Path, "/"), opts: u.Query(), scopes: c.Scopes}
 			if u.Query().Get("push") != "" {
 				p.scopes = slices.Concat(c.Scopes, c.Optional)
+			}
+			for _, opt := range slices.Sorted(maps.Keys(c.Extra)) {
+				if u.Query().Get(opt) != "" {
+					p.scopes = slices.Concat(p.scopes, c.Extra[opt])
+				}
 			}
 			p.endpoint = oauth2.Endpoint{AuthURL: p.at(c.Endpoint.AuthURL), TokenURL: p.at(c.Endpoint.TokenURL), AuthStyle: c.Endpoint.AuthStyle}
 			if c.Push != nil && c.Push.Env != "" {
@@ -294,8 +328,8 @@ func (p *Provider) metaScope(meta map[string]string) map[string]any {
 }
 
 // AuthURL is where the browser goes to consent, coming back to redirect with state and a code that only
-// verifier (oauth2.GenerateVerifier) trades.
-func (p *Provider) AuthURL(redirect, state, verifier string) string {
+// verifier (oauth2.GenerateVerifier) trades; meta is what the person named before, as AskOf read it.
+func (p *Provider) AuthURL(redirect, state, verifier string, meta map[string]string) (string, error) {
 	opts := []oauth2.AuthCodeOption{oauth2.S256ChallengeOption(verifier)}
 	for k, v := range p.Params {
 		opts = append(opts, oauth2.SetAuthURLParam(k, v))
@@ -303,7 +337,63 @@ func (p *Provider) AuthURL(redirect, state, verifier string) string {
 	if p.resource != "" {
 		opts = append(opts, oauth2.SetAuthURLParam("resource", p.resource))
 	}
-	return p.config(redirect).AuthCodeURL(state, opts...)
+	if p.Comma {
+		opts = append(opts, oauth2.SetAuthURLParam("scope", strings.Join(p.scopes, ",")))
+	}
+	cfg := p.config(redirect)
+	if strings.Contains(cfg.Endpoint.AuthURL, "{") {
+		u, err := expand(cfg.Endpoint.AuthURL, p.metaScope(meta))
+		if err != nil {
+			return "", fmt.Errorf("%s: where it signs in: %w", p.Name, err)
+		}
+		cfg.Endpoint.AuthURL = u
+	}
+	return cfg.AuthCodeURL(state, opts...), nil
+}
+
+// AskOf is what a person named for the connector's Ask, as its grant keeps it: what its Find finds in it, lower
+// case, through its As; or why it is no such thing.
+func (p *Provider) AskOf(v string) (map[string]string, error) {
+	k := p.Ask
+	if k == nil {
+		return nil, nil
+	}
+	v = strings.ToLower(strings.TrimSpace(v))
+	if k.Find != "" {
+		f := reOf(k.Find).FindStringSubmatch(v)
+		if f == nil {
+			return nil, fmt.Errorf("%s needs %s: %s", p.Name, k.Label, k.Help)
+		}
+		v = f[1]
+	}
+	if k.As != "" {
+		x, _ := fillStr(k.As, map[string]any{"it": v})
+		v = text(x)
+	}
+	if v == "" {
+		return nil, fmt.Errorf("%s needs %s", p.Name, k.Label)
+	}
+	return map[string]string{k.Name: v}, nil
+}
+
+// signed says the callback's query q is signed with the client secret, as Signed has it: over its values as they
+// are, or as a query escapes them, as Shopify's libraries differ on.
+func (p *Provider) signed(q url.Values) bool {
+	got := q.Get(p.Signed)
+	for _, esc := range []func(string) string{func(s string) string { return s }, url.QueryEscape} {
+		var pairs []string
+		for _, k := range slices.Sorted(maps.Keys(q)) {
+			if k != p.Signed {
+				pairs = append(pairs, esc(k)+"="+esc(strings.Join(q[k], ",")))
+			}
+		}
+		m := hmac.New(sha256.New, []byte(p.secret))
+		m.Write([]byte(strings.Join(pairs, "&")))
+		if same(got, hex.EncodeToString(m.Sum(nil))) {
+			return true
+		}
+	}
+	return false
 }
 
 // Grant is a connected account: who it is, its refresh token, the scopes the provider granted and the
@@ -314,18 +404,31 @@ type Grant struct {
 	Meta             map[string]string
 }
 
-// Exchange is the account the provider came back to redirect for, with the query q it came back with. It
-// fails when the person refused, or left out a scope an API connector asks for.
-func (p *Provider) Exchange(ctx context.Context, redirect string, q url.Values, verifier string) (*Grant, error) {
+// Exchange is the account the provider came back to redirect for, with the query q it came back with, for what
+// the person named before, asked. It fails when the person refused, or left out a scope an API connector asks for.
+func (p *Provider) Exchange(ctx context.Context, redirect string, q url.Values, verifier string, asked map[string]string) (*Grant, error) {
 	if e := q.Get("error"); e != "" {
 		return nil, fmt.Errorf("%s was not connected: %s", p.Name, cmp.Or(q.Get("error_description"), e))
+	}
+	if p.Signed != "" && !p.signed(q) {
+		return nil, fmt.Errorf("%s was not connected: it came back without %s's signature", p.Name, p.Name)
 	}
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, client)
 	opts := []oauth2.AuthCodeOption{oauth2.VerifierOption(verifier)}
 	if p.resource != "" {
 		opts = append(opts, oauth2.SetAuthURLParam("resource", p.resource))
 	}
+	for k, v := range p.Trades {
+		opts = append(opts, oauth2.SetAuthURLParam(k, v))
+	}
 	meta := map[string]string{}
+	if p.Ask != nil {
+		k := p.Ask.Name
+		if asked[k] == "" || !strings.EqualFold(q.Get(k), asked[k]) {
+			return nil, fmt.Errorf("%s was not connected: it came back for %s %q, not %q", p.Name, k, q.Get(k), asked[k])
+		}
+		meta[k] = asked[k]
+	}
 	for _, k := range p.Keep {
 		if v := q.Get(k); v != "" {
 			meta[k] = v
@@ -353,7 +456,7 @@ func (p *Provider) Exchange(ctx context.Context, redirect string, q url.Values, 
 		g.Refresh = cmp.Or(g.Refresh, tok.AccessToken)
 	}
 	if s, _ := tok.Extra("scope").(string); s != "" {
-		g.Scopes = strings.Fields(s)
+		g.Scopes = strings.FieldsFunc(s, func(r rune) bool { return r == ',' || unicode.IsSpace(r) })
 	}
 	switch {
 	case g.Refresh == "":
@@ -392,7 +495,7 @@ func granted(scopes []string, want string) bool {
 // Refresh is a fresh access token for the refresh token rt of the grant that kept meta. Its RefreshToken is the
 // one to keep from now on: rt, or the one the provider replaced it with.
 func (p *Provider) Refresh(ctx context.Context, rt string, meta map[string]string) (*oauth2.Token, error) {
-	if len(p.Keys) > 0 && p.Trade == nil || p.Lasts {
+	if len(p.Keys) > 0 && p.Trade == nil || p.Lasts || p.was(rt) != nil {
 		return &oauth2.Token{AccessToken: rt, RefreshToken: rt}, nil
 	}
 	if len(p.Keys) > 0 {
@@ -421,6 +524,8 @@ func (p *Provider) Refresh(ctx context.Context, rt string, meta map[string]strin
 func (p *Provider) RevokeToken(ctx context.Context, rt string, meta map[string]string) error {
 	rv := &Revocation{Refresh: rt, Meta: meta, ctx: ctx, p: p}
 	switch {
+	case p.was(rt) != nil:
+		return nil
 	case p.RevokeWith != nil:
 		return rv.p.RevokeWith(rv)
 	case len(p.Keys) > 0:
@@ -519,6 +624,8 @@ type State struct {
 	Member    uuid.UUID `json:"m"`
 	Verifier  string    `json:"v"`
 	Exp       int64     `json:"x"`
+	// Meta is what the person named before signing in, the connector's Ask.
+	Meta map[string]string `json:"e,omitempty"`
 }
 
 // TTL is how long a person has to consent.
@@ -599,17 +706,34 @@ func (p *Provider) Open(ctx context.Context, tok *oauth2.Token, meta map[string]
 	if len(p.Keys) > 0 {
 		return p.openKeys(ctx, keysFrom(tok.AccessToken), meta)
 	}
+	if w := p.was(tok.AccessToken); w != nil {
+		return w.openKeys(ctx, keysFrom(tok.AccessToken), meta)
+	}
 	if p.TokenType != "" {
 		t := *tok
 		t.TokenType = p.TokenType
 		tok = &t
 	}
+	c := &Client{ctx: ctx, p: p, tok: tok, Meta: meta}
+	// A connector that signs its requests with Sign puts the token where they say, in place of the Authorization header.
 	var rt http.RoundTripper = &oauth2.Transport{Source: oauth2.StaticTokenSource(tok)}
+	if p.Authorize != nil {
+		rt = &keyTransport{c: c}
+	}
 	if p.Pace > 0 {
 		rt = &paced{base: rt, p: pacerOf(p.ID, p.Pace)}
 	}
-	hc := &http.Client{Timeout: client.Timeout, Transport: rt}
-	return &Client{ctx: ctx, p: p, http: hc, tok: tok, Meta: meta}
+	c.http = &http.Client{Timeout: client.Timeout, Transport: rt}
+	return c
+}
+
+// was is the key connector the grant of token t was made with, as this one's Was, when its token is that one's
+// keys; nil when it is this one's own.
+func (p *Provider) was(t string) *Provider {
+	if p.Was == "" || !strings.HasPrefix(t, "{") || registry[p.Was] == nil {
+		return nil
+	}
+	return &Provider{Connector: registry[p.Was]}
 }
 
 // Context is what the Client's requests run in.
@@ -1233,3 +1357,6 @@ func mcpAccount(tool string) func(c *Client) (string, error) {
 
 // ClientID is the OAuth client's id.
 func (p *Provider) ClientID() string { return p.clientID }
+
+// Ready says the provider connects accounts: an MCP or key connector, or an API connector with its client.
+func (p *Provider) Ready() bool { return p.MCP != "" || len(p.Keys) > 0 || p.clientID != "" }

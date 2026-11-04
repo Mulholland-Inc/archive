@@ -1,21 +1,28 @@
 <script>
-  // KeysDialog connects a connector that has no sign-in, like Karbon or Shopify, with the keys it asks for: what
-  // the person pastes from the service, each with where to find it. Secrets are typed as passwords, sent once
-  // and never shown again.
+  // KeysDialog connects a connector that has no sign-in, like Karbon, with the keys it asks for: what the person
+  // pastes from the service, each with where to find it. Secrets are typed as passwords, sent once and never shown
+  // again. A connector whose sign-in is the account's own, like a Shopify store's, asks here for which account
+  // instead, and goes on to sign in there.
   import Dialog from './Dialog.svelte';
   import Field from './Field.svelte';
   import Input from './Input.svelte';
   import Button from './Button.svelte';
   import Text from './Text.svelte';
-  import { connectKeys } from '../lib/app.svelte.js';
+  import { connect, connectKeys } from '../lib/app.svelte.js';
 
   let { open = $bindable(false), connector } = $props();
 
   let values = $state({});
   let busy = $state(false);
-  const filled = $derived((connector.keys ?? []).every((k) => (values[k.name] ?? '').trim() !== ''));
+  const asks = $derived(connector.ask ? [connector.ask] : (connector.keys ?? []));
+  const filled = $derived(asks.every((k) => (values[k.name] ?? '').trim() !== ''));
 
   async function send(close) {
+    if (connector.ask) {
+      busy = true;
+      connect(connector.id, { [connector.ask.name]: values[connector.ask.name].trim() });
+      return;
+    }
     busy = true;
     const ok = await connectKeys(connector.id, values);
     busy = false;
@@ -27,7 +34,7 @@
 </script>
 
 <Dialog bind:open title={`Connect ${connector.name}`}>
-  {#each connector.keys ?? [] as k (k.name)}
+  {#each asks as k (k.name)}
     <Field label={k.label}>
       {#snippet children(id)}
         <Input {id} type={k.secret ? 'password' : 'text'} autocomplete="off" spellcheck="false" bind:value={values[k.name]} />
@@ -37,6 +44,6 @@
   {/each}
   {#snippet footer({ close })}
     <Button variant="ghost" onclick={close}>Cancel</Button>
-    <Button variant="primary" disabled={!filled || busy} onclick={() => send(close)}>{busy ? 'Connecting…' : 'Connect'}</Button>
+    <Button variant="primary" disabled={!filled || busy} onclick={() => send(close)}>{busy ? 'Connecting…' : connector.ask ? `Continue to ${connector.by ?? connector.name}` : 'Connect'}</Button>
   {/snippet}
 </Dialog>
