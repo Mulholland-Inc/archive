@@ -499,7 +499,7 @@ func (a *Archive) Disconnect(ctx context.Context, id uuid.UUID) error {
 		// Its watches end first, while its grant still lets Archive end them.
 		var cl *connect.Client
 		if push, _ := p.PushOf(); push == nil || push.Unwatch == nil {
-		} else if tok, terr := p.Refresh(ctx, rt); terr == nil {
+		} else if tok, terr := p.Refresh(ctx, rt, c.Meta); terr == nil {
 			cl = p.Open(ctx, tok, c.Meta)
 			rt = tok.RefreshToken
 		}
@@ -511,7 +511,7 @@ func (a *Archive) Disconnect(ctx context.Context, id uuid.UUID) error {
 		}
 		var shared bool
 		if shared, err = a.grantShared(ctx, c, p); err == nil && !shared {
-			err = p.RevokeToken(ctx, rt)
+			err = p.RevokeToken(ctx, rt, c.Meta)
 		}
 	}
 	if err != nil {
@@ -612,7 +612,7 @@ func (a *Archive) connectionToken(ctx context.Context, id uuid.UUID) (*oauth2.To
 		if err != nil {
 			return err
 		}
-		if tok, err = p.Refresh(ctx, rt); err != nil {
+		if tok, err = p.Refresh(ctx, rt, c.Meta); err != nil {
 			msg := fmt.Sprintf("%s refused to let Archive keep reading %s (%s); connect it again", p.Name, c.Account, connect.Reason(err))
 			refused = fmt.Errorf("connection %s: %s: %w", id, msg, ErrUnauthorized)
 			if re := (*oauth2.RetrieveError)(nil); errors.As(err, &re) && re.Response != nil && re.Response.StatusCode/100 == 4 {
@@ -1203,6 +1203,7 @@ var syncSchema = map[string]syncTable{
 	"chat_message":                     {},
 	"marketing_campaign":               {},
 	"work_item":                        {},
+	"compliance":                       {},
 	"commerce_product":                 {},
 	"commerce_order":                   {},
 	"dental_provider":                  {},

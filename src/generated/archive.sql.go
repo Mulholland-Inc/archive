@@ -197,7 +197,7 @@ SELECT jsonb_build_object(
             'archive.ledger_account'::regclass, 'archive.ledger_contact'::regclass, 'archive.ledger_item'::regclass,
             'archive.ledger_entry'::regclass, 'archive.ledger_line'::regclass, 'archive.calendar_event'::regclass,
             'archive.calendar_attendee'::regclass, 'archive.crm_company'::regclass, 'archive.crm_contact'::regclass, 'archive.crm_deal'::regclass,
-            'archive.chat_message'::regclass, 'archive.marketing_campaign'::regclass, 'archive.work_item'::regclass,
+            'archive.chat_message'::regclass, 'archive.marketing_campaign'::regclass, 'archive.work_item'::regclass, 'archive.compliance'::regclass,
             'archive.commerce_product'::regclass, 'archive.commerce_order'::regclass, 'archive.commerce_line'::regclass,
             'archive.ad_metric'::regclass, 'archive.dental_provider'::regclass, 'archive.dental_patient'::regclass,
             'archive.dental_appointment'::regclass, 'archive.dental_procedure'::regclass, 'archive.dental_payment'::regclass,
@@ -480,6 +480,7 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.chat_message x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.marketing_campaign x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.work_item x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.compliance x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.commerce_product x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.commerce_order x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.ad_metric x WHERE x.connection = c.id)
@@ -760,6 +761,7 @@ WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM arch
     AND NOT EXISTS (SELECT FROM archive.crm_contact x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.chat_message x WHERE x.sender = k.id)
     AND NOT EXISTS (SELECT FROM archive.work_item x WHERE x.assignee = k.id)
+    AND NOT EXISTS (SELECT FROM archive.compliance x WHERE x.owner = k.id)
     AND NOT EXISTS (SELECT FROM archive.commerce_order x WHERE x.customer = k.id)
     AND NOT EXISTS (SELECT FROM archive.dental_patient x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.rental_tenant x WHERE x.person = k.id))

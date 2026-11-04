@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // Key connectors are the services that let an app in with what a person pastes, not with a sign-in: an API key
@@ -16,7 +18,8 @@ import (
 // account they are (Account), and keeps them as an OAuth connector keeps its refresh token, sealed with the
 // workspace key, so they are never shown again. A key that is not Secret, like a store's address, is kept as the
 // connection's Meta too. A key never refreshes and is never revoked by Archive: the person ends it where they
-// made it, and connects again with a new one.
+// made it, and connects again with a new one. Keys that are an OAuth client of the account's own, like Vanta's,
+// are traded for an access token whenever the last has run out (Trade); the token is never kept.
 
 // Key is something a key connector asks for.
 type Key struct {
@@ -66,7 +69,18 @@ func (p *Provider) KeyGrant(ctx context.Context, keys map[string]string) (*Grant
 			meta[k.Name] = v
 		}
 	}
-	c := p.openKeys(ctx, kept, meta)
+	// Keys that are a client are tried by trading them, which refuses them with a 400 or 401.
+	open, err := kept, error(nil)
+	if p.Trade != nil {
+		if open, _, err = p.trade(ctx, kept); err != nil {
+			var r *Refusal
+			if errors.As(err, &r) && r.Status/100 == 4 {
+				return nil, fmt.Errorf("%s did not take those keys: %s", p.Name, r.Message)
+			}
+			return nil, fmt.Errorf("%s could not be connected with those keys: %w", p.Name, err)
+		}
+	}
+	c := p.openKeys(ctx, open, meta)
 	defer c.Close()
 	account := p.Name
 	if p.Account != nil {
@@ -82,6 +96,25 @@ func (p *Provider) KeyGrant(ctx context.Context, keys map[string]string) (*Grant
 	}
 	b, _ := json.Marshal(kept)
 	return &Grant{Account: account, Refresh: string(b), Meta: meta}, nil
+}
+
+// trade is keys with the access token their Trade answers with, as access, and when that token ends: zero when
+// it does not say. The request goes unsigned, with the keys as {key/...}.
+func (p *Provider) trade(ctx context.Context, keys map[string]string) (map[string]string, time.Time, error) {
+	c := &Client{ctx: ctx, p: p, http: client, keys: keys}
+	ans, err := c.req(*p.Trade, c.scope())
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	out := maps.Clone(keys)
+	if out["access"] = text(pick(ans, "access_token")); out["access"] == "" {
+		return nil, time.Time{}, fmt.Errorf("%s gave no access token for those keys", p.Name)
+	}
+	var end time.Time
+	if s := atoi(text(pick(ans, "expires_in"))); s > 0 {
+		end = time.Now().Add(time.Duration(s) * time.Second)
+	}
+	return out, end, nil
 }
 
 // keysFrom are the keys a grant kept, as KeyGrant wrote them.
