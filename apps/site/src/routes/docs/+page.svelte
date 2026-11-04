@@ -798,7 +798,7 @@ archive set member &lt;id&gt; <span class="s">'&#123;"groups":["finance"]&#125;'
 <tr><td>Docs</td><td>Notion, Confluence</td></tr>
 <tr><td>Work and code</td><td>Jira, Linear, Asana, GitHub, GitLab</td></tr>
 <tr><td>CRM and support</td><td>HubSpot, Salesforce, Pipedrive, Zendesk, Intercom</td></tr>
-<tr><td>Finance and meetings</td><td>Stripe, Xero, QuickBooks Online, Exact Online, Zoom</td></tr>
+<tr><td>Finance and meetings</td><td>Stripe, Xero, QuickBooks Online, NetSuite, Exact Online, banks through Plaid, Zoom</td></tr>
 </tbody>
 </table>
 <Note>Connectors roll out provider by provider, as each provider approves the Archive app. Services that issue API tokens, such as Stripe, Notion, Linear and GitHub, connect with a pasted token.</Note>

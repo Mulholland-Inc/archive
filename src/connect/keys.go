@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
+	"time"
 )
 
 // Key connectors are the services that let an app in with what a person pastes, not with a sign-in: an API key
@@ -15,8 +18,10 @@ import (
 // it is for, like Shopify's. Its Keys say what to ask for; connecting checks them by asking the service whose
 // account they are (Account), and keeps them as an OAuth connector keeps its refresh token, sealed with the
 // workspace key, so they are never shown again. A key that is not Secret, like a store's address, is kept as the
-// connection's Meta too. A key never refreshes and is never revoked by Archive: the person ends it where they
-// made it, and connects again with a new one.
+// connection's Meta too. A key never refreshes, and Archive revokes it only where the connector has RevokeBy:
+// otherwise the person ends it where they made it, and connects again with a new one. Keys that are an OAuth client
+// of the account's own, like Vanta's, are traded for an access token whenever the last has run out (Trade); the token
+// is never kept.
 
 // Key is something a key connector asks for.
 type Key struct {
@@ -27,6 +32,69 @@ type Key struct {
 	Help  string `json:"help,omitempty"`
 	// Secret says it is a secret: the form hides it, and it is kept only sealed.
 	Secret bool `json:"secret,omitempty"`
+}
+
+// Link is a key connector whose keys come from its provider's own widget in the app, like Plaid Link, rather
+// than from what a person pastes. Start asks, with the server's client, for what opens the widget, at Token in its
+// answer, reading {user}, the member who connects, {hook}, where the provider pushes, and {back}, the app's page a
+// bank's own sign-in sends the browser back to. The widget hands the app the Keys, and Swap trades them for those
+// kept: Keep by name, each read from its answer, and of them Meta the connection's Meta too.
+type Link struct {
+	Start Req
+	Token Path
+	Swap  Req
+	Keep  map[string]Path
+	Meta  []string
+}
+
+func (l *Link) check() error {
+	if err := l.Start.check("start", "client", "option", "user", "hook", "back"); err != nil {
+		return err
+	}
+	if l.Token == "" || len(l.Keep) == 0 {
+		return errors.New("link: needs Token and Keep")
+	}
+	return l.Swap.check("swap", "client", "option", "key")
+}
+
+// LinkToken is what opens key connector p's widget for member user, which pushes to hook and comes back to back.
+func (p *Provider) LinkToken(ctx context.Context, user, hook, back string) (string, error) {
+	if p.Link == nil {
+		return "", fmt.Errorf("%s has no widget to connect with", p.Name)
+	}
+	c := p.openKeys(ctx, nil, nil)
+	defer c.Close()
+	sc := c.scope()
+	sc["user"], sc["hook"], sc["back"] = user, hook, back
+	ans, err := c.req(p.Link.Start, sc)
+	if err != nil {
+		return "", err
+	}
+	tok := text(pick(ans, p.Link.Token))
+	if tok == "" {
+		return "", fmt.Errorf("%s answered without %s", p.Name, p.Link.Token)
+	}
+	return tok, nil
+}
+
+// swap trades the keys a widget handed over for those its Link keeps.
+func (p *Provider) swap(ctx context.Context, keys map[string]string) (kept, meta map[string]string, err error) {
+	c := p.openKeys(ctx, keys, nil)
+	defer c.Close()
+	ans, err := c.req(p.Link.Swap, c.scope())
+	if err != nil {
+		return nil, nil, err
+	}
+	kept, meta = map[string]string{}, map[string]string{}
+	for name, at := range p.Link.Keep {
+		if kept[name] = text(pick(ans, at)); kept[name] == "" {
+			return nil, nil, fmt.Errorf("%s answered without %s", p.Name, at)
+		}
+		if slices.Contains(p.Link.Meta, name) {
+			meta[name] = kept[name]
+		}
+	}
+	return kept, meta, nil
 }
 
 // keyProvider is the key connector c, available unless it names an Env this server does not set.
@@ -66,7 +134,24 @@ func (p *Provider) KeyGrant(ctx context.Context, keys map[string]string) (*Grant
 			meta[k.Name] = v
 		}
 	}
-	c := p.openKeys(ctx, kept, meta)
+	if p.Link != nil {
+		var err error
+		if kept, meta, err = p.swap(ctx, kept); err != nil {
+			return nil, fmt.Errorf("%s could not be connected: %w", p.Name, err)
+		}
+	}
+	// Keys that are a client are tried by trading them, which refuses them with a 400 or 401.
+	open, err := kept, error(nil)
+	if p.Trade != nil {
+		if open, _, err = p.trade(ctx, kept); err != nil {
+			var r *Refusal
+			if errors.As(err, &r) && r.Status/100 == 4 {
+				return nil, fmt.Errorf("%s did not take those keys: %s", p.Name, r.Message)
+			}
+			return nil, fmt.Errorf("%s could not be connected with those keys: %w", p.Name, err)
+		}
+	}
+	c := p.openKeys(ctx, open, meta)
 	defer c.Close()
 	account := p.Name
 	if p.Account != nil {
@@ -82,6 +167,25 @@ func (p *Provider) KeyGrant(ctx context.Context, keys map[string]string) (*Grant
 	}
 	b, _ := json.Marshal(kept)
 	return &Grant{Account: account, Refresh: string(b), Meta: meta}, nil
+}
+
+// trade is keys with the access token their Trade answers with, as access, and when that token ends: zero when
+// it does not say. The request goes unsigned, with the keys as {key/...}.
+func (p *Provider) trade(ctx context.Context, keys map[string]string) (map[string]string, time.Time, error) {
+	c := &Client{ctx: ctx, p: p, http: client, keys: keys}
+	ans, err := c.req(*p.Trade, c.scope())
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	out := maps.Clone(keys)
+	if out["access"] = text(pick(ans, "access_token")); out["access"] == "" {
+		return nil, time.Time{}, fmt.Errorf("%s gave no access token for those keys", p.Name)
+	}
+	var end time.Time
+	if s := atoi(text(pick(ans, "expires_in"))); s > 0 {
+		end = time.Now().Add(time.Duration(s) * time.Second)
+	}
+	return out, end, nil
 }
 
 // keysFrom are the keys a grant kept, as KeyGrant wrote them.

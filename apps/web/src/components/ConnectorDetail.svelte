@@ -10,12 +10,12 @@
   import Icon from './Icon.svelte';
   import OwnConnections from './OwnConnections.svelte';
   import KeysDialog from './KeysDialog.svelte';
-  import { connect, connections } from '../lib/app.svelte.js';
+  import { connect, connectLink, connections } from '../lib/app.svelte.js';
 
   let { connector } = $props();
   let keying = $state(false);
-  // A connector with keys has no sign-in: Connect asks for them.
-  const start = () => (connector.keys?.length ? (keying = true) : connect(connector.id));
+  // A connector with keys has no sign-in: Connect asks for them, or opens the widget that hands them over.
+  const start = () => (connector.link ? connectLink(connector.id) : connector.keys?.length ? (keying = true) : connect(connector.id));
 
   connections.use();
 </script>
