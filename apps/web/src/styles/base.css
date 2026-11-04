@@ -273,11 +273,8 @@ dialog:not([open]) {
   inset-block-end: calc(var(--bottom) - var(--space-1-5));
 }
 
-.floating[data-morph]:popover-open {
-  box-shadow: none;
-}
-
 .morph-head {
+  --ring: none;
   flex: none;
   width: var(--w);
 }
