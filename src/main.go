@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -23,6 +24,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Mulholland-Inc/archive/connect"
 	"github.com/Mulholland-Inc/archive/generated"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -105,6 +107,7 @@ Usage:
                                      workspaces, whichever workspaces they are in
   archive admin remove <email>       take that away; the last admin stays
   archive admin list
+  archive secrets                    the connectors' environment variables, as the JSON Terraform reads
 
 Environment:
   DATABASE_URL       Postgres 18, required, as a role with CREATEROLE and CREATEDB, like the one
@@ -132,13 +135,8 @@ Environment:
                      in, matched on an email the provider says is verified. ARCHIVE_GOOGLE also
                      connects Gmail and Google Drive, read only, with the redirect URLs
                      <API>/connect/gmail/callback and <API>/connect/gdrive/callback
-  ARCHIVE_OUTLOOK    https://<client id>:<client secret>@login.microsoftonline.com
-  ARCHIVE_QUICKBOOKS https://<client id>:<client secret>@appcenter.intuit.com, ?sandbox=1 for sandbox companies
-  ARCHIVE_HUBSPOT    https://<client id>:<client secret>@app.hubspot.com
-  ARCHIVE_GITHUB_APP https://<client id>:<client secret>@github.com, a GitHub App's
-  ARCHIVE_ASANA      https://<client id>:<client secret>@app.asana.com
-                     the OAuth clients of the API connectors members connect their own accounts at
-                     (src/connect), each with the redirect URL <API>/connect/<connector>/callback.
+<connectors>                     the OAuth clients of the API connectors, from their definitions (src/connect), each
+                     with the redirect URL <API>/connect/<connector>/callback.
                      The MCP connectors, like Notion and Linear, need none: Archive registers itself at
                      their servers; ARCHIVE_MCP_<CONNECTOR> points one at another server
   ARCHIVE_LIVE_KEY   key the API announces live changes with to the app Worker on the API's /live/announce
@@ -182,6 +180,16 @@ func main() {
 	}
 }
 
+// cliHelp is the usage, with the connectors' variables as their definitions describe them.
+func cliHelp() string {
+	var b strings.Builder
+	secrets := connect.Secrets()
+	for _, k := range slices.Sorted(maps.Keys(secrets)) {
+		fmt.Fprintf(&b, "  %-18s %s\n", k, secrets[k])
+	}
+	return strings.Replace(cliUsage, "<connectors>", b.String(), 1)
+}
+
 func cliPrintError(w io.Writer, err error) {
 	var ve *ValidationError
 	if errors.As(err, &ve) {
@@ -201,15 +209,20 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	cmd, args := args[0], args[1:]
 	switch cmd {
 	case "help", "-h", "-help", "--help":
-		fmt.Fprint(stdout, cliUsage)
+		fmt.Fprint(stdout, cliHelp())
 		return nil
+	case "secrets":
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		enc.SetEscapeHTML(false)
+		return enc.Encode(connect.Secrets())
 	case "version":
 		fmt.Fprintln(stdout, cliVersion)
 		return nil
 	}
 
 	fs := flag.NewFlagSet("archive "+cmd, flag.ContinueOnError)
-	fs.Usage = func() { fmt.Fprint(fs.Output(), cliUsage) }
+	fs.Usage = func() { fmt.Fprint(fs.Output(), cliHelp()) }
 	addr := fs.String("addr", ":8080", "listen address (serve)")
 	confirm := fs.String("confirm", "", "run the migration whose dry run printed this confirm (schema migrate)")
 	typ := fs.String("type", "", "only this table, or file (search); personal, family or business (workspace add)")

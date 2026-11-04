@@ -23,7 +23,7 @@ import (
 // It syncs nothing until its issues are mapped into the tables of archive.sql; its push waits for that too.
 func init() {
 	Register(&Connector{
-		ID: "github", Name: "GitHub", Integration: true, Env: "ARCHIVE_GITHUB_APP", Host: "https://github.com",
+		ID: "github", Name: "GitHub", Integration: true, Env: "ARCHIVE_GITHUB_APP", Options: "?hook=<webhook secret>", Host: "https://github.com",
 		Endpoint: oauth2.Endpoint{AuthURL: "https://github.com/login/oauth/authorize", TokenURL: "https://github.com/login/oauth/access_token",
 			AuthStyle: oauth2.AuthStyleInParams},
 		RevokeWith: func(rv *Revocation) error {

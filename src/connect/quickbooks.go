@@ -26,7 +26,7 @@ import (
 // more than CDC answers at once, is listed whole again. Its pushes say which company changed.
 func init() {
 	Register(&Connector{
-		ID: "quickbooks", Name: "QuickBooks", Integration: true, Env: "ARCHIVE_QUICKBOOKS", Host: "https://appcenter.intuit.com",
+		ID: "quickbooks", Name: "QuickBooks", Integration: true, Env: "ARCHIVE_QUICKBOOKS", Options: "?sandbox=1 for development keys, &hook=<webhooks verifier token> for its pushes", Host: "https://appcenter.intuit.com",
 		Endpoint: oauth2.Endpoint{AuthURL: "https://appcenter.intuit.com/connect/oauth2", TokenURL: "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
 			AuthStyle: oauth2.AuthStyleInHeader},
 		RevokeWith: func(rv *Revocation) error {
