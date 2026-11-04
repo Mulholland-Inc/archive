@@ -80,6 +80,18 @@ func init() {
 						Parts: []Part{{Type: "application/json; charset=UTF-8", Body: Obj{"name": "{name}"}}, driveContent}}},
 				},
 			}),
+			"upload": Upload(Send{
+				Doc: "Send a file of the file table to Drive, as a new file or a new version of one, in the time a run has: { id, name, mimeType, modifiedTime, size, webViewLink, owners }. " +
+					"Drive has no write that takes a version, so Archive asks it first what version the file is; a change in the moment after is overwritten",
+				Let:      []Step{{If: "in/id", As: "parents", In: []any{"{in/id}"}}},
+				New:      Req{Method: POST, URL: driveUpload + "/files", Query: driveResuming, Header: driveUpHeader, Body: Obj{"name": "{name}", "parents": "{parents}"}},
+				Over:     Req{Method: PATCH, URL: driveUpload + "/files/{it/id}", Query: driveResuming, Header: driveUpHeader, Body: Obj{"name": "{rename}"}},
+				AtHeader: "Location",
+				Check:    &Req{URL: "/files/{it/id}?supportsAllDrives=true&fields=md5Checksum,modifiedTime"},
+				Now:      "{ans/md5Checksum;ans/modifiedTime}",
+				Part:     Req{Method: PUT, Header: map[string][]string{"Content-Range": {"{range}"}}},
+				Step:     8 << 20,
+			}),
 			"trash": Call[driveOne, driveMade](Plan{
 				Doc:   "Move a file or folder to Drive's trash, from where its owner can restore it for 30 days: { id, name, mimeType, modifiedTime, size, webViewLink, owners }",
 				Steps: []Step{{Req: Req{Method: PATCH, URL: "/files/{id}", Query: driveSaving, Body: Obj{"trashed": true}}}},
@@ -151,6 +163,8 @@ var (
 	driveGoogle    = Test{At: "f/mimeType", Re: `^application/vnd\.google-apps\.`}
 	driveSaving    = Q{"supportsAllDrives": "true", "fields": driveFields}
 	driveUploading = Q{"uploadType": "multipart", "supportsAllDrives": "true", "fields": driveFields}
+	driveResuming  = Q{"uploadType": "resumable", "supportsAllDrives": "true", "fields": driveFields}
+	driveUpHeader  = map[string][]string{"X-Upload-Content-Type": {"{mime}"}, "X-Upload-Content-Length": {"{size}"}, "Content-Type": {"application/json; charset=UTF-8"}}
 	driveNewMeta   = Obj{"name": "{name}", "mimeType": "{type}", "parents": "{parents}"}
 	driveContent   = Part{Type: "{contentType|text/plain}; charset=UTF-8", Body: "{content}"}
 )

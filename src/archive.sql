@@ -3781,6 +3781,15 @@ UPDATE archive.blob_gone SET at = sqlc.arg(at)::timestamptz WHERE hash = sqlc.ar
 -- name: NextBlob :one
 SELECT at FROM archive.blob_gone ORDER BY at LIMIT 1;
 
+-- name: CopyFile :one
+INSERT INTO archive.file (hash, name, mime, size, metadata, text, status, access)
+SELECT s.hash, sqlc.arg(name), s.mime, s.size, s.metadata, s.text, 'done', sqlc.narg(access)::uuid FROM archive.file s WHERE s.id = sqlc.arg(id)
+RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at;
+
+-- What a connection synced under an id there, as you see it.
+-- name: FileBySource :one
+SELECT kind, coalesce(version, '')::text AS version, source FROM archive.file WHERE connection = $1 AND source_id = $2 LIMIT 1;
+
 -- name: DeleteFile :one
 DELETE FROM archive.file WHERE id = $1 RETURNING id;
 

@@ -665,6 +665,69 @@ func (q *Queries) Connections(ctx context.Context, member uuid.UUID) ([]Connecti
 	return items, nil
 }
 
+const copyFile = `-- name: CopyFile :one
+INSERT INTO archive.file (hash, name, mime, size, metadata, text, status, access)
+SELECT s.hash, $1, s.mime, s.size, s.metadata, s.text, 'done', $2::uuid FROM archive.file s WHERE s.id = $3
+RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at
+`
+
+type CopyFileRow struct {
+	ID         uuid.UUID
+	Hash       string
+	Name       string
+	MIME       string
+	Size       int64
+	Metadata   map[string]any
+	Status     string
+	Error      string
+	Access     *uuid.UUID
+	CreatedAt  time.Time
+	Kind       string
+	Parent     *uuid.UUID
+	Connection *uuid.UUID
+	Stream     *string
+	SourceID   *string
+	Version    *string
+	URL        string
+	Drive      *string
+	OwnerName  *string
+	EditorName *string
+	MadeAt     *time.Time
+	EditedAt   *time.Time
+	UpdatedAt  time.Time
+}
+
+func (q *Queries) CopyFile(ctx context.Context, name string, access *uuid.UUID, iD uuid.UUID) (CopyFileRow, error) {
+	row := q.db.QueryRow(ctx, copyFile, name, access, iD)
+	var i CopyFileRow
+	err := row.Scan(
+		&i.ID,
+		&i.Hash,
+		&i.Name,
+		&i.MIME,
+		&i.Size,
+		&i.Metadata,
+		&i.Status,
+		&i.Error,
+		&i.Access,
+		&i.CreatedAt,
+		&i.Kind,
+		&i.Parent,
+		&i.Connection,
+		&i.Stream,
+		&i.SourceID,
+		&i.Version,
+		&i.URL,
+		&i.Drive,
+		&i.OwnerName,
+		&i.EditorName,
+		&i.MadeAt,
+		&i.EditedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createChat = `-- name: CreateChat :one
 INSERT INTO archive.chat (user_id, title) VALUES ($1, $2) RETURNING id, user_id, title, messages, created_at, updated_at
 `
@@ -1033,6 +1096,24 @@ func (q *Queries) FileByKey(ctx context.Context, arg FileByKeyParams) (FileByKey
 		&i.EditedAt,
 		&i.UpdatedAt,
 	)
+	return i, err
+}
+
+const fileBySource = `-- name: FileBySource :one
+SELECT kind, coalesce(version, '')::text AS version, source FROM archive.file WHERE connection = $1 AND source_id = $2 LIMIT 1
+`
+
+type FileBySourceRow struct {
+	Kind    string
+	Version string
+	Source  map[string]any
+}
+
+// What a connection synced under an id there, as you see it.
+func (q *Queries) FileBySource(ctx context.Context, connection *uuid.UUID, sourceID *string) (FileBySourceRow, error) {
+	row := q.db.QueryRow(ctx, fileBySource, connection, sourceID)
+	var i FileBySourceRow
+	err := row.Scan(&i.Kind, &i.Version, &i.Source)
 	return i, err
 }
 

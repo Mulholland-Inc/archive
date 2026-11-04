@@ -77,7 +77,7 @@ const (
 )
 
 type fileRow interface {
-	generated.FileByKeyRow | generated.CreateFileRow | generated.GetFileRow | generated.RenameFileRow | generated.LockFileRow | generated.NextPendingFileRow | generated.LockPendingFileRow | generated.ReplaceFileRow | generated.SetFileAccessRow | generated.AddFolderRow | generated.MoveFileRow
+	generated.FileByKeyRow | generated.CreateFileRow | generated.GetFileRow | generated.RenameFileRow | generated.LockFileRow | generated.NextPendingFileRow | generated.LockPendingFileRow | generated.ReplaceFileRow | generated.SetFileAccessRow | generated.AddFolderRow | generated.MoveFileRow | generated.CopyFileRow
 }
 
 func fileOf[R fileRow](r R, err error) (*File, error) {
@@ -186,6 +186,80 @@ func (a *Archive) blobNext(ctx context.Context) (bool, error) {
 		return q.DropBlobGone(ctx, hash)
 	})
 	return found, err
+}
+
+// CopyFile makes a file of the caller's, to change here, from file id, which they can read, with its bytes and words. Its
+// name is the file's unless name says, and it goes to the group access names, or everyone with "". Left to itself, with
+// no access, it goes to who sees the file; a personal connection's has no group that says so, so it must be asked.
+func (a *Archive) CopyFile(ctx context.Context, id uuid.UUID, name string, access *string) (*File, error) {
+	f, err := a.GetFile(ctx, id)
+	if err == nil {
+		err = f.blob()
+	}
+	if err != nil {
+		return nil, err
+	}
+	var g *uuid.UUID
+	if access != nil {
+		if g, err = a.fileGroup(ctx, *access); err != nil {
+			return nil, err
+		}
+	} else if g = f.Access; f.Connection != nil {
+		var c generated.ArchiveConnection
+		if err := a.sys(ctx, func(ctx context.Context) (err error) {
+			c, err = a.st.db(ctx).Connection(ctx, *f.Connection)
+			return err
+		}); err != nil {
+			return nil, err
+		}
+		if !c.Integration {
+			return nil, fmt.Errorf("%s is yours alone, as your %s connection's is, and a copy has no such setting: pass access, a group's name or \"\" for everyone, to say who sees the copy: %w", f.Name, c.Provider, httpErrBadRequest)
+		}
+	}
+	name = fileName(cmp.Or(name, f.Name), f.Hash)
+	return coreDo(a, ctx, func(ctx context.Context) (*File, error) {
+		q := a.st.db(ctx)
+		if err := q.LockHash(ctx, f.Hash); err != nil {
+			return nil, err
+		}
+		c, err := fileOf(q.FileByKey(ctx, generated.FileByKeyParams{Access: g, Hash: f.Hash, Name: name}))
+		if !errors.Is(err, ErrNotFound) {
+			return c, err
+		}
+		return fileOf(q.CopyFile(ctx, name, g, id))
+	})
+}
+
+// actionFiles are the files of the caller of an action, for its connection.
+type actionFiles struct {
+	a    *Archive
+	ctx  context.Context
+	conn uuid.UUID
+}
+
+func (x actionFiles) Open(s string) (*connect.Upfile, error) {
+	id, err := uuid.Parse(s)
+	if err != nil {
+		return nil, fmt.Errorf("file: want an id in the file table, not %q: %w", s, httpErrBadRequest)
+	}
+	f, rc, err := x.a.OpenFile(x.ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return &connect.Upfile{Name: f.Name, Mime: f.MIME, Size: f.Size, Body: rc}, nil
+}
+
+func (x actionFiles) Row(source string) (*connect.Synced, error) {
+	return coreDo(x.a, x.ctx, func(ctx context.Context) (*connect.Synced, error) {
+		r, err := x.a.st.db(ctx).FileBySource(ctx, &x.conn, &source)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("this connection synced nothing with the source_id %s: %w", source, ErrNotFound)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return &connect.Synced{Kind: r.Kind, Version: r.Version, Source: r.Source}, nil
+	})
 }
 
 // blob says why f has no bytes to read yet.

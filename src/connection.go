@@ -2169,9 +2169,15 @@ func (a *Archive) Action(ctx context.Context, name string, input any, pick strin
 		}
 		clients[c.ID] = cl
 	}
+	cl.Files = actionFiles{a, ctx, c.ID}
 	out, err := do.Do(cl, raw)
 	if err != nil {
 		return nil, actionFailed(fail, err)
+	}
+	if do.Asks {
+		if _, err := a.syncWant(ctx, c.ID); err != nil {
+			fmt.Fprintf(os.Stderr, "archive: workspace %s: asking for a sync of %s: %v\n", a.ws.ID, c.ID, err)
+		}
 	}
 	return out, nil
 }

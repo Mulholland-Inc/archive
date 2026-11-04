@@ -897,6 +897,20 @@ func (r *runner) sdk() {
 			return (*runFile)(&r), err
 		})
 	})
+	r.def(o, "copy", func(ctx context.Context, call goja.FunctionCall) (any, error) {
+		id, err := r.id(call, 0, "copy")
+		if err != nil {
+			return nil, err
+		}
+		var opts struct {
+			Name   string  `json:"name"`
+			Access *string `json:"access"`
+		}
+		if err := r.arg(call, 1, "copy", "opts", &opts); err != nil {
+			return nil, err
+		}
+		return a.CopyFile(ctx, id, opts.Name, opts.Access)
+	})
 	r.def(o, "stored", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		return a.Stored(ctx)
 	})

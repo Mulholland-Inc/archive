@@ -7,10 +7,10 @@ import (
 )
 
 // SharePoint: the document libraries of the SharePoint sites a Microsoft 365 work or school account can reach,
-// and its own OneDrive, which is one of them, read only through Microsoft Graph. It reads ARCHIVE_OUTLOOK, the
+// and its own OneDrive, which is one of them, through Microsoft Graph. It reads ARCHIVE_OUTLOOK, the
 // app registration in Microsoft Entra that Outlook connects with, like Gmail and Google Drive share
 // ARCHIVE_GOOGLE: its web redirect URIs list <API>/connect/sharepoint/callback too, and its delegated Graph
-// permissions add Files.Read.All and Sites.Read.All, which a tenant may ask an admin to consent to. Personal
+// permissions add Files.ReadWrite.All, for upload, and Sites.Read.All, which a tenant may ask an admin to consent to. Personal
 // Microsoft accounts have no SharePoint, so it signs in through the organizations endpoint. Microsoft replaces
 // the refresh token on every refresh, and has no endpoint that revokes one grant: a person removes Archive at
 // myapps.microsoft.com.
@@ -26,12 +26,12 @@ import (
 func init() {
 	Register(&Connector{
 		ID: "sharepoint", Name: "SharePoint", Env: "ARCHIVE_OUTLOOK",
-		Info: Info{By: "Microsoft", Description: "Search and read the files of your SharePoint sites and OneDrive, never change them", Category: CatFiles, Icon: IconDrive,
-			Scopes: []string{"Read files in every site and library you can read"}},
+		Info: Info{By: "Microsoft", Description: "Search and read the files of your SharePoint sites and OneDrive, and send files there when you ask", Category: CatFiles, Icon: IconDrive,
+			Scopes: []string{"Read files in every site and library you can read", "Add and replace files there when you ask"}},
 		API: "https://graph.microsoft.com/v1.0",
 		Endpoint: oauth2.Endpoint{AuthURL: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize",
 			TokenURL: "https://login.microsoftonline.com/organizations/oauth2/v2.0/token", AuthStyle: oauth2.AuthStyleInParams},
-		Scopes: []string{"offline_access", "User.Read", "Files.Read.All", "Sites.Read.All"},
+		Scopes: []string{"offline_access", "User.Read", "Files.ReadWrite.All", "Sites.Read.All"},
 		Params: map[string]string{"prompt": "select_account"},
 		Who:    &Who{Req: Req{URL: "/me?$select=mail,userPrincipalName"}, Names: []Path{"mail", "userPrincipalName"}, Lower: true},
 		Actions: map[string]*Action{
@@ -61,6 +61,21 @@ func init() {
 				Steps: []Step{
 					{If: "id", Req: Req{URL: "/drives/{drive}/items/{id}/children"}, Page: spPage, Items: "value"},
 					{Unless: "id", Req: Req{URL: "/drives/{drive}/root/children"}, Page: spPage, Items: "value"},
+				},
+			}),
+			"upload": Upload(Send{
+				Doc: "Send a file of the file table to SharePoint or OneDrive, as a new file or a new version of one, in the time a run has; without a folder it goes in the top of your OneDrive: " +
+					"{ id, name, webUrl, size, file, parentReference }",
+				New:  Req{Method: POST, URL: "/me/drive/root:/{name}:/createUploadSession", Body: spUpBody},
+				In:   &Req{Method: POST, URL: "/drives/{in/drive}/items/{in/item}:/{name}:/createUploadSession", Body: spUpBody},
+				Over: Req{Method: POST, URL: "/drives/{it/drive}/items/{it/item}/createUploadSession", Header: map[string][]string{"If-Match": {"{version}"}}, Body: Obj{"item": Obj{"name": "{rename}"}}},
+				At:   "uploadUrl",
+				Part: Req{Method: PUT, Header: map[string][]string{"Content-Range": {"{range}"}}},
+				Step: 32 * 320 << 10,
+				Bare: true,
+				Stale: []Deny{
+					{Status: []int{412}, Why: "{name} changed there since Archive last synced it, so it was not replaced: look at the newer version once it syncs, and upload again if yours should still replace it"},
+					{Status: []int{409}, Why: "there is a {name} there already: pass replace with its source_id to replace it, or name to give yours another name"},
 				},
 			}),
 			"file": Call[spOne, map[string]any](Plan{
@@ -101,7 +116,8 @@ func init() {
 }
 
 var (
-	spPage = NextURL{At: "@odata.nextLink"}
+	spPage   = NextURL{At: "@odata.nextLink"}
+	spUpBody = Obj{"item": Obj{"@microsoft.graph.conflictBehavior": "fail"}}
 	// spLibraries are the account's OneDrive, when it has one, and the libraries of the sites it reaches, each once,
 	// named by its site and itself, like Finance / Documents. A site Graph will not list the libraries of, as it answers
 	// 403 for some system sites, is left out.

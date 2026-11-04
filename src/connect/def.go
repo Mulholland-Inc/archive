@@ -85,6 +85,8 @@ type Req struct {
 	Or     *Req                `json:",omitempty"`
 	Text   bool                `json:",omitempty"`
 	Parts  []Part              `json:",omitempty"`
+	// Head are headers whose value is JSON of that, in ASCII, as Dropbox takes arguments of a request with a body of bytes.
+	Head map[string]any `json:",omitempty"`
 	// exact is a URL a provider named, sent as it is.
 	exact bool
 }
@@ -503,56 +505,28 @@ type Content struct {
 	Too  []Deny `json:",omitempty"`
 }
 
-// bytesOf opens the bytes of the file source says.
-func (s *Sync) bytesOf(c *Client, source map[string]any) (*Bytes, error) {
-	for _, k := range s.Content {
-		if k.If.At != "" && !k.If.holds(source) {
-			continue
-		}
-		if n, _ := strconv.ParseInt(text(pick(source, k.Size)), 10, 64); n > MaxCopy {
-			return nil, unsupported("it is over the %d GB Archive copies", MaxCopy>>30)
-		}
-		sc := map[string]any{"source": source}
-		u, err := c.urlOf(k.Req.URL, sc)
-		if err != nil {
-			return nil, err
-		}
-		if q := values(k.Req.Query, sc); len(q) > 0 {
-			u += sepOf(u) + q.Encode()
-		}
-		req, err := request(c.ctx, string(cmp.Or(k.Req.Method, GET)), c.p.at(u), nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Accept", "*/*")
-		for h, v := range k.Req.headers(sc) {
-			req.Header[h] = v
-		}
-		// The request's context, not a timeout, bounds a body that takes minutes.
-		hc := *c.http
-		hc.Timeout = 0
-		resp, err := hc.Do(req)
-		if err != nil {
-			return nil, unreached{fmt.Errorf("%s could not be reached: %w", c.p.Name, err)}
-		}
-		if resp.StatusCode/100 != 2 {
-			defer resp.Body.Close()
-			r := refusal(c.p, resp)
-			for _, d := range k.Too {
-				if d.is(r) {
-					why, _ := fillStr(d.Why, map[string]any{"message": r.Message})
-					return nil, unsupported("%s", text(why))
-				}
-			}
-			return nil, r
-		}
-		if resp.ContentLength > MaxCopy {
-			resp.Body.Close()
-			return nil, unsupported("it is over the %d GB Archive copies", MaxCopy>>30)
-		}
-		return &Bytes{Body: resp.Body, Size: resp.ContentLength}, nil
-	}
-	return nil, unsupported("%s has no bytes of it to copy", c.p.Name)
+// Send is how a connector's upload action sends a file up, in parts, without holding it in memory. New opens a session
+// for a new file at the top, In for one in a folder, and Over for a new version of a file: At is where the answer has the
+// session, or AtHeader the header. Each reads the input as {name}, {rename} the name asked for alone, {mime} and {size},
+// a folder's source column as {in/...} and a file's as {it/...} and its {version}, and Let's steps. Check asks what version
+// a file is now, as Now says of its answer {ans}, for a provider with no write that takes one. Part sends Step bytes at
+// a time, multiples of what the provider asks, to the session or its URL, reading {session}, {offset}, {range} and
+// {length}, and Last, when it has one, the last of them; a provider's upload URL that wants no sign-in says Bare. Stale are
+// refusals that mean the file there is not the one expected, or its name is taken, which Why says.
+type Send struct {
+	Doc       string
+	Let       []Step
+	New, Over Req
+	In        *Req
+	At        Path
+	AtHeader  string
+	Check     *Req
+	Now       string
+	Part      Req
+	Last      *Req
+	Step      int64
+	Bare      bool
+	Stale     []Deny
 }
 
 // Reads is what template Of reads to, all of it there, or the first group of Find in that.
@@ -1121,6 +1095,9 @@ func (r Req) roots() []string {
 		}
 	}
 	walk(r.Body)
+	for _, x := range r.Head {
+		walk(x)
+	}
 	for _, x := range r.Parts {
 		note(x.Type)
 		walk(x.Body)
@@ -2478,10 +2455,15 @@ func (c *Client) http1(r Req, sc map[string]any) (any, error) {
 }
 
 func (r Req) headers(sc map[string]any) http.Header {
-	if r.Header == nil {
+	if r.Header == nil && r.Head == nil {
 		return nil
 	}
 	hdr := http.Header{}
+	for k, v := range r.Head {
+		x, _ := fill(v, sc)
+		b, _ := json.Marshal(x)
+		hdr.Set(k, jsonASCII(b))
+	}
 	for k, ts := range r.Header {
 		for _, t := range ts {
 			v, _ := fillStr(t, sc)
