@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dop251/goja"
@@ -137,13 +138,20 @@ func (r *runner) model(call goja.FunctionCall) (any, error) {
 	results := make([]*ModelResult, len(reqs))
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(modelParallel)
+	// The budget pays for every call's time, not the list's wall time, so a list of eight buys no more than eight calls.
+	var spent atomic.Int64
+	start := time.Now()
 	for i := range reqs {
 		g.Go(func() (err error) {
+			t := time.Now()
 			results[i], err = providers[i](ctx, &reqs[i], files[i])
+			spent.Add(int64(time.Since(t)))
 			return err
 		})
 	}
-	if err := g.Wait(); err != nil {
+	err = g.Wait()
+	r.clock.model -= max(0, time.Duration(spent.Load())-time.Since(start))
+	if err != nil {
 		return nil, fmt.Errorf("archive.model: %w", err)
 	}
 	if !list {
