@@ -746,6 +746,7 @@ func cliServe(ctx context.Context, h *Hub, addr string) error {
 	h.mcpRoutes(mux, false)
 	mux.HandleFunc("POST /tasks", h.tasksHTTP)
 	mux.HandleFunc("POST /push/{id}", h.pushHTTP)
+	mux.HandleFunc("GET /push/{id}", h.pushHTTP)
 	h.live.serving()
 	mux.HandleFunc("GET /live", h.liveHTTP)
 	mux.HandleFunc("POST /live/announce", h.liveAnnounceHTTP)

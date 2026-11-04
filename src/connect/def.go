@@ -231,8 +231,11 @@ type (
 		Drop []string `json:",omitempty"`
 	}
 	// Cursor is an answer naming the next page's token, while More says so when there is a More. GraphQL pages
-	// so, with {page} in its variables.
-	Cursor struct{ At, More Path }
+	// so, with {page} in its variables. Then is what asks for a next page when the first is asked for otherwise.
+	Cursor struct {
+		At, More Path
+		Then     *Req `json:",omitempty"`
+	}
 	// Offset is a count from From that goes up by Step while a page comes back with Size records.
 	Offset struct{ From, Size, Step int }
 	// ToolPage is an MCP tool that pages as its schema says: Max at a time in the first of Limit that it takes, and
@@ -1639,6 +1642,9 @@ func pageOf(req Req, pg Paging, at string, sc map[string]any) Req {
 		sc["page"] = at
 		if _, ok := pg.(NextURL); ok {
 			req.URL, req.Query, req.exact = at, nil, true
+		}
+		if c, ok := pg.(Cursor); ok && c.Then != nil {
+			req = *c.Then
 		}
 	} else if o, ok := pg.(Offset); ok && o.From != 0 {
 		sc["page"] = strconv.Itoa(o.From)
@@ -3404,7 +3410,7 @@ func (l *Listen) hear(pr *Provider, r *http.Request, at string, body []byte, sec
 	for _, h := range l.Hello {
 		if h.Query != "" {
 			if v := q.Get(h.Query); v != "" {
-				return &Heard{Status: http.StatusOK, Header: http.Header{"Content-Type": {"text/plain; charset=utf-8"}}, Body: v}, nil
+				return &Heard{Status: http.StatusOK, Header: http.Header{"Content-Type": {"text/plain; charset=utf-8"}, "X-Content-Type-Options": {"nosniff"}}, Body: v}, nil
 			}
 		}
 		if h.Header != "" {

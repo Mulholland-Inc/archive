@@ -918,7 +918,7 @@ func reasonIn(b []byte) string {
 		}
 		return s
 	}
-	for _, k := range []string{"message", "error_message", "error_description", "Detail", "Message", "detail", "error"} {
+	for _, k := range []string{"message", "error_message", "error_description", "error_summary", "Detail", "Message", "detail", "error"} {
 		if s := find(v, k); s != "" {
 			return s
 		}
