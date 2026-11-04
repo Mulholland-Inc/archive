@@ -1923,6 +1923,13 @@ func (a *Archive) Action(ctx context.Context, name string, input any, pick strin
 	}
 	var in any
 	json.Unmarshal(raw, &in)
+	if do := p.Actions[act]; do != nil && do.Writes {
+		if lvl, _, err := a.level(ctx); err != nil {
+			return nil, err
+		} else if lvl == "viewer" {
+			return nil, fail(ErrForbidden, "a read-only token cannot change anything in %s; use a full one", p.Name)
+		}
+	}
 	cl := clients[c.ID]
 	if cl == nil {
 		if cl, err = a.connClient(ctx, c); err != nil {

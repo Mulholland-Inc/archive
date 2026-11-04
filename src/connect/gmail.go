@@ -1,11 +1,18 @@
 package connect
 
 import (
+	"bytes"
+	"cmp"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
+	"mime"
+	"mime/multipart"
+	"mime/quotedprintable"
 	"net/http"
 	"net/mail"
+	"net/textproto"
 	"net/url"
 	"strings"
 	"time"
@@ -13,10 +20,10 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Gmail, read only. It reads ARCHIVE_GOOGLE, the Google client sign-in uses too: its authorized redirect URIs
-// list <API>/connect/gmail/callback, like https://api.archive.dev/connect/gmail/callback, and its consent screen asks for
-// gmail.readonly, a restricted scope. Google sends a refresh token only with access_type=offline, and again on
-// a later connect only with prompt=consent.
+// Gmail. It reads ARCHIVE_GOOGLE, the Google client sign-in uses too: its authorized redirect URIs list
+// <API>/connect/gmail/callback, like https://api.archive.dev/connect/gmail/callback, and its consent screen asks for
+// gmail.modify, a restricted scope: reading, sending, drafts and labels, but never deleting for good. Google sends
+// a refresh token only with access_type=offline, and again on a later connect only with prompt=consent.
 func init() {
 	Register(&Connector{
 		ID: "gmail", Name: "Gmail", Env: "ARCHIVE_GOOGLE", Host: "https://accounts.google.com",
@@ -26,7 +33,7 @@ func init() {
 		Endpoint: oauth2.Endpoint{AuthURL: "https://accounts.google.com/o/oauth2/v2/auth", TokenURL: "https://oauth2.googleapis.com/token",
 			AuthStyle: oauth2.AuthStyleInParams},
 		Revoke: "https://oauth2.googleapis.com/revoke",
-		Scopes: []string{"https://www.googleapis.com/auth/gmail.readonly"},
+		Scopes: []string{"https://www.googleapis.com/auth/gmail.modify"},
 		Params: map[string]string{"access_type": "offline", "prompt": "consent"},
 		Account: func(c *Client) (string, error) {
 			var p struct {
@@ -90,6 +97,41 @@ func init() {
 						msgs[i] = m.flat(true)
 					}
 					return map[string]any{"id": raw.ID, "messages": msgs}, nil
+				}),
+			"send": Write("Send a message from your Gmail, maybe as a reply that joins its thread: { id, threadId }",
+				func(c *Client, in gmailNew) (any, error) {
+					m, err := in.message(c)
+					if err != nil {
+						return nil, err
+					}
+					var out struct {
+						ID       string `json:"id"`
+						ThreadID string `json:"threadId"`
+					}
+					err = c.Do("POST", gmailAPI+"/messages/send", m, &out)
+					return out, err
+				}),
+			"draft": Write("Save a message to your Gmail drafts without sending it, maybe as a reply in its thread: { id, message: { id, threadId } }",
+				func(c *Client, in gmailNew) (any, error) {
+					m, err := in.message(c)
+					if err != nil {
+						return nil, err
+					}
+					var out map[string]any
+					err = c.Do("POST", gmailAPI+"/drafts", map[string]any{"message": m}, &out)
+					return out, err
+				}),
+			"label": Write("Add and remove a message's labels: remove INBOX to archive it, UNREAD to mark it read, add STARRED or TRASH, "+
+				"or a label of yours by its id from a message's labelIds. Returns { id, threadId, labelIds }",
+				func(c *Client, in struct {
+					ID     string   `json:"id" jsonschema:"The message's id, from search"`
+					Add    []string `json:"add,omitempty" jsonschema:"Label ids to add, like STARRED"`
+					Remove []string `json:"remove,omitempty" jsonschema:"Label ids to remove, like INBOX or UNREAD"`
+				}) (any, error) {
+					var out map[string]any
+					err := c.Do("POST", gmailAPI+"/messages/"+url.PathEscape(in.ID)+"/modify",
+						map[string]any{"addLabelIds": in.Add, "removeLabelIds": in.Remove}, &out)
+					return out, err
 				}),
 		},
 		Push: gmailPush,
@@ -308,6 +350,82 @@ func clamp(n, def, most int) int {
 		return def
 	}
 	return min(n, most)
+}
+
+// gmailNew is a message to send or draft.
+type gmailNew struct {
+	To      string `json:"to,omitempty" jsonschema:"Who it goes to, like Ann <ann@example.com>, bob@example.com; a reply's sender when left out"`
+	Cc      string `json:"cc,omitempty" jsonschema:"Who gets a copy"`
+	Bcc     string `json:"bcc,omitempty" jsonschema:"Who gets a copy the others don't see"`
+	Subject string `json:"subject,omitempty" jsonschema:"The subject; a reply's is Re: and its message's when left out"`
+	Text    string `json:"text" jsonschema:"The body, as plain text"`
+	HTML    string `json:"html,omitempty" jsonschema:"The body as HTML too, which mail apps show in place of the text"`
+	Reply   string `json:"reply,omitempty" jsonschema:"The id of the message this answers, from search; it joins that message's thread"`
+}
+
+// message is n as the Gmail API takes one, RFC 5322 in raw.
+func (n gmailNew) message(c *Client) (map[string]any, error) {
+	out := map[string]any{}
+	var hdr []string
+	if n.Reply != "" {
+		var r gmailRaw
+		q := "?format=metadata&metadataHeaders=Message-ID&metadataHeaders=References&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Reply-To"
+		if err := c.Get(gmailAPI+"/messages/"+url.PathEscape(n.Reply)+q, &r); err != nil {
+			return nil, err
+		}
+		h := map[string]string{}
+		for _, x := range r.Payload.Headers {
+			h[strings.ToLower(x.Name)] = x.Value
+		}
+		out["threadId"] = r.ThreadID
+		if n.To == "" {
+			n.To = cmp.Or(h["reply-to"], h["from"])
+		}
+		if n.Subject == "" {
+			n.Subject = h["subject"]
+			if !strings.HasPrefix(strings.ToLower(n.Subject), "re:") {
+				n.Subject = "Re: " + n.Subject
+			}
+		}
+		if id := h["message-id"]; id != "" {
+			hdr = append(hdr, "In-Reply-To: "+id, "References: "+strings.TrimSpace(h["references"]+" "+id))
+		}
+	}
+	for _, f := range []struct{ k, v string }{{"To", n.To}, {"Cc", n.Cc}, {"Bcc", n.Bcc}} {
+		if f.v == "" {
+			continue
+		}
+		as, err := mail.ParseAddressList(f.v)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %v", strings.ToLower(f.k), err)
+		}
+		s := make([]string, len(as))
+		for i, a := range as {
+			s[i] = a.String()
+		}
+		hdr = append(hdr, f.k+": "+strings.Join(s, ", "))
+	}
+	hdr = append(hdr, "Subject: "+mime.QEncoding.Encode("utf-8", n.Subject), "MIME-Version: 1.0")
+	var b bytes.Buffer
+	part := func(w io.Writer, s string) {
+		q := quotedprintable.NewWriter(w)
+		q.Write([]byte(s))
+		q.Close()
+	}
+	if n.HTML == "" {
+		hdr = append(hdr, "Content-Type: text/plain; charset=UTF-8", "Content-Transfer-Encoding: quoted-printable")
+		part(&b, n.Text)
+	} else {
+		mw := multipart.NewWriter(&b)
+		hdr = append(hdr, "Content-Type: multipart/alternative; boundary="+mw.Boundary())
+		for _, p := range []struct{ typ, s string }{{"text/plain", n.Text}, {"text/html", n.HTML}} {
+			w, _ := mw.CreatePart(textproto.MIMEHeader{"Content-Type": {p.typ + "; charset=UTF-8"}, "Content-Transfer-Encoding": {"quoted-printable"}})
+			part(w, p.s)
+		}
+		mw.Close()
+	}
+	out["raw"] = base64.URLEncoding.EncodeToString([]byte(strings.Join(hdr, "\r\n") + "\r\n\r\n" + b.String()))
+	return out, nil
 }
 
 // gmailRaw is a message as the Gmail API has it, a tree of MIME parts.

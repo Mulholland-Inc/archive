@@ -1,9 +1,14 @@
 package connect
 
 import (
+	"bytes"
 	"cmp"
+	"encoding/json"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"strconv"
 	"strings"
@@ -12,8 +17,9 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Google Drive, read only, with ARCHIVE_GOOGLE like Gmail: the client's authorized redirect URIs list
-// <API>/connect/gdrive/callback, and its consent screen asks for drive.readonly, a restricted scope.
+// Google Drive, with ARCHIVE_GOOGLE like Gmail: the client's authorized redirect URIs list
+// <API>/connect/gdrive/callback, and its consent screen asks for drive, a restricted scope, to read every file
+// and to make, change and trash them; it never deletes one for good.
 // It syncs every file the account can see into drive_file, with the text of Google's own documents, from
 // Drive's changes feed, which pushes too.
 func init() {
@@ -24,7 +30,7 @@ func init() {
 		Endpoint: oauth2.Endpoint{AuthURL: "https://accounts.google.com/o/oauth2/v2/auth", TokenURL: "https://oauth2.googleapis.com/token",
 			AuthStyle: oauth2.AuthStyleInParams},
 		Revoke: "https://oauth2.googleapis.com/revoke",
-		Scopes: []string{"https://www.googleapis.com/auth/drive.readonly"},
+		Scopes: []string{"https://www.googleapis.com/auth/drive"},
 		Params: map[string]string{"access_type": "offline", "prompt": "consent"},
 		Account: func(c *Client) (string, error) {
 			var a struct {
@@ -106,6 +112,53 @@ func init() {
 						return nil, fmt.Errorf("%s is a %s file, not text; only Google files and text files export", f.Name, f.MIMEType)
 					}
 					return map[string]any{"id": f.ID, "name": f.Name, "mimeType": f.MIMEType, "text": text}, err
+				}),
+			"create": Write("Make a file or folder in Drive, maybe with text content: { id, name, mimeType, modifiedTime, size, webViewLink, owners }",
+				func(c *Client, in struct {
+					Name        string `json:"name" jsonschema:"The file's name, like Q3 notes"`
+					Content     string `json:"content,omitempty" jsonschema:"Its content, as text"`
+					ContentType string `json:"contentType,omitempty" jsonschema:"The content's MIME type, like text/csv, text/html or text/markdown; text/plain when left out"`
+					Type        string `json:"type,omitempty" jsonschema:"The file's MIME type when it differs from the content's: application/vnd.google-apps.document makes a Google Doc of text, HTML or Markdown, application/vnd.google-apps.spreadsheet a Sheet of CSV, application/vnd.google-apps.folder a folder"`
+					Folder      string `json:"folder,omitempty" jsonschema:"The id of the folder it goes in; the top of My Drive when left out"`
+				}) (any, error) {
+					meta := map[string]any{"name": in.Name}
+					if in.Type != "" {
+						meta["mimeType"] = in.Type
+					}
+					if in.Folder != "" {
+						meta["parents"] = []string{in.Folder}
+					}
+					return driveWrite(c, "POST", "", nil, meta, in.Content, in.ContentType)
+				}),
+			"update": Write("Rename a file, replace its content or move it to another folder: { id, name, mimeType, modifiedTime, size, webViewLink, owners }",
+				func(c *Client, in struct {
+					ID          string `json:"id" jsonschema:"The file's id, from search"`
+					Name        string `json:"name,omitempty" jsonschema:"Its new name"`
+					Content     string `json:"content,omitempty" jsonschema:"Its new content, as text; a Google Doc or Sheet converts it as create does"`
+					ContentType string `json:"contentType,omitempty" jsonschema:"The content's MIME type; text/plain when left out"`
+					Folder      string `json:"folder,omitempty" jsonschema:"The id of the folder to move it to"`
+				}) (any, error) {
+					meta, q := map[string]any{}, url.Values{}
+					if in.Name != "" {
+						meta["name"] = in.Name
+					}
+					if in.Folder != "" {
+						var f struct {
+							Parents []string `json:"parents"`
+						}
+						if err := c.Get(driveAPI+"/files/"+url.PathEscape(in.ID)+"?supportsAllDrives=true&fields=parents", &f); err != nil {
+							return nil, err
+						}
+						q.Set("addParents", in.Folder)
+						q.Set("removeParents", strings.Join(f.Parents, ","))
+					}
+					return driveWrite(c, "PATCH", in.ID, q, meta, in.Content, in.ContentType)
+				}),
+			"trash": Write("Move a file or folder to Drive's trash, from where its owner can restore it for 30 days: { id, name, mimeType, modifiedTime, size, webViewLink, owners }",
+				func(c *Client, in struct {
+					ID string `json:"id" jsonschema:"The file's id, from search"`
+				}) (any, error) {
+					return driveWrite(c, "PATCH", in.ID, nil, map[string]any{"trashed": true}, "", "")
 				}),
 		},
 		Push: drivePush,
@@ -297,6 +350,38 @@ const (
 	driveAPI    = "https://www.googleapis.com/drive/v3"
 	driveFields = "id,name,mimeType,modifiedTime,size,webViewLink,owners(displayName,emailAddress)"
 )
+
+// driveWrite makes a file, with method POST and no id, or changes file id: its metadata meta, and content of
+// type ct when there is any, sent together as one multipart upload.
+func driveWrite(c *Client, method, id string, q url.Values, meta map[string]any, content, ct string) (map[string]any, error) {
+	if q == nil {
+		q = url.Values{}
+	}
+	q.Set("supportsAllDrives", "true")
+	q.Set("fields", driveFields)
+	path := "/files"
+	if id != "" {
+		path += "/" + url.PathEscape(id)
+	}
+	var out map[string]any
+	if content == "" {
+		err := c.Do(method, driveAPI+path+"?"+q.Encode(), meta, &out)
+		return out, err
+	}
+	var b bytes.Buffer
+	mw := multipart.NewWriter(&b)
+	j, _ := json.Marshal(meta)
+	w, _ := mw.CreatePart(textproto.MIMEHeader{"Content-Type": {"application/json; charset=UTF-8"}})
+	w.Write(j)
+	w, _ = mw.CreatePart(textproto.MIMEHeader{"Content-Type": {cmp.Or(ct, "text/plain") + "; charset=UTF-8"}})
+	io.WriteString(w, content)
+	mw.Close()
+	q.Set("uploadType", "multipart")
+	err := c.Send(method, driveUpload+path+"?"+q.Encode(), http.Header{"Content-Type": {"multipart/related; boundary=" + mw.Boundary()}}, b.String(), &out)
+	return out, err
+}
+
+const driveUpload = "https://www.googleapis.com/upload/drive/v3"
 
 const xlsxMIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 

@@ -1,9 +1,9 @@
 // How the app shows each connector the API has (src/connect), personal or the archive's integration; one the API
 // lists that is not here still shows, plainly.
 export const catalog = [
-  { id: 'gdrive', by: 'Google', description: 'Search and read your files, never change them', name: 'Google Drive', category: 'Files', icon: 'drive', scopes: ['Read your files and documents'] },
-  { id: 'gcal', by: 'Google', description: 'Read your calendars’ events and who is invited, never change them', name: 'Google Calendar', category: 'Calendar', icon: 'calendar', scopes: ['Read your calendars and events'] },
-  { id: 'gmail', by: 'Google', description: 'Read your mail and attachments, never send or change it', name: 'Gmail', category: 'Email', icon: 'mail', scopes: ['Read your mail and its attachments'] },
+  { id: 'gdrive', by: 'Google', description: 'Search and read your files, and make or change them when you ask', name: 'Google Drive', category: 'Files', icon: 'drive', scopes: ['Read your files and documents', 'Make, change and trash files when you ask'] },
+  { id: 'gcal', by: 'Google', description: 'Read your calendars’ events and who is invited, and book or change events when you ask', name: 'Google Calendar', category: 'Calendar', icon: 'calendar', scopes: ['Read your calendars and events', 'Make, change and cancel events when you ask'] },
+  { id: 'gmail', by: 'Google', description: 'Read your mail and attachments, and send, draft or label mail when you ask', name: 'Gmail', category: 'Email', icon: 'mail', scopes: ['Read your mail and its attachments', 'Send, draft and label mail when you ask'] },
   { id: 'sharepoint', by: 'Microsoft', description: 'Search and read the files of your SharePoint sites and OneDrive, never change them', name: 'SharePoint', category: 'Files', icon: 'drive', scopes: ['Read files in every site and library you can read'] },
   { id: 'outlook', by: 'Microsoft', description: 'Read your Microsoft 365 or Outlook.com mail and calendar, never send or change them', name: 'Outlook', category: 'Email', icon: 'inbox', scopes: ['Read your mail and its attachments', 'Read your calendar'] },
   { id: 'teams', by: 'Microsoft', description: 'Read your Teams chats and the channels of your teams, never post or change them', name: 'Microsoft Teams', category: 'Chat', icon: 'chat', scopes: ['Read your chats', 'Read the channels of your teams'] },

@@ -658,6 +658,16 @@ type Action struct {
 	Doc   string
 	Input *jsonschema.Schema
 	Do    func(c *Client, in json.RawMessage) (any, error)
+	// Writes says it changes something at the provider, like sending a message, which a viewer-only token
+	// may not.
+	Writes bool
+}
+
+// Write is Act for an action that Writes.
+func Write[In any](doc string, do func(c *Client, in In) (any, error)) *Action {
+	a := Act(doc, do)
+	a.Writes = true
+	return a
 }
 
 // Act is an Action whose input is In, a struct: its fields' json names are the input's keys, required unless

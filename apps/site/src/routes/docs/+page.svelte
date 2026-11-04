@@ -774,11 +774,11 @@ archive set member &lt;id&gt; <span class="s">'&#123;"groups":["finance"]&#125;'
 <p>Write the real value as usual. Reads return it masked. Pass <code>&#123; reveal: true &#125;</code> to <code>list</code> or <code>get</code>, or <code>?reveal=true</code> over HTTP, to see it if you are an owner.</p>
 
 <h2 id="connectors">Connectors</h2>
-<p>Connectors bring a workspace's data in from the tools your team already uses. They are read-only, and they sync only what changed.</p>
+<p>Connectors bring a workspace's data in from the tools your team already uses, syncing only what changed, and their actions work in those tools when you or an agent call them.</p>
 
 <h3 id="connectors-how">How they sync</h3>
 <ul>
-<li><strong>Read-only.</strong> Connectors ask for read scopes and never write back.</li>
+<li><strong>Reads to sync.</strong> Syncing never writes back. Actions like <code>gmail.send</code>, <code>gdrive.create</code> and <code>gcal.create</code> write only when called.</li>
 <li><strong>Per workspace.</strong> A connection belongs to one workspace, and what it syncs lands there under row-level security.</li>
 <li><strong>By delta cursor.</strong> Each connection keeps the provider's cursor and fetches only changes, woken by change notifications where the provider sends them.</li>
 <li><strong>Newest first.</strong> The first sync walks the full history once, newest first, so recent data is searchable soonest.</li>
