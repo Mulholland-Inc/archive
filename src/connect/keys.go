@@ -1,12 +1,17 @@
 package connect
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -16,7 +21,8 @@ import (
 // account they are (Account), and keeps them as an OAuth connector keeps its refresh token, sealed with the
 // workspace key, so they are never shown again. A key that is not Secret, like a store's address, is kept as the
 // connection's Meta too. A key never refreshes and is never revoked by Archive: the person ends it where they
-// made it, and connects again with a new one.
+// made it, and connects again with a new one. Keys that sign in, like a token the service trades for a session, do
+// so in the connector's Let, and keys that are a client certificate, its Cert, go with every request as mutual TLS.
 
 // Key is something a key connector asks for.
 type Key struct {
@@ -94,7 +100,18 @@ func keysFrom(s string) map[string]string {
 // openKeys is a Client of the account keys are for, whose requests Authorize signs.
 func (p *Provider) openKeys(ctx context.Context, keys, meta map[string]string) *Client {
 	c := &Client{ctx: ctx, p: p, keys: keys, Meta: meta}
-	var rt http.RoundTripper = &keyTransport{c: c}
+	kt := &keyTransport{c: c, base: http.DefaultTransport}
+	if p.Cert != "" {
+		pair, err := tls.X509KeyPair(pemOf(keys[p.Cert]), pemOf(keys[p.CertKey]))
+		if err != nil {
+			kt.err = fmt.Errorf("%s's certificate and private key do not make a pair: %w", p.Name, err)
+		} else {
+			t := http.DefaultTransport.(*http.Transport).Clone()
+			t.TLSClientConfig = &tls.Config{Certificates: []tls.Certificate{pair}, MinVersion: tls.VersionTLS12}
+			kt.base = t
+		}
+	}
+	var rt http.RoundTripper = kt
 	if p.Pace > 0 {
 		rt = &paced{base: rt, p: pacerOf(p.ID, p.Pace)}
 	}
@@ -102,16 +119,40 @@ func (p *Provider) openKeys(ctx context.Context, keys, meta map[string]string) *
 	return c
 }
 
+// pemRe is a PEM block, whatever spaces a form left in it or took out of it.
+var pemRe = regexp.MustCompile(`-----BEGIN ([A-Z0-9 ]+)-----([A-Za-z0-9+/=\s]*)-----END ([A-Z0-9 ]+)-----`)
+
+// pemOf is the PEM blocks pasted in s, each written again as PEM has it: a form's field may have joined its lines.
+func pemOf(s string) []byte {
+	var b bytes.Buffer
+	for _, m := range pemRe.FindAllStringSubmatch(s, -1) {
+		der, err := base64.StdEncoding.DecodeString(strings.Join(strings.Fields(m[2]), ""))
+		if err != nil {
+			continue
+		}
+		pem.Encode(&b, &pem.Block{Type: m[1], Bytes: der})
+	}
+	return b.Bytes()
+}
+
 // Key is the key name of a key connector's account, like its store's address.
 func (c *Client) Key(name string) string { return c.keys[name] }
 
-// keyTransport signs each request with its connector's Authorize.
-type keyTransport struct{ c *Client }
+// keyTransport signs each request with its connector's Authorize, over base, which presents its certificate when it
+// has one; err is a certificate that cannot be.
+type keyTransport struct {
+	c    *Client
+	base http.RoundTripper
+	err  error
+}
 
 func (t *keyTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if t.err != nil {
+		return nil, t.err
+	}
 	r = r.Clone(r.Context())
 	if t.c.p.Authorize != nil {
 		t.c.p.Authorize(r, t.c)
 	}
-	return http.DefaultTransport.RoundTrip(r)
+	return t.base.RoundTrip(r)
 }

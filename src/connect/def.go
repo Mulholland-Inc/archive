@@ -439,7 +439,7 @@ type Kids struct {
 // the row a record is. Vars are templates' own values, so that streams share theirs. Items is the answer's list of
 // records, ID each one's id, id when empty, and Updated when it last changed there. An answer without its Items is
 // refused, so a full listing never ends empty by accident; Absent is a key a provider's answer has when it leaves
-// Items out for having none.
+// Items out for having none, or Empty for a provider that answers with nothing at all, as a 204 does.
 //
 // Key makes the id when ID cannot, the first that reads to anything. Set adds to each record, by template. Gone are
 // the records that are deleted there, and Skip those that are no record. Every is how long after it caught up the
@@ -473,6 +473,9 @@ type Sync struct {
 	Restart   []int         `json:",omitempty"`
 	Pass      []int         `json:",omitempty"`
 }
+
+// Empty is the Absent of a stream whose provider answers a list of none with nothing at all, like ADP's 204 No Content.
+const Empty Path = "<empty>"
 
 // Reads is what template Of reads to, all of it there, or the first group of Find in that.
 type Reads struct {
@@ -807,11 +810,22 @@ func (c *Connector) compile() error {
 	}
 	if c.Sign != nil {
 		sign := c.Sign
+		// A header whose template reads something there is not yet, like a session before the sign-in that opens it, is left off.
 		c.Authorize = func(r *http.Request, cl *Client) {
+			sc := cl.scope()
 			for h, t := range sign {
-				v, _ := fillStr(t, cl.scope())
-				r.Header.Set(h, text(v))
+				if v := (Reads{Of: t}).read(sc); v != "" {
+					r.Header.Set(h, v)
+				}
 			}
+		}
+	}
+	if (c.Cert == "") != (c.CertKey == "") {
+		return errors.New("a certificate needs its private key, and a key its certificate")
+	}
+	for _, k := range []string{c.Cert, c.CertKey} {
+		if k != "" && !slices.ContainsFunc(c.Keys, func(x Key) bool { return x.Name == k }) {
+			return fmt.Errorf("its certificate's %s is none of its Keys", k)
 		}
 	}
 	if w := c.Who; w != nil {
@@ -1453,7 +1467,7 @@ func (s *Sync) itemsOf(c *Client, ans any, at Path, sc map[string]any) (any, err
 	if _, list := items.([]any); items != nil && (at != "" || s.ID == "" || list) {
 		return items, nil
 	}
-	if s.Absent != "" && pick(ans, s.Absent) != nil {
+	if s.Absent == Empty && ans == nil || s.Absent != "" && s.Absent != Empty && pick(ans, s.Absent) != nil {
 		return []any{}, nil
 	}
 	return nil, fmt.Errorf("%s answered %s without its list of records, at %q", c.p.Name, s.Name, at)
@@ -2192,18 +2206,89 @@ func (c *Client) scope() map[string]any {
 	for k := range c.p.opts {
 		opts[k] = c.p.opts.Get(k)
 	}
-	return map[string]any{"client": map[string]any{"id": id, "secret": secret}, "token": c.Token(), "key": keys, "meta": meta, "option": opts}
+	c.letMu.Lock()
+	found := c.let
+	c.letMu.Unlock()
+	return map[string]any{"client": map[string]any{"id": id, "secret": secret}, "token": c.Token(), "key": keys, "meta": meta, "option": opts, "let": found}
 }
 
-// api is where the connector's relative URLs go: its API, read from the account, and what its Let finds, once.
+// api is where the connector's relative URLs go: its API, read from the account, and what its Let finds, once,
+// or what it found for the account within LetFor.
 func (c *Client) api() (string, error) {
 	c.apiOnce.Do(func() {
 		sc := c.scope()
-		if _, c.apiErr = runSteps(c, c.p.Let, sc); c.apiErr == nil {
-			c.apiURL, c.apiErr = expand(c.p.API, sc)
+		found, ok := lets.get(c)
+		if !ok {
+			if _, c.apiErr = runSteps(c, c.p.Let, sc); c.apiErr != nil {
+				return
+			}
+			found = map[string]any{}
+			for _, s := range c.p.Let {
+				if root, _, _ := strings.Cut(s.As, "/"); root != "" {
+					found[root] = sc[root]
+				}
+			}
+			lets.put(c, found)
 		}
+		maps.Copy(sc, found)
+		c.letMu.Lock()
+		c.let = found
+		c.letMu.Unlock()
+		c.apiURL, c.apiErr = expand(c.p.API, sc)
 	})
 	return c.apiURL, c.apiErr
+}
+
+// lets are what Let found for each account of a connector with a LetFor, until when it holds, in this server's memory.
+var lets = &letCache{m: map[string]letKept{}}
+
+type (
+	letCache struct {
+		sync.Mutex
+		m map[string]letKept
+	}
+	letKept struct {
+		found map[string]any
+		until time.Time
+	}
+)
+
+// of is the account c is, by what it signs in with.
+func (*letCache) of(c *Client) string {
+	b, _ := json.Marshal([]any{c.p.ID, c.keys, c.Meta, c.Token()})
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:])
+}
+
+func (l *letCache) get(c *Client) (map[string]any, bool) {
+	if c.p.LetFor <= 0 {
+		return nil, false
+	}
+	l.Lock()
+	defer l.Unlock()
+	k, ok := l.m[l.of(c)]
+	return k.found, ok && time.Now().Before(k.until)
+}
+
+func (l *letCache) put(c *Client, found map[string]any) {
+	if c.p.LetFor <= 0 {
+		return
+	}
+	l.Lock()
+	defer l.Unlock()
+	now := time.Now()
+	maps.DeleteFunc(l.m, func(_ string, k letKept) bool { return now.After(k.until) })
+	l.m[l.of(c)] = letKept{found, now.Add(c.p.LetFor)}
+}
+
+// forget drops what Let found for c's account, which the provider no longer takes.
+func (l *letCache) forget(c *Client) {
+	if c.p.LetFor <= 0 {
+		return
+	}
+	l.Lock()
+	defer l.Unlock()
+	delete(l.m, l.of(c))
 }
 
 // req sends r, its templates read from sc, and is its answer, its numbers exact.
@@ -2267,6 +2352,9 @@ func (c *Client) http1(r Req, sc map[string]any) (any, error) {
 	}
 	var raw []byte
 	if err := c.Send(string(cmp.Or(r.Method, GET)), u, hdr, body, &raw); err != nil {
+		if f := (*Refusal)(nil); errors.As(err, &f) && f.Status == http.StatusUnauthorized {
+			lets.forget(c)
+		}
 		return nil, err
 	}
 	if r.Text {

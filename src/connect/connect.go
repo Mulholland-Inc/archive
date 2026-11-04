@@ -112,8 +112,14 @@ type Connector struct {
 	Listen   *Listen
 	Sync     []*Sync
 	// Let are steps that find what API reads, once a Client, over what the account has: {key/...}, {meta/...} and
-	// {option/...}. Their requests are absolute URLs.
-	Let []Step
+	// {option/...}. Their requests are absolute URLs. What their As name Sign reads too, as {let/...}, like the
+	// session a sign-in opens, and LetFor is how long this server keeps that for the account's next Clients, until
+	// the provider refuses one with a 401; zero for once a Client.
+	Let    []Step
+	LetFor time.Duration
+	// Cert and CertKey are the Keys that are a client certificate and its private key, in PEM, which a key
+	// connector's requests present, as a provider that asks for mutual TLS has it, like ADP.
+	Cert, CertKey string
 	// Errors is an answer that refuses in a 200, as GraphQL does. Busy are what a refusal says, past its status, when
 	// the provider only turns Archive away for now. Trace is a header of its answers that names one to its support, which a
 	// refusal keeps.
@@ -511,6 +517,9 @@ type Client struct {
 	apiOnce sync.Once
 	apiURL  string
 	apiErr  error
+	// let is what its Let found, once api has run, which its Sign reads.
+	letMu sync.Mutex
+	let   map[string]any
 	// mcpSeen is what the last answer of its MCP server's transport was, which its SDK does not say in an error.
 	mcpSeen *seen
 }
