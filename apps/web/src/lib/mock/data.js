@@ -298,3 +298,10 @@ export function initials(name = '') {
     .map((w) => w[0].toUpperCase())
     .join('');
 }
+
+// Connectors for the component specimen, as the API lists them.
+export const connectors = [
+  { id: 'gmail', by: 'Google', description: 'Read your mail and attachments, and send, draft or label mail when you ask', name: 'Gmail', category: 'Email', icon: 'mail', scopes: ['Read your mail and its attachments', 'Send, draft and label mail when you ask'] },
+  { id: 'quickbooks', by: 'Intuit', description: 'Read your company’s invoices, customers and books', name: 'QuickBooks', category: 'Finance', icon: 'ledger', scopes: ['Read one company’s accounting'] },
+  { id: 'github', by: 'GitHub', description: 'Read issues, pull requests and files of your repositories', name: 'GitHub', category: 'Code', icon: 'branch', scopes: ['Read repositories you install Archive on'] }
+];

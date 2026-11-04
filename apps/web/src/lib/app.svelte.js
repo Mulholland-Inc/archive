@@ -7,7 +7,7 @@ import { resource, listen, onChange, onRefused } from './stream.svelte.js';
 import { toFile, toChat, toMember, toWorkflow, toRun, relative, show } from './live.js';
 import { toTables, countsQuery } from './schema.js';
 import { initials, mockKey, mockProfile, mockSettings } from './mock/index.js';
-import { catalog } from './mock/connectors.js';
+import { nameBrands } from './brands.svelte.js';
 import { lookOf } from './looks.js';
 import { notify } from './dialogs.svelte.js';
 import { go, replace, route } from './router.svelte.js';
@@ -1253,11 +1253,12 @@ export const connections = resource({
     // Your own connectors are the personal ones; the archive's integrations are listed in its settings.
     const ids = new Set((out?.connectors ?? []).filter((k) => !k.integration).map((k) => k.id));
     v.connectors = v.connectors.filter((c) => ids.has(c.id));
+    nameBrands(out?.connectors ?? []);
     v.integrations = (out?.connectors ?? []).filter((k) => k.integration).map((k) => toIntegration(k, out.connections.find((x) => x.provider === k.id && x.integration)));
     for (const k of (out?.connectors ?? []).filter((k) => !k.integration)) {
       let c = v.connectors.find((x) => x.id === k.id);
       if (!c) {
-        c = { id: k.id, name: k.name, by: k.name, description: `Use your ${k.name} account`, category: 'Other', scopes: [], ...catalog.find((x) => x.id === k.id) };
+        c = { by: k.name, description: `Use your ${k.name} account`, category: 'Other', scopes: [], ...k };
         v.connectors.push(c);
         c = v.connectors.at(-1);
       }
@@ -1286,7 +1287,7 @@ function lastSyncOf(x) {
 
 // toIntegration is integration connector k as its settings show it, with the archive's connection x, if any.
 function toIntegration(k, x) {
-  const shown = catalog.find((c) => c.id === k.id) ?? { by: k.name, description: `Use the archive’s ${k.name} account`, category: 'Other', scopes: [] };
+  const shown = { by: k.name, description: `Use the archive’s ${k.name} account`, category: 'Other', scopes: [], ...k };
   return {
     ...shown,
     id: k.id,

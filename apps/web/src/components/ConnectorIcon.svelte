@@ -1,6 +1,6 @@
 <script>
   import { Users, Plug } from '@lucide/svelte';
-  import { brandFor } from '../lib/brands.js';
+  import { brandFor } from '../lib/brands.svelte.js';
 
   let { id, size = 'md', label } = $props();
   const brand = $derived(brandFor(id));

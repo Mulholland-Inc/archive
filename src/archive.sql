@@ -541,7 +541,8 @@ COMMENT ON COLUMN archive.known_org.domain IS 'Its web domain, like example.com'
 
 -- What a connector's map reads a provider's text with (connect/def.go): each is null for what is not one, rather
 -- than failing the page. An address, a web domain, a time as RFC 3339 or Unix milliseconds, a date at the start of
--- text, a number, an amount in a currency's minor units from its major ones, and text cut to n bytes.
+-- text, a number, an amount in a currency's minor units from its major ones, a JSON boolean, a time in a provider's
+-- own clock, without a zone, an EIN, the elements of what may not be a list, and text cut to n bytes.
 CREATE FUNCTION archive.sync_email(s text) RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
     SELECT CASE WHEN lower(btrim(s, E' \t\r\n')) ~ '^[^@\s]+@[^@\s]+$' THEN lower(btrim(s, E' \t\r\n')) END
 $$;
@@ -553,7 +554,7 @@ $$;
 
 CREATE FUNCTION archive.sync_at(s text) RETURNS timestamptz LANGUAGE sql STABLE PARALLEL SAFE AS $$
     SELECT CASE
-        WHEN s ~ '^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$' AND pg_input_is_valid(s, 'timestamptz') THEN s::timestamptz
+        WHEN s ~ '^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:?\d{2})$' AND pg_input_is_valid(s, 'timestamptz') THEN s::timestamptz
         WHEN s ~ '^\d{12,14}$' THEN to_timestamp(s::numeric / 1000)
     END
 $$;
@@ -568,6 +569,23 @@ $$;
 
 CREATE FUNCTION archive.sync_money(s text, currency text) RETURNS jsonb LANGUAGE sql STABLE PARALLEL SAFE AS $$
     SELECT jsonb_build_object('amount', round(archive.sync_num(s) * 100), 'currency', currency) WHERE archive.sync_num(s) IS NOT NULL
+$$;
+
+CREATE FUNCTION archive.sync_bool(v jsonb) RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+    SELECT CASE WHEN jsonb_typeof(v) = 'boolean' THEN v::text::boolean END
+$$;
+
+CREATE FUNCTION archive.sync_clock(s text) RETURNS timestamp LANGUAGE sql STABLE PARALLEL SAFE AS $$
+    SELECT CASE WHEN s ~ '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$' AND s NOT LIKE '0001-01-01%' AND pg_input_is_valid(s, 'timestamp') THEN s::timestamp END
+$$;
+
+CREATE FUNCTION archive.sync_ein(s text) RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+    SELECT left(d, 2) || '-' || substr(d, 3) FROM (SELECT regexp_replace(s, '[^0-9]', '', 'g') d) x
+    WHERE d ~ '^(0[1-6]|1[0-6]|2[0-7]|3[0-9]|4[0-8]|5[0-9]|6[0-8]|7[1-7]|8[0-8]|9[0-58-9])[0-9]{7}$'
+$$;
+
+CREATE FUNCTION archive.sync_list(v jsonb) RETURNS SETOF jsonb LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+    SELECT jsonb_array_elements(v) WHERE jsonb_typeof(v) = 'array'
 $$;
 
 CREATE FUNCTION archive.sync_clip(s text, n int) RETURNS text LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $$

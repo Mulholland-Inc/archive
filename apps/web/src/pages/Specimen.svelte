@@ -62,7 +62,8 @@
   import ConnectorIcon from '../components/ConnectorIcon.svelte';
   import TriggerLabel from '../components/TriggerLabel.svelte';
   import { TYPES } from '../lib/looks.js';
-  import { catalog } from '../lib/mock/connectors.js';
+  import { connectors as catalog } from '../lib/mock/data.js';
+  import { nameBrands } from '../lib/brands.svelte.js';
   import Heading from '../components/Heading.svelte';
   import Text from '../components/Text.svelte';
   import Sidebar from '../components/Sidebar.svelte';
@@ -95,6 +96,7 @@
   import { theme, setTheme } from '../lib/theme.svelte.js';
   import { contextmenu, SEPARATOR } from '../lib/contextmenu.svelte.js';
   import { app } from '../lib/app.svelte.js';
+  nameBrands(catalog);
   const avatarSeeds = Array.from({ length: 24 }, (_, i) => `user-${i + 1}`);
 
   const sections = [
@@ -562,7 +564,7 @@
         <SpecimenBlock title="Connectors">
           <Grid columns="2" gap="3">
             <ConnectorCard connector={{ ...catalog[0], connected: true }} />
-            <ConnectorCard connector={{ ...catalog[8], connected: false }} onconnect={() => {}} />
+            <ConnectorCard connector={{ ...catalog[1], connected: false }} onconnect={() => {}} />
           </Grid>
         </SpecimenBlock>
       </SpecimenSection>

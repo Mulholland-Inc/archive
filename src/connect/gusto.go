@@ -1,14 +1,6 @@
 package connect
 
-import (
-	"cmp"
-	"errors"
-	"maps"
-	"slices"
-	"strconv"
-	"strings"
-	"time"
-)
+import "time"
 
 // Gusto, through its hosted MCP server: everything its read tools show of the companies an admin who connects
 // it reaches, their people and their payrolls. Its authorization server publishes a registration endpoint (RFC
@@ -17,15 +9,15 @@ import (
 // so its actions only read.
 //
 // One sign-in can reach several companies, and every tool but get_token_info acts on the one company_uuid
-// names, or on one employee. get_token_info lists the companies, and names the account by them; each stream
-// keeps them a day. Each stream walks what it reads, one listing of them all: each company, or each year of a
-// company's history (a payroll list takes at most a year).
+// names, or on one employee. get_token_info lists the companies, and names the account by them. Each stream
+// walks what it reads, one listing of them all: each company, or each year of a company's history (a payroll list
+// takes at most a year).
 //
 // None of its tools lists by when a record changed, and nothing it pushes reaches Archive, so a sync lists
-// again, and each stream's memory (its cursor) keeps that to what can have changed:
+// again, and what a stream remembers keeps that to what can have changed:
 //   - Setup, like departments and pay schedules, and what changes with payrolls alone, time-off balances and
 //     pay periods, is listed a day apart (Every); setup whole, so one gone is deleted.
-//   - People are listed every sync, whole, but an employee whose version is the one read before is the Same:
+//   - People are listed every sync, whole, but an employee whose version is the one read before is the same:
 //     their employment history and work addresses, which take a call each, are read only for one new or
 //     changed. Their terminations come with them.
 //   - Payrolls, pay periods and contractor payments are listed from a year before the company joined Gusto
@@ -37,706 +29,214 @@ import (
 // payroll-blocker tools, time records, which only third-party time tracking keeps, and the earnings summary,
 // which payrolls add up to.
 func init() {
-	Register(&Connector{ID: "gusto", Name: "Gusto", Integration: true, MCP: "https://mcp.api.gusto.com", Pace: 500 * time.Millisecond,
+	Register(&Connector{ID: "gusto", Name: "Gusto", Integration: true, MCP: "https://mcp.api.gusto.com", Pace: 500 * time.Millisecond, Busy: ToolBusy,
+		Info: Info{By: "Gusto", Description: "Read the company, its people and its payrolls", Category: CatPayroll, Icon: IconUsers, Scopes: []string{"Read the company, employees, contractors and payrolls"}},
 		Scopes: []string{"public", "companies:read", "employees:read", "contractors:read", "departments:read", "jobs:read", "compensations:read",
 			"employments:read", "pay_schedules:read", "payrolls:read", "time_off_requests:read"},
-		Account: gustoAccount,
-		Streams: []*Stream{
-			{Name: "company", Every: gustoDaily, Pull: (&gustoStream{each: gustoCompanyArgs, pull: gustoCompany}).Pull, Table: "payroll_company", Rows: gustoCompanyRows,
-				Doc: "Each company, as get_company answers: its name, entity type, EIN, status and admin, by its uuid; read a day apart."},
-			{Name: "employees", Pull: (&gustoStream{each: gustoStatuses, pull: gustoEmployees}).Pull, Table: "payroll_worker", Rows: gustoEmployeeRows,
+		Who: &Who{Req: Req{Tool: "get_token_info"}, Each: "**/accessible_resources", Where: Test{At: "resource_type", Is: "company"}, Names: []Path{"name"}},
+		Sync: []*Sync{
+			{Name: "company", Every: gustoDaily, Parts: gustoCompanies, Req: Req{Tool: "get_company", Body: gustoOf}, Items: "company;", Key: []Reads{{Of: "{uuid;id;part}"}}, Updated: "updated_at",
+				Doc: "Each company, as get_company answers: its name, entity type, EIN, status and admin, by its uuid; read a day apart.",
+				To: Map{Table: "payroll_company",
+					Cols: map[string]SQL{"name": "data->>'name'", "trade_name": "data->>'trade_name'", "entity_type": "data->>'entity_type'", "status": "data->>'company_status'", "tier": "data->>'tier'",
+						"suspended": "archive.sync_bool(data->'is_suspended')", "joined_on": "archive.sync_day(data->>'join_date')",
+						"admin_name":     "coalesce(nullif(btrim(data#>>'{primary_payroll_admin,full_name}'), ''), nullif(btrim(concat(data#>>'{primary_payroll_admin,first_name}', ' ', data#>>'{primary_payroll_admin,last_name}')), ''), data#>>'{primary_payroll_admin,business_name}')",
+						"signatory_name": "coalesce(nullif(btrim(data#>>'{primary_signatory,full_name}'), ''), nullif(btrim(concat(data#>>'{primary_signatory,first_name}', ' ', data#>>'{primary_signatory,last_name}')), ''), data#>>'{primary_signatory,business_name}')"},
+					People: map[string]SQL{"admin": "data#>>'{primary_payroll_admin,email}'", "signatory": "data#>>'{primary_signatory,email}'"},
+					EINs:   map[string]SQL{"org": "data->>'ein'"}}},
+			// 20 a page: each new or changed one costs two calls more, which at Gusto's pace must fit in a page's time.
+			{Name: "employees", Parts: gustoStatuses, Items: "**", Key: gustoKey, Updated: "updated_at", Set: gustoCompany, Memo: "{version}",
+				Req:  Req{Tool: "list_employees", Need: gustoStatus, Body: Obj{"company_uuid": "{in/company}", "terminated": "{in/terminated}", "include": "all_compensations,all_home_addresses,custom_fields"}},
+				Page: ToolPage{Limit: "per,limit,page_size", Max: 20, Page: "page", After: "cursor,after"},
+				Hydrate: []Hydrate{
+					Fetch{Req: Req{Tool: "list_employee_employment_history", Body: Obj{"employee_uuid": "{uuid;id}"}}, Items: "**", As: "employment_history", Bare: true},
+					Fetch{Req: Req{Tool: "get_employee_work_addresses", Body: Obj{"employee_uuid": "{uuid;id}"}}, Items: "**", As: "work_addresses", Bare: true},
+				},
 				Doc: "Every employee, the terminated too, as list_employees answers with their jobs, every compensation, home address and custom field, and " +
 					"with their employment history and work addresses, which list_employee_employment_history and get_employee_work_addresses answer, " +
-					"read again only when the employee's version changes; 100 a page, listed whole each sync, so one gone is deleted."},
-			gustoList("contractors", "get_contractors", "Every contractor, the terminated too", gustoStatuses, 0, nil, "payroll_worker", gustoContractorRows),
-			gustoList("departments", "get_departments", "Every department, with who is in it", gustoCompanyArgs, gustoDaily, nil, "payroll_department", gustoDepartmentRows),
-			gustoList("locations", "get_locations", "Every location", gustoCompanyArgs, gustoDaily, nil, "payroll_location", gustoLocationRows),
-			gustoList("pay_schedules", "get_pay_schedules", "Every pay schedule", gustoCompanyArgs, gustoDaily, nil, "payroll_schedule", gustoScheduleRows),
-			{Name: "pay_schedule_assignments", Every: gustoDaily, Pull: (&gustoStream{each: gustoCompanyArgs, pull: gustoOne("list_pay_schedule_assignments")}).Pull,
-				Table: "payroll_schedule_assignment", Rows: gustoAssignmentRows,
-				Doc: "How each company assigns people to pay schedules, as list_pay_schedule_assignments answers, by the company's uuid; read a day apart."},
-			{Name: "earning_types", Every: gustoDaily, Pull: (&gustoStream{each: gustoCompanyArgs, pull: gustoEarningTypes}).Pull,
-				Table: "payroll_earning_type", Rows: gustoEarningTypeRows,
-				Doc: "Every earning type of each company, default and custom, as list_earning_types answers, by uuid; read a day apart."},
-			gustoList("custom_fields", "list_custom_fields_schema", "Every custom field each company defines", gustoCompanyArgs, gustoDaily, nil,
-				"payroll_custom_field", gustoCustomFieldRows),
-			gustoList("time_off_requests", "get_time_off_requests", "Every time-off request", gustoCompanyArgs, 0, nil, "payroll_time_off_request", gustoTimeOffRows),
-			gustoList("time_off_balances", "get_time_off_balances", "Each employee's time-off balances, per policy", gustoCompanyArgs, gustoDaily,
-				func(at, it map[string]any) string { return str(it, "employee_uuid") }, "payroll_time_off_balance", gustoBalanceRows),
-			{Name: "payrolls", Gap: time.Second, Pull: (&gustoStream{each: gustoYears, pull: gustoPayrolls, recent: true}).Pull, Table: "payroll_run", Rows: gustoPayrollRows,
+					"read again only when the employee's version changes; 100 a page, listed whole each sync, so one gone is deleted.",
+				// An employee as a worker: their primary job, or else their first, says their title, start and pay, and their last
+				// termination when they left. Their jobs up to that one, compensations, addresses, employment history and custom
+				// fields are rows of their own.
+				To: Map{Table: "payroll_worker",
+					Cols: map[string]SQL{"kind": "'employee'", "name": gustoName, "first_name": "data->>'first_name'", "middle_initial": "data->>'middle_initial'", "last_name": "data->>'last_name'",
+						"preferred_name": "data->>'preferred_first_name'", "email": "archive.sync_email(coalesce(nullif(data->>'work_email', ''), data->>'email'))", "personal_email": "archive.sync_email(data->>'email')",
+						"phone": "data->>'phone'", "birthday": "archive.sync_day(data->>'date_of_birth')", "department_name": "data->>'department'", "active": "data->>'terminated' IS DISTINCT FROM 'true'",
+						"onboarded": "archive.sync_bool(data->'onboarded')", "onboarding_status": "data->>'onboarding_status'", "payment_method": "data->>'payment_method'",
+						"title": gustoJob + "->>'title'", "hired_on": "archive.sync_day(" + gustoJob + "->>'hire_date')", "pay_rate": "archive.sync_money(" + gustoJob + "->>'rate', 'USD')", "pay_per": gustoJob + "->>'payment_unit'",
+						"flsa_status":   "(SELECT c->>'flsa_status' FROM archive.sync_list(" + gustoJob + "->'compensations') WITH ORDINALITY y(c, n) ORDER BY n DESC LIMIT 1)",
+						"terminated_on": "(SELECT max(archive.sync_day(t->>'effective_date')) FROM archive.sync_list(data->'terminations') t)"},
+					People: map[string]SQL{"person": "coalesce(nullif(data->>'work_email', ''), data->>'email')"},
+					Refs:   map[string]SQL{"company": gustoRef, "department": "data->>'department_uuid'", "manager": "data->>'manager_uuid'"},
+					Children: []Kids{
+						{Table: "payroll_job", From: gustoJobs, Cols: map[string]SQL{"source_id": "coalesce(nullif(j->>'uuid', ''), j->>'id')", "title": "j->>'title'", "rate": "archive.sync_money(j->>'rate', 'USD')",
+							"pay_per": "j->>'payment_unit'", "hired_on": "archive.sync_day(j->>'hire_date')", "primary_job": "coalesce(j->>'primary' = 'true', false)"}, Refs: map[string]SQL{"location": "j->>'location_uuid'"}},
+						{Table: "payroll_compensation", From: "archive.sync_list(data->'jobs') WITH ORDINALITY x(j, i), archive.sync_list(j->'compensations') c WHERE " + gustoJobsTo,
+							Cols: map[string]SQL{"job_source": "coalesce(nullif(j->>'uuid', ''), j->>'id')", "rate": "archive.sync_money(c->>'rate', 'USD')", "pay_per": "c->>'payment_unit'", "flsa_status": "c->>'flsa_status'", "effective_on": "archive.sync_day(c->>'effective_date')"}},
+						{Table: "payroll_address", From: "archive.sync_list(data->'home_addresses') a", Cols: gustoHome},
+						{Table: "payroll_address", From: "archive.sync_list(data->'work_addresses') a", Cols: gustoWork, Refs: map[string]SQL{"location": "a->>'location_uuid'"}},
+						{Table: "payroll_employment", From: "archive.sync_list(data->'employment_history') e", Cols: map[string]SQL{"hired_on": "archive.sync_day(e->>'hire_date')", "terminated_on": "archive.sync_day(e->>'termination_date')", "status": "e->>'employment_status'"}},
+						{Table: "payroll_custom_value", From: "archive.sync_list(data->'custom_fields') f", Cols: map[string]SQL{"name": "f->>'name'", "value": "f->>'value'"}, Refs: map[string]SQL{"field": "f->>'company_custom_field_id'"}},
+					}}},
+			{Name: "contractors", Parts: gustoStatuses, Items: "**", Key: gustoKey, Updated: "updated_at", Set: gustoCompany, Page: gustoPage,
+				Req: Req{Tool: "get_contractors", Need: gustoStatus, Body: Obj{"company_uuid": "{in/company}", "terminated": "{in/terminated}"}},
+				Doc: "Every contractor, the terminated too, as get_contractors answers, 100 a page, listed whole each sync, so one gone is deleted.",
+				To: Map{Table: "payroll_worker",
+					Cols: map[string]SQL{"kind": "'contractor'", "name": gustoName, "first_name": "data->>'first_name'", "last_name": "data->>'last_name'", "business_name": "data->>'business_name'",
+						"contractor_type": "data->>'type'", "wage_type": "data->>'wage_type'", "email": "archive.sync_email(data->>'email')", "active": "data->>'is_active' IS DISTINCT FROM 'false'",
+						"hired_on": "archive.sync_day(data->>'start_date')", "payment_method": "data->>'payment_method'",
+						"pay_rate": "CASE WHEN lower(data->>'wage_type') = 'hourly' THEN archive.sync_money(data->>'hourly_rate', 'USD') END",
+						"pay_per":  "CASE WHEN lower(data->>'wage_type') = 'hourly' THEN 'Hour' END"},
+					People:   map[string]SQL{"person": "data->>'email'"},
+					Refs:     map[string]SQL{"company": gustoRef, "department": "data->>'department_uuid'"},
+					Children: []Kids{{Table: "payroll_address", From: "archive.sync_list(jsonb_build_array(data->'address')) a WHERE jsonb_typeof(a) = 'object'", Cols: gustoHome}}}},
+			{Name: "departments", Every: gustoDaily, Parts: gustoCompanies, Items: "**", Key: gustoKey, Updated: "updated_at", Set: gustoCompany, Page: gustoPage, Req: Req{Tool: "get_departments", Need: gustoNeed, Body: gustoOf},
+				Doc: "Every department, with who is in it, as get_departments answers, 100 a page, listed whole a day apart, so one gone is deleted.",
+				To: Map{Table: "payroll_department", Cols: map[string]SQL{"title": "data->>'title'"}, Refs: map[string]SQL{"company": gustoRef},
+					Children: []Kids{
+						{Table: "payroll_department_member", From: "archive.sync_list(data->'employees') w", Cols: map[string]SQL{}, Refs: map[string]SQL{"worker": "coalesce(nullif(w->>'uuid', ''), w->>'id')"}},
+						{Table: "payroll_department_member", From: "archive.sync_list(data->'contractors') w", Cols: map[string]SQL{}, Refs: map[string]SQL{"worker": "coalesce(nullif(w->>'uuid', ''), w->>'id')"}},
+					}}},
+			{Name: "locations", Every: gustoDaily, Parts: gustoCompanies, Items: "**", Key: gustoKey, Updated: "updated_at", Set: gustoCompany, Page: gustoPage, Req: Req{Tool: "get_locations", Need: gustoNeed, Body: gustoOf},
+				Doc: "Every location, as get_locations answers, 100 a page, listed whole a day apart, so one gone is deleted.",
+				To: Map{Table: "payroll_location", Refs: map[string]SQL{"company": gustoRef},
+					Cols: map[string]SQL{"street_1": "data->>'street_1'", "street_2": "data->>'street_2'", "city": "data->>'city'", "state": "data->>'state'", "zip": "data->>'zip'", "country": "data->>'country'",
+						"phone": "data->>'phone_number'", "active": "archive.sync_bool(data->'active')", "mailing_address": "archive.sync_bool(data->'mailing_address')", "filing_address": "archive.sync_bool(data->'filing_address')"}}},
+			{Name: "pay_schedules", Every: gustoDaily, Parts: gustoCompanies, Items: "**", Key: gustoKey, Updated: "updated_at", Set: gustoCompany, Page: gustoPage, Req: Req{Tool: "get_pay_schedules", Need: gustoNeed, Body: gustoOf},
+				Doc: "Every pay schedule, as get_pay_schedules answers, 100 a page, listed whole a day apart, so one gone is deleted.",
+				To: Map{Table: "payroll_schedule", Refs: map[string]SQL{"company": gustoRef},
+					Cols: map[string]SQL{"name": "coalesce(nullif(data->>'custom_name', ''), data->>'name')", "frequency": "data->>'frequency'", "anchor_pay_date": "archive.sync_day(data->>'anchor_pay_date')",
+						"anchor_period_end": "archive.sync_day(data->>'anchor_end_of_pay_period')", "day_1": "archive.sync_num(data->>'day_1')", "day_2": "archive.sync_num(data->>'day_2')",
+						"auto_pilot": "archive.sync_bool(data->'auto_pilot')", "active": "archive.sync_bool(data->'active')"}}},
+			{Name: "pay_schedule_assignments", Every: gustoDaily, Parts: gustoCompanies, Key: []Reads{{Of: "{part}"}}, Set: gustoCompany, Req: Req{Tool: "list_pay_schedule_assignments", Body: gustoOf},
+				Doc: "How each company assigns people to pay schedules, as list_pay_schedule_assignments answers, by the company's uuid; read a day apart.",
+				To: Map{Table: "payroll_schedule_assignment", Cols: map[string]SQL{"type": "data->>'type'"},
+					Refs: map[string]SQL{"company": gustoRef, "default_schedule": "data->>'default_pay_schedule_uuid'", "hourly_schedule": "data->>'hourly_pay_schedule_uuid'", "salaried_schedule": "data->>'salaried_pay_schedule_uuid'"},
+					Children: []Kids{
+						{Table: "payroll_schedule_member", From: "archive.sync_list(data->'employees') e", Cols: map[string]SQL{}, Refs: map[string]SQL{"worker": "e->>'employee_uuid'", "schedule": "e->>'pay_schedule_uuid'"}},
+						{Table: "payroll_schedule_member", From: "archive.sync_list(data->'departments') d", Cols: map[string]SQL{}, Refs: map[string]SQL{"department": "d->>'department_uuid'", "schedule": "d->>'pay_schedule_uuid'"}},
+					}}},
+			// Default ones and a company's own are two lists of one answer.
+			{Name: "earning_types", Every: gustoDaily, Items: "**/{in/kind}", Absent: "**", Key: gustoKey, Req: Req{Tool: "list_earning_types", Body: gustoOf},
+				Parts: &Parts{Req: Req{Tool: "get_token_info"}, Items: "**/accessible_resources", Skip: gustoNotCompany,
+					Under: &Parts{Fixed: []Obj{{"kind": "default"}, {"kind": "custom"}}, ID: "{up/uuid}/{kind}", Vals: Obj{"company": "{up/uuid}", "kind": "{kind}"}}},
+				Set: Obj{"company_uuid": "{company_uuid;in/company}", "kind": "{in/kind}"},
+				Doc: "Every earning type of each company, default and custom, as list_earning_types answers, by uuid; read a day apart.",
+				To:  Map{Table: "payroll_earning_type", Cols: map[string]SQL{"name": "data->>'name'", "kind": "data->>'kind'"}, Refs: map[string]SQL{"company": gustoRef}}},
+			{Name: "custom_fields", Every: gustoDaily, Parts: gustoCompanies, Items: "**", Key: gustoKey, Updated: "updated_at", Set: gustoCompany, Page: gustoPage, Req: Req{Tool: "list_custom_fields_schema", Need: gustoNeed, Body: gustoOf},
+				Doc: "Every custom field each company defines, as list_custom_fields_schema answers, 100 a page, listed whole a day apart, so one gone is deleted.",
+				To: Map{Table: "payroll_custom_field", Refs: map[string]SQL{"company": gustoRef},
+					Cols: map[string]SQL{"name": "data->>'name'", "type": "data->>'type'", "description": "data->>'description'", "options": "coalesce(data->'selection_options', '[]'::jsonb)"}}},
+			{Name: "time_off_requests", Parts: gustoCompanies, Items: "**", Key: gustoKey, Updated: "updated_at", Set: gustoCompany, Page: gustoPage, Req: Req{Tool: "get_time_off_requests", Need: gustoNeed, Body: gustoOf},
+				Doc: "Every time-off request, as get_time_off_requests answers, 100 a page, listed whole each sync, so one gone is deleted.",
+				// Its days, each with its hours, add up to its hours, from the first to the last.
+				To: Map{Table: "payroll_time_off_request",
+					Cols: map[string]SQL{"policy": "data->>'request_type'", "status": "data->>'status'", "employee_note": "data->>'employee_note'", "employer_note": "data->>'employer_note'",
+						"employee_name": "coalesce(nullif(btrim(data#>>'{employee,full_name}'), ''), nullif(btrim(concat(data#>>'{employee,first_name}', ' ', data#>>'{employee,last_name}')), ''), data#>>'{employee,business_name}')",
+						"approver_name": "coalesce(nullif(btrim(data#>>'{approver,full_name}'), ''), nullif(btrim(concat(data#>>'{approver,first_name}', ' ', data#>>'{approver,last_name}')), ''), data#>>'{approver,business_name}')",
+						"starts_on":     "coalesce((SELECT min(archive.sync_day(k)) FROM " + gustoDays + "), archive.sync_day(data->>'start_date'))",
+						"ends_on":       "coalesce((SELECT max(archive.sync_day(k)) FROM " + gustoDays + "), archive.sync_day(data->>'end_date'))",
+						"hours":         "(SELECT coalesce(sum(archive.sync_num(v)), 0) FROM " + gustoDays + ")"},
+					Refs:     map[string]SQL{"company": gustoRef, "worker": "coalesce(nullif(data#>>'{employee,uuid}', ''), data#>>'{employee,id}')", "approver": "coalesce(nullif(data#>>'{approver,uuid}', ''), data#>>'{approver,id}')"},
+					Children: []Kids{{Table: "payroll_time_off_day", From: gustoDays, Cols: map[string]SQL{"on_date": "archive.sync_day(k)", "hours": "archive.sync_num(v)"}}}}},
+			{Name: "time_off_balances", Every: gustoDaily, Parts: gustoCompanies, Items: "**", Key: []Reads{{Of: "{employee_uuid}"}}, Updated: "updated_at", Set: gustoCompany, Page: gustoPage, Req: Req{Tool: "get_time_off_balances", Need: gustoNeed, Body: gustoOf},
+				Doc: "Each employee's time-off balances, per policy, as get_time_off_balances answers, 100 a page, listed whole a day apart, so one gone is deleted.",
+				To: Map{Table: "payroll_time_off_balance", Cols: map[string]SQL{"name": "''"}, Refs: map[string]SQL{"company": gustoRef, "worker": "data->>'employee_uuid'"},
+					Children: []Kids{{Table: "payroll_time_off_policy", From: "archive.sync_list(data->'balances') p",
+						Cols: map[string]SQL{"name": "p->>'policy_name'", "policy_type": "p->>'policy_type'", "policy_source": "p->>'policy_uuid'", "hours": "archive.sync_num(p->>'balance_hours')",
+							"accrued_hours": "archive.sync_num(p->>'accrued_hours')", "used_hours": "archive.sync_num(p->>'used_hours')", "pending_hours": "archive.sync_num(p->>'pending_hours')"}}}}},
+			// A processed payroll is read with what get_payroll adds, every page of its employee compensations, once: after that
+			// it is the same. Each line of what each employee was paid is a row: a tax is the employee's unless Gusto says it is the employer's.
+			{Name: "payrolls", Gap: time.Second, Parts: gustoYears, Keep: true, Items: "**", Key: []Reads{{Of: "{payroll_uuid;uuid;id}"}}, Set: gustoCompany, Memo: "{processed}",
+				Req:  Req{Tool: "list_payrolls", Body: Obj{"company_uuid": "{in/company}", "start_date": "{in/start}", "end_date": "{in/end}", "include": "taxes,totals", "processing_statuses": "processed,unprocessed", "payroll_types": "regular,off_cycle,external"}},
+				Page: ToolPage{Limit: "per", Max: 25, Page: "page"},
+				Hydrate: []Hydrate{Fetch{If: Test{At: "processed", Is: "true"}, Merge: true, Each: "employee_compensations", More: "employee_compensations_pagination/has_more",
+					Req: Req{Tool: "get_payroll", Body: Obj{"company_uuid": "{company_uuid}", "payroll_uuid": "{payroll_uuid;uuid;id}", "employee_compensations_page": "{n}", "employee_compensations_per": 100}}}},
 				Doc: "Every payroll, processed or not, of every type, with its totals and taxes, and once processed what get_payroll adds, read once: each " +
 					"person's earnings, taxes, deductions, benefits and net pay. The first sync lists every year, 25 a page; the next ones from three " +
-					"months back to 90 days ahead, by uuid, and delete nothing."},
-			gustoYearList("pay_periods", "list_pay_periods", "Every pay period and the payroll it is paid in", gustoDaily,
-				func(at, it map[string]any) string { return str(it, "pay_schedule_uuid") + "/" + str(it, "start_date") }, "payroll_pay_period", gustoPayPeriodRows),
-			gustoYearList("contractor_payments", "get_contractor_payments", "Every contractor payment", 0, nil, "payroll_contractor_payment", gustoContractorPaymentRows),
-			gustoYearList("contractor_payment_groups", "get_contractor_payment_groups", "Every batch of contractor payments", 0, nil,
-				"payroll_contractor_payment_group", gustoPaymentGroupRows),
-			gustoList("tasks", "get_tasks", "Each company's open to-dos in Gusto, like payroll blockers and documents to sign", gustoCompanyArgs, 0, nil,
-				"payroll_task", gustoTaskRows),
+					"months back to 90 days ahead, by uuid, and delete nothing.",
+				To: Map{Table: "payroll_run",
+					Cols: map[string]SQL{"period_start": "archive.sync_day(data#>>'{pay_period,start_date}')", "period_end": "archive.sync_day(data#>>'{pay_period,end_date}')", "check_date": "archive.sync_day(data->>'check_date')",
+						"deadline": "archive.sync_at(data->>'payroll_deadline')", "processed": "coalesce(data->>'processed' = 'true', false)", "processed_at": "archive.sync_at(data->>'processed_date')",
+						"off_cycle": "coalesce(data->>'off_cycle' = 'true', false)", "off_cycle_reason": "data->>'off_cycle_reason'", "external": "coalesce(data->>'external' = 'true', false)",
+						"gross_pay": "archive.sync_money(data#>>'{totals,gross_pay}', 'USD')", "net_pay": "archive.sync_money(data#>>'{totals,net_pay}', 'USD')", "employee_taxes": "archive.sync_money(data#>>'{totals,employee_taxes}', 'USD')",
+						"employer_taxes": "archive.sync_money(data#>>'{totals,employer_taxes}', 'USD')", "benefits": "archive.sync_money(data#>>'{totals,benefits}', 'USD')", "deductions": "archive.sync_money(data#>>'{totals,deductions}', 'USD')",
+						"reimbursements": "archive.sync_money(data#>>'{totals,reimbursements}', 'USD')", "check_amount": "archive.sync_money(data#>>'{totals,check_amount}', 'USD')", "company_debit": "archive.sync_money(data#>>'{totals,company_debit}', 'USD')"},
+					Refs: map[string]SQL{"company": gustoRef, "schedule": "data#>>'{pay_period,pay_schedule_uuid}'"},
+					Children: []Kids{
+						{Table: "payroll_pay", From: "archive.sync_list(data->'employee_compensations') e", Refs: gustoEmployee,
+							Cols: map[string]SQL{"gross_pay": "archive.sync_money(e->>'gross_pay', 'USD')", "net_pay": "archive.sync_money(e->>'net_pay', 'USD')", "check_amount": "archive.sync_money(e->>'check_amount', 'USD')",
+								"deductions":     "archive.sync_money((SELECT sum(archive.sync_num(x->>'amount'))::text FROM archive.sync_list(e->'deductions') x), 'USD')",
+								"employee_taxes": "archive.sync_money((SELECT sum(archive.sync_num(x->>'amount'))::text FROM archive.sync_list(e->'taxes') x WHERE x->>'employer' IS DISTINCT FROM 'true'), 'USD')",
+								"employer_taxes": "archive.sync_money((SELECT sum(archive.sync_num(x->>'amount'))::text FROM archive.sync_list(e->'taxes') x WHERE x->>'employer' = 'true'), 'USD')",
+								"hours":          "(SELECT coalesce(sum(archive.sync_num(x->>'hours')), 0) FROM archive.sync_list(e->'hourly_compensations') x)", "payment_method": "e->>'payment_method'"}},
+						{Table: "payroll_pay_line", From: gustoEach + "e->'fixed_compensations') x", Refs: gustoEmployee, Cols: map[string]SQL{"kind": "'earning'", "name": "x->>'name'", "amount": "archive.sync_money(x->>'amount', 'USD')", "employer": "false"}},
+						{Table: "payroll_pay_line", From: gustoEach + "e->'hourly_compensations') x", Refs: gustoEmployee, Cols: map[string]SQL{"kind": "'earning'", "name": "x->>'name'", "amount": "archive.sync_money(x->>'amount', 'USD')", "hours": "archive.sync_num(x->>'hours')", "employer": "false"}},
+						{Table: "payroll_pay_line", From: gustoEach + "e->'paid_time_off') x", Refs: gustoEmployee, Cols: map[string]SQL{"kind": "'time_off'", "name": "x->>'name'", "hours": "archive.sync_num(x->>'hours')", "employer": "false"}},
+						{Table: "payroll_pay_line", From: gustoEach + "e->'deductions') x", Refs: gustoEmployee, Cols: map[string]SQL{"kind": "'deduction'", "name": "x->>'name'", "amount": "archive.sync_money(x->>'amount', 'USD')", "employer": "false"}},
+						{Table: "payroll_pay_line", From: gustoEach + "e->'benefits') x", Refs: gustoEmployee, Cols: map[string]SQL{"kind": "'benefit'", "name": "x->>'name'", "amount": "archive.sync_money(x->>'employee_deduction', 'USD')", "employer": "false"}},
+						{Table: "payroll_pay_line", From: gustoEach + "e->'benefits') x WHERE archive.sync_num(x->>'company_contribution') <> 0", Refs: gustoEmployee, Cols: map[string]SQL{"kind": "'benefit'", "name": "x->>'name'", "amount": "archive.sync_money(x->>'company_contribution', 'USD')", "employer": "true"}},
+						{Table: "payroll_pay_line", From: gustoEach + "e->'taxes') x", Refs: gustoEmployee, Cols: map[string]SQL{"kind": "'tax'", "name": "x->>'name'", "amount": "archive.sync_money(x->>'amount', 'USD')", "employer": "coalesce(x->>'employer' = 'true', false)"}},
+					}}},
+			{Name: "pay_periods", Every: gustoDaily, Parts: gustoYears, Keep: true, Items: "**", Key: []Reads{{Of: "{pay_schedule_uuid}/{start_date}"}}, Updated: "updated_at", Set: gustoCompany, Page: gustoPage, Req: Req{Tool: "list_pay_periods", Need: gustoNeed, Body: gustoSpan},
+				Doc: "Every pay period and the payroll it is paid in, as list_pay_periods answers, 100 a page: every year on the first sync, and from three months back to 90 days ahead a day apart after, which deletes nothing.",
+				To: Map{Table: "payroll_pay_period",
+					Cols: map[string]SQL{"starts_on": "archive.sync_day(data->>'start_date')", "ends_on": "archive.sync_day(data->>'end_date')", "check_date": "archive.sync_day(data#>>'{payroll,check_date}')",
+						"deadline": "archive.sync_at(data#>>'{payroll,payroll_deadline}')", "processed": "archive.sync_bool(data#>'{payroll,processed}')", "payroll_type": "data#>>'{payroll,payroll_type}'"},
+					Refs: map[string]SQL{"company": gustoRef, "schedule": "data->>'pay_schedule_uuid'", "run": "data#>>'{payroll,payroll_uuid}'"}}},
+			{Name: "contractor_payments", Parts: gustoYears, Keep: true, Items: "**", Key: gustoKey, Updated: "updated_at", Set: gustoCompany, Page: gustoPage, Req: Req{Tool: "get_contractor_payments", Need: gustoNeed, Body: gustoSpan},
+				Doc: "Every contractor payment, as get_contractor_payments answers, 100 a page: every year on the first sync, and from three months back to 90 days ahead after, which deletes nothing.",
+				To: Map{Table: "payroll_contractor_payment",
+					Cols: map[string]SQL{"paid_on": "archive.sync_day(data->>'date')", "wage": "archive.sync_money(data->>'wage', 'USD')", "bonus": "archive.sync_money(data->>'bonus', 'USD')", "reimbursement": "archive.sync_money(data->>'reimbursement', 'USD')",
+						"wage_total": "archive.sync_money(data->>'wage_total', 'USD')", "hours": "archive.sync_num(data->>'hours')", "hourly_rate": "archive.sync_money(data->>'hourly_rate', 'USD')", "wage_type": "data->>'wage_type'",
+						"payment_method": "data->>'payment_method'", "status": "data->>'status'"},
+					Refs: map[string]SQL{"company": gustoRef, "worker": "data->>'contractor_uuid'"}}},
+			{Name: "contractor_payment_groups", Parts: gustoYears, Keep: true, Items: "**", Key: gustoKey, Updated: "updated_at", Set: gustoCompany, Page: gustoPage, Req: Req{Tool: "get_contractor_payment_groups", Need: gustoNeed, Body: gustoSpan},
+				Doc: "Every batch of contractor payments, as get_contractor_payment_groups answers, 100 a page: every year on the first sync, and from three months back to 90 days ahead after, which deletes nothing.",
+				To: Map{Table: "payroll_contractor_payment_group", Refs: map[string]SQL{"company": gustoRef},
+					Cols: map[string]SQL{"check_date": "archive.sync_day(data->>'check_date')", "debit_date": "archive.sync_day(data->>'debit_date')", "status": "data->>'status'", "amount": "archive.sync_money(data#>>'{totals,amount}', 'USD')",
+						"debit_amount": "archive.sync_money(data#>>'{totals,debit_amount}', 'USD')", "wages": "archive.sync_money(data#>>'{totals,wage_amount}', 'USD')", "reimbursements": "archive.sync_money(data#>>'{totals,reimbursement_amount}', 'USD')"}}},
+			{Name: "tasks", Parts: gustoCompanies, Items: "**", Key: gustoKey, Updated: "updated_at", Set: gustoCompany, Page: gustoPage, Req: Req{Tool: "get_tasks", Need: gustoNeed, Body: gustoOf},
+				Doc: "Each company's open to-dos in Gusto, like payroll blockers and documents to sign, as get_tasks answers, 100 a page, listed whole each sync, so one gone is deleted.",
+				To: Map{Table: "payroll_task", Refs: map[string]SQL{"company": gustoRef},
+					Cols: map[string]SQL{"title": "data->>'title'", "description": "data->>'message'", "due_on": "archive.sync_day(data->>'due_at')", "priority": "data->>'priority'", "category": "data->>'category'", "status": "data->>'status'", "url": "data->>'deep_link'"}}},
 		}})
 }
 
-// gustoDaily is how far apart setup, which seldom changes, is read.
-const gustoDaily = 24 * time.Hour
+const (
+	// gustoDaily is how far apart setup, which seldom changes, is read.
+	gustoDaily      = 24 * time.Hour
+	gustoRef    SQL = "data->>'company_uuid'"
+	gustoName   SQL = "coalesce(nullif(btrim(data->>'full_name'), ''), nullif(btrim(concat(data->>'first_name', ' ', data->>'last_name')), ''), data->>'business_name')"
+	gustoJob        = "(SELECT j FROM archive.sync_list(data->'jobs') WITH ORDINALITY x(j, i) ORDER BY j->>'primary' = 'true' DESC NULLS LAST, i LIMIT 1)"
+	gustoJobsTo     = "i <= coalesce((SELECT min(n) FROM archive.sync_list(data->'jobs') WITH ORDINALITY y(k, n) WHERE k->>'primary' = 'true'), 2147483647)"
+	gustoJobs   SQL = "archive.sync_list(data->'jobs') WITH ORDINALITY x(j, i) WHERE " + gustoJobsTo
+	gustoDays   SQL = "jsonb_each_text(CASE WHEN jsonb_typeof(data->'days') = 'object' THEN data->'days' ELSE '{}'::jsonb END) d(k, v) WHERE archive.sync_day(k) IS NOT NULL"
+	gustoEach       = "archive.sync_list(data->'employee_compensations') e, archive.sync_list("
+)
 
-// gustoRecent is how far back the payroll lists of a sync after the first reach.
-const gustoRecent = 3 // months
-
-// gustoID is a Gusto record's uuid, or its id.
-func gustoID(it map[string]any) string { return cmp.Or(str(it, "uuid"), str(it, "id")) }
-
-// gustoCall is tool's answer to args.
-func gustoCall(c *Client, tool string, args map[string]any) (any, error) {
-	t, err := c.tool(tool)
-	if err != nil {
-		return nil, err
-	}
-	res, err := c.Call(t.Name, args)
-	if err != nil {
-		return nil, err
-	}
-	return answer(c, t.Name, res)
-}
-
-// gustoCompanies are the companies the token reaches, as get_token_info lists them: each one's uuid and name.
-func gustoCompanies(c *Client) ([]map[string]any, error) {
-	v, err := gustoCall(c, "get_token_info", map[string]any{})
-	if err != nil {
-		return nil, err
-	}
-	var out []map[string]any
-	for _, r := range objects(v, "accessible_resources") {
-		if strings.EqualFold(str(r, "resource_type"), "company") && str(r, "uuid") != "" {
-			out = append(out, r)
-		}
-	}
-	return out, nil
-}
-
-// gustoAccount names the account by its companies.
-func gustoAccount(c *Client) (string, error) {
-	cos, err := gustoCompanies(c)
-	if err != nil {
-		return "", err
-	}
-	var names []string
-	for _, co := range cos {
-		if n := strings.TrimSpace(str(co, "name")); n != "" {
-			names = append(names, n)
-		}
-	}
-	return strings.Join(names, ", "), nil
-}
-
-// gustoCursor is where a Gusto stream is. A listing under way has the arguments it reads with, one set at a
-// time, as they were when it began, the set it is at, and the cursor of that set's listing. The rest is the
-// stream's memory, kept from one sync to the next: the companies the token reached when it last asked, for a
-// day; that the stream has listed every year of its history; and what it has read in full, Seen, by id: an
-// employee's version, or a payroll whose detail it read. Next is what a listing under way has seen, which
-// becomes Seen when it ends, so one no longer listed is forgotten.
-type gustoCursor struct {
-	Each        []map[string]any  `json:"each,omitempty"`
-	At          int               `json:"at,omitempty"`
-	Cursor      string            `json:"cursor,omitempty"`
-	Companies   []string          `json:"companies,omitempty"`
-	CompaniesAt *time.Time        `json:"companies_at,omitempty"`
-	History     bool              `json:"history,omitempty"`
-	Seen        map[string]string `json:"seen,omitempty"`
-	Next        map[string]string `json:"next,omitempty"`
-}
-
-// gustoStream is a stream that lists with pull for each set of arguments each finds when its listing begins,
-// one listing of them all: whole, so one no longer listed is deleted, unless recent, whose pages delete
-// nothing.
-type gustoStream struct {
-	each   func(c *Client, st *gustoCursor) ([]map[string]any, error)
-	pull   func(c *Client, st *gustoCursor, args map[string]any, cursor string) (*Page, error)
-	recent bool
-}
-
-func (g *gustoStream) Pull(c *Client, cursor string) (*Page, error) {
-	var st gustoCursor
-	if err := cursorOf(cursor, &st); err != nil {
-		return nil, err
-	}
-	if st.Each == nil {
-		all, err := g.each(c, &st)
-		if err != nil {
-			return nil, err
-		}
-		st.Each = append([]map[string]any{}, all...)
-	}
-	page := &Page{}
-	if st.At < len(st.Each) {
-		var err error
-		if page, err = g.pull(c, &st, st.Each[st.At], st.Cursor); err != nil {
-			return nil, err
-		}
-	}
-	page.Full = !g.recent
-	switch {
-	case page.More:
-		st.Cursor = page.Cursor
-	case st.At+1 < len(st.Each):
-		st.At, st.Cursor, page.More = st.At+1, "", true
-	default:
-		// The listing is over, and only the stream's memory goes on to the next.
-		st.Each, st.At, st.Cursor = nil, 0, ""
-		st.History = st.History || g.recent
-		if st.Next != nil {
-			st.Seen, st.Next = st.Next, nil
-		}
-	}
-	page.Cursor = cursorFor(st)
-	return page, nil
-}
-
-// gustoCos are the uuids of the companies the token reaches, as the stream last asked within a day.
-func gustoCos(c *Client, st *gustoCursor) ([]string, error) {
-	if st.CompaniesAt != nil && time.Since(*st.CompaniesAt) < gustoDaily {
-		return st.Companies, nil
-	}
-	cos, err := gustoCompanies(c)
-	if err != nil {
-		return nil, err
-	}
-	st.Companies = []string{}
-	for _, co := range cos {
-		st.Companies = append(st.Companies, str(co, "uuid"))
-	}
-	st.CompaniesAt = ptrTo(time.Now().UTC())
-	return st.Companies, nil
-}
-
-func ptrTo[T any](v T) *T { return &v }
-
-// gustoCompanyArgs are the arguments that name each company.
-func gustoCompanyArgs(c *Client, st *gustoCursor) ([]map[string]any, error) {
-	cos, err := gustoCos(c, st)
-	out := []map[string]any{}
-	for _, co := range cos {
-		out = append(out, map[string]any{"company_uuid": co})
-	}
-	return out, err
-}
-
-// gustoStatuses are each company's arguments twice: as they are, and for those no longer active, whom a list
-// leaves out unless asked for.
-func gustoStatuses(c *Client, st *gustoCursor) ([]map[string]any, error) {
-	cos, err := gustoCompanyArgs(c, st)
-	if err != nil {
-		return nil, err
-	}
-	out := []map[string]any{}
-	for _, co := range cos {
-		out = append(out, co, map[string]any{"company_uuid": co["company_uuid"], "terminated": true})
-	}
-	return out, nil
-}
-
-// gustoYears are each company's years to list, as start_date and end_date, to 90 days ahead, as far as Gusto
-// lists what is coming: from a year before it joined Gusto, for history brought in with it, until the stream
-// has listed them once, and after that the recent months alone.
-func gustoYears(c *Client, st *gustoCursor) ([]map[string]any, error) {
-	cos, err := gustoCompanyArgs(c, st)
-	if err != nil {
-		return nil, err
-	}
-	last := time.Now().UTC().AddDate(0, 0, 90).Truncate(24 * time.Hour)
-	out := []map[string]any{}
-	for _, co := range cos {
-		first := last.AddDate(0, -gustoRecent, -90)
-		if !st.History {
-			v, err := gustoCall(c, "get_company", co)
-			if err != nil {
-				return nil, err
-			}
-			m, _ := v.(map[string]any)
-			joined := stamp(str(m, "join_date"))
-			if joined.IsZero() {
-				joined, _ = time.Parse(time.DateOnly, clip(str(m, "join_date"), 10))
-			}
-			if joined.IsZero() {
-				joined = last.AddDate(-10, 0, 0)
-			}
-			first = joined.AddDate(-1, 0, 0).Truncate(24 * time.Hour)
-		}
-		for start := first; !start.After(last); start = start.AddDate(1, 0, 0) {
-			end := start.AddDate(1, 0, -1)
-			if end.After(last) {
-				end = last
-			}
-			out = append(out, map[string]any{"company_uuid": co["company_uuid"], "start_date": start.Format(time.DateOnly), "end_date": end.Format(time.DateOnly)})
-		}
-	}
-	return out, nil
-}
-
-func merged(a, b map[string]any) map[string]any {
-	out := maps.Clone(a)
-	maps.Copy(out, b)
-	return out
-}
-
-// gustoListPull is a page of tool's list for args, with opts too where the tool takes them, 100 a page; key
-// is a record's id, its uuid when nil.
-func gustoListPull(c *Client, tool string, per int, args, opts map[string]any, key func(args, it map[string]any) string, cursor string) (*Page, error) {
-	l := &mcpList{tool: tool, args: args, opts: opts, limit: "per,limit,page_size", max: per, page: "page", after: "cursor,after",
-		key: gustoID, id: "uuid", updated: "updated_at"}
-	if key != nil {
-		l.key = func(it map[string]any) string { return key(args, it) }
-	}
-	page, err := l.pull(c, cursor)
-	if err != nil {
-		return nil, err
-	}
-	// A record says the company it is of, as a list of a company's may leave out.
-	for _, r := range page.Records {
-		if m, ok := r.Data.(map[string]any); ok && str(m, "company_uuid") == "" && args["company_uuid"] != nil {
-			m["company_uuid"] = args["company_uuid"]
-		}
-	}
-	return page, nil
-}
-
-// gustoList is a stream of tool's list for each set of arguments each finds, listed whole every so often, so
-// one gone is deleted; key is a record's id, as gustoListPull has it, and rows its records' rows.
-func gustoList(name, tool, what string, each func(c *Client, st *gustoCursor) ([]map[string]any, error), every time.Duration,
-	key func(args, it map[string]any) string, table string, rows func(map[string]any) *Row) *Stream {
-	g := &gustoStream{each: each, pull: func(c *Client, st *gustoCursor, args map[string]any, cursor string) (*Page, error) {
-		return gustoListPull(c, tool, 100, args, nil, key, cursor)
-	}}
-	doc := what + ", as " + tool + " answers, 100 a page, listed whole each sync, so one gone is deleted."
-	if every > 0 {
-		doc = what + ", as " + tool + " answers, 100 a page, listed whole a day apart, so one gone is deleted."
-	}
-	return &Stream{Name: name, Doc: doc, Every: every, Pull: g.Pull, Table: table, Rows: rows}
-}
-
-// gustoYearList is a stream of tool's list for each company's years (gustoYears): every year once, and the
-// recent months after, in pages that delete nothing.
-func gustoYearList(name, tool, what string, every time.Duration, key func(args, it map[string]any) string, table string, rows func(map[string]any) *Row) *Stream {
-	g := &gustoStream{each: gustoYears, recent: true, pull: func(c *Client, st *gustoCursor, args map[string]any, cursor string) (*Page, error) {
-		return gustoListPull(c, tool, 100, args, nil, key, cursor)
-	}}
-	doc := what + ", as " + tool + " answers, 100 a page: every year on the first sync, and from three months back to 90 days ahead after, which deletes nothing."
-	if every > 0 {
-		doc = strings.Replace(doc, "ahead after", "ahead a day apart after", 1)
-	}
-	return &Stream{Name: name, Every: every, Pull: g.Pull, Table: table, Rows: rows, Doc: doc}
-}
-
-func gustoCompany(c *Client, st *gustoCursor, args map[string]any, cursor string) (*Page, error) {
-	v, err := gustoCall(c, "get_company", args)
-	if err != nil {
-		return nil, err
-	}
-	m, _ := v.(map[string]any)
-	if inner, ok := m["company"].(map[string]any); ok {
-		m = inner
-	}
-	page := &Page{}
-	if m != nil {
-		page.Records = []Record{{ID: cmp.Or(gustoID(m), str(args, "company_uuid")), Data: m, Updated: stamp(str(m, "updated_at"))}}
-	}
-	return page, nil
-}
-
-// gustoEmployees is a page of a company's employees. One whose version is the one read before is the Same;
-// one new or changed is read with their employment history and work addresses, where the server has the tools.
-func gustoEmployees(c *Client, st *gustoCursor, args map[string]any, cursor string) (*Page, error) {
-	// 20 a page: each new or changed one costs two calls more, which at Gusto's pace must fit in a page's time.
-	page, err := gustoListPull(c, "list_employees", 20, args, map[string]any{"include": "all_compensations,all_home_addresses,custom_fields"}, nil, cursor)
-	if err != nil {
-		return nil, err
-	}
-	if st.Next == nil {
-		st.Next = map[string]string{}
-	}
-	for i, r := range page.Records {
-		e, _ := r.Data.(map[string]any)
-		version := str(e, "version")
-		st.Next[r.ID] = version
-		if version != "" && st.Seen[r.ID] == version {
-			page.Records[i] = Record{ID: r.ID, Same: true}
-			continue
-		}
-		for key, tool := range map[string]string{"employment_history": "list_employee_employment_history", "work_addresses": "get_employee_work_addresses"} {
-			v, err := gustoCall(c, tool, map[string]any{"employee_uuid": r.ID})
-			var unsup *Unsupported
-			switch {
-			case errors.As(err, &unsup):
-			case err != nil:
-				return nil, err
-			default:
-				e[key] = objects(v, "")
-			}
-		}
-	}
-	return page, nil
-}
-
-// gustoOne is a pull of tool's answer for a company as one record, by the company's uuid.
-func gustoOne(tool string) func(c *Client, st *gustoCursor, args map[string]any, cursor string) (*Page, error) {
-	return func(c *Client, st *gustoCursor, args map[string]any, cursor string) (*Page, error) {
-		v, err := gustoCall(c, tool, args)
-		if err != nil {
-			return nil, err
-		}
-		return &Page{Records: []Record{{ID: str(args, "company_uuid"), Data: v}}}, nil
-	}
-}
-
-// gustoEarningTypes are a company's earning types, the default ones and its own, which list_earning_types
-// answers in two lists.
-func gustoEarningTypes(c *Client, st *gustoCursor, args map[string]any, cursor string) (*Page, error) {
-	v, err := gustoCall(c, "list_earning_types", args)
-	if err != nil {
-		return nil, err
-	}
-	page := &Page{}
-	for _, kind := range []string{"default", "custom"} {
-		for _, it := range objects(v, kind) {
-			if id := gustoID(it); id != "" {
-				page.Records = append(page.Records, Record{ID: id, Data: merged(it, map[string]any{"kind": kind})})
-			}
-		}
-	}
-	return page, nil
-}
-
-// gustoPayrolls are a page of a company's payrolls in a year, 25 at a time. A processed one is read with what
-// get_payroll adds, every page of its employee compensations, once: after that it is the Same.
-func gustoPayrolls(c *Client, st *gustoCursor, args map[string]any, cursor string) (*Page, error) {
-	const per = 25
-	page := max(1, atoi(cursor))
-	v, err := gustoCall(c, "list_payrolls", merged(args, map[string]any{"include": "taxes,totals", "processing_statuses": "processed,unprocessed",
-		"payroll_types": "regular,off_cycle,external", "page": page, "per": per}))
-	if err != nil {
-		return nil, err
-	}
-	if st.Seen == nil {
-		st.Seen = map[string]string{}
-	}
-	items := objects(v, "")
-	out := &Page{}
-	for _, it := range items {
-		id := cmp.Or(str(it, "payroll_uuid"), gustoID(it))
-		switch {
-		case id == "":
-			continue
-		case it["processed"] != true:
-			out.Records = append(out.Records, Record{ID: id, Data: it})
-			continue
-		}
-		if _, ok := st.Seen[id]; ok {
-			out.Records = append(out.Records, Record{ID: id, Same: true})
-			continue
-		}
-		full, err := gustoPayroll(c, str(args, "company_uuid"), id)
-		if err != nil {
-			return nil, err
-		}
-		st.Seen[id] = ""
-		out.Records = append(out.Records, Record{ID: id, Data: merged(it, full)})
-	}
-	if len(items) >= per {
-		out.Cursor, out.More = strconv.Itoa(page+1), true
-	}
-	return out, nil
-}
-
-// gustoPayroll is payroll as get_payroll answers, with its employee compensations from every page.
-func gustoPayroll(c *Client, company, payroll string) (map[string]any, error) {
-	var out map[string]any
-	var comps []any
-	for page := 1; page <= 100; page++ {
-		v, err := gustoCall(c, "get_payroll", map[string]any{"company_uuid": company, "payroll_uuid": payroll,
-			"employee_compensations_page": page, "employee_compensations_per": 100})
-		if err != nil {
-			return nil, err
-		}
-		m, _ := v.(map[string]any)
-		if out == nil {
-			out = m
-		}
-		got, _ := m["employee_compensations"].([]any)
-		comps = append(comps, got...)
-		more, _ := m["employee_compensations_pagination"].(map[string]any)
-		if more["has_more"] != true || len(got) == 0 {
-			break
-		}
-	}
-	if out != nil {
-		out["employee_compensations"] = comps
-		delete(out, "employee_compensations_pagination")
-	}
-	return out, nil
-}
-
-func atoi(s string) int {
-	n, _ := strconv.Atoi(s)
-	return n
-}
-
-// Gusto pays in US dollars.
-const gustoCurrency = "USD"
-
-func gustoMoney(v any) Money { return money(v, gustoCurrency) }
-
-// gustoRow is a row of a company's: of the company its company_uuid names.
-func gustoRow(m map[string]any, cols map[string]any) *Row {
-	return rowOf(cols).ref("company", str(m, "company_uuid"))
-}
-
-// gustoName is the full name of a person or business Gusto has.
-func gustoName(m map[string]any) string {
-	return cmp.Or(strings.TrimSpace(str(m, "full_name")), strings.TrimSpace(str(m, "first_name")+" "+str(m, "last_name")), str(m, "business_name"))
-}
-
-// gustoAddress is an address as a row of payroll_address, of kind home or work.
-func gustoAddress(kind string, a map[string]any) *Row {
-	return rowOf(map[string]any{"kind": kind, "street_1": str(a, "street_1"), "street_2": str(a, "street_2"), "city": str(a, "city"),
-		"state": str(a, "state"), "zip": str(a, "zip"), "country": str(a, "country"), "active": flag(a, "active"),
-		"effective_on": day(str(a, "effective_date"))})
-}
-
-// gustoCompanyRows is a company with the organization its EIN is, and its payroll admin and signatory, who are
-// people by their address.
-func gustoCompanyRows(m map[string]any) *Row {
-	admin, signer := obj(m, "primary_payroll_admin"), obj(m, "primary_signatory")
-	r := rowOf(map[string]any{"name": str(m, "name"), "trade_name": str(m, "trade_name"), "entity_type": str(m, "entity_type"),
-		"status": str(m, "company_status"), "tier": str(m, "tier"), "suspended": flag(m, "is_suspended"), "joined_on": day(str(m, "join_date")),
-		"admin_name": gustoName(admin), "signatory_name": gustoName(signer)}).person("admin", str(admin, "email")).person("signatory", str(signer, "email"))
-	if ein := EIN(str(m, "ein")); ein != "" {
-		r.Orgs["org"] = ein
-	}
-	return r
-}
-
-// gustoEmployeeRows is an employee as a worker: their primary job, or else their first, says their title, start
-// and pay, and their last termination when they left. Their jobs, compensations, addresses, employment history
-// and custom fields are rows of their own.
-func gustoEmployeeRows(m map[string]any) *Row {
-	r := gustoRow(m, map[string]any{"kind": "employee", "name": gustoName(m), "first_name": str(m, "first_name"), "middle_initial": str(m, "middle_initial"),
-		"last_name": str(m, "last_name"), "preferred_name": str(m, "preferred_first_name"), "email": Email(cmp.Or(str(m, "work_email"), str(m, "email"))),
-		"personal_email": Email(str(m, "email")), "phone": str(m, "phone"), "birthday": day(str(m, "date_of_birth")), "department_name": str(m, "department"),
-		"active": m["terminated"] != true, "onboarded": flag(m, "onboarded"), "onboarding_status": str(m, "onboarding_status"),
-		"payment_method": str(m, "payment_method")})
-	r.person("person", cmp.Or(str(m, "work_email"), str(m, "email"))).ref("department", str(m, "department_uuid")).ref("manager", str(m, "manager_uuid"))
-	jobs := objects(m["jobs"], "")
-	for i, j := range jobs {
-		if i == 0 || j["primary"] == true {
-			r.Cols["title"], r.Cols["hired_on"], r.Cols["pay_rate"], r.Cols["pay_per"] = str(j, "title"), day(str(j, "hire_date")), gustoMoney(j["rate"]), str(j, "payment_unit")
-		}
-		r.child("payroll_job", rowOf(map[string]any{"source_id": gustoID(j), "title": str(j, "title"), "rate": gustoMoney(j["rate"]),
-			"pay_per": str(j, "payment_unit"), "hired_on": day(str(j, "hire_date")), "primary_job": j["primary"] == true}).ref("location", str(j, "location_uuid")))
-		for _, c := range objects(j["compensations"], "") {
-			r.child("payroll_compensation", rowOf(map[string]any{"job_source": gustoID(j), "rate": gustoMoney(c["rate"]), "pay_per": str(c, "payment_unit"),
-				"flsa_status": str(c, "flsa_status"), "effective_on": day(str(c, "effective_date"))}))
-			if i == 0 || j["primary"] == true {
-				r.Cols["flsa_status"] = str(c, "flsa_status")
-			}
-		}
-		if j["primary"] == true {
-			break
-		}
-	}
-	for _, t := range objects(m["terminations"], "") {
-		if d, _ := day(str(t, "effective_date")).(string); d != "" && (r.Cols["terminated_on"] == nil || d > r.Cols["terminated_on"].(string)) {
-			r.Cols["terminated_on"] = d
-		}
-	}
-	for _, a := range objects(m["home_addresses"], "") {
-		r.child("payroll_address", gustoAddress("home", a))
-	}
-	for _, a := range objects(m["work_addresses"], "") {
-		r.child("payroll_address", gustoAddress("work", a).ref("location", str(a, "location_uuid")))
-	}
-	for _, e := range objects(m["employment_history"], "") {
-		r.child("payroll_employment", rowOf(map[string]any{"hired_on": day(str(e, "hire_date")), "terminated_on": day(str(e, "termination_date")),
-			"status": str(e, "employment_status")}))
-	}
-	for _, f := range objects(m["custom_fields"], "") {
-		r.child("payroll_custom_value", rowOf(map[string]any{"name": str(f, "name"), "value": str(f, "value")}).ref("field", str(f, "company_custom_field_id")))
-	}
-	return r
-}
-
-func gustoContractorRows(m map[string]any) *Row {
-	r := gustoRow(m, map[string]any{"kind": "contractor", "name": gustoName(m), "first_name": str(m, "first_name"), "last_name": str(m, "last_name"),
-		"business_name": str(m, "business_name"), "contractor_type": str(m, "type"), "wage_type": str(m, "wage_type"), "email": Email(str(m, "email")),
-		"active": m["is_active"] != false, "hired_on": day(str(m, "start_date")), "payment_method": str(m, "payment_method")})
-	r.person("person", str(m, "email")).ref("department", str(m, "department_uuid"))
-	if strings.EqualFold(str(m, "wage_type"), "Hourly") {
-		r.Cols["pay_rate"], r.Cols["pay_per"] = gustoMoney(m["hourly_rate"]), "Hour"
-	}
-	if a, ok := m["address"].(map[string]any); ok {
-		r.child("payroll_address", gustoAddress("home", a))
-	}
-	return r
-}
-
-// gustoDepartmentRows is a department with its members, employees and contractors.
-func gustoDepartmentRows(m map[string]any) *Row {
-	r := gustoRow(m, map[string]any{"title": str(m, "title")})
-	for _, kind := range []string{"employees", "contractors"} {
-		for _, w := range objects(m[kind], "") {
-			r.child("payroll_department_member", rowOf(map[string]any{}).ref("worker", gustoID(w)))
-		}
-	}
-	return r
-}
-
-func gustoLocationRows(m map[string]any) *Row {
-	return gustoRow(m, map[string]any{"street_1": str(m, "street_1"), "street_2": str(m, "street_2"), "city": str(m, "city"), "state": str(m, "state"),
-		"zip": str(m, "zip"), "country": str(m, "country"), "phone": str(m, "phone_number"), "active": flag(m, "active"),
-		"mailing_address": flag(m, "mailing_address"), "filing_address": flag(m, "filing_address")})
-}
-
-func gustoScheduleRows(m map[string]any) *Row {
-	return gustoRow(m, map[string]any{"name": cmp.Or(str(m, "custom_name"), str(m, "name")), "frequency": str(m, "frequency"),
-		"anchor_pay_date": day(str(m, "anchor_pay_date")), "anchor_period_end": day(str(m, "anchor_end_of_pay_period")),
-		"day_1": decimal(m["day_1"]), "day_2": decimal(m["day_2"]), "auto_pilot": flag(m, "auto_pilot"), "active": flag(m, "active")})
-}
-
-// gustoAssignmentRows is how a company assigns pay schedules, with the schedule of each employee or department
-// it names.
-func gustoAssignmentRows(m map[string]any) *Row {
-	r := gustoRow(m, map[string]any{"type": str(m, "type")}).ref("default_schedule", str(m, "default_pay_schedule_uuid")).
-		ref("hourly_schedule", str(m, "hourly_pay_schedule_uuid")).ref("salaried_schedule", str(m, "salaried_pay_schedule_uuid"))
-	for _, e := range objects(m["employees"], "") {
-		r.child("payroll_schedule_member", rowOf(map[string]any{}).ref("worker", str(e, "employee_uuid")).ref("schedule", str(e, "pay_schedule_uuid")))
-	}
-	for _, d := range objects(m["departments"], "") {
-		r.child("payroll_schedule_member", rowOf(map[string]any{}).ref("department", str(d, "department_uuid")).ref("schedule", str(d, "pay_schedule_uuid")))
-	}
-	return r
-}
-
-func gustoEarningTypeRows(m map[string]any) *Row {
-	return gustoRow(m, map[string]any{"name": str(m, "name"), "kind": str(m, "kind")})
-}
-
-func gustoCustomFieldRows(m map[string]any) *Row {
-	return gustoRow(m, map[string]any{"name": str(m, "name"), "type": str(m, "type"), "description": str(m, "description"),
-		"options": strs(m["selection_options"])})
-}
-
-// gustoTimeOffRows is a time-off request: its days, each with its hours, add up to its hours, from the first
-// to the last.
-func gustoTimeOffRows(m map[string]any) *Row {
-	emp, approver := obj(m, "employee"), obj(m, "approver")
-	r := gustoRow(m, map[string]any{"policy": str(m, "request_type"), "status": str(m, "status"), "employee_note": str(m, "employee_note"),
-		"employer_note": str(m, "employer_note"), "employee_name": gustoName(emp), "approver_name": gustoName(approver)}).
-		ref("worker", gustoID(emp)).ref("approver", gustoID(approver))
-	days := obj(m, "days")
-	var first, last string
-	hours := 0.0
-	for _, d := range slices.Sorted(maps.Keys(days)) {
-		on, _ := day(d).(string)
-		if on == "" {
-			continue
-		}
-		first, last = cmp.Or(first, on), on
-		h, _ := strconv.ParseFloat(num(days[d]), 64)
-		hours += h
-		r.child("payroll_time_off_day", rowOf(map[string]any{"on_date": on, "hours": decimal(days[d])}))
-	}
-	r.Cols["starts_on"], r.Cols["ends_on"], r.Cols["hours"] = day(cmp.Or(first, str(m, "start_date"))), day(cmp.Or(last, str(m, "end_date"))), hours
-	return r
-}
-
-// gustoBalanceRows is an employee's time-off balances, one a policy: what is left, accrued, used and pending.
-func gustoBalanceRows(m map[string]any) *Row {
-	r := gustoRow(m, map[string]any{}).ref("worker", str(m, "employee_uuid"))
-	for _, p := range objects(m["balances"], "") {
-		r.child("payroll_time_off_policy", rowOf(map[string]any{"name": str(p, "policy_name"), "policy_type": str(p, "policy_type"), "policy_source": str(p, "policy_uuid"),
-			"hours": decimal(p["balance_hours"]), "accrued_hours": decimal(p["accrued_hours"]), "used_hours": decimal(p["used_hours"]),
-			"pending_hours": decimal(p["pending_hours"])}))
-	}
-	return r
-}
-
-// gustoPayrollRows is a payroll with what each employee was paid in it, and every line of that: their earnings,
-// deductions, benefits and taxes. A tax is the employee's unless Gusto says it is the employer's.
-func gustoPayrollRows(m map[string]any) *Row {
-	totals, period := obj(m, "totals"), obj(m, "pay_period")
-	r := gustoRow(m, map[string]any{"period_start": day(str(period, "start_date")), "period_end": day(str(period, "end_date")),
-		"check_date": day(str(m, "check_date")), "deadline": instant(str(m, "payroll_deadline")), "processed": m["processed"] == true,
-		"processed_at": instant(str(m, "processed_date")), "off_cycle": m["off_cycle"] == true, "off_cycle_reason": str(m, "off_cycle_reason"),
-		"external": m["external"] == true, "gross_pay": gustoMoney(totals["gross_pay"]), "net_pay": gustoMoney(totals["net_pay"]),
-		"employee_taxes": gustoMoney(totals["employee_taxes"]), "employer_taxes": gustoMoney(totals["employer_taxes"]),
-		"benefits": gustoMoney(totals["benefits"]), "deductions": gustoMoney(totals["deductions"]), "reimbursements": gustoMoney(totals["reimbursements"]),
-		"check_amount": gustoMoney(totals["check_amount"]), "company_debit": gustoMoney(totals["company_debit"])}).
-		ref("schedule", str(period, "pay_schedule_uuid"))
-	for _, e := range objects(m["employee_compensations"], "") {
-		worker := str(e, "employee_uuid")
-		line := func(kind, name string, amount Money, hours any, employer bool) {
-			r.child("payroll_pay_line", rowOf(map[string]any{"kind": kind, "name": name, "amount": amount, "hours": hours, "employer": employer}).ref("worker", worker))
-		}
-		var deductions, taxes, employer []Money
-		hours := 0.0
-		for _, x := range objects(e["fixed_compensations"], "") {
-			line("earning", str(x, "name"), gustoMoney(x["amount"]), nil, false)
-		}
-		for _, x := range objects(e["hourly_compensations"], "") {
-			line("earning", str(x, "name"), gustoMoney(x["amount"]), decimal(x["hours"]), false)
-			h, _ := strconv.ParseFloat(num(x["hours"]), 64)
-			hours += h
-		}
-		for _, x := range objects(e["paid_time_off"], "") {
-			line("time_off", str(x, "name"), Money{}, decimal(x["hours"]), false)
-		}
-		for _, x := range objects(e["deductions"], "") {
-			deductions = append(deductions, gustoMoney(x["amount"]))
-			line("deduction", str(x, "name"), gustoMoney(x["amount"]), nil, false)
-		}
-		for _, x := range objects(e["benefits"], "") {
-			line("benefit", str(x, "name"), gustoMoney(x["employee_deduction"]), nil, false)
-			if c := gustoMoney(x["company_contribution"]); c.Minor != nil && *c.Minor != 0 {
-				line("benefit", str(x, "name"), c, nil, true)
-			}
-		}
-		for _, x := range objects(e["taxes"], "") {
-			if x["employer"] == true {
-				employer = append(employer, gustoMoney(x["amount"]))
-			} else {
-				taxes = append(taxes, gustoMoney(x["amount"]))
-			}
-			line("tax", str(x, "name"), gustoMoney(x["amount"]), nil, x["employer"] == true)
-		}
-		r.child("payroll_pay", rowOf(map[string]any{"gross_pay": gustoMoney(e["gross_pay"]), "net_pay": gustoMoney(e["net_pay"]),
-			"check_amount": gustoMoney(e["check_amount"]), "deductions": sum(deductions...), "employee_taxes": sum(taxes...),
-			"employer_taxes": sum(employer...), "hours": hours, "payment_method": str(e, "payment_method")}).ref("worker", worker))
-	}
-	return r
-}
-
-// gustoPayPeriodRows is a pay period, with the payroll it is paid in.
-func gustoPayPeriodRows(m map[string]any) *Row {
-	p := obj(m, "payroll")
-	return gustoRow(m, map[string]any{"starts_on": day(str(m, "start_date")), "ends_on": day(str(m, "end_date")), "check_date": day(str(p, "check_date")),
-		"deadline": instant(str(p, "payroll_deadline")), "processed": flag(p, "processed"), "payroll_type": str(p, "payroll_type")}).
-		ref("schedule", str(m, "pay_schedule_uuid")).ref("run", str(p, "payroll_uuid"))
-}
-
-func gustoContractorPaymentRows(m map[string]any) *Row {
-	return gustoRow(m, map[string]any{"paid_on": day(str(m, "date")), "wage": gustoMoney(m["wage"]), "bonus": gustoMoney(m["bonus"]),
-		"reimbursement": gustoMoney(m["reimbursement"]), "wage_total": gustoMoney(m["wage_total"]), "hours": decimal(m["hours"]),
-		"hourly_rate": gustoMoney(m["hourly_rate"]), "wage_type": str(m, "wage_type"), "payment_method": str(m, "payment_method"),
-		"status": str(m, "status")}).ref("worker", str(m, "contractor_uuid"))
-}
-
-func gustoPaymentGroupRows(m map[string]any) *Row {
-	t := obj(m, "totals")
-	return gustoRow(m, map[string]any{"check_date": day(str(m, "check_date")), "debit_date": day(str(m, "debit_date")), "status": str(m, "status"),
-		"amount": gustoMoney(t["amount"]), "debit_amount": gustoMoney(t["debit_amount"]), "wages": gustoMoney(t["wage_amount"]),
-		"reimbursements": gustoMoney(t["reimbursement_amount"])})
-}
-
-func gustoTaskRows(m map[string]any) *Row {
-	return gustoRow(m, map[string]any{"title": str(m, "title"), "description": str(m, "message"), "due_on": day(str(m, "due_at")),
-		"priority": str(m, "priority"), "category": str(m, "category"), "status": str(m, "status"), "url": str(m, "deep_link")})
-}
+var (
+	gustoNeed       = []string{"company_uuid"}
+	gustoStatus     = []string{"company_uuid", "terminated"} // a tool that took no terminated would list active staff twice, and delete the rest
+	gustoOf         = Obj{"company_uuid": "{in/company}"}
+	gustoSpan       = Obj{"company_uuid": "{in/company}", "start_date": "{in/start}", "end_date": "{in/end}"}
+	gustoKey        = []Reads{{Of: "{uuid;id}"}}
+	gustoCompany    = Obj{"company_uuid": "{company_uuid;in/company}"}
+	gustoPage       = ToolPage{Limit: "per,limit,page_size", Max: 100, Page: "page", After: "cursor,after"}
+	gustoNotCompany = []Test{{At: "resource_type", Is: "company", Off: true}, {At: "uuid", Off: true}}
+	// gustoCompanies are the companies the token reaches, as get_token_info lists them.
+	gustoCompanies = &Parts{Req: Req{Tool: "get_token_info"}, Items: "**/accessible_resources", Skip: gustoNotCompany, ID: "{uuid}", Vals: Obj{"company": "{uuid}"}}
+	// gustoStatuses are each company twice: as it is, and for those no longer active, whom a list leaves out unless asked for.
+	gustoStatuses = &Parts{Req: Req{Tool: "get_token_info"}, Items: "**/accessible_resources", Skip: gustoNotCompany,
+		Under: &Parts{Fixed: []Obj{{"tag": "active"}, {"tag": "gone", "terminated": true}}, ID: "{up/uuid}/{tag}", Vals: Obj{"company": "{up/uuid}", "terminated": "{terminated}"}}}
+	// gustoYears are each company's years to list, to 90 days ahead, as far as Gusto lists what is coming: from a year before
+	// it joined Gusto, for history brought in with it, ten years back when it does not say, until the stream has listed them
+	// once, and after that the recent months alone.
+	gustoYears = &Parts{Req: Req{Tool: "get_token_info"}, Items: "**/accessible_resources", Skip: gustoNotCompany,
+		Under: &Parts{First: true, Req: Req{Tool: "get_company", Body: Obj{"company_uuid": "{up/uuid}"}},
+			Under: &Parts{Span: &Span{Last: Shift{0, 0, 90}, First: Shift{-10, 0, 0}, From: "{up/join_date}", Back: Shift{-1, 0, 0}, Then: Shift{0, -3, -90}, Step: Shift{1, 0, 0}},
+				ID: "{up/uuid}/{start}", Vals: Obj{"company": "{up/uuid}", "start": "{start}", "end": "{end}"}}}}
+	gustoEmployee = map[string]SQL{"worker": "e->>'employee_uuid'"}
+	gustoHome     = map[string]SQL{"kind": "'home'", "street_1": "a->>'street_1'", "street_2": "a->>'street_2'", "city": "a->>'city'", "state": "a->>'state'", "zip": "a->>'zip'", "country": "a->>'country'", "active": "archive.sync_bool(a->'active')", "effective_on": "archive.sync_day(a->>'effective_date')"}
+	gustoWork     = map[string]SQL{"kind": "'work'", "street_1": "a->>'street_1'", "street_2": "a->>'street_2'", "city": "a->>'city'", "state": "a->>'state'", "zip": "a->>'zip'", "country": "a->>'country'", "active": "archive.sync_bool(a->'active')", "effective_on": "archive.sync_day(a->>'effective_date')"}
+)

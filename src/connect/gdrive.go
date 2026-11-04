@@ -1,17 +1,6 @@
 package connect
 
 import (
-	"bytes"
-	"cmp"
-	"encoding/json"
-	"fmt"
-	"io"
-	"mime/multipart"
-	"net/http"
-	"net/textproto"
-	"net/url"
-	"strconv"
-	"strings"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -21,416 +10,187 @@ import (
 // <API>/connect/gdrive/callback, and its consent screen asks for drive, a restricted scope, to read every file
 // and to make, change and trash them; it never deletes one for good.
 // It syncs every file the account can see into drive_file, with the text of Google's own documents, from
-// Drive's changes feed, which pushes too.
+// Drive's changes feed, which pushes too: changes.watch, a channel of Archive's own id that pushes to Archive with its
+// token, for a week at most; the first sync a day after replaces it, and stops the one before. A push says its
+// channel in X-Goog-Channel-ID and its token in X-Goog-Channel-Token; the sync push of a new channel says nothing changed.
 func init() {
 	Register(&Connector{
-		ID: "gdrive", Name: "Google Drive", Env: "ARCHIVE_GOOGLE", Host: "https://accounts.google.com",
-		// Drive allows each user 12,000 requests a minute, and each file read for its text is one more of them.
+		ID: "gdrive", Name: "Google Drive", Env: "ARCHIVE_GOOGLE",
+		Info: Info{By: "Google", Description: "Search and read your files, and make or change them when you ask", Category: CatFiles, Icon: IconDrive,
+			Scopes: []string{"Read your files and documents", "Make, change and trash files when you ask"}},
+		API: "https://www.googleapis.com/drive/v3",
+		// Drive allows each user 325,000 quota units a minute and a project 1,000,000, and a download, the dearest read, costs
+		// 200: 20 requests a second, every account's together, stay under both.
 		Pace: 50 * time.Millisecond,
+		Busy: []string{"Quota exceeded", "rateLimitExceeded", "userRateLimitExceeded", "Rate Limit Exceeded"},
 		Endpoint: oauth2.Endpoint{AuthURL: "https://accounts.google.com/o/oauth2/v2/auth", TokenURL: "https://oauth2.googleapis.com/token",
 			AuthStyle: oauth2.AuthStyleInParams},
 		Revoke: "https://oauth2.googleapis.com/revoke",
 		Scopes: []string{"https://www.googleapis.com/auth/drive"},
 		Params: map[string]string{"access_type": "offline", "prompt": "consent"},
-		Account: func(c *Client) (string, error) {
-			var a struct {
-				User struct {
-					EmailAddress string `json:"emailAddress"`
-				} `json:"user"`
-			}
-			err := c.Get(driveAPI+"/about?fields=user", &a)
-			return strings.ToLower(a.User.EmailAddress), err
-		},
+		Who:    &Who{Req: Req{URL: "/about?fields=user"}, Names: []Path{"user/emailAddress"}, Lower: true},
 		Actions: map[string]*Action{
-			"search": Act("Find files in My Drive and the drives shared with you, newest change first, by words in their name or "+
-				"text, or by a Drive query: { files: [{ id, name, mimeType, modifiedTime, size, webViewLink, owners }], next } (pass next as page for more)",
-				func(c *Client, in struct {
-					Text  string `json:"text,omitempty" jsonschema:"Words in the file's name or content"`
-					Query string `json:"query,omitempty" jsonschema:"A Drive query instead, like mimeType = 'application/pdf' and modifiedTime > '2026-01-01'"`
-					Limit int    `json:"limit,omitempty" jsonschema:"At most this many, 1 to 100; 25 when left out"`
-					Page  string `json:"page,omitempty" jsonschema:"The next of the search before, for the files after it"`
-				}) (any, error) {
-					q := []string{"trashed = false"}
-					if in.Text != "" {
-						q = append(q, "fullText contains '"+strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(in.Text)+"'")
-					}
-					if in.Query != "" {
-						q = append(q, "("+in.Query+")")
-					}
-					v := url.Values{"q": {strings.Join(q, " and ")}, "pageSize": {fmt.Sprint(clamp(in.Limit, 25, 100))}, "supportsAllDrives": {"true"},
-						"includeItemsFromAllDrives": {"true"}, "fields": {"nextPageToken,files(" + driveFields + ")"}}
-					if in.Text == "" {
-						v.Set("orderBy", "modifiedTime desc")
-					}
-					if in.Page != "" {
-						v.Set("pageToken", in.Page)
-					}
-					var out struct {
-						Files []map[string]any `json:"files"`
-						Next  string           `json:"nextPageToken"`
-					}
-					err := c.Get(driveAPI+"/files?"+v.Encode(), &out)
-					return map[string]any{"files": out.Files, "next": out.Next}, err
-				}),
-			"file": Act("One file's details by id: { id, name, mimeType, modifiedTime, size, webViewLink, owners, parents, description }",
-				func(c *Client, in struct {
-					ID string `json:"id" jsonschema:"The file's id, from search"`
-				}) (any, error) {
-					var f map[string]any
-					err := c.Get(driveAPI+"/files/"+url.PathEscape(in.ID)+"?supportsAllDrives=true&fields="+url.QueryEscape(driveFields+",parents,description"), &f)
-					return f, err
-				}),
-			"export": Act("A file's content as text: a Google Doc as plain text, a Sheet as CSV (its first sheet), a Slides deck as plain text, "+
-				"and a text, CSV, JSON or Markdown file as it is; up to 5 MB. Returns { id, name, mimeType, text }",
-				func(c *Client, in struct {
-					ID   string `json:"id" jsonschema:"The file's id, from search"`
-					Type string `json:"type,omitempty" jsonschema:"The MIME type to export a Google file as, like text/html or text/markdown, in place of the default"`
-				}) (any, error) {
-					var f struct {
-						ID       string `json:"id"`
-						Name     string `json:"name"`
-						MIMEType string `json:"mimeType"`
-					}
-					if err := c.Get(driveAPI+"/files/"+url.PathEscape(in.ID)+"?supportsAllDrives=true&fields=id,name,mimeType", &f); err != nil {
-						return nil, err
-					}
-					var text string
-					var err error
-					switch as := driveExports[f.MIMEType]; {
-					case strings.HasPrefix(f.MIMEType, "application/vnd.google-apps."):
-						if in.Type != "" {
-							as = in.Type
-						}
-						if as == "" {
-							return nil, fmt.Errorf("%s is a %s, which has no text to export", f.Name, f.MIMEType)
-						}
-						err = c.Get(driveAPI+"/files/"+url.PathEscape(f.ID)+"/export?mimeType="+url.QueryEscape(as), &text)
-						f.MIMEType = as
-					case strings.HasPrefix(f.MIMEType, "text/") || f.MIMEType == "application/json":
-						err = c.Get(driveAPI+"/files/"+url.PathEscape(f.ID)+"?alt=media&supportsAllDrives=true", &text)
-					default:
-						return nil, fmt.Errorf("%s is a %s file, not text; only Google files and text files export", f.Name, f.MIMEType)
-					}
-					return map[string]any{"id": f.ID, "name": f.Name, "mimeType": f.MIMEType, "text": text}, err
-				}),
-			"create": Write("Make a file or folder in Drive, maybe with text content: { id, name, mimeType, modifiedTime, size, webViewLink, owners }",
-				func(c *Client, in struct {
-					Name        string `json:"name" jsonschema:"The file's name, like Q3 notes"`
-					Content     string `json:"content,omitempty" jsonschema:"Its content, as text"`
-					ContentType string `json:"contentType,omitempty" jsonschema:"The content's MIME type, like text/csv, text/html or text/markdown; text/plain when left out"`
-					Type        string `json:"type,omitempty" jsonschema:"The file's MIME type when it differs from the content's: application/vnd.google-apps.document makes a Google Doc of text, HTML or Markdown, application/vnd.google-apps.spreadsheet a Sheet of CSV, application/vnd.google-apps.folder a folder"`
-					Folder      string `json:"folder,omitempty" jsonschema:"The id of the folder it goes in; the top of My Drive when left out"`
-				}) (any, error) {
-					meta := map[string]any{"name": in.Name}
-					if in.Type != "" {
-						meta["mimeType"] = in.Type
-					}
-					if in.Folder != "" {
-						meta["parents"] = []string{in.Folder}
-					}
-					return driveWrite(c, "POST", "", nil, meta, in.Content, in.ContentType)
-				}),
-			"update": Write("Rename a file, replace its content or move it to another folder: { id, name, mimeType, modifiedTime, size, webViewLink, owners }",
-				func(c *Client, in struct {
-					ID          string `json:"id" jsonschema:"The file's id, from search"`
-					Name        string `json:"name,omitempty" jsonschema:"Its new name"`
-					Content     string `json:"content,omitempty" jsonschema:"Its new content, as text; a Google Doc or Sheet converts it as create does"`
-					ContentType string `json:"contentType,omitempty" jsonschema:"The content's MIME type; text/plain when left out"`
-					Folder      string `json:"folder,omitempty" jsonschema:"The id of the folder to move it to"`
-				}) (any, error) {
-					meta, q := map[string]any{}, url.Values{}
-					if in.Name != "" {
-						meta["name"] = in.Name
-					}
-					if in.Folder != "" {
-						var f struct {
-							Parents []string `json:"parents"`
-						}
-						if err := c.Get(driveAPI+"/files/"+url.PathEscape(in.ID)+"?supportsAllDrives=true&fields=parents", &f); err != nil {
-							return nil, err
-						}
-						q.Set("addParents", in.Folder)
-						q.Set("removeParents", strings.Join(f.Parents, ","))
-					}
-					return driveWrite(c, "PATCH", in.ID, q, meta, in.Content, in.ContentType)
-				}),
-			"trash": Write("Move a file or folder to Drive's trash, from where its owner can restore it for 30 days: { id, name, mimeType, modifiedTime, size, webViewLink, owners }",
-				func(c *Client, in struct {
-					ID string `json:"id" jsonschema:"The file's id, from search"`
-				}) (any, error) {
-					return driveWrite(c, "PATCH", in.ID, nil, map[string]any{"trashed": true}, "", "")
-				}),
+			"search": Call[driveFind, driveFound](Plan{
+				Doc: "Find files in My Drive and the drives shared with you, newest change first, by words in their name or " +
+					"text, or by a Drive query: { files: [{ id, name, mimeType, modifiedTime, size, webViewLink, owners }], next } (pass next as page for more)",
+				Clamp: map[string][2]int{"limit": {25, 100}},
+				Steps: []Step{
+					{If: "text", As: "a", In: "fullText contains '{'text}'"},
+					{If: "query", As: "b", In: "({query})"},
+					{As: "all", In: []any{"trashed = false", "{a}", "{b}"}},
+					{Unless: "text", As: "order", In: "modifiedTime desc"},
+					{As: "got", Req: Req{URL: "/files", Query: Q{"q": "{all, and }", "pageSize": "{limit}", "supportsAllDrives": "true", "includeItemsFromAllDrives": "true",
+						"fields": "nextPageToken,files(" + driveFields + ")", "orderBy": "{order}", "pageToken": "{page}"}}},
+				},
+				Out: Obj{"files": "{got/files|[]}", "next": "{got/nextPageToken|}"},
+			}),
+			"file": Call[driveOne, map[string]any](Plan{
+				Doc:   "One file's details by id: { id, name, mimeType, modifiedTime, size, webViewLink, owners, parents, description }",
+				Steps: []Step{{Req: Req{URL: "/files/{id}", Query: Q{"supportsAllDrives": "true", "fields": driveFields + ",parents,description"}}}},
+			}),
+			"export": Call[driveExport, driveText](Plan{
+				Doc: "A file's content as text: a Google Doc as plain text, a Sheet as CSV (its first sheet), a Slides deck as plain text, " +
+					"and a text, CSV, JSON or Markdown file as it is; up to 5 MB. Returns { id, name, mimeType, text }",
+				Steps: []Step{
+					{As: "f", Req: Req{URL: "/files/{id}?supportsAllDrives=true&fields=id,name,mimeType"}},
+					{Only: Test{At: "f/mimeType", Is: driveDoc}, As: "as", In: "text/plain"},
+					{Only: Test{At: "f/mimeType", Is: driveSheet}, As: "as", In: "text/csv"},
+					{Only: Test{At: "f/mimeType", Is: driveDeck}, As: "as", In: "text/plain"},
+					{If: "type", Only: driveGoogle, As: "as", In: "{type}"},
+					{Unless: "as", Only: driveGoogle, Fail: "{f/name} is a {f/mimeType}, which has no text to export"},
+					{Only: Test{At: "f/mimeType", Re: `^(application/vnd\.google-apps\.|text/|application/json$)`, Off: true}, Fail: "{f/name} is a {f/mimeType} file, not text; only Google files and text files export"},
+					{Only: driveGoogle, As: "text", Req: Req{URL: "/files/{f/id}/export", Query: Q{"mimeType": "{as}"}, Text: true}},
+					{Unless: "as", As: "text", Req: Req{URL: "/files/{f/id}?alt=media&supportsAllDrives=true", Text: true}},
+				},
+				Out: Obj{"id": "{f/id}", "name": "{f/name}", "mimeType": "{as;f/mimeType}", "text": "{text|}"},
+			}),
+			"create": Call[driveNew, driveMade](Plan{
+				Doc: "Make a file or folder in Drive, maybe with text content: { id, name, mimeType, modifiedTime, size, webViewLink, owners }",
+				Steps: []Step{
+					{If: "folder", As: "parents", In: []any{"{folder}"}},
+					{Unless: "content", Req: Req{Method: POST, URL: "/files", Query: driveSaving, Body: driveNewMeta}},
+					{If: "content", Req: Req{Method: POST, URL: driveUpload + "/files", Query: driveUploading, Parts: []Part{{Type: "application/json; charset=UTF-8", Body: driveNewMeta}, driveContent}}},
+				},
+			}),
+			"update": Call[driveEdit, driveMade](Plan{
+				Doc: "Rename a file, replace its content or move it to another folder: { id, name, mimeType, modifiedTime, size, webViewLink, owners }",
+				Steps: []Step{
+					{If: "folder", As: "f", Req: Req{URL: "/files/{id}?supportsAllDrives=true&fields=parents"}},
+					{Unless: "content", Req: Req{Method: PATCH, URL: "/files/{id}", Query: Q{"supportsAllDrives": "true", "fields": driveFields, "addParents": "{folder}", "removeParents": "{f/parents,}"}, Body: Obj{"name": "{name}"}}},
+					{If: "content", Req: Req{Method: PATCH, URL: driveUpload + "/files/{id}", Query: Q{"uploadType": "multipart", "supportsAllDrives": "true", "fields": driveFields, "addParents": "{folder}", "removeParents": "{f/parents,}"},
+						Parts: []Part{{Type: "application/json; charset=UTF-8", Body: Obj{"name": "{name}"}}, driveContent}}},
+				},
+			}),
+			"trash": Call[driveOne, driveMade](Plan{
+				Doc:   "Move a file or folder to Drive's trash, from where its owner can restore it for 30 days: { id, name, mimeType, modifiedTime, size, webViewLink, owners }",
+				Steps: []Step{{Req: Req{Method: PATCH, URL: "/files/{id}", Query: driveSaving, Body: Obj{"trashed": true}}}},
+			}),
 		},
-		Push: drivePush,
-		Streams: []*Stream{{Name: "files", Gap: 2 * time.Second, Pull: driveFiles, Table: "drive_file", Rows: driveRows,
+		Listen: &Listen{Renew: 6 * 24 * time.Hour, Until: 7*24*time.Hour - time.Hour, Mint: "archive-{nonce}", Secret: true, Replace: true,
+			Ask:      &Req{URL: "/changes/startPageToken?supportsAllDrives=true"},
+			Watch:    Req{Method: POST, URL: "/changes/watch", Query: Q{"pageToken": "{ask/startPageToken}", "supportsAllDrives": "true", "includeItemsFromAllDrives": "true"}, Body: Obj{"id": "{key}", "type": "web_hook", "address": "{hook}", "token": "{secret}", "expiration": "{until_ms}"}},
+			Resource: "{answer/resourceId}", Expires: "expiration",
+			Unwatch: &Req{Method: POST, URL: "/channels/stop", Body: Obj{"id": "{key}", "resourceId": "{resource}"}},
+			Kept:    &Kept{IDHeader: "X-Goog-Channel-ID", TokenHeader: "X-Goog-Channel-Token", Quiet: "X-Goog-Resource-State", QuietIs: "sync"},
+		},
+		Sync: []*Sync{{Name: "files", Gap: 2 * time.Second,
+			Req: Req{URL: "/files", Query: Q{"q": "trashed = false", "pageSize": "100", "corpora": "allDrives", "supportsAllDrives": "true", "includeItemsFromAllDrives": "true",
+				"fields": "nextPageToken,incompleteSearch,files(" + driveSync + ")", "pageToken": "{page}"}},
+			Items: "files", Updated: "modifiedTime", Page: Cursor{At: "nextPageToken"}, Short: Test{At: "incompleteSearch", Is: "true"},
+			Change: Resume{Start: &Req{URL: "/changes/startPageToken?supportsAllDrives=true"}, From: "startPageToken", At: "newStartPageToken",
+				Req: Req{URL: "/changes", Query: Q{"pageToken": "{page;token}", "pageSize": "100", "includeRemoved": "true", "supportsAllDrives": "true", "includeItemsFromAllDrives": "true",
+					"fields": "nextPageToken,newStartPageToken,changes(fileId,removed,file(" + driveSync + "))"}},
+				Items: "changes", Inner: "file", ID: "fileId", Gone: []Test{{At: "removed", Is: "true"}, {At: "file", Off: true}, {At: "file/trashed", Is: "true"}}},
+			Hydrate: []Hydrate{
+				Fetch{If: Test{At: "driveId"}, Once: "{driveId}", Soft: true, Req: Req{URL: "/drives/{driveId}?fields=name"}, As: "shared"},
+				// A Sheet reads whole as an Excel workbook, every sheet of it, where its CSV is its first sheet alone.
+				Download{If: Test{At: "mimeType", Is: driveSheet}, Req: Req{URL: "/files/{id}/export", Query: Q{"mimeType": driveXLSX}}, Name: "{name}.xlsx", Mime: driveXLSX, As: "text", Par: 4},
+				// An export is named for what it is, not its title: a Doc titled Report.docx is text here, and no Word file.
+				Download{If: Test{At: "mimeType", Is: driveSheet}, Req: Req{URL: "/files/{id}/export", Query: Q{"mimeType": "text/csv"}}, Name: "export.csv", Mime: "text/csv", As: "text", Par: 4},
+				Download{If: Test{At: "mimeType", Re: `^application/vnd\.google-apps\.(document|presentation)$`}, Req: Req{URL: "/files/{id}/export", Query: Q{"mimeType": "text/plain"}}, Name: "export.txt", Mime: "text/plain", As: "text", Par: 4},
+				Download{If: Test{At: "mimeType", Re: `^application/vnd\.google-apps\.`, Off: true}, Req: Req{URL: "/files/{id}?alt=media&supportsAllDrives=true"}, Name: "{name}", Mime: "{mimeType}", Size: "size", As: "text", Par: 4},
+			},
 			Doc: "Every file and folder in My Drive, shared with you and in your shared drives, but those in the trash: its name, type, size, " +
 				"folder, owner, who changed it last and when, and its words, cut at 64 KB: a Google Doc, Sheet (its first sheet) or Slides " +
 				"deck's, every sheet of a Sheet, and a PDF, Word, Excel, PowerPoint or text file's up to 25 MB; other content stays in Drive. " +
-				"A listing Drive says may have left files out deletes none. Listed whole the first time, 100 a page, and then Drive's changes since."}},
+				"A listing Drive says may have left files out deletes none. Listed whole the first time, 100 a page, and then Drive's changes since.",
+			// A file's folder is its first parent, and its owner the first of them, or for a file of a shared drive, which has none, nobody.
+			To: Map{Table: "drive_file",
+				Cols: map[string]SQL{"kind": "CASE WHEN data->>'mimeType' = 'application/vnd.google-apps.folder' THEN 'folder' ELSE 'file' END", "title": "data->>'name'", "mime": "data->>'mimeType'",
+					"size": "archive.sync_num(data->>'size')", "url": "data->>'webViewLink'",
+					"drive":      "CASE WHEN nullif(data->>'driveId', '') IS NOT NULL THEN coalesce(nullif(data#>>'{shared,name}', ''), 'Shared drive') WHEN data->>'ownedByMe' = 'true' THEN 'My Drive' ELSE 'Shared with me' END",
+					"owner_name": "data#>>'{owners,0,displayName}'", "editor_name": "data#>>'{lastModifyingUser,displayName}'", "made_at": "archive.sync_at(data->>'createdTime')",
+					"edited_at": "archive.sync_at(data->>'modifiedTime')", "text": "data->>'text'"},
+				People: map[string]SQL{"owner": "data#>>'{owners,0,emailAddress}'", "editor": "data#>>'{lastModifyingUser,emailAddress}'"},
+				Refs:   map[string]SQL{"folder": "data#>>'{parents,0}'"}}}},
 	})
-}
-
-// driveSync is what the files stream reads of a file.
-const driveSync = "id,name,mimeType,size,webViewLink,parents,driveId,ownedByMe,createdTime,modifiedTime,trashed," +
-	"owners(displayName,emailAddress),lastModifyingUser(displayName,emailAddress)"
-
-// driveCursor is where the files stream is: Token is the changes' page token its listing began at, or its
-// delta starts from, Page the next page of either, and Listing says a listing is under way.
-type driveCursor struct {
-	Token   string `json:"t"`
-	Page    string `json:"p,omitempty"`
-	Listing bool   `json:"l,omitempty"`
-	// Partial says Drive said a page of this listing may have left files out (incompleteSearch), so it deletes
-	// nothing.
-	Partial bool `json:"partial,omitempty"`
-}
-
-func driveFiles(c *Client, cursor string) (*Page, error) {
-	var cur driveCursor
-	if err := cursorOf(cursor, &cur); err != nil {
-		return nil, err
-	}
-	if cur.Token == "" {
-		var t struct {
-			Token string `json:"startPageToken"`
-		}
-		if err := c.Get(driveAPI+"/changes/startPageToken?supportsAllDrives=true", &t); err != nil {
-			return nil, err
-		}
-		cur = driveCursor{Token: t.Token, Listing: true}
-	}
-	drives := map[string]string{}
-	if cur.Listing {
-		v := url.Values{"q": {"trashed = false"}, "pageSize": {"100"}, "corpora": {"allDrives"}, "supportsAllDrives": {"true"},
-			"includeItemsFromAllDrives": {"true"}, "fields": {"nextPageToken,incompleteSearch,files(" + driveSync + ")"}}
-		if cur.Page != "" {
-			v.Set("pageToken", cur.Page)
-		}
-		var list struct {
-			Files      []map[string]any `json:"files"`
-			Next       string           `json:"nextPageToken"`
-			Incomplete bool             `json:"incompleteSearch"`
-		}
-		if err := c.Get(driveAPI+"/files?"+v.Encode(), &list); err != nil {
-			return nil, err
-		}
-		cur.Partial = cur.Partial || list.Incomplete
-		page := &Page{Full: !cur.Partial, More: list.Next != ""}
-		var err error
-		page.Records, err = driveRecords(c, list.Files, drives)
-		cur.Page, cur.Listing = list.Next, list.Next != ""
-		if !cur.Listing {
-			cur.Partial = false
-		}
-		page.Cursor = cursorFor(cur)
-		return page, err
-	}
-	v := url.Values{"pageToken": {cmp.Or(cur.Page, cur.Token)}, "pageSize": {"100"}, "includeRemoved": {"true"}, "supportsAllDrives": {"true"},
-		"includeItemsFromAllDrives": {"true"}, "fields": {"nextPageToken,newStartPageToken,changes(fileId,removed,file(" + driveSync + "))"}}
-	var ch struct {
-		Changes []struct {
-			FileID  string         `json:"fileId"`
-			Removed bool           `json:"removed"`
-			File    map[string]any `json:"file"`
-		} `json:"changes"`
-		Next  string `json:"nextPageToken"`
-		Start string `json:"newStartPageToken"`
-	}
-	if err := c.Get(driveAPI+"/changes?"+v.Encode(), &ch); err != nil {
-		return nil, err
-	}
-	page := &Page{More: ch.Next != ""}
-	var live []map[string]any
-	for _, x := range ch.Changes {
-		switch {
-		case x.FileID == "":
-		case x.Removed || x.File == nil || x.File["trashed"] == true:
-			page.Records = append(page.Records, Record{ID: x.FileID, Deleted: true})
-		default:
-			live = append(live, x.File)
-		}
-	}
-	got, err := driveRecords(c, live, drives)
-	page.Records = append(page.Records, got...)
-	if ch.Next != "" {
-		cur.Page = ch.Next
-	} else {
-		cur = driveCursor{Token: cmp.Or(ch.Start, cur.Token)}
-	}
-	page.Cursor = cursorFor(cur)
-	return page, err
-}
-
-// driveRecords are files as records, each with the drive it is in by name, and the text of those that read as
-// text, four at a time; drives keeps the names of shared drives the page has looked up.
-func driveRecords(c *Client, files []map[string]any, drives map[string]string) ([]Record, error) {
-	for _, f := range files {
-		switch id := str(f, "driveId"); {
-		case id != "":
-			if _, ok := drives[id]; !ok {
-				var d struct {
-					Name string `json:"name"`
-				}
-				if err := c.Get(driveAPI+"/drives/"+url.PathEscape(id)+"?fields=name", &d); err != nil && Busy(err) {
-					return nil, err
-				}
-				drives[id] = cmp.Or(d.Name, "Shared drive")
-			}
-			f["drive"] = drives[id]
-		case f["ownedByMe"] == true:
-			f["drive"] = "My Drive"
-		default:
-			f["drive"] = "Shared with me"
-		}
-	}
-	out := make([]Record, len(files))
-	err := each(len(files), 4, func(i int) error {
-		f := files[i]
-		text, err := driveText(c, f)
-		if err != nil {
-			return err
-		}
-		f["text"] = clip(text, maxText)
-		out[i] = Record{ID: str(f, "id"), Data: f, Updated: stamp(str(f, "modifiedTime"))}
-		return nil
-	})
-	return out, err
-}
-
-// driveText is the words of f: a Google Doc, Sheet or Slides deck as export has it, and any other file Archive
-// reads, like a PDF or a Word file, downloaded up to 25 MB; "" for the rest, or one Drive will not hand over.
-// Only a busy Drive is an error.
-func driveText(c *Client, f map[string]any) (string, error) {
-	id, mime := url.PathEscape(str(f, "id")), str(f, "mimeType")
-	// A Sheet reads whole as an Excel workbook, every sheet of it, where its CSV is its first sheet alone.
-	if mime == "application/vnd.google-apps.spreadsheet" {
-		text, err := c.fileText(driveAPI+"/files/"+id+"/export?mimeType="+url.QueryEscape(xlsxMIME), str(f, "name")+".xlsx", xlsxMIME, 0)
-		if err != nil || text != "" {
-			return text, err
-		}
-	}
-	if as := driveExports[mime]; as != "" {
-		var text string
-		if err := c.Get(driveAPI+"/files/"+id+"/export?mimeType="+url.QueryEscape(as), &text); err != nil {
-			if Busy(err) {
-				return "", err
-			}
-			return "", nil
-		}
-		return text, nil
-	}
-	if strings.HasPrefix(mime, "application/vnd.google-apps.") {
-		return "", nil
-	}
-	size, _ := strconv.ParseInt(str(f, "size"), 10, 64)
-	return c.fileText(driveAPI+"/files/"+id+"?alt=media&supportsAllDrives=true", str(f, "name"), mime, size)
-}
-
-// driveRows is a file as a file of a drive: its folder is its first parent, and its owner the first of them,
-// or for a file of a shared drive, which has none, nobody.
-func driveRows(m map[string]any) *Row {
-	kind := "file"
-	if str(m, "mimeType") == "application/vnd.google-apps.folder" {
-		kind = "folder"
-	}
-	owner, editor := map[string]any{}, obj(m, "lastModifyingUser")
-	if owners := objects(m["owners"], ""); len(owners) > 0 {
-		owner = owners[0]
-	}
-	r := rowOf(map[string]any{"kind": kind, "title": str(m, "name"), "mime": str(m, "mimeType"), "size": decimal(m["size"]), "url": str(m, "webViewLink"),
-		"drive": str(m, "drive"), "owner_name": str(owner, "displayName"), "editor_name": str(editor, "displayName"),
-		"made_at": instant(str(m, "createdTime")), "edited_at": instant(str(m, "modifiedTime")), "text": str(m, "text")})
-	if ps := strs(m["parents"]); len(ps) > 0 {
-		r.ref("folder", ps[0])
-	}
-	return r.person("owner", str(owner, "emailAddress")).person("editor", str(editor, "emailAddress"))
 }
 
 const (
-	driveAPI    = "https://www.googleapis.com/drive/v3"
 	driveFields = "id,name,mimeType,modifiedTime,size,webViewLink,owners(displayName,emailAddress)"
+	// driveSync is what the files stream reads of a file.
+	driveSync = "id,name,mimeType,size,webViewLink,parents,driveId,ownedByMe,createdTime,modifiedTime,trashed," +
+		"owners(displayName,emailAddress),lastModifyingUser(displayName,emailAddress)"
+	driveUpload = "https://www.googleapis.com/upload/drive/v3"
+	driveXLSX   = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	driveDoc    = "application/vnd.google-apps.document"
+	driveSheet  = "application/vnd.google-apps.spreadsheet"
+	driveDeck   = "application/vnd.google-apps.presentation"
 )
 
-// driveWrite makes a file, with method POST and no id, or changes file id: its metadata meta, and content of
-// type ct when there is any, sent together as one multipart upload.
-func driveWrite(c *Client, method, id string, q url.Values, meta map[string]any, content, ct string) (map[string]any, error) {
-	if q == nil {
-		q = url.Values{}
+var (
+	driveGoogle    = Test{At: "f/mimeType", Re: `^application/vnd\.google-apps\.`}
+	driveSaving    = Q{"supportsAllDrives": "true", "fields": driveFields}
+	driveUploading = Q{"uploadType": "multipart", "supportsAllDrives": "true", "fields": driveFields}
+	driveNewMeta   = Obj{"name": "{name}", "mimeType": "{type}", "parents": "{parents}"}
+	driveContent   = Part{Type: "{contentType|text/plain}; charset=UTF-8", Body: "{content}"}
+)
+
+type (
+	driveFind struct {
+		Text  string `json:"text,omitempty" jsonschema:"Words in the file's name or content"`
+		Query string `json:"query,omitempty" jsonschema:"A Drive query instead, like mimeType = 'application/pdf' and modifiedTime > '2026-01-01'"`
+		Limit int    `json:"limit,omitempty" jsonschema:"At most this many, 1 to 100; 25 when left out"`
+		Page  string `json:"page,omitempty" jsonschema:"The next of the search before, for the files after it"`
 	}
-	q.Set("supportsAllDrives", "true")
-	q.Set("fields", driveFields)
-	path := "/files"
-	if id != "" {
-		path += "/" + url.PathEscape(id)
+	driveOne struct {
+		ID string `json:"id" jsonschema:"The file's id, from search"`
 	}
-	var out map[string]any
-	if content == "" {
-		err := c.Do(method, driveAPI+path+"?"+q.Encode(), meta, &out)
-		return out, err
+	driveExport struct {
+		ID   string `json:"id" jsonschema:"The file's id, from search"`
+		Type string `json:"type,omitempty" jsonschema:"The MIME type to export a Google file as, like text/html or text/markdown, in place of the default"`
 	}
-	var b bytes.Buffer
-	mw := multipart.NewWriter(&b)
-	j, _ := json.Marshal(meta)
-	w, _ := mw.CreatePart(textproto.MIMEHeader{"Content-Type": {"application/json; charset=UTF-8"}})
-	w.Write(j)
-	w, _ = mw.CreatePart(textproto.MIMEHeader{"Content-Type": {cmp.Or(ct, "text/plain") + "; charset=UTF-8"}})
-	io.WriteString(w, content)
-	mw.Close()
-	q.Set("uploadType", "multipart")
-	err := c.Send(method, driveUpload+path+"?"+q.Encode(), http.Header{"Content-Type": {"multipart/related; boundary=" + mw.Boundary()}}, b.String(), &out)
-	return out, err
-}
-
-const driveUpload = "https://www.googleapis.com/upload/drive/v3"
-
-const xlsxMIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-
-var driveExports = map[string]string{
-	"application/vnd.google-apps.document":     "text/plain",
-	"application/vnd.google-apps.spreadsheet":  "text/csv",
-	"application/vnd.google-apps.presentation": "text/plain",
-}
-
-// drivePush is changes.watch, a channel of Archive's own id that pushes to Archive with its token, for a week
-// at most; the first sync a day after replaces it, and stops the one before. A push says its channel in
-// X-Goog-Channel-ID and its token in X-Goog-Channel-Token; the sync push of a new channel says nothing changed.
-var drivePush = &Push{Renew: 6 * 24 * time.Hour,
-	Watch: func(c *Client, h Hook, old []Watch) ([]Watch, error) {
-		var t struct {
-			Token string `json:"startPageToken"`
-		}
-		if err := c.Get(driveAPI+"/changes/startPageToken?supportsAllDrives=true", &t); err != nil {
-			return nil, err
-		}
-		id, token := "archive-"+nonce()[:32], nonce()
-		var ch struct {
-			ResourceID string `json:"resourceId"`
-			Expiration string `json:"expiration"`
-		}
-		q := url.Values{"pageToken": {t.Token}, "supportsAllDrives": {"true"}, "includeItemsFromAllDrives": {"true"}}
-		body := map[string]any{"id": id, "type": "web_hook", "address": h.URL(id), "token": token,
-			"expiration": strconv.FormatInt(time.Now().Add(7*24*time.Hour-time.Hour).UnixMilli(), 10)}
-		if err := c.Do("POST", driveAPI+"/changes/watch?"+q.Encode(), body, &ch); err != nil {
-			return nil, err
-		}
-		for _, o := range old {
-			c.Do("POST", driveAPI+"/channels/stop", map[string]string{"id": o.Key, "resourceId": o.Resource}, nil)
-		}
-		return []Watch{{Key: id, Resource: ch.ResourceID, Secret: token, Expires: stamp(ch.Expiration)}}, nil
-	},
-	Unwatch: func(c *Client, w Watch) error {
-		return c.Do("POST", driveAPI+"/channels/stop", map[string]string{"id": w.Key, "resourceId": w.Resource}, nil)
-	},
-	Hear: func(p *Provider, r *http.Request, at string, body []byte, secret func(string) string) (*Heard, error) {
-		id := r.Header.Get("X-Goog-Channel-ID")
-		kept := secret(id)
-		switch {
-		case kept == "":
-			return &Heard{}, nil
-		case !same(kept, r.Header.Get("X-Goog-Channel-Token")):
-			return nil, forged("channel %s's token", id)
-		case r.Header.Get("X-Goog-Resource-State") == "sync":
-			return &Heard{}, nil
-		}
-		return &Heard{Keys: []string{id}}, nil
-	}}
+	driveNew struct {
+		Name        string `json:"name" jsonschema:"The file's name, like Q3 notes"`
+		Content     string `json:"content,omitempty" jsonschema:"Its content, as text"`
+		ContentType string `json:"contentType,omitempty" jsonschema:"The content's MIME type, like text/csv, text/html or text/markdown; text/plain when left out"`
+		Type        string `json:"type,omitempty" jsonschema:"The file's MIME type when it differs from the content's: application/vnd.google-apps.document makes a Google Doc of text, HTML or Markdown, application/vnd.google-apps.spreadsheet a Sheet of CSV, application/vnd.google-apps.folder a folder"`
+		Folder      string `json:"folder,omitempty" jsonschema:"The id of the folder it goes in; the top of My Drive when left out"`
+	}
+	driveEdit struct {
+		ID          string `json:"id" jsonschema:"The file's id, from search"`
+		Name        string `json:"name,omitempty" jsonschema:"Its new name"`
+		Content     string `json:"content,omitempty" jsonschema:"Its new content, as text; a Google Doc or Sheet converts it as create does"`
+		ContentType string `json:"contentType,omitempty" jsonschema:"The content's MIME type; text/plain when left out"`
+		Folder      string `json:"folder,omitempty" jsonschema:"The id of the folder to move it to"`
+	}
+	driveMade struct {
+		ID           string           `json:"id"`
+		Name         string           `json:"name"`
+		MIMEType     string           `json:"mimeType"`
+		ModifiedTime string           `json:"modifiedTime,omitempty"`
+		Size         string           `json:"size,omitempty"`
+		WebViewLink  string           `json:"webViewLink,omitempty"`
+		Owners       []map[string]any `json:"owners,omitempty"`
+	}
+	driveFound struct {
+		Files []driveMade `json:"files"`
+		Next  string      `json:"next" jsonschema:"Pass as page for more; empty when there is no more"`
+	}
+	driveText struct {
+		ID       string `json:"id"`
+		Name     string `json:"name"`
+		MIMEType string `json:"mimeType"`
+		Text     string `json:"text"`
+	}
+)

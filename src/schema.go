@@ -1837,8 +1837,7 @@ const (
 // to drop anything else that has data. Each stays listed, so a database that still has one drops it whenever
 // it opens next.
 var pgDropped = map[string]bool{
-	// What connections synced is in the tables of its domain now, and syncs start from scratch to fill them
-	// (syncRowsVersion).
+	// What connections synced is in the tables of its domain now, and syncs started from scratch to fill them.
 	"table archive.record": true,
 }
 

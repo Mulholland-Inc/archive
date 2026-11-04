@@ -1,20 +1,12 @@
 package connect
 
-import (
-	"cmp"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"net/http"
-	"strings"
-	"time"
-)
+import "time"
 
 // Shopify, a store's admin through its GraphQL Admin API, read only. Shopify's sign-in is per store and for apps
 // it lists, so this connects as a custom app the store makes itself: in the store's admin, Settings, Apps and
 // sales channels, Develop apps, an app with the Admin API scopes read_orders, read_products and
 // read_customers, whose Admin API access token an owner pastes in with the store's address. The token lasts
-// until the store uninstalls the app.
+// until the store uninstalls the app. A GraphQL document with anything but queries in it is refused before it goes.
 //
 // It syncs the store's orders, with their lines, into commerce_order and commerce_line, its products into
 // commerce_product, and its customers into crm_contact, the person of their email. Each is listed whole the
@@ -23,205 +15,89 @@ import (
 func init() {
 	Register(&Connector{
 		ID: "shopify", Name: "Shopify", Integration: true,
+		Info: Info{By: "Shopify", Description: "Read the store’s orders, products and customers", Category: CatCommerce, Icon: IconCard, Scopes: []string{"Read orders, products and customers with the store’s app token"}},
 		Keys: []Key{
 			{Name: "shop", Label: "Store address", Help: "Your store's myshopify.com address, like acme.myshopify.com"},
 			{Name: "token", Label: "Admin API access token", Secret: true,
 				Help: "In your Shopify admin, Settings, Apps and sales channels, Develop apps: make an app with the Admin API scopes read_orders, " +
 					"read_all_orders, read_products and read_customers, install it, and copy its Admin API access token, which starts with shpat_"},
 		},
-		Authorize: func(r *http.Request, c *Client) { r.Header.Set("X-Shopify-Access-Token", c.Key("token")) },
-		Account: func(c *Client) (string, error) {
-			var out struct {
-				Shop struct {
-					Name   string `json:"name"`
-					Domain string `json:"myshopifyDomain"`
-				} `json:"shop"`
-			}
-			err := shopifyQL(c, "{ shop { name myshopifyDomain } }", nil, &out)
-			return cmp.Or(out.Shop.Domain, out.Shop.Name), err
+		Sign: map[string]string{"X-Shopify-Access-Token": "{key/token}"},
+		// The store, given as its address or a URL of it, in the version of the Admin API the connector reads.
+		API: "https://{+shop}/admin/api/2025-10",
+		Let: []Step{
+			{As: "shop", In: "{key/shop}", Find: `^(?:[^/]*://)?([^/]*)`},
+			{Only: Test{At: "shop", Re: `^[^.]*$`}, As: "shop", In: "{shop}.myshopify.com"},
 		},
+		// Shopify answers errors with a 200, and running out of the store's query budget is one the sync tries again later.
+		Errors: &Errors{At: "errors/0/message", Code: "errors/0/extensions/code", Busy: []string{"THROTTLED"}},
+		Who:    &Who{Req: Req{Method: POST, Read: true, URL: "/graphql.json", Body: Obj{"query": "{ shop { name myshopifyDomain } }"}}, Names: []Path{"data/shop/myshopifyDomain", "data/shop/name"}},
 		Actions: map[string]*Action{
-			"graphql": Act("Run a query of Shopify's GraphQL Admin API, like { query: \"{ orders(first: 10, query: \\\"financial_status:pending\\\") "+
-				"{ nodes { name totalPriceSet { shopMoney { amount } } } } }\" }: its data. Queries only; a mutation is refused",
-				func(c *Client, in struct {
-					Query     string         `json:"query" jsonschema:"The GraphQL query"`
-					Variables map[string]any `json:"variables,omitempty" jsonschema:"Its variables"`
-				}) (any, error) {
-					if strings.HasPrefix(strings.TrimSpace(in.Query), "mutation") {
-						return nil, errors.New("Archive reads Shopify, and runs no mutations")
-					}
-					var out any
-					err := shopifyQL(c, in.Query, in.Variables, &out)
-					return out, err
-				}),
+			"graphql": Call[shopifyQuery, any](Plan{
+				Doc: "Run a query of Shopify's GraphQL Admin API, like { query: \"{ orders(first: 10, query: \\\"financial_status:pending\\\") " +
+					"{ nodes { name totalPriceSet { shopMoney { amount } } } } }\" }: its data. Queries only; a mutation is refused",
+				Steps: []Step{
+					{Codec: GraphQLReads, In: "{query}"},
+					{As: "got", Req: Req{Method: POST, Read: true, URL: "/graphql.json", Body: Obj{"query": "{query}", "variables": "{variables}"}}},
+				},
+				Out: "{got/data}",
+			}),
 		},
-		Streams: []*Stream{
-			shopifyStream("products", "products", "ProductSortKeys", 100, shopifyProductFields, "commerce_product", shopifyProductRows,
-				"Every product, with its vendor, type, status, tags, lowest price, stock and description, cut at 64 KB"),
-			shopifyStream("customers", "customers", "CustomerSortKeys", 100, shopifyCustomerFields, "crm_contact", shopifyCustomerRows,
-				"Every customer, with their name, email, phone and address"),
-			shopifyStream("orders", "orders", "OrderSortKeys", 5, shopifyOrderFields, "commerce_order", shopifyOrderRows,
-				"Every order, with its customer, totals, payment and shipping status, tags and note, and up to 25 of its lines; without "+
-					"read_all_orders Shopify lists only the last 60 days, so a listing deletes no order"),
+		Sync: []*Sync{
+			{Name: "products", Gap: time.Second, Req: shopifyList, Items: "data/products/nodes", Updated: "updatedAt", Page: Cursor{At: "data/products/pageInfo/endCursor", More: "data/products/pageInfo/hasNextPage"},
+				Change: shopifyChange, Deny: shopifyDeny, Vars: Obj{"first": 100, "what": "query($first: Int!, $after: String) { products(first: $first, after: $after, sortKey: ID) { nodes { " + shopifyProduct + " } pageInfo { hasNextPage endCursor } } }",
+					"since_query": "query($first: Int!, $after: String, $query: String) { products(first: $first, after: $after, query: $query, sortKey: UPDATED_AT) { nodes { " + shopifyProduct + " } pageInfo { hasNextPage endCursor } } }", "field": "products"},
+				Doc: "Every product, with its vendor, type, status, tags, lowest price, stock and description, cut at 64 KB, by its id: listed whole the first time and a week after, which deletes those gone, and in between those updated since the sync before.",
+				To: Map{Table: "commerce_product",
+					Cols: map[string]SQL{"title": "data->>'title'", "vendor": "data->>'vendor'", "type": "data->>'productType'", "status": "data->>'status'", "tags": "coalesce(data->'tags', '[]'::jsonb)",
+						"price":     "archive.sync_money(data#>>'{priceRangeV2,minVariantPrice,amount}', coalesce(nullif(data#>>'{priceRangeV2,minVariantPrice,currencyCode}', ''), 'USD'))",
+						"inventory": "archive.sync_num(data->>'totalInventory')", "description": "archive.sync_clip(data->>'description', 65536)", "url": "data->>'onlineStoreUrl'",
+						"made_at": "archive.sync_at(data->>'createdAt')", "edited_at": "archive.sync_at(data->>'updatedAt')"}}},
+			{Name: "customers", Gap: time.Second, Req: shopifyList, Items: "data/customers/nodes", Updated: "updatedAt", Page: Cursor{At: "data/customers/pageInfo/endCursor", More: "data/customers/pageInfo/hasNextPage"},
+				Change: shopifyChange, Deny: shopifyDeny, Vars: Obj{"first": 100, "what": "query($first: Int!, $after: String) { customers(first: $first, after: $after, sortKey: ID) { nodes { " + shopifyCustomer + " } pageInfo { hasNextPage endCursor } } }",
+					"since_query": "query($first: Int!, $after: String, $query: String) { customers(first: $first, after: $after, query: $query, sortKey: UPDATED_AT) { nodes { " + shopifyCustomer + " } pageInfo { hasNextPage endCursor } } }", "field": "customers"},
+				Doc: "Every customer, with their name, email, phone and address, by its id: listed whole the first time and a week after, which deletes those gone, and in between those updated since the sync before.",
+				To: Map{Table: "crm_contact",
+					Cols: map[string]SQL{"first_name": "data->>'firstName'", "last_name": "data->>'lastName'", "email": "archive.sync_email(data#>>'{defaultEmailAddress,emailAddress}')",
+						"phone": "data#>>'{defaultPhoneNumber,phoneNumber}'", "stage": "'customer'", "city": "data#>>'{defaultAddress,city}'", "state": "data#>>'{defaultAddress,provinceCode}'",
+						"country": "data#>>'{defaultAddress,countryCodeV2}'", "made_at": "archive.sync_at(data->>'createdAt')", "edited_at": "archive.sync_at(data->>'updatedAt')"},
+					People: map[string]SQL{"person": "data#>>'{defaultEmailAddress,emailAddress}'"}}},
+			// Without read_all_orders, Shopify lists only the last 60 days of orders: such a listing is no listing of
+			// them all, and deletes nothing. A listing's every page says which scopes the app has, so that a page never asks apart.
+			{Name: "orders", Gap: time.Second, Req: shopifyList, Items: "data/orders/nodes", Updated: "updatedAt", Page: Cursor{At: "data/orders/pageInfo/endCursor", More: "data/orders/pageInfo/hasNextPage"},
+				Change: shopifyChange, Deny: shopifyDeny, Short: Test{At: "data/currentAppInstallation/accessScopes/*/handle", Is: "read_all_orders", Off: true},
+				Vars: Obj{"first": 5, "what": "query($first: Int!, $after: String) { orders(first: $first, after: $after, sortKey: ID) { nodes { " + shopifyOrder + " } pageInfo { hasNextPage endCursor } } currentAppInstallation { accessScopes { handle } } }",
+					"since_query": "query($first: Int!, $after: String, $query: String) { orders(first: $first, after: $after, query: $query, sortKey: UPDATED_AT) { nodes { " + shopifyOrder + " } pageInfo { hasNextPage endCursor } } }", "field": "orders"},
+				Doc: "Every order, with its customer, totals, payment and shipping status, tags and note, and up to 25 of its lines; without " +
+					"read_all_orders Shopify lists only the last 60 days, so a listing deletes no order, by its id: listed whole the first time and a week after, which deletes those gone, and in between those updated since the sync before.",
+				To: Map{Table: "commerce_order",
+					Cols: map[string]SQL{"number": "data->>'name'", "customer_name": "data#>>'{customer,displayName}'", "email": "archive.sync_email(data->>'email')",
+						"total":     "archive.sync_money(data#>>'{totalPriceSet,shopMoney,amount}', coalesce(nullif(data#>>'{totalPriceSet,shopMoney,currencyCode}', ''), 'USD'))",
+						"subtotal":  "archive.sync_money(data#>>'{subtotalPriceSet,shopMoney,amount}', coalesce(nullif(data#>>'{subtotalPriceSet,shopMoney,currencyCode}', ''), 'USD'))",
+						"tax":       "archive.sync_money(data#>>'{totalTaxSet,shopMoney,amount}', coalesce(nullif(data#>>'{totalTaxSet,shopMoney,currencyCode}', ''), 'USD'))",
+						"shipping":  "archive.sync_money(data#>>'{totalShippingPriceSet,shopMoney,amount}', coalesce(nullif(data#>>'{totalShippingPriceSet,shopMoney,currencyCode}', ''), 'USD'))",
+						"discounts": "archive.sync_money(data#>>'{totalDiscountsSet,shopMoney,amount}', coalesce(nullif(data#>>'{totalDiscountsSet,shopMoney,currencyCode}', ''), 'USD'))",
+						"refunded":  "archive.sync_money(data#>>'{totalRefundedSet,shopMoney,amount}', coalesce(nullif(data#>>'{totalRefundedSet,shopMoney,currencyCode}', ''), 'USD'))",
+						"paid":      "data->>'displayFinancialStatus'", "fulfilled": "data->>'displayFulfillmentStatus'", "cancelled_at": "archive.sync_at(data->>'cancelledAt')",
+						"city": "data#>>'{shippingAddress,city}'", "state": "data#>>'{shippingAddress,provinceCode}'", "country": "data#>>'{shippingAddress,countryCodeV2}'",
+						"tags": "coalesce(data->'tags', '[]'::jsonb)", "note": "data->>'note'", "placed_at": "archive.sync_at(data->>'createdAt')", "edited_at": "archive.sync_at(data->>'updatedAt')"},
+					People: map[string]SQL{"customer": "data->>'email'"},
+					Children: []Kids{{Table: "commerce_line", From: "archive.sync_list(data#>'{lineItems,nodes}') l",
+						Cols: map[string]SQL{"title": "l->>'title'", "variant": "l->>'variantTitle'", "sku": "l->>'sku'", "quantity": "archive.sync_num(l->>'quantity')",
+							"price": "archive.sync_money(l#>>'{originalUnitPriceSet,shopMoney,amount}', coalesce(nullif(l#>>'{originalUnitPriceSet,shopMoney,currencyCode}', ''), 'USD'))",
+							"total": "archive.sync_money(l#>>'{discountedTotalSet,shopMoney,amount}', coalesce(nullif(l#>>'{discountedTotalSet,shopMoney,currencyCode}', ''), 'USD'))"},
+						Refs: map[string]SQL{"product": "l#>>'{product,id}'"}}}}},
 		},
 	})
 }
 
-// shopifyVersion is the version of the Admin API the connector reads.
-const shopifyVersion = "2025-10"
-
-// shopifyURL is the GraphQL Admin API of the store the client's keys name, given as its address or a URL of it.
-func shopifyURL(c *Client) string {
-	shop := strings.ToLower(strings.TrimSpace(c.Key("shop")))
-	if i := strings.Index(shop, "://"); i >= 0 {
-		shop = shop[i+3:]
-	}
-	shop, _, _ = strings.Cut(shop, "/")
-	if !strings.Contains(shop, ".") {
-		shop += ".myshopify.com"
-	}
-	return "https://" + shop + "/admin/api/" + shopifyVersion + "/graphql.json"
-}
-
-// shopifyQL runs a GraphQL query on the store into out, its data. Shopify answers errors with a 200: they are a
-// Refusal, and running out of the store's query budget is a 429, which the sync tries again later.
-func shopifyQL(c *Client, query string, vars map[string]any, out any) error {
-	var res struct {
-		Data   json.RawMessage `json:"data"`
-		Errors []struct {
-			Message    string `json:"message"`
-			Extensions struct {
-				Code string `json:"code"`
-			} `json:"extensions"`
-		} `json:"errors"`
-	}
-	if err := c.Do("POST", shopifyURL(c), map[string]any{"query": query, "variables": vars}, &res); err != nil {
-		return err
-	}
-	if len(res.Errors) > 0 {
-		e := res.Errors[0]
-		status := http.StatusBadRequest
-		if e.Extensions.Code == "THROTTLED" {
-			status = http.StatusTooManyRequests
-		}
-		return &Refusal{Provider: "Shopify", Status: status, Message: e.Message}
-	}
-	if len(res.Data) == 0 || string(res.Data) == "null" {
-		return nil
-	}
-	return json.Unmarshal(res.Data, out)
-}
-
-// shopifyAllOrders says whether the store's app may read every order, not only the last 60 days'.
-func shopifyAllOrders(c *Client) (bool, error) {
-	var out struct {
-		App struct {
-			Scopes []struct {
-				Handle string `json:"handle"`
-			} `json:"accessScopes"`
-		} `json:"currentAppInstallation"`
-	}
-	if err := shopifyQL(c, "{ currentAppInstallation { accessScopes { handle } } }", nil, &out); err != nil {
-		return false, err
-	}
-	for _, s := range out.App.Scopes {
-		if s.Handle == "read_all_orders" {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// shopifyCursor is where a stream is: Since when the sync its records are as of began, Listed when its last
-// full listing began, and while a sync is under way, Mode list or delta, Began when it began, After the
-// cursor of its next page, and for a listing of orders, All, whether the app may read them all, as asked once
-// when it began.
-type shopifyCursor struct {
-	Since  string `json:"since,omitempty"`
-	Listed string `json:"listed,omitempty"`
-	Mode   string `json:"mode,omitempty"`
-	Began  string `json:"began,omitempty"`
-	After  string `json:"after,omitempty"`
-	All    *bool  `json:"all,omitempty"`
-}
-
-// shopifyStream is the stream of the store's connection field, size a page, each node with fields, into table.
-func shopifyStream(name, field, sortKeys string, size int, fields, table string, rows func(map[string]any) *Row, what string) *Stream {
-	return &Stream{Name: name, Gap: time.Second, Table: table, Rows: rows,
-		Doc: what + ", by its id: listed whole the first time and a week after, which deletes those gone, and in between those updated " +
-			"since the sync before.",
-		Pull: func(c *Client, cursor string) (*Page, error) {
-			var cur shopifyCursor
-			if err := cursorOf(cursor, &cur); err != nil {
-				return nil, err
-			}
-			now := time.Now().Add(-time.Minute).UTC()
-			if cur.Mode == "" {
-				cur.Mode, cur.Began, cur.After = "delta", now.Format(time.RFC3339), ""
-				if cur.Since == "" || now.Sub(stamp(cur.Listed)) > 7*24*time.Hour {
-					cur.Mode = "list"
-				}
-			}
-			vars := map[string]any{"first": size}
-			sort, search := "ID", ""
-			if cur.Mode == "delta" {
-				sort, search = "UPDATED_AT", fmt.Sprintf("updated_at:>'%s'", cur.Since)
-				vars["query"] = search
-			}
-			if cur.After != "" {
-				vars["after"] = cur.After
-			}
-			q := fmt.Sprintf(`query($first: Int!, $after: String, $query: String) { %s(first: $first, after: $after, query: $query, sortKey: %s) {
-				nodes { %s } pageInfo { hasNextPage endCursor } } }`, field, sort, fields)
-			var out map[string]struct {
-				Nodes    []map[string]any `json:"nodes"`
-				PageInfo struct {
-					More bool   `json:"hasNextPage"`
-					End  string `json:"endCursor"`
-				} `json:"pageInfo"`
-			}
-			if err := shopifyQL(c, q, vars, &out); err != nil {
-				if r := (*Refusal)(nil); errors.As(err, &r) && r.Status == http.StatusBadRequest && strings.Contains(strings.ToLower(r.Message), "access denied") {
-					return nil, unsupported("the store's app may not read %s; give it the scope read_%s", field, field)
-				}
-				return nil, err
-			}
-			got := out[field]
-			// Without read_all_orders, Shopify lists only the last 60 days of orders: such a listing is no listing of
-			// them all, and deletes nothing. It is asked once a listing, not a page: a page not Full in the middle of
-			// a listing, as one whose ask failed would be, starts its deleting after it, which deletes what the pages
-			// before it read. An ask that fails fails the page, which the sync tries again.
-			if field == "orders" && cur.Mode == "list" && cur.All == nil {
-				all, err := shopifyAllOrders(c)
-				if err != nil {
-					return nil, err
-				}
-				cur.All = &all
-			}
-			page := &Page{Full: cur.Mode == "list" && (field != "orders" || *cur.All)}
-			for _, m := range got.Nodes {
-				page.Records = append(page.Records, Record{ID: str(m, "id"), Data: m, Updated: stamp(str(m, "updatedAt"))})
-			}
-			if got.PageInfo.More && got.PageInfo.End != "" {
-				cur.After, page.More = got.PageInfo.End, true
-			} else {
-				if cur.Mode == "list" {
-					cur.Listed = cur.Began
-				}
-				cur = shopifyCursor{Since: cur.Began, Listed: cur.Listed}
-			}
-			page.Cursor = cursorFor(cur)
-			return page, nil
-		}}
-}
-
 const (
-	shopifyMoney         = "shopMoney { amount currencyCode }"
-	shopifyProductFields = "id title vendor productType status tags createdAt updatedAt onlineStoreUrl description totalInventory " +
+	shopifyMoney   = "shopMoney { amount currencyCode }"
+	shopifyProduct = "id title vendor productType status tags createdAt updatedAt onlineStoreUrl description totalInventory " +
 		"priceRangeV2 { minVariantPrice { amount currencyCode } }"
-	shopifyCustomerFields = "id firstName lastName displayName createdAt updatedAt tags defaultEmailAddress { emailAddress } " +
+	shopifyCustomer = "id firstName lastName displayName createdAt updatedAt tags defaultEmailAddress { emailAddress } " +
 		"defaultPhoneNumber { phoneNumber } defaultAddress { city provinceCode countryCodeV2 }"
-	shopifyOrderFields = "id name email createdAt updatedAt cancelledAt displayFinancialStatus displayFulfillmentStatus tags note " +
+	shopifyOrder = "id name email createdAt updatedAt cancelledAt displayFinancialStatus displayFulfillmentStatus tags note " +
 		"customer { displayName } shippingAddress { city provinceCode countryCodeV2 } " +
 		"totalPriceSet { " + shopifyMoney + " } subtotalPriceSet { " + shopifyMoney + " } totalTaxSet { " + shopifyMoney + " } " +
 		"totalShippingPriceSet { " + shopifyMoney + " } totalDiscountsSet { " + shopifyMoney + " } totalRefundedSet { " + shopifyMoney + " } " +
@@ -229,45 +105,14 @@ const (
 		"discountedTotalSet { " + shopifyMoney + " } } }"
 )
 
-// shopifyAmount is a MoneyBag's amount in the shop's currency, or a MoneyV2's.
-func shopifyAmount(v map[string]any) Money {
-	if m, ok := v["shopMoney"].(map[string]any); ok {
-		v = m
-	}
-	return money(v["amount"], cmp.Or(str(v, "currencyCode"), "USD"))
-}
+var (
+	shopifyList   = Req{Method: POST, Read: true, URL: "/graphql.json", Body: Obj{"query": "{what}", "variables": Obj{"first": "{first}", "after": "{page}"}}}
+	shopifyChange = SinceTime{Req: Req{Method: POST, Read: true, URL: "/graphql.json",
+		Body: Obj{"query": "{since_query}", "variables": Obj{"first": "{first}", "after": "{page}", "query": "updated_at:>'{since}'"}}}}
+	shopifyDeny = []Deny{{Status: []int{400}, Says: []string{"access denied"}, Why: "the store's app may not read {field}; give it the scope read_{field}"}}
+)
 
-func shopifyProductRows(m map[string]any) *Row {
-	return rowOf(map[string]any{"title": str(m, "title"), "vendor": str(m, "vendor"), "type": str(m, "productType"), "status": str(m, "status"),
-		"tags": strs(m["tags"]), "price": shopifyAmount(obj(obj(m, "priceRangeV2"), "minVariantPrice")), "inventory": decimal(m["totalInventory"]),
-		"description": clip(str(m, "description"), maxText), "url": str(m, "onlineStoreUrl"), "made_at": instant(str(m, "createdAt")),
-		"edited_at": instant(str(m, "updatedAt"))})
-}
-
-// shopifyCustomerRows is a customer as a contact, the person of their email.
-func shopifyCustomerRows(m map[string]any) *Row {
-	email := Email(str(obj(m, "defaultEmailAddress"), "emailAddress"))
-	addr := obj(m, "defaultAddress")
-	return rowOf(map[string]any{"first_name": str(m, "firstName"), "last_name": str(m, "lastName"), "email": email,
-		"phone": str(obj(m, "defaultPhoneNumber"), "phoneNumber"), "stage": "customer", "city": str(addr, "city"), "state": str(addr, "provinceCode"),
-		"country": str(addr, "countryCodeV2"), "made_at": instant(str(m, "createdAt")), "edited_at": instant(str(m, "updatedAt"))}).person("person", email)
-}
-
-// shopifyOrderRows is an order, placed by the person of its email, with its lines, each the product it is of.
-func shopifyOrderRows(m map[string]any) *Row {
-	email := Email(str(m, "email"))
-	ship := obj(m, "shippingAddress")
-	r := rowOf(map[string]any{"number": str(m, "name"), "customer_name": str(obj(m, "customer"), "displayName"), "email": email,
-		"total": shopifyAmount(obj(m, "totalPriceSet")), "subtotal": shopifyAmount(obj(m, "subtotalPriceSet")), "tax": shopifyAmount(obj(m, "totalTaxSet")),
-		"shipping": shopifyAmount(obj(m, "totalShippingPriceSet")), "discounts": shopifyAmount(obj(m, "totalDiscountsSet")),
-		"refunded": shopifyAmount(obj(m, "totalRefundedSet")), "paid": str(m, "displayFinancialStatus"), "fulfilled": str(m, "displayFulfillmentStatus"),
-		"cancelled_at": instant(str(m, "cancelledAt")), "city": str(ship, "city"), "state": str(ship, "provinceCode"), "country": str(ship, "countryCodeV2"),
-		"tags": strs(m["tags"]), "note": str(m, "note"), "placed_at": instant(str(m, "createdAt")), "edited_at": instant(str(m, "updatedAt"))}).
-		person("customer", email)
-	for _, l := range objects(obj(m, "lineItems")["nodes"], "") {
-		r.child("commerce_line", rowOf(map[string]any{"title": str(l, "title"), "variant": str(l, "variantTitle"), "sku": str(l, "sku"),
-			"quantity": decimal(l["quantity"]), "price": shopifyAmount(obj(l, "originalUnitPriceSet")), "total": shopifyAmount(obj(l, "discountedTotalSet"))}).
-			ref("product", str(obj(l, "product"), "id")))
-	}
-	return r
+type shopifyQuery struct {
+	Query     string         `json:"query" jsonschema:"The GraphQL query"`
+	Variables map[string]any `json:"variables,omitempty" jsonschema:"Its variables"`
 }
