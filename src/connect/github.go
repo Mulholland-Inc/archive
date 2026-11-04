@@ -13,7 +13,10 @@ import (
 // requests, all read-only, with its callback URL <API>/connect/github/callback and "Expire user
 // authorization tokens" on. A GitHub App has no scopes; it reads the repositories its installations reach,
 // so a person installs it on their account or organization too. A grant is revoked with an access token.
-// It syncs nothing until its issues are mapped into the tables of archive.sql; its push waits for that too.
+//
+// It syncs the issues and pull requests of each repository it reaches into work_item, open and closed, listed whole the
+// first time and a week after, 100 a page, which deletes those gone, and in between those updated since the sync before.
+// A repository with issues turned off is left out, its pull requests too: GitHub lists both together.
 //
 // It pushes through the app's webhook, set up once on the app: its URL <API>/push/github, its secret the hook
 // option of ARCHIVE_GITHUB_APP, and its events Issues, Pull request and Repository. A push names the
@@ -28,7 +31,8 @@ func init() {
 			AuthStyle: oauth2.AuthStyleInParams},
 		RevokeBy: &Req{Method: DELETE, URL: "https://api.github.com/applications/{client/id}/grant",
 			Header: map[string][]string{"Authorization": {"{basic}"}}, Body: Obj{"access_token": "{access}"}},
-		Who: &Who{Req: Req{URL: "/user"}, Names: []Path{"login"}},
+		Who:  &Who{Req: Req{URL: "/user"}, Names: []Path{"login"}},
+		Busy: []string{"rate limit"},
 		Actions: map[string]*Action{
 			"search": Call[githubFind, githubFound](Plan{
 				Doc: "Find issues and pull requests with GitHub's search syntax, like { query: \"repo:acme/web is:open label:bug\" }, best match first: " +
@@ -57,12 +61,31 @@ func init() {
 			}),
 		},
 		Listen: &Listen{Renew: 24 * time.Hour, Lasts: 48 * time.Hour,
-			Over: &Parts{Req: Req{URL: "/user/installations", Query: Q{"per_page": "100", "page": "{page}"}}, Items: "installations", Page: Offset{From: 1, Size: 100, Step: 1}},
+			Over: &Parts{Req: Req{URL: "/user/installations", Query: githubAll}, Items: "installations", Page: githubPage},
 			Key:  "{part}", Keys: []Path{"installation/id"},
 			Signs: []Sign{{Header: "X-Hub-Signature-256", Hook: true, Enc: Hex, Pre: "sha256=", Of: "{body}"}},
 		},
+		// Newest first, so one added or changed while a sync pages moves others on rather than past it. A repository gone
+		// mid-walk is passed over, and that listing deletes nothing.
+		Sync: []*Sync{{Name: "issues", Gap: time.Second, Parts: githubRepos, ID: "id", Updated: "updated_at", Page: githubPage, Pass: []int{404, 410, 451},
+			Req:    Req{URL: "/repos/{~part}/issues", Query: Q{"state": "all", "sort": "created", "direction": "desc", "per_page": "100", "page": "{page}"}},
+			Change: SinceTime{Req: Req{URL: "/repos/{~part}/issues", Query: Q{"state": "all", "sort": "updated", "direction": "desc", "per_page": "100", "page": "{page}", "since": "{since}"}}},
+			Doc: "Every issue and pull request of each repository, open or closed, by its id: listed whole the first time and a week after, 100 a page and a repository at a time, " +
+				"which deletes those gone, and in between those updated since the sync before. A repository with issues turned off is left out, its pull requests too.",
+			To: Map{Table: "work_item",
+				Cols: map[string]SQL{"title": "data->>'title'", "type": "CASE WHEN data->'pull_request' IS NOT NULL THEN 'pull request' ELSE 'issue' END", "status": "data->>'state'",
+					"assignee_name": "data#>>'{assignee,login}'", "done_on": "archive.sync_at(data->>'closed_at')::date", "description": "archive.sync_clip(data->>'body', 65536)",
+					"url": "data->>'html_url'", "made_at": "archive.sync_at(data->>'created_at')", "edited_at": "archive.sync_at(data->>'updated_at')"}}}},
 	})
 }
+
+var (
+	githubAll  = Q{"per_page": "100", "page": "{page}"}
+	githubPage = Offset{From: 1, Size: 100, Step: 1}
+	// githubRepos are the repositories the person's token reaches through each installation, by owner/name.
+	githubRepos = &Parts{Req: Req{URL: "/user/installations", Query: githubAll}, Items: "installations", Page: githubPage,
+		Under: &Parts{Req: Req{URL: "/user/installations/{up/id}/repositories", Query: githubAll}, Items: "repositories", Page: githubPage, ID: "{full_name}", Skip: []Test{{At: "has_issues", Is: "false"}}}}
+)
 
 type (
 	githubFind struct {

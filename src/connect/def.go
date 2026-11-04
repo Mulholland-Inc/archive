@@ -38,7 +38,7 @@ import (
 // file does not say: where a sync is, when it lists whole, and what a page of it deletes.
 //
 // Values in a definition are read at run time, so the compiler cannot check them: a Path is a /-separated walk of
-// an answer, where * is every element of a list, a number one of them, ** the first list of objects at any depth,
+// an answer, where * is every element of a list, a number one of them, from the end when negative, ** the first list of objects at any depth,
 // **/key the list under key at any depth, a;b the first of two walks that finds anything, and a+b the lists of
 // both, one after the other. A template is a
 // string whose {path} is read from what the request knows. {path} is escaped in a URL, {+path} is not, {~path} is
@@ -527,7 +527,7 @@ const (
 	overlap     = time.Minute
 )
 
-// Plan is an action: its Steps in order, each reading the input and the steps' As before it, {now}, a fresh {nonce} and {meta/...}, and Out, or
+// Plan is an action: its Steps in order, each reading the input and the steps' As before it, {now}, a fresh {nonce}, {meta/...} and {key/...}, and Out, or
 // else the answer of the last. Clamp keeps a number within what a provider takes: { def, most }. Enum names the only
 // values an input may be.
 type Plan struct {
@@ -596,7 +596,8 @@ func (p *Plan) run(c *Client, raw json.RawMessage) (any, error) {
 	if sc == nil {
 		sc = map[string]any{}
 	}
-	sc["now"], sc["nonce"], sc["meta"] = time.Now().UTC().Format(time.RFC3339), nonce(), c.scope()["meta"]
+	cs := c.scope()
+	sc["now"], sc["nonce"], sc["meta"], sc["key"] = time.Now().UTC().Format(time.RFC3339), nonce(), cs["meta"], cs["key"]
 	for k, lim := range p.Clamp {
 		n, _ := strconv.Atoi(text(sc[k]))
 		sc[k] = clamp(n, lim[0], lim[1])
@@ -1081,7 +1082,7 @@ func (r Req) check(where string, roots ...string) error {
 }
 
 func (a *Action) check() error {
-	roots := append(slices.Collect(maps.Keys(a.Input.Properties)), "now", "nonce", "meta")
+	roots := append(slices.Collect(maps.Keys(a.Input.Properties)), "now", "nonce", "meta", "key")
 	for i, s := range a.plan.Steps {
 		if s.URL == "" && s.Tool == "" && s.Codec == nil && s.In == nil && s.Fail == "" && s.Words == nil {
 			return fmt.Errorf("step %d is nothing to do", i)
@@ -2673,7 +2674,11 @@ func pick(v any, path Path) any {
 		return deep(v, rest)
 	}
 	if l, ok := v.([]any); ok {
-		if i, err := strconv.Atoi(head); err == nil && i >= 0 && i < len(l) {
+		i, err := strconv.Atoi(head)
+		if i < 0 {
+			i += len(l)
+		}
+		if err == nil && i >= 0 && i < len(l) {
 			return pick(l[i], Path(rest))
 		}
 		return nil

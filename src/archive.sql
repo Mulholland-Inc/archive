@@ -1914,6 +1914,32 @@ COMMENT ON COLUMN archive.work_item.source_id IS 'Its id there';
 COMMENT ON COLUMN archive.work_item.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.work_item.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
+-- Code: a project of an error tracker you connected, like Sentry. It is none of work_item's jobs, with no status or
+-- assignee, and a tool's list of them says little more than its name.
+CREATE TABLE archive.code_project (
+    id           uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection   uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream       text NOT NULL,
+    source_id    text NOT NULL,
+    access       uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    updated_at   timestamptz NOT NULL DEFAULT now(),
+    name         text NOT NULL DEFAULT '',
+    seen_at      timestamptz NOT NULL DEFAULT now(),
+    title        text,
+    organization text,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+COMMENT ON TABLE archive.code_project IS 'A project of an error tracker you connected, like Sentry. Read only; Archive syncs them
+icon: bug';
+COMMENT ON COLUMN archive.code_project.title IS 'Its slug';
+COMMENT ON COLUMN archive.code_project.organization IS 'The organization it is in, by slug';
+COMMENT ON COLUMN archive.code_project.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.code_project.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.code_project.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.code_project.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.code_project.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
 -- Compliance: what a compliance tool you connected, like Vanta, tracks toward an audit: each framework and how far
 -- along it is, its controls, the automated tests and their status, and the vendors, people, policies and
 -- documents it checks, one row each, its kind saying which.
@@ -3109,6 +3135,7 @@ BEGIN
         WHEN 'dental_payment' THEN concat_ws(' · ', 'Payment', r->>'paid_on')
         WHEN 'ad_metric' THEN concat_ws(' · ', nullif(r->>'campaign_name', ''), r->>'on_date')
         WHEN 'work_item' THEN concat_ws(' · ', nullif(r->>'title', ''), nullif(r->>'client_name', ''))
+        WHEN 'code_project' THEN concat_ws('/', r->>'organization', r->>'title')
         WHEN 'compliance' THEN concat_ws(' · ', nullif(r->>'code', ''), coalesce(nullif(r->>'title', ''), r->>'owner_name'))
         WHEN 'commerce_product' THEN r->>'title'
         WHEN 'commerce_order' THEN concat_ws(' · ', coalesce(nullif(r->>'number', ''), 'Order'), nullif(r->>'customer_name', ''))
@@ -3182,6 +3209,7 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.dental_procedure F
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.dental_payment FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ad_metric FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.work_item FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.code_project FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.compliance FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.commerce_product FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.commerce_order FOR EACH ROW EXECUTE FUNCTION archive.object_name();
@@ -3295,6 +3323,7 @@ GRANT SELECT ON archive.dental_procedure TO "{p}_viewer";
 GRANT SELECT ON archive.dental_payment TO "{p}_viewer";
 GRANT SELECT ON archive.ad_metric TO "{p}_viewer";
 GRANT SELECT ON archive.work_item TO "{p}_viewer";
+GRANT SELECT ON archive.code_project TO "{p}_viewer";
 GRANT SELECT ON archive.compliance TO "{p}_viewer";
 GRANT SELECT ON archive.commerce_product TO "{p}_viewer";
 GRANT SELECT ON archive.commerce_order TO "{p}_viewer";
@@ -3421,6 +3450,8 @@ ALTER TABLE archive.ad_metric ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.ad_metric FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = ad_metric.connection));
 ALTER TABLE archive.work_item ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.work_item FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = work_item.connection));
+ALTER TABLE archive.code_project ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.code_project FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = code_project.connection));
 ALTER TABLE archive.compliance ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.compliance FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = compliance.connection));
 ALTER TABLE archive.commerce_product ENABLE ROW LEVEL SECURITY;
@@ -3705,7 +3736,7 @@ SELECT jsonb_build_object(
             'archive.ledger_account'::regclass, 'archive.ledger_contact'::regclass, 'archive.ledger_item'::regclass,
             'archive.ledger_entry'::regclass, 'archive.ledger_line'::regclass, 'archive.calendar_event'::regclass,
             'archive.calendar_attendee'::regclass, 'archive.crm_company'::regclass, 'archive.crm_contact'::regclass, 'archive.crm_deal'::regclass,
-            'archive.chat_message'::regclass, 'archive.marketing_campaign'::regclass, 'archive.work_item'::regclass, 'archive.compliance'::regclass,
+            'archive.chat_message'::regclass, 'archive.marketing_campaign'::regclass, 'archive.work_item'::regclass, 'archive.code_project'::regclass, 'archive.compliance'::regclass,
             'archive.commerce_product'::regclass, 'archive.commerce_order'::regclass, 'archive.commerce_line'::regclass,
             'archive.ad_metric'::regclass, 'archive.dental_provider'::regclass, 'archive.dental_patient'::regclass,
             'archive.dental_appointment'::regclass, 'archive.dental_procedure'::regclass, 'archive.dental_payment'::regclass,
@@ -3824,6 +3855,7 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.chat_message x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.marketing_campaign x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.work_item x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.code_project x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.compliance x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.commerce_product x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.commerce_order x WHERE x.connection = c.id)
