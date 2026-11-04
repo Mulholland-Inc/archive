@@ -946,6 +946,12 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 				cur.At, cur.Done, cur.Fails = nil, &c.AskedAt, 0
 			}
 		default:
+			// A file kept while the page was pulled took the access the connection had then; narrowed since, it follows.
+			if (c.Access == nil) != (c2.Access == nil) || c.Access != nil && *c.Access != *c2.Access {
+				if _, err := a.st.Q(ctx).Exec(ctx, "UPDATE archive.file SET access = $2 WHERE connection = $1 AND access IS DISTINCT FROM $2", c.ID, c2.Access); err != nil {
+					return err
+				}
+			}
 			w := &syncDB{q: q, db: a.st.Q(ctx), id: c.ID, acc: c2.Access, now: now}
 			if err := syncSave(ctx, w, s, page, cur); err != nil {
 				return err
