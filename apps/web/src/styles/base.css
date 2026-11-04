@@ -249,6 +249,97 @@ dialog:not([open]) {
   }
 }
 
+/* A menu that forms around its trigger: the press squishes it, it springs back, the card appears, then the
+   rows pop in one by one, starting nearest the trigger. Everything is timed by tokens, so reduced motion is instant. */
+.morph-origin {
+  transition: transform var(--duration-instant) var(--ease-out);
+}
+
+.morph-origin:has([aria-haspopup]:active) {
+  transform: scale(var(--morph-squish));
+}
+
+.morph-origin[data-open] {
+  opacity: 0;
+}
+
+.floating[data-morph] {
+  inset: auto;
+  inset-inline-start: calc(var(--x) - var(--space-1-5));
+  width: calc(var(--w) + var(--space-1-5) * 2);
+  height: auto;
+  margin: 0;
+  opacity: 1;
+  transform: none;
+  transform-origin: center;
+}
+
+.floating[data-morph='down'] {
+  inset-block-start: calc(var(--top) - var(--space-1-5));
+}
+
+.floating[data-morph='up'] {
+  inset-block-end: calc(var(--bottom) - var(--space-1-5));
+}
+
+.floating[data-morph]:popover-open {
+  animation: morph-card 0s var(--duration-instant) backwards;
+}
+
+@starting-style {
+  .floating[data-morph]:popover-open {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.morph-head {
+  flex: none;
+  width: var(--w);
+  animation: morph-spring var(--duration-slow) var(--ease-bounce);
+}
+
+.morph-items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-px);
+}
+
+.morph-items > * {
+  animation: morph-row var(--duration-normal) var(--ease-out) backwards;
+  animation-delay: calc(var(--duration-fast) + var(--i) * var(--duration-instant) / 2);
+}
+
+[data-morph='down'] .morph-items {
+  --morph-from: calc(var(--shift-sm) * -1);
+  padding-block-start: var(--space-1-5);
+}
+
+[data-morph='up'] .morph-items {
+  --morph-from: var(--shift-sm);
+  padding-block-end: var(--space-1-5);
+}
+
+@keyframes morph-card {
+  from {
+    background: transparent;
+    box-shadow: none;
+  }
+}
+
+@keyframes morph-spring {
+  from {
+    transform: scale(var(--morph-squish));
+  }
+}
+
+@keyframes morph-row {
+  from {
+    opacity: 0;
+    transform: translateY(var(--morph-from)) scale(var(--scale-enter));
+  }
+}
+
 /* Phones zoom the page in on any field under 16px when it gets focus. */
 @media (hover: none) and (pointer: coarse) {
   input,

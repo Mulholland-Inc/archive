@@ -6,7 +6,7 @@
   import IconButton from './IconButton.svelte';
   import Breadcrumbs from './Breadcrumbs.svelte';
 
-  let { open = $bindable(false), root = 'Settings', items = [], section = $bindable(null), trail = [], onselect, children: pane } = $props();
+  let { open = $bindable(false), root = 'Settings', items = [], section = $bindable(null), trail = [], children: pane } = $props();
 
   let query = $state('');
   const current = $derived(section ?? items[0]?.id);
@@ -22,7 +22,7 @@
       <aside class="aside">
         <div class="search"><SearchField bind:value={query} size="sm" label="Search settings" /></div>
         <div class="scroll">
-          <SettingsNav {items} {query} active={current} onselect={(id) => { if (!items.find((i) => i.id === id)?.href) section = id; onselect?.(id); }} />
+          <SettingsNav {items} {query} active={current} onselect={(id) => (section = id)} />
         </div>
       </aside>
       {@render pane()}

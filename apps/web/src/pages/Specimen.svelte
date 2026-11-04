@@ -71,7 +71,7 @@
   import SidebarItem from '../components/SidebarItem.svelte';
   import SidebarSection from '../components/SidebarSection.svelte';
   import ArchiveHeader from '../components/ArchiveHeader.svelte';
-  import AccountMenu from '../components/AccountMenu.svelte';
+  import AccountCard from '../components/AccountCard.svelte';
   import ThemePicker from '../components/ThemePicker.svelte';
   import Disclosure from '../components/Disclosure.svelte';
   import SettingsRow from '../components/SettingsRow.svelte';
@@ -400,8 +400,8 @@
         </SpecimenBlock>
         <SpecimenBlock title="Settings dialog">
           <Button onclick={() => openSettings()}>Open settings</Button>
-          <Button onclick={() => openSettings('connectors')}>Open connectors</Button>
-          <Button onclick={() => openSettings('connectors', 'gdrive')}>Open a connector</Button>
+          <Button href="/connectors">Open connectors</Button>
+          <Button href="/connectors/gdrive">Open a connector</Button>
         </SpecimenBlock>
         <SpecimenBlock title="Settings nav">
           <SettingsNav active={settingsSection} onselect={(id) => (settingsSection = id)} items={[{ id: 'profile', label: 'Profile', icon: UserIcon }, { id: 'appearance', label: 'Appearance', icon: PaletteIcon }, { id: 'notifications', label: 'Notifications', icon: BellIcon }, { id: 'connectors', label: 'Connectors', icon: PlugIcon, group: 'Customize' }, { id: 'api', label: 'API keys', icon: PlugIcon, group: 'Platform', href: '/specimen' }]} />
@@ -587,7 +587,7 @@
           <SpecimenFrame>
             <Sidebar>
               {#snippet header()}<ArchiveHeader archive={app.archives[0]} />{/snippet}
-              {#snippet footer()}<AccountMenu user={me} />{/snippet}
+              {#snippet footer()}<AccountCard user={me} />{/snippet}
               <SidebarSection>
                 <SidebarItem icon={Plus} label="New chat" accent href="/specimen" />
                 <SidebarItem icon={Search} label="Search" shortcut="⌘ K" />

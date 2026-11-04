@@ -1,5 +1,5 @@
 <script>
-  import { Plus, Search, Library, Database, Workflow, Lock, Settings } from '@lucide/svelte';
+  import { Plus, Search, Library, Database, Workflow, Plug, Lock, Settings } from '@lucide/svelte';
   import { layoutOf } from '../layouts/index.js';
   import Sidebar from './Sidebar.svelte';
   import SidebarItem from './SidebarItem.svelte';
@@ -10,10 +10,10 @@
   import MenuItem from './MenuItem.svelte';
   import MenuSeparator from './MenuSeparator.svelte';
   import ArchiveRail from './ArchiveRail.svelte';
-  import AccountMenu from './AccountMenu.svelte';
+  import AccountCard from './AccountCard.svelte';
   import ChatActions from './ChatActions.svelte';
   import PinButton from './PinButton.svelte';
-  import { app, ws, openArchiveSettings, closeDrawer, pinnedFirst, switchArchive, createArchive, renameChat, renameView, isArchiveOwner, chats, workflows, members, schema } from '../lib/app.svelte.js';
+  import { app, ws, openSettings, closeDrawer, pinnedFirst, switchArchive, createArchive, renameChat, renameView, isArchiveOwner, chats, workflows, members, schema } from '../lib/app.svelte.js';
 
   chats.use();
   schema.use();
@@ -46,7 +46,7 @@
     <ArchiveRail archives={app.archives} current={app.archive} onselect={switchArchive} oncreate={() => { app.drawer = false; creating = true; }} />
   {/snippet}
   {#snippet header()}
-    <Menu label={ws().name} width="md" match>
+    <Menu label={ws().name} width="md" morph>
       {#snippet trigger(props)}<ArchiveHeader archive={ws()} {...props} />{/snippet}
       <MenuItem icon={Workflow} href="/workflows">
         {#snippet end()}{#if running}<Badge>{running}</Badge>{/if}{/snippet}
@@ -54,9 +54,10 @@
       </MenuItem>
       <MenuItem icon={Library} href="/library">Library</MenuItem>
       <MenuItem icon={Database} href="/database">Database</MenuItem>
+      <MenuItem icon={Plug} href="/connectors">Connectors</MenuItem>
       <MenuItem icon={Lock} href="/access">Access</MenuItem>
       <MenuSeparator />
-      <MenuItem icon={Settings} onselect={() => { app.drawer = false; openArchiveSettings(); }}>Settings</MenuItem>
+      <MenuItem icon={Settings} onselect={() => { app.drawer = false; openSettings('general'); }}>Settings</MenuItem>
     </Menu>
   {/snippet}
 
@@ -91,7 +92,7 @@
   {/if}
 
   {#snippet footer()}
-    <AccountMenu user={{ ...app.user, name: app.profile.name || app.user.name }} />
+    <AccountCard user={{ ...app.user, name: app.profile.name || app.user.name }} />
   {/snippet}
 </Sidebar>
 

@@ -1,6 +1,6 @@
 import { Pin, PinOff, Pencil, Trash2, Plus, ExternalLink, MessageSquarePlus, Share, Download, Eye, Play, RotateCcw, Copy, UserPlus, UserMinus, Users, Ban, Settings, ArrowRightLeft } from '@lucide/svelte';
 import { SEPARATOR } from './contextmenu.svelte.js';
-import { app, deleteGroup, groupUses, updateGroup, toggleGroup, createGroup, isArchiveOwner, ws, togglePin, removeChat, renameChat, newChat, renameFile, removeFile, downloadFile, openShare, runWorkflow, removeWorkflow, removeMember, invite, stopSharing, removeGuest, switchArchive, openArchiveSettings, deleteArchive } from './app.svelte.js';
+import { app, deleteGroup, groupUses, updateGroup, toggleGroup, createGroup, isArchiveOwner, ws, togglePin, removeChat, renameChat, newChat, renameFile, removeFile, downloadFile, openShare, runWorkflow, removeWorkflow, removeMember, invite, stopSharing, removeGuest, switchArchive, openSettings, deleteArchive } from './app.svelte.js';
 import { prompt, confirmDialog, notify } from './dialogs.svelte.js';
 import { go } from './router.svelte.js';
 
@@ -177,7 +177,7 @@ export function archiveItems(archive) {
       icon: Settings,
       onselect: () => {
         switchArchive(archive.id);
-        openArchiveSettings();
+        openSettings('general');
       }
     },
     SEPARATOR,

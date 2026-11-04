@@ -31,8 +31,7 @@ export const app = $state({
   model: 'pro',
   pending: null,
   muted: false,
-  settings: { open: false, section: null, sub: null },
-  archiveSettings: { open: false, section: null, sub: null },
+  settings: { open: false, section: null },
   apiKey: mockKey('ak_live_', 'Created today'),
   archiveKeys: {},
   archiveApps: {},
@@ -593,16 +592,10 @@ export async function signOut() {
   go('/');
 }
 
-// Settings dialogs
+// Settings
 
-export function openSettings(section = null, sub = null) {
-  app.archiveSettings.open = false;
-  Object.assign(app.settings, { open: true, section, sub });
-}
-
-export function openArchiveSettings(section = null, sub = null) {
-  app.settings.open = false;
-  Object.assign(app.archiveSettings, { open: true, section, sub });
+export function openSettings(section = null) {
+  Object.assign(app.settings, { open: true, section });
 }
 
 // Onboarding (MOCK: no API; kept per archive in localStorage)
@@ -1272,7 +1265,7 @@ export const connections = resource({
   load: async () => {
     const v = ws();
     const out = await api('/connect', { workspace: v.id });
-    // Your own connectors are the personal ones; the archive's integrations are listed in its settings.
+    // Your own connectors are the personal ones; the archive's are its integrations.
     const ids = new Set((out?.connectors ?? []).filter((k) => !k.integration).map((k) => k.id));
     v.connectors = v.connectors.filter((c) => ids.has(c.id));
     nameBrands(out?.connectors ?? []);

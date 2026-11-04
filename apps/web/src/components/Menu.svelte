@@ -4,15 +4,31 @@
   import { uid } from '../lib/ids.js';
   import { show, hide, roving, focusables } from '../lib/floating.js';
 
-  let { trigger, children, placement = 'bottom-start', width = 'md', match = false, label, onopenchange } = $props();
+  // With `morph` the panel forms around the trigger instead of beside it: the trigger is drawn again inside the
+  // panel, over the original, and the items grow away from it, above for a top placement and below otherwise.
+  let { trigger, children, placement = 'bottom-start', width = 'md', morph = false, label, onopenchange } = $props();
 
   const id = uid('menu');
+  const up = $derived(placement.startsWith('top'));
   let panel = $state();
+  let origin = $state();
+  let items = $state();
   let open = $state(false);
   let anchor = null;
 
-  function openAt(target, focus = 'first') {
+  function form() {
+    const r = origin.getBoundingClientRect();
+    panel.style.setProperty('--x', `${r.left}px`);
+    panel.style.setProperty('--w', `${r.width}px`);
+    panel.style.setProperty('--top', `${r.top}px`);
+    panel.style.setProperty('--bottom', `${innerHeight - r.bottom}px`);
+    const rows = [...items.children];
+    rows.forEach((el, i) => el.style.setProperty('--i', up ? rows.length - 1 - i : i));
+  }
+
+  function openAt(target, focus = morph && up ? 'last' : 'first') {
     anchor = target;
+    if (morph) form();
     show(panel, anchor);
     requestAnimationFrame(() => {
       const items = focusables(panel);
@@ -50,10 +66,22 @@
   export function openMenu(target) {
     openAt(target);
   }
+
+  const props = $derived({ onclick: toggle, onkeydown: triggerKey, 'aria-haspopup': 'menu', 'aria-expanded': open, 'aria-controls': id });
 </script>
 
-{@render trigger?.({ onclick: toggle, onkeydown: triggerKey, 'aria-haspopup': 'menu', 'aria-expanded': open, 'aria-controls': id })}
+<svelte:window onresize={morph ? close : undefined} />
 
-<MenuPanel bind:panel {id} {label} {width} data-placement={placement} data-match={match || undefined} {ontoggle} {onkeydown}>
-  {@render children()}
-</MenuPanel>
+{#if morph}
+  <div bind:this={origin} class="morph-origin" data-open={open || undefined}>{@render trigger?.(props)}</div>
+  <MenuPanel bind:panel {id} {label} {width} data-morph={up ? 'up' : 'down'} {ontoggle} {onkeydown}>
+    {#if !up}<div class="morph-head">{@render trigger?.(props)}</div>{/if}
+    <div bind:this={items} class="morph-items">{@render children()}</div>
+    {#if up}<div class="morph-head">{@render trigger?.(props)}</div>{/if}
+  </MenuPanel>
+{:else}
+  {@render trigger?.(props)}
+  <MenuPanel bind:panel {id} {label} {width} data-placement={placement} {ontoggle} {onkeydown}>
+    {@render children()}
+  </MenuPanel>
+{/if}

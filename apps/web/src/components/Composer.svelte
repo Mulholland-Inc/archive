@@ -1,5 +1,5 @@
 <script>
-  import { Plus, ArrowUp, Square, Paperclip, Library, Globe, Telescope, Camera, Mic, AudioLines } from '@lucide/svelte';
+  import { Plus, ArrowUp, Square, Paperclip, Library, Plug, Telescope, Mic, AudioLines } from '@lucide/svelte';
   import { onDestroy } from 'svelte';
   import IconButton from './IconButton.svelte';
   import Menu from './Menu.svelte';
@@ -9,9 +9,7 @@
   import ModelPicker from './ModelPicker.svelte';
   import Attachment from './Attachment.svelte';
   import Chip from './Chip.svelte';
-  import ConnectorIcon from './ConnectorIcon.svelte';
-  import { Plug } from '@lucide/svelte';
-  import { ws, openSettings, uploadFiles, library } from '../lib/app.svelte.js';
+  import { ws, uploadFiles, library } from '../lib/app.svelte.js';
   import { loadDraft, saveDraft } from '../lib/api.js';
 
   library.use();
@@ -47,7 +45,6 @@
   });
 
   let attachments = $state([]);
-  let web = $state(true);
   let research = $state(false);
   let thinking = $state(true);
   let focused = $state(false);
@@ -90,15 +87,6 @@
     uploading = true;
     for (const f of await uploadFiles(list)) attach(f, true);
     uploading = false;
-    element?.focus();
-  }
-
-  function attachSample(kind = 'image') {
-    const n = attachments.length + 1;
-    const file = kind === 'screenshot'
-      ? { id: `up-${Date.now()}`, name: `Screenshot ${n}.png`, kind: 'image', size: '840 KB', tone: 3 }
-      : { id: `up-${Date.now()}`, name: `scan-${String(n).padStart(3, '0')}.jpg`, kind: 'image', size: '2.2 MB', tone: (n % 4) + 1 };
-    attach(file);
     element?.focus();
   }
 
@@ -223,7 +211,6 @@
         <IconButton icon={Plus} label="Add files and more" variant="secondary" size={control} {...props} />
       {/snippet}
       <MenuItem icon={Paperclip} onselect={() => picker?.click()}>{uploading ? 'Uploading…' : 'Add files or photos'}</MenuItem>
-      <MenuItem icon={Camera} onselect={() => attachSample('screenshot')}>Take a screenshot</MenuItem>
       {#if ws().library.length}
         <SubMenu icon={Library} label="Add from library">
           {#each ws().library.slice(0, 8) as file (file.id)}
@@ -231,23 +218,9 @@
           {/each}
         </SubMenu>
       {/if}
-      {#if ws().connectors.some((c) => c.connected)}
-        <SubMenu icon={Plug} label="Add from a connector">
-          {#each ws().connectors.filter((c) => c.connected) as c (c.id)}
-            <MenuItem onselect={() => attach({ id: `${c.id}-${Date.now()}`, name: `From ${c.name}`, kind: 'document', size: '1.1 MB', tone: 3 })}>
-              {#snippet leading()}<ConnectorIcon id={c.id} size="xs" />{/snippet}
-              {c.name}
-            </MenuItem>
-          {/each}
-          <MenuSeparator />
-          <MenuItem icon={Plug} onselect={() => openSettings('connectors')}>Manage connectors</MenuItem>
-        </SubMenu>
-      {:else}
-        <MenuItem icon={Plug} onselect={() => openSettings('connectors')}>Connect an app</MenuItem>
-      {/if}
-      <MenuSeparator />
       <MenuItem icon={Telescope} keepOpen toggle={research} onselect={() => (research = !research)}>Research</MenuItem>
-      <MenuItem icon={Globe} keepOpen toggle={web} onselect={() => (web = !web)}>Web search</MenuItem>
+      <MenuSeparator />
+      <MenuItem icon={Plug} href="/connectors">Connectors</MenuItem>
     </Menu>
     {#if research}
       <span in:rise={{ shift: '--shift-sm' }}><Chip icon={Telescope} size="sm" onremove={() => (research = false)}>Research</Chip></span>
