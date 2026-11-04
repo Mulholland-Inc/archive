@@ -1268,6 +1268,7 @@ export const connections = resource({
       Object.assign(c, {
         ready: k.ready,
         keys: k.keys ?? [],
+        ask: k.ask ?? [],
         connections: mine,
         connected: mine.length > 0,
         account: mine.map((x) => x.account).join(', '),
@@ -1294,6 +1295,7 @@ function toIntegration(k, x) {
     name: k.name,
     ready: k.ready,
     keys: k.keys ?? [],
+    ask: k.ask ?? [],
     connected: Boolean(x),
     connection: x ?? null,
     account: x?.account ?? '',
@@ -1306,10 +1308,11 @@ function toIntegration(k, x) {
   };
 }
 
-// connect sends the browser to connect connector id: one of your own, or an integration an owner connects for everyone.
-export function connect(id) {
+// connect sends the browser to connect connector id: one of your own, or an integration an owner connects for everyone,
+// with asked, what it asks for before its sign-in, by name.
+export function connect(id, asked = {}) {
   const c = [...ws().connectors, ...archiveIntegrations()].find((x) => x.id === id);
-  if (c?.ready) location.assign(`${API}/connect/${encodeURIComponent(id)}?workspace=${encodeURIComponent(app.archive)}`);
+  if (c?.ready) location.assign(`${API}/connect/${encodeURIComponent(id)}?${new URLSearchParams({ ...asked, workspace: app.archive })}`);
 }
 
 // connectKeys connects connector id, which has no sign-in, with the keys a person pasted, by their names: one of

@@ -177,6 +177,7 @@ const (
 	CatDental    Category = "Dental"
 	CatProjects  Category = "Projects"
 	CatPayroll   Category = "Payroll"
+	CatSupport   Category = "Support"
 
 	IconMail     Icon = "mail"
 	IconUsers    Icon = "users"
@@ -883,11 +884,11 @@ func (w *Who) read(cl *Client, c *Connector) (string, error) {
 	return s, nil
 }
 
-// revoke ends a grant as r says, which reads {client}, {refresh}, {basic} the client as HTTP Basic, and {access} an
-// access token of the grant, only asked for when it does.
+// revoke ends a grant as r says, which reads {client}, {refresh}, {basic} the client as HTTP Basic, {meta/...} the
+// account's, and {access} an access token of the grant, only asked for when it does.
 func (r *Req) revoke(rv *Revocation) error {
 	id, secret := rv.Client()
-	sc := map[string]any{"client": map[string]any{"id": id, "secret": secret}, "refresh": rv.Refresh, "basic": basic(id, secret)}
+	sc := map[string]any{"client": map[string]any{"id": id, "secret": secret}, "refresh": rv.Refresh, "basic": basic(id, secret), "meta": metaOf(rv.Meta)}
 	if slices.Contains(r.roots(), "access") {
 		at, err := rv.Access()
 		if err != nil {

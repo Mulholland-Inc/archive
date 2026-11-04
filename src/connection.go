@@ -181,8 +181,9 @@ func (h *Hub) connectRoutes(mux *http.ServeMux) {
 	})
 }
 
-// connectStart sends the browser to consent to the connector in the path, for whoever is signed in, or back
-// to the connector in the app with ?error= when an MCP connector's server could not be set up.
+// connectStart sends the browser to consent to the connector in the path, for whoever is signed in, at the
+// account its query names when the connector asks for one first, or back to the connector in the app with
+// ?error= when that will not do or an MCP connector's server could not be set up.
 func (a *Archive) connectStart(w http.ResponseWriter, r *http.Request) {
 	ac, err := authUser(r.Context())
 	var p *connect.Provider
@@ -196,6 +197,10 @@ func (a *Archive) connectStart(w http.ResponseWriter, r *http.Request) {
 	if err = a.mayConnect(r.Context(), p.Connector); err == nil && len(p.Keys) > 0 {
 		err = fmt.Errorf("%s connects with keys, not by signing in", p.Name)
 	}
+	var meta map[string]string
+	if err == nil {
+		meta, err = p.Asked(r.URL.Query())
+	}
 	if err == nil {
 		p, err = a.hub.provider(r.Context(), p.ID, true)
 	}
@@ -204,8 +209,8 @@ func (a *Archive) connectStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st := connect.State{Provider: p.ID, Workspace: a.ws.ID.String(), User: ac.UserID, Member: ac.member,
-		Verifier: oauth2.GenerateVerifier(), Exp: time.Now().Add(connect.TTL).Unix()}
-	http.Redirect(w, r, p.AuthURL(a.hub.connectRedirect(p.ID), connect.SealState(a.hub.aead, st), st.Verifier), http.StatusFound)
+		Verifier: oauth2.GenerateVerifier(), Exp: time.Now().Add(connect.TTL).Unix(), Meta: meta}
+	http.Redirect(w, r, p.AuthURL(a.hub.connectRedirect(p.ID), connect.SealState(a.hub.aead, st), st.Verifier, st.Meta), http.StatusFound)
 }
 
 // connectFinish keeps the account the provider came back for, when the person who started is the one signed
@@ -226,7 +231,7 @@ func (a *Archive) connectFinish(w http.ResponseWriter, r *http.Request, st conne
 	}
 	var g *connect.Grant
 	if err == nil {
-		g, err = p.Exchange(r.Context(), a.hub.connectRedirect(p.ID), r.URL.Query(), st.Verifier)
+		g, err = p.Exchange(r.Context(), a.hub.connectRedirect(p.ID), r.URL.Query(), st.Verifier, st.Meta)
 		if err != nil && p.MCP != "" && strings.Contains(err.Error(), "invalid_client") {
 			a.hub.forgetClient(r.Context(), p)
 		}
@@ -368,13 +373,14 @@ type Connection struct {
 
 // Connector is a service accounts can be connected at; Ready says this server has its OAuth client, and
 // Integration that an account of it is the archive's, not a person's. Keys are what a key connector asks for in
-// place of a sign-in.
+// place of a sign-in, and Ask what one that signs in asks for first, sent as the query of its sign-in.
 type Connector struct {
 	ID          string        `json:"id"`
 	Name        string        `json:"name"`
 	Ready       bool          `json:"ready"`
 	Integration bool          `json:"integration"`
 	Keys        []connect.Key `json:"keys,omitempty"`
+	Ask         []connect.Key `json:"ask,omitempty"`
 	connect.Info
 }
 
@@ -391,7 +397,7 @@ func (a *Archive) Connections(ctx context.Context) (*Connections, error) {
 	}
 	out := &Connections{Connectors: []Connector{}, Connections: []Connection{}}
 	for _, c := range connect.All() {
-		out.Connectors = append(out.Connectors, Connector{ID: c.ID, Name: c.Name, Ready: a.hub.connect[c.ID] != nil, Integration: c.Integration, Keys: c.Keys, Info: c.Info})
+		out.Connectors = append(out.Connectors, Connector{ID: c.ID, Name: c.Name, Ready: a.hub.connect[c.ID] != nil, Integration: c.Integration, Keys: c.Keys, Ask: c.Ask, Info: c.Info})
 	}
 	var rows []generated.ConnectionsRow
 	err = a.st.System(ctx, func(ctx context.Context) (err error) {
@@ -499,7 +505,7 @@ func (a *Archive) Disconnect(ctx context.Context, id uuid.UUID) error {
 		// Its watches end first, while its grant still lets Archive end them.
 		var cl *connect.Client
 		if push, _ := p.PushOf(); push == nil || push.Unwatch == nil {
-		} else if tok, terr := p.Refresh(ctx, rt); terr == nil {
+		} else if tok, terr := p.Refresh(ctx, rt, c.Meta); terr == nil {
 			cl = p.Open(ctx, tok, c.Meta)
 			rt = tok.RefreshToken
 		}
@@ -511,7 +517,7 @@ func (a *Archive) Disconnect(ctx context.Context, id uuid.UUID) error {
 		}
 		var shared bool
 		if shared, err = a.grantShared(ctx, c, p); err == nil && !shared {
-			err = p.RevokeToken(ctx, rt)
+			err = p.RevokeToken(ctx, rt, c.Meta)
 		}
 	}
 	if err != nil {
@@ -612,7 +618,7 @@ func (a *Archive) connectionToken(ctx context.Context, id uuid.UUID) (*oauth2.To
 		if err != nil {
 			return err
 		}
-		if tok, err = p.Refresh(ctx, rt); err != nil {
+		if tok, err = p.Refresh(ctx, rt, c.Meta); err != nil {
 			msg := fmt.Sprintf("%s refused to let Archive keep reading %s (%s); connect it again", p.Name, c.Account, connect.Reason(err))
 			refused = fmt.Errorf("connection %s: %s: %w", id, msg, ErrUnauthorized)
 			if re := (*oauth2.RetrieveError)(nil); errors.As(err, &re) && re.Response != nil && re.Response.StatusCode/100 == 4 {

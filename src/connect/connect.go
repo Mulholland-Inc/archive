@@ -33,6 +33,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -81,6 +82,13 @@ type Connector struct {
 	// Keep are parameters the provider adds to the callback that calls need later, like QuickBooks' realmId;
 	// the Grant keeps them as its Meta.
 	Keep []string
+	// Ask are what a connector that signs in asks for first, like the Zendesk subdomain whose sign-in it is: each a
+	// name in a host, of letters, digits and dashes, kept as the grant's Meta, which its Endpoint and RevokeBy read as
+	// {meta/...} as its API does.
+	Ask []Key
+	// Lasting says the provider's access tokens never expire and come without a refresh token, as Intercom's do: the
+	// access token is kept in its place, and a refresh is using it again.
+	Lasting bool
 	// MCP is an MCP connector's server. It needs no Env, Host, Endpoint, Revoke or Scopes: its authorization
 	// server has them. Scopes, when given, are asked for in place of the ones the server suggests.
 	MCP string
@@ -242,13 +250,43 @@ func (p *Provider) at(u string) string {
 	return p.base + pu.RequestURI()
 }
 
-func (p *Provider) config(redirect string) *oauth2.Config {
-	return &oauth2.Config{ClientID: p.clientID, ClientSecret: p.secret, RedirectURL: redirect, Scopes: p.scopes, Endpoint: p.endpoint}
+// config is the OAuth client, its endpoints at the account meta, as Ask has it.
+func (p *Provider) config(redirect string, meta map[string]string) *oauth2.Config {
+	e := p.endpoint
+	if len(p.Ask) > 0 {
+		sc := map[string]any{"meta": metaOf(meta)}
+		e.AuthURL, _ = expand(e.AuthURL, sc)
+		e.TokenURL, _ = expand(e.TokenURL, sc)
+	}
+	return &oauth2.Config{ClientID: p.clientID, ClientSecret: p.secret, RedirectURL: redirect, Scopes: p.scopes, Endpoint: e}
+}
+
+func metaOf(meta map[string]string) map[string]any {
+	m := map[string]any{}
+	for k, v := range meta {
+		m[k] = v
+	}
+	return m
+}
+
+var askRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+
+// Asked are the values of q that the connector's Ask names, or why one will not do.
+func (c *Connector) Asked(q url.Values) (map[string]string, error) {
+	out := map[string]string{}
+	for _, k := range c.Ask {
+		v := strings.ToLower(strings.TrimSpace(q.Get(k.Name)))
+		if !askRe.MatchString(v) {
+			return nil, fmt.Errorf("%s needs %s, of letters, digits and dashes", c.Name, k.Label)
+		}
+		out[k.Name] = v
+	}
+	return out, nil
 }
 
 // AuthURL is where the browser goes to consent, coming back to redirect with state and a code that only
-// verifier (oauth2.GenerateVerifier) trades.
-func (p *Provider) AuthURL(redirect, state, verifier string) string {
+// verifier (oauth2.GenerateVerifier) trades, for the account meta, as Ask has it.
+func (p *Provider) AuthURL(redirect, state, verifier string, meta map[string]string) string {
 	opts := []oauth2.AuthCodeOption{oauth2.S256ChallengeOption(verifier)}
 	for k, v := range p.Params {
 		opts = append(opts, oauth2.SetAuthURLParam(k, v))
@@ -256,7 +294,7 @@ func (p *Provider) AuthURL(redirect, state, verifier string) string {
 	if p.resource != "" {
 		opts = append(opts, oauth2.SetAuthURLParam("resource", p.resource))
 	}
-	return p.config(redirect).AuthCodeURL(state, opts...)
+	return p.config(redirect, meta).AuthCodeURL(state, opts...)
 }
 
 // Grant is a connected account: who it is, its refresh token, the scopes the provider granted and the
@@ -267,9 +305,9 @@ type Grant struct {
 	Meta             map[string]string
 }
 
-// Exchange is the account the provider came back to redirect for, with the query q it came back with. It
-// fails when the person refused, or left out a scope an API connector asks for.
-func (p *Provider) Exchange(ctx context.Context, redirect string, q url.Values, verifier string) (*Grant, error) {
+// Exchange is the account the provider came back to redirect for, with the query q it came back with, and the
+// meta Ask had of it. It fails when the person refused, or left out a scope an API connector asks for.
+func (p *Provider) Exchange(ctx context.Context, redirect string, q url.Values, verifier string, meta map[string]string) (*Grant, error) {
 	if e := q.Get("error"); e != "" {
 		return nil, fmt.Errorf("%s was not connected: %s", p.Name, cmp.Or(q.Get("error_description"), e))
 	}
@@ -278,11 +316,17 @@ func (p *Provider) Exchange(ctx context.Context, redirect string, q url.Values, 
 	if p.resource != "" {
 		opts = append(opts, oauth2.SetAuthURLParam("resource", p.resource))
 	}
-	tok, err := p.config(redirect).Exchange(ctx, q.Get("code"), opts...)
+	tok, err := p.config(redirect, meta).Exchange(ctx, q.Get("code"), opts...)
 	if err != nil {
 		return nil, fmt.Errorf("%s was not connected: %s", p.Name, Reason(err))
 	}
 	g := &Grant{Refresh: tok.RefreshToken, Scopes: p.scopes, Meta: map[string]string{}}
+	if p.Lasting {
+		g.Refresh = tok.AccessToken
+	}
+	for k, v := range meta {
+		g.Meta[k] = v
+	}
 	if s, _ := tok.Extra("scope").(string); s != "" {
 		g.Scopes = strings.Fields(s)
 	}
@@ -325,13 +369,13 @@ func granted(scopes []string, want string) bool {
 	})
 }
 
-// Refresh is a fresh access token for the refresh token rt. Its RefreshToken is the one to keep from now on:
-// rt, or the one the provider replaced it with.
-func (p *Provider) Refresh(ctx context.Context, rt string) (*oauth2.Token, error) {
-	if len(p.Keys) > 0 {
+// Refresh is a fresh access token for the refresh token rt of the account meta. Its RefreshToken is the one to
+// keep from now on: rt, or the one the provider replaced it with.
+func (p *Provider) Refresh(ctx context.Context, rt string, meta map[string]string) (*oauth2.Token, error) {
+	if len(p.Keys) > 0 || p.Lasting {
 		return &oauth2.Token{AccessToken: rt, RefreshToken: rt}, nil
 	}
-	tok, err := p.config("").TokenSource(context.WithValue(ctx, oauth2.HTTPClient, client), &oauth2.Token{RefreshToken: rt}).Token()
+	tok, err := p.config("", meta).TokenSource(context.WithValue(ctx, oauth2.HTTPClient, client), &oauth2.Token{RefreshToken: rt}).Token()
 	if err != nil {
 		return nil, err
 	}
@@ -339,11 +383,11 @@ func (p *Provider) Refresh(ctx context.Context, rt string) (*oauth2.Token, error
 	return tok, nil
 }
 
-// RevokeToken ends the grant of the refresh token rt at the provider, where it has a way to: RevokeWith, or
-// RFC 7009's form at Revoke, which an MCP connector's authorization server also takes its client's
+// RevokeToken ends the grant of the refresh token rt of the account meta at the provider, where it has a way to:
+// RevokeWith, or RFC 7009's form at Revoke, which an MCP connector's authorization server also takes its client's
 // credentials with.
-func (p *Provider) RevokeToken(ctx context.Context, rt string) error {
-	rv := &Revocation{Refresh: rt, ctx: ctx, p: p}
+func (p *Provider) RevokeToken(ctx context.Context, rt string, meta map[string]string) error {
+	rv := &Revocation{Refresh: rt, Meta: meta, ctx: ctx, p: p}
 	switch {
 	case len(p.Keys) > 0:
 		return nil
@@ -375,8 +419,9 @@ func basic(id, secret string) string {
 
 // Revocation is a grant a connector's RevokeWith ends.
 type Revocation struct {
-	// Refresh is the grant's refresh token.
+	// Refresh is the grant's refresh token, and Meta its account's.
 	Refresh string
+	Meta    map[string]string
 	ctx     context.Context
 	p       *Provider
 }
@@ -386,7 +431,7 @@ func (rv *Revocation) Client() (id, secret string) { return rv.p.clientID, rv.p.
 
 // Access is an access token of the grant, for a provider that revokes with one.
 func (rv *Revocation) Access() (string, error) {
-	tok, err := rv.p.Refresh(rv.ctx, rv.Refresh)
+	tok, err := rv.p.Refresh(rv.ctx, rv.Refresh, rv.Meta)
 	if err != nil {
 		return "", err
 	}
@@ -432,7 +477,8 @@ func Reason(err error) string {
 	return err.Error()
 }
 
-// State is what the provider hands back with the code: who started connecting, where, and the PKCE verifier.
+// State is what the provider hands back with the code: who started connecting, where, the PKCE verifier and what
+// the connector asked for first.
 type State struct {
 	Provider  string    `json:"p"`
 	Workspace string    `json:"w"`
@@ -440,6 +486,8 @@ type State struct {
 	Member    uuid.UUID `json:"m"`
 	Verifier  string    `json:"v"`
 	Exp       int64     `json:"x"`
+	// Meta is what the connector's Ask had of the account.
+	Meta map[string]string `json:"k,omitempty"`
 }
 
 // TTL is how long a person has to consent.

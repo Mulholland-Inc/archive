@@ -15,7 +15,7 @@
   let { connector } = $props();
   let keying = $state(false);
   // A connector with keys has no sign-in: Connect asks for them.
-  const start = () => (connector.keys?.length ? (keying = true) : connect(connector.id));
+  const start = () => (connector.keys?.length || connector.ask?.length ? (keying = true) : connect(connector.id));
 
   connections.use();
 </script>

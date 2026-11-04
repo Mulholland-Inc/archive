@@ -39,7 +39,7 @@
         <Button icon={RefreshCw} disabled={!owner} onclick={() => syncIntegration(c.id)}>Sync now</Button>
       </Stack>
     {:else}
-      <Button variant="primary" icon={Plug} disabled={!owner || !c.ready} onclick={() => (c.keys?.length ? (keying = true) : connectIntegration(c.id))}>Connect</Button>
+      <Button variant="primary" icon={Plug} disabled={!owner || !c.ready} onclick={() => (c.keys?.length || c.ask?.length ? (keying = true) : connectIntegration(c.id))}>Connect</Button>
     {/if}
   </Stack>
   {#if !owner}<OwnerNotice what="integrations" />{/if}
