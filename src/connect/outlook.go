@@ -85,10 +85,10 @@ func init() {
 					Decode{Codec: Words, At: "body/content", As: "words", If: Test{At: "body/contentType", Is: "html"}},
 					Fetch{If: Test{At: "hasAttachments", Is: "true"}, Req: Req{URL: "/me/messages/{id}/attachments?$select=id,name,contentType,size,isInline"}, As: "attachments", Par: 4, Gone: true},
 					Download{Each: "attachments/value", If: Test{At: "@odata.type", Is: "#microsoft.graph.fileAttachment"}, Req: Req{URL: "/me/messages/{up/id}/attachments/{id}/$value"},
-						Name: "{name}", Mime: "{contentType}", Size: "size", As: "text", Par: 4},
+						Name: "{name}", Mime: "{contentType}", Size: "size", As: "text", Par: 4, Keep: true},
 				},
-				Doc: "Every message of every folder but Junk Email and Deleted Items, with its text, cut at 64 KB, its attachments' names, and the " +
-					"words of each PDF, Word, Excel, PowerPoint or text attachment up to 25 MB: " +
+				Doc: "Every message of every folder but Junk Email and Deleted Items, with its text, cut at 64 KB, its attachments' names, " +
+					"each of them up to 25 MB kept as a file, and the words of each PDF, Word, Excel, PowerPoint or text one: " +
 					"listed whole the first time, 50 a page and a folder at a time, and then each folder's delta since, messages added, changed, " +
 					"moved or deleted. A folder made since is listed whole; one gone, or a delta Graph no longer keeps, lists the mailbox whole again.",
 				To: Map{Table: "mail_message",
@@ -104,7 +104,7 @@ func init() {
 						{Table: "mail_party", From: "archive.sync_list(data->'bccRecipients') p WHERE " + outlookHas, Cols: map[string]SQL{"role": "'bcc'", "name": outlookName}, People: outlookPerson},
 						{Table: "mail_party", From: "archive.sync_list(data->'replyTo') p WHERE " + outlookHas, Cols: map[string]SQL{"role": "'reply_to'", "name": outlookName}, People: outlookPerson},
 						{Table: "mail_attachment", From: "archive.sync_list(data#>'{attachments,value}') f",
-							Cols: map[string]SQL{"filename": "f->>'name'", "mime": "f->>'contentType'", "size": "archive.sync_num(f->>'size')", "text": "f->>'text'"}},
+							Cols: map[string]SQL{"filename": "f->>'name'", "mime": "f->>'contentType'", "size": "archive.sync_num(f->>'size')", "text": "f->>'text'", "file": "f->>'file'"}},
 					}}},
 			// The calendar's view from a year back to a year ahead is one part named by the month it starts in, so a new month
 			// is a part gone, and lists the view whole again over the moved window. Times come in UTC.

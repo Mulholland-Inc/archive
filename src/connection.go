@@ -856,6 +856,7 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 		pctx, cancel := context.WithTimeout(ctx, syncPageTime)
 		var cl *connect.Client
 		if cl, err = a.connClient(pctx, c); err == nil {
+			cl.Store = a.syncStore(pctx, c.ID, c.Access)
 			page, err = s.Pull(cl, cur.Cursor)
 			if err == nil && page.More && page.Cursor == cur.Cursor {
 				err = fmt.Errorf("%s said there was more, but from where this page began", p.Name)
@@ -1644,14 +1645,15 @@ func (w *syncDB) gone(ctx context.Context, sql string, args ...any) error {
 	return w.q.DeleteUnknown(ctx)
 }
 
-// syncNarrow gives every row connection id synced the access its connection now has.
+// syncNarrow gives every row connection id synced, and every file it kept, the access its connection now has.
 func syncNarrow(ctx context.Context, db generated.DBTX, id uuid.UUID, access *uuid.UUID) error {
 	for _, t := range slices.Sorted(maps.Keys(syncSchema)) {
 		if _, err := db.Exec(ctx, "UPDATE archive."+t+" SET access = $2 WHERE connection = $1 AND access IS DISTINCT FROM $2", id, access); err != nil {
 			return err
 		}
 	}
-	return nil
+	_, err := db.Exec(ctx, "UPDATE archive.file SET access = $2 WHERE connection = $1 AND access IS DISTINCT FROM $2", id, access)
+	return err
 }
 
 // syncCols are the columns of objs, all of each's keys, in order; a row without one has it null. A key that is
@@ -2026,6 +2028,24 @@ func (a *Archive) memberConnections(ctx context.Context, member uuid.UUID) ([]ge
 		return err
 	})
 	return out, err
+}
+
+// syncStore keeps what a connector downloaded as a file of connection id, as the system, for its id: as
+// visible as the connection's rows and gone with the connection. A file kept before with that content and name
+// is that one.
+func (a *Archive) syncStore(ctx context.Context, id uuid.UUID, access *uuid.UUID) func(name string, b []byte) (string, error) {
+	return func(name string, b []byte) (string, error) {
+		var f *File
+		err := a.sys(ctx, func(ctx context.Context) error {
+			var err error
+			f, err = a.fileCommit(ctx, access, name, nil, &id, func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(b)), nil })
+			return err
+		})
+		if f == nil {
+			return "", err
+		}
+		return f.ID.String(), err
+	}
 }
 
 // connClient is a client of the connection c.

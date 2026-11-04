@@ -815,16 +815,18 @@ CREATE TABLE archive.mail_attachment (
     filename   text,
     mime       text,
     size       bigint,
-    text       text
+    text       text,
+    file       uuid REFERENCES archive.file ON DELETE SET NULL
 ) INHERITS (archive.object);
 CREATE INDEX mail_attachment_message_idx ON archive.mail_attachment (message);
 CREATE INDEX mail_attachment_connection_idx ON archive.mail_attachment (connection);
-COMMENT ON TABLE archive.mail_attachment IS 'A file attached to a message, with its words when it is a document Archive reads, like a PDF; its content stays in the mailbox. Read only; Archive syncs them
+COMMENT ON TABLE archive.mail_attachment IS 'A file attached to a message, with its words when it is a document Archive reads, like a PDF; its content is kept as a file. Read only; Archive syncs them
 icon: paperclip';
 COMMENT ON COLUMN archive.mail_attachment.message IS 'references mail_message';
 COMMENT ON COLUMN archive.mail_attachment.mime IS 'Its media type, like application/pdf';
 COMMENT ON COLUMN archive.mail_attachment.size IS 'Its size in bytes';
 COMMENT ON COLUMN archive.mail_attachment.text IS 'Its words, up to 64 KB, when it is a PDF, Word, Excel, PowerPoint or text file Archive read';
+COMMENT ON COLUMN archive.mail_attachment.file IS 'references file; its content, kept as a file its connection owns, seen by whoever sees the message; null when Archive did not keep it, like one over 25 MB or inline';
 COMMENT ON COLUMN archive.mail_attachment.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.doc_page (
@@ -3674,6 +3676,14 @@ SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, 
 
 -- name: CreateFile :one
 INSERT INTO archive.file (hash, name, mime, size, access, parent) VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at;
+
+-- A file a connection's sync kept, like a mail's attachment: found again by its content and name.
+-- name: FileKept :one
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at FROM archive.file WHERE connection = $1 AND hash = $2 AND name = $3 LIMIT 1;
+
+-- name: KeepFile :one
+INSERT INTO archive.file (hash, name, mime, size, access, connection) VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at;
 
 -- What of the files is in a folder, or at the top of a connection or of what was made here, with tree; every one without.

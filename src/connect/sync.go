@@ -81,7 +81,7 @@ type Page struct {
 type Record struct {
 	ID   string
 	Data any
-	// Updated is when it last changed there, zero when the provider does not say. The sync does not store it.
+	// Updated is when it last changed there, zero when the provider does not say.
 	Updated time.Time
 	// Deleted says it is gone there; its Data is not read.
 	Deleted bool
@@ -183,7 +183,7 @@ func htmlText(s string) string {
 // sets it, as this package cannot import it.
 var Extract func(name, mime string, b []byte) string
 
-// maxFile is the largest file a stream downloads to read its words; a bigger one keeps only its name.
+// maxFile is the largest file a stream downloads to keep or read; a bigger one keeps only its name.
 const maxFile = 25 << 20
 
 // textual says whether a file named name of media type mime is a kind Extract reads.
@@ -201,10 +201,18 @@ func textual(name, mime string) bool {
 
 // bytesText is the words of b, a file named name of media type mime, as fileText reads them.
 func bytesText(name, mime string, b []byte) string {
-	if Extract == nil || !textual(name, mime) {
+	if Extract == nil || b == nil || !textual(name, mime) {
 		return ""
 	}
 	return clip(strings.ToValidUTF8(Extract(name, mime, b), ""), maxText)
+}
+
+// keep stores b through c.Store as a file named name, and is its id; "" when the Client keeps no files or b is nil.
+func (c *Client) keep(name string, b []byte) (string, error) {
+	if c.Store == nil || b == nil {
+		return "", nil
+	}
+	return c.Store(name, b)
 }
 
 // fileText is the words of the file at the provider's URL u, named name, of media type mime and size bytes,
@@ -215,9 +223,20 @@ func (c *Client) fileText(u, name, mime string, size int64) (string, error) {
 	if Extract == nil || !textual(name, mime) || size > maxFile {
 		return "", nil
 	}
+	b, err := c.fileBytes(u, maxFile)
+	if err != nil || b == nil {
+		return "", err
+	}
+	return bytesText(name, mime, b), nil
+}
+
+// fileBytes is the content of the file at the provider's URL u, up to limit bytes: nil for one bigger, one the
+// provider will not hand over, or one that does not come in time. Only a provider turning Archive away for now
+// is an error, which the sync tries again later.
+func (c *Client) fileBytes(u string, limit int64) ([]byte, error) {
 	req, err := request(c.ctx, "GET", c.p.at(u), nil)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	req.Header.Set("Accept", "*/*")
 	hc := *c.http
@@ -225,22 +244,22 @@ func (c *Client) fileText(u, name, mime string, size int64) (string, error) {
 	resp, err := hc.Do(req)
 	if err != nil {
 		if c.ctx.Err() != nil {
-			return "", c.ctx.Err()
+			return nil, c.ctx.Err()
 		}
-		return "", nil
+		return nil, nil
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		if r := refusal(c.p, resp); Busy(r) {
-			return "", r
+			return nil, r
 		}
-		return "", nil
+		return nil, nil
 	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, maxFile+1))
-	if err != nil || len(b) > maxFile {
-		return "", nil
+	b, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil || int64(len(b)) > limit {
+		return nil, nil
 	}
-	return bytesText(name, mime, b), nil
+	return b, nil
 }
 
 // opened sends r, its templates read from sc, and is its answer as it comes, with no limit but ctx on how long that
