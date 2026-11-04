@@ -2311,7 +2311,8 @@ COMMENT ON COLUMN archive.dental_payment.updated_at IS 'When Archive last saw it
 COMMENT ON COLUMN archive.dental_payment.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 -- Calendars: an event of a calendar you connected, like Google Calendar or Outlook's, a recurring one as its
--- series and each occurrence that differs from it, and who is invited.
+-- series and each occurrence that differs from it, and who is invited. A booking tool's bookings, like Calendly's,
+-- and a notetaker's recorded meetings, like Fireflies', are events too, the latter with what was said.
 CREATE TABLE archive.calendar_event (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
     connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
@@ -2338,12 +2339,15 @@ CREATE TABLE archive.calendar_event (
     url            archive.url,
     meeting_url    archive.url,
     edited_at      timestamptz,
+    summary        text,
+    action_items   text,
+    transcript     text,
     UNIQUE (connection, stream, source_id)
 ) INHERITS (archive.object);
 CREATE INDEX calendar_event_series_idx ON archive.calendar_event (series);
 CREATE INDEX calendar_event_organizer_idx ON archive.calendar_event (organizer);
 CREATE INDEX calendar_event_starts_at_idx ON archive.calendar_event (starts_at);
-COMMENT ON TABLE archive.calendar_event IS 'An event of a calendar you connected, like Google Calendar or Outlook''s; who is invited is in calendar_attendee. Read only; Archive syncs them
+COMMENT ON TABLE archive.calendar_event IS 'An event of a calendar you connected, like Google Calendar or Outlook''s, a booking of a scheduling tool, like Calendly, or a meeting a notetaker recorded, like Fireflies, with its summary and transcript; who is invited or took part is in calendar_attendee. Read only; Archive syncs them
 icon: calendar';
 COMMENT ON COLUMN archive.calendar_event.calendar IS 'The calendar it is on, by name';
 COMMENT ON COLUMN archive.calendar_event.title IS 'Its title';
@@ -2360,6 +2364,9 @@ COMMENT ON COLUMN archive.calendar_event.organizer_name IS 'Who organizes it, by
 COMMENT ON COLUMN archive.calendar_event.url IS 'Where it opens there';
 COMMENT ON COLUMN archive.calendar_event.meeting_url IS 'Where to join it online, like a Meet or Teams link';
 COMMENT ON COLUMN archive.calendar_event.edited_at IS 'When it last changed there';
+COMMENT ON COLUMN archive.calendar_event.summary IS 'What a notetaker that recorded it says it was about, up to 64 KB';
+COMMENT ON COLUMN archive.calendar_event.action_items IS 'What a notetaker that recorded it says is to be done, a line each';
+COMMENT ON COLUMN archive.calendar_event.transcript IS 'What was said, a line each as Speaker: words, up to 512 KB';
 COMMENT ON COLUMN archive.calendar_event.connection IS 'references connection; the account it is from';
 COMMENT ON COLUMN archive.calendar_event.stream IS 'What its connector syncs it as, like messages';
 COMMENT ON COLUMN archive.calendar_event.source_id IS 'Its id there';
