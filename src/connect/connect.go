@@ -78,9 +78,18 @@ type Connector struct {
 	Optional []string
 	// Params go on the authorization URL, like the ones that ask Google for a refresh token.
 	Params map[string]string
-	// Keep are parameters the provider adds to the callback that calls need later, like QuickBooks' realmId;
-	// the Grant keeps them as its Meta.
+	// Keep are parameters the provider adds to the callback, or to its token's answer, that calls need later, like
+	// QuickBooks' realmId or Zoho's api_domain; the Grant keeps them as its Meta.
 	Keep []string
+	// Region is a parameter the provider adds to the callback naming the server an account lives on, one of
+	// Regions, like Zoho's accounts-server, which is its data center's: the Grant keeps it as its Meta, and its
+	// tokens come from and are revoked on that server in place of Endpoint's and Revoke's. A callback without it
+	// stays on theirs, and one naming another server fails.
+	Region  string
+	Regions []string
+	// TokenType is the scheme of the Authorization header of its requests, like Zoho's Zoho-oauthtoken, in place
+	// of the token's own, Bearer.
+	TokenType string
 	// MCP is an MCP connector's server. It needs no Env, Host, Endpoint, Revoke or Scopes: its authorization
 	// server has them. Scopes, when given, are asked for in place of the ones the server suggests.
 	MCP string
@@ -242,8 +251,21 @@ func (p *Provider) at(u string) string {
 	return p.base + pu.RequestURI()
 }
 
-func (p *Provider) config(redirect string) *oauth2.Config {
-	return &oauth2.Config{ClientID: p.clientID, ClientSecret: p.secret, RedirectURL: redirect, Scopes: p.scopes, Endpoint: p.endpoint}
+// config is the OAuth client for a grant with meta, its tokens on its Region's server.
+func (p *Provider) config(redirect string, meta map[string]string) *oauth2.Config {
+	e := p.endpoint
+	e.TokenURL = p.on(e.TokenURL, meta)
+	return &oauth2.Config{ClientID: p.clientID, ClientSecret: p.secret, RedirectURL: redirect, Scopes: p.scopes, Endpoint: e}
+}
+
+// on is u moved onto the server of the Region meta has, when it is one of Regions.
+func (p *Provider) on(u string, meta map[string]string) string {
+	r := meta[p.Region]
+	pu, err := url.Parse(u)
+	if p.Region == "" || !slices.Contains(p.Regions, r) || err != nil {
+		return u
+	}
+	return r + pu.RequestURI()
 }
 
 // AuthURL is where the browser goes to consent, coming back to redirect with state and a code that only
@@ -256,7 +278,7 @@ func (p *Provider) AuthURL(redirect, state, verifier string) string {
 	if p.resource != "" {
 		opts = append(opts, oauth2.SetAuthURLParam("resource", p.resource))
 	}
-	return p.config(redirect).AuthCodeURL(state, opts...)
+	return p.config(redirect, nil).AuthCodeURL(state, opts...)
 }
 
 // Grant is a connected account: who it is, its refresh token, the scopes the provider granted and the
@@ -278,16 +300,24 @@ func (p *Provider) Exchange(ctx context.Context, redirect string, q url.Values, 
 	if p.resource != "" {
 		opts = append(opts, oauth2.SetAuthURLParam("resource", p.resource))
 	}
-	tok, err := p.config(redirect).Exchange(ctx, q.Get("code"), opts...)
+	meta := map[string]string{}
+	if r := strings.TrimRight(q.Get(p.Region), "/"); p.Region != "" && r != "" {
+		if !slices.Contains(p.Regions, r) {
+			return nil, fmt.Errorf("%s was not connected: it came back for %s, a server Archive does not know", p.Name, r)
+		}
+		meta[p.Region] = r
+	}
+	tok, err := p.config(redirect, meta).Exchange(ctx, q.Get("code"), opts...)
 	if err != nil {
 		return nil, fmt.Errorf("%s was not connected: %s", p.Name, Reason(err))
 	}
-	g := &Grant{Refresh: tok.RefreshToken, Scopes: p.scopes, Meta: map[string]string{}}
+	g := &Grant{Refresh: tok.RefreshToken, Scopes: p.scopes, Meta: meta}
 	if s, _ := tok.Extra("scope").(string); s != "" {
 		g.Scopes = strings.Fields(s)
 	}
 	for _, k := range p.Keep {
-		if g.Meta[k] = q.Get(k); g.Meta[k] == "" {
+		extra, _ := tok.Extra(k).(string)
+		if g.Meta[k] = cmp.Or(q.Get(k), extra); g.Meta[k] == "" {
 			return nil, fmt.Errorf("%s was not connected: it came back without %s", p.Name, k)
 		}
 	}
@@ -325,13 +355,13 @@ func granted(scopes []string, want string) bool {
 	})
 }
 
-// Refresh is a fresh access token for the refresh token rt. Its RefreshToken is the one to keep from now on:
-// rt, or the one the provider replaced it with.
-func (p *Provider) Refresh(ctx context.Context, rt string) (*oauth2.Token, error) {
+// Refresh is a fresh access token for the refresh token rt of a grant with meta. Its RefreshToken is the one to
+// keep from now on: rt, or the one the provider replaced it with.
+func (p *Provider) Refresh(ctx context.Context, rt string, meta map[string]string) (*oauth2.Token, error) {
 	if len(p.Keys) > 0 {
 		return &oauth2.Token{AccessToken: rt, RefreshToken: rt}, nil
 	}
-	tok, err := p.config("").TokenSource(context.WithValue(ctx, oauth2.HTTPClient, client), &oauth2.Token{RefreshToken: rt}).Token()
+	tok, err := p.config("", meta).TokenSource(context.WithValue(ctx, oauth2.HTTPClient, client), &oauth2.Token{RefreshToken: rt}).Token()
 	if err != nil {
 		return nil, err
 	}
@@ -339,11 +369,11 @@ func (p *Provider) Refresh(ctx context.Context, rt string) (*oauth2.Token, error
 	return tok, nil
 }
 
-// RevokeToken ends the grant of the refresh token rt at the provider, where it has a way to: RevokeWith, or
-// RFC 7009's form at Revoke, which an MCP connector's authorization server also takes its client's
-// credentials with.
-func (p *Provider) RevokeToken(ctx context.Context, rt string) error {
-	rv := &Revocation{Refresh: rt, ctx: ctx, p: p}
+// RevokeToken ends the grant of the refresh token rt, with meta, at the provider, where it has a way to:
+// RevokeWith, or RFC 7009's form at Revoke, which an MCP connector's authorization server also takes its
+// client's credentials with.
+func (p *Provider) RevokeToken(ctx context.Context, rt string, meta map[string]string) error {
+	rv := &Revocation{Refresh: rt, Meta: meta, ctx: ctx, p: p}
 	switch {
 	case len(p.Keys) > 0:
 		return nil
@@ -364,7 +394,7 @@ func (p *Provider) RevokeToken(ctx context.Context, rt string) error {
 	default:
 		form.Del("token_type_hint")
 	}
-	return rv.send("POST", p.revoke, hdr, form)
+	return rv.send("POST", p.on(p.revoke, meta), hdr, form)
 }
 
 // basic is the Authorization header of HTTP Basic with the client id and secret, form-encoded as RFC 6749 has
@@ -375,8 +405,9 @@ func basic(id, secret string) string {
 
 // Revocation is a grant a connector's RevokeWith ends.
 type Revocation struct {
-	// Refresh is the grant's refresh token.
+	// Refresh is the grant's refresh token, and Meta what it kept of its callback.
 	Refresh string
+	Meta    map[string]string
 	ctx     context.Context
 	p       *Provider
 }
@@ -386,7 +417,7 @@ func (rv *Revocation) Client() (id, secret string) { return rv.p.clientID, rv.p.
 
 // Access is an access token of the grant, for a provider that revokes with one.
 func (rv *Revocation) Access() (string, error) {
-	tok, err := rv.p.Refresh(rv.ctx, rv.Refresh)
+	tok, err := rv.p.Refresh(rv.ctx, rv.Refresh, rv.Meta)
 	if err != nil {
 		return "", err
 	}
@@ -519,6 +550,11 @@ type Client struct {
 func (p *Provider) Open(ctx context.Context, tok *oauth2.Token, meta map[string]string) *Client {
 	if len(p.Keys) > 0 {
 		return p.openKeys(ctx, keysFrom(tok.AccessToken), meta)
+	}
+	if p.TokenType != "" {
+		t := *tok
+		t.TokenType = p.TokenType
+		tok = &t
 	}
 	var rt http.RoundTripper = &oauth2.Transport{Source: oauth2.StaticTokenSource(tok)}
 	if p.Pace > 0 {
