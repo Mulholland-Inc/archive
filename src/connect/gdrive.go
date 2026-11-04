@@ -103,8 +103,17 @@ func init() {
 			Hydrate: []Hydrate{
 				Fetch{If: Test{At: "driveId"}, Once: "{driveId}", Soft: true, Req: Req{URL: "/drives/{driveId}?fields=name"}, As: "shared"},
 			},
+			// Google exports at most 10 MB of a document, and has no bytes of what it makes that exports to nothing, like a form.
+			Content: []Content{
+				{If: Test{At: "mimeType", Is: driveDoc}, Req: Req{URL: "/files/{source/id}/export", Query: Q{"mimeType": driveDOCX}}, Too: driveTooBig},
+				{If: Test{At: "mimeType", Is: driveSheet}, Req: Req{URL: "/files/{source/id}/export", Query: Q{"mimeType": driveXLSX}}, Too: driveTooBig},
+				{If: Test{At: "mimeType", Is: driveDeck}, Req: Req{URL: "/files/{source/id}/export", Query: Q{"mimeType": drivePPTX}}, Too: driveTooBig},
+				{If: Test{At: "mimeType", Re: `^application/vnd\.google-apps\.`, Off: true}, Req: Req{URL: "/files/{source/id}?alt=media&supportsAllDrives=true"}, Size: "size",
+					Too: []Deny{{Status: []int{403}, Says: []string{"cannot be downloaded", "cannotDownload", "not downloadable"}, Why: "Google will not hand it over: {message}"}}},
+			},
 			Doc: "Every file and folder in My Drive, shared with you and in your shared drives, but those in the trash: its name, type, " +
-				"folder, owner, who changed it last and when, and a copy of its bytes. A listing Drive says may have left files out deletes none. " +
+				"folder, owner, who changed it last and when, and a copy of its bytes up to 1 GB, with its words: a Google Doc, Sheet or Slides deck as the Word, Excel or " +
+				"PowerPoint file it exports to, up to the 10 MB Google exports. A listing Drive says may have left files out deletes none. " +
 				"Listed whole the first time, 100 a page, and then Drive's changes since.",
 			// A file's folder is its first parent, and its owner the first of them, or for a file of a shared drive, which has none, nobody.
 			// Google's own documents are kept as the Office files they export to, named so.
@@ -138,6 +147,7 @@ const (
 )
 
 var (
+	driveTooBig    = []Deny{{Status: []int{403}, Says: []string{"too large to be exported", "exportSizeLimitExceeded"}, Why: "Google exports at most 10 MB of a document, and this one comes to more"}}
 	driveGoogle    = Test{At: "f/mimeType", Re: `^application/vnd\.google-apps\.`}
 	driveSaving    = Q{"supportsAllDrives": "true", "fields": driveFields}
 	driveUploading = Q{"uploadType": "multipart", "supportsAllDrives": "true", "fields": driveFields}

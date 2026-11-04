@@ -290,6 +290,8 @@ declare const archive: {
     files(opts?: { limit?: number; after?: string }): Promise<StoredFile[]>;
     /** One file with its extracted text. */
     file(id: string): Promise<StoredFile>;
+    /** How many bytes this archive's files hold, the same bytes counted once. */
+    stored(): Promise<number>;
     /** The structure of a docx, xlsx or pptx file: paragraphs with ids, cells, slides and shapes (see Documents). */
     read(fileId: string): Promise<Model>;
     /** Apply edits to a docx, xlsx or pptx file and save it as the file's new content; all or nothing (see Documents). */

@@ -83,9 +83,10 @@ func init() {
 			Change: Resume{At: "@odata.deltaLink", Expired: []int{410}, Stale: []Deny{{Status: []int{400}, Says: []string{"SyncState", "resyncRequired", "sync state"}}}},
 			// A library's top is left out.
 			Gone: []Test{{At: "deleted"}, {At: "@removed"}}, Skip: []Test{{At: "root"}},
-			Set: Obj{"drive": "{in/name}", "driveId": "{part}"},
+			Set:     Obj{"drive": "{in/name}", "driveId": "{part}"},
+			Content: []Content{{Req: Req{URL: "/drives/{source/drive}/items/{source/item}/content"}, Size: "size"}},
 			Doc: "Every file and folder of your OneDrive and of each document library of each SharePoint site you can reach: its name, type, " +
-				"folder, library, who made it and changed it last and when, and a copy of its bytes. Listed whole the first time, a library at a time, by <library id>/<item id>, and then each " +
+				"folder, library, who made it and changed it last and when, and a copy of its bytes up to 1 GB, with its words. Listed whole the first time, a library at a time, by <library id>/<item id>, and then each " +
 				"library's delta since. A library made since is listed whole; one gone, or a delta Graph no longer keeps, lists them all again.",
 			// An item's folder is its parent, which links unless it is the library's top, which is no row; and its owner who made it.
 			To: Map{Table: "file",

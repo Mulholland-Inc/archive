@@ -48,6 +48,18 @@ type Stream struct {
 	// Table is the table of archive.sql its records land in, SQL the query of the rows of a page's records, as Map has it
 	// (def.go), and Version the hash of the definition its rows come from.
 	Table, SQL, Version string
+	// Read opens the bytes of the file its row's source says, nil for a stream of no files: an *Unsupported error is a
+	// file that will not be copied, and says why.
+	Read func(c *Client, source map[string]any) (*Bytes, error)
+}
+
+// MaxCopy is the largest file Archive keeps a copy of.
+const MaxCopy = 1 << 30
+
+// Bytes is a file's content as it comes: Size is how much, -1 when the provider does not say.
+type Bytes struct {
+	Body io.ReadCloser
+	Size int64
 }
 
 // Page is what one pull found.

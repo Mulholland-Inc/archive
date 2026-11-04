@@ -25,8 +25,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Mulholland-Inc/archive/connect"
@@ -67,6 +69,8 @@ type File struct {
 }
 
 const (
+	// fileTextMax is the most of a file's words a row keeps, uploaded or synced; search reads the first 250,000 characters.
+	fileTextMax = 1 << 20
 	fileMaxPost = 64 << 20
 	fileLinkTTL = 24 * time.Hour
 	tusVersion  = "1.0.0"
@@ -436,6 +440,10 @@ func (a *Archive) fileRoutes(mux *http.ServeMux) {
 		}
 		fs, err := a.Files(r.Context(), limit, after, tree)
 		return http.StatusOK, fs, err
+	})
+	handle("GET /api/files/stored", func(r *http.Request) (int, any, error) {
+		n, err := a.Stored(r.Context())
+		return http.StatusOK, map[string]int64{"bytes": n}, err
 	})
 	handle("GET /api/files/sources", func(r *http.Request) (int, any, error) {
 		s, err := a.FileSources(r.Context())
@@ -920,7 +928,7 @@ func (a *Archive) fileProcess(ctx context.Context, id uuid.UUID) (bool, error) {
 		found = true
 		meta, text, perr := a.media(ctx, f)
 		err = pgx.BeginFunc(ctx, a.st.Q(ctx), func(tx pgx.Tx) error {
-			return generated.New(tx).SetFileContent(ctx, f.ID, meta, strings.ToValidUTF8(strings.ReplaceAll(text, "\x00", ""), "�"))
+			return generated.New(tx).SetFileContent(ctx, f.ID, meta, fileWords(text))
 		})
 		status, msg := "done", ""
 		if perr = errors.Join(err, perr); perr != nil {
@@ -929,6 +937,248 @@ func (a *Archive) fileProcess(ctx context.Context, id uuid.UUID) (bool, error) {
 		return a.st.db(ctx).SetFileStatus(ctx, f.ID, status, msg)
 	})
 	return found, err
+}
+
+// fileWords is text as a row keeps it.
+func fileWords(text string) string {
+	text = strings.ToValidUTF8(strings.ReplaceAll(text, "\x00", ""), "�")
+	if len(text) <= fileTextMax {
+		return text
+	}
+	return strings.ToValidUTF8(text[:fileTextMax], "")
+}
+
+// A synced file's bytes are copied here apart from its sync, which only marks it pending when its version changes
+// (file_check), so a page of a sync stays a page of names. The job is pushed when a transaction leaves one pending
+// (archive.push) and runs as a task of its own, on the due path of the rest of Archive's work: a few at a time, each
+// streamed from the provider into the blob store, not held in memory, for pullBudget, and it queues itself for the
+// rest. A file's lease is its retry_at, so one an instance stopped copying is taken up again; one that fails waits, a
+// minute doubling, for pullTries tries, and a provider that is busy waits as long as it asks.
+const (
+	pullPar    = 4
+	pullBudget = 4 * time.Minute
+	// pullTime is the most one file takes, read and copied: a task may start one at the end of its budget, and with
+	// that must end inside Cloud Run's 10 minutes.
+	pullTime     = 5 * time.Minute
+	pullReadTime = 2 * time.Minute
+	pullRetry    = time.Minute
+	pullBusyWait = 15 * time.Minute
+	pullTries    = 6
+)
+
+// pullAll copies files due until pullBudget is up.
+func (a *Archive) pullAll(ctx context.Context) {
+	end := time.Now().Add(pullBudget)
+	var wg sync.WaitGroup
+	for range pullPar {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for time.Now().Before(end) && ctx.Err() == nil {
+				var f generated.ClaimPullRow
+				err := a.sys(ctx, func(ctx context.Context) (err error) {
+					f, err = a.st.db(ctx).ClaimPull(ctx, time.Now().Add(pullTime+time.Minute))
+					return err
+				})
+				if err != nil {
+					if !errors.Is(err, pgx.ErrNoRows) && ctx.Err() == nil {
+						fmt.Fprintf(os.Stderr, "archive: workspace %s pulls: %v\n", a.ws.ID, err)
+					}
+					return
+				}
+				a.pull(ctx, f)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// pull copies f's bytes unless it has them, and reads its words, and says how that went on its row.
+func (a *Archive) pull(ctx context.Context, f generated.ClaimPullRow) {
+	pctx, cancel := context.WithTimeout(ctx, pullTime)
+	defer cancel()
+	err := a.pullCopy(pctx, f)
+	if err == nil {
+		err = a.pullRead(pctx, f)
+	}
+	if err == nil {
+		return
+	}
+	bg := context.WithoutCancel(ctx)
+	id, version := f.ID, f.Version
+	var skip *connect.Unsupported
+	err = a.sys(bg, func(ctx context.Context) error {
+		q := a.st.db(ctx)
+		now := time.Now()
+		switch {
+		case errors.As(err, &skip):
+			return q.SetPullEnd(ctx, generated.SetPullEndParams{ID: id, Version: version, Status: "skipped", Error: "Archive does not copy this file: " + skip.Reason})
+		case errors.Is(err, errRevoked):
+			return q.SetPullRetry(ctx, generated.SetPullRetryParams{ID: id, Version: version, At: now.Add(time.Hour), Tries: f.Tries - 1, Error: err.Error()})
+		case connect.Busy(err) || ctx.Err() != nil:
+			wait := max(min(pullRetry<<min(max(f.Tries-1, 0), 16), pullBusyWait), connect.RetryAfter(err))
+			return q.SetPullRetry(ctx, generated.SetPullRetryParams{ID: id, Version: version, At: now.Add(wait), Tries: f.Tries - 1, Error: ""})
+		case f.Tries >= pullTries:
+			return q.SetPullEnd(ctx, generated.SetPullEndParams{ID: id, Version: version, Status: "error", Error: err.Error()})
+		}
+		return q.SetPullRetry(ctx, generated.SetPullRetryParams{ID: id, Version: version, At: now.Add(pullRetry << min(f.Tries-1, 16)), Tries: f.Tries, Error: ""})
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "archive: workspace %s: file %s: %v\n", a.ws.ID, id, err)
+	}
+}
+
+// pullCopy streams f's bytes from its provider to the blob store, under a name of their own until their hash is
+// known. A version that came meanwhile, or a row that went, leaves them out.
+func (a *Archive) pullCopy(ctx context.Context, f generated.ClaimPullRow) error {
+	if f.Copied != nil && f.Version != nil && *f.Copied == *f.Version && f.Hash != "" {
+		return nil
+	}
+	var c generated.ArchiveConnection
+	err := a.sys(ctx, func(ctx context.Context) (err error) {
+		c, err = a.st.db(ctx).Connection(ctx, *f.Connection)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	p, err := a.hub.connect.Get(c.Provider)
+	if err != nil {
+		return err
+	}
+	i := slices.IndexFunc(p.Streams, func(s *connect.Stream) bool { return f.Stream != nil && s.Name == *f.Stream })
+	if i < 0 || p.Streams[i].Read == nil {
+		return &connect.Unsupported{Reason: p.Name + " has no bytes of it to copy"}
+	}
+	cl, err := a.connClient(ctx, c)
+	if err != nil {
+		return err
+	}
+	defer cl.Close()
+	body, err := p.Streams[i].Read(cl, f.Source)
+	if err != nil {
+		return err
+	}
+	defer body.Body.Close()
+	h := sha256.New()
+	var head fileHead
+	counted := &fileCount{r: io.TeeReader(io.TeeReader(body.Body, h), &head), most: connect.MaxCopy}
+	tmp := "copies/" + coreNewID().String() + ".part"
+	if err := a.blobs.put(ctx, tmp, counted, body.Size); err != nil {
+		if counted.over {
+			return &connect.Unsupported{Reason: fmt.Sprintf("it is over the %d GB Archive copies", connect.MaxCopy>>30)}
+		}
+		return err
+	}
+	hash := hex.EncodeToString(h.Sum(nil))
+	moved := false
+	err = a.sys(context.WithoutCancel(ctx), func(ctx context.Context) error {
+		q := a.st.db(ctx)
+		row, err := fileOf(q.LockFile(ctx, f.ID))
+		if errors.Is(err, ErrNotFound) || err == nil && !slices.Equal(ptrSlice(row.Version), ptrSlice(f.Version)) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := a.blobs.move(ctx, tmp, blobKey(hash)); err != nil {
+			return err
+		}
+		moved = true
+		_, err = q.SetPulled(ctx, generated.SetPulledParams{ID: f.ID, Version: f.Version, Hash: hash, Size: counted.n, Sniffed: mediaSniff(f.Name, head.b)})
+		return err
+	})
+	if !moved {
+		a.blobs.remove(context.WithoutCancel(ctx), tmp)
+	}
+	return err
+}
+
+// ptrSlice is p as a slice, to compare what may be nil.
+func ptrSlice(p *string) []string {
+	if p == nil {
+		return nil
+	}
+	return []string{*p}
+}
+
+// fileHead keeps the first bytes that go through it, which say what a file is.
+type fileHead struct{ b []byte }
+
+func (h *fileHead) Write(p []byte) (int, error) {
+	if n := 512 - len(h.b); n > 0 {
+		h.b = append(h.b, p[:min(n, len(p))]...)
+	}
+	return len(p), nil
+}
+
+// fileCount counts what is read through it, and fails past most.
+type fileCount struct {
+	r       io.Reader
+	n, most int64
+	over    bool
+}
+
+func (c *fileCount) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	if c.n += int64(n); c.n > c.most {
+		c.over = true
+		return n, errors.New("over the most Archive copies")
+	}
+	return n, err
+}
+
+// pullRead reads the words of a file whose bytes are here, as an upload's are, in pullReadTime at most.
+func (a *Archive) pullRead(ctx context.Context, c generated.ClaimPullRow) error {
+	var f *File
+	err := a.sys(ctx, func(ctx context.Context) (err error) {
+		f, err = fileOf(a.st.db(ctx).GetFile(ctx, c.ID))
+		return err
+	})
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if f.Hash == "" || !slices.Equal(ptrSlice(f.Version), ptrSlice(c.Version)) {
+		return nil
+	}
+	type read struct {
+		meta map[string]any
+		text string
+		err  error
+	}
+	got := make(chan read, 1)
+	a.reading.Lock()
+	go func() {
+		defer a.reading.Unlock()
+		m, t, e := a.media(context.WithoutCancel(ctx), f)
+		got <- read{m, t, e}
+	}()
+	status, msg := "done", ""
+	var r read
+	select {
+	case r = <-got:
+	case <-time.After(pullReadTime):
+		r.err = fmt.Errorf("reading its words took over %s", pullReadTime)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if r.err != nil {
+		status, msg = "error", r.err.Error()
+	}
+	if r.meta == nil {
+		r.meta = map[string]any{}
+	}
+	return a.sys(context.WithoutCancel(ctx), func(ctx context.Context) error {
+		return a.st.db(ctx).SetPullDone(ctx, generated.SetPullDoneParams{ID: f.ID, Version: c.Version, Status: status, Error: msg, Metadata: r.meta, Body: fileWords(r.text)})
+	})
+}
+
+// Stored is how many bytes this workspace's blobs hold, each once.
+func (a *Archive) Stored(ctx context.Context) (int64, error) {
+	return coreDo(a, ctx, func(ctx context.Context) (int64, error) { return a.st.db(ctx).Stored(ctx) })
 }
 
 func (a *Archive) media(ctx context.Context, f *File) (map[string]any, string, error) {
@@ -944,6 +1194,9 @@ func (a *Archive) media(ctx context.Context, f *File) (map[string]any, string, e
 	rc.Close()
 	if err != nil {
 		return meta, "", err
+	}
+	if f.MIME == "application/octet-stream" {
+		f.MIME = mediaSniff(f.Name, b[:min(len(b), 512)])
 	}
 	top, _, _ := strings.Cut(f.MIME, "/")
 	if _, office := officeMIME[strings.ToLower(f.MIME)]; office {
@@ -1198,8 +1451,11 @@ func (a *Archive) mediaThumbnail(ctx context.Context, b []byte) (map[string]any,
 	return map[string]any{"sha256": hash, "size": buf.Len(), "width": dst.Bounds().Dx(), "height": dst.Bounds().Dy()}, nil
 }
 
+// blobStore holds bytes by key. put reads to r's end whatever size says; -1 is a size not known. move takes what from
+// holds to the key to, unless to has it already, and from is gone either way.
 type blobStore interface {
 	put(ctx context.Context, key string, r io.Reader, size int64) error
+	move(ctx context.Context, from, to string) error
 	open(ctx context.Context, key string, size int64) (io.ReadSeekCloser, error)
 	remove(ctx context.Context, key string) error
 }
@@ -1252,6 +1508,16 @@ func (d *dirBlobs) put(_ context.Context, key string, r io.Reader, _ int64) erro
 	return os.Rename(tmp.Name(), p)
 }
 
+func (d *dirBlobs) move(_ context.Context, from, to string) error {
+	if _, err := os.Stat(d.path(to)); err == nil {
+		return os.Remove(d.path(from))
+	}
+	if err := os.MkdirAll(filepath.Dir(d.path(to)), 0o700); err != nil {
+		return err
+	}
+	return os.Rename(d.path(from), d.path(to))
+}
+
 func (d *dirBlobs) open(_ context.Context, key string, _ int64) (io.ReadSeekCloser, error) {
 	f, err := os.Open(d.path(key))
 	if errors.Is(err, fs.ErrNotExist) {
@@ -1297,6 +1563,10 @@ func (s *gcsBlobs) do(ctx context.Context, method, obj string, body io.Reader, s
 	if rng != "" {
 		req.Header.Set("Range", rng)
 	}
+	if from, ok := strings.CutPrefix(rng, "copy:"); ok {
+		req.Header.Del("Range")
+		req.Header.Set("x-goog-copy-source", "/"+strings.TrimPrefix(s.url(from), strings.TrimRight(s.origin(), "/")+"/"))
+	}
 	tok, err := s.gcp.access(ctx)
 	if err != nil {
 		return nil, err
@@ -1331,6 +1601,36 @@ func (s *gcsBlobs) put(ctx context.Context, key string, r io.Reader, size int64)
 	}
 	resp.Body.Close()
 	return nil
+}
+
+// origin is the host that base's bucket is on.
+func (s *gcsBlobs) origin() string { return s.base[:strings.LastIndex(s.base, "/")] }
+
+// move copies from to to on the server, which takes no bytes through here, and removes from.
+func (s *gcsBlobs) move(ctx context.Context, from, to string) error {
+	resp, err := s.do(ctx, "HEAD", to, nil, 0, "")
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		if resp, err = s.do(ctx, "PUT", to, nil, 0, "copy:"+from); err != nil {
+			return err
+		}
+		if resp.StatusCode/100 != 2 {
+			return gcsErr(resp)
+		}
+		resp.Body.Close()
+		// A copy that answers 200 can still fail in its body: what is there says.
+		if resp, err = s.do(ctx, "HEAD", to, nil, 0, ""); err != nil {
+			return err
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("gcs: copying to %s left nothing there: %s", to, resp.Status)
+		}
+	}
+	return s.remove(ctx, from)
 }
 
 func (s *gcsBlobs) open(ctx context.Context, key string, size int64) (io.ReadSeekCloser, error) {

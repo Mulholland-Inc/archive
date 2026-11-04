@@ -490,6 +490,69 @@ type Sync struct {
 	Deny      []Deny        `json:",omitempty"`
 	Restart   []int         `json:",omitempty"`
 	Pass      []int         `json:",omitempty"`
+	Content   []Content     `json:",omitempty"`
+}
+
+// Content is how the bytes of a stream's file are read, the first whose If holds of its row's source column: Req reads
+// that as {source/...}, and answers with them. Size is where source says how many. Too are refusals that mean it will
+// never be copied, whose Why says so.
+type Content struct {
+	If   Test `json:",omitzero"`
+	Req  Req
+	Size Path   `json:",omitempty"`
+	Too  []Deny `json:",omitempty"`
+}
+
+// bytesOf opens the bytes of the file source says.
+func (s *Sync) bytesOf(c *Client, source map[string]any) (*Bytes, error) {
+	for _, k := range s.Content {
+		if k.If.At != "" && !k.If.holds(source) {
+			continue
+		}
+		if n, _ := strconv.ParseInt(text(pick(source, k.Size)), 10, 64); n > MaxCopy {
+			return nil, unsupported("it is over the %d GB Archive copies", MaxCopy>>30)
+		}
+		sc := map[string]any{"source": source}
+		u, err := c.urlOf(k.Req.URL, sc)
+		if err != nil {
+			return nil, err
+		}
+		if q := values(k.Req.Query, sc); len(q) > 0 {
+			u += sepOf(u) + q.Encode()
+		}
+		req, err := request(c.ctx, string(cmp.Or(k.Req.Method, GET)), c.p.at(u), nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Accept", "*/*")
+		for h, v := range k.Req.headers(sc) {
+			req.Header[h] = v
+		}
+		// The request's context, not a timeout, bounds a body that takes minutes.
+		hc := *c.http
+		hc.Timeout = 0
+		resp, err := hc.Do(req)
+		if err != nil {
+			return nil, unreached{fmt.Errorf("%s could not be reached: %w", c.p.Name, err)}
+		}
+		if resp.StatusCode/100 != 2 {
+			defer resp.Body.Close()
+			r := refusal(c.p, resp)
+			for _, d := range k.Too {
+				if d.is(r) {
+					why, _ := fillStr(d.Why, map[string]any{"message": r.Message})
+					return nil, unsupported("%s", text(why))
+				}
+			}
+			return nil, r
+		}
+		if resp.ContentLength > MaxCopy {
+			resp.Body.Close()
+			return nil, unsupported("it is over the %d GB Archive copies", MaxCopy>>30)
+		}
+		return &Bytes{Body: resp.Body, Size: resp.ContentLength}, nil
+	}
+	return nil, unsupported("%s has no bytes of it to copy", c.p.Name)
 }
 
 // Reads is what template Of reads to, all of it there, or the first group of Find in that.
@@ -921,7 +984,11 @@ func (c *Connector) compile() error {
 		if err := s.check(); err != nil {
 			return fmt.Errorf("stream %s: %w", s.Name, err)
 		}
-		c.Streams = append(c.Streams, &Stream{Name: s.Name, Doc: s.Doc, Gap: s.Gap, Every: s.Every, Table: s.To.Table, Pull: s.pull, SQL: s.To.sql(), Version: s.version()})
+		st := &Stream{Name: s.Name, Doc: s.Doc, Gap: s.Gap, Every: s.Every, Table: s.To.Table, Pull: s.pull, SQL: s.To.sql(), Version: s.version()}
+		if len(s.Content) > 0 {
+			st.Read = s.bytesOf
+		}
+		c.Streams = append(c.Streams, st)
 	}
 	return nil
 }
@@ -1143,6 +1210,11 @@ func (s *Sync) check() error {
 	for _, h := range s.Hydrate {
 		if d, ok := h.(Decode); ok && d.Codec == nil {
 			return errors.New("a Decode needs a Codec")
+		}
+	}
+	for _, k := range s.Content {
+		if err := k.Req.check("content", "source"); err != nil {
+			return err
 		}
 	}
 	return nil

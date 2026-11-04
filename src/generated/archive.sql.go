@@ -369,6 +369,44 @@ func (q *Queries) Chats(ctx context.Context, userID uuid.UUID) ([]ChatsRow, erro
 	return items, nil
 }
 
+const claimPull = `-- name: ClaimPull :one
+UPDATE archive.file SET retry_at = $1::timestamptz, tries = tries + 1
+WHERE id = (SELECT f.id FROM archive.file f JOIN archive.connection c ON c.id = f.connection
+    WHERE f.status = 'pending' AND f.connection IS NOT NULL AND NOT c.revoked AND (f.retry_at IS NULL OR f.retry_at <= now())
+    ORDER BY f.retry_at NULLS FIRST LIMIT 1 FOR UPDATE OF f SKIP LOCKED)
+RETURNING id, name, hash, connection, stream, version, copied, source, tries
+`
+
+type ClaimPullRow struct {
+	ID         uuid.UUID
+	Name       string
+	Hash       string
+	Connection *uuid.UUID
+	Stream     *string
+	Version    *string
+	Copied     *string
+	Source     map[string]any
+	Tries      int32
+}
+
+// The next synced file whose bytes are due, leased until lease. A failure or a stop counts as a try.
+func (q *Queries) ClaimPull(ctx context.Context, lease time.Time) (ClaimPullRow, error) {
+	row := q.db.QueryRow(ctx, claimPull, lease)
+	var i ClaimPullRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Hash,
+		&i.Connection,
+		&i.Stream,
+		&i.Version,
+		&i.Copied,
+		&i.Source,
+		&i.Tries,
+	)
+	return i, err
+}
+
 const claimSync = `-- name: ClaimSync :one
 UPDATE archive.connection SET lease_at = $1::timestamptz
 WHERE id = (SELECT c.id FROM archive.connection c WHERE c.sync_at <= now() AND (c.lease_at IS NULL OR c.lease_at < now())
@@ -1941,6 +1979,19 @@ func (q *Queries) NextPendingFile(ctx context.Context) (NextPendingFileRow, erro
 	return i, err
 }
 
+const nextPull = `-- name: NextPull :one
+SELECT coalesce(f.retry_at, now())::timestamptz FROM archive.file f JOIN archive.connection c ON c.id = f.connection
+WHERE f.status = 'pending' AND f.connection IS NOT NULL AND NOT c.revoked ORDER BY f.retry_at NULLS FIRST LIMIT 1
+`
+
+// When a synced file's bytes are next due.
+func (q *Queries) NextPull(ctx context.Context) (time.Time, error) {
+	row := q.db.QueryRow(ctx, nextPull)
+	var column_1 time.Time
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const nextSyncAt = `-- name: NextSyncAt :one
 SELECT greatest(sync_at, least(coalesce(lease_at, sync_at), $1::timestamptz))::timestamptz FROM archive.connection
 WHERE sync_at IS NOT NULL ORDER BY 1 LIMIT 1
@@ -2418,6 +2469,107 @@ func (q *Queries) SetLocal(ctx context.Context, name string, value string) error
 	return err
 }
 
+const setPullDone = `-- name: SetPullDone :exec
+UPDATE archive.file SET status = $1, error = $2, metadata = $3, text = $4, tries = 0, retry_at = NULL
+WHERE id = $5 AND version IS NOT DISTINCT FROM $6
+`
+
+type SetPullDoneParams struct {
+	Status   string
+	Error    string
+	Metadata map[string]any
+	Body     string
+	ID       uuid.UUID
+	Version  *string
+}
+
+func (q *Queries) SetPullDone(ctx context.Context, arg SetPullDoneParams) error {
+	_, err := q.db.Exec(ctx, setPullDone,
+		arg.Status,
+		arg.Error,
+		arg.Metadata,
+		arg.Body,
+		arg.ID,
+		arg.Version,
+	)
+	return err
+}
+
+const setPullEnd = `-- name: SetPullEnd :exec
+UPDATE archive.file SET status = $1, error = $2, tries = 0, retry_at = NULL
+WHERE id = $3 AND version IS NOT DISTINCT FROM $4
+`
+
+type SetPullEndParams struct {
+	Status  string
+	Error   string
+	ID      uuid.UUID
+	Version *string
+}
+
+// Why a synced file's bytes are not here, for good until a new version comes.
+func (q *Queries) SetPullEnd(ctx context.Context, arg SetPullEndParams) error {
+	_, err := q.db.Exec(ctx, setPullEnd,
+		arg.Status,
+		arg.Error,
+		arg.ID,
+		arg.Version,
+	)
+	return err
+}
+
+const setPullRetry = `-- name: SetPullRetry :exec
+UPDATE archive.file SET retry_at = $1::timestamptz, tries = $2, error = $3
+WHERE id = $4 AND version IS NOT DISTINCT FROM $5
+`
+
+type SetPullRetryParams struct {
+	At      time.Time
+	Tries   int32
+	Error   string
+	ID      uuid.UUID
+	Version *string
+}
+
+func (q *Queries) SetPullRetry(ctx context.Context, arg SetPullRetryParams) error {
+	_, err := q.db.Exec(ctx, setPullRetry,
+		arg.At,
+		arg.Tries,
+		arg.Error,
+		arg.ID,
+		arg.Version,
+	)
+	return err
+}
+
+const setPulled = `-- name: SetPulled :execrows
+UPDATE archive.file SET hash = $1, size = $2, mime = CASE WHEN mime = 'application/octet-stream' THEN $3::text ELSE mime END, copied = version
+WHERE id = $4 AND version IS NOT DISTINCT FROM $5
+`
+
+type SetPulledParams struct {
+	Hash    string
+	Size    int64
+	Sniffed string
+	ID      uuid.UUID
+	Version *string
+}
+
+// The copy's bytes, unless a newer version came while they were read.
+func (q *Queries) SetPulled(ctx context.Context, arg SetPulledParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setPulled,
+		arg.Hash,
+		arg.Size,
+		arg.Sniffed,
+		arg.ID,
+		arg.Version,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setUploadParts = `-- name: SetUploadParts :exec
 UPDATE archive.upload SET parts = $2 WHERE id = $1
 `
@@ -2434,6 +2586,17 @@ UPDATE archive.workflow SET next_at = $3 WHERE id = $1 AND trigger = $2
 func (q *Queries) SetWorkflowNext(ctx context.Context, iD uuid.UUID, trigger string, nextAt *time.Time) error {
 	_, err := q.db.Exec(ctx, setWorkflowNext, iD, trigger, nextAt)
 	return err
+}
+
+const stored = `-- name: Stored :one
+SELECT archive.stored()::bigint
+`
+
+func (q *Queries) Stored(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, stored)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const trimWorkflowRuns = `-- name: TrimWorkflowRuns :exec

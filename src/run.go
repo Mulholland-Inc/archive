@@ -694,7 +694,7 @@ func (r *runner) promise(v any, err error) goja.Value {
 	return r.vm.ToValue(p)
 }
 
-var runReads = map[string]bool{"action": true, "query": true, "schema": true, "revisions": true, "list": true, "get": true, "search": true, "files": true, "file": true}
+var runReads = map[string]bool{"action": true, "query": true, "schema": true, "revisions": true, "list": true, "get": true, "search": true, "files": true, "file": true, "stored": true}
 
 func (r *runner) call(read bool, f func(ctx context.Context) (any, error)) (any, error) {
 	t, ok := r.ctx.Value(storeTxKey{}).(storeTx)
@@ -889,6 +889,9 @@ func (r *runner) sdk() {
 			}
 			return (*runFile)(&r), err
 		})
+	})
+	r.def(o, "stored", func(ctx context.Context, call goja.FunctionCall) (any, error) {
+		return a.Stored(ctx)
 	})
 	r.def(o, "read", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		id, err := r.id(call, 0, "read")

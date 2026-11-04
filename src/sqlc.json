@@ -87,6 +87,12 @@
               "go_type": {
                 "type": "map[string]any"
               }
+            },
+            {
+              "column": "archive.file.source",
+              "go_type": {
+                "type": "map[string]any"
+              }
             }
           ]
         }

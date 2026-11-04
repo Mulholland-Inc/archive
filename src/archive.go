@@ -41,6 +41,8 @@ type Archive struct {
 
 	blobs   blobStore
 	linkKey []byte
+	// reading lets one file at a time be read for its words, the most memory a copy takes.
+	reading sync.Mutex
 
 	mu  sync.RWMutex
 	cat *Catalog

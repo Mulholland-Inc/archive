@@ -572,6 +572,7 @@ CREATE INDEX file_pending_idx ON archive.file (id) WHERE status = 'pending' AND 
 CREATE INDEX file_search_idx ON archive.file USING gin (search);
 CREATE UNIQUE INDEX file_key ON archive.file (access, parent, hash, name) NULLS NOT DISTINCT WHERE connection IS NULL;
 CREATE INDEX file_parent_idx ON archive.file (parent);
+CREATE INDEX file_pull_idx ON archive.file (retry_at NULLS FIRST) WHERE status = 'pending' AND connection IS NOT NULL;
 CREATE INDEX file_owner_idx ON archive.file (owner);
 CREATE INDEX file_editor_idx ON archive.file (editor);
 COMMENT ON TABLE archive.file IS 'A file or folder: one you uploaded or made here, or one of a drive you connected, like Google Drive, SharePoint or Dropbox, with its bytes and its words when Archive reads them. Change yours with archive.edit and the files API; what a connection synced is read only, so archive.copy it to change it here, or its connector''s upload to change it there
@@ -615,6 +616,9 @@ BEGIN
         NEW.error := '';
         NEW.tries := 0;
         NEW.retry_at := NULL;
+    ELSIF TG_OP = 'UPDATE' AND NEW.connection IS NOT NULL AND NEW.mime = 'application/octet-stream' THEN
+        -- A provider that does not say what a file is leaves what its bytes said.
+        NEW.mime := OLD.mime;
     END IF;
     IF NEW.connection IS NULL AND NEW.parent IS NOT NULL THEN
         IF NOT EXISTS (SELECT FROM archive.file f WHERE f.id = NEW.parent AND f.kind = 'folder' AND f.connection IS NULL) THEN
@@ -640,6 +644,25 @@ END $$;
 
 CREATE TRIGGER file_check BEFORE INSERT OR UPDATE ON archive.file FOR EACH ROW EXECUTE FUNCTION archive.file_check();
 CREATE TRIGGER file_empty BEFORE DELETE ON archive.file FOR EACH ROW WHEN (OLD.kind = 'folder' AND OLD.connection IS NULL) EXECUTE FUNCTION archive.file_empty();
+
+-- push tells this connection's process once the transaction commits that a job of its has work (file.go, filePushed),
+-- whatever path the write came by, a cascade too.
+CREATE FUNCTION archive.push() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    PERFORM pg_notify('archive_moved_' || pg_backend_pid(), 'archive.push ' || TG_ARGV[0]);
+    RETURN NULL;
+END $$;
+
+CREATE TRIGGER file_pull AFTER INSERT OR UPDATE ON archive.file FOR EACH ROW WHEN (NEW.status = 'pending' AND NEW.connection IS NOT NULL) EXECUTE FUNCTION archive.push('pull');
+
+-- stored is every byte this workspace's blobs hold, each blob once however many rows have it.
+CREATE FUNCTION archive.stored() RETURNS bigint LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
+    SELECT coalesce(sum(b.size), 0)::bigint FROM (
+        SELECT f.hash, f.size FROM archive.file f WHERE f.hash <> ''
+        UNION
+        SELECT f.metadata#>>'{thumbnail,sha256}', (f.metadata#>>'{thumbnail,size}')::bigint FROM archive.file f WHERE f.metadata ? 'thumbnail'
+    ) b
+$$;
 
 -- What a connector's map reads a provider's text with (connect/def.go): each is null for what is not one, rather
 -- than failing the page. An address, a web domain, a time as RFC 3339 or Unix milliseconds, a date at the start of
@@ -3678,6 +3701,40 @@ WHERE id = $1 AND status = 'pending' FOR UPDATE;
 
 -- name: SetFileContent :exec
 UPDATE archive.file SET metadata = $2, text = $3 WHERE id = $1;
+
+-- The next synced file whose bytes are due, leased until lease. A failure or a stop counts as a try.
+-- name: ClaimPull :one
+UPDATE archive.file SET retry_at = sqlc.arg(lease)::timestamptz, tries = tries + 1
+WHERE id = (SELECT f.id FROM archive.file f JOIN archive.connection c ON c.id = f.connection
+    WHERE f.status = 'pending' AND f.connection IS NOT NULL AND NOT c.revoked AND (f.retry_at IS NULL OR f.retry_at <= now())
+    ORDER BY f.retry_at NULLS FIRST LIMIT 1 FOR UPDATE OF f SKIP LOCKED)
+RETURNING id, name, hash, connection, stream, version, copied, source, tries;
+
+-- When a synced file's bytes are next due.
+-- name: NextPull :one
+SELECT coalesce(f.retry_at, now())::timestamptz FROM archive.file f JOIN archive.connection c ON c.id = f.connection
+WHERE f.status = 'pending' AND f.connection IS NOT NULL AND NOT c.revoked ORDER BY f.retry_at NULLS FIRST LIMIT 1;
+
+-- The copy's bytes, unless a newer version came while they were read.
+-- name: SetPulled :execrows
+UPDATE archive.file SET hash = sqlc.arg(hash), size = sqlc.arg(size), mime = CASE WHEN mime = 'application/octet-stream' THEN sqlc.arg(sniffed)::text ELSE mime END, copied = version
+WHERE id = sqlc.arg(id) AND version IS NOT DISTINCT FROM sqlc.narg(version);
+
+-- name: SetPullDone :exec
+UPDATE archive.file SET status = sqlc.arg(status), error = sqlc.arg(error), metadata = sqlc.arg(metadata), text = sqlc.arg(body), tries = 0, retry_at = NULL
+WHERE id = sqlc.arg(id) AND version IS NOT DISTINCT FROM sqlc.narg(version);
+
+-- Why a synced file's bytes are not here, for good until a new version comes.
+-- name: SetPullEnd :exec
+UPDATE archive.file SET status = sqlc.arg(status), error = sqlc.arg(error), tries = 0, retry_at = NULL
+WHERE id = sqlc.arg(id) AND version IS NOT DISTINCT FROM sqlc.narg(version);
+
+-- name: SetPullRetry :exec
+UPDATE archive.file SET retry_at = sqlc.arg(at)::timestamptz, tries = sqlc.arg(tries), error = sqlc.arg(error)
+WHERE id = sqlc.arg(id) AND version IS NOT DISTINCT FROM sqlc.narg(version);
+
+-- name: Stored :one
+SELECT archive.stored()::bigint;
 
 -- name: SetFileStatus :exec
 UPDATE archive.file SET status = $2, error = $3 WHERE id = $1;
