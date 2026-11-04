@@ -15,9 +15,9 @@ import (
 )
 
 // Google Calendar, with ARCHIVE_GOOGLE like Gmail: the client's authorized redirect URIs list
-// <API>/connect/gcal/callback, and its consent screen asks for calendar.readonly, to read every calendar, and
-// calendar.events, to make, change and delete events: sensitive scopes, not restricted ones like Gmail's, so
-// Google verifies them without a security assessment.
+// <API>/connect/gcal/callback, and its consent screen asks for calendar, to read every calendar and make, change
+// and delete events: a sensitive scope, not a restricted one like Gmail's, so Google verifies it without a
+// security assessment.
 //
 // It syncs every event of each calendar on the account's list, shared and hidden ones too, into calendar_event, the past and the
 // future, a series as one event with its rule and each occurrence that differs from it as another: listed whole
@@ -29,7 +29,7 @@ func init() {
 		Endpoint: oauth2.Endpoint{AuthURL: "https://accounts.google.com/o/oauth2/v2/auth", TokenURL: "https://oauth2.googleapis.com/token",
 			AuthStyle: oauth2.AuthStyleInParams},
 		Revoke: "https://oauth2.googleapis.com/revoke",
-		Scopes: []string{"https://www.googleapis.com/auth/calendar.readonly", "https://www.googleapis.com/auth/calendar.events"},
+		Scopes: []string{"https://www.googleapis.com/auth/calendar"},
 		Params: map[string]string{"access_type": "offline", "prompt": "consent"},
 		Account: func(c *Client) (string, error) {
 			var cal struct {
