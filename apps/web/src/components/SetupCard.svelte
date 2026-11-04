@@ -24,8 +24,15 @@
     display: flex;
     align-items: center;
     gap: var(--space-2-5);
-    padding: var(--space-2) var(--space-3) 0;
-    border-radius: var(--radius-lg);
+    margin-block: var(--space-0-5) calc(var(--space-1-5) * -1);
+    padding: var(--space-1-5) var(--space-3);
+    border-radius: var(--radius-md);
+    transition: background-color var(--duration-fast) var(--ease-out);
+  }
+
+  .card:hover,
+  .card:focus-within {
+    background: var(--color-fill);
   }
 
   .art {
