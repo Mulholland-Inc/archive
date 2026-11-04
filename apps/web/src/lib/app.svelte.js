@@ -1083,14 +1083,21 @@ export async function renameFile(id, name) {
   }
 }
 
-export async function removeFile() {
-  await notify({ title: 'Files can’t be deleted yet', body: 'Archive keeps every file for now. Deleting from the library comes with an API for it.' });
+export async function removeFile(id) {
+  const w = ws();
+  try {
+    await call(`/api/files/${id}`, { method: 'DELETE' });
+    removeAt(w.library, (f) => f.id === id);
+  } catch (e) {
+    complain(e, 'Couldn’t delete the file');
+  }
 }
 
 export async function downloadFile(file) {
   try {
-    const href = await blobURL(`/api/files/${file.id}/content`, app.archive);
-    Object.assign(document.createElement('a'), { href, download: file.name }).click();
+    // A link the browser follows itself, so a large file streams to disk rather than through memory.
+    const link = await call(`/api/files/${file.id}/link?expires=5m`, { method: 'POST' });
+    Object.assign(document.createElement('a'), { href: `${link.url}&download=1` }).click();
   } catch (e) {
     complain(e, `Couldn’t download ${file.name}`);
   }

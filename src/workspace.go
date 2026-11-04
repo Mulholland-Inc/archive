@@ -430,7 +430,7 @@ func (a *Archive) afterOpen(ctx context.Context) {
 		return a.st.db(ctx).ResetProcessing(ctx)
 	})
 	err = errors.Join(err, a.syncMembers(ctx, false))
-	for _, kind := range []string{"workflow", "file", "sync", "pull"} {
+	for _, kind := range []string{"workflow", "file", "sync", "pull", "blob"} {
 		next, nerr := a.nextDue(ctx, kind)
 		if nerr == nil && next != nil {
 			nerr = a.soon(ctx, kind, *next)
@@ -668,8 +668,8 @@ func (h *Hub) tasksHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	kind, ok := strings.CutSuffix(body.Work, "s")
-	if !ok || kind != "workflow" && kind != "file" && kind != "sync" && kind != "pull" {
-		httpWrite(w, 0, nil, fmt.Errorf("work: want workflows, files, syncs or pulls: %w", httpErrBadRequest))
+	if !ok || kind != "workflow" && kind != "file" && kind != "sync" && kind != "pull" && kind != "blob" {
+		httpWrite(w, 0, nil, fmt.Errorf("work: want workflows, files, syncs, pulls or blobs: %w", httpErrBadRequest))
 		return
 	}
 	err := h.work(r.Context(), body.Workspace, kind)
@@ -743,6 +743,9 @@ func (a *Archive) nextDue(ctx context.Context, kind string) (*time.Time, error) 
 		case "pull":
 			t, err = q.NextPull(ctx)
 			n = &t
+		case "blob":
+			t, err = q.NextBlob(ctx)
+			n = &t
 		default:
 			n, err = q.NextWorkflowAt(ctx)
 		}
@@ -785,6 +788,8 @@ func (h *Hub) due(ctx context.Context, ws uuid.UUID, kind string, claimed time.T
 			ok = ok && time.Since(start) < syncBudget
 		case "pull":
 			a.pullAll(ctx)
+		case "blob":
+			ok, err = a.blobNext(ctx)
 		}
 		if err != nil && ctx.Err() == nil {
 			fmt.Fprintf(os.Stderr, "archive: workspace %s %ss: %v\n", ws, kind, err)

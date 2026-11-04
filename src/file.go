@@ -145,6 +145,49 @@ func (a *Archive) fileMine(ctx context.Context, id uuid.UUID, verb string) error
 	return err
 }
 
+// DeleteFile deletes file id, or an empty folder, of the caller's; its blob goes once no row has its hash.
+func (a *Archive) DeleteFile(ctx context.Context, id uuid.UUID) error {
+	if err := a.fileMine(ctx, id, "delete"); err != nil {
+		return err
+	}
+	_, err := coreDo(a, ctx, func(ctx context.Context) (uuid.UUID, error) { return a.st.db(ctx).DeleteFile(ctx, id) })
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("file %s: %w", id, ErrNotFound)
+	}
+	return err
+}
+
+// blobNext removes a blob queued as gone, unless a row has its hash again, and says whether there was one.
+func (a *Archive) blobNext(ctx context.Context) (bool, error) {
+	found := false
+	err := a.sys(ctx, func(ctx context.Context) error {
+		q := a.st.db(ctx)
+		hash, err := q.NextBlobGone(ctx)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		found = true
+		if err := q.LockHash(ctx, hash); err != nil {
+			return err
+		}
+		used, err := q.BlobUsed(ctx, hash)
+		if err != nil {
+			return err
+		}
+		if !used {
+			if err := a.blobs.remove(ctx, blobKey(hash)); err != nil {
+				fmt.Fprintf(os.Stderr, "archive: workspace %s: blob %s: %v\n", a.ws.ID, hash, err)
+				return q.RetryBlobGone(ctx, time.Now().Add(time.Minute), hash)
+			}
+		}
+		return q.DropBlobGone(ctx, hash)
+	})
+	return found, err
+}
+
 // blob says why f has no bytes to read yet.
 func (f *File) blob() error {
 	switch {
@@ -207,17 +250,26 @@ func (a *Archive) fileCommit(ctx context.Context, access *uuid.UUID, name string
 	if r, err = open(); err != nil {
 		return nil, err
 	}
-	err = a.blobs.put(ctx, blobKey(hash), r, size)
+	tmp := blobTemp()
+	err = a.blobs.put(ctx, tmp, r, size)
 	r.Close()
 	if err != nil {
 		return nil, err
 	}
+	defer a.blobs.remove(context.WithoutCancel(ctx), tmp)
 	f, err := coreDo(a, ctx, func(ctx context.Context) (*File, error) {
-		f, err := fileOf(a.st.db(ctx).FileByKey(ctx, generated.FileByKeyParams{Access: access, Parent: parent, Hash: hash, Name: name}))
+		q := a.st.db(ctx)
+		if err := q.LockHash(ctx, hash); err != nil {
+			return nil, err
+		}
+		f, err := fileOf(q.FileByKey(ctx, generated.FileByKeyParams{Access: access, Parent: parent, Hash: hash, Name: name}))
 		if !errors.Is(err, ErrNotFound) {
 			return f, err
 		}
-		return fileOf(a.st.db(ctx).CreateFile(ctx, generated.CreateFileParams{Hash: hash, Name: name, MIME: mt, Size: size, Access: access, Parent: parent}))
+		if err := a.blobs.move(ctx, tmp, blobKey(hash)); err != nil {
+			return nil, err
+		}
+		return fileOf(q.CreateFile(ctx, generated.CreateFileParams{Hash: hash, Name: name, MIME: mt, Size: size, Access: access, Parent: parent}))
 	})
 	if err != nil {
 		return nil, err
@@ -349,9 +401,10 @@ func (a *Archive) ProcessFile(ctx context.Context, id uuid.UUID) (*File, error) 
 	return a.GetFile(ctx, id)
 }
 
-func (a *Archive) fileSign(id uuid.UUID, exp int64) string {
+// fileSign signs a link to file id until exp, for the role that made it: what it serves is what that role still sees.
+func (a *Archive) fileSign(id uuid.UUID, exp int64, role string) string {
 	m := hmac.New(sha256.New, a.linkKey)
-	fmt.Fprintf(m, "%s.%d", id, exp)
+	fmt.Fprintf(m, "%s.%d.%s", id, exp, role)
 	return hex.EncodeToString(m.Sum(nil))
 }
 
@@ -364,11 +417,16 @@ func (a *Archive) LinkFile(ctx context.Context, id uuid.UUID, ttl time.Duration)
 	if _, err := a.GetFile(ctx, id); err != nil {
 		return nil, err
 	}
+	ac, err := signedIn(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if ttl <= 0 {
 		ttl = fileLinkTTL
 	}
 	exp := time.Now().Add(ttl).Unix()
-	return &FileLink{URL: fmt.Sprintf("%s/files/%s/%s?exp=%d&sig=%s", a.hub.api, a.ws.ID.String(), id, exp, a.fileSign(id, exp)), ExpiresAt: time.Unix(exp, 0).UTC()}, nil
+	q := url.Values{"exp": {strconv.FormatInt(exp, 10)}, "by": {ac.Role}, "sig": {a.fileSign(id, exp, ac.Role)}}
+	return &FileLink{URL: fmt.Sprintf("%s/files/%s/%s?%s", a.hub.api, a.ws.ID.String(), id, q.Encode()), ExpiresAt: time.Unix(exp, 0).UTC()}, nil
 }
 
 func mediaInline(mt string) bool {
@@ -398,7 +456,7 @@ func (a *Archive) fileServe(w http.ResponseWriter, r *http.Request, f *File, str
 		content, etag = bytes.NewReader(mediaStripGPS(b)), `"`+f.Hash+`-nogps"`
 	}
 	disp := "attachment"
-	if mediaInline(f.MIME) {
+	if mediaInline(f.MIME) && r.URL.Query().Get("download") == "" {
 		disp = "inline"
 	}
 	h := w.Header()
@@ -448,6 +506,13 @@ func (a *Archive) fileRoutes(mux *http.ServeMux) {
 	handle("GET /api/files/sources", func(r *http.Request) (int, any, error) {
 		s, err := a.FileSources(r.Context())
 		return http.StatusOK, s, err
+	})
+	handle("DELETE /api/files/{id}", func(r *http.Request) (int, any, error) {
+		id, err := httpID(r)
+		if err != nil {
+			return 0, nil, err
+		}
+		return http.StatusNoContent, nil, a.DeleteFile(r.Context(), id)
 	})
 	handle("POST /api/folders", func(r *http.Request) (int, any, error) {
 		var body struct {
@@ -629,21 +694,43 @@ func (a *Archive) fileSigned(w http.ResponseWriter, r *http.Request) {
 	id, err := httpID(r)
 	q := r.URL.Query()
 	exp, _ := strconv.ParseInt(q.Get("exp"), 10, 64)
-	if err == nil && (time.Now().Unix() > exp || !hmac.Equal([]byte(q.Get("sig")), []byte(a.fileSign(id, exp)))) {
+	by := q.Get("by")
+	if err == nil && (time.Now().Unix() > exp || !hmac.Equal([]byte(q.Get("sig")), []byte(a.fileSign(id, exp, by)))) {
 		err = fmt.Errorf("link is invalid or expired: %w", ErrForbidden)
 	}
 	var f *File
 	if err == nil {
-		err = a.st.System(r.Context(), func(ctx context.Context) (err error) {
-			f, err = fileOf(a.st.db(ctx).GetFile(ctx, id))
-			return err
-		})
+		f, err = a.fileAs(r.Context(), by, id)
 	}
 	if err != nil {
 		httpWrite(w, 0, nil, err)
 		return
 	}
 	a.fileServe(w, r, f, true)
+}
+
+// fileAs is file id as the role that signed a link to it sees it now: a link ends with the file, with the connection it
+// came from, and with its signer's access or membership.
+func (a *Archive) fileAs(ctx context.Context, role string, id uuid.UUID) (f *File, err error) {
+	gone := fmt.Errorf("link no longer reaches a file its maker can see: %w", ErrForbidden)
+	var ok bool
+	if err := a.sys(ctx, func(ctx context.Context) (err error) {
+		ok, err = a.st.db(ctx).RoleExists(ctx, role)
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, gone
+	}
+	err = a.st.As(ctx, role, func(ctx context.Context) (err error) {
+		f, err = fileOf(a.st.db(ctx).GetFile(ctx, id))
+		return err
+	})
+	if errors.Is(err, ErrNotFound) {
+		return nil, gone
+	}
+	return f, err
 }
 
 type tusUpload = generated.ArchiveUpload
@@ -1063,7 +1150,7 @@ func (a *Archive) pullCopy(ctx context.Context, f generated.ClaimPullRow) error 
 	h := sha256.New()
 	var head fileHead
 	counted := &fileCount{r: io.TeeReader(io.TeeReader(body.Body, h), &head), most: connect.MaxCopy}
-	tmp := "copies/" + coreNewID().String() + ".part"
+	tmp := blobTemp()
 	if err := a.blobs.put(ctx, tmp, counted, body.Size); err != nil {
 		if counted.over {
 			return &connect.Unsupported{Reason: fmt.Sprintf("it is over the %d GB Archive copies", connect.MaxCopy>>30)}
@@ -1074,6 +1161,9 @@ func (a *Archive) pullCopy(ctx context.Context, f generated.ClaimPullRow) error 
 	moved := false
 	err = a.sys(context.WithoutCancel(ctx), func(ctx context.Context) error {
 		q := a.st.db(ctx)
+		if err := q.LockHash(ctx, hash); err != nil {
+			return err
+		}
 		row, err := fileOf(q.LockFile(ctx, f.ID))
 		if errors.Is(err, ErrNotFound) || err == nil && !slices.Equal(ptrSlice(row.Version), ptrSlice(f.Version)) {
 			return nil
@@ -1149,31 +1239,41 @@ func (a *Archive) pullRead(ctx context.Context, c generated.ClaimPullRow) error 
 		text string
 		err  error
 	}
-	got := make(chan read, 1)
-	a.reading.Lock()
-	go func() {
-		defer a.reading.Unlock()
-		m, t, e := a.media(context.WithoutCancel(ctx), f)
-		got <- read{m, t, e}
-	}()
-	status, msg := "done", ""
-	var r read
-	select {
-	case r = <-got:
-	case <-time.After(pullReadTime):
-		r.err = fmt.Errorf("reading its words took over %s", pullReadTime)
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	if r.err != nil {
-		status, msg = "error", r.err.Error()
-	}
-	if r.meta == nil {
-		r.meta = map[string]any{}
-	}
-	return a.sys(context.WithoutCancel(ctx), func(ctx context.Context) error {
+	done := func(ctx context.Context, r read) error {
+		status, msg := "done", ""
+		if r.err != nil {
+			status, msg = "error", r.err.Error()
+		}
+		if r.meta == nil {
+			r.meta = map[string]any{}
+		}
 		return a.st.db(ctx).SetPullDone(ctx, generated.SetPullDoneParams{ID: f.ID, Version: c.Version, Status: status, Error: msg, Metadata: r.meta, Body: fileWords(r.text)})
+	}
+	bg := context.WithoutCancel(ctx)
+	late := false
+	err = a.sys(bg, func(ctx context.Context) error {
+		// One transaction, which holds a thumbnail's hash until the row has it.
+		got := make(chan read, 1)
+		a.reading.Lock()
+		go func() {
+			defer a.reading.Unlock()
+			m, t, e := a.media(ctx, f)
+			got <- read{m, t, e}
+		}()
+		select {
+		case r := <-got:
+			return done(ctx, r)
+		case <-time.After(pullReadTime):
+			late = true
+			return errors.New("too long")
+		}
 	})
+	if late {
+		return a.sys(bg, func(ctx context.Context) error {
+			return done(ctx, read{err: fmt.Errorf("reading its words took over %s", pullReadTime)})
+		})
+	}
+	return err
 }
 
 // Stored is how many bytes this workspace's blobs hold, each once.
@@ -1462,9 +1562,17 @@ type blobStore interface {
 
 func blobKey(hash string) string { return hash[:2] + "/" + hash }
 
+// blobTemp is the key bytes wait under until their hash is known and it is safe to name them by it. What an instance
+// stopped before moving goes by the bucket's lifecycle rule on .part.
+func blobTemp() string { return "copies/" + coreNewID().String() + ".part" }
+
+// blobPut writes b under its hash, in the transaction ctx has, which holds the hash's lock until a row has it.
 func (a *Archive) blobPut(ctx context.Context, b []byte) (string, error) {
 	sum := sha256.Sum256(b)
 	hash := hex.EncodeToString(sum[:])
+	if err := a.st.db(ctx).LockHash(ctx, hash); err != nil {
+		return "", err
+	}
 	return hash, a.blobs.put(ctx, blobKey(hash), bytes.NewReader(b), int64(len(b)))
 }
 

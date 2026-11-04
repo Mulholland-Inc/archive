@@ -274,7 +274,7 @@ declare const archive: {
     create(name: `${string}.${"docx" | "xlsx" | "pptx"}`, opts?: { access?: string }): Promise<StoredFile>;
     /** Change the given fields, null clears one, and return the row. */
     update<T extends keyof Tables>(table: T, id: string, patch: Partial<Tables[T]>): Promise<Tables[T]>;
-    /** Delete a row. */
+    /** Delete a row, or with "file" a file or empty folder of yours; what a connection synced goes when it goes there. */
     delete(table: keyof Tables, id: string): Promise<void>;
     /** Full-text search over every table and file you can see, best first; words match by prefix, ignoring case and accents. */
     search(text: string, opts?: { type?: keyof Tables | "file"; from?: string; to?: string; limit?: number }): Promise<Hit[]>;

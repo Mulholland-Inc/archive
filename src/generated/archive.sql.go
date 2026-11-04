@@ -209,6 +209,17 @@ func (q *Queries) BackendPID(ctx context.Context) (int32, error) {
 	return pg_backend_pid, err
 }
 
+const blobUsed = `-- name: BlobUsed :one
+SELECT (EXISTS (SELECT FROM archive.file f WHERE f.hash = $1::text) OR EXISTS (SELECT FROM archive.file f WHERE f.metadata ? 'thumbnail' AND f.metadata#>>'{thumbnail,sha256}' = $1::text))::bool
+`
+
+func (q *Queries) BlobUsed(ctx context.Context, hash string) (bool, error) {
+	row := q.db.QueryRow(ctx, blobUsed, hash)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const catalog = `-- name: Catalog :one
 WITH col AS (
     SELECT a.attrelid AS rel, a.attnum AS num, jsonb_build_object(
@@ -886,6 +897,17 @@ func (q *Queries) DeleteDDLKey(ctx context.Context, key string) error {
 	return err
 }
 
+const deleteFile = `-- name: DeleteFile :one
+DELETE FROM archive.file WHERE id = $1 RETURNING id
+`
+
+func (q *Queries) DeleteFile(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, deleteFile, id)
+	var id_2 uuid.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
 const deleteUnknown = `-- name: DeleteUnknown :exec
 WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM archive.mail_party x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.payroll_worker x WHERE x.person = k.id)
@@ -930,6 +952,15 @@ func (q *Queries) DeleteWorkflow(ctx context.Context, id uuid.UUID) (int64, erro
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const dropBlobGone = `-- name: DropBlobGone :exec
+DELETE FROM archive.blob_gone WHERE hash = $1
+`
+
+func (q *Queries) DropBlobGone(ctx context.Context, hash string) error {
+	_, err := q.db.Exec(ctx, dropBlobGone, hash)
+	return err
 }
 
 const fileByKey = `-- name: FileByKey :one
@@ -1639,6 +1670,15 @@ func (q *Queries) LockFile(ctx context.Context, id uuid.UUID) (LockFileRow, erro
 	return i, err
 }
 
+const lockHash = `-- name: LockHash :exec
+SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))
+`
+
+func (q *Queries) LockHash(ctx context.Context, hash string) error {
+	_, err := q.db.Exec(ctx, lockHash, hash)
+	return err
+}
+
 const lockPendingFile = `-- name: LockPendingFile :one
 SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at FROM archive.file
 WHERE id = $1 AND status = 'pending' FOR UPDATE
@@ -1917,6 +1957,28 @@ func (q *Queries) NameMembers(ctx context.Context, emails []string, names []stri
 	return err
 }
 
+const nextBlob = `-- name: NextBlob :one
+SELECT at FROM archive.blob_gone ORDER BY at LIMIT 1
+`
+
+func (q *Queries) NextBlob(ctx context.Context) (time.Time, error) {
+	row := q.db.QueryRow(ctx, nextBlob)
+	var at time.Time
+	err := row.Scan(&at)
+	return at, err
+}
+
+const nextBlobGone = `-- name: NextBlobGone :one
+SELECT hash FROM archive.blob_gone WHERE at <= now() ORDER BY at LIMIT 1 FOR UPDATE SKIP LOCKED
+`
+
+func (q *Queries) NextBlobGone(ctx context.Context) (string, error) {
+	row := q.db.QueryRow(ctx, nextBlobGone)
+	var hash string
+	err := row.Scan(&hash)
+	return hash, err
+}
+
 const nextPendingFile = `-- name: NextPendingFile :one
 SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at FROM archive.file
 WHERE status = 'pending' AND connection IS NULL ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED
@@ -2183,6 +2245,15 @@ UPDATE archive.file SET status = 'pending' WHERE status = 'processing'
 
 func (q *Queries) ResetProcessing(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, resetProcessing)
+	return err
+}
+
+const retryBlobGone = `-- name: RetryBlobGone :exec
+UPDATE archive.blob_gone SET at = $1::timestamptz WHERE hash = $2
+`
+
+func (q *Queries) RetryBlobGone(ctx context.Context, at time.Time, hash string) error {
+	_, err := q.db.Exec(ctx, retryBlobGone, at, hash)
 	return err
 }
 

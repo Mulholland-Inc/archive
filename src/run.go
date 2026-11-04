@@ -809,6 +809,13 @@ func (r *runner) sdk() {
 		return a.Patch(ctx, table, id, patch)
 	})
 	r.def(o, "delete", func(ctx context.Context, call goja.FunctionCall) (any, error) {
+		if call.Argument(0).String() == "file" {
+			id, err := r.id(call, 1, "delete")
+			if err != nil {
+				return nil, err
+			}
+			return nil, a.DeleteFile(ctx, id)
+		}
 		table, id, err := r.row(call, "delete")
 		if err != nil {
 			return nil, err

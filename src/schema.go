@@ -241,6 +241,9 @@ func (c *Catalog) writable(name string) (*Table, error) {
 	if err == nil && t.Schema == "archive" && t.Name == "connection" {
 		return nil, fmt.Errorf("connection is read only: connect and disconnect your accounts in Settings, Connectors: %w", ErrReadOnly)
 	}
+	if err == nil && t.Schema == "archive" && t.Name == "file" {
+		return nil, fmt.Errorf("a file is not written as a row: make one with archive.create(name) or archive.copy, change one with archive.edit, and delete one with archive.delete: %w", ErrReadOnly)
+	}
 	if err == nil && t.synced() {
 		return nil, fmt.Errorf("%s is read only: Archive syncs it from your connections: %w", name, ErrReadOnly)
 	}

@@ -572,6 +572,8 @@ CREATE INDEX file_pending_idx ON archive.file (id) WHERE status = 'pending' AND 
 CREATE INDEX file_search_idx ON archive.file USING gin (search);
 CREATE UNIQUE INDEX file_key ON archive.file (access, parent, hash, name) NULLS NOT DISTINCT WHERE connection IS NULL;
 CREATE INDEX file_parent_idx ON archive.file (parent);
+CREATE INDEX file_hash_idx ON archive.file (hash) WHERE hash <> '';
+CREATE INDEX file_thumb_idx ON archive.file ((metadata#>>'{thumbnail,sha256}')) WHERE metadata ? 'thumbnail';
 CREATE INDEX file_pull_idx ON archive.file (retry_at NULLS FIRST) WHERE status = 'pending' AND connection IS NOT NULL;
 CREATE INDEX file_owner_idx ON archive.file (owner);
 CREATE INDEX file_editor_idx ON archive.file (editor);
@@ -654,6 +656,31 @@ BEGIN
 END $$;
 
 CREATE TRIGGER file_pull AFTER INSERT OR UPDATE ON archive.file FOR EACH ROW WHEN (NEW.status = 'pending' AND NEW.connection IS NOT NULL) EXECUTE FUNCTION archive.push('pull');
+
+-- A blob goes once no file has its hash. Whatever removes the last row, a cascade from a member too, queues it in the
+-- same transaction (file_gone), and the job that removes it (file.go, blobNext) looks again under a lock on the hash,
+-- which whatever adds a row with a hash holds from before it writes the blob until it commits. Queueing waits for a
+-- removal under way, so a row removed during one queues the hash again.
+CREATE TABLE archive.blob_gone (
+    hash text PRIMARY KEY,
+    at   timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE FUNCTION archive.file_gone() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE
+    kept text[] := CASE WHEN TG_OP = 'DELETE' THEN '{}'::text[] ELSE ARRAY[NEW.hash, NEW.metadata#>>'{thumbnail,sha256}'] END;
+    h text;
+BEGIN
+    FOREACH h IN ARRAY ARRAY[OLD.hash, OLD.metadata#>>'{thumbnail,sha256}'] LOOP
+        IF h <> '' AND NOT (h = ANY (kept)) THEN
+            INSERT INTO archive.blob_gone (hash) VALUES (h) ON CONFLICT (hash) DO UPDATE SET at = now();
+            PERFORM pg_notify('archive_moved_' || pg_backend_pid(), 'archive.push blob');
+        END IF;
+    END LOOP;
+    RETURN NULL;
+END $$;
+
+CREATE TRIGGER file_gone AFTER DELETE OR UPDATE OF hash, metadata ON archive.file FOR EACH ROW EXECUTE FUNCTION archive.file_gone();
 
 -- stored is every byte this workspace's blobs hold, each blob once however many rows have it.
 CREATE FUNCTION archive.stored() RETURNS bigint LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
@@ -3735,6 +3762,27 @@ WHERE id = sqlc.arg(id) AND version IS NOT DISTINCT FROM sqlc.narg(version);
 
 -- name: Stored :one
 SELECT archive.stored()::bigint;
+
+-- name: LockHash :exec
+SELECT pg_advisory_xact_lock(hashtextextended(sqlc.arg(hash)::text, 0));
+
+-- name: NextBlobGone :one
+SELECT hash FROM archive.blob_gone WHERE at <= now() ORDER BY at LIMIT 1 FOR UPDATE SKIP LOCKED;
+
+-- name: BlobUsed :one
+SELECT (EXISTS (SELECT FROM archive.file f WHERE f.hash = sqlc.arg(hash)::text) OR EXISTS (SELECT FROM archive.file f WHERE f.metadata ? 'thumbnail' AND f.metadata#>>'{thumbnail,sha256}' = sqlc.arg(hash)::text))::bool;
+
+-- name: DropBlobGone :exec
+DELETE FROM archive.blob_gone WHERE hash = $1;
+
+-- name: RetryBlobGone :exec
+UPDATE archive.blob_gone SET at = sqlc.arg(at)::timestamptz WHERE hash = sqlc.arg(hash);
+
+-- name: NextBlob :one
+SELECT at FROM archive.blob_gone ORDER BY at LIMIT 1;
+
+-- name: DeleteFile :one
+DELETE FROM archive.file WHERE id = $1 RETURNING id;
 
 -- name: SetFileStatus :exec
 UPDATE archive.file SET status = $2, error = $3 WHERE id = $1;

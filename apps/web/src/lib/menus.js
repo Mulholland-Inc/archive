@@ -45,7 +45,7 @@ export function fileItems(file, { onopen } = {}) {
     { label: 'Share', icon: Share, onselect: () => openShare('file', file.id) },
     { label: 'Download', icon: Download, onselect: () => downloadFile(file) },
     !file.connection && SEPARATOR,
-    !file.connection && { label: 'Move to trash', icon: Trash2, danger: true, onselect: () => removeFile(file.id) }
+    !file.connection && { label: 'Delete', icon: Trash2, danger: true, onselect: () => removeFile(file.id) }
   ].filter(Boolean);
 }
 
