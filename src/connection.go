@@ -682,9 +682,8 @@ var errRevoked = errors.New("revoked")
 // syncStream is where one stream of a connection is, in its cursor. At is when its next page is due, nil
 // now, while it is due; Done the ask it last caught up to, and Last when; Since when the full listing under
 // way began, which the rows it has not read since are older than; Pages how many pages it has read for this
-// ask; Fails how many in a row failed, and Error why the last did. Rows is the version of Archive's tables its
-// rows are in (syncRowsVersion), and Def, for a stream that is only data, the hash of the definition they came from:
-// a stream of another is due, and starts from scratch. Named, kept on a connector's first stream, is when the
+// ask; Fails how many in a row failed, and Error why the last did. Def is the hash of the definition its rows came
+// from: a stream of another is due, and starts from scratch. Named, kept on a connector's first stream, is when the
 // account's name was last asked for (syncRename).
 type syncStream struct {
 	Cursor string     `json:"cursor,omitempty"`
@@ -697,7 +696,6 @@ type syncStream struct {
 	Pages  int        `json:"pages,omitempty"`
 	Fails  int        `json:"fails,omitempty"`
 	Error  string     `json:"error,omitempty"`
-	Rows   int        `json:"rows,omitempty"`
 	Def    string     `json:"def,omitempty"`
 	Named  *time.Time `json:"named,omitempty"`
 }
@@ -716,12 +714,7 @@ func (v *syncStream) due(s *connect.Stream, asked time.Time) bool {
 }
 
 // current says the stream's rows are as s writes them.
-func (v *syncStream) current(s *connect.Stream) bool {
-	if s.Version != "" {
-		return v.Def == s.Version
-	}
-	return v.Rows >= syncRowsVersion
-}
+func (v *syncStream) current(s *connect.Stream) bool { return v.Def == s.Version }
 
 type syncState map[string]*syncStream
 
@@ -859,7 +852,7 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 		if s != nil {
 			// A stream of older tables starts again from here, whatever this page did.
 			cur, name = st.of(s.Name).fresh(s), s.Name
-			cur.Rows, cur.Def, st[s.Name] = syncRowsVersion, s.Version, cur
+			cur.Def, st[s.Name] = s.Version, cur
 		}
 		var unsup *connect.Unsupported
 		switch {
@@ -1151,7 +1144,7 @@ func (a *Archive) streamTypes(ctx context.Context) string {
 }
 
 // Archive's tables of what connections sync (archive.sql): each stream's records land as rows of the table it
-// names, as its Rows maps them (connect/sync.go), with the rows that belong to each, like a message's
+// names, as its Map says (connect/def.go), with the rows that belong to each, like a message's
 // parties. syncSave writes them a page at a time, in the transaction it saves the stream's cursor in: a row
 // for each source_id of each stream of each connection, written again, with all its own rows, when it is read
 // again, only seen when the stream says it is the Same, and deleted when it is gone there, and with the people
@@ -1160,11 +1153,6 @@ func (a *Archive) streamTypes(ctx context.Context) string {
 // Every row has its connection and its access, the connection's, so row-level security sees it as it sees the
 // connection. A column that names another row of the connection keeps that row's id there in <column>_source,
 // and links once both are there, whichever came first (syncLink).
-
-// syncRowsVersion is the version of the tables: a stream whose rows are of one before syncs from scratch, its
-// cursor and memory forgotten, so its rows are written whole again. Changing a table or a mapping so that the
-// rows already synced should change counts it up. A stream that is only data goes by its definition's hash instead.
-const syncRowsVersion = 2
 
 // syncTable is what syncSave needs to know of a table of archive.sql: for a row that belongs to a row of another
 // table, that table, its parent, and the column that names it; and its columns that link another row of the
@@ -1248,35 +1236,16 @@ type syncDB struct {
 }
 
 // write writes recs of stream s into its table, with the rows that belong to each, and links what they name.
-// A record that is no row there is deleted.
 func (w *syncDB) write(ctx context.Context, s *connect.Stream, recs []syncRec) error {
 	t, ok := syncSchema[s.Table]
 	if !ok || t.parent != "" {
 		return fmt.Errorf("%s lands in %q, which is no table of archive.sql a stream lands in", s.Name, s.Table)
 	}
-	rows := make([]*connect.Row, 0, len(recs))
-	var kept []syncRec
-	var none []string
-	if s.SQL != "" {
-		var err error
-		if rows, err = w.mapped(ctx, s, recs); err != nil {
-			return err
-		}
-		kept = recs
-	} else {
-		for _, r := range recs {
-			if row := s.RowOf(r.Data); row != nil {
-				rows, kept = append(rows, row), append(kept, r)
-			} else {
-				none = append(none, r.ID)
-			}
-		}
+	rows, err := w.mapped(ctx, s, recs)
+	if err != nil {
+		return err
 	}
-	if len(none) > 0 {
-		if err := w.delete(ctx, s, none); err != nil {
-			return err
-		}
-	}
+	kept := recs
 	if len(rows) == 0 {
 		return nil
 	}
@@ -1451,9 +1420,6 @@ var syncTableRe = regexp.MustCompile(`(?ms)^CREATE TABLE archive\.(\w+) \((.*?)^
 func syncCheckSQL(ctx context.Context, db generated.DBTX) error {
 	for _, c := range connect.All() {
 		for _, s := range c.Streams {
-			if s.SQL == "" {
-				continue
-			}
 			if _, err := db.Exec(ctx, "EXPLAIN "+s.SQL, []byte("[]")); err != nil {
 				return fmt.Errorf("connector %s, stream %s: its map: %w", c.ID, s.Name, err)
 			}
@@ -1864,7 +1830,7 @@ func (a *Archive) syncOnRead(ctx context.Context) {
 }
 
 // Actions: archive.action(name, input, opts) in a run, which does something with one of the caller's own
-// connections. name is "<connector>.<action>". An API connector's actions are the Go funcs of its file in the
+// connections. name is "<connector>.<action>". An API connector's actions are the Plans of its file in the
 // connect package; an MCP connector's are its server's tools, called with tools/call, each named for its tool
 // without the connector's own prefix (notion-search is notion.search). The caller's connection to the
 // connector is the one used, or the one opts.connection names, by account or id, when they have several.

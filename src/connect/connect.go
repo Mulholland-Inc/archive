@@ -1,10 +1,11 @@
 // Package connect is Archive's connectors: the services a member connects their own accounts at, like their
 // Gmail, so Archive can read them for them, and the actions a script takes with those accounts.
 //
-// A connector is one file of this package, <id>.go, that declares a Connector and adds it with Register in
-// its init. Nothing else names it. One with an API may be only data, which the engine in def.go runs. It speaks one of three protocols, and a member never sees which:
+// A connector is one file of this package, <id>.go, that declares a Connector, only data, and adds it with Register
+// in its init, for the engine in def.go to run. Nothing else names it. It speaks one of three protocols, and a member
+// never sees which:
 //   - An API connector names the environment variable that holds its OAuth client, its endpoints and scopes,
-//     and its Actions, Go funcs over the provider's API. Load reads every connector's variable, and one
+//     and its Actions over the provider's API. Load reads every connector's variable, and one
 //     whose variable is unset is unavailable: listed, but not offered.
 //   - An MCP connector names only its MCP server. Its OAuth client is Archive's own, which Discover and
 //     Register get from the server's authorization server the first time anyone connects (below), and the
@@ -777,29 +778,6 @@ func (p *Provider) ToolActions(tools []*mcp.Tool) map[string]*Action {
 		out[name] = a
 	}
 	return out
-}
-
-// Write is Act for an action that Writes.
-func Write[In any](doc string, do func(c *Client, in In) (any, error)) *Action {
-	a := Act(doc, do)
-	a.Writes = true
-	return a
-}
-
-// Act is an Action whose input is In, a struct: its fields' json names are the input's keys, required unless
-// omitempty, and their jsonschema tags describe them.
-func Act[In any](doc string, do func(c *Client, in In) (any, error)) *Action {
-	s, err := jsonschema.For[In](nil)
-	if err != nil {
-		panic(err)
-	}
-	return &Action{Doc: doc, Input: s, Do: func(c *Client, raw json.RawMessage) (any, error) {
-		var in In
-		if err := json.Unmarshal(raw, &in); err != nil {
-			return nil, err
-		}
-		return do(c, in)
-	}}
 }
 
 // An MCP connector's OAuth client is Archive's own, registered at its server's authorization server: Register
