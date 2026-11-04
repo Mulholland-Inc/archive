@@ -12,6 +12,7 @@
   import ConnectorIcon from './ConnectorIcon.svelte';
   import { Plug } from '@lucide/svelte';
   import { ws, openSettings, uploadFiles, library } from '../lib/app.svelte.js';
+  import { loadDraft, saveDraft } from '../lib/api.js';
 
   library.use();
   import { rise } from '../lib/motion.js';
@@ -24,8 +25,26 @@
     model = $bindable('pro'),
     onsend,
     onstop,
-    element = $bindable()
+    element = $bindable(),
+    draft
   } = $props();
+
+  // Text stays on this device under the draft's key until it is sent. Nothing saves until that key is loaded.
+  let loaded = $state();
+
+  $effect(() => {
+    const key = draft;
+    if (!key) return;
+    loadDraft(key).then((text) => {
+      if (draft !== key) return;
+      value = text;
+      loaded = key;
+    });
+  });
+
+  $effect(() => {
+    if (draft && loaded === draft) saveDraft(draft, value);
+  });
 
   let attachments = $state([]);
   let web = $state(true);
@@ -45,6 +64,7 @@
     onsend?.({ text: value.trim(), attachments: [...attachments], model, research });
     value = '';
     attachments = [];
+    if (draft) saveDraft(draft, '');
   }
 
   function onkeydown(event) {

@@ -36,7 +36,7 @@
       <Greeting name={app.profile.first} look={ws().look} seed={ws().id} />
     </Stack>
     <Stack gap="4" align="center">
-      <Composer bind:value bind:element bind:model={app.model} size="lg" onsend={send} />
+      <Composer bind:value bind:element bind:model={app.model} draft="home:{ws().id}" size="lg" onsend={send} />
       <Stack direction="row" gap="2" wrap justify="center">
         {#each suggestions as s (s.id)}
           <Chip icon={icons[s.icon]} onclick={() => { value = s.prompt; element?.focus(); }}>{s.label}</Chip>

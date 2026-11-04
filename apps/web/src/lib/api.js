@@ -34,6 +34,35 @@ export function local(key, fallback) {
 
 export const setLocal = (key, value) => store(key, JSON.stringify(value));
 
+// Composer drafts, deflated and kept at one character per byte, as near to raw bytes as localStorage gets.
+// Deflating is async, so everything runs in order: coming straight back to a chat finds the last keystroke.
+
+const DRAFT = 'draft:';
+let drafts = Promise.resolve();
+
+const queue = (work) => (drafts = drafts.then(work).catch(() => ''));
+
+const pipe = async (bytes, stream) => new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(stream)).arrayBuffer());
+
+export const saveDraft = (id, text) => queue(async () => {
+  const bytes = text ? await pipe(new TextEncoder().encode(text), new CompressionStream('deflate-raw')) : [];
+  store(DRAFT + id, Array.from(bytes, (b) => String.fromCharCode(b)).join(''));
+});
+
+export const loadDraft = (id) => queue(async () => {
+  const packed = stored(DRAFT + id);
+  return packed && new TextDecoder().decode(await pipe(Uint8Array.from(packed, (c) => c.charCodeAt(0)), new DecompressionStream('deflate-raw')));
+});
+
+export const moveDraft = (from, to) => queue(() => {
+  store(DRAFT + to, stored(DRAFT + from));
+  store(DRAFT + from, '');
+});
+
+const clearDrafts = () => queue(() => {
+  for (const key of Object.keys(localStorage)) if (key.startsWith(DRAFT)) store(key, '');
+});
+
 export async function send(path, { method = 'GET', body, raw, signal, workspace: named } = {}) {
   const init = { method, headers: {}, signal, credentials: 'include' };
   if (named || workspace()) init.headers['Archive-Workspace'] = named || workspace();
@@ -108,6 +137,7 @@ export function blobURL(path, named) {
 export async function signOut() {
   await api('/auth/signout', { method: 'POST' }).catch(() => {});
   setWorkspace('');
+  clearDrafts();
 }
 
 // Passkeys: one per device, discoverable, so sign-in needs no email. The app remembers per user whether it

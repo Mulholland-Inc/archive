@@ -2,7 +2,7 @@
 // the API (see live.js for the mapping). What the API cannot do yet comes from mock/ and stays in this tab or
 // in localStorage; mock/index.js lists those pieces.
 
-import { API, api, blobURL, forgetBlobs, upload, setWorkspace, workspace, local, setLocal, signOut as apiSignOut, Unauthorized, passkeys, passkeyAsked } from './api.js';
+import { API, api, blobURL, forgetBlobs, upload, setWorkspace, workspace, local, setLocal, saveDraft, signOut as apiSignOut, Unauthorized, passkeys, passkeyAsked } from './api.js';
 import { resource, listen, onChange, onRefused } from './stream.svelte.js';
 import { toFile, toChat, toMember, toWorkflow, toRun, relative, show } from './live.js';
 import { toTables, countsQuery } from './schema.js';
@@ -1002,6 +1002,7 @@ export async function removeChat(id) {
       return complain(e, 'Couldn’t delete the chat');
     }
   }
+  saveDraft(id, '');
   removeAt(w.chats, (c) => c.id === id, () => open && go('/'));
 }
 
