@@ -123,6 +123,7 @@ export async function boot() {
   listen(app.archive);
   account.seen();
   loadArchive(ws());
+  resumeLink();
 }
 
 // Who you are and which archives you have, read again when your account, an archive's name or your role moves,
@@ -1268,6 +1269,7 @@ export const connections = resource({
       Object.assign(c, {
         ready: k.ready,
         keys: k.keys ?? [],
+        link: !!k.link,
         connections: mine,
         connected: mine.length > 0,
         account: mine.map((x) => x.account).join(', '),
@@ -1294,6 +1296,7 @@ function toIntegration(k, x) {
     name: k.name,
     ready: k.ready,
     keys: k.keys ?? [],
+    link: !!k.link,
     connected: Boolean(x),
     connection: x ?? null,
     account: x?.account ?? '',
@@ -1313,16 +1316,84 @@ export function connect(id) {
 }
 
 // connectKeys connects connector id, which has no sign-in, with the keys a person pasted, by their names: one of
-// your own, or an integration an owner connects for everyone. It says whether it connected.
-export async function connectKeys(id, keys) {
+// your own, or an integration an owner connects for everyone, in this archive or in workspace. It says whether it
+// connected.
+export async function connectKeys(id, keys, workspace) {
   try {
-    await call(`/connect/${encodeURIComponent(id)}/keys`, { method: 'POST', body: { keys } });
+    await call(`/connect/${encodeURIComponent(id)}/keys`, { method: 'POST', body: { keys }, workspace });
   } catch (e) {
     complain(e, 'Couldn’t connect');
     return false;
   }
   await connections.refresh();
   return true;
+}
+
+// Plaid Link, the widget a connector with link hands its keys over through, as Plaid has it: its script comes only
+// from Plaid. A bank whose sign-in is its own sends the browser back to the connector's page with ?oauth_state_id,
+// where the widget picks up again with the same token, which this tab keeps until then.
+const LINK_SCRIPT = 'https://cdn.plaid.com/link/v2/stable/link-initialize.js';
+const LINKING = 'archive.linking';
+let linkScript;
+
+function loadLink() {
+  linkScript ??= new Promise((resolve, reject) => {
+    const s = Object.assign(document.createElement('script'), { src: LINK_SCRIPT, onload: () => resolve(window.Plaid) });
+    s.onerror = () => {
+      linkScript = null;
+      reject(new Error('Plaid Link didn’t load. Check your connection and try again.'));
+    };
+    document.head.append(s);
+  });
+  return linkScript;
+}
+
+function linking(v) {
+  try {
+    if (v === undefined) return JSON.parse(sessionStorage.getItem(LINKING) ?? 'null');
+    if (v) sessionStorage.setItem(LINKING, JSON.stringify(v));
+    else sessionStorage.removeItem(LINKING);
+  } catch {
+    return null;
+  }
+}
+
+async function openLink({ id, token, workspace }, back) {
+  const Plaid = await loadLink();
+  Plaid.create({
+    token,
+    receivedRedirectUri: back,
+    onSuccess: (publicToken) => {
+      linking(null);
+      connectKeys(id, { public_token: publicToken }, workspace);
+    },
+    onExit: (err) => {
+      linking(null);
+      if (err) notify({ title: 'That didn’t connect', body: err.display_message || err.error_message || err.error_code });
+    }
+  }).open();
+}
+
+// connectLink connects connector id through its provider's widget.
+export async function connectLink(id) {
+  try {
+    const { token } = await call(`/connect/${encodeURIComponent(id)}/link`, { method: 'POST' });
+    const at = { id, token, workspace: app.archive };
+    linking(at);
+    await openLink(at);
+  } catch (e) {
+    linking(null);
+    complain(e, 'Couldn’t connect');
+  }
+}
+
+// resumeLink picks the widget up again when a bank's own sign-in sent the browser back here.
+function resumeLink() {
+  if (!new URLSearchParams(location.search).has('oauth_state_id')) return;
+  const at = linking();
+  const back = location.href;
+  history.replaceState(null, '', location.pathname);
+  if (at) openLink(at, back).catch((e) => complain(e, 'Couldn’t connect'));
 }
 
 // Your own accounts in every archive you are in, from /connect/mine: each stays in the archive it was connected

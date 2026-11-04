@@ -115,6 +115,8 @@ type Connector struct {
 	// that trades them for an access token, its answer's access_token, which lasts expires_in seconds: each request
 	// reads it as {key/access}, and Refresh trades again (keys.go).
 	Trade *Req
+	// Link, when set, is the provider's widget a key connector's keys come from (keys.go).
+	Link *Link
 	// Info is how it shows. Options says what else its Env's value takes or does, for the docs of that variable.
 	Info    Info
 	Options string
@@ -416,10 +418,10 @@ func (p *Provider) Refresh(ctx context.Context, rt string, meta map[string]strin
 func (p *Provider) RevokeToken(ctx context.Context, rt string, meta map[string]string) error {
 	rv := &Revocation{Refresh: rt, Meta: meta, ctx: ctx, p: p}
 	switch {
-	case len(p.Keys) > 0:
-		return nil
 	case p.RevokeWith != nil:
 		return rv.p.RevokeWith(rv)
+	case len(p.Keys) > 0:
+		return nil
 	case p.revoke == "":
 		return nil
 	}
@@ -447,7 +449,8 @@ func basic(id, secret string) string {
 
 // Revocation is a grant a connector's RevokeWith ends.
 type Revocation struct {
-	// Refresh is the grant's refresh token, and Meta the callback's parameters it kept.
+	// Refresh is the grant's refresh token, or a key connector's keys as KeyGrant kept them, and Meta the
+	// callback's parameters it kept.
 	Refresh string
 	Meta    map[string]string
 	ctx     context.Context
@@ -773,7 +776,7 @@ func reasonIn(b []byte) string {
 		}
 		return s
 	}
-	for _, k := range []string{"message", "error_description", "Detail", "Message", "detail", "error"} {
+	for _, k := range []string{"message", "error_message", "error_description", "Detail", "Message", "detail", "error"} {
 		if s := find(v, k); s != "" {
 			return s
 		}

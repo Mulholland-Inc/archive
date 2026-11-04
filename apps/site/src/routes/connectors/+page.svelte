@@ -48,6 +48,7 @@
     ['Xero', 'Transactions and contacts', MINUTE],
     ['QuickBooks Online', 'Invoices, bills, payments and customers', MINUTE],
     ['NetSuite', 'Invoices, bills, payments, journal entries, customers and vendors', MINUTE],
+    ['Banks, through Plaid', 'Accounts, balances and transactions, Zelle and Venmo payments among them', MINUTE],
     ['Exact Online', 'Accounting records', SOON],
     ['Zoom', 'Meetings and recordings', MINUTE]
   ];

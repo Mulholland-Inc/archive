@@ -3,6 +3,8 @@ package connect
 import (
 	"bytes"
 	"cmp"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -12,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math/big"
 	"mime"
 	"mime/multipart"
 	"mime/quotedprintable"
@@ -35,7 +38,8 @@ import (
 //
 // Values in a definition are read at run time, so the compiler cannot check them: a Path is a /-separated walk of
 // an answer, where * is every element of a list, a number one of them, ** the first list of objects at any depth,
-// **/key the list under key at any depth, and a;b the first of two walks that finds anything. A template is a
+// **/key the list under key at any depth, a;b the first of two walks that finds anything, and a+b the lists of
+// both, one after the other. A template is a
 // string whose {path} is read from what the request knows. {path} is escaped in a URL, {+path} is not, {~path} is
 // escaped a part at a time, {-path} is made a label of a host name, lower case with - for _, {path,} joins a list
 // with commas or {path,x} with x, {'path} and {"path} are escaped to go in a string quoted so, and {path|x} is x
@@ -706,6 +710,10 @@ func (s Step) once(c *Client, sc map[string]any, e any) (v any, err error) {
 // keyed by the app's secret, or the hook option of its variable with Hook, or the secret a handshake left with Kept,
 // after Pre. Plain are characters {url} has not percent-escaped, as the provider signs it, and Fresh a header of its
 // time in Unix milliseconds, which must be under 5 minutes old.
+//
+// With Key, Header is a JWS signed with ES256 by a key of the provider's, which Key asks for with the server's
+// client and the JWS's kid as {kid}, at JWK in its answer, kept by kid: its claim Claim is what Digest and Enc make
+// of Of, and its iat must be under 5 minutes old.
 type Sign struct {
 	Header, When, Is string
 	Digest           Digest
@@ -714,6 +722,9 @@ type Sign struct {
 	Plain, Fresh     string
 	Hook, Kept       bool
 	Pre              string
+	Key              *Req   `json:",omitempty"`
+	JWK              Path   `json:",omitempty"`
+	Claim            string `json:",omitempty"`
 }
 
 type (
@@ -836,6 +847,14 @@ func (c *Connector) compile() error {
 	if r := c.RevokeBy; r != nil {
 		c.RevokeWith = func(rv *Revocation) error { return r.revoke(rv) }
 	}
+	if l := c.Link; l != nil {
+		if len(c.Keys) == 0 {
+			return errors.New("link: a widget hands over Keys")
+		}
+		if err := l.check(); err != nil {
+			return err
+		}
+	}
 	for name, a := range c.Actions {
 		if a.plan != nil {
 			if err := a.check(); err != nil {
@@ -893,11 +912,18 @@ func (w *Who) read(cl *Client, c *Connector) (string, error) {
 }
 
 // revoke ends a grant as r says, which reads {client}, {refresh}, {basic} the client as HTTP Basic, {meta/...} what the
-// grant kept, and {access} an access token of the grant, only asked for when it does.
+// grant kept, {key/...} a key connector's keys, and {access} an access token of the grant, only asked for when it does.
 func (r *Req) revoke(rv *Revocation) error {
 	id, secret := rv.Client()
 	sc := rv.p.metaScope(rv.Meta)
 	sc["client"], sc["refresh"], sc["basic"] = map[string]any{"id": id, "secret": secret}, rv.Refresh, basic(id, secret)
+	if len(rv.p.Keys) > 0 {
+		keys := map[string]any{}
+		for k, v := range keysFrom(rv.Refresh) {
+			keys[k] = v
+		}
+		sc["key"] = keys
+	}
 	if slices.Contains(r.roots(), "access") {
 		at, err := rv.Access()
 		if err != nil {
@@ -2535,6 +2561,13 @@ func pick(v any, path Path) any {
 	if path == "" {
 		return v
 	}
+	if strings.Contains(string(path), "+") {
+		out := []any{}
+		for _, part := range strings.Split(string(path), "+") {
+			out = append(out, listOf(pick(v, Path(part)))...)
+		}
+		return out
+	}
 	if strings.Contains(string(path), ";") {
 		for _, alt := range strings.Split(string(path), ";") {
 			if x := pick(v, Path(alt)); !none(x) {
@@ -2961,6 +2994,17 @@ func (l *Listen) compile(c *Connector) error {
 	if len(l.Keys) == 0 && l.Kept == nil {
 		return errors.New("needs Keys or Kept")
 	}
+	for _, s := range l.Signs {
+		if s.Key == nil {
+			continue
+		}
+		if len(c.Keys) == 0 || s.JWK == "" || s.Claim == "" {
+			return errors.New("a JWS is a key connector's, with JWK and Claim")
+		}
+		if err := s.Key.check("jws key", "client", "option", "kid"); err != nil {
+			return err
+		}
+	}
 	if l.Key == "" && l.Mint == "" {
 		return errors.New("needs Key or Mint")
 	}
@@ -3222,7 +3266,7 @@ func (l *Listen) verify(p *Provider, r *http.Request, at string, body []byte, ke
 		case s.Kept:
 			key = kept
 		}
-		if key == "" {
+		if key == "" && s.Key == nil {
 			return forged("%s", s.Header)
 		}
 		sc := map[string]any{"method": r.Method, "url": at, "body": string(body), "secret": p.secret}
@@ -3247,12 +3291,73 @@ func (l *Listen) verify(p *Provider, r *http.Request, at string, body []byte, ke
 		if s.Enc == Hex {
 			want = hex.EncodeToString(sum)
 		}
+		if s.Key != nil {
+			claims, err := s.jws(p, r, got)
+			if err != nil {
+				return err
+			}
+			iat, _ := claims["iat"].(float64)
+			if time.Since(time.Unix(int64(iat), 0)).Abs() > 5*time.Minute {
+				return forged("%s's iat", s.Header)
+			}
+			got, _ = claims[s.Claim].(string)
+		}
 		if !same(got, s.Pre+want) {
 			return forged("%s", s.Header)
 		}
 		return nil
 	}
 	return forged("no signature it knows")
+}
+
+// jwsKeys are the providers' keys that sign their pushes' JWSs, by provider and kid.
+var jwsKeys sync.Map
+
+// jws are the claims of the JWS token, once its signature is the provider's.
+func (s Sign) jws(p *Provider, r *http.Request, token string) (map[string]any, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return nil, forged("%s is no JWS", s.Header)
+	}
+	var head struct{ Alg, Kid string }
+	if b, err := base64.RawURLEncoding.DecodeString(parts[0]); err != nil || json.Unmarshal(b, &head) != nil || head.Alg != "ES256" || head.Kid == "" {
+		return nil, forged("%s's header", s.Header)
+	}
+	k, ok := jwsKeys.Load(p.ID + " " + head.Kid)
+	if !ok {
+		c := p.openKeys(r.Context(), nil, nil)
+		defer c.Close()
+		sc := c.scope()
+		sc["kid"] = head.Kid
+		ans, err := c.req(*s.Key, sc)
+		if err != nil {
+			return nil, err
+		}
+		jwk, _ := pick(ans, s.JWK).(map[string]any)
+		x, errX := base64.RawURLEncoding.DecodeString(text(jwk["x"]))
+		y, errY := base64.RawURLEncoding.DecodeString(text(jwk["y"]))
+		if errX != nil || errY != nil || text(jwk["crv"]) != "P-256" || len(x) != 32 || len(y) != 32 {
+			return nil, fmt.Errorf("%s's key %s is no P-256 key", p.Name, head.Kid)
+		}
+		pub, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), append(append([]byte{4}, x...), y...))
+		if err != nil {
+			return nil, fmt.Errorf("%s's key %s: %w", p.Name, head.Kid, err)
+		}
+		k, _ = jwsKeys.LoadOrStore(p.ID+" "+head.Kid, pub)
+	}
+	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil || len(sig) != 64 {
+		return nil, forged("%s's signature", s.Header)
+	}
+	h := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
+	if !ecdsa.Verify(k.(*ecdsa.PublicKey), h[:], new(big.Int).SetBytes(sig[:32]), new(big.Int).SetBytes(sig[32:])) {
+		return nil, forged("%s", s.Header)
+	}
+	var claims map[string]any
+	if b, err := base64.RawURLEncoding.DecodeString(parts[1]); err != nil || json.Unmarshal(b, &claims) != nil {
+		return nil, forged("%s's claims", s.Header)
+	}
+	return claims, nil
 }
 
 // Secrets are the environment variables that hold what connectors need of this server, each described from the
