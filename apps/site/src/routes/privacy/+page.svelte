@@ -9,7 +9,7 @@
     ['Cloudflare', 'DNS, TLS and the proxy in front of api.archive.dev, and serves the web app at app.archive.dev.'],
     ['Anthropic', 'The model behind the in-app agent, when a workspace uses it. Anthropic does not train its models on what the service sends it.'],
     ['Google, Microsoft, Slack and GitHub', 'Sign-in, only with the provider you choose.'],
-    ['The services you connect', 'Google, Microsoft, Intuit and the others in Accounts you connect send Archive what you allow it to read, under your own account with them.'],
+    ['The services you connect', 'Google, Microsoft, Intuit, Oracle and the others in Accounts you connect send Archive what you allow it to read, under your own account with them.'],
     ['GitHub', 'Hosts archive.dev and the public code and issue tracker.'],
     ['Google Fonts', 'Serves the fonts on archive.dev.']
   ];
@@ -43,6 +43,7 @@
 <li><strong>Google</strong>: with your consent, Gmail messages and attachments, to read them and, when you ask, to send, draft and label mail; Google Calendar events and attendees, to read them and, when you ask, to make, change and cancel events; and Google Drive files and their contents, to read them and, when you ask, to make, change and trash files; with your email address to name the account. Archive never deletes mail or files for good.</li>
 <li><strong>Microsoft</strong>: with your consent, Outlook mail and attachments, your Outlook calendar, the files of the SharePoint sites and OneDrive you can open, and your Microsoft Teams chats and the posts of your teams' channels, with the email addresses of who sent them, all read only, with your email address to name the account.</li>
 <li><strong>Intuit QuickBooks</strong>: with an owner's consent, one company's books: its chart of accounts, customers, vendors, employees, products and services, and transactions such as invoices, bills, payments and journal entries. Intuit offers no read-only access, so Archive asks for its accounting access and only reads with it.</li>
+<li><strong>Oracle NetSuite</strong>: with an owner's consent, one NetSuite account's books, as far as the NetSuite role they sign in with may see: its chart of accounts, customers, vendors, employees, items, and transactions such as invoices, bills, payments and journal entries, with their lines, read only, with the company's name or NetSuite account ID to name the account.</li>
 <li><strong>HubSpot</strong>: with an owner's consent, the organization's contacts, companies and deals, to read them and, when you ask, to add, change, link and archive them. An archived record stays in HubSpot's recycling bin, where it can be restored.</li>
 <li><strong>Salesforce and Klaviyo</strong>: with an owner's consent, the organization's accounts, contacts, leads and opportunities, or its marketing profiles and campaigns, read only.</li>
 <li><strong>Karbon, Shopify and Meta Ads</strong>: with keys an owner makes in that service and pastes into Archive, the firm's clients, people and work items, the store's orders, products and customers, or the ad account's campaigns and daily results, read only. The keys are kept encrypted like tokens, and end when they are revoked there.</li>
@@ -60,7 +61,7 @@
 <li>never use it for advertising, never sell it, and never use it to develop, improve or train generalized AI or machine-learning models;</li>
 <li>never let a person read it unless you ask us to and agree, it is needed for security, such as investigating abuse, it is needed to comply with the law, or it is aggregated and anonymized for operations.</li>
 </ul>
-<p>We hold data from Microsoft, Intuit and every other service you connect to the same standard.</p>
+<p>We hold data from Microsoft, Intuit, Oracle and every other service you connect to the same standard.</p>
 
 <h3 id="collect-requests">Requests</h3>
 <p>Google Cloud and Cloudflare record requests to the service, such as your IP address, browser, the time and the address requested, so we can run it, fix problems and protect it.</p>

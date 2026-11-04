@@ -28,8 +28,8 @@ func init() {
 		ID: "zohocrm", Name: "Zoho CRM", Integration: true, Env: "ARCHIVE_ZOHO",
 		Info: Info{By: "Zoho", Description: "Read leads, contacts, accounts and deals, and add or update them when you ask", Category: CatCRM, Icon: IconUsers,
 			Scopes: []string{"Read leads, contacts, accounts and deals", "Add and change them when you ask; never delete"}},
-		Endpoint: zohoEndpoint, Hosts: zohoHosts, Region: "accounts-server", Regions: zohoRegions, Keep: []string{"api_domain"}, TokenType: "Zoho-oauthtoken",
-		Revoke: zohoRevoke, Params: zohoParams, Let: zohoLet,
+		Endpoint: zohoEndpoint, Keep: zohoKeep, Allow: zohoAllow, TokenType: "Zoho-oauthtoken",
+		RevokeBy: zohoRevoke, Params: zohoParams, Let: zohoLet,
 		API: "{+api}/crm/v8",
 		Scopes: []string{strings.Join([]string{"ZohoCRM.org.READ", "ZohoCRM.coql.READ",
 			"ZohoCRM.modules.leads.READ", "ZohoCRM.modules.contacts.READ", "ZohoCRM.modules.accounts.READ", "ZohoCRM.modules.deals.READ",
@@ -124,8 +124,8 @@ func init() {
 		ID: "zohobooks", Name: "Zoho Books", Integration: true, Env: "ARCHIVE_ZOHO",
 		Info: Info{By: "Zoho", Description: "Read your organizations’ invoices, bills, payments, contacts and books", Category: CatFinance, Icon: IconLedger,
 			Scopes: []string{"Read your organizations’ accounting"}},
-		Endpoint: zohoEndpoint, Hosts: zohoHosts, Region: "accounts-server", Regions: zohoRegions, Keep: []string{"api_domain"}, TokenType: "Zoho-oauthtoken",
-		Revoke: zohoRevoke, Params: zohoParams, Let: zohoLet,
+		Endpoint: zohoEndpoint, Keep: zohoKeep, Allow: zohoAllow, TokenType: "Zoho-oauthtoken",
+		RevokeBy: zohoRevoke, Params: zohoParams, Let: zohoLet,
 		API: "{+api}/books/v3",
 		Scopes: []string{strings.Join([]string{"ZohoBooks.settings.READ", "ZohoBooks.contacts.READ", "ZohoBooks.invoices.READ", "ZohoBooks.bills.READ",
 			"ZohoBooks.customerpayments.READ", "ZohoBooks.vendorpayments.READ", "ZohoBooks.accountants.READ"}, ",")},
@@ -205,14 +205,15 @@ const (
 )
 
 var (
-	zohoEndpoint = oauth2.Endpoint{AuthURL: "https://accounts.zoho.com/oauth/v2/auth", TokenURL: "https://accounts.zoho.com/oauth/v2/token", AuthStyle: oauth2.AuthStyleInParams}
-	zohoHosts    = []string{"https://accounts.zoho.com"}
-	zohoRevoke   = "https://accounts.zoho.com/oauth/v2/token/revoke"
+	// Tokens come from and are revoked on the accounts server of the account's data center.
+	zohoEndpoint = oauth2.Endpoint{AuthURL: "https://accounts.zoho.com/oauth/v2/auth", TokenURL: "{+meta/accounts-server}/oauth/v2/token", AuthStyle: oauth2.AuthStyleInParams}
+	zohoRevoke   = &Req{Method: POST, URL: "{+meta/accounts-server}/oauth/v2/token/revoke", Query: Q{"token": "{refresh}"}}
 	zohoParams   = map[string]string{"access_type": "offline", "prompt": "consent"}
+	zohoKeep     = []string{"accounts-server", "api_domain"}
 	// The accounts servers of Zoho's data centers, as https://accounts.zoho.com/oauth/serverinfo lists them.
-	zohoRegions = []string{"https://accounts.zoho.com", "https://accounts.zoho.eu", "https://accounts.zoho.in", "https://accounts.zoho.com.au",
+	zohoAllow = map[string][]string{"accounts-server": {"https://accounts.zoho.com", "https://accounts.zoho.eu", "https://accounts.zoho.in", "https://accounts.zoho.com.au",
 		"https://accounts.zoho.jp", "https://accounts.zoho.uk", "https://accounts.zoho.sg", "https://accounts.zoho.ae", "https://accounts.zoho.sa",
-		"https://accounts.zohocloud.ca", "https://accounts.zohohq.in"}
+		"https://accounts.zohocloud.ca", "https://accounts.zohohq.in"}}
 	// The API is the one the token's answer named, if it is Zoho's, as a token goes nowhere else.
 	zohoLet = []Step{
 		{As: "api", In: "{meta/api_domain}", Find: `^(https://(?:[a-z0-9-]+\.)*zohoapis\.[a-z]+(?:\.[a-z]+)?)/?$`},
