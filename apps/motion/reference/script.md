@@ -35,7 +35,7 @@ Reference for recreating `explain.mp4` in this engine: each chapter's start, len
 - Real code types itself while a robot walks across tables that light up. Your AI writes code right on your data.
 - The view pulls back across a hundred thousand cells as colour sweeps through them. It changes a hundred thousand records in seconds.
 - The wall sinks and the thin tube widens into a chute full of blocks. Now your AI reaches your data directly.
-- The words asking, waiting and limits are struck out one by one. There’s no asking, no waiting and no limits.
+- The words asking, waiting and limit are struck out one by one. There’s no asking, no waiting, no limit someone else set.
 - One dot in a thin lane through the app, a flood in a wide lane for Archive. Now far more gets done.
 - That’s why it’s 10x faster.
 

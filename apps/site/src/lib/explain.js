@@ -4,65 +4,68 @@ export const EXPLAIN = {
   nudge: 'New to all this?'
 };
 
-export const PAGES = [
+export const FILM = [
   {
-    art: 'explain-1',
-    alt: 'An app screen slid aside on its rail, showing the database that sat behind it',
-    title: 'Every app is secretly a database.',
-    text: 'Notion, Salesforce, NetSuite, QuickBooks, Google Sheets, even Claude. Behind the screen, every one of them keeps your stuff in a database.'
+    dur: 9.8,
+    lines: [
+      'A wall of app logos rushes past, including Salesforce, Notion and QuickBooks. Your company runs on apps.',
+      'The Notion, Salesforce and QuickBooks tiles slide away to show a database behind each. Your data sits behind each one.',
+      'Every app hides a database.',
+      'The database splits into slices that flatten into tables. A database is just tables.',
+      'Lines run from rows of orders to rows of customers. Orders are linked to customers.'
+    ]
   },
   {
-    art: 'explain-2',
-    alt: 'Two tables of rows and columns, with a line arching from a row in one to its matching row in the other',
-    title: 'And a database is just tables.',
-    text: 'Rows and columns, like a spreadsheet. Customers in one table, orders in another, and a line from each order to its customer. That’s the “relational” part. That’s it.'
+    dur: 9,
+    lines: [
+      'A tiny robot sits behind a wall from a giant database, sipping through one thin tube. Your AI can’t reach your data directly.',
+      'Single sips squeeze along the tube. It asks one small question at a time through an API, or an MCP.',
+      'A square peg that will not fit, a stack crushed by a lid, a gate stopping a queue. The app decides what you can do.',
+      'A rising line hits a ceiling and goes flat. You hit a limit someone else set.'
+    ]
   },
   {
-    art: 'explain-3',
-    alt: 'A big open tank full of data, and a small robot sipping from it through one thin straw',
-    title: 'But you only get a straw.',
-    text: 'You can’t touch those tables yourself. Your AI has to sip through the app’s API or MCP, one small question at a time. It’s slow, and it only sees what fits through the straw.'
+    dur: 7.3,
+    lines: [
+      'Invoices, coins, people and buildings pour into a database. This is what your company knows.',
+      'The database is shut in one locker among many, with an app logo on each door. You’re only renting a place to keep it.',
+      'A door shrinks while the database grows, and on a chart your data rises as the way out falls. Can you take your data and leave?'
+    ]
   },
   {
-    art: 'explain-4',
-    alt: 'Crates stacked inside a bolted frame, pressed up against its fixed lid, with more crates left outside',
-    title: 'And it only bends so far.',
-    text: 'Want a new kind of record, a new rule, or ten times more data? You get what the app’s makers built, at the size they allow.'
+    dur: 8.6,
+    lines: [
+      'A key drops and bounces on solid blue. There is another way.',
+      'A paper map unfolds, with clients, properties and invoices joined by roads. This is your ontology, the map of your business.',
+      'A grid of spinning things: people, invoices, places, documents. It names every kind of thing you work with.',
+      'A graph grows node by node through client, property, invoice, contract and file. It shows how they all connect.'
+    ]
   },
   {
-    art: 'explain-5',
-    alt: 'A map of typed records on a board: a customer, an order, a product and an invoice, joined by links',
-    title: 'Palantir calls the right way an [ontology](/ontology).',
-    text: 'Typed tables that describe how your business really works: what a customer is, what an order is, and how they connect. It’s how some of the biggest companies in the world run.'
+    dur: 6.1,
+    lines: [
+      'The logos flip away and leave the Archive name. Archive gives you your own database.',
+      'A fenced plot rises, a database stacks up inside it, and the key lands beside it. It’s real Postgres, and it belongs to you.',
+      'The database hops from a house to a tower to a cloud. It runs wherever you choose.'
+    ]
   },
   {
-    art: 'explain-6',
-    alt: 'A database on its own fenced plot, with a flag planted on top and a key lying by the gate',
-    title: 'Archive gives you your own.',
-    text: 'A real Postgres database, typed and shaped like your business, [living where you choose](/security). Not a copy. Not a straw. The real tables.'
+    dur: 11.4,
+    lines: [
+      'Code types itself while a robot walks across tables that light up. Your AI writes code right on your data.',
+      'The view pulls back across a hundred thousand cells as colour sweeps through them. It changes a hundred thousand records in seconds.',
+      'The wall sinks and the thin tube widens into a chute full of blocks. Now your AI reaches your data directly.',
+      'The words asking, waiting and limit are struck out one by one. There’s no asking, no waiting, no limit someone else set.',
+      'One dot in a thin lane through the app, a flood in a wide lane for Archive. Now far more gets done.',
+      'That’s why it’s 10x faster.'
+    ]
   },
   {
-    art: 'explain-7',
-    alt: 'A screen of code standing right on a table of records, with some records changed and one lifted mid-edit',
-    title: 'Your AI writes code, right on the data.',
-    text: 'Coding agents like Claude Code don’t click around. They [write code](/developers) that runs next to your tables: change a hundred thousand records, add a new type, build a new view. In seconds.'
-  },
-  {
-    art: 'explain-8',
-    alt: 'A wide open chute pouring data from a tank straight into a robot',
-    title: 'That’s why it’s 10x faster.',
-    text: 'No straw. No waiting for a feature. No limits someone else set. Your AI works on the real thing, directly.'
-  },
-  {
-    art: 'explain-9',
-    alt: 'One round base holding five pieces: a table, a database, a code screen, a key and a robot',
-    title: 'Five things, in one place.',
-    list: [
-      ['Direct data', 'The real tables, not a copy'],
-      ['A database', 'Postgres, built to grow'],
-      ['Code', 'Your AI can change anything'],
-      ['[Sovereignty](/security)', 'You own it and can take it anywhere'],
-      ['[Agents](/agents)', 'Every assistant works from the same source']
+    dur: 7.6,
+    lines: [
+      'App logos connect to your database by pipes with data moving along them. Your apps sync into your own database.',
+      'The key enters a lock and turns, the door swings open, and the view moves through. You can take it and leave whenever you like.',
+      'Own your data infrastructure. The Archive name appears.'
     ]
   }
 ];
