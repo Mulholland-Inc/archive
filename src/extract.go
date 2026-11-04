@@ -82,6 +82,7 @@ func officeText(b []byte, name string) (text string) {
 	}
 	for _, s := range m.Sheets {
 		line("# " + s.Name)
+		// A cell sits at its column, blanks between kept as empty cells, so a sheet's columns still line up as text.
 		row, cells := "", []string{}
 		flush := func() {
 			line(strings.Join(cells, "\t"))
@@ -92,9 +93,19 @@ func officeText(b []byte, name string) (text string) {
 				flush()
 				row = r
 			}
-			if c.Value != "" {
-				cells = append(cells, c.Value)
+			if c.Value == "" {
+				continue
 			}
+			col := 0
+			for _, ch := range strings.TrimRight(strings.TrimLeft(c.Ref, "$"), "0123456789") {
+				if ch >= 'A' && ch <= 'Z' {
+					col = col*26 + int(ch-'A') + 1
+				}
+			}
+			for len(cells) < col-1 {
+				cells = append(cells, "")
+			}
+			cells = append(cells, c.Value)
 		}
 		flush()
 	}
