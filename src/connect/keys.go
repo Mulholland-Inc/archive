@@ -105,13 +105,19 @@ func (p *Provider) openKeys(ctx context.Context, keys, meta map[string]string) *
 // Key is the key name of a key connector's account, like its store's address.
 func (c *Client) Key(name string) string { return c.keys[name] }
 
-// keyTransport signs each request with its connector's Authorize.
-type keyTransport struct{ c *Client }
+// keyTransport signs each request with its connector's Authorize, before base sends it, or the default transport.
+type keyTransport struct {
+	c    *Client
+	base http.RoundTripper
+}
 
 func (t *keyTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	r = r.Clone(r.Context())
 	if t.c.p.Authorize != nil {
 		t.c.p.Authorize(r, t.c)
+	}
+	if t.base != nil {
+		return t.base.RoundTrip(r)
 	}
 	return http.DefaultTransport.RoundTrip(r)
 }

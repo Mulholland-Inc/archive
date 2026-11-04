@@ -809,8 +809,9 @@ func (c *Connector) compile() error {
 		sign := c.Sign
 		c.Authorize = func(r *http.Request, cl *Client) {
 			for h, t := range sign {
-				v, _ := fillStr(t, cl.scope())
-				r.Header.Set(h, text(v))
+				if v, _ := fillStr(t, cl.scope()); text(v) != "" {
+					r.Header.Set(h, text(v))
+				}
 			}
 		}
 	}
@@ -2196,12 +2197,25 @@ func (c *Client) scope() map[string]any {
 }
 
 // api is where the connector's relative URLs go: its API, read from the account, and what its Let finds, once.
+// What Let puts in {meta/...} the account keeps as its Meta, which a grant being made saves with it, so that a
+// later Client finds it there, like the one Xero organisation a connection reads.
 func (c *Client) api() (string, error) {
 	c.apiOnce.Do(func() {
 		sc := c.scope()
-		if _, c.apiErr = runSteps(c, c.p.Let, sc); c.apiErr == nil {
-			c.apiURL, c.apiErr = expand(c.p.API, sc)
+		if _, c.apiErr = runSteps(c, c.p.Let, sc); c.apiErr != nil {
+			return
 		}
+		if m, _ := sc["meta"].(map[string]any); len(m) > 0 {
+			if c.Meta == nil {
+				c.Meta = map[string]string{}
+			}
+			for k, v := range m {
+				if s := text(v); s != "" && c.Meta[k] == "" {
+					c.Meta[k] = s
+				}
+			}
+		}
+		c.apiURL, c.apiErr = expand(c.p.API, sc)
 	})
 	return c.apiURL, c.apiErr
 }
@@ -2688,7 +2702,8 @@ type Codec struct {
 // MIMEWords as MIME does for keeping: its text falls back on its HTML's words and is cut at maxText, its HTML goes,
 // and it adds parties, the people of its headers, and sent, when its Date says. RFC5322 writes a message, maybe as
 // a reply to parent, a message as JSON, into raw, base64url. Base64JSON reads JSON out of base64, and Base64Text text.
-// Words is the words of HTML. GraphQLReads passes a GraphQL document that only reads, and refuses any other. Sum adds
+// Words is the words of HTML. Claims reads a JWT's claims, unverified, as a provider's own token says them of
+// itself. GraphQLReads passes a GraphQL document that only reads, and refuses any other. Sum adds
 // a list of numbers up.
 // ToolBusy are what MCP tools say when the API behind them turned them away for now.
 var ToolBusy = []string{"Too Many Requests", " 429", " 502", " 503", " 504", "Service Unavailable", "Bad Gateway", "Gateway Timeout", "Rate Limit Exceeded"}
@@ -2712,7 +2727,18 @@ var (
 		}
 		return string(b), nil
 	}}
-	Words        = &Codec{"words", func(v any) (any, error) { return htmlText(text(v)), nil }}
+	Words  = &Codec{"words", func(v any) (any, error) { return htmlText(text(v)), nil }}
+	Claims = &Codec{"claims", func(v any) (any, error) {
+		parts := strings.Split(text(v), ".")
+		if len(parts) != 3 {
+			return nil, errors.New("a token that is not a JWT")
+		}
+		b, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "="))
+		if err != nil {
+			return nil, fmt.Errorf("a JWT that is not base64url: %v", err)
+		}
+		return readAll(b, "the token")
+	}}
 	GraphQLReads = &Codec{"graphql_reads", graphQLReads}
 	Sum          = &Codec{"sum", func(v any) (any, error) {
 		n := 0

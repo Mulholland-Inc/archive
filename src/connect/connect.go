@@ -96,23 +96,24 @@ type Connector struct {
 	// connecting, asking and reading start a sync.
 	Push *Push
 	// Keys are what a key connector asks a person for in place of a sign-in, and Authorize puts them on a request
-	// (keys.go). Its Env, when set, is a client of the server's own its requests need too, like a developer key.
+	// (keys.go), or puts what else every request of a connector needs on it, like the Xero organisation it is for.
+	// A key connector's Env, when set, is a client of the server's own its requests need too, like a developer key.
 	Keys      []Key
 	Authorize func(req *http.Request, c *Client)
 	// Info is how it shows. Options says what else its Env's value takes or does, for the docs of that variable.
 	Info    Info
 	Options string
 	// API is the base of the requests of a connector that is only data (def.go): its Env is ARCHIVE_<ID> unless it
-	// says, and its Host that of its Endpoint. Sign are the headers of its keys' requests, Who its Account, RevokeBy
-	// its RevokeWith, Listen its Push and Sync its Streams.
+	// says, and its Host that of its Endpoint. Sign are the headers of its requests, each left off while it reads to
+	// nothing, Who its Account, RevokeBy its RevokeWith, Listen its Push and Sync its Streams.
 	API      string
 	Sign     map[string]string
 	Who      *Who
 	RevokeBy *Req
 	Listen   *Listen
 	Sync     []*Sync
-	// Let are steps that find what API reads, once a Client, over what the account has: {key/...}, {meta/...} and
-	// {option/...}. Their requests are absolute URLs.
+	// Let are steps that find what API reads, once a Client, over what the account has: {key/...}, {meta/...},
+	// {option/...} and {token}. Their requests are absolute URLs, and what they put in {meta/...} the account keeps.
 	Let []Step
 	// Errors is an answer that refuses in a 200, as GraphQL does. Busy are what a refusal says, past its status, when
 	// the provider only turns Archive away for now. Trace is a header of its answers that names one to its support, which a
@@ -500,7 +501,7 @@ type Client struct {
 	p    *Provider
 	http *http.Client
 	tok  *oauth2.Token
-	// Meta are the callback's parameters the connector keeps, like QuickBooks' realmId.
+	// Meta are the callback's parameters the connector keeps, like QuickBooks' realmId, and what its Let keeps.
 	Meta map[string]string
 	sess *mcp.ClientSession
 	// tools are the MCP server's, as it listed them for a stream.
@@ -520,12 +521,16 @@ func (p *Provider) Open(ctx context.Context, tok *oauth2.Token, meta map[string]
 	if len(p.Keys) > 0 {
 		return p.openKeys(ctx, keysFrom(tok.AccessToken), meta)
 	}
+	c := &Client{ctx: ctx, p: p, tok: tok, Meta: meta}
 	var rt http.RoundTripper = &oauth2.Transport{Source: oauth2.StaticTokenSource(tok)}
+	if p.Authorize != nil {
+		rt = &keyTransport{c: c, base: rt}
+	}
 	if p.Pace > 0 {
 		rt = &paced{base: rt, p: pacerOf(p.ID, p.Pace)}
 	}
-	hc := &http.Client{Timeout: client.Timeout, Transport: rt}
-	return &Client{ctx: ctx, p: p, http: hc, tok: tok, Meta: meta}
+	c.http = &http.Client{Timeout: client.Timeout, Transport: rt}
+	return c
 }
 
 // Context is what the Client's requests run in.
