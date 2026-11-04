@@ -1,7 +1,7 @@
 // Talking to the assistant: POST /api/chat streams one JSON event per line. The answer is built into the
 // chat's messages as it arrives, outside any component, so it keeps going while you move around the app.
 
-import { api, chatStream, Unauthorized } from './api.js';
+import { api, chatStream, moveDraft, Unauthorized } from './api.js';
 import { app, ws, chatById } from './app.svelte.js';
 import { markdown, step, toMessages, toChat } from './live.js';
 import { replace, route } from './router.svelte.js';
@@ -46,6 +46,7 @@ function adopt(w, chat, real) {
   Object.assign(chat, toChat(real, chat.pinned), { draft: false, loaded: true, streaming: true });
   controllers.set(real.id, controllers.get(old));
   controllers.delete(old);
+  moveDraft(old, real.id);
   if (route.path === `/chat/${old}`) replace(`/chat/${real.id}`);
 }
 

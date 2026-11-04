@@ -92,7 +92,7 @@
     </Stack>
   </Page>
   <ComposerDock>
-    <Composer bind:value bind:element bind:model={app.model} placeholder="Reply to Archive" {streaming} onsend={send} onstop={() => stopChat(chat.id)} />
+    <Composer bind:value bind:element bind:model={app.model} placeholder="Reply to Archive" draft={id} {streaming} onsend={send} onstop={() => stopChat(chat.id)} />
   </ComposerDock>
 {:else if ws().loading}
   <Page width="chat"><Skeleton lines={4} /></Page>
