@@ -130,11 +130,14 @@ func (a *Archive) hookSign(hook string) string {
 	return base64.RawURLEncoding.EncodeToString(m.Sum(nil)[:18])
 }
 
-// workflowTables are the tables a workflow may watch: the public ones and the members.
+// workflowTables are the tables a workflow may watch: the public ones, the members, and the tables a sync fills.
+// The rows that belong to a synced row are left out, as the sync deletes and writes them again with it.
 func workflowTables(cat *Catalog) []string {
 	var out []string
 	for _, n := range cat.names() {
-		if t := cat.Tables[n]; t.Kind == "table" && (t.Schema == "public" || n == "member") {
+		t := cat.Tables[n]
+		sync, ok := syncSchema[n]
+		if t.Kind == "table" && (t.Schema == "public" || n == "member" || t.Schema == "archive" && ok && sync.parent == "") {
 			out = append(out, n)
 		}
 	}

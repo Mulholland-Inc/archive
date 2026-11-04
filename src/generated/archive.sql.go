@@ -1117,6 +1117,68 @@ func (q *Queries) FileBySource(ctx context.Context, connection *uuid.UUID, sourc
 	return i, err
 }
 
+const fileKept = `-- name: FileKept :one
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at FROM archive.file WHERE connection = $1 AND hash = $2 AND name = $3 LIMIT 1
+`
+
+type FileKeptRow struct {
+	ID         uuid.UUID
+	Hash       string
+	Name       string
+	MIME       string
+	Size       int64
+	Metadata   map[string]any
+	Status     string
+	Error      string
+	Access     *uuid.UUID
+	CreatedAt  time.Time
+	Kind       string
+	Parent     *uuid.UUID
+	Connection *uuid.UUID
+	Stream     *string
+	SourceID   *string
+	Version    *string
+	URL        string
+	Drive      *string
+	OwnerName  *string
+	EditorName *string
+	MadeAt     *time.Time
+	EditedAt   *time.Time
+	UpdatedAt  time.Time
+}
+
+// A file a connection's sync kept, like a mail's attachment: found again by its content and name.
+func (q *Queries) FileKept(ctx context.Context, connection *uuid.UUID, hash string, name string) (FileKeptRow, error) {
+	row := q.db.QueryRow(ctx, fileKept, connection, hash, name)
+	var i FileKeptRow
+	err := row.Scan(
+		&i.ID,
+		&i.Hash,
+		&i.Name,
+		&i.MIME,
+		&i.Size,
+		&i.Metadata,
+		&i.Status,
+		&i.Error,
+		&i.Access,
+		&i.CreatedAt,
+		&i.Kind,
+		&i.Parent,
+		&i.Connection,
+		&i.Stream,
+		&i.SourceID,
+		&i.Version,
+		&i.URL,
+		&i.Drive,
+		&i.OwnerName,
+		&i.EditorName,
+		&i.MadeAt,
+		&i.EditedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const fileSources = `-- name: FileSources :many
 SELECT c.id, c.provider, c.account FROM archive.connection c WHERE EXISTS (SELECT FROM archive.file f WHERE f.connection = c.id) ORDER BY c.provider, c.account, c.id
 `
@@ -1588,6 +1650,84 @@ func (q *Queries) IntegrationFor(ctx context.Context, provider string) (Integrat
 	row := q.db.QueryRow(ctx, integrationFor, provider)
 	var i IntegrationForRow
 	err := row.Scan(&i.ID, &i.Account)
+	return i, err
+}
+
+const keepFile = `-- name: KeepFile :one
+INSERT INTO archive.file (hash, name, mime, size, access, connection) VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at
+`
+
+type KeepFileParams struct {
+	Hash       string
+	Name       string
+	MIME       string
+	Size       int64
+	Access     *uuid.UUID
+	Connection *uuid.UUID
+}
+
+type KeepFileRow struct {
+	ID         uuid.UUID
+	Hash       string
+	Name       string
+	MIME       string
+	Size       int64
+	Metadata   map[string]any
+	Status     string
+	Error      string
+	Access     *uuid.UUID
+	CreatedAt  time.Time
+	Kind       string
+	Parent     *uuid.UUID
+	Connection *uuid.UUID
+	Stream     *string
+	SourceID   *string
+	Version    *string
+	URL        string
+	Drive      *string
+	OwnerName  *string
+	EditorName *string
+	MadeAt     *time.Time
+	EditedAt   *time.Time
+	UpdatedAt  time.Time
+}
+
+func (q *Queries) KeepFile(ctx context.Context, arg KeepFileParams) (KeepFileRow, error) {
+	row := q.db.QueryRow(ctx, keepFile,
+		arg.Hash,
+		arg.Name,
+		arg.MIME,
+		arg.Size,
+		arg.Access,
+		arg.Connection,
+	)
+	var i KeepFileRow
+	err := row.Scan(
+		&i.ID,
+		&i.Hash,
+		&i.Name,
+		&i.MIME,
+		&i.Size,
+		&i.Metadata,
+		&i.Status,
+		&i.Error,
+		&i.Access,
+		&i.CreatedAt,
+		&i.Kind,
+		&i.Parent,
+		&i.Connection,
+		&i.Stream,
+		&i.SourceID,
+		&i.Version,
+		&i.URL,
+		&i.Drive,
+		&i.OwnerName,
+		&i.EditorName,
+		&i.MadeAt,
+		&i.EditedAt,
+		&i.UpdatedAt,
+	)
 	return i, err
 }
 

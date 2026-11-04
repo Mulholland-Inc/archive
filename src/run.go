@@ -195,7 +195,7 @@ func (a *Archive) run(ctx context.Context, code string, input json.RawMessage) (
 	limit := runTimeout
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	clock := &runClock{t: time.AfterFunc(limit, func() { cancel(context.DeadlineExceeded) }), end: time.Now().Add(limit), browse: browseTimeout}
+	clock := &runClock{t: time.AfterFunc(limit, func() { cancel(context.DeadlineExceeded) }), end: time.Now().Add(limit), browse: browseTimeout, model: modelTimeout, do: doTimeout}
 	defer clock.t.Stop()
 	r := &runner{a: a, out: out, js: js, input: input, at: time.Now(), clock: clock}
 	err = a.as(ctx, r.run)
@@ -209,6 +209,39 @@ func (a *Archive) run(ctx context.Context, code string, input json.RawMessage) (
 		out.Result = json.RawMessage("null")
 	}
 	return out, r.at, nil
+}
+
+// runClock is a run's time budget: browse, model and do stop the run's clock and spend budgets of their own.
+type runClock struct {
+	t                 *time.Timer
+	end               time.Time
+	browse, model, do time.Duration
+	paused            int
+	left              time.Duration
+}
+
+// pause stops the run's clock while a call spends from budget, limit in all per run; resume charges the budget
+// what the call took and, once no call is paused, restarts the clock with the time the run had left. A run an
+// agent makes inside archive.do pauses again while the clock is already stopped.
+func (c *runClock) pause(budget *time.Duration, limit time.Duration, what string) (resume func(), err error) {
+	if *budget <= 0 {
+		return nil, fmt.Errorf("this run already %s for %s, its limit", what, limit)
+	}
+	if c.paused == 0 {
+		if !c.t.Stop() {
+			return nil, errors.New("the run timed out")
+		}
+		c.left = time.Until(c.end)
+	}
+	c.paused++
+	start := time.Now()
+	return func() {
+		*budget -= time.Since(start)
+		if c.paused--; c.paused == 0 {
+			c.end = time.Now().Add(c.left)
+			c.t.Reset(c.left)
+		}
+	}, nil
 }
 
 // nested runs a saved workflow inside this run, in a savepoint it rolls back when the workflow fails.
@@ -963,6 +996,8 @@ func (r *runner) sdk() {
 	})
 	r.workflowSDK(o)
 	r.browseSDK(o)
+	r.modelSDK(o)
+	r.doSDK(o)
 	r.actionSDK(o)
 	r.vm.Set("archive", o)
 }
@@ -1094,14 +1129,27 @@ func (a *Archive) RunDocs(ctx context.Context) string {
 // the chat's run tool, which it describes, is one prompt cache entry for all of them.
 var runDocs = strings.ReplaceAll(runSDK, "{timeout}", runTimeout.String())
 
+// RunTypesFor is RunTypes with only the tables and views named in only, and those they reference; a name that is
+// neither fails as a bad request.
+func (a *Archive) RunTypesFor(ctx context.Context, only []string) (string, error) {
+	a.refresh(ctx)
+	cat := a.Catalog()
+	for _, name := range only {
+		if cat.Tables[name] == nil {
+			return "", fmt.Errorf("tables: %q is no table or view of this workspace, which has %s: %w", name, strings.Join(cat.names(), ", "), httpErrBadRequest)
+		}
+	}
+	return runTypesFor(cat, only) + a.actionTypes(ctx) + a.streamTypes(ctx), nil
+}
+
 // RunTypes is the TypeScript of this workspace's types and tables, as the live database has them, and of the
 // actions and synced streams of the caller's connections.
 func (a *Archive) RunTypes(ctx context.Context) string {
 	a.refresh(ctx)
-	return runTypes(a.Catalog()) + a.actionTypes(ctx) + a.streamTypes(ctx)
+	return runTypesFor(a.Catalog(), nil) + a.actionTypes(ctx) + a.streamTypes(ctx)
 }
 
-var runStatic = []string{"Actions", "Streams", "Base", "Row", "Hit", "Migration", "SchemaChange", "Table", "StoredFile", "Tables", "FetchResponse", "RunResult", "BrowseResult", "WorkflowOn", "CronInput", "TableInput", "WebhookInput",
+var runStatic = []string{"Actions", "Streams", "Base", "Row", "Hit", "Migration", "SchemaChange", "Table", "StoredFile", "Tables", "FetchResponse", "RunResult", "BrowseResult", "ModelResult", "DoResult", "WorkflowOn", "CronInput", "TableInput", "WebhookInput",
 	"Money", "Timestamp", "Time", "Interval", "Address", "Name", "Postcode", "Geo", "Quantity"}
 
 func runPascal(s string) string {
@@ -1177,7 +1225,19 @@ func runFormat(schema, name string) string {
 		"timestamp": "YYYY-MM-DDTHH:MM:SS, no zone", "interval": "Postgres interval, like 1 day 02:00:00"}[name]
 }
 
-func runTypes(cat *Catalog) string {
+// runTypesFor is the TypeScript of the catalog; a non-nil only keeps just those tables and views and what they reference.
+func runTypesFor(cat *Catalog, only []string) string {
+	names := cat.names()
+	if only != nil {
+		keep := map[string]bool{}
+		for _, name := range only {
+			keep[name] = true
+			for _, c := range cat.Tables[name].Columns {
+				keep[strings.TrimPrefix(strings.TrimPrefix(c.target(), "public."), "archive.")] = true
+			}
+		}
+		names = slices.DeleteFunc(names, func(name string) bool { return !keep[name] })
+	}
 	n := &runNames{cat: cat, used: map[string]bool{}, names: map[string]string{}}
 	for _, s := range runStatic {
 		n.used[s] = true
@@ -1228,15 +1288,15 @@ func runTypes(cat *Catalog) string {
 	b.WriteString("\n/** Your types, from the live database. */\n")
 	decl("public")
 	tables := map[string]string{}
-	for _, name := range cat.names() {
+	for _, name := range names {
 		tables[name] = n.name("table."+name, name)
 	}
 	b.WriteString("\n/** Table name to row type. */\ninterface Tables {\n")
-	for _, name := range cat.names() {
+	for _, name := range names {
 		fmt.Fprintf(&b, "    %s: %s;\n", runProp(name), tables[name])
 	}
 	b.WriteString("}\n")
-	for _, name := range cat.names() {
+	for _, name := range names {
 		tb := cat.Tables[name]
 		ro := ""
 		if tb.Kind == "view" {

@@ -243,22 +243,10 @@ func (a *Archive) chat(w http.ResponseWriter, r *http.Request) {
 	}
 	send(map[string]any{"type": "chat", "chat": Chat{ID: c.ID, Title: c.Title, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt}})
 	fail := func(err error) { send(map[string]any{"type": "error", "error": err.Error()}) }
-	tools := []any{map[string]any{
-		"name":        "run",
-		"description": runDocs,
-		"input_schema": map[string]any{
-			"type":                 "object",
-			"properties":           chatRunProperties,
-			"required":             []string{"description", "code"},
-			"additionalProperties": false,
-		},
-		"eager_input_streaming": true,
-		"cache_control":         map[string]string{"type": "ephemeral"},
-	}}
 	role, _, _ := a.level(ctx)
-	system := chatSystemBlocks(a.RunTypes(ctx), ac, role)
+	system := chatSystemBlocks(a.RunTypes(ctx), chatSystem(ac, role))
 	for runs := 0; ; {
-		msg, stop, err := chatTurn(ctx, key, tools, system, msgs, send)
+		msg, stop, _, err := chatTurn(ctx, key, chatModel, chatTools, system, msgs, send)
 		if ctx.Err() != nil {
 			return
 		}
@@ -322,6 +310,20 @@ func (a *Archive) chat(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// chatTools is the agent's one tool, run, which the chat and archive.do both give the model.
+var chatTools = []any{map[string]any{
+	"name":        "run",
+	"description": runDocs,
+	"input_schema": map[string]any{
+		"type":                 "object",
+		"properties":           chatRunProperties,
+		"required":             []string{"description", "code"},
+		"additionalProperties": false,
+	},
+	"eager_input_streaming": true,
+	"cache_control":         map[string]string{"type": "ephemeral"},
+}}
+
 // chatRunProperties are the run tool's input, description first, so the step's label streams before its code.
 var chatRunProperties = json.RawMessage(`{"description":{"type":"string","description":"What this step does, in a few words, for the person watching: 'Finding unpaid invoices', 'Adding 3 rows to contacts'"},` +
 	`"code":{"type":"string","description":"TypeScript to run inside Archive against the archive SDK in this tool's description"}}`)
@@ -343,13 +345,13 @@ func chatCode(in any) (string, bool) {
 
 // chatSystemBlocks is the system prompt: first the workspace's tables, which the SDK docs in the run tool end
 // with, as their own cache entry shared by everyone in the workspace; then, uncached, the date and who the
-// agent talks with. Ahead of both, the run tool's description is the same in every workspace (runDocs), so
-// with the conversation's own breakpoint a chat has three, all with the default lifetime.
-func chatSystemBlocks(types string, ac *Actor, role string) []any {
+// agent talks with (text). Ahead of both, the run tool's description is the same in every workspace (runDocs),
+// so with the conversation's own breakpoint a chat has three, all with the default lifetime.
+func chatSystemBlocks(types, text string) []any {
 	return []any{
 		map[string]any{"type": "text", "text": "The tables of this archive, as TypeScript, which the SDK in the run tool's description reads and writes:\n\n" + types,
 			"cache_control": map[string]string{"type": "ephemeral"}},
-		map[string]any{"type": "text", "text": chatSystem(ac, role)},
+		map[string]any{"type": "text", "text": text},
 	}
 }
 
@@ -411,13 +413,19 @@ func chatPartial(s, key string) string {
 }
 
 func chatPost(ctx context.Context, key string, body []byte) (*http.Response, error) {
+	url := strings.TrimRight(cmp.Or(os.Getenv("ANTHROPIC_BASE_URL"), "https://api.anthropic.com"), "/") + "/v1/messages"
+	return modelPost(ctx, url, http.Header{"x-api-key": {key}, "anthropic-version": {chatAPIVersion}}, body)
+}
+
+// modelPost posts JSON to a model API, trying three times on 429 and 5xx; Anthropic and Gemini both answer an
+// error as {"error": {"message"}}.
+func modelPost(ctx context.Context, url string, header http.Header, body []byte) (*http.Response, error) {
 	for try := 0; ; try++ {
-		req, err := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(cmp.Or(os.Getenv("ANTHROPIC_BASE_URL"), "https://api.anthropic.com"), "/")+"/v1/messages", bytes.NewReader(body))
+		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 		if err != nil {
 			return nil, err
 		}
-		req.Header.Set("x-api-key", key)
-		req.Header.Set("anthropic-version", chatAPIVersion)
+		req.Header = header.Clone()
 		req.Header.Set("content-type", "application/json")
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -446,9 +454,19 @@ func chatPost(ctx context.Context, key string, body []byte) (*http.Response, err
 	}
 }
 
-func chatTurn(ctx context.Context, key string, tools []any, system []any, msgs []chatMessage, send func(map[string]any)) (*chatMessage, string, error) {
+// chatUsage is what one turn cost: message_start carries the input tokens, split by the prompt cache, and
+// message_delta the output tokens.
+type chatUsage struct {
+	In      int `json:"input_tokens"`
+	Out     int `json:"output_tokens"`
+	Cached  int `json:"cache_read_input_tokens"`
+	Written int `json:"cache_creation_input_tokens"`
+}
+
+func chatTurn(ctx context.Context, key, model string, tools []any, system []any, msgs []chatMessage, send func(map[string]any)) (*chatMessage, string, chatUsage, error) {
+	var usage chatUsage
 	b, err := json.Marshal(map[string]any{
-		"model":         chatModel,
+		"model":         model,
 		"max_tokens":    chatMaxTokens,
 		"stream":        true,
 		"system":        system,
@@ -457,11 +475,11 @@ func chatTurn(ctx context.Context, key string, tools []any, system []any, msgs [
 		"cache_control": map[string]string{"type": "ephemeral"},
 	})
 	if err != nil {
-		return nil, "", err
+		return nil, "", usage, err
 	}
 	resp, err := chatPost(ctx, key, b)
 	if err != nil {
-		return nil, "", err
+		return nil, "", usage, err
 	}
 	defer resp.Body.Close()
 	var blocks []chatBlock
@@ -479,7 +497,11 @@ func chatTurn(ctx context.Context, key string, tools []any, system []any, msgs [
 			Index        int            `json:"index"`
 			ContentBlock chatBlock      `json:"content_block"`
 			Delta        map[string]any `json:"delta"`
-			Error        struct {
+			Message      struct {
+				Usage chatUsage `json:"usage"`
+			} `json:"message"`
+			Usage chatUsage `json:"usage"`
+			Error struct {
 				Message string `json:"message"`
 			} `json:"error"`
 		}
@@ -487,6 +509,9 @@ func chatTurn(ctx context.Context, key string, tools []any, system []any, msgs [
 			continue
 		}
 		switch ev.Type {
+		case "message_start":
+			u := ev.Message.Usage
+			usage.In = u.In + u.Cached + u.Written
 		case "content_block_start":
 			for len(blocks) <= ev.Index {
 				blocks, partial = append(blocks, nil), append(partial, "")
@@ -531,15 +556,16 @@ func chatTurn(ctx context.Context, key string, tools []any, system []any, msgs [
 			if s, ok := ev.Delta["stop_reason"].(string); ok {
 				stop = s
 			}
+			usage.Out = ev.Usage.Out
 		case "error":
-			return nil, "", errors.New("model: " + ev.Error.Message)
+			return nil, "", usage, errors.New("model: " + ev.Error.Message)
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return nil, "", err
+		return nil, "", usage, err
 	}
 	if stop == "" {
-		return nil, "", errors.New("model: the stream ended early")
+		return nil, "", usage, errors.New("model: the stream ended early")
 	}
 	m := &chatMessage{Role: "assistant", Content: []chatBlock{}}
 	for _, blk := range blocks {
@@ -547,5 +573,5 @@ func chatTurn(ctx context.Context, key string, tools []any, system []any, msgs [
 			m.Content = append(m.Content, blk)
 		}
 	}
-	return m, stop, nil
+	return m, stop, usage, nil
 }

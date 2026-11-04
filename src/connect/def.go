@@ -405,9 +405,10 @@ type (
 		As    string `json:",omitempty"`
 		If    Test   `json:",omitzero"`
 	}
-	// Files reads the words of the files of a record, the list at Each, Par at once, at As. Its request answers
-	// with the content, base64url, at Data. A file without Has, over Most bytes at Size, or of a kind Archive does
-	// not read is not asked for, and only a provider that is busy fails the page.
+	// Files reads the files of a record, the list at Each, Par at once: their words at As, and, on a Client with a
+	// Store, each kept as a file whose id lands at "file". Its request answers with the content, base64url, at
+	// Data. A file without Has or over Most bytes at Size is not asked for, nor, with no Store, one of a kind
+	// Archive does not read; only a provider that is busy fails the page.
 	Files struct {
 		Each            Path
 		Req             Req
@@ -418,7 +419,8 @@ type (
 	}
 	// Download reads the words of a file its Req answers with, down to 25 MB, at As: the record's own, or each of
 	// the list at Each that passes If, reading the record as {up/...}. Name and Mime are templates, and Size a path. One
-	// that already has As is left alone. Only a provider that is busy fails the page.
+	// that already has As is left alone. With Keep, on a Client with a Store, the file is kept too, whatever its
+	// kind, and its id lands at "file". Only a provider that is busy fails the page.
 	Download struct {
 		Each       Path `json:",omitempty"`
 		If         Test `json:",omitzero"`
@@ -427,6 +429,7 @@ type (
 		Size       Path
 		As         string
 		Par        int
+		Keep       bool `json:",omitempty"`
 	}
 )
 
@@ -724,7 +727,7 @@ func (s Step) once(c *Client, sc map[string]any, e any) (v any, err error) {
 	v = e
 	switch {
 	case s.Words != nil:
-		if v, err = c.words(*s.Words, sc); err != nil {
+		if v, _, err = c.download(*s.Words, sc); err != nil {
 			return nil, err
 		}
 	case s.Req.URL != "" || s.Tool != "":
@@ -2231,7 +2234,7 @@ func (s *Sync) hydrated(c *Client, mode string, recs []Record, base map[string]a
 					a, _ := f.(map[string]any)
 					name, kind := text(pick(a, h.Name)), text(pick(a, h.Mime))
 					size, _ := strconv.Atoi(text(pick(a, h.Size)))
-					if text(pick(a, h.Has)) == "" || size > h.Most || Extract == nil || !textual(name, kind) {
+					if text(pick(a, h.Has)) == "" || size > h.Most || c.Store == nil && (Extract == nil || !textual(name, kind)) {
 						continue
 					}
 					x := scope(r)
@@ -2243,6 +2246,11 @@ func (s *Sync) hydrated(c *Client, mode string, recs []Record, base map[string]a
 					if err == nil {
 						b, _ := unb64(text(pick(ans, h.Data)))
 						a[h.As] = bytesText(name, kind, b)
+						if id, err := c.keep(name, b); err != nil {
+							return err
+						} else if id != "" {
+							a["file"] = id
+						}
 					}
 				}
 				return nil
@@ -2261,12 +2269,15 @@ func (s *Sync) hydrated(c *Client, mode string, recs []Record, base map[string]a
 					if h.If.At != "" && !h.If.holds(r.Data) || !none(pick(r.Data, Path(h.As))) {
 						return nil
 					}
-					t, err := c.words(h, x)
+					t, id, err := c.download(h, x)
 					if err != nil {
 						return err
 					}
 					if t != "" {
 						data(r)[h.As] = t
+					}
+					if id != "" {
+						data(r)["file"] = id
 					}
 					return nil
 				}
@@ -2278,11 +2289,14 @@ func (s *Sync) hydrated(c *Client, mode string, recs []Record, base map[string]a
 					}
 					y := maps.Clone(x)
 					maps.Copy(y, a)
-					t, err := c.words(h, y)
+					t, id, err := c.download(h, y)
 					if err != nil {
 						return err
 					}
 					a[h.As] = t
+					if id != "" {
+						a["file"] = id
+					}
 				}
 				return nil
 			})
@@ -2322,11 +2336,12 @@ func (f Fetch) read(c *Client, sc map[string]any) (any, error) {
 	return first, nil
 }
 
-// words are the words of the file d says, downloaded whole; "" for what it does not read.
-func (c *Client) words(d Download, sc map[string]any) (string, error) {
+// download is the words of the file d says, downloaded whole, "" for what it does not read, and the id it is kept
+// under when d keeps it and the Client has a Store.
+func (c *Client) download(d Download, sc map[string]any) (string, string, error) {
 	u, err := c.urlOf(d.Req.URL, sc)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if q := values(d.Req.Query, sc); len(q) > 0 {
 		u = u + sepOf(u) + q.Encode()
@@ -2334,7 +2349,19 @@ func (c *Client) words(d Download, sc map[string]any) (string, error) {
 	name, _ := fillStr(d.Name, sc)
 	kind, _ := fillStr(d.Mime, sc)
 	size, _ := strconv.ParseInt(text(pick(sc, d.Size)), 10, 64)
-	return c.fileText(u, text(name), text(kind), size)
+	if !d.Keep || c.Store == nil {
+		t, err := c.fileText(u, text(name), text(kind), size)
+		return t, "", err
+	}
+	if size > maxFile {
+		return "", "", nil
+	}
+	b, err := c.fileBytes(u, maxFile)
+	if err != nil || b == nil {
+		return "", "", err
+	}
+	id, err := c.keep(text(name), b)
+	return bytesText(text(name), text(kind), b), id, err
 }
 
 func sepOf(u string) string {

@@ -77,7 +77,7 @@ const (
 )
 
 type fileRow interface {
-	generated.FileByKeyRow | generated.CreateFileRow | generated.GetFileRow | generated.RenameFileRow | generated.LockFileRow | generated.NextPendingFileRow | generated.LockPendingFileRow | generated.ReplaceFileRow | generated.SetFileAccessRow | generated.AddFolderRow | generated.MoveFileRow | generated.CopyFileRow
+	generated.FileByKeyRow | generated.CreateFileRow | generated.FileKeptRow | generated.KeepFileRow | generated.GetFileRow | generated.RenameFileRow | generated.LockFileRow | generated.NextPendingFileRow | generated.LockPendingFileRow | generated.ReplaceFileRow | generated.SetFileAccessRow | generated.AddFolderRow | generated.MoveFileRow | generated.CopyFileRow
 }
 
 func fileOf[R fileRow](r R, err error) (*File, error) {
@@ -303,10 +303,12 @@ func (a *Archive) fileAdd(ctx context.Context, access *uuid.UUID, name string, p
 	if err != nil {
 		return nil, err
 	}
-	return a.fileCommit(ctx, access, name, parent, func() (io.ReadCloser, error) { return os.Open(tmp.Name()) })
+	return a.fileCommit(ctx, access, name, parent, nil, func() (io.ReadCloser, error) { return os.Open(tmp.Name()) })
 }
 
-func (a *Archive) fileCommit(ctx context.Context, access *uuid.UUID, name string, parent *uuid.UUID, open func() (io.ReadCloser, error)) (*File, error) {
+// fileCommit stores what open gives as a file named name in parent, or, with conn, as one a connection's sync kept,
+// which has no parent and is found again by its content and name.
+func (a *Archive) fileCommit(ctx context.Context, access *uuid.UUID, name string, parent, conn *uuid.UUID, open func() (io.ReadCloser, error)) (*File, error) {
 	r, err := open()
 	if err != nil {
 		return nil, err
@@ -339,12 +341,22 @@ func (a *Archive) fileCommit(ctx context.Context, access *uuid.UUID, name string
 		if err := q.LockHash(ctx, hash); err != nil {
 			return nil, err
 		}
-		f, err := fileOf(q.FileByKey(ctx, generated.FileByKeyParams{Access: access, Parent: parent, Hash: hash, Name: name}))
+		var f *File
+		var err error
+		if conn != nil {
+			f, err = fileOf(q.FileKept(ctx, conn, hash, name))
+		} else {
+			f, err = fileOf(q.FileByKey(ctx, generated.FileByKeyParams{Access: access, Parent: parent, Hash: hash, Name: name}))
+		}
 		if !errors.Is(err, ErrNotFound) {
 			return f, err
 		}
 		// The row first: a caller it refuses leaves no blob behind.
-		f, err = fileOf(q.CreateFile(ctx, generated.CreateFileParams{Hash: hash, Name: name, MIME: mt, Size: size, Access: access, Parent: parent}))
+		if conn != nil {
+			f, err = fileOf(q.KeepFile(ctx, generated.KeepFileParams{Hash: hash, Name: name, MIME: mt, Size: size, Access: access, Connection: conn}))
+		} else {
+			f, err = fileOf(q.CreateFile(ctx, generated.CreateFileParams{Hash: hash, Name: name, MIME: mt, Size: size, Access: access, Parent: parent}))
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -1029,7 +1041,7 @@ func (a *Archive) tusUpload(w http.ResponseWriter, r *http.Request, id uuid.UUID
 }
 
 func (a *Archive) tusFinish(ctx context.Context, up *tusUpload) (*File, error) {
-	f, err := a.fileCommit(ctx, up.Access, up.Name, nil, func() (io.ReadCloser, error) { return &tusReader{a: a, ctx: ctx, up: up}, nil })
+	f, err := a.fileCommit(ctx, up.Access, up.Name, nil, nil, func() (io.ReadCloser, error) { return &tusReader{a: a, ctx: ctx, up: up}, nil })
 	if err != nil {
 		return nil, err
 	}

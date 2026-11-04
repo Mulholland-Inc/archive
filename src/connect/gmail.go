@@ -97,7 +97,7 @@ func init() {
 					{Table: "mail_party", From: "jsonb_array_elements(data->'parties') p",
 						Cols: map[string]SQL{"role": "p->>'role'", "name": "p->>'name'"}, People: map[string]SQL{"person": "p->>'address'"}},
 					{Table: "mail_attachment", From: "jsonb_array_elements(data->'attachments') f",
-						Cols: map[string]SQL{"filename": "f->>'filename'", "mime": "f->>'mimeType'", "size": "archive.sync_num(f->>'size')", "text": "f->>'text'"}},
+						Cols: map[string]SQL{"filename": "f->>'filename'", "mime": "f->>'mimeType'", "size": "archive.sync_num(f->>'size')", "text": "f->>'text'", "file": "f->>'file'"}},
 				}}}},
 	})
 }

@@ -166,6 +166,8 @@
  *              returns them, oldest change first; when there are more, the next run follows at once. A row is
  *              created when archive.create added it since the last run, and updated when archive.update changed
  *              it since. Rows the workflow writes itself never run it again.
+ *              A synced table such as mail_message can be watched: its rows are created when the sync first saved them
+ *              and updated when it saw them change, and a sync that saved records wakes the workflow.
  *     webhook  { trigger: "webhook", method, query, headers, body }: query and headers are objects of strings
  *              (header names in lower case); body is the parsed JSON when it parses, otherwise the raw text, and
  *              null when empty.
@@ -232,6 +234,25 @@
  *     if (!r.done) throw new Error("no hours: " + r.answer);
  *     await archive.create("note", { name: "Saturday opening hours", text: r.answer, source: r.url });
  * - What it does on a site is not undone when the run fails: a form it sent stays sent.
+ *
+ * Models
+ * - archive.model({ model, prompt, system, files, schema, effort }) asks a model once and returns { text, json,
+ *   tokens_in, tokens_out }: model is a gemini- or claude- name, like "gemini-3.8-flash" or "claude-haiku-5-5"; files
+ *   are PDFs and images from archive.files, each { id } whole or { id, page } for one page of a PDF (1-based), up
+ *   to 20 MB each and 10 a call; with schema, a JSON schema, json is the answer parsed and text its raw form; effort
+ *   "none" turns thinking off where the model has it. Use it to read a document, classify rows or draft text inside a run.
+ *   Give a list of requests to get a list of results: they run at once, eight at a time, in order, and fail together.
+ * - The keys live on the server: GEMINI_API_KEY, or GOOGLE_CLOUD_PROJECT for Vertex as the server itself, and
+ *   ANTHROPIC_API_KEY; a model whose key is not set throws. Each call
+ *   has 2 minutes, and a run calls models for at most 10 minutes in all, time that does not count toward its {timeout}.
+ *   The run's transaction stays open while a model answers, so read with models first and write after when you can.
+ * - archive.do(goal, { model, instructions, files, maxRuns, tables }) hands goal to an agent like the one in chat, which writes
+ *   and runs scripts against this same SDK until it is done, and returns { answer, runs, tokens_in, tokens_out }. Its
+ *   runs join this run's transaction: what it writes is saved with your run and undone when your run fails. files are
+ *   given as for archive.model; maxRuns caps its scripts (25 by default, 50 at most). Say what to do and how to answer.
+ *   With tables, like ["line", "mail_message"], the agent sees only those tables, their references and the built-in
+ *   types, which makes a run faster and keeps it to the desk at hand; a name that is no table or view throws.
+ * - A run's agents work for at most 10 minutes in all, outside its {timeout}. The key is the server's ANTHROPIC_API_KEY.
  *
  * Connected accounts
  * - Each person connects their own Gmail, Outlook, Google Drive and Notion in Settings, Connectors; those are
@@ -310,6 +331,12 @@ declare const archive: {
     run(name: string, input?: unknown): Promise<RunResult>;
     /** Have an agent use a fresh web browser to reach goal, starting at url; before any write, 5 minutes a run (see Browsing). */
     browse(goal: string, opts?: { url?: string }): Promise<BrowseResult>;
+    /** Ask a gemini- or claude- model once, with files (a PDF page with page) and a JSON schema for json; 10 minutes a run (see Models). */
+    model(req: ModelReq): Promise<ModelResult>;
+    /** Ask several models at once, eight at a time; the results come in the order of reqs and the first error fails them all (see Models). */
+    model(reqs: ModelReq[]): Promise<ModelResult[]>;
+    /** Have an agent reach goal by writing and running scripts inside this run's transaction, and return its answer; 10 minutes a run (see Models). */
+    do(goal: string, opts?: { model?: string; instructions?: string; files?: { id: string; page?: number }[]; maxRuns?: number; tables?: string[] }): Promise<DoResult>;
     /** Do the action name, like "gmail.search", with one of your connected accounts; connection picks one when you have several (see Connected accounts). */
     action<A extends keyof Actions>(name: A, input: Actions[A]["input"], opts?: { connection?: string }): Promise<Actions[A]["output"]>;
 };
@@ -379,6 +406,33 @@ interface BrowseResult {
     answer: string;
     /** The page it ended on. */
     url: string;
+}
+
+interface ModelReq {
+    model: string;
+    prompt: string;
+    system?: string;
+    files?: { id: string; page?: number }[];
+    schema?: object;
+    effort?: "none";
+}
+
+interface ModelResult {
+    /** The answer as text; with a schema, the JSON as a string. */
+    text: string;
+    /** The answer parsed, when a schema was given. */
+    json?: any;
+    tokens_in: number;
+    tokens_out: number;
+}
+
+interface DoResult {
+    /** The agent's final answer, as the goal asked. */
+    answer: string;
+    /** How many scripts it ran. */
+    runs: number;
+    tokens_in: number;
+    tokens_out: number;
 }
 
 type Row = Record<string, any>;

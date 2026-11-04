@@ -714,6 +714,9 @@ type Client struct {
 	mcpSeen *seen
 	// Files is the caller's files, for an upload.
 	Files Yours
+	// Store keeps b, a file named name, as a file of the workspace the Client syncs for, and is that file's id.
+	// The server sets it on a syncing Client; one without it keeps no files.
+	Store func(name string, b []byte) (string, error)
 }
 
 // Open is a Client of the account whose access token tok is, with the Meta its grant kept.
