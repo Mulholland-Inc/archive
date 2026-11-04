@@ -37,9 +37,10 @@ import (
 // an answer, where * is every element of a list, a number one of them, ** the first list of objects at any depth,
 // **/key the list under key at any depth, and a;b the first of two walks that finds anything. A template is a
 // string whose {path} is read from what the request knows. {path} is escaped in a URL, {+path} is not, {~path} is
-// escaped a part at a time, {path,} joins a list with commas or {path,x} with x, {'path} and {"path} are escaped to
-// go in a string quoted so, and {path|x} is x when the path has nothing. A value that is only one {path} keeps its
-// type, and with nothing there its key is left out.
+// escaped a part at a time, {-path} is made a label of a host name, lower case with - for _, {path,} joins a list
+// with commas or {path,x} with x, {'path} and {"path} are escaped to go in a string quoted so, and {path|x} is x
+// when the path has nothing. A value that is only one {path} keeps its type, and with nothing there its key is left
+// out.
 
 type (
 	// Path is a walk of an answer, like paging/next/after or */portalId.
@@ -177,6 +178,8 @@ const (
 	CatDental    Category = "Dental"
 	CatProjects  Category = "Projects"
 	CatPayroll   Category = "Payroll"
+
+	CatCompliance Category = "Compliance"
 
 	IconMail     Icon = "mail"
 	IconUsers    Icon = "users"
@@ -805,6 +808,11 @@ func (c *Connector) compile() error {
 			c.Host = u.Scheme + "://" + u.Host
 		}
 	}
+	if c.Trade != nil {
+		if err := c.Trade.check("trade", "key", "client", "option"); err != nil {
+			return err
+		}
+	}
 	if c.Sign != nil {
 		sign := c.Sign
 		c.Authorize = func(r *http.Request, cl *Client) {
@@ -883,11 +891,12 @@ func (w *Who) read(cl *Client, c *Connector) (string, error) {
 	return s, nil
 }
 
-// revoke ends a grant as r says, which reads {client}, {refresh}, {basic} the client as HTTP Basic, and {access} an
-// access token of the grant, only asked for when it does.
+// revoke ends a grant as r says, which reads {client}, {refresh}, {basic} the client as HTTP Basic, {meta/...} what the
+// grant kept, and {access} an access token of the grant, only asked for when it does.
 func (r *Req) revoke(rv *Revocation) error {
 	id, secret := rv.Client()
-	sc := map[string]any{"client": map[string]any{"id": id, "secret": secret}, "refresh": rv.Refresh, "basic": basic(id, secret)}
+	sc := rv.p.metaScope(rv.Meta)
+	sc["client"], sc["refresh"], sc["basic"] = map[string]any{"id": id, "secret": secret}, rv.Refresh, basic(id, secret)
 	if slices.Contains(r.roots(), "access") {
 		at, err := rv.Access()
 		if err != nil {
@@ -2416,14 +2425,14 @@ func values(q Q, sc map[string]any) url.Values {
 	return out
 }
 
-var varRe = regexp.MustCompile(`\{[+~'"]?[A-Za-z_][\w\-*/.@;]*(,[^|{}]*)?(\|[^{}]*)?\}`)
+var varRe = regexp.MustCompile(`\{[+~'"-]?[A-Za-z_][\w\-*/.@;]*(,[^|{}]*)?(\|[^{}]*)?\}`)
 
 // tvar is a {path} of a template.
 type tvar struct {
-	path, def, sep  string
-	raw, segs, join bool
-	quote           byte
-	hasDef          bool
+	path, def, sep        string
+	raw, segs, join, host bool
+	quote                 byte
+	hasDef                bool
 }
 
 func varOf(m string) tvar {
@@ -2434,6 +2443,8 @@ func varOf(m string) tvar {
 		v.raw, s = true, s[1:]
 	case '~':
 		v.segs, s = true, s[1:]
+	case '-':
+		v.host, s = true, s[1:]
 	case '\'', '"':
 		v.quote, s = s[0], s[1:]
 	}
@@ -2461,6 +2472,9 @@ func (v tvar) of(sc map[string]any) (any, bool) {
 			s = append(s, text(e))
 		}
 		return strings.Join(s, cmp.Or(v.sep, ",")), true
+	}
+	if v.host {
+		return strings.ReplaceAll(strings.ToLower(text(x)), "_", "-"), true
 	}
 	switch v.quote {
 	case '\'':
