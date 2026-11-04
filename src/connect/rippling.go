@@ -9,9 +9,12 @@ import (
 // Rippling's REST API: the company an admin who connects it is, its departments, work locations and people. Third
 // parties reach it only through an App Shop listing, with OAuth: Rippling's terms bar an app from using an API token a
 // customer made. The listing, named archive, lists <API>/connect/rippling/callback among its redirect URLs and asks for
-// companies.read, departments.read, work-locations.read, workers.read and users.read, all read only; Rippling takes a
+// companies.read, workers.read, users.read, departments.read-write and work-locations.read-write; Rippling takes a
 // listing's scopes from the listing, not the authorization request, so Scopes is empty. One token is one company. The
 // token request signs with the client in a Basic header, and a refresh token is used once, for a new one.
+//
+// Its actions add and change departments and work locations, and remove a work location, when asked: Rippling's API
+// writes nothing else Archive syncs, as workers and users only read, and a department cannot be deleted there.
 //
 // Rippling counts an install done once the app says so, which mark_app_installed does: once a Client, before its
 // first request, which connecting makes too, asking the company's name.
@@ -23,13 +26,31 @@ import (
 func init() {
 	Register(&Connector{
 		ID: "rippling", Name: "Rippling", Integration: true,
-		Info: Info{By: "Rippling", Description: "Read the company, its departments, locations and people", Category: CatPayroll, Icon: IconUsers,
-			Scopes: []string{"Read the company, departments, work locations and employees"}},
+		Info: Info{By: "Rippling", Description: "Read the company, its departments, locations and people, and add or update departments and locations when you ask", Category: CatPayroll, Icon: IconUsers,
+			Scopes: []string{"Read the company, departments, work locations and employees", "Add and change departments and work locations, and remove work locations, when you ask"}},
 		API: "https://rest.ripplingapis.com",
 		Endpoint: oauth2.Endpoint{AuthURL: "https://app.rippling.com/apps/PLATFORM/archive/authorize", TokenURL: "https://api.rippling.com/api/o/token/",
 			AuthStyle: oauth2.AuthStyleInHeader},
 		Let: []Step{{Req: Req{Method: POST, Read: true, URL: "https://api.rippling.com/platform/api/mark_app_installed"}}},
 		Who: &Who{Req: Req{URL: "/companies/"}, Names: []Path{"results/0/name", "results/0/legal_name"}},
+		Actions: map[string]*Action{
+			"create": Call[ripplingNew, any](Plan{
+				Doc: "Add a department or work location, like { type: \"departments\", fields: { name, parent_id } } or { type: \"work-locations\", fields: { name, " +
+					"address: { type: \"WORK\", street_address, locality, region, postal_code, country } } }, country an ISO code: the record",
+				Enum:  map[string][]string{"type": ripplingTypes},
+				Steps: []Step{{Req: Req{Method: POST, URL: "/{type}/", Body: "{fields}"}}},
+			}),
+			"update": Call[ripplingEdit, any](Plan{
+				Doc:   "Change a department or work location by id: only the fields given change, like { type: \"departments\", id, fields: { name } }. Returns the record",
+				Enum:  map[string][]string{"type": ripplingTypes},
+				Steps: []Step{{Req: Req{Method: PATCH, URL: "/{type}/{id}/", Body: "{fields}"}}},
+			}),
+			"remove": Call[ripplingOne, ripplingRemoved](Plan{
+				Doc:   "Delete a work location by id, for good; Rippling cannot delete a department. { id }",
+				Steps: []Step{{Req: Req{Method: DELETE, URL: "/work-locations/{id}/"}}},
+				Out:   Obj{"id": "{id}"},
+			}),
+		},
 		Sync: []*Sync{
 			{Name: "company", Every: ripplingDaily, Req: Req{URL: "/companies/"}, Items: "results", Updated: "updated_at",
 				Doc: "The company, with its legal name and the name it does business as, by id; read a day apart.",
@@ -83,4 +104,23 @@ var (
 	// ripplingCompanies is the token's company, as /companies/ lists it, so each record says whose it is.
 	ripplingCompanies = &Parts{Req: Req{URL: "/companies/"}, Items: "results", ID: "{id}", Vals: Obj{"company": "{id}"}}
 	ripplingCompany   = Obj{"company_id": "{company_id;in/company}"}
+	ripplingTypes     = []string{"departments", "work-locations"}
+)
+
+type (
+	ripplingNew struct {
+		Type   string         `json:"type" jsonschema:"departments or work-locations"`
+		Fields map[string]any `json:"fields" jsonschema:"A department's name, parent_id and reference_code, or a work location's name and address"`
+	}
+	ripplingEdit struct {
+		Type   string         `json:"type" jsonschema:"departments or work-locations"`
+		ID     string         `json:"id" jsonschema:"The record's id, a source_id of payroll_department or payroll_location"`
+		Fields map[string]any `json:"fields" jsonschema:"The fields to change"`
+	}
+	ripplingOne struct {
+		ID string `json:"id" jsonschema:"The work location's id, a source_id of payroll_location"`
+	}
+	ripplingRemoved struct {
+		ID string `json:"id"`
+	}
 )
