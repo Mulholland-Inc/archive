@@ -834,6 +834,12 @@ func (c *Connector) compile() error {
 			}
 		}
 	}
+	if b := c.Basic; b[0] != "" {
+		if c.Sign != nil {
+			return errors.New("a connector signs with Sign or Basic, not both")
+		}
+		c.Authorize = func(r *http.Request, cl *Client) { r.SetBasicAuth(cl.keys[b[0]], cl.keys[b[1]]) }
+	}
 	if w := c.Who; w != nil {
 		if w.Tool != "" {
 			c.Account = mcpAccount(w.Tool)

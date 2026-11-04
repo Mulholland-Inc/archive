@@ -121,10 +121,12 @@ type Connector struct {
 	Info    Info
 	Options string
 	// API is the base of the requests of a connector that is only data (def.go): its Env is ARCHIVE_<ID> unless it
-	// says, and its Host that of its Endpoint. Sign are the headers of its keys' requests, Who its Account, RevokeBy
-	// its RevokeWith, Listen its Push and Sync its Streams.
+	// says, and its Host that of its Endpoint. Sign are the headers of its keys' requests, and Basic the names of the
+	// keys that are their HTTP Basic user and password, as Business Central on premises takes them. Who is its Account,
+	// RevokeBy its RevokeWith, Listen its Push and Sync its Streams.
 	API      string
 	Sign     map[string]string
+	Basic    [2]string
 	Who      *Who
 	RevokeBy *Req
 	Listen   *Listen
