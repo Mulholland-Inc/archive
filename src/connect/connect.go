@@ -288,13 +288,13 @@ func (p *Provider) Exchange(ctx context.Context, redirect string, q url.Values, 
 		err = errors.New("it named no account")
 	}
 	switch {
-	case err != nil && p.MCP != "":
+	case err != nil && p.MCP == "":
+		return nil, fmt.Errorf("%s did not say whose account it is: %v", p.Name, err)
+	case err != nil:
 		fmt.Fprintf(os.Stderr, "archive: %s did not say whose account it is, so it is named %s: %v\n", p.Name, p.Name, err)
-		fallthrough
+		g.Account = p.Name
 	case g.Account == "":
 		g.Account = p.Name
-	case err != nil:
-		return nil, fmt.Errorf("%s did not say whose account it is: %v", p.Name, err)
 	}
 	return g, nil
 }
