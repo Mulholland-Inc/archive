@@ -232,10 +232,13 @@ func (a *Archive) CopyFile(ctx context.Context, id uuid.UUID, name string, acces
 
 // actionFiles are the files of the caller of an action, for its connection.
 type actionFiles struct {
-	a    *Archive
-	ctx  context.Context
-	conn uuid.UUID
+	a     *Archive
+	ctx   context.Context
+	conn  uuid.UUID
+	until time.Time
 }
+
+func (x actionFiles) Until() time.Time { return x.until }
 
 func (x actionFiles) Open(s string) (*connect.Upfile, error) {
 	id, err := uuid.Parse(s)
@@ -340,10 +343,12 @@ func (a *Archive) fileCommit(ctx context.Context, access *uuid.UUID, name string
 		if !errors.Is(err, ErrNotFound) {
 			return f, err
 		}
-		if err := a.blobs.move(ctx, tmp, blobKey(hash)); err != nil {
+		// The row first: a caller it refuses leaves no blob behind.
+		f, err = fileOf(q.CreateFile(ctx, generated.CreateFileParams{Hash: hash, Name: name, MIME: mt, Size: size, Access: access, Parent: parent}))
+		if err != nil {
 			return nil, err
 		}
-		return fileOf(q.CreateFile(ctx, generated.CreateFileParams{Hash: hash, Name: name, MIME: mt, Size: size, Access: access, Parent: parent}))
+		return f, a.blobs.move(ctx, tmp, blobKey(hash))
 	})
 	if err != nil {
 		return nil, err
@@ -1165,6 +1170,10 @@ func (a *Archive) pull(ctx context.Context, f generated.ClaimPullRow) {
 	if err == nil {
 		return
 	}
+	stopped := ctx.Err() != nil
+	if errors.Is(err, context.DeadlineExceeded) && !stopped {
+		err = fmt.Errorf("copying it took over %s", pullTime)
+	}
 	bg := context.WithoutCancel(ctx)
 	id, version := f.ID, f.Version
 	var skip *connect.Unsupported
@@ -1176,7 +1185,7 @@ func (a *Archive) pull(ctx context.Context, f generated.ClaimPullRow) {
 			return q.SetPullEnd(ctx, generated.SetPullEndParams{ID: id, Version: version, Status: "skipped", Error: "Archive does not copy this file: " + skip.Reason})
 		case errors.Is(err, errRevoked):
 			return q.SetPullRetry(ctx, generated.SetPullRetryParams{ID: id, Version: version, At: now.Add(time.Hour), Tries: f.Tries - 1, Error: err.Error()})
-		case connect.Busy(err) || ctx.Err() != nil:
+		case connect.Busy(err) || stopped:
 			wait := max(min(pullRetry<<min(max(f.Tries-1, 0), 16), pullBusyWait), connect.RetryAfter(err))
 			return q.SetPullRetry(ctx, generated.SetPullRetryParams{ID: id, Version: version, At: now.Add(wait), Tries: f.Tries - 1, Error: ""})
 		case f.Tries >= pullTries:
@@ -1245,11 +1254,12 @@ func (a *Archive) pullCopy(ctx context.Context, f generated.ClaimPullRow) error 
 		if err != nil {
 			return err
 		}
-		if err := a.blobs.move(ctx, tmp, blobKey(hash)); err != nil {
+		if _, err = q.SetPulled(ctx, generated.SetPulledParams{ID: f.ID, Version: f.Version, Hash: hash, Size: counted.n, Sniffed: mediaSniff(f.Name, head.b)}); err != nil {
 			return err
 		}
-		moved = true
-		_, err = q.SetPulled(ctx, generated.SetPulledParams{ID: f.ID, Version: f.Version, Hash: hash, Size: counted.n, Sniffed: mediaSniff(f.Name, head.b)})
+		if err = a.blobs.move(ctx, tmp, blobKey(hash)); err == nil {
+			moved = true
+		}
 		return err
 	})
 	if !moved {

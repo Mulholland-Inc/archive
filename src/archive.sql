@@ -668,7 +668,7 @@ CREATE TABLE archive.blob_gone (
 
 CREATE FUNCTION archive.file_gone() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE
-    kept text[] := CASE WHEN TG_OP = 'DELETE' THEN '{}'::text[] ELSE ARRAY[NEW.hash, NEW.metadata#>>'{thumbnail,sha256}'] END;
+    kept text[] := CASE WHEN TG_OP = 'DELETE' THEN '{}'::text[] ELSE array_remove(ARRAY[NEW.hash, NEW.metadata#>>'{thumbnail,sha256}'], NULL) END;
     h text;
 BEGIN
     FOREACH h IN ARRAY ARRAY[OLD.hash, OLD.metadata#>>'{thumbnail,sha256}'] LOOP

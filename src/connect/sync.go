@@ -324,7 +324,7 @@ func jsonASCII(b []byte) string {
 	var out strings.Builder
 	for _, r := range string(b) {
 		switch {
-		case r < 0x80:
+		case r < 0x7f:
 			out.WriteRune(r)
 		case r < 0x10000:
 			fmt.Fprintf(&out, "\\u%04x", r)
@@ -342,6 +342,8 @@ type Yours interface {
 	Open(id string) (*Upfile, error)
 	// Row is what this connection synced under source id there.
 	Row(source string) (*Synced, error)
+	// Until is when the run ends, which no context says.
+	Until() time.Time
 }
 
 // Upfile is a file to send up.
@@ -402,12 +404,8 @@ func (s *Send) run(c *Client, raw json.RawMessage) (any, error) {
 		return nil, fmt.Errorf("%s is empty, and %s takes no upload without bytes", up.Name, c.p.Name)
 	}
 	// It ends before the run does, so what is said of it reaches the script.
-	ctx := c.ctx
-	if end, ok := ctx.Deadline(); ok {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithDeadline(ctx, end.Add(-2*time.Second))
-		defer cancel()
-	}
+	ctx, cancel := context.WithDeadline(c.ctx, c.Files.Until().Add(-2*time.Second))
+	defer cancel()
 	sc := map[string]any{"name": cmp.Or(in.Name, up.Name), "mime": up.Mime, "size": int(up.Size)}
 	if in.Name != "" {
 		sc["rename"] = in.Name
