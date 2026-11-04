@@ -249,7 +249,8 @@ dialog:not([open]) {
   }
 }
 
-/* A menu that forms around its trigger: the card and its rows appear at once, and go at once. */
+/* A menu that forms around its trigger: the card unfolds from the trigger and folds back into it, clipped to the
+   trigger's size while closed. The clip leaves a pixel on each side for the card's border. */
 .morph-origin[data-open] {
   opacity: 0;
 }
@@ -262,20 +263,42 @@ dialog:not([open]) {
   margin: 0;
   opacity: 1;
   transform: none;
-  transition: none;
+  --morph-radius: var(--radius-md);
+  transition:
+    clip-path var(--duration-fast) var(--ease-out),
+    overlay var(--duration-fast) var(--ease-out) allow-discrete,
+    display var(--duration-fast) var(--ease-out) allow-discrete;
 }
 
 .floating[data-morph='down'] {
+  --morph-radius: var(--radius-lg);
   inset-block-start: var(--top);
+  clip-path: inset(-1px calc(100% - var(--w) - 1px) calc(100% - var(--h) - 1px) -1px round var(--morph-radius));
 }
 
 .floating[data-morph='up'] {
   inset-block-end: var(--bottom);
+  clip-path: inset(calc(100% - var(--h) - 1px) calc(100% - var(--w) - 1px) -1px -1px round var(--morph-radius));
 }
 
 .floating[data-morph]:popover-open {
   padding: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--morph-radius);
+  clip-path: inset(-1px -1px -1px -1px round var(--morph-radius));
+}
+
+.floating[data-morph='down']:popover-open {
+  background: var(--color-canvas);
+}
+
+@starting-style {
+  .floating[data-morph='down']:popover-open {
+    clip-path: inset(-1px calc(100% - var(--w) - 1px) calc(100% - var(--h) - 1px) -1px round var(--morph-radius));
+  }
+
+  .floating[data-morph='up']:popover-open {
+    clip-path: inset(calc(100% - var(--h) - 1px) calc(100% - var(--w) - 1px) -1px -1px round var(--morph-radius));
+  }
 }
 
 .morph-head {
