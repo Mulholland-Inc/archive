@@ -110,6 +110,23 @@ type Connector struct {
 	RevokeBy *Req
 	Listen   *Listen
 	Sync     []*Sync
+	// Let are steps that find what API reads, once a Client, over what the account has: {key/...}, {meta/...} and
+	// {option/...}. Their requests are absolute URLs.
+	Let []Step
+	// Errors is an answer that refuses in a 200, as GraphQL does. Busy are what a refusal says, past its status, when
+	// the provider only turns Archive away for now. Trace is a header of its answers that names one to its support, which a
+	// refusal keeps.
+	Errors *Errors
+	Busy   []string
+	Trace  string
+}
+
+// Errors reads a refusal out of a 200: its message at At and code at Code, which is a provider that is busy when it
+// is one of Busy. Its Status is 400 unless it says.
+type Errors struct {
+	At, Code Path
+	Status   int
+	Busy     []string
 }
 
 // MCPEnv is the environment variable that, when set, is another server for an MCP connector than its own, one
@@ -400,7 +417,7 @@ func (rv *Revocation) send(method, u string, hdr http.Header, body any) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		return refusal(rv.p.Name, resp)
+		return refusal(rv.p, resp)
 	}
 	return nil
 }
@@ -489,6 +506,12 @@ type Client struct {
 	tools []*mcp.Tool
 	// keys are a key connector's, by name.
 	keys map[string]string
+	// apiURL is where its relative URLs go, as api finds it once.
+	apiOnce sync.Once
+	apiURL  string
+	apiErr  error
+	// mcpSeen is what the last answer of its MCP server's transport was, which its SDK does not say in an error.
+	mcpSeen *seen
 }
 
 // Open is a Client of the account whose access token tok is, with the Meta its grant kept.
@@ -544,11 +567,11 @@ func (c *Client) Send(method, u string, hdr http.Header, body, v any) error {
 		if errors.As(err, &re) {
 			return err
 		}
-		return fmt.Errorf("%s could not be reached: %w", c.p.Name, errors.Unwrap(err))
+		return unreached{fmt.Errorf("%s could not be reached: %w", c.p.Name, errors.Unwrap(err))}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		return refusal(c.p.Name, resp)
+		return refusal(c.p, resp)
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
 	switch {
@@ -601,12 +624,15 @@ func request(ctx context.Context, method, u string, body any) (*http.Request, er
 }
 
 // Refusal is a provider answering a request with a 4xx or 5xx, or a tool's result marked as an error, with
-// no Status.
+// no Status. Busy says it only turned Archive away for now, and Retry how long it asked Archive to wait, 0 when it did
+// not say.
 type Refusal struct {
 	Provider string
 	Status   int
 	// Message is what it said why, as it said it.
 	Message string
+	Busy    bool
+	Retry   time.Duration
 }
 
 func (r *Refusal) Error() string {
@@ -620,9 +646,40 @@ func (r *Refusal) Error() string {
 	return s
 }
 
-func refusal(provider string, resp *http.Response) *Refusal {
+func refusal(p *Provider, resp *http.Response) *Refusal {
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-	return &Refusal{Provider: provider, Status: resp.StatusCode, Message: reasonIn(b)}
+	msg := reasonIn(b)
+	f := &Refusal{Provider: p.Name, Status: resp.StatusCode, Message: msg, Retry: retryAfter(resp.Header), Busy: busyStatus(resp.StatusCode) || p.busySays(msg)}
+	if p.Trace != "" {
+		if id := resp.Header.Get(p.Trace); id != "" {
+			f.Message = strings.TrimPrefix(msg+" ("+p.Trace+" "+id+")", " ")
+		}
+	}
+	return f
+}
+
+// busyStatus says a status only turns a call away for now.
+func busyStatus(s int) bool {
+	return s == http.StatusTooManyRequests || s == http.StatusBadGateway || s == http.StatusServiceUnavailable || s == http.StatusGatewayTimeout
+}
+
+func (c *Connector) busySays(msg string) bool {
+	return slices.ContainsFunc(c.Busy, func(s string) bool { return strings.Contains(msg, s) })
+}
+
+// retryAfter is how long a Retry-After header asks to wait, in seconds or until a date; 0 when it asks nothing.
+func retryAfter(h http.Header) time.Duration {
+	v := h.Get("Retry-After")
+	if v == "" {
+		return 0
+	}
+	if s, err := strconv.Atoi(v); err == nil && s > 0 {
+		return time.Duration(s) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		return max(time.Until(t), 0)
+	}
+	return 0
 }
 
 // reasonIn is the message in a provider's error body: the first of the keys providers put it under, at any
@@ -900,9 +957,12 @@ func (c *Client) session() (*mcp.ClientSession, error) {
 		return nil, fmt.Errorf("%s has no MCP server", c.p.Name)
 	}
 	cl := mcp.NewClient(&mcp.Implementation{Name: "archive", Title: "Archive", Version: "1"}, nil)
-	s, err := cl.Connect(c.ctx, &mcp.StreamableClientTransport{Endpoint: c.p.server, HTTPClient: c.http, MaxRetries: -1, DisableStandaloneSSE: true}, nil)
+	c.mcpSeen = &seen{base: c.http.Transport}
+	hc := *c.http
+	hc.Transport = c.mcpSeen
+	s, err := cl.Connect(c.ctx, &mcp.StreamableClientTransport{Endpoint: c.p.server, HTTPClient: &hc, MaxRetries: -1, DisableStandaloneSSE: true}, nil)
 	if err != nil {
-		return nil, fmt.Errorf("%s's MCP server could not be reached: %w", c.p.Name, err)
+		return nil, unreached{fmt.Errorf("%s's MCP server could not be reached: %w", c.p.Name, err)}
 	}
 	c.sess = s
 	return s, nil
@@ -917,7 +977,7 @@ func (c *Client) Tools() ([]*mcp.Tool, error) {
 	var out []*mcp.Tool
 	for t, err := range s.Tools(c.ctx, nil) {
 		if err != nil {
-			return nil, fmt.Errorf("%s did not list its tools: %w", c.p.Name, err)
+			return nil, c.transportErr(fmt.Errorf("%s did not list its tools: %w", c.p.Name, err))
 		}
 		out = append(out, t)
 	}
@@ -933,12 +993,47 @@ func (c *Client) Call(name string, args any) (*mcp.CallToolResult, error) {
 	}
 	res, err := s.CallTool(c.ctx, &mcp.CallToolParams{Name: name, Arguments: args})
 	if err != nil {
-		return nil, fmt.Errorf("%s %s: %w", c.p.Name, name, err)
+		return nil, c.transportErr(fmt.Errorf("%s %s: %w", c.p.Name, name, err))
 	}
 	if res.IsError {
-		return nil, &Refusal{Provider: c.p.Name, Message: name + ": " + Text(res)}
+		return nil, &Refusal{Provider: c.p.Name, Message: name + ": " + Text(res), Busy: c.p.busySays(Text(res))}
 	}
 	return res, nil
+}
+
+// seen is a transport that keeps the last refusal its server answered with that was only for now.
+type seen struct {
+	base http.RoundTripper
+	mu   sync.Mutex
+	last *Refusal
+}
+
+func (t *seen) RoundTrip(r *http.Request) (*http.Response, error) {
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	res, err := base.RoundTrip(r)
+	if err == nil && busyStatus(res.StatusCode) {
+		t.mu.Lock()
+		t.last = &Refusal{Status: res.StatusCode, Busy: true, Retry: retryAfter(res.Header)}
+		t.mu.Unlock()
+	}
+	return res, err
+}
+
+// transportErr is err, an MCP request that failed, with the refusal behind it if its server was only busy.
+func (c *Client) transportErr(err error) error {
+	if c.mcpSeen == nil {
+		return err
+	}
+	c.mcpSeen.mu.Lock()
+	defer c.mcpSeen.mu.Unlock()
+	if f := c.mcpSeen.last; f != nil {
+		c.mcpSeen.last = nil
+		return &Refusal{Provider: c.p.Name, Status: f.Status, Message: err.Error(), Busy: true, Retry: f.Retry}
+	}
+	return err
 }
 
 // pacer spaces the requests this server sends one provider at least pace apart, and holds them all back when
@@ -994,14 +1089,15 @@ func (t *paced) RoundTrip(r *http.Request) (*http.Response, error) {
 	}
 	res, err := t.base.RoundTrip(r)
 	if err == nil && res.StatusCode == http.StatusTooManyRequests {
-		rest := pacerRest
-		if s, e := strconv.Atoi(res.Header.Get("Retry-After")); e == nil && s > 0 {
-			rest = time.Duration(s) * time.Second
-		}
-		t.p.rest(rest)
+		t.p.rest(cmp.Or(retryAfter(res.Header), pacerRest))
 	}
 	return res, err
 }
+
+// unreached is a provider a request never got an answer from.
+type unreached struct{ error }
+
+func (u unreached) Unwrap() error { return u.error }
 
 // Busy says err is a provider that turned a call away for now, by rate limit or by being out of reach, rather
 // than one that will fail again: a sync keeps trying such a page, later and later, and never gives it up.
@@ -1009,14 +1105,21 @@ func Busy(err error) bool {
 	if err == nil {
 		return false
 	}
-	s := err.Error()
-	for _, w := range []string{"Too Many Requests", " 429", "could not be reached", " 502", " 503", " 504", "Service Unavailable", "Bad Gateway", "Gateway Timeout",
-		"Quota exceeded", "rateLimitExceeded", "userRateLimitExceeded", "Rate Limit Exceeded"} {
-		if strings.Contains(s, w) {
-			return true
-		}
+	if r := (*Refusal)(nil); errors.As(err, &r) {
+		return r.Busy
 	}
-	return false
+	if re := (*oauth2.RetrieveError)(nil); errors.As(err, &re) && re.Response != nil {
+		return busyStatus(re.Response.StatusCode)
+	}
+	return errors.As(err, new(unreached))
+}
+
+// RetryAfter is how long err, a provider that is busy, asked to wait; 0 when it did not say.
+func RetryAfter(err error) time.Duration {
+	if r := (*Refusal)(nil); errors.As(err, &r) {
+		return r.Retry
+	}
+	return 0
 }
 
 // Text is the text of a tool's result, its text parts on lines of their own.

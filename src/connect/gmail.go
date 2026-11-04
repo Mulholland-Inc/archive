@@ -20,6 +20,8 @@ func init() {
 		API: "https://gmail.googleapis.com/gmail/v1/users/me",
 		// Every mailbox's requests together, as this is the server's; each mailbox's own limit is its stream's Gap.
 		Pace: 200 * time.Millisecond,
+		// Gmail turns a user away for now with a 403 that says so.
+		Busy: []string{"Quota exceeded", "rateLimitExceeded", "userRateLimitExceeded", "Rate Limit Exceeded"},
 		Endpoint: oauth2.Endpoint{AuthURL: "https://accounts.google.com/o/oauth2/v2/auth", TokenURL: "https://oauth2.googleapis.com/token",
 			AuthStyle: oauth2.AuthStyleInParams},
 		Revoke: "https://oauth2.googleapis.com/revoke",
@@ -34,7 +36,7 @@ func init() {
 					{As: "list", Req: Req{URL: "/messages", Query: Q{"q": "{query}", "maxResults": "{limit}", "pageToken": "{page}"}}},
 					{As: "found", Each: "list/messages", Codec: MIMEHead, Req: Req{URL: "/messages/{id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date"}},
 				},
-				Out: Obj{"messages": "{found}", "next": "{list/nextPageToken|}"},
+				Out: Obj{"messages": "{found|[]}", "next": "{list/nextPageToken|}"},
 			}),
 			"message": Call[gmailOne, gmailMessage](Plan{
 				Doc:   "One message by id, with its text",
@@ -67,12 +69,12 @@ func init() {
 		Listen: &Listen{Env: "ARCHIVE_GMAIL_TOPIC", OIDC: true, Renew: 6 * 24 * time.Hour,
 			Watch: Req{Method: POST, URL: "/watch", Body: Obj{"topicName": "{target}"}}, Key: "{account}", Expires: "expiration",
 			Unwatch: &Req{Method: POST, URL: "/stop"},
-			Wrap:    "message/data", Codec: Base64JSON, Keys: "emailAddress"},
+			Wrap:    "message/data", Codec: Base64JSON, Keys: []Path{"emailAddress"}, Lower: true},
 		Sync: []*Sync{{Name: "messages", Gap: 50 * time.Second,
 			// Gmail allows each user 6,000 quota units a minute, and format=full costs 60 a message, so a page of 50
 			// costs about 3,005 and takes 10 seconds at Pace. A page a minute keeps a mailbox's sync at about half the
 			// limit, which leaves the rest to actions, and reads a 5,000-message mailbox in about 100 minutes.
-			Req: Req{URL: "/messages", Query: Q{"maxResults": "50", "pageToken": "{page}"}}, Items: "messages", Page: Cursor{At: "nextPageToken"},
+			Req: Req{URL: "/messages", Query: Q{"maxResults": "50", "pageToken": "{page}"}}, Items: "messages", Absent: "resultSizeEstimate", Page: Cursor{At: "nextPageToken"},
 			Change: Token{Start: Req{URL: "/profile"}, At: "historyId", Expired: []int{404},
 				Req:  Req{URL: "/history?historyTypes=messageAdded&historyTypes=messageDeleted&historyTypes=labelAdded&historyTypes=labelRemoved", Query: Q{"startHistoryId": "{token}", "maxResults": "100", "pageToken": "{page}"}},
 				Each: "history", Live: []Path{"messagesAdded/*/message/id", "labelsAdded/*/message/id", "labelsRemoved/*/message/id"}, Gone: []Path{"messagesDeleted/*/message/id"}},

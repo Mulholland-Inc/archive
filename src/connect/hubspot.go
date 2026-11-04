@@ -39,7 +39,7 @@ func init() {
 			}),
 		},
 		Listen: &Listen{
-			Watch: hubspotIntrospect, Key: "{answer/hub_id}", Keys: "*/portalId",
+			Watch: hubspotIntrospect, Key: "{answer/hub_id}", Keys: []Path{"*/portalId"},
 			Signs: []Sign{
 				{Header: "X-HubSpot-Signature-v3", Of: "{method}{url}{body}{header/X-HubSpot-Request-Timestamp}", Plain: hubspotPlain, Fresh: "X-HubSpot-Request-Timestamp"},
 				{Header: "X-HubSpot-Signature", When: "X-HubSpot-Signature-Version", Is: "v1", Digest: SHA256, Enc: Hex, Of: "{secret}{body}"},

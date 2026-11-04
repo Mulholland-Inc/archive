@@ -131,8 +131,10 @@ func each(n, par int, f func(i int) error) error {
 
 // stamp is the time s, RFC 3339 or a Unix time in milliseconds as a string; zero when it is neither.
 func stamp(s string) time.Time {
-	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
-		return t
+	for _, layout := range []string{time.RFC3339Nano, "2006-01-02T15:04:05.999-0700"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t
+		}
 	}
 	var ms int64
 	if _, err := fmt.Sscan(s, &ms); err == nil && ms > 1e11 {
@@ -225,7 +227,7 @@ func (c *Client) fileText(u, name, mime string, size int64) (string, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		if r := refusal(c.p.Name, resp); Busy(r) {
+		if r := refusal(c.p, resp); Busy(r) {
 			return "", r
 		}
 		return "", nil
