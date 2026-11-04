@@ -1,6 +1,8 @@
 <script>
   import { getContext } from 'svelte';
+  import { ChevronDown } from '@lucide/svelte';
   import ArchiveIcon from './ArchiveIcon.svelte';
+  import Icon from './Icon.svelte';
 
   let { archive, ...rest } = $props();
   const sidebar = getContext('sidebar');
@@ -13,6 +15,7 @@
     <span class="name">{archive?.name}</span>
     <span class="sub">{archive?.kind}, {archive?.members.length} {archive?.members.length === 1 ? 'member' : 'members'}</span>
   </span>
+  <span class="chevron"><Icon icon={ChevronDown} size="md" /></span>
 </button>
 
 <style>
@@ -25,11 +28,14 @@
     min-height: var(--archive-header);
     padding: var(--space-2);
     border-radius: var(--radius-md);
+    background: var(--color-surface-raised);
+    box-shadow: var(--ring);
     text-align: start;
     transition: background-color var(--duration-fast) var(--ease-out);
   }
 
-  .header:hover {
+  .header:hover,
+  .header[aria-expanded='true'] {
     background: var(--color-fill);
   }
 
@@ -37,6 +43,18 @@
     justify-content: center;
     padding: var(--space-2) var(--space-0);
     gap: var(--space-0);
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .chevron {
+    display: flex;
+    flex: none;
+    color: var(--color-text-secondary);
+  }
+
+  .collapsed .chevron {
+    display: none;
   }
 
   .lines {

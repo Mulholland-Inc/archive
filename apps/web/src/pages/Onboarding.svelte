@@ -12,7 +12,7 @@
   import InviteDialog from '../components/InviteDialog.svelte';
   import NewWorkflowDialog from '../components/NewWorkflowDialog.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { app, onboardingSteps, stepDone, completeStep, toggleStep, openSettings, openArchiveSettings, createWorkflow } from '../lib/app.svelte.js';
+  import { app, onboardingSteps, stepDone, completeStep, toggleStep, openSettings, createWorkflow } from '../lib/app.svelte.js';
   import { go } from '../lib/router.svelte.js';
 
   let inviting = $state(false);
@@ -27,11 +27,11 @@
     dpa: () => completeStep('dpa'),
     verify: () => completeStep('verify'),
     invite: () => (inviting = true),
-    connect: () => openSettings('connectors'),
+    connect: () => go('/connectors'),
     upload: () => go('/library'),
     workflow: () => (creating = true),
     region: () => {
-      openArchiveSettings('server');
+      openSettings('server');
       completeStep('region');
     }
   };
