@@ -46,7 +46,7 @@
       ['AI', 'ChatGPT, Claude, Gemini and Grok, acting as you', 'Gemini in Google Workspace, Copilot in Microsoft 365'],
       ['Lists', 'Records, boards and calendars in one place', 'Spreadsheets and lists in their own apps'],
       ['Who sees what', 'Enforced underneath, for people and AI alike', 'Folder, site and file sharing'],
-      ['Working together', 'Connectors bring Drive and SharePoint in, read-only', 'Your files stay where they are']
+      ['Working together', 'Connectors bring Drive and SharePoint in', 'Your files stay where they are']
     ]}
   />
 

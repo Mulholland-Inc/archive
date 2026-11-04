@@ -27,7 +27,7 @@
       <li><strong>Your files</strong>: documents, spreadsheets, slides and PDFs, stored next to the records they belong to. Your AI can edit Word, Excel and PowerPoint files in place.</li>
       <li><strong>Agent access</strong>: a way for the AI you already use to search, read and file information in your workspace, under the same rules as everyone else.</li>
     </ul>
-    <p>You do not have to give up the tools your team likes. Read-only connectors bring in copies of your mail, files, chats and CRM data and keep them current, without ever changing anything at the source. The agency keeps its inbox and its chat. It just stops losing what happens in them.</p>
+    <p>You do not have to give up the tools your team likes. Connectors bring in copies of your mail, files, chats and CRM data and keep them current, without changing anything at the source unless you ask. The agency keeps its inbox and its chat. It just stops losing what happens in them.</p>
 
     <h2>Every person, and every AI you choose</h2>
     <p>Having everything in one place only helps if the right people can use it, and only the right people. Think of a small property manager. Owners should see their own buildings and nothing else. The maintenance contractor needs work orders, not rent ledgers. Finance needs the ledgers, not tenant chats.</p>

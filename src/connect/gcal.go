@@ -10,12 +10,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/oauth2"
 )
 
-// Google Calendar, read only, with ARCHIVE_GOOGLE like Gmail: the client's authorized redirect URIs list
-// <API>/connect/gcal/callback, and its consent screen asks for calendar.readonly, a sensitive scope, not a
-// restricted one like Gmail's, so Google verifies it without a security assessment.
+// Google Calendar, with ARCHIVE_GOOGLE like Gmail: the client's authorized redirect URIs list
+// <API>/connect/gcal/callback, and its consent screen asks for calendar.readonly, to read every calendar, and
+// calendar.events, to make, change and delete events: sensitive scopes, not restricted ones like Gmail's, so
+// Google verifies them without a security assessment.
 //
 // It syncs every event of each calendar on the account's list, shared and hidden ones too, into calendar_event, the past and the
 // future, a series as one event with its rule and each occurrence that differs from it as another: listed whole
@@ -27,7 +29,7 @@ func init() {
 		Endpoint: oauth2.Endpoint{AuthURL: "https://accounts.google.com/o/oauth2/v2/auth", TokenURL: "https://oauth2.googleapis.com/token",
 			AuthStyle: oauth2.AuthStyleInParams},
 		Revoke: "https://oauth2.googleapis.com/revoke",
-		Scopes: []string{"https://www.googleapis.com/auth/calendar.readonly"},
+		Scopes: []string{"https://www.googleapis.com/auth/calendar.readonly", "https://www.googleapis.com/auth/calendar.events"},
 		Params: map[string]string{"access_type": "offline", "prompt": "consent"},
 		Account: func(c *Client) (string, error) {
 			var cal struct {
@@ -74,6 +76,30 @@ func init() {
 					err := c.Get(calendarAPI+"/calendars/"+url.PathEscape(cmp.Or(in.Calendar, "primary"))+"/events?"+q.Encode(), &out)
 					return map[string]any{"events": out.Items, "next": out.Next}, err
 				}),
+			"create": Write("Put an event on a calendar and invite people to it, maybe with a Google Meet link: the event, as events returns one",
+				func(c *Client, in gcalNew) (any, error) {
+					if in.Summary == "" || in.Start == "" || in.End == "" {
+						return nil, errors.New("an event needs a summary, a start and an end")
+					}
+					return in.save(c, "POST", "")
+				}),
+			"update": Write("Change an event, a whole series when its id is the series': only what you give changes. Returns the event, as events returns one",
+				func(c *Client, in struct {
+					ID string `json:"id" jsonschema:"The event's id, from events"`
+					gcalNew
+				}) (any, error) {
+					return in.save(c, "PATCH", in.ID)
+				}),
+			"delete": Write("Cancel an event, or a whole series by the series' id, telling who was invited: { id }",
+				func(c *Client, in struct {
+					Calendar string `json:"calendar,omitempty" jsonschema:"The calendar's id, from calendars; the primary one when left out"`
+					ID       string `json:"id" jsonschema:"The event's id, from events"`
+					Quiet    bool   `json:"quiet,omitempty" jsonschema:"Don't email the people invited"`
+				}) (any, error) {
+					q := url.Values{"sendUpdates": {gcalNotify(in.Quiet)}}
+					err := c.Do("DELETE", calendarAPI+"/calendars/"+url.PathEscape(cmp.Or(in.Calendar, "primary"))+"/events/"+url.PathEscape(in.ID)+"?"+q.Encode(), nil, nil)
+					return map[string]any{"id": in.ID}, err
+				}),
 		},
 		Push: gcalPush,
 		Streams: []*Stream{{Name: "events", Gap: time.Second, Pull: gcalEvents, Table: "calendar_event", Rows: gcalRows,
@@ -85,6 +111,71 @@ func init() {
 }
 
 const calendarAPI = "https://www.googleapis.com/calendar/v3"
+
+// gcalNew is an event to make, or what to change of one.
+type gcalNew struct {
+	Calendar    string   `json:"calendar,omitempty" jsonschema:"The calendar's id, from calendars; the primary one when left out"`
+	Summary     string   `json:"summary,omitempty" jsonschema:"The event's title"`
+	Start       string   `json:"start,omitempty" jsonschema:"When it starts, RFC 3339 like 2026-11-04T15:00:00-08:00, or a date like 2026-11-04 for an all-day event"`
+	End         string   `json:"end,omitempty" jsonschema:"When it ends, as start; an all-day event's is the day after its last"`
+	TimeZone    string   `json:"timeZone,omitempty" jsonschema:"An IANA time zone, like America/Los_Angeles; the calendar's when left out"`
+	Description string   `json:"description,omitempty" jsonschema:"What it is about"`
+	Location    string   `json:"location,omitempty" jsonschema:"Where it is"`
+	Attendees   []string `json:"attendees,omitempty" jsonschema:"The email addresses of who to invite; on update, everyone invited"`
+	Meet        bool     `json:"meet,omitempty" jsonschema:"Add a Google Meet link"`
+	Quiet       bool     `json:"quiet,omitempty" jsonschema:"Don't email the people invited"`
+}
+
+// save sends e to the calendar: POST makes it, PATCH changes event id.
+func (e gcalNew) save(c *Client, method, id string) (map[string]any, error) {
+	ev := map[string]any{}
+	for k, v := range map[string]string{"summary": e.Summary, "description": e.Description, "location": e.Location} {
+		if v != "" {
+			ev[k] = v
+		}
+	}
+	for k, v := range map[string]string{"start": e.Start, "end": e.End} {
+		switch {
+		case v == "":
+		case len(v) == len(time.DateOnly):
+			ev[k] = map[string]any{"date": v}
+		default:
+			t := map[string]any{"dateTime": v}
+			if e.TimeZone != "" {
+				t["timeZone"] = e.TimeZone
+			}
+			ev[k] = t
+		}
+	}
+	if e.Attendees != nil {
+		as := make([]map[string]any, len(e.Attendees))
+		for i, a := range e.Attendees {
+			as[i] = map[string]any{"email": a}
+		}
+		ev["attendees"] = as
+	}
+	q := url.Values{"sendUpdates": {gcalNotify(e.Quiet)}}
+	if e.Meet {
+		ev["conferenceData"] = map[string]any{"createRequest": map[string]any{"requestId": uuid.NewString(),
+			"conferenceSolutionKey": map[string]any{"type": "hangoutsMeet"}}}
+		q.Set("conferenceDataVersion", "1")
+	}
+	u := calendarAPI + "/calendars/" + url.PathEscape(cmp.Or(e.Calendar, "primary")) + "/events"
+	if id != "" {
+		u += "/" + url.PathEscape(id)
+	}
+	var out map[string]any
+	err := c.Do(method, u+"?"+q.Encode(), ev, &out)
+	return out, err
+}
+
+// gcalNotify is Calendar's sendUpdates: whether to email the people invited.
+func gcalNotify(quiet bool) string {
+	if quiet {
+		return "none"
+	}
+	return "all"
+}
 
 // gcalCal is a calendar the events stream walks, and Token its sync token, where its changes start.
 type gcalCal struct {
