@@ -19,6 +19,7 @@
     const r = origin.getBoundingClientRect();
     panel.style.setProperty('--x', `${r.left}px`);
     panel.style.setProperty('--w', `${r.width}px`);
+    panel.style.setProperty('--h', `${r.height}px`);
     panel.style.setProperty('--top', `${r.top}px`);
     panel.style.setProperty('--bottom', `${innerHeight - r.bottom}px`);
   }
