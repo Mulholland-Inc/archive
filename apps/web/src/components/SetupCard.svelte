@@ -33,13 +33,6 @@
     gap: var(--space-3);
     padding: var(--space-3);
     border-radius: var(--radius-lg);
-    background: var(--color-canvas);
-    box-shadow: inset 0 0 0 var(--border-width) var(--color-border);
-    transition: box-shadow var(--duration-fast) var(--ease-out);
-  }
-
-  .card:hover {
-    box-shadow: inset 0 0 0 var(--border-width) var(--color-border-strong);
   }
 
   .head {
