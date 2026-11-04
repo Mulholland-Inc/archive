@@ -466,8 +466,9 @@ func (a *Archive) ownConnections(ctx context.Context, ac *Actor) ([]generated.Co
 }
 
 // Disconnect deletes the caller's connection id, or, for an owner, the archive's integration id, with its
-// rows, and revokes its refresh token at the provider where it can. A revoke that fails leaves the grant at
-// the provider, where the person can still remove it; the connection is gone either way.
+// rows, and revokes its refresh token at the provider where it can, unless grantShared. A revoke that fails or
+// is held back leaves the grant at the provider, where the person can still remove it; the connection is gone
+// either way.
 func (a *Archive) Disconnect(ctx context.Context, id uuid.UUID) error {
 	c, err := a.connectionMine(ctx, id)
 	if err != nil {
@@ -508,12 +509,34 @@ func (a *Archive) Disconnect(ctx context.Context, id uuid.UUID) error {
 		if cl != nil {
 			cl.Close()
 		}
-		err = p.RevokeToken(ctx, rt)
+		var shared bool
+		if shared, err = a.grantShared(ctx, c, p); err == nil && !shared {
+			err = p.RevokeToken(ctx, rt)
+		}
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "archive: workspace %s: disconnected %s, but did not revoke it: %v\n", a.ws.ID, id, err)
 	}
 	return nil
+}
+
+// grantShared says another connection of c's member holds what revoking c's token would end: a revoke ends the
+// person's whole grant to an OAuth client, as Google's does, and connectors with one Env share a client. It takes
+// the same client and the same account. A row named after its connector doesn't say whose account it is, so it
+// counts as the same.
+func (a *Archive) grantShared(ctx context.Context, c generated.ArchiveConnection, p *connect.Provider) (shared bool, err error) {
+	err = a.sys(ctx, func(ctx context.Context) error {
+		rows, err := a.st.db(ctx).MemberConnections(ctx, c.Member)
+		for _, r := range rows {
+			o := connect.Get(r.Provider)
+			if o == nil || r.Member != c.Member || o.ID != p.ID && (p.Env == "" || o.Env != p.Env) {
+				continue
+			}
+			shared = shared || r.Account == c.Account || r.Account == o.Name || c.Account == p.Name
+		}
+		return err
+	})
+	return shared, err
 }
 
 // connectionMine is the connection id, when the caller may connect, disconnect and sync it: their own, or the
