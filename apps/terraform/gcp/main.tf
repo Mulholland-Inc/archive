@@ -12,23 +12,19 @@ locals {
   # Every secret env var of the service and the job, by name. Terraform makes each one's Secret Manager secret,
   # archive-<name in kebab case>, and hands it to Cloud Run at version latest, but never holds a value: each is
   # seeded with gcloud, and Cloud Run won't start a revision until all of them have a version.
-  # A feature that is not used is seeded with a single space, which Archive reads as unset.
-  secrets = {
+  # A feature that is not used is seeded with a single space, which Archive reads as unset. The connectors' are in
+  # secrets.json, from their definitions: go run . secrets > ../apps/terraform/gcp/secrets.json, in src. A key that
+  # leaves this map destroys its secret, so CI fails when the file is stale, and a rename needs care.
+  secrets = merge(jsondecode(file("${path.module}/secrets.json")), {
     DATABASE_URL       = "Postgres as the archive user: host=/cloudsql/<connection name> user=archive password=<password> dbname=archive."
     ARCHIVE_SECRET_KEY = "32 random bytes, hex or base64, wrapping every workspace's data key."
     ARCHIVE_LIVE_KEY   = "Key the API announces live changes to the app Worker with; the image workflow sets it on the Worker as LIVE_KEY."
     ANTHROPIC_API_KEY  = "Key of the in-app agent and archive.browse. A space leaves the agent off."
     TYPESAFE_API_KEY   = "TypeSafe key of archive.browse. A space leaves browse off."
-    ARCHIVE_GOOGLE     = "Sign-in with Google and the Gmail and Google Drive connectors, https://<client id>:<client secret>@accounts.google.com. A space leaves it off."
     ARCHIVE_MICROSOFT  = "Sign-in with Microsoft, https://<client id>:<client secret>@login.microsoftonline.com. A space leaves it off."
     ARCHIVE_SLACK      = "Sign-in with Slack, https://<client id>:<client secret>@slack.com. A space leaves it off."
     ARCHIVE_GITHUB     = "Sign-in with GitHub, https://<client id>:<client secret>@github.com. A space leaves it off."
-    ARCHIVE_OUTLOOK    = "The Outlook connector's Entra app, https://<client id>:<client secret>@login.microsoftonline.com. A space leaves it off."
-    ARCHIVE_QUICKBOOKS = "The QuickBooks connector's Intuit app, https://<client id>:<client secret>@appcenter.intuit.com, ?sandbox=1 for development keys, &hook=<webhooks verifier token> for its pushes. A space leaves it off."
-    ARCHIVE_HUBSPOT    = "The HubSpot connector's app, https://<client id>:<client secret>@app.hubspot.com. A space leaves it off."
-    ARCHIVE_GITHUB_APP = "The GitHub connector's GitHub App, https://<client id>:<client secret>@github.com?hook=<webhook secret>. A space leaves it off."
-    ARCHIVE_ASANA      = "The Asana connector's app, https://<client id>:<client secret>@app.asana.com, ?push=1 once the app has the webhooks scopes. A space leaves it off."
-  }
+  })
 
   services = ["run.googleapis.com", "sqladmin.googleapis.com", "secretmanager.googleapis.com", "iam.googleapis.com", "storage.googleapis.com", "artifactregistry.googleapis.com", "iamcredentials.googleapis.com", "sts.googleapis.com", "cloudtasks.googleapis.com", "siteverification.googleapis.com", "pubsub.googleapis.com"]
 }

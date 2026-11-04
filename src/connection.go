@@ -375,6 +375,7 @@ type Connector struct {
 	Ready       bool          `json:"ready"`
 	Integration bool          `json:"integration"`
 	Keys        []connect.Key `json:"keys,omitempty"`
+	connect.Info
 }
 
 type Connections struct {
@@ -390,7 +391,7 @@ func (a *Archive) Connections(ctx context.Context) (*Connections, error) {
 	}
 	out := &Connections{Connectors: []Connector{}, Connections: []Connection{}}
 	for _, c := range connect.All() {
-		out.Connectors = append(out.Connectors, Connector{ID: c.ID, Name: c.Name, Ready: a.hub.connect[c.ID] != nil, Integration: c.Integration, Keys: c.Keys})
+		out.Connectors = append(out.Connectors, Connector{ID: c.ID, Name: c.Name, Ready: a.hub.connect[c.ID] != nil, Integration: c.Integration, Keys: c.Keys, Info: c.Info})
 	}
 	var rows []generated.ConnectionsRow
 	err = a.st.System(ctx, func(ctx context.Context) (err error) {
@@ -659,8 +660,9 @@ var errRevoked = errors.New("revoked")
 // now, while it is due; Done the ask it last caught up to, and Last when; Since when the full listing under
 // way began, which the rows it has not read since are older than; Pages how many pages it has read for this
 // ask; Fails how many in a row failed, and Error why the last did. Rows is the version of Archive's tables its
-// rows are in (syncRowsVersion): a stream of an older one is due, and starts from scratch. Named, kept on a
-// connector's first stream, is when the account's name was last asked for (syncRename).
+// rows are in (syncRowsVersion), and Def, for a stream that is only data, the hash of the definition they came from:
+// a stream of another is due, and starts from scratch. Named, kept on a connector's first stream, is when the
+// account's name was last asked for (syncRename).
 type syncStream struct {
 	Cursor string     `json:"cursor,omitempty"`
 	At     *time.Time `json:"at,omitempty"`
@@ -673,20 +675,29 @@ type syncStream struct {
 	Fails  int        `json:"fails,omitempty"`
 	Error  string     `json:"error,omitempty"`
 	Rows   int        `json:"rows,omitempty"`
+	Def    string     `json:"def,omitempty"`
 	Named  *time.Time `json:"named,omitempty"`
 }
 
 // due says whether the stream has yet to catch up to the ask at asked: one that pulls only every so often
 // counts as caught up while it last did within every of the ask, unless a listing of it is under way. One whose
 // rows are in older tables is due until it starts again.
-func (v *syncStream) due(asked time.Time, every time.Duration) bool {
-	if v.Rows < syncRowsVersion {
+func (v *syncStream) due(s *connect.Stream, asked time.Time) bool {
+	if !v.current(s) {
 		return true
 	}
 	if v.Done != nil && !v.Done.Before(asked) {
 		return false
 	}
-	return every <= 0 || v.Last == nil || v.More || !asked.Before(v.Last.Add(every))
+	return s.Every <= 0 || v.Last == nil || v.More || !asked.Before(v.Last.Add(s.Every))
+}
+
+// current says the stream's rows are as s writes them.
+func (v *syncStream) current(s *connect.Stream) bool {
+	if s.Version != "" {
+		return v.Def == s.Version
+	}
+	return v.Rows >= syncRowsVersion
 }
 
 type syncState map[string]*syncStream
@@ -716,7 +727,7 @@ func syncPick(streams []*connect.Stream, st syncState, asked time.Time) *connect
 	var at time.Time
 	for _, s := range streams {
 		v := st.of(s.Name)
-		if !v.due(asked, s.Every) {
+		if !v.due(s, asked) {
 			continue
 		}
 		var t time.Time
@@ -760,7 +771,7 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 	var named bool
 	var account string
 	if s != nil {
-		cur := syncStateOf(c.Cursor).of(s.Name).fresh()
+		cur := syncStateOf(c.Cursor).of(s.Name).fresh(s)
 		pctx, cancel := context.WithTimeout(ctx, syncPageTime)
 		var cl *connect.Client
 		if cl, err = a.connClient(pctx, c); err == nil {
@@ -824,8 +835,8 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 		cur, name := &syncStream{}, ""
 		if s != nil {
 			// A stream of older tables starts again from here, whatever this page did.
-			cur, name = st.of(s.Name).fresh(), s.Name
-			cur.Rows, st[s.Name] = syncRowsVersion, cur
+			cur, name = st.of(s.Name).fresh(s), s.Name
+			cur.Rows, cur.Def, st[s.Name] = syncRowsVersion, s.Version, cur
 		}
 		var unsup *connect.Unsupported
 		switch {
@@ -881,7 +892,7 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 			if v.Error != "" {
 				errs = append(errs, v.Error)
 			}
-			if !v.due(c2.AskedAt, d.Every) {
+			if !v.due(d, c2.AskedAt) {
 				continue
 			}
 			at := now
@@ -914,8 +925,8 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 
 // fresh is v, or where a stream whose rows are in older tables starts again: from scratch, its cursor and memory
 // forgotten, with only when the account was named kept.
-func (v *syncStream) fresh() *syncStream {
-	if v.Rows >= syncRowsVersion {
+func (v *syncStream) fresh(s *connect.Stream) *syncStream {
+	if v.current(s) {
 		return v
 	}
 	return &syncStream{Named: v.Named}
@@ -1129,7 +1140,7 @@ func (a *Archive) streamTypes(ctx context.Context) string {
 
 // syncRowsVersion is the version of the tables: a stream whose rows are of one before syncs from scratch, its
 // cursor and memory forgotten, so its rows are written whole again. Changing a table or a mapping so that the
-// rows already synced should change counts it up.
+// rows already synced should change counts it up. A stream that is only data goes by its definition's hash instead.
 const syncRowsVersion = 2
 
 // syncTable is what syncSave needs to know of a table of archive.sql: for a row that belongs to a row of another
@@ -1223,11 +1234,19 @@ func (w *syncDB) write(ctx context.Context, s *connect.Stream, recs []syncRec) e
 	rows := make([]*connect.Row, 0, len(recs))
 	var kept []syncRec
 	var none []string
-	for _, r := range recs {
-		if row := s.RowOf(r.Data); row != nil {
-			rows, kept = append(rows, row), append(kept, r)
-		} else {
-			none = append(none, r.ID)
+	if s.SQL != "" {
+		var err error
+		if rows, err = w.mapped(ctx, s, recs); err != nil {
+			return err
+		}
+		kept = recs
+	} else {
+		for _, r := range recs {
+			if row := s.RowOf(r.Data); row != nil {
+				rows, kept = append(rows, row), append(kept, r)
+			} else {
+				none = append(none, r.ID)
+			}
 		}
 	}
 	if len(none) > 0 {
@@ -1320,6 +1339,104 @@ func (w *syncDB) write(ctx context.Context, s *connect.Stream, recs []syncRec) e
 		}
 	}
 	return w.link(ctx, written)
+}
+
+// mapped are the rows of recs as Postgres evaluates the stream's map over them.
+func (w *syncDB) mapped(ctx context.Context, s *connect.Stream, recs []syncRec) ([]*connect.Row, error) {
+	data := make([]json.RawMessage, len(recs))
+	for i, r := range recs {
+		data[i] = r.Data
+	}
+	res, err := w.db.Query(ctx, s.SQL, jsonOf(data))
+	if err != nil {
+		return nil, fmt.Errorf("the map of %s: %w", s.Name, err)
+	}
+	defer res.Close()
+	rows := make([]*connect.Row, 0, len(recs))
+	for res.Next() {
+		var b []byte
+		if err := res.Scan(&b); err != nil {
+			return nil, err
+		}
+		d := json.NewDecoder(bytes.NewReader(b))
+		d.UseNumber()
+		var row connect.Row
+		if err := d.Decode(&row); err != nil {
+			return nil, fmt.Errorf("the map of %s: %w", s.Name, err)
+		}
+		rows = append(rows, &row)
+	}
+	if err := res.Err(); err != nil {
+		return nil, fmt.Errorf("the map of %s: %w", s.Name, err)
+	}
+	return rows, nil
+}
+
+// syncCheck fails on a stream that is only data whose table or columns archive.sql does not have, as startup does.
+func syncCheck() error {
+	cols := map[string][]string{}
+	for _, m := range syncTableRe.FindAllStringSubmatch(storeSchema, -1) {
+		for _, line := range strings.Split(m[2], "\n") {
+			if f := strings.Fields(line); len(f) > 1 && syncColRe.MatchString(f[0]) {
+				cols[m[1]] = append(cols[m[1]], f[0])
+			}
+		}
+	}
+	has := func(table string, sets ...map[string]connect.SQL) error {
+		for _, set := range sets {
+			for c := range set {
+				if !slices.Contains(cols[table], c) {
+					return fmt.Errorf("%s has no column %s", table, c)
+				}
+			}
+		}
+		return nil
+	}
+	for _, c := range connect.All() {
+		for _, s := range c.Sync {
+			fail := func(err error) error { return fmt.Errorf("connector %s, stream %s: %w", c.ID, s.Name, err) }
+			t, ok := syncSchema[s.To.Table]
+			if !ok || t.parent != "" {
+				return fail(fmt.Errorf("%q is no table of archive.sql a stream lands in", s.To.Table))
+			}
+			if err := has(s.To.Table, s.To.Cols, s.To.People, s.To.Orgs, s.To.Refs); err != nil {
+				return fail(err)
+			}
+			for k := range s.To.Refs {
+				if t.links[k] == "" {
+					return fail(fmt.Errorf("%s of %s links no table", k, s.To.Table))
+				}
+			}
+			for _, k := range s.To.Children {
+				ct, ok := syncSchema[k.Table]
+				if !ok || ct.parent != s.To.Table {
+					return fail(fmt.Errorf("%q is no table of the rows of %s", k.Table, s.To.Table))
+				}
+				if err := has(k.Table, k.Cols, k.People, k.Orgs, k.Refs); err != nil {
+					return fail(err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+var syncTableRe = regexp.MustCompile(`(?ms)^CREATE TABLE archive\.(\w+) \((.*?)^\)`)
+
+// syncCheckSQL has Postgres read the map of every stream that is only data, so one that is not SQL it can run stops
+// a workspace from opening.
+func syncCheckSQL(ctx context.Context, db generated.DBTX) error {
+	for _, c := range connect.All() {
+		for _, s := range c.Streams {
+			if s.SQL == "" {
+				continue
+			}
+			if _, err := db.Exec(ctx, "EXPLAIN "+s.SQL, []byte("[]")); err != nil {
+				return fmt.Errorf("connector %s, stream %s: its map: %w", c.ID, s.Name, err)
+			}
+		}
+	}
+	return nil
 }
 
 // object is the columns of a row of table: cols, its people and organizations by their ids, each link by its
@@ -1831,16 +1948,6 @@ func (a *Archive) connTools(ctx context.Context, c generated.ArchiveConnection) 
 	return t.tools, t.err
 }
 
-// actionName is the action of an MCP connector's tool: its name, without the connector's id before it.
-func actionName(p *connect.Provider, tool string) string {
-	for _, sep := range []string{"-", "_", "."} {
-		if s, ok := strings.CutPrefix(tool, p.ID+sep); ok && s != "" {
-			return s
-		}
-	}
-	return tool
-}
-
 func deref(s *string) string {
 	if s == nil {
 		return ""
@@ -1923,11 +2030,24 @@ func (a *Archive) Action(ctx context.Context, name string, input any, pick strin
 	}
 	var in any
 	json.Unmarshal(raw, &in)
-	if do := p.Actions[act]; do != nil && do.Writes {
+	acts, err := a.actionsOf(ctx, p, c)
+	if err != nil {
+		return nil, actionFailed(fail, err)
+	}
+	do := acts[act]
+	if do == nil {
+		return nil, fail(ErrNotFound, "%s has no action %s; it has %s", p.Name, act, strings.Join(actionNames(acts), ", "))
+	}
+	if do.Writes {
 		if lvl, _, err := a.level(ctx); err != nil {
 			return nil, err
 		} else if lvl == "viewer" {
 			return nil, fail(ErrForbidden, "a read-only token cannot change anything in %s; use a full one", p.Name)
+		}
+	}
+	if do.Input != nil {
+		if err := actionCheck(name, do.Input, in); err != nil {
+			return nil, err
 		}
 	}
 	cl := clients[c.ID]
@@ -1937,45 +2057,23 @@ func (a *Archive) Action(ctx context.Context, name string, input any, pick strin
 		}
 		clients[c.ID] = cl
 	}
+	out, err := do.Do(cl, raw)
+	if err != nil {
+		return nil, actionFailed(fail, err)
+	}
+	return out, nil
+}
+
+// actionsOf are the actions of connection c of p: an MCP server's its tools, as it lists them.
+func (a *Archive) actionsOf(ctx context.Context, p *connect.Provider, c generated.ArchiveConnection) (map[string]*connect.Action, error) {
 	if p.MCP == "" {
-		do := p.Actions[act]
-		if do == nil {
-			return nil, fail(ErrNotFound, "%s has no action %s; it has %s", p.Name, act, strings.Join(actionNames(p), ", "))
-		}
-		if err := actionCheck(name, do.Input, in); err != nil {
-			return nil, err
-		}
-		out, err := do.Do(cl, raw)
-		if err != nil {
-			return nil, actionFailed(fail, err)
-		}
-		return out, nil
+		return p.Actions, nil
 	}
 	tools, err := a.connTools(ctx, c)
 	if err != nil {
-		return nil, actionFailed(fail, err)
+		return nil, err
 	}
-	var tool *mcp.Tool
-	var names []string
-	for _, t := range tools {
-		if actionName(p, t.Name) == act {
-			tool = t
-		}
-		names = append(names, actionName(p, t.Name))
-	}
-	if tool == nil {
-		return nil, fail(ErrNotFound, "%s has no action %s; it has %s", p.Name, act, strings.Join(names, ", "))
-	}
-	if s := actionSchema(tool.InputSchema); s != nil {
-		if err := actionCheck(name, s, in); err != nil {
-			return nil, err
-		}
-	}
-	res, err := cl.Call(tool.Name, in)
-	if err != nil {
-		return nil, actionFailed(fail, err)
-	}
-	return actionResult(res), nil
+	return p.ToolActions(tools), nil
 }
 
 // actionFailed is err as the action's failure, with the code its kind has: a provider's 404 is not_found, a
@@ -2014,36 +2112,9 @@ func actionCheck(name string, s *jsonschema.Schema, input any) error {
 	return nil
 }
 
-// actionSchema is an MCP tool's schema, nil when it does not read as one.
-func actionSchema(v any) *jsonschema.Schema {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return nil
-	}
-	var s jsonschema.Schema
-	if json.Unmarshal(b, &s) != nil {
-		return nil
-	}
-	return &s
-}
-
-// actionResult is what a tool's result is in the script: its structured content, or its text, parsed when
-// it is JSON.
-func actionResult(res *mcp.CallToolResult) any {
-	if res.StructuredContent != nil {
-		return res.StructuredContent
-	}
-	text := connect.Text(res)
-	var v any
-	if json.Unmarshal([]byte(text), &v) == nil {
-		return v
-	}
-	return text
-}
-
-func actionNames(p *connect.Provider) []string {
+func actionNames(acts map[string]*connect.Action) []string {
 	var out []string
-	for n := range p.Actions {
+	for n := range acts {
 		out = append(out, n)
 	}
 	sort.Strings(out)
@@ -2116,27 +2187,15 @@ func (a *Archive) actionTypes(ctx context.Context) string {
 		if err != nil || done[p.ID] {
 			continue
 		}
-		if p.MCP == "" {
-			done[p.ID] = true
-			for _, n := range actionNames(p) {
-				act := p.Actions[n]
-				actionEntry(&b, p.ID+"."+n, act.Doc, act.Input, nil)
-			}
-			continue
-		}
-		tools, err := a.connTools(ctx, c)
+		acts, err := a.actionsOf(ctx, p, c)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "archive: workspace %s: the tools of %s %s: %v\n", a.ws.ID, p.Name, c.Account, err)
 			continue
 		}
 		done[p.ID] = true
-		slices.SortFunc(tools, func(x, y *mcp.Tool) int { return strings.Compare(x.Name, y.Name) })
-		for _, t := range tools {
-			doc, _, _ := strings.Cut(strings.TrimSpace(t.Description), "\n\n")
-			if len(doc) > 600 {
-				doc = doc[:600] + "..."
-			}
-			actionEntry(&b, p.ID+"."+actionName(p, t.Name), doc, t.InputSchema, t.OutputSchema)
+		for _, n := range actionNames(acts) {
+			act := acts[n]
+			actionEntry(&b, p.ID+"."+n, act.Doc, act.Input, act.Output)
 		}
 	}
 	b.WriteString("}\n")

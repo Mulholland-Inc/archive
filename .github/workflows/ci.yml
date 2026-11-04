@@ -33,6 +33,8 @@ jobs:
         working-directory: src
       - run: go vet ./...
         working-directory: src
+      - run: go run . secrets | diff - ../apps/terraform/gcp/secrets.json
+        working-directory: src
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
         working-directory: src
   web:

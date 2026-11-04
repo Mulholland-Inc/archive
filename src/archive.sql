@@ -539,6 +539,46 @@ icon: building-2';
 COMMENT ON COLUMN archive.known_org.ein IS 'Its US employer identification number';
 COMMENT ON COLUMN archive.known_org.domain IS 'Its web domain, like example.com';
 
+-- What a connector's map reads a provider's text with (connect/def.go): each is null for what is not one, rather
+-- than failing the page. An address, a web domain, a time as RFC 3339 or Unix milliseconds, a date at the start of
+-- text, a number, an amount in a currency's minor units from its major ones, and text cut to n bytes.
+CREATE FUNCTION archive.sync_email(s text) RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+    SELECT CASE WHEN lower(btrim(s, E' \t\r\n')) ~ '^[^@\s]+@[^@\s]+$' THEN lower(btrim(s, E' \t\r\n')) END
+$$;
+
+CREATE FUNCTION archive.sync_domain(s text) RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+    SELECT d FROM (SELECT rtrim(regexp_replace(regexp_replace(regexp_replace(lower(btrim(s, E' \t\r\n')), '^.*?://', ''), '[/?#:].*$', ''), '^www\.', ''), '.') d) x
+    WHERE d ~ '^[a-z0-9]([a-z0-9\-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9\-]*[a-z0-9])?)+$'
+$$;
+
+CREATE FUNCTION archive.sync_at(s text) RETURNS timestamptz LANGUAGE sql STABLE PARALLEL SAFE AS $$
+    SELECT CASE
+        WHEN s ~ '^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$' AND pg_input_is_valid(s, 'timestamptz') THEN s::timestamptz
+        WHEN s ~ '^\d{12,14}$' THEN to_timestamp(s::numeric / 1000)
+    END
+$$;
+
+CREATE FUNCTION archive.sync_day(s text) RETURNS date LANGUAGE sql STABLE PARALLEL SAFE AS $$
+    SELECT CASE WHEN left(s, 10) ~ '^\d{4}-\d{2}-\d{2}$' AND pg_input_is_valid(left(s, 10), 'date') THEN left(s, 10)::date END
+$$;
+
+CREATE FUNCTION archive.sync_num(s text) RETURNS numeric LANGUAGE sql STABLE PARALLEL SAFE AS $$
+    SELECT CASE WHEN btrim(s) ~ '^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$' AND pg_input_is_valid(btrim(s), 'numeric') THEN btrim(s)::numeric END
+$$;
+
+CREATE FUNCTION archive.sync_money(s text, currency text) RETURNS jsonb LANGUAGE sql STABLE PARALLEL SAFE AS $$
+    SELECT jsonb_build_object('amount', round(archive.sync_num(s) * 100), 'currency', currency) WHERE archive.sync_num(s) IS NOT NULL
+$$;
+
+CREATE FUNCTION archive.sync_clip(s text, n int) RETURNS text LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $$
+DECLARE b bytea := convert_to(s, 'UTF8');
+BEGIN
+    IF s IS NULL OR octet_length(b) <= n THEN RETURN s; END IF;
+    WHILE n > 0 AND get_byte(b, n) & 192 = 128 LOOP n := n - 1; END LOOP;
+    RETURN convert_from(substring(b FOR n), 'UTF8');
+END
+$$;
+
 CREATE TABLE archive.mail_message (
     id          uuid PRIMARY KEY DEFAULT uuidv7(),
     connection  uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
