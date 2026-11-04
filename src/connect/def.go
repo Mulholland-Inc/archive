@@ -577,7 +577,7 @@ func (p *Plan) run(c *Client, raw json.RawMessage) (any, error) {
 	if sc == nil {
 		sc = map[string]any{}
 	}
-	sc["now"] = time.Now().UTC().Format(time.RFC3339)
+	sc["now"], sc["meta"] = time.Now().UTC().Format(time.RFC3339), c.scope()["meta"]
 	for k, lim := range p.Clamp {
 		n, _ := strconv.Atoi(text(sc[k]))
 		sc[k] = clamp(n, lim[0], lim[1])
@@ -914,6 +914,9 @@ func (r Req) roots() []string {
 	var seen []string
 	note := func(t string) {
 		for _, m := range varRe.FindAllString(t, -1) {
+			if varOf(m).hasDef {
+				continue
+			}
 			for _, alt := range strings.Split(varOf(m).path, ";") {
 				root, _, _ := strings.Cut(alt, "/")
 				seen = append(seen, root)
@@ -980,7 +983,7 @@ func (r Req) check(where string, roots ...string) error {
 }
 
 func (a *Action) check() error {
-	roots := append(slices.Collect(maps.Keys(a.Input.Properties)), "now")
+	roots := append(slices.Collect(maps.Keys(a.Input.Properties)), "now", "meta")
 	for i, s := range a.plan.Steps {
 		if s.URL == "" && s.Tool == "" && s.Codec == nil && s.In == nil && s.Fail == "" && s.Words == nil {
 			return fmt.Errorf("step %d is nothing to do", i)
@@ -1115,7 +1118,12 @@ func (s *Sync) pull(c *Client, cursor string) (*Page, error) {
 		}
 		for _, d := range s.Deny {
 			if d.is(r) {
-				why, _ := fillStr(d.Why, map[string]any{"message": r.Message, "stream": s.Name})
+				x := maps.Clone(s.Vars)
+				if x == nil {
+					x = Obj{}
+				}
+				x["message"], x["stream"] = r.Message, s.Name
+				why, _ := fillStr(d.Why, x)
 				return nil, unsupported("%s", text(why))
 			}
 		}
