@@ -809,6 +809,9 @@ func (c *Connector) compile() error {
 		sign := c.Sign
 		c.Authorize = func(r *http.Request, cl *Client) {
 			for h, t := range sign {
+				if r.Header.Get(h) != "" {
+					continue
+				}
 				v, _ := fillStr(t, cl.scope())
 				r.Header.Set(h, text(v))
 			}
@@ -2192,15 +2195,27 @@ func (c *Client) scope() map[string]any {
 	for k := range c.p.opts {
 		opts[k] = c.p.opts.Get(k)
 	}
-	return map[string]any{"client": map[string]any{"id": id, "secret": secret}, "token": c.Token(), "key": keys, "meta": meta, "option": opts}
+	sc := map[string]any{"client": map[string]any{"id": id, "secret": secret}, "token": c.Token(), "key": keys, "meta": meta, "option": opts}
+	if let := c.let.Load(); let != nil {
+		sc["let"] = *let
+	}
+	return sc
 }
 
-// api is where the connector's relative URLs go: its API, read from the account, and what its Let finds, once.
+// api is where the connector's relative URLs go: its API, read from the account, and what its Let finds, once,
+// which every template reads after as {let/...}.
 func (c *Client) api() (string, error) {
 	c.apiOnce.Do(func() {
 		sc := c.scope()
 		if _, c.apiErr = runSteps(c, c.p.Let, sc); c.apiErr == nil {
 			c.apiURL, c.apiErr = expand(c.p.API, sc)
+			let := map[string]any{}
+			for _, s := range c.p.Let {
+				if root, _, _ := strings.Cut(s.As, "/"); root != "" {
+					let[root] = sc[root]
+				}
+			}
+			c.let.Store(&let)
 		}
 	})
 	return c.apiURL, c.apiErr
@@ -2688,6 +2703,7 @@ type Codec struct {
 // MIMEWords as MIME does for keeping: its text falls back on its HTML's words and is cut at maxText, its HTML goes,
 // and it adds parties, the people of its headers, and sent, when its Date says. RFC5322 writes a message, maybe as
 // a reply to parent, a message as JSON, into raw, base64url. Base64JSON reads JSON out of base64, and Base64Text text.
+// Basic is an Authorization header of HTTP Basic, of id:secret.
 // Words is the words of HTML. GraphQLReads passes a GraphQL document that only reads, and refuses any other. Sum adds
 // a list of numbers up.
 // ToolBusy are what MCP tools say when the API behind them turned them away for now.
@@ -2712,6 +2728,7 @@ var (
 		}
 		return string(b), nil
 	}}
+	Basic        = &Codec{"basic", func(v any) (any, error) { return "Basic " + base64.StdEncoding.EncodeToString([]byte(text(v))), nil }}
 	Words        = &Codec{"words", func(v any) (any, error) { return htmlText(text(v)), nil }}
 	GraphQLReads = &Codec{"graphql_reads", graphQLReads}
 	Sum          = &Codec{"sum", func(v any) (any, error) {

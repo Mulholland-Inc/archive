@@ -1915,7 +1915,8 @@ COMMENT ON COLUMN archive.work_item.updated_at IS 'When Archive last saw it chan
 COMMENT ON COLUMN archive.work_item.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 -- Commerce: the orders and products of a store you connected, like Shopify, each order with its lines and its
--- customer as the person of their email.
+-- customer as the person of their email, and the payments, invoices and disputes of a payment service, like Square
+-- or PayPal.
 CREATE TABLE archive.commerce_product (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
     connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
@@ -2040,6 +2041,158 @@ COMMENT ON COLUMN archive.commerce_line.variant IS 'Which of the product, like L
 COMMENT ON COLUMN archive.commerce_line.price IS 'What one cost';
 COMMENT ON COLUMN archive.commerce_line.total IS 'What they cost together, less discounts';
 COMMENT ON COLUMN archive.commerce_line.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.commerce_payment (
+    id              uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection      uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream          text NOT NULL,
+    source_id       text NOT NULL,
+    access          uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    updated_at      timestamptz NOT NULL DEFAULT now(),
+    name            text NOT NULL DEFAULT '',
+    seen_at         timestamptz NOT NULL DEFAULT now(),
+    kind            text,
+    status          text,
+    amount          archive.money,
+    fee             archive.money,
+    tip             archive.money,
+    refunded        archive.money,
+    method          text,
+    customer        uuid REFERENCES archive.known_person ON DELETE SET NULL,
+    customer_name   text,
+    email           archive.email,
+    purchase        uuid REFERENCES archive.commerce_order ON DELETE SET NULL,
+    purchase_source text,
+    reference       text,
+    note            text,
+    url             archive.url,
+    paid_at         timestamptz,
+    edited_at       timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX commerce_payment_customer_idx ON archive.commerce_payment (customer);
+CREATE INDEX commerce_payment_purchase_idx ON archive.commerce_payment (purchase);
+CREATE INDEX commerce_payment_paid_at_idx ON archive.commerce_payment (paid_at);
+COMMENT ON TABLE archive.commerce_payment IS 'A payment a payment service you connected took or made, like a Square payment or a PayPal transaction. Read only; Archive syncs them
+icon: banknote';
+COMMENT ON COLUMN archive.commerce_payment.kind IS 'What it is there: payment, for Square, or PayPal''s event code, like T0006 for a checkout payment or T1107 for a refund';
+COMMENT ON COLUMN archive.commerce_payment.status IS 'Where it is, like COMPLETED, PENDING or FAILED, or PayPal''s S, P, V, D or F';
+COMMENT ON COLUMN archive.commerce_payment.amount IS 'What it came to, tip included; less than nothing for money that went out, like a refund';
+COMMENT ON COLUMN archive.commerce_payment.fee IS 'What the service charged for it';
+COMMENT ON COLUMN archive.commerce_payment.tip IS 'The tip in it';
+COMMENT ON COLUMN archive.commerce_payment.refunded IS 'What of it was refunded';
+COMMENT ON COLUMN archive.commerce_payment.method IS 'How it was paid, like CARD VISA 1234, CASH or PayPal''s instrument';
+COMMENT ON COLUMN archive.commerce_payment.customer IS 'references known_person; who paid, by their address';
+COMMENT ON COLUMN archive.commerce_payment.customer_name IS 'Who paid, by name';
+COMMENT ON COLUMN archive.commerce_payment.email IS 'The address of who paid';
+COMMENT ON COLUMN archive.commerce_payment.purchase IS 'references commerce_order; the order it paid for';
+COMMENT ON COLUMN archive.commerce_payment.purchase_source IS 'The id there of the order it paid for';
+COMMENT ON COLUMN archive.commerce_payment.reference IS 'The invoice or other number it was paid against';
+COMMENT ON COLUMN archive.commerce_payment.url IS 'Its receipt';
+COMMENT ON COLUMN archive.commerce_payment.paid_at IS 'When it was made';
+COMMENT ON COLUMN archive.commerce_payment.edited_at IS 'When it last changed there';
+COMMENT ON COLUMN archive.commerce_payment.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.commerce_payment.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.commerce_payment.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.commerce_payment.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.commerce_payment.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.commerce_invoice (
+    id              uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection      uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream          text NOT NULL,
+    source_id       text NOT NULL,
+    access          uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    updated_at      timestamptz NOT NULL DEFAULT now(),
+    name            text NOT NULL DEFAULT '',
+    seen_at         timestamptz NOT NULL DEFAULT now(),
+    number          text,
+    title           text,
+    status          text,
+    customer        uuid REFERENCES archive.known_person ON DELETE SET NULL,
+    customer_name   text,
+    email           archive.email,
+    total           archive.money,
+    paid            archive.money,
+    due             archive.money,
+    issued_on       date,
+    due_on          date,
+    purchase        uuid REFERENCES archive.commerce_order ON DELETE SET NULL,
+    purchase_source text,
+    note            text,
+    url             archive.url,
+    made_at         timestamptz,
+    edited_at       timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX commerce_invoice_customer_idx ON archive.commerce_invoice (customer);
+CREATE INDEX commerce_invoice_purchase_idx ON archive.commerce_invoice (purchase);
+CREATE INDEX commerce_invoice_due_on_idx ON archive.commerce_invoice (due_on);
+COMMENT ON TABLE archive.commerce_invoice IS 'An invoice a payment service you connected sent or keeps, like a Square or PayPal invoice. Read only; Archive syncs them
+icon: file-text';
+COMMENT ON COLUMN archive.commerce_invoice.number IS 'Its number, like INV-0042';
+COMMENT ON COLUMN archive.commerce_invoice.title IS 'What it is for';
+COMMENT ON COLUMN archive.commerce_invoice.status IS 'Where it is, like DRAFT, UNPAID, PAID or CANCELED';
+COMMENT ON COLUMN archive.commerce_invoice.customer IS 'references known_person; who it is to, by their address';
+COMMENT ON COLUMN archive.commerce_invoice.customer_name IS 'Who it is to, by name';
+COMMENT ON COLUMN archive.commerce_invoice.email IS 'The address it goes to';
+COMMENT ON COLUMN archive.commerce_invoice.total IS 'What it asks for in all';
+COMMENT ON COLUMN archive.commerce_invoice.paid IS 'What of it was paid';
+COMMENT ON COLUMN archive.commerce_invoice.due IS 'What is left to pay';
+COMMENT ON COLUMN archive.commerce_invoice.issued_on IS 'The day it is dated';
+COMMENT ON COLUMN archive.commerce_invoice.due_on IS 'When it is due';
+COMMENT ON COLUMN archive.commerce_invoice.purchase IS 'references commerce_order; the order it bills';
+COMMENT ON COLUMN archive.commerce_invoice.purchase_source IS 'The id there of the order it bills';
+COMMENT ON COLUMN archive.commerce_invoice.note IS 'What it says to the customer';
+COMMENT ON COLUMN archive.commerce_invoice.url IS 'Where the customer sees and pays it';
+COMMENT ON COLUMN archive.commerce_invoice.made_at IS 'When it was made there';
+COMMENT ON COLUMN archive.commerce_invoice.edited_at IS 'When it last changed there';
+COMMENT ON COLUMN archive.commerce_invoice.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.commerce_invoice.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.commerce_invoice.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.commerce_invoice.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.commerce_invoice.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.commerce_dispute (
+    id             uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream         text NOT NULL,
+    source_id      text NOT NULL,
+    access         uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    updated_at     timestamptz NOT NULL DEFAULT now(),
+    name           text NOT NULL DEFAULT '',
+    seen_at        timestamptz NOT NULL DEFAULT now(),
+    reason         text,
+    status         text,
+    stage          text,
+    amount         archive.money,
+    payment        uuid REFERENCES archive.commerce_payment ON DELETE SET NULL,
+    payment_source text,
+    respond_by     timestamptz,
+    made_at        timestamptz,
+    edited_at      timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX commerce_dispute_payment_idx ON archive.commerce_dispute (payment);
+COMMENT ON TABLE archive.commerce_dispute IS 'A dispute or chargeback a buyer opened over a payment of a payment service you connected, like Square or PayPal. Read only; Archive syncs them
+icon: shield-alert';
+COMMENT ON COLUMN archive.commerce_dispute.reason IS 'Why the buyer disputes it, like NOT_AS_DESCRIBED or UNAUTHORIZED';
+COMMENT ON COLUMN archive.commerce_dispute.status IS 'Where it is, like EVIDENCE_REQUIRED, WAITING_FOR_SELLER_RESPONSE, WON or RESOLVED';
+COMMENT ON COLUMN archive.commerce_dispute.stage IS 'How far it went, like INQUIRY or CHARGEBACK';
+COMMENT ON COLUMN archive.commerce_dispute.amount IS 'What is disputed';
+COMMENT ON COLUMN archive.commerce_dispute.payment IS 'references commerce_payment; the payment disputed';
+COMMENT ON COLUMN archive.commerce_dispute.payment_source IS 'The id there of the payment disputed';
+COMMENT ON COLUMN archive.commerce_dispute.respond_by IS 'When the seller has to answer by';
+COMMENT ON COLUMN archive.commerce_dispute.made_at IS 'When it was opened';
+COMMENT ON COLUMN archive.commerce_dispute.edited_at IS 'When it last changed there';
+COMMENT ON COLUMN archive.commerce_dispute.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.commerce_dispute.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.commerce_dispute.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.commerce_dispute.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.commerce_dispute.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.ad_metric (
     id              uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -2704,6 +2857,9 @@ BEGIN
         WHEN 'commerce_product' THEN r->>'title'
         WHEN 'commerce_order' THEN concat_ws(' · ', coalesce(nullif(r->>'number', ''), 'Order'), nullif(r->>'customer_name', ''))
         WHEN 'commerce_line' THEN concat_ws(' · ', nullif(r->>'title', ''), nullif(r->>'variant', ''))
+        WHEN 'commerce_payment' THEN concat_ws(' · ', coalesce(nullif(r->>'customer_name', ''), nullif(r->>'email', ''), 'Payment'), left(r->>'paid_at', 10))
+        WHEN 'commerce_invoice' THEN concat_ws(' · ', coalesce(nullif(r->>'number', ''), 'Invoice'), coalesce(nullif(r->>'customer_name', ''), r->>'email'))
+        WHEN 'commerce_dispute' THEN concat_ws(' · ', 'Dispute', nullif(r->>'reason', ''), left(r->>'made_at', 10))
         WHEN 'marketing_campaign' THEN r->>'title'
         WHEN 'chat_message' THEN coalesce(nullif(left(btrim(r->>'text'), 120), ''), r->>'sender_name')
         WHEN 'crm_company' THEN coalesce(nullif(btrim(r->>'title'), ''), r->>'domain')
@@ -2767,6 +2923,9 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.work_item FOR EACH
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.commerce_product FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.commerce_order FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.commerce_line FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.commerce_payment FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.commerce_invoice FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.commerce_dispute FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.marketing_campaign FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.chat_message FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.crm_company FOR EACH ROW EXECUTE FUNCTION archive.object_name();
@@ -2870,6 +3029,9 @@ GRANT SELECT ON archive.work_item TO "{p}_viewer";
 GRANT SELECT ON archive.commerce_product TO "{p}_viewer";
 GRANT SELECT ON archive.commerce_order TO "{p}_viewer";
 GRANT SELECT ON archive.commerce_line TO "{p}_viewer";
+GRANT SELECT ON archive.commerce_payment TO "{p}_viewer";
+GRANT SELECT ON archive.commerce_invoice TO "{p}_viewer";
+GRANT SELECT ON archive.commerce_dispute TO "{p}_viewer";
 GRANT SELECT ON archive.marketing_campaign TO "{p}_viewer";
 GRANT SELECT ON archive.chat_message TO "{p}_viewer";
 GRANT SELECT ON archive.crm_company TO "{p}_viewer";
@@ -2989,6 +3151,12 @@ ALTER TABLE archive.commerce_order ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.commerce_order FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = commerce_order.connection));
 ALTER TABLE archive.commerce_line ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.commerce_line FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = commerce_line.connection));
+ALTER TABLE archive.commerce_payment ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.commerce_payment FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = commerce_payment.connection));
+ALTER TABLE archive.commerce_invoice ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.commerce_invoice FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = commerce_invoice.connection));
+ALTER TABLE archive.commerce_dispute ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.commerce_dispute FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = commerce_dispute.connection));
 ALTER TABLE archive.marketing_campaign ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.marketing_campaign FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = marketing_campaign.connection));
 ALTER TABLE archive.chat_message ENABLE ROW LEVEL SECURITY;
@@ -3025,6 +3193,8 @@ CREATE POLICY seen ON archive.known_person FOR SELECT USING (EXISTS (SELECT FROM
     OR EXISTS (SELECT FROM archive.chat_message x WHERE x.sender = known_person.id)
     OR EXISTS (SELECT FROM archive.work_item x WHERE x.assignee = known_person.id)
     OR EXISTS (SELECT FROM archive.commerce_order x WHERE x.customer = known_person.id)
+    OR EXISTS (SELECT FROM archive.commerce_payment x WHERE x.customer = known_person.id)
+    OR EXISTS (SELECT FROM archive.commerce_invoice x WHERE x.customer = known_person.id)
     OR EXISTS (SELECT FROM archive.dental_patient x WHERE x.person = known_person.id));
 ALTER TABLE archive.known_org ENABLE ROW LEVEL SECURITY;
 CREATE POLICY seen ON archive.known_org FOR SELECT USING (EXISTS (SELECT FROM archive.payroll_company c WHERE c.org = known_org.id)
@@ -3247,6 +3417,7 @@ SELECT jsonb_build_object(
             'archive.calendar_attendee'::regclass, 'archive.crm_company'::regclass, 'archive.crm_contact'::regclass, 'archive.crm_deal'::regclass,
             'archive.chat_message'::regclass, 'archive.marketing_campaign'::regclass, 'archive.work_item'::regclass,
             'archive.commerce_product'::regclass, 'archive.commerce_order'::regclass, 'archive.commerce_line'::regclass,
+            'archive.commerce_payment'::regclass, 'archive.commerce_invoice'::regclass, 'archive.commerce_dispute'::regclass,
             'archive.ad_metric'::regclass, 'archive.dental_provider'::regclass, 'archive.dental_patient'::regclass,
             'archive.dental_appointment'::regclass, 'archive.dental_procedure'::regclass, 'archive.dental_payment'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
@@ -3362,6 +3533,9 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.work_item x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.commerce_product x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.commerce_order x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.commerce_payment x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.commerce_invoice x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.commerce_dispute x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.ad_metric x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.dental_provider x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.dental_patient x WHERE x.connection = c.id)
@@ -3459,6 +3633,8 @@ WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM arch
     AND NOT EXISTS (SELECT FROM archive.chat_message x WHERE x.sender = k.id)
     AND NOT EXISTS (SELECT FROM archive.work_item x WHERE x.assignee = k.id)
     AND NOT EXISTS (SELECT FROM archive.commerce_order x WHERE x.customer = k.id)
+    AND NOT EXISTS (SELECT FROM archive.commerce_payment x WHERE x.customer = k.id)
+    AND NOT EXISTS (SELECT FROM archive.commerce_invoice x WHERE x.customer = k.id)
     AND NOT EXISTS (SELECT FROM archive.dental_patient x WHERE x.person = k.id))
 DELETE FROM archive.known_org o WHERE NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.org = o.id)
     AND NOT EXISTS (SELECT FROM archive.crm_company x WHERE x.org = o.id);
