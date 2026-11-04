@@ -38,9 +38,9 @@
 
 <SettingsDialog bind:open={s.open} bind:section={s.section} {items} {trail} onselect={() => (s.sub = null)}>
   {#if connector}
-    <SettingsPane onback={() => (s.sub = null)}><ConnectorDetail {connector} /></SettingsPane>
+    <ConnectorDetail {connector} onback={() => (s.sub = null)} />
   {:else if integration}
-    <SettingsPane onback={() => (s.sub = null)}><IntegrationDetail {integration} /></SettingsPane>
+    <IntegrationDetail {integration} onback={() => (s.sub = null)} />
   {:else if current === 'connectors'}
     <ConnectorSettings onopen={(id) => (s.sub = id)} onback={back} backNarrow />
   {:else if current === 'integrations'}
