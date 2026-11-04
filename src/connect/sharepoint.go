@@ -7,16 +7,16 @@ import (
 )
 
 // SharePoint: the document libraries of the SharePoint sites a Microsoft 365 work or school account can reach,
-// and its own OneDrive, which is one of them, read only through Microsoft Graph. It reads ARCHIVE_OUTLOOK, the
+// and its own OneDrive, which is one of them, through Microsoft Graph. It reads ARCHIVE_OUTLOOK, the
 // app registration in Microsoft Entra that Outlook connects with, like Gmail and Google Drive share
 // ARCHIVE_GOOGLE: its web redirect URIs list <API>/connect/sharepoint/callback too, and its delegated Graph
-// permissions add Files.Read.All and Sites.Read.All, which a tenant may ask an admin to consent to. Personal
+// permissions add Files.ReadWrite.All, for upload, and Sites.Read.All, which a tenant may ask an admin to consent to. Personal
 // Microsoft accounts have no SharePoint, so it signs in through the organizations endpoint. Microsoft replaces
 // the refresh token on every refresh, and has no endpoint that revokes one grant: a person removes Archive at
 // myapps.microsoft.com.
 //
-// It syncs every file and folder of every library into drive_file, each library with Graph's delta of it, as
-// Outlook syncs each folder, with the words of each PDF, Word, Excel, PowerPoint or text file up to 25 MB.
+// It syncs every file and folder of every library into archive.file, each library with Graph's delta of it, as
+// Outlook syncs each folder.
 //
 // Graph pushes a library's changes only to a subscription of each library: to the top of it, which tells of a change
 // anywhere in it, with a clientState of Archive's own, for 42,000 minutes, under the 42,300 Graph allows a drive's: the
@@ -26,12 +26,12 @@ import (
 func init() {
 	Register(&Connector{
 		ID: "sharepoint", Name: "SharePoint", Env: "ARCHIVE_OUTLOOK",
-		Info: Info{By: "Microsoft", Description: "Search and read the files of your SharePoint sites and OneDrive, never change them", Category: CatFiles, Icon: IconDrive,
-			Scopes: []string{"Read files in every site and library you can read"}},
+		Info: Info{By: "Microsoft", Description: "Search and read the files of your SharePoint sites and OneDrive, and send files there when you ask", Category: CatFiles, Icon: IconDrive,
+			Scopes: []string{"Read files in every site and library you can read", "Add and replace files there when you ask"}},
 		API: "https://graph.microsoft.com/v1.0",
 		Endpoint: oauth2.Endpoint{AuthURL: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize",
 			TokenURL: "https://login.microsoftonline.com/organizations/oauth2/v2.0/token", AuthStyle: oauth2.AuthStyleInParams},
-		Scopes: []string{"offline_access", "User.Read", "Files.Read.All", "Sites.Read.All"},
+		Scopes: []string{"offline_access", "User.Read", "Files.ReadWrite.All", "Sites.Read.All"},
 		Params: map[string]string{"prompt": "select_account"},
 		Who:    &Who{Req: Req{URL: "/me?$select=mail,userPrincipalName"}, Names: []Path{"mail", "userPrincipalName"}, Lower: true},
 		Actions: map[string]*Action{
@@ -63,14 +63,24 @@ func init() {
 					{Unless: "id", Req: Req{URL: "/drives/{drive}/root/children"}, Page: spPage, Items: "value"},
 				},
 			}),
-			"file": Call[spOne, map[string]any](Plan{
-				Doc: "One file's details, and its words when it is a PDF, Word, Excel, PowerPoint or text file up to 25 MB: { id, name, webUrl, size, file, parentReference, createdBy, " +
-					"lastModifiedBy, lastModifiedDateTime, text }",
-				Steps: []Step{
-					{As: "f", Req: Req{URL: "/drives/{drive}/items/{id}"}},
-					{If: "f/file", As: "f/text", Words: &Download{Req: Req{URL: "/drives/{drive}/items/{id}/content"}, Name: "{f/name}", Mime: "{f/file/mimeType}", Size: "f/size"}},
+			"upload": Upload(Send{
+				Doc: "Send a file of the file table to SharePoint or OneDrive, as a new file or a new version of one, in the time a run has; without a folder it goes in the top of your OneDrive: " +
+					"{ id, name, webUrl, size, file, parentReference }",
+				New:  Req{Method: POST, URL: "/me/drive/root:/{name}:/createUploadSession", Body: spUpBody},
+				In:   &Req{Method: POST, URL: "/drives/{in/drive}/items/{in/item}:/{name}:/createUploadSession", Body: spUpBody},
+				Over: Req{Method: POST, URL: "/drives/{it/drive}/items/{it/item}/createUploadSession", Header: map[string][]string{"If-Match": {"{version}"}}, Body: Obj{"item": Obj{"name": "{rename}"}}},
+				At:   "uploadUrl",
+				Part: Req{Method: PUT, Header: map[string][]string{"Content-Range": {"{range}"}}},
+				Step: 32 * 320 << 10,
+				Bare: true,
+				Stale: []Deny{
+					{Status: []int{412}, Why: "{name} changed there since Archive last synced it, so it was not replaced: look at the newer version once it syncs, and upload again if yours should still replace it"},
+					{Status: []int{409}, Why: "there is a {name} there already: pass replace with its source_id to replace it, or name to give yours another name"},
 				},
-				Out: "{f}",
+			}),
+			"file": Call[spOne, map[string]any](Plan{
+				Doc:   "One file's details: { id, name, webUrl, size, file, parentReference, createdBy, lastModifiedBy, lastModifiedDateTime }; its words are in the file table",
+				Steps: []Step{{Req: Req{URL: "/drives/{drive}/items/{id}"}}},
 			}),
 		},
 		Listen: &Listen{Renew: 27 * 24 * time.Hour, Until: 42000 * time.Minute, Secret: true, Lax: true, Over: spLibraries,
@@ -83,29 +93,31 @@ func init() {
 			Kept:    &Kept{Each: "value", ID: "subscriptionId", Token: "clientState"},
 		},
 		Sync: []*Sync{{Name: "files", Gap: time.Second, Parts: spLibraries,
-			Req:   Req{URL: "/drives/{part}/root/delta?$select=id,name,size,webUrl,file,folder,root,parentReference,createdDateTime,lastModifiedDateTime,createdBy,lastModifiedBy,deleted"},
+			Req:   Req{URL: "/drives/{part}/root/delta?$select=id,name,size,eTag,cTag,webUrl,file,folder,root,parentReference,createdDateTime,lastModifiedDateTime,createdBy,lastModifiedBy,deleted"},
 			Items: "value", Key: []Reads{{Of: "{part}/{id}"}}, Updated: "lastModifiedDateTime", Page: spPage, Pass: []int{403, 404},
 			Change: Resume{At: "@odata.deltaLink", Expired: []int{410}, Stale: []Deny{{Status: []int{400}, Says: []string{"SyncState", "resyncRequired", "sync state"}}}},
 			// A library's top is left out.
 			Gone: []Test{{At: "deleted"}, {At: "@removed"}}, Skip: []Test{{At: "root"}},
 			Set:     Obj{"drive": "{in/name}", "driveId": "{part}"},
-			Hydrate: []Hydrate{Download{If: Test{At: "file"}, Req: Req{URL: "/drives/{driveId}/items/{id}/content"}, Name: "{name}", Mime: "{file/mimeType}", Size: "size", As: "text", Par: 4}},
-			Doc: "Every file and folder of your OneDrive and of each document library of each SharePoint site you can reach: its name, type, size, " +
-				"folder, library, who made it and changed it last and when, and the words of a PDF, Word, Excel, PowerPoint or text " +
-				"file up to 25 MB, cut at 64 KB; other content stays in SharePoint. Listed whole the first time, a library at a time, by <library id>/<item id>, and then each " +
+			Content: []Content{{Req: Req{URL: "/drives/{source/drive}/items/{source/item}/content"}, Size: "size"}},
+			Doc: "Every file and folder of your OneDrive and of each document library of each SharePoint site you can reach: its name, type, " +
+				"folder, library, who made it and changed it last and when, and a copy of its bytes up to 1 GB, with its words. Listed whole the first time, a library at a time, by <library id>/<item id>, and then each " +
 				"library's delta since. A library made since is listed whole; one gone, or a delta Graph no longer keeps, lists them all again.",
 			// An item's folder is its parent, which links unless it is the library's top, which is no row; and its owner who made it.
-			To: Map{Table: "drive_file",
-				Cols: map[string]SQL{"kind": "CASE WHEN data->'folder' IS NOT NULL THEN 'folder' ELSE 'file' END", "title": "data->>'name'", "mime": "data#>>'{file,mimeType}'", "size": "archive.sync_num(data->>'size')",
-					"url": "data->>'webUrl'", "drive": "data->>'drive'", "owner_name": "data#>>'{createdBy,user,displayName}'", "editor_name": "data#>>'{lastModifiedBy,user,displayName}'",
-					"made_at": "archive.sync_at(data->>'createdDateTime')", "edited_at": "archive.sync_at(data->>'lastModifiedDateTime')", "text": "data->>'text'"},
+			To: Map{Table: "file",
+				Cols: map[string]SQL{"kind": "CASE WHEN data->'folder' IS NOT NULL THEN 'folder' ELSE 'file' END", "name": "data->>'name'",
+					"mime": "CASE WHEN data->'folder' IS NOT NULL THEN 'inode/directory' ELSE coalesce(data#>>'{file,mimeType}', 'application/octet-stream') END", "version": "coalesce(data->>'cTag', data->>'eTag')",
+					"source": "jsonb_build_object('drive', data->>'driveId', 'item', data->>'id', 'size', data->>'size')",
+					"url":    "data->>'webUrl'", "drive": "data->>'drive'", "owner_name": "data#>>'{createdBy,user,displayName}'", "editor_name": "data#>>'{lastModifiedBy,user,displayName}'",
+					"made_at": "archive.sync_at(data->>'createdDateTime')", "edited_at": "archive.sync_at(data->>'lastModifiedDateTime')"},
 				People: map[string]SQL{"owner": "data#>>'{createdBy,user,email}'", "editor": "data#>>'{lastModifiedBy,user,email}'"},
-				Refs:   map[string]SQL{"folder": "coalesce(nullif(data#>>'{parentReference,driveId}', ''), data->>'driveId') || '/' || nullif(data#>>'{parentReference,id}', '')"}}}},
+				Refs:   map[string]SQL{"parent": "coalesce(nullif(data#>>'{parentReference,driveId}', ''), data->>'driveId') || '/' || nullif(data#>>'{parentReference,id}', '')"}}}},
 	})
 }
 
 var (
-	spPage = NextURL{At: "@odata.nextLink"}
+	spPage   = NextURL{At: "@odata.nextLink"}
+	spUpBody = Obj{"item": Obj{"@microsoft.graph.conflictBehavior": "fail"}}
 	// spLibraries are the account's OneDrive, when it has one, and the libraries of the sites it reaches, each once,
 	// named by its site and itself, like Finance / Documents. A site Graph will not list the libraries of, as it answers
 	// 403 for some system sites, is left out.

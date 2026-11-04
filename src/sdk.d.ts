@@ -252,7 +252,7 @@
  *   when it is one of those.
  * - Archive also keeps a copy of what these accounts have, synced when the service says something changed or
  *   when you read them after 5 minutes without a sync, as rows of the tables of their domain: mail_message,
- *   mail_party and mail_attachment, calendar_event and calendar_attendee, chat_message, doc_page, drive_file,
+ *   mail_party and mail_attachment, calendar_event and calendar_attendee, chat_message, doc_page, file,
  *   marketing_campaign, ad_metric, work_item, code_project, compliance, the bank_, commerce_, crm_, dental_, ledger_, payroll_, spend_ and warehouse_ tables, with
  *   the people and organizations they name in known_person and known_org. Each row has its connection, its
  *   stream (like messages) and its source_id there, and updated_at when it last changed; Streams, after
@@ -260,6 +260,10 @@
  *   integration's everyone sees, or its group when an owner narrowed it (its access column). Read them like any table, without calling the service:
  *     await archive.query("SELECT m.subject, k.email FROM mail_message m JOIN mail_party p ON p.message = m.id JOIN known_person k ON k.id = p.person WHERE p.role = 'from' ORDER BY m.sent_at DESC LIMIT 20");
  *   The connection table's synced_at says when one last caught up; disconnecting deletes what it synced.
+ * - A file a connection synced, like a Drive file, is a row of file with a copy of its bytes up to 1 GB, in the tree of its
+ *   parent column: read it with archive.file and archive.read like your own, archive.copy it to change it here, or send one
+ *   of yours there with its connector's upload, as archive.action("gdrive.upload", { file, folder, replace }), by the
+ *   source_id of the folder or file. That must fit in the 30 seconds a run has.
  */
 declare const archive: {
     /** Read with one SQL statement as you, with $1, $2, ... bound to params; returns its rows, or [] when it has none. Writes and DDL throw forbidden. */
@@ -274,7 +278,7 @@ declare const archive: {
     create(name: `${string}.${"docx" | "xlsx" | "pptx"}`, opts?: { access?: string }): Promise<StoredFile>;
     /** Change the given fields, null clears one, and return the row. */
     update<T extends keyof Tables>(table: T, id: string, patch: Partial<Tables[T]>): Promise<Tables[T]>;
-    /** Delete a row. */
+    /** Delete a row, or with "file" a file or empty folder of yours; what a connection synced goes when it goes there. */
     delete(table: keyof Tables, id: string): Promise<void>;
     /** Full-text search over every table and file you can see, best first; words match by prefix, ignoring case and accents. */
     search(text: string, opts?: { type?: keyof Tables | "file"; from?: string; to?: string; limit?: number }): Promise<Hit[]>;
@@ -286,13 +290,21 @@ declare const archive: {
     migrate(sql: string, opts?: { confirm?: string }): Promise<Migration>;
     /** Migrations saved before this run, newest first. */
     revisions(opts?: { limit?: number }): Promise<Revision[]>;
-    /** Files you can see, oldest first, with their extracted text; page with after = the last id. */
+    /** Files and folders you can see, yours and what your connections synced, oldest first, with their extracted text; page with after = the last id. */
     files(opts?: { limit?: number; after?: string }): Promise<StoredFile[]>;
     /** One file with its extracted text. */
     file(id: string): Promise<StoredFile>;
+    /** A file of yours, to change with archive.edit, from any file you can read: the same bytes and words. A file of your personal connection needs opts.access, a group's name or "" for everyone, as nothing else says who sees the copy. */
+    copy(id: string, opts?: { name?: string; access?: string }): Promise<StoredFile>;
+    /** Make a folder of yours, in opts.parent or at the top, that opts.access, a group's name, sees; everyone when left out. */
+    folder(name: string, opts?: { parent?: string; access?: string }): Promise<StoredFile>;
+    /** Put a file or folder of yours in the folder with this id, or at the top with null. */
+    move(id: string, folder: string | null): Promise<StoredFile>;
+    /** How many bytes this archive's files hold, the same bytes counted once. */
+    stored(): Promise<number>;
     /** The structure of a docx, xlsx or pptx file: paragraphs with ids, cells, slides and shapes (see Documents). */
     read(fileId: string): Promise<Model>;
-    /** Apply edits to a docx, xlsx or pptx file and save it as the file's new content; all or nothing (see Documents). */
+    /** Apply edits to a docx, xlsx or pptx file of yours and save it as the file's new content; all or nothing (see Documents). What a connection synced is read only: archive.copy it first. */
     edit(fileId: string, edits: Edit[]): Promise<StoredFile>;
     /** Run your saved workflow name now, for real, inside this run, and record it in workflow_run (see Workflows in the header). */
     run(name: string, input?: unknown): Promise<RunResult>;
@@ -461,9 +473,21 @@ interface StoredFile {
     sha256: string;
     /** Extracted metadata: pages, dimensions, mail headers, ... */
     metadata: Row;
-    /** pending, done or error; text is ready when done. */
+    /** pending, done, skipped (Archive does not copy it, as error says) or error; text is ready when done. */
     status: string;
     error?: string;
+    /** file or folder. */
+    kind: string;
+    /** The id of the folder it is in, null at the top. */
+    parent: string | null;
+    /** The connection it is synced from, null for one of yours; a connection's is read only. */
+    connection: string | null;
+    /** Its id there, for a connector's upload { folder, replace }. */
+    source_id?: string;
+    /** The token there of its content. */
+    version?: string;
+    /** Where it opens there. */
+    url?: string;
     /** The id of the group that sees the file, null for the whole workspace. */
     access: string | null;
     created_at: string;

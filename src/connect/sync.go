@@ -1,6 +1,8 @@
 package connect
 
 import (
+	"cmp"
+	"context"
 	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/rand"
@@ -13,10 +15,12 @@ import (
 	"net/mail"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -48,6 +52,18 @@ type Stream struct {
 	// Table is the table of archive.sql its records land in, SQL the query of the rows of a page's records, as Map has it
 	// (def.go), and Version the hash of the definition its rows come from.
 	Table, SQL, Version string
+	// Read opens the bytes of the file its row's source says, nil for a stream of no files: an *Unsupported error is a
+	// file that will not be copied, and says why.
+	Read func(c *Client, source map[string]any) (*Bytes, error)
+}
+
+// MaxCopy is the largest file Archive keeps a copy of.
+const MaxCopy = 1 << 30
+
+// Bytes is a file's content as it comes: Size is how much, -1 when the provider does not say.
+type Bytes struct {
+	Body io.ReadCloser
+	Size int64
 }
 
 // Page is what one pull found.
@@ -225,6 +241,287 @@ func (c *Client) fileText(u, name, mime string, size int64) (string, error) {
 		return "", nil
 	}
 	return bytesText(name, mime, b), nil
+}
+
+// opened sends r, its templates read from sc, and is its answer as it comes, with no limit but ctx on how long that
+// takes. body is what it sends, n bytes, if not r's Body; bare sends it without the account's sign-in.
+func (c *Client) opened(ctx context.Context, r Req, sc map[string]any, body io.Reader, n int64, bare bool) (*http.Response, error) {
+	u, err := c.urlOf(r.URL, sc)
+	if err != nil {
+		return nil, err
+	}
+	return c.send(ctx, r, u, sc, body, n, bare)
+}
+
+func (c *Client) send(ctx context.Context, r Req, u string, sc map[string]any, body io.Reader, n int64, bare bool) (*http.Response, error) {
+	if q := values(r.Query, sc); len(q) > 0 {
+		u += sepOf(u) + q.Encode()
+	}
+	var v any
+	if body == nil && r.Body != nil {
+		v, _ = fill(r.Body, sc)
+	}
+	req, err := request(ctx, string(cmp.Or(r.Method, GET)), c.p.at(u), v)
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		req.Body, req.ContentLength = io.NopCloser(body), n
+	}
+	req.Header.Set("Accept", "*/*")
+	for h, vs := range r.headers(sc) {
+		req.Header[h] = vs
+	}
+	hc := http.Client{}
+	if !bare {
+		hc.Transport = c.http.Transport
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, unreached{fmt.Errorf("%s could not be reached: %w", c.p.Name, err)}
+	}
+	return resp, nil
+}
+
+// bytesOf opens the bytes of the file source says.
+func (s *Sync) bytesOf(c *Client, source map[string]any) (*Bytes, error) {
+	for _, k := range s.Content {
+		if k.If.At != "" && !k.If.holds(source) {
+			continue
+		}
+		if n, _ := strconv.ParseInt(text(pick(source, k.Size)), 10, 64); n > MaxCopy {
+			return nil, unsupported("it is over the %d GB Archive copies", MaxCopy>>30)
+		}
+		resp, err := c.opened(c.ctx, k.Req, map[string]any{"source": source}, nil, 0, false)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode/100 != 2 {
+			defer resp.Body.Close()
+			r := refusal(c.p, resp)
+			for _, d := range k.Too {
+				if d.is(r) {
+					why, _ := fillStr(d.Why, map[string]any{"message": r.Message})
+					return nil, unsupported("%s", text(why))
+				}
+			}
+			return nil, r
+		}
+		if resp.ContentLength > MaxCopy {
+			resp.Body.Close()
+			return nil, unsupported("it is over the %d GB Archive copies", MaxCopy>>30)
+		}
+		return &Bytes{Body: resp.Body, Size: resp.ContentLength}, nil
+	}
+	return nil, unsupported("%s has no bytes of it to copy", c.p.Name)
+}
+
+// jsonASCII is JSON b with what is not ASCII escaped, as a header takes it.
+func jsonASCII(b []byte) string {
+	var out strings.Builder
+	for _, r := range string(b) {
+		switch {
+		case r < 0x7f:
+			out.WriteRune(r)
+		case r < 0x10000:
+			fmt.Fprintf(&out, "\\u%04x", r)
+		default:
+			r -= 0x10000
+			fmt.Fprintf(&out, "\\u%04x\\u%04x", 0xd800+(r>>10), 0xdc00+(r&0x3ff))
+		}
+	}
+	return out.String()
+}
+
+// Yours is the caller's files, read as the caller.
+type Yours interface {
+	// Open is the bytes of the file with id, which the caller can read.
+	Open(id string) (*Upfile, error)
+	// Row is what this connection synced under source id there.
+	Row(source string) (*Synced, error)
+	// Until is when the run ends, which no context says.
+	Until() time.Time
+}
+
+// Upfile is a file to send up.
+type Upfile struct {
+	Name, Mime string
+	Size       int64
+	Body       io.ReadSeekCloser
+}
+
+// Synced is a row a connection synced: a file or a folder, the version there Archive last saw, and its source column.
+type Synced struct {
+	Kind, Version string
+	Source        map[string]any
+}
+
+type upInput struct {
+	File    string `json:"file" jsonschema:"The id in the file table of the file to send"`
+	Folder  string `json:"folder,omitempty" jsonschema:"The source_id in the file table of the folder it goes in; the top when left out"`
+	Name    string `json:"name,omitempty" jsonschema:"Its name there; the file's own when left out"`
+	Replace string `json:"replace,omitempty" jsonschema:"The source_id in the file table of the file it replaces, which it refuses to do if that file changed there since Archive last synced it"`
+}
+
+// Upload is the action of a Send. It returns what the provider says of the file.
+func Upload(s Send) *Action {
+	in, err := jsonschema.For[upInput](nil)
+	if err != nil {
+		panic(err)
+	}
+	return &Action{Doc: s.Doc, Input: in, Output: map[string]any{}, Writes: true, Asks: true,
+		Do: func(c *Client, raw json.RawMessage) (any, error) { return s.run(c, raw) }}
+}
+
+// stale is a refusal to write over what is not the file expected.
+func (s *Send) stale(c *Client, r *Refusal, sc map[string]any) error {
+	for _, d := range s.Stale {
+		if d.is(r) {
+			why, _ := fillStr(d.Why, map[string]any{"message": r.Message, "name": sc["name"]})
+			return &Refusal{Provider: c.p.Name, Status: http.StatusConflict, Message: text(why)}
+		}
+	}
+	if r.Status == http.StatusForbidden {
+		r.Message = strings.TrimSpace(r.Message + " If it was connected before Archive could write there, connect it again in Settings, Connectors, to allow that.")
+	}
+	return r
+}
+
+func (s *Send) run(c *Client, raw json.RawMessage) (any, error) {
+	var in upInput
+	if err := json.Unmarshal(raw, &in); err != nil {
+		return nil, err
+	}
+	up, err := c.Files.Open(in.File)
+	if err != nil {
+		return nil, err
+	}
+	defer up.Body.Close()
+	if up.Size == 0 {
+		return nil, fmt.Errorf("%s is empty, and %s takes no upload without bytes", up.Name, c.p.Name)
+	}
+	// It ends before the run does, so what is said of it reaches the script.
+	ctx, cancel := context.WithDeadline(c.ctx, c.Files.Until().Add(-2*time.Second))
+	defer cancel()
+	sc := map[string]any{"name": cmp.Or(in.Name, up.Name), "mime": up.Mime, "size": int(up.Size)}
+	if in.Name != "" {
+		sc["rename"] = in.Name
+	}
+	open := s.New
+	if in.Folder != "" {
+		row, err := c.Files.Row(in.Folder)
+		if err != nil {
+			return nil, err
+		}
+		if row.Kind != "folder" {
+			return nil, fmt.Errorf("folder %s is a %s here, not a folder", in.Folder, row.Kind)
+		}
+		sc["in"] = row.Source
+		if s.In != nil {
+			open = *s.In
+		}
+	}
+	if in.Replace != "" {
+		row, err := c.Files.Row(in.Replace)
+		if err != nil {
+			return nil, err
+		}
+		if row.Kind != "file" || row.Version == "" {
+			return nil, fmt.Errorf("replace %s is no file Archive has a version of; wait for a sync and look again", in.Replace)
+		}
+		sc["it"], sc["version"], open = row.Source, row.Version, s.Over
+		if s.Check != nil {
+			ans, err := c.req(*s.Check, sc)
+			if err != nil {
+				return nil, err
+			}
+			now, _ := fillStr(s.Now, map[string]any{"ans": ans})
+			if text(now) != row.Version {
+				return nil, &Refusal{Provider: c.p.Name, Status: http.StatusConflict, Message: fmt.Sprintf(
+					"%s changed there since Archive last synced it, so it was not replaced: look at the newer version once it syncs, and upload again if yours should still replace it", sc["name"])}
+			}
+		}
+	}
+	if _, err := runSteps(c, s.Let, sc); err != nil {
+		return nil, err
+	}
+	resp, err := c.opened(ctx, open, sc, nil, 0, false)
+	if err != nil {
+		return nil, s.late(err, 0, up)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return nil, s.stale(c, refusal(c.p, resp), sc)
+	}
+	var session string
+	if s.AtHeader != "" {
+		session = resp.Header.Get(s.AtHeader)
+	} else {
+		b, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
+		if err != nil {
+			return nil, err
+		}
+		ans, err := readAll(b, c.p.Name)
+		if err != nil {
+			return nil, err
+		}
+		session = text(pick(ans, s.At))
+	}
+	if session == "" {
+		return nil, fmt.Errorf("%s opened no upload", c.p.Name)
+	}
+	sc["session"] = session
+	var out any
+	for off := int64(0); off < up.Size; {
+		n := min(s.Step, up.Size-off)
+		last := off+n == up.Size
+		if _, err := up.Body.Seek(off, io.SeekStart); err != nil {
+			return nil, err
+		}
+		sc["offset"], sc["length"], sc["range"] = int(off), int(n), fmt.Sprintf("bytes %d-%d/%d", off, off+n-1, up.Size)
+		r := s.Part
+		if last && s.Last != nil {
+			r = *s.Last
+		}
+		var resp *http.Response
+		if r.URL == "" {
+			resp, err = c.send(ctx, r, session, sc, io.LimitReader(up.Body, n), n, s.Bare)
+		} else {
+			resp, err = c.opened(ctx, r, sc, io.LimitReader(up.Body, n), n, s.Bare)
+		}
+		if err != nil {
+			return nil, s.late(err, off, up)
+		}
+		if resp.StatusCode/100 != 2 && resp.StatusCode != http.StatusPermanentRedirect {
+			defer resp.Body.Close()
+			return nil, s.stale(c, refusal(c.p, resp), sc)
+		}
+		if last {
+			b, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
+			if err == nil && len(b) > 0 {
+				out, err = readAll(b, c.p.Name)
+			}
+			if err != nil {
+				resp.Body.Close()
+				return nil, err
+			}
+		}
+		resp.Body.Close()
+		off += n
+	}
+	return out, nil
+}
+
+// late is err, one that ended an upload with sent bytes of up sent, in words a script can act on when it is the run's
+// time that ran out.
+func (s *Send) late(err error, sent int64, up *Upfile) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("the run's time ran out with %d of %s's %d bytes sent, and nothing changed there: a run has 30 seconds, so send a smaller file", sent, up.Name, up.Size)
+	}
+	return err
 }
 
 // tool is the MCP server's tool name, from its list, which the Client keeps; a server without it makes the

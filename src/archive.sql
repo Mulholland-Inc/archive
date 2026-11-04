@@ -169,24 +169,6 @@ CREATE FUNCTION archive.search_query(q text) RETURNS tsquery LANGUAGE sql IMMUTA
     SELECT array_to_string(array(SELECT quote_literal(l) || ':*' FROM unnest(to_tsvector('simple', archive.search_fold(q))) u(l)), ' | ')::tsquery
 $$;
 
-CREATE TABLE archive.file (
-    id         uuid PRIMARY KEY DEFAULT uuidv7(),
-    hash       text NOT NULL,
-    name       text NOT NULL,
-    mime       text NOT NULL,
-    size       bigint NOT NULL,
-    metadata   jsonb NOT NULL DEFAULT '{}',
-    text       text NOT NULL DEFAULT '',
-    status     text NOT NULL DEFAULT 'pending',
-    error      text NOT NULL DEFAULT '',
-    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    search     tsvector GENERATED ALWAYS AS (setweight(archive.search_doc(name), 'A') || setweight(archive.search_doc(text), 'C')) STORED,
-    UNIQUE NULLS NOT DISTINCT (access, hash, name)
-);
-CREATE INDEX file_pending_idx ON archive.file (id) WHERE status = 'pending';
-CREATE INDEX file_search_idx ON archive.file USING gin (search);
-
 CREATE TABLE archive.upload (
     id         uuid PRIMARY KEY,
     role       text NOT NULL,
@@ -538,6 +520,176 @@ COMMENT ON TABLE archive.known_org IS 'An organization your connections know, by
 icon: building-2';
 COMMENT ON COLUMN archive.known_org.ein IS 'Its US employer identification number';
 COMMENT ON COLUMN archive.known_org.domain IS 'Its web domain, like example.com';
+
+-- A file is a row, uploaded or synced, with its bytes in the blob store by the sha256 of its content (file.go): one
+-- blob however many rows have the same bytes, in this workspace alone. hash is '' while there are no bytes here: a
+-- folder never has any, and a synced file none until they are copied. An uploaded file is an editor's to change;
+-- a synced file is its connection's, as what else connections sync is, and seen as its connection is, and only Go
+-- writes it (connection.go). parent is the folder it is in. Removing a folder removes what a sync has in it, and an
+-- uploaded one must be empty first (file_empty).
+--
+-- version is the provider's token of its content: a new one makes the file pending (file_check), and until the
+-- copy is done the row keeps the bytes it has. copied is the version its bytes are of, so a restart reads none
+-- again. source is what the connector reads the content with (connect/def.go, Content). tries and retry_at are the
+-- copy's: how many have failed in a row, and when the next may start, which a copy under way holds as its lease.
+CREATE TABLE archive.file (
+    id            uuid PRIMARY KEY DEFAULT uuidv7(),
+    hash          text NOT NULL DEFAULT '',
+    name          text NOT NULL,
+    mime          text NOT NULL DEFAULT '',
+    size          bigint NOT NULL DEFAULT 0,
+    metadata      jsonb NOT NULL DEFAULT '{}',
+    text          text NOT NULL DEFAULT '',
+    status        text NOT NULL DEFAULT 'pending',
+    error         text NOT NULL DEFAULT '',
+    access        uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    search        tsvector GENERATED ALWAYS AS (setweight(archive.search_doc(name), 'A') || setweight(archive.search_doc(text), 'C')) STORED,
+    kind          text NOT NULL DEFAULT 'file' CONSTRAINT file_kind CHECK (kind IN ('file', 'folder')),
+    parent        uuid REFERENCES archive.file ON DELETE CASCADE,
+    parent_source text,
+    connection    uuid REFERENCES archive.connection ON DELETE CASCADE,
+    stream        text,
+    source_id     text,
+    version       text,
+    copied        text,
+    source        jsonb NOT NULL DEFAULT '{}',
+    url           archive.url,
+    drive         text,
+    owner         uuid REFERENCES archive.known_person ON DELETE SET NULL,
+    owner_name    text,
+    editor        uuid REFERENCES archive.known_person ON DELETE SET NULL,
+    editor_name   text,
+    made_at       timestamptz,
+    edited_at     timestamptz,
+    tries         integer NOT NULL DEFAULT 0,
+    retry_at      timestamptz,
+    seen_at       timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT file_source UNIQUE (connection, stream, source_id)
+);
+CREATE INDEX file_pending_idx ON archive.file (id) WHERE status = 'pending' AND connection IS NULL;
+CREATE INDEX file_search_idx ON archive.file USING gin (search);
+CREATE UNIQUE INDEX file_key ON archive.file (access, parent, hash, name) NULLS NOT DISTINCT WHERE connection IS NULL;
+CREATE INDEX file_parent_idx ON archive.file (parent);
+CREATE INDEX file_hash_idx ON archive.file (hash) WHERE hash <> '';
+CREATE INDEX file_thumb_idx ON archive.file ((metadata#>>'{thumbnail,sha256}')) WHERE metadata ? 'thumbnail';
+CREATE INDEX file_pull_idx ON archive.file (retry_at NULLS FIRST) WHERE status = 'pending' AND connection IS NOT NULL;
+CREATE INDEX file_owner_idx ON archive.file (owner);
+CREATE INDEX file_editor_idx ON archive.file (editor);
+COMMENT ON TABLE archive.file IS 'A file or folder: one you uploaded or made here, or one of a drive you connected, like Google Drive, SharePoint or Dropbox, with its bytes and its words when Archive reads them. Change yours with archive.edit and the files API; what a connection synced is read only, so archive.copy it to change it here, or its connector''s upload to change it there
+icon: folder-open';
+COMMENT ON COLUMN archive.file.hash IS 'The sha256 of its bytes; empty while Archive has none, as for a folder or a file not yet copied';
+COMMENT ON COLUMN archive.file.name IS 'Its name; a Google Doc, Sheet or Slides deck''s ends in .docx, .xlsx or .pptx, as Archive keeps it';
+COMMENT ON COLUMN archive.file.mime IS 'Its media type, like application/pdf';
+COMMENT ON COLUMN archive.file.size IS 'The size in bytes of what Archive has of it';
+COMMENT ON COLUMN archive.file.metadata IS 'What Archive read of it, like an image''s width and height';
+COMMENT ON COLUMN archive.file.text IS 'Its words: a PDF, Word, Excel, PowerPoint, HTML or text file''s up to 64 MB, cut at 1 MB';
+COMMENT ON COLUMN archive.file.status IS 'pending while Archive reads or copies it, done once it has, skipped when it will not copy it and error when it failed; error says why';
+COMMENT ON COLUMN archive.file.error IS 'Why it is skipped or failed';
+COMMENT ON COLUMN archive.file.access IS 'Group that sees it: null for everyone, or for what a connection synced everyone who sees the connection';
+COMMENT ON COLUMN archive.file.kind IS 'file or folder';
+COMMENT ON COLUMN archive.file.parent IS 'references file; the folder it is in, null at the top';
+COMMENT ON COLUMN archive.file.parent_source IS 'The id there of the folder it is in';
+COMMENT ON COLUMN archive.file.connection IS 'references connection; the account it is from, null for one made here';
+COMMENT ON COLUMN archive.file.stream IS 'What its connector syncs it as, like files';
+COMMENT ON COLUMN archive.file.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.file.version IS 'The token there of its content, which changes when its content does';
+COMMENT ON COLUMN archive.file.url IS 'Where it opens there';
+COMMENT ON COLUMN archive.file.drive IS 'The drive it is in, like My Drive, a shared drive or a SharePoint site''s library';
+COMMENT ON COLUMN archive.file.owner IS 'references known_person; who owns or made it, by their address';
+COMMENT ON COLUMN archive.file.owner_name IS 'Who owns or made it, by name';
+COMMENT ON COLUMN archive.file.editor IS 'references known_person; who changed it last, by their address';
+COMMENT ON COLUMN archive.file.editor_name IS 'Who changed it last, by name';
+COMMENT ON COLUMN archive.file.made_at IS 'When it was made there';
+COMMENT ON COLUMN archive.file.edited_at IS 'When it last changed there';
+COMMENT ON COLUMN archive.file.updated_at IS 'When Archive last saw it change';
+
+-- file_check keeps what makes a file a file: a folder has no bytes to wait for; a new version of a synced file makes
+-- it pending; and an uploaded file's folder is an uploaded folder it can see, never itself or under itself.
+CREATE FUNCTION archive.file_check() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    up uuid := NEW.parent;
+BEGIN
+    IF NEW.kind = 'folder' THEN
+        NEW.status := 'done';
+    ELSIF NEW.connection IS NOT NULL AND (TG_OP = 'INSERT' OR NEW.version IS DISTINCT FROM OLD.version OR OLD.kind = 'folder') THEN
+        NEW.status := 'pending';
+        NEW.error := '';
+        NEW.tries := 0;
+        NEW.retry_at := NULL;
+    ELSIF TG_OP = 'UPDATE' AND NEW.connection IS NOT NULL AND NEW.mime = 'application/octet-stream' THEN
+        -- A provider that does not say what a file is leaves what its bytes said.
+        NEW.mime := OLD.mime;
+    END IF;
+    IF NEW.connection IS NULL AND NEW.parent IS NOT NULL THEN
+        IF NOT EXISTS (SELECT FROM archive.file f WHERE f.id = NEW.parent AND f.kind = 'folder' AND f.connection IS NULL) THEN
+            RAISE EXCEPTION 'file %''s folder % is no folder of yours here', NEW.name, NEW.parent USING ERRCODE = '23503';
+        END IF;
+        WHILE up IS NOT NULL LOOP
+            IF up = NEW.id THEN
+                RAISE EXCEPTION 'folder % cannot go under itself', NEW.name USING ERRCODE = '23514';
+            END IF;
+            SELECT f.parent INTO up FROM archive.file f WHERE f.id = up;
+        END LOOP;
+    END IF;
+    RETURN NEW;
+END $$;
+
+CREATE FUNCTION archive.file_empty() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+BEGIN
+    IF EXISTS (SELECT FROM archive.file f WHERE f.parent = OLD.id) THEN
+        RAISE EXCEPTION 'folder % is not empty: delete or move what is in it first', OLD.name USING ERRCODE = '23503';
+    END IF;
+    RETURN OLD;
+END $$;
+
+CREATE TRIGGER file_check BEFORE INSERT OR UPDATE ON archive.file FOR EACH ROW EXECUTE FUNCTION archive.file_check();
+CREATE TRIGGER file_empty BEFORE DELETE ON archive.file FOR EACH ROW WHEN (OLD.kind = 'folder' AND OLD.connection IS NULL) EXECUTE FUNCTION archive.file_empty();
+
+-- push tells this connection's process once the transaction commits that a job of its has work (file.go, filePushed),
+-- whatever path the write came by, a cascade too.
+CREATE FUNCTION archive.push() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    PERFORM pg_notify('archive_moved_' || pg_backend_pid(), 'archive.push ' || TG_ARGV[0]);
+    RETURN NULL;
+END $$;
+
+CREATE TRIGGER file_pull AFTER INSERT OR UPDATE ON archive.file FOR EACH ROW WHEN (NEW.status = 'pending' AND NEW.connection IS NOT NULL) EXECUTE FUNCTION archive.push('pull');
+
+-- A blob goes once no file has its hash. Whatever removes the last row, a cascade from a member too, queues it in the
+-- same transaction (file_gone), and the job that removes it (file.go, blobNext) looks again under a lock on the hash,
+-- which whatever adds a row with a hash holds from before it writes the blob until it commits. Queueing waits for a
+-- removal under way, so a row removed during one queues the hash again.
+CREATE TABLE archive.blob_gone (
+    hash text PRIMARY KEY,
+    at   timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE FUNCTION archive.file_gone() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE
+    kept text[] := CASE WHEN TG_OP = 'DELETE' THEN '{}'::text[] ELSE array_remove(ARRAY[NEW.hash, NEW.metadata#>>'{thumbnail,sha256}'], NULL) END;
+    h text;
+BEGIN
+    FOREACH h IN ARRAY ARRAY[OLD.hash, OLD.metadata#>>'{thumbnail,sha256}'] LOOP
+        IF h <> '' AND NOT (h = ANY (kept)) THEN
+            INSERT INTO archive.blob_gone (hash) VALUES (h) ON CONFLICT (hash) DO UPDATE SET at = now();
+            PERFORM pg_notify('archive_moved_' || pg_backend_pid(), 'archive.push blob');
+        END IF;
+    END LOOP;
+    RETURN NULL;
+END $$;
+
+CREATE TRIGGER file_gone AFTER DELETE OR UPDATE OF hash, metadata ON archive.file FOR EACH ROW EXECUTE FUNCTION archive.file_gone();
+
+-- stored is every byte this workspace's blobs hold, each blob once however many rows have it.
+CREATE FUNCTION archive.stored() RETURNS bigint LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
+    SELECT coalesce(sum(b.size), 0)::bigint FROM (
+        SELECT f.hash, f.size FROM archive.file f WHERE f.hash <> ''
+        UNION
+        SELECT f.metadata#>>'{thumbnail,sha256}', (f.metadata#>>'{thumbnail,size}')::bigint FROM archive.file f WHERE f.metadata ? 'thumbnail'
+    ) b
+$$;
 
 -- What a connector's map reads a provider's text with (connect/def.go): each is null for what is not one, rather
 -- than failing the page. An address, a web domain, a time as RFC 3339 or Unix milliseconds, a date at the start of
@@ -1590,62 +1742,6 @@ COMMENT ON COLUMN archive.payroll_task.stream IS 'What its connector syncs it as
 COMMENT ON COLUMN archive.payroll_task.source_id IS 'Its id there';
 COMMENT ON COLUMN archive.payroll_task.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.payroll_task.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
-
--- Files: a file or folder of a drive you connected, like Google Drive or SharePoint, by its id there. Its folder
--- links once that folder is synced too; the text of what reads as text, like a Google Doc, is kept so search
--- finds it, and the rest of its content stays there.
-CREATE TABLE archive.drive_file (
-    id            uuid PRIMARY KEY DEFAULT uuidv7(),
-    connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
-    stream        text NOT NULL,
-    source_id     text NOT NULL,
-    access        uuid REFERENCES archive."group" ON DELETE RESTRICT,
-    created_at    timestamptz NOT NULL DEFAULT now(),
-    updated_at    timestamptz NOT NULL DEFAULT now(),
-    name          text NOT NULL DEFAULT '',
-    seen_at       timestamptz NOT NULL DEFAULT now(),
-    kind          text CONSTRAINT drive_file_kind CHECK (kind IN ('file', 'folder')),
-    title         text,
-    mime          text,
-    size          bigint,
-    url           archive.url,
-    drive         text,
-    folder        uuid REFERENCES archive.drive_file ON DELETE SET NULL,
-    folder_source text,
-    owner         uuid REFERENCES archive.known_person ON DELETE SET NULL,
-    owner_name    text,
-    editor        uuid REFERENCES archive.known_person ON DELETE SET NULL,
-    editor_name   text,
-    made_at       timestamptz,
-    edited_at     timestamptz,
-    text          text,
-    UNIQUE (connection, stream, source_id)
-) INHERITS (archive.object);
-CREATE INDEX drive_file_folder_idx ON archive.drive_file (folder);
-CREATE INDEX drive_file_owner_idx ON archive.drive_file (owner);
-CREATE INDEX drive_file_editor_idx ON archive.drive_file (editor);
-COMMENT ON TABLE archive.drive_file IS 'A file or folder of a drive you connected, like Google Drive or SharePoint, with its words when it is a document Archive reads, like a Google Doc, a PDF or a Word file; other content stays there. Read only; Archive syncs them
-icon: folder-open';
-COMMENT ON COLUMN archive.drive_file.kind IS 'file or folder';
-COMMENT ON COLUMN archive.drive_file.title IS 'Its name there';
-COMMENT ON COLUMN archive.drive_file.mime IS 'Its media type, like application/pdf';
-COMMENT ON COLUMN archive.drive_file.size IS 'Its size in bytes';
-COMMENT ON COLUMN archive.drive_file.url IS 'Where it opens there';
-COMMENT ON COLUMN archive.drive_file.drive IS 'The drive it is in, like My Drive, a shared drive or a SharePoint site''s library';
-COMMENT ON COLUMN archive.drive_file.folder IS 'references drive_file; the folder it is in';
-COMMENT ON COLUMN archive.drive_file.folder_source IS 'The id there of the folder it is in';
-COMMENT ON COLUMN archive.drive_file.owner IS 'references known_person; who owns or made it, by their address';
-COMMENT ON COLUMN archive.drive_file.owner_name IS 'Who owns or made it, by name';
-COMMENT ON COLUMN archive.drive_file.editor IS 'references known_person; who changed it last, by their address';
-COMMENT ON COLUMN archive.drive_file.editor_name IS 'Who changed it last, by name';
-COMMENT ON COLUMN archive.drive_file.made_at IS 'When it was made there';
-COMMENT ON COLUMN archive.drive_file.edited_at IS 'When it last changed there';
-COMMENT ON COLUMN archive.drive_file.text IS 'Its words, up to 64 KB: a Google Doc''s, Sheet''s (its first sheet, as CSV) or Slides deck''s, or a PDF, Word, Excel, PowerPoint or text file''s up to 25 MB';
-COMMENT ON COLUMN archive.drive_file.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.drive_file.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.drive_file.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.drive_file.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.drive_file.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 -- Chat: a message of a chat or a channel you connected, like Microsoft Teams, with who sent it as the person of
 -- their email address.
@@ -3127,7 +3223,6 @@ BEGIN
         WHEN 'payroll_contractor_payment' THEN concat_ws(' · ', who, r->>'paid_on')
         WHEN 'payroll_contractor_payment_group' THEN concat_ws(' · ', 'Contractor payments', r->>'check_date')
         WHEN 'payroll_task' THEN r->>'title'
-        WHEN 'drive_file' THEN r->>'title'
         WHEN 'dental_provider' THEN coalesce(nullif(btrim(concat_ws(' ', nullif(r->>'first_name', ''), nullif(r->>'last_name', ''), nullif(r->>'suffix', ''))), ''), r->>'abbr')
         WHEN 'dental_patient' THEN btrim(concat_ws(' ', coalesce(nullif(r->>'preferred_name', ''), nullif(r->>'first_name', '')), nullif(r->>'last_name', '')))
         WHEN 'dental_appointment' THEN concat_ws(' · ', (SELECT btrim(concat_ws(' ', p.first_name, p.last_name)) FROM archive.dental_patient p WHERE p.id = (r->>'patient')::uuid), r->>'starts_at')
@@ -3201,7 +3296,6 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_pay_period
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_contractor_payment FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_contractor_payment_group FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_task FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.drive_file FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.dental_provider FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.dental_patient FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.dental_appointment FOR EACH ROW EXECUTE FUNCTION archive.object_name();
@@ -3315,7 +3409,6 @@ GRANT SELECT ON archive.payroll_pay_period TO "{p}_viewer";
 GRANT SELECT ON archive.payroll_contractor_payment TO "{p}_viewer";
 GRANT SELECT ON archive.payroll_contractor_payment_group TO "{p}_viewer";
 GRANT SELECT ON archive.payroll_task TO "{p}_viewer";
-GRANT SELECT ON archive.drive_file TO "{p}_viewer";
 GRANT SELECT ON archive.dental_provider TO "{p}_viewer";
 GRANT SELECT ON archive.dental_patient TO "{p}_viewer";
 GRANT SELECT ON archive.dental_appointment TO "{p}_viewer";
@@ -3353,7 +3446,10 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO "{p}_viewer"
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT, UPDATE, DELETE ON TABLES TO "{p}_editor";
 
 ALTER TABLE archive.file ENABLE ROW LEVEL SECURITY;
-CREATE POLICY access ON archive.file USING (archive.can(access)) WITH CHECK (archive.can(access));
+CREATE POLICY see ON archive.file FOR SELECT USING (archive.can(access) AND (connection IS NULL OR EXISTS (SELECT FROM archive.connection c WHERE c.id = file.connection)));
+CREATE POLICY add ON archive.file FOR INSERT WITH CHECK (archive.can(access) AND connection IS NULL);
+CREATE POLICY change ON archive.file FOR UPDATE USING (archive.can(access) AND connection IS NULL) WITH CHECK (archive.can(access) AND connection IS NULL);
+CREATE POLICY remove ON archive.file FOR DELETE USING (archive.can(access) AND connection IS NULL);
 
 ALTER TABLE archive.secret ENABLE ROW LEVEL SECURITY;
 CREATE POLICY owner ON archive.secret FOR SELECT USING (pg_has_role(current_user, '{p}_owner', 'USAGE'));
@@ -3434,8 +3530,6 @@ ALTER TABLE archive.payroll_contractor_payment_group ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.payroll_contractor_payment_group FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_contractor_payment_group.connection));
 ALTER TABLE archive.payroll_task ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.payroll_task FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_task.connection));
-ALTER TABLE archive.drive_file ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.drive_file FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = drive_file.connection));
 ALTER TABLE archive.dental_provider ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.dental_provider FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = dental_provider.connection));
 ALTER TABLE archive.dental_patient ENABLE ROW LEVEL SECURITY;
@@ -3506,7 +3600,7 @@ ALTER TABLE archive.known_person ENABLE ROW LEVEL SECURITY;
 CREATE POLICY seen ON archive.known_person FOR SELECT USING (EXISTS (SELECT FROM archive.mail_party p WHERE p.person = known_person.id)
     OR EXISTS (SELECT FROM archive.payroll_worker w WHERE w.person = known_person.id)
     OR EXISTS (SELECT FROM archive.payroll_company c WHERE c.admin = known_person.id OR c.signatory = known_person.id)
-    OR EXISTS (SELECT FROM archive.drive_file f WHERE f.owner = known_person.id OR f.editor = known_person.id)
+    OR EXISTS (SELECT FROM archive.file f WHERE f.owner = known_person.id OR f.editor = known_person.id)
     OR EXISTS (SELECT FROM archive.ledger_contact l WHERE l.person = known_person.id)
     OR EXISTS (SELECT FROM archive.calendar_event e WHERE e.organizer = known_person.id)
     OR EXISTS (SELECT FROM archive.calendar_attendee a WHERE a.person = known_person.id)
@@ -3576,50 +3670,128 @@ INSERT INTO archive.secret (id, table_name, row_id, column_name, type, value, ac
 SELECT id, row_id, column_name, type, value FROM archive.secret WHERE table_name = $1 AND row_id = ANY(sqlc.arg(ids)::uuid[]);
 
 -- name: FileByKey :one
-SELECT id, hash, name, mime, size, metadata, status, error, access, created_at FROM archive.file WHERE access IS NOT DISTINCT FROM $1 AND hash = $2 AND name = $3;
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at FROM archive.file WHERE connection IS NULL AND access IS NOT DISTINCT FROM $1 AND parent IS NOT DISTINCT FROM $2 AND hash = $3 AND name = $4;
 
 -- name: CreateFile :one
-INSERT INTO archive.file (hash, name, mime, size, access) VALUES ($1, $2, $3, $4, $5)
-RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at;
+INSERT INTO archive.file (hash, name, mime, size, access, parent) VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at;
 
+-- What of the files is in a folder, or at the top of a connection or of what was made here, with tree; every one without.
 -- name: Files :many
-SELECT id, hash, name, mime, size, metadata, status, error, access, created_at FROM archive.file
-WHERE id > sqlc.arg(after) ORDER BY id LIMIT sqlc.arg(lim);
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at FROM archive.file
+WHERE id > sqlc.arg(after) AND (NOT sqlc.arg(tree)::bool OR parent IS NOT DISTINCT FROM sqlc.narg(in_folder)::uuid AND (sqlc.narg(in_folder)::uuid IS NOT NULL OR connection IS NOT DISTINCT FROM sqlc.narg(of_connection)::uuid))
+ORDER BY id LIMIT sqlc.arg(lim);
+
+-- The connections you can see that have files, for the top of the tree.
+-- name: FileSources :many
+SELECT c.id, c.provider, c.account FROM archive.connection c WHERE EXISTS (SELECT FROM archive.file f WHERE f.connection = c.id) ORDER BY c.provider, c.account, c.id;
+
+-- name: AddFolder :one
+INSERT INTO archive.file (name, kind, access, parent) VALUES ($1, 'folder', $2, $3)
+RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at;
+
+-- name: MoveFile :one
+UPDATE archive.file SET parent = sqlc.narg(parent)::uuid WHERE id = sqlc.arg(id)::uuid
+RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at;
 
 -- name: GetFile :one
-SELECT id, hash, name, mime, size, metadata, status, error, access, created_at FROM archive.file WHERE id = $1;
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at FROM archive.file WHERE id = $1;
 
 -- name: RenameFile :one
 UPDATE archive.file SET name = $2 WHERE id = $1
-RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at;
+RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at;
 
 -- name: SetFileAccess :one
 UPDATE archive.file SET access = sqlc.narg(access)::uuid WHERE id = sqlc.arg(id)::uuid
-RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at;
+RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at;
 
 -- name: LockFile :one
-SELECT id, hash, name, mime, size, metadata, status, error, access, created_at FROM archive.file WHERE id = $1 FOR UPDATE;
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at FROM archive.file WHERE id = $1 FOR UPDATE;
 
 -- name: FileText :one
 SELECT text FROM archive.file WHERE id = $1;
 
 -- name: FileWithText :one
-SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, text FROM archive.file WHERE id = $1;
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at, text FROM archive.file WHERE id = $1;
 
 -- name: FilesWithText :many
-SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, text FROM archive.file
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at, text FROM archive.file
 WHERE id > sqlc.arg(after) ORDER BY id LIMIT sqlc.arg(lim);
 
 -- name: NextPendingFile :one
-SELECT id, hash, name, mime, size, metadata, status, error, access, created_at FROM archive.file
-WHERE status = 'pending' ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED;
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at FROM archive.file
+WHERE status = 'pending' AND connection IS NULL ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED;
 
 -- name: LockPendingFile :one
-SELECT id, hash, name, mime, size, metadata, status, error, access, created_at FROM archive.file
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at FROM archive.file
 WHERE id = $1 AND status = 'pending' FOR UPDATE;
 
 -- name: SetFileContent :exec
 UPDATE archive.file SET metadata = $2, text = $3 WHERE id = $1;
+
+-- The next synced file whose bytes are due, leased until lease. A failure or a stop counts as a try.
+-- name: ClaimPull :one
+UPDATE archive.file SET retry_at = sqlc.arg(lease)::timestamptz, tries = tries + 1
+WHERE id = (SELECT f.id FROM archive.file f JOIN archive.connection c ON c.id = f.connection
+    WHERE f.status = 'pending' AND f.connection IS NOT NULL AND NOT c.revoked AND (f.retry_at IS NULL OR f.retry_at <= now())
+    ORDER BY f.retry_at NULLS FIRST LIMIT 1 FOR UPDATE OF f SKIP LOCKED)
+RETURNING id, name, hash, connection, stream, version, copied, source, tries;
+
+-- When a synced file's bytes are next due.
+-- name: NextPull :one
+SELECT coalesce(f.retry_at, now())::timestamptz FROM archive.file f JOIN archive.connection c ON c.id = f.connection
+WHERE f.status = 'pending' AND f.connection IS NOT NULL AND NOT c.revoked ORDER BY f.retry_at NULLS FIRST LIMIT 1;
+
+-- The copy's bytes, unless a newer version came while they were read.
+-- name: SetPulled :execrows
+UPDATE archive.file SET hash = sqlc.arg(hash), size = sqlc.arg(size), mime = CASE WHEN mime = 'application/octet-stream' THEN sqlc.arg(sniffed)::text ELSE mime END, copied = version
+WHERE id = sqlc.arg(id) AND version IS NOT DISTINCT FROM sqlc.narg(version);
+
+-- name: SetPullDone :exec
+UPDATE archive.file SET status = sqlc.arg(status), error = sqlc.arg(error), metadata = sqlc.arg(metadata), text = sqlc.arg(body), tries = 0, retry_at = NULL
+WHERE id = sqlc.arg(id) AND version IS NOT DISTINCT FROM sqlc.narg(version);
+
+-- Why a synced file's bytes are not here, for good until a new version comes.
+-- name: SetPullEnd :exec
+UPDATE archive.file SET status = sqlc.arg(status), error = sqlc.arg(error), tries = 0, retry_at = NULL
+WHERE id = sqlc.arg(id) AND version IS NOT DISTINCT FROM sqlc.narg(version);
+
+-- name: SetPullRetry :exec
+UPDATE archive.file SET retry_at = sqlc.arg(at)::timestamptz, tries = sqlc.arg(tries), error = sqlc.arg(error)
+WHERE id = sqlc.arg(id) AND version IS NOT DISTINCT FROM sqlc.narg(version);
+
+-- name: Stored :one
+SELECT archive.stored()::bigint;
+
+-- name: LockHash :exec
+SELECT pg_advisory_xact_lock(hashtextextended(sqlc.arg(hash)::text, 0));
+
+-- name: NextBlobGone :one
+SELECT hash FROM archive.blob_gone WHERE at <= now() ORDER BY at LIMIT 1 FOR UPDATE SKIP LOCKED;
+
+-- name: BlobUsed :one
+SELECT (EXISTS (SELECT FROM archive.file f WHERE f.hash = sqlc.arg(hash)::text) OR EXISTS (SELECT FROM archive.file f WHERE f.metadata ? 'thumbnail' AND f.metadata#>>'{thumbnail,sha256}' = sqlc.arg(hash)::text))::bool;
+
+-- name: DropBlobGone :exec
+DELETE FROM archive.blob_gone WHERE hash = $1;
+
+-- name: RetryBlobGone :exec
+UPDATE archive.blob_gone SET at = sqlc.arg(at)::timestamptz WHERE hash = sqlc.arg(hash);
+
+-- name: NextBlob :one
+SELECT at FROM archive.blob_gone ORDER BY at LIMIT 1;
+
+-- name: CopyFile :one
+INSERT INTO archive.file (hash, name, mime, size, metadata, text, status, access)
+SELECT s.hash, sqlc.arg(name), s.mime, s.size, s.metadata, s.text, 'done', sqlc.narg(access)::uuid FROM archive.file s WHERE s.id = sqlc.arg(id)
+RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at;
+
+-- What a connection synced under an id there, as you see it.
+-- name: FileBySource :one
+SELECT kind, coalesce(version, '')::text AS version, source FROM archive.file WHERE connection = $1 AND source_id = $2 LIMIT 1;
+
+-- name: DeleteFile :one
+DELETE FROM archive.file WHERE id = $1 RETURNING id;
 
 -- name: SetFileStatus :exec
 UPDATE archive.file SET status = $2, error = $3 WHERE id = $1;
@@ -3629,7 +3801,7 @@ UPDATE archive.file SET status = 'pending' WHERE status = 'processing';
 
 -- name: ReplaceFile :one
 UPDATE archive.file SET hash = $2, size = $3, status = 'pending', text = '', error = '', metadata = '{}' WHERE id = $1
-RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at;
+RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at;
 
 -- name: Upload :one
 SELECT * FROM archive.upload WHERE id = $1;
@@ -3732,7 +3904,7 @@ SELECT jsonb_build_object(
             'archive.payroll_time_off_day'::regclass, 'archive.payroll_time_off_balance'::regclass, 'archive.payroll_time_off_policy'::regclass,
             'archive.payroll_run'::regclass, 'archive.payroll_pay'::regclass, 'archive.payroll_pay_line'::regclass,
             'archive.payroll_pay_period'::regclass, 'archive.payroll_contractor_payment'::regclass,
-            'archive.payroll_contractor_payment_group'::regclass, 'archive.payroll_task'::regclass, 'archive.drive_file'::regclass,
+            'archive.payroll_contractor_payment_group'::regclass, 'archive.payroll_task'::regclass, 'archive.file'::regclass,
             'archive.ledger_account'::regclass, 'archive.ledger_contact'::regclass, 'archive.ledger_item'::regclass,
             'archive.ledger_entry'::regclass, 'archive.ledger_line'::regclass, 'archive.calendar_event'::regclass,
             'archive.calendar_attendee'::regclass, 'archive.crm_company'::regclass, 'archive.crm_contact'::regclass, 'archive.crm_deal'::regclass,
@@ -3822,7 +3994,7 @@ UPDATE archive.workflow SET next_at = now() WHERE cursor_id IS NOT NULL AND next
 SELECT next_at FROM archive.workflow WHERE next_at IS NOT NULL ORDER BY next_at LIMIT 1;
 
 -- name: HasPendingFiles :one
-SELECT EXISTS (SELECT FROM archive.file WHERE status = 'pending');
+SELECT EXISTS (SELECT FROM archive.file WHERE status = 'pending' AND connection IS NULL);
 
 -- name: Connections :many
 SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_at, c.sync_at, c.synced_at,
@@ -3843,7 +4015,7 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.payroll_contractor_payment x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.payroll_contractor_payment_group x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.payroll_task x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.drive_file x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.file x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.ledger_account x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.ledger_contact x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.ledger_item x WHERE x.connection = c.id)
@@ -3955,7 +4127,7 @@ SELECT pg_try_advisory_xact_lock(hashtextextended(sqlc.arg(name)::text, 0));
 WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM archive.mail_party x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.payroll_worker x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.admin = k.id OR x.signatory = k.id)
-    AND NOT EXISTS (SELECT FROM archive.drive_file x WHERE x.owner = k.id OR x.editor = k.id)
+    AND NOT EXISTS (SELECT FROM archive.file x WHERE x.owner = k.id OR x.editor = k.id)
     AND NOT EXISTS (SELECT FROM archive.ledger_contact x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.calendar_event x WHERE x.organizer = k.id)
     AND NOT EXISTS (SELECT FROM archive.calendar_attendee x WHERE x.person = k.id)

@@ -25,10 +25,13 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/Mulholland-Inc/archive/connect"
 	"github.com/Mulholland-Inc/archive/generated"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -40,26 +43,41 @@ import (
 )
 
 type File struct {
-	ID        uuid.UUID      `json:"id"`
-	Hash      string         `json:"sha256"`
-	Name      string         `json:"name"`
-	MIME      string         `json:"mime"`
-	Size      int64          `json:"size"`
-	Metadata  map[string]any `json:"metadata"`
-	Status    string         `json:"status"`
-	Error     string         `json:"error,omitempty"`
-	Access    *uuid.UUID     `json:"access"`
-	CreatedAt time.Time      `json:"created_at"`
+	ID         uuid.UUID      `json:"id"`
+	Hash       string         `json:"sha256"`
+	Name       string         `json:"name"`
+	MIME       string         `json:"mime"`
+	Size       int64          `json:"size"`
+	Metadata   map[string]any `json:"metadata"`
+	Status     string         `json:"status"`
+	Error      string         `json:"error,omitempty"`
+	Access     *uuid.UUID     `json:"access"`
+	CreatedAt  time.Time      `json:"created_at"`
+	Kind       string         `json:"kind"`
+	Parent     *uuid.UUID     `json:"parent"`
+	Connection *uuid.UUID     `json:"connection"`
+	Stream     *string        `json:"stream,omitempty"`
+	SourceID   *string        `json:"source_id,omitempty"`
+	Version    *string        `json:"version,omitempty"`
+	URL        string         `json:"url,omitempty"`
+	Drive      *string        `json:"drive,omitempty"`
+	OwnerName  *string        `json:"owner_name,omitempty"`
+	EditorName *string        `json:"editor_name,omitempty"`
+	MadeAt     *time.Time     `json:"made_at,omitempty"`
+	EditedAt   *time.Time     `json:"edited_at,omitempty"`
+	UpdatedAt  time.Time      `json:"updated_at"`
 }
 
 const (
+	// fileTextMax is the most of a file's words a row keeps, uploaded or synced; search reads the first 250,000 characters.
+	fileTextMax = 1 << 20
 	fileMaxPost = 64 << 20
 	fileLinkTTL = 24 * time.Hour
 	tusVersion  = "1.0.0"
 )
 
 type fileRow interface {
-	generated.FileByKeyRow | generated.CreateFileRow | generated.GetFileRow | generated.RenameFileRow | generated.LockFileRow | generated.NextPendingFileRow | generated.LockPendingFileRow | generated.ReplaceFileRow | generated.SetFileAccessRow
+	generated.FileByKeyRow | generated.CreateFileRow | generated.GetFileRow | generated.RenameFileRow | generated.LockFileRow | generated.NextPendingFileRow | generated.LockPendingFileRow | generated.ReplaceFileRow | generated.SetFileAccessRow | generated.AddFolderRow | generated.MoveFileRow | generated.CopyFileRow
 }
 
 func fileOf[R fileRow](r R, err error) (*File, error) {
@@ -82,7 +100,7 @@ func fileName(name, hash string) string {
 }
 
 // AddFile stores a file that the group access sees, by its id or its name, or everyone with "".
-func (a *Archive) AddFile(ctx context.Context, access, name string, r io.Reader) (*File, error) {
+func (a *Archive) AddFile(ctx context.Context, access, name string, parent *uuid.UUID, r io.Reader) (*File, error) {
 	if _, err := signedIn(ctx); err != nil {
 		return nil, err
 	}
@@ -90,7 +108,174 @@ func (a *Archive) AddFile(ctx context.Context, access, name string, r io.Reader)
 	if err != nil {
 		return nil, err
 	}
-	return a.fileAdd(ctx, g, name, r)
+	return a.fileAdd(ctx, g, name, parent, r)
+}
+
+// AddFolder makes a folder in parent, or at the top with nil, that the group access sees.
+func (a *Archive) AddFolder(ctx context.Context, access, name string, parent *uuid.UUID) (*File, error) {
+	name = strings.TrimSpace(filepath.Base(strings.ReplaceAll(name, "\\", "/")))
+	if name == "" || name == "." || name == "/" {
+		return nil, fmt.Errorf("name: want a folder name: %w", httpErrBadRequest)
+	}
+	g, err := a.fileGroup(ctx, access)
+	if err != nil {
+		return nil, err
+	}
+	return coreDo(a, ctx, func(ctx context.Context) (*File, error) {
+		return fileOf(a.st.db(ctx).AddFolder(ctx, name, g, parent))
+	})
+}
+
+// MoveFile puts file id in the folder parent, or at the top with nil.
+func (a *Archive) MoveFile(ctx context.Context, id uuid.UUID, parent *uuid.UUID) (*File, error) {
+	if err := a.fileMine(ctx, id, "move"); err != nil {
+		return nil, err
+	}
+	return coreDo(a, ctx, func(ctx context.Context) (*File, error) {
+		return fileOf(a.st.db(ctx).MoveFile(ctx, parent, id))
+	})
+}
+
+// fileMine refuses to do to file id what a connection's file does not take, in words an agent can act on.
+func (a *Archive) fileMine(ctx context.Context, id uuid.UUID, verb string) error {
+	f, err := a.GetFile(ctx, id)
+	if err == nil && f.Connection != nil {
+		return fmt.Errorf("cannot %s %s: its connection syncs it, so it is read only here; archive.copy(%q) makes a copy you can change: %w", verb, f.Name, id, ErrForbidden)
+	}
+	return err
+}
+
+// DeleteFile deletes file id, or an empty folder, of the caller's; its blob goes once no row has its hash.
+func (a *Archive) DeleteFile(ctx context.Context, id uuid.UUID) error {
+	if err := a.fileMine(ctx, id, "delete"); err != nil {
+		return err
+	}
+	_, err := coreDo(a, ctx, func(ctx context.Context) (uuid.UUID, error) { return a.st.db(ctx).DeleteFile(ctx, id) })
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("file %s: %w", id, ErrNotFound)
+	}
+	return err
+}
+
+// blobNext removes a blob queued as gone, unless a row has its hash again, and says whether there was one.
+func (a *Archive) blobNext(ctx context.Context) (bool, error) {
+	found := false
+	err := a.sys(ctx, func(ctx context.Context) error {
+		q := a.st.db(ctx)
+		hash, err := q.NextBlobGone(ctx)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		found = true
+		if err := q.LockHash(ctx, hash); err != nil {
+			return err
+		}
+		used, err := q.BlobUsed(ctx, hash)
+		if err != nil {
+			return err
+		}
+		if !used {
+			if err := a.blobs.remove(ctx, blobKey(hash)); err != nil {
+				fmt.Fprintf(os.Stderr, "archive: workspace %s: blob %s: %v\n", a.ws.ID, hash, err)
+				return q.RetryBlobGone(ctx, time.Now().Add(time.Minute), hash)
+			}
+		}
+		return q.DropBlobGone(ctx, hash)
+	})
+	return found, err
+}
+
+// CopyFile makes a file of the caller's, to change here, from file id, which they can read, with its bytes and words. Its
+// name is the file's unless name says, and it goes to the group access names, or everyone with "". Left to itself, with
+// no access, it goes to who sees the file; a personal connection's has no group that says so, so it must be asked.
+func (a *Archive) CopyFile(ctx context.Context, id uuid.UUID, name string, access *string) (*File, error) {
+	f, err := a.GetFile(ctx, id)
+	if err == nil {
+		err = f.blob()
+	}
+	if err != nil {
+		return nil, err
+	}
+	var g *uuid.UUID
+	if access != nil {
+		if g, err = a.fileGroup(ctx, *access); err != nil {
+			return nil, err
+		}
+	} else if g = f.Access; f.Connection != nil {
+		var c generated.ArchiveConnection
+		if err := a.sys(ctx, func(ctx context.Context) (err error) {
+			c, err = a.st.db(ctx).Connection(ctx, *f.Connection)
+			return err
+		}); err != nil {
+			return nil, err
+		}
+		if !c.Integration {
+			return nil, fmt.Errorf("%s is yours alone, as your %s connection's is, and a copy has no such setting: pass access, a group's name or \"\" for everyone, to say who sees the copy: %w", f.Name, c.Provider, httpErrBadRequest)
+		}
+	}
+	name = fileName(cmp.Or(name, f.Name), f.Hash)
+	return coreDo(a, ctx, func(ctx context.Context) (*File, error) {
+		q := a.st.db(ctx)
+		if err := q.LockHash(ctx, f.Hash); err != nil {
+			return nil, err
+		}
+		c, err := fileOf(q.FileByKey(ctx, generated.FileByKeyParams{Access: g, Hash: f.Hash, Name: name}))
+		if !errors.Is(err, ErrNotFound) {
+			return c, err
+		}
+		return fileOf(q.CopyFile(ctx, name, g, id))
+	})
+}
+
+// actionFiles are the files of the caller of an action, for its connection.
+type actionFiles struct {
+	a     *Archive
+	ctx   context.Context
+	conn  uuid.UUID
+	until time.Time
+}
+
+func (x actionFiles) Until() time.Time { return x.until }
+
+func (x actionFiles) Open(s string) (*connect.Upfile, error) {
+	id, err := uuid.Parse(s)
+	if err != nil {
+		return nil, fmt.Errorf("file: want an id in the file table, not %q: %w", s, httpErrBadRequest)
+	}
+	f, rc, err := x.a.OpenFile(x.ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return &connect.Upfile{Name: f.Name, Mime: f.MIME, Size: f.Size, Body: rc}, nil
+}
+
+func (x actionFiles) Row(source string) (*connect.Synced, error) {
+	return coreDo(x.a, x.ctx, func(ctx context.Context) (*connect.Synced, error) {
+		r, err := x.a.st.db(ctx).FileBySource(ctx, &x.conn, &source)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("this connection synced nothing with the source_id %s: %w", source, ErrNotFound)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return &connect.Synced{Kind: r.Kind, Version: r.Version, Source: r.Source}, nil
+	})
+}
+
+// blob says why f has no bytes to read yet.
+func (f *File) blob() error {
+	switch {
+	case f.Kind == "folder":
+		return fmt.Errorf("%s is a folder: %w", f.Name, httpErrBadRequest)
+	case f.Hash == "" && f.Error != "":
+		return fmt.Errorf("Archive has no copy of %s: %s: %w", f.Name, f.Error, ErrNotFound)
+	case f.Hash == "":
+		return fmt.Errorf("Archive has not copied %s yet: %w", f.Name, ErrNotFound)
+	}
+	return nil
 }
 
 // fileGroup is the id of the group access names, by its id or its name; nil for "".
@@ -105,7 +290,7 @@ func (a *Archive) fileGroup(ctx context.Context, access string) (g *uuid.UUID, e
 	return g, err
 }
 
-func (a *Archive) fileAdd(ctx context.Context, access *uuid.UUID, name string, r io.Reader) (*File, error) {
+func (a *Archive) fileAdd(ctx context.Context, access *uuid.UUID, name string, parent *uuid.UUID, r io.Reader) (*File, error) {
 	tmp, err := os.CreateTemp("", "archive-post-")
 	if err != nil {
 		return nil, err
@@ -118,10 +303,10 @@ func (a *Archive) fileAdd(ctx context.Context, access *uuid.UUID, name string, r
 	if err != nil {
 		return nil, err
 	}
-	return a.fileCommit(ctx, access, name, func() (io.ReadCloser, error) { return os.Open(tmp.Name()) })
+	return a.fileCommit(ctx, access, name, parent, func() (io.ReadCloser, error) { return os.Open(tmp.Name()) })
 }
 
-func (a *Archive) fileCommit(ctx context.Context, access *uuid.UUID, name string, open func() (io.ReadCloser, error)) (*File, error) {
+func (a *Archive) fileCommit(ctx context.Context, access *uuid.UUID, name string, parent *uuid.UUID, open func() (io.ReadCloser, error)) (*File, error) {
 	r, err := open()
 	if err != nil {
 		return nil, err
@@ -142,17 +327,28 @@ func (a *Archive) fileCommit(ctx context.Context, access *uuid.UUID, name string
 	if r, err = open(); err != nil {
 		return nil, err
 	}
-	err = a.blobs.put(ctx, blobKey(hash), r, size)
+	tmp := blobTemp()
+	err = a.blobs.put(ctx, tmp, r, size)
 	r.Close()
 	if err != nil {
 		return nil, err
 	}
+	defer a.blobs.remove(context.WithoutCancel(ctx), tmp)
 	f, err := coreDo(a, ctx, func(ctx context.Context) (*File, error) {
-		f, err := fileOf(a.st.db(ctx).FileByKey(ctx, access, hash, name))
+		q := a.st.db(ctx)
+		if err := q.LockHash(ctx, hash); err != nil {
+			return nil, err
+		}
+		f, err := fileOf(q.FileByKey(ctx, generated.FileByKeyParams{Access: access, Parent: parent, Hash: hash, Name: name}))
 		if !errors.Is(err, ErrNotFound) {
 			return f, err
 		}
-		return fileOf(a.st.db(ctx).CreateFile(ctx, generated.CreateFileParams{Hash: hash, Name: name, MIME: mt, Size: size, Access: access}))
+		// The row first: a caller it refuses leaves no blob behind.
+		f, err = fileOf(q.CreateFile(ctx, generated.CreateFileParams{Hash: hash, Name: name, MIME: mt, Size: size, Access: access, Parent: parent}))
+		if err != nil {
+			return nil, err
+		}
+		return f, a.blobs.move(ctx, tmp, blobKey(hash))
 	})
 	if err != nil {
 		return nil, err
@@ -179,12 +375,20 @@ func (a *Archive) fileReady(ctx context.Context, f *File) (*File, error) {
 	return a.ProcessFile(ctx, f.ID)
 }
 
-func (a *Archive) Files(ctx context.Context, limit int, after uuid.UUID) ([]*File, error) {
+// FileTree says which of the files Files lists: nil is every one; else those in the folder Parent, or with none those
+// at the top of the connection Connection, or at the top of what was made here.
+type FileTree struct{ Parent, Connection *uuid.UUID }
+
+func (a *Archive) Files(ctx context.Context, limit int, after uuid.UUID, tree *FileTree) ([]*File, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
+	p := generated.FilesParams{After: after, Lim: int32(limit)}
+	if tree != nil {
+		p.Tree, p.InFolder, p.OfConnection = true, tree.Parent, tree.Connection
+	}
 	return coreDo(a, ctx, func(ctx context.Context) ([]*File, error) {
-		rows, err := a.st.db(ctx).Files(ctx, after, int32(limit))
+		rows, err := a.st.db(ctx).Files(ctx, p)
 		fs := make([]*File, len(rows))
 		for i := range rows {
 			fs[i] = (*File)(&rows[i])
@@ -208,6 +412,9 @@ func (a *Archive) RenameFile(ctx context.Context, id uuid.UUID, name string) (*F
 	if name == "" || name == "." || name == "/" {
 		return nil, fmt.Errorf("name: want a file name: %w", httpErrBadRequest)
 	}
+	if err := a.fileMine(ctx, id, "rename"); err != nil {
+		return nil, err
+	}
 	return coreDo(a, ctx, func(ctx context.Context) (*File, error) {
 		f, err := fileOf(a.st.db(ctx).RenameFile(ctx, id, name))
 		var pe *pgconn.PgError
@@ -226,6 +433,9 @@ func (a *Archive) RenameFile(ctx context.Context, id uuid.UUID, name string) (*F
 func (a *Archive) SetFileAccess(ctx context.Context, id uuid.UUID, access string) (*File, error) {
 	g, err := a.fileGroup(ctx, access)
 	if err != nil {
+		return nil, err
+	}
+	if err := a.fileMine(ctx, id, "change who sees"); err != nil {
 		return nil, err
 	}
 	return coreDo(a, ctx, func(ctx context.Context) (*File, error) {
@@ -253,6 +463,9 @@ func (a *Archive) FileText(ctx context.Context, id uuid.UUID) (string, error) {
 
 func (a *Archive) OpenFile(ctx context.Context, id uuid.UUID) (*File, io.ReadSeekCloser, error) {
 	f, err := a.GetFile(ctx, id)
+	if err == nil {
+		err = f.blob()
+	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -267,9 +480,10 @@ func (a *Archive) ProcessFile(ctx context.Context, id uuid.UUID) (*File, error) 
 	return a.GetFile(ctx, id)
 }
 
-func (a *Archive) fileSign(id uuid.UUID, exp int64) string {
+// fileSign signs a link to file id until exp, for the role that made it: what it serves is what that role still sees.
+func (a *Archive) fileSign(id uuid.UUID, exp int64, role string) string {
 	m := hmac.New(sha256.New, a.linkKey)
-	fmt.Fprintf(m, "%s.%d", id, exp)
+	fmt.Fprintf(m, "%s.%d.%s", id, exp, role)
 	return hex.EncodeToString(m.Sum(nil))
 }
 
@@ -282,11 +496,16 @@ func (a *Archive) LinkFile(ctx context.Context, id uuid.UUID, ttl time.Duration)
 	if _, err := a.GetFile(ctx, id); err != nil {
 		return nil, err
 	}
+	ac, err := signedIn(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if ttl <= 0 {
 		ttl = fileLinkTTL
 	}
 	exp := time.Now().Add(ttl).Unix()
-	return &FileLink{URL: fmt.Sprintf("%s/files/%s/%s?exp=%d&sig=%s", a.hub.api, a.ws.ID.String(), id, exp, a.fileSign(id, exp)), ExpiresAt: time.Unix(exp, 0).UTC()}, nil
+	q := url.Values{"exp": {strconv.FormatInt(exp, 10)}, "by": {ac.Role}, "sig": {a.fileSign(id, exp, ac.Role)}}
+	return &FileLink{URL: fmt.Sprintf("%s/files/%s/%s?%s", a.hub.api, a.ws.ID.String(), id, q.Encode()), ExpiresAt: time.Unix(exp, 0).UTC()}, nil
 }
 
 func mediaInline(mt string) bool {
@@ -295,6 +514,10 @@ func mediaInline(mt string) bool {
 }
 
 func (a *Archive) fileServe(w http.ResponseWriter, r *http.Request, f *File, strip bool) {
+	if err := f.blob(); err != nil {
+		httpWrite(w, 0, nil, err)
+		return
+	}
 	rc, err := a.blobs.open(r.Context(), blobKey(f.Hash), f.Size)
 	if err != nil {
 		httpWrite(w, 0, nil, err)
@@ -312,7 +535,7 @@ func (a *Archive) fileServe(w http.ResponseWriter, r *http.Request, f *File, str
 		content, etag = bytes.NewReader(mediaStripGPS(b)), `"`+f.Hash+`-nogps"`
 	}
 	disp := "attachment"
-	if mediaInline(f.MIME) {
+	if mediaInline(f.MIME) && r.URL.Query().Get("download") == "" {
 		disp = "inline"
 	}
 	h := w.Header()
@@ -341,8 +564,46 @@ func (a *Archive) fileRoutes(mux *http.ServeMux) {
 				return 0, nil, fmt.Errorf("after: %w", httpErrBadRequest)
 			}
 		}
-		fs, err := a.Files(r.Context(), limit, after)
+		var tree *FileTree
+		if q := r.URL.Query(); q.Has("parent") || q.Has("connection") || q.Has("top") {
+			tree = &FileTree{}
+			var err error
+			if tree.Parent, err = fileParam(r, "parent"); err == nil {
+				tree.Connection, err = fileParam(r, "connection")
+			}
+			if err != nil {
+				return 0, nil, err
+			}
+		}
+		fs, err := a.Files(r.Context(), limit, after, tree)
 		return http.StatusOK, fs, err
+	})
+	handle("GET /api/files/stored", func(r *http.Request) (int, any, error) {
+		n, err := a.Stored(r.Context())
+		return http.StatusOK, map[string]int64{"bytes": n}, err
+	})
+	handle("GET /api/files/sources", func(r *http.Request) (int, any, error) {
+		s, err := a.FileSources(r.Context())
+		return http.StatusOK, s, err
+	})
+	handle("DELETE /api/files/{id}", func(r *http.Request) (int, any, error) {
+		id, err := httpID(r)
+		if err != nil {
+			return 0, nil, err
+		}
+		return http.StatusNoContent, nil, a.DeleteFile(r.Context(), id)
+	})
+	handle("POST /api/folders", func(r *http.Request) (int, any, error) {
+		var body struct {
+			Name   string     `json:"name"`
+			Access *string    `json:"access"`
+			Parent *uuid.UUID `json:"parent"`
+		}
+		if err := httpDecode(r, &body); err != nil {
+			return 0, nil, err
+		}
+		f, err := a.AddFolder(r.Context(), deref(body.Access), body.Name, body.Parent)
+		return http.StatusCreated, f, err
 	})
 	handle("POST /api/files", func(r *http.Request) (int, any, error) {
 		r.Body = http.MaxBytesReader(nil, r.Body, fileMaxPost)
@@ -356,7 +617,11 @@ func (a *Archive) fileRoutes(mux *http.ServeMux) {
 				return 0, nil, fmt.Errorf("no file part: %w", httpErrBadRequest)
 			}
 			if p.FormName() == "file" {
-				f, err := a.AddFile(r.Context(), r.URL.Query().Get("access"), p.FileName(), p)
+				parent, err := fileParam(r, "parent")
+				if err != nil {
+					return 0, nil, err
+				}
+				f, err := a.AddFile(r.Context(), r.URL.Query().Get("access"), p.FileName(), parent, p)
 				return http.StatusCreated, f, err
 			}
 		}
@@ -373,6 +638,7 @@ func (a *Archive) fileRoutes(mux *http.ServeMux) {
 		var body struct {
 			Name   *string         `json:"name"`
 			Access json.RawMessage `json:"access"`
+			Parent json.RawMessage `json:"parent"`
 		}
 		if err := httpDecode(r, &body); err != nil {
 			return 0, nil, err
@@ -388,7 +654,16 @@ func (a *Archive) fileRoutes(mux *http.ServeMux) {
 			if err := json.Unmarshal(body.Access, &g); err != nil {
 				return 0, nil, fmt.Errorf("access: want a group's id or name, or null for everyone: %w", httpErrBadRequest)
 			}
-			f, err = a.SetFileAccess(r.Context(), id, deref(g))
+			if f, err = a.SetFileAccess(r.Context(), id, deref(g)); err != nil {
+				return 0, nil, err
+			}
+		}
+		if len(body.Parent) > 0 {
+			var p *uuid.UUID
+			if err := json.Unmarshal(body.Parent, &p); err != nil {
+				return 0, nil, fmt.Errorf("parent: want a folder's id, or null for the top: %w", httpErrBadRequest)
+			}
+			f, err = a.MoveFile(r.Context(), id, p)
 		}
 		if f == nil && err == nil {
 			f, err = a.GetFile(r.Context(), id)
@@ -444,6 +719,42 @@ func (a *Archive) fileRoutes(mux *http.ServeMux) {
 	})
 }
 
+// fileParam is the id in the query parameter name, nil when it has none.
+func fileParam(r *http.Request, name string) (*uuid.UUID, error) {
+	s := r.URL.Query().Get(name)
+	if s == "" {
+		return nil, nil
+	}
+	id, err := uuid.Parse(s)
+	if err != nil {
+		return nil, fmt.Errorf("%s: want an id: %w", name, httpErrBadRequest)
+	}
+	return &id, nil
+}
+
+// FileSource is a connection whose files you can see, at the top of the tree.
+type FileSource struct {
+	ID       uuid.UUID `json:"id"`
+	Provider string    `json:"provider"`
+	Name     string    `json:"name"`
+	Account  string    `json:"account"`
+}
+
+// FileSources are the connections whose files the caller sees.
+func (a *Archive) FileSources(ctx context.Context) ([]FileSource, error) {
+	return coreDo(a, ctx, func(ctx context.Context) ([]FileSource, error) {
+		rows, err := a.st.db(ctx).FileSources(ctx)
+		out := make([]FileSource, len(rows))
+		for i, c := range rows {
+			out[i] = FileSource{ID: c.ID, Provider: c.Provider, Name: c.Provider, Account: c.Account}
+			if k := connect.Get(c.Provider); k != nil {
+				out[i].Name = k.Name
+			}
+		}
+		return out, err
+	})
+}
+
 func (f *File) thumbnail() *File {
 	if f == nil {
 		return nil
@@ -462,21 +773,43 @@ func (a *Archive) fileSigned(w http.ResponseWriter, r *http.Request) {
 	id, err := httpID(r)
 	q := r.URL.Query()
 	exp, _ := strconv.ParseInt(q.Get("exp"), 10, 64)
-	if err == nil && (time.Now().Unix() > exp || !hmac.Equal([]byte(q.Get("sig")), []byte(a.fileSign(id, exp)))) {
+	by := q.Get("by")
+	if err == nil && (time.Now().Unix() > exp || !hmac.Equal([]byte(q.Get("sig")), []byte(a.fileSign(id, exp, by)))) {
 		err = fmt.Errorf("link is invalid or expired: %w", ErrForbidden)
 	}
 	var f *File
 	if err == nil {
-		err = a.st.System(r.Context(), func(ctx context.Context) (err error) {
-			f, err = fileOf(a.st.db(ctx).GetFile(ctx, id))
-			return err
-		})
+		f, err = a.fileAs(r.Context(), by, id)
 	}
 	if err != nil {
 		httpWrite(w, 0, nil, err)
 		return
 	}
 	a.fileServe(w, r, f, true)
+}
+
+// fileAs is file id as the role that signed a link to it sees it now: a link ends with the file, with the connection it
+// came from, and with its signer's access or membership.
+func (a *Archive) fileAs(ctx context.Context, role string, id uuid.UUID) (f *File, err error) {
+	gone := fmt.Errorf("link no longer reaches a file its maker can see: %w", ErrForbidden)
+	var ok bool
+	if err := a.sys(ctx, func(ctx context.Context) (err error) {
+		ok, err = a.st.db(ctx).RoleExists(ctx, role)
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, gone
+	}
+	err = a.st.As(ctx, role, func(ctx context.Context) (err error) {
+		f, err = fileOf(a.st.db(ctx).GetFile(ctx, id))
+		return err
+	})
+	if errors.Is(err, ErrNotFound) {
+		return nil, gone
+	}
+	return f, err
 }
 
 type tusUpload = generated.ArchiveUpload
@@ -696,7 +1029,7 @@ func (a *Archive) tusUpload(w http.ResponseWriter, r *http.Request, id uuid.UUID
 }
 
 func (a *Archive) tusFinish(ctx context.Context, up *tusUpload) (*File, error) {
-	f, err := a.fileCommit(ctx, up.Access, up.Name, func() (io.ReadCloser, error) { return &tusReader{a: a, ctx: ctx, up: up}, nil })
+	f, err := a.fileCommit(ctx, up.Access, up.Name, nil, func() (io.ReadCloser, error) { return &tusReader{a: a, ctx: ctx, up: up}, nil })
 	if err != nil {
 		return nil, err
 	}
@@ -761,7 +1094,7 @@ func (a *Archive) fileProcess(ctx context.Context, id uuid.UUID) (bool, error) {
 		found = true
 		meta, text, perr := a.media(ctx, f)
 		err = pgx.BeginFunc(ctx, a.st.Q(ctx), func(tx pgx.Tx) error {
-			return generated.New(tx).SetFileContent(ctx, f.ID, meta, strings.ToValidUTF8(strings.ReplaceAll(text, "\x00", ""), "�"))
+			return generated.New(tx).SetFileContent(ctx, f.ID, meta, fileWords(text))
 		})
 		status, msg := "done", ""
 		if perr = errors.Join(err, perr); perr != nil {
@@ -770,6 +1103,266 @@ func (a *Archive) fileProcess(ctx context.Context, id uuid.UUID) (bool, error) {
 		return a.st.db(ctx).SetFileStatus(ctx, f.ID, status, msg)
 	})
 	return found, err
+}
+
+// fileWords is text as a row keeps it.
+func fileWords(text string) string {
+	text = strings.ToValidUTF8(strings.ReplaceAll(text, "\x00", ""), "�")
+	if len(text) <= fileTextMax {
+		return text
+	}
+	return strings.ToValidUTF8(text[:fileTextMax], "")
+}
+
+// A synced file's bytes are copied here apart from its sync, which only marks it pending when its version changes
+// (file_check), so a page of a sync stays a page of names. The job is pushed when a transaction leaves one pending
+// (archive.push) and runs as a task of its own, on the due path of the rest of Archive's work: a few at a time, each
+// streamed from the provider into the blob store, not held in memory, for pullBudget, and it queues itself for the
+// rest. A file's lease is its retry_at, so one an instance stopped copying is taken up again; one that fails waits, a
+// minute doubling, for pullTries tries, and a provider that is busy waits as long as it asks.
+const (
+	pullPar    = 4
+	pullBudget = 4 * time.Minute
+	// pullTime is the most one file takes, read and copied: a task may start one at the end of its budget, and with
+	// that must end inside Cloud Run's 10 minutes.
+	pullTime     = 5 * time.Minute
+	pullReadTime = 2 * time.Minute
+	pullRetry    = time.Minute
+	pullBusyWait = 15 * time.Minute
+	pullTries    = 6
+)
+
+// pullAll copies files due until pullBudget is up.
+func (a *Archive) pullAll(ctx context.Context) {
+	end := time.Now().Add(pullBudget)
+	var wg sync.WaitGroup
+	for range pullPar {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for time.Now().Before(end) && ctx.Err() == nil {
+				var f generated.ClaimPullRow
+				err := a.sys(ctx, func(ctx context.Context) (err error) {
+					f, err = a.st.db(ctx).ClaimPull(ctx, time.Now().Add(pullTime+time.Minute))
+					return err
+				})
+				if err != nil {
+					if !errors.Is(err, pgx.ErrNoRows) && ctx.Err() == nil {
+						fmt.Fprintf(os.Stderr, "archive: workspace %s pulls: %v\n", a.ws.ID, err)
+					}
+					return
+				}
+				a.pull(ctx, f)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// pull copies f's bytes unless it has them, and reads its words, and says how that went on its row.
+func (a *Archive) pull(ctx context.Context, f generated.ClaimPullRow) {
+	pctx, cancel := context.WithTimeout(ctx, pullTime)
+	defer cancel()
+	err := a.pullCopy(pctx, f)
+	if err == nil {
+		err = a.pullRead(pctx, f)
+	}
+	if err == nil {
+		return
+	}
+	stopped := ctx.Err() != nil
+	if errors.Is(err, context.DeadlineExceeded) && !stopped {
+		err = fmt.Errorf("copying it took over %s", pullTime)
+	}
+	bg := context.WithoutCancel(ctx)
+	id, version := f.ID, f.Version
+	var skip *connect.Unsupported
+	err = a.sys(bg, func(ctx context.Context) error {
+		q := a.st.db(ctx)
+		now := time.Now()
+		switch {
+		case errors.As(err, &skip):
+			return q.SetPullEnd(ctx, generated.SetPullEndParams{ID: id, Version: version, Status: "skipped", Error: "Archive does not copy this file: " + skip.Reason})
+		case errors.Is(err, errRevoked):
+			return q.SetPullRetry(ctx, generated.SetPullRetryParams{ID: id, Version: version, At: now.Add(time.Hour), Tries: f.Tries - 1, Error: err.Error()})
+		case connect.Busy(err) || stopped:
+			wait := max(min(pullRetry<<min(max(f.Tries-1, 0), 16), pullBusyWait), connect.RetryAfter(err))
+			return q.SetPullRetry(ctx, generated.SetPullRetryParams{ID: id, Version: version, At: now.Add(wait), Tries: f.Tries - 1, Error: ""})
+		case f.Tries >= pullTries:
+			return q.SetPullEnd(ctx, generated.SetPullEndParams{ID: id, Version: version, Status: "error", Error: err.Error()})
+		}
+		return q.SetPullRetry(ctx, generated.SetPullRetryParams{ID: id, Version: version, At: now.Add(pullRetry << min(f.Tries-1, 16)), Tries: f.Tries, Error: ""})
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "archive: workspace %s: file %s: %v\n", a.ws.ID, id, err)
+	}
+}
+
+// pullCopy streams f's bytes from its provider to the blob store, under a name of their own until their hash is
+// known. A version that came meanwhile, or a row that went, leaves them out.
+func (a *Archive) pullCopy(ctx context.Context, f generated.ClaimPullRow) error {
+	if f.Copied != nil && f.Version != nil && *f.Copied == *f.Version && f.Hash != "" {
+		return nil
+	}
+	var c generated.ArchiveConnection
+	err := a.sys(ctx, func(ctx context.Context) (err error) {
+		c, err = a.st.db(ctx).Connection(ctx, *f.Connection)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	p, err := a.hub.connect.Get(c.Provider)
+	if err != nil {
+		return err
+	}
+	i := slices.IndexFunc(p.Streams, func(s *connect.Stream) bool { return f.Stream != nil && s.Name == *f.Stream })
+	if i < 0 || p.Streams[i].Read == nil {
+		return &connect.Unsupported{Reason: p.Name + " has no bytes of it to copy"}
+	}
+	cl, err := a.connClient(ctx, c)
+	if err != nil {
+		return err
+	}
+	defer cl.Close()
+	body, err := p.Streams[i].Read(cl, f.Source)
+	if err != nil {
+		return err
+	}
+	defer body.Body.Close()
+	h := sha256.New()
+	var head fileHead
+	counted := &fileCount{r: io.TeeReader(io.TeeReader(body.Body, h), &head), most: connect.MaxCopy}
+	tmp := blobTemp()
+	if err := a.blobs.put(ctx, tmp, counted, body.Size); err != nil {
+		if counted.over {
+			return &connect.Unsupported{Reason: fmt.Sprintf("it is over the %d GB Archive copies", connect.MaxCopy>>30)}
+		}
+		return err
+	}
+	hash := hex.EncodeToString(h.Sum(nil))
+	moved := false
+	err = a.sys(context.WithoutCancel(ctx), func(ctx context.Context) error {
+		q := a.st.db(ctx)
+		if err := q.LockHash(ctx, hash); err != nil {
+			return err
+		}
+		row, err := fileOf(q.LockFile(ctx, f.ID))
+		if errors.Is(err, ErrNotFound) || err == nil && !slices.Equal(ptrSlice(row.Version), ptrSlice(f.Version)) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if _, err = q.SetPulled(ctx, generated.SetPulledParams{ID: f.ID, Version: f.Version, Hash: hash, Size: counted.n, Sniffed: mediaSniff(f.Name, head.b)}); err != nil {
+			return err
+		}
+		if err = a.blobs.move(ctx, tmp, blobKey(hash)); err == nil {
+			moved = true
+		}
+		return err
+	})
+	if !moved {
+		a.blobs.remove(context.WithoutCancel(ctx), tmp)
+	}
+	return err
+}
+
+// ptrSlice is p as a slice, to compare what may be nil.
+func ptrSlice(p *string) []string {
+	if p == nil {
+		return nil
+	}
+	return []string{*p}
+}
+
+// fileHead keeps the first bytes that go through it, which say what a file is.
+type fileHead struct{ b []byte }
+
+func (h *fileHead) Write(p []byte) (int, error) {
+	if n := 512 - len(h.b); n > 0 {
+		h.b = append(h.b, p[:min(n, len(p))]...)
+	}
+	return len(p), nil
+}
+
+// fileCount counts what is read through it, and fails past most.
+type fileCount struct {
+	r       io.Reader
+	n, most int64
+	over    bool
+}
+
+func (c *fileCount) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	if c.n += int64(n); c.n > c.most {
+		c.over = true
+		return n, errors.New("over the most Archive copies")
+	}
+	return n, err
+}
+
+// pullRead reads the words of a file whose bytes are here, as an upload's are, in pullReadTime at most.
+func (a *Archive) pullRead(ctx context.Context, c generated.ClaimPullRow) error {
+	var f *File
+	err := a.sys(ctx, func(ctx context.Context) (err error) {
+		f, err = fileOf(a.st.db(ctx).GetFile(ctx, c.ID))
+		return err
+	})
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if f.Hash == "" || !slices.Equal(ptrSlice(f.Version), ptrSlice(c.Version)) {
+		return nil
+	}
+	type read struct {
+		meta map[string]any
+		text string
+		err  error
+	}
+	done := func(ctx context.Context, r read) error {
+		status, msg := "done", ""
+		if r.err != nil {
+			status, msg = "error", r.err.Error()
+		}
+		if r.meta == nil {
+			r.meta = map[string]any{}
+		}
+		return a.st.db(ctx).SetPullDone(ctx, generated.SetPullDoneParams{ID: f.ID, Version: c.Version, Status: status, Error: msg, Metadata: r.meta, Body: fileWords(r.text)})
+	}
+	bg := context.WithoutCancel(ctx)
+	late := false
+	err = a.sys(bg, func(ctx context.Context) error {
+		// One transaction, which holds a thumbnail's hash until the row has it.
+		got := make(chan read, 1)
+		a.reading.Lock()
+		go func() {
+			defer a.reading.Unlock()
+			m, t, e := a.media(ctx, f)
+			got <- read{m, t, e}
+		}()
+		select {
+		case r := <-got:
+			return done(ctx, r)
+		case <-time.After(pullReadTime):
+			late = true
+			return errors.New("too long")
+		}
+	})
+	if late {
+		return a.sys(bg, func(ctx context.Context) error {
+			return done(ctx, read{err: fmt.Errorf("reading its words took over %s", pullReadTime)})
+		})
+	}
+	return err
+}
+
+// Stored is how many bytes this workspace's blobs hold, each once.
+func (a *Archive) Stored(ctx context.Context) (int64, error) {
+	return coreDo(a, ctx, func(ctx context.Context) (int64, error) { return a.st.db(ctx).Stored(ctx) })
 }
 
 func (a *Archive) media(ctx context.Context, f *File) (map[string]any, string, error) {
@@ -785,6 +1378,9 @@ func (a *Archive) media(ctx context.Context, f *File) (map[string]any, string, e
 	rc.Close()
 	if err != nil {
 		return meta, "", err
+	}
+	if f.MIME == "application/octet-stream" {
+		f.MIME = mediaSniff(f.Name, b[:min(len(b), 512)])
 	}
 	top, _, _ := strings.Cut(f.MIME, "/")
 	if _, office := officeMIME[strings.ToLower(f.MIME)]; office {
@@ -1039,17 +1635,28 @@ func (a *Archive) mediaThumbnail(ctx context.Context, b []byte) (map[string]any,
 	return map[string]any{"sha256": hash, "size": buf.Len(), "width": dst.Bounds().Dx(), "height": dst.Bounds().Dy()}, nil
 }
 
+// blobStore holds bytes by key. put reads to r's end whatever size says; -1 is a size not known. move takes what from
+// holds to the key to, unless to has it already, and from is gone either way.
 type blobStore interface {
 	put(ctx context.Context, key string, r io.Reader, size int64) error
+	move(ctx context.Context, from, to string) error
 	open(ctx context.Context, key string, size int64) (io.ReadSeekCloser, error)
 	remove(ctx context.Context, key string) error
 }
 
 func blobKey(hash string) string { return hash[:2] + "/" + hash }
 
+// blobTemp is the key bytes wait under until their hash is known and it is safe to name them by it. What an instance
+// stopped before moving goes by the bucket's lifecycle rule on .part.
+func blobTemp() string { return "copies/" + coreNewID().String() + ".part" }
+
+// blobPut writes b under its hash, in the transaction ctx has, which holds the hash's lock until a row has it.
 func (a *Archive) blobPut(ctx context.Context, b []byte) (string, error) {
 	sum := sha256.Sum256(b)
 	hash := hex.EncodeToString(sum[:])
+	if err := a.st.db(ctx).LockHash(ctx, hash); err != nil {
+		return "", err
+	}
 	return hash, a.blobs.put(ctx, blobKey(hash), bytes.NewReader(b), int64(len(b)))
 }
 
@@ -1091,6 +1698,16 @@ func (d *dirBlobs) put(_ context.Context, key string, r io.Reader, _ int64) erro
 		return err
 	}
 	return os.Rename(tmp.Name(), p)
+}
+
+func (d *dirBlobs) move(_ context.Context, from, to string) error {
+	if _, err := os.Stat(d.path(to)); err == nil {
+		return os.Remove(d.path(from))
+	}
+	if err := os.MkdirAll(filepath.Dir(d.path(to)), 0o700); err != nil {
+		return err
+	}
+	return os.Rename(d.path(from), d.path(to))
 }
 
 func (d *dirBlobs) open(_ context.Context, key string, _ int64) (io.ReadSeekCloser, error) {
@@ -1138,6 +1755,10 @@ func (s *gcsBlobs) do(ctx context.Context, method, obj string, body io.Reader, s
 	if rng != "" {
 		req.Header.Set("Range", rng)
 	}
+	if from, ok := strings.CutPrefix(rng, "copy:"); ok {
+		req.Header.Del("Range")
+		req.Header.Set("x-goog-copy-source", "/"+strings.TrimPrefix(s.url(from), strings.TrimRight(s.origin(), "/")+"/"))
+	}
 	tok, err := s.gcp.access(ctx)
 	if err != nil {
 		return nil, err
@@ -1172,6 +1793,36 @@ func (s *gcsBlobs) put(ctx context.Context, key string, r io.Reader, size int64)
 	}
 	resp.Body.Close()
 	return nil
+}
+
+// origin is the host that base's bucket is on.
+func (s *gcsBlobs) origin() string { return s.base[:strings.LastIndex(s.base, "/")] }
+
+// move copies from to to on the server, which takes no bytes through here, and removes from.
+func (s *gcsBlobs) move(ctx context.Context, from, to string) error {
+	resp, err := s.do(ctx, "HEAD", to, nil, 0, "")
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		if resp, err = s.do(ctx, "PUT", to, nil, 0, "copy:"+from); err != nil {
+			return err
+		}
+		if resp.StatusCode/100 != 2 {
+			return gcsErr(resp)
+		}
+		resp.Body.Close()
+		// A copy that answers 200 can still fail in its body: what is there says.
+		if resp, err = s.do(ctx, "HEAD", to, nil, 0, ""); err != nil {
+			return err
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("gcs: copying to %s left nothing there: %s", to, resp.Status)
+		}
+	}
+	return s.remove(ctx, from)
 }
 
 func (s *gcsBlobs) open(ctx context.Context, key string, size int64) (io.ReadSeekCloser, error) {

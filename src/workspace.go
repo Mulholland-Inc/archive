@@ -308,7 +308,13 @@ func (h *Hub) openArchive(ctx context.Context, row generated.ArchiveWorkspace, k
 	id := row.ID.String()
 	cfg := h.pg.Copy()
 	cfg.Database = h.database(id)
-	st, err := OpenStore(ctx, cfg, id, authPassword(key), func(table, rid string) { h.live.moved(id, liveChange{Table: table, ID: rid}) })
+	st, err := OpenStore(ctx, cfg, id, authPassword(key), func(table, rid string) {
+		if table == "archive.push" {
+			h.pushed(row.ID, rid)
+			return
+		}
+		h.live.moved(id, liveChange{Table: table, ID: rid})
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -424,7 +430,7 @@ func (a *Archive) afterOpen(ctx context.Context) {
 		return a.st.db(ctx).ResetProcessing(ctx)
 	})
 	err = errors.Join(err, a.syncMembers(ctx, false))
-	for _, kind := range []string{"workflow", "file", "sync"} {
+	for _, kind := range []string{"workflow", "file", "sync", "pull", "blob"} {
 		next, nerr := a.nextDue(ctx, kind)
 		if nerr == nil && next != nil {
 			nerr = a.soon(ctx, kind, *next)
@@ -437,17 +443,31 @@ func (a *Archive) afterOpen(ctx context.Context) {
 }
 
 func (a *Archive) soon(ctx context.Context, kind string, at time.Time) error {
+	return a.hub.soon(ctx, a.ws.ID, kind, at)
+}
+
+func (h *Hub) soon(ctx context.Context, ws uuid.UUID, kind string, at time.Time) error {
 	ctx = context.WithoutCancel(ctx)
-	r, err := a.hub.q().SoonDue(ctx, a.ws.ID, kind, at)
+	r, err := h.q().SoonDue(ctx, ws, kind, at)
 	switch {
 	case err != nil:
 		return err
 	case r.Changed:
-		return a.hub.wake(ctx, a.ws.ID, kind, r.At)
+		return h.wake(ctx, ws, kind, r.At)
 	case time.Since(r.At) > workflowRetry:
-		return a.hub.wake(ctx, a.ws.ID, kind, time.Now())
+		return h.wake(ctx, ws, kind, time.Now())
 	}
 	return nil
+}
+
+// pushed queues the job a committed transaction said has work (archive.push). It runs before the commit returns, so an
+// instance that stops once its request ends has queued it first.
+func (h *Hub) pushed(ws uuid.UUID, kind string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := h.soon(ctx, ws, kind, time.Now()); err != nil {
+		fmt.Fprintf(os.Stderr, "archive: workspace %s: queueing %s: %v\n", ws, kind, err)
+	}
 }
 
 func hubTasksOpen() (*hubTasks, error) {
@@ -648,8 +668,8 @@ func (h *Hub) tasksHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	kind, ok := strings.CutSuffix(body.Work, "s")
-	if !ok || kind != "workflow" && kind != "file" && kind != "sync" {
-		httpWrite(w, 0, nil, fmt.Errorf("work: want workflows, files or syncs: %w", httpErrBadRequest))
+	if !ok || kind != "workflow" && kind != "file" && kind != "sync" && kind != "pull" && kind != "blob" {
+		httpWrite(w, 0, nil, fmt.Errorf("work: want workflows, files, syncs, pulls or blobs: %w", httpErrBadRequest))
 		return
 	}
 	err := h.work(r.Context(), body.Workspace, kind)
@@ -667,6 +687,8 @@ func (h *Hub) work(ctx context.Context, ws uuid.UUID, kind string) error {
 		lease += browseTimeout
 	case kind == "sync":
 		lease = syncBudget + syncRetry
+	case kind == "pull":
+		lease = pullBudget + pullTime + time.Minute
 	}
 	at, err := q.ClaimDueFor(ctx, time.Now().Add(lease), ws, kind)
 	if err == nil {
@@ -711,11 +733,21 @@ func (a *Archive) nextDue(ctx context.Context, kind string) (*time.Time, error) 
 			}
 			return err
 		}
-		n, err := q.NextWorkflowAt(ctx)
-		if kind == "sync" {
-			var t time.Time
+		var n *time.Time
+		var err error
+		var t time.Time
+		switch kind {
+		case "sync":
 			t, err = q.NextSyncAt(ctx, time.Now().Add(syncLeaseCheck))
 			n = &t
+		case "pull":
+			t, err = q.NextPull(ctx)
+			n = &t
+		case "blob":
+			t, err = q.NextBlob(ctx)
+			n = &t
+		default:
+			n, err = q.NextWorkflowAt(ctx)
 		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
@@ -754,6 +786,10 @@ func (h *Hub) due(ctx context.Context, ws uuid.UUID, kind string, claimed time.T
 		case "sync":
 			ok, err = a.syncNext(ctx)
 			ok = ok && time.Since(start) < syncBudget
+		case "pull":
+			a.pullAll(ctx)
+		case "blob":
+			ok, err = a.blobNext(ctx)
 		}
 		if err != nil && ctx.Err() == nil {
 			fmt.Fprintf(os.Stderr, "archive: workspace %s %ss: %v\n", ws, kind, err)
@@ -1266,6 +1302,10 @@ func (x prefixBlobs) put(ctx context.Context, key string, r io.Reader, size int6
 
 func (x prefixBlobs) open(ctx context.Context, key string, size int64) (io.ReadSeekCloser, error) {
 	return x.b.open(ctx, x.p+key, size)
+}
+
+func (x prefixBlobs) move(ctx context.Context, from, to string) error {
+	return x.b.move(ctx, x.p+from, x.p+to)
 }
 
 func (x prefixBlobs) remove(ctx context.Context, key string) error { return x.b.remove(ctx, x.p+key) }

@@ -23,6 +23,68 @@ func (q *Queries) AddDDLKey(ctx context.Context, key string, pid int32) error {
 	return err
 }
 
+const addFolder = `-- name: AddFolder :one
+INSERT INTO archive.file (name, kind, access, parent) VALUES ($1, 'folder', $2, $3)
+RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at
+`
+
+type AddFolderRow struct {
+	ID         uuid.UUID
+	Hash       string
+	Name       string
+	MIME       string
+	Size       int64
+	Metadata   map[string]any
+	Status     string
+	Error      string
+	Access     *uuid.UUID
+	CreatedAt  time.Time
+	Kind       string
+	Parent     *uuid.UUID
+	Connection *uuid.UUID
+	Stream     *string
+	SourceID   *string
+	Version    *string
+	URL        string
+	Drive      *string
+	OwnerName  *string
+	EditorName *string
+	MadeAt     *time.Time
+	EditedAt   *time.Time
+	UpdatedAt  time.Time
+}
+
+func (q *Queries) AddFolder(ctx context.Context, name string, access *uuid.UUID, parent *uuid.UUID) (AddFolderRow, error) {
+	row := q.db.QueryRow(ctx, addFolder, name, access, parent)
+	var i AddFolderRow
+	err := row.Scan(
+		&i.ID,
+		&i.Hash,
+		&i.Name,
+		&i.MIME,
+		&i.Size,
+		&i.Metadata,
+		&i.Status,
+		&i.Error,
+		&i.Access,
+		&i.CreatedAt,
+		&i.Kind,
+		&i.Parent,
+		&i.Connection,
+		&i.Stream,
+		&i.SourceID,
+		&i.Version,
+		&i.URL,
+		&i.Drive,
+		&i.OwnerName,
+		&i.EditorName,
+		&i.MadeAt,
+		&i.EditedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const addWorkflowRun = `-- name: AddWorkflowRun :one
 INSERT INTO archive.workflow_run (workflow, trigger, result, logs, error, ms, created_at)
 SELECT w.id, $1, $2, $3, $4, $5, $6
@@ -147,6 +209,17 @@ func (q *Queries) BackendPID(ctx context.Context) (int32, error) {
 	return pg_backend_pid, err
 }
 
+const blobUsed = `-- name: BlobUsed :one
+SELECT (EXISTS (SELECT FROM archive.file f WHERE f.hash = $1::text) OR EXISTS (SELECT FROM archive.file f WHERE f.metadata ? 'thumbnail' AND f.metadata#>>'{thumbnail,sha256}' = $1::text))::bool
+`
+
+func (q *Queries) BlobUsed(ctx context.Context, hash string) (bool, error) {
+	row := q.db.QueryRow(ctx, blobUsed, hash)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const catalog = `-- name: Catalog :one
 WITH col AS (
     SELECT a.attrelid AS rel, a.attnum AS num, jsonb_build_object(
@@ -193,7 +266,7 @@ SELECT jsonb_build_object(
             'archive.payroll_time_off_day'::regclass, 'archive.payroll_time_off_balance'::regclass, 'archive.payroll_time_off_policy'::regclass,
             'archive.payroll_run'::regclass, 'archive.payroll_pay'::regclass, 'archive.payroll_pay_line'::regclass,
             'archive.payroll_pay_period'::regclass, 'archive.payroll_contractor_payment'::regclass,
-            'archive.payroll_contractor_payment_group'::regclass, 'archive.payroll_task'::regclass, 'archive.drive_file'::regclass,
+            'archive.payroll_contractor_payment_group'::regclass, 'archive.payroll_task'::regclass, 'archive.file'::regclass,
             'archive.ledger_account'::regclass, 'archive.ledger_contact'::regclass, 'archive.ledger_item'::regclass,
             'archive.ledger_entry'::regclass, 'archive.ledger_line'::regclass, 'archive.calendar_event'::regclass,
             'archive.calendar_attendee'::regclass, 'archive.crm_company'::regclass, 'archive.crm_contact'::regclass, 'archive.crm_deal'::regclass,
@@ -305,6 +378,44 @@ func (q *Queries) Chats(ctx context.Context, userID uuid.UUID) ([]ChatsRow, erro
 		return nil, err
 	}
 	return items, nil
+}
+
+const claimPull = `-- name: ClaimPull :one
+UPDATE archive.file SET retry_at = $1::timestamptz, tries = tries + 1
+WHERE id = (SELECT f.id FROM archive.file f JOIN archive.connection c ON c.id = f.connection
+    WHERE f.status = 'pending' AND f.connection IS NOT NULL AND NOT c.revoked AND (f.retry_at IS NULL OR f.retry_at <= now())
+    ORDER BY f.retry_at NULLS FIRST LIMIT 1 FOR UPDATE OF f SKIP LOCKED)
+RETURNING id, name, hash, connection, stream, version, copied, source, tries
+`
+
+type ClaimPullRow struct {
+	ID         uuid.UUID
+	Name       string
+	Hash       string
+	Connection *uuid.UUID
+	Stream     *string
+	Version    *string
+	Copied     *string
+	Source     map[string]any
+	Tries      int32
+}
+
+// The next synced file whose bytes are due, leased until lease. A failure or a stop counts as a try.
+func (q *Queries) ClaimPull(ctx context.Context, lease time.Time) (ClaimPullRow, error) {
+	row := q.db.QueryRow(ctx, claimPull, lease)
+	var i ClaimPullRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Hash,
+		&i.Connection,
+		&i.Stream,
+		&i.Version,
+		&i.Copied,
+		&i.Source,
+		&i.Tries,
+	)
+	return i, err
 }
 
 const claimSync = `-- name: ClaimSync :one
@@ -471,7 +582,7 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.payroll_contractor_payment x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.payroll_contractor_payment_group x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.payroll_task x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.drive_file x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.file x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.ledger_account x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.ledger_contact x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.ledger_item x WHERE x.connection = c.id)
@@ -554,6 +665,69 @@ func (q *Queries) Connections(ctx context.Context, member uuid.UUID) ([]Connecti
 	return items, nil
 }
 
+const copyFile = `-- name: CopyFile :one
+INSERT INTO archive.file (hash, name, mime, size, metadata, text, status, access)
+SELECT s.hash, $1, s.mime, s.size, s.metadata, s.text, 'done', $2::uuid FROM archive.file s WHERE s.id = $3
+RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at
+`
+
+type CopyFileRow struct {
+	ID         uuid.UUID
+	Hash       string
+	Name       string
+	MIME       string
+	Size       int64
+	Metadata   map[string]any
+	Status     string
+	Error      string
+	Access     *uuid.UUID
+	CreatedAt  time.Time
+	Kind       string
+	Parent     *uuid.UUID
+	Connection *uuid.UUID
+	Stream     *string
+	SourceID   *string
+	Version    *string
+	URL        string
+	Drive      *string
+	OwnerName  *string
+	EditorName *string
+	MadeAt     *time.Time
+	EditedAt   *time.Time
+	UpdatedAt  time.Time
+}
+
+func (q *Queries) CopyFile(ctx context.Context, name string, access *uuid.UUID, iD uuid.UUID) (CopyFileRow, error) {
+	row := q.db.QueryRow(ctx, copyFile, name, access, iD)
+	var i CopyFileRow
+	err := row.Scan(
+		&i.ID,
+		&i.Hash,
+		&i.Name,
+		&i.MIME,
+		&i.Size,
+		&i.Metadata,
+		&i.Status,
+		&i.Error,
+		&i.Access,
+		&i.CreatedAt,
+		&i.Kind,
+		&i.Parent,
+		&i.Connection,
+		&i.Stream,
+		&i.SourceID,
+		&i.Version,
+		&i.URL,
+		&i.Drive,
+		&i.OwnerName,
+		&i.EditorName,
+		&i.MadeAt,
+		&i.EditedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createChat = `-- name: CreateChat :one
 INSERT INTO archive.chat (user_id, title) VALUES ($1, $2) RETURNING id, user_id, title, messages, created_at, updated_at
 `
@@ -573,8 +747,8 @@ func (q *Queries) CreateChat(ctx context.Context, userID uuid.UUID, title string
 }
 
 const createFile = `-- name: CreateFile :one
-INSERT INTO archive.file (hash, name, mime, size, access) VALUES ($1, $2, $3, $4, $5)
-RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at
+INSERT INTO archive.file (hash, name, mime, size, access, parent) VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at
 `
 
 type CreateFileParams struct {
@@ -583,19 +757,33 @@ type CreateFileParams struct {
 	MIME   string
 	Size   int64
 	Access *uuid.UUID
+	Parent *uuid.UUID
 }
 
 type CreateFileRow struct {
-	ID        uuid.UUID
-	Hash      string
-	Name      string
-	MIME      string
-	Size      int64
-	Metadata  map[string]any
-	Status    string
-	Error     string
-	Access    *uuid.UUID
-	CreatedAt time.Time
+	ID         uuid.UUID
+	Hash       string
+	Name       string
+	MIME       string
+	Size       int64
+	Metadata   map[string]any
+	Status     string
+	Error      string
+	Access     *uuid.UUID
+	CreatedAt  time.Time
+	Kind       string
+	Parent     *uuid.UUID
+	Connection *uuid.UUID
+	Stream     *string
+	SourceID   *string
+	Version    *string
+	URL        string
+	Drive      *string
+	OwnerName  *string
+	EditorName *string
+	MadeAt     *time.Time
+	EditedAt   *time.Time
+	UpdatedAt  time.Time
 }
 
 func (q *Queries) CreateFile(ctx context.Context, arg CreateFileParams) (CreateFileRow, error) {
@@ -605,6 +793,7 @@ func (q *Queries) CreateFile(ctx context.Context, arg CreateFileParams) (CreateF
 		arg.MIME,
 		arg.Size,
 		arg.Access,
+		arg.Parent,
 	)
 	var i CreateFileRow
 	err := row.Scan(
@@ -618,6 +807,19 @@ func (q *Queries) CreateFile(ctx context.Context, arg CreateFileParams) (CreateF
 		&i.Error,
 		&i.Access,
 		&i.CreatedAt,
+		&i.Kind,
+		&i.Parent,
+		&i.Connection,
+		&i.Stream,
+		&i.SourceID,
+		&i.Version,
+		&i.URL,
+		&i.Drive,
+		&i.OwnerName,
+		&i.EditorName,
+		&i.MadeAt,
+		&i.EditedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -758,11 +960,22 @@ func (q *Queries) DeleteDDLKey(ctx context.Context, key string) error {
 	return err
 }
 
+const deleteFile = `-- name: DeleteFile :one
+DELETE FROM archive.file WHERE id = $1 RETURNING id
+`
+
+func (q *Queries) DeleteFile(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, deleteFile, id)
+	var id_2 uuid.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
 const deleteUnknown = `-- name: DeleteUnknown :exec
 WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM archive.mail_party x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.payroll_worker x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.admin = k.id OR x.signatory = k.id)
-    AND NOT EXISTS (SELECT FROM archive.drive_file x WHERE x.owner = k.id OR x.editor = k.id)
+    AND NOT EXISTS (SELECT FROM archive.file x WHERE x.owner = k.id OR x.editor = k.id)
     AND NOT EXISTS (SELECT FROM archive.ledger_contact x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.calendar_event x WHERE x.organizer = k.id)
     AND NOT EXISTS (SELECT FROM archive.calendar_attendee x WHERE x.person = k.id)
@@ -804,25 +1017,59 @@ func (q *Queries) DeleteWorkflow(ctx context.Context, id uuid.UUID) (int64, erro
 	return result.RowsAffected(), nil
 }
 
-const fileByKey = `-- name: FileByKey :one
-SELECT id, hash, name, mime, size, metadata, status, error, access, created_at FROM archive.file WHERE access IS NOT DISTINCT FROM $1 AND hash = $2 AND name = $3
+const dropBlobGone = `-- name: DropBlobGone :exec
+DELETE FROM archive.blob_gone WHERE hash = $1
 `
 
-type FileByKeyRow struct {
-	ID        uuid.UUID
-	Hash      string
-	Name      string
-	MIME      string
-	Size      int64
-	Metadata  map[string]any
-	Status    string
-	Error     string
-	Access    *uuid.UUID
-	CreatedAt time.Time
+func (q *Queries) DropBlobGone(ctx context.Context, hash string) error {
+	_, err := q.db.Exec(ctx, dropBlobGone, hash)
+	return err
 }
 
-func (q *Queries) FileByKey(ctx context.Context, access *uuid.UUID, hash string, name string) (FileByKeyRow, error) {
-	row := q.db.QueryRow(ctx, fileByKey, access, hash, name)
+const fileByKey = `-- name: FileByKey :one
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at FROM archive.file WHERE connection IS NULL AND access IS NOT DISTINCT FROM $1 AND parent IS NOT DISTINCT FROM $2 AND hash = $3 AND name = $4
+`
+
+type FileByKeyParams struct {
+	Access *uuid.UUID
+	Parent *uuid.UUID
+	Hash   string
+	Name   string
+}
+
+type FileByKeyRow struct {
+	ID         uuid.UUID
+	Hash       string
+	Name       string
+	MIME       string
+	Size       int64
+	Metadata   map[string]any
+	Status     string
+	Error      string
+	Access     *uuid.UUID
+	CreatedAt  time.Time
+	Kind       string
+	Parent     *uuid.UUID
+	Connection *uuid.UUID
+	Stream     *string
+	SourceID   *string
+	Version    *string
+	URL        string
+	Drive      *string
+	OwnerName  *string
+	EditorName *string
+	MadeAt     *time.Time
+	EditedAt   *time.Time
+	UpdatedAt  time.Time
+}
+
+func (q *Queries) FileByKey(ctx context.Context, arg FileByKeyParams) (FileByKeyRow, error) {
+	row := q.db.QueryRow(ctx, fileByKey,
+		arg.Access,
+		arg.Parent,
+		arg.Hash,
+		arg.Name,
+	)
 	var i FileByKeyRow
 	err := row.Scan(
 		&i.ID,
@@ -835,8 +1082,70 @@ func (q *Queries) FileByKey(ctx context.Context, access *uuid.UUID, hash string,
 		&i.Error,
 		&i.Access,
 		&i.CreatedAt,
+		&i.Kind,
+		&i.Parent,
+		&i.Connection,
+		&i.Stream,
+		&i.SourceID,
+		&i.Version,
+		&i.URL,
+		&i.Drive,
+		&i.OwnerName,
+		&i.EditorName,
+		&i.MadeAt,
+		&i.EditedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const fileBySource = `-- name: FileBySource :one
+SELECT kind, coalesce(version, '')::text AS version, source FROM archive.file WHERE connection = $1 AND source_id = $2 LIMIT 1
+`
+
+type FileBySourceRow struct {
+	Kind    string
+	Version string
+	Source  map[string]any
+}
+
+// What a connection synced under an id there, as you see it.
+func (q *Queries) FileBySource(ctx context.Context, connection *uuid.UUID, sourceID *string) (FileBySourceRow, error) {
+	row := q.db.QueryRow(ctx, fileBySource, connection, sourceID)
+	var i FileBySourceRow
+	err := row.Scan(&i.Kind, &i.Version, &i.Source)
+	return i, err
+}
+
+const fileSources = `-- name: FileSources :many
+SELECT c.id, c.provider, c.account FROM archive.connection c WHERE EXISTS (SELECT FROM archive.file f WHERE f.connection = c.id) ORDER BY c.provider, c.account, c.id
+`
+
+type FileSourcesRow struct {
+	ID       uuid.UUID
+	Provider string
+	Account  string
+}
+
+// The connections you can see that have files, for the top of the tree.
+func (q *Queries) FileSources(ctx context.Context) ([]FileSourcesRow, error) {
+	rows, err := q.db.Query(ctx, fileSources)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FileSourcesRow
+	for rows.Next() {
+		var i FileSourcesRow
+		if err := rows.Scan(&i.ID, &i.Provider, &i.Account); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const fileText = `-- name: FileText :one
@@ -851,21 +1160,34 @@ func (q *Queries) FileText(ctx context.Context, id uuid.UUID) (string, error) {
 }
 
 const fileWithText = `-- name: FileWithText :one
-SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, text FROM archive.file WHERE id = $1
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at, text FROM archive.file WHERE id = $1
 `
 
 type FileWithTextRow struct {
-	ID        uuid.UUID
-	Hash      string
-	Name      string
-	MIME      string
-	Size      int64
-	Metadata  map[string]any
-	Status    string
-	Error     string
-	Access    *uuid.UUID
-	CreatedAt time.Time
-	Text      string
+	ID         uuid.UUID
+	Hash       string
+	Name       string
+	MIME       string
+	Size       int64
+	Metadata   map[string]any
+	Status     string
+	Error      string
+	Access     *uuid.UUID
+	CreatedAt  time.Time
+	Kind       string
+	Parent     *uuid.UUID
+	Connection *uuid.UUID
+	Stream     *string
+	SourceID   *string
+	Version    *string
+	URL        string
+	Drive      *string
+	OwnerName  *string
+	EditorName *string
+	MadeAt     *time.Time
+	EditedAt   *time.Time
+	UpdatedAt  time.Time
+	Text       string
 }
 
 func (q *Queries) FileWithText(ctx context.Context, id uuid.UUID) (FileWithTextRow, error) {
@@ -882,31 +1204,73 @@ func (q *Queries) FileWithText(ctx context.Context, id uuid.UUID) (FileWithTextR
 		&i.Error,
 		&i.Access,
 		&i.CreatedAt,
+		&i.Kind,
+		&i.Parent,
+		&i.Connection,
+		&i.Stream,
+		&i.SourceID,
+		&i.Version,
+		&i.URL,
+		&i.Drive,
+		&i.OwnerName,
+		&i.EditorName,
+		&i.MadeAt,
+		&i.EditedAt,
+		&i.UpdatedAt,
 		&i.Text,
 	)
 	return i, err
 }
 
 const files = `-- name: Files :many
-SELECT id, hash, name, mime, size, metadata, status, error, access, created_at FROM archive.file
-WHERE id > $1 ORDER BY id LIMIT $2
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at FROM archive.file
+WHERE id > $1 AND (NOT $2::bool OR parent IS NOT DISTINCT FROM $3::uuid AND ($3::uuid IS NOT NULL OR connection IS NOT DISTINCT FROM $4::uuid))
+ORDER BY id LIMIT $5
 `
 
-type FilesRow struct {
-	ID        uuid.UUID
-	Hash      string
-	Name      string
-	MIME      string
-	Size      int64
-	Metadata  map[string]any
-	Status    string
-	Error     string
-	Access    *uuid.UUID
-	CreatedAt time.Time
+type FilesParams struct {
+	After        uuid.UUID
+	Tree         bool
+	InFolder     *uuid.UUID
+	OfConnection *uuid.UUID
+	Lim          int32
 }
 
-func (q *Queries) Files(ctx context.Context, after uuid.UUID, lim int32) ([]FilesRow, error) {
-	rows, err := q.db.Query(ctx, files, after, lim)
+type FilesRow struct {
+	ID         uuid.UUID
+	Hash       string
+	Name       string
+	MIME       string
+	Size       int64
+	Metadata   map[string]any
+	Status     string
+	Error      string
+	Access     *uuid.UUID
+	CreatedAt  time.Time
+	Kind       string
+	Parent     *uuid.UUID
+	Connection *uuid.UUID
+	Stream     *string
+	SourceID   *string
+	Version    *string
+	URL        string
+	Drive      *string
+	OwnerName  *string
+	EditorName *string
+	MadeAt     *time.Time
+	EditedAt   *time.Time
+	UpdatedAt  time.Time
+}
+
+// What of the files is in a folder, or at the top of a connection or of what was made here, with tree; every one without.
+func (q *Queries) Files(ctx context.Context, arg FilesParams) ([]FilesRow, error) {
+	rows, err := q.db.Query(ctx, files,
+		arg.After,
+		arg.Tree,
+		arg.InFolder,
+		arg.OfConnection,
+		arg.Lim,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -925,6 +1289,19 @@ func (q *Queries) Files(ctx context.Context, after uuid.UUID, lim int32) ([]File
 			&i.Error,
 			&i.Access,
 			&i.CreatedAt,
+			&i.Kind,
+			&i.Parent,
+			&i.Connection,
+			&i.Stream,
+			&i.SourceID,
+			&i.Version,
+			&i.URL,
+			&i.Drive,
+			&i.OwnerName,
+			&i.EditorName,
+			&i.MadeAt,
+			&i.EditedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -937,22 +1314,35 @@ func (q *Queries) Files(ctx context.Context, after uuid.UUID, lim int32) ([]File
 }
 
 const filesWithText = `-- name: FilesWithText :many
-SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, text FROM archive.file
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at, text FROM archive.file
 WHERE id > $1 ORDER BY id LIMIT $2
 `
 
 type FilesWithTextRow struct {
-	ID        uuid.UUID
-	Hash      string
-	Name      string
-	MIME      string
-	Size      int64
-	Metadata  map[string]any
-	Status    string
-	Error     string
-	Access    *uuid.UUID
-	CreatedAt time.Time
-	Text      string
+	ID         uuid.UUID
+	Hash       string
+	Name       string
+	MIME       string
+	Size       int64
+	Metadata   map[string]any
+	Status     string
+	Error      string
+	Access     *uuid.UUID
+	CreatedAt  time.Time
+	Kind       string
+	Parent     *uuid.UUID
+	Connection *uuid.UUID
+	Stream     *string
+	SourceID   *string
+	Version    *string
+	URL        string
+	Drive      *string
+	OwnerName  *string
+	EditorName *string
+	MadeAt     *time.Time
+	EditedAt   *time.Time
+	UpdatedAt  time.Time
+	Text       string
 }
 
 func (q *Queries) FilesWithText(ctx context.Context, after uuid.UUID, lim int32) ([]FilesWithTextRow, error) {
@@ -975,6 +1365,19 @@ func (q *Queries) FilesWithText(ctx context.Context, after uuid.UUID, lim int32)
 			&i.Error,
 			&i.Access,
 			&i.CreatedAt,
+			&i.Kind,
+			&i.Parent,
+			&i.Connection,
+			&i.Stream,
+			&i.SourceID,
+			&i.Version,
+			&i.URL,
+			&i.Drive,
+			&i.OwnerName,
+			&i.EditorName,
+			&i.MadeAt,
+			&i.EditedAt,
+			&i.UpdatedAt,
 			&i.Text,
 		); err != nil {
 			return nil, err
@@ -997,20 +1400,33 @@ func (q *Queries) ForgetUser(ctx context.Context, id uuid.UUID) error {
 }
 
 const getFile = `-- name: GetFile :one
-SELECT id, hash, name, mime, size, metadata, status, error, access, created_at FROM archive.file WHERE id = $1
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at FROM archive.file WHERE id = $1
 `
 
 type GetFileRow struct {
-	ID        uuid.UUID
-	Hash      string
-	Name      string
-	MIME      string
-	Size      int64
-	Metadata  map[string]any
-	Status    string
-	Error     string
-	Access    *uuid.UUID
-	CreatedAt time.Time
+	ID         uuid.UUID
+	Hash       string
+	Name       string
+	MIME       string
+	Size       int64
+	Metadata   map[string]any
+	Status     string
+	Error      string
+	Access     *uuid.UUID
+	CreatedAt  time.Time
+	Kind       string
+	Parent     *uuid.UUID
+	Connection *uuid.UUID
+	Stream     *string
+	SourceID   *string
+	Version    *string
+	URL        string
+	Drive      *string
+	OwnerName  *string
+	EditorName *string
+	MadeAt     *time.Time
+	EditedAt   *time.Time
+	UpdatedAt  time.Time
 }
 
 func (q *Queries) GetFile(ctx context.Context, id uuid.UUID) (GetFileRow, error) {
@@ -1027,6 +1443,19 @@ func (q *Queries) GetFile(ctx context.Context, id uuid.UUID) (GetFileRow, error)
 		&i.Error,
 		&i.Access,
 		&i.CreatedAt,
+		&i.Kind,
+		&i.Parent,
+		&i.Connection,
+		&i.Stream,
+		&i.SourceID,
+		&i.Version,
+		&i.URL,
+		&i.Drive,
+		&i.OwnerName,
+		&i.EditorName,
+		&i.MadeAt,
+		&i.EditedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -1043,7 +1472,7 @@ func (q *Queries) GroupByName(ctx context.Context, name string) (uuid.UUID, erro
 }
 
 const hasPendingFiles = `-- name: HasPendingFiles :one
-SELECT EXISTS (SELECT FROM archive.file WHERE status = 'pending')
+SELECT EXISTS (SELECT FROM archive.file WHERE status = 'pending' AND connection IS NULL)
 `
 
 func (q *Queries) HasPendingFiles(ctx context.Context) (bool, error) {
@@ -1262,20 +1691,33 @@ func (q *Queries) KnownPeople(ctx context.Context, emails []string) ([]KnownPeop
 }
 
 const lockFile = `-- name: LockFile :one
-SELECT id, hash, name, mime, size, metadata, status, error, access, created_at FROM archive.file WHERE id = $1 FOR UPDATE
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at FROM archive.file WHERE id = $1 FOR UPDATE
 `
 
 type LockFileRow struct {
-	ID        uuid.UUID
-	Hash      string
-	Name      string
-	MIME      string
-	Size      int64
-	Metadata  map[string]any
-	Status    string
-	Error     string
-	Access    *uuid.UUID
-	CreatedAt time.Time
+	ID         uuid.UUID
+	Hash       string
+	Name       string
+	MIME       string
+	Size       int64
+	Metadata   map[string]any
+	Status     string
+	Error      string
+	Access     *uuid.UUID
+	CreatedAt  time.Time
+	Kind       string
+	Parent     *uuid.UUID
+	Connection *uuid.UUID
+	Stream     *string
+	SourceID   *string
+	Version    *string
+	URL        string
+	Drive      *string
+	OwnerName  *string
+	EditorName *string
+	MadeAt     *time.Time
+	EditedAt   *time.Time
+	UpdatedAt  time.Time
 }
 
 func (q *Queries) LockFile(ctx context.Context, id uuid.UUID) (LockFileRow, error) {
@@ -1292,26 +1734,61 @@ func (q *Queries) LockFile(ctx context.Context, id uuid.UUID) (LockFileRow, erro
 		&i.Error,
 		&i.Access,
 		&i.CreatedAt,
+		&i.Kind,
+		&i.Parent,
+		&i.Connection,
+		&i.Stream,
+		&i.SourceID,
+		&i.Version,
+		&i.URL,
+		&i.Drive,
+		&i.OwnerName,
+		&i.EditorName,
+		&i.MadeAt,
+		&i.EditedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
 
+const lockHash = `-- name: LockHash :exec
+SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))
+`
+
+func (q *Queries) LockHash(ctx context.Context, hash string) error {
+	_, err := q.db.Exec(ctx, lockHash, hash)
+	return err
+}
+
 const lockPendingFile = `-- name: LockPendingFile :one
-SELECT id, hash, name, mime, size, metadata, status, error, access, created_at FROM archive.file
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at FROM archive.file
 WHERE id = $1 AND status = 'pending' FOR UPDATE
 `
 
 type LockPendingFileRow struct {
-	ID        uuid.UUID
-	Hash      string
-	Name      string
-	MIME      string
-	Size      int64
-	Metadata  map[string]any
-	Status    string
-	Error     string
-	Access    *uuid.UUID
-	CreatedAt time.Time
+	ID         uuid.UUID
+	Hash       string
+	Name       string
+	MIME       string
+	Size       int64
+	Metadata   map[string]any
+	Status     string
+	Error      string
+	Access     *uuid.UUID
+	CreatedAt  time.Time
+	Kind       string
+	Parent     *uuid.UUID
+	Connection *uuid.UUID
+	Stream     *string
+	SourceID   *string
+	Version    *string
+	URL        string
+	Drive      *string
+	OwnerName  *string
+	EditorName *string
+	MadeAt     *time.Time
+	EditedAt   *time.Time
+	UpdatedAt  time.Time
 }
 
 func (q *Queries) LockPendingFile(ctx context.Context, id uuid.UUID) (LockPendingFileRow, error) {
@@ -1328,6 +1805,19 @@ func (q *Queries) LockPendingFile(ctx context.Context, id uuid.UUID) (LockPendin
 		&i.Error,
 		&i.Access,
 		&i.CreatedAt,
+		&i.Kind,
+		&i.Parent,
+		&i.Connection,
+		&i.Stream,
+		&i.SourceID,
+		&i.Version,
+		&i.URL,
+		&i.Drive,
+		&i.OwnerName,
+		&i.EditorName,
+		&i.MadeAt,
+		&i.EditedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -1476,6 +1966,68 @@ func (q *Queries) Members(ctx context.Context) ([]MembersRow, error) {
 	return items, nil
 }
 
+const moveFile = `-- name: MoveFile :one
+UPDATE archive.file SET parent = $1::uuid WHERE id = $2::uuid
+RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at
+`
+
+type MoveFileRow struct {
+	ID         uuid.UUID
+	Hash       string
+	Name       string
+	MIME       string
+	Size       int64
+	Metadata   map[string]any
+	Status     string
+	Error      string
+	Access     *uuid.UUID
+	CreatedAt  time.Time
+	Kind       string
+	Parent     *uuid.UUID
+	Connection *uuid.UUID
+	Stream     *string
+	SourceID   *string
+	Version    *string
+	URL        string
+	Drive      *string
+	OwnerName  *string
+	EditorName *string
+	MadeAt     *time.Time
+	EditedAt   *time.Time
+	UpdatedAt  time.Time
+}
+
+func (q *Queries) MoveFile(ctx context.Context, parent *uuid.UUID, iD uuid.UUID) (MoveFileRow, error) {
+	row := q.db.QueryRow(ctx, moveFile, parent, iD)
+	var i MoveFileRow
+	err := row.Scan(
+		&i.ID,
+		&i.Hash,
+		&i.Name,
+		&i.MIME,
+		&i.Size,
+		&i.Metadata,
+		&i.Status,
+		&i.Error,
+		&i.Access,
+		&i.CreatedAt,
+		&i.Kind,
+		&i.Parent,
+		&i.Connection,
+		&i.Stream,
+		&i.SourceID,
+		&i.Version,
+		&i.URL,
+		&i.Drive,
+		&i.OwnerName,
+		&i.EditorName,
+		&i.MadeAt,
+		&i.EditedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const nameMembers = `-- name: NameMembers :exec
 UPDATE archive.member m SET name = u.name FROM (SELECT unnest($1::text[]) AS email, unnest($2::text[]) AS name) u
 WHERE m.email = u.email AND u.name <> '' AND m.name IS DISTINCT FROM u.name AND (m.name = '' OR m.name = m.email::text)
@@ -1486,22 +2038,57 @@ func (q *Queries) NameMembers(ctx context.Context, emails []string, names []stri
 	return err
 }
 
+const nextBlob = `-- name: NextBlob :one
+SELECT at FROM archive.blob_gone ORDER BY at LIMIT 1
+`
+
+func (q *Queries) NextBlob(ctx context.Context) (time.Time, error) {
+	row := q.db.QueryRow(ctx, nextBlob)
+	var at time.Time
+	err := row.Scan(&at)
+	return at, err
+}
+
+const nextBlobGone = `-- name: NextBlobGone :one
+SELECT hash FROM archive.blob_gone WHERE at <= now() ORDER BY at LIMIT 1 FOR UPDATE SKIP LOCKED
+`
+
+func (q *Queries) NextBlobGone(ctx context.Context) (string, error) {
+	row := q.db.QueryRow(ctx, nextBlobGone)
+	var hash string
+	err := row.Scan(&hash)
+	return hash, err
+}
+
 const nextPendingFile = `-- name: NextPendingFile :one
-SELECT id, hash, name, mime, size, metadata, status, error, access, created_at FROM archive.file
-WHERE status = 'pending' ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED
+SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at FROM archive.file
+WHERE status = 'pending' AND connection IS NULL ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED
 `
 
 type NextPendingFileRow struct {
-	ID        uuid.UUID
-	Hash      string
-	Name      string
-	MIME      string
-	Size      int64
-	Metadata  map[string]any
-	Status    string
-	Error     string
-	Access    *uuid.UUID
-	CreatedAt time.Time
+	ID         uuid.UUID
+	Hash       string
+	Name       string
+	MIME       string
+	Size       int64
+	Metadata   map[string]any
+	Status     string
+	Error      string
+	Access     *uuid.UUID
+	CreatedAt  time.Time
+	Kind       string
+	Parent     *uuid.UUID
+	Connection *uuid.UUID
+	Stream     *string
+	SourceID   *string
+	Version    *string
+	URL        string
+	Drive      *string
+	OwnerName  *string
+	EditorName *string
+	MadeAt     *time.Time
+	EditedAt   *time.Time
+	UpdatedAt  time.Time
 }
 
 func (q *Queries) NextPendingFile(ctx context.Context) (NextPendingFileRow, error) {
@@ -1518,8 +2105,34 @@ func (q *Queries) NextPendingFile(ctx context.Context) (NextPendingFileRow, erro
 		&i.Error,
 		&i.Access,
 		&i.CreatedAt,
+		&i.Kind,
+		&i.Parent,
+		&i.Connection,
+		&i.Stream,
+		&i.SourceID,
+		&i.Version,
+		&i.URL,
+		&i.Drive,
+		&i.OwnerName,
+		&i.EditorName,
+		&i.MadeAt,
+		&i.EditedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const nextPull = `-- name: NextPull :one
+SELECT coalesce(f.retry_at, now())::timestamptz FROM archive.file f JOIN archive.connection c ON c.id = f.connection
+WHERE f.status = 'pending' AND f.connection IS NOT NULL AND NOT c.revoked ORDER BY f.retry_at NULLS FIRST LIMIT 1
+`
+
+// When a synced file's bytes are next due.
+func (q *Queries) NextPull(ctx context.Context) (time.Time, error) {
+	row := q.db.QueryRow(ctx, nextPull)
+	var column_1 time.Time
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const nextSyncAt = `-- name: NextSyncAt :one
@@ -1585,20 +2198,33 @@ func (q *Queries) RenameConnection(ctx context.Context, iD uuid.UUID, account st
 
 const renameFile = `-- name: RenameFile :one
 UPDATE archive.file SET name = $2 WHERE id = $1
-RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at
+RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at
 `
 
 type RenameFileRow struct {
-	ID        uuid.UUID
-	Hash      string
-	Name      string
-	MIME      string
-	Size      int64
-	Metadata  map[string]any
-	Status    string
-	Error     string
-	Access    *uuid.UUID
-	CreatedAt time.Time
+	ID         uuid.UUID
+	Hash       string
+	Name       string
+	MIME       string
+	Size       int64
+	Metadata   map[string]any
+	Status     string
+	Error      string
+	Access     *uuid.UUID
+	CreatedAt  time.Time
+	Kind       string
+	Parent     *uuid.UUID
+	Connection *uuid.UUID
+	Stream     *string
+	SourceID   *string
+	Version    *string
+	URL        string
+	Drive      *string
+	OwnerName  *string
+	EditorName *string
+	MadeAt     *time.Time
+	EditedAt   *time.Time
+	UpdatedAt  time.Time
 }
 
 func (q *Queries) RenameFile(ctx context.Context, iD uuid.UUID, name string) (RenameFileRow, error) {
@@ -1615,26 +2241,52 @@ func (q *Queries) RenameFile(ctx context.Context, iD uuid.UUID, name string) (Re
 		&i.Error,
 		&i.Access,
 		&i.CreatedAt,
+		&i.Kind,
+		&i.Parent,
+		&i.Connection,
+		&i.Stream,
+		&i.SourceID,
+		&i.Version,
+		&i.URL,
+		&i.Drive,
+		&i.OwnerName,
+		&i.EditorName,
+		&i.MadeAt,
+		&i.EditedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const replaceFile = `-- name: ReplaceFile :one
 UPDATE archive.file SET hash = $2, size = $3, status = 'pending', text = '', error = '', metadata = '{}' WHERE id = $1
-RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at
+RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at
 `
 
 type ReplaceFileRow struct {
-	ID        uuid.UUID
-	Hash      string
-	Name      string
-	MIME      string
-	Size      int64
-	Metadata  map[string]any
-	Status    string
-	Error     string
-	Access    *uuid.UUID
-	CreatedAt time.Time
+	ID         uuid.UUID
+	Hash       string
+	Name       string
+	MIME       string
+	Size       int64
+	Metadata   map[string]any
+	Status     string
+	Error      string
+	Access     *uuid.UUID
+	CreatedAt  time.Time
+	Kind       string
+	Parent     *uuid.UUID
+	Connection *uuid.UUID
+	Stream     *string
+	SourceID   *string
+	Version    *string
+	URL        string
+	Drive      *string
+	OwnerName  *string
+	EditorName *string
+	MadeAt     *time.Time
+	EditedAt   *time.Time
+	UpdatedAt  time.Time
 }
 
 func (q *Queries) ReplaceFile(ctx context.Context, iD uuid.UUID, hash string, size int64) (ReplaceFileRow, error) {
@@ -1651,6 +2303,19 @@ func (q *Queries) ReplaceFile(ctx context.Context, iD uuid.UUID, hash string, si
 		&i.Error,
 		&i.Access,
 		&i.CreatedAt,
+		&i.Kind,
+		&i.Parent,
+		&i.Connection,
+		&i.Stream,
+		&i.SourceID,
+		&i.Version,
+		&i.URL,
+		&i.Drive,
+		&i.OwnerName,
+		&i.EditorName,
+		&i.MadeAt,
+		&i.EditedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -1661,6 +2326,15 @@ UPDATE archive.file SET status = 'pending' WHERE status = 'processing'
 
 func (q *Queries) ResetProcessing(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, resetProcessing)
+	return err
+}
+
+const retryBlobGone = `-- name: RetryBlobGone :exec
+UPDATE archive.blob_gone SET at = $1::timestamptz WHERE hash = $2
+`
+
+func (q *Queries) RetryBlobGone(ctx context.Context, at time.Time, hash string) error {
+	_, err := q.db.Exec(ctx, retryBlobGone, at, hash)
 	return err
 }
 
@@ -1860,20 +2534,33 @@ func (q *Queries) SetConnectionToken(ctx context.Context, iD uuid.UUID, token []
 
 const setFileAccess = `-- name: SetFileAccess :one
 UPDATE archive.file SET access = $1::uuid WHERE id = $2::uuid
-RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at
+RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at
 `
 
 type SetFileAccessRow struct {
-	ID        uuid.UUID
-	Hash      string
-	Name      string
-	MIME      string
-	Size      int64
-	Metadata  map[string]any
-	Status    string
-	Error     string
-	Access    *uuid.UUID
-	CreatedAt time.Time
+	ID         uuid.UUID
+	Hash       string
+	Name       string
+	MIME       string
+	Size       int64
+	Metadata   map[string]any
+	Status     string
+	Error      string
+	Access     *uuid.UUID
+	CreatedAt  time.Time
+	Kind       string
+	Parent     *uuid.UUID
+	Connection *uuid.UUID
+	Stream     *string
+	SourceID   *string
+	Version    *string
+	URL        string
+	Drive      *string
+	OwnerName  *string
+	EditorName *string
+	MadeAt     *time.Time
+	EditedAt   *time.Time
+	UpdatedAt  time.Time
 }
 
 func (q *Queries) SetFileAccess(ctx context.Context, access *uuid.UUID, iD uuid.UUID) (SetFileAccessRow, error) {
@@ -1890,6 +2577,19 @@ func (q *Queries) SetFileAccess(ctx context.Context, access *uuid.UUID, iD uuid.
 		&i.Error,
 		&i.Access,
 		&i.CreatedAt,
+		&i.Kind,
+		&i.Parent,
+		&i.Connection,
+		&i.Stream,
+		&i.SourceID,
+		&i.Version,
+		&i.URL,
+		&i.Drive,
+		&i.OwnerName,
+		&i.EditorName,
+		&i.MadeAt,
+		&i.EditedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -1921,6 +2621,107 @@ func (q *Queries) SetLocal(ctx context.Context, name string, value string) error
 	return err
 }
 
+const setPullDone = `-- name: SetPullDone :exec
+UPDATE archive.file SET status = $1, error = $2, metadata = $3, text = $4, tries = 0, retry_at = NULL
+WHERE id = $5 AND version IS NOT DISTINCT FROM $6
+`
+
+type SetPullDoneParams struct {
+	Status   string
+	Error    string
+	Metadata map[string]any
+	Body     string
+	ID       uuid.UUID
+	Version  *string
+}
+
+func (q *Queries) SetPullDone(ctx context.Context, arg SetPullDoneParams) error {
+	_, err := q.db.Exec(ctx, setPullDone,
+		arg.Status,
+		arg.Error,
+		arg.Metadata,
+		arg.Body,
+		arg.ID,
+		arg.Version,
+	)
+	return err
+}
+
+const setPullEnd = `-- name: SetPullEnd :exec
+UPDATE archive.file SET status = $1, error = $2, tries = 0, retry_at = NULL
+WHERE id = $3 AND version IS NOT DISTINCT FROM $4
+`
+
+type SetPullEndParams struct {
+	Status  string
+	Error   string
+	ID      uuid.UUID
+	Version *string
+}
+
+// Why a synced file's bytes are not here, for good until a new version comes.
+func (q *Queries) SetPullEnd(ctx context.Context, arg SetPullEndParams) error {
+	_, err := q.db.Exec(ctx, setPullEnd,
+		arg.Status,
+		arg.Error,
+		arg.ID,
+		arg.Version,
+	)
+	return err
+}
+
+const setPullRetry = `-- name: SetPullRetry :exec
+UPDATE archive.file SET retry_at = $1::timestamptz, tries = $2, error = $3
+WHERE id = $4 AND version IS NOT DISTINCT FROM $5
+`
+
+type SetPullRetryParams struct {
+	At      time.Time
+	Tries   int32
+	Error   string
+	ID      uuid.UUID
+	Version *string
+}
+
+func (q *Queries) SetPullRetry(ctx context.Context, arg SetPullRetryParams) error {
+	_, err := q.db.Exec(ctx, setPullRetry,
+		arg.At,
+		arg.Tries,
+		arg.Error,
+		arg.ID,
+		arg.Version,
+	)
+	return err
+}
+
+const setPulled = `-- name: SetPulled :execrows
+UPDATE archive.file SET hash = $1, size = $2, mime = CASE WHEN mime = 'application/octet-stream' THEN $3::text ELSE mime END, copied = version
+WHERE id = $4 AND version IS NOT DISTINCT FROM $5
+`
+
+type SetPulledParams struct {
+	Hash    string
+	Size    int64
+	Sniffed string
+	ID      uuid.UUID
+	Version *string
+}
+
+// The copy's bytes, unless a newer version came while they were read.
+func (q *Queries) SetPulled(ctx context.Context, arg SetPulledParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setPulled,
+		arg.Hash,
+		arg.Size,
+		arg.Sniffed,
+		arg.ID,
+		arg.Version,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setUploadParts = `-- name: SetUploadParts :exec
 UPDATE archive.upload SET parts = $2 WHERE id = $1
 `
@@ -1937,6 +2738,17 @@ UPDATE archive.workflow SET next_at = $3 WHERE id = $1 AND trigger = $2
 func (q *Queries) SetWorkflowNext(ctx context.Context, iD uuid.UUID, trigger string, nextAt *time.Time) error {
 	_, err := q.db.Exec(ctx, setWorkflowNext, iD, trigger, nextAt)
 	return err
+}
+
+const stored = `-- name: Stored :one
+SELECT archive.stored()::bigint
+`
+
+func (q *Queries) Stored(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, stored)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const trimWorkflowRuns = `-- name: TrimWorkflowRuns :exec

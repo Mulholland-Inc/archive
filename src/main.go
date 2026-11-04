@@ -533,7 +533,7 @@ func cliFile(ctx context.Context, a *Archive, pos []string, access, output strin
 				return fmt.Errorf("-after: %w", err)
 			}
 		}
-		return out(a.Files(ctx, limit, aid))
+		return out(a.Files(ctx, limit, aid, nil))
 	}
 	if len(pos) < 2 {
 		return cliErrUsage
@@ -546,7 +546,7 @@ func cliFile(ctx context.Context, a *Archive, pos []string, access, output strin
 			if err != nil {
 				return err
 			}
-			f, err := a.AddFile(ctx, access, filepath.Base(p), fh)
+			f, err := a.AddFile(ctx, access, filepath.Base(p), nil, fh)
 			fh.Close()
 			if err != nil {
 				return fmt.Errorf("%s: %w", p, err)
@@ -746,6 +746,7 @@ func cliServe(ctx context.Context, h *Hub, addr string) error {
 	h.mcpRoutes(mux, false)
 	mux.HandleFunc("POST /tasks", h.tasksHTTP)
 	mux.HandleFunc("POST /push/{id}", h.pushHTTP)
+	mux.HandleFunc("GET /push/{id}", h.pushHTTP)
 	h.live.serving()
 	mux.HandleFunc("GET /live", h.liveHTTP)
 	mux.HandleFunc("POST /live/announce", h.liveAnnounceHTTP)

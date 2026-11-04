@@ -192,6 +192,17 @@ resource "google_sql_user" "this" {
 }
 
 resource "google_storage_bucket" "this" {
+  # Bytes wait under .part until their hash names them, and what an instance stopped before that goes.
+  lifecycle_rule {
+    condition {
+      age            = 2
+      matches_suffix = [".part"]
+    }
+    action {
+      type = "Delete"
+    }
+  }
+
   name                        = "${var.project}-archive"
   location                    = var.region
   uniform_bucket_level_access = true

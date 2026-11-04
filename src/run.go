@@ -48,17 +48,30 @@ type RunOutput struct {
 }
 
 type runFile struct {
-	ID        uuid.UUID      `json:"id"`
-	Hash      string         `json:"sha256"`
-	Name      string         `json:"name"`
-	MIME      string         `json:"mime"`
-	Size      int64          `json:"size"`
-	Metadata  map[string]any `json:"metadata"`
-	Status    string         `json:"status"`
-	Error     string         `json:"error,omitempty"`
-	Access    *uuid.UUID     `json:"access"`
-	CreatedAt time.Time      `json:"created_at"`
-	Text      string         `json:"text"`
+	ID         uuid.UUID      `json:"id"`
+	Hash       string         `json:"sha256"`
+	Name       string         `json:"name"`
+	MIME       string         `json:"mime"`
+	Size       int64          `json:"size"`
+	Metadata   map[string]any `json:"metadata"`
+	Status     string         `json:"status"`
+	Error      string         `json:"error,omitempty"`
+	Access     *uuid.UUID     `json:"access"`
+	CreatedAt  time.Time      `json:"created_at"`
+	Kind       string         `json:"kind"`
+	Parent     *uuid.UUID     `json:"parent"`
+	Connection *uuid.UUID     `json:"connection"`
+	Stream     *string        `json:"stream,omitempty"`
+	SourceID   *string        `json:"source_id,omitempty"`
+	Version    *string        `json:"version,omitempty"`
+	URL        string         `json:"url,omitempty"`
+	Drive      *string        `json:"drive,omitempty"`
+	OwnerName  *string        `json:"owner_name,omitempty"`
+	EditorName *string        `json:"editor_name,omitempty"`
+	MadeAt     *time.Time     `json:"made_at,omitempty"`
+	EditedAt   *time.Time     `json:"edited_at,omitempty"`
+	UpdatedAt  time.Time      `json:"updated_at"`
+	Text       string         `json:"text"`
 }
 
 type runTable struct {
@@ -681,7 +694,7 @@ func (r *runner) promise(v any, err error) goja.Value {
 	return r.vm.ToValue(p)
 }
 
-var runReads = map[string]bool{"action": true, "query": true, "schema": true, "revisions": true, "list": true, "get": true, "search": true, "files": true, "file": true}
+var runReads = map[string]bool{"action": true, "query": true, "schema": true, "revisions": true, "list": true, "get": true, "search": true, "files": true, "file": true, "stored": true}
 
 func (r *runner) call(read bool, f func(ctx context.Context) (any, error)) (any, error) {
 	t, ok := r.ctx.Value(storeTxKey{}).(storeTx)
@@ -796,6 +809,13 @@ func (r *runner) sdk() {
 		return a.Patch(ctx, table, id, patch)
 	})
 	r.def(o, "delete", func(ctx context.Context, call goja.FunctionCall) (any, error) {
+		if call.Argument(0).String() == "file" {
+			id, err := r.id(call, 1, "delete")
+			if err != nil {
+				return nil, err
+			}
+			return nil, a.DeleteFile(ctx, id)
+		}
 		table, id, err := r.row(call, "delete")
 		if err != nil {
 			return nil, err
@@ -876,6 +896,48 @@ func (r *runner) sdk() {
 			}
 			return (*runFile)(&r), err
 		})
+	})
+	r.def(o, "copy", func(ctx context.Context, call goja.FunctionCall) (any, error) {
+		id, err := r.id(call, 0, "copy")
+		if err != nil {
+			return nil, err
+		}
+		var opts struct {
+			Name   string  `json:"name"`
+			Access *string `json:"access"`
+		}
+		if err := r.arg(call, 1, "copy", "opts", &opts); err != nil {
+			return nil, err
+		}
+		return a.CopyFile(ctx, id, opts.Name, opts.Access)
+	})
+	r.def(o, "folder", func(ctx context.Context, call goja.FunctionCall) (any, error) {
+		name, err := r.str(call, 0, "folder", "name")
+		if err != nil {
+			return nil, err
+		}
+		var opts struct {
+			Parent *uuid.UUID `json:"parent"`
+			Access string     `json:"access"`
+		}
+		if err := r.arg(call, 1, "folder", "opts", &opts); err != nil {
+			return nil, err
+		}
+		return a.AddFolder(ctx, opts.Access, name, opts.Parent)
+	})
+	r.def(o, "move", func(ctx context.Context, call goja.FunctionCall) (any, error) {
+		id, err := r.id(call, 0, "move")
+		if err != nil {
+			return nil, err
+		}
+		var parent *uuid.UUID
+		if err := r.arg(call, 1, "move", "folder", &parent); err != nil {
+			return nil, err
+		}
+		return a.MoveFile(ctx, id, parent)
+	})
+	r.def(o, "stored", func(ctx context.Context, call goja.FunctionCall) (any, error) {
+		return a.Stored(ctx)
 	})
 	r.def(o, "read", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		id, err := r.id(call, 0, "read")

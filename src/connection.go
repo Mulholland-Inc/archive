@@ -1259,7 +1259,7 @@ var syncSchema = map[string]syncTable{
 	"payroll_contractor_payment":       {links: map[string]string{"company": "payroll_company", "worker": "payroll_worker"}},
 	"payroll_contractor_payment_group": {links: map[string]string{"company": "payroll_company"}},
 	"payroll_task":                     {links: map[string]string{"company": "payroll_company"}},
-	"drive_file":                       {links: map[string]string{"folder": "drive_file"}},
+	"file":                             {links: map[string]string{"parent": "file"}},
 	"calendar_event":                   {links: map[string]string{"series": "calendar_event"}},
 	"calendar_attendee":                {parent: "calendar_event", of: "event"},
 	"crm_company":                      {},
@@ -2083,7 +2083,7 @@ func (e *actionError) Unwrap() error { return e.kind }
 // Action does the action name with input on one of the caller's connections: the one pick names, by account
 // or id, or their only one to its connector. clients are the connections' clients this run opened, which it
 // closes when it ends.
-func (a *Archive) Action(ctx context.Context, name string, input any, pick string, clients map[uuid.UUID]*connect.Client) (any, error) {
+func (a *Archive) Action(ctx context.Context, name string, input any, pick string, clients map[uuid.UUID]*connect.Client, until time.Time) (any, error) {
 	ac, err := signedIn(ctx)
 	if err != nil {
 		return nil, err
@@ -2169,9 +2169,15 @@ func (a *Archive) Action(ctx context.Context, name string, input any, pick strin
 		}
 		clients[c.ID] = cl
 	}
+	cl.Files = actionFiles{a, ctx, c.ID, until}
 	out, err := do.Do(cl, raw)
 	if err != nil {
 		return nil, actionFailed(fail, err)
+	}
+	if do.Asks {
+		if _, err := a.syncWant(ctx, c.ID); err != nil {
+			fmt.Fprintf(os.Stderr, "archive: workspace %s: asking for a sync of %s: %v\n", a.ws.ID, c.ID, err)
+		}
 	}
 	return out, nil
 }
@@ -2252,7 +2258,7 @@ func (r *runner) actionSDK(o *goja.Object) {
 		if r.clients == nil {
 			r.clients = map[uuid.UUID]*connect.Client{}
 		}
-		return r.a.Action(ctx, name, input, opts.Connection, r.clients)
+		return r.a.Action(ctx, name, input, opts.Connection, r.clients, r.clock.end)
 	})
 }
 

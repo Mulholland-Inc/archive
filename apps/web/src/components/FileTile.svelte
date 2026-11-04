@@ -1,11 +1,11 @@
 <script>
-  import { FileText, Image, AudioLines, FileSpreadsheet, Play } from '@lucide/svelte';
+  import { FileText, Folder, Image, AudioLines, FileSpreadsheet, Play } from '@lucide/svelte';
   import Icon from './Icon.svelte';
   import { contextmenu } from '../lib/contextmenu.svelte.js';
   import { blobURL } from '../lib/api.js';
 
   let { file, onclick, selected = false, menu, items } = $props();
-  const icons = { image: Image, recording: AudioLines, spreadsheet: FileSpreadsheet, pdf: FileText, document: FileText };
+  const icons = { image: Image, recording: AudioLines, spreadsheet: FileSpreadsheet, pdf: FileText, document: FileText, folder: Folder };
   let thumb = $state('');
   $effect(() => {
     thumb = '';
@@ -19,6 +19,8 @@
   <div class={['thumb', file.kind, `t${file.tone}`]}>
     {#if thumb}
       <img class="real" src={thumb} alt="" loading="lazy" draggable="false" />
+    {:else if file.kind === 'folder'}
+      <span class="sheet"></span>
     {:else if file.kind === 'image'}
       <span class="photo"><span class="sun"></span><span class="hill"></span><span class="hill back"></span></span>
     {:else if file.kind === 'recording'}
@@ -41,13 +43,13 @@
         <span class="line short"></span>
       </span>
     {/if}
-    <span class="ext">{file.ext}</span>
+    {#if file.ext}<span class="ext">{file.ext}</span>{/if}
   </div>
   <div class="meta">
     <span class="kind"><Icon icon={icons[file.kind] ?? FileText} size="sm" /></span>
     <span class="text">
       <span class="name">{file.name}</span>
-      <span class="sub">{file.modified}, {file.size}</span>
+      <span class="sub">{file.sub ?? `${file.modified}, ${file.size}`}</span>
     </span>
     {#if menu}<span class="menu">{@render menu()}</span>{/if}
   </div>

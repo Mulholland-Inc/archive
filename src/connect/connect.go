@@ -712,6 +712,8 @@ type Client struct {
 	apiErr  error
 	// mcpSeen is what the last answer of its MCP server's transport was, which its SDK does not say in an error.
 	mcpSeen *seen
+	// Files is the caller's files, for an upload.
+	Files Yours
 }
 
 // Open is a Client of the account whose access token tok is, with the Meta its grant kept.
@@ -916,7 +918,7 @@ func reasonIn(b []byte) string {
 		}
 		return s
 	}
-	for _, k := range []string{"message", "error_message", "error_description", "Detail", "Message", "detail", "error"} {
+	for _, k := range []string{"message", "error_message", "error_description", "error_summary", "Detail", "Message", "detail", "error"} {
 		if s := find(v, k); s != "" {
 			return s
 		}
@@ -956,7 +958,9 @@ type Action struct {
 	// Writes says it changes something at the provider, like sending a message, which a viewer-only token
 	// may not.
 	Writes bool
-	plan   *Plan
+	// Asks says it changes what a stream syncs, so a sync should follow it.
+	Asks bool
+	plan *Plan
 }
 
 // ToolActions are the actions of an MCP connector: its server's tools, each by its name without the connector's id

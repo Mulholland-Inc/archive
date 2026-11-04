@@ -85,6 +85,8 @@ type Req struct {
 	Or     *Req                `json:",omitempty"`
 	Text   bool                `json:",omitempty"`
 	Parts  []Part              `json:",omitempty"`
+	// Head are headers whose value is JSON of that, in ASCII, as Dropbox takes arguments of a request with a body of bytes.
+	Head map[string]any `json:",omitempty"`
 	// exact is a URL a provider named, sent as it is.
 	exact bool
 }
@@ -229,8 +231,11 @@ type (
 		Drop []string `json:",omitempty"`
 	}
 	// Cursor is an answer naming the next page's token, while More says so when there is a More. GraphQL pages
-	// so, with {page} in its variables.
-	Cursor struct{ At, More Path }
+	// so, with {page} in its variables. Then is what asks for a next page when the first is asked for otherwise.
+	Cursor struct {
+		At, More Path
+		Then     *Req `json:",omitempty"`
+	}
 	// Offset is a count from From that goes up by Step while a page comes back with Size records.
 	Offset struct{ From, Size, Step int }
 	// ToolPage is an MCP tool that pages as its schema says: Max at a time in the first of Limit that it takes, and
@@ -490,6 +495,41 @@ type Sync struct {
 	Deny      []Deny        `json:",omitempty"`
 	Restart   []int         `json:",omitempty"`
 	Pass      []int         `json:",omitempty"`
+	Content   []Content     `json:",omitempty"`
+}
+
+// Content is how the bytes of a stream's file are read, the first whose If holds of its row's source column: Req reads
+// that as {source/...}, and answers with them. Size is where source says how many. Too are refusals that mean it will
+// never be copied, whose Why says so.
+type Content struct {
+	If   Test `json:",omitzero"`
+	Req  Req
+	Size Path   `json:",omitempty"`
+	Too  []Deny `json:",omitempty"`
+}
+
+// Send is how a connector's upload action sends a file up, in parts, without holding it in memory. New opens a session
+// for a new file at the top, In for one in a folder, and Over for a new version of a file: At is where the answer has the
+// session, or AtHeader the header. Each reads the input as {name}, {rename} the name asked for alone, {mime} and {size},
+// a folder's source column as {in/...} and a file's as {it/...} and its {version}, and Let's steps. Check asks what version
+// a file is now, as Now says of its answer {ans}, for a provider with no write that takes one. Part sends Step bytes at
+// a time, multiples of what the provider asks, to the session or its URL, reading {session}, {offset}, {range} and
+// {length}, and Last, when it has one, the last of them; a provider's upload URL that wants no sign-in says Bare. Stale are
+// refusals that mean the file there is not the one expected, or its name is taken, which Why says.
+type Send struct {
+	Doc       string
+	Let       []Step
+	New, Over Req
+	In        *Req
+	At        Path
+	AtHeader  string
+	Check     *Req
+	Now       string
+	Part      Req
+	Last      *Req
+	Step      int64
+	Bare      bool
+	Stale     []Deny
 }
 
 // Reads is what template Of reads to, all of it there, or the first group of Find in that.
@@ -921,7 +961,11 @@ func (c *Connector) compile() error {
 		if err := s.check(); err != nil {
 			return fmt.Errorf("stream %s: %w", s.Name, err)
 		}
-		c.Streams = append(c.Streams, &Stream{Name: s.Name, Doc: s.Doc, Gap: s.Gap, Every: s.Every, Table: s.To.Table, Pull: s.pull, SQL: s.To.sql(), Version: s.version()})
+		st := &Stream{Name: s.Name, Doc: s.Doc, Gap: s.Gap, Every: s.Every, Table: s.To.Table, Pull: s.pull, SQL: s.To.sql(), Version: s.version()}
+		if len(s.Content) > 0 {
+			st.Read = s.bytesOf
+		}
+		c.Streams = append(c.Streams, st)
 	}
 	return nil
 }
@@ -1054,6 +1098,9 @@ func (r Req) roots() []string {
 		}
 	}
 	walk(r.Body)
+	for _, x := range r.Head {
+		walk(x)
+	}
 	for _, x := range r.Parts {
 		note(x.Type)
 		walk(x.Body)
@@ -1143,6 +1190,11 @@ func (s *Sync) check() error {
 	for _, h := range s.Hydrate {
 		if d, ok := h.(Decode); ok && d.Codec == nil {
 			return errors.New("a Decode needs a Codec")
+		}
+	}
+	for _, k := range s.Content {
+		if err := k.Req.check("content", "source"); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -1590,6 +1642,9 @@ func pageOf(req Req, pg Paging, at string, sc map[string]any) Req {
 		sc["page"] = at
 		if _, ok := pg.(NextURL); ok {
 			req.URL, req.Query, req.exact = at, nil, true
+		}
+		if c, ok := pg.(Cursor); ok && c.Then != nil {
+			req = *c.Then
 		}
 	} else if o, ok := pg.(Offset); ok && o.From != 0 {
 		sc["page"] = strconv.Itoa(o.From)
@@ -2406,10 +2461,15 @@ func (c *Client) http1(r Req, sc map[string]any) (any, error) {
 }
 
 func (r Req) headers(sc map[string]any) http.Header {
-	if r.Header == nil {
+	if r.Header == nil && r.Head == nil {
 		return nil
 	}
 	hdr := http.Header{}
+	for k, v := range r.Head {
+		x, _ := fill(v, sc)
+		b, _ := json.Marshal(x)
+		hdr.Set(k, jsonASCII(b))
+	}
 	for k, ts := range r.Header {
 		for _, t := range ts {
 			v, _ := fillStr(t, sc)
@@ -3350,7 +3410,7 @@ func (l *Listen) hear(pr *Provider, r *http.Request, at string, body []byte, sec
 	for _, h := range l.Hello {
 		if h.Query != "" {
 			if v := q.Get(h.Query); v != "" {
-				return &Heard{Status: http.StatusOK, Header: http.Header{"Content-Type": {"text/plain; charset=utf-8"}}, Body: v}, nil
+				return &Heard{Status: http.StatusOK, Header: http.Header{"Content-Type": {"text/plain; charset=utf-8"}, "X-Content-Type-Options": {"nosniff"}}, Body: v}, nil
 			}
 		}
 		if h.Header != "" {

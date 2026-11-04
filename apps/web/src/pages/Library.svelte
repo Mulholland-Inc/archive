@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { Upload, LayoutGrid, List as ListIcon, Ellipsis, Download, Pencil, MessageSquarePlus, SearchX, FolderPlus, Share, FileText, Image, AudioLines, FileSpreadsheet, Inbox } from '@lucide/svelte';
+  import { Upload, LayoutGrid, List as ListIcon, Ellipsis, Download, Pencil, MessageSquarePlus, SearchX, FolderPlus, ExternalLink, FileText, Folder, Image, AudioLines, FileSpreadsheet, Inbox } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
   import StickyHeader from '../components/StickyHeader.svelte';
@@ -27,7 +27,7 @@
   import Skeleton from '../components/Skeleton.svelte';
   import FileInput from '../components/FileInput.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { ws, seedOf, uploadFiles, addFolder, downloadFile, openShare, library, members, groups, mayLimit, accessOptions, setFileAccess } from '../lib/app.svelte.js';
+  import { ws, seedOf, uploadFiles, addFolder, downloadFile, library, members, groups, mayLimit, accessOptions, setFileAccess, folderFiles, fileById, findFiles } from '../lib/app.svelte.js';
 
   library.use();
   members.use();
@@ -55,35 +55,70 @@
   ];
   const columns = [
     { key: 'name', label: 'Name' },
-    { key: 'folder', label: 'Folder', muted: true, width: 'md' },
-    { key: 'modified', label: 'Added', muted: true, width: 'sm' },
+    { key: 'modified', label: 'Changed', muted: true, width: 'sm' },
     { key: 'size', label: 'Size', muted: true, align: 'end', width: 'sm' },
     { key: 'menu', label: '', width: 'xs', align: 'end' }
   ];
 
   let query = $state('');
   let kind = $state('all');
-  let folder = $state('all');
+  // Where in the tree: the folders opened, top first, each a folder's id or a connection's. A connection's has no parent.
+  let trail = $state([]);
+  let rows = $state([]);
+  let found = $state(null);
   let sort = $state('recent');
   let view = $state('grid');
   let openId = $state(route.parts[1] ?? null);
   let preview = $state(Boolean(route.parts[1]));
   let searchEl = $state();
 
-  const open = $derived(ws().library.find((f) => f.id === openId));
-  const folders = $derived([{ value: 'all', label: 'All folders' }, ...ws().folders.map((f) => ({ value: f, label: f }))]);
+  const here = $derived(trail.at(-1));
+  const synced = $derived(trail.some((t) => t.connection));
+  let opened = $state(null);
+  const open = $derived(opened?.id === openId ? opened : null);
+  const sources = $derived(ws().sources.map((s) => ({ id: s.id, name: s.name, kind: 'folder', ext: '', sub: s.account, connection: s.id, source: true, tone: 1 })));
   const bytes = (s) => parseFloat(s) * (s.includes('MB') ? 1024 : 1);
+  const listed = $derived(found ?? (here ? rows : [...sources, ...ws().library]));
   const files = $derived.by(() => {
-    const q = query.trim().toLowerCase();
-    const out = ws().library.filter(
-      (f) => (kind === 'all' || f.kind === kind) && (folder === 'all' || f.folder === folder) && (!q || f.name.toLowerCase().includes(q) || f.folder.toLowerCase().includes(q))
-    );
-    if (sort === 'name') return [...out].sort((a, b) => a.name.localeCompare(b.name));
-    if (sort === 'size') return [...out].sort((a, b) => (b.bytes ?? bytes(b.size)) - (a.bytes ?? bytes(a.size)));
-    return out;
+    const out = listed.filter((f) => kind === 'all' || f.kind === kind || f.kind === 'folder');
+    const by = sort === 'name' ? (a, b) => a.name.localeCompare(b.name) : sort === 'size' ? (a, b) => (b.bytes ?? bytes(b.size ?? '0')) - (a.bytes ?? bytes(a.size ?? '0')) : () => 0;
+    return [...out].sort((a, b) => (b.kind === 'folder') - (a.kind === 'folder') || by(a, b));
+  });
+
+  // A folder is read again when it opens, and when what it is read from moves.
+  $effect(() => {
+    const at = here;
+    ws().library;
+    if (!at) return;
+    folderFiles(at.source ? { connection: at.id } : { parent: at.id }).then((list) => {
+      if (here === at) rows = list;
+    }).catch(() => {});
+  });
+  $effect(() => {
+    const q = query.trim();
+    if (!q) {
+      found = null;
+      return;
+    }
+    const wait = setTimeout(() => findFiles(q).then((list) => {
+      if (query.trim() === q) found = list;
+    }).catch(() => {}), 200);
+    return () => clearTimeout(wait);
+  });
+  $effect(() => {
+    const id = openId;
+    if (!id) return;
+    const known = listed.find((f) => f.id === id);
+    if (known) opened = known;
+    else fileById(id).then((f) => (opened = f)).catch(() => {});
   });
 
   function show(file) {
+    if (file.kind === 'folder') {
+      trail = [...trail, file];
+      query = '';
+      return;
+    }
     openId = file.id;
     preview = true;
   }
@@ -97,10 +132,8 @@
 
   async function newFolder() {
     const name = await prompt({ title: 'New folder', label: 'Name', placeholder: 'Wedding, 1981', confirm: 'Create' });
-    if (name) {
-      addFolder(name);
-      folder = name;
-    }
+    const made = name && (await addFolder(name, here?.id));
+    if (made) trail = [...trail, made];
   }
 
   let picker = $state();
@@ -115,7 +148,7 @@
     event.currentTarget.value = '';
     if (!list.length) return;
     uploading = true;
-    const added = await uploadFiles(list, folder === 'all' ? undefined : folder);
+    const added = await uploadFiles(list, here?.id);
     uploading = false;
     if (kind !== 'all' && added.some((f) => f.kind !== kind)) kind = 'all';
     query = '';
@@ -130,7 +163,6 @@
   function clear() {
     query = '';
     kind = 'all';
-    folder = 'all';
   }
 
   onMount(() => {
@@ -160,16 +192,25 @@
   <StickyHeader title="Library" art="bg-library">
     {#snippet search()}
       <SearchField bind:value={query} bind:element={searchEl} placeholder="Search files and folders" shortcut="/" />
-      <Select bind:value={folder} options={folders} variant="ghost" label="Folder" />
     {/snippet}
     {#snippet actions()}
-      {#if folder !== 'all'}<IconButton icon={Share} label={`Share ${folder}`} variant="secondary" onclick={() => openShare('folder', folder)} />{/if}
-      <IconButton icon={FolderPlus} label="New folder" variant="secondary" onclick={newFolder} />
-      <Button variant="primary" icon={Upload} loading={uploading} onclick={upload}>Upload</Button>
+      {#if !synced}
+        <IconButton icon={FolderPlus} label="New folder" variant="secondary" onclick={newFolder} />
+        <Button variant="primary" icon={Upload} loading={uploading} onclick={upload}>Upload</Button>
+      {/if}
     {/snippet}
   </StickyHeader>
 
   <Stack gap="4">
+    {#if trail.length && !found}
+      <Stack direction="row" gap="1" align="center" wrap>
+        <Button size="sm" variant="ghost" onclick={() => (trail = [])}>Library</Button>
+        {#each trail as t, i (t.id)}
+          <Text tone="secondary">/</Text>
+          <Button size="sm" variant="ghost" onclick={() => (trail = trail.slice(0, i + 1))}>{t.name}</Button>
+        {/each}
+      </Stack>
+    {/if}
     <Stack direction="row" gap="2" align="center" wrap>
       {#each kinds as k (k.value)}
         <Chip selected={kind === k.value} onclick={() => (kind = k.value)}>{k.label}</Chip>
@@ -180,31 +221,30 @@
     </Stack>
   </Stack>
 
-  {#if ws().loading && !ws().library.length}
+  {#if ws().loading && !listed.length}
     <Grid min="tile" gap="2">{#each { length: 6 } as _, i (i)}<Skeleton variant="block" size="lg" />{/each}</Grid>
-  {:else if !ws().library.length}
-    <EmptyState icon={Inbox} title="No files yet">
-      <Button variant="primary" icon={Upload} onclick={upload}>Upload</Button>
+  {:else if !listed.length && !found}
+    <EmptyState icon={Inbox} title={here ? `${here.name} is empty` : 'No files yet'}>
+      {#if !synced}<Button variant="primary" icon={Upload} onclick={upload}>Upload</Button>{/if}
     </EmptyState>
   {:else if !files.length}
-    <EmptyState icon={SearchX} title={folder !== 'all' && !query && kind === 'all' ? `${folder} is empty` : 'Nothing matches that search'}>
+    <EmptyState icon={SearchX} title="Nothing matches that search">
       <Button onclick={clear}>Show all files</Button>
-      {#if folder !== 'all'}<Button variant="primary" icon={Upload} onclick={upload}>Upload here</Button>{/if}
     </EmptyState>
   {:else if view === 'grid'}
     <Grid min="tile" gap="2">
       {#each files as file (file.id)}
-        <FileTile {file} onclick={() => show(file)} items={() => fileActions(file)}>
-          {#snippet menu()}{@render fileMenu(file)}{/snippet}
+        <FileTile {file} onclick={() => show(file)} items={file.source ? undefined : () => fileActions(file)}>
+          {#snippet menu()}{#if !file.source}{@render fileMenu(file)}{/if}{/snippet}
         </FileTile>
       {/each}
     </Grid>
   {:else}
-    <Table {columns} rows={files} label="Files" onrowclick={show} menu={fileActions}>
+    <Table {columns} rows={files} label="Files" onrowclick={show} menu={(f) => (f.source ? [] : fileActions(f))}>
       {#snippet cell(row, col)}
         {#if col.key === 'name'}
           <Stack direction="row" gap="3" align="center">
-            <Icon icon={kinds.find((k) => k.value === row.kind)?.icon ?? FileText} size="md" />
+            <Icon icon={row.kind === 'folder' ? Folder : (kinds.find((k) => k.value === row.kind)?.icon ?? FileText)} size="md" />
             <Text weight="medium" truncate>{row.name}</Text>
           </Stack>
         {:else if col.key === 'owner'}
@@ -229,21 +269,22 @@
       <Stack gap="0">
         <SettingsRow label="Kind"><Badge>{open.ext}</Badge></SettingsRow>
         <SettingsRow label="Who sees it">
-          {#if mayLimit(open.access)}
+          {#if !open.connection && mayLimit(open.access)}
             <Select value={open.access ?? ''} options={accessOptions(open.access)} size="sm" variant="ghost" label={`Who sees ${open.name}`} onchange={(v) => setFileAccess(open, v || null)} />
           {:else}
             <Text tone="secondary">{open.folder}</Text>
           {/if}
         </SettingsRow>
-        <SettingsRow label="Added"><Text tone="secondary">{open.created ? new Date(open.created).toLocaleString() : open.modified}</Text></SettingsRow>
-        {#if open.status && open.status !== 'done'}<SettingsRow label="Status"><Text tone="secondary">{open.status === 'pending' ? 'Still reading it' : open.status}</Text></SettingsRow>{/if}
-        <SettingsRow label="Size"><Text tone="secondary">{open.size}</Text></SettingsRow>
+        <SettingsRow label="Changed"><Text tone="secondary">{open.created ? new Date(open.created).toLocaleString() : open.modified}</Text></SettingsRow>
+        {#if open.status && open.status !== 'done'}<SettingsRow label="Status"><Text tone="secondary">{open.error || (open.connection ? 'Still copying it' : 'Still reading it')}</Text></SettingsRow>{/if}
+        {#if open.held}<SettingsRow label="Size"><Text tone="secondary">{open.size}</Text></SettingsRow>{/if}
       </Stack>
     </Grid>
   {/if}
   {#snippet footer({ close })}
-    <Button icon={Pencil} onclick={() => rename(open)}>Rename</Button>
-    <Button icon={Download} onclick={() => downloadFile(open)}>Download</Button>
+    {#if open?.url}<Button icon={ExternalLink} onclick={() => window.open(open.url, '_blank', 'noopener')}>Open there</Button>{/if}
+    {#if !open?.connection}<Button icon={Pencil} onclick={() => rename(open)}>Rename</Button>{/if}
+    {#if open?.held}<Button icon={Download} onclick={() => downloadFile(open)}>Download</Button>{/if}
     <Button variant="primary" icon={MessageSquarePlus} onclick={() => ask(open, close)}>Ask about this</Button>
   {/snippet}
 </Dialog>
