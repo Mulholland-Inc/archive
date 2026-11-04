@@ -1624,7 +1624,7 @@ CREATE TABLE archive.drive_file (
 CREATE INDEX drive_file_folder_idx ON archive.drive_file (folder);
 CREATE INDEX drive_file_owner_idx ON archive.drive_file (owner);
 CREATE INDEX drive_file_editor_idx ON archive.drive_file (editor);
-COMMENT ON TABLE archive.drive_file IS 'A file or folder of a drive you connected, like Google Drive or SharePoint, with its words when it is a document Archive reads, like a Google Doc, a PDF or a Word file; other content stays there. Read only; Archive syncs them
+COMMENT ON TABLE archive.drive_file IS 'A file or folder of a drive you connected, like Google Drive, SharePoint, Dropbox or Box, with its words when it is a document Archive reads, like a Google Doc, a PDF or a Word file; other content stays there. Read only; Archive syncs them
 icon: folder-open';
 COMMENT ON COLUMN archive.drive_file.kind IS 'file or folder';
 COMMENT ON COLUMN archive.drive_file.title IS 'Its name there';
@@ -2389,6 +2389,79 @@ COMMENT ON COLUMN archive.calendar_attendee.role IS 'required, optional or resou
 COMMENT ON COLUMN archive.calendar_attendee.response IS 'What they answered: accepted, declined, tentative or none';
 COMMENT ON COLUMN archive.calendar_attendee.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
+-- Signatures: an envelope of an e-signature service you connected, like DocuSign: the agreement it sends for
+-- signing, where it is, who sent it, and the words of its documents once everyone has signed; and each recipient.
+CREATE TABLE archive.sign_envelope (
+    id           uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection   uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream       text NOT NULL,
+    source_id    text NOT NULL,
+    access       uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    updated_at   timestamptz NOT NULL DEFAULT now(),
+    name         text NOT NULL DEFAULT '',
+    seen_at      timestamptz NOT NULL DEFAULT now(),
+    title        text,
+    status       text,
+    sender       uuid REFERENCES archive.known_person ON DELETE SET NULL,
+    sender_name  text,
+    documents    text[],
+    made_at      timestamptz,
+    sent_at      timestamptz,
+    completed_at timestamptz,
+    voided_at    timestamptz,
+    edited_at    timestamptz,
+    text         text,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX sign_envelope_sender_idx ON archive.sign_envelope (sender);
+CREATE INDEX sign_envelope_sent_at_idx ON archive.sign_envelope (sent_at);
+COMMENT ON TABLE archive.sign_envelope IS 'An envelope of an e-signature service you connected, like DocuSign: an agreement sent for signing; who it went to is in sign_recipient. Read only; Archive syncs them
+icon: file-signature';
+COMMENT ON COLUMN archive.sign_envelope.title IS 'Its subject';
+COMMENT ON COLUMN archive.sign_envelope.status IS 'Where it is: created (a draft), sent, delivered, completed, declined or voided';
+COMMENT ON COLUMN archive.sign_envelope.sender IS 'references known_person; who sent it, by their address';
+COMMENT ON COLUMN archive.sign_envelope.sender_name IS 'Who sent it, by name';
+COMMENT ON COLUMN archive.sign_envelope.documents IS 'The names of its documents';
+COMMENT ON COLUMN archive.sign_envelope.made_at IS 'When it was made there';
+COMMENT ON COLUMN archive.sign_envelope.sent_at IS 'When it was sent';
+COMMENT ON COLUMN archive.sign_envelope.completed_at IS 'When everyone had signed';
+COMMENT ON COLUMN archive.sign_envelope.voided_at IS 'When it was voided';
+COMMENT ON COLUMN archive.sign_envelope.edited_at IS 'When it last changed there';
+COMMENT ON COLUMN archive.sign_envelope.text IS 'The words of its documents as signed, up to 64 KB, once it is completed';
+COMMENT ON COLUMN archive.sign_envelope.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.sign_envelope.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.sign_envelope.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.sign_envelope.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.sign_envelope.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.sign_recipient (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    name       text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    envelope   uuid NOT NULL REFERENCES archive.sign_envelope ON DELETE CASCADE,
+    person     uuid NOT NULL REFERENCES archive.known_person ON DELETE CASCADE,
+    role       text,
+    status     text,
+    routing    int,
+    signed_at  timestamptz
+) INHERITS (archive.object);
+CREATE INDEX sign_recipient_envelope_idx ON archive.sign_recipient (envelope);
+CREATE INDEX sign_recipient_person_idx ON archive.sign_recipient (person);
+CREATE INDEX sign_recipient_connection_idx ON archive.sign_recipient (connection);
+COMMENT ON TABLE archive.sign_recipient IS 'Someone an envelope went to, and where they are with it. Read only; Archive syncs them
+icon: user-check';
+COMMENT ON COLUMN archive.sign_recipient.envelope IS 'references sign_envelope';
+COMMENT ON COLUMN archive.sign_recipient.person IS 'references known_person; who, by their address';
+COMMENT ON COLUMN archive.sign_recipient.role IS 'signer, cc, or another kind there, like certified delivery or in person signer';
+COMMENT ON COLUMN archive.sign_recipient.status IS 'Where they are: created, sent, delivered, signed, completed or declined';
+COMMENT ON COLUMN archive.sign_recipient.routing IS 'Their place in the order it goes round, from 1';
+COMMENT ON COLUMN archive.sign_recipient.signed_at IS 'When they signed';
+COMMENT ON COLUMN archive.sign_recipient.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
 -- Books: the accounting of a company you connected, like its QuickBooks: its chart of accounts, the customers,
 -- vendors and employees it deals with, what it sells and buys, and every transaction with its lines. A row's
 -- kind says what it is there, like Invoice or Bill, since one table holds them all.
@@ -2711,6 +2784,8 @@ BEGIN
         WHEN 'crm_deal' THEN r->>'title'
         WHEN 'calendar_event' THEN coalesce(nullif(btrim(r->>'title'), ''), 'Busy')
         WHEN 'calendar_attendee' THEN coalesce(own, (SELECT p.email FROM archive.known_person p WHERE p.id = (r->>'person')::uuid))
+        WHEN 'sign_envelope' THEN coalesce(nullif(btrim(r->>'title'), ''), 'Envelope')
+        WHEN 'sign_recipient' THEN coalesce(own, (SELECT p.email FROM archive.known_person p WHERE p.id = (r->>'person')::uuid))
         WHEN 'ledger_account' THEN coalesce(nullif(r->>'full_name', ''), r->>'title')
         WHEN 'ledger_contact' THEN coalesce(nullif(r->>'title', ''), nullif(r->>'company', ''), r->>'email')
         WHEN 'ledger_item' THEN r->>'title'
@@ -2774,6 +2849,8 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.crm_contact FOR EA
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.crm_deal FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.calendar_event FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.calendar_attendee FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.sign_envelope FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.sign_recipient FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_account FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_contact FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_item FOR EACH ROW EXECUTE FUNCTION archive.object_name();
@@ -2877,6 +2954,8 @@ GRANT SELECT ON archive.crm_contact TO "{p}_viewer";
 GRANT SELECT ON archive.crm_deal TO "{p}_viewer";
 GRANT SELECT ON archive.calendar_event TO "{p}_viewer";
 GRANT SELECT ON archive.calendar_attendee TO "{p}_viewer";
+GRANT SELECT ON archive.sign_envelope TO "{p}_viewer";
+GRANT SELECT ON archive.sign_recipient TO "{p}_viewer";
 GRANT SELECT ON archive.ledger_account TO "{p}_viewer";
 GRANT SELECT ON archive.ledger_contact TO "{p}_viewer";
 GRANT SELECT ON archive.ledger_item TO "{p}_viewer";
@@ -3003,6 +3082,10 @@ ALTER TABLE archive.calendar_event ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.calendar_event FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = calendar_event.connection));
 ALTER TABLE archive.calendar_attendee ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.calendar_attendee FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = calendar_attendee.connection));
+ALTER TABLE archive.sign_envelope ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.sign_envelope FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = sign_envelope.connection));
+ALTER TABLE archive.sign_recipient ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.sign_recipient FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = sign_recipient.connection));
 ALTER TABLE archive.ledger_account ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.ledger_account FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = ledger_account.connection));
 ALTER TABLE archive.ledger_contact ENABLE ROW LEVEL SECURITY;
@@ -3021,6 +3104,8 @@ CREATE POLICY seen ON archive.known_person FOR SELECT USING (EXISTS (SELECT FROM
     OR EXISTS (SELECT FROM archive.ledger_contact l WHERE l.person = known_person.id)
     OR EXISTS (SELECT FROM archive.calendar_event e WHERE e.organizer = known_person.id)
     OR EXISTS (SELECT FROM archive.calendar_attendee a WHERE a.person = known_person.id)
+    OR EXISTS (SELECT FROM archive.sign_envelope x WHERE x.sender = known_person.id)
+    OR EXISTS (SELECT FROM archive.sign_recipient x WHERE x.person = known_person.id)
     OR EXISTS (SELECT FROM archive.crm_contact x WHERE x.person = known_person.id)
     OR EXISTS (SELECT FROM archive.chat_message x WHERE x.sender = known_person.id)
     OR EXISTS (SELECT FROM archive.work_item x WHERE x.assignee = known_person.id)
@@ -3244,7 +3329,7 @@ SELECT jsonb_build_object(
             'archive.payroll_contractor_payment_group'::regclass, 'archive.payroll_task'::regclass, 'archive.drive_file'::regclass,
             'archive.ledger_account'::regclass, 'archive.ledger_contact'::regclass, 'archive.ledger_item'::regclass,
             'archive.ledger_entry'::regclass, 'archive.ledger_line'::regclass, 'archive.calendar_event'::regclass,
-            'archive.calendar_attendee'::regclass, 'archive.crm_company'::regclass, 'archive.crm_contact'::regclass, 'archive.crm_deal'::regclass,
+            'archive.calendar_attendee'::regclass, 'archive.sign_envelope'::regclass, 'archive.sign_recipient'::regclass, 'archive.crm_company'::regclass, 'archive.crm_contact'::regclass, 'archive.crm_deal'::regclass,
             'archive.chat_message'::regclass, 'archive.marketing_campaign'::regclass, 'archive.work_item'::regclass,
             'archive.commerce_product'::regclass, 'archive.commerce_order'::regclass, 'archive.commerce_line'::regclass,
             'archive.ad_metric'::regclass, 'archive.dental_provider'::regclass, 'archive.dental_patient'::regclass,
@@ -3354,6 +3439,7 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.ledger_item x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.ledger_entry x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.calendar_event x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.sign_envelope x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.crm_company x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.crm_contact x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.crm_deal x WHERE x.connection = c.id)
@@ -3455,6 +3541,8 @@ WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM arch
     AND NOT EXISTS (SELECT FROM archive.ledger_contact x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.calendar_event x WHERE x.organizer = k.id)
     AND NOT EXISTS (SELECT FROM archive.calendar_attendee x WHERE x.person = k.id)
+    AND NOT EXISTS (SELECT FROM archive.sign_envelope x WHERE x.sender = k.id)
+    AND NOT EXISTS (SELECT FROM archive.sign_recipient x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.crm_contact x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.chat_message x WHERE x.sender = k.id)
     AND NOT EXISTS (SELECT FROM archive.work_item x WHERE x.assignee = k.id)

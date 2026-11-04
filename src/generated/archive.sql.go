@@ -196,7 +196,7 @@ SELECT jsonb_build_object(
             'archive.payroll_contractor_payment_group'::regclass, 'archive.payroll_task'::regclass, 'archive.drive_file'::regclass,
             'archive.ledger_account'::regclass, 'archive.ledger_contact'::regclass, 'archive.ledger_item'::regclass,
             'archive.ledger_entry'::regclass, 'archive.ledger_line'::regclass, 'archive.calendar_event'::regclass,
-            'archive.calendar_attendee'::regclass, 'archive.crm_company'::regclass, 'archive.crm_contact'::regclass, 'archive.crm_deal'::regclass,
+            'archive.calendar_attendee'::regclass, 'archive.sign_envelope'::regclass, 'archive.sign_recipient'::regclass, 'archive.crm_company'::regclass, 'archive.crm_contact'::regclass, 'archive.crm_deal'::regclass,
             'archive.chat_message'::regclass, 'archive.marketing_campaign'::regclass, 'archive.work_item'::regclass,
             'archive.commerce_product'::regclass, 'archive.commerce_order'::regclass, 'archive.commerce_line'::regclass,
             'archive.ad_metric'::regclass, 'archive.dental_provider'::regclass, 'archive.dental_patient'::regclass,
@@ -473,6 +473,7 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.ledger_item x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.ledger_entry x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.calendar_event x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.sign_envelope x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.crm_company x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.crm_contact x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.crm_deal x WHERE x.connection = c.id)
@@ -753,6 +754,8 @@ WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM arch
     AND NOT EXISTS (SELECT FROM archive.ledger_contact x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.calendar_event x WHERE x.organizer = k.id)
     AND NOT EXISTS (SELECT FROM archive.calendar_attendee x WHERE x.person = k.id)
+    AND NOT EXISTS (SELECT FROM archive.sign_envelope x WHERE x.sender = k.id)
+    AND NOT EXISTS (SELECT FROM archive.sign_recipient x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.crm_contact x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.chat_message x WHERE x.sender = k.id)
     AND NOT EXISTS (SELECT FROM archive.work_item x WHERE x.assignee = k.id)

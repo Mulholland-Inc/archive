@@ -1197,6 +1197,8 @@ var syncSchema = map[string]syncTable{
 	"drive_file":                       {links: map[string]string{"folder": "drive_file"}},
 	"calendar_event":                   {links: map[string]string{"series": "calendar_event"}},
 	"calendar_attendee":                {parent: "calendar_event", of: "event"},
+	"sign_envelope":                    {},
+	"sign_recipient":                   {parent: "sign_envelope", of: "envelope"},
 	"crm_company":                      {},
 	"crm_contact":                      {links: map[string]string{"company": "crm_company"}},
 	"crm_deal":                         {links: map[string]string{"company": "crm_company"}},
@@ -1606,7 +1608,7 @@ func jsonOf(v any) []byte {
 
 // Pushes: POST /push/<connector> is where a connector's provider tells Archive that an account changed
 // (connect/sync.go), which asks for that connection's sync and nothing more: the sync reads what changed from
-// its cursor. A push names a watch by its key; archive.watch, in the main database, says which workspace and
+// its cursor. GET is where a provider like Dropbox checks its webhook's handshake. A push names a watch by its key; archive.watch, in the main database, says which workspace and
 // connection each is, and holds the secret its pushes prove themselves with. A push for a watch Archive no
 // longer has, as of an account disconnected since, is answered as heard and starts nothing, so the provider
 // does not send it again; one not signed as its provider signs is refused.

@@ -777,8 +777,8 @@ type Listen struct {
 	Only     Test
 }
 
-// Hello is a handshake: a query parameter whose value is answered as it came, in plain text, or with Header, a header
-// answered with itself, and kept as the secret of the watch the URL names.
+// Hello is a handshake: a query parameter whose value is answered as it came, in plain text a browser is told not
+// to sniff, or with Header, a header answered with itself, and kept as the secret of the watch the URL names.
 type Hello struct{ Query, Header string }
 
 // Kept is how a push names a watch and proves it with the secret Archive kept. With ByQuery the key is in the push's
@@ -3102,7 +3102,7 @@ func (l *Listen) hear(pr *Provider, r *http.Request, at string, body []byte, sec
 	for _, h := range l.Hello {
 		if h.Query != "" {
 			if v := q.Get(h.Query); v != "" {
-				return &Heard{Status: http.StatusOK, Header: http.Header{"Content-Type": {"text/plain; charset=utf-8"}}, Body: v}, nil
+				return &Heard{Status: http.StatusOK, Header: http.Header{"Content-Type": {"text/plain; charset=utf-8"}, "X-Content-Type-Options": {"nosniff"}}, Body: v}, nil
 			}
 		}
 		if h.Header != "" {
