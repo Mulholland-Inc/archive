@@ -15,7 +15,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -48,11 +47,17 @@ func init() {
 				Help: "The unencrypted PEM private key whose public key is the user's RSA_PUBLIC_KEY, from -----BEGIN PRIVATE KEY----- to -----END PRIVATE KEY-----"},
 			{Name: "scope", Label: "What to sync", Help: "Databases, schemas or tables, comma separated, like ANALYTICS, RAW.SHOPIFY, FINANCE.PUBLIC.FORECAST"},
 		},
-		Authorize: snowAuthorize,
-		Account:   snowWho,
-		Answer:    snowRows,
-		API:       "https://{-account}.snowflakecomputing.com/api/v2",
-		Let:       []Step{{As: "account", In: "{key/account}", Find: `(?i)^(?:[^/]*://)?([^/]*?)(?:\.snowflakecomputing\.com)?(?:/.*)?$`}},
+		Mint: []Step{{As: "key/jwt", In: Obj{"account": "{key/account}", "user": "{key/user}", "key": "{key/key}"}, Codec: snowJWT}},
+		Sign: map[string]string{"Authorization": "Bearer {key/jwt}", "X-Snowflake-Authorization-Token-Type": "KEYPAIR_JWT", "User-Agent": "Archive"},
+		Who: &Who{Req: snowStatement(`SELECT CURRENT_ORGANIZATION_NAME() || '-' || CURRENT_ACCOUNT_NAME() AS "account", CURRENT_ROLE() AS "role", CURRENT_WAREHOUSE() AS "warehouse"`),
+			Names: []Path{"data/0/account"},
+			Check: []Step{
+				{Only: Test{At: "who/data/0/role", Re: snowAdmin}, Fail: "the user's default role is {who/data/0/role}, which may change the whole account; give it a role of its own, like ARCHIVE"},
+				{Only: Test{At: "who/data/0/warehouse", Off: true}, Fail: "the user has no warehouse to run on; give it a DEFAULT_WAREHOUSE its role may use"},
+			}},
+		Answer: snowRows,
+		API:    "https://{-account}.snowflakecomputing.com/api/v2",
+		Let:    []Step{{As: "account", In: "{key/account}", Find: `(?i)^(?:[^/]*://)?([^/]*?)(?:\.snowflakecomputing\.com)?(?:/.*)?$`}},
 		Actions: map[string]*Action{
 			"query": Call[snowQuery, any](Plan{
 				Doc: "Run one read-only SQL statement, SELECT, WITH, SHOW, DESCRIBE or EXPLAIN, as the service user's role, like { statement: \"SELECT region, SUM(net_sales) " +
@@ -266,71 +271,25 @@ func snowFirst(q string) (string, error) {
 var (
 	snowWord  = regexp.MustCompile(`^[A-Za-z_]*`)
 	snowArmor = regexp.MustCompile(`-----[A-Z ]+-----`)
-	// snowAdmin are roles that may change the account, which Archive does not connect as.
-	snowAdmin = []string{"ACCOUNTADMIN", "ORGADMIN", "SECURITYADMIN", "SYSADMIN", "USERADMIN", "GLOBALORGADMIN"}
 )
 
-// snowWho checks the key, and names the account by its organization and name, once the user's role is not one that
-// may change the whole account and it has a warehouse.
-func snowWho(c *Client) (string, error) {
-	if _, err := snowKey(c.Key("key")); err != nil {
-		return "", err
-	}
-	ans, err := c.req(snowStatement(`SELECT CURRENT_ORGANIZATION_NAME() || '-' || CURRENT_ACCOUNT_NAME() AS "account", CURRENT_ROLE() AS "role", CURRENT_WAREHOUSE() AS "warehouse"`), map[string]any{})
+// snowAdmin are roles that may change the account, which Archive does not connect as.
+const snowAdmin = `(?i)^(ACCOUNTADMIN|ORGADMIN|SECURITYADMIN|SYSADMIN|USERADMIN|GLOBALORGADMIN)$`
+
+// snowJWT is a JWT of its user of its account, signed with its key, as Snowflake's key-pair authentication has it:
+// issued by <ACCOUNT>.<USER>.SHA256:<the public key's fingerprint>, for <ACCOUNT>.<USER>, the account without its region.
+var snowJWT = &Codec{"snowflake_jwt", func(v any) (any, error) {
+	k, err := snowKey(text(pick(v, "key")))
 	if err != nil {
-		return "", err
-	}
-	role := strings.ToUpper(text(pick(ans, "data/0/role")))
-	switch {
-	case slices.Contains(snowAdmin, role):
-		return "", fmt.Errorf("the user's default role is %s, which may change the whole account; give it a role of its own, like ARCHIVE", role)
-	case text(pick(ans, "data/0/warehouse")) == "":
-		return "", errors.New("the user has no warehouse to run on; give it a DEFAULT_WAREHOUSE its role may use")
-	}
-	return text(pick(ans, "data/0/account")), nil
-}
-
-// snowAuthorize signs a request with a JWT of the account's key; one with a key that is no key goes unsigned, for
-// Snowflake to refuse.
-func snowAuthorize(r *http.Request, c *Client) {
-	r.Header.Set("User-Agent", "Archive")
-	if t, err := snowJWT(c.Key("account"), c.Key("user"), c.Key("key")); err == nil {
-		r.Header.Set("Authorization", "Bearer "+t)
-		r.Header.Set("X-Snowflake-Authorization-Token-Type", "KEYPAIR_JWT")
-	}
-}
-
-// snowTokens are the JWTs of keys, kept until shortly before their hour is up.
-var snowTokens = struct {
-	sync.Mutex
-	m map[[32]byte]snowToken
-}{m: map[[32]byte]snowToken{}}
-
-type snowToken struct {
-	token string
-	until time.Time
-}
-
-// snowJWT is a JWT of user of account, signed with key, as Snowflake's key-pair authentication has it: issued by
-// <ACCOUNT>.<USER>.SHA256:<the public key's fingerprint>, for <ACCOUNT>.<USER>, the account without its region.
-func snowJWT(account, user, key string) (string, error) {
-	id := sha256.Sum256([]byte(account + "\x00" + user + "\x00" + key))
-	snowTokens.Lock()
-	defer snowTokens.Unlock()
-	if t := snowTokens.m[id]; time.Now().Before(t.until) {
-		return t.token, nil
-	}
-	k, err := snowKey(key)
-	if err != nil {
-		return "", err
+		return nil, err
 	}
 	pub, err := x509.MarshalPKIXPublicKey(&k.PublicKey)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	fp := sha256.Sum256(pub)
-	acct, _, _ := strings.Cut(snowAccount(account), ".")
-	sub := strings.ToUpper(acct) + "." + strings.ToUpper(strings.TrimSpace(user))
+	acct, _, _ := strings.Cut(snowAccount(text(pick(v, "account"))), ".")
+	sub := strings.ToUpper(acct) + "." + strings.ToUpper(strings.TrimSpace(text(pick(v, "user"))))
 	now := time.Now()
 	head, _ := json.Marshal(map[string]string{"alg": "RS256", "typ": "JWT"})
 	claims, _ := json.Marshal(map[string]any{"iss": sub + ".SHA256:" + base64.StdEncoding.EncodeToString(fp[:]), "sub": sub, "iat": now.Unix(), "exp": now.Add(time.Hour).Unix()})
@@ -338,12 +297,10 @@ func snowJWT(account, user, key string) (string, error) {
 	sum := sha256.Sum256([]byte(msg))
 	sig, err := rsa.SignPKCS1v15(rand.Reader, k, crypto.SHA256, sum[:])
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	tok := msg + "." + base64.RawURLEncoding.EncodeToString(sig)
-	snowTokens.m[id] = snowToken{tok, now.Add(50 * time.Minute)}
-	return tok, nil
-}
+	return msg + "." + base64.RawURLEncoding.EncodeToString(sig), nil
+}}
 
 // snowAccount is the account of an identifier or URL, as its host names it: xy12345.us-east-2.aws or acme-prod.
 func snowAccount(s string) string {

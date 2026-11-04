@@ -207,7 +207,7 @@ const (
 // first group of the regexp Find over it when it says. With
 // Each, the first of Names of each of its elements that pass Where, joined by commas. Tool asks an MCP server's tool,
 // without arguments, and reads what it says the way such tools say it: the first address or name in it, or its first
-// line.
+// line. Check are steps that read the answer as {who}, whose Fail refuses an account Archive should not connect as.
 type Who struct {
 	Req
 	Names []Path
@@ -216,6 +216,7 @@ type Who struct {
 	Each  Path
 	Where Test
 	Tool  string
+	Check []Step `json:",omitempty"`
 }
 
 // Paging is how an answer names the next page, which the next request reads as {page}.
@@ -859,12 +860,20 @@ func (c *Connector) compile() error {
 			return err
 		}
 	}
-	if c.Sign != nil {
-		sign := c.Sign
+	if c.Sign != nil || c.Pin != nil {
+		sign, pin := c.Sign, c.Pin
 		c.Authorize = func(r *http.Request, cl *Client) {
 			for h, t := range sign {
 				v, _ := fillStr(t, cl.scope())
 				r.Header.Set(h, text(v))
+			}
+			if pin != nil {
+				q := r.URL.Query()
+				for k, t := range pin {
+					v, _ := fillStr(t, cl.scope())
+					q.Set(k, text(v))
+				}
+				r.URL.RawQuery = q.Encode()
 			}
 		}
 	}
@@ -921,6 +930,13 @@ func (w *Who) read(cl *Client, c *Connector) (string, error) {
 	ans, err := cl.req(w.Req, cl.scope())
 	if err != nil {
 		return "", err
+	}
+	if w.Check != nil {
+		sc := cl.scope()
+		sc["who"] = ans
+		if _, err := runSteps(cl, w.Check, sc); err != nil {
+			return "", err
+		}
 	}
 	first := func(v any) string {
 		for _, n := range w.Names {
