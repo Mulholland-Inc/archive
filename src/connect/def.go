@@ -3,6 +3,8 @@ package connect
 import (
 	"bytes"
 	"cmp"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -12,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math/big"
 	"mime"
 	"mime/multipart"
 	"mime/quotedprintable"
@@ -25,6 +28,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/google/jsonschema-go/jsonschema"
 )
@@ -35,11 +39,13 @@ import (
 //
 // Values in a definition are read at run time, so the compiler cannot check them: a Path is a /-separated walk of
 // an answer, where * is every element of a list, a number one of them, ** the first list of objects at any depth,
-// **/key the list under key at any depth, and a;b the first of two walks that finds anything. A template is a
+// **/key the list under key at any depth, a;b the first of two walks that finds anything, and a+b the lists of
+// both, one after the other. A template is a
 // string whose {path} is read from what the request knows. {path} is escaped in a URL, {+path} is not, {~path} is
-// escaped a part at a time, {path,} joins a list with commas or {path,x} with x, {'path} and {"path} are escaped to
-// go in a string quoted so, and {path|x} is x when the path has nothing. A value that is only one {path} keeps its
-// type, and with nothing there its key is left out.
+// escaped a part at a time, {-path} is made a label of a host name, lower case with - for _, {path,} joins a list
+// with commas or {path,x} with x, {'path} and {"path} are escaped to go in a string quoted so, and {path|x} is x
+// when the path has nothing. A value that is only one {path} keeps its type, and with nothing there its key is left
+// out.
 
 type (
 	// Path is a walk of an answer, like paging/next/after or */portalId.
@@ -178,6 +184,9 @@ const (
 	CatProjects  Category = "Projects"
 	CatPayroll   Category = "Payroll"
 
+	CatCompliance Category = "Compliance"
+	CatData       Category = "Data"
+
 	IconMail     Icon = "mail"
 	IconUsers    Icon = "users"
 	IconList     Icon = "list"
@@ -190,9 +199,12 @@ const (
 	IconLedger   Icon = "ledger"
 	IconCard     Icon = "card"
 	IconBug      Icon = "bug"
+
+	IconWarehouse Icon = "warehouse"
 )
 
-// Who is how to ask whose account a token is for: the first of Names in the answer, lowercase when Lower. With
+// Who is how to ask whose account a token is for: the first of Names in the answer, lowercase when Lower, and the
+// first group of the regexp Find over it when it says. With
 // Each, the first of Names of each of its elements that pass Where, joined by commas. Tool asks an MCP server's tool,
 // without arguments, and reads what it says the way such tools say it: the first address or name in it, or its first
 // line.
@@ -200,6 +212,7 @@ type Who struct {
 	Req
 	Names []Path
 	Lower bool
+	Find  string `json:",omitempty"`
 	Each  Path
 	Where Test
 	Tool  string
@@ -302,7 +315,8 @@ func (Resume) change()      {}
 // from two walks in a row lists every part whole, which deletes what it had.
 //
 // A part is ID, by template, {id} when empty, Vals what else it keeps. The things come from Req's answer at Items,
-// every page of it, or are Fixed, or are the dates of Span. Soft are refusals that mean there are none. Skip are those
+// every page of it, or are Fixed, or are the dates of Span, or the names Split reads to, a template, by commas or
+// white space, each as {name} and its pieces between dots as {at/0}, {at/1}, ..., its backticks left off. Soft are refusals that mean there are none. Skip are those
 // that are no part, and Not requests that name one that is none, by id, when they do not answer 404. Deep lists those
 // under one that passes DeepIf the way Req does, whose {id} is its. Under lists more under each, which read it as
 // {up/...}, and those are the parts. First skips this level once the stream has listed whole. Also are other places
@@ -315,6 +329,7 @@ type Parts struct {
 	Vals   Obj      `json:",omitempty"`
 	Fixed  []Obj    `json:",omitempty"`
 	Span   *Span    `json:",omitempty"`
+	Split  string   `json:",omitempty"`
 	Soft   []int    `json:",omitempty"`
 	Skip   []Test   `json:",omitempty"`
 	Not    []Req    `json:",omitempty"`
@@ -439,7 +454,8 @@ type Kids struct {
 // the row a record is. Vars are templates' own values, so that streams share theirs. Items is the answer's list of
 // records, ID each one's id, id when empty, and Updated when it last changed there. An answer without its Items is
 // refused, so a full listing never ends empty by accident; Absent is a key a provider's answer has when it leaves
-// Items out for having none.
+// Items out for having none, and Empty says an answer with nothing in it at all, as Zoho's 204 or an object without
+// keys is, has none.
 //
 // Key makes the id when ID cannot, the first that reads to anything. Set adds to each record, by template. Gone are
 // the records that are deleted there, and Skip those that are no record. Every is how long after it caught up the
@@ -461,6 +477,7 @@ type Sync struct {
 	Hydrate   []Hydrate
 	To        Map
 	Absent    Path          `json:",omitempty"`
+	Empty     bool          `json:",omitempty"`
 	Key       []Reads       `json:",omitempty"`
 	Set       Obj           `json:",omitempty"`
 	Gone      []Test        `json:",omitempty"`
@@ -702,6 +719,10 @@ func (s Step) once(c *Client, sc map[string]any, e any) (v any, err error) {
 // keyed by the app's secret, or the hook option of its variable with Hook, or the secret a handshake left with Kept,
 // after Pre. Plain are characters {url} has not percent-escaped, as the provider signs it, and Fresh a header of its
 // time in Unix milliseconds, which must be under 5 minutes old.
+//
+// With Key, Header is a JWS signed with ES256 by a key of the provider's, which Key asks for with the server's
+// client and the JWS's kid as {kid}, at JWK in its answer, kept by kid: its claim Claim is what Digest and Enc make
+// of Of, and its iat must be under 5 minutes old.
 type Sign struct {
 	Header, When, Is string
 	Digest           Digest
@@ -710,6 +731,9 @@ type Sign struct {
 	Plain, Fresh     string
 	Hook, Kept       bool
 	Pre              string
+	Key              *Req   `json:",omitempty"`
+	JWK              Path   `json:",omitempty"`
+	Claim            string `json:",omitempty"`
 }
 
 type (
@@ -805,6 +829,11 @@ func (c *Connector) compile() error {
 			c.Host = u.Scheme + "://" + u.Host
 		}
 	}
+	if c.Trade != nil {
+		if err := c.Trade.check("trade", "key", "client", "option", "basic"); err != nil {
+			return err
+		}
+	}
 	if c.Sign != nil {
 		sign := c.Sign
 		c.Authorize = func(r *http.Request, cl *Client) {
@@ -813,6 +842,12 @@ func (c *Connector) compile() error {
 				r.Header.Set(h, text(v))
 			}
 		}
+	}
+	if b := c.Basic; b[0] != "" {
+		if c.Sign != nil {
+			return errors.New("a connector signs with Sign or Basic, not both")
+		}
+		c.Authorize = func(r *http.Request, cl *Client) { r.SetBasicAuth(cl.keys[b[0]], cl.keys[b[1]]) }
 	}
 	if w := c.Who; w != nil {
 		if w.Tool != "" {
@@ -826,6 +861,14 @@ func (c *Connector) compile() error {
 	}
 	if r := c.RevokeBy; r != nil {
 		c.RevokeWith = func(rv *Revocation) error { return r.revoke(rv) }
+	}
+	if l := c.Link; l != nil {
+		if len(c.Keys) == 0 {
+			return errors.New("link: a widget hands over Keys")
+		}
+		if err := l.check(); err != nil {
+			return err
+		}
 	}
 	for name, a := range c.Actions {
 		if a.plan != nil {
@@ -877,17 +920,30 @@ func (w *Who) read(cl *Client, c *Connector) (string, error) {
 	if w.Lower {
 		s = strings.ToLower(s)
 	}
+	if w.Find != "" {
+		if f := reOf(w.Find).FindStringSubmatch(s); f != nil {
+			s = f[1]
+		}
+	}
 	if s == "" && len(c.Keys) > 0 {
 		s = c.Name
 	}
 	return s, nil
 }
 
-// revoke ends a grant as r says, which reads {client}, {refresh}, {basic} the client as HTTP Basic, and {access} an
-// access token of the grant, only asked for when it does.
+// revoke ends a grant as r says, which reads {client}, {refresh}, {basic} the client as HTTP Basic, {meta/...} what the
+// grant kept, {key/...} a key connector's keys, and {access} an access token of the grant, only asked for when it does.
 func (r *Req) revoke(rv *Revocation) error {
 	id, secret := rv.Client()
-	sc := map[string]any{"client": map[string]any{"id": id, "secret": secret}, "refresh": rv.Refresh, "basic": basic(id, secret)}
+	sc := rv.p.metaScope(rv.Meta)
+	sc["client"], sc["refresh"], sc["basic"] = map[string]any{"id": id, "secret": secret}, rv.Refresh, basic(id, secret)
+	if len(rv.p.Keys) > 0 {
+		keys := map[string]any{}
+		for k, v := range keysFrom(rv.Refresh) {
+			keys[k] = v
+		}
+		sc["key"] = keys
+	}
 	if slices.Contains(r.roots(), "access") {
 		at, err := rv.Access()
 		if err != nil {
@@ -1054,7 +1110,7 @@ func (s *Sync) check() error {
 // written by another starts from scratch.
 func (s *Sync) version() string {
 	x := *s
-	x.Doc, x.Gap, x.Every, x.Absent, x.Deny, x.Restart, x.Pass = "", 0, 0, "", nil, nil, nil
+	x.Doc, x.Gap, x.Every, x.Absent, x.Empty, x.Deny, x.Restart, x.Pass = "", 0, 0, "", false, nil, nil, nil
 	h := sha256.New()
 	b, _ := json.Marshal(x)
 	h.Write(b)
@@ -1142,6 +1198,8 @@ func (s *Sync) step(c *Client, st flow) (*Page, error) {
 		sc = Obj{}
 	}
 	sc["stream"] = s.Name
+	cs := c.scope()
+	sc["key"], sc["meta"], sc["option"] = cs["key"], cs["meta"], cs["option"]
 	if st.Mode == "" {
 		parts, info, err := s.parts(c, sc, st)
 		if err != nil {
@@ -1384,6 +1442,18 @@ func (p *Parts) items(c *Client, sc map[string]any, again bool) ([]any, error) {
 		return out, nil
 	case p.Span != nil:
 		return p.Span.dates(sc, again), nil
+	case p.Split != "":
+		v, _ := fillStr(p.Split, sc)
+		out := []any{}
+		for _, n := range strings.FieldsFunc(text(v), func(r rune) bool { return r == ',' || unicode.IsSpace(r) }) {
+			n = strings.ReplaceAll(n, "`", "")
+			at := []any{}
+			for _, x := range strings.Split(n, ".") {
+				at = append(at, x)
+			}
+			out = append(out, map[string]any{"name": n, "at": at})
+		}
+		return out, nil
 	case p.Req.URL == "" && p.Req.Tool == "":
 		return nil, nil
 	case p.Page != nil:
@@ -1453,7 +1523,7 @@ func (s *Sync) itemsOf(c *Client, ans any, at Path, sc map[string]any) (any, err
 	if _, list := items.([]any); items != nil && (at != "" || s.ID == "" || list) {
 		return items, nil
 	}
-	if s.Absent != "" && pick(ans, s.Absent) != nil {
+	if m, _ := ans.(map[string]any); s.Absent != "" && pick(ans, s.Absent) != nil || s.Empty && (ans == nil || m != nil && len(m) == 0) {
 		return []any{}, nil
 	}
 	return nil, fmt.Errorf("%s answered %s without its list of records, at %q", c.p.Name, s.Name, at)
@@ -2276,6 +2346,11 @@ func (c *Client) http1(r Req, sc map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if c.p.Answer != nil {
+		if ans, err = c.p.Answer.fn(ans); err != nil {
+			return nil, err
+		}
+	}
 	if e := c.p.Errors; e != nil {
 		if msg := text(pick(ans, e.At)); msg != "" {
 			f := &Refusal{Provider: c.p.Name, Status: cmp.Or(e.Status, http.StatusBadRequest), Message: msg}
@@ -2416,14 +2491,14 @@ func values(q Q, sc map[string]any) url.Values {
 	return out
 }
 
-var varRe = regexp.MustCompile(`\{[+~'"]?[A-Za-z_][\w\-*/.@;]*(,[^|{}]*)?(\|[^{}]*)?\}`)
+var varRe = regexp.MustCompile(`\{[+~'"-]?[A-Za-z_][\w\-*/.@;]*(,[^|{}]*)?(\|[^{}]*)?\}`)
 
 // tvar is a {path} of a template.
 type tvar struct {
-	path, def, sep  string
-	raw, segs, join bool
-	quote           byte
-	hasDef          bool
+	path, def, sep        string
+	raw, segs, join, host bool
+	quote                 byte
+	hasDef                bool
 }
 
 func varOf(m string) tvar {
@@ -2434,6 +2509,8 @@ func varOf(m string) tvar {
 		v.raw, s = true, s[1:]
 	case '~':
 		v.segs, s = true, s[1:]
+	case '-':
+		v.host, s = true, s[1:]
 	case '\'', '"':
 		v.quote, s = s[0], s[1:]
 	}
@@ -2461,6 +2538,9 @@ func (v tvar) of(sc map[string]any) (any, bool) {
 			s = append(s, text(e))
 		}
 		return strings.Join(s, cmp.Or(v.sep, ",")), true
+	}
+	if v.host {
+		return strings.ReplaceAll(strings.ToLower(text(x)), "_", "-"), true
 	}
 	switch v.quote {
 	case '\'':
@@ -2519,6 +2599,13 @@ func fill(t any, sc map[string]any) (any, bool) {
 func pick(v any, path Path) any {
 	if path == "" {
 		return v
+	}
+	if strings.Contains(string(path), "+") {
+		out := []any{}
+		for _, part := range strings.Split(string(path), "+") {
+			out = append(out, listOf(pick(v, Path(part)))...)
+		}
+		return out
 	}
 	if strings.Contains(string(path), ";") {
 		for _, alt := range strings.Split(string(path), ";") {
@@ -2688,8 +2775,8 @@ type Codec struct {
 // MIMEWords as MIME does for keeping: its text falls back on its HTML's words and is cut at maxText, its HTML goes,
 // and it adds parties, the people of its headers, and sent, when its Date says. RFC5322 writes a message, maybe as
 // a reply to parent, a message as JSON, into raw, base64url. Base64JSON reads JSON out of base64, and Base64Text text.
-// Words is the words of HTML. GraphQLReads passes a GraphQL document that only reads, and refuses any other. Sum adds
-// a list of numbers up.
+// Words is the words of HTML. GraphQLReads passes a GraphQL document that only reads, and refuses any other, and
+// SQLReads one SQL statement that only reads. Sum adds a list of numbers up.
 // ToolBusy are what MCP tools say when the API behind them turned them away for now.
 var ToolBusy = []string{"Too Many Requests", " 429", " 502", " 503", " 504", "Service Unavailable", "Bad Gateway", "Gateway Timeout", "Rate Limit Exceeded"}
 
@@ -2714,6 +2801,7 @@ var (
 	}}
 	Words        = &Codec{"words", func(v any) (any, error) { return htmlText(text(v)), nil }}
 	GraphQLReads = &Codec{"graphql_reads", graphQLReads}
+	SQLReads     = &Codec{"sql_reads", sqlReads}
 	Sum          = &Codec{"sum", func(v any) (any, error) {
 		n := 0
 		for _, e := range listOf(v) {
@@ -2722,6 +2810,83 @@ var (
 		}
 		return n, nil
 	}}
+)
+
+// sqlReads passes one SQL statement that starts as a read does, like SELECT, WITH, SHOW or DESCRIBE, and has no word
+// anywhere in it that writes, like INSERT after a WITH's queries. Strings, quoted names and comments are skipped, and
+// one statement is all it takes: a ; with more after it is refused. A name that is such a word is quoted.
+func sqlReads(v any) (any, error) {
+	q := text(v)
+	var words []string
+	for i := 0; i < len(q); {
+		switch c := q[i]; {
+		case strings.HasPrefix(q[i:], "--"):
+			for i < len(q) && q[i] != '\n' {
+				i++
+			}
+		case strings.HasPrefix(q[i:], "/*"):
+			n := 0
+			for i < len(q) {
+				if strings.HasPrefix(q[i:], "/*") {
+					n, i = n+1, i+2
+				} else if strings.HasPrefix(q[i:], "*/") {
+					n, i = n-1, i+2
+					if n == 0 {
+						break
+					}
+				} else {
+					i++
+				}
+			}
+			if n > 0 {
+				return nil, errors.New("a comment that does not end")
+			}
+		case c == '\'' || c == '"' || c == '`':
+			j := i + 1
+			for j < len(q) && q[j] != c {
+				if q[j] == '\\' && c != '`' {
+					j++
+				}
+				j++
+			}
+			if j >= len(q) {
+				return nil, errors.New("a string or quoted name that does not end")
+			}
+			i = j + 1
+		case c == ';':
+			if strings.TrimSpace(q[i+1:]) != "" {
+				return nil, errors.New("one statement at a time")
+			}
+			i = len(q)
+		case c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z':
+			j := i
+			for j < len(q) && (q[j] == '_' || q[j] >= 'a' && q[j] <= 'z' || q[j] >= 'A' && q[j] <= 'Z' || q[j] >= '0' && q[j] <= '9') {
+				j++
+			}
+			words = append(words, strings.ToUpper(q[i:j]))
+			i = j
+		default:
+			i++
+		}
+	}
+	if len(words) == 0 || !slices.Contains(sqlRead, words[0]) {
+		return nil, errors.New("only a query that reads, which starts with SELECT, WITH, SHOW, DESCRIBE, EXPLAIN, VALUES, TABLE or FROM")
+	}
+	for _, w := range words {
+		if slices.Contains(sqlWrite, w) {
+			return nil, fmt.Errorf("only a query that reads, and %s writes", w)
+		}
+	}
+	return q, nil
+}
+
+// sqlRead are the words a statement that reads starts with, and sqlWrite those that make one that starts so write
+// after all, like a WITH's INSERT or Hive's FROM t INSERT INTO: a statement that starts any other way, like SET, USE or
+// COMMENT ON, is refused for how it starts.
+var (
+	sqlRead  = []string{"SELECT", "WITH", "SHOW", "DESCRIBE", "DESC", "EXPLAIN", "VALUES", "TABLE", "FROM", "LIST"}
+	sqlWrite = []string{"INSERT", "UPDATE", "DELETE", "MERGE", "UPSERT", "OVERWRITE", "CREATE", "DROP", "ALTER", "TRUNCATE", "GRANT", "REVOKE",
+		"COPY", "OPTIMIZE", "VACUUM", "CALL", "EXECUTE", "CACHE", "UNCACHE", "MSCK"}
 )
 
 // graphQLReads passes a document whose operations are all queries, and refuses one that has anything else, wherever it
@@ -2945,6 +3110,17 @@ func (l *Listen) compile(c *Connector) error {
 	}
 	if len(l.Keys) == 0 && l.Kept == nil {
 		return errors.New("needs Keys or Kept")
+	}
+	for _, s := range l.Signs {
+		if s.Key == nil {
+			continue
+		}
+		if len(c.Keys) == 0 || s.JWK == "" || s.Claim == "" {
+			return errors.New("a JWS is a key connector's, with JWK and Claim")
+		}
+		if err := s.Key.check("jws key", "client", "option", "kid"); err != nil {
+			return err
+		}
 	}
 	if l.Key == "" && l.Mint == "" {
 		return errors.New("needs Key or Mint")
@@ -3207,7 +3383,7 @@ func (l *Listen) verify(p *Provider, r *http.Request, at string, body []byte, ke
 		case s.Kept:
 			key = kept
 		}
-		if key == "" {
+		if key == "" && s.Key == nil {
 			return forged("%s", s.Header)
 		}
 		sc := map[string]any{"method": r.Method, "url": at, "body": string(body), "secret": p.secret}
@@ -3232,12 +3408,73 @@ func (l *Listen) verify(p *Provider, r *http.Request, at string, body []byte, ke
 		if s.Enc == Hex {
 			want = hex.EncodeToString(sum)
 		}
+		if s.Key != nil {
+			claims, err := s.jws(p, r, got)
+			if err != nil {
+				return err
+			}
+			iat, _ := claims["iat"].(float64)
+			if time.Since(time.Unix(int64(iat), 0)).Abs() > 5*time.Minute {
+				return forged("%s's iat", s.Header)
+			}
+			got, _ = claims[s.Claim].(string)
+		}
 		if !same(got, s.Pre+want) {
 			return forged("%s", s.Header)
 		}
 		return nil
 	}
 	return forged("no signature it knows")
+}
+
+// jwsKeys are the providers' keys that sign their pushes' JWSs, by provider and kid.
+var jwsKeys sync.Map
+
+// jws are the claims of the JWS token, once its signature is the provider's.
+func (s Sign) jws(p *Provider, r *http.Request, token string) (map[string]any, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return nil, forged("%s is no JWS", s.Header)
+	}
+	var head struct{ Alg, Kid string }
+	if b, err := base64.RawURLEncoding.DecodeString(parts[0]); err != nil || json.Unmarshal(b, &head) != nil || head.Alg != "ES256" || head.Kid == "" {
+		return nil, forged("%s's header", s.Header)
+	}
+	k, ok := jwsKeys.Load(p.ID + " " + head.Kid)
+	if !ok {
+		c := p.openKeys(r.Context(), nil, nil)
+		defer c.Close()
+		sc := c.scope()
+		sc["kid"] = head.Kid
+		ans, err := c.req(*s.Key, sc)
+		if err != nil {
+			return nil, err
+		}
+		jwk, _ := pick(ans, s.JWK).(map[string]any)
+		x, errX := base64.RawURLEncoding.DecodeString(text(jwk["x"]))
+		y, errY := base64.RawURLEncoding.DecodeString(text(jwk["y"]))
+		if errX != nil || errY != nil || text(jwk["crv"]) != "P-256" || len(x) != 32 || len(y) != 32 {
+			return nil, fmt.Errorf("%s's key %s is no P-256 key", p.Name, head.Kid)
+		}
+		pub, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), append(append([]byte{4}, x...), y...))
+		if err != nil {
+			return nil, fmt.Errorf("%s's key %s: %w", p.Name, head.Kid, err)
+		}
+		k, _ = jwsKeys.LoadOrStore(p.ID+" "+head.Kid, pub)
+	}
+	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil || len(sig) != 64 {
+		return nil, forged("%s's signature", s.Header)
+	}
+	h := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
+	if !ecdsa.Verify(k.(*ecdsa.PublicKey), h[:], new(big.Int).SetBytes(sig[:32]), new(big.Int).SetBytes(sig[32:])) {
+		return nil, forged("%s", s.Header)
+	}
+	var claims map[string]any
+	if b, err := base64.RawURLEncoding.DecodeString(parts[1]); err != nil || json.Unmarshal(b, &claims) != nil {
+		return nil, forged("%s's claims", s.Header)
+	}
+	return claims, nil
 }
 
 // Secrets are the environment variables that hold what connectors need of this server, each described from the

@@ -111,7 +111,8 @@ func (h *Hub) connectRedirect(id string) string { return h.api + "/connect/" + i
 // in, DELETE /connect/<connection id> disconnects one, and
 // POST /connect/<connection id>/sync asks for its sync now (below), and PUT /connect/<connection id>/access
 // narrows an integration to a group. A key connector, which has no sign-in, connects with POST
-// /connect/<id>/keys and the keys it asks for, { keys: { <name>: <value> } }. A person connects, disconnects and syncs their own connections; only an
+// /connect/<id>/keys and the keys it asks for, { keys: { <name>: <value> } }; one whose keys come from its
+// provider's widget, like Plaid Link, first gets what opens it from POST /connect/<id>/link, { token }. A person connects, disconnects and syncs their own connections; only an
 // owner, the archive's integrations.
 func (h *Hub) connectRoutes(mux *http.ServeMux) {
 	authed := func(pattern string, f func(a *Archive, w http.ResponseWriter, r *http.Request)) {
@@ -156,6 +157,10 @@ func (h *Hub) connectRoutes(mux *http.ServeMux) {
 			err = a.connectKeys(r.Context(), r.PathValue("id"), body.Keys)
 		}
 		httpWrite(w, http.StatusNoContent, nil, err)
+	})
+	authed("POST /connect/{id}/link", func(a *Archive, w http.ResponseWriter, r *http.Request) {
+		tok, err := a.connectLink(r.Context(), r.PathValue("id"))
+		httpWrite(w, http.StatusOK, map[string]string{"token": tok}, err)
 	})
 	authed("POST /connect/{id}/sync", func(a *Archive, w http.ResponseWriter, r *http.Request) {
 		id, err := httpID(r)
@@ -261,8 +266,48 @@ func (a *Archive) connectKeys(ctx context.Context, id string, keys map[string]st
 	if err != nil {
 		return fmt.Errorf("%w: %w", err, httpErrBadRequest)
 	}
-	_, err = a.connectionSave(ctx, ac.member, p.Connector, g)
+	// A grant a widget made exists at the provider already, and is ended there when it is not kept.
+	if _, err = a.connectionSave(ctx, ac.member, p.Connector, g); err != nil && p.Link != nil {
+		p.RevokeToken(ctx, g.Refresh, g.Meta)
+	}
 	return err
+}
+
+// connectLink is what opens key connector id's widget for whoever is signed in: its provider pushes to
+// Archive, and a bank's own sign-in sends the browser back to the connector in the app.
+func (a *Archive) connectLink(ctx context.Context, id string) (string, error) {
+	ac, err := authUser(ctx)
+	if err != nil {
+		return "", err
+	}
+	p, err := a.hub.connector(id)
+	if err != nil {
+		return "", err
+	}
+	if p.Link == nil {
+		return "", fmt.Errorf("%s has no widget to connect with: %w", p.Name, httpErrBadRequest)
+	}
+	if err := a.mayConnect(ctx, p.Connector); err != nil {
+		return "", err
+	}
+	// Each time the widget connects makes a new grant at the provider, so an integration connects once until it is
+	// disconnected.
+	if p.Integration {
+		err = a.sys(ctx, func(ctx context.Context) error {
+			had, err := a.st.db(ctx).IntegrationFor(ctx, p.ID)
+			if err == nil {
+				return fmt.Errorf("this archive's %s is %s; disconnect it before connecting another: %w", p.Name, had.Account, ErrConflict)
+			}
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			}
+			return err
+		})
+		if err != nil {
+			return "", err
+		}
+	}
+	return p.LinkToken(ctx, ac.member.String(), a.hub.api+"/push/"+p.ID, a.hub.app+connectBack(p.ID))
 }
 
 // connectBack is where the app shows connector id: the archive's integrations in its settings, and a person's
@@ -368,13 +413,14 @@ type Connection struct {
 
 // Connector is a service accounts can be connected at; Ready says this server has its OAuth client, and
 // Integration that an account of it is the archive's, not a person's. Keys are what a key connector asks for in
-// place of a sign-in.
+// place of a sign-in, and Link that its provider's widget hands them over.
 type Connector struct {
 	ID          string        `json:"id"`
 	Name        string        `json:"name"`
 	Ready       bool          `json:"ready"`
 	Integration bool          `json:"integration"`
 	Keys        []connect.Key `json:"keys,omitempty"`
+	Link        bool          `json:"link,omitempty"`
 	connect.Info
 }
 
@@ -391,7 +437,7 @@ func (a *Archive) Connections(ctx context.Context) (*Connections, error) {
 	}
 	out := &Connections{Connectors: []Connector{}, Connections: []Connection{}}
 	for _, c := range connect.All() {
-		out.Connectors = append(out.Connectors, Connector{ID: c.ID, Name: c.Name, Ready: a.hub.connect[c.ID] != nil, Integration: c.Integration, Keys: c.Keys, Info: c.Info})
+		out.Connectors = append(out.Connectors, Connector{ID: c.ID, Name: c.Name, Ready: a.hub.connect[c.ID] != nil, Integration: c.Integration, Keys: c.Keys, Link: c.Link != nil, Info: c.Info})
 	}
 	var rows []generated.ConnectionsRow
 	err = a.st.System(ctx, func(ctx context.Context) (err error) {
@@ -499,7 +545,7 @@ func (a *Archive) Disconnect(ctx context.Context, id uuid.UUID) error {
 		// Its watches end first, while its grant still lets Archive end them.
 		var cl *connect.Client
 		if push, _ := p.PushOf(); push == nil || push.Unwatch == nil {
-		} else if tok, terr := p.Refresh(ctx, rt); terr == nil {
+		} else if tok, terr := p.Refresh(ctx, rt, c.Meta); terr == nil {
 			cl = p.Open(ctx, tok, c.Meta)
 			rt = tok.RefreshToken
 		}
@@ -511,7 +557,7 @@ func (a *Archive) Disconnect(ctx context.Context, id uuid.UUID) error {
 		}
 		var shared bool
 		if shared, err = a.grantShared(ctx, c, p); err == nil && !shared {
-			err = p.RevokeToken(ctx, rt)
+			err = p.RevokeToken(ctx, rt, c.Meta)
 		}
 	}
 	if err != nil {
@@ -612,7 +658,7 @@ func (a *Archive) connectionToken(ctx context.Context, id uuid.UUID) (*oauth2.To
 		if err != nil {
 			return err
 		}
-		if tok, err = p.Refresh(ctx, rt); err != nil {
+		if tok, err = p.Refresh(ctx, rt, c.Meta); err != nil {
 			msg := fmt.Sprintf("%s refused to let Archive keep reading %s (%s); connect it again", p.Name, c.Account, connect.Reason(err))
 			refused = fmt.Errorf("connection %s: %s: %w", id, msg, ErrUnauthorized)
 			if re := (*oauth2.RetrieveError)(nil); errors.As(err, &re) && re.Response != nil && re.Response.StatusCode/100 == 4 {
@@ -1203,6 +1249,7 @@ var syncSchema = map[string]syncTable{
 	"chat_message":                     {},
 	"marketing_campaign":               {},
 	"work_item":                        {},
+	"compliance":                       {},
 	"commerce_product":                 {},
 	"commerce_order":                   {},
 	"dental_provider":                  {},
@@ -1217,6 +1264,15 @@ var syncSchema = map[string]syncTable{
 	"ledger_item":                      {links: map[string]string{"income_account": "ledger_account", "expense_account": "ledger_account"}},
 	"ledger_entry":                     {links: map[string]string{"contact": "ledger_contact", "account": "ledger_account"}},
 	"ledger_line":                      {parent: "ledger_entry", of: "entry", links: map[string]string{"account": "ledger_account", "item": "ledger_item"}},
+	"bank_account":                     {},
+	"bank_transaction":                 {links: map[string]string{"account": "bank_account"}},
+	"spend_department":                 {},
+	"spend_user":                       {links: map[string]string{"department": "spend_department", "manager": "spend_user"}},
+	"spend_card":                       {links: map[string]string{"holder": "spend_user"}},
+	"spend_transaction":                {links: map[string]string{"spender": "spend_user", "card": "spend_card", "department": "spend_department"}},
+	"spend_receipt":                    {parent: "spend_transaction", of: "spend"},
+	"warehouse_table":                  {},
+	"warehouse_column":                 {parent: "warehouse_table", of: "relation"},
 }
 
 // syncRec is a record of a page to write, its data as JSON.

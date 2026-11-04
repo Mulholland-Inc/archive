@@ -1914,6 +1914,63 @@ COMMENT ON COLUMN archive.work_item.source_id IS 'Its id there';
 COMMENT ON COLUMN archive.work_item.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.work_item.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
+-- Compliance: what a compliance tool you connected, like Vanta, tracks toward an audit: each framework and how far
+-- along it is, its controls, the automated tests and their status, and the vendors, people, policies and
+-- documents it checks, one row each, its kind saying which.
+CREATE TABLE archive.compliance (
+    id           uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection   uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream       text NOT NULL,
+    source_id    text NOT NULL,
+    access       uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    updated_at   timestamptz NOT NULL DEFAULT now(),
+    name         text NOT NULL DEFAULT '',
+    seen_at      timestamptz NOT NULL DEFAULT now(),
+    kind         text,
+    code         text,
+    title        text,
+    status       text,
+    category     text,
+    risk         text,
+    owner        uuid REFERENCES archive.known_person ON DELETE SET NULL,
+    owner_name   text,
+    passing      numeric,
+    total        numeric,
+    due_on       date,
+    checked_at   timestamptz,
+    description  text,
+    url          archive.url,
+    made_at      timestamptz,
+    edited_at    timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX compliance_owner_idx ON archive.compliance (owner);
+CREATE INDEX compliance_kind_status_idx ON archive.compliance (kind, status);
+COMMENT ON TABLE archive.compliance IS 'A framework, control, test, vendor, person, policy or document a compliance tool you connected tracks, like Vanta. Read only; Archive syncs them
+icon: shield-check';
+COMMENT ON COLUMN archive.compliance.kind IS 'What it is: framework, control, test, vendor, person, policy or document';
+COMMENT ON COLUMN archive.compliance.code IS 'Its short name there, like SOC 2 or a control''s CC6.1';
+COMMENT ON COLUMN archive.compliance.title IS 'Its name';
+COMMENT ON COLUMN archive.compliance.status IS 'Where it stands, as the tool says it: a test''s OK or NEEDS_ATTENTION, a person''s OVERDUE or COMPLETE tasks, a policy''s APPROVED or EXPIRED, a document''s Needs document or OK';
+COMMENT ON COLUMN archive.compliance.category IS 'Its group there, like a test''s Computers, a control''s domains, a vendor''s category or a person''s employment status';
+COMMENT ON COLUMN archive.compliance.risk IS 'A vendor''s risk, like HIGH: what is left after its controls, or else before them';
+COMMENT ON COLUMN archive.compliance.owner IS 'references known_person; who owns it, by their address, or for a person, who they are';
+COMMENT ON COLUMN archive.compliance.owner_name IS 'Who owns it, or who they are, by name';
+COMMENT ON COLUMN archive.compliance.passing IS 'A framework''s controls done';
+COMMENT ON COLUMN archive.compliance.total IS 'A framework''s controls in all';
+COMMENT ON COLUMN archive.compliance.due_on IS 'When it is due: a failing test''s fix, a person''s tasks or a vendor''s next review';
+COMMENT ON COLUMN archive.compliance.checked_at IS 'When it was last tested, reviewed, approved or uploaded';
+COMMENT ON COLUMN archive.compliance.description IS 'What it is, and for a test what failed and how to fix it';
+COMMENT ON COLUMN archive.compliance.url IS 'Where it opens there, or a vendor''s website';
+COMMENT ON COLUMN archive.compliance.made_at IS 'When it was made there, or a person started';
+COMMENT ON COLUMN archive.compliance.edited_at IS 'When it last changed there, or a test last flipped';
+COMMENT ON COLUMN archive.compliance.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.compliance.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.compliance.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.compliance.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.compliance.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
 -- Commerce: the orders and products of a store you connected, like Shopify, each order with its lines and its
 -- customer as the person of their email.
 CREATE TABLE archive.commerce_product (
@@ -2606,6 +2663,357 @@ COMMENT ON COLUMN archive.ledger_line.item_source IS 'The id there of the produc
 COMMENT ON COLUMN archive.ledger_line.unit_price IS 'What one of it costs';
 COMMENT ON COLUMN archive.ledger_line.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
+-- Banks: the accounts of a bank login you connected, like through Plaid, with their balances, and every
+-- transaction on them. Money a business moves with Zelle or Venmo shows here as the bank sees it. Unlike the
+-- books, nobody has sorted these: they are what the bank says happened.
+CREATE TABLE archive.bank_account (
+    id            uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream        text NOT NULL,
+    source_id     text NOT NULL,
+    access        uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
+    name          text NOT NULL DEFAULT '',
+    seen_at       timestamptz NOT NULL DEFAULT now(),
+    title         text,
+    official_name text,
+    mask          text,
+    type          text,
+    subtype       text,
+    balance       archive.money,
+    available     archive.money,
+    credit_limit  archive.money,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+COMMENT ON TABLE archive.bank_account IS 'An account at a bank you connected, like a checking account or a credit card, with its balance. Read only; Archive syncs them
+icon: landmark';
+COMMENT ON COLUMN archive.bank_account.title IS 'Its name, as the bank or its owner calls it';
+COMMENT ON COLUMN archive.bank_account.official_name IS 'Its name as the bank has it on record';
+COMMENT ON COLUMN archive.bank_account.mask IS 'The last digits of its account number';
+COMMENT ON COLUMN archive.bank_account.type IS 'depository, credit, loan or investment';
+COMMENT ON COLUMN archive.bank_account.subtype IS 'Like checking, savings or credit card';
+COMMENT ON COLUMN archive.bank_account.balance IS 'Its balance when the bank last said: what is in it, or what is owed on a credit card or loan';
+COMMENT ON COLUMN archive.bank_account.available IS 'What can be spent or drawn from it, pending transactions taken off';
+COMMENT ON COLUMN archive.bank_account.credit_limit IS 'Its credit limit, for a credit card or line of credit';
+COMMENT ON COLUMN archive.bank_account.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.bank_account.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.bank_account.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.bank_account.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.bank_account.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.bank_transaction (
+    id             uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream         text NOT NULL,
+    source_id      text NOT NULL,
+    access         uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    updated_at     timestamptz NOT NULL DEFAULT now(),
+    name           text NOT NULL DEFAULT '',
+    seen_at        timestamptz NOT NULL DEFAULT now(),
+    account        uuid REFERENCES archive.bank_account ON DELETE SET NULL,
+    account_source text,
+    posted_on      date,
+    authorized_on  date,
+    amount         archive.money,
+    description    text,
+    merchant       text,
+    counterparty   text,
+    org            uuid REFERENCES archive.known_org ON DELETE SET NULL,
+    channel        text,
+    category       text,
+    detail         text,
+    pending        boolean,
+    check_number   text,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX bank_transaction_account_idx ON archive.bank_transaction (account);
+CREATE INDEX bank_transaction_org_idx ON archive.bank_transaction (org);
+CREATE INDEX bank_transaction_posted_on_idx ON archive.bank_transaction (posted_on);
+COMMENT ON TABLE archive.bank_transaction IS 'Money that went into or out of a bank account you connected: a card purchase, a deposit, a check, a transfer, or a Zelle or Venmo payment. Read only; Archive syncs them
+icon: arrow-left-right';
+COMMENT ON COLUMN archive.bank_transaction.account IS 'references bank_account; the account it is on';
+COMMENT ON COLUMN archive.bank_transaction.account_source IS 'The id there of the account it is on';
+COMMENT ON COLUMN archive.bank_transaction.posted_on IS 'The day it posted, or for a pending one the day it was made';
+COMMENT ON COLUMN archive.bank_transaction.authorized_on IS 'The day it was made, when the bank says';
+COMMENT ON COLUMN archive.bank_transaction.amount IS 'How much: positive for money in, negative for money out';
+COMMENT ON COLUMN archive.bank_transaction.description IS 'What the bank calls it, like its statement line';
+COMMENT ON COLUMN archive.bank_transaction.merchant IS 'Who it was paid to or from, as the bank or Plaid names them';
+COMMENT ON COLUMN archive.bank_transaction.counterparty IS 'The other party, like a merchant, a person, or the app it went through, such as Zelle or Venmo';
+COMMENT ON COLUMN archive.bank_transaction.org IS 'references known_org; the merchant, by its web domain';
+COMMENT ON COLUMN archive.bank_transaction.channel IS 'How it was made: online, in store or other';
+COMMENT ON COLUMN archive.bank_transaction.category IS 'Its category, like FOOD_AND_DRINK, TRANSFER_IN or LOAN_PAYMENTS';
+COMMENT ON COLUMN archive.bank_transaction.detail IS 'Its category in detail, like TRANSFER_IN_ACCOUNT_TRANSFER';
+COMMENT ON COLUMN archive.bank_transaction.pending IS 'Whether it has not posted yet; once it posts, the pending one goes and the posted one comes';
+COMMENT ON COLUMN archive.bank_transaction.check_number IS 'Its check number, for a check';
+COMMENT ON COLUMN archive.bank_transaction.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.bank_transaction.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.bank_transaction.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.bank_transaction.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.bank_transaction.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+-- Spend: the company cards and expenses of a spend platform you connected, like Ramp or Brex: the people who
+-- spend, their departments, their cards, and every card purchase and reimbursement with its receipts. Its bills
+-- and vendors are books, in ledger_entry and ledger_contact.
+CREATE TABLE archive.spend_department (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream     text NOT NULL,
+    source_id  text NOT NULL,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    name       text NOT NULL DEFAULT '',
+    seen_at    timestamptz NOT NULL DEFAULT now(),
+    title      text,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+COMMENT ON TABLE archive.spend_department IS 'A department of a spend platform you connected, like Ramp or Brex. Read only; Archive syncs them
+icon: network';
+COMMENT ON COLUMN archive.spend_department.title IS 'Its name';
+COMMENT ON COLUMN archive.spend_department.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.spend_department.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.spend_department.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.spend_department.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.spend_department.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.spend_user (
+    id                uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection        uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream            text NOT NULL,
+    source_id         text NOT NULL,
+    access            uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at        timestamptz NOT NULL DEFAULT now(),
+    updated_at        timestamptz NOT NULL DEFAULT now(),
+    name              text NOT NULL DEFAULT '',
+    seen_at           timestamptz NOT NULL DEFAULT now(),
+    first_name        text,
+    last_name         text,
+    person            uuid REFERENCES archive.known_person ON DELETE SET NULL,
+    email             archive.email,
+    role              text,
+    status            text,
+    employee_id       text,
+    department        uuid REFERENCES archive.spend_department ON DELETE SET NULL,
+    department_source text,
+    manager           uuid REFERENCES archive.spend_user ON DELETE SET NULL,
+    manager_source    text,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX spend_user_person_idx ON archive.spend_user (person);
+CREATE INDEX spend_user_department_idx ON archive.spend_user (department);
+CREATE INDEX spend_user_manager_idx ON archive.spend_user (manager);
+COMMENT ON TABLE archive.spend_user IS 'Someone of a spend platform you connected, like Ramp or Brex, who may hold its cards or spend. Read only; Archive syncs them
+icon: user-round';
+COMMENT ON COLUMN archive.spend_user.person IS 'references known_person; who they are, by their email';
+COMMENT ON COLUMN archive.spend_user.role IS 'What they may do there, like BUSINESS_ADMIN';
+COMMENT ON COLUMN archive.spend_user.status IS 'Where their account is, like ACTIVE or INVITED';
+COMMENT ON COLUMN archive.spend_user.employee_id IS 'Their employee id, from the HR system';
+COMMENT ON COLUMN archive.spend_user.department IS 'references spend_department; the department they are in';
+COMMENT ON COLUMN archive.spend_user.department_source IS 'The id there of their department';
+COMMENT ON COLUMN archive.spend_user.manager IS 'references spend_user; who they report to';
+COMMENT ON COLUMN archive.spend_user.manager_source IS 'The id there of who they report to';
+COMMENT ON COLUMN archive.spend_user.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.spend_user.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.spend_user.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.spend_user.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.spend_user.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.spend_card (
+    id            uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream        text NOT NULL,
+    source_id     text NOT NULL,
+    access        uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
+    name          text NOT NULL DEFAULT '',
+    seen_at       timestamptz NOT NULL DEFAULT now(),
+    title         text,
+    kind          text,
+    last_four     text,
+    expires       text,
+    status        text,
+    holder        uuid REFERENCES archive.spend_user ON DELETE SET NULL,
+    holder_source text,
+    holder_name   text,
+    spend_limit   archive.money,
+    limit_period  text,
+    made_at       timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX spend_card_holder_idx ON archive.spend_card (holder);
+COMMENT ON TABLE archive.spend_card IS 'A company card of a spend platform you connected, like Ramp or Brex: never its number, only its last four digits. Read only; Archive syncs them
+icon: credit-card';
+COMMENT ON COLUMN archive.spend_card.title IS 'The name it was given there';
+COMMENT ON COLUMN archive.spend_card.kind IS 'physical or virtual';
+COMMENT ON COLUMN archive.spend_card.last_four IS 'The last four digits of its number';
+COMMENT ON COLUMN archive.spend_card.expires IS 'When it expires, as MM/YY';
+COMMENT ON COLUMN archive.spend_card.status IS 'Where it is, like ACTIVE, LOCKED, SUSPENDED or TERMINATED';
+COMMENT ON COLUMN archive.spend_card.holder IS 'references spend_user; who holds it';
+COMMENT ON COLUMN archive.spend_card.holder_source IS 'The id there of who holds it';
+COMMENT ON COLUMN archive.spend_card.holder_name IS 'Who holds it, by name';
+COMMENT ON COLUMN archive.spend_card.spend_limit IS 'What it may spend in a period, when the card has a limit of its own';
+COMMENT ON COLUMN archive.spend_card.limit_period IS 'How often its limit starts again, like MONTHLY or ONE_TIME';
+COMMENT ON COLUMN archive.spend_card.made_at IS 'When it was issued';
+COMMENT ON COLUMN archive.spend_card.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.spend_card.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.spend_card.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.spend_card.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.spend_card.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.spend_transaction (
+    id                uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection        uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream            text NOT NULL,
+    source_id         text NOT NULL,
+    access            uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at        timestamptz NOT NULL DEFAULT now(),
+    updated_at        timestamptz NOT NULL DEFAULT now(),
+    name              text NOT NULL DEFAULT '',
+    seen_at           timestamptz NOT NULL DEFAULT now(),
+    kind              text NOT NULL,
+    merchant          text,
+    mcc               text,
+    category          text,
+    amount            archive.money,
+    original_amount   archive.money,
+    spent_at          timestamptz,
+    posted_at         timestamptz,
+    status            text,
+    memo              text,
+    spender           uuid REFERENCES archive.spend_user ON DELETE SET NULL,
+    spender_source    text,
+    spender_name      text,
+    card              uuid REFERENCES archive.spend_card ON DELETE SET NULL,
+    card_source       text,
+    department        uuid REFERENCES archive.spend_department ON DELETE SET NULL,
+    department_source text,
+    department_name   text,
+    url               archive.url,
+    edited_at         timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX spend_transaction_spender_idx ON archive.spend_transaction (spender);
+CREATE INDEX spend_transaction_card_idx ON archive.spend_transaction (card);
+CREATE INDEX spend_transaction_department_idx ON archive.spend_transaction (department);
+CREATE INDEX spend_transaction_spent_at_idx ON archive.spend_transaction (spent_at);
+COMMENT ON TABLE archive.spend_transaction IS 'A card purchase or reimbursement of a spend platform you connected, like Ramp or Brex; its receipts are in spend_receipt. Read only; Archive syncs them
+icon: credit-card';
+COMMENT ON COLUMN archive.spend_transaction.kind IS 'What it is: card or reimbursement, or on Brex billpay or clawback';
+COMMENT ON COLUMN archive.spend_transaction.merchant IS 'Who it was paid to, by name or as the card statement shows them';
+COMMENT ON COLUMN archive.spend_transaction.mcc IS 'The merchant category code of the card network';
+COMMENT ON COLUMN archive.spend_transaction.category IS 'What kind of spend it is there, like RESTAURANTS or Software';
+COMMENT ON COLUMN archive.spend_transaction.amount IS 'What it cost the business, in the business''s currency; a refund is negative';
+COMMENT ON COLUMN archive.spend_transaction.original_amount IS 'What it cost in the merchant''s currency';
+COMMENT ON COLUMN archive.spend_transaction.spent_at IS 'When it was bought';
+COMMENT ON COLUMN archive.spend_transaction.posted_at IS 'When it settled or was paid';
+COMMENT ON COLUMN archive.spend_transaction.status IS 'Where it is there, like CLEARED, PENDING, DECLINED, APPROVED or SETTLED';
+COMMENT ON COLUMN archive.spend_transaction.memo IS 'What the spender wrote about it';
+COMMENT ON COLUMN archive.spend_transaction.spender IS 'references spend_user; who spent it';
+COMMENT ON COLUMN archive.spend_transaction.spender_source IS 'The id there of who spent it';
+COMMENT ON COLUMN archive.spend_transaction.spender_name IS 'Who spent it, by name';
+COMMENT ON COLUMN archive.spend_transaction.card IS 'references spend_card; the card it was on';
+COMMENT ON COLUMN archive.spend_transaction.card_source IS 'The id there of the card it was on';
+COMMENT ON COLUMN archive.spend_transaction.department IS 'references spend_department; the department it is of';
+COMMENT ON COLUMN archive.spend_transaction.department_source IS 'The id there of its department';
+COMMENT ON COLUMN archive.spend_transaction.department_name IS 'Its department, by name';
+COMMENT ON COLUMN archive.spend_transaction.url IS 'Where it opens there';
+COMMENT ON COLUMN archive.spend_transaction.edited_at IS 'When it last changed there';
+COMMENT ON COLUMN archive.spend_transaction.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.spend_transaction.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.spend_transaction.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.spend_transaction.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.spend_transaction.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.spend_receipt (
+    id             uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    access         uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    name           text NOT NULL DEFAULT '',
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    updated_at     timestamptz NOT NULL DEFAULT now(),
+    spend          uuid NOT NULL REFERENCES archive.spend_transaction ON DELETE CASCADE,
+    receipt_source text,
+    position       integer
+) INHERITS (archive.object);
+CREATE INDEX spend_receipt_spend_idx ON archive.spend_receipt (spend);
+CREATE INDEX spend_receipt_connection_idx ON archive.spend_receipt (connection);
+COMMENT ON TABLE archive.spend_receipt IS 'A receipt attached to a card purchase or reimbursement: that it is there, not the file. Read only; Archive syncs them
+icon: receipt';
+COMMENT ON COLUMN archive.spend_receipt.spend IS 'references spend_transaction; the purchase or reimbursement it is for';
+COMMENT ON COLUMN archive.spend_receipt.receipt_source IS 'Its id there';
+COMMENT ON COLUMN archive.spend_receipt.position IS 'Where it is among its transaction''s receipts, from 1';
+COMMENT ON COLUMN archive.spend_receipt.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+-- Warehouses: the tables and views of a data warehouse you connected, like Snowflake, that you picked, with their
+-- columns, but not their rows, which stay there and are queried live.
+CREATE TABLE archive.warehouse_table (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream     text NOT NULL,
+    source_id  text NOT NULL,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    name       text NOT NULL DEFAULT '',
+    seen_at    timestamptz NOT NULL DEFAULT now(),
+    database   text,
+    schema     text,
+    title      text,
+    kind       text,
+    row_count  numeric,
+    bytes      numeric,
+    comment    text,
+    clustering text,
+    made_at    timestamptz,
+    edited_at  timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+COMMENT ON TABLE archive.warehouse_table IS 'A table or view of a data warehouse you connected, like Snowflake; its columns are in warehouse_column, and its rows stay there, for the connector''s query action. Read only; Archive syncs them
+icon: table';
+COMMENT ON COLUMN archive.warehouse_table.database IS 'The database it is in';
+COMMENT ON COLUMN archive.warehouse_table.schema IS 'The schema it is in';
+COMMENT ON COLUMN archive.warehouse_table.title IS 'Its name';
+COMMENT ON COLUMN archive.warehouse_table.kind IS 'Like BASE TABLE, VIEW, MATERIALIZED VIEW or EXTERNAL TABLE';
+COMMENT ON COLUMN archive.warehouse_table.row_count IS 'How many rows it has; null for a view';
+COMMENT ON COLUMN archive.warehouse_table.bytes IS 'How many bytes it takes; null for a view';
+COMMENT ON COLUMN archive.warehouse_table.comment IS 'What its comment there says';
+COMMENT ON COLUMN archive.warehouse_table.clustering IS 'Its clustering key';
+COMMENT ON COLUMN archive.warehouse_table.made_at IS 'When it was made there';
+COMMENT ON COLUMN archive.warehouse_table.edited_at IS 'When its rows or definition last changed there';
+COMMENT ON COLUMN archive.warehouse_table.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.warehouse_table.stream IS 'What its connector syncs it as, like tables';
+COMMENT ON COLUMN archive.warehouse_table.source_id IS 'Its id there, <database>.<schema>.<name>';
+COMMENT ON COLUMN archive.warehouse_table.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.warehouse_table.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.warehouse_column (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    name       text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    relation   uuid NOT NULL REFERENCES archive.warehouse_table ON DELETE CASCADE,
+    position   integer,
+    title      text,
+    type       text,
+    nullable   boolean,
+    comment    text
+) INHERITS (archive.object);
+CREATE INDEX warehouse_column_relation_idx ON archive.warehouse_column (relation);
+CREATE INDEX warehouse_column_connection_idx ON archive.warehouse_column (connection);
+COMMENT ON TABLE archive.warehouse_column IS 'A column of a warehouse table or view. Read only; Archive syncs them
+icon: columns-3';
+COMMENT ON COLUMN archive.warehouse_column.relation IS 'references warehouse_table; the table or view it is a column of';
+COMMENT ON COLUMN archive.warehouse_column.position IS 'Where it is among the columns, from 1';
+COMMENT ON COLUMN archive.warehouse_column.title IS 'Its name';
+COMMENT ON COLUMN archive.warehouse_column.type IS 'Its type there, like NUMBER, TEXT, TIMESTAMP_NTZ or VARIANT';
+COMMENT ON COLUMN archive.warehouse_column.nullable IS 'Whether it may be null';
+COMMENT ON COLUMN archive.warehouse_column.comment IS 'What its comment there says';
+
 -- mine says whether the current role is the member m or one of their tokens, which are all in m's group role.
 CREATE FUNCTION archive.mine(m uuid) RETURNS bool LANGUAGE sql STABLE AS $$
     SELECT EXISTS (SELECT FROM pg_catalog.pg_roles r WHERE r.rolname = '{p}_m' || translate(rtrim(encode(uuid_send(m), 'base64'), '='), '+/', '-_')
@@ -2701,6 +3109,7 @@ BEGIN
         WHEN 'dental_payment' THEN concat_ws(' · ', 'Payment', r->>'paid_on')
         WHEN 'ad_metric' THEN concat_ws(' · ', nullif(r->>'campaign_name', ''), r->>'on_date')
         WHEN 'work_item' THEN concat_ws(' · ', nullif(r->>'title', ''), nullif(r->>'client_name', ''))
+        WHEN 'compliance' THEN concat_ws(' · ', nullif(r->>'code', ''), coalesce(nullif(r->>'title', ''), r->>'owner_name'))
         WHEN 'commerce_product' THEN r->>'title'
         WHEN 'commerce_order' THEN concat_ws(' · ', coalesce(nullif(r->>'number', ''), 'Order'), nullif(r->>'customer_name', ''))
         WHEN 'commerce_line' THEN concat_ws(' · ', nullif(r->>'title', ''), nullif(r->>'variant', ''))
@@ -2716,6 +3125,15 @@ BEGIN
         WHEN 'ledger_item' THEN r->>'title'
         WHEN 'ledger_entry' THEN concat_ws(' · ', regexp_replace(r->>'kind', '([a-z])([A-Z])', '\1 \2', 'g'), nullif(r->>'number', ''), r->>'txn_on')
         WHEN 'ledger_line' THEN coalesce(nullif(btrim(r->>'description'), ''), r->>'kind')
+        WHEN 'bank_account' THEN concat_ws(' · ', coalesce(nullif(r->>'title', ''), r->>'official_name'), nullif(r->>'mask', ''))
+        WHEN 'bank_transaction' THEN concat_ws(' · ', coalesce(nullif(btrim(r->>'merchant'), ''), nullif(btrim(r->>'description'), '')), r->>'posted_on')
+        WHEN 'spend_department' THEN r->>'title'
+        WHEN 'spend_user' THEN coalesce(nullif(btrim(concat_ws(' ', nullif(r->>'first_name', ''), nullif(r->>'last_name', ''))), ''), r->>'email')
+        WHEN 'spend_card' THEN concat_ws(' · ', coalesce(nullif(r->>'title', ''), nullif(r->>'holder_name', ''), 'Card'), '•' || nullif(r->>'last_four', ''))
+        WHEN 'spend_transaction' THEN concat_ws(' · ', coalesce(nullif(r->>'merchant', ''), initcap(r->>'kind')), nullif(r->>'spender_name', ''), left(r->>'spent_at', 10))
+        WHEN 'spend_receipt' THEN concat_ws(' ', 'Receipt', r->>'position')
+        WHEN 'warehouse_table' THEN concat_ws('.', nullif(r->>'database', ''), nullif(r->>'schema', ''), r->>'title')
+        WHEN 'warehouse_column' THEN concat_ws(' · ', r->>'title', nullif(r->>'type', ''))
         ELSE own END), ''), '');
     RETURN NEW;
 END $$;
@@ -2764,6 +3182,7 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.dental_procedure F
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.dental_payment FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ad_metric FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.work_item FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.compliance FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.commerce_product FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.commerce_order FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.commerce_line FOR EACH ROW EXECUTE FUNCTION archive.object_name();
@@ -2775,6 +3194,15 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.crm_deal FOR EACH 
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.calendar_event FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.calendar_attendee FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_account FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.bank_account FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.bank_transaction FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.spend_department FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.spend_user FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.spend_card FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.spend_transaction FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.spend_receipt FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.warehouse_table FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.warehouse_column FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_contact FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_item FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_entry FOR EACH ROW EXECUTE FUNCTION archive.object_name();
@@ -2867,6 +3295,7 @@ GRANT SELECT ON archive.dental_procedure TO "{p}_viewer";
 GRANT SELECT ON archive.dental_payment TO "{p}_viewer";
 GRANT SELECT ON archive.ad_metric TO "{p}_viewer";
 GRANT SELECT ON archive.work_item TO "{p}_viewer";
+GRANT SELECT ON archive.compliance TO "{p}_viewer";
 GRANT SELECT ON archive.commerce_product TO "{p}_viewer";
 GRANT SELECT ON archive.commerce_order TO "{p}_viewer";
 GRANT SELECT ON archive.commerce_line TO "{p}_viewer";
@@ -2882,6 +3311,15 @@ GRANT SELECT ON archive.ledger_contact TO "{p}_viewer";
 GRANT SELECT ON archive.ledger_item TO "{p}_viewer";
 GRANT SELECT ON archive.ledger_entry TO "{p}_viewer";
 GRANT SELECT ON archive.ledger_line TO "{p}_viewer";
+GRANT SELECT ON archive.bank_account TO "{p}_viewer";
+GRANT SELECT ON archive.bank_transaction TO "{p}_viewer";
+GRANT SELECT ON archive.spend_department TO "{p}_viewer";
+GRANT SELECT ON archive.spend_user TO "{p}_viewer";
+GRANT SELECT ON archive.spend_card TO "{p}_viewer";
+GRANT SELECT ON archive.spend_transaction TO "{p}_viewer";
+GRANT SELECT ON archive.spend_receipt TO "{p}_viewer";
+GRANT SELECT ON archive.warehouse_table TO "{p}_viewer";
+GRANT SELECT ON archive.warehouse_column TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT, UPDATE, DELETE ON TABLES TO "{p}_editor";
 
@@ -2983,6 +3421,8 @@ ALTER TABLE archive.ad_metric ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.ad_metric FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = ad_metric.connection));
 ALTER TABLE archive.work_item ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.work_item FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = work_item.connection));
+ALTER TABLE archive.compliance ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.compliance FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = compliance.connection));
 ALTER TABLE archive.commerce_product ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.commerce_product FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = commerce_product.connection));
 ALTER TABLE archive.commerce_order ENABLE ROW LEVEL SECURITY;
@@ -3013,6 +3453,24 @@ ALTER TABLE archive.ledger_entry ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.ledger_entry FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = ledger_entry.connection));
 ALTER TABLE archive.ledger_line ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.ledger_line FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = ledger_line.connection));
+ALTER TABLE archive.bank_account ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.bank_account FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = bank_account.connection));
+ALTER TABLE archive.bank_transaction ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.bank_transaction FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = bank_transaction.connection));
+ALTER TABLE archive.spend_department ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.spend_department FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = spend_department.connection));
+ALTER TABLE archive.spend_user ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.spend_user FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = spend_user.connection));
+ALTER TABLE archive.spend_card ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.spend_card FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = spend_card.connection));
+ALTER TABLE archive.spend_transaction ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.spend_transaction FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = spend_transaction.connection));
+ALTER TABLE archive.spend_receipt ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.spend_receipt FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = spend_receipt.connection));
+ALTER TABLE archive.warehouse_table ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.warehouse_table FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = warehouse_table.connection));
+ALTER TABLE archive.warehouse_column ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.warehouse_column FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = warehouse_column.connection));
 ALTER TABLE archive.known_person ENABLE ROW LEVEL SECURITY;
 CREATE POLICY seen ON archive.known_person FOR SELECT USING (EXISTS (SELECT FROM archive.mail_party p WHERE p.person = known_person.id)
     OR EXISTS (SELECT FROM archive.payroll_worker w WHERE w.person = known_person.id)
@@ -3024,11 +3482,13 @@ CREATE POLICY seen ON archive.known_person FOR SELECT USING (EXISTS (SELECT FROM
     OR EXISTS (SELECT FROM archive.crm_contact x WHERE x.person = known_person.id)
     OR EXISTS (SELECT FROM archive.chat_message x WHERE x.sender = known_person.id)
     OR EXISTS (SELECT FROM archive.work_item x WHERE x.assignee = known_person.id)
+    OR EXISTS (SELECT FROM archive.compliance x WHERE x.owner = known_person.id)
     OR EXISTS (SELECT FROM archive.commerce_order x WHERE x.customer = known_person.id)
     OR EXISTS (SELECT FROM archive.dental_patient x WHERE x.person = known_person.id));
 ALTER TABLE archive.known_org ENABLE ROW LEVEL SECURITY;
 CREATE POLICY seen ON archive.known_org FOR SELECT USING (EXISTS (SELECT FROM archive.payroll_company c WHERE c.org = known_org.id)
-    OR EXISTS (SELECT FROM archive.crm_company x WHERE x.org = known_org.id));
+    OR EXISTS (SELECT FROM archive.crm_company x WHERE x.org = known_org.id)
+    OR EXISTS (SELECT FROM archive.bank_transaction x WHERE x.org = known_org.id));
 
 -- name: HasRole :one
 SELECT pg_has_role(sqlc.arg(member)::name, rolname, 'USAGE') FROM pg_catalog.pg_roles WHERE rolname = sqlc.arg(grp)::name;
@@ -3245,10 +3705,14 @@ SELECT jsonb_build_object(
             'archive.ledger_account'::regclass, 'archive.ledger_contact'::regclass, 'archive.ledger_item'::regclass,
             'archive.ledger_entry'::regclass, 'archive.ledger_line'::regclass, 'archive.calendar_event'::regclass,
             'archive.calendar_attendee'::regclass, 'archive.crm_company'::regclass, 'archive.crm_contact'::regclass, 'archive.crm_deal'::regclass,
-            'archive.chat_message'::regclass, 'archive.marketing_campaign'::regclass, 'archive.work_item'::regclass,
+            'archive.chat_message'::regclass, 'archive.marketing_campaign'::regclass, 'archive.work_item'::regclass, 'archive.compliance'::regclass,
             'archive.commerce_product'::regclass, 'archive.commerce_order'::regclass, 'archive.commerce_line'::regclass,
             'archive.ad_metric'::regclass, 'archive.dental_provider'::regclass, 'archive.dental_patient'::regclass,
-            'archive.dental_appointment'::regclass, 'archive.dental_procedure'::regclass, 'archive.dental_payment'::regclass)
+            'archive.dental_appointment'::regclass, 'archive.dental_procedure'::regclass, 'archive.dental_payment'::regclass,
+            'archive.bank_account'::regclass, 'archive.bank_transaction'::regclass,
+            'archive.spend_department'::regclass, 'archive.spend_user'::regclass, 'archive.spend_card'::regclass,
+            'archive.spend_transaction'::regclass, 'archive.spend_receipt'::regclass,
+            'archive.warehouse_table'::regclass, 'archive.warehouse_column'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -3360,6 +3824,7 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.chat_message x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.marketing_campaign x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.work_item x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.compliance x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.commerce_product x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.commerce_order x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.ad_metric x WHERE x.connection = c.id)
@@ -3367,7 +3832,14 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.dental_patient x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.dental_appointment x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.dental_procedure x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.dental_payment x WHERE x.connection = c.id))::bigint AS items,
+        + (SELECT count(*) FROM archive.dental_payment x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.bank_account x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.bank_transaction x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.spend_department x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.spend_user x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.spend_card x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.spend_transaction x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.warehouse_table x WHERE x.connection = c.id))::bigint AS items,
     c.integration, coalesce(c.access::text, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
 FROM archive.connection c WHERE c.member = $1 AND NOT c.integration OR c.integration ORDER BY c.provider, c.account, c.id;
 
@@ -3458,10 +3930,12 @@ WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM arch
     AND NOT EXISTS (SELECT FROM archive.crm_contact x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.chat_message x WHERE x.sender = k.id)
     AND NOT EXISTS (SELECT FROM archive.work_item x WHERE x.assignee = k.id)
+    AND NOT EXISTS (SELECT FROM archive.compliance x WHERE x.owner = k.id)
     AND NOT EXISTS (SELECT FROM archive.commerce_order x WHERE x.customer = k.id)
     AND NOT EXISTS (SELECT FROM archive.dental_patient x WHERE x.person = k.id))
 DELETE FROM archive.known_org o WHERE NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.org = o.id)
-    AND NOT EXISTS (SELECT FROM archive.crm_company x WHERE x.org = o.id);
+    AND NOT EXISTS (SELECT FROM archive.crm_company x WHERE x.org = o.id)
+    AND NOT EXISTS (SELECT FROM archive.bank_transaction x WHERE x.org = o.id);
 
 -- The people of emails, each added unless there is one.
 -- name: KnownPeople :many
