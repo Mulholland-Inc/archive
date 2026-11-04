@@ -179,6 +179,8 @@ const (
 	CatProjects  Category = "Projects"
 	CatPayroll   Category = "Payroll"
 
+	CatCompliance Category = "Compliance"
+
 	IconMail     Icon = "mail"
 	IconUsers    Icon = "users"
 	IconList     Icon = "list"
@@ -804,6 +806,11 @@ func (c *Connector) compile() error {
 		}
 		if u, err := url.Parse(c.Endpoint.AuthURL); err == nil && c.Host == "" {
 			c.Host = u.Scheme + "://" + u.Host
+		}
+	}
+	if c.Trade != nil {
+		if err := c.Trade.check("trade", "key", "client", "option"); err != nil {
+			return err
 		}
 	}
 	if c.Sign != nil {

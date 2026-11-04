@@ -1203,6 +1203,7 @@ var syncSchema = map[string]syncTable{
 	"chat_message":                     {},
 	"marketing_campaign":               {},
 	"work_item":                        {},
+	"compliance":                       {},
 	"commerce_product":                 {},
 	"commerce_order":                   {},
 	"dental_provider":                  {},
