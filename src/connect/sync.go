@@ -57,6 +57,9 @@ type Stream struct {
 	// (below); nil leaves the record out.
 	Table string
 	Rows  func(data map[string]any) *Row
+	// SQL, in place of Rows, is the query of the rows of a page's records, as Map has it (def.go), and Version the
+	// hash of the definition its rows come from.
+	SQL, Version string
 }
 
 // Page is what one pull found.
@@ -147,6 +150,14 @@ func clip(s string, n int) string {
 		n--
 	}
 	return s[:n]
+}
+
+// clamp is n within 1 and most, or def when it is not given.
+func clamp(n, def, most int) int {
+	if n <= 0 {
+		return def
+	}
+	return min(n, most)
 }
 
 // maxText is the most of a record's text a stream keeps, like a message's body.

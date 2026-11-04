@@ -2,7 +2,7 @@
 // Gmail, so Archive can read them for them, and the actions a script takes with those accounts.
 //
 // A connector is one file of this package, <id>.go, that declares a Connector and adds it with Register in
-// its init. Nothing else names it. It speaks one of three protocols, and a member never sees which:
+// its init. Nothing else names it. One with an API may be only data, which the engine in def.go runs. It speaks one of three protocols, and a member never sees which:
 //   - An API connector names the environment variable that holds its OAuth client, its endpoints and scopes,
 //     and its Actions, Go funcs over the provider's API. Load reads every connector's variable, and one
 //     whose variable is unset is unavailable: listed, but not offered.
@@ -98,6 +98,18 @@ type Connector struct {
 	// (keys.go). Its Env, when set, is a client of the server's own its requests need too, like a developer key.
 	Keys      []Key
 	Authorize func(req *http.Request, c *Client)
+	// Info is how it shows. Options says what else its Env's value takes or does, for the docs of that variable.
+	Info    Info
+	Options string
+	// API is the base of the requests of a connector that is only data (def.go): its Env is ARCHIVE_<ID> unless it
+	// says, and its Host that of its Endpoint. Sign are the headers of its keys' requests, Who its Account, RevokeBy
+	// its RevokeWith, Listen its Push and Sync its Streams.
+	API      string
+	Sign     map[string]string
+	Who      *Who
+	RevokeBy *Req
+	Listen   *Listen
+	Sync     []*Sync
 }
 
 // MCPEnv is the environment variable that, when set, is another server for an MCP connector than its own, one
@@ -110,6 +122,9 @@ var registry = map[string]*Connector{}
 func Register(c *Connector) {
 	if registry[c.ID] != nil {
 		panic("connect: two connectors are " + c.ID)
+	}
+	if err := c.compile(); err != nil {
+		panic("connect: " + c.ID + ": " + err.Error())
 	}
 	registry[c.ID] = c
 }
@@ -655,12 +670,56 @@ func find(v any, key string) string {
 // archive.action("<connector>.<name>", input). Its input is checked against Input before Do sees it.
 type Action struct {
 	// Doc says what it does and returns, for the run tool's docs.
-	Doc   string
-	Input *jsonschema.Schema
-	Do    func(c *Client, in json.RawMessage) (any, error)
+	Doc    string
+	Input  *jsonschema.Schema
+	Output any
+	Do     func(c *Client, in json.RawMessage) (any, error)
 	// Writes says it changes something at the provider, like sending a message, which a viewer-only token
 	// may not.
 	Writes bool
+	plan   *Plan
+}
+
+// ToolActions are the actions of an MCP connector: its server's tools, each by its name without the connector's id
+// before it. A tool writes unless the server says it only reads.
+func (p *Provider) ToolActions(tools []*mcp.Tool) map[string]*Action {
+	out := make(map[string]*Action, len(tools))
+	for _, t := range tools {
+		doc, _, _ := strings.Cut(strings.TrimSpace(t.Description), "\n\n")
+		if len(doc) > 600 {
+			doc = doc[:600] + "..."
+		}
+		a := &Action{Doc: doc, Output: t.OutputSchema, Writes: t.Annotations == nil || !t.Annotations.ReadOnlyHint}
+		var s jsonschema.Schema
+		if b, err := json.Marshal(t.InputSchema); err == nil && json.Unmarshal(b, &s) == nil {
+			a.Input = &s
+		}
+		a.Do = func(c *Client, raw json.RawMessage) (any, error) {
+			var in any
+			json.Unmarshal(raw, &in)
+			res, err := c.Call(t.Name, in)
+			if err != nil {
+				return nil, err
+			}
+			if res.StructuredContent != nil {
+				return res.StructuredContent, nil
+			}
+			var v any
+			if json.Unmarshal([]byte(Text(res)), &v) == nil {
+				return v, nil
+			}
+			return Text(res), nil
+		}
+		name := t.Name
+		for _, sep := range []string{"-", "_", "."} {
+			if s, ok := strings.CutPrefix(t.Name, p.ID+sep); ok && s != "" {
+				name = s
+				break
+			}
+		}
+		out[name] = a
+	}
+	return out
 }
 
 // Write is Act for an action that Writes.

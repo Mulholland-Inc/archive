@@ -1319,7 +1319,8 @@ func (s *pgStore) migrate(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("archive.sql: %w", err)
 	}
-	return pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
+	applied := true
+	err = pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
 		for _, st := range []string{"SET LOCAL search_path = ''", "SET LOCAL check_function_bodies = off"} {
 			if _, err := tx.Exec(ctx, st); err != nil {
 				return err
@@ -1331,10 +1332,15 @@ func (s *pgStore) migrate(ctx context.Context) error {
 		}
 		if len(lost) > 0 {
 			fmt.Fprintf(os.Stderr, "archive: archive.sql not applied at startup, it would delete data:\n  %s\n", strings.Join(lost, "\n  "))
+			applied = false
 			return nil
 		}
 		return generated.New(tx).InsertRevision(ctx, s.hash())
 	})
+	if err != nil || !applied {
+		return err
+	}
+	return syncCheckSQL(ctx, conn)
 }
 
 // scratch is the snapshot of Archive's schema that sql makes in a new database, which it drops after.
