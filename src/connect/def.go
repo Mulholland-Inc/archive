@@ -843,6 +843,12 @@ func (c *Connector) compile() error {
 			}
 		}
 	}
+	if b := c.Basic; b[0] != "" {
+		if c.Sign != nil {
+			return errors.New("a connector signs with Sign or Basic, not both")
+		}
+		c.Authorize = func(r *http.Request, cl *Client) { r.SetBasicAuth(cl.keys[b[0]], cl.keys[b[1]]) }
+	}
 	if w := c.Who; w != nil {
 		if w.Tool != "" {
 			c.Account = mcpAccount(w.Tool)
@@ -1192,6 +1198,8 @@ func (s *Sync) step(c *Client, st flow) (*Page, error) {
 		sc = Obj{}
 	}
 	sc["stream"] = s.Name
+	cs := c.scope()
+	sc["key"], sc["meta"], sc["option"] = cs["key"], cs["meta"], cs["option"]
 	if st.Mode == "" {
 		parts, info, err := s.parts(c, sc, st)
 		if err != nil {
@@ -2337,6 +2345,11 @@ func (c *Client) http1(r Req, sc map[string]any) (any, error) {
 	ans, err := readAll(raw, c.p.Name)
 	if err != nil {
 		return nil, err
+	}
+	if c.p.Answer != nil {
+		if ans, err = c.p.Answer.fn(ans); err != nil {
+			return nil, err
+		}
 	}
 	if e := c.p.Errors; e != nil {
 		if msg := text(pick(ans, e.At)); msg != "" {

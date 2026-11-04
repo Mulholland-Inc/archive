@@ -2947,65 +2947,72 @@ COMMENT ON COLUMN archive.spend_receipt.receipt_source IS 'Its id there';
 COMMENT ON COLUMN archive.spend_receipt.position IS 'Where it is among its transaction''s receipts, from 1';
 COMMENT ON COLUMN archive.spend_receipt.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
--- Warehouse: a table or view of a data warehouse you connected, like Databricks, as its catalog says it is: its
--- name, owner, comment and columns, never its rows, which a query of the warehouse reads live.
+-- Warehouses: the tables and views of a data warehouse you connected, like Snowflake, that you picked, with their
+-- columns, but not their rows, which stay there and are queried live.
 CREATE TABLE archive.warehouse_table (
-    id           uuid PRIMARY KEY DEFAULT uuidv7(),
-    connection   uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
-    stream       text NOT NULL,
-    source_id    text NOT NULL,
-    access       uuid REFERENCES archive."group" ON DELETE RESTRICT,
-    created_at   timestamptz NOT NULL DEFAULT now(),
-    updated_at   timestamptz NOT NULL DEFAULT now(),
-    name         text NOT NULL DEFAULT '',
-    seen_at      timestamptz NOT NULL DEFAULT now(),
-    kind         text,
-    catalog      text,
-    schema       text,
-    title        text,
-    full_name    text,
-    format       text,
-    owner        uuid REFERENCES archive.known_person ON DELETE SET NULL,
-    owner_name   text,
-    description  text,
-    columns      jsonb NOT NULL DEFAULT '[]',
-    column_count numeric,
-    row_count    numeric,
-    bytes        numeric,
-    location     text,
-    definition   text,
-    url          archive.url,
-    made_at      timestamptz,
-    edited_at    timestamptz,
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream     text NOT NULL,
+    source_id  text NOT NULL,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    name       text NOT NULL DEFAULT '',
+    seen_at    timestamptz NOT NULL DEFAULT now(),
+    database   text,
+    schema     text,
+    title      text,
+    kind       text,
+    row_count  numeric,
+    bytes      numeric,
+    comment    text,
+    clustering text,
+    made_at    timestamptz,
+    edited_at  timestamptz,
     UNIQUE (connection, stream, source_id)
 ) INHERITS (archive.object);
-CREATE INDEX warehouse_table_owner_idx ON archive.warehouse_table (owner);
-CREATE INDEX warehouse_table_full_name_idx ON archive.warehouse_table (full_name);
-COMMENT ON TABLE archive.warehouse_table IS 'A table or view of a data warehouse you connected, like Databricks: its columns, owner and comment, never its rows, which the connection''s query action reads live. Read only; Archive syncs them
-icon: warehouse';
-COMMENT ON COLUMN archive.warehouse_table.kind IS 'What it is: managed, external, view, materialized view, streaming table, foreign and so on';
-COMMENT ON COLUMN archive.warehouse_table.catalog IS 'The catalog it is in, like main';
+COMMENT ON TABLE archive.warehouse_table IS 'A table or view of a data warehouse you connected, like Snowflake; its columns are in warehouse_column, and its rows stay there, for the connector''s query action. Read only; Archive syncs them
+icon: table';
+COMMENT ON COLUMN archive.warehouse_table.database IS 'The database it is in';
 COMMENT ON COLUMN archive.warehouse_table.schema IS 'The schema it is in';
 COMMENT ON COLUMN archive.warehouse_table.title IS 'Its name';
-COMMENT ON COLUMN archive.warehouse_table.full_name IS 'Its name with its catalog and schema, like main.sales.orders, as SQL names it';
-COMMENT ON COLUMN archive.warehouse_table.format IS 'How its data is kept, like DELTA, PARQUET or ICEBERG';
-COMMENT ON COLUMN archive.warehouse_table.owner IS 'references known_person; who owns it, when they are a person';
-COMMENT ON COLUMN archive.warehouse_table.owner_name IS 'Who owns it: a person, group or service principal';
-COMMENT ON COLUMN archive.warehouse_table.description IS 'What its owner says it is';
-COMMENT ON COLUMN archive.warehouse_table.columns IS 'Its columns in order, each { name, type, comment, nullable }';
-COMMENT ON COLUMN archive.warehouse_table.column_count IS 'How many columns it has';
-COMMENT ON COLUMN archive.warehouse_table.row_count IS 'How many rows it has, when the warehouse says';
-COMMENT ON COLUMN archive.warehouse_table.bytes IS 'How big it is, in bytes, when the warehouse says';
-COMMENT ON COLUMN archive.warehouse_table.location IS 'Where its files are, for an external table';
-COMMENT ON COLUMN archive.warehouse_table.definition IS 'A view''s SQL';
-COMMENT ON COLUMN archive.warehouse_table.url IS 'Where it opens in the warehouse''s own catalog explorer';
+COMMENT ON COLUMN archive.warehouse_table.kind IS 'Like BASE TABLE, VIEW, MATERIALIZED VIEW or EXTERNAL TABLE';
+COMMENT ON COLUMN archive.warehouse_table.row_count IS 'How many rows it has; null for a view';
+COMMENT ON COLUMN archive.warehouse_table.bytes IS 'How many bytes it takes; null for a view';
+COMMENT ON COLUMN archive.warehouse_table.comment IS 'What its comment there says';
+COMMENT ON COLUMN archive.warehouse_table.clustering IS 'Its clustering key';
 COMMENT ON COLUMN archive.warehouse_table.made_at IS 'When it was made there';
-COMMENT ON COLUMN archive.warehouse_table.edited_at IS 'When it, or its data, last changed there';
+COMMENT ON COLUMN archive.warehouse_table.edited_at IS 'When its rows or definition last changed there';
 COMMENT ON COLUMN archive.warehouse_table.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.warehouse_table.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.warehouse_table.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.warehouse_table.stream IS 'What its connector syncs it as, like tables';
+COMMENT ON COLUMN archive.warehouse_table.source_id IS 'Its id there, <database>.<schema>.<name>';
 COMMENT ON COLUMN archive.warehouse_table.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.warehouse_table.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.warehouse_column (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    name       text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    relation   uuid NOT NULL REFERENCES archive.warehouse_table ON DELETE CASCADE,
+    position   integer,
+    title      text,
+    type       text,
+    nullable   boolean,
+    comment    text
+) INHERITS (archive.object);
+CREATE INDEX warehouse_column_relation_idx ON archive.warehouse_column (relation);
+CREATE INDEX warehouse_column_connection_idx ON archive.warehouse_column (connection);
+COMMENT ON TABLE archive.warehouse_column IS 'A column of a warehouse table or view. Read only; Archive syncs them
+icon: columns-3';
+COMMENT ON COLUMN archive.warehouse_column.relation IS 'references warehouse_table; the table or view it is a column of';
+COMMENT ON COLUMN archive.warehouse_column.position IS 'Where it is among the columns, from 1';
+COMMENT ON COLUMN archive.warehouse_column.title IS 'Its name';
+COMMENT ON COLUMN archive.warehouse_column.type IS 'Its type there, like NUMBER, TEXT, TIMESTAMP_NTZ or VARIANT';
+COMMENT ON COLUMN archive.warehouse_column.nullable IS 'Whether it may be null';
+COMMENT ON COLUMN archive.warehouse_column.comment IS 'What its comment there says';
 
 -- mine says whether the current role is the member m or one of their tokens, which are all in m's group role.
 CREATE FUNCTION archive.mine(m uuid) RETURNS bool LANGUAGE sql STABLE AS $$
@@ -3125,7 +3132,8 @@ BEGIN
         WHEN 'spend_card' THEN concat_ws(' · ', coalesce(nullif(r->>'title', ''), nullif(r->>'holder_name', ''), 'Card'), '•' || nullif(r->>'last_four', ''))
         WHEN 'spend_transaction' THEN concat_ws(' · ', coalesce(nullif(r->>'merchant', ''), initcap(r->>'kind')), nullif(r->>'spender_name', ''), left(r->>'spent_at', 10))
         WHEN 'spend_receipt' THEN concat_ws(' ', 'Receipt', r->>'position')
-        WHEN 'warehouse_table' THEN coalesce(nullif(r->>'full_name', ''), r->>'title')
+        WHEN 'warehouse_table' THEN concat_ws('.', nullif(r->>'database', ''), nullif(r->>'schema', ''), r->>'title')
+        WHEN 'warehouse_column' THEN concat_ws(' · ', r->>'title', nullif(r->>'type', ''))
         ELSE own END), ''), '');
     RETURN NEW;
 END $$;
@@ -3194,6 +3202,7 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.spend_card FOR EAC
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.spend_transaction FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.spend_receipt FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.warehouse_table FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.warehouse_column FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_contact FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_item FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_entry FOR EACH ROW EXECUTE FUNCTION archive.object_name();
@@ -3310,6 +3319,7 @@ GRANT SELECT ON archive.spend_card TO "{p}_viewer";
 GRANT SELECT ON archive.spend_transaction TO "{p}_viewer";
 GRANT SELECT ON archive.spend_receipt TO "{p}_viewer";
 GRANT SELECT ON archive.warehouse_table TO "{p}_viewer";
+GRANT SELECT ON archive.warehouse_column TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT, UPDATE, DELETE ON TABLES TO "{p}_editor";
 
@@ -3459,6 +3469,8 @@ ALTER TABLE archive.spend_receipt ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.spend_receipt FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = spend_receipt.connection));
 ALTER TABLE archive.warehouse_table ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.warehouse_table FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = warehouse_table.connection));
+ALTER TABLE archive.warehouse_column ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.warehouse_column FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = warehouse_column.connection));
 ALTER TABLE archive.known_person ENABLE ROW LEVEL SECURITY;
 CREATE POLICY seen ON archive.known_person FOR SELECT USING (EXISTS (SELECT FROM archive.mail_party p WHERE p.person = known_person.id)
     OR EXISTS (SELECT FROM archive.payroll_worker w WHERE w.person = known_person.id)
@@ -3471,7 +3483,6 @@ CREATE POLICY seen ON archive.known_person FOR SELECT USING (EXISTS (SELECT FROM
     OR EXISTS (SELECT FROM archive.chat_message x WHERE x.sender = known_person.id)
     OR EXISTS (SELECT FROM archive.work_item x WHERE x.assignee = known_person.id)
     OR EXISTS (SELECT FROM archive.compliance x WHERE x.owner = known_person.id)
-    OR EXISTS (SELECT FROM archive.warehouse_table x WHERE x.owner = known_person.id)
     OR EXISTS (SELECT FROM archive.commerce_order x WHERE x.customer = known_person.id)
     OR EXISTS (SELECT FROM archive.dental_patient x WHERE x.person = known_person.id));
 ALTER TABLE archive.known_org ENABLE ROW LEVEL SECURITY;
@@ -3700,7 +3711,8 @@ SELECT jsonb_build_object(
             'archive.dental_appointment'::regclass, 'archive.dental_procedure'::regclass, 'archive.dental_payment'::regclass,
             'archive.bank_account'::regclass, 'archive.bank_transaction'::regclass,
             'archive.spend_department'::regclass, 'archive.spend_user'::regclass, 'archive.spend_card'::regclass,
-            'archive.spend_transaction'::regclass, 'archive.spend_receipt'::regclass, 'archive.warehouse_table'::regclass)
+            'archive.spend_transaction'::regclass, 'archive.spend_receipt'::regclass,
+            'archive.warehouse_table'::regclass, 'archive.warehouse_column'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -3919,7 +3931,6 @@ WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM arch
     AND NOT EXISTS (SELECT FROM archive.chat_message x WHERE x.sender = k.id)
     AND NOT EXISTS (SELECT FROM archive.work_item x WHERE x.assignee = k.id)
     AND NOT EXISTS (SELECT FROM archive.compliance x WHERE x.owner = k.id)
-    AND NOT EXISTS (SELECT FROM archive.warehouse_table x WHERE x.owner = k.id)
     AND NOT EXISTS (SELECT FROM archive.commerce_order x WHERE x.customer = k.id)
     AND NOT EXISTS (SELECT FROM archive.dental_patient x WHERE x.person = k.id))
 DELETE FROM archive.known_org o WHERE NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.org = o.id)

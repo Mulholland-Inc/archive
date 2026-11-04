@@ -13,7 +13,7 @@ import "time"
 // the workspace wants Archive to write.
 //
 // It syncs each table, view and materialized view of the catalogs, schemas or tables picked, like main,
-// finance.ledger or sales.crm.accounts, into warehouse_table, with its columns, owner and comment, never its rows:
+// finance.ledger or sales.crm.accounts, into warehouse_table, its columns into warehouse_column, never its rows:
 // a pick is listed through table-summaries, its schema and table names a LIKE pattern, so an _ in one also matches
 // any one character, and each table is read whole, at most four at once. Databricks says nothing of what changed
 // when, so each is listed whole at most six hours apart, which deletes what is gone. The query action runs one
@@ -84,23 +84,18 @@ func init() {
 				Req: Req{URL: "/api/2.1/unity-catalog/table-summaries",
 					Query: Q{"catalog_name": "{in/catalog}", "schema_name_pattern": "{in/schema|%}", "table_name_pattern": "{in/table|%}", "max_results": "1000", "page_token": "{page}"}},
 				Hydrate: []Hydrate{Fetch{Par: 4, Gone: true, Merge: true, Req: Req{URL: "/api/2.1/unity-catalog/tables/{full_name}", Query: Q{"include_browse": "true"}}}},
-				Set:     Obj{"workspace": "{meta/host}"},
 				Deny:    []Deny{{Status: []int{403}, Why: "the service principal may not read these tables; give it USE CATALOG, USE SCHEMA and SELECT: {message}"}},
 				Pass:    []int{404},
-				Doc: "Every table, view and materialized view of the catalogs, schemas and tables picked, with its columns, owner, comment, format, location " +
-					"and a view's definition, never its rows, by its full name: listed whole at most six hours apart, 1000 a page, which deletes those gone.",
+				Doc: "Every table, view and materialized view of the catalogs, schemas and tables picked, with its kind, comment, when it was made and " +
+					"last changed, and its columns, never its rows, by its full name: listed whole at most six hours apart, 1000 a page, which deletes those gone.",
 				To: Map{Table: "warehouse_table",
-					Cols: map[string]SQL{"kind": "lower(replace(data->>'table_type', '_', ' '))", "catalog": "data->>'catalog_name'", "schema": "data->>'schema_name'",
-						"title": "data->>'name'", "full_name": "data->>'full_name'", "format": "data->>'data_source_format'", "owner_name": "data->>'owner'",
-						"description": "archive.sync_clip(data->>'comment', 65536)", "location": "data->>'storage_location'",
-						"definition": "archive.sync_clip(data->>'view_definition', 65536)",
-						"columns": `(SELECT coalesce(jsonb_agg(jsonb_strip_nulls(jsonb_build_object('name', c->>'name', 'type', c->>'type_text', 'comment', c->>'comment',
-							'nullable', archive.sync_bool(c->'nullable'))) ORDER BY archive.sync_num(c->>'position')), '[]'::jsonb) FROM archive.sync_list(data->'columns') c)`,
-						"column_count": "(SELECT count(*) FROM archive.sync_list(data->'columns') c)",
-						"url": "'https://' || regexp_replace(regexp_replace(data->>'workspace', '^[^/]*://', ''), '[/?#].*$', '') || '/explore/data/' || " +
-							"concat_ws('/', data->>'catalog_name', data->>'schema_name', data->>'name')",
+					Cols: map[string]SQL{"database": "data->>'catalog_name'", "schema": "data->>'schema_name'", "title": "data->>'name'",
+						"kind": "replace(data->>'table_type', '_', ' ')", "comment": "archive.sync_clip(data->>'comment', 65536)",
 						"made_at": "archive.sync_at(data->>'created_at')", "edited_at": "archive.sync_at(data->>'updated_at')"},
-					People: map[string]SQL{"owner": "data->>'owner'"}}},
+					// Unity Catalog counts a table's columns from 0.
+					Children: []Kids{{Table: "warehouse_column", From: "archive.sync_list(data->'columns') c",
+						Cols: map[string]SQL{"position": "archive.sync_num(c->>'position') + 1", "title": "c->>'name'", "type": "c->>'type_text'",
+							"nullable": "archive.sync_bool(c->'nullable')", "comment": "c->>'comment'"}}}}},
 		},
 	})
 }

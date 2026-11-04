@@ -1272,6 +1272,7 @@ var syncSchema = map[string]syncTable{
 	"spend_transaction":                {links: map[string]string{"spender": "spend_user", "card": "spend_card", "department": "spend_department"}},
 	"spend_receipt":                    {parent: "spend_transaction", of: "spend"},
 	"warehouse_table":                  {},
+	"warehouse_column":                 {parent: "warehouse_table", of: "relation"},
 }
 
 // syncRec is a record of a page to write, its data as JSON.
