@@ -28,6 +28,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/google/jsonschema-go/jsonschema"
 )
@@ -198,9 +199,12 @@ const (
 	IconLedger   Icon = "ledger"
 	IconCard     Icon = "card"
 	IconBug      Icon = "bug"
+
+	IconWarehouse Icon = "warehouse"
 )
 
-// Who is how to ask whose account a token is for: the first of Names in the answer, lowercase when Lower. With
+// Who is how to ask whose account a token is for: the first of Names in the answer, lowercase when Lower, and the
+// first group of the regexp Find over it when it says. With
 // Each, the first of Names of each of its elements that pass Where, joined by commas. Tool asks an MCP server's tool,
 // without arguments, and reads what it says the way such tools say it: the first address or name in it, or its first
 // line.
@@ -208,6 +212,7 @@ type Who struct {
 	Req
 	Names []Path
 	Lower bool
+	Find  string `json:",omitempty"`
 	Each  Path
 	Where Test
 	Tool  string
@@ -310,7 +315,8 @@ func (Resume) change()      {}
 // from two walks in a row lists every part whole, which deletes what it had.
 //
 // A part is ID, by template, {id} when empty, Vals what else it keeps. The things come from Req's answer at Items,
-// every page of it, or are Fixed, or are the dates of Span. Soft are refusals that mean there are none. Skip are those
+// every page of it, or are Fixed, or are the dates of Span, or the names Split reads to, a template, by commas or
+// white space, each as {name} and its pieces between dots as {at/0}, {at/1}, ..., its backticks left off. Soft are refusals that mean there are none. Skip are those
 // that are no part, and Not requests that name one that is none, by id, when they do not answer 404. Deep lists those
 // under one that passes DeepIf the way Req does, whose {id} is its. Under lists more under each, which read it as
 // {up/...}, and those are the parts. First skips this level once the stream has listed whole. Also are other places
@@ -323,6 +329,7 @@ type Parts struct {
 	Vals   Obj      `json:",omitempty"`
 	Fixed  []Obj    `json:",omitempty"`
 	Span   *Span    `json:",omitempty"`
+	Split  string   `json:",omitempty"`
 	Soft   []int    `json:",omitempty"`
 	Skip   []Test   `json:",omitempty"`
 	Not    []Req    `json:",omitempty"`
@@ -447,7 +454,8 @@ type Kids struct {
 // the row a record is. Vars are templates' own values, so that streams share theirs. Items is the answer's list of
 // records, ID each one's id, id when empty, and Updated when it last changed there. An answer without its Items is
 // refused, so a full listing never ends empty by accident; Absent is a key a provider's answer has when it leaves
-// Items out for having none, and Empty says an answer with nothing in it at all, as Zoho's 204 is, has none.
+// Items out for having none, and Empty says an answer with nothing in it at all, as Zoho's 204 or an object without
+// keys is, has none.
 //
 // Key makes the id when ID cannot, the first that reads to anything. Set adds to each record, by template. Gone are
 // the records that are deleted there, and Skip those that are no record. Every is how long after it caught up the
@@ -822,7 +830,7 @@ func (c *Connector) compile() error {
 		}
 	}
 	if c.Trade != nil {
-		if err := c.Trade.check("trade", "key", "client", "option"); err != nil {
+		if err := c.Trade.check("trade", "key", "client", "option", "basic"); err != nil {
 			return err
 		}
 	}
@@ -911,6 +919,11 @@ func (w *Who) read(cl *Client, c *Connector) (string, error) {
 	}
 	if w.Lower {
 		s = strings.ToLower(s)
+	}
+	if w.Find != "" {
+		if f := reOf(w.Find).FindStringSubmatch(s); f != nil {
+			s = f[1]
+		}
 	}
 	if s == "" && len(c.Keys) > 0 {
 		s = c.Name
@@ -1429,6 +1442,18 @@ func (p *Parts) items(c *Client, sc map[string]any, again bool) ([]any, error) {
 		return out, nil
 	case p.Span != nil:
 		return p.Span.dates(sc, again), nil
+	case p.Split != "":
+		v, _ := fillStr(p.Split, sc)
+		out := []any{}
+		for _, n := range strings.FieldsFunc(text(v), func(r rune) bool { return r == ',' || unicode.IsSpace(r) }) {
+			n = strings.ReplaceAll(n, "`", "")
+			at := []any{}
+			for _, x := range strings.Split(n, ".") {
+				at = append(at, x)
+			}
+			out = append(out, map[string]any{"name": n, "at": at})
+		}
+		return out, nil
 	case p.Req.URL == "" && p.Req.Tool == "":
 		return nil, nil
 	case p.Page != nil:
@@ -1498,7 +1523,7 @@ func (s *Sync) itemsOf(c *Client, ans any, at Path, sc map[string]any) (any, err
 	if _, list := items.([]any); items != nil && (at != "" || s.ID == "" || list) {
 		return items, nil
 	}
-	if s.Absent != "" && pick(ans, s.Absent) != nil || s.Empty && ans == nil {
+	if m, _ := ans.(map[string]any); s.Absent != "" && pick(ans, s.Absent) != nil || s.Empty && (ans == nil || m != nil && len(m) == 0) {
 		return []any{}, nil
 	}
 	return nil, fmt.Errorf("%s answered %s without its list of records, at %q", c.p.Name, s.Name, at)
@@ -2750,8 +2775,8 @@ type Codec struct {
 // MIMEWords as MIME does for keeping: its text falls back on its HTML's words and is cut at maxText, its HTML goes,
 // and it adds parties, the people of its headers, and sent, when its Date says. RFC5322 writes a message, maybe as
 // a reply to parent, a message as JSON, into raw, base64url. Base64JSON reads JSON out of base64, and Base64Text text.
-// Words is the words of HTML. GraphQLReads passes a GraphQL document that only reads, and refuses any other. Sum adds
-// a list of numbers up.
+// Words is the words of HTML. GraphQLReads passes a GraphQL document that only reads, and refuses any other, and
+// SQLReads one SQL statement that only reads. Sum adds a list of numbers up.
 // ToolBusy are what MCP tools say when the API behind them turned them away for now.
 var ToolBusy = []string{"Too Many Requests", " 429", " 502", " 503", " 504", "Service Unavailable", "Bad Gateway", "Gateway Timeout", "Rate Limit Exceeded"}
 
@@ -2776,6 +2801,7 @@ var (
 	}}
 	Words        = &Codec{"words", func(v any) (any, error) { return htmlText(text(v)), nil }}
 	GraphQLReads = &Codec{"graphql_reads", graphQLReads}
+	SQLReads     = &Codec{"sql_reads", sqlReads}
 	Sum          = &Codec{"sum", func(v any) (any, error) {
 		n := 0
 		for _, e := range listOf(v) {
@@ -2784,6 +2810,83 @@ var (
 		}
 		return n, nil
 	}}
+)
+
+// sqlReads passes one SQL statement that starts as a read does, like SELECT, WITH, SHOW or DESCRIBE, and has no word
+// anywhere in it that writes, like INSERT after a WITH's queries. Strings, quoted names and comments are skipped, and
+// one statement is all it takes: a ; with more after it is refused. A name that is such a word is quoted.
+func sqlReads(v any) (any, error) {
+	q := text(v)
+	var words []string
+	for i := 0; i < len(q); {
+		switch c := q[i]; {
+		case strings.HasPrefix(q[i:], "--"):
+			for i < len(q) && q[i] != '\n' {
+				i++
+			}
+		case strings.HasPrefix(q[i:], "/*"):
+			n := 0
+			for i < len(q) {
+				if strings.HasPrefix(q[i:], "/*") {
+					n, i = n+1, i+2
+				} else if strings.HasPrefix(q[i:], "*/") {
+					n, i = n-1, i+2
+					if n == 0 {
+						break
+					}
+				} else {
+					i++
+				}
+			}
+			if n > 0 {
+				return nil, errors.New("a comment that does not end")
+			}
+		case c == '\'' || c == '"' || c == '`':
+			j := i + 1
+			for j < len(q) && q[j] != c {
+				if q[j] == '\\' && c != '`' {
+					j++
+				}
+				j++
+			}
+			if j >= len(q) {
+				return nil, errors.New("a string or quoted name that does not end")
+			}
+			i = j + 1
+		case c == ';':
+			if strings.TrimSpace(q[i+1:]) != "" {
+				return nil, errors.New("one statement at a time")
+			}
+			i = len(q)
+		case c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z':
+			j := i
+			for j < len(q) && (q[j] == '_' || q[j] >= 'a' && q[j] <= 'z' || q[j] >= 'A' && q[j] <= 'Z' || q[j] >= '0' && q[j] <= '9') {
+				j++
+			}
+			words = append(words, strings.ToUpper(q[i:j]))
+			i = j
+		default:
+			i++
+		}
+	}
+	if len(words) == 0 || !slices.Contains(sqlRead, words[0]) {
+		return nil, errors.New("only a query that reads, which starts with SELECT, WITH, SHOW, DESCRIBE, EXPLAIN, VALUES, TABLE or FROM")
+	}
+	for _, w := range words {
+		if slices.Contains(sqlWrite, w) {
+			return nil, fmt.Errorf("only a query that reads, and %s writes", w)
+		}
+	}
+	return q, nil
+}
+
+// sqlRead are the words a statement that reads starts with, and sqlWrite those that make one that starts so write
+// after all, like a WITH's INSERT or Hive's FROM t INSERT INTO: a statement that starts any other way, like SET, USE or
+// COMMENT ON, is refused for how it starts.
+var (
+	sqlRead  = []string{"SELECT", "WITH", "SHOW", "DESCRIBE", "DESC", "EXPLAIN", "VALUES", "TABLE", "FROM", "LIST"}
+	sqlWrite = []string{"INSERT", "UPDATE", "DELETE", "MERGE", "UPSERT", "OVERWRITE", "CREATE", "DROP", "ALTER", "TRUNCATE", "GRANT", "REVOKE",
+		"COPY", "OPTIMIZE", "VACUUM", "CALL", "EXECUTE", "CACHE", "UNCACHE", "MSCK"}
 )
 
 // graphQLReads passes a document whose operations are all queries, and refuses one that has anything else, wherever it
