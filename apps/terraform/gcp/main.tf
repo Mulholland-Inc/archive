@@ -372,8 +372,8 @@ resource "google_cloud_run_v2_service" "this" {
       }
 
       startup_probe {
-        failure_threshold = 30
-        period_seconds    = 10
+        failure_threshold = 240
+        period_seconds    = 1
         http_get {
           path = "/health"
         }
