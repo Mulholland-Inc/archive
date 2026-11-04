@@ -170,10 +170,13 @@ func (p *Provider) KeyGrant(ctx context.Context, keys map[string]string) (*Grant
 }
 
 // trade is keys with the access token their Trade answers with, as access, and when that token ends: zero when
-// it does not say. The request goes unsigned, with the keys as {key/...}.
+// it does not say. The request goes unsigned, with the keys as {key/...}, and {basic} the keys client_id and
+// client_secret as HTTP Basic, for a token endpoint that takes the client only so.
 func (p *Provider) trade(ctx context.Context, keys map[string]string) (map[string]string, time.Time, error) {
 	c := &Client{ctx: ctx, p: p, http: client, keys: keys}
-	ans, err := c.req(*p.Trade, c.scope())
+	sc := c.scope()
+	sc["basic"] = basic(keys["client_id"], keys["client_secret"])
+	ans, err := c.req(*p.Trade, sc)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
