@@ -256,8 +256,8 @@ dialog:not([open]) {
 
 .floating[data-morph] {
   inset: auto;
-  inset-inline-start: calc(var(--x) - var(--space-1-5));
-  width: calc(var(--w) + var(--space-1-5) * 2);
+  inset-inline-start: var(--x);
+  width: var(--w);
   height: auto;
   margin: 0;
   opacity: 1;
@@ -266,11 +266,16 @@ dialog:not([open]) {
 }
 
 .floating[data-morph='down'] {
-  inset-block-start: calc(var(--top) - var(--space-1-5));
+  inset-block-start: var(--top);
 }
 
 .floating[data-morph='up'] {
-  inset-block-end: calc(var(--bottom) - var(--space-1-5));
+  inset-block-end: var(--bottom);
+}
+
+.floating[data-morph]:popover-open {
+  padding: 0;
+  border-radius: var(--radius-md);
 }
 
 .morph-head {
@@ -283,14 +288,7 @@ dialog:not([open]) {
   display: flex;
   flex-direction: column;
   gap: var(--space-px);
-}
-
-[data-morph='down'] .morph-items {
-  padding-block-start: var(--space-1-5);
-}
-
-[data-morph='up'] .morph-items {
-  padding-block-end: var(--space-1-5);
+  padding: var(--space-1-5);
 }
 
 /* Phones zoom the page in on any field under 16px when it gets focus. */
