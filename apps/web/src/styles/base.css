@@ -249,16 +249,7 @@ dialog:not([open]) {
   }
 }
 
-/* A menu that forms around its trigger: the press squishes it, it springs back, the card appears, then the
-   rows pop in one by one, starting nearest the trigger. Everything is timed by tokens, so reduced motion is instant. */
-.morph-origin {
-  transition: transform var(--duration-instant) var(--ease-out);
-}
-
-.morph-origin:has([aria-haspopup]:active) {
-  transform: scale(var(--morph-squish));
-}
-
+/* A menu that forms around its trigger: the card and its rows appear at once, and go at once. */
 .morph-origin[data-open] {
   opacity: 0;
 }
@@ -271,7 +262,7 @@ dialog:not([open]) {
   margin: 0;
   opacity: 1;
   transform: none;
-  transform-origin: center;
+  transition: none;
 }
 
 .floating[data-morph='down'] {
@@ -283,20 +274,12 @@ dialog:not([open]) {
 }
 
 .floating[data-morph]:popover-open {
-  animation: morph-card 0s var(--duration-instant) backwards;
-}
-
-@starting-style {
-  .floating[data-morph]:popover-open {
-    opacity: 1;
-    transform: none;
-  }
+  box-shadow: none;
 }
 
 .morph-head {
   flex: none;
   width: var(--w);
-  animation: morph-spring var(--duration-slow) var(--ease-bounce);
 }
 
 .morph-items {
@@ -305,39 +288,12 @@ dialog:not([open]) {
   gap: var(--space-px);
 }
 
-.morph-items > * {
-  animation: morph-row var(--duration-normal) var(--ease-out) backwards;
-  animation-delay: calc(var(--duration-fast) + var(--i) * var(--duration-instant) / 2);
-}
-
 [data-morph='down'] .morph-items {
-  --morph-from: calc(var(--shift-sm) * -1);
   padding-block-start: var(--space-1-5);
 }
 
 [data-morph='up'] .morph-items {
-  --morph-from: var(--shift-sm);
   padding-block-end: var(--space-1-5);
-}
-
-@keyframes morph-card {
-  from {
-    background: transparent;
-    box-shadow: none;
-  }
-}
-
-@keyframes morph-spring {
-  from {
-    transform: scale(var(--morph-squish));
-  }
-}
-
-@keyframes morph-row {
-  from {
-    opacity: 0;
-    transform: translateY(var(--morph-from)) scale(var(--scale-enter));
-  }
 }
 
 /* Phones zoom the page in on any field under 16px when it gets focus. */

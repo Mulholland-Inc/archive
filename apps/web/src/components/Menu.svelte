@@ -12,7 +12,6 @@
   const up = $derived(placement.startsWith('top'));
   let panel = $state();
   let origin = $state();
-  let items = $state();
   let open = $state(false);
   let anchor = null;
 
@@ -22,8 +21,6 @@
     panel.style.setProperty('--w', `${r.width}px`);
     panel.style.setProperty('--top', `${r.top}px`);
     panel.style.setProperty('--bottom', `${innerHeight - r.bottom}px`);
-    const rows = [...items.children];
-    rows.forEach((el, i) => el.style.setProperty('--i', up ? rows.length - 1 - i : i));
   }
 
   function openAt(target, focus = morph && up ? 'last' : 'first') {
@@ -76,7 +73,7 @@
   <div bind:this={origin} class="morph-origin" data-open={open || undefined}>{@render trigger?.(props)}</div>
   <MenuPanel bind:panel {id} {label} {width} data-morph={up ? 'up' : 'down'} {ontoggle} {onkeydown}>
     {#if !up}<div class="morph-head">{@render trigger?.(props)}</div>{/if}
-    <div bind:this={items} class="morph-items">{@render children()}</div>
+    <div class="morph-items">{@render children()}</div>
     {#if up}<div class="morph-head">{@render trigger?.(props)}</div>{/if}
   </MenuPanel>
 {:else}
