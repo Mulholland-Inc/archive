@@ -442,7 +442,7 @@ type Kids struct {
 // the row a record is. Vars are templates' own values, so that streams share theirs. Items is the answer's list of
 // records, ID each one's id, id when empty, and Updated when it last changed there. An answer without its Items is
 // refused, so a full listing never ends empty by accident; Absent is a key a provider's answer has when it leaves
-// Items out for having none.
+// Items out for having none, and Empty says an answer with nothing in it at all, as Zoho's 204 is, has none.
 //
 // Key makes the id when ID cannot, the first that reads to anything. Set adds to each record, by template. Gone are
 // the records that are deleted there, and Skip those that are no record. Every is how long after it caught up the
@@ -464,6 +464,7 @@ type Sync struct {
 	Hydrate   []Hydrate
 	To        Map
 	Absent    Path          `json:",omitempty"`
+	Empty     bool          `json:",omitempty"`
 	Key       []Reads       `json:",omitempty"`
 	Set       Obj           `json:",omitempty"`
 	Gone      []Test        `json:",omitempty"`
@@ -1063,7 +1064,7 @@ func (s *Sync) check() error {
 // written by another starts from scratch.
 func (s *Sync) version() string {
 	x := *s
-	x.Doc, x.Gap, x.Every, x.Absent, x.Deny, x.Restart, x.Pass = "", 0, 0, "", nil, nil, nil
+	x.Doc, x.Gap, x.Every, x.Absent, x.Empty, x.Deny, x.Restart, x.Pass = "", 0, 0, "", false, nil, nil, nil
 	h := sha256.New()
 	b, _ := json.Marshal(x)
 	h.Write(b)
@@ -1462,7 +1463,7 @@ func (s *Sync) itemsOf(c *Client, ans any, at Path, sc map[string]any) (any, err
 	if _, list := items.([]any); items != nil && (at != "" || s.ID == "" || list) {
 		return items, nil
 	}
-	if s.Absent != "" && pick(ans, s.Absent) != nil {
+	if s.Absent != "" && pick(ans, s.Absent) != nil || s.Empty && ans == nil {
 		return []any{}, nil
 	}
 	return nil, fmt.Errorf("%s answered %s without its list of records, at %q", c.p.Name, s.Name, at)

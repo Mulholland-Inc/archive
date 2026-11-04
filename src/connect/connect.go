@@ -84,9 +84,15 @@ type Connector struct {
 	Optional []string
 	// Params go on the authorization URL, like the ones that ask Google for a refresh token.
 	Params map[string]string
-	// Keep are parameters the provider adds to the callback that calls need later, like QuickBooks' realmId;
-	// the Grant keeps them as its Meta.
-	Keep []string
+	// Keep are parameters the provider adds to the callback, or else to its token's answer, that calls need later,
+	// like QuickBooks' realmId or Zoho's api_domain; the Grant keeps them as its Meta. Allow are the only values one
+	// of them may have, by its name, like the servers Zoho's accounts-server names, which its tokens are sent to: a
+	// callback with another fails.
+	Keep  []string
+	Allow map[string][]string
+	// TokenType is the scheme of the Authorization header of its requests, like Zoho's Zoho-oauthtoken, in place
+	// of the token's own, Bearer.
+	TokenType string
 	// MCP is an MCP connector's server. It needs no Env, Host, Endpoint, Revoke or Scopes: its authorization
 	// server has them. Scopes, when given, are asked for in place of the ones the server suggests.
 	MCP string
@@ -316,8 +322,11 @@ func (p *Provider) Exchange(ctx context.Context, redirect string, q url.Values, 
 	}
 	meta := map[string]string{}
 	for _, k := range p.Keep {
-		if meta[k] = q.Get(k); meta[k] == "" {
-			return nil, fmt.Errorf("%s was not connected: it came back without %s", p.Name, k)
+		if v := q.Get(k); v != "" {
+			meta[k] = v
+		}
+		if vals, ok := p.Allow[k]; ok && meta[k] != "" && !slices.Contains(vals, meta[k]) {
+			return nil, fmt.Errorf("%s was not connected: it came back with %s %s, which Archive does not know", p.Name, k, meta[k])
 		}
 	}
 	cfg, err := p.configOf(redirect, meta)
@@ -327,6 +336,12 @@ func (p *Provider) Exchange(ctx context.Context, redirect string, q url.Values, 
 	tok, err := cfg.Exchange(ctx, q.Get("code"), opts...)
 	if err != nil {
 		return nil, fmt.Errorf("%s was not connected: %s", p.Name, Reason(err))
+	}
+	for _, k := range p.Keep {
+		extra, _ := tok.Extra(k).(string)
+		if meta[k] = cmp.Or(meta[k], extra); meta[k] == "" {
+			return nil, fmt.Errorf("%s was not connected: it came back without %s", p.Name, k)
+		}
 	}
 	g := &Grant{Refresh: tok.RefreshToken, Scopes: p.scopes, Meta: meta}
 	if p.Lasts {
@@ -577,6 +592,11 @@ type Client struct {
 func (p *Provider) Open(ctx context.Context, tok *oauth2.Token, meta map[string]string) *Client {
 	if len(p.Keys) > 0 {
 		return p.openKeys(ctx, keysFrom(tok.AccessToken), meta)
+	}
+	if p.TokenType != "" {
+		t := *tok
+		t.TokenType = p.TokenType
+		tok = &t
 	}
 	var rt http.RoundTripper = &oauth2.Transport{Source: oauth2.StaticTokenSource(tok)}
 	if p.Pace > 0 {
