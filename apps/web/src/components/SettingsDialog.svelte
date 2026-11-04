@@ -10,12 +10,6 @@
 
   let query = $state('');
   const current = $derived(section ?? items[0]?.id);
-
-  function select(id) {
-    const run = items.find((i) => i.id === id)?.run;
-    if (run) run();
-    else section = id;
-  }
 </script>
 
 <Dialog bind:open bare size="xl" label={root}>
@@ -28,7 +22,7 @@
       <aside class="aside">
         <div class="search"><SearchField bind:value={query} size="sm" label="Search settings" /></div>
         <div class="scroll">
-          <SettingsNav {items} {query} active={current} onselect={select} />
+          <SettingsNav {items} {query} active={current} onselect={(id) => (section = id)} />
         </div>
       </aside>
       {@render pane()}

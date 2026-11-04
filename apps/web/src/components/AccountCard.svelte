@@ -1,35 +1,51 @@
 <script>
   import { getContext } from 'svelte';
-  import { Bell, BellOff, Sun, Moon, Settings } from '@lucide/svelte';
+  import { Bell, BellOff, Sun, Moon, Settings, User, LifeBuoy, LogOut } from '@lucide/svelte';
   import Avatar from './Avatar.svelte';
   import IconButton from './IconButton.svelte';
+  import Menu from './Menu.svelte';
+  import MenuItem from './MenuItem.svelte';
+  import MenuSeparator from './MenuSeparator.svelte';
   import { theme, toggleTheme } from '../lib/theme.svelte.js';
-  import { app, openSettings } from '../lib/app.svelte.js';
+  import { app, openSettings, signOut } from '../lib/app.svelte.js';
 
   let { user } = $props();
   const sidebar = getContext('sidebar');
   const collapsed = $derived(sidebar?.collapsed ?? false);
 
-  function settings() {
+  function settings(section) {
     app.drawer = false;
-    openSettings();
+    openSettings(section);
+  }
+
+  function help() {
+    app.drawer = false;
+    app.help = true;
   }
 </script>
 
-<div class={['card', { collapsed }]}>
-  <button type="button" class="account" aria-label="Settings" onclick={settings}>
-    <Avatar name={user.name} seed={user.id} size="ml" />
-    <span class="who">
-      <span class="name">{user.name}</span>
-      <span class="status">{user.status || user.plan}</span>
-    </span>
-  </button>
-  <span class="actions">
-    <IconButton icon={app.muted ? BellOff : Bell} label={app.muted ? 'Unmute notifications' : 'Mute notifications'} pressed={app.muted} onclick={() => (app.muted = !app.muted)} />
-    <IconButton icon={theme.resolved === 'dark' ? Sun : Moon} label={theme.resolved === 'dark' ? 'Light mode' : 'Dark mode'} onclick={toggleTheme} />
-    <IconButton icon={Settings} label="Settings" shortcut="⌘ ," onclick={settings} />
-  </span>
-</div>
+<Menu label={user.name} placement="top-start" morph>
+  {#snippet trigger(props)}
+    <div class={['card', { collapsed }]}>
+      <button type="button" class="account" aria-label={collapsed ? user.name : undefined} {...props}>
+        <Avatar name={user.name} seed={user.id} size="ml" />
+        <span class="who">
+          <span class="name">{user.name}</span>
+          <span class="status">{user.status || user.plan}</span>
+        </span>
+      </button>
+      <span class="actions">
+        <IconButton icon={app.muted ? BellOff : Bell} label={app.muted ? 'Unmute notifications' : 'Mute notifications'} pressed={app.muted} onclick={() => (app.muted = !app.muted)} />
+        <IconButton icon={theme.resolved === 'dark' ? Sun : Moon} label={theme.resolved === 'dark' ? 'Light mode' : 'Dark mode'} onclick={toggleTheme} />
+        <IconButton icon={Settings} label="Settings" shortcut="⌘ ," onclick={() => settings()} />
+      </span>
+    </div>
+  {/snippet}
+  <MenuItem icon={User} onselect={() => settings('profile')}>Profile</MenuItem>
+  <MenuItem icon={LifeBuoy} onselect={help}>Help</MenuItem>
+  <MenuSeparator />
+  <MenuItem icon={LogOut} onselect={signOut}>Log out</MenuItem>
+</Menu>
 
 <style>
   .card {

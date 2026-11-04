@@ -1,5 +1,5 @@
 <script>
-  import { User, Palette, Bell, KeyRound, Building2, Server, LifeBuoy, LogOut } from '@lucide/svelte';
+  import { User, Palette, Bell, KeyRound, Building2, Server } from '@lucide/svelte';
   import SettingsDialog from './SettingsDialog.svelte';
   import SettingsPane from './SettingsPane.svelte';
   import ProfileSettings from './ProfileSettings.svelte';
@@ -8,7 +8,7 @@
   import ArchiveSettings from './ArchiveSettings.svelte';
   import ServerSettings from './ServerSettings.svelte';
   import ApiKeySettings from './ApiKeySettings.svelte';
-  import { app, signOut } from '../lib/app.svelte.js';
+  import { app } from '../lib/app.svelte.js';
 
   const items = [
     { id: 'profile', label: 'Profile', icon: User, group: 'You' },
@@ -17,9 +17,7 @@
     { id: 'api', label: 'API key', icon: KeyRound, group: 'You' },
     { id: 'general', label: 'General', icon: Building2, group: 'Archive' },
     { id: 'server', label: 'Server', icon: Server, group: 'Archive' },
-    { id: 'archive-api', label: 'API key', icon: KeyRound, group: 'Archive' },
-    { id: 'help', label: 'Help', icon: LifeBuoy, run: () => { s.open = false; app.help = true; } },
-    { id: 'logout', label: 'Log out', icon: LogOut, run: signOut }
+    { id: 'archive-api', label: 'API key', icon: KeyRound, group: 'Archive' }
   ];
 
   const s = app.settings;

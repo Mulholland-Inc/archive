@@ -34,8 +34,7 @@
     transition: background-color var(--duration-fast) var(--ease-out);
   }
 
-  .header:hover,
-  .header[aria-expanded='true'] {
+  .header:hover {
     background: var(--color-fill);
   }
 
