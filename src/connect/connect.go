@@ -104,7 +104,8 @@ type Connector struct {
 	Options string
 	// API is the base of the requests of a connector that is only data (def.go): its Env is ARCHIVE_<ID> unless it
 	// says, and its Host that of its Endpoint. Sign are the headers of its keys' requests, Who its Account, RevokeBy
-	// its RevokeWith, Listen its Push and Sync its Streams.
+	// its RevokeWith, Listen its Push and Sync its Streams. A Sign that starts Basic, like Basic {key/id}:{key/secret},
+	// is HTTP Basic of the rest.
 	API      string
 	Sign     map[string]string
 	Who      *Who

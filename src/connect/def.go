@@ -177,6 +177,7 @@ const (
 	CatDental    Category = "Dental"
 	CatProjects  Category = "Projects"
 	CatPayroll   Category = "Payroll"
+	CatProperty  Category = "Property"
 
 	IconMail     Icon = "mail"
 	IconUsers    Icon = "users"
@@ -809,6 +810,11 @@ func (c *Connector) compile() error {
 		sign := c.Sign
 		c.Authorize = func(r *http.Request, cl *Client) {
 			for h, t := range sign {
+				if pair, ok := strings.CutPrefix(t, "Basic "); ok {
+					v, _ := fillStr(pair, cl.scope())
+					r.Header.Set(h, "Basic "+base64.StdEncoding.EncodeToString([]byte(text(v))))
+					continue
+				}
 				v, _ := fillStr(t, cl.scope())
 				r.Header.Set(h, text(v))
 			}
