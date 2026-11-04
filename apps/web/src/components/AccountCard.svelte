@@ -1,6 +1,6 @@
 <script>
   import { getContext } from 'svelte';
-  import { Bell, BellOff, Sun, Moon, Settings, User, LifeBuoy, LogOut } from '@lucide/svelte';
+  import { Bell, BellOff, Moon, Settings, User, LifeBuoy, LogOut } from '@lucide/svelte';
   import Avatar from './Avatar.svelte';
   import IconButton from './IconButton.svelte';
   import Menu from './Menu.svelte';
@@ -36,13 +36,13 @@
       </button>
       <span class="actions">
         <IconButton icon={app.muted ? BellOff : Bell} label={app.muted ? 'Unmute notifications' : 'Mute notifications'} pressed={app.muted} onclick={() => (app.muted = !app.muted)} />
-        <IconButton icon={theme.resolved === 'dark' ? Sun : Moon} label={theme.resolved === 'dark' ? 'Light mode' : 'Dark mode'} onclick={toggleTheme} />
         <IconButton icon={Settings} label="Settings" shortcut="⌘ ," onclick={() => settings()} />
       </span>
     </div>
   {/snippet}
   <MenuItem icon={User} onselect={() => settings('profile')}>Profile</MenuItem>
   <MenuItem icon={LifeBuoy} onselect={help}>Help</MenuItem>
+  <MenuItem icon={Moon} toggle={theme.resolved === 'dark'} keepOpen onselect={toggleTheme}>Dark mode</MenuItem>
   <MenuSeparator />
   <MenuItem icon={LogOut} onselect={signOut}>Log out</MenuItem>
 </Menu>
