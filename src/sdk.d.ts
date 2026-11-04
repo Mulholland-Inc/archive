@@ -296,6 +296,10 @@ declare const archive: {
     file(id: string): Promise<StoredFile>;
     /** A file of yours, to change with archive.edit, from any file you can read: the same bytes and words. A file of your personal connection needs opts.access, a group's name or "" for everyone, as nothing else says who sees the copy. */
     copy(id: string, opts?: { name?: string; access?: string }): Promise<StoredFile>;
+    /** Make a folder of yours, in opts.parent or at the top, that opts.access, a group's name, sees; everyone when left out. */
+    folder(name: string, opts?: { parent?: string; access?: string }): Promise<StoredFile>;
+    /** Put a file or folder of yours in the folder with this id, or at the top with null. */
+    move(id: string, folder: string | null): Promise<StoredFile>;
     /** How many bytes this archive's files hold, the same bytes counted once. */
     stored(): Promise<number>;
     /** The structure of a docx, xlsx or pptx file: paragraphs with ids, cells, slides and shapes (see Documents). */

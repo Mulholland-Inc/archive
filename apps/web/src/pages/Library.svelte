@@ -277,14 +277,14 @@
         </SettingsRow>
         <SettingsRow label="Changed"><Text tone="secondary">{open.created ? new Date(open.created).toLocaleString() : open.modified}</Text></SettingsRow>
         {#if open.status && open.status !== 'done'}<SettingsRow label="Status"><Text tone="secondary">{open.error || (open.connection ? 'Still copying it' : 'Still reading it')}</Text></SettingsRow>{/if}
-        <SettingsRow label="Size"><Text tone="secondary">{open.size}</Text></SettingsRow>
+        {#if open.held}<SettingsRow label="Size"><Text tone="secondary">{open.size}</Text></SettingsRow>{/if}
       </Stack>
     </Grid>
   {/if}
   {#snippet footer({ close })}
     {#if open?.url}<Button icon={ExternalLink} onclick={() => window.open(open.url, '_blank', 'noopener')}>Open there</Button>{/if}
     {#if !open?.connection}<Button icon={Pencil} onclick={() => rename(open)}>Rename</Button>{/if}
-    <Button icon={Download} onclick={() => downloadFile(open)}>Download</Button>
+    {#if open?.held}<Button icon={Download} onclick={() => downloadFile(open)}>Download</Button>{/if}
     <Button variant="primary" icon={MessageSquarePlus} onclick={() => ask(open, close)}>Ask about this</Button>
   {/snippet}
 </Dialog>

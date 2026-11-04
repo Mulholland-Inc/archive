@@ -1044,9 +1044,9 @@ export async function uploadFiles(list, parent) {
   return added;
 }
 
-// A file's folder is the name of the group it is limited to, or Everyone.
+// Who sees a file: the group it is limited to, Everyone, or for what a connection synced whoever sees the connection.
 function filed(f, w) {
-  f.folder = f.access ? (groupById(f.access, w)?.name ?? 'Unknown group') : 'Everyone';
+  f.folder = f.access ? (groupById(f.access, w)?.name ?? 'Unknown group') : f.connection ? 'Who sees its connection' : 'Everyone';
   return f;
 }
 

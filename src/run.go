@@ -911,6 +911,31 @@ func (r *runner) sdk() {
 		}
 		return a.CopyFile(ctx, id, opts.Name, opts.Access)
 	})
+	r.def(o, "folder", func(ctx context.Context, call goja.FunctionCall) (any, error) {
+		name, err := r.str(call, 0, "folder", "name")
+		if err != nil {
+			return nil, err
+		}
+		var opts struct {
+			Parent *uuid.UUID `json:"parent"`
+			Access string     `json:"access"`
+		}
+		if err := r.arg(call, 1, "folder", "opts", &opts); err != nil {
+			return nil, err
+		}
+		return a.AddFolder(ctx, opts.Access, name, opts.Parent)
+	})
+	r.def(o, "move", func(ctx context.Context, call goja.FunctionCall) (any, error) {
+		id, err := r.id(call, 0, "move")
+		if err != nil {
+			return nil, err
+		}
+		var parent *uuid.UUID
+		if err := r.arg(call, 1, "move", "folder", &parent); err != nil {
+			return nil, err
+		}
+		return a.MoveFile(ctx, id, parent)
+	})
 	r.def(o, "stored", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		return a.Stored(ctx)
 	})

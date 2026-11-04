@@ -43,7 +43,7 @@ export function fileItems(file, { onopen } = {}) {
     SEPARATOR,
     !file.connection && { label: 'Rename', icon: Pencil, onselect: () => renameFilePrompt(file) },
     { label: 'Share', icon: Share, onselect: () => openShare('file', file.id) },
-    { label: 'Download', icon: Download, onselect: () => downloadFile(file) },
+    file.held && file.kind !== 'folder' && { label: 'Download', icon: Download, onselect: () => downloadFile(file) },
     !file.connection && SEPARATOR,
     !file.connection && { label: 'Delete', icon: Trash2, danger: true, onselect: () => removeFile(file.id) }
   ].filter(Boolean);
