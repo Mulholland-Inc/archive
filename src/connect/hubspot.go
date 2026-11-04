@@ -6,21 +6,24 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// HubSpot's CRM, read only: contacts, companies and deals. Its app, in a HubSpot developer account, lists
+// HubSpot's CRM: contacts, companies and deals, read, and when asked made, changed, linked and archived (to
+// HubSpot's recycling bin, which keeps them 90 days). Its app, in a HubSpot developer project, lists
 // <API>/connect/hubspot/callback among its redirect URLs, and exactly the Scopes here as required. Its webhooks are
 // set up once on the app, to <API>/push/hubspot, for the creation, deletion and property changes of contacts,
 // companies and deals; a push is an array of events, each with the portalId of its account, the hub_id of its token.
 func init() {
 	Register(&Connector{
 		ID: "hubspot", Name: "HubSpot", Integration: true,
-		Info: Info{By: "HubSpot", Description: "Read contacts, companies and deals", Category: CatCRM, Icon: IconUsers, Scopes: []string{"Read contacts, companies and deals"}},
-		API:  "https://api.hubapi.com",
+		Info: Info{By: "HubSpot", Description: "Read contacts, companies and deals, and add or update them when you ask", Category: CatCRM, Icon: IconUsers,
+			Scopes: []string{"Read contacts, companies and deals", "Add, change, link and archive them when you ask"}},
+		API: "https://api.hubapi.com",
 		Endpoint: oauth2.Endpoint{AuthURL: "https://app.hubspot.com/oauth/authorize", TokenURL: "https://api.hubspot.com/oauth/v3/token",
 			AuthStyle: oauth2.AuthStyleInParams},
 		RevokeBy: &Req{Method: POST, URL: "https://api.hubapi.com/oauth/v3/token/revoke",
 			Form: Q{"client_id": "{client/id}", "client_secret": "{client/secret}", "token": "{refresh}", "token_type_hint": "refresh_token"}},
-		Scopes: []string{"oauth", "crm.objects.contacts.read", "crm.objects.companies.read", "crm.objects.deals.read"},
-		Who:    &Who{Req: hubspotIntrospect, Names: []Path{"hub_domain", "user"}, Lower: true},
+		Scopes: []string{"oauth", "crm.objects.contacts.read", "crm.objects.companies.read", "crm.objects.deals.read",
+			"crm.objects.contacts.write", "crm.objects.companies.write", "crm.objects.deals.write"},
+		Who: &Who{Req: hubspotIntrospect, Names: []Path{"hub_domain", "user"}, Lower: true},
 		Actions: map[string]*Action{
 			"search": Call[hubspotFind, hubspotFound](Plan{
 				Doc:   "Find contacts, companies or deals by words in their default text properties (names, emails, domains, phone numbers), newest first (pass next as page for more)",
@@ -36,6 +39,28 @@ func init() {
 				Enum: map[string][]string{"type": hubspotTypes},
 				Steps: []Step{{Req: Req{URL: "/crm/v3/objects/{type}/{id}",
 					Query: Q{"properties": "{properties,}", "associations": "{associations,}"}}}},
+			}),
+			"create": Call[hubspotNew, hubspotRecord](Plan{
+				Doc:   "Add a contact, company or deal with its properties, like { type: \"contacts\", properties: { email, firstname, lastname } } or { type: \"deals\", properties: { dealname, amount, dealstage } }: the record",
+				Enum:  map[string][]string{"type": hubspotTypes},
+				Steps: []Step{{Req: Req{Method: POST, URL: "/crm/v3/objects/{type}", Body: Obj{"properties": "{properties}"}}}},
+			}),
+			"update": Call[hubspotEdit, hubspotRecord](Plan{
+				Doc:   "Change a contact, company or deal: only the properties given change, and an empty string clears one. Returns the record",
+				Enum:  map[string][]string{"type": hubspotTypes},
+				Steps: []Step{{Req: Req{Method: PATCH, URL: "/crm/v3/objects/{type}/{id}", Body: Obj{"properties": "{properties}"}}}},
+			}),
+			"link": Call[hubspotLink, hubspotLinked](Plan{
+				Doc:   "Associate two records with HubSpot's default label, like a contact with its company or a deal with a contact: { from, to }",
+				Enum:  map[string][]string{"type": hubspotTypes, "toType": hubspotTypes},
+				Steps: []Step{{Req: Req{Method: PUT, URL: "/crm/v4/objects/{type}/{id}/associations/default/{toType}/{toId}"}}},
+				Out:   Obj{"from": "{id}", "to": "{toId}"},
+			}),
+			"archive": Call[hubspotOne, hubspotArchived](Plan{
+				Doc:   "Archive a contact, company or deal: HubSpot moves it to its recycling bin, where it can be restored for 90 days. { id }",
+				Enum:  map[string][]string{"type": hubspotTypes},
+				Steps: []Step{{Req: Req{Method: DELETE, URL: "/crm/v3/objects/{type}/{id}"}}},
+				Out:   Obj{"id": "{id}"},
 			}),
 		},
 		Listen: &Listen{
@@ -125,6 +150,28 @@ type (
 		ID           string   `json:"id" jsonschema:"The record's id"`
 		Properties   []string `json:"properties,omitempty" jsonschema:"The properties to return; HubSpot's defaults when left out"`
 		Associations []string `json:"associations,omitempty" jsonschema:"The types of the records associated with it to list, like companies or deals"`
+	}
+	hubspotNew struct {
+		Type       string         `json:"type" jsonschema:"contacts, companies or deals"`
+		Properties map[string]any `json:"properties" jsonschema:"Its properties by internal name, like email, firstname, name, domain, dealname, amount, dealstage or closedate"`
+	}
+	hubspotEdit struct {
+		Type       string         `json:"type" jsonschema:"contacts, companies or deals"`
+		ID         string         `json:"id" jsonschema:"The record's id"`
+		Properties map[string]any `json:"properties" jsonschema:"The properties to change by internal name; an empty string clears one"`
+	}
+	hubspotLink struct {
+		Type   string `json:"type" jsonschema:"The first record's type: contacts, companies or deals"`
+		ID     string `json:"id" jsonschema:"The first record's id"`
+		ToType string `json:"toType" jsonschema:"The other record's type: contacts, companies or deals"`
+		ToID   string `json:"toId" jsonschema:"The other record's id"`
+	}
+	hubspotLinked struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	}
+	hubspotArchived struct {
+		ID string `json:"id"`
 	}
 	hubspotRecord struct {
 		ID           string         `json:"id"`

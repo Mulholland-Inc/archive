@@ -71,7 +71,7 @@
   </Row>
   <Row art="connectors" alt="Cables from mail, chat and file services plugged into one Archive socket">
     <h2>Connect it to everything else.</h2>
-    <p>Bring in mail, calendars, files, chat and business tools like Gmail, Slack, Google Drive, HubSpot and Stripe. Connectors only read, and keep up as things change.</p>
+    <p>Bring in mail, calendars, files, chat and business tools like Gmail, Slack, Google Drive, HubSpot and Stripe. Connectors keep up as things change, and act, like sending an email or updating a deal, only when you ask.</p>
     <p>Reach Archive from your own apps, scripts and services through the API and the command line, with the same permissions everywhere.</p>
   </Row>
   <Row flip art="factory" alt="A factory turning a jumble of documents into neatly packed crates">
