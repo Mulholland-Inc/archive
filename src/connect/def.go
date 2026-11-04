@@ -417,13 +417,14 @@ func (Files) hydrate()    {}
 func (Download) hydrate() {}
 
 // Map is what a record is as a row, each column a SQL expression over data. People are its known_person columns
-// by address and Orgs its known_org columns by web domain, Refs its columns that are a row of the connection by
-// that row's id there. Children are rows of other tables that belong to it.
+// by address and Orgs its known_org columns by web domain, or EINs by EIN, Refs its columns that are a row of the
+// connection by that row's id there. Children are rows of other tables that belong to it.
 type Map struct {
 	Table              string
 	Cols               map[string]SQL
 	People, Orgs, Refs map[string]SQL
 	Children           []Kids
+	EINs               map[string]SQL `json:",omitempty"`
 }
 
 // Kids are the child rows of a record: one for each row of From, a SQL table expression over data.
@@ -508,7 +509,7 @@ const (
 	overlap     = time.Minute
 )
 
-// Plan is an action: its Steps in order, each reading the input and the steps' As before it, and {now}, and Out, or
+// Plan is an action: its Steps in order, each reading the input and the steps' As before it, {now}, a fresh {nonce} and {meta/...}, and Out, or
 // else the answer of the last. Clamp keeps a number within what a provider takes: { def, most }. Enum names the only
 // values an input may be.
 type Plan struct {
@@ -577,7 +578,7 @@ func (p *Plan) run(c *Client, raw json.RawMessage) (any, error) {
 	if sc == nil {
 		sc = map[string]any{}
 	}
-	sc["now"], sc["meta"] = time.Now().UTC().Format(time.RFC3339), c.scope()["meta"]
+	sc["now"], sc["nonce"], sc["meta"] = time.Now().UTC().Format(time.RFC3339), nonce(), c.scope()["meta"]
 	for k, lim := range p.Clamp {
 		n, _ := strconv.Atoi(text(sc[k]))
 		sc[k] = clamp(n, lim[0], lim[1])
@@ -983,7 +984,7 @@ func (r Req) check(where string, roots ...string) error {
 }
 
 func (a *Action) check() error {
-	roots := append(slices.Collect(maps.Keys(a.Input.Properties)), "now", "meta")
+	roots := append(slices.Collect(maps.Keys(a.Input.Properties)), "now", "nonce", "meta")
 	for i, s := range a.plan.Steps {
 		if s.URL == "" && s.Tool == "" && s.Codec == nil && s.In == nil && s.Fail == "" && s.Words == nil {
 			return fmt.Errorf("step %d is nothing to do", i)
@@ -1814,6 +1815,11 @@ func nextOf(p Paging, ans any, n int, cur string) string {
 	return ""
 }
 
+func atoi(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
+}
+
 // firstTaken is the first of names, comma separated, that takes has.
 func firstTaken(names string, has func(string) bool) string {
 	for _, n := range strings.Split(names, ",") {
@@ -2370,7 +2376,7 @@ func (c *Client) urlOf(t string, sc map[string]any) (string, error) {
 		return "", fmt.Errorf("%s: %w", c.p.Name, err)
 	}
 	u = strings.TrimSuffix(u, "?")
-	if !strings.HasPrefix(u, "/") && !strings.HasPrefix(t, "{") {
+	if !strings.HasPrefix(u, "/") && !strings.HasPrefix(u, "?") && !strings.HasPrefix(t, "{") {
 		return u, nil
 	}
 	base, err := c.api()
@@ -2378,9 +2384,9 @@ func (c *Client) urlOf(t string, sc map[string]any) (string, error) {
 		return "", err
 	}
 	switch {
-	case strings.HasPrefix(u, "/"):
+	case strings.HasPrefix(u, "/"), strings.HasPrefix(u, "?"):
 		return base + u, nil
-	case strings.HasPrefix(u, base+"/"):
+	case strings.HasPrefix(u, base+"/"), strings.HasPrefix(u, base+"?"):
 		return u, nil
 	}
 	return "", fmt.Errorf("%s is neither a path, which starts with /, nor a URL of %s's API", u, c.p.Name)
@@ -2641,10 +2647,10 @@ func readAll(b []byte, provider string) (any, error) {
 
 // sql is the query of a page's records, a jsonb array in $1, as the JSON of a Row each, in order.
 func (m Map) sql() string {
-	return "SELECT " + rowSQL(m.Cols, m.People, m.Orgs, m.Refs, m.Children) + " FROM jsonb_array_elements($1::jsonb) WITH ORDINALITY AS r(data, i) ORDER BY i"
+	return "SELECT " + rowSQL(m.Cols, m.People, m.Orgs, m.EINs, m.Refs, m.Children) + " FROM jsonb_array_elements($1::jsonb) WITH ORDINALITY AS r(data, i) ORDER BY i"
 }
 
-func rowSQL(cols, people, orgs, refs map[string]SQL, kids []Kids) string {
+func rowSQL(cols, people, orgs, eins, refs map[string]SQL, kids []Kids) string {
 	wrap := func(cols map[string]SQL, f string) string {
 		var parts []string
 		for _, k := range slices.Sorted(maps.Keys(cols)) {
@@ -2654,12 +2660,12 @@ func rowSQL(cols, people, orgs, refs map[string]SQL, kids []Kids) string {
 	}
 	s := "jsonb_build_object('cols', " + wrap(cols, "(%s)") +
 		", 'people', jsonb_strip_nulls(" + wrap(people, "archive.sync_email(%s)") + ")" +
-		", 'orgs', jsonb_strip_nulls(" + wrap(orgs, "archive.sync_domain(%s)") + ")" +
+		", 'orgs', jsonb_strip_nulls(" + wrap(orgs, "archive.sync_domain(%s)") + " || " + wrap(eins, "archive.sync_ein(%s)") + ")" +
 		", 'refs', jsonb_strip_nulls(" + wrap(refs, "nullif(%s, '')") + ")"
 	if len(kids) > 0 {
 		var ks []string
 		for _, k := range kids {
-			ks = append(ks, "(SELECT coalesce(jsonb_agg("+rowSQL(k.Cols, k.People, k.Orgs, k.Refs, nil)+" || jsonb_build_object('table', '"+k.Table+"')), '[]'::jsonb) FROM "+string(k.From)+")")
+			ks = append(ks, "(SELECT coalesce(jsonb_agg("+rowSQL(k.Cols, k.People, k.Orgs, nil, k.Refs, nil)+" || jsonb_build_object('table', '"+k.Table+"')), '[]'::jsonb) FROM "+string(k.From)+")")
 		}
 		s += ", 'children', " + strings.Join(ks, " || ")
 	}

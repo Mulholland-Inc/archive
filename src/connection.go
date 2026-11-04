@@ -1422,7 +1422,7 @@ func syncCheck() error {
 			if !ok || t.parent != "" {
 				return fail(fmt.Errorf("%q is no table of archive.sql a stream lands in", s.To.Table))
 			}
-			if err := has(s.To.Table, s.To.Cols, s.To.People, s.To.Orgs, s.To.Refs); err != nil {
+			if err := has(s.To.Table, s.To.Cols, s.To.People, s.To.Orgs, s.To.EINs, s.To.Refs); err != nil {
 				return fail(err)
 			}
 			for k := range s.To.Refs {

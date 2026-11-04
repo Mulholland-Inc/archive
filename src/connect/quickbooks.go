@@ -184,7 +184,7 @@ var (
 			"contact": `coalesce('Customer:' || nullif(data#>>'{CustomerRef,value}', ''), 'Vendor:' || nullif(data#>>'{VendorRef,value}', ''), coalesce(nullif(data#>>'{EntityRef,type}', ''), 'Customer') || ':' || nullif(data#>>'{EntityRef,value}', ''))`,
 			"account": `coalesce(nullif(data#>>'{DepositToAccountRef,value}', ''), nullif(data#>>'{AccountRef,value}', ''), nullif(data#>>'{CheckPayment,BankAccountRef,value}', ''),
 				nullif(data#>>'{CreditCardPayment,CCAccountRef,value}', ''), nullif(data#>>'{FromAccountRef,value}', ''), nullif(data#>>'{APAccountRef,value}', ''), data#>>'{ARAccountRef,value}')`},
-		Children: []Kids{{Table: "ledger_line", From: "jsonb_array_elements(data->'Line') WITH ORDINALITY l(x, i) WHERE x->>'DetailType' IS DISTINCT FROM 'SubTotalLineDetail'",
+		Children: []Kids{{Table: "ledger_line", From: "archive.sync_list(data->'Line') WITH ORDINALITY l(x, i) WHERE x->>'DetailType' IS DISTINCT FROM 'SubTotalLineDetail'",
 			Cols: map[string]SQL{"position": "coalesce(archive.sync_num(x->>'LineNum'), i)", "kind": "x->>'DetailType'", "description": "x->>'Description'",
 				"amount":     "archive.sync_money(x->>'Amount', " + qboCurrency + ")",
 				"posting":    "x->(x->>'DetailType')->>'PostingType'",

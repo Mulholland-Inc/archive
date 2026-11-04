@@ -82,7 +82,7 @@ func init() {
 						"city": "data#>>'{shippingAddress,city}'", "state": "data#>>'{shippingAddress,provinceCode}'", "country": "data#>>'{shippingAddress,countryCodeV2}'",
 						"tags": "coalesce(data->'tags', '[]'::jsonb)", "note": "data->>'note'", "placed_at": "archive.sync_at(data->>'createdAt')", "edited_at": "archive.sync_at(data->>'updatedAt')"},
 					People: map[string]SQL{"customer": "data->>'email'"},
-					Children: []Kids{{Table: "commerce_line", From: "jsonb_array_elements(data#>'{lineItems,nodes}') l",
+					Children: []Kids{{Table: "commerce_line", From: "archive.sync_list(data#>'{lineItems,nodes}') l",
 						Cols: map[string]SQL{"title": "l->>'title'", "variant": "l->>'variantTitle'", "sku": "l->>'sku'", "quantity": "archive.sync_num(l->>'quantity')",
 							"price": "archive.sync_money(l#>>'{originalUnitPriceSet,shopMoney,amount}', coalesce(nullif(l#>>'{originalUnitPriceSet,shopMoney,currencyCode}', ''), 'USD'))",
 							"total": "archive.sync_money(l#>>'{discountedTotalSet,shopMoney,amount}', coalesce(nullif(l#>>'{discountedTotalSet,shopMoney,currencyCode}', ''), 'USD'))"},

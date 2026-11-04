@@ -1,16 +1,8 @@
 package connect
 
 import (
-	"cmp"
-	"errors"
-	"net/http"
-	"net/url"
-	"slices"
-	"strconv"
-	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"golang.org/x/oauth2"
 )
 
@@ -22,371 +14,168 @@ import (
 // It syncs every event of each calendar on the account's list, shared and hidden ones too, into calendar_event, the past and the
 // future, a series as one event with its rule and each occurrence that differs from it as another: listed whole
 // the first time, and then each calendar's sync token, which says what changed, deleted too. Holidays and the
-// birthdays of contacts are left out. A calendar it watches pushes, through a channel of its own.
+// birthdays of contacts are left out.
+//
+// A calendar pushes through events.watch, a channel of Archive's own id that pushes to Archive with its token, for a
+// week less an hour: the first sync a day after replaces them all, and stops the ones before. A push says its channel
+// in X-Goog-Channel-ID and its token in X-Goog-Channel-Token; the sync push of a new channel says nothing changed.
 func init() {
 	Register(&Connector{
-		ID: "gcal", Name: "Google Calendar", Env: "ARCHIVE_GOOGLE", Host: "https://accounts.google.com",
+		ID: "gcal", Name: "Google Calendar", Env: "ARCHIVE_GOOGLE",
+		Info: Info{By: "Google", Description: "Read your calendars’ events and who is invited, and book or change events when you ask", Category: CatCalendar, Icon: IconCalendar,
+			Scopes: []string{"Read your calendars and events", "Make, change and cancel events when you ask"}},
+		API:  "https://www.googleapis.com/calendar/v3",
+		Busy: []string{"Quota exceeded", "rateLimitExceeded", "userRateLimitExceeded", "Rate Limit Exceeded"},
 		Endpoint: oauth2.Endpoint{AuthURL: "https://accounts.google.com/o/oauth2/v2/auth", TokenURL: "https://oauth2.googleapis.com/token",
 			AuthStyle: oauth2.AuthStyleInParams},
 		Revoke: "https://oauth2.googleapis.com/revoke",
 		Scopes: []string{"https://www.googleapis.com/auth/calendar"},
 		Params: map[string]string{"access_type": "offline", "prompt": "consent"},
-		Account: func(c *Client) (string, error) {
-			var cal struct {
-				ID string `json:"id"`
-			}
-			err := c.Get(calendarAPI+"/calendars/primary", &cal)
-			return strings.ToLower(cal.ID), err
-		},
+		Who:    &Who{Req: Req{URL: "/calendars/primary"}, Names: []Path{"id"}, Lower: true},
 		Actions: map[string]*Action{
-			"calendars": Act("The calendars on your list: [{ id, summary, description, timeZone, accessRole, primary }]",
-				func(c *Client, in struct{}) (any, error) {
-					var out struct {
-						Items []map[string]any `json:"items"`
-					}
-					err := c.Get(calendarAPI+"/users/me/calendarList?maxResults=250&fields=items(id,summary,description,timeZone,accessRole,primary)", &out)
-					return out.Items, err
-				}),
-			"events": Act("Events of a calendar, each occurrence of a series on its own, soonest first, maybe only between two times or with "+
-				"some words: { events: [{ id, summary, description, location, start, end, status, organizer, attendees, htmlLink, hangoutLink }], next } "+
-				"(pass next as page for more)",
-				func(c *Client, in struct {
-					Calendar string `json:"calendar,omitempty" jsonschema:"The calendar's id, from calendars; the primary one when left out"`
-					From     string `json:"from,omitempty" jsonschema:"Only those ending after this time, RFC 3339 like 2026-11-03T00:00:00Z; now when left out"`
-					To       string `json:"to,omitempty" jsonschema:"Only those starting before this time, RFC 3339"`
-					Query    string `json:"query,omitempty" jsonschema:"Words in the event, its attendees or its location"`
-					Limit    int    `json:"limit,omitempty" jsonschema:"At most this many, 1 to 250; 50 when left out"`
-					Page     string `json:"page,omitempty" jsonschema:"The next of the call before, for the events after it"`
-				}) (any, error) {
-					q := url.Values{"singleEvents": {"true"}, "orderBy": {"startTime"}, "maxResults": {strconv.Itoa(clamp(in.Limit, 50, 250))},
-						"timeMin": {cmp.Or(in.From, time.Now().UTC().Format(time.RFC3339))}}
-					if in.To != "" {
-						q.Set("timeMax", in.To)
-					}
-					if in.Query != "" {
-						q.Set("q", in.Query)
-					}
-					if in.Page != "" {
-						q.Set("pageToken", in.Page)
-					}
-					var out struct {
-						Items []map[string]any `json:"items"`
-						Next  string           `json:"nextPageToken"`
-					}
-					err := c.Get(calendarAPI+"/calendars/"+url.PathEscape(cmp.Or(in.Calendar, "primary"))+"/events?"+q.Encode(), &out)
-					return map[string]any{"events": out.Items, "next": out.Next}, err
-				}),
-			"create": Write("Put an event on a calendar and invite people to it, maybe with a Google Meet link: the event, as events returns one",
-				func(c *Client, in gcalNew) (any, error) {
-					if in.Summary == "" || in.Start == "" || in.End == "" {
-						return nil, errors.New("an event needs a summary, a start and an end")
-					}
-					return in.save(c, "POST", "")
-				}),
-			"update": Write("Change an event, a whole series when its id is the series': only what you give changes. Returns the event, as events returns one",
-				func(c *Client, in struct {
-					ID string `json:"id" jsonschema:"The event's id, from events"`
-					gcalNew
-				}) (any, error) {
-					return in.save(c, "PATCH", in.ID)
-				}),
-			"delete": Write("Cancel an event, or a whole series by the series' id, telling who was invited: { id }",
-				func(c *Client, in struct {
-					Calendar string `json:"calendar,omitempty" jsonschema:"The calendar's id, from calendars; the primary one when left out"`
-					ID       string `json:"id" jsonschema:"The event's id, from events"`
-					Quiet    bool   `json:"quiet,omitempty" jsonschema:"Don't email the people invited"`
-				}) (any, error) {
-					q := url.Values{"sendUpdates": {gcalNotify(in.Quiet)}}
-					err := c.Do("DELETE", calendarAPI+"/calendars/"+url.PathEscape(cmp.Or(in.Calendar, "primary"))+"/events/"+url.PathEscape(in.ID)+"?"+q.Encode(), nil, nil)
-					return map[string]any{"id": in.ID}, err
-				}),
+			"calendars": Call[struct{}, []gcalCalendar](Plan{
+				Doc:   "The calendars on your list: [{ id, summary, description, timeZone, accessRole, primary }]",
+				Steps: []Step{{As: "got", Req: Req{URL: "/users/me/calendarList?maxResults=250&fields=items(id,summary,description,timeZone,accessRole,primary)"}}},
+				Out:   "{got/items|[]}",
+			}),
+			"events": Call[gcalFind, gcalFound](Plan{
+				Doc: "Events of a calendar, each occurrence of a series on its own, soonest first, maybe only between two times or with " +
+					"some words: { events: [{ id, summary, description, location, start, end, status, organizer, attendees, htmlLink, hangoutLink }], next } " +
+					"(pass next as page for more)",
+				Clamp: map[string][2]int{"limit": {50, 250}},
+				Steps: []Step{
+					{Unless: "from", As: "from", In: "{now}"},
+					{As: "got", Req: Req{URL: "/calendars/{calendar|primary}/events", Query: Q{"singleEvents": "true", "orderBy": "startTime", "maxResults": "{limit}",
+						"timeMin": "{from}", "timeMax": "{to}", "q": "{query}", "pageToken": "{page}"}}},
+				},
+				Out: Obj{"events": "{got/items|[]}", "next": "{got/nextPageToken|}"},
+			}),
+			"create": Call[gcalNew, map[string]any](Plan{
+				Doc: "Put an event on a calendar and invite people to it, maybe with a Google Meet link: the event, as events returns one",
+				Steps: []Step{
+					{Unless: "summary", Fail: gcalNeeds}, {Unless: "start", Fail: gcalNeeds}, {Unless: "end", Fail: gcalNeeds},
+					gcalNotify, gcalQuiet, gcalStart, gcalStartDay, gcalEnd, gcalEndDay, gcalPeople, gcalMeet, gcalVersion,
+					{Req: Req{Method: POST, URL: "/calendars/{calendar|primary}/events", Query: gcalSend, Body: gcalEvent}},
+				},
+			}),
+			"update": Call[gcalEdit, map[string]any](Plan{
+				Doc: "Change an event, a whole series when its id is the series': only what you give changes. Returns the event, as events returns one",
+				Steps: []Step{
+					gcalNotify, gcalQuiet, gcalStart, gcalStartDay, gcalEnd, gcalEndDay, gcalPeople, gcalMeet, gcalVersion,
+					{Req: Req{Method: PATCH, URL: "/calendars/{calendar|primary}/events/{id}", Query: gcalSend, Body: gcalEvent}},
+				},
+			}),
+			"delete": Call[gcalGone, gcalDeleted](Plan{
+				Doc: "Cancel an event, or a whole series by the series' id, telling who was invited: { id }",
+				Steps: []Step{
+					gcalNotify, gcalQuiet,
+					{Req: Req{Method: DELETE, URL: "/calendars/{calendar|primary}/events/{id}", Query: Q{"sendUpdates": "{notify}"}}},
+				},
+				Out: Obj{"id": "{id}"},
+			}),
 		},
-		Push: gcalPush,
-		Streams: []*Stream{{Name: "events", Gap: time.Second, Pull: gcalEvents, Table: "calendar_event", Rows: gcalRows,
+		Listen: &Listen{Renew: 6 * 24 * time.Hour, Until: 7*24*time.Hour - time.Hour, Over: gcalCalendars, Mint: "archive-{nonce}", Secret: true, Replace: true, Lax: true,
+			Watch:    Req{Method: POST, URL: "/calendars/{part}/events/watch", Body: Obj{"id": "{key}", "type": "web_hook", "address": "{hook}", "token": "{secret}", "expiration": "{until_ms}"}},
+			Resource: "{answer/resourceId}", Expires: "expiration",
+			Unwatch: &Req{Method: POST, URL: "/channels/stop", Body: Obj{"id": "{key}", "resourceId": "{resource}"}},
+			Kept:    &Kept{IDHeader: "X-Goog-Channel-ID", TokenHeader: "X-Goog-Channel-Token", Quiet: "X-Goog-Resource-State", QuietIs: "sync"},
+		},
+		Sync: []*Sync{{Name: "events", Gap: time.Second, Parts: gcalCalendars,
+			Req:   Req{URL: "/calendars/{part}/events", Query: Q{"maxResults": "250", "pageToken": "{page}"}},
+			Items: "items", Absent: "kind", Key: []Reads{{Of: "{part}/{id}"}}, Updated: "updated", Page: Cursor{At: "nextPageToken"},
+			Change: Resume{At: "nextSyncToken", Expired: []int{410}, Gone: []Test{{At: "status", Is: "cancelled"}},
+				Req: Req{URL: "/calendars/{part}/events", Query: Q{"maxResults": "250", "syncToken": "{token}", "showDeleted": "true", "pageToken": "{page}"}}},
+			Set:     Obj{"calendarId": "{part}", "calendar": "{in/name}"},
+			Hydrate: []Hydrate{Decode{Codec: Words, At: "description", As: "description", If: Test{At: "description", Re: "<"}}},
 			Doc: "Every event of each calendar on your list, shared, subscribed and hidden ones too, past and future, by <calendar id>/<event id>: a series as one event with " +
 				"its rule, and each occurrence that differs from it as another, with its attendees and their answers and its description, cut " +
 				"at 64 KB. Listed whole the first time, 250 a page and a calendar at a time, and then each calendar's changes since; a calendar " +
-				"gone, or a sync token Google no longer keeps, lists them all again."}},
+				"gone, or a sync token Google no longer keeps, lists them all again.",
+			To: Map{Table: "calendar_event",
+				Cols: map[string]SQL{"calendar": "data->>'calendar'", "title": "data->>'summary'", "description": "archive.sync_clip(data->>'description', 65536)", "location": "data->>'location'",
+					"starts_at": "coalesce(archive.sync_at(data#>>'{start,dateTime}'), archive.sync_at(archive.sync_day(data#>>'{start,date}')::text || 'T00:00:00Z'))",
+					"ends_at":   "coalesce(archive.sync_at(data#>>'{end,dateTime}'), archive.sync_at(archive.sync_day(data#>>'{end,date}')::text || 'T00:00:00Z'))",
+					"all_day":   "nullif(data#>>'{start,date}', '') IS NOT NULL", "status": "data->>'status'",
+					"recurrence":     `(SELECT string_agg(r#>>'{}', E'\n') FROM archive.sync_list(data->'recurrence') r)`,
+					"organizer_name": "data#>>'{organizer,displayName}'", "url": "data->>'htmlLink'",
+					"meeting_url": `coalesce(nullif(data->>'hangoutLink', ''), (SELECT e->>'uri' FROM archive.sync_list(data#>'{conferenceData,entryPoints}') e WHERE e->>'entryPointType' = 'video' AND nullif(e->>'uri', '') IS NOT NULL LIMIT 1))`,
+					"edited_at":   "archive.sync_at(data->>'updated')"},
+				People: map[string]SQL{"organizer": "data#>>'{organizer,email}'"},
+				Refs:   map[string]SQL{"series": "(data->>'calendarId') || '/' || nullif(data->>'recurringEventId', '')"},
+				Children: []Kids{{Table: "calendar_attendee", From: "archive.sync_list(data->'attendees') a WHERE archive.sync_email(a->>'email') IS NOT NULL",
+					Cols: map[string]SQL{"name": "a->>'displayName'", "role": "CASE WHEN a->>'resource' = 'true' THEN 'resource' WHEN a->>'optional' = 'true' THEN 'optional' ELSE 'required' END",
+						"response": "CASE WHEN a->>'responseStatus' IN ('accepted', 'declined', 'tentative') THEN a->>'responseStatus' ELSE 'none' END"},
+					People: map[string]SQL{"person": "a->>'email'"}}}}}},
 	})
 }
 
-const calendarAPI = "https://www.googleapis.com/calendar/v3"
+const (
+	gcalDay   = `^\d{4}-\d{2}-\d{2}$`
+	gcalNeeds = "an event needs a summary, a start and an end"
+)
 
-// gcalNew is an event to make, or what to change of one.
-type gcalNew struct {
-	Calendar    string   `json:"calendar,omitempty" jsonschema:"The calendar's id, from calendars; the primary one when left out"`
-	Summary     string   `json:"summary,omitempty" jsonschema:"The event's title"`
-	Start       string   `json:"start,omitempty" jsonschema:"When it starts, RFC 3339 like 2026-11-04T15:00:00-08:00, or a date like 2026-11-04 for an all-day event"`
-	End         string   `json:"end,omitempty" jsonschema:"When it ends, as start; an all-day event's is the day after its last"`
-	TimeZone    string   `json:"timeZone,omitempty" jsonschema:"An IANA time zone, like America/Los_Angeles; the calendar's when left out"`
-	Description string   `json:"description,omitempty" jsonschema:"What it is about"`
-	Location    string   `json:"location,omitempty" jsonschema:"Where it is"`
-	Attendees   []string `json:"attendees,omitempty" jsonschema:"The email addresses of who to invite; on update, everyone invited"`
-	Meet        bool     `json:"meet,omitempty" jsonschema:"Add a Google Meet link"`
-	Quiet       bool     `json:"quiet,omitempty" jsonschema:"Don't email the people invited"`
-}
+var (
+	// gcalCalendars are every calendar of the account's list, those it only reads and those it hid too, but holidays and
+	// the birthdays of contacts, which are Google's.
+	gcalCalendars = &Parts{Req: Req{URL: "/users/me/calendarList", Query: Q{"maxResults": "250", "showHidden": "true", "fields": "nextPageToken,items(id,summary,summaryOverride)", "pageToken": "{page}"}},
+		Items: "items", Page: Cursor{At: "nextPageToken"}, Skip: []Test{{At: "id", Re: "#(holiday|contacts)@"}}, Vals: Obj{"name": "{summaryOverride;summary}"}}
+	gcalNotify   = Step{As: "notify", In: "all"}
+	gcalQuiet    = Step{If: "quiet", As: "notify", In: "none"}
+	gcalStart    = Step{If: "start", As: "begin", In: Obj{"dateTime": "{start}", "timeZone": "{timeZone}"}}
+	gcalStartDay = Step{If: "start", Only: Test{At: "start", Re: gcalDay}, As: "begin", In: Obj{"date": "{start}"}}
+	gcalEnd      = Step{If: "end", As: "finish", In: Obj{"dateTime": "{end}", "timeZone": "{timeZone}"}}
+	gcalEndDay   = Step{If: "end", Only: Test{At: "end", Re: gcalDay}, As: "finish", In: Obj{"date": "{end}"}}
+	gcalPeople   = Step{Each: "attendees", As: "people", In: Obj{"email": "{it}"}}
+	gcalMeet     = Step{If: "meet", As: "conference", In: Obj{"createRequest": Obj{"requestId": "{nonce}", "conferenceSolutionKey": Obj{"type": "hangoutsMeet"}}}}
+	gcalVersion  = Step{If: "meet", As: "version", In: "1"}
+	gcalSend     = Q{"sendUpdates": "{notify}", "conferenceDataVersion": "{version}"}
+	gcalEvent    = Obj{"summary": "{summary}", "description": "{description}", "location": "{location}", "start": "{begin}", "end": "{finish}", "attendees": "{people}", "conferenceData": "{conference}"}
+)
 
-// save sends e to the calendar: POST makes it, PATCH changes event id.
-func (e gcalNew) save(c *Client, method, id string) (map[string]any, error) {
-	ev := map[string]any{}
-	for k, v := range map[string]string{"summary": e.Summary, "description": e.Description, "location": e.Location} {
-		if v != "" {
-			ev[k] = v
-		}
+type (
+	gcalFind struct {
+		Calendar string `json:"calendar,omitempty" jsonschema:"The calendar's id, from calendars; the primary one when left out"`
+		From     string `json:"from,omitempty" jsonschema:"Only those ending after this time, RFC 3339 like 2026-11-03T00:00:00Z; now when left out"`
+		To       string `json:"to,omitempty" jsonschema:"Only those starting before this time, RFC 3339"`
+		Query    string `json:"query,omitempty" jsonschema:"Words in the event, its attendees or its location"`
+		Limit    int    `json:"limit,omitempty" jsonschema:"At most this many, 1 to 250; 50 when left out"`
+		Page     string `json:"page,omitempty" jsonschema:"The next of the call before, for the events after it"`
 	}
-	for k, v := range map[string]string{"start": e.Start, "end": e.End} {
-		switch {
-		case v == "":
-		case len(v) == len(time.DateOnly):
-			ev[k] = map[string]any{"date": v}
-		default:
-			t := map[string]any{"dateTime": v}
-			if e.TimeZone != "" {
-				t["timeZone"] = e.TimeZone
-			}
-			ev[k] = t
-		}
+	// gcalNew is an event to make, or what to change of one.
+	gcalNew struct {
+		Calendar    string   `json:"calendar,omitempty" jsonschema:"The calendar's id, from calendars; the primary one when left out"`
+		Summary     string   `json:"summary,omitempty" jsonschema:"The event's title"`
+		Start       string   `json:"start,omitempty" jsonschema:"When it starts, RFC 3339 like 2026-11-04T15:00:00-08:00, or a date like 2026-11-04 for an all-day event"`
+		End         string   `json:"end,omitempty" jsonschema:"When it ends, as start; an all-day event's is the day after its last"`
+		TimeZone    string   `json:"timeZone,omitempty" jsonschema:"An IANA time zone, like America/Los_Angeles; the calendar's when left out"`
+		Description string   `json:"description,omitempty" jsonschema:"What it is about"`
+		Location    string   `json:"location,omitempty" jsonschema:"Where it is"`
+		Attendees   []string `json:"attendees,omitempty" jsonschema:"The email addresses of who to invite; on update, everyone invited"`
+		Meet        bool     `json:"meet,omitempty" jsonschema:"Add a Google Meet link"`
+		Quiet       bool     `json:"quiet,omitempty" jsonschema:"Don't email the people invited"`
 	}
-	if e.Attendees != nil {
-		as := make([]map[string]any, len(e.Attendees))
-		for i, a := range e.Attendees {
-			as[i] = map[string]any{"email": a}
-		}
-		ev["attendees"] = as
+	gcalEdit struct {
+		ID string `json:"id" jsonschema:"The event's id, from events"`
+		gcalNew
 	}
-	q := url.Values{"sendUpdates": {gcalNotify(e.Quiet)}}
-	if e.Meet {
-		ev["conferenceData"] = map[string]any{"createRequest": map[string]any{"requestId": uuid.NewString(),
-			"conferenceSolutionKey": map[string]any{"type": "hangoutsMeet"}}}
-		q.Set("conferenceDataVersion", "1")
+	gcalGone struct {
+		Calendar string `json:"calendar,omitempty" jsonschema:"The calendar's id, from calendars; the primary one when left out"`
+		ID       string `json:"id" jsonschema:"The event's id, from events"`
+		Quiet    bool   `json:"quiet,omitempty" jsonschema:"Don't email the people invited"`
 	}
-	u := calendarAPI + "/calendars/" + url.PathEscape(cmp.Or(e.Calendar, "primary")) + "/events"
-	if id != "" {
-		u += "/" + url.PathEscape(id)
+	gcalCalendar struct {
+		ID          string `json:"id"`
+		Summary     string `json:"summary"`
+		Description string `json:"description,omitempty"`
+		TimeZone    string `json:"timeZone,omitempty"`
+		AccessRole  string `json:"accessRole,omitempty"`
+		Primary     bool   `json:"primary,omitempty"`
 	}
-	var out map[string]any
-	err := c.Do(method, u+"?"+q.Encode(), ev, &out)
-	return out, err
-}
-
-// gcalNotify is Calendar's sendUpdates: whether to email the people invited.
-func gcalNotify(quiet bool) string {
-	if quiet {
-		return "none"
+	gcalFound struct {
+		Events []map[string]any `json:"events"`
+		Next   string           `json:"next" jsonschema:"Pass as page for more; empty when there is no more"`
 	}
-	return "all"
-}
-
-// gcalCal is a calendar the events stream walks, and Token its sync token, where its changes start.
-type gcalCal struct {
-	ID    string `json:"id"`
-	Name  string `json:"n,omitempty"`
-	Token string `json:"t,omitempty"`
-}
-
-// gcalCursor is where the events stream is: the calendars, the one under way, the next page of it, and whether
-// this walk lists every calendar whole.
-type gcalCursor struct {
-	Cals    []gcalCal `json:"cals,omitempty"`
-	At      int       `json:"at,omitempty"`
-	Page    string    `json:"p,omitempty"`
-	Listing bool      `json:"l,omitempty"`
-}
-
-// gcalCalendars are every calendar of the account's list, those it only reads and those it hid too, but holidays
-// and the birthdays of contacts, which are Google's.
-func gcalCalendars(c *Client) ([]gcalCal, error) {
-	var out []gcalCal
-	q := url.Values{"maxResults": {"250"}, "showHidden": {"true"}, "fields": {"nextPageToken,items(id,summary,summaryOverride)"}}
-	for {
-		var list struct {
-			Items []struct {
-				ID       string `json:"id"`
-				Summary  string `json:"summary"`
-				Override string `json:"summaryOverride"`
-			} `json:"items"`
-			Next string `json:"nextPageToken"`
-		}
-		if err := c.Get(calendarAPI+"/users/me/calendarList?"+q.Encode(), &list); err != nil {
-			return nil, err
-		}
-		for _, it := range list.Items {
-			if !strings.Contains(it.ID, "#holiday@") && !strings.Contains(it.ID, "#contacts@") {
-				out = append(out, gcalCal{ID: it.ID, Name: cmp.Or(it.Override, it.Summary)})
-			}
-		}
-		if list.Next == "" {
-			return out, nil
-		}
-		q.Set("pageToken", list.Next)
+	gcalDeleted struct {
+		ID string `json:"id"`
 	}
-}
-
-func gcalEvents(c *Client, cursor string) (*Page, error) {
-	var cur gcalCursor
-	if err := cursorOf(cursor, &cur); err != nil {
-		return nil, err
-	}
-	if cursor == "" {
-		cur.Listing = true
-	}
-	// A walk begins with the calendars there are now, each where its changes ended before.
-	if cur.At == 0 && cur.Page == "" {
-		cals, err := gcalCalendars(c)
-		if err != nil {
-			return nil, err
-		}
-		tokens := map[string]string{}
-		for _, k := range cur.Cals {
-			tokens[k.ID] = k.Token
-			if !slices.ContainsFunc(cals, func(n gcalCal) bool { return n.ID == k.ID }) {
-				cur.Listing = true
-			}
-		}
-		for i := range cals {
-			if !cur.Listing {
-				cals[i].Token = tokens[cals[i].ID]
-			}
-		}
-		cur.Cals = cals
-	}
-	page := &Page{Full: cur.Listing}
-	if cur.At >= len(cur.Cals) {
-		page.Cursor = cursorFor(gcalCursor{Cals: cur.Cals})
-		return page, nil
-	}
-	cal := &cur.Cals[cur.At]
-	q := url.Values{"maxResults": {"250"}}
-	if cal.Token != "" {
-		q.Set("syncToken", cal.Token)
-		q.Set("showDeleted", "true")
-	}
-	if cur.Page != "" {
-		q.Set("pageToken", cur.Page)
-	}
-	var res struct {
-		Items []map[string]any `json:"items"`
-		Next  string           `json:"nextPageToken"`
-		Sync  string           `json:"nextSyncToken"`
-	}
-	if err := c.Get(calendarAPI+"/calendars/"+url.PathEscape(cal.ID)+"/events?"+q.Encode(), &res); err != nil {
-		if r := (*Refusal)(nil); errors.As(err, &r) && r.Status == http.StatusGone {
-			page.More, page.Cursor = true, cursorFor(gcalCursor{Listing: true})
-			return page, nil
-		}
-		return nil, err
-	}
-	for _, e := range res.Items {
-		id := cal.ID + "/" + str(e, "id")
-		if str(e, "status") == "cancelled" && cal.Token != "" {
-			page.Records = append(page.Records, Record{ID: id, Deleted: true})
-			continue
-		}
-		e["calendarId"], e["calendar"] = cal.ID, cal.Name
-		page.Records = append(page.Records, Record{ID: id, Data: e, Updated: stamp(str(e, "updated"))})
-	}
-	if res.Next != "" {
-		cur.Page = res.Next
-	} else {
-		cal.Token, cur.Page = res.Sync, ""
-		cur.At++
-	}
-	if cur.At < len(cur.Cals) {
-		page.More = true
-	} else {
-		cur.At, cur.Listing = 0, false
-	}
-	page.Cursor = cursorFor(cur)
-	return page, nil
-}
-
-// gcalTime is an event's start or end: its dateTime, or for an all-day event its date at midnight UTC.
-func gcalTime(v map[string]any) any {
-	if t := instant(str(v, "dateTime")); t != nil {
-		return t
-	}
-	if d := day(str(v, "date")); d != nil {
-		return d.(string) + "T00:00:00Z"
-	}
-	return nil
-}
-
-// gcalRows is an event of a calendar: who organizes it and who is invited, with what they answered, and where
-// to join it.
-func gcalRows(m map[string]any) *Row {
-	desc := str(m, "description")
-	if strings.Contains(desc, "<") {
-		desc = htmlText(desc)
-	}
-	meeting := str(m, "hangoutLink")
-	for _, ep := range objects(obj(m, "conferenceData")["entryPoints"], "") {
-		if meeting == "" && str(ep, "entryPointType") == "video" {
-			meeting = str(ep, "uri")
-		}
-	}
-	org := obj(m, "organizer")
-	cal := str(m, "calendarId")
-	series := ""
-	if id := str(m, "recurringEventId"); id != "" {
-		series = cal + "/" + id
-	}
-	r := rowOf(map[string]any{"calendar": str(m, "calendar"), "title": str(m, "summary"), "description": clip(desc, maxText),
-		"location": str(m, "location"), "starts_at": gcalTime(obj(m, "start")), "ends_at": gcalTime(obj(m, "end")),
-		"all_day": str(obj(m, "start"), "date") != "", "status": str(m, "status"), "recurrence": strings.Join(strs(m["recurrence"]), "\n"),
-		"organizer_name": str(org, "displayName"), "url": str(m, "htmlLink"), "meeting_url": meeting, "edited_at": instant(str(m, "updated"))}).
-		ref("series", series).person("organizer", str(org, "email"))
-	responses := map[string]string{"accepted": "accepted", "declined": "declined", "tentative": "tentative"}
-	for _, a := range objects(m["attendees"], "") {
-		if Email(str(a, "email")) == "" {
-			continue
-		}
-		role := "required"
-		if a["resource"] == true {
-			role = "resource"
-		} else if a["optional"] == true {
-			role = "optional"
-		}
-		r.child("calendar_attendee", rowOf(map[string]any{"name": str(a, "displayName"), "role": role,
-			"response": cmp.Or(responses[str(a, "responseStatus")], "none")}).person("person", str(a, "email")))
-	}
-	return r
-}
-
-// gcalPush is events.watch on each calendar the stream walks, a channel of Archive's own id that pushes to
-// Archive with its token, for a week less an hour: the first sync a day after replaces them all, and stops the
-// ones before. Its pushes are Drive's, read the same way.
-var gcalPush = &Push{Renew: 6 * 24 * time.Hour,
-	Watch: func(c *Client, h Hook, old []Watch) ([]Watch, error) {
-		cals, err := gcalCalendars(c)
-		if err != nil {
-			return nil, err
-		}
-		exp := strconv.FormatInt(time.Now().Add(7*24*time.Hour-time.Hour).UnixMilli(), 10)
-		var out []Watch
-		for _, cal := range cals {
-			id, token := "archive-"+nonce()[:32], nonce()
-			var ch struct {
-				ResourceID string `json:"resourceId"`
-				Expiration string `json:"expiration"`
-			}
-			body := map[string]any{"id": id, "type": "web_hook", "address": h.URL(id), "token": token, "expiration": exp}
-			if err := c.Do("POST", calendarAPI+"/calendars/"+url.PathEscape(cal.ID)+"/events/watch", body, &ch); err != nil {
-				if Busy(err) {
-					return nil, err
-				}
-				continue
-			}
-			out = append(out, Watch{Key: id, Resource: ch.ResourceID, Secret: token, Expires: stamp(ch.Expiration)})
-		}
-		for _, o := range old {
-			c.Do("POST", calendarAPI+"/channels/stop", map[string]string{"id": o.Key, "resourceId": o.Resource}, nil)
-		}
-		return out, nil
-	},
-	Unwatch: func(c *Client, w Watch) error {
-		return c.Do("POST", calendarAPI+"/channels/stop", map[string]string{"id": w.Key, "resourceId": w.Resource}, nil)
-	},
-	Hear: func(p *Provider, r *http.Request, at string, body []byte, secret func(string) string) (*Heard, error) {
-		return drivePush.Hear(p, r, at, body, secret)
-	},
-}
+)
