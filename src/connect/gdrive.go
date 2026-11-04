@@ -19,7 +19,8 @@ func init() {
 		Info: Info{By: "Google", Description: "Search and read your files, and make or change them when you ask", Category: CatFiles, Icon: IconDrive,
 			Scopes: []string{"Read your files and documents", "Make, change and trash files when you ask"}},
 		API: "https://www.googleapis.com/drive/v3",
-		// Drive allows each user 12,000 requests a minute, and each file read for its text is one more of them.
+		// Drive allows each user 325,000 quota units a minute and a project 1,000,000, and a download, the dearest read, costs
+		// 200: 20 requests a second, every account's together, stay under both.
 		Pace: 50 * time.Millisecond,
 		Busy: []string{"Quota exceeded", "rateLimitExceeded", "userRateLimitExceeded", "Rate Limit Exceeded"},
 		Endpoint: oauth2.Endpoint{AuthURL: "https://accounts.google.com/o/oauth2/v2/auth", TokenURL: "https://oauth2.googleapis.com/token",
