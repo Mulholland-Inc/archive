@@ -785,8 +785,8 @@ export function archiveIntegrations() {
   return ws().integrations ?? [];
 }
 
-export function connectIntegration(id) {
-  if (isArchiveOwner()) connect(id);
+export function connectIntegration(id, asked) {
+  if (isArchiveOwner()) connect(id, asked);
 }
 
 async function onIntegration(id, what, path, init) {
@@ -1269,6 +1269,7 @@ export const connections = resource({
       Object.assign(c, {
         ready: k.ready,
         keys: k.keys ?? [],
+        ask: k.ask ?? null,
         link: !!k.link,
         connections: mine,
         connected: mine.length > 0,
@@ -1296,6 +1297,7 @@ function toIntegration(k, x) {
     name: k.name,
     ready: k.ready,
     keys: k.keys ?? [],
+    ask: k.ask ?? null,
     link: !!k.link,
     connected: Boolean(x),
     connection: x ?? null,
@@ -1310,9 +1312,11 @@ function toIntegration(k, x) {
 }
 
 // connect sends the browser to connect connector id: one of your own, or an integration an owner connects for everyone.
-export function connect(id) {
+// asked is what a connector whose sign-in is the account's own, like a Shopify store's, asks for first, by its name.
+export function connect(id, asked = {}) {
   const c = [...ws().connectors, ...archiveIntegrations()].find((x) => x.id === id);
-  if (c?.ready) location.assign(`${API}/connect/${encodeURIComponent(id)}?workspace=${encodeURIComponent(app.archive)}`);
+  const q = new URLSearchParams({ ...asked, workspace: app.archive });
+  if (c?.ready) location.assign(`${API}/connect/${encodeURIComponent(id)}?${q}`);
 }
 
 // connectKeys connects connector id, which has no sign-in, with the keys a person pasted, by their names: one of

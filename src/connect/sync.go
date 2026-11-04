@@ -384,6 +384,10 @@ type Heard struct {
 	Header http.Header
 	Body   string
 	Keep   map[string]string
+	// All and Forget are what it asks Archive to forget of the accounts of Keys (Listen.Forget): All every one,
+	// disconnected; Forget the records of each stream, by id.
+	All    bool
+	Forget map[string][]string
 }
 
 // ErrForged is a push that is not the provider's: unsigned, or signed with another secret.

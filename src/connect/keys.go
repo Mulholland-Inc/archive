@@ -32,6 +32,10 @@ type Key struct {
 	Help  string `json:"help,omitempty"`
 	// Secret says it is a secret: the form hides it, and it is kept only sealed.
 	Secret bool `json:"secret,omitempty"`
+	// Find, for a connector's Ask, is a regexp what is named must match, whose first group is what is kept, made
+	// As, a template of it as {it}, when it says.
+	Find string `json:"-"`
+	As   string `json:"-"`
 }
 
 // Link is a key connector whose keys come from its provider's own widget in the app, like Plaid Link, rather

@@ -771,6 +771,9 @@ const (
 // Hearing: Hello is the handshake a provider opens a watch with. A push's Keys are read from its body, or from what
 // Codec makes of what is at Wrap, the first of them that has any, or from Kept, which proves them too. Only is what a
 // push says for it to mean anything.
+//
+// Forgetting: Forget are pushes that ask Archive to delete what it has of the account, as a privacy law has the
+// provider ask, like Shopify's redactions; the first whose header When is Is decides.
 type Listen struct {
 	Env      string
 	OIDC     bool
@@ -801,6 +804,23 @@ type Listen struct {
 	Keys     []Path
 	Kept     *Kept
 	Only     Test
+	Forget   []Forget
+}
+
+// Forget is a push that asks Archive to forget, when its header When is Is: with All, the account, which is
+// disconnected and what it synced deleted; else the records Of names, each by stream; with neither, nothing, which
+// is only heard, as a request for what Archive keeps of someone is, whose answer is what the account's archive shows.
+type Forget struct {
+	When, Is string
+	All      bool
+	Of       []Forgot
+}
+
+// Forgot is records of Stream a push names: each at At, its id ID, a template of it as {it}.
+type Forgot struct {
+	Stream string
+	At     Path
+	ID     string
 }
 
 // Hello is a handshake: a query parameter whose value is answered as it came, in plain text, or with Header, a header
@@ -830,6 +850,9 @@ func (c *Connector) compile() error {
 		if u, err := url.Parse(c.Endpoint.AuthURL); err == nil && c.Host == "" {
 			c.Host = u.Scheme + "://" + u.Host
 		}
+	}
+	if (c.Ask != nil || c.Signed != "" || c.Was != "") && (len(c.Keys) > 0 || c.MCP != "") {
+		return errors.New("Ask, Signed and Was are a sign-in's, not keys' or an MCP server's")
 	}
 	if c.Trade != nil {
 		if err := c.Trade.check("trade", "key", "client", "option", "basic"); err != nil {
@@ -3127,6 +3150,16 @@ func (l *Listen) compile(c *Connector) error {
 	if l.Key == "" && l.Mint == "" {
 		return errors.New("needs Key or Mint")
 	}
+	for _, f := range l.Forget {
+		if f.When == "" || f.Is == "" {
+			return errors.New("a forget needs When and Is")
+		}
+		for _, o := range f.Of {
+			if !slices.ContainsFunc(c.Sync, func(s *Sync) bool { return s.Name == o.Stream }) {
+				return fmt.Errorf("a forget of %s, which it does not sync", o.Stream)
+			}
+		}
+	}
 	if l.Watch.URL != "" {
 		if err := l.Watch.check("watch", "client", "token", "key", "meta", "option", "target", "account", "conn", "ask", "nonce", "secret", "hook", "part", "in", "until", "until_ms", "up"); err != nil {
 			return err
@@ -3342,6 +3375,16 @@ func (l *Listen) hear(pr *Provider, r *http.Request, at string, body []byte, sec
 	if l.Only.At != "" && !l.Only.holds(v) {
 		return &Heard{}, nil
 	}
+	var forget *Forget
+	for i, f := range l.Forget {
+		if r.Header.Get(f.When) == f.Is {
+			forget = &l.Forget[i]
+			break
+		}
+	}
+	if forget != nil && !forget.All && len(forget.Of) == 0 {
+		return &Heard{Status: http.StatusOK}, nil
+	}
 	if k := l.Kept; k != nil {
 		if k.ByQuery {
 			return &Heard{Keys: []string{q.Get("k")}}, nil
@@ -3374,7 +3417,18 @@ func (l *Listen) hear(pr *Provider, r *http.Request, at string, body []byte, sec
 			keys = append(keys, s)
 		}
 	}
-	return &Heard{Keys: keysOf(keys...)}, nil
+	heard := &Heard{Keys: keysOf(keys...)}
+	if forget != nil {
+		heard.Status, heard.All, heard.Forget = http.StatusOK, forget.All, map[string][]string{}
+		for _, o := range forget.Of {
+			for _, e := range listOf(pick(v, o.At)) {
+				if id, _ := fillStr(o.ID, map[string]any{"it": e}); text(id) != "" {
+					heard.Forget[o.Stream] = append(heard.Forget[o.Stream], text(id))
+				}
+			}
+		}
+	}
+	return heard, nil
 }
 
 // verify checks a push against the first of Signs whose header it has. kept is the secret of the watch it names.

@@ -204,13 +204,25 @@ func (a *Archive) connectStart(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		p, err = a.hub.provider(r.Context(), p.ID, true)
 	}
+	if err == nil && !p.Ready() {
+		err = fmt.Errorf("%s is not set up on this server; it needs %s", p.Name, p.Env)
+	}
+	// A connector whose sign-in is on the account's own host, like a Shopify store's, is told which first.
+	var asked map[string]string
+	if err == nil && p.Ask != nil {
+		asked, err = p.AskOf(r.URL.Query().Get(p.Ask.Name))
+	}
+	st := connect.State{Provider: r.PathValue("id"), Workspace: a.ws.ID.String(), User: ac.UserID, Member: ac.member,
+		Verifier: oauth2.GenerateVerifier(), Exp: time.Now().Add(connect.TTL).Unix(), Meta: asked}
+	var to string
+	if err == nil {
+		to, err = p.AuthURL(a.hub.connectRedirect(p.ID), connect.SealState(a.hub.aead, st), st.Verifier, asked)
+	}
 	if err != nil {
 		http.Redirect(w, r, a.hub.app+connectBack(r.PathValue("id"))+"?"+url.Values{"workspace": {a.ws.ID.String()}, "error": {err.Error()}}.Encode(), http.StatusSeeOther)
 		return
 	}
-	st := connect.State{Provider: p.ID, Workspace: a.ws.ID.String(), User: ac.UserID, Member: ac.member,
-		Verifier: oauth2.GenerateVerifier(), Exp: time.Now().Add(connect.TTL).Unix()}
-	http.Redirect(w, r, p.AuthURL(a.hub.connectRedirect(p.ID), connect.SealState(a.hub.aead, st), st.Verifier), http.StatusFound)
+	http.Redirect(w, r, to, http.StatusFound)
 }
 
 // connectFinish keeps the account the provider came back for, when the person who started is the one signed
@@ -231,7 +243,7 @@ func (a *Archive) connectFinish(w http.ResponseWriter, r *http.Request, st conne
 	}
 	var g *connect.Grant
 	if err == nil {
-		g, err = p.Exchange(r.Context(), a.hub.connectRedirect(p.ID), r.URL.Query(), st.Verifier)
+		g, err = p.Exchange(r.Context(), a.hub.connectRedirect(p.ID), r.URL.Query(), st.Verifier, st.Meta)
 		if err != nil && p.MCP != "" && strings.Contains(err.Error(), "invalid_client") {
 			a.hub.forgetClient(r.Context(), p)
 		}
@@ -420,6 +432,7 @@ type Connector struct {
 	Ready       bool          `json:"ready"`
 	Integration bool          `json:"integration"`
 	Keys        []connect.Key `json:"keys,omitempty"`
+	Ask         *connect.Key  `json:"ask,omitempty"`
 	Link        bool          `json:"link,omitempty"`
 	connect.Info
 }
@@ -437,7 +450,7 @@ func (a *Archive) Connections(ctx context.Context) (*Connections, error) {
 	}
 	out := &Connections{Connectors: []Connector{}, Connections: []Connection{}}
 	for _, c := range connect.All() {
-		out.Connectors = append(out.Connectors, Connector{ID: c.ID, Name: c.Name, Ready: a.hub.connect[c.ID] != nil, Integration: c.Integration, Keys: c.Keys, Link: c.Link != nil, Info: c.Info})
+		out.Connectors = append(out.Connectors, Connector{ID: c.ID, Name: c.Name, Ready: a.hub.connect[c.ID] != nil && a.hub.connect[c.ID].Ready(), Integration: c.Integration, Keys: c.Keys, Ask: c.Ask, Link: c.Link != nil, Info: c.Info})
 	}
 	var rows []generated.ConnectionsRow
 	err = a.st.System(ctx, func(ctx context.Context) (err error) {
@@ -520,7 +533,13 @@ func (a *Archive) Disconnect(ctx context.Context, id uuid.UUID) error {
 	if err != nil {
 		return err
 	}
-	err = a.sys(ctx, func(ctx context.Context) (err error) {
+	return a.disconnect(ctx, c)
+}
+
+// disconnect deletes connection c, with what it synced, and ends its watches and grant at the provider.
+func (a *Archive) disconnect(ctx context.Context, c generated.ArchiveConnection) error {
+	id := c.ID
+	err := a.sys(ctx, func(ctx context.Context) (err error) {
 		q := a.st.db(ctx)
 		if c, err = q.DeleteConnection(ctx, c.ID); err != nil {
 			return err
@@ -1730,6 +1749,10 @@ func (h *Hub) pushHTTP(w http.ResponseWriter, r *http.Request) {
 	for _, key := range heard.Keys {
 		rows, err := h.q().WatchesFor(ctx, p.ID, key)
 		for _, row := range rows {
+			if heard.All || len(heard.Forget) > 0 {
+				err = errors.Join(err, h.pushForget(ctx, row.Workspace, row.Connection, heard))
+				continue
+			}
 			err = errors.Join(err, h.pushAsk(ctx, row.Workspace, row.Connection))
 		}
 		if err != nil {
@@ -1761,6 +1784,49 @@ func (h *Hub) pushAsk(ctx context.Context, ws, conn uuid.UUID) error {
 		return h.q().DropWatches(context.WithoutCancel(ctx), conn, []string{})
 	}
 	return err
+}
+
+// pushForget deletes what a push asked Archive to forget of connection conn of workspace ws: all of it, which
+// disconnects it, or the records it names of each stream. A connection or workspace gone since has nothing left.
+func (h *Hub) pushForget(ctx context.Context, ws, conn uuid.UUID, heard *connect.Heard) error {
+	ctx = context.WithoutCancel(ctx)
+	a, release, err := h.acquire(ctx, ws.String())
+	if errors.Is(err, ErrNotFound) {
+		return h.q().DropWatches(ctx, conn, []string{})
+	}
+	if err != nil {
+		return err
+	}
+	defer release()
+	var c generated.ArchiveConnection
+	err = a.sys(ctx, func(ctx context.Context) (err error) {
+		c, err = a.st.db(ctx).Connection(ctx, conn)
+		return err
+	})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return h.q().DropWatches(ctx, conn, []string{})
+	case err != nil:
+		return err
+	case heard.All:
+		fmt.Fprintf(os.Stderr, "archive: workspace %s: %s asked Archive to forget %s, so it is disconnected\n", ws, c.Provider, c.Account)
+		return a.disconnect(ctx, c)
+	}
+	p := connect.Get(c.Provider)
+	if p == nil {
+		return nil
+	}
+	return a.sys(ctx, func(ctx context.Context) error {
+		w := &syncDB{q: a.st.db(ctx), db: a.st.Q(ctx), id: c.ID, now: time.Now()}
+		for _, s := range p.Streams {
+			if ids := heard.Forget[s.Name]; len(ids) > 0 {
+				if err := w.delete(ctx, s, ids); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
 }
 
 // pushConnection says whether workspace ws has connection conn, to connector id: a handshake is kept only
