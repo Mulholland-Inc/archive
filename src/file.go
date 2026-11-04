@@ -336,7 +336,7 @@ func (a *Archive) fileCommit(ctx context.Context, access *uuid.UUID, name string
 		return nil, err
 	}
 	defer a.blobs.remove(context.WithoutCancel(ctx), tmp)
-	f, err := coreDo(a, ctx, func(ctx context.Context) (*File, error) {
+	commit := func(ctx context.Context) (*File, error) {
 		q := a.st.db(ctx)
 		if err := q.LockHash(ctx, hash); err != nil {
 			return nil, err
@@ -361,7 +361,14 @@ func (a *Archive) fileCommit(ctx context.Context, access *uuid.UUID, name string
 			return nil, err
 		}
 		return f, a.blobs.move(ctx, tmp, blobKey(hash))
-	})
+	}
+	var f *File
+	if conn != nil {
+		// A sync has no one signed in: it keeps the file in the system's transaction it calls this in.
+		f, err = commit(ctx)
+	} else {
+		f, err = coreDo(a, ctx, commit)
+	}
 	if err != nil {
 		return nil, err
 	}

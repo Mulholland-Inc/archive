@@ -116,21 +116,36 @@ func cursorFor(v any) string {
 	return string(b)
 }
 
-// each calls f for 0 to n-1, at most par at once, and is the first error.
+// each calls f for 0 to n-1, at most par at once, starts no more after an error, and is the first error.
 func each(n, par int, f func(i int) error) error {
-	errs := make([]error, n)
+	var first error
+	var mu sync.Mutex
+	failed := func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return first != nil
+	}
 	sem := make(chan struct{}, par)
 	var wg sync.WaitGroup
 	for i := range n {
-		wg.Add(1)
 		sem <- struct{}{}
+		if failed() {
+			break
+		}
+		wg.Add(1)
 		go func() {
 			defer func() { <-sem; wg.Done() }()
-			errs[i] = f(i)
+			if err := f(i); err != nil {
+				mu.Lock()
+				defer mu.Unlock()
+				if first == nil {
+					first = err
+				}
+			}
 		}()
 	}
 	wg.Wait()
-	return errors.Join(errs...)
+	return first
 }
 
 // stamp is the time s, RFC 3339 or a Unix time in milliseconds as a string; zero when it is neither.

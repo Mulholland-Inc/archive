@@ -940,6 +940,10 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 				// A provider that is busy or out of reach is tried again, at most syncBusyWait apart, for as long
 				// as it takes; only a page that fails some other way waits for the next ask.
 				cur.At = ptr(now.Add(max(min(syncRetry<<min(cur.Fails-1, 16), syncBusyWait), connect.RetryAfter(err))))
+				// Being turned away now and then is how a sync goes; it is a problem once it keeps happening.
+				if cur.Fails < syncTries {
+					cur.Error = ""
+				}
 			}
 			if cur.Fails >= syncTries && !busy {
 				// It waits for the next ask, as one caught up does, with its error, and tries as many times then.
