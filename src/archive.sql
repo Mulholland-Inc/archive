@@ -2753,6 +2753,200 @@ COMMENT ON COLUMN archive.bank_transaction.source_id IS 'Its id there';
 COMMENT ON COLUMN archive.bank_transaction.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.bank_transaction.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
+-- Spend: the company cards and expenses of a spend platform you connected, like Ramp or Brex: the people who
+-- spend, their departments, their cards, and every card purchase and reimbursement with its receipts. Its bills
+-- and vendors are books, in ledger_entry and ledger_contact.
+CREATE TABLE archive.spend_department (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream     text NOT NULL,
+    source_id  text NOT NULL,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    name       text NOT NULL DEFAULT '',
+    seen_at    timestamptz NOT NULL DEFAULT now(),
+    title      text,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+COMMENT ON TABLE archive.spend_department IS 'A department of a spend platform you connected, like Ramp or Brex. Read only; Archive syncs them
+icon: network';
+COMMENT ON COLUMN archive.spend_department.title IS 'Its name';
+COMMENT ON COLUMN archive.spend_department.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.spend_department.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.spend_department.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.spend_department.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.spend_department.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.spend_user (
+    id                uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection        uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream            text NOT NULL,
+    source_id         text NOT NULL,
+    access            uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at        timestamptz NOT NULL DEFAULT now(),
+    updated_at        timestamptz NOT NULL DEFAULT now(),
+    name              text NOT NULL DEFAULT '',
+    seen_at           timestamptz NOT NULL DEFAULT now(),
+    first_name        text,
+    last_name         text,
+    person            uuid REFERENCES archive.known_person ON DELETE SET NULL,
+    email             archive.email,
+    role              text,
+    status            text,
+    employee_id       text,
+    department        uuid REFERENCES archive.spend_department ON DELETE SET NULL,
+    department_source text,
+    manager           uuid REFERENCES archive.spend_user ON DELETE SET NULL,
+    manager_source    text,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX spend_user_person_idx ON archive.spend_user (person);
+CREATE INDEX spend_user_department_idx ON archive.spend_user (department);
+CREATE INDEX spend_user_manager_idx ON archive.spend_user (manager);
+COMMENT ON TABLE archive.spend_user IS 'Someone of a spend platform you connected, like Ramp or Brex, who may hold its cards or spend. Read only; Archive syncs them
+icon: user-round';
+COMMENT ON COLUMN archive.spend_user.person IS 'references known_person; who they are, by their email';
+COMMENT ON COLUMN archive.spend_user.role IS 'What they may do there, like BUSINESS_ADMIN';
+COMMENT ON COLUMN archive.spend_user.status IS 'Where their account is, like ACTIVE or INVITED';
+COMMENT ON COLUMN archive.spend_user.employee_id IS 'Their employee id, from the HR system';
+COMMENT ON COLUMN archive.spend_user.department IS 'references spend_department; the department they are in';
+COMMENT ON COLUMN archive.spend_user.department_source IS 'The id there of their department';
+COMMENT ON COLUMN archive.spend_user.manager IS 'references spend_user; who they report to';
+COMMENT ON COLUMN archive.spend_user.manager_source IS 'The id there of who they report to';
+COMMENT ON COLUMN archive.spend_user.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.spend_user.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.spend_user.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.spend_user.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.spend_user.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.spend_card (
+    id            uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream        text NOT NULL,
+    source_id     text NOT NULL,
+    access        uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
+    name          text NOT NULL DEFAULT '',
+    seen_at       timestamptz NOT NULL DEFAULT now(),
+    title         text,
+    kind          text,
+    last_four     text,
+    expires       text,
+    status        text,
+    holder        uuid REFERENCES archive.spend_user ON DELETE SET NULL,
+    holder_source text,
+    holder_name   text,
+    spend_limit   archive.money,
+    limit_period  text,
+    made_at       timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX spend_card_holder_idx ON archive.spend_card (holder);
+COMMENT ON TABLE archive.spend_card IS 'A company card of a spend platform you connected, like Ramp or Brex: never its number, only its last four digits. Read only; Archive syncs them
+icon: credit-card';
+COMMENT ON COLUMN archive.spend_card.title IS 'The name it was given there';
+COMMENT ON COLUMN archive.spend_card.kind IS 'physical or virtual';
+COMMENT ON COLUMN archive.spend_card.last_four IS 'The last four digits of its number';
+COMMENT ON COLUMN archive.spend_card.expires IS 'When it expires, as MM/YY';
+COMMENT ON COLUMN archive.spend_card.status IS 'Where it is, like ACTIVE, LOCKED, SUSPENDED or TERMINATED';
+COMMENT ON COLUMN archive.spend_card.holder IS 'references spend_user; who holds it';
+COMMENT ON COLUMN archive.spend_card.holder_source IS 'The id there of who holds it';
+COMMENT ON COLUMN archive.spend_card.holder_name IS 'Who holds it, by name';
+COMMENT ON COLUMN archive.spend_card.spend_limit IS 'What it may spend in a period, when the card has a limit of its own';
+COMMENT ON COLUMN archive.spend_card.limit_period IS 'How often its limit starts again, like MONTHLY or ONE_TIME';
+COMMENT ON COLUMN archive.spend_card.made_at IS 'When it was issued';
+COMMENT ON COLUMN archive.spend_card.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.spend_card.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.spend_card.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.spend_card.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.spend_card.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.spend_transaction (
+    id                uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection        uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream            text NOT NULL,
+    source_id         text NOT NULL,
+    access            uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at        timestamptz NOT NULL DEFAULT now(),
+    updated_at        timestamptz NOT NULL DEFAULT now(),
+    name              text NOT NULL DEFAULT '',
+    seen_at           timestamptz NOT NULL DEFAULT now(),
+    kind              text NOT NULL,
+    merchant          text,
+    mcc               text,
+    category          text,
+    amount            archive.money,
+    original_amount   archive.money,
+    spent_at          timestamptz,
+    posted_at         timestamptz,
+    status            text,
+    memo              text,
+    spender           uuid REFERENCES archive.spend_user ON DELETE SET NULL,
+    spender_source    text,
+    spender_name      text,
+    card              uuid REFERENCES archive.spend_card ON DELETE SET NULL,
+    card_source       text,
+    department        uuid REFERENCES archive.spend_department ON DELETE SET NULL,
+    department_source text,
+    department_name   text,
+    url               archive.url,
+    edited_at         timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX spend_transaction_spender_idx ON archive.spend_transaction (spender);
+CREATE INDEX spend_transaction_card_idx ON archive.spend_transaction (card);
+CREATE INDEX spend_transaction_department_idx ON archive.spend_transaction (department);
+CREATE INDEX spend_transaction_spent_at_idx ON archive.spend_transaction (spent_at);
+COMMENT ON TABLE archive.spend_transaction IS 'A card purchase or reimbursement of a spend platform you connected, like Ramp or Brex; its receipts are in spend_receipt. Read only; Archive syncs them
+icon: credit-card';
+COMMENT ON COLUMN archive.spend_transaction.kind IS 'What it is: card or reimbursement, or on Brex billpay or clawback';
+COMMENT ON COLUMN archive.spend_transaction.merchant IS 'Who it was paid to, by name or as the card statement shows them';
+COMMENT ON COLUMN archive.spend_transaction.mcc IS 'The merchant category code of the card network';
+COMMENT ON COLUMN archive.spend_transaction.category IS 'What kind of spend it is there, like RESTAURANTS or Software';
+COMMENT ON COLUMN archive.spend_transaction.amount IS 'What it cost the business, in the business''s currency; a refund is negative';
+COMMENT ON COLUMN archive.spend_transaction.original_amount IS 'What it cost in the merchant''s currency';
+COMMENT ON COLUMN archive.spend_transaction.spent_at IS 'When it was bought';
+COMMENT ON COLUMN archive.spend_transaction.posted_at IS 'When it settled or was paid';
+COMMENT ON COLUMN archive.spend_transaction.status IS 'Where it is there, like CLEARED, PENDING, DECLINED, APPROVED or SETTLED';
+COMMENT ON COLUMN archive.spend_transaction.memo IS 'What the spender wrote about it';
+COMMENT ON COLUMN archive.spend_transaction.spender IS 'references spend_user; who spent it';
+COMMENT ON COLUMN archive.spend_transaction.spender_source IS 'The id there of who spent it';
+COMMENT ON COLUMN archive.spend_transaction.spender_name IS 'Who spent it, by name';
+COMMENT ON COLUMN archive.spend_transaction.card IS 'references spend_card; the card it was on';
+COMMENT ON COLUMN archive.spend_transaction.card_source IS 'The id there of the card it was on';
+COMMENT ON COLUMN archive.spend_transaction.department IS 'references spend_department; the department it is of';
+COMMENT ON COLUMN archive.spend_transaction.department_source IS 'The id there of its department';
+COMMENT ON COLUMN archive.spend_transaction.department_name IS 'Its department, by name';
+COMMENT ON COLUMN archive.spend_transaction.url IS 'Where it opens there';
+COMMENT ON COLUMN archive.spend_transaction.edited_at IS 'When it last changed there';
+COMMENT ON COLUMN archive.spend_transaction.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.spend_transaction.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.spend_transaction.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.spend_transaction.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.spend_transaction.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.spend_receipt (
+    id             uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    access         uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    name           text NOT NULL DEFAULT '',
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    updated_at     timestamptz NOT NULL DEFAULT now(),
+    spend          uuid NOT NULL REFERENCES archive.spend_transaction ON DELETE CASCADE,
+    receipt_source text,
+    position       integer
+) INHERITS (archive.object);
+CREATE INDEX spend_receipt_spend_idx ON archive.spend_receipt (spend);
+CREATE INDEX spend_receipt_connection_idx ON archive.spend_receipt (connection);
+COMMENT ON TABLE archive.spend_receipt IS 'A receipt attached to a card purchase or reimbursement: that it is there, not the file. Read only; Archive syncs them
+icon: receipt';
+COMMENT ON COLUMN archive.spend_receipt.spend IS 'references spend_transaction; the purchase or reimbursement it is for';
+COMMENT ON COLUMN archive.spend_receipt.receipt_source IS 'Its id there';
+COMMENT ON COLUMN archive.spend_receipt.position IS 'Where it is among its transaction''s receipts, from 1';
+COMMENT ON COLUMN archive.spend_receipt.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
 -- mine says whether the current role is the member m or one of their tokens, which are all in m's group role.
 CREATE FUNCTION archive.mine(m uuid) RETURNS bool LANGUAGE sql STABLE AS $$
     SELECT EXISTS (SELECT FROM pg_catalog.pg_roles r WHERE r.rolname = '{p}_m' || translate(rtrim(encode(uuid_send(m), 'base64'), '='), '+/', '-_')
@@ -2866,6 +3060,11 @@ BEGIN
         WHEN 'ledger_line' THEN coalesce(nullif(btrim(r->>'description'), ''), r->>'kind')
         WHEN 'bank_account' THEN concat_ws(' · ', coalesce(nullif(r->>'title', ''), r->>'official_name'), nullif(r->>'mask', ''))
         WHEN 'bank_transaction' THEN concat_ws(' · ', coalesce(nullif(btrim(r->>'merchant'), ''), nullif(btrim(r->>'description'), '')), r->>'posted_on')
+        WHEN 'spend_department' THEN r->>'title'
+        WHEN 'spend_user' THEN coalesce(nullif(btrim(concat_ws(' ', nullif(r->>'first_name', ''), nullif(r->>'last_name', ''))), ''), r->>'email')
+        WHEN 'spend_card' THEN concat_ws(' · ', coalesce(nullif(r->>'title', ''), nullif(r->>'holder_name', ''), 'Card'), '•' || nullif(r->>'last_four', ''))
+        WHEN 'spend_transaction' THEN concat_ws(' · ', coalesce(nullif(r->>'merchant', ''), initcap(r->>'kind')), nullif(r->>'spender_name', ''), left(r->>'spent_at', 10))
+        WHEN 'spend_receipt' THEN concat_ws(' ', 'Receipt', r->>'position')
         ELSE own END), ''), '');
     RETURN NEW;
 END $$;
@@ -2928,6 +3127,11 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.calendar_attendee 
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_account FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.bank_account FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.bank_transaction FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.spend_department FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.spend_user FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.spend_card FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.spend_transaction FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.spend_receipt FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_contact FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_item FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_entry FOR EACH ROW EXECUTE FUNCTION archive.object_name();
@@ -3038,6 +3242,11 @@ GRANT SELECT ON archive.ledger_entry TO "{p}_viewer";
 GRANT SELECT ON archive.ledger_line TO "{p}_viewer";
 GRANT SELECT ON archive.bank_account TO "{p}_viewer";
 GRANT SELECT ON archive.bank_transaction TO "{p}_viewer";
+GRANT SELECT ON archive.spend_department TO "{p}_viewer";
+GRANT SELECT ON archive.spend_user TO "{p}_viewer";
+GRANT SELECT ON archive.spend_card TO "{p}_viewer";
+GRANT SELECT ON archive.spend_transaction TO "{p}_viewer";
+GRANT SELECT ON archive.spend_receipt TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT, UPDATE, DELETE ON TABLES TO "{p}_editor";
 
@@ -3175,6 +3384,16 @@ ALTER TABLE archive.bank_account ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.bank_account FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = bank_account.connection));
 ALTER TABLE archive.bank_transaction ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.bank_transaction FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = bank_transaction.connection));
+ALTER TABLE archive.spend_department ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.spend_department FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = spend_department.connection));
+ALTER TABLE archive.spend_user ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.spend_user FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = spend_user.connection));
+ALTER TABLE archive.spend_card ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.spend_card FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = spend_card.connection));
+ALTER TABLE archive.spend_transaction ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.spend_transaction FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = spend_transaction.connection));
+ALTER TABLE archive.spend_receipt ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.spend_receipt FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = spend_receipt.connection));
 ALTER TABLE archive.known_person ENABLE ROW LEVEL SECURITY;
 CREATE POLICY seen ON archive.known_person FOR SELECT USING (EXISTS (SELECT FROM archive.mail_party p WHERE p.person = known_person.id)
     OR EXISTS (SELECT FROM archive.payroll_worker w WHERE w.person = known_person.id)
@@ -3413,7 +3632,9 @@ SELECT jsonb_build_object(
             'archive.commerce_product'::regclass, 'archive.commerce_order'::regclass, 'archive.commerce_line'::regclass,
             'archive.ad_metric'::regclass, 'archive.dental_provider'::regclass, 'archive.dental_patient'::regclass,
             'archive.dental_appointment'::regclass, 'archive.dental_procedure'::regclass, 'archive.dental_payment'::regclass,
-            'archive.bank_account'::regclass, 'archive.bank_transaction'::regclass)
+            'archive.bank_account'::regclass, 'archive.bank_transaction'::regclass,
+            'archive.spend_department'::regclass, 'archive.spend_user'::regclass, 'archive.spend_card'::regclass,
+            'archive.spend_transaction'::regclass, 'archive.spend_receipt'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -3535,7 +3756,11 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.dental_procedure x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.dental_payment x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.bank_account x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.bank_transaction x WHERE x.connection = c.id))::bigint AS items,
+        + (SELECT count(*) FROM archive.bank_transaction x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.spend_department x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.spend_user x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.spend_card x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.spend_transaction x WHERE x.connection = c.id))::bigint AS items,
     c.integration, coalesce(c.access::text, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
 FROM archive.connection c WHERE c.member = $1 AND NOT c.integration OR c.integration ORDER BY c.provider, c.account, c.id;
 
