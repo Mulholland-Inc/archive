@@ -184,6 +184,7 @@ const (
 	CatPayroll   Category = "Payroll"
 
 	CatCompliance Category = "Compliance"
+	CatData       Category = "Data"
 
 	IconMail     Icon = "mail"
 	IconUsers    Icon = "users"
@@ -1178,6 +1179,8 @@ func (s *Sync) step(c *Client, st flow) (*Page, error) {
 		sc = Obj{}
 	}
 	sc["stream"] = s.Name
+	cs := c.scope()
+	sc["key"], sc["meta"], sc["option"] = cs["key"], cs["meta"], cs["option"]
 	if st.Mode == "" {
 		parts, info, err := s.parts(c, sc, st)
 		if err != nil {
@@ -2311,6 +2314,11 @@ func (c *Client) http1(r Req, sc map[string]any) (any, error) {
 	ans, err := readAll(raw, c.p.Name)
 	if err != nil {
 		return nil, err
+	}
+	if c.p.Answer != nil {
+		if ans, err = c.p.Answer.fn(ans); err != nil {
+			return nil, err
+		}
 	}
 	if e := c.p.Errors; e != nil {
 		if msg := text(pick(ans, e.At)); msg != "" {

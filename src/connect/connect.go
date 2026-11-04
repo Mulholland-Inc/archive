@@ -134,8 +134,9 @@ type Connector struct {
 	Let []Step
 	// Errors is an answer that refuses in a 200, as GraphQL does. Busy are what a refusal says, past its status, when
 	// the provider only turns Archive away for now. Trace is a header of its answers that names one to its support, which a
-	// refusal keeps.
+	// refusal keeps. Answer reads every answer before anything else does, like Snowflake's, whose rows are lists.
 	Errors *Errors
+	Answer *Codec
 	Busy   []string
 	Trace  string
 }
