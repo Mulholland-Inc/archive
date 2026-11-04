@@ -1894,7 +1894,7 @@ func namedNext(v any, recs []Record) string {
 		}
 	}
 	for _, l := range levels {
-		for _, k := range []string{"namedNext", "next_cursor", "endCursor", "cursor"} {
+		for _, k := range []string{"nextCursor", "next_cursor", "endCursor", "cursor"} {
 			if s, ok := l[k].(string); ok && s != "" {
 				return s
 			}
