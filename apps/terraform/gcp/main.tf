@@ -11,7 +11,7 @@ locals {
 
   # Every secret env var of the service and the job, by name. Terraform makes each one's Secret Manager secret,
   # archive-<name in kebab case>, and hands it to Cloud Run at version latest, but never holds a value: each is
-  # seeded with gcloud (README, "Secrets"), and Cloud Run won't start a revision until all of them have a version.
+  # seeded with gcloud, and Cloud Run won't start a revision until all of them have a version.
   # A feature that is not used is seeded with a single space, which Archive reads as unset.
   secrets = {
     DATABASE_URL       = "Postgres as the archive user: host=/cloudsql/<connection name> user=archive password=<password> dbname=archive."
@@ -189,7 +189,7 @@ resource "google_sql_user" "this" {
   name     = "archive"
   instance = google_sql_database_instance.this.name
 
-  # Its password is set with gcloud sql users set-password and kept only in DATABASE_URL (README, "Secrets").
+  # Its password is set with gcloud sql users set-password and kept only in DATABASE_URL.
   lifecycle {
     ignore_changes = [password]
   }
