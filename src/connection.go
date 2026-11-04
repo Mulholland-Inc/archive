@@ -888,7 +888,8 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 			}
 		}
 	}()
-	return a.sys(context.WithoutCancel(ctx), func(ctx context.Context) error {
+	var wrote bool
+	err = a.sys(context.WithoutCancel(ctx), func(ctx context.Context) error {
 		q := a.st.db(ctx)
 		now, err2 := q.TxNow(ctx)
 		if err2 != nil {
@@ -948,6 +949,7 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 			if err := syncSave(ctx, w, s, page, cur); err != nil {
 				return err
 			}
+			wrote = len(page.Records) > 0
 			if named {
 				cur.Named = &now
 				if account != "" {
@@ -1002,6 +1004,11 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 		next = save.SyncAt
 		return q.SaveSync(ctx, save)
 	})
+	// A sync commits under a.sys, which wakes nothing, so a table workflow watching what it saved is woken here.
+	if err == nil && wrote {
+		a.wakeTables(context.WithValue(context.WithoutCancel(ctx), storeTxKey{}, nil))
+	}
+	return err
 }
 
 // fresh is v, or where a stream whose rows are in older tables starts again: from scratch, its cursor and memory
@@ -1046,7 +1053,7 @@ func syncSave(ctx context.Context, w *syncDB, s *connect.Stream, page *connect.P
 			return fmt.Errorf("record %s of %s: %w", r.ID, s.Name, err)
 		}
 		at[r.ID] = len(live)
-		live = append(live, syncRec{ID: r.ID, Data: b, Updated: r.Updated})
+		live = append(live, syncRec{ID: r.ID, Data: b})
 	}
 	live = slices.DeleteFunc(live, func(r syncRec) bool { return r.ID == "" })
 	if len(live) > 0 {
@@ -1297,9 +1304,8 @@ var syncSchema = map[string]syncTable{
 
 // syncRec is a record of a page to write, its data as JSON.
 type syncRec struct {
-	ID      string
-	Data    json.RawMessage
-	Updated time.Time
+	ID   string
+	Data json.RawMessage
 }
 
 // syncDB is the transaction syncSave writes in: its queries, and the statements below.
@@ -1332,17 +1338,16 @@ func (w *syncDB) write(ctx context.Context, s *connect.Stream, recs []syncRec) e
 	objs := make([]map[string]any, len(rows))
 	for i, row := range rows {
 		o := w.object(s.Table, row, people, orgs)
-		o["stream"], o["source_id"], o["seen_at"], o["updated_at"] = s.Name, kept[i].ID, w.now, w.now
-		if !kept[i].Updated.IsZero() {
-			o["updated_at"] = kept[i].Updated
-		}
+		// Both are when Archive saw it: a workflow reads created_at = updated_at as a row new to it, and a
+		// provider's own stamp could fall behind its cursor.
+		o["stream"], o["source_id"], o["seen_at"], o["created_at"], o["updated_at"] = s.Name, kept[i].ID, w.now, w.now, w.now
 		objs[i] = o
 	}
 	cols := syncCols(objs)
 	set := []string{}
 	var compare []string
 	for _, c := range cols {
-		if c == "connection" || c == "stream" || c == "source_id" || c == "updated_at" {
+		if c == "connection" || c == "stream" || c == "source_id" || c == "created_at" || c == "updated_at" {
 			continue
 		}
 		set = append(set, c+" = EXCLUDED."+c)

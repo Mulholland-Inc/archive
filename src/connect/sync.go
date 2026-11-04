@@ -81,7 +81,7 @@ type Page struct {
 type Record struct {
 	ID   string
 	Data any
-	// Updated is when it last changed there, zero when the provider does not say.
+	// Updated is when it last changed there, zero when the provider does not say. The sync does not store it.
 	Updated time.Time
 	// Deleted says it is gone there; its Data is not read.
 	Deleted bool

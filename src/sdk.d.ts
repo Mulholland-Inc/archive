@@ -166,6 +166,8 @@
  *              returns them, oldest change first; when there are more, the next run follows at once. A row is
  *              created when archive.create added it since the last run, and updated when archive.update changed
  *              it since. Rows the workflow writes itself never run it again.
+ *              A synced table such as mail_message can be watched: its rows are created when the sync first saved them
+ *              and updated when it saw them change, and a sync that saved records wakes the workflow.
  *     webhook  { trigger: "webhook", method, query, headers, body }: query and headers are objects of strings
  *              (header names in lower case); body is the parsed JSON when it parses, otherwise the raw text, and
  *              null when empty.
