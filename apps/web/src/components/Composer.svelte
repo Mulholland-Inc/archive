@@ -220,7 +220,7 @@
       {/if}
       <MenuItem icon={Telescope} keepOpen toggle={research} onselect={() => (research = !research)}>Research</MenuItem>
       <MenuSeparator />
-      <MenuItem icon={Plug} href="/connectors">Connectors</MenuItem>
+      <MenuItem icon={Plug} href="/settings/connectors">Connectors</MenuItem>
     </Menu>
     {#if research}
       <span in:rise={{ shift: '--shift-sm' }}><Chip icon={Telescope} size="sm" onremove={() => (research = false)}>Research</Chip></span>

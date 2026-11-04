@@ -17,7 +17,6 @@
   import RowPage from './pages/Row.svelte';
   import AccessPage from './pages/Access.svelte';
   import GroupPage from './pages/Group.svelte';
-  import Connectors from './pages/Connectors.svelte';
   import AppSettings from './components/AppSettings.svelte';
   import Specimen from './pages/Specimen.svelte';
   import Onboarding from './pages/Onboarding.svelte';
@@ -43,9 +42,9 @@
   let last = '/';
 
   $effect(() => {
-    const [head, a] = route.parts;
+    const [head, a, b] = route.parts;
     if (head === 'settings') {
-      openSettings(a ?? 'profile');
+      openSettings(a ?? 'profile', b ?? null);
       replace(last);
     } else {
       last = route.path;
@@ -65,12 +64,12 @@
     { id: 'p-library', group: 'Go to', label: 'Library', icon: Library, run: () => go('/library') },
     { id: 'p-database', group: 'Go to', label: 'Database', icon: Database, run: () => go('/database') },
     { id: 'p-workflows', group: 'Go to', label: 'Workflows', icon: WorkflowIcon, run: () => go('/workflows') },
-    { id: 'p-connectors', group: 'Go to', label: 'Connectors', icon: Plug, run: () => go('/connectors') },
+    { id: 'p-connectors', group: 'Go to', label: 'Connectors', icon: Plug, run: () => openSettings('connectors') },
     { id: 'p-access', group: 'Go to', label: 'Access', icon: Lock, run: () => go('/access') },
     { id: 'p-onboarding', group: 'Go to', label: 'Onboarding', icon: ListChecks, run: () => go('/onboarding') },
     { id: 'p-archive', group: 'Go to', label: 'Archive settings', icon: Building2, run: () => openSettings('general') },
     { id: 'p-server', group: 'Go to', label: 'Server', icon: Server, run: () => openSettings('server'), searchOnly: true },
-    { id: 'p-integrations', group: 'Go to', label: 'Integrations', icon: Blocks, run: () => go('/connectors'), searchOnly: true },
+    { id: 'p-integrations', group: 'Go to', label: 'Integrations', icon: Blocks, run: () => openSettings('integrations'), searchOnly: true },
     { id: 'p-keys', group: 'Go to', label: 'Archive API key', icon: KeyRound, run: () => openSettings('archive-api'), searchOnly: true },
     { id: 'p-my-key', group: 'Go to', label: 'Your API key', icon: KeyRound, run: () => openSettings('api'), searchOnly: true },
     { id: 'p-settings', group: 'Go to', label: 'Settings', icon: Settings, shortcut: '⌘ ,', run: () => openSettings() },
@@ -136,8 +135,6 @@
         <Workflow id={route.parts[1]} />
       {:else if route.parts[0] === 'workflows'}
         <Workflows />
-      {:else if route.parts[0] === 'connectors'}
-        <Connectors id={route.parts[1]} />
       {:else if route.parts[0] === 'access' && route.parts[1] === 'groups' && route.parts[2]}
         <GroupPage id={route.parts[2]} />
       {:else if route.parts[0] === 'access'}

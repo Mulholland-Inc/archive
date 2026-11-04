@@ -131,7 +131,7 @@
               </ListItem>
             {/each}
             {#each integrations as i (i.id)}
-              <ListItem href={`/connectors/${i.id}`} icon={Plug}>
+              <ListItem href={`/settings/integrations/${i.id}`} icon={Plug}>
                 <Text>{i.name}</Text>
                 <Text tone="tertiary">Narrowed to {group.name}</Text>
               </ListItem>
