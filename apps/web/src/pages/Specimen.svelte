@@ -400,8 +400,8 @@
         </SpecimenBlock>
         <SpecimenBlock title="Settings dialog">
           <Button onclick={() => openSettings()}>Open settings</Button>
-          <Button href="/connectors">Open connectors</Button>
-          <Button href="/connectors/gdrive">Open a connector</Button>
+          <Button href="/settings/connectors">Open connectors</Button>
+          <Button href="/settings/connectors/gdrive">Open a connector</Button>
         </SpecimenBlock>
         <SpecimenBlock title="Settings nav">
           <SettingsNav active={settingsSection} onselect={(id) => (settingsSection = id)} items={[{ id: 'profile', label: 'Profile', icon: UserIcon }, { id: 'appearance', label: 'Appearance', icon: PaletteIcon }, { id: 'notifications', label: 'Notifications', icon: BellIcon }, { id: 'connectors', label: 'Connectors', icon: PlugIcon, group: 'Customize' }, { id: 'api', label: 'API keys', icon: PlugIcon, group: 'Platform', href: '/specimen' }]} />

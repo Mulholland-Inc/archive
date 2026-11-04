@@ -219,7 +219,7 @@ func (a *Archive) connectStart(w http.ResponseWriter, r *http.Request) {
 		to, err = p.AuthURL(a.hub.connectRedirect(p.ID), connect.SealState(a.hub.aead, st), st.Verifier, asked)
 	}
 	if err != nil {
-		http.Redirect(w, r, a.hub.app+"/connectors/"+r.PathValue("id")+"?"+url.Values{"workspace": {a.ws.ID.String()}, "error": {err.Error()}}.Encode(), http.StatusSeeOther)
+		http.Redirect(w, r, a.hub.app+connectBack(r.PathValue("id"))+"?"+url.Values{"workspace": {a.ws.ID.String()}, "error": {err.Error()}}.Encode(), http.StatusSeeOther)
 		return
 	}
 	http.Redirect(w, r, to, http.StatusFound)
@@ -254,7 +254,7 @@ func (a *Archive) connectFinish(w http.ResponseWriter, r *http.Request, st conne
 	if err != nil {
 		back.Set("error", err.Error())
 	}
-	http.Redirect(w, r, a.hub.app+"/connectors/"+st.Provider+"?"+back.Encode(), http.StatusSeeOther)
+	http.Redirect(w, r, a.hub.app+connectBack(st.Provider)+"?"+back.Encode(), http.StatusSeeOther)
 }
 
 // connectKeys connects the key connector id with keys, for whoever is signed in, or for the archive when it
@@ -319,7 +319,16 @@ func (a *Archive) connectLink(ctx context.Context, id string) (string, error) {
 			return "", err
 		}
 	}
-	return p.LinkToken(ctx, ac.member.String(), a.hub.api+"/push/"+p.ID, a.hub.app+"/connectors/"+p.ID)
+	return p.LinkToken(ctx, ac.member.String(), a.hub.api+"/push/"+p.ID, a.hub.app+connectBack(p.ID))
+}
+
+// connectBack is where the app shows connector id in its settings: the archive's integrations, or a person's
+// connectors.
+func connectBack(id string) string {
+	if c := connect.Get(id); c != nil && c.Integration {
+		return "/settings/integrations/" + id
+	}
+	return "/settings/connectors/" + id
 }
 
 // level is what the caller may do in the archive: their member's level, viewer through a viewer-only token,

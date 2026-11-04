@@ -31,7 +31,7 @@ export const app = $state({
   model: 'pro',
   pending: null,
   muted: false,
-  settings: { open: false, section: null },
+  settings: { open: false, section: null, sub: null },
   apiKey: mockKey('ak_live_', 'Created today'),
   archiveKeys: {},
   archiveApps: {},
@@ -594,8 +594,8 @@ export async function signOut() {
 
 // Settings
 
-export function openSettings(section = null) {
-  Object.assign(app.settings, { open: true, section });
+export function openSettings(section = null, sub = null) {
+  Object.assign(app.settings, { open: true, section, sub });
 }
 
 // Onboarding (MOCK: no API; kept per archive in localStorage)

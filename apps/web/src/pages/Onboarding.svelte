@@ -27,7 +27,7 @@
     dpa: () => completeStep('dpa'),
     verify: () => completeStep('verify'),
     invite: () => (inviting = true),
-    connect: () => go('/connectors'),
+    connect: () => openSettings('connectors'),
     upload: () => go('/library'),
     workflow: () => (creating = true),
     region: () => {

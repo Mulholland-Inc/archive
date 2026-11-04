@@ -1,5 +1,5 @@
 <script>
-  import { Plus, Search, Library, Database, Workflow, Plug, Lock, Settings } from '@lucide/svelte';
+  import { Plus, Search, Library, Database, Workflow, Blocks, Lock, Settings } from '@lucide/svelte';
   import { layoutOf } from '../layouts/index.js';
   import Sidebar from './Sidebar.svelte';
   import SidebarItem from './SidebarItem.svelte';
@@ -54,7 +54,7 @@
       </MenuItem>
       <MenuItem icon={Library} href="/library">Library</MenuItem>
       <MenuItem icon={Database} href="/database">Database</MenuItem>
-      <MenuItem icon={Plug} href="/connectors">Connectors</MenuItem>
+      <MenuItem icon={Blocks} onselect={() => { app.drawer = false; openSettings('integrations'); }}>Integrations</MenuItem>
       <MenuItem icon={Lock} href="/access">Access</MenuItem>
       <MenuSeparator />
       <MenuItem icon={Settings} onselect={() => { app.drawer = false; openSettings('general'); }}>Settings</MenuItem>
