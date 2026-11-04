@@ -1839,6 +1839,8 @@ const (
 var pgDropped = map[string]bool{
 	// What connections synced is in the tables of its domain now, and syncs started from scratch to fill them.
 	"table archive.record": true,
+	// Synced files are rows of archive.file now, and syncs start from scratch to fill them.
+	"table archive.drive_file": true,
 }
 
 // pgPlan is the DDL that brings live to want, both read with an empty search_path, for Archive's own schema: it

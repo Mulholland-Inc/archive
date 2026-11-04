@@ -607,9 +607,15 @@ func (a *Archive) EditDocument(ctx context.Context, id uuid.UUID, ops []OfficeOp
 }
 
 func (a *Archive) editDocument(ctx context.Context, id uuid.UUID, ops []OfficeOp) (*File, error) {
+	if err := a.fileMine(ctx, id, "edit"); err != nil {
+		return nil, err
+	}
 	f, err := fileOf(a.st.db(ctx).LockFile(ctx, id))
 	if errors.Is(err, ErrNotFound) {
 		return nil, fmt.Errorf("file %s: %w", id, ErrNotFound)
+	}
+	if err == nil {
+		err = f.blob()
 	}
 	if err != nil {
 		return nil, err
@@ -2151,5 +2157,5 @@ func (a *Archive) CreateDocument(ctx context.Context, access, name string) (*Fil
 	default:
 		return nil, fmt.Errorf("archive.create: %q is not a document; end the name in .docx, .xlsx or .pptx: %w", name, httpErrBadRequest)
 	}
-	return a.AddFile(ctx, access, name, bytes.NewReader(b))
+	return a.AddFile(ctx, access, name, nil, bytes.NewReader(b))
 }

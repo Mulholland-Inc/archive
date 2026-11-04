@@ -521,7 +521,7 @@ type SearchHit struct {
 }
 
 const searchFile = `SELECT 'file' AS kind, 'file' AS type, f.id, f.created_at, jsonb_build_object('id', f.id, 'name', f.name, 'mime', f.mime,
-		'size', f.size, 'sha256', f.hash, 'access', f.access, 'created_at', f.created_at) AS data, ts_rank(f.search, q.q, 1) AS rank,
+		'size', f.size, 'sha256', f.hash, 'access', f.access, 'created_at', f.created_at, 'kind', f.kind, 'parent', f.parent, 'connection', f.connection, 'url', f.url) AS data, ts_rank(f.search, q.q, 1) AS rank,
 		CASE WHEN f.text <> '' THEN ts_headline('simple', left(f.text, 100000), q.q, 'MaxFragments=1, MaxWords=30, MinWords=10, StartSel=**, StopSel=**') ELSE '' END AS snippet
 	FROM archive.file f, q WHERE f.search @@ q.q`
 

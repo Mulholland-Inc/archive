@@ -9,8 +9,7 @@ import (
 // Google Drive, with ARCHIVE_GOOGLE like Gmail: the client's authorized redirect URIs list
 // <API>/connect/gdrive/callback, and its consent screen asks for drive, a restricted scope, to read every file
 // and to make, change and trash them; it never deletes one for good.
-// It syncs every file the account can see into drive_file, with the text of Google's own documents, from
-// Drive's changes feed, which pushes too: changes.watch, a channel of Archive's own id that pushes to Archive with its
+// It syncs every file the account can see into archive.file from Drive's changes feed, which pushes too: changes.watch, a channel of Archive's own id that pushes to Archive with its
 // token, for a week at most; the first sync a day after replaces it, and stops the one before. A push says its
 // channel in X-Goog-Channel-ID and its token in X-Goog-Channel-Token; the sync push of a new channel says nothing changed.
 func init() {
@@ -103,36 +102,36 @@ func init() {
 				Items: "changes", Inner: "file", ID: "fileId", Gone: []Test{{At: "removed", Is: "true"}, {At: "file", Off: true}, {At: "file/trashed", Is: "true"}}},
 			Hydrate: []Hydrate{
 				Fetch{If: Test{At: "driveId"}, Once: "{driveId}", Soft: true, Req: Req{URL: "/drives/{driveId}?fields=name"}, As: "shared"},
-				// A Sheet reads whole as an Excel workbook, every sheet of it, where its CSV is its first sheet alone.
-				Download{If: Test{At: "mimeType", Is: driveSheet}, Req: Req{URL: "/files/{id}/export", Query: Q{"mimeType": driveXLSX}}, Name: "{name}.xlsx", Mime: driveXLSX, As: "text", Par: 4},
-				// An export is named for what it is, not its title: a Doc titled Report.docx is text here, and no Word file.
-				Download{If: Test{At: "mimeType", Is: driveSheet}, Req: Req{URL: "/files/{id}/export", Query: Q{"mimeType": "text/csv"}}, Name: "export.csv", Mime: "text/csv", As: "text", Par: 4},
-				Download{If: Test{At: "mimeType", Re: `^application/vnd\.google-apps\.(document|presentation)$`}, Req: Req{URL: "/files/{id}/export", Query: Q{"mimeType": "text/plain"}}, Name: "export.txt", Mime: "text/plain", As: "text", Par: 4},
-				Download{If: Test{At: "mimeType", Re: `^application/vnd\.google-apps\.`, Off: true}, Req: Req{URL: "/files/{id}?alt=media&supportsAllDrives=true"}, Name: "{name}", Mime: "{mimeType}", Size: "size", As: "text", Par: 4},
 			},
-			Doc: "Every file and folder in My Drive, shared with you and in your shared drives, but those in the trash: its name, type, size, " +
-				"folder, owner, who changed it last and when, and its words, cut at 64 KB: a Google Doc, Sheet (its first sheet) or Slides " +
-				"deck's, every sheet of a Sheet, and a PDF, Word, Excel, PowerPoint or text file's up to 25 MB; other content stays in Drive. " +
-				"A listing Drive says may have left files out deletes none. Listed whole the first time, 100 a page, and then Drive's changes since.",
+			Doc: "Every file and folder in My Drive, shared with you and in your shared drives, but those in the trash: its name, type, " +
+				"folder, owner, who changed it last and when, and a copy of its bytes. A listing Drive says may have left files out deletes none. " +
+				"Listed whole the first time, 100 a page, and then Drive's changes since.",
 			// A file's folder is its first parent, and its owner the first of them, or for a file of a shared drive, which has none, nobody.
-			To: Map{Table: "drive_file",
-				Cols: map[string]SQL{"kind": "CASE WHEN data->>'mimeType' = 'application/vnd.google-apps.folder' THEN 'folder' ELSE 'file' END", "title": "data->>'name'", "mime": "data->>'mimeType'",
-					"size": "archive.sync_num(data->>'size')", "url": "data->>'webViewLink'",
+			// Google's own documents are kept as the Office files they export to, named so.
+			To: Map{Table: "file",
+				Cols: map[string]SQL{"kind": "CASE WHEN data->>'mimeType' = 'application/vnd.google-apps.folder' THEN 'folder' ELSE 'file' END",
+					"name": "CASE data->>'mimeType' WHEN '" + driveDoc + "' THEN regexp_replace(data->>'name', '(\\.docx)?$', '.docx', 'i') WHEN '" + driveSheet + "' THEN regexp_replace(data->>'name', '(\\.xlsx)?$', '.xlsx', 'i') " +
+						"WHEN '" + driveDeck + "' THEN regexp_replace(data->>'name', '(\\.pptx)?$', '.pptx', 'i') ELSE data->>'name' END",
+					"mime":    "CASE data->>'mimeType' WHEN '" + driveDoc + "' THEN '" + driveDOCX + "' WHEN '" + driveSheet + "' THEN '" + driveXLSX + "' WHEN '" + driveDeck + "' THEN '" + drivePPTX + "' ELSE coalesce(data->>'mimeType', 'application/octet-stream') END",
+					"version": "coalesce(data->>'md5Checksum', data->>'modifiedTime')", "source": "jsonb_build_object('id', data->>'id', 'mimeType', data->>'mimeType', 'size', data->>'size')",
+					"url":        "data->>'webViewLink'",
 					"drive":      "CASE WHEN nullif(data->>'driveId', '') IS NOT NULL THEN coalesce(nullif(data#>>'{shared,name}', ''), 'Shared drive') WHEN data->>'ownedByMe' = 'true' THEN 'My Drive' ELSE 'Shared with me' END",
 					"owner_name": "data#>>'{owners,0,displayName}'", "editor_name": "data#>>'{lastModifyingUser,displayName}'", "made_at": "archive.sync_at(data->>'createdTime')",
-					"edited_at": "archive.sync_at(data->>'modifiedTime')", "text": "data->>'text'"},
+					"edited_at": "archive.sync_at(data->>'modifiedTime')"},
 				People: map[string]SQL{"owner": "data#>>'{owners,0,emailAddress}'", "editor": "data#>>'{lastModifyingUser,emailAddress}'"},
-				Refs:   map[string]SQL{"folder": "data#>>'{parents,0}'"}}}},
+				Refs:   map[string]SQL{"parent": "data#>>'{parents,0}'"}}}},
 	})
 }
 
 const (
 	driveFields = "id,name,mimeType,modifiedTime,size,webViewLink,owners(displayName,emailAddress)"
 	// driveSync is what the files stream reads of a file.
-	driveSync = "id,name,mimeType,size,webViewLink,parents,driveId,ownedByMe,createdTime,modifiedTime,trashed," +
+	driveSync = "id,name,mimeType,size,md5Checksum,webViewLink,parents,driveId,ownedByMe,createdTime,modifiedTime,trashed," +
 		"owners(displayName,emailAddress),lastModifyingUser(displayName,emailAddress)"
 	driveUpload = "https://www.googleapis.com/upload/drive/v3"
+	driveDOCX   = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 	driveXLSX   = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	drivePPTX   = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 	driveDoc    = "application/vnd.google-apps.document"
 	driveSheet  = "application/vnd.google-apps.spreadsheet"
 	driveDeck   = "application/vnd.google-apps.presentation"

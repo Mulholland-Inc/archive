@@ -252,7 +252,7 @@
  *   when it is one of those.
  * - Archive also keeps a copy of what these accounts have, synced when the service says something changed or
  *   when you read them after 5 minutes without a sync, as rows of the tables of their domain: mail_message,
- *   mail_party and mail_attachment, calendar_event and calendar_attendee, chat_message, doc_page, drive_file,
+ *   mail_party and mail_attachment, calendar_event and calendar_attendee, chat_message, doc_page, file,
  *   marketing_campaign, ad_metric, work_item, code_project, compliance, the bank_, commerce_, crm_, dental_, ledger_, payroll_, spend_ and warehouse_ tables, with
  *   the people and organizations they name in known_person and known_org. Each row has its connection, its
  *   stream (like messages) and its source_id there, and updated_at when it last changed; Streams, after

@@ -59,7 +59,7 @@ function shell(w) {
     chats: [],
     conversations: {},
     library: [],
-    folders: [],
+    sources: [],
     workflows: [],
     members: [],
     groups: [],
@@ -191,10 +191,10 @@ function setMe(me) {
   Object.assign(app.profile, { name, first: app.user.first });
 }
 
-async function files(id) {
+async function files(id, where) {
   const all = [];
   for (let after = ''; ; ) {
-    const next = await api(`/api/files?limit=500${after ? `&after=${after}` : ''}`, { workspace: id });
+    const next = await api(`/api/files?limit=500&${where}${after ? `&after=${after}` : ''}`, { workspace: id });
     all.push(...next);
     if (next.length < 500) break;
     after = next.at(-1).id;
@@ -227,17 +227,36 @@ export const chats = resource({
   }
 });
 
-// The library's files, and its folders: the name of every group a file is limited to, and the empty ones made
-// here.
+// The top of the library: what was made here, and the connections whose files you can see. A folder is read when opened.
 export const library = resource({
   tables: ['archive.file', 'archive.group'],
   load: async () => {
     const v = ws();
-    const [list] = await Promise.all([files(v.id), groups.refresh()]);
+    const [list, sources] = await Promise.all([files(v.id, 'top=1'), api('/api/files/sources', { workspace: v.id }), groups.refresh()]);
     v.library = list.map((f) => filed(toFile(f, v.name), v));
-    v.folders = [...new Set([...v.library.map((f) => f.folder), ...v.folders])];
+    v.sources = sources ?? [];
   }
 });
+
+// folderFiles are what is in the folder parent, or at the top of connection.
+export async function folderFiles({ parent, connection }) {
+  const v = ws();
+  const list = await files(v.id, parent ? `parent=${parent}` : `top=1&connection=${connection}`);
+  return list.map((f) => filed(toFile(f, v.name), v));
+}
+
+// fileById is the file id, wherever in the tree it is.
+export async function fileById(id) {
+  const v = ws();
+  return filed(toFile(await api(`/api/files/${id}`, { workspace: v.id }), v.name), v);
+}
+
+// findFiles are the files whose name or words have q, wherever in the tree they are.
+export async function findFiles(q) {
+  const v = ws();
+  const hits = await api(`/api/search?type=file&limit=100&q=${encodeURIComponent(q)}`, { workspace: v.id });
+  return (hits ?? []).map((h) => ({ ...filed(toFile(h.data, v.name), v), snippet: h.snippet }));
+}
 
 // A file's bytes and thumbnail are cached as blobs; a file that moved has them fetched again.
 onChange((changes) => {
@@ -1009,15 +1028,13 @@ export async function removeChat(id) {
 
 // Library
 
-export async function uploadFiles(list, folder) {
+export async function uploadFiles(list, parent) {
   const w = ws();
-  const access = w.groups.find((g) => g.name === folder)?.id;
   const added = [];
   for (const file of list) {
     try {
-      const f = filed(toFile(await upload(file, access), w.name), w);
-      w.library.unshift(f);
-      if (!w.folders.includes(f.folder)) w.folders.push(f.folder);
+      const f = filed(toFile(await upload(file, undefined, parent), w.name), w);
+      if (!parent) w.library.unshift(f);
       added.push(f);
     } catch (e) {
       await complain(e, `Couldn’t upload ${file.name}`);
@@ -1039,18 +1056,18 @@ export async function setFileAccess(file, access) {
   try {
     const f = filed(toFile(await call(`/api/files/${file.id}`, { method: 'PATCH', body: { access } }), w.name), w);
     Object.assign(file, { access: f.access, folder: f.folder });
-    if (!w.folders.includes(f.folder)) w.folders.push(f.folder);
   } catch (e) {
     complain(e, `Couldn’t change who sees ${file.name}`);
   }
 }
 
-// Folders are the group a file is limited to ("Everyone" when it isn't). A new, empty one is MOCK
-// until a file is filed in it.
-export function addFolder(name) {
+export async function addFolder(name, parent) {
   const w = ws();
-  if (!name || w.folders.includes(name)) return;
-  w.folders.push(name);
+  try {
+    return filed(toFile(await call('/api/folders', { method: 'POST', body: { name, parent: parent ?? null } }), w.name), w);
+  } catch (e) {
+    complain(e, `Couldn’t make ${name}`);
+  }
 }
 
 export async function renameFile(id, name) {
@@ -1086,7 +1103,7 @@ export const permissions = [
   { value: 'edit', label: 'Editor' }
 ];
 
-export const shareKinds = { file: 'File', folder: 'Folder', workflow: 'Workflow', table: 'Table' };
+export const shareKinds = { file: 'File', workflow: 'Workflow', table: 'Table' };
 
 export function shareItem(kind, target, w = ws()) {
   if (kind === 'file') {
@@ -1097,11 +1114,8 @@ export function shareItem(kind, target, w = ws()) {
     const f = w.workflows.find((x) => x.id === target);
     return f && { name: f.name, path: `/workflows/${f.id}` };
   }
-  if (kind === 'table') {
-    const t = w.schema.find((x) => x.id === target);
-    return t && { name: t.name, path: `/database/${t.id}` };
-  }
-  return w.folders.includes(target) ? { name: target, path: '/library' } : null;
+  const t = w.schema.find((x) => x.id === target);
+  return t ? { name: t.name, path: `/database/${t.id}` } : null;
 }
 
 export function isExternal(email) {

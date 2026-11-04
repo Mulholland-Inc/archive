@@ -29,6 +29,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Mulholland-Inc/archive/connect"
 	"github.com/Mulholland-Inc/archive/generated"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -40,16 +41,29 @@ import (
 )
 
 type File struct {
-	ID        uuid.UUID      `json:"id"`
-	Hash      string         `json:"sha256"`
-	Name      string         `json:"name"`
-	MIME      string         `json:"mime"`
-	Size      int64          `json:"size"`
-	Metadata  map[string]any `json:"metadata"`
-	Status    string         `json:"status"`
-	Error     string         `json:"error,omitempty"`
-	Access    *uuid.UUID     `json:"access"`
-	CreatedAt time.Time      `json:"created_at"`
+	ID         uuid.UUID      `json:"id"`
+	Hash       string         `json:"sha256"`
+	Name       string         `json:"name"`
+	MIME       string         `json:"mime"`
+	Size       int64          `json:"size"`
+	Metadata   map[string]any `json:"metadata"`
+	Status     string         `json:"status"`
+	Error      string         `json:"error,omitempty"`
+	Access     *uuid.UUID     `json:"access"`
+	CreatedAt  time.Time      `json:"created_at"`
+	Kind       string         `json:"kind"`
+	Parent     *uuid.UUID     `json:"parent"`
+	Connection *uuid.UUID     `json:"connection"`
+	Stream     *string        `json:"stream,omitempty"`
+	SourceID   *string        `json:"source_id,omitempty"`
+	Version    *string        `json:"version,omitempty"`
+	URL        string         `json:"url,omitempty"`
+	Drive      *string        `json:"drive,omitempty"`
+	OwnerName  *string        `json:"owner_name,omitempty"`
+	EditorName *string        `json:"editor_name,omitempty"`
+	MadeAt     *time.Time     `json:"made_at,omitempty"`
+	EditedAt   *time.Time     `json:"edited_at,omitempty"`
+	UpdatedAt  time.Time      `json:"updated_at"`
 }
 
 const (
@@ -59,7 +73,7 @@ const (
 )
 
 type fileRow interface {
-	generated.FileByKeyRow | generated.CreateFileRow | generated.GetFileRow | generated.RenameFileRow | generated.LockFileRow | generated.NextPendingFileRow | generated.LockPendingFileRow | generated.ReplaceFileRow | generated.SetFileAccessRow
+	generated.FileByKeyRow | generated.CreateFileRow | generated.GetFileRow | generated.RenameFileRow | generated.LockFileRow | generated.NextPendingFileRow | generated.LockPendingFileRow | generated.ReplaceFileRow | generated.SetFileAccessRow | generated.AddFolderRow | generated.MoveFileRow
 }
 
 func fileOf[R fileRow](r R, err error) (*File, error) {
@@ -82,7 +96,7 @@ func fileName(name, hash string) string {
 }
 
 // AddFile stores a file that the group access sees, by its id or its name, or everyone with "".
-func (a *Archive) AddFile(ctx context.Context, access, name string, r io.Reader) (*File, error) {
+func (a *Archive) AddFile(ctx context.Context, access, name string, parent *uuid.UUID, r io.Reader) (*File, error) {
 	if _, err := signedIn(ctx); err != nil {
 		return nil, err
 	}
@@ -90,7 +104,54 @@ func (a *Archive) AddFile(ctx context.Context, access, name string, r io.Reader)
 	if err != nil {
 		return nil, err
 	}
-	return a.fileAdd(ctx, g, name, r)
+	return a.fileAdd(ctx, g, name, parent, r)
+}
+
+// AddFolder makes a folder in parent, or at the top with nil, that the group access sees.
+func (a *Archive) AddFolder(ctx context.Context, access, name string, parent *uuid.UUID) (*File, error) {
+	name = strings.TrimSpace(filepath.Base(strings.ReplaceAll(name, "\\", "/")))
+	if name == "" || name == "." || name == "/" {
+		return nil, fmt.Errorf("name: want a folder name: %w", httpErrBadRequest)
+	}
+	g, err := a.fileGroup(ctx, access)
+	if err != nil {
+		return nil, err
+	}
+	return coreDo(a, ctx, func(ctx context.Context) (*File, error) {
+		return fileOf(a.st.db(ctx).AddFolder(ctx, name, g, parent))
+	})
+}
+
+// MoveFile puts file id in the folder parent, or at the top with nil.
+func (a *Archive) MoveFile(ctx context.Context, id uuid.UUID, parent *uuid.UUID) (*File, error) {
+	if err := a.fileMine(ctx, id, "move"); err != nil {
+		return nil, err
+	}
+	return coreDo(a, ctx, func(ctx context.Context) (*File, error) {
+		return fileOf(a.st.db(ctx).MoveFile(ctx, parent, id))
+	})
+}
+
+// fileMine refuses to do to file id what a connection's file does not take, in words an agent can act on.
+func (a *Archive) fileMine(ctx context.Context, id uuid.UUID, verb string) error {
+	f, err := a.GetFile(ctx, id)
+	if err == nil && f.Connection != nil {
+		return fmt.Errorf("cannot %s %s: its connection syncs it, so it is read only here; archive.copy(%q) makes a copy you can change: %w", verb, f.Name, id, ErrForbidden)
+	}
+	return err
+}
+
+// blob says why f has no bytes to read yet.
+func (f *File) blob() error {
+	switch {
+	case f.Kind == "folder":
+		return fmt.Errorf("%s is a folder: %w", f.Name, httpErrBadRequest)
+	case f.Hash == "" && f.Error != "":
+		return fmt.Errorf("Archive has no copy of %s: %s: %w", f.Name, f.Error, ErrNotFound)
+	case f.Hash == "":
+		return fmt.Errorf("Archive has not copied %s yet: %w", f.Name, ErrNotFound)
+	}
+	return nil
 }
 
 // fileGroup is the id of the group access names, by its id or its name; nil for "".
@@ -105,7 +166,7 @@ func (a *Archive) fileGroup(ctx context.Context, access string) (g *uuid.UUID, e
 	return g, err
 }
 
-func (a *Archive) fileAdd(ctx context.Context, access *uuid.UUID, name string, r io.Reader) (*File, error) {
+func (a *Archive) fileAdd(ctx context.Context, access *uuid.UUID, name string, parent *uuid.UUID, r io.Reader) (*File, error) {
 	tmp, err := os.CreateTemp("", "archive-post-")
 	if err != nil {
 		return nil, err
@@ -118,10 +179,10 @@ func (a *Archive) fileAdd(ctx context.Context, access *uuid.UUID, name string, r
 	if err != nil {
 		return nil, err
 	}
-	return a.fileCommit(ctx, access, name, func() (io.ReadCloser, error) { return os.Open(tmp.Name()) })
+	return a.fileCommit(ctx, access, name, parent, func() (io.ReadCloser, error) { return os.Open(tmp.Name()) })
 }
 
-func (a *Archive) fileCommit(ctx context.Context, access *uuid.UUID, name string, open func() (io.ReadCloser, error)) (*File, error) {
+func (a *Archive) fileCommit(ctx context.Context, access *uuid.UUID, name string, parent *uuid.UUID, open func() (io.ReadCloser, error)) (*File, error) {
 	r, err := open()
 	if err != nil {
 		return nil, err
@@ -148,11 +209,11 @@ func (a *Archive) fileCommit(ctx context.Context, access *uuid.UUID, name string
 		return nil, err
 	}
 	f, err := coreDo(a, ctx, func(ctx context.Context) (*File, error) {
-		f, err := fileOf(a.st.db(ctx).FileByKey(ctx, access, hash, name))
+		f, err := fileOf(a.st.db(ctx).FileByKey(ctx, generated.FileByKeyParams{Access: access, Parent: parent, Hash: hash, Name: name}))
 		if !errors.Is(err, ErrNotFound) {
 			return f, err
 		}
-		return fileOf(a.st.db(ctx).CreateFile(ctx, generated.CreateFileParams{Hash: hash, Name: name, MIME: mt, Size: size, Access: access}))
+		return fileOf(a.st.db(ctx).CreateFile(ctx, generated.CreateFileParams{Hash: hash, Name: name, MIME: mt, Size: size, Access: access, Parent: parent}))
 	})
 	if err != nil {
 		return nil, err
@@ -179,12 +240,20 @@ func (a *Archive) fileReady(ctx context.Context, f *File) (*File, error) {
 	return a.ProcessFile(ctx, f.ID)
 }
 
-func (a *Archive) Files(ctx context.Context, limit int, after uuid.UUID) ([]*File, error) {
+// FileTree says which of the files Files lists: nil is every one; else those in the folder Parent, or with none those
+// at the top of the connection Connection, or at the top of what was made here.
+type FileTree struct{ Parent, Connection *uuid.UUID }
+
+func (a *Archive) Files(ctx context.Context, limit int, after uuid.UUID, tree *FileTree) ([]*File, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
+	p := generated.FilesParams{After: after, Lim: int32(limit)}
+	if tree != nil {
+		p.Tree, p.InFolder, p.OfConnection = true, tree.Parent, tree.Connection
+	}
 	return coreDo(a, ctx, func(ctx context.Context) ([]*File, error) {
-		rows, err := a.st.db(ctx).Files(ctx, after, int32(limit))
+		rows, err := a.st.db(ctx).Files(ctx, p)
 		fs := make([]*File, len(rows))
 		for i := range rows {
 			fs[i] = (*File)(&rows[i])
@@ -208,6 +277,9 @@ func (a *Archive) RenameFile(ctx context.Context, id uuid.UUID, name string) (*F
 	if name == "" || name == "." || name == "/" {
 		return nil, fmt.Errorf("name: want a file name: %w", httpErrBadRequest)
 	}
+	if err := a.fileMine(ctx, id, "rename"); err != nil {
+		return nil, err
+	}
 	return coreDo(a, ctx, func(ctx context.Context) (*File, error) {
 		f, err := fileOf(a.st.db(ctx).RenameFile(ctx, id, name))
 		var pe *pgconn.PgError
@@ -226,6 +298,9 @@ func (a *Archive) RenameFile(ctx context.Context, id uuid.UUID, name string) (*F
 func (a *Archive) SetFileAccess(ctx context.Context, id uuid.UUID, access string) (*File, error) {
 	g, err := a.fileGroup(ctx, access)
 	if err != nil {
+		return nil, err
+	}
+	if err := a.fileMine(ctx, id, "change who sees"); err != nil {
 		return nil, err
 	}
 	return coreDo(a, ctx, func(ctx context.Context) (*File, error) {
@@ -253,6 +328,9 @@ func (a *Archive) FileText(ctx context.Context, id uuid.UUID) (string, error) {
 
 func (a *Archive) OpenFile(ctx context.Context, id uuid.UUID) (*File, io.ReadSeekCloser, error) {
 	f, err := a.GetFile(ctx, id)
+	if err == nil {
+		err = f.blob()
+	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -295,6 +373,10 @@ func mediaInline(mt string) bool {
 }
 
 func (a *Archive) fileServe(w http.ResponseWriter, r *http.Request, f *File, strip bool) {
+	if err := f.blob(); err != nil {
+		httpWrite(w, 0, nil, err)
+		return
+	}
 	rc, err := a.blobs.open(r.Context(), blobKey(f.Hash), f.Size)
 	if err != nil {
 		httpWrite(w, 0, nil, err)
@@ -341,8 +423,35 @@ func (a *Archive) fileRoutes(mux *http.ServeMux) {
 				return 0, nil, fmt.Errorf("after: %w", httpErrBadRequest)
 			}
 		}
-		fs, err := a.Files(r.Context(), limit, after)
+		var tree *FileTree
+		if q := r.URL.Query(); q.Has("parent") || q.Has("connection") || q.Has("top") {
+			tree = &FileTree{}
+			var err error
+			if tree.Parent, err = fileParam(r, "parent"); err == nil {
+				tree.Connection, err = fileParam(r, "connection")
+			}
+			if err != nil {
+				return 0, nil, err
+			}
+		}
+		fs, err := a.Files(r.Context(), limit, after, tree)
 		return http.StatusOK, fs, err
+	})
+	handle("GET /api/files/sources", func(r *http.Request) (int, any, error) {
+		s, err := a.FileSources(r.Context())
+		return http.StatusOK, s, err
+	})
+	handle("POST /api/folders", func(r *http.Request) (int, any, error) {
+		var body struct {
+			Name   string     `json:"name"`
+			Access *string    `json:"access"`
+			Parent *uuid.UUID `json:"parent"`
+		}
+		if err := httpDecode(r, &body); err != nil {
+			return 0, nil, err
+		}
+		f, err := a.AddFolder(r.Context(), deref(body.Access), body.Name, body.Parent)
+		return http.StatusCreated, f, err
 	})
 	handle("POST /api/files", func(r *http.Request) (int, any, error) {
 		r.Body = http.MaxBytesReader(nil, r.Body, fileMaxPost)
@@ -356,7 +465,11 @@ func (a *Archive) fileRoutes(mux *http.ServeMux) {
 				return 0, nil, fmt.Errorf("no file part: %w", httpErrBadRequest)
 			}
 			if p.FormName() == "file" {
-				f, err := a.AddFile(r.Context(), r.URL.Query().Get("access"), p.FileName(), p)
+				parent, err := fileParam(r, "parent")
+				if err != nil {
+					return 0, nil, err
+				}
+				f, err := a.AddFile(r.Context(), r.URL.Query().Get("access"), p.FileName(), parent, p)
 				return http.StatusCreated, f, err
 			}
 		}
@@ -373,6 +486,7 @@ func (a *Archive) fileRoutes(mux *http.ServeMux) {
 		var body struct {
 			Name   *string         `json:"name"`
 			Access json.RawMessage `json:"access"`
+			Parent json.RawMessage `json:"parent"`
 		}
 		if err := httpDecode(r, &body); err != nil {
 			return 0, nil, err
@@ -388,7 +502,16 @@ func (a *Archive) fileRoutes(mux *http.ServeMux) {
 			if err := json.Unmarshal(body.Access, &g); err != nil {
 				return 0, nil, fmt.Errorf("access: want a group's id or name, or null for everyone: %w", httpErrBadRequest)
 			}
-			f, err = a.SetFileAccess(r.Context(), id, deref(g))
+			if f, err = a.SetFileAccess(r.Context(), id, deref(g)); err != nil {
+				return 0, nil, err
+			}
+		}
+		if len(body.Parent) > 0 {
+			var p *uuid.UUID
+			if err := json.Unmarshal(body.Parent, &p); err != nil {
+				return 0, nil, fmt.Errorf("parent: want a folder's id, or null for the top: %w", httpErrBadRequest)
+			}
+			f, err = a.MoveFile(r.Context(), id, p)
 		}
 		if f == nil && err == nil {
 			f, err = a.GetFile(r.Context(), id)
@@ -441,6 +564,42 @@ func (a *Archive) fileRoutes(mux *http.ServeMux) {
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		io.WriteString(w, text)
+	})
+}
+
+// fileParam is the id in the query parameter name, nil when it has none.
+func fileParam(r *http.Request, name string) (*uuid.UUID, error) {
+	s := r.URL.Query().Get(name)
+	if s == "" {
+		return nil, nil
+	}
+	id, err := uuid.Parse(s)
+	if err != nil {
+		return nil, fmt.Errorf("%s: want an id: %w", name, httpErrBadRequest)
+	}
+	return &id, nil
+}
+
+// FileSource is a connection whose files you can see, at the top of the tree.
+type FileSource struct {
+	ID       uuid.UUID `json:"id"`
+	Provider string    `json:"provider"`
+	Name     string    `json:"name"`
+	Account  string    `json:"account"`
+}
+
+// FileSources are the connections whose files the caller sees.
+func (a *Archive) FileSources(ctx context.Context) ([]FileSource, error) {
+	return coreDo(a, ctx, func(ctx context.Context) ([]FileSource, error) {
+		rows, err := a.st.db(ctx).FileSources(ctx)
+		out := make([]FileSource, len(rows))
+		for i, c := range rows {
+			out[i] = FileSource{ID: c.ID, Provider: c.Provider, Name: c.Provider, Account: c.Account}
+			if k := connect.Get(c.Provider); k != nil {
+				out[i].Name = k.Name
+			}
+		}
+		return out, err
 	})
 }
 
@@ -696,7 +855,7 @@ func (a *Archive) tusUpload(w http.ResponseWriter, r *http.Request, id uuid.UUID
 }
 
 func (a *Archive) tusFinish(ctx context.Context, up *tusUpload) (*File, error) {
-	f, err := a.fileCommit(ctx, up.Access, up.Name, func() (io.ReadCloser, error) { return &tusReader{a: a, ctx: ctx, up: up}, nil })
+	f, err := a.fileCommit(ctx, up.Access, up.Name, nil, func() (io.ReadCloser, error) { return &tusReader{a: a, ctx: ctx, up: up}, nil })
 	if err != nil {
 		return nil, err
 	}

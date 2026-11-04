@@ -48,17 +48,30 @@ type RunOutput struct {
 }
 
 type runFile struct {
-	ID        uuid.UUID      `json:"id"`
-	Hash      string         `json:"sha256"`
-	Name      string         `json:"name"`
-	MIME      string         `json:"mime"`
-	Size      int64          `json:"size"`
-	Metadata  map[string]any `json:"metadata"`
-	Status    string         `json:"status"`
-	Error     string         `json:"error,omitempty"`
-	Access    *uuid.UUID     `json:"access"`
-	CreatedAt time.Time      `json:"created_at"`
-	Text      string         `json:"text"`
+	ID         uuid.UUID      `json:"id"`
+	Hash       string         `json:"sha256"`
+	Name       string         `json:"name"`
+	MIME       string         `json:"mime"`
+	Size       int64          `json:"size"`
+	Metadata   map[string]any `json:"metadata"`
+	Status     string         `json:"status"`
+	Error      string         `json:"error,omitempty"`
+	Access     *uuid.UUID     `json:"access"`
+	CreatedAt  time.Time      `json:"created_at"`
+	Kind       string         `json:"kind"`
+	Parent     *uuid.UUID     `json:"parent"`
+	Connection *uuid.UUID     `json:"connection"`
+	Stream     *string        `json:"stream,omitempty"`
+	SourceID   *string        `json:"source_id,omitempty"`
+	Version    *string        `json:"version,omitempty"`
+	URL        string         `json:"url,omitempty"`
+	Drive      *string        `json:"drive,omitempty"`
+	OwnerName  *string        `json:"owner_name,omitempty"`
+	EditorName *string        `json:"editor_name,omitempty"`
+	MadeAt     *time.Time     `json:"made_at,omitempty"`
+	EditedAt   *time.Time     `json:"edited_at,omitempty"`
+	UpdatedAt  time.Time      `json:"updated_at"`
+	Text       string         `json:"text"`
 }
 
 type runTable struct {

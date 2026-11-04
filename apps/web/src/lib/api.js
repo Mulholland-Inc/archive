@@ -105,10 +105,13 @@ export async function run(code) {
   return out.result;
 }
 
-export async function upload(file, access) {
+export async function upload(file, access, parent) {
   const form = new FormData();
   form.append('file', file);
-  return api(`/api/files${access ? `?access=${encodeURIComponent(access)}` : ''}`, { method: 'POST', raw: form });
+  const q = new URLSearchParams();
+  if (access) q.set('access', access);
+  if (parent) q.set('parent', parent);
+  return api(`/api/files${q.size ? `?${q}` : ''}`, { method: 'POST', raw: form });
 }
 
 export const fileURL = (id, part = 'content') => `${API}/api/files/${id}/${part}`;

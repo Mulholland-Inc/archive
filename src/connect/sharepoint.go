@@ -15,8 +15,8 @@ import (
 // the refresh token on every refresh, and has no endpoint that revokes one grant: a person removes Archive at
 // myapps.microsoft.com.
 //
-// It syncs every file and folder of every library into drive_file, each library with Graph's delta of it, as
-// Outlook syncs each folder, with the words of each PDF, Word, Excel, PowerPoint or text file up to 25 MB.
+// It syncs every file and folder of every library into archive.file, each library with Graph's delta of it, as
+// Outlook syncs each folder.
 //
 // Graph pushes a library's changes only to a subscription of each library: to the top of it, which tells of a change
 // anywhere in it, with a clientState of Archive's own, for 42,000 minutes, under the 42,300 Graph allows a drive's: the
@@ -64,13 +64,8 @@ func init() {
 				},
 			}),
 			"file": Call[spOne, map[string]any](Plan{
-				Doc: "One file's details, and its words when it is a PDF, Word, Excel, PowerPoint or text file up to 25 MB: { id, name, webUrl, size, file, parentReference, createdBy, " +
-					"lastModifiedBy, lastModifiedDateTime, text }",
-				Steps: []Step{
-					{As: "f", Req: Req{URL: "/drives/{drive}/items/{id}"}},
-					{If: "f/file", As: "f/text", Words: &Download{Req: Req{URL: "/drives/{drive}/items/{id}/content"}, Name: "{f/name}", Mime: "{f/file/mimeType}", Size: "f/size"}},
-				},
-				Out: "{f}",
+				Doc:   "One file's details: { id, name, webUrl, size, file, parentReference, createdBy, lastModifiedBy, lastModifiedDateTime }; its words are in the file table",
+				Steps: []Step{{Req: Req{URL: "/drives/{drive}/items/{id}"}}},
 			}),
 		},
 		Listen: &Listen{Renew: 27 * 24 * time.Hour, Until: 42000 * time.Minute, Secret: true, Lax: true, Over: spLibraries,
@@ -83,24 +78,24 @@ func init() {
 			Kept:    &Kept{Each: "value", ID: "subscriptionId", Token: "clientState"},
 		},
 		Sync: []*Sync{{Name: "files", Gap: time.Second, Parts: spLibraries,
-			Req:   Req{URL: "/drives/{part}/root/delta?$select=id,name,size,webUrl,file,folder,root,parentReference,createdDateTime,lastModifiedDateTime,createdBy,lastModifiedBy,deleted"},
+			Req:   Req{URL: "/drives/{part}/root/delta?$select=id,name,size,eTag,cTag,webUrl,file,folder,root,parentReference,createdDateTime,lastModifiedDateTime,createdBy,lastModifiedBy,deleted"},
 			Items: "value", Key: []Reads{{Of: "{part}/{id}"}}, Updated: "lastModifiedDateTime", Page: spPage, Pass: []int{403, 404},
 			Change: Resume{At: "@odata.deltaLink", Expired: []int{410}, Stale: []Deny{{Status: []int{400}, Says: []string{"SyncState", "resyncRequired", "sync state"}}}},
 			// A library's top is left out.
 			Gone: []Test{{At: "deleted"}, {At: "@removed"}}, Skip: []Test{{At: "root"}},
-			Set:     Obj{"drive": "{in/name}", "driveId": "{part}"},
-			Hydrate: []Hydrate{Download{If: Test{At: "file"}, Req: Req{URL: "/drives/{driveId}/items/{id}/content"}, Name: "{name}", Mime: "{file/mimeType}", Size: "size", As: "text", Par: 4}},
-			Doc: "Every file and folder of your OneDrive and of each document library of each SharePoint site you can reach: its name, type, size, " +
-				"folder, library, who made it and changed it last and when, and the words of a PDF, Word, Excel, PowerPoint or text " +
-				"file up to 25 MB, cut at 64 KB; other content stays in SharePoint. Listed whole the first time, a library at a time, by <library id>/<item id>, and then each " +
+			Set: Obj{"drive": "{in/name}", "driveId": "{part}"},
+			Doc: "Every file and folder of your OneDrive and of each document library of each SharePoint site you can reach: its name, type, " +
+				"folder, library, who made it and changed it last and when, and a copy of its bytes. Listed whole the first time, a library at a time, by <library id>/<item id>, and then each " +
 				"library's delta since. A library made since is listed whole; one gone, or a delta Graph no longer keeps, lists them all again.",
 			// An item's folder is its parent, which links unless it is the library's top, which is no row; and its owner who made it.
-			To: Map{Table: "drive_file",
-				Cols: map[string]SQL{"kind": "CASE WHEN data->'folder' IS NOT NULL THEN 'folder' ELSE 'file' END", "title": "data->>'name'", "mime": "data#>>'{file,mimeType}'", "size": "archive.sync_num(data->>'size')",
-					"url": "data->>'webUrl'", "drive": "data->>'drive'", "owner_name": "data#>>'{createdBy,user,displayName}'", "editor_name": "data#>>'{lastModifiedBy,user,displayName}'",
-					"made_at": "archive.sync_at(data->>'createdDateTime')", "edited_at": "archive.sync_at(data->>'lastModifiedDateTime')", "text": "data->>'text'"},
+			To: Map{Table: "file",
+				Cols: map[string]SQL{"kind": "CASE WHEN data->'folder' IS NOT NULL THEN 'folder' ELSE 'file' END", "name": "data->>'name'",
+					"mime": "CASE WHEN data->'folder' IS NOT NULL THEN 'inode/directory' ELSE coalesce(data#>>'{file,mimeType}', 'application/octet-stream') END", "version": "coalesce(data->>'cTag', data->>'eTag')",
+					"source": "jsonb_build_object('drive', data->>'driveId', 'item', data->>'id', 'size', data->>'size')",
+					"url":    "data->>'webUrl'", "drive": "data->>'drive'", "owner_name": "data#>>'{createdBy,user,displayName}'", "editor_name": "data#>>'{lastModifiedBy,user,displayName}'",
+					"made_at": "archive.sync_at(data->>'createdDateTime')", "edited_at": "archive.sync_at(data->>'lastModifiedDateTime')"},
 				People: map[string]SQL{"owner": "data#>>'{createdBy,user,email}'", "editor": "data#>>'{lastModifiedBy,user,email}'"},
-				Refs:   map[string]SQL{"folder": "coalesce(nullif(data#>>'{parentReference,driveId}', ''), data->>'driveId') || '/' || nullif(data#>>'{parentReference,id}', '')"}}}},
+				Refs:   map[string]SQL{"parent": "coalesce(nullif(data#>>'{parentReference,driveId}', ''), data->>'driveId') || '/' || nullif(data#>>'{parentReference,id}', '')"}}}},
 	})
 }
 

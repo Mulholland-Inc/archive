@@ -1259,7 +1259,7 @@ var syncSchema = map[string]syncTable{
 	"payroll_contractor_payment":       {links: map[string]string{"company": "payroll_company", "worker": "payroll_worker"}},
 	"payroll_contractor_payment_group": {links: map[string]string{"company": "payroll_company"}},
 	"payroll_task":                     {links: map[string]string{"company": "payroll_company"}},
-	"drive_file":                       {links: map[string]string{"folder": "drive_file"}},
+	"file":                             {links: map[string]string{"parent": "file"}},
 	"calendar_event":                   {links: map[string]string{"series": "calendar_event"}},
 	"calendar_attendee":                {parent: "calendar_event", of: "event"},
 	"crm_company":                      {},
