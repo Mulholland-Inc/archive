@@ -18,8 +18,7 @@ func init() {
 		Info: Info{By: "Google", Description: "Read your mail and attachments, and send, draft or label mail when you ask", Category: CatEmail, Icon: IconMail,
 			Scopes: []string{"Read your mail and its attachments", "Send, draft and label mail when you ask"}},
 		API: "https://gmail.googleapis.com/gmail/v1/users/me",
-		// Gmail allows each user 6,000 units of query cost a minute, and reading a whole message costs a lot of them:
-		// 300 requests a minute stay under it, which reads a 5,000-message mailbox in about 17 minutes.
+		// Every mailbox's requests together, as this is the server's; each mailbox's own limit is its stream's Gap.
 		Pace: 200 * time.Millisecond,
 		Endpoint: oauth2.Endpoint{AuthURL: "https://accounts.google.com/o/oauth2/v2/auth", TokenURL: "https://oauth2.googleapis.com/token",
 			AuthStyle: oauth2.AuthStyleInParams},
@@ -69,9 +68,10 @@ func init() {
 			Watch: Req{Method: POST, URL: "/watch", Body: Obj{"topicName": "{target}"}}, Key: "{account}", Expires: "expiration",
 			Unwatch: &Req{Method: POST, URL: "/stop"},
 			Wrap:    "message/data", Codec: Base64JSON, Keys: "emailAddress"},
-		Sync: []*Sync{{Name: "messages", Gap: 5 * time.Second,
-			// 50 messages a page cost 255 quota units, so pages 5 seconds apart keep a mailbox's sync under half of
-			// Gmail's 6,000 a minute for each user, which leaves the rest to actions.
+		Sync: []*Sync{{Name: "messages", Gap: 50 * time.Second,
+			// Gmail allows each user 6,000 quota units a minute, and format=full costs 60 a message, so a page of 50
+			// costs about 3,005 and takes 10 seconds at Pace. A page a minute keeps a mailbox's sync at about half the
+			// limit, which leaves the rest to actions, and reads a 5,000-message mailbox in about 100 minutes.
 			Req: Req{URL: "/messages", Query: Q{"maxResults": "50", "pageToken": "{page}"}}, Items: "messages", Page: Cursor{At: "nextPageToken"},
 			Change: Token{Start: Req{URL: "/profile"}, At: "historyId", Expired: []int{404},
 				Req:  Req{URL: "/history?historyTypes=messageAdded&historyTypes=messageDeleted&historyTypes=labelAdded&historyTypes=labelRemoved", Query: Q{"startHistoryId": "{token}", "maxResults": "100", "pageToken": "{page}"}},
