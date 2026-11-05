@@ -18,17 +18,6 @@ func init() {
 		Actions: ynabActions(),
 		Sync:    ynabSyncs(),
 	})
-	Register(&Connector{
-		ID: "ynab_token", Name: "YNAB (personal token)",
-		Info: ynabInfo,
-		API:  "https://api.ynab.com/v1",
-		Keys: []Key{{Name: "token", Label: "Personal access token", Secret: true,
-			Help: "In YNAB, Account Settings, Developer Settings, New Token. YNAB shows it once; it reads and could change your plans, though Archive only reads"}},
-		Sign:    map[string]string{"Authorization": "Bearer {key/token}"},
-		Who:     &Who{Req: Req{URL: "/plans"}, Names: []Path{"data/plans/0/name"}},
-		Actions: ynabActions(),
-		Sync:    ynabSyncs(),
-	})
 }
 
 var ynabInfo = Info{By: "YNAB", Description: "Read your YNAB plans: accounts, transactions and what each category has budgeted, spent and left", Category: CatFinance, Icon: IconLedger,

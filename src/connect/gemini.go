@@ -1,32 +1,30 @@
 package connect
 
 import (
-	"crypto/hmac"
-	"crypto/sha512"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
 	"strconv"
-	"sync/atomic"
 	"time"
+
+	"golang.org/x/oauth2"
 )
 
 func init() {
 	Register(&Connector{
 		ID: "gemini", Name: "Gemini",
 		Info: Info{By: "Gemini", Description: "Read your Gemini exchange balances, staking, trades, deposits and withdrawals", Category: CatFinance, Icon: IconCard,
-			Scopes: []string{"Read balances, staking, trades and transfers with a read-only Auditor key", "Never trade, send or move money"}},
+			Scopes: []string{"Read your account, balances, trades and transfers", "Never trade, send or move money"}},
 		API: "https://api.gemini.com",
-		Keys: []Key{
-			{Name: "key", Label: "API key", Secret: true,
-				Help: "In Gemini, Settings, API, Create API key: scope Primary, role Auditor only, and leave “Uses a time based nonce” off. Its key starts with account-"},
-			{Name: "secret", Label: "API secret", Secret: true, Help: "The secret Gemini shows once, beside the key"},
-		},
+		Endpoint: oauth2.Endpoint{AuthURL: "https://exchange.gemini.com/auth", TokenURL: "https://exchange.gemini.com/auth/token",
+			AuthStyle: oauth2.AuthStyleInParams},
+		RevokeBy:  &Req{Method: POST, URL: "https://exchange.gemini.com/auth/token/revoke", Form: Q{"client_id": "{client/id}", "client_secret": "{client/secret}", "token": "{access}"}},
+		Scopes:    []string{"account:read", "balances:read", "history:read"},
+		Comma:     true,
 		Authorize: geminiSign,
 		Answer:    geminiPaged,
-		Who:       &Who{Req: Req{Method: POST, Read: true, URL: "/v1/balances"}, Names: []Path{"accountName"}},
+		Who:       &Who{Req: Req{Method: POST, Read: true, URL: "/v1/account"}, Names: []Path{"users/0/name", "account/accountName"}},
 		Actions: map[string]*Action{
 			"balances": Call[struct{}, []map[string]any](Plan{
 				Doc:   "What the exchange account holds of each currency, with its worth in US dollars: [{ currency, amount, available, amountNotional, availableNotional }]",
@@ -83,7 +81,7 @@ const geminiCoin SQL = "upper(regexp_replace(data->>'symbol', 'usd$', ''))"
 var (
 	geminiPage  = Cursor{At: "after", More: "more"}
 	geminiPairs = &Parts{Req: Req{Method: POST, Read: true, URL: "/v1/balances"}, Items: "items", Skip: []Test{{At: "currency", Is: "USD"}}, ID: "{-currency}usd"}
-	geminiDeny  = []Deny{{Status: []int{400, 403}, Why: "Gemini does not let this key read {stream}: {message}"}}
+	geminiDeny  = []Deny{{Status: []int{400, 403}, Why: "Gemini does not let Archive read {stream}: {message}"}}
 )
 
 type geminiFind struct {
@@ -91,10 +89,8 @@ type geminiFind struct {
 	Since  int64  `json:"since,omitempty" jsonschema:"Only trades on or after this time, in Unix seconds"`
 }
 
-var geminiNonce atomic.Int64
-
-// geminiSign moves a request's JSON body into Gemini's signed payload: the body, the path and a nonce that only grows, in base64,
-// signed with the key's secret by HMAC-SHA384. The request itself goes with no body.
+// geminiSign moves a request's JSON body into the payload Gemini reads its private API's arguments from: the body and the path,
+// in base64. With OAuth the request goes with the access token and no nonce or signature, and itself with no body.
 func geminiSign(r *http.Request, c *Client) {
 	payload := map[string]any{}
 	if r.Body != nil {
@@ -102,27 +98,13 @@ func geminiSign(r *http.Request, c *Client) {
 		r.Body.Close()
 		json.Unmarshal(b, &payload)
 	}
-	n := time.Now().UnixMilli()
-	for {
-		last := geminiNonce.Load()
-		if n <= last {
-			n = last + 1
-		}
-		if geminiNonce.CompareAndSwap(last, n) {
-			break
-		}
-	}
-	payload["request"], payload["nonce"] = r.URL.Path, strconv.FormatInt(n, 10)
+	payload["request"] = r.URL.Path
 	j, _ := json.Marshal(payload)
-	enc := base64.StdEncoding.EncodeToString(j)
-	mac := hmac.New(sha512.New384, []byte(c.keys["secret"]))
-	mac.Write([]byte(enc))
 	r.Body, r.ContentLength, r.GetBody = http.NoBody, 0, nil
 	r.Header.Set("Content-Type", "text/plain")
 	r.Header.Set("Cache-Control", "no-cache")
-	r.Header.Set("X-GEMINI-APIKEY", c.keys["key"])
-	r.Header.Set("X-GEMINI-PAYLOAD", enc)
-	r.Header.Set("X-GEMINI-SIGNATURE", hex.EncodeToString(mac.Sum(nil)))
+	r.Header.Set("Authorization", "Bearer "+c.Token())
+	r.Header.Set("X-GEMINI-PAYLOAD", base64.StdEncoding.EncodeToString(j))
 }
 
 // geminiPaged wraps Gemini's list answers as { items, after, more }: after is a second past the newest timestamp in the list,
