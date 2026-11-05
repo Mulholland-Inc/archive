@@ -260,7 +260,7 @@ func agentLoop(ctx context.Context, key, model string, system []any, msgs []agen
 					return res, err
 				}
 			}
-			send(map[string]any{"type": "result", "id": u["id"], "result": out.Result, "logs": out.Logs, "error": out.Error})
+			send(map[string]any{"type": "result", "id": u["id"], "result": out.Result, "logs": out.Logs, "error": out.Error, "files": out.Files})
 			b, _ := json.Marshal(out)
 			reply.Content = append(reply.Content, agentBlock{"type": "tool_result", "tool_use_id": u["id"], "content": string(b), "is_error": out.Error != ""})
 		}

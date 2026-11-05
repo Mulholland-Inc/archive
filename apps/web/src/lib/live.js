@@ -79,6 +79,8 @@ export function toFile(f, owner = '') {
     connection: f.connection ?? null,
     url: f.url ?? '',
     held: f.sha256 !== '',
+    hash: f.sha256,
+    office: /\.(docx|docm|dotx|xlsx|xlsm|xltx|pptx|pptm|potx)$/i.test(f.name),
     error: f.error ?? '',
     ext: f.kind === 'folder' || ext.includes('.') ? '' : ext,
     sub: f.kind === 'folder' ? relative(f.edited_at ?? f.created_at) : f.status === 'skipped' ? 'Not copied' : f.sha256 === '' ? 'Copying' : undefined,
@@ -191,10 +193,26 @@ function outcome(b) {
   const raw = typeof b.content === 'string' ? b.content : (b.content ?? []).map((c) => c.text ?? '').join('');
   try {
     const o = JSON.parse(raw);
-    return { logs: o.logs ?? [], error: o.error ?? '', state: 'done' };
+    return { logs: o.logs ?? [], error: o.error ?? '', files: o.files, state: 'done' };
   } catch {
     return { logs: [], error: b.is_error ? raw : '', state: 'done' };
   }
+}
+
+// The files a run reported, onto its message: a card per file, and one it made stays made.
+export function changed(message, files) {
+  for (const f of files ?? []) {
+    const had = message.files.find((x) => x.id === f.id);
+    if (!had) message.files.push({ ...f, kind: fileKind('', f.name) });
+    else Object.assign(had, { name: f.name, action: had.action === 'created' ? 'created' : f.action });
+  }
+}
+
+// What a person sent with the files that went along as a line naming each one (withFiles, agent.svelte.js).
+function attached(text) {
+  const [said, list] = text.split(/\n*^Attached from the library:\n(?=(?:- .+ \(file [\da-f-]{36}\)\n?)+$)/m);
+  if (list === undefined) return { text };
+  return { text: said, attachments: [...list.matchAll(/^- (.+) \(file ([\da-f-]{36})\)$/gm)].map(([, name, id]) => ({ id, name, kind: fileKind('', name) })) };
 }
 
 // A saved conversation's messages (Anthropic's format) to the screen's messages: one user bubble per question,
@@ -214,7 +232,7 @@ export function toMessages(messages = []) {
       for (const b of content) if (b.type === 'tool_result' && calls[b.tool_use_id]) Object.assign(calls[b.tool_use_id], outcome(b));
       const text = content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
       if (text) {
-        out.push({ id: `m${n++}`, role: 'user', text });
+        out.push({ id: `m${n++}`, role: 'user', ...attached(text) });
         turn = null;
       }
       continue;
@@ -229,6 +247,8 @@ export function toMessages(messages = []) {
     if (m.role !== 'assistant') continue;
     m.steps = m.calls.map(step);
     m.blocks = markdown(m.text);
+    m.files = [];
+    for (const c of m.calls) changed(m, c.files);
     delete m.calls;
   }
   return out;

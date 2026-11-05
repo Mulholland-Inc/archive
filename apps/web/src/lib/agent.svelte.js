@@ -3,7 +3,7 @@
 
 import { api, turnStream, Unauthorized } from './api.js';
 import { app, ws, agentById } from './app.svelte.js';
-import { markdown, step, toMessages } from './live.js';
+import { changed, markdown, step, toMessages } from './live.js';
 import { resource } from './stream.svelte.js';
 
 const PAGE = 20;
@@ -61,7 +61,7 @@ export async function sendMessage(id, { text = '', attachments = [] }) {
   w.conversations[id] ??= [];
   const list = w.conversations[id];
   list.push({ id: mid(), role: 'user', text, attachments });
-  list.push({ id: mid(), role: 'assistant', steps: [], blocks: [], text: '' });
+  list.push({ id: mid(), role: 'assistant', steps: [], blocks: [], text: '', files: [] });
   const live = list.at(-1);
   const ctrl = new AbortController();
   controllers.set(id, ctrl);
@@ -108,7 +108,10 @@ export async function sendMessage(id, { text = '', attachments = [] }) {
         if (ev.code !== undefined) c.code = ev.code;
         if (ev.description) c.description = ev.description;
         if (ev.type === 'run') c.state = 'running';
-        if (ev.type === 'result') Object.assign(c, { state: 'done', logs: ev.logs ?? [], error: ev.error ?? '' });
+        if (ev.type === 'result') {
+          Object.assign(c, { state: 'done', logs: ev.logs ?? [], error: ev.error ?? '' });
+          changed(live, ev.files);
+        }
         const i = live.steps.findIndex((s) => s.id === ev.id);
         if (i >= 0) live.steps[i] = step(c);
       } else if (ev.type === 'error') {

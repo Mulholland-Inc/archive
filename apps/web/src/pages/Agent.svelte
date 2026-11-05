@@ -1,5 +1,5 @@
 <script>
-  import { onMount, tick } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { Settings, Eraser, Bot } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
@@ -13,7 +13,7 @@
   import EmptyState from '../components/EmptyState.svelte';
   import Skeleton from '../components/Skeleton.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { app, ws, agentById, agents, updateAgent, rememberAgent, markSeen } from '../lib/app.svelte.js';
+  import { app, ws, agentById, agents, library, closeFile, updateAgent, rememberAgent, markSeen } from '../lib/app.svelte.js';
   import { conversation, loadEarlier, sendMessage, stopAgent } from '../lib/agent.svelte.js';
   import { clearConversation } from '../lib/menus.js';
 
@@ -43,6 +43,7 @@
     const last = messages.at(-1);
     last?.text;
     last?.steps?.length;
+    last?.files?.length;
     toBottom();
   });
 
@@ -63,6 +64,7 @@
   }
 
   agents.use();
+  library.use();
   conversation.use(() => agent && id);
   $effect(() => {
     if (agent) rememberAgent(id);
@@ -79,6 +81,9 @@
   $effect(() => {
     if (element && !document.activeElement?.matches('input, textarea')) element.focus();
   });
+
+  // The canvas is beside a chat: leaving the chat closes it.
+  onDestroy(closeFile);
 
   onMount(() => {
     if (id && app.pending?.id === id) {

@@ -45,6 +45,27 @@ type RunOutput struct {
 	Result json.RawMessage `json:"result"`
 	Logs   []string        `json:"logs"`
 	Error  string          `json:"error"`
+	Files  []runChange     `json:"files,omitempty"`
+}
+
+// runChange is a file a run made or edited, as its chat shows it. action is "created" or "edited".
+type runChange struct {
+	ID     uuid.UUID `json:"id"`
+	Name   string    `json:"name"`
+	Action string    `json:"action"`
+}
+
+// change notes one, once per file; one the run made stays made.
+func (o *RunOutput) change(c runChange) {
+	i := slices.IndexFunc(o.Files, func(x runChange) bool { return x.ID == c.ID })
+	if i < 0 {
+		o.Files = append(o.Files, c)
+		return
+	}
+	if o.Files[i].Action == "created" {
+		c.Action = "created"
+	}
+	o.Files[i] = c
 }
 
 type runFile struct {
@@ -206,7 +227,7 @@ func (a *Archive) run(ctx context.Context, code string, input json.RawMessage) (
 		out.Error = runMessage(err)
 	}
 	if out.Error != "" {
-		out.Result = json.RawMessage("null")
+		out.Result, out.Files = json.RawMessage("null"), nil
 	}
 	return out, r.at, nil
 }
@@ -274,11 +295,14 @@ func (r *runner) nested(ctx context.Context, code string, input json.RawMessage)
 		out.Error = runMessage(err)
 	}
 	if out.Error != "" {
-		out.Result = json.RawMessage("null")
+		out.Result, out.Files = json.RawMessage("null"), nil
 		return out, sp.Rollback(ctx)
 	}
 	if err := sp.Commit(ctx); err != nil {
 		return nil, err
+	}
+	for _, c := range out.Files {
+		r.out.change(c)
 	}
 	if t.after != nil {
 		*t.after = append(*t.after, *after...)
@@ -746,6 +770,17 @@ func (r *runner) call(read bool, f func(ctx context.Context) (any, error)) (any,
 	return v, storeErr(sp.Commit(r.ctx))
 }
 
+// noted returns a file this run made or edited, noted as action once it worked.
+func (r *runner) noted(action string) func(*File, error) (any, error) {
+	return func(f *File, err error) (any, error) {
+		if err != nil {
+			return nil, err
+		}
+		r.out.change(runChange{f.ID, f.Name, action})
+		return f, nil
+	}
+}
+
 func (r *runner) sdk() {
 	a, o := r.a, r.vm.NewObject()
 	r.def(o, "query", func(ctx context.Context, call goja.FunctionCall) (any, error) {
@@ -832,7 +867,7 @@ func (r *runner) sdk() {
 			if err := r.arg(call, 1, "create", "opts", &opts); err != nil {
 				return nil, err
 			}
-			return a.CreateDocument(ctx, opts.Access, table)
+			return r.noted("created")(a.CreateDocument(ctx, opts.Access, table))
 		}
 		if err := r.arg(call, 1, "create", "data", &data); err != nil {
 			return nil, err
@@ -869,7 +904,11 @@ func (r *runner) sdk() {
 			if err != nil {
 				return nil, err
 			}
-			return nil, a.DeleteFile(ctx, id)
+			if err := a.DeleteFile(ctx, id); err != nil {
+				return nil, err
+			}
+			r.out.Files = slices.DeleteFunc(r.out.Files, func(c runChange) bool { return c.ID == id })
+			return nil, nil
 		}
 		table, id, err := r.row(call, "delete")
 		if err != nil {
@@ -955,7 +994,7 @@ func (r *runner) sdk() {
 		if err := r.arg(call, 1, "copy", "opts", &opts); err != nil {
 			return nil, err
 		}
-		return a.CopyFile(ctx, id, opts.Name, opts.Access)
+		return r.noted("created")(a.CopyFile(ctx, id, opts.Name, opts.Access))
 	})
 	r.def(o, "read", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		id, err := r.id(call, 0, "read")
@@ -977,7 +1016,7 @@ func (r *runner) sdk() {
 		if err != nil {
 			return nil, fmt.Errorf("archive.edit: %v: %w", err, httpErrBadRequest)
 		}
-		return a.EditDocument(ctx, id, ops)
+		return r.noted("edited")(a.EditDocument(ctx, id, ops))
 	})
 	r.workflowSDK(o)
 	r.browseSDK(o)

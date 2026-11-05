@@ -488,9 +488,9 @@
           <ServerSettings />
         </SpecimenBlock>
         <SpecimenBlock title="Attachments">
-          <Attachment name="adaeze-letter-03.jpg" kind="image" size="2.4 MB" tone={4} />
-          <Attachment name="Linden kickoff notes.pdf" kind="pdf" size="480 KB" tone={1} />
-          <Attachment name="Cassette 4, side A.wav" kind="recording" size="96 MB" tone={2} onremove={() => {}} />
+          <Attachment name="adaeze-letter-03.jpg" kind="image" size="2.4 MB" />
+          <Attachment name="Linden kickoff notes.pdf" kind="pdf" size="480 KB" />
+          <Attachment name="Cassette 4, side A.wav" kind="recording" size="96 MB" onremove={() => {}} />
         </SpecimenBlock>
         <SpecimenBlock title="Progress, divider and disclosure" column>
           <ProgressBar value={0.25} />

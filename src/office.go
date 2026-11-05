@@ -3,17 +3,21 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"math"
 	"path"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -353,6 +357,12 @@ type OfficeModel struct {
 	Tables     []OfficeTable     `json:"tables,omitempty"`
 	Sheets     []OfficeSheet     `json:"sheets,omitempty"`
 	Slides     []OfficeSlide     `json:"slides,omitempty"`
+	// What OfficeView adds. Width and Height are a docx's page in twips, or a deck's slide in EMU.
+	Width  int64         `json:"width,omitempty"`
+	Height int64         `json:"height,omitempty"`
+	Header string        `json:"header,omitempty"`
+	Footer string        `json:"footer,omitempty"`
+	Styles []OfficeStyle `json:"styles,omitempty"`
 }
 type OfficeParagraph struct {
 	ID    string   `json:"id,omitempty"`
@@ -361,10 +371,68 @@ type OfficeParagraph struct {
 	In    string   `json:"in,omitempty"`
 	Text  string   `json:"text"`
 	Runs  []string `json:"runs,omitempty"`
+	// What OfficeView adds. Spans are Text by formatting, when any has some; Marker is a list item's number or bullet.
+	Spans  []OfficeSpan  `json:"spans,omitempty"`
+	Marker string        `json:"marker,omitempty"`
+	Level  int           `json:"level,omitempty"`
+	Align  string        `json:"align,omitempty"`
+	Images []OfficeImage `json:"images,omitempty"`
+}
+type OfficeSpan struct {
+	Text   string  `json:"text"`
+	Bold   bool    `json:"bold,omitempty"`
+	Italic bool    `json:"italic,omitempty"`
+	Under  bool    `json:"under,omitempty"`
+	Strike bool    `json:"strike,omitempty"`
+	Link   bool    `json:"link,omitempty"`
+	Color  string  `json:"color,omitempty"`
+	Size   float64 `json:"size,omitempty"` // points, on a slide
+}
+type OfficeBox struct {
+	X   int64   `json:"x"`
+	Y   int64   `json:"y"`
+	W   int64   `json:"w"`
+	H   int64   `json:"h"`
+	Rot float64 `json:"rot,omitempty"`
+}
+type OfficeImage struct {
+	Part string    `json:"part"`
+	Box  OfficeBox `json:"box"`
+	Z    int       `json:"z,omitempty"`
+}
+type OfficeGridCell struct {
+	Span int    `json:"span,omitempty"`
+	Rows int    `json:"rows,omitempty"`
+	Skip bool   `json:"skip,omitempty"` // covered by the merged cell above
+	Fill string `json:"fill,omitempty"`
 }
 type OfficeTable struct {
-	ID   string     `json:"id"`
-	Rows [][]string `json:"rows"`
+	ID   string             `json:"id"`
+	Rows [][]string         `json:"rows"`
+	Grid [][]OfficeGridCell `json:"grid,omitempty"`
+}
+type OfficeCol struct {
+	Min    int     `json:"min"`
+	Max    int     `json:"max"`
+	Width  float64 `json:"width,omitempty"` // in characters of the default font
+	Hidden bool    `json:"hidden,omitempty"`
+}
+type OfficeStyle struct {
+	Bold   bool    `json:"bold,omitempty"`
+	Italic bool    `json:"italic,omitempty"`
+	Under  bool    `json:"under,omitempty"`
+	Strike bool    `json:"strike,omitempty"`
+	Size   float64 `json:"size,omitempty"`
+	Color  string  `json:"color,omitempty"`
+	Fill   string  `json:"fill,omitempty"`
+	Align  string  `json:"align,omitempty"`
+	VAlign string  `json:"valign,omitempty"`
+	Wrap   bool    `json:"wrap,omitempty"`
+	Indent int     `json:"indent,omitempty"`
+	Top    string  `json:"top,omitempty"` // a border's color, "auto" when it has none of its own
+	Right  string  `json:"right,omitempty"`
+	Bottom string  `json:"bottom,omitempty"`
+	Left   string  `json:"left,omitempty"`
 }
 type OfficeSheet struct {
 	Name      string         `json:"name"`
@@ -372,6 +440,7 @@ type OfficeSheet struct {
 	Merged    []string       `json:"merged,omitempty"`
 	Tables    []OfficeXTable `json:"tables,omitempty"`
 	Cells     []OfficeCell   `json:"cells"`
+	Cols      []OfficeCol    `json:"cols,omitempty"` // OfficeView
 }
 type OfficeXTable struct {
 	Name    string   `json:"name"`
@@ -382,17 +451,34 @@ type OfficeCell struct {
 	Ref     string `json:"ref"`
 	Value   string `json:"value,omitempty"`
 	Formula string `json:"formula,omitempty"`
+	// What OfficeView adds: the value as its number format shows it, that format's color, and an index into Styles.
+	Text  string `json:"text,omitempty"`
+	Ink   string `json:"ink,omitempty"`
+	Style int    `json:"style,omitempty"`
 }
 type OfficeSlide struct {
 	Number int           `json:"slide"`
 	Hidden bool          `json:"hidden,omitempty"`
 	Shapes []OfficeShape `json:"shapes"`
+	// What OfficeView adds: what is behind and around the shapes that hold text. Everything drawn has a Z.
+	Background string        `json:"background,omitempty"`
+	Backdrop   string        `json:"backdrop,omitempty"`
+	Decor      []OfficeShape `json:"decor,omitempty"`
+	Pictures   []OfficeImage `json:"pictures,omitempty"`
 }
 type OfficeShape struct {
 	Index       int               `json:"shape"`
 	Name        string            `json:"name,omitempty"`
 	Placeholder string            `json:"placeholder,omitempty"`
 	Paragraphs  []OfficeParagraph `json:"paragraphs"`
+	// What OfficeView adds. Inset is the text's distance from the box's sides, in EMU: left, top, right, bottom.
+	Box    *OfficeBox `json:"box,omitempty"`
+	Z      int        `json:"z,omitempty"`
+	Fill   string     `json:"fill,omitempty"`
+	Line   string     `json:"line,omitempty"`
+	Geom   string     `json:"geom,omitempty"`
+	Anchor string     `json:"anchor,omitempty"`
+	Inset  []int64    `json:"inset,omitempty"`
 }
 type OfficeOp struct {
 	Op        string `json:"op"`
@@ -590,6 +676,19 @@ func (a *Archive) ReadDocument(ctx context.Context, id uuid.UUID) (*OfficeModel,
 		return nil, err
 	}
 	m, err := OfficeRead(b, f.Name)
+	if err != nil {
+		return nil, fmt.Errorf("archive.read: %v: %w", err, httpErrBadRequest)
+	}
+	return m, nil
+}
+
+// ViewDocument is a document as OfficeView reads it, for the canvas.
+func (a *Archive) ViewDocument(ctx context.Context, id uuid.UUID) (*OfficeModel, error) {
+	f, b, err := a.documentBytes(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	m, err := OfficeView(b, f.Name)
 	if err != nil {
 		return nil, fmt.Errorf("archive.read: %v: %w", err, httpErrBadRequest)
 	}
@@ -1839,6 +1938,7 @@ var (
 type officeDeck struct {
 	pkg    *OfficePackage
 	slides []string
+	w, h   int64
 }
 
 func officeOpenDeck(p *OfficePackage) (*officeDeck, error) {
@@ -1866,6 +1966,9 @@ func officeOpenDeck(p *OfficePackage) (*officeDeck, error) {
 		return nil, err
 	}
 	d := &officeDeck{pkg: p}
+	if sz := OfficeRoot(doc).Child(px, "sldSz"); sz != nil {
+		d.w, d.h = officeInt(sz.Attrv("cx")), officeInt(sz.Attrv("cy"))
+	}
 	for _, s := range OfficeRoot(doc).Find(px, "sldId") {
 		for _, a := range s.Attr {
 			if a.Name.Local == "id" && a.Name.Space != "" {
@@ -2097,7 +2200,7 @@ func officeBlankParts(kind string) []string {
 	case "pptx":
 		group := `<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>`
 		shape := func(id, name, ph string, y, h int, body string) string {
-			return fmt.Sprintf(`<p:sp><p:nvSpPr><p:cNvPr id="%s" name="%s"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr>%s</p:nvPr></p:nvSpPr><p:spPr><a:xfrm><a:off x="1524000" y="%d"/><a:ext cx="9144000" cy="%d"/></a:xfrm></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/>%s</p:txBody></p:sp>`, id, name, ph, y, h, body)
+			return fmt.Sprintf(`<p:sp><p:nvSpPr><p:cNvPr id="%s" name="%s"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr>%s</p:nvPr></p:nvSpPr><p:spPr><a:xfrm><a:off x="1524000" y="%d"/><a:ext cx="9144000" cy="%d"/></a:xfrm></p:spPr><p:txBody><a:bodyPr%s/>%s</p:txBody></p:sp>`, id, name, ph, y, h, map[string]string{"2": ` anchor="b"`}[id], body)
 		}
 		title := func(body string) string {
 			return shape("2", "Title 1", `<p:ph type="ctrTitle"/>`, 1122363, 2387600, body)
@@ -2105,9 +2208,9 @@ func officeBlankParts(kind string) []string {
 		sub := func(body string) string {
 			return shape("3", "Subtitle 2", `<p:ph type="subTitle" idx="1"/>`, 3602038, 1655762, body)
 		}
-		empty := `<a:p><a:endParaRPr lang="en-US"/></a:p>`
-		layoutTitle := `<a:p><a:pPr algn="ctr"/><a:r><a:rPr lang="en-US" sz="6000"/><a:t>Click to add title</a:t></a:r></a:p>`
-		layoutSub := `<a:p><a:pPr marL="0" indent="0" algn="ctr"><a:buNone/></a:pPr><a:r><a:rPr lang="en-US" sz="2400"/><a:t>Click to add subtitle</a:t></a:r></a:p>`
+		empty := `<a:lstStyle/><a:p><a:endParaRPr lang="en-US"/></a:p>`
+		layoutTitle := `<a:lstStyle><a:lvl1pPr algn="ctr"><a:defRPr sz="6000"/></a:lvl1pPr></a:lstStyle><a:p><a:r><a:rPr lang="en-US"/><a:t>Click to add title</a:t></a:r></a:p>`
+		layoutSub := `<a:lstStyle><a:lvl1pPr marL="0" indent="0" algn="ctr"><a:buNone/><a:defRPr sz="2400"/></a:lvl1pPr></a:lstStyle><a:p><a:r><a:rPr lang="en-US"/><a:t>Click to add subtitle</a:t></a:r></a:p>`
 		clr := func(name, v string) string { return `<a:` + name + `><a:srgbClr val="` + v + `"/></a:` + name + `>` }
 		fill := `<a:solidFill><a:schemeClr val="phClr"/></a:solidFill>`
 		line := `<a:ln w="12700"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln>`
@@ -2158,4 +2261,1608 @@ func (a *Archive) CreateDocument(ctx context.Context, access, name string) (*Fil
 		return nil, fmt.Errorf("archive.create: %q is not a document; end the name in .docx, .xlsx or .pptx: %w", name, httpErrBadRequest)
 	}
 	return a.AddFile(ctx, access, name, nil, bytes.NewReader(b))
+}
+
+// OfficeView is OfficeRead with what it takes to draw the file as it looks: formatting, numbering, number formats,
+// positions and pictures, only where the file says them. It is the canvas's: archive.read stays what an agent edits by.
+func OfficeView(b []byte, name string) (*OfficeModel, error) {
+	m, err := OfficeRead(b, name)
+	if err != nil {
+		return nil, err
+	}
+	p, err := OfficeOpen(b)
+	if err != nil {
+		return nil, err
+	}
+	switch m.Type {
+	case "docx":
+		w, err := officeOpenWord(p)
+		if err != nil {
+			return nil, err
+		}
+		w.view(m)
+	case "xlsx":
+		bk, err := officeOpenBook(p)
+		if err != nil {
+			return nil, err
+		}
+		bk.view(m)
+	default:
+		d, err := officeOpenDeck(p)
+		if err != nil {
+			return nil, err
+		}
+		if err := d.view(m); err != nil {
+			return nil, err
+		}
+	}
+	return m, nil
+}
+
+// OfficeMedia is an embedded picture of a file, by the part name OfficeView gave it.
+func OfficeMedia(b []byte, part string) ([]byte, error) {
+	p, err := OfficeOpen(b)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.Contains(part, "/media/") || !p.Has(part) {
+		return nil, fmt.Errorf("%s: %w", part, ErrNotFound)
+	}
+	return p.Part(part)
+}
+
+func officeInt(s string) int64 {
+	n, _ := strconv.ParseInt(s, 10, 64)
+	return n
+}
+
+// officeOn reads a toggle like <w:b/>, <w:b w:val="0"/> or b="1": set, and whether it is on.
+func officeOn(v string) bool { return v != "0" && v != "false" && v != "off" && v != "none" }
+
+// officeAttr is an attribute by its local name, whatever its prefix.
+func officeAttr(n *OfficeNode, local string) string {
+	for _, a := range n.Attr {
+		if a.Name.Local == local {
+			return a.Value
+		}
+	}
+	return ""
+}
+
+// officeByLocal finds elements by their local name, for those whose prefix is declared on the element itself.
+func officeByLocal(n *OfficeNode, local string) []*OfficeNode {
+	var out []*OfficeNode
+	for _, k := range n.Kids {
+		if k.Local == local {
+			out = append(out, k)
+		}
+		out = append(out, officeByLocal(k, local)...)
+	}
+	return out
+}
+
+func officeTarget(rels []OfficeRel, id string) string {
+	for _, r := range rels {
+		if r.ID == id {
+			return r.Target
+		}
+	}
+	return ""
+}
+
+func officeRelOf(rels []OfficeRel, kind string) string {
+	for _, r := range rels {
+		if strings.HasSuffix(r.Type, "/"+kind) {
+			return r.Target
+		}
+	}
+	return ""
+}
+
+// officeDrawable says whether a browser draws a picture, which EMF and WMF it does not.
+func officeDrawable(part string) bool {
+	switch strings.ToLower(path.Ext(part)) {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp":
+		return true
+	}
+	return false
+}
+
+// officeShade applies to a "#RRGGBB" the changes a color's element can carry: lumMod and lumOff in HSL, as fractions,
+// and a mix toward white (t > 0) or black (t < 0) for tint and shade.
+func officeShade(hex string, lumMod, lumOff, t float64) string {
+	if len(hex) != 7 {
+		return hex
+	}
+	v, err := strconv.ParseUint(hex[1:], 16, 32)
+	if err != nil {
+		return hex
+	}
+	r, g, b := float64(v>>16&255)/255, float64(v>>8&255)/255, float64(v&255)/255
+	if lumMod != 1 || lumOff != 0 {
+		hi, lo := max(r, g, b), min(r, g, b)
+		l := (hi + lo) / 2
+		var h, s float64
+		if hi != lo {
+			d := hi - lo
+			if s = d / (hi + lo); l > 0.5 {
+				s = d / (2 - hi - lo)
+			}
+			switch hi {
+			case r:
+				h = (g - b) / d
+				if g < b {
+					h += 6
+				}
+			case g:
+				h = (b-r)/d + 2
+			default:
+				h = (r-g)/d + 4
+			}
+			h /= 6
+		}
+		l = min(1, max(0, l*lumMod+lumOff))
+		q := l + s - l*s
+		if l < 0.5 {
+			q = l * (1 + s)
+		}
+		p := 2*l - q
+		ch := func(t float64) float64 {
+			t -= math.Floor(t)
+			switch {
+			case t < 1.0/6:
+				return p + (q-p)*6*t
+			case t < 0.5:
+				return q
+			case t < 2.0/3:
+				return p + (q-p)*(2.0/3-t)*6
+			}
+			return p
+		}
+		r, g, b = ch(h+1.0/3), ch(h), ch(h-1.0/3)
+	}
+	mix := func(c float64) int {
+		if t > 0 {
+			c += (1 - c) * t
+		} else {
+			c *= 1 + t
+		}
+		return int(math.Round(c * 255))
+	}
+	return fmt.Sprintf("#%02X%02X%02X", mix(r), mix(g), mix(b))
+}
+
+// A docx: runs, numbering, tables' merged cells, pictures, the header and the footer.
+
+var officeHeadingStyle = regexp.MustCompile(`(?i)^(title|subtitle|heading)`)
+
+type officeWordStyle struct {
+	based, numID, ilvl, jc string
+	rpr                    *OfficeNode
+}
+
+func (x *officeWord) view(m *OfficeModel) {
+	rels, _ := x.pkg.Rels(officeDocPart)
+	styles := map[string]officeWordStyle{}
+	if b, err := x.pkg.Part(officeRelOf(rels, "styles")); err == nil {
+		if doc, err := OfficeParse(b); err == nil {
+			for _, st := range OfficeRoot(doc).Children(x.w, "style") {
+				var v officeWordStyle
+				if n := st.Child(x.w, "basedOn"); n != nil {
+					v.based = n.Attrv(x.w + ":val")
+				}
+				v.rpr = st.Child(x.w, "rPr")
+				if ppr := st.Child(x.w, "pPr"); ppr != nil {
+					if n := ppr.Child(x.w, "jc"); n != nil {
+						v.jc = n.Attrv(x.w + ":val")
+					}
+					if np := ppr.Child(x.w, "numPr"); np != nil {
+						if n := np.Child(x.w, "numId"); n != nil {
+							v.numID = n.Attrv(x.w + ":val")
+						}
+						if n := np.Child(x.w, "ilvl"); n != nil {
+							v.ilvl = n.Attrv(x.w + ":val")
+						}
+					}
+				}
+				styles[st.Attrv(x.w+":styleId")] = v
+			}
+		}
+	}
+	// A style and those it is based on, nearest first.
+	chain := func(id string) []officeWordStyle {
+		var out []officeWordStyle
+		for i := 0; id != "" && i < 16; i++ {
+			st, ok := styles[id]
+			if !ok {
+				break
+			}
+			out = append(out, st)
+			id = st.based
+		}
+		return out
+	}
+	levels := x.numbering(rels)
+	counts := map[string][]int{}
+	for i, p := range x.ps {
+		mp := &m.Paragraphs[i]
+		ppr := p.Child(x.w, "pPr")
+		var own []officeWordStyle
+		numID, ilvl, jc := "", "", ""
+		if ppr != nil {
+			if st := ppr.Child(x.w, "pStyle"); st != nil {
+				own = chain(st.Attrv(x.w + ":val"))
+			}
+			if n := ppr.Child(x.w, "jc"); n != nil {
+				jc = n.Attrv(x.w + ":val")
+			}
+			if np := ppr.Child(x.w, "numPr"); np != nil {
+				if n := np.Child(x.w, "numId"); n != nil {
+					numID = n.Attrv(x.w + ":val")
+				}
+				if n := np.Child(x.w, "ilvl"); n != nil {
+					ilvl = n.Attrv(x.w + ":val")
+				}
+			}
+		}
+		styled := numID == ""
+		for _, st := range own {
+			jc = cmp.Or(jc, st.jc)
+			numID = cmp.Or(numID, st.numID)
+			ilvl = cmp.Or(ilvl, st.ilvl)
+		}
+		switch jc {
+		case "center", "right", "both":
+			mp.Align = jc
+		case "end":
+			mp.Align = "right"
+		}
+		if numID != "" && numID != "0" {
+			mp.Level, _ = strconv.Atoi(ilvl)
+			mp.Marker = officeMarker(levels[numID], counts, numID, mp.Level)
+			// A style's own list, like List Bullet 2's, is deeper by its indent rather than by its level.
+			if styled && mp.Level == 0 {
+				mp.Level = max(0, int(levels[numID][0].left/360)-1)
+			}
+		}
+		// A heading's look is the canvas's; the rest of a paragraph style's formatting reaches its text.
+		var base []*OfficeNode
+		if !officeHeadingStyle.MatchString(mp.Style) {
+			for _, st := range own {
+				if st.rpr != nil {
+					base = append(base, st.rpr)
+				}
+			}
+		}
+		mp.Spans = x.spans(p, rels, base, chain)
+		for _, d := range p.Find(x.w, "drawing") {
+			for _, blip := range officeByLocal(d, "blip") {
+				part := officeTarget(rels, officeAttr(blip, "embed"))
+				if part == "" || !officeDrawable(part) {
+					continue
+				}
+				im := OfficeImage{Part: part}
+				if e := officeByLocal(d, "extent"); len(e) > 0 {
+					im.Box.W, im.Box.H = officeInt(e[0].Attrv("cx")), officeInt(e[0].Attrv("cy"))
+				}
+				mp.Images = append(mp.Images, im)
+			}
+		}
+	}
+	for i, t := range x.tbls {
+		m.Tables[i].Grid = x.grid(t)
+	}
+	if sects := x.doc.Find(x.w, "sectPr"); len(sects) > 0 {
+		sect := sects[len(sects)-1]
+		if sz := sect.Child(x.w, "pgSz"); sz != nil {
+			m.Width, m.Height = officeInt(sz.Attrv(x.w+":w")), officeInt(sz.Attrv(x.w+":h"))
+		}
+		m.Header = x.margin(sect, "headerReference", rels)
+		m.Footer = x.margin(sect, "footerReference", rels)
+	}
+}
+
+// margin is the text of a section's usual header or footer.
+func (x *officeWord) margin(sect *OfficeNode, ref string, rels []OfficeRel) string {
+	for _, r := range sect.Children(x.w, ref) {
+		if r.Attrv(x.w+":type") != "default" && r.Attrv(x.w+":type") != "" {
+			continue
+		}
+		b, err := x.pkg.Part(officeTarget(rels, officeAttr(r, "id")))
+		if err != nil {
+			continue
+		}
+		doc, err := OfficeParse(b)
+		if err != nil {
+			continue
+		}
+		var lines []string
+		for _, p := range doc.Find(x.w, "p") {
+			if t := strings.TrimSpace(x.tn.text(p)); t != "" {
+				lines = append(lines, t)
+			}
+		}
+		return strings.Join(lines, "\n")
+	}
+	return ""
+}
+
+type officeLevel struct {
+	format, text string
+	start        int
+	left         int64
+}
+
+// numbering is each list's levels, from numbering.xml.
+func (x *officeWord) numbering(rels []OfficeRel) map[string]map[int]officeLevel {
+	out := map[string]map[int]officeLevel{}
+	b, err := x.pkg.Part(officeRelOf(rels, "numbering"))
+	if err != nil {
+		return out
+	}
+	doc, err := OfficeParse(b)
+	if err != nil {
+		return out
+	}
+	val := func(n *OfficeNode, local string) string {
+		if k := n.Child(x.w, local); k != nil {
+			return k.Attrv(x.w + ":val")
+		}
+		return ""
+	}
+	read := func(lvl *OfficeNode, into map[int]officeLevel) {
+		i, _ := strconv.Atoi(lvl.Attrv(x.w + ":ilvl"))
+		start, err := strconv.Atoi(val(lvl, "start"))
+		if err != nil {
+			start = 1
+		}
+		var left int64
+		if ppr := lvl.Child(x.w, "pPr"); ppr != nil {
+			if n := ppr.Child(x.w, "ind"); n != nil {
+				left = officeInt(n.Attrv(x.w + ":left"))
+			}
+		}
+		into[i] = officeLevel{val(lvl, "numFmt"), val(lvl, "lvlText"), start, left}
+	}
+	abstract := map[string]map[int]officeLevel{}
+	root := OfficeRoot(doc)
+	for _, a := range root.Children(x.w, "abstractNum") {
+		ls := map[int]officeLevel{}
+		for _, lvl := range a.Children(x.w, "lvl") {
+			read(lvl, ls)
+		}
+		abstract[a.Attrv(x.w+":abstractNumId")] = ls
+	}
+	for _, n := range root.Children(x.w, "num") {
+		ls := map[int]officeLevel{}
+		maps.Copy(ls, abstract[val(n, "abstractNumId")])
+		for _, o := range n.Children(x.w, "lvlOverride") {
+			if lvl := o.Child(x.w, "lvl"); lvl != nil {
+				read(lvl, ls)
+			}
+		}
+		out[n.Attrv(x.w+":numId")] = ls
+	}
+	return out
+}
+
+func officeRoman(n int) string {
+	var b strings.Builder
+	for _, r := range []struct {
+		v int
+		s string
+	}{{1000, "m"}, {900, "cm"}, {500, "d"}, {400, "cd"}, {100, "c"}, {90, "xc"}, {50, "l"}, {40, "xl"}, {10, "x"}, {9, "ix"}, {5, "v"}, {4, "iv"}, {1, "i"}} {
+		for ; n >= r.v; n -= r.v {
+			b.WriteString(r.s)
+		}
+	}
+	return b.String()
+}
+
+func officeOrdinal(n int, format string) string {
+	switch format {
+	case "lowerLetter", "upperLetter":
+		s := strings.Repeat(string(rune('a'+(n-1)%26)), (n-1)/26+1)
+		if format == "upperLetter" {
+			return strings.ToUpper(s)
+		}
+		return s
+	case "lowerRoman":
+		return officeRoman(n)
+	case "upperRoman":
+		return strings.ToUpper(officeRoman(n))
+	case "decimalZero":
+		return fmt.Sprintf("%02d", n)
+	}
+	return strconv.Itoa(n)
+}
+
+// officeMarker counts a list item and says what it shows, from its level's text like "%1." or a bullet's character.
+func officeMarker(levels map[int]officeLevel, counts map[string][]int, id string, level int) string {
+	l, ok := levels[level]
+	if !ok {
+		return ""
+	}
+	c := counts[id]
+	for len(c) <= level {
+		c = append(c, 0)
+	}
+	if c[level] == 0 {
+		c[level] = l.start
+	} else {
+		c[level]++
+	}
+	c = c[:level+1]
+	counts[id] = c
+	switch l.format {
+	case "none":
+		return ""
+	case "bullet":
+		switch {
+		case l.text == "o":
+			return "◦"
+		case l.text == "":
+			return ""
+		case []rune(l.text)[0] == 0xF0A7:
+			return "▪"
+		case []rune(l.text)[0] >= 0xE000 && []rune(l.text)[0] <= 0xF8FF:
+			return "•"
+		}
+		return l.text
+	}
+	text := l.text
+	for i := 0; i < len(c); i++ {
+		n := c[i]
+		f := l.format
+		if o, ok := levels[i]; ok && i != level {
+			f = o.format
+		}
+		text = strings.ReplaceAll(text, "%"+strconv.Itoa(i+1), officeOrdinal(n, f))
+	}
+	return text
+}
+
+// spans is a paragraph's text by formatting: its runs', and through base the paragraph style's. Nil if it has none.
+func (x *officeWord) spans(p *OfficeNode, rels []OfficeRel, base []*OfficeNode, chain func(string) []officeWordStyle) []OfficeSpan {
+	on := func(rprs []*OfficeNode, local string) bool {
+		for _, r := range rprs {
+			if n := r.Child(x.w, local); n != nil {
+				return officeOn(n.Attrv(x.w + ":val"))
+			}
+		}
+		return false
+	}
+	var out []OfficeSpan
+	formatted := false
+	var last *OfficeNode
+	for _, seg := range x.tn.segments(p) {
+		if seg.run == last && len(out) > 0 {
+			out[len(out)-1].Text += seg.text
+			continue
+		}
+		last = seg.run
+		var rprs []*OfficeNode
+		if r := seg.run.Child(x.w, "rPr"); r != nil {
+			rprs = append(rprs, r)
+			if n := r.Child(x.w, "rStyle"); n != nil {
+				for _, st := range chain(n.Attrv(x.w + ":val")) {
+					if st.rpr != nil {
+						rprs = append(rprs, st.rpr)
+					}
+				}
+			}
+		}
+		rprs = append(rprs, base...)
+		sp := OfficeSpan{Text: seg.text, Bold: on(rprs, "b"), Italic: on(rprs, "i"), Under: on(rprs, "u"), Strike: on(rprs, "strike"), Link: seg.run.Parent != nil && seg.run.Parent.Is(x.w, "hyperlink")}
+		for _, r := range rprs {
+			if n := r.Child(x.w, "color"); n != nil {
+				if c := n.Attrv(x.w + ":val"); c != "auto" && len(c) == 6 {
+					sp.Color = "#" + strings.ToUpper(c)
+				}
+				break
+			}
+		}
+		if sp.Bold || sp.Italic || sp.Under || sp.Strike || sp.Link || sp.Color != "" {
+			formatted = true
+		}
+		out = append(out, sp)
+	}
+	if !formatted {
+		return nil
+	}
+	return out
+}
+
+// grid is a table's cells as they sit on its columns: how far each spans, and which a merge above covers.
+func (x *officeWord) grid(t *OfficeNode) [][]OfficeGridCell {
+	var out [][]OfficeGridCell
+	open := map[int][2]int{} // a column's merge still going: the row and cell it started at
+	for r, tr := range x.rows(t) {
+		var row []OfficeGridCell
+		col := 0
+		for _, tc := range x.cells(tr) {
+			g := OfficeGridCell{Span: 1, Rows: 1}
+			if pr := tc.Child(x.w, "tcPr"); pr != nil {
+				if n := pr.Child(x.w, "gridSpan"); n != nil {
+					g.Span = max(1, int(officeInt(n.Attrv(x.w+":val"))))
+				}
+				if n := pr.Child(x.w, "shd"); n != nil {
+					if c := n.Attrv(x.w + ":fill"); c != "auto" && len(c) == 6 {
+						g.Fill = "#" + strings.ToUpper(c)
+					}
+				}
+				if n := pr.Child(x.w, "vMerge"); n != nil {
+					if v := n.Attrv(x.w + ":val"); v == "restart" {
+						open[col] = [2]int{r, len(row)}
+					} else if at, ok := open[col]; ok {
+						g.Skip = true
+						out[at[0]][at[1]].Rows++
+					}
+				} else {
+					delete(open, col)
+				}
+			}
+			row = append(row, g)
+			col += g.Span
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+// An xlsx: number formats, each format of a cell, and column widths.
+
+var officeBuiltinFormats = map[int]string{1: "0", 2: "0.00", 3: "#,##0", 4: "#,##0.00", 9: "0%", 10: "0.00%", 11: "0.00E+00", 12: "# ?/?", 13: "# ??/??", 14: "m/d/yyyy", 15: "d-mmm-yy", 16: "d-mmm", 17: "mmm-yy", 18: "h:mm AM/PM", 19: "h:mm:ss AM/PM", 20: "h:mm", 21: "h:mm:ss", 22: "m/d/yyyy h:mm", 37: "#,##0;(#,##0)", 38: "#,##0;[Red](#,##0)", 39: "#,##0.00;(#,##0.00)", 40: "#,##0.00;[Red](#,##0.00)", 45: "mm:ss", 46: "[h]:mm:ss", 47: "mm:ss.0", 48: "##0.0E+0", 49: "@"}
+
+var officeIndexed = strings.Fields("000000 FFFFFF FF0000 00FF00 0000FF FFFF00 FF00FF 00FFFF 000000 FFFFFF FF0000 00FF00 0000FF FFFF00 FF00FF 00FFFF 800000 008000 000080 808000 800080 008080 C0C0C0 808080 9999FF 993366 FFFFCC CCFFFF 660066 FF8080 0066CC CCCCFF 000080 FF00FF FFFF00 00FFFF 800080 800000 008080 0000FF 00CCFF CCFFFF CCFFCC FFFF99 99CCFF FF99CC CC99FF FFCC99 3366FF 33CCCC 99CC00 FFCC00 FF9900 FF6600 666699 969696 003366 339966 003300 333300 993300 993366 333399 333333")
+
+// bookColor is a color element's value: its rgb, its place in the theme or the old palette, with its tint.
+func officeBookColor(n *OfficeNode, theme []string) string {
+	if n == nil {
+		return ""
+	}
+	hex := ""
+	if v := n.Attrv("rgb"); len(v) == 8 {
+		hex = "#" + strings.ToUpper(v[2:])
+	} else if v, ok := n.Get("theme"); ok {
+		if i := int(officeInt(v)); i < len(theme) {
+			hex = theme[i]
+		}
+	} else if v, ok := n.Get("indexed"); ok {
+		if i := int(officeInt(v)); i < len(officeIndexed) {
+			hex = "#" + officeIndexed[i]
+		}
+	}
+	if t, err := strconv.ParseFloat(n.Attrv("tint"), 64); err == nil && hex != "" {
+		return officeShade(hex, 1, 0, t)
+	}
+	return hex
+}
+
+func (bk *officeBook) view(m *OfficeModel) {
+	var theme []string
+	rels, _ := bk.pkg.Rels(bk.wbPart)
+	if b, err := bk.pkg.Part(officeRelOf(rels, "theme")); err == nil {
+		s := officeReadTheme(b)
+		for _, k := range []string{"lt1", "dk1", "lt2", "dk2", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6", "hlink", "folHlink"} {
+			theme = append(theme, s[k])
+		}
+	}
+	formats := []string{}
+	if b, err := bk.pkg.Part(officeRelOf(rels, "styles")); err == nil {
+		if doc, err := OfficeParse(b); err == nil {
+			m.Styles, formats = officeBookStyles(doc, theme)
+		}
+	}
+	for i := range m.Sheets {
+		s, err := bk.sheet(m.Sheets[i].Name)
+		if err != nil {
+			continue
+		}
+		sheet := &m.Sheets[i]
+		if cols := OfficeRoot(s.doc).Child(s.x, "cols"); cols != nil {
+			for _, c := range cols.Children(s.x, "col") {
+				w, _ := strconv.ParseFloat(c.Attrv("width"), 64)
+				sheet.Cols = append(sheet.Cols, OfficeCol{int(officeInt(c.Attrv("min"))), int(officeInt(c.Attrv("max"))), w, officeOn(cmp.Or(c.Attrv("hidden"), "0"))})
+			}
+		}
+		masters := s.sharedMasters()
+		cells := []OfficeCell{}
+		for _, r := range s.rows() {
+			for _, c := range s.cells(r) {
+				cell := OfficeCell{Ref: OfficeColName(c.r) + strconv.Itoa(r.r), Value: s.value(c.n), Formula: s.formula(c.n, masters), Style: int(officeInt(c.n.Attrv("s")))}
+				if cell.Style >= len(m.Styles) {
+					cell.Style = 0
+				}
+				if t := c.n.Attrv("t"); cell.Value != "" && (t == "" || t == "n") && cell.Style < len(formats) {
+					cell.Text, cell.Ink = officeNumber(cell.Value, formats[cell.Style])
+					if cell.Text == cell.Value {
+						cell.Text = ""
+					}
+				}
+				if cell.Value != "" || cell.Formula != "" || cell.Style != 0 {
+					cells = append(cells, cell)
+				}
+			}
+		}
+		sheet.Cells = cells
+	}
+}
+
+// officeBookStyles is each cell format of a workbook, and its number format's code by the same index.
+func officeBookStyles(doc *OfficeNode, theme []string) ([]OfficeStyle, []string) {
+	root := OfficeRoot(doc)
+	x, _ := OfficePrefixOf(doc, officeXNS...)
+	list := func(name, item string) []*OfficeNode {
+		if n := root.Child(x, name); n != nil {
+			return n.Children(x, item)
+		}
+		return nil
+	}
+	custom := map[int]string{}
+	for _, f := range list("numFmts", "numFmt") {
+		custom[int(officeInt(f.Attrv("numFmtId")))] = f.Attrv("formatCode")
+	}
+	fonts, fills, borders := list("fonts", "font"), list("fills", "fill"), list("borders", "border")
+	var styles []OfficeStyle
+	var formats []string
+	for _, xf := range list("cellXfs", "xf") {
+		var st OfficeStyle
+		if i := int(officeInt(xf.Attrv("fontId"))); i < len(fonts) {
+			f := fonts[i]
+			toggle := func(local string) bool {
+				n := f.Child(x, local)
+				return n != nil && officeOn(n.Attrv("val"))
+			}
+			st.Bold, st.Italic, st.Under, st.Strike = toggle("b"), toggle("i"), toggle("u"), toggle("strike")
+			st.Color = officeBookColor(f.Child(x, "color"), theme)
+			if n := f.Child(x, "sz"); n != nil {
+				st.Size, _ = strconv.ParseFloat(n.Attrv("val"), 64)
+			}
+		}
+		if i := int(officeInt(xf.Attrv("fillId"))); i < len(fills) {
+			if p := fills[i].Child(x, "patternFill"); p != nil && p.Attrv("patternType") == "solid" {
+				st.Fill = officeBookColor(p.Child(x, "fgColor"), theme)
+			}
+		}
+		if i := int(officeInt(xf.Attrv("borderId"))); i < len(borders) {
+			side := func(local string) string {
+				n := borders[i].Child(x, local)
+				if n == nil || n.Attrv("style") == "" {
+					return ""
+				}
+				return cmp.Or(officeBookColor(n.Child(x, "color"), theme), "auto")
+			}
+			st.Top, st.Right, st.Bottom, st.Left = side("top"), side("right"), side("bottom"), side("left")
+		}
+		if al := xf.Child(x, "alignment"); al != nil {
+			st.Align, st.VAlign = al.Attrv("horizontal"), al.Attrv("vertical")
+			st.Wrap = officeOn(cmp.Or(al.Attrv("wrapText"), "0"))
+			st.Indent = int(officeInt(al.Attrv("indent")))
+		}
+		id := int(officeInt(xf.Attrv("numFmtId")))
+		styles = append(styles, st)
+		formats = append(formats, cmp.Or(custom[id], officeBuiltinFormats[id]))
+	}
+	return styles, formats
+}
+
+var (
+	officeFormatColor = regexp.MustCompile(`(?i)^\[(red|blue|green|black|white|yellow|magenta|cyan)\]`)
+	officeFormatTag   = regexp.MustCompile(`\[[^\]]*\]`)
+	officeFormatDate  = regexp.MustCompile(`(?i)[ymdhs]`)
+	officeFormatNum   = regexp.MustCompile(`[0#?][0#?,.]*(?:E[+-]0+)?|\.[0#?]+`)
+	officeInkNames    = map[string]string{"red": "#FF0000", "blue": "#0000FF", "green": "#00FF00", "black": "#000000", "white": "#FFFFFF", "yellow": "#FFFF00", "magenta": "#FF00FF", "cyan": "#00FFFF"}
+)
+
+// officeNumber shows a cell's number as format says, and the color the format gives it. What it does not know how to
+// show, like a fraction, it leaves as the file holds it.
+func officeNumber(value, format string) (string, string) {
+	n, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return value, ""
+	}
+	if format == "" || strings.EqualFold(format, "General") || format == "@" || strings.Contains(format, "?/?") {
+		if format == "" || strings.EqualFold(format, "General") {
+			return officeGeneral(n), ""
+		}
+		return value, ""
+	}
+	// Up to four sections: positive, negative, zero, text. A second section's number is shown without its sign.
+	var sections []string
+	var cur strings.Builder
+	quoted := false
+	for i := 0; i < len(format); i++ {
+		c := format[i]
+		switch {
+		case c == '"':
+			quoted = !quoted
+		case c == '\\' && i+1 < len(format):
+			cur.WriteByte(c)
+			i++
+			c = format[i]
+		case c == ';' && !quoted:
+			sections = append(sections, cur.String())
+			cur.Reset()
+			continue
+		}
+		cur.WriteByte(c)
+	}
+	sections = append(sections, cur.String())
+	section, abs := sections[0], false
+	switch {
+	case n < 0 && len(sections) > 1:
+		section, abs = sections[1], true
+	case n == 0 && len(sections) > 2:
+		section = sections[2]
+	}
+	if abs {
+		n = -n
+	}
+	ink := ""
+	if m := officeFormatColor.FindStringSubmatch(section); m != nil {
+		ink = officeInkNames[strings.ToLower(m[1])]
+		section = section[len(m[0]):]
+	}
+	// Literals out of the way, as control characters that stand for their index.
+	var lits []string
+	var code strings.Builder
+	lit := func(s string) {
+		lits = append(lits, s)
+		code.WriteByte(1)
+	}
+	for i := 0; i < len(section); i++ {
+		c := section[i]
+		switch c {
+		case '"':
+			j := strings.IndexByte(section[i+1:], '"')
+			if j < 0 {
+				j = len(section) - i - 1
+			}
+			lit(section[i+1 : i+1+j])
+			i += j + 1
+		case '\\':
+			if i+1 < len(section) {
+				i++
+				lit(section[i : i+1])
+			}
+		case '_':
+			i++
+			lit(" ")
+		case '*':
+			i++
+		case '[':
+			j := strings.IndexByte(section[i:], ']')
+			if j < 0 {
+				code.WriteByte(c)
+				continue
+			}
+			tag := section[i : i+j+1]
+			if strings.HasPrefix(tag, "[$") {
+				sym, _, _ := strings.Cut(tag[2:len(tag)-1], "-")
+				lit(sym)
+			} else {
+				code.WriteString(tag)
+			}
+			i += j
+		default:
+			code.WriteByte(c)
+		}
+	}
+	text := code.String()
+	bare := officeFormatTag.ReplaceAllString(text, "")
+	out := ""
+	if officeFormatDate.MatchString(bare) && !strings.Contains(bare, "#") {
+		out = officeDate(n, text)
+	} else {
+		out = officeFormatNum.ReplaceAllStringFunc(text, func(p string) string { return officeDigits(n, p, strings.Contains(text, "%")) })
+		if !officeFormatNum.MatchString(text) {
+			out = text
+		}
+		if n < 0 {
+			out = "-" + strings.TrimPrefix(out, "-")
+		}
+	}
+	var b strings.Builder
+	li := 0
+	for i := 0; i < len(out); i++ {
+		if out[i] == 1 {
+			if li < len(lits) {
+				b.WriteString(lits[li])
+				li++
+			}
+			continue
+		}
+		b.WriteByte(out[i])
+	}
+	return b.String(), ink
+}
+
+func officeGeneral(n float64) string {
+	if n == math.Trunc(n) && math.Abs(n) < 1e11 {
+		return strconv.FormatInt(int64(n), 10)
+	}
+	s := strconv.FormatFloat(n, 'g', 10, 64)
+	if !strings.Contains(s, "e") {
+		return s
+	}
+	return strconv.FormatFloat(n, 'E', 2, 64)
+}
+
+// officeDigits is a number by one run of a format's digit placeholders, like #,##0.00 or 0.00E+00.
+func officeDigits(n float64, p string, percent bool) string {
+	if percent {
+		n *= 100
+	}
+	if i := strings.IndexAny(p, "Ee"); i >= 0 {
+		dec := 0
+		if d := strings.IndexByte(p[:i], '.'); d >= 0 {
+			dec = i - d - 1
+		}
+		s := strconv.FormatFloat(n, 'E', dec, 64)
+		m, e, _ := strings.Cut(s, "E")
+		return m + "E" + e[:1] + fmt.Sprintf("%02s", strings.TrimLeft(e[1:], "0"))
+	}
+	whole, frac, _ := strings.Cut(p, ".")
+	comma := strings.Contains(whole, ",")
+	for strings.HasSuffix(whole, ",") {
+		n /= 1000
+		whole = whole[:len(whole)-1]
+	}
+	need, opt := strings.Count(frac, "0"), strings.Count(frac, "#")+strings.Count(frac, "?")
+	s := strconv.FormatFloat(math.Abs(n), 'f', need+opt, 64)
+	in, fr, _ := strings.Cut(s, ".")
+	for len(fr) > need && strings.HasSuffix(fr, "0") {
+		fr = fr[:len(fr)-1]
+	}
+	if z := strings.Count(whole, "0"); len(in) < z {
+		in = strings.Repeat("0", z-len(in)) + in
+	} else if z == 0 && in == "0" {
+		in = ""
+	}
+	if comma {
+		for i := len(in) - 3; i > 0; i -= 3 {
+			in = in[:i] + "," + in[i:]
+		}
+	}
+	if fr != "" {
+		return in + "." + fr
+	}
+	return in
+}
+
+// officeDate is a serial date by a format's y, m, d, h and s, m being minutes after an h or before an s.
+func officeDate(n float64, code string) string {
+	t := time.Date(1899, 12, 30, 0, 0, 0, 0, time.UTC).Add(time.Duration(n * float64(24*time.Hour)).Round(time.Second))
+	lower := strings.ToLower(code)
+	h12 := strings.Contains(lower, "am/pm") || strings.Contains(lower, "a/p")
+	var b strings.Builder
+	lastH := false
+	for i := 0; i < len(code); {
+		if strings.HasPrefix(lower[i:], "am/pm") {
+			b.WriteString(t.Format("PM"))
+			i += 5
+			continue
+		}
+		c := lower[i]
+		if !strings.ContainsRune("ymdhs", rune(c)) {
+			if c == '[' {
+				j := strings.IndexByte(code[i:], ']')
+				if j > 0 {
+					tag := lower[i+1 : i+j]
+					if strings.Trim(tag, "hms") == "" {
+						switch tag[0] {
+						case 'h':
+							fmt.Fprintf(&b, "%d", int(n*24))
+							lastH = true
+						case 'm':
+							fmt.Fprintf(&b, "%d", int(n*24*60))
+						case 's':
+							fmt.Fprintf(&b, "%d", int(n*24*3600))
+						}
+					}
+					i += j + 1
+					continue
+				}
+			}
+			b.WriteByte(code[i])
+			i++
+			continue
+		}
+		k := i
+		for k < len(code) && lower[k] == c {
+			k++
+		}
+		run := k - i
+		rest := strings.TrimLeft(lower[k:], " :\x01")
+		switch c {
+		case 'y':
+			if run > 2 {
+				b.WriteString(t.Format("2006"))
+			} else {
+				b.WriteString(t.Format("06"))
+			}
+		case 'm':
+			if run <= 2 && (lastH || strings.HasPrefix(rest, "s")) {
+				fmt.Fprintf(&b, "%0*d", run, t.Minute())
+				lastH = false
+			} else {
+				switch run {
+				case 1:
+					b.WriteString(t.Format("1"))
+				case 2:
+					b.WriteString(t.Format("01"))
+				case 3:
+					b.WriteString(t.Format("Jan"))
+				case 5:
+					b.WriteString(t.Format("Jan")[:1])
+				default:
+					b.WriteString(t.Format("January"))
+				}
+			}
+		case 'd':
+			switch run {
+			case 1:
+				b.WriteString(t.Format("2"))
+			case 2:
+				b.WriteString(t.Format("02"))
+			case 3:
+				b.WriteString(t.Format("Mon"))
+			default:
+				b.WriteString(t.Format("Monday"))
+			}
+		case 'h':
+			h := t.Hour()
+			if h12 {
+				h = (h+11)%12 + 1
+			}
+			fmt.Fprintf(&b, "%0*d", run, h)
+			lastH = true
+		case 's':
+			fmt.Fprintf(&b, "%0*d", run, t.Second())
+			lastH = false
+		}
+		i = k
+	}
+	return b.String()
+}
+
+// A pptx: where everything is and how it looks, each thing found on the slide, then its layout, then its master.
+
+type officeLayer struct {
+	part string
+	root *OfficeNode
+	a, p string
+	rels []OfficeRel
+}
+
+func (l *officeLayer) tree() *OfficeNode {
+	if c := l.root.Child(l.p, "cSld"); c != nil {
+		return c.Child(l.p, "spTree")
+	}
+	return nil
+}
+
+func (d *officeDeck) layer(part string) (*officeLayer, error) {
+	b, err := d.pkg.Part(part)
+	if err != nil {
+		return nil, err
+	}
+	doc, err := OfficeParse(b)
+	if err != nil {
+		return nil, err
+	}
+	a, _ := OfficePrefixOf(doc, officeANS...)
+	p, _ := OfficePrefixOf(doc, officePNS...)
+	rels, _ := d.pkg.Rels(part)
+	return &officeLayer{part, OfficeRoot(doc), a, p, rels}, nil
+}
+
+// officeReadTheme is a theme's colors by their names, like dk1 and accent1.
+func officeReadTheme(b []byte) map[string]string {
+	out := map[string]string{}
+	doc, err := OfficeParse(b)
+	if err != nil {
+		return out
+	}
+	a, _ := OfficePrefixOf(doc, officeANS...)
+	for _, s := range OfficeRoot(doc).Find(a, "clrScheme") {
+		for _, k := range s.Kids {
+			if len(k.Kids) == 0 {
+				continue
+			}
+			v := cmp.Or(k.Kids[0].Attrv("lastClr"), k.Kids[0].Attrv("val"))
+			if len(v) == 6 {
+				out[k.Local] = "#" + strings.ToUpper(v)
+			}
+		}
+		break
+	}
+	return out
+}
+
+// officePaint reads colors and fills in a deck's theme.
+type officePaint struct {
+	theme, clrMap map[string]string
+}
+
+// color is the color element under n, with its changes. "" if it has none, or is the placeholder color of a style.
+func (c officePaint) color(n *OfficeNode) string {
+	if n == nil {
+		return ""
+	}
+	for _, k := range n.Kids {
+		hex := ""
+		switch k.Local {
+		case "srgbClr":
+			hex = "#" + strings.ToUpper(k.Attrv("val"))
+		case "sysClr":
+			hex = "#" + strings.ToUpper(k.Attrv("lastClr"))
+		case "schemeClr":
+			v := k.Attrv("val")
+			hex = c.theme[cmp.Or(c.clrMap[v], v)]
+		default:
+			continue
+		}
+		mod, off, t := 1.0, 0.0, 0.0
+		for _, e := range k.Kids {
+			v := float64(officeInt(e.Attrv("val"))) / 100000
+			switch e.Local {
+			case "lumMod":
+				mod = v
+			case "lumOff":
+				off = v
+			case "tint":
+				t = 1 - v
+			case "shade":
+				t = v - 1
+			}
+		}
+		return officeShade(hex, mod, off, t)
+	}
+	return ""
+}
+
+// fill is a shape's or background's fill: a solid color or a gradient's first, and whether it says none.
+func (c officePaint) fill(pr *OfficeNode) (string, bool) {
+	if pr == nil {
+		return "", false
+	}
+	for _, k := range pr.Kids {
+		switch k.Local {
+		case "noFill":
+			return "", true
+		case "solidFill":
+			return c.color(k), false
+		case "gradFill":
+			if gs := officeByLocal(k, "gs"); len(gs) > 0 {
+				return c.color(gs[0]), false
+			}
+		}
+	}
+	return "", false
+}
+
+func (d *officeDeck) view(m *OfficeModel) error {
+	m.Width, m.Height = d.w, d.h
+	for i := range d.slides {
+		sl, err := d.layer(d.slides[i])
+		if err != nil {
+			return err
+		}
+		lay, err := d.layer(officeRelOf(sl.rels, "slideLayout"))
+		if err != nil {
+			return err
+		}
+		mas, err := d.layer(officeRelOf(lay.rels, "slideMaster"))
+		if err != nil {
+			return err
+		}
+		paint := officePaint{theme: map[string]string{}, clrMap: map[string]string{}}
+		if b, err := d.pkg.Part(officeRelOf(mas.rels, "theme")); err == nil {
+			paint.theme = officeReadTheme(b)
+		}
+		if cm := mas.root.Child(mas.p, "clrMap"); cm != nil {
+			for _, a := range cm.Attr {
+				paint.clrMap[a.Name.Local] = a.Value
+			}
+		}
+		s := &m.Slides[i]
+		v := officeSlideView{d: d, paint: paint, sl: sl, lay: lay, mas: mas}
+		v.background(s)
+		z := 0
+		for _, l := range []*officeLayer{mas, lay} {
+			if l == mas && lay.root.Attrv("showMasterSp") == "0" {
+				continue
+			}
+			v.decor(l, s, &z)
+		}
+		// The slide's own, in document order: shapes with text keep the index they are edited by.
+		n := 0
+		tree := sl.tree()
+		if tree == nil {
+			continue
+		}
+		var walk func(*OfficeNode)
+		walk = func(g *OfficeNode) {
+			for _, k := range g.Kids {
+				switch {
+				case k.Is(sl.p, "grpSp"):
+					walk(k)
+				case k.Is(sl.p, "sp"):
+					z++
+					if k.Child(sl.p, "txBody") != nil {
+						if n < len(s.Shapes) {
+							v.shape(sl, k, &s.Shapes[n])
+							s.Shapes[n].Z = z
+						}
+						n++
+					} else {
+						var sh OfficeShape
+						v.shape(sl, k, &sh)
+						sh.Z = z
+						if sh.Box != nil && (sh.Fill != "" || sh.Line != "") {
+							s.Decor = append(s.Decor, sh)
+						}
+					}
+				case k.Is(sl.p, "pic"):
+					z++
+					if im, ok := v.picture(sl, k); ok {
+						im.Z = z
+						s.Pictures = append(s.Pictures, im)
+					}
+				}
+			}
+		}
+		walk(tree)
+	}
+	return nil
+}
+
+type officeSlideView struct {
+	d            *officeDeck
+	paint        officePaint
+	sl, lay, mas *officeLayer
+}
+
+func (v officeSlideView) background(s *OfficeSlide) {
+	for _, l := range []*officeLayer{v.sl, v.lay, v.mas} {
+		c := l.root.Child(l.p, "cSld")
+		if c == nil {
+			continue
+		}
+		bg := c.Child(l.p, "bg")
+		if bg == nil {
+			continue
+		}
+		if pr := bg.Child(l.p, "bgPr"); pr != nil {
+			if blips := officeByLocal(pr, "blip"); len(blips) > 0 {
+				if part := officeTarget(l.rels, officeAttr(blips[0], "embed")); officeDrawable(part) {
+					s.Backdrop = part
+				}
+			}
+			s.Background, _ = v.paint.fill(pr)
+		} else if ref := bg.Child(l.p, "bgRef"); ref != nil {
+			s.Background = v.paint.color(ref)
+		}
+		return
+	}
+}
+
+func (v officeSlideView) decor(l *officeLayer, s *OfficeSlide, z *int) {
+	tree := l.tree()
+	if tree == nil {
+		return
+	}
+	for _, k := range tree.Kids {
+		switch {
+		case k.Is(l.p, "sp"):
+			if officeHolder(k, l.p) != nil {
+				continue
+			}
+			var sh OfficeShape
+			v.shape(l, k, &sh)
+			if sh.Box == nil {
+				continue
+			}
+			*z++
+			sh.Z = *z
+			for _, sp := range k.Find(l.a, "p") {
+				sh.Paragraphs = append(sh.Paragraphs, OfficeParagraph{Text: (officeTextNames{l.a, "p", "r", "t", false}).text(sp)})
+			}
+			v.paragraphs(l, k, &sh)
+			s.Decor = append(s.Decor, sh)
+		case k.Is(l.p, "pic"):
+			if im, ok := v.picture(l, k); ok {
+				*z++
+				im.Z = *z
+				s.Pictures = append(s.Pictures, im)
+			}
+		}
+	}
+}
+
+// officeHolder is a shape's placeholder element, if it is one.
+func officeHolder(sp *OfficeNode, p string) *OfficeNode {
+	for _, nv := range sp.Kids {
+		if strings.HasPrefix(nv.Local, "nv") {
+			if nvp := nv.Child(p, "nvPr"); nvp != nil {
+				return nvp.Child(p, "ph")
+			}
+		}
+	}
+	return nil
+}
+
+// inherited is the shape a placeholder takes after in a layer: by its idx, or else by its kind.
+func (v officeSlideView) inherited(l *officeLayer, ph *OfficeNode) *OfficeNode {
+	tree := l.tree()
+	if tree == nil || ph == nil {
+		return nil
+	}
+	kind := func(t string) string {
+		switch t {
+		case "ctrTitle":
+			return "title"
+		case "", "subTitle", "obj", "tbl", "chart", "dgm", "media", "clipArt", "pic":
+			return "body"
+		}
+		return t
+	}
+	var byKind *OfficeNode
+	for _, k := range tree.Find(l.p, "sp") {
+		h := officeHolder(k, l.p)
+		if h == nil {
+			continue
+		}
+		if idx := ph.Attrv("idx"); idx != "" && h.Attrv("idx") == idx {
+			return k
+		}
+		if byKind == nil && kind(h.Attrv("type")) == kind(ph.Attrv("type")) {
+			byKind = k
+		}
+	}
+	return byKind
+}
+
+// lineage is a shape and those it takes after, each with its layer, nearest first.
+func (v officeSlideView) lineage(l *officeLayer, sp *OfficeNode) []officeOwned {
+	out := []officeOwned{{l, sp}}
+	ph := officeHolder(sp, l.p)
+	if ph == nil {
+		return out
+	}
+	if l == v.sl {
+		if k := v.inherited(v.lay, ph); k != nil {
+			out = append(out, officeOwned{v.lay, k})
+		}
+	}
+	if l != v.mas {
+		if k := v.inherited(v.mas, ph); k != nil {
+			out = append(out, officeOwned{v.mas, k})
+		}
+	}
+	return out
+}
+
+type officeOwned struct {
+	l  *officeLayer
+	sp *OfficeNode
+}
+
+// box is where a shape is, in slide coordinates through the groups it is in.
+func (v officeSlideView) box(chain []officeOwned, pr string) *OfficeBox {
+	for _, o := range chain {
+		spPr := o.sp.Child(o.l.p, pr)
+		if spPr == nil {
+			continue
+		}
+		xf := spPr.Child(o.l.a, "xfrm")
+		if xf == nil {
+			continue
+		}
+		off, ext := xf.Child(o.l.a, "off"), xf.Child(o.l.a, "ext")
+		if off == nil || ext == nil {
+			continue
+		}
+		b := &OfficeBox{X: officeInt(off.Attrv("x")), Y: officeInt(off.Attrv("y")), W: officeInt(ext.Attrv("cx")), H: officeInt(ext.Attrv("cy")), Rot: float64(officeInt(xf.Attrv("rot"))) / 60000}
+		for g := o.sp.Nearest(o.l.p, "grpSp"); g != nil; g = g.Nearest(o.l.p, "grpSp") {
+			pr := g.Child(o.l.p, "grpSpPr")
+			if pr == nil {
+				break
+			}
+			gx := pr.Child(o.l.a, "xfrm")
+			if gx == nil {
+				break
+			}
+			go1, ge, gc, gce := gx.Child(o.l.a, "off"), gx.Child(o.l.a, "ext"), gx.Child(o.l.a, "chOff"), gx.Child(o.l.a, "chExt")
+			if go1 == nil || ge == nil || gc == nil || gce == nil || officeInt(gce.Attrv("cx")) == 0 || officeInt(gce.Attrv("cy")) == 0 {
+				break
+			}
+			sx, sy := float64(officeInt(ge.Attrv("cx")))/float64(officeInt(gce.Attrv("cx"))), float64(officeInt(ge.Attrv("cy")))/float64(officeInt(gce.Attrv("cy")))
+			b.X = officeInt(go1.Attrv("x")) + int64(float64(b.X-officeInt(gc.Attrv("x")))*sx)
+			b.Y = officeInt(go1.Attrv("y")) + int64(float64(b.Y-officeInt(gc.Attrv("y")))*sy)
+			b.W, b.H = int64(float64(b.W)*sx), int64(float64(b.H)*sy)
+		}
+		return b
+	}
+	return nil
+}
+
+func (v officeSlideView) picture(l *officeLayer, pic *OfficeNode) (OfficeImage, bool) {
+	blips := officeByLocal(pic, "blip")
+	if len(blips) == 0 {
+		return OfficeImage{}, false
+	}
+	part := officeTarget(l.rels, officeAttr(blips[0], "embed"))
+	box := v.box(v.lineage(l, pic), "spPr")
+	if !officeDrawable(part) || box == nil {
+		return OfficeImage{}, false
+	}
+	return OfficeImage{Part: part, Box: *box}, true
+}
+
+// shape fills in where a shape is, how it looks, and how its text does.
+func (v officeSlideView) shape(l *officeLayer, sp *OfficeNode, sh *OfficeShape) {
+	chain := v.lineage(l, sp)
+	sh.Box = v.box(chain, "spPr")
+	if pr := sp.Child(l.p, "spPr"); pr != nil {
+		fill, none := v.paint.fill(pr)
+		sh.Fill = fill
+		style := sp.Child(l.p, "style")
+		if fill == "" && !none && style != nil {
+			if r := style.Child(l.a, "fillRef"); r != nil && r.Attrv("idx") != "0" {
+				sh.Fill = v.paint.color(r)
+			}
+		}
+		if ln := pr.Child(l.a, "ln"); ln != nil {
+			sh.Line, _ = v.paint.fill(ln)
+		} else if style != nil {
+			if r := style.Child(l.a, "lnRef"); r != nil && r.Attrv("idx") != "0" {
+				sh.Line = v.paint.color(r)
+			}
+		}
+		if g := pr.Child(l.a, "prstGeom"); g != nil {
+			if g := g.Attrv("prst"); g == "ellipse" || g == "roundRect" {
+				sh.Geom = g
+			}
+		}
+	}
+	for _, o := range chain {
+		tx := o.sp.Child(o.l.p, "txBody")
+		if tx == nil {
+			continue
+		}
+		bp := tx.Child(o.l.a, "bodyPr")
+		if bp == nil {
+			continue
+		}
+		if sh.Anchor == "" {
+			sh.Anchor = bp.Attrv("anchor")
+		}
+		if sh.Inset == nil && bp.Attrv("lIns")+bp.Attrv("tIns")+bp.Attrv("rIns")+bp.Attrv("bIns") != "" {
+			ins := func(a string, def int64) int64 {
+				if s, ok := bp.Get(a); ok {
+					return officeInt(s)
+				}
+				return def
+			}
+			sh.Inset = []int64{ins("lIns", 91440), ins("tIns", 45720), ins("rIns", 91440), ins("bIns", 45720)}
+		}
+	}
+	if sh.Inset == nil {
+		sh.Inset = []int64{91440, 45720, 91440, 45720}
+	}
+	v.paragraphs(l, sp, sh)
+}
+
+// paragraphs fills in a shape's text: alignment, bullets and each run's look, through its list styles and those of what
+// it takes after, then the master's text style, then what the shape's style says.
+func (v officeSlideView) paragraphs(l *officeLayer, sp *OfficeNode, sh *OfficeShape) {
+	tx := sp.Child(l.p, "txBody")
+	if tx == nil {
+		return
+	}
+	chain := v.lineage(l, sp)
+	ph := officeHolder(sp, l.p)
+	master := "otherStyle"
+	if ph != nil {
+		master = "bodyStyle"
+		if t := ph.Attrv("type"); t == "title" || t == "ctrTitle" {
+			master = "titleStyle"
+		}
+	}
+	levels := func(n int) []officeOwned {
+		name := "lvl" + strconv.Itoa(n+1) + "pPr"
+		var out []officeOwned
+		for _, o := range chain {
+			if t := o.sp.Child(o.l.p, "txBody"); t != nil {
+				if s := t.Child(o.l.a, "lstStyle"); s != nil {
+					if k := s.Child(o.l.a, name); k != nil {
+						out = append(out, officeOwned{o.l, k})
+					}
+				}
+			}
+		}
+		if ts := v.mas.root.Child(v.mas.p, "txStyles"); ts != nil {
+			if s := ts.Child(v.mas.p, master); s != nil {
+				if k := s.Child(v.mas.a, name); k != nil {
+					out = append(out, officeOwned{v.mas, k})
+				}
+			}
+		}
+		return out
+	}
+	scale := 1.0
+	if bp := tx.Child(l.a, "bodyPr"); bp != nil {
+		if fit := bp.Child(l.a, "normAutofit"); fit != nil {
+			if f := officeInt(fit.Attrv("fontScale")); f > 0 {
+				scale = float64(f) / 100000
+			}
+		}
+	}
+	ink := ""
+	if style := sp.Child(l.p, "style"); style != nil {
+		ink = v.paint.color(style.Child(l.a, "fontRef"))
+	}
+	tn := officeTextNames{l.a, "p", "r", "t", false}
+	autos := map[int]int{}
+	for i, p := range tx.Children(l.a, "p") {
+		if i >= len(sh.Paragraphs) {
+			break
+		}
+		mp := &sh.Paragraphs[i]
+		pPr := p.Child(l.a, "pPr")
+		lvl := 0
+		if pPr != nil {
+			lvl = int(officeInt(pPr.Attrv("lvl")))
+		}
+		ls := levels(lvl)
+		algn := ""
+		if pPr != nil {
+			algn = pPr.Attrv("algn")
+		}
+		for _, o := range ls {
+			algn = cmp.Or(algn, o.sp.Attrv("algn"))
+		}
+		switch algn {
+		case "ctr":
+			mp.Align = "center"
+		case "r":
+			mp.Align = "right"
+		case "just":
+			mp.Align = "both"
+		}
+		mp.Level = lvl
+		mp.Marker = officeBullet(pPr, ls, l.a, autos, lvl)
+		var spans []OfficeSpan
+		var last *OfficeNode
+		for _, seg := range tn.segments(p) {
+			if seg.run == last && len(spans) > 0 {
+				spans[len(spans)-1].Text += seg.text
+				continue
+			}
+			last = seg.run
+			var rPr *OfficeNode
+			if seg.run != nil {
+				rPr = seg.run.Child(l.a, "rPr")
+			}
+			spans = append(spans, v.run(rPr, ls, l.a, ink, scale, seg.text))
+		}
+		if len(spans) == 0 {
+			var end *OfficeNode
+			if e := p.Child(l.a, "endParaRPr"); e != nil {
+				end = e
+			}
+			spans = []OfficeSpan{v.run(end, ls, l.a, ink, scale, "")}
+		}
+		mp.Spans = spans
+	}
+}
+
+// officeBullet is what a paragraph of a shape starts with, the first of its own and its list styles' to say.
+func officeBullet(pPr *OfficeNode, ls []officeOwned, a string, autos map[int]int, lvl int) string {
+	nodes := []*OfficeNode{}
+	if pPr != nil {
+		nodes = append(nodes, pPr)
+	}
+	for _, o := range ls {
+		nodes = append(nodes, o.sp)
+	}
+	for _, n := range nodes {
+		for _, k := range n.Kids {
+			switch k.Local {
+			case "buNone":
+				return ""
+			case "buChar":
+				c := k.Attrv("char")
+				if c == "" {
+					return ""
+				}
+				if r := []rune(c)[0]; r >= 0xE000 && r <= 0xF8FF || c == "§" || c == "Ø" {
+					return "•"
+				}
+				return c
+			case "buAutoNum":
+				autos[lvl]++
+				for k := range autos {
+					if k > lvl {
+						delete(autos, k)
+					}
+				}
+				t := k.Attrv("type")
+				f := "decimal"
+				switch {
+				case strings.HasPrefix(t, "alphaLc"):
+					f = "lowerLetter"
+				case strings.HasPrefix(t, "alphaUc"):
+					f = "upperLetter"
+				case strings.HasPrefix(t, "romanLc"):
+					f = "lowerRoman"
+				case strings.HasPrefix(t, "romanUc"):
+					f = "upperRoman"
+				}
+				s := officeOrdinal(autos[lvl]+max(int(officeInt(k.Attrv("startAt"))), 1)-1, f)
+				switch {
+				case strings.HasSuffix(t, "ParenBoth"):
+					return "(" + s + ")"
+				case strings.HasSuffix(t, "ParenR"):
+					return s + ")"
+				}
+				return s + "."
+			}
+		}
+	}
+	return ""
+}
+
+// run is a run's look, each thing from the first of its own properties and its list styles' to say it.
+func (v officeSlideView) run(rPr *OfficeNode, ls []officeOwned, a, ink string, scale float64, text string) OfficeSpan {
+	var props []*OfficeNode
+	if rPr != nil {
+		props = append(props, rPr)
+	}
+	for _, o := range ls {
+		if d := o.sp.Child(o.l.a, "defRPr"); d != nil {
+			props = append(props, d)
+		}
+	}
+	sp := OfficeSpan{Text: text, Size: 18 * scale, Color: ink}
+	on := func(name string, set *bool) {
+		for _, r := range props {
+			if s, ok := r.Get(name); ok {
+				*set = officeOn(s)
+				return
+			}
+		}
+	}
+	on("b", &sp.Bold)
+	on("i", &sp.Italic)
+	on("u", &sp.Under)
+	if s := func() string {
+		for _, r := range props {
+			if s, ok := r.Get("strike"); ok {
+				return s
+			}
+		}
+		return ""
+	}(); s != "" && s != "noStrike" {
+		sp.Strike = true
+	}
+	for _, r := range props {
+		if s, ok := r.Get("sz"); ok {
+			sp.Size = float64(officeInt(s)) / 100 * scale
+			break
+		}
+	}
+	for _, r := range props {
+		if f, none := v.paint.fill(r); f != "" || none {
+			sp.Color = f
+			break
+		}
+	}
+	if sp.Color == "" {
+		sp.Color = v.paint.theme[cmp.Or(v.paint.clrMap["tx1"], "dk1")]
+	}
+	return sp
 }

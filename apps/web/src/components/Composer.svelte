@@ -79,7 +79,7 @@
     <div class="atts">
       {#each attachments as a (a.id)}
         <span in:rise={{ shift: '--shift-sm' }}>
-          <Attachment name={a.name} kind={a.kind} size={a.size} tone={a.tone} onremove={() => (attachments = attachments.filter((x) => x.id !== a.id))} />
+          <Attachment name={a.name} kind={a.kind} size={a.size} onremove={() => (attachments = attachments.filter((x) => x.id !== a.id))} />
         </span>
       {/each}
     </div>
