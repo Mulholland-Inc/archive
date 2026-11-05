@@ -50,6 +50,7 @@ type Actor struct {
 	UserRole  string    `json:"-"`
 	member    uuid.UUID
 	scoped    bool
+	verified  bool
 }
 
 func (ac *Actor) label() string {
@@ -517,9 +518,10 @@ const (
 )
 
 var (
-	signinRefused  = fmt.Errorf("no Archive account for this sign-in; ask a workspace's owner to add you: %w", ErrForbidden)
-	signinMismatch = fmt.Errorf("sign-in state does not match; start again: %w", ErrUnauthorized)
-	signinBuiltin  = []signinConfig{
+	signinRefused    = fmt.Errorf("no Archive account for this sign-in; ask a workspace's owner to add you: %w", ErrForbidden)
+	signinMismatch   = fmt.Errorf("sign-in state does not match; start again: %w", ErrUnauthorized)
+	signinUnverified = fmt.Errorf("check it's you with a passkey first: %w", ErrForbidden)
+	signinBuiltin    = []signinConfig{
 		{ID: "google", Name: "Google", base: "https://accounts.google.com"},
 		{ID: "microsoft", Name: "Microsoft", base: "https://login.microsoftonline.com"},
 		{ID: "slack", Name: "Slack", base: "https://slack.com"},
@@ -687,7 +689,12 @@ func (s *signin) handler() http.Handler {
 			}
 		}
 		admin := u.Admin && ac.Role == ac.UserRole
-		return ok(map[string]any{"actor": ac, "role": m.Role, "group": m.Group, "workspace": a.ws.ID.String(), "workspaces": all, "admin": admin}, err)
+		var signin signinMethods
+		if len(u.Signin) > 0 {
+			json.Unmarshal(u.Signin, &signin)
+		}
+		return ok(map[string]any{"actor": ac, "role": m.Role, "group": m.Group, "workspace": a.ws.ID.String(), "workspaces": all, "admin": admin,
+			"verified": ac.verified, "passkey": len(signin.Passkeys) > 0}, err)
 	})
 	authed("DELETE /auth/unread", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		return http.StatusNoContent, nil, h.q().ClearUnread(r.Context(), archiveFrom(r.Context()).ws.ID, ActorFrom(r.Context()).UserID)
@@ -766,6 +773,9 @@ func (s *signin) handler() http.Handler {
 		if err != nil {
 			return 0, nil, err
 		}
+		if len(pu.m.Passkeys) > 0 && !ac.verified {
+			return 0, nil, signinUnverified
+		}
 		var exclude []protocol.CredentialDescriptor
 		for _, c := range pu.m.Passkeys {
 			exclude = append(exclude, c.Descriptor())
@@ -795,8 +805,65 @@ func (s *signin) handler() http.Handler {
 		if err != nil {
 			return 0, nil, fmt.Errorf("passkey: %v: %w", err, httpErrBadRequest)
 		}
+		if len(pu.m.Passkeys) > 0 && !ac.verified {
+			return 0, nil, signinUnverified
+		}
 		pu.m.Passkeys = append(pu.m.Passkeys, *cred)
-		return ok(map[string]int{"passkeys": len(pu.m.Passkeys)}, s.save(r.Context(), pu))
+		if err := s.save(r.Context(), pu); err != nil {
+			return 0, nil, err
+		}
+		if cred.Flags.UserVerified && !ac.verified {
+			if err := s.verify(r); err != nil {
+				return 0, nil, err
+			}
+		}
+		return ok(map[string]any{"passkeys": len(pu.m.Passkeys), "verified": ac.verified || cred.Flags.UserVerified}, nil)
+	})
+	authed("POST /auth/passkey/verify", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
+		ac, err := authUser(r.Context())
+		if err != nil {
+			return 0, nil, err
+		}
+		pu, err := s.user(r.Context(), ac.UserID)
+		if err != nil {
+			return 0, nil, err
+		}
+		if len(pu.m.Passkeys) == 0 {
+			return 0, nil, fmt.Errorf("add a passkey first: %w", ErrConflict)
+		}
+		opts, data, err := s.wa.BeginLogin(pu, webauthn.WithUserVerification(protocol.VerificationRequired))
+		if err != nil {
+			return 0, nil, err
+		}
+		s.begin(w, *data, ac.UserID)
+		return ok(opts, nil)
+	})
+	authed("POST /auth/passkey/verify/finish", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
+		ac, err := authUser(r.Context())
+		if err != nil {
+			return 0, nil, err
+		}
+		cer, err := s.finish(w, r)
+		if err != nil || cer.User != ac.UserID {
+			return 0, nil, cmp.Or(err, fmt.Errorf("passkey ceremony belongs to another user: %w", ErrForbidden))
+		}
+		pu, err := s.user(r.Context(), ac.UserID)
+		if err != nil {
+			return 0, nil, err
+		}
+		cred, err := s.wa.FinishLogin(pu, cer.Data, r)
+		if err != nil {
+			return 0, nil, fmt.Errorf("passkey: %v: %w", err, ErrUnauthorized)
+		}
+		for i, c := range pu.m.Passkeys {
+			if string(c.ID) == string(cred.ID) {
+				pu.m.Passkeys[i] = *cred
+			}
+		}
+		if err := s.save(r.Context(), pu); err != nil {
+			return 0, nil, err
+		}
+		return ok(map[string]bool{"verified": true}, s.verify(r))
 	})
 	open("POST /auth/passkey/login", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		opts, data, err := s.wa.BeginDiscoverableLogin()
@@ -831,7 +898,7 @@ func (s *signin) handler() http.Handler {
 		if err := s.save(r.Context(), found); err != nil {
 			return 0, nil, err
 		}
-		return ok(s.signedIn(w, r, found.u))
+		return ok(s.signedIn(w, r, found.u, cred.Flags.UserVerified))
 	})
 
 	mux.HandleFunc("GET /auth/oidc/{provider}", func(w http.ResponseWriter, r *http.Request) {
@@ -868,7 +935,7 @@ func (s *signin) handler() http.Handler {
 			next = st.Next
 		}
 		if err == nil {
-			_, err = s.signedIn(w, r, u)
+			_, err = s.signedIn(w, r, u, false)
 		}
 		if err != nil {
 			httpWrite(w, 0, nil, err)
@@ -893,16 +960,27 @@ func (s *signin) setSession(w http.ResponseWriter, secret string) {
 	http.SetCookie(w, s.cookie(signinCookie, secret, "/", age))
 }
 
-func (s *signin) signedIn(w http.ResponseWriter, r *http.Request, u *User) (any, error) {
+// signedIn starts a session; verified is whether it was started with a passkey and its user verification, the second step
+// Plaid Link needs. A provider sign-in is one step, checked later with s.verify.
+func (s *signin) signedIn(w http.ResponseWriter, r *http.Request, u *User, verified bool) (any, error) {
 	if len(u.Workspaces) == 0 {
 		return nil, signinRefused
 	}
 	secret := authNewSecret()
-	if err := s.h.q().CreateSession(r.Context(), u.ID, authHash(secret)); err != nil {
+	if err := s.h.q().CreateSession(r.Context(), u.ID, authHash(secret), verified); err != nil {
 		return nil, err
 	}
 	s.setSession(w, secret)
 	return map[string]*User{"user": u}, nil
+}
+
+// verify marks the browser session of r as checked with a passkey.
+func (s *signin) verify(r *http.Request) error {
+	c, err := r.Cookie(signinCookie)
+	if err != nil || c.Value == "" {
+		return fmt.Errorf("only a browser session can be checked with a passkey: %w", ErrForbidden)
+	}
+	return s.h.q().VerifySession(r.Context(), authHash(c.Value))
 }
 
 func (s *signin) user(ctx context.Context, id uuid.UUID) (*signinUser, error) {

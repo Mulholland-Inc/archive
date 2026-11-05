@@ -78,7 +78,8 @@ CREATE TABLE archive.token (
     created_at timestamptz NOT NULL DEFAULT now(),
     client     uuid REFERENCES archive.mcp_client ON DELETE CASCADE,
     refresh    text UNIQUE,
-    refresh_expires_at timestamptz
+    refresh_expires_at timestamptz,
+    verified   boolean NOT NULL DEFAULT false
 );
 CREATE INDEX token_user_idx ON archive.token (user_id);
 
@@ -171,14 +172,17 @@ UPDATE archive."user" SET signin = $2 WHERE id = $1;
 UPDATE archive."user" SET name = $2 WHERE id = $1 AND name = '';
 
 -- name: Authenticate :one
-SELECT t.id, t.kind, t.name, coalesce(t.role, '')::text AS role, u.id AS user_id, u.email, u.name AS user_name,
+SELECT t.id, t.kind, t.name, coalesce(t.role, '')::text AS role, t.verified, u.id AS user_id, u.email, u.name AS user_name,
     coalesce(t.workspace::text, '')::text AS workspace,
     ARRAY(SELECT w.id::text FROM archive.workspace w WHERE w.id = ANY(u.workspaces) ORDER BY array_position(u.workspaces, w.id))::text[] AS workspaces
 FROM archive.token t JOIN archive."user" u ON u.id = t.user_id
 WHERE t.hash = $1 AND t.kind = ANY(sqlc.arg(kinds)::text[]) AND (t.expires_at IS NULL OR t.expires_at > now());
 
 -- name: CreateSession :exec
-INSERT INTO archive.token (user_id, kind, hash, expires_at) VALUES ($1, 'session', $2, now() + interval '30 days');
+INSERT INTO archive.token (user_id, kind, hash, verified, expires_at) VALUES ($1, 'session', $2, $3, now() + interval '30 days');
+
+-- name: VerifySession :exec
+UPDATE archive.token SET verified = true WHERE hash = $1 AND kind = 'session';
 
 -- name: SignOut :exec
 DELETE FROM archive.token WHERE hash = $1 AND kind = 'session';

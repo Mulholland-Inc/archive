@@ -19,6 +19,9 @@ export const app = $state({
   role: 'viewer',
   canAdd: false,
   askPasskey: false,
+  passkey: false,
+  verified: false,
+  checking: null,
   archives: [],
   archive: null,
   collapsed: typeof localStorage !== 'undefined' && localStorage.getItem('archive.sidebar') === 'collapsed',
@@ -173,6 +176,8 @@ function setMe(me) {
   app.user = { id: me.actor.user_id, name, first: name.split(/[\s@]+/)[0], email: me.actor.email, plan: me.role.charAt(0).toUpperCase() + me.role.slice(1), tone: 1 };
   app.role = me.role;
   app.canAdd = !!me.admin;
+  app.passkey = !!me.passkey;
+  app.verified = !!me.verified;
 }
 
 async function files(id, where) {
@@ -1287,6 +1292,10 @@ async function openLink({ id, token, workspace }, back) {
 }
 
 export async function connectLink(id) {
+  if (!app.verified) {
+    app.checking = id;
+    return;
+  }
   try {
     const { token } = await call(`/connect/${encodeURIComponent(id)}/link`, { method: 'POST' });
     const at = { id, token, workspace: app.archive };

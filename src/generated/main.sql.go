@@ -82,7 +82,7 @@ func (q *Queries) AllWorkspaces(ctx context.Context) ([]ArchiveWorkspace, error)
 }
 
 const authenticate = `-- name: Authenticate :one
-SELECT t.id, t.kind, t.name, coalesce(t.role, '')::text AS role, u.id AS user_id, u.email, u.name AS user_name,
+SELECT t.id, t.kind, t.name, coalesce(t.role, '')::text AS role, t.verified, u.id AS user_id, u.email, u.name AS user_name,
     coalesce(t.workspace::text, '')::text AS workspace,
     ARRAY(SELECT w.id::text FROM archive.workspace w WHERE w.id = ANY(u.workspaces) ORDER BY array_position(u.workspaces, w.id))::text[] AS workspaces
 FROM archive.token t JOIN archive."user" u ON u.id = t.user_id
@@ -94,6 +94,7 @@ type AuthenticateRow struct {
 	Kind       string
 	Name       string
 	Role       string
+	Verified   bool
 	UserID     uuid.UUID
 	Email      string
 	UserName   string
@@ -109,6 +110,7 @@ func (q *Queries) Authenticate(ctx context.Context, hash string, kinds []string)
 		&i.Kind,
 		&i.Name,
 		&i.Role,
+		&i.Verified,
 		&i.UserID,
 		&i.Email,
 		&i.UserName,
@@ -273,11 +275,11 @@ func (q *Queries) CreateMCPToken(ctx context.Context, arg CreateMCPTokenParams) 
 }
 
 const createSession = `-- name: CreateSession :exec
-INSERT INTO archive.token (user_id, kind, hash, expires_at) VALUES ($1, 'session', $2, now() + interval '30 days')
+INSERT INTO archive.token (user_id, kind, hash, verified, expires_at) VALUES ($1, 'session', $2, $3, now() + interval '30 days')
 `
 
-func (q *Queries) CreateSession(ctx context.Context, userID uuid.UUID, hash string) error {
-	_, err := q.db.Exec(ctx, createSession, userID, hash)
+func (q *Queries) CreateSession(ctx context.Context, userID uuid.UUID, hash string, verified bool) error {
+	_, err := q.db.Exec(ctx, createSession, userID, hash, verified)
 	return err
 }
 
@@ -1024,6 +1026,15 @@ func (q *Queries) UserWorkspaces(ctx context.Context, id uuid.UUID) ([]ArchiveWo
 		return nil, err
 	}
 	return items, nil
+}
+
+const verifySession = `-- name: VerifySession :exec
+UPDATE archive.token SET verified = true WHERE hash = $1 AND kind = 'session'
+`
+
+func (q *Queries) VerifySession(ctx context.Context, hash string) error {
+	_, err := q.db.Exec(ctx, verifySession, hash)
+	return err
 }
 
 const watchSecret = `-- name: WatchSecret :one

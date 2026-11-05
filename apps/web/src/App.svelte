@@ -20,6 +20,7 @@
   import HelpDialog from './components/HelpDialog.svelte';
   import SignIn from './components/SignIn.svelte';
   import PasskeyPrompt from './components/PasskeyPrompt.svelte';
+  import PasskeyCheck from './components/PasskeyCheck.svelte';
   import Loading from './components/Loading.svelte';
 
   boot();
@@ -106,6 +107,7 @@
 <HelpDialog bind:open={app.help} />
 <ContextMenu />
 {#if app.askPasskey}<PasskeyPrompt />{/if}
+{#if app.checking}<PasskeyCheck />{/if}
 {/if}
 
 <style>
