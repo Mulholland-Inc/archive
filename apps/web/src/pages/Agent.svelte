@@ -136,7 +136,7 @@
 {:else if ws().loading}
   <Page width="chat"><Skeleton lines={4} /></Page>
 {:else}
-  <Page center><EmptyState icon={Bot} title="This agent no longer exists" /></Page>
+  <Page center><EmptyState icon={Bot} title={id ? 'This agent no longer exists' : 'No agents'} /></Page>
 {/if}
 
 <style>

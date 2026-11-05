@@ -1314,9 +1314,6 @@ func (s *pgStore) migrate(ctx context.Context) error {
 			applied = false
 			return nil
 		}
-		if err := generated.New(tx).SeedAgent(ctx); err != nil {
-			return err
-		}
 		if _, err := tx.Exec(ctx, fileInheritOnce); err != nil {
 			return fmt.Errorf("files in folders: %w", err)
 		}
