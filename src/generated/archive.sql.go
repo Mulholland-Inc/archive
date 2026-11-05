@@ -308,6 +308,7 @@ SELECT jsonb_build_object(
             'archive.spend_department'::regclass, 'archive.spend_user'::regclass, 'archive.spend_card'::regclass,
             'archive.spend_transaction'::regclass, 'archive.spend_receipt'::regclass,
             'archive.warehouse_table'::regclass, 'archive.warehouse_column'::regclass,
+            'archive.photo'::regclass,
             'archive.investment_holding'::regclass, 'archive.investment_transaction'::regclass,
             'archive.bank_liability'::regclass, 'archive.budget_category'::regclass,
             'archive.parcel'::regclass, 'archive.parcel_event'::regclass, 'archive.vehicle'::regclass, 'archive.vehicle_charge'::regclass, 'archive.home_device'::regclass,
@@ -588,6 +589,7 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.spend_card x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.spend_transaction x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.warehouse_table x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.photo x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.investment_holding x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.investment_transaction x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.bank_liability x WHERE x.connection = c.id)
@@ -975,6 +977,38 @@ func (q *Queries) DeleteWorkflow(ctx context.Context, id uuid.UUID) (int64, erro
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const deviceConnection = `-- name: DeviceConnection :one
+INSERT INTO archive.connection (member, provider, account, token, sync_at) VALUES ($1, 'iphone', $2, ''::bytea, NULL)
+ON CONFLICT (member, provider, account) DO UPDATE SET updated_at = now(), revoked = false
+RETURNING id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, lease_at, revoked, integration
+`
+
+func (q *Queries) DeviceConnection(ctx context.Context, member uuid.UUID, account string) (ArchiveConnection, error) {
+	row := q.db.QueryRow(ctx, deviceConnection, member, account)
+	var i ArchiveConnection
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Access,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Member,
+		&i.Provider,
+		&i.Account,
+		&i.Token,
+		&i.Scopes,
+		&i.Error,
+		&i.Meta,
+		&i.SyncAt,
+		&i.SyncedAt,
+		&i.Cursor,
+		&i.LeaseAt,
+		&i.Revoked,
+		&i.Integration,
+	)
+	return i, err
 }
 
 const dropBlobGone = `-- name: DropBlobGone :exec
