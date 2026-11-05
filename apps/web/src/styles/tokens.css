@@ -173,6 +173,7 @@
   --bubble-max: 85%;
   --settings-art: 11rem;
   --settings-art-sm: calc(var(--settings-art) * 0.7);
+  --settings-qr: 18rem;
   --login-art: 18rem;
   --login-art-max: 35svh;
   --banner-height: 12rem;

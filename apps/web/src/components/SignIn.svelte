@@ -3,7 +3,7 @@
   import Art from './Art.svelte';
   import Heading from './Heading.svelte';
   import Button from './Button.svelte';
-  import Input from './Input.svelte';
+  import CodeInput from './CodeInput.svelte';
   import ConnectorIcon from './ConnectorIcon.svelte';
   import Text from './Text.svelte';
   import { API, api, devicePasskey, passkeyLogin, passkeys, rememberPasskey, said, signOut, Unauthorized } from '../lib/api.js';
@@ -18,11 +18,8 @@
   let loaded = $state(false);
   let pending = $state(false);
   let code = $state('');
-  let field = $state();
   let passkeyed = false;
   const first = passkeys && devicePasskey();
-
-  $effect(() => field?.focus());
 
   api('/auth/methods')
     .then((m) => {
@@ -45,12 +42,11 @@
     busy = false;
   }
 
-  async function verify(event) {
-    event.preventDefault();
+  async function verify() {
     error = '';
     busy = true;
     try {
-      const out = await api('/auth/totp/verify', { method: 'POST', body: { code: code.replace(/\D/g, '') } });
+      const out = await api('/auth/totp/verify', { method: 'POST', body: { code } });
       if (passkeyed) rememberPasskey(out.user.id, 'yes');
       await done();
     } catch (err) {
@@ -70,16 +66,14 @@
 
 <div class="screen" transition:fade={{ speed: 'normal' }}>
   <div class="card">
-    <Art name={art} size="lg" />
+    <Art name={pending ? 'totp' : art} size="lg" />
     <Heading level={1} size="xl" leading="inherit" wrap="normal">{pending ? 'Enter your code' : title}</Heading>
-    {#if error}<p class="error" role="alert">{error}</p>{/if}
     {#if pending}
-      <form class="methods" onsubmit={verify}>
-        <Input bind:value={code} bind:element={field} aria-label="Code" inputmode="numeric" autocomplete="one-time-code" />
-        <Button variant="primary" size="lg" type="submit" full loading={busy}>Verify</Button>
-        <Button variant="ghost" size="lg" full onclick={back}>Back</Button>
-      </form>
+      <CodeInput bind:value={code} {busy} invalid={error && !code} done={verify} />
+      {#if error}<p class="error" role="alert">{error}</p>{/if}
+      <Button variant="ghost" size="lg" full onclick={back}>Back</Button>
     {:else if loaded}
+      {#if error}<p class="error" role="alert">{error}</p>{/if}
       <div class="methods">
         {#if passkeys && first}
           <Button variant="primary" size="lg" icon={KeyRound} full loading={busy} onclick={passkey}>Use a passkey</Button>
