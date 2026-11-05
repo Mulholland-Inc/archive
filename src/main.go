@@ -38,7 +38,7 @@ func main() {
 
 func start(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return errors.New("want serve or secrets")
+		return errors.New("want serve, migrate or secrets")
 	}
 	switch args[0] {
 	case "serve":
@@ -53,13 +53,20 @@ func start(ctx context.Context, args []string) error {
 		}
 		defer h.Close()
 		return serve(ctx, h, *addr)
+	case "migrate":
+		h, err := Open(ctx)
+		if err != nil {
+			return err
+		}
+		defer h.Close()
+		return h.migrateAll(ctx)
 	case "secrets":
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		enc.SetEscapeHTML(false)
 		return enc.Encode(connect.Secrets())
 	}
-	return fmt.Errorf("unknown command %q: want serve or secrets", args[0])
+	return fmt.Errorf("unknown command %q: want serve, migrate or secrets", args[0])
 }
 
 func serve(ctx context.Context, h *Hub, addr string) error {
@@ -98,6 +105,7 @@ func serve(ctx context.Context, h *Hub, addr string) error {
 	mux.HandleFunc("POST /tasks", h.tasksHTTP)
 	mux.HandleFunc("POST /push/{id}", h.pushHTTP)
 	mux.HandleFunc("GET /push/{id}", h.pushHTTP)
+	mux.HandleFunc("POST /device/{stream}", h.deviceHTTP)
 	mux.HandleFunc("POST /email", h.emailHTTP)
 	mux.HandleFunc("GET /live", h.liveHTTP)
 	mux.HandleFunc("GET /auth/live", h.liveCheckHTTP)

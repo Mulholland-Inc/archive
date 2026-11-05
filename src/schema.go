@@ -1305,8 +1305,8 @@ func (s *pgStore) migrate(ctx context.Context) error {
 				return err
 			}
 		}
-		if _, err := tx.Exec(ctx, agentSlugOnce); err != nil {
-			return fmt.Errorf("agent slugs: %w", err)
+		if _, err := tx.Exec(ctx, s.expand(storeMigrateAs)); err != nil {
+			return fmt.Errorf("migration role: %w", err)
 		}
 		lost, err := pgMigrate(ctx, tx, want)
 		if err != nil {
@@ -1315,10 +1315,8 @@ func (s *pgStore) migrate(ctx context.Context) error {
 		if len(lost) > 0 {
 			fmt.Fprintf(os.Stderr, "archive: archive.sql not applied at startup, it would delete data:\n  %s\n", strings.Join(lost, "\n  "))
 			applied = false
-			return nil
-		}
-		if _, err := tx.Exec(ctx, fileInheritOnce); err != nil {
-			return fmt.Errorf("files in folders: %w", err)
+			_, err := tx.Exec(ctx, s.expand(storeMigrateRole))
+			return err
 		}
 		if _, err := tx.Exec(ctx, s.expand(storeMigrateRole)); err != nil {
 			return fmt.Errorf("migration role: %w", err)
@@ -1331,70 +1329,11 @@ func (s *pgStore) migrate(ctx context.Context) error {
 	return syncCheckSQL(ctx, conn)
 }
 
-const agentSlugOnce = `DO $$
-DECLARE
-    r record;
-    base text;
-    next text;
-    n integer;
+const storeMigrateAs = `DO $$
 BEGIN
-    IF to_regclass('archive.agent') IS NULL OR EXISTS (SELECT FROM pg_catalog.pg_attribute WHERE attrelid = to_regclass('archive.agent') AND attname = 'slug') THEN
-        RETURN;
+    IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{p}_base') THEN
+        EXECUTE format('GRANT "{p}_base" TO %I WITH INHERIT TRUE', current_user);
     END IF;
-    ALTER TABLE archive.agent ADD COLUMN slug text;
-    FOR r IN SELECT id, name FROM archive.agent ORDER BY created_at, id LOOP
-        base := coalesce(nullif(btrim(regexp_replace(lower(regexp_replace(normalize(r.name, NFD), '[\u0300-\u036f]', '', 'g')), '[^a-z0-9]+', '-', 'g'), '-'), ''), 'agent');
-        next := rtrim(left(base, 32), '-');
-        n := 1;
-        WHILE EXISTS (SELECT FROM archive.agent a WHERE a.slug = next) LOOP
-            n := n + 1;
-            next := rtrim(left(base, 31 - length(n::text)), '-') || '-' || n;
-        END LOOP;
-        UPDATE archive.agent SET slug = next, updated_at = updated_at WHERE id = r.id;
-    END LOOP;
-END $$`
-
-const workspaceSlugOnce = `DO $$
-DECLARE
-    r record;
-    base text;
-    next text;
-    n integer;
-BEGIN
-    IF to_regclass('archive.workspace') IS NULL OR EXISTS (SELECT FROM pg_catalog.pg_attribute WHERE attrelid = to_regclass('archive.workspace') AND attname = 'slug') THEN
-        RETURN;
-    END IF;
-    ALTER TABLE archive.workspace ADD COLUMN slug text;
-    FOR r IN SELECT id, name FROM archive.workspace ORDER BY created_at, id LOOP
-        base := coalesce(nullif(regexp_replace(lower(regexp_replace(normalize(r.name, NFD), '[\u0300-\u036f]', '', 'g')), '[^a-z0-9]', '', 'g'), ''), 'workspace');
-        next := left(base, 24);
-        n := 1;
-        WHILE EXISTS (SELECT FROM archive.workspace w WHERE w.slug = next) LOOP
-            n := n + 1;
-            next := left(base, 24 - length(n::text)) || n;
-        END LOOP;
-        UPDATE archive.workspace SET slug = next WHERE id = r.id;
-    END LOOP;
-END $$`
-
-const fileInheritOnce = `DO $$
-DECLARE
-    r record;
-BEGIN
-    FOR r IN
-        WITH RECURSIVE tree AS (
-            SELECT id, 0 AS depth FROM archive.file WHERE parent IS NULL AND connection IS NULL AND kind = 'folder'
-            UNION ALL
-            SELECT f.id, t.depth + 1 FROM archive.file f JOIN tree t ON f.parent = t.id WHERE f.connection IS NULL
-        )
-        SELECT id FROM tree WHERE depth > 0 ORDER BY depth
-    LOOP
-        BEGIN
-            UPDATE archive.file c SET access = p.access FROM archive.file p WHERE c.id = r.id AND p.id = c.parent AND c.access IS DISTINCT FROM p.access;
-        EXCEPTION WHEN unique_violation THEN
-            UPDATE archive.file c SET name = 'Copy ' || left(c.id::text, 4) || ' ' || c.name, access = p.access FROM archive.file p WHERE c.id = r.id AND p.id = c.parent;
-        END;
-    END LOOP;
 END $$`
 
 const storeMigrateRole = `DO $$

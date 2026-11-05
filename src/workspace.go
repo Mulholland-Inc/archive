@@ -33,18 +33,19 @@ import (
 )
 
 type Hub struct {
-	key     []byte
-	aead    cipher.AEAD
-	pg      *pgx.ConnConfig
-	main    *pgxpool.Pool
-	blobs   blobStore
-	hints   Hints
-	app     string
-	api     string
-	mcpURL  string
-	tasks   *hubTasks
-	live    *liveHub
-	connect connect.Providers
+	migrating bool
+	key       []byte
+	aead      cipher.AEAD
+	pg        *pgx.ConnConfig
+	main      *pgxpool.Pool
+	blobs     blobStore
+	hints     Hints
+	app       string
+	api       string
+	mcpURL    string
+	tasks     *hubTasks
+	live      *liveHub
+	connect   connect.Providers
 
 	mu   sync.Mutex
 	open map[string]*hubEntry
@@ -173,10 +174,6 @@ func openHub(ctx context.Context, dsn, dir string) (*Hub, error) {
 	if h.main, err = storePool(ctx, pg, storeSysConns, nil, nil); err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
-	if err := h.migrate(ctx); err != nil {
-		h.Close()
-		return nil, fmt.Errorf("main database: %w", err)
-	}
 	return h, nil
 }
 
@@ -199,6 +196,27 @@ func (h *Hub) urls(port string) error {
 }
 
 const mainLock = 7274
+
+func (h *Hub) migrateAll(ctx context.Context) error {
+	h.migrating = true
+	if err := h.migrate(ctx); err != nil {
+		return fmt.Errorf("main database: %w", err)
+	}
+	rows, err := h.q().AllWorkspaces(ctx)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, row := range rows {
+		a, err := h.load(ctx, row.ID.String())
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		a.Close()
+	}
+	return errors.Join(errs...)
+}
 
 func (h *Hub) migrate(ctx context.Context) error {
 	conn, err := h.main.Acquire(ctx)
@@ -233,9 +251,6 @@ func (h *Hub) migrate(ctx context.Context) error {
 }
 
 func mainMigrate(ctx context.Context, tx pgx.Tx, want pgSchema) error {
-	if _, err := tx.Exec(ctx, workspaceSlugOnce); err != nil {
-		return fmt.Errorf("workspace slugs: %w", err)
-	}
 	lost, err := pgMigrate(ctx, tx, want)
 	if err != nil {
 		return fmt.Errorf("main.sql: %w", err)
@@ -297,7 +312,7 @@ func (h *Hub) openArchive(ctx context.Context, row generated.ArchiveWorkspace, k
 	id := row.ID.String()
 	cfg := h.pg.Copy()
 	cfg.Database = h.database(id)
-	st, err := OpenStore(ctx, cfg, id, authPassword(key), func(table, rid string) {
+	st, err := OpenStore(ctx, cfg, id, authPassword(key), h.migrating, func(table, rid string) {
 		if table == "archive.push" {
 			h.pushed(row.ID, rid)
 			return

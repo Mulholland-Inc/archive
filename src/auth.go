@@ -528,15 +528,14 @@ type signin struct {
 	wa      *webauthn.WebAuthn
 	configs []signinConfig
 
-	mu         sync.Mutex
-	ceremonies map[string]signinCeremonyData
-	providers  map[string]*signinProvider
+	mu        sync.Mutex
+	providers map[string]*signinProvider
 }
 
 type signinCeremonyData struct {
-	data webauthn.SessionData
-	user uuid.UUID
-	exp  time.Time
+	Data webauthn.SessionData `json:"data"`
+	User uuid.UUID            `json:"user"`
+	Exp  time.Time            `json:"exp"`
 }
 
 type signinConfig struct {
@@ -592,7 +591,7 @@ func newSignin(h *Hub) (*signin, error) {
 	if err != nil || u.Host == "" {
 		return nil, fmt.Errorf("ARCHIVE_URL %q is not a URL", h.app)
 	}
-	s := &signin{h: h, secure: strings.HasPrefix(h.api, "https://"), ceremonies: map[string]signinCeremonyData{}, providers: map[string]*signinProvider{}}
+	s := &signin{h: h, secure: strings.HasPrefix(h.api, "https://"), providers: map[string]*signinProvider{}}
 	if s.wa, err = webauthn.New(&webauthn.Config{RPID: u.Hostname(), RPDisplayName: "Archive", RPOrigins: []string{u.Scheme + "://" + u.Host}}); err != nil {
 		return nil, fmt.Errorf("passkeys: %w", err)
 	}
@@ -653,7 +652,6 @@ func (s *signin) handler() http.Handler {
 		if ac.Role != ac.UserRole {
 			m.Role = "viewer"
 		}
-		a.syncCatchUp(r.Context(), m.ID)
 		rows, err := h.q().UserWorkspaces(r.Context(), ac.UserID)
 		all := []Workspace{}
 		for _, x := range rows {
@@ -756,14 +754,14 @@ func (s *signin) handler() http.Handler {
 			return 0, nil, err
 		}
 		cer, err := s.finish(w, r)
-		if err != nil || cer.user != ac.UserID {
+		if err != nil || cer.User != ac.UserID {
 			return 0, nil, cmp.Or(err, fmt.Errorf("passkey ceremony belongs to another user: %w", ErrForbidden))
 		}
 		pu, err := s.user(r.Context(), ac.UserID)
 		if err != nil {
 			return 0, nil, err
 		}
-		cred, err := s.wa.FinishRegistration(pu, cer.data, r)
+		cred, err := s.wa.FinishRegistration(pu, cer.Data, r)
 		if err != nil {
 			return 0, nil, fmt.Errorf("passkey: %v: %w", err, httpErrBadRequest)
 		}
@@ -791,7 +789,7 @@ func (s *signin) handler() http.Handler {
 			}
 			found, err = s.user(r.Context(), id)
 			return found, err
-		}, cer.data, r)
+		}, cer.Data, r)
 		if err != nil {
 			return 0, nil, fmt.Errorf("passkey: %v: %w", err, ErrUnauthorized)
 		}
@@ -885,29 +883,27 @@ func (s *signin) save(ctx context.Context, pu *signinUser) error {
 }
 
 func (s *signin) begin(w http.ResponseWriter, data webauthn.SessionData, user uuid.UUID) {
-	key := authNewSecret()
-	s.mu.Lock()
-	for k, c := range s.ceremonies {
-		if time.Now().After(c.exp) {
-			delete(s.ceremonies, k)
-		}
-	}
-	s.ceremonies[key] = signinCeremonyData{data, user, time.Now().Add(5 * time.Minute)}
-	s.mu.Unlock()
-	http.SetCookie(w, s.cookie(signinCeremony, key, "/auth/passkey/", 300))
+	b, _ := json.Marshal(signinCeremonyData{data, user, time.Now().Add(5 * time.Minute)})
+	nonce := make([]byte, s.h.aead.NonceSize())
+	rand.Read(nonce)
+	sealed := s.h.aead.Seal(nonce, nonce, b, []byte(signinCeremony))
+	http.SetCookie(w, s.cookie(signinCeremony, base64.RawURLEncoding.EncodeToString(sealed), "/auth/passkey/", 300))
 }
 
 func (s *signin) finish(w http.ResponseWriter, r *http.Request) (signinCeremonyData, error) {
+	var cer signinCeremonyData
 	c, err := r.Cookie(signinCeremony)
 	if err != nil {
-		return signinCeremonyData{}, fmt.Errorf("no passkey ceremony in progress: %w", httpErrBadRequest)
+		return cer, fmt.Errorf("no passkey ceremony in progress: %w", httpErrBadRequest)
 	}
 	http.SetCookie(w, s.cookie(signinCeremony, "", "/auth/passkey/", -1))
-	s.mu.Lock()
-	cer, ok := s.ceremonies[c.Value]
-	delete(s.ceremonies, c.Value)
-	s.mu.Unlock()
-	if !ok || time.Now().After(cer.exp) {
+	sealed, err := base64.RawURLEncoding.DecodeString(c.Value)
+	n := s.h.aead.NonceSize()
+	if err != nil || len(sealed) < n {
+		return cer, fmt.Errorf("passkey ceremony expired: %w", httpErrBadRequest)
+	}
+	b, err := s.h.aead.Open(nil, sealed[:n], sealed[n:], []byte(signinCeremony))
+	if err != nil || json.Unmarshal(b, &cer) != nil || time.Now().After(cer.Exp) {
 		return cer, fmt.Errorf("passkey ceremony expired: %w", httpErrBadRequest)
 	}
 	return cer, nil
