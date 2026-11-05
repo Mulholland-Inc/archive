@@ -1,5 +1,5 @@
 <script>
-  import { UserPlus, SearchX, Share as ShareIcon, Ban, UsersRound, Plus, Pencil, Trash2, Settings2 } from '@lucide/svelte';
+  import { UserPlus, SearchX, Share as ShareIcon, Ban, UsersRound, Plus, Pencil, Trash2 } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
   import StickyHeader from '../components/StickyHeader.svelte';
@@ -21,7 +21,7 @@
   import MobileMenu from '../components/MobileMenu.svelte';
   import Chip from '../components/Chip.svelte';
   import GroupDialog from '../components/GroupDialog.svelte';
-  import { ws, seedOf, setRole, shareItem, shareKinds, permissions, isExternal, openShare, stopSharing, members, groups, groupById, isArchiveOwner, invite } from '../lib/app.svelte.js';
+  import { ws, seedOf, setRole, shareItem, shareKinds, permissions, isExternal, openShare, stopSharing, members, groups, groupById, toggleGroup, isArchiveOwner, invite } from '../lib/app.svelte.js';
 
   members.use();
   groups.use();
@@ -219,15 +219,19 @@
           {:else if col.key === 'role'}
             <Menu value={row.role} options={roles} size="sm" variant="ghost" label={`Role for ${row.name}`} onchange={(v) => changeRole(row, v)} />
           {:else if col.key === 'groups'}
-            <span class="groups">{#each groupsOf(row) as g (g.id)}<Chip size="sm" href={`/access/groups/${g.id}`}>{g.name}</Chip>{:else}<Text tone="tertiary">None</Text>{/each}</span>
+            <span class="groups">
+              {#each groupsOf(row) as g (g.id)}<Chip size="sm" href={`/access/groups/${g.id}`} onremove={owner ? () => toggleGroup(row, g.id) : undefined}>{g.name}</Chip>{:else}{#if !owner}<Text tone="tertiary">None</Text>{/if}{/each}
+              {#if owner}
+                <Menu width="sm" label={`Add ${row.name} to a group`}>
+                  {#snippet trigger(props)}<IconButton icon={Plus} label={`Add ${row.name} to a group`} size="xs" tooltip={false} {...props} />{/snippet}
+                  <MenuItems items={memberGroupItems(row)} />
+                </Menu>
+              {/if}
+            </span>
           {:else if col.key === 'active'}
             {row.status === 'invited' ? 'Invited' : row.active}
           {:else if col.key === 'actions'}
             <span class="actions">
-              <Menu end width="sm" label={`Groups for ${row.name}`}>
-                {#snippet trigger(props)}<IconButton icon={Settings2} label={`Groups for ${row.name}`} size="sm" tooltip={false} {...props} />{/snippet}
-                <MenuItems items={memberGroupItems(row)} />
-              </Menu>
               <IconButton icon={Trash2} label={row.status === 'invited' ? `Revoke ${row.name}’s invitation` : `Remove ${row.name}`} size="sm" onclick={() => removeMemberConfirm(row)} />
             </span>
           {/if}
@@ -272,8 +276,8 @@
   .groups {
     display: inline-flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: var(--space-1);
     max-width: 100%;
-    overflow: hidden;
   }
 </style>
