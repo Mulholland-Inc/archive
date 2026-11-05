@@ -102,6 +102,7 @@ type Workspace struct {
 	Color     *int16    `json:"color"`
 	Slug      string    `json:"slug"`
 	CreatedAt time.Time `json:"created_at,omitzero"`
+	Unread    bool      `json:"unread,omitempty"`
 }
 
 type WorkspaceLook struct {
