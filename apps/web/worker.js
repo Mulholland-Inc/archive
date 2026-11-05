@@ -121,6 +121,8 @@ export default {
     if (url.pathname === '/live/announce') return announce(request, env);
     if (url.pathname === '/live') return connect(request, env, url);
     if (url.hostname.startsWith('api.')) return fetch(request);
-    return env.ASSETS.fetch(request);
+    const asset = await env.ASSETS.fetch(request);
+    const missing = url.pathname.startsWith('/assets/') && (asset.headers.get('Content-Type') || '').startsWith('text/html');
+    return missing ? new Response('not found', { status: 404 }) : asset;
   }
 };
