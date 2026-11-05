@@ -1236,6 +1236,11 @@ var syncSchema = map[string]syncTable{
 	"vehicle":                          {},
 	"vehicle_charge":                   {links: map[string]string{"vehicle": "vehicle"}},
 	"home_device":                      {},
+	"health_sample":                    {},
+	"health_day":                       {},
+	"health_sleep":                     {},
+	"health_workout":                   {},
+	"health_record":                    {},
 }
 
 type syncRec struct {
