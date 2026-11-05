@@ -15,7 +15,6 @@
   import GroupPage from './pages/Group.svelte';
   import Canvas from './components/Canvas.svelte';
   import AppSettings from './components/AppSettings.svelte';
-  import Specimen from './pages/Specimen.svelte';
   import Onboarding from './pages/Onboarding.svelte';
   import { route, replace } from './lib/router.svelte.js';
   import { app, ws, toggleSidebar, closeDrawer, openSettings, boot, account, lastAgent } from './lib/app.svelte.js';
@@ -97,8 +96,6 @@
         <AccessPage />
       {:else if route.parts[0] === 'onboarding'}
         <Onboarding />
-      {:else if route.parts[0] === 'specimen'}
-        <Specimen />
       {:else}
         {#key lastAgent()?.id}<Agent id={lastAgent()?.id} />{/key}
       {/if}

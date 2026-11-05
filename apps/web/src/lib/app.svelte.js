@@ -6,7 +6,7 @@ import { API, api, forgetBlobs, upload, setWorkspace, workspace, local, setLocal
 import { resource, listen, onChange, onRefused } from './stream.svelte.js';
 import { toFile, toMember, toWorkflow, toRun, relative, show } from './live.js';
 import { toTables, countsQuery } from './schema.js';
-import { initials, mockKey, mockProfile, mockSettings } from './mock/index.js';
+import { mockKey, mockProfile, mockSettings } from './mock/index.js';
 import { nameBrands } from './brands.svelte.js';
 import { lookOf } from './looks.js';
 import { notify } from './dialogs.svelte.js';
@@ -1532,4 +1532,3 @@ async function onOwnConnection(x, path, init, failed) {
 export const syncOwnConnection = (x) => onOwnConnection(x, '/sync', { method: 'POST' }, `Couldn’t sync ${x.account}`);
 export const disconnectOwnConnection = (x) => onOwnConnection(x, '', { method: 'DELETE' }, `Couldn’t disconnect ${x.account}`);
 
-export { initials };

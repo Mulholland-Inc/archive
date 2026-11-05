@@ -5,9 +5,15 @@
   import Textarea from './Textarea.svelte';
   import Menu from './Menu.svelte';
   import Button from './Button.svelte';
-  import { triggerKinds } from '../lib/mock/workflows.js';
 
   let { open = $bindable(false), oncreate } = $props();
+
+  const triggerKinds = [
+    { value: 'manual', label: 'Run by hand' },
+    { value: 'schedule', label: 'On a schedule' },
+    { value: 'file', label: 'When a file is added' },
+    { value: 'email', label: 'When an email arrives' }
+  ];
 
   let name = $state('');
   let kind = $state('file');

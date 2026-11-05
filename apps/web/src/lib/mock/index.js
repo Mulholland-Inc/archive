@@ -11,9 +11,6 @@
 // - Onboarding checklist: kept on this device per archive.
 // - Empty folders in the library: a folder is a file's access group, so a new one exists once a file is in it.
 // - Workflow pause, stop and "needs input": runs are synchronous in the API.
-// - The component specimen (/specimen) shows the design system with made-up files, chats and members (data.js).
-
-export { initials } from './data.js';
 
 export function mockKey(prefix, date) {
   const hex = () => Math.random().toString(16).slice(2, 10).padEnd(8, '0');
