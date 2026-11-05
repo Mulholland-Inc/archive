@@ -114,6 +114,18 @@ var importStreams = []importStream{
 			Cols: map[string]SQL{"app": "data->>'app'", "build": "data->>'build'", "markers": "archive.sync_num(data->>'markers')", "called": "archive.sync_num(data->>'called')",
 				"chromosomes": "archive.sync_num(data->>'chromosomes')"},
 			Refs: map[string]SQL{"file": "data->>'file_source'"}}},
+	{"orders", "Every order of Amazon's privacy export, Your Orders, since the account began: its items with their ASIN, quantity, price and tax, " +
+		"what it came to with shipping and discounts, what was refunded, its status, how it was paid and its carrier tracking, by website and order id.",
+		Map{Table: "commerce_order",
+			Cols: map[string]SQL{"number": "data->>'number'", "customer_name": "'Amazon'",
+				"total": importMoney("total"), "shipping": importMoney("shipping"), "discounts": importMoney("discounts"), "refunded": importMoney("refunded"),
+				"fulfilled": "nullif(data->>'status', '')", "state": "data->>'state'", "country": "data->>'country'", "placed_at": "archive.sync_at(data->>'placed')",
+				"tags": "jsonb_build_array(data->>'website')",
+				"note": "nullif(concat_ws('; ', nullif(data->>'payment', ''), (SELECT string_agg(t #>> '{}', ', ') FROM archive.sync_list(data->'tracking') t)), '')"},
+			Children: []Kids{{Table: "commerce_line", From: "jsonb_array_elements(data->'items') l",
+				Cols: map[string]SQL{"title": "l->>'title'", "sku": "nullif(l->>'asin', '')", "product_source": "nullif(l->>'asin', '')", "variant": "nullif(l->>'condition', '')",
+					"quantity": "archive.sync_num(l->>'quantity')",
+					"price":    "archive.sync_money(l->>'price', coalesce(data->>'currency', 'USD'))", "total": "archive.sync_money(l->>'total', coalesce(data->>'currency', 'USD'))"}}}}},
 	{"media", "The books of a Goodreads export and the films of a Letterboxd one, with your shelf, rating, review and when you read or watched them.",
 		Map{Table: "media",
 			Cols: map[string]SQL{"app": "data->>'app'", "kind": "data->>'kind'", "title": "data->>'title'", "creator": "data->>'creator'", "year": "archive.sync_num(data->>'year')",
@@ -143,7 +155,7 @@ func init() {
 	Register(&Connector{
 		ID: "import", Name: "Import",
 		Info: Info{By: "Archive", Category: CatFiles, Icon: IconDrive,
-			Description: "Bring in an export a service gave you: Google Takeout, Apple's privacy export, Facebook or Instagram, ChatGPT, Claude or Grok, a GEDCOM family tree, raw DNA, Goodreads, Letterboxd, a WhatsApp chat or an iMessage chat.db",
+			Description: "Bring in an export a service gave you: Google Takeout, Apple's privacy export, Facebook or Instagram, ChatGPT, Claude or Grok, a GEDCOM family tree, raw DNA, Amazon's Your Orders, Goodreads, Letterboxd, a WhatsApp chat or an iMessage chat.db",
 			Scopes:      []string{"Read the export, which moves under the import so only you see it, and goes when you disconnect it"}},
 		Keys:    []Key{{Name: "file", Label: "Export", File: true, Help: "The zip or file a service gave you, of any size. Choose JSON over HTML where it asks. To import one already in Archive, like a Takeout zip in your Google Drive, choose Import in its menu"}},
 		Account: importAccount,
@@ -420,6 +432,7 @@ func init() {
 				h := strings.ToLower(string(head()))
 				return strings.Contains(h, "rsid") && (strings.Contains(h, "chromosome") || strings.Contains(h, "23andme") || strings.Contains(h, "ancestrydna"))
 			}},
+		{stream: "orders", name: "Amazon orders", parse: importAmazon, match: importAmazonMatch},
 		{stream: "media", name: "Goodreads", parse: importGoodreads,
 			match: func(p, base string, head func() []byte) bool {
 				return strings.HasSuffix(base, ".csv") && bytes.HasPrefix(bytes.TrimPrefix(head(), []byte("\ufeff")), []byte("Book Id,Title,Author"))
