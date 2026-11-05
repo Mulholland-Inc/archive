@@ -754,6 +754,9 @@ func (c *Connector) compile() error {
 	if (c.Ask != nil || c.Signed != "" || c.Was != "") && (c.Keyed() || c.MCP != "") {
 		return errors.New("Ask, Signed and Was are a sign-in's, not keys' or an MCP server's")
 	}
+	if c.OAuth1 != "" && (c.Keyed() || c.MCP != "" || c.Ask != nil || c.Signed != "" || !c.Lasts) {
+		return errors.New("an OAuth 1 sign-in asks nothing first, signs nothing back, and its token Lasts")
+	}
 	if c.Trade != nil {
 		if err := c.Trade.check("trade", "key", "client", "option", "basic"); err != nil {
 			return err

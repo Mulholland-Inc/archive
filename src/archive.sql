@@ -4225,6 +4225,109 @@ COMMENT ON COLUMN archive.music_artist.source_id IS 'Their id there';
 COMMENT ON COLUMN archive.music_artist.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.music_artist.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
+CREATE TABLE archive.notebook (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream     text NOT NULL,
+    source_id  text NOT NULL,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    name       text NOT NULL DEFAULT '',
+    seen_at    timestamptz NOT NULL DEFAULT now(),
+    title      text,
+    stack      text,
+    is_default boolean,
+    made_at    timestamptz,
+    edited_at  timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+COMMENT ON TABLE archive.notebook IS 'A notebook of a notes app you connected, like Evernote; its notes are in note. Read only; Archive syncs them
+icon: notebook';
+COMMENT ON COLUMN archive.notebook.title IS 'Its name';
+COMMENT ON COLUMN archive.notebook.stack IS 'The stack it is in, when it is in one';
+COMMENT ON COLUMN archive.notebook.is_default IS 'Whether new notes go in it';
+COMMENT ON COLUMN archive.notebook.made_at IS 'When it was made';
+COMMENT ON COLUMN archive.notebook.edited_at IS 'When it was last changed';
+COMMENT ON COLUMN archive.notebook.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.notebook.stream IS 'What its connector syncs it as, like notebooks';
+COMMENT ON COLUMN archive.notebook.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.notebook.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.notebook.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.note (
+    id              uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection      uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream          text NOT NULL,
+    source_id       text NOT NULL,
+    access          uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    updated_at      timestamptz NOT NULL DEFAULT now(),
+    name            text NOT NULL DEFAULT '',
+    seen_at         timestamptz NOT NULL DEFAULT now(),
+    title           text,
+    text            text,
+    notebook        uuid REFERENCES archive.notebook ON DELETE SET NULL,
+    notebook_source text,
+    tags            text,
+    author          text,
+    source_url      text,
+    place           text,
+    url             archive.url,
+    reminder_at     timestamptz,
+    done_at         timestamptz,
+    made_at         timestamptz,
+    edited_at       timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX note_notebook_idx ON archive.note (notebook);
+COMMENT ON TABLE archive.note IS 'A note of a notes app you connected, like Evernote, with its words; its attachments are in note_attachment. Read only; Archive syncs them
+icon: sticky-note';
+COMMENT ON COLUMN archive.note.title IS 'Its title';
+COMMENT ON COLUMN archive.note.text IS 'Its words, up to 1 MB, as plain text: a checklist''s boxes as [ ] and [x]';
+COMMENT ON COLUMN archive.note.notebook IS 'references notebook; the notebook it is in';
+COMMENT ON COLUMN archive.note.notebook_source IS 'The id there of the notebook it is in';
+COMMENT ON COLUMN archive.note.tags IS 'Its tags, comma separated';
+COMMENT ON COLUMN archive.note.author IS 'Who wrote it, when the app says';
+COMMENT ON COLUMN archive.note.source_url IS 'The web page it was clipped from';
+COMMENT ON COLUMN archive.note.place IS 'Where it was written, by name or as latitude, longitude';
+COMMENT ON COLUMN archive.note.url IS 'Where it is there';
+COMMENT ON COLUMN archive.note.reminder_at IS 'When it reminds you';
+COMMENT ON COLUMN archive.note.done_at IS 'When its reminder was marked done';
+COMMENT ON COLUMN archive.note.made_at IS 'When it was written';
+COMMENT ON COLUMN archive.note.edited_at IS 'When it was last edited';
+COMMENT ON COLUMN archive.note.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.note.stream IS 'What its connector syncs it as, like notes';
+COMMENT ON COLUMN archive.note.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.note.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.note.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.note_attachment (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    name       text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    note       uuid NOT NULL REFERENCES archive.note ON DELETE CASCADE,
+    filename   text,
+    mime       text,
+    size       bigint,
+    text       text,
+    file       uuid REFERENCES archive.file ON DELETE SET NULL
+) INHERITS (archive.object);
+CREATE INDEX note_attachment_note_idx ON archive.note_attachment (note);
+CREATE INDEX note_attachment_connection_idx ON archive.note_attachment (connection);
+COMMENT ON TABLE archive.note_attachment IS 'A file in a note, like a PDF, a photo or a recording, with its words when it is a document Archive reads; its content is kept as a file. Read only; Archive syncs them
+icon: paperclip';
+COMMENT ON COLUMN archive.note_attachment.note IS 'references note';
+COMMENT ON COLUMN archive.note_attachment.filename IS 'Its file name, when it has one';
+COMMENT ON COLUMN archive.note_attachment.mime IS 'Its media type, like application/pdf or image/jpeg';
+COMMENT ON COLUMN archive.note_attachment.size IS 'Its size in bytes';
+COMMENT ON COLUMN archive.note_attachment.text IS 'Its words, up to 64 KB, when it is a PDF, Word, Excel, PowerPoint or text file Archive read';
+COMMENT ON COLUMN archive.note_attachment.file IS 'references file; its content, kept as a file its connection owns, seen by whoever sees the note; null when Archive did not keep it, like one over 25 MB';
+COMMENT ON COLUMN archive.note_attachment.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
 CREATE TABLE archive.school_notice (
     id           uuid PRIMARY KEY DEFAULT uuidv7(),
     connection   uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
@@ -4400,6 +4503,9 @@ BEGIN
         WHEN 'music_playlist' THEN r->>'title'
         WHEN 'music_track' THEN concat_ws(' · ', r->>'title', nullif(r->>'artists', ''))
         WHEN 'music_artist' THEN r->>'title'
+        WHEN 'notebook' THEN r->>'title'
+        WHEN 'note' THEN coalesce(nullif(r->>'title', ''), 'Untitled note')
+        WHEN 'note_attachment' THEN coalesce(nullif(r->>'filename', ''), r->>'mime')
         ELSE own END), ''), '');
     RETURN NEW;
 END $$;
@@ -4495,6 +4601,9 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.home_device FOR EA
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.music_playlist FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.music_track FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.music_artist FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.notebook FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.note FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.note_attachment FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.school_notice FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_contact FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_item FOR EACH ROW EXECUTE FUNCTION archive.object_name();
@@ -4634,6 +4743,9 @@ GRANT SELECT ON archive.home_device TO "{p}_viewer";
 GRANT SELECT ON archive.music_playlist TO "{p}_viewer";
 GRANT SELECT ON archive.music_track TO "{p}_viewer";
 GRANT SELECT ON archive.music_artist TO "{p}_viewer";
+GRANT SELECT ON archive.notebook TO "{p}_viewer";
+GRANT SELECT ON archive.note TO "{p}_viewer";
+GRANT SELECT ON archive.note_attachment TO "{p}_viewer";
 GRANT SELECT ON archive.school_notice TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT, UPDATE, DELETE ON TABLES TO "{p}_editor";
@@ -4844,6 +4956,12 @@ ALTER TABLE archive.music_track ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.music_track FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = music_track.connection));
 ALTER TABLE archive.music_artist ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.music_artist FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = music_artist.connection));
+ALTER TABLE archive.notebook ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.notebook FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = notebook.connection));
+ALTER TABLE archive.note ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.note FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = note.connection));
+ALTER TABLE archive.note_attachment ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.note_attachment FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = note_attachment.connection));
 ALTER TABLE archive.school_notice ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.school_notice FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = school_notice.connection));
 ALTER TABLE archive.known_person ENABLE ROW LEVEL SECURITY;
@@ -5180,6 +5298,7 @@ SELECT jsonb_build_object(
             'archive.parcel'::regclass, 'archive.parcel_event'::regclass, 'archive.vehicle'::regclass, 'archive.vehicle_charge'::regclass, 'archive.home_device'::regclass,
             'archive.health_sample'::regclass, 'archive.health_day'::regclass, 'archive.health_sleep'::regclass, 'archive.health_workout'::regclass, 'archive.health_record'::regclass,
             'archive.music_playlist'::regclass, 'archive.music_track'::regclass, 'archive.music_artist'::regclass,
+            'archive.notebook'::regclass, 'archive.note'::regclass, 'archive.note_attachment'::regclass,
             'archive.school_notice'::regclass,
             'archive.contact'::regclass, 'archive.location'::regclass, 'archive.history'::regclass, 'archive.post'::regclass,
             'archive.kin'::regclass, 'archive.kin_tie'::regclass, 'archive.dna'::regclass, 'archive.media'::regclass)
@@ -5339,6 +5458,8 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.music_playlist x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.music_track x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.music_artist x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.notebook x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.note x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.school_notice x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.contact x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.location x WHERE x.connection = c.id)
