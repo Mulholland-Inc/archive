@@ -520,8 +520,8 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <thead><tr><th>Call</th><th>Does</th></tr></thead>
 <tbody>
 <tr><td><code>query(sql, ...params): Row[]</code></td><td>Reads with one SQL statement as you, with <code>$1</code>, <code>$2</code> bound to params; writes and DDL throw.</td></tr>
-<tr><td><code>list(table, &#123; where?, limit?, after?, reveal? &#125;): Tables[T][]</code></td><td>Rows oldest first. <code>where</code> matches exact, cleaned values, <code>access</code> included. Page with <code>after</code> set to the last id.</td></tr>
-<tr><td><code>get(table, id, &#123; reveal? &#125;): Tables[T]</code></td><td>One row. Throws <code>not_found</code> if it does not exist or you cannot see it.</td></tr>
+<tr><td><code>list(table, &#123; where?, limit?, after? &#125;): Tables[T][]</code></td><td>Rows oldest first. <code>where</code> matches exact, cleaned values, <code>access</code> included. Page with <code>after</code> set to the last id.</td></tr>
+<tr><td><code>get(table, id): Tables[T]</code></td><td>One row. Throws <code>not_found</code> if it does not exist or you cannot see it.</td></tr>
 <tr><td><code>create(table, data): Tables[T]</code></td><td>Inserts a cleaned, validated row. Set <code>access</code> in <code>data</code> to a group to keep it to that group.</td></tr>
 <tr><td><code>update(table, id, patch): Tables[T]</code></td><td>Changes only the fields given; <code>null</code> clears one.</td></tr>
 <tr><td><code>delete(table, id): void</code></td><td>Deletes a row.</td></tr>
@@ -612,7 +612,6 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <thead><tr><th>Parameter</th><th>Does</th></tr></thead>
 <tbody>
 <tr><td><code>limit</code>, <code>after</code></td><td>Page size, and the last id you got for the next page.</td></tr>
-<tr><td><code>reveal=true</code></td><td>Shows secret values, to managers, engineers and the owner.</td></tr>
 <tr><td><code>column=value</code></td><td>Any other parameter filters rows by that column, like <code>access=hr</code>.</td></tr>
 </tbody>
 </table>
@@ -658,7 +657,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <tbody>
 <tr><td>viewer</td><td>Read rows and files.</td></tr>
 <tr><td>editor</td><td>Also add, change and delete them.</td></tr>
-<tr><td>manager</td><td>Also change the schema, manage people, integrations and agents, see every row and file whatever its access, and reveal secret fields.</td></tr>
+<tr><td>manager</td><td>Also change the schema, manage people, integrations and agents, and see every row and file whatever its access.</td></tr>
 <tr><td>engineer</td><td>Also change the workspace's name and look, and create, read and revoke its API keys.</td></tr>
 <tr><td>owner</td><td>Also delete the workspace and transfer it. Each workspace has one.</td></tr>
 </tbody>
@@ -697,7 +696,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <p>Anyone below a manager can only write rows whose access is empty or one of their own groups. A table only one group should ever see uses <code>access text NOT NULL DEFAULT 'hr' CHECK (access = 'hr')</code>.</p>
 
 <h2 id="secrets">Secret fields</h2>
-<p>Some values should never sit in plain text. Columns of a secret type are encrypted, read back masked, and shown only to managers, engineers and the owner.</p>
+<p>Columns of a secret type read back as they are stored, to anyone who can read the row. They stay out of search and cannot be filtered.</p>
 
 <h3 id="secrets-types">Secret types</h3>
 <table>
@@ -705,13 +704,13 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <tbody>
 <tr><td><code>archive.card</code></td><td>Payment card numbers</td></tr>
 <tr><td><code>archive.us_ssn</code></td><td>US Social Security numbers</td></tr>
-<tr><td><code>archive.national</code></td><td>National identity numbers</td></tr>
-<tr><td><code>archive.passport</code></td><td>Passport numbers</td></tr>
+<tr><td><code>archive.national</code></td><td>National identity numbers, like <code>US 123456789</code></td></tr>
+<tr><td><code>archive.passport</code></td><td>Passport numbers, like <code>US X1234567</code></td></tr>
 </tbody>
 </table>
 
-<h3 id="secrets-reveal">Writing and reading</h3>
-<p>Write the real value as usual. Reads return it masked. Pass <code>&#123; reveal: true &#125;</code> to <code>list</code> or <code>get</code>, or <code>?reveal=true</code> over HTTP, to see it if you are a manager, engineer or the owner.</p>
+<h3 id="secrets-write">Writing</h3>
+<p>Write a national id or passport as a string, or as an object with its country and number. It reads back as the string.</p>
 
 <h2 id="connectors">Connectors</h2>
 <p>Connectors bring a workspace's data in from the tools your team already uses, syncing only what changed, and their actions work in those tools when you or an agent call them.</p>

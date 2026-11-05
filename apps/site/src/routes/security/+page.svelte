@@ -12,7 +12,7 @@
   const ROLES = [
     ['viewer', 'Browse, open and search records and files, read documents, and open boards, calendars and lists.'],
     ['editor', 'Everything a viewer can, plus add, change and remove records and files, and edit Office documents.'],
-    ['manager', 'Everything an editor can, plus add, change and remove people up to their own role, connect the workspace\'s integrations, make agents, change how information is organized, see everything whatever its group, and see the real secret numbers.'],
+    ['manager', 'Everything an editor can, plus add, change and remove people up to their own role, connect the workspace\'s integrations, make agents, change how information is organized, and see everything whatever its group.'],
     ['engineer', 'Everything a manager can, plus change the workspace\'s name and look, and hold its API keys.'],
     ['owner', 'Everything an engineer can, plus delete the workspace and hand it to someone else. Each workspace has exactly one owner, who cannot be removed.']
   ];
@@ -33,7 +33,7 @@
   ];
 </script>
 
-<Meta title="Security — Archive" description="Only the right people see your information. Roles and groups, sealed secret fields, and AI assistants that follow the same rules as everyone else." />
+<Meta title="Security — Archive" description="Only the right people see your information. Roles and groups, and AI assistants that follow the same rules as everyone else." />
 
 <Hero
   title="Only the right people see it."
@@ -57,11 +57,6 @@
     <h2>Checked on every request.</h2>
     <p>The rules live at the core of Archive, not on a screen, so a bug in one place cannot show someone else's information.</p>
     <p>Every list, board, search and assistant sees exactly what you are allowed to see.</p>
-  </Row>
-  <Row flip art="types" alt="Typed fields on a form, one of them covered by a sealed envelope">
-    <h2>Secret fields stay sealed.</h2>
-    <p>Card numbers, Social Security numbers, national IDs and passports are encrypted before they are stored, and everyone sees only the last few digits.</p>
-    <p>Only managers, engineers and the owner can see the real number.</p>
   </Row>
 </Section>
 

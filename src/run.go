@@ -806,10 +806,9 @@ func (r *runner) sdk() {
 			return nil, err
 		}
 		var opts struct {
-			Where  map[string]any `json:"where"`
-			Limit  int            `json:"limit"`
-			After  string         `json:"after"`
-			Reveal bool           `json:"reveal"`
+			Where map[string]any `json:"where"`
+			Limit int            `json:"limit"`
+			After string         `json:"after"`
 		}
 		if err := r.arg(call, 1, "list", "opts", &opts); err != nil {
 			return nil, err
@@ -818,27 +817,14 @@ func (r *runner) sdk() {
 		if err != nil {
 			return nil, err
 		}
-		rs, err := a.List(ctx, table, opts.Where, opts.Limit, after)
-		if err == nil && opts.Reveal {
-			err = a.Reveal(ctx, table, rs...)
-		}
-		return rs, err
+		return a.List(ctx, table, opts.Where, opts.Limit, after)
 	})
 	r.def(o, "get", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		table, id, err := r.row(call, "get")
 		if err != nil {
 			return nil, err
 		}
-		var opts struct {
-			Reveal bool `json:"reveal"`
-		}
-		if err := r.arg(call, 2, "get", "opts", &opts); err != nil {
-			return nil, err
-		}
 		row, err := a.Get(ctx, table, id)
-		if err == nil && opts.Reveal {
-			err = a.Reveal(ctx, table, row)
-		}
 		if err == nil && table == "file" {
 			r.read(ctx, id)
 		}

@@ -7,8 +7,8 @@
  * Transaction and access
  * - A run is one transaction, as you. If it throws, times out or returns too much, everything rolls back. A failed
  *   SDK call you catch undoes only that call. What fetch, browse and actions did outside Archive stays done.
- * - viewer reads, editor also writes, manager also changes the schema, members, integrations and agents, sees every row
- *   and reveals secrets, engineer also changes the workspace's name and look and has its API keys, and the one owner also deletes and transfers it.
+ * - viewer reads, editor also writes, manager also changes the schema, members, integrations and agents, sees every row,
+ *   engineer also changes the workspace's name and look and has its API keys, and the one owner also deletes and transfers it.
  * - A row's access says who sees it: null is the workspace, a group is that group and managers and up. Row-level security
  *   applies everywhere, SQL included. Writes take a group by id or name, like access: "hr"; reads give the id.
  * - Managers and up write the group table { name, description }; deleting one throws conflict while a row's access is it.
@@ -23,7 +23,7 @@
  *   without ? are required on create; empty fields read back null.
  * - Writes clean messy input, so pass what you have: "(415) 555-0123", "$1,234.50", "4/3/1990".
  * - JSON: date "2026-10-27"; timestamptz "2026-10-27T09:30:00Z"; uuids and references as id strings; enums as strings.
- *   Secret types (Card, UsSsn, National, Passport) read back masked; { reveal: true } shows them to managers and up.
+ *   Secret types read back as stored and cannot be filtered: Card and UsSsn as their number, National "US 123456789", Passport "US X1234567".
  *
  * Schema (managers and up)
  * - archive.migrate(sql) dry-runs CREATE, ALTER or DROP of a TABLE, VIEW, INDEX, TYPE, DOMAIN, FUNCTION, TRIGGER,
@@ -118,9 +118,9 @@ declare const archive: {
     /** Read with one SQL statement as you, with $1, $2, ... bound to params; returns its rows, or [] when it has none. Writes and DDL throw forbidden. */
     query(sql: string, ...params: unknown[]): Promise<Row[]>;
     /** Rows of a table, oldest first; where matches exact (cleaned) values; page with after = the last id. */
-    list<T extends keyof Tables>(table: T, opts?: { where?: Partial<Tables[T]>; limit?: number; after?: string; reveal?: boolean }): Promise<Tables[T][]>;
+    list<T extends keyof Tables>(table: T, opts?: { where?: Partial<Tables[T]>; limit?: number; after?: string }): Promise<Tables[T][]>;
     /** One row by id; throws not_found if it does not exist or you cannot see it. */
-    get<T extends keyof Tables>(table: T, id: string, opts?: { reveal?: boolean }): Promise<Tables[T]>;
+    get<T extends keyof Tables>(table: T, id: string): Promise<Tables[T]>;
     /** Insert a row, cleaned and validated per field, and return it; data.access says which group sees it, null for everyone. */
     create<T extends keyof Tables>(table: T, data: Partial<Tables[T]>): Promise<Tables[T]>;
     /** Create an empty document named name, its type taken from the extension; fill it with archive.edit (see Documents). */
