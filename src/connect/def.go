@@ -2394,11 +2394,12 @@ func values(q Q, sc map[string]any) url.Values {
 	return out
 }
 
-var varRe = regexp.MustCompile(`\{[+~'"-]?[A-Za-z_][\w\-*/.@;]*(,[^|{}]*)?(\|[^{}]*)?\}`)
+var varRe = regexp.MustCompile(`\{[+~'"#-]?[A-Za-z_][\w\-*/.@;]*(,[^|{}]*)?(\|[^{}]*)?\}`)
 
 type tvar struct {
 	path, def, sep        string
 	raw, segs, join, host bool
+	num                   bool
 	quote                 byte
 	hasDef                bool
 }
@@ -2413,6 +2414,8 @@ func varOf(m string) tvar {
 		v.segs, s = true, s[1:]
 	case '-':
 		v.host, s = true, s[1:]
+	case '#':
+		v.num, s = true, s[1:]
 	case '\'', '"':
 		v.quote, s = s[0], s[1:]
 	}
@@ -2442,6 +2445,9 @@ func (v tvar) of(sc map[string]any) (any, bool) {
 	}
 	if v.host {
 		return strings.ReplaceAll(strings.ToLower(text(x)), "_", "-"), true
+	}
+	if n, err := strconv.ParseFloat(text(x), 64); v.num && err == nil {
+		return n, true
 	}
 	switch v.quote {
 	case '\'':

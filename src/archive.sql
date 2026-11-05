@@ -2817,12 +2817,12 @@ CREATE TABLE archive.bank_account (
     credit_limit  archive.money,
     UNIQUE (connection, stream, source_id)
 ) INHERITS (archive.object);
-COMMENT ON TABLE archive.bank_account IS 'An account at a bank you connected, like a checking account or a credit card, with its balance. Read only; Archive syncs them
+COMMENT ON TABLE archive.bank_account IS 'An account you connected at a bank, brokerage, budgeting app or crypto exchange, like a checking account, a credit card, an IRA or a Bitcoin wallet, with its balance. Read only; Archive syncs them
 icon: landmark';
 COMMENT ON COLUMN archive.bank_account.title IS 'Its name, as the bank or its owner calls it';
 COMMENT ON COLUMN archive.bank_account.official_name IS 'Its name as the bank has it on record';
 COMMENT ON COLUMN archive.bank_account.mask IS 'The last digits of its account number';
-COMMENT ON COLUMN archive.bank_account.type IS 'depository, credit, loan or investment';
+COMMENT ON COLUMN archive.bank_account.type IS 'depository, credit, loan, investment, crypto or other';
 COMMENT ON COLUMN archive.bank_account.subtype IS 'Like checking, savings or credit card';
 COMMENT ON COLUMN archive.bank_account.balance IS 'Its balance when the bank last said: what is in it, or what is owed on a credit card or loan';
 COMMENT ON COLUMN archive.bank_account.available IS 'What can be spent or drawn from it, pending transactions taken off';
@@ -3140,6 +3140,197 @@ COMMENT ON COLUMN archive.warehouse_column.type IS 'Its type there, like NUMBER,
 COMMENT ON COLUMN archive.warehouse_column.nullable IS 'Whether it may be null';
 COMMENT ON COLUMN archive.warehouse_column.comment IS 'What its comment there says';
 
+CREATE TABLE archive.investment_holding (
+    id             uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream         text NOT NULL,
+    source_id      text NOT NULL,
+    access         uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    updated_at     timestamptz NOT NULL DEFAULT now(),
+    name           text NOT NULL DEFAULT '',
+    seen_at        timestamptz NOT NULL DEFAULT now(),
+    account        uuid REFERENCES archive.bank_account ON DELETE SET NULL,
+    account_source text,
+    security       text,
+    ticker         text,
+    cusip          text,
+    isin           text,
+    kind           text,
+    quantity       numeric,
+    price          archive.money,
+    priced_on      date,
+    value          archive.money,
+    cost_basis     archive.money,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX investment_holding_account_idx ON archive.investment_holding (account);
+COMMENT ON TABLE archive.investment_holding IS 'What an investment or crypto account you connected holds: a stock, fund, bond, coin or cash, how much, and what it is worth. Read only; Archive syncs them
+icon: chart-pie';
+COMMENT ON COLUMN archive.investment_holding.account IS 'references bank_account; the account that holds it';
+COMMENT ON COLUMN archive.investment_holding.account_source IS 'The id there of the account that holds it';
+COMMENT ON COLUMN archive.investment_holding.security IS 'What it is, by name, like Vanguard Total Stock Market ETF or Bitcoin';
+COMMENT ON COLUMN archive.investment_holding.ticker IS 'Its ticker symbol, like VTI, or its coin, like BTC';
+COMMENT ON COLUMN archive.investment_holding.cusip IS 'Its CUSIP, for a US security';
+COMMENT ON COLUMN archive.investment_holding.isin IS 'Its ISIN';
+COMMENT ON COLUMN archive.investment_holding.kind IS 'What kind it is, like equity, etf, mutual fund, fixed income, cash, option or cryptocurrency';
+COMMENT ON COLUMN archive.investment_holding.quantity IS 'How many shares or coins; negative for a short position';
+COMMENT ON COLUMN archive.investment_holding.price IS 'The price of one, when it was last priced';
+COMMENT ON COLUMN archive.investment_holding.priced_on IS 'The day it was last priced';
+COMMENT ON COLUMN archive.investment_holding.value IS 'What it was worth, all of it, when it was last priced';
+COMMENT ON COLUMN archive.investment_holding.cost_basis IS 'What was paid for all of it, when the institution says';
+COMMENT ON COLUMN archive.investment_holding.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.investment_holding.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.investment_holding.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.investment_holding.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.investment_holding.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.investment_transaction (
+    id             uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream         text NOT NULL,
+    source_id      text NOT NULL,
+    access         uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    updated_at     timestamptz NOT NULL DEFAULT now(),
+    name           text NOT NULL DEFAULT '',
+    seen_at        timestamptz NOT NULL DEFAULT now(),
+    account        uuid REFERENCES archive.bank_account ON DELETE SET NULL,
+    account_source text,
+    traded_on      date,
+    kind           text,
+    subtype        text,
+    description    text,
+    security       text,
+    ticker         text,
+    quantity       numeric,
+    price          archive.money,
+    amount         archive.money,
+    fees           archive.money,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX investment_transaction_account_idx ON archive.investment_transaction (account);
+CREATE INDEX investment_transaction_traded_on_idx ON archive.investment_transaction (traded_on);
+COMMENT ON TABLE archive.investment_transaction IS 'A buy, sell, dividend, fee, deposit or transfer in an investment or crypto account you connected. Read only; Archive syncs them
+icon: chart-candlestick';
+COMMENT ON COLUMN archive.investment_transaction.account IS 'references bank_account; the account it is in';
+COMMENT ON COLUMN archive.investment_transaction.account_source IS 'The id there of the account it is in';
+COMMENT ON COLUMN archive.investment_transaction.traded_on IS 'The day it happened';
+COMMENT ON COLUMN archive.investment_transaction.kind IS 'What it is, like buy, sell, dividend, fee, transfer, deposit, withdrawal, send or receive';
+COMMENT ON COLUMN archive.investment_transaction.subtype IS 'What it is in detail, like qualified dividend, contribution or staking reward';
+COMMENT ON COLUMN archive.investment_transaction.description IS 'What the institution calls it';
+COMMENT ON COLUMN archive.investment_transaction.security IS 'What was bought, sold or paid, by name';
+COMMENT ON COLUMN archive.investment_transaction.ticker IS 'Its ticker symbol or coin, like VTI or BTC';
+COMMENT ON COLUMN archive.investment_transaction.quantity IS 'How many shares or coins: positive for more in the account, negative for fewer';
+COMMENT ON COLUMN archive.investment_transaction.price IS 'The price of one';
+COMMENT ON COLUMN archive.investment_transaction.amount IS 'How much money: positive for cash into the account, like a sale or dividend, negative for cash out, like a buy or fee; for a crypto wallet, what the coins that came in or went out were worth';
+COMMENT ON COLUMN archive.investment_transaction.fees IS 'What it cost in fees';
+COMMENT ON COLUMN archive.investment_transaction.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.investment_transaction.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.investment_transaction.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.investment_transaction.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.investment_transaction.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.bank_liability (
+    id                 uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection         uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream             text NOT NULL,
+    source_id          text NOT NULL,
+    access             uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at         timestamptz NOT NULL DEFAULT now(),
+    updated_at         timestamptz NOT NULL DEFAULT now(),
+    name               text NOT NULL DEFAULT '',
+    seen_at            timestamptz NOT NULL DEFAULT now(),
+    account            uuid REFERENCES archive.bank_account ON DELETE SET NULL,
+    account_source     text,
+    kind               text,
+    loan_name          text,
+    status             text,
+    interest_rate      archive.percentage,
+    minimum_payment    archive.money,
+    next_due_on        date,
+    last_payment       archive.money,
+    last_paid_on       date,
+    statement_balance  archive.money,
+    statement_on       date,
+    overdue            boolean,
+    past_due           archive.money,
+    originated_on      date,
+    original_principal archive.money,
+    matures_on         date,
+    escrow_balance     archive.money,
+    interest_paid_ytd  archive.money,
+    principal_paid_ytd archive.money,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX bank_liability_account_idx ON archive.bank_liability (account);
+COMMENT ON TABLE archive.bank_liability IS 'The terms of a credit card, student loan or mortgage you connected: its rate, what is due and when, and what was paid. Read only; Archive syncs them
+icon: scale';
+COMMENT ON COLUMN archive.bank_liability.account IS 'references bank_account; the account it is the terms of, with its balance';
+COMMENT ON COLUMN archive.bank_liability.account_source IS 'The id there of its account';
+COMMENT ON COLUMN archive.bank_liability.kind IS 'credit, student or mortgage';
+COMMENT ON COLUMN archive.bank_liability.loan_name IS 'The loan''s name or type, like Stafford Unsubsidized or Conventional Fixed';
+COMMENT ON COLUMN archive.bank_liability.status IS 'Where a student loan is, like repayment, deferment or forbearance';
+COMMENT ON COLUMN archive.bank_liability.interest_rate IS 'Its interest rate, or for a card its purchase APR, as a percentage like 6.8';
+COMMENT ON COLUMN archive.bank_liability.minimum_payment IS 'The least that must be paid next';
+COMMENT ON COLUMN archive.bank_liability.next_due_on IS 'When the next payment is due';
+COMMENT ON COLUMN archive.bank_liability.last_payment IS 'How much was paid last';
+COMMENT ON COLUMN archive.bank_liability.last_paid_on IS 'When it was paid last';
+COMMENT ON COLUMN archive.bank_liability.statement_balance IS 'The balance on the last statement';
+COMMENT ON COLUMN archive.bank_liability.statement_on IS 'When the last statement was issued';
+COMMENT ON COLUMN archive.bank_liability.overdue IS 'Whether a payment is late';
+COMMENT ON COLUMN archive.bank_liability.past_due IS 'How much is past due';
+COMMENT ON COLUMN archive.bank_liability.originated_on IS 'When the loan was made';
+COMMENT ON COLUMN archive.bank_liability.original_principal IS 'How much was borrowed';
+COMMENT ON COLUMN archive.bank_liability.matures_on IS 'When the loan is due to be paid off';
+COMMENT ON COLUMN archive.bank_liability.escrow_balance IS 'What a mortgage holds in escrow for taxes and insurance';
+COMMENT ON COLUMN archive.bank_liability.interest_paid_ytd IS 'Interest paid so far this year';
+COMMENT ON COLUMN archive.bank_liability.principal_paid_ytd IS 'Principal paid so far this year';
+COMMENT ON COLUMN archive.bank_liability.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.bank_liability.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.bank_liability.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.bank_liability.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.bank_liability.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.budget_category (
+    id          uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection  uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream      text NOT NULL,
+    source_id   text NOT NULL,
+    access      uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    updated_at  timestamptz NOT NULL DEFAULT now(),
+    name        text NOT NULL DEFAULT '',
+    seen_at     timestamptz NOT NULL DEFAULT now(),
+    budget      text,
+    group_name  text,
+    title       text,
+    budgeted    archive.money,
+    activity    archive.money,
+    available   archive.money,
+    goal        archive.money,
+    goal_due_on date,
+    hidden      boolean,
+    note        text,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+COMMENT ON TABLE archive.budget_category IS 'A category of a budget you connected, like Groceries in YNAB, with what was budgeted and spent this month. Read only; Archive syncs them
+icon: wallet';
+COMMENT ON COLUMN archive.budget_category.budget IS 'The budget it is in, by name';
+COMMENT ON COLUMN archive.budget_category.group_name IS 'The group it is in, like Monthly Bills';
+COMMENT ON COLUMN archive.budget_category.title IS 'Its name';
+COMMENT ON COLUMN archive.budget_category.budgeted IS 'What was budgeted for it this month';
+COMMENT ON COLUMN archive.budget_category.activity IS 'What was spent or came in this month: negative for spending';
+COMMENT ON COLUMN archive.budget_category.available IS 'What is left to spend';
+COMMENT ON COLUMN archive.budget_category.goal IS 'Its goal''s target, when it has one';
+COMMENT ON COLUMN archive.budget_category.goal_due_on IS 'When its goal is due';
+COMMENT ON COLUMN archive.budget_category.hidden IS 'Whether it is hidden';
+COMMENT ON COLUMN archive.budget_category.note IS 'The note on it';
+COMMENT ON COLUMN archive.budget_category.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.budget_category.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.budget_category.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.budget_category.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.budget_category.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 CREATE TABLE archive.parcel (
     id            uuid PRIMARY KEY DEFAULT uuidv7(),
     connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
@@ -3464,6 +3655,10 @@ BEGIN
         WHEN 'spend_receipt' THEN concat_ws(' ', 'Receipt', r->>'position')
         WHEN 'warehouse_table' THEN concat_ws('.', nullif(r->>'database', ''), nullif(r->>'schema', ''), r->>'title')
         WHEN 'warehouse_column' THEN concat_ws(' · ', r->>'title', nullif(r->>'type', ''))
+        WHEN 'investment_holding' THEN concat_ws(' · ', coalesce(nullif(r->>'ticker', ''), r->>'security'), nullif(r->>'quantity', ''))
+        WHEN 'investment_transaction' THEN concat_ws(' · ', initcap(r->>'kind'), coalesce(nullif(r->>'ticker', ''), nullif(r->>'security', ''), nullif(r->>'description', '')), r->>'traded_on')
+        WHEN 'bank_liability' THEN concat_ws(' · ', initcap(r->>'kind'), nullif(r->>'loan_name', ''))
+        WHEN 'budget_category' THEN concat_ws(' · ', nullif(r->>'group_name', ''), r->>'title')
         WHEN 'parcel' THEN concat_ws(' · ', concat_ws(' ', r->>'carrier', r->>'tracking'), nullif(r->>'status', ''))
         WHEN 'parcel_event' THEN concat_ws(' · ', nullif(r->>'status', ''), nullif(r->>'city', ''), left(r->>'at', 10))
         WHEN 'vehicle' THEN coalesce(nullif(r->>'title', ''), r->>'vin')
@@ -3538,6 +3733,10 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.spend_transaction 
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.spend_receipt FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.warehouse_table FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.warehouse_column FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.investment_holding FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.investment_transaction FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.bank_liability FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.budget_category FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.parcel FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.parcel_event FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.vehicle FOR EACH ROW EXECUTE FUNCTION archive.object_name();
@@ -3655,6 +3854,10 @@ GRANT SELECT ON archive.spend_transaction TO "{p}_viewer";
 GRANT SELECT ON archive.spend_receipt TO "{p}_viewer";
 GRANT SELECT ON archive.warehouse_table TO "{p}_viewer";
 GRANT SELECT ON archive.warehouse_column TO "{p}_viewer";
+GRANT SELECT ON archive.investment_holding TO "{p}_viewer";
+GRANT SELECT ON archive.investment_transaction TO "{p}_viewer";
+GRANT SELECT ON archive.bank_liability TO "{p}_viewer";
+GRANT SELECT ON archive.budget_category TO "{p}_viewer";
 GRANT SELECT ON archive.parcel TO "{p}_viewer";
 GRANT SELECT ON archive.parcel_event TO "{p}_viewer";
 GRANT SELECT ON archive.vehicle TO "{p}_viewer";
@@ -3817,6 +4020,14 @@ ALTER TABLE archive.warehouse_table ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.warehouse_table FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = warehouse_table.connection));
 ALTER TABLE archive.warehouse_column ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.warehouse_column FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = warehouse_column.connection));
+ALTER TABLE archive.investment_holding ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.investment_holding FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = investment_holding.connection));
+ALTER TABLE archive.investment_transaction ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.investment_transaction FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = investment_transaction.connection));
+ALTER TABLE archive.bank_liability ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.bank_liability FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = bank_liability.connection));
+ALTER TABLE archive.budget_category ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.budget_category FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = budget_category.connection));
 ALTER TABLE archive.parcel ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.parcel FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = parcel.connection));
 ALTER TABLE archive.parcel_event ENABLE ROW LEVEL SECURITY;
@@ -4154,6 +4365,8 @@ SELECT jsonb_build_object(
             'archive.spend_department'::regclass, 'archive.spend_user'::regclass, 'archive.spend_card'::regclass,
             'archive.spend_transaction'::regclass, 'archive.spend_receipt'::regclass,
             'archive.warehouse_table'::regclass, 'archive.warehouse_column'::regclass,
+            'archive.investment_holding'::regclass, 'archive.investment_transaction'::regclass,
+            'archive.bank_liability'::regclass, 'archive.budget_category'::regclass,
             'archive.parcel'::regclass, 'archive.parcel_event'::regclass, 'archive.vehicle'::regclass, 'archive.vehicle_charge'::regclass, 'archive.home_device'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
@@ -4294,6 +4507,10 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.spend_card x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.spend_transaction x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.warehouse_table x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.investment_holding x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.investment_transaction x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.bank_liability x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.budget_category x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.parcel x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.vehicle x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.vehicle_charge x WHERE x.connection = c.id)
