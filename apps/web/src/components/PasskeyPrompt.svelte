@@ -2,7 +2,7 @@
   import { KeyRound } from '@lucide/svelte';
   import Button from './Button.svelte';
   import Icon from './Icon.svelte';
-  import { passkeyRegister, passkeyVerify, rememberPasskey } from '../lib/api.js';
+  import { passkeyRegister, rememberPasskey } from '../lib/api.js';
   import { app } from '../lib/app.svelte.js';
   import { rise } from '../lib/motion.js';
 
@@ -13,10 +13,7 @@
     busy = true;
     error = '';
     try {
-      if (app.passkey && !app.verified) await passkeyVerify();
-      const done = await passkeyRegister(app.user.id);
-      app.passkey = true;
-      app.verified ||= done.verified;
+      await passkeyRegister(app.user.id);
       app.askPasskey = false;
     } catch (e) {
       if (e.name !== 'NotAllowedError' && e.name !== 'AbortError') error = e.message;

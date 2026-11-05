@@ -866,7 +866,7 @@ func (h *Hub) localUser(ctx context.Context, want string) (*Archive, *Actor, fun
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	t := generated.AuthenticateRow{Kind: "session", Verified: true, UserID: u.ID, Email: u.Email, UserName: u.Name}
+	t := generated.AuthenticateRow{Kind: "session", UserID: u.ID, Email: u.Email, UserName: u.Name}
 	for _, w := range u.Workspaces {
 		t.Workspaces = append(t.Workspaces, w.String())
 	}
@@ -905,7 +905,6 @@ func (h *Hub) enter(ctx context.Context, t generated.AuthenticateRow, want strin
 	role := a.roleID("u", m.ID)
 	ac := &Actor{UserID: t.UserID, Email: t.Email, Name: t.UserName, Role: role, UserRole: role, member: m.ID}
 	ac.scoped = t.Workspace != ""
-	ac.verified = t.Kind == "session" && t.Verified
 	if t.Kind != "session" {
 		ac.TokenName = t.Name
 	}
