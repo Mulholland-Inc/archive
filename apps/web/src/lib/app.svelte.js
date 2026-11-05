@@ -613,10 +613,12 @@ export function openSettings(section = null, sub = null) {
   Object.assign(app.settings, { open: true, section, sub });
 }
 
+export const onboards = () => ws()?.look.type === 'business';
+
 export const onboardingSteps = [
-  { id: 'business', group: 'Legal', title: 'Add your business details', body: 'Your legal name, EIN and address.', action: 'Add' },
   { id: 'msa', group: 'Legal', title: 'Sign the master services agreement', body: 'The terms for your archive, billing and support.', action: 'Review and sign' },
   { id: 'dpa', group: 'Legal', title: 'Sign the data processing agreement', body: 'How we process personal data on your behalf.', action: 'Review and sign' },
+  { id: 'business', group: 'Billing', title: 'Add your business details', body: 'Your legal name, EIN and address.', action: 'Add' },
   { id: 'card', group: 'Billing', title: 'Link a card', body: 'We charge it under your agreement.', action: 'Link' }
 ];
 

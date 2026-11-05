@@ -1428,7 +1428,7 @@ func (a *Archive) agreementCreate(ctx context.Context, data map[string]any) (map
 	}
 	verr := &ValidationError{Type: "agreement"}
 	in := map[string]string{}
-	for _, k := range []string{"signer", "title"} {
+	for _, k := range []string{"company", "signer", "title"} {
 		s, _ := data[k].(string)
 		if in[k] = strings.TrimSpace(s); in[k] == "" {
 			verr.Errors = append(verr.Errors, FieldError{Path: k, Message: "required"})
@@ -1437,13 +1437,9 @@ func (a *Archive) agreementCreate(ctx context.Context, data map[string]any) (map
 	if len(verr.Errors) > 0 {
 		return nil, verr
 	}
-	company, err := a.businessName(ctx)
-	if err != nil {
-		return nil, err
-	}
 	c, _ := ctx.Value(clientKey{}).(client)
 	sum := sha256.Sum256([]byte(body))
-	return map[string]any{"name": title, "kind": kind, "body": body, "hash": hex.EncodeToString(sum[:]), "company": company, "signer": in["signer"], "title": in["title"],
+	return map[string]any{"name": title, "kind": kind, "body": body, "hash": hex.EncodeToString(sum[:]), "company": in["company"], "signer": in["signer"], "title": in["title"],
 		"email": ac.Email, "ip": c.ip, "agent": c.agent}, nil
 }
 
