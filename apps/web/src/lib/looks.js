@@ -142,19 +142,3 @@ export function lookOf(w) {
   const d = defaultLook(type);
   return { type, icon: Object.values(TYPES).some((t) => t.icons.includes(w.icon)) ? w.icon : d.icon, tint: w.color ?? d.tint };
 }
-
-const art = new Map();
-
-export const decoded = (url) => art.get(url)?.ready ?? false;
-
-export function decode(url) {
-  let a = art.get(url);
-  if (!a) {
-    const image = new Image();
-    image.src = url;
-    a = { image, ready: false };
-    a.done = image.decode().catch(() => {}).then(() => (a.ready = true));
-    art.set(url, a);
-  }
-  return a.done;
-}

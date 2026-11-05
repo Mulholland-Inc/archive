@@ -11,7 +11,7 @@
   import { TINTS, AVATARS } from '../lib/looks.js';
   import { app, groups, members, agentById, agentAddress, createAgent, updateAgent, mayLimit, accessOptions } from '../lib/app.svelte.js';
 
-  groups.use();
+  groups.use(() => Boolean(app.agentDialog));
   members.use();
 
   const agent = $derived(agentById(app.agentDialog));

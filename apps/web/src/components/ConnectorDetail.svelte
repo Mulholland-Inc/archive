@@ -15,8 +15,10 @@
 
   let { connector, onback } = $props();
   let keying = $state(false);
+  let keyingIn = $state();
   const files = $derived(connector.keys?.some((k) => k.file));
-  const start = () => (connector.link ? connectLink(connector.id) : connector.keys?.length || connector.ask ? (keying = true) : connect(connector.id));
+  const start = () => (connector.link ? connectLink(connector.id) : connector.keys?.length || connector.ask ? ((keyingIn = undefined), (keying = true)) : connect(connector.id));
+  const reconnect = $derived(connector.link || connector.keys?.length ? undefined : (x) => (connector.ask ? ((keyingIn = x.workspace.id), (keying = true)) : connect(connector.id, {}, x.workspace.id)));
 
   connections.use();
 </script>
@@ -38,7 +40,7 @@
     {#if connector.ready === false}
       <Text as="p" size="md" tone="secondary">This server has no {connector.by} client set up for {connector.name} yet. Ask whoever runs it to set one up.</Text>
     {/if}
-    <OwnConnections {connector} />
+    <OwnConnections {connector} {reconnect} />
     <Section title="Archive can">
       <Stack gap="2">
         {#each connector.scopes as scope (scope)}
@@ -48,4 +50,4 @@
     </Section>
   </Stack>
 </SettingsPane>
-<KeysDialog bind:open={keying} {connector} />
+<KeysDialog bind:open={keying} {connector} workspace={keyingIn} />

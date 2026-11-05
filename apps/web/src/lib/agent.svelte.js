@@ -1,6 +1,6 @@
 
 import { api, turnStream, Unauthorized } from './api.js';
-import { app, ws, agentById, openFile } from './app.svelte.js';
+import { app, ws, agentById, openFile, clearUnread } from './app.svelte.js';
 import { route } from './router.svelte.js';
 import { changed, markdown, step, toMessages } from './live.js';
 import { resource } from './stream.svelte.js';
@@ -77,6 +77,8 @@ export async function sendMessage(id, { text = '', attachments = [] }) {
     controllers.delete(id);
     agent.keep = true;
     agent.streaming = false;
+    if (app.archive === w.id) clearUnread(w);
+    else w.unread = true;
     if (!live.blocks.length && !live.steps.length) live.blocks = [{ type: 'p', text: '*No answer.*' }];
     const shown = live.files.findLast((f) => f.action !== 'read') ?? live.files.at(-1);
     if (shown && !ctrl.signal.aborted && route.parts[0] === 'agent' && route.parts[1] === id && !matchMedia('(max-width: 56rem)').matches) openFile(shown.id, shown.name);

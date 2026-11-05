@@ -52,7 +52,8 @@ CREATE TABLE archive."user" (
     workspaces uuid[] NOT NULL DEFAULT '{}',
     signin     jsonb NOT NULL DEFAULT '{}',
     created_at timestamptz NOT NULL DEFAULT now(),
-    admin      boolean NOT NULL DEFAULT false
+    admin      boolean NOT NULL DEFAULT false,
+    unread     uuid[] NOT NULL DEFAULT '{}'
 );
 CREATE INDEX user_workspaces_idx ON archive."user" USING gin (workspaces);
 
@@ -149,13 +150,19 @@ SELECT id, email, name FROM archive."user" WHERE workspaces @> ARRAY[sqlc.arg(wo
 -- name: UserWorkspaces :many
 SELECT w.* FROM archive.workspace w JOIN archive."user" u ON w.id = ANY(u.workspaces) WHERE u.id = $1 ORDER BY array_position(u.workspaces, w.id);
 
+-- name: MarkUnread :exec
+UPDATE archive."user" SET unread = array_append(array_remove(unread, sqlc.arg(workspace)::uuid), sqlc.arg(workspace)::uuid) WHERE id = sqlc.arg(id);
+
+-- name: ClearUnread :exec
+UPDATE archive."user" SET unread = array_remove(unread, sqlc.arg(workspace)::uuid) WHERE id = sqlc.arg(id);
+
 -- name: JoinWorkspace :one
 INSERT INTO archive."user" (email, name, workspaces) VALUES (sqlc.arg(email), sqlc.arg(name), ARRAY[sqlc.arg(workspace)::uuid])
 ON CONFLICT (email) DO UPDATE SET workspaces = archive."user".workspaces || EXCLUDED.workspaces WHERE NOT archive."user".workspaces @> EXCLUDED.workspaces
 RETURNING *;
 
 -- name: LeaveWorkspace :exec
-UPDATE archive."user" SET workspaces = array_remove(workspaces, sqlc.arg(workspace)::uuid) WHERE id = sqlc.arg(id);
+UPDATE archive."user" SET workspaces = array_remove(workspaces, sqlc.arg(workspace)::uuid), unread = array_remove(unread, sqlc.arg(workspace)::uuid) WHERE id = sqlc.arg(id);
 
 -- name: SetSignin :exec
 UPDATE archive."user" SET signin = $2 WHERE id = $1;

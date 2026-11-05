@@ -57,6 +57,7 @@ const brands = {
   'Zoho CRM': 'logos:zoho',
   'Zoho Books': 'logos:zoho',
   'Shopify (app token)': 'logos:shopify',
+  Amazon: ['si:amazon', '#FF9900'],
   UPS: ['si:ups', '#150400'],
   FedEx: ['si:fedex', '#4D148C'],
   Tesla: ['si:tesla', '#CC0000'],

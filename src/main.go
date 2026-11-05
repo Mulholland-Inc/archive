@@ -38,7 +38,7 @@ func main() {
 
 func start(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return errors.New("want serve, migrate or secrets")
+		return errors.New("want serve, migrate, secrets or places")
 	}
 	switch args[0] {
 	case "serve":
@@ -65,8 +65,10 @@ func start(ctx context.Context, args []string) error {
 		enc.SetIndent("", "  ")
 		enc.SetEscapeHTML(false)
 		return enc.Encode(connect.Secrets())
+	case "places":
+		return connect.WritePlaces(ctx, "connect/places.json.gz")
 	}
-	return fmt.Errorf("unknown command %q: want serve, migrate or secrets", args[0])
+	return fmt.Errorf("unknown command %q: want serve, migrate, secrets or places", args[0])
 }
 
 func serve(ctx context.Context, h *Hub, addr string) error {

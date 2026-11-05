@@ -136,6 +136,7 @@ type ArchiveUser struct {
 	Signin     json.RawMessage
 	CreatedAt  time.Time
 	Admin      bool
+	Unread     []uuid.UUID
 }
 
 type ArchiveWatch struct {

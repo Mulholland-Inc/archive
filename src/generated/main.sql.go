@@ -141,6 +141,15 @@ func (q *Queries) ClearDue(ctx context.Context, iD uuid.UUID, kind string, claim
 	return err
 }
 
+const clearUnread = `-- name: ClearUnread :exec
+UPDATE archive."user" SET unread = array_remove(unread, $1::uuid) WHERE id = $2
+`
+
+func (q *Queries) ClearUnread(ctx context.Context, workspace uuid.UUID, iD uuid.UUID) error {
+	_, err := q.db.Exec(ctx, clearUnread, workspace, iD)
+	return err
+}
+
 const connectionWatches = `-- name: ConnectionWatches :many
 SELECT provider, key, workspace, connection, resource, secret, expires_at, created_at FROM archive.watch WHERE connection = $1 ORDER BY key
 `
@@ -422,7 +431,7 @@ func (q *Queries) DueAt(ctx context.Context, workspace uuid.UUID, kind string) (
 }
 
 const firstAdmin = `-- name: FirstAdmin :one
-SELECT id, email, name, workspaces, signin, created_at, admin FROM archive."user" WHERE admin ORDER BY created_at, id LIMIT 1
+SELECT id, email, name, workspaces, signin, created_at, admin, unread FROM archive."user" WHERE admin ORDER BY created_at, id LIMIT 1
 `
 
 func (q *Queries) FirstAdmin(ctx context.Context) (ArchiveUser, error) {
@@ -436,6 +445,7 @@ func (q *Queries) FirstAdmin(ctx context.Context) (ArchiveUser, error) {
 		&i.Signin,
 		&i.CreatedAt,
 		&i.Admin,
+		&i.Unread,
 	)
 	return i, err
 }
@@ -452,7 +462,7 @@ func (q *Queries) InsertMainRevision(ctx context.Context, hash string) error {
 const joinWorkspace = `-- name: JoinWorkspace :one
 INSERT INTO archive."user" (email, name, workspaces) VALUES ($1, $2, ARRAY[$3::uuid])
 ON CONFLICT (email) DO UPDATE SET workspaces = archive."user".workspaces || EXCLUDED.workspaces WHERE NOT archive."user".workspaces @> EXCLUDED.workspaces
-RETURNING id, email, name, workspaces, signin, created_at, admin
+RETURNING id, email, name, workspaces, signin, created_at, admin, unread
 `
 
 func (q *Queries) JoinWorkspace(ctx context.Context, email string, name string, workspace uuid.UUID) (ArchiveUser, error) {
@@ -466,6 +476,7 @@ func (q *Queries) JoinWorkspace(ctx context.Context, email string, name string, 
 		&i.Signin,
 		&i.CreatedAt,
 		&i.Admin,
+		&i.Unread,
 	)
 	return i, err
 }
@@ -508,7 +519,7 @@ func (q *Queries) KeyWorkspace(ctx context.Context, iD uuid.UUID, userID uuid.UU
 }
 
 const leaveWorkspace = `-- name: LeaveWorkspace :exec
-UPDATE archive."user" SET workspaces = array_remove(workspaces, $1::uuid) WHERE id = $2
+UPDATE archive."user" SET workspaces = array_remove(workspaces, $1::uuid), unread = array_remove(unread, $1::uuid) WHERE id = $2
 `
 
 func (q *Queries) LeaveWorkspace(ctx context.Context, workspace uuid.UUID, iD uuid.UUID) error {
@@ -542,6 +553,15 @@ func (q *Queries) MainRevision(ctx context.Context) (string, error) {
 	var column_1 string
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const markUnread = `-- name: MarkUnread :exec
+UPDATE archive."user" SET unread = array_append(array_remove(unread, $1::uuid), $1::uuid) WHERE id = $2
+`
+
+func (q *Queries) MarkUnread(ctx context.Context, workspace uuid.UUID, iD uuid.UUID) error {
+	_, err := q.db.Exec(ctx, markUnread, workspace, iD)
+	return err
 }
 
 const nameUser = `-- name: NameUser :exec
@@ -912,7 +932,7 @@ func (q *Queries) UsedMCPCode(ctx context.Context, hash string) (*uuid.UUID, err
 }
 
 const userByEmail = `-- name: UserByEmail :one
-SELECT id, email, name, workspaces, signin, created_at, admin FROM archive."user" WHERE email = $1
+SELECT id, email, name, workspaces, signin, created_at, admin, unread FROM archive."user" WHERE email = $1
 `
 
 func (q *Queries) UserByEmail(ctx context.Context, email string) (ArchiveUser, error) {
@@ -926,12 +946,13 @@ func (q *Queries) UserByEmail(ctx context.Context, email string) (ArchiveUser, e
 		&i.Signin,
 		&i.CreatedAt,
 		&i.Admin,
+		&i.Unread,
 	)
 	return i, err
 }
 
 const userByID = `-- name: UserByID :one
-SELECT id, email, name, workspaces, signin, created_at, admin FROM archive."user" WHERE id = $1
+SELECT id, email, name, workspaces, signin, created_at, admin, unread FROM archive."user" WHERE id = $1
 `
 
 func (q *Queries) UserByID(ctx context.Context, id uuid.UUID) (ArchiveUser, error) {
@@ -945,12 +966,13 @@ func (q *Queries) UserByID(ctx context.Context, id uuid.UUID) (ArchiveUser, erro
 		&i.Signin,
 		&i.CreatedAt,
 		&i.Admin,
+		&i.Unread,
 	)
 	return i, err
 }
 
 const userByOIDC = `-- name: UserByOIDC :one
-SELECT id, email, name, workspaces, signin, created_at, admin FROM archive."user" WHERE signin->'oidc' @> $1::jsonb
+SELECT id, email, name, workspaces, signin, created_at, admin, unread FROM archive."user" WHERE signin->'oidc' @> $1::jsonb
 `
 
 func (q *Queries) UserByOIDC(ctx context.Context, link []byte) (ArchiveUser, error) {
@@ -964,6 +986,7 @@ func (q *Queries) UserByOIDC(ctx context.Context, link []byte) (ArchiveUser, err
 		&i.Signin,
 		&i.CreatedAt,
 		&i.Admin,
+		&i.Unread,
 	)
 	return i, err
 }
