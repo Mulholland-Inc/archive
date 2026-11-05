@@ -12,7 +12,7 @@
   import InviteDialog from '../components/InviteDialog.svelte';
   import NewWorkflowDialog from '../components/NewWorkflowDialog.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { app, onboardingSteps, stepDone, completeStep, toggleStep, openSettings, createWorkflow } from '../lib/app.svelte.js';
+  import { app, onboardingSteps, stepDone, toggleStep, openSettings, createWorkflow } from '../lib/app.svelte.js';
   import { go } from '../lib/router.svelte.js';
 
   let inviting = $state(false);
@@ -23,17 +23,10 @@
   const groups = [...new Set(onboardingSteps.map((s) => s.group))].map((g) => [g, onboardingSteps.filter((s) => s.group === g)]);
 
   const actions = {
-    msa: () => completeStep('msa'),
-    dpa: () => completeStep('dpa'),
-    verify: () => completeStep('verify'),
     invite: () => (inviting = true),
     connect: () => openSettings('connectors'),
     upload: () => go('/library'),
-    workflow: () => (creating = true),
-    region: () => {
-      openSettings('server');
-      completeStep('region');
-    }
+    workflow: () => (creating = true)
   };
 
   function create(data) {

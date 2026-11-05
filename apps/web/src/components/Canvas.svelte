@@ -1,6 +1,6 @@
 <script>
   import { tick } from 'svelte';
-  import { X, Pencil, Share, Trash2, Download, Copy, FileQuestion } from '@lucide/svelte';
+  import { X, Pencil, Trash2, Download, Copy, FileQuestion } from '@lucide/svelte';
   import TopBar from './TopBar.svelte';
   import Button from './Button.svelte';
   import IconButton from './IconButton.svelte';
@@ -8,7 +8,7 @@
   import Tabs from './Tabs.svelte';
   import EmptyState from './EmptyState.svelte';
   import Skeleton from './Skeleton.svelte';
-  import { app, canvas, closeFile, editFile, copyFile, downloadFile, openShare, removeFile } from '../lib/app.svelte.js';
+  import { app, canvas, closeFile, editFile, copyFile, downloadFile, removeFile } from '../lib/app.svelte.js';
   import { blobURL, send, local, setLocal } from '../lib/api.js';
   import { renameFilePrompt } from '../lib/menus.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
@@ -491,7 +491,6 @@
       {#if synced && file.held}<Button size="sm" icon={Copy} onclick={() => copyFile(file.id)}>Copy</Button>{/if}
       {#if file}
         {#if !file.connection}<IconButton icon={Pencil} label="Rename" placement="bottom" onclick={() => renameFilePrompt(file)} />{/if}
-        <IconButton icon={Share} label="Share" placement="bottom" onclick={() => openShare('file', file.id)} />
         {#if file.held}<IconButton icon={Download} label="Download" placement="bottom" onclick={() => downloadFile(file)} />{/if}
         {#if !file.connection}<IconButton icon={Trash2} label="Delete" placement="bottom" onclick={remove} />{/if}
       {/if}

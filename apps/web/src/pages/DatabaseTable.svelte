@@ -1,5 +1,5 @@
 <script>
-  import { Box, Share, MessageSquare, Download, Rows3, Columns3, Clock, ArrowRight, ArrowLeft, Workflow, Users, Table2 } from '@lucide/svelte';
+  import { Box, MessageSquare, Download, Rows3, Columns3, Clock, ArrowRight, ArrowLeft, Workflow, Table2 } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
   import Breadcrumbs from '../components/Breadcrumbs.svelte';
@@ -16,7 +16,6 @@
   import Text from '../components/Text.svelte';
   import Heading from '../components/Heading.svelte';
   import Stack from '../components/Stack.svelte';
-  import Adaptive from '../components/Adaptive.svelte';
   import List from '../components/List.svelte';
   import ListItem from '../components/ListItem.svelte';
   import TextLink from '../components/TextLink.svelte';
@@ -25,7 +24,7 @@
   import CodeBlock from '../components/CodeBlock.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import RowLink from '../components/RowLink.svelte';
-  import { ws, openShare, schema, counts, preview, members, workflows, shownOf, titleOf, cellText, linkOf, tableOf } from '../lib/app.svelte.js';
+  import { ws, schema, counts, preview, members, workflows, shownOf, titleOf, cellText, linkOf, tableOf } from '../lib/app.svelte.js';
   import { typeLabel, ddl } from '../lib/schema.js';
   import { api } from '../lib/api.js';
   import { show } from '../lib/live.js';
@@ -46,13 +45,11 @@
   members.use();
   workflows.use();
   preview.use(() => type?.id);
-  const share = $derived(type && ws().shares.find((s) => s.kind === 'table' && s.target === type.id));
   const people = (roles) => ws().members.filter((m) => m.status === 'active' && roles.includes(m.role));
   const access = $derived(type ? [
     { label: 'Owners', people: people(['owner']), note: 'Full control' },
     { label: 'Can edit', people: people(type.access.edit), note: 'Add and change rows' },
-    { label: 'Can view', people: people(type.access.view), note: 'Read only' },
-    { label: 'Shared with', people: share?.people ?? [], note: share ? `Shared by ${share.by}` : '' }
+    { label: 'Can view', people: people(type.access.view), note: 'Read only' }
   ] : []);
   const count = (n) => n?.toLocaleString('en-US') ?? '—';
   const joined = (names) => (names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0]);
@@ -107,7 +104,6 @@
     {/snippet}
     {#snippet trailing()}
       {#if type}
-        <Adaptive inline>{#snippet wide()}<Button size="sm" variant="ghost" icon={Share} onclick={() => openShare('table', type.id)}>Share</Button>{/snippet}</Adaptive>
         <Button size="sm" variant="primary" icon={MessageSquare} onclick={ask}>Ask about this</Button>
         <DetailsButton />
       {/if}
@@ -136,9 +132,6 @@
         </Property>
         <Property label="Used by" icon={Workflow}>
           {#if flows.length}<Text>{flows.length} {flows.length === 1 ? 'workflow' : 'workflows'}</Text>{:else}<Text tone="tertiary">No workflows</Text>{/if}
-        </Property>
-        <Property label="Shared with" icon={Users}>
-          {#if share}<AvatarGroup people={share.people} /><Text tone="secondary">{share.people.length} people</Text>{:else}<Text tone="tertiary">Only archive members</Text>{/if}
         </Property>
       </Stack>
 
@@ -234,7 +227,6 @@
       <Stats items={[{ label: 'Rows', value: count(type.rows) }, { label: 'Columns', value: type.columns.length }, { label: 'Links', value: related.length }, { label: 'Updated', value: type.updated }]} />
       <SidebarSection>
         <SidebarItem icon={MessageSquare} label="Ask about this" onclick={ask} />
-        <SidebarItem icon={Share} label="Share" onclick={() => openShare('table', type.id)} />
         <SidebarItem icon={Download} label="Download CSV" onclick={exportCsv} />
       </SidebarSection>
       {#if related.length}

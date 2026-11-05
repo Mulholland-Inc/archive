@@ -28,8 +28,7 @@
     { value: 'tables', label: 'Tables' },
     { value: 'views', label: 'Views' },
     { value: 'linked', label: 'Linked' },
-    { value: 'automated', label: 'Used by workflows' },
-    { value: 'shared', label: 'Shared' }
+    { value: 'automated', label: 'Used by workflows' }
   ];
   const sorts = [
     { value: 'name', label: 'Name' },
@@ -54,14 +53,12 @@
   const linksOf = (t) => [...new Set(t.links.map((l) => l.to))].map(nameOf);
   // A view shows as its layout, like in the sidebar; a table as a box.
   const iconOf = (t) => (t.kind !== 'view' ? Box : ({ board: Kanban, calendar: CalendarDays })[t.layout] ?? Table2);
-  const shared = (t) => ws().shares.some((s) => s.kind === 'table' && s.target === t.id);
   const keep = {
     all: () => true,
     tables: (t) => t.kind !== 'view',
     views: (t) => t.kind === 'view',
     linked: (t) => t.links.length || types.some((o) => o.links.some((l) => l.to === t.id)),
-    automated: (t) => t.workflows.length,
-    shared
+    automated: (t) => t.workflows.length
   };
   const rows = $derived.by(() => {
     const q = query.trim().toLowerCase();

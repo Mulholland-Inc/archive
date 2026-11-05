@@ -1,6 +1,5 @@
-// Maps what the API returns onto the shapes the screens were designed with (see mock/ for the made-up
-// versions). Each mapper takes one API object and returns one screen object, so a screen can move from
-// mock to real data one piece at a time.
+// Maps what the API returns onto the shapes the screens were designed with. Each mapper takes one API object and
+// returns one screen object.
 
 import { fileURL } from './api.js';
 

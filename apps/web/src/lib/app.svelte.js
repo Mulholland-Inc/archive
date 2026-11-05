@@ -1,12 +1,10 @@
 // The app's state. An archive is one Archive workspace: its agents, files, tables, members and workflows come from
-// the API (see live.js for the mapping). What the API cannot do yet comes from mock/ and stays in this tab or
-// in localStorage; mock/index.js lists those pieces.
+// the API (see live.js for the mapping).
 
 import { API, api, forgetBlobs, upload, setWorkspace, workspace, local, setLocal, saveDraft, signOut as apiSignOut, Unauthorized, passkeys, passkeyAsked } from './api.js';
 import { resource, listen, onChange, onRefused } from './stream.svelte.js';
 import { toFile, toMember, toWorkflow, toRun, relative, show } from './live.js';
 import { toTables, countsQuery } from './schema.js';
-import { mockKey, mockProfile, mockSettings } from './mock/index.js';
 import { nameBrands } from './brands.svelte.js';
 import { lookOf } from './looks.js';
 import { notify } from './dialogs.svelte.js';
@@ -32,14 +30,11 @@ export const app = $state({
   pending: null,
   muted: false,
   settings: { open: false, section: null, sub: null },
-  apiKey: mockKey('ak_live_', 'Created today'),
   archiveKeys: {},
   archiveApps: {},
-  share: { open: false, kind: null, target: null },
   onboarding: [],
   // Your own connected accounts in every archive you are in (ownConnections).
-  ownConnections: [],
-  profile: mockProfile()
+  ownConnections: []
 });
 
 const kindOf = (type) => ({ family: 'Family', business: 'Business', personal: 'Just you' })[type] ?? 'Archive';
@@ -54,7 +49,6 @@ function shell(w) {
     kind: kindOf(look.type),
     tone: (w.id.charCodeAt(w.id.length - 1) % 6) + 1,
     look,
-    settings: mockSettings(),
     agents: [],
     conversations: {},
     library: [],
@@ -66,7 +60,6 @@ function shell(w) {
     schema: [],
     archiveTables: [],
     names: {},
-    shares: [],
     connectors: [],
     catalog: null,
     counts: null,
@@ -188,7 +181,6 @@ function setMe(me) {
   app.role = me.role;
   // Admins of this Archive make and delete archives, whichever archive they are in.
   app.canAdd = !!me.admin;
-  Object.assign(app.profile, { name, first: app.user.first });
 }
 
 async function files(id, where) {
@@ -668,14 +660,10 @@ export function openSettings(section = null, sub = null) {
 // Onboarding (MOCK: no API; kept per archive in localStorage)
 
 export const onboardingSteps = [
-  { id: 'msa', group: 'Legal', title: 'Sign the master services agreement', body: 'The terms for your archive, billing and support.', action: 'Review and sign' },
-  { id: 'dpa', group: 'Legal', title: 'Sign the data processing agreement', body: 'How we process personal data on your behalf under GDPR.', action: 'Review and sign' },
-  { id: 'verify', group: 'Legal', title: 'Verify your business details', body: 'Confirm your legal name, address and VAT number for invoices.', action: 'Verify' },
   { id: 'invite', group: 'Your team', title: 'Invite your team', body: 'Add the people who should read, edit or own this archive.', action: 'Invite' },
   { id: 'connect', group: 'Your data', title: 'Connect a source', body: 'Bring in your Gmail, Google Drive, Notion and more.', action: 'Connect' },
   { id: 'upload', group: 'Your data', title: 'Upload your first files', body: 'Drop in scans, letters, recordings or spreadsheets.', action: 'Upload' },
-  { id: 'workflow', group: 'Your data', title: 'Set up a workflow', body: 'Let an agent file, tag or transcribe new items as they arrive.', action: 'Create' },
-  { id: 'region', group: 'Your data', title: 'Choose a data region and retention', body: 'Pick where your archive lives and how long deleted items are kept.', action: 'Choose' }
+  { id: 'workflow', group: 'Your data', title: 'Set up a workflow', body: 'Let an agent file, tag or transcribe new items as they arrive.', action: 'Create' }
 ];
 
 const saveSteps = () => setLocal(`archive.onboarding:${app.archive}`, app.onboarding);
@@ -684,7 +672,7 @@ export function stepDone(id) {
   return app.onboarding.includes(id);
 }
 
-export function completeStep(id) {
+function completeStep(id) {
   if (stepDone(id)) return;
   app.onboarding.push(id);
   saveSteps();
@@ -921,11 +909,7 @@ export async function revokeApp(id) {
   }
 }
 
-export async function rotateKey(scope) {
-  if (scope !== 'archive') {
-    app.apiKey = mockKey('ak_live_', 'Rotated just now');
-    return;
-  }
+export async function rotateKey() {
   if (!isArchiveOwner()) return;
   const id = app.archive;
   try {
@@ -1187,102 +1171,6 @@ export async function downloadFile(file) {
     Object.assign(document.createElement('a'), { href: `${link.url}&download=1` }).click();
   } catch (e) {
     complain(e, `Couldn’t download ${file.name}`);
-  }
-}
-
-// Sharing (MOCK: there is no API for sharing one item with someone outside the archive; shares stay in this tab)
-
-export const permissions = [
-  { value: 'view', label: 'Viewer' },
-  { value: 'edit', label: 'Editor' }
-];
-
-export const shareKinds = { file: 'File', workflow: 'Workflow', table: 'Table' };
-
-export function shareItem(kind, target, w = ws()) {
-  if (kind === 'file') {
-    const f = w.library.find((x) => x.id === target);
-    return f && { name: f.name, path: `/library/${f.id}` };
-  }
-  if (kind === 'workflow') {
-    const f = w.workflows.find((x) => x.id === target);
-    return f && { name: f.name, path: `/workflows/${f.id}` };
-  }
-  const t = w.schema.find((x) => x.id === target);
-  return t ? { name: t.name, path: `/database/${t.id}` } : null;
-}
-
-export function isExternal(email) {
-  return !ws().members.some((m) => m.email === email);
-}
-
-export function shareFor(kind, target) {
-  return ws().shares.find((s) => s.kind === kind && s.target === target);
-}
-
-function ensureShare(kind, target) {
-  const w = ws();
-  if (!shareFor(kind, target)) w.shares.unshift({ id: nid('sh'), kind, target, by: app.profile.name, date: 'Just now', people: [] });
-  return shareFor(kind, target);
-}
-
-function prune(share) {
-  if (share.people.length) return;
-  const w = ws();
-  const i = w.shares.indexOf(share);
-  if (i >= 0) w.shares.splice(i, 1);
-}
-
-export function openShare(kind, target) {
-  Object.assign(app.share, { open: true, kind, target });
-}
-
-export function contacts(w = ws()) {
-  const out = new Map();
-  for (const m of w.members) {
-    if (m.status === 'active' && m.email !== app.user.email) out.set(m.email, { id: m.id, user: m.user, name: m.name, email: m.email, tone: m.tone });
-  }
-  for (const s of w.shares) {
-    for (const p of s.people) if (!out.has(p.email)) out.set(p.email, { name: p.name, email: p.email, tone: p.tone, guest: true });
-  }
-  return [...out.values()];
-}
-
-export function addPeople(kind, target, emails, permission) {
-  const share = ensureShare(kind, target);
-  const known = contacts();
-  const added = [];
-  for (const email of emails) {
-    if (share.people.some((p) => p.email === email)) continue;
-    const person = known.find((p) => p.email === email);
-    const name = person?.name ?? email.split('@')[0].replace(/[._-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-    share.people.push({ name, email, permission, tone: person?.tone ?? (email.length % 6) + 1 });
-    added.push(name);
-  }
-  if (!added.length) prune(share);
-}
-
-export function setPermission(share, email, permission) {
-  const p = share.people.find((x) => x.email === email);
-  if (p) p.permission = permission;
-}
-
-export function unsharePerson(share, email) {
-  const i = share.people.findIndex((x) => x.email === email);
-  if (i < 0) return;
-  share.people.splice(i, 1);
-  prune(share);
-}
-
-export function stopSharing(id) {
-  removeAt(ws().shares, (s) => s.id === id);
-}
-
-export function removeGuest(email) {
-  const w = ws();
-  for (const share of [...w.shares]) {
-    share.people = share.people.filter((p) => p.email !== email);
-    prune(share);
   }
 }
 

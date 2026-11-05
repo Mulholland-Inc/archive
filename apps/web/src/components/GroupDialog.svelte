@@ -51,7 +51,7 @@
     {#snippet children(id)}<Textarea {id} bind:value={description} rows={2} placeholder="What it is for, or who is in it" />{/snippet}
   </Field>
   <Field label="Members">
-    {#snippet children()}<PeoplePicker bind:value={picked} people={everyone} invite={false} label="Members" placeholder="Add members by name or email" />{/snippet}
+    {#snippet children()}<PeoplePicker bind:value={picked} people={everyone} label="Members" placeholder="Add members by name or email" />{/snippet}
   </Field>
   {#snippet footer({ close })}
     <Button variant="ghost" onclick={close}>Cancel</Button>

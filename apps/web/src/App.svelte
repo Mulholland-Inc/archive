@@ -20,7 +20,6 @@
   import { app, ws, toggleSidebar, closeDrawer, openSettings, boot, account, lastAgent } from './lib/app.svelte.js';
   import PromptHost from './components/PromptHost.svelte';
   import HelpDialog from './components/HelpDialog.svelte';
-  import ShareDialog from './components/ShareDialog.svelte';
   import SignIn from './components/SignIn.svelte';
   import PasskeyPrompt from './components/PasskeyPrompt.svelte';
   import Loading from './components/Loading.svelte';
@@ -35,7 +34,7 @@
   $effect(() => {
     const [head, a, b] = route.parts;
     if (head === 'settings') {
-      openSettings(a ?? 'profile', b ?? null);
+      openSettings(a ?? 'appearance', b ?? null);
       replace(last);
     } else {
       last = route.path;
@@ -106,7 +105,6 @@
 <AppSettings />
 <PromptHost />
 <HelpDialog bind:open={app.help} />
-<ShareDialog />
 <ContextMenu />
 {#if app.askPasskey}<PasskeyPrompt />{/if}
 {/if}

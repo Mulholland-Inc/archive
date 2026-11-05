@@ -87,7 +87,7 @@
   {/if}
 
   {#snippet footer()}
-    <AccountCard user={{ ...app.user, name: app.profile.name || app.user.name }} />
+    <AccountCard user={app.user} />
   {/snippet}
 </Sidebar>
 
