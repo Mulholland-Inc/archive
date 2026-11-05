@@ -236,7 +236,7 @@ func (a *Archive) connectKeys(ctx context.Context, id string, keys map[string]st
 	if err != nil {
 		return err
 	}
-	if len(p.Keys) == 0 {
+	if !p.Keyed() {
 		return fmt.Errorf("%s connects by signing in, not with keys: %w", p.Name, httpErrBadRequest)
 	}
 	if err := a.mayConnect(ctx, p.Connector); err != nil {
@@ -383,6 +383,7 @@ type Connector struct {
 	Keys        []connect.Key `json:"keys,omitempty"`
 	Ask         *connect.Key  `json:"ask,omitempty"`
 	Link        bool          `json:"link,omitempty"`
+	Tap         bool          `json:"tap,omitempty"`
 	connect.Info
 }
 
@@ -398,7 +399,7 @@ func (a *Archive) Connections(ctx context.Context) (*Connections, error) {
 	}
 	out := &Connections{Connectors: []Connector{}, Connections: []Connection{}}
 	for _, c := range connect.All() {
-		out.Connectors = append(out.Connectors, Connector{ID: c.ID, Name: c.Name, Ready: a.hub.connect[c.ID] != nil && a.hub.connect[c.ID].Ready(), Integration: c.Integration, Keys: c.Keys, Ask: c.Ask, Link: c.Link != nil, Info: c.Info})
+		out.Connectors = append(out.Connectors, Connector{ID: c.ID, Name: c.Name, Ready: a.hub.connect[c.ID] != nil && a.hub.connect[c.ID].Ready(), Integration: c.Integration, Keys: c.Keys, Ask: c.Ask, Link: c.Link != nil, Tap: c.Tap, Info: c.Info})
 	}
 	var rows []generated.ConnectionsRow
 	err = a.st.System(ctx, func(ctx context.Context) (err error) {
