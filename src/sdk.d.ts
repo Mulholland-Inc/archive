@@ -12,8 +12,8 @@
  * - A row's access says who sees it: null is the workspace, a group is that group and managers and up. Row-level security
  *   applies everywhere, SQL included. Writes take a group by id or name, like access: "hr"; reads give the id.
  * - Managers and up write the group table { name, description }; deleting one throws conflict while a row's access is it.
- *   Quote "group" in SQL. Managers and up write the member table { email, role, groups }: groups by id or name, a new name
- *   makes that group, adding an email invites them. Nobody sets or removes a role above their own. The owner stays: only
+ *   Quote "group" in SQL. Managers and up write the member table { email, role, group }: one group by id or name, a new name
+ *   makes it, null takes them out, adding an email invites them. Deleting a group takes its members out. Nobody sets or removes a role above their own. The owner stays: only
  *   they transfer, with archive.update("member", id, { role: "owner" }), which makes them an engineer.
  * - SDK errors have code ('invalid', 'not_found', 'forbidden', 'conflict' or a SQLSTATE); invalid has errors: [{ path, message }].
  *

@@ -1,6 +1,6 @@
-import { Pencil, Trash2, Plus, ExternalLink, MessageSquarePlus, Download, Eye, Play, RotateCcw, Copy, Users, Settings, ArrowRightLeft, FolderInput } from '@lucide/svelte';
+import { Pencil, Trash2, ExternalLink, MessageSquarePlus, Download, Eye, Play, RotateCcw, Copy, Users, Settings, ArrowRightLeft, FolderInput } from '@lucide/svelte';
 import { SEPARATOR } from './contextmenu.svelte.js';
-import { app, deleteGroup, groupUses, updateGroup, toggleGroup, createGroup, atLeast, ws, removeAgent, askAgent, renameFile, removeFile, downloadFile, runWorkflow, removeWorkflow, removeMember, switchArchive, openSettings, deleteArchive } from './app.svelte.js';
+import { app, deleteGroup, groupUses, updateGroup, createGroup, atLeast, ws, removeAgent, askAgent, renameFile, removeFile, downloadFile, runWorkflow, removeWorkflow, removeMember, switchArchive, openSettings, deleteArchive } from './app.svelte.js';
 import { prompt, confirmDialog, notify } from './dialogs.svelte.js';
 import { clearAgent } from './agent.svelte.js';
 import { go } from './router.svelte.js';
@@ -100,7 +100,7 @@ export async function deleteGroupConfirm(group) {
     await notify({ title: `${group.name} is in use`, body: `It is the access of ${usesText(uses)}. Give them other access, then delete it.` });
     return false;
   }
-  const people = ws().members.filter((m) => m.groups.includes(group.id));
+  const people = ws().members.filter((m) => m.group === group.id);
   const left = people.length ? ` ${people.length === 1 ? '1 member leaves it.' : `Its ${people.length} members leave it.`}` : '';
   if (!(await confirmDialog({ title: `Delete ${group.name}?`, body: `No rows use it.${left}`, confirm: 'Delete group' }))) return false;
   return deleteGroup(group);
@@ -114,14 +114,6 @@ export async function renameGroupPrompt(group) {
 export async function newGroupPrompt(people = []) {
   const name = await prompt({ title: 'New group', label: 'Name', placeholder: 'Finance team', confirm: 'Create' });
   return name ? createGroup({ name, people }) : null;
-}
-
-export function memberGroupItems(member) {
-  if (!atLeast('manager')) return [];
-  return [
-    ...ws().groups.filter((g) => !member.groups.includes(g.id)).map((g) => ({ label: g.name, onselect: () => toggleGroup(member, g.id) })),
-    { label: 'New group…', icon: Plus, onselect: () => newGroupPrompt([member.id]) }
-  ];
 }
 
 async function deleteArchiveConfirm(archive) {

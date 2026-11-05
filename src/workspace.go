@@ -1337,29 +1337,21 @@ func (a *Archive) groupNames(ctx context.Context, tb *Table, in map[string]any) 
 	if tb.Schema != "archive" || tb.Name != "member" {
 		return nil
 	}
-	list, ok := in["groups"].([]any)
+	s, ok := in["group"].(string)
 	if !ok {
 		return nil
 	}
-	out := make([]any, 0, len(list))
-	for _, v := range list {
-		s, ok := v.(string)
-		if !ok {
-			out = append(out, v)
-			continue
+	id, err := a.groupID(ctx, s, true)
+	if err != nil {
+		var ve *ValidationError
+		if errors.As(err, &ve) {
+			ve.Type, ve.Errors[0].Path = "member", "group"
 		}
-		id, err := a.groupID(ctx, s, true)
-		if err != nil {
-			var ve *ValidationError
-			if errors.As(err, &ve) {
-				ve.Type, ve.Errors[0].Path = "member", "groups"
-			}
-			return err
-		}
-		if id != nil {
-			out = append(out, id.String())
-		}
+		return err
 	}
-	in["groups"] = out
+	in["group"] = nil
+	if id != nil {
+		in["group"] = id.String()
+	}
 	return nil
 }

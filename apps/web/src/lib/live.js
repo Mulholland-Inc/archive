@@ -110,7 +110,7 @@ export function toFile(f, owner = '') {
 
 export function toMember(p, me) {
   const mine = me && p.email === me.email;
-  return { id: p.id, user: mine ? me.user_id : undefined, name: p.name || p.email, email: p.email, role: p.role, groups: p.groups ?? [], active: mine ? 'Now' : '', status: 'active', tone: tone(p.email, 6) };
+  return { id: p.id, user: mine ? me.user_id : undefined, name: p.name || p.email, email: p.email, role: p.role, group: p.group ?? null, active: mine ? 'Now' : '', status: 'active', tone: tone(p.email, 6) };
 }
 
 export function markdown(src = '') {

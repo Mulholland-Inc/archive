@@ -290,7 +290,7 @@ func connectBack(id string) string {
 	return "/settings/connectors/" + id
 }
 
-func (a *Archive) level(ctx context.Context) (string, []uuid.UUID, error) {
+func (a *Archive) level(ctx context.Context) (string, *uuid.UUID, error) {
 	ac, err := signedIn(ctx)
 	if err != nil {
 		return "", nil, err
@@ -300,9 +300,9 @@ func (a *Archive) level(ctx context.Context) (string, []uuid.UUID, error) {
 		return "", nil, err
 	}
 	if ac.Role != ac.UserRole {
-		return "viewer", m.Groups, nil
+		return "viewer", m.Group, nil
 	}
-	return m.Role, m.Groups, nil
+	return m.Role, m.Group, nil
 }
 
 func mayManage(lvl string) bool {
@@ -319,8 +319,8 @@ func (a *Archive) mayConnect(ctx context.Context, c *connect.Connector) error {
 	return nil
 }
 
-func mayUse(c generated.ArchiveConnection, lvl string, groups []uuid.UUID) bool {
-	return mayManage(lvl) || lvl == "editor" && (c.Access == nil || slices.Contains(groups, *c.Access))
+func mayUse(c generated.ArchiveConnection, lvl string, group *uuid.UUID) bool {
+	return mayManage(lvl) || lvl == "editor" && (c.Access == nil || group != nil && *group == *c.Access)
 }
 
 func (a *Archive) connectionSave(ctx context.Context, member uuid.UUID, c *connect.Connector, g *connect.Grant) (uuid.UUID, error) {
@@ -1942,11 +1942,11 @@ func (a *Archive) Action(ctx context.Context, name string, input any, pick strin
 		}
 	}
 	if p.Integration && len(mine) > 0 {
-		lvl, groups, err := a.level(ctx)
+		lvl, group, err := a.level(ctx)
 		if err != nil {
 			return nil, err
 		}
-		if !mayUse(mine[0], lvl, groups) {
+		if !mayUse(mine[0], lvl, group) {
 			return nil, fail(ErrForbidden, "only editors and up use the archive's %s%s", p.Name, map[bool]string{true: ", and of the group it is narrowed to", false: ""}[mine[0].Access != nil])
 		}
 	}
@@ -2104,10 +2104,10 @@ func (a *Archive) actionTypes(ctx context.Context) string {
 		if conns, err = a.memberConnections(ctx, ac.member); err != nil {
 			fmt.Fprintf(os.Stderr, "archive: workspace %s: the actions of %s: %v\n", a.ws.ID, ac.Email, err)
 		}
-		lvl, groups, _ := a.level(ctx)
+		lvl, group, _ := a.level(ctx)
 		conns = slices.DeleteFunc(conns, func(c generated.ArchiveConnection) bool {
 			k := connect.Get(c.Provider)
-			return k == nil || k.Integration != c.Integration || c.Integration && !mayUse(c, lvl, groups)
+			return k == nil || k.Integration != c.Integration || c.Integration && !mayUse(c, lvl, group)
 		})
 	}
 	var yours []string

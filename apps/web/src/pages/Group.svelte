@@ -18,7 +18,7 @@
   import List from '../components/List.svelte';
   import ListItem from '../components/ListItem.svelte';
   import EmptyState from '../components/EmptyState.svelte';
-  import { ws, seedOf, members, groups, usage, connections, groupById, updateGroup, toggleGroup, atLeast, tableOf } from '../lib/app.svelte.js';
+  import { ws, seedOf, members, groups, usage, connections, groupById, updateGroup, setGroup, atLeast, tableOf } from '../lib/app.svelte.js';
   import { renameGroupPrompt, deleteGroupConfirm, usesText } from '../lib/menus.js';
   import { go } from '../lib/router.svelte.js';
 
@@ -31,8 +31,8 @@
 
   const group = $derived(groupById(id));
   const manages = $derived(atLeast('manager'));
-  const people = $derived(ws().members.filter((m) => m.groups.includes(id)));
-  const others = $derived(ws().members.filter((m) => !m.groups.includes(id)));
+  const people = $derived(ws().members.filter((m) => m.group === id));
+  const others = $derived(ws().members.filter((m) => m.group !== id));
   const uses = $derived(ws().usage[id]);
   const integrations = $derived((ws().integrations ?? []).filter((i) => i.connected && i.access === id));
   const tables = $derived((uses ?? []).filter((u) => u.table !== 'connection'));
@@ -87,7 +87,7 @@
             <Menu end width="md" label="Add a member">
               {#snippet trigger(props)}<Button size="sm" icon={UserPlus} {...props}>Add member</Button>{/snippet}
               {#each others as m (m.id)}
-                <MenuItem onselect={() => toggleGroup(m, id)}>
+                <MenuItem onselect={() => setGroup(m, id)}>
                   {#snippet leading()}<Avatar name={m.name} seed={seedOf(m)} size="xs" />{/snippet}
                   {m.name}
                 </MenuItem>
@@ -103,7 +103,7 @@
               {:else if col.key === 'email'}
                 {row.email}
               {:else if col.key === 'menu'}
-                <IconButton icon={UserMinus} label={`Remove ${row.name} from ${group.name}`} size="sm" onclick={() => toggleGroup(row, id)} />
+                <IconButton icon={UserMinus} label={`Remove ${row.name} from ${group.name}`} size="sm" onclick={() => setGroup(row, null)} />
               {/if}
             {/snippet}
           </Table>

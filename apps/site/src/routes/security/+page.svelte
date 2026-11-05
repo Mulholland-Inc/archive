@@ -18,7 +18,7 @@
   ];
 
   const FAQ = [
-    ['Can a technical user get around the rules?', 'No. The rules live at the core of Archive, so even someone working directly with the data only sees what their role and groups allow.'],
+    ['Can a technical user get around the rules?', 'No. The rules live at the core of Archive, so even someone working directly with the data only sees what their role and group allow.'],
     ['What can an assistant see?', 'Exactly what the person who connected it can see. Its access key acts as them, and can be made read only or given an end date.'],
     ['Can an assistant leave a half-finished change behind?', 'No. Every job is all or nothing, so if anything goes wrong, every change is undone.'],
     ['Can an assistant reach our servers or network?', 'No. The scripts it runs can call public web services, but never private or internal addresses, so they cannot reach the servers Archive runs on.'],
@@ -51,7 +51,7 @@
   <Row flip art="tokens" alt="A ring of keys, each cut for a different door">
     <h2>Every key answers to a person.</h2>
     <p>Each access key belongs to one person and never does more than they can. Make it read only, or give it an end date.</p>
-    <p>Change someone's role or groups and their keys follow right away.</p>
+    <p>Change someone's role or group and their keys follow right away.</p>
   </Row>
   <Row art="views" alt="One set of records seen through several windows, each showing different entries">
     <h2>Checked on every request.</h2>

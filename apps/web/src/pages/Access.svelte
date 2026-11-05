@@ -12,21 +12,19 @@
   import Button from '../components/Button.svelte';
   import IconButton from '../components/IconButton.svelte';
   import Menu from '../components/Menu.svelte';
-  import MenuItems from '../components/MenuItems.svelte';
   import Spacer from '../components/Spacer.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import InviteDialog from '../components/InviteDialog.svelte';
   import AvatarGroup from '../components/AvatarGroup.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import Chip from '../components/Chip.svelte';
   import GroupDialog from '../components/GroupDialog.svelte';
-  import { ws, seedOf, setRole, members, groups, groupById, toggleGroup, atLeast, ROLES } from '../lib/app.svelte.js';
+  import { ws, seedOf, setRole, members, groups, groupById, setGroup, atLeast, ROLES } from '../lib/app.svelte.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
 
   members.use();
   groups.use();
   import { route, go } from '../lib/router.svelte.js';
-  import { memberGroupItems, removeMemberConfirm, renameGroupPrompt, deleteGroupConfirm } from '../lib/menus.js';
+  import { removeMemberConfirm, renameGroupPrompt, deleteGroupConfirm } from '../lib/menus.js';
 
   const focus = ws().members.find((m) => m.id === route.parts[1]);
   let tab = $state(route.parts[1] === 'groups' ? 'groups' : focus?.status === 'invited' ? 'invitations' : 'members');
@@ -47,7 +45,7 @@
 
   const groupRows = $derived(
     ws()
-      .groups.map((g) => ({ group: g, id: g.id, people: ws().members.filter((m) => m.groups.includes(g.id)) }))
+      .groups.map((g) => ({ group: g, id: g.id, people: ws().members.filter((m) => m.group === g.id) }))
       .filter((r) => matches(r.group.name, r.group.description, ...r.people.flatMap((p) => [p.name, p.email])))
   );
 
@@ -61,7 +59,7 @@
     { key: 'name', label: 'Name' },
     { key: 'email', label: 'Email', muted: true, width: 'lg' },
     { key: 'role', label: 'Role', width: 'sm', mobile: 'trailing' },
-    { key: 'groups', label: 'Groups', width: 'md', mobile: 'hidden' },
+    { key: 'group', label: 'Group', width: 'md', mobile: 'hidden' },
     { key: 'active', label: tab === 'invitations' ? 'Status' : 'Last active', muted: true, width: 'sm', mobile: 'hidden' },
     ...(manages ? [{ key: 'actions', label: '', width: 'sm', align: 'end' }] : [])
   ]);
@@ -71,7 +69,11 @@
     { key: 'people', label: 'Members', width: 'lg' },
     ...(manages ? [{ key: 'actions', label: '', width: 'sm', align: 'end' }] : [])
   ]);
-  const groupsOf = (m) => m.groups.map((id) => groupById(id)).filter(Boolean);
+  const groupOptions = $derived([{ value: '', label: 'None' }, ...ws().groups.map((g) => ({ value: g.id, label: g.name }))]);
+  function changeGroup(row, group) {
+    const m = ws().members.find((x) => x.id === row.id);
+    if (m) setGroup(m, group || null);
+  }
   async function changeRole(row, role) {
     const m = ws().members.find((x) => x.id === row.id);
     if (!m || (role === 'owner' && !(await confirmDialog({ title: `Transfer ${ws().name} to ${row.name}?`, body: 'You become an engineer.', confirm: 'Transfer' })))) return;
@@ -145,21 +147,19 @@
           {:else if col.key === 'email'}
             {row.email}
           {:else if col.key === 'role'}
-            <span class="role">
+            <span class="pick">
               {#if mayChange(row)}
                 <Menu value={row.role} options={assignable(row)} size="sm" variant="ghost" label={`Role for ${row.name}`} onchange={(v) => changeRole(row, v)} />
               {:else}
                 {ROLES.find((r) => r.value === row.role)?.label}
               {/if}
             </span>
-          {:else if col.key === 'groups'}
-            <span class="groups">
-              {#each groupsOf(row) as g (g.id)}<Chip size="sm" href={`/access/groups/${g.id}`} onremove={manages ? () => toggleGroup(row, g.id) : undefined}>{g.name}</Chip>{:else}{#if !manages}<Text tone="tertiary">None</Text>{/if}{/each}
+          {:else if col.key === 'group'}
+            <span class="pick">
               {#if manages}
-                <Menu width="sm" label={`Add ${row.name} to a group`}>
-                  {#snippet trigger(props)}<IconButton icon={Plus} label={`Add ${row.name} to a group`} size="xs" tooltip={false} {...props} />{/snippet}
-                  <MenuItems items={memberGroupItems(row)} />
-                </Menu>
+                <Menu value={row.group ?? ''} options={groupOptions} size="sm" variant="ghost" label={`Group for ${row.name}`} onchange={(v) => changeGroup(row, v)} />
+              {:else}
+                {groupById(row.group)?.name ?? 'None'}
               {/if}
             </span>
           {:else if col.key === 'active'}
@@ -187,15 +187,8 @@
     gap: var(--space-1);
   }
 
-  .role :global(.trigger) {
+  .pick :global(.trigger) {
     margin-inline-start: calc(-1 * var(--space-2));
   }
 
-  .groups {
-    display: inline-flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: var(--space-1);
-    max-width: 100%;
-  }
 </style>

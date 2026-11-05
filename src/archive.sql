@@ -36,7 +36,7 @@ CREATE TABLE archive."group" (
     access      uuid REFERENCES archive."group" ON DELETE RESTRICT,
     UNIQUE (name)
 ) INHERITS (archive.object);
-COMMENT ON TABLE archive."group" IS 'A group of members, like finance: a row whose access is a group''s id is seen only by its members and by managers, engineers and the owner. Managers and up add, rename, describe and delete groups, and put members in them with member.groups; a group cannot be deleted while rows use it
+COMMENT ON TABLE archive."group" IS 'A group of members, like finance: a row whose access is a group''s id is seen only by its members and by managers, engineers and the owner. Managers and up add, rename, describe and delete groups, and put a member in one with member.group; a group cannot be deleted while rows use it, and its members leave it when it is
 icon: users-round';
 COMMENT ON COLUMN archive."group".name IS 'Any text, like Finance team; unique whatever its case';
 CREATE UNIQUE INDEX group_name_idx ON archive."group" (lower(name));
@@ -59,7 +59,7 @@ BEGIN
     FOR r IN SELECT c.oid::regclass AS rel, c.relname::text AS name, a.attname::text AS col
         FROM pg_catalog.pg_constraint k JOIN pg_catalog.pg_class c ON c.oid = k.conrelid
         JOIN pg_catalog.pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = k.conkey[1]
-        WHERE k.contype = 'f' AND k.confrelid = 'archive."group"'::regclass AND cardinality(k.conkey) = 1 AND c.oid <> 'archive."group"'::regclass
+        WHERE k.contype = 'f' AND k.confdeltype <> 'n' AND k.confrelid = 'archive."group"'::regclass AND cardinality(k.conkey) = 1 AND c.oid <> 'archive."group"'::regclass
           AND has_table_privilege(c.oid, 'SELECT')
         ORDER BY 2, 3 LOOP
         EXECUTE format('SELECT count(*) FROM %s WHERE %I = $1', r.rel, r.col) INTO n USING g;
@@ -101,7 +101,6 @@ BEGIN
             EXECUTE format('CREATE ROLE %I NOLOGIN', archive.group_role(NEW.id));
         END IF;
     ELSE
-        UPDATE archive.member SET groups = array_remove(groups, OLD.id) WHERE OLD.id = ANY (groups);
         EXECUTE format('DROP ROLE IF EXISTS %I', archive.group_role(OLD.id));
     END IF;
     RETURN NULL;
@@ -244,7 +243,7 @@ CREATE TABLE archive.member (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     email      archive.email NOT NULL UNIQUE,
     role       archive.level NOT NULL DEFAULT 'viewer',
-    groups     uuid[] NOT NULL DEFAULT '{}',
+    "group"    uuid REFERENCES archive."group" ON DELETE SET NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     name       text NOT NULL DEFAULT '',
@@ -254,7 +253,7 @@ COMMENT ON TABLE archive.member IS 'A person in this workspace. Managers and up 
 icon: users';
 COMMENT ON COLUMN archive.member.email IS 'The address they sign in with; it cannot change';
 COMMENT ON COLUMN archive.member.role IS 'One member is the owner. To transfer the workspace the owner sets another member''s role to owner, which makes the old owner an engineer';
-COMMENT ON COLUMN archive.member.groups IS 'The ids of the groups they are in; a row whose access is a group is seen only by its members and by managers, engineers and the owner';
+COMMENT ON COLUMN archive.member."group" IS 'references group; the one group they are in, or null. A row whose access is a group is seen only by its members and by managers, engineers and the owner';
 CREATE UNIQUE INDEX member_owner_idx ON archive.member (role) WHERE role = 'owner';
 
 CREATE FUNCTION archive.member_check() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -288,11 +287,6 @@ BEGIN
     IF TG_OP = 'UPDATE' AND NEW.email <> OLD.email THEN
         RAISE EXCEPTION 'an email cannot change; remove the member and add the new address' USING ERRCODE = '22023', TABLE = 'member', COLUMN = 'email';
     END IF;
-    NEW.groups := ARRAY(SELECT DISTINCT g FROM unnest(NEW.groups) g WHERE g IS NOT NULL ORDER BY g);
-    IF EXISTS (SELECT FROM unnest(NEW.groups) g WHERE NOT EXISTS (SELECT FROM archive."group" x WHERE x.id = g)) THEN
-        RAISE EXCEPTION 'no group %', (SELECT g FROM unnest(NEW.groups) g WHERE NOT EXISTS (SELECT FROM archive."group" x WHERE x.id = g) LIMIT 1)
-            USING ERRCODE = '22023', TABLE = 'member', COLUMN = 'groups';
-    END IF;
     RETURN NEW;
 END $$;
 
@@ -311,9 +305,6 @@ DECLARE
     rid   uuid;
     u     text;
     m     text;
-    g     uuid;
-    added uuid[] := '{}';
-    gone  uuid[] := '{}';
 BEGIN
     PERFORM pg_advisory_xact_lock(7273);
     IF TG_OP = 'DELETE' THEN
@@ -337,18 +328,12 @@ BEGIN
             EXECUTE format('GRANT %I TO %I', '{p}_' || NEW.role, u);
         END IF;
         EXECUTE format('GRANT %I TO %I', m, u);
-        IF TG_OP = 'INSERT' THEN
-            added := NEW.groups;
-        ELSE
-            added := ARRAY(SELECT unnest(NEW.groups) EXCEPT SELECT unnest(OLD.groups));
-            gone := ARRAY(SELECT unnest(OLD.groups) EXCEPT SELECT unnest(NEW.groups));
+        IF TG_OP = 'UPDATE' AND OLD."group" IS DISTINCT FROM NEW."group" AND EXISTS (SELECT FROM pg_roles WHERE rolname = archive.group_role(OLD."group")) THEN
+            EXECUTE format('REVOKE %I FROM %I', archive.group_role(OLD."group"), m);
         END IF;
-        FOREACH g IN ARRAY added LOOP
-            EXECUTE format('GRANT %I TO %I', archive.group_role(g), m);
-        END LOOP;
-        FOREACH g IN ARRAY gone LOOP
-            EXECUTE format('REVOKE %I FROM %I', archive.group_role(g), m);
-        END LOOP;
+        IF NEW."group" IS NOT NULL AND (TG_OP = 'INSERT' OR OLD."group" IS DISTINCT FROM NEW."group") THEN
+            EXECUTE format('GRANT %I TO %I', archive.group_role(NEW."group"), m);
+        END IF;
     END IF;
     IF TG_OP <> 'UPDATE' THEN
         PERFORM set_config('archive.members', '1', true);
@@ -3590,10 +3575,10 @@ SELECT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = sqlc.arg(role)::n
 SELECT NOT EXISTS (SELECT FROM archive.member);
 
 -- name: MemberByEmail :one
-SELECT id, role::text AS role, groups FROM archive.member WHERE email = sqlc.arg(email)::text;
+SELECT id, role::text AS role, "group" FROM archive.member WHERE email = sqlc.arg(email)::text;
 
 -- name: Members :many
-SELECT id, email::text AS email, role::text AS role, groups FROM archive.member ORDER BY email;
+SELECT id, email::text AS email, role::text AS role, "group" FROM archive.member ORDER BY email;
 
 -- name: NameMembers :exec
 UPDATE archive.member m SET name = u.name FROM (SELECT unnest(sqlc.arg(emails)::text[]) AS email, unnest(sqlc.arg(names)::text[]) AS name) u
