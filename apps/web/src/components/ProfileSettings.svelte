@@ -4,7 +4,7 @@
   import Field from './Field.svelte';
   import Input from './Input.svelte';
   import Textarea from './Textarea.svelte';
-  import Select from './Select.svelte';
+  import Menu from './Menu.svelte';
   import Avatar from './Avatar.svelte';
   import Button from './Button.svelte';
   import { app } from '../lib/app.svelte.js';
@@ -42,7 +42,7 @@
     <Field label="Full name">{#snippet children(id)}<Input {id} bind:value={name} />{/snippet}</Field>
     <Field label="What should Archive call you?">{#snippet children(id)}<Input {id} bind:value={call} />{/snippet}</Field>
   </Grid>
-  <Field label="What best describes your work?">{#snippet children(id)}<Select {id} bind:value={work} options={works} full />{/snippet}</Field>
+  <Field label="What best describes your work?">{#snippet children(id)}<Menu {id} bind:value={work} options={works} full />{/snippet}</Field>
   <Field label="Personal preferences">{#snippet children(id)}<Textarea {id} bind:value={prefs} rows={4} />{/snippet}</Field>
   <Stack direction="row" gap="2" justify="end">
     <Button variant="ghost" disabled={!dirty} onclick={reset}>Cancel</Button>

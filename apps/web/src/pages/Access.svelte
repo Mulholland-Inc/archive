@@ -6,7 +6,6 @@
   import Tabs from '../components/Tabs.svelte';
   import Stack from '../components/Stack.svelte';
   import SearchField from '../components/SearchField.svelte';
-  import Select from '../components/Select.svelte';
   import Table from '../components/Table.svelte';
   import Avatar from '../components/Avatar.svelte';
   import Text from '../components/Text.svelte';
@@ -146,9 +145,9 @@
     <Tabs bind:value={tab} items={tabs} label="Access" variant="pill" />
     <Spacer />
     {#if tab === 'shares'}
-      <Select bind:value={kindFilter} options={kindFilters} variant="ghost" label="Kind" placement="bottom-end" />
+      <Menu bind:value={kindFilter} options={kindFilters} variant="ghost" label="Kind" />
     {:else if tab !== 'groups'}
-      <Select bind:value={roleFilter} options={roleFilters} variant="ghost" label="Role" placement="bottom-end" />
+      <Menu bind:value={roleFilter} options={roleFilters} variant="ghost" label="Role" />
     {/if}
   </Stack>
 
@@ -218,14 +217,14 @@
           {:else if col.key === 'email'}
             {row.email}
           {:else if col.key === 'role'}
-            <Select value={row.role} options={roles} size="sm" variant="ghost" label={`Role for ${row.name}`} onchange={(v) => changeRole(row, v)} />
+            <Menu value={row.role} options={roles} size="sm" variant="ghost" label={`Role for ${row.name}`} onchange={(v) => changeRole(row, v)} />
           {:else if col.key === 'groups'}
             <span class="groups">{#each groupsOf(row) as g (g.id)}<Chip size="sm" href={`/access/groups/${g.id}`}>{g.name}</Chip>{:else}<Text tone="tertiary">None</Text>{/each}</span>
           {:else if col.key === 'active'}
             {row.status === 'invited' ? 'Invited' : row.active}
           {:else if col.key === 'actions'}
             <span class="actions">
-              <Menu placement="bottom-end" width="sm" label={`Groups for ${row.name}`}>
+              <Menu end width="sm" label={`Groups for ${row.name}`}>
                 {#snippet trigger(props)}<IconButton icon={Settings2} label={`Groups for ${row.name}`} size="sm" tooltip={false} {...props} />{/snippet}
                 <MenuItems items={memberGroupItems(row)} />
               </Menu>

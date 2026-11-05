@@ -37,7 +37,7 @@
   <PaneHeader title="Connectors" description="Your own accounts that Archive can read from and act in. Only you can use them." art="api">
     {#snippet search()}
       <div class="search"><SearchField bind:value={query} size="sm" placeholder="Search" label="Search connectors" /></div>
-      <Menu label="Filter" placement="bottom-end">
+      <Menu label="Filter" end>
         {#snippet trigger(props)}<IconButton icon={ListFilter} label="Filter" pressed={categories.length > 0} {...props} />{/snippet}
         <MenuLabel>Category</MenuLabel>
         {#each allCategories as c (c)}

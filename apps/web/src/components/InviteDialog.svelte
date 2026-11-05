@@ -2,7 +2,7 @@
   import Dialog from './Dialog.svelte';
   import Field from './Field.svelte';
   import Textarea from './Textarea.svelte';
-  import Select from './Select.svelte';
+  import Menu from './Menu.svelte';
   import Button from './Button.svelte';
   import Chip from './Chip.svelte';
   import Stack from './Stack.svelte';
@@ -46,7 +46,7 @@
   </Field>
   <Field label="Role">
     {#snippet children(id)}
-      <Select {id} bind:value={role} options={roles} full />
+      <Menu {id} bind:value={role} options={roles} full />
     {/snippet}
   </Field>
   <Field label="Groups">

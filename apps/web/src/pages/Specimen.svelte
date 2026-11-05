@@ -17,7 +17,6 @@
   import IconButton from '../components/IconButton.svelte';
   import Input from '../components/Input.svelte';
   import Textarea from '../components/Textarea.svelte';
-  import Select from '../components/Select.svelte';
   import PeoplePicker from '../components/PeoplePicker.svelte';
   import Checkbox from '../components/Checkbox.svelte';
   import Switch from '../components/Switch.svelte';
@@ -296,11 +295,11 @@
           <Field label="Autosize">{#snippet children(id)}<Textarea {id} autosize rows={1} placeholder="Grows as you type" />{/snippet}</Field>
         </SpecimenBlock>
         <SpecimenBlock title="Select">
-          <Select bind:value={select} options={roles} label="Role" />
-          <Select bind:value={select} options={roles} size="sm" label="Role" />
-          <Select bind:value={select} options={roles} variant="ghost" label="Role" />
-          <Select options={roles} placeholder="Pick a role" label="Role" />
-          <Select options={roles} disabled placeholder="Disabled" label="Role" />
+          <Menu bind:value={select} options={roles} label="Role" />
+          <Menu bind:value={select} options={roles} size="sm" label="Role" />
+          <Menu bind:value={select} options={roles} variant="ghost" label="Role" />
+          <Menu options={roles} placeholder="Pick a role" label="Role" />
+          <Menu options={roles} disabled placeholder="Disabled" label="Role" />
         </SpecimenBlock>
         <SpecimenBlock title="People picker">
           <PeoplePicker bind:value={picked} people={contacts()} label="People" />
@@ -372,7 +371,7 @@
             <MenuSeparator />
             <MenuItem icon={Trash2} danger>Delete</MenuItem>
           </Menu>
-          <Menu label="Placement" placement="bottom-end">
+          <Menu label="Placement" end>
             {#snippet trigger(props)}<IconButton icon={Ellipsis} label="End-aligned menu" {...props} />{/snippet}
             <MenuItem icon={Pencil}>Rename</MenuItem>
             <MenuItem icon={Share}>Share</MenuItem>
@@ -505,7 +504,7 @@
           </Disclosure>
           <Stack gap="0">
             <SettingsRow label="Settings row"><Switch checked label="Example" /></SettingsRow>
-            <SettingsRow label="Another row"><Select value="viewer" options={roles} size="sm" label="Role" /></SettingsRow>
+            <SettingsRow label="Another row"><Menu value="viewer" options={roles} size="sm" label="Role" /></SettingsRow>
           </Stack>
         </SpecimenBlock>
       </SpecimenSection>

@@ -7,7 +7,7 @@
   import Stack from '../components/Stack.svelte';
   import SearchField from '../components/SearchField.svelte';
   import Chip from '../components/Chip.svelte';
-  import Select from '../components/Select.svelte';
+  import Menu from '../components/Menu.svelte';
   import Spacer from '../components/Spacer.svelte';
   import Table from '../components/Table.svelte';
   import Text from '../components/Text.svelte';
@@ -101,7 +101,7 @@
       <Chip selected={filter === f.value} onclick={() => (filter = f.value)}>{f.label}</Chip>
     {/each}
     <Spacer />
-    <Select bind:value={sort} options={sorts} variant="ghost" label="Sort by" placement="bottom-end" />
+    <Menu bind:value={sort} options={sorts} variant="ghost" label="Sort by" />
   </Stack>
 
   {#if !types.length}

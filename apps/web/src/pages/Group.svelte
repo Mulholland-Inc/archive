@@ -88,7 +88,7 @@
       <Section title={people.length === 1 ? '1 member' : `${people.length} members`}>
         {#snippet actions()}
           {#if owner && others.length}
-            <Menu placement="bottom-end" width="md" label="Add a member">
+            <Menu end width="md" label="Add a member">
               {#snippet trigger(props)}<Button size="sm" icon={UserPlus} {...props}>Add member</Button>{/snippet}
               {#each others as m (m.id)}
                 <MenuItem onselect={() => toggleGroup(m, id)}>

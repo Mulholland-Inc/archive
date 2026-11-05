@@ -3,7 +3,7 @@
   import Field from './Field.svelte';
   import Input from './Input.svelte';
   import Textarea from './Textarea.svelte';
-  import Select from './Select.svelte';
+  import Menu from './Menu.svelte';
   import Button from './Button.svelte';
   import { triggerKinds } from '../lib/mock/workflows.js';
 
@@ -33,7 +33,7 @@
     {#snippet children(id)}<Input {id} bind:value={name} placeholder="Summarize new letters" />{/snippet}
   </Field>
   <Field label="Trigger">
-    {#snippet children(id)}<Select {id} bind:value={kind} options={triggerKinds} full />{/snippet}
+    {#snippet children(id)}<Menu {id} bind:value={kind} options={triggerKinds} full />{/snippet}
   </Field>
   {#if kind !== 'manual'}
     <Field label="When">
