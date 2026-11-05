@@ -6,23 +6,23 @@
   import Heading from './Heading.svelte';
   import IconButton from './IconButton.svelte';
   import Button from './Button.svelte';
-  import { app, ws, archiveKey, rotateKey, isArchiveOwner, tokens, archiveApps, revokeApp } from '../lib/app.svelte.js';
+  import { app, ws, archiveKey, rotateKey, isArchiveOwner, tokens, revokeApp } from '../lib/app.svelte.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
   import { apiPrompt } from '../lib/apiprompt.js';
 
-  let { onback, backNarrow = true } = $props();
+  let { personal = false, onback, backNarrow = true } = $props();
 
   let shown = $state(false);
-  const key = $derived(archiveKey());
-  const locked = $derived(!isArchiveOwner());
+  const key = $derived(personal ? app.apiKey : archiveKey());
+  const locked = $derived(!personal && !isArchiveOwner());
   const secret = $derived(key?.secret ?? '');
   const masked = $derived(secret ? `${secret.slice(0, secret.lastIndexOf('_') + 1)}${'•'.repeat(12)}${secret.slice(-4)}` : key ? `arc_${'•'.repeat(16)}` : 'No key yet');
 
   tokens.use(() => app.archive);
 
   async function current() {
-    if (!secret) await rotateKey();
-    return archiveKey()?.secret ?? '';
+    if (!secret) await rotateKey(personal);
+    return (personal ? app.apiKey : archiveKey())?.secret ?? '';
   }
 
   async function copy() {
@@ -30,18 +30,18 @@
   }
 
   async function copyPrompt() {
-    await navigator.clipboard?.writeText(apiPrompt({ key: await current(), archive: ws() })).catch(() => {});
+    await navigator.clipboard?.writeText(apiPrompt({ key: await current(), archive: personal ? null : ws(), archives: app.archives })).catch(() => {});
   }
 
   const since = (t) => `Connected ${new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
 
   async function disconnect(t) {
-    if (await confirmDialog({ title: `Disconnect ${t.name}?`, body: `It loses access to ${ws().name} right away.`, confirm: 'Disconnect' })) await revokeApp(t.id);
+    if (await confirmDialog({ title: `Disconnect ${t.name}?`, body: `It loses access to ${t.workspace_name} right away.`, confirm: 'Disconnect' })) await revokeApp(t.id);
   }
 
   async function rotate() {
     if (!key || (await confirmDialog({ title: 'Rotate this key?', body: 'The old key stops working right away.', confirm: 'Rotate' }))) {
-      await rotateKey();
+      await rotateKey(personal);
       shown = true;
     }
   }
@@ -49,9 +49,9 @@
 
 <SettingsPane {onback} {backNarrow}>
   <div class="page">
-    <div class="art"><Art name="security" /></div>
-    <Heading size="xl" wrap="normal" step>Archive API key</Heading>
-    <p class="sub">Only for {ws().name}, with your access. Copy it whenever you need it.</p>
+    <div class="art"><Art name={personal ? 'tokens' : 'security'} /></div>
+    <Heading size="xl" wrap="normal" step>{personal ? 'Your API key' : 'Archive API key'}</Heading>
+    <p class="sub">{personal ? 'Works in every archive you’re in' : `Only for ${ws().name}`}, with your access. Copy it whenever you need it.</p>
     {#if locked}<div class="notice"><OwnerNotice what="the archive API key" ask="if you need it" /></div>{/if}
     <div class="key">
       <span class="value" aria-label={shown ? 'API key' : 'API key, hidden'}>{shown && !locked && secret ? secret : masked}</span>
@@ -62,12 +62,12 @@
     <div class="setup">
       <Button variant="primary" icon={Sparkles} disabled={locked} onclick={copyPrompt}>Copy setup prompt</Button>
     </div>
-    {#if archiveApps().length}
+    {#if personal && app.apps.length}
       <div class="apps">
         <Heading level={3} size="sm" serif={false}>Connected apps</Heading>
-        {#each archiveApps() as t (t.id)}
+        {#each app.apps as t (t.id)}
           <div class="app">
-            <span class="app-name">{t.name}<small>{since(t)}, as you</small></span>
+            <span class="app-name">{t.name}<small>{since(t)} to {t.workspace_name}, as you</small></span>
             <Button size="sm" variant="ghost" onclick={() => disconnect(t)}>Disconnect</Button>
           </div>
         {/each}

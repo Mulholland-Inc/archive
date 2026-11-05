@@ -597,11 +597,23 @@ func (q *Queries) RevokeMCPToken(ctx context.Context, client *uuid.UUID, hash st
 }
 
 const revokeToken = `-- name: RevokeToken :one
-DELETE FROM archive.token WHERE id = $1 AND user_id = $2 AND workspace = $3 AND kind IN ('api', 'mcp') RETURNING coalesce(role, '')::text
+DELETE FROM archive.token WHERE id = $1 AND user_id = $2 AND kind IN ('api', 'mcp') AND (workspace = $3 OR (NOT $4::bool AND role IS NULL)) RETURNING coalesce(role, '')::text
 `
 
-func (q *Queries) RevokeToken(ctx context.Context, iD uuid.UUID, userID uuid.UUID, workspace *uuid.UUID) (string, error) {
-	row := q.db.QueryRow(ctx, revokeToken, iD, userID, workspace)
+type RevokeTokenParams struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	Workspace *uuid.UUID
+	Scoped    bool
+}
+
+func (q *Queries) RevokeToken(ctx context.Context, arg RevokeTokenParams) (string, error) {
+	row := q.db.QueryRow(ctx, revokeToken,
+		arg.ID,
+		arg.UserID,
+		arg.Workspace,
+		arg.Scoped,
+	)
 	var column_1 string
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -734,20 +746,33 @@ func (q *Queries) SoonDue(ctx context.Context, workspace uuid.UUID, kind string,
 }
 
 const tokenSealed = `-- name: TokenSealed :one
-SELECT sealed FROM archive.token WHERE id = $1 AND user_id = $2 AND workspace = $3 AND kind = 'api' AND sealed IS NOT NULL
+SELECT sealed FROM archive.token WHERE id = $1 AND user_id = $2 AND kind = 'api' AND sealed IS NOT NULL AND (NOT $3::bool OR workspace = $4)
 `
 
-func (q *Queries) TokenSealed(ctx context.Context, iD uuid.UUID, userID uuid.UUID, workspace *uuid.UUID) ([]byte, error) {
-	row := q.db.QueryRow(ctx, tokenSealed, iD, userID, workspace)
+type TokenSealedParams struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	Scoped    bool
+	Workspace *uuid.UUID
+}
+
+func (q *Queries) TokenSealed(ctx context.Context, arg TokenSealedParams) ([]byte, error) {
+	row := q.db.QueryRow(ctx, tokenSealed,
+		arg.ID,
+		arg.UserID,
+		arg.Scoped,
+		arg.Workspace,
+	)
 	var sealed []byte
 	err := row.Scan(&sealed)
 	return sealed, err
 }
 
 const tokens = `-- name: Tokens :many
-SELECT id, name, (role IS NOT NULL)::bool AS viewer, expires_at, refresh_expires_at, created_at, (kind = 'mcp')::bool AS app
-FROM archive.token
-WHERE user_id = $1 AND workspace = $2 AND kind IN ('api', 'mcp') ORDER BY id
+SELECT t.id, t.name, (t.role IS NOT NULL)::bool AS viewer, t.expires_at, t.refresh_expires_at, t.created_at, (t.kind = 'mcp')::bool AS app,
+    coalesce(w.id::text, '')::text AS workspace, coalesce(w.name, '')::text AS workspace_name
+FROM archive.token t LEFT JOIN archive.workspace w ON w.id = t.workspace
+WHERE t.user_id = $1 AND t.kind IN ('api', 'mcp') AND (NOT $2::bool OR t.workspace = $3) ORDER BY t.id
 `
 
 type TokensRow struct {
@@ -758,10 +783,12 @@ type TokensRow struct {
 	RefreshExpiresAt *time.Time
 	CreatedAt        time.Time
 	App              bool
+	Workspace        string
+	WorkspaceName    string
 }
 
-func (q *Queries) Tokens(ctx context.Context, userID uuid.UUID, workspace *uuid.UUID) ([]TokensRow, error) {
-	rows, err := q.db.Query(ctx, tokens, userID, workspace)
+func (q *Queries) Tokens(ctx context.Context, userID uuid.UUID, scoped bool, workspace *uuid.UUID) ([]TokensRow, error) {
+	rows, err := q.db.Query(ctx, tokens, userID, scoped, workspace)
 	if err != nil {
 		return nil, err
 	}
@@ -777,6 +804,8 @@ func (q *Queries) Tokens(ctx context.Context, userID uuid.UUID, workspace *uuid.
 			&i.RefreshExpiresAt,
 			&i.CreatedAt,
 			&i.App,
+			&i.Workspace,
+			&i.WorkspaceName,
 		); err != nil {
 			return nil, err
 		}

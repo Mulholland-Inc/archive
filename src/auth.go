@@ -46,6 +46,7 @@ type Actor struct {
 	Role      string    `json:"-"`
 	UserRole  string    `json:"-"`
 	member    uuid.UUID
+	scoped    bool
 }
 
 func (ac *Actor) label() string {
@@ -93,6 +94,8 @@ type Token struct {
 	Name      string     `json:"name"`
 	Viewer    bool       `json:"viewer,omitempty"`
 	App       bool       `json:"app,omitempty"`
+	Workspace string     `json:"workspace,omitempty"`
+	Where     string     `json:"workspace_name,omitempty"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
 	Secret    string     `json:"token,omitempty"`
@@ -364,10 +367,16 @@ func (a *Archive) userActor(ctx context.Context, u *User) (*Actor, error) {
 	return &Actor{UserID: u.ID, Email: u.Email, Name: u.Name, Role: role, UserRole: role, member: m.ID}, nil
 }
 
-func (a *Archive) CreateToken(ctx context.Context, name string, ttl time.Duration, viewer bool) (*Token, error) {
+func (a *Archive) CreateToken(ctx context.Context, name string, ttl time.Duration, viewer, personal bool) (*Token, error) {
 	ac, err := authUser(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if personal && viewer {
+		return nil, fmt.Errorf("personal: a viewer-only token belongs to one workspace: %w", httpErrBadRequest)
+	}
+	if personal && ac.scoped {
+		return nil, fmt.Errorf("a key for one workspace cannot make a personal key: %w", ErrForbidden)
 	}
 	t := &Token{ID: coreNewID(), Name: strings.TrimSpace(name), Viewer: viewer, Secret: authNewSecret()}
 	var exp *time.Time
@@ -377,6 +386,10 @@ func (a *Archive) CreateToken(ctx context.Context, name string, ttl time.Duratio
 	}
 	return t, a.sys(ctx, func(ctx context.Context) error {
 		var role *string
+		ws := &a.ws.ID
+		if personal {
+			ws = nil
+		}
 		if viewer {
 			r := a.roleID("t", t.ID)
 			if err := a.exec(ctx, authCreate(r), authGrant(a.prefix+"_viewer", r), authGrant(a.roleID("m", ac.member), r)); err != nil {
@@ -384,7 +397,7 @@ func (a *Archive) CreateToken(ctx context.Context, name string, ttl time.Duratio
 			}
 			role = &r
 		}
-		row, err := a.hub.q().CreateToken(ctx, generated.CreateTokenParams{ID: t.ID, UserID: ac.UserID, Workspace: &a.ws.ID, Name: t.Name, Role: role, Hash: authHash(t.Secret), Sealed: a.sealToken(t.ID, t.Secret), ExpiresAt: exp})
+		row, err := a.hub.q().CreateToken(ctx, generated.CreateTokenParams{ID: t.ID, UserID: ac.UserID, Workspace: ws, Name: t.Name, Role: role, Hash: authHash(t.Secret), Sealed: a.sealToken(t.ID, t.Secret), ExpiresAt: exp})
 		t.CreatedAt, t.ExpiresAt = row.CreatedAt, row.ExpiresAt
 		a.moved(ctx, "archive.token", t.ID.String())
 		return err
@@ -402,7 +415,7 @@ func (a *Archive) TokenSecret(ctx context.Context, id uuid.UUID) (string, error)
 	if err != nil {
 		return "", err
 	}
-	sealed, err := a.hub.q().TokenSealed(ctx, id, ac.UserID, &a.ws.ID)
+	sealed, err := a.hub.q().TokenSealed(ctx, generated.TokenSealedParams{ID: id, UserID: ac.UserID, Scoped: ac.scoped, Workspace: &a.ws.ID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrNotFound
 	}
@@ -425,10 +438,10 @@ func (a *Archive) Tokens(ctx context.Context) ([]*Token, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := a.hub.q().Tokens(ctx, ac.UserID, &a.ws.ID)
+	rows, err := a.hub.q().Tokens(ctx, ac.UserID, ac.scoped, &a.ws.ID)
 	out := []*Token{}
 	for _, r := range rows {
-		t := &Token{ID: r.ID, Name: r.Name, Viewer: r.Viewer, App: r.App, ExpiresAt: r.ExpiresAt, CreatedAt: r.CreatedAt}
+		t := &Token{ID: r.ID, Name: r.Name, Viewer: r.Viewer, App: r.App, Workspace: r.Workspace, Where: r.WorkspaceName, ExpiresAt: r.ExpiresAt, CreatedAt: r.CreatedAt}
 		if r.App {
 			t.ExpiresAt = r.RefreshExpiresAt
 		}
@@ -443,7 +456,7 @@ func (a *Archive) RevokeToken(ctx context.Context, id uuid.UUID) error {
 		return err
 	}
 	return a.sys(ctx, func(ctx context.Context) error {
-		role, err := a.hub.q().RevokeToken(ctx, id, ac.UserID, &a.ws.ID)
+		role, err := a.hub.q().RevokeToken(ctx, generated.RevokeTokenParams{ID: id, UserID: ac.UserID, Scoped: ac.scoped, Workspace: &a.ws.ID})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("token %s: %w", id, ErrNotFound)
 		}
@@ -610,7 +623,7 @@ func (s *signin) handler() http.Handler {
 		rows, err := h.q().UserWorkspaces(r.Context(), ac.UserID)
 		all := []Workspace{}
 		for _, x := range rows {
-			if r.Header.Get("Authorization") == "" || x.ID == a.ws.ID {
+			if !ac.scoped || x.ID == a.ws.ID {
 				all = append(all, workspaceOut(x))
 			}
 		}
@@ -648,9 +661,10 @@ func (s *signin) handler() http.Handler {
 	})
 	authed("POST /auth/tokens", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		var body struct {
-			Name    string `json:"name"`
-			Expires string `json:"expires"`
-			Viewer  bool   `json:"viewer"`
+			Name     string `json:"name"`
+			Expires  string `json:"expires"`
+			Viewer   bool   `json:"viewer"`
+			Personal bool   `json:"personal"`
 		}
 		if err := httpDecode(r, &body); err != nil {
 			return 0, nil, err
@@ -662,7 +676,7 @@ func (s *signin) handler() http.Handler {
 				return 0, nil, fmt.Errorf("expires: %v: %w", err, httpErrBadRequest)
 			}
 		}
-		t, err := archiveFrom(r.Context()).CreateToken(r.Context(), body.Name, ttl, body.Viewer)
+		t, err := archiveFrom(r.Context()).CreateToken(r.Context(), body.Name, ttl, body.Viewer, body.Personal)
 		return http.StatusCreated, t, err
 	})
 	authed("GET /auth/tokens/{id}/secret", func(w http.ResponseWriter, r *http.Request) (int, any, error) {

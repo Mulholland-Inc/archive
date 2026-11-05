@@ -153,15 +153,16 @@ DELETE FROM archive.token WHERE hash = $1 AND kind = 'session';
 INSERT INTO archive.token (id, user_id, workspace, kind, name, role, hash, sealed, expires_at) VALUES ($1, $2, $3, 'api', $4, $5, $6, $7, $8) RETURNING created_at, expires_at;
 
 -- name: TokenSealed :one
-SELECT sealed FROM archive.token WHERE id = $1 AND user_id = $2 AND workspace = $3 AND kind = 'api' AND sealed IS NOT NULL;
+SELECT sealed FROM archive.token WHERE id = $1 AND user_id = $2 AND kind = 'api' AND sealed IS NOT NULL AND (NOT sqlc.arg(scoped)::bool OR workspace = sqlc.arg(workspace));
 
 -- name: Tokens :many
-SELECT id, name, (role IS NOT NULL)::bool AS viewer, expires_at, refresh_expires_at, created_at, (kind = 'mcp')::bool AS app
-FROM archive.token
-WHERE user_id = $1 AND workspace = $2 AND kind IN ('api', 'mcp') ORDER BY id;
+SELECT t.id, t.name, (t.role IS NOT NULL)::bool AS viewer, t.expires_at, t.refresh_expires_at, t.created_at, (t.kind = 'mcp')::bool AS app,
+    coalesce(w.id::text, '')::text AS workspace, coalesce(w.name, '')::text AS workspace_name
+FROM archive.token t LEFT JOIN archive.workspace w ON w.id = t.workspace
+WHERE t.user_id = $1 AND t.kind IN ('api', 'mcp') AND (NOT sqlc.arg(scoped)::bool OR t.workspace = sqlc.arg(workspace)) ORDER BY t.id;
 
 -- name: RevokeToken :one
-DELETE FROM archive.token WHERE id = $1 AND user_id = $2 AND workspace = $3 AND kind IN ('api', 'mcp') RETURNING coalesce(role, '')::text;
+DELETE FROM archive.token WHERE id = $1 AND user_id = $2 AND kind IN ('api', 'mcp') AND (workspace = sqlc.arg(workspace) OR (NOT sqlc.arg(scoped)::bool AND role IS NULL)) RETURNING coalesce(role, '')::text;
 
 -- name: CreateMCPClient :one
 INSERT INTO archive.mcp_client (name, redirect_uris, secret) VALUES ($1, $2, $3) RETURNING id, created_at;

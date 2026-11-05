@@ -15,6 +15,7 @@
   const items = [
     { id: 'appearance', label: 'Appearance', icon: Palette, group: 'You' },
     { id: 'connectors', label: 'Connectors', icon: Plug, group: 'You' },
+    { id: 'api', label: 'API key', icon: KeyRound, group: 'You' },
     { id: 'general', label: 'General', icon: Building2, group: 'Archive' },
     { id: 'server', label: 'Server', icon: Server, group: 'Archive' },
     { id: 'integrations', label: 'Integrations', icon: Blocks, group: 'Archive' },
@@ -40,6 +41,8 @@
     <ConnectorSettings onopen={(id) => (s.sub = id)} onback={back} backNarrow />
   {:else if current === 'integrations'}
     <IntegrationSettings onopen={(id) => (s.sub = id)} onback={back} />
+  {:else if current === 'api'}
+    <ApiKeySettings personal onback={back} />
   {:else if current === 'archive-api'}
     <ApiKeySettings onback={back} />
   {:else}

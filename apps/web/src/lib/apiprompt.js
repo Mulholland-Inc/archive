@@ -1,11 +1,11 @@
 import { API } from './api.js';
 
-export function apiPrompt({ key, archive }) {
+export function apiPrompt({ key, archive, archives }) {
   const base = API || 'http://localhost:8080';
   const mcp = /^https:\/\/api\./.test(base) ? base.replace('://api.', '://mcp.') : `${base}/mcp`;
   const scope = archive
     ? `This key belongs to one archive, "${archive.name}" (workspace \`${archive.id}\`), and acts with my access there.`
-    : 'This key acts with my access.';
+    : `This key is mine and works in every archive I'm in, with my access there. Say which one on every request with \`Archive-Workspace: <id>\`:\n${archives.map((a) => `  - ${a.name}: \`${a.id}\``).join('\n')}`;
 
   return `You are helping me work with Archive, a database and file store for my records, through its HTTP API.
 
@@ -25,7 +25,7 @@ export function apiPrompt({ key, archive }) {
 - \`GET /api/files/{id}/model\` and \`POST /api/files/{id}/edit\` with an array of edits: read and change a docx, xlsx or pptx, as \`archive.read\` and \`archive.edit\` do.
 - \`POST /api/run\` with \`{ "code": "…" }\`: run TypeScript against the archive SDK; \`GET /api/run/docs\` documents it.
 - Workflows are rows of the \`workflow\` table: \`POST /api/workflow\` with \`{ "name", "source", "on" }\` saves one (\`on\` is \`{ "cron": "0 9 * * *", "tz"?: "Europe/Amsterdam" }\`, \`{ "table": "invoice", "events": ["created", "updated"] }\`, \`{ "webhook": true }\` or null), \`PATCH\` and \`DELETE /api/workflow/{id}\` change and remove it, and a bad one comes back as 422 with \`errors\` (path, message, and line and column in source). Run one with \`POST /api/run\` and \`return await archive.run("name", input)\`. Its runs are the read-only \`workflow_run\` table: \`GET /api/workflow_run?workflow={id}\`.
-- MCP: \`${mcp}\` with the same key.
+- MCP: \`${mcp}\` with the same key${archive ? '' : ' and `Archive-Workspace` header'}.
 
 Errors come back as \`{ "error": "…" }\` with a 4xx or 5xx status.`;
 }
