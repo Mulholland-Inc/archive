@@ -643,13 +643,13 @@ type pgStore struct {
 	roles    map[string]*pgxpool.Pool
 }
 
-func OpenStore(ctx context.Context, pg *pgx.ConnConfig, prefix, password string, moved func(table, id string)) (*pgStore, error) {
+func OpenStore(ctx context.Context, pg *pgx.ConnConfig, prefix, password string, migrate bool, moved func(table, id string)) (*pgStore, error) {
 	cfg := pg.Copy()
 	cfg.RuntimeParams["search_path"] = "public"
 	s := &pgStore{cfg: cfg, prefix: prefix, password: password, base: pg, moved: moved, roles: map[string]*pgxpool.Pool{}}
 	var err error
 	if s.sys, err = storePool(ctx, pg, storeSysConns, moved, nil); err == nil {
-		err = s.bootstrap(ctx, password)
+		err = s.bootstrap(ctx, password, migrate)
 	}
 	if err == nil {
 		auth := prefix + "_authenticator"
@@ -687,7 +687,7 @@ func storePool(ctx context.Context, base *pgx.ConnConfig, conns int32, moved fun
 	return pgxpool.NewWithConfig(ctx, cfg)
 }
 
-func (s *pgStore) bootstrap(ctx context.Context, password string) error {
+func (s *pgStore) bootstrap(ctx context.Context, password string, migrate bool) error {
 	tx, err := s.sys.Begin(ctx)
 	if err != nil {
 		return err
@@ -706,7 +706,7 @@ func (s *pgStore) bootstrap(ctx context.Context, password string) error {
 		return err
 	}
 	rev, _ := generated.New(s.sys).Revision(ctx)
-	if strings.HasSuffix(rev, ":"+s.hash()) {
+	if rev != "" && !migrate || strings.HasSuffix(rev, ":"+s.hash()) {
 		return nil
 	}
 	return s.migrate(ctx)
