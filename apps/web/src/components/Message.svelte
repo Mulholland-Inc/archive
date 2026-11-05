@@ -71,7 +71,7 @@
     background: var(--color-bubble);
     color: var(--color-text);
     font-size: var(--text-prose);
-    font-family: var(--font-prose);
+    font-family: var(--font-sans);
     line-height: var(--leading-prose);
     letter-spacing: var(--tracking-normal);
     white-space: pre-wrap;
