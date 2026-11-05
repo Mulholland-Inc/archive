@@ -402,6 +402,7 @@ COMMENT ON COLUMN archive.workflow.next_at IS 'When it runs next: a cron workflo
 CREATE TABLE archive.agent (
     id           uuid PRIMARY KEY DEFAULT uuidv7(),
     name         text NOT NULL DEFAULT '',
+    description  text NOT NULL DEFAULT '',
     instructions text NOT NULL DEFAULT '',
     avatar       integer NOT NULL DEFAULT 0 CONSTRAINT agent_avatar CHECK (avatar BETWEEN 0 AND 49),
     tint         integer NOT NULL DEFAULT 10 CONSTRAINT agent_tint CHECK (tint BETWEEN 0 AND 31),
@@ -411,6 +412,7 @@ CREATE TABLE archive.agent (
 ) INHERITS (archive.object);
 COMMENT ON TABLE archive.agent IS 'An agent of this workspace, which everyone in it can talk with, or with access only that group. Each person has their own endless conversation with it, in turn and memory
 icon: bot';
+COMMENT ON COLUMN archive.agent.description IS 'One short line saying what it is for, shown under its name';
 COMMENT ON COLUMN archive.agent.instructions IS 'What it is for and how it works, which it follows in every turn';
 COMMENT ON COLUMN archive.agent.avatar IS 'Its picture, one figure by number: 0 boxy robot, 1 ringed robot, 2 wheel robot, 3 television robot, 4 rotor robot, 5 claw robot, 6 spring robot, 7 one-eyed robot, 8 hexagon robot, 9 light bulb robot, 10 boxing robot, 11 magnet robot, 12 stacked robot, 13 satellite robot, 14 barrel robot, 15 spider robot, 16 saucer robot, 17 headphone robot, 18 alarm clock robot, 19 cog robot, 20 steam robot, 21 knight robot, 22 rocket robot, 23 diving robot, 24 tracked robot, 25 cat, 26 owl, 27 frog, 28 bear, 29 bunny, 30 penguin, 31 fox, 32 ghost, 33 octopus, 34 sprout, 35 chick, 36 dinosaur, 37 shark, 38 bat, 39 hedgehog, 40 water drop, 41 alien, 42 monster, 43 cactus, 44 snail, 45 wizard, 46 astronaut, 47 ninja, 48 viking, 49 snowman';
 COMMENT ON COLUMN archive.agent.tint IS 'The colour of its picture, 0 to 31';
