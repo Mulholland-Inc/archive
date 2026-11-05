@@ -112,7 +112,7 @@
 
   $effect(() => {
     const id = route.parts[1];
-    if (ws().loading) return;
+    if (!ws().filed) return;
     const known = sources.find((s) => s.id === id);
     untrack(() => {
       if (!id) {
@@ -299,7 +299,7 @@
     </Stack>
   </Stack>
 
-  {#if ws().loading && !listed.length}
+  {#if !ws().filed && !listed.length}
     <Grid min="tile" gap="2">{#each { length: 6 } as _, i (i)}<Skeleton variant="block" size="lg" />{/each}</Grid>
   {:else if !listed.length && !found}
     <EmptyState icon={Inbox} title={here ? `${here.name} is empty` : 'No files yet'}>

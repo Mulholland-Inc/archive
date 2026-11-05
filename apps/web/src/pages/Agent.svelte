@@ -14,7 +14,7 @@
   import EmptyState from '../components/EmptyState.svelte';
   import Skeleton from '../components/Skeleton.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { app, ws, atLeast, agentById, agentAddress, agents, library, closeFile, updateAgent, rememberAgent, markSeen } from '../lib/app.svelte.js';
+  import { app, ws, atLeast, agentById, agentAddress, agents, closeFile, updateAgent, rememberAgent, markSeen } from '../lib/app.svelte.js';
   import { conversation, loadEarlier, sendMessage, stopAgent } from '../lib/agent.svelte.js';
   import { clearConversation } from '../lib/menus.js';
 
@@ -71,7 +71,6 @@
   }
 
   agents.use();
-  library.use();
   conversation.use(() => agent && id);
   $effect(() => {
     if (agent) rememberAgent(id);

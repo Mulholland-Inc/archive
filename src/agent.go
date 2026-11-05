@@ -168,6 +168,11 @@ func (a *Archive) turn(w http.ResponseWriter, r *http.Request) {
 	enc := json.NewEncoder(w)
 	rc := http.NewResponseController(w)
 	send := func(v map[string]any) {
+		if v["type"] == "done" || v["type"] == "error" {
+			if err := a.hub.q().MarkUnread(context.WithoutCancel(ctx), a.ws.ID, ac.UserID); err != nil {
+				fmt.Fprintf(os.Stderr, "archive: workspace %s unread: %v\n", a.ws.ID, err)
+			}
+		}
 		if ctx.Err() == nil {
 			enc.Encode(v)
 			rc.Flush()
