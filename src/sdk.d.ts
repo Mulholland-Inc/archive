@@ -1,6 +1,6 @@
 /**
  * Archive runs your TypeScript against the `archive` SDK below. Your code is the body of an async function: use
- * top-level await and `return` a JSON value. Output: { result, logs, error }; console.log, warn and error add to logs.
+ * top-level await and `return` a JSON value. Output: { result, logs, error, files }; console.log, warn and error add to logs.
  * Only archive, console, fetch, input and standard JavaScript exist: no require, import, timers, files or process.
  * Limits: {timeout} a run, 256 KB of result, 64 KB of logs. Return what you need, not whole tables.
  *
@@ -212,6 +212,8 @@ interface RunResult {
     logs: string[];
     /** "" when the run worked. */
     error: string;
+    /** The files it made or edited, if any. */
+    files?: { id: string; name: string; action: "created" | "edited" }[];
 }
 
 interface BrowseResult {

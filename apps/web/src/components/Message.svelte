@@ -5,6 +5,7 @@
   import { rise } from '../lib/motion.js';
   import { contextmenu } from '../lib/contextmenu.svelte.js';
   import { messageItems } from '../lib/menus.js';
+  import { openFile, ws } from '../lib/app.svelte.js';
 
   let { message, streaming = false } = $props();
 </script>
@@ -13,12 +14,12 @@
   <article class="user" in:rise {@attach contextmenu(() => messageItems(message))}>
     {#if message.attachments?.length}
       <div class="atts">
-        {#each message.attachments as a, i (a.id)}
-          <Attachment name={a.name} kind={a.kind} size={a.size} tone={(i % 4) + 1} />
+        {#each message.attachments as a (a.id)}
+          <Attachment name={a.name} kind={a.kind} size={a.size} onopen={() => openFile(a.id, a.name)} />
         {/each}
       </div>
     {/if}
-    <div class="bubble">{message.text}</div>
+    {#if message.text}<div class="bubble">{message.text}</div>{/if}
   </article>
 {:else}
   <article class="assistant" in:rise {@attach contextmenu(() => messageItems(message))}>
@@ -27,6 +28,13 @@
     {/if}
     {#if message.blocks?.length}
       <Prose blocks={message.blocks} />
+    {/if}
+    {#if message.files?.length}
+      <div class="files">
+        {#each message.files as f (f.id)}
+          <Attachment row name={ws().library.find((x) => x.id === f.id)?.name ?? f.name} kind={f.kind} size={f.action === 'created' ? 'Created' : 'Edited'} onopen={() => openFile(f.id, f.name)} />
+        {/each}
+      </div>
     {/if}
   </article>
 {/if}
@@ -44,6 +52,17 @@
     flex-wrap: wrap;
     justify-content: flex-end;
     gap: var(--space-2);
+  }
+
+  /* Files the answer changed, framed as a table in its prose is. */
+  .files {
+    display: flex;
+    flex-direction: column;
+    max-width: var(--measure-sm);
+    overflow: hidden;
+    border-radius: var(--radius-lg);
+    background: var(--color-surface);
+    box-shadow: inset 0 0 0 var(--border-width) var(--color-border);
   }
 
   .bubble {

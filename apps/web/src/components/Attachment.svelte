@@ -1,13 +1,20 @@
 <script>
-  import { FileText, Image, AudioLines, FileSpreadsheet, X } from '@lucide/svelte';
+  import { X } from '@lucide/svelte';
   import Icon from './Icon.svelte';
 
-  let { name, kind = 'document', size, onremove, tone = 1 } = $props();
-  const icons = { image: Image, recording: AudioLines, spreadsheet: FileSpreadsheet, pdf: FileText, document: FileText };
+  let { name, kind = 'document', size, onremove, onopen, row = false } = $props();
+  // Kinds don't tell these apart, so their extensions do.
+  const types = [
+    [/\.(pptx?|pptm|potx|key|odp)$/i, 'presentation'],
+    [/\.(mp4|m4v|mov|webm|mkv|avi)$/i, 'video'],
+    [/\.(txt|md|json|log)$/i, 'text']
+  ];
+  const art = $derived(types.find(([re]) => re.test(name))?.[1] ?? (['image', 'recording', 'spreadsheet', 'pdf'].includes(kind) ? kind : /\.(docx?|odt|rtf|pages)$/i.test(name) ? 'document' : 'file'));
 </script>
 
-<span class="att">
-  <span class={['thumb', `t${tone}`]}><Icon icon={icons[kind] ?? FileText} size="md" /></span>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<svelte:element this={onopen ? 'button' : 'span'} type={onopen ? 'button' : undefined} class={['att', { row }]} onclick={onopen}>
+  <img class="thumb" src={`/types/file-${art}.webp`} alt="" />
   <span class="meta">
     <span class="name">{name}</span>
     {#if size}<span class="size">{size}</span>{/if}
@@ -15,7 +22,7 @@
   {#if onremove}
     <button type="button" class="remove" aria-label={`Remove ${name}`} onclick={onremove}><Icon icon={X} size="xs" /></button>
   {/if}
-</span>
+</svelte:element>
 
 <style>
   .att {
@@ -24,27 +31,65 @@
     align-items: center;
     gap: var(--space-2);
     flex: none;
-    max-width: var(--col-lg);
+    max-width: min(var(--col-lg), 100%);
     padding: var(--space-1-5);
     border-radius: var(--radius-lg);
     background: var(--color-surface);
     box-shadow: inset 0 0 0 var(--border-width) var(--color-border);
   }
 
+  button.att {
+    text-align: start;
+    transition: background-color var(--duration-fast) var(--ease-out);
+  }
+
+  button.att:hover {
+    background: var(--color-fill);
+  }
+
+  /* A line of its own in a list of files, as a row of a table is. */
+  .row {
+    display: flex;
+    width: 100%;
+    max-width: none;
+    padding: var(--space-2) var(--space-3) var(--space-2) var(--space-2);
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .row:not(:last-child) {
+    box-shadow: inset 0 calc(var(--border-width) * -1) 0 var(--color-border-subtle);
+  }
+
+  button.row:hover {
+    background: var(--color-fill-subtle);
+  }
+
+  .row .thumb {
+    width: var(--control-md);
+    height: var(--control-md);
+  }
+
+  .row .meta {
+    flex: 1;
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding-inline-end: 0;
+  }
+
+  .row .size {
+    flex: none;
+    font-size: var(--text-sm);
+  }
+
   .thumb {
-    display: grid;
-    place-items: center;
     flex: none;
     width: var(--control-lg);
     height: var(--control-lg);
-    border-radius: var(--radius-md);
-    color: var(--color-text-secondary);
   }
-
-  .t1 { background: var(--color-thumb-1); }
-  .t2 { background: var(--color-thumb-2); }
-  .t3 { background: var(--color-thumb-3); }
-  .t4 { background: var(--color-thumb-4); }
 
   .meta {
     display: flex;

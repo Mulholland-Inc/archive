@@ -13,6 +13,7 @@
   import RowPage from './pages/Row.svelte';
   import AccessPage from './pages/Access.svelte';
   import GroupPage from './pages/Group.svelte';
+  import Canvas from './components/Canvas.svelte';
   import AppSettings from './components/AppSettings.svelte';
   import Specimen from './pages/Specimen.svelte';
   import Onboarding from './pages/Onboarding.svelte';
@@ -71,6 +72,7 @@
 {:else}
 <Shell>
   {#snippet sidebar()}<AppSidebar />{/snippet}
+  {#snippet pane()}{#if app.canvas}{#key app.canvas.id}<Canvas />{/key}{/if}{/snippet}
   {#key key}
     <View>
       {#if route.parts[0] === 'agent'}

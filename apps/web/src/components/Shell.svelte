@@ -1,10 +1,11 @@
 <script>
-  let { sidebar, children } = $props();
+  let { sidebar, pane, children } = $props();
 </script>
 
 <div class="shell">
   {@render sidebar()}
   <main class="main">{@render children()}</main>
+  {@render pane?.()}
 </div>
 
 <style>

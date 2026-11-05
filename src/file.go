@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -702,6 +703,43 @@ func (a *Archive) fileRoutes(mux *http.ServeMux) {
 		}
 		l, err := a.LinkFile(r.Context(), id, ttl)
 		return http.StatusOK, l, err
+	})
+	handle("GET /api/files/{id}/model", func(r *http.Request) (int, any, error) {
+		id, err := httpID(r)
+		if err != nil {
+			return 0, nil, err
+		}
+		m, err := a.ViewDocument(r.Context(), id)
+		return http.StatusOK, m, err
+	})
+	handle("POST /api/files/{id}/edit", func(r *http.Request) (int, any, error) {
+		id, err := httpID(r)
+		if err != nil {
+			return 0, nil, err
+		}
+		var ops []OfficeOp
+		if err := httpDecode(r, &ops); err != nil {
+			return 0, nil, err
+		}
+		f, err := a.EditDocument(r.Context(), id, ops)
+		return http.StatusOK, f, err
+	})
+	mux.HandleFunc("GET /api/files/{id}/media/{part...}", func(w http.ResponseWriter, r *http.Request) {
+		id, err := httpID(r)
+		var pic []byte
+		if err == nil {
+			var b []byte
+			if _, b, err = a.documentBytes(r.Context(), id); err == nil {
+				pic, err = OfficeMedia(b, r.PathValue("part"))
+			}
+		}
+		if err != nil {
+			httpWrite(w, 0, nil, err)
+			return
+		}
+		w.Header().Set("Content-Type", cmp.Or(mime.TypeByExtension(path.Ext(r.PathValue("part"))), "application/octet-stream"))
+		w.Header().Set("Content-Security-Policy", "sandbox")
+		w.Write(pic)
 	})
 	mux.HandleFunc("GET /api/files/{id}/content", func(w http.ResponseWriter, r *http.Request) {
 		f, err := file(r)

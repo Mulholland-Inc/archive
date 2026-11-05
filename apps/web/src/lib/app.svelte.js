@@ -26,6 +26,8 @@ export const app = $state({
   collapsed: typeof localStorage !== 'undefined' && localStorage.getItem('archive.sidebar') === 'collapsed',
   drawer: false,
   details: false,
+  // The file open in the canvas: { id, name, file, model, error }.
+  canvas: null,
   help: false,
   pending: null,
   muted: false,
@@ -258,6 +260,68 @@ export async function findFiles(q) {
   const v = ws();
   const hits = await api(`/api/search?type=file&limit=100&q=${encodeURIComponent(q)}`, { workspace: v.id });
   return (hits ?? []).map((h) => ({ ...filed(toFile(h.data, v.name), v), snippet: h.snippet }));
+}
+
+// The file open in the canvas, read again when it moves; a document's model only when its bytes did. One that went
+// closes it, and one that was already gone when opened says so.
+export const canvas = resource({
+  tables: ['archive.file'],
+  byId: true,
+  load: async (id) => {
+    if (app.canvas?.id !== id) return;
+    const v = ws();
+    let f;
+    try {
+      f = await fileById(id);
+    } catch (e) {
+      if (app.canvas?.id !== id) return;
+      const gone = [403, 404].includes(e.status);
+      if (gone && app.canvas.file) closeFile();
+      else app.canvas.error = gone ? 'Not found' : e.message;
+      return;
+    }
+    let { model, error, file } = app.canvas;
+    if (f.office && f.held && f.hash !== file?.hash) {
+      try {
+        model = await api(`/api/files/${id}/model`, { workspace: v.id });
+        error = '';
+      } catch (e) {
+        error = e.message;
+      }
+    }
+    if (app.canvas?.id === id) Object.assign(app.canvas, { file: f, model, error });
+  }
+});
+
+// name is what to call it until it is read, or if it turns out to be gone.
+export function openFile(id, name = '') {
+  if (app.canvas?.id === id) return;
+  app.canvas = { id, name, file: null, model: null, error: '' };
+  canvas.refresh(id);
+}
+
+export function closeFile() {
+  app.canvas = null;
+}
+
+// editFile applies edits, all or nothing, as archive.edit does, and shows what they made. A refused one throws why.
+export async function editFile(id, ops) {
+  try {
+    await call(`/api/files/${id}/edit`, { method: 'POST', body: ops });
+  } catch (e) {
+    throw new Error(e.message.replace(/^archive\.edit: edit \d+ \(\w+\): /, '').replace(/: (bad request|forbidden)$/, ''));
+  }
+  await canvas.refresh(id);
+}
+
+// copyFile makes a file you can change from one a connection syncs, and opens it.
+export async function copyFile(id) {
+  try {
+    const copy = await runCode(`return await archive.copy(${JSON.stringify(id)});`);
+    openFile(copy.id);
+  } catch (e) {
+    complain(e, 'Couldn’t copy the file');
+  }
 }
 
 // A file's bytes and thumbnail are cached as blobs; a file that moved has them fetched again.

@@ -111,6 +111,8 @@
   --sidebar-width: 15rem;
   --sidebar-rail: 3.25rem;
   --aside-width: 19rem;
+  --canvas-width: 42rem;
+  --canvas-min: 22rem;
   --archive-rail: 4.75rem;
   --dock-height: 3.25rem;
   --archive-tile: 3.25rem;
