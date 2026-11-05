@@ -101,7 +101,7 @@ export async function upload(file, access, parent) {
   const q = new URLSearchParams();
   if (access) q.set('access', access);
   if (parent) q.set('parent', parent);
-  return api(`/api/files${q.size ? `?${q}` : ''}`, { method: 'POST', raw: form });
+  return api(`/api/file${q.size ? `?${q}` : ''}`, { method: 'POST', raw: form });
 }
 
 // Uploads a file of any size by tus, in parts small enough for one request each, and picks up where it left off
@@ -111,7 +111,7 @@ const PART = 16 << 20;
 
 export async function uploadLarge(file, progress = () => {}) {
   const meta = `filename ${btoa(Array.from(new TextEncoder().encode(file.name), (b) => String.fromCharCode(b)).join(''))}`;
-  const made = await send('/api/files/tus', { method: 'POST', headers: { ...TUS, 'Upload-Length': String(file.size), 'Upload-Metadata': meta } });
+  const made = await send('/api/file/tus', { method: 'POST', headers: { ...TUS, 'Upload-Length': String(file.size), 'Upload-Metadata': meta } });
   const done = made.headers.get('Archive-File-Id');
   if (done) return done;
   const at = new URL(made.headers.get('Location'), location.origin).pathname;
@@ -132,7 +132,7 @@ export async function uploadLarge(file, progress = () => {}) {
   }
 }
 
-export const fileURL = (id, part = 'content') => `${API}/api/files/${id}/${part}`;
+export const fileURL = (id, part = 'content') => `${API}/api/file/${id}/${part}`;
 
 const blobs = new Map();
 export function forgetBlobs(prefix) {

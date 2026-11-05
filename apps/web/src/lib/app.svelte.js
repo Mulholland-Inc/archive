@@ -178,7 +178,7 @@ function setMe(me) {
 async function files(id, where) {
   const all = [];
   for (let after = ''; ; ) {
-    const next = await api(`/api/files?limit=500&${where}${after ? `&after=${after}` : ''}`, { workspace: id });
+    const next = await api(`/api/file?limit=500&${where}${after ? `&after=${after}` : ''}`, { workspace: id });
     all.push(...next);
     if (next.length < 500) break;
     after = next.at(-1).id;
@@ -199,25 +199,32 @@ export const agents = resource({
   tables: ['archive.agent'],
   load: async () => {
     const v = ws();
-    const list = (await booted(v, 'agents', () => api('/api/agent/list', { workspace: v.id }))) ?? [];
+    const list = (await booted(v, 'agents', () => api('/api/agent_list?limit=1000', { workspace: v.id }))) ?? [];
     const had = new Map(v.agents.map((a) => [a.id, a]));
     const ids = new Set(list.map((a) => a.id));
     const seen = local(`archive.seen:${v.id}`, {});
-    for (const a of list) a.seen = seen[a.id] ??= a.at;
+    for (const a of list) {
+      a.at ??= '';
+      a.seen = seen[a.id] ??= a.at;
+    }
     setLocal(`archive.seen:${v.id}`, seen);
     v.agents = list.map((a) => (had.has(a.id) ? Object.assign(had.get(a.id), a) : a));
     for (const id of Object.keys(v.conversations)) if (!ids.has(id)) delete v.conversations[id];
   }
 });
 
+const SOURCES = `return await archive.query("SELECT c.id, c.provider, c.account FROM archive.connection c WHERE EXISTS (SELECT FROM archive.file f WHERE f.connection = c.id) ORDER BY c.provider, c.account, c.id");`;
+
 export const library = resource({
   tables: ['archive.file', 'archive.group'],
   load: async () => {
     const v = ws();
     try {
-      const [list, sources] = await Promise.all([files(v.id, 'top=1'), api('/api/files/sources', { workspace: v.id }), groups.refresh()]);
+      if (!v.catalog) await schema.refresh();
+      const [list, sources] = await Promise.all([files(v.id, 'parent=&connection='), runCode(SOURCES, v.id), groups.refresh()]);
       v.library = list.map((f) => filed(toFile(f, v.name), v));
-      v.sources = sources ?? [];
+      const named = new Map(v.catalog.catalog.connectors.map((k) => [k.id, k.name]));
+      v.sources = sources.map((s) => ({ ...s, name: named.get(s.provider) ?? s.provider }));
     } finally {
       v.filed = true;
     }
@@ -226,13 +233,13 @@ export const library = resource({
 
 export async function folderFiles({ parent, connection }) {
   const v = ws();
-  const list = await files(v.id, parent ? `parent=${parent}` : `top=1&connection=${connection}`);
+  const list = await files(v.id, parent ? `parent=${parent}` : `parent=&connection=${connection}`);
   return list.map((f) => filed(toFile(f, v.name), v));
 }
 
 export async function fileById(id) {
   const v = ws();
-  return filed(toFile(await api(`/api/files/${id}`, { workspace: v.id }), v.name), v);
+  return filed(toFile(await api(`/api/file/${id}`, { workspace: v.id }), v.name), v);
 }
 
 export async function findFiles(q) {
@@ -260,7 +267,7 @@ export const canvas = resource({
     let { model, error, file } = app.canvas;
     if (f.office && f.held && f.hash !== file?.hash) {
       try {
-        model = await api(`/api/files/${id}/model`, { workspace: v.id });
+        model = await api(`/api/file/${id}/model`, { workspace: v.id });
         error = '';
       } catch (e) {
         error = e.message;
@@ -282,7 +289,7 @@ export function closeFile() {
 
 export async function editFile(id, ops) {
   try {
-    await call(`/api/files/${id}/edit`, { method: 'POST', body: ops });
+    await call(`/api/file/${id}`, { method: 'PATCH', body: { edits: ops } });
   } catch (e) {
     throw new Error(e.message.replace(/^archive\.edit: edit \d+ \(\w+\): /, '').replace(/: (bad request|forbidden)$/, ''));
   }
@@ -299,15 +306,17 @@ export async function copyFile(id) {
 }
 
 onChange((changes) => {
-  for (const c of changes) if (c.table === 'archive.file') forgetBlobs(c.id ? `/api/files/${c.id}/` : '/api/files/');
+  for (const c of changes) if (c.table === 'archive.file') forgetBlobs(c.id ? `/api/file/${c.id}/` : '/api/file/');
 });
+
+const memberOf = (p) => toMember(p, { ...app.user, user_id: app.user.id });
 
 export const members = resource({
   tables: ['archive.member', 'archive.user'],
   load: async () => {
     const v = ws();
-    const list = (await booted(v, 'people', () => api('/auth/users', { workspace: v.id }))) ?? [];
-    v.members = list.map((p) => toMember(p, { ...app.user, user_id: app.user.id }));
+    const list = (await booted(v, 'members', () => api('/api/member?limit=1000', { workspace: v.id }))) ?? [];
+    v.members = list.map(memberOf).sort((a, b) => a.email.localeCompare(b.email));
   }
 });
 
@@ -337,7 +346,7 @@ export const workflows = resource({
   tables: ['archive.workflow', 'archive.workflow_run'],
   load: async () => {
     const v = ws();
-    const list = (await booted(v, 'workflows', () => api('/api/workflow/list', { workspace: v.id }))) ?? [];
+    const list = (await booted(v, 'workflows', () => api('/api/workflow_list?limit=1000', { workspace: v.id }))) ?? [];
     v.flows = list;
     const had = new Map(v.workflows.map((w) => [w.id, w]));
     v.workflows = list.map((w) => {
@@ -365,12 +374,8 @@ export const schema = resource({
   tables: ['archive.revision', 'archive.workflow'],
   load: async () => {
     const v = ws();
-    const [catalog, ddl] = await Promise.all([
-      booted(v, 'types', () => api('/api/types', { workspace: v.id })),
-      booted(v, 'schema', () => api('/api/schema', { workspace: v.id }).catch(() => [])),
-      workflows.refresh()
-    ]);
-    v.catalog = { catalog, ddl, flows: v.flows };
+    const [catalog] = await Promise.all([booted(v, 'types', () => api('/api/types', { workspace: v.id })), workflows.refresh()]);
+    v.catalog = { catalog, ddl: catalog.schema, flows: v.flows };
     tables(v);
     counts.reset();
   }
@@ -661,17 +666,15 @@ export async function invite({ emails, role, group }) {
   for (const email of emails) {
     if (w.members.some((m) => m.email === email)) continue;
     try {
-      const people = await call('/auth/users', { method: 'POST', body: { email, role } });
-      w.members = people.map((p) => toMember(p, { ...app.user, user_id: app.user.id }));
-      const m = w.members.find((x) => x.email === email);
-      if (m && group) await setGroup(m, group);
+      const m = memberOf(await call('/api/member', { method: 'POST', body: { email, role, group } }));
+      w.members = [...w.members, m].sort((a, b) => a.email.localeCompare(b.email));
       added.push(m);
     } catch (e) {
       await complain(e, `Couldn’t invite ${email}`);
     }
   }
   if (added.length) completeStep('invite');
-  return added.filter(Boolean);
+  return added;
 }
 
 export async function removeMember(id) {
@@ -679,8 +682,8 @@ export async function removeMember(id) {
   const m = w.members.find((x) => x.id === id);
   if (!m) return;
   try {
-    const people = await call(`/auth/users/${encodeURIComponent(m.email)}`, { method: 'DELETE' });
-    w.members = people.map((p) => toMember(p, { ...app.user, user_id: app.user.id }));
+    await call(`/api/member/${m.id}`, { method: 'DELETE' });
+    w.members = w.members.filter((x) => x.id !== id);
   } catch (e) {
     complain(e, `Couldn’t remove ${m.name}`);
   }
@@ -797,19 +800,19 @@ export function connectIntegration(id, asked) {
   if (atLeast('manager')) connect(id, asked);
 }
 
-async function onIntegration(id, what, path, init) {
+async function onIntegration(id, what, act) {
   const c = archiveIntegrations().find((x) => x.id === id);
   if (!c?.connection || !atLeast('manager')) return;
   try {
-    await call(`/connect/${c.connection.id}${path}`, init);
+    await act(c.connection.id);
   } catch (e) {
     complain(e, `Couldn’t ${what} ${c.name}`);
   }
   return connections.refresh();
 }
 
-export const disconnectIntegration = (id) => onIntegration(id, 'disconnect', '', { method: 'DELETE' });
-export const syncIntegration = (id) => onIntegration(id, 'sync', '/sync', { method: 'POST' });
+export const disconnectIntegration = (id) => onIntegration(id, 'disconnect', (c) => call(`/api/connection/${c}`, { method: 'DELETE' }));
+export const syncIntegration = (id) => onIntegration(id, 'sync', (connection) => call('/api/action/sync', { method: 'POST', body: { connection } }));
 
 
 const KEY_NAME = 'Archive API key';
@@ -1042,7 +1045,7 @@ function filed(f, w) {
 export async function setFileAccess(file, access) {
   const w = ws();
   try {
-    const f = filed(toFile(await call(`/api/files/${file.id}`, { method: 'PATCH', body: { access } }), w.name), w);
+    const f = filed(toFile(await call(`/api/file/${file.id}`, { method: 'PATCH', body: { access } }), w.name), w);
     Object.assign(file, { access: f.access, folder: f.folder, sub: f.sub });
   } catch (e) {
     complain(e, `Couldn’t change who sees ${file.name}`);
@@ -1052,7 +1055,7 @@ export async function setFileAccess(file, access) {
 export async function addFolder(name, parent) {
   const w = ws();
   try {
-    return filed(toFile(await call('/api/folders', { method: 'POST', body: { name, parent: parent ?? null } }), w.name), w);
+    return filed(toFile(await call('/api/file', { method: 'POST', body: { kind: 'folder', name, parent: parent ?? null } }), w.name), w);
   } catch (e) {
     complain(e, `Couldn’t make ${name}`);
   }
@@ -1063,7 +1066,7 @@ export async function renameFile(file, name) {
   const before = file.name;
   file.name = name;
   try {
-    await call(`/api/files/${file.id}`, { method: 'PATCH', body: { name } });
+    await call(`/api/file/${file.id}`, { method: 'PATCH', body: { name } });
   } catch (e) {
     file.name = before;
     complain(e, 'Couldn’t rename the file');
@@ -1072,7 +1075,7 @@ export async function renameFile(file, name) {
 
 export async function moveFile(file, parent) {
   try {
-    await call(`/api/files/${file.id}`, { method: 'PATCH', body: { parent } });
+    await call(`/api/file/${file.id}`, { method: 'PATCH', body: { parent } });
   } catch (e) {
     complain(e, `Couldn’t move ${file.name}`);
   }
@@ -1081,7 +1084,7 @@ export async function moveFile(file, parent) {
 export async function removeFile(id) {
   const w = ws();
   try {
-    await call(`/api/files/${id}`, { method: 'DELETE' });
+    await call(`/api/file/${id}`, { method: 'DELETE' });
     removeAt(w.library, (f) => f.id === id);
   } catch (e) {
     complain(e, 'Couldn’t delete the file');
@@ -1090,7 +1093,7 @@ export async function removeFile(id) {
 
 export async function downloadFile(file) {
   try {
-    const link = await call(`/api/files/${file.id}/link?expires=5m`, { method: 'POST' });
+    const link = await call(`/api/file/${file.id}/link?expires=5m`);
     Object.assign(document.createElement('a'), { href: `${link.url}&download=1` }).click();
   } catch (e) {
     complain(e, `Couldn’t download ${file.name}`);
@@ -1133,8 +1136,8 @@ export async function renameView(id, name) {
   if (!/^[a-z]/.test(to)) return complain(new Error('A view’s name starts with a letter.'), 'Couldn’t rename the view');
   const sql = `ALTER VIEW public."${id}" RENAME TO "${to}"`;
   try {
-    const dry = await call('/api/schema/migrate', { method: 'POST', body: { sql } });
-    await call('/api/schema/migrate', { method: 'POST', body: { sql, confirm: dry.confirm } });
+    const dry = await call('/api/action/migrate', { method: 'POST', body: { sql } });
+    await call('/api/action/migrate', { method: 'POST', body: { sql, confirm: dry.confirm } });
   } catch (e) {
     return complain(e, 'Couldn’t rename the view');
   }
@@ -1161,19 +1164,22 @@ export const connections = resource({
   tables: ['archive.connection'],
   load: async () => {
     const v = ws();
-    const out = await api('/connect', { workspace: v.id });
-    const ids = new Set((out?.connectors ?? []).filter((k) => !k.integration).map((k) => k.id));
+    if (!v.catalog) await schema.refresh();
+    const connectors = v.catalog.catalog.connectors;
+    const rows = await api('/api/connection_list?limit=1000', { workspace: v.id });
+    rows.sort((a, b) => a.provider.localeCompare(b.provider) || a.account.localeCompare(b.account));
+    const ids = new Set(connectors.filter((k) => !k.integration).map((k) => k.id));
     v.connectors = v.connectors.filter((c) => ids.has(c.id));
-    nameBrands(out?.connectors ?? []);
-    v.integrations = (out?.connectors ?? []).filter((k) => k.integration).map((k) => toIntegration(k, out.connections.find((x) => x.provider === k.id && x.integration)));
-    for (const k of (out?.connectors ?? []).filter((k) => !k.integration)) {
+    nameBrands(connectors);
+    v.integrations = connectors.filter((k) => k.integration).map((k) => toIntegration(k, rows.find((x) => x.provider === k.id && x.integration)));
+    for (const k of connectors.filter((k) => !k.integration)) {
       let c = v.connectors.find((x) => x.id === k.id);
       if (!c) {
         c = { by: k.name, description: `Use your ${k.name} account`, category: 'Other', scopes: [], ...k };
         v.connectors.push(c);
         c = v.connectors.at(-1);
       }
-      const mine = out.connections.filter((x) => x.provider === k.id && !x.integration);
+      const mine = rows.filter((x) => x.provider === k.id && !x.integration);
       const synced = mine.every((x) => x.synced_at) ? mine.map((x) => x.synced_at).sort()[0] : '';
       Object.assign(c, {
         ready: k.ready,
@@ -1228,13 +1234,12 @@ export function connect(id, asked = {}, workspace = app.archive) {
 }
 
 export async function connectPlaces(id, q) {
-  const out = await call(`/connect/${encodeURIComponent(id)}/places?${new URLSearchParams({ q })}`).catch(() => null);
-  return out?.places ?? [];
+  return (await call('/api/action/places', { method: 'POST', body: { provider: id, q } })) ?? [];
 }
 
 export async function connectKeys(id, keys, workspace, quiet = false) {
   try {
-    await call(`/connect/${encodeURIComponent(id)}/keys`, { method: 'POST', body: { keys }, workspace });
+    await call('/api/connection', { method: 'POST', body: { provider: id, keys }, workspace });
   } catch (e) {
     if (quiet && !(e instanceof Unauthorized)) return e;
     complain(e, 'Couldn’t connect');
@@ -1288,7 +1293,7 @@ async function openLink({ id, token, workspace }, back) {
 
 export async function connectLink(id) {
   try {
-    const { token } = await call(`/connect/${encodeURIComponent(id)}/link`, { method: 'POST' });
+    const { token } = await call('/api/action/link', { method: 'POST', body: { provider: id } });
     const at = { id, token, workspace: app.archive };
     linking(at);
     await openLink(at);
@@ -1309,14 +1314,17 @@ function resumeLink() {
 export const ownConnections = resource({
   tables: ['archive.connection'],
   load: async () => {
-    const out = await call('/connect/mine');
-    app.ownConnections = (out?.connections ?? []).map((x) => ({ ...x, look: lookOf(x.workspace) }));
+    const all = await Promise.all(app.archives.map(async (v) => {
+      const rows = await api('/api/connection_list?integration=false&limit=1000', { workspace: v.id });
+      return rows.map((x) => ({ ...x, workspace: { id: v.id, name: v.name }, look: v.look }));
+    }));
+    app.ownConnections = all.flat().sort((a, b) => a.provider.localeCompare(b.provider) || a.account.localeCompare(b.account) || a.workspace.name.localeCompare(b.workspace.name));
   }
 });
 
-async function onOwnConnection(x, path, init, failed) {
+async function onOwnConnection(x, act, failed) {
   try {
-    await call(`/connect/${encodeURIComponent(x.id)}${path}`, { ...init, workspace: x.workspace.id });
+    await act(x.workspace.id);
   } catch (e) {
     complain(e, failed);
   }
@@ -1324,6 +1332,6 @@ async function onOwnConnection(x, path, init, failed) {
   return ownConnections.refresh();
 }
 
-export const syncOwnConnection = (x) => onOwnConnection(x, '/sync', { method: 'POST' }, `Couldn’t sync ${x.account}`);
-export const disconnectOwnConnection = (x) => onOwnConnection(x, '', { method: 'DELETE' }, `Couldn’t disconnect ${x.account}`);
+export const syncOwnConnection = (x) => onOwnConnection(x, (workspace) => call('/api/action/sync', { method: 'POST', body: { connection: x.id }, workspace }), `Couldn’t sync ${x.account}`);
+export const disconnectOwnConnection = (x) => onOwnConnection(x, (workspace) => call(`/api/connection/${x.id}`, { method: 'DELETE', workspace }), `Couldn’t disconnect ${x.account}`);
 

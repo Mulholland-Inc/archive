@@ -130,7 +130,7 @@ func (a *Archive) reload(ctx context.Context) error {
 	return err
 }
 
-func (a *Archive) List(ctx context.Context, typ string, where map[string]any, limit int, after uuid.UUID) ([]map[string]any, error) {
+func (a *Archive) List(ctx context.Context, typ string, where map[string]any, limit int, after uuid.UUID, desc bool) ([]map[string]any, error) {
 	cat := a.catalog(ctx)
 	tb, err := cat.table(typ)
 	if err != nil {
@@ -145,6 +145,7 @@ func (a *Archive) List(ctx context.Context, typ string, where map[string]any, li
 			verr.Errors = append(verr.Errors, FieldError{Path: k, Message: "unknown field"})
 		case cat.secret(col) != nil:
 			verr.Errors = append(verr.Errors, FieldError{Path: k, Message: "secret fields cannot be filtered"})
+		case where[k] == nil:
 		default:
 			if v, ok := cat.clean(k, col, where[k], a.hints, &verr.Errors); ok {
 				norm[k] = v
@@ -162,12 +163,19 @@ func (a *Archive) List(ctx context.Context, typ string, where map[string]any, li
 			return nil, err
 		}
 		q := `SELECT ` + tb.rowSQL() + ` FROM ` + tb.ident() + ` t, jsonb_populate_record(NULL::` + tb.ident() + `, $1) w WHERE t.id > $2`
-		args := []any{norm, after}
-		for _, k := range specKeys(norm) {
-			q += " AND t." + pgIdent(k) + " = w." + pgIdent(k)
+		order := " ORDER BY t.id LIMIT $3"
+		if desc {
+			q = `SELECT ` + tb.rowSQL() + ` FROM ` + tb.ident() + ` t, jsonb_populate_record(NULL::` + tb.ident() + `, $1) w WHERE ($2 = '00000000-0000-0000-0000-000000000000'::uuid OR t.id < $2)`
+			order = " ORDER BY t.id DESC LIMIT $3"
 		}
-		args = append(args, limit)
-		rs, err := storeRows(ctx, a.st, q+fmt.Sprintf(" ORDER BY t.id LIMIT $%d", len(args)), args...)
+		for _, k := range specKeys(where) {
+			if where[k] == nil {
+				q += " AND t." + pgIdent(k) + " IS NULL"
+			} else {
+				q += " AND t." + pgIdent(k) + " = w." + pgIdent(k)
+			}
+		}
+		rs, err := storeRows(ctx, a.st, q+order, norm, after, limit)
 		if tb.isWorkflow() {
 			a.workflowRows(ctx, rs...)
 		}
@@ -200,13 +208,44 @@ func (a *Archive) coreGet(ctx context.Context, tb *Table, id uuid.UUID) (map[str
 	return rs[0], nil
 }
 
+type write struct {
+	create func(a *Archive, ctx context.Context, data map[string]any) (map[string]any, error)
+	update func(a *Archive, ctx context.Context, id uuid.UUID, data map[string]any) (map[string]any, error)
+	delete func(a *Archive, ctx context.Context, id uuid.UUID) error
+	save   func(a *Archive, ctx context.Context, id uuid.UUID, data map[string]any) (map[string]any, error)
+	remove func(a *Archive, ctx context.Context, id uuid.UUID) error
+}
+
+var writes map[string]write
+
+func init() {
+	writes = map[string]write{
+		"file":       {create: (*Archive).fileCreate, update: (*Archive).fileUpdate, delete: (*Archive).fileDelete},
+		"workflow":   {save: (*Archive).workflowSave, remove: (*Archive).workflowDelete},
+		"connection": {save: (*Archive).connectionSave, remove: (*Archive).connectionRemove},
+	}
+}
+
+func (t *Table) write() write {
+	if t.Schema != "archive" {
+		return write{}
+	}
+	return writes[t.Name]
+}
+
 func (a *Archive) Create(ctx context.Context, typ string, data map[string]any) (map[string]any, error) {
 	tb, err := a.catalog(ctx).writable(typ)
 	if err != nil {
 		return nil, err
 	}
-	if tb.isWorkflow() {
-		return a.workflowSave(ctx, tb, uuid.Nil, data, true)
+	w := tb.write()
+	if w.save != nil {
+		return w.save(a, ctx, uuid.Nil, data)
+	}
+	if w.create != nil {
+		if data, err = w.create(a, ctx, data); err != nil {
+			return nil, err
+		}
 	}
 	return coreDo(a, ctx, func(ctx context.Context) (map[string]any, error) { return a.coreCreate(ctx, tb, data) })
 }
@@ -243,27 +282,25 @@ func coreAccess(v any) *uuid.UUID {
 	return nil
 }
 
-func (a *Archive) Replace(ctx context.Context, typ string, id uuid.UUID, data map[string]any) (map[string]any, error) {
-	return a.coreWrite(ctx, typ, id, data, true)
-}
-
 func (a *Archive) Patch(ctx context.Context, typ string, id uuid.UUID, data map[string]any) (map[string]any, error) {
-	return a.coreWrite(ctx, typ, id, data, false)
-}
-
-func (a *Archive) coreWrite(ctx context.Context, typ string, id uuid.UUID, data map[string]any, full bool) (map[string]any, error) {
 	tb, err := a.catalog(ctx).writable(typ)
 	if err != nil {
 		return nil, err
 	}
-	if tb.isWorkflow() {
-		return a.workflowSave(ctx, tb, id, data, full)
+	w := tb.write()
+	if w.save != nil {
+		return w.save(a, ctx, id, data)
+	}
+	if w.update != nil {
+		if data, err = w.update(a, ctx, id, data); err != nil {
+			return nil, err
+		}
 	}
 	return coreDo(a, ctx, func(ctx context.Context) (map[string]any, error) {
 		if _, err := a.coreGet(ctx, tb, id); err != nil {
 			return nil, err
 		}
-		out, err := a.prepare(ctx, tb, data, full)
+		out, err := a.prepare(ctx, tb, data, false)
 		if err != nil {
 			return nil, err
 		}
@@ -363,8 +400,14 @@ func (a *Archive) Delete(ctx context.Context, typ string, id uuid.UUID) error {
 	if err != nil {
 		return err
 	}
-	if tb.isWorkflow() {
-		return a.workflowDelete(ctx, id)
+	w := tb.write()
+	if w.remove != nil {
+		return w.remove(a, ctx, id)
+	}
+	if w.delete != nil {
+		if err := w.delete(a, ctx, id); err != nil {
+			return err
+		}
 	}
 	return a.as(ctx, func(ctx context.Context) error {
 		if _, err := a.coreGet(ctx, tb, id); err != nil {
@@ -429,13 +472,6 @@ func (a *Archive) Migrate(ctx context.Context, sql, name, confirm string) (*Sche
 	return m, err
 }
 
-func (a *Archive) SchemaRevisions(ctx context.Context, limit int) ([]SchemaRevision, error) {
-	if _, err := signedIn(ctx); err != nil {
-		return nil, err
-	}
-	return a.st.Revisions(ctx, cmp.Or(min(max(limit, 0), 100), 20))
-}
-
 func coreRowID(row map[string]any) uuid.UUID { return coreUUID(row, "id") }
 
 func coreUUID(row map[string]any, key string) uuid.UUID {
@@ -485,7 +521,7 @@ type SearchHit struct {
 }
 
 const searchFile = `SELECT 'file' AS kind, 'file' AS type, f.id, f.created_at, jsonb_build_object('id', f.id, 'name', f.name, 'mime', f.mime,
-		'size', f.size, 'sha256', f.hash, 'access', f.access, 'created_at', f.created_at, 'kind', f.kind, 'parent', f.parent, 'connection', f.connection, 'url', f.url, 'status', f.status, 'error', f.error, 'edited_at', f.edited_at) AS data, ts_rank(f.search, q.q, 1) AS rank,
+		'size', f.size, 'hash', f.hash, 'access', f.access, 'created_at', f.created_at, 'kind', f.kind, 'parent', f.parent, 'connection', f.connection, 'url', f.url, 'status', f.status, 'error', f.error, 'edited_at', f.edited_at) AS data, ts_rank(f.search, q.q, 1) AS rank,
 		CASE WHEN f.text <> '' THEN ts_headline('simple', left(f.text, 100000), q.q, 'MaxFragments=1, MaxWords=30, MinWords=10, StartSel=**, StopSel=**') ELSE '' END AS snippet
 	FROM archive.file f, q WHERE f.search @@ q.q`
 
@@ -900,6 +936,8 @@ func storeErr(err error) error {
 		return fmt.Errorf("%s; change the schema with archive.migrate: %w", pe.Message, ErrForbidden)
 	case pe.Code == "42501":
 		return fmt.Errorf("%s: %w", pe.Message, ErrForbidden)
+	case pe.Code == "23505" && pe.ConstraintName == "file_key":
+		return fmt.Errorf("a file by that name with the same content is already there: %w", ErrConflict)
 	case pe.Code == "23503" || pe.Code == "23001" || pe.Code == "23505":
 		return fmt.Errorf("%s: %w", cmp.Or(pe.Detail, pe.Message), ErrConflict)
 	case pe.Code == "23502" && pe.ColumnName != "":

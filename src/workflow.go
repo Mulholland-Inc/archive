@@ -261,7 +261,7 @@ func (a *Archive) workflowOf(ctx context.Context, w generated.ArchiveWorkflow) (
 	return o, nil
 }
 
-func (a *Archive) workflowSave(ctx context.Context, tb *Table, id uuid.UUID, data map[string]any, full bool) (map[string]any, error) {
+func (a *Archive) workflowSave(ctx context.Context, id uuid.UUID, data map[string]any) (map[string]any, error) {
 	ac, err := signedIn(ctx)
 	if err != nil {
 		return nil, err
@@ -281,9 +281,7 @@ func (a *Archive) workflowSave(ctx context.Context, tb *Table, id uuid.UUID, dat
 				return nil, err
 			}
 			old = &w
-			if !full {
-				name, source, on, access = w.Name, w.Source, json.RawMessage(w.On), w.Access
-			}
+			name, source, on, access = w.Name, w.Source, json.RawMessage(w.On), w.Access
 		}
 		verr := &ValidationError{Type: "workflow"}
 		bad := func(path, msg string) { verr.Errors = append(verr.Errors, FieldError{Path: path, Message: msg}) }
@@ -371,6 +369,10 @@ func (a *Archive) workflowSave(ctx context.Context, tb *Table, id uuid.UUID, dat
 			return nil, storeErr(err)
 		}
 		storeAfter(ctx, func() { a.workflowSchedule(ctx) })
+		tb, err := a.catalog(ctx).table("workflow")
+		if err != nil {
+			return nil, err
+		}
 		row, err := a.coreGet(ctx, tb, id)
 		a.workflowRows(ctx, row)
 		return row, err

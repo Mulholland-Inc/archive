@@ -1035,18 +1035,6 @@ func workspaceOut(r generated.ArchiveWorkspace) Workspace {
 	return Workspace{ID: r.ID.String(), Name: r.Name, Type: string(r.Type), Icon: r.Icon, Color: r.Color, Slug: r.Slug, CreatedAt: r.CreatedAt}
 }
 
-func (h *Hub) Workspaces(ctx context.Context) ([]Workspace, error) {
-	if err := h.admin(ctx); err != nil {
-		return nil, err
-	}
-	rows, err := h.q().AllWorkspaces(ctx)
-	out := []Workspace{}
-	for _, r := range rows {
-		out = append(out, workspaceOut(r))
-	}
-	return out, err
-}
-
 func (h *Hub) AddWorkspace(ctx context.Context, name, owner string, look WorkspaceLook) (*Workspace, error) {
 	if err := h.admin(ctx); err != nil {
 		return nil, err
@@ -1285,9 +1273,6 @@ func (x prefixBlobs) remove(ctx context.Context, key string) error { return x.b.
 
 func (h *Hub) workspaceRoutes(authed func(string, func(http.ResponseWriter, *http.Request) (int, any, error))) {
 	ok := func(v any, err error) (int, any, error) { return http.StatusOK, v, err }
-	authed("GET /auth/workspace", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		return ok(archiveFrom(r.Context()).Info(r.Context()))
-	})
 	authed("PATCH /auth/workspace", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		var body struct {
 			Name *string `json:"name"`
@@ -1297,9 +1282,6 @@ func (h *Hub) workspaceRoutes(authed func(string, func(http.ResponseWriter, *htt
 			return 0, nil, err
 		}
 		return ok(archiveFrom(r.Context()).SetInfo(r.Context(), body.Name, body.WorkspaceLook))
-	})
-	authed("GET /auth/workspaces", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		return ok(h.Workspaces(r.Context()))
 	})
 	authed("POST /auth/workspaces", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		var body struct {

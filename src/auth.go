@@ -93,14 +93,6 @@ type User struct {
 	TotpUntil  *time.Time      `json:"-"`
 }
 
-type Person struct {
-	ID    uuid.UUID  `json:"id"`
-	Email string     `json:"email"`
-	Name  string     `json:"name"`
-	Role  string     `json:"role"`
-	Group *uuid.UUID `json:"group"`
-}
-
 type Token struct {
 	ID        uuid.UUID  `json:"id"`
 	Name      string     `json:"name"`
@@ -258,22 +250,6 @@ func (a *Archive) joined(ctx context.Context, email, name string, first bool) (*
 	return u, err
 }
 
-func (a *Archive) RemoveUser(ctx context.Context, email string) error {
-	email, err := authEmail(email)
-	if err != nil {
-		return err
-	}
-	people, err := a.People(ctx)
-	if err != nil {
-		return err
-	}
-	i := slices.IndexFunc(people, func(p Person) bool { return p.Email == email })
-	if i < 0 {
-		return fmt.Errorf("user %s: %w", email, ErrNotFound)
-	}
-	return a.Delete(ctx, "member", people[i].ID)
-}
-
 func (a *Archive) syncMembers(ctx context.Context, removals bool) error {
 	ctx = context.WithValue(context.WithoutCancel(ctx), storeTxKey{}, nil)
 	hq := a.hub.q()
@@ -302,7 +278,11 @@ func (a *Archive) syncMembers(ctx context.Context, removals bool) error {
 	for _, m := range ms {
 		keep[m.Email] = true
 		if !in[m.Email] {
-			u, err := hq.JoinWorkspace(ctx, m.Email, "", a.ws.ID)
+			name := m.Name
+			if name == m.Email {
+				name = ""
+			}
+			u, err := hq.JoinWorkspace(ctx, m.Email, name, a.ws.ID)
 			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return err
 			}
@@ -339,23 +319,6 @@ func (a *Archive) syncMembers(ctx context.Context, removals bool) error {
 		a.hub.liveUser(ctx, u.ID)
 	}
 	return nil
-}
-
-func (a *Archive) People(ctx context.Context) ([]Person, error) {
-	ms, err := coreDo(a, ctx, func(ctx context.Context) ([]generated.MembersRow, error) { return a.st.db(ctx).Members(ctx) })
-	if err != nil {
-		return nil, err
-	}
-	users, err := a.hub.q().WorkspaceUsers(ctx, a.ws.ID)
-	names := map[string]string{}
-	for _, u := range users {
-		names[u.Email] = u.Name
-	}
-	out := []Person{}
-	for _, m := range ms {
-		out = append(out, Person{ID: m.ID, Email: m.Email, Name: names[m.Email], Role: m.Role, Group: m.Group})
-	}
-	return out, err
 }
 
 func userBy[T any](ctx context.Context, h *Hub, get func(*generated.Queries, context.Context, T) (generated.ArchiveUser, error), arg T) (*User, error) {
@@ -754,32 +717,6 @@ func (s *signin) handler() http.Handler {
 	})
 	authed("DELETE /auth/unread", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		return http.StatusNoContent, nil, h.q().ClearUnread(r.Context(), archiveFrom(r.Context()).ws.ID, ActorFrom(r.Context()).UserID)
-	})
-	authed("GET /auth/users", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		return ok(archiveFrom(r.Context()).People(r.Context()))
-	})
-	authed("POST /auth/users", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		var body struct {
-			Email string `json:"email"`
-			Name  string `json:"name"`
-			Role  string `json:"role"`
-		}
-		if err := httpDecode(r, &body); err != nil {
-			return 0, nil, err
-		}
-		a := archiveFrom(r.Context())
-		if _, err := a.AddUser(r.Context(), body.Email, body.Name, body.Role); err != nil {
-			return 0, nil, err
-		}
-		p, err := a.People(r.Context())
-		return http.StatusCreated, p, err
-	})
-	authed("DELETE /auth/users/{email}", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		a := archiveFrom(r.Context())
-		if err := a.RemoveUser(r.Context(), r.PathValue("email")); err != nil {
-			return 0, nil, err
-		}
-		return ok(a.People(r.Context()))
 	})
 	authed("GET /auth/tokens", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		return ok(archiveFrom(r.Context()).Tokens(r.Context()))

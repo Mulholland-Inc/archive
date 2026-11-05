@@ -36,7 +36,6 @@ import (
 	"github.com/Mulholland-Inc/archive/generated"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/ledongthuc/pdf"
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
@@ -45,7 +44,7 @@ import (
 
 type File struct {
 	ID         uuid.UUID      `json:"id"`
-	Hash       string         `json:"sha256"`
+	Hash       string         `json:"hash"`
 	Name       string         `json:"name"`
 	MIME       string         `json:"mime"`
 	Size       int64          `json:"size"`
@@ -77,7 +76,7 @@ const (
 )
 
 type fileRow interface {
-	generated.FileByKeyRow | generated.CreateFileRow | generated.FileKeptRow | generated.KeepFileRow | generated.GetFileRow | generated.RenameFileRow | generated.LockFileRow | generated.NextPendingFileRow | generated.LockPendingFileRow | generated.ReplaceFileRow | generated.SetFileAccessRow | generated.AddFolderRow | generated.MoveFileRow | generated.CopyFileRow
+	generated.FileByKeyRow | generated.CreateFileRow | generated.FileKeptRow | generated.KeepFileRow | generated.GetFileRow | generated.LockFileRow | generated.NextPendingFileRow | generated.LockPendingFileRow | generated.ReplaceFileRow | generated.CopyFileRow
 }
 
 func fileOf[R fileRow](r R, err error) (*File, error) {
@@ -110,29 +109,6 @@ func (a *Archive) AddFile(ctx context.Context, access, name string, parent *uuid
 	return a.fileAdd(ctx, g, name, parent, r)
 }
 
-func (a *Archive) AddFolder(ctx context.Context, access, name string, parent *uuid.UUID) (*File, error) {
-	name = strings.TrimSpace(filepath.Base(strings.ReplaceAll(name, "\\", "/")))
-	if name == "" || name == "." || name == "/" {
-		return nil, fmt.Errorf("name: want a folder name: %w", httpErrBadRequest)
-	}
-	g, err := a.fileGroup(ctx, access)
-	if err != nil {
-		return nil, err
-	}
-	return coreDo(a, ctx, func(ctx context.Context) (*File, error) {
-		return fileOf(a.st.db(ctx).AddFolder(ctx, name, g, parent))
-	})
-}
-
-func (a *Archive) MoveFile(ctx context.Context, id uuid.UUID, parent *uuid.UUID) (*File, error) {
-	if err := a.fileMine(ctx, id, "move"); err != nil {
-		return nil, err
-	}
-	return coreDo(a, ctx, func(ctx context.Context) (*File, error) {
-		return fileOf(a.st.db(ctx).MoveFile(ctx, parent, id))
-	})
-}
-
 func (a *Archive) fileMine(ctx context.Context, id uuid.UUID, verb string) error {
 	f, err := a.GetFile(ctx, id)
 	if err == nil && f.Connection != nil {
@@ -141,15 +117,69 @@ func (a *Archive) fileMine(ctx context.Context, id uuid.UUID, verb string) error
 	return err
 }
 
-func (a *Archive) DeleteFile(ctx context.Context, id uuid.UUID) error {
-	if err := a.fileMine(ctx, id, "delete"); err != nil {
-		return err
+func fileBase(name string) string {
+	name = strings.TrimSpace(filepath.Base(strings.ReplaceAll(name, "\\", "/")))
+	if name == "." || name == "/" {
+		return ""
 	}
-	_, err := coreDo(a, ctx, func(ctx context.Context) (uuid.UUID, error) { return a.st.db(ctx).DeleteFile(ctx, id) })
-	if errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("file %s: %w", id, ErrNotFound)
+	return name
+}
+
+func (a *Archive) fileCreate(ctx context.Context, data map[string]any) (map[string]any, error) {
+	if data["kind"] != "folder" {
+		return nil, &ValidationError{Type: "file", Errors: []FieldError{{Path: "kind", Message: `the file table takes folders, { kind: "folder", name, parent, access }; a file comes as a multipart upload, and archive.create("name.docx") makes a document`}}}
 	}
-	return err
+	name, _ := data["name"].(string)
+	if name = fileBase(name); name == "" {
+		return nil, &ValidationError{Type: "file", Errors: []FieldError{{Path: "name", Message: "want a folder name"}}}
+	}
+	out := map[string]any{"kind": "folder", "name": name}
+	for _, k := range []string{"parent", "access"} {
+		if v, ok := data[k]; ok {
+			out[k] = v
+		}
+	}
+	return out, nil
+}
+
+func (a *Archive) fileUpdate(ctx context.Context, id uuid.UUID, data map[string]any) (map[string]any, error) {
+	out := map[string]any{}
+	for _, k := range specKeys(data) {
+		switch k {
+		case "parent", "access":
+			out[k] = data[k]
+		case "name":
+			name, _ := data[k].(string)
+			if name = fileBase(name); name == "" {
+				return nil, &ValidationError{Type: "file", Errors: []FieldError{{Path: k, Message: "want a file name"}}}
+			}
+			out[k] = name
+		case "edits":
+		default:
+			return nil, &ValidationError{Type: "file", Errors: []FieldError{{Path: k, Message: "of a file, only name, parent, access and edits change"}}}
+		}
+	}
+	if err := a.fileMine(ctx, id, "change"); err != nil {
+		return nil, err
+	}
+	if edits, ok := data["edits"]; ok {
+		raw, err := json.Marshal(edits)
+		if err != nil {
+			return nil, fmt.Errorf("edits: %v: %w", err, httpErrBadRequest)
+		}
+		ops, err := OfficeParseOps(raw)
+		if err != nil {
+			return nil, fmt.Errorf("archive.edit: %v: %w", err, httpErrBadRequest)
+		}
+		if _, err := a.EditDocument(ctx, id, ops); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+func (a *Archive) fileDelete(ctx context.Context, id uuid.UUID) error {
+	return a.fileMine(ctx, id, "delete")
 }
 
 func (a *Archive) blobNext(ctx context.Context) (bool, error) {
@@ -384,86 +414,11 @@ func (a *Archive) fileReady(ctx context.Context, f *File) (*File, error) {
 	return a.ProcessFile(ctx, f.ID)
 }
 
-type FileTree struct{ Parent, Connection *uuid.UUID }
-
-func (a *Archive) Files(ctx context.Context, limit int, after uuid.UUID, tree *FileTree) ([]*File, error) {
-	if limit <= 0 || limit > 1000 {
-		limit = 100
-	}
-	p := generated.FilesParams{After: after, Lim: int32(limit)}
-	if tree != nil {
-		p.Tree, p.InFolder, p.OfConnection = true, tree.Parent, tree.Connection
-	}
-	return coreDo(a, ctx, func(ctx context.Context) ([]*File, error) {
-		rows, err := a.st.db(ctx).Files(ctx, p)
-		fs := make([]*File, len(rows))
-		for i := range rows {
-			fs[i] = (*File)(&rows[i])
-		}
-		return fs, err
-	})
-}
-
-// ExportFiles lists files a person could import as an export, such as a Takeout zip a Drive or Dropbox connection copied in,
-// optionally only those whose name has q in it.
-func (a *Archive) ExportFiles(ctx context.Context, q string) ([]*File, error) {
-	return coreDo(a, ctx, func(ctx context.Context) ([]*File, error) {
-		rows, err := a.st.db(ctx).ExportFiles(ctx, strings.TrimSpace(q))
-		fs := make([]*File, len(rows))
-		for i := range rows {
-			fs[i] = (*File)(&rows[i])
-		}
-		return fs, err
-	})
-}
-
 func (a *Archive) GetFile(ctx context.Context, id uuid.UUID) (*File, error) {
 	return coreDo(a, ctx, func(ctx context.Context) (*File, error) {
 		f, err := fileOf(a.st.db(ctx).GetFile(ctx, id))
 		if errors.Is(err, ErrNotFound) {
 			return nil, fmt.Errorf("file %s: %w", id, ErrNotFound)
-		}
-		return f, err
-	})
-}
-
-func (a *Archive) RenameFile(ctx context.Context, id uuid.UUID, name string) (*File, error) {
-	name = strings.TrimSpace(filepath.Base(strings.ReplaceAll(name, "\\", "/")))
-	if name == "" || name == "." || name == "/" {
-		return nil, fmt.Errorf("name: want a file name: %w", httpErrBadRequest)
-	}
-	if err := a.fileMine(ctx, id, "rename"); err != nil {
-		return nil, err
-	}
-	return coreDo(a, ctx, func(ctx context.Context) (*File, error) {
-		f, err := fileOf(a.st.db(ctx).RenameFile(ctx, id, name))
-		var pe *pgconn.PgError
-		switch {
-		case errors.Is(err, ErrNotFound):
-			return nil, fmt.Errorf("file %s: %w", id, ErrNotFound)
-		case errors.As(err, &pe) && pe.Code == "23505":
-			return nil, fmt.Errorf("a file named %q with the same content is already here: %w", name, ErrConflict)
-		}
-		return f, err
-	})
-}
-
-func (a *Archive) SetFileAccess(ctx context.Context, id uuid.UUID, access string) (*File, error) {
-	g, err := a.fileGroup(ctx, access)
-	if err != nil {
-		return nil, err
-	}
-	if err := a.fileMine(ctx, id, "change who sees"); err != nil {
-		return nil, err
-	}
-	return coreDo(a, ctx, func(ctx context.Context) (*File, error) {
-		f, err := fileOf(a.st.db(ctx).SetFileAccess(ctx, g, id))
-		var pe *pgconn.PgError
-		switch {
-		case errors.Is(err, ErrNotFound):
-			return nil, fmt.Errorf("file %s: %w", id, ErrNotFound)
-		case errors.As(err, &pe) && pe.Code == "23505":
-			return nil, fmt.Errorf("a file by that name with the same content is already there: %w", ErrConflict)
 		}
 		return f, err
 	})
@@ -563,195 +518,45 @@ func (a *Archive) fileServe(w http.ResponseWriter, r *http.Request, f *File, str
 	http.ServeContent(w, r, "", f.CreatedAt, content)
 }
 
-func (a *Archive) fileRoutes(mux *http.ServeMux) {
-	handle := func(pattern string, f func(r *http.Request) (int, any, error)) { httpHandle(mux, pattern, f) }
-	file := func(r *http.Request) (*File, error) {
-		id, err := httpID(r)
-		if err != nil {
-			return nil, err
-		}
-		return a.GetFile(r.Context(), id)
+func (a *Archive) fileUpload(r *http.Request) (*File, error) {
+	r.Body = http.MaxBytesReader(nil, r.Body, fileMaxPost)
+	mr, err := r.MultipartReader()
+	if err != nil {
+		return nil, fmt.Errorf("want a multipart/form-data body with a file part: %w", httpErrBadRequest)
 	}
-	handle("GET /api/files", func(r *http.Request) (int, any, error) {
-		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-		var after uuid.UUID
-		if s := r.URL.Query().Get("after"); s != "" {
-			var err error
-			if after, err = uuid.Parse(s); err != nil {
-				return 0, nil, fmt.Errorf("after: %w", httpErrBadRequest)
-			}
+	for {
+		p, err := mr.NextPart()
+		if err != nil {
+			return nil, fmt.Errorf("no file part: %w", httpErrBadRequest)
 		}
-		var tree *FileTree
-		if q := r.URL.Query(); q.Has("parent") || q.Has("connection") || q.Has("top") {
-			tree = &FileTree{}
-			var err error
-			if tree.Parent, err = fileParam(r, "parent"); err == nil {
-				tree.Connection, err = fileParam(r, "connection")
-			}
+		if p.FormName() == "file" {
+			parent, err := fileParam(r, "parent")
 			if err != nil {
-				return 0, nil, err
+				return nil, err
 			}
+			return a.AddFile(r.Context(), r.URL.Query().Get("access"), p.FileName(), parent, p)
 		}
-		fs, err := a.Files(r.Context(), limit, after, tree)
-		return http.StatusOK, fs, err
-	})
-	handle("GET /api/files/exports", func(r *http.Request) (int, any, error) {
-		fs, err := a.ExportFiles(r.Context(), r.URL.Query().Get("q"))
-		return http.StatusOK, fs, err
-	})
-	handle("GET /api/files/stored", func(r *http.Request) (int, any, error) {
-		n, err := a.Stored(r.Context())
-		return http.StatusOK, map[string]int64{"bytes": n}, err
-	})
-	handle("GET /api/files/sources", func(r *http.Request) (int, any, error) {
-		s, err := a.FileSources(r.Context())
-		return http.StatusOK, s, err
-	})
-	handle("DELETE /api/files/{id}", func(r *http.Request) (int, any, error) {
-		id, err := httpID(r)
-		if err != nil {
-			return 0, nil, err
-		}
-		return http.StatusNoContent, nil, a.DeleteFile(r.Context(), id)
-	})
-	handle("POST /api/folders", func(r *http.Request) (int, any, error) {
-		var body struct {
-			Name   string     `json:"name"`
-			Access *string    `json:"access"`
-			Parent *uuid.UUID `json:"parent"`
-		}
-		if err := httpDecode(r, &body); err != nil {
-			return 0, nil, err
-		}
-		f, err := a.AddFolder(r.Context(), deref(body.Access), body.Name, body.Parent)
-		return http.StatusCreated, f, err
-	})
-	handle("POST /api/files", func(r *http.Request) (int, any, error) {
-		r.Body = http.MaxBytesReader(nil, r.Body, fileMaxPost)
-		mr, err := r.MultipartReader()
-		if err != nil {
-			return 0, nil, fmt.Errorf("want a multipart/form-data body with a file part: %w", httpErrBadRequest)
-		}
-		for {
-			p, err := mr.NextPart()
-			if err != nil {
-				return 0, nil, fmt.Errorf("no file part: %w", httpErrBadRequest)
-			}
-			if p.FormName() == "file" {
-				parent, err := fileParam(r, "parent")
-				if err != nil {
-					return 0, nil, err
-				}
-				f, err := a.AddFile(r.Context(), r.URL.Query().Get("access"), p.FileName(), parent, p)
-				return http.StatusCreated, f, err
-			}
-		}
-	})
-	handle("GET /api/files/{id}", func(r *http.Request) (int, any, error) {
-		f, err := file(r)
-		return http.StatusOK, f, err
-	})
-	handle("PATCH /api/files/{id}", func(r *http.Request) (int, any, error) {
-		id, err := httpID(r)
-		if err != nil {
-			return 0, nil, err
-		}
-		var body struct {
-			Name   *string         `json:"name"`
-			Access json.RawMessage `json:"access"`
-			Parent json.RawMessage `json:"parent"`
-		}
-		if err := httpDecode(r, &body); err != nil {
-			return 0, nil, err
-		}
-		var f *File
-		if body.Name != nil {
-			if f, err = a.RenameFile(r.Context(), id, *body.Name); err != nil {
-				return 0, nil, err
-			}
-		}
-		if len(body.Access) > 0 {
-			var g *string
-			if err := json.Unmarshal(body.Access, &g); err != nil {
-				return 0, nil, fmt.Errorf("access: want a group's id or name, or null for everyone: %w", httpErrBadRequest)
-			}
-			if f, err = a.SetFileAccess(r.Context(), id, deref(g)); err != nil {
-				return 0, nil, err
-			}
-		}
-		if len(body.Parent) > 0 {
-			var p *uuid.UUID
-			if err := json.Unmarshal(body.Parent, &p); err != nil {
-				return 0, nil, fmt.Errorf("parent: want a folder's id, or null for the top: %w", httpErrBadRequest)
-			}
-			f, err = a.MoveFile(r.Context(), id, p)
-		}
-		if f == nil && err == nil {
-			f, err = a.GetFile(r.Context(), id)
-		}
-		return http.StatusOK, f, err
-	})
-	handle("POST /api/files/{id}/link", func(r *http.Request) (int, any, error) {
-		id, err := httpID(r)
-		if err != nil {
-			return 0, nil, err
-		}
-		var ttl time.Duration
-		if s := r.URL.Query().Get("expires"); s != "" {
-			if ttl, err = time.ParseDuration(s); err != nil || ttl <= 0 {
-				return 0, nil, fmt.Errorf("expires: want a duration like 1h: %w", httpErrBadRequest)
-			}
-		}
-		l, err := a.LinkFile(r.Context(), id, ttl)
-		return http.StatusOK, l, err
-	})
-	handle("GET /api/files/{id}/model", func(r *http.Request) (int, any, error) {
-		id, err := httpID(r)
-		if err != nil {
-			return 0, nil, err
-		}
-		m, err := a.ViewDocument(r.Context(), id)
-		return http.StatusOK, m, err
-	})
-	handle("POST /api/files/{id}/edit", func(r *http.Request) (int, any, error) {
-		id, err := httpID(r)
-		if err != nil {
-			return 0, nil, err
-		}
-		var ops []OfficeOp
-		if err := httpDecode(r, &ops); err != nil {
-			return 0, nil, err
-		}
-		f, err := a.EditDocument(r.Context(), id, ops)
-		return http.StatusOK, f, err
-	})
-	mux.HandleFunc("GET /api/files/{id}/media/{part...}", func(w http.ResponseWriter, r *http.Request) {
-		id, err := httpID(r)
-		var pic []byte
-		if err == nil {
-			var b []byte
-			if _, b, err = a.documentBytes(r.Context(), id); err == nil {
-				pic, err = OfficeMedia(b, r.PathValue("part"))
-			}
-		}
-		if err != nil {
-			httpWrite(w, 0, nil, err)
-			return
-		}
-		w.Header().Set("Content-Type", cmp.Or(mime.TypeByExtension(path.Ext(r.PathValue("part"))), "application/octet-stream"))
-		w.Header().Set("Content-Security-Policy", "sandbox")
-		w.Write(pic)
-	})
-	mux.HandleFunc("GET /api/files/{id}/content", func(w http.ResponseWriter, r *http.Request) {
-		f, err := file(r)
+	}
+}
+
+func (a *Archive) filePart(w http.ResponseWriter, r *http.Request) {
+	id, err := httpID(r)
+	if err != nil {
+		httpWrite(w, 0, nil, err)
+		return
+	}
+	ctx := r.Context()
+	part := r.PathValue("part")
+	switch {
+	case part == "content":
+		f, err := a.GetFile(ctx, id)
 		if err != nil {
 			httpWrite(w, 0, nil, err)
 			return
 		}
 		a.fileServe(w, r, f, r.URL.Query().Get("strip") == "gps")
-	})
-	mux.HandleFunc("GET /api/files/{id}/thumbnail", func(w http.ResponseWriter, r *http.Request) {
-		f, err := file(r)
+	case part == "thumbnail":
+		f, err := a.GetFile(ctx, id)
 		t := f.thumbnail()
 		if err == nil && t == nil {
 			err = fmt.Errorf("file %s has no thumbnail: %w", f.ID, ErrNotFound)
@@ -761,20 +566,44 @@ func (a *Archive) fileRoutes(mux *http.ServeMux) {
 			return
 		}
 		a.fileServe(w, r, t, false)
-	})
-	mux.HandleFunc("GET /api/files/{id}/text", func(w http.ResponseWriter, r *http.Request) {
-		id, err := httpID(r)
-		var text string
-		if err == nil {
-			text, err = a.FileText(r.Context(), id)
-		}
+	case part == "text":
+		text, err := a.FileText(ctx, id)
 		if err != nil {
 			httpWrite(w, 0, nil, err)
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		io.WriteString(w, text)
-	})
+	case part == "model":
+		m, err := a.ViewDocument(ctx, id)
+		httpWrite(w, http.StatusOK, m, err)
+	case part == "link":
+		var ttl time.Duration
+		if s := r.URL.Query().Get("expires"); s != "" {
+			if ttl, err = time.ParseDuration(s); err != nil || ttl <= 0 {
+				httpWrite(w, 0, nil, fmt.Errorf("expires: want a duration like 1h: %w", httpErrBadRequest))
+				return
+			}
+		}
+		l, err := a.LinkFile(ctx, id, ttl)
+		httpWrite(w, http.StatusOK, l, err)
+	case strings.HasPrefix(part, "media/"):
+		name := strings.TrimPrefix(part, "media/")
+		_, b, err := a.documentBytes(ctx, id)
+		var pic []byte
+		if err == nil {
+			pic, err = OfficeMedia(b, name)
+		}
+		if err != nil {
+			httpWrite(w, 0, nil, err)
+			return
+		}
+		w.Header().Set("Content-Type", cmp.Or(mime.TypeByExtension(path.Ext(name)), "application/octet-stream"))
+		w.Header().Set("Content-Security-Policy", "sandbox")
+		w.Write(pic)
+	default:
+		httpWrite(w, 0, nil, fmt.Errorf("file part %q: want content, text, thumbnail, model, link or media/...: %w", part, ErrNotFound))
+	}
 }
 
 func fileParam(r *http.Request, name string) (*uuid.UUID, error) {
@@ -787,27 +616,6 @@ func fileParam(r *http.Request, name string) (*uuid.UUID, error) {
 		return nil, fmt.Errorf("%s: want an id: %w", name, httpErrBadRequest)
 	}
 	return &id, nil
-}
-
-type FileSource struct {
-	ID       uuid.UUID `json:"id"`
-	Provider string    `json:"provider"`
-	Name     string    `json:"name"`
-	Account  string    `json:"account"`
-}
-
-func (a *Archive) FileSources(ctx context.Context) ([]FileSource, error) {
-	return coreDo(a, ctx, func(ctx context.Context) ([]FileSource, error) {
-		rows, err := a.st.db(ctx).FileSources(ctx)
-		out := make([]FileSource, len(rows))
-		for i, c := range rows {
-			out[i] = FileSource{ID: c.ID, Provider: c.Provider, Name: c.Provider, Account: c.Account}
-			if k := connect.Get(c.Provider); k != nil {
-				out[i].Name = k.Name
-			}
-		}
-		return out, err
-	})
 }
 
 func (f *File) thumbnail() *File {
@@ -944,7 +752,7 @@ func (a *Archive) tus(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusPreconditionFailed)
 		return
 	}
-	ref := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/files/tus"), "/")
+	ref := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/file/tus"), "/")
 	if ref == "" && r.Method == http.MethodPost {
 		a.tusCreate(w, r)
 		return
@@ -1003,7 +811,7 @@ func (a *Archive) tusCreate(w http.ResponseWriter, r *http.Request) {
 		httpWrite(w, 0, nil, err)
 		return
 	}
-	w.Header().Set("Location", "/api/files/tus/"+up.ID.String())
+	w.Header().Set("Location", "/api/file/tus/"+up.ID.String())
 	if f != nil {
 		w.Header().Set("Archive-File-Id", f.ID.String())
 	}
@@ -1393,10 +1201,6 @@ func (a *Archive) pullRead(ctx context.Context, c generated.ClaimPullRow) error 
 		})
 	}
 	return err
-}
-
-func (a *Archive) Stored(ctx context.Context) (int64, error) {
-	return coreDo(a, ctx, func(ctx context.Context) (int64, error) { return a.st.db(ctx).Stored(ctx) })
 }
 
 func (a *Archive) media(ctx context.Context, f *File) (map[string]any, string, error) {

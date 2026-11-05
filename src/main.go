@@ -96,8 +96,8 @@ func serve(ctx context.Context, h *Hub, addr string) error {
 	mux := http.NewServeMux()
 	mux.Handle("/api/", h.httpAuth((*Archive).handler))
 	tus := h.httpAuth(func(a *Archive) http.Handler { return http.HandlerFunc(a.tus) })
-	mux.Handle("/api/files/tus", tus)
-	mux.Handle("/api/files/tus/", tus)
+	mux.Handle("/api/file/tus", tus)
+	mux.Handle("/api/file/tus/", tus)
 	mux.HandleFunc("GET /files/{workspace}/{id}", h.inWorkspace((*Archive).fileSigned))
 	mux.HandleFunc("POST /hooks/run/{workspace}/{token}", h.inWorkspace((*Archive).workflowHook))
 	mux.Handle("/auth/", si.handler())
@@ -230,56 +230,22 @@ func httpHandler(a *Archive) http.Handler {
 	handle("GET /api/boot", func(r *http.Request) (int, any, error) {
 		return ok(a.boot(r.Context()))
 	})
-	handle("GET /api/agent/list", func(r *http.Request) (int, any, error) {
-		return ok(a.agentList(r.Context()))
-	})
-	handle("GET /api/workflow/list", func(r *http.Request) (int, any, error) {
-		return ok(a.workflowList(r.Context()))
-	})
 	mux.HandleFunc("POST /api/turn", a.turn)
-	handle("GET /api/agent/{id}/turns", func(r *http.Request) (int, any, error) {
-		id, err := httpID(r)
-		if err != nil {
-			return 0, nil, err
-		}
-		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-		return ok(a.Turns(r.Context(), id, limit))
-	})
-	handle("DELETE /api/agent/{id}/turns", func(r *http.Request) (int, any, error) {
-		id, err := httpID(r)
-		if err != nil {
-			return 0, nil, err
-		}
-		return http.StatusNoContent, nil, a.ClearTurns(r.Context(), id)
-	})
-	mux.HandleFunc("GET /api/run/docs", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		io.WriteString(w, a.RunDocs(r.Context()))
-	})
 	handle("GET /api/types", func(r *http.Request) (int, any, error) {
-		return ok(a.Catalog(), nil)
+		return ok(a.types(r.Context()))
 	})
-	handle("GET /api/schema", func(r *http.Request) (int, any, error) {
-		return ok(a.Schema(r.Context(), r.URL.Query().Get("name")))
-	})
-	handle("POST /api/schema/migrate", func(r *http.Request) (int, any, error) {
-		var body struct {
-			SQL     string `json:"sql"`
-			Name    string `json:"name"`
-			Confirm string `json:"confirm"`
+	handle("POST /api/action/{name}", func(r *http.Request) (int, any, error) {
+		act, found := actions[r.PathValue("name")]
+		if !found {
+			return 0, nil, fmt.Errorf("action %q; there are %s: %w", r.PathValue("name"), strings.Join(specKeys(actions), ", "), ErrNotFound)
 		}
-		if err := httpDecode(r, &body); err != nil {
-			return 0, nil, err
+		b, err := io.ReadAll(http.MaxBytesReader(nil, r.Body, 10<<20))
+		if err != nil {
+			return 0, nil, fmt.Errorf("body: %v: %w", err, httpErrBadRequest)
 		}
-		return ok(a.Migrate(r.Context(), body.SQL, body.Name, body.Confirm))
+		return ok(act(a, r.Context(), b))
 	})
-	handle("GET /api/schema/revisions", func(r *http.Request) (int, any, error) {
-		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-		revs, err := a.SchemaRevisions(r.Context(), limit)
-		return ok(map[string]any{"revisions": revs}, err)
-	})
-
-	a.fileRoutes(mux)
+	mux.HandleFunc("GET /api/file/{id}/{part...}", a.filePart)
 	handle("GET /api/search", func(r *http.Request) (int, any, error) {
 		q := r.URL.Query()
 		limit, _ := strconv.Atoi(q.Get("limit"))
@@ -299,13 +265,21 @@ func httpHandler(a *Archive) http.Handler {
 		}
 		where := map[string]any{}
 		for k, v := range q {
-			if k != "limit" && k != "after" {
+			switch {
+			case k == "limit" || k == "after" || k == "desc":
+			case v[0] == "":
+				where[k] = nil
+			default:
 				where[k] = v[0]
 			}
 		}
-		return ok(a.List(r.Context(), r.PathValue("type"), where, limit, after))
+		return ok(a.List(r.Context(), r.PathValue("type"), where, limit, after, q.Has("desc")))
 	})
 	handle("POST /api/{type}", func(r *http.Request) (int, any, error) {
+		if r.PathValue("type") == "file" && strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
+			f, err := a.fileUpload(r)
+			return http.StatusCreated, f, err
+		}
 		var data map[string]any
 		if err := httpDecode(r, &data); err != nil {
 			return 0, nil, err
@@ -313,29 +287,24 @@ func httpHandler(a *Archive) http.Handler {
 		rec, err := a.Create(r.Context(), r.PathValue("type"), data)
 		return http.StatusCreated, rec, err
 	})
-	object := func(f func(ctx context.Context, typ string, id uuid.UUID, r *http.Request) (any, error)) func(r *http.Request) (int, any, error) {
-		return func(r *http.Request) (int, any, error) {
-			id, err := httpID(r)
-			if err != nil {
-				return 0, nil, err
-			}
-			return ok(f(r.Context(), r.PathValue("type"), id, r))
+	handle("GET /api/{type}/{id}", func(r *http.Request) (int, any, error) {
+		id, err := httpID(r)
+		if err != nil {
+			return 0, nil, err
 		}
-	}
-	withData := func(f func(ctx context.Context, typ string, id uuid.UUID, data map[string]any) (map[string]any, error)) func(r *http.Request) (int, any, error) {
-		return object(func(ctx context.Context, typ string, id uuid.UUID, r *http.Request) (any, error) {
-			var data map[string]any
-			if err := httpDecode(r, &data); err != nil {
-				return nil, err
-			}
-			return f(ctx, typ, id, data)
-		})
-	}
-	handle("GET /api/{type}/{id}", object(func(ctx context.Context, typ string, id uuid.UUID, r *http.Request) (any, error) {
-		return a.Get(ctx, typ, id)
-	}))
-	handle("PUT /api/{type}/{id}", withData(a.Replace))
-	handle("PATCH /api/{type}/{id}", withData(a.Patch))
+		return ok(a.Get(r.Context(), r.PathValue("type"), id))
+	})
+	handle("PATCH /api/{type}/{id}", func(r *http.Request) (int, any, error) {
+		id, err := httpID(r)
+		if err != nil {
+			return 0, nil, err
+		}
+		var data map[string]any
+		if err := httpDecode(r, &data); err != nil {
+			return 0, nil, err
+		}
+		return ok(a.Patch(r.Context(), r.PathValue("type"), id, data))
+	})
 	handle("DELETE /api/{type}/{id}", func(r *http.Request) (int, any, error) {
 		id, err := httpID(r)
 		if err != nil {
@@ -344,6 +313,60 @@ func httpHandler(a *Archive) http.Handler {
 		return http.StatusNoContent, nil, a.Delete(r.Context(), r.PathValue("type"), id)
 	})
 	return mux
+}
+
+type action = func(a *Archive, ctx context.Context, body []byte) (any, error)
+
+func act[T any](f func(a *Archive, ctx context.Context, in T) (any, error)) action {
+	return func(a *Archive, ctx context.Context, body []byte) (any, error) {
+		var in T
+		if len(body) > 0 {
+			if err := json.Unmarshal(body, &in); err != nil {
+				return nil, fmt.Errorf("body: %v: %w", err, httpErrBadRequest)
+			}
+		}
+		return f(a, ctx, in)
+	}
+}
+
+var actions map[string]action
+
+func init() {
+	type ofConnector struct {
+		Provider string `json:"provider"`
+		Q        string `json:"q"`
+	}
+	actions = map[string]action{
+		"docs": act(func(a *Archive, ctx context.Context, _ struct{}) (any, error) { return a.RunDocs(ctx), nil }),
+		"migrate": act(func(a *Archive, ctx context.Context, in struct {
+			SQL     string `json:"sql"`
+			Name    string `json:"name"`
+			Confirm string `json:"confirm"`
+		}) (any, error) {
+			return a.Migrate(ctx, in.SQL, in.Name, in.Confirm)
+		}),
+		"clear": act(func(a *Archive, ctx context.Context, in struct {
+			Agent uuid.UUID `json:"agent"`
+		}) (any, error) {
+			return nil, a.ClearTurns(ctx, in.Agent)
+		}),
+		"sync": act(func(a *Archive, ctx context.Context, in struct {
+			Connection uuid.UUID `json:"connection"`
+		}) (any, error) {
+			return nil, a.SyncNow(ctx, in.Connection)
+		}),
+		"link": act(func(a *Archive, ctx context.Context, in ofConnector) (any, error) {
+			tok, err := a.connectLink(ctx, in.Provider)
+			return map[string]string{"token": tok}, err
+		}),
+		"places": act(func(a *Archive, ctx context.Context, in ofConnector) (any, error) {
+			p, err := a.hub.connector(in.Provider)
+			if err != nil {
+				return nil, err
+			}
+			return p.Places(in.Q, 20), nil
+		}),
+	}
 }
 
 func httpError(err error) (int, any) {

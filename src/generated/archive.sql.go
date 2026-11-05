@@ -23,68 +23,6 @@ func (q *Queries) AddDDLKey(ctx context.Context, key string, pid int32) error {
 	return err
 }
 
-const addFolder = `-- name: AddFolder :one
-INSERT INTO archive.file (name, kind, access, parent) VALUES ($1, 'folder', $2, $3)
-RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at
-`
-
-type AddFolderRow struct {
-	ID         uuid.UUID
-	Hash       string
-	Name       string
-	MIME       string
-	Size       int64
-	Metadata   map[string]any
-	Status     string
-	Error      string
-	Access     *uuid.UUID
-	CreatedAt  time.Time
-	Kind       string
-	Parent     *uuid.UUID
-	Connection *uuid.UUID
-	Stream     *string
-	SourceID   *string
-	Version    *string
-	URL        string
-	Drive      *string
-	OwnerName  *string
-	EditorName *string
-	MadeAt     *time.Time
-	EditedAt   *time.Time
-	UpdatedAt  time.Time
-}
-
-func (q *Queries) AddFolder(ctx context.Context, name string, access *uuid.UUID, parent *uuid.UUID) (AddFolderRow, error) {
-	row := q.db.QueryRow(ctx, addFolder, name, access, parent)
-	var i AddFolderRow
-	err := row.Scan(
-		&i.ID,
-		&i.Hash,
-		&i.Name,
-		&i.MIME,
-		&i.Size,
-		&i.Metadata,
-		&i.Status,
-		&i.Error,
-		&i.Access,
-		&i.CreatedAt,
-		&i.Kind,
-		&i.Parent,
-		&i.Connection,
-		&i.Stream,
-		&i.SourceID,
-		&i.Version,
-		&i.URL,
-		&i.Drive,
-		&i.OwnerName,
-		&i.EditorName,
-		&i.MadeAt,
-		&i.EditedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const addWorkflowRun = `-- name: AddWorkflowRun :one
 INSERT INTO archive.workflow_run (workflow, trigger, result, logs, error, ms, created_at)
 SELECT w.id, $1, $2, $3, $4, $5, $6
@@ -317,7 +255,8 @@ SELECT jsonb_build_object(
             'archive.notebook'::regclass, 'archive.note'::regclass, 'archive.note_attachment'::regclass,
             'archive.school_notice'::regclass,
             'archive.contact'::regclass, 'archive.location'::regclass, 'archive.history'::regclass, 'archive.post'::regclass,
-            'archive.kin'::regclass, 'archive.kin_tie'::regclass, 'archive.dna'::regclass, 'archive.media'::regclass)
+            'archive.kin'::regclass, 'archive.kin_tie'::regclass, 'archive.dna'::regclass, 'archive.media'::regclass,
+            'archive.agent_list'::regclass, 'archive.workflow_list'::regclass, 'archive.connection_list'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -542,136 +481,6 @@ func (q *Queries) ConnectionLocked(ctx context.Context, id uuid.UUID) (ArchiveCo
 		&i.Integration,
 	)
 	return i, err
-}
-
-const connections = `-- name: Connections :many
-SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_at, c.sync_at, c.synced_at,
-    ((SELECT count(*) FROM archive.mail_message x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.doc_page x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_company x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_department x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_location x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_schedule x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_worker x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_custom_field x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_schedule_assignment x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_earning_type x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_time_off_request x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_time_off_balance x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_run x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_pay_period x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_contractor_payment x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_contractor_payment_group x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_task x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.file x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.ledger_account x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.ledger_contact x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.ledger_item x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.ledger_entry x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.calendar_event x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.crm_company x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.crm_contact x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.crm_deal x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.chat_message x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.marketing_campaign x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.work_item x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.code_project x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.compliance x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.commerce_product x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.commerce_order x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.ad_metric x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.dental_provider x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.dental_patient x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.dental_appointment x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.dental_procedure x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.dental_payment x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.bank_account x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.bank_transaction x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.spend_department x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.spend_user x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.spend_card x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.spend_transaction x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.warehouse_table x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.photo x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.place_visit x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.investment_holding x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.investment_transaction x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.bank_liability x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.budget_category x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.parcel x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.vehicle x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.vehicle_charge x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.home_device x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.health_sample x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.health_day x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.health_sleep x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.health_workout x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.health_record x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.music_playlist x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.music_track x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.music_artist x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.notebook x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.note x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.school_notice x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.contact x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.location x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.history x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.post x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.kin x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.dna x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.media x WHERE x.connection = c.id))::bigint AS items,
-    c.integration, coalesce(c.access::text, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
-FROM archive.connection c WHERE c.member = $1 AND NOT c.integration OR c.integration ORDER BY c.provider, c.account, c.id
-`
-
-type ConnectionsRow struct {
-	ID          uuid.UUID
-	Provider    string
-	Account     string
-	Scopes      []string
-	Error       string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	SyncAt      *time.Time
-	SyncedAt    *time.Time
-	Items       int64
-	Integration bool
-	Access      string
-	ConnectedBy string
-}
-
-func (q *Queries) Connections(ctx context.Context, member uuid.UUID) ([]ConnectionsRow, error) {
-	rows, err := q.db.Query(ctx, connections, member)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ConnectionsRow
-	for rows.Next() {
-		var i ConnectionsRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.Provider,
-			&i.Account,
-			&i.Scopes,
-			&i.Error,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.SyncAt,
-			&i.SyncedAt,
-			&i.Items,
-			&i.Integration,
-			&i.Access,
-			&i.ConnectedBy,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const copyFile = `-- name: CopyFile :one
@@ -936,17 +745,6 @@ func (q *Queries) DeleteDDLKey(ctx context.Context, key string) error {
 	return err
 }
 
-const deleteFile = `-- name: DeleteFile :one
-DELETE FROM archive.file WHERE id = $1 RETURNING id
-`
-
-func (q *Queries) DeleteFile(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, deleteFile, id)
-	var id_2 uuid.UUID
-	err := row.Scan(&id_2)
-	return id_2, err
-}
-
 const deleteUnknown = `-- name: DeleteUnknown :exec
 WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM archive.mail_party x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.payroll_worker x WHERE x.person = k.id)
@@ -1042,86 +840,6 @@ DELETE FROM archive.blob_gone WHERE hash = $1
 func (q *Queries) DropBlobGone(ctx context.Context, hash string) error {
 	_, err := q.db.Exec(ctx, dropBlobGone, hash)
 	return err
-}
-
-const exportFiles = `-- name: ExportFiles :many
-SELECT f.id, f.hash, f.name, f.mime, f.size, f.metadata, f.status, f.error, f.access, f.created_at, f.kind, f.parent, f.connection, f.stream, f.source_id, f.version, coalesce(f.url::text, '')::text AS url, f.drive, f.owner_name, f.editor_name, f.made_at, f.edited_at, f.updated_at FROM archive.file f
-WHERE f.kind = 'file' AND f.hash <> '' AND f.name ~* '\.(zip|json|ged|gedcom|csv|txt|mbox|ics|vcf|db)$'
-  AND NOT EXISTS (SELECT FROM archive.connection c WHERE c.id = f.connection AND c.provider = 'import')
-  AND ($1::text = '' OR f.name ILIKE '%' || $1::text || '%')
-ORDER BY f.name ~* '\.(zip|ged|gedcom|mbox|db)$' DESC, coalesce(f.edited_at, f.created_at) DESC, f.id LIMIT 50
-`
-
-type ExportFilesRow struct {
-	ID         uuid.UUID
-	Hash       string
-	Name       string
-	MIME       string
-	Size       int64
-	Metadata   map[string]any
-	Status     string
-	Error      string
-	Access     *uuid.UUID
-	CreatedAt  time.Time
-	Kind       string
-	Parent     *uuid.UUID
-	Connection *uuid.UUID
-	Stream     *string
-	SourceID   *string
-	Version    *string
-	URL        string
-	Drive      *string
-	OwnerName  *string
-	EditorName *string
-	MadeAt     *time.Time
-	EditedAt   *time.Time
-	UpdatedAt  time.Time
-}
-
-// Files a person could import as an export: copied in, not a folder, named like one, and not already under an import. Zips and
-// other whole exports come first, then the newest.
-func (q *Queries) ExportFiles(ctx context.Context, q_ string) ([]ExportFilesRow, error) {
-	rows, err := q.db.Query(ctx, exportFiles, q_)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ExportFilesRow
-	for rows.Next() {
-		var i ExportFilesRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.Hash,
-			&i.Name,
-			&i.MIME,
-			&i.Size,
-			&i.Metadata,
-			&i.Status,
-			&i.Error,
-			&i.Access,
-			&i.CreatedAt,
-			&i.Kind,
-			&i.Parent,
-			&i.Connection,
-			&i.Stream,
-			&i.SourceID,
-			&i.Version,
-			&i.URL,
-			&i.Drive,
-			&i.OwnerName,
-			&i.EditorName,
-			&i.MadeAt,
-			&i.EditedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const fileByKey = `-- name: FileByKey :one
@@ -1275,36 +993,6 @@ func (q *Queries) FileKept(ctx context.Context, connection *uuid.UUID, hash stri
 	return i, err
 }
 
-const fileSources = `-- name: FileSources :many
-SELECT c.id, c.provider, c.account FROM archive.connection c WHERE EXISTS (SELECT FROM archive.file f WHERE f.connection = c.id) ORDER BY c.provider, c.account, c.id
-`
-
-type FileSourcesRow struct {
-	ID       uuid.UUID
-	Provider string
-	Account  string
-}
-
-func (q *Queries) FileSources(ctx context.Context) ([]FileSourcesRow, error) {
-	rows, err := q.db.Query(ctx, fileSources)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []FileSourcesRow
-	for rows.Next() {
-		var i FileSourcesRow
-		if err := rows.Scan(&i.ID, &i.Provider, &i.Account); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const fileText = `-- name: FileText :one
 SELECT text FROM archive.file WHERE id = $1
 `
@@ -1377,96 +1065,6 @@ func (q *Queries) FileWithText(ctx context.Context, id uuid.UUID) (FileWithTextR
 		&i.Text,
 	)
 	return i, err
-}
-
-const files = `-- name: Files :many
-SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at FROM archive.file
-WHERE id > $1 AND (NOT $2::bool OR parent IS NOT DISTINCT FROM $3::uuid AND ($3::uuid IS NOT NULL OR connection IS NOT DISTINCT FROM $4::uuid))
-ORDER BY id LIMIT $5
-`
-
-type FilesParams struct {
-	After        uuid.UUID
-	Tree         bool
-	InFolder     *uuid.UUID
-	OfConnection *uuid.UUID
-	Lim          int32
-}
-
-type FilesRow struct {
-	ID         uuid.UUID
-	Hash       string
-	Name       string
-	MIME       string
-	Size       int64
-	Metadata   map[string]any
-	Status     string
-	Error      string
-	Access     *uuid.UUID
-	CreatedAt  time.Time
-	Kind       string
-	Parent     *uuid.UUID
-	Connection *uuid.UUID
-	Stream     *string
-	SourceID   *string
-	Version    *string
-	URL        string
-	Drive      *string
-	OwnerName  *string
-	EditorName *string
-	MadeAt     *time.Time
-	EditedAt   *time.Time
-	UpdatedAt  time.Time
-}
-
-func (q *Queries) Files(ctx context.Context, arg FilesParams) ([]FilesRow, error) {
-	rows, err := q.db.Query(ctx, files,
-		arg.After,
-		arg.Tree,
-		arg.InFolder,
-		arg.OfConnection,
-		arg.Lim,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []FilesRow
-	for rows.Next() {
-		var i FilesRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.Hash,
-			&i.Name,
-			&i.MIME,
-			&i.Size,
-			&i.Metadata,
-			&i.Status,
-			&i.Error,
-			&i.Access,
-			&i.CreatedAt,
-			&i.Kind,
-			&i.Parent,
-			&i.Connection,
-			&i.Stream,
-			&i.SourceID,
-			&i.Version,
-			&i.URL,
-			&i.Drive,
-			&i.OwnerName,
-			&i.EditorName,
-			&i.MadeAt,
-			&i.EditedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const filesWithText = `-- name: FilesWithText :many
@@ -1932,35 +1530,6 @@ func (q *Queries) KnownPeople(ctx context.Context, emails []string) ([]KnownPeop
 	return items, nil
 }
 
-const lastTurns = `-- name: LastTurns :many
-SELECT n, messages FROM (SELECT t.n, t.messages FROM archive.turn t WHERE t.agent = $1 ORDER BY t.n DESC LIMIT $2) r ORDER BY n
-`
-
-type LastTurnsRow struct {
-	N        int64
-	Messages json.RawMessage
-}
-
-func (q *Queries) LastTurns(ctx context.Context, agent uuid.UUID, limit int32) ([]LastTurnsRow, error) {
-	rows, err := q.db.Query(ctx, lastTurns, agent, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []LastTurnsRow
-	for rows.Next() {
-		var i LastTurnsRow
-		if err := rows.Scan(&i.N, &i.Messages); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const lockFile = `-- name: LockFile :one
 SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at FROM archive.file WHERE id = $1 FOR UPDATE
 `
@@ -2223,7 +1792,7 @@ func (q *Queries) MemberEntry(ctx context.Context, email string) (MemberEntryRow
 }
 
 const members = `-- name: Members :many
-SELECT id, email::text AS email, role::text AS role, "group" FROM archive.member ORDER BY email
+SELECT id, email::text AS email, role::text AS role, "group", name FROM archive.member ORDER BY email
 `
 
 type MembersRow struct {
@@ -2231,6 +1800,7 @@ type MembersRow struct {
 	Email string
 	Role  string
 	Group *uuid.UUID
+	Name  string
 }
 
 func (q *Queries) Members(ctx context.Context) ([]MembersRow, error) {
@@ -2247,6 +1817,7 @@ func (q *Queries) Members(ctx context.Context) ([]MembersRow, error) {
 			&i.Email,
 			&i.Role,
 			&i.Group,
+			&i.Name,
 		); err != nil {
 			return nil, err
 		}
@@ -2370,68 +1941,6 @@ func (q *Queries) MemoryLevels(ctx context.Context, agent uuid.UUID, member uuid
 		return nil, err
 	}
 	return items, nil
-}
-
-const moveFile = `-- name: MoveFile :one
-UPDATE archive.file SET parent = $1::uuid WHERE id = $2::uuid
-RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at
-`
-
-type MoveFileRow struct {
-	ID         uuid.UUID
-	Hash       string
-	Name       string
-	MIME       string
-	Size       int64
-	Metadata   map[string]any
-	Status     string
-	Error      string
-	Access     *uuid.UUID
-	CreatedAt  time.Time
-	Kind       string
-	Parent     *uuid.UUID
-	Connection *uuid.UUID
-	Stream     *string
-	SourceID   *string
-	Version    *string
-	URL        string
-	Drive      *string
-	OwnerName  *string
-	EditorName *string
-	MadeAt     *time.Time
-	EditedAt   *time.Time
-	UpdatedAt  time.Time
-}
-
-func (q *Queries) MoveFile(ctx context.Context, parent *uuid.UUID, iD uuid.UUID) (MoveFileRow, error) {
-	row := q.db.QueryRow(ctx, moveFile, parent, iD)
-	var i MoveFileRow
-	err := row.Scan(
-		&i.ID,
-		&i.Hash,
-		&i.Name,
-		&i.MIME,
-		&i.Size,
-		&i.Metadata,
-		&i.Status,
-		&i.Error,
-		&i.Access,
-		&i.CreatedAt,
-		&i.Kind,
-		&i.Parent,
-		&i.Connection,
-		&i.Stream,
-		&i.SourceID,
-		&i.Version,
-		&i.URL,
-		&i.Drive,
-		&i.OwnerName,
-		&i.EditorName,
-		&i.MadeAt,
-		&i.EditedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
 }
 
 const nameMembers = `-- name: NameMembers :exec
@@ -2626,68 +2135,6 @@ func (q *Queries) RenameConnection(ctx context.Context, iD uuid.UUID, account st
 	return err
 }
 
-const renameFile = `-- name: RenameFile :one
-UPDATE archive.file SET name = $2 WHERE id = $1
-RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at
-`
-
-type RenameFileRow struct {
-	ID         uuid.UUID
-	Hash       string
-	Name       string
-	MIME       string
-	Size       int64
-	Metadata   map[string]any
-	Status     string
-	Error      string
-	Access     *uuid.UUID
-	CreatedAt  time.Time
-	Kind       string
-	Parent     *uuid.UUID
-	Connection *uuid.UUID
-	Stream     *string
-	SourceID   *string
-	Version    *string
-	URL        string
-	Drive      *string
-	OwnerName  *string
-	EditorName *string
-	MadeAt     *time.Time
-	EditedAt   *time.Time
-	UpdatedAt  time.Time
-}
-
-func (q *Queries) RenameFile(ctx context.Context, iD uuid.UUID, name string) (RenameFileRow, error) {
-	row := q.db.QueryRow(ctx, renameFile, iD, name)
-	var i RenameFileRow
-	err := row.Scan(
-		&i.ID,
-		&i.Hash,
-		&i.Name,
-		&i.MIME,
-		&i.Size,
-		&i.Metadata,
-		&i.Status,
-		&i.Error,
-		&i.Access,
-		&i.CreatedAt,
-		&i.Kind,
-		&i.Parent,
-		&i.Connection,
-		&i.Stream,
-		&i.SourceID,
-		&i.Version,
-		&i.URL,
-		&i.Drive,
-		&i.OwnerName,
-		&i.EditorName,
-		&i.MadeAt,
-		&i.EditedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const replaceFile = `-- name: ReplaceFile :one
 UPDATE archive.file SET hash = $2, size = $3, status = 'pending', text = '', error = '', metadata = '{}' WHERE id = $1
 RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at
@@ -2788,44 +2235,6 @@ func (q *Queries) RevisionNamed(ctx context.Context, name *string) (bool, error)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
-}
-
-const revisions = `-- name: Revisions :many
-SELECT id, created_at, author, coalesce(name, '')::text AS name, statements FROM archive.revision WHERE statements <> '[]' ORDER BY created_at DESC, id DESC LIMIT $1
-`
-
-type RevisionsRow struct {
-	ID         uuid.UUID
-	CreatedAt  time.Time
-	Author     string
-	Name       string
-	Statements json.RawMessage
-}
-
-func (q *Queries) Revisions(ctx context.Context, limit int32) ([]RevisionsRow, error) {
-	rows, err := q.db.Query(ctx, revisions, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []RevisionsRow
-	for rows.Next() {
-		var i RevisionsRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.CreatedAt,
-			&i.Author,
-			&i.Name,
-			&i.Statements,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const roleExists = `-- name: RoleExists :one
@@ -2946,68 +2355,6 @@ UPDATE archive.connection SET token = $2, error = '', updated_at = now() WHERE i
 func (q *Queries) SetConnectionToken(ctx context.Context, iD uuid.UUID, token []byte) error {
 	_, err := q.db.Exec(ctx, setConnectionToken, iD, token)
 	return err
-}
-
-const setFileAccess = `-- name: SetFileAccess :one
-UPDATE archive.file SET access = $1::uuid WHERE id = $2::uuid
-RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at
-`
-
-type SetFileAccessRow struct {
-	ID         uuid.UUID
-	Hash       string
-	Name       string
-	MIME       string
-	Size       int64
-	Metadata   map[string]any
-	Status     string
-	Error      string
-	Access     *uuid.UUID
-	CreatedAt  time.Time
-	Kind       string
-	Parent     *uuid.UUID
-	Connection *uuid.UUID
-	Stream     *string
-	SourceID   *string
-	Version    *string
-	URL        string
-	Drive      *string
-	OwnerName  *string
-	EditorName *string
-	MadeAt     *time.Time
-	EditedAt   *time.Time
-	UpdatedAt  time.Time
-}
-
-func (q *Queries) SetFileAccess(ctx context.Context, access *uuid.UUID, iD uuid.UUID) (SetFileAccessRow, error) {
-	row := q.db.QueryRow(ctx, setFileAccess, access, iD)
-	var i SetFileAccessRow
-	err := row.Scan(
-		&i.ID,
-		&i.Hash,
-		&i.Name,
-		&i.MIME,
-		&i.Size,
-		&i.Metadata,
-		&i.Status,
-		&i.Error,
-		&i.Access,
-		&i.CreatedAt,
-		&i.Kind,
-		&i.Parent,
-		&i.Connection,
-		&i.Stream,
-		&i.SourceID,
-		&i.Version,
-		&i.URL,
-		&i.Drive,
-		&i.OwnerName,
-		&i.EditorName,
-		&i.MadeAt,
-		&i.EditedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
 }
 
 const setFileContent = `-- name: SetFileContent :exec
@@ -3152,17 +2499,6 @@ UPDATE archive.workflow SET next_at = $3 WHERE id = $1 AND trigger = $2
 func (q *Queries) SetWorkflowNext(ctx context.Context, iD uuid.UUID, trigger string, nextAt *time.Time) error {
 	_, err := q.db.Exec(ctx, setWorkflowNext, iD, trigger, nextAt)
 	return err
-}
-
-const stored = `-- name: Stored :one
-SELECT archive.stored()::bigint
-`
-
-func (q *Queries) Stored(ctx context.Context) (int64, error) {
-	row := q.db.QueryRow(ctx, stored)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
 }
 
 const trimWorkflowRuns = `-- name: TrimWorkflowRuns :exec

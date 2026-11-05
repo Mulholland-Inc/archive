@@ -73,7 +73,7 @@ func (o *RunOutput) change(c runChange) {
 
 type runFile struct {
 	ID         uuid.UUID      `json:"id"`
-	Hash       string         `json:"sha256"`
+	Hash       string         `json:"hash"`
 	Name       string         `json:"name"`
 	MIME       string         `json:"mime"`
 	Size       int64          `json:"size"`
@@ -823,6 +823,7 @@ func (r *runner) sdk() {
 			Where map[string]any `json:"where"`
 			Limit int            `json:"limit"`
 			After string         `json:"after"`
+			Desc  bool           `json:"desc"`
 		}
 		if err := r.arg(call, 1, "list", "opts", &opts); err != nil {
 			return nil, err
@@ -831,7 +832,7 @@ func (r *runner) sdk() {
 		if err != nil {
 			return nil, err
 		}
-		return a.List(ctx, table, opts.Where, opts.Limit, after)
+		return a.List(ctx, table, opts.Where, opts.Limit, after, opts.Desc)
 	})
 	r.def(o, "get", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		table, id, err := r.row(call, "get")
@@ -848,21 +849,6 @@ func (r *runner) sdk() {
 		table, err := r.str(call, 0, "create", "table")
 		if err != nil {
 			return nil, err
-		}
-		if table == "file" {
-			var f struct {
-				Kind   string     `json:"kind"`
-				Name   string     `json:"name"`
-				Parent *uuid.UUID `json:"parent"`
-				Access string     `json:"access"`
-			}
-			if err := r.arg(call, 1, "create", "data", &f); err != nil {
-				return nil, err
-			}
-			if f.Kind != "folder" {
-				return nil, &ValidationError{Type: "file", Errors: []FieldError{{Path: "kind", Message: `the file table takes folders, { kind: "folder", name, parent, access }; archive.create("name.docx") makes a document`}}}
-			}
-			return a.AddFolder(ctx, f.Access, f.Name, f.Parent)
 		}
 		var data map[string]any
 		if path.Ext(table) != "" {
@@ -894,39 +880,20 @@ func (r *runner) sdk() {
 		if patch == nil {
 			return nil, fmt.Errorf("archive.update: patch must be an object: %w", httpErrBadRequest)
 		}
-		if table == "file" {
-			if access, ok := patch["access"]; ok && len(patch) == 1 {
-				g, ok := access.(string)
-				if !ok && access != nil {
-					return nil, &ValidationError{Type: "file", Errors: []FieldError{{Path: "access", Message: "want a group's id or name, or null for everyone"}}}
-				}
-				return a.SetFileAccess(ctx, id, g)
-			}
-			parent, err := runFileParent(patch)
-			if err != nil {
-				return nil, err
-			}
-			return a.MoveFile(ctx, id, parent)
-		}
 		return a.Patch(ctx, table, id, patch)
 	})
 	r.def(o, "delete", func(ctx context.Context, call goja.FunctionCall) (any, error) {
-		if call.Argument(0).String() == "file" {
-			id, err := r.id(call, 1, "delete")
-			if err != nil {
-				return nil, err
-			}
-			if err := a.DeleteFile(ctx, id); err != nil {
-				return nil, err
-			}
-			r.out.Files = slices.DeleteFunc(r.out.Files, func(c runChange) bool { return c.ID == id })
-			return nil, nil
-		}
 		table, id, err := r.row(call, "delete")
 		if err != nil {
 			return nil, err
 		}
-		return nil, a.Delete(ctx, table, id)
+		if err := a.Delete(ctx, table, id); err != nil {
+			return nil, err
+		}
+		if table == "file" {
+			r.out.Files = slices.DeleteFunc(r.out.Files, func(c runChange) bool { return c.ID == id })
+		}
+		return nil, nil
 	})
 	r.def(o, "search", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		text, err := r.str(call, 0, "search", "text")
@@ -1045,22 +1012,6 @@ func (r *runner) sdk() {
 	r.actionSDK(o)
 	r.emailSDK(o)
 	r.vm.Set("archive", o)
-}
-
-func runFileParent(patch map[string]any) (*uuid.UUID, error) {
-	v, ok := patch["parent"]
-	if !ok || len(patch) != 1 {
-		return nil, &ValidationError{Type: "file", Errors: []FieldError{{Path: "parent", Message: "of a file, only { parent }, a folder's id or null, or { access }, a group or null, changes; archive.edit changes its content"}}}
-	}
-	if v == nil {
-		return nil, nil
-	}
-	s, _ := v.(string)
-	id, err := uuid.Parse(s)
-	if err != nil {
-		return nil, &ValidationError{Type: "file", Errors: []FieldError{{Path: "parent", Message: fmt.Sprintf("%v is not a folder's id", v)}}}
-	}
-	return &id, nil
 }
 
 func runParam(v any) any {

@@ -419,7 +419,7 @@ func (h *Hub) deviceAsk(w http.ResponseWriter, d *device) (any, error) {
 		return nil, fmt.Errorf("want { text, agent }: %v: %w", err, httpErrBadRequest)
 	}
 	if body.Agent == uuid.Nil {
-		agents, err := d.a.List(d.r.Context(), "agent", nil, 1, uuid.Nil)
+		agents, err := d.a.List(d.r.Context(), "agent", nil, 1, uuid.Nil, false)
 		if err != nil {
 			return nil, err
 		}

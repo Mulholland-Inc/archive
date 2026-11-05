@@ -99,68 +99,6 @@ func (h *Hub) oauth1Cookie(sealed string, maxAge int) *http.Cookie {
 }
 
 func (h *Hub) connectRoutes(mux *http.ServeMux) {
-	authed := func(pattern string, f func(a *Archive, w http.ResponseWriter, r *http.Request)) {
-		mux.Handle(pattern, h.httpAuth(func(a *Archive) http.Handler {
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { f(a, w, r) })
-		}))
-	}
-	authed("GET /connect", func(a *Archive, w http.ResponseWriter, r *http.Request) {
-		c, err := a.Connections(r.Context())
-		httpWrite(w, http.StatusOK, c, err)
-	})
-	authed("GET /connect/mine", func(a *Archive, w http.ResponseWriter, r *http.Request) {
-		c, err := a.hub.OwnConnections(r.Context(), a)
-		httpWrite(w, http.StatusOK, map[string]any{"connections": c}, err)
-	})
-	authed("DELETE /connect/{id}", func(a *Archive, w http.ResponseWriter, r *http.Request) {
-		id, err := httpID(r)
-		if err == nil {
-			err = a.Disconnect(r.Context(), id)
-		}
-		httpWrite(w, http.StatusNoContent, nil, err)
-	})
-	authed("PUT /connect/{id}/access", func(a *Archive, w http.ResponseWriter, r *http.Request) {
-		id, err := httpID(r)
-		var body struct {
-			Access string `json:"access"`
-		}
-		if err == nil {
-			err = httpDecode(r, &body)
-		}
-		if err == nil {
-			err = a.SetAccess(r.Context(), id, body.Access)
-		}
-		httpWrite(w, http.StatusNoContent, nil, err)
-	})
-	authed("POST /connect/{id}/keys", func(a *Archive, w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			Keys map[string]string `json:"keys"`
-		}
-		err := httpDecode(r, &body)
-		if err == nil {
-			err = a.connectKeys(r.Context(), r.PathValue("id"), body.Keys)
-		}
-		httpWrite(w, http.StatusNoContent, nil, err)
-	})
-	authed("POST /connect/{id}/link", func(a *Archive, w http.ResponseWriter, r *http.Request) {
-		tok, err := a.connectLink(r.Context(), r.PathValue("id"))
-		httpWrite(w, http.StatusOK, map[string]string{"token": tok}, err)
-	})
-	authed("GET /connect/{id}/places", func(a *Archive, w http.ResponseWriter, r *http.Request) {
-		p, err := a.hub.connector(r.PathValue("id"))
-		var out []connect.Place
-		if err == nil {
-			out = p.Places(r.URL.Query().Get("q"), 20)
-		}
-		httpWrite(w, http.StatusOK, map[string]any{"places": out}, err)
-	})
-	authed("POST /connect/{id}/sync", func(a *Archive, w http.ResponseWriter, r *http.Request) {
-		id, err := httpID(r)
-		if err == nil {
-			err = a.SyncNow(r.Context(), id)
-		}
-		httpWrite(w, http.StatusNoContent, nil, err)
-	})
 	mux.HandleFunc("GET /connect/{id}", func(w http.ResponseWriter, r *http.Request) {
 		r.Header.Set("Archive-Workspace", r.URL.Query().Get("workspace"))
 		h.httpAuth(func(a *Archive) http.Handler { return http.HandlerFunc(a.connectStart) }).ServeHTTP(w, r)
@@ -254,7 +192,7 @@ func (a *Archive) connectFinish(w http.ResponseWriter, r *http.Request, st conne
 		}
 	}
 	if err == nil {
-		_, err = a.connectionSave(r.Context(), st.Member, p.Connector, g)
+		_, err = a.connectionKeep(r.Context(), st.Member, p.Connector, g)
 	}
 	if err != nil {
 		back.Set("error", err.Error())
@@ -262,20 +200,62 @@ func (a *Archive) connectFinish(w http.ResponseWriter, r *http.Request, st conne
 	http.Redirect(w, r, a.hub.app+connectBack(st.Provider)+"?"+back.Encode(), http.StatusSeeOther)
 }
 
-func (a *Archive) connectKeys(ctx context.Context, id string, keys map[string]string) error {
+var errConnectionRun = fmt.Errorf("connection is read only in a run, as connecting and disconnecting reach outside it and cannot roll back: connect and disconnect your accounts in Settings, Connectors: %w", ErrReadOnly)
+
+func connectionInRun(ctx context.Context) bool {
+	_, in := ctx.Value(runWroteKey{}).(*bool)
+	return in
+}
+
+func (a *Archive) connectionSave(ctx context.Context, id uuid.UUID, data map[string]any) (map[string]any, error) {
+	if connectionInRun(ctx) {
+		return nil, errConnectionRun
+	}
+	var body struct {
+		Provider string            `json:"provider"`
+		Keys     map[string]string `json:"keys"`
+		Access   *string           `json:"access"`
+	}
+	b, err := json.Marshal(data)
+	if err == nil {
+		d := json.NewDecoder(bytes.NewReader(b))
+		d.DisallowUnknownFields()
+		err = d.Decode(&body)
+	}
+	if err != nil {
+		return nil, &ValidationError{Type: "connection", Errors: []FieldError{{Message: fmt.Sprintf(`want { provider, keys } to connect, or { access } to narrow an integration: %v`, err)}}}
+	}
+	if id == uuid.Nil {
+		if id, err = a.connectKeys(ctx, body.Provider, body.Keys); err != nil {
+			return nil, err
+		}
+	} else if err = a.SetAccess(ctx, id, deref(body.Access)); err != nil {
+		return nil, err
+	}
+	return a.Get(ctx, "connection", id)
+}
+
+func (a *Archive) connectionRemove(ctx context.Context, id uuid.UUID) error {
+	if connectionInRun(ctx) {
+		return errConnectionRun
+	}
+	return a.Disconnect(ctx, id)
+}
+
+func (a *Archive) connectKeys(ctx context.Context, id string, keys map[string]string) (uuid.UUID, error) {
 	ac, err := authUser(ctx)
 	if err != nil {
-		return err
+		return uuid.Nil, err
 	}
 	p, err := a.hub.connector(id)
 	if err != nil {
-		return err
+		return uuid.Nil, err
 	}
 	if !p.Keyed() {
-		return fmt.Errorf("%s connects by signing in, not with keys: %w", p.Name, httpErrBadRequest)
+		return uuid.Nil, fmt.Errorf("%s connects by signing in, not with keys: %w", p.Name, httpErrBadRequest)
 	}
 	if err := a.mayConnect(ctx, p.Connector); err != nil {
-		return err
+		return uuid.Nil, err
 	}
 	var files []*File
 	for _, k := range p.Keys {
@@ -284,27 +264,27 @@ func (a *Archive) connectKeys(ctx context.Context, id string, keys map[string]st
 		}
 		id, err := uuid.Parse(strings.TrimSpace(keys[k.Name]))
 		if err != nil {
-			return fmt.Errorf("%s: want the id of a file of yours: %w", k.Label, httpErrBadRequest)
+			return uuid.Nil, fmt.Errorf("%s: want the id of a file of yours: %w", k.Label, httpErrBadRequest)
 		}
 		f, err := a.GetFile(ctx, id)
 		if err != nil {
-			return fmt.Errorf("%s: %w", k.Label, err)
+			return uuid.Nil, fmt.Errorf("%s: %w", k.Label, err)
 		}
 		if f.Kind != "file" {
-			return fmt.Errorf("%s: %s is a folder: %w", k.Label, f.Name, httpErrBadRequest)
+			return uuid.Nil, fmt.Errorf("%s: %s is a folder: %w", k.Label, f.Name, httpErrBadRequest)
 		}
 		files = append(files, f)
 	}
 	g, err := p.KeyGrant(ctx, keys)
 	if err != nil {
-		return fmt.Errorf("%w: %w", err, httpErrBadRequest)
+		return uuid.Nil, fmt.Errorf("%w: %w", err, httpErrBadRequest)
 	}
-	conn, err := a.connectionSave(ctx, ac.member, p.Connector, g)
+	conn, err := a.connectionKeep(ctx, ac.member, p.Connector, g)
 	if err != nil && p.Link != nil {
 		p.RevokeToken(ctx, g.Refresh, g.Meta)
 	}
 	if err != nil {
-		return err
+		return uuid.Nil, err
 	}
 	// A file of yours that a connection reads moves under it, so only you see it, as you see what it syncs; one a
 	// connection of yours synced, like a Drive file, stays where it is.
@@ -324,7 +304,7 @@ func (a *Archive) connectKeys(ctx context.Context, id string, keys map[string]st
 				return err
 			})
 			if err != nil {
-				return err
+				return uuid.Nil, err
 			}
 		}
 		if f.Connection != nil {
@@ -336,10 +316,10 @@ func (a *Archive) connectKeys(ctx context.Context, id string, keys map[string]st
 			return err
 		})
 		if err != nil {
-			return err
+			return uuid.Nil, err
 		}
 	}
-	return nil
+	return conn, nil
 }
 
 func (a *Archive) connectLink(ctx context.Context, id string) (string, error) {
@@ -415,7 +395,7 @@ func mayUse(c generated.ArchiveConnection, lvl string, group *uuid.UUID) bool {
 	return mayManage(lvl) || lvl == "editor" && (c.Access == nil || group != nil && *group == *c.Access)
 }
 
-func (a *Archive) connectionSave(ctx context.Context, member uuid.UUID, c *connect.Connector, g *connect.Grant) (uuid.UUID, error) {
+func (a *Archive) connectionKeep(ctx context.Context, member uuid.UUID, c *connect.Connector, g *connect.Grant) (uuid.UUID, error) {
 	var id uuid.UUID
 	if g.Meta == nil {
 		g.Meta = map[string]string{}
@@ -449,22 +429,6 @@ func (a *Archive) connectionSave(ctx context.Context, member uuid.UUID, c *conne
 	return id, err
 }
 
-type Connection struct {
-	ID          uuid.UUID  `json:"id"`
-	Provider    string     `json:"provider"`
-	Account     string     `json:"account"`
-	Scopes      []string   `json:"scopes"`
-	Error       string     `json:"error"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	SyncAt      *time.Time `json:"sync_at"`
-	SyncedAt    *time.Time `json:"synced_at"`
-	Items       int64      `json:"items"`
-	Integration bool       `json:"integration"`
-	Access      string     `json:"access"`
-	ConnectedBy string     `json:"connected_by"`
-}
-
 type Connector struct {
 	ID          string        `json:"id"`
 	Name        string        `json:"name"`
@@ -477,85 +441,12 @@ type Connector struct {
 	connect.Info
 }
 
-type Connections struct {
-	Connectors  []Connector  `json:"connectors"`
-	Connections []Connection `json:"connections"`
-}
-
-func (a *Archive) Connections(ctx context.Context) (*Connections, error) {
-	ac, err := signedIn(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := &Connections{Connectors: []Connector{}, Connections: []Connection{}}
+func (a *Archive) connectors() []Connector {
+	out := []Connector{}
 	for _, c := range connect.All() {
-		out.Connectors = append(out.Connectors, Connector{ID: c.ID, Name: c.Name, Ready: a.hub.connect[c.ID] != nil && a.hub.connect[c.ID].Ready(), Integration: c.Integration, Keys: c.Keys, Ask: c.Ask, Link: c.Link != nil, Tap: c.Tap, Info: c.Info})
+		out = append(out, Connector{ID: c.ID, Name: c.Name, Ready: a.hub.connect[c.ID] != nil && a.hub.connect[c.ID].Ready(), Integration: c.Integration, Keys: c.Keys, Ask: c.Ask, Link: c.Link != nil, Tap: c.Tap, Info: c.Info})
 	}
-	var rows []generated.ConnectionsRow
-	err = a.st.System(ctx, func(ctx context.Context) (err error) {
-		rows, err = a.st.db(ctx).Connections(ctx, ac.member)
-		return err
-	})
-	for _, r := range rows {
-		out.Connections = append(out.Connections, Connection(r))
-	}
-	return out, err
-}
-
-type OwnConnection struct {
-	Connection
-	Workspace Workspace `json:"workspace"`
-}
-
-func (h *Hub) OwnConnections(ctx context.Context, here *Archive) ([]OwnConnection, error) {
-	ac, err := authUser(ctx)
-	if err != nil {
-		return nil, err
-	}
-	all := []uuid.UUID{here.ws.ID}
-	if ac.TokenID == uuid.Nil && ac.TokenName == "" {
-		u, err := h.q().UserByID(ctx, ac.UserID)
-		if err != nil {
-			return nil, err
-		}
-		all = u.Workspaces
-	}
-	out := []OwnConnection{}
-	for _, ws := range all {
-		a, release, err := h.acquire(ctx, ws.String())
-		if errors.Is(err, ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		rows, err := a.ownConnections(ctx, ac)
-		release()
-		if errors.Is(err, ErrForbidden) {
-			continue
-		}
-		if err != nil {
-			return nil, fmt.Errorf("workspace %s: %w", ws, err)
-		}
-		for _, r := range rows {
-			out = append(out, OwnConnection{Connection: Connection(r), Workspace: workspaceOut(a.ws)})
-		}
-	}
-	slices.SortStableFunc(out, func(x, y OwnConnection) int {
-		return cmp.Or(strings.Compare(x.Provider, y.Provider), strings.Compare(x.Account, y.Account), strings.Compare(x.Workspace.Name, y.Workspace.Name))
-	})
-	return out, nil
-}
-
-func (a *Archive) ownConnections(ctx context.Context, ac *Actor) ([]generated.ConnectionsRow, error) {
-	me, err := a.userActor(ctx, &User{ID: ac.UserID, Email: ac.Email, Name: ac.Name})
-	if err != nil {
-		return nil, err
-	}
-	rows, err := coreDo(a, withArchive(WithActor(ctx, me), a), func(ctx context.Context) ([]generated.ConnectionsRow, error) {
-		return a.st.db(ctx).Connections(ctx, me.member)
-	})
-	return slices.DeleteFunc(rows, func(r generated.ConnectionsRow) bool { return r.Integration }), err
+	return out
 }
 
 func (a *Archive) Disconnect(ctx context.Context, id uuid.UUID) error {
