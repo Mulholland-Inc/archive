@@ -5,6 +5,7 @@ import EventKit
 import HealthKit
 import Photos
 import SwiftUI
+import UserNotifications
 import WidgetKit
 
 @main
@@ -24,7 +25,7 @@ struct ArchiveApp: App {
 }
 
 /// Wakes the app in the background: HealthKit's observers, a refresh every hour or so, and a longer run for the first listing of a big library.
-final class Delegate: NSObject, UIApplicationDelegate {
+final class Delegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     static let refresh = "dev.archive.app.refresh"
     static let backfill = "dev.archive.app.backfill"
 
@@ -41,8 +42,12 @@ final class Delegate: NSObject, UIApplicationDelegate {
         }
         if Status.shared.onboarded { Watcher.watch() }
         _ = Places.shared
+        UNUserNotificationCenter.current().delegate = self
         return true
     }
+
+    /// While the app is open it shows Sign in itself, so a notice then only goes to Notification Center.
+    func userNotificationCenter(_: UNUserNotificationCenter, willPresent _: UNNotification) async -> UNNotificationPresentationOptions { [.list] }
 
     static func schedule() {
         let r = BGAppRefreshTaskRequest(identifier: refresh)
@@ -95,12 +100,28 @@ final class Watcher: NSObject, PHPhotoLibraryChangeObserver {
     }
 
     func synced(_ stream: String, _ err: Error?) {
-        if case .signedOut = err as? ClientError { signedIn = false }
+        if case .signedOut = err as? ClientError, signedIn {
+            signedIn = false
+            Self.reconnect()
+        }
         errors[stream] = err?.localizedDescription
         if err == nil {
             at[stream] = .now
             Group.defaults.set(at, forKey: "at")
             WidgetCenter.shared.reloadAllTimelines()
+        }
+    }
+
+    /// When Archive turns the phone's sign-in down, as when it is revoked in Archive, a notification brings the user back to one tap of Sign in,
+    /// even if it happened in a background sync.
+    static func reconnect() {
+        let n = UNMutableNotificationContent()
+        n.title = "Archive stopped syncing"
+        n.body = "Tap to sign in again. Nothing is lost; it picks up where it left off."
+        Task {
+            // Provisional needs no answer from the user, so it holds on phones set up before Archive asked for it.
+            _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .provisional])
+            try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "reconnect", content: n, trigger: nil))
         }
     }
 
@@ -124,6 +145,8 @@ final class Watcher: NSObject, PHPhotoLibraryChangeObserver {
         _ = try? await events.requestFullAccessToReminders()
         Places.shared.ask()
         await Syncer.shared.askWallet()
+        // Provisional: notices like "sign in again" arrive quietly in Notification Center, with no prompt to answer now.
+        _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .provisional])
         onboarded = true
         UserDefaults.standard.set(true, forKey: "onboarded")
         Watcher.watch()
