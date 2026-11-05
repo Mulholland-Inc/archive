@@ -186,8 +186,8 @@ async function files(id, where) {
 const agentList = (workspace) =>
   runCode(
     `const agents = await archive.list("agent", { limit: 1000 });
-const last = await archive.query(\`SELECT DISTINCT ON (agent) agent, updated_at AS at, left(jsonb_path_query_array(messages, '$[*].content[*] ? (@.type == "text").text') ->> -1, 200) AS text FROM archive.turn ORDER BY agent, n DESC\`);
-return agents.map((a) => { const t = last.find((t) => t.agent === a.id); return { ...a, last: t?.text ?? '', at: t?.at ?? '' }; });`,
+const last = await archive.query(\`SELECT DISTINCT ON (agent) agent, updated_at AS at FROM archive.turn ORDER BY agent, n DESC\`);
+return agents.map((a) => { const t = last.find((t) => t.agent === a.id); return { ...a, at: t?.at ?? '' }; });`,
     workspace
   );
 
@@ -975,7 +975,7 @@ export function markSeen(agent) {
 export async function createAgent(row) {
   try {
     const agent = await call('/api/agent', { method: 'POST', body: row });
-    ws().agents.push({ ...agent, last: '', at: '', seen: '' });
+    ws().agents.push({ ...agent, at: '', seen: '' });
     go(`/agent/${agent.id}`);
   } catch (e) {
     complain(e, 'Couldn’t create the agent');

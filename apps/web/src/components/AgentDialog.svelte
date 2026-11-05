@@ -16,6 +16,7 @@
   const open = $derived(Boolean(app.agentDialog));
 
   let name = $state('');
+  let description = $state('');
   let look = $state({ avatar: 0, tint: 0 });
   let instructions = $state('');
   let access = $state('');
@@ -25,13 +26,14 @@
   $effect(() => {
     if (!open) return;
     name = agent?.name ?? '';
+    description = agent?.description ?? '';
     instructions = agent?.instructions ?? '';
     access = agent?.access ?? '';
     look = agent ? { avatar: agent.avatar, tint: agent.tint } : { avatar: Math.floor(Math.random() * AVATARS.length), tint: Math.floor(Math.random() * TINTS) };
   });
 
   function save(close) {
-    const row = { name: name.trim(), avatar: look.avatar, tint: look.tint, instructions, ...(limits && { access: access || null }) };
+    const row = { name: name.trim(), description: description.trim(), avatar: look.avatar, tint: look.tint, instructions, ...(limits && { access: access || null }) };
     if (agent) updateAgent(agent.id, row);
     else createAgent(row);
     close();
@@ -42,6 +44,11 @@
   <Field label="Name">
     {#snippet children(id)}
       <Input {id} bind:value={name} />
+    {/snippet}
+  </Field>
+  <Field label="Description">
+    {#snippet children(id)}
+      <Input {id} bind:value={description} />
     {/snippet}
   </Field>
   <LookPicker bind:look agent />

@@ -55,8 +55,8 @@
  *   row's width its first other number); scatter (number or money, up by the first other); year (date).
  *
  * Agents
- * - When they want a new agent, make it: archive.create("agent", { name, instructions, avatar, tint, access }), with
- *   instructions saying what it is for, a tint from 0 to 31 and an avatar that suits, by a number its column lists.
+ * - When they want a new agent, make it: archive.create("agent", { name, description, instructions, avatar, tint, access }), with
+ *   description one short line saying what it is for, instructions how it works, a tint from 0 to 31 and an avatar that suits, by a number its column lists.
  *   Managers and up write the agent table; for anyone else it throws forbidden.
  * - Each person's conversation with an agent is theirs and never ends. turn holds it word for word, by n; memory sums it
  *   up, a row covering turns lo to lo+size-1 and its two halves of size/2 saying more. Both are read only. Search memory

@@ -60,7 +60,6 @@ export async function sendMessage(id, { text = '', attachments = [] }) {
   const ctrl = new AbortController();
   controllers.set(id, ctrl);
   agent.streaming = true;
-  agent.last = text;
   const started = Date.now();
   const calls = {};
   let segment = '';
@@ -90,7 +89,6 @@ export async function sendMessage(id, { text = '', attachments = [] }) {
         if (!segment && live.text) live.text += '\n\n';
         segment += ev.text;
         live.text += ev.text;
-        agent.last = segment;
         render();
       } else if (ev.type === 'thinking') {
         segment = '';
@@ -127,7 +125,7 @@ export async function clearAgent(id) {
   controllers.get(id)?.abort();
   await api(`/api/agent/${id}/turns`, { method: 'DELETE', workspace: w.id });
   w.conversations[id] = [];
-  Object.assign(agent, { last: '', saved: 0, limit: PAGE, more: false, keep: false });
+  Object.assign(agent, { saved: 0, limit: PAGE, more: false, keep: false });
 }
 
 export function stopAgent(id) {
