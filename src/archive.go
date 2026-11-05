@@ -771,48 +771,58 @@ var (
 	storeIdentRe  = regexp.MustCompile(`[A-Za-z0-9_$]`)
 )
 
+// storeSkip returns where the comment, string, quoted name or dollar-quoted body at i ends, as Postgres reads it,
+// and whether it is a comment; for anything else, i.
+func storeSkip(src string, i int) (int, bool) {
+	switch c := src[i]; {
+	case c == '-' && strings.HasPrefix(src[i:], "--"):
+		if n := strings.IndexByte(src[i:], '\n'); n >= 0 {
+			return i + n, true
+		}
+		return len(src), true
+	case c == '/' && strings.HasPrefix(src[i:], "/*"):
+		for d := 0; i < len(src); i++ {
+			if strings.HasPrefix(src[i:], "/*") {
+				d, i = d+1, i+1
+			} else if strings.HasPrefix(src[i:], "*/") {
+				if d, i = d-1, i+1; d == 0 {
+					return i, true
+				}
+			}
+		}
+		return len(src), true
+	case c == '\'' || c == '"':
+		// E'...' has backslash escapes; the e of a word before a quote, as in LIKE'\', is no prefix.
+		esc := c == '\'' && i > 0 && (src[i-1] == 'E' || src[i-1] == 'e') && (i == 1 || !storeIdentRe.MatchString(src[i-2:i-1]))
+		for i++; i < len(src) && src[i] != c; i++ {
+			if esc && src[i] == '\\' {
+				i++
+			}
+		}
+		return i, false
+	case c == '$':
+		if m := storeDollarRe.FindString(src[i:]); m != "" && (i == 0 || !storeIdentRe.MatchString(src[i-1:i])) {
+			if n := strings.Index(src[i+len(m):], m); n >= 0 {
+				return i + len(m) + n + len(m) - 1, false
+			}
+			return len(src), false
+		}
+	}
+	return i, false
+}
+
 func storeSplit(src string) []string {
 	var out []string
 	start := 0
 	for i := 0; i < len(src); i++ {
-		switch c := src[i]; {
-		case c == '-' && strings.HasPrefix(src[i:], "--"):
-			if n := strings.IndexByte(src[i:], '\n'); n >= 0 {
-				i += n
-			} else {
-				i = len(src)
-			}
-		case c == '/' && strings.HasPrefix(src[i:], "/*"):
-			for d := 0; i < len(src); i++ {
-				if strings.HasPrefix(src[i:], "/*") {
-					d, i = d+1, i+1
-				} else if strings.HasPrefix(src[i:], "*/") {
-					if d, i = d-1, i+1; d == 0 {
-						break
-					}
-				}
-			}
-		case c == '\'' || c == '"':
-			esc := c == '\'' && i > 0 && (src[i-1] == 'E' || src[i-1] == 'e')
-			for i++; i < len(src) && src[i] != c; i++ {
-				if esc && src[i] == '\\' {
-					i++
-				}
-			}
-		case c == '$':
-			if m := storeDollarRe.FindString(src[i:]); m != "" && (i == 0 || !storeIdentRe.MatchString(src[i-1:i])) {
-				if n := strings.Index(src[i+len(m):], m); n >= 0 {
-					i += len(m) + n + len(m) - 1
-				} else {
-					i = len(src)
-				}
-			}
-		case c == ';':
+		if src[i] == ';' {
 			if st := strings.TrimSpace(src[start:i]); st != "" {
 				out = append(out, st)
 			}
 			start = i + 1
+			continue
 		}
+		i, _ = storeSkip(src, i)
 	}
 	if st := strings.TrimSpace(src[start:]); st != "" {
 		out = append(out, st)
