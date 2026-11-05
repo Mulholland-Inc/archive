@@ -154,7 +154,8 @@ func (h *Hub) cors(next http.Handler) http.Handler {
 		case split && origin == app && (first == "api" || first == "auth" || first == "connect"):
 			w.Header().Set("Access-Control-Allow-Origin", app)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
-			headers = "Content-Type, Archive-Workspace"
+			headers = "Content-Type, Archive-Workspace, Tus-Resumable, Upload-Length, Upload-Offset, Upload-Metadata"
+			w.Header().Set("Access-Control-Expose-Headers", "Location, Upload-Offset, Archive-File-Id")
 		case !h.localApp():
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 		}

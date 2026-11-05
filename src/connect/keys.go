@@ -20,6 +20,7 @@ type Key struct {
 	Label  string `json:"label"`
 	Help   string `json:"help,omitempty"`
 	Secret bool   `json:"secret,omitempty"`
+	File   bool   `json:"file,omitempty"`
 	Find   string `json:"-"`
 	As     string `json:"-"`
 }
@@ -145,7 +146,7 @@ func (p *Provider) KeyGrant(ctx context.Context, keys map[string]string) (*Grant
 		account = a
 	}
 	b, _ := json.Marshal(kept)
-	return &Grant{Account: account, Refresh: string(b), Meta: meta}, nil
+	return &Grant{Account: account, Refresh: string(b), Scopes: []string{}, Meta: meta}, nil
 }
 
 func (p *Provider) trade(ctx context.Context, keys map[string]string) (map[string]string, time.Time, error) {

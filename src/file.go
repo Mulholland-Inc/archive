@@ -1255,11 +1255,11 @@ func (a *Archive) pullCopy(ctx context.Context, f generated.ClaimPullRow) error 
 	defer body.Body.Close()
 	h := sha256.New()
 	var head fileHead
-	counted := &fileCount{r: io.TeeReader(io.TeeReader(body.Body, h), &head), most: connect.MaxCopy}
+	counted := &fileCount{r: io.TeeReader(io.TeeReader(body.Body, h), &head), most: cmp.Or(p.Streams[i].Most, connect.MaxCopy)}
 	tmp := blobTemp()
 	if err := a.blobs.put(ctx, tmp, counted, body.Size); err != nil {
 		if counted.over {
-			return &connect.Unsupported{Reason: fmt.Sprintf("it is over the %d GB Archive copies", connect.MaxCopy>>30)}
+			return &connect.Unsupported{Reason: fmt.Sprintf("it is over the %d GB Archive copies", counted.most>>30)}
 		}
 		return err
 	}

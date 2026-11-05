@@ -32,6 +32,7 @@ type Stream struct {
 	Pull                func(c *Client, cursor string) (*Page, error)
 	Table, SQL, Version string
 	Read                func(c *Client, source map[string]any) (*Bytes, error)
+	Most                int64
 }
 
 const MaxCopy = 1 << 30
