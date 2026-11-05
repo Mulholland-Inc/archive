@@ -1,9 +1,11 @@
 <script>
+  import { Copy, Check } from '@lucide/svelte';
   import Dialog from './Dialog.svelte';
   import Field from './Field.svelte';
   import Input from './Input.svelte';
   import Textarea from './Textarea.svelte';
   import Button from './Button.svelte';
+  import IconButton from './IconButton.svelte';
   import LookPicker from './LookPicker.svelte';
   import Menu from './Menu.svelte';
   import { TINTS, AVATARS } from '../lib/looks.js';
@@ -20,6 +22,7 @@
   let look = $state({ avatar: 0, tint: 0 });
   let instructions = $state('');
   let access = $state('');
+  let copied = $state(false);
 
   const address = $derived(agent ? `${ws().slug}-${agent.slug}@${location.hostname.replace(/^app\./, '')}` : '');
   const limits = $derived(mayLimit(agent?.access) && accessOptions(agent?.access).length > 1);
@@ -32,6 +35,12 @@
     access = agent?.access ?? '';
     look = agent ? { avatar: agent.avatar, tint: agent.tint } : { avatar: Math.floor(Math.random() * AVATARS.length), tint: Math.floor(Math.random() * TINTS) };
   });
+
+  async function copy() {
+    await navigator.clipboard.writeText(address);
+    copied = true;
+    setTimeout(() => (copied = false), 1600);
+  }
 
   function save(close) {
     const row = { name: name.trim(), description: description.trim(), avatar: look.avatar, tint: look.tint, instructions, ...(limits && { access: access || null }) };
@@ -55,7 +64,11 @@
   {#if agent}
     <Field label="Email">
       {#snippet children(id)}
-        <Input {id} value={address} readonly />
+        <Input {id} value={address} readonly>
+          {#snippet trailing()}
+            <IconButton icon={copied ? Check : Copy} label={copied ? 'Copied' : 'Copy'} size="xs" tooltip={false} onclick={copy} />
+          {/snippet}
+        </Input>
       {/snippet}
     </Field>
   {/if}
