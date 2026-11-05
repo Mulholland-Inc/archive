@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type ArchiveWorkspaceType string
@@ -210,4 +211,7 @@ type ArchiveWorkspace struct {
 	Type      ArchiveWorkspaceType
 	Icon      *string
 	Color     *int16
+	Sent      int32
+	SentOn    pgtype.Date
+	Slug      string
 }

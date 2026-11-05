@@ -15,8 +15,35 @@ CREATE TABLE archive.workspace (
     created_at timestamptz NOT NULL DEFAULT now(),
     type       archive.workspace_type NOT NULL DEFAULT 'personal',
     icon       text,
-    color      smallint CONSTRAINT workspace_color CHECK (color BETWEEN 0 AND 31)
+    color      smallint CONSTRAINT workspace_color CHECK (color BETWEEN 0 AND 31),
+    sent       integer NOT NULL DEFAULT 0,
+    sent_on    date,
+    slug       text NOT NULL UNIQUE CONSTRAINT workspace_slug CHECK (slug ~ '^[a-z0-9]{1,24}$')
 );
+
+CREATE FUNCTION archive.workspace_base(name text) RETURNS text LANGUAGE sql IMMUTABLE SET search_path = pg_catalog AS $$
+    SELECT coalesce(nullif(regexp_replace(lower(regexp_replace(normalize(name, NFD), '[\u0300-\u036f]', '', 'g')), '[^a-z0-9]', '', 'g'), ''), 'workspace');
+$$;
+
+CREATE FUNCTION archive.workspace_slug() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog AS $$
+DECLARE
+    base text := archive.workspace_base(NEW.name);
+    n integer := 1;
+BEGIN
+    IF TG_OP = 'UPDATE' AND base = archive.workspace_base(OLD.name) THEN
+        NEW.slug := OLD.slug;
+        RETURN NEW;
+    END IF;
+    NEW.slug := left(base, 24);
+    WHILE NOT pg_try_advisory_xact_lock(hashtext('workspace slug ' || NEW.slug))
+        OR EXISTS (SELECT FROM archive.workspace w WHERE w.slug = NEW.slug AND w.id <> NEW.id) LOOP
+        n := n + 1;
+        NEW.slug := left(base, 24 - length(n::text)) || n;
+    END LOOP;
+    RETURN NEW;
+END $$;
+
+CREATE TRIGGER slug BEFORE INSERT OR UPDATE ON archive.workspace FOR EACH ROW EXECUTE FUNCTION archive.workspace_slug();
 
 CREATE TABLE archive."user" (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -206,6 +233,16 @@ DELETE FROM archive.token WHERE user_id = $1 AND workspace = $2 RETURNING coales
 
 -- name: WorkspaceByID :one
 SELECT * FROM archive.workspace WHERE id = $1;
+
+-- name: WorkspaceBySlug :one
+SELECT * FROM archive.workspace WHERE slug = $1;
+
+-- name: CountEmail :one
+UPDATE archive.workspace SET sent = CASE WHEN sent_on = (now() AT TIME ZONE 'UTC')::date THEN sent + 1 ELSE 1 END, sent_on = (now() AT TIME ZONE 'UTC')::date
+WHERE id = sqlc.arg(id) AND (sent_on IS DISTINCT FROM (now() AT TIME ZONE 'UTC')::date OR sent < sqlc.arg(cap)::integer) RETURNING sent;
+
+-- name: UncountEmail :exec
+UPDATE archive.workspace SET sent = greatest(sent - 1, 0) WHERE id = $1;
 
 -- name: AllWorkspaces :many
 SELECT * FROM archive.workspace ORDER BY created_at, id;

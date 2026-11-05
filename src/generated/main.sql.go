@@ -47,7 +47,7 @@ func (q *Queries) AllDue(ctx context.Context) ([]ArchiveDue, error) {
 }
 
 const allWorkspaces = `-- name: AllWorkspaces :many
-SELECT id, name, key, created_at, type, icon, color FROM archive.workspace ORDER BY created_at, id
+SELECT id, name, key, created_at, type, icon, color, sent, sent_on, slug FROM archive.workspace ORDER BY created_at, id
 `
 
 func (q *Queries) AllWorkspaces(ctx context.Context) ([]ArchiveWorkspace, error) {
@@ -67,6 +67,9 @@ func (q *Queries) AllWorkspaces(ctx context.Context) ([]ArchiveWorkspace, error)
 			&i.Type,
 			&i.Icon,
 			&i.Color,
+			&i.Sent,
+			&i.SentOn,
+			&i.Slug,
 		); err != nil {
 			return nil, err
 		}
@@ -169,6 +172,18 @@ func (q *Queries) ConnectionWatches(ctx context.Context, connection uuid.UUID) (
 		return nil, err
 	}
 	return items, nil
+}
+
+const countEmail = `-- name: CountEmail :one
+UPDATE archive.workspace SET sent = CASE WHEN sent_on = (now() AT TIME ZONE 'UTC')::date THEN sent + 1 ELSE 1 END, sent_on = (now() AT TIME ZONE 'UTC')::date
+WHERE id = $1 AND (sent_on IS DISTINCT FROM (now() AT TIME ZONE 'UTC')::date OR sent < $2::integer) RETURNING sent
+`
+
+func (q *Queries) CountEmail(ctx context.Context, iD uuid.UUID, cap int32) (int32, error) {
+	row := q.db.QueryRow(ctx, countEmail, iD, cap)
+	var sent int32
+	err := row.Scan(&sent)
+	return sent, err
 }
 
 const createMCPClient = `-- name: CreateMCPClient :one
@@ -295,7 +310,7 @@ func (q *Queries) CreateToken(ctx context.Context, arg CreateTokenParams) (Creat
 
 const createWorkspace = `-- name: CreateWorkspace :one
 INSERT INTO archive.workspace (id, name, key, type, icon, color) VALUES ($1, $2, $3, $4, $5, $6)
-ON CONFLICT DO NOTHING RETURNING id, name, key, created_at, type, icon, color
+ON CONFLICT DO NOTHING RETURNING id, name, key, created_at, type, icon, color, sent, sent_on, slug
 `
 
 type CreateWorkspaceParams struct {
@@ -325,6 +340,9 @@ func (q *Queries) CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams
 		&i.Type,
 		&i.Icon,
 		&i.Color,
+		&i.Sent,
+		&i.SentOn,
+		&i.Slug,
 	)
 	return i, err
 }
@@ -828,6 +846,15 @@ func (q *Queries) Tokens(ctx context.Context, userID uuid.UUID, scoped bool, wor
 	return items, nil
 }
 
+const uncountEmail = `-- name: UncountEmail :exec
+UPDATE archive.workspace SET sent = greatest(sent - 1, 0) WHERE id = $1
+`
+
+func (q *Queries) UncountEmail(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, uncountEmail, id)
+	return err
+}
+
 const updateWorkspace = `-- name: UpdateWorkspace :exec
 UPDATE archive.workspace SET name = coalesce($1, name), type = coalesce($2, type),
     icon = coalesce($3, icon), color = coalesce($4, color) WHERE id = $5
@@ -942,7 +969,7 @@ func (q *Queries) UserByOIDC(ctx context.Context, link []byte) (ArchiveUser, err
 }
 
 const userWorkspaces = `-- name: UserWorkspaces :many
-SELECT w.id, w.name, w.key, w.created_at, w.type, w.icon, w.color FROM archive.workspace w JOIN archive."user" u ON w.id = ANY(u.workspaces) WHERE u.id = $1 ORDER BY array_position(u.workspaces, w.id)
+SELECT w.id, w.name, w.key, w.created_at, w.type, w.icon, w.color, w.sent, w.sent_on, w.slug FROM archive.workspace w JOIN archive."user" u ON w.id = ANY(u.workspaces) WHERE u.id = $1 ORDER BY array_position(u.workspaces, w.id)
 `
 
 func (q *Queries) UserWorkspaces(ctx context.Context, id uuid.UUID) ([]ArchiveWorkspace, error) {
@@ -962,6 +989,9 @@ func (q *Queries) UserWorkspaces(ctx context.Context, id uuid.UUID) ([]ArchiveWo
 			&i.Type,
 			&i.Icon,
 			&i.Color,
+			&i.Sent,
+			&i.SentOn,
+			&i.Slug,
 		); err != nil {
 			return nil, err
 		}
@@ -1014,7 +1044,7 @@ func (q *Queries) WatchesFor(ctx context.Context, provider string, key string) (
 }
 
 const workspaceByID = `-- name: WorkspaceByID :one
-SELECT id, name, key, created_at, type, icon, color FROM archive.workspace WHERE id = $1
+SELECT id, name, key, created_at, type, icon, color, sent, sent_on, slug FROM archive.workspace WHERE id = $1
 `
 
 func (q *Queries) WorkspaceByID(ctx context.Context, id uuid.UUID) (ArchiveWorkspace, error) {
@@ -1028,6 +1058,31 @@ func (q *Queries) WorkspaceByID(ctx context.Context, id uuid.UUID) (ArchiveWorks
 		&i.Type,
 		&i.Icon,
 		&i.Color,
+		&i.Sent,
+		&i.SentOn,
+		&i.Slug,
+	)
+	return i, err
+}
+
+const workspaceBySlug = `-- name: WorkspaceBySlug :one
+SELECT id, name, key, created_at, type, icon, color, sent, sent_on, slug FROM archive.workspace WHERE slug = $1
+`
+
+func (q *Queries) WorkspaceBySlug(ctx context.Context, slug string) (ArchiveWorkspace, error) {
+	row := q.db.QueryRow(ctx, workspaceBySlug, slug)
+	var i ArchiveWorkspace
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Key,
+		&i.CreatedAt,
+		&i.Type,
+		&i.Icon,
+		&i.Color,
+		&i.Sent,
+		&i.SentOn,
+		&i.Slug,
 	)
 	return i, err
 }

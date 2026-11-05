@@ -180,6 +180,36 @@ func (q *Queries) AdvisoryXactLock(ctx context.Context, key int64) error {
 	return err
 }
 
+const agentsNamed = `-- name: AgentsNamed :many
+SELECT id, name, slug FROM archive.agent WHERE id::text = $1::text OR slug = $1::text OR name = $1::text ORDER BY id
+`
+
+type AgentsNamedRow struct {
+	ID   uuid.UUID
+	Name string
+	Slug string
+}
+
+func (q *Queries) AgentsNamed(ctx context.Context, who string) ([]AgentsNamedRow, error) {
+	rows, err := q.db.Query(ctx, agentsNamed, who)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AgentsNamedRow
+	for rows.Next() {
+		var i AgentsNamedRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.Slug); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const appendTurn = `-- name: AppendTurn :exec
 UPDATE archive.turn SET messages = messages || $1::jsonb, updated_at = now() WHERE id = $2
 `
@@ -256,7 +286,7 @@ SELECT jsonb_build_object(
             AND regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)')
             FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid), false),
         'columns', (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid)))
-        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.agent'::regclass, 'archive.turn'::regclass, 'archive.memory'::regclass, 'archive.member'::regclass, 'archive."group"'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass, 'archive.connection'::regclass, 'archive.known_person'::regclass, 'archive.known_org'::regclass, 'archive.mail_message'::regclass,
+        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.agent'::regclass, 'archive.inbox'::regclass, 'archive.turn'::regclass, 'archive.memory'::regclass, 'archive.member'::regclass, 'archive."group"'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass, 'archive.connection'::regclass, 'archive.known_person'::regclass, 'archive.known_org'::regclass, 'archive.mail_message'::regclass,
             'archive.mail_party'::regclass, 'archive.mail_attachment'::regclass, 'archive.doc_page'::regclass, 'archive.payroll_company'::regclass,
             'archive.payroll_department'::regclass, 'archive.payroll_location'::regclass, 'archive.payroll_schedule'::regclass,
             'archive.payroll_worker'::regclass, 'archive.payroll_job'::regclass, 'archive.payroll_compensation'::regclass,
@@ -1586,6 +1616,17 @@ func (q *Queries) IntegrationFor(ctx context.Context, provider string) (Integrat
 	return i, err
 }
 
+const isMember = `-- name: IsMember :one
+SELECT EXISTS (SELECT FROM archive.member WHERE lower(email::text) = lower($1))
+`
+
+func (q *Queries) IsMember(ctx context.Context, email string) (bool, error) {
+	row := q.db.QueryRow(ctx, isMember, email)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const keepFile = `-- name: KeepFile :one
 INSERT INTO archive.file (hash, name, mime, size, access, connection) VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at
@@ -2378,6 +2419,35 @@ func (q *Queries) NoMembers(ctx context.Context) (bool, error) {
 	var not_exists bool
 	err := row.Scan(&not_exists)
 	return not_exists, err
+}
+
+const receive = `-- name: Receive :one
+INSERT INTO archive.inbox (agent, access, name, sender, recipient, text, sent_at)
+SELECT a.id, a.access, $1, $2, $3, $4, $5 FROM archive.agent a WHERE a.slug = $6
+RETURNING id
+`
+
+type ReceiveParams struct {
+	Name      string
+	Sender    string
+	Recipient string
+	Text      string
+	SentAt    *time.Time
+	Slug      string
+}
+
+func (q *Queries) Receive(ctx context.Context, arg ReceiveParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, receive,
+		arg.Name,
+		arg.Sender,
+		arg.Recipient,
+		arg.Text,
+		arg.SentAt,
+		arg.Slug,
+	)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const renameConnection = `-- name: RenameConnection :exec

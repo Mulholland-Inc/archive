@@ -99,6 +99,7 @@ type Workspace struct {
 	Type      string    `json:"type"`
 	Icon      *string   `json:"icon"`
 	Color     *int16    `json:"color"`
+	Slug      string    `json:"slug"`
 	CreatedAt time.Time `json:"created_at,omitzero"`
 }
 
@@ -232,6 +233,9 @@ func (h *Hub) migrate(ctx context.Context) error {
 }
 
 func mainMigrate(ctx context.Context, tx pgx.Tx, want pgSchema) error {
+	if _, err := tx.Exec(ctx, workspaceSlugOnce); err != nil {
+		return fmt.Errorf("workspace slugs: %w", err)
+	}
 	lost, err := pgMigrate(ctx, tx, want)
 	if err != nil {
 		return fmt.Errorf("main.sql: %w", err)
@@ -1012,7 +1016,7 @@ func (h *Hub) admin(ctx context.Context) error {
 }
 
 func workspaceOut(r generated.ArchiveWorkspace) Workspace {
-	return Workspace{ID: r.ID.String(), Name: r.Name, Type: string(r.Type), Icon: r.Icon, Color: r.Color, CreatedAt: r.CreatedAt}
+	return Workspace{ID: r.ID.String(), Name: r.Name, Type: string(r.Type), Icon: r.Icon, Color: r.Color, Slug: r.Slug, CreatedAt: r.CreatedAt}
 }
 
 func (h *Hub) Workspaces(ctx context.Context) ([]Workspace, error) {
