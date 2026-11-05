@@ -404,6 +404,19 @@ func (a *Archive) Files(ctx context.Context, limit int, after uuid.UUID, tree *F
 	})
 }
 
+// ExportFiles lists files a person could import as an export, such as a Takeout zip a Drive or Dropbox connection copied in,
+// optionally only those whose name has q in it.
+func (a *Archive) ExportFiles(ctx context.Context, q string) ([]*File, error) {
+	return coreDo(a, ctx, func(ctx context.Context) ([]*File, error) {
+		rows, err := a.st.db(ctx).ExportFiles(ctx, strings.TrimSpace(q))
+		fs := make([]*File, len(rows))
+		for i := range rows {
+			fs[i] = (*File)(&rows[i])
+		}
+		return fs, err
+	})
+}
+
 func (a *Archive) GetFile(ctx context.Context, id uuid.UUID) (*File, error) {
 	return coreDo(a, ctx, func(ctx context.Context) (*File, error) {
 		f, err := fileOf(a.st.db(ctx).GetFile(ctx, id))
@@ -580,6 +593,10 @@ func (a *Archive) fileRoutes(mux *http.ServeMux) {
 			}
 		}
 		fs, err := a.Files(r.Context(), limit, after, tree)
+		return http.StatusOK, fs, err
+	})
+	handle("GET /api/files/exports", func(r *http.Request) (int, any, error) {
+		fs, err := a.ExportFiles(r.Context(), r.URL.Query().Get("q"))
 		return http.StatusOK, fs, err
 	})
 	handle("GET /api/files/stored", func(r *http.Request) (int, any, error) {

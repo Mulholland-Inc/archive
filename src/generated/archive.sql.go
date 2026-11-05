@@ -1030,6 +1030,86 @@ func (q *Queries) DropBlobGone(ctx context.Context, hash string) error {
 	return err
 }
 
+const exportFiles = `-- name: ExportFiles :many
+SELECT f.id, f.hash, f.name, f.mime, f.size, f.metadata, f.status, f.error, f.access, f.created_at, f.kind, f.parent, f.connection, f.stream, f.source_id, f.version, coalesce(f.url::text, '')::text AS url, f.drive, f.owner_name, f.editor_name, f.made_at, f.edited_at, f.updated_at FROM archive.file f
+WHERE f.kind = 'file' AND f.hash <> '' AND f.name ~* '\.(zip|json|ged|gedcom|csv|txt|mbox|ics|vcf|db)$'
+  AND NOT EXISTS (SELECT FROM archive.connection c WHERE c.id = f.connection AND c.provider = 'import')
+  AND ($1::text = '' OR f.name ILIKE '%' || $1::text || '%')
+ORDER BY f.name ~* '\.(zip|ged|gedcom|mbox|db)$' DESC, coalesce(f.edited_at, f.created_at) DESC, f.id LIMIT 50
+`
+
+type ExportFilesRow struct {
+	ID         uuid.UUID
+	Hash       string
+	Name       string
+	MIME       string
+	Size       int64
+	Metadata   map[string]any
+	Status     string
+	Error      string
+	Access     *uuid.UUID
+	CreatedAt  time.Time
+	Kind       string
+	Parent     *uuid.UUID
+	Connection *uuid.UUID
+	Stream     *string
+	SourceID   *string
+	Version    *string
+	URL        string
+	Drive      *string
+	OwnerName  *string
+	EditorName *string
+	MadeAt     *time.Time
+	EditedAt   *time.Time
+	UpdatedAt  time.Time
+}
+
+// Files a person could import as an export: copied in, not a folder, named like one, and not already under an import. Zips and
+// other whole exports come first, then the newest.
+func (q *Queries) ExportFiles(ctx context.Context, q_ string) ([]ExportFilesRow, error) {
+	rows, err := q.db.Query(ctx, exportFiles, q_)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ExportFilesRow
+	for rows.Next() {
+		var i ExportFilesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Hash,
+			&i.Name,
+			&i.MIME,
+			&i.Size,
+			&i.Metadata,
+			&i.Status,
+			&i.Error,
+			&i.Access,
+			&i.CreatedAt,
+			&i.Kind,
+			&i.Parent,
+			&i.Connection,
+			&i.Stream,
+			&i.SourceID,
+			&i.Version,
+			&i.URL,
+			&i.Drive,
+			&i.OwnerName,
+			&i.EditorName,
+			&i.MadeAt,
+			&i.EditedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const fileByKey = `-- name: FileByKey :one
 SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at FROM archive.file WHERE connection IS NULL AND access IS NOT DISTINCT FROM $1 AND parent IS NOT DISTINCT FROM $2 AND hash = $3 AND name = $4
 `

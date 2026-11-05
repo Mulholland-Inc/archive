@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -274,6 +275,24 @@ func (a *Archive) connectKeys(ctx context.Context, id string, keys map[string]st
 	// A file of yours that a connection reads moves under it, so only you see it, as you see what it syncs; one a
 	// connection of yours synced, like a Drive file, stays where it is.
 	for _, f := range files {
+		// One named by its file's id, as each import is so it stays its own connection, shows the file's name right away,
+		// numbered like "takeout (2).zip" when another of yours has that name
+		if g.Account == f.ID.String() {
+			ext := filepath.Ext(f.Name)
+			names := []string{f.Name}
+			for i := 2; i <= 50; i++ {
+				names = append(names, fmt.Sprintf("%s (%d)%s", strings.TrimSuffix(f.Name, ext), i, ext))
+			}
+			err := a.sys(ctx, func(ctx context.Context) error {
+				_, err := a.st.Q(ctx).Exec(ctx, "UPDATE archive.connection c SET account = coalesce((SELECT x.n FROM unnest($2::text[]) WITH ORDINALITY x(n, i) "+
+					"WHERE NOT EXISTS (SELECT FROM archive.connection o WHERE o.member = c.member AND o.provider = c.provider AND o.account = x.n) "+
+					"ORDER BY x.i LIMIT 1), c.account) WHERE c.id = $1", conn, names)
+				return err
+			})
+			if err != nil {
+				return err
+			}
+		}
 		if f.Connection != nil {
 			continue
 		}

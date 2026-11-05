@@ -4946,6 +4946,15 @@ SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, 
 WHERE id > sqlc.arg(after) AND (NOT sqlc.arg(tree)::bool OR parent IS NOT DISTINCT FROM sqlc.narg(in_folder)::uuid AND (sqlc.narg(in_folder)::uuid IS NOT NULL OR connection IS NOT DISTINCT FROM sqlc.narg(of_connection)::uuid))
 ORDER BY id LIMIT sqlc.arg(lim);
 
+-- name: ExportFiles :many
+-- Files a person could import as an export: copied in, not a folder, named like one, and not already under an import. Zips and
+-- other whole exports come first, then the newest.
+SELECT f.id, f.hash, f.name, f.mime, f.size, f.metadata, f.status, f.error, f.access, f.created_at, f.kind, f.parent, f.connection, f.stream, f.source_id, f.version, coalesce(f.url::text, '')::text AS url, f.drive, f.owner_name, f.editor_name, f.made_at, f.edited_at, f.updated_at FROM archive.file f
+WHERE f.kind = 'file' AND f.hash <> '' AND f.name ~* '\.(zip|json|ged|gedcom|csv|txt|mbox|ics|vcf|db)$'
+  AND NOT EXISTS (SELECT FROM archive.connection c WHERE c.id = f.connection AND c.provider = 'import')
+  AND (sqlc.arg(q)::text = '' OR f.name ILIKE '%' || sqlc.arg(q)::text || '%')
+ORDER BY f.name ~* '\.(zip|ged|gedcom|mbox|db)$' DESC, coalesce(f.edited_at, f.created_at) DESC, f.id LIMIT 50;
+
 -- name: FileSources :many
 SELECT c.id, c.provider, c.account FROM archive.connection c WHERE EXISTS (SELECT FROM archive.file f WHERE f.connection = c.id) ORDER BY c.provider, c.account, c.id;
 
