@@ -855,6 +855,9 @@ func (h *Hub) localUser(ctx context.Context, want string) (*Archive, *Actor, fun
 
 func (h *Hub) enter(ctx context.Context, t generated.AuthenticateRow, want string) (*Archive, *Actor, func(), error) {
 	short := cmp.Or(t.Workspace, want)
+	if short == "" && t.Kind == "api" && len(t.Workspaces) > 1 {
+		return nil, nil, nil, h.pickWorkspace(ctx, t.UserID)
+	}
 	if short == "" && len(t.Workspaces) > 0 {
 		short = t.Workspaces[0]
 	}
@@ -881,6 +884,7 @@ func (h *Hub) enter(ctx context.Context, t generated.AuthenticateRow, want strin
 		release()
 		return nil, nil, nil, err
 	}
+	ac.scoped = t.Workspace != ""
 	if t.Kind != "session" {
 		ac.TokenName = t.Name
 	}
@@ -888,6 +892,18 @@ func (h *Hub) enter(ctx context.Context, t generated.AuthenticateRow, want strin
 		ac.Role, ac.TokenID = cmp.Or(t.Role, ac.Role), t.ID
 	}
 	return a, ac, release, nil
+}
+
+func (h *Hub) pickWorkspace(ctx context.Context, user uuid.UUID) error {
+	rows, err := h.q().UserWorkspaces(ctx, user)
+	if err != nil {
+		return err
+	}
+	names := make([]string, len(rows))
+	for i, w := range rows {
+		names[i] = fmt.Sprintf("%s (%s)", w.Name, w.ID)
+	}
+	return fmt.Errorf("this key works in several workspaces, so send Archive-Workspace with the id of one: %s: %w", strings.Join(names, ", "), httpErrBadRequest)
 }
 
 func (h *Hub) httpAuth(next func(a *Archive) http.Handler) http.Handler {

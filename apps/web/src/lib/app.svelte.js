@@ -29,8 +29,9 @@ export const app = $state({
   pending: null,
   muted: false,
   settings: { open: false, section: null, sub: null },
+  apiKey: null,
   archiveKeys: {},
-  archiveApps: {},
+  apps: [],
   onboarding: [],
   ownConnections: []
 });
@@ -795,42 +796,49 @@ export function archiveKey() {
   return app.archiveKeys[app.archive] ?? null;
 }
 
+const personalKey = (x) => x.name === KEY_NAME && !x.app && !x.workspace;
+const workspaceKey = (id) => (x) => x.name === KEY_NAME && !x.app && x.workspace === id;
+const newest = (list) => [...list].sort((a, b) => b.created_at.localeCompare(a.created_at));
+
+async function withSecret(kept, t) {
+  if (kept?.secret && kept.id === t?.id) return kept;
+  if (!t) return null;
+  const secret = (await call(`/auth/tokens/${t.id}/secret`).catch(() => null))?.secret ?? '';
+  return { id: t.id, secret };
+}
+
 export const tokens = resource({
   tables: ['archive.token'],
   load: async () => {
     const id = app.archive;
     const list = (await call('/auth/tokens')) ?? [];
-    app.archiveApps[id] = list.filter((x) => x.app).sort((a, b) => b.created_at.localeCompare(a.created_at));
-    const t = list.filter((x) => x.name === KEY_NAME && !x.app).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
-    if (app.archiveKeys[id]?.secret && app.archiveKeys[id].id === t?.id) return;
-    const secret = t ? ((await call(`/auth/tokens/${t.id}/secret`).catch(() => null))?.secret ?? '') : '';
-    app.archiveKeys[id] = t ? { id: t.id, secret, date: `Created ${new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` } : null;
+    app.apps = newest(list.filter((x) => x.app));
+    app.apiKey = await withSecret(app.apiKey, newest(list.filter(personalKey))[0]);
+    app.archiveKeys[id] = await withSecret(app.archiveKeys[id], newest(list.filter(workspaceKey(id)))[0]);
   }
 });
 
-export function archiveApps() {
-  return app.archiveApps[app.archive] ?? [];
-}
-
 export async function revokeApp(id) {
-  const before = app.archiveApps[app.archive];
-  app.archiveApps[app.archive] = archiveApps().filter((x) => x.id !== id);
+  const before = app.apps;
+  app.apps = before.filter((x) => x.id !== id);
   try {
     await call(`/auth/tokens/${id}`, { method: 'DELETE' });
   } catch (e) {
-    app.archiveApps[app.archive] = before;
+    app.apps = before;
     complain(e, 'Couldn’t disconnect it');
   }
 }
 
-export async function rotateKey() {
-  if (!isArchiveOwner()) return;
+export async function rotateKey(personal = false) {
+  if (!personal && !isArchiveOwner()) return;
   const id = app.archive;
   try {
-    const old = (await call('/auth/tokens')).filter((x) => x.name === KEY_NAME);
-    const t = await call('/auth/tokens', { method: 'POST', body: { name: KEY_NAME } });
+    const old = (await call('/auth/tokens')).filter(personal ? personalKey : workspaceKey(id));
+    const t = await call('/auth/tokens', { method: 'POST', body: { name: KEY_NAME, personal } });
     for (const o of old) await call(`/auth/tokens/${o.id}`, { method: 'DELETE' }).catch(() => {});
-    app.archiveKeys[id] = { id: t.id, secret: t.token, date: old.length ? 'Rotated just now' : 'Created just now' };
+    const key = { id: t.id, secret: t.token };
+    if (personal) app.apiKey = key;
+    else app.archiveKeys[id] = key;
   } catch (e) {
     complain(e, 'Couldn’t make a new key');
   }
