@@ -795,7 +795,7 @@ func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string
 	if err := q.AdvisoryXactLock(ctx, storeLock); err != nil {
 		return nil, err
 	}
-	restore, err := schemaSettings(ctx, sp, "lock_timeout", "search_path")
+	restore, err := schemaSettings(ctx, sp, "lock_timeout", "search_path", "role")
 	if err != nil {
 		return nil, err
 	}
@@ -803,6 +803,9 @@ func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string
 		return nil, err
 	}
 	if err := q.SetLocal(ctx, "search_path", "public"); err != nil {
+		return nil, err
+	}
+	if err := q.SetLocal(ctx, "role", s.prefix+"_manager"); err != nil {
 		return nil, err
 	}
 	before, err := pgRead(ctx, sp, "archive", "public")
@@ -1317,6 +1320,9 @@ func (s *pgStore) migrate(ctx context.Context) error {
 		if _, err := tx.Exec(ctx, fileInheritOnce); err != nil {
 			return fmt.Errorf("files in folders: %w", err)
 		}
+		if _, err := tx.Exec(ctx, s.expand(storeMigrateRole)); err != nil {
+			return fmt.Errorf("migration role: %w", err)
+		}
 		return generated.New(tx).InsertRevision(ctx, s.hash())
 	})
 	if err != nil || !applied {
@@ -1342,6 +1348,40 @@ BEGIN
         EXCEPTION WHEN unique_violation THEN
             UPDATE archive.file c SET name = 'Copy ' || left(c.id::text, 4) || ' ' || c.name, access = p.access FROM archive.file p WHERE c.id = r.id AND p.id = c.parent;
         END;
+    END LOOP;
+END $$`
+
+const storeMigrateRole = `DO $$
+DECLARE
+    sys text := current_user;
+    r record;
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{p}_base') THEN
+        CREATE ROLE "{p}_base" NOLOGIN;
+    END IF;
+    GRANT "{p}_base" TO "{p}_manager" WITH INHERIT TRUE, SET FALSE;
+    EXECUTE format('GRANT "{p}_base" TO %I WITH INHERIT FALSE, SET TRUE', sys);
+    EXECUTE format('GRANT "{p}_manager" TO %I WITH INHERIT FALSE, SET TRUE', sys);
+    GRANT CREATE ON SCHEMA archive TO "{p}_base";
+    GRANT CREATE, USAGE ON SCHEMA public TO "{p}_manager";
+    GRANT REFERENCES ON archive."group" TO "{p}_manager";
+    ALTER TABLE archive.object OWNER TO "{p}_base";
+    FOR r IN SELECT c.oid::regclass AS ident, c.relkind FROM pg_catalog.pg_class c
+        WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p', 'v', 'S')
+          AND c.relowner = sys::regrole AND NOT c.relispartition LOOP
+        EXECUTE format('ALTER %s %s OWNER TO "{p}_manager"',
+            CASE r.relkind WHEN 'v' THEN 'VIEW' WHEN 'S' THEN 'SEQUENCE' ELSE 'TABLE' END, r.ident);
+    END LOOP;
+    FOR r IN SELECT oid::regprocedure AS ident FROM pg_catalog.pg_proc
+        WHERE pronamespace = 'public'::regnamespace AND proowner = sys::regrole LOOP
+        EXECUTE format('ALTER ROUTINE %s OWNER TO "{p}_manager"', r.ident);
+    END LOOP;
+    FOR r IN SELECT t.oid::regtype AS ident, t.typtype FROM pg_catalog.pg_type t
+        WHERE t.typnamespace = 'public'::regnamespace AND t.typowner = sys::regrole
+          AND (t.typtype IN ('d', 'e') OR t.typtype = 'c' AND EXISTS (
+              SELECT FROM pg_catalog.pg_class c WHERE c.oid = t.typrelid AND c.relkind = 'c')) LOOP
+        EXECUTE format('ALTER %s %s OWNER TO "{p}_manager"',
+            CASE r.typtype WHEN 'd' THEN 'DOMAIN' ELSE 'TYPE' END, r.ident);
     END LOOP;
 END $$`
 

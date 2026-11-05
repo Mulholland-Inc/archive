@@ -3302,7 +3302,7 @@ BEGIN
     END IF;
 END $$;
 
-CREATE FUNCTION archive.ddl(k text, stmt text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+CREATE FUNCTION archive.ddl(k text, stmt text) RETURNS void LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
 BEGIN
     PERFORM archive.ddl_allowed(k);
     EXECUTE stmt;
