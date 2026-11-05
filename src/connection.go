@@ -1241,6 +1241,9 @@ var syncSchema = map[string]syncTable{
 	"health_sleep":                     {},
 	"health_workout":                   {},
 	"health_record":                    {},
+	"music_playlist":                   {},
+	"music_track":                      {links: map[string]string{"playlist": "music_playlist"}},
+	"music_artist":                     {},
 }
 
 type syncRec struct {
