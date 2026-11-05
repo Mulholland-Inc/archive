@@ -156,6 +156,7 @@ const (
 
 	CatCompliance Category = "Compliance"
 	CatData       Category = "Data"
+	CatHealth     Category = "Health"
 
 	IconMail     Icon = "mail"
 	IconUsers    Icon = "users"
@@ -171,6 +172,7 @@ const (
 	IconBug      Icon = "bug"
 
 	IconWarehouse Icon = "warehouse"
+	IconHeart     Icon = "heart"
 )
 
 type Who struct {
@@ -178,6 +180,7 @@ type Who struct {
 	Names []Path
 	Lower bool
 	Find  string `json:",omitempty"`
+	As    string `json:",omitempty"`
 	Each  Path
 	Where Test
 	Tool  string
@@ -821,6 +824,13 @@ func (w *Who) read(cl *Client, c *Connector) (string, error) {
 		}
 		s = strings.Join(names, ", ")
 	}
+	if w.As != "" {
+		sc := cl.scope()
+		sc["who"] = ans
+		if v, _ := fillStr(w.As, sc); strings.Trim(text(v), " ·") != "" {
+			s = strings.Trim(text(v), " ·")
+		}
+	}
 	if w.Lower {
 		s = strings.ToLower(s)
 	}
@@ -1384,7 +1394,7 @@ func (sp *Span) dates(sc map[string]any, again bool) []any {
 		if end.After(last) {
 			end = last
 		}
-		out = append(out, map[string]any{"start": start.Format(time.DateOnly), "end": end.Format(time.DateOnly)})
+		out = append(out, map[string]any{"start": start.Format(time.DateOnly), "end": end.Format(time.DateOnly), "after": end.AddDate(0, 0, 1).Format(time.DateOnly)})
 	}
 	return out
 }
