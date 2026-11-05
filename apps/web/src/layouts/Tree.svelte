@@ -3,19 +3,12 @@
   import { fill } from './fill.js';
   import { label, figure } from './format.js';
 
-  // A tree: each row under the row its by column links to, an outline with lines from each row to those under
-  // it, for an org chart, a family, folders or categories. A row whose by is empty, or names a row not here, is
-  // a root. Beside each name are up to three of its other columns, in columns of their own. The names stay at
-  // the top and the rows scroll under them.
   let { view, rows, shown, text, pick } = $props();
 
   const byCol = $derived(view.columns.find((c) => c.name === view.by));
-  // The by column links rows of the view to rows of it, or of the table it reads.
   const self = $derived(Boolean(byCol) && [view.id, baseOf(view)].includes(linkOf(view, byCol)));
   const details = $derived(shown.filter((c) => c.name !== view.by && c.type !== 'long' && c.type !== 'file').slice(0, 3));
 
-  // The rows in outline order, each with its depth, whether it is the last under its parent, and for each row
-  // above it whether more come under that one after it, which is where a line runs on down.
   const lines = $derived.by(() => {
     const ids = new Set(rows.map((r) => r.id));
     const parent = (r) => (self && r[view.by] !== r.id && ids.has(r[view.by]) ? r[view.by] : null);
@@ -36,7 +29,6 @@
         walk(under.get(r.id) ?? [], [...guides, !last]);
       });
     walk(under.get(null) ?? [], []);
-    // Rows that only lead back to each other have no root; they are roots of their own.
     walk(rows.filter((r) => !seen.has(r.id)), []);
     return out;
   });
@@ -62,8 +54,6 @@
 </div>
 
 <style>
-  /* On a page too narrow for the names and their details, the tree scrolls sideways rather than squeeze the
-     names. */
   .tree {
     display: flex;
     height: var(--view-fill);
@@ -71,7 +61,6 @@
     overflow-x: auto;
   }
 
-  /* Every row, the head's too, has the same columns: the outline, then each detail. */
   .row {
     display: grid;
     min-width: min-content;
@@ -92,7 +81,6 @@
     text-align: end;
   }
 
-  /* The rows scroll in a box as much wider than the tree as a row's hover reaches out past it. */
   .scroll {
     min-height: 0;
     flex: 1;
@@ -101,7 +89,6 @@
     overflow-y: auto;
   }
 
-  /* A row's text starts where the head's does; its hover reaches out past it. */
   .item {
     width: calc(100% + 2 * var(--space-3));
     height: var(--view-tree-row);
@@ -125,9 +112,6 @@
     align-items: center;
   }
 
-  /* A guide is one step of indent. Its line runs down from under the start of the name of the row it belongs
-     to: on through the step when more rows come under that one, and in the last step curving into the name it
-     leads to, stopping short of it. */
   .guide {
     position: relative;
     flex: none;
@@ -150,8 +134,6 @@
     display: none;
   }
 
-  /* Each line is drawn once, as its color is see-through and would darken where two overlap: a row with more
-     after it branches straight off the line running on, and the last one is the line's own end, curving in. */
   .elbow::after {
     content: '';
     position: absolute;

@@ -1,6 +1,3 @@
-// What each of the app's pages reads, so a link to it can read that before it is followed (router.svelte.js).
-// A resource read this way is fresh when the page uses it, so the page shows it at once; one that moved since
-// is read again as usual.
 
 import { preloadWith } from './router.svelte.js';
 import { agents, library, members, workflows, runs, schema, counts, preview, viewRows } from './app.svelte.js';

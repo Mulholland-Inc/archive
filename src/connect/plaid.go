@@ -2,28 +2,6 @@ package connect
 
 import "time"
 
-// Plaid, which reads a bank login's accounts and transactions for apps: an owner connects the business's bank
-// for everyone, through Plaid Link, Plaid's own widget, where they pick the bank and sign in to it, never to
-// Archive. ARCHIVE_PLAID is https://<client id>:<secret>@production.plaid.com, the keys of Mulholland's Plaid team;
-// @sandbox.plaid.com with its Sandbox secret reads Plaid's test banks instead. Every call is a POST with the
-// client in its headers.
-//
-// Link starts with a link token for Transactions alone, two years of it, with Archive's push URL as its webhook
-// and the bank's integrations page as its redirect URI, which Plaid's dashboard must list, for the banks, like
-// Chase, whose sign-in is their own (OAuth) and sends the browser back there. Link hands the app a public token,
-// which connecting trades for the login's access token and item id. Only reads are ever asked for: no transfer,
-// payment or Auth, so Archive never sees an account number. Disconnecting removes the login at Plaid, which
-// ends its access token and Plaid's monthly charge for it.
-//
-// It syncs the login's accounts with their balances, as Plaid last refreshed them (/accounts/get, which Plaid does
-// not charge for, unlike /accounts/balance/get), listed whole each sync; and its transactions, through
-// /transactions/sync: all of them the first time, 500 a page, and then from the cursor the last sync ended at,
-// what was added, changed and removed since. A removed transaction is only its ids. A change while a sync pages
-// (TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION, a 400) starts it again from where it began. Plaid's webhooks,
-// signed with a JWS, name the item_id, and SYNC_UPDATES_AVAILABLE among them is new transactions.
-//
-// Its actions only read, from what Plaid already holds and does not charge for by the call: the login's state, its
-// accounts, and transactions between two dates. None asks Plaid to refresh anything.
 func init() {
 	Register(&Connector{
 		ID: "plaid", Name: "Plaid", Integration: true, Env: "ARCHIVE_PLAID", Host: "https://production.plaid.com",
@@ -93,13 +71,10 @@ func init() {
 	})
 }
 
-// A balance's currency, US dollars when Plaid names none.
 const plaidBalanceCurrency = "coalesce(nullif(data#>>'{balances,iso_currency_code}', ''), 'USD')"
 
 var plaidLogin = Obj{"access_token": "{key/access_token}"}
 
-// Transactions from a cursor, with the statement line as the bank wrote it beside Plaid's cleaned-up name: none for
-// the first page of a listing, the page's for the next, and the last sync's for a delta's first.
 var (
 	plaidList = Req{Method: POST, Read: true, URL: "/transactions/sync",
 		Body: Obj{"access_token": "{key/access_token}", "cursor": "{page}", "count": 500, "options": Obj{"include_original_description": true}}}

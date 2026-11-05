@@ -6,15 +6,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Klaviyo, the email and SMS marketing platform, read only through its API. It reads ARCHIVE_KLAVIYO, an OAuth
-// app of a Klaviyo account whose redirect URLs list <API>/connect/klaviyo/callback, with the read scopes here;
-// Klaviyo takes the client as HTTP Basic, wants PKCE, and revokes a refresh token the same way. An owner
-// connects the account for everyone.
-//
-// It syncs every profile into crm_contact, the person of their email, and every email and SMS campaign into
-// marketing_campaign. Profiles are listed whole the first time and a week after, which deletes those gone, and
-// in between read by when they changed since the sync before; campaigns, which are few, are listed whole each
-// sync. It pushes nothing: Klaviyo's webhooks are for its partners.
 func init() {
 	Register(&Connector{
 		ID: "klaviyo", Name: "Klaviyo", Integration: true,
@@ -48,7 +39,6 @@ func init() {
 						"made_at": "archive.sync_at(data#>>'{attributes,created}')", "edited_at": "archive.sync_at(data#>>'{attributes,updated}')"},
 					People: map[string]SQL{"person": "data#>>'{attributes,email}'"}}},
 			{Name: "campaigns", Gap: time.Second, Req: Req{URL: "/campaigns", Header: klaviyoHead, Query: Q{"filter": "equals(messages.channel,'{part}')"}}, Items: "data", Updated: "attributes/updated_at", Page: klaviyoPage,
-				// Klaviyo lists one channel at a time.
 				Parts: &Parts{Fixed: []Obj{{"id": "email"}, {"id": "sms"}}},
 				Set:   Obj{"channel": "{part}"},
 				Doc: "Every email and SMS campaign, by its id, with its name, status and when it was scheduled and sent: listed whole each sync, " +
@@ -62,7 +52,6 @@ func init() {
 }
 
 var (
-	// klaviyoHead is the version of Klaviyo's API the connector reads, which every request names.
 	klaviyoHead = map[string][]string{"Revision": {"2025-07-15"}, "Accept": {"application/vnd.api+json"}}
 	klaviyoPage = NextURL{At: "links/next"}
 )

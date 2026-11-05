@@ -6,20 +6,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Brex, the corporate card and spend platform, read only through its API. It reads ARCHIVE_BREX, the OAuth client
-// Brex issues a partner, whose redirect URIs, which Brex sets, list <API>/connect/brex/callback; Brex takes the client
-// in the form, gives a refresh token for offline_access and a new one with every refresh, and only an account admin
-// connects a company, for everyone. Its staging, on two hosts of its own, is not a sandbox, so this reads production
-// alone.
-//
-// It syncs the company's departments, people and cards, every expense into spend_transaction with its receipts, card
-// purchases and reimbursements alike, and its vendors into ledger_contact. Brex's expenses are what its people spend,
-// with a memo, category and receipts, but not the card; its card transactions, which name the card and nothing more,
-// the get action reads. It has no API for bills, whose payments are expenses too. Expenses are listed whole the first
-// time and a week after, which deletes those gone, and in between by what was updated since the sync before; the rest,
-// which are few, are listed whole each sync. Its scopes only read, and so do its actions: nothing here moves money,
-// issues or changes a card, or approves spend, and cards.pan, which shows a card's number, is not asked for. Brex has
-// webhooks, which Archive does not register yet: connecting, asking and reading start a sync.
 func init() {
 	Register(&Connector{
 		ID: "brex", Name: "Brex", Integration: true,
@@ -85,7 +71,6 @@ func init() {
 	})
 }
 
-// Brex's money is { amount, currency }, the amount in cents.
 const (
 	brexAmount   SQL = "archive.sync_money((archive.sync_num(data#>>'{billing_amount,amount}') / 100)::text, data#>>'{billing_amount,currency}')"
 	brexOriginal SQL = "archive.sync_money((archive.sync_num(data#>>'{original_amount,amount}') / 100)::text, data#>>'{original_amount,currency}')"
@@ -93,8 +78,7 @@ const (
 )
 
 var (
-	brexQuery = Q{"limit": "100", "cursor": "{page}"}
-	// An expense names its spender, department and merchant by id unless asked for them.
+	brexQuery    = Q{"limit": "100", "cursor": "{page}"}
 	brexExpenses = Q{"limit": "100", "cursor": "{page}", "expand[]": "{expand}"}
 	brexPage     = Cursor{At: "next_cursor"}
 )

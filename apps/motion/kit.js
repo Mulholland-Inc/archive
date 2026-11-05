@@ -1,4 +1,3 @@
-// The vocabulary films are written in. A shot builds GSAP tweens on plain values once; a frame only seeks and draws.
 import gsap from './node_modules/gsap/index.js';
 import { BRANDS } from '../kit/brands.js';
 import { W, H, hooks, register, TR } from './engine.js';
@@ -10,7 +9,6 @@ export const SERIF = '"EB Garamond"', SANS = '"Inter Tight"';
 
 gsap.ticker.sleep();
 
-// Easing presets: named by how they feel.
 const spring = (k, d) => x => (x >= 1 ? 1 : 1 - Math.exp(-d * x) * Math.cos(k * x));
 export const EASE = {
   snap: 'expo.out', quart: 'power3.out', soft: x => x * x * x * (x * (6 * x - 15) + 10), glide: 'sine.inOut', settle: 'expo.inOut', pop: 'back.out(1.7)', in: 'power3.in', linear: 'none',
@@ -23,7 +21,6 @@ export const mix = (a, b, x) => a + (b - a) * x;
 export const hash = n => { const s = Math.sin(n * 12.9898) * 43758.5453; return s - Math.floor(s); };
 const rad = d => d * Math.PI / 180;
 
-// Assets stay loaded across film reloads.
 const marks = new Map();
 let word = [];
 await Promise.all([`500 100px ${SERIF}`, `500 100px ${SANS}`].map(f => document.fonts.load(f)));
@@ -107,7 +104,6 @@ export function zoomed(g, s, cx, cy, draw) {
   g.restore();
 }
 
-// Strokes the first p of a polyline: charts and links draw on with this.
 export function curve(g, pts, p) {
   const n = (pts.length - 1) * clamp(p), whole = Math.floor(n);
   if (n <= 0) return;
@@ -126,14 +122,12 @@ export function basis(cam) {
   return { right, up };
 }
 
-// Slides a camera so its center sits (dx, dy) pixels from the middle of the frame.
 export function shifted(cam, dx, dy) {
   const { right, up } = basis(cam);
   const k = 1 / cam.zoom;
   return { ...cam, center: cam.center.map((v, i) => v - right[i] * dx * k + up[i] * dy * k) };
 }
 
-// Where a world point lands on screen under a camera.
 export function project(p, cam) {
   const { right, up } = basis(cam);
   const d = p.map((v, i) => v - cam.center[i]);
@@ -149,7 +143,6 @@ class Shot {
     this.motion = 0;
   }
 
-  // A plain value that animates from `from` to `to` starting at `at`. Read it with .v in draw.
   v(at, d, name = 'snap', from = 0, to = 1) {
     const o = { v: from };
     this.tl.to(o, { v: to, duration: d, ease: ease(name), lazy: false }, at);
@@ -157,7 +150,6 @@ class Shot {
     return o;
   }
 
-  // Keyframes of one value: s.keys(0, [[1.2, 0.5, 'soft'], [2, 0.3, 'spring']]) goes to each value in turn. Each key is [value, duration, ease, delay].
   keys(from, list, at = 0) {
     const o = { v: from };
     let t = at;
@@ -170,7 +162,6 @@ class Shot {
     return o;
   }
 
-  // A camera move: values from `a` to `b`. Numbers tween, arrays tween per element; call with no args for the camera now.
   cam(a, b, at = 0, d = this.dur, name = 'soft') {
     const o = { x: 0 };
     this.tl.to(o, { x: 1, duration: d, ease: ease(name), lazy: false }, at);
@@ -183,7 +174,6 @@ class Shot {
     };
   }
 
-  // Masked type: words rise out of their baselines in sequence. Returns a function that draws it.
   type(lines, { x = 96, y = 200, size = 120, lead = size * 1.04, at = 0, gap = 0.04, d = 0.28, ease: e = 'snap', center = false, color = C.ink, family = SERIF, hot = [], hotColor = C.lime, leave } = {}) {
     const words = [];
     let n = 0;
@@ -216,7 +206,6 @@ class Shot {
     };
   }
 
-  // Word swap: each entry takes the spot at its time, pushing the last one up and out.
   swap(entries, { x, y, size, color = C.lime, family = SERIF } = {}) {
     const list = entries.map(([word, at], i) => ({ word, a: this.v(at, 0.26, 'snap'), b: i + 1 < entries.length ? this.v(entries[i + 1][1], 0.2, 'quart') : null }));
     return g => {
@@ -235,7 +224,6 @@ class Shot {
     };
   }
 
-  // Lines of [lead, struck, tail] that rise one at a time, then a line cuts through each struck word.
   strike(rows, { x, y, size, lead = size * 1.1, at = 0, gap = 0.3, color = C.ink, line = C.lime, family = SERIF } = {}) {
     const list = rows.map((row, i) => ({ row, a: this.v(at + i * gap, 0.16), cut: this.v(at + i * gap + 0.2, 0.14) }));
     return g => {
@@ -255,14 +243,12 @@ class Shot {
     };
   }
 
-  // A bar that wipes in from the left, usually behind type.
   bar(x, y, w, h, color, at, d = 0.2, name = 'snap') {
     const a = this.v(at, d, name);
     return g => fill(g, color, x, y, w * a.v, h);
   }
 }
 
-// Registers a shot. shot('name', seconds, 'left', s => (g, t) => {...}). The enter kind is optional.
 export function shot(name, dur, a, b) {
   const enter = typeof a === 'string' ? a : null;
   register(name, dur, enter, b ?? a);

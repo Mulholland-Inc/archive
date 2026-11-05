@@ -18,9 +18,6 @@
   import { ws, schema, viewRows, linkOf, tableOf, shownOf, titleOf, cellText, renameView, isArchiveOwner } from '../lib/app.svelte.js';
   import { layoutOf } from '../layouts/index.js';
 
-  // A view, drawn the way its comment's layout says (../layouts), under the same header whatever it is. The
-  // rows are the view's own, as row-level security lets the member see them. Each row is called by its name,
-  // and each link by the name of the row it names, never by an id.
   let { id } = $props();
 
   schema.use();
@@ -30,14 +27,10 @@
   const all = $derived(ws().viewRows?.[id] ?? []);
   const shown = $derived(shownOf(view));
   const layout = $derived(layoutOf(view));
-  // Archive's own tables are shown as views are, but they are Archive's: not renamed, and with no page of DDL.
   const mine = $derived(Boolean(view) && ws().schema.includes(view));
   const text = (c, r) => cellText(view, c, r);
   const label = (c) => c.name.replaceAll('_', ' ').replace(/^./, (x) => x.toUpperCase());
 
-  // Search reads every shown column; the chips are the values of the column the view groups by, unless it is a
-  // date, place or number, or failing that its first column of few values that repeat: one whose rows each have
-  // their own, like an id from another service, filters nothing. Sort is by any shown column.
   let query = $state('');
   let filter = $state(null);
   let sort = $state('');
@@ -63,7 +56,6 @@
     return [...out].sort((a, b) => key(a).localeCompare(key(b), undefined, { numeric: true }));
   });
 
-  // A row opens its own page, like a table's.
   const pick = (r) => r.id && go(`/view/${id}/${r.id}`);
 
   function clear() {

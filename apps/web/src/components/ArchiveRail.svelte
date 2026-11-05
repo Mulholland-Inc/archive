@@ -40,7 +40,6 @@
     transition: background-color var(--duration-normal) var(--ease-out);
   }
 
-  /* The image is bigger than its circle, and stays centred on it. */
   .mark {
     position: relative;
     display: grid;

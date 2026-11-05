@@ -6,23 +6,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// SharePoint: the document libraries of the SharePoint sites a Microsoft 365 work or school account can reach,
-// and its own OneDrive, which is one of them, through Microsoft Graph. It reads ARCHIVE_OUTLOOK, the
-// app registration in Microsoft Entra that Outlook connects with, like Gmail and Google Drive share
-// ARCHIVE_GOOGLE: its web redirect URIs list <API>/connect/sharepoint/callback too, and its delegated Graph
-// permissions add Files.ReadWrite.All, for upload, and Sites.Read.All, which a tenant may ask an admin to consent to. Personal
-// Microsoft accounts have no SharePoint, so it signs in through the organizations endpoint. Microsoft replaces
-// the refresh token on every refresh, and has no endpoint that revokes one grant: a person removes Archive at
-// myapps.microsoft.com.
-//
-// It syncs every file and folder of every library into archive.file, each library with Graph's delta of it, as
-// Outlook syncs each folder.
-//
-// Graph pushes a library's changes only to a subscription of each library: to the top of it, which tells of a change
-// anywhere in it, with a clientState of Archive's own, for 42,000 minutes, under the 42,300 Graph allows a drive's: the
-// first sync after a library's comes within 27 days of ending renews it, one for a library made since is made, and one
-// for a library gone is deleted. A library Graph will not subscribe to, as some system libraries are, is left to the
-// syncs that start otherwise.
 func init() {
 	Register(&Connector{
 		ID: "sharepoint", Name: "SharePoint", Env: "ARCHIVE_OUTLOOK",
@@ -96,14 +79,12 @@ func init() {
 			Req:   Req{URL: "/drives/{part}/root/delta?$select=id,name,size,eTag,cTag,webUrl,file,folder,root,parentReference,createdDateTime,lastModifiedDateTime,createdBy,lastModifiedBy,deleted"},
 			Items: "value", Key: []Reads{{Of: "{part}/{id}"}}, Updated: "lastModifiedDateTime", Page: spPage, Pass: []int{403, 404},
 			Change: Resume{At: "@odata.deltaLink", Expired: []int{410}, Stale: []Deny{{Status: []int{400}, Says: []string{"SyncState", "resyncRequired", "sync state"}}}},
-			// A library's top is left out.
-			Gone: []Test{{At: "deleted"}, {At: "@removed"}}, Skip: []Test{{At: "root"}},
+			Gone:   []Test{{At: "deleted"}, {At: "@removed"}}, Skip: []Test{{At: "root"}},
 			Set:     Obj{"drive": "{in/name}", "driveId": "{part}"},
 			Content: []Content{{Req: Req{URL: "/drives/{source/drive}/items/{source/item}/content"}, Size: "size"}},
 			Doc: "Every file and folder of your OneDrive and of each document library of each SharePoint site you can reach: its name, type, " +
 				"folder, library, who made it and changed it last and when, and a copy of its bytes up to 1 GB, with its words. Listed whole the first time, a library at a time, by <library id>/<item id>, and then each " +
 				"library's delta since. A library made since is listed whole; one gone, or a delta Graph no longer keeps, lists them all again.",
-			// An item's folder is its parent, which links unless it is the library's top, which is no row; and its owner who made it.
 			To: Map{Table: "file",
 				Cols: map[string]SQL{"kind": "CASE WHEN data->'folder' IS NOT NULL THEN 'folder' ELSE 'file' END", "name": "data->>'name'",
 					"mime": "CASE WHEN data->'folder' IS NOT NULL THEN 'inode/directory' ELSE coalesce(data#>>'{file,mimeType}', 'application/octet-stream') END", "version": "coalesce(data->>'cTag', data->>'eTag')",
@@ -116,11 +97,8 @@ func init() {
 }
 
 var (
-	spPage   = NextURL{At: "@odata.nextLink"}
-	spUpBody = Obj{"item": Obj{"@microsoft.graph.conflictBehavior": "fail"}}
-	// spLibraries are the account's OneDrive, when it has one, and the libraries of the sites it reaches, each once,
-	// named by its site and itself, like Finance / Documents. A site Graph will not list the libraries of, as it answers
-	// 403 for some system sites, is left out.
+	spPage      = NextURL{At: "@odata.nextLink"}
+	spUpBody    = Obj{"item": Obj{"@microsoft.graph.conflictBehavior": "fail"}}
 	spLibraries = &Parts{Req: Req{URL: "/me/drive?$select=id"}, Soft: []int{404}, Vals: Obj{"name": "OneDrive"},
 		Also: []*Parts{{Req: Req{URL: "/sites?$select=id,displayName,name,webUrl&$top=200", Query: Q{"search": "*"}}, Items: "value", Page: spPage,
 			Under: &Parts{Req: Req{URL: "/sites/{up/id}/drives?$select=id,name,webUrl"}, Items: "value", Page: spPage, Soft: []int{403, 404}, Vals: Obj{"name": "{up/displayName;up/name} / {name}"}}}}}

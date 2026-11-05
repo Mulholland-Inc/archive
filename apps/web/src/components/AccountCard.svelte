@@ -1,6 +1,6 @@
 <script>
   import { getContext } from 'svelte';
-  import { Bell, BellOff, Moon, Settings, User, Plug, LifeBuoy, LogOut } from '@lucide/svelte';
+  import { Bell, BellOff, Moon, Settings, Plug, LifeBuoy, LogOut } from '@lucide/svelte';
   import Avatar from './Avatar.svelte';
   import IconButton from './IconButton.svelte';
   import Menu from './Menu.svelte';
@@ -40,7 +40,6 @@
       </span>
     </div>
   {/snippet}
-  <MenuItem icon={User} onselect={() => settings('profile')}>Profile</MenuItem>
   <MenuItem icon={Plug} onselect={() => settings('connectors')}>Connectors</MenuItem>
   <MenuItem icon={LifeBuoy} onselect={help}>Help</MenuItem>
   <MenuItem icon={Moon} toggle={theme.resolved === 'dark'} keepOpen onselect={toggleTheme}>Dark mode</MenuItem>

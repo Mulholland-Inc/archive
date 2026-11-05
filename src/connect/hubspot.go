@@ -6,11 +6,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// HubSpot's CRM: contacts, companies and deals, read, and when asked made, changed, linked and archived (to
-// HubSpot's recycling bin, which keeps them 90 days). Its app, in a HubSpot developer project, lists
-// <API>/connect/hubspot/callback among its redirect URLs, and exactly the Scopes here as required. Its webhooks are
-// set up once on the app, to <API>/push/hubspot, for the creation, deletion and property changes of contacts,
-// companies and deals; a push is an array of events, each with the portalId of its account, the hub_id of its token.
 func init() {
 	Register(&Connector{
 		ID: "hubspot", Name: "HubSpot", Integration: true,
@@ -127,10 +122,8 @@ var (
 	hubspotTypes      = []string{"contacts", "companies", "deals"}
 	hubspotIntrospect = Req{Method: POST, Read: true, URL: "https://api.hubspot.com/oauth/v3/token/introspect",
 		Form: Q{"client_id": "{client/id}", "client_secret": "{client/secret}", "token_type_hint": "access_token", "access_token": "{token}"}}
-	hubspotList = Req{URL: "/crm/v3/objects/{stream}", Query: Q{"limit": "100", "properties": "{props,}", "associations": "{with}", "after": "{page}"}}
-	hubspotPage = Cursor{At: "paging/next/after"}
-	// A search reaches no further than 10,000 results, so a delta bigger than that lists whole. It goes on from the
-	// last change it read, so a record that changes while it pages, and moves to the end, moves no other out of reach.
+	hubspotList   = Req{URL: "/crm/v3/objects/{stream}", Query: Q{"limit": "100", "properties": "{props,}", "associations": "{with}", "after": "{page}"}}
+	hubspotPage   = Cursor{At: "paging/next/after"}
 	hubspotSearch = SinceTime{Ms: true, Mark: "properties/{changed}", Most: 9900,
 		Req: Req{Method: POST, Read: true, URL: "/crm/v3/objects/{stream}/search", Body: Obj{"limit": 100, "properties": "{props}", "after": "{page}",
 			"filterGroups": []Obj{{"filters": []Obj{{"propertyName": "{changed}", "operator": "GTE", "value": "{since}"}}}},

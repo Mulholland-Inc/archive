@@ -48,20 +48,16 @@ type RunOutput struct {
 	Files  []runChange     `json:"files,omitempty"`
 }
 
-// runChange is a file a run touched, as its chat shows it. action is "created", "edited" or "read".
 type runChange struct {
 	ID     uuid.UUID `json:"id"`
 	Name   string    `json:"name"`
 	Action string    `json:"action"`
 }
 
-// runReadMax is how many files a run's reads note: one that reads through a library is no list of cards, and a model
-// reads this output on every later turn.
 const runReadMax = 20
 
 var runActions = map[string]int{"read": 0, "edited": 1, "created": 2}
 
-// change notes one, once per file, as the most it did to it.
 func (o *RunOutput) change(c runChange) {
 	i := slices.IndexFunc(o.Files, func(x runChange) bool { return x.ID == c.ID })
 	if i < 0 {
@@ -169,8 +165,6 @@ func (e runCompileErr) text() string {
 	return fmt.Sprintf("line %d:%d: %s", e.line, e.col, e.msg)
 }
 
-// runTransform strips the TypeScript in code down to JavaScript with esbuild, as the body of an async function;
-// that is all the checking code gets. Its errors give the line and column in code.
 func runTransform(code string) (string, []runCompileErr) {
 	res := api.Transform("(async () => {\n"+code+"\n})()", api.TransformOptions{Loader: api.LoaderTS, Target: api.ES2020, Sourcefile: "script.ts"})
 	var errs []runCompileErr
@@ -240,7 +234,6 @@ func (a *Archive) run(ctx context.Context, code string, input json.RawMessage) (
 	return out, r.at, nil
 }
 
-// runClock is a run's time budget: browse, model and do stop the run's clock and spend budgets of their own.
 type runClock struct {
 	t                 *time.Timer
 	end               time.Time
@@ -249,9 +242,6 @@ type runClock struct {
 	left              time.Duration
 }
 
-// pause stops the run's clock while a call spends from budget, limit in all per run; resume charges the budget
-// what the call took and, once no call is paused, restarts the clock with the time the run had left. A run an
-// agent makes inside archive.do pauses again while the clock is already stopped.
 func (c *runClock) pause(budget *time.Duration, limit time.Duration, what string) (resume func(), err error) {
 	if *budget <= 0 {
 		return nil, fmt.Errorf("this run already %s for %s, its limit", what, limit)
@@ -273,7 +263,6 @@ func (c *runClock) pause(budget *time.Duration, limit time.Duration, what string
 	}, nil
 }
 
-// nested runs a saved workflow inside this run, in a savepoint it rolls back when the workflow fails.
 func (r *runner) nested(ctx context.Context, code string, input json.RawMessage) (*RunOutput, error) {
 	out := &RunOutput{Result: json.RawMessage("null"), Logs: []string{}}
 	if r.depth >= workflowDepth {
@@ -778,14 +767,12 @@ func (r *runner) call(read bool, f func(ctx context.Context) (any, error)) (any,
 	return v, storeErr(sp.Commit(r.ctx))
 }
 
-// read notes that this run read file id; a folder has nothing to show.
 func (r *runner) read(ctx context.Context, id uuid.UUID) {
 	if f, err := r.a.GetFile(ctx, id); err == nil && f.Kind != "folder" {
 		r.out.change(runChange{f.ID, f.Name, "read"})
 	}
 }
 
-// noted returns a file this run made or edited, noted as action once it worked.
 func (r *runner) noted(action string) func(*File, error) (any, error) {
 	return func(f *File, err error) (any, error) {
 		if err != nil {
@@ -1059,7 +1046,6 @@ func (r *runner) sdk() {
 	r.vm.Set("archive", o)
 }
 
-// runFileParent is the folder an archive.update of a file moves it to, nil for the top.
 func runFileParent(patch map[string]any) (*uuid.UUID, error) {
 	v, ok := patch["parent"]
 	if !ok || len(patch) != 1 {
@@ -1094,8 +1080,6 @@ func runParam(v any) any {
 	return v
 }
 
-// runQuery runs one statement as the user, under row-level security, in a read-only savepoint that it rolls
-// back, so Postgres refuses any write.
 func (a *Archive) runQuery(ctx context.Context, query string, params []any) ([]map[string]any, error) {
 	q := strings.TrimRightFunc(strings.TrimSpace(query), func(r rune) bool { return r == ';' || unicode.IsSpace(r) })
 	if runSyncedRe.MatchString(q) {
@@ -1194,29 +1178,22 @@ func runTables(cat *Catalog) []runTable {
 	return out
 }
 
-// RunDocs is the SDK's documentation with this workspace's tables and the caller's connections.
 func (a *Archive) RunDocs(ctx context.Context) string {
 	return runDocs + "\n" + a.RunTypes(ctx) + a.RunConnections(ctx)
 }
 
-// runDocs is the SDK's documentation without this workspace's tables: the same bytes in every workspace, so
-// agents' run tool, which it describes, is one prompt cache entry for all of them.
 var runDocs = strings.ReplaceAll(runSDK, "{timeout}", runTimeout.String())
 
-// RunTypes is the TypeScript of this workspace's types and tables, as the live database has them: the same for
-// everyone in it, so one prompt cache entry for them all.
 func (a *Archive) RunTypes(ctx context.Context) string {
 	a.refresh(ctx)
 	cat := a.Catalog()
 	return runTypesFor(cat, a.syncShown(ctx, cat))
 }
 
-// RunConnections is the TypeScript of the actions and synced streams of the caller's connections.
 func (a *Archive) RunConnections(ctx context.Context) string {
 	return a.actionTypes(ctx) + a.streamTypes(ctx)
 }
 
-// runStatic are the types the docs declare, which no table or type of a workspace may be named as.
 var runStatic = append(runSDKTypes(runSDK), "Actions", "Streams", "Tables", "Synced")
 
 func runSDKTypes(src string) []string {
@@ -1300,10 +1277,8 @@ func runFormat(schema, name string) string {
 		"timestamp": "YYYY-MM-DDTHH:MM:SS, no zone", "interval": "Postgres interval, like 1 day 02:00:00"}[name]
 }
 
-// runSyncedCols are the columns the Synced interface holds for the tables syncs write.
 var runSyncedCols = []string{"access", "connection", "stream", "source_id"}
 
-// runTypesFor is the TypeScript of the catalog's tables and views named in shown.
 func runTypesFor(cat *Catalog, shown map[string]bool) string {
 	names := slices.DeleteFunc(cat.names(), func(name string) bool { return !shown[name] })
 	n := &runNames{cat: cat, used: map[string]bool{}, names: map[string]string{}}
@@ -1400,8 +1375,6 @@ func runTypesFor(cat *Catalog, shown map[string]bool) string {
 		}
 		return runDoc("    ", desc, ref, runFormat(c.Schema, c.Type), gen) + fmt.Sprintf("    %s%s: %s;\n", runProp(c.Name), opt, ts)
 	}
-	// syncedFields are a table's columns of runSyncedCols as the docs write them, "" unless it has them all. A table
-	// extends Synced only when they are written the same, so nothing it says of them is lost.
 	syncedFields := func(tb *Table) string {
 		var out strings.Builder
 		for _, name := range runSyncedCols {
@@ -1444,7 +1417,6 @@ func runTypesFor(cat *Catalog, shown map[string]bool) string {
 	return b.String()
 }
 
-// runSyncedRe finds a query that may read a table Archive syncs from connections, whose syncs a read catches up.
 var runSyncedRe = regexp.MustCompile(`(?i)\b(known_person|known_org|` + strings.Join(slices.Sorted(maps.Keys(syncSchema)), "|") + `)\b`)
 
 var runIdentRe = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*$`)

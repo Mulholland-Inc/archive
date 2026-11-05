@@ -58,7 +58,6 @@ type modelReq struct {
 	Effort string          `json:"effort"`
 }
 
-// modelPart is a file as a model sees it: one PDF, one page of one, or an image.
 type modelPart struct {
 	mime string
 	data []byte
@@ -68,7 +67,6 @@ type modelProvider = func(ctx context.Context, req *modelReq, parts []modelPart)
 
 var modelMIMEs = map[string]bool{"application/pdf": true, "image/png": true, "image/jpeg": true, "image/webp": true, "image/gif": true}
 
-// modelProviders maps a model name's prefix to the provider that serves it.
 var modelProviders = map[string]modelProvider{
 	"gemini-": modelGemini,
 	"claude-": modelClaude,
@@ -80,7 +78,6 @@ func (r *runner) modelSDK(o *goja.Object) {
 	o.Set("model", func(call goja.FunctionCall) goja.Value { return r.promise(r.model(call)) })
 }
 
-// model takes one request or a list. A list runs at once, modelParallel at a time, and fails on its first error.
 func (r *runner) model(call goja.FunctionCall) (any, error) {
 	reqs, list := []modelReq{{}}, false
 	if _, list = call.Argument(0).Export().([]any); list {
@@ -114,8 +111,6 @@ func (r *runner) model(call goja.FunctionCall) (any, error) {
 	if len(reqs) > modelMaxList {
 		return nil, fmt.Errorf("archive.model: %d requests is more than the %d one call takes: %w", len(reqs), modelMaxList, httpErrBadRequest)
 	}
-	// Files open through the run's transaction, which only this goroutine may use; the whole list is held in
-	// memory while it runs, so it is bounded as a whole too.
 	held := 0
 	for i, req := range reqs {
 		var err error
@@ -138,7 +133,6 @@ func (r *runner) model(call goja.FunctionCall) (any, error) {
 	results := make([]*ModelResult, len(reqs))
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(modelParallel)
-	// The budget pays for every call's time, not the list's wall time, so a list of eight buys no more than eight calls.
 	var spent atomic.Int64
 	start := time.Now()
 	for i := range reqs {
@@ -160,7 +154,6 @@ func (r *runner) model(call goja.FunctionCall) (any, error) {
 	return results, nil
 }
 
-// modelFiles loads each file the caller may read, whole or one PDF page, within the size and type limits.
 func (r *runner) modelFiles(files []modelFile) ([]modelPart, error) {
 	if len(files) > modelMaxN {
 		return nil, fmt.Errorf("%d files; a model reads at most %d a call: %w", len(files), modelMaxN, httpErrBadRequest)
@@ -201,7 +194,6 @@ func (r *runner) modelFiles(files []modelFile) ([]modelPart, error) {
 	return parts, nil
 }
 
-// modelPage cuts page (1-based) out of a PDF as a PDF of its own.
 func modelPage(data []byte, page int) ([]byte, error) {
 	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(data), model.NewDefaultConfiguration())
 	if err != nil {
@@ -298,8 +290,6 @@ func modelGemini(ctx context.Context, req *modelReq, parts []modelPart) (*ModelR
 	return res, nil
 }
 
-// geminiEndpoint is the Gemini API with GEMINI_API_KEY, else Vertex in GOOGLE_CLOUD_PROJECT as the machine's own
-// Google credentials (gcloud's on a laptop, the service account on Cloud Run), in VERTEX_LOCATION, us by default.
 func geminiEndpoint(ctx context.Context, model string) (string, http.Header, error) {
 	if key := strings.TrimSpace(os.Getenv("GEMINI_API_KEY")); key != "" {
 		return "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent", http.Header{"x-goog-api-key": {key}}, nil
@@ -336,7 +326,6 @@ var geminiCreds struct {
 	err error
 }
 
-// modelBlock is a file as an Anthropic content block: a document for a PDF, an image otherwise.
 func modelBlock(p modelPart) agentBlock {
 	kind := "image"
 	if p.mime == "application/pdf" {

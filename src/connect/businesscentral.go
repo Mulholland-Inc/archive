@@ -6,32 +6,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Microsoft Dynamics 365 Business Central, a company's books, sales and purchasing through its API v2.0, which
-// adds and changes sales quotes and customers when asked. Business Central online signs in through Microsoft
-// Entra with ARCHIVE_OUTLOOK, the app registration Outlook, SharePoint and Teams connect with: its web redirect
-// URIs list <API>/connect/businesscentral/callback and <API>/connect/businesscentralsandbox/callback too, and it has
-// the delegated Dynamics 365 Business Central permission Financials.ReadWrite.All, which a tenant may ask an admin to
-// consent to. A token is for one resource, so it asks for nothing of Graph's. Personal Microsoft accounts have no
-// Business Central, so it signs in through the organizations endpoint, and the tenant is the token's. Microsoft
-// replaces the refresh token on every refresh, and has no endpoint that revokes one grant: a person removes Archive
-// at myapps.microsoft.com. An owner connects it for everyone, and it reads what that person's permission sets in
-// Business Central let them: D365 READ to read, and D365 SALES DOC, EDIT and D365 CUSTOMER, EDIT to write.
-//
-// A tenant has environments, production and sandbox ones, each with companies. Production and sandbox connect
-// apart, as two connectors, so that a sandbox, which starts as a copy of production, is never read as more of the
-// same books: each syncs every company of every environment of its kind that /environments/v1.1 lists.
-//
-// Business Central on premises has no Entra sign-in to share: its API v2.0 web services take a user's name and
-// web service access key as HTTP Basic, on the server's own address, which has to be reachable from the internet
-// over https. It connects with those pasted in, and syncs every company of that server instance.
-//
-// It syncs each company's customers and vendors into ledger_contact, items into ledger_item, the chart of accounts
-// into ledger_account, sales quotes, orders and invoices and purchase orders and invoices into ledger_entry with
-// their lines in ledger_line, and the general ledger's entries into ledger_entry. Each is listed whole the first time
-// and a week after, which deletes what is gone, and in between filtered to what changed since the sync before, by
-// lastModifiedDateTime. A posted ledger entry is never deleted or changed, so those are only ever read since. An
-// amount without a currency code is in the company's own currency, which the API does not say: US dollars. It
-// pushes nothing yet: Business Central's webhooks are subscriptions per company and entity that last three days.
 func init() {
 	Register(&Connector{
 		ID: "businesscentral", Name: "Business Central", Integration: true, Env: "ARCHIVE_OUTLOOK",
@@ -68,9 +42,7 @@ func init() {
 				Help: "On that user's card in Business Central, Web Service Access Key: make one with no expiry date and copy it. The server's credential type must be NavUserPassword"},
 		},
 		Basic: [2]string{"user", "key"},
-		// The server's API, given with or without /api/v2.0, at a host name with a domain: an address of a network's
-		// own, like an IP or localhost, is refused.
-		API: "{+base}/api/v2.0",
+		API:   "{+base}/api/v2.0",
 		Let: []Step{
 			{As: "base", In: "{key/url}", Find: `^(https://[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?::[0-9]{1,5})?(?:/[A-Za-z0-9_.-]+)*?)/*(?:/api/v2\.0)?/*$`},
 			{Unless: "base", Fail: "Business Central's address is https://<server>:<port>/<instance>/api/v2.0, at a host name the internet reaches, not {key/url}"},
@@ -83,28 +55,23 @@ func init() {
 }
 
 const (
-	bcAPI = "https://api.businesscentral.dynamics.com"
-	// An amount is in its document's currency, or else the company's own.
+	bcAPI          = "https://api.businesscentral.dynamics.com"
 	bcCurrency SQL = "coalesce(nullif(data->>'currencyCode', ''), 'USD')"
 	bcEdited   SQL = "archive.sync_at(data->>'lastModifiedDateTime')"
 	bcDoc          = ", by company and id: listed whole the first time and a week after, 1000 a page, which deletes those gone, and in between those changed since the sync before."
-	// bcZero is the id Business Central gives a reference to nothing.
-	bcZero = "00000000-0000-0000-0000-000000000000"
+	bcZero         = "00000000-0000-0000-0000-000000000000"
 )
 
 var (
 	bcEndpoint = oauth2.Endpoint{AuthURL: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize",
 		TokenURL: "https://login.microsoftonline.com/organizations/oauth2/v2.0/token", AuthStyle: oauth2.AuthStyleInParams}
-	bcScopes = []string{"offline_access", bcAPI + "/Financials.ReadWrite.All"}
-	bcParams = map[string]string{"prompt": "select_account"}
-	bcPage   = NextURL{At: "@odata.nextLink"}
-	bcPrefer = map[string][]string{"Prefer": {"odata.maxpagesize=1000"}}
-	// Business Central needs an If-Match to change a record; * changes it whatever its version.
+	bcScopes  = []string{"offline_access", bcAPI + "/Financials.ReadWrite.All"}
+	bcParams  = map[string]string{"prompt": "select_account"}
+	bcPage    = NextURL{At: "@odata.nextLink"}
+	bcPrefer  = map[string][]string{"Prefer": {"odata.maxpagesize=1000"}}
 	bcIfMatch = map[string][]string{"If-Match": {"*"}}
 )
 
-// bcEnvironments are the companies of every Business Central environment of the tenant of kind, Production or
-// Sandbox, each as <environment>/<company id>.
 func bcEnvironments(kind string) *Parts {
 	return &Parts{Req: Req{URL: "/environments/v1.1"}, Items: "value",
 		Skip: []Test{{At: "applicationFamily", Not: "BusinessCentral"}, {At: "type", Not: kind}},
@@ -112,25 +79,18 @@ func bcEnvironments(kind string) *Parts {
 			Vals: Obj{"at": "/v2.0/{up/name}/api/v2.0/companies({id})", "company": "{displayName;name}", "environment": "{up/name}"}}}
 }
 
-// bcRef is the row of the connection a record's id at field refers to, which is in the record's company.
 func bcRef(of, field string) SQL {
 	return SQL("data->>'company' || '/' || nullif(nullif(" + of + "->>'" + field + "', ''), '" + bcZero + "')")
 }
 
-// bcDay is the day of a record's date field, which is 0001-01-01 when it is blank.
 func bcDay(field string) SQL {
 	return SQL("archive.sync_day(nullif(data->>'" + field + "', '0001-01-01'))")
 }
 
-// bcEnum is an enum's value as Business Central shows it, or null when it is blank: OData writes In Review as
-// In_x0020_Review, and a blank as _x0020_.
 func bcEnum(at string) SQL {
 	return SQL("nullif(btrim(replace(replace(replace(" + at + ", '_x0020_', ' '), '_x002D_', '-'), '_x0026_', '&')), '')")
 }
 
-// bcDocument is a sales or purchase document of a company's, like salesQuotes, as an entry of the books with its
-// lines, from its stream's name, Business Central's kind of entry, the entity, its lines, and its fields: the day it
-// is dated, when it is due, and who it is with.
 type bcDocument struct {
 	name, kind, entity, lines, on, due, with string
 }
@@ -143,8 +103,6 @@ var bcDocuments = []bcDocument{
 	{"purchase_invoices", "PurchaseInvoice", "purchaseInvoices", "purchaseInvoiceLines", "invoiceDate", "dueDate", "vendor"},
 }
 
-// bcStream is a stream of entity in every company of parts, changed since the sync before by lastModifiedDateTime,
-// each record with its company's part, name and environment.
 func bcStream(name, entity, expand string, parts *Parts) *Sync {
 	q := Q{}
 	if expand != "" {
@@ -158,8 +116,7 @@ func bcStream(name, entity, expand string, parts *Parts) *Sync {
 		Key: []Reads{{Of: "{part}/{id}"}}, Updated: "lastModifiedDateTime", Page: bcPage,
 		Change: SinceTime{Req: Req{URL: "{+in/at}/" + entity, Query: since, Header: bcPrefer}},
 		Set:    Obj{"company": "{part}", "company_name": "{in/company}", "environment": "{in/environment}"},
-		// A company the person's permissions do not reach is passed over until the next walk.
-		Pass: []int{403}}
+		Pass:   []int{403}}
 }
 
 func bcSyncs(parts *Parts) []*Sync {
@@ -197,7 +154,6 @@ func bcSyncs(parts *Parts) []*Sync {
 				"WHEN 'CostOfGoodsSold' THEN 'Expense' WHEN 'Expense' THEN 'Expense' END",
 			"balance": "archive.sync_money(data->>'netChange', 'USD')", "active": "NOT coalesce(archive.sync_bool(data->'blocked'), false)", "edited_at": bcEdited}}
 
-	// Posted entries are never changed or deleted, so what changed since is all there is to read.
 	ledger := bcStream("ledger_entries", "generalLedgerEntries", "", parts)
 	ch := ledger.Change.(SinceTime)
 	ch.Lasts = true
@@ -224,7 +180,6 @@ func bcSyncs(parts *Parts) []*Sync {
 				"total": "archive.sync_money(data->>'totalAmountIncludingTax', " + bcCurrency + ")", "balance": balance,
 				"memo": "nullif(data->>'externalDocumentNumber', '')", "status": bcEnum("data->>'status'"), "edited_at": bcEdited},
 			Refs: map[string]SQL{"contact": bcRef("data", d.with+"Id")},
-			// A comment line is only words, and no line of the books.
 			Children: []Kids{{Table: "ledger_line", From: SQL("archive.sync_list(data->'" + d.lines + "') WITH ORDINALITY l(x, i) WHERE x->>'lineType' IS DISTINCT FROM 'Comment'"),
 				Cols: map[string]SQL{"position": "i", "kind": bcEnum("x->>'lineType'"), "description": "x->>'description'",
 					"amount":     "archive.sync_money(coalesce(x->>'amountExcludingTax', x->>'netAmount'), " + bcCurrency + ")",
@@ -236,8 +191,6 @@ func bcSyncs(parts *Parts) []*Sync {
 	return append(out, ledger)
 }
 
-// bcActions are the actions of a connector whose companies are in the environments of kind, or on premises when
-// kind is empty, where there are none.
 func bcActions(kind string) map[string]*Action {
 	at, need := "/companies({company})", []Step(nil)
 	companies := []Step{{Req: Req{URL: "/companies", Header: bcPrefer}, Page: bcPage, Items: "value"}}

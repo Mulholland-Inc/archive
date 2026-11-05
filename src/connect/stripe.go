@@ -2,15 +2,6 @@ package connect
 
 import "time"
 
-// Stripe, through its hosted MCP server: customers, payments, invoices, subscriptions and the rest of an
-// account, as the person who connects allows. Its authorization server registers any client, but only as a
-// public one, so Archive's client there has no secret and proves itself with PKCE alone. An account's admins
-// can turn MCP access off. get_stripe_account_info names the account.
-//
-// It syncs each live account the person allowed, a sandbox left out: its customers into ledger_contact and its invoices
-// and charges into ledger_entry, through stripe_api_read and Stripe's list methods, 100 a page, newest first. Those say
-// nothing of what changed when, so each is listed at most an hour apart. A listing deletes nothing, so what is deleted
-// there stays here. Its actions are the server's tools.
 func init() {
 	Register(&Connector{ID: "stripe", Name: "Stripe", Integration: true, MCP: "https://mcp.stripe.com", Who: &Who{Tool: "get_stripe_account_info"}, Busy: ToolBusy,
 		Info: Info{By: "Stripe", Description: "Read customers, invoices and charges, and look up payments and subscriptions", Category: CatFinance, Icon: IconCard, Scopes: []string{"Use your Stripe account as you allow"}},
@@ -41,23 +32,18 @@ func init() {
 }
 
 var (
-	// The next page starts after the last record of this one.
-	stripePage = Cursor{At: "data/-1/id", More: "has_more"}
-	// The accounts the person allowed; every other tool names one, and says whether it is live.
+	stripePage     = Cursor{At: "data/-1/id", More: "has_more"}
 	stripeAccounts = &Parts{Req: Req{Tool: "list_available_accounts_or_orgs"}, Items: "accounts", ID: "{stripe_context}", Skip: []Test{{At: "livemode", Is: "false"}}}
 )
 
-// stripeList is a list method of Stripe's API, by its operation id, for the account.
 func stripeList(op string) Req {
 	return Req{Tool: "stripe_api_read", Body: Obj{"stripe_api_operation_id": op, "stripe_context": "{part}", "livemode": true, "parameters": Obj{"limit": 100, "starting_after": "{page}"}}}
 }
 
-// stripeMoney is the amount at key of of, already in the currency's minor units, as sync_money takes major ones.
 func stripeMoney(of, key string) SQL {
 	return SQL("archive.sync_money((archive.sync_num(" + of + "->>'" + key + "') / 100)::text, upper(" + of + "->>'currency'))")
 }
 
-// stripeDay is the date, in UTC, of the Unix seconds at key.
 func stripeDay(key string) SQL {
 	return SQL("(to_timestamp(archive.sync_num(data->>'" + key + "')) AT TIME ZONE 'UTC')::date")
 }

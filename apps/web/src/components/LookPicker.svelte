@@ -8,7 +8,6 @@
 
   const types = Object.entries(TYPES).map(([value, t]) => ({ value, label: t.label }));
 
-  // A single line keeps what is picked in view, and a mouse wheel scrolls it sideways.
   let iconRow = $state();
   let tintRow = $state();
 

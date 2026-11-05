@@ -6,22 +6,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// GitHub, read only, as a GitHub App acting for the person who connects. It reads ARCHIVE_GITHUB_APP, the
-// app's client id and secret (not its app id or private key): a GitHub App, not the OAuth App sign-in uses,
-// because only a GitHub App's user tokens expire and come with a refresh token (8 hours, and 6 months,
-// replaced on every refresh), and its permissions are fine-grained: Metadata, Contents, Issues and Pull
-// requests, all read-only, with its callback URL <API>/connect/github/callback and "Expire user
-// authorization tokens" on. A GitHub App has no scopes; it reads the repositories its installations reach,
-// so a person installs it on their account or organization too. A grant is revoked with an access token.
-//
-// It syncs the issues and pull requests of each repository it reaches into work_item, open and closed, listed whole the
-// first time and a week after, 100 a page, which deletes those gone, and in between those updated since the sync before.
-// A repository with issues turned off is left out, its pull requests too: GitHub lists both together.
-//
-// It pushes through the app's webhook, set up once on the app: its URL <API>/push/github, its secret the hook
-// option of ARCHIVE_GITHUB_APP, and its events Issues, Pull request and Repository. A push names the
-// installation it is for, and an account is the installations its token reaches, read again on a sync a day
-// after. X-Hub-Signature-256 is sha256= and the HMAC-SHA256 of the body with the secret, in hex.
 func init() {
 	Register(&Connector{
 		ID: "github", Name: "GitHub", Integration: true, Env: "ARCHIVE_GITHUB_APP", Options: "?hook=<webhook secret>",
@@ -65,8 +49,6 @@ func init() {
 			Key:  "{part}", Keys: []Path{"installation/id"},
 			Signs: []Sign{{Header: "X-Hub-Signature-256", Hook: true, Enc: Hex, Pre: "sha256=", Of: "{body}"}},
 		},
-		// Newest first, so one added or changed while a sync pages moves others on rather than past it. A repository gone
-		// mid-walk is passed over, and that listing deletes nothing.
 		Sync: []*Sync{{Name: "issues", Gap: time.Second, Parts: githubRepos, ID: "id", Updated: "updated_at", Page: githubPage, Pass: []int{404, 410, 451},
 			Req:    Req{URL: "/repos/{~part}/issues", Query: Q{"state": "all", "sort": "created", "direction": "desc", "per_page": "100", "page": "{page}"}},
 			Change: SinceTime{Req: Req{URL: "/repos/{~part}/issues", Query: Q{"state": "all", "sort": "updated", "direction": "desc", "per_page": "100", "page": "{page}", "since": "{since}"}}},
@@ -80,9 +62,8 @@ func init() {
 }
 
 var (
-	githubAll  = Q{"per_page": "100", "page": "{page}"}
-	githubPage = Offset{From: 1, Size: 100, Step: 1}
-	// githubRepos are the repositories the person's token reaches through each installation, by owner/name.
+	githubAll   = Q{"per_page": "100", "page": "{page}"}
+	githubPage  = Offset{From: 1, Size: 100, Step: 1}
 	githubRepos = &Parts{Req: Req{URL: "/user/installations", Query: githubAll}, Items: "installations", Page: githubPage,
 		Under: &Parts{Req: Req{URL: "/user/installations/{up/id}/repositories", Query: githubAll}, Items: "repositories", Page: githubPage, ID: "{full_name}", Skip: []Test{{At: "has_issues", Is: "false"}}}}
 )

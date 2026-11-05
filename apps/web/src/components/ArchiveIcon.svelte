@@ -38,7 +38,6 @@
     later(() => turn(0, me.pace * 1.5, 1.3), 80);
   }
 
-  // An icon's strip loads when it nears the screen, so a long picker fetches only what is scrolled to.
   $effect(() => {
     const watch = new IntersectionObserver(([e]) => {
       if (!e.isIntersecting) return;
@@ -68,7 +67,6 @@
   });
 </script>
 
-<!-- One image per icon, a strip of frames (apps/draw/render.js), with no hue of its own: --tint colours it here. -->
 <span
   bind:this={root}
   class={['bot', size, `mood-${mood}`, { awake }]}

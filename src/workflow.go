@@ -1,12 +1,5 @@
 package main
 
-// Workflows are rows of archive.workflow, which the catalog shows as the table workflow, and their runs rows of
-// archive.workflow_run, the read-only table workflow_run. archive.create, update and delete of a workflow go
-// through the write hook here, workflowSave and workflowDelete, which compile its source and check its name
-// and on before anything is saved, and keep what Archive owns: who it runs as, its webhook secret, when it is
-// due and the cursor of the table it watches. Reads are plain list, get and query, under row-level security:
-// each person sees their own workflows and their runs (archive.mine).
-
 import (
 	"context"
 	"crypto/hmac"
@@ -46,7 +39,6 @@ var (
 	workflowEvents = []string{"created", "updated"}
 )
 
-// WorkflowRun is one run as Archive records it.
 type WorkflowRun struct {
 	ID      uuid.UUID       `json:"id"`
 	At      time.Time       `json:"at"`
@@ -57,7 +49,6 @@ type WorkflowRun struct {
 	Error   string          `json:"error"`
 }
 
-// workflowOn is a workflow's on: when it runs. Its JSON is what the on column holds.
 type workflowOn struct {
 	Cron    string   `json:"cron,omitempty"`
 	TZ      string   `json:"tz,omitempty"`
@@ -83,8 +74,6 @@ func (o *workflowOn) kind() string {
 	return ""
 }
 
-// trigger is on as Archive schedules it, in the trigger column: an edit that keeps it keeps the workflow's
-// place in its schedule and its table. It is the // on: line of before workflows were rows, without events.
 func (o *workflowOn) trigger() string {
 	switch o.kind() {
 	case "cron":
@@ -122,16 +111,12 @@ func workflowToken() string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-// hookSign is the signature a webhook URL carries after its hook: whoever can read a workflow, like the group
-// it is shared with, reads its hook, but only the server can sign it, so only whose it is has the URL.
 func (a *Archive) hookSign(hook string) string {
 	m := hmac.New(sha256.New, secretDerive(a.hub.key, "workflow hook "+a.ws.ID.String()))
 	m.Write([]byte(hook))
 	return base64.RawURLEncoding.EncodeToString(m.Sum(nil)[:18])
 }
 
-// workflowTables are the tables a workflow may watch: the public ones, the members, and the tables a sync fills.
-// The rows that belong to a synced row are left out, as the sync deletes and writes them again with it.
 func workflowTables(cat *Catalog) []string {
 	var out []string
 	for _, n := range cat.names() {
@@ -144,8 +129,6 @@ func workflowTables(cat *Catalog) []string {
 	return out
 }
 
-// workflowParseOn checks an on value, as a write passes it or the column holds it, and cleans it: a table
-// workflow without events gets both. Each problem is one error, with its path.
 func (a *Archive) workflowParseOn(ctx context.Context, v any) (*workflowOn, []FieldError) {
 	if b, ok := v.(json.RawMessage); ok {
 		if len(b) == 0 {
@@ -270,7 +253,6 @@ func (a *Archive) workflowParseOn(ctx context.Context, v any) (*workflowOn, []Fi
 	return o, nil
 }
 
-// workflowOf is the on of a saved workflow, checked against the tables there are now.
 func (a *Archive) workflowOf(ctx context.Context, w generated.ArchiveWorkflow) (*workflowOn, error) {
 	o, errs := a.workflowParseOn(ctx, json.RawMessage(w.On))
 	if len(errs) > 0 {
@@ -279,9 +261,6 @@ func (a *Archive) workflowOf(ctx context.Context, w generated.ArchiveWorkflow) (
 	return o, nil
 }
 
-// workflowSave is the write hook of archive.create and archive.update on workflow: it takes name, source, on
-// and access, refuses the write with every problem when one is wrong, and otherwise saves it as the person writing,
-// who it then runs as. With id it changes that workflow, and full replaces it whole.
 func (a *Archive) workflowSave(ctx context.Context, tb *Table, id uuid.UUID, data map[string]any, full bool) (map[string]any, error) {
 	ac, err := signedIn(ctx)
 	if err != nil {
@@ -398,8 +377,6 @@ func (a *Archive) workflowSave(ctx context.Context, tb *Table, id uuid.UUID, dat
 	})
 }
 
-// workflowDelete is the write hook of archive.delete on workflow: the workflow goes with its runs, its
-// schedule and its cursor.
 func (a *Archive) workflowDelete(ctx context.Context, id uuid.UUID) error {
 	return a.as(ctx, func(ctx context.Context) error {
 		n, err := a.st.db(ctx).DeleteWorkflow(ctx, id)
@@ -420,7 +397,6 @@ func (a *Archive) workflowSchedule(ctx context.Context) {
 	}
 }
 
-// workflowRows gives each workflow row read through the catalog its webhook URL in place of its secret.
 func (a *Archive) workflowRows(ctx context.Context, rows ...map[string]any) {
 	var me string
 	if ac := ActorFrom(ctx); ac != nil {
@@ -433,14 +409,12 @@ func (a *Archive) workflowRows(ctx context.Context, rows ...map[string]any) {
 		hook, _ := r["hook"].(string)
 		delete(r, "hook")
 		r["url"] = nil
-		// The webhook runs it as whose it is, so only they have its URL, not the group it is shared with.
 		if on, _ := r["on"].(map[string]any); on != nil && on["webhook"] == true && hook != "" && fmt.Sprint(r["member"]) == me {
 			r["url"] = a.hub.api + "/hooks/run/" + a.ws.ID.String() + "/" + hook + "." + a.hookSign(hook)
 		}
 	}
 }
 
-// workflow is the caller's workflow named name, or name.ts, as their transaction sees it.
 func (a *Archive) workflow(ctx context.Context, name string) (generated.ArchiveWorkflow, error) {
 	ac, err := signedIn(ctx)
 	if err != nil {
@@ -602,8 +576,6 @@ func (a *Archive) workflowTable(ctx context.Context, w generated.ArchiveWorkflow
 	if own == nil {
 		own = []time.Time{}
 	}
-	// A row is created while its created_at and updated_at are the same, as archive.create leaves them, and
-	// updated once archive.update has moved updated_at on.
 	which := ""
 	switch {
 	case !on.wants("updated"):
@@ -650,7 +622,6 @@ func (a *Archive) workflowTable(ctx context.Context, w generated.ArchiveWorkflow
 		now := time.Now()
 		return a.sys(ctx, func(ctx context.Context) error { return a.st.db(ctx).SetWorkflowNext(ctx, w.ID, w.Trigger, &now) })
 	}
-	// rows is both, in order.
 	created, updated, all := []map[string]any{}, []map[string]any{}, []map[string]any{}
 	for _, f := range rows {
 		if f.created {
@@ -675,8 +646,6 @@ func (a *Archive) workflowTable(ctx context.Context, w generated.ArchiveWorkflow
 
 func (a *Archive) workflowHook(rw http.ResponseWriter, r *http.Request) {
 	var w generated.ArchiveWorkflow
-	// A URL is the hook and its signature, or the hook alone for a workflow no group sees, whose hook no one
-	// else reads.
 	hook, sig, signed := strings.Cut(r.PathValue("token"), ".")
 	err := a.sys(r.Context(), func(ctx context.Context) (err error) {
 		w, err = a.st.db(ctx).WorkflowByHook(ctx, hook)

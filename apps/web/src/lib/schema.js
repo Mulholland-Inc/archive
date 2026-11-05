@@ -1,5 +1,3 @@
-// Tables as the Database screens show them, from the catalog (/api/types) and the DDL (/api/schema).
-
 import { relative } from './live.js';
 
 const sql = { id: 'uuid', text: 'text', long: 'text', date: 'date', money: 'numeric(12,2)', number: 'integer', link: 'uuid', file: 'uuid', email: 'text', yes: 'boolean', place: 'text' };
@@ -25,8 +23,6 @@ const kinds = {
 
 const own = new Set(['id', 'access', 'created_at', 'updated_at', 'search']);
 
-// linkTo is the table a link names, as the app knows it: a table or view of the workspace by its name, one of
-// Archive's own the catalog shows (member, mail_message, ...) by its name too, or archive.file for a file.
 function linkTo(ref, tables) {
   if (!ref) return undefined;
   if (ref === 'archive.file') return ref;
@@ -36,8 +32,6 @@ function linkTo(ref, tables) {
 
 function column(c, types, tables) {
   const enumType = types[`${c.schema}.${c.type}`]?.enum?.length;
-  // An id or a list of ids can also link through its comment, "references <table>": Postgres has no foreign
-  // key for arrays, and the agent sometimes writes the comment without one.
   const ref = c.ref?.replace(/^public\./, '') || (c.type === 'uuid' ? /^references\s+([a-z][a-z0-9_]*)/i.exec(c.description ?? '')?.[1] : undefined);
   const to = linkTo(c.ref || ref, tables);
   const type = c.ref === 'archive.file' ? 'file' : ref ? 'link' : enumType ? 'choice' : (kinds[c.type] ?? 'text');
@@ -52,9 +46,6 @@ function column(c, types, tables) {
   };
 }
 
-// counts: { [table]: { rows, updated } }, from one query; workflows: the real workflows, to say which
-// tables start one. With archive, Archive's own tables the catalog shows instead, which links name: a row of
-// one has its page as a row of a table does.
 export function toTables(catalog, schema = [], counts = {}, workflows = [], archive = false) {
   const ddls = Object.fromEntries(schema.map((s) => [s.name, s.ddl]));
   return Object.values(catalog.tables ?? {})
@@ -81,7 +72,6 @@ export function toTables(catalog, schema = [], counts = {}, workflows = [], arch
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-// One read-only query for every table's row count and last change.
 export function countsQuery(catalog) {
   const tables = Object.values(catalog.tables ?? {}).filter((t) => t.schema === 'public');
   if (!tables.length) return '';

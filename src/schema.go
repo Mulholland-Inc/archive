@@ -24,9 +24,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// The schema: the Catalog is the tables and types a workspace has, read from Postgres, with what each column
-// takes and how a value is cleaned for it. Migrate changes it with DDL, dry run first; pgPlan, at the end,
-// diffs archive.sql against the database and plans the DDL that brings Archive's own schema up to date.
 type Catalog struct {
 	Tables map[string]*Table  `json:"tables"`
 	Types  map[string]*PgType `json:"types"`
@@ -91,9 +88,8 @@ type Candidate struct {
 type FieldError struct {
 	Path    string `json:"path"`
 	Message string `json:"message"`
-	// Line and Column place a compile error in a workflow's source.
-	Line   int `json:"line,omitempty"`
-	Column int `json:"column,omitempty"`
+	Line    int    `json:"line,omitempty"`
+	Column  int    `json:"column,omitempty"`
 }
 
 type ValidationError struct {
@@ -152,8 +148,6 @@ func catalogParse(b []byte) (*Catalog, error) {
 			t.internal = []string{"seen_at"}
 			t.Columns = slices.DeleteFunc(t.Columns, func(c *Column) bool { return c.Name == "seen_at" })
 		}
-		// These of Archive's tables are seen by whose they are, not by a group: the access every object has
-		// says nothing of them.
 		if t.Schema == "archive" && slices.Contains([]string{"member", "group", "workflow", "workflow_run", "turn", "memory", "known_person", "known_org"}, t.Name) {
 			t.internal = append(t.internal, "access")
 			t.Columns = slices.DeleteFunc(t.Columns, func(c *Column) bool { return c.Name == "access" })
@@ -162,9 +156,6 @@ func catalogParse(b []byte) (*Catalog, error) {
 	return c, nil
 }
 
-// catalogWorkflow shows archive.workflow as a person writes it: name, source, on and access, with whose it is,
-// its next time and webhook URL to read. What Archive keeps of it (who it runs as, its trigger and cursor) stays
-// out of list and get, and its webhook secret becomes its URL (workflowRows).
 func catalogWorkflow(t *Table) {
 	internal := []string{"user_id", "role", "trigger", "hook", "cursor_at", "cursor_id"}
 	t.Columns = slices.DeleteFunc(t.Columns, func(c *Column) bool { return slices.Contains(internal, c.Name) })
@@ -178,21 +169,16 @@ func catalogWorkflow(t *Table) {
 		Description: "Its webhook URL, when on is { webhook: true }: anyone with it can POST to it, so give it only to the service that calls it"})
 }
 
-// catalogConnection shows archive.connection without whose it is, its sealed refresh token (connect/connect.go)
-// and its sync's cursor (connection.go).
 func catalogConnection(t *Table) {
 	t.internal = []string{"member", "token", "cursor"}
 	t.Columns = slices.DeleteFunc(t.Columns, func(c *Column) bool { return slices.Contains(t.internal, c.Name) })
 }
 
-// synced says whether t is a table Archive syncs from connections (connection.go): one of syncSchema, or the
-// people and organizations they name.
 func (t *Table) synced() bool {
 	_, ok := syncSchema[t.Name]
 	return t.Schema == "archive" && (ok || t.Name == "known_person" || t.Name == "known_org")
 }
 
-// isWorkflow says whether t is archive.workflow, whose writes go through its write hook (workflow.go).
 func (t *Table) isWorkflow() bool { return t.Schema == "archive" && t.Name == "workflow" }
 
 var catalogMetaRe = regexp.MustCompile(`^([a-z][a-z0-9_]*):[ \t]*(\S.*?)\s*$`)
@@ -368,7 +354,6 @@ func (c *Catalog) checkMeta(t *Table, bad func(path, msg string)) {
 		k, v, path := kv[0], kv[1], t.Name+"."+kv[0]
 		switch {
 		case k == "icon":
-			// Tables and views had icons once; an icon: line from then is ignored.
 		case !slices.Contains(keys, k) && len(keys) == 0:
 			bad(path, "unknown key "+k+" in the last line of "+what+"; a table's comment is only its description")
 		case !slices.Contains(keys, k):
@@ -747,9 +732,6 @@ func specKeys[V any](m map[string]V) []string {
 	return slices.Sorted(maps.Keys(m))
 }
 
-// SchemaMigration is a migration's report: its own statements, then what Archive added to the tables, and what
-// they change and which of those changes lose data. Without confirm it is a dry run, which changes nothing;
-// applying it takes its confirm. A named migration runs once; running it again skips it.
 type SchemaMigration struct {
 	Applied    bool           `json:"applied"`
 	Confirm    string         `json:"confirm,omitempty"`
@@ -761,9 +743,6 @@ type SchemaMigration struct {
 	Skipped    bool           `json:"skipped,omitempty"`
 }
 
-// schemaTx is the schema state of one transaction: once it migrated, its catalog is read from it, cached per
-// archive.schema setting, which a rolled back savepoint undoes along with the migration.
-// schemaTurnKey is the agent's turn a run belongs to, a request's id.
 type schemaTurnKey struct{}
 
 type schemaTx struct {
@@ -779,9 +758,6 @@ type SchemaRevision struct {
 	Statements json.RawMessage `json:"statements"`
 }
 
-// Migrate runs src, DDL on the public schema, in a savepoint of the transaction in ctx, adds to each table what
-// every table has, checks the result and reports what it changes. Without confirm it rolls back; with the
-// report's confirm it keeps the migration, which commits or rolls back with the transaction.
 func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string) (*SchemaMigration, error) {
 	stmts := storeSplit(src)
 	if err := schemaCheckSQL(stmts); err != nil {
@@ -833,8 +809,6 @@ func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string
 	if err != nil {
 		return nil, err
 	}
-	// In a turn the confirm carries the turn of its dry run, so a migration that drops data is confirmed only in a
-	// later turn, after the person saw the drops; the turn is in the hash, so it cannot be changed.
 	turn, _ := ctx.Value(schemaTurnKey{}).(string)
 	from := turn
 	if confirm != "" {
@@ -893,7 +867,6 @@ func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string
 		if err := run(fmt.Sprintf("statement %d", i+1), st); err != nil {
 			return nil, err
 		}
-		// A view or a foreign key after it may use the columns every table has.
 		if schemaCreateTableRe.MatchString(schemaBare(st)) {
 			if _, err := derive(true); err != nil {
 				return nil, err
@@ -951,8 +924,6 @@ var (
 	schemaBannedRe = regexp.MustCompile(`(?is)\bOWNER\s+TO\b|\bSET\s+SCHEMA\b|^CREATE\s+TABLE\s+[^(]*\bAS\s`)
 )
 
-// schemaCheckSQL allows only DDL on the kinds of object a workspace has. Rows change through archive.create,
-// update and delete, which run as the user, so row-level security applies.
 func schemaCheckSQL(stmts []string) error {
 	ve := &ValidationError{Type: "schema"}
 	if len(stmts) == 0 {
@@ -980,7 +951,6 @@ var (
 	schemaItemRe        = regexp.MustCompile(`^\(?"?([a-z_][a-z0-9_]*)"?\)?(::text)?$`)
 )
 
-// schemaSearch is the derived search expression of each public table that has one, and the columns it covers.
 func schemaSearch(ctx context.Context, tx pgx.Tx) (map[string][]string, error) {
 	rows, err := tx.Query(ctx, `SELECT c.relname::text, pg_catalog.pg_get_expr(d.adbin, d.adrelid) FROM pg_catalog.pg_attrdef d
         JOIN pg_catalog.pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum JOIN pg_catalog.pg_class c ON c.oid = d.adrelid
@@ -1012,7 +982,6 @@ func schemaSearch(ctx context.Context, tx pgx.Tx) (map[string][]string, error) {
 	return out, err
 }
 
-// schemaDerived are the tables whose search is the one schemaDerive adds, over their text columns.
 func schemaDerived(ctx context.Context, tx pgx.Tx, cat *Catalog) (map[string]bool, error) {
 	search, err := schemaSearch(ctx, tx)
 	out := map[string]bool{}
@@ -1024,8 +993,6 @@ func schemaDerived(ctx context.Context, tx pgx.Tx, cat *Catalog) (map[string]boo
 	return out, err
 }
 
-// schemaSearchClear empties the derived search of each table whose columns stmts drop or retype, since
-// Postgres keeps a column a generated column uses; schemaDerive sets it again after.
 func schemaSearchClear(stmts []string, derived map[string]bool) []string {
 	var out []string
 	for _, st := range stmts {
@@ -1046,7 +1013,6 @@ func schemaSearchClear(stmts []string, derived map[string]bool) []string {
 	return slices.Compact(out)
 }
 
-// schemaBare is st with each comment a space, as Postgres reads it, and no space around it.
 func schemaBare(st string) string {
 	var b strings.Builder
 	for i := 0; i < len(st); i++ {
@@ -1061,8 +1027,6 @@ func schemaBare(st string) string {
 	return strings.TrimSpace(b.String())
 }
 
-// schemaFunctions refuses what Postgres says a migration left behind, however its SQL spelled it: a function that
-// runs as its owner, or in another language than sql and plpgsql.
 func schemaFunctions(ctx context.Context, q generated.DBTX) error {
 	var name string
 	err := q.QueryRow(ctx, `SELECT p.oid::pg_catalog.regprocedure::text FROM pg_catalog.pg_proc p
@@ -1094,7 +1058,6 @@ func schemaSearchArray(cols []string) string {
 	return "ARRAY[" + strings.Join(parts, ", ") + "]"
 }
 
-// schemaSearchCols are the columns a derived search column covers: the text ones that are not secret, by name.
 func schemaSearchCols(cat *Catalog, t *Table) []string {
 	out := []string{}
 	for _, c := range t.Columns {
@@ -1121,12 +1084,6 @@ func (c *Catalog) texty(schema, name string) bool {
 	return false
 }
 
-// schemaDerive is what each public table lacks of what every table has: archive.object (object.go) and its
-// id, name, access, created_at and updated_at columns, the primary key on id and the foreign key on access to
-// archive."group" that INHERITS does not pass on,
-// the search column and index, row-level security with the access policy, and the grants to the viewer and
-// editor roles; and a derived search that no longer covers its text columns. With cols, only the columns
-// and object.
 func schemaDerive(ctx context.Context, tx pgx.Tx, cat *Catalog, derived map[string]bool, prefix string, cols bool) ([]string, error) {
 	policed := map[string]bool{}
 	rows, err := tx.Query(ctx, `SELECT c.relname::text FROM pg_catalog.pg_class c WHERE c.relnamespace = 'public'::regnamespace
@@ -1153,7 +1110,6 @@ func schemaDerive(ctx context.Context, tx pgx.Tx, cat *Catalog, derived map[stri
 		if c := t.col("id"); c == nil {
 			add = append(add, "ADD COLUMN id uuid NOT NULL DEFAULT uuidv7()", "ADD CONSTRAINT "+pgIdent(name+"_pkey")+" PRIMARY KEY (id)")
 		} else if c.Type == "uuid" && !c.List && !c.PK && !t.Partitioned {
-			// INHERITS gives a table its parent's columns, not its primary key.
 			add = append(add, "ADD CONSTRAINT "+pgIdent(name+"_pkey")+" PRIMARY KEY (id)")
 		}
 		if c := t.col("name"); c == nil {
@@ -1171,7 +1127,6 @@ func schemaDerive(ctx context.Context, tx pgx.Tx, cat *Catalog, derived map[stri
 		if !t.Object && !t.Partitioned && objectFits(t) {
 			after = append(after, "ALTER TABLE "+id+" INHERIT archive.object")
 		}
-		// Postgres passes no foreign key on: each table's access references the group that sees its rows.
 		if access == nil || access.Type == "uuid" && !access.List && access.Ref == "" {
 			after = append(after, "ALTER TABLE "+id+" ADD CONSTRAINT "+pgIdent(name+"_access_fkey")+` FOREIGN KEY (access) REFERENCES archive."group"(id) ON DELETE RESTRICT`)
 		}
@@ -1226,9 +1181,6 @@ func schemaDerive(ctx context.Context, tx pgx.Tx, cat *Catalog, derived map[stri
 	return out, err
 }
 
-// schemaMoved gives each public table that lacks it the trigger that tells Go what a write moved
-// (archive.moved), by running each statement. It is plumbing, like the row-level security every table has,
-// so schema show and a migration's changes leave it out (pgRead).
 func schemaMoved(ctx context.Context, q generated.DBTX, run func(string) error) error {
 	rows, err := q.Query(ctx, `SELECT c.relname::text FROM pg_catalog.pg_class c WHERE c.relnamespace = 'public'::regnamespace
         AND c.relkind IN ('r', 'p') AND NOT c.relispartition
@@ -1249,7 +1201,6 @@ func schemaMoved(ctx context.Context, q generated.DBTX, run func(string) error) 
 	return nil
 }
 
-// schemaSettings reads the settings, for the returned func to set them back.
 func schemaSettings(ctx context.Context, tx pgx.Tx, names ...string) (func() error, error) {
 	vals := make([]string, len(names))
 	for i, n := range names {
@@ -1267,7 +1218,6 @@ func schemaSettings(ctx context.Context, tx pgx.Tx, names ...string) (func() err
 	}, nil
 }
 
-// txCatalog is the catalog of the transaction in ctx when it migrated, otherwise nil.
 func (s *pgStore) txCatalog(ctx context.Context) *Catalog {
 	t, ok := ctx.Value(storeTxKey{}).(storeTx)
 	if !ok || t.sch == nil || t.sch.n == 0 {
@@ -1299,8 +1249,6 @@ func schemaCatalog(ctx context.Context, q generated.DBTX) (*Catalog, error) {
 	return catalogParse(b)
 }
 
-// Schema is the DDL of the public schema as the transaction in ctx sees it, by table or view: each with its
-// constraints, indexes, policies, triggers and comments, and the types, functions and sequences only it uses.
 func (s *pgStore) Schema(ctx context.Context) (map[string]string, error) {
 	var b interface {
 		Begin(context.Context) (pgx.Tx, error)
@@ -1323,7 +1271,6 @@ func (s *pgStore) Schema(ctx context.Context) (map[string]string, error) {
 	return sch.ddl("public"), nil
 }
 
-// Revisions are the migrations, newest first.
 func (s *pgStore) Revisions(ctx context.Context, limit int) ([]SchemaRevision, error) {
 	rows, err := generated.New(s.sys).Revisions(ctx, int32(limit))
 	out := []SchemaRevision{}
@@ -1333,9 +1280,6 @@ func (s *pgStore) Revisions(ctx context.Context, limit int) ([]SchemaRevision, e
 	return out, err
 }
 
-// migrate brings the archive schema to archive.sql at startup: it applies the file to a scratch database and
-// runs what makes the live schema the same. It never deletes data: when it would, it says so and leaves the
-// schema as it is.
 func (s *pgStore) migrate(ctx context.Context) error {
 	conn, err := s.sys.Acquire(ctx)
 	if err != nil {
@@ -1381,8 +1325,6 @@ func (s *pgStore) migrate(ctx context.Context) error {
 	return syncCheckSQL(ctx, conn)
 }
 
-// fileInheritOnce gives what is in a folder the folder's access, top down, for rows from before file_check did; two
-// that then differ by nothing but access keep both, one renamed. Delete it once production has run it.
 const fileInheritOnce = `DO $$
 DECLARE
     r record;
@@ -1403,12 +1345,10 @@ BEGIN
     END LOOP;
 END $$`
 
-// scratch is the snapshot of Archive's schema that sql makes in a new database, which it drops after.
 func (s *pgStore) scratch(ctx context.Context, sql string) (pgSchema, error) {
 	return pgScratch(ctx, s.sys, s.cfg, sql)
 }
 
-// pgScratch is the snapshot of the schema that sql makes in a new database on sys's server, which it drops after.
 func pgScratch(ctx context.Context, sys *pgxpool.Pool, base *pgx.ConnConfig, sql string) (pgSchema, error) {
 	b := make([]byte, 8)
 	rand.Read(b)
@@ -1441,8 +1381,6 @@ func pgScratch(ctx context.Context, sys *pgxpool.Pool, base *pgx.ConnConfig, sql
 	})
 }
 
-// pgMigrate runs in tx what brings Archive's schema to want, unless that would lose data: then it returns
-// what and runs nothing.
 func pgMigrate(ctx context.Context, tx pgx.Tx, want pgSchema) ([]string, error) {
 	for _, st := range []string{"SET LOCAL search_path = ''", "SET LOCAL check_function_bodies = off", "SET LOCAL lock_timeout = '1min'", "SET LOCAL statement_timeout = 0"} {
 		if _, err := tx.Exec(ctx, st); err != nil {
@@ -1465,24 +1403,21 @@ func pgMigrate(ctx context.Context, tx pgx.Tx, want pgSchema) ([]string, error) 
 	return lost, nil
 }
 
-// pgObject is one object of a schema as Postgres renders it from pg_catalog: a table, view, sequence, type,
-// domain or function, or a column, constraint, index, trigger or policy of one, or the schema itself.
 type pgObject struct {
 	Kind, Schema string
-	Of           string // the table, view, type or domain it is part of
-	Name         string // a function's has its arguments
-	ID           string // its oid in its database, which a rename keeps
-	Def          string // what defines it, as Postgres renders it: a column's type, default and NOT NULL, an index's CREATE INDEX
-	Type         string // a column's type; a constraint's kind
+	Of           string
+	Name         string
+	ID           string
+	Def          string
+	Type         string
 	Comment, ACL string
 	RLS, Force   bool
-	Num          int      // a column's number
-	File         int64    // a table's file, which a rewrite replaces
-	Items        []string // an enum's labels; a column's or domain's default and whether it is NOT NULL
-	Users        []string // the phTables and phViews of its schema that use a type, domain, function or sequence
+	Num          int
+	File         int64
+	Items        []string
+	Users        []string
 }
 
-// pgSchema is a snapshot of schemas, by kind and qualified name.
 type pgSchema map[string]*pgObject
 
 func (o *pgObject) key() string { return o.Kind + " " + o.qname() }
@@ -1494,7 +1429,6 @@ func (o *pgObject) qname() string {
 	return o.Schema + "." + o.Name
 }
 
-// def is what a diff compares: its definition, comment and grants.
 func (o *pgObject) def() string {
 	parts := []string{o.Def}
 	if o.RLS {
@@ -1512,8 +1446,6 @@ func (o *pgObject) def() string {
 	return strings.TrimSpace(strings.Join(slices.DeleteFunc(parts, func(s string) bool { return s == "" }), "\n"))
 }
 
-// pgReadSQL reads every object of the schemas in $1, each as kind, schema, of, name, id, def, type, comment, acl,
-// rls, force, num, file and items. {acl x} is the grants in x, sorted; {ext x} leaves out what an extension owns.
 var pgReadSQL = pgMacro(pgMacro(`
 SELECT 'schema', n.nspname::text, '', n.nspname::text, 'n' || n.oid, '', '', coalesce(obj_description(n.oid, 'pg_namespace'), ''),
     {acl coalesce(n.nspacl, acldefault('n'::"char", n.nspowner))}, false, false, 0, 0::int8, '{}'::text[] FROM pg_namespace n WHERE n.nspname = ANY($1)
@@ -1594,7 +1526,6 @@ func pgMacro(sql, name, repl string) string {
 	return regexp.MustCompile(`\{`+name+` ([^}]+)\}`).ReplaceAllString(sql, repl)
 }
 
-// pgUsersSQL is, for each type, function or sequence, the tables and views in the schemas in $1 that use it.
 const pgUsersSQL = `SELECT DISTINCT CASE d.refclassid WHEN 'pg_proc'::regclass THEN 'p' || d.refobjid WHEN 'pg_class'::regclass THEN 'c' || d.refobjid
         ELSE 't' || coalesce((SELECT y.typelem FROM pg_type y WHERE y.oid = d.refobjid AND y.typcategory = 'A' AND y.typelem <> 0), d.refobjid) END,
     r.relnamespace::regnamespace::text || '.' || r.relname
@@ -1608,7 +1539,6 @@ FROM pg_depend d JOIN pg_class r ON r.oid = CASE d.classid
 WHERE d.deptype = 'n' AND d.refclassid IN ('pg_type'::regclass, 'pg_proc'::regclass, 'pg_class'::regclass) AND r.relkind IN ('r', 'p', 'v')
     AND r.relnamespace IN (SELECT oid FROM pg_namespace WHERE nspname = ANY($1))`
 
-// pgRead snapshots the schemas as q sees them; Postgres leaves the names on q's search_path unqualified.
 func pgRead(ctx context.Context, q generated.DBTX, schemas ...string) (pgSchema, error) {
 	var db string
 	if err := q.QueryRow(ctx, "SELECT oid::text FROM pg_catalog.pg_database WHERE datname = current_database()").Scan(&db); err != nil {
@@ -1638,7 +1568,6 @@ func pgRead(ctx context.Context, q generated.DBTX, schemas ...string) (pgSchema,
 	return s, err
 }
 
-// only is the part of s in the schema.
 func (s pgSchema) only(schema string) pgSchema {
 	return maps.Collect(func(yield func(string, *pgObject) bool) {
 		for k, o := range s {
@@ -1649,7 +1578,6 @@ func (s pgSchema) only(schema string) pgSchema {
 	})
 }
 
-// hash is a fingerprint of s, the same in any database with the same schemas.
 func (s pgSchema) hash() string {
 	h := sha256.New()
 	for _, k := range slices.Sorted(maps.Keys(s)) {
@@ -1658,7 +1586,6 @@ func (s pgSchema) hash() string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// SchemaChange is an object a migration creates, alters or drops, with its definition before and after.
 type SchemaChange struct {
 	Kind   string `json:"kind"`
 	Name   string `json:"name"`
@@ -1670,9 +1597,6 @@ type SchemaChange struct {
 
 var pgParents = map[string]bool{"table": true, "view": true, "type": true, "domain": true}
 
-// pgCompare is what changed from a to b, leaving out the parts of what is created or dropped as a whole, and
-// of that what loses data: a dropped table, column or attribute, and a column whose type changed in a table
-// that was rewritten. Objects match by oid within a database, so a rename is a change, and otherwise by name.
 func pgCompare(a, b pgSchema) (changes, phDrops []SchemaChange) {
 	changes, phDrops = []SchemaChange{}, []SchemaChange{}
 	byID, ids := map[string]*pgObject{}, map[string]bool{}
@@ -1744,7 +1668,6 @@ func pgCompare(a, b pgSchema) (changes, phDrops []SchemaChange) {
 
 var pgOrder = map[string]int{"attribute": 1, "column": 1, "constraint": 2, "index": 3, "policy": 4, "trigger": 5}
 
-// render is o as DDL, with its parts: a table with its columns, constraints, indexes, policies and triggers.
 func (s pgSchema) render(o *pgObject) string {
 	var parts []*pgObject
 	for _, p := range s {
@@ -1806,7 +1729,6 @@ func (s pgSchema) render(o *pgObject) string {
 	return strings.Join(append(append([]string{head}, comments...), out...), ";\n") + ";\n"
 }
 
-// create is the statement that creates o, a constraint, index, policy or trigger.
 func (s pgSchema) create(o *pgObject) string {
 	switch o.Kind {
 	case "constraint":
@@ -1820,7 +1742,6 @@ func (s pgSchema) create(o *pgObject) string {
 	return o.Def
 }
 
-// target names o after COMMENT ON, GRANT ... ON and DROP.
 func (s pgSchema) target(o *pgObject) string {
 	rel := pgIdent(o.Schema, o.Of)
 	switch o.Kind {
@@ -1842,8 +1763,6 @@ func (s pgSchema) target(o *pgObject) string {
 	return strings.ToUpper(o.Kind) + " " + pgIdent(o.Schema, o.Name)
 }
 
-// ddl is the DDL of the schema by table or view, each with the types, domains, functions and sequences that
-// only it uses, of the tables, or of the views when no table does; the others are on their own.
 func (s pgSchema) ddl(schema string) map[string]string {
 	out := map[string]string{}
 	rank := map[string]int{"domain": 0, "type": 0, "sequence": 1, "function": 2, "table": 3, "view": 3}
@@ -1870,7 +1789,6 @@ func (s pgSchema) ddl(schema string) map[string]string {
 	return out
 }
 
-// The phases of a plan, in the order it runs them.
 const (
 	phSchemas = iota
 	phDrops
@@ -1892,24 +1810,13 @@ const (
 	phases
 )
 
-// pgDropped are the tables and columns archive.sql deletes on purpose, data and all, by kind and qualified
-// name, like "table archive.record": pgPlan drops them as it finds them gone from archive.sql, or a column of
-// another type there, which it makes anew, where it refuses to drop anything else that has data. Each stays listed, so a database that still has one drops it whenever
-// it opens next.
 var pgDropped = map[string]bool{
-	// What connections synced is in the tables of its domain now, and syncs started from scratch to fill them.
-	"table archive.record": true,
-	// Synced files are rows of archive.file now, and syncs start from scratch to fill them.
-	"table archive.drive_file": true,
-	// Agents replaced chats, and nothing of them was kept.
-	"table archive.chat": true,
-	// An agent's avatar became a number, and every agent started over on the first.
+	"table archive.record":        true,
+	"table archive.drive_file":    true,
+	"table archive.chat":          true,
 	"column archive.agent.avatar": true,
 }
 
-// pgPlan is the DDL that brings live to want, both read with an empty search_path, for Archive's own schema: it
-// does what archive.sql needs and refuses the rest. Types and domains are altered, never dropped and created,
-// since user tables use them. lost is what would lose data; the plan leaves it out, unless pgDropped names it.
 func pgPlan(live, want pgSchema) (stmts, lost []string, err error) {
 	var ph [phases][]string
 	add := func(p int, st string) { ph[p] = append(ph[p], st) }
@@ -1918,7 +1825,6 @@ func pgPlan(live, want pgSchema) (stmts, lost []string, err error) {
 			err = fmt.Errorf("%s %s: %s is not supported; change archive.sql another way, or teach pgPlan in src/schema.go", o.Kind, o.qname(), what)
 		}
 	}
-	// whole is whether o is part of a table or type that s has and other does not.
 	whole := func(s, other pgSchema, o *pgObject) bool {
 		for _, k := range []string{"table ", "type "} {
 			if o.Of != "" && s[k+o.Schema+"."+o.Of] != nil && other[k+o.Schema+"."+o.Of] == nil {
@@ -1950,7 +1856,6 @@ func pgPlan(live, want pgSchema) (stmts, lost []string, err error) {
 			case "schema":
 				add(phSchemas, "CREATE SCHEMA "+pgIdent(n.Name))
 			case "table", "type":
-				// A table that inherits another is made once the tables it inherits are.
 				p := phase[n.Kind]
 				if parents, _ := pgInherits(n.Def); n.Kind == "table" && len(parents) > 0 {
 					p = phChildren
@@ -2025,7 +1930,6 @@ func pgPlan(live, want pgSchema) (stmts, lost []string, err error) {
 					add(part(n), want.create(n))
 				case "table":
 					if o.Def != n.Def {
-						// A table begins or stops inheriting once its columns are its parent's: after the tables.
 						was, rest := pgInherits(o.Def)
 						now, nrest := pgInherits(n.Def)
 						if rest != nrest {
@@ -2099,7 +2003,6 @@ func pgPlan(live, want pgSchema) (stmts, lost []string, err error) {
 
 var pgInheritsRe = regexp.MustCompile(`INHERITS \(([^)]*)\)\s*`)
 
-// pgInherits is the parents a table's definition names, and the rest of it.
 func pgInherits(def string) ([]string, string) {
 	m := pgInheritsRe.FindStringSubmatch(def)
 	if m == nil {
@@ -2108,8 +2011,6 @@ func pgInherits(def string) ([]string, string) {
 	return strings.Split(m[1], ", "), strings.TrimSpace(pgInheritsRe.ReplaceAllString(def, ""))
 }
 
-// pgAlter alters a domain, column or attribute o into n: its type, when no data is lost, default and NOT NULL.
-// A column made NOT NULL with a default takes its default where it was null first.
 func pgAlter(want pgSchema, o, n *pgObject, add func(int, string), fail func(*pgObject, string), lost *[]string) {
 	p, alter := phTables, want.alter(n)+" ALTER "+strings.ToUpper(n.Kind)+" "+pgIdent(n.Name)
 	if n.Kind == "domain" {
@@ -2157,7 +2058,6 @@ func pgAlter(want pgSchema, o, n *pgObject, add func(int, string), fail func(*pg
 	}
 }
 
-// alter starts the ALTER of what o is part of: a table, type or domain.
 func (s pgSchema) alter(o *pgObject) string {
 	for _, k := range []string{"domain", "type"} {
 		if s[k+" "+o.Schema+"."+o.Of] != nil {
@@ -2167,7 +2067,6 @@ func (s pgSchema) alter(o *pgObject) string {
 	return "ALTER TABLE " + pgIdent(o.Schema, o.Of)
 }
 
-// drop is the statement that drops o.
 func (s pgSchema) drop(o *pgObject) string {
 	switch o.Kind {
 	case "column", "attribute", "constraint":
@@ -2179,8 +2078,6 @@ func (s pgSchema) drop(o *pgObject) string {
 var pgPrivileges = map[byte]string{'r': "SELECT", 'a': "INSERT", 'w': "UPDATE", 'd': "DELETE", 'D': "TRUNCATE", 'x': "REFERENCES",
 	't': "TRIGGER", 'm': "MAINTAIN", 'X': "EXECUTE", 'U': "USAGE", 'C': "CREATE", 'c': "CONNECT", 'T': "TEMPORARY"}
 
-// phGrants changes the grants on target, or o's default privileges, from was to now, sorted aclitems like
-// role=arw/owner.
 func pgGrants(target string, o *pgObject, was, now string) ([]string, error) {
 	items := func(acl string) map[string]string {
 		out := map[string]string{}
@@ -2229,7 +2126,6 @@ func pgRole(who string) string {
 	return pgIdent(who)
 }
 
-// ours is the part of s that archive.sql makes: the archive schema, and the default privileges on public.
 func (s pgSchema) ours() pgSchema {
 	return maps.Collect(func(yield func(string, *pgObject) bool) {
 		for k, o := range s {
@@ -2238,4 +2134,21 @@ func (s pgSchema) ours() pgSchema {
 			}
 		}
 	})
+}
+
+func objectText(c *Column) bool {
+	return c.Schema == "pg_catalog" && c.Type == "text" && !c.List && !c.Generated
+}
+
+func objectFits(t *Table) bool {
+	for _, w := range []struct {
+		name, typ string
+		notNull   bool
+	}{{"id", "uuid", true}, {"name", "text", false}, {"access", "uuid", false}, {"created_at", "timestamptz", true}, {"updated_at", "timestamptz", true}} {
+		c := t.col(w.name)
+		if c != nil && (c.Schema != "pg_catalog" || c.Type != w.typ || c.List || c.Generated || w.notNull && !c.NotNull) {
+			return false
+		}
+	}
+	return true
 }

@@ -6,20 +6,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Ramp, the corporate card and spend platform, read only through its Developer API. It reads ARCHIVE_RAMP, an app
-// of Ramp's partner Developer Console with the authorization code and refresh token grants, whose redirect URIs list
-// <API>/connect/ramp/callback; Ramp takes the client as HTTP Basic, and only an admin or the business owner connects
-// a business, for everyone. A refresh keeps the refresh token. Ramp's sandbox, on demo.ramp.com and
-// demo-api.ramp.com, is two hosts where production has two others, so this reads production alone.
-//
-// It syncs the business's departments, people and cards, every card transaction and reimbursement into
-// spend_transaction with their receipts, its vendors into ledger_contact and its bills into ledger_entry. Ramp lists
-// transactions by when they were made and says nothing of what changed since, so they are listed a year at a time
-// from eight years back the first time, and after that the last 90 days each sync, which a pending one clears within;
-// those pages delete nothing. Reimbursements are listed whole the first time and a week after, and in between by
-// what was updated since the sync before. The rest, which are few, are listed whole each sync. Its scopes only
-// read, and so do its actions: nothing here moves money, issues or changes a card, or approves spend. Ramp has
-// webhooks, which Archive does not register yet: connecting, asking and reading start a sync.
 func init() {
 	Register(&Connector{
 		ID: "ramp", Name: "Ramp", Integration: true,
@@ -54,7 +40,6 @@ func init() {
 						"role": "data->>'role'", "status": "data->>'status'", "employee_id": "data->>'employee_id'"},
 					People: map[string]SQL{"person": "data->>'email'"},
 					Refs:   map[string]SQL{"department": "data->>'department_id'", "manager": "data->>'manager_id'"}}},
-			// Physical and virtual cards are two lists, which Ramp's API still calls beta: a business it does not show them for skips them.
 			{Name: "physical_cards", Gap: time.Second, Req: Req{URL: "/cards/physical", Query: rampQuery}, Items: "data", Page: rampPage, Deny: rampBeta,
 				Doc: "Every physical card, by id, with its holder, its last four digits and when it expires, listed whole each sync, 100 a page, so one gone is deleted.",
 				To: Map{Table: "spend_card",
@@ -98,7 +83,6 @@ func init() {
 						"address": `concat_ws(', ', nullif(btrim(data#>>'{address,address_line_1}'), ''), nullif(btrim(data#>>'{address,address_line_2}'), ''), nullif(btrim(data#>>'{address,city}'), ''),
 							nullif(btrim(data#>>'{address,state}'), ''), nullif(btrim(data#>>'{address,postal_code}'), ''), nullif(btrim(data#>>'{address,country}'), ''))`,
 						"active": "archive.sync_bool(data->'is_active')", "edited_at": "archive.sync_at(data->>'updated_at')"}}},
-			// A bill is open until it is paid, and what is left of it is all of it until then.
 			{Name: "bills", Gap: time.Second, Req: Req{URL: "/bills", Query: rampQuery}, Items: "data", Page: rampPage,
 				Doc: "Every bill, by id, with its vendor, invoice number, amount, dates, status and lines, listed whole each sync, 100 a page, so one gone is deleted.",
 				To: Map{Table: "ledger_entry",
@@ -114,8 +98,6 @@ func init() {
 }
 
 const (
-	// Ramp's money is in minor units, with how many make one; a transaction says how many once, beside its amounts. Its
-	// amount in dollars, before entity_amount, stands in when that is missing.
 	rampAmount SQL = "coalesce(archive.sync_money((archive.sync_num(data#>>'{entity_amount,value}') / coalesce(nullif(archive.sync_num(data->>'minor_unit_conversion_rate'), 0), 100))::text, data#>>'{entity_amount,currency}'), " +
 		"archive.sync_money(data->>'amount', coalesce(nullif(data->>'currency_code', ''), 'USD')))"
 	rampOriginal   SQL = "archive.sync_money((archive.sync_num(data#>>'{original_transaction_amount,amount}') / coalesce(nullif(archive.sync_num(data#>>'{original_transaction_amount,minor_unit_conversion_rate}'), 0), 100))::text, data#>>'{original_transaction_amount,currency_code}')"
@@ -125,14 +107,10 @@ const (
 )
 
 var (
-	// A page's next is the whole URL of the one after, its cursor in it.
-	rampQuery = Q{"page_size": "100"}
-	rampPage  = NextURL{At: "page/next"}
-	rampBeta  = []Deny{{Status: []int{403, 404}, Why: "Ramp does not list these cards for this business: {message}"}}
-	// rampYears are the years to list transactions in, from eight years back, until the stream has listed them once, and
-	// after that the last 90 days.
-	rampYears = &Parts{Span: &Span{First: Shift{-8, 0, 0}, Step: Shift{1, 0, 0}, Then: Shift{0, 0, -90}}, ID: "{start}", Vals: Obj{"start": "{start}", "end": "{end}"}}
-	// A transaction's or reimbursement's receipts are the ids of the images attached to it.
+	rampQuery    = Q{"page_size": "100"}
+	rampPage     = NextURL{At: "page/next"}
+	rampBeta     = []Deny{{Status: []int{403, 404}, Why: "Ramp does not list these cards for this business: {message}"}}
+	rampYears    = &Parts{Span: &Span{First: Shift{-8, 0, 0}, Step: Shift{1, 0, 0}, Then: Shift{0, 0, -90}}, ID: "{start}", Vals: Obj{"start": "{start}", "end": "{end}"}}
 	rampReceipts = Kids{Table: "spend_receipt", From: "archive.sync_list(data->'receipts') WITH ORDINALITY r(x, i)", Cols: map[string]SQL{"receipt_source": "x #>> '{}'", "position": "i"}}
 )
 

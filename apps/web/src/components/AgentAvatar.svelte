@@ -46,7 +46,6 @@
     later(() => turn(0, me.pace * 1.5, 1.3), 80);
   }
 
-  // A figure's strip loads when it nears the screen, so a long picker fetches only what is scrolled to.
   $effect(() => {
     const watch = new IntersectionObserver(([e]) => {
       if (!e.isIntersecting) return;
@@ -74,8 +73,6 @@
   });
 </script>
 
-<!-- One image per figure (apps/draw/render.js): four turn frames with no hue of their own, which --tint colours here,
-     then the same four as eyes alone, pale on any tint and brightest when lit. -->
 <span bind:this={root} class={['bot', size, `mood-${mood}`, { awake, lit }]} style:--tint={`var(--tint-${tint})`} style:--src={seen ? `url(/bots/agent-${name}.webp)` : null} aria-hidden="true">
   <span class="art">
     <span class="layer" style:--cell={frame}><i class="sheen"></i><i class="eyes"></i></span>

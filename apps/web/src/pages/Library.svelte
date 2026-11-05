@@ -1,6 +1,6 @@
 <script>
   import { onMount, untrack } from 'svelte';
-  import { Upload, LayoutGrid, List as ListIcon, Ellipsis, Download, Pencil, MessageSquarePlus, SearchX, FolderPlus, ExternalLink, FileText, Folder, Image, AudioLines, FileSpreadsheet, Inbox } from '@lucide/svelte';
+  import { Upload, LayoutGrid, List as ListIcon, Ellipsis, Download, Pencil, MessageSquarePlus, SearchX, FolderPlus, ExternalLink, FileText, Image, AudioLines, FileSpreadsheet, Inbox } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
   import StickyHeader from '../components/StickyHeader.svelte';
@@ -20,7 +20,6 @@
   import Dialog from '../components/Dialog.svelte';
   import Avatar from '../components/Avatar.svelte';
   import Badge from '../components/Badge.svelte';
-  import Icon from '../components/Icon.svelte';
   import Text from '../components/Text.svelte';
   import Spacer from '../components/Spacer.svelte';
   import SettingsRow from '../components/SettingsRow.svelte';
@@ -64,7 +63,6 @@
 
   let query = $state('');
   let kind = $state('all');
-  // Where in the tree, as the URL says: the folders opened, top first, each a folder's id or a connection's. A connection's has no parent.
   let trail = $state([]);
   let rows = $state([]);
   let found = $state(null);
@@ -91,7 +89,6 @@
     return [...out].sort((a, b) => (b.kind === 'folder') - (a.kind === 'folder') || by(a, b));
   });
 
-  // /library/<id> is a connection or a folder to go to, or a file to open where it is.
   async function locate(id) {
     try {
       const f = await fileById(id);
@@ -130,7 +127,6 @@
     });
   });
 
-  // A folder is read again when it opens, and when what it is read from moves.
   $effect(() => {
     const at = here;
     ws().library;
@@ -160,7 +156,6 @@
 
   function show(file) {
     if (file.kind === 'folder') {
-      // From a search it may be anywhere, so the URL finds its place.
       if (!found) trail = [...trail, file];
       query = '';
       go(`/library/${file.id}`);
@@ -186,7 +181,6 @@
     moveOpen = true;
   }
 
-  // Where it can go: the folders here, never itself, and nothing a connection syncs.
   $effect(() => {
     const at = moveTrail.at(-1);
     if (!moveOpen) return;
@@ -204,7 +198,6 @@
     const to = moveTrail.at(-1);
     const file = moving;
     moveOpen = false;
-    // At the top it keeps who sees it; in a folder it takes the folder's.
     if (to && to.access !== file.access && !(await confirmDialog({ title: `Move ${file.name}?`, body: `${to.folder} will see it instead of ${file.folder}.`, confirm: 'Move' }))) return;
     moveFile(file, to?.id ?? null);
   }
@@ -395,7 +388,6 @@
 </Dialog>
 
 <style>
-  /* A row's and a ghost button's padding reach out of the dialog's edge, so what is in them lines up with its title. */
   .moves {
     display: flex;
     flex-direction: column;

@@ -4,9 +4,6 @@ COPY go.mod ./
 COPY browser ./browser
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /browser ./browser
 
-# Chromium from Debian, cut down to the files headless Chrome loads: its own directory without the Vulkan
-# validation layers and other locales, the shared libraries it links (not Mesa, LLVM or GTK, which it never
-# loads headless), NSS's runtime modules, fontconfig, and Noto for Latin, a few scripts, emoji and CJK.
 FROM debian:trixie-slim AS chrome
 RUN apt-get update && apt-get install -y --no-install-recommends chromium tini fonts-noto-core fonts-noto-color-emoji fonts-noto-cjk fontconfig
 RUN set -e; out=/out; mkdir -p $out/usr/lib $out/etc $out/usr/share/fonts $out/var/cache; \

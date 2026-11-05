@@ -346,7 +346,6 @@ type ClaimPullRow struct {
 	Tries      int32
 }
 
-// The next synced file whose bytes are due, leased until lease. A failure or a stop counts as a try.
 func (q *Queries) ClaimPull(ctx context.Context, lease time.Time) (ClaimPullRow, error) {
 	row := q.db.QueryRow(ctx, claimPull, lease)
 	var i ClaimPullRow
@@ -965,7 +964,6 @@ DELETE FROM archive.known_org o WHERE NOT EXISTS (SELECT FROM archive.payroll_co
     AND NOT EXISTS (SELECT FROM archive.bank_transaction x WHERE x.org = o.id)
 `
 
-// People nothing names any more go, and organizations too.
 func (q *Queries) DeleteUnknown(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, deleteUnknown)
 	return err
@@ -1084,7 +1082,6 @@ type FileBySourceRow struct {
 	Source  map[string]any
 }
 
-// What a connection synced under an id there, as you see it.
 func (q *Queries) FileBySource(ctx context.Context, connection *uuid.UUID, sourceID *string) (FileBySourceRow, error) {
 	row := q.db.QueryRow(ctx, fileBySource, connection, sourceID)
 	var i FileBySourceRow
@@ -1122,7 +1119,6 @@ type FileKeptRow struct {
 	UpdatedAt  time.Time
 }
 
-// A file a connection's sync kept, like a mail's attachment: found again by its content and name.
 func (q *Queries) FileKept(ctx context.Context, connection *uuid.UUID, hash string, name string) (FileKeptRow, error) {
 	row := q.db.QueryRow(ctx, fileKept, connection, hash, name)
 	var i FileKeptRow
@@ -1164,7 +1160,6 @@ type FileSourcesRow struct {
 	Account  string
 }
 
-// The connections you can see that have files, for the top of the tree.
 func (q *Queries) FileSources(ctx context.Context) ([]FileSourcesRow, error) {
 	rows, err := q.db.Query(ctx, fileSources)
 	if err != nil {
@@ -1299,7 +1294,6 @@ type FilesRow struct {
 	UpdatedAt  time.Time
 }
 
-// What of the files is in a folder, or at the top of a connection or of what was made here, with tree; every one without.
 func (q *Queries) Files(ctx context.Context, arg FilesParams) ([]FilesRow, error) {
 	rows, err := q.db.Query(ctx, files,
 		arg.After,
@@ -1718,7 +1712,6 @@ type KnownDomainsRow struct {
 	Domain string
 }
 
-// The organizations of domains, each added unless there is one.
 func (q *Queries) KnownDomains(ctx context.Context, domains []string) ([]KnownDomainsRow, error) {
 	rows, err := q.db.Query(ctx, knownDomains, domains)
 	if err != nil {
@@ -1751,7 +1744,6 @@ type KnownOrgsRow struct {
 	Ein string
 }
 
-// The organizations of eins, each added unless there is one.
 func (q *Queries) KnownOrgs(ctx context.Context, eins []string) ([]KnownOrgsRow, error) {
 	rows, err := q.db.Query(ctx, knownOrgs, eins)
 	if err != nil {
@@ -1784,7 +1776,6 @@ type KnownPeopleRow struct {
 	Email string
 }
 
-// The people of emails, each added unless there is one.
 func (q *Queries) KnownPeople(ctx context.Context, emails []string) ([]KnownPeopleRow, error) {
 	rows, err := q.db.Query(ctx, knownPeople, emails)
 	if err != nil {
@@ -2033,7 +2024,6 @@ const memberConnections = `-- name: MemberConnections :many
 SELECT id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, asked_at, lease_at, revoked, integration FROM archive.connection WHERE member = $1 AND NOT integration OR integration ORDER BY provider, account, id
 `
 
-// A member's personal connections, and the archive's integrations.
 func (q *Queries) MemberConnections(ctx context.Context, member uuid.UUID) ([]ArchiveConnection, error) {
 	rows, err := q.db.Query(ctx, memberConnections, member)
 	if err != nil {
@@ -2385,7 +2375,6 @@ SELECT coalesce(f.retry_at, now())::timestamptz FROM archive.file f JOIN archive
 WHERE f.status = 'pending' AND f.connection IS NOT NULL AND NOT c.revoked ORDER BY f.retry_at NULLS FIRST LIMIT 1
 `
 
-// When a synced file's bytes are next due.
 func (q *Queries) NextPull(ctx context.Context) (time.Time, error) {
 	row := q.db.QueryRow(ctx, nextPull)
 	var column_1 time.Time
@@ -2398,8 +2387,6 @@ SELECT greatest(sync_at, least(coalesce(lease_at, sync_at), $1::timestamptz))::t
 WHERE sync_at IS NOT NULL ORDER BY 1 LIMIT 1
 `
 
-// When a sync is next due: a connection whose page another task holds is looked at again shortly, not when its
-// lease runs out, since that task queues the next itself once its page is done (connection.go, syncLeaseCheck).
 func (q *Queries) NextSyncAt(ctx context.Context, soon time.Time) (time.Time, error) {
 	row := q.db.QueryRow(ctx, nextSyncAt, soon)
 	var column_1 time.Time
@@ -2435,8 +2422,6 @@ WHERE c.id = $1 AND c.account <> $2 AND NOT EXISTS (
     SELECT FROM archive.connection o WHERE o.id <> c.id AND o.member = c.member AND o.provider = c.provider AND o.account = $2 AND NOT o.integration)
 `
 
-// A connection's account as its provider now calls it; not one that another of its member's own connections to
-// the provider already has, as connecting again would renew that one.
 func (q *Queries) RenameConnection(ctx context.Context, iD uuid.UUID, account string) error {
 	_, err := q.db.Exec(ctx, renameConnection, iD, account)
 	return err
@@ -2938,7 +2923,6 @@ type SetPullEndParams struct {
 	Version *string
 }
 
-// Why a synced file's bytes are not here, for good until a new version comes.
 func (q *Queries) SetPullEnd(ctx context.Context, arg SetPullEndParams) error {
 	_, err := q.db.Exec(ctx, setPullEnd,
 		arg.Status,
@@ -2986,7 +2970,6 @@ type SetPulledParams struct {
 	Version *string
 }
 
-// The copy's bytes, unless a newer version came while they were read.
 func (q *Queries) SetPulled(ctx context.Context, arg SetPulledParams) (int64, error) {
 	result, err := q.db.Exec(ctx, setPulled,
 		arg.Hash,
@@ -3220,7 +3203,6 @@ const wantSync = `-- name: WantSync :one
 UPDATE archive.connection SET asked_at = now(), sync_at = coalesce(sync_at, now()) WHERE id = $1 AND NOT revoked RETURNING id
 `
 
-// A push asks for a sync: one already due, or backing off, keeps its time.
 func (q *Queries) WantSync(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, wantSync, id)
 	var id_2 uuid.UUID

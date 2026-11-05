@@ -10,21 +10,19 @@
   import { confirmDialog } from '../lib/dialogs.svelte.js';
   import { apiPrompt } from '../lib/apiprompt.js';
 
-  let { scope = 'user', onback, backNarrow = true } = $props();
+  let { onback, backNarrow = true } = $props();
 
   let shown = $state(false);
-  const archive = $derived(scope === 'archive');
-  const key = $derived(archive ? archiveKey() : app.apiKey);
-  const locked = $derived(archive && !isArchiveOwner());
+  const key = $derived(archiveKey());
+  const locked = $derived(!isArchiveOwner());
   const secret = $derived(key?.secret ?? '');
   const masked = $derived(secret ? `${secret.slice(0, secret.lastIndexOf('_') + 1)}${'•'.repeat(12)}${secret.slice(-4)}` : key ? `arc_${'•'.repeat(16)}` : 'No key yet');
 
-  tokens.use(() => archive && app.archive);
+  tokens.use(() => app.archive);
 
-  // The key to copy: the one there is, or, when there is none or its secret cannot be read, a new one.
   async function current() {
-    if (!secret) await rotateKey(scope);
-    return (archive ? archiveKey() : app.apiKey)?.secret ?? '';
+    if (!secret) await rotateKey();
+    return archiveKey()?.secret ?? '';
   }
 
   async function copy() {
@@ -32,7 +30,7 @@
   }
 
   async function copyPrompt() {
-    await navigator.clipboard?.writeText(apiPrompt({ key: await current(), archive: archive ? ws() : null })).catch(() => {});
+    await navigator.clipboard?.writeText(apiPrompt({ key: await current(), archive: ws() })).catch(() => {});
   }
 
   const since = (t) => `Connected ${new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
@@ -43,17 +41,17 @@
 
   async function rotate() {
     if (!key || (await confirmDialog({ title: 'Rotate this key?', body: 'The old key stops working right away.', confirm: 'Rotate' }))) {
-      await rotateKey(scope);
-      shown = archive;
+      await rotateKey();
+      shown = true;
     }
   }
 </script>
 
 <SettingsPane {onback} {backNarrow}>
   <div class="page">
-    <div class="art"><Art name={archive ? 'security' : 'tokens'} /></div>
-    <Heading size="xl" wrap="normal" step>{archive ? 'Archive API key' : 'Your API key'}</Heading>
-    <p class="sub">{archive ? `Only for ${ws().name}, with your access. Copy it whenever you need it.` : 'Works across every archive you’re in, with your access. Treat it like a password.'}</p>
+    <div class="art"><Art name="security" /></div>
+    <Heading size="xl" wrap="normal" step>Archive API key</Heading>
+    <p class="sub">Only for {ws().name}, with your access. Copy it whenever you need it.</p>
     {#if locked}<div class="notice"><OwnerNotice what="the archive API key" ask="if you need it" /></div>{/if}
     <div class="key">
       <span class="value" aria-label={shown ? 'API key' : 'API key, hidden'}>{shown && !locked && secret ? secret : masked}</span>
@@ -64,7 +62,7 @@
     <div class="setup">
       <Button variant="primary" icon={Sparkles} disabled={locked} onclick={copyPrompt}>Copy setup prompt</Button>
     </div>
-    {#if archive && archiveApps().length}
+    {#if archiveApps().length}
       <div class="apps">
         <Heading level={3} size="sm" serif={false}>Connected apps</Heading>
         {#each archiveApps() as t (t.id)}

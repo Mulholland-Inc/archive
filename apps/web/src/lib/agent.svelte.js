@@ -1,5 +1,3 @@
-// Talking to an agent: POST /api/turn streams one JSON event per line. The answer is built into the agent's
-// messages as it arrives, outside any component, so it keeps going while you move around the app.
 
 import { api, turnStream, Unauthorized } from './api.js';
 import { app, ws, agentById, openFile } from './app.svelte.js';
@@ -12,9 +10,6 @@ const controllers = new Map();
 let seq = 0;
 const mid = () => `l${++seq}`;
 
-// An agent's newest turns of yours, read when its page opens and again when one moves: a message sent from
-// another tab, or the agent answering there. While this tab streams an answer into it, the stream is what it
-// shows; once that answer is saved it is the same messages, so they are kept as they were built.
 export const conversation = resource({
   tables: ['archive.turn'],
   load: async (id) => {
@@ -39,7 +34,6 @@ export const conversation = resource({
   }
 });
 
-// Reads the page of turns before those on screen.
 export function loadEarlier(id) {
   const agent = agentById(id);
   if (!agent?.more || agent.streaming) return null;
@@ -49,7 +43,6 @@ export function loadEarlier(id) {
   return conversation.refresh(id);
 }
 
-// Files from the library go along as a line naming each one, so the agent can open them by id.
 function withFiles(text, attachments) {
   if (!attachments.length) return text;
   return `${text}\n\nAttached from the library:\n${attachments.map((a) => `- ${a.name} (file ${a.id})`).join('\n')}`.trim();
@@ -76,7 +69,6 @@ export async function sendMessage(id, { text = '', attachments = [] }) {
     live.text += `${live.text ? '\n\n' : ''}*${text}*`;
     render();
   };
-  // The answer is done at done; the stream stays open while the server compacts memory.
   let finished = false;
   const finish = () => {
     if (finished) return;
@@ -87,8 +79,6 @@ export async function sendMessage(id, { text = '', attachments = [] }) {
     agent.keep = true;
     agent.streaming = false;
     if (!live.blocks.length && !live.steps.length) live.blocks = [{ type: 'p', text: '*No answer.*' }];
-    // What the turn was about opens beside the answer: what it changed last, or else read last. The panel would
-    // cover the answer on a narrow screen, and elsewhere it would come out of nowhere.
     const shown = live.files.findLast((f) => f.action !== 'read') ?? live.files.at(-1);
     if (shown && !ctrl.signal.aborted && route.parts[0] === 'agent' && route.parts[1] === id && !matchMedia('(max-width: 56rem)').matches) openFile(shown.id, shown.name);
   };
@@ -130,7 +120,6 @@ export async function sendMessage(id, { text = '', attachments = [] }) {
   finish();
 }
 
-// Forgets your conversation with an agent, on the server and on screen.
 export async function clearAgent(id) {
   const w = ws();
   const agent = agentById(id);

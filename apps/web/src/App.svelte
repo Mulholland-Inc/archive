@@ -1,7 +1,5 @@
 <script>
-  import Shell from './components/Shell.svelte';
   import AppSidebar from './components/AppSidebar.svelte';
-  import View from './components/View.svelte';
   import ContextMenu from './components/ContextMenu.svelte';
   import Agent from './pages/Agent.svelte';
   import LibraryPage from './pages/Library.svelte';
@@ -15,20 +13,17 @@
   import GroupPage from './pages/Group.svelte';
   import Canvas from './components/Canvas.svelte';
   import AppSettings from './components/AppSettings.svelte';
-  import Specimen from './pages/Specimen.svelte';
   import Onboarding from './pages/Onboarding.svelte';
   import { route, replace } from './lib/router.svelte.js';
   import { app, ws, toggleSidebar, closeDrawer, openSettings, boot, account, lastAgent } from './lib/app.svelte.js';
   import PromptHost from './components/PromptHost.svelte';
   import HelpDialog from './components/HelpDialog.svelte';
-  import ShareDialog from './components/ShareDialog.svelte';
   import SignIn from './components/SignIn.svelte';
   import PasskeyPrompt from './components/PasskeyPrompt.svelte';
   import Loading from './components/Loading.svelte';
 
   boot();
 
-  // Who you are and your archives are always on screen.
   account.use(() => app.status === 'ready');
 
   let last = '/';
@@ -36,7 +31,7 @@
   $effect(() => {
     const [head, a, b] = route.parts;
     if (head === 'settings') {
-      openSettings(a ?? 'profile', b ?? null);
+      openSettings(a ?? 'appearance', b ?? null);
       replace(last);
     } else {
       last = route.path;
@@ -70,11 +65,11 @@
 {:else if app.status !== 'ready' || !ws()}
   <Loading />
 {:else}
-<Shell>
-  {#snippet sidebar()}<AppSidebar />{/snippet}
-  {#snippet pane()}{#if app.canvas}{#key app.canvas.id}<Canvas />{/key}{/if}{/snippet}
+<div class="shell">
+  <AppSidebar />
+  <main class="main">
   {#key key}
-    <View>
+    <div class="view">
       {#if route.parts[0] === 'agent'}
         <Agent id={route.parts[1]} />
       {:else if route.parts[0] === 'library'}
@@ -97,19 +92,44 @@
         <AccessPage />
       {:else if route.parts[0] === 'onboarding'}
         <Onboarding />
-      {:else if route.parts[0] === 'specimen'}
-        <Specimen />
       {:else}
         {#key lastAgent()?.id}<Agent id={lastAgent()?.id} />{/key}
       {/if}
-    </View>
+    </div>
   {/key}
-</Shell>
+  </main>
+  {#if app.canvas}{#key app.canvas.id}<Canvas />{/key}{/if}
+</div>
 
 <AppSettings />
 <PromptHost />
 <HelpDialog bind:open={app.help} />
-<ShareDialog />
 <ContextMenu />
 {#if app.askPasskey}<PasskeyPrompt />{/if}
 {/if}
+
+<style>
+  .shell {
+    display: flex;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .main {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .view {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+  }
+</style>

@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -33,19 +34,17 @@ import (
 )
 
 type Hub struct {
-	key   []byte
-	aead  cipher.AEAD
-	pg    *pgx.ConnConfig
-	main  *pgxpool.Pool
-	blobs blobStore
-	hints Hints
-	app   string
-	api   string
-	// mcpURL is MCP's own host, mcp.<domain>, and the issuer of its OAuth (mcp.go); the API's in development.
-	mcpURL string
-	tasks  *hubTasks
-	live   *liveHub
-	// connect are the connectors this server has an OAuth client for (connection.go).
+	key     []byte
+	aead    cipher.AEAD
+	pg      *pgx.ConnConfig
+	main    *pgxpool.Pool
+	blobs   blobStore
+	hints   Hints
+	app     string
+	api     string
+	mcpURL  string
+	tasks   *hubTasks
+	live    *liveHub
 	connect connect.Providers
 
 	mu   sync.Mutex
@@ -69,7 +68,6 @@ type hubTasks struct {
 	verify *oidc.IDTokenVerifier
 }
 
-// hubTask is a Cloud Tasks task as its REST API takes it.
 type hubTask struct {
 	Name         string    `json:"name"`
 	ScheduleTime time.Time `json:"scheduleTime"`
@@ -96,8 +94,6 @@ func gcpMetadata() *gcpToken {
 	return &gcpToken{meta: "http://" + coreEnv("GCE_METADATA_HOST", "metadata.google.internal")}
 }
 
-// Workspace is a workspace as its people see it. Type is personal, family or business; Icon is one of the web
-// app's icons and Color one of its tints, by index; null is the default for the type.
 type Workspace struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
@@ -107,7 +103,6 @@ type Workspace struct {
 	CreatedAt time.Time `json:"created_at,omitzero"`
 }
 
-// WorkspaceLook is what may change of a workspace besides its name; a field left out stays as it is.
 type WorkspaceLook struct {
 	Type  *string `json:"type"`
 	Icon  *string `json:"icon"`
@@ -203,12 +198,8 @@ func (h *Hub) urls(port string) error {
 	return nil
 }
 
-// mainLock is the lock a process holds on the main database while it brings it to main.sql, so processes that
-// start at once do it one at a time.
 const mainLock = 7274
 
-// migrate brings the main database to main.sql at startup, before any workspace opens. A new install, with no
-// one and no workspace yet, starts with one workspace, whose first member becomes the admin.
 func (h *Hub) migrate(ctx context.Context) error {
 	conn, err := h.main.Acquire(ctx)
 	if err != nil {
@@ -241,8 +232,6 @@ func (h *Hub) migrate(ctx context.Context) error {
 	return err
 }
 
-// mainMigrate brings the main database to want, main.sql's snapshot, in tx, and stamps it with main.sql's hash.
-// It runs nothing that would delete data, and says what instead.
 func mainMigrate(ctx context.Context, tx pgx.Tx, want pgSchema) error {
 	lost, err := pgMigrate(ctx, tx, want)
 	if err != nil {
@@ -276,7 +265,6 @@ func (h *Hub) Close() {
 	if h.main != nil {
 		h.main.Close()
 	}
-	// What the stores committed is held in memory; send it last, so closing is not held up by it.
 	h.live.settle(liveSettle)
 }
 
@@ -300,8 +288,6 @@ func (h *Hub) unwrap(row generated.ArchiveWorkspace) ([]byte, error) {
 	return k, nil
 }
 
-// database is the name of a workspace's database, on the main database's server. The main database is no
-// workspace's.
 func (h *Hub) database(id string) string { return "archive_" + id }
 
 func (h *Hub) openArchive(ctx context.Context, row generated.ArchiveWorkspace, key []byte) (*Archive, error) {
@@ -460,8 +446,6 @@ func (h *Hub) soon(ctx context.Context, ws uuid.UUID, kind string, at time.Time)
 	return nil
 }
 
-// pushed queues the job a committed transaction said has work (archive.push). It runs before the commit returns, so an
-// instance that stops once its request ends has queued it first.
 func (h *Hub) pushed(ws uuid.UUID, kind string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -497,11 +481,6 @@ func hubTasksOpen() (*hubTasks, error) {
 	return t, nil
 }
 
-// wake queues a task that does ws's work of kind at at. A task's name dedupes it: Cloud Tasks takes one name
-// once, and refuses it for an hour after its task ran. Most wakes are named for when they were asked for too,
-// so a wake for a time a task already woke for is a new task, not refused and lost; repeats within a second
-// are one. A claimed wake, the one a task queues for when another task's claim runs out, is named for that
-// time alone, which only that claim has, so tasks that found the work claimed queue one between them.
 func (h *Hub) wake(ctx context.Context, ws uuid.UUID, kind string, at time.Time) error {
 	return h.queue(ctx, ws, kind, at, time.Now().Unix())
 }
@@ -614,8 +593,6 @@ func (t *gcpToken) access(ctx context.Context) (string, error) {
 
 func (h *Hub) taskCaller(r *http.Request) error { return h.googleCaller(r, "/tasks") }
 
-// googleCaller checks that r is a call Google signed for Archive's tasks account, with an OIDC token whose
-// audience is the API's path: Cloud Tasks' calls of /tasks, and Pub/Sub's pushes to /push/<connector>.
 func (h *Hub) googleCaller(r *http.Request, path string) error {
 	t := h.tasks
 	tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
@@ -826,9 +803,6 @@ func (h *Hub) secret(r *http.Request) (string, error) {
 	return "", fmt.Errorf("sign in or send a bearer token: %w", ErrUnauthorized)
 }
 
-// authenticate enters the workspace secret is a token for, of one of kinds: by default the API's, a session or
-// an API token. MCP takes API tokens and MCP clients' (Hub.mcp), and an MCP client's is for MCP alone, the
-// resource it was issued for.
 func (h *Hub) authenticate(ctx context.Context, secret, want string, kinds ...string) (*Archive, *Actor, func(), error) {
 	if len(kinds) == 0 {
 		kinds = []string{"api", "session"}
@@ -865,7 +839,6 @@ func localHost(host string) bool {
 	return host == "localhost" || ip != nil && ip.IsLoopback()
 }
 
-// localUser signs a request from this machine in as the first admin, while the web app is on localhost.
 func (h *Hub) localUser(ctx context.Context, want string) (*Archive, *Actor, func(), error) {
 	u, err := h.q().FirstAdmin(ctx)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -955,9 +928,6 @@ func (h *Hub) inWorkspace(f func(a *Archive, w http.ResponseWriter, r *http.Requ
 	}
 }
 
-// mcp serves MCP to a bearer token: an API token, or an MCP client's from OAuth (mcp.go), which acts in the one
-// workspace it was granted for. Archive-Workspace, if a client sends it, must be that workspace. It takes no
-// session, by cookie or as a bearer, so no sign-in to the web app ever reaches it.
 func (h *Hub) mcp(w http.ResponseWriter, r *http.Request) {
 	scheme, tok, _ := strings.Cut(r.Header.Get("Authorization"), " ")
 	err := fmt.Errorf("send Authorization: Bearer <token>, from OAuth or an API token: %w", ErrUnauthorized)
@@ -987,8 +957,6 @@ func (h *Hub) mcp(w http.ResponseWriter, r *http.Request) {
 				}
 				return a.mcps[ac.member]
 			},
-				// Stateless: no Mcp-Session-Id, so any instance answers any request and a redeploy drops nothing.
-				// run needs nothing from the client mid-call, so plain JSON replies are enough.
 				&mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, PropagateRequestCancellation: true}))
 	}
 	hd := a.mcph
@@ -1016,8 +984,6 @@ func (a *Archive) workspaceAdmin(ctx context.Context) (*Actor, error) {
 	return ac, nil
 }
 
-// admin says whether whoever asks is an admin of this Archive, by their user in the main database, in whichever
-// workspace they ask from. A read-only token is never one.
 func (h *Hub) admin(ctx context.Context) error {
 	ac, err := authUser(ctx)
 	if err != nil {
@@ -1030,7 +996,6 @@ func (h *Hub) admin(ctx context.Context) error {
 	return err
 }
 
-// Admins are the people who run this Archive.
 func (h *Hub) Admins(ctx context.Context) ([]User, error) {
 	if err := h.admin(ctx); err != nil {
 		return nil, err
@@ -1043,7 +1008,6 @@ func (h *Hub) Admins(ctx context.Context) ([]User, error) {
 	return out, err
 }
 
-// SetAdmin makes the person with the email an admin, or no longer one; the last admin stays one.
 func (h *Hub) SetAdmin(ctx context.Context, email string, admin bool) (*User, error) {
 	if err := h.admin(ctx); err != nil {
 		return nil, err
@@ -1141,11 +1105,8 @@ func workspaceName(name string) (string, error) {
 	return name, nil
 }
 
-// workspaceIcons are the web app's workspace icons (apps/draw/icons.mjs writes this list). A saved name that has left
-// it stays a valid row, and the web app shows its type's default; only a write has to name one of these.
 var workspaceIcons = []string{"aframe", "apartment", "beachhouse", "bungalow", "tent", "caravan", "cottage", "shed", "houseboat", "hut", "igloo", "logcabin", "stilts", "tipi", "treehouse", "castle", "duplex", "farmhouse", "lighthouse", "manor", "pagoda", "palace", "rowhouse", "townhouse", "windmill", "church", "daycare", "school", "farm", "greenhouse", "accounting", "architect", "bank", "datacentre", "insurance", "lawfirm", "marketing", "office", "realestate", "recruiter", "server", "skyscraper", "software", "exchange", "dental", "hospital", "clinic", "pharmacy", "vet", "bakery", "bar", "brewery", "butcher", "cafe", "diner", "fishmonger", "foodtruck", "grocery", "market", "pizzeria", "restaurant", "winery", "bookshop", "boutique", "florist", "shop", "hardware", "jeweller", "barbershop", "gym", "salon", "spa", "yoga", "gallery", "cinema", "hotel", "library", "museum", "music", "photo", "stadium", "theatre", "capitol", "courthouse", "nonprofit", "townhall", "university", "garage", "dealership", "carwash", "petrol", "construction", "factory", "silo", "depot", "mine", "warehouse", "workshop", "hangar", "airtower", "bridge", "port", "station", "oilwell", "power", "solar", "telecom", "watertower", "windfarm"}
 
-// typ is the look's type, once the look is valid.
 func (l WorkspaceLook) typ() (*generated.ArchiveWorkspaceType, error) {
 	ve := &ValidationError{Type: "workspace"}
 	var out *generated.ArchiveWorkspaceType
@@ -1180,7 +1141,6 @@ func (h *Hub) createWorkspace(ctx context.Context, name, owner string, look Work
 	if typ == nil {
 		typ = new(generated.ArchiveWorkspaceTypePersonal)
 	}
-	// A new install's first workspace has no owner yet: the first archive user add is.
 	if owner != "" {
 		if owner, err = authEmail(owner); err != nil {
 			return row, err
@@ -1245,7 +1205,6 @@ func (a *Archive) Info(ctx context.Context) (*Workspace, error) {
 	return &w, nil
 }
 
-// SetInfo renames the workspace and changes its look, what is given of them, all in one write.
 func (a *Archive) SetInfo(ctx context.Context, name *string, look WorkspaceLook) (*Workspace, error) {
 	if _, err := a.workspaceAdmin(ctx); err != nil {
 		return nil, err
@@ -1341,4 +1300,73 @@ func (h *Hub) workspaceRoutes(authed func(string, func(http.ResponseWriter, *htt
 	authed("DELETE /auth/workspaces/{id}", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		return http.StatusNoContent, nil, h.DeleteWorkspace(r.Context(), r.PathValue("id"))
 	})
+}
+
+var groupNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_]{0,23}$`)
+
+func (a *Archive) groupID(ctx context.Context, s string, make bool) (*uuid.UUID, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, nil
+	}
+	if id, err := uuid.Parse(s); err == nil {
+		return &id, nil
+	}
+	name := strings.ToLower(s)
+	id, err := a.st.db(ctx).GroupByName(ctx, name)
+	if errors.Is(err, pgx.ErrNoRows) && make && groupNameRe.MatchString(name) {
+		err = a.st.Q(ctx).QueryRow(ctx, `INSERT INTO archive."group" (name) VALUES ($1) RETURNING id`, name).Scan(&id)
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, &ValidationError{Type: "group", Errors: []FieldError{{Path: "access", Message: fmt.Sprintf(`no group %q; make it with archive.create("group", { name: %q })`, s, name)}}}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &id, nil
+}
+
+func (a *Archive) groupNames(ctx context.Context, tb *Table, in map[string]any) error {
+	if s, ok := in["access"].(string); ok && tb.col("access") != nil {
+		id, err := a.groupID(ctx, s, false)
+		if ve := (*ValidationError)(nil); errors.As(err, &ve) {
+			ve.Type = tb.Name
+		}
+		if err != nil {
+			return err
+		}
+		if id == nil {
+			in["access"] = nil
+		} else {
+			in["access"] = id.String()
+		}
+	}
+	if tb.Schema != "archive" || tb.Name != "member" {
+		return nil
+	}
+	list, ok := in["groups"].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]any, 0, len(list))
+	for _, v := range list {
+		s, ok := v.(string)
+		if !ok {
+			out = append(out, v)
+			continue
+		}
+		id, err := a.groupID(ctx, s, true)
+		if err != nil {
+			var ve *ValidationError
+			if errors.As(err, &ve) {
+				ve.Type, ve.Errors[0].Path = "member", "groups"
+			}
+			return err
+		}
+		if id != nil {
+			out = append(out, id.String())
+		}
+	}
+	in["groups"] = out
+	return nil
 }

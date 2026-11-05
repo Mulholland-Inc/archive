@@ -1,6 +1,6 @@
 <script>
   import { tick } from 'svelte';
-  import { X, Pencil, Share, Trash2, Download, Copy, FileQuestion } from '@lucide/svelte';
+  import { X, Pencil, Trash2, Download, Copy, FileQuestion } from '@lucide/svelte';
   import TopBar from './TopBar.svelte';
   import Button from './Button.svelte';
   import IconButton from './IconButton.svelte';
@@ -8,12 +8,11 @@
   import Tabs from './Tabs.svelte';
   import EmptyState from './EmptyState.svelte';
   import Skeleton from './Skeleton.svelte';
-  import { app, canvas, closeFile, editFile, copyFile, downloadFile, openShare, removeFile } from '../lib/app.svelte.js';
+  import { app, canvas, closeFile, editFile, copyFile, downloadFile, removeFile } from '../lib/app.svelte.js';
   import { blobURL, send, local, setLocal } from '../lib/api.js';
   import { renameFilePrompt } from '../lib/menus.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
 
-  // One of these per file (App.svelte), so nothing held for one is ever taken for another's.
   const { id } = app.canvas;
 
   canvas.use(() => id);
@@ -25,8 +24,6 @@
     if (await confirmDialog({ title: `Delete ${file.name}?`, confirm: 'Delete' })) removeFile(file.id);
   };
   const shown = $derived(!file?.held ? '' : file.mime?.startsWith('image/') ? 'image' : file.mime === 'application/pdf' ? 'pdf' : file.mime?.startsWith('audio/') ? 'audio' : file.mime?.startsWith('video/') ? 'video' : file.mime?.startsWith('text/') ? 'text' : '');
-
-  // The pane
 
   let aside = $state();
   let closer = $state();
@@ -47,7 +44,6 @@
     handle.addEventListener('pointerup', up);
   }
 
-  // What the pane's limits let it be is what is kept.
   async function keep() {
     await tick();
     width = aside.offsetWidth;
@@ -66,14 +62,11 @@
     if (event.key === 'Escape' && !event.defaultPrevented && !document.querySelector('dialog[open], :popover-open')) closeFile();
   }
 
-  // Taking over a narrow screen takes the focus along, and closing gives it back.
   $effect(() => {
     const before = document.activeElement;
     if (matchMedia('(max-width: 56rem)').matches) requestAnimationFrame(() => closer?.querySelector('button')?.focus());
     return () => before?.isConnected && before.focus();
   });
-
-  // What the browser shows itself
 
   let src = $state('');
   let text = $state('');
@@ -86,16 +79,12 @@
     else blobURL(f.path).then((u) => (src = u)).catch(() => {});
   });
 
-  // Text a person edits: a paragraph, a table cell's, a shape's. held is what each field being edited started from: a
-  // read moves what is under a field, not what is in it, and what is saved is what changed since it started.
 
   let held = $state({});
   let refused = $state(null);
 
-  // A shape's paragraphs are one line each, a paragraph's text is what it holds.
   const typed = (el) => (el.classList.contains('lines') && el.children.length ? [...el.children].map((c) => c.textContent).join('\n') : el.textContent.replace(/\n$/, ''));
 
-  // A run of text as the file formats it. On a slide it has the slide's own size and color; on a page, the page's type.
   function run(s, slideWidth) {
     const e = document.createElement('span');
     e.textContent = s.text;
@@ -118,7 +107,6 @@
     blobURL(`/api/files/${id}/media/${part}`).then((u) => (el.src = u)).catch(() => {});
   };
 
-  // EMU as a share of the slide, for what must scale with it.
   const share = (v, of) => `${(v / of) * 100}%`;
   const boxOf = (b) => (b ? `left:${share(b.x, model.width)};top:${share(b.y, model.height)};width:${share(b.w, model.width)};height:${share(b.h, model.height)};${b.rot ? `transform:rotate(${b.rot}deg);` : ''}` : 'left:5%;top:5%;width:90%;');
   const insetOf = (s) => (s.inset ? [1, 2, 3, 0].map((i) => `${(s.inset[i] / model.width) * 100}cqw`).join(' ') : '');
@@ -170,8 +158,6 @@
     }
   }
 
-  // The smallest replace_text that turns old into next, so the formatting around a change stays. Its find is the
-  // first of its kind in old, as replace_text takes the first.
   function change(old, next) {
     const low = (s, i) => /[\uDC00-\uDFFF]/.test(s[i] ?? '');
     let a = 0;
@@ -194,7 +180,6 @@
     };
   }
 
-  // A document as the model has it: paragraphs in order, those of a table gathered where the table starts.
   const blocks = $derived.by(() => {
     const out = [];
     const tables = new Map();
@@ -220,12 +205,9 @@
     return s === 'title' || s === 'subtitle' ? s : (s.match(/^heading([1-6])$/)?.[0] ?? (s.includes('quote') ? 'quote' : ''));
   };
 
-  // A table's cell as it sits on the table's columns.
   const tableAt = (key) => model.tables?.[+key.slice(1)];
 
   const inlineOf = (p) => (p.spans ? (el) => el.replaceChildren(...p.spans.map((s) => run(s))) : null);
-
-  // A sheet: a grid of what is in it and some room to go on, of which only the rows in view are drawn.
 
   const ROW = 28;
   const COL = 96;
@@ -275,7 +257,6 @@
     return { cells, spans, hidden, used: { cols, rows }, cols: Math.max(cols + 2, Math.ceil(wide / COL)), rows: Math.max(rows + 6, Math.ceil(tall / ROW)) };
   });
 
-  // A column's width in pixels, as Excel turns its characters into them; a hidden one is not drawn.
   const widths = $derived.by(() => {
     const out = new Map();
     for (const c of sheet?.cols ?? []) for (let n = c.min; n <= Math.min(c.max, grid.cols); n++) out.set(n - 1, c.hidden ? 0 : c.width ? Math.round(c.width * 7 + 5) : COL);
@@ -284,7 +265,6 @@
   const widthOf = (c) => widths.get(c) ?? COL;
   const here = $derived(at ? place(at) : { col: -1, row: -1 });
 
-  // The file's look of a cell. Black and white are the page's, so they follow the theme.
   function cellLook(c) {
     const st = c && model.styles?.[c.style ?? 0];
     if (!c || (!st && !c.ink)) return { css: '', painted: false, inked: false };
@@ -307,7 +287,6 @@
     return { css, painted: Boolean(fill), inked: Boolean(ink) };
   }
 
-  // Text runs on over the empty cells beside it, as a sheet's does; a number never does.
   const spills = (ref, c, col, row) => Boolean(c?.value) && !number.test(c.value) && !c.formula && !grid.spans.has(ref) && !grid.cells.get(refOf(col + 1, row))?.value;
 
   const first = $derived(Math.max(0, Math.floor(top / ROW) - 5));
@@ -431,7 +410,6 @@
     if (ref) begin(pending[keyOf(ref)] ?? raw(ref));
   }
 
-  // The grid's own size, for which rows are drawn.
   const measure = (el) => {
     const seen = new ResizeObserver(() => {
       tall = el.clientHeight;
@@ -491,7 +469,6 @@
       {#if synced && file.held}<Button size="sm" icon={Copy} onclick={() => copyFile(file.id)}>Copy</Button>{/if}
       {#if file}
         {#if !file.connection}<IconButton icon={Pencil} label="Rename" placement="bottom" onclick={() => renameFilePrompt(file)} />{/if}
-        <IconButton icon={Share} label="Share" placement="bottom" onclick={() => openShare('file', file.id)} />
         {#if file.held}<IconButton icon={Download} label="Download" placement="bottom" onclick={() => downloadFile(file)} />{/if}
         {#if !file.connection}<IconButton icon={Trash2} label="Delete" placement="bottom" onclick={remove} />{/if}
       {/if}
@@ -640,7 +617,6 @@
 </aside>
 
 <style>
-  /* Text starts where the title of a TopBar does: the bar's padding and a ghost button's. */
   .canvas {
     --edge: calc(var(--space-2) + var(--space-3));
     --color-canvas: var(--color-surface);
@@ -737,8 +713,6 @@
     font-size: var(--text-sm);
   }
 
-  /* Text a person edits. A field's own padding reaches out of the page's edge, so its words stay on it. */
-
   .page {
     --field-edge: var(--space-1-5);
     display: flex;
@@ -829,7 +803,6 @@
     padding-inline-start: var(--space-4);
   }
 
-  /* A list item's number or bullet is the file's; it hangs left of the text and is not part of what is edited. */
   .item {
     margin-block-end: 0;
     padding-inline-start: calc(var(--field-edge) + (var(--level, 0) + 1) * 1.5em);
@@ -929,7 +902,6 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* Everything on a slide is in the slide's own units, so it scales as one; its colors are the file's in both themes. */
   .slide {
     position: relative;
     container-type: inline-size;
@@ -1000,8 +972,6 @@
     inset-inline-start: calc(var(--level, 0) * 1.1em);
     color: var(--ink);
   }
-
-  /* A sheet. */
 
   .ref {
     flex: none;

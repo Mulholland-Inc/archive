@@ -357,21 +357,19 @@ type OfficeModel struct {
 	Tables     []OfficeTable     `json:"tables,omitempty"`
 	Sheets     []OfficeSheet     `json:"sheets,omitempty"`
 	Slides     []OfficeSlide     `json:"slides,omitempty"`
-	// What OfficeView adds. Width and Height are a docx's page in twips, or a deck's slide in EMU.
-	Width  int64         `json:"width,omitempty"`
-	Height int64         `json:"height,omitempty"`
-	Header string        `json:"header,omitempty"`
-	Footer string        `json:"footer,omitempty"`
-	Styles []OfficeStyle `json:"styles,omitempty"`
+	Width      int64             `json:"width,omitempty"`
+	Height     int64             `json:"height,omitempty"`
+	Header     string            `json:"header,omitempty"`
+	Footer     string            `json:"footer,omitempty"`
+	Styles     []OfficeStyle     `json:"styles,omitempty"`
 }
 type OfficeParagraph struct {
-	ID    string   `json:"id,omitempty"`
-	Style string   `json:"style,omitempty"`
-	List  string   `json:"list,omitempty"`
-	In    string   `json:"in,omitempty"`
-	Text  string   `json:"text"`
-	Runs  []string `json:"runs,omitempty"`
-	// What OfficeView adds. Spans are Text by formatting, when any has some; Marker is a list item's number or bullet.
+	ID     string        `json:"id,omitempty"`
+	Style  string        `json:"style,omitempty"`
+	List   string        `json:"list,omitempty"`
+	In     string        `json:"in,omitempty"`
+	Text   string        `json:"text"`
+	Runs   []string      `json:"runs,omitempty"`
 	Spans  []OfficeSpan  `json:"spans,omitempty"`
 	Marker string        `json:"marker,omitempty"`
 	Level  int           `json:"level,omitempty"`
@@ -386,7 +384,7 @@ type OfficeSpan struct {
 	Strike bool    `json:"strike,omitempty"`
 	Link   bool    `json:"link,omitempty"`
 	Color  string  `json:"color,omitempty"`
-	Size   float64 `json:"size,omitempty"` // points, on a slide
+	Size   float64 `json:"size,omitempty"`
 }
 type OfficeBox struct {
 	X   int64   `json:"x"`
@@ -403,7 +401,7 @@ type OfficeImage struct {
 type OfficeGridCell struct {
 	Span int    `json:"span,omitempty"`
 	Rows int    `json:"rows,omitempty"`
-	Skip bool   `json:"skip,omitempty"` // covered by the merged cell above
+	Skip bool   `json:"skip,omitempty"`
 	Fill string `json:"fill,omitempty"`
 }
 type OfficeTable struct {
@@ -414,7 +412,7 @@ type OfficeTable struct {
 type OfficeCol struct {
 	Min    int     `json:"min"`
 	Max    int     `json:"max"`
-	Width  float64 `json:"width,omitempty"` // in characters of the default font
+	Width  float64 `json:"width,omitempty"`
 	Hidden bool    `json:"hidden,omitempty"`
 }
 type OfficeStyle struct {
@@ -429,7 +427,7 @@ type OfficeStyle struct {
 	VAlign string  `json:"valign,omitempty"`
 	Wrap   bool    `json:"wrap,omitempty"`
 	Indent int     `json:"indent,omitempty"`
-	Top    string  `json:"top,omitempty"` // a border's color, "auto" when it has none of its own
+	Top    string  `json:"top,omitempty"`
 	Right  string  `json:"right,omitempty"`
 	Bottom string  `json:"bottom,omitempty"`
 	Left   string  `json:"left,omitempty"`
@@ -440,7 +438,7 @@ type OfficeSheet struct {
 	Merged    []string       `json:"merged,omitempty"`
 	Tables    []OfficeXTable `json:"tables,omitempty"`
 	Cells     []OfficeCell   `json:"cells"`
-	Cols      []OfficeCol    `json:"cols,omitempty"` // OfficeView
+	Cols      []OfficeCol    `json:"cols,omitempty"`
 }
 type OfficeXTable struct {
 	Name    string   `json:"name"`
@@ -451,16 +449,14 @@ type OfficeCell struct {
 	Ref     string `json:"ref"`
 	Value   string `json:"value,omitempty"`
 	Formula string `json:"formula,omitempty"`
-	// What OfficeView adds: the value as its number format shows it, that format's color, and an index into Styles.
-	Text  string `json:"text,omitempty"`
-	Ink   string `json:"ink,omitempty"`
-	Style int    `json:"style,omitempty"`
+	Text    string `json:"text,omitempty"`
+	Ink     string `json:"ink,omitempty"`
+	Style   int    `json:"style,omitempty"`
 }
 type OfficeSlide struct {
-	Number int           `json:"slide"`
-	Hidden bool          `json:"hidden,omitempty"`
-	Shapes []OfficeShape `json:"shapes"`
-	// What OfficeView adds: what is behind and around the shapes that hold text. Everything drawn has a Z.
+	Number     int           `json:"slide"`
+	Hidden     bool          `json:"hidden,omitempty"`
+	Shapes     []OfficeShape `json:"shapes"`
 	Background string        `json:"background,omitempty"`
 	Backdrop   string        `json:"backdrop,omitempty"`
 	Decor      []OfficeShape `json:"decor,omitempty"`
@@ -471,14 +467,13 @@ type OfficeShape struct {
 	Name        string            `json:"name,omitempty"`
 	Placeholder string            `json:"placeholder,omitempty"`
 	Paragraphs  []OfficeParagraph `json:"paragraphs"`
-	// What OfficeView adds. Inset is the text's distance from the box's sides, in EMU: left, top, right, bottom.
-	Box    *OfficeBox `json:"box,omitempty"`
-	Z      int        `json:"z,omitempty"`
-	Fill   string     `json:"fill,omitempty"`
-	Line   string     `json:"line,omitempty"`
-	Geom   string     `json:"geom,omitempty"`
-	Anchor string     `json:"anchor,omitempty"`
-	Inset  []int64    `json:"inset,omitempty"`
+	Box         *OfficeBox        `json:"box,omitempty"`
+	Z           int               `json:"z,omitempty"`
+	Fill        string            `json:"fill,omitempty"`
+	Line        string            `json:"line,omitempty"`
+	Geom        string            `json:"geom,omitempty"`
+	Anchor      string            `json:"anchor,omitempty"`
+	Inset       []int64           `json:"inset,omitempty"`
 }
 type OfficeOp struct {
 	Op        string `json:"op"`
@@ -682,7 +677,6 @@ func (a *Archive) ReadDocument(ctx context.Context, id uuid.UUID) (*OfficeModel,
 	return m, nil
 }
 
-// ViewDocument is a document as OfficeView reads it, for the canvas.
 func (a *Archive) ViewDocument(ctx context.Context, id uuid.UUID) (*OfficeModel, error) {
 	f, b, err := a.documentBytes(ctx, id)
 	if err != nil {
@@ -770,8 +764,6 @@ func officeOpenWord(p *OfficePackage) (*officeWord, error) {
 	return &officeWord{nil, p, b, doc, w, officeTextNames{w, "p", "r", "t", true}, doc.Find(w, "p"), doc.Find(w, "tbl")}, nil
 }
 
-// own returns the local elements under n whose nearest parent element is n,
-// skipping those inside a nested one: a table's own rows, a row's own cells.
 func (x *officeWord) own(n *OfficeNode, local, parent string) []*OfficeNode {
 	var out []*OfficeNode
 	for _, k := range n.Find(x.w, local) {
@@ -2263,8 +2255,6 @@ func (a *Archive) CreateDocument(ctx context.Context, access, name string) (*Fil
 	return a.AddFile(ctx, access, name, nil, bytes.NewReader(b))
 }
 
-// OfficeView is OfficeRead with what it takes to draw the file as it looks: formatting, numbering, number formats,
-// positions and pictures, only where the file says them. It is the canvas's: archive.read stays what an agent edits by.
 func OfficeView(b []byte, name string) (*OfficeModel, error) {
 	m, err := OfficeRead(b, name)
 	if err != nil {
@@ -2299,7 +2289,6 @@ func OfficeView(b []byte, name string) (*OfficeModel, error) {
 	return m, nil
 }
 
-// OfficeMedia is an embedded picture of a file, by the part name OfficeView gave it.
 func OfficeMedia(b []byte, part string) ([]byte, error) {
 	p, err := OfficeOpen(b)
 	if err != nil {
@@ -2316,10 +2305,8 @@ func officeInt(s string) int64 {
 	return n
 }
 
-// officeOn reads a toggle like <w:b/>, <w:b w:val="0"/> or b="1": set, and whether it is on.
 func officeOn(v string) bool { return v != "0" && v != "false" && v != "off" && v != "none" }
 
-// officeAttr is an attribute by its local name, whatever its prefix.
 func officeAttr(n *OfficeNode, local string) string {
 	for _, a := range n.Attr {
 		if a.Name.Local == local {
@@ -2329,7 +2316,6 @@ func officeAttr(n *OfficeNode, local string) string {
 	return ""
 }
 
-// officeByLocal finds elements by their local name, for those whose prefix is declared on the element itself.
 func officeByLocal(n *OfficeNode, local string) []*OfficeNode {
 	var out []*OfficeNode
 	for _, k := range n.Kids {
@@ -2359,7 +2345,6 @@ func officeRelOf(rels []OfficeRel, kind string) string {
 	return ""
 }
 
-// officeDrawable says whether a browser draws a picture, which EMF and WMF it does not.
 func officeDrawable(part string) bool {
 	switch strings.ToLower(path.Ext(part)) {
 	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp":
@@ -2368,8 +2353,6 @@ func officeDrawable(part string) bool {
 	return false
 }
 
-// officeShade applies to a "#RRGGBB" the changes a color's element can carry: lumMod and lumOff in HSL, as fractions,
-// and a mix toward white (t > 0) or black (t < 0) for tint and shade.
 func officeShade(hex string, lumMod, lumOff, t float64) string {
 	if len(hex) != 7 {
 		return hex
@@ -2432,8 +2415,6 @@ func officeShade(hex string, lumMod, lumOff, t float64) string {
 	return fmt.Sprintf("#%02X%02X%02X", mix(r), mix(g), mix(b))
 }
 
-// A docx: runs, numbering, tables' merged cells, pictures, the header and the footer.
-
 var officeHeadingStyle = regexp.MustCompile(`(?i)^(title|subtitle|heading)`)
 
 type officeWordStyle struct {
@@ -2469,7 +2450,6 @@ func (x *officeWord) view(m *OfficeModel) {
 			}
 		}
 	}
-	// A style and those it is based on, nearest first.
 	chain := func(id string) []officeWordStyle {
 		var out []officeWordStyle
 		for i := 0; id != "" && i < 16; i++ {
@@ -2520,12 +2500,10 @@ func (x *officeWord) view(m *OfficeModel) {
 		if numID != "" && numID != "0" {
 			mp.Level, _ = strconv.Atoi(ilvl)
 			mp.Marker = officeMarker(levels[numID], counts, numID, mp.Level)
-			// A style's own list, like List Bullet 2's, is deeper by its indent rather than by its level.
 			if styled && mp.Level == 0 {
 				mp.Level = max(0, int(levels[numID][0].left/360)-1)
 			}
 		}
-		// A heading's look is the canvas's; the rest of a paragraph style's formatting reaches its text.
 		var base []*OfficeNode
 		if !officeHeadingStyle.MatchString(mp.Style) {
 			for _, st := range own {
@@ -2562,7 +2540,6 @@ func (x *officeWord) view(m *OfficeModel) {
 	}
 }
 
-// margin is the text of a section's usual header or footer.
 func (x *officeWord) margin(sect *OfficeNode, ref string, rels []OfficeRel) string {
 	for _, r := range sect.Children(x.w, ref) {
 		if r.Attrv(x.w+":type") != "default" && r.Attrv(x.w+":type") != "" {
@@ -2593,7 +2570,6 @@ type officeLevel struct {
 	left         int64
 }
 
-// numbering is each list's levels, from numbering.xml.
 func (x *officeWord) numbering(rels []OfficeRel) map[string]map[int]officeLevel {
 	out := map[string]map[int]officeLevel{}
 	b, err := x.pkg.Part(officeRelOf(rels, "numbering"))
@@ -2677,7 +2653,6 @@ func officeOrdinal(n int, format string) string {
 	return strconv.Itoa(n)
 }
 
-// officeMarker counts a list item and says what it shows, from its level's text like "%1." or a bullet's character.
 func officeMarker(levels map[int]officeLevel, counts map[string][]int, id string, level int) string {
 	l, ok := levels[level]
 	if !ok {
@@ -2722,7 +2697,6 @@ func officeMarker(levels map[int]officeLevel, counts map[string][]int, id string
 	return text
 }
 
-// spans is a paragraph's text by formatting: its runs', and through base the paragraph style's. Nil if it has none.
 func (x *officeWord) spans(p *OfficeNode, rels []OfficeRel, base []*OfficeNode, chain func(string) []officeWordStyle) []OfficeSpan {
 	on := func(rprs []*OfficeNode, local string) bool {
 		for _, r := range rprs {
@@ -2773,10 +2747,9 @@ func (x *officeWord) spans(p *OfficeNode, rels []OfficeRel, base []*OfficeNode, 
 	return out
 }
 
-// grid is a table's cells as they sit on its columns: how far each spans, and which a merge above covers.
 func (x *officeWord) grid(t *OfficeNode) [][]OfficeGridCell {
 	var out [][]OfficeGridCell
-	open := map[int][2]int{} // a column's merge still going: the row and cell it started at
+	open := map[int][2]int{}
 	for r, tr := range x.rows(t) {
 		var row []OfficeGridCell
 		col := 0
@@ -2810,13 +2783,10 @@ func (x *officeWord) grid(t *OfficeNode) [][]OfficeGridCell {
 	return out
 }
 
-// An xlsx: number formats, each format of a cell, and column widths.
-
 var officeBuiltinFormats = map[int]string{1: "0", 2: "0.00", 3: "#,##0", 4: "#,##0.00", 9: "0%", 10: "0.00%", 11: "0.00E+00", 12: "# ?/?", 13: "# ??/??", 14: "m/d/yyyy", 15: "d-mmm-yy", 16: "d-mmm", 17: "mmm-yy", 18: "h:mm AM/PM", 19: "h:mm:ss AM/PM", 20: "h:mm", 21: "h:mm:ss", 22: "m/d/yyyy h:mm", 37: "#,##0;(#,##0)", 38: "#,##0;[Red](#,##0)", 39: "#,##0.00;(#,##0.00)", 40: "#,##0.00;[Red](#,##0.00)", 45: "mm:ss", 46: "[h]:mm:ss", 47: "mm:ss.0", 48: "##0.0E+0", 49: "@"}
 
 var officeIndexed = strings.Fields("000000 FFFFFF FF0000 00FF00 0000FF FFFF00 FF00FF 00FFFF 000000 FFFFFF FF0000 00FF00 0000FF FFFF00 FF00FF 00FFFF 800000 008000 000080 808000 800080 008080 C0C0C0 808080 9999FF 993366 FFFFCC CCFFFF 660066 FF8080 0066CC CCCCFF 000080 FF00FF FFFF00 00FFFF 800080 800000 008080 0000FF 00CCFF CCFFFF CCFFCC FFFF99 99CCFF FF99CC CC99FF FFCC99 3366FF 33CCCC 99CC00 FFCC00 FF9900 FF6600 666699 969696 003366 339966 003300 333300 993300 993366 333399 333333")
 
-// bookColor is a color element's value: its rgb, its place in the theme or the old palette, with its tint.
 func officeBookColor(n *OfficeNode, theme []string) string {
 	if n == nil {
 		return ""
@@ -2889,7 +2859,6 @@ func (bk *officeBook) view(m *OfficeModel) {
 	}
 }
 
-// officeBookStyles is each cell format of a workbook, and its number format's code by the same index.
 func officeBookStyles(doc *OfficeNode, theme []string) ([]OfficeStyle, []string) {
 	root := OfficeRoot(doc)
 	x, _ := OfficePrefixOf(doc, officeXNS...)
@@ -2955,8 +2924,6 @@ var (
 	officeInkNames    = map[string]string{"red": "#FF0000", "blue": "#0000FF", "green": "#00FF00", "black": "#000000", "white": "#FFFFFF", "yellow": "#FFFF00", "magenta": "#FF00FF", "cyan": "#00FFFF"}
 )
 
-// officeNumber shows a cell's number as format says, and the color the format gives it. What it does not know how to
-// show, like a fraction, it leaves as the file holds it.
 func officeNumber(value, format string) (string, string) {
 	n, err := strconv.ParseFloat(value, 64)
 	if err != nil {
@@ -2968,7 +2935,6 @@ func officeNumber(value, format string) (string, string) {
 		}
 		return value, ""
 	}
-	// Up to four sections: positive, negative, zero, text. A second section's number is shown without its sign.
 	var sections []string
 	var cur strings.Builder
 	quoted := false
@@ -3004,7 +2970,6 @@ func officeNumber(value, format string) (string, string) {
 		ink = officeInkNames[strings.ToLower(m[1])]
 		section = section[len(m[0]):]
 	}
-	// Literals out of the way, as control characters that stand for their index.
 	var lits []string
 	var code strings.Builder
 	lit := func(s string) {
@@ -3089,7 +3054,6 @@ func officeGeneral(n float64) string {
 	return strconv.FormatFloat(n, 'E', 2, 64)
 }
 
-// officeDigits is a number by one run of a format's digit placeholders, like #,##0.00 or 0.00E+00.
 func officeDigits(n float64, p string, percent bool) string {
 	if percent {
 		n *= 100
@@ -3131,7 +3095,6 @@ func officeDigits(n float64, p string, percent bool) string {
 	return in
 }
 
-// officeDate is a serial date by a format's y, m, d, h and s, m being minutes after an h or before an s.
 func officeDate(n float64, code string) string {
 	t := time.Date(1899, 12, 30, 0, 0, 0, 0, time.UTC).Add(time.Duration(n * float64(24*time.Hour)).Round(time.Second))
 	lower := strings.ToLower(code)
@@ -3227,8 +3190,6 @@ func officeDate(n float64, code string) string {
 	return b.String()
 }
 
-// A pptx: where everything is and how it looks, each thing found on the slide, then its layout, then its master.
-
 type officeLayer struct {
 	part string
 	root *OfficeNode
@@ -3258,7 +3219,6 @@ func (d *officeDeck) layer(part string) (*officeLayer, error) {
 	return &officeLayer{part, OfficeRoot(doc), a, p, rels}, nil
 }
 
-// officeReadTheme is a theme's colors by their names, like dk1 and accent1.
 func officeReadTheme(b []byte) map[string]string {
 	out := map[string]string{}
 	doc, err := OfficeParse(b)
@@ -3281,12 +3241,10 @@ func officeReadTheme(b []byte) map[string]string {
 	return out
 }
 
-// officePaint reads colors and fills in a deck's theme.
 type officePaint struct {
 	theme, clrMap map[string]string
 }
 
-// color is the color element under n, with its changes. "" if it has none, or is the placeholder color of a style.
 func (c officePaint) color(n *OfficeNode) string {
 	if n == nil {
 		return ""
@@ -3323,7 +3281,6 @@ func (c officePaint) color(n *OfficeNode) string {
 	return ""
 }
 
-// fill is a shape's or background's fill: a solid color or a gradient's first, and whether it says none.
 func (c officePaint) fill(pr *OfficeNode) (string, bool) {
 	if pr == nil {
 		return "", false
@@ -3377,7 +3334,6 @@ func (d *officeDeck) view(m *OfficeModel) error {
 			}
 			v.decor(l, s, &z)
 		}
-		// The slide's own, in document order: shapes with text keep the index they are edited by.
 		n := 0
 		tree := sl.tree()
 		if tree == nil {
@@ -3482,7 +3438,6 @@ func (v officeSlideView) decor(l *officeLayer, s *OfficeSlide, z *int) {
 	}
 }
 
-// officeHolder is a shape's placeholder element, if it is one.
 func officeHolder(sp *OfficeNode, p string) *OfficeNode {
 	for _, nv := range sp.Kids {
 		if strings.HasPrefix(nv.Local, "nv") {
@@ -3494,7 +3449,6 @@ func officeHolder(sp *OfficeNode, p string) *OfficeNode {
 	return nil
 }
 
-// inherited is the shape a placeholder takes after in a layer: by its idx, or else by its kind.
 func (v officeSlideView) inherited(l *officeLayer, ph *OfficeNode) *OfficeNode {
 	tree := l.tree()
 	if tree == nil || ph == nil {
@@ -3525,7 +3479,6 @@ func (v officeSlideView) inherited(l *officeLayer, ph *OfficeNode) *OfficeNode {
 	return byKind
 }
 
-// lineage is a shape and those it takes after, each with its layer, nearest first.
 func (v officeSlideView) lineage(l *officeLayer, sp *OfficeNode) []officeOwned {
 	out := []officeOwned{{l, sp}}
 	ph := officeHolder(sp, l.p)
@@ -3550,7 +3503,6 @@ type officeOwned struct {
 	sp *OfficeNode
 }
 
-// box is where a shape is, in slide coordinates through the groups it is in.
 func (v officeSlideView) box(chain []officeOwned, pr string) *OfficeBox {
 	for _, o := range chain {
 		spPr := o.sp.Child(o.l.p, pr)
@@ -3602,7 +3554,6 @@ func (v officeSlideView) picture(l *officeLayer, pic *OfficeNode) (OfficeImage, 
 	return OfficeImage{Part: part, Box: *box}, true
 }
 
-// shape fills in where a shape is, how it looks, and how its text does.
 func (v officeSlideView) shape(l *officeLayer, sp *OfficeNode, sh *OfficeShape) {
 	chain := v.lineage(l, sp)
 	sh.Box = v.box(chain, "spPr")
@@ -3656,8 +3607,6 @@ func (v officeSlideView) shape(l *officeLayer, sp *OfficeNode, sh *OfficeShape) 
 	v.paragraphs(l, sp, sh)
 }
 
-// paragraphs fills in a shape's text: alignment, bullets and each run's look, through its list styles and those of what
-// it takes after, then the master's text style, then what the shape's style says.
 func (v officeSlideView) paragraphs(l *officeLayer, sp *OfficeNode, sh *OfficeShape) {
 	tx := sp.Child(l.p, "txBody")
 	if tx == nil {
@@ -3760,7 +3709,6 @@ func (v officeSlideView) paragraphs(l *officeLayer, sp *OfficeNode, sh *OfficeSh
 	}
 }
 
-// officeBullet is what a paragraph of a shape starts with, the first of its own and its list styles' to say.
 func officeBullet(pPr *OfficeNode, ls []officeOwned, a string, autos map[int]int, lvl int) string {
 	nodes := []*OfficeNode{}
 	if pPr != nil {
@@ -3816,7 +3764,6 @@ func officeBullet(pPr *OfficeNode, ls []officeOwned, a string, autos map[int]int
 	return ""
 }
 
-// run is a run's look, each thing from the first of its own properties and its list styles' to say it.
 func (v officeSlideView) run(rPr *OfficeNode, ls []officeOwned, a, ink string, scale float64, text string) OfficeSpan {
 	var props []*OfficeNode
 	if rPr != nil {

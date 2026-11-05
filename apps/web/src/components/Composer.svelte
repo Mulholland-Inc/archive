@@ -17,7 +17,6 @@
     draft
   } = $props();
 
-  // Text stays on this device under the draft's key until it is sent. Nothing saves until that key is loaded.
   let loaded = $state();
 
   $effect(() => {
@@ -59,7 +58,6 @@
     }
   }
 
-  // Files picked here go to the library first, then along with the message by id.
   let picker = $state();
   let uploading = $state(false);
 

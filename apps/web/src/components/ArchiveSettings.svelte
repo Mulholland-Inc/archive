@@ -5,8 +5,6 @@
   import Divider from './Divider.svelte';
   import Field from './Field.svelte';
   import Input from './Input.svelte';
-  import Menu from './Menu.svelte';
-  import Switch from './Switch.svelte';
   import SettingsRow from './SettingsRow.svelte';
   import Button from './Button.svelte';
   import Dialog from './Dialog.svelte';
@@ -18,7 +16,6 @@
   let name = $state(ws().name);
   let look = $state({ ...ws().look });
   let deleting = $state(false);
-  const settings = $derived(ws().settings);
   const dirty = $derived(name !== ws().name || look.icon !== ws().look.icon || look.tint !== ws().look.tint || look.type !== ws().look.type);
 
   $effect(() => {
@@ -31,20 +28,6 @@
     saveArchive({ name: name.trim() || ws().name, look: { ...look } });
   }
 
-  const roles = [
-    { value: 'viewer', label: 'Viewer' },
-    { value: 'editor', label: 'Editor' }
-  ];
-  const regions = [
-    { value: 'us-central1', label: 'United States (Iowa)' },
-    { value: 'us-east4', label: 'United States (Virginia)' },
-    { value: 'us-west1', label: 'United States (Oregon)' }
-  ];
-  const retentions = [
-    { value: 'forever', label: 'Keep forever' },
-    { value: '1y', label: '1 year' },
-    { value: '90d', label: '90 days' }
-  ];
 </script>
 
 <Stack gap="8">
@@ -59,20 +42,6 @@
       <Button variant="primary" disabled={!dirty} onclick={save}>Save changes</Button>
     </Stack>
   </Stack>
-  <Divider />
-  <Section title="Members" gap="lg">
-    <Stack gap="0">
-      <SettingsRow label="Default role for new members"><Menu bind:value={settings.defaultRole} options={roles} size="sm" label="Default role" /></SettingsRow>
-      <SettingsRow label="Editors can invite people"><Switch bind:checked={settings.invites} label="Editors can invite people" /></SettingsRow>
-    </Stack>
-  </Section>
-  <Divider />
-  <Section title="Data" gap="lg">
-    <Stack gap="0">
-      <SettingsRow label="Data region"><Menu bind:value={settings.region} options={regions} size="sm" label="Data region" /></SettingsRow>
-      <SettingsRow label="Chat history"><Menu bind:value={settings.retention} options={retentions} size="sm" label="Chat history" /></SettingsRow>
-    </Stack>
-  </Section>
   <Divider />
   <Section title="Delete archive">
     <SettingsRow label={`Permanently delete ${ws().name}`}>

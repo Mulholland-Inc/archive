@@ -1,8 +1,4 @@
 <script>
-  // The floating surface every menu and option list draws on. `kind` says which, and so how it is sized and
-  // capped: a dropdown (Menu) and a submenu (SubMenu) are menus, a context menu (ContextMenu) sits at x and y,
-  // the pointer, and grows from its origin corner, and a
-  // picker (PeoplePicker) matches its field's width and leaves focus in the field.
   let { panel = $bindable(), kind = 'dropdown', width = 'md', popover = 'auto', label, x, y, origin, children, ...rest } = $props();
   const classes = $derived(['panel', 'floating', kind, `w-${width}`]);
 </script>

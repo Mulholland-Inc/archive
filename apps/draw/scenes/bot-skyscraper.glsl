@@ -5,14 +5,12 @@ vec2 tier(vec3 p, float y, float h, float w) {
 vec2 map(vec3 p) {
   p = rotY(p, TURN);
   vec3 m = mirX(p);
-  // Art Deco setbacks, each tier a step narrower.
   vec2 r = tier(p, 0.0, 0.42, 0.52);
   r = U(r, tier(p, 0.84, 0.32, 0.42));
   r = U(r, tier(p, 1.48, 0.2, 0.31));
   r = U(r, tier(p, 1.88, 0.09, 0.2));
   r = U(r, M(sdCone(p - vec3(0.0, 2.06, 0.0), 0.28, 0.12, 0.04), WHITE + SOLID));
   r = U(r, M(sdCapsule(p, vec3(0.0, 2.3, 0.0), vec3(0.0, 2.54, 0.0), 0.016), GRAPHITE));
-  // Eyes, a door, and a band of windows up each tier.
   r = U(r, M(sdBox(p - vec3(0.0, 0.11, 0.52), vec3(0.09, 0.11, 0.02)), GRAPHITE));
   for (int i = 0; i < 3; i++) {
     float x = -0.2 + float(i) * 0.2;

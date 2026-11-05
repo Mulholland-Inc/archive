@@ -4,7 +4,6 @@
   let dock = $state();
   let height = $state(0);
 
-  // The dock floats over the page, so the page keeps this much room at its end for the last message.
   $effect(() => {
     const view = dock?.parentElement;
     view?.style.setProperty('--dock-height', `${height}px`);

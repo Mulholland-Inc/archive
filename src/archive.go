@@ -27,9 +27,6 @@ import (
 	"golang.org/x/text/language"
 )
 
-// An Archive is one workspace as code sees it: rows listed, read, written and searched as the person signed in,
-// so row-level security decides each of them. Its store, pgStore below, is the workspace's Postgres database:
-// its pools, its roles and the transaction a call runs in.
 type Archive struct {
 	hub    *Hub
 	ws     generated.ArchiveWorkspace
@@ -41,7 +38,6 @@ type Archive struct {
 
 	blobs   blobStore
 	linkKey []byte
-	// reading lets one file at a time be read for its words, the most memory a copy takes.
 	reading sync.Mutex
 
 	mu  sync.RWMutex
@@ -50,11 +46,8 @@ type Archive struct {
 	hmu  sync.Mutex
 	api  http.Handler
 	mcph http.Handler
-	// mcps are the MCP servers of the members that called /mcp, each describing its run tool with their own
-	// actions.
 	mcps map[uuid.UUID]*mcp.Server
 
-	// conns are the access tokens and tools of connections that runs used (connection.go).
 	conns archiveConns
 }
 
@@ -116,7 +109,6 @@ func (a *Archive) Catalog() *Catalog {
 	return a.cat
 }
 
-// catalog is the catalog the transaction in ctx sees: its own when it changed the schema.
 func (a *Archive) catalog(ctx context.Context) *Catalog {
 	if c := a.st.txCatalog(ctx); c != nil {
 		return c
@@ -242,7 +234,6 @@ func (a *Archive) coreCreate(ctx context.Context, tb *Table, data map[string]any
 	return row, a.secretsPut(ctx, tb, row, seal)
 }
 
-// coreAccess is a row's access, the id of the group that sees it; nil for the whole workspace.
 func coreAccess(v any) *uuid.UUID {
 	if s, ok := v.(string); ok {
 		if id, err := uuid.Parse(s); err == nil {
@@ -412,8 +403,6 @@ func (a *Archive) Delete(ctx context.Context, typ string, id uuid.UUID) error {
 	})
 }
 
-// Schema is each table and view of the public schema as the transaction in ctx sees it, with its columns and
-// DDL; with a name, that one, of any schema the catalog shows, with DDL when it is public.
 func (a *Archive) Schema(ctx context.Context, name string) (any, error) {
 	if _, err := signedIn(ctx); err != nil {
 		return nil, err
@@ -439,8 +428,6 @@ func (a *Archive) Schema(ctx context.Context, name string) (any, error) {
 	return nil, fmt.Errorf("no table or view %q; there are %s: %w", name, strings.Join(cat.names(), ", "), ErrNotFound)
 }
 
-// Migrate dry-runs a migration, or with its dry run's confirm runs it, in the transaction in ctx or one of its
-// own: a run that migrates and then fails changes nothing. A named migration runs once.
 func (a *Archive) Migrate(ctx context.Context, sql, name, confirm string) (*SchemaMigration, error) {
 	ac, err := signedIn(ctx)
 	if err != nil {
@@ -592,15 +579,11 @@ func searchTime(name, s string, end bool) (*time.Time, error) {
 	return &t, nil
 }
 
-// storeSQLFile is Archive's own schema of a workspace and, after it, the sqlc queries; only the schema is applied.
-//
 //go:embed archive.sql
 var storeSQLFile string
 
 var storeSchema, _, _ = strings.Cut(storeSQLFile, "\n-- name:")
 
-// mainSQLFile is the main database's schema and, after it, the Hub's sqlc queries (Hub.migrate).
-//
 //go:embed main.sql
 var mainSQLFile string
 
@@ -664,9 +647,6 @@ func storeCommitted(after *[]func(), err error) error {
 	return err
 }
 
-// A request runs as its caller's role, logged in as it (pgStore.As), so what it runs cannot become another role:
-// Postgres lets a session set only the roles its login is a member of. The authenticator, which app logs in
-// as, is a member of none.
 type pgStore struct {
 	app, sys *pgxpool.Pool
 	cfg      *pgx.ConnConfig
@@ -678,7 +658,6 @@ type pgStore struct {
 	roles    map[string]*pgxpool.Pool
 }
 
-// OpenStore opens a workspace's store; moved hears what each of its transactions committed (livePool).
 func OpenStore(ctx context.Context, pg *pgx.ConnConfig, prefix, password string, moved func(table, id string)) (*pgStore, error) {
 	cfg := pg.Copy()
 	cfg.RuntimeParams["search_path"] = "public"
@@ -698,8 +677,6 @@ func OpenStore(ctx context.Context, pg *pgx.ConnConfig, prefix, password string,
 	return s, nil
 }
 
-// A process holds the hub's pool and, per open workspace, its system and app pools, and two revisions overlap
-// while a deploy rolls out: these keep that well inside the database's connections.
 const (
 	storeAppConns  = 6
 	storeSysConns  = 3
@@ -725,8 +702,6 @@ func storePool(ctx context.Context, base *pgx.ConnConfig, conns int32, moved fun
 	return pgxpool.NewWithConfig(ctx, cfg)
 }
 
-// bootstrap makes the store's roles and sets the authenticator's password. Processes opening the same store at
-// once would race on those roles' catalog rows, so it holds the store lock while it does.
 func (s *pgStore) bootstrap(ctx context.Context, password string) error {
 	tx, err := s.sys.Begin(ctx)
 	if err != nil {
@@ -771,8 +746,6 @@ var (
 	storeIdentRe  = regexp.MustCompile(`[A-Za-z0-9_$]`)
 )
 
-// storeSkip returns where the comment, string, quoted name or dollar-quoted body at i ends, as Postgres reads it,
-// and whether it is a comment; for anything else, i.
 func storeSkip(src string, i int) (int, bool) {
 	switch c := src[i]; {
 	case c == '-' && strings.HasPrefix(src[i:], "--"):
@@ -792,7 +765,6 @@ func storeSkip(src string, i int) (int, bool) {
 		}
 		return len(src), true
 	case c == '\'' || c == '"':
-		// E'...' has backslash escapes; the e of a word before a quote, as in LIKE'\', is no prefix.
 		esc := c == '\'' && i > 0 && (src[i-1] == 'E' || src[i-1] == 'e') && (i == 1 || !storeIdentRe.MatchString(src[i-2:i-1]))
 		for i++; i < len(src) && src[i] != c; i++ {
 			if esc && src[i] == '\\' {
@@ -880,7 +852,6 @@ func (s *pgStore) As(ctx context.Context, role string, fn func(context.Context) 
 	}
 	after := &[]func(){}
 	return storeCommitted(after, storeErr(pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
-		// The role it is already, said so, as the SQL that asks which role is writing reads it.
 		if err := generated.New(tx).SetLocal(ctx, "role", role); err != nil {
 			return err
 		}
@@ -888,8 +859,6 @@ func (s *pgStore) As(ctx context.Context, role string, fn func(context.Context) 
 	})))
 }
 
-// rolePool is the pool that logs in as role, made the first time this process runs as it: the role may log in
-// from then on, with a password only this Archive's key makes.
 func (s *pgStore) rolePool(ctx context.Context, role string) (*pgxpool.Pool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -918,7 +887,6 @@ func (s *pgStore) rolePool(ctx context.Context, role string) (*pgxpool.Pool, err
 	return p, nil
 }
 
-// rolePassword is role's password, from the authenticator's, which the Archive's key makes.
 func (s *pgStore) rolePassword(role string) string {
 	sum := sha256.Sum256([]byte(s.password + "\x00" + role))
 	return hex.EncodeToString(sum[:])

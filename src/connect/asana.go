@@ -6,22 +6,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Asana, read only: workspaces, projects and tasks. It reads ARCHIVE_ASANA, an app of the Asana developer
-// console distributed to any workspace, whose redirect URLs list <API>/connect/asana/callback and whose OAuth
-// permission scopes include the Scopes here; with webhooks:read, webhooks:write and webhooks:delete too, and
-// ?push=1 on the variable, it asks for those, which its pushes need. Asana's MCP server lets no client register
-// itself, so this is its REST API. Revoking takes the client's credentials with the refresh token.
-//
-// It syncs the tasks of each project that is not archived into work_item, completed ones too, its project as its type:
-// listed whole the first time and a week after, 100 a page, which deletes those gone, and in between those modified
-// since the sync before. A task in no project, and a subtask, is not listed.
-//
-// It pushes through a webhook on each project of the account that is not archived, pushing to Archive's URL with a
-// key of the connection's, the project and a nonce, which only Asana learns. Asana creates one only once its
-// handshake, posted to that URL with X-Hook-Secret, is answered with the same header; Archive keeps that secret
-// by the key, and a push after is signed with it: X-Hook-Signature, the hex HMAC-SHA256 of the body. Asana
-// deletes a webhook that fails for a day, so the first sync a week after checks each is still there. A push
-// without events is Asana's heartbeat, and starts nothing.
 func init() {
 	Register(&Connector{
 		ID: "asana", Name: "Asana", Integration: true, Env: "ARCHIVE_ASANA", Options: "?push=1 once the app has the webhooks scopes",
@@ -95,9 +79,8 @@ func init() {
 }
 
 var (
-	asanaAll  = Q{"opt_fields": "name", "limit": "100", "offset": "{page}"}
-	asanaPage = Cursor{At: "next_page/offset"}
-	// asanaProjects are the projects of every workspace that are not archived.
+	asanaAll      = Q{"opt_fields": "name", "limit": "100", "offset": "{page}"}
+	asanaPage     = Cursor{At: "next_page/offset"}
 	asanaProjects = &Parts{Req: Req{URL: "/workspaces", Query: asanaAll}, Items: "data", Page: asanaPage,
 		Under: &Parts{Req: Req{URL: "/projects", Query: Q{"archived": "false", "opt_fields": "name", "workspace": "{up/gid}", "limit": "100", "offset": "{page}"}}, Items: "data", Page: asanaPage, ID: "{gid}", Vals: Obj{"name": "{name}"}}}
 	asanaFields  = "name,notes,completed,completed_at,assignee.name,assignee.email,start_on,due_on,permalink_url,created_at,modified_at"

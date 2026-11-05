@@ -31,7 +31,6 @@ body,
   height: var(--viewport-height, 100%);
 }
 
-/* The window itself never bounces; any scroller in it hands a scroll on to the one around it when it ends. */
 html,
 body {
   overscroll-behavior: none;
@@ -146,7 +145,6 @@ dialog::backdrop {
   white-space: nowrap;
 }
 
-/* The one spin every spinner, running badge and running step turns with. */
 @keyframes spin {
   to {
     transform: rotate(var(--turn-full));
@@ -249,8 +247,6 @@ dialog:not([open]) {
   }
 }
 
-/* A menu that forms around its trigger: the card unfolds from the trigger and folds back into it, clipped to the
-   trigger's rect (--clip, set when it opens) while closed. Open, it leaves a pixel on each side for its border. */
 .morph-origin {
   display: contents;
 }
@@ -303,7 +299,6 @@ dialog:not([open]) {
   overflow-y: auto;
 }
 
-/* Phones zoom the page in on any field under 16px when it gets focus. */
 @media (hover: none) and (pointer: coarse) {
   input,
   textarea,

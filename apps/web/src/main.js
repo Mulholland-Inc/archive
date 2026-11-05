@@ -11,6 +11,4 @@ import App from './App.svelte';
 import Authorize from './pages/Authorize.svelte';
 import './lib/preload.js';
 
-// /authorize is an MCP client asking for an archive (pages/Authorize.svelte): it signs in and picks one, and
-// starts nothing of the app's own.
 export default mount(location.pathname === '/authorize' ? Authorize : App, { target: document.getElementById('app') });

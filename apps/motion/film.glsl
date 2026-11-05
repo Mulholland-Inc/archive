@@ -1,4 +1,3 @@
-// Timing and shared props for film scenes. T is the shot's time in seconds.
 #define IN(r, f, c, s) if ((s) > 0.002) { vec2 h_ = f((p - (c)) / (s)); h_.x *= (s); r = U(r, h_); }
 
 float ramp(float a, float d) { return clamp((T - a) / d, 0.0, 1.0); }

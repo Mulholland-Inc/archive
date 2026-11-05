@@ -54,7 +54,6 @@
     gap: var(--space-2);
   }
 
-  /* Files the answer changed, framed as a table in its prose is. */
   .files {
     display: flex;
     flex-direction: column;

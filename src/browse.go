@@ -67,7 +67,6 @@ type browseView struct {
 	Els   []browseEl `json:"els"`
 }
 
-// list numbers the elements as Jev and Claude see them.
 func (v *browseView) list() []string {
 	out := make([]string, len(v.Els))
 	for i, e := range v.Els {
@@ -188,7 +187,6 @@ func browseRun(ctx context.Context, addr, jev, ant, goal, start string) (*Browse
 	return &BrowseResult{Done: act.Action == "done" && act.Achieved, Answer: act.Answer, URL: v.URL}, nil
 }
 
-// browseID caches the ID token for the browser service; Google's last an hour.
 var browseID struct {
 	sync.Mutex
 	tok string
@@ -287,7 +285,6 @@ var browseActions = map[string]string{
 	"need_planner": "None of these fits: the page is blocked or confusing, or `goal` needs another website",
 }
 
-// next asks Jev for the next action and hands off to Claude when it needs text or Jev is unsure.
 func (b *browser) next(ctx context.Context, v *browseView) (*browseAct, error) {
 	if len(v.Els) == 0 && (v.URL == "" || v.URL == "about:blank") {
 		return b.plan(ctx, v, "")
@@ -377,7 +374,6 @@ var browseTool = map[string]any{
 	},
 }
 
-// plan asks Claude for the next action, for text Jev cannot write and choices it is unsure of.
 func (b *browser) plan(ctx context.Context, v *browseView, hint string) (*browseAct, error) {
 	var s strings.Builder
 	fmt.Fprintf(&s, "Goal: %s\nNow on: %s %s\nHistory:\n", b.goal, v.Title, v.URL)
@@ -454,9 +450,6 @@ func (b *browser) act(ctx context.Context, v *browseView, a *browseAct) {
 		if a.Action == "scroll_up" {
 			dy = -dy
 		}
-		// Scrolled in the page, not with a wheel event: cdproto drops a zero deltaX, which Chrome's mouseWheel
-		// requires, so every wheel failed. It scrolls what is under the middle of the viewport if that scrolls,
-		// else the page.
 		err = b.do(chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
 			_, err := chromedp.Evaluate[any](fmt.Sprintf(`(() => {
   let s = document.elementFromPoint(640, 400);

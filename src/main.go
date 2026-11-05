@@ -180,7 +180,6 @@ func main() {
 	}
 }
 
-// cliHelp is the usage, with the connectors' variables as their definitions describe them.
 func cliHelp() string {
 	var b strings.Builder
 	secrets := connect.Secrets()
@@ -276,7 +275,6 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	case "serve":
 		return cliServe(ctx, h, *addr)
 	case "workspace", "admin":
-		// These are this Archive's, not a workspace's: they act as an admin, the first one unless -as says.
 		ac, err := cliAdmin(ctx, h, *as, cmd+" "+pos[0])
 		if err != nil {
 			return err
@@ -453,9 +451,6 @@ func cliAuth(ctx context.Context, a *Archive, cmd string, pos []string, name, ro
 	return cliErrUsage
 }
 
-// cliAdmin is who an instance command acts as: the user with the email, or the first admin. While this Archive
-// has no admin, as when its first workspace's owners had no users when it moved, archive admin add makes one,
-// since the command line already has the database.
 func cliAdmin(ctx context.Context, h *Hub, email, cmd string) (*Actor, error) {
 	var u generated.ArchiveUser
 	var err error
@@ -669,8 +664,6 @@ func cliSchema(ctx context.Context, a *Archive, pos []string, confirm string, st
 	return cliErrUsage
 }
 
-// cliMigrate runs the migrations, each named or not, one after the other in one transaction, so each sees the
-// ones before, and rolls them all back unless confirm is theirs: one migration's own, or a hash of several.
 func cliMigrate(ctx context.Context, a *Archive, srcs [][2]string, confirm string) ([]*SchemaMigration, error) {
 	ms, sums, sum := []*SchemaMigration{}, []string{}, ""
 	errDry := errors.New("dry run")
@@ -751,13 +744,10 @@ func cliServe(ctx context.Context, h *Hub, addr string) error {
 	mux.HandleFunc("GET /live", h.liveHTTP)
 	mux.HandleFunc("POST /live/announce", h.liveAnnounceHTTP)
 	mux.HandleFunc("GET /auth/live", h.liveCheckHTTP)
-	// MCP's own host is the same service, and serves MCP and its OAuth and nothing else (mcp.go).
 	own := http.NewServeMux()
 	h.mcpRoutes(own, true)
 	api, mcpOwn := h.cors(mux), mcpCORS(own)
 	hs := &http.Server{Addr: addr, ReadHeaderTimeout: 10 * time.Second, Handler: h.live.after(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Nothing the API serves is for a frame, so no other site can lay sign-in or an MCP client's grant
-		// (/auth/oauth/*) under a decoy; the web app's own pages say the same (apps/web/public/_headers).
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'")
 		if h.mcpHost(r) {
@@ -797,7 +787,6 @@ func (h *Hub) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Vary", "Origin")
 		first, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
-		// MCP and its OAuth take bearer tokens from anywhere, and never a cookie.
 		if first == "mcp" || first == "oauth" || first == ".well-known" {
 			mcp.ServeHTTP(w, r)
 			return
@@ -1026,8 +1015,6 @@ type mcpRunInput struct {
 	Code string `json:"code" jsonschema:"TypeScript to run inside Archive against the archive SDK in the tool description"`
 }
 
-// mcpServer is the MCP server of the member ac, whose run tool's docs are the workspace's tables and their own
-// actions, made again on every tools/list that finds them changed.
 func mcpServer(a *Archive, ac *Actor) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "archive", Title: "Archive", Version: cliVersion}, nil)
 	var mu sync.Mutex

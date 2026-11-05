@@ -6,27 +6,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Oracle NetSuite, one account's books through SuiteQL over its REST web services, read only. It reads
-// ARCHIVE_NETSUITE, https://<client id>:<client secret>@system.netsuite.com, the OAuth 2.0 client of an integration
-// record Mulholland keeps in its own NetSuite account: Authorization Code Grant, the scope REST Web Services, and the
-// redirect URI <API>/connect/netsuite/callback. NetSuite installs that record in a customer's account the first time
-// someone there connects, unless the account asks its admin to approve integrations first.
-//
-// Signing in starts at NetSuite's own login, which comes back with the account's id as company: every call goes to
-// that account's host, <account id>.suitetalk.api.netsuite.com, a sandbox's 1234567_SB1 as 1234567-sb1, its token
-// endpoint too. The person picks the role they connect as, and Archive reads only what that role may see. The role
-// needs REST Web Services, Log in using OAuth 2.0 Access Tokens and SuiteAnalytics Workbook, and the view and Find
-// Transaction permissions of what it reads; an Administrator cannot connect, as NetSuite keeps that role off REST
-// over OAuth 2.0. The account needs the features REST Web Services, OAuth 2.0 and SuiteAnalytics Workbook. A
-// confidential client's refresh token lasts seven days and NetSuite does not replace it, so a connection asks to be
-// connected again a week after it was.
-//
-// It syncs into the ledger tables, as QuickBooks does: the chart of accounts, customers, vendors, employees, items,
-// and the transactions of the books, with their lines. SuiteQL answers at most 1000 rows a page and 100,000 a query,
-// so a listing pages by id, each page the 1000 after the last id it read. Accounts, which are few, are listed whole
-// each sync; the rest are listed whole the first time and a week after, which deletes what is gone, and in between
-// read what changed since the newest lastmodifieddate read before, in the account's own clock. Each transaction's
-// lines are a query of their own, read only when it changed.
 func init() {
 	Register(&Connector{
 		ID: "netsuite", Name: "NetSuite", Integration: true,
@@ -39,8 +18,6 @@ func init() {
 		RevokeBy: &Req{Method: POST, URL: nsHost + "/services/rest/auth/oauth2/v1/revoke", Header: map[string][]string{"Authorization": {"{basic}"}}, Form: Q{"token": "{refresh}"}},
 		Scopes:   []string{"rest_webservices"},
 		Keep:     []string{"company"},
-		// NetSuite names the company only in its top subsidiary, which an account without OneWorld has no table of,
-		// so the account is the subsidiary's name when it has one, and else its id.
 		Who: &Who{Req: Req{Method: POST, Read: true, URL: nsQL, Header: nsTransient,
 			Body: Obj{"q": "SELECT s.name FROM subsidiary s WHERE s.parent IS NULL UNION ALL SELECT '{'meta/company}' AS name FROM dual"},
 			Or:   &Req{Method: POST, Read: true, URL: nsQL, Header: nsTransient, Body: Obj{"q": "SELECT '{'meta/company}' AS name FROM dual"}}},
@@ -87,9 +64,6 @@ func init() {
 					Cols: map[string]SQL{"title": "coalesce(nullif(data->>'displayname', ''), data->>'itemid')", "sku": "data->>'itemid'", "type": "data->>'typename'",
 						"description": "data->>'description'", "active": nsActive, "edited_at": nsEditedAt},
 					Refs: map[string]SQL{"income_account": "data->>'incomeaccount'", "expense_account": "data->>'expenseaccount'"}}},
-			// The kinds of transaction that are the books' and have a counterpart in the ledger: sales, purchases, the money
-			// that pays them, and journal entries; orders that post nothing, like sales orders, are left out but estimates and
-			// purchase orders.
 			{Name: "transactions", Gap: time.Second, Req: nsList, Items: "items", ID: "id", Page: nsPage, Deny: nsDeny, Change: nsChange, Memo: "{stamp}",
 				Vars: Obj{"select": "t.id, t.tranid, t.type, BUILTIN.DF(t.type) AS typename, TO_CHAR(t.trandate, 'YYYY-MM-DD') AS trandate, " +
 					"TO_CHAR(t.duedate, 'YYYY-MM-DD') AS duedate, t.entity, BUILTIN.DF(t.entity) AS entityname, t.foreigntotal, t.foreignamountremaining, " +
@@ -107,8 +81,6 @@ func init() {
 						"total": "archive.sync_money(data->>'foreigntotal', " + nsCurrency + ")", "balance": "archive.sync_money(data->>'foreignamountremaining', " + nsCurrency + ")",
 						"memo": "data->>'memo'", "status": "data->>'statusname'", "edited_at": nsEditedAt},
 					Refs: map[string]SQL{"contact": "data->>'entity'"},
-					// NetSuite signs a line's amount as it posts, a debit up and a credit down, so a line keeps its size, and a
-					// journal entry's line says which it is.
 					Children: []Kids{{Table: "ledger_line", From: "archive.sync_list(data->'lines') WITH ORDINALITY l(x, i)",
 						Cols: map[string]SQL{"position": "coalesce(archive.sync_num(x->>'linesequencenumber'), i)", "kind": "CASE WHEN nullif(x->>'item', '') IS NOT NULL THEN 'Item' ELSE 'Account' END",
 							"description": "x->>'memo'", "amount": "archive.sync_money(ltrim(x->>'foreignamount', '-'), " + nsCurrency + ")",
@@ -120,11 +92,9 @@ func init() {
 }
 
 const (
-	// nsHost is the connected account's own host.
 	nsHost = "https://{-meta/company}.suitetalk.api.netsuite.com"
 	nsDoc  = ", the inactive too, by its internal id: listed whole the first time and a week after, 1000 a page, which deletes those gone, and in between " +
 		"those whose lastmodifieddate is on or after the newest read before."
-	// nsStamp is when a record last changed, in the account's clock, to the second, as a delta asks for it.
 	nsStamp        = "TO_CHAR(t.lastmodifieddate, 'YYYY-MM-DD HH24:MI:SS') AS stamp"
 	nsActive   SQL = "data->>'isinactive' IS DISTINCT FROM 'T'"
 	nsEditedAt SQL = "archive.sync_clock(data->>'stamp')"
@@ -136,19 +106,13 @@ const (
 )
 
 var (
-	// SuiteQL over REST is only for a request that says it keeps nothing.
 	nsTransient = map[string][]string{"Prefer": {"transient"}}
-	// A page is the 1000 after the last id of the page before, which a full page names, so no query reaches SuiteQL's
-	// 100,000 rows.
-	nsList   = Req{Method: POST, Read: true, URL: nsQL, Query: Q{"limit": "1000"}, Header: nsTransient, Body: Obj{"q": nsAfter + nsOrder}}
-	nsPage   = Cursor{At: "items/999/id", More: "hasMore"}
-	nsChange = SinceTime{Req: Req{Method: POST, Read: true, URL: nsQL, Query: Q{"limit": "1000"}, Header: nsTransient,
+	nsList      = Req{Method: POST, Read: true, URL: nsQL, Query: Q{"limit": "1000"}, Header: nsTransient, Body: Obj{"q": nsAfter + nsOrder}}
+	nsPage      = Cursor{At: "items/999/id", More: "hasMore"}
+	nsChange    = SinceTime{Req: Req{Method: POST, Read: true, URL: nsQL, Query: Q{"limit": "1000"}, Header: nsTransient,
 		Body: Obj{"q": nsAfter + nsSince + nsOrder}}, Stamp: "stamp"}
-	nsKind = Obj{"kind": "{kind}"}
-	// A role that may not read a kind of record, or an account without it, is refused as a record or field not found.
-	nsDeny = []Deny{{Status: []int{400, 403}, Says: []string{"not found", "permission"}, Why: "NetSuite does not let the connected role read these: {message}"}}
-	// A customer, vendor or employee as a contact, who is the person of its email; NetSuite's ids are one count over
-	// every kind, so they share a table as they are.
+	nsKind    = Obj{"kind": "{kind}"}
+	nsDeny    = []Deny{{Status: []int{400, 403}, Says: []string{"not found", "permission"}, Why: "NetSuite does not let the connected role read these: {message}"}}
 	nsContact = Map{Table: "ledger_contact",
 		Cols: map[string]SQL{"kind": "data->>'kind'", "title": "data->>'entityid'", "company": "data->>'companyname'", "email": "archive.sync_email(data->>'email')",
 			"phone": "data->>'phone'", "active": nsActive, "edited_at": nsEditedAt},

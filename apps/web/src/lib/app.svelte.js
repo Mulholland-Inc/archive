@@ -1,12 +1,8 @@
-// The app's state. An archive is one Archive workspace: its agents, files, tables, members and workflows come from
-// the API (see live.js for the mapping). What the API cannot do yet comes from mock/ and stays in this tab or
-// in localStorage; mock/index.js lists those pieces.
 
 import { API, api, forgetBlobs, upload, setWorkspace, workspace, local, setLocal, saveDraft, signOut as apiSignOut, Unauthorized, passkeys, passkeyAsked } from './api.js';
 import { resource, listen, onChange, onRefused } from './stream.svelte.js';
 import { toFile, toMember, toWorkflow, toRun, relative, show } from './live.js';
 import { toTables, countsQuery } from './schema.js';
-import { initials, mockKey, mockProfile, mockSettings } from './mock/index.js';
 import { nameBrands } from './brands.svelte.js';
 import { lookOf } from './looks.js';
 import { notify } from './dialogs.svelte.js';
@@ -14,6 +10,8 @@ import { go, replace, route } from './router.svelte.js';
 
 let counter = 0;
 const nid = (prefix) => `${prefix}${Date.now().toString(36)}${(counter++).toString(36)}`;
+
+export const pinned = $state({ title: null });
 
 export const app = $state({
   status: 'loading',
@@ -26,20 +24,15 @@ export const app = $state({
   collapsed: typeof localStorage !== 'undefined' && localStorage.getItem('archive.sidebar') === 'collapsed',
   drawer: false,
   details: false,
-  // The file open in the canvas: { id, name, file, model, error }.
   canvas: null,
   help: false,
   pending: null,
   muted: false,
   settings: { open: false, section: null, sub: null },
-  apiKey: mockKey('ak_live_', 'Created today'),
   archiveKeys: {},
   archiveApps: {},
-  share: { open: false, kind: null, target: null },
   onboarding: [],
-  // Your own connected accounts in every archive you are in (ownConnections).
-  ownConnections: [],
-  profile: mockProfile()
+  ownConnections: []
 });
 
 const kindOf = (type) => ({ family: 'Family', business: 'Business', personal: 'Just you' })[type] ?? 'Archive';
@@ -54,7 +47,6 @@ function shell(w) {
     kind: kindOf(look.type),
     tone: (w.id.charCodeAt(w.id.length - 1) % 6) + 1,
     look,
-    settings: mockSettings(),
     agents: [],
     conversations: {},
     library: [],
@@ -66,7 +58,6 @@ function shell(w) {
     schema: [],
     archiveTables: [],
     names: {},
-    shares: [],
     connectors: [],
     catalog: null,
     counts: null,
@@ -88,12 +79,9 @@ async function complain(error, title = 'That didn’t work') {
   await notify({ title, body: error?.message ?? String(error) });
 }
 
-// Signing in and loading
-
 export async function boot() {
   const query = new URLSearchParams(location.search);
   const named = query.get('workspace');
-  // A connector's consent sends the browser back here, saying why it did not connect when it did not.
   if (query.get('error')) notify({ title: 'That didn’t connect', body: query.get('error') });
   if (named) {
     setWorkspace(named);
@@ -103,7 +91,6 @@ export async function boot() {
   try {
     me = await api('/auth/me');
   } catch (e) {
-    // The archive this device opened last may be gone; open your first one instead.
     if (!(e instanceof Unauthorized) && workspace() && e.status >= 403) {
       setWorkspace('');
       return boot();
@@ -126,9 +113,6 @@ export async function boot() {
   resumeLink();
 }
 
-// Who you are and which archives you have, read again when your account, an archive's name or your role moves,
-// in this tab or anywhere else. An archive you were removed from, or that was deleted, goes; one you were
-// added to arrives.
 async function loadMe() {
   if (app.status !== 'ready') return;
   let me;
@@ -137,7 +121,6 @@ async function loadMe() {
     me = await api('/auth/me', { workspace: app.archive });
   } catch (e) {
     if (e instanceof Unauthorized) return leave();
-    // This archive cannot be read: you may have left it, or it was deleted. Ask who you are without it.
     here = false;
     setWorkspace('');
     me = await api('/auth/me').catch((e) => (e instanceof Unauthorized ? leave() : null));
@@ -168,10 +151,8 @@ export const account = resource({
   load: loadMe
 });
 
-// A socket the archive refuses may mean you left it or it is gone.
 onRefused(() => app.status === 'ready' && account.refresh());
 
-// Another tab of this browser signing out signs this one out too.
 const tabs = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('archive') : null;
 tabs?.addEventListener('message', (e) => {
   if (e.data === 'signedOut' && app.status === 'ready') {
@@ -186,9 +167,7 @@ function setMe(me) {
   const name = me.actor.name || me.actor.email;
   app.user = { id: me.actor.user_id, name, first: name.split(/[\s@]+/)[0], email: me.actor.email, plan: me.role.charAt(0).toUpperCase() + me.role.slice(1), tone: 1 };
   app.role = me.role;
-  // Admins of this Archive make and delete archives, whichever archive they are in.
   app.canAdd = !!me.admin;
-  Object.assign(app.profile, { name, first: app.user.first });
 }
 
 async function files(id, where) {
@@ -202,12 +181,7 @@ async function files(id, where) {
   return all.reverse();
 }
 
-// What an archive shows, each read again when what it is read from moves (stream.svelte.js). Each reads into
-// the archive that is open when it starts.
 
-// The workspace's agents, each with your latest message with it and when it came (at). seen is the latest you have
-// seen, kept on this device; one you have not seen yet shows a dot. What this tab knows of one (it is streaming, its
-// messages are loaded) stays with it.
 const agentList = (workspace) =>
   runCode(
     `const agents = await archive.list("agent", { limit: 1000 });
@@ -231,7 +205,6 @@ export const agents = resource({
   }
 });
 
-// The top of the library: what was made here, and the connections whose files you can see. A folder is read when opened.
 export const library = resource({
   tables: ['archive.file', 'archive.group'],
   load: async () => {
@@ -242,28 +215,23 @@ export const library = resource({
   }
 });
 
-// folderFiles are what is in the folder parent, or at the top of connection.
 export async function folderFiles({ parent, connection }) {
   const v = ws();
   const list = await files(v.id, parent ? `parent=${parent}` : `top=1&connection=${connection}`);
   return list.map((f) => filed(toFile(f, v.name), v));
 }
 
-// fileById is the file id, wherever in the tree it is.
 export async function fileById(id) {
   const v = ws();
   return filed(toFile(await api(`/api/files/${id}`, { workspace: v.id }), v.name), v);
 }
 
-// findFiles are the files whose name or words have q, wherever in the tree they are.
 export async function findFiles(q) {
   const v = ws();
   const hits = await api(`/api/search?type=file&limit=100&q=${encodeURIComponent(q)}`, { workspace: v.id });
   return (hits ?? []).map((h) => ({ ...filed(toFile(h.data, v.name), v), snippet: h.snippet }));
 }
 
-// The file open in the canvas, read again when it moves; a document's model only when its bytes did. One that went
-// closes it, and one that was already gone when opened says so.
 export const canvas = resource({
   tables: ['archive.file'],
   byId: true,
@@ -293,7 +261,6 @@ export const canvas = resource({
   }
 });
 
-// name is what to call it until it is read, or if it turns out to be gone.
 export function openFile(id, name = '') {
   if (app.canvas?.id === id) return;
   app.canvas = { id, name, file: null, model: null, error: '' };
@@ -304,7 +271,6 @@ export function closeFile() {
   app.canvas = null;
 }
 
-// editFile applies edits, all or nothing, as archive.edit does, and shows what they made. A refused one throws why.
 export async function editFile(id, ops) {
   try {
     await call(`/api/files/${id}/edit`, { method: 'POST', body: ops });
@@ -314,7 +280,6 @@ export async function editFile(id, ops) {
   await canvas.refresh(id);
 }
 
-// copyFile makes a file you can change from one a connection syncs, and opens it.
 export async function copyFile(id) {
   try {
     const copy = await runCode(`return await archive.copy(${JSON.stringify(id)});`);
@@ -324,7 +289,6 @@ export async function copyFile(id) {
   }
 }
 
-// A file's bytes and thumbnail are cached as blobs; a file that moved has them fetched again.
 onChange((changes) => {
   for (const c of changes) if (c.table === 'archive.file') forgetBlobs(c.id ? `/api/files/${c.id}/` : '/api/files/');
 });
@@ -338,8 +302,6 @@ export const members = resource({
   }
 });
 
-// The groups, by name: rows of the group table, which everyone reads and owners write. Who is in one is each
-// member's groups, so they move with the members too.
 export const groups = resource({
   tables: ['archive.group', 'archive.member'],
   load: async () => {
@@ -349,8 +311,6 @@ export const groups = resource({
   }
 });
 
-// Where a group is used, for its page: each table with how many rows have it as their access. It moves with any
-// row of any table that can have one.
 export const usage = resource({
   tables: (c) => !c.table.startsWith('archive.') || !['archive.agent', 'archive.turn', 'archive.workflow_run', 'archive.revision', 'archive.token', 'archive.user', 'archive.workspace'].includes(c.table),
   load: async (id) => {
@@ -359,7 +319,6 @@ export const usage = resource({
   }
 });
 
-// Workflows are rows of the workflow table and their runs of workflow_run, read through a run as any rows are.
 const runCode = async (code, workspace) => {
   const out = await api('/api/run', { method: 'POST', body: { code }, workspace: workspace ?? app.archive });
   if (out?.error) throw new Error(out.error);
@@ -373,7 +332,6 @@ return ws.map((w) => ({ ...w, last: last.find((r) => r.workflow === w.id) ?? nul
     workspace
   );
 
-// The workflows, each with its last run. Runs already read for a workflow's page stay until runs reads them.
 export const workflows = resource({
   tables: ['archive.workflow', 'archive.workflow_run'],
   load: async () => {
@@ -388,7 +346,6 @@ export const workflows = resource({
   }
 });
 
-// A workflow's runs, for its page.
 export const runs = resource({
   tables: ['archive.workflow_run', 'archive.workflow'],
   load: async (id) => {
@@ -402,8 +359,6 @@ export const runs = resource({
   }
 });
 
-// The tables and views, from the catalog and the DDL: they move with a migration. Which workflows a table
-// starts moves with the workflows.
 export const schema = resource({
   tables: ['archive.revision', 'archive.workflow'],
   load: async () => {
@@ -419,7 +374,6 @@ export const schema = resource({
   }
 });
 
-// Every table's row count and last change, in one read-only query: they move with any row of any table.
 export const counts = resource({
   tables: (c) => !c.table.startsWith('archive.'),
   load: async () => {
@@ -433,7 +387,6 @@ export const counts = resource({
   }
 });
 
-// The schema's tables from what was read last, keeping the rows each table's page read.
 function tables(v) {
   if (!v.catalog) return;
   const samples = new Map(v.schema.map((t) => [t.id, t.sample]));
@@ -441,7 +394,6 @@ function tables(v) {
   v.archiveTables = toTables(v.catalog.catalog, [], {}, [], true);
 }
 
-// The first rows of a table, for its page; they move with any write to it.
 export const preview = resource({
   tables: (c) => !c.table.startsWith('archive.'),
   param: (c) => c.table,
@@ -452,7 +404,6 @@ export const preview = resource({
   }
 });
 
-// A view's rows, as its page draws them: they move with any row of any table, since a view reads others.
 export const viewRows = resource({
   tables: (c) => !c.table.startsWith('archive.'),
   param: (c) => c.table,
@@ -463,15 +414,10 @@ export const viewRows = resource({
   }
 });
 
-// tableOf is a table or view of the workspace, or one of Archive's own that a link names, by its id.
 export function tableOf(id, v = ws()) {
   return v?.schema.find((x) => x.id === id) ?? v?.archiveTables?.find((x) => x.id === id);
 }
 
-// baseOf is the table a view reads, as its DDL names it after its own FROM, past the parentheses Postgres puts
-// around joins and past its schema, archive's as the workspace's: not the FROM of a subquery in its select list,
-// like a count of another table; a table is its own.
-// A view whose FROM is a subquery, like SELECT q.*, ... AS name FROM (...) q, reads what that reads.
 export function baseOf(t) {
   if (t?.kind !== 'view') return t?.id;
   const from = (ddl) => {
@@ -500,8 +446,6 @@ export function baseOf(t) {
   return from(t.ddl ?? '') ?? t.id;
 }
 
-// linkOf is the table a column links to; a view's columns have none of their own, so it is its table's, or that
-// of the view it reads.
 export function linkOf(t, c, depth = 0) {
   if (c.to || t?.kind !== 'view' || depth > 4) return c.to;
   const base = tableOf(baseOf(t));
@@ -509,9 +453,6 @@ export function linkOf(t, c, depth = 0) {
   return col ? linkOf(base, col, depth + 1) : undefined;
 }
 
-// shownOf is the columns of t a screen shows a row by, past its name: not what Archive keeps of every row, and
-// not an id that names no table the app knows, which would read as a bare UUID; nor, of Archive's own tables,
-// the ids a row has at the service it came from, nor of a view of one.
 export function shownOf(t) {
   const own = ['id', 'name', 'access', 'created_at', 'updated_at', 'search'];
   const base = tableOf(baseOf(t));
@@ -524,13 +465,10 @@ export function shownOf(t) {
   );
 }
 
-// rowOf is one row of a table or view, as its member may read it.
 export async function rowOf(table, id) {
   return call(`/api/${encodeURIComponent(table)}/${encodeURIComponent(id)}`);
 }
 
-// titleOf is what a row of t is called: its name, shown as a cell is; for a row of a view with none, the name
-// of the row of the table it reads; or Untitled; never its id.
 export function titleOf(row, t) {
   const own = show(row?.name).trim();
   if (own || t?.kind !== 'view') return own || 'Untitled';
@@ -538,9 +476,6 @@ export function titleOf(row, t) {
   return (base !== t.id && tableOf(base) && nameOf(base, row?.id)?.trim()) || 'Untitled';
 }
 
-// Row names, for links: by table and id in each workspace's names, a name, or null for a row the member
-// cannot see. A link asks for its row's name; what is asked at once is read in one query, as the member may
-// read it, and read again when its table moves.
 const asked = new Map();
 let askTimer = null;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -584,7 +519,6 @@ async function readNames() {
   }
 }
 
-// The names of a table that moved are read again; until then its links show the names they had.
 onChange((changes, sweep) => {
   for (const v of app.archives) {
     for (const table of Object.keys(v.names ?? {})) {
@@ -595,8 +529,6 @@ onChange((changes, sweep) => {
   }
 });
 
-// nameOf is the name of the row id of table, for a link to it: undefined while it is read, null when the
-// member cannot see it.
 export function nameOf(table, id, v = ws()) {
   if (!v || !table || typeof id !== 'string' || !UUID.test(id)) return null;
   const got = v.names?.[table]?.[id];
@@ -604,18 +536,15 @@ export function nameOf(table, id, v = ws()) {
   return got;
 }
 
-// linkTitle is how a link to a row reads: its name, Untitled, or why there is none to show.
 export function linkTitle(table, id) {
   const name = nameOf(table, id);
   return name === undefined ? '…' : name === null ? 'Not found' : name.trim() || 'Untitled';
 }
 
-// linkHref is the page of the row a link names: its row's page, or the file's in the library.
 export function linkHref(table, id) {
   return table === 'archive.file' ? `/library/${id}` : `/view/${table}/${id}`;
 }
 
-// cellText is a cell as text, for search, filters, groups and sorting: a link by the names of its rows.
 export function cellText(t, c, row) {
   const v = row?.[c.name];
   const to = linkOf(t, c);
@@ -623,8 +552,6 @@ export function cellText(t, c, row) {
   return (Array.isArray(v) ? v : [v]).map((id) => linkTitle(to, id)).join(', ');
 }
 
-// What links to a row of view (or table) id: the rows of other tables whose link columns point at the table
-// the view reads, which its DDL names. Each is { table, column, rows: [{ id, title }] }.
 export async function rowRelations(id, row) {
   const v = ws();
   const t = tableOf(id, v);
@@ -659,23 +586,15 @@ export async function signOut() {
   go('/');
 }
 
-// Settings
-
 export function openSettings(section = null, sub = null) {
   Object.assign(app.settings, { open: true, section, sub });
 }
 
-// Onboarding (MOCK: no API; kept per archive in localStorage)
-
 export const onboardingSteps = [
-  { id: 'msa', group: 'Legal', title: 'Sign the master services agreement', body: 'The terms for your archive, billing and support.', action: 'Review and sign' },
-  { id: 'dpa', group: 'Legal', title: 'Sign the data processing agreement', body: 'How we process personal data on your behalf under GDPR.', action: 'Review and sign' },
-  { id: 'verify', group: 'Legal', title: 'Verify your business details', body: 'Confirm your legal name, address and VAT number for invoices.', action: 'Verify' },
   { id: 'invite', group: 'Your team', title: 'Invite your team', body: 'Add the people who should read, edit or own this archive.', action: 'Invite' },
   { id: 'connect', group: 'Your data', title: 'Connect a source', body: 'Bring in your Gmail, Google Drive, Notion and more.', action: 'Connect' },
   { id: 'upload', group: 'Your data', title: 'Upload your first files', body: 'Drop in scans, letters, recordings or spreadsheets.', action: 'Upload' },
-  { id: 'workflow', group: 'Your data', title: 'Set up a workflow', body: 'Let an agent file, tag or transcribe new items as they arrive.', action: 'Create' },
-  { id: 'region', group: 'Your data', title: 'Choose a data region and retention', body: 'Pick where your archive lives and how long deleted items are kept.', action: 'Choose' }
+  { id: 'workflow', group: 'Your data', title: 'Set up a workflow', body: 'Let an agent file, tag or transcribe new items as they arrive.', action: 'Create' }
 ];
 
 const saveSteps = () => setLocal(`archive.onboarding:${app.archive}`, app.onboarding);
@@ -684,7 +603,7 @@ export function stepDone(id) {
   return app.onboarding.includes(id);
 }
 
-export function completeStep(id) {
+function completeStep(id) {
   if (stepDone(id)) return;
   app.onboarding.push(id);
   saveSteps();
@@ -696,8 +615,6 @@ export function toggleStep(id) {
   else app.onboarding.splice(i, 1);
   saveSteps();
 }
-
-// People
 
 export function seedOf(person) {
   const p = typeof person === 'string' ? { name: person } : person;
@@ -752,9 +669,6 @@ export async function setRole(member, role) {
   }
 }
 
-// Groups. A group is a row of the group table: an owner makes one, even empty, renames, describes and deletes
-// it. A member's groups are the ids of theirs, a column of their row; a row's access is the id of the group
-// that sees it, or null for everyone.
 
 export function groupById(id, w = ws()) {
   return w?.groups.find((g) => g.id === id);
@@ -773,9 +687,6 @@ async function setGroups(member, next) {
   }
 }
 
-// mayLimit says whether you may change who sees a row or file whose access is current: an editor in its group,
-// or of one everyone sees, or an owner. accessOptions are what you may give it to: everyone, and the groups you
-// are in, or every group for an owner.
 export function mayLimit(current) {
   if (app.role === 'owner') return true;
   const me = ws().members.find((m) => m.email === app.user.email);
@@ -790,8 +701,6 @@ export function accessOptions(current) {
 
 export const toggleGroup = (member, id) => setGroups(member, member.groups.includes(id) ? member.groups.filter((g) => g !== id) : [...member.groups, id]);
 
-// createGroup makes the group name, described, with the members whose ids are people in it; it is the group, or
-// null when it could not be made.
 export async function createGroup({ name, description = '', people = [] }) {
   const w = ws();
   let g;
@@ -834,14 +743,11 @@ export async function deleteGroup(group) {
   return true;
 }
 
-// groupUses is where the group id is a row's access: each table, as the catalog names it, with how many rows
-// you see there, and the connections narrowed to it. While it has any, it cannot be deleted.
 export async function groupUses(id) {
   const rows = (await runCode(`return await archive.query("select * from archive.group_uses($1)", ${JSON.stringify(id)});`)) ?? [];
   return rows.map((r) => ({ table: r.table, rows: Number(r.rows) }));
 }
 
-// setAccess gives the row id of table to the group access, or to everyone with null.
 export async function setAccess(table, row, access) {
   const before = row.access;
   row.access = access;
@@ -855,8 +761,6 @@ export async function setAccess(table, row, access) {
   }
 }
 
-// Integrations: the archive's connections, one to each integration the API has, which an owner connects for
-// everyone (src/connect). They are read with your own connectors, from /connect.
 
 export function archiveIntegrations() {
   return ws().integrations ?? [];
@@ -880,8 +784,6 @@ async function onIntegration(id, what, path, init) {
 export const disconnectIntegration = (id) => onIntegration(id, 'disconnect', '', { method: 'DELETE' });
 export const syncIntegration = (id) => onIntegration(id, 'sync', '/sync', { method: 'POST' });
 
-// API keys. The archive key is a real API token of yours for this archive; its secret is shown once, when it is
-// made. "Your API key", one key across every archive, is MOCK: tokens belong to one workspace.
 
 const KEY_NAME = 'Archive API key';
 
@@ -889,17 +791,14 @@ export function archiveKey() {
   return app.archiveKeys[app.archive] ?? null;
 }
 
-// Your tokens for the archive, read again when one is made or revoked, here or anywhere else.
 export const tokens = resource({
   tables: ['archive.token'],
   load: async () => {
     const id = app.archive;
     const list = (await call('/auth/tokens')) ?? [];
-    // The apps you let in over MCP (src/mcp.go), each a grant you can revoke.
     app.archiveApps[id] = list.filter((x) => x.app).sort((a, b) => b.created_at.localeCompare(a.created_at));
     const t = list.filter((x) => x.name === KEY_NAME && !x.app).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
     if (app.archiveKeys[id]?.secret && app.archiveKeys[id].id === t?.id) return;
-    // Archive keeps the key sealed, so it can be read again.
     const secret = t ? ((await call(`/auth/tokens/${t.id}/secret`).catch(() => null))?.secret ?? '') : '';
     app.archiveKeys[id] = t ? { id: t.id, secret, date: `Created ${new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` } : null;
   }
@@ -909,7 +808,6 @@ export function archiveApps() {
   return app.archiveApps[app.archive] ?? [];
 }
 
-// Revoking an app ends its access and refresh tokens at once.
 export async function revokeApp(id) {
   const before = app.archiveApps[app.archive];
   app.archiveApps[app.archive] = archiveApps().filter((x) => x.id !== id);
@@ -921,11 +819,7 @@ export async function revokeApp(id) {
   }
 }
 
-export async function rotateKey(scope) {
-  if (scope !== 'archive') {
-    app.apiKey = mockKey('ak_live_', 'Rotated just now');
-    return;
-  }
+export async function rotateKey() {
   if (!isArchiveOwner()) return;
   const id = app.archive;
   try {
@@ -937,8 +831,6 @@ export async function rotateKey(scope) {
     complain(e, 'Couldn’t make a new key');
   }
 }
-
-// Layout
 
 function isNarrow() {
   return typeof matchMedia !== 'undefined' && matchMedia('(max-width: 56rem)').matches;
@@ -969,8 +861,6 @@ function removeAt(list, predicate, after) {
   return item;
 }
 
-// Archives
-
 export async function switchArchive(id) {
   if (id === app.archive || !app.archives.some((v) => v.id === id)) return;
   setWorkspace(id);
@@ -978,7 +868,6 @@ export async function switchArchive(id) {
   app.onboarding = local(`archive.onboarding:${id}`, []);
   const head = route.parts[0];
   if (['agent', 'workflows', 'database'].includes(head) && route.parts[1]) go(`/${head === 'agent' ? '' : head}`);
-  // Listening to the archive reads who you are in it (me) and what is on screen.
   listen(id);
   loadArchive(ws());
 }
@@ -998,7 +887,6 @@ export async function createArchive(name, look) {
   }
 }
 
-// Saves the archive's name and look in one PATCH, the one a rename makes, which tells every tab it moved.
 export async function saveArchive({ name, look }) {
   const w = ws();
   const before = { name: w.name, look: w.look, kind: w.kind };
@@ -1027,8 +915,6 @@ export async function deleteArchive(id) {
   go('/');
 }
 
-// Agents. Sending and streaming live in agent.svelte.js.
-
 export function agentById(id) {
   return ws()?.agents.find((a) => a.id === id);
 }
@@ -1037,12 +923,10 @@ export function rememberAgent(id) {
   setLocal(`archive.agent:${app.archive}`, id);
 }
 
-// The agent you talked with last here, or the first.
 export function lastAgent() {
   return agentById(local(`archive.agent:${app.archive}`, null)) ?? ws()?.agents[0];
 }
 
-// Sends text to the agent you talked with last, on its page, and says where that is.
 export function askAgent(text, attachments = []) {
   const agent = lastAgent();
   if (!agent) return '/';
@@ -1052,10 +936,8 @@ export function askAgent(text, attachments = []) {
 
 export const unread = (agent) => agent.at !== agent.seen && !agent.streaming;
 
-// Whether an archive has a message you have not seen: from its agents once it has been open, or from a look at it.
 export const archiveUnread = (w) => (w.agents.length ? w.agents.some(unread) : Boolean(w.unread));
 
-// Looks at the archives that are not open, so the rail can mark them. An agent never seen here has no mark.
 async function peekArchives() {
   await Promise.allSettled(app.archives.filter((w) => w.id !== app.archive).map(async (w) => {
     const seen = local(`archive.seen:${w.id}`, {});
@@ -1104,8 +986,6 @@ export async function removeAgent(id) {
   go('/');
 }
 
-// Library
-
 export async function uploadFiles(list, parent) {
   const w = ws();
   const added = [];
@@ -1122,14 +1002,12 @@ export async function uploadFiles(list, parent) {
   return added;
 }
 
-// Who sees a file: the group it is limited to, Everyone, or for what a connection synced whoever sees the connection.
 function filed(f, w) {
   f.folder = f.access ? (groupById(f.access, w)?.name ?? 'Unknown group') : f.connection ? 'Who sees its connection' : 'Everyone';
   if (f.kind === 'folder' && f.access) f.sub = f.folder;
   return f;
 }
 
-// setFileAccess limits file to the group access, or opens it to everyone with null.
 export async function setFileAccess(file, access) {
   const w = ws();
   try {
@@ -1161,7 +1039,6 @@ export async function renameFile(file, name) {
   }
 }
 
-// moveFile puts file in the folder parent, or at the top with null.
 export async function moveFile(file, parent) {
   try {
     await call(`/api/files/${file.id}`, { method: 'PATCH', body: { parent } });
@@ -1182,7 +1059,6 @@ export async function removeFile(id) {
 
 export async function downloadFile(file) {
   try {
-    // A link the browser follows itself, so a large file streams to disk rather than through memory.
     const link = await call(`/api/files/${file.id}/link?expires=5m`, { method: 'POST' });
     Object.assign(document.createElement('a'), { href: `${link.url}&download=1` }).click();
   } catch (e) {
@@ -1190,104 +1066,6 @@ export async function downloadFile(file) {
   }
 }
 
-// Sharing (MOCK: there is no API for sharing one item with someone outside the archive; shares stay in this tab)
-
-export const permissions = [
-  { value: 'view', label: 'Viewer' },
-  { value: 'edit', label: 'Editor' }
-];
-
-export const shareKinds = { file: 'File', workflow: 'Workflow', table: 'Table' };
-
-export function shareItem(kind, target, w = ws()) {
-  if (kind === 'file') {
-    const f = w.library.find((x) => x.id === target);
-    return f && { name: f.name, path: `/library/${f.id}` };
-  }
-  if (kind === 'workflow') {
-    const f = w.workflows.find((x) => x.id === target);
-    return f && { name: f.name, path: `/workflows/${f.id}` };
-  }
-  const t = w.schema.find((x) => x.id === target);
-  return t ? { name: t.name, path: `/database/${t.id}` } : null;
-}
-
-export function isExternal(email) {
-  return !ws().members.some((m) => m.email === email);
-}
-
-export function shareFor(kind, target) {
-  return ws().shares.find((s) => s.kind === kind && s.target === target);
-}
-
-function ensureShare(kind, target) {
-  const w = ws();
-  if (!shareFor(kind, target)) w.shares.unshift({ id: nid('sh'), kind, target, by: app.profile.name, date: 'Just now', people: [] });
-  return shareFor(kind, target);
-}
-
-function prune(share) {
-  if (share.people.length) return;
-  const w = ws();
-  const i = w.shares.indexOf(share);
-  if (i >= 0) w.shares.splice(i, 1);
-}
-
-export function openShare(kind, target) {
-  Object.assign(app.share, { open: true, kind, target });
-}
-
-export function contacts(w = ws()) {
-  const out = new Map();
-  for (const m of w.members) {
-    if (m.status === 'active' && m.email !== app.user.email) out.set(m.email, { id: m.id, user: m.user, name: m.name, email: m.email, tone: m.tone });
-  }
-  for (const s of w.shares) {
-    for (const p of s.people) if (!out.has(p.email)) out.set(p.email, { name: p.name, email: p.email, tone: p.tone, guest: true });
-  }
-  return [...out.values()];
-}
-
-export function addPeople(kind, target, emails, permission) {
-  const share = ensureShare(kind, target);
-  const known = contacts();
-  const added = [];
-  for (const email of emails) {
-    if (share.people.some((p) => p.email === email)) continue;
-    const person = known.find((p) => p.email === email);
-    const name = person?.name ?? email.split('@')[0].replace(/[._-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-    share.people.push({ name, email, permission, tone: person?.tone ?? (email.length % 6) + 1 });
-    added.push(name);
-  }
-  if (!added.length) prune(share);
-}
-
-export function setPermission(share, email, permission) {
-  const p = share.people.find((x) => x.email === email);
-  if (p) p.permission = permission;
-}
-
-export function unsharePerson(share, email) {
-  const i = share.people.findIndex((x) => x.email === email);
-  if (i < 0) return;
-  share.people.splice(i, 1);
-  prune(share);
-}
-
-export function stopSharing(id) {
-  removeAt(ws().shares, (s) => s.id === id);
-}
-
-export function removeGuest(email) {
-  const w = ws();
-  for (const share of [...w.shares]) {
-    share.people = share.people.filter((p) => p.email !== email);
-    prune(share);
-  }
-}
-
-// Workflows. A workflow is a script saved in the archive's workflow table; runs are synchronous, so there is no pausing or
-// stopping one, and the assistant writes new ones.
 
 export function workflowById(id) {
   return ws()?.workflows.find((w) => w.id === id);
@@ -1318,8 +1096,6 @@ export function createWorkflow({ name, trigger, steps }) {
   return askAgent(text);
 }
 
-// renameView renames view id to name, as an owner changes the schema: a dry run, then the run it confirms. A
-// view's name is its Postgres name, so name becomes one, like "Client notes" client_notes; its page follows it.
 export async function renameView(id, name) {
   const to = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
   if (!to || to === id || !isArchiveOwner()) return;
@@ -1350,16 +1126,11 @@ export async function removeWorkflow(id) {
   }
 }
 
-// Connectors: only those the API has, with your connections to them, read from /connect.
-
-// Your connected accounts, onto the connectors the API has. Connecting is the provider's consent page, which
-// sends the browser back to the connector here.
 export const connections = resource({
   tables: ['archive.connection'],
   load: async () => {
     const v = ws();
     const out = await api('/connect', { workspace: v.id });
-    // Your own connectors are the personal ones; the archive's are its integrations.
     const ids = new Set((out?.connectors ?? []).filter((k) => !k.integration).map((k) => k.id));
     v.connectors = v.connectors.filter((c) => ids.has(c.id));
     nameBrands(out?.connectors ?? []);
@@ -1372,7 +1143,6 @@ export const connections = resource({
         c = v.connectors.at(-1);
       }
       const mine = out.connections.filter((x) => x.provider === k.id && !x.integration);
-      // Synced is when every account last caught up: the earliest, and never while one has not yet.
       const synced = mine.every((x) => x.synced_at) ? mine.map((x) => x.synced_at).sort()[0] : '';
       Object.assign(c, {
         ready: k.ready,
@@ -1391,12 +1161,10 @@ export const connections = resource({
   }
 });
 
-// lastSyncOf is when a connection last caught up, as the app says it.
 function lastSyncOf(x) {
   return x.synced_at ? relative(x.synced_at) : x.sync_at ? 'Syncing…' : 'Not yet';
 }
 
-// toIntegration is integration connector k as its settings show it, with the archive's connection x, if any.
 function toIntegration(k, x) {
   const shown = { by: k.name, description: `Use the archive’s ${k.name} account`, category: 'Other', scopes: [], ...k };
   return {
@@ -1419,17 +1187,12 @@ function toIntegration(k, x) {
   };
 }
 
-// connect sends the browser to connect connector id: one of your own, or an integration an owner connects for everyone.
-// asked is what a connector whose sign-in is the account's own, like a Shopify store's, asks for first, by its name.
 export function connect(id, asked = {}) {
   const c = [...ws().connectors, ...archiveIntegrations()].find((x) => x.id === id);
   const q = new URLSearchParams({ ...asked, workspace: app.archive });
   if (c?.ready) location.assign(`${API}/connect/${encodeURIComponent(id)}?${q}`);
 }
 
-// connectKeys connects connector id, which has no sign-in, with the keys a person pasted, by their names: one of
-// your own, or an integration an owner connects for everyone, in this archive or in workspace. It says whether it
-// connected.
 export async function connectKeys(id, keys, workspace) {
   try {
     await call(`/connect/${encodeURIComponent(id)}/keys`, { method: 'POST', body: { keys }, workspace });
@@ -1441,9 +1204,6 @@ export async function connectKeys(id, keys, workspace) {
   return true;
 }
 
-// Plaid Link, the widget a connector with link hands its keys over through, as Plaid has it: its script comes only
-// from Plaid. A bank whose sign-in is its own sends the browser back to the connector's page with ?oauth_state_id,
-// where the widget picks up again with the same token, which this tab keeps until then.
 const LINK_SCRIPT = 'https://cdn.plaid.com/link/v2/stable/link-initialize.js';
 const LINKING = 'archive.linking';
 let linkScript;
@@ -1486,7 +1246,6 @@ async function openLink({ id, token, workspace }, back) {
   }).open();
 }
 
-// connectLink connects connector id through its provider's widget.
 export async function connectLink(id) {
   try {
     const { token } = await call(`/connect/${encodeURIComponent(id)}/link`, { method: 'POST' });
@@ -1499,7 +1258,6 @@ export async function connectLink(id) {
   }
 }
 
-// resumeLink picks the widget up again when a bank's own sign-in sent the browser back here.
 function resumeLink() {
   if (!new URLSearchParams(location.search).has('oauth_state_id')) return;
   const at = linking();
@@ -1508,8 +1266,6 @@ function resumeLink() {
   if (at) openLink(at, back).catch((e) => complain(e, 'Couldn’t connect'));
 }
 
-// Your own accounts in every archive you are in, from /connect/mine: each stays in the archive it was connected
-// in, and is synced and disconnected there, as its member.
 export const ownConnections = resource({
   tables: ['archive.connection'],
   load: async () => {
@@ -1518,7 +1274,6 @@ export const ownConnections = resource({
   }
 });
 
-// onOwnConnection does what path says to your connection x, in the archive it is in.
 async function onOwnConnection(x, path, init, failed) {
   try {
     await call(`/connect/${encodeURIComponent(x.id)}${path}`, { ...init, workspace: x.workspace.id });
@@ -1532,4 +1287,3 @@ async function onOwnConnection(x, path, init, failed) {
 export const syncOwnConnection = (x) => onOwnConnection(x, '/sync', { method: 'POST' }, `Couldn’t sync ${x.account}`);
 export const disconnectOwnConnection = (x) => onOwnConnection(x, '', { method: 'DELETE' }, `Couldn’t disconnect ${x.account}`);
 
-export { initials };

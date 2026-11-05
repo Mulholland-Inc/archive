@@ -2,12 +2,6 @@ package connect
 
 import "time"
 
-// Sentry, through its hosted MCP server: organizations, projects, issues, events and traces. Its authorization
-// server registers any client (RFC 7591) and asks for the scopes its metadata lists. whoami names the user.
-//
-// It syncs each organization's projects into code_project, by slug, the only thing find_projects says of one. Issues are
-// not synced: search_issues answers in Markdown, at most 100 and with no next page, and Archive syncs only from JSON.
-// A listing deletes nothing, so a project deleted there stays here. Its actions are the server's tools.
 func init() {
 	Register(&Connector{ID: "sentry", Name: "Sentry", Integration: true, MCP: "https://mcp.sentry.dev/mcp", Who: &Who{Tool: "whoami"}, Busy: ToolBusy,
 		Info: Info{By: "Sentry", Description: "List projects, and look into issues, events and traces", Category: CatCode, Icon: IconBug, Scopes: []string{"Read your organization’s projects and issues"}},

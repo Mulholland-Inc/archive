@@ -7,10 +7,6 @@
   import { uid } from '../lib/ids.js';
   import { show, hide, roving, focusables } from '../lib/floating.js';
 
-  // The one dropdown. Its card opens over the trigger and folds back into it, so nothing shows twice. With `options`
-  // it picks a value, and the chosen option lands on the trigger's text. With a `trigger` snippet it lists actions
-  // under a copy of the trigger, or over it when there is more room above. `end` keeps the card's right edge on the
-  // trigger's, where a left-aligned one would run off the page.
   let {
     trigger,
     children,
@@ -103,7 +99,6 @@
     hide(panel);
   }
 
-  // A pick closes at once: folding back would show the old value over the new one.
   function pick(v) {
     panel.style.transition = 'none';
     value = v;

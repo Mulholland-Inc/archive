@@ -2,23 +2,6 @@ package connect
 
 import "time"
 
-// Databricks, a workspace's lakehouse: the metadata of the Unity Catalog tables a person picks, synced, and SQL run
-// live on a SQL warehouse they choose through the Statement Execution API. Databricks signs a third party in only
-// through an OAuth app each customer's account admin makes for it, as no app works across accounts but Databricks'
-// own partners', so this connects as a service principal the workspace makes for Archive, whose OAuth secret an
-// admin pastes in with the workspace's address, the warehouse and what to sync. The secret is traded at the
-// workspace's /oidc/v1/token for a token of an hour, with the client as HTTP Basic, as Databricks takes it; it lasts
-// until the admin deletes it, at most two years. Archive reads and writes only what the service principal's grants
-// allow: USE CATALOG, USE SCHEMA and SELECT to read, Can use on the warehouse to query, and MODIFY or more only when
-// the workspace wants Archive to write.
-//
-// It syncs each table, view and materialized view of the catalogs, schemas or tables picked, like main,
-// finance.ledger or sales.crm.accounts, into warehouse_table, its columns into warehouse_column, never its rows:
-// a pick is listed through table-summaries, its schema and table names a LIKE pattern, so an _ in one also matches
-// any one character, and each table is read whole, at most four at once. Databricks says nothing of what changed
-// when, so each is listed whole at most six hours apart, which deletes what is gone. The query action runs one
-// statement that only reads, refused before it goes otherwise, and execute one that may write, which only a member
-// who may write can run.
 func init() {
 	Register(&Connector{
 		ID: "databricks", Name: "Databricks", Integration: true,
@@ -35,14 +18,12 @@ func init() {
 			{Name: "tables", Label: "Catalogs, schemas or tables",
 				Help: "What Archive syncs the metadata of, by commas, like main, finance.ledger, sales.crm.accounts; give the service principal USE CATALOG, USE SCHEMA and SELECT on them"},
 		},
-		// The workspace, given as its address or a URL of it.
 		API: "https://{+host}",
 		Let: []Step{{As: "host", In: "{key/host}", Find: `^(?:[^/]*://)?([^/?#]*)`}},
 		Trade: &Req{Method: POST, URL: "/oidc/v1/token", Header: map[string][]string{"Authorization": {"{basic}"}},
 			Form: Q{"grant_type": "client_credentials", "scope": "all-apis"}},
 		Sign: map[string]string{"Authorization": "Bearer {key/access}"},
-		// The workspace names itself as the issuer of its tokens.
-		Who: &Who{Req: Req{URL: "/oidc/.well-known/oauth-authorization-server"}, Names: []Path{"issuer"}, Find: `^https?://([^/]*)`},
+		Who:  &Who{Req: Req{URL: "/oidc/.well-known/oauth-authorization-server"}, Names: []Path{"issuer"}, Find: `^https?://([^/]*)`},
 		Actions: map[string]*Action{
 			"query": Call[dbQuery, any](Plan{
 				Doc: "Run one SQL statement that only reads on the SQL warehouse, like { query: \"SELECT region, sum(amount) AS total FROM main.sales.orders " +
@@ -92,7 +73,6 @@ func init() {
 					Cols: map[string]SQL{"database": "data->>'catalog_name'", "schema": "data->>'schema_name'", "title": "data->>'name'",
 						"kind": "replace(data->>'table_type', '_', ' ')", "comment": "archive.sync_clip(data->>'comment', 65536)",
 						"made_at": "archive.sync_at(data->>'created_at')", "edited_at": "archive.sync_at(data->>'updated_at')"},
-					// Unity Catalog counts a table's columns from 0.
 					Children: []Kids{{Table: "warehouse_column", From: "archive.sync_list(data->'columns') c",
 						Cols: map[string]SQL{"position": "archive.sync_num(c->>'position') + 1", "title": "c->>'name'", "type": "c->>'type_text'",
 							"nullable": "archive.sync_bool(c->'nullable')", "comment": "c->>'comment'"}}}}},
@@ -101,8 +81,6 @@ func init() {
 }
 
 var (
-	// dbStatement is a statement on the connection's warehouse, unless the input names another, waiting the most
-	// Databricks lets it, its answer inline.
 	dbStatement = Obj{"statement": "{query}", "warehouse_id": "{warehouse;meta/warehouse}", "catalog": "{catalog}", "schema": "{schema}",
 		"parameters": "{parameters}", "row_limit": "{limit}", "wait_timeout": "50s", "on_wait_timeout": "CANCEL", "disposition": "INLINE", "format": "JSON_ARRAY"}
 	dbOut = Obj{"state": "{got/status/state}", "columns": "{got/manifest/schema/columns}", "rows": "{got/result/data_array}",
@@ -110,7 +88,6 @@ var (
 		"next_chunk_index": "{got/result/next_chunk_index}"}
 )
 
-// dbRun sends a statement, whose failure Databricks answers with a 200.
 func dbRun(r Req) []Step {
 	return []Step{{As: "got", Req: r}, {If: "got/status/error/message", Fail: "Databricks did not run it: {got/status/error/message}"}}
 }

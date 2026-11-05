@@ -17,8 +17,6 @@ const adminIfNone = `-- name: AdminIfNone :exec
 UPDATE archive."user" u SET admin = true WHERE u.id = $1 AND NOT EXISTS (SELECT FROM archive."user" x WHERE x.admin)
 `
 
-// The first person a new install adds becomes its admin: they are the first member of a workspace while there
-// is none.
 func (q *Queries) AdminIfNone(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, adminIfNone, id)
 	return err
@@ -236,7 +234,6 @@ type CreateMCPCodeParams struct {
 	Challenge   string
 }
 
-// A new code; codes that lapsed a while ago go, while a used one is kept long enough to catch its reuse.
 func (q *Queries) CreateMCPCode(ctx context.Context, arg CreateMCPCodeParams) error {
 	_, err := q.db.Exec(ctx, createMCPCode,
 		arg.Hash,
@@ -268,7 +265,6 @@ type CreateMCPTokenParams struct {
 	RefreshExpiresAt *time.Time
 }
 
-// A grant's first tokens; grants whose refresh token lapsed go.
 func (q *Queries) CreateMCPToken(ctx context.Context, arg CreateMCPTokenParams) error {
 	_, err := q.db.Exec(ctx, createMCPToken,
 		arg.ID,
@@ -538,7 +534,6 @@ type KeepWatchSecretParams struct {
 	Secret     []byte
 }
 
-// A handshake's secret, kept by the key in the URL only it was sent: the first one wins.
 func (q *Queries) KeepWatchSecret(ctx context.Context, arg KeepWatchSecretParams) (int64, error) {
 	result, err := q.db.Exec(ctx, keepWatchSecret,
 		arg.Provider,
@@ -603,7 +598,6 @@ const noUsers = `-- name: NoUsers :one
 SELECT (NOT EXISTS (SELECT FROM archive."user") AND NOT EXISTS (SELECT FROM archive.workspace))::bool
 `
 
-// A new install: no one and no workspace yet.
 func (q *Queries) NoUsers(ctx context.Context) (bool, error) {
 	row := q.db.QueryRow(ctx, noUsers)
 	var column_1 bool
@@ -642,7 +636,6 @@ type RefreshMCPTokenRow struct {
 	Workspace *uuid.UUID
 }
 
-// A refresh turns the grant's refresh token into a new access token and a new refresh token, once.
 func (q *Queries) RefreshMCPToken(ctx context.Context, arg RefreshMCPTokenParams) (RefreshMCPTokenRow, error) {
 	row := q.db.QueryRow(ctx, refreshMCPToken,
 		arg.Hash,
@@ -666,7 +659,6 @@ type RevokeMCPTokenRow struct {
 	Workspace *uuid.UUID
 }
 
-// Revoking either of a grant's tokens, by its client, ends the grant.
 func (q *Queries) RevokeMCPToken(ctx context.Context, client *uuid.UUID, hash string) (RevokeMCPTokenRow, error) {
 	row := q.db.QueryRow(ctx, revokeMCPToken, client, hash)
 	var i RevokeMCPTokenRow
@@ -745,7 +737,6 @@ WHERE u.email = $2::text AND ($1::bool OR EXISTS (SELECT FROM archive."user" x W
 RETURNING id, email, name, workspaces, signin, created_at, admin
 `
 
-// An admin is named by their email, and stops being one unless they are the last.
 func (q *Queries) SetAdmin(ctx context.Context, admin bool, email string) (ArchiveUser, error) {
 	row := q.db.QueryRow(ctx, setAdmin, admin, email)
 	var i ArchiveUser
@@ -860,7 +851,6 @@ type TokensRow struct {
 	App              bool
 }
 
-// Your API tokens and MCP grants in a workspace; a grant lapses when its refresh token does.
 func (q *Queries) Tokens(ctx context.Context, userID uuid.UUID, workspace *uuid.UUID) ([]TokensRow, error) {
 	rows, err := q.db.Query(ctx, tokens, userID, workspace)
 	if err != nil {
@@ -917,7 +907,6 @@ const useMCPCode = `-- name: UseMCPCode :one
 UPDATE archive.mcp_code SET token = $1 WHERE hash = $2 AND token IS NULL AND expires_at > now() RETURNING hash, client, user_id, workspace, redirect_uri, challenge, token, expires_at, created_at
 `
 
-// A code is used once, by naming the token it becomes: a code used before, or lapsed, is no row.
 func (q *Queries) UseMCPCode(ctx context.Context, token *uuid.UUID, hash string) (ArchiveMcpCode, error) {
 	row := q.db.QueryRow(ctx, useMCPCode, token, hash)
 	var i ArchiveMcpCode

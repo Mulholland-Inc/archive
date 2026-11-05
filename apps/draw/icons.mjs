@@ -1,11 +1,3 @@
-// The icon library: scenes/bot-<name>.glsl to /bots/<name>.webp, the names registered in the web app and the API, and
-// a contact sheet to review. A scene's first line says where it belongs:
-//   #pragma frame {"set":["family"],"label":"Cottage","group":"home"}
-//
-// With --agents, the same for agents' figures: scenes/agent-<name>.glsl to /bots/agent-<name>.webp, registered in
-// looks.js and archive.agent. Their first line is only #pragma frame {"label":"Cat"}.
-//
-//   node apps/draw/icons.mjs [--agents] <a,b|all> [--out file.png]
 import { spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -17,7 +9,6 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, '../..');
 const bots = join(repo, 'apps/web/public/bots');
 const WORK = ['personal', 'family', 'business'];
-// What a type starts on, and the order a picker lists places in: the kinds of place people look for first.
 const DEFAULTS = { personal: 'logcabin', family: 'cottage', business: 'office' };
 const GROUPS = ['home', 'office', 'health', 'food', 'shop', 'care', 'culture', 'civic', 'auto', 'trade', 'transport', 'energy'];
 
@@ -55,7 +46,6 @@ function register() {
   console.log(`registered ${work.length} workspace icons`);
 }
 
-// A figure's number is saved on agents' rows, so figures keep their place and a new one goes last.
 function registerAgents() {
   const saved = readFileSync(join(repo, 'apps/web/src/lib/looks.js'), 'utf8').match(/export const AVATARS = \[(.*)\];/)[1].match(/\w+/g) ?? [];
   const order = [...saved.filter(n => lib.some(i => i.name === n)), ...lib.map(i => i.name).filter(n => !saved.includes(n))];
@@ -87,8 +77,6 @@ async function bake() {
   if (failed) process.exit(1);
 }
 
-// The sheet draws what was baked with the app's own tokens and ArchiveIcon's own styles, at their real sizes, on the
-// app's light and dark backgrounds.
 async function sheet() {
   const tokens = readFileSync(join(repo, 'apps/web/src/styles/tokens.css'), 'utf8');
   const styles = readFileSync(join(repo, 'apps/web/src/components/ArchiveIcon.svelte'), 'utf8').match(/<style>([\s\S]*)<\/style>/)[1];
@@ -109,7 +97,6 @@ async function sheet() {
   await shoot(html);
 }
 
-// The sheet of figures: each at rest large and at the sizes the sidebar uses, and small and awake, on light and dark.
 async function agentSheet(order) {
   const shown = order.filter(n => names.includes(n));
   const tokens = readFileSync(join(repo, 'apps/web/src/styles/tokens.css'), 'utf8');

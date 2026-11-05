@@ -119,9 +119,6 @@ export const ICON_LABELS = {
   windfarm: 'Wind farm'
 };
 
-// What an agent can look like: pre-rendered figures (apps/draw/scenes/agent-*, /bots/agent-*). An agent's row holds an
-// index into AVATARS, so the order is saved data and a new figure goes last; archive.agent's column comment and check
-// say the same. 0 is the default.
 export const AVATARS = ['bolt', 'orb', 'wheel', 'tv', 'copter', 'claw', 'spring', 'lens', 'hex', 'bulb', 'boxer', 'magnet', 'stack', 'dish', 'barrel', 'spider', 'saucer', 'phones', 'alarm', 'cog', 'steam', 'knight', 'rocket', 'diver', 'tread', 'cat', 'owl', 'frog', 'bear', 'bunny', 'penguin', 'fox', 'ghost', 'octo', 'sprout', 'chick', 'dino', 'shark', 'bat', 'hog', 'drop', 'alien', 'monster', 'cactus', 'snail', 'wizard', 'spaceman', 'ninja', 'viking', 'snowman'];
 export const AVATAR_LABELS = { bolt: 'Boxy robot', orb: 'Ringed robot', wheel: 'Wheel robot', tv: 'Television robot', copter: 'Rotor robot', claw: 'Claw robot', spring: 'Spring robot', lens: 'One-eyed robot', hex: 'Hexagon robot', bulb: 'Light bulb robot', boxer: 'Boxing robot', magnet: 'Magnet robot', stack: 'Stacked robot', dish: 'Satellite robot', barrel: 'Barrel robot', spider: 'Spider robot', saucer: 'Saucer robot', phones: 'Headphone robot', alarm: 'Alarm clock robot', cog: 'Cog robot', steam: 'Steam robot', knight: 'Knight robot', rocket: 'Rocket robot', diver: 'Diving robot', tread: 'Tracked robot', cat: 'Cat', owl: 'Owl', frog: 'Frog', bear: 'Bear', bunny: 'Bunny', penguin: 'Penguin', fox: 'Fox', ghost: 'Ghost', octo: 'Octopus', sprout: 'Sprout', chick: 'Chick', dino: 'Dinosaur', shark: 'Shark', bat: 'Bat', hog: 'Hedgehog', drop: 'Water drop', alien: 'Alien', monster: 'Monster', cactus: 'Cactus', snail: 'Snail', wizard: 'Wizard', spaceman: 'Astronaut', ninja: 'Ninja', viking: 'Viking', snowman: 'Snowman' };
 
@@ -140,8 +137,6 @@ export function defaultLook(type = 'personal') {
   return { type, icon: TYPES[type].icons[1], tint: KIND_TINTS[type] };
 }
 
-// An archive's look is its workspace's type, icon and colour, from the API; without an icon it offers or a colour it
-// has its type's.
 export function lookOf(w) {
   const type = TYPES[w.type] ? w.type : 'personal';
   const d = defaultLook(type);
