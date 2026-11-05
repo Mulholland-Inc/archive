@@ -9,8 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime"
-	"mime/multipart"
 	"net/http"
 	"os"
 	"strings"
@@ -37,7 +35,6 @@ const (
 	modelParallel = 8
 	modelMaxList  = 64
 	modelMaxHeld  = 200 << 20
-	speechMax     = 25 << 20
 )
 
 type ModelResult struct {
@@ -222,40 +219,6 @@ func modelKey(env string) (string, error) {
 		return "", fmt.Errorf("this model is not configured on this server; it needs %s", env)
 	}
 	return key, nil
-}
-
-func speech(r *http.Request) (any, error) {
-	key, err := modelKey("OPENAI_API_KEY")
-	if err != nil {
-		return nil, err
-	}
-	kind, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err != nil || !strings.HasPrefix(kind, "audio/") {
-		return nil, fmt.Errorf("Content-Type: want audio, got %q: %w", r.Header.Get("Content-Type"), httpErrBadRequest)
-	}
-	audio, err := io.ReadAll(http.MaxBytesReader(nil, r.Body, speechMax))
-	if err != nil {
-		return nil, fmt.Errorf("body: %v: %w", err, httpErrBadRequest)
-	}
-	var body bytes.Buffer
-	form := multipart.NewWriter(&body)
-	form.WriteField("model", "gpt-4o-mini-transcribe")
-	file, err := form.CreateFormFile("file", "speech."+strings.TrimPrefix(kind, "audio/"))
-	if err != nil {
-		return nil, err
-	}
-	file.Write(audio)
-	form.Close()
-	ctx, cancel := context.WithTimeout(r.Context(), modelCall)
-	defer cancel()
-	resp, err := modelPost(ctx, "https://api.openai.com/v1/audio/transcriptions", http.Header{"Authorization": {"Bearer " + key}, "Content-Type": {form.FormDataContentType()}}, body.Bytes())
-	if err != nil {
-		return nil, err
-	}
-	var out struct {
-		Text string `json:"text"`
-	}
-	return out, modelDecode(resp, &out)
 }
 
 func modelDecode(resp *http.Response, v any) error {
