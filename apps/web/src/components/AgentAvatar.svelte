@@ -1,5 +1,6 @@
 <script>
-  import { PERSONALITIES, personality, AVATARS } from '../lib/looks.js';
+  import { untrack } from 'svelte';
+  import { PERSONALITIES, personality, AVATARS, decoded, decode } from '../lib/looks.js';
 
   let { avatar = 0, tint = 0, seed = '', size = 'md', active = false } = $props();
 
@@ -11,7 +12,9 @@
   let frame = $state(0);
   let awake = $state(false);
   let lit = $state(false);
-  let seen = $state(false);
+  const url = $derived(`/bots/agent-${name}.webp`);
+  let src = $state(untrack(() => (decoded(url) ? url : null)));
+  let seen = $state(untrack(() => decoded(url)));
   let timer;
   const later = (fn, ms) => (timer = setTimeout(fn, ms));
   const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -47,6 +50,14 @@
   }
 
   $effect(() => {
+    if (!seen) return;
+    const want = url;
+    if (decoded(want)) src = want;
+    else decode(want).then(() => want === url && (src = want));
+  });
+
+  $effect(() => {
+    if (seen) return;
     const watch = new IntersectionObserver(([e]) => {
       if (!e.isIntersecting) return;
       seen = true;
@@ -73,7 +84,7 @@
   });
 </script>
 
-<span bind:this={root} class={['bot', size, `mood-${mood}`, { awake, lit }]} style:--tint={`var(--tint-${tint})`} style:--src={seen ? `url(/bots/agent-${name}.webp)` : null} aria-hidden="true">
+<span bind:this={root} class={['bot', size, `mood-${mood}`, { awake, lit }]} style:--tint={`var(--tint-${tint})`} style:--src={src ? `url(${src})` : null} aria-hidden="true">
   <span class="art">
     <span class="layer" style:--cell={frame}><i class="sheen"></i><i class="eyes"></i></span>
   </span>

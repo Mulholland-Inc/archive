@@ -1492,7 +1492,7 @@ func (q *Queries) GetFile(ctx context.Context, id uuid.UUID) (GetFileRow, error)
 }
 
 const groupByName = `-- name: GroupByName :one
-SELECT id FROM archive."group" WHERE name = lower(btrim($1::text))
+SELECT id FROM archive."group" WHERE lower(name) = lower(btrim($1::text))
 `
 
 func (q *Queries) GroupByName(ctx context.Context, name string) (uuid.UUID, error) {

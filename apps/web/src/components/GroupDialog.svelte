@@ -17,10 +17,9 @@
   let saving = $state(false);
 
   const everyone = $derived(ws().members);
-  const clean = $derived(name.trim().toLowerCase());
-  const taken = $derived(ws().groups.some((g) => g.name === clean));
-  const valid = $derived(/^[a-z0-9][a-z0-9_]{0,23}$/.test(clean));
-  const error = $derived(!clean ? '' : taken ? 'There is already a group by that name' : valid ? '' : 'Use 1-24 lowercase letters, digits or _, like finance');
+  const clean = $derived(name.trim());
+  const taken = $derived(ws().groups.some((g) => g.name.toLowerCase() === clean.toLowerCase()));
+  const error = $derived(taken ? 'There is already a group by that name' : '');
 
   $effect.pre(() => {
     if (!open) return;
@@ -43,7 +42,7 @@
 
 <Dialog bind:open title="New group">
   <Field label="Name" {error}>
-    {#snippet children(id)}<Input {id} bind:value={name} placeholder="finance" maxlength="24" autocomplete="off" invalid={Boolean(error)} />{/snippet}
+    {#snippet children(id)}<Input {id} bind:value={name} placeholder="Finance team" autocomplete="off" invalid={Boolean(error)} />{/snippet}
   </Field>
   <Field label="Description">
     {#snippet children(id)}<Textarea {id} bind:value={description} rows={2} placeholder="What it is for, or who is in it" />{/snippet}
@@ -53,6 +52,6 @@
   </Field>
   {#snippet footer({ close })}
     <Button variant="ghost" onclick={close}>Cancel</Button>
-    <Button variant="primary" loading={saving} disabled={!valid || taken} onclick={() => save(close)}>Create group</Button>
+    <Button variant="primary" loading={saving} disabled={!clean || taken} onclick={() => save(close)}>Create group</Button>
   {/snippet}
 </Dialog>

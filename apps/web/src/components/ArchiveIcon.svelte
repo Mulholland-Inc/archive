@@ -1,5 +1,6 @@
 <script>
-  import { PERSONALITIES, personality } from '../lib/looks.js';
+  import { untrack } from 'svelte';
+  import { PERSONALITIES, personality, decoded, decode } from '../lib/looks.js';
 
   let { icon = 'cottage', tint = 0, seed = '', size = 'md', active = false } = $props();
 
@@ -9,7 +10,9 @@
   let root = $state();
   let frame = $state(0);
   let awake = $state(false);
-  let seen = $state(false);
+  const url = $derived(`/bots/${icon}.webp`);
+  let src = $state(untrack(() => (decoded(url) ? url : null)));
+  let seen = $state(untrack(() => decoded(url)));
   let timer;
   const later = (fn, ms) => (timer = setTimeout(fn, ms));
   const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -39,6 +42,14 @@
   }
 
   $effect(() => {
+    if (!seen) return;
+    const want = url;
+    if (decoded(want)) src = want;
+    else decode(want).then(() => want === url && (src = want));
+  });
+
+  $effect(() => {
+    if (seen) return;
     const watch = new IntersectionObserver(([e]) => {
       if (!e.isIntersecting) return;
       seen = true;
@@ -71,7 +82,7 @@
   bind:this={root}
   class={['bot', size, `mood-${mood}`, { awake }]}
   style:--tint={`var(--tint-${tint})`}
-  style:--src={seen ? `url(/bots/${icon}.webp)` : null}
+  style:--src={src ? `url(${src})` : null}
   aria-hidden="true"
 >
   <span class="art">
