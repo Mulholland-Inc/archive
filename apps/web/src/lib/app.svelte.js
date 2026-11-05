@@ -32,7 +32,6 @@ export const app = $state({
   apiKey: null,
   archiveKeys: {},
   apps: [],
-  onboarding: [],
   signup: { terms: {}, agreement: [], business: [], billing: [] },
   ownConnections: []
 });
@@ -109,7 +108,6 @@ export async function boot() {
   setWorkspace(me.workspace);
   app.archives = me.workspaces.map(shell);
   app.archive = me.workspace;
-  app.onboarding = local(`archive.onboarding:${me.workspace}`, []);
   loadSignup();
   app.askPasskey = passkeys && !passkeyAsked(me.actor.user_id);
   app.status = 'ready';
@@ -619,17 +617,8 @@ export const onboardingSteps = [
   { id: 'business', group: 'Legal', title: 'Add your business details', body: 'Your legal name, EIN and address.', action: 'Add' },
   { id: 'msa', group: 'Legal', title: 'Sign the master services agreement', body: 'The terms for your archive, billing and support.', action: 'Review and sign' },
   { id: 'dpa', group: 'Legal', title: 'Sign the data processing agreement', body: 'How we process personal data on your behalf.', action: 'Review and sign' },
-  { id: 'card', group: 'Billing', title: 'Link a card', body: 'We charge it under your agreement.', action: 'Link' },
-  { id: 'invite', group: 'Your team', title: 'Invite your team', body: 'Add the people who should read, edit or own this archive.', action: 'Invite' },
-  { id: 'connect', group: 'Your data', title: 'Connect a source', body: 'Bring in your Gmail, Google Drive, Notion and more.', action: 'Connect' },
-  { id: 'upload', group: 'Your data', title: 'Upload your first files', body: 'Drop in scans, letters, recordings or spreadsheets.', action: 'Upload' },
-  { id: 'workflow', group: 'Your data', title: 'Set up a workflow', body: 'Let an agent file, tag or transcribe new items as they arrive.', action: 'Create' },
-  { id: 'region', group: 'Your data', title: 'Choose a data region and retention', body: 'Pick where your archive lives and how long deleted items are kept.', action: 'Choose' }
+  { id: 'card', group: 'Billing', title: 'Link a card', body: 'We charge it under your agreement.', action: 'Link' }
 ];
-
-export const serverStep = (id) => ['business', 'msa', 'dpa', 'card'].includes(id);
-
-const saveSteps = () => setLocal(`archive.onboarding:${app.archive}`, app.onboarding);
 
 export async function loadSignup() {
   try {
@@ -644,21 +633,7 @@ export const signed = (kind) => app.signup.agreement.find((a) => a.kind === kind
 export function stepDone(id) {
   if (id === 'business') return app.signup.business.length > 0;
   if (id === 'msa' || id === 'dpa') return Boolean(signed(id));
-  if (id === 'card') return Boolean(app.signup.billing[0]?.name);
-  return app.onboarding.includes(id);
-}
-
-export function completeStep(id) {
-  if (stepDone(id)) return;
-  app.onboarding.push(id);
-  saveSteps();
-}
-
-export function toggleStep(id) {
-  const i = app.onboarding.indexOf(id);
-  if (i === -1) app.onboarding.push(id);
-  else app.onboarding.splice(i, 1);
-  saveSteps();
+  return Boolean(app.signup.billing[0]?.name);
 }
 
 export async function saveBusiness(data) {
@@ -713,7 +688,6 @@ export async function invite({ emails, role, group }) {
       await complain(e, `Couldn’t invite ${email}`);
     }
   }
-  if (added.length) completeStep('invite');
   return added;
 }
 
@@ -942,7 +916,6 @@ export async function switchArchive(id) {
   if (id === app.archive || !app.archives.some((v) => v.id === id)) return;
   setWorkspace(id);
   app.archive = id;
-  app.onboarding = local(`archive.onboarding:${id}`, []);
   loadSignup();
   const head = route.parts[0];
   if (['agent', 'workflows', 'database'].includes(head) && route.parts[1]) go(`/${head === 'agent' ? '' : head}`);
@@ -1073,7 +1046,6 @@ export async function uploadFiles(list, parent) {
       await complain(e, `Couldn’t upload ${file.name}`);
     }
   }
-  if (added.length) completeStep('upload');
   return added;
 }
 
@@ -1166,7 +1138,6 @@ export function runWorkflow(id) {
 }
 
 export function createWorkflow({ name, trigger, steps }) {
-  completeStep('workflow');
   const text = `Write and save a workflow called “${name}”.\nTrigger: ${trigger.label}.\nSteps:\n${steps.map((s) => `- ${s}`).join('\n')}`;
   return askAgent(text);
 }
@@ -1236,7 +1207,6 @@ export const connections = resource({
         items: mine.reduce((n, x) => n + (x.items ?? 0), 0)
       });
     }
-    if (v.connectors.some((c) => c.connected)) completeStep('connect');
   }
 });
 
