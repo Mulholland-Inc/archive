@@ -404,75 +404,12 @@ resource "google_cloud_run_v2_service" "this" {
   ]
 }
 
-resource "google_cloud_run_v2_job" "this" {
-  name                = "archive"
-  location            = var.region
-  deletion_protection = var.deletion_protection
-
-  template {
-    template {
-      service_account = google_service_account.this.email
-      timeout         = "600s"
-      max_retries     = 0
-
-      containers {
-        image = local.image
-        args  = ["help"]
-
-        resources {
-          limits = {
-            cpu    = var.cpu
-            memory = var.memory
-          }
-        }
-
-        dynamic "env" {
-          for_each = local.env
-          content {
-            name  = env.key
-            value = env.value
-          }
-        }
-
-        dynamic "env" {
-          for_each = google_secret_manager_secret.this
-          content {
-            name = env.key
-            value_source {
-              secret_key_ref {
-                secret  = env.value.secret_id
-                version = "latest"
-              }
-            }
-          }
-        }
-
-        volume_mounts {
-          name       = "cloudsql"
-          mount_path = "/cloudsql"
-        }
-      }
-
-      volumes {
-        name = "cloudsql"
-        cloud_sql_instance {
-          instances = [google_sql_database_instance.this.connection_name]
-        }
-      }
-    }
-  }
+removed {
+  from = google_cloud_run_v2_job.this
 
   lifecycle {
-    ignore_changes = [template[0].template[0].containers[0].image, client, client_version]
+    destroy = false
   }
-
-  depends_on = [
-    google_project_iam_member.sql,
-    google_cloud_tasks_queue_iam_member.this,
-    google_service_account_iam_member.tasks,
-    google_secret_manager_secret_iam_member.this,
-    google_storage_bucket_iam_member.this,
-  ]
 }
 
 data "cloudflare_zone" "this" {
@@ -743,14 +680,6 @@ resource "google_secret_manager_secret_iam_member" "deploy_live" {
   secret_id = google_secret_manager_secret.this["ARCHIVE_LIVE_KEY"].id
   role      = "roles/secretmanager.secretAccessor"
   member    = google_service_account.deploy[0].member
-}
-
-resource "google_cloud_run_v2_job_iam_member" "deploy" {
-  count    = var.github_repository != "" ? 1 : 0
-  name     = google_cloud_run_v2_job.this.name
-  location = var.region
-  role     = "roles/run.developer"
-  member   = google_service_account.deploy[0].member
 }
 
 resource "google_service_account_iam_member" "deploy_runs_as" {

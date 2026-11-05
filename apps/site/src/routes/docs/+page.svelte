@@ -47,8 +47,7 @@
       [
         ['code', 'Code mode'],
         ['sdk', 'The SDK'],
-        ['api', 'The HTTP API'],
-        ['cli', 'The CLI']
+        ['api', 'The HTTP API']
       ]
     ],
     [
@@ -337,7 +336,7 @@ icon: receipt'</span>;
 <p>Owners. Everyone else can read the schema.</p>
 
 <h3 id="schema-git">Keep it in git</h3>
-<p>Keep migrations as <code>.sql</code> files and run them with <code>archive schema migrate &lt;dir&gt;</code>: it dry-runs the files that have not run yet, in name order, each once by its name, and <code>-confirm</code> with the hash it prints runs them. Over HTTP, <code>POST /api/schema/migrate</code> takes <code>&#123;"sql", "name", "confirm"&#125;</code>, and the Terraform provider has an <code>archive_migration</code> resource.</p>
+<p>Keep migrations as <code>.sql</code> files. Over HTTP, <code>POST /api/schema/migrate</code> takes <code>&#123;"sql", "name", "confirm"&#125;</code>, and the Terraform provider has an <code>archive_migration</code> resource.</p>
 
 <h2 id="views">Views</h2>
 <p>A view is a saved way to look at a table: a real Postgres view, with its layout in its comment. Boards, calendars and filtered tables are all views.</p>
@@ -511,7 +510,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <p>The <code>run</code> tool's description is the SDK reference plus an interface for each of your tables, generated from the live schema. Read the same text at <code>GET /api/run/docs</code>.</p>
 
 <h3 id="code-elsewhere">Run it from anywhere</h3>
-<p>The same runtime answers <code>POST /api/run</code> with <code>&#123;"code": "..."&#125;</code> and <code>archive run script.ts</code> on the command line. The output is always <code>&#123;"result", "logs", "error"&#125;</code>.</p>
+<p>The same runtime answers <code>POST /api/run</code> with <code>&#123;"code": "..."&#125;</code>. The output is always <code>&#123;"result", "logs", "error"&#125;</code>.</p>
 
 <h2 id="sdk">The SDK</h2>
 <p>Scripts call one object, <code>archive</code>, with one word per action. Table names are typed from your schema, so <code>Tables[T]</code> below is the row type of table <code>T</code>.</p>
@@ -652,65 +651,6 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <pre>&#123;"type": "invoice", "errors": [&#123;"path": "amount", "message": "…"&#125;]&#125;</pre>
 </Code>
 
-<h2 id="cli">The CLI</h2>
-<p>The <code>archive</code> command line offers the same operations as the API and the SDK, for terminals and shell scripts. Output is JSON.</p>
-<Code tabs={['terminal']}>
-<pre>archive list invoice -limit <span class="n">5</span> status=unpaid
-archive search northwind -type invoice -from <span class="n">2026-01-01</span>
-archive schema migrate ./migrations</pre>
-</Code>
-
-<h3 id="cli-rows">Rows and search</h3>
-<table>
-<thead><tr><th>Command</th><th>Does</th></tr></thead>
-<tbody>
-<tr><td><code>archive list &lt;table&gt; [-limit n] [-after id] [-reveal] [column=value …]</code></td><td>Lists rows.</td></tr>
-<tr><td><code>archive get &lt;table&gt; &lt;id&gt; [-reveal]</code></td><td>One row.</td></tr>
-<tr><td><code>archive create &lt;table&gt; [json]</code></td><td>Creates a row from the argument or stdin, <code>access</code> included.</td></tr>
-<tr><td><code>archive set &lt;table&gt; &lt;id&gt; [json]</code></td><td>Sets some columns; <code>null</code> clears one.</td></tr>
-<tr><td><code>archive update &lt;table&gt; &lt;id&gt; [json]</code></td><td>Replaces the whole row.</td></tr>
-<tr><td><code>archive delete &lt;table&gt; &lt;id&gt;</code></td><td>Deletes a row.</td></tr>
-<tr><td><code>archive search &lt;query&gt; [-type t] [-from d] [-to d] [-limit n]</code></td><td>Finds rows and files.</td></tr>
-</tbody>
-</table>
-<Note mark="!">On the command line, <code>set</code> changes some columns and <code>update</code> replaces the row. In the SDK, <code>update</code> changes only the fields you pass.</Note>
-
-<h3 id="cli-schema">Schema and code</h3>
-<table>
-<thead><tr><th>Command</th><th>Does</th></tr></thead>
-<tbody>
-<tr><td><code>archive types</code></td><td>Tables, columns and the built-in types.</td></tr>
-<tr><td><code>archive schema show [name]</code></td><td>Prints the DDL of every table and view, or of one.</td></tr>
-<tr><td><code>archive schema migrate &lt;file.sql|dir|-&gt; [-confirm hash]</code></td><td>Dry-runs migrations, or with the confirm runs them: a file once by its name, a directory's files that have not run in name order.</td></tr>
-<tr><td><code>archive schema revisions</code></td><td>Lists the migrations.</td></tr>
-<tr><td><code>archive run &lt;file.ts|-&gt;</code></td><td>Runs a script and prints <code>&#123;result, logs, error&#125;</code>.</td></tr>
-<tr><td><code>archive run -docs</code></td><td>Prints the SDK reference with your table types.</td></tr>
-</tbody>
-</table>
-
-<h3 id="cli-files">Files</h3>
-<table>
-<thead><tr><th>Command</th><th>Does</th></tr></thead>
-<tbody>
-<tr><td><code>archive file add &lt;path&gt;… [-access group]</code></td><td>Stores files and extracts their text; with <code>-access</code>, only that group and the owners see them.</td></tr>
-<tr><td><code>archive file get &lt;id&gt; [-o path|-]</code></td><td>Prints metadata, or writes the content with <code>-o</code>.</td></tr>
-<tr><td><code>archive file list [-limit n] [-after id]</code></td><td>Lists files.</td></tr>
-</tbody>
-</table>
-
-<h3 id="cli-access">People and tokens</h3>
-<table>
-<thead><tr><th>Command</th><th>Does</th></tr></thead>
-<tbody>
-<tr><td><code>archive user add &lt;email&gt; [-name n] [-role viewer|editor|owner]</code></td><td>Invites a person to the workspace; they sign in with a provider under that email. The first one is an owner.</td></tr>
-<tr><td><code>archive user remove &lt;email&gt;</code></td><td>Takes them out of the workspace, with their tokens.</td></tr>
-<tr><td><code>archive list member</code></td><td>Lists the people here, with their role and groups.</td></tr>
-<tr><td><code>archive set member &lt;id&gt; '&#123;"role":"editor","groups":["hr"]&#125;'</code></td><td>Changes someone's role or groups.</td></tr>
-<tr><td><code>archive token create [-name n] [-expires 720h] [-viewer]</code></td><td>Creates a token that acts as you; <code>-viewer</code> makes it read only.</td></tr>
-<tr><td><code>archive token list</code>, <code>revoke &lt;id&gt;</code></td><td>Lists or revokes tokens.</td></tr>
-</tbody>
-</table>
-
 <h2 id="people">People and roles</h2>
 <p>Everyone in a workspace has one role. Roles are Postgres roles, so the database itself enforces them.</p>
 <table>
@@ -723,7 +663,7 @@ archive schema migrate ./migrations</pre>
 </table>
 
 <h3 id="people-add">Adding people</h3>
-<p>An owner invites the person by email on the Users page or with <code>archive user add</code>, and removes them there too. People are rows of the <code>member</code> table, so changing a role is an update.</p>
+<p>An owner invites the person by email on the Users page, and removes them there too. People are rows of the <code>member</code> table, so changing a role is an update.</p>
 <Code tabs={['curl', 'run.ts']}>
 <pre>curl https://your-workspace.archive.mulholland.ai/auth/users \
   -H <span class="s">"Authorization: Bearer $ARCHIVE_TOKEN"</span> \
@@ -745,10 +685,8 @@ archive schema migrate ./migrations</pre>
 
 <h3 id="groups-make">Making a group</h3>
 <p>Put someone in it. A group exists while at least one person is in it, and its name can be any text.</p>
-<Code tabs={['terminal', 'run.ts']}>
-<pre>archive list member email=anna@example.com
-archive set member &lt;id&gt; <span class="s">'&#123;"groups":["finance"]&#125;'</span></pre>
-<pre hidden><span class="k">await</span> archive.<span class="f">create</span>(<span class="s">"invoice"</span>, &#123; customer: <span class="s">"Hart"</span>, amount: <span class="s">"$980"</span>, access: <span class="s">"finance"</span> &#125;)
+<Code tabs={['run.ts']}>
+<pre><span class="k">await</span> archive.<span class="f">create</span>(<span class="s">"invoice"</span>, &#123; customer: <span class="s">"Hart"</span>, amount: <span class="s">"$980"</span>, access: <span class="s">"finance"</span> &#125;)
 
 <span class="k">return</span> archive.<span class="f">list</span>(<span class="s">"invoice"</span>, &#123; where: &#123; access: <span class="s">"finance"</span> &#125; &#125;)</pre>
 </Code>

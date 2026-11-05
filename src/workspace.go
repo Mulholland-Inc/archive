@@ -168,7 +168,7 @@ func openHub(ctx context.Context, dsn, dir string) (*Hub, error) {
 	if err := h.urls("8080"); err != nil {
 		return nil, err
 	}
-	h.live = newLive(h.api, h.localApp())
+	h.live = newLive(h.api)
 	if h.main, err = storePool(ctx, pg, storeSysConns, nil, nil); err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
@@ -841,7 +841,7 @@ func localHost(host string) bool {
 func (h *Hub) localUser(ctx context.Context, want string) (*Archive, *Actor, func(), error) {
 	u, err := h.q().FirstAdmin(ctx)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil, nil, fmt.Errorf("no users yet; add the first owner with archive user add <email>: %w", ErrUnauthorized)
+		return nil, nil, nil, fmt.Errorf("no users yet: %w", ErrUnauthorized)
 	}
 	if err != nil {
 		return nil, nil, nil, err
@@ -993,41 +993,6 @@ func (h *Hub) admin(ctx context.Context) error {
 		return fmt.Errorf("only admins of this Archive do this: %w", ErrForbidden)
 	}
 	return err
-}
-
-func (h *Hub) Admins(ctx context.Context) ([]User, error) {
-	if err := h.admin(ctx); err != nil {
-		return nil, err
-	}
-	rows, err := h.q().Admins(ctx)
-	out := []User{}
-	for _, r := range rows {
-		out = append(out, User(r))
-	}
-	return out, err
-}
-
-func (h *Hub) SetAdmin(ctx context.Context, email string, admin bool) (*User, error) {
-	if err := h.admin(ctx); err != nil {
-		return nil, err
-	}
-	email, err := authEmail(email)
-	if err != nil {
-		return nil, err
-	}
-	r, err := h.q().SetAdmin(ctx, admin, email)
-	if errors.Is(err, pgx.ErrNoRows) {
-		if _, err := h.q().UserByEmail(ctx, email); err != nil {
-			return nil, fmt.Errorf("user %s: %w", email, ErrNotFound)
-		}
-		return nil, fmt.Errorf("%s is the last admin of this Archive: %w", email, ErrConflict)
-	}
-	if err != nil {
-		return nil, err
-	}
-	u := User(r)
-	h.liveUser(ctx, u.ID)
-	return &u, nil
 }
 
 func workspaceOut(r generated.ArchiveWorkspace) Workspace {

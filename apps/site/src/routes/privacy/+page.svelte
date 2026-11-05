@@ -118,7 +118,7 @@
 </ul>
 
 <h2 id="rights">Your choices and rights</h2>
-<p>You can read, change, export and delete your content in the app, the API and the CLI. You can also ask us for a copy of the personal information we hold about you, to correct it or to delete it. For content in an organization's workspace, we may ask its owners to act on your request. We will not treat you differently for asking.</p>
+<p>You can read, change, export and delete your content in the app and the API. You can also ask us for a copy of the personal information we hold about you, to correct it or to delete it. For content in an organization's workspace, we may ask its owners to act on your request. We will not treat you differently for asking.</p>
 
 <h2 id="children">Children</h2>
 <p>The service is not meant for children under 13, and we do not knowingly collect their information.</p>

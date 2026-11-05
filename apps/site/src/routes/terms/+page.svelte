@@ -30,7 +30,7 @@
 <h2 id="content">Your content</h2>
 <p>You own what you put in the service, and so does the customer whose workspace it is in. We claim no ownership of it.</p>
 <p>You let Mulholland store, copy, process and send your content only as needed to run the service for you, including through the providers listed in the Privacy Policy, such as Anthropic when your workspace uses the in-app agent. We do not sell your content or use it for advertising.</p>
-<p>You confirm that you have the right to put your content in the service, and that doing so breaks no law and no one else's rights. You can export your content at any time through the app, the API and the CLI.</p>
+<p>You confirm that you have the right to put your content in the service, and that doing so breaks no law and no one else's rights. You can export your content at any time through the app and the API.</p>
 
 <h2 id="connected">Accounts you connect</h2>
 <p>When you connect an account you hold at another service, like your Gmail, Outlook, Google Drive, SharePoint or your organization's QuickBooks, you let Archive read it on your behalf, keep a copy of what it reads in your workspace and keep that copy current, as the <a href="/privacy#collect-connected">Privacy Policy</a> describes. Connect only accounts you may let Archive read, and for an organization's account, only with its permission. Your use of that service is still under its own terms with you.</p>

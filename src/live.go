@@ -61,22 +61,15 @@ type liveHub struct {
 	socks map[string]map[*liveSocket]bool
 }
 
-func newLive(api string, local bool) *liveHub {
+func newLive(api string) *liveHub {
 	l := &liveHub{key: strings.TrimSpace(os.Getenv("ARCHIVE_LIVE_KEY")), client: &http.Client{Timeout: 5 * time.Second},
 		pending: map[string]*livePending{}, socks: map[string]map[*liveSocket]bool{}}
-	switch {
-	case l.key != "":
+	if l.key != "" {
 		l.to = strings.TrimRight(coreEnv("ARCHIVE_LIVE_URL", api), "/") + "/live/announce"
-	case local:
-		l.to, l.client.Timeout = api+"/live/announce", time.Second
+	} else {
+		l.serve = os.Getenv("K_REVISION") == ""
 	}
 	return l
-}
-
-func (l *liveHub) serving() {
-	if l.key == "" {
-		l.to, l.serve = "", os.Getenv("K_REVISION") == ""
-	}
 }
 
 func (l *liveHub) on() bool { return l != nil && (l.serve || l.to != "") }
@@ -206,14 +199,9 @@ func (l *liveHub) send(a liveAnnounce) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if l.key != "" {
-		req.Header.Set("Authorization", "Bearer "+l.key)
-	}
+	req.Header.Set("Authorization", "Bearer "+l.key)
 	resp, err := l.client.Do(req)
 	if err != nil {
-		if l.key == "" {
-			return nil
-		}
 		return err
 	}
 	io.Copy(io.Discard, resp.Body)
@@ -305,25 +293,6 @@ func (l *liveHub) relay(a liveAnnounce) {
 			s.send(frame)
 		}
 	}
-}
-
-func (h *Hub) liveAnnounceHTTP(w http.ResponseWriter, r *http.Request) {
-	if !h.live.serve || !h.local(r) {
-		http.NotFound(w, r)
-		return
-	}
-	var a liveAnnounce
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&a); err != nil || a.Workspace == "" {
-		http.Error(w, "want {workspace, changes}", http.StatusBadRequest)
-		return
-	}
-	for _, c := range a.Changes {
-		h.live.moved(a.Workspace, c)
-	}
-	for _, u := range a.Drop {
-		h.live.drop(a.Workspace, u)
-	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Hub) liveReader(r *http.Request) (ws, user string, err error) {

@@ -107,22 +107,11 @@ SELECT * FROM archive."user" WHERE id = $1;
 -- name: UserByOIDC :one
 SELECT * FROM archive."user" WHERE signin->'oidc' @> sqlc.arg(link)::jsonb;
 
--- name: FirstUser :one
-SELECT * FROM archive."user" WHERE workspaces @> ARRAY[sqlc.arg(workspace)::uuid] ORDER BY created_at, id LIMIT 1;
-
 -- name: FirstAdmin :one
 SELECT * FROM archive."user" WHERE admin ORDER BY created_at, id LIMIT 1;
 
--- name: Admins :many
-SELECT * FROM archive."user" WHERE admin ORDER BY email;
-
 -- name: AdminIfNone :exec
 UPDATE archive."user" u SET admin = true WHERE u.id = $1 AND NOT EXISTS (SELECT FROM archive."user" x WHERE x.admin);
-
--- name: SetAdmin :one
-UPDATE archive."user" u SET admin = sqlc.arg(admin)::bool
-WHERE u.email = sqlc.arg(email)::text AND (sqlc.arg(admin)::bool OR EXISTS (SELECT FROM archive."user" x WHERE x.admin AND x.id <> u.id))
-RETURNING *;
 
 -- name: NoUsers :one
 SELECT (NOT EXISTS (SELECT FROM archive."user") AND NOT EXISTS (SELECT FROM archive.workspace))::bool;
@@ -210,9 +199,6 @@ DELETE FROM archive.token WHERE id = $1 AND kind = 'mcp' RETURNING workspace;
 
 -- name: DeleteWorkspaceTokens :many
 DELETE FROM archive.token WHERE user_id = $1 AND workspace = $2 RETURNING coalesce(role, '')::text;
-
--- name: FirstWorkspace :one
-SELECT * FROM archive.workspace ORDER BY created_at, id LIMIT 1;
 
 -- name: WorkspaceByID :one
 SELECT * FROM archive.workspace WHERE id = $1;
