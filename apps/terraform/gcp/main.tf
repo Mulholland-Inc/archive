@@ -637,7 +637,6 @@ resource "cloudflare_workers_script" "email" {
 
 resource "cloudflare_email_routing_dns" "this" {
   zone_id = data.cloudflare_zone.this.zone_id
-  name    = var.domain
 }
 
 resource "cloudflare_email_routing_catch_all" "this" {
