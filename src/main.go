@@ -98,6 +98,7 @@ func serve(ctx context.Context, h *Hub, addr string) error {
 	mux.HandleFunc("POST /tasks", h.tasksHTTP)
 	mux.HandleFunc("POST /push/{id}", h.pushHTTP)
 	mux.HandleFunc("GET /push/{id}", h.pushHTTP)
+	mux.HandleFunc("POST /device/{stream}", h.deviceHTTP)
 	mux.HandleFunc("POST /email", h.emailHTTP)
 	mux.HandleFunc("GET /live", h.liveHTTP)
 	mux.HandleFunc("GET /auth/live", h.liveCheckHTTP)

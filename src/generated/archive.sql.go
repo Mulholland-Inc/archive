@@ -307,7 +307,8 @@ SELECT jsonb_build_object(
             'archive.bank_account'::regclass, 'archive.bank_transaction'::regclass,
             'archive.spend_department'::regclass, 'archive.spend_user'::regclass, 'archive.spend_card'::regclass,
             'archive.spend_transaction'::regclass, 'archive.spend_receipt'::regclass,
-            'archive.warehouse_table'::regclass, 'archive.warehouse_column'::regclass)
+            'archive.warehouse_table'::regclass, 'archive.warehouse_column'::regclass,
+            'archive.health_sample'::regclass, 'archive.photo'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -610,7 +611,9 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.spend_user x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.spend_card x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.spend_transaction x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.warehouse_table x WHERE x.connection = c.id))::bigint AS items,
+        + (SELECT count(*) FROM archive.warehouse_table x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.health_sample x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.photo x WHERE x.connection = c.id))::bigint AS items,
     c.integration, coalesce(c.access::text, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
 FROM archive.connection c WHERE c.member = $1 AND NOT c.integration OR c.integration ORDER BY c.provider, c.account, c.id
 `
@@ -982,6 +985,39 @@ func (q *Queries) DeleteWorkflow(ctx context.Context, id uuid.UUID) (int64, erro
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const deviceConnection = `-- name: DeviceConnection :one
+INSERT INTO archive.connection (member, provider, account, token, sync_at) VALUES ($1, 'iphone', $2, ''::bytea, NULL)
+ON CONFLICT (member, provider, account) DO UPDATE SET updated_at = now(), revoked = false
+RETURNING id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, asked_at, lease_at, revoked, integration
+`
+
+func (q *Queries) DeviceConnection(ctx context.Context, member uuid.UUID, account string) (ArchiveConnection, error) {
+	row := q.db.QueryRow(ctx, deviceConnection, member, account)
+	var i ArchiveConnection
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Access,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Member,
+		&i.Provider,
+		&i.Account,
+		&i.Token,
+		&i.Scopes,
+		&i.Error,
+		&i.Meta,
+		&i.SyncAt,
+		&i.SyncedAt,
+		&i.Cursor,
+		&i.AskedAt,
+		&i.LeaseAt,
+		&i.Revoked,
+		&i.Integration,
+	)
+	return i, err
 }
 
 const dropBlobGone = `-- name: DropBlobGone :exec

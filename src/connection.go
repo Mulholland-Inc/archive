@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1191,6 +1192,8 @@ var syncSchema = map[string]syncTable{
 	"spend_receipt":                    {parent: "spend_transaction", of: "spend"},
 	"warehouse_table":                  {},
 	"warehouse_column":                 {parent: "warehouse_table", of: "relation"},
+	"health_sample":                    {},
+	"photo":                            {},
 }
 
 type syncRec struct {
@@ -1348,9 +1351,13 @@ func syncCheck() error {
 		}
 		return nil
 	}
+	syncs := map[string][]*connect.Sync{"iphone": connect.Phone}
 	for _, c := range connect.All() {
-		for _, s := range c.Sync {
-			fail := func(err error) error { return fmt.Errorf("connector %s, stream %s: %w", c.ID, s.Name, err) }
+		syncs[c.ID] = c.Sync
+	}
+	for id, ss := range syncs {
+		for _, s := range ss {
+			fail := func(err error) error { return fmt.Errorf("connector %s, stream %s: %w", id, s.Name, err) }
 			t, ok := syncSchema[s.To.Table]
 			if !ok || t.parent != "" {
 				return fail(fmt.Errorf("%q is no table of archive.sql a stream lands in", s.To.Table))
@@ -1380,10 +1387,17 @@ func syncCheck() error {
 var syncTableRe = regexp.MustCompile(`(?ms)^CREATE TABLE archive\.(\w+) \((.*?)^\)`)
 
 func syncCheckSQL(ctx context.Context, db generated.DBTX) error {
+	streams := map[string][]*connect.Stream{}
+	for _, s := range connect.Phone {
+		streams["iphone"] = append(streams["iphone"], connect.PhoneStream(s.Name))
+	}
 	for _, c := range connect.All() {
-		for _, s := range c.Streams {
+		streams[c.ID] = c.Streams
+	}
+	for id, ss := range streams {
+		for _, s := range ss {
 			if _, err := db.Exec(ctx, "EXPLAIN "+s.SQL, []byte("[]")); err != nil {
-				return fmt.Errorf("connector %s, stream %s: its map: %w", c.ID, s.Name, err)
+				return fmt.Errorf("connector %s, stream %s: its map: %w", id, s.Name, err)
 			}
 		}
 	}
@@ -1552,6 +1566,93 @@ func jsonOf(v any) []byte {
 }
 
 const pushMax = 1 << 20
+
+const deviceMax = 32 << 20
+
+// deviceHTTP lands a batch the Archive app on an iPhone pushes, records of one stream of connect.Phone, as a sync of the phone's own
+// connection: it signs in with an OAuth token of Archive's, so the phone is the member's alone and what it pushes is theirs.
+func (h *Hub) deviceHTTP(w http.ResponseWriter, r *http.Request) {
+	s := connect.PhoneStream(r.PathValue("stream"))
+	if s == nil {
+		http.NotFound(w, r)
+		return
+	}
+	tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if !ok {
+		httpWrite(w, 0, nil, fmt.Errorf("send Authorization: Bearer <token>, from signing in with the app: %w", ErrUnauthorized))
+		return
+	}
+	ctx := r.Context()
+	a, ac, release, err := h.authenticate(ctx, strings.TrimSpace(tok), r.Header.Get("Archive-Workspace"), "mcp", "api")
+	if err != nil {
+		httpWrite(w, 0, nil, err)
+		return
+	}
+	defer release()
+	var body struct {
+		Device  string           `json:"device"`
+		Records []connect.Record `json:"records"`
+		Full    bool             `json:"full"`
+		More    bool             `json:"more"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, deviceMax)).Decode(&body); err != nil {
+		httpWrite(w, 0, nil, fmt.Errorf("want { device, records: [{ id, data, deleted }], full, more }: %v: %w", err, httpErrBadRequest))
+		return
+	}
+	device := strings.Join(strings.Fields(body.Device), " ")
+	if device == "" || len(device) > 200 {
+		httpWrite(w, 0, nil, fmt.Errorf("device: want the phone's name: %w", httpErrBadRequest))
+		return
+	}
+	var c generated.ArchiveConnection
+	if err := a.sys(ctx, func(ctx context.Context) (err error) {
+		c, err = a.st.db(ctx).DeviceConnection(ctx, ac.member, device)
+		return err
+	}); err != nil {
+		httpWrite(w, 0, nil, err)
+		return
+	}
+	store := a.syncStore(ctx, c.ID, c.Access)
+	for i, rec := range body.Records {
+		d, _ := rec.Data.(map[string]any)
+		thumb, _ := d["thumbnail"].(string)
+		if s.Table != "photo" || thumb == "" {
+			continue
+		}
+		b, err := base64.StdEncoding.DecodeString(thumb)
+		if err == nil {
+			d["thumbnail"], err = store(rec.ID+".jpg", b)
+		}
+		if err != nil {
+			httpWrite(w, 0, nil, fmt.Errorf("record %d, its thumbnail: %v: %w", i, err, httpErrBadRequest))
+			return
+		}
+	}
+	err = a.sys(ctx, func(ctx context.Context) error {
+		q := a.st.db(ctx)
+		now, err := q.TxNow(ctx)
+		if err != nil {
+			return err
+		}
+		if c, err = q.ConnectionLocked(ctx, c.ID); err != nil {
+			return err
+		}
+		st := syncStateOf(c.Cursor)
+		cur := st.of(s.Name).fresh(s)
+		cur.Def, st[s.Name] = s.Version, cur
+		w := &syncDB{q: q, db: a.st.Q(ctx), id: c.ID, acc: c.Access, now: now}
+		if err := syncSave(ctx, w, s, &connect.Page{Records: body.Records, Full: body.Full, More: body.More}, cur); err != nil {
+			return err
+		}
+		cur.Last = &now
+		cursor, _ := json.Marshal(st)
+		return q.SaveSync(ctx, generated.SaveSyncParams{ID: c.ID, Cursor: cursor, SyncedAt: &now})
+	})
+	if err == nil && len(body.Records) > 0 {
+		a.wakeTables(context.WithValue(context.WithoutCancel(ctx), storeTxKey{}, nil))
+	}
+	httpWrite(w, http.StatusOK, map[string]any{"connection": c.ID, "records": len(body.Records)}, err)
+}
 
 func (h *Hub) pushHTTP(w http.ResponseWriter, r *http.Request) {
 	p, err := h.connector(r.PathValue("id"))

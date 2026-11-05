@@ -1894,7 +1894,7 @@ CREATE TABLE archive.crm_contact (
 ) INHERITS (archive.object);
 CREATE INDEX crm_contact_person_idx ON archive.crm_contact (person);
 CREATE INDEX crm_contact_company_idx ON archive.crm_contact (company);
-COMMENT ON TABLE archive.crm_contact IS 'A contact of a CRM you connected, like HubSpot. Read only; Archive syncs them
+COMMENT ON TABLE archive.crm_contact IS 'A contact of a CRM you connected, like HubSpot, or of your iPhone. Read only; Archive syncs them
 icon: contact';
 COMMENT ON COLUMN archive.crm_contact.person IS 'references known_person; who they are, by their email';
 COMMENT ON COLUMN archive.crm_contact.company IS 'references crm_company; the company they are with';
@@ -2538,7 +2538,7 @@ CREATE TABLE archive.calendar_event (
 CREATE INDEX calendar_event_series_idx ON archive.calendar_event (series);
 CREATE INDEX calendar_event_organizer_idx ON archive.calendar_event (organizer);
 CREATE INDEX calendar_event_starts_at_idx ON archive.calendar_event (starts_at);
-COMMENT ON TABLE archive.calendar_event IS 'An event of a calendar you connected, like Google Calendar or Outlook''s; who is invited is in calendar_attendee. Read only; Archive syncs them
+COMMENT ON TABLE archive.calendar_event IS 'An event of a calendar you connected, like Google Calendar, Outlook''s or your iPhone''s; who is invited is in calendar_attendee. Read only; Archive syncs them
 icon: calendar';
 COMMENT ON COLUMN archive.calendar_event.calendar IS 'The calendar it is on, by name';
 COMMENT ON COLUMN archive.calendar_event.title IS 'Its title';
@@ -3141,6 +3141,87 @@ COMMENT ON COLUMN archive.warehouse_column.type IS 'Its type there, like NUMBER,
 COMMENT ON COLUMN archive.warehouse_column.nullable IS 'Whether it may be null';
 COMMENT ON COLUMN archive.warehouse_column.comment IS 'What its comment there says';
 
+CREATE TABLE archive.health_sample (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream     text NOT NULL,
+    source_id  text NOT NULL,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    name       text NOT NULL DEFAULT '',
+    seen_at    timestamptz NOT NULL DEFAULT now(),
+    kind       text,
+    value      double precision,
+    unit       text,
+    starts_at  timestamptz,
+    ends_at    timestamptz,
+    source     text,
+    device     text,
+    meta       jsonb,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX health_sample_kind_idx ON archive.health_sample (connection, kind, starts_at);
+COMMENT ON TABLE archive.health_sample IS 'One reading of Apple Health on your iPhone, like a day''s steps, a heart rate, a night''s sleep or a workout. Only you see it: it is never shared or used to train a model. Read only; the Archive app on your iPhone syncs them
+icon: heart-pulse';
+COMMENT ON COLUMN archive.health_sample.kind IS 'What it measures, as HealthKit names it, like HKQuantityTypeIdentifierStepCount, HKCategoryTypeIdentifierSleepAnalysis or HKWorkoutActivityTypeRunning';
+COMMENT ON COLUMN archive.health_sample.value IS 'How much, in unit; a category''s value, like a sleep stage''s number; a workout''s energy burned';
+COMMENT ON COLUMN archive.health_sample.unit IS 'The unit of value, like count, count/min, kg or kcal';
+COMMENT ON COLUMN archive.health_sample.starts_at IS 'When it began';
+COMMENT ON COLUMN archive.health_sample.ends_at IS 'When it ended; when it began for a reading at one moment';
+COMMENT ON COLUMN archive.health_sample.source IS 'The app or device that recorded it, like Apple Watch or Oura';
+COMMENT ON COLUMN archive.health_sample.device IS 'The device it was measured on, like Watch7,1';
+COMMENT ON COLUMN archive.health_sample.meta IS 'What else HealthKit keeps with it, like a workout''s distance and seconds or a sleep stage''s name';
+COMMENT ON COLUMN archive.health_sample.connection IS 'references connection; the iPhone it is from';
+COMMENT ON COLUMN archive.health_sample.stream IS 'What the app syncs it as: health';
+COMMENT ON COLUMN archive.health_sample.source_id IS 'Its HealthKit UUID';
+COMMENT ON COLUMN archive.health_sample.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.health_sample.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.photo (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream     text NOT NULL,
+    source_id  text NOT NULL,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    name       text NOT NULL DEFAULT '',
+    seen_at    timestamptz NOT NULL DEFAULT now(),
+    title      text,
+    kind       text,
+    taken_at   timestamptz,
+    edited_at  timestamptz,
+    width      integer,
+    height     integer,
+    seconds    double precision,
+    latitude   double precision,
+    longitude  double precision,
+    favorite   boolean,
+    thumbnail  uuid REFERENCES archive.file ON DELETE SET NULL,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX photo_taken_at_idx ON archive.photo (taken_at);
+CREATE INDEX photo_thumbnail_idx ON archive.photo (thumbnail);
+COMMENT ON TABLE archive.photo IS 'A photo or video in the Photos library of your iPhone: when and where it was taken, and a small copy of it; the original stays on the phone. Read only; the Archive app on your iPhone syncs them
+icon: image';
+COMMENT ON COLUMN archive.photo.title IS 'Its file name there, like IMG_0042.HEIC';
+COMMENT ON COLUMN archive.photo.kind IS 'photo, video, live, screenshot, panorama or portrait';
+COMMENT ON COLUMN archive.photo.taken_at IS 'When it was taken';
+COMMENT ON COLUMN archive.photo.edited_at IS 'When it last changed there';
+COMMENT ON COLUMN archive.photo.width IS 'Its width, in pixels';
+COMMENT ON COLUMN archive.photo.height IS 'Its height, in pixels';
+COMMENT ON COLUMN archive.photo.seconds IS 'How long a video lasts';
+COMMENT ON COLUMN archive.photo.latitude IS 'Where it was taken, north of the equator';
+COMMENT ON COLUMN archive.photo.longitude IS 'Where it was taken, east of Greenwich';
+COMMENT ON COLUMN archive.photo.favorite IS 'It is a favorite there';
+COMMENT ON COLUMN archive.photo.thumbnail IS 'references file; a JPEG of it, 512 pixels on its longer side';
+COMMENT ON COLUMN archive.photo.connection IS 'references connection; the iPhone it is from';
+COMMENT ON COLUMN archive.photo.stream IS 'What the app syncs it as: photos';
+COMMENT ON COLUMN archive.photo.source_id IS 'Its id in the Photos library';
+COMMENT ON COLUMN archive.photo.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.photo.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
 CREATE FUNCTION archive.mine(m uuid) RETURNS bool LANGUAGE sql STABLE AS $$
     SELECT EXISTS (SELECT FROM pg_catalog.pg_roles r WHERE r.rolname = '{p}_m' || translate(rtrim(encode(uuid_send(m), 'base64'), '='), '+/', '-_')
         AND pg_has_role(current_user, r.oid, 'USAGE'))
@@ -3250,6 +3331,8 @@ BEGIN
         WHEN 'spend_receipt' THEN concat_ws(' ', 'Receipt', r->>'position')
         WHEN 'warehouse_table' THEN concat_ws('.', nullif(r->>'database', ''), nullif(r->>'schema', ''), r->>'title')
         WHEN 'warehouse_column' THEN concat_ws(' · ', r->>'title', nullif(r->>'type', ''))
+        WHEN 'health_sample' THEN concat_ws(' · ', regexp_replace(regexp_replace(r->>'kind', '^HK(Quantity|Category|Correlation)?TypeIdentifier|^HKWorkoutActivityType', ''), '([a-z])([A-Z])', '\1 \2', 'g'), left(r->>'starts_at', 10))
+        WHEN 'photo' THEN concat_ws(' · ', coalesce(nullif(r->>'title', ''), initcap(r->>'kind')), left(r->>'taken_at', 10))
         ELSE own END), ''), '');
     RETURN NEW;
 END $$;
@@ -3319,6 +3402,8 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.spend_transaction 
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.spend_receipt FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.warehouse_table FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.warehouse_column FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.health_sample FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.photo FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_contact FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_item FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_entry FOR EACH ROW EXECUTE FUNCTION archive.object_name();
@@ -3431,6 +3516,8 @@ GRANT SELECT ON archive.spend_transaction TO "{p}_viewer";
 GRANT SELECT ON archive.spend_receipt TO "{p}_viewer";
 GRANT SELECT ON archive.warehouse_table TO "{p}_viewer";
 GRANT SELECT ON archive.warehouse_column TO "{p}_viewer";
+GRANT SELECT ON archive.health_sample TO "{p}_viewer";
+GRANT SELECT ON archive.photo TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT, UPDATE, DELETE ON TABLES TO "{p}_editor";
 
@@ -3588,6 +3675,10 @@ ALTER TABLE archive.warehouse_table ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.warehouse_table FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = warehouse_table.connection));
 ALTER TABLE archive.warehouse_column ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.warehouse_column FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = warehouse_column.connection));
+ALTER TABLE archive.health_sample ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.health_sample FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = health_sample.connection AND NOT c.integration));
+ALTER TABLE archive.photo ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.photo FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = photo.connection));
 ALTER TABLE archive.known_person ENABLE ROW LEVEL SECURITY;
 CREATE POLICY seen ON archive.known_person FOR SELECT USING (EXISTS (SELECT FROM archive.mail_party p WHERE p.person = known_person.id)
     OR EXISTS (SELECT FROM archive.payroll_worker w WHERE w.person = known_person.id)
@@ -3914,7 +4005,8 @@ SELECT jsonb_build_object(
             'archive.bank_account'::regclass, 'archive.bank_transaction'::regclass,
             'archive.spend_department'::regclass, 'archive.spend_user'::regclass, 'archive.spend_card'::regclass,
             'archive.spend_transaction'::regclass, 'archive.spend_receipt'::regclass,
-            'archive.warehouse_table'::regclass, 'archive.warehouse_column'::regclass)
+            'archive.warehouse_table'::regclass, 'archive.warehouse_column'::regclass,
+            'archive.health_sample'::regclass, 'archive.photo'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -4053,7 +4145,9 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.spend_user x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.spend_card x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.spend_transaction x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.warehouse_table x WHERE x.connection = c.id))::bigint AS items,
+        + (SELECT count(*) FROM archive.warehouse_table x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.health_sample x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.photo x WHERE x.connection = c.id))::bigint AS items,
     c.integration, coalesce(c.access::text, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
 FROM archive.connection c WHERE c.member = $1 AND NOT c.integration OR c.integration ORDER BY c.provider, c.account, c.id;
 
@@ -4070,6 +4164,11 @@ SELECT id, account FROM archive.connection WHERE provider = $1 AND integration F
 INSERT INTO archive.connection (id, member, provider, account, token, scopes, meta, integration) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT (id) DO UPDATE SET member = EXCLUDED.member, token = EXCLUDED.token, scopes = EXCLUDED.scopes, meta = EXCLUDED.meta, error = '', updated_at = now(),
     sync_at = now(), asked_at = now(), revoked = false;
+
+-- name: DeviceConnection :one
+INSERT INTO archive.connection (member, provider, account, token, sync_at) VALUES ($1, 'iphone', $2, ''::bytea, NULL)
+ON CONFLICT (member, provider, account) DO UPDATE SET updated_at = now(), revoked = false
+RETURNING *;
 
 -- name: RenameConnection :exec
 UPDATE archive.connection c SET account = $2, updated_at = now()
