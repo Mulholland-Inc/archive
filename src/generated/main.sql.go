@@ -22,38 +22,6 @@ func (q *Queries) AdminIfNone(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
-const admins = `-- name: Admins :many
-SELECT id, email, name, workspaces, signin, created_at, admin FROM archive."user" WHERE admin ORDER BY email
-`
-
-func (q *Queries) Admins(ctx context.Context) ([]ArchiveUser, error) {
-	rows, err := q.db.Query(ctx, admins)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ArchiveUser
-	for rows.Next() {
-		var i ArchiveUser
-		if err := rows.Scan(
-			&i.ID,
-			&i.Email,
-			&i.Name,
-			&i.Workspaces,
-			&i.Signin,
-			&i.CreatedAt,
-			&i.Admin,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const allDue = `-- name: AllDue :many
 SELECT workspace, kind, at FROM archive.due
 `
@@ -454,44 +422,6 @@ func (q *Queries) FirstAdmin(ctx context.Context) (ArchiveUser, error) {
 	return i, err
 }
 
-const firstUser = `-- name: FirstUser :one
-SELECT id, email, name, workspaces, signin, created_at, admin FROM archive."user" WHERE workspaces @> ARRAY[$1::uuid] ORDER BY created_at, id LIMIT 1
-`
-
-func (q *Queries) FirstUser(ctx context.Context, workspace uuid.UUID) (ArchiveUser, error) {
-	row := q.db.QueryRow(ctx, firstUser, workspace)
-	var i ArchiveUser
-	err := row.Scan(
-		&i.ID,
-		&i.Email,
-		&i.Name,
-		&i.Workspaces,
-		&i.Signin,
-		&i.CreatedAt,
-		&i.Admin,
-	)
-	return i, err
-}
-
-const firstWorkspace = `-- name: FirstWorkspace :one
-SELECT id, name, key, created_at, type, icon, color FROM archive.workspace ORDER BY created_at, id LIMIT 1
-`
-
-func (q *Queries) FirstWorkspace(ctx context.Context) (ArchiveWorkspace, error) {
-	row := q.db.QueryRow(ctx, firstWorkspace)
-	var i ArchiveWorkspace
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Key,
-		&i.CreatedAt,
-		&i.Type,
-		&i.Icon,
-		&i.Color,
-	)
-	return i, err
-}
-
 const insertMainRevision = `-- name: InsertMainRevision :exec
 INSERT INTO archive.main_revision (hash) VALUES ($1)
 `
@@ -729,27 +659,6 @@ func (q *Queries) SaveWatch(ctx context.Context, arg SaveWatchParams) error {
 		arg.ExpiresAt,
 	)
 	return err
-}
-
-const setAdmin = `-- name: SetAdmin :one
-UPDATE archive."user" u SET admin = $1::bool
-WHERE u.email = $2::text AND ($1::bool OR EXISTS (SELECT FROM archive."user" x WHERE x.admin AND x.id <> u.id))
-RETURNING id, email, name, workspaces, signin, created_at, admin
-`
-
-func (q *Queries) SetAdmin(ctx context.Context, admin bool, email string) (ArchiveUser, error) {
-	row := q.db.QueryRow(ctx, setAdmin, admin, email)
-	var i ArchiveUser
-	err := row.Scan(
-		&i.ID,
-		&i.Email,
-		&i.Name,
-		&i.Workspaces,
-		&i.Signin,
-		&i.CreatedAt,
-		&i.Admin,
-	)
-	return i, err
 }
 
 const setDue = `-- name: SetDue :execrows

@@ -14,5 +14,5 @@ export const PRODUCT = [
   { href: "/models", art: "models", title: "Models", text: "AI models that know your business" },
   { href: "/connectors", art: "connectors", title: "Connectors", text: "Mail, files, chat and CRM in one place" },
   { href: "/security", art: "security", title: "Security", text: "Only the right people see it" },
-  { href: "/developers", art: "api", title: "Developers", text: "API, command line and Terraform" }
+  { href: "/developers", art: "api", title: "Developers", text: "API and Terraform" }
 ];

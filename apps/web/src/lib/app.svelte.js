@@ -878,7 +878,7 @@ export async function switchArchive(id) {
 
 export async function createArchive(name, look) {
   if (!app.canAdd) {
-    await notify({ title: 'Ask an admin for a new archive', body: 'Only the people who run this Archive can make archives. They add one with archive workspace add and name you as its owner.' });
+    await notify({ title: 'Ask an admin for a new archive', body: 'Only the people who run this Archive can make archives.' });
     return;
   }
   try {

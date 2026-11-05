@@ -364,31 +364,6 @@ func (a *Archive) userActor(ctx context.Context, u *User) (*Actor, error) {
 	return &Actor{UserID: u.ID, Email: u.Email, Name: u.Name, Role: role, UserRole: role, member: m.ID}, nil
 }
 
-func (a *Archive) CLIActor(ctx context.Context, email string) (*Actor, error) {
-	if email == "" {
-		u, err := userBy(ctx, a.hub, (*generated.Queries).FirstUser, a.ws.ID)
-		if errors.Is(err, ErrNotFound) {
-			return nil, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-		return a.userActor(ctx, u)
-	}
-	email, err := authEmail(email)
-	if err != nil {
-		return nil, err
-	}
-	u, err := userBy(ctx, a.hub, (*generated.Queries).UserByEmail, email)
-	if errors.Is(err, ErrNotFound) {
-		return nil, fmt.Errorf("user %s: %w", email, ErrNotFound)
-	}
-	if err != nil {
-		return nil, err
-	}
-	return a.userActor(ctx, u)
-}
-
 func (a *Archive) CreateToken(ctx context.Context, name string, ttl time.Duration, viewer bool) (*Token, error) {
 	ac, err := authUser(ctx)
 	if err != nil {
