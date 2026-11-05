@@ -517,7 +517,6 @@ CREATE TABLE archive.connection (
     sync_at    timestamptz DEFAULT now(),
     synced_at  timestamptz,
     cursor     jsonb NOT NULL DEFAULT '{}',
-    asked_at   timestamptz NOT NULL DEFAULT now(),
     lease_at   timestamptz,
     revoked    boolean NOT NULL DEFAULT false,
     integration boolean NOT NULL DEFAULT false,
@@ -534,7 +533,7 @@ COMMENT ON COLUMN archive.connection.meta IS 'What the service said about the ac
 COMMENT ON COLUMN archive.connection.account IS 'The account there, like the mailbox address';
 COMMENT ON COLUMN archive.connection.scopes IS 'What Archive may do there, as the service granted it';
 COMMENT ON COLUMN archive.connection.error IS 'Why Archive last failed to reach it, like a revoked grant; empty while it works';
-COMMENT ON COLUMN archive.connection.sync_at IS 'When Archive next reads what changed there; null once it has it all, until the service says something changed, you ask, or you read what it syncs';
+COMMENT ON COLUMN archive.connection.sync_at IS 'When Archive next reads what changed there: on a schedule, sooner when the service says something changed or you ask';
 COMMENT ON COLUMN archive.connection.synced_at IS 'When Archive last had everything there';
 COMMENT ON COLUMN archive.connection.integration IS 'It is the archive''s, like its QuickBooks, which a manager, engineer or the owner connects for everyone, not one person''s own';
 COMMENT ON COLUMN archive.connection.access IS 'The id of the group an integration and what it syncs are narrowed to; null for everyone';
@@ -4314,7 +4313,7 @@ SELECT id, account FROM archive.connection WHERE provider = $1 AND integration F
 -- name: SaveConnection :exec
 INSERT INTO archive.connection (id, member, provider, account, token, scopes, meta, integration) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT (id) DO UPDATE SET member = EXCLUDED.member, token = EXCLUDED.token, scopes = EXCLUDED.scopes, meta = EXCLUDED.meta, error = '', updated_at = now(),
-    sync_at = now(), asked_at = now(), revoked = false;
+    sync_at = now(), revoked = false;
 
 -- name: RenameConnection :exec
 UPDATE archive.connection c SET account = $2, updated_at = now()
@@ -4361,15 +4360,10 @@ UPDATE archive.connection SET cursor = sqlc.arg(cursor), sync_at = sqlc.narg(syn
 WHERE id = sqlc.arg(id);
 
 -- name: AskSync :exec
-UPDATE archive.connection SET cursor = $2, sync_at = now(), asked_at = now(), revoked = false WHERE id = $1;
+UPDATE archive.connection SET cursor = $2, sync_at = now(), revoked = false WHERE id = $1;
 
--- name: WantSync :one
-UPDATE archive.connection SET asked_at = now(), sync_at = coalesce(sync_at, now()) WHERE id = $1 AND NOT revoked RETURNING id;
-
--- name: CatchUpSyncs :many
-UPDATE archive.connection SET asked_at = now(), sync_at = now()
-WHERE (member = sqlc.arg(member) AND NOT integration OR integration) AND sync_at IS NULL AND NOT revoked AND (synced_at IS NULL OR synced_at < sqlc.arg(stale)::timestamptz)
-RETURNING id;
+-- name: WantSync :exec
+UPDATE archive.connection SET cursor = sqlc.arg(cursor), sync_at = sqlc.narg(sync_at) WHERE id = sqlc.arg(id);
 
 -- name: TryLock :one
 SELECT pg_try_advisory_xact_lock(hashtextextended(sqlc.arg(name)::text, 0));
