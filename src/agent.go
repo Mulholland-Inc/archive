@@ -80,16 +80,15 @@ func (a *Archive) ClearTurns(ctx context.Context, agent uuid.UUID) error {
 	return err
 }
 
-func (a *Archive) boot(ctx context.Context) (map[string]any, error) {
-	var agents, flows []map[string]any
-	var people []Person
-	err := a.as(ctx, func(ctx context.Context) (err error) {
-		if agents, err = a.List(ctx, "agent", nil, 1000, uuid.Nil); err != nil {
-			return err
+func (a *Archive) agentList(ctx context.Context) ([]map[string]any, error) {
+	return coreDo(a, ctx, func(ctx context.Context) ([]map[string]any, error) {
+		agents, err := a.List(ctx, "agent", nil, 1000, uuid.Nil)
+		if err != nil {
+			return nil, err
 		}
 		turns, err := a.runQuery(ctx, "SELECT DISTINCT ON (agent) agent, updated_at AS at FROM archive.turn ORDER BY agent, n DESC", nil)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		at := map[any]any{}
 		for _, t := range turns {
@@ -98,12 +97,19 @@ func (a *Archive) boot(ctx context.Context) (map[string]any, error) {
 		for _, x := range agents {
 			x["at"] = cmp.Or(at[x["id"]], any(""))
 		}
-		if flows, err = a.List(ctx, "workflow", nil, 1000, uuid.Nil); err != nil {
-			return err
+		return agents, nil
+	})
+}
+
+func (a *Archive) workflowList(ctx context.Context) ([]map[string]any, error) {
+	return coreDo(a, ctx, func(ctx context.Context) ([]map[string]any, error) {
+		flows, err := a.List(ctx, "workflow", nil, 1000, uuid.Nil)
+		if err != nil {
+			return nil, err
 		}
 		runs, err := a.runQuery(ctx, "SELECT DISTINCT ON (workflow) id, workflow, created_at AS at, trigger, ms, error FROM workflow_run ORDER BY workflow, created_at DESC, id DESC", nil)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		last := map[any]map[string]any{}
 		for _, run := range runs {
@@ -111,6 +117,20 @@ func (a *Archive) boot(ctx context.Context) (map[string]any, error) {
 		}
 		for _, x := range flows {
 			x["last"] = last[x["id"]]
+		}
+		return flows, nil
+	})
+}
+
+func (a *Archive) boot(ctx context.Context) (map[string]any, error) {
+	var agents, flows []map[string]any
+	var people []Person
+	err := a.as(ctx, func(ctx context.Context) (err error) {
+		if agents, err = a.agentList(ctx); err != nil {
+			return err
+		}
+		if flows, err = a.workflowList(ctx); err != nil {
+			return err
 		}
 		people, err = a.People(ctx)
 		return err

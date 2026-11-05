@@ -230,6 +230,12 @@ func httpHandler(a *Archive) http.Handler {
 	handle("GET /api/boot", func(r *http.Request) (int, any, error) {
 		return ok(a.boot(r.Context()))
 	})
+	handle("GET /api/agent/list", func(r *http.Request) (int, any, error) {
+		return ok(a.agentList(r.Context()))
+	})
+	handle("GET /api/workflow/list", func(r *http.Request) (int, any, error) {
+		return ok(a.workflowList(r.Context()))
+	})
 	mux.HandleFunc("POST /api/turn", a.turn)
 	handle("GET /api/agent/{id}/turns", func(r *http.Request) (int, any, error) {
 		id, err := httpID(r)
