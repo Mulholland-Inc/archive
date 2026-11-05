@@ -941,6 +941,10 @@ export function agentById(id) {
   return ws()?.agents.find((a) => a.id === id);
 }
 
+export function agentAddress(agent) {
+  return `${ws().slug}-${agent.slug}@${location.hostname.replace(/^app\./, '')}`;
+}
+
 export function rememberAgent(id) {
   setLocal(`archive.agent:${app.archive}`, id);
 }
