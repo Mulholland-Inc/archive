@@ -103,7 +103,7 @@ func Register(c *Connector) {
 	if len(c.Sync) == 0 {
 		panic("connect: " + c.ID + " has no stream")
 	}
-	if len(c.Actions) == 0 && c.MCP == "" {
+	if len(c.Actions) == 0 && c.MCP == "" && !c.mailOnly() {
 		panic("connect: " + c.ID + " has no action")
 	}
 	registry[c.ID] = c

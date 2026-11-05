@@ -275,8 +275,8 @@ type Parts struct {
 }
 
 type Scan struct {
-	Find, Near string
-	Days       int
+	Find, Near, From string
+	Days             int
 }
 
 type Shift [3]int
@@ -392,6 +392,7 @@ type Sync struct {
 	Restart   []int         `json:",omitempty"`
 	Pass      []int         `json:",omitempty"`
 	Content   []Content     `json:",omitempty"`
+	Mail      *Scan         `json:",omitempty"`
 }
 
 type Content struct {
@@ -707,8 +708,12 @@ type Kept struct {
 	Each, ID, Token       Path
 }
 
+func (c *Connector) mailOnly() bool {
+	return len(c.Sync) > 0 && !slices.ContainsFunc(c.Sync, func(s *Sync) bool { return s.Mail == nil })
+}
+
 func (c *Connector) compile() error {
-	if c.API == "" && c.MCP == "" {
+	if c.API == "" && c.MCP == "" && !c.mailOnly() {
 		return nil
 	}
 	if len(c.Keys) == 0 && c.MCP == "" {
@@ -977,7 +982,11 @@ func (s *Sync) check() error {
 		return errors.New("To.Cols has between 1 and 50 columns")
 	}
 	roots := append(slices.Collect(maps.Keys(s.Vars)), "stream", "part", "in", "page", "key", "meta", "option")
-	if err := s.Req.check("listing", roots...); err != nil {
+	if s.Mail != nil {
+		if s.Req.URL != "" || s.Req.Tool != "" || s.Change != nil || s.Page != nil || s.Parts != nil {
+			return errors.New("a stream that reads mail has no Req, Change, Page or Parts")
+		}
+	} else if err := s.Req.check("listing", roots...); err != nil {
 		return err
 	}
 	switch ch := s.Change.(type) {
@@ -1430,6 +1439,18 @@ func (s *Sync) itemsOf(c *Client, ans any, at Path, sc map[string]any) (any, err
 }
 
 func (s *Sync) send(c *Client, req Req, st *flow, sc map[string]any) (any, error) {
+	if s.Mail != nil {
+		if c.Mail == nil {
+			return nil, errors.New("it reads the mail Archive synced, which only a sync can")
+		}
+		m := *s.Mail
+		for _, t := range []*string{&m.Near, &m.From} {
+			v, _ := fillStr(*t, sc)
+			*t = text(v)
+		}
+		got, err := c.Mail(m)
+		return Obj{"messages": got}, err
+	}
 	if p, ok := s.Page.(ToolPage); ok {
 		var err error
 		if req, err = p.asking(c, req, st.Page); err != nil {
