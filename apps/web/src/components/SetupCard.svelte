@@ -1,14 +1,14 @@
 <script>
   import { getContext } from 'svelte';
   import Art from './Art.svelte';
-  import { onboardingSteps, stepDone } from '../lib/app.svelte.js';
+  import { onboardingSteps, onboards, stepDone } from '../lib/app.svelte.js';
   import { href } from '../lib/router.svelte.js';
 
   const sidebar = getContext('sidebar');
   const next = $derived(onboardingSteps.find((s) => !stepDone(s.id)));
 </script>
 
-{#if !sidebar?.collapsed && next}
+{#if !sidebar?.collapsed && next && onboards()}
   <div class="card">
     <div class="art"><Art name="onboarding" /></div>
     <div class="text">

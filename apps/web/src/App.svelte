@@ -15,7 +15,7 @@
   import AppSettings from './components/AppSettings.svelte';
   import Onboarding from './pages/Onboarding.svelte';
   import { route, replace } from './lib/router.svelte.js';
-  import { app, ws, toggleSidebar, closeDrawer, openSettings, boot, account, lastAgent } from './lib/app.svelte.js';
+  import { app, ws, onboards, toggleSidebar, closeDrawer, openSettings, boot, account, lastAgent } from './lib/app.svelte.js';
   import PromptHost from './components/PromptHost.svelte';
   import HelpDialog from './components/HelpDialog.svelte';
   import SignIn from './components/SignIn.svelte';
@@ -90,7 +90,7 @@
         <GroupPage id={route.parts[2]} />
       {:else if route.parts[0] === 'access'}
         <AccessPage />
-      {:else if route.parts[0] === 'onboarding'}
+      {:else if route.parts[0] === 'onboarding' && onboards()}
         <Onboarding />
       {:else}
         {#key lastAgent()?.id}<Agent id={lastAgent()?.id} />{/key}

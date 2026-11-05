@@ -24,6 +24,7 @@
   let form = $state({});
 
   let signing = $state(null);
+  let company = $state('');
   let signer = $state('');
   let title = $state('');
   let binding = $state(false);
@@ -53,7 +54,7 @@
 
   const ready = (id) => {
     if (!owner) return false;
-    if (id === 'msa' || id === 'dpa') return Boolean(business && app.signup.terms[id]?.trim());
+    if (id === 'msa' || id === 'dpa') return Boolean(app.signup.terms[id]?.trim());
     return id === 'business' || Boolean(business);
   };
 
@@ -77,6 +78,7 @@
     reading = null;
     signing = kind;
     openPanel(`sign:${kind}`, onboardingSteps.find((s) => s.id === kind).title, agreement);
+    company = business?.name ?? '';
     signer = '';
     title = '';
     binding = false;
@@ -101,7 +103,7 @@
   });
 
   const sign = () => attempt(async () => {
-    await signAgreement({ kind: signing, signer, title });
+    await signAgreement({ kind: signing, company, signer, title });
     closeFile();
   });
 
@@ -161,14 +163,15 @@
   {:else if signing}
     <Prose blocks={markdown(app.signup.terms[signing])} />
     <div class="sign">
+      <Field label="Company">{#snippet children(id)}<Input {id} bind:value={company} />{/snippet}</Field>
       <Field label="Full name">{#snippet children(id)}<Input {id} bind:value={signer} />{/snippet}</Field>
       <Field label="Title">{#snippet children(id)}<Input {id} bind:value={title} />{/snippet}</Field>
       <label class="bind">
-        <Checkbox bind:checked={binding} label="I can sign for {business?.name}" />
-        <Text>I can sign for {business?.name}</Text>
+        <Checkbox bind:checked={binding} label="I can sign for this company" />
+        <Text>I can sign for this company</Text>
       </label>
       {#if error}<Text size="sm" tone="danger" role="alert">{error}</Text>{/if}
-      <div><Button variant="primary" disabled={busy || !binding || !signer.trim() || !title.trim()} onclick={sign}>Sign</Button></div>
+      <div><Button variant="primary" disabled={busy || !binding || !company.trim() || !signer.trim() || !title.trim()} onclick={sign}>Sign</Button></div>
     </div>
   {/if}
 {/snippet}
