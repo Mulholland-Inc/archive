@@ -1,9 +1,9 @@
 <script>
-  import { PERSONALITIES, personality, avatarOf, lit } from '../lib/looks.js';
+  import { PERSONALITIES, personality, AVATARS, lit } from '../lib/looks.js';
 
-  let { avatar, tint = 0, seed = '', size = 'md', active = false } = $props();
+  let { avatar = 0, tint = 0, seed = '', size = 'md', active = false } = $props();
 
-  const name = $derived(avatarOf(avatar));
+  const name = $derived(AVATARS[avatar]);
   const stem = $derived(`turn-${name}`);
   const lights = $derived(lit(name));
   const mood = $derived(personality(`${seed}${name}`));

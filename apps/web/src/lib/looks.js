@@ -119,14 +119,13 @@ export const ICON_LABELS = {
   windfarm: 'Wind farm'
 };
 
-// What an agent can look like: pre-rendered figures with eyes (/bots/turn-*), and the first is the default. The first
-// list wakes with lit eyes and a panel; the rest have their eyes drawn on. An agent's row holds { figure }, and
-// archive.agent_avatar() holds the same names.
+// What an agent can look like: pre-rendered figures with eyes (/bots/turn-*). An agent's row holds an index into
+// AVATARS, so the order is saved data, and archive.agent's column comment and check say the same. The first list
+// wakes with lit eyes and a panel; the rest have their eyes drawn on.
 const LIT = ['float', 'face', 'bank', 'bookcase', 'cabinet', 'cottage', 'factory', 'farmhouse', 'safe', 'townhouse', 'warehouse'];
 const DRAWN = ['archivist', 'baobab', 'capitol', 'castle', 'chest', 'ledger', 'oak', 'pine', 'pinecone', 'pyramid', 'skyscraper'];
 export const AVATARS = [...LIT, ...DRAWN];
 export const lit = (avatar) => LIT.includes(avatar);
-export const avatarOf = (avatar) => (AVATARS.includes(avatar?.figure) ? avatar.figure : AVATARS[0]);
 export const AVATAR_LABELS = { float: 'Robot', face: 'Tall robot', bank: 'Bank', bookcase: 'Bookcase', cabinet: 'Cabinet', cottage: 'Cottage', factory: 'Factory', farmhouse: 'Farmhouse', safe: 'Safe', townhouse: 'Townhouse', warehouse: 'Warehouse', archivist: 'Archivist', baobab: 'Baobab', capitol: 'Capitol', castle: 'Castle', chest: 'Chest', ledger: 'Ledger', oak: 'Oak', pine: 'Pine', pinecone: 'Pinecone', pyramid: 'Pyramid', skyscraper: 'Skyscraper' };
 
 export const PERSONALITIES = [

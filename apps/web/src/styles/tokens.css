@@ -114,7 +114,7 @@
   --archive-rail: 4.75rem;
   --dock-height: 3.25rem;
   --archive-tile: 3.25rem;
-  --archive-glyph: 2.875rem;
+  --archive-glyph: 3.75rem;
   --archive-pill: 0.25rem;
   --archive-badge: 1.125rem;
   --archive-header: calc(var(--avatar-lg) + var(--space-2) * 2);

@@ -1,6 +1,6 @@
 package main
 
-// Agents are rows of archive.agent, which everyone in the workspace sees. Each person's conversation with one is
+// Agents are rows of archive.agent, which the workspace or the group in their access sees. Each person's conversation with one is
 // theirs alone and never ends: a request reads the turns still in context, word for word, and one line of memory
 // for everything older, and answers as that person, under their role.
 //
@@ -603,7 +603,7 @@ func agentSystem(ac *Actor, role string, agent map[string]any, memory string) st
 	}
 	s += " The run tool is the only way to read or change their archive; give each call a description of what it does, in a few words, which they see while it runs. Run calls and their results are folded away in the conversation, so the answer itself presents what they need, as a short markdown table when that helps." +
 		" A workflow is a row of the workflow table: save it with archive.create(\"workflow\", { name, source, on }), fix a refused save from its errors, try it with archive.run(name, input), read its result or the workflow_run table, and change it with archive.update." +
-		" An agent is a row of the agent table, and when they want a new one you make it: archive.create(\"agent\", { name, instructions, avatar, tint }), with instructions saying what it is for, and a tint from 0 to 31. Pick it an avatar that suits what it does, from the names the agent table's avatar column lists."
+		" An agent is a row of the agent table, and when they want a new one you make it: archive.create(\"agent\", { name, instructions, avatar, tint }), with instructions saying what it is for, and a tint from 0 to 31. Pick it an avatar that suits what it does, by a number the agent table's avatar column lists."
 	if in := strings.TrimSpace(fmt.Sprint(agent["instructions"])); in != "" {
 		s += "\n\nYour instructions, which the workspace set:\n" + in
 	}

@@ -154,7 +154,7 @@ func catalogParse(b []byte) (*Catalog, error) {
 		}
 		// These of Archive's tables are seen by whose they are, not by a group: the access every object has
 		// says nothing of them.
-		if t.Schema == "archive" && slices.Contains([]string{"member", "group", "workflow", "workflow_run", "agent", "turn", "memory", "known_person", "known_org"}, t.Name) {
+		if t.Schema == "archive" && slices.Contains([]string{"member", "group", "workflow", "workflow_run", "turn", "memory", "known_person", "known_org"}, t.Name) {
 			t.internal = append(t.internal, "access")
 			t.Columns = slices.DeleteFunc(t.Columns, func(c *Column) bool { return c.Name == "access" })
 		}
@@ -1842,8 +1842,8 @@ const (
 )
 
 // pgDropped are the tables and columns archive.sql deletes on purpose, data and all, by kind and qualified
-// name, like "table archive.record": pgPlan drops them as it finds them gone from archive.sql, where it refuses
-// to drop anything else that has data. Each stays listed, so a database that still has one drops it whenever
+// name, like "table archive.record": pgPlan drops them as it finds them gone from archive.sql, or a column of
+// another type there, which it makes anew, where it refuses to drop anything else that has data. Each stays listed, so a database that still has one drops it whenever
 // it opens next.
 var pgDropped = map[string]bool{
 	// What connections synced is in the tables of its domain now, and syncs started from scratch to fill them.
@@ -1852,6 +1852,8 @@ var pgDropped = map[string]bool{
 	"table archive.drive_file": true,
 	// Agents replaced chats, and nothing of them was kept.
 	"table archive.chat": true,
+	// An agent's avatar became a number, and every agent started over on the first.
+	"column archive.agent.avatar": true,
 }
 
 // pgPlan is the DDL that brings live to want, both read with an empty search_path, for Archive's own schema: it
@@ -2073,6 +2075,10 @@ func pgAlter(want pgSchema, o, n *pgObject, add func(int, string), fail func(*pg
 			fail(n, "changing its type from "+o.Type+" to "+n.Type)
 		case base == nbase || n.Type == "text" && (base == "character varying" || base == "character"):
 			add(p, alter+" TYPE "+n.Type)
+		case pgDropped[n.key()]:
+			add(p, want.alter(n)+" DROP COLUMN "+pgIdent(n.Name))
+			add(p, want.alter(n)+" ADD COLUMN "+pgIdent(n.Name)+" "+n.Def)
+			return
 		default:
 			*lost = append(*lost, n.Kind+" "+n.qname()+" from "+o.Type+" to "+n.Type)
 		}
