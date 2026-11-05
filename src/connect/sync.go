@@ -495,12 +495,14 @@ func (c *Client) tool(name string) (*mcp.Tool, error) {
 		}
 		c.tools = ts
 	}
-	for _, t := range c.tools {
-		if t.Name == name {
-			return t, nil
+	for _, n := range strings.Split(name, ",") {
+		for _, t := range c.tools {
+			if t.Name == strings.TrimSpace(n) {
+				return t, nil
+			}
 		}
 	}
-	return nil, unsupported("%s's MCP server has no tool %s", c.p.Name, name)
+	return nil, unsupported("%s's MCP server has no tool %s", c.p.Name, strings.ReplaceAll(name, ",", " or "))
 }
 
 func takes(t *mcp.Tool) (map[string]bool, []string) {

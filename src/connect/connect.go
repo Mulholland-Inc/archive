@@ -1147,7 +1147,11 @@ func (c *Client) Close() {
 
 func mcpAccount(tool string) func(c *Client) (string, error) {
 	return func(c *Client) (string, error) {
-		res, err := c.Call(tool, map[string]any{})
+		t, err := c.tool(tool)
+		if err != nil {
+			return "", err
+		}
+		res, err := c.Call(t.Name, map[string]any{})
 		if err != nil {
 			return "", err
 		}

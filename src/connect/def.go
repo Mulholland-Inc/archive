@@ -203,8 +203,8 @@ type (
 	}
 	Offset   struct{ From, Size, Step int }
 	ToolPage struct {
-		Limit, After, Page string
-		Max                int
+		Limit, After, Page, Offset string
+		Max                        int
 	}
 )
 
@@ -1881,6 +1881,8 @@ func (p ToolPage) asking(c *Client, req Req, at string) (Req, error) {
 			args[a] = at
 		} else if n := firstTaken(p.Page, has); n != "" {
 			args[n] = atoi(at)
+		} else if o := firstTaken(p.Offset, has); o != "" {
+			args[o] = atoi(at)
 		}
 	}
 	req.Body = args
@@ -1899,6 +1901,9 @@ func (p ToolPage) after(c *Client, tool string, ans any, recs []Record, at strin
 	}
 	if firstTaken(p.Page, has) != "" && len(recs) > 0 && len(recs) >= p.Max {
 		return strconv.Itoa(max(atoi(at), 1) + 1)
+	}
+	if firstTaken(p.Offset, has) != "" && len(recs) > 0 && len(recs) >= p.Max {
+		return strconv.Itoa(atoi(at) + len(recs))
 	}
 	return ""
 }
