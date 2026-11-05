@@ -1,9 +1,10 @@
 <script>
-  import { ArrowUp, Square, Paperclip } from '@lucide/svelte';
+  import { ArrowUp, Square, Paperclip, Mic } from '@lucide/svelte';
   import IconButton from './IconButton.svelte';
   import Attachment from './Attachment.svelte';
-  import { uploadFiles } from '../lib/app.svelte.js';
-  import { loadDraft, saveDraft } from '../lib/api.js';
+  import { uploadFiles, ws } from '../lib/app.svelte.js';
+  import { api, loadDraft, saveDraft } from '../lib/api.js';
+  import { notify } from '../lib/dialogs.svelte.js';
   import { rise } from '../lib/motion.js';
 
   let {
@@ -37,7 +38,71 @@
   let focused = $state(false);
 
   const control = $derived(size === 'lg' ? 'md' : 'sm');
-  const ready = $derived(value.trim().length > 0 || attachments.length > 0);
+  const speech = $derived(ws().catalog?.catalog.speech && navigator.mediaDevices && window.MediaRecorder);
+
+  let dictation = $state();
+  let recording = $state(false);
+
+  const ready = $derived(!dictation && (value.trim().length > 0 || attachments.length > 0));
+
+  function end() {
+    dictation?.abort();
+    dictation = null;
+    recording = false;
+  }
+
+  $effect(() => {
+    draft;
+    return end;
+  });
+
+  async function dictate() {
+    if (recording) {
+      recording = false;
+      dictation.recorder.stop();
+      return;
+    }
+    const ctl = (dictation = new AbortController());
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const release = () => stream.getTracks().forEach((t) => t.stop());
+      if (ctl.signal.aborted) return release();
+      const recorder = new MediaRecorder(stream);
+      const chunks = [];
+      recorder.ondataavailable = (e) => chunks.push(e.data);
+      ctl.signal.addEventListener('abort', () => {
+        recorder.onstop = null;
+        if (recorder.state !== 'inactive') recorder.stop();
+        release();
+      });
+      recorder.onstop = () => {
+        release();
+        transcribe(new Blob(chunks, { type: recorder.mimeType }), ctl);
+      };
+      ctl.recorder = recorder;
+      recorder.start();
+      recording = true;
+    } catch (error) {
+      fail(error, ctl);
+    }
+  }
+
+  async function transcribe(audio, ctl) {
+    try {
+      const { text } = await api('/api/speech', { method: 'POST', raw: audio, headers: { 'Content-Type': audio.type }, signal: ctl.signal });
+      if (text) value = value.trim() ? `${value.trimEnd()} ${text}` : text;
+      dictation = null;
+      element?.focus();
+    } catch (error) {
+      fail(error, ctl);
+    }
+  }
+
+  function fail(error, ctl) {
+    if (ctl.signal.aborted) return;
+    end();
+    notify({ title: 'That didn’t work', body: error.message });
+  }
 
   function send() {
     if (streaming) {
@@ -103,6 +168,9 @@
   <div class="bar">
     <IconButton icon={Paperclip} label="Attach files" variant="ghost" size={control} disabled={uploading} onclick={() => picker?.click()} />
     <span class="spacer"></span>
+    {#if speech}
+      <IconButton icon={recording ? Square : Mic} label={recording ? 'Stop' : 'Dictate'} variant="ghost" size={control} pressed={recording} disabled={dictation && !recording} onclick={dictate} />
+    {/if}
     {#if streaming}
       <IconButton icon={Square} label="Stop" variant="inverse" round size={control} type="submit" />
     {:else}
