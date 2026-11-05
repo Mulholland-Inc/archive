@@ -33,6 +33,8 @@
  * - drops lists what deletes or rewrites data. Confirm those only when the people you work for asked for exactly them or
  *   agreed after you showed them. Talking with an agent, that confirm throws forbidden until a later turn: dry-run, tell
  *   them what it deletes, and stop.
+ * - A migration runs with your own access, so a function it reaches (a CHECK, a column DEFAULT, an ALTER COLUMN ... USING,
+ *   a domain check, a trigger) cannot write a row or read one your role may not: that throws forbidden with the rule it broke.
  * - Keep data with ALTER TABLE ... RENAME and ALTER COLUMN ... TYPE ... USING. An enum value added is usable only from
  *   the next run. To undo a migration, migrate the reverse. Past ones:
  *   archive.query("SELECT created_at, author, statements FROM archive.revision WHERE statements <> '[]' ORDER BY created_at DESC LIMIT 20")
