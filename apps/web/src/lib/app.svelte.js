@@ -591,10 +591,14 @@ export function openSettings(section = null, sub = null) {
 }
 
 export const onboardingSteps = [
+  { id: 'msa', group: 'Legal', title: 'Sign the master services agreement', body: 'The terms for your archive, billing and support.', action: 'Review and sign' },
+  { id: 'dpa', group: 'Legal', title: 'Sign the data processing agreement', body: 'How we process personal data on your behalf under GDPR.', action: 'Review and sign' },
+  { id: 'verify', group: 'Legal', title: 'Verify your business details', body: 'Confirm your legal name, address and VAT number for invoices.', action: 'Verify' },
   { id: 'invite', group: 'Your team', title: 'Invite your team', body: 'Add the people who should read, edit or own this archive.', action: 'Invite' },
   { id: 'connect', group: 'Your data', title: 'Connect a source', body: 'Bring in your Gmail, Google Drive, Notion and more.', action: 'Connect' },
   { id: 'upload', group: 'Your data', title: 'Upload your first files', body: 'Drop in scans, letters, recordings or spreadsheets.', action: 'Upload' },
-  { id: 'workflow', group: 'Your data', title: 'Set up a workflow', body: 'Let an agent file, tag or transcribe new items as they arrive.', action: 'Create' }
+  { id: 'workflow', group: 'Your data', title: 'Set up a workflow', body: 'Let an agent file, tag or transcribe new items as they arrive.', action: 'Create' },
+  { id: 'region', group: 'Your data', title: 'Choose a data region and retention', body: 'Pick where your archive lives and how long deleted items are kept.', action: 'Choose' }
 ];
 
 const saveSteps = () => setLocal(`archive.onboarding:${app.archive}`, app.onboarding);
@@ -603,7 +607,7 @@ export function stepDone(id) {
   return app.onboarding.includes(id);
 }
 
-function completeStep(id) {
+export function completeStep(id) {
   if (stepDone(id)) return;
   app.onboarding.push(id);
   saveSteps();
