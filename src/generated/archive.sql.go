@@ -307,7 +307,8 @@ SELECT jsonb_build_object(
             'archive.bank_account'::regclass, 'archive.bank_transaction'::regclass,
             'archive.spend_department'::regclass, 'archive.spend_user'::regclass, 'archive.spend_card'::regclass,
             'archive.spend_transaction'::regclass, 'archive.spend_receipt'::regclass,
-            'archive.warehouse_table'::regclass, 'archive.warehouse_column'::regclass)
+            'archive.warehouse_table'::regclass, 'archive.warehouse_column'::regclass,
+            'archive.parcel'::regclass, 'archive.parcel_event'::regclass, 'archive.vehicle'::regclass, 'archive.vehicle_charge'::regclass, 'archive.home_device'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -610,7 +611,11 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.spend_user x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.spend_card x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.spend_transaction x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.warehouse_table x WHERE x.connection = c.id))::bigint AS items,
+        + (SELECT count(*) FROM archive.warehouse_table x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.parcel x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.vehicle x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.vehicle_charge x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.home_device x WHERE x.connection = c.id))::bigint AS items,
     c.integration, coalesce(c.access::text, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
 FROM archive.connection c WHERE c.member = $1 AND NOT c.integration OR c.integration ORDER BY c.provider, c.account, c.id
 `

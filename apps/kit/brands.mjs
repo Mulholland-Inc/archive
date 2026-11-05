@@ -56,7 +56,11 @@ const brands = {
   SharePoint: 'si:microsoftsharepoint',
   'Zoho CRM': 'logos:zoho',
   'Zoho Books': 'logos:zoho',
-  'Shopify (app token)': 'logos:shopify'
+  'Shopify (app token)': 'logos:shopify',
+  UPS: ['si:ups', '#150400'],
+  FedEx: ['si:fedex', '#4D148C'],
+  Tesla: ['si:tesla', '#CC0000'],
+  'Google Nest': 'logos:google-icon'
 };
 
 const own = {
