@@ -1,5 +1,6 @@
 import AuthenticationServices
 import CryptoKit
+import DeviceCheck
 import Foundation
 import Security
 import UIKit
@@ -17,7 +18,8 @@ enum ClientError: LocalizedError {
 }
 
 /// The phone's way into Archive: Archive's own OAuth, the one MCP clients use, with PKCE. The phone registers itself as a client once,
-/// signs in on the web app, and keeps the rotating refresh token in the Keychain; /device/{stream} takes the access token.
+/// signs in on the web app, and keeps the rotating refresh token in the Keychain, which the Share extension shares; /device/* takes the access token.
+/// Where Archive asks for it, the app also proves with App Attest that it is the real app on a real iPhone, and signs each request with the key it attested.
 actor Client {
     static let shared = Client()
     static let api = URL(string: Bundle.main.object(forInfoDictionaryKey: "ArchiveAPI") as! String)!
@@ -27,9 +29,14 @@ actor Client {
     private var access: String?
     private var until = Date.distantPast
     private var refreshing: Task<String, Error>?
+    private var attestOff = false
+
+    /// Only the app signs with its attested key; the Share extension saves files, which Archive takes unsigned.
+    static let signs = Bundle.main.bundleURL.pathExtension == "app"
 
     nonisolated var signedIn: Bool { Keychain.get("refresh") != nil }
 
+    #if !EXTENSION
     func signIn() async throws {
         let client = try await clientID()
         let verifier = Self.random()
@@ -49,6 +56,7 @@ actor Client {
         }
         _ = try await token(["grant_type": "authorization_code", "code": code, "redirect_uri": Self.redirect, "code_verifier": verifier, "client_id": client])
     }
+    #endif
 
     func signOut() async {
         if let refresh = Keychain.get("refresh"), let client = Keychain.get("client") {
@@ -60,21 +68,140 @@ actor Client {
 
     /// Lands records of a stream in Archive: [{ id, data }] or [{ id, deleted: true }]; full when they are all of it, more when another batch of it follows.
     func push(_ stream: String, _ records: [[String: Any]], full: Bool = false, more: Bool = false) async throws {
-        var req = URLRequest(url: Self.api.appending(path: "device/\(stream)"))
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONSerialization.data(withJSONObject: ["device": await UIDevice.current.model, "records": records, "full": full, "more": more])
-        for attempt in 0 ..< 2 {
+        let body = try JSONSerialization.data(withJSONObject: ["records": records, "full": full, "more": more])
+        _ = try await send("POST", "device/\(stream)", body: .data(body, "application/json"))
+    }
+
+    /// Keeps a photo's original, full size, with the photo Archive has of it already.
+    func original(_ id: String, name: String, file: URL) async throws {
+        _ = try await send("PUT", "device/originals", query: [.init(name: "photo", value: id), .init(name: "name", value: name)],
+                           body: .file(file, "application/octet-stream"), cheap: true)
+    }
+
+    /// Keeps a file in the member's Archive files, as an upload in the web app would.
+    func save(_ name: String, file: URL) async throws {
+        _ = try await send("POST", "device/files", query: [.init(name: "name", value: name)], body: .file(file, "application/octet-stream"))
+    }
+
+    /// Asks the workspace's agent, as the web app's chat does, and answers with what it said last, after its last run of code.
+    func ask(_ text: String) async throws -> String {
+        let (lines, _) = try await send("POST", "device/ask", body: .data(try JSONSerialization.data(withJSONObject: ["text": text]), "application/json"))
+        var answer = ""
+        for line in lines.split(separator: UInt8(ascii: "\n")) {
+            guard let e = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] else { continue }
+            switch e["type"] as? String {
+            case "text": answer += e["text"] as? String ?? ""
+            case "run", "code": answer = ""
+            case "error": throw ClientError.refused(500, e["error"] as? String ?? "The agent failed")
+            default: break
+            }
+        }
+        return answer.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    enum Body {
+        case data(Data, String)
+        case file(URL, String)
+    }
+
+    /// A request of /device/*: the access token, which install of the app it is, and, where Archive wants it, an assertion of the attested key
+    /// over the method, the path and the body's SHA-256. Cheap ones wait for Wi-Fi, and keep off Low Data Mode.
+    private func send(_ method: String, _ path: String, query: [URLQueryItem] = [], body: Body, cheap: Bool = false) async throws -> (Data, Int) {
+        var url = URLComponents(url: Self.api.appending(path: path), resolvingAgainstBaseURL: false)!
+        if !query.isEmpty { url.queryItems = query }
+        var req = URLRequest(url: url.url!)
+        req.httpMethod = method
+        req.allowsExpensiveNetworkAccess = !cheap
+        req.allowsConstrainedNetworkAccess = !cheap
+        let sum: String
+        switch body {
+        case let .data(d, type):
+            req.setValue(type, forHTTPHeaderField: "Content-Type")
+            sum = SHA256.hash(data: d).hex
+        case let .file(f, type):
+            req.setValue(type, forHTTPHeaderField: "Content-Type")
+            sum = try Self.sha256(f)
+        }
+        req.setValue(sum, forHTTPHeaderField: "Archive-Body-SHA256")
+        req.setValue(Self.install, forHTTPHeaderField: "Archive-Device")
+        req.setValue(await UIDevice.current.name, forHTTPHeaderField: "Archive-Device-Name")
+        for attempt in 0 ..< 3 {
             req.setValue("Bearer " + (try await bearer()), forHTTPHeaderField: "Authorization")
-            let (body, res) = try await URLSession.shared.data(for: req)
+            if let key = try await attested() {
+                let client = Data(SHA256.hash(data: Data("\(method) \(req.url!.path)\n\(sum)".utf8)))
+                req.setValue(try await DCAppAttestService.shared.generateAssertion(key, clientDataHash: client).base64EncodedString(), forHTTPHeaderField: "Archive-Assertion")
+            }
+            let (got, res): (Data, URLResponse)
+            switch body {
+            case let .data(d, _): (got, res) = try await URLSession.shared.upload(for: req, from: d)
+            case let .file(f, _): (got, res) = try await URLSession.shared.upload(for: req, fromFile: f)
+            }
             let status = (res as? HTTPURLResponse)?.statusCode ?? 0
-            if status == 401, attempt == 0 {
-                access = nil
+            let said = String(decoding: got, as: UTF8.self)
+            if status == 401, attempt < 2 {
+                // An assertion overtaken by another of the same key is only retried; any other App Attest refusal attests a new key.
+                if said.contains("used before") { continue }
+                if said.contains("App Attest") {
+                    Keychain.set("attestKey", nil)
+                    attestOff = false
+                } else {
+                    access = nil
+                }
                 continue
             }
-            guard status == 200 else { throw ClientError.refused(status, String(decoding: body, as: UTF8.self)) }
-            return
+            guard status == 200 else { throw ClientError.refused(status, said) }
+            return (got, status)
         }
+        throw ClientError.signedOut
+    }
+
+    /// The App Attest key this install signs with, attested on first use; nil where Archive does not ask for it, as in the Simulator.
+    private func attested() async throws -> String? {
+        guard Self.signs else { return nil }
+        if let key = Keychain.get("attestKey") { return key }
+        if attestOff { return nil }
+        var req = URLRequest(url: Self.api.appending(path: "device/attest"))
+        req.setValue("Bearer " + (try await bearer()), forHTTPHeaderField: "Authorization")
+        req.setValue(Self.install, forHTTPHeaderField: "Archive-Device")
+        req.setValue(await UIDevice.current.name, forHTTPHeaderField: "Archive-Device-Name")
+        struct Challenge: Decodable { let challenge: String, required: Bool }
+        let (body, res) = try await URLSession.shared.data(for: req)
+        guard (res as? HTTPURLResponse)?.statusCode == 200, let c = try? JSONDecoder().decode(Challenge.self, from: body) else {
+            throw ClientError.refused((res as? HTTPURLResponse)?.statusCode ?? 0, String(decoding: body, as: UTF8.self))
+        }
+        guard c.required else {
+            attestOff = true
+            return nil
+        }
+        let service = DCAppAttestService.shared
+        guard service.isSupported else { throw ClientError.refused(0, "This iPhone can't prove to Archive that it runs the real app (App Attest)") }
+        let key = try await service.generateKey()
+        let attestation = try await service.attestKey(key, clientDataHash: Data(SHA256.hash(data: Data(c.challenge.utf8))))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["key": key, "attestation": attestation.base64EncodedString(), "challenge": c.challenge])
+        let (said, posted) = try await URLSession.shared.data(for: req)
+        guard (posted as? HTTPURLResponse)?.statusCode == 200 else {
+            throw ClientError.refused((posted as? HTTPURLResponse)?.statusCode ?? 0, String(decoding: said, as: UTF8.self))
+        }
+        Keychain.set("attestKey", key)
+        return key
+    }
+
+    /// This install's id, Archive's account for the phone's connection; kept in the Keychain, so the Share extension sends the same.
+    static var install: String {
+        if let id = Keychain.get("install") { return id }
+        let id = UUID().uuidString.lowercased()
+        Keychain.set("install", id)
+        return id
+    }
+
+    private static func sha256(_ file: URL) throws -> String {
+        let h = try FileHandle(forReadingFrom: file)
+        defer { try? h.close() }
+        var sum = SHA256()
+        while let chunk = try h.read(upToCount: 1 << 20), !chunk.isEmpty { sum.update(data: chunk) }
+        return sum.finalize().hex
     }
 
     private func bearer() async throws -> String {
@@ -89,8 +216,10 @@ actor Client {
 
     private func token(_ params: [String: String]) async throws -> String {
         let (body, status) = try await form("oauth/token", params)
-        if status == 400, params["grant_type"] == "refresh_token" {
+        // A refresh Archive turns down, or a client it no longer knows, means signing in again.
+        if status == 400 || status == 401, params["grant_type"] == "refresh_token" {
             Keychain.set("refresh", nil)
+            if status == 401 { Keychain.set("client", nil) }
             throw ClientError.signedOut
         }
         struct Answer: Decodable { let access_token: String, refresh_token: String, expires_in: Double }
@@ -137,6 +266,7 @@ actor Client {
     }
 }
 
+#if !EXTENSION
 /// The sign-in page, in the browser the user is signed in to Archive with.
 @MainActor final class Web: NSObject, ASWebAuthenticationPresentationContextProviding {
     static func open(_ url: URL) async throws -> URL {
@@ -154,25 +284,43 @@ actor Client {
         UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first ?? ASPresentationAnchor()
     }
 }
+#endif
 
-/// Secrets the app keeps after the first unlock, so background syncs can sign in while the phone is locked.
+/// Secrets the app keeps after the first unlock, so background syncs can sign in while the phone is locked; in the access group
+/// the Share extension has too, where the build has it, as signed builds do.
 enum Keychain {
+    static let group = Bundle.main.object(forInfoDictionaryKey: "KeychainGroup") as? String
+
+    private static func query(_ key: String, grouped: Bool) -> [CFString: Any] {
+        var q: [CFString: Any] = [kSecClass: kSecClassGenericPassword, kSecAttrService: Client.scheme, kSecAttrAccount: key]
+        if grouped, let group, !group.hasPrefix("$") { q[kSecAttrAccessGroup] = group }
+        return q
+    }
+
     static func get(_ key: String) -> String? {
-        var out: AnyObject?
-        let q: [CFString: Any] = [kSecClass: kSecClassGenericPassword, kSecAttrService: Client.scheme, kSecAttrAccount: key, kSecReturnData: true]
-        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
-        return String(decoding: d, as: UTF8.self)
+        for grouped in [true, false] {
+            var out: AnyObject?
+            var q = query(key, grouped: grouped)
+            q[kSecReturnData] = true
+            if SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data { return String(decoding: d, as: UTF8.self) }
+        }
+        return nil
     }
 
     static func set(_ key: String, _ value: String?) {
-        let q: [CFString: Any] = [kSecClass: kSecClassGenericPassword, kSecAttrService: Client.scheme, kSecAttrAccount: key]
-        SecItemDelete(q as CFDictionary)
+        for grouped in [true, false] { SecItemDelete(query(key, grouped: grouped) as CFDictionary) }
         guard let value else { return }
-        var add = q
-        add[kSecValueData] = Data(value.utf8)
-        add[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        SecItemAdd(add as CFDictionary, nil)
+        for grouped in [true, false] {
+            var add = query(key, grouped: grouped)
+            add[kSecValueData] = Data(value.utf8)
+            add[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            if SecItemAdd(add as CFDictionary, nil) != errSecMissingEntitlement { return }
+        }
     }
+}
+
+extension SHA256.Digest {
+    var hex: String { map { String(format: "%02x", $0) }.joined() }
 }
 
 extension Data {

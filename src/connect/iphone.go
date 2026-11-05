@@ -13,9 +13,30 @@ var Phone = []*Sync{
 		To: Map{Table: "health_workout",
 			Cols: map[string]SQL{"sport": "data->>'sport'", "starts_at": "archive.sync_at(data->>'start')", "ends_at": "archive.sync_at(data->>'end')",
 				"minutes": "archive.sync_num(data->>'seconds') / 60", "calories": "archive.sync_num(data->>'kcal')", "distance": "archive.sync_num(data->>'meters')",
+				"device": "coalesce(nullif(data->>'device', ''), data->>'source')", "route": "(data->>'route')::uuid"}}},
+	{Name: "sleep", Doc: "Apple Health nights and naps by <first sample's UUID>, each the stages HealthKit has between going to bed and getting up: " +
+		"{ day, start, end, asleep, deep, rem, core, awake (minutes), inBed, nap, heartRate, lowestHeartRate, hrv, respiratoryRate, source, device }",
+		To: Map{Table: "health_sleep",
+			Cols: map[string]SQL{"on_date": "archive.sync_day(data->>'day')", "starts_at": "archive.sync_at(data->>'start')", "ends_at": "archive.sync_at(data->>'end')",
+				"asleep_minutes": "archive.sync_num(data->>'asleep')", "deep_minutes": "archive.sync_num(data->>'deep')", "rem_minutes": "archive.sync_num(data->>'rem')",
+				"light_minutes": "archive.sync_num(data->>'core')", "awake_minutes": "archive.sync_num(data->>'awake')",
+				"efficiency": "round(100 * archive.sync_num(data->>'asleep') / nullif(archive.sync_num(data->>'inBed'), 0), 1)",
+				"heart_rate": "archive.sync_num(data->>'heartRate')", "lowest_heart_rate": "archive.sync_num(data->>'lowestHeartRate')",
+				"hrv": "archive.sync_num(data->>'hrv')", "respiratory_rate": "archive.sync_num(data->>'respiratoryRate')", "nap": "archive.sync_bool(data->'nap')",
 				"device": "coalesce(nullif(data->>'device', ''), data->>'source')"}}},
+	{Name: "days", Doc: "Apple Health's activity rings by day: { day, steps, activeCalories, calories, meters, exerciseMinutes, standHours, restingHeartRate, hrv, " +
+		"moveGoal, exerciseGoal, standGoal }, the last few days sent again as they fill in",
+		To: Map{Table: "health_day",
+			Cols: map[string]SQL{"kind": "'activity'", "on_date": "archive.sync_day(data->>'day')", "steps": "archive.sync_num(data->>'steps')",
+				"active_calories": "archive.sync_num(data->>'activeCalories')", "calories": "archive.sync_num(data->>'calories')", "distance": "archive.sync_num(data->>'meters')",
+				"active_minutes": "archive.sync_num(data->>'exerciseMinutes')", "resting_heart_rate": "archive.sync_num(data->>'restingHeartRate')",
+				"hrv": "archive.sync_num(data->>'hrv')", "detail": "data - 'day'"}}},
+	{Name: "records", Doc: "Apple Health's medical record, by the record's UUID, each a FHIR R4 resource { resource, organization }: what Health Records downloaded " +
+		"from your hospitals, and what the phone measured or you logged that has no number of its own, as FHIR too: ECGs and hearing tests as Observations, " +
+		"moods as an Observation of State of mind, medications as MedicationStatements and their doses as MedicationAdministrations",
+		To: fhirRecord},
 	{Name: "photos", Doc: "The Photos library by asset id: { name, kind, created, modified, width, height, duration, latitude, longitude, favorite, thumbnail }, " +
-		"thumbnail a base64 JPEG the server keeps as a file",
+		"thumbnail a base64 JPEG the server keeps as a file; an original comes apart, to PUT /device/originals?photo=<asset id>&name=<file name>",
 		To: Map{Table: "photo",
 			Cols: map[string]SQL{"title": "data->>'name'", "kind": "data->>'kind'", "taken_at": "archive.sync_at(data->>'created')",
 				"edited_at": "archive.sync_at(data->>'modified')", "width": "(data->>'width')::integer", "height": "(data->>'height')::integer",
@@ -38,6 +59,34 @@ var Phone = []*Sync{
 			Children: []Kids{{Table: "calendar_attendee", From: "archive.sync_list(data->'attendees') a WHERE archive.sync_email(a->>'email') IS NOT NULL",
 				Cols:   map[string]SQL{"name": "a->>'name'", "role": "a->>'role'", "response": "a->>'status'"},
 				People: map[string]SQL{"person": "a->>'email'"}}}}},
+	{Name: "reminders", Doc: "Reminders by identifier: { list, title, notes, url, priority, due, start, done, completed, created, modified }, listed whole",
+		To: Map{Table: "work_item",
+			Cols: map[string]SQL{"title": "data->>'title'", "type": "'reminder'", "status": "CASE WHEN archive.sync_bool(data->'done') THEN 'done' ELSE 'open' END",
+				"client_name": "data->>'list'", "starts_on": "archive.sync_day(left(data->>'start', 10))", "due_on": "archive.sync_day(left(data->>'due', 10))",
+				"done_on": "archive.sync_day(left(data->>'completed', 10))", "description": "archive.sync_clip(data->>'notes', 65536)", "url": "data->>'url'",
+				"made_at": "archive.sync_at(data->>'created')", "edited_at": "archive.sync_at(data->>'modified')"}}},
+	{Name: "places", Doc: "Places the phone saw you stay a while, by <arrival>/<latitude>,<longitude>: { title, address, city, country, category, latitude, longitude, " +
+		"accuracy, arrived, departed }, departed missing while you are there",
+		To: Map{Table: "place_visit",
+			Cols: map[string]SQL{"title": "data->>'title'", "address": "data->>'address'", "city": "data->>'city'", "country": "data->>'country'",
+				"category": "data->>'category'", "latitude": "archive.sync_num(data->>'latitude')::double precision",
+				"longitude": "archive.sync_num(data->>'longitude')::double precision", "accuracy": "archive.sync_num(data->>'accuracy')::double precision",
+				"arrived_at": "archive.sync_at(data->>'arrived')", "departed_at": "archive.sync_at(data->>'departed')"}}},
+	{Name: "wallet_accounts", Doc: "Apple Card, Apple Cash and Apple Savings from Wallet, by FinanceKit's account id: { name, institution, kind, balance, available, " +
+		"limit, currency }, listed whole",
+		To: Map{Table: "bank_account",
+			Cols: map[string]SQL{"title": "data->>'name'", "official_name": "data->>'institution'", "type": "data->>'kind'", "subtype": "data->>'institution'",
+				"balance":      "archive.sync_money(data->>'balance', coalesce(nullif(data->>'currency', ''), 'USD'))",
+				"available":    "archive.sync_money(data->>'available', coalesce(nullif(data->>'currency', ''), 'USD'))",
+				"credit_limit": "archive.sync_money(data->>'limit', coalesce(nullif(data->>'currency', ''), 'USD'))"}}},
+	{Name: "wallet_transactions", Doc: "Wallet transactions by FinanceKit's id: { account, posted, authorized, amount (negative is money out), currency, description, " +
+		"merchant, category, kind, pending }, new, changed and deleted ones as FinanceKit's history hears of them",
+		To: Map{Table: "bank_transaction",
+			Cols: map[string]SQL{"posted_on": "archive.sync_day(left(data->>'posted', 10))", "authorized_on": "archive.sync_day(left(data->>'authorized', 10))",
+				"amount":      "archive.sync_money(data->>'amount', coalesce(nullif(data->>'currency', ''), 'USD'))",
+				"description": "data->>'description'", "merchant": "data->>'merchant'", "category": "data->>'category'", "detail": "data->>'kind'",
+				"channel": "'apple pay'", "pending": "archive.sync_bool(data->'pending')"},
+			Refs: map[string]SQL{"account": "data->>'account'"}}},
 }
 
 var phone = map[string]*Stream{}

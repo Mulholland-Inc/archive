@@ -24,7 +24,9 @@ actor Syncer {
         running = true
         repeat {
             again = false
-            for (name, run) in [("health", healthAll), ("photos", photos), ("contacts", contacts), ("events", events)] as [(String, () async throws -> Void)] {
+            let runs: [(String, () async throws -> Void)] = [("health", healthAll), ("photos", photos), ("contacts", contacts), ("events", events),
+                                                              ("reminders", reminders), ("places", places), ("wallet", wallet), ("originals", originals)]
+            for (name, run) in runs {
                 do {
                     try await run()
                     await Status.shared.synced(name, nil)
@@ -36,9 +38,9 @@ actor Syncer {
         running = false
     }
 
-    private func pushed(_ stream: String, _ records: [[String: Any]], full: Bool = false, more: Bool = false) async throws {
+    func pushed(_ stream: String, _ records: [[String: Any]], full: Bool = false, more: Bool = false) async throws {
         try await Client.shared.push(stream, records, full: full, more: more)
-        await Status.shared.add(stream == "workouts" ? "health" : stream, records.count)
+        await Status.shared.add(Status.row[stream] ?? stream, records.count)
     }
 
     // MARK: Health
@@ -49,19 +51,56 @@ actor Syncer {
         .bodyMass, .height, .bodyMassIndex, .bodyFatPercentage, .bloodPressureSystolic, .bloodPressureDiastolic, .bloodGlucose,
         .dietaryEnergyConsumed, .dietaryWater,
     ]
-    static let categories: [HKCategoryTypeIdentifier] = [.sleepAnalysis, .mindfulSession]
+    /// Sleep and mindful minutes are durations; the rest, like cycle tracking, are events with a level.
+    static let categories: [HKCategoryTypeIdentifier] = [
+        .sleepAnalysis, .mindfulSession, .menstrualFlow, .intermenstrualBleeding, .ovulationTestResult, .cervicalMucusQuality, .sexualActivity,
+        .pregnancyTestResult, .progesteroneTestResult, .contraceptive, .pregnancy, .lactation, .highHeartRateEvent, .lowHeartRateEvent,
+        .irregularHeartRhythmEvent, .lowCardioFitnessEvent, .appleWalkingSteadinessEvent, .handwashingEvent, .toothbrushingEvent,
+    ]
+    static let durations: Set<HKCategoryTypeIdentifier> = [.sleepAnalysis, .mindfulSession]
+
+    /// Every sample type the app reads, each to its stream: workouts, records for what has no number of its own, the rest health.
     static var types: [HKSampleType] {
-        quantities.map { HKQuantityType($0) } + categories.map { HKCategoryType($0) } + [HKWorkoutType.workoutType()]
+        var t: [HKSampleType] = quantities.map { HKQuantityType($0) } + categories.map { HKCategoryType($0) }
+        t += [HKWorkoutType.workoutType(), HKObjectType.electrocardiogramType(), HKObjectType.audiogramSampleType()]
+        if #available(iOS 18, *) { t.append(HKObjectType.stateOfMindType()) }
+        if #available(iOS 26, *) { t.append(HKObjectType.medicationDoseEventType()) }
+        return t + clinical
+    }
+
+    /// Health Records, from the hospitals the user connected in Health; only where the phone has them.
+    static var clinical: [HKSampleType] {
+        guard health.supportsHealthRecords() else { return [] }
+        let ids: [HKClinicalTypeIdentifier] = [.allergyRecord, .clinicalNoteRecord, .conditionRecord, .immunizationRecord, .labResultRecord,
+                                               .medicationRecord, .procedureRecord, .vitalSignRecord, .coverageRecord]
+        return ids.compactMap { HKObjectType.clinicalType(forIdentifier: $0) }
+    }
+
+    /// What the app asks to read: the samples, workouts' routes and the activity rings. Doses come with the medications the user shares, one by one.
+    static var reads: Set<HKObjectType> {
+        var r = Set<HKObjectType>(types).union([HKSeriesType.workoutRoute(), HKObjectType.activitySummaryType()])
+        if #available(iOS 26, *) { r.remove(HKObjectType.medicationDoseEventType()) }
+        return r
+    }
+
+    static func stream(_ type: HKSampleType) -> String {
+        switch type {
+        case is HKWorkoutType: "workouts"
+        case is HKQuantityType, is HKCategoryType: "health"
+        default: "records"
+        }
     }
 
     /// Wakes the app when Health has new samples, even in the background; called at every launch, as HealthKit wants.
     nonisolated static func observe() {
         guard HKHealthStore.isHealthDataAvailable() else { return }
+        let made: Set<HKSampleType> = [HKCategoryType(.sleepAnalysis), HKQuantityType(.stepCount), HKQuantityType(.activeEnergyBurned)]
         for type in types {
             health.execute(HKObserverQuery(sampleType: type, predicate: nil) { _, done, err in
                 guard err == nil else { return done() }
                 Task {
                     try? await Syncer.shared.health(type)
+                    if made.contains(type) { try? await Syncer.shared.healthMade() }
                     done()
                 }
             })
@@ -69,7 +108,7 @@ actor Syncer {
         }
     }
 
-    /// Each type on its own, since the user may allow some and not others; it fails only when none synced.
+    /// Each type on its own, since the user may allow some and not others; it fails only when none synced. Then the nights, days and medications made of them.
     private func healthAll() async throws {
         var failed: Error?
         var synced = false
@@ -80,6 +119,11 @@ actor Syncer {
             } catch {
                 failed = error
             }
+        }
+        do {
+            try await healthMade()
+        } catch {
+            failed = failed ?? error
         }
         if !synced, let failed { throw failed }
     }
@@ -94,19 +138,25 @@ actor Syncer {
         let key = "anchor." + type.identifier
         while true {
             let anchor = UserDefaults.standard.data(forKey: key).flatMap { try? NSKeyedUnarchiver.unarchivedObject(ofClass: HKQueryAnchor.self, from: $0) }
-            let q = HKAnchoredObjectQueryDescriptor(predicates: [.sample(type: type)], anchor: anchor, limit: 500)
+            // Workouts carry their routes, so fewer go at a time.
+            let limit = type is HKWorkoutType ? 20 : 500
+            let q = HKAnchoredObjectQueryDescriptor(predicates: [.sample(type: type)], anchor: anchor, limit: limit)
             let got = try await q.result(for: Self.health)
-            let records = got.addedSamples.map(record) + got.deletedObjects.map { ["id": $0.uuid.uuidString, "deleted": true] }
+            var records: [[String: Any]] = []
+            for s in got.addedSamples { records.append(await record(s)) }
+            records += got.deletedObjects.map { ["id": $0.uuid.uuidString, "deleted": true] }
             if !records.isEmpty {
-                try await pushed(type == HKWorkoutType.workoutType() ? "workouts" : "health", records)
+                try await pushed(Self.stream(type), records)
             }
             UserDefaults.standard.set(try NSKeyedArchiver.archivedData(withRootObject: got.newAnchor, requiringSecureCoding: true), forKey: key)
-            if records.count < 500 { return }
+            if records.count < limit { return }
         }
     }
 
-    /// A sample as Archive's other health connectors keep one: its kind in their words, like steps or heart_rate; a workout goes to workouts.
-    private func record(_ s: HKSample) -> [String: Any] {
+    /// A sample as Archive's other health connectors keep one: its kind in their words, like steps or heart_rate; a workout goes to workouts,
+    /// with its route; what has no number of its own goes to records, as FHIR.
+    private func record(_ s: HKSample) async -> [String: Any] {
+        if let r = await fhir(s) { return ["id": s.uuid.uuidString, "data": r] }
         var d: [String: Any] = ["start": s.startDate.iso, "end": s.endDate.iso, "source": s.sourceRevision.source.name]
         if let device = s.device?.model ?? s.device?.name { d["device"] = device }
         switch s {
@@ -123,8 +173,13 @@ actor Syncer {
             } else {
                 d["kind"] = Self.kinds[s.categoryType.identifier] ?? Self.snake(s.categoryType.identifier)
             }
-            d["value"] = s.endDate.timeIntervalSince(s.startDate) / 60
-            d["unit"] = "min"
+            if Self.durations.contains(HKCategoryTypeIdentifier(rawValue: s.categoryType.identifier)) {
+                d["value"] = s.endDate.timeIntervalSince(s.startDate) / 60
+                d["unit"] = "min"
+            } else {
+                d["value"] = s.value
+                d["unit"] = "level"
+            }
         case let s as HKWorkout:
             d["sport"] = s.workoutActivityType.name
             d["seconds"] = s.duration
@@ -134,6 +189,7 @@ actor Syncer {
             if let m = s.statistics(for: HKQuantityType(.distanceWalkingRunning))?.sumQuantity() ?? s.statistics(for: HKQuantityType(.distanceCycling))?.sumQuantity() {
                 d["meters"] = m.doubleValue(for: .meter())
             }
+            if let gpx = await route(s) { d["route"] = Data(gpx.utf8).base64EncodedString() }
         default: break
         }
         return ["id": s.uuid.uuidString, "data": d]
@@ -221,6 +277,41 @@ actor Syncer {
         return ["id": a.localIdentifier, "data": d]
     }
 
+    /// Each photo and video itself, full size, after its record: oldest first, on Wi-Fi only, from iCloud where the phone keeps only a small copy.
+    private func originals() async throws {
+        guard PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized || PHPhotoLibrary.authorizationStatus(for: .readWrite) == .limited,
+              UserDefaults.standard.object(forKey: "photos.listed") == nil else { return }
+        let doneFile = URL.applicationSupportDirectory.appending(path: "originals.json")
+        var done = Set((try? JSONDecoder().decode([String].self, from: Data(contentsOf: doneFile))) ?? [])
+        func save() throws {
+            try FileManager.default.createDirectory(at: .applicationSupportDirectory, withIntermediateDirectories: true)
+            try JSONEncoder().encode(Array(done)).write(to: doneFile, options: .completeFileProtectionUntilFirstUserAuthentication)
+        }
+        defer { try? save() }
+        let opts = PHFetchOptions()
+        opts.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
+        let assets = PHAsset.fetchAssets(with: opts)
+        for i in 0 ..< assets.count {
+            try Task.checkCancellation()
+            let a = assets.object(at: i)
+            guard !done.contains(a.localIdentifier),
+                  let res = PHAssetResource.assetResources(for: a).first(where: { [.photo, .video, .audio].contains($0.type) }) else { continue }
+            let tmp = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: tmp) }
+            let o = PHAssetResourceRequestOptions()
+            o.isNetworkAccessAllowed = true
+            try await PHAssetResourceManager.default().writeData(for: res, toFile: tmp, options: o)
+            do {
+                try await Client.shared.original(a.localIdentifier, name: res.originalFilename, file: tmp)
+            } catch let ClientError.refused(status, said) where status == 404 && said.contains("no photo") {
+                continue
+            }
+            done.insert(a.localIdentifier)
+            await Status.shared.add("originals", 1)
+            if done.count % 20 == 0 { try save() }
+        }
+    }
+
     private func thumbnail(_ a: PHAsset) async -> Data? {
         let opts = PHImageRequestOptions()
         opts.deliveryMode = .highQualityFormat
@@ -296,6 +387,41 @@ actor Syncer {
             try await pushed("events", Array(records[start ..< end]), full: true, more: end < records.count)
         }
         UserDefaults.standard.set(sum, forKey: "events.sum")
+    }
+
+    // MARK: Reminders
+
+    /// Reminders, done or not, listed whole when they differ from the last listing, as events are.
+    private func reminders() async throws {
+        guard EKEventStore.authorizationStatus(for: .reminder) == .fullAccess else { return }
+        let store = EKEventStore()
+        let records: [[String: Any]] = await withCheckedContinuation { done in
+            store.fetchReminders(matching: store.predicateForReminders(in: nil)) { found in
+                done.resume(returning: (found ?? []).map(Self.reminder))
+            }
+        }
+        let sum = Data(SHA256.hash(data: try JSONSerialization.data(withJSONObject: records, options: .sortedKeys))).base64URL
+        if UserDefaults.standard.string(forKey: "reminders.sum") == sum { return }
+        if records.isEmpty {
+            try await pushed("reminders", [], full: true)
+        }
+        for start in stride(from: 0, to: records.count, by: 200) {
+            let end = min(start + 200, records.count)
+            try await pushed("reminders", Array(records[start ..< end]), full: true, more: end < records.count)
+        }
+        UserDefaults.standard.set(sum, forKey: "reminders.sum")
+    }
+
+    private static func reminder(_ r: EKReminder) -> [String: Any] {
+        var d: [String: Any] = ["list": r.calendar.title, "title": r.title ?? "", "priority": r.priority, "done": r.isCompleted]
+        if let n = r.notes { d["notes"] = n }
+        if let u = r.url { d["url"] = u.absoluteString }
+        if let t = r.dueDateComponents?.date { d["due"] = t.iso }
+        if let t = r.startDateComponents?.date { d["start"] = t.iso }
+        if let t = r.completionDate { d["completed"] = t.iso }
+        if let t = r.creationDate { d["created"] = t.iso }
+        if let t = r.lastModifiedDate { d["modified"] = t.iso }
+        return ["id": r.calendarItemIdentifier, "data": d]
     }
 
     private func event(_ e: EKEvent) -> [String: Any] {

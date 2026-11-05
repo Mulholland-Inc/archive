@@ -3583,6 +3583,7 @@ CREATE TABLE archive.health_workout (
     max_heart_rate numeric,
     strain         numeric,
     device         text,
+    route          uuid REFERENCES archive.file ON DELETE SET NULL,
     UNIQUE (connection, stream, source_id)
 ) INHERITS (archive.object);
 CREATE INDEX health_workout_starts_at_idx ON archive.health_workout (starts_at);
@@ -3597,6 +3598,7 @@ COMMENT ON COLUMN archive.health_workout.heart_rate IS 'Average heart rate, in b
 COMMENT ON COLUMN archive.health_workout.max_heart_rate IS 'Highest heart rate, in beats a minute';
 COMMENT ON COLUMN archive.health_workout.strain IS 'Whoop''s strain, 0 to 21';
 COMMENT ON COLUMN archive.health_workout.device IS 'What recorded it, like Garmin Forerunner 965';
+COMMENT ON COLUMN archive.health_workout.route IS 'references file; where it went, as a GPX track';
 COMMENT ON COLUMN archive.health_workout.connection IS 'references connection; the account it is from';
 COMMENT ON COLUMN archive.health_workout.stream IS 'What its connector syncs it as, like messages';
 COMMENT ON COLUMN archive.health_workout.source_id IS 'Its id there';
@@ -3683,11 +3685,13 @@ CREATE TABLE archive.photo (
     longitude  double precision,
     favorite   boolean,
     thumbnail  uuid REFERENCES archive.file ON DELETE SET NULL,
+    original   uuid REFERENCES archive.file ON DELETE SET NULL,
     UNIQUE (connection, stream, source_id)
 ) INHERITS (archive.object);
 CREATE INDEX photo_taken_at_idx ON archive.photo (taken_at);
 CREATE INDEX photo_thumbnail_idx ON archive.photo (thumbnail);
-COMMENT ON TABLE archive.photo IS 'A photo or video in the Photos library of your iPhone: when and where it was taken, and a small copy of it; the original stays on the phone. Read only; the Archive app on your iPhone syncs them
+CREATE INDEX photo_original_idx ON archive.photo (original);
+COMMENT ON TABLE archive.photo IS 'A photo or video in the Photos library of your iPhone: when and where it was taken, a small copy of it, and the original itself when you chose to keep originals in the app. Read only; the Archive app on your iPhone syncs them
 icon: image';
 COMMENT ON COLUMN archive.photo.title IS 'Its file name there, like IMG_0042.HEIC';
 COMMENT ON COLUMN archive.photo.kind IS 'photo, video, live, screenshot, panorama or portrait';
@@ -3700,11 +3704,53 @@ COMMENT ON COLUMN archive.photo.latitude IS 'Where it was taken, north of the eq
 COMMENT ON COLUMN archive.photo.longitude IS 'Where it was taken, east of Greenwich';
 COMMENT ON COLUMN archive.photo.favorite IS 'It is a favorite there';
 COMMENT ON COLUMN archive.photo.thumbnail IS 'references file; a JPEG of it, 512 pixels on its longer side';
+COMMENT ON COLUMN archive.photo.original IS 'references file; the photo or video itself, full size, as the phone has it';
 COMMENT ON COLUMN archive.photo.connection IS 'references connection; the iPhone it is from';
 COMMENT ON COLUMN archive.photo.stream IS 'What the app syncs it as: photos';
 COMMENT ON COLUMN archive.photo.source_id IS 'Its id in the Photos library';
 COMMENT ON COLUMN archive.photo.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.photo.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.place_visit (
+    id          uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection  uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream      text NOT NULL,
+    source_id   text NOT NULL,
+    access      uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    updated_at  timestamptz NOT NULL DEFAULT now(),
+    name        text NOT NULL DEFAULT '',
+    seen_at     timestamptz NOT NULL DEFAULT now(),
+    title       text,
+    address     text,
+    city        text,
+    country     text,
+    category    text,
+    latitude    double precision,
+    longitude   double precision,
+    accuracy    double precision,
+    arrived_at  timestamptz,
+    departed_at timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX place_visit_arrived_at_idx ON archive.place_visit (arrived_at);
+COMMENT ON TABLE archive.place_visit IS 'A place you went and stayed a while, as your iPhone noticed it, like home, an office or a restaurant: location history, seen only by you. Read only; the Archive app on your iPhone syncs them
+icon: map-pin';
+COMMENT ON COLUMN archive.place_visit.title IS 'What the place is called, like Gjelina, or its street address';
+COMMENT ON COLUMN archive.place_visit.address IS 'Its street address';
+COMMENT ON COLUMN archive.place_visit.city IS 'Its city';
+COMMENT ON COLUMN archive.place_visit.country IS 'Its country';
+COMMENT ON COLUMN archive.place_visit.category IS 'What kind of place Apple Maps says it is, like restaurant, cafe or airport';
+COMMENT ON COLUMN archive.place_visit.latitude IS 'Where, north of the equator';
+COMMENT ON COLUMN archive.place_visit.longitude IS 'Where, east of Greenwich';
+COMMENT ON COLUMN archive.place_visit.accuracy IS 'How sure the phone was of where, in meters';
+COMMENT ON COLUMN archive.place_visit.arrived_at IS 'When you got there';
+COMMENT ON COLUMN archive.place_visit.departed_at IS 'When you left; null while you are still there';
+COMMENT ON COLUMN archive.place_visit.connection IS 'references connection; the iPhone it is from';
+COMMENT ON COLUMN archive.place_visit.stream IS 'What the app syncs it as: places';
+COMMENT ON COLUMN archive.place_visit.source_id IS 'When you arrived and where, as the phone keys it';
+COMMENT ON COLUMN archive.place_visit.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.place_visit.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.investment_holding (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -4409,7 +4455,8 @@ BEGIN
         WHEN 'workflow' THEN own
         WHEN 'workflow_run' THEN concat_ws(' · ', (SELECT w.name FROM archive.workflow w WHERE w.id = (r->>'workflow')::uuid),
             to_char((r->>'created_at')::timestamptz AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI'))
-        WHEN 'connection' THEN concat_ws(' · ', nullif(r->>'account', ''), r->>'provider')
+        WHEN 'connection' THEN CASE WHEN r->>'provider' = 'iphone' THEN coalesce(nullif(r#>>'{meta,device}', ''), 'iPhone')
+            ELSE concat_ws(' · ', nullif(r->>'account', ''), r->>'provider') END
         WHEN 'known_person' THEN r->>'email'
         WHEN 'known_org' THEN coalesce(r->>'domain', r->>'ein')
         WHEN 'mail_message' THEN coalesce(nullif(btrim(r->>'subject'), ''), nullif(left(btrim(r->>'snippet'), 120), ''), 'No subject')
@@ -4490,6 +4537,7 @@ BEGIN
         WHEN 'health_workout' THEN concat_ws(' · ', initcap(coalesce(nullif(r->>'sport', ''), 'workout')), left(r->>'starts_at', 10))
         WHEN 'health_record' THEN concat_ws(' · ', coalesce(nullif(r->>'title', ''), r->>'type'), left(r->>'at', 10))
         WHEN 'photo' THEN concat_ws(' · ', coalesce(nullif(r->>'title', ''), initcap(r->>'kind')), left(r->>'taken_at', 10))
+        WHEN 'place_visit' THEN concat_ws(' · ', coalesce(nullif(r->>'title', ''), nullif(r->>'address', ''), 'A place'), left(r->>'arrived_at', 10))
         WHEN 'investment_holding' THEN concat_ws(' · ', coalesce(nullif(r->>'ticker', ''), r->>'security'), nullif(r->>'quantity', ''))
         WHEN 'investment_transaction' THEN concat_ws(' · ', initcap(r->>'kind'), coalesce(nullif(r->>'ticker', ''), nullif(r->>'security', ''), nullif(r->>'description', '')), r->>'traded_on')
         WHEN 'bank_liability' THEN concat_ws(' · ', initcap(r->>'kind'), nullif(r->>'loan_name', ''))
@@ -4589,6 +4637,7 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.health_sleep FOR E
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.health_workout FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.health_record FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.photo FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.place_visit FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.investment_holding FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.investment_transaction FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.bank_liability FOR EACH ROW EXECUTE FUNCTION archive.object_name();
@@ -4731,6 +4780,7 @@ GRANT SELECT ON archive.health_sleep TO "{p}_viewer";
 GRANT SELECT ON archive.health_workout TO "{p}_viewer";
 GRANT SELECT ON archive.health_record TO "{p}_viewer";
 GRANT SELECT ON archive.photo TO "{p}_viewer";
+GRANT SELECT ON archive.place_visit TO "{p}_viewer";
 GRANT SELECT ON archive.investment_holding TO "{p}_viewer";
 GRANT SELECT ON archive.investment_transaction TO "{p}_viewer";
 GRANT SELECT ON archive.bank_liability TO "{p}_viewer";
@@ -4932,6 +4982,8 @@ ALTER TABLE archive.health_record ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.health_record FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = health_record.connection));
 ALTER TABLE archive.photo ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.photo FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = photo.connection));
+ALTER TABLE archive.place_visit ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.place_visit FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = place_visit.connection));
 ALTER TABLE archive.investment_holding ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.investment_holding FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = investment_holding.connection));
 ALTER TABLE archive.investment_transaction ENABLE ROW LEVEL SECURITY;
@@ -5292,7 +5344,7 @@ SELECT jsonb_build_object(
             'archive.spend_department'::regclass, 'archive.spend_user'::regclass, 'archive.spend_card'::regclass,
             'archive.spend_transaction'::regclass, 'archive.spend_receipt'::regclass,
             'archive.warehouse_table'::regclass, 'archive.warehouse_column'::regclass,
-            'archive.photo'::regclass,
+            'archive.photo'::regclass, 'archive.place_visit'::regclass,
             'archive.investment_holding'::regclass, 'archive.investment_transaction'::regclass,
             'archive.bank_liability'::regclass, 'archive.budget_category'::regclass,
             'archive.parcel'::regclass, 'archive.parcel_event'::regclass, 'archive.vehicle'::regclass, 'archive.vehicle_charge'::regclass, 'archive.home_device'::regclass,
@@ -5442,6 +5494,7 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.spend_transaction x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.warehouse_table x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.photo x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.place_visit x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.investment_holding x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.investment_transaction x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.bank_liability x WHERE x.connection = c.id)
@@ -5486,9 +5539,16 @@ ON CONFLICT (id) DO UPDATE SET member = EXCLUDED.member, token = EXCLUDED.token,
     sync_at = now(), revoked = false;
 
 -- name: DeviceConnection :one
-INSERT INTO archive.connection (member, provider, account, token, sync_at) VALUES ($1, 'iphone', $2, ''::bytea, NULL)
-ON CONFLICT (member, provider, account) DO UPDATE SET updated_at = now(), revoked = false
+INSERT INTO archive.connection (member, provider, account, name, meta, token, sync_at)
+VALUES ($1, 'iphone', $2, $3, jsonb_build_object('device', $3::text), ''::bytea, NULL)
+ON CONFLICT (member, provider, account) DO UPDATE SET meta = archive.connection.meta || excluded.meta, updated_at = now(), revoked = false
 RETURNING *;
+
+-- name: DeviceAttest :exec
+UPDATE archive.connection SET meta = jsonb_set(meta, '{attest}', to_jsonb($2::text)), updated_at = now() WHERE id = $1;
+
+-- name: PhotoOriginal :execrows
+UPDATE archive.photo SET original = $3, updated_at = now() WHERE connection = $1 AND stream = 'photos' AND source_id = $2;
 
 -- name: RenameConnection :exec
 UPDATE archive.connection c SET account = $2, updated_at = now()

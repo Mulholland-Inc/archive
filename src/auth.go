@@ -5,12 +5,15 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/ecdsa"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -510,6 +513,7 @@ const (
 	signinCeremony = "archive_webauthn"
 	signinOIDC     = "archive_oidc"
 	signinGitHub   = "https://github.com"
+	signinApple    = "https://appleid.apple.com"
 )
 
 var (
@@ -520,6 +524,7 @@ var (
 		{ID: "microsoft", Name: "Microsoft", base: "https://login.microsoftonline.com"},
 		{ID: "slack", Name: "Slack", base: "https://slack.com"},
 		{ID: "github", Name: "GitHub", base: signinGitHub},
+		{ID: "apple", Name: "Apple", base: signinApple},
 	}
 )
 
@@ -551,6 +556,13 @@ type signinProvider struct {
 	signinConfig
 	cfg      oauth2.Config
 	verifier *oidc.IDTokenVerifier
+	apple    *signinAppleKey
+}
+
+// signinAppleKey signs the client secret Sign in with Apple wants instead of a fixed one: a JWT from the team's key, good for an hour.
+type signinAppleKey struct {
+	team, id string
+	key      *ecdsa.PrivateKey
 }
 
 type signinMethods struct {
@@ -609,6 +621,11 @@ func newSignin(h *Hub) (*signin, error) {
 		c.clientID = p.User.Username()
 		c.secret, _ = p.User.Password()
 		c.base = strings.TrimRight(p.Scheme+"://"+p.Host+p.Path, "/")
+		if c.ID == "apple" {
+			if _, err := signinAppleKeyOf(c.secret); err != nil {
+				return nil, fmt.Errorf("%s: want https://<services id>:<team id>.<key id>.<the .p8 key, base64>@appleid.apple.com, URL-escaped: %v", env, err)
+			}
+		}
 		if c.clientID != "" && c.secret != "" {
 			s.configs = append(s.configs, c)
 		}
@@ -826,7 +843,22 @@ func (s *signin) handler() http.Handler {
 		bind := authNewSecret()
 		st := signinState{Nonce: authNewSecret(), Verifier: oauth2.GenerateVerifier(), Bind: authHash(bind), Exp: time.Now().Add(10 * time.Minute).Unix(), Next: signinNext(r.URL.Query().Get("next"))}
 		http.SetCookie(w, s.cookie(signinOIDC, bind, "/auth/oidc/", 600))
-		http.Redirect(w, r, p.cfg.AuthCodeURL(s.seal(st), oidc.Nonce(st.Nonce), oauth2.S256ChallengeOption(st.Verifier)), http.StatusFound)
+		opts := []oauth2.AuthCodeOption{oidc.Nonce(st.Nonce), oauth2.S256ChallengeOption(st.Verifier)}
+		if p.apple != nil {
+			// Apple sends the name and email only to a form post, and takes no PKCE.
+			opts = []oauth2.AuthCodeOption{oidc.Nonce(st.Nonce), oauth2.SetAuthURLParam("response_mode", "form_post")}
+		}
+		http.Redirect(w, r, p.cfg.AuthCodeURL(s.seal(st), opts...), http.StatusFound)
+	})
+	// Apple posts the code back from its own site, which carries no Lax cookie; a redirect to the GET callback carries it again.
+	mux.HandleFunc("POST /auth/oidc/{provider}/callback", func(w http.ResponseWriter, r *http.Request) {
+		q := url.Values{}
+		for _, k := range []string{"code", "state", "error"} {
+			if v := r.PostFormValue(k); v != "" {
+				q.Set(k, v)
+			}
+		}
+		http.Redirect(w, r, s.h.api+"/auth/oidc/"+url.PathEscape(r.PathValue("provider"))+"/callback?"+q.Encode(), http.StatusSeeOther)
 	})
 	mux.HandleFunc("GET /auth/oidc/{provider}/callback", func(w http.ResponseWriter, r *http.Request) {
 		http.SetCookie(w, s.cookie(signinOIDC, "", "/auth/oidc/", -1))
@@ -935,6 +967,13 @@ func (s *signin) provider(id string) (*signinProvider, error) {
 	c := s.configs[i]
 	p := &signinProvider{signinConfig: c, cfg: oauth2.Config{ClientID: c.clientID, ClientSecret: c.secret,
 		RedirectURL: s.h.api + "/auth/oidc/" + id + "/callback", Scopes: []string{oidc.ScopeOpenID, "email", "profile"}}}
+	if id == "apple" {
+		key, err := signinAppleKeyOf(c.secret)
+		if err != nil {
+			return nil, err
+		}
+		p.apple, p.cfg.Scopes = key, []string{"name", "email"}
+	}
 	if id == "github" {
 		p.cfg.Endpoint, p.cfg.Scopes = github.Endpoint, []string{"read:user", "user:email"}
 		if c.base != signinGitHub {
@@ -951,6 +990,9 @@ func (s *signin) provider(id string) (*signinProvider, error) {
 			return nil, fmt.Errorf("sign-in provider %s: %w", c.Name, err)
 		}
 		p.cfg.Endpoint = op.Endpoint()
+		if p.apple != nil {
+			p.cfg.Endpoint.AuthStyle = oauth2.AuthStyleInParams
+		}
 		p.verifier = op.Verifier(&oidc.Config{ClientID: c.clientID, SkipIssuerCheck: id == "microsoft"})
 	}
 	s.providers[id] = p
@@ -991,16 +1033,18 @@ func (s *signin) identify(ctx context.Context, p *signinProvider, tok *oauth2.To
 		return nil, fmt.Errorf("sign-in: unexpected issuer %s: %w", idt.Issuer, ErrUnauthorized)
 	}
 	var claims struct {
-		Email         string `json:"email"`
-		EmailVerified bool   `json:"email_verified"`
-		DomainOwner   bool   `json:"xms_edov"`
-		Name          string `json:"name"`
+		Email         string          `json:"email"`
+		EmailVerified json.RawMessage `json:"email_verified"`
+		DomainOwner   bool            `json:"xms_edov"`
+		Name          string          `json:"name"`
 	}
 	if err := idt.Claims(&claims); err != nil {
 		return nil, err
 	}
 	id := &signinIdentity{link: signinOIDCLink{idt.Issuer, idt.Subject}, name: claims.Name}
-	if claims.EmailVerified || p.ID == "microsoft" && claims.DomainOwner {
+	// Apple says email_verified as the string "true".
+	verified := string(claims.EmailVerified) == "true" || string(claims.EmailVerified) == `"true"`
+	if verified || p.ID == "microsoft" && claims.DomainOwner {
 		id.email = claims.Email
 	}
 	return id, nil
@@ -1069,7 +1113,14 @@ func (s *signin) oidcCallback(r *http.Request) (*User, error) {
 	if c, err := r.Cookie(signinOIDC); err != nil || authHash(c.Value) != st.Bind {
 		return nil, signinMismatch
 	}
-	tok, err := p.cfg.Exchange(ctx, r.URL.Query().Get("code"), oauth2.VerifierOption(st.Verifier))
+	cfg, opts := p.cfg, []oauth2.AuthCodeOption{oauth2.VerifierOption(st.Verifier)}
+	if p.apple != nil {
+		if cfg.ClientSecret, err = p.apple.secret(p.clientID); err != nil {
+			return nil, err
+		}
+		opts = nil
+	}
+	tok, err := cfg.Exchange(ctx, r.URL.Query().Get("code"), opts...)
 	if err != nil {
 		return nil, fmt.Errorf("sign-in: %v: %w", err, ErrUnauthorized)
 	}
@@ -1099,6 +1150,40 @@ func (s *signin) oidcCallback(r *http.Request) (*User, error) {
 		return nil, signinRefused
 	}
 	return u, err
+}
+
+func signinAppleKeyOf(secret string) (*signinAppleKey, error) {
+	team, rest, _ := strings.Cut(secret, ".")
+	id, raw, _ := strings.Cut(rest, ".")
+	b, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		return nil, fmt.Errorf("the key is not base64: %v", err)
+	}
+	if block, _ := pem.Decode(b); block != nil {
+		b = block.Bytes
+	}
+	k, err := x509.ParsePKCS8PrivateKey(b)
+	ec, ok := k.(*ecdsa.PrivateKey)
+	if err != nil || !ok || team == "" || id == "" {
+		return nil, errors.New("want the team id, the key id and the key Apple gave as a .p8")
+	}
+	return &signinAppleKey{team: team, id: id, key: ec}, nil
+}
+
+func (k *signinAppleKey) secret(clientID string) (string, error) {
+	now := time.Now()
+	head, _ := json.Marshal(map[string]string{"alg": "ES256", "kid": k.id})
+	body, _ := json.Marshal(map[string]any{"iss": k.team, "iat": now.Unix(), "exp": now.Add(time.Hour).Unix(), "aud": signinApple, "sub": clientID})
+	signed := base64.RawURLEncoding.EncodeToString(head) + "." + base64.RawURLEncoding.EncodeToString(body)
+	sum := sha256.Sum256([]byte(signed))
+	r, s, err := ecdsa.Sign(rand.Reader, k.key, sum[:])
+	if err != nil {
+		return "", err
+	}
+	sig := make([]byte, 64)
+	r.FillBytes(sig[:32])
+	s.FillBytes(sig[32:])
+	return signed + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
 
 func signinNext(next string) string {
