@@ -201,7 +201,7 @@ var catalogLayouts = []string{"table", "board", "calendar", "list", "map", "gall
 
 var (
 	catalogSystem   = map[string]bool{"id": true, "created_at": true, "updated_at": true}
-	catalogReserved = map[string]bool{"files": true, "views": true, "search": true, "schema": true, "types": true,
+	catalogReserved = map[string]bool{"boot": true, "files": true, "views": true, "search": true, "schema": true, "types": true,
 		"member": true, "group": true, "user": true, "token": true, "file": true, "upload": true, "revision": true, "run": true,
 		"workflow": true, "workflow_run": true, "connection": true, "agent": true, "turn": true, "memory": true}
 	catalogNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)

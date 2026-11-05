@@ -195,19 +195,11 @@ async function booted(v, key, load) {
   return out;
 }
 
-const agentList = (workspace) =>
-  runCode(
-    `const agents = await archive.list("agent", { limit: 1000 });
-const last = await archive.query(\`SELECT DISTINCT ON (agent) agent, updated_at AS at FROM archive.turn ORDER BY agent, n DESC\`);
-return agents.map((a) => { const t = last.find((t) => t.agent === a.id); return { ...a, at: t?.at ?? '' }; });`,
-    workspace
-  );
-
 export const agents = resource({
   tables: ['archive.agent'],
   load: async () => {
     const v = ws();
-    const list = (await booted(v, 'agents', () => agentList(v.id))) ?? [];
+    const list = (await booted(v, 'agents', () => api('/api/agent/list', { workspace: v.id }))) ?? [];
     const had = new Map(v.agents.map((a) => [a.id, a]));
     const ids = new Set(list.map((a) => a.id));
     const seen = local(`archive.seen:${v.id}`, {});
@@ -341,19 +333,11 @@ const runCode = async (code, workspace) => {
   if (out?.error) throw new Error(out.error);
   return out?.result;
 };
-const workflowList = (workspace) =>
-  runCode(
-    `const ws = await archive.list("workflow", { limit: 1000 });
-const last = await archive.query("SELECT DISTINCT ON (workflow) id, workflow, created_at AS at, trigger, ms, error FROM workflow_run ORDER BY workflow, created_at DESC, id DESC");
-return ws.map((w) => ({ ...w, last: last.find((r) => r.workflow === w.id) ?? null }));`,
-    workspace
-  );
-
 export const workflows = resource({
   tables: ['archive.workflow', 'archive.workflow_run'],
   load: async () => {
     const v = ws();
-    const list = (await booted(v, 'workflows', () => workflowList(v.id))) ?? [];
+    const list = (await booted(v, 'workflows', () => api('/api/workflow/list', { workspace: v.id }))) ?? [];
     v.flows = list;
     const had = new Map(v.workflows.map((w) => [w.id, w]));
     v.workflows = list.map((w) => {
