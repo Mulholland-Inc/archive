@@ -286,6 +286,8 @@ func WritePlaces(ctx context.Context, file string) error {
 	if err != nil {
 		return err
 	}
+	oracle.Places = append(oracle.Places, fhirPlace{Name: "Oracle Health sandbox (test patients)", Server: len(oracle.Servers)})
+	oracle.Servers = append(oracle.Servers, fhirServer{FHIR: "https://fhir-myrecord.cerner.com/r4/ec2458f2-1e24-41c8-b71b-0e701af7583d"})
 	for _, d := range []*fhirPlaces{epic, oracle} {
 		if err := smartOf(ctx, d.Servers); err != nil {
 			return err
