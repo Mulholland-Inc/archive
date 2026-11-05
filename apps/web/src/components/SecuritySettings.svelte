@@ -1,11 +1,11 @@
 <script>
   import { Copy } from '@lucide/svelte';
   import { encode } from 'uqr';
-  import Section from './Section.svelte';
-  import SettingsRow from './SettingsRow.svelte';
+  import Art from './Art.svelte';
   import Button from './Button.svelte';
+  import CodeInput from './CodeInput.svelte';
+  import Heading from './Heading.svelte';
   import IconButton from './IconButton.svelte';
-  import Input from './Input.svelte';
   import { api, said } from '../lib/api.js';
 
   let on = $state(null);
@@ -15,8 +15,11 @@
   let error = $state('');
   let busy = $state(false);
 
-  const qr = $derived(link && encode(link.uri, { border: 4 }));
+  const qr = $derived(link && encode(link.uri, { border: 4, ecc: 'H' }));
   const dark = $derived(qr && qr.data.flatMap((row, y) => row.flatMap((cell, x) => (cell ? [`M${x} ${y}h1v1h-1z`] : []))).join(''));
+
+  const plate = $derived(qr && Math.round(qr.size * 0.24));
+  const corner = $derived(qr && (qr.size - plate) / 2);
 
   api('/auth/totp')
     .then((out) => (on = out.on))
@@ -36,23 +39,19 @@
 
   const start = () => act(async () => (link = await api('/auth/totp/setup', { method: 'POST' })));
 
-  const post = async (path) => (on = (await api(path, { method: 'POST', body: { code: code.replace(/\D/g, '') } })).on);
+  const post = async (path) => (on = (await api(path, { method: 'POST', body: { code } })).on);
 
-  function confirm(event) {
-    event.preventDefault();
+  const confirm = () =>
     act(async () => {
       await post('/auth/totp/enable');
       link = null;
     });
-  }
 
-  function unlink(event) {
-    event.preventDefault();
+  const unlink = () =>
     act(async () => {
       await post('/auth/totp/disable');
       unlinking = false;
     });
-  }
 
   function cancel() {
     link = null;
@@ -61,40 +60,68 @@
   }
 </script>
 
-<Section title="Authenticator app">
+{#snippet failure()}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
+{/snippet}
+
+<div class="page">
   {#if link}
-    <svg class="qr" viewBox="0 0 {qr.size} {qr.size}" shape-rendering="crispEdges" role="img" aria-label="QR code"><path d={dark} /></svg>
-    <div class="key">
-      <span class="value">{link.key}</span>
-      <IconButton icon={Copy} label="Copy key" size="sm" onclick={() => navigator.clipboard?.writeText(link.key).catch(() => {})} />
+    <div class="card">
+      <svg class="qr" viewBox="0 0 {qr.size} {qr.size}" shape-rendering="crispEdges" role="img" aria-label="QR code"><path d={dark} /><image href="{import.meta.env.BASE_URL}art/shield.webp" x={corner} y={corner} width={plate} height={plate} /></svg>
+      <Heading size="xl" wrap="normal">Scan, then enter your code</Heading>
+      <div class="key">
+        <span class="value">{link.key}</span>
+        <IconButton icon={Copy} label="Copy key" size="sm" onclick={() => navigator.clipboard?.writeText(link.key).catch(() => {})} />
+      </div>
+      <CodeInput bind:value={code} {busy} invalid={error && !code} done={confirm} />
+      {@render failure()}
+      <Button variant="ghost" onclick={cancel}>Cancel</Button>
     </div>
-    <form class="code" onsubmit={confirm}>
-      <Input bind:value={code} aria-label="Code" placeholder="Code" inputmode="numeric" autocomplete="one-time-code" />
-      <Button variant="primary" type="submit" loading={busy}>Link</Button>
-      <Button variant="ghost" onclick={cancel}>Cancel</Button>
-    </form>
   {:else if unlinking}
-    <form class="code" onsubmit={unlink}>
-      <Input bind:value={code} aria-label="Code" placeholder="Code" inputmode="numeric" autocomplete="one-time-code" />
-      <Button variant="primary" type="submit" loading={busy}>Unlink</Button>
+    <div class="card">
+      <Art name="linked" />
+      <Heading size="xl" wrap="normal">Enter your code to unlink</Heading>
+      <CodeInput bind:value={code} {busy} invalid={error && !code} done={unlink} />
+      {@render failure()}
       <Button variant="ghost" onclick={cancel}>Cancel</Button>
-    </form>
+    </div>
   {:else if on !== null}
-    <SettingsRow label={on ? 'Linked' : 'Not linked'}>
+    <div class="card">
+      <Art name={on ? 'linked' : 'unlinked'} />
+      <Heading size="xl" wrap="normal">Authenticator app</Heading>
+      {@render failure()}
       {#if on}
         <Button onclick={() => (unlinking = true)}>Unlink</Button>
       {:else}
-        <Button loading={busy} onclick={start}>Link</Button>
+        <Button variant="primary" loading={busy} onclick={start}>Link</Button>
       {/if}
-    </SettingsRow>
+    </div>
+  {:else}
+    {@render failure()}
   {/if}
-</Section>
+</div>
 
 <style>
+  .page {
+    display: grid;
+    place-items: center;
+    min-height: 100%;
+    padding-block: var(--space-4);
+  }
+
+  .card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-4);
+    width: 100%;
+    max-width: var(--measure-xs);
+    text-align: center;
+  }
+
   .qr {
-    width: var(--settings-art);
-    height: var(--settings-art);
+    width: 100%;
+    max-width: var(--settings-qr);
     border-radius: var(--radius-lg);
     background: #fff;
     fill: #000;
@@ -104,7 +131,7 @@
     display: flex;
     align-items: center;
     gap: var(--space-1);
-    max-width: var(--measure-sm);
+    width: 100%;
     min-height: var(--control-xl);
     padding: var(--space-1) var(--space-1) var(--space-1) var(--space-4);
     border-radius: var(--radius-lg);
@@ -116,19 +143,8 @@
     flex: 1;
     min-width: 0;
     overflow-wrap: anywhere;
-    font-size: var(--text-md);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .code {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    max-width: var(--measure-sm);
-  }
-
-  .code :global(.box) {
-    flex: 1;
+    font-size: var(--text-sm);
+    text-align: start;
   }
 
   .error {
