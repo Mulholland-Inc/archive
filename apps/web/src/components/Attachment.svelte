@@ -1,20 +1,14 @@
 <script>
   import { X } from '@lucide/svelte';
   import Icon from './Icon.svelte';
+  import { fileArt } from '../lib/live.js';
 
   let { name, kind = 'document', size, onremove, onopen, row = false } = $props();
-  // Kinds don't tell these apart, so their extensions do.
-  const types = [
-    [/\.(pptx?|pptm|potx|key|odp)$/i, 'presentation'],
-    [/\.(mp4|m4v|mov|webm|mkv|avi)$/i, 'video'],
-    [/\.(txt|md|json|log)$/i, 'text']
-  ];
-  const art = $derived(types.find(([re]) => re.test(name))?.[1] ?? (['image', 'recording', 'spreadsheet', 'pdf'].includes(kind) ? kind : /\.(docx?|odt|rtf|pages)$/i.test(name) ? 'document' : 'file'));
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <svelte:element this={onopen ? 'button' : 'span'} type={onopen ? 'button' : undefined} class={['att', { row }]} onclick={onopen}>
-  <img class="thumb" src={`/types/file-${art}.webp`} alt="" />
+  <img class="thumb" src={fileArt(name, kind)} alt="" />
   <span class="meta">
     <span class="name">{name}</span>
     {#if size}<span class="size">{size}</span>{/if}

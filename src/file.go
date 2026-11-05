@@ -100,7 +100,7 @@ func fileName(name, hash string) string {
 	return name
 }
 
-// AddFile stores a file that the group access sees, by its id or its name, or everyone with "".
+// AddFile stores a file that the group access sees, by its id or its name, or everyone with ""; in a folder, as the folder is seen.
 func (a *Archive) AddFile(ctx context.Context, access, name string, parent *uuid.UUID, r io.Reader) (*File, error) {
 	if _, err := signedIn(ctx); err != nil {
 		return nil, err
@@ -112,7 +112,7 @@ func (a *Archive) AddFile(ctx context.Context, access, name string, parent *uuid
 	return a.fileAdd(ctx, g, name, parent, r)
 }
 
-// AddFolder makes a folder in parent, or at the top with nil, that the group access sees.
+// AddFolder makes a folder in parent, or at the top with nil, that the group access sees; in a folder, as that one is seen.
 func (a *Archive) AddFolder(ctx context.Context, access, name string, parent *uuid.UUID) (*File, error) {
 	name = strings.TrimSpace(filepath.Base(strings.ReplaceAll(name, "\\", "/")))
 	if name == "" || name == "." || name == "/" {
@@ -127,7 +127,7 @@ func (a *Archive) AddFolder(ctx context.Context, access, name string, parent *uu
 	})
 }
 
-// MoveFile puts file id in the folder parent, or at the top with nil.
+// MoveFile puts file id in the folder parent, whose access it takes, or at the top with nil, keeping its own.
 func (a *Archive) MoveFile(ctx context.Context, id uuid.UUID, parent *uuid.UUID) (*File, error) {
 	if err := a.fileMine(ctx, id, "move"); err != nil {
 		return nil, err
@@ -344,6 +344,13 @@ func (a *Archive) fileCommit(ctx context.Context, access *uuid.UUID, name string
 		}
 		var f *File
 		var err error
+		access := access
+		if access == nil && parent != nil {
+			// A folder it cannot see is file_check's to refuse.
+			if up, err := fileOf(q.GetFile(ctx, *parent)); err == nil {
+				access = up.Access
+			}
+		}
 		if conn != nil {
 			f, err = fileOf(q.FileKept(ctx, conn, hash, name))
 		} else {
@@ -449,7 +456,7 @@ func (a *Archive) RenameFile(ctx context.Context, id uuid.UUID, name string) (*F
 }
 
 // SetFileAccess gives file id to the group access, by its id or its name, or to everyone with "", as an editor
-// in both groups, or an owner, does.
+// in both groups, or an owner, does, and a folder all that is in it. What is in a folder takes the folder's.
 func (a *Archive) SetFileAccess(ctx context.Context, id uuid.UUID, access string) (*File, error) {
 	g, err := a.fileGroup(ctx, access)
 	if err != nil {

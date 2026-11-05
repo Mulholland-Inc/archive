@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { Upload, LayoutGrid, List as ListIcon, Ellipsis, Download, Pencil, MessageSquarePlus, SearchX, FolderPlus, ExternalLink, FileText, Folder, Image, AudioLines, FileSpreadsheet, Inbox } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
@@ -10,6 +10,7 @@
   import Chip from '../components/Chip.svelte';
   import SegmentedControl from '../components/SegmentedControl.svelte';
   import FileTile from '../components/FileTile.svelte';
+  import Attachment from '../components/Attachment.svelte';
   import Table from '../components/Table.svelte';
   import Button from '../components/Button.svelte';
   import IconButton from '../components/IconButton.svelte';
@@ -26,13 +27,14 @@
   import Skeleton from '../components/Skeleton.svelte';
   import FileInput from '../components/FileInput.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { ws, seedOf, uploadFiles, addFolder, downloadFile, library, members, groups, mayLimit, accessOptions, setFileAccess, folderFiles, fileById, findFiles } from '../lib/app.svelte.js';
+  import { ws, seedOf, uploadFiles, addFolder, moveFile, downloadFile, library, members, groups, mayLimit, accessOptions, setFileAccess, folderFiles, fileById, findFiles } from '../lib/app.svelte.js';
 
   library.use();
   members.use();
   groups.use();
-  import { prompt } from '../lib/dialogs.svelte.js';
-  import { route } from '../lib/router.svelte.js';
+  import { prompt, confirmDialog } from '../lib/dialogs.svelte.js';
+  import { route, go, replace } from '../lib/router.svelte.js';
+  import { fileArt } from '../lib/live.js';
   import { fileItems, askAboutFile, renameFilePrompt as rename } from '../lib/menus.js';
 
   const kinds = [
@@ -56,19 +58,24 @@
     { key: 'name', label: 'Name' },
     { key: 'modified', label: 'Changed', muted: true, width: 'sm' },
     { key: 'size', label: 'Size', muted: true, align: 'end', width: 'sm' },
+    { key: 'folder', label: 'Who sees it', muted: true, width: 'sm' },
     { key: 'menu', label: '', width: 'xs', align: 'end' }
   ];
 
   let query = $state('');
   let kind = $state('all');
-  // Where in the tree: the folders opened, top first, each a folder's id or a connection's. A connection's has no parent.
+  // Where in the tree, as the URL says: the folders opened, top first, each a folder's id or a connection's. A connection's has no parent.
   let trail = $state([]);
   let rows = $state([]);
   let found = $state(null);
   let sort = $state('recent');
   let view = $state('grid');
-  let openId = $state(route.parts[1] ?? null);
-  let preview = $state(Boolean(route.parts[1]));
+  let openId = $state(null);
+  let preview = $state(false);
+  let moving = $state(null);
+  let moveOpen = $state(false);
+  let moveTrail = $state([]);
+  let moveRows = $state([]);
   let searchEl = $state();
 
   const here = $derived(trail.at(-1));
@@ -82,6 +89,45 @@
     const out = listed.filter((f) => kind === 'all' || f.kind === kind || f.kind === 'folder');
     const by = sort === 'name' ? (a, b) => a.name.localeCompare(b.name) : sort === 'size' ? (a, b) => (b.bytes ?? bytes(b.size ?? '0')) - (a.bytes ?? bytes(a.size ?? '0')) : () => 0;
     return [...out].sort((a, b) => (b.kind === 'folder') - (a.kind === 'folder') || by(a, b));
+  });
+
+  // /library/<id> is a connection or a folder to go to, or a file to open where it is.
+  async function locate(id) {
+    try {
+      const f = await fileById(id);
+      const chain = f.kind === 'folder' ? [f] : [];
+      for (let up = f.parent; up; ) {
+        const d = await fileById(up);
+        chain.unshift(d);
+        up = d.parent;
+      }
+      if (route.parts[1] !== id) return;
+      const from = f.connection && sources.find((s) => s.id === f.connection);
+      trail = from ? [from, ...chain] : chain;
+      if (f.kind !== 'folder') {
+        openId = id;
+        preview = true;
+      }
+    } catch {
+      if (route.parts[1] === id) replace('/library');
+    }
+  }
+
+  $effect(() => {
+    const id = route.parts[1];
+    if (ws().loading) return;
+    const known = sources.find((s) => s.id === id);
+    untrack(() => {
+      if (!id) {
+        if (trail.length) trail = [];
+        return;
+      }
+      if (trail.at(-1)?.id === id) return;
+      const at = trail.findIndex((t) => t.id === id);
+      if (at >= 0) trail = trail.slice(0, at + 1);
+      else if (known) trail = [known];
+      else locate(id);
+    });
   });
 
   // A folder is read again when it opens, and when what it is read from moves.
@@ -114,8 +160,10 @@
 
   function show(file) {
     if (file.kind === 'folder') {
-      trail = [...trail, file];
+      // From a search it may be anywhere, so the URL finds its place.
+      if (!found) trail = [...trail, file];
       query = '';
+      go(`/library/${file.id}`);
       return;
     }
     openId = file.id;
@@ -127,12 +175,50 @@
     askAboutFile(file);
   }
 
-  const fileActions = (file) => fileItems(file, { onopen: show });
+  function details(file) {
+    openId = file.id;
+    preview = true;
+  }
+
+  function startMove(file) {
+    moving = file;
+    moveTrail = [];
+    moveOpen = true;
+  }
+
+  // Where it can go: the folders here, never itself, and nothing a connection syncs.
+  $effect(() => {
+    const at = moveTrail.at(-1);
+    if (!moveOpen) return;
+    const keep = (list) => list.filter((f) => f.kind === 'folder' && !f.connection && f.id !== moving?.id);
+    if (!at) {
+      moveRows = keep(ws().library);
+      return;
+    }
+    folderFiles({ parent: at.id }).then((list) => {
+      if (moveTrail.at(-1) === at) moveRows = keep(list);
+    }).catch(() => {});
+  });
+
+  async function moveHere() {
+    const to = moveTrail.at(-1);
+    const file = moving;
+    moveOpen = false;
+    // At the top it keeps who sees it; in a folder it takes the folder's.
+    if (to && to.access !== file.access && !(await confirmDialog({ title: `Move ${file.name}?`, body: `${to.folder} will see it instead of ${file.folder}.`, confirm: 'Move' }))) return;
+    moveFile(file, to?.id ?? null);
+  }
+
+  const menuItems = (file) => fileItems(file, { onmove: startMove, onaccess: details });
+  const fileActions = (file) => fileItems(file, { onopen: show, onmove: startMove, onaccess: details });
 
   async function newFolder() {
     const name = await prompt({ title: 'New folder', label: 'Name', placeholder: 'Wedding, 1981', confirm: 'Create' });
     const made = name && (await addFolder(name, here?.id));
-    if (made) trail = [...trail, made];
+    if (made) {
+      trail = [...trail, made];
+      go(`/library/${made.id}`);
+    }
   }
 
   let picker = $state();
@@ -179,7 +265,7 @@
 {#snippet fileMenu(file)}
   <Menu end width="sm" label="File actions">
     {#snippet trigger(props)}<IconButton icon={Ellipsis} label={`Actions for ${file.name}`} size="sm" tooltip={false} {...props} />{/snippet}
-    <MenuItems items={fileItems(file)} />
+    <MenuItems items={menuItems(file)} />
   </Menu>
 {/snippet}
 
@@ -203,10 +289,10 @@
   <Stack gap="4">
     {#if trail.length && !found}
       <Stack direction="row" gap="1" align="center" wrap>
-        <Button size="sm" variant="ghost" onclick={() => (trail = [])}>Library</Button>
+        <Button size="sm" variant="ghost" onclick={() => go('/library')}>Library</Button>
         {#each trail as t, i (t.id)}
           <Text tone="secondary">/</Text>
-          <Button size="sm" variant="ghost" onclick={() => (trail = trail.slice(0, i + 1))}>{t.name}</Button>
+          <Button size="sm" variant="ghost" onclick={() => go(`/library/${t.id}`)}>{t.name}</Button>
         {/each}
       </Stack>
     {/if}
@@ -243,7 +329,7 @@
       {#snippet cell(row, col)}
         {#if col.key === 'name'}
           <Stack direction="row" gap="3" align="center">
-            <Icon icon={row.kind === 'folder' ? Folder : (kinds.find((k) => k.value === row.kind)?.icon ?? FileText)} size="md" />
+            <img class="art" src={fileArt(row.name, row.kind)} alt="" />
             <Text weight="medium" truncate>{row.name}</Text>
           </Stack>
         {:else if col.key === 'owner'}
@@ -266,9 +352,9 @@
     <Grid columns="2" gap="6">
       <FileTile file={open} />
       <Stack gap="0">
-        <SettingsRow label="Kind"><Badge>{open.ext}</Badge></SettingsRow>
+        {#if open.ext}<SettingsRow label="Kind"><Badge>{open.ext}</Badge></SettingsRow>{/if}
         <SettingsRow label="Who sees it">
-          {#if !open.connection && mayLimit(open.access)}
+          {#if !open.connection && !open.parent && mayLimit(open.access)}
             <Menu value={open.access ?? ''} options={accessOptions(open.access)} size="sm" variant="ghost" label={`Who sees ${open.name}`} onchange={(v) => setFileAccess(open, v || null)} />
           {:else}
             <Text tone="secondary">{open.folder}</Text>
@@ -284,6 +370,46 @@
     {#if open?.url}<Button icon={ExternalLink} onclick={() => window.open(open.url, '_blank', 'noopener')}>Open there</Button>{/if}
     {#if !open?.connection}<Button icon={Pencil} onclick={() => rename(open)}>Rename</Button>{/if}
     {#if open?.held}<Button icon={Download} onclick={() => downloadFile(open)}>Download</Button>{/if}
-    <Button variant="primary" icon={MessageSquarePlus} onclick={() => ask(open, close)}>Ask about this</Button>
+    {#if open?.kind !== 'folder'}<Button variant="primary" icon={MessageSquarePlus} onclick={() => ask(open, close)}>Ask about this</Button>{/if}
   {/snippet}
 </Dialog>
+
+<Dialog bind:open={moveOpen} title={moving ? `Move ${moving.name}` : 'Move'}>
+  <div class="moves">
+    <div class="crumbs">
+      <Stack direction="row" gap="1" align="center" wrap>
+        <Button size="sm" variant="ghost" onclick={() => (moveTrail = [])}>Library</Button>
+        {#each moveTrail as t, i (t.id)}
+          <Text tone="secondary">/</Text>
+          <Button size="sm" variant="ghost" onclick={() => (moveTrail = moveTrail.slice(0, i + 1))}>{t.name}</Button>
+        {/each}
+      </Stack>
+    </div>
+    {#each moveRows as f (f.id)}
+      <Attachment row name={f.name} kind="folder" onopen={() => (moveTrail = [...moveTrail, f])} />
+    {/each}
+  </div>
+  {#snippet footer()}
+    <Button variant="primary" disabled={(moveTrail.at(-1)?.id ?? null) === (moving?.parent ?? null)} onclick={moveHere}>Move here</Button>
+  {/snippet}
+</Dialog>
+
+<style>
+  /* A row's and a ghost button's padding reach out of the dialog's edge, so what is in them lines up with its title. */
+  .moves {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-inline: calc(var(--space-3) * -1);
+  }
+
+  .crumbs {
+    margin-inline-start: var(--space-1-5);
+  }
+
+  .art {
+    flex: none;
+    width: var(--control-sm);
+    height: var(--control-sm);
+  }
+</style>

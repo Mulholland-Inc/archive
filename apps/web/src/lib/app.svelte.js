@@ -1125,6 +1125,7 @@ export async function uploadFiles(list, parent) {
 // Who sees a file: the group it is limited to, Everyone, or for what a connection synced whoever sees the connection.
 function filed(f, w) {
   f.folder = f.access ? (groupById(f.access, w)?.name ?? 'Unknown group') : f.connection ? 'Who sees its connection' : 'Everyone';
+  if (f.kind === 'folder' && f.access) f.sub = f.folder;
   return f;
 }
 
@@ -1133,7 +1134,7 @@ export async function setFileAccess(file, access) {
   const w = ws();
   try {
     const f = filed(toFile(await call(`/api/files/${file.id}`, { method: 'PATCH', body: { access } }), w.name), w);
-    Object.assign(file, { access: f.access, folder: f.folder });
+    Object.assign(file, { access: f.access, folder: f.folder, sub: f.sub });
   } catch (e) {
     complain(e, `Couldn’t change who sees ${file.name}`);
   }
@@ -1148,16 +1149,24 @@ export async function addFolder(name, parent) {
   }
 }
 
-export async function renameFile(id, name) {
-  const f = ws().library.find((x) => x.id === id);
-  if (!f || !name) return;
-  const before = f.name;
-  f.name = name;
+export async function renameFile(file, name) {
+  if (!name) return;
+  const before = file.name;
+  file.name = name;
   try {
-    await call(`/api/files/${id}`, { method: 'PATCH', body: { name } });
+    await call(`/api/files/${file.id}`, { method: 'PATCH', body: { name } });
   } catch (e) {
-    f.name = before;
+    file.name = before;
     complain(e, 'Couldn’t rename the file');
+  }
+}
+
+// moveFile puts file in the folder parent, or at the top with null.
+export async function moveFile(file, parent) {
+  try {
+    await call(`/api/files/${file.id}`, { method: 'PATCH', body: { parent } });
+  } catch (e) {
+    complain(e, `Couldn’t move ${file.name}`);
   }
 }
 
