@@ -1,45 +1,198 @@
 <script>
-  import { onMount } from 'svelte';
-  import { check, mount } from '../lib/avatar.js';
-  import { AVATARS } from '../lib/avatars.js';
+  import { PERSONALITIES, personality, avatarOf, lit } from '../lib/looks.js';
 
-  let { avatar, tint = 0, mood = 'idle', size = 'md' } = $props();
+  let { avatar, tint = 0, seed = '', size = 'md', active = false } = $props();
 
-  // An agent writes its own avatar, so one the renderer refuses shows the fallback.
-  const def = $derived.by(() => {
-    const checked = check($state.snapshot(avatar));
-    return checked.ok ? checked.value : AVATARS[0];
-  });
+  const name = $derived(avatarOf(avatar));
+  const stem = $derived(`turn-${name}`);
+  const lights = $derived(lit(name));
+  const mood = $derived(personality(`${seed}${name}`));
+  const me = $derived(PERSONALITIES[mood]);
 
-  // The renderer takes colours, not tokens.
-  const token = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  const options = () => ({ def, tint: token(`--tint-${tint}`), ink: token('--color-avatar-ink'), mood });
+  let root = $state();
+  let frame = $state(0);
+  let awake = $state(false);
+  let eyes = $state(false);
+  let timer;
+  const later = (fn, ms) => (timer = setTimeout(fn, ms));
+  const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  let host;
-  let live;
+  function turn(to, pace, slowing, done) {
+    if (frame === to) return done?.();
+    frame += Math.sign(to - frame);
+    later(() => turn(to, pace * slowing, slowing, done), pace);
+  }
 
-  onMount(() => {
-    live = mount(host, options());
-    return () => live?.destroy();
-  });
+  function idle() {
+    later(() => {
+      const pick = Math.random();
+      eyes = false;
+      if (pick < 0.45) later(() => ((eyes = true), idle()), 110);
+      else turn(pick < 0.75 ? 2 : 1, me.pace * 1.6, 1, () => later(() => turn(3, me.pace * 1.6, 1, () => ((eyes = true), idle())), 420 + Math.random() * 500));
+    }, me.rest * (0.7 + Math.random() * 0.6));
+  }
+
+  function wake() {
+    clearTimeout(timer);
+    awake = true;
+    if (still()) return ((frame = 3), (eyes = true));
+    turn(3, me.pace, 1.15, () => ((eyes = true), idle()));
+  }
+
+  function sleep() {
+    clearTimeout(timer);
+    awake = false;
+    eyes = false;
+    if (still()) return (frame = 0);
+    later(() => turn(0, me.pace * 1.5, 1.3), 80);
+  }
 
   $effect(() => {
-    const next = options();
-    live?.update(next);
+    if (active) {
+      wake();
+      return sleep;
+    }
+    if (matchMedia('(hover: none)').matches) return;
+    const host = root.closest('button, a') ?? root;
+    host.addEventListener('pointerenter', wake);
+    host.addEventListener('pointerleave', sleep);
+    return () => {
+      clearTimeout(timer);
+      host.removeEventListener('pointerenter', wake);
+      host.removeEventListener('pointerleave', sleep);
+    };
   });
 </script>
 
-<span bind:this={host} class={['avatar', size]} aria-hidden="true"></span>
+<span bind:this={root} class={['bot', size, `mood-${mood}`, { building: !name.match(/^(float|face)$/), awake, eyes, facing: frame === 3 && awake }]} style:--tint={`var(--tint-${tint})`} aria-hidden="true">
+  <span class="art">
+    {#each [0, 1, 2, 3] as i (i)}
+      <span class={['layer', 'f', { show: frame === i }]} style:--src={`url(/bots/${stem}-${i}.webp)`}>
+        <img src={`/bots/${stem}-${i}.webp`} alt="" />
+        <i class="sheen"></i>
+      </span>
+    {/each}
+    {#if lights}
+      <img class="lit" src={`/bots/${stem}-lit.webp`} alt="" />
+      <img class="panel" src={`/bots/${stem}-panel.webp`} alt="" />
+      <i class="led red" style:--src={`url(/bots/${stem}-red.webp)`}></i>
+      <i class="led blue" style:--src={`url(/bots/${stem}-blue.webp)`}></i>
+    {/if}
+  </span>
+</span>
 
 <style>
-  .avatar {
-    display: block;
+  .bot {
+    position: relative;
+    display: grid;
+    place-items: center;
     flex: none;
     width: var(--avatar-md);
     height: var(--avatar-md);
+    overflow: visible;
   }
 
   .xs { width: var(--avatar-xs); height: var(--avatar-xs); }
   .lg { width: var(--avatar-lg); height: var(--avatar-lg); }
   .xxl { width: var(--avatar-2xl); height: var(--avatar-2xl); }
+
+  .mood-0 { --tilt: var(--bot-tilt-0); --lift: var(--bot-lift-0); }
+  .mood-1 { --tilt: var(--bot-tilt-1); --lift: var(--bot-lift-1); }
+  .mood-2 { --tilt: var(--bot-tilt-2); --lift: var(--bot-lift-2); }
+  .mood-3 { --tilt: var(--bot-tilt-3); --lift: var(--bot-lift-3); }
+
+  .art {
+    position: absolute;
+    inset: 0;
+    transition: transform var(--bot-turn) var(--ease-settle);
+  }
+
+  .building .art {
+    inset: var(--bot-building-inset);
+  }
+
+  .awake .art {
+    transform: translateY(var(--lift)) rotate(var(--tilt));
+    transition: transform var(--bot-wake) var(--ease-bounce);
+  }
+
+  img,
+  .layer {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  .layer {
+    isolation: isolate;
+  }
+
+  .sheen {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(var(--bot-sheen-angle), color-mix(in oklch, var(--tint) var(--bot-sheen-light), var(--tint-light)) 0%, var(--tint) var(--bot-sheen-mid), color-mix(in oklch, var(--tint) var(--bot-sheen-dark), var(--tint-dark)) 100%);
+    mix-blend-mode: multiply;
+    -webkit-mask: var(--src) center / 100% 100% no-repeat;
+    mask: var(--src) center / 100% 100% no-repeat;
+  }
+
+  .f,
+  .lit,
+  .panel,
+  .led {
+    opacity: 0;
+  }
+
+  .f.show,
+  .eyes .lit,
+  .facing .panel {
+    opacity: 1;
+  }
+
+  .led {
+    position: absolute;
+    inset: 0;
+    -webkit-mask: var(--src) center / 100% 100% no-repeat;
+    mask: var(--src) center / 100% 100% no-repeat;
+  }
+
+  .red {
+    background: var(--led-red);
+  }
+
+  .blue {
+    background: var(--led-blue);
+  }
+
+  .facing .red {
+    animation: red var(--duration-led-red) step-end infinite;
+  }
+
+  .facing .blue {
+    animation: blue var(--duration-led-blue) step-end infinite;
+  }
+
+  @keyframes red {
+    0%, 45% { opacity: 1; }
+    46%, 100% { opacity: 0; }
+  }
+
+  @keyframes blue {
+    0%, 30% { opacity: 0; }
+    31%, 70% { opacity: 1; }
+    71%, 100% { opacity: 0; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .led {
+      animation: none;
+    }
+
+    .art,
+    .awake .art {
+      transition: none;
+      transform: none;
+    }
+  }
 </style>
