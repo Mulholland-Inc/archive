@@ -5,6 +5,7 @@
   import Button from './Button.svelte';
   import Text from './Text.svelte';
   import FileInput from './FileInput.svelte';
+  import { ArrowUpRight } from '@lucide/svelte';
   import { connect, connectKeys } from '../lib/app.svelte.js';
   import { uploadLarge } from '../lib/api.js';
 
@@ -15,7 +16,7 @@
   let pickers = $state({});
   let busy = $state(false);
   let sent = $state(0);
-  let failed = $state('');
+  let error = $state('');
   const asks = $derived(connector.ask ? [connector.ask] : (connector.keys ?? []));
   const filled = $derived(asks.every((k) => (k.file ? picked[k.name] : (values[k.name] ?? '').trim() !== '')));
 
@@ -26,7 +27,7 @@
       return;
     }
     busy = true;
-    failed = '';
+    error = '';
     const keys = { ...values };
     try {
       for (const k of asks.filter((k) => k.file)) {
@@ -36,16 +37,18 @@
     } catch (e) {
       busy = false;
       sent = 0;
-      failed = `Couldn’t upload it: ${e.message}`;
+      error = `Couldn’t upload it: ${e.message}`;
       return;
     }
-    const ok = await connectKeys(connector.id, keys);
+    const ok = await connectKeys(connector.id, keys, undefined, true);
     busy = false;
     sent = 0;
-    if (ok) {
+    if (ok === true) {
       values = {};
       picked = {};
       close();
+    } else if (ok) {
+      error = ok.message ?? String(ok);
     }
   }
 </script>
@@ -61,10 +64,11 @@
           <Input {id} type={k.secret ? 'password' : 'text'} autocomplete="off" spellcheck="false" bind:value={values[k.name]} />
         {/if}
         {#if k.help}<Text size="sm" tone="secondary">{k.help}</Text>{/if}
+        {#if k.link}<Button size="sm" href={k.link} target="_blank" rel="noreferrer" iconEnd={ArrowUpRight}>Open {new URL(k.link).host}</Button>{/if}
       {/snippet}
     </Field>
   {/each}
-  {#if failed}<Text size="sm" tone="danger">{failed}</Text>{/if}
+  {#if error}<Text size="sm" tone="danger" role="alert">{error}</Text>{/if}
   {#snippet footer({ close })}
     <Button variant="ghost" onclick={close}>Cancel</Button>
     <Button variant="primary" disabled={!filled || busy} onclick={() => send(close)}>{busy ? (sent ? `Uploading… ${Math.floor(sent * 100)}%` : 'Connecting…') : connector.ask ? `Continue to ${connector.by ?? connector.name}` : asks.some((k) => k.file) ? 'Import' : 'Connect'}</Button>

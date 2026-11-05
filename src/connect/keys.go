@@ -19,6 +19,7 @@ type Key struct {
 	Name   string `json:"name"`
 	Label  string `json:"label"`
 	Help   string `json:"help,omitempty"`
+	Link   string `json:"link,omitempty"`
 	Secret bool   `json:"secret,omitempty"`
 	File   bool   `json:"file,omitempty"`
 	Find   string `json:"-"`

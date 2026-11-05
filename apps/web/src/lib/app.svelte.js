@@ -941,6 +941,10 @@ export function agentById(id) {
   return ws()?.agents.find((a) => a.id === id);
 }
 
+export function agentAddress(agent) {
+  return `${ws().slug}-${agent.slug}@${location.hostname.replace(/^app\./, '')}`;
+}
+
 export function rememberAgent(id) {
   setLocal(`archive.agent:${app.archive}`, id);
 }
@@ -1216,10 +1220,11 @@ export function connect(id, asked = {}) {
   if (c?.ready) location.assign(`${API}/connect/${encodeURIComponent(id)}?${q}`);
 }
 
-export async function connectKeys(id, keys, workspace) {
+export async function connectKeys(id, keys, workspace, quiet = false) {
   try {
     await call(`/connect/${encodeURIComponent(id)}/keys`, { method: 'POST', body: { keys }, workspace });
   } catch (e) {
+    if (quiet && !(e instanceof Unauthorized)) return e;
     complain(e, 'Couldn’t connect');
     return false;
   }

@@ -225,6 +225,7 @@ code.inline, .prose code { font: var(--weight-medium) var(--text-em) var(--font-
 .foot .big { margin-top: var(--space-8); }
 .foot .big svg { width: 100%; height: auto; fill: var(--fill-faint); }
 .foot .fine { display: flex; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; margin-top: var(--space-5); font-size: var(--text-2xs); color: var(--fg-muted); }
+.foot .marks { max-width: var(--measure-lg); margin-top: var(--space-3); font-size: var(--text-2xs); color: var(--fg-muted); }
 
 .code { background: var(--code-bg); color: var(--code-fg); border-radius: var(--radius-sm); overflow: hidden; font: var(--weight-normal) var(--text-xs) / var(--leading-loose) var(--font-mono); }
 .code-head { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-3) 0 var(--space-5); font: var(--weight-medium) var(--text-xs) / var(--leading-none) var(--font-sans); color: var(--fg-muted); }

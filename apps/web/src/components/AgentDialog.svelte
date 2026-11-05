@@ -9,7 +9,7 @@
   import LookPicker from './LookPicker.svelte';
   import Menu from './Menu.svelte';
   import { TINTS, AVATARS } from '../lib/looks.js';
-  import { app, groups, members, agentById, createAgent, updateAgent, mayLimit, accessOptions, ws } from '../lib/app.svelte.js';
+  import { app, groups, members, agentById, agentAddress, createAgent, updateAgent, mayLimit, accessOptions } from '../lib/app.svelte.js';
 
   groups.use();
   members.use();
@@ -24,7 +24,7 @@
   let access = $state('');
   let copied = $state(false);
 
-  const address = $derived(agent ? `${ws().slug}-${agent.slug}@${location.hostname.replace(/^app\./, '')}` : '');
+  const address = $derived(agent ? agentAddress(agent) : '');
   const limits = $derived(mayLimit(agent?.access) && accessOptions(agent?.access).length > 1);
 
   $effect(() => {
