@@ -431,16 +431,6 @@ COMMENT ON COLUMN archive.memory.lo IS 'The first turn it sums up';
 COMMENT ON COLUMN archive.memory.size IS 'How many turns it sums up, a power of two';
 COMMENT ON COLUMN archive.memory.name IS 'The line';
 
-CREATE FUNCTION archive.agent_last() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
-BEGIN
-    IF NOT EXISTS (SELECT FROM archive.agent a WHERE a.id <> OLD.id) THEN
-        RAISE EXCEPTION 'this is the last agent; create another before deleting it' USING ERRCODE = '22023', TABLE = 'agent';
-    END IF;
-    RETURN OLD;
-END;
-$$;
-CREATE TRIGGER last BEFORE DELETE ON archive.agent FOR EACH ROW EXECUTE FUNCTION archive.agent_last();
-
 CREATE TABLE archive.workflow_run (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     workflow   uuid NOT NULL REFERENCES archive.workflow ON DELETE CASCADE,
@@ -3586,9 +3576,6 @@ WHERE m.email = u.email AND u.name <> '' AND m.name IS DISTINCT FROM u.name AND 
 
 -- name: ForgetUser :exec
 DELETE FROM archive.workflow w WHERE w.user_id = $1;
-
--- name: SeedAgent :exec
-INSERT INTO archive.agent (name) SELECT 'Archive' WHERE NOT EXISTS (SELECT FROM archive.agent);
 
 -- name: CreateTurn :one
 INSERT INTO archive.turn (agent, member, n, name, messages)

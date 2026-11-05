@@ -2686,15 +2686,6 @@ func (q *Queries) SaveSync(ctx context.Context, arg SaveSyncParams) error {
 	return err
 }
 
-const seedAgent = `-- name: SeedAgent :exec
-INSERT INTO archive.agent (name) SELECT 'Archive' WHERE NOT EXISTS (SELECT FROM archive.agent)
-`
-
-func (q *Queries) SeedAgent(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, seedAgent)
-	return err
-}
-
 const setConnectionAccess = `-- name: SetConnectionAccess :exec
 UPDATE archive.connection c SET access = $1::uuid, updated_at = now() WHERE c.id = $2::uuid AND c.integration
 `
