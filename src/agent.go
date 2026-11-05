@@ -86,7 +86,7 @@ func (a *Archive) types(ctx context.Context) (map[string]any, error) {
 		return nil, err
 	}
 	cat := a.Catalog()
-	return map[string]any{"tables": cat.Tables, "types": cat.Types, "connectors": a.connectors(), "schema": schema}, nil
+	return map[string]any{"tables": cat.Tables, "types": cat.Types, "connectors": a.connectors(), "schema": schema, "speech": strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) != ""}, nil
 }
 
 func (a *Archive) turnCreate(ctx context.Context, agent, member uuid.UUID, text string, first agentMessage) (uuid.UUID, error) {
@@ -634,7 +634,9 @@ func modelPost(ctx context.Context, url string, header http.Header, body []byte)
 			return nil, err
 		}
 		req.Header = header.Clone()
-		req.Header.Set("content-type", "application/json")
+		if req.Header.Get("content-type") == "" {
+			req.Header.Set("content-type", "application/json")
+		}
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			return nil, err
