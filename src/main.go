@@ -38,7 +38,7 @@ func main() {
 
 func start(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return errors.New("want serve, migrate or secrets")
+		return errors.New("want serve, migrate, secrets or places")
 	}
 	switch args[0] {
 	case "serve":
@@ -65,8 +65,10 @@ func start(ctx context.Context, args []string) error {
 		enc.SetIndent("", "  ")
 		enc.SetEscapeHTML(false)
 		return enc.Encode(connect.Secrets())
+	case "places":
+		return connect.WritePlaces(ctx, "connect/places.json.gz")
 	}
-	return fmt.Errorf("unknown command %q: want serve, migrate or secrets", args[0])
+	return fmt.Errorf("unknown command %q: want serve, migrate, secrets or places", args[0])
 }
 
 func serve(ctx context.Context, h *Hub, addr string) error {
@@ -167,7 +169,8 @@ func (h *Hub) cors(next http.Handler) http.Handler {
 		case split && origin == app && (first == "api" || first == "auth" || first == "connect"):
 			w.Header().Set("Access-Control-Allow-Origin", app)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
-			headers = "Content-Type, Archive-Workspace"
+			headers = "Content-Type, Archive-Workspace, Tus-Resumable, Upload-Length, Upload-Offset, Upload-Metadata"
+			w.Header().Set("Access-Control-Expose-Headers", "Location, Upload-Offset, Archive-File-Id")
 		case !h.localApp():
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 		}

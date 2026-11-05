@@ -1,6 +1,6 @@
-import { Pencil, Trash2, ExternalLink, MessageSquarePlus, Download, Eye, Play, RotateCcw, Copy, Users, Settings, ArrowRightLeft, FolderInput } from '@lucide/svelte';
+import { Pencil, Trash2, ExternalLink, MessageSquarePlus, Download, Eye, Play, RotateCcw, Copy, Users, Settings, ArrowRightLeft, FolderInput, PackageOpen } from '@lucide/svelte';
 import { SEPARATOR } from './contextmenu.svelte.js';
-import { app, deleteGroup, groupUses, updateGroup, createGroup, atLeast, ws, removeAgent, askAgent, renameFile, removeFile, downloadFile, runWorkflow, removeWorkflow, removeMember, switchArchive, openSettings, deleteArchive } from './app.svelte.js';
+import { app, deleteGroup, groupUses, updateGroup, createGroup, atLeast, ws, removeAgent, askAgent, renameFile, removeFile, downloadFile, runWorkflow, removeWorkflow, removeMember, switchArchive, openSettings, deleteArchive, connectKeys } from './app.svelte.js';
 import { prompt, confirmDialog, notify } from './dialogs.svelte.js';
 import { clearAgent } from './agent.svelte.js';
 import { go } from './router.svelte.js';
@@ -40,6 +40,14 @@ export async function renameFilePrompt(file) {
   renameFile(file, name);
 }
 
+// Files a service's export comes as, which the Import connector reads
+const EXPORT = /\.(zip|json|ged|gedcom|csv|txt|mbox|ics|vcf|db)$/i;
+
+export async function importFile(file) {
+  if (!file.connection && !(await confirmDialog({ title: `Import ${file.name}?`, body: 'Archive reads what is in it. The file moves under the import, so only you see it, and it goes if you disconnect the import.', confirm: 'Import' }))) return;
+  if (await connectKeys('import', { file: file.id })) go('/settings/connectors/import');
+}
+
 export function fileItems(file, { onopen, onmove, onaccess } = {}) {
   return [
     onopen && { label: 'Open', icon: Eye, onselect: () => onopen(file) },
@@ -49,6 +57,7 @@ export function fileItems(file, { onopen, onmove, onaccess } = {}) {
     !file.connection && onmove && { label: 'Move', icon: FolderInput, onselect: () => onmove(file) },
     !file.connection && file.kind === 'folder' && onaccess && { label: 'Who sees it', icon: Users, onselect: () => onaccess(file) },
     file.held && file.kind !== 'folder' && { label: 'Download', icon: Download, onselect: () => downloadFile(file) },
+    file.held && file.kind !== 'folder' && EXPORT.test(file.name) && { label: 'Import', icon: PackageOpen, onselect: () => importFile(file) },
     !file.connection && SEPARATOR,
     !file.connection && { label: 'Delete', icon: Trash2, danger: true, onselect: () => removeFile(file.id) }
   ].filter(Boolean);

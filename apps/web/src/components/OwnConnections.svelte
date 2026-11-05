@@ -1,5 +1,5 @@
 <script>
-  import { RefreshCw, Unplug } from '@lucide/svelte';
+  import { Plug, RefreshCw, Unplug } from '@lucide/svelte';
   import Section from './Section.svelte';
   import Stack from './Stack.svelte';
   import Button from './Button.svelte';
@@ -9,7 +9,7 @@
   import { relative } from '../lib/live.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
 
-  let { connector } = $props();
+  let { connector, reconnect } = $props();
 
   ownConnections.use();
 
@@ -42,7 +42,11 @@
             <Text size="sm" tone="secondary" truncate>{x.workspace.name}</Text>
           </Stack>
           <div class="controls">
-            <Button size="sm" variant="ghost" icon={RefreshCw} onclick={() => syncOwnConnection(x)}>Sync</Button>
+            {#if x.error && reconnect}
+              <Button size="sm" variant="primary" icon={Plug} onclick={() => reconnect(x)}>Reconnect</Button>
+            {:else}
+              <Button size="sm" variant="ghost" icon={RefreshCw} onclick={() => syncOwnConnection(x)}>Sync</Button>
+            {/if}
             <Button size="sm" variant="ghost" icon={Unplug} onclick={() => remove(x)}>Disconnect</Button>
           </div>
         </li>

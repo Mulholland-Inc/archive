@@ -9,13 +9,9 @@ func init() {
 			Scopes: []string{"Find FedEx tracking numbers in the mail you synced", "Look up where each package is with FedEx"}},
 		API:  "https://apis.fedex.com",
 		Pace: 250 * time.Millisecond,
-		Keys: []Key{
-			{Name: "client_id", Label: "API key", Secret: true,
-				Help: "At developer.fedex.com, My Projects, Create a project: pick Track API, then on its Production key copy the API Key"},
-			{Name: "client_secret", Label: "Secret key", Secret: true, Help: "On the same key: copy its Secret Key"},
-		},
+		Tap:  true, Env: "ARCHIVE_FEDEX", Host: "https://apis.fedex.com", Options: "the API Key and Secret Key of Archive's Production project at developer.fedex.com, with the Track API",
 		Trade: &Req{Method: POST, URL: "/oauth/token",
-			Form: Q{"grant_type": "client_credentials", "client_id": "{key/client_id}", "client_secret": "{key/client_secret}"}},
+			Form: Q{"grant_type": "client_credentials", "client_id": "{client/id}", "client_secret": "{client/secret}"}},
 		Sign:   map[string]string{"Authorization": "Bearer {key/access}", "X-locale": "en_US"},
 		Errors: &Errors{At: "errors/0/message", Code: "errors/0/code"},
 		Actions: map[string]*Action{

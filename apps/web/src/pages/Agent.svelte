@@ -1,7 +1,8 @@
 <script>
   import { onDestroy, onMount, tick } from 'svelte';
-  import { Settings, Eraser, Bot } from '@lucide/svelte';
+  import { Settings, Eraser, Bot, Check } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
+  import Chip from '../components/Chip.svelte';
   import Page from '../components/Page.svelte';
   import Stack from '../components/Stack.svelte';
   import Message from '../components/Message.svelte';
@@ -13,7 +14,7 @@
   import EmptyState from '../components/EmptyState.svelte';
   import Skeleton from '../components/Skeleton.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { app, ws, atLeast, agentById, agents, library, closeFile, updateAgent, rememberAgent, markSeen } from '../lib/app.svelte.js';
+  import { app, ws, atLeast, agentById, agentAddress, agents, closeFile, updateAgent, rememberAgent, markSeen } from '../lib/app.svelte.js';
   import { conversation, loadEarlier, sendMessage, stopAgent } from '../lib/agent.svelte.js';
   import { clearConversation } from '../lib/menus.js';
 
@@ -29,6 +30,13 @@
   let value = $state('');
   let scroller = $state();
   let element = $state();
+  let copied = $state(false);
+
+  async function copy() {
+    await navigator.clipboard.writeText(agentAddress(agent));
+    copied = true;
+    setTimeout(() => (copied = false), 1600);
+  }
 
   function nearBottom() {
     return scroller ? scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 160 : true;
@@ -63,7 +71,6 @@
   }
 
   agents.use();
-  library.use();
   conversation.use(() => agent && id);
   $effect(() => {
     if (agent) rememberAgent(id);
@@ -96,6 +103,7 @@
   {#snippet leading()}
     <MobileMenu />
     {#if agent && atLeast('manager')}<EditableTitle value={agent.name} label="Rename agent" onsave={(name) => updateAgent(agent.id, { name })} />{:else if agent}<span class="name">{agent.name}</span>{/if}
+    {#if agent}<span class="address"><Chip size="sm" icon={copied ? Check : undefined} onclick={copy}>{agentAddress(agent)}</Chip></span>{/if}
   {/snippet}
   {#snippet trailing()}
     {#if agent}
@@ -169,6 +177,10 @@
   @media (max-width: 40rem) {
     h1 {
       font-size: var(--text-2xl);
+    }
+
+    .address {
+      display: none;
     }
   }
 </style>

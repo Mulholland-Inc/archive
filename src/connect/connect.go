@@ -44,6 +44,7 @@ type Connector struct {
 	Revoke      string
 	RevokeWith  func(rv *Revocation) error
 	Lasts       bool
+	OAuth1      string
 	Scopes      []string
 	Optional    []string
 	Extra       map[string][]string
@@ -62,6 +63,7 @@ type Connector struct {
 	Streams     []*Stream
 	Push        *Push
 	Keys        []Key
+	Tap         bool
 	Authorize   func(req *http.Request, c *Client)
 	Trade       *Req
 	Mint        []Step
@@ -89,6 +91,10 @@ type Errors struct {
 	Busy     []string
 }
 
+// Keyed is whether it connects without a sign-in: with keys the person pastes, or, Tap, in one tap with nothing to paste,
+// reading with Archive's own app credentials from Env, when it has one, or only what Archive already synced.
+func (c *Connector) Keyed() bool { return len(c.Keys) > 0 || c.Tap }
+
 func (c *Connector) MCPEnv() string { return "ARCHIVE_MCP_" + strings.ToUpper(c.ID) }
 
 var registry = map[string]*Connector{}
@@ -100,7 +106,7 @@ func Register(c *Connector) {
 	if err := c.compile(); err != nil {
 		panic("connect: " + c.ID + ": " + err.Error())
 	}
-	if len(c.Sync) == 0 {
+	if len(c.Sync) == 0 && len(c.Streams) == 0 {
 		panic("connect: " + c.ID + " has no stream")
 	}
 	if len(c.Actions) == 0 && c.MCP == "" && !c.mailOnly() {
@@ -136,7 +142,7 @@ type Providers map[string]*Provider
 func Load(getenv func(string) string) (Providers, error) {
 	out := Providers{}
 	for _, c := range All() {
-		if len(c.Keys) > 0 {
+		if c.Keyed() {
 			if p, ok := keyProvider(c, getenv); ok {
 				out[c.ID] = p
 			}
@@ -256,6 +262,12 @@ func (p *Provider) AskOf(v string) (map[string]string, error) {
 	if k == nil {
 		return nil, nil
 	}
+	if k.Places != "" {
+		if m, ok := k.placeOf(v); ok {
+			return m, nil
+		}
+		return nil, fmt.Errorf("%s needs your health system: search for it by name and pick it", p.Name)
+	}
 	v = strings.ToLower(strings.TrimSpace(v))
 	if k.Find != "" {
 		f := reOf(k.Find).FindStringSubmatch(v)
@@ -319,7 +331,7 @@ func (p *Provider) Exchange(ctx context.Context, redirect string, q url.Values, 
 		if asked[k] == "" || (p.Signed != "" || q.Has(k)) && !strings.EqualFold(q.Get(k), asked[k]) {
 			return nil, fmt.Errorf("%s was not connected: it came back for %s %q, not %q", p.Name, k, q.Get(k), asked[k])
 		}
-		meta[k] = asked[k]
+		maps.Copy(meta, asked)
 	}
 	for _, k := range p.Keep {
 		if v := q.Get(k); v != "" {
@@ -356,6 +368,12 @@ func (p *Provider) Exchange(ctx context.Context, redirect string, q url.Values, 
 	case p.MCP == "" && slices.ContainsFunc(p.Scopes, func(s string) bool { return !granted(g.Scopes, s) }):
 		return nil, fmt.Errorf("%s was connected without all the access Archive asked for; connect it again and allow it all", p.Name)
 	}
+	return p.named(ctx, tok, g)
+}
+
+// named names whose account a new grant is, by the connector's Account.
+func (p *Provider) named(ctx context.Context, tok *oauth2.Token, g *Grant) (*Grant, error) {
+	var err error
 	c := p.Open(ctx, tok, g.Meta)
 	defer c.Close()
 	if p.Account != nil {
@@ -383,10 +401,10 @@ func granted(scopes []string, want string) bool {
 }
 
 func (p *Provider) Refresh(ctx context.Context, rt string, meta map[string]string) (*oauth2.Token, error) {
-	if len(p.Keys) > 0 && p.Trade == nil && p.Mint == nil || p.Lasts || p.was(rt) != nil {
+	if p.Keyed() && p.Trade == nil && p.Mint == nil || p.Lasts || p.was(rt) != nil {
 		return &oauth2.Token{AccessToken: rt, RefreshToken: rt}, nil
 	}
-	if len(p.Keys) > 0 {
+	if p.Keyed() {
 		keys, end, err := p.trade(ctx, keysFrom(rt))
 		if err != nil {
 			return nil, err
@@ -413,7 +431,7 @@ func (p *Provider) RevokeToken(ctx context.Context, rt string, meta map[string]s
 		return nil
 	case p.RevokeWith != nil:
 		return rv.p.RevokeWith(rv)
-	case len(p.Keys) > 0:
+	case p.Keyed():
 		return nil
 	case p.revoke == "":
 		return nil
@@ -560,11 +578,12 @@ type Client struct {
 	mcpSeen *seen
 	Files   Yours
 	Store   func(name string, b []byte) (string, error)
+	Export  func() (*Upfile, error)
 	Mail    func(s Scan) ([]any, error)
 }
 
 func (p *Provider) Open(ctx context.Context, tok *oauth2.Token, meta map[string]string) *Client {
-	if len(p.Keys) > 0 {
+	if p.Keyed() {
 		return p.openKeys(ctx, keysFrom(tok.AccessToken), meta)
 	}
 	if w := p.was(tok.AccessToken); w != nil {
@@ -1150,4 +1169,4 @@ func mcpAccount(tool string) func(c *Client) (string, error) {
 
 func (p *Provider) ClientID() string { return p.clientID }
 
-func (p *Provider) Ready() bool { return p.MCP != "" || len(p.Keys) > 0 || p.clientID != "" }
+func (p *Provider) Ready() bool { return p.MCP != "" || p.Keyed() || p.clientID != "" }
