@@ -3781,6 +3781,119 @@ COMMENT ON COLUMN archive.home_device.source_id IS 'Its id there';
 COMMENT ON COLUMN archive.home_device.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.home_device.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
+-- Music: what a music service you connected, like Spotify, says you saved, played and put in playlists, and the
+-- artists you follow and play most. The music itself stays there.
+CREATE TABLE archive.music_playlist (
+    id            uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream        text NOT NULL,
+    source_id     text NOT NULL,
+    access        uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
+    name          text NOT NULL DEFAULT '',
+    seen_at       timestamptz NOT NULL DEFAULT now(),
+    title         text,
+    description   text,
+    owner_name    text,
+    public        boolean,
+    collaborative boolean,
+    tracks        numeric,
+    url           archive.url,
+    version       text,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+COMMENT ON TABLE archive.music_playlist IS 'A playlist of a music service you connected, like Spotify, that you made or follow; its tracks are in music_track. Read only; Archive syncs them
+icon: list-music';
+COMMENT ON COLUMN archive.music_playlist.title IS 'Its name';
+COMMENT ON COLUMN archive.music_playlist.description IS 'What its description says';
+COMMENT ON COLUMN archive.music_playlist.owner_name IS 'Who made it';
+COMMENT ON COLUMN archive.music_playlist.public IS 'Whether anyone can find it';
+COMMENT ON COLUMN archive.music_playlist.collaborative IS 'Whether others may add to it';
+COMMENT ON COLUMN archive.music_playlist.tracks IS 'How many tracks it has';
+COMMENT ON COLUMN archive.music_playlist.url IS 'Where it is there';
+COMMENT ON COLUMN archive.music_playlist.version IS 'Its version there, which changes when it does';
+COMMENT ON COLUMN archive.music_playlist.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.music_playlist.stream IS 'What its connector syncs it as, like playlists';
+COMMENT ON COLUMN archive.music_playlist.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.music_playlist.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.music_playlist.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.music_track (
+    id            uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream        text NOT NULL,
+    source_id     text NOT NULL,
+    access        uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
+    name          text NOT NULL DEFAULT '',
+    seen_at       timestamptz NOT NULL DEFAULT now(),
+    list          text,
+    title         text,
+    artists       text,
+    album         text,
+    duration_ms   numeric,
+    url           archive.url,
+    track_id      text,
+    rank          integer,
+    playlist      uuid REFERENCES archive.music_playlist ON DELETE SET NULL,
+    added_at      timestamptz,
+    played_at     timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX music_track_playlist_idx ON archive.music_track (playlist);
+COMMENT ON TABLE archive.music_track IS 'A track on a list of a music service you connected, like Spotify: one you saved, played, play most or put in a playlist, a row for each. Read only; Archive syncs them
+icon: music';
+COMMENT ON COLUMN archive.music_track.list IS 'Which list it is on: Liked Songs, Played, Top tracks, or the playlist''s name';
+COMMENT ON COLUMN archive.music_track.title IS 'Its name';
+COMMENT ON COLUMN archive.music_track.artists IS 'Who it is by, comma separated';
+COMMENT ON COLUMN archive.music_track.album IS 'The album it is on';
+COMMENT ON COLUMN archive.music_track.duration_ms IS 'How long it is, in milliseconds';
+COMMENT ON COLUMN archive.music_track.url IS 'Where it is there';
+COMMENT ON COLUMN archive.music_track.track_id IS 'The track''s id there, the same on every list';
+COMMENT ON COLUMN archive.music_track.rank IS 'Where it is among your top tracks, from 1';
+COMMENT ON COLUMN archive.music_track.playlist IS 'references music_playlist; the playlist it is in';
+COMMENT ON COLUMN archive.music_track.added_at IS 'When it was saved or added to its playlist';
+COMMENT ON COLUMN archive.music_track.played_at IS 'When it was played, for a play';
+COMMENT ON COLUMN archive.music_track.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.music_track.stream IS 'What its connector syncs it as, like saved';
+COMMENT ON COLUMN archive.music_track.source_id IS 'Its id there: the track''s, a play''s time, or <playlist>/<track>/<when added>';
+COMMENT ON COLUMN archive.music_track.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.music_track.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.music_artist (
+    id            uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream        text NOT NULL,
+    source_id     text NOT NULL,
+    access        uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
+    name          text NOT NULL DEFAULT '',
+    seen_at       timestamptz NOT NULL DEFAULT now(),
+    list          text,
+    title         text,
+    genres        text,
+    url           archive.url,
+    artist_id     text,
+    rank          integer,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+COMMENT ON TABLE archive.music_artist IS 'An artist of a music service you connected, like Spotify, that you follow or play most. Read only; Archive syncs them
+icon: mic-vocal';
+COMMENT ON COLUMN archive.music_artist.list IS 'Following or Top artists';
+COMMENT ON COLUMN archive.music_artist.title IS 'Their name';
+COMMENT ON COLUMN archive.music_artist.genres IS 'Their genres, comma separated';
+COMMENT ON COLUMN archive.music_artist.url IS 'Where they are there';
+COMMENT ON COLUMN archive.music_artist.artist_id IS 'Their id there';
+COMMENT ON COLUMN archive.music_artist.rank IS 'Where they are among your top artists, from 1';
+COMMENT ON COLUMN archive.music_artist.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.music_artist.stream IS 'What its connector syncs it as, like artists';
+COMMENT ON COLUMN archive.music_artist.source_id IS 'Their id there';
+COMMENT ON COLUMN archive.music_artist.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.music_artist.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
 CREATE TABLE archive.school_notice (
     id           uuid PRIMARY KEY DEFAULT uuidv7(),
     connection   uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
@@ -3944,6 +4057,9 @@ BEGIN
         WHEN 'vehicle_charge' THEN concat_ws(' · ', nullif(r->>'site', ''), left(r->>'started_at', 10))
         WHEN 'school_notice' THEN concat_ws(' · ', coalesce(nullif(r->>'title', ''), 'No subject'), nullif(r->>'student', ''))
         WHEN 'home_device' THEN concat_ws(' · ', coalesce(nullif(r->>'title', ''), initcap(r->>'kind')), nullif(r->>'room', ''))
+        WHEN 'music_playlist' THEN r->>'title'
+        WHEN 'music_track' THEN concat_ws(' · ', r->>'title', nullif(r->>'artists', ''))
+        WHEN 'music_artist' THEN r->>'title'
         ELSE own END), ''), '');
     RETURN NEW;
 END $$;
@@ -4027,6 +4143,9 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.parcel_event FOR E
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.vehicle FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.vehicle_charge FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.home_device FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.music_playlist FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.music_track FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.music_artist FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.school_notice FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_contact FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_item FOR EACH ROW EXECUTE FUNCTION archive.object_name();
@@ -4154,6 +4273,9 @@ GRANT SELECT ON archive.parcel_event TO "{p}_viewer";
 GRANT SELECT ON archive.vehicle TO "{p}_viewer";
 GRANT SELECT ON archive.vehicle_charge TO "{p}_viewer";
 GRANT SELECT ON archive.home_device TO "{p}_viewer";
+GRANT SELECT ON archive.music_playlist TO "{p}_viewer";
+GRANT SELECT ON archive.music_track TO "{p}_viewer";
+GRANT SELECT ON archive.music_artist TO "{p}_viewer";
 GRANT SELECT ON archive.school_notice TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT, UPDATE, DELETE ON TABLES TO "{p}_editor";
@@ -4340,6 +4462,12 @@ ALTER TABLE archive.vehicle_charge ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.vehicle_charge FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = vehicle_charge.connection));
 ALTER TABLE archive.home_device ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.home_device FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = home_device.connection));
+ALTER TABLE archive.music_playlist ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.music_playlist FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = music_playlist.connection));
+ALTER TABLE archive.music_track ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.music_track FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = music_track.connection));
+ALTER TABLE archive.music_artist ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.music_artist FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = music_artist.connection));
 ALTER TABLE archive.school_notice ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.school_notice FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = school_notice.connection));
 ALTER TABLE archive.known_person ENABLE ROW LEVEL SECURITY;
@@ -4673,6 +4801,7 @@ SELECT jsonb_build_object(
             'archive.bank_liability'::regclass, 'archive.budget_category'::regclass,
             'archive.parcel'::regclass, 'archive.parcel_event'::regclass, 'archive.vehicle'::regclass, 'archive.vehicle_charge'::regclass, 'archive.home_device'::regclass,
             'archive.health_sample'::regclass, 'archive.health_day'::regclass, 'archive.health_sleep'::regclass, 'archive.health_workout'::regclass, 'archive.health_record'::regclass,
+            'archive.music_playlist'::regclass, 'archive.music_track'::regclass, 'archive.music_artist'::regclass,
             'archive.school_notice'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
@@ -4826,6 +4955,9 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.health_sleep x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.health_workout x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.health_record x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.music_playlist x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.music_track x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.music_artist x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.school_notice x WHERE x.connection = c.id))::bigint AS items,
     c.integration, coalesce(c.access::text, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
 FROM archive.connection c WHERE c.member = $1 AND NOT c.integration OR c.integration ORDER BY c.provider, c.account, c.id;
