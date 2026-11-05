@@ -85,7 +85,8 @@
  * - fetch counts toward the run's {timeout}; responses over 5 MB fail.
  *
  * Files
- * - Folders: archive.create("file", { kind: "folder", name, parent, access }). Move with archive.update("file", id, { parent }), null for the top.
+ * - Folders: archive.create("file", { kind: "folder", name, parent, access }). Rename with archive.update("file", id, { name }), move with { parent }, null for the top.
+ *   Rows of file leave out its text: read that with archive.file or archive.query.
  *   What is in a folder is seen as the folder is: it takes the folder's access when it comes in, and archive.update("file", folder, { access }), a group
  *   or null for everyone, changes it for everything under the folder. A file in a folder refuses an access of its own; move it out to give it one.
  *   Bytes held, each once: archive.query("SELECT archive.stored()").
@@ -118,7 +119,8 @@
  * Connected accounts
  * - People connect their own Gmail, Outlook, Drive or Notion in Settings, Connectors; managers and up connect integrations
  *   for everyone in Archive settings, Integrations, and may narrow one to a group. Both are rows of connection. To use an
- *   account, a person connects it there: you cannot.
+ *   account, a person connects it there: you cannot, as archive.create, update and delete of connection throw not allowed in a run,
+ *   because what they do at the service cannot roll back. connection_list says how many rows each has.
  * - archive.action("gmail.search", { query }) uses one; Actions lists yours. With several accounts at a connector, pass
  *   { connection }, its account or id. Integrations act for editors and up. Failures throw, with code unauthorized when
  *   the account must connect again. An action counts toward {timeout}. In a workflow, actions are its runner's.
@@ -131,8 +133,8 @@
 declare const archive: {
     /** Read with one SQL statement as you, with $1, $2, ... bound to params; returns its rows, or [] when it has none. Writes and DDL throw forbidden. */
     query(sql: string, ...params: unknown[]): Promise<Row[]>;
-    /** Rows of a table, oldest first; where matches exact (cleaned) values; page with after = the last id. */
-    list<T extends keyof Tables>(table: T, opts?: { where?: Partial<Tables[T]>; limit?: number; after?: string }): Promise<Tables[T][]>;
+    /** Rows of a table, oldest first, or newest first with desc; where matches exact (cleaned) values, null matching empty; page with after = the last id. */
+    list<T extends keyof Tables>(table: T, opts?: { where?: Partial<Tables[T]>; limit?: number; after?: string; desc?: boolean }): Promise<Tables[T][]>;
     /** One row by id; throws not_found if it does not exist or you cannot see it. */
     get<T extends keyof Tables>(table: T, id: string): Promise<Tables[T]>;
     /** Insert a row, cleaned and validated per field, and return it; data.access says which group sees it, null for everyone. */
@@ -360,7 +362,8 @@ interface StoredFile {
     name: string;
     mime: string;
     size: number;
-    sha256: string;
+    /** The sha256 of its bytes. */
+    hash: string;
     /** Extracted metadata: pages, dimensions, mail headers, ... */
     metadata: Row;
     /** pending, done, skipped (Archive does not copy it, as error says) or error; text is ready when done. */

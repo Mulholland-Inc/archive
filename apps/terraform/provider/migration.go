@@ -45,10 +45,10 @@ func (r *migrationResource) Create(ctx context.Context, req resource.CreateReque
 		Confirm  string `json:"confirm"`
 	}
 	body := map[string]any{"sql": m.SQL.ValueString(), "name": m.Name.ValueString()}
-	err := r.c.do(ctx, "POST", "/api/schema/migrate", body, &out)
+	err := r.c.do(ctx, "POST", "/api/action/migrate", body, &out)
 	if err == nil && out.Confirm != "" {
 		body["confirm"] = out.Confirm
-		err = r.c.do(ctx, "POST", "/api/schema/migrate", body, &out)
+		err = r.c.do(ctx, "POST", "/api/action/migrate", body, &out)
 	}
 	if err != nil {
 		resp.Diagnostics.AddError("The migration failed", err.Error())

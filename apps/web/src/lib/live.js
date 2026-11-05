@@ -85,12 +85,12 @@ export function toFile(f, owner = '') {
     parent: f.parent ?? null,
     connection: f.connection ?? null,
     url: f.url ?? '',
-    held: f.sha256 !== '',
-    hash: f.sha256,
+    held: f.hash !== '',
+    hash: f.hash,
     office: /\.(docx|docm|dotx|xlsx|xlsm|xltx|pptx|pptm|potx)$/i.test(f.name),
     error: f.error ?? '',
     ext: f.kind === 'folder' || ext.includes('.') ? '' : ext,
-    sub: f.kind === 'folder' ? relative(f.edited_at ?? f.created_at) : f.status === 'skipped' ? 'Not copied' : f.sha256 === '' ? 'Copying' : undefined,
+    sub: f.kind === 'folder' ? relative(f.edited_at ?? f.created_at) : f.status === 'skipped' ? 'Not copied' : f.hash === '' ? 'Copying' : undefined,
     mime: f.mime,
     bytes: f.size,
     size: f.kind === 'folder' ? '' : size(f.size),
@@ -102,8 +102,8 @@ export function toFile(f, owner = '') {
     access: f.access,
     status: f.status,
     href: fileURL(f.id),
-    path: `/api/files/${f.id}/content`,
-    thumb: f.metadata?.thumbnail ? `/api/files/${f.id}/thumbnail` : '',
+    path: `/api/file/${f.id}/content`,
+    thumb: f.metadata?.thumbnail ? `/api/file/${f.id}/thumbnail` : '',
     tone: tone(f.id)
   };
 }

@@ -336,7 +336,7 @@ icon: receipt'</span>;
 <p>Managers, engineers and the owner. Everyone else can read the schema.</p>
 
 <h3 id="schema-git">Keep it in git</h3>
-<p>Keep migrations as <code>.sql</code> files. Over HTTP, <code>POST /api/schema/migrate</code> takes <code>&#123;"sql", "name", "confirm"&#125;</code>, and the Terraform provider has an <code>archive_migration</code> resource.</p>
+<p>Keep migrations as <code>.sql</code> files. Over HTTP, <code>POST /api/action/migrate</code> takes <code>&#123;"sql", "name", "confirm"&#125;</code>, and the Terraform provider has an <code>archive_migration</code> resource.</p>
 
 <h2 id="views">Views</h2>
 <p>A view is a saved way to look at a table: a real Postgres view, with its layout in its comment. Boards, calendars and filtered tables are all views.</p>
@@ -389,7 +389,7 @@ icon: calendar'</span>;</pre>
 <h2 id="files">Files</h2>
 <p>Upload any file. Archive pulls out its metadata and text before the upload returns, so search finds it right away.</p>
 <Code tabs={['curl']}>
-<pre>curl <span class="s">"https://your-workspace.archive.mulholland.ai/api/files?access=finance"</span> \
+<pre>curl <span class="s">"https://your-workspace.archive.mulholland.ai/api/file?access=finance"</span> \
   -H <span class="s">"Authorization: Bearer $ARCHIVE_TOKEN"</span> \
   -F file=@contract.pdf</pre>
 </Code>
@@ -399,20 +399,26 @@ icon: calendar'</span>;</pre>
 <Note>Office files are stored and edited in place but not text-extracted yet, so search finds them by name only.</Note>
 
 <h3 id="files-large">Large files</h3>
-<p>A plain upload takes up to 64 MB. For bigger files, use resumable tus uploads at <code>/api/files/tus</code>, which pick up where they stopped.</p>
+<p>A plain upload takes up to 64 MB. For bigger files, use resumable tus uploads at <code>/api/file/tus</code>, which pick up where they stopped.</p>
 
 <h3 id="files-links">Download links</h3>
-<p><code>POST /api/files/&#123;id&#125;/link</code> returns a signed URL that works without signing in, for 24 hours or for <code>?expires=1h</code>. Signed links always drop a photo's GPS location; on a signed-in download, add <code>?strip=gps</code>.</p>
+<p><code>GET /api/file/&#123;id&#125;/link</code> returns a signed URL that works without signing in, for 24 hours or for <code>?expires=1h</code>. Signed links always drop a photo's GPS location; on a signed-in download, add <code>?strip=gps</code>.</p>
 
 <h3 id="files-endpoints">Endpoints</h3>
 <table>
 <thead><tr><th>Endpoint</th><th>Returns</th></tr></thead>
 <tbody>
-<tr><td><code>GET /api/files</code></td><td>Your files, oldest first; page with <code>limit</code> and <code>after</code>.</td></tr>
-<tr><td><code>GET /api/files/&#123;id&#125;</code></td><td>One file's metadata.</td></tr>
-<tr><td><code>GET /api/files/&#123;id&#125;/content</code></td><td>Its bytes.</td></tr>
-<tr><td><code>GET /api/files/&#123;id&#125;/thumbnail</code></td><td>Its thumbnail, for images.</td></tr>
-<tr><td><code>GET /api/files/&#123;id&#125;/text</code></td><td>Its extracted text.</td></tr>
+<tr><td><code>GET /api/file</code></td><td>Your files, oldest first; page with <code>limit</code> and <code>after</code>, and <code>parent=</code> for the top.</td></tr>
+<tr><td><code>POST /api/file</code></td><td>Uploads a multipart <code>file</code>, or makes a folder from <code>&#123;"kind": "folder", "name", "parent", "access"&#125;</code>.</td></tr>
+<tr><td><code>GET /api/file/&#123;id&#125;</code></td><td>One file's metadata.</td></tr>
+<tr><td><code>PATCH /api/file/&#123;id&#125;</code></td><td>Changes <code>name</code>, <code>parent</code> or <code>access</code>, or a document with <code>edits</code>.</td></tr>
+<tr><td><code>DELETE /api/file/&#123;id&#125;</code></td><td>Deletes a file or empty folder of yours.</td></tr>
+<tr><td><code>GET /api/file/&#123;id&#125;/content</code></td><td>Its bytes.</td></tr>
+<tr><td><code>GET /api/file/&#123;id&#125;/thumbnail</code></td><td>Its thumbnail, for images.</td></tr>
+<tr><td><code>GET /api/file/&#123;id&#125;/text</code></td><td>Its extracted text.</td></tr>
+<tr><td><code>GET /api/file/&#123;id&#125;/model</code></td><td>A document's model, as <code>archive.read</code> gives it.</td></tr>
+<tr><td><code>GET /api/file/&#123;id&#125;/media/&#123;part&#125;</code></td><td>An image inside a document.</td></tr>
+<tr><td><code>GET /api/file/&#123;id&#125;/link</code></td><td>A signed download link.</td></tr>
 </tbody>
 </table>
 
@@ -507,7 +513,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 </Code>
 
 <h3 id="code-docs">The tool's docs</h3>
-<p>The <code>run</code> tool's description is the SDK reference plus an interface for each of your tables, generated from the live schema. Read the same text at <code>GET /api/run/docs</code>.</p>
+<p>The <code>run</code> tool's description is the SDK reference plus an interface for each of your tables, generated from the live schema. Read the same text with <code>POST /api/action/docs</code>.</p>
 
 <h3 id="code-elsewhere">Run it from anywhere</h3>
 <p>The same runtime answers <code>POST /api/run</code> with <code>&#123;"code": "..."&#125;</code>. The output is always <code>&#123;"result", "logs", "error"&#125;</code>.</p>
@@ -602,7 +608,6 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <tr><td><code>POST /api/&#123;table&#125;</code></td><td>Creates a row; its <code>access</code> says which group sees it.</td></tr>
 <tr><td><code>GET /api/&#123;table&#125;/&#123;id&#125;</code></td><td>One row.</td></tr>
 <tr><td><code>PATCH /api/&#123;table&#125;/&#123;id&#125;</code></td><td>Changes only what you send.</td></tr>
-<tr><td><code>PUT /api/&#123;table&#125;/&#123;id&#125;</code></td><td>Replaces the whole row.</td></tr>
 <tr><td><code>DELETE /api/&#123;table&#125;/&#123;id&#125;</code></td><td>Deletes the row.</td></tr>
 </tbody>
 </table>
@@ -612,7 +617,8 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <thead><tr><th>Parameter</th><th>Does</th></tr></thead>
 <tbody>
 <tr><td><code>limit</code>, <code>after</code></td><td>Page size, and the last id you got for the next page.</td></tr>
-<tr><td><code>column=value</code></td><td>Any other parameter filters rows by that column, like <code>access=hr</code>.</td></tr>
+<tr><td><code>desc</code></td><td>Newest first, so <code>limit</code> takes the last rows.</td></tr>
+<tr><td><code>column=value</code></td><td>Any other parameter filters rows by that column, like <code>access=hr</code>; an empty value matches null.</td></tr>
 </tbody>
 </table>
 
@@ -620,14 +626,15 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <table>
 <thead><tr><th>Endpoint</th><th>Does</th></tr></thead>
 <tbody>
-<tr><td><code>GET /api/types</code></td><td>Your tables and views, with their columns.</td></tr>
-<tr><td><code>GET /api/schema</code></td><td>Each table and view with its columns and DDL; <code>?name=</code> for one.</td></tr>
-<tr><td><code>POST /api/schema/migrate</code></td><td>Dry-runs <code>&#123;"sql", "name"&#125;</code>, or runs it with <code>"confirm"</code>; a named migration runs once.</td></tr>
-<tr><td><code>GET /api/schema/revisions</code></td><td>Migrations, newest first.</td></tr>
+<tr><td><code>GET /api/types</code></td><td>The catalog: your tables and views with their columns and DDL, and every connector.</td></tr>
+<tr><td><code>GET /api/boot</code></td><td>What the app reads on first load: agents, workflows, members and types.</td></tr>
+<tr><td><code>POST /api/action/migrate</code></td><td>Dry-runs <code>&#123;"sql", "name"&#125;</code>, or runs it with <code>"confirm"</code>; a named migration runs once.</td></tr>
 <tr><td><code>GET /api/search?q=</code></td><td>Search, with <code>type</code>, <code>from</code>, <code>to</code> and <code>limit</code>.</td></tr>
 <tr><td><code>POST /api/run</code></td><td>Runs a script: <code>&#123;"code": "..."&#125;</code>.</td></tr>
-<tr><td><code>GET /api/run/docs</code></td><td>The SDK reference with your table types.</td></tr>
-<tr><td><code>/api/files…</code></td><td>Files, see <a href="#files-endpoints">Files</a>.</td></tr>
+<tr><td><code>POST /api/turn</code></td><td>Talks with an agent, as a stream: <code>&#123;"agent", "text"&#125;</code>.</td></tr>
+<tr><td><code>POST /api/action/docs</code></td><td>The SDK reference with your table types.</td></tr>
+<tr><td><code>POST /api/action/&#123;name&#125;</code></td><td>What is not a write: <code>clear</code> an agent's conversation with you <code>&#123;"agent"&#125;</code>, <code>sync</code> a connection <code>&#123;"connection"&#125;</code>, a connector's <code>link</code> token <code>&#123;"provider"&#125;</code> or <code>places</code> <code>&#123;"provider", "q"&#125;</code>.</td></tr>
+<tr><td><code>/api/file…</code></td><td>Files, see <a href="#files-endpoints">Files</a>.</td></tr>
 </tbody>
 </table>
 
@@ -636,9 +643,13 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <thead><tr><th>Endpoint</th><th>Does</th></tr></thead>
 <tbody>
 <tr><td><code>GET /auth/me</code></td><td>Who you are, your <code>role</code>, your <code>group</code>, the current <code>workspace</code> and all your <code>workspaces</code>.</td></tr>
-<tr><td><code>GET</code>, <code>POST /auth/users</code></td><td>List the people here, or invite one with <code>&#123;"email", "name", "role"&#125;</code> (managers and up).</td></tr>
-<tr><td><code>DELETE /auth/users/&#123;email&#125;</code></td><td>Remove someone, with their tokens (managers and up).</td></tr>
+<tr><td><code>GET</code>, <code>POST /api/member</code></td><td>List the people here, or invite one with <code>&#123;"email", "name", "role"&#125;</code> (managers and up).</td></tr>
+<tr><td><code>DELETE /api/member/&#123;id&#125;</code></td><td>Remove someone, with their tokens (managers and up).</td></tr>
 <tr><td><code>PATCH /api/member/&#123;id&#125;</code></td><td>Change someone's <code>role</code> or <code>group</code> (managers and up).</td></tr>
+<tr><td><code>GET /api/connection_list</code></td><td>The connections you can see, with their row counts.</td></tr>
+<tr><td><code>POST /api/connection</code></td><td>Connect an account with keys: <code>&#123;"provider", "keys"&#125;</code>.</td></tr>
+<tr><td><code>PATCH /api/connection/&#123;id&#125;</code></td><td>Narrow an integration to a group: <code>&#123;"access"&#125;</code> (managers and up).</td></tr>
+<tr><td><code>DELETE /api/connection/&#123;id&#125;</code></td><td>Disconnect it, deleting what it synced.</td></tr>
 <tr><td><code>GET</code>, <code>POST /auth/tokens</code></td><td>List tokens, or create one (engineers and the owner).</td></tr>
 <tr><td><code>DELETE /auth/tokens/&#123;id&#125;</code></td><td>Revoke a token (engineers and the owner).</td></tr>
 </tbody>
@@ -666,7 +677,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <h3 id="people-add">Adding people</h3>
 <p>A manager, engineer or the owner invites the person by email on the Users page, and removes them there too. People are rows of the <code>member</code> table, so changing a role is an update.</p>
 <Code tabs={['curl', 'run.ts']}>
-<pre>curl https://your-workspace.archive.mulholland.ai/auth/users \
+<pre>curl https://your-workspace.archive.mulholland.ai/api/member \
   -H <span class="s">"Authorization: Bearer $ARCHIVE_TOKEN"</span> \
   -d <span class="s">'&#123;"email": "anna@example.com", "role": "editor"&#125;'</span></pre>
 <pre hidden><span class="k">const</span> [anna] = <span class="k">await</span> archive.<span class="f">list</span>(<span class="s">"member"</span>, &#123; where: &#123; email: <span class="s">"anna@example.com"</span> &#125; &#125;)

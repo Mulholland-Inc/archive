@@ -47,25 +47,6 @@ const (
 	memoryCalls  = 8
 )
 
-type Turn struct {
-	N        int64           `json:"n"`
-	Messages json.RawMessage `json:"messages"`
-}
-
-func (a *Archive) Turns(ctx context.Context, agent uuid.UUID, limit int) ([]Turn, error) {
-	out := []Turn{}
-	if limit <= 0 {
-		limit = 20
-	}
-	return out, a.as(ctx, func(ctx context.Context) error {
-		rows, err := a.st.db(ctx).LastTurns(ctx, agent, int32(limit))
-		for _, r := range rows {
-			out = append(out, Turn{N: r.N, Messages: r.Messages})
-		}
-		return err
-	})
-}
-
 func (a *Archive) ClearTurns(ctx context.Context, agent uuid.UUID) error {
 	ac, err := signedIn(ctx)
 	if err != nil {
@@ -80,69 +61,32 @@ func (a *Archive) ClearTurns(ctx context.Context, agent uuid.UUID) error {
 	return err
 }
 
-func (a *Archive) agentList(ctx context.Context) ([]map[string]any, error) {
-	return coreDo(a, ctx, func(ctx context.Context) ([]map[string]any, error) {
-		agents, err := a.List(ctx, "agent", nil, 1000, uuid.Nil)
-		if err != nil {
-			return nil, err
-		}
-		turns, err := a.runQuery(ctx, "SELECT DISTINCT ON (agent) agent, updated_at AS at FROM archive.turn ORDER BY agent, n DESC", nil)
-		if err != nil {
-			return nil, err
-		}
-		at := map[any]any{}
-		for _, t := range turns {
-			at[t["agent"]] = t["at"]
-		}
-		for _, x := range agents {
-			x["at"] = cmp.Or(at[x["id"]], any(""))
-		}
-		return agents, nil
-	})
-}
-
-func (a *Archive) workflowList(ctx context.Context) ([]map[string]any, error) {
-	return coreDo(a, ctx, func(ctx context.Context) ([]map[string]any, error) {
-		flows, err := a.List(ctx, "workflow", nil, 1000, uuid.Nil)
-		if err != nil {
-			return nil, err
-		}
-		runs, err := a.runQuery(ctx, "SELECT DISTINCT ON (workflow) id, workflow, created_at AS at, trigger, ms, error FROM workflow_run ORDER BY workflow, created_at DESC, id DESC", nil)
-		if err != nil {
-			return nil, err
-		}
-		last := map[any]map[string]any{}
-		for _, run := range runs {
-			last[run["workflow"]] = run
-		}
-		for _, x := range flows {
-			x["last"] = last[x["id"]]
-		}
-		return flows, nil
-	})
-}
-
 func (a *Archive) boot(ctx context.Context) (map[string]any, error) {
-	var agents, flows []map[string]any
-	var people []Person
-	err := a.as(ctx, func(ctx context.Context) (err error) {
-		if agents, err = a.agentList(ctx); err != nil {
-			return err
+	out := map[string]any{}
+	err := a.as(ctx, func(ctx context.Context) error {
+		for key, typ := range map[string]string{"agents": "agent_list", "workflows": "workflow_list", "members": "member"} {
+			rows, err := a.List(ctx, typ, nil, 1000, uuid.Nil, false)
+			if err != nil {
+				return err
+			}
+			out[key] = rows
 		}
-		if flows, err = a.workflowList(ctx); err != nil {
-			return err
-		}
-		people, err = a.People(ctx)
-		return err
+		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
+	out["types"], err = a.types(ctx)
+	return out, err
+}
+
+func (a *Archive) types(ctx context.Context) (map[string]any, error) {
 	schema, err := a.Schema(ctx, "")
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"agents": agents, "workflows": flows, "people": people, "types": a.Catalog(), "schema": schema}, nil
+	cat := a.Catalog()
+	return map[string]any{"tables": cat.Tables, "types": cat.Types, "connectors": a.connectors(), "schema": schema}, nil
 }
 
 func (a *Archive) turnCreate(ctx context.Context, agent, member uuid.UUID, text string, first agentMessage) (uuid.UUID, error) {

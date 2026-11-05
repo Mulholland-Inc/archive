@@ -8,8 +8,15 @@
   import SearchField from './SearchField.svelte';
   import SegmentedControl from './SegmentedControl.svelte';
   import Spinner from './Spinner.svelte';
-  import { api } from '../lib/api.js';
+  import { run } from '../lib/api.js';
+  import { ws } from '../lib/app.svelte.js';
   import { size, fileArt, toFile } from '../lib/live.js';
+
+  const EXPORTS = `SELECT f.id, f.hash, f.name, f.mime, f.size, f.metadata, f.status, f.error, f.access, f.created_at, f.kind, f.parent, f.connection, f.edited_at FROM archive.file f
+    WHERE f.kind = 'file' AND f.hash <> '' AND f.name ~* '\\.(zip|json|ged|gedcom|csv|txt|mbox|ics|vcf|db)$'
+      AND NOT EXISTS (SELECT FROM archive.connection c WHERE c.id = f.connection AND c.provider = 'import')
+      AND ($1::text = '' OR f.name ILIKE '%' || $1::text || '%')
+    ORDER BY f.name ~* '\\.(zip|ged|gedcom|mbox|db)$' DESC, coalesce(f.edited_at, f.created_at) DESC, f.id LIMIT 50`;
 
   // The file a key connector reads: one from this device, dropped or chosen, or with `library`, one already in Archive, like a
   // Takeout zip a Google Drive connection copied in. `file` is the device's File, `held` the Archive file; one is set at a time.
@@ -25,7 +32,10 @@
 
   $effect(() => {
     if (!library) return;
-    api('/api/files/sources').then((s) => (names = Object.fromEntries((s ?? []).map((x) => [x.id, x.name]))), () => {});
+    run(`return await archive.query("SELECT DISTINCT c.id, c.provider FROM archive.connection c JOIN archive.file f ON f.connection = c.id");`).then((rows) => {
+      const of = new Map((ws().catalog?.catalog.connectors ?? []).map((k) => [k.id, k.name]));
+      names = Object.fromEntries(rows.map((x) => [x.id, of.get(x.provider) ?? x.provider]));
+    });
   });
 
   $effect(() => {
@@ -33,8 +43,8 @@
     const term = q.trim();
     const n = ++asked;
     const t = setTimeout(async () => {
-      const list = await api(`/api/files/exports${term ? `?q=${encodeURIComponent(term)}` : ''}`).catch(() => []);
-      if (n === asked) found = (list ?? []).map((f) => toFile(f));
+      const list = await run(`return await archive.query(${JSON.stringify(EXPORTS)}, ${JSON.stringify(term)});`);
+      if (n === asked) found = list.map((f) => toFile(f));
     }, term ? 200 : 0);
     return () => clearTimeout(t);
   });

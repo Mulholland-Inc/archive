@@ -35,8 +35,12 @@
     if (!places || !open) return;
     const q = query;
     const t = setTimeout(async () => {
-      const out = await connectPlaces(connector.id, q);
-      if (q === query) found = out;
+      try {
+        const out = await connectPlaces(connector.id, q);
+        if (q === query) found = out;
+      } catch (e) {
+        error = e.message;
+      }
     }, q ? 120 : 0);
     return () => clearTimeout(t);
   });

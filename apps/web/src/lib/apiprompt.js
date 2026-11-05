@@ -18,12 +18,12 @@ export function apiPrompt({ key, archive, archives }) {
 
 ## Endpoints
 - \`GET /api/types\`: every table and view, with its columns, types and descriptions. Start here.
-- \`GET /api/{table}?limit=&after=&<column>=<value>\`, \`GET /api/{table}/{id}\`: list and read rows.
-- \`POST /api/{table}\`, \`PATCH /api/{table}/{id}\`, \`PUT /api/{table}/{id}\`, \`DELETE /api/{table}/{id}\`: write rows (JSON bodies).
+- \`GET /api/{table}?limit=&after=&desc=1&<column>=<value>\`, \`GET /api/{table}/{id}\`: list and read rows; an empty value matches null.
+- \`POST /api/{table}\`, \`PATCH /api/{table}/{id}\`, \`DELETE /api/{table}/{id}\`: write rows (JSON bodies).
 - \`GET /api/search?q=&type=&limit=\`: full-text search across tables.
-- \`GET /api/files\`, \`POST /api/files\` (multipart, field \`file\`), \`GET /api/files/{id}/content\`, \`GET /api/files/{id}/text\`: files and their text.
-- \`GET /api/files/{id}/model\` and \`POST /api/files/{id}/edit\` with an array of edits: read and change a docx, xlsx or pptx, as \`archive.read\` and \`archive.edit\` do.
-- \`POST /api/run\` with \`{ "code": "…" }\`: run TypeScript against the archive SDK; \`GET /api/run/docs\` documents it.
+- \`GET /api/file\`, \`POST /api/file\` (multipart, field \`file\`, or \`{ "kind": "folder", "name" }\`), \`GET /api/file/{id}/content\`, \`GET /api/file/{id}/text\`: files and their text.
+- \`GET /api/file/{id}/model\` and \`PATCH /api/file/{id}\` with \`{ "edits": [...] }\`: read and change a docx, xlsx or pptx, as \`archive.read\` and \`archive.edit\` do.
+- \`POST /api/run\` with \`{ "code": "…" }\`: run TypeScript against the archive SDK; \`POST /api/action/docs\` documents it.
 - Workflows are rows of the \`workflow\` table: \`POST /api/workflow\` with \`{ "name", "source", "on" }\` saves one (\`on\` is \`{ "cron": "0 9 * * *", "tz"?: "Europe/Amsterdam" }\`, \`{ "table": "invoice", "events": ["created", "updated"] }\`, \`{ "webhook": true }\` or null), \`PATCH\` and \`DELETE /api/workflow/{id}\` change and remove it, and a bad one comes back as 422 with \`errors\` (path, message, and line and column in source). Run one with \`POST /api/run\` and \`return await archive.run("name", input)\`. Its runs are the read-only \`workflow_run\` table: \`GET /api/workflow_run?workflow={id}\`.
 - MCP: \`${mcp}\` with the same key${archive ? '' : ' and `Archive-Workspace` header'}.
 

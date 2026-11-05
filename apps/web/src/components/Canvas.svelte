@@ -104,7 +104,7 @@
   }
 
   const media = (part) => (el) => {
-    blobURL(`/api/files/${id}/media/${part}`).then((u) => (el.src = u)).catch(() => {});
+    blobURL(`/api/file/${id}/media/${part}`).then((u) => (el.src = u)).catch(() => {});
   };
 
   const share = (v, of) => `${(v / of) * 100}%`;

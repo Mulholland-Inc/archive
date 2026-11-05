@@ -5036,6 +5036,103 @@ CREATE POLICY seen ON archive.known_org FOR SELECT USING (EXISTS (SELECT FROM ar
     OR EXISTS (SELECT FROM archive.crm_company x WHERE x.org = known_org.id)
     OR EXISTS (SELECT FROM archive.bank_transaction x WHERE x.org = known_org.id));
 
+CREATE VIEW archive.agent_list WITH (security_invoker = true) AS
+SELECT a.id, a.name, a.description, a.instructions, a.avatar, a.tint, a.slug, a.access, a.created_at, a.updated_at,
+    (SELECT t.updated_at FROM archive.turn t WHERE t.agent = a.id ORDER BY t.n DESC LIMIT 1) AS at
+FROM archive.agent a;
+COMMENT ON VIEW archive.agent_list IS 'Each agent you can see, with when your own conversation with it last moved';
+COMMENT ON COLUMN archive.agent_list.at IS 'When your last turn with it changed; null before you talk with it';
+
+CREATE VIEW archive.workflow_list WITH (security_invoker = true) AS
+SELECT w.id, w.name, w.source, w."on", w.next_at, w.member, w.hook, w.created_at, w.updated_at,
+    (SELECT to_jsonb(r) FROM (SELECT x.id, x.workflow, x.created_at AS at, x.trigger, x.ms, x.error FROM archive.workflow_run x
+        WHERE x.workflow = w.id ORDER BY x.created_at DESC, x.id DESC LIMIT 1) r) AS last
+FROM archive.workflow w;
+COMMENT ON VIEW archive.workflow_list IS 'Each workflow you can see, with its last run';
+COMMENT ON COLUMN archive.workflow_list.last IS 'Its last run: id, workflow, at, trigger, ms and error; null before its first';
+
+CREATE VIEW archive.connection_list WITH (security_invoker = true) AS
+SELECT c.id, c.name, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_at, c.sync_at, c.synced_at, c.integration, c.access,
+    ((SELECT count(*) FROM archive.mail_message x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.doc_page x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_company x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_department x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_location x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_schedule x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_worker x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_custom_field x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_schedule_assignment x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_earning_type x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_time_off_request x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_time_off_balance x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_run x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_pay_period x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_contractor_payment x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_contractor_payment_group x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.payroll_task x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.file x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.ledger_account x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.ledger_contact x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.ledger_item x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.ledger_entry x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.calendar_event x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.crm_company x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.crm_contact x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.crm_deal x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.chat_message x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.marketing_campaign x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.work_item x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.code_project x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.compliance x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.commerce_product x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.commerce_order x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.ad_metric x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.dental_provider x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.dental_patient x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.dental_appointment x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.dental_procedure x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.dental_payment x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.bank_account x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.bank_transaction x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.spend_department x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.spend_user x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.spend_card x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.spend_transaction x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.warehouse_table x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.photo x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.place_visit x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.investment_holding x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.investment_transaction x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.bank_liability x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.budget_category x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.parcel x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.vehicle x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.vehicle_charge x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.home_device x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.health_sample x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.health_day x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.health_sleep x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.health_workout x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.health_record x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.music_playlist x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.music_track x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.music_artist x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.notebook x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.note x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.school_notice x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.contact x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.location x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.history x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.post x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.kin x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.dna x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.media x WHERE x.connection = c.id))::bigint AS items,
+    (SELECT m.email::text FROM archive.member m WHERE m.id = c.member) AS connected_by
+FROM archive.connection c;
+COMMENT ON VIEW archive.connection_list IS 'Each connection you can see, with how many of its rows you see and who connected it';
+
+GRANT SELECT ON archive.agent_list, archive.workflow_list, archive.connection_list TO "{p}_viewer";
+
 -- name: HasRole :one
 SELECT pg_has_role(sqlc.arg(member)::name, rolname, 'USAGE') FROM pg_catalog.pg_roles WHERE rolname = sqlc.arg(grp)::name;
 
@@ -5052,7 +5149,7 @@ SELECT coalesce((SELECT r.id::text || ':' || r.hash FROM archive.revision r ORDE
 SELECT id, role::text AS role, "group" FROM archive.member WHERE email = sqlc.arg(email)::text;
 
 -- name: Members :many
-SELECT id, email::text AS email, role::text AS role, "group" FROM archive.member ORDER BY email;
+SELECT id, email::text AS email, role::text AS role, "group", name FROM archive.member ORDER BY email;
 
 -- name: NameMembers :exec
 UPDATE archive.member m SET name = u.name FROM (SELECT unnest(sqlc.arg(emails)::text[]) AS email, unnest(sqlc.arg(names)::text[]) AS name) u
@@ -5072,9 +5169,6 @@ UPDATE archive.turn SET messages = messages || sqlc.arg(messages)::jsonb, update
 -- name: ClearTurns :exec
 WITH gone AS (DELETE FROM archive.memory m WHERE m.agent = sqlc.arg(agent) AND m.member = sqlc.arg(member))
 DELETE FROM archive.turn t WHERE t.agent = sqlc.arg(agent) AND t.member = sqlc.arg(member);
-
--- name: LastTurns :many
-SELECT * FROM (SELECT t.n, t.messages FROM archive.turn t WHERE t.agent = $1 ORDER BY t.n DESC LIMIT $2) r ORDER BY n;
 
 -- name: TurnsBetween :many
 SELECT n, messages, created_at FROM archive.turn WHERE agent = sqlc.arg(agent) AND member = sqlc.arg(member) AND n >= sqlc.arg(lo) AND n < sqlc.arg(hi) ORDER BY n;
@@ -5114,41 +5208,8 @@ SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, 
 INSERT INTO archive.file (hash, name, mime, size, access, connection) VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at;
 
--- name: Files :many
-SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at FROM archive.file
-WHERE id > sqlc.arg(after) AND (NOT sqlc.arg(tree)::bool OR parent IS NOT DISTINCT FROM sqlc.narg(in_folder)::uuid AND (sqlc.narg(in_folder)::uuid IS NOT NULL OR connection IS NOT DISTINCT FROM sqlc.narg(of_connection)::uuid))
-ORDER BY id LIMIT sqlc.arg(lim);
-
--- name: ExportFiles :many
--- Files a person could import as an export: copied in, not a folder, named like one, and not already under an import. Zips and
--- other whole exports come first, then the newest.
-SELECT f.id, f.hash, f.name, f.mime, f.size, f.metadata, f.status, f.error, f.access, f.created_at, f.kind, f.parent, f.connection, f.stream, f.source_id, f.version, coalesce(f.url::text, '')::text AS url, f.drive, f.owner_name, f.editor_name, f.made_at, f.edited_at, f.updated_at FROM archive.file f
-WHERE f.kind = 'file' AND f.hash <> '' AND f.name ~* '\.(zip|json|ged|gedcom|csv|txt|mbox|ics|vcf|db)$'
-  AND NOT EXISTS (SELECT FROM archive.connection c WHERE c.id = f.connection AND c.provider = 'import')
-  AND (sqlc.arg(q)::text = '' OR f.name ILIKE '%' || sqlc.arg(q)::text || '%')
-ORDER BY f.name ~* '\.(zip|ged|gedcom|mbox|db)$' DESC, coalesce(f.edited_at, f.created_at) DESC, f.id LIMIT 50;
-
--- name: FileSources :many
-SELECT c.id, c.provider, c.account FROM archive.connection c WHERE EXISTS (SELECT FROM archive.file f WHERE f.connection = c.id) ORDER BY c.provider, c.account, c.id;
-
--- name: AddFolder :one
-INSERT INTO archive.file (name, kind, access, parent) VALUES ($1, 'folder', $2, $3)
-RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at;
-
--- name: MoveFile :one
-UPDATE archive.file SET parent = sqlc.narg(parent)::uuid WHERE id = sqlc.arg(id)::uuid
-RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at;
-
 -- name: GetFile :one
 SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at FROM archive.file WHERE id = $1;
-
--- name: RenameFile :one
-UPDATE archive.file SET name = $2 WHERE id = $1
-RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at;
-
--- name: SetFileAccess :one
-UPDATE archive.file SET access = sqlc.narg(access)::uuid WHERE id = sqlc.arg(id)::uuid
-RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at;
 
 -- name: LockFile :one
 SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at FROM archive.file WHERE id = $1 FOR UPDATE;
@@ -5201,9 +5262,6 @@ WHERE id = sqlc.arg(id) AND version IS NOT DISTINCT FROM sqlc.narg(version);
 UPDATE archive.file SET retry_at = sqlc.arg(at)::timestamptz, tries = sqlc.arg(tries), error = sqlc.arg(error)
 WHERE id = sqlc.arg(id) AND version IS NOT DISTINCT FROM sqlc.narg(version);
 
--- name: Stored :one
-SELECT archive.stored()::bigint;
-
 -- name: LockHash :exec
 SELECT pg_advisory_xact_lock(hashtextextended(sqlc.arg(hash)::text, 0));
 
@@ -5229,9 +5287,6 @@ RETURNING id, hash, name, mime, size, metadata, status, error, access, created_a
 
 -- name: FileBySource :one
 SELECT kind, coalesce(version, '')::text AS version, source FROM archive.file WHERE connection = $1 AND source_id = $2 LIMIT 1;
-
--- name: DeleteFile :one
-DELETE FROM archive.file WHERE id = $1 RETURNING id;
 
 -- name: SetFileStatus :exec
 UPDATE archive.file SET status = $2, error = $3 WHERE id = $1;
@@ -5263,9 +5318,6 @@ SELECT coalesce((SELECT id::text || ':' || hash FROM archive.revision ORDER BY c
 
 -- name: InsertRevision :exec
 INSERT INTO archive.revision (hash) VALUES ($1);
-
--- name: Revisions :many
-SELECT id, created_at, author, coalesce(name, '')::text AS name, statements FROM archive.revision WHERE statements <> '[]' ORDER BY created_at DESC, id DESC LIMIT $1;
 
 -- name: RevisionNamed :one
 SELECT EXISTS (SELECT FROM archive.revision WHERE name = $1);
@@ -5365,7 +5417,8 @@ SELECT jsonb_build_object(
             'archive.notebook'::regclass, 'archive.note'::regclass, 'archive.note_attachment'::regclass,
             'archive.school_notice'::regclass,
             'archive.contact'::regclass, 'archive.location'::regclass, 'archive.history'::regclass, 'archive.post'::regclass,
-            'archive.kin'::regclass, 'archive.kin_tie'::regclass, 'archive.dna'::regclass, 'archive.media'::regclass)
+            'archive.kin'::regclass, 'archive.kin_tie'::regclass, 'archive.dna'::regclass, 'archive.media'::regclass,
+            'archive.agent_list'::regclass, 'archive.workflow_list'::regclass, 'archive.connection_list'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -5456,85 +5509,6 @@ SELECT next_at FROM archive.workflow WHERE next_at IS NOT NULL ORDER BY next_at 
 
 -- name: HasPendingFiles :one
 SELECT EXISTS (SELECT FROM archive.file WHERE status = 'pending' AND connection IS NULL);
-
--- name: Connections :many
-SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_at, c.sync_at, c.synced_at,
-    ((SELECT count(*) FROM archive.mail_message x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.doc_page x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_company x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_department x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_location x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_schedule x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_worker x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_custom_field x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_schedule_assignment x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_earning_type x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_time_off_request x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_time_off_balance x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_run x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_pay_period x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_contractor_payment x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_contractor_payment_group x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_task x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.file x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.ledger_account x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.ledger_contact x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.ledger_item x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.ledger_entry x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.calendar_event x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.crm_company x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.crm_contact x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.crm_deal x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.chat_message x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.marketing_campaign x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.work_item x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.code_project x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.compliance x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.commerce_product x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.commerce_order x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.ad_metric x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.dental_provider x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.dental_patient x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.dental_appointment x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.dental_procedure x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.dental_payment x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.bank_account x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.bank_transaction x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.spend_department x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.spend_user x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.spend_card x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.spend_transaction x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.warehouse_table x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.photo x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.place_visit x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.investment_holding x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.investment_transaction x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.bank_liability x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.budget_category x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.parcel x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.vehicle x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.vehicle_charge x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.home_device x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.health_sample x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.health_day x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.health_sleep x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.health_workout x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.health_record x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.music_playlist x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.music_track x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.music_artist x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.notebook x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.note x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.school_notice x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.contact x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.location x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.history x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.post x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.kin x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.dna x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.media x WHERE x.connection = c.id))::bigint AS items,
-    c.integration, coalesce(c.access::text, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
-FROM archive.connection c WHERE c.member = $1 AND NOT c.integration OR c.integration ORDER BY c.provider, c.account, c.id;
 
 -- name: Connection :one
 SELECT * FROM archive.connection WHERE id = $1;

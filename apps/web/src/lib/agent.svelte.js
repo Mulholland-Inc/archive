@@ -18,7 +18,7 @@ export const conversation = resource({
     if (!agent || controllers.has(id)) return;
     agent.limit ??= PAGE;
     try {
-      const turns = (await api(`/api/agent/${id}/turns?limit=${agent.limit}`, { workspace: w.id })) ?? [];
+      const turns = (await api(`/api/turn?agent=${id}&limit=${agent.limit}&desc=1`, { workspace: w.id })).reverse();
       agent.error = '';
       if (controllers.has(id)) return;
       const messages = turns.flatMap((t) => t.messages);
@@ -125,7 +125,7 @@ export async function clearAgent(id) {
   const agent = agentById(id);
   if (!agent) return;
   controllers.get(id)?.abort();
-  await api(`/api/agent/${id}/turns`, { method: 'DELETE', workspace: w.id });
+  await api('/api/action/clear', { method: 'POST', body: { agent: id }, workspace: w.id });
   w.conversations[id] = [];
   Object.assign(agent, { saved: 0, limit: PAGE, more: false, keep: false });
 }

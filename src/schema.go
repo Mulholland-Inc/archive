@@ -144,8 +144,11 @@ func catalogParse(b []byte) (*Catalog, error) {
 		if t.Schema == "archive" && t.Name == "connection" {
 			catalogConnection(t)
 		}
+		if t.Schema == "archive" && t.Name == "file" {
+			catalogFile(t)
+		}
 		if t.synced() {
-			t.internal = []string{"seen_at"}
+			t.internal = append(t.internal, "seen_at")
 			t.Columns = slices.DeleteFunc(t.Columns, func(c *Column) bool { return c.Name == "seen_at" })
 		}
 		if t.Schema == "archive" && slices.Contains([]string{"member", "group", "workflow", "workflow_run", "turn", "memory", "known_person", "known_org"}, t.Name) {
@@ -174,12 +177,20 @@ func catalogConnection(t *Table) {
 	t.Columns = slices.DeleteFunc(t.Columns, func(c *Column) bool { return slices.Contains(t.internal, c.Name) })
 }
 
+func catalogFile(t *Table) {
+	gone := []string{"parent_source", "copied", "source", "tries", "retry_at"}
+	t.internal = append(gone, "text")
+	t.Columns = slices.DeleteFunc(t.Columns, func(c *Column) bool { return slices.Contains(gone, c.Name) })
+}
+
 func (t *Table) synced() bool {
 	_, ok := syncSchema[t.Name]
 	return t.Schema == "archive" && (ok || t.Name == "known_person" || t.Name == "known_org")
 }
 
-func (t *Table) isWorkflow() bool { return t.Schema == "archive" && t.Name == "workflow" }
+func (t *Table) isWorkflow() bool {
+	return t.Schema == "archive" && (t.Name == "workflow" || t.Name == "workflow_list")
+}
 
 var catalogMetaRe = regexp.MustCompile(`^([a-z][a-z0-9_]*):[ \t]*(\S.*?)\s*$`)
 
@@ -203,7 +214,8 @@ var (
 	catalogSystem   = map[string]bool{"id": true, "created_at": true, "updated_at": true}
 	catalogReserved = map[string]bool{"boot": true, "files": true, "views": true, "search": true, "schema": true, "types": true,
 		"member": true, "group": true, "user": true, "token": true, "file": true, "upload": true, "revision": true, "run": true,
-		"workflow": true, "workflow_run": true, "connection": true, "agent": true, "turn": true, "memory": true}
+		"workflow": true, "workflow_run": true, "connection": true, "agent": true, "turn": true, "memory": true,
+		"action": true, "agent_list": true, "workflow_list": true, "connection_list": true}
 	catalogNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 	catalogRefRe  = regexp.MustCompile(`(?i)^references\s+([a-z][a-z0-9_]*)\b[\s.;:,-]*`)
 )
@@ -227,11 +239,8 @@ func (c *Catalog) writable(name string) (*Table, error) {
 	if err == nil && t.Schema == "archive" && t.Name == "workflow_run" {
 		return nil, fmt.Errorf("workflow_run is read only: Archive records a run each time a workflow runs: %w", ErrReadOnly)
 	}
-	if err == nil && t.Schema == "archive" && t.Name == "connection" {
-		return nil, fmt.Errorf("connection is read only: connect and disconnect your accounts in Settings, Connectors: %w", ErrReadOnly)
-	}
 	if err == nil && t.Schema == "archive" && t.Name == "file" {
-		return nil, fmt.Errorf("a file is not written as a row: make one with archive.create(name) or archive.copy, change one with archive.edit, and delete one with archive.delete: %w", ErrReadOnly)
+		return t, nil
 	}
 	if err == nil && t.synced() {
 		return nil, fmt.Errorf("%s is read only: Archive syncs it from your connections: %w", name, ErrReadOnly)
@@ -750,14 +759,6 @@ type schemaTx struct {
 	cats map[string]*Catalog
 }
 
-type SchemaRevision struct {
-	ID         uuid.UUID       `json:"id"`
-	At         string          `json:"at"`
-	Author     string          `json:"author"`
-	Name       string          `json:"name,omitempty"`
-	Statements json.RawMessage `json:"statements"`
-}
-
 func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string) (*SchemaMigration, error) {
 	stmts := storeSplit(src)
 	if err := schemaCheckSQL(stmts); err != nil {
@@ -1272,15 +1273,6 @@ func (s *pgStore) Schema(ctx context.Context) (map[string]string, error) {
 		return nil, err
 	}
 	return sch.ddl("public"), nil
-}
-
-func (s *pgStore) Revisions(ctx context.Context, limit int) ([]SchemaRevision, error) {
-	rows, err := generated.New(s.sys).Revisions(ctx, int32(limit))
-	out := []SchemaRevision{}
-	for _, r := range rows {
-		out = append(out, SchemaRevision{ID: r.ID, At: r.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"), Author: r.Author, Name: r.Name, Statements: r.Statements})
-	}
-	return out, err
 }
 
 func (s *pgStore) migrate(ctx context.Context) error {
