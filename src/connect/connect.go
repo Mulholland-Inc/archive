@@ -261,6 +261,12 @@ func (p *Provider) AskOf(v string) (map[string]string, error) {
 	if k == nil {
 		return nil, nil
 	}
+	if k.Places != "" {
+		if m, ok := k.placeOf(v); ok {
+			return m, nil
+		}
+		return nil, fmt.Errorf("%s needs your health system: search for it by name and pick it", p.Name)
+	}
 	v = strings.ToLower(strings.TrimSpace(v))
 	if k.Find != "" {
 		f := reOf(k.Find).FindStringSubmatch(v)
@@ -324,7 +330,7 @@ func (p *Provider) Exchange(ctx context.Context, redirect string, q url.Values, 
 		if asked[k] == "" || (p.Signed != "" || q.Has(k)) && !strings.EqualFold(q.Get(k), asked[k]) {
 			return nil, fmt.Errorf("%s was not connected: it came back for %s %q, not %q", p.Name, k, q.Get(k), asked[k])
 		}
-		meta[k] = asked[k]
+		maps.Copy(meta, asked)
 	}
 	for _, k := range p.Keep {
 		if v := q.Get(k); v != "" {
