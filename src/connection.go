@@ -1191,6 +1191,10 @@ var syncSchema = map[string]syncTable{
 	"spend_receipt":                    {parent: "spend_transaction", of: "spend"},
 	"warehouse_table":                  {},
 	"warehouse_column":                 {parent: "warehouse_table", of: "relation"},
+	"investment_holding":               {links: map[string]string{"account": "bank_account"}},
+	"investment_transaction":           {links: map[string]string{"account": "bank_account"}},
+	"bank_liability":                   {links: map[string]string{"account": "bank_account"}},
+	"budget_category":                  {},
 }
 
 type syncRec struct {
