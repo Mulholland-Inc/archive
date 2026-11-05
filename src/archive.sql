@@ -2191,7 +2191,7 @@ CREATE TABLE archive.commerce_order (
 ) INHERITS (archive.object);
 CREATE INDEX commerce_order_customer_idx ON archive.commerce_order (customer);
 CREATE INDEX commerce_order_placed_at_idx ON archive.commerce_order (placed_at);
-COMMENT ON TABLE archive.commerce_order IS 'An order of a store you connected, like Shopify; what was in it is in commerce_line. Read only; Archive syncs them
+COMMENT ON TABLE archive.commerce_order IS 'An order of a store you connected, like Shopify, or one you placed, from an Amazon export; what was in it is in commerce_line. Read only; Archive syncs them
 icon: shopping-cart';
 COMMENT ON COLUMN archive.commerce_order.number IS 'Its number, like #1001';
 COMMENT ON COLUMN archive.commerce_order.customer IS 'references known_person; who placed it, by their address';
