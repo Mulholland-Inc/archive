@@ -143,8 +143,8 @@
  *   be dropped until you change or drop the view.
  *
  * Agents
- * - An agent is a row of the agent table, which everyone in the workspace sees and editors write:
- *   archive.create("agent", { name, instructions, avatar, tint }). It follows its instructions in every turn, and
+ * - An agent is a row of the agent table, which everyone in the workspace sees, or only the group in its access, and
+ *   editors write: archive.create("agent", { name, instructions, avatar, tint, access }). It follows its instructions in every turn, and
  *   answers each person as them, under their role.
  * - Each person's conversation with an agent is their own and never ends. turn holds every question and answer word
  *   for word, by n. memory sums them up: a row covers turns lo to lo+size-1, and its two halves, of size/2, say more.

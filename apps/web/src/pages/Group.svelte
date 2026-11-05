@@ -1,5 +1,5 @@
 <script>
-  import { Ellipsis, UsersRound, UserPlus, UserMinus, Table2, Plug, Pencil, Trash2 } from '@lucide/svelte';
+  import { UsersRound, UserPlus, UserMinus, Table2, Plug, Pencil, Trash2 } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
   import Breadcrumbs from '../components/Breadcrumbs.svelte';
@@ -21,7 +21,6 @@
   import EmptyState from '../components/EmptyState.svelte';
   import { ws, seedOf, members, groups, usage, connections, groupById, updateGroup, toggleGroup, isArchiveOwner, tableOf } from '../lib/app.svelte.js';
   import { renameGroupPrompt, deleteGroupConfirm, usesText } from '../lib/menus.js';
-  import { SEPARATOR } from '../lib/contextmenu.svelte.js';
   import { go } from '../lib/router.svelte.js';
 
   // A group's page: its name and description, which an owner changes, who is in it, and where it is used, the
@@ -70,10 +69,8 @@
     <PageHeader title={group.name} renameLabel="Rename group" onrename={owner ? (name) => updateGroup(group, { name }) : undefined}>
       {#snippet actions()}
         {#if owner}
-          <Menu placement="bottom-end" width="sm" label="Group actions">
-            {#snippet trigger(props)}<IconButton icon={Ellipsis} label="Group actions" {...props} />{/snippet}
-            <MenuItems items={[{ label: 'Rename', icon: Pencil, onselect: () => renameGroupPrompt(group) }, SEPARATOR, { label: 'Delete', icon: Trash2, danger: true, onselect: remove }]} />
-          </Menu>
+          <IconButton icon={Pencil} label="Rename" onclick={() => renameGroupPrompt(group)} />
+          <IconButton icon={Trash2} label="Delete" onclick={remove} />
         {/if}
       {/snippet}
       {#if describing}

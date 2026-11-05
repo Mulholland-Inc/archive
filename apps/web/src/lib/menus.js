@@ -1,6 +1,6 @@
-import { Pencil, Trash2, Plus, ExternalLink, MessageSquarePlus, Share, Download, Eye, Play, RotateCcw, Copy, UserPlus, UserMinus, Users, Ban, Settings, ArrowRightLeft } from '@lucide/svelte';
+import { Pencil, Trash2, Plus, ExternalLink, MessageSquarePlus, Share, Download, Eye, Play, RotateCcw, Copy, Users, Ban, Settings, ArrowRightLeft } from '@lucide/svelte';
 import { SEPARATOR } from './contextmenu.svelte.js';
-import { app, deleteGroup, groupUses, updateGroup, toggleGroup, createGroup, isArchiveOwner, ws, removeAgent, askAgent, renameFile, removeFile, downloadFile, openShare, runWorkflow, removeWorkflow, removeMember, invite, stopSharing, removeGuest, switchArchive, openSettings, deleteArchive } from './app.svelte.js';
+import { app, deleteGroup, groupUses, updateGroup, toggleGroup, createGroup, isArchiveOwner, ws, removeAgent, askAgent, renameFile, removeFile, downloadFile, openShare, runWorkflow, removeWorkflow, removeMember, stopSharing, removeGuest, switchArchive, openSettings, deleteArchive } from './app.svelte.js';
 import { prompt, confirmDialog, notify } from './dialogs.svelte.js';
 import { clearAgent } from './agent.svelte.js';
 import { go } from './router.svelte.js';
@@ -86,18 +86,15 @@ export function workflowItems(workflow, { open = true, onrun, ondelete = () => d
   ];
 }
 
-export function memberItems(member, { roles = [], onrole } = {}) {
+// removeMemberConfirm removes member, or revokes their invitation, once you confirm.
+export async function removeMemberConfirm(member) {
   const invited = member.status === 'invited';
-  return [
-    { heading: 'Role' },
-    ...roles.map((r) => ({ label: r.label, checked: member.role === r.value, onselect: () => member.role !== r.value && onrole?.(member, r.value) })),
-    SEPARATOR,
-    ...memberGroupItems(member),
-    SEPARATOR,
-    { label: 'Copy email', icon: Copy, onselect: () => copyText(member.email) },
-    SEPARATOR,
-    { label: invited ? 'Revoke invitation' : 'Remove from archive', icon: Trash2, danger: true, onselect: () => removeMember(member.id) }
-  ];
+  if (await confirmDialog({ title: invited ? `Revoke ${member.name}’s invitation?` : `Remove ${member.name}?`, body: invited ? 'The invitation stops working.' : 'They lose access to this archive.', confirm: invited ? 'Revoke' : 'Remove' })) removeMember(member.id);
+}
+
+// removeGuestConfirm ends everything shared with guest once you confirm.
+export async function removeGuestConfirm(guest) {
+  if (await confirmDialog({ title: `Remove ${guest.name}?`, body: 'Nothing stays shared with them.', confirm: 'Remove' })) removeGuest(guest.email);
 }
 
 // usesText says where a group is used, like 3 rows in invoice and 1 in file.
@@ -129,32 +126,14 @@ export async function newGroupPrompt(people = []) {
   return name ? createGroup({ name, people }) : null;
 }
 
-export function groupItems(group) {
-  return [
-    { label: 'Open', icon: ExternalLink, onselect: () => go(`/access/groups/${group.id}`) },
-    { label: 'Rename', icon: Pencil, onselect: () => renameGroupPrompt(group) },
-    SEPARATOR,
-    { label: 'Delete', icon: Trash2, danger: true, onselect: () => deleteGroupConfirm(group) }
-  ];
-}
-
 // memberGroupItems are the groups a member can be in, checked when they are, for an owner to toggle, and a new
 // one to make with them in it.
-function memberGroupItems(member) {
+export function memberGroupItems(member) {
   if (!isArchiveOwner()) return [];
   return [
     { heading: 'Groups' },
     ...ws().groups.map((g) => ({ label: g.name, checked: member.groups.includes(g.id), keepOpen: true, onselect: () => toggleGroup(member, g.id) })),
     { label: 'New group…', icon: Plus, onselect: () => newGroupPrompt([member.id]) }
-  ];
-}
-
-export function guestItems(guest) {
-  return [
-    { label: 'Invite to archive', icon: UserPlus, onselect: () => invite({ emails: [guest.email], role: 'viewer' }) },
-    { label: 'Copy email', icon: Copy, onselect: () => copyText(guest.email) },
-    SEPARATOR,
-    { label: 'Remove all access', icon: UserMinus, danger: true, onselect: () => removeGuest(guest.email) }
   ];
 }
 

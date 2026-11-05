@@ -389,21 +389,22 @@ COMMENT ON COLUMN archive.workflow.member IS 'references member; whose it is, wh
 COMMENT ON COLUMN archive.workflow.access IS 'Group that sees it and its runs too; null for only you. Only you change, run or delete it';
 COMMENT ON COLUMN archive.workflow.next_at IS 'When it runs next: a cron workflow''s next time, or now for a table workflow with rows waiting';
 
--- An agent is shared by the workspace; what each person said with it, turn and memory, is theirs alone.
+-- An agent is shared by the workspace, or by the group its access names; what each person said with it, turn and
+-- memory, is theirs alone.
 CREATE TABLE archive.agent (
     id           uuid PRIMARY KEY DEFAULT uuidv7(),
     name         text NOT NULL DEFAULT '',
     instructions text NOT NULL DEFAULT '',
-    avatar       jsonb,
+    avatar       integer NOT NULL DEFAULT 0 CONSTRAINT agent_avatar CHECK (avatar BETWEEN 0 AND 21),
     tint         integer NOT NULL DEFAULT 10 CONSTRAINT agent_tint CHECK (tint BETWEEN 0 AND 31),
     access       uuid REFERENCES archive."group" ON DELETE RESTRICT,
     created_at   timestamptz NOT NULL DEFAULT now(),
     updated_at   timestamptz NOT NULL DEFAULT now()
 ) INHERITS (archive.object);
-COMMENT ON TABLE archive.agent IS 'An agent of this workspace, which everyone in it can talk with. Each person has their own endless conversation with it, in turn and memory
+COMMENT ON TABLE archive.agent IS 'An agent of this workspace, which everyone in it can talk with, or with access only that group. Each person has their own endless conversation with it, in turn and memory
 icon: bot';
 COMMENT ON COLUMN archive.agent.instructions IS 'What it is for and how it works, which it follows in every turn';
-COMMENT ON COLUMN archive.agent.avatar IS 'Its picture, { figure }, and null for the default. figure is float, face, bank, bookcase, cabinet, cottage, factory, farmhouse, safe, townhouse, warehouse, archivist, baobab, capitol, castle, chest, ledger, oak, pine, pinecone, pyramid or skyscraper. float is a robot and face a tall robot; each of the others is what it says';
+COMMENT ON COLUMN archive.agent.avatar IS 'Its picture, one figure by number: 0 robot, 1 tall robot, 2 bank, 3 bookcase, 4 cabinet, 5 cottage, 6 factory, 7 farmhouse, 8 safe, 9 townhouse, 10 warehouse, 11 archivist, 12 baobab, 13 capitol, 14 castle, 15 chest, 16 ledger, 17 oak, 18 pine, 19 pinecone, 20 pyramid, 21 skyscraper';
 COMMENT ON COLUMN archive.agent.tint IS 'The colour of its picture, 0 to 31';
 
 CREATE TABLE archive.turn (
@@ -449,8 +450,9 @@ COMMENT ON COLUMN archive.memory.lo IS 'The first turn it sums up';
 COMMENT ON COLUMN archive.memory.size IS 'How many turns it sums up, a power of two';
 COMMENT ON COLUMN archive.memory.name IS 'The line';
 
--- agent_last keeps one agent in every workspace: agents are made by talking with an agent.
-CREATE FUNCTION archive.agent_last() RETURNS trigger LANGUAGE plpgsql AS $$
+-- agent_last keeps one agent in every workspace, counting those its caller cannot see: agents are made by talking
+-- with an agent.
+CREATE FUNCTION archive.agent_last() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 BEGIN
     IF NOT EXISTS (SELECT FROM archive.agent a WHERE a.id <> OLD.id) THEN
         RAISE EXCEPTION 'this is the last agent; create another before deleting it' USING ERRCODE = '22023', TABLE = 'agent';
@@ -459,20 +461,6 @@ BEGIN
 END;
 $$;
 CREATE TRIGGER last BEFORE DELETE ON archive.agent FOR EACH ROW EXECUTE FUNCTION archive.agent_last();
-
--- An avatar is one of the figures the web app has (looks.js), refused by name as it is written.
-CREATE FUNCTION archive.agent_avatar() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
-    IF NEW.avatar IS NULL OR (TG_OP = 'UPDATE' AND NEW.avatar IS NOT DISTINCT FROM OLD.avatar) THEN
-        RETURN NEW;
-    END IF;
-    IF NEW.avatar->>'figure' IS NULL OR NEW.avatar->>'figure' NOT IN ('float', 'face', 'bank', 'bookcase', 'cabinet', 'cottage', 'factory', 'farmhouse', 'safe', 'townhouse', 'warehouse', 'archivist', 'baobab', 'capitol', 'castle', 'chest', 'ledger', 'oak', 'pine', 'pinecone', 'pyramid', 'skyscraper') THEN
-        RAISE EXCEPTION 'avatar: expected { figure }, with a figure the avatar column lists' USING ERRCODE = '22023', TABLE = 'agent';
-    END IF;
-    RETURN NEW;
-END;
-$$;
-CREATE TRIGGER avatar BEFORE INSERT OR UPDATE OF avatar ON archive.agent FOR EACH ROW EXECUTE FUNCTION archive.agent_avatar();
 
 -- A run of a workflow: what started it, what it returned, logged and threw, and how long it took. Archive
 -- writes them, keeping the last 100 of each workflow; everyone else only reads them, as the workflow's owner.
@@ -3540,6 +3528,9 @@ ALTER TABLE archive.workflow ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.workflow USING (archive.mine(member)) WITH CHECK (archive.mine(member) AND (access IS NULL OR archive.can(access)));
 -- A workflow with access is seen, with its runs, by that group too; only whose it is changes, runs or deletes it.
 CREATE POLICY shared ON archive.workflow FOR SELECT USING (access IS NOT NULL AND archive.can(access));
+
+ALTER TABLE archive.agent ENABLE ROW LEVEL SECURITY;
+CREATE POLICY access ON archive.agent USING (archive.can(access)) WITH CHECK (archive.can(access));
 
 ALTER TABLE archive.turn ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.turn FOR SELECT USING (archive.mine(member));
