@@ -3894,6 +3894,45 @@ COMMENT ON COLUMN archive.music_artist.source_id IS 'Their id there';
 COMMENT ON COLUMN archive.music_artist.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.music_artist.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
+CREATE TABLE archive.school_notice (
+    id           uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection   uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream       text NOT NULL,
+    source_id    text NOT NULL,
+    access       uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    updated_at   timestamptz NOT NULL DEFAULT now(),
+    name         text NOT NULL DEFAULT '',
+    seen_at      timestamptz NOT NULL DEFAULT now(),
+    service      text,
+    school       text,
+    sender       archive.email,
+    student      text,
+    kind         text,
+    title        text,
+    text         text,
+    sent_at      timestamptz,
+    mail_message text,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX school_notice_sent_at_idx ON archive.school_notice (sent_at);
+COMMENT ON TABLE archive.school_notice IS 'A message a school app you connected sent you, like ParentSquare, PowerSchool or ClassDojo, read from mail you synced, since these apps have no API for parents. Read only; Archive syncs them
+icon: school';
+COMMENT ON COLUMN archive.school_notice.service IS 'Which app sent it, like ParentSquare';
+COMMENT ON COLUMN archive.school_notice.school IS 'Who it is from, as the mail names them, usually the school or teacher';
+COMMENT ON COLUMN archive.school_notice.sender IS 'The address it came from';
+COMMENT ON COLUMN archive.school_notice.student IS 'Which of your children it names, by the first names you gave, by commas';
+COMMENT ON COLUMN archive.school_notice.kind IS 'What it is about, by its subject: alert, attendance, grades, payment, event or message';
+COMMENT ON COLUMN archive.school_notice.title IS 'Its subject';
+COMMENT ON COLUMN archive.school_notice.text IS 'Its text, up to 64 KB';
+COMMENT ON COLUMN archive.school_notice.sent_at IS 'When it was sent';
+COMMENT ON COLUMN archive.school_notice.mail_message IS 'The mail''s id in its mailbox';
+COMMENT ON COLUMN archive.school_notice.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.school_notice.stream IS 'What its connector syncs it as, like notices';
+COMMENT ON COLUMN archive.school_notice.source_id IS 'The mail''s id in its mailbox';
+COMMENT ON COLUMN archive.school_notice.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.school_notice.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
 CREATE FUNCTION archive.mine(m uuid) RETURNS bool LANGUAGE sql STABLE AS $$
     SELECT EXISTS (SELECT FROM pg_catalog.pg_roles r WHERE r.rolname = '{p}_m' || translate(rtrim(encode(uuid_send(m), 'base64'), '='), '+/', '-_')
         AND pg_has_role(current_user, r.oid, 'USAGE'))
@@ -4016,6 +4055,7 @@ BEGIN
         WHEN 'parcel_event' THEN concat_ws(' · ', nullif(r->>'status', ''), nullif(r->>'city', ''), left(r->>'at', 10))
         WHEN 'vehicle' THEN coalesce(nullif(r->>'title', ''), r->>'vin')
         WHEN 'vehicle_charge' THEN concat_ws(' · ', nullif(r->>'site', ''), left(r->>'started_at', 10))
+        WHEN 'school_notice' THEN concat_ws(' · ', coalesce(nullif(r->>'title', ''), 'No subject'), nullif(r->>'student', ''))
         WHEN 'home_device' THEN concat_ws(' · ', coalesce(nullif(r->>'title', ''), initcap(r->>'kind')), nullif(r->>'room', ''))
         WHEN 'music_playlist' THEN r->>'title'
         WHEN 'music_track' THEN concat_ws(' · ', r->>'title', nullif(r->>'artists', ''))
@@ -4106,6 +4146,7 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.home_device FOR EA
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.music_playlist FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.music_track FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.music_artist FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.school_notice FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_contact FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_item FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_entry FOR EACH ROW EXECUTE FUNCTION archive.object_name();
@@ -4235,6 +4276,7 @@ GRANT SELECT ON archive.home_device TO "{p}_viewer";
 GRANT SELECT ON archive.music_playlist TO "{p}_viewer";
 GRANT SELECT ON archive.music_track TO "{p}_viewer";
 GRANT SELECT ON archive.music_artist TO "{p}_viewer";
+GRANT SELECT ON archive.school_notice TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT, UPDATE, DELETE ON TABLES TO "{p}_editor";
 
@@ -4426,6 +4468,8 @@ ALTER TABLE archive.music_track ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.music_track FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = music_track.connection));
 ALTER TABLE archive.music_artist ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.music_artist FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = music_artist.connection));
+ALTER TABLE archive.school_notice ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.school_notice FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = school_notice.connection));
 ALTER TABLE archive.known_person ENABLE ROW LEVEL SECURITY;
 CREATE POLICY seen ON archive.known_person FOR SELECT USING (EXISTS (SELECT FROM archive.mail_party p WHERE p.person = known_person.id)
     OR EXISTS (SELECT FROM archive.payroll_worker w WHERE w.person = known_person.id)
@@ -4757,7 +4801,8 @@ SELECT jsonb_build_object(
             'archive.bank_liability'::regclass, 'archive.budget_category'::regclass,
             'archive.parcel'::regclass, 'archive.parcel_event'::regclass, 'archive.vehicle'::regclass, 'archive.vehicle_charge'::regclass, 'archive.home_device'::regclass,
             'archive.health_sample'::regclass, 'archive.health_day'::regclass, 'archive.health_sleep'::regclass, 'archive.health_workout'::regclass, 'archive.health_record'::regclass,
-            'archive.music_playlist'::regclass, 'archive.music_track'::regclass, 'archive.music_artist'::regclass)
+            'archive.music_playlist'::regclass, 'archive.music_track'::regclass, 'archive.music_artist'::regclass,
+            'archive.school_notice'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -4912,7 +4957,8 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.health_record x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.music_playlist x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.music_track x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.music_artist x WHERE x.connection = c.id))::bigint AS items,
+        + (SELECT count(*) FROM archive.music_artist x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.school_notice x WHERE x.connection = c.id))::bigint AS items,
     c.integration, coalesce(c.access::text, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
 FROM archive.connection c WHERE c.member = $1 AND NOT c.integration OR c.integration ORDER BY c.provider, c.account, c.id;
 
