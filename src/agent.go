@@ -557,10 +557,10 @@ func agentSystem(ac *Actor, role string, agent map[string]any, memory string) st
 	}
 	s := "Today is " + time.Now().UTC().Format("Monday 2 January 2006") + ". You are " + fmt.Sprint(agent["name"]) + ", an agent in Archive, talking with " + who + "."
 	switch role {
-	case "owner", "editor":
+	case "owner", "editor", "engineer":
 		s += " They are an " + role + " of this workspace."
-	case "viewer":
-		s += " They are a viewer of this workspace."
+	case "viewer", "manager":
+		s += " They are a " + role + " of this workspace."
 	}
 	s += " Your id in the agent table is " + fmt.Sprint(agent["id"]) + ". The run tool is the only way to read or change their archive. Run calls and their results are folded away in the conversation, so the answer itself presents what they need, as a short markdown table when that helps."
 	if in := strings.TrimSpace(fmt.Sprint(agent["instructions"])); in != "" {

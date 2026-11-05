@@ -433,8 +433,8 @@ func (a *Archive) Migrate(ctx context.Context, sql, name, confirm string) (*Sche
 	if err != nil {
 		return nil, err
 	}
-	if !a.owner(ctx, ac.Role) {
-		return nil, fmt.Errorf("only owners change the schema: %w", ErrForbidden)
+	if !a.has(ctx, ac.Role, a.prefix+"_manager") {
+		return nil, fmt.Errorf("only managers, engineers and the owner change the schema: %w", ErrForbidden)
 	}
 	author := ac.Email
 	if ac.TokenName != "" {
@@ -597,11 +597,21 @@ const storeRoles = `DO $$ BEGIN
         CREATE ROLE "{p}_viewer" NOLOGIN;
     END IF;
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_editor') THEN
-        CREATE ROLE "{p}_editor" NOLOGIN IN ROLE "{p}_viewer";
+        CREATE ROLE "{p}_editor" NOLOGIN;
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_manager') THEN
+        CREATE ROLE "{p}_manager" NOLOGIN;
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_engineer') THEN
+        CREATE ROLE "{p}_engineer" NOLOGIN;
     END IF;
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_owner') THEN
-        CREATE ROLE "{p}_owner" NOLOGIN IN ROLE "{p}_editor";
+        CREATE ROLE "{p}_owner" NOLOGIN;
     END IF;
+    GRANT "{p}_viewer" TO "{p}_editor";
+    GRANT "{p}_editor" TO "{p}_manager";
+    GRANT "{p}_manager" TO "{p}_engineer";
+    GRANT "{p}_engineer" TO "{p}_owner";
     IF NOT EXISTS (SELECT FROM pg_db_role_setting s JOIN pg_database d ON d.oid = s.setdatabase WHERE d.datname = current_database() AND s.setrole = 0) THEN
         EXECUTE format('ALTER DATABASE %I SET search_path = archive, public', current_database());
         EXECUTE format('ALTER DATABASE %I SET timezone = %L', current_database(), 'UTC');

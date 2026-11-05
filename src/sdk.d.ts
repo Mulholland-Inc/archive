@@ -7,12 +7,14 @@
  * Transaction and access
  * - A run is one transaction, as you. If it throws, times out or returns too much, everything rolls back. A failed
  *   SDK call you catch undoes only that call. What fetch, browse and actions did outside Archive stays done.
- * - viewer reads, editor also writes, owner also changes the schema and members, sees every row and reveals secrets.
- * - A row's access says who sees it: null is the workspace, a group is that group and the owners. Row-level security
+ * - viewer reads, editor also writes, manager also changes the schema, members, integrations and agents, sees every row
+ *   and reveals secrets, engineer also changes the workspace's name and look and has its API keys, and the one owner also deletes and transfers it.
+ * - A row's access says who sees it: null is the workspace, a group is that group and managers and up. Row-level security
  *   applies everywhere, SQL included. Writes take a group by id or name, like access: "hr"; reads give the id.
- * - Owners write the group table { name, description }; deleting one throws conflict while a row's access is it. Quote
- *   "group" in SQL. Owners write the member table { email, role, groups }: groups by id or name, a new name makes that
- *   group, adding an email invites them, and the last owner stays.
+ * - Managers and up write the group table { name, description }; deleting one throws conflict while a row's access is it.
+ *   Quote "group" in SQL. Managers and up write the member table { email, role, groups }: groups by id or name, a new name
+ *   makes that group, adding an email invites them. Nobody sets or removes a role above their own. The owner stays: only
+ *   they transfer, with archive.update("member", id, { role: "owner" }), which makes them an engineer.
  * - SDK errors have code ('invalid', 'not_found', 'forbidden', 'conflict' or a SQLSTATE); invalid has errors: [{ path, message }].
  *
  * Data
@@ -21,9 +23,9 @@
  *   without ? are required on create; empty fields read back null.
  * - Writes clean messy input, so pass what you have: "(415) 555-0123", "$1,234.50", "4/3/1990".
  * - JSON: date "2026-10-27"; timestamptz "2026-10-27T09:30:00Z"; uuids and references as id strings; enums as strings.
- *   Secret types (Card, UsSsn, National, Passport) read back masked; { reveal: true } shows them to owners.
+ *   Secret types (Card, UsSsn, National, Passport) read back masked; { reveal: true } shows them to managers and up.
  *
- * Schema (owners)
+ * Schema (managers and up)
  * - archive.migrate(sql) dry-runs CREATE, ALTER or DROP of a TABLE, VIEW, INDEX, TYPE, DOMAIN, FUNCTION, TRIGGER,
  *   SEQUENCE or POLICY, and COMMENT ON, and returns a report with confirm. archive.migrate(sql, { confirm }) runs it as
  *   part of this run, and later calls see it. A confirm goes stale when the schema changes: that throws conflict, so dry-run
@@ -55,6 +57,7 @@
  * Agents
  * - When they want a new agent, make it: archive.create("agent", { name, instructions, avatar, tint, access }), with
  *   instructions saying what it is for, a tint from 0 to 31 and an avatar that suits, by a number its column lists.
+ *   Managers and up write the agent table; for anyone else it throws forbidden.
  * - Each person's conversation with an agent is theirs and never ends. turn holds it word for word, by n; memory sums it
  *   up, a row covering turns lo to lo+size-1 and its two halves of size/2 saying more. Both are read only. Search memory
  *   first, then read only the part of a turn you need, as a whole one can be very long:
@@ -99,11 +102,11 @@
  * - A run browses for 5 minutes at most, calls models for 10 and runs agents for 10, none of it counting toward {timeout}.
  *
  * Connected accounts
- * - People connect their own Gmail, Outlook, Drive or Notion in Settings, Connectors; owners connect integrations for
- *   everyone in Archive settings, Integrations, and may narrow one to a group. Both are rows of connection. To use an
+ * - People connect their own Gmail, Outlook, Drive or Notion in Settings, Connectors; managers and up connect integrations
+ *   for everyone in Archive settings, Integrations, and may narrow one to a group. Both are rows of connection. To use an
  *   account, a person connects it there: you cannot.
  * - archive.action("gmail.search", { query }) uses one; Actions lists yours. With several accounts at a connector, pass
- *   { connection }, its account or id. Integrations act for editors and owners. Failures throw, with code unauthorized when
+ *   { connection }, its account or id. Integrations act for editors and up. Failures throw, with code unauthorized when
  *   the account must connect again. An action counts toward {timeout}. In a workflow, actions are its runner's.
  * - What connected accounts have is also synced into tables, for this workspace's connectors only, so read those first, without calling
  *   the service. Rows have connection, stream and source_id; Streams says which stream lands where. A personal account's rows only its

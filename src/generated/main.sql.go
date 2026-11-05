@@ -478,6 +478,17 @@ func (q *Queries) KeepWatchSecret(ctx context.Context, arg KeepWatchSecretParams
 	return result.RowsAffected(), nil
 }
 
+const keyWorkspace = `-- name: KeyWorkspace :one
+SELECT workspace FROM archive.token WHERE id = $1 AND user_id = $2 AND kind = 'api'
+`
+
+func (q *Queries) KeyWorkspace(ctx context.Context, iD uuid.UUID, userID uuid.UUID) (*uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, keyWorkspace, iD, userID)
+	var workspace *uuid.UUID
+	err := row.Scan(&workspace)
+	return workspace, err
+}
+
 const leaveWorkspace = `-- name: LeaveWorkspace :exec
 UPDATE archive."user" SET workspaces = array_remove(workspaces, $1::uuid) WHERE id = $2
 `

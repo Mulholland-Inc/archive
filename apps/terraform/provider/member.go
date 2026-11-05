@@ -71,13 +71,13 @@ func (r *memberResource) Metadata(_ context.Context, req resource.MetadataReques
 
 func (r *memberResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "A person in the workspace: a row of the member table. Adding one invites them; removing it takes them out with their tokens. Needs an owner's token.",
+		Description: "A person in the workspace: a row of the member table. Adding one invites them; removing it takes them out with their tokens. Needs a manager's, engineer's or the owner's token.",
 		Attributes: map[string]schema.Attribute{
 			"id":    schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"email": schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}, Description: "The address they sign in with, in lowercase. It cannot change."},
-			"role":  schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("viewer"), Description: "viewer, editor or owner."},
+			"role":  schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("viewer"), Description: "viewer, editor, manager, engineer or owner. There is one owner; setting it transfers the workspace and needs the owner's token."},
 			"groups": schema.SetAttribute{Optional: true, Computed: true, ElementType: types.StringType, Default: setdefault.StaticValue(types.SetValueMust(types.StringType, []attr.Value{})),
-				Description: "The names of the groups they are in, like hr; one no group has yet is made. A row whose access is the hr group is seen only by its members and the owners."},
+				Description: "The names of the groups they are in, like hr; one no group has yet is made. A row whose access is the hr group is seen only by its members and by managers, engineers and the owner."},
 		},
 	}
 }

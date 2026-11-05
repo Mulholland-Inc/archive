@@ -12,7 +12,9 @@
   const ROLES = [
     ['viewer', 'Browse, open and search records and files, read documents, and open boards, calendars and lists.'],
     ['editor', 'Everything a viewer can, plus add, change and remove records and files, and edit Office documents.'],
-    ['owner', 'Everything an editor can, plus add, change and remove people, change how information is organized, see everything whatever its group, and see the real secret numbers. There is always at least one owner.']
+    ['manager', 'Everything an editor can, plus add, change and remove people up to their own role, connect the workspace\'s integrations, make agents, change how information is organized, see everything whatever its group, and see the real secret numbers.'],
+    ['engineer', 'Everything a manager can, plus change the workspace\'s name and look, and hold its API keys.'],
+    ['owner', 'Everything an engineer can, plus delete the workspace and hand it to someone else. Each workspace has exactly one owner, who cannot be removed.']
   ];
 
   const FAQ = [
@@ -20,7 +22,7 @@
     ['What can an assistant see?', 'Exactly what the person who connected it can see. Its access key acts as them, and can be made read only or given an end date.'],
     ['Can an assistant leave a half-finished change behind?', 'No. Every job is all or nothing, so if anything goes wrong, every change is undone.'],
     ['Can an assistant reach our servers or network?', 'No. The scripts it runs can call public web services, but never private or internal addresses, so they cannot reach the servers Archive runs on.'],
-    ['Who can see a card number or a Social Security number?', 'Only owners, and only when they ask for it. Everyone else sees just the last few digits.'],
+    ['Who can see a card number or a Social Security number?', 'Only managers, engineers and the owner, and only when they ask for it. Everyone else sees just the last few digits.'],
     ['How do I share a file outside Archive?', 'Make a share link. It lasts 24 hours unless you choose another length, and photos shared through it have their location data removed.']
   ];
 
@@ -59,7 +61,7 @@
   <Row flip art="types" alt="Typed fields on a form, one of them covered by a sealed envelope">
     <h2>Secret fields stay sealed.</h2>
     <p>Card numbers, Social Security numbers, national IDs and passports are encrypted before they are stored, and everyone sees only the last few digits.</p>
-    <p>Only owners can see the real number.</p>
+    <p>Only managers, engineers and the owner can see the real number.</p>
   </Row>
 </Section>
 

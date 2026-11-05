@@ -38,7 +38,7 @@
   const group = $derived(wf?.access ? groupById(wf.access) : null);
   const accessOptions = $derived([
     { value: '', label: 'Only you' },
-    ...(ws()?.groups ?? []).filter((g) => app.role === 'owner' || me?.groups.includes(g.id) || g.id === wf?.access).map((g) => ({ value: g.id, label: g.name }))
+    ...(ws()?.groups ?? []).filter((g) => atLeast('manager') || me?.groups.includes(g.id) || g.id === wf?.access).map((g) => ({ value: g.id, label: g.name }))
   ]);
 
   const run = $derived(wf?.runs.find((r) => r.id === selected) ?? wf?.runs[0]);

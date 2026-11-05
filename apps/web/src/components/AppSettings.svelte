@@ -10,20 +10,20 @@
   import ConnectorDetail from './ConnectorDetail.svelte';
   import IntegrationSettings from './IntegrationSettings.svelte';
   import IntegrationDetail from './IntegrationDetail.svelte';
-  import { app, ws, archiveIntegrations } from '../lib/app.svelte.js';
+  import { app, ws, atLeast, archiveIntegrations } from '../lib/app.svelte.js';
 
-  const items = [
+  const items = $derived([
     { id: 'appearance', label: 'Appearance', icon: Palette, group: 'You' },
     { id: 'connectors', label: 'Connectors', icon: Plug, group: 'You' },
     { id: 'api', label: 'API key', icon: KeyRound, group: 'You' },
     { id: 'general', label: 'General', icon: Building2, group: 'Archive' },
     { id: 'server', label: 'Server', icon: Server, group: 'Archive' },
     { id: 'integrations', label: 'Integrations', icon: Blocks, group: 'Archive' },
-    { id: 'archive-api', label: 'API key', icon: KeyRound, group: 'Archive' }
-  ];
+    ...(atLeast('engineer') ? [{ id: 'archive-api', label: 'API key', icon: KeyRound, group: 'Archive' }] : [])
+  ]);
 
   const s = app.settings;
-  const current = $derived(s.section ?? 'appearance');
+  const current = $derived(items.some((i) => i.id === s.section) ? s.section : 'appearance');
   const title = $derived(items.find((i) => i.id === current)?.label);
   const connector = $derived(current === 'connectors' && s.sub ? ws().connectors.find((c) => c.id === s.sub) : null);
   const integration = $derived(current === 'integrations' && s.sub ? archiveIntegrations().find((c) => c.id === s.sub) : null);

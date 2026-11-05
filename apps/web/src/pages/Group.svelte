@@ -18,7 +18,7 @@
   import List from '../components/List.svelte';
   import ListItem from '../components/ListItem.svelte';
   import EmptyState from '../components/EmptyState.svelte';
-  import { ws, seedOf, members, groups, usage, connections, groupById, updateGroup, toggleGroup, isArchiveOwner, tableOf } from '../lib/app.svelte.js';
+  import { ws, seedOf, members, groups, usage, connections, groupById, updateGroup, toggleGroup, atLeast, tableOf } from '../lib/app.svelte.js';
   import { renameGroupPrompt, deleteGroupConfirm, usesText } from '../lib/menus.js';
   import { go } from '../lib/router.svelte.js';
 
@@ -30,7 +30,7 @@
   usage.use(() => id);
 
   const group = $derived(groupById(id));
-  const owner = $derived(isArchiveOwner());
+  const manages = $derived(atLeast('manager'));
   const people = $derived(ws().members.filter((m) => m.groups.includes(id)));
   const others = $derived(ws().members.filter((m) => !m.groups.includes(id)));
   const uses = $derived(ws().usage[id]);
@@ -42,7 +42,7 @@
   const memberColumns = $derived([
     { key: 'name', label: 'Name' },
     { key: 'email', label: 'Email', muted: true, width: 'lg' },
-    ...(owner ? [{ key: 'menu', label: '', width: 'xs', align: 'end' }] : [])
+    ...(manages ? [{ key: 'menu', label: '', width: 'xs', align: 'end' }] : [])
   ]);
   const placeOf = (table) => (table === 'file' ? '/library' : tableOf(table) ? `/database/${table}` : null);
 
@@ -62,16 +62,16 @@
 
 {#if group}
   <Page>
-    <PageHeader title={group.name} renameLabel="Rename group" onrename={owner ? (name) => updateGroup(group, { name }) : undefined}>
+    <PageHeader title={group.name} renameLabel="Rename group" onrename={manages ? (name) => updateGroup(group, { name }) : undefined}>
       {#snippet actions()}
-        {#if owner}
+        {#if manages}
           <IconButton icon={Pencil} label="Rename" onclick={() => renameGroupPrompt(group)} />
           <IconButton icon={Trash2} label="Delete" onclick={remove} />
         {/if}
       {/snippet}
       {#if describing}
         <InlineEdit value={group.description} label="Description" onsave={(description) => { describing = false; updateGroup(group, { description }); }} oncancel={() => (describing = false)} />
-      {:else if owner}
+      {:else if manages}
         <button type="button" class="describe" onclick={() => (describing = true)}>
           <Text tone={group.description ? 'secondary' : 'tertiary'}>{group.description || 'Add a description'}</Text>
         </button>
@@ -83,7 +83,7 @@
     <Stack gap="8">
       <Section title={people.length === 1 ? '1 member' : `${people.length} members`}>
         {#snippet actions()}
-          {#if owner && others.length}
+          {#if manages && others.length}
             <Menu end width="md" label="Add a member">
               {#snippet trigger(props)}<Button size="sm" icon={UserPlus} {...props}>Add member</Button>{/snippet}
               {#each others as m (m.id)}
@@ -133,7 +133,7 @@
         {:else}
           <Text tone="tertiary">No row is limited to {group.name}.</Text>
         {/if}
-        {#if owner}
+        {#if manages}
           <Stack direction="row" gap="3" align="center" wrap>
             <Button variant="danger" disabled={!uses || inUse} onclick={remove}>Delete group</Button>
             {#if inUse}

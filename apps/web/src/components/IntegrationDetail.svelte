@@ -5,18 +5,18 @@
   import Section from './Section.svelte';
   import ConnectorIcon from './ConnectorIcon.svelte';
   import SettingsRow from './SettingsRow.svelte';
-  import OwnerNotice from './OwnerNotice.svelte';
+  import ManagerNotice from './ManagerNotice.svelte';
   import Button from './Button.svelte';
   import Badge from './Badge.svelte';
   import StatusBadge from './StatusBadge.svelte';
   import Text from './Text.svelte';
   import Icon from './Icon.svelte';
   import KeysDialog from './KeysDialog.svelte';
-  import { connectIntegration, connectLink, disconnectIntegration, syncIntegration, isArchiveOwner, connections } from '../lib/app.svelte.js';
+  import { connectIntegration, connectLink, disconnectIntegration, syncIntegration, atLeast, connections } from '../lib/app.svelte.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
 
   let { integration: c, onback } = $props();
-  const owner = $derived(isArchiveOwner());
+  const manages = $derived(atLeast('manager'));
   let keying = $state(false);
   connections.use();
 
@@ -35,14 +35,14 @@
   {/snippet}
   {#snippet tools()}
     {#if c.connected}
-      <Button variant="ghost" icon={Unplug} disabled={!owner} onclick={disconnect}>Disconnect</Button>
-      <Button icon={RefreshCw} disabled={!owner} onclick={() => syncIntegration(c.id)}>Sync now</Button>
+      <Button variant="ghost" icon={Unplug} disabled={!manages} onclick={disconnect}>Disconnect</Button>
+      <Button icon={RefreshCw} disabled={!manages} onclick={() => syncIntegration(c.id)}>Sync now</Button>
     {:else}
-      <Button variant="primary" icon={Plug} disabled={!owner || !c.ready} onclick={() => (c.link ? connectLink(c.id) : c.keys?.length || c.ask ? (keying = true) : connectIntegration(c.id))}>Connect</Button>
+      <Button variant="primary" icon={Plug} disabled={!manages || !c.ready} onclick={() => (c.link ? connectLink(c.id) : c.keys?.length || c.ask ? (keying = true) : connectIntegration(c.id))}>Connect</Button>
     {/if}
   {/snippet}
   <Stack gap="6">
-    {#if !owner}<OwnerNotice what="integrations" />{/if}
+    {#if !manages}<ManagerNotice what="integrations" />{/if}
     {#if c.ready === false}
       <Text as="p" size="md" tone="secondary">This server has no {c.by} client set up for {c.name} yet. Ask whoever runs it to set one up.</Text>
     {/if}

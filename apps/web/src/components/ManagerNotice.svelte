@@ -1,18 +1,18 @@
 <script>
   import { Lock } from '@lucide/svelte';
   import Icon from './Icon.svelte';
-  import { ws, members } from '../lib/app.svelte.js';
+  import { atLeast, ws, members } from '../lib/app.svelte.js';
 
   members.use();
 
-  let { what = 'this', ask = 'to connect or change one' } = $props();
-  const owners = $derived(ws().members.filter((m) => m.role === 'owner' && m.status === 'active').map((m) => m.name));
-  const list = $derived(owners.length > 1 ? `${owners.slice(0, -1).join(', ')} or ${owners.at(-1)}` : owners[0]);
+  let { what = 'this' } = $props();
+  const names = $derived(ws().members.filter((m) => atLeast('manager', m.role) && m.status === 'active').map((m) => m.name));
+  const list = $derived(names.length > 1 ? `${names.slice(0, -1).join(', ')} or ${names.at(-1)}` : names[0]);
 </script>
 
 <p class="notice" role="note">
   <Icon icon={Lock} size="sm" />
-  <span><strong>Only owners can manage {what}.</strong> {#if list}Ask {list} {ask}.{/if}</span>
+  <span><strong>Only managers, engineers and the owner can manage {what}.</strong> {#if list}Ask {list} to connect or change one.{/if}</span>
 </p>
 
 <style>

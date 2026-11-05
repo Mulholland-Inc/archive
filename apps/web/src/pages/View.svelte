@@ -15,7 +15,7 @@
   import Menu from '../components/Menu.svelte';
   import Spacer from '../components/Spacer.svelte';
   import RowLink from '../components/RowLink.svelte';
-  import { ws, schema, viewRows, linkOf, tableOf, shownOf, titleOf, cellText, renameView, isArchiveOwner } from '../lib/app.svelte.js';
+  import { ws, schema, viewRows, linkOf, tableOf, shownOf, titleOf, cellText, renameView, atLeast } from '../lib/app.svelte.js';
   import { layoutOf } from '../layouts/index.js';
 
   let { id } = $props();
@@ -92,7 +92,7 @@
 {:else}
   {@render topbar()}
   <Page width="wide">
-    <StickyHeader title={view.name} renameLabel="Rename view" onrename={mine && isArchiveOwner() ? (name) => renameView(view.id, name) : undefined} description={view.description && view.description.toLowerCase() !== view.name.toLowerCase() ? view.description : ''}>
+    <StickyHeader title={view.name} renameLabel="Rename view" onrename={mine && atLeast('manager') ? (name) => renameView(view.id, name) : undefined} description={view.description && view.description.toLowerCase() !== view.name.toLowerCase() ? view.description : ''}>
       {#snippet search()}
         <SearchField bind:value={query} bind:element={searchEl} placeholder={`Find in ${view.name.toLowerCase()}`} shortcut="/" />
       {/snippet}

@@ -152,6 +152,9 @@ DELETE FROM archive.token WHERE hash = $1 AND kind = 'session';
 -- name: CreateToken :one
 INSERT INTO archive.token (id, user_id, workspace, kind, name, role, hash, sealed, expires_at) VALUES ($1, $2, $3, 'api', $4, $5, $6, $7, $8) RETURNING created_at, expires_at;
 
+-- name: KeyWorkspace :one
+SELECT workspace FROM archive.token WHERE id = $1 AND user_id = $2 AND kind = 'api';
+
 -- name: TokenSealed :one
 SELECT sealed FROM archive.token WHERE id = $1 AND user_id = $2 AND kind = 'api' AND sealed IS NOT NULL AND (NOT sqlc.arg(scoped)::bool OR workspace = sqlc.arg(workspace));
 

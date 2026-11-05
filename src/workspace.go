@@ -993,8 +993,8 @@ func (a *Archive) workspaceAdmin(ctx context.Context) (*Actor, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !a.owner(ctx, ac.UserRole) {
-		return nil, fmt.Errorf("only owners of this workspace change it: %w", ErrForbidden)
+	if !a.has(ctx, ac.UserRole, a.prefix+"_engineer") {
+		return nil, fmt.Errorf("only engineers and the owner change this workspace: %w", ErrForbidden)
 	}
 	return ac, nil
 }
@@ -1043,7 +1043,8 @@ func (h *Hub) AddWorkspace(ctx context.Context, name, owner string, look Workspa
 }
 
 func (h *Hub) DeleteWorkspace(ctx context.Context, id string) error {
-	if err := h.admin(ctx); err != nil {
+	ac, err := authUser(ctx)
+	if err != nil {
 		return err
 	}
 	ws, err := uuid.Parse(id)
@@ -1052,6 +1053,21 @@ func (h *Hub) DeleteWorkspace(ctx context.Context, id string) error {
 	}
 	if err != nil {
 		return fmt.Errorf("workspace %q: %w", id, ErrNotFound)
+	}
+	if ac.TokenID != uuid.Nil && archiveFrom(ctx).ws.ID != ws {
+		return fmt.Errorf("a token only deletes its own workspace: %w", ErrForbidden)
+	}
+	a, release, err := h.acquire(ctx, id)
+	if err != nil {
+		return err
+	}
+	m, err := a.memberOf(ctx, ac.Email)
+	release()
+	if err != nil {
+		return err
+	}
+	if m.Role != "owner" {
+		return fmt.Errorf("only this workspace's owner deletes it: %w", ErrForbidden)
 	}
 	tell := h.liveMembers(ctx, ws)
 	h.forget(id)

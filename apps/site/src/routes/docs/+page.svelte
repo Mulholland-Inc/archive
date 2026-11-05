@@ -142,7 +142,7 @@
 <h2 id="quickstart">Quick start</h2>
 <p>From your invite to your first answer in a few minutes. No card, no sales call.</p>
 <ol>
-<li>Get invited to a workspace by one of its owners, or ask <a href="https://mulholland.ai">Mulholland</a> for one.</li>
+<li>Get invited to a workspace by its owner, or ask <a href="https://mulholland.ai">Mulholland</a> for one.</li>
 <li>Sign in with Google, Microsoft, Slack or GitHub under the email you were invited with.</li>
 <li>Create a token (see <a href="#tokens">Tokens</a>) and keep it as <code>ARCHIVE_TOKEN</code>.</li>
 <li>Connect your AI (see <a href="#connect">Connect your AI</a>), or call the API straight away.</li>
@@ -243,7 +243,7 @@ Then tell me which tables and views I have, and what each one is for.</pre>
 </table>
 
 <h3 id="token-manage">List and revoke</h3>
-<p><code>GET /auth/tokens</code> lists your tokens without their values. <code>DELETE /auth/tokens/&#123;id&#125;</code> revokes one, and it stops working at once. When your role or groups change, your tokens change with them, and removing you from the workspace removes your tokens.</p>
+<p>Only engineers and the owner create a workspace's tokens, read-only ones included, and read or revoke their own. <code>GET /auth/tokens</code> lists your tokens without their values. <code>DELETE /auth/tokens/&#123;id&#125;</code> revokes one, and it stops working at once. When your role or groups change, your tokens change with them, and removing you from the workspace removes your tokens.</p>
 
 <h2 id="types">Your own types</h2>
 <p>Each kind of record is a real Postgres table in the <code>public</code> schema. The table is the type, a row is a record, and nothing else is stored about it.</p>
@@ -333,7 +333,7 @@ icon: receipt'</span>;
 <p>The <code>archive.revision</code> table holds every migration, with who ran it and its statements; read it with <code>archive.query</code>. To undo one, migrate the reverse. Data that was dropped stays gone.</p>
 
 <h3 id="schema-who">Who can change it</h3>
-<p>Owners. Everyone else can read the schema.</p>
+<p>Managers, engineers and the owner. Everyone else can read the schema.</p>
 
 <h3 id="schema-git">Keep it in git</h3>
 <p>Keep migrations as <code>.sql</code> files. Over HTTP, <code>POST /api/schema/migrate</code> takes <code>&#123;"sql", "name", "confirm"&#125;</code>, and the Terraform provider has an <code>archive_migration</code> resource.</p>
@@ -552,7 +552,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 </table>
 
 <h3 id="sdk-members">Members</h3>
-<p>People are rows of the <code>member</code> table, so the same calls manage them: <code>list("member")</code>, <code>create("member", &#123; email, role, groups &#125;)</code>, <code>update("member", id, &#123; groups: ["hr"] &#125;)</code> and <code>delete("member", id)</code>. Everyone can read it; only owners can change it.</p>
+<p>People are rows of the <code>member</code> table, so the same calls manage them: <code>list("member")</code>, <code>create("member", &#123; email, role, groups &#125;)</code>, <code>update("member", id, &#123; groups: ["hr"] &#125;)</code> and <code>delete("member", id)</code>. Everyone can read it; managers, engineers and the owner can change it, up to their own role.</p>
 
 <h3 id="sdk-values">Values</h3>
 <p>Rows are plain JSON. Dates are <code>"2026-10-27"</code>, instants are UTC like <code>"2026-10-27T09:30:00Z"</code>, references are id strings, arrays are lists and enums are one of their strings. Empty fields read back as <code>null</code>. The built-in composite types read back as objects:</p>
@@ -612,7 +612,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <thead><tr><th>Parameter</th><th>Does</th></tr></thead>
 <tbody>
 <tr><td><code>limit</code>, <code>after</code></td><td>Page size, and the last id you got for the next page.</td></tr>
-<tr><td><code>reveal=true</code></td><td>Shows secret values, to owners.</td></tr>
+<tr><td><code>reveal=true</code></td><td>Shows secret values, to managers, engineers and the owner.</td></tr>
 <tr><td><code>column=value</code></td><td>Any other parameter filters rows by that column, like <code>access=hr</code>.</td></tr>
 </tbody>
 </table>
@@ -637,11 +637,11 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <thead><tr><th>Endpoint</th><th>Does</th></tr></thead>
 <tbody>
 <tr><td><code>GET /auth/me</code></td><td>Who you are, your <code>role</code>, your <code>groups</code>, the current <code>workspace</code> and all your <code>workspaces</code>.</td></tr>
-<tr><td><code>GET</code>, <code>POST /auth/users</code></td><td>List the people here, or invite one with <code>&#123;"email", "name", "role"&#125;</code> (owners).</td></tr>
-<tr><td><code>DELETE /auth/users/&#123;email&#125;</code></td><td>Remove someone, with their tokens (owners).</td></tr>
-<tr><td><code>PATCH /api/member/&#123;id&#125;</code></td><td>Change someone's <code>role</code> or <code>groups</code> (owners).</td></tr>
-<tr><td><code>GET</code>, <code>POST /auth/tokens</code></td><td>List or create tokens.</td></tr>
-<tr><td><code>DELETE /auth/tokens/&#123;id&#125;</code></td><td>Revoke a token.</td></tr>
+<tr><td><code>GET</code>, <code>POST /auth/users</code></td><td>List the people here, or invite one with <code>&#123;"email", "name", "role"&#125;</code> (managers and up).</td></tr>
+<tr><td><code>DELETE /auth/users/&#123;email&#125;</code></td><td>Remove someone, with their tokens (managers and up).</td></tr>
+<tr><td><code>PATCH /api/member/&#123;id&#125;</code></td><td>Change someone's <code>role</code> or <code>groups</code> (managers and up).</td></tr>
+<tr><td><code>GET</code>, <code>POST /auth/tokens</code></td><td>List tokens, or create one (engineers and the owner).</td></tr>
+<tr><td><code>DELETE /auth/tokens/&#123;id&#125;</code></td><td>Revoke a token (engineers and the owner).</td></tr>
 </tbody>
 </table>
 
@@ -658,21 +658,23 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <tbody>
 <tr><td>viewer</td><td>Read rows and files.</td></tr>
 <tr><td>editor</td><td>Also add, change and delete them.</td></tr>
-<tr><td>owner</td><td>Also change the schema, manage people, see every row and file whatever its access, and reveal secret fields.</td></tr>
+<tr><td>manager</td><td>Also change the schema, manage people, integrations and agents, see every row and file whatever its access, and reveal secret fields.</td></tr>
+<tr><td>engineer</td><td>Also change the workspace's name and look, and create, read and revoke its API keys.</td></tr>
+<tr><td>owner</td><td>Also delete the workspace and transfer it. Each workspace has one.</td></tr>
 </tbody>
 </table>
 
 <h3 id="people-add">Adding people</h3>
-<p>An owner invites the person by email on the Users page, and removes them there too. People are rows of the <code>member</code> table, so changing a role is an update.</p>
+<p>A manager, engineer or the owner invites the person by email on the Users page, and removes them there too. People are rows of the <code>member</code> table, so changing a role is an update.</p>
 <Code tabs={['curl', 'run.ts']}>
 <pre>curl https://your-workspace.archive.mulholland.ai/auth/users \
   -H <span class="s">"Authorization: Bearer $ARCHIVE_TOKEN"</span> \
   -d <span class="s">'&#123;"email": "anna@example.com", "role": "editor"&#125;'</span></pre>
 <pre hidden><span class="k">const</span> [anna] = <span class="k">await</span> archive.<span class="f">list</span>(<span class="s">"member"</span>, &#123; where: &#123; email: <span class="s">"anna@example.com"</span> &#125; &#125;)
 
-<span class="k">return</span> archive.<span class="f">update</span>(<span class="s">"member"</span>, anna.id, &#123; role: <span class="s">"owner"</span> &#125;)</pre>
+<span class="k">return</span> archive.<span class="f">update</span>(<span class="s">"member"</span>, anna.id, &#123; role: <span class="s">"manager"</span> &#125;)</pre>
 </Code>
-<p>A workspace always keeps at least one owner, and an email cannot change: remove the person and add the new address.</p>
+<p>Nobody sets or removes a role above their own. A workspace has one owner, who cannot leave or be removed; setting another member's role to <code>owner</code> transfers it and makes the old owner an engineer. An email cannot change: remove the person and add the new address.</p>
 
 <h3 id="people-signin">Signing in</h3>
 <p>No passwords. Only invited people sign in: with Google, Microsoft, Slack or GitHub under the email they were invited with, as long as the provider says that email is verified. The first sign-in links that account, and the app then offers to add a passkey to the device.</p>
@@ -681,7 +683,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <p>Every table has one policy, <code>access</code>, that checks each row with <code>archive.can(access)</code>. It applies to the web app, the API, your AI and raw SQL alike, so a bug in one surface cannot show another person's data.</p>
 
 <h2 id="groups">Groups</h2>
-<p>A group, like <code>hr</code> or <code>finance</code>, is a set of people. A row or file whose <code>access</code> is <code>hr</code> is seen only by the hr group and the owners. With no access, the whole workspace sees it.</p>
+<p>A group, like <code>hr</code> or <code>finance</code>, is a set of people. A row or file whose <code>access</code> is <code>hr</code> is seen only by the hr group and by managers, engineers and the owner. With no access, the whole workspace sees it.</p>
 
 <h3 id="groups-make">Making a group</h3>
 <p>Put someone in it. A group exists while at least one person is in it, and its name can be any text.</p>
@@ -692,10 +694,10 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 </Code>
 
 <h3 id="groups-rules">Who can write what</h3>
-<p>Anyone but an owner can only write rows whose access is empty or one of their own groups. A table only one group should ever see uses <code>access text NOT NULL DEFAULT 'hr' CHECK (access = 'hr')</code>.</p>
+<p>Anyone below a manager can only write rows whose access is empty or one of their own groups. A table only one group should ever see uses <code>access text NOT NULL DEFAULT 'hr' CHECK (access = 'hr')</code>.</p>
 
 <h2 id="secrets">Secret fields</h2>
-<p>Some values should never sit in plain text. Columns of a secret type are encrypted, read back masked, and shown only to owners.</p>
+<p>Some values should never sit in plain text. Columns of a secret type are encrypted, read back masked, and shown only to managers, engineers and the owner.</p>
 
 <h3 id="secrets-types">Secret types</h3>
 <table>
@@ -709,7 +711,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 </table>
 
 <h3 id="secrets-reveal">Writing and reading</h3>
-<p>Write the real value as usual. Reads return it masked. Pass <code>&#123; reveal: true &#125;</code> to <code>list</code> or <code>get</code>, or <code>?reveal=true</code> over HTTP, to see it if you are an owner.</p>
+<p>Write the real value as usual. Reads return it masked. Pass <code>&#123; reveal: true &#125;</code> to <code>list</code> or <code>get</code>, or <code>?reveal=true</code> over HTTP, to see it if you are a manager, engineer or the owner.</p>
 
 <h2 id="connectors">Connectors</h2>
 <p>Connectors bring a workspace's data in from the tools your team already uses, syncing only what changed, and their actions work in those tools when you or an agent call them.</p>
