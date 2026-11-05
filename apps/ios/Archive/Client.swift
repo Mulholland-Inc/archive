@@ -108,7 +108,7 @@ actor Client {
         var req = URLRequest(url: Self.api.appending(path: "oauth/register"))
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let name = "Archive for " + (await UIDevice.current.model)
+        let name = await UIDevice.current.model
         req.httpBody = try JSONSerialization.data(withJSONObject: ["client_name": name, "redirect_uris": [Self.redirect], "token_endpoint_auth_method": "none"])
         let (body, res) = try await URLSession.shared.data(for: req)
         struct Answer: Decodable { let client_id: String }

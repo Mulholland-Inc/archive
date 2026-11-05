@@ -69,10 +69,19 @@ actor Syncer {
         }
     }
 
+    /// Each type on its own, since the user may allow some and not others; it fails only when none synced.
     private func healthAll() async throws {
+        var failed: Error?
+        var synced = false
         for type in Self.types {
-            try await health(type)
+            do {
+                try await health(type)
+                synced = true
+            } catch {
+                failed = error
+            }
         }
+        if !synced, let failed { throw failed }
     }
 
     private var units: [HKQuantityType: HKUnit] = [:]

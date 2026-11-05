@@ -37,11 +37,7 @@ final class Delegate: NSObject, UIApplicationDelegate {
                 Delegate.schedule()
             }
         }
-        if Status.shared.onboarded { Syncer.observe() }
-        for name in [Notification.Name.CNContactStoreDidChange, .EKEventStoreChanged] {
-            NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { _ in Task { await Syncer.shared.all() } }
-        }
-        PHPhotoLibrary.shared().register(Watcher.shared)
+        if Status.shared.onboarded { Watcher.watch() }
         return true
     }
 
@@ -55,9 +51,19 @@ final class Delegate: NSObject, UIApplicationDelegate {
     }
 }
 
-/// Photos tells a registered observer, not NotificationCenter, when the library changes while the app runs.
+/// Syncs when something changes: Health wakes the app even in the background; Photos, Contacts and Calendar tell it while it runs.
+/// Only once the user has answered, since watching Photos asks for it.
 final class Watcher: NSObject, PHPhotoLibraryChangeObserver {
     static let shared = Watcher()
+
+    static func watch() {
+        Syncer.observe()
+        PHPhotoLibrary.shared().register(shared)
+        for name in [Notification.Name.CNContactStoreDidChange, .EKEventStoreChanged] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { _ in Task { await Syncer.shared.all() } }
+        }
+    }
+
     func photoLibraryDidChange(_: PHChange) { Task { await Syncer.shared.all() } }
 }
 
@@ -96,7 +102,7 @@ final class Watcher: NSObject, PHPhotoLibraryChangeObserver {
         _ = try? await EKEventStore().requestFullAccessToEvents()
         onboarded = true
         UserDefaults.standard.set(true, forKey: "onboarded")
-        Syncer.observe()
+        Watcher.watch()
         await Sample.add()
         await Syncer.shared.all()
     }
