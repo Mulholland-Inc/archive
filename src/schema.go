@@ -1362,7 +1362,9 @@ BEGIN
     GRANT CREATE ON SCHEMA archive TO "{p}_base";
     GRANT CREATE, USAGE ON SCHEMA public TO "{p}_manager";
     GRANT REFERENCES ON archive."group" TO "{p}_manager";
-    ALTER TABLE archive.object OWNER TO "{p}_base";
+    IF (SELECT c.relowner FROM pg_catalog.pg_class c WHERE c.oid = 'archive.object'::regclass) = sys::regrole THEN
+        ALTER TABLE archive.object OWNER TO "{p}_base";
+    END IF;
     FOR r IN SELECT c.oid::regclass AS ident, c.relkind FROM pg_catalog.pg_class c
         WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p', 'v', 'S')
           AND c.relowner = sys::regrole AND NOT c.relispartition LOOP
@@ -2122,7 +2124,10 @@ func pgGrants(target string, o *pgObject, was, now string) ([]string, error) {
 		out := map[string]string{}
 		for _, it := range strings.Split(acl, ", ") {
 			if who, privs, ok := strings.Cut(it, "="); ok {
-				privs, _, _ = strings.Cut(privs, "/")
+				privs, by, _ := strings.Cut(privs, "/")
+				if who == by {
+					continue
+				}
 				out[cmp.Or(strings.Trim(who, `"`), "PUBLIC")] = privs
 			}
 		}
