@@ -743,7 +743,7 @@ func (c *Connector) compile() error {
 	if c.API == "" && c.MCP == "" && !c.mailOnly() {
 		return nil
 	}
-	if len(c.Keys) == 0 && c.MCP == "" {
+	if !c.Tap && len(c.Keys) == 0 && c.MCP == "" {
 		if c.Env == "" {
 			c.Env = "ARCHIVE_" + strings.ToUpper(c.ID)
 		}
@@ -751,7 +751,7 @@ func (c *Connector) compile() error {
 			c.Host = u.Scheme + "://" + u.Host
 		}
 	}
-	if (c.Ask != nil || c.Signed != "" || c.Was != "") && (len(c.Keys) > 0 || c.MCP != "") {
+	if (c.Ask != nil || c.Signed != "" || c.Was != "") && (c.Keyed() || c.MCP != "") {
 		return errors.New("Ask, Signed and Was are a sign-in's, not keys' or an MCP server's")
 	}
 	if c.Trade != nil {
@@ -878,7 +878,7 @@ func (w *Who) read(cl *Client, c *Connector) (string, error) {
 			s = f[1]
 		}
 	}
-	if s == "" && len(c.Keys) > 0 {
+	if s == "" && c.Keyed() {
 		s = c.Name
 	}
 	return s, nil
@@ -888,7 +888,7 @@ func (r *Req) revoke(rv *Revocation) error {
 	id, secret := rv.Client()
 	sc := rv.p.metaScope(rv.Meta)
 	sc["client"], sc["refresh"], sc["basic"] = map[string]any{"id": id, "secret": secret}, rv.Refresh, basic(id, secret)
-	if len(rv.p.Keys) > 0 {
+	if rv.p.Keyed() {
 		keys := map[string]any{}
 		for k, v := range keysFrom(rv.Refresh) {
 			keys[k] = v

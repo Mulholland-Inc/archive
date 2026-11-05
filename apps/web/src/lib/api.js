@@ -53,8 +53,8 @@ const clearDrafts = () => queue(() => {
   for (const key of Object.keys(localStorage)) if (key.startsWith(DRAFT)) store(key, '');
 });
 
-export async function send(path, { method = 'GET', body, raw, signal, workspace: named } = {}) {
-  const init = { method, headers: {}, signal, credentials: 'include' };
+export async function send(path, { method = 'GET', body, raw, signal, headers = {}, workspace: named } = {}) {
+  const init = { method, headers: { ...headers }, signal, credentials: 'include' };
   if (named || workspace()) init.headers['Archive-Workspace'] = named || workspace();
   if (raw !== undefined) init.body = raw;
   else if (body !== undefined) {
@@ -102,6 +102,34 @@ export async function upload(file, access, parent) {
   if (access) q.set('access', access);
   if (parent) q.set('parent', parent);
   return api(`/api/files${q.size ? `?${q}` : ''}`, { method: 'POST', raw: form });
+}
+
+// Uploads a file of any size by tus, in parts small enough for one request each, and picks up where it left off
+// after a dropped connection. Resolves to the new file's id.
+const TUS = { 'Tus-Resumable': '1.0.0' };
+const PART = 16 << 20;
+
+export async function uploadLarge(file, progress = () => {}) {
+  const meta = `filename ${btoa(Array.from(new TextEncoder().encode(file.name), (b) => String.fromCharCode(b)).join(''))}`;
+  const made = await send('/api/files/tus', { method: 'POST', headers: { ...TUS, 'Upload-Length': String(file.size), 'Upload-Metadata': meta } });
+  const done = made.headers.get('Archive-File-Id');
+  if (done) return done;
+  const at = new URL(made.headers.get('Location'), location.origin).pathname;
+  let off = 0;
+  for (let tries = 0; ; ) {
+    try {
+      const r = await send(at, { method: 'PATCH', headers: { ...TUS, 'Upload-Offset': String(off), 'Content-Type': 'application/offset+octet-stream' }, raw: file.slice(off, off + PART) });
+      off = Number(r.headers.get('Upload-Offset'));
+      progress(off / file.size);
+      const id = r.headers.get('Archive-File-Id');
+      if (id) return id;
+      tries = 0;
+    } catch (e) {
+      if (++tries > 5 || e instanceof Unauthorized) throw e;
+      await new Promise((ok) => setTimeout(ok, 1000 * 2 ** tries));
+      off = Number((await send(at, { method: 'HEAD', headers: TUS })).headers.get('Upload-Offset'));
+    }
+  }
 }
 
 export const fileURL = (id, part = 'content') => `${API}/api/files/${id}/${part}`;

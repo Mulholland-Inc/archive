@@ -941,6 +941,10 @@ export function agentById(id) {
   return ws()?.agents.find((a) => a.id === id);
 }
 
+export function agentAddress(agent) {
+  return `${ws().slug}-${agent.slug}@${location.hostname.replace(/^app\./, '')}`;
+}
+
 export function rememberAgent(id) {
   setLocal(`archive.agent:${app.archive}`, id);
 }
@@ -1172,6 +1176,7 @@ export const connections = resource({
         keys: k.keys ?? [],
         ask: k.ask ?? null,
         link: !!k.link,
+        tap: !!k.tap,
         connections: mine,
         connected: mine.length > 0,
         account: mine.map((x) => x.account).join(', '),
@@ -1198,6 +1203,7 @@ function toIntegration(k, x) {
     keys: k.keys ?? [],
     ask: k.ask ?? null,
     link: !!k.link,
+    tap: !!k.tap,
     connected: Boolean(x),
     connection: x ?? null,
     account: x?.account ?? '',
@@ -1213,7 +1219,8 @@ function toIntegration(k, x) {
 export function connect(id, asked = {}, workspace = app.archive) {
   const c = [...ws().connectors, ...archiveIntegrations()].find((x) => x.id === id);
   const q = new URLSearchParams({ ...asked, workspace });
-  if (c?.ready) location.assign(`${API}/connect/${encodeURIComponent(id)}?${q}`);
+  if (c?.ready && c.tap) connectKeys(id, {}, workspace);
+  else if (c?.ready) location.assign(`${API}/connect/${encodeURIComponent(id)}?${q}`);
 }
 
 export async function connectPlaces(id, q) {
@@ -1221,10 +1228,11 @@ export async function connectPlaces(id, q) {
   return out?.places ?? [];
 }
 
-export async function connectKeys(id, keys, workspace) {
+export async function connectKeys(id, keys, workspace, quiet = false) {
   try {
     await call(`/connect/${encodeURIComponent(id)}/keys`, { method: 'POST', body: { keys }, workspace });
   } catch (e) {
+    if (quiet && !(e instanceof Unauthorized)) return e;
     complain(e, 'Couldn’t connect');
     return false;
   }

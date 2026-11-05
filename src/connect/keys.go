@@ -19,7 +19,9 @@ type Key struct {
 	Name   string `json:"name"`
 	Label  string `json:"label"`
 	Help   string `json:"help,omitempty"`
+	Link   string `json:"link,omitempty"`
 	Secret bool   `json:"secret,omitempty"`
+	File   bool   `json:"file,omitempty"`
 	Find   string `json:"-"`
 	As     string `json:"-"`
 	Places string `json:"places,omitempty"`
@@ -101,7 +103,7 @@ func keyProvider(c *Connector, getenv func(string) string) (*Provider, bool) {
 }
 
 func (p *Provider) KeyGrant(ctx context.Context, keys map[string]string) (*Grant, error) {
-	if len(p.Keys) == 0 {
+	if !p.Keyed() {
 		return nil, fmt.Errorf("%s connects by signing in, not with keys", p.Name)
 	}
 	kept, meta := map[string]string{}, map[string]string{}
@@ -146,7 +148,7 @@ func (p *Provider) KeyGrant(ctx context.Context, keys map[string]string) (*Grant
 		account = a
 	}
 	b, _ := json.Marshal(kept)
-	return &Grant{Account: account, Refresh: string(b), Meta: meta}, nil
+	return &Grant{Account: account, Refresh: string(b), Scopes: []string{}, Meta: meta}, nil
 }
 
 func (p *Provider) trade(ctx context.Context, keys map[string]string) (map[string]string, time.Time, error) {
@@ -162,7 +164,11 @@ func (p *Provider) trade(ctx context.Context, keys map[string]string) (map[strin
 		}
 		return out, time.Now().Add(mintLasts), nil
 	}
-	sc["basic"] = basic(keys["client_id"], keys["client_secret"])
+	if id, secret := keys["client_id"], keys["client_secret"]; id != "" {
+		sc["basic"] = basic(id, secret)
+	} else {
+		sc["basic"] = basic(p.clientID, p.secret)
+	}
 	ans, err := c.req(*p.Trade, sc)
 	if err != nil {
 		return nil, time.Time{}, err

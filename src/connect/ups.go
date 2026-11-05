@@ -9,11 +9,7 @@ func init() {
 			Scopes: []string{"Find UPS tracking numbers in the mail you synced", "Look up where each package is with UPS"}},
 		API:  "https://onlinetools.ups.com",
 		Pace: 250 * time.Millisecond,
-		Keys: []Key{
-			{Name: "client_id", Label: "Client ID", Secret: true,
-				Help: "At developer.ups.com, sign in with a UPS account, Apps, Add Apps: add an app with the Tracking API product and copy its Client ID"},
-			{Name: "client_secret", Label: "Client secret", Secret: true, Help: "On the same app: copy its Client Secret"},
-		},
+		Tap:  true, Env: "ARCHIVE_UPS", Host: "https://onlinetools.ups.com", Options: "the Client ID and Client Secret of Archive's app at developer.ups.com, with the Tracking API",
 		Trade: &Req{Method: POST, URL: "/security/v1/oauth/token", Header: map[string][]string{"Authorization": {"{basic}"}},
 			Form: Q{"grant_type": "client_credentials"}},
 		Sign:   map[string]string{"Authorization": "Bearer {key/access}", "transactionSrc": "archive"},

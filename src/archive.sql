@@ -3140,6 +3140,293 @@ COMMENT ON COLUMN archive.warehouse_column.type IS 'Its type there, like NUMBER,
 COMMENT ON COLUMN archive.warehouse_column.nullable IS 'Whether it may be null';
 COMMENT ON COLUMN archive.warehouse_column.comment IS 'What its comment there says';
 
+-- Personal records an import brings in from an export: address books, where you were, what you watched and read, what
+-- you posted, your family tree and a summary of your DNA. Each row is its connection's, so only its owner sees it.
+CREATE TABLE archive.contact (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream     text NOT NULL,
+    source_id  text NOT NULL,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    name       text NOT NULL DEFAULT '',
+    seen_at    timestamptz NOT NULL DEFAULT now(),
+    book       text,
+    full_name  text,
+    first_name text,
+    last_name  text,
+    person     uuid REFERENCES archive.known_person ON DELETE SET NULL,
+    emails     text[],
+    phones     text[],
+    company    text,
+    job_title  text,
+    birthday   date,
+    address    text,
+    note       text,
+    url        text,
+    made_at    timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX contact_person_idx ON archive.contact (person);
+COMMENT ON TABLE archive.contact IS 'Someone in an address book of yours, like Google Contacts or iCloud Contacts, or a Facebook friend, from an export you imported. Read only; Archive syncs them
+icon: book-user';
+COMMENT ON COLUMN archive.contact.book IS 'The address book it is from, like Google Contacts or Facebook friends';
+COMMENT ON COLUMN archive.contact.full_name IS 'Their name as the book shows it';
+COMMENT ON COLUMN archive.contact.person IS 'references known_person; who they are, by their first email';
+COMMENT ON COLUMN archive.contact.emails IS 'Their email addresses, the first one first';
+COMMENT ON COLUMN archive.contact.phones IS 'Their phone numbers, as written';
+COMMENT ON COLUMN archive.contact.company IS 'The organization they are with';
+COMMENT ON COLUMN archive.contact.birthday IS 'Their birthday; a year of 1604 means the book has no year';
+COMMENT ON COLUMN archive.contact.address IS 'Their first address, as one line';
+COMMENT ON COLUMN archive.contact.note IS 'What the book notes about them, up to 64 KB';
+COMMENT ON COLUMN archive.contact.made_at IS 'When they were added, like when you became Facebook friends';
+COMMENT ON COLUMN archive.contact.connection IS 'references connection; the import it is from';
+COMMENT ON COLUMN archive.contact.stream IS 'What its connector syncs it as, like contacts';
+COMMENT ON COLUMN archive.contact.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.contact.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.contact.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.location (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream     text NOT NULL,
+    source_id  text NOT NULL,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    name       text NOT NULL DEFAULT '',
+    seen_at    timestamptz NOT NULL DEFAULT now(),
+    kind       text CONSTRAINT location_kind CHECK (kind IN ('point', 'visit', 'move')),
+    at         timestamptz,
+    ends_at    timestamptz,
+    lat        double precision,
+    lng        double precision,
+    accuracy   double precision,
+    place      text,
+    address    text,
+    activity   text,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX location_at_idx ON archive.location (at);
+COMMENT ON TABLE archive.location IS 'Where you were, from an export you imported, like Google''s Location History and Timeline. Sensitive: only you see it. Read only; Archive syncs them
+icon: map-pin';
+COMMENT ON COLUMN archive.location.kind IS 'point, a place you were at a moment; visit, a stay at a place; or move, a trip between two';
+COMMENT ON COLUMN archive.location.at IS 'When you were there, or when the visit or trip began';
+COMMENT ON COLUMN archive.location.ends_at IS 'When the visit or trip ended';
+COMMENT ON COLUMN archive.location.lat IS 'Latitude in degrees; where a trip began';
+COMMENT ON COLUMN archive.location.lng IS 'Longitude in degrees; where a trip began';
+COMMENT ON COLUMN archive.location.accuracy IS 'How far off it may be, in meters';
+COMMENT ON COLUMN archive.location.place IS 'The place, like its name or home or work';
+COMMENT ON COLUMN archive.location.address IS 'The place''s address';
+COMMENT ON COLUMN archive.location.activity IS 'How you moved, like walking or in_passenger_vehicle';
+COMMENT ON COLUMN archive.location.connection IS 'references connection; the import it is from';
+COMMENT ON COLUMN archive.location.stream IS 'What its connector syncs it as, like places';
+COMMENT ON COLUMN archive.location.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.location.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.location.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.history (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream     text NOT NULL,
+    source_id  text NOT NULL,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    name       text NOT NULL DEFAULT '',
+    seen_at    timestamptz NOT NULL DEFAULT now(),
+    app        text,
+    kind       text CONSTRAINT history_kind CHECK (kind IN ('visit', 'watch', 'search', 'listen', 'activity')),
+    at         timestamptz,
+    title      text,
+    url        text,
+    detail     text,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX history_at_idx ON archive.history (at);
+COMMENT ON TABLE archive.history IS 'Something you watched, searched, visited or listened to, from an export you imported, like YouTube''s watch history or Chrome''s. Read only; Archive syncs them
+icon: history';
+COMMENT ON COLUMN archive.history.app IS 'Where you did it, like YouTube, Chrome, Search or Apple Music';
+COMMENT ON COLUMN archive.history.kind IS 'visit, watch, search, listen, or activity for anything else';
+COMMENT ON COLUMN archive.history.at IS 'When; the day, for Apple Music''s plays';
+COMMENT ON COLUMN archive.history.title IS 'What it was: the page, video or song, or what you searched for';
+COMMENT ON COLUMN archive.history.url IS 'Where it is';
+COMMENT ON COLUMN archive.history.detail IS 'More about it, like the YouTube channel, how Chrome got to the page or how many plays';
+COMMENT ON COLUMN archive.history.connection IS 'references connection; the import it is from';
+COMMENT ON COLUMN archive.history.stream IS 'What its connector syncs it as, like history';
+COMMENT ON COLUMN archive.history.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.history.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.history.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.post (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream     text NOT NULL,
+    source_id  text NOT NULL,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    name       text NOT NULL DEFAULT '',
+    seen_at    timestamptz NOT NULL DEFAULT now(),
+    app        text,
+    at         timestamptz,
+    text       text,
+    url        text,
+    place      text,
+    files      text[],
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+COMMENT ON TABLE archive.post IS 'Something you posted, like on Facebook or Instagram, from an export you imported; its photos and videos are files of the import. Read only; Archive syncs them
+icon: newspaper';
+COMMENT ON COLUMN archive.post.app IS 'Where you posted it, like Facebook or Instagram';
+COMMENT ON COLUMN archive.post.at IS 'When you posted it';
+COMMENT ON COLUMN archive.post.text IS 'What it says';
+COMMENT ON COLUMN archive.post.url IS 'The link it shares';
+COMMENT ON COLUMN archive.post.place IS 'Where you checked in';
+COMMENT ON COLUMN archive.post.files IS 'The names of its photos and videos, as files of the import';
+COMMENT ON COLUMN archive.post.connection IS 'references connection; the import it is from';
+COMMENT ON COLUMN archive.post.stream IS 'What its connector syncs it as, like posts';
+COMMENT ON COLUMN archive.post.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.post.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.post.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.kin (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream     text NOT NULL,
+    source_id  text NOT NULL,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    name       text NOT NULL DEFAULT '',
+    seen_at    timestamptz NOT NULL DEFAULT now(),
+    given      text,
+    surname    text,
+    sex        text,
+    born       text,
+    born_in    text,
+    died       text,
+    died_in    text,
+    note       text,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+COMMENT ON TABLE archive.kin IS 'A person of a family tree you imported, like a GEDCOM file from Ancestry, FamilySearch or MyHeritage; their parents, spouses and children are in kin_tie. Read only; Archive syncs them
+icon: tree-deciduous';
+COMMENT ON COLUMN archive.kin.given IS 'Their given names';
+COMMENT ON COLUMN archive.kin.surname IS 'Their family name';
+COMMENT ON COLUMN archive.kin.sex IS 'male or female, as the tree records it';
+COMMENT ON COLUMN archive.kin.born IS 'When they were born, as the tree gives it, like 12 MAR 1850 or ABT 1850';
+COMMENT ON COLUMN archive.kin.born_in IS 'Where they were born';
+COMMENT ON COLUMN archive.kin.died IS 'When they died, as the tree gives it';
+COMMENT ON COLUMN archive.kin.died_in IS 'Where they died';
+COMMENT ON COLUMN archive.kin.note IS 'What the tree notes about them, up to 64 KB';
+COMMENT ON COLUMN archive.kin.connection IS 'references connection; the import it is from';
+COMMENT ON COLUMN archive.kin.stream IS 'What its connector syncs it as, like people';
+COMMENT ON COLUMN archive.kin.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.kin.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.kin.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.kin_tie (
+    id              uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection      uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    access          uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    name            text NOT NULL DEFAULT '',
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    updated_at      timestamptz NOT NULL DEFAULT now(),
+    person          uuid NOT NULL REFERENCES archive.kin ON DELETE CASCADE,
+    kind            text CONSTRAINT kin_tie_kind CHECK (kind IN ('parent', 'child', 'spouse')),
+    relative        uuid REFERENCES archive.kin ON DELETE SET NULL,
+    relative_source text
+) INHERITS (archive.object);
+CREATE INDEX kin_tie_person_idx ON archive.kin_tie (person);
+CREATE INDEX kin_tie_relative_idx ON archive.kin_tie (relative);
+CREATE INDEX kin_tie_connection_idx ON archive.kin_tie (connection);
+COMMENT ON TABLE archive.kin_tie IS 'How two people of a family tree are related: each tie is there both ways. Read only; Archive syncs them
+icon: git-fork';
+COMMENT ON COLUMN archive.kin_tie.person IS 'references kin; whose tie it is';
+COMMENT ON COLUMN archive.kin_tie.kind IS 'What the relative is to them: parent, child or spouse';
+COMMENT ON COLUMN archive.kin_tie.relative IS 'references kin; who they are tied to';
+COMMENT ON COLUMN archive.kin_tie.relative_source IS 'The id there of who they are tied to';
+COMMENT ON COLUMN archive.kin_tie.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.dna (
+    id          uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection  uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream      text NOT NULL,
+    source_id   text NOT NULL,
+    access      uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    updated_at  timestamptz NOT NULL DEFAULT now(),
+    name        text NOT NULL DEFAULT '',
+    seen_at     timestamptz NOT NULL DEFAULT now(),
+    app         text,
+    build       text,
+    markers     bigint,
+    called      bigint,
+    chromosomes integer,
+    file        uuid REFERENCES archive.file ON DELETE SET NULL,
+    file_source text,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+COMMENT ON TABLE archive.dna IS 'A raw DNA file you imported, like 23andMe''s or AncestryDNA''s: what it is, while its genotypes stay in the file. Sensitive: only you see it. Read only; Archive syncs them
+icon: dna';
+COMMENT ON COLUMN archive.dna.app IS 'The company that tested it, like 23andMe, AncestryDNA, MyHeritage or FamilyTreeDNA';
+COMMENT ON COLUMN archive.dna.build IS 'The reference genome its positions are on, like GRCh37';
+COMMENT ON COLUMN archive.dna.markers IS 'How many markers, SNPs, it lists';
+COMMENT ON COLUMN archive.dna.called IS 'How many of them have a genotype, not a no-call';
+COMMENT ON COLUMN archive.dna.chromosomes IS 'How many chromosomes it has markers on, counting X, Y and the mitochondrial';
+COMMENT ON COLUMN archive.dna.file IS 'references file; the raw file';
+COMMENT ON COLUMN archive.dna.file_source IS 'The raw file''s path in the export';
+COMMENT ON COLUMN archive.dna.connection IS 'references connection; the import it is from';
+COMMENT ON COLUMN archive.dna.stream IS 'What its connector syncs it as, like dna';
+COMMENT ON COLUMN archive.dna.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.dna.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.dna.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.media (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream     text NOT NULL,
+    source_id  text NOT NULL,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    name       text NOT NULL DEFAULT '',
+    seen_at    timestamptz NOT NULL DEFAULT now(),
+    app        text,
+    kind       text CONSTRAINT media_kind CHECK (kind IN ('book', 'film')),
+    title      text,
+    creator    text,
+    year       integer,
+    rating     numeric,
+    review     text,
+    shelf      text,
+    done_on    date,
+    added_on   date,
+    isbn       text,
+    url        text,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+COMMENT ON TABLE archive.media IS 'A book or film you logged, like on Goodreads or Letterboxd, from an export you imported. Read only; Archive syncs them
+icon: library';
+COMMENT ON COLUMN archive.media.app IS 'Where you logged it, like Goodreads or Letterboxd';
+COMMENT ON COLUMN archive.media.kind IS 'book or film';
+COMMENT ON COLUMN archive.media.creator IS 'Its author, for a book';
+COMMENT ON COLUMN archive.media.year IS 'The year it came out';
+COMMENT ON COLUMN archive.media.rating IS 'Your rating, out of 5';
+COMMENT ON COLUMN archive.media.review IS 'Your review, up to 64 KB';
+COMMENT ON COLUMN archive.media.shelf IS 'Where it is: read, currently-reading or to-read for a book, watched or watchlist for a film';
+COMMENT ON COLUMN archive.media.done_on IS 'When you last read or watched it';
+COMMENT ON COLUMN archive.media.added_on IS 'When you added it';
+COMMENT ON COLUMN archive.media.isbn IS 'A book''s ISBN-13, or else its ISBN';
+COMMENT ON COLUMN archive.media.url IS 'Where it is there';
+COMMENT ON COLUMN archive.media.connection IS 'references connection; the import it is from';
+COMMENT ON COLUMN archive.media.stream IS 'What its connector syncs it as, like media';
+COMMENT ON COLUMN archive.media.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.media.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.media.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
 CREATE TABLE archive.health_sample (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
@@ -4086,6 +4373,14 @@ BEGIN
         WHEN 'spend_receipt' THEN concat_ws(' ', 'Receipt', r->>'position')
         WHEN 'warehouse_table' THEN concat_ws('.', nullif(r->>'database', ''), nullif(r->>'schema', ''), r->>'title')
         WHEN 'warehouse_column' THEN concat_ws(' · ', r->>'title', nullif(r->>'type', ''))
+        WHEN 'contact' THEN coalesce(nullif(btrim(r->>'full_name'), ''), nullif(btrim(concat_ws(' ', nullif(r->>'first_name', ''), nullif(r->>'last_name', ''))), ''), r#>>'{emails,0}', r#>>'{phones,0}')
+        WHEN 'location' THEN concat_ws(' · ', coalesce(nullif(r->>'place', ''), nullif(r->>'activity', ''), initcap(r->>'kind')), left(r->>'at', 16))
+        WHEN 'history' THEN concat_ws(' · ', coalesce(nullif(btrim(r->>'title'), ''), r->>'url'), nullif(r->>'app', ''))
+        WHEN 'post' THEN coalesce(nullif(left(btrim(r->>'text'), 120), ''), concat_ws(' · ', r->>'app', left(r->>'at', 10)))
+        WHEN 'kin' THEN coalesce(nullif(btrim(concat_ws(' ', nullif(r->>'given', ''), nullif(r->>'surname', ''))), ''), 'Unnamed')
+        WHEN 'kin_tie' THEN r->>'kind'
+        WHEN 'dna' THEN concat_ws(' · ', coalesce(nullif(r->>'app', ''), 'DNA'), nullif(r->>'build', ''))
+        WHEN 'media' THEN concat_ws(' · ', r->>'title', nullif(coalesce(r->>'creator', r->>'year'), ''))
         WHEN 'health_sample' THEN concat_ws(' · ', replace(r->>'kind', '_', ' '), nullif(concat_ws(' ', r->>'value', r->>'unit'), ''), left(r->>'starts_at', 10))
         WHEN 'health_day' THEN concat_ws(' · ', initcap(r->>'kind'), r->>'on_date')
         WHEN 'health_sleep' THEN concat_ws(' · ', CASE WHEN (r->>'nap')::boolean THEN 'Nap' ELSE 'Sleep' END, coalesce(r->>'on_date', left(r->>'starts_at', 10)))
@@ -4174,6 +4469,14 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.spend_transaction 
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.spend_receipt FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.warehouse_table FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.warehouse_column FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.contact FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.location FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.history FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.post FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.kin FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.kin_tie FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.dna FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.media FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.health_sample FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.health_day FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.health_sleep FOR EACH ROW EXECUTE FUNCTION archive.object_name();
@@ -4305,6 +4608,14 @@ GRANT SELECT ON archive.spend_transaction TO "{p}_viewer";
 GRANT SELECT ON archive.spend_receipt TO "{p}_viewer";
 GRANT SELECT ON archive.warehouse_table TO "{p}_viewer";
 GRANT SELECT ON archive.warehouse_column TO "{p}_viewer";
+GRANT SELECT ON archive.contact TO "{p}_viewer";
+GRANT SELECT ON archive.location TO "{p}_viewer";
+GRANT SELECT ON archive.history TO "{p}_viewer";
+GRANT SELECT ON archive.post TO "{p}_viewer";
+GRANT SELECT ON archive.kin TO "{p}_viewer";
+GRANT SELECT ON archive.kin_tie TO "{p}_viewer";
+GRANT SELECT ON archive.dna TO "{p}_viewer";
+GRANT SELECT ON archive.media TO "{p}_viewer";
 GRANT SELECT ON archive.health_sample TO "{p}_viewer";
 GRANT SELECT ON archive.health_day TO "{p}_viewer";
 GRANT SELECT ON archive.health_sleep TO "{p}_viewer";
@@ -4481,6 +4792,22 @@ ALTER TABLE archive.warehouse_table ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.warehouse_table FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = warehouse_table.connection));
 ALTER TABLE archive.warehouse_column ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.warehouse_column FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = warehouse_column.connection));
+ALTER TABLE archive.contact ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.contact FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = contact.connection));
+ALTER TABLE archive.location ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.location FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = location.connection));
+ALTER TABLE archive.history ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.history FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = history.connection));
+ALTER TABLE archive.post ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.post FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = post.connection));
+ALTER TABLE archive.kin ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.kin FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = kin.connection));
+ALTER TABLE archive.kin_tie ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.kin_tie FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = kin_tie.connection));
+ALTER TABLE archive.dna ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.dna FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = dna.connection));
+ALTER TABLE archive.media ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.media FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = media.connection));
 ALTER TABLE archive.health_sample ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.health_sample FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = health_sample.connection));
 ALTER TABLE archive.health_day ENABLE ROW LEVEL SECURITY;
@@ -4532,7 +4859,8 @@ CREATE POLICY seen ON archive.known_person FOR SELECT USING (EXISTS (SELECT FROM
     OR EXISTS (SELECT FROM archive.work_item x WHERE x.assignee = known_person.id)
     OR EXISTS (SELECT FROM archive.compliance x WHERE x.owner = known_person.id)
     OR EXISTS (SELECT FROM archive.commerce_order x WHERE x.customer = known_person.id)
-    OR EXISTS (SELECT FROM archive.dental_patient x WHERE x.person = known_person.id));
+    OR EXISTS (SELECT FROM archive.dental_patient x WHERE x.person = known_person.id)
+    OR EXISTS (SELECT FROM archive.contact x WHERE x.person = known_person.id));
 ALTER TABLE archive.known_org ENABLE ROW LEVEL SECURITY;
 CREATE POLICY seen ON archive.known_org FOR SELECT USING (EXISTS (SELECT FROM archive.payroll_company c WHERE c.org = known_org.id)
     OR EXISTS (SELECT FROM archive.crm_company x WHERE x.org = known_org.id)
@@ -4852,7 +5180,9 @@ SELECT jsonb_build_object(
             'archive.parcel'::regclass, 'archive.parcel_event'::regclass, 'archive.vehicle'::regclass, 'archive.vehicle_charge'::regclass, 'archive.home_device'::regclass,
             'archive.health_sample'::regclass, 'archive.health_day'::regclass, 'archive.health_sleep'::regclass, 'archive.health_workout'::regclass, 'archive.health_record'::regclass,
             'archive.music_playlist'::regclass, 'archive.music_track'::regclass, 'archive.music_artist'::regclass,
-            'archive.school_notice'::regclass)
+            'archive.school_notice'::regclass,
+            'archive.contact'::regclass, 'archive.location'::regclass, 'archive.history'::regclass, 'archive.post'::regclass,
+            'archive.kin'::regclass, 'archive.kin_tie'::regclass, 'archive.dna'::regclass, 'archive.media'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -5009,7 +5339,14 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.music_playlist x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.music_track x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.music_artist x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.school_notice x WHERE x.connection = c.id))::bigint AS items,
+        + (SELECT count(*) FROM archive.school_notice x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.contact x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.location x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.history x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.post x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.kin x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.dna x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.media x WHERE x.connection = c.id))::bigint AS items,
     c.integration, coalesce(c.access::text, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
 FROM archive.connection c WHERE c.member = $1 AND NOT c.integration OR c.integration ORDER BY c.provider, c.account, c.id;
 
@@ -5098,7 +5435,8 @@ WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM arch
     AND NOT EXISTS (SELECT FROM archive.work_item x WHERE x.assignee = k.id)
     AND NOT EXISTS (SELECT FROM archive.compliance x WHERE x.owner = k.id)
     AND NOT EXISTS (SELECT FROM archive.commerce_order x WHERE x.customer = k.id)
-    AND NOT EXISTS (SELECT FROM archive.dental_patient x WHERE x.person = k.id))
+    AND NOT EXISTS (SELECT FROM archive.dental_patient x WHERE x.person = k.id)
+    AND NOT EXISTS (SELECT FROM archive.contact x WHERE x.person = k.id))
 DELETE FROM archive.known_org o WHERE NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.org = o.id)
     AND NOT EXISTS (SELECT FROM archive.crm_company x WHERE x.org = o.id)
     AND NOT EXISTS (SELECT FROM archive.bank_transaction x WHERE x.org = o.id);

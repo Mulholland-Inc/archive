@@ -15,13 +15,11 @@ func init() {
 			ID: s.id, Name: s.name,
 			Info: Info{By: s.by, Description: s.what, Category: CatHome, Icon: IconInbox,
 				Scopes: []string{"Read the " + s.name + " mail in the mailboxes you synced to Archive; nothing is sent to " + s.name}},
-			Keys: []Key{{Name: "students", Label: "Your children's first names",
-				Help: "By commas, like Maya, Leo: each notice is matched to the child it names. " + s.name + " has no API for parents, so Archive reads its mail, which Gmail or Outlook must already sync"}},
+			Tap: true,
 			Sync: []*Sync{{Name: "notices", Gap: time.Second, Every: time.Hour, Keep: true,
 				Mail: &Scan{From: s.from, Days: schoolDays}, Items: "messages", ID: "id",
-				Set: Obj{"students": "{key/students}"},
 				Doc: "Every message " + s.where + " in mail synced from your mailboxes in the last " + schoolDaysText + ", with its school, " +
-					"which of your children it names, and what kind it is, like grades, attendance, an alert or an event: read again every hour, " +
+					"the child it names when it says, like Student: Maya, and what kind it is, like grades, attendance, an alert or an event: read again every hour, " +
 					"and kept once the mail is older.",
 				To: Map{Table: "school_notice",
 					Cols: map[string]SQL{"service": SQL("'" + s.name + "'"), "school": "nullif(data->>'from_name', '')", "sender": "archive.sync_email(data->>'from')",
@@ -35,9 +33,8 @@ const (
 	schoolDays     = 400
 	schoolDaysText = "400 days"
 
-	schoolStudent SQL = "(SELECT string_agg(n, ', ' ORDER BY n) FROM (SELECT DISTINCT btrim(n) AS n FROM unnest(string_to_array(data->>'students', ',')) n) x " +
-		"WHERE n <> '' AND concat_ws(' ', data->>'subject', data->>'text') ~* ('\\m' || regexp_replace(n, '([^[:alnum:] ])', '\\\\\\1', 'g') || '\\M'))"
-	schoolKind SQL = "CASE WHEN data->>'subject' ~* 'urgent|emergency|alert|clos(ed|ure)|lockdown|delay' THEN 'alert' " +
+	schoolStudent SQL = "substring(concat_ws(' ', data->>'subject', data->>'text') from '(?:Student(?: Name)?|Child):\\s*([[:upper:]][[:alpha:]''-]+(?: [[:upper:]][[:alpha:]''-]+)?)')"
+	schoolKind    SQL = "CASE WHEN data->>'subject' ~* 'urgent|emergency|alert|clos(ed|ure)|lockdown|delay' THEN 'alert' " +
 		"WHEN data->>'subject' ~* 'absen|attendance|tardy|late arrival' THEN 'attendance' " +
 		"WHEN data->>'subject' ~* 'grade|report card|progress report|score|assignment|missing work' THEN 'grades' " +
 		"WHEN data->>'subject' ~* 'payment|fee|invoice|lunch balance' THEN 'payment' " +

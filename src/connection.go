@@ -244,20 +244,57 @@ func (a *Archive) connectKeys(ctx context.Context, id string, keys map[string]st
 	if err != nil {
 		return err
 	}
-	if len(p.Keys) == 0 {
+	if !p.Keyed() {
 		return fmt.Errorf("%s connects by signing in, not with keys: %w", p.Name, httpErrBadRequest)
 	}
 	if err := a.mayConnect(ctx, p.Connector); err != nil {
 		return err
 	}
+	var files []*File
+	for _, k := range p.Keys {
+		if !k.File {
+			continue
+		}
+		id, err := uuid.Parse(strings.TrimSpace(keys[k.Name]))
+		if err != nil {
+			return fmt.Errorf("%s: want the id of a file of yours: %w", k.Label, httpErrBadRequest)
+		}
+		f, err := a.GetFile(ctx, id)
+		if err != nil {
+			return fmt.Errorf("%s: %w", k.Label, err)
+		}
+		if f.Kind != "file" {
+			return fmt.Errorf("%s: %s is a folder: %w", k.Label, f.Name, httpErrBadRequest)
+		}
+		files = append(files, f)
+	}
 	g, err := p.KeyGrant(ctx, keys)
 	if err != nil {
 		return fmt.Errorf("%w: %w", err, httpErrBadRequest)
 	}
-	if _, err = a.connectionSave(ctx, ac.member, p.Connector, g); err != nil && p.Link != nil {
+	conn, err := a.connectionSave(ctx, ac.member, p.Connector, g)
+	if err != nil && p.Link != nil {
 		p.RevokeToken(ctx, g.Refresh, g.Meta)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	// A file of yours that a connection reads moves under it, so only you see it, as you see what it syncs; one a
+	// connection of yours synced, like a Drive file, stays where it is.
+	for _, f := range files {
+		if f.Connection != nil {
+			continue
+		}
+		err := a.sys(ctx, func(ctx context.Context) error {
+			_, err := a.st.Q(ctx).Exec(ctx, "UPDATE archive.file SET connection = $2, stream = 'export', source_id = $1::text, parent = NULL, "+
+				"access = (SELECT c.access FROM archive.connection c WHERE c.id = $2) WHERE id = $1 AND connection IS NULL", f.ID, conn)
+			return err
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (a *Archive) connectLink(ctx context.Context, id string) (string, error) {
@@ -391,6 +428,7 @@ type Connector struct {
 	Keys        []connect.Key `json:"keys,omitempty"`
 	Ask         *connect.Key  `json:"ask,omitempty"`
 	Link        bool          `json:"link,omitempty"`
+	Tap         bool          `json:"tap,omitempty"`
 	connect.Info
 }
 
@@ -406,7 +444,7 @@ func (a *Archive) Connections(ctx context.Context) (*Connections, error) {
 	}
 	out := &Connections{Connectors: []Connector{}, Connections: []Connection{}}
 	for _, c := range connect.All() {
-		out.Connectors = append(out.Connectors, Connector{ID: c.ID, Name: c.Name, Ready: a.hub.connect[c.ID] != nil && a.hub.connect[c.ID].Ready(), Integration: c.Integration, Keys: c.Keys, Ask: c.Ask, Link: c.Link != nil, Info: c.Info})
+		out.Connectors = append(out.Connectors, Connector{ID: c.ID, Name: c.Name, Ready: a.hub.connect[c.ID] != nil && a.hub.connect[c.ID].Ready(), Integration: c.Integration, Keys: c.Keys, Ask: c.Ask, Link: c.Link != nil, Tap: c.Tap, Info: c.Info})
 	}
 	var rows []generated.ConnectionsRow
 	err = a.st.System(ctx, func(ctx context.Context) (err error) {
@@ -1236,6 +1274,14 @@ var syncSchema = map[string]syncTable{
 	"spend_receipt":                    {parent: "spend_transaction", of: "spend"},
 	"warehouse_table":                  {},
 	"warehouse_column":                 {parent: "warehouse_table", of: "relation"},
+	"contact":                          {},
+	"location":                         {},
+	"history":                          {},
+	"post":                             {},
+	"kin":                              {},
+	"kin_tie":                          {parent: "kin", of: "person", links: map[string]string{"relative": "kin"}},
+	"dna":                              {links: map[string]string{"file": "file"}},
+	"media":                            {},
 	"photo":                            {},
 	"investment_holding":               {links: map[string]string{"account": "bank_account"}},
 	"investment_transaction":           {links: map[string]string{"account": "bank_account"}},
@@ -2096,7 +2142,40 @@ func (a *Archive) connClient(ctx context.Context, c generated.ArchiveConnection)
 	if err != nil {
 		return nil, err
 	}
-	return p.Open(ctx, tok, c.Meta), nil
+	cl := p.Open(ctx, tok, c.Meta)
+	for _, k := range p.Keys {
+		if id, err := uuid.Parse(c.Meta[k.Name]); k.File && err == nil {
+			cl.Export = func() (*connect.Upfile, error) { return a.connExport(ctx, id) }
+		}
+	}
+	return cl, nil
+}
+
+// connExport opens the file a connection reads, like an import's export, which it checked the member saw when they
+// connected it.
+func (a *Archive) connExport(ctx context.Context, id uuid.UUID) (*connect.Upfile, error) {
+	var f *File
+	err := a.sys(ctx, func(ctx context.Context) (err error) {
+		f, err = fileOf(a.st.db(ctx).GetFile(ctx, id))
+		return err
+	})
+	if errors.Is(err, ErrNotFound) {
+		return nil, &connect.Unsupported{Reason: "its file is gone"}
+	}
+	if err != nil {
+		return nil, err
+	}
+	if f.Hash == "" && f.Error == "" && f.Kind == "file" {
+		return nil, &connect.Refusal{Provider: "Archive", Message: f.Name + " is still being copied", Busy: true, Retry: time.Minute}
+	}
+	if err := f.blob(); err != nil {
+		return nil, &connect.Unsupported{Reason: err.Error()}
+	}
+	rc, err := a.blobs.open(ctx, blobKey(f.Hash), f.Size)
+	if err != nil {
+		return nil, err
+	}
+	return &connect.Upfile{Name: f.Name, Mime: f.MIME, Size: f.Size, Body: rc}, nil
 }
 
 func (a *Archive) connTools(ctx context.Context, c generated.ArchiveConnection) ([]*mcp.Tool, error) {
