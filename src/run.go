@@ -727,7 +727,7 @@ func (r *runner) promise(v any, err error) goja.Value {
 	return r.vm.ToValue(p)
 }
 
-var runReads = map[string]bool{"action": true, "query": true, "schema": true, "revisions": true, "list": true, "get": true, "search": true, "files": true, "file": true, "stored": true}
+var runReads = map[string]bool{"action": true, "query": true, "schema": true, "list": true, "get": true, "search": true, "files": true, "file": true}
 
 func (r *runner) call(read bool, f func(ctx context.Context) (any, error)) (any, error) {
 	t, ok := r.ctx.Value(storeTxKey{}).(storeTx)
@@ -809,6 +809,21 @@ func (r *runner) sdk() {
 		if err != nil {
 			return nil, err
 		}
+		if table == "file" {
+			var f struct {
+				Kind   string     `json:"kind"`
+				Name   string     `json:"name"`
+				Parent *uuid.UUID `json:"parent"`
+				Access string     `json:"access"`
+			}
+			if err := r.arg(call, 1, "create", "data", &f); err != nil {
+				return nil, err
+			}
+			if f.Kind != "folder" {
+				return nil, &ValidationError{Type: "file", Errors: []FieldError{{Path: "kind", Message: `the file table takes folders, { kind: "folder", name, parent, access }; archive.create("name.docx") makes a document`}}}
+			}
+			return a.AddFolder(ctx, f.Access, f.Name, f.Parent)
+		}
 		var data map[string]any
 		if path.Ext(table) != "" {
 			var opts struct {
@@ -838,6 +853,13 @@ func (r *runner) sdk() {
 		}
 		if patch == nil {
 			return nil, fmt.Errorf("archive.update: patch must be an object: %w", httpErrBadRequest)
+		}
+		if table == "file" {
+			parent, err := runFileParent(patch)
+			if err != nil {
+				return nil, err
+			}
+			return a.MoveFile(ctx, id, parent)
 		}
 		return a.Patch(ctx, table, id, patch)
 	})
@@ -894,15 +916,6 @@ func (r *runner) sdk() {
 		}
 		return a.Migrate(ctx, sql, "", opts.Confirm)
 	})
-	r.def(o, "revisions", func(ctx context.Context, call goja.FunctionCall) (any, error) {
-		var opts struct {
-			Limit int `json:"limit"`
-		}
-		if err := r.arg(call, 0, "revisions", "opts", &opts); err != nil {
-			return nil, err
-		}
-		return a.SchemaRevisions(ctx, opts.Limit)
-	})
 	r.def(o, "files", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		var opts struct {
 			Limit int    `json:"limit"`
@@ -944,34 +957,6 @@ func (r *runner) sdk() {
 		}
 		return a.CopyFile(ctx, id, opts.Name, opts.Access)
 	})
-	r.def(o, "folder", func(ctx context.Context, call goja.FunctionCall) (any, error) {
-		name, err := r.str(call, 0, "folder", "name")
-		if err != nil {
-			return nil, err
-		}
-		var opts struct {
-			Parent *uuid.UUID `json:"parent"`
-			Access string     `json:"access"`
-		}
-		if err := r.arg(call, 1, "folder", "opts", &opts); err != nil {
-			return nil, err
-		}
-		return a.AddFolder(ctx, opts.Access, name, opts.Parent)
-	})
-	r.def(o, "move", func(ctx context.Context, call goja.FunctionCall) (any, error) {
-		id, err := r.id(call, 0, "move")
-		if err != nil {
-			return nil, err
-		}
-		var parent *uuid.UUID
-		if err := r.arg(call, 1, "move", "folder", &parent); err != nil {
-			return nil, err
-		}
-		return a.MoveFile(ctx, id, parent)
-	})
-	r.def(o, "stored", func(ctx context.Context, call goja.FunctionCall) (any, error) {
-		return a.Stored(ctx)
-	})
 	r.def(o, "read", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		id, err := r.id(call, 0, "read")
 		if err != nil {
@@ -1000,6 +985,23 @@ func (r *runner) sdk() {
 	r.doSDK(o)
 	r.actionSDK(o)
 	r.vm.Set("archive", o)
+}
+
+// runFileParent is the folder an archive.update of a file moves it to, the one thing it changes, nil for the top.
+func runFileParent(patch map[string]any) (*uuid.UUID, error) {
+	v, ok := patch["parent"]
+	if !ok || len(patch) != 1 {
+		return nil, &ValidationError{Type: "file", Errors: []FieldError{{Path: "parent", Message: "of a file, only { parent } changes, a folder's id or null; archive.edit changes its content"}}}
+	}
+	if v == nil {
+		return nil, nil
+	}
+	s, _ := v.(string)
+	id, err := uuid.Parse(s)
+	if err != nil {
+		return nil, &ValidationError{Type: "file", Errors: []FieldError{{Path: "parent", Message: fmt.Sprintf("%v is not a folder's id", v)}}}
+	}
+	return &id, nil
 }
 
 func runParam(v any) any {
@@ -1120,37 +1122,38 @@ func runTables(cat *Catalog) []runTable {
 	return out
 }
 
-// RunDocs is the SDK's documentation with an interface per table of this workspace: runDocs, then RunTypes.
+// RunDocs is the SDK's documentation with this workspace's tables and the caller's connections.
 func (a *Archive) RunDocs(ctx context.Context) string {
-	return runDocs + "\n" + a.RunTypes(ctx)
+	return runDocs + "\n" + a.RunTypes(ctx) + a.RunConnections(ctx)
 }
 
 // runDocs is the SDK's documentation without this workspace's tables: the same bytes in every workspace, so
 // agents' run tool, which it describes, is one prompt cache entry for all of them.
 var runDocs = strings.ReplaceAll(runSDK, "{timeout}", runTimeout.String())
 
-// RunTypesFor is RunTypes with only the tables and views named in only, and those they reference; a name that is
-// neither fails as a bad request.
-func (a *Archive) RunTypesFor(ctx context.Context, only []string) (string, error) {
-	a.refresh(ctx)
-	cat := a.Catalog()
-	for _, name := range only {
-		if cat.Tables[name] == nil {
-			return "", fmt.Errorf("tables: %q is no table or view of this workspace, which has %s: %w", name, strings.Join(cat.names(), ", "), httpErrBadRequest)
-		}
-	}
-	return runTypesFor(cat, only) + a.actionTypes(ctx) + a.streamTypes(ctx), nil
-}
-
-// RunTypes is the TypeScript of this workspace's types and tables, as the live database has them, and of the
-// actions and synced streams of the caller's connections.
+// RunTypes is the TypeScript of this workspace's types and tables, as the live database has them: the same for
+// everyone in it, so one prompt cache entry for them all.
 func (a *Archive) RunTypes(ctx context.Context) string {
 	a.refresh(ctx)
-	return runTypesFor(a.Catalog(), nil) + a.actionTypes(ctx) + a.streamTypes(ctx)
+	cat := a.Catalog()
+	return runTypesFor(cat, a.syncShown(ctx, cat))
 }
 
-var runStatic = []string{"Actions", "Streams", "Base", "Row", "Hit", "Migration", "SchemaChange", "Table", "StoredFile", "Tables", "FetchResponse", "RunResult", "BrowseResult", "ModelResult", "DoResult", "WorkflowOn", "CronInput", "TableInput", "WebhookInput",
-	"Money", "Timestamp", "Time", "Interval", "Address", "Name", "Postcode", "Geo", "Quantity"}
+// RunConnections is the TypeScript of the actions and synced streams of the caller's connections.
+func (a *Archive) RunConnections(ctx context.Context) string {
+	return a.actionTypes(ctx) + a.streamTypes(ctx)
+}
+
+// runStatic are the types the docs declare, which no table or type of a workspace may be named as.
+var runStatic = append(runSDKTypes(runSDK), "Actions", "Streams", "Tables", "Synced")
+
+func runSDKTypes(src string) []string {
+	var out []string
+	for _, m := range regexp.MustCompile(`(?m)^(?:interface|type) (\w+)`).FindAllStringSubmatch(src, -1) {
+		out = append(out, m[1])
+	}
+	return out
+}
 
 func runPascal(s string) string {
 	var b strings.Builder
@@ -1225,19 +1228,12 @@ func runFormat(schema, name string) string {
 		"timestamp": "YYYY-MM-DDTHH:MM:SS, no zone", "interval": "Postgres interval, like 1 day 02:00:00"}[name]
 }
 
-// runTypesFor is the TypeScript of the catalog; a non-nil only keeps just those tables and views and what they reference.
-func runTypesFor(cat *Catalog, only []string) string {
-	names := cat.names()
-	if only != nil {
-		keep := map[string]bool{}
-		for _, name := range only {
-			keep[name] = true
-			for _, c := range cat.Tables[name].Columns {
-				keep[strings.TrimPrefix(strings.TrimPrefix(c.target(), "public."), "archive.")] = true
-			}
-		}
-		names = slices.DeleteFunc(names, func(name string) bool { return !keep[name] })
-	}
+// runSyncedCols are the columns the Synced interface holds for the tables syncs write.
+var runSyncedCols = []string{"access", "connection", "stream", "source_id"}
+
+// runTypesFor is the TypeScript of the catalog's tables and views named in shown.
+func runTypesFor(cat *Catalog, shown map[string]bool) string {
+	names := slices.DeleteFunc(cat.names(), func(name string) bool { return !shown[name] })
 	n := &runNames{cat: cat, used: map[string]bool{}, names: map[string]string{}}
 	for _, s := range runStatic {
 		n.used[s] = true
@@ -1296,53 +1292,80 @@ func runTypesFor(cat *Catalog, only []string) string {
 		fmt.Fprintf(&b, "    %s: %s;\n", runProp(name), tables[name])
 	}
 	b.WriteString("}\n")
+	field := func(tb *Table, c *Column) string {
+		ref := ""
+		if tg := c.target(); tg == "archive.file" {
+			ref = "References a file: archive.file(id)"
+		} else if tg != "" && !strings.HasPrefix(strings.ToLower(c.Description), "references") {
+			ref = "References " + strings.TrimPrefix(tg, "public.")
+		}
+		gen := ""
+		if c.Generated {
+			gen = "Generated; read only"
+		}
+		desc := c.Description
+		if c.Name == "access" && desc == "" && tb.Schema == "public" {
+			desc = "The id of the group that sees the row, null for the whole workspace; a write may name the group instead, like hr"
+		}
+		if c.Name == "name" && desc == "" {
+			desc = "The row's title, which the app shows it and every link to it by"
+			if tb.Schema == "public" && tb.Kind == "table" {
+				desc += "; set it on every create"
+			}
+		}
+		opt := "?"
+		if c.required() {
+			opt = ""
+		}
+		ts := n.ts(c.Schema, c.Type, c.List)
+		switch {
+		case tb.isWorkflow() && c.Name == "on":
+			ts = "WorkflowOn | null"
+		case tb.Schema == "archive" && tb.Name == "workflow_run" && c.Name == "logs":
+			ts = "string[]"
+		case tb.Schema == "archive" && tb.Name == "workflow_run" && c.Name == "result":
+			ts = "any"
+		}
+		return runDoc("    ", desc, ref, runFormat(c.Schema, c.Type), gen) + fmt.Sprintf("    %s%s: %s;\n", runProp(c.Name), opt, ts)
+	}
+	// syncedFields are a table's columns of runSyncedCols as the docs write them, "" unless it has them all. A table
+	// extends Synced only when they are written the same, so nothing it says of them is lost.
+	syncedFields := func(tb *Table) string {
+		var out strings.Builder
+		for _, name := range runSyncedCols {
+			c := tb.col(name)
+			if c == nil {
+				return ""
+			}
+			out.WriteString(field(tb, c))
+		}
+		return out.String()
+	}
+	synced := ""
+	if tb := cat.Tables["mail_message"]; tb != nil {
+		synced = syncedFields(tb)
+	}
+	extends := func(tb *Table) bool { return synced != "" && tb.synced() && syncedFields(tb) == synced }
+	if slices.ContainsFunc(names, func(name string) bool { return extends(cat.Tables[name]) }) {
+		b.WriteString("\n/** What every table of a connection's rows has. */\ninterface Synced extends Base {\n" + synced + "}\n")
+	}
 	for _, name := range names {
 		tb := cat.Tables[name]
 		ro := ""
 		if tb.Kind == "view" {
 			ro = "View; read only"
 		}
+		base := "Base"
+		if extends(tb) {
+			base = "Synced"
+		}
 		b.WriteString("\n" + runDoc("", tb.Description, ro))
-		fmt.Fprintf(&b, "interface %s extends Base {\n", tables[name])
+		fmt.Fprintf(&b, "interface %s extends %s {\n", tables[name], base)
 		for _, c := range tb.Columns {
-			if catalogSystem[c.Name] || c.Type == "tsvector" {
+			if catalogSystem[c.Name] || c.Type == "tsvector" || base == "Synced" && slices.Contains(runSyncedCols, c.Name) {
 				continue
 			}
-			ref := ""
-			if tg := c.target(); tg == "archive.file" {
-				ref = "References a file: archive.file(id)"
-			} else if tg != "" && !strings.HasPrefix(strings.ToLower(c.Description), "references") {
-				ref = "References " + strings.TrimPrefix(tg, "public.")
-			}
-			gen := ""
-			if c.Generated {
-				gen = "Generated; read only"
-			}
-			desc := c.Description
-			if c.Name == "access" && desc == "" && tb.Schema == "public" {
-				desc = "The id of the group that sees the row, null for the whole workspace; a write may name the group instead, like hr"
-			}
-			if c.Name == "name" && desc == "" {
-				desc = "The row's title, which the app shows it and every link to it by"
-				if tb.Schema == "public" && tb.Kind == "table" {
-					desc += "; set it on every create"
-				}
-			}
-			b.WriteString(runDoc("    ", desc, ref, runFormat(c.Schema, c.Type), gen))
-			opt := "?"
-			if c.required() {
-				opt = ""
-			}
-			ts := n.ts(c.Schema, c.Type, c.List)
-			switch {
-			case tb.isWorkflow() && c.Name == "on":
-				ts = "WorkflowOn | null"
-			case tb.Schema == "archive" && tb.Name == "workflow_run" && c.Name == "logs":
-				ts = "string[]"
-			case tb.Schema == "archive" && tb.Name == "workflow_run" && c.Name == "result":
-				ts = "any"
-			}
-			fmt.Fprintf(&b, "    %s%s: %s;\n", runProp(c.Name), opt, ts)
+			b.WriteString(field(tb, c))
 		}
 		b.WriteString("}\n")
 	}
