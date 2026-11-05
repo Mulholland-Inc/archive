@@ -13,6 +13,8 @@ import { go, replace, route } from './router.svelte.js';
 let counter = 0;
 const nid = (prefix) => `${prefix}${Date.now().toString(36)}${(counter++).toString(36)}`;
 
+export const pinned = $state({ title: null });
+
 export const app = $state({
   status: 'loading',
   user: { id: '', name: '', first: '', email: '', plan: '', tone: 1 },

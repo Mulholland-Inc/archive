@@ -15,7 +15,6 @@
   import IconButton from '../components/IconButton.svelte';
   import Menu from '../components/Menu.svelte';
   import MenuItem from '../components/MenuItem.svelte';
-  import MenuItems from '../components/MenuItems.svelte';
   import List from '../components/List.svelte';
   import ListItem from '../components/ListItem.svelte';
   import EmptyState from '../components/EmptyState.svelte';

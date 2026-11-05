@@ -2,7 +2,7 @@
   import Art from './Art.svelte';
   import Heading from './Heading.svelte';
   import EditableTitle from './EditableTitle.svelte';
-  import { pinned } from '../lib/pagetitle.svelte.js';
+  import { pinned } from '../lib/app.svelte.js';
 
   let { title, description, art, search, actions, onrename, renameLabel = 'Rename' } = $props();
 

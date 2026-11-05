@@ -1,6 +1,6 @@
 <script>
   import { onMount, untrack } from 'svelte';
-  import { Upload, LayoutGrid, List as ListIcon, Ellipsis, Download, Pencil, MessageSquarePlus, SearchX, FolderPlus, ExternalLink, FileText, Folder, Image, AudioLines, FileSpreadsheet, Inbox } from '@lucide/svelte';
+  import { Upload, LayoutGrid, List as ListIcon, Ellipsis, Download, Pencil, MessageSquarePlus, SearchX, FolderPlus, ExternalLink, FileText, Image, AudioLines, FileSpreadsheet, Inbox } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
   import StickyHeader from '../components/StickyHeader.svelte';
@@ -20,7 +20,6 @@
   import Dialog from '../components/Dialog.svelte';
   import Avatar from '../components/Avatar.svelte';
   import Badge from '../components/Badge.svelte';
-  import Icon from '../components/Icon.svelte';
   import Text from '../components/Text.svelte';
   import Spacer from '../components/Spacer.svelte';
   import SettingsRow from '../components/SettingsRow.svelte';

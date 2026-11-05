@@ -20,7 +20,6 @@
   import DetailsButton from '../components/DetailsButton.svelte';
   import SidebarSection from '../components/SidebarSection.svelte';
   import SidebarItem from '../components/SidebarItem.svelte';
-  import SidebarBlock from '../components/SidebarBlock.svelte';
   import Chip from '../components/Chip.svelte';
   import { app, ws, groups, members, groupById, setAccess, workflowById, runWorkflow, renameWorkflow, removeWorkflow, workflows, runs } from '../lib/app.svelte.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
@@ -118,20 +117,20 @@
 
     {#snippet side()}
       <SidebarSection title="Who sees it">
-        <SidebarBlock>
+        <div class="block">
           {#if mine}
             <Menu value={wf.access ?? ''} options={accessOptions} size="sm" label="Who sees it" full onchange={(v) => setAccess('workflow', wf, v || null)} />
           {:else if group}
             <Chip size="sm" href={`/access/groups/${group.id}`}>{group.name}</Chip>
           {/if}
-        </SidebarBlock>
+        </div>
       </SidebarSection>
       {#if run}
         <SidebarSection title={`Run #${run.number}`}>
-          <SidebarBlock>
+          <div class="block">
             <StatusBadge status={run.paused ? 'paused' : run.status} plain />
             <Text size="sm" tone="tertiary">Started {run.started}{#if run.elapsed}, {run.elapsed}{/if}</Text>
-          </SidebarBlock>
+          </div>
         </SidebarSection>
       {/if}
       <SidebarSection>
@@ -140,7 +139,7 @@
             {#snippet leading()}<StatusBadge status={r.paused ? 'paused' : r.status} plain iconOnly />{/snippet}
           </SidebarItem>
         {:else}
-          <SidebarBlock><Text size="sm" tone="tertiary">No runs yet</Text></SidebarBlock>
+          <div class="block"><Text size="sm" tone="tertiary">No runs yet</Text></div>
         {/each}
       </SidebarSection>
     {/snippet}
@@ -153,3 +152,12 @@
     </EmptyState>
   </Page>
 {/if}
+
+<style>
+  .block {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-1-5);
+  }
+</style>

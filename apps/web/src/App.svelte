@@ -1,7 +1,5 @@
 <script>
-  import Shell from './components/Shell.svelte';
   import AppSidebar from './components/AppSidebar.svelte';
-  import View from './components/View.svelte';
   import ContextMenu from './components/ContextMenu.svelte';
   import Agent from './pages/Agent.svelte';
   import LibraryPage from './pages/Library.svelte';
@@ -68,11 +66,11 @@
 {:else if app.status !== 'ready' || !ws()}
   <Loading />
 {:else}
-<Shell>
-  {#snippet sidebar()}<AppSidebar />{/snippet}
-  {#snippet pane()}{#if app.canvas}{#key app.canvas.id}<Canvas />{/key}{/if}{/snippet}
+<div class="shell">
+  <AppSidebar />
+  <main class="main">
   {#key key}
-    <View>
+    <div class="view">
       {#if route.parts[0] === 'agent'}
         <Agent id={route.parts[1]} />
       {:else if route.parts[0] === 'library'}
@@ -98,9 +96,11 @@
       {:else}
         {#key lastAgent()?.id}<Agent id={lastAgent()?.id} />{/key}
       {/if}
-    </View>
+    </div>
   {/key}
-</Shell>
+  </main>
+  {#if app.canvas}{#key app.canvas.id}<Canvas />{/key}{/if}
+</div>
 
 <AppSettings />
 <PromptHost />
@@ -108,3 +108,29 @@
 <ContextMenu />
 {#if app.askPasskey}<PasskeyPrompt />{/if}
 {/if}
+
+<style>
+  .shell {
+    display: flex;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .main {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .view {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+  }
+</style>

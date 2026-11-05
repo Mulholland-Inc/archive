@@ -18,7 +18,6 @@
   import Stack from '../components/Stack.svelte';
   import List from '../components/List.svelte';
   import ListItem from '../components/ListItem.svelte';
-  import TextLink from '../components/TextLink.svelte';
   import Stats from '../components/Stats.svelte';
   import AvatarGroup from '../components/AvatarGroup.svelte';
   import CodeBlock from '../components/CodeBlock.svelte';
@@ -145,7 +144,7 @@
               </Stack>
             {:else if col.key === 'type'}
               {#if row.to && byId(row.to)}
-                <TextLink href={`/database/${row.to}`}>{byId(row.to).name}</TextLink>
+                <a class="link" href={`/database/${row.to}`}>{byId(row.to).name}</a>
               {:else}
                 <Text tone="secondary">{(row.to && tableOf(row.to)?.name) || (row.to === 'archive.file' ? 'File' : typeLabel(row))}</Text>
               {/if}
@@ -246,3 +245,16 @@
     </EmptyState>
   </Page>
 {/if}
+
+<style>
+  .link {
+    color: var(--color-text);
+    text-decoration: underline;
+    text-decoration-color: var(--color-border);
+    text-underline-offset: var(--underline-offset);
+  }
+
+  .link:hover {
+    text-decoration-color: currentColor;
+  }
+</style>
