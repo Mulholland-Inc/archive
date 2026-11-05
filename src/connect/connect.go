@@ -105,7 +105,7 @@ func Register(c *Connector) {
 	if err := c.compile(); err != nil {
 		panic("connect: " + c.ID + ": " + err.Error())
 	}
-	if len(c.Sync) == 0 {
+	if len(c.Sync) == 0 && len(c.Streams) == 0 {
 		panic("connect: " + c.ID + " has no stream")
 	}
 	if len(c.Actions) == 0 && c.MCP == "" && !c.mailOnly() {
@@ -565,6 +565,7 @@ type Client struct {
 	mcpSeen *seen
 	Files   Yours
 	Store   func(name string, b []byte) (string, error)
+	Export  func() (*Upfile, error)
 	Mail    func(s Scan) ([]any, error)
 }
 

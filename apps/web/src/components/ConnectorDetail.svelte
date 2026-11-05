@@ -15,6 +15,7 @@
 
   let { connector, onback } = $props();
   let keying = $state(false);
+  const files = $derived(connector.keys?.some((k) => k.file));
   const start = () => (connector.link ? connectLink(connector.id) : connector.keys?.length || connector.ask ? (keying = true) : connect(connector.id));
 
   connections.use();
@@ -29,8 +30,8 @@
     </Stack>
   {/snippet}
   {#snippet tools()}
-    {#if !connector.connected}
-      <Button variant="primary" icon={Plug} disabled={!connector.ready} onclick={start}>Connect</Button>
+    {#if !connector.connected || files}
+      <Button variant="primary" icon={Plug} disabled={!connector.ready} onclick={start}>{files ? 'Import' : 'Connect'}</Button>
     {/if}
   {/snippet}
   <Stack gap="6">

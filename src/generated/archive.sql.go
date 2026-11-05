@@ -314,7 +314,9 @@ SELECT jsonb_build_object(
             'archive.parcel'::regclass, 'archive.parcel_event'::regclass, 'archive.vehicle'::regclass, 'archive.vehicle_charge'::regclass, 'archive.home_device'::regclass,
             'archive.health_sample'::regclass, 'archive.health_day'::regclass, 'archive.health_sleep'::regclass, 'archive.health_workout'::regclass, 'archive.health_record'::regclass,
             'archive.music_playlist'::regclass, 'archive.music_track'::regclass, 'archive.music_artist'::regclass,
-            'archive.school_notice'::regclass)
+            'archive.school_notice'::regclass,
+            'archive.contact'::regclass, 'archive.location'::regclass, 'archive.history'::regclass, 'archive.post'::regclass,
+            'archive.kin'::regclass, 'archive.kin_tie'::regclass, 'archive.dna'::regclass, 'archive.media'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -606,7 +608,14 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.music_playlist x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.music_track x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.music_artist x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.school_notice x WHERE x.connection = c.id))::bigint AS items,
+        + (SELECT count(*) FROM archive.school_notice x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.contact x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.location x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.history x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.post x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.kin x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.dna x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.media x WHERE x.connection = c.id))::bigint AS items,
     c.integration, coalesce(c.access::text, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
 FROM archive.connection c WHERE c.member = $1 AND NOT c.integration OR c.integration ORDER BY c.provider, c.account, c.id
 `
@@ -947,7 +956,8 @@ WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM arch
     AND NOT EXISTS (SELECT FROM archive.work_item x WHERE x.assignee = k.id)
     AND NOT EXISTS (SELECT FROM archive.compliance x WHERE x.owner = k.id)
     AND NOT EXISTS (SELECT FROM archive.commerce_order x WHERE x.customer = k.id)
-    AND NOT EXISTS (SELECT FROM archive.dental_patient x WHERE x.person = k.id))
+    AND NOT EXISTS (SELECT FROM archive.dental_patient x WHERE x.person = k.id)
+    AND NOT EXISTS (SELECT FROM archive.contact x WHERE x.person = k.id))
 DELETE FROM archive.known_org o WHERE NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.org = o.id)
     AND NOT EXISTS (SELECT FROM archive.crm_company x WHERE x.org = o.id)
     AND NOT EXISTS (SELECT FROM archive.bank_transaction x WHERE x.org = o.id)
