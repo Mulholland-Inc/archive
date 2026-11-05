@@ -156,6 +156,7 @@ const (
 
 	CatCompliance Category = "Compliance"
 	CatData       Category = "Data"
+	CatMedia      Category = "Media"
 
 	IconMail     Icon = "mail"
 	IconUsers    Icon = "users"
@@ -171,6 +172,7 @@ const (
 	IconBug      Icon = "bug"
 
 	IconWarehouse Icon = "warehouse"
+	IconMusic     Icon = "music"
 )
 
 type Who struct {
@@ -371,20 +373,21 @@ type Sync struct {
 	Parts     *Parts
 	Hydrate   []Hydrate
 	To        Map
-	Absent    Path          `json:",omitempty"`
-	Empty     bool          `json:",omitempty"`
-	Key       []Reads       `json:",omitempty"`
-	Set       Obj           `json:",omitempty"`
-	Gone      []Test        `json:",omitempty"`
-	Skip      []Test        `json:",omitempty"`
-	Every     time.Duration `json:",omitempty"`
-	Keep      bool          `json:",omitempty"`
-	Short     Test          `json:",omitzero"`
-	Memo      string        `json:",omitempty"`
-	Deny      []Deny        `json:",omitempty"`
-	Restart   []int         `json:",omitempty"`
-	Pass      []int         `json:",omitempty"`
-	Content   []Content     `json:",omitempty"`
+	Absent    Path                                          `json:",omitempty"`
+	Empty     bool                                          `json:",omitempty"`
+	Key       []Reads                                       `json:",omitempty"`
+	Set       Obj                                           `json:",omitempty"`
+	Gone      []Test                                        `json:",omitempty"`
+	Skip      []Test                                        `json:",omitempty"`
+	Every     time.Duration                                 `json:",omitempty"`
+	Keep      bool                                          `json:",omitempty"`
+	Short     Test                                          `json:",omitzero"`
+	Memo      string                                        `json:",omitempty"`
+	Deny      []Deny                                        `json:",omitempty"`
+	Restart   []int                                         `json:",omitempty"`
+	Pass      []int                                         `json:",omitempty"`
+	Content   []Content                                     `json:",omitempty"`
+	Pull      func(c *Client, cursor string) (*Page, error) `json:"-"`
 }
 
 type Content struct {
@@ -489,6 +492,27 @@ func Call[In, Out any](p Plan) *Action {
 	a.Writes = slices.ContainsFunc(p.Steps, func(s Step) bool { return s.Req.writes() })
 	a.Do = func(c *Client, raw json.RawMessage) (any, error) { return p.run(c, raw) }
 	return a
+}
+
+// Func is an action in Go, for a provider that speaks more than HTTP and JSON, like IMAP.
+func Func[In, Out any](doc string, f func(c *Client, in In) (Out, error)) *Action {
+	in, err := jsonschema.For[In](nil)
+	if err != nil {
+		panic(err)
+	}
+	out, err := jsonschema.For[Out](nil)
+	if err != nil {
+		panic(err)
+	}
+	return &Action{Doc: doc, Input: in, Output: out, Do: func(c *Client, raw json.RawMessage) (any, error) {
+		var v In
+		if len(raw) > 0 && string(raw) != "null" {
+			if err := json.Unmarshal(raw, &v); err != nil {
+				return nil, err
+			}
+		}
+		return f(c, v)
+	}}
 }
 
 func (p *Plan) run(c *Client, raw json.RawMessage) (any, error) {
@@ -781,6 +805,9 @@ func (c *Connector) compile() error {
 			return fmt.Errorf("stream %s: %w", s.Name, err)
 		}
 		st := &Stream{Name: s.Name, Doc: s.Doc, Gap: s.Gap, Every: s.Every, Table: s.To.Table, Pull: s.pull, SQL: s.To.sql(), Version: s.version()}
+		if s.Pull != nil {
+			st.Pull = s.Pull
+		}
 		if len(s.Content) > 0 {
 			st.Read = s.bytesOf
 		}
@@ -968,6 +995,9 @@ func (s *Sync) check() error {
 	}
 	if len(s.To.Cols) == 0 || len(s.To.Cols) > 50 {
 		return errors.New("To.Cols has between 1 and 50 columns")
+	}
+	if s.Pull != nil {
+		return nil
 	}
 	roots := append(slices.Collect(maps.Keys(s.Vars)), "stream", "part", "in", "page", "key", "meta", "option")
 	if err := s.Req.check("listing", roots...); err != nil {
