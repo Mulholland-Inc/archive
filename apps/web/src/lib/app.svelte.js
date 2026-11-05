@@ -448,7 +448,7 @@ export function baseOf(t) {
 }
 
 export function linkOf(t, c, depth = 0) {
-  if (c.to || t?.kind !== 'view' || depth > 4) return c.to;
+  if (c.to || t?.kind !== 'view' || c.type !== 'id' || depth > 4) return c.to;
   const base = tableOf(baseOf(t));
   const col = base !== t && base?.columns.find((x) => x.name === c.name);
   return col ? linkOf(base, col, depth + 1) : undefined;
