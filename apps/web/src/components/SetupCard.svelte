@@ -1,11 +1,11 @@
 <script>
   import { getContext } from 'svelte';
   import Art from './Art.svelte';
-  import { app, onboardingSteps } from '../lib/app.svelte.js';
+  import { onboardingSteps, stepDone } from '../lib/app.svelte.js';
   import { href } from '../lib/router.svelte.js';
 
   const sidebar = getContext('sidebar');
-  const next = $derived(onboardingSteps.find((s) => !app.onboarding.includes(s.id)));
+  const next = $derived(onboardingSteps.find((s) => !stepDone(s.id)));
 </script>
 
 {#if !sidebar?.collapsed && next}

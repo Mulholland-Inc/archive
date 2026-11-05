@@ -337,7 +337,14 @@ func init() {
 		Q        string `json:"q"`
 	}
 	actions = map[string]action{
-		"docs": act(func(a *Archive, ctx context.Context, _ struct{}) (any, error) { return a.RunDocs(ctx), nil }),
+		"docs":       act(func(a *Archive, ctx context.Context, _ struct{}) (any, error) { return a.RunDocs(ctx), nil }),
+		"onboarding": act(func(a *Archive, ctx context.Context, _ struct{}) (any, error) { return a.onboarding(ctx) }),
+		"card":       act(func(a *Archive, ctx context.Context, _ struct{}) (any, error) { return a.cardStart(ctx) }),
+		"linked": act(func(a *Archive, ctx context.Context, in struct {
+			SetupIntent string `json:"setup_intent"`
+		}) (any, error) {
+			return a.cardLinked(ctx, in.SetupIntent)
+		}),
 		"migrate": act(func(a *Archive, ctx context.Context, in struct {
 			SQL     string `json:"sql"`
 			Name    string `json:"name"`

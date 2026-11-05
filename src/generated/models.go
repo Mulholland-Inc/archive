@@ -61,7 +61,7 @@ func (ns NullArchiveWorkspaceType) Value() (driver.Value, error) {
 // icon: plug
 type ArchiveConnection struct {
 	ID uuid.UUID
-	// The field's name
+	// The linked card, like visa 4242; empty until one is linked
 	Name string
 	// Group that sees it, its connection's: null for everyone who sees the connection
 	Access *uuid.UUID
@@ -158,7 +158,7 @@ type ArchiveWatch struct {
 // icon: workflow
 type ArchiveWorkflow struct {
 	ID uuid.UUID
-	// The field's name
+	// The linked card, like visa 4242; empty until one is linked
 	Name string
 	// Group that sees it, its connection's: null for everyone who sees the connection
 	Access *uuid.UUID
@@ -186,7 +186,7 @@ type ArchiveWorkflow struct {
 // icon: list-checks
 type ArchiveWorkflowRun struct {
 	ID uuid.UUID
-	// The field's name
+	// The linked card, like visa 4242; empty until one is linked
 	Name string
 	// Group that sees it, its connection's: null for everyone who sees the connection
 	Access *uuid.UUID

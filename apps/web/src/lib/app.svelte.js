@@ -33,6 +33,7 @@ export const app = $state({
   archiveKeys: {},
   apps: [],
   onboarding: [],
+  signup: { terms: {}, agreement: [], business: [], billing: [] },
   ownConnections: []
 });
 
@@ -109,6 +110,7 @@ export async function boot() {
   app.archives = me.workspaces.map(shell);
   app.archive = me.workspace;
   app.onboarding = local(`archive.onboarding:${me.workspace}`, []);
+  loadSignup();
   app.askPasskey = passkeys && !passkeyAsked(me.actor.user_id);
   app.status = 'ready';
   prepare(ws());
@@ -281,6 +283,10 @@ export function openFile(id, name = '') {
   if (app.canvas?.id === id) return;
   app.canvas = { id, name, file: null, model: null, error: '' };
   canvas.refresh(id);
+}
+
+export function openPanel(id, name, panel) {
+  app.canvas = { id, name, panel, file: null, model: null, error: '' };
 }
 
 export function closeFile() {
@@ -610,9 +616,10 @@ export function openSettings(section = null, sub = null) {
 }
 
 export const onboardingSteps = [
+  { id: 'business', group: 'Legal', title: 'Add your business details', body: 'Your legal name, EIN and address.', action: 'Add' },
   { id: 'msa', group: 'Legal', title: 'Sign the master services agreement', body: 'The terms for your archive, billing and support.', action: 'Review and sign' },
-  { id: 'dpa', group: 'Legal', title: 'Sign the data processing agreement', body: 'How we process personal data on your behalf under GDPR.', action: 'Review and sign' },
-  { id: 'verify', group: 'Legal', title: 'Verify your business details', body: 'Confirm your legal name, address and VAT number for invoices.', action: 'Verify' },
+  { id: 'dpa', group: 'Legal', title: 'Sign the data processing agreement', body: 'How we process personal data on your behalf.', action: 'Review and sign' },
+  { id: 'card', group: 'Billing', title: 'Link a card', body: 'We charge it under your agreement.', action: 'Link' },
   { id: 'invite', group: 'Your team', title: 'Invite your team', body: 'Add the people who should read, edit or own this archive.', action: 'Invite' },
   { id: 'connect', group: 'Your data', title: 'Connect a source', body: 'Bring in your Gmail, Google Drive, Notion and more.', action: 'Connect' },
   { id: 'upload', group: 'Your data', title: 'Upload your first files', body: 'Drop in scans, letters, recordings or spreadsheets.', action: 'Upload' },
@@ -620,9 +627,24 @@ export const onboardingSteps = [
   { id: 'region', group: 'Your data', title: 'Choose a data region and retention', body: 'Pick where your archive lives and how long deleted items are kept.', action: 'Choose' }
 ];
 
+export const serverStep = (id) => ['business', 'msa', 'dpa', 'card'].includes(id);
+
 const saveSteps = () => setLocal(`archive.onboarding:${app.archive}`, app.onboarding);
 
+export async function loadSignup() {
+  try {
+    app.signup = await call('/api/action/onboarding', { method: 'POST' });
+  } catch (e) {
+    await complain(e);
+  }
+}
+
+export const signed = (kind) => app.signup.agreement.find((a) => a.kind === kind);
+
 export function stepDone(id) {
+  if (id === 'business') return app.signup.business.length > 0;
+  if (id === 'msa' || id === 'dpa') return Boolean(signed(id));
+  if (id === 'card') return Boolean(app.signup.billing[0]?.name);
   return app.onboarding.includes(id);
 }
 
@@ -637,6 +659,24 @@ export function toggleStep(id) {
   if (i === -1) app.onboarding.push(id);
   else app.onboarding.splice(i, 1);
   saveSteps();
+}
+
+export async function saveBusiness(data) {
+  const id = app.signup.business[0]?.id;
+  await call(id ? `/api/business/${id}` : '/api/business', { method: id ? 'PATCH' : 'POST', body: data });
+  await loadSignup();
+}
+
+export async function signAgreement(data) {
+  await call('/api/agreement', { method: 'POST', body: data });
+  await loadSignup();
+}
+
+export const startCard = () => call('/api/action/card', { method: 'POST' });
+
+export async function cardLinked(setup_intent) {
+  await call('/api/action/linked', { method: 'POST', body: { setup_intent } });
+  await loadSignup();
 }
 
 export function seedOf(person) {
@@ -903,6 +943,7 @@ export async function switchArchive(id) {
   setWorkspace(id);
   app.archive = id;
   app.onboarding = local(`archive.onboarding:${id}`, []);
+  loadSignup();
   const head = route.parts[0];
   if (['agent', 'workflows', 'database'].includes(head) && route.parts[1]) go(`/${head === 'agent' ? '' : head}`);
   prepare(ws());

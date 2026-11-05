@@ -4692,7 +4692,90 @@ BEGIN
     RETURN r;
 END $$;
 
+CREATE TABLE archive.business (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    name       text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    access     uuid,
+    ein        text NOT NULL,
+    street     text NOT NULL,
+    city       text NOT NULL,
+    state      text NOT NULL,
+    zip        text NOT NULL
+) INHERITS (archive.object);
+COMMENT ON TABLE archive.business IS 'The company this workspace belongs to, as named in its agreements. There is one row; only the owner changes it. Its shape is checked, not its truth.
+icon: building-2';
+COMMENT ON COLUMN archive.business.name IS 'Its legal name';
+COMMENT ON COLUMN archive.business.ein IS 'Its EIN, like 12-3456789';
+COMMENT ON COLUMN archive.business.state IS 'Two-letter US state, like NY';
+COMMENT ON COLUMN archive.business.zip IS 'Like 10001 or 10001-1234';
+CREATE UNIQUE INDEX business_one_idx ON archive.business ((true));
+
+CREATE FUNCTION archive.business_check() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF btrim(NEW.name) = '' THEN
+        RAISE EXCEPTION 'want its legal name' USING ERRCODE = '23514', COLUMN = 'name';
+    ELSIF NEW.ein !~ '^\d{2}-\d{7}$' THEN
+        RAISE EXCEPTION 'want an EIN like 12-3456789' USING ERRCODE = '23514', COLUMN = 'ein';
+    ELSIF btrim(NEW.street) = '' THEN
+        RAISE EXCEPTION 'want a street address' USING ERRCODE = '23514', COLUMN = 'street';
+    ELSIF btrim(NEW.city) = '' THEN
+        RAISE EXCEPTION 'want a city' USING ERRCODE = '23514', COLUMN = 'city';
+    ELSIF NEW.state !~ '^[A-Z]{2}$' THEN
+        RAISE EXCEPTION 'want a two-letter state like NY' USING ERRCODE = '23514', COLUMN = 'state';
+    ELSIF NEW.zip !~ '^\d{5}(-\d{4})?$' THEN
+        RAISE EXCEPTION 'want a ZIP like 10001 or 10001-1234' USING ERRCODE = '23514', COLUMN = 'zip';
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER business_check BEFORE INSERT OR UPDATE ON archive.business FOR EACH ROW EXECUTE FUNCTION archive.business_check();
+
+CREATE TABLE archive.agreement (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    name       text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    access     uuid,
+    kind       text NOT NULL CONSTRAINT agreement_kind CHECK (kind IN ('msa', 'dpa')),
+    body       text NOT NULL,
+    hash       text NOT NULL,
+    company    text NOT NULL,
+    signer     text NOT NULL,
+    title      text NOT NULL,
+    email      text NOT NULL,
+    ip         text NOT NULL DEFAULT '',
+    agent      text NOT NULL DEFAULT '',
+    UNIQUE (kind, hash)
+) INHERITS (archive.object);
+COMMENT ON TABLE archive.agreement IS 'An agreement this workspace signed: the exact text, who signed it and from where. Only the owner signs, in the app; a signed row never changes.
+icon: file-signature';
+COMMENT ON COLUMN archive.agreement.kind IS 'msa or dpa';
+COMMENT ON COLUMN archive.agreement.body IS 'The exact text they signed';
+COMMENT ON COLUMN archive.agreement.hash IS 'SHA-256 of the text';
+COMMENT ON COLUMN archive.agreement.company IS 'The legal name they signed for';
+COMMENT ON COLUMN archive.agreement.signer IS 'The name they typed';
+COMMENT ON COLUMN archive.agreement.title IS 'Their title at the company';
+COMMENT ON COLUMN archive.agreement.email IS 'The address they were signed in with';
+
+CREATE TABLE archive.billing (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    name       text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    access     uuid,
+    customer   text NOT NULL
+) INHERITS (archive.object);
+COMMENT ON TABLE archive.billing IS 'This workspace''s Stripe customer. There is one row; amounts and periods live in Stripe, and Archive writes this row itself.
+icon: credit-card';
+COMMENT ON COLUMN archive.billing.name IS 'The linked card, like visa 4242; empty until one is linked';
+COMMENT ON COLUMN archive.billing.customer IS 'Its Stripe customer id';
+CREATE UNIQUE INDEX billing_one_idx ON archive.billing ((true));
+
 GRANT USAGE ON SCHEMA archive TO "{p}_viewer";
+GRANT SELECT ON archive.business, archive.agreement, archive.billing TO "{p}_viewer";
+GRANT INSERT, UPDATE ON archive.business TO "{p}_owner";
+GRANT INSERT ON archive.agreement TO "{p}_owner";
 GRANT SELECT ON archive.file, archive.member, archive."group", archive.revision TO "{p}_viewer";
 GRANT INSERT, UPDATE, DELETE ON archive.file TO "{p}_editor";
 GRANT INSERT, UPDATE, DELETE ON archive.member, archive."group" TO "{p}_manager";
@@ -5386,7 +5469,7 @@ SELECT jsonb_build_object(
             AND regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)')
             FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid), false),
         'columns', (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid)))
-        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.agent'::regclass, 'archive.inbox'::regclass, 'archive.turn'::regclass, 'archive.memory'::regclass, 'archive.member'::regclass, 'archive."group"'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass, 'archive.connection'::regclass, 'archive.known_person'::regclass, 'archive.known_org'::regclass, 'archive.mail_message'::regclass,
+        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.business'::regclass, 'archive.agreement'::regclass, 'archive.billing'::regclass, 'archive.agent'::regclass, 'archive.inbox'::regclass, 'archive.turn'::regclass, 'archive.memory'::regclass, 'archive.member'::regclass, 'archive."group"'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass, 'archive.connection'::regclass, 'archive.known_person'::regclass, 'archive.known_org'::regclass, 'archive.mail_message'::regclass,
             'archive.mail_party'::regclass, 'archive.mail_attachment'::regclass, 'archive.doc_page'::regclass, 'archive.payroll_company'::regclass,
             'archive.payroll_department'::regclass, 'archive.payroll_location'::regclass, 'archive.payroll_schedule'::regclass,
             'archive.payroll_worker'::regclass, 'archive.payroll_job'::regclass, 'archive.payroll_compensation'::regclass,
@@ -5625,3 +5708,15 @@ WITH added AS (INSERT INTO archive.known_org (domain) SELECT DISTINCT d FROM unn
     RETURNING id, domain)
 SELECT a.id, a.domain::text AS domain FROM added a
 UNION ALL SELECT o.id, o.domain::text FROM archive.known_org o WHERE o.domain = ANY(sqlc.arg(domains)::text[]);
+
+-- name: BusinessName :one
+SELECT name FROM archive.business;
+
+-- name: BillingCustomer :one
+SELECT customer FROM archive.billing;
+
+-- name: AddBilling :exec
+INSERT INTO archive.billing (customer) VALUES ($1) ON CONFLICT DO NOTHING;
+
+-- name: LinkCard :exec
+UPDATE archive.billing SET name = $1, updated_at = now();
