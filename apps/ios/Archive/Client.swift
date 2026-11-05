@@ -11,8 +11,11 @@ enum ClientError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .signedOut: "Signed out"
-        case let .refused(status, body): "Archive said \(status): \(body)"
+        case .signedOut: "Sign in to Archive again to keep syncing."
+        case let .refused(status, body):
+            // Archive answers { error }; show its words, not the JSON.
+            (try? JSONDecoder().decode([String: String].self, from: Data(body.utf8)))?["error"].map { $0.prefix(1).uppercased() + $0.dropFirst() }
+                ?? (status == 0 ? body : "Archive couldn't take this (\(status)). It tries again on the next sync.")
         }
     }
 }
@@ -70,6 +73,24 @@ actor Client {
     func push(_ stream: String, _ records: [[String: Any]], full: Bool = false, more: Bool = false) async throws {
         let body = try JSONSerialization.data(withJSONObject: ["records": records, "full": full, "more": more])
         _ = try await send("POST", "device/\(stream)", body: .data(body, "application/json"))
+    }
+
+    /// Checks the sign-in still holds, so a phone Archive turned down hears of it even with nothing new to send.
+    func check() async throws {
+        for attempt in 0 ..< 2 {
+            var req = URLRequest(url: Self.api.appending(path: "device/attest"))
+            req.setValue("Bearer " + (try await bearer()), forHTTPHeaderField: "Authorization")
+            req.setValue(Self.install, forHTTPHeaderField: "Archive-Device")
+            req.setValue(await UIDevice.current.name, forHTTPHeaderField: "Archive-Device-Name")
+            let (body, res) = try await URLSession.shared.data(for: req)
+            let status = (res as? HTTPURLResponse)?.statusCode ?? 0
+            if status == 401, attempt == 0 {
+                access = nil
+                continue
+            }
+            guard status == 200 else { throw ClientError.refused(status, String(decoding: body, as: UTF8.self)) }
+            return
+        }
     }
 
     /// Keeps a photo's original, full size, with the photo Archive has of it already.

@@ -33,6 +33,8 @@ struct SignIn: View {
                         try await Client.shared.signIn()
                         status.signedIn = true
                         error = nil
+                        // Signing in again picks up where the last sync stopped.
+                        if status.onboarded { Task { await Syncer.shared.all() } }
                     } catch {
                         self.error = error.localizedDescription
                     }

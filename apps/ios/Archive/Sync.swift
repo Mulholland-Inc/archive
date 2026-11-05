@@ -24,6 +24,14 @@ actor Syncer {
         running = true
         repeat {
             again = false
+            do {
+                try await Client.shared.check()
+            } catch let e as ClientError {
+                if case .signedOut = e {
+                    await Status.shared.synced("health", e)
+                    break
+                }
+            } catch {}
             let runs: [(String, () async throws -> Void)] = [("health", healthAll), ("photos", photos), ("contacts", contacts), ("events", events),
                                                               ("reminders", reminders), ("places", places), ("wallet", wallet), ("originals", originals)]
             for (name, run) in runs {
