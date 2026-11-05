@@ -100,7 +100,7 @@ func keyProvider(c *Connector, getenv func(string) string) (*Provider, bool) {
 }
 
 func (p *Provider) KeyGrant(ctx context.Context, keys map[string]string) (*Grant, error) {
-	if len(p.Keys) == 0 {
+	if !p.Keyed() {
 		return nil, fmt.Errorf("%s connects by signing in, not with keys", p.Name)
 	}
 	kept, meta := map[string]string{}, map[string]string{}
@@ -161,7 +161,11 @@ func (p *Provider) trade(ctx context.Context, keys map[string]string) (map[strin
 		}
 		return out, time.Now().Add(mintLasts), nil
 	}
-	sc["basic"] = basic(keys["client_id"], keys["client_secret"])
+	if id, secret := keys["client_id"], keys["client_secret"]; id != "" {
+		sc["basic"] = basic(id, secret)
+	} else {
+		sc["basic"] = basic(p.clientID, p.secret)
+	}
 	ans, err := c.req(*p.Trade, sc)
 	if err != nil {
 		return nil, time.Time{}, err

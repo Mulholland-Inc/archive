@@ -1176,6 +1176,7 @@ export const connections = resource({
         keys: k.keys ?? [],
         ask: k.ask ?? null,
         link: !!k.link,
+        tap: !!k.tap,
         connections: mine,
         connected: mine.length > 0,
         account: mine.map((x) => x.account).join(', '),
@@ -1202,6 +1203,7 @@ function toIntegration(k, x) {
     keys: k.keys ?? [],
     ask: k.ask ?? null,
     link: !!k.link,
+    tap: !!k.tap,
     connected: Boolean(x),
     connection: x ?? null,
     account: x?.account ?? '',
@@ -1217,7 +1219,8 @@ function toIntegration(k, x) {
 export function connect(id, asked = {}) {
   const c = [...ws().connectors, ...archiveIntegrations()].find((x) => x.id === id);
   const q = new URLSearchParams({ ...asked, workspace: app.archive });
-  if (c?.ready) location.assign(`${API}/connect/${encodeURIComponent(id)}?${q}`);
+  if (c?.ready && c.tap) connectKeys(id, {}, app.archive);
+  else if (c?.ready) location.assign(`${API}/connect/${encodeURIComponent(id)}?${q}`);
 }
 
 export async function connectKeys(id, keys, workspace) {

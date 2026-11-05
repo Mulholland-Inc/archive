@@ -62,6 +62,7 @@ type Connector struct {
 	Streams     []*Stream
 	Push        *Push
 	Keys        []Key
+	Tap         bool
 	Authorize   func(req *http.Request, c *Client)
 	Trade       *Req
 	Mint        []Step
@@ -88,6 +89,10 @@ type Errors struct {
 	Status   int
 	Busy     []string
 }
+
+// Keyed is whether it connects without a sign-in: with keys the person pastes, or, Tap, in one tap with nothing to paste,
+// reading with Archive's own app credentials from Env, when it has one, or only what Archive already synced.
+func (c *Connector) Keyed() bool { return len(c.Keys) > 0 || c.Tap }
 
 func (c *Connector) MCPEnv() string { return "ARCHIVE_MCP_" + strings.ToUpper(c.ID) }
 
@@ -136,7 +141,7 @@ type Providers map[string]*Provider
 func Load(getenv func(string) string) (Providers, error) {
 	out := Providers{}
 	for _, c := range All() {
-		if len(c.Keys) > 0 {
+		if c.Keyed() {
 			if p, ok := keyProvider(c, getenv); ok {
 				out[c.ID] = p
 			}
@@ -383,10 +388,10 @@ func granted(scopes []string, want string) bool {
 }
 
 func (p *Provider) Refresh(ctx context.Context, rt string, meta map[string]string) (*oauth2.Token, error) {
-	if len(p.Keys) > 0 && p.Trade == nil && p.Mint == nil || p.Lasts || p.was(rt) != nil {
+	if p.Keyed() && p.Trade == nil && p.Mint == nil || p.Lasts || p.was(rt) != nil {
 		return &oauth2.Token{AccessToken: rt, RefreshToken: rt}, nil
 	}
-	if len(p.Keys) > 0 {
+	if p.Keyed() {
 		keys, end, err := p.trade(ctx, keysFrom(rt))
 		if err != nil {
 			return nil, err
@@ -413,7 +418,7 @@ func (p *Provider) RevokeToken(ctx context.Context, rt string, meta map[string]s
 		return nil
 	case p.RevokeWith != nil:
 		return rv.p.RevokeWith(rv)
-	case len(p.Keys) > 0:
+	case p.Keyed():
 		return nil
 	case p.revoke == "":
 		return nil
@@ -564,7 +569,7 @@ type Client struct {
 }
 
 func (p *Provider) Open(ctx context.Context, tok *oauth2.Token, meta map[string]string) *Client {
-	if len(p.Keys) > 0 {
+	if p.Keyed() {
 		return p.openKeys(ctx, keysFrom(tok.AccessToken), meta)
 	}
 	if w := p.was(tok.AccessToken); w != nil {
@@ -1150,4 +1155,4 @@ func mcpAccount(tool string) func(c *Client) (string, error) {
 
 func (p *Provider) ClientID() string { return p.clientID }
 
-func (p *Provider) Ready() bool { return p.MCP != "" || len(p.Keys) > 0 || p.clientID != "" }
+func (p *Provider) Ready() bool { return p.MCP != "" || p.Keyed() || p.clientID != "" }
