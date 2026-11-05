@@ -730,6 +730,7 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 		var cl *connect.Client
 		if cl, err = a.connClient(pctx, c); err == nil {
 			cl.Store = a.syncStore(pctx, c.ID, c.Access)
+			cl.Mail = a.syncMail(pctx, c)
 			page, err = s.Pull(cl, cur.Cursor)
 			if err == nil && page.More && page.Cursor == cur.Cursor {
 				err = fmt.Errorf("%s said there was more, but from where this page began", p.Name)
@@ -1195,6 +1196,11 @@ var syncSchema = map[string]syncTable{
 	"investment_transaction":           {links: map[string]string{"account": "bank_account"}},
 	"bank_liability":                   {links: map[string]string{"account": "bank_account"}},
 	"budget_category":                  {},
+	"parcel":                           {},
+	"parcel_event":                     {parent: "parcel", of: "parcel"},
+	"vehicle":                          {},
+	"vehicle_charge":                   {links: map[string]string{"vehicle": "vehicle"}},
+	"home_device":                      {},
 }
 
 type syncRec struct {
@@ -1864,6 +1870,58 @@ func (a *Archive) syncStore(ctx context.Context, id uuid.UUID, access *uuid.UUID
 			return "", err
 		}
 		return f.ID.String(), err
+	}
+}
+
+func (a *Archive) syncMail(ctx context.Context, c generated.ArchiveConnection) func(s connect.Scan) ([]any, error) {
+	return func(s connect.Scan) ([]any, error) {
+		find, err := regexp.Compile(s.Find)
+		if err != nil {
+			return nil, err
+		}
+		type hit struct{ subject, text, id string }
+		var hits []hit
+		var sent []*time.Time
+		err = a.sys(ctx, func(ctx context.Context) error {
+			rows, err := a.st.Q(ctx).Query(ctx, `SELECT coalesce(m.subject, ''), coalesce(m.text, ''), m.source_id, coalesce(m.sent_at, m.received_at)
+				FROM archive.mail_message m JOIN archive.connection o ON o.id = m.connection
+				WHERE coalesce(m.received_at, m.sent_at) > now() - make_interval(days => $1) AND (m.subject ~* $2 OR m.text ~* $2)
+					AND (o.integration OR o.member = $3 AND NOT $4) AND (m.access IS NULL OR m.access = $5)
+				ORDER BY coalesce(m.received_at, m.sent_at) DESC LIMIT 2000`,
+				max(s.Days, 1), cmp.Or(s.Near, "."), c.Member, c.Integration, c.Access)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var h hit
+				var at *time.Time
+				if err := rows.Scan(&h.subject, &h.text, &h.id, &at); err != nil {
+					return err
+				}
+				hits, sent = append(hits, h), append(sent, at)
+			}
+			return rows.Err()
+		})
+		if err != nil {
+			return nil, err
+		}
+		out, seen := []any{}, map[string]bool{}
+		for i, h := range hits {
+			for _, m := range find.FindAllStringSubmatch(h.subject+"\n"+h.text, -1) {
+				n := strings.ToUpper(strings.Join(strings.Fields(m[len(m)-1]), ""))
+				if seen[n] {
+					continue
+				}
+				seen[n] = true
+				o := map[string]any{"id": n, "subject": h.subject, "message": h.id}
+				if sent[i] != nil {
+					o["sent_at"] = sent[i].UTC().Format(time.RFC3339)
+				}
+				out = append(out, o)
+			}
+		}
+		return out, nil
 	}
 }
 

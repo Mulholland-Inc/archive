@@ -156,6 +156,7 @@ const (
 
 	CatCompliance Category = "Compliance"
 	CatData       Category = "Data"
+	CatHome       Category = "Home"
 
 	IconMail     Icon = "mail"
 	IconUsers    Icon = "users"
@@ -270,6 +271,12 @@ type Parts struct {
 	Under  *Parts   `json:",omitempty"`
 	First  bool     `json:",omitempty"`
 	Also   []*Parts `json:",omitempty"`
+	Mail   *Scan    `json:",omitempty"`
+}
+
+type Scan struct {
+	Find, Near string
+	Days       int
 }
 
 type Shift [3]int
@@ -1104,7 +1111,7 @@ func (s *Sync) step(c *Client, st flow) (*Page, error) {
 			return nil, err
 		}
 		if s.Parts != nil && len(parts) == 0 {
-			if len(st.Since) > 0 {
+			if len(st.Since) > 0 && s.Parts.Mail == nil {
 				return nil, fmt.Errorf("%s listed none of what it listed before; Archive keeps what it has and asks again next sync", c.p.Name)
 			}
 			return &Page{Cursor: st.cursor()}, nil
@@ -1334,6 +1341,11 @@ func (p *Parts) items(c *Client, sc map[string]any, again bool) ([]any, error) {
 		return out, nil
 	case p.Span != nil:
 		return p.Span.dates(sc, again), nil
+	case p.Mail != nil:
+		if c.Mail == nil {
+			return nil, errors.New("it reads the mail Archive synced, which only a sync can")
+		}
+		return c.Mail(*p.Mail)
 	case p.Split != "":
 		v, _ := fillStr(p.Split, sc)
 		out := []any{}

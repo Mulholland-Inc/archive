@@ -3332,6 +3332,220 @@ COMMENT ON COLUMN archive.budget_category.stream IS 'What its connector syncs it
 COMMENT ON COLUMN archive.budget_category.source_id IS 'Its id there';
 COMMENT ON COLUMN archive.budget_category.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.budget_category.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+CREATE TABLE archive.parcel (
+    id            uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream        text NOT NULL,
+    source_id     text NOT NULL,
+    access        uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
+    name          text NOT NULL DEFAULT '',
+    seen_at       timestamptz NOT NULL DEFAULT now(),
+    carrier       text,
+    tracking      text,
+    status        text,
+    status_code   text,
+    delivered     boolean,
+    service       text,
+    weight        text,
+    expected_on   date,
+    delivered_at  timestamptz,
+    signed_by     text,
+    from_city     text,
+    from_state    text,
+    from_country  text,
+    city          text,
+    state         text,
+    country       text,
+    last_event    text,
+    last_event_at timestamptz,
+    mail_subject  text,
+    mail_message  text,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX parcel_tracking_idx ON archive.parcel (tracking);
+COMMENT ON TABLE archive.parcel IS 'A package a carrier you connected, like UPS or FedEx, is carrying or carried, found by its tracking number in mail you synced; its scans are in parcel_event. Read only; Archive syncs them
+icon: package';
+COMMENT ON COLUMN archive.parcel.carrier IS 'Who carries it, like UPS or FedEx';
+COMMENT ON COLUMN archive.parcel.tracking IS 'Its tracking number';
+COMMENT ON COLUMN archive.parcel.status IS 'Where it is, in the carrier''s words, like Delivered or On the way';
+COMMENT ON COLUMN archive.parcel.status_code IS 'The carrier''s code for its status, like D for UPS or DL for FedEx when delivered';
+COMMENT ON COLUMN archive.parcel.delivered IS 'Whether it was delivered';
+COMMENT ON COLUMN archive.parcel.service IS 'How it ships, like UPS Ground or FedEx 2Day';
+COMMENT ON COLUMN archive.parcel.weight IS 'What it weighs, with its unit, like 2.5 LBS';
+COMMENT ON COLUMN archive.parcel.expected_on IS 'When the carrier says it arrives, or arrived';
+COMMENT ON COLUMN archive.parcel.delivered_at IS 'When it was delivered';
+COMMENT ON COLUMN archive.parcel.signed_by IS 'Who signed for it, or where it was left';
+COMMENT ON COLUMN archive.parcel.from_city IS 'Where it ships from';
+COMMENT ON COLUMN archive.parcel.city IS 'Where it ships to';
+COMMENT ON COLUMN archive.parcel.last_event IS 'Its last scan, like Out for delivery';
+COMMENT ON COLUMN archive.parcel.last_event_at IS 'When its last scan was';
+COMMENT ON COLUMN archive.parcel.mail_subject IS 'The subject of the newest mail its tracking number was in';
+COMMENT ON COLUMN archive.parcel.mail_message IS 'That mail''s id in its mailbox';
+COMMENT ON COLUMN archive.parcel.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.parcel.stream IS 'What its connector syncs it as, like packages';
+COMMENT ON COLUMN archive.parcel.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.parcel.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.parcel.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.parcel_event (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    name       text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    parcel     uuid NOT NULL REFERENCES archive.parcel ON DELETE CASCADE,
+    at         timestamptz,
+    status     text,
+    code       text,
+    city       text,
+    state      text,
+    country    text
+) INHERITS (archive.object);
+CREATE INDEX parcel_event_parcel_idx ON archive.parcel_event (parcel);
+CREATE INDEX parcel_event_connection_idx ON archive.parcel_event (connection);
+COMMENT ON TABLE archive.parcel_event IS 'A scan of a package: where it was, when, and what the carrier said. Read only; Archive syncs them
+icon: map-pin';
+COMMENT ON COLUMN archive.parcel_event.parcel IS 'references parcel; the package it is a scan of';
+COMMENT ON COLUMN archive.parcel_event.at IS 'When it was';
+COMMENT ON COLUMN archive.parcel_event.status IS 'What the carrier said, like Arrived at Facility';
+COMMENT ON COLUMN archive.parcel_event.code IS 'The carrier''s code for it';
+COMMENT ON COLUMN archive.parcel_event.city IS 'Where it was';
+COMMENT ON COLUMN archive.parcel_event.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.vehicle (
+    id            uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream        text NOT NULL,
+    source_id     text NOT NULL,
+    access        uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
+    name          text NOT NULL DEFAULT '',
+    seen_at       timestamptz NOT NULL DEFAULT now(),
+    vin           text,
+    title         text,
+    model         text,
+    trim          text,
+    color         text,
+    state         text,
+    odometer      numeric,
+    battery       numeric,
+    range         numeric,
+    charging      text,
+    software      text,
+    read_at       timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+COMMENT ON TABLE archive.vehicle IS 'A car on an account you connected, like Tesla, as it last said; its charging sessions are in vehicle_charge. Read only; Archive syncs them
+icon: car';
+COMMENT ON COLUMN archive.vehicle.vin IS 'Its vehicle identification number';
+COMMENT ON COLUMN archive.vehicle.title IS 'What you named it';
+COMMENT ON COLUMN archive.vehicle.model IS 'Its model, like modely';
+COMMENT ON COLUMN archive.vehicle.trim IS 'Its trim, like p74d';
+COMMENT ON COLUMN archive.vehicle.color IS 'Its paint, like PearlWhite';
+COMMENT ON COLUMN archive.vehicle.state IS 'Whether it was online, asleep or offline';
+COMMENT ON COLUMN archive.vehicle.odometer IS 'How far it has gone, in miles';
+COMMENT ON COLUMN archive.vehicle.battery IS 'How charged it was, in percent';
+COMMENT ON COLUMN archive.vehicle.range IS 'How far it could go on that charge, in miles';
+COMMENT ON COLUMN archive.vehicle.charging IS 'Whether it was charging, like Charging, Complete or Disconnected';
+COMMENT ON COLUMN archive.vehicle.software IS 'Its software version';
+COMMENT ON COLUMN archive.vehicle.read_at IS 'When it last said how it was; a car asleep says nothing';
+COMMENT ON COLUMN archive.vehicle.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.vehicle.stream IS 'What its connector syncs it as, like packages';
+COMMENT ON COLUMN archive.vehicle.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.vehicle.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.vehicle.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.vehicle_charge (
+    id            uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream        text NOT NULL,
+    source_id     text NOT NULL,
+    access        uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
+    name          text NOT NULL DEFAULT '',
+    seen_at       timestamptz NOT NULL DEFAULT now(),
+    vehicle       uuid REFERENCES archive.vehicle ON DELETE SET NULL,
+    vehicle_source text,
+    vin           text,
+    site          text,
+    country       text,
+    started_at    timestamptz,
+    ended_at      timestamptz,
+    energy        numeric,
+    cost          archive.money,
+    billing       text,
+    invoice       text,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX vehicle_charge_vehicle_idx ON archive.vehicle_charge (vehicle);
+CREATE INDEX vehicle_charge_started_at_idx ON archive.vehicle_charge (started_at);
+COMMENT ON TABLE archive.vehicle_charge IS 'A charging session of a car you connected, like at a Tesla Supercharger: where, when, how much energy and what it cost. Read only; Archive syncs them
+icon: plug-zap';
+COMMENT ON COLUMN archive.vehicle_charge.vehicle IS 'references vehicle; the car it charged';
+COMMENT ON COLUMN archive.vehicle_charge.vehicle_source IS 'The VIN of the car it charged';
+COMMENT ON COLUMN archive.vehicle_charge.site IS 'Where it was, the charging site''s name';
+COMMENT ON COLUMN archive.vehicle_charge.started_at IS 'When it began';
+COMMENT ON COLUMN archive.vehicle_charge.ended_at IS 'When it stopped';
+COMMENT ON COLUMN archive.vehicle_charge.energy IS 'How much energy it took, in kWh';
+COMMENT ON COLUMN archive.vehicle_charge.cost IS 'What it cost, charging and any fees';
+COMMENT ON COLUMN archive.vehicle_charge.billing IS 'How it was paid, like IMMEDIATE';
+COMMENT ON COLUMN archive.vehicle_charge.invoice IS 'Its invoice''s id, for the connector''s get action';
+COMMENT ON COLUMN archive.vehicle_charge.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.vehicle_charge.stream IS 'What its connector syncs it as, like packages';
+COMMENT ON COLUMN archive.vehicle_charge.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.vehicle_charge.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.vehicle_charge.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.home_device (
+    id            uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream        text NOT NULL,
+    source_id     text NOT NULL,
+    access        uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
+    name          text NOT NULL DEFAULT '',
+    seen_at       timestamptz NOT NULL DEFAULT now(),
+    kind          text,
+    title         text,
+    room          text,
+    online        boolean,
+    mode          text,
+    eco           text,
+    hvac          text,
+    temperature   numeric,
+    humidity      numeric,
+    heat_to       numeric,
+    cool_to       numeric,
+    scale         text,
+    traits        text[],
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+COMMENT ON TABLE archive.home_device IS 'A device in a home you connected, like a Nest thermostat, camera or doorbell, as it read when Archive last looked. Read only; Archive syncs them
+icon: house';
+COMMENT ON COLUMN archive.home_device.kind IS 'What it is, like thermostat, camera, doorbell or display';
+COMMENT ON COLUMN archive.home_device.title IS 'What you named it, or else its room';
+COMMENT ON COLUMN archive.home_device.room IS 'The room it is in';
+COMMENT ON COLUMN archive.home_device.online IS 'Whether it was online';
+COMMENT ON COLUMN archive.home_device.mode IS 'A thermostat''s mode, like HEAT, COOL, HEATCOOL or OFF';
+COMMENT ON COLUMN archive.home_device.eco IS 'A thermostat''s eco mode, MANUAL_ECO or OFF';
+COMMENT ON COLUMN archive.home_device.hvac IS 'Whether a thermostat was HEATING, COOLING or OFF';
+COMMENT ON COLUMN archive.home_device.temperature IS 'The temperature where it is, in °C';
+COMMENT ON COLUMN archive.home_device.humidity IS 'The humidity where it is, in percent';
+COMMENT ON COLUMN archive.home_device.heat_to IS 'What a thermostat heats to, in °C';
+COMMENT ON COLUMN archive.home_device.cool_to IS 'What a thermostat cools to, in °C';
+COMMENT ON COLUMN archive.home_device.scale IS 'Whether its display shows CELSIUS or FAHRENHEIT';
+COMMENT ON COLUMN archive.home_device.traits IS 'What it can do, like Temperature, ThermostatMode or CameraLiveStream';
+COMMENT ON COLUMN archive.home_device.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.home_device.stream IS 'What its connector syncs it as, like packages';
+COMMENT ON COLUMN archive.home_device.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.home_device.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.home_device.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE FUNCTION archive.mine(m uuid) RETURNS bool LANGUAGE sql STABLE AS $$
     SELECT EXISTS (SELECT FROM pg_catalog.pg_roles r WHERE r.rolname = '{p}_m' || translate(rtrim(encode(uuid_send(m), 'base64'), '='), '+/', '-_')
@@ -3446,6 +3660,11 @@ BEGIN
         WHEN 'investment_transaction' THEN concat_ws(' · ', initcap(r->>'kind'), coalesce(nullif(r->>'ticker', ''), nullif(r->>'security', ''), nullif(r->>'description', '')), r->>'traded_on')
         WHEN 'bank_liability' THEN concat_ws(' · ', initcap(r->>'kind'), nullif(r->>'loan_name', ''))
         WHEN 'budget_category' THEN concat_ws(' · ', nullif(r->>'group_name', ''), r->>'title')
+        WHEN 'parcel' THEN concat_ws(' · ', concat_ws(' ', r->>'carrier', r->>'tracking'), nullif(r->>'status', ''))
+        WHEN 'parcel_event' THEN concat_ws(' · ', nullif(r->>'status', ''), nullif(r->>'city', ''), left(r->>'at', 10))
+        WHEN 'vehicle' THEN coalesce(nullif(r->>'title', ''), r->>'vin')
+        WHEN 'vehicle_charge' THEN concat_ws(' · ', nullif(r->>'site', ''), left(r->>'started_at', 10))
+        WHEN 'home_device' THEN concat_ws(' · ', coalesce(nullif(r->>'title', ''), initcap(r->>'kind')), nullif(r->>'room', ''))
         ELSE own END), ''), '');
     RETURN NEW;
 END $$;
@@ -3519,6 +3738,11 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.investment_holding
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.investment_transaction FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.bank_liability FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.budget_category FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.parcel FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.parcel_event FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.vehicle FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.vehicle_charge FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.home_device FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_contact FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_item FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_entry FOR EACH ROW EXECUTE FUNCTION archive.object_name();
@@ -3635,6 +3859,11 @@ GRANT SELECT ON archive.investment_holding TO "{p}_viewer";
 GRANT SELECT ON archive.investment_transaction TO "{p}_viewer";
 GRANT SELECT ON archive.bank_liability TO "{p}_viewer";
 GRANT SELECT ON archive.budget_category TO "{p}_viewer";
+GRANT SELECT ON archive.parcel TO "{p}_viewer";
+GRANT SELECT ON archive.parcel_event TO "{p}_viewer";
+GRANT SELECT ON archive.vehicle TO "{p}_viewer";
+GRANT SELECT ON archive.vehicle_charge TO "{p}_viewer";
+GRANT SELECT ON archive.home_device TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT, UPDATE, DELETE ON TABLES TO "{p}_editor";
 
@@ -3800,6 +4029,16 @@ ALTER TABLE archive.bank_liability ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.bank_liability FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = bank_liability.connection));
 ALTER TABLE archive.budget_category ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.budget_category FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = budget_category.connection));
+ALTER TABLE archive.parcel ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.parcel FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = parcel.connection));
+ALTER TABLE archive.parcel_event ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.parcel_event FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = parcel_event.connection));
+ALTER TABLE archive.vehicle ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.vehicle FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = vehicle.connection));
+ALTER TABLE archive.vehicle_charge ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.vehicle_charge FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = vehicle_charge.connection));
+ALTER TABLE archive.home_device ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.home_device FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = home_device.connection));
 ALTER TABLE archive.known_person ENABLE ROW LEVEL SECURITY;
 CREATE POLICY seen ON archive.known_person FOR SELECT USING (EXISTS (SELECT FROM archive.mail_party p WHERE p.person = known_person.id)
     OR EXISTS (SELECT FROM archive.payroll_worker w WHERE w.person = known_person.id)
@@ -4128,7 +4367,8 @@ SELECT jsonb_build_object(
             'archive.spend_transaction'::regclass, 'archive.spend_receipt'::regclass,
             'archive.warehouse_table'::regclass, 'archive.warehouse_column'::regclass,
             'archive.investment_holding'::regclass, 'archive.investment_transaction'::regclass,
-            'archive.bank_liability'::regclass, 'archive.budget_category'::regclass)
+            'archive.bank_liability'::regclass, 'archive.budget_category'::regclass,
+            'archive.parcel'::regclass, 'archive.parcel_event'::regclass, 'archive.vehicle'::regclass, 'archive.vehicle_charge'::regclass, 'archive.home_device'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -4271,7 +4511,11 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.investment_holding x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.investment_transaction x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.bank_liability x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.budget_category x WHERE x.connection = c.id))::bigint AS items,
+        + (SELECT count(*) FROM archive.budget_category x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.parcel x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.vehicle x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.vehicle_charge x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.home_device x WHERE x.connection = c.id))::bigint AS items,
     c.integration, coalesce(c.access::text, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
 FROM archive.connection c WHERE c.member = $1 AND NOT c.integration OR c.integration ORDER BY c.provider, c.account, c.id;
 
