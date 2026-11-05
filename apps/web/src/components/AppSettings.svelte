@@ -1,9 +1,10 @@
 <script>
-  import { Palette, Plug, Blocks, KeyRound, Building2 } from '@lucide/svelte';
+  import { Palette, Plug, Blocks, KeyRound, Building2, Server } from '@lucide/svelte';
   import SettingsDialog from './SettingsDialog.svelte';
   import SettingsPane from './SettingsPane.svelte';
   import AppearanceSettings from './AppearanceSettings.svelte';
   import ArchiveSettings from './ArchiveSettings.svelte';
+  import ServerSettings from './ServerSettings.svelte';
   import ApiKeySettings from './ApiKeySettings.svelte';
   import ConnectorSettings from './ConnectorSettings.svelte';
   import ConnectorDetail from './ConnectorDetail.svelte';
@@ -15,6 +16,7 @@
     { id: 'appearance', label: 'Appearance', icon: Palette, group: 'You' },
     { id: 'connectors', label: 'Connectors', icon: Plug, group: 'You' },
     { id: 'general', label: 'General', icon: Building2, group: 'Archive' },
+    { id: 'server', label: 'Server', icon: Server, group: 'Archive' },
     { id: 'integrations', label: 'Integrations', icon: Blocks, group: 'Archive' },
     { id: 'archive-api', label: 'API key', icon: KeyRound, group: 'Archive' }
   ];
@@ -44,6 +46,8 @@
     <SettingsPane onback={back} backNarrow>
       {#if current === 'general'}
         <ArchiveSettings />
+      {:else if current === 'server'}
+        <ServerSettings />
       {:else}
         <AppearanceSettings />
       {/if}
