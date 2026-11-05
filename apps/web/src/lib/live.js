@@ -211,12 +211,13 @@ function outcome(b) {
   }
 }
 
-// The files a run reported, onto its message: a card per file, and one it made stays made.
+// The files a run reported, onto its message: a card per file, as the most any run did to it.
+const actions = ['read', 'edited', 'created'];
 export function changed(message, files) {
   for (const f of files ?? []) {
     const had = message.files.find((x) => x.id === f.id);
     if (!had) message.files.push({ ...f, kind: fileKind('', f.name) });
-    else Object.assign(had, { name: f.name, action: had.action === 'created' ? 'created' : f.action });
+    else Object.assign(had, { name: f.name, action: actions[Math.max(actions.indexOf(had.action), actions.indexOf(f.action))] });
   }
 }
 

@@ -2,7 +2,8 @@
 // messages as it arrives, outside any component, so it keeps going while you move around the app.
 
 import { api, turnStream, Unauthorized } from './api.js';
-import { app, ws, agentById } from './app.svelte.js';
+import { app, ws, agentById, openFile } from './app.svelte.js';
+import { route } from './router.svelte.js';
 import { changed, markdown, step, toMessages } from './live.js';
 import { resource } from './stream.svelte.js';
 
@@ -86,6 +87,10 @@ export async function sendMessage(id, { text = '', attachments = [] }) {
     agent.keep = true;
     agent.streaming = false;
     if (!live.blocks.length && !live.steps.length) live.blocks = [{ type: 'p', text: '*No answer.*' }];
+    // What the turn was about opens beside the answer: what it changed last, or else read last. The panel would
+    // cover the answer on a narrow screen, and elsewhere it would come out of nowhere.
+    const shown = live.files.findLast((f) => f.action !== 'read') ?? live.files.at(-1);
+    if (shown && !ctrl.signal.aborted && route.parts[0] === 'agent' && route.parts[1] === id && !matchMedia('(max-width: 56rem)').matches) openFile(shown.id, shown.name);
   };
   try {
     for await (const ev of turnStream({ agent: id, text: withFiles(text, attachments) }, ctrl.signal)) {

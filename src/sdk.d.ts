@@ -214,8 +214,8 @@ interface RunResult {
     logs: string[];
     /** "" when the run worked. */
     error: string;
-    /** The files it made or edited, if any. */
-    files?: { id: string; name: string; action: "created" | "edited" }[];
+    /** The files it made, edited or read by id, if any; its chat shows each one and opens one when the turn ends. */
+    files?: { id: string; name: string; action: "created" | "edited" | "read" }[];
 }
 
 interface BrowseResult {
