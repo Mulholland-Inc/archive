@@ -45,6 +45,7 @@ function shell(w) {
   return {
     id: w.id,
     name: w.name,
+    slug: w.slug,
     kind: kindOf(look.type),
     tone: (w.id.charCodeAt(w.id.length - 1) % 6) + 1,
     look,
@@ -131,7 +132,7 @@ async function loadMe() {
   const had = new Map(app.archives.map((v) => [v.id, v]));
   app.archives = me.workspaces.map((w) => {
     const v = had.get(w.id) ?? shell(w);
-    Object.assign(v, { name: w.name, look: lookOf(w), kind: kindOf(w.type) });
+    Object.assign(v, { name: w.name, slug: w.slug, look: lookOf(w), kind: kindOf(w.type) });
     return v;
   });
   if (!app.archives.some((v) => v.id === app.archive)) {
@@ -914,7 +915,7 @@ export async function saveArchive({ name, look }) {
   Object.assign(w, { name: name || w.name, look: { ...look }, kind: kindOf(look.type) });
   try {
     const saved = await call('/auth/workspace', { method: 'PATCH', body: { name: w.name, ...lookBody(look) } });
-    Object.assign(w, { name: saved.name, look: lookOf(saved), kind: kindOf(saved.type) });
+    Object.assign(w, { name: saved.name, slug: saved.slug, look: lookOf(saved), kind: kindOf(saved.type) });
   } catch (e) {
     Object.assign(w, before);
     complain(e, 'Couldn’t save the archive');
@@ -987,7 +988,8 @@ export async function updateAgent(id, patch) {
   const before = { ...agent };
   Object.assign(agent, patch);
   try {
-    await call(`/api/agent/${id}`, { method: 'PATCH', body: patch });
+    const saved = await call(`/api/agent/${id}`, { method: 'PATCH', body: patch });
+    agent.slug = saved.slug;
   } catch (e) {
     Object.assign(agent, before);
     complain(e, 'Couldn’t change the agent');

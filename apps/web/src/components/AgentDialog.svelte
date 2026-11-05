@@ -7,7 +7,7 @@
   import LookPicker from './LookPicker.svelte';
   import Menu from './Menu.svelte';
   import { TINTS, AVATARS } from '../lib/looks.js';
-  import { app, groups, members, agentById, createAgent, updateAgent, mayLimit, accessOptions } from '../lib/app.svelte.js';
+  import { app, groups, members, agentById, createAgent, updateAgent, mayLimit, accessOptions, ws } from '../lib/app.svelte.js';
 
   groups.use();
   members.use();
@@ -21,6 +21,7 @@
   let instructions = $state('');
   let access = $state('');
 
+  const address = $derived(agent ? `${ws().slug}-${agent.slug}@${location.hostname.replace(/^app\./, '')}` : '');
   const limits = $derived(mayLimit(agent?.access) && accessOptions(agent?.access).length > 1);
 
   $effect(() => {
@@ -51,6 +52,13 @@
       <Input {id} bind:value={description} />
     {/snippet}
   </Field>
+  {#if agent}
+    <Field label="Email">
+      {#snippet children(id)}
+        <Input {id} value={address} readonly />
+      {/snippet}
+    </Field>
+  {/if}
   <LookPicker bind:look agent />
   {#if limits}
     <Field label="Who sees it">

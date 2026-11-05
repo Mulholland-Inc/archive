@@ -17,6 +17,8 @@ locals {
     ARCHIVE_MICROSOFT  = "Sign-in with Microsoft, https://<client id>:<client secret>@login.microsoftonline.com. A space leaves it off."
     ARCHIVE_SLACK      = "Sign-in with Slack, https://<client id>:<client secret>@slack.com. A space leaves it off."
     ARCHIVE_GITHUB     = "Sign-in with GitHub, https://<client id>:<client secret>@github.com. A space leaves it off."
+    ARCHIVE_EMAIL      = "Sending email, https://<account id>:<token>@api.cloudflare.com. Terraform sets it."
+    ARCHIVE_EMAIL_KEY  = "Key the email Worker posts received mail to the API with. Terraform sets it."
   })
 
   services = ["run.googleapis.com", "sqladmin.googleapis.com", "secretmanager.googleapis.com", "iam.googleapis.com", "storage.googleapis.com", "artifactregistry.googleapis.com", "iamcredentials.googleapis.com", "sts.googleapis.com", "cloudtasks.googleapis.com", "siteverification.googleapis.com", "pubsub.googleapis.com"]
@@ -400,6 +402,8 @@ resource "google_cloud_run_v2_service" "this" {
   }
 
   depends_on = [
+    google_secret_manager_secret_version.email,
+    google_secret_manager_secret_version.email_key,
     google_project_iam_member.sql,
     google_cloud_tasks_queue_iam_member.this,
     google_service_account_iam_member.tasks,
@@ -578,6 +582,72 @@ resource "cloudflare_workers_route" "live" {
 data "cloudflare_account_api_token_permission_groups_list" "this" {
   count      = var.github_repository != "" ? 1 : 0
   account_id = data.cloudflare_zone.this.account.id
+}
+
+data "cloudflare_account_api_token_permission_groups_list" "email" {
+  account_id = data.cloudflare_zone.this.account.id
+  name       = "Email Sending Write"
+}
+
+resource "cloudflare_email_sending_subdomain" "this" {
+  zone_id = data.cloudflare_zone.this.zone_id
+  name    = var.domain
+}
+
+resource "cloudflare_account_token" "email" {
+  account_id = data.cloudflare_zone.this.account.id
+  name       = "archive-email"
+  policies = [{
+    effect            = "allow"
+    permission_groups = [for g in data.cloudflare_account_api_token_permission_groups_list.email.result : { id = g.id }]
+    resources         = jsonencode({ "com.cloudflare.api.account.${data.cloudflare_zone.this.account.id}" = "*" })
+  }]
+}
+
+resource "google_secret_manager_secret_version" "email" {
+  secret      = google_secret_manager_secret.this["ARCHIVE_EMAIL"].id
+  secret_data = "https://${data.cloudflare_zone.this.account.id}:${cloudflare_account_token.email.value}@api.cloudflare.com"
+}
+
+resource "random_password" "email_key" {
+  length  = 48
+  special = false
+}
+
+resource "google_secret_manager_secret_version" "email_key" {
+  secret      = google_secret_manager_secret.this["ARCHIVE_EMAIL_KEY"].id
+  secret_data = random_password.email_key.result
+}
+
+resource "cloudflare_workers_script" "email" {
+  account_id  = data.cloudflare_zone.this.account.id
+  script_name = "archive-email"
+  main_module = "email.js"
+  content     = file("${path.module}/email.js")
+  bindings = [{
+    type = "plain_text"
+    name = "API"
+    text = local.api_url
+    }, {
+    type = "secret_text"
+    name = "KEY"
+    text = random_password.email_key.result
+  }]
+}
+
+resource "cloudflare_email_routing_dns" "this" {
+  zone_id = data.cloudflare_zone.this.zone_id
+  name    = var.domain
+}
+
+resource "cloudflare_email_routing_catch_all" "this" {
+  zone_id  = data.cloudflare_zone.this.zone_id
+  name     = "archive"
+  enabled  = true
+  matchers = [{ type = "all" }]
+  actions  = [{ type = "worker", value = [cloudflare_workers_script.email.script_name] }]
+
+  depends_on = [cloudflare_email_routing_dns.this]
 }
 
 resource "cloudflare_account_token" "app" {
