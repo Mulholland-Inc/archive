@@ -1,9 +1,11 @@
 import BackgroundTasks
 import Contacts
+import CoreLocation
 import EventKit
 import HealthKit
 import Photos
 import SwiftUI
+import WidgetKit
 
 @main
 struct ArchiveApp: App {
@@ -38,6 +40,7 @@ final class Delegate: NSObject, UIApplicationDelegate {
             }
         }
         if Status.shared.onboarded { Watcher.watch() }
+        _ = Places.shared
         return true
     }
 
@@ -59,7 +62,7 @@ final class Watcher: NSObject, PHPhotoLibraryChangeObserver {
     static func watch() {
         Syncer.observe()
         PHPhotoLibrary.shared().register(shared)
-        for name in [Notification.Name.CNContactStoreDidChange, .EKEventStoreChanged] {
+        for name in [Notification.Name.CNContactStoreDidChange, .EKEventStoreChanged] {  // reminders change the event store too
             NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { _ in Task { await Syncer.shared.all() } }
         }
     }
@@ -70,17 +73,25 @@ final class Watcher: NSObject, PHPhotoLibraryChangeObserver {
 /// What the app shows: whether it is set up, and per stream how much it sent and when, kept across launches.
 @MainActor final class Status: ObservableObject {
     static let shared = Status()
-    static let streams = [("health", "Health", "heart"), ("photos", "Photos", "photo"), ("contacts", "Contacts", "person.crop.circle"), ("events", "Calendar", "calendar")]
+    static var streams: [(String, String, String)] {
+        [("health", "Health", "heart"), ("photos", "Photos", "photo"), ("originals", "Originals", "photo.stack"), ("contacts", "Contacts", "person.crop.circle"),
+         ("events", "Calendar", "calendar"), ("reminders", "Reminders", "checklist"), ("places", "Places", "mappin.and.ellipse")]
+            + (Syncer.walletAvailable ? [("wallet", "Wallet", "wallet.pass")] : [])
+    }
+
+    /// The row each stream counts toward.
+    nonisolated static let row = ["workouts": "health", "sleep": "health", "days": "health", "records": "health",
+                                  "wallet_accounts": "wallet", "wallet_transactions": "wallet"]
 
     @Published var signedIn = Client.shared.signedIn
     @Published var onboarded = UserDefaults.standard.bool(forKey: "onboarded")
-    @Published var sent: [String: Int] = UserDefaults.standard.dictionary(forKey: "sent") as? [String: Int] ?? [:]
-    @Published var at: [String: Date] = UserDefaults.standard.dictionary(forKey: "at") as? [String: Date] ?? [:]
+    @Published var sent: [String: Int] = Group.sent
+    @Published var at: [String: Date] = Group.at
     @Published var errors: [String: String] = [:]
 
     func add(_ stream: String, _ n: Int) {
         sent[stream, default: 0] += n
-        UserDefaults.standard.set(sent, forKey: "sent")
+        Group.defaults.set(sent, forKey: "sent")
     }
 
     func synced(_ stream: String, _ err: Error?) {
@@ -88,18 +99,31 @@ final class Watcher: NSObject, PHPhotoLibraryChangeObserver {
         errors[stream] = err?.localizedDescription
         if err == nil {
             at[stream] = .now
-            UserDefaults.standard.set(at, forKey: "at")
+            Group.defaults.set(at, forKey: "at")
+            WidgetCenter.shared.reloadAllTimelines()
         }
     }
 
-    /// Asks for all four at once: Health's sheet, then Photos', Contacts' and Calendar's alerts.
+    /// Asks for everything at once: Health's sheets, then Photos', Contacts', Calendar's, Reminders', Location's and Wallet's.
     func allow() async {
         if HKHealthStore.isHealthDataAvailable() {
-            try? await Syncer.health.requestAuthorization(toShare: Sample.writes, read: Set(Syncer.types))
+            // Health Records has sheets of its own, and closing them closes the request, so they come after the rest.
+            try? await Syncer.health.requestAuthorization(toShare: Sample.writes, read: Syncer.reads.subtracting(Syncer.clinical))
+            // A sheet asked for while the last one is still closing never shows, so each waits a moment.
+            try? await Task.sleep(for: .seconds(1))
+            if !Syncer.clinical.isEmpty { try? await Syncer.health.requestAuthorization(toShare: [], read: Set(Syncer.clinical)) }
+            try? await Task.sleep(for: .seconds(1))
+            if #available(iOS 26, *) {
+                try? await Syncer.health.requestPerObjectReadAuthorization(for: HKObjectType.userAnnotatedMedicationType(), predicate: nil)
+            }
         }
         _ = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
         _ = try? await CNContactStore().requestAccess(for: .contacts)
-        _ = try? await EKEventStore().requestFullAccessToEvents()
+        let events = EKEventStore()
+        _ = try? await events.requestFullAccessToEvents()
+        _ = try? await events.requestFullAccessToReminders()
+        Places.shared.ask()
+        await Syncer.shared.askWallet()
         onboarded = true
         UserDefaults.standard.set(true, forKey: "onboarded")
         Watcher.watch()
@@ -124,7 +148,11 @@ enum Sample {
     }
 
     static var writes: Set<HKSampleType> {
-        on ? [HKQuantityType(.stepCount), HKQuantityType(.heartRate), HKCategoryType(.sleepAnalysis)] : []
+        guard on else { return [] }
+        var w: Set<HKSampleType> = [HKQuantityType(.stepCount), HKQuantityType(.heartRate), HKCategoryType(.sleepAnalysis), HKQuantityType(.activeEnergyBurned),
+                                    HKQuantityType(.distanceWalkingRunning), HKCategoryType(.menstrualFlow), HKWorkoutType.workoutType(), HKSeriesType.workoutRoute()]
+        if #available(iOS 18, *) { w.insert(HKObjectType.stateOfMindType()) }
+        return w
     }
 
     static func add() async {
@@ -146,8 +174,23 @@ enum Sample {
         for (stage, from, to) in stages {
             samples.append(HKCategorySample(type: HKCategoryType(.sleepAnalysis), value: stage.rawValue, start: night + from * 3600, end: night + to * 3600))
         }
+        let flow = HKCategorySample(type: HKCategoryType(.menstrualFlow), value: HKCategoryValueMenstrualFlow.medium.rawValue, start: night - 86400 * 3,
+                                    end: night - 86400 * 3, metadata: [HKMetadataKeyMenstrualCycleStart: true])
+        samples.append(flow)
+        if #available(iOS 18, *) {
+            samples.append(HKStateOfMind(date: now - 3600, kind: .dailyMood, valence: 0.6, labels: [.happy, .grateful], associations: [.family]))
+        }
         try? await Syncer.health.save(samples)
+        await run(at: now - 86400)
+        await Syncer.shared.visit(arrived: now - 7200, departed: now - 3600, at: .init(latitude: 34.0007, longitude: -118.4649), accuracy: 30)
         let store = EKEventStore()
+        if let list = store.defaultCalendarForNewReminders() {
+            let r = EKReminder(eventStore: store)
+            r.calendar = list
+            r.title = "Renew passport"
+            r.dueDateComponents = Calendar.current.dateComponents([.year, .month, .day], from: now + 86400 * 14)
+            try? store.save(r, commit: true)
+        }
         if let cal = store.defaultCalendarForNewEvents {
             let e = EKEvent(eventStore: store)
             e.calendar = cal
@@ -157,5 +200,28 @@ enum Sample {
             e.endDate = e.startDate + 7200
             try? store.save(e, span: .thisEvent)
         }
+    }
+
+    /// A 5 km run along the beach in Santa Monica, with its route.
+    private static func run(at start: Date) async {
+        let config = HKWorkoutConfiguration()
+        config.activityType = .running
+        config.locationType = .outdoor
+        let b = HKWorkoutBuilder(healthStore: Syncer.health, configuration: config, device: nil)
+        let end = start + 1800
+        do {
+            try await b.beginCollection(at: start)
+            try await b.addSamples([HKQuantitySample(type: HKQuantityType(.distanceWalkingRunning), quantity: HKQuantity(unit: .meter(), doubleValue: 5000), start: start, end: end),
+                                    HKQuantitySample(type: HKQuantityType(.activeEnergyBurned), quantity: HKQuantity(unit: .kilocalorie(), doubleValue: 380), start: start, end: end)])
+            try await b.endCollection(at: end)
+            guard let w = try await b.finishWorkout() else { return }
+            let route = HKWorkoutRouteBuilder(healthStore: Syncer.health, device: nil)
+            let points = (0 ... 60).map { i in
+                CLLocation(coordinate: .init(latitude: 34.0100 - Double(i) * 0.0007, longitude: -118.4960 + Double(i) * 0.0004), altitude: 5, horizontalAccuracy: 5,
+                           verticalAccuracy: 5, timestamp: start + Double(i) * 30)
+            }
+            try await route.insertRouteData(points)
+            try await route.finishRoute(with: w, metadata: nil)
+        } catch {}
     }
 }

@@ -308,7 +308,7 @@ SELECT jsonb_build_object(
             'archive.spend_department'::regclass, 'archive.spend_user'::regclass, 'archive.spend_card'::regclass,
             'archive.spend_transaction'::regclass, 'archive.spend_receipt'::regclass,
             'archive.warehouse_table'::regclass, 'archive.warehouse_column'::regclass,
-            'archive.photo'::regclass,
+            'archive.photo'::regclass, 'archive.place_visit'::regclass,
             'archive.investment_holding'::regclass, 'archive.investment_transaction'::regclass,
             'archive.bank_liability'::regclass, 'archive.budget_category'::regclass,
             'archive.parcel'::regclass, 'archive.parcel_event'::regclass, 'archive.vehicle'::regclass, 'archive.vehicle_charge'::regclass, 'archive.home_device'::regclass,
@@ -590,6 +590,7 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.spend_transaction x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.warehouse_table x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.photo x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.place_visit x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.investment_holding x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.investment_transaction x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.bank_liability x WHERE x.connection = c.id)
@@ -979,14 +980,24 @@ func (q *Queries) DeleteWorkflow(ctx context.Context, id uuid.UUID) (int64, erro
 	return result.RowsAffected(), nil
 }
 
+const deviceAttest = `-- name: DeviceAttest :exec
+UPDATE archive.connection SET meta = jsonb_set(meta, '{attest}', to_jsonb($2::text)), updated_at = now() WHERE id = $1
+`
+
+func (q *Queries) DeviceAttest(ctx context.Context, iD uuid.UUID, column2 string) error {
+	_, err := q.db.Exec(ctx, deviceAttest, iD, column2)
+	return err
+}
+
 const deviceConnection = `-- name: DeviceConnection :one
-INSERT INTO archive.connection (member, provider, account, token, sync_at) VALUES ($1, 'iphone', $2, ''::bytea, NULL)
-ON CONFLICT (member, provider, account) DO UPDATE SET updated_at = now(), revoked = false
+INSERT INTO archive.connection (member, provider, account, name, meta, token, sync_at)
+VALUES ($1, 'iphone', $2, $3, jsonb_build_object('device', $3::text), ''::bytea, NULL)
+ON CONFLICT (member, provider, account) DO UPDATE SET meta = archive.connection.meta || excluded.meta, updated_at = now(), revoked = false
 RETURNING id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, lease_at, revoked, integration
 `
 
-func (q *Queries) DeviceConnection(ctx context.Context, member uuid.UUID, account string) (ArchiveConnection, error) {
-	row := q.db.QueryRow(ctx, deviceConnection, member, account)
+func (q *Queries) DeviceConnection(ctx context.Context, member uuid.UUID, account string, name string) (ArchiveConnection, error) {
+	row := q.db.QueryRow(ctx, deviceConnection, member, account, name)
 	var i ArchiveConnection
 	err := row.Scan(
 		&i.ID,
@@ -2445,6 +2456,18 @@ func (q *Queries) NoMembers(ctx context.Context) (bool, error) {
 	var not_exists bool
 	err := row.Scan(&not_exists)
 	return not_exists, err
+}
+
+const photoOriginal = `-- name: PhotoOriginal :execrows
+UPDATE archive.photo SET original = $3, updated_at = now() WHERE connection = $1 AND stream = 'photos' AND source_id = $2
+`
+
+func (q *Queries) PhotoOriginal(ctx context.Context, connection uuid.UUID, sourceID string, original *uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, photoOriginal, connection, sourceID, original)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const receive = `-- name: Receive :one

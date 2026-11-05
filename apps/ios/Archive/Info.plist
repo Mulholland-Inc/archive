@@ -4,6 +4,8 @@
 <dict>
 	<key>ArchiveAPI</key>
 	<string>$(ARCHIVE_API)</string>
+	<key>ArchiveWallet</key>
+	<string>$(ARCHIVE_WALLET)</string>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>dev.archive.app.refresh</string>
@@ -29,6 +31,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>KeychainGroup</key>
+	<string>$(AppIdentifierPrefix)dev.archive.app.shared</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
@@ -38,12 +42,22 @@
 	<string>Archive keeps your calendar's events in your Archive.</string>
 	<key>NSContactsUsageDescription</key>
 	<string>Archive keeps your contacts in your Archive.</string>
+	<key>NSFinancialDataUsageDescription</key>
+	<string>Archive keeps your Apple Card, Apple Cash and Apple Savings balances and transactions in your Archive.</string>
+	<key>NSHealthClinicalHealthRecordsShareUsageDescription</key>
+	<string>Archive keeps the health records your hospitals sent to Health in your own Archive, where only you can see them.</string>
 	<key>NSHealthShareUsageDescription</key>
 	<string>Archive keeps your Health data in your own Archive, where only you can see it.</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>Archive writes sample Health data in the Simulator only.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Archive keeps the places you spend time in your Archive, from your iPhone's visits, which barely use the battery.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Archive keeps the places you spend time in your Archive, so you can find where you were.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Archive keeps when and where your photos were taken, and a small copy of each, in your Archive.</string>
+	<string>Archive keeps your photos and videos in your Archive, full size, with when and where each was taken.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Archive keeps your reminders in your Archive.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>

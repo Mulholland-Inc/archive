@@ -54,10 +54,11 @@ struct Allow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 28) {
             Text("Keep your iPhone in Archive").font(.title.weight(.semibold)).padding(.top, 48)
-            ForEach([("heart", "Health", "Activity, heart, sleep, body and workouts. Only you see it."),
-                     ("photo", "Photos", "When and where each was taken, and a small copy."),
+            ForEach([("heart", "Health", "Activity, sleep, heart, workouts and routes, cycles, moods, medications and your health records. Only you see it."),
+                     ("photo", "Photos", "Every photo and video, full size, on Wi-Fi."),
                      ("person.crop.circle", "Contacts", "Names, emails, phones and companies."),
-                     ("calendar", "Calendar", "Events from a year back to two ahead.")], id: \.1) { icon, title, line in
+                     ("calendar", "Calendar and Reminders", "Events from a year back to two ahead, and your lists."),
+                     ("mappin.and.ellipse", "Places", "Where you spent time, from your iPhone's visits.")], id: \.1) { icon, title, line in
                 HStack(alignment: .top, spacing: 14) {
                     Image(systemName: icon).font(.title2).frame(width: 32)
                     VStack(alignment: .leading, spacing: 2) {

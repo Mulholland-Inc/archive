@@ -17,6 +17,8 @@ locals {
     ARCHIVE_MICROSOFT  = "Sign-in with Microsoft, https://<client id>:<client secret>@login.microsoftonline.com. A space leaves it off."
     ARCHIVE_SLACK      = "Sign-in with Slack, https://<client id>:<client secret>@slack.com. A space leaves it off."
     ARCHIVE_GITHUB     = "Sign-in with GitHub, https://<client id>:<client secret>@github.com. A space leaves it off."
+    ARCHIVE_APPLE      = "Sign in with Apple, https://<services id>:<team id>.<key id>.<the .p8 key, base64>@appleid.apple.com, URL-escaped. A space leaves it off."
+    ARCHIVE_IOS_APP    = "The iPhone app's App ID, <team id>.dev.archive.app: the phone then proves each upload comes from it with App Attest. A space leaves App Attest off."
     ARCHIVE_EMAIL      = "Sending email, https://<account id>:<token>@api.cloudflare.com. Terraform sets it."
     ARCHIVE_EMAIL_KEY  = "Key the email Worker posts received mail to the API with. Terraform sets it."
   })
