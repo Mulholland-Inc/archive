@@ -231,9 +231,6 @@ func httpHandler(a *Archive) http.Handler {
 		return ok(a.boot(r.Context()))
 	})
 	mux.HandleFunc("POST /api/turn", a.turn)
-	handle("POST /api/speech", func(r *http.Request) (int, any, error) {
-		return ok(speech(r))
-	})
 	handle("GET /api/types", func(r *http.Request) (int, any, error) {
 		return ok(a.types(r.Context()))
 	})
