@@ -8,20 +8,15 @@
   import Text from '../components/Text.svelte';
   import Button from '../components/Button.svelte';
   import EmptyState from '../components/EmptyState.svelte';
-  import InviteDialog from '../components/InviteDialog.svelte';
-  import NewWorkflowDialog from '../components/NewWorkflowDialog.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
   import Dialog from '../components/Dialog.svelte';
   import Field from '../components/Field.svelte';
   import Input from '../components/Input.svelte';
   import Prose from '../components/Prose.svelte';
-  import { app, onboardingSteps, serverStep, stepDone, signed, completeStep, toggleStep, openSettings, createWorkflow, atLeast, openPanel, closeFile, saveBusiness, signAgreement, startCard, cardLinked } from '../lib/app.svelte.js';
+  import { app, onboardingSteps, stepDone, signed, atLeast, openPanel, closeFile, saveBusiness, signAgreement, startCard, cardLinked } from '../lib/app.svelte.js';
   import { notify } from '../lib/dialogs.svelte.js';
   import { markdown } from '../lib/live.js';
-  import { go } from '../lib/router.svelte.js';
 
-  let inviting = $state(false);
-  let creating = $state(false);
   let error = $state('');
   let busy = $state(false);
 
@@ -53,30 +48,17 @@
     business: openBusiness,
     msa: () => openSigning('msa'),
     dpa: () => openSigning('dpa'),
-    card: openCard,
-    invite: () => (inviting = true),
-    connect: () => openSettings('connectors'),
-    upload: () => go('/library'),
-    workflow: () => (creating = true),
-    region: () => {
-      openSettings('server');
-      completeStep('region');
-    }
+    card: openCard
   };
 
   const ready = (id) => {
-    if (serverStep(id) && !owner) return false;
+    if (!owner) return false;
     if (id === 'msa' || id === 'dpa') return Boolean(business && app.signup.terms[id]?.trim());
-    if (id === 'card') return Boolean(business);
-    return true;
+    return id === 'business' || Boolean(business);
   };
 
   const total = onboardingSteps.length;
   const progress = $derived(Math.round((done / total) * 20) / 20);
-
-  function create(data) {
-    go(createWorkflow(data));
-  }
 
   function openBusiness() {
     const { name = '', ein = '', street = '', city = '', state = '', zip = '' } = business ?? {};
@@ -214,7 +196,7 @@
         {#each steps as step (step.id)}
           {@const checked = stepDone(step.id)}
           <li class={['step', { checked }]}>
-            <Checkbox {checked} label={step.title} disabled={serverStep(step.id)} onchange={() => toggleStep(step.id)} />
+            <Checkbox {checked} label={step.title} disabled />
             <div class="copy">
               <Text weight="medium">{step.title}</Text>
               <Text size="sm" tone="secondary">{detail(step)}</Text>
@@ -223,7 +205,7 @@
               <Button size="sm" variant={step === next ? 'primary' : 'secondary'} disabled={!ready(step.id)} onclick={actions[step.id]}>{step.action}</Button>
             {:else if step.id === 'msa' || step.id === 'dpa'}
               <Button size="sm" variant="secondary" onclick={() => openReading(step.id)}>View</Button>
-            {:else if step.id === 'business' || step.id === 'card'}
+            {:else}
               <Button size="sm" variant="secondary" disabled={!ready(step.id)} onclick={actions[step.id]}>{step.id === 'card' ? 'Change' : 'Edit'}</Button>
             {/if}
           </li>
@@ -232,9 +214,6 @@
     </Section>
   {/each}
 </Page>
-
-<InviteDialog bind:open={inviting} />
-<NewWorkflowDialog bind:open={creating} oncreate={create} />
 
 <Dialog bind:open={filing} title="Business details">
   <Field label="Legal name">{#snippet children(id)}<Input {id} bind:value={form.name} />{/snippet}</Field>
