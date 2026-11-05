@@ -114,23 +114,21 @@ var importStreams = []importStream{
 			Cols: map[string]SQL{"app": "data->>'app'", "build": "data->>'build'", "markers": "archive.sync_num(data->>'markers')", "called": "archive.sync_num(data->>'called')",
 				"chromosomes": "archive.sync_num(data->>'chromosomes')"},
 			Refs: map[string]SQL{"file": "data->>'file_source'"}}},
-	{"orders", "Every order of Amazon's privacy export, Your Orders, since the account began: its items with their ASIN, quantity, price and tax, " +
-		"what it came to with shipping and discounts, what was refunded, its status, how it was paid and its carrier tracking, by website and order id.",
-		Map{Table: "commerce_order",
-			Cols: map[string]SQL{"number": "data->>'number'", "customer_name": "'Amazon'",
-				"total": importMoney("total"), "shipping": importMoney("shipping"), "discounts": importMoney("discounts"), "refunded": importMoney("refunded"),
-				"fulfilled": "nullif(data->>'status', '')", "state": "data->>'state'", "country": "data->>'country'", "placed_at": "archive.sync_at(data->>'placed')",
-				"tags": "jsonb_build_array(data->>'website')",
-				"note": "nullif(concat_ws('; ', nullif(data->>'payment', ''), (SELECT string_agg(t #>> '{}', ', ') FROM archive.sync_list(data->'tracking') t)), '')"},
-			Children: []Kids{{Table: "commerce_line", From: "jsonb_array_elements(data->'items') l",
-				Cols: map[string]SQL{"title": "l->>'title'", "sku": "nullif(l->>'asin', '')", "product_source": "nullif(l->>'asin', '')", "variant": "nullif(l->>'condition', '')",
-					"quantity": "archive.sync_num(l->>'quantity')",
-					"price":    "archive.sync_money(l->>'price', coalesce(data->>'currency', 'USD'))", "total": "archive.sync_money(l->>'total', coalesce(data->>'currency', 'USD'))"}}}}},
 	{"media", "The books of a Goodreads export and the films of a Letterboxd one, with your shelf, rating, review and when you read or watched them.",
 		Map{Table: "media",
 			Cols: map[string]SQL{"app": "data->>'app'", "kind": "data->>'kind'", "title": "data->>'title'", "creator": "data->>'creator'", "year": "archive.sync_num(data->>'year')",
 				"rating": "archive.sync_num(data->>'rating')", "review": "data->>'review'", "shelf": "data->>'shelf'", "done_on": "archive.sync_day(data->>'done')",
 				"added_on": "archive.sync_day(data->>'added')", "isbn": "data->>'isbn'", "url": "data->>'url'"}}},
+	{"orders", "What you bought on Amazon, from its Your Orders export: each order with its date, total, shipping, discounts, refunds, status, where it went, " +
+		"how it was paid and its tracking, and what was in it.",
+		Map{Table: "commerce_order",
+			Cols: map[string]SQL{"number": "data->>'number'", "total": "archive.sync_money(data->>'total', data->>'currency')",
+				"shipping": "archive.sync_money(data->>'shipping', data->>'currency')", "discounts": "archive.sync_money(data->>'discounts', data->>'currency')",
+				"refunded": "archive.sync_money(data->>'refunded', data->>'currency')", "fulfilled": "data->>'status'", "city": "data->>'city'", "state": "data->>'state'",
+				"country": "data->>'country'", "note": "data->>'note'", "tags": "coalesce(data->'tags', '[]'::jsonb)", "placed_at": "archive.sync_at(data->>'placed')"},
+			Children: []Kids{{Table: "commerce_line", From: "archive.sync_list(data->'lines') l",
+				Cols: map[string]SQL{"title": "l->>'title'", "sku": "l->>'sku'", "quantity": "archive.sync_num(l->>'quantity')",
+					"price": "archive.sync_money(l->>'price', data->>'currency')", "total": "archive.sync_money(l->>'total', data->>'currency')"}}}}},
 }
 
 func init() {
@@ -155,9 +153,9 @@ func init() {
 	Register(&Connector{
 		ID: "import", Name: "Import",
 		Info: Info{By: "Archive", Category: CatFiles, Icon: IconDrive,
-			Description: "Bring in an export a service gave you: Google Takeout, Apple's privacy export, Facebook or Instagram, ChatGPT, Claude or Grok, a GEDCOM family tree, raw DNA, Amazon's Your Orders, Goodreads, Letterboxd, a WhatsApp chat or an iMessage chat.db",
+			Description: "Bring in the copy of your data a service gives you: Google Takeout, Apple's privacy export, Amazon orders, Facebook or Instagram, ChatGPT, Claude or Grok, a GEDCOM family tree, raw DNA, Goodreads, Letterboxd, a WhatsApp chat or an iMessage chat.db. Drop it in and Archive works out what it is",
 			Scopes:      []string{"Read the export, which moves under the import so only you see it, and goes when you disconnect it"}},
-		Keys:    []Key{{Name: "file", Label: "Export", File: true, Help: "The zip or file a service gave you, of any size. Choose JSON over HTML where it asks. To import one already in Archive, like a Takeout zip in your Google Drive, choose Import in its menu"}},
+		Keys:    []Key{{Name: "file", Label: "Export", File: true, Help: "Any size; a big one picks up where it left off if the connection drops. For one already in Archive, like a Takeout zip in your Google Drive, choose Import in its menu in Files"}},
 		Account: importAccount,
 		Actions: map[string]*Action{"contents": {
 			Doc:   "What the export holds: each member, its size and the stream that reads it, or files when it is kept as a file; the first 2,000 members",
@@ -432,7 +430,6 @@ func init() {
 				h := strings.ToLower(string(head()))
 				return strings.Contains(h, "rsid") && (strings.Contains(h, "chromosome") || strings.Contains(h, "23andme") || strings.Contains(h, "ancestrydna"))
 			}},
-		{stream: "orders", name: "Amazon orders", parse: importAmazon, match: importAmazonMatch},
 		{stream: "media", name: "Goodreads", parse: importGoodreads,
 			match: func(p, base string, head func() []byte) bool {
 				return strings.HasSuffix(base, ".csv") && bytes.HasPrefix(bytes.TrimPrefix(head(), []byte("\ufeff")), []byte("Book Id,Title,Author"))
@@ -441,6 +438,8 @@ func init() {
 			match: func(p, base string, head func() []byte) bool {
 				return slices.Contains(importLetter, base) && bytes.Contains(head(), []byte("Letterboxd URI"))
 			}},
+		{stream: "orders", name: "Amazon orders", parse: importAmazon,
+			match: func(p, base string, head func() []byte) bool { return importAmazonFile(p) != "" }},
 		{stream: "history", name: "Apple Music plays", parse: importAppleMusic,
 			match: func(p, base string, _ func() []byte) bool {
 				return strings.HasSuffix(base, ".csv") && strings.Contains(base, "Play History Daily Tracks")
@@ -2261,6 +2260,201 @@ func importLetterboxd(x *importRun, m *importMember, r io.Reader, _ int64) error
 	}
 	for _, k := range order {
 		if !x.put("letterboxd:"+k, films[k], 0) {
+			return nil
+		}
+	}
+	return nil
+}
+
+// Amazon: the Your Orders part of "Request your data", one CSV row an item, grouped into orders; refunds come from the returns CSVs.
+
+var importAmazonPlace = regexp.MustCompile(`((?:[A-Z][A-Z.'-]* )*[A-Z][A-Z.'-]*),? ([A-Z]{2}) \d{5}(?:-\d{4})?,? (United States|USA|US)$`)
+
+// importAmazonFile says whether a path is one of Amazon's order ("orders") or returns ("returns") CSVs.
+func importAmazonFile(p string) string {
+	base := strings.ToLower(path.Base(p))
+	switch {
+	case !strings.HasSuffix(base, ".csv"):
+		return ""
+	case strings.Contains(base, "retail.orderhistory") || base == "order history.csv":
+		return "orders"
+	case strings.Contains(base, "retail.ordersreturned"):
+		return "returns"
+	}
+	return ""
+}
+
+// importAmazonRow keys a row by its column names in lowercase letters and digits only, as Amazon renames columns between exports.
+func importAmazonRow(row map[string]string) map[string]string {
+	keyed := make(map[string]string, len(row))
+	for k, v := range row {
+		keyed[strings.Map(func(r rune) rune {
+			if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+				return r
+			}
+			return -1
+		}, strings.ToLower(k))] = v
+	}
+	return keyed
+}
+
+// importAmazonCol is the first of a keyed row's columns, by any of their names, that has a value.
+func importAmazonCol(row map[string]string, names ...string) string {
+	for _, n := range names {
+		if v := row[n]; v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// importAmazonCents reads an amount like "1,234.50", "'-2.00'" or "$5" in cents, and whether there was one.
+func importAmazonCents(s string) (int64, bool) {
+	s = strings.NewReplacer("'", "", ",", "", "$", "", "£", "", "€", "", " ", "").Replace(s)
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, false
+	}
+	return int64(math.Round(f * 100)), true
+}
+
+// importAmazonWhere sets the state and country of a US address like "Ann Lee 1 Main St SAN FRANCISCO CA 94110-1234 United States", and its
+// city when the street is not in capitals too.
+func importAmazonWhere(data map[string]any, addr string) {
+	g := importAmazonPlace.FindStringSubmatch(addr)
+	if g == nil {
+		return
+	}
+	data["state"], data["country"] = g[2], "US"
+	if strings.ToUpper(addr) == addr {
+		return
+	}
+	words := strings.Fields(strings.ToLower(g[1]))
+	for i, w := range words {
+		words[i] = strings.ToUpper(w[:1]) + w[1:]
+	}
+	data["city"] = strings.Join(words, " ")
+}
+
+func importAmazonMoney(c int64) string { return strconv.FormatFloat(float64(c)/100, 'f', 2, 64) }
+
+func importAmazon(x *importRun, m *importMember, r io.Reader, _ int64) error {
+	var sibs []*zip.File
+	if m.zip != nil && !m.nested {
+		for _, f := range m.zip.File {
+			if importAmazonFile(f.Name) != "" {
+				sibs = append(sibs, f)
+			}
+		}
+	}
+	if len(sibs) > 0 && sibs[0] != m.f {
+		return nil
+	}
+	type order struct {
+		data                     map[string]any
+		lines                    []map[string]any
+		total, ship, off, refund int64
+		statuses, tracking       []string
+	}
+	orders := map[string]*order{}
+	var keys []string
+	refunds := map[string]int64{}
+	read := func(name string, r io.Reader) error {
+		kind := importAmazonFile(name)
+		return importCSV(r, func(row map[string]string) bool {
+			row = importAmazonRow(row)
+			id := importAmazonCol(row, "orderid")
+			if id == "" {
+				return true
+			}
+			if kind == "returns" {
+				if c, ok := importAmazonCents(importAmazonCol(row, "amountrefunded", "refundamount", "refundedamount", "amount")); ok {
+					refunds[id] += max(c, -c)
+				}
+				return true
+			}
+			site := cmp.Or(strings.ToLower(importAmazonCol(row, "website", "marketplace")), "amazon.com")
+			key := site + ":" + id
+			o := orders[key]
+			if o == nil {
+				o = &order{data: map[string]any{"number": id, "currency": cmp.Or(importAmazonCol(row, "currency"), "USD"), "tags": []string{site}}}
+				if t := importAmazonCol(row, "orderdate", "orderplaceddate", "date"); t != "" {
+					if at, err := time.Parse(time.RFC3339, t); err == nil {
+						o.data["placed"] = at.UTC().Format(time.RFC3339)
+					} else if at, err := time.Parse("2006-01-02", t); err == nil {
+						o.data["placed"] = at.Format(time.RFC3339)
+					} else if at, err := time.Parse("01/02/2006", t); err == nil {
+						o.data["placed"] = at.Format(time.RFC3339)
+					}
+				}
+				if pm := importAmazonCol(row, "paymentinstrumenttype", "paymentmethod", "paymentmethodtype"); pm != "" {
+					o.data["note"] = "Paid with " + pm
+				}
+				if addr := strings.TrimSpace(importAmazonCol(row, "shippingaddress", "shiptoaddress")); addr != "" {
+					importAmazonWhere(o.data, addr)
+				}
+				orders[key] = o
+				keys = append(keys, key)
+			}
+			line := map[string]any{"title": importAmazonCol(row, "productname", "title", "itemname"), "sku": importAmazonCol(row, "asin", "asinisbn")}
+			if q := importAmazonCol(row, "quantity", "originalquantity"); q != "" {
+				line["quantity"] = q
+			}
+			if c, ok := importAmazonCents(importAmazonCol(row, "unitprice", "purchaseprice", "purchasepriceperunit")); ok {
+				line["price"] = importAmazonMoney(c)
+			}
+			if c, ok := importAmazonCents(importAmazonCol(row, "totalowed", "itemtotal", "totalamount")); ok {
+				line["total"] = importAmazonMoney(c)
+				o.total += c
+			}
+			if c, ok := importAmazonCents(importAmazonCol(row, "shippingcharge")); ok {
+				o.ship += c
+			}
+			if c, ok := importAmazonCents(importAmazonCol(row, "totaldiscounts", "itempromotiondiscount")); ok {
+				o.off += max(c, -c)
+			}
+			if st := importAmazonCol(row, "orderstatus", "shipmentstatus"); st != "" && !slices.Contains(o.statuses, st) {
+				o.statuses = append(o.statuses, st)
+			}
+			if t := importAmazonCol(row, "carriernametrackingnumber", "carriernameandtrackingnumber", "tracking"); t != "" && t != "Not Available" && !slices.Contains(o.tracking, t) {
+				o.tracking = append(o.tracking, t)
+			}
+			o.lines = append(o.lines, line)
+			return true
+		})
+	}
+	if len(sibs) == 0 {
+		if err := read(m.Path, r); err != nil {
+			return err
+		}
+	}
+	for _, f := range sibs {
+		fr, err := f.Open()
+		if err != nil {
+			return err
+		}
+		err = read(f.Name, fr)
+		fr.Close()
+		if err != nil {
+			return err
+		}
+	}
+	for _, k := range keys {
+		o := orders[k]
+		o.data["lines"] = o.lines
+		o.data["total"], o.data["shipping"], o.data["discounts"] = importAmazonMoney(o.total), importAmazonMoney(o.ship), importAmazonMoney(o.off)
+		if c := refunds[o.data["number"].(string)]; c > 0 {
+			o.data["refunded"] = importAmazonMoney(c)
+		}
+		o.data["status"] = strings.Join(o.statuses, ", ")
+		if len(o.tracking) > 0 {
+			note := "Tracking " + strings.Join(o.tracking, ", ")
+			if paid, ok := o.data["note"].(string); ok {
+				note = paid + " · " + note
+			}
+			o.data["note"] = note
+		}
+		if !x.put("amazon:"+k, o.data, 0) {
 			return nil
 		}
 	}
