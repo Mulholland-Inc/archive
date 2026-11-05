@@ -653,7 +653,6 @@ func (s *signin) handler() http.Handler {
 		if ac.Role != ac.UserRole {
 			m.Role = "viewer"
 		}
-		a.syncCatchUp(r.Context(), m.ID)
 		rows, err := h.q().UserWorkspaces(r.Context(), ac.UserID)
 		all := []Workspace{}
 		for _, x := range rows {
