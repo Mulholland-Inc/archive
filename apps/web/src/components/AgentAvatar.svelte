@@ -1,33 +1,26 @@
 <script>
   import { onMount } from 'svelte';
-  import { validateAvatar } from 'open-bot-avatar';
-  import { mountAvatar } from 'open-bot-avatar/dom';
+  import { check, mount } from '../lib/avatar.js';
   import { AVATARS } from '../lib/avatars.js';
 
   let { avatar, tint = 0, mood = 'idle', size = 'md' } = $props();
 
-  const fallback = AVATARS.find((a) => a.id === 'chat');
-
   // An agent writes its own avatar, so one the renderer refuses shows the fallback.
-  const definition = $derived.by(() => {
-    const checked = validateAvatar($state.snapshot(avatar));
-    return checked.ok ? checked.value : fallback;
+  const def = $derived.by(() => {
+    const checked = check($state.snapshot(avatar));
+    return checked.ok ? checked.value : AVATARS[0];
   });
 
-  // The renderer takes a colour, not a token, and the eyes stay readable on any tint.
-  const color = $derived(getComputedStyle(document.documentElement).getPropertyValue(`--tint-${tint}`).trim());
-  const eyeColor = $derived.by(() => {
-    const n = parseInt(color.slice(1), 16);
-    return 0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255) < 90 ? '#ffffff' : '#151515';
-  });
+  // The renderer takes colours, not tokens.
+  const token = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const options = () => ({ def, tint: token(`--tint-${tint}`), ink: token('--color-avatar-ink'), mood });
 
   let host;
   let live;
-  const options = () => ({ definition, color, eyeColor, mood, followPointer: true, label: '' });
 
   onMount(() => {
-    live = mountAvatar(host, options());
-    return () => live.destroy();
+    live = mount(host, options());
+    return () => live?.destroy();
   });
 
   $effect(() => {
