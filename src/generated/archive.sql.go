@@ -426,15 +426,6 @@ func (q *Queries) ClaimWorkflow(ctx context.Context, lease time.Time) (ArchiveWo
 	return i, err
 }
 
-const clearSecrets = `-- name: ClearSecrets :exec
-SELECT archive.secret_clear($1, $2, $3)
-`
-
-func (q *Queries) ClearSecrets(ctx context.Context, tbl string, rid uuid.UUID, col *string) error {
-	_, err := q.db.Exec(ctx, clearSecrets, tbl, rid, col)
-	return err
-}
-
 const clearTurns = `-- name: ClearTurns :exec
 WITH gone AS (DELETE FROM archive.memory m WHERE m.agent = $1 AND m.member = $2)
 DELETE FROM archive.turn t WHERE t.agent = $1 AND t.member = $2
@@ -783,33 +774,6 @@ func (q *Queries) CreateFile(ctx context.Context, arg CreateFileParams) (CreateF
 		&i.UpdatedAt,
 	)
 	return i, err
-}
-
-const createSecret = `-- name: CreateSecret :exec
-INSERT INTO archive.secret (id, table_name, row_id, column_name, type, value, access) VALUES ($1, $2, $3, $4, $5, $6, $7)
-`
-
-type CreateSecretParams struct {
-	ID         uuid.UUID
-	TableName  string
-	RowID      uuid.UUID
-	ColumnName string
-	Type       string
-	Value      []byte
-	Access     *uuid.UUID
-}
-
-func (q *Queries) CreateSecret(ctx context.Context, arg CreateSecretParams) error {
-	_, err := q.db.Exec(ctx, createSecret,
-		arg.ID,
-		arg.TableName,
-		arg.RowID,
-		arg.ColumnName,
-		arg.Type,
-		arg.Value,
-		arg.Access,
-	)
-	return err
 }
 
 const createTurn = `-- name: CreateTurn :one
@@ -2720,44 +2684,6 @@ func (q *Queries) SaveSync(ctx context.Context, arg SaveSyncParams) error {
 		arg.ID,
 	)
 	return err
-}
-
-const secrets = `-- name: Secrets :many
-SELECT id, row_id, column_name, type, value FROM archive.secret WHERE table_name = $1 AND row_id = ANY($2::uuid[])
-`
-
-type SecretsRow struct {
-	ID         uuid.UUID
-	RowID      uuid.UUID
-	ColumnName string
-	Type       string
-	Value      []byte
-}
-
-func (q *Queries) Secrets(ctx context.Context, tableName string, ids []uuid.UUID) ([]SecretsRow, error) {
-	rows, err := q.db.Query(ctx, secrets, tableName, ids)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []SecretsRow
-	for rows.Next() {
-		var i SecretsRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.RowID,
-			&i.ColumnName,
-			&i.Type,
-			&i.Value,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const seedAgent = `-- name: SeedAgent :exec

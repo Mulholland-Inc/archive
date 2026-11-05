@@ -202,7 +202,7 @@ var catalogLayouts = []string{"table", "board", "calendar", "list", "map", "gall
 var (
 	catalogSystem   = map[string]bool{"id": true, "created_at": true, "updated_at": true}
 	catalogReserved = map[string]bool{"files": true, "views": true, "search": true, "schema": true, "types": true,
-		"member": true, "group": true, "user": true, "token": true, "file": true, "upload": true, "secret": true, "revision": true, "run": true,
+		"member": true, "group": true, "user": true, "token": true, "file": true, "upload": true, "revision": true, "run": true,
 		"workflow": true, "workflow_run": true, "connection": true, "agent": true, "turn": true, "memory": true}
 	catalogNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 	catalogRefRe  = regexp.MustCompile(`(?i)^references\s+([a-z][a-z0-9_]*)\b[\s.;:,-]*`)
@@ -1814,6 +1814,7 @@ var pgDropped = map[string]bool{
 	"table archive.record":        true,
 	"table archive.drive_file":    true,
 	"table archive.chat":          true,
+	"table archive.secret":        true,
 	"column archive.agent.avatar": true,
 }
 

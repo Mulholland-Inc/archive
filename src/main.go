@@ -273,15 +273,11 @@ func httpHandler(a *Archive) http.Handler {
 		}
 		where := map[string]any{}
 		for k, v := range q {
-			if k != "limit" && k != "after" && k != "reveal" {
+			if k != "limit" && k != "after" {
 				where[k] = v[0]
 			}
 		}
-		rs, err := a.List(r.Context(), r.PathValue("type"), where, limit, after)
-		if err == nil && q.Get("reveal") == "true" {
-			err = a.Reveal(r.Context(), r.PathValue("type"), rs...)
-		}
-		return ok(rs, err)
+		return ok(a.List(r.Context(), r.PathValue("type"), where, limit, after))
 	})
 	handle("POST /api/{type}", func(r *http.Request) (int, any, error) {
 		var data map[string]any
@@ -310,11 +306,7 @@ func httpHandler(a *Archive) http.Handler {
 		})
 	}
 	handle("GET /api/{type}/{id}", object(func(ctx context.Context, typ string, id uuid.UUID, r *http.Request) (any, error) {
-		rec, err := a.Get(ctx, typ, id)
-		if err == nil && r.URL.Query().Get("reveal") == "true" {
-			err = a.Reveal(ctx, typ, rec)
-		}
-		return rec, err
+		return a.Get(ctx, typ, id)
 	}))
 	handle("PUT /api/{type}/{id}", withData(a.Replace))
 	handle("PATCH /api/{type}/{id}", withData(a.Patch))

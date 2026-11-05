@@ -152,17 +152,6 @@ CREATE TABLE archive.upload (
     created_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE archive.secret (
-    id          uuid PRIMARY KEY,
-    table_name  text NOT NULL,
-    row_id      uuid NOT NULL,
-    column_name text NOT NULL,
-    type        text NOT NULL,
-    value       bytea NOT NULL,
-    access      uuid,
-    UNIQUE (table_name, row_id, column_name)
-);
-
 CREATE DOMAIN archive.duration AS text CHECK (VALUE ~ '^P([0-9]+Y)?([0-9]+M)?([0-9]+D)?(T([0-9]+H)?([0-9]+M)?([0-9]+(\.[0-9]+)?S)?)?$');
 COMMENT ON DOMAIN archive.duration IS 'ISO 8601 duration';
 CREATE DOMAIN archive.timezone AS text CHECK (VALUE ~ '^[A-Za-z][A-Za-z0-9_+\-/]*$');
@@ -176,7 +165,7 @@ COMMENT ON DOMAIN archive.percentage IS 'Fraction, 0.21 is 21%';
 CREATE DOMAIN archive.bic AS text CHECK (VALUE ~ '^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$');
 COMMENT ON DOMAIN archive.bic IS 'ISO 9362 bank identifier';
 CREATE DOMAIN archive.card AS text;
-COMMENT ON DOMAIN archive.card IS 'Payment card, stored encrypted; the column holds its mask';
+COMMENT ON DOMAIN archive.card IS 'Payment card number';
 CREATE DOMAIN archive.us_routing AS text CHECK (VALUE ~ '^[0-9]{9}$');
 COMMENT ON DOMAIN archive.us_routing IS 'US ABA routing number';
 CREATE DOMAIN archive.lei AS text CHECK (VALUE ~ '^[A-Z0-9]{18}[0-9]{2}$');
@@ -186,11 +175,11 @@ COMMENT ON DOMAIN archive.isin IS 'ISO 6166 securities identifier';
 CREATE DOMAIN archive.us_ein AS text CHECK (VALUE ~ '^(0[1-6]|1[0-6]|2[0-7]|3[0-9]|4[0-8]|5[0-9]|6[0-8]|7[1-7]|8[0-8]|9[0-58-9])-[0-9]{7}$');
 COMMENT ON DOMAIN archive.us_ein IS 'US employer identification number';
 CREATE DOMAIN archive.us_ssn AS text;
-COMMENT ON DOMAIN archive.us_ssn IS 'US social security number, stored encrypted; the column holds its mask';
+COMMENT ON DOMAIN archive.us_ssn IS 'US social security number, nine digits';
 CREATE DOMAIN archive.national AS text;
-COMMENT ON DOMAIN archive.national IS 'National id number with its country and scheme, stored encrypted; the column holds its mask';
+COMMENT ON DOMAIN archive.national IS 'National id number after its country, like US 123456789';
 CREATE DOMAIN archive.passport AS text;
-COMMENT ON DOMAIN archive.passport IS 'Passport number with its issuing country, stored encrypted; the column holds its mask';
+COMMENT ON DOMAIN archive.passport IS 'Passport number after its issuing country, like US X1234567';
 CREATE DOMAIN archive.email AS text CHECK (VALUE ~ '^[^@\s]+@[^@\s]+$');
 COMMENT ON DOMAIN archive.email IS 'Email address; the domain is lowercase and punycode';
 CREATE DOMAIN archive.phone AS text CHECK (VALUE ~ '^\+[1-9][0-9]{6,14}$');
@@ -249,7 +238,7 @@ CREATE TABLE archive.composite_use (
 COMMENT ON TABLE archive.composite_use IS 'Always empty; it uses every built-in composite type, so pg-schema-diff sees them as used by a table before and after a user table starts using one';
 
 CREATE TYPE archive.level AS ENUM ('viewer', 'editor', 'manager', 'engineer', 'owner');
-COMMENT ON TYPE archive.level IS 'What a member may do: a viewer reads, an editor also writes, a manager also changes the schema, the members, integrations and agents and sees every row and secret, an engineer also changes the workspace''s name and look and has its API keys, and its one owner also deletes it and transfers it';
+COMMENT ON TYPE archive.level IS 'What a member may do: a viewer reads, an editor also writes, a manager also changes the schema, the members, integrations and agents and sees every row, an engineer also changes the workspace''s name and look and has its API keys, and its one owner also deletes it and transfers it';
 
 CREATE TABLE archive.member (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -3321,14 +3310,6 @@ CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.member FOR EACH
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive."group" FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.revision FOR EACH ROW EXECUTE FUNCTION archive.moved();
 
-CREATE FUNCTION archive.secret_clear(tbl text, rid uuid, col text) RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $$
-    DELETE FROM archive.secret s
-    WHERE s.table_name = tbl AND s.row_id = rid AND (col IS NULL OR s.column_name = col)
-      AND pg_has_role(current_setting('role')::name, '{p}_editor', 'USAGE')
-      AND (s.access IS NULL OR pg_has_role(current_setting('role')::name, '{p}_manager', 'USAGE')
-        OR EXISTS (SELECT FROM pg_catalog.pg_roles r WHERE r.rolname = archive.group_role(s.access) AND pg_has_role(current_setting('role')::name, r.oid, 'USAGE')))
-$$;
-
 CREATE FUNCTION archive.ddl_allowed(k text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 BEGIN
     IF NOT EXISTS (SELECT FROM archive.ddl_key d WHERE d.key = k AND d.pid = pg_backend_pid()) THEN
@@ -3354,7 +3335,6 @@ END $$;
 GRANT USAGE ON SCHEMA archive TO "{p}_viewer";
 GRANT SELECT ON archive.file, archive.member, archive."group", archive.revision TO "{p}_viewer";
 GRANT INSERT, UPDATE, DELETE ON archive.file TO "{p}_editor";
-GRANT SELECT, INSERT, DELETE ON archive.secret TO "{p}_editor";
 GRANT INSERT, UPDATE, DELETE ON archive.member, archive."group" TO "{p}_manager";
 GRANT SELECT, INSERT, UPDATE, DELETE ON archive.workflow TO "{p}_viewer";
 GRANT SELECT ON archive.workflow_run TO "{p}_viewer";
@@ -3435,10 +3415,6 @@ CREATE POLICY add ON archive.file FOR INSERT WITH CHECK (archive.can(access) AND
 CREATE POLICY change ON archive.file FOR UPDATE USING (archive.can(access) AND connection IS NULL) WITH CHECK (archive.can(access) AND connection IS NULL);
 CREATE POLICY remove ON archive.file FOR DELETE USING (archive.can(access) AND connection IS NULL);
 
-ALTER TABLE archive.secret ENABLE ROW LEVEL SECURITY;
-CREATE POLICY manager ON archive.secret FOR SELECT USING (pg_has_role(current_user, '{p}_manager', 'USAGE'));
-CREATE POLICY writer ON archive.secret FOR INSERT WITH CHECK (archive.can(access));
-CREATE POLICY manager_delete ON archive.secret FOR DELETE USING (pg_has_role(current_user, '{p}_manager', 'USAGE'));
 
 ALTER TABLE archive.workflow ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.workflow USING (archive.mine(member)) WITH CHECK (archive.mine(member) AND (access IS NULL OR archive.can(access)));
@@ -3667,15 +3643,6 @@ ON CONFLICT (agent, member, size, lo) DO NOTHING;
 SELECT i::bigint AS i, e.message::text AS message
 FROM generate_subscripts(sqlc.arg(texts)::text[], 1) i, pg_input_error_info((sqlc.arg(texts)::text[])[i], (sqlc.arg(regs)::text[])[i]) e
 WHERE e.message IS NOT NULL ORDER BY i;
-
--- name: ClearSecrets :exec
-SELECT archive.secret_clear(sqlc.arg(tbl), sqlc.arg(rid), sqlc.narg(col));
-
--- name: CreateSecret :exec
-INSERT INTO archive.secret (id, table_name, row_id, column_name, type, value, access) VALUES ($1, $2, $3, $4, $5, $6, $7);
-
--- name: Secrets :many
-SELECT id, row_id, column_name, type, value FROM archive.secret WHERE table_name = $1 AND row_id = ANY(sqlc.arg(ids)::uuid[]);
 
 -- name: FileByKey :one
 SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at FROM archive.file WHERE connection IS NULL AND access IS NOT DISTINCT FROM $1 AND parent IS NOT DISTINCT FROM $2 AND hash = $3 AND name = $4;

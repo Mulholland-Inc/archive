@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"os"
 	"regexp"
@@ -211,7 +212,7 @@ func (a *Archive) Create(ctx context.Context, typ string, data map[string]any) (
 }
 
 func (a *Archive) coreCreate(ctx context.Context, tb *Table, data map[string]any) (map[string]any, error) {
-	out, seal, err := a.prepare(ctx, tb, data, true, nil)
+	out, err := a.prepare(ctx, tb, data, true)
 	if err != nil {
 		return nil, err
 	}
@@ -230,8 +231,7 @@ func (a *Archive) coreCreate(ctx context.Context, tb *Table, data map[string]any
 	if err != nil {
 		return nil, err
 	}
-	row := rs[0]
-	return row, a.secretsPut(ctx, tb, row, seal)
+	return rs[0], nil
 }
 
 func coreAccess(v any) *uuid.UUID {
@@ -260,11 +260,10 @@ func (a *Archive) coreWrite(ctx context.Context, typ string, id uuid.UUID, data 
 		return a.workflowSave(ctx, tb, id, data, full)
 	}
 	return coreDo(a, ctx, func(ctx context.Context) (map[string]any, error) {
-		old, err := a.coreGet(ctx, tb, id)
-		if err != nil {
+		if _, err := a.coreGet(ctx, tb, id); err != nil {
 			return nil, err
 		}
-		out, seal, err := a.prepare(ctx, tb, data, full, old)
+		out, err := a.prepare(ctx, tb, data, full)
 		if err != nil {
 			return nil, err
 		}
@@ -279,47 +278,26 @@ func (a *Archive) coreWrite(ctx context.Context, typ string, id uuid.UUID, data 
 		if len(rs) == 0 {
 			return nil, fmt.Errorf("you cannot change this row: %w", ErrForbidden)
 		}
-		return rs[0], a.secretsPut(ctx, tb, rs[0], seal)
+		return rs[0], nil
 	})
 }
 
-func (a *Archive) prepare(ctx context.Context, tb *Table, data map[string]any, full bool, old map[string]any) (map[string]any, map[string]any, error) {
-	cat := a.catalog(ctx)
-	in, keep := map[string]any{}, map[string]any{}
-	for k, v := range data {
-		if str, ok := v.(string); ok && old != nil && old[k] == str && tb.col(k) != nil && cat.secret(tb.col(k)) != nil {
-			keep[k] = v
-			continue
-		}
-		in[k] = v
-	}
+func (a *Archive) prepare(ctx context.Context, tb *Table, data map[string]any, full bool) (map[string]any, error) {
+	in := maps.Clone(data)
 	if err := a.groupNames(ctx, tb, in); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	out, err := cat.Normalize(tb, in, a.hints, full)
+	out, err := a.catalog(ctx).Normalize(tb, in, a.hints, full)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if err := a.refCheck(ctx, tb, out); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if err := a.pgCheck(ctx, tb, out); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	seal := map[string]any{}
-	for k, v := range out {
-		if s := cat.secret(tb.col(k)); s != nil {
-			seal[k] = v
-			if v != nil {
-				out[k] = secretMask(s, v)
-			}
-		}
-	}
-	for k, v := range keep {
-		out[k] = v
-		delete(seal, k)
-	}
-	return out, seal, nil
+	return out, nil
 }
 
 func (a *Archive) refCheck(ctx context.Context, tb *Table, out map[string]any) error {
@@ -399,7 +377,7 @@ func (a *Archive) Delete(ctx context.Context, typ string, id uuid.UUID) error {
 		if tag.RowsAffected() == 0 {
 			return fmt.Errorf("you cannot delete this row: %w", ErrForbidden)
 		}
-		return a.st.db(ctx).ClearSecrets(ctx, tb.Name, id, nil)
+		return nil
 	})
 }
 
