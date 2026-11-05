@@ -126,13 +126,12 @@ export async function newGroupPrompt(people = []) {
   return name ? createGroup({ name, people }) : null;
 }
 
-// memberGroupItems are the groups a member can be in, checked when they are, for an owner to toggle, and a new
-// one to make with them in it.
+// memberGroupItems are the groups a member is not in yet, for an owner to add them to, and a new one to make with
+// them in it.
 export function memberGroupItems(member) {
   if (!isArchiveOwner()) return [];
   return [
-    { heading: 'Groups' },
-    ...ws().groups.map((g) => ({ label: g.name, checked: member.groups.includes(g.id), keepOpen: true, onselect: () => toggleGroup(member, g.id) })),
+    ...ws().groups.filter((g) => !member.groups.includes(g.id)).map((g) => ({ label: g.name, onselect: () => toggleGroup(member, g.id) })),
     { label: 'New group…', icon: Plus, onselect: () => newGroupPrompt([member.id]) }
   ];
 }
