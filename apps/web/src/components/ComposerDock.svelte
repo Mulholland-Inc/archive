@@ -1,5 +1,5 @@
 <script>
-  let { children, above } = $props();
+  let { children } = $props();
 
   let dock = $state();
   let height = $state(0);
@@ -14,7 +14,6 @@
 
 <div class="dock" bind:this={dock} bind:offsetHeight={height}>
   <div class="inner">
-    {#if above}{@render above()}{/if}
     {@render children()}
   </div>
 </div>

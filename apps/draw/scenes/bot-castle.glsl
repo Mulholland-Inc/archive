@@ -1,7 +1,6 @@
-#pragma frame {"size":[320,320],"center":[0.0,0.9,0.0],"zoom":116,"pitch":14,"trim":false,"bounds":[[-1.3,-0.1,-1.3],[1.3,2.1,1.3]]}
-#define GLOW GRAPHITE
+#pragma frame {"set":["family"],"label":"Castle","center":[0.0,0.9,0.0],"pitch":14,"bounds":[[-1.3,-0.1,-1.3],[1.3,2.1,1.3]],"group":"home"}
 vec2 map(vec3 p) {
-  p = rotY(p, 0.785);
+  p = rotY(p, TURN);
   vec3 m = mirX(p);
   // A keep that tapers as it rises.
   float wall = max(length(p.xz) - (0.62 - 0.1 * p.y), abs(p.y - 0.72) - 0.72);
@@ -22,7 +21,6 @@ vec2 map(vec3 p) {
   r = U(r, M(sdBox(n - vec3(0.56, 1.73, 0.0), vec3(0.09, 0.14, 0.15)), WHITE + SOLID));
   r = U(r, M(sdCylinder(p - vec3(0.0, 1.55, 0.0), 0.48, 0.09), GRAPHITE));
   // Narrow eyes, a cross-shaped arrow loop and an iron-bound door.
-  r = U(r, M(sdBox(m - vec3(0.15, 0.86, 0.5), vec3(0.075, 0.055, 0.04)), GLOW + SOLID));
   r = U(r, M(min(sdBox(p - vec3(0.0, 1.16, 0.47), vec3(0.016, 0.13, 0.04)), sdBox(p - vec3(0.0, 1.2, 0.47), vec3(0.06, 0.016, 0.04))), GRAPHITE));
   float door = min(sdBox(p - vec3(0.0, 0.17, 0.62), vec3(0.12, 0.17, 0.05)), sdCylinder((p - vec3(0.0, 0.34, 0.62)).xzy, 0.12, 0.05));
   r = U(r, M(door, GRAPHITE));

@@ -49,7 +49,7 @@
               "go_type": "encoding/json.RawMessage"
             },
             {
-              "column": "archive.chat.messages",
+              "column": "archive.turn.messages",
               "go_type": "encoding/json.RawMessage"
             },
             {

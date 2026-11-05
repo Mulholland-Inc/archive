@@ -97,7 +97,7 @@ func gcpMetadata() *gcpToken {
 }
 
 // Workspace is a workspace as its people see it. Type is personal, family or business; Icon is one of the web
-// app's icons and Color one of its 8 tints, by index; null is the default for the type.
+// app's icons and Color one of its tints, by index; null is the default for the type.
 type Workspace struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
@@ -1141,7 +1141,11 @@ func workspaceName(name string) (string, error) {
 	return name, nil
 }
 
-// typ is the look's type, once the look is valid. The icons are archive.workspace's to check.
+// workspaceIcons are the web app's workspace icons (apps/draw/icons.mjs writes this list). A saved name that has left
+// it stays a valid row, and the web app shows its type's default; only a write has to name one of these.
+var workspaceIcons = []string{"aframe", "apartment", "beachhouse", "bungalow", "tent", "caravan", "cottage", "shed", "houseboat", "hut", "igloo", "logcabin", "stilts", "tipi", "treehouse", "castle", "duplex", "farmhouse", "lighthouse", "manor", "pagoda", "palace", "rowhouse", "townhouse", "windmill", "church", "daycare", "school", "farm", "greenhouse", "accounting", "architect", "bank", "datacentre", "insurance", "lawfirm", "marketing", "office", "realestate", "recruiter", "server", "skyscraper", "software", "exchange", "dental", "hospital", "clinic", "pharmacy", "vet", "bakery", "bar", "brewery", "butcher", "cafe", "diner", "fishmonger", "foodtruck", "grocery", "market", "pizzeria", "restaurant", "winery", "bookshop", "boutique", "florist", "shop", "hardware", "jeweller", "barbershop", "gym", "salon", "spa", "yoga", "gallery", "cinema", "hotel", "library", "museum", "music", "photo", "stadium", "theatre", "capitol", "courthouse", "nonprofit", "townhall", "university", "garage", "dealership", "carwash", "petrol", "construction", "factory", "silo", "depot", "mine", "warehouse", "workshop", "hangar", "airtower", "bridge", "port", "station", "oilwell", "power", "solar", "telecom", "watertower", "windfarm"}
+
+// typ is the look's type, once the look is valid.
 func (l WorkspaceLook) typ() (*generated.ArchiveWorkspaceType, error) {
 	ve := &ValidationError{Type: "workspace"}
 	var out *generated.ArchiveWorkspaceType
@@ -1153,19 +1157,13 @@ func (l WorkspaceLook) typ() (*generated.ArchiveWorkspaceType, error) {
 			ve.Errors = append(ve.Errors, FieldError{Path: "type", Message: "want personal, family or business"})
 		}
 	}
-	if l.Color != nil && (*l.Color < 0 || *l.Color > 7) {
-		ve.Errors = append(ve.Errors, FieldError{Path: "color", Message: "want a tint from 0 to 7"})
+	if l.Icon != nil && !slices.Contains(workspaceIcons, *l.Icon) {
+		ve.Errors = append(ve.Errors, FieldError{Path: "icon", Message: "want one of " + strings.Join(workspaceIcons, ", ")})
+	}
+	if l.Color != nil && (*l.Color < 0 || *l.Color > 31) {
+		ve.Errors = append(ve.Errors, FieldError{Path: "color", Message: "want a tint from 0 to 31"})
 	}
 	return out, ve.err()
-}
-
-// workspaceErr says which field archive.workspace's checks refused.
-func workspaceErr(err error) error {
-	var pe *pgconn.PgError
-	if errors.As(err, &pe) && pe.Code == "23514" && pe.ConstraintName == "workspace_icon" {
-		return &ValidationError{Type: "workspace", Errors: []FieldError{{Path: "icon", Message: "want one of the web app's icons, like robot, chest or cottage"}}}
-	}
-	return storeErr(err)
 }
 
 func (h *Hub) createWorkspace(ctx context.Context, name, owner string, look WorkspaceLook) (generated.ArchiveWorkspace, error) {
@@ -1197,7 +1195,7 @@ func (h *Hub) createWorkspace(ctx context.Context, name, owner string, look Work
 		return row, fmt.Errorf("workspace %s already exists: %w", short, ErrConflict)
 	}
 	if err != nil {
-		return row, workspaceErr(err)
+		return row, storeErr(err)
 	}
 	ctx = context.WithoutCancel(ctx)
 	fail := func(err error) (generated.ArchiveWorkspace, error) {
@@ -1265,7 +1263,7 @@ func (a *Archive) SetInfo(ctx context.Context, name *string, look WorkspaceLook)
 			return nil, err
 		}
 		if err := a.hub.q().UpdateWorkspace(ctx, generated.UpdateWorkspaceParams{ID: a.ws.ID, Name: name, Type: typ, Icon: look.Icon, Color: look.Color}); err != nil {
-			return nil, workspaceErr(err)
+			return nil, storeErr(err)
 		}
 		a.moved(ctx, "archive.workspace", a.ws.ID.String())
 		a.hub.liveMembers(ctx, a.ws.ID)()

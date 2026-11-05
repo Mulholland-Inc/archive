@@ -56,15 +56,6 @@ func (ns NullArchiveWorkspaceType) Value() (driver.Value, error) {
 	return string(ns.ArchiveWorkspaceType), nil
 }
 
-type ArchiveChat struct {
-	ID        uuid.UUID
-	UserID    uuid.UUID
-	Title     string
-	Messages  json.RawMessage
-	CreatedAt time.Time
-	UpdatedAt time.Time
-}
-
 // One of your own accounts at another service that Archive reads for you, like your Gmail; archive.action uses it. Read only; connect and disconnect them in Settings, Connectors
 // icon: plug
 type ArchiveConnection struct {

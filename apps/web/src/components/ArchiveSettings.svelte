@@ -82,7 +82,7 @@
 </Stack>
 
 <Dialog bind:open={deleting} title="Delete this archive?" size="sm">
-  <Text as="p" tone="secondary">All chats, files and workflows in {ws().name} will be deleted for everyone.</Text>
+  <Text as="p" tone="secondary">All agents, files and workflows in {ws().name} will be deleted for everyone.</Text>
   {#snippet footer({ close })}
     <Button variant="ghost" onclick={close}>Cancel</Button>
     <Button variant="danger" onclick={() => { close(); deleteArchive(ws().id); }}>Delete archive</Button>

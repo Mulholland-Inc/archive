@@ -15,7 +15,7 @@ CREATE TABLE archive.main_revision (
 -- What a workspace is for, which picks the icons the web app offers it.
 CREATE TYPE archive.workspace_type AS ENUM ('personal', 'family', 'business');
 
--- icon and color are how the web app shows the workspace: one of its icons, and one of its 8 tints by index;
+-- icon and color are how the web app shows the workspace: one of its icons, and one of its tints by index;
 -- null is the default for its type.
 CREATE TABLE archive.workspace (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -23,9 +23,8 @@ CREATE TABLE archive.workspace (
     key        bytea NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
     type       archive.workspace_type NOT NULL DEFAULT 'personal',
-    icon       text CONSTRAINT workspace_icon CHECK (icon IN ('robot', 'chest', 'safe', 'bookcase', 'pinecone', 'cottage', 'castle',
-        'townhouse', 'farmhouse', 'oak', 'pine', 'baobab', 'skyscraper', 'capitol', 'pyramid', 'ledger', 'cabinet', 'bank', 'warehouse', 'factory')),
-    color      smallint CONSTRAINT workspace_color CHECK (color BETWEEN 0 AND 7)
+    icon       text,
+    color      smallint CONSTRAINT workspace_color CHECK (color BETWEEN 0 AND 31)
 );
 
 -- A person who signs in, and the workspaces they are a member of. admin says they run this Archive: they make

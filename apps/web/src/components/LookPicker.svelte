@@ -1,11 +1,43 @@
 <script>
   import ArchiveIcon from './ArchiveIcon.svelte';
+  import AgentAvatar from './AgentAvatar.svelte';
   import SegmentedControl from './SegmentedControl.svelte';
   import { TYPES, TINTS, ICON_LABELS, KIND_TINTS } from '../lib/looks.js';
 
-  let { look = $bindable() } = $props();
+  let { look = $bindable(), avatars } = $props();
 
   const types = Object.entries(TYPES).map(([value, t]) => ({ value, label: t.label }));
+
+  // A single line keeps what is picked in view, and a mouse wheel scrolls it sideways.
+  let iconRow = $state();
+  let tintRow = $state();
+
+  function reveal(node) {
+    const on = node?.querySelector('.on');
+    if (!on) return;
+    if (on.offsetLeft < node.scrollLeft || on.offsetLeft + on.offsetWidth > node.scrollLeft + node.clientWidth) node.scrollLeft = on.offsetLeft - (node.clientWidth - on.offsetWidth) / 2;
+  }
+
+  $effect(() => {
+    look.icon;
+    look.avatar;
+    reveal(iconRow);
+  });
+
+  $effect(() => {
+    look.tint;
+    reveal(tintRow);
+  });
+
+  function row(node) {
+    const wheel = (event) => {
+      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+      node.scrollLeft += event.deltaY;
+      event.preventDefault();
+    };
+    node.addEventListener('wheel', wheel, { passive: false });
+    return { destroy: () => node.removeEventListener('wheel', wheel) };
+  }
 
   function setType(type) {
     look = { type, icon: TYPES[type].icons[1], tint: KIND_TINTS[type] };
@@ -13,17 +45,25 @@
 </script>
 
 <div class="picker">
-  <SegmentedControl value={look.type} options={types} label="Type" onchange={setType} />
-  <div class="icons" role="radiogroup" aria-label="Icon">
-    {#each TYPES[look.type].icons as icon (icon)}
-      <button type="button" role="radio" aria-checked={look.icon === icon} aria-label={ICON_LABELS[icon]} title={ICON_LABELS[icon]} class={['choice', { on: look.icon === icon }]} onclick={() => (look = { ...look, icon })}>
-        <ArchiveIcon {icon} tint={look.tint} size="lg" />
-      </button>
-    {/each}
+  {#if !avatars}<SegmentedControl value={look.type} options={types} label="Type" onchange={setType} />{/if}
+  <div class="icons" role="radiogroup" aria-label="Icon" bind:this={iconRow} use:row>
+    {#if avatars}
+      {#each avatars as avatar (avatar.id)}
+        <button type="button" role="radio" aria-checked={look.avatar?.id === avatar.id} aria-label={avatar.name} title={avatar.name} class={['choice', { on: look.avatar?.id === avatar.id }]} onclick={() => (look = { ...look, avatar })}>
+          <AgentAvatar {avatar} tint={look.tint} size="lg" />
+        </button>
+      {/each}
+    {:else}
+      {#each TYPES[look.type].icons as icon (icon)}
+        <button type="button" role="radio" aria-checked={look.icon === icon} aria-label={ICON_LABELS[icon]} title={ICON_LABELS[icon]} class={['choice', { on: look.icon === icon }]} onclick={() => (look = { ...look, icon })}>
+          <ArchiveIcon {icon} tint={look.tint} size="lg" />
+        </button>
+      {/each}
+    {/if}
   </div>
-  <div class="tints" role="radiogroup" aria-label="Colour">
+  <div class="tints" role="radiogroup" aria-label="Colour" bind:this={tintRow} use:row>
     {#each { length: TINTS } as _, i (i)}
-      <button type="button" role="radio" aria-checked={look.tint === i} aria-label={`Colour ${i + 1}`} class={['swatch', `tint-${i}`, { on: look.tint === i }]} onclick={() => (look = { ...look, tint: i })}></button>
+      <button type="button" role="radio" aria-checked={look.tint === i} aria-label={`Colour ${i + 1}`} class={['swatch', { on: look.tint === i }]} style={`--tint: var(--tint-${i})`} onclick={() => (look = { ...look, tint: i })}></button>
     {/each}
   </div>
 </div>
@@ -35,15 +75,11 @@
     gap: var(--space-4);
   }
 
-  .icons {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(var(--control-2xl), 1fr));
-    gap: var(--space-2);
-  }
-
   .choice {
     display: grid;
     place-items: center;
+    flex: none;
+    width: var(--control-2xl);
     aspect-ratio: 1;
     padding: var(--space-1);
     border-radius: var(--radius-lg);
@@ -59,13 +95,20 @@
     box-shadow: inset 0 0 0 var(--focus-width) var(--color-accent);
   }
 
+  .icons,
   .tints {
+    position: relative;
     display: flex;
-    flex-wrap: wrap;
+    flex: none;
     gap: var(--space-2);
+    margin: calc(var(--space-1) * -1);
+    padding: var(--space-1);
+    overflow-x: auto;
+    scrollbar-width: none;
   }
 
   .swatch {
+    flex: none;
     width: var(--control-sm);
     height: var(--control-sm);
     border-radius: var(--radius-full);
@@ -76,13 +119,4 @@
   .swatch.on {
     box-shadow: 0 0 0 var(--focus-width) var(--color-surface-raised), 0 0 0 calc(var(--focus-width) * 2) var(--color-text);
   }
-
-  .tint-0 { --tint: var(--tint-0); }
-  .tint-1 { --tint: var(--tint-1); }
-  .tint-2 { --tint: var(--tint-2); }
-  .tint-3 { --tint: var(--tint-3); }
-  .tint-4 { --tint: var(--tint-4); }
-  .tint-5 { --tint: var(--tint-5); }
-  .tint-6 { --tint: var(--tint-6); }
-  .tint-7 { --tint: var(--tint-7); }
 </style>

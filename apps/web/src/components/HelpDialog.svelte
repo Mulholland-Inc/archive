@@ -7,8 +7,6 @@
 
   let { open = $bindable(false) } = $props();
   const keys = [
-    ['Search and commands', '⌘ K'],
-    ['New chat', '⌘ ⇧ O'],
     ['Toggle sidebar', '⌘ .'],
     ['Settings', '⌘ ,'],
     ['Search the library', '/'],

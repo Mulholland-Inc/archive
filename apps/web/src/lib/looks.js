@@ -1,19 +1,123 @@
 export const TYPES = {
-  personal: { label: 'Personal', icons: ['robot', 'chest', 'safe', 'bookcase', 'pinecone'] },
-  family: { label: 'Family', icons: ['robot', 'cottage', 'castle', 'townhouse', 'farmhouse', 'oak', 'pine', 'baobab', 'pinecone'] },
-  business: { label: 'Business', icons: ['robot', 'skyscraper', 'capitol', 'pyramid', 'ledger', 'cabinet', 'bank', 'warehouse', 'factory'] }
+  personal: { label: 'Personal', icons: ['aframe', 'logcabin', 'apartment', 'beachhouse', 'bungalow', 'tent', 'caravan', 'cottage', 'shed', 'houseboat', 'hut', 'igloo', 'stilts', 'tipi', 'treehouse'] },
+  family: { label: 'Family', icons: ['bungalow', 'cottage', 'castle', 'duplex', 'farmhouse', 'lighthouse', 'logcabin', 'manor', 'pagoda', 'palace', 'rowhouse', 'stilts', 'townhouse', 'treehouse', 'windmill', 'church', 'daycare', 'school', 'farm', 'greenhouse'] },
+  business: { label: 'Business', icons: ['accounting', 'office', 'architect', 'bank', 'datacentre', 'insurance', 'lawfirm', 'marketing', 'realestate', 'recruiter', 'server', 'skyscraper', 'software', 'exchange', 'dental', 'hospital', 'clinic', 'pharmacy', 'vet', 'bakery', 'bar', 'brewery', 'butcher', 'cafe', 'diner', 'fishmonger', 'foodtruck', 'grocery', 'market', 'pizzeria', 'restaurant', 'winery', 'bookshop', 'boutique', 'florist', 'shop', 'hardware', 'jeweller', 'barbershop', 'gym', 'salon', 'spa', 'yoga', 'gallery', 'cinema', 'hotel', 'library', 'museum', 'music', 'photo', 'stadium', 'theatre', 'capitol', 'church', 'courthouse', 'daycare', 'nonprofit', 'school', 'townhall', 'university', 'garage', 'dealership', 'carwash', 'petrol', 'construction', 'factory', 'farm', 'silo', 'greenhouse', 'depot', 'mine', 'warehouse', 'workshop', 'hangar', 'airtower', 'bridge', 'port', 'station', 'oilwell', 'power', 'solar', 'telecom', 'watertower', 'windfarm'] }
 };
 
-export const TINTS = 8;
-export const KIND_TINTS = { business: 3, family: 0, personal: 1 };
+export const TINTS = 32;
+export const KIND_TINTS = { business: 17, family: 12, personal: 10 };
 
 export const ICON_LABELS = {
-  robot: 'Robot', chest: 'Chest', safe: 'Safe', bookcase: 'Bookcase', pinecone: 'Pinecone', cottage: 'Cottage', castle: 'Castle',
-  townhouse: 'Townhouse', farmhouse: 'Farmhouse', oak: 'Oak', pine: 'Pine', baobab: 'Baobab', skyscraper: 'Skyscraper',
-  capitol: 'Capitol', pyramid: 'Pyramid', ledger: 'Ledger', cabinet: 'Cabinet', bank: 'Bank', warehouse: 'Warehouse', factory: 'Factory'
+  aframe: 'A-frame cabin',
+  apartment: 'Apartment block',
+  beachhouse: 'Beach house',
+  bungalow: 'Bungalow',
+  tent: 'Campsite',
+  caravan: 'Caravan',
+  castle: 'Castle',
+  cottage: 'Cottage',
+  duplex: 'Duplex',
+  farmhouse: 'Farmhouse',
+  shed: 'Garden shed',
+  houseboat: 'Houseboat',
+  hut: 'Hut',
+  igloo: 'Igloo',
+  lighthouse: 'Lighthouse',
+  logcabin: 'Log cabin',
+  manor: 'Manor',
+  pagoda: 'Pagoda',
+  palace: 'Palace',
+  rowhouse: 'Row houses',
+  stilts: 'Stilt house',
+  tipi: 'Tipi',
+  townhouse: 'Townhouse',
+  treehouse: 'Treehouse',
+  windmill: 'Windmill',
+  accounting: 'Accounting office',
+  architect: 'Architecture studio',
+  bank: 'Bank',
+  datacentre: 'Data centre',
+  insurance: 'Insurance office',
+  lawfirm: 'Law firm',
+  marketing: 'Marketing agency',
+  office: 'Office',
+  realestate: 'Real estate agency',
+  recruiter: 'Recruitment agency',
+  server: 'Server building',
+  skyscraper: 'Skyscraper',
+  software: 'Software company',
+  exchange: 'Stock exchange',
+  dental: 'Dental office',
+  hospital: 'Hospital',
+  clinic: 'Medical clinic',
+  pharmacy: 'Pharmacy',
+  vet: 'Vet',
+  bakery: 'Bakery',
+  bar: 'Bar',
+  brewery: 'Brewery',
+  butcher: 'Butcher',
+  cafe: 'Cafe',
+  diner: 'Diner',
+  fishmonger: 'Fishmonger',
+  foodtruck: 'Food truck',
+  grocery: 'Grocery',
+  market: 'Market',
+  pizzeria: 'Pizzeria',
+  restaurant: 'Restaurant',
+  winery: 'Winery',
+  bookshop: 'Bookshop',
+  boutique: 'Clothing boutique',
+  florist: 'Florist',
+  shop: 'General store',
+  hardware: 'Hardware store',
+  jeweller: 'Jeweller',
+  barbershop: 'Barbershop',
+  gym: 'Gym',
+  salon: 'Hair salon',
+  spa: 'Spa',
+  yoga: 'Yoga studio',
+  gallery: 'Art gallery',
+  cinema: 'Cinema',
+  hotel: 'Hotel',
+  library: 'Library',
+  museum: 'Museum',
+  music: 'Music studio',
+  photo: 'Photo studio',
+  stadium: 'Stadium',
+  theatre: 'Theatre',
+  capitol: 'Capitol',
+  church: 'Church',
+  courthouse: 'Courthouse',
+  daycare: 'Daycare',
+  nonprofit: 'Nonprofit office',
+  school: 'School',
+  townhall: 'Town hall',
+  university: 'University',
+  garage: 'Auto garage',
+  dealership: 'Car dealership',
+  carwash: 'Car wash',
+  petrol: 'Petrol station',
+  construction: 'Construction yard',
+  factory: 'Factory',
+  farm: 'Farm',
+  silo: 'Grain silo',
+  greenhouse: 'Greenhouse',
+  depot: 'Logistics depot',
+  mine: 'Mine',
+  warehouse: 'Warehouse',
+  workshop: 'Workshop',
+  hangar: 'Airport hangar',
+  airtower: 'Airport tower',
+  bridge: 'Bridge',
+  port: 'Port',
+  station: 'Train station',
+  oilwell: 'Oil well',
+  power: 'Power station',
+  solar: 'Solar farm',
+  telecom: 'Telecom mast',
+  watertower: 'Water tower',
+  windfarm: 'Wind farm'
 };
-
-export const PLAIN = ['archivist', 'oak', 'pine', 'baobab', 'pinecone', 'skyscraper', 'capitol', 'ledger', 'castle', 'chest', 'pyramid'];
 
 export const PERSONALITIES = [
   { pace: 70, rest: 2600 },
@@ -30,10 +134,10 @@ export function defaultLook(type = 'personal') {
   return { type, icon: TYPES[type].icons[1], tint: KIND_TINTS[type] };
 }
 
-// An archive's look is its workspace's type, icon and colour, from the API; without an icon or a colour it has
-// its type's.
+// An archive's look is its workspace's type, icon and colour, from the API; without an icon it offers or a colour it
+// has its type's.
 export function lookOf(w) {
   const type = TYPES[w.type] ? w.type : 'personal';
   const d = defaultLook(type);
-  return { type, icon: w.icon ?? d.icon, tint: w.color ?? d.tint };
+  return { type, icon: Object.values(TYPES).some((t) => t.icons.includes(w.icon)) ? w.icon : d.icon, tint: w.color ?? d.tint };
 }

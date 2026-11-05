@@ -154,7 +154,7 @@ func catalogParse(b []byte) (*Catalog, error) {
 		}
 		// These of Archive's tables are seen by whose they are, not by a group: the access every object has
 		// says nothing of them.
-		if t.Schema == "archive" && slices.Contains([]string{"member", "group", "workflow", "workflow_run", "known_person", "known_org"}, t.Name) {
+		if t.Schema == "archive" && slices.Contains([]string{"member", "group", "workflow", "workflow_run", "agent", "turn", "memory", "known_person", "known_org"}, t.Name) {
 			t.internal = append(t.internal, "access")
 			t.Columns = slices.DeleteFunc(t.Columns, func(c *Column) bool { return c.Name == "access" })
 		}
@@ -217,7 +217,7 @@ var (
 	catalogSystem   = map[string]bool{"id": true, "created_at": true, "updated_at": true}
 	catalogReserved = map[string]bool{"files": true, "views": true, "search": true, "schema": true, "types": true,
 		"member": true, "group": true, "user": true, "token": true, "file": true, "upload": true, "secret": true, "revision": true, "run": true,
-		"workflow": true, "workflow_run": true, "connection": true}
+		"workflow": true, "workflow_run": true, "connection": true, "agent": true, "turn": true, "memory": true}
 	catalogNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 	catalogRefRe  = regexp.MustCompile(`(?i)^references\s+([a-z][a-z0-9_]*)\b[\s.;:,-]*`)
 )
@@ -234,6 +234,9 @@ func (c *Catalog) writable(name string) (*Table, error) {
 	t, err := c.table(name)
 	if err == nil && t.Kind == "view" {
 		return nil, fmt.Errorf("%s is a view, and views are read only; write to the tables it selects from: %w", name, ErrReadOnly)
+	}
+	if err == nil && t.Schema == "archive" && (t.Name == "turn" || t.Name == "memory") {
+		return nil, fmt.Errorf("%s is read only: Archive records it as you talk with an agent: %w", t.Name, ErrReadOnly)
 	}
 	if err == nil && t.Schema == "archive" && t.Name == "workflow_run" {
 		return nil, fmt.Errorf("workflow_run is read only: Archive records a run each time a workflow runs: %w", ErrReadOnly)
@@ -760,7 +763,7 @@ type SchemaMigration struct {
 
 // schemaTx is the schema state of one transaction: once it migrated, its catalog is read from it, cached per
 // archive.schema setting, which a rolled back savepoint undoes along with the migration.
-// schemaTurnKey is the chat turn a run belongs to, a request's id.
+// schemaTurnKey is the agent's turn a run belongs to, a request's id.
 type schemaTurnKey struct{}
 
 type schemaTx struct {
@@ -830,7 +833,7 @@ func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string
 	if err != nil {
 		return nil, err
 	}
-	// In chat the confirm carries the turn of its dry run, so a migration that drops data is confirmed only in a
+	// In a turn the confirm carries the turn of its dry run, so a migration that drops data is confirmed only in a
 	// later turn, after the person saw the drops; the turn is in the hash, so it cannot be changed.
 	turn, _ := ctx.Value(schemaTurnKey{}).(string)
 	from := turn
@@ -1338,6 +1341,9 @@ func (s *pgStore) migrate(ctx context.Context) error {
 			applied = false
 			return nil
 		}
+		if err := generated.New(tx).SeedAgent(ctx); err != nil {
+			return err
+		}
 		return generated.New(tx).InsertRevision(ctx, s.hash())
 	})
 	if err != nil || !applied {
@@ -1844,6 +1850,8 @@ var pgDropped = map[string]bool{
 	"table archive.record": true,
 	// Synced files are rows of archive.file now, and syncs start from scratch to fill them.
 	"table archive.drive_file": true,
+	// Agents replaced chats, and nothing of them was kept.
+	"table archive.chat": true,
 }
 
 // pgPlan is the DDL that brings live to want, both read with an empty search_path, for Archive's own schema: it

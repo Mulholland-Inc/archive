@@ -1,34 +1,37 @@
-import { Pin, PinOff, Pencil, Trash2, Plus, ExternalLink, MessageSquarePlus, Share, Download, Eye, Play, RotateCcw, Copy, UserPlus, UserMinus, Users, Ban, Settings, ArrowRightLeft } from '@lucide/svelte';
+import { Pencil, Trash2, Plus, ExternalLink, MessageSquarePlus, Share, Download, Eye, Play, RotateCcw, Copy, UserPlus, UserMinus, Users, Ban, Settings, ArrowRightLeft } from '@lucide/svelte';
 import { SEPARATOR } from './contextmenu.svelte.js';
-import { app, deleteGroup, groupUses, updateGroup, toggleGroup, createGroup, isArchiveOwner, ws, togglePin, removeChat, renameChat, newChat, renameFile, removeFile, downloadFile, openShare, runWorkflow, removeWorkflow, removeMember, invite, stopSharing, removeGuest, switchArchive, openSettings, deleteArchive } from './app.svelte.js';
+import { app, deleteGroup, groupUses, updateGroup, toggleGroup, createGroup, isArchiveOwner, ws, removeAgent, askAgent, renameFile, removeFile, downloadFile, openShare, runWorkflow, removeWorkflow, removeMember, invite, stopSharing, removeGuest, switchArchive, openSettings, deleteArchive } from './app.svelte.js';
 import { prompt, confirmDialog, notify } from './dialogs.svelte.js';
+import { clearAgent } from './agent.svelte.js';
 import { go } from './router.svelte.js';
 
-export async function copyText(text) {
+async function copyText(text) {
   await navigator.clipboard?.writeText(text).catch(() => {});
 }
 
-export async function renameChatPrompt(chat) {
-  const next = await prompt({ title: 'Rename chat', label: 'Title', value: chat.title });
-  if (next) renameChat(chat.id, next);
+async function deleteAgent(agent) {
+  if (await confirmDialog({ title: `Delete ${agent.name}?`, body: 'Everyone’s conversations with it go too.', confirm: 'Delete' })) removeAgent(agent.id);
 }
 
-export async function deleteChat(chat) {
-  if (await confirmDialog({ title: 'Delete this chat?', body: `“${chat.title}” will be removed.`, confirm: 'Delete' })) removeChat(chat.id);
+export async function clearConversation(agent) {
+  if (!(await confirmDialog({ title: `Clear your conversation with ${agent.name}?`, body: 'It forgets everything you said to it. Nobody else’s conversation changes.', confirm: 'Clear' }))) return;
+  try {
+    await clearAgent(agent.id);
+  } catch (e) {
+    notify({ title: 'Couldn’t clear the conversation', body: e.message });
+  }
 }
 
-export function chatItems(chat, { open = true, unpin = true, rename = () => renameChatPrompt(chat) } = {}) {
+export function agentItems(agent) {
   return [
-    open && { label: 'Open', icon: ExternalLink, onselect: () => go(`/chat/${chat.id}`) },
-    (!chat.pinned || unpin) && { label: chat.pinned ? 'Unpin' : 'Pin', icon: chat.pinned ? PinOff : Pin, onselect: () => togglePin(chat.id) },
-    rename && { label: 'Rename', icon: Pencil, onselect: rename },
+    { label: 'Settings', icon: Settings, onselect: () => (app.agentDialog = agent.id) },
     SEPARATOR,
-    { label: 'Delete', icon: Trash2, danger: true, onselect: () => deleteChat(chat) }
+    { label: 'Delete', icon: Trash2, danger: true, onselect: () => deleteAgent(agent) }
   ];
 }
 
 export function askAboutFile(file) {
-  go(`/chat/${newChat(`About ${file.name}`, { text: `What is in ${file.name}?`, attachments: [{ id: file.id, name: file.name, kind: file.kind, size: file.size, tone: file.tone, real: true }] })}`);
+  go(askAgent(`What is in ${file.name}?`, [{ id: file.id, name: file.name, kind: file.kind, size: file.size, tone: file.tone }]));
 }
 
 export async function renameFilePrompt(file) {
@@ -50,7 +53,7 @@ export function fileItems(file, { onopen } = {}) {
 }
 
 export function askAboutTable(table) {
-  go(`/chat/${newChat(`About ${table.name}`, { text: `What is in the ${table.name} table?` })}`);
+  go(askAgent(`What is in the ${table.name} table?`));
 }
 
 export function tableItems(table) {
@@ -137,7 +140,7 @@ export function groupItems(group) {
 
 // memberGroupItems are the groups a member can be in, checked when they are, for an owner to toggle, and a new
 // one to make with them in it.
-export function memberGroupItems(member) {
+function memberGroupItems(member) {
   if (!isArchiveOwner()) return [];
   return [
     { heading: 'Groups' },
@@ -164,7 +167,7 @@ export function shareItems(share, item) {
   ];
 }
 
-export async function deleteArchiveConfirm(archive) {
+async function deleteArchiveConfirm(archive) {
   if (await confirmDialog({ title: 'Delete this archive?', body: `“${archive.name}” and everything in it will be removed.`, confirm: 'Delete' })) deleteArchive(archive.id);
 }
 
@@ -185,7 +188,7 @@ export function archiveItems(archive) {
   ];
 }
 
-export function messageText(message) {
+function messageText(message) {
   if (message.text) return message.text;
   return (message.blocks ?? []).map((b) => b.text ?? (b.items ?? []).map((i) => `- ${i}`).join('\n')).filter(Boolean).join('\n\n');
 }

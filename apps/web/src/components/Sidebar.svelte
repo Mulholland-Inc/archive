@@ -82,7 +82,7 @@
   .body {
     display: flex;
     flex-direction: column;
-    gap: var(--space-4);
+    gap: var(--space-2);
     flex: 1;
     min-height: 0;
     padding: var(--space-2);

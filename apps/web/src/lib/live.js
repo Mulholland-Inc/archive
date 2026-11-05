@@ -54,7 +54,7 @@ export function show(v) {
 const hash = (s = '') => [...s].reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 7);
 export const tone = (s, n = 4) => (hash(s) % n) + 1;
 
-export function fileKind(mime = '', name = '') {
+function fileKind(mime = '', name = '') {
   const ext = name.match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase() ?? '';
   if (mime.startsWith('image/')) return 'image';
   if (mime.startsWith('audio/') || mime.startsWith('video/')) return 'recording';
@@ -98,8 +98,6 @@ export function toFile(f, owner = '') {
     tone: tone(f.id)
   };
 }
-
-export const toChat = (c, pinned = false) => ({ id: c.id, title: c.title || 'Untitled', updated: relative(c.updated_at ?? c.created_at), at: c.updated_at, pinned });
 
 export function toMember(p, me) {
   const mine = me && p.email === me.email;
@@ -199,7 +197,7 @@ function outcome(b) {
   }
 }
 
-// A saved chat's messages (Anthropic's format) to the screen's messages: one user bubble per question,
+// A saved conversation's messages (Anthropic's format) to the screen's messages: one user bubble per question,
 // one assistant message per answer with its tool calls as steps and its text as prose.
 export function toMessages(messages = []) {
   const out = [];
@@ -274,7 +272,7 @@ export function trigger(on) {
   return { kind: on.table === 'file' ? 'file' : 'table', table: on.table, label: `When ${/^[aeiou]/i.test(t) ? 'an' : 'a'} ${t} is ${what}` };
 }
 
-export const pretty = (name) => {
+const pretty = (name) => {
   const s = name.replace(/\.ts$/, '').replaceAll(/[-_]+/g, ' ');
   return s.charAt(0).toUpperCase() + s.slice(1);
 };

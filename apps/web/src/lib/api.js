@@ -54,11 +54,6 @@ export const loadDraft = (id) => queue(async () => {
   return packed && new TextDecoder().decode(await pipe(Uint8Array.from(packed, (c) => c.charCodeAt(0)), new DecompressionStream('deflate-raw')));
 });
 
-export const moveDraft = (from, to) => queue(() => {
-  store(DRAFT + to, stored(DRAFT + from));
-  store(DRAFT + from, '');
-});
-
 const clearDrafts = () => queue(() => {
   for (const key of Object.keys(localStorage)) if (key.startsWith(DRAFT)) store(key, '');
 });
@@ -85,8 +80,8 @@ export async function api(path, opts) {
   return r.status === 204 ? null : r.json();
 }
 
-export async function* chatStream(body, signal) {
-  const r = await send('/api/chat', { method: 'POST', body, signal });
+export async function* turnStream(body, signal) {
+  const r = await send('/api/turn', { method: 'POST', body, signal });
   const reader = r.body.pipeThrough(new TextDecoderStream()).getReader();
   let buf = '';
   for (;;) {
