@@ -718,7 +718,7 @@
     display: flex;
     flex-direction: column;
     padding: var(--space-4) var(--edge) var(--space-12);
-    font-family: var(--font-prose);
+    font-family: var(--font-sans);
     font-size: var(--text-prose);
     line-height: var(--leading-prose);
     letter-spacing: var(--tracking-normal);

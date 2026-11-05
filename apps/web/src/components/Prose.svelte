@@ -44,7 +44,7 @@
     flex-direction: column;
     gap: var(--space-prose);
     min-width: 0;
-    font-family: var(--font-prose);
+    font-family: var(--font-sans);
     font-size: var(--text-prose);
     line-height: var(--leading-prose);
     letter-spacing: var(--tracking-normal);
