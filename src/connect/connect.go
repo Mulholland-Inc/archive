@@ -41,6 +41,7 @@ type Connector struct {
 	Env, Host   string
 	Hosts       []string
 	Endpoint    oauth2.Endpoint
+	RefreshURL  string
 	Revoke      string
 	RevokeWith  func(rv *Revocation) error
 	Lasts       bool
@@ -415,6 +416,9 @@ func (p *Provider) Refresh(ctx context.Context, rt string, meta map[string]strin
 	cfg, err := p.configOf("", meta)
 	if err != nil {
 		return nil, err
+	}
+	if p.RefreshURL != "" {
+		cfg.Endpoint.TokenURL = p.RefreshURL
 	}
 	tok, err := cfg.TokenSource(context.WithValue(ctx, oauth2.HTTPClient, client), &oauth2.Token{RefreshToken: rt}).Token()
 	if err != nil {

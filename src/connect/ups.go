@@ -1,19 +1,24 @@
 package connect
 
-import "time"
+import (
+	"time"
+
+	"golang.org/x/oauth2"
+)
 
 func init() {
 	Register(&Connector{
 		ID: "ups", Name: "UPS",
 		Info: Info{By: "UPS", Description: "Track the UPS packages your mail mentions, and any you ask about", Category: CatHome, Icon: IconInbox,
-			Scopes: []string{"Find UPS tracking numbers in the mail you synced", "Look up where each package is with UPS"}},
-		API:  "https://onlinetools.ups.com",
-		Pace: 250 * time.Millisecond,
-		Tap:  true, Env: "ARCHIVE_UPS", Host: "https://onlinetools.ups.com", Options: "the Client ID and Client Secret of Archive's app at developer.ups.com, with the Tracking API",
-		Trade: &Req{Method: POST, URL: "/security/v1/oauth/token", Header: map[string][]string{"Authorization": {"{basic}"}},
-			Form: Q{"grant_type": "client_credentials"}},
-		Sign:   map[string]string{"Authorization": "Bearer {key/access}", "transactionSrc": "archive"},
-		Errors: &Errors{At: "response/errors/0/message", Code: "response/errors/0/code"},
+			Scopes: []string{"Sign in to your UPS account", "Find UPS tracking numbers in the mail you synced", "Look up where each package is with UPS, as you"}},
+		API:        "https://onlinetools.ups.com",
+		Pace:       250 * time.Millisecond,
+		Endpoint:   oauth2.Endpoint{AuthURL: "https://onlinetools.ups.com/security/v1/oauth/authorize", TokenURL: "https://onlinetools.ups.com/security/v1/oauth/token"},
+		RefreshURL: "https://onlinetools.ups.com/security/v1/oauth/refresh",
+		Params:     map[string]string{"type": "ups_com_api"},
+		Options:    "Archive's app at developer.ups.com, with Authorization (OAuth) and Tracking, its callback <Archive API>/connect/ups/callback",
+		Sign:       map[string]string{"Authorization": "Bearer {token}", "transactionSrc": "archive"},
+		Errors:     &Errors{At: "response/errors/0/message", Code: "response/errors/0/code"},
 		Actions: map[string]*Action{
 			"track": Call[parcelOne, any](Plan{
 				Doc: "Where a UPS package is, by its tracking number, like { number: \"1Z999AA10123456784\" }: its status, delivery date, " +
