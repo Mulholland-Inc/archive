@@ -8,20 +8,6 @@ export const me = {
   tone: 1
 };
 
-export const models = [
-  { id: 'pro', name: 'Archive 2 Pro' },
-  { id: 'standard', name: 'Archive 2' },
-  { id: 'flash', name: 'Archive 2 Flash' }
-];
-
-export const suggestions = [
-  { id: 's1', label: 'Summarize', icon: 'files', prompt: 'Summarize everything in the 1970s letters folder' },
-  { id: 's2', label: 'Find', icon: 'search', prompt: 'Find the deed for the Enugu house' },
-  { id: 's3', label: 'Timeline', icon: 'timeline', prompt: 'Build a timeline of the family moving to Leeds' },
-  { id: 's4', label: 'Transcribe', icon: 'audio', prompt: 'Transcribe the interview with Uncle Chidi' },
-  { id: 's5', label: 'Automate', icon: 'workflow', prompt: 'Every time a scan is added, tag the people in it' }
-];
-
 export const conversations = {
   'letters-1974': [
     {
@@ -156,98 +142,6 @@ export const conversations = {
       ],
       blocks: [{ type: 'p', text: 'The name change is confirmed: the tenant became **Mercer Holdings (UK) Ltd** on 11 March 2026. I’m working through the notice period now and will post the note here.' }]
     }
-  ],
-  'exif-rename': [
-    {
-      id: 'm1',
-      role: 'user',
-      text: 'I have about 3,000 scanned photos with names like IMG_0042.jpg. Write a script that renames them to the date the photo was taken, like 1988-07-14_001.jpg.'
-    },
-    {
-      id: 'm2',
-      role: 'assistant',
-      blocks: [
-        { type: 'p', text: 'Here is a small Python script that reads the EXIF `DateTimeOriginal` field and renames each file. Scans often lack EXIF data, so it falls back to the file’s modified time and puts those in a separate `undated/` folder for you to check.' },
-        {
-          type: 'code',
-          lang: 'python',
-          code: `from pathlib import Path
-from datetime import datetime
-from PIL import Image
-
-SOURCE = Path("~/Scans").expanduser()
-UNDATED = SOURCE / "undated"
-
-def taken(path):
-    with Image.open(path) as img:
-        raw = img.getexif().get_ifd(0x8769).get(36867)
-    if raw:
-        return datetime.strptime(raw, "%Y:%m:%d %H:%M:%S")
-    return None
-
-counts = {}
-for path in sorted(SOURCE.glob("*.jpg")):
-    when = taken(path)
-    if when is None:
-        UNDATED.mkdir(exist_ok=True)
-        path.rename(UNDATED / path.name)
-        continue
-    day = when.strftime("%Y-%m-%d")
-    counts[day] = counts.get(day, 0) + 1
-    path.rename(SOURCE / f"{day}_{counts[day]:03d}.jpg")`
-        },
-        { type: 'p', text: 'Install the one dependency and run it from the folder the script is in:' },
-        { type: 'code', lang: 'bash', code: 'python3 -m pip install pillow\npython3 rename_scans.py' },
-        { type: 'h', text: 'Before you run it' },
-        {
-          type: 'ul',
-          items: [
-            'Try it on a **copy** of a few hundred files first. Renames can’t be undone.',
-            'If two scans share a timestamp to the second, the counter keeps them apart.',
-            'For flatbed scans the date is usually the *scan* date, not the photo date. Those are better dated from what’s in the picture.'
-          ]
-        },
-        { type: 'p', text: 'I can also run this inside the archive instead, so the originals stay untouched and only the display names change.' }
-      ]
-    }
-  ],
-  'linden-brief': [
-    {
-      id: 'm1',
-      role: 'user',
-      attachments: [{ id: 'a1', name: 'Linden kickoff notes.pdf', kind: 'pdf', size: '480 KB' }],
-      text: 'Turn the kickoff notes into a one-page moodboard brief for the team.'
-    },
-    {
-      id: 'm2',
-      role: 'assistant',
-      worked: '6s',
-      task: true,
-      steps: [
-        { id: 's1', label: 'Reading the six pages of kickoff notes', status: 'done', time: '2s' },
-        { id: 's2', label: 'Pulling out goals, audiences and deadlines', status: 'done', time: '3s' },
-        { id: 's3', label: 'Writing the one-page brief', status: 'done', time: '1s' }
-      ],
-      blocks: [
-        { type: 'h', text: 'Linden Library rebrand: moodboard brief' },
-        { type: 'p', text: 'Linden is a 90-year-old public library becoming a neighbourhood workshop: tools, seeds and sewing machines alongside books. The identity should feel **civic, handmade and durable**, never nostalgic.' },
-        { type: 'h', text: 'Collect' },
-        {
-          type: 'ul',
-          items: [
-            'Municipal signage from the 1950s and 60s, especially enamel and cast letters',
-            'Library stamps, date-due cards and catalogue drawers',
-            'Workshop pegboards and tool outlines',
-            'Risograph and letterpress prints with visible texture'
-          ]
-        },
-        { type: 'h', text: 'Avoid' },
-        { type: 'ul', items: ['Sepia filters and “vintage” pastiche', 'Book-spine clichés', 'Anything that reads as a café'] },
-        { type: 'h', text: 'Palette direction' },
-        { type: 'p', text: 'Start from the building itself: linden-leaf green, brick, and the pale stone of the entrance. One bright signal colour for wayfinding.' },
-        { type: 'p', text: 'Boards are due **Thursday 6 November**, 20 to 30 images each, one board per person.' }
-      ]
-    }
   ]
 };
 
@@ -258,24 +152,6 @@ export const library = [
   { id: 'f4', name: 'Leeds, winter 1974', kind: 'image', ext: 'JPG', size: '3.1 MB', modified: 'Yesterday', owner: 'Nora Okafor', folder: 'Photo albums', tone: 3 },
   { id: 'f5', name: 'Enugu house deed (1969)', kind: 'pdf', ext: 'PDF', size: '1.2 MB', modified: 'Yesterday', owner: 'Emeka Okafor', folder: 'Property', tone: 1 },
   { id: 'f6', name: 'Family tree export', kind: 'spreadsheet', ext: 'CSV', size: '64 KB', modified: 'Yesterday', owner: 'Nora Okafor', folder: 'Family tree', tone: 2 },
-  { id: 'f7', name: 'Lagos wedding, roll 2', kind: 'image', ext: 'JPG', size: '2.8 MB', modified: 'Mon', owner: 'Amara Okafor', folder: 'Photo albums', tone: 4 },
-  { id: 'f8', name: 'Aunt Ifeoma’s recipe cards', kind: 'document', ext: 'DOC', size: '22 KB', modified: 'Mon', owner: 'Ifeoma Nwosu', folder: 'Recipes', tone: 1 },
-  { id: 'f9', name: 'Grandpa Obi, voice memo', kind: 'recording', ext: 'MP3', size: '6 MB', modified: 'Sun', owner: 'Nora Okafor', folder: 'Interviews', duration: '7:40', tone: 3 },
-  { id: 'f10', name: 'Reunion 2019 group photo', kind: 'image', ext: 'HEIC', size: '4.6 MB', modified: 'Sun', owner: 'Tobi Okafor', folder: 'Photo albums', tone: 2 },
-  { id: 'f11', name: 'Service record, 1958', kind: 'pdf', ext: 'PDF', size: '880 KB', modified: 'Sat', owner: 'Nora Okafor', folder: 'Military', tone: 4 },
-  { id: 'f12', name: 'Igbo proverbs notebook', kind: 'pdf', ext: 'PDF', size: '12 MB', modified: 'Sat', owner: 'Chidi Okafor', folder: 'Notebooks', tone: 1 },
-  { id: 'f13', name: 'Household ledger 1966', kind: 'spreadsheet', ext: 'XLSX', size: '140 KB', modified: 'Fri', owner: 'Nora Okafor', folder: 'Ledgers', tone: 3 },
-  { id: 'f14', name: 'Christmas in Leeds, 1977', kind: 'image', ext: 'JPG', size: '2.2 MB', modified: 'Oct 22', owner: 'Amara Okafor', folder: 'Photo albums', tone: 1 },
-  { id: 'f15', name: 'Cassette 4, side A', kind: 'recording', ext: 'WAV', size: '96 MB', modified: 'Oct 20', owner: 'Nora Okafor', folder: 'Cassettes', duration: '31:05', tone: 4 },
-  { id: 'f16', name: 'Birth certificate, Chidi', kind: 'pdf', ext: 'PDF', size: '640 KB', modified: 'Oct 18', owner: 'Emeka Okafor', folder: 'Certificates', tone: 2 },
-  { id: 'f17', name: 'Market stall, Onitsha', kind: 'image', ext: 'JPG', size: '1.9 MB', modified: 'Oct 15', owner: 'Nora Okafor', folder: 'Photo albums', tone: 3 },
-  { id: 'f18', name: 'Reunion book captions', kind: 'document', ext: 'DOC', size: '31 KB', modified: 'Oct 12', owner: 'Tobi Okafor', folder: 'Reunion book', tone: 4 },
-  { id: 'f19', name: 'Polaroid restore, batch 1', kind: 'image', ext: 'PNG', size: '8.4 MB', modified: 'Oct 11', owner: 'Nora Okafor', folder: 'Restorations', tone: 1 },
-  { id: 'f20', name: 'Cassette 4, side B', kind: 'recording', ext: 'WAV', size: '92 MB', modified: 'Oct 10', owner: 'Nora Okafor', folder: 'Cassettes', duration: '29:51', tone: 2 },
-  { id: 'f21', name: 'Passport stamps, 1972', kind: 'image', ext: 'JPG', size: '1.6 MB', modified: 'Oct 8', owner: 'Emeka Okafor', folder: 'Documents', tone: 3 },
-  { id: 'f22', name: 'School report, Amara 1984', kind: 'pdf', ext: 'PDF', size: '420 KB', modified: 'Oct 6', owner: 'Amara Okafor', folder: 'School', tone: 4 },
-  { id: 'f23', name: 'Wedding speech draft', kind: 'document', ext: 'DOC', size: '12 KB', modified: 'Oct 2', owner: 'Tobi Okafor', folder: 'Speeches', tone: 1 },
-  { id: 'f24', name: 'Harmattan, 1979', kind: 'image', ext: 'JPG', size: '2.0 MB', modified: 'Sep 29', owner: 'Nora Okafor', folder: 'Photo albums', tone: 2 }
 ];
 
 export const members = [

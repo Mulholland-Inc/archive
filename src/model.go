@@ -336,12 +336,12 @@ var geminiCreds struct {
 }
 
 // modelBlock is a file as an Anthropic content block: a document for a PDF, an image otherwise.
-func modelBlock(p modelPart) chatBlock {
+func modelBlock(p modelPart) agentBlock {
 	kind := "image"
 	if p.mime == "application/pdf" {
 		kind = "document"
 	}
-	return chatBlock{"type": kind, "source": map[string]any{"type": "base64", "media_type": p.mime, "data": base64.StdEncoding.EncodeToString(p.data)}}
+	return agentBlock{"type": kind, "source": map[string]any{"type": "base64", "media_type": p.mime, "data": base64.StdEncoding.EncodeToString(p.data)}}
 }
 
 func modelClaude(ctx context.Context, req *modelReq, parts []modelPart) (*ModelResult, error) {
@@ -349,11 +349,11 @@ func modelClaude(ctx context.Context, req *modelReq, parts []modelPart) (*ModelR
 	if err != nil {
 		return nil, err
 	}
-	content := []chatBlock{{"type": "text", "text": req.Prompt}}
+	content := []agentBlock{{"type": "text", "text": req.Prompt}}
 	for _, p := range parts {
 		content = append(content, modelBlock(p))
 	}
-	body := map[string]any{"model": req.Model, "max_tokens": modelTokens, "messages": []chatMessage{{Role: "user", Content: content}}}
+	body := map[string]any{"model": req.Model, "max_tokens": modelTokens, "messages": []agentMessage{{Role: "user", Content: content}}}
 	if req.System != "" {
 		body["system"] = req.System
 	}
@@ -365,7 +365,7 @@ func modelClaude(ctx context.Context, req *modelReq, parts []modelPart) (*ModelR
 	if err != nil {
 		return nil, err
 	}
-	resp, err := chatPost(ctx, key, b)
+	resp, err := agentPost(ctx, key, b)
 	if err != nil {
 		return nil, err
 	}

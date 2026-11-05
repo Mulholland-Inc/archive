@@ -386,7 +386,7 @@ func (b *browser) plan(ctx context.Context, v *browseView, hint string) (*browse
 	}
 	s.WriteString("Elements:\n" + strings.Join(v.list(), "\n") + "\nPage text:\n" + v.Text + "\n" + hint)
 	body, err := json.Marshal(map[string]any{
-		"model":       chatModel,
+		"model":       agentModel,
 		"max_tokens":  2048,
 		"system":      browseSystem,
 		"tools":       []any{browseTool},
@@ -396,7 +396,7 @@ func (b *browser) plan(ctx context.Context, v *browseView, hint string) (*browse
 	if err != nil {
 		return nil, err
 	}
-	resp, err := chatPost(ctx, b.ant, body)
+	resp, err := agentPost(ctx, b.ant, body)
 	if err != nil {
 		return nil, err
 	}

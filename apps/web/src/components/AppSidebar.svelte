@@ -1,5 +1,5 @@
 <script>
-  import { Plus, Search, Library, Database, Workflow, Blocks, Lock, Settings } from '@lucide/svelte';
+  import { Plus, Library, Database, Workflow, Blocks, Lock, Settings } from '@lucide/svelte';
   import { layoutOf } from '../layouts/index.js';
   import Sidebar from './Sidebar.svelte';
   import SidebarItem from './SidebarItem.svelte';
@@ -11,24 +11,23 @@
   import MenuSeparator from './MenuSeparator.svelte';
   import ArchiveRail from './ArchiveRail.svelte';
   import AccountCard from './AccountCard.svelte';
-  import ChatActions from './ChatActions.svelte';
-  import PinButton from './PinButton.svelte';
-  import { app, ws, openSettings, closeDrawer, pinnedFirst, switchArchive, createArchive, renameChat, renameView, isArchiveOwner, chats, workflows, members, schema } from '../lib/app.svelte.js';
-
-  chats.use();
-  schema.use();
-  workflows.use();
-  members.use();
+  import AgentAvatar from './AgentAvatar.svelte';
+  import AgentDialog from './AgentDialog.svelte';
+  import { app, ws, openSettings, closeDrawer, switchArchive, createArchive, lastAgent, unread, renameView, isArchiveOwner, agents, workflows, members, schema } from '../lib/app.svelte.js';
   import { route, active } from '../lib/router.svelte.js';
   import NewArchiveDialog from './NewArchiveDialog.svelte';
   import SetupCard from './SetupCard.svelte';
-  import { chatItems } from '../lib/menus.js';
+  import { agentItems } from '../lib/menus.js';
+
+  agents.use();
+  schema.use();
+  workflows.use();
+  members.use();
 
   const running = $derived(ws().workflows.filter((w) => w.runs[0] && (w.runs[0].status === 'running' || w.runs[0].status === 'waiting')).length);
-  const visible = $derived(pinnedFirst(ws().chats));
+  const here = $derived(route.parts[0] === 'agent' ? route.parts[1] : route.path === '/' ? lastAgent()?.id : null);
   // Views are the archive's pages: Postgres views, each drawn the way its comment says.
   const views = $derived((ws().schema ?? []).filter((t) => t.kind === 'view'));
-
 
   let creating = $state(false);
   let renaming = $state(null);
@@ -64,29 +63,25 @@
   <SetupCard />
 
   <SidebarSection>
-    <SidebarItem icon={Plus} label="New chat" href="/" accent shortcut="⌘ ⇧ O" />
-    <SidebarItem icon={Search} label="Search" shortcut="⌘ K" onclick={() => { app.drawer = false; app.palette = true; }} />
+    <SidebarItem icon={Plus} label="New agent" accent onclick={() => { app.drawer = false; app.agentDialog = true; }} />
   </SidebarSection>
+
+  {#if ws().agents.length}
+    <SidebarSection title={collapsed ? undefined : 'Agents'}>
+      {#each ws().agents as agent (agent.id)}
+        <SidebarItem label={agent.name} tall={!collapsed} detail={agent.last} dot={unread(agent) && here !== agent.id} href={`/agent/${agent.id}`} active={here === agent.id} items={() => agentItems(agent)} ondouble={() => (app.agentDialog = agent.id)}>
+          {#snippet leading()}
+            <AgentAvatar avatar={agent.avatar} tint={agent.tint} size={collapsed ? 'xs' : 'lg'} mood={agent.streaming ? 'thinking' : 'idle'} />
+          {/snippet}
+        </SidebarItem>
+      {/each}
+    </SidebarSection>
+  {/if}
 
   {#if views.length}
     <SidebarSection title={collapsed ? undefined : 'Views'}>
       {#each views as view (view.id)}
         <SidebarItem icon={layoutOf(view).icon} label={view.name} href={`/view/${view.id}`} active={active(`/view/${view.id}`)} onrename={isArchiveOwner() ? (name) => renameView(view.id, name) : undefined} bind:editing={() => renaming === view.id, (on) => (renaming = on ? view.id : null)} />
-      {/each}
-    </SidebarSection>
-  {/if}
-
-  {#if !collapsed && visible.length}
-    <SidebarSection title="Chats">
-        {#each visible as chat (chat.id)}
-        <SidebarItem label={chat.title} href={`/chat/${chat.id}`} active={route.path === `/chat/${chat.id}`} items={() => chatItems(chat, { open: false, rename: () => (renaming = chat.id) })} onrename={(title) => renameChat(chat.id, title)} bind:editing={() => renaming === chat.id, (on) => (renaming = on ? chat.id : null)}>
-          {#snippet before()}
-            {#if chat.pinned}<PinButton {chat} />{/if}
-          {/snippet}
-          {#snippet actions()}
-            <ChatActions {chat} size="sm" inline />
-          {/snippet}
-        </SidebarItem>
       {/each}
     </SidebarSection>
   {/if}
@@ -97,3 +92,4 @@
 </Sidebar>
 
 <NewArchiveDialog bind:open={creating} oncreate={createArchive} />
+<AgentDialog />

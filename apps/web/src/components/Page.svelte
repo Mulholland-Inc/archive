@@ -1,8 +1,8 @@
 <script>
-  let { width = 'page', center = false, children, element = $bindable() } = $props();
+  let { width = 'page', center = false, children, element = $bindable(), onscroll } = $props();
 </script>
 
-<div class="scroll" bind:this={element}>
+<div class="scroll" bind:this={element} {onscroll}>
   <div class={['inner', width, { center }]}>
     {@render children()}
   </div>

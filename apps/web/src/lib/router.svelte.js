@@ -1,4 +1,4 @@
-// The app's routes are plain paths, like /chat/<id>: the host serves index.html for each (wrangler.jsonc's
+// The app's routes are plain paths, like /agent/<id>: the host serves index.html for each (wrangler.jsonc's
 // single-page-application fallback, and Vite's in development).
 
 function parse() {

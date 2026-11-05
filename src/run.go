@@ -1126,7 +1126,7 @@ func (a *Archive) RunDocs(ctx context.Context) string {
 }
 
 // runDocs is the SDK's documentation without this workspace's tables: the same bytes in every workspace, so
-// the chat's run tool, which it describes, is one prompt cache entry for all of them.
+// agents' run tool, which it describes, is one prompt cache entry for all of them.
 var runDocs = strings.ReplaceAll(runSDK, "{timeout}", runTimeout.String())
 
 // RunTypesFor is RunTypes with only the tables and views named in only, and those they reference; a name that is

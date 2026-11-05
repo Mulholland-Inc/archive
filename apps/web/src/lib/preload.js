@@ -3,12 +3,11 @@
 // is read again as usual.
 
 import { preloadWith } from './router.svelte.js';
-import { chats, library, members, workflows, runs, schema, counts, preview, viewRows } from './app.svelte.js';
-import { conversation } from './chat.svelte.js';
+import { agents, library, members, workflows, runs, schema, counts, preview, viewRows } from './app.svelte.js';
+import { conversation } from './agent.svelte.js';
 
 const pages = {
-  chat: (id) => [chats.prefetch(), conversation.prefetch(id)],
-  chats: () => chats.prefetch(),
+  agent: (id) => [agents.prefetch(), conversation.prefetch(id)],
   library: () => [library.prefetch(), members.prefetch()],
   database: (id) => [schema.prefetch(), counts.prefetch(), workflows.prefetch(), id && preview.prefetch(id), id && members.prefetch()],
   workflows: (id) => [workflows.prefetch(), id && runs.prefetch(id)],

@@ -9,22 +9,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const outDir = resolve(here, '../site/static/art');
 const chrome = process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
-const args = process.argv.slice(2);
-const flag = (k, d) => { const i = args.indexOf(`--${k}`); return i < 0 ? d : args[i + 1]; };
-const target = args.find((a, i) => !a.startsWith('--') && !(i > 0 && args[i - 1].startsWith('--'))) ?? 'all';
-const opts = {
-  scale: +flag('scale', 2),
-  ss: +flag('ss', 3),
-  line: +flag('line', 1),
-  shade: flag('shade', null) === null ? undefined : +flag('shade'),
-  bg: flag('bg', null),
-  ao: +flag('ao', 0),
-};
-const out = resolve(flag('out', outDir));
-const scenes = target === 'all'
-  ? readdirSync(join(here, 'scenes')).filter(f => f.endsWith('.glsl')).map(f => f.slice(0, -5)).sort()
-  : target.split(',');
-
+export async function withPage(fn) {
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.json': 'application/json', '.glsl': 'text/plain' };
 const server = createServer((req, res) => {
   const path = join(here, decodeURIComponent(new URL(req.url, 'http://x').pathname));
@@ -75,16 +60,45 @@ const send = (method, params = {}, sessionId) => new Promise((ok, fail) => {
   ws.send(JSON.stringify({ id, method, params, sessionId }));
 });
 
-let failed = 0;
 try {
   const { targetId } = await send('Target.createTarget', { url: `http://127.0.0.1:${port}/render.html` });
   const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true });
+  return await fn((method, params) => send(method, params, sessionId));
+} finally {
+  ws.close();
+  const gone = new Promise(r => proc.once('exit', r));
+  proc.kill();
+  await gone;
+  server.close();
+  rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+}
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+const args = process.argv.slice(2);
+const flag = (k, d) => { const i = args.indexOf(`--${k}`); return i < 0 ? d : args[i + 1]; };
+const target = args.find((a, i) => !a.startsWith('--') && !(i > 0 && args[i - 1].startsWith('--'))) ?? 'all';
+const opts = {
+  scale: +flag('scale', 2),
+  ss: +flag('ss', 3),
+  line: +flag('line', 1),
+  shade: flag('shade', null) === null ? undefined : +flag('shade'),
+  bg: flag('bg', null),
+  ao: +flag('ao', 0),
+};
+const out = resolve(flag('out', outDir));
+const scenes = target === 'all'
+  ? readdirSync(join(here, 'scenes')).filter(f => f.endsWith('.glsl')).map(f => f.slice(0, -5)).sort()
+  : target.split(',');
+
+let failed = 0;
+await withPage(async send => {
   mkdirSync(out, { recursive: true });
   const cwebp = spawnSync('which', ['cwebp']).status === 0;
   for (const name of scenes) {
     const t0 = Date.now();
     const expr = `new Promise(r => { const f = () => window.bake ? r() : setTimeout(f, 30); f(); }).then(() => window.bake(${JSON.stringify(name)}, ${JSON.stringify(opts)}))`;
-    const { result, exceptionDetails } = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }, sessionId);
+    const { result, exceptionDetails } = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true });
     if (exceptionDetails) throw new Error(exceptionDetails.exception?.description ?? exceptionDetails.text);
     if (result.value.error) {
       console.error(`${name}: ${result.value.error}`);
@@ -97,12 +111,6 @@ try {
     if (cwebp && spawnSync('cwebp', ['-quiet', '-lossless', '-z', '6', file, '-o', webp]).status === 0 && !args.includes('--png')) rmSync(file);
     console.log(`${cwebp ? webp : file} ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   }
-} finally {
-  ws.close();
-  const gone = new Promise(r => proc.once('exit', r));
-  proc.kill();
-  await gone;
-  server.close();
-  rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-}
+});
 process.exit(failed ? 1 : 0);
+}

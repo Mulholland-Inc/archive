@@ -1,17 +1,15 @@
 <script>
-  import { PLAIN, PERSONALITIES, personality } from '../lib/looks.js';
+  import { PERSONALITIES, personality } from '../lib/looks.js';
 
-  let { icon = 'robot', tint = 0, seed = '', size = 'md', label, active = false, greet = false } = $props();
+  let { icon = 'cottage', tint = 0, seed = '', size = 'md', active = false } = $props();
 
-  const stem = $derived(icon === 'robot' ? 'turn-float' : `turn-${icon}`);
-  const lights = $derived(!PLAIN.includes(icon));
   const mood = $derived(personality(`${seed}${icon}`));
   const me = $derived(PERSONALITIES[mood]);
 
   let root = $state();
   let frame = $state(0);
   let awake = $state(false);
-  let eyes = $state(false);
+  let seen = $state(false);
   let timer;
   const later = (fn, ms) => (timer = setTimeout(fn, ms));
   const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -23,37 +21,38 @@
   }
 
   function idle() {
-    later(() => {
-      const pick = Math.random();
-      eyes = false;
-      if (pick < 0.45) later(() => ((eyes = true), idle()), 110);
-      else turn(pick < 0.75 ? 2 : 1, me.pace * 1.6, 1, () => later(() => turn(3, me.pace * 1.6, 1, () => ((eyes = true), idle())), 420 + Math.random() * 500));
-    }, me.rest * (0.7 + Math.random() * 0.6));
+    later(() => turn(Math.random() < 0.6 ? 2 : 1, me.pace * 1.6, 1, () => later(() => turn(3, me.pace * 1.6, 1, idle), 420 + Math.random() * 500)), me.rest * (0.7 + Math.random() * 0.6));
   }
 
   function wake() {
     clearTimeout(timer);
     awake = true;
-    if (still()) return ((frame = 3), (eyes = true));
-    turn(3, me.pace, 1.15, () => ((eyes = true), idle()));
+    if (still()) return (frame = 3);
+    turn(3, me.pace, 1.15, idle);
   }
 
   function sleep() {
     clearTimeout(timer);
     awake = false;
-    eyes = false;
     if (still()) return (frame = 0);
     later(() => turn(0, me.pace * 1.5, 1.3), 80);
   }
 
+  // An icon's strip loads when it nears the screen, so a long picker fetches only what is scrolled to.
   $effect(() => {
-    if (!active && !greet) return;
-    const t = setTimeout(wake, greet ? 300 : 0);
-    const back = greet && !active ? setTimeout(sleep, 3200) : null;
-    return () => {
-      clearTimeout(t);
-      clearTimeout(back);
-    };
+    const watch = new IntersectionObserver(([e]) => {
+      if (!e.isIntersecting) return;
+      seen = true;
+      watch.disconnect();
+    }, { rootMargin: '200px' });
+    watch.observe(root);
+    return () => watch.disconnect();
+  });
+
+  $effect(() => {
+    if (!active) return;
+    const t = setTimeout(wake);
+    return () => clearTimeout(t);
   });
 
   $effect(() => {
@@ -69,26 +68,16 @@
   });
 </script>
 
+<!-- One image per icon, a strip of frames (apps/draw/render.js), with no hue of its own: --tint colours it here. -->
 <span
   bind:this={root}
-  class={['bot', size, `tint-${tint}`, `mood-${mood}`, { building: icon !== 'robot', awake, eyes, facing: frame === 3 && awake }]}
-  role={label ? 'img' : undefined}
-  aria-label={label}
-  aria-hidden={label ? undefined : 'true'}
+  class={['bot', size, `mood-${mood}`, { awake }]}
+  style:--tint={`var(--tint-${tint})`}
+  style:--src={seen ? `url(/bots/${icon}.webp)` : null}
+  aria-hidden="true"
 >
   <span class="art">
-    {#each [0, 1, 2, 3] as i (i)}
-      <span class={['layer', 'f', `src-${stem}-${i}`, { show: frame === i }]}>
-        <img src={`/bots/${stem}-${i}.webp`} alt="" />
-        <i class="sheen"></i>
-      </span>
-    {/each}
-    {#if lights}
-      <img class="lit" src={`/bots/${stem}-lit.webp`} alt="" />
-      <img class="panel" src={`/bots/${stem}-panel.webp`} alt="" />
-      <i class={['led', 'red', `src-${stem}-red`]}></i>
-      <i class={['led', 'blue', `src-${stem}-blue`]}></i>
-    {/if}
+    <span class="layer" style:--cell={frame}><i class="sheen"></i></span>
   </span>
 </span>
 
@@ -110,15 +99,6 @@
   .xxl { width: var(--avatar-2xl); height: var(--avatar-2xl); }
   .rail { width: var(--archive-glyph); height: var(--archive-glyph); }
 
-  .tint-0 { --tint: var(--tint-0); }
-  .tint-1 { --tint: var(--tint-1); }
-  .tint-2 { --tint: var(--tint-2); }
-  .tint-3 { --tint: var(--tint-3); }
-  .tint-4 { --tint: var(--tint-4); }
-  .tint-5 { --tint: var(--tint-5); }
-  .tint-6 { --tint: var(--tint-6); }
-  .tint-7 { --tint: var(--tint-7); }
-
   .mood-0 { --tilt: var(--bot-tilt-0); --lift: var(--bot-lift-0); }
   .mood-1 { --tilt: var(--bot-tilt-1); --lift: var(--bot-lift-1); }
   .mood-2 { --tilt: var(--bot-tilt-2); --lift: var(--bot-lift-2); }
@@ -130,94 +110,30 @@
     transition: transform var(--bot-turn) var(--ease-settle);
   }
 
-  .building .art {
-    inset: var(--bot-building-inset);
-  }
-
   .awake .art {
     transform: translateY(var(--lift)) rotate(var(--tilt));
     transition: transform var(--bot-wake) var(--ease-bounce);
   }
 
-  img,
   .layer {
     position: absolute;
     inset: 0;
-    width: 100%;
-    height: 100%;
-  }
-
-  .layer {
+    display: block;
+    --at: calc(var(--cell) * 100% / 3) 0 / 400% 100% no-repeat;
+    background: var(--src) var(--at);
     isolation: isolate;
   }
 
   .sheen {
     position: absolute;
     inset: 0;
-    background: linear-gradient(var(--bot-sheen-angle), color-mix(in srgb, var(--tint) var(--bot-sheen-light), var(--tint-light)) 0%, var(--tint) var(--bot-sheen-mid), color-mix(in srgb, var(--tint) var(--bot-sheen-dark), var(--tint-dark)) 100%);
+    background: linear-gradient(var(--bot-sheen-angle), color-mix(in oklch, var(--tint) var(--bot-sheen-light), var(--tint-light)) 0%, var(--tint) var(--bot-sheen-mid), color-mix(in oklch, var(--tint) var(--bot-sheen-dark), var(--tint-dark)) 100%);
     mix-blend-mode: multiply;
-    -webkit-mask: var(--src) center / 100% 100% no-repeat;
-    mask: var(--src) center / 100% 100% no-repeat;
-  }
-
-  .f {
-    opacity: 0;
-  }
-
-  .f.show {
-    opacity: 1;
-  }
-
-  .lit,
-  .panel,
-  .led {
-    opacity: 0;
-  }
-
-  .eyes .lit,
-  .facing .panel {
-    opacity: 1;
-  }
-
-  .led {
-    position: absolute;
-    inset: 0;
-    -webkit-mask: var(--src) center / 100% 100% no-repeat;
-    mask: var(--src) center / 100% 100% no-repeat;
-  }
-
-  .red {
-    background: var(--led-red);
-  }
-
-  .blue {
-    background: var(--led-blue);
-  }
-
-  .facing .red {
-    animation: red var(--duration-led-red) step-end infinite;
-  }
-
-  .facing .blue {
-    animation: blue var(--duration-led-blue) step-end infinite;
-  }
-
-  @keyframes red {
-    0%, 45% { opacity: 1; }
-    46%, 100% { opacity: 0; }
-  }
-
-  @keyframes blue {
-    0%, 30% { opacity: 0; }
-    31%, 70% { opacity: 1; }
-    71%, 100% { opacity: 0; }
+    -webkit-mask: var(--src) var(--at);
+    mask: var(--src) var(--at);
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .led {
-      animation: none;
-    }
-
     .art,
     .awake .art {
       transition: none;

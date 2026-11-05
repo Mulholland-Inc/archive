@@ -4,6 +4,9 @@
 #define SOLID 32.0
 #define ALT 64.0
 
+uniform float uTurn;
+#define TURN uTurn
+
 vec2 M(float d, float m) { return vec2(d, m); }
 
 float sdSphere(vec3 p, float r) { return length(p) - r; }
@@ -185,3 +188,40 @@ float ladder(vec3 p, float h, float w, float pitch, float r) {
   float rungs = sdBox(vec3(p.x, y, p.z), vec3(w, r * 0.7, r * 0.7));
   return min(rails, rungs);
 }
+
+#ifdef ICON
+// Icons (scenes/bot-*.glsl). Hue is never baked: materials here only say how light or dark a part is.
+#define PALE (WHITE + SOLID)
+#define MID (STEEL + SOLID)
+#define TONE (CORAL + SOLID)
+#define DARK (GRAPHITE + SOLID)
+#define V vec3
+vec2 box(vec3 p, vec3 at, vec3 b, float r, float m) { return M(sdRoundBox(p - at, b, r), m); }
+vec2 ball(vec3 p, vec3 at, float r, float m) { return M(sdSphere(p - at, r), m); }
+vec2 oval(vec3 p, vec3 at, vec3 r, float m) { return M(sdEllipsoid(p - at, r), m); }
+vec2 can(vec3 p, vec3 at, float r, float h, float m) { return M(sdRoundCylinder(p - at, r, h, min(0.03, min(r, h) * 0.5)), m); }
+vec2 stick(vec3 p, vec3 a, vec3 b, float r, float m) { return M(sdCapsule(p, a, b, r), m); }
+vec2 cone(vec3 p, vec3 at, float h, float r1, float r2, float m) { return M(sdCone(p - at, h, r1, r2), m); }
+// Cans lying along x and along z, and a hoop standing up, facing you.
+vec2 canX(vec3 p, vec3 at, float r, float h, float m) { return can(rotZ(p - at, 1.5708), V(0.0), r, h, m); }
+vec2 canZ(vec3 p, vec3 at, float r, float h, float m) { return can(rotX(p - at, 1.5708), V(0.0), r, h, m); }
+vec2 ringZ(vec3 p, vec3 at, float R, float r, float m) { return M(sdTorus((p - at).xzy, R, r), m); }
+// A roof with its ridge running front to back, its eaves at y.
+vec2 pitch(vec3 p, float y, float w, float h, float d, float m) {
+  vec3 q = p - vec3(0.0, y, 0.0);
+  vec2 n = normalize(vec2(h, w));
+  return M(max(max(dot(vec2(abs(q.x), q.y), n) - w * n.x, -q.y), abs(q.z) - d), m);
+}
+// A flat-roofed building standing on the ground, its front at z = d, and its door; a big flat sign on top of it,
+// d being its 2D distance; an awning across the front at height y.
+vec2 block(vec3 p, float w, float h, float d) {
+  return U(box(p, V(0.0, h * 0.5, 0.0), V(w, h * 0.5, d), 0.015, PALE), box(p, V(0.0, h + 0.04, 0.0), V(w + 0.05, 0.04, d + 0.05), 0.015, TONE));
+}
+vec2 door(vec3 p, float x, float w, float h, float z) { return box(p, V(x, h * 0.5, z), V(w, h * 0.5, 0.012), 0.008, DARK); }
+vec2 emblem(vec3 p, float d, float m) { return M(extrude(d + 0.03, p.z, 0.08) - 0.03, m); }
+vec2 awning(vec3 p, float y, float w, float z) {
+  vec3 q = rotX(p - V(0.0, y, z + 0.1), 0.5);
+  vec2 a = box(q, V(0.0), V(w, 0.012, 0.15), 0.008, PALE);
+  return mod(p.x + w + 40.0 * 0.21, 0.42) < 0.21 ? vec2(a.x, TONE) : a;
+}
+#endif

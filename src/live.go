@@ -7,13 +7,13 @@ package main
 // connection listens on its own channel only (livePool), so Postgres hands each session back exactly what it
 // committed: a notification is delivered when its transaction commits, never for one that rolls back, and is
 // dropped with a rolled-back savepoint (a failed archive.run). It arrives on the same connection, inside the COMMIT
-// it follows, in the goroutine that committed. So every write path (archive.create, files, chats, workflows,
+// it follows, in the goroutine that committed. So every write path (archive.create, files, turns, workflows,
 // members, migrations, background work) is live with no code of its own, and a new table is too: Migrate
 // gives every public table the trigger (schemaMoved). The rows of archive.user, archive.token and
 // archive.workspace live in the main database, are shared by every workspace and are written by the Hub
 // outside any workspace's store, so those few writes say so themselves (liveUser, Archive.moved).
 //
-// What it carries. A change names the table that moved ("invoice", or "archive.chat" for Archive's own) and,
+// What it carries. A change names the table that moved ("invoice", or "archive.turn" for Archive's own) and,
 // for Archive's own rows, the row's id. Never row data: a browser re-reads through the API, so row-level
 // security still decides what it sees.
 //

@@ -180,12 +180,12 @@ func (q *Queries) AdvisoryXactLock(ctx context.Context, key int64) error {
 	return err
 }
 
-const appendChat = `-- name: AppendChat :exec
-UPDATE archive.chat SET messages = messages || $1::jsonb, updated_at = now() WHERE id = $2
+const appendTurn = `-- name: AppendTurn :exec
+UPDATE archive.turn SET messages = messages || $1::jsonb, updated_at = now() WHERE id = $2
 `
 
-func (q *Queries) AppendChat(ctx context.Context, messages []byte, iD uuid.UUID) error {
-	_, err := q.db.Exec(ctx, appendChat, messages, iD)
+func (q *Queries) AppendTurn(ctx context.Context, messages []byte, iD uuid.UUID) error {
+	_, err := q.db.Exec(ctx, appendTurn, messages, iD)
 	return err
 }
 
@@ -256,7 +256,7 @@ SELECT jsonb_build_object(
             AND regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)')
             FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid), false),
         'columns', (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid)))
-        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.member'::regclass, 'archive."group"'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass, 'archive.connection'::regclass, 'archive.known_person'::regclass, 'archive.known_org'::regclass, 'archive.mail_message'::regclass,
+        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.agent'::regclass, 'archive.turn'::regclass, 'archive.memory'::regclass, 'archive.member'::regclass, 'archive."group"'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass, 'archive.connection'::regclass, 'archive.known_person'::regclass, 'archive.known_org'::regclass, 'archive.mail_message'::regclass,
             'archive.mail_party'::regclass, 'archive.mail_attachment'::regclass, 'archive.doc_page'::regclass, 'archive.payroll_company'::regclass,
             'archive.payroll_department'::regclass, 'archive.payroll_location'::regclass, 'archive.payroll_schedule'::regclass,
             'archive.payroll_worker'::regclass, 'archive.payroll_job'::regclass, 'archive.payroll_compensation'::regclass,
@@ -319,60 +319,6 @@ func (q *Queries) CatchUpSyncs(ctx context.Context, member uuid.UUID, stale time
 			return nil, err
 		}
 		items = append(items, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const chatByID = `-- name: ChatByID :one
-SELECT id, user_id, title, messages, created_at, updated_at FROM archive.chat WHERE id = $1 AND user_id = $2
-`
-
-func (q *Queries) ChatByID(ctx context.Context, iD uuid.UUID, userID uuid.UUID) (ArchiveChat, error) {
-	row := q.db.QueryRow(ctx, chatByID, iD, userID)
-	var i ArchiveChat
-	err := row.Scan(
-		&i.ID,
-		&i.UserID,
-		&i.Title,
-		&i.Messages,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const chats = `-- name: Chats :many
-SELECT id, title, created_at, updated_at FROM archive.chat WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 200
-`
-
-type ChatsRow struct {
-	ID        uuid.UUID
-	Title     string
-	CreatedAt time.Time
-	UpdatedAt time.Time
-}
-
-func (q *Queries) Chats(ctx context.Context, userID uuid.UUID) ([]ChatsRow, error) {
-	rows, err := q.db.Query(ctx, chats, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ChatsRow
-	for rows.Next() {
-		var i ChatsRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.Title,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -487,6 +433,16 @@ SELECT archive.secret_clear($1, $2, $3)
 
 func (q *Queries) ClearSecrets(ctx context.Context, tbl string, rid uuid.UUID, col *string) error {
 	_, err := q.db.Exec(ctx, clearSecrets, tbl, rid, col)
+	return err
+}
+
+const clearTurns = `-- name: ClearTurns :exec
+WITH gone AS (DELETE FROM archive.memory m WHERE m.agent = $1 AND m.member = $2)
+DELETE FROM archive.turn t WHERE t.agent = $1 AND t.member = $2
+`
+
+func (q *Queries) ClearTurns(ctx context.Context, agent uuid.UUID, member uuid.UUID) error {
+	_, err := q.db.Exec(ctx, clearTurns, agent, member)
 	return err
 }
 
@@ -728,24 +684,6 @@ func (q *Queries) CopyFile(ctx context.Context, name string, access *uuid.UUID, 
 	return i, err
 }
 
-const createChat = `-- name: CreateChat :one
-INSERT INTO archive.chat (user_id, title) VALUES ($1, $2) RETURNING id, user_id, title, messages, created_at, updated_at
-`
-
-func (q *Queries) CreateChat(ctx context.Context, userID uuid.UUID, title string) (ArchiveChat, error) {
-	row := q.db.QueryRow(ctx, createChat, userID, title)
-	var i ArchiveChat
-	err := row.Scan(
-		&i.ID,
-		&i.UserID,
-		&i.Title,
-		&i.Messages,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const createFile = `-- name: CreateFile :one
 INSERT INTO archive.file (hash, name, mime, size, access, parent) VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at
@@ -851,6 +789,31 @@ func (q *Queries) CreateSecret(ctx context.Context, arg CreateSecretParams) erro
 	return err
 }
 
+const createTurn = `-- name: CreateTurn :one
+INSERT INTO archive.turn (agent, member, n, name, messages)
+SELECT $1, $2, coalesce(max(t.n) + 1, 0), $3, $4 FROM archive.turn t WHERE t.agent = $1 AND t.member = $2
+ON CONFLICT (agent, member, n) DO NOTHING RETURNING id
+`
+
+type CreateTurnParams struct {
+	Agent    uuid.UUID
+	Member   uuid.UUID
+	Name     string
+	Messages json.RawMessage
+}
+
+func (q *Queries) CreateTurn(ctx context.Context, arg CreateTurnParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, createTurn,
+		arg.Agent,
+		arg.Member,
+		arg.Name,
+		arg.Messages,
+	)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const createUpload = `-- name: CreateUpload :exec
 INSERT INTO archive.upload (id, role, access, name, length) VALUES ($1, $2, $3, $4, $5)
 `
@@ -906,18 +869,6 @@ func (q *Queries) DDLRevision(ctx context.Context, arg DDLRevisionParams) (uuid.
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
-}
-
-const deleteChat = `-- name: DeleteChat :execrows
-DELETE FROM archive.chat WHERE id = $1 AND user_id = $2
-`
-
-func (q *Queries) DeleteChat(ctx context.Context, iD uuid.UUID, userID uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteChat, iD, userID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
 }
 
 const deleteConnection = `-- name: DeleteConnection :one
@@ -1453,11 +1404,11 @@ func (q *Queries) FilesWithText(ctx context.Context, after uuid.UUID, lim int32)
 }
 
 const forgetUser = `-- name: ForgetUser :exec
-WITH gone AS (DELETE FROM archive.chat c WHERE c.user_id = $1::uuid) DELETE FROM archive.workflow w WHERE w.user_id = $1::uuid
+DELETE FROM archive.workflow w WHERE w.user_id = $1
 `
 
-func (q *Queries) ForgetUser(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, forgetUser, id)
+func (q *Queries) ForgetUser(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, forgetUser, userID)
 	return err
 }
 
@@ -1830,6 +1781,35 @@ func (q *Queries) KnownPeople(ctx context.Context, emails []string) ([]KnownPeop
 	return items, nil
 }
 
+const lastTurns = `-- name: LastTurns :many
+SELECT n, messages FROM (SELECT t.n, t.messages FROM archive.turn t WHERE t.agent = $1 ORDER BY t.n DESC LIMIT $2) r ORDER BY n
+`
+
+type LastTurnsRow struct {
+	N        int64
+	Messages json.RawMessage
+}
+
+func (q *Queries) LastTurns(ctx context.Context, agent uuid.UUID, limit int32) ([]LastTurnsRow, error) {
+	rows, err := q.db.Query(ctx, lastTurns, agent, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LastTurnsRow
+	for rows.Next() {
+		var i LastTurnsRow
+		if err := rows.Scan(&i.N, &i.Messages); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockFile = `-- name: LockFile :one
 SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at FROM archive.file WHERE id = $1 FOR UPDATE
 `
@@ -2106,6 +2086,120 @@ func (q *Queries) Members(ctx context.Context) ([]MembersRow, error) {
 	return items, nil
 }
 
+const memoryBlocks = `-- name: MemoryBlocks :many
+SELECT lo, size, name FROM archive.memory WHERE agent = $1 AND member = $2 AND lo = ANY($3::bigint[]) AND size = ANY($4::bigint[])
+`
+
+type MemoryBlocksParams struct {
+	Agent  uuid.UUID
+	Member uuid.UUID
+	Los    []int64
+	Sizes  []int64
+}
+
+type MemoryBlocksRow struct {
+	Lo   int64
+	Size int64
+	Name string
+}
+
+func (q *Queries) MemoryBlocks(ctx context.Context, arg MemoryBlocksParams) ([]MemoryBlocksRow, error) {
+	rows, err := q.db.Query(ctx, memoryBlocks,
+		arg.Agent,
+		arg.Member,
+		arg.Los,
+		arg.Sizes,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MemoryBlocksRow
+	for rows.Next() {
+		var i MemoryBlocksRow
+		if err := rows.Scan(&i.Lo, &i.Size, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const memoryLevel = `-- name: MemoryLevel :many
+SELECT lo, name FROM archive.memory WHERE agent = $1 AND member = $2 AND size = $3 AND lo >= $4 AND lo < $5 ORDER BY lo
+`
+
+type MemoryLevelParams struct {
+	Agent  uuid.UUID
+	Member uuid.UUID
+	Size   int64
+	Lo     int64
+	Hi     int64
+}
+
+type MemoryLevelRow struct {
+	Lo   int64
+	Name string
+}
+
+func (q *Queries) MemoryLevel(ctx context.Context, arg MemoryLevelParams) ([]MemoryLevelRow, error) {
+	rows, err := q.db.Query(ctx, memoryLevel,
+		arg.Agent,
+		arg.Member,
+		arg.Size,
+		arg.Lo,
+		arg.Hi,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MemoryLevelRow
+	for rows.Next() {
+		var i MemoryLevelRow
+		if err := rows.Scan(&i.Lo, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const memoryLevels = `-- name: MemoryLevels :many
+SELECT size, count(*) AS lines FROM archive.memory WHERE agent = $1 AND member = $2 GROUP BY size
+`
+
+type MemoryLevelsRow struct {
+	Size  int64
+	Lines int64
+}
+
+func (q *Queries) MemoryLevels(ctx context.Context, agent uuid.UUID, member uuid.UUID) ([]MemoryLevelsRow, error) {
+	rows, err := q.db.Query(ctx, memoryLevels, agent, member)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MemoryLevelsRow
+	for rows.Next() {
+		var i MemoryLevelsRow
+		if err := rows.Scan(&i.Size, &i.Lines); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const moveFile = `-- name: MoveFile :one
 UPDATE archive.file SET parent = $1::uuid WHERE id = $2::uuid
 RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at
@@ -2309,18 +2403,6 @@ func (q *Queries) NoMembers(ctx context.Context) (bool, error) {
 	var not_exists bool
 	err := row.Scan(&not_exists)
 	return not_exists, err
-}
-
-const renameChat = `-- name: RenameChat :execrows
-UPDATE archive.chat SET title = $3 WHERE id = $1 AND user_id = $2
-`
-
-func (q *Queries) RenameChat(ctx context.Context, iD uuid.UUID, userID uuid.UUID, title string) (int64, error) {
-	result, err := q.db.Exec(ctx, renameChat, iD, userID, title)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
 }
 
 const renameConnection = `-- name: RenameConnection :exec
@@ -2580,6 +2662,30 @@ func (q *Queries) SaveConnection(ctx context.Context, arg SaveConnectionParams) 
 	return err
 }
 
+const saveMemory = `-- name: SaveMemory :exec
+INSERT INTO archive.memory (agent, member, lo, size, name) VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (agent, member, size, lo) DO NOTHING
+`
+
+type SaveMemoryParams struct {
+	Agent  uuid.UUID
+	Member uuid.UUID
+	Lo     int64
+	Size   int64
+	Name   string
+}
+
+func (q *Queries) SaveMemory(ctx context.Context, arg SaveMemoryParams) error {
+	_, err := q.db.Exec(ctx, saveMemory,
+		arg.Agent,
+		arg.Member,
+		arg.Lo,
+		arg.Size,
+		arg.Name,
+	)
+	return err
+}
+
 const saveSync = `-- name: SaveSync :exec
 UPDATE archive.connection SET cursor = $1, sync_at = $2, synced_at = coalesce($3, synced_at),
     error = $4, revoked = $5, lease_at = NULL
@@ -2643,6 +2749,15 @@ func (q *Queries) Secrets(ctx context.Context, tableName string, ids []uuid.UUID
 		return nil, err
 	}
 	return items, nil
+}
+
+const seedAgent = `-- name: SeedAgent :exec
+INSERT INTO archive.agent (name) SELECT 'Archive' WHERE NOT EXISTS (SELECT FROM archive.agent)
+`
+
+func (q *Queries) SeedAgent(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, seedAgent)
+	return err
 }
 
 const setConnectionAccess = `-- name: SetConnectionAccess :exec
@@ -2910,6 +3025,77 @@ func (q *Queries) TryLock(ctx context.Context, name string) (bool, error) {
 	var pg_try_advisory_xact_lock bool
 	err := row.Scan(&pg_try_advisory_xact_lock)
 	return pg_try_advisory_xact_lock, err
+}
+
+const turnSizes = `-- name: TurnSizes :many
+SELECT n, length(messages::text)::bigint AS bytes FROM archive.turn WHERE agent = $1 AND member = $2 AND n >= $3 ORDER BY n DESC
+`
+
+type TurnSizesRow struct {
+	N     int64
+	Bytes int64
+}
+
+func (q *Queries) TurnSizes(ctx context.Context, agent uuid.UUID, member uuid.UUID, lo int64) ([]TurnSizesRow, error) {
+	rows, err := q.db.Query(ctx, turnSizes, agent, member, lo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TurnSizesRow
+	for rows.Next() {
+		var i TurnSizesRow
+		if err := rows.Scan(&i.N, &i.Bytes); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const turnsBetween = `-- name: TurnsBetween :many
+SELECT n, messages, created_at FROM archive.turn WHERE agent = $1 AND member = $2 AND n >= $3 AND n < $4 ORDER BY n
+`
+
+type TurnsBetweenParams struct {
+	Agent  uuid.UUID
+	Member uuid.UUID
+	Lo     int64
+	Hi     int64
+}
+
+type TurnsBetweenRow struct {
+	N         int64
+	Messages  json.RawMessage
+	CreatedAt time.Time
+}
+
+func (q *Queries) TurnsBetween(ctx context.Context, arg TurnsBetweenParams) ([]TurnsBetweenRow, error) {
+	rows, err := q.db.Query(ctx, turnsBetween,
+		arg.Agent,
+		arg.Member,
+		arg.Lo,
+		arg.Hi,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TurnsBetweenRow
+	for rows.Next() {
+		var i TurnsBetweenRow
+		if err := rows.Scan(&i.N, &i.Messages, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const txNow = `-- name: TxNow :one

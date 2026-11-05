@@ -1,15 +1,5 @@
 CREATE SCHEMA archive;
 
-CREATE TABLE archive.chat (
-    id         uuid PRIMARY KEY DEFAULT uuidv7(),
-    user_id    uuid NOT NULL,
-    title      text NOT NULL DEFAULT '',
-    messages   jsonb NOT NULL DEFAULT '[]',
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX chat_user_idx ON archive.chat (user_id, updated_at);
-
 CREATE TABLE archive.revision (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     hash       text NOT NULL,
@@ -398,6 +388,77 @@ COMMENT ON COLUMN archive.workflow."on" IS 'When it runs: { cron, tz? }, { table
 COMMENT ON COLUMN archive.workflow.member IS 'references member; whose it is, who alone changes, runs or deletes it';
 COMMENT ON COLUMN archive.workflow.access IS 'Group that sees it and its runs too; null for only you. Only you change, run or delete it';
 COMMENT ON COLUMN archive.workflow.next_at IS 'When it runs next: a cron workflow''s next time, or now for a table workflow with rows waiting';
+
+-- An agent is shared by the workspace; what each person said with it, turn and memory, is theirs alone.
+CREATE TABLE archive.agent (
+    id           uuid PRIMARY KEY DEFAULT uuidv7(),
+    name         text NOT NULL DEFAULT '',
+    instructions text NOT NULL DEFAULT '',
+    avatar       jsonb CONSTRAINT agent_avatar CHECK (avatar IS NULL OR jsonb_typeof(avatar->'body'->'path') = 'string' AND jsonb_typeof(avatar->'eyes') = 'object'),
+    tint         integer NOT NULL DEFAULT 10 CONSTRAINT agent_tint CHECK (tint BETWEEN 0 AND 31),
+    access       uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    updated_at   timestamptz NOT NULL DEFAULT now()
+) INHERITS (archive.object);
+COMMENT ON TABLE archive.agent IS 'An agent of this workspace, which everyone in it can talk with. Each person has their own endless conversation with it, in turn and memory
+icon: bot';
+COMMENT ON COLUMN archive.agent.instructions IS 'What it is for and how it works, which it follows in every turn';
+COMMENT ON COLUMN archive.agent.avatar IS 'Its living picture, geometry only: { version: 1, id, name, body: { path }, eyes: { x, y, spacing, scale } }. id is a lowercase slug and name a short name. path is one filled SVG path in a 0 0 100 100 box, kept within 8 to 92: a soft, recognizable silhouette of one object or creature that reads at 28 px. x and y are the center of its two eyes, spacing the distance between them, and scale 1 makes each eye 4 wide and 11 tall; they must sit well inside the body, on its biggest part';
+COMMENT ON COLUMN archive.agent.tint IS 'The colour of its picture, 0 to 31';
+
+CREATE TABLE archive.turn (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    agent      uuid NOT NULL REFERENCES archive.agent ON DELETE CASCADE,
+    member     uuid NOT NULL REFERENCES archive.member ON DELETE CASCADE,
+    n          bigint NOT NULL,
+    messages   jsonb NOT NULL DEFAULT '[]',
+    name       text NOT NULL DEFAULT '',
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (agent, member, n)
+) INHERITS (archive.object);
+COMMENT ON TABLE archive.turn IS 'One question to an agent and everything it did to answer, word for word, numbered from 0. Each person sees only their own. Read only; Archive records them
+icon: message-square';
+COMMENT ON COLUMN archive.turn.agent IS 'references agent; who answered';
+COMMENT ON COLUMN archive.turn.member IS 'references member; who asked';
+COMMENT ON COLUMN archive.turn.n IS 'Its place in this person''s conversation with this agent';
+COMMENT ON COLUMN archive.turn.messages IS 'The question, the answer, and each run call with its result';
+COMMENT ON COLUMN archive.turn.name IS 'The question, shortened';
+
+-- memory is a binary tree over a conversation's turns: size 1 is one turn's line, and turns lo to lo+size-1,
+-- an aligned power of two, are summed up in one. How many lines of size 1 there are is how many turns left
+-- the model's context; every line can be built again from the turns.
+CREATE TABLE archive.memory (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    agent      uuid NOT NULL REFERENCES archive.agent ON DELETE CASCADE,
+    member     uuid NOT NULL REFERENCES archive.member ON DELETE CASCADE,
+    lo         bigint NOT NULL,
+    size       bigint NOT NULL,
+    name       text NOT NULL DEFAULT '',
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (agent, member, size, lo)
+) INHERITS (archive.object);
+COMMENT ON TABLE archive.memory IS 'One line summing up turns lo to lo+size-1 of a person''s conversation with an agent. To look further back, read the two halves of a line, and at size 1 its turn. Each person sees only their own. Read only; Archive writes them
+icon: brain';
+COMMENT ON COLUMN archive.memory.agent IS 'references agent; whose memory it is';
+COMMENT ON COLUMN archive.memory.member IS 'references member; who it was with';
+COMMENT ON COLUMN archive.memory.lo IS 'The first turn it sums up';
+COMMENT ON COLUMN archive.memory.size IS 'How many turns it sums up, a power of two';
+COMMENT ON COLUMN archive.memory.name IS 'The line';
+
+-- agent_last keeps one agent in every workspace: agents are made by talking with an agent.
+CREATE FUNCTION archive.agent_last() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM archive.agent a WHERE a.id <> OLD.id) THEN
+        RAISE EXCEPTION 'this is the last agent; create another before deleting it' USING ERRCODE = '22023', TABLE = 'agent';
+    END IF;
+    RETURN OLD;
+END;
+$$;
+CREATE TRIGGER last BEFORE DELETE ON archive.agent FOR EACH ROW EXECUTE FUNCTION archive.agent_last();
 
 -- A run of a workflow: what started it, what it returned, logged and threw, and how long it took. Archive
 -- writes them, keeping the last 100 of each workflow; everyone else only reads them, as the workflow's owner.
@@ -3332,7 +3393,8 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_item FOR EA
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_entry FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_line FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 
-CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.chat FOR EACH ROW EXECUTE FUNCTION archive.moved();
+CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.agent FOR EACH ROW EXECUTE FUNCTION archive.moved();
+CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.turn FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.workflow FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.workflow_run FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.connection FOR EACH ROW EXECUTE FUNCTION archive.moved();
@@ -3378,6 +3440,8 @@ GRANT SELECT, INSERT, DELETE ON archive.secret TO "{p}_editor";
 GRANT INSERT, UPDATE, DELETE ON archive.member, archive."group" TO "{p}_owner";
 GRANT SELECT, INSERT, UPDATE, DELETE ON archive.workflow TO "{p}_viewer";
 GRANT SELECT ON archive.workflow_run TO "{p}_viewer";
+GRANT SELECT ON archive.agent, archive.turn, archive.memory TO "{p}_viewer";
+GRANT INSERT, UPDATE, DELETE ON archive.agent TO "{p}_editor";
 GRANT SELECT ON archive.connection TO "{p}_viewer";
 GRANT SELECT ON archive.known_person TO "{p}_viewer";
 GRANT SELECT ON archive.known_org TO "{p}_viewer";
@@ -3462,6 +3526,12 @@ ALTER TABLE archive.workflow ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.workflow USING (archive.mine(member)) WITH CHECK (archive.mine(member) AND (access IS NULL OR archive.can(access)));
 -- A workflow with access is seen, with its runs, by that group too; only whose it is changes, runs or deletes it.
 CREATE POLICY shared ON archive.workflow FOR SELECT USING (access IS NOT NULL AND archive.can(access));
+
+ALTER TABLE archive.turn ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.turn FOR SELECT USING (archive.mine(member));
+
+ALTER TABLE archive.memory ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.memory FOR SELECT USING (archive.mine(member));
 
 ALTER TABLE archive.workflow_run ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.workflow_run FOR SELECT USING (EXISTS (SELECT FROM archive.workflow w WHERE w.id = workflow_run.workflow));
@@ -3637,25 +3707,44 @@ UPDATE archive.member m SET name = u.name FROM (SELECT unnest(sqlc.arg(emails)::
 WHERE m.email = u.email AND u.name <> '' AND m.name IS DISTINCT FROM u.name AND (m.name = '' OR m.name = m.email::text);
 
 -- name: ForgetUser :exec
-WITH gone AS (DELETE FROM archive.chat c WHERE c.user_id = sqlc.arg(id)::uuid) DELETE FROM archive.workflow w WHERE w.user_id = sqlc.arg(id)::uuid;
+DELETE FROM archive.workflow w WHERE w.user_id = $1;
 
--- name: Chats :many
-SELECT id, title, created_at, updated_at FROM archive.chat WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 200;
+-- name: SeedAgent :exec
+INSERT INTO archive.agent (name) SELECT 'Archive' WHERE NOT EXISTS (SELECT FROM archive.agent);
 
--- name: ChatByID :one
-SELECT * FROM archive.chat WHERE id = $1 AND user_id = $2;
+-- name: CreateTurn :one
+INSERT INTO archive.turn (agent, member, n, name, messages)
+SELECT sqlc.arg(agent), sqlc.arg(member), coalesce(max(t.n) + 1, 0), sqlc.arg(name), sqlc.arg(messages) FROM archive.turn t WHERE t.agent = sqlc.arg(agent) AND t.member = sqlc.arg(member)
+ON CONFLICT (agent, member, n) DO NOTHING RETURNING id;
 
--- name: CreateChat :one
-INSERT INTO archive.chat (user_id, title) VALUES ($1, $2) RETURNING *;
+-- name: AppendTurn :exec
+UPDATE archive.turn SET messages = messages || sqlc.arg(messages)::jsonb, updated_at = now() WHERE id = sqlc.arg(id);
 
--- name: AppendChat :exec
-UPDATE archive.chat SET messages = messages || sqlc.arg(messages)::jsonb, updated_at = now() WHERE id = sqlc.arg(id);
+-- name: ClearTurns :exec
+WITH gone AS (DELETE FROM archive.memory m WHERE m.agent = sqlc.arg(agent) AND m.member = sqlc.arg(member))
+DELETE FROM archive.turn t WHERE t.agent = sqlc.arg(agent) AND t.member = sqlc.arg(member);
 
--- name: RenameChat :execrows
-UPDATE archive.chat SET title = $3 WHERE id = $1 AND user_id = $2;
+-- name: LastTurns :many
+SELECT * FROM (SELECT t.n, t.messages FROM archive.turn t WHERE t.agent = $1 ORDER BY t.n DESC LIMIT $2) r ORDER BY n;
 
--- name: DeleteChat :execrows
-DELETE FROM archive.chat WHERE id = $1 AND user_id = $2;
+-- name: TurnsBetween :many
+SELECT n, messages, created_at FROM archive.turn WHERE agent = sqlc.arg(agent) AND member = sqlc.arg(member) AND n >= sqlc.arg(lo) AND n < sqlc.arg(hi) ORDER BY n;
+
+-- name: TurnSizes :many
+SELECT n, length(messages::text)::bigint AS bytes FROM archive.turn WHERE agent = sqlc.arg(agent) AND member = sqlc.arg(member) AND n >= sqlc.arg(lo) ORDER BY n DESC;
+
+-- name: MemoryLevels :many
+SELECT size, count(*) AS lines FROM archive.memory WHERE agent = $1 AND member = $2 GROUP BY size;
+
+-- name: MemoryBlocks :many
+SELECT lo, size, name FROM archive.memory WHERE agent = sqlc.arg(agent) AND member = sqlc.arg(member) AND lo = ANY(sqlc.arg(los)::bigint[]) AND size = ANY(sqlc.arg(sizes)::bigint[]);
+
+-- name: MemoryLevel :many
+SELECT lo, name FROM archive.memory WHERE agent = sqlc.arg(agent) AND member = sqlc.arg(member) AND size = sqlc.arg(size) AND lo >= sqlc.arg(lo) AND lo < sqlc.arg(hi) ORDER BY lo;
+
+-- name: SaveMemory :exec
+INSERT INTO archive.memory (agent, member, lo, size, name) VALUES (sqlc.arg(agent), sqlc.arg(member), sqlc.arg(lo), sqlc.arg(size), sqlc.arg(name))
+ON CONFLICT (agent, member, size, lo) DO NOTHING;
 
 -- name: InputErrors :many
 SELECT i::bigint AS i, e.message::text AS message
@@ -3904,7 +3993,7 @@ SELECT jsonb_build_object(
             AND regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)')
             FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid), false),
         'columns', (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid)))
-        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.member'::regclass, 'archive."group"'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass, 'archive.connection'::regclass, 'archive.known_person'::regclass, 'archive.known_org'::regclass, 'archive.mail_message'::regclass,
+        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.agent'::regclass, 'archive.turn'::regclass, 'archive.memory'::regclass, 'archive.member'::regclass, 'archive."group"'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass, 'archive.connection'::regclass, 'archive.known_person'::regclass, 'archive.known_org'::regclass, 'archive.mail_message'::regclass,
             'archive.mail_party'::regclass, 'archive.mail_attachment'::regclass, 'archive.doc_page'::regclass, 'archive.payroll_company'::regclass,
             'archive.payroll_department'::regclass, 'archive.payroll_location'::regclass, 'archive.payroll_schedule'::regclass,
             'archive.payroll_worker'::regclass, 'archive.payroll_job'::regclass, 'archive.payroll_compensation'::regclass,

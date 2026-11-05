@@ -61,7 +61,7 @@
   import ConnectorCard from '../components/ConnectorCard.svelte';
   import ConnectorIcon from '../components/ConnectorIcon.svelte';
   import TriggerLabel from '../components/TriggerLabel.svelte';
-  import { TYPES } from '../lib/looks.js';
+  import { TYPES, TINTS } from '../lib/looks.js';
   import { connectors as catalog } from '../lib/mock/data.js';
   import { nameBrands } from '../lib/brands.svelte.js';
   import Heading from '../components/Heading.svelte';
@@ -75,7 +75,6 @@
   import ThemePicker from '../components/ThemePicker.svelte';
   import Disclosure from '../components/Disclosure.svelte';
   import SettingsRow from '../components/SettingsRow.svelte';
-  import Greeting from '../components/Greeting.svelte';
   import SpecimenFrame from '../components/SpecimenFrame.svelte';
   import SpecimenTarget from '../components/SpecimenTarget.svelte';
   import Checklist from '../components/Checklist.svelte';
@@ -219,18 +218,18 @@
         <SpecimenBlock title="Archive icons, hover to wake">
           {#each Object.entries(TYPES) as [type, t] (type)}
             {#each t.icons as icon, i (icon)}
-              <ArchiveIcon {icon} tint={i % 8} seed={type} size="xl" label={`${t.label}: ${icon}`} />
+              <ArchiveIcon {icon} tint={i % TINTS} seed={type} size="xl" />
             {/each}
           {/each}
         </SpecimenBlock>
         <SpecimenBlock title="Archive icon sizes">
-          <ArchiveIcon icon="cottage" tint={0} size="xs" /><ArchiveIcon icon="cottage" tint={0} size="sm" /><ArchiveIcon icon="cottage" tint={0} /><ArchiveIcon icon="cottage" tint={0} size="lg" /><ArchiveIcon icon="cottage" tint={0} size="xl" /><ArchiveIcon icon="robot" tint={3} size="xxl" />
+          <ArchiveIcon icon="cottage" tint={0} size="xs" /><ArchiveIcon icon="cottage" tint={0} size="sm" /><ArchiveIcon icon="cottage" tint={0} /><ArchiveIcon icon="cottage" tint={0} size="lg" /><ArchiveIcon icon="cottage" tint={0} size="xl" /><ArchiveIcon icon="cottage" tint={3} size="xxl" />
         </SpecimenBlock>
         <SpecimenBlock title="Look picker" column>
           <LookPicker bind:look />
         </SpecimenBlock>
         <SpecimenBlock title="Working indicator">
-          <ArchiveIcon icon="cottage" tint={0} size="sm" active label="Working" />
+          <ArchiveIcon icon="cottage" tint={0} size="sm" active />
         </SpecimenBlock>
       </SpecimenSection>
 
@@ -254,7 +253,7 @@
           <Button size="lg">Large</Button>
         </SpecimenBlock>
         <SpecimenBlock title="With icons and states">
-          <Button variant="primary" icon={Plus}>New chat</Button>
+          <Button variant="primary" icon={Plus}>New agent</Button>
           <Button icon={Download}>Download</Button>
           <Button iconEnd={ArrowRight}>Continue</Button>
           <Button variant="danger" icon={Trash2}>Delete</Button>
@@ -413,7 +412,6 @@
         <SpecimenBlock title="Dialog and command palette">
           <Button onclick={() => (dialog = true)}>Open dialog</Button>
           <Button variant="danger" onclick={() => (confirm = true)}>Confirm dialog</Button>
-          <Button icon={Search} onclick={() => (app.palette = true)}>Command palette</Button>
         </SpecimenBlock>
       </SpecimenSection>
 
@@ -530,9 +528,6 @@
       </SpecimenSection>
 
       <SpecimenSection id="s-chat" title="Chat">
-        <SpecimenBlock title="Greeting" column>
-          <Greeting name={me.first} />
-        </SpecimenBlock>
         <SpecimenBlock title="Composer: home, chat, streaming" column>
           <Composer bind:value={composer} size="lg" />
           <Composer placeholder="Reply to Archive" />
@@ -576,9 +571,8 @@
               {#snippet rail()}<ArchiveRail archives={app.archives} current={app.archives[0].id} onselect={() => {}} oncreate={() => {}} />{/snippet}
               {#snippet header()}<ArchiveHeader archive={app.archives[0]} />{/snippet}
               <SidebarSection>
-                <SidebarItem icon={Plus} label="New chat" accent href="/specimen" />
-                <SidebarItem icon={Search} label="Search" />
-                <SidebarItem icon={MessagesSquare} label="Chats" href="/specimen" active />
+                <SidebarItem icon={Plus} label="New agent" accent href="/specimen" />
+                <SidebarItem icon={MessagesSquare} label="Agents" href="/specimen" active />
               </SidebarSection>
             </Sidebar>
           </SpecimenFrame>
@@ -589,18 +583,15 @@
               {#snippet header()}<ArchiveHeader archive={app.archives[0]} />{/snippet}
               {#snippet footer()}<AccountCard user={me} />{/snippet}
               <SidebarSection>
-                <SidebarItem icon={Plus} label="New chat" accent href="/specimen" />
-                <SidebarItem icon={Search} label="Search" shortcut="⌘ K" />
+                <SidebarItem icon={Plus} label="New agent" accent href="/specimen" />
               </SidebarSection>
               <SidebarSection>
-                <SidebarItem icon={MessagesSquare} label="Chats" href="/specimen" active />
+                <SidebarItem icon={MessagesSquare} label="Agents" href="/specimen" active />
                 <SidebarItem icon={Library} label="Library" href="/specimen" />
                 <SidebarItem icon={Lock} label="Access" href="/specimen" badge="3" />
               </SidebarSection>
               <SidebarSection title="Today">
-                <SidebarItem label="Rename scanned photos by EXIF date" href="/specimen">
-                  {#snippet actions()}<IconButton icon={Ellipsis} label="More" size="xs" tooltip={false} />{/snippet}
-                </SidebarItem>
+                <SidebarItem label="Rename scanned photos by EXIF date" href="/specimen" />
               </SidebarSection>
             </Sidebar>
           </SpecimenFrame>
@@ -608,9 +599,8 @@
             <Sidebar collapsed>
               {#snippet header()}<ArchiveHeader archive={app.archives[1]} />{/snippet}
               <SidebarSection>
-                <SidebarItem icon={Plus} label="New chat" accent href="/specimen" />
-                <SidebarItem icon={Search} label="Search" />
-                <SidebarItem icon={MessagesSquare} label="Chats" href="/specimen" active />
+                <SidebarItem icon={Plus} label="New agent" accent href="/specimen" />
+                <SidebarItem icon={MessagesSquare} label="Agents" href="/specimen" active />
                 <SidebarItem icon={Library} label="Library" href="/specimen" />
               </SidebarSection>
             </Sidebar>
@@ -621,7 +611,7 @@
   </Split>
 </Page>
 
-<Dialog bind:open={dialog} title="Rename chat">
+<Dialog bind:open={dialog} title="Rename agent">
   <Field label="Title">{#snippet children(id)}<Input {id} value="Transcribe Grandma Adaeze's 1974 letters" />{/snippet}</Field>
   {#snippet footer({ close })}
     <Button variant="ghost" onclick={close}>Cancel</Button>
@@ -629,7 +619,7 @@
   {/snippet}
 </Dialog>
 
-<Dialog bind:open={confirm} title="Delete this chat?" size="sm">
+<Dialog bind:open={confirm} title="Delete this agent?" size="sm">
   <Text as="p" tone="secondary">This can’t be undone.</Text>
   {#snippet footer({ close })}
     <Button variant="ghost" onclick={close}>Cancel</Button>

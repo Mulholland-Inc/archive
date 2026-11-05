@@ -4,15 +4,11 @@
 // Still mocked, and what would replace it:
 // - Sharing one file, folder, table or workflow with people (Share dialog, Access > Shares and guests).
 //   Needs a sharing API; today access is by role and access group only.
-// - Pinned chats: kept on this device. Needs a pinned flag on /api/chats.
 // - Profile (name you are called, work, preferences) and notification settings: kept in this tab. Needs
 //   PATCH on the signed-in user.
 // - "Your API key" across every archive: tokens belong to one workspace, so the archive key is the real one.
 // - Archive server settings (region, retention, default role, invites): needs a workspace settings API.
 // - Onboarding checklist: kept on this device per archive.
-// - Model picker, research and web search toggles, suggestions on the home screen: the API has one
-//   assistant and takes only text.
-// - Composer screenshots and recordings: shown as attachments but not sent.
 // - Empty folders in the library: a folder is a file's access group, so a new one exists once a file is in it.
 // - Workflow pause, stop and "needs input": runs are synchronous in the API.
 // - The component specimen (/specimen) shows the design system with made-up files, chats and members (data.js).

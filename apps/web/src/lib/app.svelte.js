@@ -1,10 +1,10 @@
-// The app's state. An archive is one Archive workspace: its chats, files, tables, members and workflows come from
+// The app's state. An archive is one Archive workspace: its agents, files, tables, members and workflows come from
 // the API (see live.js for the mapping). What the API cannot do yet comes from mock/ and stays in this tab or
 // in localStorage; mock/index.js lists those pieces.
 
-import { API, api, blobURL, forgetBlobs, upload, setWorkspace, workspace, local, setLocal, saveDraft, signOut as apiSignOut, Unauthorized, passkeys, passkeyAsked } from './api.js';
+import { API, api, forgetBlobs, upload, setWorkspace, workspace, local, setLocal, saveDraft, signOut as apiSignOut, Unauthorized, passkeys, passkeyAsked } from './api.js';
 import { resource, listen, onChange, onRefused } from './stream.svelte.js';
-import { toFile, toChat, toMember, toWorkflow, toRun, relative, show } from './live.js';
+import { toFile, toMember, toWorkflow, toRun, relative, show } from './live.js';
 import { toTables, countsQuery } from './schema.js';
 import { initials, mockKey, mockProfile, mockSettings } from './mock/index.js';
 import { nameBrands } from './brands.svelte.js';
@@ -26,9 +26,7 @@ export const app = $state({
   collapsed: typeof localStorage !== 'undefined' && localStorage.getItem('archive.sidebar') === 'collapsed',
   drawer: false,
   details: false,
-  palette: false,
   help: false,
-  model: 'pro',
   pending: null,
   muted: false,
   settings: { open: false, section: null, sub: null },
@@ -55,7 +53,7 @@ function shell(w) {
     tone: (w.id.charCodeAt(w.id.length - 1) % 6) + 1,
     look,
     settings: mockSettings(),
-    chats: [],
+    agents: [],
     conversations: {},
     library: [],
     sources: [],
@@ -122,6 +120,7 @@ export async function boot() {
   listen(app.archive);
   account.seen();
   loadArchive(ws());
+  peekArchives();
   resumeLink();
 }
 
@@ -204,25 +203,29 @@ async function files(id, where) {
 // What an archive shows, each read again when what it is read from moves (stream.svelte.js). Each reads into
 // the archive that is open when it starts.
 
-// The chats, newest first. A chat being written here and not saved yet stays at the top, and what this tab
-// knows of a chat (it is streaming, its messages are loaded) stays with it.
-export const chats = resource({
-  tables: ['archive.chat'],
+// The workspace's agents, each with your latest message with it and when it came (at). seen is the latest you have
+// seen, kept on this device; one you have not seen yet shows a dot. What this tab knows of one (it is streaming, its
+// messages are loaded) stays with it.
+const agentList = (workspace) =>
+  runCode(
+    `const agents = await archive.list("agent", { limit: 1000 });
+const last = await archive.query(\`SELECT DISTINCT ON (agent) agent, updated_at AS at, left(jsonb_path_query_array(messages, '$[*].content[*] ? (@.type == "text").text') ->> -1, 200) AS text FROM archive.turn ORDER BY agent, n DESC\`);
+return agents.map((a) => { const t = last.find((t) => t.agent === a.id); return { ...a, last: t?.text ?? '', at: t?.at ?? '' }; });`,
+    workspace
+  );
+
+export const agents = resource({
+  tables: ['archive.agent', 'archive.turn'],
   load: async () => {
     const v = ws();
-    const list = (await api('/api/chats', { workspace: v.id })) ?? [];
-    const pins = new Set(local(`archive.pins:${v.id}`, []));
-    const had = new Map(v.chats.map((c) => [c.id, c]));
-    const next = list.map((c) => {
-      const old = had.get(c.id);
-      const fresh = toChat(c, pins.has(c.id));
-      return old ? Object.assign(old, fresh, { updated: old.streaming ? old.updated : fresh.updated }) : fresh;
-    });
-    const ids = new Set(next.map((c) => c.id));
-    v.chats = [...v.chats.filter((c) => c.draft || (c.streaming && !ids.has(c.id))), ...next];
-    for (const id of Object.keys(v.conversations)) {
-      if (!ids.has(id) && !v.chats.some((c) => c.id === id)) delete v.conversations[id];
-    }
+    const list = (await agentList(v.id)) ?? [];
+    const had = new Map(v.agents.map((a) => [a.id, a]));
+    const ids = new Set(list.map((a) => a.id));
+    const seen = local(`archive.seen:${v.id}`, {});
+    for (const a of list) a.seen = seen[a.id] ??= a.at;
+    setLocal(`archive.seen:${v.id}`, seen);
+    v.agents = list.map((a) => (had.has(a.id) ? Object.assign(had.get(a.id), a) : a));
+    for (const id of Object.keys(v.conversations)) if (!ids.has(id)) delete v.conversations[id];
   }
 });
 
@@ -285,7 +288,7 @@ export const groups = resource({
 // Where a group is used, for its page: each table with how many rows have it as their access. It moves with any
 // row of any table that can have one.
 export const usage = resource({
-  tables: (c) => !c.table.startsWith('archive.') || !['archive.chat', 'archive.workflow_run', 'archive.revision', 'archive.token', 'archive.user', 'archive.workspace'].includes(c.table),
+  tables: (c) => !c.table.startsWith('archive.') || !['archive.agent', 'archive.turn', 'archive.workflow_run', 'archive.revision', 'archive.token', 'archive.user', 'archive.workspace'].includes(c.table),
   load: async (id) => {
     const v = ws();
     v.usage = { ...v.usage, [id]: await groupUses(id) };
@@ -576,9 +579,9 @@ export async function rowRelations(id, row) {
   return { from: from.filter((l) => l.rows.length) };
 }
 
-export async function loadArchive(v = ws()) {
+async function loadArchive(v = ws()) {
   v.loading = true;
-  await Promise.allSettled([chats.refresh(), library.refresh(), members.refresh(), groups.refresh(), workflows.refresh(), schema.refresh()]);
+  await Promise.allSettled([agents.refresh(), library.refresh(), members.refresh(), groups.refresh(), workflows.refresh(), schema.refresh()]);
   v.loading = false;
 }
 
@@ -693,9 +696,7 @@ export function groupById(id, w = ws()) {
   return w?.groups.find((g) => g.id === id);
 }
 
-export const groupName = (id) => (id ? (groupById(id)?.name ?? 'Unknown group') : 'Everyone');
-
-export async function setGroups(member, next) {
+async function setGroups(member, next) {
   const before = member.groups;
   member.groups = [...new Set(next)];
   try {
@@ -875,7 +876,7 @@ export async function rotateKey(scope) {
 
 // Layout
 
-export function isNarrow() {
+function isNarrow() {
   return typeof matchMedia !== 'undefined' && matchMedia('(max-width: 56rem)').matches;
 }
 
@@ -912,7 +913,7 @@ export async function switchArchive(id) {
   app.archive = id;
   app.onboarding = local(`archive.onboarding:${id}`, []);
   const head = route.parts[0];
-  if (['chat', 'workflows', 'database'].includes(head) && route.parts[1]) go(`/${head === 'chat' ? '' : head}`);
+  if (['agent', 'workflows', 'database'].includes(head) && route.parts[1]) go(`/${head === 'agent' ? '' : head}`);
   // Listening to the archive reads who you are in it (me) and what is on screen.
   listen(id);
   loadArchive(ws());
@@ -962,61 +963,81 @@ export async function deleteArchive(id) {
   go('/');
 }
 
-// Chats. Sending and streaming live in chat.svelte.js.
+// Agents. Sending and streaming live in agent.svelte.js.
 
-export function newChat(title, { attachments = [], text } = {}) {
-  const id = nid('new-');
-  const w = ws();
-  w.chats.unshift({ id, title: title || 'New chat', updated: 'Just now', draft: true });
-  w.conversations[id] = [];
-  if (text !== undefined) app.pending = { id, text, attachments };
-  return id;
+export function agentById(id) {
+  return ws()?.agents.find((a) => a.id === id);
 }
 
-export function chatById(id) {
-  return ws()?.chats.find((c) => c.id === id);
+export function rememberAgent(id) {
+  setLocal(`archive.agent:${app.archive}`, id);
 }
 
-export async function renameChat(id, title) {
-  const chat = chatById(id);
-  if (!chat || !title) return;
-  const before = chat.title;
-  chat.title = title;
-  if (chat.draft) return;
+// The agent you talked with last here, or the first.
+export function lastAgent() {
+  return agentById(local(`archive.agent:${app.archive}`, null)) ?? ws()?.agents[0];
+}
+
+// Sends text to the agent you talked with last, on its page, and says where that is.
+export function askAgent(text, attachments = []) {
+  const agent = lastAgent();
+  if (!agent) return '/';
+  app.pending = { id: agent.id, text, attachments };
+  return `/agent/${agent.id}`;
+}
+
+export const unread = (agent) => agent.at !== agent.seen && !agent.streaming;
+
+// Whether an archive has a message you have not seen: from its agents once it has been open, or from a look at it.
+export const archiveUnread = (w) => (w.agents.length ? w.agents.some(unread) : Boolean(w.unread));
+
+// Looks at the archives that are not open, so the rail can mark them. An agent never seen here has no mark.
+async function peekArchives() {
+  await Promise.allSettled(app.archives.filter((w) => w.id !== app.archive).map(async (w) => {
+    const seen = local(`archive.seen:${w.id}`, {});
+    w.unread = ((await agentList(w.id)) ?? []).some((a) => seen[a.id] !== undefined && a.at !== seen[a.id]);
+  }));
+}
+
+export function markSeen(agent) {
+  agent.seen = agent.at;
+  setLocal(`archive.seen:${app.archive}`, { ...local(`archive.seen:${app.archive}`, {}), [agent.id]: agent.at });
+}
+
+export async function createAgent(row) {
   try {
-    chat.title = (await call(`/api/chats/${id}`, { method: 'PATCH', body: { title } })).title || title;
+    const agent = await call('/api/agent', { method: 'POST', body: row });
+    ws().agents.push({ ...agent, last: '', at: '', seen: '' });
+    go(`/agent/${agent.id}`);
   } catch (e) {
-    chat.title = before;
-    complain(e, 'Couldn’t rename the chat');
+    complain(e, 'Couldn’t create the agent');
   }
 }
 
-// Pins are MOCK: chats have no pinned flag in the API, so pins stay on this device.
-export function togglePin(id) {
-  const chat = chatById(id);
-  if (!chat) return;
-  chat.pinned = !chat.pinned;
-  setLocal(`archive.pins:${app.archive}`, ws().chats.filter((c) => c.pinned && !c.draft).map((c) => c.id));
+export async function updateAgent(id, patch) {
+  const agent = agentById(id);
+  if (!agent) return;
+  const before = { ...agent };
+  Object.assign(agent, patch);
+  try {
+    await call(`/api/agent/${id}`, { method: 'PATCH', body: patch });
+  } catch (e) {
+    Object.assign(agent, before);
+    complain(e, 'Couldn’t change the agent');
+  }
 }
 
-export function pinnedFirst(chats) {
-  return [...chats.filter((c) => c.pinned), ...chats.filter((c) => !c.pinned)];
-}
-
-export async function removeChat(id) {
+export async function removeAgent(id) {
   const w = ws();
-  const chat = chatById(id);
-  if (!chat) return;
-  const open = route.path === `/chat/${id}`;
-  if (!chat.draft) {
-    try {
-      await call(`/api/chats/${id}`, { method: 'DELETE' });
-    } catch (e) {
-      return complain(e, 'Couldn’t delete the chat');
-    }
+  try {
+    await call(`/api/agent/${id}`, { method: 'DELETE' });
+  } catch (e) {
+    return complain(e, 'Couldn’t delete the agent');
   }
   saveDraft(id, '');
-  removeAt(w.chats, (c) => c.id === id, () => open && go('/'));
+  w.agents = w.agents.filter((a) => a.id !== id);
+  delete w.conversations[id];
+  go('/');
 }
 
 // Library
@@ -1221,7 +1242,7 @@ export function runWorkflow(id) {
 export function createWorkflow({ name, trigger, steps }) {
   completeStep('workflow');
   const text = `Write and save a workflow called “${name}”.\nTrigger: ${trigger.label}.\nSteps:\n${steps.map((s) => `- ${s}`).join('\n')}`;
-  return `/chat/${newChat(name || 'New workflow', { text })}`;
+  return askAgent(text);
 }
 
 // renameView renames view id to name, as an owner changes the schema: a dry run, then the run it confirms. A

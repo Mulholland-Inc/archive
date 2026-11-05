@@ -30,7 +30,7 @@
  *
  * Data
  * - Each type is a table or a view in the public schema, or one of Archive's own: member, workflow and
- *   workflow_run (see Workflows). A row is a plain object (see Tables, after this SDK).
+ *   workflow_run (see Workflows), agent, turn and memory (see Agents). A row is a plain object (see Tables, after this SDK).
  *   Views are read only: list, get and search them; create, update and delete go to their tables.
  *   Archive sets id, created_at and updated_at. Every row also has a name: the title the app shows it by,
  *   and every link to it, in every table, view and list. Set it on every create, like { name: "Acme" }; a row
@@ -87,7 +87,7 @@
  *
  * - Dropping a table or a column deletes its data, and changing a column's type rewrites it, so those are in
  *   drops. Confirm a migration with drops only when the people you work for asked for exactly those drops or
- *   agreed to them after you showed them: in chat, its confirm throws forbidden until a later turn, so dry-run
+ *   agreed to them after you showed them: talking with an agent, its confirm throws forbidden until a later turn, so dry-run
  *   it, tell them what it deletes, and stop. Drop nothing they did not ask for, like a column you copied from.
  * - A migration you confirm is part of this run: if the run throws or times out afterwards, it is undone with
  *   everything else. Later calls in the run see the change at once, so you can move data between steps:
@@ -141,6 +141,17 @@
  *   by. Change one with CREATE OR REPLACE VIEW, delete it with DROP VIEW. Postgres saves SELECT * as the
  *   columns the table has then, so a view does not get columns added later, and a column a view selects cannot
  *   be dropped until you change or drop the view.
+ *
+ * Agents
+ * - An agent is a row of the agent table, which everyone in the workspace sees and editors write:
+ *   archive.create("agent", { name, instructions, avatar, tint }). It follows its instructions in every turn, and
+ *   answers each person as them, under their role.
+ * - Each person's conversation with an agent is their own and never ends. turn holds every question and answer word
+ *   for word, by n. memory sums them up: a row covers turns lo to lo+size-1, and its two halves, of size/2, say more.
+ *   Both are read only, and each person reads only their own. To look back, search memory first, then read only the
+ *   part of a turn you need, since a whole turn can be very long:
+ *   archive.query("SELECT lo, size, name FROM archive.memory WHERE agent = $1 AND name ~* $2 ORDER BY size, lo DESC LIMIT 20", id, word)
+ *   archive.query("SELECT n, substring(messages::text, '(?i).{0,250}' || $2 || '.{0,250}') AS said FROM archive.turn WHERE agent = $1 AND messages::text ~* $2 ORDER BY n DESC LIMIT 5", id, word)
  *
  * Workflows
  * - A workflow is a saved script that Archive runs by itself: on a schedule, when rows of a table are added or
@@ -246,7 +257,7 @@
  *   ANTHROPIC_API_KEY; a model whose key is not set throws. Each call
  *   has 2 minutes, and a run calls models for at most 10 minutes in all, time that does not count toward its {timeout}.
  *   The run's transaction stays open while a model answers, so read with models first and write after when you can.
- * - archive.do(goal, { model, instructions, files, maxRuns, tables }) hands goal to an agent like the one in chat, which writes
+ * - archive.do(goal, { model, instructions, files, maxRuns, tables }) hands goal to a one-off agent, with no conversation or memory, which writes
  *   and runs scripts against this same SDK until it is done, and returns { answer, runs, tokens_in, tokens_out }. Its
  *   runs join this run's transaction: what it writes is saved with your run and undone when your run fails. files are
  *   given as for archive.model; maxRuns caps its scripts (25 by default, 50 at most). Say what to do and how to answer.

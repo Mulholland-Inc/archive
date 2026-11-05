@@ -97,7 +97,7 @@ Usage:
   archive token list
   archive token revoke <id>
 
-  archive workspace add <name> <owner email> [-type t] [-icon i] [-color 0-7]
+  archive workspace add <name> <owner email> [-type t] [-icon i] [-color 0-31]
                                      create a workspace, with its own database, for someone else;
                                      -type is personal (the default), family or business, and
                                      -icon and -color are how the web app shows it
@@ -143,7 +143,7 @@ Environment:
                      (apps/web/worker.js), which tells every open web app what moved; unset, serve holds
                      the web app's /live sockets itself and other archive commands on this machine tell
                      it; ARCHIVE_LIVE_URL sends the announces to another address, like wrangler dev's
-  ANTHROPIC_API_KEY  key for the agent behind POST /api/chat, which can only call the run tool, in
+  ANTHROPIC_API_KEY  key for the agents behind POST /api/turn, which can only call the run tool, in
                      every workspace; ANTHROPIC_BASE_URL points it at another
                      Messages API endpoint
 
@@ -226,8 +226,8 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	addr := fs.String("addr", ":8080", "listen address (serve)")
 	confirm := fs.String("confirm", "", "run the migration whose dry run printed this confirm (schema migrate)")
 	typ := fs.String("type", "", "only this table, or file (search); personal, family or business (workspace add)")
-	icon := fs.String("icon", "", "one of the web app's icons, like chest or cottage (workspace add)")
-	color := fs.String("color", "", "one of the web app's tints, 0 to 7 (workspace add)")
+	icon := fs.String("icon", "", "one of the web app's icons, like cottage, bakery or office (workspace add)")
+	color := fs.String("color", "", "one of the web app's tints, 0 to 31 (workspace add)")
 	limit := fs.Int("limit", 100, "page size (list)")
 	after := fs.String("after", "", "list objects after this id (list)")
 	as := fs.String("as", "", "act as this user")
@@ -295,7 +295,7 @@ func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 		if *color != "" {
 			c, err := strconv.ParseInt(*color, 10, 16)
 			if err != nil {
-				return fmt.Errorf("-color %q: want a tint from 0 to 7", *color)
+				return fmt.Errorf("-color %q: want a tint from 0 to 31", *color)
 			}
 			look.Color = new(int16(c))
 		}
@@ -865,36 +865,21 @@ func httpHandler(a *Archive) http.Handler {
 		}
 		return ok(a.Run(r.Context(), body.Code))
 	})
-	mux.HandleFunc("POST /api/chat", a.chat)
-	handle("GET /api/chats", func(r *http.Request) (int, any, error) {
-		return ok(a.Chats(r.Context()))
-	})
-	handle("GET /api/chats/{id}", func(r *http.Request) (int, any, error) {
+	mux.HandleFunc("POST /api/turn", a.turn)
+	handle("GET /api/agent/{id}/turns", func(r *http.Request) (int, any, error) {
 		id, err := httpID(r)
 		if err != nil {
 			return 0, nil, err
 		}
-		return ok(a.Chat(r.Context(), id))
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		return ok(a.Turns(r.Context(), id, limit))
 	})
-	handle("PATCH /api/chats/{id}", func(r *http.Request) (int, any, error) {
+	handle("DELETE /api/agent/{id}/turns", func(r *http.Request) (int, any, error) {
 		id, err := httpID(r)
 		if err != nil {
 			return 0, nil, err
 		}
-		var body struct {
-			Title string `json:"title"`
-		}
-		if err := httpDecode(r, &body); err != nil {
-			return 0, nil, err
-		}
-		return ok(a.RenameChat(r.Context(), id, body.Title))
-	})
-	handle("DELETE /api/chats/{id}", func(r *http.Request) (int, any, error) {
-		id, err := httpID(r)
-		if err != nil {
-			return 0, nil, err
-		}
-		return http.StatusNoContent, nil, a.DeleteChat(r.Context(), id)
+		return http.StatusNoContent, nil, a.ClearTurns(r.Context(), id)
 	})
 	mux.HandleFunc("GET /api/run/docs", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")

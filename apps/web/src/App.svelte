@@ -1,13 +1,9 @@
 <script>
-  import { Plus, Sun, Moon, Monitor, Settings, Shapes, MessagesSquare, Library, Database, Lock, PanelLeft, FileText, Palette } from '@lucide/svelte';
   import Shell from './components/Shell.svelte';
   import AppSidebar from './components/AppSidebar.svelte';
   import View from './components/View.svelte';
-  import CommandPalette from './components/CommandPalette.svelte';
   import ContextMenu from './components/ContextMenu.svelte';
-  import Home from './pages/Home.svelte';
-  import Chat from './pages/Chat.svelte';
-  import Chats from './pages/Chats.svelte';
+  import Agent from './pages/Agent.svelte';
   import LibraryPage from './pages/Library.svelte';
   import DatabasePage from './pages/Database.svelte';
   import Workflows from './pages/Workflows.svelte';
@@ -20,24 +16,19 @@
   import AppSettings from './components/AppSettings.svelte';
   import Specimen from './pages/Specimen.svelte';
   import Onboarding from './pages/Onboarding.svelte';
-  import { route, go, replace } from './lib/router.svelte.js';
-  import { app, toggleSidebar, closeDrawer } from './lib/app.svelte.js';
-  import { setTheme, toggleTheme } from './lib/theme.svelte.js';
-  import { ws } from './lib/app.svelte.js';
+  import { route, replace } from './lib/router.svelte.js';
+  import { app, ws, toggleSidebar, closeDrawer, openSettings, boot, account, lastAgent } from './lib/app.svelte.js';
   import PromptHost from './components/PromptHost.svelte';
   import HelpDialog from './components/HelpDialog.svelte';
   import ShareDialog from './components/ShareDialog.svelte';
   import SignIn from './components/SignIn.svelte';
   import PasskeyPrompt from './components/PasskeyPrompt.svelte';
   import Loading from './components/Loading.svelte';
-  import { Workflow as WorkflowIcon, Plug, User, Building2, ListChecks, Server, KeyRound, Blocks } from '@lucide/svelte';
-  import { switchArchive, openSettings, boot, account, chats, library, schema, members, workflows } from './lib/app.svelte.js';
 
   boot();
 
-  // Who you are and your archives are always on screen; the palette lists everything else while it is open.
+  // Who you are and your archives are always on screen.
   account.use(() => app.status === 'ready');
-  for (const r of [chats, library, schema, members, workflows]) r.use(() => app.status === 'ready' && app.palette);
 
   let last = '/';
 
@@ -53,35 +44,6 @@
 
   const key = $derived(route.parts[0] === 'access' && route.parts[2] ? route.parts.slice(0, 3).join('/') : ['library', 'access'].includes(route.parts[0]) ? route.parts[0] : route.parts.slice(0, 2).join('/') || 'home');
 
-  const commands = $derived(!ws() ? [] : [
-    { id: 'new', group: 'Actions', label: 'New chat', icon: Plus, shortcut: '⌘ ⇧ O', run: () => go('/') },
-    { id: 'theme', group: 'Actions', label: 'Toggle light and dark', icon: Palette, run: toggleTheme },
-    { id: 'light', group: 'Actions', label: 'Use light theme', icon: Sun, run: () => setTheme('light'), searchOnly: true },
-    { id: 'dark', group: 'Actions', label: 'Use dark theme', icon: Moon, run: () => setTheme('dark'), searchOnly: true },
-    { id: 'system', group: 'Actions', label: 'Use system theme', icon: Monitor, run: () => setTheme('system'), searchOnly: true },
-    { id: 'sidebar', group: 'Actions', label: 'Toggle sidebar', icon: PanelLeft, shortcut: '⌘ .', run: toggleSidebar },
-    { id: 'p-chats', group: 'Go to', label: 'Chats', icon: MessagesSquare, run: () => go('/chats') },
-    { id: 'p-library', group: 'Go to', label: 'Library', icon: Library, run: () => go('/library') },
-    { id: 'p-database', group: 'Go to', label: 'Database', icon: Database, run: () => go('/database') },
-    { id: 'p-workflows', group: 'Go to', label: 'Workflows', icon: WorkflowIcon, run: () => go('/workflows') },
-    { id: 'p-connectors', group: 'Go to', label: 'Connectors', icon: Plug, run: () => openSettings('connectors') },
-    { id: 'p-access', group: 'Go to', label: 'Access', icon: Lock, run: () => go('/access') },
-    { id: 'p-onboarding', group: 'Go to', label: 'Onboarding', icon: ListChecks, run: () => go('/onboarding') },
-    { id: 'p-archive', group: 'Go to', label: 'Archive settings', icon: Building2, run: () => openSettings('general') },
-    { id: 'p-server', group: 'Go to', label: 'Server', icon: Server, run: () => openSettings('server'), searchOnly: true },
-    { id: 'p-integrations', group: 'Go to', label: 'Integrations', icon: Blocks, run: () => openSettings('integrations'), searchOnly: true },
-    { id: 'p-keys', group: 'Go to', label: 'Archive API key', icon: KeyRound, run: () => openSettings('archive-api'), searchOnly: true },
-    { id: 'p-my-key', group: 'Go to', label: 'Your API key', icon: KeyRound, run: () => openSettings('api'), searchOnly: true },
-    { id: 'p-settings', group: 'Go to', label: 'Settings', icon: Settings, shortcut: '⌘ ,', run: () => openSettings() },
-    { id: 'p-specimen', group: 'Go to', label: 'Component specimen', icon: Shapes, run: () => go('/specimen') },
-    ...ws().chats.map((c, i) => ({ id: `c-${c.id}`, group: 'Chats', label: c.title, icon: MessagesSquare, meta: c.updated, run: () => go(`/chat/${c.id}`), searchOnly: i >= 6 })),
-    ...ws().library.map((f) => ({ id: `f-${f.id}`, group: 'Files', label: f.name, icon: FileText, meta: f.folder, run: () => go(`/library/${f.id}`), searchOnly: true })),
-    ...ws().schema.map((t) => ({ id: `t-${t.id}`, group: 'Tables', label: t.name, icon: Database, meta: t.rows === null ? '' : `${t.rows.toLocaleString('en-US')} rows`, run: () => go(`/database/${t.id}`), searchOnly: true })),
-    ...ws().members.map((m) => ({ id: `u-${m.id}`, group: 'People', label: m.name, icon: User, meta: m.email, run: () => go(`/access/${m.id}`), searchOnly: true })),
-    ...ws().workflows.map((w) => ({ id: `w-${w.id}`, group: 'Workflows', label: w.name, icon: WorkflowIcon, meta: w.trigger.label, run: () => go(`/workflows/${w.id}`), searchOnly: true })),
-    ...app.archives.filter((w) => w.id !== app.archive).map((w) => ({ id: `ws-${w.id}`, group: 'Archives', label: `Switch to ${w.name}`, icon: Building2, run: () => switchArchive(w.id), searchOnly: true }))
-  ]);
-
   function onkeydown(event) {
     if (event.key === 'Escape' && app.drawer && !document.querySelector('dialog[open], :popover-open')) {
       closeDrawer();
@@ -90,18 +52,12 @@
     const mod = event.metaKey || event.ctrlKey;
     if (!mod) return;
     const k = event.key.toLowerCase();
-    if (k === 'k') {
-      event.preventDefault();
-      app.palette = !app.palette;
-    } else if (k === '.') {
+    if (k === '.') {
       event.preventDefault();
       toggleSidebar();
     } else if (k === ',') {
       event.preventDefault();
       if (!app.settings.open) openSettings();
-    } else if (k === 'o' && event.shiftKey) {
-      event.preventDefault();
-      go('/');
     }
   }
 </script>
@@ -117,10 +73,8 @@
   {#snippet sidebar()}<AppSidebar />{/snippet}
   {#key key}
     <View>
-      {#if route.parts[0] === 'chat'}
-        <Chat id={route.parts[1]} />
-      {:else if route.parts[0] === 'chats'}
-        <Chats />
+      {#if route.parts[0] === 'agent'}
+        <Agent id={route.parts[1]} />
       {:else if route.parts[0] === 'library'}
         <LibraryPage />
       {:else if route.parts[0] === 'view' && route.parts[2]}
@@ -144,13 +98,12 @@
       {:else if route.parts[0] === 'specimen'}
         <Specimen />
       {:else}
-        <Home />
+        {#key lastAgent()?.id}<Agent id={lastAgent()?.id} />{/key}
       {/if}
     </View>
   {/key}
 </Shell>
 
-<CommandPalette bind:open={app.palette} {commands} />
 <AppSettings />
 <PromptHost />
 <HelpDialog bind:open={app.help} />

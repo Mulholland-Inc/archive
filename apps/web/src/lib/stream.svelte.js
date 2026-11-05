@@ -3,7 +3,7 @@
 //
 // The socket is api.<domain>/live?workspace=<id> (the app Worker, which hands it to the workspace's Durable
 // Object), or in development `archive serve`'s own /live through vite's proxy; both send the same frames:
-// {event:"ready"} once, then {event:"change", changes:[{table, id}]}, a table like "invoice" or "archive.chat"
+// {event:"ready"} once, then {event:"change", changes:[{table, id}]}, a table like "invoice" or "archive.turn"
 // and, for Archive's own rows, the row's id. They name what moved, never the rows: what is read again comes
 // through the API, so row-level security decides what this person sees.
 //
@@ -11,11 +11,11 @@
 //
 //   export const files = resource({ tables: ['archive.file'], load: () => ... });   // in lib/
 //   files.use();                                                                     // in a component
-//   conversation.use(() => chatId);                                                  // with a parameter
+//   conversation.use(() => agentId);                                                 // with a parameter
 //
 // While a component that uses it is mounted, a change to one of its tables reads it again. A change to data
 // nobody has on screen only marks it stale, and it is read when a screen next uses it. A hidden tab marks
-// what it shows stale too, and reads it when it is shown again. A change naming a row (archive.chat <id>)
+// what it shows stale too, and reads it when it is shown again. A change naming a row (archive.file <id>)
 // reads only the resource whose parameter is that id.
 //
 // Reconnecting: the socket comes back with a backoff (1s doubling to 30s, jittered), and the backoff is only
@@ -48,7 +48,7 @@ const hidden = () => typeof document !== 'undefined' && document.hidden;
 
 // A resource: data the app reads from the API, and the tables whose changes make it stale. tables is a list
 // of tables, or a function of a change saying whether it touches this data. For data read by a parameter
-// (a chat by its id), param says which parameter a change touches, or undefined for every one: with byId,
+// (an agent by its id), param says which parameter a change touches, or undefined for every one: with byId,
 // a change's row id.
 export function resource({ tables, load, byId = false, param: which = byId ? (c) => c.id || undefined : () => undefined }) {
   const touches = typeof tables === 'function' ? tables : (c) => tables.includes(c.table);

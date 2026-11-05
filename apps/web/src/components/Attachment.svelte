@@ -2,11 +2,11 @@
   import { FileText, Image, AudioLines, FileSpreadsheet, X } from '@lucide/svelte';
   import Icon from './Icon.svelte';
 
-  let { name, kind = 'document', size, onremove, tone = 1, href } = $props();
+  let { name, kind = 'document', size, onremove, tone = 1 } = $props();
   const icons = { image: Image, recording: AudioLines, spreadsheet: FileSpreadsheet, pdf: FileText, document: FileText };
 </script>
 
-<svelte:element this={href ? 'a' : 'span'} {href} class={['att', kind, { link: href }]}>
+<span class="att">
   <span class={['thumb', `t${tone}`]}><Icon icon={icons[kind] ?? FileText} size="md" /></span>
   <span class="meta">
     <span class="name">{name}</span>
@@ -15,7 +15,7 @@
   {#if onremove}
     <button type="button" class="remove" aria-label={`Remove ${name}`} onclick={onremove}><Icon icon={X} size="xs" /></button>
   {/if}
-</svelte:element>
+</span>
 
 <style>
   .att {
@@ -29,14 +29,6 @@
     border-radius: var(--radius-lg);
     background: var(--color-surface);
     box-shadow: inset 0 0 0 var(--border-width) var(--color-border);
-  }
-
-  .link {
-    transition: box-shadow var(--duration-fast) var(--ease-out);
-  }
-
-  .link:hover {
-    box-shadow: inset 0 0 0 var(--border-width) var(--color-border-strong);
   }
 
   .thumb {
