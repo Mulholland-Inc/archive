@@ -38,7 +38,7 @@
 <li><strong>Sessions and tokens</strong>: the session that keeps you signed in, and the API and agent tokens you make. We keep only a hash of each.</li>
 </ul>
 <h3 id="collect-content">Your content</h3>
-<p>Everything you and your team put in a workspace: records, files, views, workflows and their runs, chats with the in-app agent and secret fields. It is your content, and we use it only to run the service for you.</p>
+<p>Everything you and your team put in a workspace: records, files, views, workflows and their runs, chats with the in-app agent and secret fields. It is your content, and we use it only to run the service for you, and, where your organization's agreement with Mulholland allows it, to make de-identified data, as <a href="#models">Models we make</a> describes.</p>
 <h3 id="collect-connected">Accounts you connect</h3>
 <p>You can connect accounts you hold at other services so that Archive can read them for you and your workspace. Each person connects their own mail, calendar and files, and their own personal accounts, like their health, money and music, and only an owner connects an organization's accounts, like its accounting or its bank, for the workspace. Archive only reads to keep its copy current. It changes something at a service only when you, or a tool or agent acting as you, asks it to, like sending an email from your Gmail. It asks each service for no more access than that needs, and uses only what you allow on that service's own consent screen.</p>
 <ul>
@@ -88,7 +88,7 @@
 <li>never use it for advertising, never sell it, and never use it to develop, improve or train generalized AI or machine-learning models;</li>
 <li>never let a person read it unless you ask us to and agree, it is needed for security, such as investigating abuse, it is needed to comply with the law, or it is aggregated and anonymized for operations.</li>
 </ul>
-<p>We hold data from Microsoft, Intuit, Oracle and every other service you connect to the same standard.</p>
+<p>We hold data from Microsoft, Intuit, Oracle and every other service you connect to the same standard, with one difference: where a service's terms allow it and your organization's agreement with Mulholland does too, we may de-identify that data as <a href="#models">Models we make</a> describes. We never do that with Google user data.</p>
 
 <h3 id="ynab">YNAB data</h3>
 <p>When you connect YNAB, this is how Archive handles what it gets from the YNAB API.</p>
@@ -136,14 +136,25 @@
 <li>To store, search and serve your content to the people and tokens your workspace allows.</li>
 <li>To run the in-app agent and your workflows when you use them.</li>
 <li>To keep the service secure, fix problems and answer you when you write to us.</li>
+<li>Where a customer's agreement with Mulholland allows it, to make de-identified data and train our own models with it, as <a href="#models">Models we make</a> describes.</li>
 </ul>
 <p>We do not sell personal information or customer content, and we do not use either for advertising. We share them only with the providers below, as needed to run the service, or when the law requires it.</p>
 
 <h2 id="agent">The in-app agent</h2>
 <p>Archive calls an AI model only when someone in a workspace chats with its agent. The service then sends the conversation to Anthropic's API: the messages, the name and email address of the person chatting, their role and groups, a description of the workspace's tables, and the results of the code the agent runs, which can include any records and file contents that person can see, among them what their connected accounts synced.</p>
-<p>Anthropic processes it to answer and does not use it to train its models. Neither do we: we do not train AI models on your content or on what your connected accounts hold.</p>
+<p>Anthropic processes it to answer and does not use it to train its models. We train our own models only on de-identified data, and only as <a href="#models">Models we make</a> describes.</p>
 <p>The service always uses Mulholland's Anthropic account. Chats are kept in the workspace until they are deleted.</p>
 <p>When you connect your own AI app over MCP or the API, or write a workflow that calls another service, what it reads goes to that provider under your own account with them.</p>
+
+<h2 id="models">Models we make</h2>
+<p>Mulholland makes decision models and fine-tuned language models. Where a workspace belongs to a customer whose <a href="https://mulholland.ai/legal">Master Services Agreement</a> with Mulholland is on version 1.4 or later, we may de-identify information in that workspace and use the de-identified data, alone or combined with de-identified data from other customers and sources, for any lawful purpose, including to develop and train our own models. We may sell, license or otherwise make those models available to others, on their own or as part of our products.</p>
+<ul>
+<li><strong>Which data</strong>: only information we first receive or generate on or after the date the customer first agrees to one of those versions, never earlier information or new information made by reprocessing it. Customers on earlier versions, and workspaces with no such agreement, are not affected.</li>
+<li><strong>Never used</strong>: data from Google APIs, from YNAB and from Plaid, Apple Health data from the iPhone app, and data from any other connected service whose terms do not allow it. We also never de-identify information about children under 18, or tax return information.</li>
+<li><strong>How</strong>: we de-identify inside the customer's own workspace before combining the result with anything else, and first remove credentials, access tokens, payment-card data, government ID numbers, financial-account numbers and biometric identifiers. Protected health information is de-identified only under HIPAA's expert determination method, or, for structured fields only, its safe harbor method.</li>
+<li><strong>Limits</strong>: we keep and use de-identified data only in de-identified form, and will not try to re-identify it. We do not sell or license the de-identified data itself as a dataset. We never use identifiable customer data to train a model used for another customer, and never let Anthropic or any other outside model provider train its models on customer data or on de-identified data made from it.</li>
+</ul>
+<p>The customer's agreement governs, and Mulholland's <a href="https://mulholland.ai/policies/customer-data">Customer Data Privacy Notice</a> summarizes it.</p>
 
 <h2 id="processors">Who else handles it</h2>
 <p>These providers process information for us to run the service and this site.</p>
