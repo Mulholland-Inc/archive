@@ -63,6 +63,18 @@ function fileKind(mime = '', name = '') {
   return 'document';
 }
 
+// fileArt is the drawing of a file or folder; a kind doesn't tell these extensions apart.
+const arts = [
+  [/\.(pptx?|pptm|potx|key|odp)$/i, 'presentation'],
+  [/\.(mp4|m4v|mov|webm|mkv|avi)$/i, 'video'],
+  [/\.(txt|md|json|log)$/i, 'text'],
+  [/\.(docx?|odt|rtf|pages)$/i, 'document']
+];
+export function fileArt(name = '', kind) {
+  const art = kind === 'folder' ? kind : (arts.find(([re]) => re.test(name))?.[1] ?? (['image', 'recording', 'spreadsheet', 'pdf'].includes(kind) ? kind : 'file'));
+  return `/types/file-${art}.webp`;
+}
+
 function clock(seconds) {
   const s = Math.round(seconds);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -86,7 +98,7 @@ export function toFile(f, owner = '') {
     sub: f.kind === 'folder' ? relative(f.edited_at ?? f.created_at) : f.status === 'skipped' ? 'Not copied' : f.sha256 === '' ? 'Copying' : undefined,
     mime: f.mime,
     bytes: f.size,
-    size: size(f.size),
+    size: f.kind === 'folder' ? '' : size(f.size),
     duration: duration ? clock(duration) : '',
     modified: relative(f.edited_at ?? f.created_at),
     created: f.edited_at ?? f.created_at,

@@ -81,6 +81,8 @@
  *
  * Files
  * - Folders: archive.create("file", { kind: "folder", name, parent, access }). Move with archive.update("file", id, { parent }), null for the top.
+ *   What is in a folder is seen as the folder is: it takes the folder's access when it comes in, and archive.update("file", folder, { access }), a group
+ *   or null for everyone, changes it for everything under the folder. A file in a folder refuses an access of its own; move it out to give it one.
  *   Bytes held, each once: archive.query("SELECT archive.stored()").
  *
  * Browsing

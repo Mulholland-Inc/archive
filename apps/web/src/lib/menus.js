@@ -1,4 +1,4 @@
-import { Pencil, Trash2, Plus, ExternalLink, MessageSquarePlus, Share, Download, Eye, Play, RotateCcw, Copy, Users, Ban, Settings, ArrowRightLeft } from '@lucide/svelte';
+import { Pencil, Trash2, Plus, ExternalLink, MessageSquarePlus, Share, Download, Eye, Play, RotateCcw, Copy, Users, Ban, Settings, ArrowRightLeft, FolderInput } from '@lucide/svelte';
 import { SEPARATOR } from './contextmenu.svelte.js';
 import { app, deleteGroup, groupUses, updateGroup, toggleGroup, createGroup, isArchiveOwner, ws, removeAgent, askAgent, renameFile, removeFile, downloadFile, openShare, runWorkflow, removeWorkflow, removeMember, stopSharing, removeGuest, switchArchive, openSettings, deleteArchive } from './app.svelte.js';
 import { prompt, confirmDialog, notify } from './dialogs.svelte.js';
@@ -36,15 +36,17 @@ export function askAboutFile(file) {
 
 export async function renameFilePrompt(file) {
   const name = await prompt({ title: 'Rename file', label: 'Name', value: file.name });
-  if (name) renameFile(file.id, name);
+  renameFile(file, name);
 }
 
-export function fileItems(file, { onopen } = {}) {
+export function fileItems(file, { onopen, onmove, onaccess } = {}) {
   return [
     onopen && { label: 'Open', icon: Eye, onselect: () => onopen(file) },
     { label: 'Ask about this', icon: MessageSquarePlus, onselect: () => askAboutFile(file) },
     SEPARATOR,
     !file.connection && { label: 'Rename', icon: Pencil, onselect: () => renameFilePrompt(file) },
+    !file.connection && onmove && { label: 'Move', icon: FolderInput, onselect: () => onmove(file) },
+    !file.connection && file.kind === 'folder' && onaccess && { label: 'Who sees it', icon: Users, onselect: () => onaccess(file) },
     { label: 'Share', icon: Share, onselect: () => openShare('file', file.id) },
     file.held && file.kind !== 'folder' && { label: 'Download', icon: Download, onselect: () => downloadFile(file) },
     !file.connection && SEPARATOR,

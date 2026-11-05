@@ -1370,6 +1370,9 @@ func (s *pgStore) migrate(ctx context.Context) error {
 		if err := generated.New(tx).SeedAgent(ctx); err != nil {
 			return err
 		}
+		if _, err := tx.Exec(ctx, fileInheritOnce); err != nil {
+			return fmt.Errorf("files in folders: %w", err)
+		}
 		return generated.New(tx).InsertRevision(ctx, s.hash())
 	})
 	if err != nil || !applied {
@@ -1377,6 +1380,28 @@ func (s *pgStore) migrate(ctx context.Context) error {
 	}
 	return syncCheckSQL(ctx, conn)
 }
+
+// fileInheritOnce gives what is in a folder the folder's access, top down, for rows from before file_check did; two
+// that then differ by nothing but access keep both, one renamed. Delete it once production has run it.
+const fileInheritOnce = `DO $$
+DECLARE
+    r record;
+BEGIN
+    FOR r IN
+        WITH RECURSIVE tree AS (
+            SELECT id, 0 AS depth FROM archive.file WHERE parent IS NULL AND connection IS NULL AND kind = 'folder'
+            UNION ALL
+            SELECT f.id, t.depth + 1 FROM archive.file f JOIN tree t ON f.parent = t.id WHERE f.connection IS NULL
+        )
+        SELECT id FROM tree WHERE depth > 0 ORDER BY depth
+    LOOP
+        BEGIN
+            UPDATE archive.file c SET access = p.access FROM archive.file p WHERE c.id = r.id AND p.id = c.parent AND c.access IS DISTINCT FROM p.access;
+        EXCEPTION WHEN unique_violation THEN
+            UPDATE archive.file c SET name = 'Copy ' || left(c.id::text, 4) || ' ' || c.name, access = p.access FROM archive.file p WHERE c.id = r.id AND p.id = c.parent;
+        END;
+    END LOOP;
+END $$`
 
 // scratch is the snapshot of Archive's schema that sql makes in a new database, which it drops after.
 func (s *pgStore) scratch(ctx context.Context, sql string) (pgSchema, error) {

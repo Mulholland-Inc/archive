@@ -589,7 +589,8 @@ COMMENT ON COLUMN archive.known_org.domain IS 'Its web domain, like example.com'
 -- folder never has any, and a synced file none until they are copied. An uploaded file is an editor's to change;
 -- a synced file is its connection's, as what else connections sync is, and seen as its connection is, and only Go
 -- writes it (connection.go). parent is the folder it is in. Removing a folder removes what a sync has in it, and an
--- uploaded one must be empty first (file_empty).
+-- uploaded one must be empty first (file_empty). What is in an uploaded folder is seen as the folder is: file_check
+-- takes its access from the folder, and file_inherit passes a folder's new access down.
 --
 -- version is the provider's token of its content: a new one makes the file pending (file_check), and until the
 -- copy is done the row keeps the bytes it has. copied is the version its bytes are of, so a restart reads none
@@ -650,7 +651,7 @@ COMMENT ON COLUMN archive.file.metadata IS 'What Archive read of it, like an ima
 COMMENT ON COLUMN archive.file.text IS 'Its words: a PDF, Word, Excel, PowerPoint, HTML or text file''s up to 64 MB, cut at 1 MB';
 COMMENT ON COLUMN archive.file.status IS 'pending while Archive reads or copies it, done once it has, skipped when it will not copy it and error when it failed; error says why';
 COMMENT ON COLUMN archive.file.error IS 'Why it is skipped or failed';
-COMMENT ON COLUMN archive.file.access IS 'Group that sees it: null for everyone, or for what a connection synced everyone who sees the connection';
+COMMENT ON COLUMN archive.file.access IS 'Group that sees it: null for everyone, or for what a connection synced everyone who sees the connection; in a folder, the folder''s';
 COMMENT ON COLUMN archive.file.kind IS 'file or folder';
 COMMENT ON COLUMN archive.file.parent IS 'references file; the folder it is in, null at the top';
 COMMENT ON COLUMN archive.file.parent_source IS 'The id there of the folder it is in';
@@ -669,10 +670,12 @@ COMMENT ON COLUMN archive.file.edited_at IS 'When it last changed there';
 COMMENT ON COLUMN archive.file.updated_at IS 'When Archive last saw it change';
 
 -- file_check keeps what makes a file a file: a folder has no bytes to wait for; a new version of a synced file makes
--- it pending; and an uploaded file's folder is an uploaded folder it can see, never itself or under itself.
+-- it pending; and an uploaded file's folder is an uploaded folder it can see, never itself or under itself, whose
+-- access it has. Coming into a folder with none named takes the folder's, and asking for another is refused.
 CREATE FUNCTION archive.file_check() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
     up uuid := NEW.parent;
+    folder archive.file;
 BEGIN
     IF NEW.kind = 'folder' THEN
         NEW.status := 'done';
@@ -686,7 +689,8 @@ BEGIN
         NEW.mime := OLD.mime;
     END IF;
     IF NEW.connection IS NULL AND NEW.parent IS NOT NULL THEN
-        IF NOT EXISTS (SELECT FROM archive.file f WHERE f.id = NEW.parent AND f.kind = 'folder' AND f.connection IS NULL) THEN
+        SELECT * INTO folder FROM archive.file f WHERE f.id = NEW.parent AND f.kind = 'folder' AND f.connection IS NULL;
+        IF NOT FOUND THEN
             RAISE EXCEPTION 'file %''s folder % is no folder of yours here', NEW.name, NEW.parent USING ERRCODE = '23503';
         END IF;
         WHILE up IS NOT NULL LOOP
@@ -695,6 +699,12 @@ BEGIN
             END IF;
             SELECT f.parent INTO up FROM archive.file f WHERE f.id = up;
         END LOOP;
+        IF NEW.access IS DISTINCT FROM folder.access THEN
+            IF (TG_OP = 'INSERT' AND NEW.access IS NOT NULL) OR (TG_OP = 'UPDATE' AND NEW.parent IS NOT DISTINCT FROM OLD.parent AND NEW.access IS DISTINCT FROM OLD.access) THEN
+                RAISE EXCEPTION '% is in the folder %, which says who sees it: change the folder''s access, or move it out first', NEW.name, folder.name USING ERRCODE = '23514', TABLE = 'file';
+            END IF;
+            NEW.access := folder.access;
+        END IF;
     END IF;
     RETURN NEW;
 END $$;
@@ -708,6 +718,12 @@ BEGIN
 END $$;
 
 CREATE TRIGGER file_check BEFORE INSERT OR UPDATE ON archive.file FOR EACH ROW EXECUTE FUNCTION archive.file_check();
+CREATE FUNCTION archive.file_inherit() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    UPDATE archive.file SET access = NEW.access WHERE parent = NEW.id AND connection IS NULL AND access IS DISTINCT FROM NEW.access;
+    RETURN NULL;
+END $$;
+CREATE TRIGGER file_inherit AFTER UPDATE ON archive.file FOR EACH ROW WHEN (NEW.kind = 'folder' AND NEW.connection IS NULL AND NEW.access IS DISTINCT FROM OLD.access) EXECUTE FUNCTION archive.file_inherit();
 CREATE TRIGGER file_empty BEFORE DELETE ON archive.file FOR EACH ROW WHEN (OLD.kind = 'folder' AND OLD.connection IS NULL) EXECUTE FUNCTION archive.file_empty();
 
 -- push tells this connection's process once the transaction commits that a job of its has work (file.go, filePushed),

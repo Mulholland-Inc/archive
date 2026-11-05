@@ -890,6 +890,13 @@ func (r *runner) sdk() {
 			return nil, fmt.Errorf("archive.update: patch must be an object: %w", httpErrBadRequest)
 		}
 		if table == "file" {
+			if access, ok := patch["access"]; ok && len(patch) == 1 {
+				g, ok := access.(string)
+				if !ok && access != nil {
+					return nil, &ValidationError{Type: "file", Errors: []FieldError{{Path: "access", Message: "want a group's id or name, or null for everyone"}}}
+				}
+				return a.SetFileAccess(ctx, id, g)
+			}
 			parent, err := runFileParent(patch)
 			if err != nil {
 				return nil, err
@@ -1026,11 +1033,11 @@ func (r *runner) sdk() {
 	r.vm.Set("archive", o)
 }
 
-// runFileParent is the folder an archive.update of a file moves it to, the one thing it changes, nil for the top.
+// runFileParent is the folder an archive.update of a file moves it to, nil for the top.
 func runFileParent(patch map[string]any) (*uuid.UUID, error) {
 	v, ok := patch["parent"]
 	if !ok || len(patch) != 1 {
-		return nil, &ValidationError{Type: "file", Errors: []FieldError{{Path: "parent", Message: "of a file, only { parent } changes, a folder's id or null; archive.edit changes its content"}}}
+		return nil, &ValidationError{Type: "file", Errors: []FieldError{{Path: "parent", Message: "of a file, only { parent }, a folder's id or null, or { access }, a group or null, changes; archive.edit changes its content"}}}
 	}
 	if v == nil {
 		return nil, nil
