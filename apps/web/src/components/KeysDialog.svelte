@@ -4,19 +4,41 @@
   import Input from './Input.svelte';
   import Button from './Button.svelte';
   import Text from './Text.svelte';
-  import { connect, connectKeys } from '../lib/app.svelte.js';
+  import SearchField from './SearchField.svelte';
+  import { connect, connectKeys, connectPlaces } from '../lib/app.svelte.js';
 
-  let { open = $bindable(false), connector } = $props();
+  let { open = $bindable(false), connector, workspace } = $props();
 
   let values = $state({});
   let busy = $state(false);
   const asks = $derived(connector.ask ? [connector.ask] : (connector.keys ?? []));
   const filled = $derived(asks.every((k) => (values[k.name] ?? '').trim() !== ''));
+  const places = $derived(connector.ask?.places ? connector.ask : null);
+
+  let query = $state('');
+  let found = $state([]);
+  let picked = $state(null);
+
+  $effect(() => {
+    if (!places || !open) return;
+    const q = query;
+    const t = setTimeout(async () => {
+      const out = await connectPlaces(connector.id, q);
+      if (q === query) found = out;
+    }, q ? 120 : 0);
+    return () => clearTimeout(t);
+  });
+
+  function pick(place) {
+    picked = place;
+    busy = true;
+    connect(connector.id, { [places.name]: place.value }, workspace);
+  }
 
   async function send(close) {
     if (connector.ask) {
       busy = true;
-      connect(connector.id, { [connector.ask.name]: values[connector.ask.name].trim() });
+      connect(connector.id, { [connector.ask.name]: values[connector.ask.name].trim() }, workspace);
       return;
     }
     busy = true;
@@ -30,16 +52,87 @@
 </script>
 
 <Dialog bind:open title={`Connect ${connector.name}`}>
-  {#each asks as k (k.name)}
-    <Field label={k.label}>
+  {#if places}
+    <Field label={places.label}>
       {#snippet children(id)}
-        <Input {id} type={k.secret ? 'password' : 'text'} autocomplete="off" spellcheck="false" bind:value={values[k.name]} />
-        {#if k.help}<Text size="sm" tone="secondary">{k.help}</Text>{/if}
+        <SearchField {id} bind:value={query} placeholder="Search by name" label={places.label} autocomplete="off" spellcheck="false" />
+        {#if places.help}<Text size="sm" tone="secondary">{places.help}</Text>{/if}
       {/snippet}
     </Field>
-  {/each}
+    <ul class="places" aria-label="Health systems">
+      {#each found as place (place.value + place.name)}
+        <li>
+          <button type="button" class="place" disabled={busy} onclick={() => pick(place)}>
+            <span class="name">{place.name}</span>
+            {#if picked === place}<Text size="sm" tone="secondary">Opening…</Text>{:else if place.state}<Text size="sm" tone="secondary">{place.state}</Text>{/if}
+          </button>
+        </li>
+      {:else}
+        {#if query.trim()}<li><Text size="sm" tone="secondary">No health system by that name. Try the name on your patient portal’s sign-in page.</Text></li>{/if}
+      {/each}
+    </ul>
+  {:else}
+    {#each asks as k (k.name)}
+      <Field label={k.label}>
+        {#snippet children(id)}
+          <Input {id} type={k.secret ? 'password' : 'text'} autocomplete="off" spellcheck="false" bind:value={values[k.name]} />
+          {#if k.help}<Text size="sm" tone="secondary">{k.help}</Text>{/if}
+        {/snippet}
+      </Field>
+    {/each}
+  {/if}
   {#snippet footer({ close })}
     <Button variant="ghost" onclick={close}>Cancel</Button>
-    <Button variant="primary" disabled={!filled || busy} onclick={() => send(close)}>{busy ? 'Connecting…' : connector.ask ? `Continue to ${connector.by ?? connector.name}` : 'Connect'}</Button>
+    {#if !places}
+      <Button variant="primary" disabled={!filled || busy} onclick={() => send(close)}>{busy ? 'Connecting…' : connector.ask ? `Continue to ${connector.by ?? connector.name}` : 'Connect'}</Button>
+    {/if}
   {/snippet}
 </Dialog>
+
+<style>
+  .places {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-0-5);
+    max-height: 18rem;
+    margin: var(--space-2) 0 0;
+    padding: 0;
+    overflow-y: auto;
+    list-style: none;
+  }
+
+  .place {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    width: 100%;
+    min-height: var(--control-lg);
+    padding: var(--space-1-5) var(--space-2);
+    border: 0;
+    border-radius: var(--radius-md);
+    background: none;
+    color: var(--color-text);
+    font: inherit;
+    font-size: var(--text-md);
+    text-align: left;
+    cursor: pointer;
+    transition: background-color var(--duration-fast) var(--ease-out);
+  }
+
+  .place:hover:not(:disabled),
+  .place:focus-visible {
+    background: var(--color-fill-subtle);
+  }
+
+  .place:disabled {
+    cursor: default;
+  }
+
+  .name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+</style>

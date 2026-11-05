@@ -1,24 +1,36 @@
 package connect
 
 import (
+	"bytes"
+	"cmp"
+	"compress/gzip"
+	"context"
+	_ "embed"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"slices"
+	"strings"
+	"sync"
 	"time"
+	"unicode"
 
 	"golang.org/x/oauth2"
+	"golang.org/x/sync/errgroup"
 )
 
 // MyChart and Oracle Health's patient portal sign a patient in with SMART on FHIR at their own health system, which names their record (patient) as it grants the token.
+// The patient finds their health system by name in places.json.gz, which holds where each one signs in.
 func init() {
 	Register(&Connector{
 		ID: "mychart", Name: "MyChart", Env: "ARCHIVE_EPIC", Host: "https://fhir.epic.com",
 		Info: Info{By: "Epic", Description: "Read your medical record from a health system's MyChart: conditions, medications, allergies, labs, vitals, immunizations, visits and documents",
 			Category: CatHealth, Icon: IconHeart, Scopes: fhirInfo},
-		Ask: &Key{Name: "epic", Label: "Health system's FHIR address",
-			Help: "Your health system's Epic FHIR R4 address, like https://fhir.example.org/FHIR/api/FHIR/R4, from open.epic.com/MyApps/Endpoints",
-			Find: `^(https://[a-z0-9.-]+(?::\d+)?(?:/[^?#\s]*?)?)/api/fhir/r4/?$`},
-		Endpoint: oauth2.Endpoint{AuthURL: "{+meta/epic}/oauth2/authorize?aud={meta/epic}%2Fapi%2FFHIR%2FR4", TokenURL: "{+meta/epic}/oauth2/token",
-			AuthStyle: oauth2.AuthStyleInHeader},
-		Scopes: fhirScopes, Keep: []string{"patient"},
-		Let: []Step{{As: "fhir", In: "{meta/epic}/api/FHIR/R4"}},
+		Ask:      fhirAsk("epic", "Search by the name on your MyChart sign-in, like Sutter Health or Kaiser Permanente"),
+		Endpoint: fhirEndpoint,
+		Scopes:   fhirScopes, Keep: []string{"patient"},
+		Let: []Step{{As: "fhir", In: "{meta/fhir}"}},
 		API: "{+fhir}", Answer: fhirNext,
 		Who:     fhirWho,
 		Actions: fhirActions(),
@@ -29,13 +41,10 @@ func init() {
 		ID: "oraclehealth", Name: "Oracle Health", Env: "ARCHIVE_CERNER", Host: "https://authorization.cerner.com",
 		Info: Info{By: "Oracle", Description: "Read your medical record from a health system on Oracle Health (Cerner): conditions, medications, allergies, labs, vitals, immunizations, visits and documents",
 			Category: CatHealth, Icon: IconHeart, Scopes: fhirInfo},
-		Ask: &Key{Name: "tenant", Label: "Health system's FHIR address",
-			Help: "Your health system's Oracle Health patient FHIR address, like https://fhir-myrecord.cerner.com/r4/ec2458f2-1e24-41c8-b71b-0e701af7583d",
-			Find: `^(?:https://fhir-myrecord\.cerner\.com/r4/)?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/?$`},
-		Endpoint: oauth2.Endpoint{AuthURL: "https://authorization.cerner.com/tenants/{meta/tenant}/protocols/oauth2/profiles/smart-v1/personas/patient/authorize?aud=https%3A%2F%2Ffhir-myrecord.cerner.com%2Fr4%2F{meta/tenant}",
-			TokenURL: "https://authorization.cerner.com/tenants/{meta/tenant}/hosts/fhir-myrecord.cerner.com/protocols/oauth2/profiles/smart-v1/token", AuthStyle: oauth2.AuthStyleInHeader},
-		Scopes: fhirScopes, Keep: []string{"patient"},
-		Let: []Step{{As: "fhir", In: "https://fhir-myrecord.cerner.com/r4/{meta/tenant}"}},
+		Ask:      fhirAsk("oracle", "Search by your health system's name, like Intermountain Health"),
+		Endpoint: fhirEndpoint,
+		Scopes:   fhirScopes, Keep: []string{"patient"},
+		Let: []Step{{As: "fhir", In: "{meta/fhir}"}},
 		API: "{+fhir}", Answer: fhirNext,
 		Who:     fhirWho,
 		Actions: fhirActions(),
@@ -50,8 +59,9 @@ var (
 	fhirScopes = []string{"launch/patient", "offline_access", "patient/Patient.read", "patient/Condition.read", "patient/MedicationRequest.read",
 		"patient/AllergyIntolerance.read", "patient/Observation.read", "patient/Immunization.read", "patient/Encounter.read",
 		"patient/DiagnosticReport.read", "patient/DocumentReference.read", "patient/Binary.read"}
-	fhirWho  = &Who{Req: Req{URL: "/Patient/{meta/patient}"}, Names: []Path{"name/0/text", "id"}, As: "{who/name/0/text} · {who/managingOrganization/display}"}
-	fhirPage = NextURL{At: "next"}
+	fhirEndpoint = oauth2.Endpoint{AuthURL: "{+meta/authorize}?aud={meta/fhir}", TokenURL: "{+meta/token}", AuthStyle: oauth2.AuthStyleInHeader}
+	fhirWho      = &Who{Req: Req{URL: "/Patient/{meta/patient}"}, Names: []Path{"name/0/text", "id"}, As: "{who/name/0/text} · {who/managingOrganization/display}"}
+	fhirPage     = NextURL{At: "next"}
 
 	fhirRecord = Map{Table: "health_record",
 		Cols: map[string]SQL{
@@ -172,3 +182,233 @@ type (
 		ID   string `json:"id" jsonschema:"Its id"`
 	}
 )
+
+func fhirAsk(places, help string) *Key {
+	return &Key{Name: "fhir", Label: "Your health system", Help: help, Places: places}
+}
+
+// A place is a health system a patient can pick, at the FHIR server (Servers[Server]) that signs them in.
+type (
+	fhirServer struct {
+		FHIR      string `json:"fhir"`
+		Authorize string `json:"authorize"`
+		Token     string `json:"token"`
+	}
+	fhirPlace struct {
+		Name   string `json:"name"`
+		State  string `json:"state,omitempty"`
+		Server int    `json:"server"`
+	}
+	fhirPlaces struct {
+		Servers []fhirServer `json:"servers"`
+		Places  []fhirPlace  `json:"places"`
+	}
+	Place struct {
+		Name  string `json:"name"`
+		State string `json:"state,omitempty"`
+		Value string `json:"value"`
+	}
+)
+
+//go:embed places.json.gz
+var placesGz []byte
+
+var places = sync.OnceValue(func() map[string]*fhirPlaces {
+	var out map[string]*fhirPlaces
+	r, err := gzip.NewReader(bytes.NewReader(placesGz))
+	if err == nil {
+		err = json.NewDecoder(r).Decode(&out)
+	}
+	if err != nil {
+		panic("connect: places.json.gz: " + err.Error())
+	}
+	return out
+})
+
+// Places finds up to n of a connector's health systems whose names have words starting with each of q's, those that start with q first.
+func (p *Provider) Places(q string, n int) []Place {
+	d := p.Ask.dir()
+	if d == nil {
+		return nil
+	}
+	words := placeWords(q)
+	var first, rest []Place
+	for _, pl := range d.Places {
+		name := placeWords(pl.Name + " " + pl.State)
+		if slices.ContainsFunc(words, func(w string) bool {
+			return !slices.ContainsFunc(name, func(x string) bool { return strings.HasPrefix(x, w) })
+		}) {
+			continue
+		}
+		hit := Place{Name: pl.Name, State: pl.State, Value: d.Servers[pl.Server].FHIR}
+		if len(words) > 0 && strings.HasPrefix(strings.Join(name, " "), strings.Join(words, " ")) {
+			first = append(first, hit)
+		} else {
+			rest = append(rest, hit)
+		}
+	}
+	out := append(first, rest...)
+	return out[:min(n, len(out))]
+}
+
+func (k *Key) dir() *fhirPlaces {
+	if k == nil || k.Places == "" {
+		return nil
+	}
+	return places()[k.Places]
+}
+
+func placeWords(s string) []string {
+	return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+}
+
+// placeOf is the server a patient picked, by its FHIR address.
+func (k *Key) placeOf(v string) (map[string]string, bool) {
+	v = strings.TrimRight(strings.TrimSpace(v), "/")
+	for _, s := range k.dir().Servers {
+		if strings.EqualFold(s.FHIR, v) {
+			return map[string]string{k.Name: s.FHIR, "authorize": s.Authorize, "token": s.Token}, true
+		}
+	}
+	return nil, false
+}
+
+// WritePlaces gathers Epic's and Oracle Health's published directories of health systems patients sign in at, and where each signs in, into file.
+func WritePlaces(ctx context.Context, file string) error {
+	epic, err := fhirDirectory(ctx, "https://open.epic.com/Endpoints/Brands", func(org fhirOrg) bool { return len(org.Endpoint) > 0 })
+	if err != nil {
+		return err
+	}
+	epic.Places = append(epic.Places, fhirPlace{Name: "Epic sandbox (test patients)", Server: len(epic.Servers)})
+	epic.Servers = append(epic.Servers, fhirServer{FHIR: "https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4"})
+	oracle, err := fhirDirectory(ctx, "https://raw.githubusercontent.com/oracle-samples/ignite-endpoints/main/oracle_health_fhir_endpoints/millennium_patient_r4_endpoints.json",
+		func(fhirOrg) bool { return true })
+	if err != nil {
+		return err
+	}
+	for _, d := range []*fhirPlaces{epic, oracle} {
+		if err := smartOf(ctx, d.Servers); err != nil {
+			return err
+		}
+		slices.SortStableFunc(d.Places, func(a, b fhirPlace) int {
+			return cmp.Or(strings.Compare(a.Name, b.Name), strings.Compare(a.State, b.State))
+		})
+	}
+	var buf bytes.Buffer
+	w, _ := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+	if err := json.NewEncoder(w).Encode(map[string]*fhirPlaces{"epic": epic, "oracle": oracle}); err != nil {
+		return err
+	}
+	if err := w.Close(); err != nil {
+		return err
+	}
+	return os.WriteFile(file, buf.Bytes(), 0o644)
+}
+
+type fhirOrg struct {
+	Name    string `json:"name"`
+	Address []struct {
+		State string `json:"state"`
+	} `json:"address"`
+	Endpoint []struct {
+		Reference string `json:"reference"`
+	} `json:"endpoint"`
+}
+
+func fhirDirectory(ctx context.Context, from string, brand func(fhirOrg) bool) (*fhirPlaces, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, from, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/fhir+json")
+	r, err := (&http.Client{Timeout: 10 * time.Minute}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Body.Close()
+	if r.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%s answered %s", from, r.Status)
+	}
+	var b struct {
+		Entry []struct {
+			FullURL  string `json:"fullUrl"`
+			Resource struct {
+				ResourceType string          `json:"resourceType"`
+				ID           string          `json:"id"`
+				Address      json.RawMessage `json:"address"`
+				fhirOrg
+			} `json:"resource"`
+		} `json:"entry"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+		return nil, fmt.Errorf("%s: %w", from, err)
+	}
+	at := map[string]string{}
+	for _, e := range b.Entry {
+		if e.Resource.ResourceType == "Endpoint" {
+			var addr string
+			json.Unmarshal(e.Resource.Address, &addr)
+			at[e.FullURL], at["Endpoint/"+e.Resource.ID] = strings.TrimRight(addr, "/"), strings.TrimRight(addr, "/")
+		}
+	}
+	d, server := &fhirPlaces{}, map[string]int{}
+	for _, e := range b.Entry {
+		org := e.Resource.fhirOrg
+		if e.Resource.ResourceType != "Organization" || len(org.Endpoint) == 0 || !brand(org) || at[org.Endpoint[0].Reference] == "" {
+			continue
+		}
+		json.Unmarshal(e.Resource.Address, &org.Address)
+		fhir := at[org.Endpoint[0].Reference]
+		i, ok := server[fhir]
+		if !ok {
+			i, server[fhir] = len(d.Servers), len(d.Servers)
+			d.Servers = append(d.Servers, fhirServer{FHIR: fhir})
+		}
+		pl := fhirPlace{Name: strings.TrimSpace(org.Name), Server: i}
+		if len(org.Address) > 0 {
+			pl.State = org.Address[0].State
+		}
+		d.Places = append(d.Places, pl)
+	}
+	if len(d.Places) == 0 {
+		return nil, fmt.Errorf("%s listed no health systems", from)
+	}
+	return d, nil
+}
+
+// smartOf reads where each server signs patients in from its SMART configuration, or, when it doesn't answer, Epic's usual place beside the FHIR address.
+func smartOf(ctx context.Context, servers []fhirServer) error {
+	var g errgroup.Group
+	g.SetLimit(32)
+	for i := range servers {
+		s := &servers[i]
+		g.Go(func() error {
+			var smart struct {
+				Authorize string `json:"authorization_endpoint"`
+				Token     string `json:"token_endpoint"`
+			}
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.FHIR+"/.well-known/smart-configuration", nil)
+			if err != nil {
+				return err
+			}
+			req.Header.Set("Accept", "application/json")
+			if r, err := client.Do(req); err == nil {
+				if r.StatusCode == http.StatusOK {
+					json.NewDecoder(r.Body).Decode(&smart)
+				}
+				r.Body.Close()
+			}
+			if smart.Authorize == "" || smart.Token == "" {
+				base, ok := strings.CutSuffix(s.FHIR, "/api/FHIR/R4")
+				if !ok {
+					return fmt.Errorf("%s has no SMART configuration", s.FHIR)
+				}
+				smart.Authorize, smart.Token = base+"/oauth2/authorize", base+"/oauth2/token"
+				fmt.Fprintf(os.Stderr, "places: %s has no SMART configuration, so it signs in beside its FHIR address\n", s.FHIR)
+			}
+			s.Authorize, s.Token = smart.Authorize, smart.Token
+			return nil
+		})
+	}
+	return g.Wait()
+}

@@ -137,6 +137,14 @@ func (h *Hub) connectRoutes(mux *http.ServeMux) {
 		tok, err := a.connectLink(r.Context(), r.PathValue("id"))
 		httpWrite(w, http.StatusOK, map[string]string{"token": tok}, err)
 	})
+	authed("GET /connect/{id}/places", func(a *Archive, w http.ResponseWriter, r *http.Request) {
+		p, err := a.hub.connector(r.PathValue("id"))
+		var out []connect.Place
+		if err == nil {
+			out = p.Places(r.URL.Query().Get("q"), 20)
+		}
+		httpWrite(w, http.StatusOK, map[string]any{"places": out}, err)
+	})
 	authed("POST /connect/{id}/sync", func(a *Archive, w http.ResponseWriter, r *http.Request) {
 		id, err := httpID(r)
 		if err == nil {

@@ -22,6 +22,7 @@ type Key struct {
 	Secret bool   `json:"secret,omitempty"`
 	Find   string `json:"-"`
 	As     string `json:"-"`
+	Places string `json:"places,omitempty"`
 }
 
 type Link struct {

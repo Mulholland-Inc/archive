@@ -1210,10 +1210,15 @@ function toIntegration(k, x) {
   };
 }
 
-export function connect(id, asked = {}) {
+export function connect(id, asked = {}, workspace = app.archive) {
   const c = [...ws().connectors, ...archiveIntegrations()].find((x) => x.id === id);
-  const q = new URLSearchParams({ ...asked, workspace: app.archive });
+  const q = new URLSearchParams({ ...asked, workspace });
   if (c?.ready) location.assign(`${API}/connect/${encodeURIComponent(id)}?${q}`);
+}
+
+export async function connectPlaces(id, q) {
+  const out = await call(`/connect/${encodeURIComponent(id)}/places?${new URLSearchParams({ q })}`).catch(() => null);
+  return out?.places ?? [];
 }
 
 export async function connectKeys(id, keys, workspace) {
