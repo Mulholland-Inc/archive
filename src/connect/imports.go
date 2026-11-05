@@ -127,8 +127,9 @@ var importStreams = []importStream{
 				"refunded": "archive.sync_money(data->>'refunded', data->>'currency')", "fulfilled": "data->>'status'", "city": "data->>'city'", "state": "data->>'state'",
 				"country": "data->>'country'", "note": "data->>'note'", "tags": "coalesce(data->'tags', '[]'::jsonb)", "placed_at": "archive.sync_at(data->>'placed')"},
 			Children: []Kids{{Table: "commerce_line", From: "archive.sync_list(data->'lines') l",
-				Cols: map[string]SQL{"title": "l->>'title'", "sku": "l->>'sku'", "quantity": "archive.sync_num(l->>'quantity')",
-					"price": "archive.sync_money(l->>'price', data->>'currency')", "total": "archive.sync_money(l->>'total', data->>'currency')"}}}}},
+				Cols: map[string]SQL{"title": "l->>'title'", "sku": "l->>'sku'", "product_source": "l->>'asin'", "variant": "nullif(l->>'variant', '')",
+					"quantity": "archive.sync_num(l->>'quantity')",
+					"price":    "archive.sync_money(l->>'price', data->>'currency')", "total": "archive.sync_money(l->>'total', data->>'currency')"}}}}},
 }
 
 func init() {
@@ -155,7 +156,7 @@ func init() {
 		Info: Info{By: "Archive", Category: CatFiles, Icon: IconDrive,
 			Description: "Bring in the copy of your data a service gives you: Google Takeout, Apple's privacy export, Amazon orders, Facebook or Instagram, ChatGPT, Claude or Grok, a GEDCOM family tree, raw DNA, Goodreads, Letterboxd, a WhatsApp chat or an iMessage chat.db. Drop it in and Archive works out what it is",
 			Scopes:      []string{"Read the export, which moves under the import so only you see it, and goes when you disconnect it"}},
-		Keys:    []Key{{Name: "file", Label: "Export", File: true, Help: "Any size; a big one picks up where it left off if the connection drops. For one already in Archive, like a Takeout zip in your Google Drive, choose Import in its menu in Files"}},
+		Keys:    []Key{{Name: "file", Label: "Export", File: true, Help: "A .zip or a single file, any size. If the connection drops, it picks up where it left off"}},
 		Account: importAccount,
 		Actions: map[string]*Action{"contents": {
 			Doc:   "What the export holds: each member, its size and the stream that reads it, or files when it is kept as a file; the first 2,000 members",
@@ -2396,7 +2397,9 @@ func importAmazon(x *importRun, m *importMember, r io.Reader, _ int64) error {
 				orders[key] = o
 				keys = append(keys, key)
 			}
-			line := map[string]any{"title": importAmazonCol(row, "productname", "title", "itemname"), "sku": importAmazonCol(row, "asin", "asinisbn")}
+			asin := importAmazonCol(row, "asin", "asinisbn")
+			line := map[string]any{"title": importAmazonCol(row, "productname", "title", "itemname"), "sku": asin, "asin": asin,
+				"variant": importAmazonCol(row, "productcondition", "itemcondition", "condition")}
 			if q := importAmazonCol(row, "quantity", "originalquantity"); q != "" {
 				line["quantity"] = q
 			}

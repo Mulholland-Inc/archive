@@ -96,9 +96,9 @@
   .sm { max-width: var(--dialog-sm); }
   .lg { max-width: var(--dialog-lg); }
   .tall { max-width: var(--dialog-lg); height: min(var(--type-dialog-height), calc(100vh - var(--space-12))); }
-  .tall .body { flex: 1; overflow: hidden; }
+  .tall > .body { flex: 1; overflow: hidden; }
   .xl { max-width: min(var(--dialog-xl), calc(100vw - var(--dialog-xl-margin))); height: min(var(--dialog-xl-height), calc(100vh - var(--dialog-xl-margin))); max-height: none; }
-  .xl .body { flex: 1; gap: var(--space-0); overflow: hidden; }
+  .xl > .body { flex: 1; gap: var(--space-0); overflow: hidden; }
   .palette { max-width: var(--palette-width); align-self: start; margin-block-start: var(--dialog-offset); }
 
   .bare {
