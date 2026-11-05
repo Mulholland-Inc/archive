@@ -642,7 +642,7 @@ export function atLeast(role, of = app.role) {
   return rank(of) >= rank(role);
 }
 
-export async function invite({ emails, role, groups: ids = [] }) {
+export async function invite({ emails, role, group }) {
   const w = ws();
   const added = [];
   for (const email of emails) {
@@ -651,7 +651,7 @@ export async function invite({ emails, role, groups: ids = [] }) {
       const people = await call('/auth/users', { method: 'POST', body: { email, role } });
       w.members = people.map((p) => toMember(p, { ...app.user, user_id: app.user.id }));
       const m = w.members.find((x) => x.email === email);
-      if (m && ids.length) await setGroups(m, ids);
+      if (m && group) await setGroup(m, group);
       added.push(m);
     } catch (e) {
       await complain(e, `Couldn’t invite ${email}`);
@@ -689,15 +689,15 @@ export function groupById(id, w = ws()) {
   return w?.groups.find((g) => g.id === id);
 }
 
-async function setGroups(member, next) {
-  const before = member.groups;
-  member.groups = [...new Set(next)];
+export async function setGroup(member, group) {
+  const before = member.group;
+  member.group = group;
   try {
-    await call(`/api/member/${member.id}`, { method: 'PATCH', body: { groups: member.groups } });
+    await call(`/api/member/${member.id}`, { method: 'PATCH', body: { group } });
     return true;
   } catch (e) {
-    member.groups = before;
-    complain(e, `Couldn’t change ${member.name}’s groups`);
+    member.group = before;
+    complain(e, `Couldn’t change ${member.name}’s group`);
     return false;
   }
 }
@@ -705,16 +705,15 @@ async function setGroups(member, next) {
 export function mayLimit(current) {
   if (atLeast('manager')) return true;
   const me = ws().members.find((m) => m.email === app.user.email);
-  return app.role === 'editor' && (!current || Boolean(me?.groups.includes(current)));
+  return app.role === 'editor' && (!current || me?.group === current);
 }
 
 export function accessOptions(current) {
   const me = ws().members.find((m) => m.email === app.user.email);
-  const mine = ws().groups.filter((g) => atLeast('manager') || me?.groups.includes(g.id) || g.id === current);
+  const mine = ws().groups.filter((g) => atLeast('manager') || me?.group === g.id || g.id === current);
   return [{ value: '', label: 'Everyone' }, ...mine.map((g) => ({ value: g.id, label: g.name }))];
 }
 
-export const toggleGroup = (member, id) => setGroups(member, member.groups.includes(id) ? member.groups.filter((g) => g !== id) : [...member.groups, id]);
 
 export async function createGroup({ name, description = '', people = [] }) {
   const w = ws();
@@ -727,7 +726,7 @@ export async function createGroup({ name, description = '', people = [] }) {
   }
   const group = { id: g.id, name: g.name, description: g.description ?? '' };
   if (!w.groups.some((x) => x.id === group.id)) w.groups = [...w.groups, group].sort((a, b) => a.name.localeCompare(b.name));
-  for (const m of w.members) if (people.includes(m.id)) await setGroups(m, [...m.groups, group.id]);
+  for (const m of w.members) if (people.includes(m.id)) await setGroup(m, group.id);
   return group;
 }
 
@@ -754,7 +753,7 @@ export async function deleteGroup(group) {
   }
   const w = ws();
   w.groups = w.groups.filter((g) => g.id !== group.id);
-  for (const m of w.members) m.groups = m.groups.filter((g) => g !== group.id);
+  for (const m of w.members) if (m.group === group.id) m.group = null;
   return true;
 }
 

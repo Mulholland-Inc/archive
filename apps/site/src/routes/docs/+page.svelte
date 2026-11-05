@@ -218,7 +218,7 @@ Then tell me which tables and views I have, and what each one is for.</pre>
 </Code>
 
 <h2 id="tokens">Tokens</h2>
-<p>A token acts as you, with your role and groups, and never does more than you can. Agents, scripts and CI each get their own.</p>
+<p>A token acts as you, with your role and group, and never does more than you can. Agents, scripts and CI each get their own.</p>
 <Code tabs={['header']}>
 <pre>Authorization: Bearer $ARCHIVE_TOKEN</pre>
 </Code>
@@ -238,7 +238,7 @@ Then tell me which tables and views I have, and what each one is for.</pre>
 <tbody>
 <tr><td><code>name</code></td><td>A label, so you know which token is which.</td></tr>
 <tr><td><code>expires</code></td><td>A lifetime such as <code>"720h"</code>. Left out, the token does not expire.</td></tr>
-<tr><td><code>viewer</code></td><td><code>true</code> makes the token read only. It keeps your groups, and never sees more than you do.</td></tr>
+<tr><td><code>viewer</code></td><td><code>true</code> makes the token read only. It keeps your group, and never sees more than you do.</td></tr>
 </tbody>
 </table>
 
@@ -552,7 +552,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 </table>
 
 <h3 id="sdk-members">Members</h3>
-<p>People are rows of the <code>member</code> table, so the same calls manage them: <code>list("member")</code>, <code>create("member", &#123; email, role, groups &#125;)</code>, <code>update("member", id, &#123; groups: ["hr"] &#125;)</code> and <code>delete("member", id)</code>. Everyone can read it; managers, engineers and the owner can change it, up to their own role.</p>
+<p>People are rows of the <code>member</code> table, so the same calls manage them: <code>list("member")</code>, <code>create("member", &#123; email, role, group &#125;)</code>, <code>update("member", id, &#123; group: "hr" &#125;)</code> and <code>delete("member", id)</code>. Everyone can read it; managers, engineers and the owner can change it, up to their own role.</p>
 
 <h3 id="sdk-values">Values</h3>
 <p>Rows are plain JSON. Dates are <code>"2026-10-27"</code>, instants are UTC like <code>"2026-10-27T09:30:00Z"</code>, references are id strings, arrays are lists and enums are one of their strings. Empty fields read back as <code>null</code>. The built-in composite types read back as objects:</p>
@@ -635,10 +635,10 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <table>
 <thead><tr><th>Endpoint</th><th>Does</th></tr></thead>
 <tbody>
-<tr><td><code>GET /auth/me</code></td><td>Who you are, your <code>role</code>, your <code>groups</code>, the current <code>workspace</code> and all your <code>workspaces</code>.</td></tr>
+<tr><td><code>GET /auth/me</code></td><td>Who you are, your <code>role</code>, your <code>group</code>, the current <code>workspace</code> and all your <code>workspaces</code>.</td></tr>
 <tr><td><code>GET</code>, <code>POST /auth/users</code></td><td>List the people here, or invite one with <code>&#123;"email", "name", "role"&#125;</code> (managers and up).</td></tr>
 <tr><td><code>DELETE /auth/users/&#123;email&#125;</code></td><td>Remove someone, with their tokens (managers and up).</td></tr>
-<tr><td><code>PATCH /api/member/&#123;id&#125;</code></td><td>Change someone's <code>role</code> or <code>groups</code> (managers and up).</td></tr>
+<tr><td><code>PATCH /api/member/&#123;id&#125;</code></td><td>Change someone's <code>role</code> or <code>group</code> (managers and up).</td></tr>
 <tr><td><code>GET</code>, <code>POST /auth/tokens</code></td><td>List tokens, or create one (engineers and the owner).</td></tr>
 <tr><td><code>DELETE /auth/tokens/&#123;id&#125;</code></td><td>Revoke a token (engineers and the owner).</td></tr>
 </tbody>
@@ -682,7 +682,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <p>Every table has one policy, <code>access</code>, that checks each row with <code>archive.can(access)</code>. It applies to the web app, the API, your AI and raw SQL alike, so a bug in one surface cannot show another person's data.</p>
 
 <h2 id="groups">Groups</h2>
-<p>A group, like <code>hr</code> or <code>finance</code>, is a set of people. A row or file whose <code>access</code> is <code>hr</code> is seen only by the hr group and by managers, engineers and the owner. With no access, the whole workspace sees it.</p>
+<p>A group, like <code>hr</code> or <code>finance</code>, is a set of people, and each person is in one group at most. A row or file whose <code>access</code> is <code>hr</code> is seen only by the hr group and by managers, engineers and the owner. With no access, the whole workspace sees it.</p>
 
 <h3 id="groups-make">Making a group</h3>
 <p>Put someone in it. A group exists while at least one person is in it, and its name can be any text.</p>
@@ -693,7 +693,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 </Code>
 
 <h3 id="groups-rules">Who can write what</h3>
-<p>Anyone below a manager can only write rows whose access is empty or one of their own groups. A table only one group should ever see uses <code>access text NOT NULL DEFAULT 'hr' CHECK (access = 'hr')</code>.</p>
+<p>Anyone below a manager can only write rows whose access is empty or their own group. A table only one group should ever see uses <code>access text NOT NULL DEFAULT 'hr' CHECK (access = 'hr')</code>.</p>
 
 <h2 id="secrets">Secret fields</h2>
 <p>Columns of a secret type read back as they are stored, to anyone who can read the row. They stay out of search and cannot be filtered.</p>

@@ -1968,19 +1968,19 @@ func (q *Queries) LockWorkflow(ctx context.Context, id uuid.UUID) (ArchiveWorkfl
 }
 
 const memberByEmail = `-- name: MemberByEmail :one
-SELECT id, role::text AS role, groups FROM archive.member WHERE email = $1::text
+SELECT id, role::text AS role, "group" FROM archive.member WHERE email = $1::text
 `
 
 type MemberByEmailRow struct {
-	ID     uuid.UUID
-	Role   string
-	Groups []uuid.UUID
+	ID    uuid.UUID
+	Role  string
+	Group *uuid.UUID
 }
 
 func (q *Queries) MemberByEmail(ctx context.Context, email string) (MemberByEmailRow, error) {
 	row := q.db.QueryRow(ctx, memberByEmail, email)
 	var i MemberByEmailRow
-	err := row.Scan(&i.ID, &i.Role, &i.Groups)
+	err := row.Scan(&i.ID, &i.Role, &i.Group)
 	return i, err
 }
 
@@ -2029,14 +2029,14 @@ func (q *Queries) MemberConnections(ctx context.Context, member uuid.UUID) ([]Ar
 }
 
 const members = `-- name: Members :many
-SELECT id, email::text AS email, role::text AS role, groups FROM archive.member ORDER BY email
+SELECT id, email::text AS email, role::text AS role, "group" FROM archive.member ORDER BY email
 `
 
 type MembersRow struct {
-	ID     uuid.UUID
-	Email  string
-	Role   string
-	Groups []uuid.UUID
+	ID    uuid.UUID
+	Email string
+	Role  string
+	Group *uuid.UUID
 }
 
 func (q *Queries) Members(ctx context.Context) ([]MembersRow, error) {
@@ -2052,7 +2052,7 @@ func (q *Queries) Members(ctx context.Context) ([]MembersRow, error) {
 			&i.ID,
 			&i.Email,
 			&i.Role,
-			&i.Groups,
+			&i.Group,
 		); err != nil {
 			return nil, err
 		}

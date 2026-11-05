@@ -14,12 +14,12 @@
 
   let emails = $state('');
   let role = $state('viewer');
-  let picked = $state([]);
-  const pick = (id) => (picked = picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id]);
+  let picked = $state(null);
+  const pick = (id) => (picked = picked === id ? null : id);
 
   async function newGroup() {
     const g = await newGroupPrompt();
-    if (g) picked = [...picked, g.id];
+    if (g) picked = g.id;
   }
   const list = $derived(emails.split(/[\s,;]+/).filter((e) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)));
   const count = $derived(list.length);
@@ -27,9 +27,9 @@
   const roles = $derived(ROLES.filter((r) => r.value !== 'owner' && atLeast(r.value)));
 
   function send(close) {
-    invite({ emails: list, role, groups: picked });
+    invite({ emails: list, role, group: picked });
     emails = '';
-    picked = [];
+    picked = null;
     close();
   }
 </script>
@@ -45,10 +45,10 @@
       <Menu {id} bind:value={role} options={roles} full />
     {/snippet}
   </Field>
-  <Field label="Groups">
+  <Field label="Group">
     {#snippet children()}
       <Stack direction="row" gap="1-5" wrap>
-        {#each ws().groups as g (g.id)}<Chip selected={picked.includes(g.id)} onclick={() => pick(g.id)}>{g.name}</Chip>{/each}
+        {#each ws().groups as g (g.id)}<Chip selected={picked === g.id} onclick={() => pick(g.id)}>{g.name}</Chip>{/each}
         <Chip icon={Plus} onclick={newGroup}>New group</Chip>
       </Stack>
     {/snippet}

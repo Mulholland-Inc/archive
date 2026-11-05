@@ -82,11 +82,11 @@ type User struct {
 }
 
 type Person struct {
-	ID     uuid.UUID   `json:"id"`
-	Email  string      `json:"email"`
-	Name   string      `json:"name"`
-	Role   string      `json:"role"`
-	Groups []uuid.UUID `json:"groups"`
+	ID    uuid.UUID  `json:"id"`
+	Email string     `json:"email"`
+	Name  string     `json:"name"`
+	Role  string     `json:"role"`
+	Group *uuid.UUID `json:"group"`
 }
 
 type Token struct {
@@ -341,7 +341,7 @@ func (a *Archive) People(ctx context.Context) ([]Person, error) {
 	}
 	out := []Person{}
 	for _, m := range ms {
-		out = append(out, Person{ID: m.ID, Email: m.Email, Name: names[m.Email], Role: m.Role, Groups: m.Groups})
+		out = append(out, Person{ID: m.ID, Email: m.Email, Name: names[m.Email], Role: m.Role, Group: m.Group})
 	}
 	return out, err
 }
@@ -662,7 +662,7 @@ func (s *signin) handler() http.Handler {
 			}
 		}
 		admin := err == nil && h.admin(r.Context()) == nil
-		return ok(map[string]any{"actor": ac, "role": m.Role, "groups": m.Groups, "workspace": a.ws.ID.String(), "workspaces": all, "admin": admin}, err)
+		return ok(map[string]any{"actor": ac, "role": m.Role, "group": m.Group, "workspace": a.ws.ID.String(), "workspaces": all, "admin": admin}, err)
 	})
 	authed("GET /auth/users", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		return ok(archiveFrom(r.Context()).People(r.Context()))
