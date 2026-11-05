@@ -8,9 +8,13 @@ import (
 	"crypto/ecdsa"
 	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha1"
 	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/x509"
+	"encoding/base32"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -83,6 +87,10 @@ type User struct {
 	CreatedAt  time.Time       `json:"created_at"`
 	Admin      bool            `json:"admin"`
 	Unread     []uuid.UUID     `json:"-"`
+	Totp       []byte          `json:"-"`
+	TotpStep   int64           `json:"-"`
+	TotpFails  int32           `json:"-"`
+	TotpUntil  *time.Time      `json:"-"`
 }
 
 type Person struct {
@@ -512,6 +520,8 @@ const (
 	signinCookie   = "archive_session"
 	signinCeremony = "archive_webauthn"
 	signinOIDC     = "archive_oidc"
+	signinTotp     = "archive_totp"
+	signinTotpLink = "archive_totp_link"
 	signinGitHub   = "https://github.com"
 	signinApple    = "https://appleid.apple.com"
 )
@@ -519,6 +529,8 @@ const (
 var (
 	signinRefused  = fmt.Errorf("no Archive account for this sign-in; ask a workspace's owner to add you: %w", ErrForbidden)
 	signinMismatch = fmt.Errorf("sign-in state does not match; start again: %w", ErrUnauthorized)
+	totpWrong      = fmt.Errorf("Wrong code: %w", httpErrBadRequest)
+	totpLocked     = fmt.Errorf("Too many tries. Try again later: %w", ErrBusy)
 	signinBuiltin  = []signinConfig{
 		{ID: "google", Name: "Google", base: "https://accounts.google.com"},
 		{ID: "microsoft", Name: "Microsoft", base: "https://login.microsoftonline.com"},
@@ -536,6 +548,11 @@ type signin struct {
 
 	mu        sync.Mutex
 	providers map[string]*signinProvider
+}
+
+type signinTotpSetup struct {
+	Secret []byte    `json:"s"`
+	Exp    time.Time `json:"x"`
 }
 
 type signinCeremonyData struct {
@@ -652,14 +669,60 @@ func (s *signin) handler() http.Handler {
 	ok := func(v any, err error) (int, any, error) { return http.StatusOK, v, err }
 
 	open("GET /auth/methods", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		return ok(map[string]any{"providers": append([]signinConfig{}, s.configs...)}, nil)
+		_, err := s.pending(r)
+		return ok(map[string]any{"providers": append([]signinConfig{}, s.configs...), "code": err == nil}, nil)
 	})
 	open("POST /auth/signout", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		s.setSession(w, "")
-		if c, err := r.Cookie(signinCookie); err == nil {
-			return http.StatusNoContent, nil, h.q().SignOut(r.Context(), authHash(c.Value))
+		http.SetCookie(w, s.cookie(signinTotp, "", "/auth/", -1))
+		var errs []error
+		for _, name := range []string{signinCookie, signinTotp} {
+			if c, err := r.Cookie(name); err == nil {
+				errs = append(errs, h.q().SignOut(r.Context(), authHash(c.Value)))
+			}
 		}
-		return http.StatusNoContent, nil, nil
+		return http.StatusNoContent, nil, errors.Join(errs...)
+	})
+	open("POST /auth/totp/verify", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
+		if err := s.sameOrigin(r); err != nil {
+			return 0, nil, err
+		}
+		t, err := s.pending(r)
+		if err != nil {
+			return 0, nil, err
+		}
+		if len(t.Workspaces) == 0 {
+			return 0, nil, signinRefused
+		}
+		var body struct {
+			Code string `json:"code"`
+		}
+		if err := httpDecode(r, &body); err != nil {
+			return 0, nil, err
+		}
+		step, err := s.totpCheck(r.Context(), t.UserID, body.Code)
+		if err != nil {
+			return 0, nil, err
+		}
+		if n, err := h.q().TotpUse(r.Context(), step, t.UserID); err != nil {
+			return 0, nil, err
+		} else if n == 0 {
+			return 0, nil, totpWrong
+		}
+		c, err := r.Cookie(signinTotp)
+		if err != nil {
+			return 0, nil, signinMismatch
+		}
+		secret := authNewSecret()
+		if n, err := h.q().TotpSession(r.Context(), authHash(secret), authHash(c.Value)); err != nil {
+			return 0, nil, err
+		} else if n == 0 {
+			return 0, nil, signinMismatch
+		}
+		http.SetCookie(w, s.cookie(signinTotp, "", "/auth/", -1))
+		s.setSession(w, secret)
+		u, err := userBy(r.Context(), h, (*generated.Queries).UserByID, t.UserID)
+		return ok(map[string]*User{"user": u}, err)
 	})
 	authed("GET /auth/me", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		a, ac := archiveFrom(r.Context()), ActorFrom(r.Context())
@@ -755,6 +818,102 @@ func (s *signin) handler() http.Handler {
 			return 0, nil, err
 		}
 		return http.StatusNoContent, nil, archiveFrom(r.Context()).RevokeToken(r.Context(), id)
+	})
+
+	browser := func(pattern string, f func(w http.ResponseWriter, r *http.Request, ac *Actor) (int, any, error)) {
+		authed(pattern, func(w http.ResponseWriter, r *http.Request) (int, any, error) {
+			ac := ActorFrom(r.Context())
+			if ac.TokenID != uuid.Nil {
+				return 0, nil, fmt.Errorf("two-factor changes need a signed-in browser, not a token: %w", ErrForbidden)
+			}
+			if r.Method != http.MethodGet {
+				if err := s.sameOrigin(r); err != nil {
+					return 0, nil, err
+				}
+			}
+			return f(w, r, ac)
+		})
+	}
+	browser("GET /auth/totp", func(w http.ResponseWriter, r *http.Request, ac *Actor) (int, any, error) {
+		u, err := userBy(r.Context(), h, (*generated.Queries).UserByID, ac.UserID)
+		if err != nil {
+			return 0, nil, err
+		}
+		return ok(map[string]bool{"on": u.Totp != nil}, nil)
+	})
+	browser("POST /auth/totp/setup", func(w http.ResponseWriter, r *http.Request, ac *Actor) (int, any, error) {
+		u, err := userBy(r.Context(), h, (*generated.Queries).UserByID, ac.UserID)
+		if err != nil {
+			return 0, nil, err
+		}
+		if u.Totp != nil {
+			return 0, nil, fmt.Errorf("An app is linked already: %w", ErrConflict)
+		}
+		secret := make([]byte, 20)
+		rand.Read(secret)
+		b, _ := json.Marshal(signinTotpSetup{secret, time.Now().Add(10 * time.Minute)})
+		sealed := s.totpSeal("totp link "+ac.UserID.String(), b)
+		http.SetCookie(w, s.cookie(signinTotpLink, base64.RawURLEncoding.EncodeToString(sealed), "/auth/totp/", 600))
+		key := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(secret)
+		link := url.URL{Scheme: "otpauth", Host: "totp", Path: "/Archive:" + ac.Email, RawQuery: url.Values{"secret": {key}, "issuer": {"Archive"}}.Encode()}
+		return ok(map[string]string{"key": key, "uri": link.String()}, nil)
+	})
+	browser("POST /auth/totp/enable", func(w http.ResponseWriter, r *http.Request, ac *Actor) (int, any, error) {
+		var body struct {
+			Code string `json:"code"`
+		}
+		if err := httpDecode(r, &body); err != nil {
+			return 0, nil, err
+		}
+		c, err := r.Cookie(signinTotpLink)
+		if err != nil {
+			return 0, nil, fmt.Errorf("Start again: %w", httpErrBadRequest)
+		}
+		sealed, err := base64.RawURLEncoding.DecodeString(c.Value)
+		var setup signinTotpSetup
+		if err == nil {
+			var b []byte
+			if b, err = s.totpOpen("totp link "+ac.UserID.String(), sealed); err == nil {
+				err = json.Unmarshal(b, &setup)
+			}
+		}
+		if err != nil || time.Now().After(setup.Exp) {
+			return 0, nil, fmt.Errorf("Start again: %w", httpErrBadRequest)
+		}
+		step := totpStep(setup.Secret, body.Code)
+		if step == 0 {
+			return 0, nil, totpWrong
+		}
+		keep, _ := h.secret(r)
+		n, err := h.q().EnableTotp(r.Context(), generated.EnableTotpParams{ID: ac.UserID, Totp: s.totpSeal("totp "+ac.UserID.String(), setup.Secret), Step: step, Keep: authHash(keep)})
+		if err != nil {
+			return 0, nil, err
+		}
+		if n == 0 {
+			return 0, nil, fmt.Errorf("An app is linked already: %w", ErrConflict)
+		}
+		http.SetCookie(w, s.cookie(signinTotpLink, "", "/auth/totp/", -1))
+		return ok(map[string]bool{"on": true}, nil)
+	})
+	browser("POST /auth/totp/disable", func(w http.ResponseWriter, r *http.Request, ac *Actor) (int, any, error) {
+		var body struct {
+			Code string `json:"code"`
+		}
+		if err := httpDecode(r, &body); err != nil {
+			return 0, nil, err
+		}
+		step, err := s.totpCheck(r.Context(), ac.UserID, body.Code)
+		if err != nil {
+			return 0, nil, err
+		}
+		n, err := h.q().DisableTotp(r.Context(), ac.UserID, step)
+		if err != nil {
+			return 0, nil, err
+		}
+		if n == 0 {
+			return 0, nil, totpWrong
+		}
+		return ok(map[string]bool{"on": false}, nil)
 	})
 
 	authed("POST /auth/passkey/register", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
@@ -898,11 +1057,88 @@ func (s *signin) signedIn(w http.ResponseWriter, r *http.Request, u *User) (any,
 		return nil, signinRefused
 	}
 	secret := authNewSecret()
+	if u.Totp != nil {
+		if err := s.h.q().CreateTotpToken(r.Context(), u.ID, authHash(secret)); err != nil {
+			return nil, err
+		}
+		http.SetCookie(w, s.cookie(signinTotp, secret, "/auth/", 300))
+		return map[string]bool{"code": true}, nil
+	}
 	if err := s.h.q().CreateSession(r.Context(), u.ID, authHash(secret)); err != nil {
 		return nil, err
 	}
 	s.setSession(w, secret)
 	return map[string]*User{"user": u}, nil
+}
+
+func (s *signin) sameOrigin(r *http.Request) error {
+	if r.Header.Get("Origin") != httpOrigin(s.h.app) {
+		return fmt.Errorf("send this from %s: %w", s.h.app, ErrForbidden)
+	}
+	return nil
+}
+
+func (s *signin) pending(r *http.Request) (generated.AuthenticateRow, error) {
+	c, err := r.Cookie(signinTotp)
+	if err != nil {
+		return generated.AuthenticateRow{}, signinMismatch
+	}
+	t, err := s.h.q().Authenticate(r.Context(), authHash(c.Value), []string{"totp"})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return t, signinMismatch
+	}
+	return t, err
+}
+
+func (s *signin) totpSeal(purpose string, plain []byte) []byte {
+	nonce := make([]byte, s.h.aead.NonceSize())
+	rand.Read(nonce)
+	return s.h.aead.Seal(nonce, nonce, plain, []byte(purpose))
+}
+
+func (s *signin) totpOpen(purpose string, sealed []byte) ([]byte, error) {
+	n := s.h.aead.NonceSize()
+	if len(sealed) < n {
+		return nil, errors.New("sealed value is too short")
+	}
+	return s.h.aead.Open(nil, sealed[:n], sealed[n:], []byte(purpose))
+}
+
+func (s *signin) totpCheck(ctx context.Context, id uuid.UUID, code string) (int64, error) {
+	sealed, err := s.h.q().TotpTry(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, totpLocked
+	}
+	if err != nil {
+		return 0, err
+	}
+	secret, err := s.totpOpen("totp "+id.String(), sealed)
+	if err != nil {
+		return 0, fmt.Errorf("two-factor secret of %s does not open with ARCHIVE_SECRET_KEY: %w", id, err)
+	}
+	step := totpStep(secret, code)
+	if step == 0 {
+		return 0, totpWrong
+	}
+	return step, nil
+}
+
+func totpCode(secret []byte, step int64) string {
+	m := hmac.New(sha1.New, secret)
+	m.Write(binary.BigEndian.AppendUint64(nil, uint64(step)))
+	sum := m.Sum(nil)
+	at := sum[len(sum)-1] & 15
+	return fmt.Sprintf("%06d", binary.BigEndian.Uint32(sum[at:at+4])&0x7fffffff%1000000)
+}
+
+func totpStep(secret []byte, code string) int64 {
+	now, found := time.Now().Unix()/30, int64(0)
+	for step := now - 1; step <= now+1; step++ {
+		if subtle.ConstantTimeCompare([]byte(totpCode(secret, step)), []byte(code)) == 1 {
+			found = step
+		}
+	}
+	return found
 }
 
 func (s *signin) user(ctx context.Context, id uuid.UUID) (*signinUser, error) {

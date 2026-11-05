@@ -53,7 +53,11 @@ CREATE TABLE archive."user" (
     signin     jsonb NOT NULL DEFAULT '{}',
     created_at timestamptz NOT NULL DEFAULT now(),
     admin      boolean NOT NULL DEFAULT false,
-    unread     uuid[] NOT NULL DEFAULT '{}'
+    unread     uuid[] NOT NULL DEFAULT '{}',
+    totp       bytea,
+    totp_step  bigint NOT NULL DEFAULT 0,
+    totp_fails integer NOT NULL DEFAULT 0,
+    totp_until timestamptz
 );
 CREATE INDEX user_workspaces_idx ON archive."user" USING gin (workspaces);
 
@@ -181,7 +185,37 @@ WHERE t.hash = $1 AND t.kind = ANY(sqlc.arg(kinds)::text[]) AND (t.expires_at IS
 INSERT INTO archive.token (user_id, kind, hash, expires_at) VALUES ($1, 'session', $2, now() + interval '30 days');
 
 -- name: SignOut :exec
-DELETE FROM archive.token WHERE hash = $1 AND kind = 'session';
+DELETE FROM archive.token WHERE hash = $1 AND kind IN ('session', 'totp');
+
+-- name: CreateTotpToken :exec
+WITH old AS (DELETE FROM archive.token x WHERE x.kind = 'totp' AND x.expires_at < now())
+INSERT INTO archive.token (user_id, kind, hash, expires_at) VALUES ($1, 'totp', $2, now() + interval '5 minutes');
+
+-- name: TotpSession :execrows
+WITH gone AS (DELETE FROM archive.token x WHERE x.hash = sqlc.arg(pending) AND x.kind = 'totp' AND x.expires_at > now() RETURNING x.user_id)
+INSERT INTO archive.token (user_id, kind, hash, expires_at) SELECT gone.user_id, 'session', sqlc.arg(hash), now() + interval '30 days' FROM gone;
+
+-- name: TotpTry :one
+UPDATE archive."user" SET
+    totp_fails = CASE WHEN totp_until > now() THEN totp_fails + 1 ELSE 1 END,
+    totp_until = CASE WHEN totp_until > now() THEN totp_until ELSE now() + interval '15 minutes' END
+WHERE id = $1 AND totp IS NOT NULL AND (totp_until IS NULL OR totp_until <= now() OR totp_fails < 5)
+RETURNING totp;
+
+-- name: TotpUse :execrows
+UPDATE archive."user" SET totp_step = sqlc.arg(step), totp_fails = 0, totp_until = NULL WHERE id = sqlc.arg(id) AND totp_step < sqlc.arg(step);
+
+-- name: EnableTotp :one
+WITH linked AS (
+    UPDATE archive."user" u SET totp = sqlc.arg(totp), totp_step = sqlc.arg(step), totp_fails = 0, totp_until = NULL
+    WHERE u.id = sqlc.arg(id) AND u.totp IS NULL RETURNING u.id
+), gone AS (
+    DELETE FROM archive.token x USING linked WHERE x.user_id = linked.id AND x.kind = 'session' AND x.hash <> sqlc.arg(keep)
+)
+SELECT count(*) FROM linked;
+
+-- name: DisableTotp :execrows
+UPDATE archive."user" SET totp = NULL, totp_step = 0, totp_fails = 0, totp_until = NULL WHERE id = sqlc.arg(id) AND totp_step < sqlc.arg(step);
 
 -- name: CreateToken :one
 INSERT INTO archive.token (id, user_id, workspace, kind, name, role, hash, sealed, expires_at) VALUES ($1, $2, $3, 'api', $4, $5, $6, $7, $8) RETURNING created_at, expires_at;

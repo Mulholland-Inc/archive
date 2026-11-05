@@ -160,6 +160,8 @@ export async function signOut() {
 }
 
 
+export const said = (e) => e.message.replace(/: (bad request|busy|conflict|forbidden)$/, '');
+
 export const passkeys = typeof PublicKeyCredential !== 'undefined';
 
 const devices = () => local('passkeys', {});
@@ -185,7 +187,8 @@ export async function passkeyLogin() {
       response: { clientDataJSON: text(r.clientDataJSON), authenticatorData: text(r.authenticatorData), signature: text(r.signature), userHandle: r.userHandle ? text(r.userHandle) : null }
     }
   });
-  rememberPasskey(done.user.id, 'yes');
+  if (done.user) rememberPasskey(done.user.id, 'yes');
+  return done;
 }
 
 export async function passkeyRegister(user) {
