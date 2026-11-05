@@ -38,7 +38,8 @@ CREATE TABLE archive."group" (
 ) INHERITS (archive.object);
 COMMENT ON TABLE archive."group" IS 'A group of members, like finance: a row whose access is a group''s id is seen only by its members and the owners. Owners add, rename, describe and delete groups, and put members in them with member.groups; a group cannot be deleted while rows use it
 icon: users-round';
-COMMENT ON COLUMN archive."group".name IS '1-24 lowercase letters, digits or _, like finance; unique';
+COMMENT ON COLUMN archive."group".name IS 'Any text, like Finance team; unique whatever its case';
+CREATE UNIQUE INDEX group_name_idx ON archive."group" (lower(name));
 COMMENT ON COLUMN archive."group".description IS 'What the group is for, or who is in it';
 
 CREATE FUNCTION archive.group_role(g uuid) RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
@@ -83,9 +84,9 @@ BEGIN
         END IF;
         RETURN OLD;
     END IF;
-    NEW.name := lower(btrim(NEW.name));
-    IF NEW.name !~ '^[a-z0-9][a-z0-9_]{0,23}$' THEN
-        RAISE EXCEPTION 'want a group name of 1-24 lowercase letters, digits or _' USING ERRCODE = '22023', TABLE = 'group', COLUMN = 'name';
+    NEW.name := btrim(NEW.name);
+    IF NEW.name = '' THEN
+        RAISE EXCEPTION 'want a group name' USING ERRCODE = '22023', TABLE = 'group', COLUMN = 'name';
     END IF;
     NEW.description := btrim(NEW.description);
     NEW.access := NULL;
@@ -4056,7 +4057,7 @@ UPDATE archive.connection SET error = $2, updated_at = now() WHERE id = $1 AND e
 DELETE FROM archive.connection WHERE id = $1 RETURNING *;
 
 -- name: GroupByName :one
-SELECT id FROM archive."group" WHERE name = lower(btrim(sqlc.arg(name)::text));
+SELECT id FROM archive."group" WHERE lower(name) = lower(btrim(sqlc.arg(name)::text));
 
 -- name: SetConnectionAccess :exec
 UPDATE archive.connection c SET access = sqlc.narg(access)::uuid, updated_at = now() WHERE c.id = sqlc.arg(conn)::uuid AND c.integration;

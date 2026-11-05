@@ -16,7 +16,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -1302,8 +1301,6 @@ func (h *Hub) workspaceRoutes(authed func(string, func(http.ResponseWriter, *htt
 	})
 }
 
-var groupNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_]{0,23}$`)
-
 func (a *Archive) groupID(ctx context.Context, s string, make bool) (*uuid.UUID, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -1312,13 +1309,12 @@ func (a *Archive) groupID(ctx context.Context, s string, make bool) (*uuid.UUID,
 	if id, err := uuid.Parse(s); err == nil {
 		return &id, nil
 	}
-	name := strings.ToLower(s)
-	id, err := a.st.db(ctx).GroupByName(ctx, name)
-	if errors.Is(err, pgx.ErrNoRows) && make && groupNameRe.MatchString(name) {
-		err = a.st.Q(ctx).QueryRow(ctx, `INSERT INTO archive."group" (name) VALUES ($1) RETURNING id`, name).Scan(&id)
+	id, err := a.st.db(ctx).GroupByName(ctx, s)
+	if errors.Is(err, pgx.ErrNoRows) && make {
+		err = a.st.Q(ctx).QueryRow(ctx, `INSERT INTO archive."group" (name) VALUES ($1) RETURNING id`, s).Scan(&id)
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, &ValidationError{Type: "group", Errors: []FieldError{{Path: "access", Message: fmt.Sprintf(`no group %q; make it with archive.create("group", { name: %q })`, s, name)}}}
+		return nil, &ValidationError{Type: "group", Errors: []FieldError{{Path: "access", Message: fmt.Sprintf(`no group %q; make it with archive.create("group", { name: %q })`, s, s)}}}
 	}
 	if err != nil {
 		return nil, err

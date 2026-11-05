@@ -111,7 +111,7 @@ export async function renameGroupPrompt(group) {
 }
 
 export async function newGroupPrompt(people = []) {
-  const name = await prompt({ title: 'New group', label: 'Name', placeholder: 'finance', confirm: 'Create' });
+  const name = await prompt({ title: 'New group', label: 'Name', placeholder: 'Finance team', confirm: 'Create' });
   return name ? createGroup({ name, people }) : null;
 }
 

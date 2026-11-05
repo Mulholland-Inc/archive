@@ -744,7 +744,7 @@ archive schema migrate ./migrations</pre>
 <p>A group, like <code>hr</code> or <code>finance</code>, is a set of people. A row or file whose <code>access</code> is <code>hr</code> is seen only by the hr group and the owners. With no access, the whole workspace sees it.</p>
 
 <h3 id="groups-make">Making a group</h3>
-<p>Put someone in it. A group exists while at least one person is in it, and its name is up to 24 lowercase letters, digits or <code>_</code>.</p>
+<p>Put someone in it. A group exists while at least one person is in it, and its name can be any text.</p>
 <Code tabs={['terminal', 'run.ts']}>
 <pre>archive list member email=anna@example.com
 archive set member &lt;id&gt; <span class="s">'&#123;"groups":["finance"]&#125;'</span></pre>
