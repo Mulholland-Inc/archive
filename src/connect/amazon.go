@@ -16,7 +16,7 @@ func init() {
 				"Every item since the account began, with prices, tax and tracking, comes from importing Amazon's Your Orders export.",
 			To: Map{Table: "commerce_order",
 				Cols: map[string]SQL{"number": "substring(concat_ws(' ', data->>'subject', data->>'text') from '\\m(\\d{3}-\\d{7}-\\d{7})\\M')",
-					"customer_name": "'Amazon'", "total": "archive.sync_money(replace(" + amazonTotal + ", ',', ''), " + amazonCurrency + ")",
+					"total": "archive.sync_money(replace(" + amazonTotal + ", ',', ''), " + amazonCurrency + ")",
 					"placed_at": "archive.sync_at(data->>'sent_at')", "note": "data->>'subject'",
 					"tags": "jsonb_build_array(lower(substring(data->>'from' from '@(amazon\\.[a-z.]+)$')))"},
 				Children: []Kids{{Table: "commerce_line", From: "(SELECT substring(data->>'subject' from '(?:Ordered|Your Amazon[^:]*order of):?\\s*\"?(.+?)\"?(?:\\s+and \\d+ more items?)?\\.?$') AS t) l WHERE l.t IS NOT NULL",
