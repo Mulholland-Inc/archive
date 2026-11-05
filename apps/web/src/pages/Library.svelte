@@ -8,7 +8,6 @@
   import Grid from '../components/Grid.svelte';
   import SearchField from '../components/SearchField.svelte';
   import Chip from '../components/Chip.svelte';
-  import Select from '../components/Select.svelte';
   import SegmentedControl from '../components/SegmentedControl.svelte';
   import FileTile from '../components/FileTile.svelte';
   import Table from '../components/Table.svelte';
@@ -178,7 +177,7 @@
 </script>
 
 {#snippet fileMenu(file)}
-  <Menu placement="bottom-end" width="sm" label="File actions">
+  <Menu end width="sm" label="File actions">
     {#snippet trigger(props)}<IconButton icon={Ellipsis} label={`Actions for ${file.name}`} size="sm" tooltip={false} {...props} />{/snippet}
     <MenuItems items={fileItems(file)} />
   </Menu>
@@ -216,7 +215,7 @@
         <Chip selected={kind === k.value} onclick={() => (kind = k.value)}>{k.label}</Chip>
       {/each}
       <Spacer />
-      <Select bind:value={sort} options={sorts} variant="ghost" label="Sort by" placement="bottom-end" />
+      <Menu bind:value={sort} options={sorts} variant="ghost" label="Sort by" />
       <SegmentedControl bind:value={view} options={views} iconOnly label="View" />
     </Stack>
   </Stack>
@@ -270,7 +269,7 @@
         <SettingsRow label="Kind"><Badge>{open.ext}</Badge></SettingsRow>
         <SettingsRow label="Who sees it">
           {#if !open.connection && mayLimit(open.access)}
-            <Select value={open.access ?? ''} options={accessOptions(open.access)} size="sm" variant="ghost" label={`Who sees ${open.name}`} onchange={(v) => setFileAccess(open, v || null)} />
+            <Menu value={open.access ?? ''} options={accessOptions(open.access)} size="sm" variant="ghost" label={`Who sees ${open.name}`} onchange={(v) => setFileAccess(open, v || null)} />
           {:else}
             <Text tone="secondary">{open.folder}</Text>
           {/if}

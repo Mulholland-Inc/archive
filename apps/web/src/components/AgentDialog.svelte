@@ -5,7 +5,7 @@
   import Textarea from './Textarea.svelte';
   import Button from './Button.svelte';
   import LookPicker from './LookPicker.svelte';
-  import Select from './Select.svelte';
+  import Menu from './Menu.svelte';
   import { TINTS, AVATARS } from '../lib/looks.js';
   import { app, groups, members, agentById, createAgent, updateAgent, mayLimit, accessOptions } from '../lib/app.svelte.js';
 
@@ -50,7 +50,7 @@
   {#if limits}
     <Field label="Who sees it">
       {#snippet children()}
-        <Select value={access} options={accessOptions(agent?.access)} label="Who sees it" full onchange={(v) => (access = v)} />
+        <Menu value={access} options={accessOptions(agent?.access)} label="Who sees it" full onchange={(v) => (access = v)} />
       {/snippet}
     </Field>
   {/if}

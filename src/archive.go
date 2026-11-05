@@ -413,7 +413,7 @@ func (a *Archive) Delete(ctx context.Context, typ string, id uuid.UUID) error {
 }
 
 // Schema is each table and view of the public schema as the transaction in ctx sees it, with its columns and
-// DDL; with a name, only that one.
+// DDL; with a name, that one, of any schema the catalog shows, with DDL when it is public.
 func (a *Archive) Schema(ctx context.Context, name string) (any, error) {
 	if _, err := signedIn(ctx); err != nil {
 		return nil, err
@@ -423,12 +423,9 @@ func (a *Archive) Schema(ctx context.Context, name string) (any, error) {
 		return nil, err
 	}
 	cat := a.catalog(ctx)
-	out, names := []runTable{}, []string{}
+	out := []runTable{}
 	for _, t := range runTables(cat) {
-		if cat.Tables[t.Name].Schema != "public" {
-			continue
-		}
-		if names = append(names, t.Name); name == "" || t.Name == name {
+		if t.Name == name || name == "" && cat.Tables[t.Name].Schema == "public" {
 			t.DDL = ddl[t.Name]
 			out = append(out, t)
 		}
@@ -439,7 +436,7 @@ func (a *Archive) Schema(ctx context.Context, name string) (any, error) {
 	case len(out) == 1:
 		return out[0], nil
 	}
-	return nil, fmt.Errorf("no table or view %q; there are %s: %w", name, strings.Join(names, ", "), ErrNotFound)
+	return nil, fmt.Errorf("no table or view %q; there are %s: %w", name, strings.Join(cat.names(), ", "), ErrNotFound)
 }
 
 // Migrate dry-runs a migration, or with its dry run's confirm runs it, in the transaction in ctx or one of its

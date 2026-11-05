@@ -640,7 +640,7 @@ CREATE INDEX file_thumb_idx ON archive.file ((metadata#>>'{thumbnail,sha256}')) 
 CREATE INDEX file_pull_idx ON archive.file (retry_at NULLS FIRST) WHERE status = 'pending' AND connection IS NOT NULL;
 CREATE INDEX file_owner_idx ON archive.file (owner);
 CREATE INDEX file_editor_idx ON archive.file (editor);
-COMMENT ON TABLE archive.file IS 'A file or folder: one you uploaded or made here, or one of a drive you connected, like Google Drive, SharePoint or Dropbox, with its bytes and its words when Archive reads them. Change yours with archive.edit and the files API; what a connection synced is read only, so archive.copy it to change it here, or its connector''s upload to change it there
+COMMENT ON TABLE archive.file IS 'A file or folder: one you uploaded or made here, or one of a drive you connected, like Google Drive, SharePoint or Dropbox, with its bytes and its words when Archive reads them. Change yours with archive.edit; what a connection synced is read only, so archive.copy it to change it here, or its connector''s upload to change it there
 icon: folder-open';
 COMMENT ON COLUMN archive.file.hash IS 'The sha256 of its bytes; empty while Archive has none, as for a folder or a file not yet copied';
 COMMENT ON COLUMN archive.file.name IS 'Its name; a Google Doc, Sheet or Slides deck''s ends in .docx, .xlsx or .pptx, as Archive keeps it';
@@ -3436,7 +3436,7 @@ BEGIN
 END $$;
 
 GRANT USAGE ON SCHEMA archive TO "{p}_viewer";
-GRANT SELECT ON archive.file, archive.member, archive."group" TO "{p}_viewer";
+GRANT SELECT ON archive.file, archive.member, archive."group", archive.revision TO "{p}_viewer";
 GRANT INSERT, UPDATE, DELETE ON archive.file TO "{p}_editor";
 GRANT SELECT, INSERT, DELETE ON archive.secret TO "{p}_editor";
 GRANT INSERT, UPDATE, DELETE ON archive.member, archive."group" TO "{p}_owner";
@@ -4174,6 +4174,9 @@ WHERE c.id = $1 AND c.account <> $2 AND NOT EXISTS (
 
 -- name: ConnectionLocked :one
 SELECT * FROM archive.connection WHERE id = $1 FOR UPDATE;
+
+-- name: ConnectedProviders :many
+SELECT DISTINCT provider FROM archive.connection WHERE NOT revoked ORDER BY provider;
 
 -- A member's personal connections, and the archive's integrations.
 -- name: MemberConnections :many

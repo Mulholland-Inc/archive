@@ -12,7 +12,7 @@
   import StickyHeader from '../components/StickyHeader.svelte';
   import SearchField from '../components/SearchField.svelte';
   import Chip from '../components/Chip.svelte';
-  import Select from '../components/Select.svelte';
+  import Menu from '../components/Menu.svelte';
   import Spacer from '../components/Spacer.svelte';
   import RowLink from '../components/RowLink.svelte';
   import { ws, schema, viewRows, linkOf, tableOf, shownOf, titleOf, cellText, renameView, isArchiveOwner } from '../lib/app.svelte.js';
@@ -118,7 +118,7 @@
           {/each}
         {/if}
         <Spacer />
-        <Select bind:value={sort} options={sorts} variant="ghost" label="Sort by" placement="bottom-end" />
+        <Menu bind:value={sort} options={sorts} variant="ghost" label="Sort by" />
       </Stack>
 
       {#if !all.length}

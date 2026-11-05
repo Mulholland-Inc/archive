@@ -1209,7 +1209,10 @@ func (a *Archive) streamTypes(ctx context.Context) string {
 	if ac := ActorFrom(ctx); ac != nil {
 		conns, _ = a.memberConnections(ctx, ac.member)
 	}
-	b.WriteString("\n" + runDoc("", `What Archive syncs of the accounts you connected, by "<connector>.<stream>", and the table each lands in: its rows' stream column is the part after the dot, and their connection column the connection's id (see Connected accounts in the header)`) + "interface Streams {\n")
+	if len(conns) == 0 {
+		return ""
+	}
+	b.WriteString("\n" + runDoc("", `What Archive syncs of the accounts you connected, by "<connector>.<stream>", and the table each lands in: its rows' stream column is the part after the dot`) + "interface Streams {\n")
 	done := map[string]bool{}
 	for _, c := range conns {
 		p, err := a.hub.connector(c.Provider)
@@ -1224,6 +1227,62 @@ func (a *Archive) streamTypes(ctx context.Context) string {
 	}
 	b.WriteString("}\n")
 	return b.String()
+}
+
+// syncShown are the tables the docs show: all but the ones syncs write, of which only those a connection in this
+// workspace writes, with the rows that belong to them, what they reference and the people and organizations they
+// name. It reads the connections each time, so connecting or disconnecting changes the next docs.
+func (a *Archive) syncShown(ctx context.Context, cat *Catalog) map[string]bool {
+	show := map[string]bool{}
+	var walk func(name string)
+	walk = func(name string) {
+		t := cat.Tables[name]
+		if t == nil || show[name] {
+			return
+		}
+		show[name] = true
+		for child, ct := range syncSchema {
+			if ct.parent == name {
+				walk(child)
+			}
+		}
+		for _, c := range t.Columns {
+			walk(strings.TrimPrefix(strings.TrimPrefix(c.target(), "public."), "archive."))
+		}
+	}
+	for _, name := range cat.names() {
+		if t := cat.Tables[name]; !t.synced() || name == "file" {
+			show[name] = true
+		}
+	}
+	var providers []string
+	err := a.st.System(ctx, func(ctx context.Context) (err error) {
+		providers, err = a.st.db(ctx).ConnectedProviders(ctx)
+		return err
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "archive: workspace %s: its connections for the docs: %v\n", a.ws.ID, err)
+	}
+	if len(providers) > 0 {
+		walk("known_person")
+		walk("known_org")
+	}
+	for _, id := range providers {
+		if c := connect.Get(id); c != nil {
+			for _, st := range c.Streams {
+				walk(st.Table)
+			}
+		}
+	}
+	// A table of the workspace's own may name a synced one.
+	for _, name := range cat.names() {
+		if t := cat.Tables[name]; t.Schema == "public" {
+			for _, c := range t.Columns {
+				walk(strings.TrimPrefix(strings.TrimPrefix(c.target(), "public."), "archive."))
+			}
+		}
+	}
+	return show
 }
 
 // Archive's tables of what connections sync (archive.sql): each stream's records land as rows of the table it
@@ -2327,7 +2386,7 @@ func (a *Archive) actionTypes(ctx context.Context) string {
 			yours = append(yours, p.Name+" "+c.Account)
 		}
 	}
-	intro := "Actions on the accounts you connected, by name, for archive.action (see Connected accounts in the header)"
+	intro := "Actions on the accounts you connected, by name, for archive.action (see Connected accounts)"
 	if len(yours) == 0 {
 		intro += ". You have connected none"
 	} else {

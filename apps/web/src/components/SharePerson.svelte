@@ -1,7 +1,7 @@
 <script>
   import Avatar from './Avatar.svelte';
   import { Trash2 } from '@lucide/svelte';
-  import Select from './Select.svelte';
+  import Menu from './Menu.svelte';
   import IconButton from './IconButton.svelte';
   import { seedOf, permissions, isExternal, setPermission, unsharePerson } from '../lib/app.svelte.js';
 
@@ -17,7 +17,7 @@
       {#if isExternal(person.email)}<span>External</span>{/if}
     </span>
   </span>
-  <Select value={person.permission} options={permissions} size="sm" variant="ghost" placement="bottom-end" label={`Access for ${person.name}`} onchange={(v) => setPermission(share, person.email, v)} />
+  <Menu value={person.permission} options={permissions} size="sm" variant="ghost" label={`Access for ${person.name}`} onchange={(v) => setPermission(share, person.email, v)} />
   <IconButton icon={Trash2} label={`Remove ${person.name}`} size="sm" onclick={() => unsharePerson(share, person.email)} />
 </div>
 

@@ -19,7 +19,7 @@
   import EmptyState from '../components/EmptyState.svelte';
   import RowLink from '../components/RowLink.svelte';
   import Chip from '../components/Chip.svelte';
-  import Select from '../components/Select.svelte';
+  import Menu from '../components/Menu.svelte';
   import { ws, schema, groups, members, rowOf, rowRelations, linkOf, tableOf, baseOf, shownOf, titleOf, groupById, mayLimit, accessOptions, setAccess } from '../lib/app.svelte.js';
   import { show, relative } from '../lib/live.js';
 
@@ -86,7 +86,7 @@
         {#if limited}
           <Property label="Who sees it" icon={Lock}>
             {#if mayLimit(row.access)}
-              <Select value={row.access ?? ''} options={accessOptions(row.access)} size="sm" variant="ghost" label="Who sees it" onchange={(v) => setAccess(base.id, row, v || null)} />
+              <Menu value={row.access ?? ''} options={accessOptions(row.access)} size="sm" variant="ghost" label="Who sees it" onchange={(v) => setAccess(base.id, row, v || null)} />
             {:else if group}
               <Chip size="sm" href={`/access/groups/${group.id}`}>{group.name}</Chip>
             {:else}

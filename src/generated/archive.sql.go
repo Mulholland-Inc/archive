@@ -446,6 +446,30 @@ func (q *Queries) ClearTurns(ctx context.Context, agent uuid.UUID, member uuid.U
 	return err
 }
 
+const connectedProviders = `-- name: ConnectedProviders :many
+SELECT DISTINCT provider FROM archive.connection WHERE NOT revoked ORDER BY provider
+`
+
+func (q *Queries) ConnectedProviders(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, connectedProviders)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var provider string
+		if err := rows.Scan(&provider); err != nil {
+			return nil, err
+		}
+		items = append(items, provider)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const connection = `-- name: Connection :one
 SELECT id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, asked_at, lease_at, revoked, integration FROM archive.connection WHERE id = $1
 `

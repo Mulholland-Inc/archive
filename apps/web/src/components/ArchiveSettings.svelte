@@ -5,7 +5,7 @@
   import Divider from './Divider.svelte';
   import Field from './Field.svelte';
   import Input from './Input.svelte';
-  import Select from './Select.svelte';
+  import Menu from './Menu.svelte';
   import Switch from './Switch.svelte';
   import SettingsRow from './SettingsRow.svelte';
   import Button from './Button.svelte';
@@ -62,15 +62,15 @@
   <Divider />
   <Section title="Members" gap="lg">
     <Stack gap="0">
-      <SettingsRow label="Default role for new members"><Select bind:value={settings.defaultRole} options={roles} size="sm" label="Default role" placement="bottom-end" /></SettingsRow>
+      <SettingsRow label="Default role for new members"><Menu bind:value={settings.defaultRole} options={roles} size="sm" label="Default role" /></SettingsRow>
       <SettingsRow label="Editors can invite people"><Switch bind:checked={settings.invites} label="Editors can invite people" /></SettingsRow>
     </Stack>
   </Section>
   <Divider />
   <Section title="Data" gap="lg">
     <Stack gap="0">
-      <SettingsRow label="Data region"><Select bind:value={settings.region} options={regions} size="sm" label="Data region" placement="bottom-end" /></SettingsRow>
-      <SettingsRow label="Chat history"><Select bind:value={settings.retention} options={retentions} size="sm" label="Chat history" placement="bottom-end" /></SettingsRow>
+      <SettingsRow label="Data region"><Menu bind:value={settings.region} options={regions} size="sm" label="Data region" /></SettingsRow>
+      <SettingsRow label="Chat history"><Menu bind:value={settings.retention} options={retentions} size="sm" label="Chat history" /></SettingsRow>
     </Stack>
   </Section>
   <Divider />

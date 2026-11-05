@@ -24,7 +24,7 @@
   }
 </script>
 
-<Menu label={user.name} placement="top-start" morph>
+<Menu label={user.name}>
   {#snippet trigger(props)}
     <div class={['card', { collapsed }]}>
       <button type="button" class="account" aria-label={collapsed ? user.name : undefined} {...props}>

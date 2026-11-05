@@ -198,7 +198,7 @@ func (a *Archive) turn(w http.ResponseWriter, r *http.Request) {
 		return out, nil
 	}
 	role, _, _ := a.level(ctx)
-	system := agentSystemBlocks(a.RunTypes(ctx), agentSystem(ac, role, agent, memory))
+	system := agentSystemBlocks(a.RunTypes(ctx), strings.TrimSpace(a.RunConnections(ctx))+"\n\n"+agentSystem(ac, role, agent, memory))
 	res, err := agentLoop(ctx, key, agentModel, system, append(msgs, first), agentMaxRuns, send, save, run)
 	if err != nil {
 		send(map[string]any{"type": "error", "error": err.Error()})
@@ -575,10 +575,10 @@ func agentDescription(in any) string {
 	return strings.TrimSpace(d)
 }
 
-// agentSystemBlocks is the system prompt: first the workspace's tables, which the SDK docs in the run tool end
-// with, as their own cache entry shared by everyone in the workspace; then, uncached, the date and who the
-// agent talks with (text). Ahead of both, the run tool's description is the same in every workspace (runDocs),
-// so with the conversation's own breakpoint a turn has three, all with the default lifetime.
+// agentSystemBlocks is the system prompt: first the workspace's tables, as their own cache entry shared by everyone
+// in the workspace; then the caller's own (text), which the conversation's breakpoint caches. Ahead of both, the
+// run tool's description is the same in every workspace (runDocs), so a turn has three breakpoints, all with the
+// default lifetime.
 func agentSystemBlocks(types, text string) []any {
 	return []any{
 		map[string]any{"type": "text", "text": "The tables of this archive, as TypeScript, which the SDK in the run tool's description reads and writes:\n\n" + types,
@@ -601,13 +601,11 @@ func agentSystem(ac *Actor, role string, agent map[string]any, memory string) st
 	case "viewer":
 		s += " They are a viewer of this workspace."
 	}
-	s += " The run tool is the only way to read or change their archive; give each call a description of what it does, in a few words, which they see while it runs. Run calls and their results are folded away in the conversation, so the answer itself presents what they need, as a short markdown table when that helps." +
-		" A workflow is a row of the workflow table: save it with archive.create(\"workflow\", { name, source, on }), fix a refused save from its errors, try it with archive.run(name, input), read its result or the workflow_run table, and change it with archive.update." +
-		" An agent is a row of the agent table, and when they want a new one you make it: archive.create(\"agent\", { name, instructions, avatar, tint }), with instructions saying what it is for, and a tint from 0 to 31. Pick it an avatar that suits what it does, by a number the agent table's avatar column lists."
+	s += " Your id in the agent table is " + fmt.Sprint(agent["id"]) + ". The run tool is the only way to read or change their archive. Run calls and their results are folded away in the conversation, so the answer itself presents what they need, as a short markdown table when that helps."
 	if in := strings.TrimSpace(fmt.Sprint(agent["instructions"])); in != "" {
 		s += "\n\nYour instructions, which the workspace set:\n" + in
 	}
-	s += "\n\nThis conversation has no end, and no new session starts. Older turns leave the conversation and stay as memory, below if there is any: one line per #turn or #first-last range, oldest first, coarser with age. It may be all you need. Your id in the agent table is " + fmt.Sprint(agent["id"]) + ". To look further, search memory first, as its lines are short: archive.query(\"SELECT lo, size, name FROM archive.memory WHERE agent = $1 AND name ~* $2 ORDER BY size, lo DESC LIMIT 20\", id, word). A line's two halves are the rows of half its size at lo and lo + size/2. Then go to the turn, word for word, and read only what you need, since a whole turn can be very long: archive.query(\"SELECT n, substring(messages::text, '(?i).{0,250}' || $2 || '.{0,250}') AS said FROM archive.turn WHERE agent = $1 AND messages::text ~* $2 ORDER BY n DESC LIMIT 5\", id, word)."
+	s += "\n\nThis conversation has no end, and no new session starts. Older turns leave it and stay as memory, below if there is any: one line per #turn or #first-last range, oldest first, coarser with age."
 	if memory != "" {
 		s += "\n\nYour memory of them:\n" + memory
 	}

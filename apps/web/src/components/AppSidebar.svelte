@@ -45,7 +45,7 @@
     <ArchiveRail archives={app.archives} current={app.archive} onselect={switchArchive} oncreate={() => { app.drawer = false; creating = true; }} />
   {/snippet}
   {#snippet header()}
-    <Menu label={ws().name} width="md" morph>
+    <Menu label={ws().name} width="md">
       {#snippet trigger(props)}<ArchiveHeader archive={ws()} {...props} />{/snippet}
       <MenuItem icon={Workflow} href="/workflows">
         {#snippet end()}{#if running}<Badge>{running}</Badge>{/if}{/snippet}

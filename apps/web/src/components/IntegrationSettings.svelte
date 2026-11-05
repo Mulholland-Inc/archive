@@ -41,7 +41,7 @@
   <PaneHeader title="Integrations" description="The archive’s own accounts, like its QuickBooks or GitHub, connected once for everyone. Only owners can add or change them." art="connectors">
     {#snippet search()}
       <div class="search"><SearchField bind:value={query} size="sm" placeholder="Search" label="Search integrations" /></div>
-      <Menu label="Filter" placement="bottom-end">
+      <Menu label="Filter" end>
         {#snippet trigger(props)}<IconButton icon={ListFilter} label="Filter" pressed={filtered} {...props} />{/snippet}
         <MenuLabel>Status</MenuLabel>
         <MenuItem keepOpen checked={status === 'connected'} onselect={() => (status = status === 'connected' ? 'all' : 'connected')}>Connected</MenuItem>

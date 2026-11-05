@@ -21,7 +21,6 @@
   import SidebarSection from '../components/SidebarSection.svelte';
   import SidebarItem from '../components/SidebarItem.svelte';
   import SidebarBlock from '../components/SidebarBlock.svelte';
-  import Select from '../components/Select.svelte';
   import Chip from '../components/Chip.svelte';
   import { app, ws, groups, members, groupById, setAccess, workflowById, runWorkflow, renameWorkflow, removeWorkflow, workflows, runs } from '../lib/app.svelte.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
@@ -94,7 +93,7 @@
     <Page>
       <PageHeader title={wf.name} renameLabel="Rename workflow" onrename={mine ? (name) => renameWorkflow(id, name) : undefined}>
         {#snippet actions()}
-          {#if mine}<Menu placement="bottom-end" width="sm" label="Workflow actions">
+          {#if mine}<Menu end width="sm" label="Workflow actions">
             {#snippet trigger(props)}<IconButton icon={Ellipsis} label="Workflow actions" {...props} />{/snippet}
             <MenuItems items={workflowItems(wf, { open: false, onrun: start, ondelete: remove })} />
           </Menu>{/if}
@@ -121,7 +120,7 @@
       <SidebarSection title="Who sees it">
         <SidebarBlock>
           {#if mine}
-            <Select value={wf.access ?? ''} options={accessOptions} size="sm" label="Who sees it" full onchange={(v) => setAccess('workflow', wf, v || null)} />
+            <Menu value={wf.access ?? ''} options={accessOptions} size="sm" label="Who sees it" full onchange={(v) => setAccess('workflow', wf, v || null)} />
           {:else if group}
             <Chip size="sm" href={`/access/groups/${group.id}`}>{group.name}</Chip>
           {/if}

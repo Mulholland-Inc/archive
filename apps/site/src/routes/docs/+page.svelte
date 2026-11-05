@@ -331,7 +331,7 @@ icon: receipt'</span>;
 <p>Dropping a table or a column deletes its data, and changing a column's type rewrites it. The dry run lists those in <code>drops</code>, so you see them before you confirm.</p>
 
 <h3 id="schema-history">History</h3>
-<p><code>archive.revisions()</code> lists every migration, newest first, with who ran it and its statements. To undo one, migrate the reverse. Data that was dropped stays gone.</p>
+<p>The <code>archive.revision</code> table holds every migration, with who ran it and its statements; read it with <code>archive.query</code>. To undo one, migrate the reverse. Data that was dropped stays gone.</p>
 
 <h3 id="schema-who">Who can change it</h3>
 <p>Owners. Everyone else can read the schema.</p>
