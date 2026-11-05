@@ -906,6 +906,9 @@ func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string
 	if err := schemaMoved(ctx, sp, func(st string) error { return q.DDL(ctx, key, st) }); err != nil {
 		return nil, err
 	}
+	if err := schemaFunctions(ctx, sp); err != nil {
+		return nil, err
+	}
 	after, err := pgRead(ctx, sp, "archive", "public")
 	if err != nil {
 		return nil, err
@@ -945,8 +948,7 @@ func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string
 
 var (
 	schemaStmtRe   = regexp.MustCompile(`(?is)^(CREATE\s+(OR\s+REPLACE\s+)?(UNIQUE\s+)?(TABLE|VIEW|INDEX|TYPE|DOMAIN|FUNCTION|TRIGGER|SEQUENCE|POLICY)|(ALTER|DROP)\s+(TABLE|VIEW|INDEX|TYPE|DOMAIN|FUNCTION|TRIGGER|SEQUENCE|POLICY)|COMMENT\s+ON)\s`)
-	schemaBannedRe = regexp.MustCompile(`(?is)\bSECURITY\s+DEFINER\b|\bOWNER\s+TO\b|\bSET\s+SCHEMA\b|^CREATE\s+TABLE\s+[^(]*\bAS\s`)
-	schemaLangRe   = regexp.MustCompile(`(?i)\bLANGUAGE\s+'?([a-z_]+)`)
+	schemaBannedRe = regexp.MustCompile(`(?is)\bOWNER\s+TO\b|\bSET\s+SCHEMA\b|^CREATE\s+TABLE\s+[^(]*\bAS\s`)
 )
 
 // schemaCheckSQL allows only DDL on the kinds of object a workspace has. Rows change through archive.create,
@@ -964,11 +966,7 @@ func schemaCheckSQL(stmts []string) error {
 			ve.Errors = append(ve.Errors, FieldError{Path: path, Message: "want CREATE, ALTER or DROP of a TABLE, VIEW, INDEX, TYPE, DOMAIN, FUNCTION, TRIGGER, SEQUENCE or POLICY, or COMMENT ON; change rows with archive.create, archive.update and archive.delete between migrations"})
 		case strings.HasPrefix(strings.ToUpper(st), "COMMENT"):
 		case schemaBannedRe.MatchString(st):
-			ve.Errors = append(ve.Errors, FieldError{Path: path, Message: "SECURITY DEFINER, OWNER TO, SET SCHEMA and CREATE TABLE ... AS are not allowed"})
-		default:
-			if m := schemaLangRe.FindStringSubmatch(st); m != nil && !strings.EqualFold(m[1], "sql") && !strings.EqualFold(m[1], "plpgsql") {
-				ve.Errors = append(ve.Errors, FieldError{Path: path, Message: "functions are LANGUAGE sql or plpgsql"})
-			}
+			ve.Errors = append(ve.Errors, FieldError{Path: path, Message: "OWNER TO, SET SCHEMA and CREATE TABLE ... AS are not allowed"})
 		}
 	}
 	return ve.err()
@@ -1048,10 +1046,38 @@ func schemaSearchClear(stmts []string, derived map[string]bool) []string {
 	return slices.Compact(out)
 }
 
-var schemaLeadRe = regexp.MustCompile(`^(\s+|--[^\n]*(\n|$)|/\*(?s:.*?)\*/)+`)
+// schemaBare is st with each comment a space, as Postgres reads it, and no space around it.
+func schemaBare(st string) string {
+	var b strings.Builder
+	for i := 0; i < len(st); i++ {
+		end, comment := storeSkip(st, i)
+		if comment {
+			b.WriteByte(' ')
+		} else {
+			b.WriteString(st[i:min(end+1, len(st))])
+		}
+		i = end
+	}
+	return strings.TrimSpace(b.String())
+}
 
-// schemaBare is st without the comments and space before it.
-func schemaBare(st string) string { return schemaLeadRe.ReplaceAllString(st, "") }
+// schemaFunctions refuses what Postgres says a migration left behind, however its SQL spelled it: a function that
+// runs as its owner, or in another language than sql and plpgsql.
+func schemaFunctions(ctx context.Context, q generated.DBTX) error {
+	var name string
+	err := q.QueryRow(ctx, `SELECT p.oid::pg_catalog.regprocedure::text FROM pg_catalog.pg_proc p
+        JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+        JOIN pg_catalog.pg_language l ON l.oid = p.prolang
+        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'archive')
+        AND (p.prosecdef OR l.lanname NOT IN ('sql', 'plpgsql')) LIMIT 1`).Scan(&name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return fmt.Errorf("function %s: functions are LANGUAGE sql or plpgsql, without SECURITY DEFINER: %w", name, ErrForbidden)
+}
 
 func schemaSetSearch(table string, cols []string) string {
 	return "ALTER TABLE " + pgIdent("public", table) + " ALTER COLUMN search SET EXPRESSION AS (archive.search_doc(VARIADIC " + schemaSearchArray(cols) + "))"
