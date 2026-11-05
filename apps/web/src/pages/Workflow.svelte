@@ -21,7 +21,7 @@
   import SidebarSection from '../components/SidebarSection.svelte';
   import SidebarItem from '../components/SidebarItem.svelte';
   import Chip from '../components/Chip.svelte';
-  import { app, ws, groups, members, groupById, setAccess, workflowById, runWorkflow, renameWorkflow, removeWorkflow, workflows, runs } from '../lib/app.svelte.js';
+  import { app, ws, atLeast, groups, members, groupById, setAccess, workflowById, runWorkflow, renameWorkflow, removeWorkflow, workflows, runs } from '../lib/app.svelte.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
   import { workflowItems, runItems } from '../lib/menus.js';
 
