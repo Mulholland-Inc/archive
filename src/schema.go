@@ -1308,12 +1308,6 @@ func (s *pgStore) migrate(ctx context.Context) error {
 		if _, err := tx.Exec(ctx, s.expand(storeMigrateAs)); err != nil {
 			return fmt.Errorf("migration role: %w", err)
 		}
-		if _, err := tx.Exec(ctx, agentSlugOnce); err != nil {
-			return fmt.Errorf("agent slugs: %w", err)
-		}
-		if _, err := tx.Exec(ctx, syncPollOnce); err != nil {
-			return fmt.Errorf("sync schedule: %w", err)
-		}
 		lost, err := pgMigrate(ctx, tx, want)
 		if err != nil {
 			return fmt.Errorf("archive.sql: %w", err)
@@ -1334,41 +1328,6 @@ func (s *pgStore) migrate(ctx context.Context) error {
 	}
 	return syncCheckSQL(ctx, conn)
 }
-
-const syncPollOnce = `DO $$
-BEGIN
-    IF EXISTS (SELECT FROM pg_catalog.pg_attribute a WHERE a.attrelid = to_regclass('archive.connection') AND a.attname = 'asked_at' AND NOT a.attisdropped) THEN
-        UPDATE archive.connection SET sync_at = now() + random() * interval '1 hour' WHERE sync_at IS NULL AND NOT revoked;
-        BEGIN
-            ALTER TABLE archive.connection DROP COLUMN asked_at;
-        EXCEPTION WHEN dependent_objects_still_exist THEN
-            NULL;
-        END;
-    END IF;
-END $$`
-
-const agentSlugOnce = `DO $$
-DECLARE
-    r record;
-    base text;
-    next text;
-    n integer;
-BEGIN
-    IF to_regclass('archive.agent') IS NULL OR EXISTS (SELECT FROM pg_catalog.pg_attribute WHERE attrelid = to_regclass('archive.agent') AND attname = 'slug') THEN
-        RETURN;
-    END IF;
-    ALTER TABLE archive.agent ADD COLUMN slug text;
-    FOR r IN SELECT id, name FROM archive.agent ORDER BY created_at, id LOOP
-        base := coalesce(nullif(btrim(regexp_replace(lower(regexp_replace(normalize(r.name, NFD), '[\u0300-\u036f]', '', 'g')), '[^a-z0-9]+', '-', 'g'), '-'), ''), 'agent');
-        next := rtrim(left(base, 32), '-');
-        n := 1;
-        WHILE EXISTS (SELECT FROM archive.agent a WHERE a.slug = next) LOOP
-            n := n + 1;
-            next := rtrim(left(base, 31 - length(n::text)), '-') || '-' || n;
-        END LOOP;
-        UPDATE archive.agent SET slug = next, updated_at = updated_at WHERE id = r.id;
-    END LOOP;
-END $$`
 
 const storeMigrateAs = `DO $$
 BEGIN
