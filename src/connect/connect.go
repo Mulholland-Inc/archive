@@ -560,6 +560,7 @@ type Client struct {
 	mcpSeen *seen
 	Files   Yours
 	Store   func(name string, b []byte) (string, error)
+	Mail    func(s Scan) ([]any, error)
 }
 
 func (p *Provider) Open(ctx context.Context, tok *oauth2.Token, meta map[string]string) *Client {

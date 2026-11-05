@@ -81,12 +81,11 @@ type ArchiveConnection struct {
 	Error string
 	// What the service said about the account when it connected, like QuickBooks' realmId
 	Meta map[string]string
-	// When Archive next reads what changed there; null once it has it all, until the service says something changed, you ask, or you read what it syncs
+	// When Archive next reads what changed there: on a schedule, sooner when the service says something changed or you ask
 	SyncAt *time.Time
 	// When Archive last had everything there
 	SyncedAt *time.Time
 	Cursor   json.RawMessage
-	AskedAt  time.Time
 	LeaseAt  *time.Time
 	Revoked  bool
 	// It is the archive's, like its QuickBooks, which a manager, engineer or the owner connects for everyone, not one person's own

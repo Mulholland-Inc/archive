@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"net"
 	"net/http"
 	"path"
@@ -1069,9 +1068,6 @@ func runParam(v any) any {
 
 func (a *Archive) runQuery(ctx context.Context, query string, params []any) ([]map[string]any, error) {
 	q := strings.TrimRightFunc(strings.TrimSpace(query), func(r rune) bool { return r == ';' || unicode.IsSpace(r) })
-	if runSyncedRe.MatchString(q) {
-		a.syncOnRead(ctx)
-	}
 	fail := func(err error) error {
 		var pe *pgconn.PgError
 		if errors.As(err, &pe) && pe.Code == "25006" {
@@ -1403,8 +1399,6 @@ func runTypesFor(cat *Catalog, shown map[string]bool) string {
 	}
 	return b.String()
 }
-
-var runSyncedRe = regexp.MustCompile(`(?i)\b(known_person|known_org|` + strings.Join(slices.Sorted(maps.Keys(syncSchema)), "|") + `)\b`)
 
 var runIdentRe = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*$`)
 

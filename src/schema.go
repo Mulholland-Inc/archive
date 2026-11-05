@@ -1308,6 +1308,9 @@ func (s *pgStore) migrate(ctx context.Context) error {
 		if _, err := tx.Exec(ctx, agentSlugOnce); err != nil {
 			return fmt.Errorf("agent slugs: %w", err)
 		}
+		if _, err := tx.Exec(ctx, syncPollOnce); err != nil {
+			return fmt.Errorf("sync schedule: %w", err)
+		}
 		lost, err := pgMigrate(ctx, tx, want)
 		if err != nil {
 			return fmt.Errorf("archive.sql: %w", err)
@@ -1330,6 +1333,18 @@ func (s *pgStore) migrate(ctx context.Context) error {
 	}
 	return syncCheckSQL(ctx, conn)
 }
+
+const syncPollOnce = `DO $$
+BEGIN
+    IF EXISTS (SELECT FROM pg_catalog.pg_attribute a WHERE a.attrelid = to_regclass('archive.connection') AND a.attname = 'asked_at' AND NOT a.attisdropped) THEN
+        UPDATE archive.connection SET sync_at = now() + random() * interval '1 hour' WHERE sync_at IS NULL AND NOT revoked;
+        BEGIN
+            ALTER TABLE archive.connection DROP COLUMN asked_at;
+        EXCEPTION WHEN dependent_objects_still_exist THEN
+            NULL;
+        END;
+    END IF;
+END $$`
 
 const agentSlugOnce = `DO $$
 DECLARE

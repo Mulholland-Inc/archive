@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"os"
@@ -350,7 +351,9 @@ func (a *Archive) connectionSave(ctx context.Context, member uuid.UUID, c *conne
 			Token: connect.SealToken(a.aead, id, g.Refresh), Scopes: g.Scopes, Meta: g.Meta, Integration: c.Integration})
 	})
 	if err == nil {
-		a.syncSoon(ctx)
+		if _, err := a.syncWant(ctx, id); err != nil {
+			fmt.Fprintf(os.Stderr, "archive: workspace %s: queueing a sync: %v\n", a.ws.ID, err)
+		}
 	}
 	return id, err
 }
@@ -626,7 +629,8 @@ const (
 	syncTries      = 5
 	syncBusyWait   = 15 * time.Minute
 	syncMaxPages   = 100_000
-	syncStale      = 5 * time.Minute
+	syncPoll       = time.Hour
+	syncBackstop   = 24 * time.Hour
 	syncRename     = 24 * time.Hour
 )
 
@@ -635,9 +639,9 @@ var errRevoked = errors.New("revoked")
 type syncStream struct {
 	Cursor string     `json:"cursor,omitempty"`
 	At     *time.Time `json:"at,omitempty"`
-	Done   *time.Time `json:"done,omitempty"`
 	Last   *time.Time `json:"last,omitempty"`
 	More   bool       `json:"more,omitempty"`
+	Again  bool       `json:"again,omitempty"`
 	Since  *time.Time `json:"since,omitempty"`
 	Skip   string     `json:"skip,omitempty"`
 	Pages  int        `json:"pages,omitempty"`
@@ -647,14 +651,34 @@ type syncStream struct {
 	Named  *time.Time `json:"named,omitempty"`
 }
 
-func (v *syncStream) due(s *connect.Stream, asked time.Time) bool {
-	if !v.current(s) {
-		return true
+func (v *syncStream) due(s *connect.Stream, now time.Time) bool {
+	return !v.current(s) || v.At == nil || !v.At.After(now)
+}
+
+func (v *syncStream) settled(s *connect.Stream, now time.Time) bool {
+	return !v.due(s, now) && !v.More && !v.Again && v.Fails == 0
+}
+
+func (v *syncStream) floor(s *connect.Stream, now time.Time) time.Time {
+	if v.Last != nil && v.Last.Add(s.Every).After(now) {
+		return v.Last.Add(s.Every)
 	}
-	if v.Done != nil && !v.Done.Before(asked) {
-		return false
+	return now
+}
+
+func syncEvery(p *connect.Provider, s *connect.Stream) time.Duration {
+	if s.Every > 0 {
+		return s.Every
 	}
-	return s.Every <= 0 || v.Last == nil || v.More || !asked.Before(v.Last.Add(s.Every))
+	if push, target := p.PushOf(); push != nil && push.Watch != nil && (push.Env == "" || target != "") {
+		return syncBackstop
+	}
+	return syncPoll
+}
+
+func syncLater(p *connect.Provider, s *connect.Stream, now time.Time) *time.Time {
+	every := syncEvery(p, s)
+	return ptr(now.Add(every + rand.N(every/10)))
 }
 
 func (v *syncStream) current(s *connect.Stream) bool { return v.Def == s.Version }
@@ -679,12 +703,12 @@ func (st syncState) of(name string) *syncStream {
 	return st[name]
 }
 
-func syncPick(streams []*connect.Stream, st syncState, asked time.Time) *connect.Stream {
+func syncPick(streams []*connect.Stream, st syncState, now time.Time) *connect.Stream {
 	var pick *connect.Stream
 	var at time.Time
 	for _, s := range streams {
 		v := st.of(s.Name)
-		if !v.due(s, asked) {
+		if !v.due(s, now) {
 			continue
 		}
 		var t time.Time
@@ -719,7 +743,7 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 	if gone == nil {
 		streams = p.Streams
 	}
-	s := syncPick(streams, syncStateOf(c.Cursor), c.AskedAt)
+	s := syncPick(streams, syncStateOf(c.Cursor), time.Now())
 	var page *connect.Page
 	var err error
 	var named bool
@@ -730,6 +754,7 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 		var cl *connect.Client
 		if cl, err = a.connClient(pctx, c); err == nil {
 			cl.Store = a.syncStore(pctx, c.ID, c.Access)
+			cl.Mail = a.syncMail(pctx, c)
 			page, err = s.Pull(cl, cur.Cursor)
 			if err == nil && page.More && page.Cursor == cur.Cursor {
 				err = fmt.Errorf("%s said there was more, but from where this page began", p.Name)
@@ -779,6 +804,8 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 		save.Cursor, _ = json.Marshal(st)
 		switch {
 		case gone != nil:
+			save.SyncAt = ptr(now.Add(syncBackstop))
+			next = save.SyncAt
 			return q.SaveSync(ctx, save)
 		case errors.Is(err, errRevoked):
 			save.Revoked = true
@@ -793,8 +820,8 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 		switch {
 		case s == nil:
 		case errors.As(err, &unsup):
-			cur.Skip, cur.More, cur.Since, cur.Fails, cur.Error, cur.At, cur.Pages = unsup.Reason, false, nil, 0, "", nil, 0
-			cur.Done = &c.AskedAt
+			cur.Skip, cur.More, cur.Again, cur.Since, cur.Fails, cur.Error, cur.Pages = unsup.Reason, false, false, nil, 0, "", 0
+			cur.At = syncLater(p, s, now)
 		case err == nil && cur.Pages+1 >= syncMaxPages:
 			err = fmt.Errorf("%s had more after %d pages; it starts again on the next sync", p.Name, syncMaxPages)
 			cur.Cursor, cur.More, cur.Since, cur.Pages = "", false, nil, 0
@@ -811,7 +838,7 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 				}
 			}
 			if cur.Fails >= syncTries && !busy {
-				cur.At, cur.Done, cur.Fails = nil, &c.AskedAt, 0
+				cur.At, cur.Again, cur.Fails = syncLater(p, s, now), false, 0
 			}
 		default:
 			if (c.Access == nil) != (c2.Access == nil) || c.Access != nil && *c.Access != *c2.Access {
@@ -834,23 +861,27 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 			}
 			cur.Cursor, cur.More, cur.Skip, cur.Fails, cur.Error, cur.At = page.Cursor, page.More, "", 0, "", nil
 			cur.Pages++
-			if page.More {
+			switch {
+			case page.More:
 				cur.At = ptr(now.Add(s.Gap))
-			} else {
-				cur.Done, cur.Last, cur.Pages = &c.AskedAt, &now, 0
+			case cur.Again:
+				cur.Last, cur.Pages, cur.Again = &now, 0, false
+				cur.At = ptr(cur.floor(s, now.Add(s.Gap)))
+			default:
+				cur.Last, cur.Pages = &now, 0
+				cur.At = syncLater(p, s, now)
 			}
 		}
 		var errs []string
+		settled := true
 		for _, d := range streams {
 			v := st.of(d.Name)
 			if v.Error != "" {
 				errs = append(errs, v.Error)
 			}
-			if !v.due(d, c2.AskedAt) {
-				continue
-			}
+			settled = settled && v.settled(d, now)
 			at := now
-			if v.At != nil {
+			if v.current(d) && v.At != nil {
 				at = *v.At
 			}
 			if save.SyncAt == nil || at.Before(*save.SyncAt) {
@@ -866,7 +897,7 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 				}
 			}
 		}
-		if save.SyncAt == nil && len(errs) == 0 {
+		if settled && len(errs) == 0 {
 			save.SyncedAt = &now
 		}
 		save.Error = strings.Join(errs, "; ")
@@ -987,7 +1018,7 @@ func (a *Archive) SyncNow(ctx context.Context, id uuid.UUID) error {
 		}
 		st := syncStateOf(c.Cursor)
 		for _, v := range st {
-			v.At, v.Fails, v.Last = nil, 0, nil
+			v.At, v.Fails, v.Last, v.Again = nil, 0, nil, false
 		}
 		cursor, _ := json.Marshal(st)
 		return q.AskSync(ctx, id, cursor)
@@ -1001,46 +1032,51 @@ func (a *Archive) SyncNow(ctx context.Context, id uuid.UUID) error {
 	return a.soon(ctx, "sync", time.Now())
 }
 
-func (a *Archive) syncSoon(ctx context.Context) {
-	if err := a.soon(ctx, "sync", time.Now()); err != nil {
-		fmt.Fprintf(os.Stderr, "archive: workspace %s: queueing a sync: %v\n", a.ws.ID, err)
-	}
-}
-
 func (a *Archive) syncWant(ctx context.Context, id uuid.UUID) (bool, error) {
 	ctx = context.WithoutCancel(ctx)
 	var found bool
+	var next *time.Time
 	err := a.sys(ctx, func(ctx context.Context) error {
 		q := a.st.db(ctx)
-		if _, err := q.Connection(ctx, id); err != nil {
+		c, err := q.ConnectionLocked(ctx, id)
+		if err != nil {
 			return err
 		}
 		found = true
-		_, err := q.WantSync(ctx, id)
-		return err
+		p, gone := a.hub.connect.Get(c.Provider)
+		if gone != nil || c.Revoked {
+			return nil
+		}
+		now, err := q.TxNow(ctx)
+		if err != nil {
+			return err
+		}
+		st := syncStateOf(c.Cursor)
+		for _, s := range p.Streams {
+			v := st.of(s.Name)
+			if v.settled(s, now) {
+				v.At = ptr(v.floor(s, now))
+			} else {
+				v.Again = true
+			}
+			at := now
+			if v.current(s) && v.At != nil {
+				at = *v.At
+			}
+			if next == nil || at.Before(*next) {
+				next = &at
+			}
+		}
+		cursor, _ := json.Marshal(st)
+		return q.WantSync(ctx, cursor, next, id)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return found, nil
 	}
-	if err != nil {
+	if err != nil || next == nil {
 		return found, err
 	}
-	return true, a.soon(ctx, "sync", time.Now())
-}
-
-func (a *Archive) syncCatchUp(ctx context.Context, member uuid.UUID) {
-	ctx = context.WithValue(context.WithoutCancel(ctx), storeTxKey{}, nil)
-	var asked []uuid.UUID
-	err := a.sys(ctx, func(ctx context.Context) (err error) {
-		asked, err = a.st.db(ctx).CatchUpSyncs(ctx, member, time.Now().Add(-syncStale))
-		return err
-	})
-	if err == nil && len(asked) > 0 {
-		err = a.soon(ctx, "sync", time.Now())
-	}
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "archive: workspace %s: catching up syncs: %v\n", a.ws.ID, err)
-	}
+	return true, a.soon(ctx, "sync", *next)
 }
 
 func (a *Archive) streamTypes(ctx context.Context) string {
@@ -1191,6 +1227,15 @@ var syncSchema = map[string]syncTable{
 	"spend_receipt":                    {parent: "spend_transaction", of: "spend"},
 	"warehouse_table":                  {},
 	"warehouse_column":                 {parent: "warehouse_table", of: "relation"},
+	"investment_holding":               {links: map[string]string{"account": "bank_account"}},
+	"investment_transaction":           {links: map[string]string{"account": "bank_account"}},
+	"bank_liability":                   {links: map[string]string{"account": "bank_account"}},
+	"budget_category":                  {},
+	"parcel":                           {},
+	"parcel_event":                     {parent: "parcel", of: "parcel"},
+	"vehicle":                          {},
+	"vehicle_charge":                   {links: map[string]string{"vehicle": "vehicle"}},
+	"home_device":                      {},
 	"health_sample":                    {},
 	"health_day":                       {},
 	"health_sleep":                     {},
@@ -1794,12 +1839,6 @@ func (a *Archive) unwatch(ctx context.Context, c generated.ArchiveConnection, p 
 	return errors.Join(append(errs, a.hub.q().DropWatches(ctx, c.ID, []string{}))...)
 }
 
-func (a *Archive) syncOnRead(ctx context.Context) {
-	if ac := ActorFrom(ctx); ac != nil && ac.member != uuid.Nil {
-		a.syncCatchUp(ctx, ac.member)
-	}
-}
-
 const (
 	actionToolsTTL = time.Hour
 	actionFailTTL  = time.Minute
@@ -1865,6 +1904,58 @@ func (a *Archive) syncStore(ctx context.Context, id uuid.UUID, access *uuid.UUID
 			return "", err
 		}
 		return f.ID.String(), err
+	}
+}
+
+func (a *Archive) syncMail(ctx context.Context, c generated.ArchiveConnection) func(s connect.Scan) ([]any, error) {
+	return func(s connect.Scan) ([]any, error) {
+		find, err := regexp.Compile(s.Find)
+		if err != nil {
+			return nil, err
+		}
+		type hit struct{ subject, text, id string }
+		var hits []hit
+		var sent []*time.Time
+		err = a.sys(ctx, func(ctx context.Context) error {
+			rows, err := a.st.Q(ctx).Query(ctx, `SELECT coalesce(m.subject, ''), coalesce(m.text, ''), m.source_id, coalesce(m.sent_at, m.received_at)
+				FROM archive.mail_message m JOIN archive.connection o ON o.id = m.connection
+				WHERE coalesce(m.received_at, m.sent_at) > now() - make_interval(days => $1) AND (m.subject ~* $2 OR m.text ~* $2)
+					AND (o.integration OR o.member = $3 AND NOT $4) AND (m.access IS NULL OR m.access = $5)
+				ORDER BY coalesce(m.received_at, m.sent_at) DESC LIMIT 2000`,
+				max(s.Days, 1), cmp.Or(s.Near, "."), c.Member, c.Integration, c.Access)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var h hit
+				var at *time.Time
+				if err := rows.Scan(&h.subject, &h.text, &h.id, &at); err != nil {
+					return err
+				}
+				hits, sent = append(hits, h), append(sent, at)
+			}
+			return rows.Err()
+		})
+		if err != nil {
+			return nil, err
+		}
+		out, seen := []any{}, map[string]bool{}
+		for i, h := range hits {
+			for _, m := range find.FindAllStringSubmatch(h.subject+"\n"+h.text, -1) {
+				n := strings.ToUpper(strings.Join(strings.Fields(m[len(m)-1]), ""))
+				if seen[n] {
+					continue
+				}
+				seen[n] = true
+				o := map[string]any{"id": n, "subject": h.subject, "message": h.id}
+				if sent[i] != nil {
+					o["sent_at"] = sent[i].UTC().Format(time.RFC3339)
+				}
+				out = append(out, o)
+			}
+		}
+		return out, nil
 	}
 }
 

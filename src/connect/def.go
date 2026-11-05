@@ -156,6 +156,7 @@ const (
 
 	CatCompliance Category = "Compliance"
 	CatData       Category = "Data"
+	CatHome       Category = "Home"
 	CatHealth     Category = "Health"
 
 	IconMail     Icon = "mail"
@@ -273,6 +274,12 @@ type Parts struct {
 	Under  *Parts   `json:",omitempty"`
 	First  bool     `json:",omitempty"`
 	Also   []*Parts `json:",omitempty"`
+	Mail   *Scan    `json:",omitempty"`
+}
+
+type Scan struct {
+	Find, Near string
+	Days       int
 }
 
 type Shift [3]int
@@ -1114,7 +1121,7 @@ func (s *Sync) step(c *Client, st flow) (*Page, error) {
 			return nil, err
 		}
 		if s.Parts != nil && len(parts) == 0 {
-			if len(st.Since) > 0 {
+			if len(st.Since) > 0 && s.Parts.Mail == nil {
 				return nil, fmt.Errorf("%s listed none of what it listed before; Archive keeps what it has and asks again next sync", c.p.Name)
 			}
 			return &Page{Cursor: st.cursor()}, nil
@@ -1344,6 +1351,11 @@ func (p *Parts) items(c *Client, sc map[string]any, again bool) ([]any, error) {
 		return out, nil
 	case p.Span != nil:
 		return p.Span.dates(sc, again), nil
+	case p.Mail != nil:
+		if c.Mail == nil {
+			return nil, errors.New("it reads the mail Archive synced, which only a sync can")
+		}
+		return c.Mail(*p.Mail)
 	case p.Split != "":
 		v, _ := fillStr(p.Split, sc)
 		out := []any{}
@@ -2392,11 +2404,12 @@ func values(q Q, sc map[string]any) url.Values {
 	return out
 }
 
-var varRe = regexp.MustCompile(`\{[+~'"-]?[A-Za-z_][\w\-*/.@;]*(,[^|{}]*)?(\|[^{}]*)?\}`)
+var varRe = regexp.MustCompile(`\{[+~'"#-]?[A-Za-z_][\w\-*/.@;]*(,[^|{}]*)?(\|[^{}]*)?\}`)
 
 type tvar struct {
 	path, def, sep        string
 	raw, segs, join, host bool
+	num                   bool
 	quote                 byte
 	hasDef                bool
 }
@@ -2411,6 +2424,8 @@ func varOf(m string) tvar {
 		v.segs, s = true, s[1:]
 	case '-':
 		v.host, s = true, s[1:]
+	case '#':
+		v.num, s = true, s[1:]
 	case '\'', '"':
 		v.quote, s = s[0], s[1:]
 	}
@@ -2440,6 +2455,9 @@ func (v tvar) of(sc map[string]any) (any, bool) {
 	}
 	if v.host {
 		return strings.ReplaceAll(strings.ToLower(text(x)), "_", "-"), true
+	}
+	if n, err := strconv.ParseFloat(text(x), 64); v.num && err == nil {
+		return n, true
 	}
 	switch v.quote {
 	case '\'':
