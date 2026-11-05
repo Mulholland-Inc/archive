@@ -125,6 +125,10 @@ type runQueryErr struct {
 func (e *runQueryErr) Error() string { return e.err.Error() }
 func (e *runQueryErr) Unwrap() error { return e.err }
 
+type runWroteKey struct{}
+
+type runFreshKey struct{}
+
 type runner struct {
 	a         *Archive
 	vm        *goja.Runtime
@@ -133,6 +137,8 @@ type runner struct {
 	out       *RunOutput
 	input     json.RawMessage
 	at        time.Time
+	stamp     bool
+	wrote     *bool
 	depth     int
 	clock     *runClock
 	logBytes  int
@@ -194,11 +200,11 @@ func runCompile(code string) (string, error) {
 }
 
 func (a *Archive) Run(ctx context.Context, code string) (*RunOutput, error) {
-	out, _, err := a.run(ctx, code, nil)
+	out, _, err := a.run(ctx, code, nil, false)
 	return out, err
 }
 
-func (a *Archive) run(ctx context.Context, code string, input json.RawMessage) (*RunOutput, time.Time, error) {
+func (a *Archive) run(ctx context.Context, code string, input json.RawMessage, stamp bool) (*RunOutput, time.Time, error) {
 	if _, err := signedIn(ctx); err != nil {
 		return nil, time.Time{}, err
 	}
@@ -207,7 +213,9 @@ func (a *Archive) run(ctx context.Context, code string, input json.RawMessage) (
 		return nil, time.Time{}, err
 	}
 	defer free()
-	a.refresh(ctx)
+	if ctx.Value(runFreshKey{}) == nil {
+		a.refresh(ctx)
+	}
 	out := &RunOutput{Result: json.RawMessage("null"), Logs: []string{}}
 	js, err := runCompile(code)
 	if err != nil {
@@ -219,8 +227,9 @@ func (a *Archive) run(ctx context.Context, code string, input json.RawMessage) (
 	defer cancel(nil)
 	clock := &runClock{t: time.AfterFunc(limit, func() { cancel(context.DeadlineExceeded) }), end: time.Now().Add(limit), browse: browseTimeout, model: modelTimeout, do: doTimeout}
 	defer clock.t.Stop()
-	r := &runner{a: a, out: out, js: js, input: input, at: time.Now(), clock: clock}
-	err = a.as(ctx, r.run)
+	wrote := new(bool)
+	r := &runner{a: a, out: out, js: js, input: input, at: time.Now(), stamp: stamp, wrote: wrote, clock: clock}
+	err = a.as(context.WithValue(ctx, runWroteKey{}, wrote), r.run)
 	switch {
 	case err != nil && errors.Is(context.Cause(ctx), context.DeadlineExceeded):
 		out.Error = fmt.Sprintf("timed out after %s; nothing was saved", limit)
@@ -282,7 +291,7 @@ func (r *runner) nested(ctx context.Context, code string, input json.RawMessage)
 		return nil, err
 	}
 	after := &[]func(){}
-	n := &runner{a: r.a, out: out, js: js, input: input, at: r.at, depth: r.depth + 1, clock: r.clock}
+	n := &runner{a: r.a, out: out, js: js, input: input, at: r.at, wrote: r.wrote, depth: r.depth + 1, clock: r.clock}
 	err = n.run(context.WithValue(ctx, storeTxKey{}, storeTx{sp, t.role, after, t.sch}))
 	switch {
 	case err != nil && ctx.Err() != nil:
@@ -309,8 +318,10 @@ func (r *runner) nested(ctx context.Context, code string, input json.RawMessage)
 func (r *runner) run(ctx context.Context) error {
 	r.ctx = ctx
 	defer r.closeClients()
-	if at, err := r.a.st.db(ctx).TxNow(ctx); err == nil {
-		r.at = at
+	if r.stamp {
+		if at, err := r.a.st.db(ctx).TxNow(ctx); err == nil {
+			r.at = at
+		}
 	}
 	r.vm = goja.New()
 	r.vm.SetMaxCallStackSize(10000)
@@ -729,6 +740,9 @@ func runAfter(fn, s string) (uuid.UUID, error) {
 
 func (r *runner) def(o *goja.Object, name string, f func(ctx context.Context, call goja.FunctionCall) (any, error)) {
 	o.Set(name, func(call goja.FunctionCall) goja.Value {
+		if !runReads[name] || name == "email" || name == "action" {
+			*r.wrote = true
+		}
 		return r.promise(r.call(runReads[name], func(ctx context.Context) (any, error) { return f(ctx, call) }))
 	})
 }

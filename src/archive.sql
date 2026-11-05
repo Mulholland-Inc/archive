@@ -5045,6 +5045,9 @@ SELECT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = sqlc.arg(role)::n
 -- name: NoMembers :one
 SELECT NOT EXISTS (SELECT FROM archive.member);
 
+-- name: MemberEntry :one
+SELECT coalesce((SELECT r.id::text || ':' || r.hash FROM archive.revision r ORDER BY r.created_at DESC, r.id DESC LIMIT 1), '')::text AS revision, m.id, m.role::text AS role, m."group" FROM archive.member m WHERE m.email = sqlc.arg(email)::text;
+
 -- name: MemberByEmail :one
 SELECT id, role::text AS role, "group" FROM archive.member WHERE email = sqlc.arg(email)::text;
 

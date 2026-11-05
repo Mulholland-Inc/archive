@@ -225,7 +225,10 @@ func httpHandler(a *Archive) http.Handler {
 		if body.Code == "" {
 			return 0, nil, fmt.Errorf("code: want the TypeScript to run: %w", httpErrBadRequest)
 		}
-		return ok(a.Run(r.Context(), body.Code))
+		return ok(a.Run(context.WithValue(r.Context(), runFreshKey{}, true), body.Code))
+	})
+	handle("GET /api/boot", func(r *http.Request) (int, any, error) {
+		return ok(a.boot(r.Context()))
 	})
 	mux.HandleFunc("POST /api/turn", a.turn)
 	handle("GET /api/agent/{id}/turns", func(r *http.Request) (int, any, error) {

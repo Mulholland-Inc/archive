@@ -111,6 +111,7 @@ export async function boot() {
   app.onboarding = local(`archive.onboarding:${me.workspace}`, []);
   app.askPasskey = passkeys && !passkeyAsked(me.actor.user_id);
   app.status = 'ready';
+  prepare(ws());
   listen(app.archive);
   account.seen();
   loadArchive(ws());
@@ -186,6 +187,14 @@ async function files(id, where) {
 }
 
 
+async function booted(v, key, load) {
+  const data = await v.boot;
+  if (!data || !(key in data)) return load();
+  const out = data[key];
+  delete data[key];
+  return out;
+}
+
 const agentList = (workspace) =>
   runCode(
     `const agents = await archive.list("agent", { limit: 1000 });
@@ -195,10 +204,10 @@ return agents.map((a) => { const t = last.find((t) => t.agent === a.id); return 
   );
 
 export const agents = resource({
-  tables: ['archive.agent', 'archive.turn'],
+  tables: ['archive.agent'],
   load: async () => {
     const v = ws();
-    const list = (await agentList(v.id)) ?? [];
+    const list = (await booted(v, 'agents', () => agentList(v.id))) ?? [];
     const had = new Map(v.agents.map((a) => [a.id, a]));
     const ids = new Set(list.map((a) => a.id));
     const seen = local(`archive.seen:${v.id}`, {});
@@ -305,7 +314,7 @@ export const members = resource({
   tables: ['archive.member', 'archive.user'],
   load: async () => {
     const v = ws();
-    const list = (await api('/auth/users', { workspace: v.id })) ?? [];
+    const list = (await booted(v, 'people', () => api('/auth/users', { workspace: v.id }))) ?? [];
     v.members = list.map((p) => toMember(p, { ...app.user, user_id: app.user.id }));
   }
 });
@@ -344,7 +353,7 @@ export const workflows = resource({
   tables: ['archive.workflow', 'archive.workflow_run'],
   load: async () => {
     const v = ws();
-    const list = (await workflowList(v.id)) ?? [];
+    const list = (await booted(v, 'workflows', () => workflowList(v.id))) ?? [];
     v.flows = list;
     const had = new Map(v.workflows.map((w) => [w.id, w]));
     v.workflows = list.map((w) => {
@@ -373,8 +382,8 @@ export const schema = resource({
   load: async () => {
     const v = ws();
     const [catalog, ddl] = await Promise.all([
-      api('/api/types', { workspace: v.id }),
-      api('/api/schema', { workspace: v.id }).catch(() => []),
+      booted(v, 'types', () => api('/api/types', { workspace: v.id })),
+      booted(v, 'schema', () => api('/api/schema', { workspace: v.id }).catch(() => [])),
       workflows.refresh()
     ]);
     v.catalog = { catalog, ddl, flows: v.flows };
@@ -584,10 +593,16 @@ export function clearUnread(v) {
   api('/auth/unread', { method: 'DELETE', workspace: v.id }).catch(() => {});
 }
 
+function prepare(v) {
+  v.boot = api('/api/boot', { workspace: v.id });
+  v.boot.catch(() => {});
+}
+
 async function loadArchive(v = ws()) {
   if (v.unread) clearUnread(v);
   v.loading = true;
   await Promise.allSettled([agents.refresh(), members.refresh(), workflows.refresh(), schema.refresh()]);
+  v.boot = null;
   v.loading = false;
 }
 
@@ -903,6 +918,7 @@ export async function switchArchive(id) {
   app.onboarding = local(`archive.onboarding:${id}`, []);
   const head = route.parts[0];
   if (['agent', 'workflows', 'database'].includes(head) && route.parts[1]) go(`/${head === 'agent' ? '' : head}`);
+  prepare(ws());
   listen(id);
   loadArchive(ws());
 }
