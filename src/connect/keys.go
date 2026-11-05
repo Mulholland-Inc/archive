@@ -24,6 +24,7 @@ type Key struct {
 	File   bool   `json:"file,omitempty"`
 	Find   string `json:"-"`
 	As     string `json:"-"`
+	Places string `json:"places,omitempty"`
 }
 
 type Link struct {

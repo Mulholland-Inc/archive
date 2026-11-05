@@ -90,6 +90,15 @@ func (h *Hub) forgetClient(ctx context.Context, p *connect.Provider) {
 
 func (h *Hub) connectRedirect(id string) string { return h.api + "/connect/" + id + "/callback" }
 
+// oauth1Cookie holds an OAuth 1 sign-in's sealed request-token secret between its two legs.
+const oauth1Cookie = "archive_oauth1"
+
+func (h *Hub) oauth1Cookie(sealed string, maxAge int) *http.Cookie {
+	u, _ := url.Parse(h.api)
+	return &http.Cookie{Name: oauth1Cookie, Value: sealed, Path: strings.TrimRight(u.Path, "/") + "/connect/", MaxAge: maxAge,
+		HttpOnly: true, Secure: strings.HasPrefix(h.api, "https://"), SameSite: http.SameSiteLaxMode}
+}
+
 func (h *Hub) connectRoutes(mux *http.ServeMux) {
 	authed := func(pattern string, f func(a *Archive, w http.ResponseWriter, r *http.Request)) {
 		mux.Handle(pattern, h.httpAuth(func(a *Archive) http.Handler {
@@ -137,6 +146,14 @@ func (h *Hub) connectRoutes(mux *http.ServeMux) {
 	authed("POST /connect/{id}/link", func(a *Archive, w http.ResponseWriter, r *http.Request) {
 		tok, err := a.connectLink(r.Context(), r.PathValue("id"))
 		httpWrite(w, http.StatusOK, map[string]string{"token": tok}, err)
+	})
+	authed("GET /connect/{id}/places", func(a *Archive, w http.ResponseWriter, r *http.Request) {
+		p, err := a.hub.connector(r.PathValue("id"))
+		var out []connect.Place
+		if err == nil {
+			out = p.Places(r.URL.Query().Get("q"), 20)
+		}
+		httpWrite(w, http.StatusOK, map[string]any{"places": out}, err)
 	})
 	authed("POST /connect/{id}/sync", func(a *Archive, w http.ResponseWriter, r *http.Request) {
 		id, err := httpID(r)
@@ -188,7 +205,15 @@ func (a *Archive) connectStart(w http.ResponseWriter, r *http.Request) {
 	st := connect.State{Provider: r.PathValue("id"), Workspace: a.ws.ID.String(), User: ac.UserID, Member: ac.member,
 		Verifier: oauth2.GenerateVerifier(), Exp: time.Now().Add(connect.TTL).Unix(), Meta: asked}
 	var to string
-	if err == nil {
+	switch {
+	case err == nil && p.OAuth1 != "":
+		var token, secret string
+		token, secret, err = p.RequestToken(r.Context(), a.hub.connectRedirect(p.ID)+"?"+url.Values{"state": {connect.SealState(a.hub.aead, st)}}.Encode())
+		if err == nil {
+			http.SetCookie(w, a.hub.oauth1Cookie(connect.SealSecret(a.hub.aead, token, secret), int(connect.TTL.Seconds())))
+			to = p.AuthURL1(token)
+		}
+	case err == nil:
 		to, err = p.AuthURL(a.hub.connectRedirect(p.ID), connect.SealState(a.hub.aead, st), st.Verifier, asked)
 	}
 	if err != nil {
@@ -213,7 +238,17 @@ func (a *Archive) connectFinish(w http.ResponseWriter, r *http.Request, st conne
 		err = a.mayConnect(r.Context(), p.Connector)
 	}
 	var g *connect.Grant
-	if err == nil {
+	if err == nil && p.OAuth1 != "" {
+		http.SetCookie(w, a.hub.oauth1Cookie("", -1))
+		token := r.URL.Query().Get("oauth_token")
+		secret, ok := "", false
+		if c, err2 := r.Cookie(oauth1Cookie); err2 == nil {
+			secret, ok = connect.OpenSecret(a.hub.aead, token, c.Value)
+		}
+		if err = signinMismatch; ok {
+			g, err = p.Exchange1(r.Context(), r.URL.Query(), token, secret)
+		}
+	} else if err == nil {
 		g, err = p.Exchange(r.Context(), a.hub.connectRedirect(p.ID), r.URL.Query(), st.Verifier, st.Meta)
 		if err != nil && p.MCP != "" && strings.Contains(err.Error(), "invalid_client") {
 			a.hub.forgetClient(r.Context(), p)
@@ -1311,6 +1346,9 @@ var syncSchema = map[string]syncTable{
 	"music_playlist":                   {},
 	"music_track":                      {links: map[string]string{"playlist": "music_playlist"}},
 	"music_artist":                     {},
+	"notebook":                         {},
+	"note":                             {links: map[string]string{"notebook": "notebook"}},
+	"note_attachment":                  {parent: "note", of: "note"},
 	"school_notice":                    {},
 }
 

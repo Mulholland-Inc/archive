@@ -53,6 +53,8 @@ function shell(w) {
     conversations: {},
     library: [],
     sources: [],
+    filed: false,
+    unread: w.unread ?? false,
     workflows: [],
     members: [],
     groups: [],
@@ -61,6 +63,7 @@ function shell(w) {
     archiveTables: [],
     names: {},
     connectors: [],
+    flows: [],
     catalog: null,
     counts: null,
     loading: true
@@ -111,7 +114,6 @@ export async function boot() {
   listen(app.archive);
   account.seen();
   loadArchive(ws());
-  peekArchives();
   resumeLink();
 }
 
@@ -132,7 +134,7 @@ async function loadMe() {
   const had = new Map(app.archives.map((v) => [v.id, v]));
   app.archives = me.workspaces.map((w) => {
     const v = had.get(w.id) ?? shell(w);
-    Object.assign(v, { name: w.name, slug: w.slug, look: lookOf(w), kind: kindOf(w.type) });
+    Object.assign(v, { name: w.name, slug: w.slug, look: lookOf(w), kind: kindOf(w.type), unread: (w.unread ?? false) && w.id !== app.archive });
     return v;
   });
   if (!app.archives.some((v) => v.id === app.archive)) {
@@ -211,9 +213,13 @@ export const library = resource({
   tables: ['archive.file', 'archive.group'],
   load: async () => {
     const v = ws();
-    const [list, sources] = await Promise.all([files(v.id, 'top=1'), api('/api/files/sources', { workspace: v.id }), groups.refresh()]);
-    v.library = list.map((f) => filed(toFile(f, v.name), v));
-    v.sources = sources ?? [];
+    try {
+      const [list, sources] = await Promise.all([files(v.id, 'top=1'), api('/api/files/sources', { workspace: v.id }), groups.refresh()]);
+      v.library = list.map((f) => filed(toFile(f, v.name), v));
+      v.sources = sources ?? [];
+    } finally {
+      v.filed = true;
+    }
   }
 });
 
@@ -339,6 +345,7 @@ export const workflows = resource({
   load: async () => {
     const v = ws();
     const list = (await workflowList(v.id)) ?? [];
+    v.flows = list;
     const had = new Map(v.workflows.map((w) => [w.id, w]));
     v.workflows = list.map((w) => {
       const fresh = toWorkflow(w);
@@ -365,14 +372,14 @@ export const schema = resource({
   tables: ['archive.revision', 'archive.workflow'],
   load: async () => {
     const v = ws();
-    const [catalog, ddl, flows] = await Promise.all([
+    const [catalog, ddl] = await Promise.all([
       api('/api/types', { workspace: v.id }),
       api('/api/schema', { workspace: v.id }).catch(() => []),
-      workflowList(v.id).catch(() => [])
+      workflows.refresh()
     ]);
-    v.catalog = { catalog, ddl, flows: flows ?? [] };
+    v.catalog = { catalog, ddl, flows: v.flows };
     tables(v);
-    await counts.refresh();
+    counts.reset();
   }
 });
 
@@ -572,9 +579,15 @@ export async function rowRelations(id, row) {
   return { from: from.filter((l) => l.rows.length) };
 }
 
+export function clearUnread(v) {
+  v.unread = false;
+  api('/auth/unread', { method: 'DELETE', workspace: v.id }).catch(() => {});
+}
+
 async function loadArchive(v = ws()) {
+  if (v.unread) clearUnread(v);
   v.loading = true;
-  await Promise.allSettled([agents.refresh(), library.refresh(), members.refresh(), groups.refresh(), workflows.refresh(), schema.refresh()]);
+  await Promise.allSettled([agents.refresh(), members.refresh(), workflows.refresh(), schema.refresh()]);
   v.loading = false;
 }
 
@@ -962,15 +975,6 @@ export function askAgent(text, attachments = []) {
 
 export const unread = (agent) => agent.at !== agent.seen && !agent.streaming;
 
-export const archiveUnread = (w) => (w.agents.length ? w.agents.some(unread) : Boolean(w.unread));
-
-async function peekArchives() {
-  await Promise.allSettled(app.archives.filter((w) => w.id !== app.archive).map(async (w) => {
-    const seen = local(`archive.seen:${w.id}`, {});
-    w.unread = ((await agentList(w.id)) ?? []).some((a) => seen[a.id] !== undefined && a.at !== seen[a.id]);
-  }));
-}
-
 export function markSeen(agent) {
   agent.seen = agent.at;
   setLocal(`archive.seen:${app.archive}`, { ...local(`archive.seen:${app.archive}`, {}), [agent.id]: agent.at });
@@ -1216,11 +1220,16 @@ function toIntegration(k, x) {
   };
 }
 
-export function connect(id, asked = {}) {
+export function connect(id, asked = {}, workspace = app.archive) {
   const c = [...ws().connectors, ...archiveIntegrations()].find((x) => x.id === id);
-  const q = new URLSearchParams({ ...asked, workspace: app.archive });
-  if (c?.ready && c.tap) connectKeys(id, {}, app.archive);
+  const q = new URLSearchParams({ ...asked, workspace });
+  if (c?.ready && c.tap) connectKeys(id, {}, workspace);
   else if (c?.ready) location.assign(`${API}/connect/${encodeURIComponent(id)}?${q}`);
+}
+
+export async function connectPlaces(id, q) {
+  const out = await call(`/connect/${encodeURIComponent(id)}/places?${new URLSearchParams({ q })}`).catch(() => null);
+  return out?.places ?? [];
 }
 
 export async function connectKeys(id, keys, workspace, quiet = false) {

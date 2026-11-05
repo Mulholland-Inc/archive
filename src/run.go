@@ -747,7 +747,7 @@ func (r *runner) promise(v any, err error) goja.Value {
 	return r.vm.ToValue(p)
 }
 
-var runReads = map[string]bool{"email": true, "action": true, "query": true, "schema": true, "list": true, "get": true, "search": true, "files": true, "file": true}
+var runReads = map[string]bool{"email": true, "action": true, "schema": true, "list": true, "get": true, "search": true, "files": true, "file": true}
 
 func (r *runner) call(read bool, f func(ctx context.Context) (any, error)) (any, error) {
 	t, ok := r.ctx.Value(storeTxKey{}).(storeTx)
@@ -784,20 +784,21 @@ func (r *runner) noted(action string) func(*File, error) (any, error) {
 
 func (r *runner) sdk() {
 	a, o := r.a, r.vm.NewObject()
-	r.def(o, "query", func(ctx context.Context, call goja.FunctionCall) (any, error) {
+	o.Set("query", func(call goja.FunctionCall) goja.Value {
 		q, err := r.str(call, 0, "query", "sql")
 		if err != nil {
-			return nil, err
+			return r.promise(nil, err)
 		}
 		params := make([]any, 0, len(call.Arguments))
 		for i := 1; i < len(call.Arguments); i++ {
 			var p any
 			if err := r.arg(call, i, "query", fmt.Sprintf("param $%d", i), &p); err != nil {
-				return nil, err
+				return r.promise(nil, err)
 			}
 			params = append(params, runParam(p))
 		}
-		return a.runQuery(ctx, q, params)
+		rows, err := a.runQuery(r.ctx, q, params)
+		return r.promise(rows, storeErr(err))
 	})
 	r.def(o, "list", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		table, err := r.str(call, 0, "list", "table")
@@ -1077,23 +1078,26 @@ func (a *Archive) runQuery(ctx context.Context, query string, params []any) ([]m
 	}
 	return coreDo(a, ctx, func(ctx context.Context) ([]map[string]any, error) {
 		t, _ := ctx.Value(storeTxKey{}).(storeTx)
-		ro, err := t.tx.Begin(ctx)
+		readOnly := func() (pgx.Tx, error) {
+			ro, err := t.tx.Begin(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return ro, generated.New(ro).SetLocal(ctx, "transaction_read_only", "on")
+		}
+		ro, err := readOnly()
+		defer func() {
+			if ro != nil {
+				ro.Rollback(context.WithoutCancel(ctx))
+			}
+		}()
 		if err != nil {
 			return nil, err
 		}
-		defer ro.Rollback(context.WithoutCancel(ctx))
-		if err := generated.New(ro).SetLocal(ctx, "transaction_read_only", "on"); err != nil {
-			return nil, err
-		}
-		sp, err := ro.Begin(ctx)
-		if err != nil {
-			return nil, err
-		}
-		rows, err := storeRows(context.WithValue(ctx, storeTxKey{}, storeTx{sp, t.role, t.after, t.sch}), a.st, runWrap+q+"\n) SELECT to_jsonb(q) FROM q", params...)
+		rows, err := storeRows(context.WithValue(ctx, storeTxKey{}, storeTx{ro, t.role, t.after, t.sch}), a.st, runWrap+q+"\n) SELECT to_jsonb(q) FROM q", params...)
 		if err == nil {
 			return rows, nil
 		}
-		sp.Rollback(ctx)
 		var pe *pgconn.PgError
 		if !errors.As(err, &pe) || pe.Code != "42601" && pe.Code != "0A000" {
 			if pe != nil && pe.Position > int32(len([]rune(runWrap))) {
@@ -1102,6 +1106,10 @@ func (a *Archive) runQuery(ctx context.Context, query string, params []any) ([]m
 				pe.Position = 0
 			}
 			return nil, fail(err)
+		}
+		ro.Rollback(ctx)
+		if ro, err = readOnly(); err != nil {
+			return nil, err
 		}
 		res, err := ro.Query(ctx, q, append([]any{pgx.QueryResultFormats{pgx.TextFormatCode}}, params...)...)
 		if err != nil {

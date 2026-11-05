@@ -79,6 +79,7 @@ type User struct {
 	Signin     json.RawMessage `json:"-"`
 	CreatedAt  time.Time       `json:"created_at"`
 	Admin      bool            `json:"admin"`
+	Unread     []uuid.UUID     `json:"-"`
 }
 
 type Person struct {
@@ -181,15 +182,15 @@ func authUser(ctx context.Context) (*Actor, error) {
 }
 
 func (a *Archive) memberOf(ctx context.Context, email string) (generated.MemberByEmailRow, error) {
-	var m generated.MemberByEmailRow
-	err := a.st.System(ctx, func(ctx context.Context) (err error) {
-		m, err = a.st.db(ctx).MemberByEmail(ctx, email)
-		return err
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		err = fmt.Errorf("you are not in this workspace: %w", ErrForbidden)
+	q := generated.New(a.st.sys)
+	if t, ok := ctx.Value(storeTxKey{}).(storeTx); ok && t.role == "" {
+		q = generated.New(t.tx)
 	}
-	return m, err
+	m, err := q.MemberByEmail(ctx, email)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return m, fmt.Errorf("you are not in this workspace: %w", ErrForbidden)
+	}
+	return m, storeErr(err)
 }
 
 func (a *Archive) AddUser(ctx context.Context, email, name, role string) (*User, error) {
@@ -653,14 +654,26 @@ func (s *signin) handler() http.Handler {
 			m.Role = "viewer"
 		}
 		rows, err := h.q().UserWorkspaces(r.Context(), ac.UserID)
+		if err != nil {
+			return 0, nil, err
+		}
+		u, err := h.q().UserByID(r.Context(), ac.UserID)
+		if err != nil {
+			return 0, nil, err
+		}
 		all := []Workspace{}
 		for _, x := range rows {
 			if !ac.scoped || x.ID == a.ws.ID {
-				all = append(all, workspaceOut(x))
+				w := workspaceOut(x)
+				w.Unread = slices.Contains(u.Unread, x.ID)
+				all = append(all, w)
 			}
 		}
-		admin := err == nil && h.admin(r.Context()) == nil
+		admin := u.Admin && ac.Role == ac.UserRole
 		return ok(map[string]any{"actor": ac, "role": m.Role, "group": m.Group, "workspace": a.ws.ID.String(), "workspaces": all, "admin": admin}, err)
+	})
+	authed("DELETE /auth/unread", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
+		return http.StatusNoContent, nil, h.q().ClearUnread(r.Context(), archiveFrom(r.Context()).ws.ID, ActorFrom(r.Context()).UserID)
 	})
 	authed("GET /auth/users", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		return ok(archiveFrom(r.Context()).People(r.Context()))

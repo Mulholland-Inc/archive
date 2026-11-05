@@ -4,7 +4,6 @@
   import ArchiveIcon from './ArchiveIcon.svelte';
   import Icon from './Icon.svelte';
   import { archiveItems } from '../lib/menus.js';
-  import { archiveUnread } from '../lib/app.svelte.js';
 
   let { archives = [], current, onselect, oncreate } = $props();
 
@@ -17,7 +16,7 @@
     <ArchiveRailItem label={w.name} active={w.id === current} count={running(w)} items={() => archiveItems(w)} onclick={() => onselect?.(w.id)}>
       <span class="mark">
         <ArchiveIcon icon={w.look.icon} tint={w.look.tint} seed={w.id} size="rail" />
-        {#if archiveUnread(w)}<i class="dot" role="img" aria-label="New messages"></i>{/if}
+        {#if w.unread}<i class="dot" role="img" aria-label="New messages"></i>{/if}
       </span>
     </ArchiveRailItem>
   {/each}

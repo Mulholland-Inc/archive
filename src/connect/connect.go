@@ -44,6 +44,7 @@ type Connector struct {
 	Revoke      string
 	RevokeWith  func(rv *Revocation) error
 	Lasts       bool
+	OAuth1      string
 	Scopes      []string
 	Optional    []string
 	Extra       map[string][]string
@@ -261,6 +262,12 @@ func (p *Provider) AskOf(v string) (map[string]string, error) {
 	if k == nil {
 		return nil, nil
 	}
+	if k.Places != "" {
+		if m, ok := k.placeOf(v); ok {
+			return m, nil
+		}
+		return nil, fmt.Errorf("%s needs your health system: search for it by name and pick it", p.Name)
+	}
 	v = strings.ToLower(strings.TrimSpace(v))
 	if k.Find != "" {
 		f := reOf(k.Find).FindStringSubmatch(v)
@@ -324,7 +331,7 @@ func (p *Provider) Exchange(ctx context.Context, redirect string, q url.Values, 
 		if asked[k] == "" || (p.Signed != "" || q.Has(k)) && !strings.EqualFold(q.Get(k), asked[k]) {
 			return nil, fmt.Errorf("%s was not connected: it came back for %s %q, not %q", p.Name, k, q.Get(k), asked[k])
 		}
-		meta[k] = asked[k]
+		maps.Copy(meta, asked)
 	}
 	for _, k := range p.Keep {
 		if v := q.Get(k); v != "" {
@@ -361,6 +368,12 @@ func (p *Provider) Exchange(ctx context.Context, redirect string, q url.Values, 
 	case p.MCP == "" && slices.ContainsFunc(p.Scopes, func(s string) bool { return !granted(g.Scopes, s) }):
 		return nil, fmt.Errorf("%s was connected without all the access Archive asked for; connect it again and allow it all", p.Name)
 	}
+	return p.named(ctx, tok, g)
+}
+
+// named names whose account a new grant is, by the connector's Account.
+func (p *Provider) named(ctx context.Context, tok *oauth2.Token, g *Grant) (*Grant, error) {
+	var err error
 	c := p.Open(ctx, tok, g.Meta)
 	defer c.Close()
 	if p.Account != nil {
