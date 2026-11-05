@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -36,9 +37,9 @@ func init() {
 			Scopes: []string{"Read your iCloud Mail and its attachments", "Read your iCloud calendars", "Read your iCloud contacts"}},
 		API: icloudCalDAV,
 		Keys: []Key{
-			{Name: "email", Label: "Apple ID", Help: "The email address you sign in to iCloud with; if it is not an @icloud.com, @me.com or @mac.com address and you use iCloud Mail, your iCloud Mail address"},
-			{Name: "password", Label: "App-specific password", Secret: true,
-				Help: "Not your Apple ID password: make one at account.apple.com, under Sign-In and Security, App-Specific Passwords, and name it Archive"},
+			{Name: "email", Label: "Apple ID", Help: "The email you sign in to iCloud with, or your @icloud.com address if you use iCloud Mail"},
+			{Name: "password", Label: "App-specific password", Secret: true, Link: "https://account.apple.com/account/manage/section/security",
+				Help: "Apple’s Sign-In and Security page, then App-Specific Passwords, then +, named Archive. It looks like abcd-efgh-ijkl-mnop, and Archive checks it as you connect"},
 		},
 		Basic:   [2]string{"email", "password"},
 		Account: icloudAccount,
@@ -106,11 +107,19 @@ const (
 )
 
 func icloudAccount(c *Client) (string, error) {
+	if !strings.Contains(c.Key("email"), "@") {
+		return "", icloudRefused(c, http.StatusUnauthorized, "an Apple ID is an email address, like you@icloud.com")
+	}
+	if !icloudAppPassword.MatchString(c.Key("password")) {
+		return "", icloudRefused(c, http.StatusUnauthorized, "that is not an app-specific password, which looks like abcd-efgh-ijkl-mnop; Archive never takes your Apple ID password. Make one on Apple’s Sign-In and Security page")
+	}
 	if _, _, err := icloudHome(c, icloudCalDAV, true); err != nil {
 		return "", err
 	}
 	return strings.ToLower(c.Key("email")), nil
 }
+
+var icloudAppPassword = regexp.MustCompile(`^[a-zA-Z]{4}-?[a-zA-Z]{4}-?[a-zA-Z]{4}-?[a-zA-Z]{4}$`)
 
 func icloudRefused(c *Client, status int, msg string) *Refusal {
 	return &Refusal{Provider: c.p.Name, Status: status, Message: msg}
@@ -590,7 +599,7 @@ func (h icloudHTTP) Do(r *http.Request) (*http.Response, error) {
 	resp, err := h.c.http.Do(r.WithContext(h.c.ctx))
 	if err == nil && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
 		resp.Body.Close()
-		return nil, icloudRefused(h.c, resp.StatusCode, "iCloud did not take that Apple ID and app-specific password")
+		return nil, icloudRefused(h.c, resp.StatusCode, "Apple turned down that Apple ID and app-specific password: check the Apple ID, and make a new app-specific password if that one was revoked or mistyped")
 	}
 	return resp, err
 }
