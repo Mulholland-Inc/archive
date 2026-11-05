@@ -8,7 +8,7 @@
     "directory": "dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/live", "/live/*"]
+    "run_worker_first": ["/live", "/live/*", "/assets/*"]
   },
   "durable_objects": {
     "bindings": [{ "name": "WORKSPACE_STREAM", "class_name": "WorkspaceStream" }]
