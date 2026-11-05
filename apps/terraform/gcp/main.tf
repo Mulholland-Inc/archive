@@ -153,6 +153,11 @@ resource "google_sql_database_instance" "this" {
       enabled = true
     }
 
+    ip_configuration {
+      ipv4_enabled = true
+      ssl_mode     = "ENCRYPTED_ONLY"
+    }
+
     dynamic "database_flags" {
       for_each = var.db_max_connections != null ? [var.db_max_connections] : []
       content {
