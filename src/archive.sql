@@ -403,7 +403,7 @@ CREATE TABLE archive.agent (
 COMMENT ON TABLE archive.agent IS 'An agent of this workspace, which everyone in it can talk with. Each person has their own endless conversation with it, in turn and memory
 icon: bot';
 COMMENT ON COLUMN archive.agent.instructions IS 'What it is for and how it works, which it follows in every turn';
-COMMENT ON COLUMN archive.agent.avatar IS 'Its living picture, as data: { id, name, parts }. id is a lowercase slug, name a short name, and parts at most 24 shapes, with mirrored ones counted twice, making a chunky, recognizable figure that reads at 28 px. y is up, z faces you, and it stays within about -1.2 to 1.2. A part is { kind, at: [x, y, z], size, turn?: [x, y, z] degrees, part?, tone?, blend?, cut?, mirror? }. kind and size: ball [rx, ry, rz], box [half x, half y, half z, rounding], cone [bottom radius, height, top radius], can [radius, half height, rounding], ring [radius, thickness] and eye [radius]. Parts apply in order. Those with the same part name meld smoothly by blend, about 0.1; different names get an ink line where they meet. tone is pale, mid, tone, dark, white or ink. cut carves the part out of what came before. mirror repeats it at -x. An eye is a flat disc painted on what is under it, so only its x and y matter; a figure needs one, usually mirrored, of radius about 0.2';
+COMMENT ON COLUMN archive.agent.avatar IS 'Its picture, { figure }, and null for the default. figure is float, face, bank, bookcase, cabinet, cottage, factory, farmhouse, safe, townhouse, warehouse, archivist, baobab, capitol, castle, chest, ledger, oak, pine, pinecone, pyramid or skyscraper. float is a robot and face a tall robot; each of the others is what it says';
 COMMENT ON COLUMN archive.agent.tint IS 'The colour of its picture, 0 to 31';
 
 CREATE TABLE archive.turn (
@@ -460,32 +460,14 @@ END;
 $$;
 CREATE TRIGGER last BEFORE DELETE ON archive.agent FOR EACH ROW EXECUTE FUNCTION archive.agent_last();
 
--- A bad avatar is refused as it is written, by the field to fix; the web app checks the rest of it as it draws.
+-- An avatar is one of the figures the web app has (looks.js), refused by name as it is written.
 CREATE FUNCTION archive.agent_avatar() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE
-    p jsonb;
-    i integer := 0;
 BEGIN
-    IF NEW.avatar IS NULL THEN
+    IF NEW.avatar IS NULL OR (TG_OP = 'UPDATE' AND NEW.avatar IS NOT DISTINCT FROM OLD.avatar) THEN
         RETURN NEW;
     END IF;
-    IF jsonb_typeof(NEW.avatar->'parts') IS DISTINCT FROM 'array' OR jsonb_array_length(NEW.avatar->'parts') = 0 THEN
-        RAISE EXCEPTION 'avatar.parts: expected a non-empty array, as the avatar column says' USING ERRCODE = '22023', TABLE = 'agent';
-    END IF;
-    FOR p IN SELECT jsonb_array_elements(NEW.avatar->'parts') LOOP
-        IF p->>'kind' IS NULL OR p->>'kind' NOT IN ('ball', 'box', 'cone', 'can', 'ring', 'eye') THEN
-            RAISE EXCEPTION 'avatar.parts[%].kind: expected ball, box, cone, can, ring or eye', i USING ERRCODE = '22023', TABLE = 'agent';
-        END IF;
-        IF jsonb_typeof(p->'at') IS DISTINCT FROM 'array' OR jsonb_array_length(p->'at') <> 3 THEN
-            RAISE EXCEPTION 'avatar.parts[%].at: expected [x, y, z]', i USING ERRCODE = '22023', TABLE = 'agent';
-        END IF;
-        IF jsonb_typeof(p->'size') IS DISTINCT FROM 'array' THEN
-            RAISE EXCEPTION 'avatar.parts[%].size: expected an array of numbers', i USING ERRCODE = '22023', TABLE = 'agent';
-        END IF;
-        i := i + 1;
-    END LOOP;
-    IF NOT jsonb_path_exists(NEW.avatar, '$.parts[*] ? (@.kind == "eye")') THEN
-        RAISE EXCEPTION 'avatar.parts: needs an eye' USING ERRCODE = '22023', TABLE = 'agent';
+    IF NEW.avatar->>'figure' IS NULL OR NEW.avatar->>'figure' NOT IN ('float', 'face', 'bank', 'bookcase', 'cabinet', 'cottage', 'factory', 'farmhouse', 'safe', 'townhouse', 'warehouse', 'archivist', 'baobab', 'capitol', 'castle', 'chest', 'ledger', 'oak', 'pine', 'pinecone', 'pyramid', 'skyscraper') THEN
+        RAISE EXCEPTION 'avatar: expected { figure }, with a figure the avatar column lists' USING ERRCODE = '22023', TABLE = 'agent';
     END IF;
     RETURN NEW;
 END;

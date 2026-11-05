@@ -71,7 +71,7 @@
       {#each ws().agents as agent (agent.id)}
         <SidebarItem label={agent.name} tall={!collapsed} detail={agent.last} dot={unread(agent) && here !== agent.id} href={`/agent/${agent.id}`} active={here === agent.id} items={() => agentItems(agent)} ondouble={() => (app.agentDialog = agent.id)}>
           {#snippet leading()}
-            <AgentAvatar avatar={agent.avatar} tint={agent.tint} size={collapsed ? 'xs' : 'lg'} mood={agent.streaming ? 'thinking' : 'idle'} />
+            <AgentAvatar avatar={agent.avatar} tint={agent.tint} seed={agent.id} size={collapsed ? 'xs' : 'lg'} active={agent.streaming} />
           {/snippet}
         </SidebarItem>
       {/each}

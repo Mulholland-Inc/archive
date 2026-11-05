@@ -2,7 +2,7 @@
   import ArchiveIcon from './ArchiveIcon.svelte';
   import AgentAvatar from './AgentAvatar.svelte';
   import SegmentedControl from './SegmentedControl.svelte';
-  import { TYPES, TINTS, ICON_LABELS, KIND_TINTS } from '../lib/looks.js';
+  import { TYPES, TINTS, ICON_LABELS, KIND_TINTS, AVATAR_LABELS } from '../lib/looks.js';
 
   let { look = $bindable(), avatars } = $props();
 
@@ -48,9 +48,9 @@
   {#if !avatars}<SegmentedControl value={look.type} options={types} label="Type" onchange={setType} />{/if}
   <div class="icons" role="radiogroup" aria-label="Icon" bind:this={iconRow} use:row>
     {#if avatars}
-      {#each avatars as avatar (avatar.id)}
-        <button type="button" role="radio" aria-checked={look.avatar?.id === avatar.id} aria-label={avatar.name} title={avatar.name} class={['choice', { on: look.avatar?.id === avatar.id }]} onclick={() => (look = { ...look, avatar })}>
-          <AgentAvatar {avatar} tint={look.tint} size="lg" />
+      {#each avatars as avatar (avatar)}
+        <button type="button" role="radio" aria-checked={look.avatar === avatar} aria-label={AVATAR_LABELS[avatar]} title={AVATAR_LABELS[avatar]} class={['choice', { on: look.avatar === avatar }]} onclick={() => (look = { ...look, avatar })}>
+          <AgentAvatar avatar={{ figure: avatar }} tint={look.tint} size="lg" />
         </button>
       {/each}
     {:else}

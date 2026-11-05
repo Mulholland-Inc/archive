@@ -106,7 +106,7 @@
   <Page width="home" center>
     <Stack gap="8" align="stretch">
       <div class="greeting">
-        <AgentAvatar avatar={agent.avatar} tint={agent.tint} size="xxl" />
+        <AgentAvatar avatar={agent.avatar} tint={agent.tint} seed={agent.id} size="xxl" active />
         <h1>{part}, {app.profile.first}</h1>
       </div>
       <Composer bind:value bind:element placeholder={`Message ${agent.name}`} draft={id} size="lg" onsend={send} />
