@@ -15,7 +15,9 @@
 
   const { id } = app.canvas;
 
-  canvas.use(() => id);
+  const panel = app.canvas.panel;
+
+  canvas.use(() => !panel && id);
 
   const file = $derived(app.canvas?.file);
   const model = $derived(app.canvas?.model);
@@ -476,7 +478,9 @@
     {/snippet}
   </TopBar>
 
-  {#if !file && app.canvas.error}
+  {#if panel}
+    <div class="body"><article class="page">{@render panel()}</article></div>
+  {:else if !file && app.canvas.error}
     <div class="body center"><EmptyState icon={FileQuestion} title={app.canvas.error} /></div>
   {:else if !file}
     <div class="pad"><Skeleton lines={4} /></div>

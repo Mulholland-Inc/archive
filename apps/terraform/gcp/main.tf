@@ -21,6 +21,7 @@ locals {
     ARCHIVE_IOS_APP    = "The iPhone app's App ID, <team id>.dev.archive.app: the phone then proves each upload comes from it with App Attest. A space leaves App Attest off."
     ARCHIVE_EMAIL      = "Sending email, https://<account id>:<token>@api.cloudflare.com. Terraform sets it."
     ARCHIVE_EMAIL_KEY  = "Key the email Worker posts received mail to the API with. Terraform sets it."
+    ARCHIVE_STRIPE     = "Linking clients' cards, https://<secret key>@api.stripe.com?publishable=<publishable key>. A space leaves it off."
   })
 
   services = ["run.googleapis.com", "sqladmin.googleapis.com", "secretmanager.googleapis.com", "iam.googleapis.com", "storage.googleapis.com", "artifactregistry.googleapis.com", "iamcredentials.googleapis.com", "sts.googleapis.com", "cloudtasks.googleapis.com", "siteverification.googleapis.com", "pubsub.googleapis.com"]

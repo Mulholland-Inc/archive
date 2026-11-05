@@ -13,6 +13,15 @@ import (
 	"github.com/google/uuid"
 )
 
+const addBilling = `-- name: AddBilling :exec
+INSERT INTO archive.billing (customer) VALUES ($1) ON CONFLICT DO NOTHING
+`
+
+func (q *Queries) AddBilling(ctx context.Context, customer string) error {
+	_, err := q.db.Exec(ctx, addBilling, customer)
+	return err
+}
+
 const addDDLKey = `-- name: AddDDLKey :exec
 WITH old AS (DELETE FROM archive.ddl_key WHERE created_at < now() - interval '1 hour')
 INSERT INTO archive.ddl_key (key, pid) VALUES ($1, $2)
@@ -177,6 +186,17 @@ func (q *Queries) BackendPID(ctx context.Context) (int32, error) {
 	return pg_backend_pid, err
 }
 
+const billingCustomer = `-- name: BillingCustomer :one
+SELECT customer FROM archive.billing
+`
+
+func (q *Queries) BillingCustomer(ctx context.Context) (string, error) {
+	row := q.db.QueryRow(ctx, billingCustomer)
+	var customer string
+	err := row.Scan(&customer)
+	return customer, err
+}
+
 const blobUsed = `-- name: BlobUsed :one
 SELECT (EXISTS (SELECT FROM archive.file f WHERE f.hash = $1::text) OR EXISTS (SELECT FROM archive.file f WHERE f.metadata ? 'thumbnail' AND f.metadata#>>'{thumbnail,sha256}' = $1::text))::bool
 `
@@ -186,6 +206,17 @@ func (q *Queries) BlobUsed(ctx context.Context, hash string) (bool, error) {
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const businessName = `-- name: BusinessName :one
+SELECT name FROM archive.business
+`
+
+func (q *Queries) BusinessName(ctx context.Context) (string, error) {
+	row := q.db.QueryRow(ctx, businessName)
+	var name string
+	err := row.Scan(&name)
+	return name, err
 }
 
 const catalog = `-- name: Catalog :one
@@ -224,7 +255,7 @@ SELECT jsonb_build_object(
             AND regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)')
             FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid), false),
         'columns', (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid)))
-        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.agent'::regclass, 'archive.inbox'::regclass, 'archive.turn'::regclass, 'archive.memory'::regclass, 'archive.member'::regclass, 'archive."group"'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass, 'archive.connection'::regclass, 'archive.known_person'::regclass, 'archive.known_org'::regclass, 'archive.mail_message'::regclass,
+        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.business'::regclass, 'archive.agreement'::regclass, 'archive.billing'::regclass, 'archive.agent'::regclass, 'archive.inbox'::regclass, 'archive.turn'::regclass, 'archive.memory'::regclass, 'archive.member'::regclass, 'archive."group"'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass, 'archive.connection'::regclass, 'archive.known_person'::regclass, 'archive.known_org'::regclass, 'archive.mail_message'::regclass,
             'archive.mail_party'::regclass, 'archive.mail_attachment'::regclass, 'archive.doc_page'::regclass, 'archive.payroll_company'::regclass,
             'archive.payroll_department'::regclass, 'archive.payroll_location'::regclass, 'archive.payroll_schedule'::regclass,
             'archive.payroll_worker'::regclass, 'archive.payroll_job'::regclass, 'archive.payroll_compensation'::regclass,
@@ -1528,6 +1559,15 @@ func (q *Queries) KnownPeople(ctx context.Context, emails []string) ([]KnownPeop
 		return nil, err
 	}
 	return items, nil
+}
+
+const linkCard = `-- name: LinkCard :exec
+UPDATE archive.billing SET name = $1, updated_at = now()
+`
+
+func (q *Queries) LinkCard(ctx context.Context, name string) error {
+	_, err := q.db.Exec(ctx, linkCard, name)
+	return err
 }
 
 const lockFile = `-- name: LockFile :one

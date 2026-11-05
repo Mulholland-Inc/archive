@@ -223,6 +223,7 @@ func init() {
 		"file":       {create: (*Archive).fileCreate, update: (*Archive).fileUpdate, delete: (*Archive).fileDelete},
 		"workflow":   {save: (*Archive).workflowSave, remove: (*Archive).workflowDelete},
 		"connection": {save: (*Archive).connectionSave, remove: (*Archive).connectionRemove},
+		"agreement":  {create: (*Archive).agreementCreate},
 	}
 }
 

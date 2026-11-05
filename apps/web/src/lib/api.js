@@ -65,7 +65,8 @@ export async function send(path, { method = 'GET', body, raw, signal, headers = 
   if (r.status === 401) throw new Unauthorized('Signed out');
   if (!r.ok && r.status !== 204) {
     const out = await r.json().catch(() => ({}));
-    throw Object.assign(new Error(out.error ?? r.statusText), { status: r.status });
+    const field = out.errors?.[0];
+    throw Object.assign(new Error(out.error ?? (field ? `${field.path}: ${field.message}` : r.statusText)), { status: r.status });
   }
   return r;
 }

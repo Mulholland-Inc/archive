@@ -215,6 +215,7 @@ var (
 	catalogReserved = map[string]bool{"boot": true, "files": true, "views": true, "search": true, "schema": true, "types": true,
 		"member": true, "group": true, "user": true, "token": true, "file": true, "upload": true, "revision": true, "run": true,
 		"workflow": true, "workflow_run": true, "connection": true, "agent": true, "turn": true, "memory": true,
+		"business": true, "agreement": true, "billing": true,
 		"action": true, "agent_list": true, "workflow_list": true, "connection_list": true}
 	catalogNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 	catalogRefRe  = regexp.MustCompile(`(?i)^references\s+([a-z][a-z0-9_]*)\b[\s.;:,-]*`)

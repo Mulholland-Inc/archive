@@ -7,6 +7,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -943,7 +944,8 @@ func (h *Hub) httpAuth(next func(a *Archive) http.Handler) http.Handler {
 			return
 		}
 		defer release()
-		next(a).ServeHTTP(w, r.WithContext(withArchive(WithActor(r.Context(), ac), a)))
+		ctx := context.WithValue(WithActor(r.Context(), ac), clientKey{}, clientOf(r))
+		next(a).ServeHTTP(w, r.WithContext(withArchive(ctx, a)))
 	})
 }
 
@@ -1356,4 +1358,247 @@ func (a *Archive) groupNames(ctx context.Context, tb *Table, in map[string]any) 
 		in["group"] = id.String()
 	}
 	return nil
+}
+
+//go:embed msa.md
+var msaText string
+
+//go:embed dpa.md
+var dpaText string
+
+type clientKey struct{}
+
+type client struct{ ip, agent string }
+
+func clientOf(r *http.Request) client {
+	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if f := r.Header.Get("X-Forwarded-For"); f != "" {
+		ip = strings.TrimSpace(f[strings.LastIndex(f, ",")+1:])
+	}
+	return client{ip: ip, agent: r.UserAgent()}
+}
+
+func (a *Archive) ownerInPerson(ctx context.Context, what string) (*Actor, error) {
+	ac, err := authUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if ac.TokenID != uuid.Nil || ctx.Value(runWroteKey{}) != nil {
+		return nil, fmt.Errorf("the owner %s in the app, not a token or a run: %w", what, ErrForbidden)
+	}
+	m, err := a.memberOf(ctx, ac.Email)
+	if err != nil {
+		return nil, err
+	}
+	if m.Role != "owner" {
+		return nil, fmt.Errorf("only the owner %s: %w", what, ErrForbidden)
+	}
+	return ac, nil
+}
+
+func (a *Archive) businessName(ctx context.Context) (string, error) {
+	var name string
+	err := a.sys(ctx, func(ctx context.Context) (err error) {
+		name, err = a.st.db(ctx).BusinessName(ctx)
+		return err
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", fmt.Errorf("fill in the business details first: %w", ErrConflict)
+	}
+	return name, err
+}
+
+func (a *Archive) agreementCreate(ctx context.Context, data map[string]any) (map[string]any, error) {
+	ac, err := a.ownerInPerson(ctx, "signs an agreement")
+	if err != nil {
+		return nil, err
+	}
+	kind, _ := data["kind"].(string)
+	title, body := "", ""
+	switch kind {
+	case "msa":
+		title, body = "Master services agreement", msaText
+	case "dpa":
+		title, body = "Data processing agreement", dpaText
+	default:
+		return nil, &ValidationError{Type: "agreement", Errors: []FieldError{{Path: "kind", Message: "want msa or dpa"}}}
+	}
+	if strings.TrimSpace(body) == "" {
+		return nil, fmt.Errorf("src/%s.md has no text yet, so there is nothing to sign: %w", kind, ErrConflict)
+	}
+	verr := &ValidationError{Type: "agreement"}
+	in := map[string]string{}
+	for _, k := range []string{"signer", "title"} {
+		s, _ := data[k].(string)
+		if in[k] = strings.TrimSpace(s); in[k] == "" {
+			verr.Errors = append(verr.Errors, FieldError{Path: k, Message: "required"})
+		}
+	}
+	if len(verr.Errors) > 0 {
+		return nil, verr
+	}
+	company, err := a.businessName(ctx)
+	if err != nil {
+		return nil, err
+	}
+	c, _ := ctx.Value(clientKey{}).(client)
+	sum := sha256.Sum256([]byte(body))
+	return map[string]any{"name": title, "kind": kind, "body": body, "hash": hex.EncodeToString(sum[:]), "company": company, "signer": in["signer"], "title": in["title"],
+		"email": ac.Email, "ip": c.ip, "agent": c.agent}, nil
+}
+
+func (a *Archive) onboarding(ctx context.Context) (any, error) {
+	out := map[string]any{"terms": map[string]string{"msa": msaText, "dpa": dpaText}}
+	err := a.as(ctx, func(ctx context.Context) error {
+		for _, typ := range []string{"agreement", "business", "billing"} {
+			rows, err := a.List(ctx, typ, nil, 100, uuid.Nil, false)
+			if err != nil {
+				return err
+			}
+			out[typ] = rows
+		}
+		return nil
+	})
+	return out, err
+}
+
+type stripeAPI struct{ base, secret, publishable string }
+
+func stripeEnv() (*stripeAPI, error) {
+	raw := strings.TrimSpace(os.Getenv("ARCHIVE_STRIPE"))
+	if raw == "" {
+		return nil, fmt.Errorf("this server does not link cards: ARCHIVE_STRIPE is not set: %w", ErrForbidden)
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil || u.Query().Get("publishable") == "" {
+		return nil, errors.New("ARCHIVE_STRIPE: want https://<secret key>@api.stripe.com?publishable=<publishable key>")
+	}
+	return &stripeAPI{base: u.Scheme + "://" + u.Host, secret: u.User.Username(), publishable: u.Query().Get("publishable")}, nil
+}
+
+func (s *stripeAPI) call(ctx context.Context, method, path string, form url.Values, once string, out any) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, method, s.base+path, strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	req.SetBasicAuth(s.secret, "")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if once != "" {
+		req.Header.Set("Idempotency-Key", once)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("stripe: %w", err)
+	}
+	defer res.Body.Close()
+	b, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	if err != nil {
+		return fmt.Errorf("stripe: %w", err)
+	}
+	if res.StatusCode >= 300 {
+		var e struct {
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		json.Unmarshal(b, &e)
+		return fmt.Errorf("stripe: %s", cmp.Or(e.Error.Message, res.Status))
+	}
+	return json.Unmarshal(b, out)
+}
+
+func (a *Archive) billingCustomer(ctx context.Context) (string, error) {
+	var customer string
+	err := a.sys(ctx, func(ctx context.Context) (err error) {
+		customer, err = a.st.db(ctx).BillingCustomer(ctx)
+		return err
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return customer, err
+}
+
+func (a *Archive) cardStart(ctx context.Context) (any, error) {
+	ac, err := a.ownerInPerson(ctx, "links a card")
+	if err != nil {
+		return nil, err
+	}
+	company, err := a.businessName(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s, err := stripeEnv()
+	if err != nil {
+		return nil, err
+	}
+	customer, err := a.billingCustomer(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if customer == "" {
+		var c struct {
+			ID string `json:"id"`
+		}
+		form := url.Values{"name": {company}, "email": {ac.Email}, "metadata[workspace]": {a.ws.ID.String()}}
+		if err := s.call(ctx, http.MethodPost, "/v1/customers", form, "archive-customer-"+a.ws.ID.String(), &c); err != nil {
+			return nil, err
+		}
+		customer = c.ID
+		if err := a.sys(ctx, func(ctx context.Context) error { return a.st.db(ctx).AddBilling(ctx, customer) }); err != nil {
+			return nil, err
+		}
+	}
+	var si struct {
+		Secret string `json:"client_secret"`
+	}
+	form := url.Values{"customer": {customer}, "payment_method_types[]": {"card"}, "usage": {"off_session"}, "metadata[workspace]": {a.ws.ID.String()}}
+	if err := s.call(ctx, http.MethodPost, "/v1/setup_intents", form, "", &si); err != nil {
+		return nil, err
+	}
+	return map[string]string{"secret": si.Secret, "key": s.publishable}, nil
+}
+
+func (a *Archive) cardLinked(ctx context.Context, id string) (any, error) {
+	if _, err := a.ownerInPerson(ctx, "links a card"); err != nil {
+		return nil, err
+	}
+	s, err := stripeEnv()
+	if err != nil {
+		return nil, err
+	}
+	customer, err := a.billingCustomer(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var si struct {
+		Status   string `json:"status"`
+		Customer string `json:"customer"`
+		Method   struct {
+			ID   string `json:"id"`
+			Card struct {
+				Brand string `json:"brand"`
+				Last4 string `json:"last4"`
+			} `json:"card"`
+		} `json:"payment_method"`
+	}
+	if err := s.call(ctx, http.MethodGet, "/v1/setup_intents/"+url.PathEscape(id)+"?expand[]=payment_method", nil, "", &si); err != nil {
+		return nil, err
+	}
+	if customer == "" || si.Customer != customer {
+		return nil, fmt.Errorf("setup_intent %q is not this workspace's: %w", id, ErrForbidden)
+	}
+	if si.Status != "succeeded" {
+		return nil, fmt.Errorf("the card is not linked yet, its setup is %s: %w", si.Status, ErrConflict)
+	}
+	form := url.Values{"invoice_settings[default_payment_method]": {si.Method.ID}}
+	var done struct{}
+	if err := s.call(ctx, http.MethodPost, "/v1/customers/"+url.PathEscape(customer), form, "", &done); err != nil {
+		return nil, err
+	}
+	card := si.Method.Card.Brand + " " + si.Method.Card.Last4
+	err = a.sys(ctx, func(ctx context.Context) error { return a.st.db(ctx).LinkCard(ctx, card) })
+	return map[string]string{"card": card}, err
 }
