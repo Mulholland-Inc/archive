@@ -191,6 +191,23 @@ export async function passkeyLogin() {
   return done;
 }
 
+export async function passkeyVerify() {
+  const pk = (await api('/auth/passkey/verify', { method: 'POST' })).publicKey;
+  pk.challenge = bytes(pk.challenge);
+  pk.allowCredentials = (pk.allowCredentials ?? []).map((c) => ({ ...c, id: bytes(c.id) }));
+  const cred = await navigator.credentials.get({ publicKey: pk });
+  const r = cred.response;
+  await api('/auth/passkey/verify/finish', {
+    method: 'POST',
+    body: {
+      id: cred.id,
+      rawId: text(cred.rawId),
+      type: cred.type,
+      response: { clientDataJSON: text(r.clientDataJSON), authenticatorData: text(r.authenticatorData), signature: text(r.signature), userHandle: r.userHandle ? text(r.userHandle) : null }
+    }
+  });
+}
+
 export async function passkeyRegister(user) {
   const pk = (await api('/auth/passkey/register', { method: 'POST' })).publicKey;
   pk.challenge = bytes(pk.challenge);
@@ -198,7 +215,7 @@ export async function passkeyRegister(user) {
   pk.excludeCredentials = (pk.excludeCredentials ?? []).map((c) => ({ ...c, id: bytes(c.id) }));
   const cred = await navigator.credentials.create({ publicKey: pk });
   const r = cred.response;
-  await api('/auth/passkey/register/finish', {
+  const done = await api('/auth/passkey/register/finish', {
     method: 'POST',
     body: {
       id: cred.id,
@@ -208,4 +225,5 @@ export async function passkeyRegister(user) {
     }
   });
   rememberPasskey(user, 'yes');
+  return done;
 }

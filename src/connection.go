@@ -334,6 +334,9 @@ func (a *Archive) connectLink(ctx context.Context, id string) (string, error) {
 	if p.Link == nil {
 		return "", fmt.Errorf("%s has no widget to connect with: %w", p.Name, httpErrBadRequest)
 	}
+	if !ac.verified {
+		return "", signinUnverified
+	}
 	if err := a.mayConnect(ctx, p.Connector); err != nil {
 		return "", err
 	}
