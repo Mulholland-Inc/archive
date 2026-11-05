@@ -157,6 +157,7 @@ const (
 	CatCompliance Category = "Compliance"
 	CatData       Category = "Data"
 	CatHome       Category = "Home"
+	CatHealth     Category = "Health"
 
 	IconMail     Icon = "mail"
 	IconUsers    Icon = "users"
@@ -172,6 +173,7 @@ const (
 	IconBug      Icon = "bug"
 
 	IconWarehouse Icon = "warehouse"
+	IconHeart     Icon = "heart"
 )
 
 type Who struct {
@@ -179,6 +181,7 @@ type Who struct {
 	Names []Path
 	Lower bool
 	Find  string `json:",omitempty"`
+	As    string `json:",omitempty"`
 	Each  Path
 	Where Test
 	Tool  string
@@ -833,6 +836,13 @@ func (w *Who) read(cl *Client, c *Connector) (string, error) {
 		}
 		s = strings.Join(names, ", ")
 	}
+	if w.As != "" {
+		sc := cl.scope()
+		sc["who"] = ans
+		if v, _ := fillStr(w.As, sc); strings.Trim(text(v), " ·") != "" {
+			s = strings.Trim(text(v), " ·")
+		}
+	}
 	if w.Lower {
 		s = strings.ToLower(s)
 	}
@@ -1405,7 +1415,7 @@ func (sp *Span) dates(sc map[string]any, again bool) []any {
 		if end.After(last) {
 			end = last
 		}
-		out = append(out, map[string]any{"start": start.Format(time.DateOnly), "end": end.Format(time.DateOnly)})
+		out = append(out, map[string]any{"start": start.Format(time.DateOnly), "end": end.Format(time.DateOnly), "after": end.AddDate(0, 0, 1).Format(time.DateOnly)})
 	}
 	return out
 }
@@ -2415,11 +2425,12 @@ func values(q Q, sc map[string]any) url.Values {
 	return out
 }
 
-var varRe = regexp.MustCompile(`\{[+~'"-]?[A-Za-z_][\w\-*/.@;]*(,[^|{}]*)?(\|[^{}]*)?\}`)
+var varRe = regexp.MustCompile(`\{[+~'"#-]?[A-Za-z_][\w\-*/.@;]*(,[^|{}]*)?(\|[^{}]*)?\}`)
 
 type tvar struct {
 	path, def, sep        string
 	raw, segs, join, host bool
+	num                   bool
 	quote                 byte
 	hasDef                bool
 }
@@ -2434,6 +2445,8 @@ func varOf(m string) tvar {
 		v.segs, s = true, s[1:]
 	case '-':
 		v.host, s = true, s[1:]
+	case '#':
+		v.num, s = true, s[1:]
 	case '\'', '"':
 		v.quote, s = s[0], s[1:]
 	}
@@ -2463,6 +2476,9 @@ func (v tvar) of(sc map[string]any) (any, bool) {
 	}
 	if v.host {
 		return strings.ReplaceAll(strings.ToLower(text(x)), "_", "-"), true
+	}
+	if n, err := strconv.ParseFloat(text(x), 64); v.num && err == nil {
+		return n, true
 	}
 	switch v.quote {
 	case '\'':

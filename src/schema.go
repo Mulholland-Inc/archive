@@ -1305,6 +1305,9 @@ func (s *pgStore) migrate(ctx context.Context) error {
 				return err
 			}
 		}
+		if _, err := tx.Exec(ctx, s.expand(storeMigrateAs)); err != nil {
+			return fmt.Errorf("migration role: %w", err)
+		}
 		if _, err := tx.Exec(ctx, agentSlugOnce); err != nil {
 			return fmt.Errorf("agent slugs: %w", err)
 		}
@@ -1318,7 +1321,8 @@ func (s *pgStore) migrate(ctx context.Context) error {
 		if len(lost) > 0 {
 			fmt.Fprintf(os.Stderr, "archive: archive.sql not applied at startup, it would delete data:\n  %s\n", strings.Join(lost, "\n  "))
 			applied = false
-			return nil
+			_, err := tx.Exec(ctx, s.expand(storeMigrateRole))
+			return err
 		}
 		if _, err := tx.Exec(ctx, fileInheritOnce); err != nil {
 			return fmt.Errorf("files in folders: %w", err)
@@ -1410,6 +1414,13 @@ BEGIN
             UPDATE archive.file c SET name = 'Copy ' || left(c.id::text, 4) || ' ' || c.name, access = p.access FROM archive.file p WHERE c.id = r.id AND p.id = c.parent;
         END;
     END LOOP;
+END $$`
+
+const storeMigrateAs = `DO $$
+BEGIN
+    IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{p}_base') THEN
+        EXECUTE format('GRANT "{p}_base" TO %I WITH INHERIT TRUE', current_user);
+    END IF;
 END $$`
 
 const storeMigrateRole = `DO $$
