@@ -43,6 +43,10 @@
     box-shadow: none;
   }
 
+  :global(.morph-head) .header {
+    background: transparent;
+  }
+
   .collapsed {
     justify-content: center;
     padding: var(--space-2) var(--space-0);
