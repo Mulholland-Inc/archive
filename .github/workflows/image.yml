@@ -62,6 +62,8 @@ jobs:
       - if: env.DEPLOY == 'true'
         run: |
           image="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT/ghcr/${GITHUB_REPOSITORY,,}:sha-${GITHUB_SHA::7}"
+          gcloud run jobs update archive --project "$GCP_PROJECT" --region "$GCP_REGION" --image "$image" --args migrate
+          gcloud run jobs execute archive --project "$GCP_PROJECT" --region "$GCP_REGION" --wait
           gcloud run services update archive --project "$GCP_PROJECT" --region "$GCP_REGION" --image "$image" & api=$!
           if gcloud run services describe archive-browser --project "$GCP_PROJECT" --region "$GCP_REGION" >/dev/null 2>&1; then
             gcloud run services update archive-browser --project "$GCP_PROJECT" --region "$GCP_REGION" --image "$GCP_REGION-docker.pkg.dev/$GCP_PROJECT/ghcr/${GITHUB_REPOSITORY,,}:browser-sha-${GITHUB_SHA::7}"

@@ -413,6 +413,90 @@ resource "google_cloud_run_v2_service" "this" {
   ]
 }
 
+import {
+  to = google_cloud_run_v2_job.migrate
+  id = "projects/${var.project}/locations/${var.region}/jobs/archive"
+}
+
+resource "google_cloud_run_v2_job" "migrate" {
+  name                = "archive"
+  location            = var.region
+  deletion_protection = var.deletion_protection
+
+  template {
+    template {
+      service_account = google_service_account.this.email
+      timeout         = "3600s"
+      max_retries     = 0
+
+      containers {
+        image = local.image
+        args  = ["migrate"]
+
+        resources {
+          limits = {
+            cpu    = var.cpu
+            memory = var.memory
+          }
+        }
+
+        dynamic "env" {
+          for_each = local.env
+          content {
+            name  = env.key
+            value = env.value
+          }
+        }
+
+        dynamic "env" {
+          for_each = google_secret_manager_secret.this
+          content {
+            name = env.key
+            value_source {
+              secret_key_ref {
+                secret  = env.value.secret_id
+                version = "latest"
+              }
+            }
+          }
+        }
+
+        volume_mounts {
+          name       = "cloudsql"
+          mount_path = "/cloudsql"
+        }
+      }
+
+      volumes {
+        name = "cloudsql"
+        cloud_sql_instance {
+          instances = [google_sql_database_instance.this.connection_name]
+        }
+      }
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [template[0].template[0].containers[0].image, client, client_version]
+  }
+
+  depends_on = [
+    google_secret_manager_secret_version.email,
+    google_secret_manager_secret_version.email_key,
+    google_project_iam_member.sql,
+    google_secret_manager_secret_iam_member.this,
+    google_storage_bucket_iam_member.this,
+  ]
+}
+
+resource "google_cloud_run_v2_job_iam_member" "deploy" {
+  count    = var.github_repository != "" ? 1 : 0
+  name     = google_cloud_run_v2_job.migrate.name
+  location = var.region
+  role     = "roles/run.developer"
+  member   = google_service_account.deploy[0].member
+}
+
 removed {
   from = google_cloud_run_v2_job.this
 
