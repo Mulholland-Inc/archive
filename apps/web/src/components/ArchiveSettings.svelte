@@ -11,11 +11,12 @@
   import Text from './Text.svelte';
   import ArchiveIcon from './ArchiveIcon.svelte';
   import LookPicker from './LookPicker.svelte';
-  import { app, ws, deleteArchive, saveArchive } from '../lib/app.svelte.js';
+  import { app, ws, atLeast, deleteArchive, saveArchive } from '../lib/app.svelte.js';
 
   let name = $state(ws().name);
   let look = $state({ ...ws().look });
   let deleting = $state(false);
+  const can = $derived(atLeast('engineer'));
   const dirty = $derived(name !== ws().name || look.icon !== ws().look.icon || look.tint !== ws().look.tint || look.type !== ws().look.type);
 
   $effect(() => {
@@ -34,20 +35,24 @@
   <Stack gap="6">
     <Stack direction="row" gap="4" align="center">
       <ArchiveIcon icon={look.icon} tint={look.tint} seed={ws().id} size="xxl" />
-      <Field label="Name">{#snippet children(id)}<Input {id} bind:value={name} />{/snippet}</Field>
+      <Field label="Name">{#snippet children(id)}<Input {id} bind:value={name} disabled={!can} />{/snippet}</Field>
     </Stack>
-    <LookPicker bind:look />
-    <Stack direction="row" gap="2" justify="end">
-      <Button variant="ghost" disabled={!dirty} onclick={() => { name = ws().name; look = { ...ws().look }; }}>Cancel</Button>
-      <Button variant="primary" disabled={!dirty} onclick={save}>Save changes</Button>
-    </Stack>
+    {#if can}
+      <LookPicker bind:look />
+      <Stack direction="row" gap="2" justify="end">
+        <Button variant="ghost" disabled={!dirty} onclick={() => { name = ws().name; look = { ...ws().look }; }}>Cancel</Button>
+        <Button variant="primary" disabled={!dirty} onclick={save}>Save changes</Button>
+      </Stack>
+    {/if}
   </Stack>
-  <Divider />
-  <Section title="Delete archive">
-    <SettingsRow label={`Permanently delete ${ws().name}`}>
-      <Button variant="danger" icon={Trash2} onclick={() => (deleting = true)}>Delete</Button>
-    </SettingsRow>
-  </Section>
+  {#if app.role === 'owner'}
+    <Divider />
+    <Section title="Delete archive">
+      <SettingsRow label={`Permanently delete ${ws().name}`}>
+        <Button variant="danger" icon={Trash2} onclick={() => (deleting = true)}>Delete</Button>
+      </SettingsRow>
+    </Section>
+  {/if}
 </Stack>
 
 <Dialog bind:open={deleting} title="Delete this archive?" size="sm">

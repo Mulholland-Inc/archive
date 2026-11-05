@@ -20,7 +20,8 @@
   import MobileMenu from '../components/MobileMenu.svelte';
   import Chip from '../components/Chip.svelte';
   import GroupDialog from '../components/GroupDialog.svelte';
-  import { ws, seedOf, setRole, members, groups, groupById, toggleGroup, isArchiveOwner } from '../lib/app.svelte.js';
+  import { ws, seedOf, setRole, members, groups, groupById, toggleGroup, atLeast, ROLES } from '../lib/app.svelte.js';
+  import { confirmDialog } from '../lib/dialogs.svelte.js';
 
   members.use();
   groups.use();
@@ -33,14 +34,10 @@
   let roleFilter = $state('all');
   let inviting = $state(false);
   let creating = $state(false);
-  const owner = $derived(isArchiveOwner());
-
-  const roles = [
-    { value: 'viewer', label: 'Viewer' },
-    { value: 'editor', label: 'Editor' },
-    { value: 'owner', label: 'Owner' }
-  ];
-  const roleFilters = [{ value: 'all', label: 'All roles' }, ...roles];
+  const manages = $derived(atLeast('manager'));
+  const mayChange = (row) => manages && row.role !== 'owner' && atLeast(row.role);
+  const assignable = (row) => ROLES.filter((r) => atLeast(r.value) && (r.value !== 'owner' || row.status === 'active'));
+  const roleFilters = [{ value: 'all', label: 'All roles' }, ...ROLES];
   const q = $derived(query.trim().toLowerCase());
   const matches = (...fields) => !q || fields.some((f) => f?.toLowerCase().includes(q));
 
@@ -66,18 +63,19 @@
     { key: 'role', label: 'Role', width: 'sm', mobile: 'trailing' },
     { key: 'groups', label: 'Groups', width: 'md', mobile: 'hidden' },
     { key: 'active', label: tab === 'invitations' ? 'Status' : 'Last active', muted: true, width: 'sm', mobile: 'hidden' },
-    ...(owner ? [{ key: 'actions', label: '', width: 'sm', align: 'end' }] : [])
+    ...(manages ? [{ key: 'actions', label: '', width: 'sm', align: 'end' }] : [])
   ]);
   const groupColumns = $derived([
     { key: 'name', label: 'Name' },
     { key: 'description', label: 'Description', muted: true, width: 'lg', mobile: 'hidden' },
     { key: 'people', label: 'Members', width: 'lg' },
-    ...(owner ? [{ key: 'actions', label: '', width: 'sm', align: 'end' }] : [])
+    ...(manages ? [{ key: 'actions', label: '', width: 'sm', align: 'end' }] : [])
   ]);
   const groupsOf = (m) => m.groups.map((id) => groupById(id)).filter(Boolean);
-  function changeRole(row, role) {
+  async function changeRole(row, role) {
     const m = ws().members.find((x) => x.id === row.id);
-    if (m) setRole(m, role);
+    if (!m || (role === 'owner' && !(await confirmDialog({ title: `Transfer ${ws().name} to ${row.name}?`, body: 'You become an engineer.', confirm: 'Transfer' })))) return;
+    setRole(m, role);
   }
 </script>
 
@@ -90,9 +88,9 @@
       <SearchField bind:value={query} placeholder={tab === 'groups' ? 'Search groups and members' : 'Search by name or email'} />
     {/snippet}
     {#snippet actions()}
-      {#if tab === 'groups' && owner}
+      {#if tab === 'groups' && manages}
         <Button variant="primary" icon={Plus} onclick={() => (creating = true)}>New group</Button>
-      {:else}
+      {:else if manages}
         <Button variant="primary" icon={UserPlus} onclick={() => (inviting = true)}>Invite</Button>
       {/if}
     {/snippet}
@@ -134,8 +132,8 @@
     {:else if q}
       <EmptyState icon={SearchX} title="No group matches that search" size="sm" />
     {:else}
-      <EmptyState icon={UsersRound} title={owner ? 'No groups yet. A row limited to a group is seen only by its members and the owners' : 'No groups yet'} size="sm">
-        {#if owner}<Button icon={Plus} onclick={() => (creating = true)}>New group</Button>{/if}
+      <EmptyState icon={UsersRound} title={manages ? 'No groups yet. A row limited to a group is seen only by its members and by managers and up' : 'No groups yet'} size="sm">
+        {#if manages}<Button icon={Plus} onclick={() => (creating = true)}>New group</Button>{/if}
       </EmptyState>
     {/if}
   {:else}
@@ -147,11 +145,17 @@
           {:else if col.key === 'email'}
             {row.email}
           {:else if col.key === 'role'}
-            <Menu value={row.role} options={roles} size="sm" variant="ghost" label={`Role for ${row.name}`} onchange={(v) => changeRole(row, v)} />
+            <span class="role">
+              {#if mayChange(row)}
+                <Menu value={row.role} options={assignable(row)} size="sm" variant="ghost" label={`Role for ${row.name}`} onchange={(v) => changeRole(row, v)} />
+              {:else}
+                {ROLES.find((r) => r.value === row.role)?.label}
+              {/if}
+            </span>
           {:else if col.key === 'groups'}
             <span class="groups">
-              {#each groupsOf(row) as g (g.id)}<Chip size="sm" href={`/access/groups/${g.id}`} onremove={owner ? () => toggleGroup(row, g.id) : undefined}>{g.name}</Chip>{:else}{#if !owner}<Text tone="tertiary">None</Text>{/if}{/each}
-              {#if owner}
+              {#each groupsOf(row) as g (g.id)}<Chip size="sm" href={`/access/groups/${g.id}`} onremove={manages ? () => toggleGroup(row, g.id) : undefined}>{g.name}</Chip>{:else}{#if !manages}<Text tone="tertiary">None</Text>{/if}{/each}
+              {#if manages}
                 <Menu width="sm" label={`Add ${row.name} to a group`}>
                   {#snippet trigger(props)}<IconButton icon={Plus} label={`Add ${row.name} to a group`} size="xs" tooltip={false} {...props} />{/snippet}
                   <MenuItems items={memberGroupItems(row)} />
@@ -162,7 +166,7 @@
             {row.status === 'invited' ? 'Invited' : row.active}
           {:else if col.key === 'actions'}
             <span class="actions">
-              <IconButton icon={Trash2} label={row.status === 'invited' ? `Revoke ${row.name}’s invitation` : `Remove ${row.name}`} size="sm" onclick={() => removeMemberConfirm(row)} />
+              {#if mayChange(row)}<IconButton icon={Trash2} label={row.status === 'invited' ? `Revoke ${row.name}’s invitation` : `Remove ${row.name}`} size="sm" onclick={() => removeMemberConfirm(row)} />{/if}
             </span>
           {/if}
         {/snippet}
@@ -181,6 +185,10 @@
     display: inline-flex;
     justify-content: flex-end;
     gap: var(--space-1);
+  }
+
+  .role :global(.trigger) {
+    margin-inline-start: calc(-1 * var(--space-2));
   }
 
   .groups {

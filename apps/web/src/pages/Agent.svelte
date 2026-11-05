@@ -13,7 +13,7 @@
   import EmptyState from '../components/EmptyState.svelte';
   import Skeleton from '../components/Skeleton.svelte';
   import MobileMenu from '../components/MobileMenu.svelte';
-  import { app, ws, agentById, agents, library, closeFile, updateAgent, rememberAgent, markSeen } from '../lib/app.svelte.js';
+  import { app, ws, atLeast, agentById, agents, library, closeFile, updateAgent, rememberAgent, markSeen } from '../lib/app.svelte.js';
   import { conversation, loadEarlier, sendMessage, stopAgent } from '../lib/agent.svelte.js';
   import { clearConversation } from '../lib/menus.js';
 
@@ -95,11 +95,11 @@
 <TopBar bordered>
   {#snippet leading()}
     <MobileMenu />
-    {#if agent}<EditableTitle value={agent.name} label="Rename agent" onsave={(name) => updateAgent(agent.id, { name })} />{/if}
+    {#if agent && atLeast('manager')}<EditableTitle value={agent.name} label="Rename agent" onsave={(name) => updateAgent(agent.id, { name })} />{:else if agent}<span class="name">{agent.name}</span>{/if}
   {/snippet}
   {#snippet trailing()}
     {#if agent}
-      <IconButton icon={Settings} label="Settings" size="md" onclick={() => (app.agentDialog = agent.id)} />
+      {#if atLeast('manager')}<IconButton icon={Settings} label="Settings" size="md" onclick={() => (app.agentDialog = agent.id)} />{/if}
       {#if messages.length}<IconButton icon={Eraser} label="Clear" size="md" onclick={() => clearConversation(agent)} />{/if}
     {/if}
   {/snippet}
@@ -140,6 +140,15 @@
 {/if}
 
 <style>
+  .name {
+    overflow: hidden;
+    padding-inline: var(--space-3);
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .greeting {
     display: flex;
     flex-direction: column;

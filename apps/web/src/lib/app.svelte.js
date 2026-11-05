@@ -628,8 +628,18 @@ export function seedOf(person) {
   return m?.user ?? m?.id ?? p.email ?? p.name ?? '';
 }
 
-export function isArchiveOwner() {
-  return app.role === 'owner';
+export const ROLES = [
+  { value: 'viewer', label: 'Viewer' },
+  { value: 'editor', label: 'Editor' },
+  { value: 'manager', label: 'Manager' },
+  { value: 'engineer', label: 'Engineer' },
+  { value: 'owner', label: 'Owner' }
+];
+
+const rank = (role) => ROLES.findIndex((r) => r.value === role);
+
+export function atLeast(role, of = app.role) {
+  return rank(of) >= rank(role);
 }
 
 export async function invite({ emails, role, groups: ids = [] }) {
@@ -693,14 +703,14 @@ async function setGroups(member, next) {
 }
 
 export function mayLimit(current) {
-  if (app.role === 'owner') return true;
+  if (atLeast('manager')) return true;
   const me = ws().members.find((m) => m.email === app.user.email);
   return app.role === 'editor' && (!current || Boolean(me?.groups.includes(current)));
 }
 
 export function accessOptions(current) {
   const me = ws().members.find((m) => m.email === app.user.email);
-  const mine = ws().groups.filter((g) => app.role === 'owner' || me?.groups.includes(g.id) || g.id === current);
+  const mine = ws().groups.filter((g) => atLeast('manager') || me?.groups.includes(g.id) || g.id === current);
   return [{ value: '', label: 'Everyone' }, ...mine.map((g) => ({ value: g.id, label: g.name }))];
 }
 
@@ -772,12 +782,12 @@ export function archiveIntegrations() {
 }
 
 export function connectIntegration(id, asked) {
-  if (isArchiveOwner()) connect(id, asked);
+  if (atLeast('manager')) connect(id, asked);
 }
 
 async function onIntegration(id, what, path, init) {
   const c = archiveIntegrations().find((x) => x.id === id);
-  if (!c?.connection || !isArchiveOwner()) return;
+  if (!c?.connection || !atLeast('manager')) return;
   try {
     await call(`/connect/${c.connection.id}${path}`, init);
   } catch (e) {
@@ -830,7 +840,7 @@ export async function revokeApp(id) {
 }
 
 export async function rotateKey(personal = false) {
-  if (!personal && !isArchiveOwner()) return;
+  if (!personal && !atLeast('engineer')) return;
   const id = app.archive;
   try {
     const old = (await call('/auth/tokens')).filter(personal ? personalKey : workspaceKey(id));
@@ -1110,7 +1120,7 @@ export function createWorkflow({ name, trigger, steps }) {
 
 export async function renameView(id, name) {
   const to = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-  if (!to || to === id || !isArchiveOwner()) return;
+  if (!to || to === id || !atLeast('manager')) return;
   if (!/^[a-z]/.test(to)) return complain(new Error('A view’s name starts with a letter.'), 'Couldn’t rename the view');
   const sql = `ALTER VIEW public."${id}" RENAME TO "${to}"`;
   try {

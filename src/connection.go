@@ -305,18 +305,22 @@ func (a *Archive) level(ctx context.Context) (string, []uuid.UUID, error) {
 	return m.Role, m.Groups, nil
 }
 
+func mayManage(lvl string) bool {
+	return lvl == "manager" || lvl == "engineer" || lvl == "owner"
+}
+
 func (a *Archive) mayConnect(ctx context.Context, c *connect.Connector) error {
 	if _, err := authUser(ctx); err != nil || !c.Integration {
 		return err
 	}
-	if lvl, _, err := a.level(ctx); err != nil || lvl != "owner" {
-		return cmp.Or(err, fmt.Errorf("only an owner connects %s, for the whole archive: %w", c.Name, ErrForbidden))
+	if lvl, _, err := a.level(ctx); err != nil || !mayManage(lvl) {
+		return cmp.Or(err, fmt.Errorf("only managers, engineers and the owner connect %s, for the whole archive: %w", c.Name, ErrForbidden))
 	}
 	return nil
 }
 
 func mayUse(c generated.ArchiveConnection, lvl string, groups []uuid.UUID) bool {
-	return lvl == "owner" || lvl == "editor" && (c.Access == nil || slices.Contains(groups, *c.Access))
+	return mayManage(lvl) || lvl == "editor" && (c.Access == nil || slices.Contains(groups, *c.Access))
 }
 
 func (a *Archive) connectionSave(ctx context.Context, member uuid.UUID, c *connect.Connector, g *connect.Grant) (uuid.UUID, error) {
@@ -544,8 +548,8 @@ func (a *Archive) connectionMine(ctx context.Context, id uuid.UUID) (generated.A
 	case err != nil:
 		return c, err
 	case c.Integration:
-		if lvl, _, err := a.level(ctx); err != nil || lvl != "owner" {
-			return c, cmp.Or(err, fmt.Errorf("only an owner changes the archive's %s: %w", c.Provider, ErrForbidden))
+		if lvl, _, err := a.level(ctx); err != nil || !mayManage(lvl) {
+			return c, cmp.Or(err, fmt.Errorf("only managers, engineers and the owner change the archive's %s: %w", c.Provider, ErrForbidden))
 		}
 	}
 	return c, nil
@@ -1943,14 +1947,14 @@ func (a *Archive) Action(ctx context.Context, name string, input any, pick strin
 			return nil, err
 		}
 		if !mayUse(mine[0], lvl, groups) {
-			return nil, fail(ErrForbidden, "only editors and owners use the archive's %s%s", p.Name, map[bool]string{true: ", and of the group it is narrowed to", false: ""}[mine[0].Access != nil])
+			return nil, fail(ErrForbidden, "only editors and up use the archive's %s%s", p.Name, map[bool]string{true: ", and of the group it is narrowed to", false: ""}[mine[0].Access != nil])
 		}
 	}
 	switch {
 	case len(mine) == 0 && pick != "":
 		return nil, fail(ErrNotFound, "you have no %s connection %q", p.Name, pick)
 	case len(mine) == 0 && p.Integration:
-		return nil, fail(ErrNotFound, "this archive has not connected %s; an owner connects it in Archive settings, Integrations", p.Name)
+		return nil, fail(ErrNotFound, "this archive has not connected %s; a manager, engineer or the owner connects it in Archive settings, Integrations", p.Name)
 	case len(mine) == 0:
 		return nil, fail(ErrNotFound, "you have not connected %s; connect it in Settings, Connectors", p.Name)
 	case len(mine) > 1:

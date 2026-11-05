@@ -1,12 +1,11 @@
 <script>
   import { Eye, EyeOff, Copy, RefreshCw, Sparkles } from '@lucide/svelte';
   import SettingsPane from './SettingsPane.svelte';
-  import OwnerNotice from './OwnerNotice.svelte';
   import Art from './Art.svelte';
   import Heading from './Heading.svelte';
   import IconButton from './IconButton.svelte';
   import Button from './Button.svelte';
-  import { app, ws, archiveKey, rotateKey, isArchiveOwner, tokens, revokeApp } from '../lib/app.svelte.js';
+  import { app, ws, archiveKey, rotateKey, tokens, revokeApp } from '../lib/app.svelte.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
   import { apiPrompt } from '../lib/apiprompt.js';
 
@@ -14,7 +13,6 @@
 
   let shown = $state(false);
   const key = $derived(personal ? app.apiKey : archiveKey());
-  const locked = $derived(!personal && !isArchiveOwner());
   const secret = $derived(key?.secret ?? '');
   const masked = $derived(secret ? `${secret.slice(0, secret.lastIndexOf('_') + 1)}${'•'.repeat(12)}${secret.slice(-4)}` : key ? `arc_${'•'.repeat(16)}` : 'No key yet');
 
@@ -52,15 +50,14 @@
     <div class="art"><Art name={personal ? 'tokens' : 'security'} /></div>
     <Heading size="xl" wrap="normal" step>{personal ? 'Your API key' : 'Archive API key'}</Heading>
     <p class="sub">{personal ? 'Works in every archive you’re in' : `Only for ${ws().name}`}, with your access. Copy it whenever you need it.</p>
-    {#if locked}<div class="notice"><OwnerNotice what="the archive API key" ask="if you need it" /></div>{/if}
     <div class="key">
-      <span class="value" aria-label={shown ? 'API key' : 'API key, hidden'}>{shown && !locked && secret ? secret : masked}</span>
-      <IconButton icon={shown ? EyeOff : Eye} label={shown ? 'Hide key' : 'Show key'} size="sm" disabled={locked || !secret} onclick={() => (shown = !shown)} />
-      <IconButton icon={RefreshCw} label={key ? 'Rotate key' : 'Make a key'} size="sm" disabled={locked} onclick={rotate} />
-      <IconButton icon={Copy} label="Copy key" size="sm" disabled={locked} onclick={copy} />
+      <span class="value" aria-label={shown ? 'API key' : 'API key, hidden'}>{shown && secret ? secret : masked}</span>
+      <IconButton icon={shown ? EyeOff : Eye} label={shown ? 'Hide key' : 'Show key'} size="sm" disabled={!secret} onclick={() => (shown = !shown)} />
+      <IconButton icon={RefreshCw} label={key ? 'Rotate key' : 'Make a key'} size="sm" onclick={rotate} />
+      <IconButton icon={Copy} label="Copy key" size="sm" onclick={copy} />
     </div>
     <div class="setup">
-      <Button variant="primary" icon={Sparkles} disabled={locked} onclick={copyPrompt}>Copy setup prompt</Button>
+      <Button variant="primary" icon={Sparkles} onclick={copyPrompt}>Copy setup prompt</Button>
     </div>
     {#if personal && app.apps.length}
       <div class="apps">
@@ -102,12 +99,6 @@
     margin-block: var(--space-2) var(--space-6);
     color: var(--color-text-secondary);
     font-size: var(--text-md);
-  }
-
-  .notice {
-    width: 100%;
-    max-width: var(--measure-sm);
-    text-align: start;
   }
 
   .key {

@@ -46,7 +46,7 @@
   preview.use(() => type?.id);
   const people = (roles) => ws().members.filter((m) => m.status === 'active' && roles.includes(m.role));
   const access = $derived(type ? [
-    { label: 'Owners', people: people(['owner']), note: 'Full control' },
+    { label: 'Can manage', people: people(['manager', 'engineer', 'owner']), note: 'Full control' },
     { label: 'Can edit', people: people(type.access.edit), note: 'Add and change rows' },
     { label: 'Can view', people: people(type.access.view), note: 'Read only' }
   ] : []);

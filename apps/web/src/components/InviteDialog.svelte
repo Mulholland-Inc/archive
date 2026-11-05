@@ -7,7 +7,7 @@
   import Chip from './Chip.svelte';
   import Stack from './Stack.svelte';
   import { Plus } from '@lucide/svelte';
-  import { invite, ws } from '../lib/app.svelte.js';
+  import { invite, ws, ROLES, atLeast } from '../lib/app.svelte.js';
   import { newGroupPrompt } from '../lib/menus.js';
 
   let { open = $bindable(false) } = $props();
@@ -24,11 +24,7 @@
   const list = $derived(emails.split(/[\s,;]+/).filter((e) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)));
   const count = $derived(list.length);
 
-  const roles = [
-    { value: 'viewer', label: 'Viewer' },
-    { value: 'editor', label: 'Editor' },
-    { value: 'owner', label: 'Owner' }
-  ];
+  const roles = $derived(ROLES.filter((r) => r.value !== 'owner' && atLeast(r.value)));
 
   function send(close) {
     invite({ emails: list, role, groups: picked });

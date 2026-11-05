@@ -36,7 +36,7 @@ CREATE TABLE archive."group" (
     access      uuid REFERENCES archive."group" ON DELETE RESTRICT,
     UNIQUE (name)
 ) INHERITS (archive.object);
-COMMENT ON TABLE archive."group" IS 'A group of members, like finance: a row whose access is a group''s id is seen only by its members and the owners. Owners add, rename, describe and delete groups, and put members in them with member.groups; a group cannot be deleted while rows use it
+COMMENT ON TABLE archive."group" IS 'A group of members, like finance: a row whose access is a group''s id is seen only by its members and by managers, engineers and the owner. Managers and up add, rename, describe and delete groups, and put members in them with member.groups; a group cannot be deleted while rows use it
 icon: users-round';
 COMMENT ON COLUMN archive."group".name IS 'Any text, like Finance team; unique whatever its case';
 CREATE UNIQUE INDEX group_name_idx ON archive."group" (lower(name));
@@ -47,7 +47,7 @@ CREATE FUNCTION archive.group_role(g uuid) RETURNS text LANGUAGE sql IMMUTABLE P
 $$;
 
 CREATE FUNCTION archive.can(g uuid) RETURNS bool LANGUAGE sql STABLE AS $$
-    SELECT g IS NULL OR pg_has_role(current_user, '{p}_owner', 'USAGE')
+    SELECT g IS NULL OR pg_has_role(current_user, '{p}_manager', 'USAGE')
         OR EXISTS (SELECT FROM pg_catalog.pg_roles r WHERE r.rolname = archive.group_role(g) AND pg_has_role(current_user, r.oid, 'USAGE'))
 $$;
 
@@ -248,8 +248,8 @@ CREATE TABLE archive.composite_use (
 );
 COMMENT ON TABLE archive.composite_use IS 'Always empty; it uses every built-in composite type, so pg-schema-diff sees them as used by a table before and after a user table starts using one';
 
-CREATE TYPE archive.level AS ENUM ('viewer', 'editor', 'owner');
-COMMENT ON TYPE archive.level IS 'What a member may do: a viewer reads, an editor also writes, an owner also changes the schema and the members and sees every row and secret';
+CREATE TYPE archive.level AS ENUM ('viewer', 'editor', 'manager', 'engineer', 'owner');
+COMMENT ON TYPE archive.level IS 'What a member may do: a viewer reads, an editor also writes, a manager also changes the schema, the members, integrations and agents and sees every row and secret, an engineer also changes the workspace''s name and look and has its API keys, and its one owner also deletes it and transfers it';
 
 CREATE TABLE archive.member (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -261,13 +261,40 @@ CREATE TABLE archive.member (
     name       text NOT NULL DEFAULT '',
     access     uuid REFERENCES archive."group" ON DELETE RESTRICT
 ) INHERITS (archive.object);
-COMMENT ON TABLE archive.member IS 'A person in this workspace. Owners add, change and remove members; adding an email invites that person
+COMMENT ON TABLE archive.member IS 'A person in this workspace. Managers and up add, change and remove members, none of them above their own role; adding an email invites that person
 icon: users';
 COMMENT ON COLUMN archive.member.email IS 'The address they sign in with; it cannot change';
-COMMENT ON COLUMN archive.member.groups IS 'The ids of the groups they are in; a row whose access is a group is seen only by its members and the owners';
+COMMENT ON COLUMN archive.member.role IS 'One member is the owner. To transfer the workspace the owner sets another member''s role to owner, which makes the old owner an engineer';
+COMMENT ON COLUMN archive.member.groups IS 'The ids of the groups they are in; a row whose access is a group is seen only by its members and by managers, engineers and the owner';
+CREATE UNIQUE INDEX member_owner_idx ON archive.member (role) WHERE role = 'owner';
 
 CREATE FUNCTION archive.member_check() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    acting bool := starts_with(current_user, '{p}_');
 BEGIN
+    IF TG_OP = 'DELETE' THEN
+        IF OLD.role = 'owner' THEN
+            RAISE EXCEPTION '% is the owner of this workspace and stays; the owner can transfer it by setting another member''s role to owner', OLD.email USING ERRCODE = '23001';
+        END IF;
+        IF acting AND NOT pg_has_role(current_user, '{p}_' || OLD.role, 'USAGE') THEN
+            RAISE EXCEPTION 'you cannot remove %, whose role % is above yours', OLD.email, OLD.role USING ERRCODE = '42501';
+        END IF;
+        RETURN OLD;
+    END IF;
+    IF acting AND TG_OP = 'INSERT' AND NEW.role = 'owner' THEN
+        RAISE EXCEPTION 'this workspace has its owner; add % with another role, then the owner can transfer it by setting their role to owner', NEW.email USING ERRCODE = '42501', TABLE = 'member', COLUMN = 'role';
+    END IF;
+    IF acting AND (TG_OP = 'INSERT' OR NEW.role <> OLD.role) AND NOT pg_has_role(current_user, '{p}_' || NEW.role, 'USAGE') THEN
+        RAISE EXCEPTION 'you cannot make someone % as it is above your role', NEW.role USING ERRCODE = '42501', TABLE = 'member', COLUMN = 'role';
+    END IF;
+    IF acting AND TG_OP = 'UPDATE' AND NEW.role <> OLD.role THEN
+        IF OLD.role = 'owner' THEN
+            RAISE EXCEPTION '% is the owner of this workspace; the owner can transfer it by setting another member''s role to owner', OLD.email USING ERRCODE = '42501', TABLE = 'member', COLUMN = 'role';
+        END IF;
+        IF NOT pg_has_role(current_user, '{p}_' || OLD.role, 'USAGE') THEN
+            RAISE EXCEPTION 'you cannot change the role of %, as % is above yours', OLD.email, OLD.role USING ERRCODE = '42501', TABLE = 'member', COLUMN = 'role';
+        END IF;
+    END IF;
     NEW.email := lower(btrim(NEW.email));
     IF TG_OP = 'UPDATE' AND NEW.email <> OLD.email THEN
         RAISE EXCEPTION 'an email cannot change; remove the member and add the new address' USING ERRCODE = '22023', TABLE = 'member', COLUMN = 'email';
@@ -277,6 +304,16 @@ BEGIN
         RAISE EXCEPTION 'no group %', (SELECT g FROM unnest(NEW.groups) g WHERE NOT EXISTS (SELECT FROM archive."group" x WHERE x.id = g) LIMIT 1)
             USING ERRCODE = '22023', TABLE = 'member', COLUMN = 'groups';
     END IF;
+    RETURN NEW;
+END $$;
+
+CREATE FUNCTION archive.member_transfer() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+BEGIN
+    IF TG_TABLE_SCHEMA <> 'archive' OR TG_TABLE_NAME <> 'member' THEN
+        RAISE EXCEPTION 'archive.member_transfer is for the member table' USING ERRCODE = '42501';
+    END IF;
+    PERFORM pg_advisory_xact_lock(7273);
+    UPDATE archive.member SET role = 'engineer' WHERE role = 'owner';
     RETURN NEW;
 END $$;
 
@@ -290,10 +327,6 @@ DECLARE
     gone  uuid[] := '{}';
 BEGIN
     PERFORM pg_advisory_xact_lock(7273);
-    IF TG_OP <> 'INSERT' AND OLD.role = 'owner' AND (TG_OP = 'DELETE' OR NEW.role <> 'owner')
-        AND NOT EXISTS (SELECT FROM archive.member x WHERE x.role = 'owner' AND x.id <> OLD.id) THEN
-        RAISE EXCEPTION '% is the last owner of this workspace', OLD.email USING ERRCODE = '23001';
-    END IF;
     IF TG_OP = 'DELETE' THEN
         rid := OLD.id;
     ELSE
@@ -311,7 +344,7 @@ BEGIN
             EXECUTE format('CREATE ROLE %I NOLOGIN', m);
         END IF;
         IF TG_OP = 'INSERT' OR NEW.role <> OLD.role THEN
-            EXECUTE format('REVOKE %I, %I, %I FROM %I', '{p}_viewer', '{p}_editor', '{p}_owner', u);
+            EXECUTE format('REVOKE %I, %I, %I, %I, %I FROM %I', '{p}_viewer', '{p}_editor', '{p}_manager', '{p}_engineer', '{p}_owner', u);
             EXECUTE format('GRANT %I TO %I', '{p}_' || NEW.role, u);
         END IF;
         EXECUTE format('GRANT %I TO %I', m, u);
@@ -334,7 +367,8 @@ BEGIN
     RETURN NULL;
 END $$;
 
-CREATE TRIGGER member_check BEFORE INSERT OR UPDATE ON archive.member FOR EACH ROW EXECUTE FUNCTION archive.member_check();
+CREATE TRIGGER member_check BEFORE INSERT OR UPDATE OR DELETE ON archive.member FOR EACH ROW EXECUTE FUNCTION archive.member_check();
+CREATE TRIGGER member_transfer BEFORE UPDATE ON archive.member FOR EACH ROW WHEN (NEW.role = 'owner' AND OLD.role <> 'owner') EXECUTE FUNCTION archive.member_transfer();
 CREATE TRIGGER member_roles AFTER INSERT OR UPDATE OR DELETE ON archive.member FOR EACH ROW EXECUTE FUNCTION archive.member_roles();
 
 CREATE TABLE archive.workflow (
@@ -487,7 +521,7 @@ COMMENT ON COLUMN archive.connection.scopes IS 'What Archive may do there, as th
 COMMENT ON COLUMN archive.connection.error IS 'Why Archive last failed to reach it, like a revoked grant; empty while it works';
 COMMENT ON COLUMN archive.connection.sync_at IS 'When Archive next reads what changed there; null once it has it all, until the service says something changed, you ask, or you read what it syncs';
 COMMENT ON COLUMN archive.connection.synced_at IS 'When Archive last had everything there';
-COMMENT ON COLUMN archive.connection.integration IS 'It is the archive''s, like its QuickBooks, which an owner connects for everyone, not one person''s own';
+COMMENT ON COLUMN archive.connection.integration IS 'It is the archive''s, like its QuickBooks, which a manager, engineer or the owner connects for everyone, not one person''s own';
 COMMENT ON COLUMN archive.connection.access IS 'The id of the group an integration and what it syncs are narrowed to; null for everyone';
 
 CREATE TABLE archive.known_person (
@@ -3289,7 +3323,7 @@ CREATE FUNCTION archive.secret_clear(tbl text, rid uuid, col text) RETURNS void 
     DELETE FROM archive.secret s
     WHERE s.table_name = tbl AND s.row_id = rid AND (col IS NULL OR s.column_name = col)
       AND pg_has_role(current_setting('role')::name, '{p}_editor', 'USAGE')
-      AND (s.access IS NULL OR pg_has_role(current_setting('role')::name, '{p}_owner', 'USAGE')
+      AND (s.access IS NULL OR pg_has_role(current_setting('role')::name, '{p}_manager', 'USAGE')
         OR EXISTS (SELECT FROM pg_catalog.pg_roles r WHERE r.rolname = archive.group_role(s.access) AND pg_has_role(current_setting('role')::name, r.oid, 'USAGE')))
 $$;
 
@@ -3319,11 +3353,11 @@ GRANT USAGE ON SCHEMA archive TO "{p}_viewer";
 GRANT SELECT ON archive.file, archive.member, archive."group", archive.revision TO "{p}_viewer";
 GRANT INSERT, UPDATE, DELETE ON archive.file TO "{p}_editor";
 GRANT SELECT, INSERT, DELETE ON archive.secret TO "{p}_editor";
-GRANT INSERT, UPDATE, DELETE ON archive.member, archive."group" TO "{p}_owner";
+GRANT INSERT, UPDATE, DELETE ON archive.member, archive."group" TO "{p}_manager";
 GRANT SELECT, INSERT, UPDATE, DELETE ON archive.workflow TO "{p}_viewer";
 GRANT SELECT ON archive.workflow_run TO "{p}_viewer";
 GRANT SELECT ON archive.agent, archive.turn, archive.memory TO "{p}_viewer";
-GRANT INSERT, UPDATE, DELETE ON archive.agent TO "{p}_editor";
+GRANT INSERT, UPDATE, DELETE ON archive.agent TO "{p}_manager";
 GRANT SELECT ON archive.connection TO "{p}_viewer";
 GRANT SELECT ON archive.known_person TO "{p}_viewer";
 GRANT SELECT ON archive.known_org TO "{p}_viewer";
@@ -3400,9 +3434,9 @@ CREATE POLICY change ON archive.file FOR UPDATE USING (archive.can(access) AND c
 CREATE POLICY remove ON archive.file FOR DELETE USING (archive.can(access) AND connection IS NULL);
 
 ALTER TABLE archive.secret ENABLE ROW LEVEL SECURITY;
-CREATE POLICY owner ON archive.secret FOR SELECT USING (pg_has_role(current_user, '{p}_owner', 'USAGE'));
+CREATE POLICY manager ON archive.secret FOR SELECT USING (pg_has_role(current_user, '{p}_manager', 'USAGE'));
 CREATE POLICY writer ON archive.secret FOR INSERT WITH CHECK (archive.can(access));
-CREATE POLICY owner_delete ON archive.secret FOR DELETE USING (pg_has_role(current_user, '{p}_owner', 'USAGE'));
+CREATE POLICY manager_delete ON archive.secret FOR DELETE USING (pg_has_role(current_user, '{p}_manager', 'USAGE'));
 
 ALTER TABLE archive.workflow ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.workflow USING (archive.mine(member)) WITH CHECK (archive.mine(member) AND (access IS NULL OR archive.can(access)));

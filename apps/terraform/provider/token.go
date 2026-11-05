@@ -54,7 +54,7 @@ func (r *tokenResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 	keep := []planmodifier.String{stringplanmodifier.UseStateForUnknown()}
 	replace := []planmodifier.String{stringplanmodifier.RequiresReplace()}
 	resp.Schema = schema.Schema{
-		Description: "An API or agent token. It acts as the user it belongs to, with their role and groups, or read only with viewer. Any change makes a new token.",
+		Description: "An API or agent token. It acts as the user it belongs to, with their role and groups, or read only with viewer. Any change makes a new token. Needs an engineer's or the owner's token.",
 		Attributes: map[string]schema.Attribute{
 			"id":   schema.StringAttribute{Computed: true, PlanModifiers: keep},
 			"name": schema.StringAttribute{Required: true, PlanModifiers: replace},

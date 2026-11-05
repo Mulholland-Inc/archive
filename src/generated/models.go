@@ -88,7 +88,7 @@ type ArchiveConnection struct {
 	AskedAt  time.Time
 	LeaseAt  *time.Time
 	Revoked  bool
-	// It is the archive's, like its QuickBooks, which an owner connects for everyone, not one person's own
+	// It is the archive's, like its QuickBooks, which a manager, engineer or the owner connects for everyone, not one person's own
 	Integration bool
 }
 

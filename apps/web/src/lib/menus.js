@@ -1,6 +1,6 @@
 import { Pencil, Trash2, Plus, ExternalLink, MessageSquarePlus, Download, Eye, Play, RotateCcw, Copy, Users, Settings, ArrowRightLeft, FolderInput } from '@lucide/svelte';
 import { SEPARATOR } from './contextmenu.svelte.js';
-import { app, deleteGroup, groupUses, updateGroup, toggleGroup, createGroup, isArchiveOwner, ws, removeAgent, askAgent, renameFile, removeFile, downloadFile, runWorkflow, removeWorkflow, removeMember, switchArchive, openSettings, deleteArchive } from './app.svelte.js';
+import { app, deleteGroup, groupUses, updateGroup, toggleGroup, createGroup, atLeast, ws, removeAgent, askAgent, renameFile, removeFile, downloadFile, runWorkflow, removeWorkflow, removeMember, switchArchive, openSettings, deleteArchive } from './app.svelte.js';
 import { prompt, confirmDialog, notify } from './dialogs.svelte.js';
 import { clearAgent } from './agent.svelte.js';
 import { go } from './router.svelte.js';
@@ -23,6 +23,7 @@ export async function clearConversation(agent) {
 }
 
 export function agentItems(agent) {
+  if (!atLeast('manager')) return [];
   return [
     { label: 'Settings', icon: Settings, onselect: () => (app.agentDialog = agent.id) },
     SEPARATOR,
@@ -116,7 +117,7 @@ export async function newGroupPrompt(people = []) {
 }
 
 export function memberGroupItems(member) {
-  if (!isArchiveOwner()) return [];
+  if (!atLeast('manager')) return [];
   return [
     ...ws().groups.filter((g) => !member.groups.includes(g.id)).map((g) => ({ label: g.name, onselect: () => toggleGroup(member, g.id) })),
     { label: 'New group…', icon: Plus, onselect: () => newGroupPrompt([member.id]) }
@@ -139,8 +140,7 @@ export function archiveItems(archive) {
         openSettings('general');
       }
     },
-    SEPARATOR,
-    { label: 'Delete archive', icon: Trash2, danger: true, disabled: app.archives.length < 2, onselect: () => deleteArchiveConfirm(archive) }
+    ...(current && app.role === 'owner' ? [SEPARATOR, { label: 'Delete archive', icon: Trash2, danger: true, disabled: app.archives.length < 2, onselect: () => deleteArchiveConfirm(archive) }] : [])
   ];
 }
 

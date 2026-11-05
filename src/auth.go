@@ -162,10 +162,6 @@ func (a *Archive) has(ctx context.Context, role, group string) bool {
 	return ok
 }
 
-func (a *Archive) owner(ctx context.Context, role string) bool {
-	return a.has(ctx, role, a.prefix+"_owner")
-}
-
 func signedIn(ctx context.Context) (*Actor, error) {
 	if ac := ActorFrom(ctx); ac != nil {
 		return ac, nil
@@ -367,6 +363,33 @@ func (a *Archive) userActor(ctx context.Context, u *User) (*Actor, error) {
 	return &Actor{UserID: u.ID, Email: u.Email, Name: u.Name, Role: role, UserRole: role, member: m.ID}, nil
 }
 
+func (a *Archive) mayKey(ctx context.Context, email string) error {
+	m, err := a.memberOf(ctx, email)
+	if err == nil && m.Role != "engineer" && m.Role != "owner" {
+		err = fmt.Errorf("only engineers and the owner have this workspace's API keys: %w", ErrForbidden)
+	}
+	return err
+}
+
+func (a *Archive) mayKeyOf(ctx context.Context, ac *Actor, id uuid.UUID) error {
+	ws, err := a.hub.q().KeyWorkspace(ctx, id, ac.UserID)
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && ws == nil {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if *ws == a.ws.ID {
+		return a.mayKey(ctx, ac.Email)
+	}
+	other, release, err := a.hub.acquire(ctx, ws.String())
+	if err != nil {
+		return err
+	}
+	defer release()
+	return other.mayKey(ctx, ac.Email)
+}
+
 func (a *Archive) CreateToken(ctx context.Context, name string, ttl time.Duration, viewer, personal bool) (*Token, error) {
 	ac, err := authUser(ctx)
 	if err != nil {
@@ -377,6 +400,11 @@ func (a *Archive) CreateToken(ctx context.Context, name string, ttl time.Duratio
 	}
 	if personal && ac.scoped {
 		return nil, fmt.Errorf("a key for one workspace cannot make a personal key: %w", ErrForbidden)
+	}
+	if !personal {
+		if err := a.mayKey(ctx, ac.Email); err != nil {
+			return nil, err
+		}
 	}
 	t := &Token{ID: coreNewID(), Name: strings.TrimSpace(name), Viewer: viewer, Secret: authNewSecret()}
 	var exp *time.Time
@@ -413,6 +441,9 @@ func (a *Archive) sealToken(id uuid.UUID, secret string) []byte {
 func (a *Archive) TokenSecret(ctx context.Context, id uuid.UUID) (string, error) {
 	ac, err := authUser(ctx)
 	if err != nil {
+		return "", err
+	}
+	if err := a.mayKeyOf(ctx, ac, id); err != nil {
 		return "", err
 	}
 	sealed, err := a.hub.q().TokenSealed(ctx, generated.TokenSealedParams{ID: id, UserID: ac.UserID, Scoped: ac.scoped, Workspace: &a.ws.ID})
@@ -455,6 +486,9 @@ func (a *Archive) RevokeToken(ctx context.Context, id uuid.UUID) error {
 	if err != nil {
 		return err
 	}
+	if err := a.mayKeyOf(ctx, ac, id); err != nil {
+		return err
+	}
 	return a.sys(ctx, func(ctx context.Context) error {
 		role, err := a.hub.q().RevokeToken(ctx, generated.RevokeTokenParams{ID: id, UserID: ac.UserID, Scoped: ac.scoped, Workspace: &a.ws.ID})
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -478,7 +512,7 @@ const (
 )
 
 var (
-	signinRefused  = fmt.Errorf("no Archive account for this sign-in; ask an owner to add you: %w", ErrForbidden)
+	signinRefused  = fmt.Errorf("no Archive account for this sign-in; ask a workspace's owner to add you: %w", ErrForbidden)
 	signinMismatch = fmt.Errorf("sign-in state does not match; start again: %w", ErrUnauthorized)
 	signinBuiltin  = []signinConfig{
 		{ID: "google", Name: "Google", base: "https://accounts.google.com"},

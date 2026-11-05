@@ -13,7 +13,7 @@
   import AccountCard from './AccountCard.svelte';
   import AgentAvatar from './AgentAvatar.svelte';
   import AgentDialog from './AgentDialog.svelte';
-  import { app, ws, openSettings, closeDrawer, switchArchive, createArchive, lastAgent, unread, renameView, isArchiveOwner, agents, workflows, members, schema } from '../lib/app.svelte.js';
+  import { app, ws, openSettings, closeDrawer, switchArchive, createArchive, lastAgent, unread, renameView, atLeast, agents, workflows, members, schema } from '../lib/app.svelte.js';
   import { route, active } from '../lib/router.svelte.js';
   import NewArchiveDialog from './NewArchiveDialog.svelte';
   import SetupCard from './SetupCard.svelte';
@@ -62,7 +62,7 @@
   <SetupCard />
 
   <SidebarSection>
-    <SidebarItem icon={Plus} label="New agent" accent onclick={() => { app.drawer = false; app.agentDialog = true; }} />
+    {#if atLeast('manager')}<SidebarItem icon={Plus} label="New agent" accent onclick={() => { app.drawer = false; app.agentDialog = true; }} />{/if}
   </SidebarSection>
 
   {#if ws().agents.length}
@@ -80,7 +80,7 @@
   {#if views.length}
     <SidebarSection title={collapsed ? undefined : 'Views'}>
       {#each views as view (view.id)}
-        <SidebarItem icon={layoutOf(view).icon} label={view.name} href={`/view/${view.id}`} active={active(`/view/${view.id}`)} onrename={isArchiveOwner() ? (name) => renameView(view.id, name) : undefined} bind:editing={() => renaming === view.id, (on) => (renaming = on ? view.id : null)} />
+        <SidebarItem icon={layoutOf(view).icon} label={view.name} href={`/view/${view.id}`} active={active(`/view/${view.id}`)} onrename={atLeast('manager') ? (name) => renameView(view.id, name) : undefined} bind:editing={() => renaming === view.id, (on) => (renaming = on ? view.id : null)} />
       {/each}
     </SidebarSection>
   {/if}
