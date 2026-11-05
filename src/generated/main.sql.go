@@ -317,6 +317,16 @@ func (q *Queries) CreateToken(ctx context.Context, arg CreateTokenParams) (Creat
 	return i, err
 }
 
+const createTotpToken = `-- name: CreateTotpToken :exec
+WITH old AS (DELETE FROM archive.token x WHERE x.kind = 'totp' AND x.expires_at < now())
+INSERT INTO archive.token (user_id, kind, hash, expires_at) VALUES ($1, 'totp', $2, now() + interval '5 minutes')
+`
+
+func (q *Queries) CreateTotpToken(ctx context.Context, userID uuid.UUID, hash string) error {
+	_, err := q.db.Exec(ctx, createTotpToken, userID, hash)
+	return err
+}
+
 const createWorkspace = `-- name: CreateWorkspace :one
 INSERT INTO archive.workspace (id, name, key, type, icon, color) VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT DO NOTHING RETURNING id, name, key, created_at, type, icon, color, sent, sent_on, slug
@@ -410,6 +420,18 @@ func (q *Queries) DeleteWorkspaceTokens(ctx context.Context, userID uuid.UUID, w
 	return items, nil
 }
 
+const disableTotp = `-- name: DisableTotp :execrows
+UPDATE archive."user" SET totp = NULL, totp_step = 0, totp_fails = 0, totp_until = NULL WHERE id = $1 AND totp_step < $2
+`
+
+func (q *Queries) DisableTotp(ctx context.Context, iD uuid.UUID, step int64) (int64, error) {
+	result, err := q.db.Exec(ctx, disableTotp, iD, step)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const dropWatches = `-- name: DropWatches :exec
 DELETE FROM archive.watch WHERE connection = $1 AND NOT key = ANY($2::text[])
 `
@@ -430,8 +452,37 @@ func (q *Queries) DueAt(ctx context.Context, workspace uuid.UUID, kind string) (
 	return at, err
 }
 
+const enableTotp = `-- name: EnableTotp :one
+WITH linked AS (
+    UPDATE archive."user" u SET totp = $1, totp_step = $2, totp_fails = 0, totp_until = NULL
+    WHERE u.id = $3 AND u.totp IS NULL RETURNING u.id
+), gone AS (
+    DELETE FROM archive.token x USING linked WHERE x.user_id = linked.id AND x.kind = 'session' AND x.hash <> $4
+)
+SELECT count(*) FROM linked
+`
+
+type EnableTotpParams struct {
+	Totp []byte
+	Step int64
+	ID   uuid.UUID
+	Keep string
+}
+
+func (q *Queries) EnableTotp(ctx context.Context, arg EnableTotpParams) (int64, error) {
+	row := q.db.QueryRow(ctx, enableTotp,
+		arg.Totp,
+		arg.Step,
+		arg.ID,
+		arg.Keep,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const firstAdmin = `-- name: FirstAdmin :one
-SELECT id, email, name, workspaces, signin, created_at, admin, unread FROM archive."user" WHERE admin ORDER BY created_at, id LIMIT 1
+SELECT id, email, name, workspaces, signin, created_at, admin, unread, totp, totp_step, totp_fails, totp_until FROM archive."user" WHERE admin ORDER BY created_at, id LIMIT 1
 `
 
 func (q *Queries) FirstAdmin(ctx context.Context) (ArchiveUser, error) {
@@ -446,6 +497,10 @@ func (q *Queries) FirstAdmin(ctx context.Context) (ArchiveUser, error) {
 		&i.CreatedAt,
 		&i.Admin,
 		&i.Unread,
+		&i.Totp,
+		&i.TotpStep,
+		&i.TotpFails,
+		&i.TotpUntil,
 	)
 	return i, err
 }
@@ -462,7 +517,7 @@ func (q *Queries) InsertMainRevision(ctx context.Context, hash string) error {
 const joinWorkspace = `-- name: JoinWorkspace :one
 INSERT INTO archive."user" (email, name, workspaces) VALUES ($1, $2, ARRAY[$3::uuid])
 ON CONFLICT (email) DO UPDATE SET workspaces = archive."user".workspaces || EXCLUDED.workspaces WHERE NOT archive."user".workspaces @> EXCLUDED.workspaces
-RETURNING id, email, name, workspaces, signin, created_at, admin, unread
+RETURNING id, email, name, workspaces, signin, created_at, admin, unread, totp, totp_step, totp_fails, totp_until
 `
 
 func (q *Queries) JoinWorkspace(ctx context.Context, email string, name string, workspace uuid.UUID) (ArchiveUser, error) {
@@ -477,6 +532,10 @@ func (q *Queries) JoinWorkspace(ctx context.Context, email string, name string, 
 		&i.CreatedAt,
 		&i.Admin,
 		&i.Unread,
+		&i.Totp,
+		&i.TotpStep,
+		&i.TotpFails,
+		&i.TotpUntil,
 	)
 	return i, err
 }
@@ -767,7 +826,7 @@ func (q *Queries) SetSignin(ctx context.Context, iD uuid.UUID, signin json.RawMe
 }
 
 const signOut = `-- name: SignOut :exec
-DELETE FROM archive.token WHERE hash = $1 AND kind = 'session'
+DELETE FROM archive.token WHERE hash = $1 AND kind IN ('session', 'totp')
 `
 
 func (q *Queries) SignOut(ctx context.Context, hash string) error {
@@ -866,6 +925,46 @@ func (q *Queries) Tokens(ctx context.Context, userID uuid.UUID, scoped bool, wor
 	return items, nil
 }
 
+const totpSession = `-- name: TotpSession :execrows
+WITH gone AS (DELETE FROM archive.token x WHERE x.hash = $2 AND x.kind = 'totp' AND x.expires_at > now() RETURNING x.user_id)
+INSERT INTO archive.token (user_id, kind, hash, expires_at) SELECT gone.user_id, 'session', $1, now() + interval '30 days' FROM gone
+`
+
+func (q *Queries) TotpSession(ctx context.Context, hash string, pending string) (int64, error) {
+	result, err := q.db.Exec(ctx, totpSession, hash, pending)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const totpTry = `-- name: TotpTry :one
+UPDATE archive."user" SET
+    totp_fails = CASE WHEN totp_until > now() THEN totp_fails + 1 ELSE 1 END,
+    totp_until = CASE WHEN totp_until > now() THEN totp_until ELSE now() + interval '15 minutes' END
+WHERE id = $1 AND totp IS NOT NULL AND (totp_until IS NULL OR totp_until <= now() OR totp_fails < 5)
+RETURNING totp
+`
+
+func (q *Queries) TotpTry(ctx context.Context, id uuid.UUID) ([]byte, error) {
+	row := q.db.QueryRow(ctx, totpTry, id)
+	var totp []byte
+	err := row.Scan(&totp)
+	return totp, err
+}
+
+const totpUse = `-- name: TotpUse :execrows
+UPDATE archive."user" SET totp_step = $1, totp_fails = 0, totp_until = NULL WHERE id = $2 AND totp_step < $1
+`
+
+func (q *Queries) TotpUse(ctx context.Context, step int64, iD uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, totpUse, step, iD)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const uncountEmail = `-- name: UncountEmail :exec
 UPDATE archive.workspace SET sent = greatest(sent - 1, 0) WHERE id = $1
 `
@@ -932,7 +1031,7 @@ func (q *Queries) UsedMCPCode(ctx context.Context, hash string) (*uuid.UUID, err
 }
 
 const userByEmail = `-- name: UserByEmail :one
-SELECT id, email, name, workspaces, signin, created_at, admin, unread FROM archive."user" WHERE email = $1
+SELECT id, email, name, workspaces, signin, created_at, admin, unread, totp, totp_step, totp_fails, totp_until FROM archive."user" WHERE email = $1
 `
 
 func (q *Queries) UserByEmail(ctx context.Context, email string) (ArchiveUser, error) {
@@ -947,12 +1046,16 @@ func (q *Queries) UserByEmail(ctx context.Context, email string) (ArchiveUser, e
 		&i.CreatedAt,
 		&i.Admin,
 		&i.Unread,
+		&i.Totp,
+		&i.TotpStep,
+		&i.TotpFails,
+		&i.TotpUntil,
 	)
 	return i, err
 }
 
 const userByID = `-- name: UserByID :one
-SELECT id, email, name, workspaces, signin, created_at, admin, unread FROM archive."user" WHERE id = $1
+SELECT id, email, name, workspaces, signin, created_at, admin, unread, totp, totp_step, totp_fails, totp_until FROM archive."user" WHERE id = $1
 `
 
 func (q *Queries) UserByID(ctx context.Context, id uuid.UUID) (ArchiveUser, error) {
@@ -967,12 +1070,16 @@ func (q *Queries) UserByID(ctx context.Context, id uuid.UUID) (ArchiveUser, erro
 		&i.CreatedAt,
 		&i.Admin,
 		&i.Unread,
+		&i.Totp,
+		&i.TotpStep,
+		&i.TotpFails,
+		&i.TotpUntil,
 	)
 	return i, err
 }
 
 const userByOIDC = `-- name: UserByOIDC :one
-SELECT id, email, name, workspaces, signin, created_at, admin, unread FROM archive."user" WHERE signin->'oidc' @> $1::jsonb
+SELECT id, email, name, workspaces, signin, created_at, admin, unread, totp, totp_step, totp_fails, totp_until FROM archive."user" WHERE signin->'oidc' @> $1::jsonb
 `
 
 func (q *Queries) UserByOIDC(ctx context.Context, link []byte) (ArchiveUser, error) {
@@ -987,6 +1094,10 @@ func (q *Queries) UserByOIDC(ctx context.Context, link []byte) (ArchiveUser, err
 		&i.CreatedAt,
 		&i.Admin,
 		&i.Unread,
+		&i.Totp,
+		&i.TotpStep,
+		&i.TotpFails,
+		&i.TotpUntil,
 	)
 	return i, err
 }

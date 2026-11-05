@@ -137,6 +137,10 @@ type ArchiveUser struct {
 	CreatedAt  time.Time
 	Admin      bool
 	Unread     []uuid.UUID
+	Totp       []byte
+	TotpStep   int64
+	TotpFails  int32
+	TotpUntil  *time.Time
 }
 
 type ArchiveWatch struct {
