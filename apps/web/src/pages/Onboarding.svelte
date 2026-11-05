@@ -30,7 +30,7 @@
     upload: () => go('/library'),
     workflow: () => (creating = true),
     region: () => {
-      openSettings('general');
+      openSettings('server');
       completeStep('region');
     }
   };
