@@ -48,22 +48,30 @@ type RunOutput struct {
 	Files  []runChange     `json:"files,omitempty"`
 }
 
-// runChange is a file a run made or edited, as its chat shows it. action is "created" or "edited".
+// runChange is a file a run touched, as its chat shows it. action is "created", "edited" or "read".
 type runChange struct {
 	ID     uuid.UUID `json:"id"`
 	Name   string    `json:"name"`
 	Action string    `json:"action"`
 }
 
-// change notes one, once per file; one the run made stays made.
+// runReadMax is how many files a run's reads note: one that reads through a library is no list of cards, and a model
+// reads this output on every later turn.
+const runReadMax = 20
+
+var runActions = map[string]int{"read": 0, "edited": 1, "created": 2}
+
+// change notes one, once per file, as the most it did to it.
 func (o *RunOutput) change(c runChange) {
 	i := slices.IndexFunc(o.Files, func(x runChange) bool { return x.ID == c.ID })
 	if i < 0 {
-		o.Files = append(o.Files, c)
+		if c.Action != "read" || len(o.Files) < runReadMax {
+			o.Files = append(o.Files, c)
+		}
 		return
 	}
-	if o.Files[i].Action == "created" {
-		c.Action = "created"
+	if runActions[o.Files[i].Action] > runActions[c.Action] {
+		c.Action = o.Files[i].Action
 	}
 	o.Files[i] = c
 }
@@ -770,6 +778,13 @@ func (r *runner) call(read bool, f func(ctx context.Context) (any, error)) (any,
 	return v, storeErr(sp.Commit(r.ctx))
 }
 
+// read notes that this run read file id; a folder has nothing to show.
+func (r *runner) read(ctx context.Context, id uuid.UUID) {
+	if f, err := r.a.GetFile(ctx, id); err == nil && f.Kind != "folder" {
+		r.out.change(runChange{f.ID, f.Name, "read"})
+	}
+}
+
 // noted returns a file this run made or edited, noted as action once it worked.
 func (r *runner) noted(action string) func(*File, error) (any, error) {
 	return func(f *File, err error) (any, error) {
@@ -836,6 +851,9 @@ func (r *runner) sdk() {
 		row, err := a.Get(ctx, table, id)
 		if err == nil && opts.Reveal {
 			err = a.Reveal(ctx, table, row)
+		}
+		if err == nil && table == "file" {
+			r.read(ctx, id)
 		}
 		return row, err
 	})
@@ -981,13 +999,17 @@ func (r *runner) sdk() {
 		if err != nil {
 			return nil, err
 		}
-		return coreDo(a, ctx, func(ctx context.Context) (*runFile, error) {
+		f, err := coreDo(a, ctx, func(ctx context.Context) (*runFile, error) {
 			r, err := a.st.db(ctx).FileWithText(ctx, id)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil, fmt.Errorf("file %s: %w", id, ErrNotFound)
 			}
 			return (*runFile)(&r), err
 		})
+		if err == nil {
+			r.read(ctx, id)
+		}
+		return f, err
 	})
 	r.def(o, "copy", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		id, err := r.id(call, 0, "copy")
@@ -1008,7 +1030,11 @@ func (r *runner) sdk() {
 		if err != nil {
 			return nil, err
 		}
-		return a.ReadDocument(ctx, id)
+		m, err := a.ReadDocument(ctx, id)
+		if err == nil {
+			r.read(ctx, id)
+		}
+		return m, err
 	})
 	r.def(o, "edit", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		id, err := r.id(call, 0, "edit")

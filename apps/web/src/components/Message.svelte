@@ -32,7 +32,7 @@
     {#if message.files?.length}
       <div class="files">
         {#each message.files as f (f.id)}
-          <Attachment row name={ws().library.find((x) => x.id === f.id)?.name ?? f.name} kind={f.kind} size={f.action === 'created' ? 'Created' : 'Edited'} onopen={() => openFile(f.id, f.name)} />
+          <Attachment row name={ws().library.find((x) => x.id === f.id)?.name ?? f.name} kind={f.kind} size={{ created: 'Created', edited: 'Edited', read: 'Read' }[f.action]} onopen={() => openFile(f.id, f.name)} />
         {/each}
       </div>
     {/if}

@@ -187,6 +187,7 @@ func (r *runner) modelFiles(files []modelFile) ([]modelPart, error) {
 		if total += len(data); len(data) > modelMaxFile || total > modelMaxAll {
 			return nil, fmt.Errorf("the files run over the %d MB a model reads in one call: %w", modelMaxAll>>20, httpErrBadRequest)
 		}
+		r.out.change(runChange{f.ID, f.Name, "read"})
 		if mf.Page != 0 {
 			if f.MIME != "application/pdf" {
 				return nil, fmt.Errorf("file %s: page is for PDF files only: %w", mf.ID, httpErrBadRequest)
