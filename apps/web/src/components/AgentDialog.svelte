@@ -7,7 +7,7 @@
   import Button from './Button.svelte';
   import IconButton from './IconButton.svelte';
   import LookPicker from './LookPicker.svelte';
-  import { validateAvatar } from 'open-bot-avatar';
+  import { check } from '../lib/avatar.js';
   import { run } from '../lib/api.js';
   import { TINTS } from '../lib/looks.js';
   import { AVATARS } from '../lib/avatars.js';
@@ -23,7 +23,8 @@
   let drawing = $state(false);
   let failed = $state('');
 
-  const choices = $derived([...drawn, ...(agent?.avatar && !AVATARS.some((a) => a.id === agent.avatar.id) ? [agent.avatar] : []), ...AVATARS]);
+  const own = $derived(check(agent?.avatar).ok ? agent.avatar : null);
+  const choices = $derived([...drawn, ...(own && !AVATARS.some((a) => a.id === own.id) ? [own] : []), ...AVATARS]);
 
   let name = $state('');
   let look = $state({ avatar: AVATARS[0], tint: 0 });
@@ -36,10 +37,10 @@
     failed = '';
     name = agent?.name ?? '';
     instructions = agent?.instructions ?? '';
-    look = agent ? { avatar: agent.avatar ?? AVATARS.find((a) => a.id === 'chat'), tint: agent.tint } : { avatar: AVATARS[Math.floor(Math.random() * AVATARS.length)], tint: Math.floor(Math.random() * TINTS) };
+    look = agent ? { avatar: own ?? AVATARS[0], tint: agent.tint } : { avatar: AVATARS[Math.floor(Math.random() * AVATARS.length)], tint: Math.floor(Math.random() * TINTS) };
   });
 
-  // Asks a model for an avatar from the words typed here, with the library's own design prompt, and once more
+  // Asks a model for an avatar from the words typed here, with its design prompt, and once more
   // with the reasons if the renderer refuses what it drew.
   async function draw() {
     drawing = true;
@@ -51,7 +52,7 @@
         const { text } = await run(`return await archive.model(${JSON.stringify({ model: 'claude-haiku-5-5', system, prompt })})`);
         let checked;
         try {
-          checked = validateAvatar(JSON.parse(text.replace(/^[^{]*|[^}]*$/g, '')));
+          checked = check(JSON.parse(text.replace(/^[^{]*|[^}]*$/g, '')));
         } catch {
           checked = { ok: false, errors: ['the answer was not JSON'] };
         }

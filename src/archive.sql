@@ -394,7 +394,7 @@ CREATE TABLE archive.agent (
     id           uuid PRIMARY KEY DEFAULT uuidv7(),
     name         text NOT NULL DEFAULT '',
     instructions text NOT NULL DEFAULT '',
-    avatar       jsonb CONSTRAINT agent_avatar CHECK (avatar IS NULL OR jsonb_typeof(avatar->'body'->'path') = 'string' AND jsonb_typeof(avatar->'eyes') = 'object'),
+    avatar       jsonb,
     tint         integer NOT NULL DEFAULT 10 CONSTRAINT agent_tint CHECK (tint BETWEEN 0 AND 31),
     access       uuid REFERENCES archive."group" ON DELETE RESTRICT,
     created_at   timestamptz NOT NULL DEFAULT now(),
@@ -403,7 +403,7 @@ CREATE TABLE archive.agent (
 COMMENT ON TABLE archive.agent IS 'An agent of this workspace, which everyone in it can talk with. Each person has their own endless conversation with it, in turn and memory
 icon: bot';
 COMMENT ON COLUMN archive.agent.instructions IS 'What it is for and how it works, which it follows in every turn';
-COMMENT ON COLUMN archive.agent.avatar IS 'Its living picture, geometry only: { version: 1, id, name, body: { path }, eyes: { x, y, spacing, scale } }. id is a lowercase slug and name a short name. path is one filled SVG path in a 0 0 100 100 box, kept within 8 to 92: a soft, recognizable silhouette of one object or creature that reads at 28 px. x and y are the center of its two eyes, spacing the distance between them, and scale 1 makes each eye 4 wide and 11 tall; they must sit well inside the body, on its biggest part';
+COMMENT ON COLUMN archive.agent.avatar IS 'Its living picture, as data: { id, name, parts }. id is a lowercase slug, name a short name, and parts at most 24 shapes, with mirrored ones counted twice, making a chunky, recognizable figure that reads at 28 px. y is up, z faces you, and it stays within about -1.2 to 1.2. A part is { kind, at: [x, y, z], size, turn?: [x, y, z] degrees, part?, tone?, blend?, cut?, mirror? }. kind and size: ball [rx, ry, rz], box [half x, half y, half z, rounding], cone [bottom radius, height, top radius], can [radius, half height, rounding], ring [radius, thickness] and eye [radius]. Parts apply in order. Those with the same part name meld smoothly by blend, about 0.1; different names get an ink line where they meet. tone is pale, mid, tone, dark, white or ink. cut carves the part out of what came before. mirror repeats it at -x. An eye is a flat disc painted on what is under it, so only its x and y matter; a figure needs one, usually mirrored, of radius about 0.2';
 COMMENT ON COLUMN archive.agent.tint IS 'The colour of its picture, 0 to 31';
 
 CREATE TABLE archive.turn (
@@ -459,6 +459,38 @@ BEGIN
 END;
 $$;
 CREATE TRIGGER last BEFORE DELETE ON archive.agent FOR EACH ROW EXECUTE FUNCTION archive.agent_last();
+
+-- A bad avatar is refused as it is written, by the field to fix; the web app checks the rest of it as it draws.
+CREATE FUNCTION archive.agent_avatar() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    p jsonb;
+    i integer := 0;
+BEGIN
+    IF NEW.avatar IS NULL THEN
+        RETURN NEW;
+    END IF;
+    IF jsonb_typeof(NEW.avatar->'parts') IS DISTINCT FROM 'array' OR jsonb_array_length(NEW.avatar->'parts') = 0 THEN
+        RAISE EXCEPTION 'avatar.parts: expected a non-empty array, as the avatar column says' USING ERRCODE = '22023', TABLE = 'agent';
+    END IF;
+    FOR p IN SELECT jsonb_array_elements(NEW.avatar->'parts') LOOP
+        IF p->>'kind' IS NULL OR p->>'kind' NOT IN ('ball', 'box', 'cone', 'can', 'ring', 'eye') THEN
+            RAISE EXCEPTION 'avatar.parts[%].kind: expected ball, box, cone, can, ring or eye', i USING ERRCODE = '22023', TABLE = 'agent';
+        END IF;
+        IF jsonb_typeof(p->'at') IS DISTINCT FROM 'array' OR jsonb_array_length(p->'at') <> 3 THEN
+            RAISE EXCEPTION 'avatar.parts[%].at: expected [x, y, z]', i USING ERRCODE = '22023', TABLE = 'agent';
+        END IF;
+        IF jsonb_typeof(p->'size') IS DISTINCT FROM 'array' THEN
+            RAISE EXCEPTION 'avatar.parts[%].size: expected an array of numbers', i USING ERRCODE = '22023', TABLE = 'agent';
+        END IF;
+        i := i + 1;
+    END LOOP;
+    IF NOT jsonb_path_exists(NEW.avatar, '$.parts[*] ? (@.kind == "eye")') THEN
+        RAISE EXCEPTION 'avatar.parts: needs an eye' USING ERRCODE = '22023', TABLE = 'agent';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER avatar BEFORE INSERT OR UPDATE OF avatar ON archive.agent FOR EACH ROW EXECUTE FUNCTION archive.agent_avatar();
 
 -- A run of a workflow: what started it, what it returned, logged and threw, and how long it took. Archive
 -- writes them, keeping the last 100 of each workflow; everyone else only reads them, as the workflow's owner.
