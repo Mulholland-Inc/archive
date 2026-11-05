@@ -107,6 +107,20 @@
 </ul>
 <p class="small">We are not affiliated, associated, or in any way officially connected with YNAB or any of its subsidiaries or affiliates. The official YNAB website can be found at <a href="https://www.ynab.com">https://www.ynab.com</a>. The names YNAB and You Need A Budget, as well as related names, tradenames, marks, trademarks, emblems, and images are registered trademarks of YNAB.</p>
 
+<h3 id="plaid">Plaid data</h3>
+<p>When an owner connects a bank, brokerage or lender through Plaid, this is how Archive handles what it gets from Plaid.</p>
+<ul>
+<li><strong>How it connects</strong>: the owner picks their institution and signs in to it in Plaid's own window, and chooses there which accounts to share. Plaid handles that sign-in under <a href="https://plaid.com/legal/#end-user-privacy-policy">Plaid's End User Privacy Policy</a>. Archive never sees or keeps the password for the institution. Plaid gives Archive an access token for that one login.</li>
+<li><strong>What Archive reads</strong>: the name of the institution, and for each shared account its name, type, the last few digits of its number and its balances; up to two years of transactions, pending ones too, with their dates, amounts, merchants, categories and descriptions; and, where the institution has them, investment holdings and trades, and the rates, payments and due dates of credit cards, student loans and mortgages. Archive does not ask Plaid for full account and routing numbers or for identity details.</li>
+<li><strong>Read only</strong>: Archive never trades, pays, transfers or moves money through Plaid.</li>
+<li><strong>Why</strong>: only so that the people and tools the owner allows can see, search and work with the organization's accounts in Archive, and to keep Archive's copy current when Plaid says something changed.</li>
+<li><strong>Who sees it</strong>: Plaid is an organization connection. Only an owner connects it, and what it syncs is seen by the people the owner allows.</li>
+<li><strong>How it is stored and secured</strong>: the Plaid access token is encrypted with the workspace's own key, which is itself encrypted with a key kept in Google Secret Manager. The copy of the accounts is kept in the workspace's own Postgres database in Google Cloud's us-central1 region, in the United States, encrypted at rest, and reached only over TLS. Postgres roles and row-level security limit it to the people the owner allows. Archive checks Plaid's signature on every message Plaid sends it.</li>
+<li><strong>Who else gets it</strong>: Google Cloud stores it and Cloudflare carries it, to run the service. It goes to Anthropic only when someone asks the in-app agent about it, to an AI app or tool only when someone connects that app to Archive themselves, and to anyone else only when the law requires it. We never sell it, never use it for advertising, and never use it to train AI models.</li>
+<li><strong>How long it is kept</strong>: while the login stays connected. Disconnecting it in Archive removes the login at Plaid, so Plaid stops sharing its data with Archive, and deletes the access token and everything synced through Plaid at once. Google Cloud's automatic database backups can hold it for up to seven more days.</li>
+<li><strong>Deleting on request</strong>: disconnect the login in Archive, or write to <a href="mailto:hello@mulholland.ai">hello@mulholland.ai</a> and we will delete it. To manage what Plaid itself keeps, use <a href="https://my.plaid.com">Plaid Portal</a>.</li>
+</ul>
+
 <h3 id="collect-requests">Requests</h3>
 <p>Google Cloud and Cloudflare record requests to the service, such as your IP address, browser, the time and the address requested, so we can run it, fix problems and protect it.</p>
 <h3 id="collect-site">This site</h3>
