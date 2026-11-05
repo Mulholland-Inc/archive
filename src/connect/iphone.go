@@ -3,12 +3,17 @@ package connect
 // Phone is what the Archive app on an iPhone pushes to /device/{stream}: what only lives on the phone, which no API reaches.
 // It is no connector to connect: the app signs in with Archive's own OAuth, and each phone is a personal connection, provider iphone.
 var Phone = []*Sync{
-	{Name: "health", Doc: "Apple Health samples by their HealthKit UUID: { type, value, unit, start, end, source, device, meta }, " +
-		"new and deleted ones as HealthKit's anchored queries hear of them",
+	{Name: "health", Doc: "Apple Health samples by their HealthKit UUID: { kind, value, unit, start, end, source, device }, kind in the other health " +
+		"connectors' words, like steps, heart_rate or sleep_deep in minutes; new and deleted ones as HealthKit's anchored queries hear of them",
 		To: Map{Table: "health_sample",
-			Cols: map[string]SQL{"kind": "data->>'type'", "value": "(data->>'value')::double precision", "unit": "data->>'unit'",
+			Cols: map[string]SQL{"kind": "data->>'kind'", "value": "archive.sync_num(data->>'value')", "unit": "data->>'unit'",
 				"starts_at": "archive.sync_at(data->>'start')", "ends_at": "archive.sync_at(data->>'end')",
-				"source": "data->>'source'", "device": "data->>'device'", "meta": "nullif(data->'meta', '{}'::jsonb)"}}},
+				"device": "coalesce(nullif(data->>'device', ''), data->>'source')"}}},
+	{Name: "workouts", Doc: "Apple Health workouts by their HealthKit UUID: { sport, start, end, seconds, kcal, meters, source, device }",
+		To: Map{Table: "health_workout",
+			Cols: map[string]SQL{"sport": "data->>'sport'", "starts_at": "archive.sync_at(data->>'start')", "ends_at": "archive.sync_at(data->>'end')",
+				"minutes": "archive.sync_num(data->>'seconds') / 60", "calories": "archive.sync_num(data->>'kcal')", "distance": "archive.sync_num(data->>'meters')",
+				"device": "coalesce(nullif(data->>'device', ''), data->>'source')"}}},
 	{Name: "photos", Doc: "The Photos library by asset id: { name, kind, created, modified, width, height, duration, latitude, longitude, favorite, thumbnail }, " +
 		"thumbnail a base64 JPEG the server keeps as a file",
 		To: Map{Table: "photo",

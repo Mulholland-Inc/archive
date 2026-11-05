@@ -157,6 +157,8 @@ const (
 	CatCompliance Category = "Compliance"
 	CatData       Category = "Data"
 	CatHome       Category = "Home"
+	CatHealth     Category = "Health"
+	CatMedia      Category = "Media"
 
 	IconMail     Icon = "mail"
 	IconUsers    Icon = "users"
@@ -172,6 +174,8 @@ const (
 	IconBug      Icon = "bug"
 
 	IconWarehouse Icon = "warehouse"
+	IconHeart     Icon = "heart"
+	IconMusic     Icon = "music"
 )
 
 type Who struct {
@@ -179,6 +183,7 @@ type Who struct {
 	Names []Path
 	Lower bool
 	Find  string `json:",omitempty"`
+	As    string `json:",omitempty"`
 	Each  Path
 	Where Test
 	Tool  string
@@ -275,8 +280,8 @@ type Parts struct {
 }
 
 type Scan struct {
-	Find, Near string
-	Days       int
+	Find, Near, From string
+	Days             int
 }
 
 type Shift [3]int
@@ -378,20 +383,22 @@ type Sync struct {
 	Parts     *Parts
 	Hydrate   []Hydrate
 	To        Map
-	Absent    Path          `json:",omitempty"`
-	Empty     bool          `json:",omitempty"`
-	Key       []Reads       `json:",omitempty"`
-	Set       Obj           `json:",omitempty"`
-	Gone      []Test        `json:",omitempty"`
-	Skip      []Test        `json:",omitempty"`
-	Every     time.Duration `json:",omitempty"`
-	Keep      bool          `json:",omitempty"`
-	Short     Test          `json:",omitzero"`
-	Memo      string        `json:",omitempty"`
-	Deny      []Deny        `json:",omitempty"`
-	Restart   []int         `json:",omitempty"`
-	Pass      []int         `json:",omitempty"`
-	Content   []Content     `json:",omitempty"`
+	Absent    Path                                          `json:",omitempty"`
+	Empty     bool                                          `json:",omitempty"`
+	Key       []Reads                                       `json:",omitempty"`
+	Set       Obj                                           `json:",omitempty"`
+	Gone      []Test                                        `json:",omitempty"`
+	Skip      []Test                                        `json:",omitempty"`
+	Every     time.Duration                                 `json:",omitempty"`
+	Keep      bool                                          `json:",omitempty"`
+	Short     Test                                          `json:",omitzero"`
+	Memo      string                                        `json:",omitempty"`
+	Deny      []Deny                                        `json:",omitempty"`
+	Restart   []int                                         `json:",omitempty"`
+	Pass      []int                                         `json:",omitempty"`
+	Content   []Content                                     `json:",omitempty"`
+	Pull      func(c *Client, cursor string) (*Page, error) `json:"-"`
+	Mail      *Scan                                         `json:",omitempty"`
 }
 
 type Content struct {
@@ -496,6 +503,27 @@ func Call[In, Out any](p Plan) *Action {
 	a.Writes = slices.ContainsFunc(p.Steps, func(s Step) bool { return s.Req.writes() })
 	a.Do = func(c *Client, raw json.RawMessage) (any, error) { return p.run(c, raw) }
 	return a
+}
+
+// Func is an action in Go, for a provider that speaks more than HTTP and JSON, like IMAP.
+func Func[In, Out any](doc string, f func(c *Client, in In) (Out, error)) *Action {
+	in, err := jsonschema.For[In](nil)
+	if err != nil {
+		panic(err)
+	}
+	out, err := jsonschema.For[Out](nil)
+	if err != nil {
+		panic(err)
+	}
+	return &Action{Doc: doc, Input: in, Output: out, Do: func(c *Client, raw json.RawMessage) (any, error) {
+		var v In
+		if len(raw) > 0 && string(raw) != "null" {
+			if err := json.Unmarshal(raw, &v); err != nil {
+				return nil, err
+			}
+		}
+		return f(c, v)
+	}}
 }
 
 func (p *Plan) run(c *Client, raw json.RawMessage) (any, error) {
@@ -707,8 +735,12 @@ type Kept struct {
 	Each, ID, Token       Path
 }
 
+func (c *Connector) mailOnly() bool {
+	return len(c.Sync) > 0 && !slices.ContainsFunc(c.Sync, func(s *Sync) bool { return s.Mail == nil })
+}
+
 func (c *Connector) compile() error {
-	if c.API == "" && c.MCP == "" {
+	if c.API == "" && c.MCP == "" && !c.mailOnly() {
 		return nil
 	}
 	if len(c.Keys) == 0 && c.MCP == "" {
@@ -788,6 +820,9 @@ func (c *Connector) compile() error {
 			return fmt.Errorf("stream %s: %w", s.Name, err)
 		}
 		st := &Stream{Name: s.Name, Doc: s.Doc, Gap: s.Gap, Every: s.Every, Table: s.To.Table, Pull: s.pull, SQL: s.To.sql(), Version: s.version()}
+		if s.Pull != nil {
+			st.Pull = s.Pull
+		}
 		if len(s.Content) > 0 {
 			st.Read = s.bytesOf
 		}
@@ -827,6 +862,13 @@ func (w *Who) read(cl *Client, c *Connector) (string, error) {
 			}
 		}
 		s = strings.Join(names, ", ")
+	}
+	if w.As != "" {
+		sc := cl.scope()
+		sc["who"] = ans
+		if v, _ := fillStr(w.As, sc); strings.Trim(text(v), " ·") != "" {
+			s = strings.Trim(text(v), " ·")
+		}
 	}
 	if w.Lower {
 		s = strings.ToLower(s)
@@ -976,8 +1018,15 @@ func (s *Sync) check() error {
 	if len(s.To.Cols) == 0 || len(s.To.Cols) > 50 {
 		return errors.New("To.Cols has between 1 and 50 columns")
 	}
+	if s.Pull != nil {
+		return nil
+	}
 	roots := append(slices.Collect(maps.Keys(s.Vars)), "stream", "part", "in", "page", "key", "meta", "option")
-	if err := s.Req.check("listing", roots...); err != nil {
+	if s.Mail != nil {
+		if s.Req.URL != "" || s.Req.Tool != "" || s.Change != nil || s.Page != nil || s.Parts != nil {
+			return errors.New("a stream that reads mail has no Req, Change, Page or Parts")
+		}
+	} else if err := s.Req.check("listing", roots...); err != nil {
 		return err
 	}
 	switch ch := s.Change.(type) {
@@ -1396,7 +1445,7 @@ func (sp *Span) dates(sc map[string]any, again bool) []any {
 		if end.After(last) {
 			end = last
 		}
-		out = append(out, map[string]any{"start": start.Format(time.DateOnly), "end": end.Format(time.DateOnly)})
+		out = append(out, map[string]any{"start": start.Format(time.DateOnly), "end": end.Format(time.DateOnly), "after": end.AddDate(0, 0, 1).Format(time.DateOnly)})
 	}
 	return out
 }
@@ -1430,6 +1479,18 @@ func (s *Sync) itemsOf(c *Client, ans any, at Path, sc map[string]any) (any, err
 }
 
 func (s *Sync) send(c *Client, req Req, st *flow, sc map[string]any) (any, error) {
+	if s.Mail != nil {
+		if c.Mail == nil {
+			return nil, errors.New("it reads the mail Archive synced, which only a sync can")
+		}
+		m := *s.Mail
+		for _, t := range []*string{&m.Near, &m.From} {
+			v, _ := fillStr(*t, sc)
+			*t = text(v)
+		}
+		got, err := c.Mail(m)
+		return Obj{"messages": got}, err
+	}
 	if p, ok := s.Page.(ToolPage); ok {
 		var err error
 		if req, err = p.asking(c, req, st.Page); err != nil {

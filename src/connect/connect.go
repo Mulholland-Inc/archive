@@ -103,7 +103,7 @@ func Register(c *Connector) {
 	if len(c.Sync) == 0 {
 		panic("connect: " + c.ID + " has no stream")
 	}
-	if len(c.Actions) == 0 && c.MCP == "" {
+	if len(c.Actions) == 0 && c.MCP == "" && !c.mailOnly() {
 		panic("connect: " + c.ID + " has no action")
 	}
 	registry[c.ID] = c
@@ -316,7 +316,7 @@ func (p *Provider) Exchange(ctx context.Context, redirect string, q url.Values, 
 	meta := map[string]string{}
 	if p.Ask != nil {
 		k := p.Ask.Name
-		if asked[k] == "" || !strings.EqualFold(q.Get(k), asked[k]) {
+		if asked[k] == "" || (p.Signed != "" || q.Has(k)) && !strings.EqualFold(q.Get(k), asked[k]) {
 			return nil, fmt.Errorf("%s was not connected: it came back for %s %q, not %q", p.Name, k, q.Get(k), asked[k])
 		}
 		meta[k] = asked[k]
@@ -377,7 +377,7 @@ func (p *Provider) Exchange(ctx context.Context, redirect string, q url.Values, 
 }
 
 func granted(scopes []string, want string) bool {
-	return want == "offline_access" || slices.ContainsFunc(scopes, func(s string) bool {
+	return want == "offline_access" || strings.HasPrefix(want, "launch/") || slices.ContainsFunc(scopes, func(s string) bool {
 		return strings.EqualFold(s, want) || strings.HasSuffix(strings.ToLower(s), "/"+strings.ToLower(want))
 	})
 }

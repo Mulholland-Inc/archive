@@ -3151,31 +3151,229 @@ CREATE TABLE archive.health_sample (
     name       text NOT NULL DEFAULT '',
     seen_at    timestamptz NOT NULL DEFAULT now(),
     kind       text,
-    value      double precision,
+    value      numeric,
     unit       text,
     starts_at  timestamptz,
     ends_at    timestamptz,
-    source     text,
     device     text,
-    meta       jsonb,
     UNIQUE (connection, stream, source_id)
 ) INHERITS (archive.object);
-CREATE INDEX health_sample_kind_idx ON archive.health_sample (connection, kind, starts_at);
-COMMENT ON TABLE archive.health_sample IS 'One reading of Apple Health on your iPhone, like a day''s steps, a heart rate, a night''s sleep or a workout. Only you see it: it is never shared or used to train a model. Read only; the Archive app on your iPhone syncs them
-icon: heart-pulse';
-COMMENT ON COLUMN archive.health_sample.kind IS 'What it measures, as HealthKit names it, like HKQuantityTypeIdentifierStepCount, HKCategoryTypeIdentifierSleepAnalysis or HKWorkoutActivityTypeRunning';
-COMMENT ON COLUMN archive.health_sample.value IS 'How much, in unit; a category''s value, like a sleep stage''s number; a workout''s energy burned';
-COMMENT ON COLUMN archive.health_sample.unit IS 'The unit of value, like count, count/min, kg or kcal';
-COMMENT ON COLUMN archive.health_sample.starts_at IS 'When it began';
-COMMENT ON COLUMN archive.health_sample.ends_at IS 'When it ended; when it began for a reading at one moment';
-COMMENT ON COLUMN archive.health_sample.source IS 'The app or device that recorded it, like Apple Watch or Oura';
-COMMENT ON COLUMN archive.health_sample.device IS 'The device it was measured on, like Watch7,1';
-COMMENT ON COLUMN archive.health_sample.meta IS 'What else HealthKit keeps with it, like a workout''s distance and seconds or a sleep stage''s name';
-COMMENT ON COLUMN archive.health_sample.connection IS 'references connection; the iPhone it is from';
-COMMENT ON COLUMN archive.health_sample.stream IS 'What the app syncs it as: health';
-COMMENT ON COLUMN archive.health_sample.source_id IS 'Its HealthKit UUID';
+CREATE INDEX health_sample_kind_idx ON archive.health_sample (kind, starts_at);
+COMMENT ON TABLE archive.health_sample IS 'One health measurement of yours, like a heart rate, a weight or a glucose reading, from a device or app you connected, like Oura, Fitbit or Apple Health: health information, seen only by you. Read only; Archive syncs them
+icon: activity';
+COMMENT ON COLUMN archive.health_sample.kind IS 'What it measures, in snake_case, like heart_rate, steps, weight, body_fat, blood_glucose, spo2, hrv, respiratory_rate or vo2_max';
+COMMENT ON COLUMN archive.health_sample.value IS 'What it measured, in unit';
+COMMENT ON COLUMN archive.health_sample.unit IS 'Like count/min, count, kg, %, ms or mg/dL';
+COMMENT ON COLUMN archive.health_sample.starts_at IS 'When it was measured, or when the span it covers starts';
+COMMENT ON COLUMN archive.health_sample.ends_at IS 'When the span it covers ends; starts_at for a moment';
+COMMENT ON COLUMN archive.health_sample.device IS 'What measured it, like Oura ring or Apple Watch';
+COMMENT ON COLUMN archive.health_sample.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.health_sample.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.health_sample.source_id IS 'Its id there';
 COMMENT ON COLUMN archive.health_sample.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.health_sample.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.health_day (
+    id                 uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection         uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream             text NOT NULL,
+    source_id          text NOT NULL,
+    access             uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at         timestamptz NOT NULL DEFAULT now(),
+    updated_at         timestamptz NOT NULL DEFAULT now(),
+    name               text NOT NULL DEFAULT '',
+    seen_at            timestamptz NOT NULL DEFAULT now(),
+    kind               text,
+    on_date            date,
+    score              numeric,
+    steps              numeric,
+    active_calories    numeric,
+    calories           numeric,
+    distance           numeric,
+    active_minutes     numeric,
+    resting_heart_rate numeric,
+    hrv                numeric,
+    spo2               numeric,
+    respiratory_rate   numeric,
+    temperature        numeric,
+    detail             jsonb,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX health_day_on_date_idx ON archive.health_day (on_date);
+COMMENT ON TABLE archive.health_day IS 'A device''s summary of one of your days, like Oura''s readiness or Whoop''s recovery: health information, seen only by you. A day can have a row of each kind. Read only; Archive syncs them
+icon: calendar-heart';
+COMMENT ON COLUMN archive.health_day.kind IS 'What it sums up, like readiness, sleep, activity, recovery, strain, heart, hrv, spo2 or breathing';
+COMMENT ON COLUMN archive.health_day.on_date IS 'The day, in your time zone';
+COMMENT ON COLUMN archive.health_day.score IS 'Its score that day as the device rates it, like readiness 0 to 100, Whoop recovery as a percent, or strain 0 to 21';
+COMMENT ON COLUMN archive.health_day.steps IS 'Steps taken';
+COMMENT ON COLUMN archive.health_day.active_calories IS 'Calories burned moving, in kcal';
+COMMENT ON COLUMN archive.health_day.calories IS 'Calories burned in all, in kcal';
+COMMENT ON COLUMN archive.health_day.distance IS 'Distance moved, in meters';
+COMMENT ON COLUMN archive.health_day.active_minutes IS 'Minutes of moderate or vigorous activity';
+COMMENT ON COLUMN archive.health_day.resting_heart_rate IS 'Resting heart rate, in beats a minute';
+COMMENT ON COLUMN archive.health_day.hrv IS 'Heart rate variability, in ms (RMSSD)';
+COMMENT ON COLUMN archive.health_day.spo2 IS 'Average blood oxygen, in percent';
+COMMENT ON COLUMN archive.health_day.respiratory_rate IS 'Breaths a minute';
+COMMENT ON COLUMN archive.health_day.temperature IS 'Skin temperature against your baseline, in °C';
+COMMENT ON COLUMN archive.health_day.detail IS 'Everything else the device said of the day, like the contributors to a score, by its own names';
+COMMENT ON COLUMN archive.health_day.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.health_day.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.health_day.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.health_day.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.health_day.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.health_sleep (
+    id                uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection        uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream            text NOT NULL,
+    source_id         text NOT NULL,
+    access            uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at        timestamptz NOT NULL DEFAULT now(),
+    updated_at        timestamptz NOT NULL DEFAULT now(),
+    name              text NOT NULL DEFAULT '',
+    seen_at           timestamptz NOT NULL DEFAULT now(),
+    on_date           date,
+    starts_at         timestamptz,
+    ends_at           timestamptz,
+    asleep_minutes    numeric,
+    deep_minutes      numeric,
+    rem_minutes       numeric,
+    light_minutes     numeric,
+    awake_minutes     numeric,
+    efficiency        numeric,
+    score             numeric,
+    heart_rate        numeric,
+    lowest_heart_rate numeric,
+    hrv               numeric,
+    respiratory_rate  numeric,
+    nap               boolean,
+    device            text,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX health_sleep_starts_at_idx ON archive.health_sleep (starts_at);
+COMMENT ON TABLE archive.health_sleep IS 'One of your sleeps, a night or a nap, from a device or app you connected, like Oura, Whoop or Fitbit: health information, seen only by you. Read only; Archive syncs them
+icon: moon';
+COMMENT ON COLUMN archive.health_sleep.on_date IS 'The day it counts for, the day you woke, in your time zone';
+COMMENT ON COLUMN archive.health_sleep.starts_at IS 'When you went to bed';
+COMMENT ON COLUMN archive.health_sleep.ends_at IS 'When you got up';
+COMMENT ON COLUMN archive.health_sleep.asleep_minutes IS 'Minutes asleep';
+COMMENT ON COLUMN archive.health_sleep.deep_minutes IS 'Minutes of deep sleep';
+COMMENT ON COLUMN archive.health_sleep.rem_minutes IS 'Minutes of REM sleep';
+COMMENT ON COLUMN archive.health_sleep.light_minutes IS 'Minutes of light sleep';
+COMMENT ON COLUMN archive.health_sleep.awake_minutes IS 'Minutes awake in bed';
+COMMENT ON COLUMN archive.health_sleep.efficiency IS 'Percent of the time in bed asleep';
+COMMENT ON COLUMN archive.health_sleep.score IS 'Its score as the device rates it, like Whoop''s sleep performance';
+COMMENT ON COLUMN archive.health_sleep.heart_rate IS 'Average heart rate, in beats a minute';
+COMMENT ON COLUMN archive.health_sleep.lowest_heart_rate IS 'Lowest heart rate, in beats a minute';
+COMMENT ON COLUMN archive.health_sleep.hrv IS 'Average heart rate variability, in ms';
+COMMENT ON COLUMN archive.health_sleep.respiratory_rate IS 'Breaths a minute';
+COMMENT ON COLUMN archive.health_sleep.nap IS 'It was a nap, not the main sleep';
+COMMENT ON COLUMN archive.health_sleep.device IS 'What measured it, like Oura ring';
+COMMENT ON COLUMN archive.health_sleep.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.health_sleep.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.health_sleep.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.health_sleep.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.health_sleep.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.health_workout (
+    id             uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream         text NOT NULL,
+    source_id      text NOT NULL,
+    access         uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    updated_at     timestamptz NOT NULL DEFAULT now(),
+    name           text NOT NULL DEFAULT '',
+    seen_at        timestamptz NOT NULL DEFAULT now(),
+    sport          text,
+    starts_at      timestamptz,
+    ends_at        timestamptz,
+    minutes        numeric,
+    calories       numeric,
+    distance       numeric,
+    steps          numeric,
+    heart_rate     numeric,
+    max_heart_rate numeric,
+    strain         numeric,
+    device         text,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX health_workout_starts_at_idx ON archive.health_workout (starts_at);
+COMMENT ON TABLE archive.health_workout IS 'One of your workouts, like a run or a ride, from a device or app you connected, like Whoop, Garmin or Apple Health: health information, seen only by you. Read only; Archive syncs them
+icon: dumbbell';
+COMMENT ON COLUMN archive.health_workout.sport IS 'What it was, in lowercase, like running, cycling, walking or strength training';
+COMMENT ON COLUMN archive.health_workout.minutes IS 'How long it lasted';
+COMMENT ON COLUMN archive.health_workout.calories IS 'Calories burned, in kcal';
+COMMENT ON COLUMN archive.health_workout.distance IS 'Distance covered, in meters';
+COMMENT ON COLUMN archive.health_workout.steps IS 'Steps taken';
+COMMENT ON COLUMN archive.health_workout.heart_rate IS 'Average heart rate, in beats a minute';
+COMMENT ON COLUMN archive.health_workout.max_heart_rate IS 'Highest heart rate, in beats a minute';
+COMMENT ON COLUMN archive.health_workout.strain IS 'Whoop''s strain, 0 to 21';
+COMMENT ON COLUMN archive.health_workout.device IS 'What recorded it, like Garmin Forerunner 965';
+COMMENT ON COLUMN archive.health_workout.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.health_workout.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.health_workout.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.health_workout.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.health_workout.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.health_record (
+    id           uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection   uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream       text NOT NULL,
+    source_id    text NOT NULL,
+    access       uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    updated_at   timestamptz NOT NULL DEFAULT now(),
+    name         text NOT NULL DEFAULT '',
+    seen_at      timestamptz NOT NULL DEFAULT now(),
+    type         text,
+    title        text,
+    code         text,
+    code_system  text,
+    category     text,
+    status       text,
+    value        numeric,
+    unit         text,
+    value_text   text,
+    low          numeric,
+    high         numeric,
+    flag         text,
+    at           timestamptz,
+    ends_at      timestamptz,
+    clinician    text,
+    organization text,
+    note         text,
+    resource     jsonb,
+    edited_at    timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX health_record_type_idx ON archive.health_record (type, at);
+COMMENT ON TABLE archive.health_record IS 'One item of your medical record, as FHIR R4 has it, from a patient portal you connected, like MyChart: a condition, medication, allergy, lab result, immunization, visit or document. Health information, seen only by you. Read only; Archive syncs them
+icon: stethoscope';
+COMMENT ON COLUMN archive.health_record.type IS 'Its FHIR resourceType: Patient, Condition, MedicationRequest, AllergyIntolerance, Observation, Immunization, Encounter or DocumentReference';
+COMMENT ON COLUMN archive.health_record.title IS 'What it is, as the record names it, like Hemoglobin A1c or Lisinopril 10 mg tablet';
+COMMENT ON COLUMN archive.health_record.code IS 'Its code, like LOINC 4548-4 for a lab, RxNorm for a drug, SNOMED or ICD-10 for a condition, CVX for a vaccine';
+COMMENT ON COLUMN archive.health_record.code_system IS 'The system of its code, like http://loinc.org';
+COMMENT ON COLUMN archive.health_record.category IS 'Like laboratory, vital-signs, problem-list-item or clinical-note';
+COMMENT ON COLUMN archive.health_record.status IS 'Like active, resolved, final, completed or stopped';
+COMMENT ON COLUMN archive.health_record.value IS 'Its number, for a lab or vital';
+COMMENT ON COLUMN archive.health_record.unit IS 'The unit of value, like mg/dL or %';
+COMMENT ON COLUMN archive.health_record.value_text IS 'Its value in words, like Negative, a dose or a reaction';
+COMMENT ON COLUMN archive.health_record.low IS 'The low end of its normal range';
+COMMENT ON COLUMN archive.health_record.high IS 'The high end of its normal range';
+COMMENT ON COLUMN archive.health_record.flag IS 'How it compares with the normal range, like H, L or A';
+COMMENT ON COLUMN archive.health_record.at IS 'When it happened: taken, given, diagnosed, prescribed or the visit started';
+COMMENT ON COLUMN archive.health_record.ends_at IS 'When it ended, like a visit''s end or a condition''s resolution';
+COMMENT ON COLUMN archive.health_record.clinician IS 'Who recorded, ordered or saw you, by name';
+COMMENT ON COLUMN archive.health_record.organization IS 'The health system it is from, by name';
+COMMENT ON COLUMN archive.health_record.note IS 'Its notes and, for a document, its text when the portal sends it as text, up to 256 KB';
+COMMENT ON COLUMN archive.health_record.resource IS 'The whole FHIR resource';
+COMMENT ON COLUMN archive.health_record.edited_at IS 'When it last changed there';
+COMMENT ON COLUMN archive.health_record.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.health_record.stream IS 'What its connector syncs it as, like messages';
+COMMENT ON COLUMN archive.health_record.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.health_record.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.health_record.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.photo (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -3220,6 +3418,7 @@ COMMENT ON COLUMN archive.photo.stream IS 'What the app syncs it as: photos';
 COMMENT ON COLUMN archive.photo.source_id IS 'Its id in the Photos library';
 COMMENT ON COLUMN archive.photo.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.photo.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
 CREATE TABLE archive.investment_holding (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
     connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
@@ -3626,6 +3825,158 @@ COMMENT ON COLUMN archive.home_device.source_id IS 'Its id there';
 COMMENT ON COLUMN archive.home_device.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.home_device.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
+-- Music: what a music service you connected, like Spotify, says you saved, played and put in playlists, and the
+-- artists you follow and play most. The music itself stays there.
+CREATE TABLE archive.music_playlist (
+    id            uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream        text NOT NULL,
+    source_id     text NOT NULL,
+    access        uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
+    name          text NOT NULL DEFAULT '',
+    seen_at       timestamptz NOT NULL DEFAULT now(),
+    title         text,
+    description   text,
+    owner_name    text,
+    public        boolean,
+    collaborative boolean,
+    tracks        numeric,
+    url           archive.url,
+    version       text,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+COMMENT ON TABLE archive.music_playlist IS 'A playlist of a music service you connected, like Spotify, that you made or follow; its tracks are in music_track. Read only; Archive syncs them
+icon: list-music';
+COMMENT ON COLUMN archive.music_playlist.title IS 'Its name';
+COMMENT ON COLUMN archive.music_playlist.description IS 'What its description says';
+COMMENT ON COLUMN archive.music_playlist.owner_name IS 'Who made it';
+COMMENT ON COLUMN archive.music_playlist.public IS 'Whether anyone can find it';
+COMMENT ON COLUMN archive.music_playlist.collaborative IS 'Whether others may add to it';
+COMMENT ON COLUMN archive.music_playlist.tracks IS 'How many tracks it has';
+COMMENT ON COLUMN archive.music_playlist.url IS 'Where it is there';
+COMMENT ON COLUMN archive.music_playlist.version IS 'Its version there, which changes when it does';
+COMMENT ON COLUMN archive.music_playlist.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.music_playlist.stream IS 'What its connector syncs it as, like playlists';
+COMMENT ON COLUMN archive.music_playlist.source_id IS 'Its id there';
+COMMENT ON COLUMN archive.music_playlist.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.music_playlist.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.music_track (
+    id            uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream        text NOT NULL,
+    source_id     text NOT NULL,
+    access        uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
+    name          text NOT NULL DEFAULT '',
+    seen_at       timestamptz NOT NULL DEFAULT now(),
+    list          text,
+    title         text,
+    artists       text,
+    album         text,
+    duration_ms   numeric,
+    url           archive.url,
+    track_id      text,
+    rank          integer,
+    playlist      uuid REFERENCES archive.music_playlist ON DELETE SET NULL,
+    added_at      timestamptz,
+    played_at     timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX music_track_playlist_idx ON archive.music_track (playlist);
+COMMENT ON TABLE archive.music_track IS 'A track on a list of a music service you connected, like Spotify: one you saved, played, play most or put in a playlist, a row for each. Read only; Archive syncs them
+icon: music';
+COMMENT ON COLUMN archive.music_track.list IS 'Which list it is on: Liked Songs, Played, Top tracks, or the playlist''s name';
+COMMENT ON COLUMN archive.music_track.title IS 'Its name';
+COMMENT ON COLUMN archive.music_track.artists IS 'Who it is by, comma separated';
+COMMENT ON COLUMN archive.music_track.album IS 'The album it is on';
+COMMENT ON COLUMN archive.music_track.duration_ms IS 'How long it is, in milliseconds';
+COMMENT ON COLUMN archive.music_track.url IS 'Where it is there';
+COMMENT ON COLUMN archive.music_track.track_id IS 'The track''s id there, the same on every list';
+COMMENT ON COLUMN archive.music_track.rank IS 'Where it is among your top tracks, from 1';
+COMMENT ON COLUMN archive.music_track.playlist IS 'references music_playlist; the playlist it is in';
+COMMENT ON COLUMN archive.music_track.added_at IS 'When it was saved or added to its playlist';
+COMMENT ON COLUMN archive.music_track.played_at IS 'When it was played, for a play';
+COMMENT ON COLUMN archive.music_track.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.music_track.stream IS 'What its connector syncs it as, like saved';
+COMMENT ON COLUMN archive.music_track.source_id IS 'Its id there: the track''s, a play''s time, or <playlist>/<track>/<when added>';
+COMMENT ON COLUMN archive.music_track.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.music_track.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.music_artist (
+    id            uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream        text NOT NULL,
+    source_id     text NOT NULL,
+    access        uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
+    name          text NOT NULL DEFAULT '',
+    seen_at       timestamptz NOT NULL DEFAULT now(),
+    list          text,
+    title         text,
+    genres        text,
+    url           archive.url,
+    artist_id     text,
+    rank          integer,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+COMMENT ON TABLE archive.music_artist IS 'An artist of a music service you connected, like Spotify, that you follow or play most. Read only; Archive syncs them
+icon: mic-vocal';
+COMMENT ON COLUMN archive.music_artist.list IS 'Following or Top artists';
+COMMENT ON COLUMN archive.music_artist.title IS 'Their name';
+COMMENT ON COLUMN archive.music_artist.genres IS 'Their genres, comma separated';
+COMMENT ON COLUMN archive.music_artist.url IS 'Where they are there';
+COMMENT ON COLUMN archive.music_artist.artist_id IS 'Their id there';
+COMMENT ON COLUMN archive.music_artist.rank IS 'Where they are among your top artists, from 1';
+COMMENT ON COLUMN archive.music_artist.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.music_artist.stream IS 'What its connector syncs it as, like artists';
+COMMENT ON COLUMN archive.music_artist.source_id IS 'Their id there';
+COMMENT ON COLUMN archive.music_artist.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.music_artist.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
+CREATE TABLE archive.school_notice (
+    id           uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection   uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream       text NOT NULL,
+    source_id    text NOT NULL,
+    access       uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    updated_at   timestamptz NOT NULL DEFAULT now(),
+    name         text NOT NULL DEFAULT '',
+    seen_at      timestamptz NOT NULL DEFAULT now(),
+    service      text,
+    school       text,
+    sender       archive.email,
+    student      text,
+    kind         text,
+    title        text,
+    text         text,
+    sent_at      timestamptz,
+    mail_message text,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX school_notice_sent_at_idx ON archive.school_notice (sent_at);
+COMMENT ON TABLE archive.school_notice IS 'A message a school app you connected sent you, like ParentSquare, PowerSchool or ClassDojo, read from mail you synced, since these apps have no API for parents. Read only; Archive syncs them
+icon: school';
+COMMENT ON COLUMN archive.school_notice.service IS 'Which app sent it, like ParentSquare';
+COMMENT ON COLUMN archive.school_notice.school IS 'Who it is from, as the mail names them, usually the school or teacher';
+COMMENT ON COLUMN archive.school_notice.sender IS 'The address it came from';
+COMMENT ON COLUMN archive.school_notice.student IS 'Which of your children it names, by the first names you gave, by commas';
+COMMENT ON COLUMN archive.school_notice.kind IS 'What it is about, by its subject: alert, attendance, grades, payment, event or message';
+COMMENT ON COLUMN archive.school_notice.title IS 'Its subject';
+COMMENT ON COLUMN archive.school_notice.text IS 'Its text, up to 64 KB';
+COMMENT ON COLUMN archive.school_notice.sent_at IS 'When it was sent';
+COMMENT ON COLUMN archive.school_notice.mail_message IS 'The mail''s id in its mailbox';
+COMMENT ON COLUMN archive.school_notice.connection IS 'references connection; the account it is from';
+COMMENT ON COLUMN archive.school_notice.stream IS 'What its connector syncs it as, like notices';
+COMMENT ON COLUMN archive.school_notice.source_id IS 'The mail''s id in its mailbox';
+COMMENT ON COLUMN archive.school_notice.updated_at IS 'When Archive last saw it change';
+COMMENT ON COLUMN archive.school_notice.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
+
 CREATE FUNCTION archive.mine(m uuid) RETURNS bool LANGUAGE sql STABLE AS $$
     SELECT EXISTS (SELECT FROM pg_catalog.pg_roles r WHERE r.rolname = '{p}_m' || translate(rtrim(encode(uuid_send(m), 'base64'), '='), '+/', '-_')
         AND pg_has_role(current_user, r.oid, 'USAGE'))
@@ -3735,7 +4086,11 @@ BEGIN
         WHEN 'spend_receipt' THEN concat_ws(' ', 'Receipt', r->>'position')
         WHEN 'warehouse_table' THEN concat_ws('.', nullif(r->>'database', ''), nullif(r->>'schema', ''), r->>'title')
         WHEN 'warehouse_column' THEN concat_ws(' · ', r->>'title', nullif(r->>'type', ''))
-        WHEN 'health_sample' THEN concat_ws(' · ', regexp_replace(regexp_replace(r->>'kind', '^HK(Quantity|Category|Correlation)?TypeIdentifier|^HKWorkoutActivityType', ''), '([a-z])([A-Z])', '\1 \2', 'g'), left(r->>'starts_at', 10))
+        WHEN 'health_sample' THEN concat_ws(' · ', replace(r->>'kind', '_', ' '), nullif(concat_ws(' ', r->>'value', r->>'unit'), ''), left(r->>'starts_at', 10))
+        WHEN 'health_day' THEN concat_ws(' · ', initcap(r->>'kind'), r->>'on_date')
+        WHEN 'health_sleep' THEN concat_ws(' · ', CASE WHEN (r->>'nap')::boolean THEN 'Nap' ELSE 'Sleep' END, coalesce(r->>'on_date', left(r->>'starts_at', 10)))
+        WHEN 'health_workout' THEN concat_ws(' · ', initcap(coalesce(nullif(r->>'sport', ''), 'workout')), left(r->>'starts_at', 10))
+        WHEN 'health_record' THEN concat_ws(' · ', coalesce(nullif(r->>'title', ''), r->>'type'), left(r->>'at', 10))
         WHEN 'photo' THEN concat_ws(' · ', coalesce(nullif(r->>'title', ''), initcap(r->>'kind')), left(r->>'taken_at', 10))
         WHEN 'investment_holding' THEN concat_ws(' · ', coalesce(nullif(r->>'ticker', ''), r->>'security'), nullif(r->>'quantity', ''))
         WHEN 'investment_transaction' THEN concat_ws(' · ', initcap(r->>'kind'), coalesce(nullif(r->>'ticker', ''), nullif(r->>'security', ''), nullif(r->>'description', '')), r->>'traded_on')
@@ -3745,7 +4100,11 @@ BEGIN
         WHEN 'parcel_event' THEN concat_ws(' · ', nullif(r->>'status', ''), nullif(r->>'city', ''), left(r->>'at', 10))
         WHEN 'vehicle' THEN coalesce(nullif(r->>'title', ''), r->>'vin')
         WHEN 'vehicle_charge' THEN concat_ws(' · ', nullif(r->>'site', ''), left(r->>'started_at', 10))
+        WHEN 'school_notice' THEN concat_ws(' · ', coalesce(nullif(r->>'title', ''), 'No subject'), nullif(r->>'student', ''))
         WHEN 'home_device' THEN concat_ws(' · ', coalesce(nullif(r->>'title', ''), initcap(r->>'kind')), nullif(r->>'room', ''))
+        WHEN 'music_playlist' THEN r->>'title'
+        WHEN 'music_track' THEN concat_ws(' · ', r->>'title', nullif(r->>'artists', ''))
+        WHEN 'music_artist' THEN r->>'title'
         ELSE own END), ''), '');
     RETURN NEW;
 END $$;
@@ -3816,6 +4175,10 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.spend_receipt FOR 
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.warehouse_table FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.warehouse_column FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.health_sample FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.health_day FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.health_sleep FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.health_workout FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.health_record FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.photo FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.investment_holding FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.investment_transaction FOR EACH ROW EXECUTE FUNCTION archive.object_name();
@@ -3826,6 +4189,10 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.parcel_event FOR E
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.vehicle FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.vehicle_charge FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.home_device FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.music_playlist FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.music_track FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.music_artist FOR EACH ROW EXECUTE FUNCTION archive.object_name();
+CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.school_notice FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_contact FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_item FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_entry FOR EACH ROW EXECUTE FUNCTION archive.object_name();
@@ -3939,6 +4306,10 @@ GRANT SELECT ON archive.spend_receipt TO "{p}_viewer";
 GRANT SELECT ON archive.warehouse_table TO "{p}_viewer";
 GRANT SELECT ON archive.warehouse_column TO "{p}_viewer";
 GRANT SELECT ON archive.health_sample TO "{p}_viewer";
+GRANT SELECT ON archive.health_day TO "{p}_viewer";
+GRANT SELECT ON archive.health_sleep TO "{p}_viewer";
+GRANT SELECT ON archive.health_workout TO "{p}_viewer";
+GRANT SELECT ON archive.health_record TO "{p}_viewer";
 GRANT SELECT ON archive.photo TO "{p}_viewer";
 GRANT SELECT ON archive.investment_holding TO "{p}_viewer";
 GRANT SELECT ON archive.investment_transaction TO "{p}_viewer";
@@ -3949,6 +4320,10 @@ GRANT SELECT ON archive.parcel_event TO "{p}_viewer";
 GRANT SELECT ON archive.vehicle TO "{p}_viewer";
 GRANT SELECT ON archive.vehicle_charge TO "{p}_viewer";
 GRANT SELECT ON archive.home_device TO "{p}_viewer";
+GRANT SELECT ON archive.music_playlist TO "{p}_viewer";
+GRANT SELECT ON archive.music_track TO "{p}_viewer";
+GRANT SELECT ON archive.music_artist TO "{p}_viewer";
+GRANT SELECT ON archive.school_notice TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT, UPDATE, DELETE ON TABLES TO "{p}_editor";
 
@@ -4107,7 +4482,15 @@ CREATE POLICY mine ON archive.warehouse_table FOR SELECT USING (archive.can(acce
 ALTER TABLE archive.warehouse_column ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.warehouse_column FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = warehouse_column.connection));
 ALTER TABLE archive.health_sample ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.health_sample FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = health_sample.connection AND NOT c.integration));
+CREATE POLICY mine ON archive.health_sample FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = health_sample.connection));
+ALTER TABLE archive.health_day ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.health_day FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = health_day.connection));
+ALTER TABLE archive.health_sleep ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.health_sleep FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = health_sleep.connection));
+ALTER TABLE archive.health_workout ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.health_workout FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = health_workout.connection));
+ALTER TABLE archive.health_record ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.health_record FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = health_record.connection));
 ALTER TABLE archive.photo ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.photo FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = photo.connection));
 ALTER TABLE archive.investment_holding ENABLE ROW LEVEL SECURITY;
@@ -4128,6 +4511,14 @@ ALTER TABLE archive.vehicle_charge ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.vehicle_charge FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = vehicle_charge.connection));
 ALTER TABLE archive.home_device ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.home_device FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = home_device.connection));
+ALTER TABLE archive.music_playlist ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.music_playlist FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = music_playlist.connection));
+ALTER TABLE archive.music_track ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.music_track FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = music_track.connection));
+ALTER TABLE archive.music_artist ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.music_artist FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = music_artist.connection));
+ALTER TABLE archive.school_notice ENABLE ROW LEVEL SECURITY;
+CREATE POLICY mine ON archive.school_notice FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = school_notice.connection));
 ALTER TABLE archive.known_person ENABLE ROW LEVEL SECURITY;
 CREATE POLICY seen ON archive.known_person FOR SELECT USING (EXISTS (SELECT FROM archive.mail_party p WHERE p.person = known_person.id)
     OR EXISTS (SELECT FROM archive.payroll_worker w WHERE w.person = known_person.id)
@@ -4455,10 +4846,13 @@ SELECT jsonb_build_object(
             'archive.spend_department'::regclass, 'archive.spend_user'::regclass, 'archive.spend_card'::regclass,
             'archive.spend_transaction'::regclass, 'archive.spend_receipt'::regclass,
             'archive.warehouse_table'::regclass, 'archive.warehouse_column'::regclass,
-            'archive.health_sample'::regclass, 'archive.photo'::regclass,
+            'archive.photo'::regclass,
             'archive.investment_holding'::regclass, 'archive.investment_transaction'::regclass,
             'archive.bank_liability'::regclass, 'archive.budget_category'::regclass,
-            'archive.parcel'::regclass, 'archive.parcel_event'::regclass, 'archive.vehicle'::regclass, 'archive.vehicle_charge'::regclass, 'archive.home_device'::regclass)
+            'archive.parcel'::regclass, 'archive.parcel_event'::regclass, 'archive.vehicle'::regclass, 'archive.vehicle_charge'::regclass, 'archive.home_device'::regclass,
+            'archive.health_sample'::regclass, 'archive.health_day'::regclass, 'archive.health_sleep'::regclass, 'archive.health_workout'::regclass, 'archive.health_record'::regclass,
+            'archive.music_playlist'::regclass, 'archive.music_track'::regclass, 'archive.music_artist'::regclass,
+            'archive.school_notice'::regclass)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -4598,7 +4992,6 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.spend_card x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.spend_transaction x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.warehouse_table x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.health_sample x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.photo x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.investment_holding x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.investment_transaction x WHERE x.connection = c.id)
@@ -4607,7 +5000,16 @@ SELECT c.id, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_a
         + (SELECT count(*) FROM archive.parcel x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.vehicle x WHERE x.connection = c.id)
         + (SELECT count(*) FROM archive.vehicle_charge x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.home_device x WHERE x.connection = c.id))::bigint AS items,
+        + (SELECT count(*) FROM archive.home_device x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.health_sample x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.health_day x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.health_sleep x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.health_workout x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.health_record x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.music_playlist x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.music_track x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.music_artist x WHERE x.connection = c.id)
+        + (SELECT count(*) FROM archive.school_notice x WHERE x.connection = c.id))::bigint AS items,
     c.integration, coalesce(c.access::text, '')::text AS access, coalesce((SELECT m.email::text FROM archive.member m WHERE m.id = c.member), '')::text AS connected_by
 FROM archive.connection c WHERE c.member = $1 AND NOT c.integration OR c.integration ORDER BY c.provider, c.account, c.id;
 

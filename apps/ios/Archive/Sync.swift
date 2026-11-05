@@ -38,7 +38,7 @@ actor Syncer {
 
     private func pushed(_ stream: String, _ records: [[String: Any]], full: Bool = false, more: Bool = false) async throws {
         try await Client.shared.push(stream, records, full: full, more: more)
-        await Status.shared.add(stream, records.count)
+        await Status.shared.add(stream == "workouts" ? "health" : stream, records.count)
     }
 
     // MARK: Health
@@ -98,51 +98,62 @@ actor Syncer {
             let got = try await q.result(for: Self.health)
             let records = got.addedSamples.map(record) + got.deletedObjects.map { ["id": $0.uuid.uuidString, "deleted": true] }
             if !records.isEmpty {
-                try await pushed("health", records)
+                try await pushed(type == HKWorkoutType.workoutType() ? "workouts" : "health", records)
             }
             UserDefaults.standard.set(try NSKeyedArchiver.archivedData(withRootObject: got.newAnchor, requiringSecureCoding: true), forKey: key)
             if records.count < 500 { return }
         }
     }
 
+    /// A sample as Archive's other health connectors keep one: its kind in their words, like steps or heart_rate; a workout goes to workouts.
     private func record(_ s: HKSample) -> [String: Any] {
-        var d: [String: Any] = ["type": s.sampleType.identifier, "start": s.startDate.iso, "end": s.endDate.iso, "source": s.sourceRevision.source.name]
-        var meta: [String: Any] = [:]
-        for (k, v) in s.metadata ?? [:] {
-            switch v {
-            case let v as HKQuantity: meta[k] = v.description
-            case let v as Date: meta[k] = v.iso
-            case let v as NSNumber: meta[k] = v
-            default: meta[k] = "\(v)"
-            }
-        }
+        var d: [String: Any] = ["start": s.startDate.iso, "end": s.endDate.iso, "source": s.sourceRevision.source.name]
+        if let device = s.device?.model ?? s.device?.name { d["device"] = device }
         switch s {
         case let s as HKQuantitySample:
+            d["kind"] = Self.kinds[s.quantityType.identifier] ?? Self.snake(s.quantityType.identifier)
             let unit = units[s.quantityType] ?? HKUnit.count()
             if s.quantity.is(compatibleWith: unit) {
                 d["value"] = s.quantity.doubleValue(for: unit)
                 d["unit"] = unit.unitString
             }
         case let s as HKCategorySample:
-            d["value"] = s.value
             if s.categoryType == HKCategoryType(.sleepAnalysis) {
-                meta["stage"] = ["in bed", "asleep", "awake", "core", "deep", "REM"][safe: s.value]
+                d["kind"] = "sleep_" + (["in_bed", "asleep", "awake", "core", "deep", "rem"][safe: s.value] ?? "asleep")
+            } else {
+                d["kind"] = Self.kinds[s.categoryType.identifier] ?? Self.snake(s.categoryType.identifier)
             }
+            d["value"] = s.endDate.timeIntervalSince(s.startDate) / 60
+            d["unit"] = "min"
         case let s as HKWorkout:
-            d["type"] = "HKWorkoutActivityType" + s.workoutActivityType.name
+            d["sport"] = s.workoutActivityType.name
+            d["seconds"] = s.duration
             if let kcal = s.statistics(for: HKQuantityType(.activeEnergyBurned))?.sumQuantity() {
-                d["value"] = kcal.doubleValue(for: .kilocalorie())
-                d["unit"] = "kcal"
+                d["kcal"] = kcal.doubleValue(for: .kilocalorie())
             }
-            meta["seconds"] = s.duration
             if let m = s.statistics(for: HKQuantityType(.distanceWalkingRunning))?.sumQuantity() ?? s.statistics(for: HKQuantityType(.distanceCycling))?.sumQuantity() {
-                meta["meters"] = m.doubleValue(for: .meter())
+                d["meters"] = m.doubleValue(for: .meter())
             }
         default: break
         }
-        if let device = s.device?.model ?? s.device?.name { d["device"] = device }
-        if !meta.isEmpty { d["meta"] = meta }
         return ["id": s.uuid.uuidString, "data": d]
+    }
+
+    /// HealthKit's names in the words Oura's, Fitbit's and Whoop's samples use; the rest in snake_case, like dietary_water.
+    static let kinds: [String: String] = [
+        HKQuantityTypeIdentifier.stepCount.rawValue: "steps", HKQuantityTypeIdentifier.heartRate.rawValue: "heart_rate",
+        HKQuantityTypeIdentifier.restingHeartRate.rawValue: "resting_heart_rate", HKQuantityTypeIdentifier.heartRateVariabilitySDNN.rawValue: "hrv",
+        HKQuantityTypeIdentifier.oxygenSaturation.rawValue: "spo2", HKQuantityTypeIdentifier.bodyMass.rawValue: "weight",
+        HKQuantityTypeIdentifier.bodyFatPercentage.rawValue: "body_fat", HKQuantityTypeIdentifier.vo2Max.rawValue: "vo2_max",
+        HKQuantityTypeIdentifier.activeEnergyBurned.rawValue: "active_calories", HKQuantityTypeIdentifier.basalEnergyBurned.rawValue: "resting_calories",
+        HKQuantityTypeIdentifier.distanceWalkingRunning.rawValue: "distance", HKQuantityTypeIdentifier.appleExerciseTime.rawValue: "exercise_minutes",
+        HKQuantityTypeIdentifier.appleStandTime.rawValue: "stand_minutes", HKQuantityTypeIdentifier.dietaryEnergyConsumed.rawValue: "calories_eaten",
+        HKCategoryTypeIdentifier.mindfulSession.rawValue: "mindful",
+    ]
+
+    static func snake(_ id: String) -> String {
+        let name = id.replacingOccurrences(of: #"^HK(Quantity|Category)TypeIdentifier"#, with: "", options: .regularExpression)
+        return name.replacingOccurrences(of: #"([a-z0-9])([A-Z])"#, with: "$1_$2", options: .regularExpression).lowercased()
     }
 
     // MARK: Photos
@@ -337,24 +348,24 @@ extension PHAsset {
 extension HKWorkoutActivityType {
     var name: String {
         switch self {
-        case .running: "Running"
-        case .walking: "Walking"
-        case .cycling: "Cycling"
-        case .swimming: "Swimming"
-        case .hiking: "Hiking"
-        case .yoga: "Yoga"
-        case .functionalStrengthTraining: "FunctionalStrengthTraining"
-        case .traditionalStrengthTraining: "TraditionalStrengthTraining"
-        case .highIntensityIntervalTraining: "HighIntensityIntervalTraining"
-        case .rowing: "Rowing"
-        case .elliptical: "Elliptical"
-        case .dance: "Dance"
-        case .pilates: "Pilates"
-        case .tennis: "Tennis"
-        case .golf: "Golf"
-        case .soccer: "Soccer"
-        case .basketball: "Basketball"
-        default: "Other\(rawValue)"
+        case .running: "running"
+        case .walking: "walking"
+        case .cycling: "cycling"
+        case .swimming: "swimming"
+        case .hiking: "hiking"
+        case .yoga: "yoga"
+        case .functionalStrengthTraining: "functional strength training"
+        case .traditionalStrengthTraining: "traditional strength training"
+        case .highIntensityIntervalTraining: "high intensity interval training"
+        case .rowing: "rowing"
+        case .elliptical: "elliptical"
+        case .dance: "dance"
+        case .pilates: "pilates"
+        case .tennis: "tennis"
+        case .golf: "golf"
+        case .soccer: "soccer"
+        case .basketball: "basketball"
+        default: "workout"
         }
     }
 }
