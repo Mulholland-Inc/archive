@@ -64,6 +64,9 @@ func (a *Archive) as(ctx context.Context, fn func(context.Context) error) error 
 		if err := fn(ctx); err != nil {
 			return err
 		}
+		if wrote, ok := ctx.Value(runWroteKey{}).(*bool); ok && !*wrote {
+			return nil
+		}
 		tx, err := a.st.db(ctx).TxWrote(ctx)
 		if tx.Members {
 			storeAfter(ctx, func() {

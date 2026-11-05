@@ -891,19 +891,19 @@ func (h *Hub) enter(ctx context.Context, t generated.AuthenticateRow, want strin
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	stamp, err := generated.New(a.st.sys).Revision(ctx)
-	if err == nil && stamp != a.Catalog().stamp {
+	m, err := generated.New(a.st.sys).MemberEntry(ctx, t.Email)
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = fmt.Errorf("you are not in this workspace: %w", ErrForbidden)
+	}
+	if err == nil && m.Revision != a.Catalog().stamp {
 		err = a.reload(ctx)
 	}
 	if err != nil {
 		release()
 		return nil, nil, nil, err
 	}
-	ac, err := a.userActor(ctx, &User{ID: t.UserID, Email: t.Email, Name: t.UserName})
-	if err != nil {
-		release()
-		return nil, nil, nil, err
-	}
+	role := a.roleID("u", m.ID)
+	ac := &Actor{UserID: t.UserID, Email: t.Email, Name: t.UserName, Role: role, UserRole: role, member: m.ID}
 	ac.scoped = t.Workspace != ""
 	if t.Kind != "session" {
 		ac.TokenName = t.Name

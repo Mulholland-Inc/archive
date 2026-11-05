@@ -2199,6 +2199,29 @@ func (q *Queries) MemberConnections(ctx context.Context, member uuid.UUID) ([]Ar
 	return items, nil
 }
 
+const memberEntry = `-- name: MemberEntry :one
+SELECT coalesce((SELECT r.id::text || ':' || r.hash FROM archive.revision r ORDER BY r.created_at DESC, r.id DESC LIMIT 1), '')::text AS revision, m.id, m.role::text AS role, m."group" FROM archive.member m WHERE m.email = $1::text
+`
+
+type MemberEntryRow struct {
+	Revision string
+	ID       uuid.UUID
+	Role     string
+	Group    *uuid.UUID
+}
+
+func (q *Queries) MemberEntry(ctx context.Context, email string) (MemberEntryRow, error) {
+	row := q.db.QueryRow(ctx, memberEntry, email)
+	var i MemberEntryRow
+	err := row.Scan(
+		&i.Revision,
+		&i.ID,
+		&i.Role,
+		&i.Group,
+	)
+	return i, err
+}
+
 const members = `-- name: Members :many
 SELECT id, email::text AS email, role::text AS role, "group" FROM archive.member ORDER BY email
 `

@@ -93,7 +93,10 @@ type browser struct {
 }
 
 func (r *runner) browseSDK(o *goja.Object) {
-	o.Set("browse", func(call goja.FunctionCall) goja.Value { return r.promise(r.browse(call)) })
+	o.Set("browse", func(call goja.FunctionCall) goja.Value {
+		*r.wrote = true
+		return r.promise(r.browse(call))
+	})
 }
 
 func (r *runner) browse(call goja.FunctionCall) (any, error) {

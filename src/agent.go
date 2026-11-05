@@ -71,9 +71,58 @@ func (a *Archive) ClearTurns(ctx context.Context, agent uuid.UUID) error {
 	if err != nil {
 		return err
 	}
-	return a.sys(ctx, func(ctx context.Context) error {
+	err = a.sys(ctx, func(ctx context.Context) error {
 		return a.st.db(ctx).ClearTurns(ctx, agent, ac.member)
 	})
+	if err == nil {
+		a.hub.live.moved(a.ws.ID.String(), liveChange{Table: "archive.agent", ID: agent.String()})
+	}
+	return err
+}
+
+func (a *Archive) boot(ctx context.Context) (map[string]any, error) {
+	var agents, flows []map[string]any
+	var people []Person
+	err := a.as(ctx, func(ctx context.Context) (err error) {
+		if agents, err = a.List(ctx, "agent", nil, 1000, uuid.Nil); err != nil {
+			return err
+		}
+		turns, err := a.runQuery(ctx, "SELECT DISTINCT ON (agent) agent, updated_at AS at FROM archive.turn ORDER BY agent, n DESC", nil)
+		if err != nil {
+			return err
+		}
+		at := map[any]any{}
+		for _, t := range turns {
+			at[t["agent"]] = t["at"]
+		}
+		for _, x := range agents {
+			x["at"] = cmp.Or(at[x["id"]], any(""))
+		}
+		if flows, err = a.List(ctx, "workflow", nil, 1000, uuid.Nil); err != nil {
+			return err
+		}
+		runs, err := a.runQuery(ctx, "SELECT DISTINCT ON (workflow) id, workflow, created_at AS at, trigger, ms, error FROM workflow_run ORDER BY workflow, created_at DESC, id DESC", nil)
+		if err != nil {
+			return err
+		}
+		last := map[any]map[string]any{}
+		for _, run := range runs {
+			last[run["workflow"]] = run
+		}
+		for _, x := range flows {
+			x["last"] = last[x["id"]]
+		}
+		people, err = a.People(ctx)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	schema, err := a.Schema(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"agents": agents, "workflows": flows, "people": people, "types": a.Catalog(), "schema": schema}, nil
 }
 
 func (a *Archive) turnCreate(ctx context.Context, agent, member uuid.UUID, text string, first agentMessage) (uuid.UUID, error) {
@@ -172,6 +221,7 @@ func (a *Archive) turn(w http.ResponseWriter, r *http.Request) {
 			if err := a.hub.q().MarkUnread(context.WithoutCancel(ctx), a.ws.ID, ac.UserID); err != nil {
 				fmt.Fprintf(os.Stderr, "archive: workspace %s unread: %v\n", a.ws.ID, err)
 			}
+			a.hub.live.moved(a.ws.ID.String(), liveChange{Table: "archive.agent", ID: body.Agent.String()})
 		}
 		if ctx.Err() == nil {
 			enc.Encode(v)
