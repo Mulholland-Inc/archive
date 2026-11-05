@@ -2,7 +2,10 @@
 // a contact sheet to review. A scene's first line says where it belongs:
 //   #pragma frame {"set":["family"],"label":"Cottage","group":"home"}
 //
-//   node apps/draw/icons.mjs <a,b|all> [--out file.png]
+// With --agents, the same for agents' figures: scenes/agent-<name>.glsl to /bots/agent-<name>.webp, registered in
+// looks.js and archive.agent. Their first line is only #pragma frame {"label":"Cat"}.
+//
+//   node apps/draw/icons.mjs [--agents] <a,b|all> [--out file.png]
 import { spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -18,17 +21,19 @@ const WORK = ['personal', 'family', 'business'];
 const DEFAULTS = { personal: 'logcabin', family: 'cottage', business: 'office' };
 const GROUPS = ['home', 'office', 'health', 'food', 'shop', 'care', 'culture', 'civic', 'auto', 'trade', 'transport', 'energy'];
 
-const [what] = process.argv.slice(2);
+const agents = process.argv.includes('--agents');
+const [what] = process.argv.slice(2).filter(a => a !== '--agents');
 const at = process.argv.indexOf('--out');
 const out = at < 0 ? join(tmpdir(), 'icons.png') : resolve(process.argv[at + 1]);
 if (!what) {
-  console.error('usage: icons.mjs <a,b|all> [--out file.png]');
+  console.error('usage: icons.mjs [--agents] <a,b|all> [--out file.png]');
   process.exit(1);
 }
 
-const lib = readdirSync(join(here, 'scenes')).filter(f => /^bot-.*\.glsl$/.test(f)).map(f => {
+const prefix = agents ? 'agent-' : 'bot-';
+const lib = readdirSync(join(here, 'scenes')).filter(f => f.startsWith(prefix) && f.endsWith('.glsl')).map(f => {
   const m = readFileSync(join(here, 'scenes', f), 'utf8').match(/^#pragma frame (.*)$/m);
-  return { name: f.slice(4, -5), ...JSON.parse(m[1]) };
+  return { name: f.slice(prefix.length, -5), ...JSON.parse(m[1]) };
 }).sort((a, b) => GROUPS.indexOf(a.group) - GROUPS.indexOf(b.group) || a.label.localeCompare(b.label));
 const names = what === 'all' ? lib.map(i => i.name) : what.split(',');
 
@@ -50,18 +55,31 @@ function register() {
   console.log(`registered ${work.length} workspace icons`);
 }
 
+// A figure's number is saved on agents' rows, so figures keep their place and a new one goes last.
+function registerAgents() {
+  const saved = readFileSync(join(repo, 'apps/web/src/lib/looks.js'), 'utf8').match(/export const AVATARS = \[(.*)\];/)[1].match(/\w+/g) ?? [];
+  const order = [...saved.filter(n => lib.some(i => i.name === n)), ...lib.map(i => i.name).filter(n => !saved.includes(n))];
+  const label = n => lib.find(i => i.name === n).label.replace(/'/g, "\\'");
+  edit('apps/web/src/lib/looks.js', /export const AVATARS = \[.*\];/, `export const AVATARS = [${order.map(n => `'${n}'`).join(', ')}];`);
+  edit('apps/web/src/lib/looks.js', /export const AVATAR_LABELS = \{.*\};/, `export const AVATAR_LABELS = { ${order.map(n => `${n}: '${label(n)}'`).join(', ')} };`);
+  edit('src/archive.sql', /CHECK \(avatar BETWEEN 0 AND \d+\)/, `CHECK (avatar BETWEEN 0 AND ${order.length - 1})`);
+  edit('src/archive.sql', /(COMMENT ON COLUMN archive\.agent\.avatar IS 'Its picture, one figure by number: ).*';/, `$1${order.map((n, i) => `${i} ${label(n).toLowerCase()}`).join(', ')}';`);
+  console.log(`registered ${order.length} agent figures`);
+  return order;
+}
+
 async function bake() {
   let failed = 0;
   await withPage(async send => {
     for (const name of names) {
       const t0 = Date.now();
-      const { result, exceptionDetails } = await send('Runtime.evaluate', { expression: `new Promise(r => { const f = () => window.icon ? r() : setTimeout(f, 30); f(); }).then(() => window.icon(${JSON.stringify(`bot-${name}`)}))`, awaitPromise: true, returnByValue: true });
+      const { result, exceptionDetails } = await send('Runtime.evaluate', { expression: `new Promise(r => { const f = () => window.icon ? r() : setTimeout(f, 30); f(); }).then(() => window.icon(${JSON.stringify(`${prefix}${name}`)}))`, awaitPromise: true, returnByValue: true });
       if (exceptionDetails || result.value.error) {
         console.error(`${name}: ${result.value?.error ?? exceptionDetails.exception?.description}`);
         failed++;
         continue;
       }
-      const made = spawnSync('cwebp', ['-quiet', '-lossless', '-z', '9', '-m', '6', '-o', join(bots, `${name}.webp`), '--', '-'], { input: Buffer.from(result.value.png.split(',')[1], 'base64') });
+      const made = spawnSync('cwebp', ['-quiet', '-lossless', '-z', '9', '-m', '6', '-o', join(bots, `${agents ? 'agent-' : ''}${name}.webp`), '--', '-'], { input: Buffer.from(result.value.png.split(',')[1], 'base64') });
       if (made.status !== 0) throw new Error(`cwebp: ${made.stderr}`);
       console.log(`${name} ${((Date.now() - t0) / 1000).toFixed(1)}s`);
     }
@@ -88,6 +106,30 @@ async function sheet() {
     .cell { display: grid; justify-items: center; gap: 2px; width: 104px; }
     .row { display: flex; align-items: center; gap: 6px; }
   </style>${rows.map((row, r) => `<div class="band ${r % 2 ? 'dark' : 'light'}">${row.map((n, i) => cell(n, ((r * 10 + i) * 3) % tints)).join('')}</div>`).join('')}`;
+  await shoot(html);
+}
+
+// The sheet of figures: each at rest large and at the sizes the sidebar uses, and small and awake, on light and dark.
+async function agentSheet(order) {
+  const shown = order.filter(n => names.includes(n));
+  const tokens = readFileSync(join(repo, 'apps/web/src/styles/tokens.css'), 'utf8');
+  const styles = readFileSync(join(repo, 'apps/web/src/components/AgentAvatar.svelte'), 'utf8').match(/<style>([\s\S]*)<\/style>/)[1];
+  const tints = [17, 10, 28, 12, 21, 8, 24, 2, 16, 26, 19];
+  const bot = (name, tint, size, cell = 0, state = '') => `<span class="bot ${size} ${state} i-${name}" style="--tint: var(--tint-${tint})"><span class="art"><span class="layer" style="--cell: ${cell}"><i class="sheen"></i><i class="eyes"></i></span></span></span>`;
+  const cell = (name, i) => `<div class="cell"><div class="row">${bot(name, tints[i % tints.length], 'xxl')}</div><div class="row">${bot(name, tints[(i + 3) % tints.length], 'lg')}${bot(name, tints[(i + 5) % tints.length], 'lg', 3, 'open')}${bot(name, tints[(i + 7) % tints.length], 'xs')}</div><span>${name}</span></div>`;
+  const band = kind => `<div class="band ${kind}">${shown.map(cell).join('')}</div>`;
+  await shoot(`<!doctype html><meta charset="utf-8"><style>${tokens}${styles}
+    ${names.map(n => `.i-${n} { --src: url(data:image/webp;base64,${readFileSync(join(bots, `agent-${n}.webp`)).toString('base64')}); }`).join('\n')}
+    body { margin: 0; font: 11px/14px -apple-system, sans-serif; width: max-content; }
+    .band { display: grid; grid-template-columns: repeat(11, 124px); gap: 10px 4px; padding: 12px; }
+    .light { background: #f7f7f8; color: #333; }
+    .dark { background: #17181b; color: #ccc; }
+    .cell { display: grid; justify-items: center; gap: 4px; width: 124px; }
+    .row { display: flex; align-items: center; gap: 2px; }
+  </style>${band('light')}${band('dark')}`);
+}
+
+async function shoot(html) {
   await withPage(async send => {
     await send('Emulation.setDeviceMetricsOverride', { width: 1400, height: 1000, deviceScaleFactor: 2, mobile: false });
     await send('Runtime.evaluate', { expression: `document.open(); document.write(${JSON.stringify(html)}); document.close(); new Promise(r => setTimeout(r, 600))`, awaitPromise: true });
@@ -100,5 +142,9 @@ async function sheet() {
 }
 
 await bake();
-register();
-await sheet();
+if (agents) {
+  await agentSheet(registerAgents());
+} else {
+  register();
+  await sheet();
+}

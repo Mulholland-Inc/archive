@@ -1,18 +1,17 @@
 <script>
-  import { PERSONALITIES, personality, AVATARS, lit } from '../lib/looks.js';
+  import { PERSONALITIES, personality, AVATARS } from '../lib/looks.js';
 
   let { avatar = 0, tint = 0, seed = '', size = 'md', active = false } = $props();
 
   const name = $derived(AVATARS[avatar]);
-  const stem = $derived(`turn-${name}`);
-  const lights = $derived(lit(name));
   const mood = $derived(personality(`${seed}${name}`));
   const me = $derived(PERSONALITIES[mood]);
 
   let root = $state();
   let frame = $state(0);
   let awake = $state(false);
-  let eyes = $state(false);
+  let lit = $state(false);
+  let seen = $state(false);
   let timer;
   const later = (fn, ms) => (timer = setTimeout(fn, ms));
   const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -26,26 +25,37 @@
   function idle() {
     later(() => {
       const pick = Math.random();
-      eyes = false;
-      if (pick < 0.45) later(() => ((eyes = true), idle()), 110);
-      else turn(pick < 0.75 ? 2 : 1, me.pace * 1.6, 1, () => later(() => turn(3, me.pace * 1.6, 1, () => ((eyes = true), idle())), 420 + Math.random() * 500));
+      lit = false;
+      if (pick < 0.45) later(() => ((lit = true), idle()), 110);
+      else turn(pick < 0.75 ? 2 : 1, me.pace * 1.6, 1, () => later(() => turn(3, me.pace * 1.6, 1, () => ((lit = true), idle())), 420 + Math.random() * 500));
     }, me.rest * (0.7 + Math.random() * 0.6));
   }
 
   function wake() {
     clearTimeout(timer);
     awake = true;
-    if (still()) return ((frame = 3), (eyes = true));
-    turn(3, me.pace, 1.15, () => ((eyes = true), idle()));
+    if (still()) return ((frame = 3), (lit = true));
+    turn(3, me.pace, 1.15, () => ((lit = true), idle()));
   }
 
   function sleep() {
     clearTimeout(timer);
     awake = false;
-    eyes = false;
+    lit = false;
     if (still()) return (frame = 0);
     later(() => turn(0, me.pace * 1.5, 1.3), 80);
   }
+
+  // A figure's strip loads when it nears the screen, so a long picker fetches only what is scrolled to.
+  $effect(() => {
+    const watch = new IntersectionObserver(([e]) => {
+      if (!e.isIntersecting) return;
+      seen = true;
+      watch.disconnect();
+    }, { rootMargin: '200px' });
+    watch.observe(root);
+    return () => watch.disconnect();
+  });
 
   $effect(() => {
     if (active) {
@@ -64,20 +74,11 @@
   });
 </script>
 
-<span bind:this={root} class={['bot', size, `mood-${mood}`, { building: !name.match(/^(float|face)$/), awake, eyes, facing: frame === 3 && awake }]} style:--tint={`var(--tint-${tint})`} aria-hidden="true">
+<!-- One image per figure (apps/draw/render.js): four turn frames with no hue of their own, which --tint colours here,
+     then the same four as eyes alone, pale on any tint and brightest when lit. -->
+<span bind:this={root} class={['bot', size, `mood-${mood}`, { awake, lit }]} style:--tint={`var(--tint-${tint})`} style:--src={seen ? `url(/bots/agent-${name}.webp)` : null} aria-hidden="true">
   <span class="art">
-    {#each [0, 1, 2, 3] as i (i)}
-      <span class={['layer', 'f', { show: frame === i }]} style:--src={`url(/bots/${stem}-${i}.webp)`}>
-        <img src={`/bots/${stem}-${i}.webp`} alt="" />
-        <i class="sheen"></i>
-      </span>
-    {/each}
-    {#if lights}
-      <img class="lit" src={`/bots/${stem}-lit.webp`} alt="" />
-      <img class="panel" src={`/bots/${stem}-panel.webp`} alt="" />
-      <i class="led red" style:--src={`url(/bots/${stem}-red.webp)`}></i>
-      <i class="led blue" style:--src={`url(/bots/${stem}-blue.webp)`}></i>
-    {/if}
+    <span class="layer" style:--cell={frame}><i class="sheen"></i><i class="eyes"></i></span>
   </span>
 </span>
 
@@ -107,24 +108,17 @@
     transition: transform var(--bot-turn) var(--ease-settle);
   }
 
-  .building .art {
-    inset: var(--bot-building-inset);
-  }
-
   .awake .art {
     transform: translateY(var(--lift)) rotate(var(--tilt));
     transition: transform var(--bot-wake) var(--ease-bounce);
   }
 
-  img,
   .layer {
     position: absolute;
     inset: 0;
-    width: 100%;
-    height: 100%;
-  }
-
-  .layer {
+    display: block;
+    --at: calc(var(--cell) * 100% / 7) 0 / 800% 100% no-repeat;
+    background: var(--src) var(--at);
     isolation: isolate;
   }
 
@@ -133,62 +127,22 @@
     inset: 0;
     background: linear-gradient(var(--bot-sheen-angle), color-mix(in oklch, var(--tint) var(--bot-sheen-light), var(--tint-light)) 0%, var(--tint) var(--bot-sheen-mid), color-mix(in oklch, var(--tint) var(--bot-sheen-dark), var(--tint-dark)) 100%);
     mix-blend-mode: multiply;
-    -webkit-mask: var(--src) center / 100% 100% no-repeat;
-    mask: var(--src) center / 100% 100% no-repeat;
+    -webkit-mask: var(--src) var(--at);
+    mask: var(--src) var(--at);
   }
 
-  .f,
-  .lit,
-  .panel,
-  .led {
-    opacity: 0;
+  .eyes {
+    position: absolute;
+    inset: 0;
+    background: var(--src) calc((var(--cell) + 4) * 100% / 7) 0 / 800% 100% no-repeat;
+    opacity: var(--bot-eyes-rest);
   }
 
-  .f.show,
-  .eyes .lit,
-  .facing .panel {
+  .lit .eyes {
     opacity: 1;
   }
 
-  .led {
-    position: absolute;
-    inset: 0;
-    -webkit-mask: var(--src) center / 100% 100% no-repeat;
-    mask: var(--src) center / 100% 100% no-repeat;
-  }
-
-  .red {
-    background: var(--led-red);
-  }
-
-  .blue {
-    background: var(--led-blue);
-  }
-
-  .facing .red {
-    animation: red var(--duration-led-red) step-end infinite;
-  }
-
-  .facing .blue {
-    animation: blue var(--duration-led-blue) step-end infinite;
-  }
-
-  @keyframes red {
-    0%, 45% { opacity: 1; }
-    46%, 100% { opacity: 0; }
-  }
-
-  @keyframes blue {
-    0%, 30% { opacity: 0; }
-    31%, 70% { opacity: 1; }
-    71%, 100% { opacity: 0; }
-  }
-
   @media (prefers-reduced-motion: reduce) {
-    .led {
-      animation: none;
-    }
-
     .art,
     .awake .art {
       transition: none;

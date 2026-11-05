@@ -119,14 +119,11 @@ export const ICON_LABELS = {
   windfarm: 'Wind farm'
 };
 
-// What an agent can look like: pre-rendered figures with eyes (/bots/turn-*). An agent's row holds an index into
-// AVATARS, so the order is saved data, and archive.agent's column comment and check say the same. The first list
-// wakes with lit eyes and a panel; the rest have their eyes drawn on.
-const LIT = ['float', 'face', 'bank', 'bookcase', 'cabinet', 'cottage', 'factory', 'farmhouse', 'safe', 'townhouse', 'warehouse'];
-const DRAWN = ['archivist', 'baobab', 'capitol', 'castle', 'chest', 'ledger', 'oak', 'pine', 'pinecone', 'pyramid', 'skyscraper'];
-export const AVATARS = [...LIT, ...DRAWN];
-export const lit = (avatar) => LIT.includes(avatar);
-export const AVATAR_LABELS = { float: 'Robot', face: 'Tall robot', bank: 'Bank', bookcase: 'Bookcase', cabinet: 'Cabinet', cottage: 'Cottage', factory: 'Factory', farmhouse: 'Farmhouse', safe: 'Safe', townhouse: 'Townhouse', warehouse: 'Warehouse', archivist: 'Archivist', baobab: 'Baobab', capitol: 'Capitol', castle: 'Castle', chest: 'Chest', ledger: 'Ledger', oak: 'Oak', pine: 'Pine', pinecone: 'Pinecone', pyramid: 'Pyramid', skyscraper: 'Skyscraper' };
+// What an agent can look like: pre-rendered figures (apps/draw/scenes/agent-*, /bots/agent-*). An agent's row holds an
+// index into AVATARS, so the order is saved data and a new figure goes last; archive.agent's column comment and check
+// say the same. 0 is the default.
+export const AVATARS = ['bolt', 'orb', 'wheel', 'tv', 'copter', 'claw', 'spring', 'lens', 'hex', 'bulb', 'boxer', 'magnet', 'stack', 'dish', 'barrel', 'spider', 'saucer', 'phones', 'alarm', 'cog', 'steam', 'knight', 'rocket', 'diver', 'tread', 'cat', 'owl', 'frog', 'bear', 'bunny', 'penguin', 'fox', 'ghost', 'octo', 'sprout', 'chick', 'dino', 'shark', 'bat', 'hog', 'drop', 'alien', 'monster', 'cactus', 'snail', 'wizard', 'spaceman', 'ninja', 'viking', 'snowman'];
+export const AVATAR_LABELS = { bolt: 'Boxy robot', orb: 'Ringed robot', wheel: 'Wheel robot', tv: 'Television robot', copter: 'Rotor robot', claw: 'Claw robot', spring: 'Spring robot', lens: 'One-eyed robot', hex: 'Hexagon robot', bulb: 'Light bulb robot', boxer: 'Boxing robot', magnet: 'Magnet robot', stack: 'Stacked robot', dish: 'Satellite robot', barrel: 'Barrel robot', spider: 'Spider robot', saucer: 'Saucer robot', phones: 'Headphone robot', alarm: 'Alarm clock robot', cog: 'Cog robot', steam: 'Steam robot', knight: 'Knight robot', rocket: 'Rocket robot', diver: 'Diving robot', tread: 'Tracked robot', cat: 'Cat', owl: 'Owl', frog: 'Frog', bear: 'Bear', bunny: 'Bunny', penguin: 'Penguin', fox: 'Fox', ghost: 'Ghost', octo: 'Octopus', sprout: 'Sprout', chick: 'Chick', dino: 'Dinosaur', shark: 'Shark', bat: 'Bat', hog: 'Hedgehog', drop: 'Water drop', alien: 'Alien', monster: 'Monster', cactus: 'Cactus', snail: 'Snail', wizard: 'Wizard', spaceman: 'Astronaut', ninja: 'Ninja', viking: 'Viking', snowman: 'Snowman' };
 
 export const PERSONALITIES = [
   { pace: 70, rest: 2600 },

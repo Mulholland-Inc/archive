@@ -224,4 +224,21 @@ vec2 awning(vec3 p, float y, float w, float z) {
   vec2 a = box(q, V(0.0), V(w, 0.012, 0.15), 0.008, PALE);
   return mod(p.x + w + 40.0 * 0.21, 0.42) < 0.21 ? vec2(a.x, TONE) : a;
 }
+// Agents (scenes/agent-*.glsl). EYE is what stays pale on any tint. SHELL is PALE with a line where a hard shape turns
+// from one face to the next; use it on boxes, and PALE on round things. Marks are painted on what faces you, in the
+// part's own x and y, so they follow its surface: paint a part, then join it to the rest.
+#define EYE (LIME + SOLID)
+#define SHELL WHITE
+vec2 dab(vec2 r, vec3 p, vec2 at, float R, float m) { return p.z > 0.0 ? paint(r, length(p.xy - at) - R, m) : r; }
+vec2 oblong(vec2 r, vec3 p, vec2 at, vec2 b, float c, float m) { return p.z > 0.0 ? paint(r, sdRect(p.xy - at, b, c), m) : r; }
+vec2 line(vec2 r, vec3 p, vec2 a, vec2 b, float w, float m) { return p.z > 0.0 ? paint(r, sdSeg(p.xy, a, b) - w, m) : r; }
+vec2 smile(vec2 r, vec3 p, vec2 at, float R, float w, float m) { return p.z > 0.0 ? paint(r, max(abs(length(p.xy - at) - R) - w, p.y - at.y + R * 0.5), m) : r; }
+// A pair of eyes at +-x, y: pale, a round pupil, and a glint on the same side of both.
+vec2 eyes(vec2 r, vec3 p, float x, float y, float R) {
+  vec3 m = mirX(p);
+  vec2 g = vec2(p.x - sign(p.x) * x + 0.3 * R, p.y - y - 0.3 * R);
+  r = dab(r, m, vec2(x, y), R, EYE);
+  r = dab(r, m, vec2(x, y), R * 0.74, DARK);
+  return p.z > 0.0 ? paint(r, length(g) - R * 0.24, EYE) : r;
+}
 #endif

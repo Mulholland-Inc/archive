@@ -17,7 +17,7 @@ export async function loadPalette() {
 
 export async function loadSources(name) {
   const [lib, scene, palette] = await Promise.all([text('sdf.glsl'), text(`scenes/${name}.glsl`), text('palette.json')]);
-  return { lib: name.startsWith('bot-') ? `#define ICON\n${lib}` : lib, scene, palette: JSON.parse(palette) };
+  return { lib: /^(bot|agent)-/.test(name) ? `#define ICON\n${lib}` : lib, scene, palette: JSON.parse(palette) };
 }
 
 function parseFrame(scene) {
@@ -411,13 +411,18 @@ function trim(img) {
 
 // An icon is one strip of four square cells, the frames of its turn, the last facing you. Scenes are framed here, so
 // they all fill a cell alike and need no framing of their own, and the strip has luminance only: hue is the app's, at
-// runtime.
+// runtime. An agent's figure (scenes/agent-*) turns less, so both eyes stay in view, fills more of its cell, draws its
+// lines a little heavier for the smallest sizes, and has four more cells: its EYE material alone in each frame, which
+// the app lays over the tint so eyes stay pale on any colour.
 const TURNS = [0.3, 0.46, 0.6, 0.785];
+const GLANCE = [0.42, 0.54, 0.66, 0.785];
 const CELL = 256;
 let renderer;
 
 export async function icon(name) {
   renderer ??= new Renderer();
+  const agent = name.startsWith('agent-');
+  const turns = agent ? GLANCE : TURNS;
   const src = await loadSources(name);
   const frame = parseFrame(src.scene);
   const tilt = frame.pragma.pitch ?? 18;
@@ -426,13 +431,13 @@ export async function icon(name) {
   const from = frame.pragma.center ?? [0, 1, 0];
   const probe = framed(256, from, 64);
   const box = [256, 256, 0, 0];
-  for (const turn of TURNS) {
+  for (const turn of turns) {
     const b = drawn(await renderer.render(probe, { ss: 1, line: 0.5, turn }));
     if (!b) throw new Error('nothing to draw');
     box[0] = Math.min(box[0], b[0]); box[1] = Math.min(box[1], b[1]); box[2] = Math.max(box[2], b[2]); box[3] = Math.max(box[3], b[3]);
   }
   const w = (box[2] - box[0]) / 256, h = (box[3] - box[1]) / 256;
-  const fill = Math.min(0.84 / Math.max(w, h), Math.sqrt(0.56 / (w * h)));
+  const fill = agent ? Math.min(0.96 / Math.max(w, h), Math.sqrt(0.7 / (w * h))) : Math.min(0.84 / Math.max(w, h), Math.sqrt(0.56 / (w * h)));
   const rad = Math.PI / 180, yaw = frame.yaw * rad, pitch = tilt * rad;
   const right = [Math.cos(yaw), 0, -Math.sin(yaw)];
   const up = [-Math.sin(pitch) * Math.sin(yaw), Math.cos(pitch), -Math.sin(pitch) * Math.cos(yaw)];
@@ -440,14 +445,23 @@ export async function icon(name) {
   const center = from.map((c, i) => c + right[i] * dx + up[i] * dy);
   const fine = framed(CELL, center, (fill * CELL) / 4);
   const cv = document.createElement('canvas');
-  cv.width = CELL * TURNS.length;
+  cv.width = CELL * turns.length * (agent ? 2 : 1);
   cv.height = CELL;
   const ctx = cv.getContext('2d', { willReadFrequently: true });
-  for (const [i, turn] of TURNS.entries()) {
-    const img = await renderer.render(fine, { ss: 4, line: CELL / 320, turn });
+  for (const [i, turn] of turns.entries()) {
+    const img = await renderer.render(fine, { ss: 4, line: CELL / (agent ? 220 : 320), turn });
     const d = img.data;
-    for (let p = 0; p < d.length; p += 4) d[p] = d[p + 1] = d[p + 2] = Math.round(0.2126 * d[p] + 0.7152 * d[p + 1] + 0.0722 * d[p + 2]);
+    const eyes = new ImageData(CELL, CELL);
+    for (let p = 0; p < d.length; p += 4) {
+      // EYE is the one saturated colour in a scene, so how blue a pixel is says how much of it is eye.
+      const eye = agent ? Math.max(0, (d[p + 2] - d[p] - 7) / 190) : 0;
+      const of = eye < 0.05 ? 0 : Math.min(1, eye);
+      const [r, g, b] = [d[p] + of * 244, d[p + 1] + of * (245 - 102), d[p + 2] + of * (247 - 197)];
+      d[p] = d[p + 1] = d[p + 2] = Math.min(255, Math.round(0.2126 * r + 0.7152 * g + 0.0722 * b));
+      eyes.data.set([244, 245, 247, Math.round(of * d[p + 3])], p);
+    }
     ctx.putImageData(img, i * CELL, 0);
+    if (agent) ctx.putImageData(eyes, (i + turns.length) * CELL, 0);
   }
   return cv.toDataURL('image/png');
 }
