@@ -344,11 +344,8 @@
   --tint-31: #c28569;
   --tint-light: white;
   --tint-dark: black;
-  --led-red: #ff3b30;
   --led-blue: #2f9bff;
-  --duration-led-red: 1.1s;
-  --duration-led-blue: 0.7s;
-  --bot-building-inset: -10%;
+  --bot-eyes-rest: 0.85;
   --bot-turn: 620ms;
   --bot-wake: 380ms;
   --bot-sheen-angle: 135deg;
