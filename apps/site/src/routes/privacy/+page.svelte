@@ -38,7 +38,7 @@
 <li><strong>Sessions and tokens</strong>: the session that keeps you signed in, and the API and agent tokens you make. We keep only a hash of each.</li>
 </ul>
 <h3 id="collect-content">Your content</h3>
-<p>Everything you and your team put in a workspace: records, files, views, workflows and their runs, chats with the in-app agent and secret fields. It is your content, and we use it only to run the service for you.</p>
+<p>Everything you and your team put in a workspace: records, files, views, workflows and their runs, chats with the in-app agent and secret fields. It is your content, and we use it only to run the service for you, and, where your organization's agreement with Mulholland allows it, to make de-identified data, as <a href="#models">Models we make</a> describes.</p>
 <h3 id="collect-connected">Accounts you connect</h3>
 <p>You can connect accounts you hold at other services so that Archive can read them for you and your workspace. Each person connects their own mail, calendar and files, and their own personal accounts, like their health, money and music, and only an owner connects an organization's accounts, like its accounting or its bank, for the workspace. Archive only reads to keep its copy current. It changes something at a service only when you, or a tool or agent acting as you, asks it to, like sending an email from your Gmail. It asks each service for no more access than that needs, and uses only what you allow on that service's own consent screen.</p>
 <ul>
@@ -88,7 +88,7 @@
 <li>never use it for advertising, never sell it, and never use it to develop, improve or train generalized AI or machine-learning models;</li>
 <li>never let a person read it unless you ask us to and agree, it is needed for security, such as investigating abuse, it is needed to comply with the law, or it is aggregated and anonymized for operations.</li>
 </ul>
-<p>We hold data from Microsoft, Intuit, Oracle and every other service you connect to the same standard.</p>
+<p>We hold data from Microsoft, Intuit, Oracle and every other service you connect to the same standard, with one difference: where a service's terms allow it and your organization's agreement with Mulholland does too, we may de-identify that data as <a href="#models">Models we make</a> describes. We never do that with Google user data.</p>
 
 <h3 id="ynab">YNAB data</h3>
 <p>When you connect YNAB, this is how Archive handles what it gets from the YNAB API.</p>
@@ -107,6 +107,20 @@
 </ul>
 <p class="small">We are not affiliated, associated, or in any way officially connected with YNAB or any of its subsidiaries or affiliates. The official YNAB website can be found at <a href="https://www.ynab.com">https://www.ynab.com</a>. The names YNAB and You Need A Budget, as well as related names, tradenames, marks, trademarks, emblems, and images are registered trademarks of YNAB.</p>
 
+<h3 id="plaid">Plaid data</h3>
+<p>When an owner connects a bank, brokerage or lender through Plaid, this is how Archive handles what it gets from Plaid.</p>
+<ul>
+<li><strong>How it connects</strong>: the owner picks their institution and signs in to it in Plaid's own window, and chooses there which accounts to share. Plaid handles that sign-in under <a href="https://plaid.com/legal/#end-user-privacy-policy">Plaid's End User Privacy Policy</a>. Archive never sees or keeps the password for the institution. Plaid gives Archive an access token for that one login.</li>
+<li><strong>What Archive reads</strong>: the name of the institution, and for each shared account its name, type, the last few digits of its number and its balances; up to two years of transactions, pending ones too, with their dates, amounts, merchants, categories and descriptions; and, where the institution has them, investment holdings and trades, and the rates, payments and due dates of credit cards, student loans and mortgages. Archive does not ask Plaid for full account and routing numbers or for identity details.</li>
+<li><strong>Read only</strong>: Archive never trades, pays, transfers or moves money through Plaid.</li>
+<li><strong>Why</strong>: only so that the people and tools the owner allows can see, search and work with the organization's accounts in Archive, and to keep Archive's copy current when Plaid says something changed.</li>
+<li><strong>Who sees it</strong>: Plaid is an organization connection. Only an owner connects it, and what it syncs is seen by the people the owner allows.</li>
+<li><strong>How it is stored and secured</strong>: the Plaid access token is encrypted with the workspace's own key, which is itself encrypted with a key kept in Google Secret Manager. The copy of the accounts is kept in the workspace's own Postgres database in Google Cloud's us-central1 region, in the United States, encrypted at rest, and reached only over TLS. Postgres roles and row-level security limit it to the people the owner allows. Archive checks Plaid's signature on every message Plaid sends it.</li>
+<li><strong>Who else gets it</strong>: Google Cloud stores it and Cloudflare carries it, to run the service. It goes to Anthropic only when someone asks the in-app agent about it, to an AI app or tool only when someone connects that app to Archive themselves, and to anyone else only when the law requires it. We never sell it, never use it for advertising, and never use it to train AI models.</li>
+<li><strong>How long it is kept</strong>: while the login stays connected. Disconnecting it in Archive removes the login at Plaid, so Plaid stops sharing its data with Archive, and deletes the access token and everything synced through Plaid at once. Google Cloud's automatic database backups can hold it for up to seven more days.</li>
+<li><strong>Deleting on request</strong>: disconnect the login in Archive, or write to <a href="mailto:hello@mulholland.ai">hello@mulholland.ai</a> and we will delete it. To manage what Plaid itself keeps, use <a href="https://my.plaid.com">Plaid Portal</a>.</li>
+</ul>
+
 <h3 id="collect-requests">Requests</h3>
 <p>Google Cloud and Cloudflare record requests to the service, such as your IP address, browser, the time and the address requested, so we can run it, fix problems and protect it.</p>
 <h3 id="collect-site">This site</h3>
@@ -122,14 +136,25 @@
 <li>To store, search and serve your content to the people and tokens your workspace allows.</li>
 <li>To run the in-app agent and your workflows when you use them.</li>
 <li>To keep the service secure, fix problems and answer you when you write to us.</li>
+<li>Where a customer's agreement with Mulholland allows it, to make de-identified data and train our own models with it, as <a href="#models">Models we make</a> describes.</li>
 </ul>
 <p>We do not sell personal information or customer content, and we do not use either for advertising. We share them only with the providers below, as needed to run the service, or when the law requires it.</p>
 
 <h2 id="agent">The in-app agent</h2>
 <p>Archive calls an AI model only when someone in a workspace chats with its agent. The service then sends the conversation to Anthropic's API: the messages, the name and email address of the person chatting, their role and groups, a description of the workspace's tables, and the results of the code the agent runs, which can include any records and file contents that person can see, among them what their connected accounts synced.</p>
-<p>Anthropic processes it to answer and does not use it to train its models. Neither do we: we do not train AI models on your content or on what your connected accounts hold.</p>
+<p>Anthropic processes it to answer and does not use it to train its models. We train our own models only on de-identified data, and only as <a href="#models">Models we make</a> describes.</p>
 <p>The service always uses Mulholland's Anthropic account. Chats are kept in the workspace until they are deleted.</p>
 <p>When you connect your own AI app over MCP or the API, or write a workflow that calls another service, what it reads goes to that provider under your own account with them.</p>
+
+<h2 id="models">Models we make</h2>
+<p>Mulholland makes decision models and fine-tuned language models. Where a workspace belongs to a customer whose <a href="https://mulholland.ai/legal">Master Services Agreement</a> with Mulholland is on version 1.4 or later, we may de-identify information in that workspace and use the de-identified data, alone or combined with de-identified data from other customers and sources, for any lawful purpose, including to develop and train our own models. We may sell, license or otherwise make those models available to others, on their own or as part of our products.</p>
+<ul>
+<li><strong>Which data</strong>: only information we first receive or generate on or after the date the customer first agrees to one of those versions, never earlier information or new information made by reprocessing it. Customers on earlier versions, and workspaces with no such agreement, are not affected. Archive stays open source, and an Archive that you or someone else runs sends Mulholland nothing, so none of its data is used.</li>
+<li><strong>Never used</strong>: data from Google APIs, from YNAB and from Plaid, Apple Health data from the iPhone app, and data from any other connected service whose terms do not allow it. We also never de-identify information about children under 18, or tax return information.</li>
+<li><strong>How</strong>: we de-identify inside the customer's own workspace before combining the result with anything else, and first remove credentials, access tokens, payment-card data, government ID numbers, financial-account numbers and biometric identifiers. Protected health information is de-identified only under HIPAA's expert determination method, or, for structured fields only, its safe harbor method.</li>
+<li><strong>Limits</strong>: we keep and use de-identified data only in de-identified form, and will not try to re-identify it. We do not sell or license the de-identified data itself as a dataset. We never use identifiable customer data to train a model used for another customer, and never let Anthropic or any other outside model provider train its models on customer data or on de-identified data made from it.</li>
+</ul>
+<p>The customer's agreement governs, and Mulholland's <a href="https://mulholland.ai/policies/customer-data">Customer Data Privacy Notice</a> summarizes it.</p>
 
 <h2 id="processors">Who else handles it</h2>
 <p>These providers process information for us to run the service and this site.</p>
