@@ -58,6 +58,12 @@
     }
   }
 
+  function onmousedown(event) {
+    if (event.target === element) return;
+    event.preventDefault();
+    element?.focus();
+  }
+
   let picker = $state();
   let uploading = $state(false);
 
@@ -72,7 +78,8 @@
   }
 </script>
 
-<form class={['composer', size, { focused }]} onsubmit={(e) => { e.preventDefault(); send(); }}>
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<form class={['composer', size, { focused }]} {onmousedown} onsubmit={(e) => { e.preventDefault(); send(); }}>
   {#if attachments.length}
     <div class="atts">
       {#each attachments as a (a.id)}
@@ -175,6 +182,10 @@
     display: flex;
     align-items: center;
     gap: var(--space-1);
+  }
+
+  .bar :global(button:disabled) {
+    pointer-events: none;
   }
 
   .spacer {
