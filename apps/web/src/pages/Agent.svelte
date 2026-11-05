@@ -52,7 +52,6 @@
     toBottom(true);
   }
 
-  // Scrolled to the top, the turns before those on screen come in above, where you were staying where it was.
   async function onscroll() {
     if (scroller.scrollTop > 160) return;
     const reading = loadEarlier(id);
@@ -82,7 +81,6 @@
     if (element && !document.activeElement?.matches('input, textarea')) element.focus();
   });
 
-  // The canvas is beside a chat: leaving the chat closes it.
   onDestroy(closeFile);
 
   onMount(() => {

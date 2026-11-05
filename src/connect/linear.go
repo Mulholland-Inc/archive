@@ -2,12 +2,6 @@ package connect
 
 import "time"
 
-// Linear, through its hosted MCP server: issues, projects, cycles, comments and documents. Its authorization
-// server registers any client (RFC 7591). No tool is documented to name the user, so the account is Linear.
-//
-// It syncs every issue into work_item, archived ones too, its team as its type, through list_issues: listed whole the
-// first time and a week after, and in between those updated since the sync before. Linear documents no tool's arguments
-// or answers, so a listing deletes nothing: an issue deleted there stays here. Its actions are the server's tools.
 func init() {
 	Register(&Connector{ID: "linear", Name: "Linear", Integration: true, MCP: "https://mcp.linear.app/mcp", Busy: ToolBusy,
 		Info: Info{By: "Linear", Description: "Read issues, and search and work with issues, projects and cycles", Category: CatProjects, Icon: IconList, Scopes: []string{"Read and write issues as you"}},
@@ -24,7 +18,6 @@ func init() {
 				People: map[string]SQL{"assignee": "data#>>'{assignee,email}'"}}}}})
 }
 
-// linearName is what key names: an object's name, or the text itself.
 func linearName(key string) SQL {
 	return SQL("CASE jsonb_typeof(data->'" + key + "') WHEN 'object' THEN data#>>'{" + key + ",name}' ELSE data->>'" + key + "' END")
 }

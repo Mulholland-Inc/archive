@@ -6,19 +6,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Google Calendar, with ARCHIVE_GOOGLE like Gmail: the client's authorized redirect URIs list
-// <API>/connect/gcal/callback, and its consent screen asks for calendar, to read every calendar and make, change
-// and delete events: a sensitive scope, not a restricted one like Gmail's, so Google verifies it without a
-// security assessment.
-//
-// It syncs every event of each calendar on the account's list, shared and hidden ones too, into calendar_event, the past and the
-// future, a series as one event with its rule and each occurrence that differs from it as another: listed whole
-// the first time, and then each calendar's sync token, which says what changed, deleted too. Holidays and the
-// birthdays of contacts are left out.
-//
-// A calendar pushes through events.watch, a channel of Archive's own id that pushes to Archive with its token, for a
-// week less an hour: the first sync a day after replaces them all, and stops the ones before. A push says its channel
-// in X-Goog-Channel-ID and its token in X-Goog-Channel-Token; the sync push of a new channel says nothing changed.
 func init() {
 	Register(&Connector{
 		ID: "gcal", Name: "Google Calendar", Env: "ARCHIVE_GOOGLE",
@@ -115,8 +102,6 @@ const (
 )
 
 var (
-	// gcalCalendars are every calendar of the account's list, those it only reads and those it hid too, but holidays and
-	// the birthdays of contacts, which are Google's.
 	gcalCalendars = &Parts{Req: Req{URL: "/users/me/calendarList", Query: Q{"maxResults": "250", "showHidden": "true", "fields": "nextPageToken,items(id,summary,summaryOverride)", "pageToken": "{page}"}},
 		Items: "items", Page: Cursor{At: "nextPageToken"}, Skip: []Test{{At: "id", Re: "#(holiday|contacts)@"}}, Vals: Obj{"name": "{summaryOverride;summary}"}}
 	gcalNotify   = Step{As: "notify", In: "all"}
@@ -141,7 +126,6 @@ type (
 		Limit    int    `json:"limit,omitempty" jsonschema:"At most this many, 1 to 250; 50 when left out"`
 		Page     string `json:"page,omitempty" jsonschema:"The next of the call before, for the events after it"`
 	}
-	// gcalNew is an event to make, or what to change of one.
 	gcalNew struct {
 		Calendar    string   `json:"calendar,omitempty" jsonschema:"The calendar's id, from calendars; the primary one when left out"`
 		Summary     string   `json:"summary,omitempty" jsonschema:"The event's title"`

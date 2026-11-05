@@ -41,7 +41,6 @@
     background: var(--color-fill);
   }
 
-  /* A line of its own in a list of files, as a row of a table is. */
   .row {
     display: flex;
     width: 100%;

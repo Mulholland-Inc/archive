@@ -6,20 +6,12 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Google Drive, with ARCHIVE_GOOGLE like Gmail: the client's authorized redirect URIs list
-// <API>/connect/gdrive/callback, and its consent screen asks for drive, a restricted scope, to read every file
-// and to make, change and trash them; it never deletes one for good.
-// It syncs every file the account can see into archive.file from Drive's changes feed, which pushes too: changes.watch, a channel of Archive's own id that pushes to Archive with its
-// token, for a week at most; the first sync a day after replaces it, and stops the one before. A push says its
-// channel in X-Goog-Channel-ID and its token in X-Goog-Channel-Token; the sync push of a new channel says nothing changed.
 func init() {
 	Register(&Connector{
 		ID: "gdrive", Name: "Google Drive", Env: "ARCHIVE_GOOGLE",
 		Info: Info{By: "Google", Description: "Search and read your files, and make or change them when you ask", Category: CatFiles, Icon: IconDrive,
 			Scopes: []string{"Read your files and documents", "Make, change and trash files when you ask"}},
-		API: "https://www.googleapis.com/drive/v3",
-		// Drive allows each user 325,000 quota units a minute and a project 1,000,000, and a download, the dearest read, costs
-		// 200: 20 requests a second, every account's together, stay under both.
+		API:  "https://www.googleapis.com/drive/v3",
 		Pace: 50 * time.Millisecond,
 		Busy: []string{"Quota exceeded", "rateLimitExceeded", "userRateLimitExceeded", "Rate Limit Exceeded"},
 		Endpoint: oauth2.Endpoint{AuthURL: "https://accounts.google.com/o/oauth2/v2/auth", TokenURL: "https://oauth2.googleapis.com/token",
@@ -115,7 +107,6 @@ func init() {
 			Hydrate: []Hydrate{
 				Fetch{If: Test{At: "driveId"}, Once: "{driveId}", Soft: true, Req: Req{URL: "/drives/{driveId}?fields=name"}, As: "shared"},
 			},
-			// Google exports at most 10 MB of a document, and has no bytes of what it makes that exports to nothing, like a form.
 			Content: []Content{
 				{If: Test{At: "mimeType", Is: driveDoc}, Req: Req{URL: "/files/{source/id}/export", Query: Q{"mimeType": driveDOCX}}, Too: driveTooBig},
 				{If: Test{At: "mimeType", Is: driveSheet}, Req: Req{URL: "/files/{source/id}/export", Query: Q{"mimeType": driveXLSX}}, Too: driveTooBig},
@@ -127,8 +118,6 @@ func init() {
 				"folder, owner, who changed it last and when, and a copy of its bytes up to 1 GB, with its words: a Google Doc, Sheet or Slides deck as the Word, Excel or " +
 				"PowerPoint file it exports to, up to the 10 MB Google exports. A listing Drive says may have left files out deletes none. " +
 				"Listed whole the first time, 100 a page, and then Drive's changes since.",
-			// A file's folder is its first parent, and its owner the first of them, or for a file of a shared drive, which has none, nobody.
-			// Google's own documents are kept as the Office files they export to, named so.
 			To: Map{Table: "file",
 				Cols: map[string]SQL{"kind": "CASE WHEN data->>'mimeType' = 'application/vnd.google-apps.folder' THEN 'folder' ELSE 'file' END",
 					"name": "CASE data->>'mimeType' WHEN '" + driveDoc + "' THEN regexp_replace(data->>'name', '(\\.docx)?$', '.docx', 'i') WHEN '" + driveSheet + "' THEN regexp_replace(data->>'name', '(\\.xlsx)?$', '.xlsx', 'i') " +
@@ -146,8 +135,7 @@ func init() {
 
 const (
 	driveFields = "id,name,mimeType,modifiedTime,size,webViewLink,owners(displayName,emailAddress)"
-	// driveSync is what the files stream reads of a file.
-	driveSync = "id,name,mimeType,size,md5Checksum,webViewLink,parents,driveId,ownedByMe,createdTime,modifiedTime,trashed," +
+	driveSync   = "id,name,mimeType,size,md5Checksum,webViewLink,parents,driveId,ownedByMe,createdTime,modifiedTime,trashed," +
 		"owners(displayName,emailAddress),lastModifyingUser(displayName,emailAddress)"
 	driveUpload = "https://www.googleapis.com/upload/drive/v3"
 	driveDOCX   = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"

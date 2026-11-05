@@ -6,49 +6,24 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Shopify, a store's admin through its GraphQL Admin API. It signs in as Archive's own Shopify app: a person names
-// their store's myshopify.com address, and Shopify asks its owner to install the app there, with OAuth's
-// authorization code grant on the store's own host, whose callback Shopify signs with an hmac of its query. The
-// token it trades the code for expires in an hour and comes with a refresh token, which a refresh replaces, as
-// Shopify has every public app's since April 2026. Disconnecting uninstalls the app.
-//
-// Before Shopify's sign-in, a store pasted the Admin API token of a custom app it made in its own admin, which
-// Shopify stopped making new ones of on January 1, 2026: shopify_token below still connects with one, and a store
-// connected so before keeps working as this one, its Was.
-//
-// It syncs the store's orders, with their lines, into commerce_order and commerce_line, its products into
-// commerce_product, and its customers into crm_contact, the person of their email. Each is listed whole the
-// first time and a week after, which deletes what is gone, and in between searched for what changed since the
-// sync before. Shopify pushes to POST /push/shopify the topics its app's configuration subscribes: app/uninstalled
-// starts a sync, which finds the grant gone, and the privacy topics it requires of every app forget what they name:
-// customers/redact a customer and their orders, shop/redact the store, 48 hours after it uninstalled the app; a
-// customers/data_request is only heard, as the store has all Archive keeps of the customer in its archive.
-//
-// Its actions read with any GraphQL query, a mutation refused, and write only through the actions that say so:
-// a product, its variants' prices, a stock count, draft orders, an order's note and tags, tags of anything that
-// has them, and a customer.
 func init() {
 	Register(&Connector{
 		ID: "shopify", Name: "Shopify", Integration: true,
 		Info: Info{By: "Shopify", Description: "Read the store’s orders, products and customers, and change them when asked", Category: CatCommerce, Icon: IconCard,
 			Scopes: []string{"Read orders, products, customers and inventory", "Change products, prices, stock, draft orders, orders’ notes and tags, and customers when asked"}},
-		// The app's client, whose host is only where its variable names it: each store signs in on its own.
 		Host:     "https://admin.shopify.com",
 		Endpoint: oauth2.Endpoint{AuthURL: "https://{meta/shop}/admin/oauth/authorize", TokenURL: "https://{meta/shop}/admin/oauth/access_token", AuthStyle: oauth2.AuthStyleInParams},
-		// write_ scopes have the read_ ones in them, and Shopify grants only those. Orders over 60 days old need
-		// read_all_orders, which Shopify approves an app for apart: asked for once the variable has ?all_orders=1.
-		Scopes: []string{"write_products", "write_inventory", "write_orders", "write_draft_orders", "write_customers"},
-		Extra:  map[string][]string{"all_orders": {"read_all_orders"}},
-		Comma:  true,
-		Trades: map[string]string{"expiring": "1"},
+		Scopes:   []string{"write_products", "write_inventory", "write_orders", "write_draft_orders", "write_customers"},
+		Extra:    map[string][]string{"all_orders": {"read_all_orders"}},
+		Comma:    true,
+		Trades:   map[string]string{"expiring": "1"},
 		Ask: &Key{Name: "shop", Label: "Store address", Help: "Your store's myshopify.com address, like acme.myshopify.com",
 			Find: `^(?:https?://)?([a-z0-9][a-z0-9-]*)(?:\.myshopify\.com)?/?(?:admin\b.*)?$`, As: "{it}.myshopify.com"},
 		Signed: "hmac",
 		Was:    "shopify_token",
 		Options: "?all_orders=1 asks for read_all_orders too, for orders over 60 days old, once Shopify has approved the app for it. " +
 			"The app's configuration subscribes app/uninstalled and the privacy topics customers/data_request, customers/redact and shop/redact to <API>/push/shopify",
-		Sign: map[string]string{"X-Shopify-Access-Token": "{token}"},
-		// Uninstalling the app ends its grant.
+		Sign:     map[string]string{"X-Shopify-Access-Token": "{token}"},
 		RevokeBy: &Req{Method: DELETE, URL: "https://{meta/shop}/admin/api_permissions/current.json", Header: map[string][]string{"X-Shopify-Access-Token": {"{access}"}}},
 		API:      shopifyAPI,
 		Let:      []Step{{As: "shop", In: "{meta/shop}"}},
@@ -70,8 +45,6 @@ func init() {
 		Sync:    shopifySync(),
 	})
 
-	// The token of a custom app a store made in its own admin before January 1, 2026, pasted in with the store's
-	// address, which lasts until the store uninstalls the app. It does what that app's scopes let it.
 	Register(&Connector{
 		ID: "shopify_token", Name: "Shopify (app token)", Integration: true,
 		Info: Info{By: "Shopify", Description: "Read the store’s orders, products and customers with a custom app the store made before 2026", Category: CatCommerce, Icon: IconCard,
@@ -96,7 +69,6 @@ func init() {
 }
 
 const (
-	// shopifyAPI is the store, in the version of the Admin API the connector reads.
 	shopifyAPI = "https://{+shop}/admin/api/2026-10"
 
 	shopifyMoney   = "shopMoney { amount currencyCode }"
@@ -119,14 +91,11 @@ var (
 	shopifyList   = Req{Method: POST, Read: true, URL: "/graphql.json", Body: Obj{"query": "{what}", "variables": Obj{"first": "{first}", "after": "{page}"}}}
 	shopifyChange = SinceTime{Req: Req{Method: POST, Read: true, URL: "/graphql.json",
 		Body: Obj{"query": "{since_query}", "variables": Obj{"first": "{first}", "after": "{page}", "query": "updated_at:>'{since}'"}}}}
-	shopifyDeny = []Deny{{Status: []int{400}, Says: []string{"access denied"}, Why: "the store's app may not read {field}; give it the scope read_{field}"}}
-	// Shopify answers errors with a 200, and running out of the store's query budget is one the sync tries again later.
+	shopifyDeny   = []Deny{{Status: []int{400}, Says: []string{"access denied"}, Why: "the store's app may not read {field}; give it the scope read_{field}"}}
 	shopifyErrors = &Errors{At: "errors/0/message", Code: "errors/0/extensions/code", Busy: []string{"THROTTLED"}}
 	shopifyWho    = &Who{Req: Req{Method: POST, Read: true, URL: "/graphql.json", Body: Obj{"query": "{ shop { name myshopifyDomain } }"}}, Names: []Path{"data/shop/myshopifyDomain", "data/shop/name"}}
 )
 
-// shopifyMutation is the steps of an action that sends mutation, named name, with vars, failing with the first
-// of the userErrors Shopify answers it with in a 200.
 func shopifyMutation(name, mutation string, vars Obj) []Step {
 	return []Step{
 		{As: "got", Req: Req{Method: POST, URL: "/graphql.json", Body: Obj{"query": mutation, "variables": vars}}},
@@ -134,7 +103,6 @@ func shopifyMutation(name, mutation string, vars Obj) []Step {
 	}
 }
 
-// shopifyActions are a new copy of the actions, for each connector to compile its own.
 func shopifyActions() map[string]*Action {
 	return map[string]*Action{
 		"graphql": Call[shopifyQuery, any](Plan{
@@ -214,7 +182,6 @@ func shopifyActions() map[string]*Action {
 	}
 }
 
-// shopifySync is a new copy of the streams, for each connector to compile its own.
 func shopifySync() []*Sync {
 	return []*Sync{
 		{Name: "products", Gap: time.Second, Req: shopifyList, Items: "data/products/nodes", Updated: "updatedAt", Page: Cursor{At: "data/products/pageInfo/endCursor", More: "data/products/pageInfo/hasNextPage"},
@@ -235,8 +202,6 @@ func shopifySync() []*Sync {
 					"phone": "data#>>'{defaultPhoneNumber,phoneNumber}'", "stage": "'customer'", "city": "data#>>'{defaultAddress,city}'", "state": "data#>>'{defaultAddress,provinceCode}'",
 					"country": "data#>>'{defaultAddress,countryCodeV2}'", "made_at": "archive.sync_at(data->>'createdAt')", "edited_at": "archive.sync_at(data->>'updatedAt')"},
 				People: map[string]SQL{"person": "data#>>'{defaultEmailAddress,emailAddress}'"}}},
-		// Without read_all_orders, Shopify lists only the last 60 days of orders: such a listing is no listing of
-		// them all, and deletes nothing. A listing's every page says which scopes the app has, so that a page never asks apart.
 		{Name: "orders", Gap: time.Second, Req: shopifyList, Items: "data/orders/nodes", Updated: "updatedAt", Page: Cursor{At: "data/orders/pageInfo/endCursor", More: "data/orders/pageInfo/hasNextPage"},
 			Change: shopifyChange, Deny: shopifyDeny, Short: Test{At: "data/currentAppInstallation/accessScopes/*/handle", Is: "read_all_orders", Off: true},
 			Vars: Obj{"first": 5, "what": "query($first: Int!, $after: String) { orders(first: $first, after: $after, sortKey: ID) { nodes { " + shopifyOrder + " } pageInfo { hasNextPage endCursor } } currentAppInstallation { accessScopes { handle } } }",

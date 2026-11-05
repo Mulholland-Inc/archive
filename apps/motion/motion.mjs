@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-// The Mac side of a session: rents and deletes the pod, syncs source, asks serve.mjs to render, downloads results.
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -40,7 +38,6 @@ function sshArgs(s) {
   return ['-p', String(s.port), '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'LogLevel=ERROR', '-o', 'ConnectTimeout=8', '-o', 'ControlMaster=auto', '-o', `ControlPath=/tmp/motion-${s.id}.sock`, '-o', 'ControlPersist=1800', `root@${s.host}`];
 }
 
-// Runs a script on the pod over stdin, so nothing needs quoting. Output streams through when `show` is set.
 function remote(s, script, { show = false } = {}) {
   const r = spawnSync('ssh', [...sshArgs(s), 'bash -s'], { input: script, encoding: 'utf8', stdio: ['pipe', show ? 'inherit' : 'pipe', show ? 'inherit' : 'pipe'] });
   if (r.status !== 0) throw new Error(`Remote script failed (${r.status}): ${(r.stderr ?? '').trim().slice(-800)}`);
@@ -111,7 +108,6 @@ for i in $(seq 1 100); do curl -s -o /dev/null http://127.0.0.1:7000/ping && exi
 tail -20 /tmp/serve.log; exit 1
 `;
 
-// Streams NDJSON from serve.mjs, printing progress; returns the final `done` message.
 function ask(s, path, onLine) {
   return new Promise((res, rej) => {
     const p = spawn('ssh', [...sshArgs(s), `curl -sN -m 900 "http://127.0.0.1:7000${path}"`], { stdio: ['ignore', 'pipe', 'inherit'] });
@@ -149,7 +145,6 @@ async function up() {
     let t, s;
     const refused = [];
     const script = `${process.env.MOTION_CPU ? 'export MOTION_CPU=1\n' : ''}${readFileSync(join(dir, 'setup.sh'), 'utf8')}`;
-    // Takes the first type with capacity. A host refusing NVENC is deleted and its GPU type dropped; capacity shifts, so retry for 5 minutes.
     let left = [...GPUS];
     const deadline = Date.now() + 300000;
     search: while (left.length && Date.now() < deadline) {

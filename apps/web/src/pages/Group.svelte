@@ -22,9 +22,6 @@
   import { renameGroupPrompt, deleteGroupConfirm, usesText } from '../lib/menus.js';
   import { go } from '../lib/router.svelte.js';
 
-  // A group's page: its name and description, which an owner changes, who is in it, and where it is used, the
-  // tables whose rows have it as their access and the integrations narrowed to it. While it is used it cannot
-  // be deleted, and the page says why.
   let { id } = $props();
 
   members.use();

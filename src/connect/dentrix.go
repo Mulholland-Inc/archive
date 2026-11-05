@@ -9,26 +9,6 @@ import (
 	"time"
 )
 
-// Dentrix, Henry Schein One's dental practice management system, on the practice's server (G-series) or in the cloud
-// (Ascend), read only through NexHealth's Synchronizer API, which reads Dentrix for its developers without Henry
-// Schein One's own developer program. It is a key connector with a key of the server's own: ARCHIVE_DENTRIX is
-// https://<API key>@nexhealth.info, Mulholland's NexHealth API key, which POST /authenticates trades for a bearer
-// token that lasts an hour, every call sending Nex-Api-Version v3.0.0. Mulholland adds each practice in NexHealth's
-// developer portal, and the practice installs NexHealth's Synchronizer on its Dentrix server (or, on Ascend, gives
-// NexHealth a user); NexHealth names it by a subdomain and a location id.
-//
-// One API key reads every practice Mulholland added, so a practice connects with an access code Mulholland gives it:
-// <subdomain>/<location id>/<signature>, the signature the first 16 hex digits of the HMAC-SHA256 of
-// <subdomain>/<location id> keyed with the API key, which connecting checks. Every request then goes to that
-// subdomain and location, whatever it asked.
-//
-// What it syncs is health information under the practice's agreement with Mulholland, and NexHealth's: its
-// providers, patients, appointments, procedures and payments, into the dental tables. An owner should narrow the
-// connection to the group that may see them. NexHealth lists up to 1,000 a page, by cursor, and lists what changed
-// since a time with updated_since: a stream asks from the newest updated_at it has seen, NexHealth's clock, not
-// Archive's. Each is listed whole the first time and a week after, which deletes what is gone; providers, which are
-// few, each sync. Appointment times are the practice's local ones, by the time zone NexHealth gives each; edited_at
-// is NexHealth's, in UTC. NexHealth takes 8 procedure listings a second, so requests go at most that fast.
 func init() {
 	Register(&Connector{
 		ID: "dentrix", Name: "Dentrix", Integration: true, Env: "ARCHIVE_DENTRIX", Host: "https://nexhealth.info",
@@ -114,23 +94,19 @@ func init() {
 
 const (
 	dxVersion = "v3.0.0"
-	// dxStart is before any practice's records, for listings NexHealth will not give without a time.
-	dxStart  = "1990-01-01T00:00:00Z"
-	dxPaths  = `^/(patients|providers|appointments|procedures|payments|charges|adjustments|claims|insurance_plans|insurance_coverages|treatment_plans|patient_recalls|appointment_types|operatories|payment_types|adjustment_types|working_hours)(/[0-9]+)?$`
-	dxEdited = SQL("archive.sync_at(data->>'updated_at') AT TIME ZONE 'UTC'")
+	dxStart   = "1990-01-01T00:00:00Z"
+	dxPaths   = `^/(patients|providers|appointments|procedures|payments|charges|adjustments|claims|insurance_plans|insurance_coverages|treatment_plans|patient_recalls|appointment_types|operatories|payment_types|adjustment_types|working_hours)(/[0-9]+)?$`
+	dxEdited  = SQL("archive.sync_at(data->>'updated_at') AT TIME ZONE 'UTC'")
 )
 
 var (
-	dxPage = Cursor{At: "page_info/end_cursor", More: "page_info/has_next_page"}
-	dxDeny = []Deny{{Status: []int{403}, Why: "NexHealth does not let Archive read {stream} of this Dentrix: {message}"}}
-	// dxBoth lists active and inactive apart, as NexHealth lists only one or the other.
+	dxPage     = Cursor{At: "page_info/end_cursor", More: "page_info/has_next_page"}
+	dxDeny     = []Deny{{Status: []int{403}, Why: "NexHealth does not let Archive read {stream} of this Dentrix: {message}"}}
 	dxBoth     = &Parts{Fixed: []Obj{{"id": "false"}, {"id": "true"}}}
 	dxInactive = Q{"inactive": "{part}"}
-	// dxEver is every appointment's time, which NexHealth asks for.
-	dxEver = Q{"start": dxStart, "end": "2100-01-01T00:00:00Z"}
+	dxEver     = Q{"start": dxStart, "end": "2100-01-01T00:00:00Z"}
 )
 
-// dxAt is a listing's query: qs, 1,000 a page, from the cursor.
 func dxAt(qs ...Q) Q {
 	q := Q{"per_page": "1000", "end_cursor": "{page}"}
 	for _, x := range qs {
@@ -141,8 +117,6 @@ func dxAt(qs ...Q) Q {
 	return q
 }
 
-// dxLocal is the time at key in the practice's own clock, by the record's time zone when it has one Postgres knows,
-// else as NexHealth wrote it.
 func dxLocal(key string) SQL {
 	return SQL("CASE WHEN data->>'timezone' <> '' AND pg_input_is_valid('2000-01-01 00:00 ' || (data->>'timezone'), 'timestamptz') " +
 		"THEN archive.sync_at(data->>'" + key + "') AT TIME ZONE (data->>'timezone') " +
@@ -154,7 +128,6 @@ type dxGet struct {
 	Query string `json:"query,omitempty" jsonschema:"Its query, like patient_id=12&per_page=100"`
 }
 
-// dxSigned passes an access code the server's API key signed, and refuses any other.
 var dxSigned = &Codec{"dentrix_signed", func(v any) (any, error) {
 	key, parts := text(pick(v, "secret")), strings.Split(strings.TrimSpace(text(pick(v, "code"))), "/")
 	if len(parts) == 3 && parts[0] != "" && parts[1] != "" && key != "" {

@@ -1,6 +1,3 @@
-// The HTTP API. On app.<domain> it is api.<domain>; anywhere else (vite dev on :5173) it is the same origin,
-// which vite proxies to `archive serve` on :8080. The session is the API host's own cookie, and the current
-// workspace goes along in the Archive-Workspace header, since one API host serves every workspace.
 
 export class Unauthorized extends Error {}
 
@@ -34,8 +31,6 @@ export function local(key, fallback) {
 
 export const setLocal = (key, value) => store(key, JSON.stringify(value));
 
-// Composer drafts, deflated and kept at one character per byte, as near to raw bytes as localStorage gets.
-// Deflating is async, so everything runs in order: coming straight back to a chat finds the last keystroke.
 
 const DRAFT = 'draft:';
 let drafts = Promise.resolve();
@@ -111,9 +106,7 @@ export async function upload(file, access, parent) {
 
 export const fileURL = (id, part = 'content') => `${API}/api/files/${id}/${part}`;
 
-// An <img> or a link can't send Archive-Workspace, so file bytes are fetched with it and shown from a blob.
 const blobs = new Map();
-// Drop the cached blobs whose path starts with prefix, in every workspace, for a file whose bytes moved.
 export function forgetBlobs(prefix) {
   for (const [key, p] of blobs) {
     if (!key.slice(key.indexOf(':') + 1).startsWith(prefix)) continue;
@@ -138,8 +131,6 @@ export async function signOut() {
   clearDrafts();
 }
 
-// Passkeys: one per device, discoverable, so sign-in needs no email. The app remembers per user whether it
-// asked to add one on this device, and which users have one here, so a returning device offers it first.
 
 export const passkeys = typeof PublicKeyCredential !== 'undefined';
 

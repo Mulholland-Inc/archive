@@ -88,8 +88,6 @@ type Person struct {
 	Groups []uuid.UUID `json:"groups"`
 }
 
-// Token is an API token, or, with App, an MCP client's grant (mcp.go), named for the client; a grant's
-// ExpiresAt is when its refresh token lapses unless the client uses it.
 type Token struct {
 	ID        uuid.UUID  `json:"id"`
 	Name      string     `json:"name"`
@@ -227,8 +225,6 @@ func (a *Archive) AddUser(ctx context.Context, email, name, role string) (*User,
 	return a.joined(ctx, email, name, first)
 }
 
-// joined adds the member with the email to the workspace's users; the first member of a workspace while this
-// Archive has no admin, as on a new install, becomes its admin.
 func (a *Archive) joined(ctx context.Context, email, name string, first bool) (*User, error) {
 	ctx = context.WithoutCancel(ctx)
 	hq, name := a.hub.q(), strings.TrimSpace(name)
@@ -287,7 +283,6 @@ func (a *Archive) syncMembers(ctx context.Context, removals bool) error {
 		in[u.Email] = true
 		emails, names = append(emails, u.Email), append(names, u.Name)
 	}
-	// A member is named as they sign in, unless an owner named them otherwise.
 	if err := a.st.System(ctx, func(ctx context.Context) error {
 		return a.st.db(ctx).NameMembers(ctx, emails, names)
 	}); err != nil {
@@ -421,15 +416,12 @@ func (a *Archive) CreateToken(ctx context.Context, name string, ttl time.Duratio
 	})
 }
 
-// sealToken is an API token's secret sealed with the server's key, for TokenSecret to open again.
 func (a *Archive) sealToken(id uuid.UUID, secret string) []byte {
 	nonce := make([]byte, a.hub.aead.NonceSize())
 	rand.Read(nonce)
 	return a.hub.aead.Seal(nonce, nonce, []byte(secret), []byte("token "+id.String()))
 }
 
-// TokenSecret is the secret of the caller's API token id, so they can copy it whenever they need it; a token
-// with no secret kept is ErrNotFound.
 func (a *Archive) TokenSecret(ctx context.Context, id uuid.UUID) (string, error) {
 	ac, err := authUser(ctx)
 	if err != nil {
@@ -560,8 +552,7 @@ type signinState struct {
 	Verifier string `json:"v"`
 	Bind     string `json:"b"`
 	Exp      int64  `json:"x"`
-	// Next is the app's path to come back to, like an MCP client's /authorize; its home if none.
-	Next string `json:"t,omitempty"`
+	Next     string `json:"t,omitempty"`
 }
 
 type signinUser struct {
@@ -640,7 +631,6 @@ func (s *signin) handler() http.Handler {
 		if ac.Role != ac.UserRole {
 			m.Role = "viewer"
 		}
-		// Opening the workspace catches up the syncs of whoever opens it.
 		a.syncCatchUp(r.Context(), m.ID)
 		rows, err := h.q().UserWorkspaces(r.Context(), ac.UserID)
 		all := []Workspace{}
@@ -649,7 +639,6 @@ func (s *signin) handler() http.Handler {
 				all = append(all, workspaceOut(x))
 			}
 		}
-		// admin says whether they may make and delete workspaces (Hub.admin).
 		admin := err == nil && h.admin(r.Context()) == nil
 		return ok(map[string]any{"actor": ac, "role": m.Role, "groups": m.Groups, "workspace": a.ws.ID.String(), "workspaces": all, "admin": admin}, err)
 	})
@@ -1080,8 +1069,6 @@ func (s *signin) oidcCallback(r *http.Request) (*User, error) {
 	return u, err
 }
 
-// signinNext is next if it is a path of the app's own to come back to after signing in, and "" if not: never
-// another site, as //evil.example or /\evil.example would be.
 func signinNext(next string) string {
 	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || strings.ContainsAny(next, "\\\r\n") || len(next) > 4096 {
 		return ""

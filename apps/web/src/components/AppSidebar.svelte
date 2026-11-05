@@ -26,7 +26,6 @@
 
   const running = $derived(ws().workflows.filter((w) => w.runs[0] && (w.runs[0].status === 'running' || w.runs[0].status === 'waiting')).length);
   const here = $derived(route.parts[0] === 'agent' ? route.parts[1] : route.path === '/' ? lastAgent()?.id : null);
-  // Views are the archive's pages: Postgres views, each drawn the way its comment says.
   const views = $derived((ws().schema ?? []).filter((t) => t.kind === 'view'));
 
   let creating = $state(false);

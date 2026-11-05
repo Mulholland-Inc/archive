@@ -30,17 +30,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Connections: the rows of archive.connection, each one of a member's own accounts that a connector of the
-// connect package connected. This is the routes and the rows; connect has the connectors and OAuth.
-//
-// GET /connect/<id> sends the browser to the provider with a state naming the workspace, the user and their
-// member, sealed with ARCHIVE_SECRET_KEY; for an MCP connector it first registers Archive's own client at its
-// authorization server, once for every workspace, and keeps it in archive.oauth_client of the main database.
-// Its callback, GET /connect/<id>/callback, checks the same person is signed in, keeps the grant's refresh
-// token sealed with the workspace key, and sends the browser back to the connector in the app. Only Go writes
-// the rows; a member reads their own. connectionAccess is how code that uses an account (archive.action,
-// below) gets an access token for it.
-
 func (h *Hub) connector(id string) (*connect.Provider, error) {
 	p, err := h.connect.Get(id)
 	if err != nil {
@@ -49,9 +38,6 @@ func (h *Hub) connector(id string) (*connect.Provider, error) {
 	return p, nil
 }
 
-// provider is the connector id with its OAuth client: an API connector's from its variable, and an MCP
-// connector's from archive.oauth_client. With register, an MCP connector without one, or without one that
-// still fits, registers one now; a process that registered at the same time keeps the one that was first.
 func (h *Hub) provider(ctx context.Context, id string, register bool) (*connect.Provider, error) {
 	p, err := h.connector(id)
 	if err != nil || p.MCP == "" {
@@ -91,8 +77,6 @@ func (h *Hub) provider(ctx context.Context, id string, register bool) (*connect.
 	return p.Registered(r), nil
 }
 
-// forgetClient drops p's client from archive.oauth_client when its authorization server no longer knows it, so
-// the next connect registers again; one another process registered since stays.
 func (h *Hub) forgetClient(ctx context.Context, p *connect.Provider) {
 	if sealed, err := h.q().OAuthClient(ctx, p.ID); err == nil {
 		if r, err := connect.OpenClient(h.aead, p.ID, sealed); err == nil && r.ClientID == p.ClientID() {
@@ -101,19 +85,8 @@ func (h *Hub) forgetClient(ctx context.Context, p *connect.Provider) {
 	}
 }
 
-// connectRedirect is the provider's redirect URI for connector id.
 func (h *Hub) connectRedirect(id string) string { return h.api + "/connect/" + id + "/callback" }
 
-// connectRoutes are /connect, like sign-in's /auth/oidc: GET /connect/<id> starts connecting one and sends the
-// browser to the provider, and the provider sends it back to GET /connect/<id>/callback. A navigation sends no
-// Archive-Workspace header, so the start takes the workspace from ?workspace= and the callback from its state.
-// GET /connect lists the connectors and your connections, GET /connect/mine your own in every archive you are
-// in, DELETE /connect/<connection id> disconnects one, and
-// POST /connect/<connection id>/sync asks for its sync now (below), and PUT /connect/<connection id>/access
-// narrows an integration to a group. A key connector, which has no sign-in, connects with POST
-// /connect/<id>/keys and the keys it asks for, { keys: { <name>: <value> } }; one whose keys come from its
-// provider's widget, like Plaid Link, first gets what opens it from POST /connect/<id>/link, { token }. A person connects, disconnects and syncs their own connections; only an
-// owner, the archive's integrations.
 func (h *Hub) connectRoutes(mux *http.ServeMux) {
 	authed := func(pattern string, f func(a *Archive, w http.ResponseWriter, r *http.Request)) {
 		mux.Handle(pattern, h.httpAuth(func(a *Archive) http.Handler {
@@ -186,8 +159,6 @@ func (h *Hub) connectRoutes(mux *http.ServeMux) {
 	})
 }
 
-// connectStart sends the browser to consent to the connector in the path, for whoever is signed in, or back
-// to the connector in the app with ?error= when an MCP connector's server could not be set up.
 func (a *Archive) connectStart(w http.ResponseWriter, r *http.Request) {
 	ac, err := authUser(r.Context())
 	var p *connect.Provider
@@ -207,7 +178,6 @@ func (a *Archive) connectStart(w http.ResponseWriter, r *http.Request) {
 	if err == nil && !p.Ready() {
 		err = fmt.Errorf("%s is not set up on this server; it needs %s", p.Name, p.Env)
 	}
-	// A connector whose sign-in is on the account's own host, like a Shopify store's, is told which first.
 	var asked map[string]string
 	if err == nil && p.Ask != nil {
 		asked, err = p.AskOf(r.URL.Query().Get(p.Ask.Name))
@@ -225,8 +195,6 @@ func (a *Archive) connectStart(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, to, http.StatusFound)
 }
 
-// connectFinish keeps the account the provider came back for, when the person who started is the one signed
-// in, and sends the browser to the connector in the app, with ?error= when it could not.
 func (a *Archive) connectFinish(w http.ResponseWriter, r *http.Request, st connect.State) {
 	ac, err := authUser(r.Context())
 	if err == nil && (ac.UserID != st.User || ac.member != st.Member) {
@@ -257,8 +225,6 @@ func (a *Archive) connectFinish(w http.ResponseWriter, r *http.Request, st conne
 	http.Redirect(w, r, a.hub.app+connectBack(st.Provider)+"?"+back.Encode(), http.StatusSeeOther)
 }
 
-// connectKeys connects the key connector id with keys, for whoever is signed in, or for the archive when it
-// is an integration, once the service says whose account they are.
 func (a *Archive) connectKeys(ctx context.Context, id string, keys map[string]string) error {
 	ac, err := authUser(ctx)
 	if err != nil {
@@ -278,15 +244,12 @@ func (a *Archive) connectKeys(ctx context.Context, id string, keys map[string]st
 	if err != nil {
 		return fmt.Errorf("%w: %w", err, httpErrBadRequest)
 	}
-	// A grant a widget made exists at the provider already, and is ended there when it is not kept.
 	if _, err = a.connectionSave(ctx, ac.member, p.Connector, g); err != nil && p.Link != nil {
 		p.RevokeToken(ctx, g.Refresh, g.Meta)
 	}
 	return err
 }
 
-// connectLink is what opens key connector id's widget for whoever is signed in: its provider pushes to
-// Archive, and a bank's own sign-in sends the browser back to the connector in the app.
 func (a *Archive) connectLink(ctx context.Context, id string) (string, error) {
 	ac, err := authUser(ctx)
 	if err != nil {
@@ -302,8 +265,6 @@ func (a *Archive) connectLink(ctx context.Context, id string) (string, error) {
 	if err := a.mayConnect(ctx, p.Connector); err != nil {
 		return "", err
 	}
-	// Each time the widget connects makes a new grant at the provider, so an integration connects once until it is
-	// disconnected.
 	if p.Integration {
 		err = a.sys(ctx, func(ctx context.Context) error {
 			had, err := a.st.db(ctx).IntegrationFor(ctx, p.ID)
@@ -322,8 +283,6 @@ func (a *Archive) connectLink(ctx context.Context, id string) (string, error) {
 	return p.LinkToken(ctx, ac.member.String(), a.hub.api+"/push/"+p.ID, a.hub.app+connectBack(p.ID))
 }
 
-// connectBack is where the app shows connector id in its settings: the archive's integrations, or a person's
-// connectors.
 func connectBack(id string) string {
 	if c := connect.Get(id); c != nil && c.Integration {
 		return "/settings/integrations/" + id
@@ -331,8 +290,6 @@ func connectBack(id string) string {
 	return "/settings/connectors/" + id
 }
 
-// level is what the caller may do in the archive: their member's level, viewer through a viewer-only token,
-// and their groups.
 func (a *Archive) level(ctx context.Context) (string, []uuid.UUID, error) {
 	ac, err := signedIn(ctx)
 	if err != nil {
@@ -348,8 +305,6 @@ func (a *Archive) level(ctx context.Context) (string, []uuid.UUID, error) {
 	return m.Role, m.Groups, nil
 }
 
-// mayConnect says whether the caller may connect, disconnect or ask for a sync of c: anyone signed in with a
-// full token connects their own; only an owner connects an integration, for the archive.
 func (a *Archive) mayConnect(ctx context.Context, c *connect.Connector) error {
 	if _, err := authUser(ctx); err != nil || !c.Integration {
 		return err
@@ -360,16 +315,10 @@ func (a *Archive) mayConnect(ctx context.Context, c *connect.Connector) error {
 	return nil
 }
 
-// mayUse says whether a member at level lvl in groups may use the archive's integration c, with
-// archive.action: editors and owners, and of an integration narrowed to a group, only its members and the
-// owners. Everyone who sees its rows reads them; acting on the archive's account writes, as an editor does.
 func mayUse(c generated.ArchiveConnection, lvl string, groups []uuid.UUID) bool {
 	return lvl == "owner" || lvl == "editor" && (c.Access == nil || slices.Contains(groups, *c.Access))
 }
 
-// connectionSave keeps g for member at provider: in the row they have for its account, or the archive's for an
-// integration, or a new one; and queues its sync, which is due now. An integration connected to another
-// account is disconnected first.
 func (a *Archive) connectionSave(ctx context.Context, member uuid.UUID, c *connect.Connector, g *connect.Grant) (uuid.UUID, error) {
 	var id uuid.UUID
 	if g.Meta == nil {
@@ -402,30 +351,22 @@ func (a *Archive) connectionSave(ctx context.Context, member uuid.UUID, c *conne
 	return id, err
 }
 
-// Connection is one of a member's connected accounts, as the API shows it: never its token.
 type Connection struct {
-	ID        uuid.UUID `json:"id"`
-	Provider  string    `json:"provider"`
-	Account   string    `json:"account"`
-	Scopes    []string  `json:"scopes"`
-	Error     string    `json:"error"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	// SyncAt is when its next sync page is due, nil while it does not sync; SyncedAt when it last caught up;
-	// Items how many things of it Archive has, the rows of its streams' tables.
-	SyncAt   *time.Time `json:"sync_at"`
-	SyncedAt *time.Time `json:"synced_at"`
-	Items    int64      `json:"items"`
-	// Integration says it is the archive's; Access is the id of the group it is narrowed to, "" for everyone; and
-	// ConnectedBy who connected it last.
-	Integration bool   `json:"integration"`
-	Access      string `json:"access"`
-	ConnectedBy string `json:"connected_by"`
+	ID          uuid.UUID  `json:"id"`
+	Provider    string     `json:"provider"`
+	Account     string     `json:"account"`
+	Scopes      []string   `json:"scopes"`
+	Error       string     `json:"error"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	SyncAt      *time.Time `json:"sync_at"`
+	SyncedAt    *time.Time `json:"synced_at"`
+	Items       int64      `json:"items"`
+	Integration bool       `json:"integration"`
+	Access      string     `json:"access"`
+	ConnectedBy string     `json:"connected_by"`
 }
 
-// Connector is a service accounts can be connected at; Ready says this server has its OAuth client, and
-// Integration that an account of it is the archive's, not a person's. Keys are what a key connector asks for in
-// place of a sign-in, and Link that its provider's widget hands them over.
 type Connector struct {
 	ID          string        `json:"id"`
 	Name        string        `json:"name"`
@@ -442,7 +383,6 @@ type Connections struct {
 	Connections []Connection `json:"connections"`
 }
 
-// Connections are the connectors, the caller's own connected accounts and the archive's integrations.
 func (a *Archive) Connections(ctx context.Context) (*Connections, error) {
 	ac, err := signedIn(ctx)
 	if err != nil {
@@ -463,15 +403,11 @@ func (a *Archive) Connections(ctx context.Context) (*Connections, error) {
 	return out, err
 }
 
-// OwnConnection is one of a person's own connections, with the archive it is connected in.
 type OwnConnection struct {
 	Connection
 	Workspace Workspace `json:"workspace"`
 }
 
-// OwnConnections are the caller's own connections in every archive they are in, so they see them all in one
-// place: each read in its own archive, as them, where it stays, and is synced and disconnected there. A token
-// reaches one archive, and reads only its own there.
 func (h *Hub) OwnConnections(ctx context.Context, here *Archive) ([]OwnConnection, error) {
 	ac, err := authUser(ctx)
 	if err != nil {
@@ -512,7 +448,6 @@ func (h *Hub) OwnConnections(ctx context.Context, here *Archive) ([]OwnConnectio
 	return out, nil
 }
 
-// ownConnections are the person ac's own connections in a, read as their member there.
 func (a *Archive) ownConnections(ctx context.Context, ac *Actor) ([]generated.ConnectionsRow, error) {
 	me, err := a.userActor(ctx, &User{ID: ac.UserID, Email: ac.Email, Name: ac.Name})
 	if err != nil {
@@ -524,10 +459,6 @@ func (a *Archive) ownConnections(ctx context.Context, ac *Actor) ([]generated.Co
 	return slices.DeleteFunc(rows, func(r generated.ConnectionsRow) bool { return r.Integration }), err
 }
 
-// Disconnect deletes the caller's connection id, or, for an owner, the archive's integration id, with its
-// rows, and revokes its refresh token at the provider where it can, unless grantShared. A revoke that fails or
-// is held back leaves the grant at the provider, where the person can still remove it; the connection is gone
-// either way.
 func (a *Archive) Disconnect(ctx context.Context, id uuid.UUID) error {
 	c, err := a.connectionMine(ctx, id)
 	if err != nil {
@@ -536,7 +467,6 @@ func (a *Archive) Disconnect(ctx context.Context, id uuid.UUID) error {
 	return a.disconnect(ctx, c)
 }
 
-// disconnect deletes connection c, with what it synced, and ends its watches and grant at the provider.
 func (a *Archive) disconnect(ctx context.Context, c generated.ArchiveConnection) error {
 	id := c.ID
 	err := a.sys(ctx, func(ctx context.Context) (err error) {
@@ -544,7 +474,6 @@ func (a *Archive) disconnect(ctx context.Context, c generated.ArchiveConnection)
 		if c, err = q.DeleteConnection(ctx, c.ID); err != nil {
 			return err
 		}
-		// Its rows went with it; the people and organizations only they named go too.
 		return q.DeleteUnknown(ctx)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -561,7 +490,6 @@ func (a *Archive) disconnect(ctx context.Context, c generated.ArchiveConnection)
 		rt, err = connect.OpenToken(a.aead, c.ID, c.Token)
 	}
 	if err == nil {
-		// Its watches end first, while its grant still lets Archive end them.
 		var cl *connect.Client
 		if push, _ := p.PushOf(); push == nil || push.Unwatch == nil {
 		} else if tok, terr := p.Refresh(ctx, rt, c.Meta); terr == nil {
@@ -585,10 +513,6 @@ func (a *Archive) disconnect(ctx context.Context, c generated.ArchiveConnection)
 	return nil
 }
 
-// grantShared says another connection of c's member holds what revoking c's token would end: a revoke ends the
-// person's whole grant to an OAuth client, as Google's does, and connectors with one Env share a client. It takes
-// the same client and the same account. A row named after its connector doesn't say whose account it is, so it
-// counts as the same.
 func (a *Archive) grantShared(ctx context.Context, c generated.ArchiveConnection, p *connect.Provider) (shared bool, err error) {
 	err = a.sys(ctx, func(ctx context.Context) error {
 		rows, err := a.st.db(ctx).MemberConnections(ctx, c.Member)
@@ -604,8 +528,6 @@ func (a *Archive) grantShared(ctx context.Context, c generated.ArchiveConnection
 	return shared, err
 }
 
-// connectionMine is the connection id, when the caller may connect, disconnect and sync it: their own, or the
-// archive's integration for an owner; not found for anyone else.
 func (a *Archive) connectionMine(ctx context.Context, id uuid.UUID) (generated.ArchiveConnection, error) {
 	ac, err := authUser(ctx)
 	if err != nil {
@@ -629,8 +551,6 @@ func (a *Archive) connectionMine(ctx context.Context, id uuid.UUID) (generated.A
 	return c, nil
 }
 
-// SetAccess narrows the archive's integration id, and its rows, to the members of group, by its id or its
-// name, or opens them to everyone with "", as an owner does.
 func (a *Archive) SetAccess(ctx context.Context, id uuid.UUID, group string) error {
 	c, err := a.connectionMine(ctx, id)
 	switch {
@@ -651,12 +571,6 @@ func (a *Archive) SetAccess(ctx context.Context, id uuid.UUID, group string) err
 	})
 }
 
-// connectionToken is a fresh access token for the connection id; each call refreshes, so code that uses an
-// account calls connectionAccess, which keeps one while it lasts. It refreshes holding the connection's row,
-// so processes refreshing at once take turns, and each refreshes with the refresh token the one before kept:
-// providers that replace the refresh token on every refresh refuse an old one, some revoking the grant. A
-// refresh that fails is the connection's error until one works; one the provider refused is errRevoked too,
-// which stops its sync.
 func (a *Archive) connectionToken(ctx context.Context, id uuid.UUID) (*oauth2.Token, error) {
 	var tok *oauth2.Token
 	var refused error
@@ -699,57 +613,21 @@ func (a *Archive) connectionToken(ctx context.Context, id uuid.UUID) (*oauth2.To
 	return tok, nil
 }
 
-// Syncs: Archive keeps a copy of what each connection's account has, as rows of the tables of its domain
-// (below), in the streams its connector declares (connect/sync.go). A sync runs only when something asks for
-// one, and never on a timer, so the service can sleep: connecting, Sync now (POST /connect/<id>/sync), a push from the provider
-// (below), or a member reading what it syncs or opening the workspace while a connection is stale
-// (syncCatchUp).
-// Asking moves the connection's asked_at on, and each stream then catches up to it: it is due until a page of
-// it ends with nothing more to come after the ask, and then waits for the next.
-//
-// A sync runs a page at a time, as tasks like the rest of Archive's work (workspace.go): a connection's
-// sync_at is when its next page is due, null once every stream has caught up, and the workspace's sync is due
-// at the earliest. A page leases one connection that is due, so a connection runs one page at a time however
-// many tasks or asks there are, pulls its stream most due, and in one transaction saves what it found and
-// where the stream is now: a page that fails leaves the cursor where it was, and the next resumes there. A
-// stream with more to come is due again its Gap later. A page that fails is the connection's error, and its
-// stream backs off, a minute doubling, for syncTries pages, and then waits for the next ask. A grant the
-// provider refused stops the sync until the member connects again or asks; a stream the provider cannot pull
-// is skipped until the next ask. A page renews its connection's watches as they near their end (syncWatch).
-
 const (
-	// syncPageTime is the most a page may take, and syncLease how long a leased page has before another may take
-	// its connection over: a little longer, so a page never outlives its lease, and short, so an instance that
-	// stops mid-page, as a deploy stops it, holds its connection up for minutes at most. syncLeaseCheck is how
-	// soon a task looks again at a connection another task's page holds, which wakes the queue itself once done.
-	// syncBudget is how long one task pulls pages before it queues the rest.
 	syncPageTime   = 2 * time.Minute
 	syncLease      = syncPageTime + time.Minute
 	syncLeaseCheck = 15 * time.Second
 	syncBudget     = 2 * time.Minute
-	// A failed page is retried syncRetry later, doubling, syncTries times in a row at most.
-	syncRetry = time.Minute
-	syncTries = 5
-	// syncBusyWait is the longest a page a busy provider turned away waits before it is tried again.
-	syncBusyWait = 15 * time.Minute
-	// syncMaxPages is the most pages a stream reads for one ask, against a provider whose cursor goes round.
-	syncMaxPages = 100_000
-	// syncStale is how old a connection's last sync is before a read or an open asks for another.
-	syncStale = 5 * time.Minute
-	// syncRename is how often a sync asks the provider again what its connection's account is called, as an
-	// account can change after it connects, like the companies a Gusto sign-in reaches.
-	syncRename = 24 * time.Hour
+	syncRetry      = time.Minute
+	syncTries      = 5
+	syncBusyWait   = 15 * time.Minute
+	syncMaxPages   = 100_000
+	syncStale      = 5 * time.Minute
+	syncRename     = 24 * time.Hour
 )
 
-// errRevoked is a refresh the provider refused, which stops a connection's sync.
 var errRevoked = errors.New("revoked")
 
-// syncStream is where one stream of a connection is, in its cursor. At is when its next page is due, nil
-// now, while it is due; Done the ask it last caught up to, and Last when; Since when the full listing under
-// way began, which the rows it has not read since are older than; Pages how many pages it has read for this
-// ask; Fails how many in a row failed, and Error why the last did. Def is the hash of the definition its rows came
-// from: a stream of another is due, and starts from scratch. Named, kept on a connector's first stream, is when the
-// account's name was last asked for (syncRename).
 type syncStream struct {
 	Cursor string     `json:"cursor,omitempty"`
 	At     *time.Time `json:"at,omitempty"`
@@ -765,9 +643,6 @@ type syncStream struct {
 	Named  *time.Time `json:"named,omitempty"`
 }
 
-// due says whether the stream has yet to catch up to the ask at asked: one that pulls only every so often
-// counts as caught up while it last did within every of the ask, unless a listing of it is under way. One whose
-// rows are in older tables is due until it starts again.
 func (v *syncStream) due(s *connect.Stream, asked time.Time) bool {
 	if !v.current(s) {
 		return true
@@ -778,7 +653,6 @@ func (v *syncStream) due(s *connect.Stream, asked time.Time) bool {
 	return s.Every <= 0 || v.Last == nil || v.More || !asked.Before(v.Last.Add(s.Every))
 }
 
-// current says the stream's rows are as s writes them.
 func (v *syncStream) current(s *connect.Stream) bool { return v.Def == s.Version }
 
 type syncState map[string]*syncStream
@@ -801,8 +675,6 @@ func (st syncState) of(name string) *syncStream {
 	return st[name]
 }
 
-// syncPick is the stream most due of streams for the ask at asked: of those that have yet to catch up to it,
-// the one due first, the first declared of those due at once; nil when all have.
 func syncPick(streams []*connect.Stream, st syncState, asked time.Time) *connect.Stream {
 	var pick *connect.Stream
 	var at time.Time
@@ -822,7 +694,6 @@ func syncPick(streams []*connect.Stream, st syncState, asked time.Time) *connect
 	return pick
 }
 
-// syncNext leases a connection whose sync is due and pulls a page of it, and says whether there was one.
 func (a *Archive) syncNext(ctx context.Context) (bool, error) {
 	var c generated.ArchiveConnection
 	err := a.sys(ctx, func(ctx context.Context) (err error) {
@@ -838,7 +709,6 @@ func (a *Archive) syncNext(ctx context.Context) (bool, error) {
 	return true, a.syncPage(ctx, c)
 }
 
-// syncPage pulls the page of c's stream most due, whether it is due yet or not, saves it, and lets the lease go.
 func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) error {
 	p, gone := a.hub.connect.Get(c.Provider)
 	var streams []*connect.Stream
@@ -848,7 +718,6 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 	s := syncPick(streams, syncStateOf(c.Cursor), c.AskedAt)
 	var page *connect.Page
 	var err error
-	// The first stream starting a listing asks again what the account is called, at most every syncRename.
 	var named bool
 	var account string
 	if s != nil {
@@ -881,8 +750,6 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 	}
 	var next *time.Time
 	defer func() {
-		// A page that leaves its connection due queues the next itself, as an ask that came while it held the
-		// lease could not.
 		if next != nil {
 			if err := a.soon(ctx, "sync", *next); err != nil {
 				fmt.Fprintf(os.Stderr, "archive: workspace %s: queueing a sync: %v\n", a.ws.ID, err)
@@ -908,16 +775,13 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 		save.Cursor, _ = json.Marshal(st)
 		switch {
 		case gone != nil:
-			// A connector this server has no client for waits for one, and an ask.
 			return q.SaveSync(ctx, save)
 		case errors.Is(err, errRevoked):
 			save.Revoked = true
 			return q.SaveSync(ctx, save)
 		}
-		// With no stream picked, every stream has caught up to the ask, and only the connection is saved.
 		cur, name := &syncStream{}, ""
 		if s != nil {
-			// A stream of older tables starts again from here, whatever this page did.
 			cur, name = st.of(s.Name).fresh(s), s.Name
 			cur.Def, st[s.Name] = s.Version, cur
 		}
@@ -937,20 +801,15 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 			cur.At = ptr(now.Add(syncRetry << min(cur.Fails-1, 16)))
 			busy := connect.Busy(err)
 			if busy {
-				// A provider that is busy or out of reach is tried again, at most syncBusyWait apart, for as long
-				// as it takes; only a page that fails some other way waits for the next ask.
 				cur.At = ptr(now.Add(max(min(syncRetry<<min(cur.Fails-1, 16), syncBusyWait), connect.RetryAfter(err))))
-				// Being turned away now and then is how a sync goes; it is a problem once it keeps happening.
 				if cur.Fails < syncTries {
 					cur.Error = ""
 				}
 			}
 			if cur.Fails >= syncTries && !busy {
-				// It waits for the next ask, as one caught up does, with its error, and tries as many times then.
 				cur.At, cur.Done, cur.Fails = nil, &c.AskedAt, 0
 			}
 		default:
-			// A file kept while the page was pulled took the access the connection had then; narrowed since, it follows.
 			if (c.Access == nil) != (c2.Access == nil) || c.Access != nil && *c.Access != *c2.Access {
 				if _, err := a.st.Q(ctx).Exec(ctx, "UPDATE archive.file SET access = $2 WHERE connection = $1 AND access IS DISTINCT FROM $2", c.ID, c2.Access); err != nil {
 					return err
@@ -977,9 +836,6 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 				cur.Done, cur.Last, cur.Pages = &c.AskedAt, &now, 0
 			}
 		}
-		// The connection is as its declared streams are: due at the first of those that have yet to catch up to
-		// the latest ask, which may have come while this page ran; failing while any is; and synced once none
-		// is due.
 		var errs []string
 		for _, d := range streams {
 			v := st.of(d.Name)
@@ -997,7 +853,6 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 				save.SyncAt = &at
 			}
 		}
-		// A stream the connector no longer declares is gone, and so are its rows.
 		for k := range st {
 			if !slices.ContainsFunc(streams, func(d *connect.Stream) bool { return d.Name == k }) {
 				delete(st, k)
@@ -1015,15 +870,12 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 		next = save.SyncAt
 		return q.SaveSync(ctx, save)
 	})
-	// A sync commits under a.sys, which wakes nothing, so a table workflow watching what it saved is woken here.
 	if err == nil && wrote {
 		a.wakeTables(context.WithValue(context.WithoutCancel(ctx), storeTxKey{}, nil))
 	}
 	return err
 }
 
-// fresh is v, or where a stream whose rows are in older tables starts again: from scratch, its cursor and memory
-// forgotten, with only when the account was named kept.
 func (v *syncStream) fresh(s *connect.Stream) *syncStream {
 	if v.current(s) {
 		return v
@@ -1031,9 +883,6 @@ func (v *syncStream) fresh(s *connect.Stream) *syncStream {
 	return &syncStream{Named: v.Named}
 }
 
-// syncSave writes the records of page of stream s into its table with w, in the transaction at w.now; a record
-// the page says is the Same is only seen. A page that ends a full listing deletes the rows it began after and
-// did not read.
 func syncSave(ctx context.Context, w *syncDB, s *connect.Stream, page *connect.Page, cur *syncStream) error {
 	if page.Full && cur.Since == nil {
 		cur.Since = &w.now
@@ -1044,7 +893,6 @@ func syncSave(ctx context.Context, w *syncDB, s *connect.Stream, page *connect.P
 		if r.ID == "" {
 			continue
 		}
-		// A record twice in a page is as it was last.
 		if i, ok := at[r.ID]; ok {
 			live[i].ID = ""
 			delete(at, r.ID)
@@ -1095,7 +943,6 @@ func syncSave(ctx context.Context, w *syncDB, s *connect.Stream, page *connect.P
 
 func ptr[T any](v T) *T { return &v }
 
-// syncJSON is v as JSON that jsonb takes: without the NUL characters it refuses, which mail has now and then.
 func syncJSON(v any) ([]byte, error) {
 	b, err := json.Marshal(v)
 	if err != nil || !bytes.Contains(b, []byte(`\u0000`)) {
@@ -1124,8 +971,6 @@ func syncJSON(v any) ([]byte, error) {
 	return json.Marshal(scrub(back))
 }
 
-// SyncNow asks for a sync of the caller's connection id, or an owner's of the archive's integration id, now,
-// past any backoff, and queues it.
 func (a *Archive) SyncNow(ctx context.Context, id uuid.UUID) error {
 	if _, err := a.connectionMine(ctx, id); err != nil {
 		return err
@@ -1137,7 +982,6 @@ func (a *Archive) SyncNow(ctx context.Context, id uuid.UUID) error {
 			return err
 		}
 		st := syncStateOf(c.Cursor)
-		// Sync now pulls every stream, those that pull only every so often too.
 		for _, v := range st {
 			v.At, v.Fails, v.Last = nil, 0, nil
 		}
@@ -1153,15 +997,12 @@ func (a *Archive) SyncNow(ctx context.Context, id uuid.UUID) error {
 	return a.soon(ctx, "sync", time.Now())
 }
 
-// syncSoon queues the sync of a connection that is due now, as one just connected.
 func (a *Archive) syncSoon(ctx context.Context) {
 	if err := a.soon(ctx, "sync", time.Now()); err != nil {
 		fmt.Fprintf(os.Stderr, "archive: workspace %s: queueing a sync: %v\n", a.ws.ID, err)
 	}
 }
 
-// syncWant asks for a sync of connection id, as a push does: it keeps a time it is already due at, or backing
-// off to, and leaves a connection whose grant was refused as it is. It says whether there is the connection.
 func (a *Archive) syncWant(ctx context.Context, id uuid.UUID) (bool, error) {
 	ctx = context.WithoutCancel(ctx)
 	var found bool
@@ -1183,9 +1024,6 @@ func (a *Archive) syncWant(ctx context.Context, id uuid.UUID) (bool, error) {
 	return true, a.soon(ctx, "sync", time.Now())
 }
 
-// syncCatchUp asks for a sync of each of member's connections whose last is over syncStale old and that is not
-// syncing, as reading what connections sync or opening the workspace does. It does not wait for them: the read reads what
-// there is, and the next sees what they bring.
 func (a *Archive) syncCatchUp(ctx context.Context, member uuid.UUID) {
 	ctx = context.WithValue(context.WithoutCancel(ctx), storeTxKey{}, nil)
 	var asked []uuid.UUID
@@ -1201,8 +1039,6 @@ func (a *Archive) syncCatchUp(ctx context.Context, member uuid.UUID) {
 	}
 }
 
-// streamTypes is the TypeScript the run tool's docs end with: a Streams interface of what the caller's
-// connections sync, by "<connector>.<stream>", each with what it pulls and the table it lands in.
 func (a *Archive) streamTypes(ctx context.Context) string {
 	var b strings.Builder
 	var conns []generated.ArchiveConnection
@@ -1229,9 +1065,6 @@ func (a *Archive) streamTypes(ctx context.Context) string {
 	return b.String()
 }
 
-// syncShown are the tables the docs show: all but the ones syncs write, of which only those a connection in this
-// workspace writes, with the rows that belong to them, what they reference and the people and organizations they
-// name. It reads the connections each time, so connecting or disconnecting changes the next docs.
 func (a *Archive) syncShown(ctx context.Context, cat *Catalog) map[string]bool {
 	show := map[string]bool{}
 	var walk func(name string)
@@ -1274,7 +1107,6 @@ func (a *Archive) syncShown(ctx context.Context, cat *Catalog) map[string]bool {
 			}
 		}
 	}
-	// A table of the workspace's own may name a synced one.
 	for _, name := range cat.names() {
 		if t := cat.Tables[name]; t.Schema == "public" {
 			for _, c := range t.Columns {
@@ -1285,26 +1117,11 @@ func (a *Archive) syncShown(ctx context.Context, cat *Catalog) map[string]bool {
 	return show
 }
 
-// Archive's tables of what connections sync (archive.sql): each stream's records land as rows of the table it
-// names, as its Map says (connect/def.go), with the rows that belong to each, like a message's
-// parties. syncSave writes them a page at a time, in the transaction it saves the stream's cursor in: a row
-// for each source_id of each stream of each connection, written again, with all its own rows, when it is read
-// again, only seen when the stream says it is the Same, and deleted when it is gone there, and with the people
-// and organizations nothing names any more.
-//
-// Every row has its connection and its access, the connection's, so row-level security sees it as it sees the
-// connection. A column that names another row of the connection keeps that row's id there in <column>_source,
-// and links once both are there, whichever came first (syncLink).
-
-// syncTable is what syncSave needs to know of a table of archive.sql: for a row that belongs to a row of another
-// table, that table, its parent, and the column that names it; and its columns that link another row of the
-// connection, by the table of that row.
 type syncTable struct {
 	parent, of string
 	links      map[string]string
 }
 
-// syncSchema are the tables of archive.sql that syncs write.
 var syncSchema = map[string]syncTable{
 	"mail_message":                     {},
 	"mail_party":                       {parent: "mail_message", of: "message"},
@@ -1372,13 +1189,11 @@ var syncSchema = map[string]syncTable{
 	"warehouse_column":                 {parent: "warehouse_table", of: "relation"},
 }
 
-// syncRec is a record of a page to write, its data as JSON.
 type syncRec struct {
 	ID   string
 	Data json.RawMessage
 }
 
-// syncDB is the transaction syncSave writes in: its queries, and the statements below.
 type syncDB struct {
 	q   *generated.Queries
 	db  generated.DBTX
@@ -1387,7 +1202,6 @@ type syncDB struct {
 	now time.Time
 }
 
-// write writes recs of stream s into its table, with the rows that belong to each, and links what they name.
 func (w *syncDB) write(ctx context.Context, s *connect.Stream, recs []syncRec) error {
 	t, ok := syncSchema[s.Table]
 	if !ok || t.parent != "" {
@@ -1408,8 +1222,6 @@ func (w *syncDB) write(ctx context.Context, s *connect.Stream, recs []syncRec) e
 	objs := make([]map[string]any, len(rows))
 	for i, row := range rows {
 		o := w.object(s.Table, row, people, orgs)
-		// Both are when Archive saw it: a workflow reads created_at = updated_at as a row new to it, and a
-		// provider's own stamp could fall behind its cursor.
 		o["stream"], o["source_id"], o["seen_at"], o["created_at"], o["updated_at"] = s.Name, kept[i].ID, w.now, w.now, w.now
 		objs[i] = o
 	}
@@ -1448,7 +1260,6 @@ func (w *syncDB) write(ctx context.Context, s *connect.Stream, recs []syncRec) e
 	if err := res.Err(); err != nil {
 		return fmt.Errorf("%s: %w", s.Table, err)
 	}
-	// The rows that belong to them are theirs alone: those of before go.
 	written := []string{s.Table}
 	parents := slices.Collect(maps.Values(ids))
 	kids := map[string][]map[string]any{}
@@ -1484,7 +1295,6 @@ func (w *syncDB) write(ctx context.Context, s *connect.Stream, recs []syncRec) e
 	return w.link(ctx, written)
 }
 
-// mapped are the rows of recs as Postgres evaluates the stream's map over them.
 func (w *syncDB) mapped(ctx context.Context, s *connect.Stream, recs []syncRec) ([]*connect.Row, error) {
 	data := make([]json.RawMessage, len(recs))
 	for i, r := range recs {
@@ -1515,7 +1325,6 @@ func (w *syncDB) mapped(ctx context.Context, s *connect.Stream, recs []syncRec) 
 	return rows, nil
 }
 
-// syncCheck fails on a stream that is only data whose table or columns archive.sql does not have, as startup does.
 func syncCheck() error {
 	cols := map[string][]string{}
 	for _, m := range syncTableRe.FindAllStringSubmatch(storeSchema, -1) {
@@ -1566,8 +1375,6 @@ func syncCheck() error {
 
 var syncTableRe = regexp.MustCompile(`(?ms)^CREATE TABLE archive\.(\w+) \((.*?)^\)`)
 
-// syncCheckSQL has Postgres read the map of every stream that is only data, so one that is not SQL it can run stops
-// a workspace from opening.
 func syncCheckSQL(ctx context.Context, db generated.DBTX) error {
 	for _, c := range connect.All() {
 		for _, s := range c.Streams {
@@ -1579,12 +1386,9 @@ func syncCheckSQL(ctx context.Context, db generated.DBTX) error {
 	return nil
 }
 
-// object is the columns of a row of table: cols, its people and organizations by their ids, each link by its
-// <column>_source, which links it once both are there, and its connection and access.
 func (w *syncDB) object(table string, row *connect.Row, people, orgs map[string]uuid.UUID) map[string]any {
 	o := map[string]any{}
 	for col, v := range row.Cols {
-		// A value a provider left empty is none: '' is no email, date or amount, and their domains refuse it.
 		if v == "" {
 			v = nil
 		}
@@ -1603,8 +1407,6 @@ func (w *syncDB) object(table string, row *connect.Row, people, orgs map[string]
 	return o
 }
 
-// known are the people and organizations rows name, by address, and by EIN or web domain, each added unless
-// there is one. An EIN never has a dot, and a domain always does.
 func (w *syncDB) known(ctx context.Context, rows []*connect.Row) (map[string]uuid.UUID, map[string]uuid.UUID, error) {
 	var emails, eins, domains []string
 	for _, r := range rows {
@@ -1658,8 +1460,6 @@ func children(r *connect.Row) []connect.Row {
 	return out
 }
 
-// link links the rows of the connection that name a row of the tables written, or are of them, to the rows
-// whose ids there they keep.
 func (w *syncDB) link(ctx context.Context, written []string) error {
 	for _, name := range slices.Sorted(maps.Keys(syncSchema)) {
 		for _, col := range slices.Sorted(maps.Keys(syncSchema[name].links)) {
@@ -1676,23 +1476,19 @@ func (w *syncDB) link(ctx context.Context, written []string) error {
 	return nil
 }
 
-// see marks the rows of ids of stream s seen, as the Same.
 func (w *syncDB) see(ctx context.Context, s *connect.Stream, ids []string) error {
 	_, err := w.db.Exec(ctx, "UPDATE archive."+s.Table+" SET seen_at = $4 WHERE connection = $1 AND stream = $2 AND source_id = ANY($3)", w.id, s.Name, ids, w.now)
 	return err
 }
 
-// delete deletes the rows of ids of stream s, gone there, with the rows that belong to them.
 func (w *syncDB) delete(ctx context.Context, s *connect.Stream, ids []string) error {
 	return w.gone(ctx, "DELETE FROM archive."+s.Table+" WHERE connection = $1 AND stream = $2 AND source_id = ANY($3)", w.id, s.Name, ids)
 }
 
-// unseen deletes the rows of stream s that a full listing begun at since did not read.
 func (w *syncDB) unseen(ctx context.Context, s *connect.Stream, since time.Time) error {
 	return w.gone(ctx, "DELETE FROM archive."+s.Table+" WHERE connection = $1 AND stream = $2 AND seen_at < $3", w.id, s.Name, since)
 }
 
-// stream deletes the rows of a stream the connector no longer declares, in whichever table they are.
 func (w *syncDB) stream(ctx context.Context, name string) error {
 	for _, t := range slices.Sorted(maps.Keys(syncSchema)) {
 		if syncSchema[t].parent != "" {
@@ -1705,7 +1501,6 @@ func (w *syncDB) stream(ctx context.Context, name string) error {
 	return nil
 }
 
-// gone runs a delete, and deletes the people and organizations nothing names any more once it deleted any.
 func (w *syncDB) gone(ctx context.Context, sql string, args ...any) error {
 	tag, err := w.db.Exec(ctx, sql, args...)
 	if err != nil || tag.RowsAffected() == 0 {
@@ -1714,7 +1509,6 @@ func (w *syncDB) gone(ctx context.Context, sql string, args ...any) error {
 	return w.q.DeleteUnknown(ctx)
 }
 
-// syncNarrow gives every row connection id synced, and every file it kept, the access its connection now has.
 func syncNarrow(ctx context.Context, db generated.DBTX, id uuid.UUID, access *uuid.UUID) error {
 	for _, t := range slices.Sorted(maps.Keys(syncSchema)) {
 		if _, err := db.Exec(ctx, "UPDATE archive."+t+" SET access = $2 WHERE connection = $1 AND access IS DISTINCT FROM $2", id, access); err != nil {
@@ -1725,8 +1519,6 @@ func syncNarrow(ctx context.Context, db generated.DBTX, id uuid.UUID, access *uu
 	return err
 }
 
-// syncCols are the columns of objs, all of each's keys, in order; a row without one has it null. A key that is
-// no column name is left out, so nothing a mapping says becomes SQL; one that is no column of the table fails.
 func syncCols(objs []map[string]any) []string {
 	var cols []string
 	for _, o := range objs {
@@ -1742,7 +1534,6 @@ func syncCols(objs []map[string]any) []string {
 
 var syncColRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
-// syncTuple is cols of alias as a row, to compare.
 func syncTuple(alias string, cols []string) string {
 	out := make([]string, len(cols))
 	for i, c := range cols {
@@ -1756,19 +1547,6 @@ func jsonOf(v any) []byte {
 	return b
 }
 
-// Pushes: POST /push/<connector> is where a connector's provider tells Archive that an account changed
-// (connect/sync.go), which asks for that connection's sync and nothing more: the sync reads what changed from
-// its cursor. A push names a watch by its key; archive.watch, in the main database, says which workspace and
-// connection each is, and holds the secret its pushes prove themselves with. A push for a watch Archive no
-// longer has, as of an account disconnected since, is answered as heard and starts nothing, so the provider
-// does not send it again; one not signed as its provider signs is refused.
-//
-// A page of a connection's sync keeps its watches (syncWatch): it asks the provider for them the first time,
-// and renews one once it nears its end. Nothing renews them on a timer: a watch of an account that nothing
-// syncs lapses, the pushes it would have sent are missed, and the next sync, whatever asks for it, reads all
-// they would have said from its cursor and watches again. Disconnecting ends them.
-
-// pushMax is the most of a push Archive reads.
 const pushMax = 1 << 20
 
 func (h *Hub) pushHTTP(w http.ResponseWriter, r *http.Request) {
@@ -1845,8 +1623,6 @@ func (h *Hub) pushHTTP(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, heard.Body)
 }
 
-// pushAsk asks for the sync of connection conn of workspace ws, which a push named; a connection or workspace
-// gone since takes its watches with it.
 func (h *Hub) pushAsk(ctx context.Context, ws, conn uuid.UUID) error {
 	a, release, err := h.acquire(ctx, ws.String())
 	if errors.Is(err, ErrNotFound) {
@@ -1863,8 +1639,6 @@ func (h *Hub) pushAsk(ctx context.Context, ws, conn uuid.UUID) error {
 	return err
 }
 
-// pushForget deletes what a push asked Archive to forget of connection conn of workspace ws: all of it, which
-// disconnects it, or the records it names of each stream. A connection or workspace gone since has nothing left.
 func (h *Hub) pushForget(ctx context.Context, ws, conn uuid.UUID, heard *connect.Heard) error {
 	ctx = context.WithoutCancel(ctx)
 	a, release, err := h.acquire(ctx, ws.String())
@@ -1906,8 +1680,6 @@ func (h *Hub) pushForget(ctx context.Context, ws, conn uuid.UUID, heard *connect
 	})
 }
 
-// pushConnection says whether workspace ws has connection conn, to connector id: a handshake is kept only
-// for one.
 func (h *Hub) pushConnection(ctx context.Context, ws, conn uuid.UUID, id string) bool {
 	a, release, err := h.acquire(ctx, ws.String())
 	if err != nil {
@@ -1922,7 +1694,6 @@ func (h *Hub) pushConnection(ctx context.Context, ws, conn uuid.UUID, id string)
 	return err == nil && c.Provider == id
 }
 
-// watchSecret is the secret Archive keeps for watch key of connector id, or "" when it has none.
 func (h *Hub) watchSecret(ctx context.Context, id, key string) string {
 	sealed, err := h.q().WatchSecret(ctx, id, key)
 	if err != nil {
@@ -1935,9 +1706,6 @@ func (h *Hub) watchSecret(ctx context.Context, id, key string) string {
 	return s
 }
 
-// syncWatch asks c's provider, through cl, to push what changes, when Archive has no watch of it yet or one is
-// within its Push's Renew of ending. Only one page of a connection at a time does, and a failure is only logged:
-// the account still syncs whenever something asks. A provider pushes only to an https API.
 func (a *Archive) syncWatch(ctx context.Context, c generated.ArchiveConnection, p *connect.Provider, cl *connect.Client) {
 	push, target := p.PushOf()
 	if push == nil || push.Watch == nil || push.Env != "" && target == "" || !strings.HasPrefix(a.hub.api, "https://") {
@@ -1955,7 +1723,6 @@ func (a *Archive) watch(ctx context.Context, c generated.ArchiveConnection, p *c
 	}
 	defer tx.Rollback(ctx)
 	q := generated.New(tx)
-	// The lock is the transaction's: a page that finds another renewing leaves it be.
 	if ok, err := q.TryLock(ctx, "watch "+c.ID.String()); err != nil || !ok {
 		return err
 	}
@@ -1982,8 +1749,6 @@ func (a *Archive) watch(ctx context.Context, c generated.ArchiveConnection, p *c
 		return a.hub.api + "/push/" + p.ID + "?" + url.Values{"w": {a.ws.ID.String()}, "c": {c.ID.String()}, "k": {key}}.Encode()
 	}}
 	got, werr := push.Watch(cl, hook, old)
-	// What it made is kept even when it then failed, so that it can be ended; what it no longer has is let go
-	// only when it did not.
 	keys := []string{}
 	for _, w := range got {
 		save := generated.SaveWatchParams{Provider: p.ID, Key: w.Key, Workspace: a.ws.ID, Connection: c.ID, Resource: w.Resource}
@@ -2006,7 +1771,6 @@ func (a *Archive) watch(ctx context.Context, c generated.ArchiveConnection, p *c
 	return errors.Join(werr, tx.Commit(ctx))
 }
 
-// unwatch ends the watches of connection c, as it disconnects, through cl when it has one, and forgets them.
 func (a *Archive) unwatch(ctx context.Context, c generated.ArchiveConnection, p *connect.Provider, cl *connect.Client) error {
 	rows, err := a.hub.q().ConnectionWatches(ctx, c.ID)
 	if err != nil || len(rows) == 0 {
@@ -2021,44 +1785,29 @@ func (a *Archive) unwatch(ctx context.Context, c generated.ArchiveConnection, p 
 	return errors.Join(append(errs, a.hub.q().DropWatches(ctx, c.ID, []string{}))...)
 }
 
-// syncOnRead catches up the caller's syncs, as reading what they sync does.
 func (a *Archive) syncOnRead(ctx context.Context) {
 	if ac := ActorFrom(ctx); ac != nil && ac.member != uuid.Nil {
 		a.syncCatchUp(ctx, ac.member)
 	}
 }
 
-// Actions: archive.action(name, input, opts) in a run, which does something with one of the caller's own
-// connections. name is "<connector>.<action>". An API connector's actions are the Plans of its file in the
-// connect package; an MCP connector's are its server's tools, called with tools/call, each named for its tool
-// without the connector's own prefix (notion-search is notion.search). The caller's connection to the
-// connector is the one used, or the one opts.connection names, by account or id, when they have several.
-//
-// actionTypes is the TypeScript the run tool's docs end with: an Actions interface of the actions of the
-// caller's connections, with their input and output types from the actions' JSON Schemas, which
-// archive.action's signature in sdk.d.ts reads, as archive.list reads Tables. A workspace keeps, between
-// runs, each connection's access token while it lasts and each MCP connection's tools for an hour.
-
 const (
 	actionToolsTTL = time.Hour
 	actionFailTTL  = time.Minute
 )
 
-// archiveConns is what a workspace keeps of its connections between runs.
 type archiveConns struct {
 	mu     sync.Mutex
 	access map[uuid.UUID]*oauth2.Token
 	tools  map[uuid.UUID]*actionTools
 }
 
-// actionTools are an MCP connection's tools as its server last listed them, or why it could not.
 type actionTools struct {
 	at    time.Time
 	tools []*mcp.Tool
 	err   error
 }
 
-// forget drops what is kept of connection id, as when it is disconnected.
 func (cs *archiveConns) forget(id uuid.UUID) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
@@ -2066,8 +1815,6 @@ func (cs *archiveConns) forget(id uuid.UUID) {
 	delete(cs.tools, id)
 }
 
-// connectionAccess is an access token of the connection id, the one kept while it has a minute left, or a
-// fresh one.
 func (a *Archive) connectionAccess(ctx context.Context, id uuid.UUID) (*oauth2.Token, error) {
 	a.conns.mu.Lock()
 	tok := a.conns.access[id]
@@ -2088,8 +1835,6 @@ func (a *Archive) connectionAccess(ctx context.Context, id uuid.UUID) (*oauth2.T
 	return tok, nil
 }
 
-// memberConnections are the personal connections of member and the archive's integrations, by connector and
-// account.
 func (a *Archive) memberConnections(ctx context.Context, member uuid.UUID) ([]generated.ArchiveConnection, error) {
 	var out []generated.ArchiveConnection
 	err := a.st.System(ctx, func(ctx context.Context) (err error) {
@@ -2099,9 +1844,6 @@ func (a *Archive) memberConnections(ctx context.Context, member uuid.UUID) ([]ge
 	return out, err
 }
 
-// syncStore keeps what a connector downloaded as a file of connection id, as the system, for its id: as
-// visible as the connection's rows and gone with the connection. A file kept before with that content and name
-// is that one.
 func (a *Archive) syncStore(ctx context.Context, id uuid.UUID, access *uuid.UUID) func(name string, b []byte) (string, error) {
 	return func(name string, b []byte) (string, error) {
 		var f *File
@@ -2117,7 +1859,6 @@ func (a *Archive) syncStore(ctx context.Context, id uuid.UUID, access *uuid.UUID
 	}
 }
 
-// connClient is a client of the connection c.
 func (a *Archive) connClient(ctx context.Context, c generated.ArchiveConnection) (*connect.Client, error) {
 	p, err := a.hub.provider(ctx, c.Provider, false)
 	if err != nil {
@@ -2130,7 +1871,6 @@ func (a *Archive) connClient(ctx context.Context, c generated.ArchiveConnection)
 	return p.Open(ctx, tok, c.Meta), nil
 }
 
-// connTools are the tools of the MCP connection c, kept for an hour, and a failure to list them for a minute.
 func (a *Archive) connTools(ctx context.Context, c generated.ArchiveConnection) ([]*mcp.Tool, error) {
 	a.conns.mu.Lock()
 	t := a.conns.tools[c.ID]
@@ -2161,22 +1901,16 @@ func deref(s *string) string {
 	return *s
 }
 
-// actionError is a failed action, as the script reads it: its message, and what kind of failure, for its
-// code.
 type actionError struct {
 	msg  string
 	kind error
 }
 
-// errActionInvalid is the kind of an action asked for wrong, or that the service said was, as code invalid.
 var errActionInvalid = errors.New("invalid")
 
 func (e *actionError) Error() string { return e.msg }
 func (e *actionError) Unwrap() error { return e.kind }
 
-// Action does the action name with input on one of the caller's connections: the one pick names, by account
-// or id, or their only one to its connector. clients are the connections' clients this run opened, which it
-// closes when it ends.
 func (a *Archive) Action(ctx context.Context, name string, input any, pick string, clients map[uuid.UUID]*connect.Client, until time.Time) (any, error) {
 	ac, err := signedIn(ctx)
 	if err != nil {
@@ -2276,7 +2010,6 @@ func (a *Archive) Action(ctx context.Context, name string, input any, pick strin
 	return out, nil
 }
 
-// actionsOf are the actions of connection c of p: an MCP server's its tools, as it lists them.
 func (a *Archive) actionsOf(ctx context.Context, p *connect.Provider, c generated.ArchiveConnection) (map[string]*connect.Action, error) {
 	if p.MCP == "" {
 		return p.Actions, nil
@@ -2288,8 +2021,6 @@ func (a *Archive) actionsOf(ctx context.Context, p *connect.Provider, c generate
 	return p.ToolActions(tools), nil
 }
 
-// actionFailed is err as the action's failure, with the code its kind has: a provider's 404 is not_found, a
-// refused grant is unauthorized, and so on.
 func actionFailed(fail func(error, string, ...any) error, err error) error {
 	var kind error
 	var rf *connect.Refusal
@@ -2308,7 +2039,6 @@ func actionFailed(fail func(error, string, ...any) error, err error) error {
 	return fail(kind, "%s", strings.TrimPrefix(err.Error(), "connection "))
 }
 
-// actionCheck checks input against the action's schema s, as an invalid error naming the action.
 func actionCheck(name string, s *jsonschema.Schema, input any) error {
 	rs, err := s.Resolve(nil)
 	if err != nil {
@@ -2356,16 +2086,12 @@ func (r *runner) actionSDK(o *goja.Object) {
 	})
 }
 
-// closeClients ends the sessions the run's actions opened.
 func (r *runner) closeClients() {
 	for _, c := range r.clients {
 		c.Close()
 	}
 }
 
-// actionTypes is the TypeScript of the actions of the caller's connections: the Actions interface, from
-// action name to its input and output. A connector the caller has several connections to has its actions
-// once, from the first whose server answers.
 func (a *Archive) actionTypes(ctx context.Context) string {
 	var b strings.Builder
 	var conns []generated.ArchiveConnection
@@ -2423,8 +2149,6 @@ func actionEntry(b *strings.Builder, name, doc string, input, output any) {
 	fmt.Fprintf(b, "    %s: {\n        input: %s;\n        output: %s;\n    };\n", strconv.Quote(name), schemaTS(input, "        ", 0), out)
 }
 
-// schemaTS is the TypeScript type of the JSON Schema v, as far as one says: types, enums, unions, objects
-// with their properties' descriptions, arrays and maps, and any for the rest, like a $ref.
 func schemaTS(v any, indent string, depth int) string {
 	var m map[string]any
 	if b, err := json.Marshal(v); err != nil || json.Unmarshal(b, &m) != nil || m == nil || depth > 6 {

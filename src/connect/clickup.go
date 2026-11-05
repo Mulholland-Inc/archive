@@ -6,19 +6,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// ClickUp, through its API v2: workspaces, spaces, folders, lists, tasks and comments, read, and when asked tasks
-// made and changed and comments posted. It reads ARCHIVE_CLICKUP, an OAuth app of ClickUp's Settings, ClickUp API,
-// whose redirect URL is <API>/connect/clickup/callback. ClickUp has no scopes: the person picks the workspaces the
-// app reaches as they connect, and its token is theirs, sees what they see and never expires; nothing revokes it
-// but removing the app in ClickUp. An owner connects it for everyone.
-//
-// It syncs every task of each workspace that is not archived, closed ones and subtasks too, into work_item, its list
-// as its type. Spaces, folders, lists and comments have no table, so the actions read them.
-//
-// It pushes through a webhook on each workspace, pushing to Archive's URL with a key of the connection's, the
-// workspace and a nonce, which only ClickUp learns, and signing the body with X-Signature, the hex HMAC-SHA256 keyed
-// by the webhook's own secret, which ClickUp answers with as it makes or renews one. ClickUp suspends a webhook that
-// fails too often, so the first sync a week after sets each active again, and one gone is made anew.
 func init() {
 	Register(&Connector{
 		ID: "clickup", Name: "ClickUp", Integration: true,
@@ -107,7 +94,6 @@ func init() {
 }
 
 var (
-	// clickupWorkspaces are the workspaces the person let the app reach, which ClickUp calls teams.
 	clickupWorkspaces = &Parts{Req: Req{URL: "/team"}, Items: "teams", Vals: Obj{"name": "{name}"}}
 	clickupAll        = Q{"page": "{page|0}", "subtasks": "true", "include_closed": "true"}
 	clickupSince      = Q{"page": "{page|0}", "subtasks": "true", "include_closed": "true", "date_updated_gt": "{since}", "order_by": "updated", "reverse": "true"}

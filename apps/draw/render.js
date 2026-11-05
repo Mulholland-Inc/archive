@@ -391,7 +391,6 @@ export async function bake(name, opts = {}) {
   return cv.toDataURL('image/png');
 }
 
-// The box of what is drawn, [x0, y0, x1, y1] with x1 and y1 past its edge, or null.
 function drawn(img) {
   const { width: W, height: H, data } = img;
   let x0 = W, y0 = H, x1 = -1, y1 = -1;
@@ -409,11 +408,6 @@ function trim(img) {
   return [x0, y0, Math.min(img.width, b[2] + pad) - x0, Math.min(img.height, b[3] + pad) - y0];
 }
 
-// An icon is one strip of four square cells, the frames of its turn, the last facing you. Scenes are framed here, so
-// they all fill a cell alike and need no framing of their own, and the strip has luminance only: hue is the app's, at
-// runtime. An agent's figure (scenes/agent-*) turns less, so both eyes stay in view, fills more of its cell, draws its
-// lines a little heavier for the smallest sizes, and has four more cells: its EYE material alone in each frame, which
-// the app lays over the tint so eyes stay pale on any colour.
 const TURNS = [0.3, 0.46, 0.6, 0.785];
 const GLANCE = [0.42, 0.54, 0.66, 0.785];
 const CELL = 256;
@@ -427,7 +421,6 @@ export async function icon(name) {
   const frame = parseFrame(src.scene);
   const tilt = frame.pragma.pitch ?? 18;
   const framed = (size, center, zoom) => ({ ...src, scene: `#pragma frame ${JSON.stringify({ size: [size, size], center, zoom, pitch: tilt, bounds: frame.pragma.bounds ?? [[-2.5, -0.6, -2.5], [2.5, 3.4, 2.5]] })}\n${frame.body}` });
-  // The frames' union, drawn small with room to spare, sets the zoom and centre.
   const from = frame.pragma.center ?? [0, 1, 0];
   const probe = framed(256, from, 64);
   const box = [256, 256, 0, 0];
@@ -453,7 +446,6 @@ export async function icon(name) {
     const d = img.data;
     const eyes = new ImageData(CELL, CELL);
     for (let p = 0; p < d.length; p += 4) {
-      // EYE is the one saturated colour in a scene, so how blue a pixel is says how much of it is eye.
       const eye = agent ? Math.max(0, (d[p + 2] - d[p] - 7) / 190) : 0;
       const of = eye < 0.05 ? 0 : Math.min(1, eye);
       const [r, g, b] = [d[p] + of * 244, d[p + 1] + of * (245 - 102), d[p + 2] + of * (247 - 197)];

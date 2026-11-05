@@ -24,7 +24,6 @@
 
   boot();
 
-  // Who you are and your archives are always on screen.
   account.use(() => app.status === 'ready');
 
   let last = '/';

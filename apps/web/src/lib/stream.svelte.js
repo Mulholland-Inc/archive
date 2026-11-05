@@ -1,28 +1,3 @@
-// Live data. One WebSocket per tab hears what moved in the open workspace, and the data on screen that
-// depends on it is read again. Nothing polls: a read happens because something moved.
-//
-// The socket is api.<domain>/live?workspace=<id> (the app Worker, which hands it to the workspace's Durable
-// Object), or in development `archive serve`'s own /live through vite's proxy; both send the same frames:
-// {event:"ready"} once, then {event:"change", changes:[{table, id}]}, a table like "invoice" or "archive.turn"
-// and, for Archive's own rows, the row's id. They name what moved, never the rows: what is read again comes
-// through the API, so row-level security decides what this person sees.
-//
-// A screen says what it shows with a resource:
-//
-//   export const files = resource({ tables: ['archive.file'], load: () => ... });   // in lib/
-//   files.use();                                                                     // in a component
-//   conversation.use(() => agentId);                                                 // with a parameter
-//
-// While a component that uses it is mounted, a change to one of its tables reads it again. A change to data
-// nobody has on screen only marks it stale, and it is read when a screen next uses it. A hidden tab marks
-// what it shows stale too, and reads it when it is shown again. A change naming a row (archive.file <id>)
-// reads only the resource whose parameter is that id.
-//
-// Reconnecting: the socket comes back with a backoff (1s doubling to 30s, jittered), and the backoff is only
-// forgiven once a socket has held for STEADY, so a socket that opens and drops at once cannot become a
-// reconnect loop. A socket that comes back may have missed changes, so what is on screen is read once more,
-// at most once every SWEEP, and the rest is marked stale. That is the one read a reconnect causes: marzy's
-// stream once re-read every page on every connect, and a flapping socket turned that into a storm of reads.
 
 import { API } from './api.js';
 
@@ -46,10 +21,6 @@ let ping = null;
 
 const hidden = () => typeof document !== 'undefined' && document.hidden;
 
-// A resource: data the app reads from the API, and the tables whose changes make it stale. tables is a list
-// of tables, or a function of a change saying whether it touches this data. For data read by a parameter
-// (an agent by its id), param says which parameter a change touches, or undefined for every one: with byId,
-// a change's row id.
 export function resource({ tables, load, byId = false, param: which = byId ? (c) => c.id || undefined : () => undefined }) {
   const touches = typeof tables === 'function' ? tables : (c) => tables.includes(c.table);
   const mounted = new Map();
@@ -65,7 +36,6 @@ export function resource({ tables, load, byId = false, param: which = byId ? (c)
   function refresh(param = true) {
     const key = keyOf(param);
     if (inflight.has(key)) {
-      // Read again after this read only if something moved since it started.
       if (stale(key)) again.add(key);
       return inflight.get(key);
     }
@@ -84,17 +54,13 @@ export function resource({ tables, load, byId = false, param: which = byId ? (c)
 
   const r = {
     refresh,
-    // Read it now if it is stale, before a screen uses it: a link about to be followed (preload.js).
     prefetch(param = true) {
       if (param === null || param === undefined || param === false || param === '') return;
       if (stale(keyOf(param))) refresh(param);
     },
-    // What was just read some other way is fresh.
     seen(param = true) {
       fresh.set(keyOf(param), gen);
     },
-    // use is called while a component initialises. param is a function of what it shows (a chat's id), or
-    // nothing; while it returns null, false or '', the component shows nothing of this.
     use(param = () => true) {
       $effect(() => {
         const p = param();
@@ -109,8 +75,6 @@ export function resource({ tables, load, byId = false, param: which = byId ? (c)
         };
       });
     },
-    // A workspace was switched to or left: everything read so far is another workspace's, and what is on
-    // screen is read for the new one.
     reset() {
       gen++;
       fresh.clear();
@@ -138,13 +102,11 @@ export function resource({ tables, load, byId = false, param: which = byId ? (c)
   return r;
 }
 
-// Hear that the socket was refused or dropped for leaving the workspace. Returns the way to stop.
 export function onRefused(fn) {
   refusedListeners.add(fn);
   return () => refusedListeners.delete(fn);
 }
 
-// Hear every change frame, for what is not a resource (a cached file's bytes). Returns the way to stop.
 export function onChange(fn) {
   listeners.add(fn);
   return () => listeners.delete(fn);
@@ -225,7 +187,6 @@ function dial() {
     if (frame.event === 'ready') {
       ready = true;
       live.status = 'open';
-      // The first socket missed nothing: the app read everything as it opened the workspace.
       if (heard) sweep();
       heard = true;
     } else if (frame.event === 'change' && Array.isArray(frame.changes)) {
@@ -238,14 +199,11 @@ function dial() {
     ping = null;
     if (socket !== s) return;
     socket = null;
-    // Dropped for leaving the workspace, or refused before it was ready: this person may no longer be in
-    // it, or it is gone. Whoever listens (the account) checks, once per try, which the backoff spaces out.
     if (e.code === 4003 || !ready) for (const fn of refusedListeners) fn();
     backoff();
   };
 }
 
-// Listen to a workspace, or to none with ''. Switching closes the old socket at once.
 export function listen(workspace = '') {
   if (workspace === live.workspace && (socket || retry)) return;
   shut();

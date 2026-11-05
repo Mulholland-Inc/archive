@@ -3,10 +3,8 @@
   import Icon from './Icon.svelte';
   import { highlighted } from '../lib/syntax.js';
 
-  // full shows all of it, with no scrolling inside; size body sets it at the page's text size, not code's.
   let { code = '', lang = 'text', full = false, size = 'code' } = $props();
   let copied = $state(false);
-  // Blank lines before the first line and after the last are left out of the view, not the copy.
   const html = $derived(highlighted(code.replace(/^(\s*\n)+/, '').trimEnd(), lang));
 
   async function copy() {
@@ -96,7 +94,6 @@
     font: inherit;
   }
 
-  /* highlight.js's classes, in Archive's colours. */
   code :global(.hljs-comment) {
     color: var(--color-text-tertiary);
     font-style: italic;

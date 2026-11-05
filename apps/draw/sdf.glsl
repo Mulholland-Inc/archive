@@ -190,7 +190,6 @@ float ladder(vec3 p, float h, float w, float pitch, float r) {
 }
 
 #ifdef ICON
-// Icons (scenes/bot-*.glsl). Hue is never baked: materials here only say how light or dark a part is.
 #define PALE (WHITE + SOLID)
 #define MID (STEEL + SOLID)
 #define TONE (CORAL + SOLID)
@@ -202,18 +201,14 @@ vec2 oval(vec3 p, vec3 at, vec3 r, float m) { return M(sdEllipsoid(p - at, r), m
 vec2 can(vec3 p, vec3 at, float r, float h, float m) { return M(sdRoundCylinder(p - at, r, h, min(0.03, min(r, h) * 0.5)), m); }
 vec2 stick(vec3 p, vec3 a, vec3 b, float r, float m) { return M(sdCapsule(p, a, b, r), m); }
 vec2 cone(vec3 p, vec3 at, float h, float r1, float r2, float m) { return M(sdCone(p - at, h, r1, r2), m); }
-// Cans lying along x and along z, and a hoop standing up, facing you.
 vec2 canX(vec3 p, vec3 at, float r, float h, float m) { return can(rotZ(p - at, 1.5708), V(0.0), r, h, m); }
 vec2 canZ(vec3 p, vec3 at, float r, float h, float m) { return can(rotX(p - at, 1.5708), V(0.0), r, h, m); }
 vec2 ringZ(vec3 p, vec3 at, float R, float r, float m) { return M(sdTorus((p - at).xzy, R, r), m); }
-// A roof with its ridge running front to back, its eaves at y.
 vec2 pitch(vec3 p, float y, float w, float h, float d, float m) {
   vec3 q = p - vec3(0.0, y, 0.0);
   vec2 n = normalize(vec2(h, w));
   return M(max(max(dot(vec2(abs(q.x), q.y), n) - w * n.x, -q.y), abs(q.z) - d), m);
 }
-// A flat-roofed building standing on the ground, its front at z = d, and its door; a big flat sign on top of it,
-// d being its 2D distance; an awning across the front at height y.
 vec2 block(vec3 p, float w, float h, float d) {
   return U(box(p, V(0.0, h * 0.5, 0.0), V(w, h * 0.5, d), 0.015, PALE), box(p, V(0.0, h + 0.04, 0.0), V(w + 0.05, 0.04, d + 0.05), 0.015, TONE));
 }
@@ -224,16 +219,12 @@ vec2 awning(vec3 p, float y, float w, float z) {
   vec2 a = box(q, V(0.0), V(w, 0.012, 0.15), 0.008, PALE);
   return mod(p.x + w + 40.0 * 0.21, 0.42) < 0.21 ? vec2(a.x, TONE) : a;
 }
-// Agents (scenes/agent-*.glsl). EYE is what stays pale on any tint. SHELL is PALE with a line where a hard shape turns
-// from one face to the next; use it on boxes, and PALE on round things. Marks are painted on what faces you, in the
-// part's own x and y, so they follow its surface: paint a part, then join it to the rest.
 #define EYE (LIME + SOLID)
 #define SHELL WHITE
 vec2 dab(vec2 r, vec3 p, vec2 at, float R, float m) { return p.z > 0.0 ? paint(r, length(p.xy - at) - R, m) : r; }
 vec2 oblong(vec2 r, vec3 p, vec2 at, vec2 b, float c, float m) { return p.z > 0.0 ? paint(r, sdRect(p.xy - at, b, c), m) : r; }
 vec2 line(vec2 r, vec3 p, vec2 a, vec2 b, float w, float m) { return p.z > 0.0 ? paint(r, sdSeg(p.xy, a, b) - w, m) : r; }
 vec2 smile(vec2 r, vec3 p, vec2 at, float R, float w, float m) { return p.z > 0.0 ? paint(r, max(abs(length(p.xy - at) - R) - w, p.y - at.y + R * 0.5), m) : r; }
-// A pair of eyes at +-x, y: pale, a round pupil, and a glint on the same side of both.
 vec2 eyes(vec2 r, vec3 p, float x, float y, float R) {
   vec3 m = mirX(p);
   vec2 g = vec2(p.x - sign(p.x) * x + 0.3 * R, p.y - y - 0.3 * R);

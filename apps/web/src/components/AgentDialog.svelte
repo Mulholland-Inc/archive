@@ -12,7 +12,6 @@
   groups.use();
   members.use();
 
-  // app.agentDialog is the id of the agent being changed, true for a new one, or null.
   const agent = $derived(agentById(app.agentDialog));
   const open = $derived(Boolean(app.agentDialog));
 
@@ -21,7 +20,6 @@
   let instructions = $state('');
   let access = $state('');
 
-  // Only someone who may limit it can choose, and only when there is a group to choose.
   const limits = $derived(mayLimit(agent?.access) && accessOptions(agent?.access).length > 1);
 
   $effect(() => {
@@ -68,7 +66,6 @@
 </Dialog>
 
 <style>
-  /* The instructions take what height the popup has left, and past that scroll inside. */
   .grow {
     display: flex;
     flex-direction: column;

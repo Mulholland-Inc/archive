@@ -1,5 +1,4 @@
 #!/bin/bash
-# Installs the render toolchain on a fresh pod. Piped over ssh by `motion up`. Exits 3 if this host refuses NVENC.
 set -eo pipefail
 export DEBIAN_FRONTEND=noninteractive
 CHROME=157.0.8103.38

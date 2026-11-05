@@ -1,16 +1,5 @@
 package main
 
-// Agents are rows of archive.agent, which the workspace or the group in their access sees. Each person's conversation with one is
-// theirs alone and never ends: a request reads the turns still in context, word for word, and one line of memory
-// for everything older, and answers as that person, under their role.
-//
-// Memory is a binary tree over the turns (archive.sql). A turn leaves the context when a call's input passes
-// memoryAt, and then gets its line; lines pair up into summaries of 2, 4, 8... turns. What the model reads is
-// cover: at most memoryLines lines, the oldest turns in the largest summaries. It changes only when turns leave
-// the context, so the prompt cache holds between. Nothing is lost, since the agent can read the turn and memory
-// tables back to the first word. What is missing is worked out from the rows, so a failed compaction just
-// finishes after the next turn.
-
 import (
 	"bufio"
 	"bytes"
@@ -40,16 +29,15 @@ const (
 	agentMaxRuns   = 25
 	agentModel     = "claude-haiku-5-5"
 
-	memoryLines  = 96      // the lines of memory in the context
-	memoryAt     = 100_000 // a call's input tokens past which turns leave the context
-	memoryKeep   = 100_000 // the bytes of newest turns that stay, about a quarter of that
-	memoryLine   = 280     // the bytes of one line
-	memoryResult = 2000    // the bytes of a run's result a turn's line is made from
-	memoryRaw    = 16      // a summary of up to this many turns is made from their lines, a larger one from its halves
-	memoryCalls  = 8       // the model calls compaction makes at once
+	memoryLines  = 96
+	memoryAt     = 100_000
+	memoryKeep   = 100_000
+	memoryLine   = 280
+	memoryResult = 2000
+	memoryRaw    = 16
+	memoryCalls  = 8
 )
 
-// Turn is a turn as the app reads it, under row-level security, so only the caller's own.
 type Turn struct {
 	N        int64           `json:"n"`
 	Messages json.RawMessage `json:"messages"`
@@ -69,8 +57,6 @@ func (a *Archive) Turns(ctx context.Context, agent uuid.UUID, limit int) ([]Turn
 	})
 }
 
-// ClearTurns forgets the caller's conversation with an agent, its memory of them included. The agent and everyone
-// else's conversations with it stay.
 func (a *Archive) ClearTurns(ctx context.Context, agent uuid.UUID) error {
 	ac, err := signedIn(ctx)
 	if err != nil {
@@ -81,8 +67,6 @@ func (a *Archive) ClearTurns(ctx context.Context, agent uuid.UUID) error {
 	})
 }
 
-// turnCreate starts the asker's next turn, named after what they said. Two at once, from two tabs, simply get the
-// next numbers.
 func (a *Archive) turnCreate(ctx context.Context, agent, member uuid.UUID, text string, first agentMessage) (uuid.UUID, error) {
 	b, err := json.Marshal([]agentMessage{first})
 	if err != nil {
@@ -132,8 +116,6 @@ func agentToolError(uses []agentBlock, msg string) *agentMessage {
 	return m
 }
 
-// turn answers one message, streaming one JSON event per line, then compacts with the stream still open: the app
-// has its answer at done, and the open request keeps the instance working.
 func (a *Archive) turn(w http.ResponseWriter, r *http.Request) {
 	key := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY"))
 	if key == "" {
@@ -211,8 +193,6 @@ func (a *Archive) turn(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// agentLoop runs the model and its run calls until it answers, for a turn and for archive.do: send hears the events,
-// save keeps each message as it comes, and an error from run ends it. What it has so far comes back with any error.
 func agentLoop(ctx context.Context, key, model string, system []any, msgs []agentMessage, maxRuns int, send func(map[string]any), save func(agentMessage) error, run func(string) (*RunOutput, error)) (*DoResult, error) {
 	res := &DoResult{}
 	for {
@@ -272,9 +252,6 @@ func agentLoop(ctx context.Context, key, model string, system []any, msgs []agen
 	}
 }
 
-// cover tiles turns [0,t) with aligned power-of-two blocks, at most budget of them, finest near t: a block stays
-// whole while its size is at most alpha times its age, with alpha as small as the budget allows, and what
-// budget remains splits the newest blocks.
 func cover(t, budget int64) [][2]int64 {
 	tile := func(alpha float64) [][2]int64 {
 		root := int64(1)
@@ -332,8 +309,6 @@ func memoryLevels(ctx context.Context, q *generated.Queries, agent, member uuid.
 	return out, err
 }
 
-// memoryRead is what the model knows of this conversation: the memory block for the turns that left the context,
-// and those still in it, a call that was stopped before it ran answered as such.
 func (a *Archive) memoryRead(ctx context.Context, agent, member uuid.UUID) (string, []agentMessage, error) {
 	lines := map[int64]string{}
 	var msgs []agentMessage
@@ -344,7 +319,6 @@ func (a *Archive) memoryRead(ctx context.Context, agent, member uuid.UUID) (stri
 			return err
 		}
 		base := levels[1]
-		// A summary still missing shows as its halves, so no turn goes unmentioned, up to twice the lines.
 		for blocks := cover(base, memoryLines); len(blocks) > 0; {
 			var los, sizes []int64
 			for _, b := range blocks {
@@ -402,8 +376,6 @@ func (a *Archive) memoryRead(ctx context.Context, agent, member uuid.UUID) (stri
 	return strings.Join(memory, "\n"), msgs, err
 }
 
-// memoryCompact moves turns out of the context when the last call took more than memoryAt tokens, keeping the
-// newest memoryKeep bytes and always the last turn, then makes every line and summary still missing, in order.
 func (a *Archive) memoryCompact(ctx context.Context, agent, member uuid.UUID, tokens int) error {
 	var levels map[int64]int64
 	var turns []generated.TurnsBetweenRow
@@ -468,8 +440,6 @@ func (a *Archive) memoryCompact(ctx context.Context, agent, member uuid.UUID, to
 	return nil
 }
 
-// memoryWrite makes n lines of size from lo on, a few at a time, and saves them in order up to the first that failed,
-// so what is saved of a level is always its start. It says how many it saved.
 func (a *Archive) memoryWrite(ctx context.Context, agent, member uuid.UUID, size, lo int64, n int, line func(int) (string, error)) (int, error) {
 	if n <= 0 {
 		return 0, nil
@@ -499,8 +469,6 @@ func (a *Archive) memoryWrite(ctx context.Context, agent, member uuid.UUID, size
 	return n, ctx.Err()
 }
 
-// memoryAsk has the model write one line. A line too long gets one more try, with the model told so, since cutting
-// it would lose whatever it said last; only if that is too long as well is it cut.
 func memoryAsk(ctx context.Context, what, text string) (string, error) {
 	limit := memoryLine - len("2006-01-02 ")
 	ask := func(prompt string) (string, error) {
@@ -534,7 +502,6 @@ func memoryCut(s string, limit int) string {
 	return s
 }
 
-// turnText is a turn as its line is made from: what was said, what each run call was for and what it found.
 func turnText(raw json.RawMessage) string {
 	var ms []agentMessage
 	json.Unmarshal(raw, &ms)
@@ -555,7 +522,6 @@ func turnText(raw json.RawMessage) string {
 	return b.String()
 }
 
-// agentTools is the agent's one tool, run, whose description goes first so a step's label streams before its code.
 var agentTools = []any{map[string]any{
 	"name":        "run",
 	"description": runDocs,
@@ -576,10 +542,6 @@ func agentDescription(in any) string {
 	return strings.TrimSpace(d)
 }
 
-// agentSystemBlocks is the system prompt: first the workspace's tables, as their own cache entry shared by everyone
-// in the workspace; then the caller's own (text), which the conversation's breakpoint caches. Ahead of both, the
-// run tool's description is the same in every workspace (runDocs), so a turn has three breakpoints, all with the
-// default lifetime.
 func agentSystemBlocks(types, text string) []any {
 	return []any{
 		map[string]any{"type": "text", "text": "The tables of this archive, as TypeScript, which the SDK in the run tool's description reads and writes:\n\n" + types,
@@ -588,8 +550,6 @@ func agentSystemBlocks(types, text string) []any {
 	}
 }
 
-// agentSystem says who the agent is, who it is talking with and their role in the workspace, which is what they
-// may do, what it is for, and what it remembers of them.
 func agentSystem(ac *Actor, role string, agent map[string]any, memory string) string {
 	who := ac.Email
 	if ac.Name != "" {
@@ -613,7 +573,6 @@ func agentSystem(ac *Actor, role string, agent map[string]any, memory string) st
 	return s
 }
 
-// agentPartialRe finds the strings in a tool input still being written, up to what has streamed whole.
 var agentPartialRe = regexp.MustCompile(`"(description|code)"\s*:\s*"((?:[^"\\]|\\[^u]|\\u[0-9a-fA-F]{4})*)`)
 
 func agentPartial(s string) (desc, code string) {
@@ -634,8 +593,6 @@ func agentPost(ctx context.Context, key string, body []byte) (*http.Response, er
 	return modelPost(ctx, url, http.Header{"x-api-key": {key}, "anthropic-version": {"2026-10-21"}}, body)
 }
 
-// modelPost posts JSON to a model API, trying three times on 429 and 5xx; Anthropic and Gemini both answer an
-// error as {"error": {"message"}}.
 func modelPost(ctx context.Context, url string, header http.Header, body []byte) (*http.Response, error) {
 	for try := 0; ; try++ {
 		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
@@ -671,8 +628,6 @@ func modelPost(ctx context.Context, url string, header http.Header, body []byte)
 	}
 }
 
-// agentUsage is what one call cost: message_start carries the input tokens, split by the prompt cache, and
-// message_delta the output tokens.
 type agentUsage struct {
 	In      int `json:"input_tokens"`
 	Out     int `json:"output_tokens"`
@@ -790,14 +745,13 @@ type DoResult struct {
 	Runs      int    `json:"runs"`
 	TokensIn  int    `json:"tokens_in"`
 	TokensOut int    `json:"tokens_out"`
-	lastIn    int    // the input tokens of the last call
+	lastIn    int
 }
 
 func (r *runner) doSDK(o *goja.Object) {
 	o.Set("do", func(call goja.FunctionCall) goja.Value { return r.promise(r.do(call)) })
 }
 
-// do is an agent's loop with no conversation or memory, with every run tool call joining this run's transaction.
 func (r *runner) do(call goja.FunctionCall) (any, error) {
 	goal, err := r.str(call, 0, "do", "goal")
 	if err != nil {

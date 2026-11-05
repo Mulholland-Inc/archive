@@ -13,40 +13,17 @@ import (
 	"time"
 )
 
-// Key connectors are the services that let an app in with what a person pastes, not with a sign-in: an API key
-// and the token of an app made in their account, like Karbon's, or an app's token and the address of the store
-// it is for, like Shopify's. Its Keys say what to ask for; connecting checks them by asking the service whose
-// account they are (Account), and keeps them as an OAuth connector keeps its refresh token, sealed with the
-// workspace key, so they are never shown again. A key that is not Secret, like a store's address, is kept as the
-// connection's Meta too. A key never refreshes, and Archive revokes it only where the connector has RevokeBy:
-// otherwise the person ends it where they made it, and connects again with a new one. Keys that are an OAuth client
-// of the account's own, like Vanta's, are traded for an access token whenever the last has run out (Trade), and others
-// that sign nothing as they are make what does (Mint); neither is ever kept.
-
-// mintLasts is how long what a connector's Mint made is used, short of the hour such tokens last, so that one a client
-// has just been handed outlives its requests.
 const mintLasts = 50 * time.Minute
 
-// Key is something a key connector asks for.
 type Key struct {
-	// Name is its name in the connector's code and in the API, Label what the form says, and Help where to find
-	// it, for the form.
-	Name  string `json:"name"`
-	Label string `json:"label"`
-	Help  string `json:"help,omitempty"`
-	// Secret says it is a secret: the form hides it, and it is kept only sealed.
-	Secret bool `json:"secret,omitempty"`
-	// Find, for a connector's Ask, is a regexp what is named must match, whose first group is what is kept, made
-	// As, a template of it as {it}, when it says.
-	Find string `json:"-"`
-	As   string `json:"-"`
+	Name   string `json:"name"`
+	Label  string `json:"label"`
+	Help   string `json:"help,omitempty"`
+	Secret bool   `json:"secret,omitempty"`
+	Find   string `json:"-"`
+	As     string `json:"-"`
 }
 
-// Link is a key connector whose keys come from its provider's own widget in the app, like Plaid Link, rather
-// than from what a person pastes. Start asks, with the server's client, for what opens the widget, at Token in its
-// answer, reading {user}, the member who connects, {hook}, where the provider pushes, and {back}, the app's page a
-// bank's own sign-in sends the browser back to. The widget hands the app the Keys, and Swap trades them for those
-// kept: Keep by name, each read from its answer, and of them Meta the connection's Meta too.
 type Link struct {
 	Start Req
 	Token Path
@@ -65,7 +42,6 @@ func (l *Link) check() error {
 	return l.Swap.check("swap", "client", "option", "key")
 }
 
-// LinkToken is what opens key connector p's widget for member user, which pushes to hook and comes back to back.
 func (p *Provider) LinkToken(ctx context.Context, user, hook, back string) (string, error) {
 	if p.Link == nil {
 		return "", fmt.Errorf("%s has no widget to connect with", p.Name)
@@ -85,7 +61,6 @@ func (p *Provider) LinkToken(ctx context.Context, user, hook, back string) (stri
 	return tok, nil
 }
 
-// swap trades the keys a widget handed over for those its Link keeps.
 func (p *Provider) swap(ctx context.Context, keys map[string]string) (kept, meta map[string]string, err error) {
 	c := p.openKeys(ctx, keys, nil)
 	defer c.Close()
@@ -105,7 +80,6 @@ func (p *Provider) swap(ctx context.Context, keys map[string]string) (kept, meta
 	return kept, meta, nil
 }
 
-// keyProvider is the key connector c, available unless it names an Env this server does not set.
 func keyProvider(c *Connector, getenv func(string) string) (*Provider, bool) {
 	p := &Provider{Connector: c}
 	if c.Env == "" {
@@ -125,8 +99,6 @@ func keyProvider(c *Connector, getenv func(string) string) (*Provider, bool) {
 	return p, true
 }
 
-// KeyGrant is the account the keys are for, to keep, once the service says whose they are. Every key is
-// needed, cut of the space around it.
 func (p *Provider) KeyGrant(ctx context.Context, keys map[string]string) (*Grant, error) {
 	if len(p.Keys) == 0 {
 		return nil, fmt.Errorf("%s connects by signing in, not with keys", p.Name)
@@ -148,7 +120,6 @@ func (p *Provider) KeyGrant(ctx context.Context, keys map[string]string) (*Grant
 			return nil, fmt.Errorf("%s could not be connected: %w", p.Name, err)
 		}
 	}
-	// Keys that are a client are tried by trading them, which refuses them with a 400 or 401, and others by minting.
 	open, err := kept, error(nil)
 	if p.Trade != nil || p.Mint != nil {
 		if open, _, err = p.trade(ctx, kept); err != nil {
@@ -177,9 +148,6 @@ func (p *Provider) KeyGrant(ctx context.Context, keys map[string]string) (*Grant
 	return &Grant{Account: account, Refresh: string(b), Meta: meta}, nil
 }
 
-// trade is keys with what its Mint makes, or the access token their Trade answers with, as access, and when that ends:
-// zero when it does not say. The request goes unsigned, with the keys as {key/...}, and {basic} the keys client_id and
-// client_secret as HTTP Basic, for a token endpoint that takes the client only so.
 func (p *Provider) trade(ctx context.Context, keys map[string]string) (map[string]string, time.Time, error) {
 	c := &Client{ctx: ctx, p: p, http: client, keys: keys}
 	sc := c.scope()
@@ -209,14 +177,12 @@ func (p *Provider) trade(ctx context.Context, keys map[string]string) (map[strin
 	return out, end, nil
 }
 
-// keysFrom are the keys a grant kept, as KeyGrant wrote them.
 func keysFrom(s string) map[string]string {
 	keys := map[string]string{}
 	json.Unmarshal([]byte(s), &keys)
 	return keys
 }
 
-// openKeys is a Client of the account keys are for, whose requests Authorize signs.
 func (p *Provider) openKeys(ctx context.Context, keys, meta map[string]string) *Client {
 	c := &Client{ctx: ctx, p: p, keys: keys, Meta: meta}
 	var rt http.RoundTripper = &keyTransport{c: c}
@@ -227,10 +193,8 @@ func (p *Provider) openKeys(ctx context.Context, keys, meta map[string]string) *
 	return c
 }
 
-// Key is the key name of a key connector's account, like its store's address.
 func (c *Client) Key(name string) string { return c.keys[name] }
 
-// keyTransport signs each request with its connector's Authorize.
 type keyTransport struct{ c *Client }
 
 func (t *keyTransport) RoundTrip(r *http.Request) (*http.Response, error) {

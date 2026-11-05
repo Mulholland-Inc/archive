@@ -6,15 +6,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Dropbox, with ARCHIVE_DROPBOX, an app of the Dropbox App Console with full access to the files of a person's Dropbox,
-// its permissions those of Scopes and its OAuth 2 redirect URIs listing <API>/connect/dropbox/callback.
-//
-// It syncs every file and folder into archive.file from list_folder's cursor, by the lowercase path, the one thing a
-// deleted entry says, so a move is the one gone and another new, and only a file's bytes that are new are read. Dropbox
-// says what is deleted of a folder by the folder alone, and archive.file takes its children with it.
-//
-// It pushes through the app's webhook, set up once in the App Console at <API>/push/dropbox. A push names the accounts it
-// is for and X-Dropbox-Signature is the hex HMAC-SHA256 of the body with the app's secret.
 func init() {
 	Register(&Connector{
 		ID: "dropbox", Name: "Dropbox",

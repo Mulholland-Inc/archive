@@ -1,4 +1,3 @@
-// The pod side of a session: keeps Chrome workers warm, hands them frames, encodes shots, caches chunks and joins them.
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream, existsSync, readFileSync, readdirSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
@@ -21,14 +20,12 @@ const hasNvenc = spawnSync('ffmpeg', '-hide_banner -loglevel error -y -f lavfi -
 const ENCODE = hasNvenc ? NVENC : X264;
 const encoderName = hasNvenc ? 'h264_nvenc (GPU)' : 'libx264 (CPU)';
 const COLOR = '-colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv';
-// The input is tagged too: frames arrive as BT.709 already, and untagged input would make ffmpeg convert their colours.
 const INPUT = `-f rawvideo -pix_fmt yuv420p -s ${W}x${H} -r ${FPS} ${COLOR} -thread_queue_size 64`;
 
 const sha = (...parts) => { const h = createHash('sha256'); for (const p of parts) h.update(p + '\0'); return h.digest('hex').slice(0, 16); };
 const read = p => readFileSync(join(root, p), 'utf8');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// Workers: Chrome processes that stay up, holding fonts and compiled shaders. They pull jobs from /next.
 const workers = new Map();
 let renderer = '', gpuError = '';
 
@@ -49,7 +46,6 @@ function engineKey() {
   return sha(read('motion/engine.js'), read('motion/kit.js'), read('motion/index.html'));
 }
 
-// The job queue: workers long-poll /next, and a job goes to the first free one.
 const queue = [];
 let current = null;
 let warmKey = '';
@@ -88,7 +84,6 @@ async function warm(res) {
     await sleep(50);
   }
   const v = manifest();
-  // Workers hold every scene compiled for this film version; only a changed source costs a compile.
   const key = engineKey() + v.film;
   if (key !== warmKey) {
     const a = Date.now();
@@ -109,7 +104,6 @@ function broadcast(job) {
   });
 }
 
-// Reads the film: shots are `shot('name', seconds, ...` blocks at column 0 of film.js, and everything before them is shared.
 function manifest() {
   const src = read('motion/film.js');
   const starts = [...src.matchAll(/^shot\(/gm)].map(m => m.index);
@@ -266,7 +260,6 @@ const server = http.createServer(async (req, res) => {
     if (w) w.ready = true;
     console.log(`worker ${q.get('w')}: ${m.renderer ?? m.error}`);
     res.end('{}');
-    // A worker that reloaded for a new engine dropped the job it had just been given.
     if (w?.job) { queue.unshift(w.job); w.job = null; }
     return;
   }

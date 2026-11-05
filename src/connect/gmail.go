@@ -6,21 +6,13 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Gmail. Its Google client is the one sign-in uses too: its authorized redirect URIs list <API>/connect/gmail/callback,
-// and its consent screen asks for gmail.modify, a restricted scope: reading, sending, drafts and labels, but never
-// deleting for good. Google sends a refresh token only with access_type=offline, and again on a later connect only
-// with prompt=consent. Its pushes come through the Pub/Sub topic its push settings name, which gmail-api-push@
-// system.gserviceaccount.com publishes to and a push subscription delivers to Archive; a watch lasts 7 days, and
-// Google asks that it be renewed daily. A push's message is { emailAddress, historyId }, the mailbox it is for.
 func init() {
 	Register(&Connector{
 		ID: "gmail", Name: "Gmail", Env: "ARCHIVE_GOOGLE", Options: "which sign-in with Google reads too",
 		Info: Info{By: "Google", Description: "Read your mail and attachments, and send, draft or label mail when you ask", Category: CatEmail, Icon: IconMail,
 			Scopes: []string{"Read your mail and its attachments", "Send, draft and label mail when you ask"}},
-		API: "https://gmail.googleapis.com/gmail/v1/users/me",
-		// Every mailbox's requests together, as this is the server's; each mailbox's own limit is its stream's Gap.
+		API:  "https://gmail.googleapis.com/gmail/v1/users/me",
 		Pace: 200 * time.Millisecond,
-		// Gmail turns a user away for now with a 403 that says so.
 		Busy: []string{"Quota exceeded", "rateLimitExceeded", "userRateLimitExceeded", "Rate Limit Exceeded"},
 		Endpoint: oauth2.Endpoint{AuthURL: "https://accounts.google.com/o/oauth2/v2/auth", TokenURL: "https://oauth2.googleapis.com/token",
 			AuthStyle: oauth2.AuthStyleInParams},
@@ -71,9 +63,6 @@ func init() {
 			Unwatch: &Req{Method: POST, URL: "/stop"},
 			Wrap:    "message/data", Codec: Base64JSON, Keys: []Path{"emailAddress"}, Lower: true},
 		Sync: []*Sync{{Name: "messages", Gap: 50 * time.Second,
-			// Gmail allows each user 6,000 quota units a minute, and format=full costs 60 a message, so a page of 50
-			// costs about 3,005 and takes 10 seconds at Pace. A page a minute keeps a mailbox's sync at about half the
-			// limit, which leaves the rest to actions, and reads a 5,000-message mailbox in about 100 minutes.
 			Req: Req{URL: "/messages", Query: Q{"maxResults": "50", "pageToken": "{page}"}}, Items: "messages", Absent: "resultSizeEstimate", Page: Cursor{At: "nextPageToken"},
 			Change: Token{Start: Req{URL: "/profile"}, At: "historyId", Expired: []int{404},
 				Req:  Req{URL: "/history?historyTypes=messageAdded&historyTypes=messageDeleted&historyTypes=labelAdded&historyTypes=labelRemoved", Query: Q{"startHistoryId": "{token}", "maxResults": "100", "pageToken": "{page}"}},
@@ -81,7 +70,6 @@ func init() {
 			Hydrate: []Hydrate{
 				Fetch{Req: Req{URL: "/messages/{id}?format=full"}, Par: 5, Gone: true},
 				Decode{Codec: MIMEWords},
-				// What fits in the 5 MB a Client reads, as Gmail sends it in base64.
 				Files{Each: "attachments", Req: Req{URL: "/messages/{id}/attachments/{attachmentId}"}, Par: 5, Most: 3 << 20,
 					Has: "attachmentId", Name: "filename", Mime: "mimeType", Size: "size", Data: "data", As: "text"},
 			},

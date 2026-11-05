@@ -90,7 +90,6 @@
     flex: none;
   }
 
-  /* No gap: the hidden mini title would still take one and indent the search; it brings its own margin. */
   .bar {
     position: relative;
     display: flex;
@@ -124,7 +123,6 @@
       transform var(--duration-normal) var(--ease-out);
   }
 
-  /* A share of the bar, not a fixed width, so a long name ends in an ellipsis rather than mid-word. */
   .compact .mini {
     max-width: 40%;
     margin-inline-end: var(--space-2);

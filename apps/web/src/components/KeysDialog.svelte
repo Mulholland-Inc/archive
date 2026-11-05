@@ -1,8 +1,4 @@
 <script>
-  // KeysDialog connects a connector that has no sign-in, like Karbon, with the keys it asks for: what the person
-  // pastes from the service, each with where to find it. Secrets are typed as passwords, sent once and never shown
-  // again. A connector whose sign-in is the account's own, like a Shopify store's, asks here for which account
-  // instead, and goes on to sign in there.
   import Dialog from './Dialog.svelte';
   import Field from './Field.svelte';
   import Input from './Input.svelte';

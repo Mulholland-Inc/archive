@@ -33,7 +33,6 @@
   members.use();
   let selected = $state(null);
 
-  // A workflow is its author's: only they run, change or delete it. Its access is a group that sees it too.
   const me = $derived(ws()?.members.find((m) => m.email === app.user.email));
   const mine = $derived(Boolean(wf) && (!wf.member || wf.member === me?.id));
   const group = $derived(wf?.access ? groupById(wf.access) : null);

@@ -1,4 +1,3 @@
-// The worker page: raymarches scenes on the GPU, composites Canvas 2D over them, and sends finished frames as raw YUV.
 export const W = 1920, H = 1080, SS = 2, FPS = 60, TR = 0.16;
 
 const lines = s => s.split('\n').length;
@@ -119,7 +118,6 @@ void main() {
   o = s.a > 0.0 ? vec4(s.rgb / s.a, s.a) : vec4(0.0);
 }`;
 
-// Packs the frame into I420 in one R8 target, so readback is 3.1 MB rather than 8.3 and ffmpeg never converts colour.
 const yuvSrc = `#version 300 es
 precision highp float;
 precision highp int;
@@ -265,7 +263,6 @@ function draw3(w, h) {
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 }
 
-// Raymarches one view of a scene at time t onto a 2D context.
 export function art(g, name, t, cam = {}) {
   if (!allowed.has(name)) throw new Error(`scene '${name}' must appear as a quoted literal in this shot's source, so the cache key can see it`);
   const sc = programs.get(name);
@@ -334,7 +331,6 @@ export function art(g, name, t, cam = {}) {
   g.drawImage(glc, 0, H - h, w, h, cam.x ?? 0, cam.y ?? 0, w, h);
 }
 
-// Film state: film.js registers its shots here when imported.
 export const shots = new Map();
 let allowed = new Set();
 let filmV = null;
@@ -355,7 +351,6 @@ async function film(v) {
   shots.clear();
   programs.clear();
   libs = null;
-  // A module URL only runs once, and an edit can return to an earlier version, so each load gets its own URL.
   await import(`./film.js?v=${v}&n=${++loads}`);
   filmV = v;
 }

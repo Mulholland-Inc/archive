@@ -35,7 +35,6 @@ func (m *memberModel) body(ctx context.Context) (map[string]any, diag.Diagnostic
 	return map[string]any{"email": m.Email.ValueString(), "role": m.Role.ValueString(), "groups": groups}, diags
 }
 
-// fill keeps a in m, with its groups by their names: the API names a member's groups by id, and takes either.
 func (r *memberResource) fill(ctx context.Context, m *memberModel, a apiMember) diag.Diagnostics {
 	var diags diag.Diagnostics
 	names := map[string]string{}

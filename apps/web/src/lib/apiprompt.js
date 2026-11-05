@@ -1,9 +1,7 @@
 import { API } from './api.js';
 
-// A prompt to paste into another assistant, so it can use this archive's API with the key.
 export function apiPrompt({ key, archive }) {
   const base = API || 'http://localhost:8080';
-  // MCP has a host of its own, mcp. for api.; in development, where there is one host, it is the API's /mcp.
   const mcp = /^https:\/\/api\./.test(base) ? base.replace('://api.', '://mcp.') : `${base}/mcp`;
   const scope = archive
     ? `This key belongs to one archive, "${archive.name}" (workspace \`${archive.id}\`), and acts with my access there.`

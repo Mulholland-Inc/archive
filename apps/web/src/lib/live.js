@@ -1,5 +1,3 @@
-// Maps what the API returns onto the shapes the screens were designed with. Each mapper takes one API object and
-// returns one screen object.
 
 import { fileURL } from './api.js';
 
@@ -33,7 +31,6 @@ export function elapsed(ms = 0) {
   return m ? `${m}m ${String(s % 60).padStart(2, '0')}s` : `${s}s`;
 }
 
-// One cell of a row as text: money, names, addresses and the other composite types read as people write them.
 export function show(v) {
   if (v === null || v === undefined) return '';
   if (Array.isArray(v)) return v.map(show).join(', ');
@@ -62,7 +59,6 @@ function fileKind(mime = '', name = '') {
   return 'document';
 }
 
-// fileArt is the drawing of a file or folder; a kind doesn't tell these extensions apart.
 const arts = [
   [/\.(pptx?|pptm|potx|key|odp)$/i, 'presentation'],
   [/\.(mp4|m4v|mov|webm|mkv|avi)$/i, 'video'],
@@ -117,7 +113,6 @@ export function toMember(p, me) {
   return { id: p.id, user: mine ? me.user_id : undefined, name: p.name || p.email, email: p.email, role: p.role, groups: p.groups ?? [], active: mine ? 'Now' : '', status: 'active', tone: tone(p.email, 6) };
 }
 
-// Markdown, as the assistant writes it, to the blocks Prose renders.
 export function markdown(src = '') {
   const blocks = [];
   const lines = src.replace(/\r/g, '').split('\n');
@@ -185,7 +180,6 @@ export function markdown(src = '') {
   return blocks;
 }
 
-// A tool call the assistant made, as a step. Its description says what it does, or else the code's first comment.
 export function step(call) {
   const said = call.description?.trim() || call.code?.match(/^\s*\/\/\s*(.+)$/m)?.[1];
   const failed = call.state === 'done' && call.error;
@@ -210,7 +204,6 @@ function outcome(b) {
   }
 }
 
-// The files a run reported, onto its message: a card per file, as the most any run did to it.
 const actions = ['read', 'edited', 'created'];
 export function changed(message, files) {
   for (const f of files ?? []) {
@@ -220,15 +213,12 @@ export function changed(message, files) {
   }
 }
 
-// What a person sent with the files that went along as a line naming each one (withFiles, agent.svelte.js).
 function attached(text) {
   const [said, list] = text.split(/\n*^Attached from the library:\n(?=(?:- .+ \(file [\da-f-]{36}\)\n?)+$)/m);
   if (list === undefined) return { text };
   return { text: said, attachments: [...list.matchAll(/^- (.+) \(file ([\da-f-]{36})\)$/gm)].map(([, name, id]) => ({ id, name, kind: fileKind('', name) })) };
 }
 
-// A saved conversation's messages (Anthropic's format) to the screen's messages: one user bubble per question,
-// one assistant message per answer with its tool calls as steps and its text as prose.
 export function toMessages(messages = []) {
   const out = [];
   const calls = {};
@@ -266,8 +256,6 @@ export function toMessages(messages = []) {
   return out;
 }
 
-// Workflows: rows of the workflow table, each with its last run; on says when it runs.
-
 const days = { '*': 'Every day', '1-5': 'Weekdays', 'MON-FRI': 'Weekdays', '0,6': 'Weekends', '6,0': 'Weekends', 'SAT,SUN': 'Weekends', 0: 'Sundays', 7: 'Sundays', 1: 'Mondays', 2: 'Tuesdays', 3: 'Wednesdays', 4: 'Thursdays', 5: 'Fridays', 6: 'Saturdays', SUN: 'Sundays', MON: 'Mondays', TUE: 'Tuesdays', WED: 'Wednesdays', THU: 'Thursdays', FRI: 'Fridays', SAT: 'Saturdays' };
 const named = { '@hourly': ['Every hour'], '@daily': ['Every day', '0', '0'], '@midnight': ['Every day', '0', '0'], '@weekly': ['Sundays', '0', '0'], '@monthly': ['On the 1st of every month', '0', '0'], '@yearly': ['Every January 1st', '0', '0'], '@annually': ['Every January 1st', '0', '0'] };
 const units = { s: 'second', m: 'minute', h: 'hour' };
@@ -293,7 +281,6 @@ function schedule(spec) {
   return 'On a schedule';
 }
 
-// on is { cron, tz? }, { table, events }, { webhook: true } or null.
 export function trigger(on) {
   if (!on) return { kind: 'manual', label: 'Run by hand' };
   if (on.webhook) return { kind: 'webhook', label: 'When its webhook is called' };
@@ -336,7 +323,6 @@ export function toRun(r, number) {
   };
 }
 
-// w is a workflow row with its last run, as last.
 export function toWorkflow(w) {
   return {
     id: w.id,

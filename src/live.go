@@ -1,31 +1,5 @@
 package main
 
-// Live data: what a committed write moved, told to every browser looking at that workspace, so it re-reads.
-//
-// Where it starts. Every table a workspace writes has a trigger, archive.moved (archive.sql), that sends what
-// it moved with pg_notify on a channel named for the writing session, archive_moved_<pid>. Every pooled
-// connection listens on its own channel only (livePool), so Postgres hands each session back exactly what it
-// committed: a notification is delivered when its transaction commits, never for one that rolls back, and is
-// dropped with a rolled-back savepoint (a failed archive.run). It arrives on the same connection, inside the COMMIT
-// it follows, in the goroutine that committed. So every write path (archive.create, files, turns, workflows,
-// members, migrations, background work) is live with no code of its own, and a new table is too: Migrate
-// gives every public table the trigger (schemaMoved). The rows of archive.user, archive.token and
-// archive.workspace live in the main database, are shared by every workspace and are written by the Hub
-// outside any workspace's store, so those few writes say so themselves (liveUser, Archive.moved).
-//
-// What it carries. A change names the table that moved ("invoice", or "archive.turn" for Archive's own) and,
-// for Archive's own rows, the row's id. Never row data: a browser re-reads through the API, so row-level
-// security still decides what it sees.
-//
-// Where it goes. Changes are held per workspace for liveWindow and sent together, and every request sends
-// what it moved before it ends (liveHub.after), since Cloud Run takes the CPU away once a request is done.
-//   - With ARCHIVE_LIVE_KEY, to the edge: one POST to the app Worker's /live/announce, which relays it to
-//     the workspace's Durable Object and on to every socket there (apps/web/worker.js). The browser's
-//     socket is held at the edge, never here.
-//   - Without it, archive serve is its own edge: it holds the sockets in process at /live, with the same
-//     frames, and another archive process on this machine (the CLI) announces to it. On Cloud Run without a
-//     key live data is off, rather than holding sockets that keep instances awake.
-
 import (
 	"bytes"
 	"cmp"
@@ -50,26 +24,18 @@ import (
 )
 
 const (
-	// liveWindow is how long changes are held to be sent together.
-	liveWindow = 100 * time.Millisecond
-	// liveIDs is how many ids of one table a send names; past it, the table alone says it moved.
-	liveIDs = 20
-	// liveSettle bounds how long a request waits for its announces after its answer.
-	liveSettle = 2 * time.Second
-	// liveSockets bounds the sockets one workspace holds in process, as the Durable Object does.
+	liveWindow  = 100 * time.Millisecond
+	liveIDs     = 20
+	liveSettle  = 2 * time.Second
 	liveSockets = 512
-	// liveFrame is the largest frame a client may send; a client says nothing yet but ping.
-	liveFrame = 1024
+	liveFrame   = 1024
 )
 
-// liveChange is one thing that moved: a table, and for Archive's own tables the row.
 type liveChange struct {
 	Table string `json:"table"`
 	ID    string `json:"id,omitempty"`
 }
 
-// liveAnnounce is what one send tells a workspace: what moved, and the users whose sockets must close
-// because they left it.
 type liveAnnounce struct {
 	Workspace string       `json:"workspace"`
 	Changes   []liveChange `json:"changes,omitempty"`
@@ -82,8 +48,6 @@ type livePending struct {
 }
 
 type liveHub struct {
-	// to is where announces go: the edge's /live/announce, or a local archive serve's; key authenticates
-	// them to the edge. serve says this process holds the sockets itself.
 	to, key string
 	serve   bool
 	client  *http.Client
@@ -97,8 +61,6 @@ type liveHub struct {
 	socks map[string]map[*liveSocket]bool
 }
 
-// newLive is the hub of a process that does not serve: it announces to the edge with a key, to an archive
-// serve on this machine without one, and nowhere else.
 func newLive(api string, local bool) *liveHub {
 	l := &liveHub{key: strings.TrimSpace(os.Getenv("ARCHIVE_LIVE_KEY")), client: &http.Client{Timeout: 5 * time.Second},
 		pending: map[string]*livePending{}, socks: map[string]map[*liveSocket]bool{}}
@@ -111,8 +73,6 @@ func newLive(api string, local bool) *liveHub {
 	return l
 }
 
-// serving makes this process hold the sockets, unless the edge does or it runs on Cloud Run, which names
-// every instance's revision in K_REVISION: a socket held there keeps an instance awake.
 func (l *liveHub) serving() {
 	if l.key == "" {
 		l.to, l.serve = "", os.Getenv("K_REVISION") == ""
@@ -133,8 +93,6 @@ func (l *liveHub) take(ws string) *livePending {
 	return p
 }
 
-// moved holds a change to send with the next flush. Past liveIDs ids of one table, the table alone stands
-// for them all.
 func (l *liveHub) moved(ws string, c liveChange) {
 	if !l.on() || ws == "" || c.Table == "" {
 		return
@@ -164,7 +122,6 @@ func (l *liveHub) moved(ws string, c liveChange) {
 	p.changes[c] = true
 }
 
-// drop closes a user's sockets on a workspace they left.
 func (l *liveHub) drop(ws, user string) {
 	if !l.on() || ws == "" || user == "" {
 		return
@@ -174,7 +131,6 @@ func (l *liveHub) drop(ws, user string) {
 	l.mu.Unlock()
 }
 
-// flush sends everything held, one announce per workspace.
 func (l *liveHub) flush() {
 	l.mu.Lock()
 	pending := l.pending
@@ -204,14 +160,12 @@ func (l *liveHub) flush() {
 	l.mu.Unlock()
 }
 
-// waiting says whether anything is held.
 func (l *liveHub) waiting() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return len(l.pending) > 0
 }
 
-// settle sends what is held and waits, up to d, until every send is done.
 func (l *liveHub) settle(d time.Duration) {
 	if l == nil {
 		return
@@ -225,7 +179,6 @@ func (l *liveHub) settle(d time.Duration) {
 	}
 }
 
-// after sends what a request moved before the request ends, its answer first.
 func (l *liveHub) after(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		next.ServeHTTP(w, r)
@@ -259,7 +212,7 @@ func (l *liveHub) send(a liveAnnounce) error {
 	resp, err := l.client.Do(req)
 	if err != nil {
 		if l.key == "" {
-			return nil // no archive serve on this machine to tell
+			return nil
 		}
 		return err
 	}
@@ -271,8 +224,6 @@ func (l *liveHub) send(a liveAnnounce) error {
 	return nil
 }
 
-// livePool makes every connection of a workspace's pool listen on its own channel and tell moved what it
-// committed (see the top of this file).
 func livePool(cfg *pgxpool.Config, moved func(table, id string)) {
 	cfg.AfterConnect = func(ctx context.Context, c *pgx.Conn) error {
 		_, err := c.Exec(ctx, "LISTEN "+pgIdent("archive_moved_"+strconv.FormatUint(uint64(c.PgConn().PID()), 10)))
@@ -287,13 +238,10 @@ func livePool(cfg *pgxpool.Config, moved func(table, id string)) {
 	}
 }
 
-// moved tells the workspace a row of the main database moved: a token, the workspace itself.
 func (a *Archive) moved(ctx context.Context, table, id string) {
 	storeAfter(ctx, func() { a.hub.live.moved(a.ws.ID.String(), liveChange{Table: table, ID: id}) })
 }
 
-// liveUser tells every workspace a user is in that their account moved, so their app re-reads who they are
-// and which workspaces they have, wherever it is open.
 func (h *Hub) liveUser(ctx context.Context, ids ...uuid.UUID) {
 	if !h.live.on() {
 		return
@@ -309,9 +257,6 @@ func (h *Hub) liveUser(ctx context.Context, ids ...uuid.UUID) {
 	}
 }
 
-// liveMembers is how to tell every member of a workspace that their account moved: the workspace was renamed
-// or deleted, which the list of workspaces each of them has shows. It finds them now and tells them when
-// called, so a deletion can be told once it is done.
 func (h *Hub) liveMembers(ctx context.Context, ws uuid.UUID) func() {
 	if !h.live.on() {
 		return func() {}
@@ -324,18 +269,12 @@ func (h *Hub) liveMembers(ctx context.Context, ws uuid.UUID) func() {
 	return func() { h.liveUser(ctx, ids...) }
 }
 
-// The sockets archive serve holds itself, when no edge holds them. The frames are the Durable Object's:
-// {"event":"ready","workspace":...} once, then {"event":"change","changes":[{table, id}]} per send; a client
-// may send "ping" and is answered "pong". A user who leaves the workspace has their sockets closed.
-
 type liveSocket struct {
 	c    *websocket.Conn
 	user string
 	wmu  sync.Mutex
 }
 
-// send writes one frame: a string as it is, anything else as JSON. A write that cannot finish in 10 seconds
-// fails, and the deadline is cleared after, so it never outlives the write.
 func (s *liveSocket) send(v any) error {
 	msg, ok := v.(string)
 	if !ok {
@@ -368,7 +307,6 @@ func (l *liveHub) relay(a liveAnnounce) {
 	}
 }
 
-// liveAnnounceHTTP takes an announce from another archive process on this machine, the CLI.
 func (h *Hub) liveAnnounceHTTP(w http.ResponseWriter, r *http.Request) {
 	if !h.live.serve || !h.local(r) {
 		http.NotFound(w, r)
@@ -388,9 +326,6 @@ func (h *Hub) liveAnnounceHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// liveReader is who may listen to a workspace: the session's user, checked as every API request is, by the
-// cookie (or a bearer token) and the workspace named in ?workspace= or Archive-Workspace, since a browser's
-// WebSocket can send no header of its own.
 func (h *Hub) liveReader(r *http.Request) (ws, user string, err error) {
 	want := cmp.Or(r.URL.Query().Get("workspace"), r.Header.Get("Archive-Workspace"))
 	var a *Archive
@@ -410,15 +345,11 @@ func (h *Hub) liveReader(r *http.Request) (ws, user string, err error) {
 	return a.ws.ID.String(), ac.UserID.String(), nil
 }
 
-// liveCheckHTTP answers the edge Worker, which asks before it lets a browser's socket through to a
-// workspace's Durable Object, with the browser's cookie: whether this session may read the workspace, and as
-// whom.
 func (h *Hub) liveCheckHTTP(w http.ResponseWriter, r *http.Request) {
 	ws, user, err := h.liveReader(r)
 	httpWrite(w, http.StatusOK, map[string]string{"workspace": ws, "user": user}, err)
 }
 
-// liveHTTP is the socket at /live, when this process holds the sockets.
 func (h *Hub) liveHTTP(w http.ResponseWriter, r *http.Request) {
 	if !h.live.serve {
 		http.Error(w, "live updates are served at the edge", http.StatusNotFound)

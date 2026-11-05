@@ -7,22 +7,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Zoho CRM and Zoho Books, both with ARCHIVE_ZOHO: a server-based client from Zoho's API Console
-// (api-console.zoho.com) whose redirect URIs list <API>/connect/zohocrm/callback and <API>/connect/zohobooks/callback,
-// with multi-DC on, so that an account of any data center connects. An owner connects one for everyone.
-//
-// Each data center is its own Zoho: consent starts at accounts.zoho.com, which sends a person on to theirs, and the
-// callback names its accounts server, accounts-server, where their tokens come from and are revoked; the token's
-// answer names their API, api_domain. Zoho asks for its scopes comma separated, and sends a refresh token only with
-// access_type=offline, and again only with prompt=consent. Its APIs take a token as Zoho-oauthtoken, not Bearer.
-//
-// CRM syncs leads and contacts into crm_contact, as Salesforce's are, accounts into crm_company and deals into
-// crm_deal; it adds and changes them when asked, and deletes nothing. Books syncs every organization of the account:
-// its chart of accounts into ledger_account, its customers and vendors into ledger_contact, and its invoices, bills,
-// payments both ways and journals into ledger_entry, without their lines, which only reading one has; it only reads.
-// A stream is listed whole the first time and a week after, which deletes what is gone, and in between pages its
-// newest changes down to the sync before; Books' chart of accounts and payments, which it cannot list by change, are
-// listed whole every time. Neither pushes.
 func init() {
 	Register(&Connector{
 		ID: "zohocrm", Name: "Zoho CRM", Integration: true, Env: "ARCHIVE_ZOHO",
@@ -95,8 +79,6 @@ func init() {
 						"state": "data->>'Mailing_State'", "country": "data->>'Mailing_Country'", "made_at": "archive.sync_at(data->>'Created_Time')", "edited_at": "archive.sync_at(data->>'Modified_Time')"},
 					People: map[string]SQL{"person": "data->>'Email'"},
 					Refs:   map[string]SQL{"company": "data#>>'{Account_Name,id}'"}}},
-			// A lead is a contact whose stage is lead until it is converted, when Zoho lists it no more and the contact
-			// it became is the one.
 			{Name: "leads", Gap: time.Second, Req: zcrmList, Items: "data", Empty: true, Updated: "Modified_Time", Page: zcrmPage, Change: zcrmChange,
 				Vars: Obj{"module": "Leads", "fields": "First_Name,Last_Name,Email,Phone,Designation,Company,Lead_Status,Lead_Source,City,State,Country,Created_Time,Modified_Time"},
 				Doc:  "Every lead not yet converted, with First_Name, Last_Name, Email, Phone, Designation, Company, Lead_Status, Lead_Source, City, State, Country" + zcrmDoc,
@@ -105,8 +87,6 @@ func init() {
 						"job_title": "data->>'Designation'", "company_name": "data->>'Company'", "stage": "'lead'", "lead_status": "data->>'Lead_Status'", "city": "data->>'City'",
 						"state": "data->>'State'", "country": "data->>'Country'", "made_at": "archive.sync_at(data->>'Created_Time')", "edited_at": "archive.sync_at(data->>'Modified_Time')"},
 					People: map[string]SQL{"person": "data->>'Email'"}}},
-			// Zoho's deals have no closed or won of their own: a stage that starts Closed is closed, and Closed Won won,
-			// as the stages a CRM starts with are named.
 			{Name: "deals", Gap: time.Second, Req: zcrmList, Items: "data", Empty: true, Updated: "Modified_Time", Page: zcrmPage, Change: zcrmChange,
 				Vars: Obj{"module": "Deals", "fields": "Deal_Name,Amount,Currency,Stage,Pipeline,Closing_Date,Account_Name,Description,Created_Time,Modified_Time"},
 				Doc:  "Every deal, with Deal_Name, Amount, Currency, Stage, Pipeline, Closing_Date, Account_Name, Description" + zcrmDoc,
@@ -195,26 +175,21 @@ func init() {
 }
 
 const (
-	zcrmDoc = ", by its id: listed whole the first time and a week after, 200 a page, which deletes those gone, and in between those modified since the sync before, newest first."
-	// A record of a CRM with one currency names none: US dollars.
-	zcrmCurrency SQL = "coalesce(nullif(data->>'Currency', ''), 'USD')"
-	zbooksDoc        = ": listed whole the first time and a week after, 200 a page, which deletes those gone, and in between those modified since the sync before, newest first."
-	// An item without its own currency is in its organization's.
+	zcrmDoc            = ", by its id: listed whole the first time and a week after, 200 a page, which deletes those gone, and in between those modified since the sync before, newest first."
+	zcrmCurrency   SQL = "coalesce(nullif(data->>'Currency', ''), 'USD')"
+	zbooksDoc          = ": listed whole the first time and a week after, 200 a page, which deletes those gone, and in between those modified since the sync before, newest first."
 	zbooksCurrency SQL = "coalesce(nullif(data->>'currency_code', ''), nullif(data->>'org_currency', ''), 'USD')"
 	zbooksEdited   SQL = "archive.sync_at(coalesce(nullif(data->>'last_modified_time', ''), data->>'created_time'))"
 )
 
 var (
-	// Tokens come from and are revoked on the accounts server of the account's data center.
 	zohoEndpoint = oauth2.Endpoint{AuthURL: "https://accounts.zoho.com/oauth/v2/auth", TokenURL: "{+meta/accounts-server}/oauth/v2/token", AuthStyle: oauth2.AuthStyleInParams}
 	zohoRevoke   = &Req{Method: POST, URL: "{+meta/accounts-server}/oauth/v2/token/revoke", Query: Q{"token": "{refresh}"}}
 	zohoParams   = map[string]string{"access_type": "offline", "prompt": "consent"}
 	zohoKeep     = []string{"accounts-server", "api_domain"}
-	// The accounts servers of Zoho's data centers, as https://accounts.zoho.com/oauth/serverinfo lists them.
-	zohoAllow = map[string][]string{"accounts-server": {"https://accounts.zoho.com", "https://accounts.zoho.eu", "https://accounts.zoho.in", "https://accounts.zoho.com.au",
+	zohoAllow    = map[string][]string{"accounts-server": {"https://accounts.zoho.com", "https://accounts.zoho.eu", "https://accounts.zoho.in", "https://accounts.zoho.com.au",
 		"https://accounts.zoho.jp", "https://accounts.zoho.uk", "https://accounts.zoho.sg", "https://accounts.zoho.ae", "https://accounts.zoho.sa",
 		"https://accounts.zohocloud.ca", "https://accounts.zohohq.in"}}
-	// The API is the one the token's answer named, if it is Zoho's, as a token goes nowhere else.
 	zohoLet = []Step{
 		{As: "api", In: "{meta/api_domain}", Find: `^(https://(?:[a-z0-9-]+\.)*zohoapis\.[a-z]+(?:\.[a-z]+)?)/?$`},
 		{Unless: "api", Fail: "Zoho named no API of its own for this account: {meta/api_domain|nothing}"},
@@ -222,22 +197,16 @@ var (
 
 	zcrmModules = []string{"Leads", "Contacts", "Accounts", "Deals"}
 	zcrmList    = Req{URL: "/{module}", Query: Q{"fields": "{fields}", "per_page": "200", "page_token": "{page}"}}
-	// The first 2000 records page by number, and the rest only by the token each page names.
-	zcrmPage   = Cursor{At: "info/next_page_token", More: "info/more_records"}
-	zcrmChange = NewestFirst{Query: Q{"sort_by": "Modified_Time", "sort_order": "desc"}, Expired: []int{400}}
-	// Zoho answers a write of one record with its outcome in data, which may refuse it with a 2xx.
+	zcrmPage    = Cursor{At: "info/next_page_token", More: "info/more_records"}
+	zcrmChange  = NewestFirst{Query: Q{"sort_by": "Modified_Time", "sort_order": "desc"}, Expired: []int{400}}
 	zcrmRefused = Step{Only: Test{At: "got/data/0/status", Is: "error"}, Fail: "Zoho refused it: {got/data/0/code}, {got/data/0/message} {got/data/0/details}"}
 
-	// Every organization of the account is a part, with its currency.
-	zbooksOrgs = &Parts{Req: Req{URL: "/organizations"}, Items: "organizations", ID: "{organization_id}", Vals: Obj{"name": "{name}", "currency": "{currency_code}"}}
-	zbooksList = Req{URL: "/{what}", Query: Q{"organization_id": "{part}", "per_page": "200", "page": "{page}"}}
-	zbooksPage = Offset{From: 1, Size: 200, Step: 1}
-	// A list that cannot sort by last_modified_time lists whole.
+	zbooksOrgs   = &Parts{Req: Req{URL: "/organizations"}, Items: "organizations", ID: "{organization_id}", Vals: Obj{"name": "{name}", "currency": "{currency_code}"}}
+	zbooksList   = Req{URL: "/{what}", Query: Q{"organization_id": "{part}", "per_page": "200", "page": "{page}"}}
+	zbooksPage   = Offset{From: 1, Size: 200, Step: 1}
 	zbooksChange = NewestFirst{Query: Q{"sort_column": "last_modified_time", "sort_order": "D"}, Expired: []int{400}}
 	zbooksSet    = Obj{"organization_id": "{part}", "organization": "{in/name}", "org_currency": "{in/currency}"}
-	// A transaction as an entry of the books, from what its stream's Set reads into entry: its number, date, who it is
-	// with and their id, its total and what is left of it.
-	zbooksEntry = Map{Table: "ledger_entry",
+	zbooksEntry  = Map{Table: "ledger_entry",
 		Cols: map[string]SQL{"kind": "data->>'kind'", "number": "data#>>'{entry,number}'", "txn_on": "archive.sync_day(data#>>'{entry,on}')",
 			"due_on": "archive.sync_day(data->>'due_date')", "contact_name": "data#>>'{entry,with}'",
 			"total": "archive.sync_money(data#>>'{entry,total}', " + zbooksCurrency + ")", "balance": "archive.sync_money(data#>>'{entry,left}', " + zbooksCurrency + ")",

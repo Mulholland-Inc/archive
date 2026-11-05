@@ -51,7 +51,6 @@
   const types = $derived(ws().schema);
   const nameOf = (id) => types.find((t) => t.id === id)?.name ?? id;
   const linksOf = (t) => [...new Set(t.links.map((l) => l.to))].map(nameOf);
-  // A view shows as its layout, like in the sidebar; a table as a box.
   const iconOf = (t) => (t.kind !== 'view' ? Box : ({ board: Kanban, calendar: CalendarDays })[t.layout] ?? Table2);
   const keep = {
     all: () => true,

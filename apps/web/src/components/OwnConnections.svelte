@@ -9,8 +9,6 @@
   import { relative } from '../lib/live.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
 
-  // Your own accounts at connector in every archive you are in, each labelled with the archive it is connected
-  // in, where it is synced and disconnected.
   let { connector } = $props();
 
   ownConnections.use();
@@ -19,7 +17,6 @@
 
   function synced(x) {
     if (x.error) return x.error;
-    // "synced 5 min ago", "synced yesterday", but "synced on Sun" and "synced on Nov 1".
     const r = x.synced_at && relative(x.synced_at);
     if (r) return `${(x.items ?? 0).toLocaleString()} items synced ${/^(Just|Today|Yesterday|\d)/.test(r) ? r.toLowerCase() : `on ${r}`}`;
     return x.sync_at ? 'Syncing…' : 'Not synced yet';
@@ -63,7 +60,6 @@
     list-style: none;
   }
 
-  /* Columns: the account and its sync, the archive it is connected in, then its buttons. */
   .account {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, var(--col-md)) auto;

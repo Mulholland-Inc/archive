@@ -84,19 +84,15 @@ export function workflowItems(workflow, { open = true, onrun, ondelete = () => d
   ];
 }
 
-// removeMemberConfirm removes member, or revokes their invitation, once you confirm.
 export async function removeMemberConfirm(member) {
   const invited = member.status === 'invited';
   if (await confirmDialog({ title: invited ? `Revoke ${member.name}’s invitation?` : `Remove ${member.name}?`, body: invited ? 'The invitation stops working.' : 'They lose access to this archive.', confirm: invited ? 'Revoke' : 'Remove' })) removeMember(member.id);
 }
 
-// usesText says where a group is used, like 3 rows in invoice and 1 in file.
 export function usesText(uses) {
   return uses.map((u, i) => `${u.rows} ${i === 0 ? (u.rows === 1 ? 'row' : 'rows') + ' ' : ''}in ${u.table}`).join(', ');
 }
 
-// deleteGroupConfirm deletes group once you confirm, and only when no row's access is it: a row whose group went
-// would be seen by everyone, so Archive refuses, and this says where it is used instead.
 export async function deleteGroupConfirm(group) {
   const uses = await groupUses(group.id).catch(() => []);
   if (uses.length) {
@@ -119,8 +115,6 @@ export async function newGroupPrompt(people = []) {
   return name ? createGroup({ name, people }) : null;
 }
 
-// memberGroupItems are the groups a member is not in yet, for an owner to add them to, and a new one to make with
-// them in it.
 export function memberGroupItems(member) {
   if (!isArchiveOwner()) return [];
   return [

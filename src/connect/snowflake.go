@@ -18,23 +18,6 @@ import (
 	"time"
 )
 
-// Snowflake, a company's data warehouse, through its SQL API. A warehouse is too big to copy, so Archive keeps only
-// what is in the databases, schemas and tables an owner picks, each table's or view's columns, rows and size, and
-// runs SQL there live when asked: query only reads, and execute, which writes, goes only where the role was granted
-// it, and is refused to a viewer's token.
-//
-// It is a key connector with key-pair authentication, which needs nothing of Mulholland's and no browser: the
-// account's admin makes a service user with an RSA public key, a role that may SELECT what Archive is to read,
-// and write only where the admin chooses, and a default warehouse, and an owner pastes in the account, the user, its private key and the picks.
-// Each request is signed with a JWT of the key that lasts an hour. A role that may change the account, like
-// SYSADMIN, cannot connect. The key lasts until the admin unsets it from the user.
-//
-// The SQL API answers rows as lists, which Archive reads into objects by the names of their columns; a statement
-// that takes over 45 seconds answers with its handle, which the query action reads again.
-//
-// It syncs every table and view of each pick into warehouse_table, with its columns into warehouse_column, from
-// each database's INFORMATION_SCHEMA, listed whole every six hours, which deletes those gone. Each sync wakes the
-// warehouse for a minute or so.
 func init() {
 	Register(&Connector{
 		ID: "snowflake", Name: "Snowflake", Integration: true,
@@ -74,7 +57,6 @@ func init() {
 				Out: Obj{"columns": "{got/resultSetMetaData/rowType}", "rows": "{got/data}", "rowCount": "{got/resultSetMetaData/numRows}",
 					"partitions": "{got/resultSetMetaData/partitionInfo}", "handle": "{got/statementHandle}", "message": "{got/message}"},
 			}),
-			// A write goes only where the role was granted it, like a schema of Archive's own; the setup grants none.
 			"execute": Call[snowQuery, any](Plan{
 				Doc: "Run one SQL statement that writes, like { statement: \"INSERT INTO archive.forecast.weekly (week, sku, units) VALUES ('2026-11-09', 'RUG-8X10', 140)\" } " +
 					"or a CREATE TABLE, MERGE, UPDATE or DELETE, as the service user's role, which may write only where its admin granted it: { rowCount, rows, handle, message }; " +
@@ -93,13 +75,10 @@ func init() {
 			}),
 		},
 		Sync: []*Sync{
-			// A pick is a database, a schema of one or a table of one; the parts are the picks, each listed from its
-			// database's INFORMATION_SCHEMA, 200 tables a page after the last one's name.
 			{Name: "tables", Gap: time.Second, Every: 6 * time.Hour, Items: "data", ID: "id", Page: Cursor{At: "data/199/id"},
 				Parts: &Parts{Req: snowStatement(snowPicks), Items: "data", Vals: Obj{"db": "{db}", "schema": "{schema}", "table": "{table}"}},
 				Req:   snowStatement(snowTables),
-				// A pick that is not there, or that the role may not read, is passed over until the next sync.
-				Pass: []int{http.StatusNotFound},
+				Pass:  []int{http.StatusNotFound},
 				Deny: []Deny{{Status: []int{http.StatusUnprocessableEntity}, Says: []string{"warehouse"}, Why: "the service user has no warehouse to run on: {message}"},
 					{Status: []int{http.StatusUnprocessableEntity}, Says: []string{"does not exist or not authorized"}, Why: "the service user's role may not read every pick: {message}"}},
 				Doc: "Every table and view of the databases, schemas and tables picked, but INFORMATION_SCHEMA's, with its kind, rows, size, comment, clustering key and " +
@@ -116,11 +95,8 @@ func init() {
 }
 
 const (
-	// snowPicks are the picks of the scope key, each split into its database, schema and table, upper case as
-	// Snowflake keeps names it was not given in quotes.
 	snowPicks = `SELECT DISTINCT UPPER(TRIM(value)) AS "id", UPPER(SPLIT_PART(TRIM(value), '.', 1)) AS "db", UPPER(SPLIT_PART(TRIM(value), '.', 2)) AS "schema", ` +
 		`UPPER(SPLIT_PART(TRIM(value), '.', 3)) AS "table" FROM TABLE(SPLIT_TO_TABLE(REGEXP_REPLACE('{'meta/scope}', '[\\s;]+', ','), ',')) WHERE TRIM(value) <> ''`
-	// snowTables are a pick's tables and views, with their columns, 200 a page after the last one's name.
 	snowTables = `SELECT t.table_catalog || '.' || t.table_schema || '.' || t.table_name AS "id", t.table_catalog AS "database", t.table_schema AS "schema", ` +
 		`t.table_name AS "name", t.table_type AS "kind", t.row_count AS "rows", t.bytes AS "bytes", t.comment AS "comment", t.clustering_key AS "clustering", ` +
 		`TO_VARCHAR(t.created, 'YYYY-MM-DD"T"HH24:MI:SS.FF3TZH:TZM') AS "created", TO_VARCHAR(t.last_altered, 'YYYY-MM-DD"T"HH24:MI:SS.FF3TZH:TZM') AS "altered", ` +
@@ -133,10 +109,8 @@ const (
 		`GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 ORDER BY 1 LIMIT 200`
 )
 
-// snowParams tag Archive's statements, so the account's query history names them, and keep each to one statement.
 var snowParams = Obj{"QUERY_TAG": "archive", "MULTI_STATEMENT_COUNT": "1"}
 
-// snowStatement is a request that runs the statement q.
 func snowStatement(q string) Req {
 	return Req{Method: POST, Read: true, URL: "/statements", Body: Obj{"statement": q, "timeout": 300, "parameters": snowParams}}
 }
@@ -154,9 +128,6 @@ type (
 	}
 )
 
-// snowRows is an answer of the SQL API with its rows, lists, as objects by the names of their columns, and a VARIANT,
-// OBJECT or ARRAY read out of the JSON Snowflake gives it as. An answer without the columns, like a later
-// partition's, stays as it is.
 var snowRows = &Codec{"snowflake_rows", func(v any) (any, error) {
 	m, _ := v.(map[string]any)
 	rows, ok := m["data"].([]any)
@@ -187,8 +158,6 @@ var snowRows = &Codec{"snowflake_rows", func(v any) (any, error) {
 	return m, nil
 }}
 
-// snowReads passes one statement that only reads, by its first word, and refuses any other. The role's grants are what
-// keep it from writing; this says so before Snowflake does.
 var snowReads = &Codec{"snowflake_reads", func(v any) (any, error) {
 	first, err := snowFirst(text(v))
 	if err != nil {
@@ -200,7 +169,6 @@ var snowReads = &Codec{"snowflake_reads", func(v any) (any, error) {
 	return text(v), nil
 }}
 
-// snowOne passes one statement of any kind.
 var snowOne = &Codec{"snowflake_one", func(v any) (any, error) {
 	if _, err := snowFirst(text(v)); err != nil {
 		return nil, err
@@ -208,8 +176,6 @@ var snowOne = &Codec{"snowflake_one", func(v any) (any, error) {
 	return text(v), nil
 }}
 
-// snowFirst is the first word of q, upper case, once q is one statement: comments, strings and quoted names are
-// skipped, and a semicolon may only end it.
 func snowFirst(q string) (string, error) {
 	first, ended := "", false
 	for i := 0; i < len(q); {
@@ -273,11 +239,8 @@ var (
 	snowArmor = regexp.MustCompile(`-----[A-Z ]+-----`)
 )
 
-// snowAdmin are roles that may change the account, which Archive does not connect as.
 const snowAdmin = `(?i)^(ACCOUNTADMIN|ORGADMIN|SECURITYADMIN|SYSADMIN|USERADMIN|GLOBALORGADMIN)$`
 
-// snowJWT is a JWT of its user of its account, signed with its key, as Snowflake's key-pair authentication has it:
-// issued by <ACCOUNT>.<USER>.SHA256:<the public key's fingerprint>, for <ACCOUNT>.<USER>, the account without its region.
 var snowJWT = &Codec{"snowflake_jwt", func(v any) (any, error) {
 	k, err := snowKey(text(pick(v, "key")))
 	if err != nil {
@@ -302,7 +265,6 @@ var snowJWT = &Codec{"snowflake_jwt", func(v any) (any, error) {
 	return msg + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }}
 
-// snowAccount is the account of an identifier or URL, as its host names it: xy12345.us-east-2.aws or acme-prod.
 func snowAccount(s string) string {
 	s = strings.TrimSpace(s)
 	if _, after, ok := strings.Cut(s, "://"); ok {
@@ -312,7 +274,6 @@ func snowAccount(s string) string {
 	return strings.TrimSuffix(strings.ToLower(s), ".snowflakecomputing.com")
 }
 
-// snowKey is the RSA private key of a PEM, its lines maybe run together as a form's field leaves them, PKCS #8 or #1.
 func snowKey(s string) (*rsa.PrivateKey, error) {
 	if strings.Contains(s, "ENCRYPTED") {
 		return nil, errors.New("that private key is encrypted; paste one made with -nocrypt")

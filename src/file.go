@@ -70,7 +70,6 @@ type File struct {
 }
 
 const (
-	// fileTextMax is the most of a file's words a row keeps, uploaded or synced; search reads the first 250,000 characters.
 	fileTextMax = 1 << 20
 	fileMaxPost = 64 << 20
 	fileLinkTTL = 24 * time.Hour
@@ -100,7 +99,6 @@ func fileName(name, hash string) string {
 	return name
 }
 
-// AddFile stores a file that the group access sees, by its id or its name, or everyone with ""; in a folder, as the folder is seen.
 func (a *Archive) AddFile(ctx context.Context, access, name string, parent *uuid.UUID, r io.Reader) (*File, error) {
 	if _, err := signedIn(ctx); err != nil {
 		return nil, err
@@ -112,7 +110,6 @@ func (a *Archive) AddFile(ctx context.Context, access, name string, parent *uuid
 	return a.fileAdd(ctx, g, name, parent, r)
 }
 
-// AddFolder makes a folder in parent, or at the top with nil, that the group access sees; in a folder, as that one is seen.
 func (a *Archive) AddFolder(ctx context.Context, access, name string, parent *uuid.UUID) (*File, error) {
 	name = strings.TrimSpace(filepath.Base(strings.ReplaceAll(name, "\\", "/")))
 	if name == "" || name == "." || name == "/" {
@@ -127,7 +124,6 @@ func (a *Archive) AddFolder(ctx context.Context, access, name string, parent *uu
 	})
 }
 
-// MoveFile puts file id in the folder parent, whose access it takes, or at the top with nil, keeping its own.
 func (a *Archive) MoveFile(ctx context.Context, id uuid.UUID, parent *uuid.UUID) (*File, error) {
 	if err := a.fileMine(ctx, id, "move"); err != nil {
 		return nil, err
@@ -137,7 +133,6 @@ func (a *Archive) MoveFile(ctx context.Context, id uuid.UUID, parent *uuid.UUID)
 	})
 }
 
-// fileMine refuses to do to file id what a connection's file does not take, in words an agent can act on.
 func (a *Archive) fileMine(ctx context.Context, id uuid.UUID, verb string) error {
 	f, err := a.GetFile(ctx, id)
 	if err == nil && f.Connection != nil {
@@ -146,7 +141,6 @@ func (a *Archive) fileMine(ctx context.Context, id uuid.UUID, verb string) error
 	return err
 }
 
-// DeleteFile deletes file id, or an empty folder, of the caller's; its blob goes once no row has its hash.
 func (a *Archive) DeleteFile(ctx context.Context, id uuid.UUID) error {
 	if err := a.fileMine(ctx, id, "delete"); err != nil {
 		return err
@@ -158,7 +152,6 @@ func (a *Archive) DeleteFile(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
-// blobNext removes a blob queued as gone, unless a row has its hash again, and says whether there was one.
 func (a *Archive) blobNext(ctx context.Context) (bool, error) {
 	found := false
 	err := a.sys(ctx, func(ctx context.Context) error {
@@ -189,9 +182,6 @@ func (a *Archive) blobNext(ctx context.Context) (bool, error) {
 	return found, err
 }
 
-// CopyFile makes a file of the caller's, to change here, from file id, which they can read, with its bytes and words. Its
-// name is the file's unless name says, and it goes to the group access names, or everyone with "". Left to itself, with
-// no access, it goes to who sees the file; a personal connection's has no group that says so, so it must be asked.
 func (a *Archive) CopyFile(ctx context.Context, id uuid.UUID, name string, access *string) (*File, error) {
 	f, err := a.GetFile(ctx, id)
 	if err == nil {
@@ -231,7 +221,6 @@ func (a *Archive) CopyFile(ctx context.Context, id uuid.UUID, name string, acces
 	})
 }
 
-// actionFiles are the files of the caller of an action, for its connection.
 type actionFiles struct {
 	a     *Archive
 	ctx   context.Context
@@ -266,7 +255,6 @@ func (x actionFiles) Row(source string) (*connect.Synced, error) {
 	})
 }
 
-// blob says why f has no bytes to read yet.
 func (f *File) blob() error {
 	switch {
 	case f.Kind == "folder":
@@ -279,7 +267,6 @@ func (f *File) blob() error {
 	return nil
 }
 
-// fileGroup is the id of the group access names, by its id or its name; nil for "".
 func (a *Archive) fileGroup(ctx context.Context, access string) (g *uuid.UUID, err error) {
 	if access == "" {
 		return nil, nil
@@ -307,8 +294,6 @@ func (a *Archive) fileAdd(ctx context.Context, access *uuid.UUID, name string, p
 	return a.fileCommit(ctx, access, name, parent, nil, func() (io.ReadCloser, error) { return os.Open(tmp.Name()) })
 }
 
-// fileCommit stores what open gives as a file named name in parent, or, with conn, as one a connection's sync kept,
-// which has no parent and is found again by its content and name.
 func (a *Archive) fileCommit(ctx context.Context, access *uuid.UUID, name string, parent, conn *uuid.UUID, open func() (io.ReadCloser, error)) (*File, error) {
 	r, err := open()
 	if err != nil {
@@ -346,7 +331,6 @@ func (a *Archive) fileCommit(ctx context.Context, access *uuid.UUID, name string
 		var err error
 		access := access
 		if access == nil && parent != nil {
-			// A folder it cannot see is file_check's to refuse.
 			if up, err := fileOf(q.GetFile(ctx, *parent)); err == nil {
 				access = up.Access
 			}
@@ -359,7 +343,6 @@ func (a *Archive) fileCommit(ctx context.Context, access *uuid.UUID, name string
 		if !errors.Is(err, ErrNotFound) {
 			return f, err
 		}
-		// The row first: a caller it refuses leaves no blob behind.
 		if conn != nil {
 			f, err = fileOf(q.KeepFile(ctx, generated.KeepFileParams{Hash: hash, Name: name, MIME: mt, Size: size, Access: access, Connection: conn}))
 		} else {
@@ -372,7 +355,6 @@ func (a *Archive) fileCommit(ctx context.Context, access *uuid.UUID, name string
 	}
 	var f *File
 	if conn != nil {
-		// A sync has no one signed in: it keeps the file in the system's transaction it calls this in.
 		f, err = commit(ctx)
 	} else {
 		f, err = coreDo(a, ctx, commit)
@@ -402,8 +384,6 @@ func (a *Archive) fileReady(ctx context.Context, f *File) (*File, error) {
 	return a.ProcessFile(ctx, f.ID)
 }
 
-// FileTree says which of the files Files lists: nil is every one; else those in the folder Parent, or with none those
-// at the top of the connection Connection, or at the top of what was made here.
 type FileTree struct{ Parent, Connection *uuid.UUID }
 
 func (a *Archive) Files(ctx context.Context, limit int, after uuid.UUID, tree *FileTree) ([]*File, error) {
@@ -455,8 +435,6 @@ func (a *Archive) RenameFile(ctx context.Context, id uuid.UUID, name string) (*F
 	})
 }
 
-// SetFileAccess gives file id to the group access, by its id or its name, or to everyone with "", as an editor
-// in both groups, or an owner, does, and a folder all that is in it. What is in a folder takes the folder's.
 func (a *Archive) SetFileAccess(ctx context.Context, id uuid.UUID, access string) (*File, error) {
 	g, err := a.fileGroup(ctx, access)
 	if err != nil {
@@ -507,7 +485,6 @@ func (a *Archive) ProcessFile(ctx context.Context, id uuid.UUID) (*File, error) 
 	return a.GetFile(ctx, id)
 }
 
-// fileSign signs a link to file id until exp, for the role that made it: what it serves is what that role still sees.
 func (a *Archive) fileSign(id uuid.UUID, exp int64, role string) string {
 	m := hmac.New(sha256.New, a.linkKey)
 	fmt.Fprintf(m, "%s.%d.%s", id, exp, role)
@@ -783,7 +760,6 @@ func (a *Archive) fileRoutes(mux *http.ServeMux) {
 	})
 }
 
-// fileParam is the id in the query parameter name, nil when it has none.
 func fileParam(r *http.Request, name string) (*uuid.UUID, error) {
 	s := r.URL.Query().Get(name)
 	if s == "" {
@@ -796,7 +772,6 @@ func fileParam(r *http.Request, name string) (*uuid.UUID, error) {
 	return &id, nil
 }
 
-// FileSource is a connection whose files you can see, at the top of the tree.
 type FileSource struct {
 	ID       uuid.UUID `json:"id"`
 	Provider string    `json:"provider"`
@@ -804,7 +779,6 @@ type FileSource struct {
 	Account  string    `json:"account"`
 }
 
-// FileSources are the connections whose files the caller sees.
 func (a *Archive) FileSources(ctx context.Context) ([]FileSource, error) {
 	return coreDo(a, ctx, func(ctx context.Context) ([]FileSource, error) {
 		rows, err := a.st.db(ctx).FileSources(ctx)
@@ -852,8 +826,6 @@ func (a *Archive) fileSigned(w http.ResponseWriter, r *http.Request) {
 	a.fileServe(w, r, f, true)
 }
 
-// fileAs is file id as the role that signed a link to it sees it now: a link ends with the file, with the connection it
-// came from, and with its signer's access or membership.
 func (a *Archive) fileAs(ctx context.Context, role string, id uuid.UUID) (f *File, err error) {
 	gone := fmt.Errorf("link no longer reaches a file its maker can see: %w", ErrForbidden)
 	var ok bool
@@ -1169,7 +1141,6 @@ func (a *Archive) fileProcess(ctx context.Context, id uuid.UUID) (bool, error) {
 	return found, err
 }
 
-// fileWords is text as a row keeps it.
 func fileWords(text string) string {
 	text = strings.ToValidUTF8(strings.ReplaceAll(text, "\x00", ""), "�")
 	if len(text) <= fileTextMax {
@@ -1178,17 +1149,9 @@ func fileWords(text string) string {
 	return strings.ToValidUTF8(text[:fileTextMax], "")
 }
 
-// A synced file's bytes are copied here apart from its sync, which only marks it pending when its version changes
-// (file_check), so a page of a sync stays a page of names. The job is pushed when a transaction leaves one pending
-// (archive.push) and runs as a task of its own, on the due path of the rest of Archive's work: a few at a time, each
-// streamed from the provider into the blob store, not held in memory, for pullBudget, and it queues itself for the
-// rest. A file's lease is its retry_at, so one an instance stopped copying is taken up again; one that fails waits, a
-// minute doubling, for pullTries tries, and a provider that is busy waits as long as it asks.
 const (
-	pullPar    = 4
-	pullBudget = 4 * time.Minute
-	// pullTime is the most one file takes, read and copied: a task may start one at the end of its budget, and with
-	// that must end inside Cloud Run's 10 minutes.
+	pullPar      = 4
+	pullBudget   = 4 * time.Minute
 	pullTime     = 5 * time.Minute
 	pullReadTime = 2 * time.Minute
 	pullRetry    = time.Minute
@@ -1196,7 +1159,6 @@ const (
 	pullTries    = 6
 )
 
-// pullAll copies files due until pullBudget is up.
 func (a *Archive) pullAll(ctx context.Context) {
 	end := time.Now().Add(pullBudget)
 	var wg sync.WaitGroup
@@ -1223,7 +1185,6 @@ func (a *Archive) pullAll(ctx context.Context) {
 	wg.Wait()
 }
 
-// pull copies f's bytes unless it has them, and reads its words, and says how that went on its row.
 func (a *Archive) pull(ctx context.Context, f generated.ClaimPullRow) {
 	pctx, cancel := context.WithTimeout(ctx, pullTime)
 	defer cancel()
@@ -1262,8 +1223,6 @@ func (a *Archive) pull(ctx context.Context, f generated.ClaimPullRow) {
 	}
 }
 
-// pullCopy streams f's bytes from its provider to the blob store, under a name of their own until their hash is
-// known. A version that came meanwhile, or a row that went, leaves them out.
 func (a *Archive) pullCopy(ctx context.Context, f generated.ClaimPullRow) error {
 	if f.Copied != nil && f.Version != nil && *f.Copied == *f.Version && f.Hash != "" {
 		return nil
@@ -1332,7 +1291,6 @@ func (a *Archive) pullCopy(ctx context.Context, f generated.ClaimPullRow) error 
 	return err
 }
 
-// ptrSlice is p as a slice, to compare what may be nil.
 func ptrSlice(p *string) []string {
 	if p == nil {
 		return nil
@@ -1340,7 +1298,6 @@ func ptrSlice(p *string) []string {
 	return []string{*p}
 }
 
-// fileHead keeps the first bytes that go through it, which say what a file is.
 type fileHead struct{ b []byte }
 
 func (h *fileHead) Write(p []byte) (int, error) {
@@ -1350,7 +1307,6 @@ func (h *fileHead) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// fileCount counts what is read through it, and fails past most.
 type fileCount struct {
 	r       io.Reader
 	n, most int64
@@ -1366,7 +1322,6 @@ func (c *fileCount) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// pullRead reads the words of a file whose bytes are here, as an upload's are, in pullReadTime at most.
 func (a *Archive) pullRead(ctx context.Context, c generated.ClaimPullRow) error {
 	var f *File
 	err := a.sys(ctx, func(ctx context.Context) (err error) {
@@ -1400,7 +1355,6 @@ func (a *Archive) pullRead(ctx context.Context, c generated.ClaimPullRow) error 
 	bg := context.WithoutCancel(ctx)
 	late := false
 	err = a.sys(bg, func(ctx context.Context) error {
-		// One transaction, which holds a thumbnail's hash until the row has it.
 		got := make(chan read, 1)
 		a.reading.Lock()
 		go func() {
@@ -1424,7 +1378,6 @@ func (a *Archive) pullRead(ctx context.Context, c generated.ClaimPullRow) error 
 	return err
 }
 
-// Stored is how many bytes this workspace's blobs hold, each once.
 func (a *Archive) Stored(ctx context.Context) (int64, error) {
 	return coreDo(a, ctx, func(ctx context.Context) (int64, error) { return a.st.db(ctx).Stored(ctx) })
 }
@@ -1699,8 +1652,6 @@ func (a *Archive) mediaThumbnail(ctx context.Context, b []byte) (map[string]any,
 	return map[string]any{"sha256": hash, "size": buf.Len(), "width": dst.Bounds().Dx(), "height": dst.Bounds().Dy()}, nil
 }
 
-// blobStore holds bytes by key. put reads to r's end whatever size says; -1 is a size not known. move takes what from
-// holds to the key to, unless to has it already, and from is gone either way.
 type blobStore interface {
 	put(ctx context.Context, key string, r io.Reader, size int64) error
 	move(ctx context.Context, from, to string) error
@@ -1710,11 +1661,8 @@ type blobStore interface {
 
 func blobKey(hash string) string { return hash[:2] + "/" + hash }
 
-// blobTemp is the key bytes wait under until their hash is known and it is safe to name them by it. What an instance
-// stopped before moving goes by the bucket's lifecycle rule on .part.
 func blobTemp() string { return "copies/" + coreNewID().String() + ".part" }
 
-// blobPut writes b under its hash, in the transaction ctx has, which holds the hash's lock until a row has it.
 func (a *Archive) blobPut(ctx context.Context, b []byte) (string, error) {
 	sum := sha256.Sum256(b)
 	hash := hex.EncodeToString(sum[:])
@@ -1859,10 +1807,8 @@ func (s *gcsBlobs) put(ctx context.Context, key string, r io.Reader, size int64)
 	return nil
 }
 
-// origin is the host that base's bucket is on.
 func (s *gcsBlobs) origin() string { return s.base[:strings.LastIndex(s.base, "/")] }
 
-// move copies from to to on the server, which takes no bytes through here, and removes from.
 func (s *gcsBlobs) move(ctx context.Context, from, to string) error {
 	resp, err := s.do(ctx, "HEAD", to, nil, 0, "")
 	if err != nil {
@@ -1877,7 +1823,6 @@ func (s *gcsBlobs) move(ctx context.Context, from, to string) error {
 			return gcsErr(resp)
 		}
 		resp.Body.Close()
-		// A copy that answers 200 can still fail in its body: what is there says.
 		if resp, err = s.do(ctx, "HEAD", to, nil, 0, ""); err != nil {
 			return err
 		}
@@ -1957,12 +1902,8 @@ func (o *gcsObject) Close() error {
 	return o.body.Close()
 }
 
-// Text extraction that uploads and synced files share: a file's words, from a PDF, a Word document, an Excel
-// workbook, a PowerPoint deck, HTML or plain text, so search finds what is in it wherever it came from. The
-// connectors read it as connect.Extract, as they cannot import this package.
 func init() { connect.Extract = mediaText }
 
-// officeMIME are the Office formats whose text OfficeRead reads, by media type, as the extension it reads them by.
 var officeMIME = map[string]string{
 	"application/vnd.openxmlformats-officedocument.wordprocessingml.document":   "docx",
 	"application/vnd.ms-word.document.macroenabled.12":                          "docm",
@@ -1972,15 +1913,11 @@ var officeMIME = map[string]string{
 	"application/vnd.ms-powerpoint.presentation.macroenabled.12":                "pptm",
 }
 
-// byExt are the types mediaText reads, by the extension of a file whose type is not given.
 var byExt = map[string]string{".pdf": "application/pdf", ".txt": "text/plain", ".csv": "text/csv", ".md": "text/markdown",
 	".html": "text/html", ".htm": "text/html", ".json": "application/json"}
 
-// mediaText is the text of b, a file named name of media type mime: "" for a kind it has no text of, or one
-// it cannot read.
 func mediaText(name, mime string, b []byte) string {
 	mime = strings.ToLower(mime)
-	// Mail often names an attachment's type only generally: its name says what it is.
 	if mime == "" || mime == "application/octet-stream" {
 		mime = byExt[strings.ToLower(path.Ext(name))]
 	}
@@ -2003,8 +1940,6 @@ func mediaText(name, mime string, b []byte) string {
 	return ""
 }
 
-// officeText is the words of an Office file: a document's paragraphs and tables, a workbook's sheets as rows of
-// cells, and a deck's slides, each on lines of their own.
 func officeText(b []byte, name string) (text string) {
 	defer func() {
 		if recover() != nil {
@@ -2032,7 +1967,6 @@ func officeText(b []byte, name string) (text string) {
 	}
 	for _, s := range m.Sheets {
 		line("# " + s.Name)
-		// A cell sits at its column, blanks between kept as empty cells, so a sheet's columns still line up as text.
 		row, cells := "", []string{}
 		flush := func() {
 			line(strings.Join(cells, "\t"))

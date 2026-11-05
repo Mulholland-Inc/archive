@@ -20,7 +20,6 @@
 
   tokens.use(() => app.archive);
 
-  // The key to copy: the one there is, or, when there is none or its secret cannot be read, a new one.
   async function current() {
     if (!secret) await rotateKey();
     return archiveKey()?.secret ?? '';

@@ -9,8 +9,6 @@
   import { boot } from '../lib/app.svelte.js';
   import { fade } from '../lib/motion.js';
 
-  // The sign-in screen. Elsewhere than the app itself, like an MCP client's /authorize, it says what signing in
-  // is for, comes back to next after a provider's sign-in, and calls done after a passkey's.
   let { title = 'Sign in to Archive', art = 'cli', next = '', done = boot } = $props();
 
   let error = $state('');

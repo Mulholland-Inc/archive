@@ -15,12 +15,6 @@ CREATE TABLE archive.ddl_key (
     created_at timestamptz NOT NULL DEFAULT now()
 );
 
--- object is what every row is: every table of the public schema inherits it, and so does each of Archive's own
--- that the catalog shows, so every row has an id, a name, an access and when it was made and last changed.
--- Its name is the title every screen shows a row by, and a link by: '' until something names it, never its id.
--- What Postgres does not pass on to a child, its primary key, foreign keys, indexes and row-level security,
--- each table has of its own (schemaDerive). A read of object itself would read every child's rows under
--- object's policies, not theirs, so no role may read it, and it has row-level security with no policy.
 CREATE TABLE archive.object (
     id         uuid NOT NULL DEFAULT uuidv7(),
     name       text NOT NULL DEFAULT '',
@@ -33,13 +27,6 @@ ALTER TABLE archive.object FORCE ROW LEVEL SECURITY;
 COMMENT ON TABLE archive.object IS 'What every row is: its id, name, access and when it was made and changed. Every table inherits it; it is read through them, never itself';
 COMMENT ON COLUMN archive.object.name IS 'The row''s title, which every screen shows it and its links by';
 
--- A group is a row: a set of members, like finance. A row's access is the id of the group that sees it, a
--- foreign key to its row, null for the whole workspace; each table has its own, since Postgres does not pass
--- foreign keys on (schemaDerive). Its members hold its Postgres role, named by its id (group_role), which
--- archive.can checks, so a rename changes the row alone. group_roles makes the role with the row, and drops it
--- with the row after taking the group out of every member's groups. A group lasts, empty or not, until an
--- owner deletes it, which group_check refuses while any row's access is the group, saying where
--- (group_uses): a row is never opened to everyone because its group went.
 CREATE TABLE archive."group" (
     id          uuid PRIMARY KEY DEFAULT uuidv7(),
     name        text NOT NULL,
@@ -63,8 +50,6 @@ CREATE FUNCTION archive.can(g uuid) RETURNS bool LANGUAGE sql STABLE AS $$
         OR EXISTS (SELECT FROM pg_catalog.pg_roles r WHERE r.rolname = archive.group_role(g) AND pg_has_role(current_user, r.oid, 'USAGE'))
 $$;
 
--- group_uses is each table where rows the current role sees have the group g as their access, or as another
--- column that references groups, with how many.
 CREATE FUNCTION archive.group_uses(g uuid) RETURNS TABLE ("table" text, "rows" bigint) LANGUAGE plpgsql STABLE AS $$
 DECLARE
     r record;
@@ -124,9 +109,6 @@ END $$;
 CREATE TRIGGER group_check BEFORE INSERT OR UPDATE OR DELETE ON archive."group" FOR EACH ROW EXECUTE FUNCTION archive.group_check();
 CREATE TRIGGER group_roles AFTER INSERT OR DELETE ON archive."group" FOR EACH ROW EXECUTE FUNCTION archive.group_roles();
 
--- name_follows keeps a table's name made of other columns of its row, named by the trigger's arguments and
--- joined by spaces, like name_follows('first_name', 'last_name'), or of a field of one, like 'full_name.full',
--- until a write sets name itself: a row whose name is not what its columns make keeps it.
 CREATE FUNCTION archive.name_follows() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
     made text;
@@ -354,13 +336,6 @@ END $$;
 CREATE TRIGGER member_check BEFORE INSERT OR UPDATE ON archive.member FOR EACH ROW EXECUTE FUNCTION archive.member_check();
 CREATE TRIGGER member_roles AFTER INSERT OR UPDATE OR DELETE ON archive.member FOR EACH ROW EXECUTE FUNCTION archive.member_roles();
 
--- A workflow is a row: a script Archive runs on its own, saved and changed with archive.create, update and
--- delete like any other row, through a write hook in Go (workflow.go) that compiles source and checks on
--- before anything is saved. Its owner reads and writes it: the member it belongs to and their tokens
--- (archive.mine). role is who it runs as: whoever saved it last, set by workflow_saved, so a token never
--- gains rights. trigger is on as Archive schedules it, hook its webhook secret, next_at when it is due, and
--- cursor_at and cursor_id the last row of its table it has seen; Archive keeps them, and they survive an edit
--- or a rename.
 CREATE TABLE archive.workflow (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     user_id    uuid NOT NULL,
@@ -389,8 +364,6 @@ COMMENT ON COLUMN archive.workflow.member IS 'references member; whose it is, wh
 COMMENT ON COLUMN archive.workflow.access IS 'Group that sees it and its runs too; null for only you. Only you change, run or delete it';
 COMMENT ON COLUMN archive.workflow.next_at IS 'When it runs next: a cron workflow''s next time, or now for a table workflow with rows waiting';
 
--- An agent is shared by the workspace, or by the group its access names; what each person said with it, turn and
--- memory, is theirs alone.
 CREATE TABLE archive.agent (
     id           uuid PRIMARY KEY DEFAULT uuidv7(),
     name         text NOT NULL DEFAULT '',
@@ -427,9 +400,6 @@ COMMENT ON COLUMN archive.turn.n IS 'Its place in this person''s conversation wi
 COMMENT ON COLUMN archive.turn.messages IS 'The question, the answer, and each run call with its result';
 COMMENT ON COLUMN archive.turn.name IS 'The question, shortened';
 
--- memory is a binary tree over a conversation's turns: size 1 is one turn's line, and turns lo to lo+size-1,
--- an aligned power of two, are summed up in one. How many lines of size 1 there are is how many turns left
--- the model's context; every line can be built again from the turns.
 CREATE TABLE archive.memory (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     agent      uuid NOT NULL REFERENCES archive.agent ON DELETE CASCADE,
@@ -450,8 +420,6 @@ COMMENT ON COLUMN archive.memory.lo IS 'The first turn it sums up';
 COMMENT ON COLUMN archive.memory.size IS 'How many turns it sums up, a power of two';
 COMMENT ON COLUMN archive.memory.name IS 'The line';
 
--- agent_last keeps one agent in every workspace, counting those its caller cannot see: agents are made by talking
--- with an agent.
 CREATE FUNCTION archive.agent_last() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 BEGIN
     IF NOT EXISTS (SELECT FROM archive.agent a WHERE a.id <> OLD.id) THEN
@@ -462,8 +430,6 @@ END;
 $$;
 CREATE TRIGGER last BEFORE DELETE ON archive.agent FOR EACH ROW EXECUTE FUNCTION archive.agent_last();
 
--- A run of a workflow: what started it, what it returned, logged and threw, and how long it took. Archive
--- writes them, keeping the last 100 of each workflow; everyone else only reads them, as the workflow's owner.
 CREATE TABLE archive.workflow_run (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     workflow   uuid NOT NULL REFERENCES archive.workflow ON DELETE CASCADE,
@@ -487,24 +453,6 @@ COMMENT ON COLUMN archive.workflow_run.error IS 'Why it failed; empty when it wo
 COMMENT ON COLUMN archive.workflow_run.ms IS 'How long it took, in milliseconds';
 COMMENT ON COLUMN archive.workflow_run.created_at IS 'When it started';
 
--- A connection is an account at another service that Archive reads: a member's own, like their Gmail, or, for
--- an integration, the archive's, like its QuickBooks company, which a connector's file says it is
--- (connect.Connector.Integration). An archive has at most one connection to each integration, which an owner
--- connects; member is then who connected it last, and every member sees it, and what it syncs, while archive.can
--- their access, the group it is narrowed to, null for everyone, as rows of a user table are. Go alone writes it
--- (connection.go): connecting adds it, connecting the same account again renews it, and disconnecting deletes it. provider is a connector's id; token is its refresh token, sealed with the
--- workspace key like a secret value, and stays out of the catalog with member. meta is what the provider's
--- callback said that calls need, like QuickBooks' realmId. error is why its last refresh or sync failed,
--- empty while it works. Each member sees their own personal connections (archive.mine), owners too.
---
--- Its sync (connection.go) keeps a copy of what the account has in Archive's tables of its domain, a page at a time,
--- and runs only when something asks: connecting, Sync now, a push from the provider, or a member reading what
--- it syncs or opening the workspace while it is stale. asked_at is when something last asked, and each stream catches up to it;
--- sync_at is when its next page is due, null once every stream has caught up, and lease_at when the page under
--- way may be taken over, so a connection runs one page at a time. synced_at is when every stream last caught
--- up, revoked says its grant was refused, which nothing but connecting again or Sync now retries, and cursor
--- is where each stream is, { <stream>: { cursor, at, more, since, skip, fails, error, done } }, which stays out
--- of the catalog too.
 CREATE TABLE archive.connection (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     member     uuid NOT NULL REFERENCES archive.member ON DELETE CASCADE,
@@ -541,22 +489,6 @@ COMMENT ON COLUMN archive.connection.synced_at IS 'When Archive last had everyth
 COMMENT ON COLUMN archive.connection.integration IS 'It is the archive''s, like its QuickBooks, which an owner connects for everyone, not one person''s own';
 COMMENT ON COLUMN archive.connection.access IS 'The id of the group an integration and what it syncs are narrowed to; null for everyone';
 
--- What connections sync lands in tables of the domains it belongs to: mail, docs and payroll, which every
--- connector of a domain shares, as its file maps its records (connect/sync.go), so Gmail and Outlook are one
--- mail and two payroll providers one payroll. A table a stream lands in has a row for each source_id, its id
--- at the provider, of each stream of each connection; seen_at is when a sync last read it, which a full
--- listing compares, and updated_at when it last changed. Its other tables are rows that belong to one of
--- those, like a message's parties, and are written again with it. A row that names another row of its
--- connection keeps that row's id there in <column>_source, so it links once both are there. Only Go writes
--- them (connection.go): a row gone there is deleted, and disconnecting deletes the connection's. Every row has its
--- connection's access, and is seen as the connection is: a personal connection's by its member, and an
--- integration's by everyone archive.can its access.
---
--- People and organizations are shared by every domain and every connection, by a key that is the same wherever
--- they are seen: known_person is an email address, known_org an EIN or a domain. A row of one holds that key
--- alone, and is seen by whoever sees a row that names it; the rest, like a name, stays on the rows that said
--- it. So a member sees a person only as their own connections and the integrations they may see know them,
--- and learns nothing of who else knows them.
 CREATE TABLE archive.known_person (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     email      archive.email NOT NULL UNIQUE,
@@ -584,18 +516,6 @@ icon: building-2';
 COMMENT ON COLUMN archive.known_org.ein IS 'Its US employer identification number';
 COMMENT ON COLUMN archive.known_org.domain IS 'Its web domain, like example.com';
 
--- A file is a row, uploaded or synced, with its bytes in the blob store by the sha256 of its content (file.go): one
--- blob however many rows have the same bytes, in this workspace alone. hash is '' while there are no bytes here: a
--- folder never has any, and a synced file none until they are copied. An uploaded file is an editor's to change;
--- a synced file is its connection's, as what else connections sync is, and seen as its connection is, and only Go
--- writes it (connection.go). parent is the folder it is in. Removing a folder removes what a sync has in it, and an
--- uploaded one must be empty first (file_empty). What is in an uploaded folder is seen as the folder is: file_check
--- takes its access from the folder, and file_inherit passes a folder's new access down.
---
--- version is the provider's token of its content: a new one makes the file pending (file_check), and until the
--- copy is done the row keeps the bytes it has. copied is the version its bytes are of, so a restart reads none
--- again. source is what the connector reads the content with (connect/def.go, Content). tries and retry_at are the
--- copy's: how many have failed in a row, and when the next may start, which a copy under way holds as its lease.
 CREATE TABLE archive.file (
     id            uuid PRIMARY KEY DEFAULT uuidv7(),
     hash          text NOT NULL DEFAULT '',
@@ -669,9 +589,6 @@ COMMENT ON COLUMN archive.file.made_at IS 'When it was made there';
 COMMENT ON COLUMN archive.file.edited_at IS 'When it last changed there';
 COMMENT ON COLUMN archive.file.updated_at IS 'When Archive last saw it change';
 
--- file_check keeps what makes a file a file: a folder has no bytes to wait for; a new version of a synced file makes
--- it pending; and an uploaded file's folder is an uploaded folder it can see, never itself or under itself, whose
--- access it has. Coming into a folder with none named takes the folder's, and asking for another is refused.
 CREATE FUNCTION archive.file_check() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
     up uuid := NEW.parent;
@@ -685,7 +602,6 @@ BEGIN
         NEW.tries := 0;
         NEW.retry_at := NULL;
     ELSIF TG_OP = 'UPDATE' AND NEW.connection IS NOT NULL AND NEW.mime = 'application/octet-stream' THEN
-        -- A provider that does not say what a file is leaves what its bytes said.
         NEW.mime := OLD.mime;
     END IF;
     IF NEW.connection IS NULL AND NEW.parent IS NOT NULL THEN
@@ -726,8 +642,6 @@ END $$;
 CREATE TRIGGER file_inherit AFTER UPDATE ON archive.file FOR EACH ROW WHEN (NEW.kind = 'folder' AND NEW.connection IS NULL AND NEW.access IS DISTINCT FROM OLD.access) EXECUTE FUNCTION archive.file_inherit();
 CREATE TRIGGER file_empty BEFORE DELETE ON archive.file FOR EACH ROW WHEN (OLD.kind = 'folder' AND OLD.connection IS NULL) EXECUTE FUNCTION archive.file_empty();
 
--- push tells this connection's process once the transaction commits that a job of its has work (file.go, filePushed),
--- whatever path the write came by, a cascade too.
 CREATE FUNCTION archive.push() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     PERFORM pg_notify('archive_moved_' || pg_backend_pid(), 'archive.push ' || TG_ARGV[0]);
@@ -736,10 +650,6 @@ END $$;
 
 CREATE TRIGGER file_pull AFTER INSERT OR UPDATE ON archive.file FOR EACH ROW WHEN (NEW.status = 'pending' AND NEW.connection IS NOT NULL) EXECUTE FUNCTION archive.push('pull');
 
--- A blob goes once no file has its hash. Whatever removes the last row, a cascade from a member too, queues it in the
--- same transaction (file_gone), and the job that removes it (file.go, blobNext) looks again under a lock on the hash,
--- which whatever adds a row with a hash holds from before it writes the blob until it commits. Queueing waits for a
--- removal under way, so a row removed during one queues the hash again.
 CREATE TABLE archive.blob_gone (
     hash text PRIMARY KEY,
     at   timestamptz NOT NULL DEFAULT now()
@@ -761,7 +671,6 @@ END $$;
 
 CREATE TRIGGER file_gone AFTER DELETE OR UPDATE OF hash, metadata ON archive.file FOR EACH ROW EXECUTE FUNCTION archive.file_gone();
 
--- stored is every byte this workspace's blobs hold, each blob once however many rows have it.
 CREATE FUNCTION archive.stored() RETURNS bigint LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
     SELECT coalesce(sum(b.size), 0)::bigint FROM (
         SELECT f.hash, f.size FROM archive.file f WHERE f.hash <> ''
@@ -770,10 +679,6 @@ CREATE FUNCTION archive.stored() RETURNS bigint LANGUAGE sql STABLE SECURITY DEF
     ) b
 $$;
 
--- What a connector's map reads a provider's text with (connect/def.go): each is null for what is not one, rather
--- than failing the page. An address, a web domain, a time as RFC 3339 or Unix milliseconds, a date at the start of
--- text, a number, an amount in a currency's minor units from its major ones, a JSON boolean, a time in a provider's
--- own clock, without a zone, an EIN, the elements of what may not be a list, and text cut to n bytes.
 CREATE FUNCTION archive.sync_email(s text) RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
     SELECT CASE WHEN lower(btrim(s, E' \t\r\n')) ~ '^[^@\s]+@[^@\s]+$' THEN lower(btrim(s, E' \t\r\n')) END
 $$;
@@ -1824,8 +1729,6 @@ COMMENT ON COLUMN archive.payroll_task.source_id IS 'Its id there';
 COMMENT ON COLUMN archive.payroll_task.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.payroll_task.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
--- Chat: a message of a chat or a channel you connected, like Microsoft Teams, with who sent it as the person of
--- their email address.
 CREATE TABLE archive.chat_message (
     id          uuid PRIMARY KEY DEFAULT uuidv7(),
     connection  uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
@@ -1868,9 +1771,6 @@ COMMENT ON COLUMN archive.chat_message.source_id IS 'Its id there';
 COMMENT ON COLUMN archive.chat_message.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.chat_message.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
--- CRM: the companies, contacts and deals of a CRM you connected, like HubSpot. A company is the organization of
--- its web domain, a contact the person of their email address, so they meet the same people and organizations
--- in mail, calendars and books.
 CREATE TABLE archive.crm_company (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
     connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
@@ -2040,8 +1940,6 @@ COMMENT ON COLUMN archive.marketing_campaign.source_id IS 'Its id there';
 COMMENT ON COLUMN archive.marketing_campaign.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.marketing_campaign.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
--- Work: a job a practice-management or project tool you connected tracks, like a Karbon work item: whose it is,
--- for which client, where it is and when it is due.
 CREATE TABLE archive.work_item (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
     connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
@@ -2091,8 +1989,6 @@ COMMENT ON COLUMN archive.work_item.source_id IS 'Its id there';
 COMMENT ON COLUMN archive.work_item.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.work_item.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
--- Code: a project of an error tracker you connected, like Sentry. It is none of work_item's jobs, with no status or
--- assignee, and a tool's list of them says little more than its name.
 CREATE TABLE archive.code_project (
     id           uuid PRIMARY KEY DEFAULT uuidv7(),
     connection   uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
@@ -2117,9 +2013,6 @@ COMMENT ON COLUMN archive.code_project.source_id IS 'Its id there';
 COMMENT ON COLUMN archive.code_project.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.code_project.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
--- Compliance: what a compliance tool you connected, like Vanta, tracks toward an audit: each framework and how far
--- along it is, its controls, the automated tests and their status, and the vendors, people, policies and
--- documents it checks, one row each, its kind saying which.
 CREATE TABLE archive.compliance (
     id           uuid PRIMARY KEY DEFAULT uuidv7(),
     connection   uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
@@ -2174,8 +2067,6 @@ COMMENT ON COLUMN archive.compliance.source_id IS 'Its id there';
 COMMENT ON COLUMN archive.compliance.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.compliance.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
--- Commerce: the orders and products of a store you connected, like Shopify, each order with its lines and its
--- customer as the person of their email.
 CREATE TABLE archive.commerce_product (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
     connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
@@ -2345,10 +2236,6 @@ COMMENT ON COLUMN archive.ad_metric.source_id IS 'Its id there';
 COMMENT ON COLUMN archive.ad_metric.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.ad_metric.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
--- Dental: the practice data of a dental practice management system you connected, like Open Dental: its
--- providers, patients, appointments, procedures and payments. It is health information, which only the
--- people who need it should see: an owner narrows the connection to a group, and its rows follow. Times are the
--- practice's own, local, as the system keeps them.
 CREATE TABLE archive.dental_provider (
     id              uuid PRIMARY KEY DEFAULT uuidv7(),
     connection      uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
@@ -2570,8 +2457,6 @@ COMMENT ON COLUMN archive.dental_payment.source_id IS 'Its id there';
 COMMENT ON COLUMN archive.dental_payment.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.dental_payment.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
--- Calendars: an event of a calendar you connected, like Google Calendar or Outlook's, a recurring one as its
--- series and each occurrence that differs from it, and who is invited.
 CREATE TABLE archive.calendar_event (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
     connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
@@ -2649,9 +2534,6 @@ COMMENT ON COLUMN archive.calendar_attendee.role IS 'required, optional or resou
 COMMENT ON COLUMN archive.calendar_attendee.response IS 'What they answered: accepted, declined, tentative or none';
 COMMENT ON COLUMN archive.calendar_attendee.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
--- Books: the accounting of a company you connected, like its QuickBooks: its chart of accounts, the customers,
--- vendors and employees it deals with, what it sells and buys, and every transaction with its lines. A row's
--- kind says what it is there, like Invoice or Bill, since one table holds them all.
 CREATE TABLE archive.ledger_account (
     id            uuid PRIMARY KEY DEFAULT uuidv7(),
     connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
@@ -2866,9 +2748,6 @@ COMMENT ON COLUMN archive.ledger_line.item_source IS 'The id there of the produc
 COMMENT ON COLUMN archive.ledger_line.unit_price IS 'What one of it costs';
 COMMENT ON COLUMN archive.ledger_line.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
--- Banks: the accounts of a bank login you connected, like through Plaid, with their balances, and every
--- transaction on them. Money a business moves with Zelle or Venmo shows here as the bank sees it. Unlike the
--- books, nobody has sorted these: they are what the bank says happened.
 CREATE TABLE archive.bank_account (
     id            uuid PRIMARY KEY DEFAULT uuidv7(),
     connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
@@ -2956,9 +2835,6 @@ COMMENT ON COLUMN archive.bank_transaction.source_id IS 'Its id there';
 COMMENT ON COLUMN archive.bank_transaction.updated_at IS 'When Archive last saw it change';
 COMMENT ON COLUMN archive.bank_transaction.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
--- Spend: the company cards and expenses of a spend platform you connected, like Ramp or Brex: the people who
--- spend, their departments, their cards, and every card purchase and reimbursement with its receipts. Its bills
--- and vendors are books, in ledger_entry and ledger_contact.
 CREATE TABLE archive.spend_department (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
@@ -3150,8 +3026,6 @@ COMMENT ON COLUMN archive.spend_receipt.receipt_source IS 'Its id there';
 COMMENT ON COLUMN archive.spend_receipt.position IS 'Where it is among its transaction''s receipts, from 1';
 COMMENT ON COLUMN archive.spend_receipt.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
--- Warehouses: the tables and views of a data warehouse you connected, like Snowflake, that you picked, with their
--- columns, but not their rows, which stay there and are queried live.
 CREATE TABLE archive.warehouse_table (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
@@ -3217,14 +3091,11 @@ COMMENT ON COLUMN archive.warehouse_column.type IS 'Its type there, like NUMBER,
 COMMENT ON COLUMN archive.warehouse_column.nullable IS 'Whether it may be null';
 COMMENT ON COLUMN archive.warehouse_column.comment IS 'What its comment there says';
 
--- mine says whether the current role is the member m or one of their tokens, which are all in m's group role.
 CREATE FUNCTION archive.mine(m uuid) RETURNS bool LANGUAGE sql STABLE AS $$
     SELECT EXISTS (SELECT FROM pg_catalog.pg_roles r WHERE r.rolname = '{p}_m' || translate(rtrim(encode(uuid_send(m), 'base64'), '='), '+/', '-_')
         AND pg_has_role(current_user, r.oid, 'USAGE'))
 $$;
 
--- workflow_saved makes a workflow run as whoever saved it last. Archive's own writes (scheduling, the cursor)
--- run with no role set and leave it.
 CREATE FUNCTION archive.workflow_saved() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF current_setting('role') <> 'none' THEN
@@ -3235,10 +3106,6 @@ END $$;
 
 CREATE TRIGGER workflow_saved BEFORE INSERT OR UPDATE ON archive.workflow FOR EACH ROW EXECUTE FUNCTION archive.workflow_saved();
 
--- moved says what a write moved to the session that wrote it, on a channel only that session listens on. A
--- notification is sent only when its transaction commits and is dropped with a rolled-back savepoint, so Go
--- hears exactly what committed (live.go). A public table names itself; an archive table its schema too and
--- the row's id. Every public table gets the statement trigger archive_moved (schemaDerive).
 CREATE FUNCTION archive.moved() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
     what text := CASE WHEN TG_TABLE_SCHEMA = 'public' THEN TG_TABLE_NAME ELSE TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME END;
@@ -3252,10 +3119,6 @@ BEGIN
     RETURN NULL;
 END $$;
 
--- object_name names a row of Archive's own tables as it is written, from what the row says: a message by its
--- subject, a worker by their name, a payroll by its check date, a pay by whose it is. A row the service named
--- keeps that name. It runs on every write, so a sync, a link or a rename moves the name with them; a person
--- or an organization is named by its address or domain alone, since anything more is where it was seen.
 CREATE FUNCTION archive.object_name() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
     r jsonb := to_jsonb(NEW);
@@ -3542,7 +3405,6 @@ CREATE POLICY owner_delete ON archive.secret FOR DELETE USING (pg_has_role(curre
 
 ALTER TABLE archive.workflow ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.workflow USING (archive.mine(member)) WITH CHECK (archive.mine(member) AND (access IS NULL OR archive.can(access)));
--- A workflow with access is seen, with its runs, by that group too; only whose it is changes, runs or deletes it.
 CREATE POLICY shared ON archive.workflow FOR SELECT USING (access IS NOT NULL AND archive.can(access));
 
 ALTER TABLE archive.agent ENABLE ROW LEVEL SECURITY;
@@ -3560,9 +3422,6 @@ CREATE POLICY mine ON archive.workflow_run FOR SELECT USING (EXISTS (SELECT FROM
 ALTER TABLE archive.connection ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.connection FOR SELECT USING (archive.mine(member) AND NOT integration OR integration AND archive.can(access));
 
--- A row Archive syncs is seen as its connection is, within its access, as rows of a user table are. A person
--- or an organization is seen with a row that names it, and with nothing else, so it says no more than what a
--- member could already see.
 ALTER TABLE archive.mail_message ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.mail_message FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = mail_message.connection));
 ALTER TABLE archive.mail_party ENABLE ROW LEVEL SECURITY;
@@ -3788,7 +3647,6 @@ SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, 
 INSERT INTO archive.file (hash, name, mime, size, access, parent) VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at;
 
--- A file a connection's sync kept, like a mail's attachment: found again by its content and name.
 -- name: FileKept :one
 SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at FROM archive.file WHERE connection = $1 AND hash = $2 AND name = $3 LIMIT 1;
 
@@ -3796,13 +3654,11 @@ SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, 
 INSERT INTO archive.file (hash, name, mime, size, access, connection) VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at;
 
--- What of the files is in a folder, or at the top of a connection or of what was made here, with tree; every one without.
 -- name: Files :many
 SELECT id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at FROM archive.file
 WHERE id > sqlc.arg(after) AND (NOT sqlc.arg(tree)::bool OR parent IS NOT DISTINCT FROM sqlc.narg(in_folder)::uuid AND (sqlc.narg(in_folder)::uuid IS NOT NULL OR connection IS NOT DISTINCT FROM sqlc.narg(of_connection)::uuid))
 ORDER BY id LIMIT sqlc.arg(lim);
 
--- The connections you can see that have files, for the top of the tree.
 -- name: FileSources :many
 SELECT c.id, c.provider, c.account FROM archive.connection c WHERE EXISTS (SELECT FROM archive.file f WHERE f.connection = c.id) ORDER BY c.provider, c.account, c.id;
 
@@ -3849,7 +3705,6 @@ WHERE id = $1 AND status = 'pending' FOR UPDATE;
 -- name: SetFileContent :exec
 UPDATE archive.file SET metadata = $2, text = $3 WHERE id = $1;
 
--- The next synced file whose bytes are due, leased until lease. A failure or a stop counts as a try.
 -- name: ClaimPull :one
 UPDATE archive.file SET retry_at = sqlc.arg(lease)::timestamptz, tries = tries + 1
 WHERE id = (SELECT f.id FROM archive.file f JOIN archive.connection c ON c.id = f.connection
@@ -3857,12 +3712,10 @@ WHERE id = (SELECT f.id FROM archive.file f JOIN archive.connection c ON c.id = 
     ORDER BY f.retry_at NULLS FIRST LIMIT 1 FOR UPDATE OF f SKIP LOCKED)
 RETURNING id, name, hash, connection, stream, version, copied, source, tries;
 
--- When a synced file's bytes are next due.
 -- name: NextPull :one
 SELECT coalesce(f.retry_at, now())::timestamptz FROM archive.file f JOIN archive.connection c ON c.id = f.connection
 WHERE f.status = 'pending' AND f.connection IS NOT NULL AND NOT c.revoked ORDER BY f.retry_at NULLS FIRST LIMIT 1;
 
--- The copy's bytes, unless a newer version came while they were read.
 -- name: SetPulled :execrows
 UPDATE archive.file SET hash = sqlc.arg(hash), size = sqlc.arg(size), mime = CASE WHEN mime = 'application/octet-stream' THEN sqlc.arg(sniffed)::text ELSE mime END, copied = version
 WHERE id = sqlc.arg(id) AND version IS NOT DISTINCT FROM sqlc.narg(version);
@@ -3871,7 +3724,6 @@ WHERE id = sqlc.arg(id) AND version IS NOT DISTINCT FROM sqlc.narg(version);
 UPDATE archive.file SET status = sqlc.arg(status), error = sqlc.arg(error), metadata = sqlc.arg(metadata), text = sqlc.arg(body), tries = 0, retry_at = NULL
 WHERE id = sqlc.arg(id) AND version IS NOT DISTINCT FROM sqlc.narg(version);
 
--- Why a synced file's bytes are not here, for good until a new version comes.
 -- name: SetPullEnd :exec
 UPDATE archive.file SET status = sqlc.arg(status), error = sqlc.arg(error), tries = 0, retry_at = NULL
 WHERE id = sqlc.arg(id) AND version IS NOT DISTINCT FROM sqlc.narg(version);
@@ -3906,7 +3758,6 @@ INSERT INTO archive.file (hash, name, mime, size, metadata, text, status, access
 SELECT s.hash, sqlc.arg(name), s.mime, s.size, s.metadata, s.text, 'done', sqlc.narg(access)::uuid FROM archive.file s WHERE s.id = sqlc.arg(id)
 RETURNING id, hash, name, mime, size, metadata, status, error, access, created_at, kind, parent, connection, stream, source_id, version, coalesce(url::text, '')::text AS url, drive, owner_name, editor_name, made_at, edited_at, updated_at;
 
--- What a connection synced under an id there, as you see it.
 -- name: FileBySource :one
 SELECT kind, coalesce(version, '')::text AS version, source FROM archive.file WHERE connection = $1 AND source_id = $2 LIMIT 1;
 
@@ -4181,8 +4032,6 @@ INSERT INTO archive.connection (id, member, provider, account, token, scopes, me
 ON CONFLICT (id) DO UPDATE SET member = EXCLUDED.member, token = EXCLUDED.token, scopes = EXCLUDED.scopes, meta = EXCLUDED.meta, error = '', updated_at = now(),
     sync_at = now(), asked_at = now(), revoked = false;
 
--- A connection's account as its provider now calls it; not one that another of its member's own connections to
--- the provider already has, as connecting again would renew that one.
 -- name: RenameConnection :exec
 UPDATE archive.connection c SET account = $2, updated_at = now()
 WHERE c.id = $1 AND c.account <> $2 AND NOT EXISTS (
@@ -4194,7 +4043,6 @@ SELECT * FROM archive.connection WHERE id = $1 FOR UPDATE;
 -- name: ConnectedProviders :many
 SELECT DISTINCT provider FROM archive.connection WHERE NOT revoked ORDER BY provider;
 
--- A member's personal connections, and the archive's integrations.
 -- name: MemberConnections :many
 SELECT * FROM archive.connection WHERE member = $1 AND NOT integration OR integration ORDER BY provider, account, id;
 
@@ -4219,8 +4067,6 @@ WHERE id = (SELECT c.id FROM archive.connection c WHERE c.sync_at <= now() AND (
     ORDER BY c.sync_at LIMIT 1 FOR UPDATE SKIP LOCKED)
 RETURNING *;
 
--- When a sync is next due: a connection whose page another task holds is looked at again shortly, not when its
--- lease runs out, since that task queues the next itself once its page is done (connection.go, syncLeaseCheck).
 -- name: NextSyncAt :one
 SELECT greatest(sync_at, least(coalesce(lease_at, sync_at), sqlc.arg(soon)::timestamptz))::timestamptz FROM archive.connection
 WHERE sync_at IS NOT NULL ORDER BY 1 LIMIT 1;
@@ -4233,7 +4079,6 @@ WHERE id = sqlc.arg(id);
 -- name: AskSync :exec
 UPDATE archive.connection SET cursor = $2, sync_at = now(), asked_at = now(), revoked = false WHERE id = $1;
 
--- A push asks for a sync: one already due, or backing off, keeps its time.
 -- name: WantSync :one
 UPDATE archive.connection SET asked_at = now(), sync_at = coalesce(sync_at, now()) WHERE id = $1 AND NOT revoked RETURNING id;
 
@@ -4245,7 +4090,6 @@ RETURNING id;
 -- name: TryLock :one
 SELECT pg_try_advisory_xact_lock(hashtextextended(sqlc.arg(name)::text, 0));
 
--- People nothing names any more go, and organizations too.
 -- name: DeleteUnknown :exec
 WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM archive.mail_party x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.payroll_worker x WHERE x.person = k.id)
@@ -4264,21 +4108,18 @@ DELETE FROM archive.known_org o WHERE NOT EXISTS (SELECT FROM archive.payroll_co
     AND NOT EXISTS (SELECT FROM archive.crm_company x WHERE x.org = o.id)
     AND NOT EXISTS (SELECT FROM archive.bank_transaction x WHERE x.org = o.id);
 
--- The people of emails, each added unless there is one.
 -- name: KnownPeople :many
 WITH added AS (INSERT INTO archive.known_person (email) SELECT DISTINCT e FROM unnest(sqlc.arg(emails)::text[]) e ORDER BY e ON CONFLICT (email) DO NOTHING
     RETURNING id, email)
 SELECT a.id, a.email::text AS email FROM added a
 UNION ALL SELECT k.id, k.email::text FROM archive.known_person k WHERE k.email = ANY(sqlc.arg(emails)::text[]);
 
--- The organizations of eins, each added unless there is one.
 -- name: KnownOrgs :many
 WITH added AS (INSERT INTO archive.known_org (ein) SELECT DISTINCT e FROM unnest(sqlc.arg(eins)::text[]) e ORDER BY e ON CONFLICT (ein) DO NOTHING
     RETURNING id, ein)
 SELECT a.id, a.ein::text AS ein FROM added a
 UNION ALL SELECT o.id, o.ein::text FROM archive.known_org o WHERE o.ein = ANY(sqlc.arg(eins)::text[]);
 
--- The organizations of domains, each added unless there is one.
 -- name: KnownDomains :many
 WITH added AS (INSERT INTO archive.known_org (domain) SELECT DISTINCT d FROM unnest(sqlc.arg(domains)::text[]) d ORDER BY d ON CONFLICT (domain) DO NOTHING
     RETURNING id, domain)
