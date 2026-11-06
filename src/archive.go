@@ -769,7 +769,22 @@ func (s *pgStore) bootstrap(ctx context.Context, password string, migrate bool) 
 			return err
 		}
 	}
+	if migrate {
+		if err := s.settle(ctx); err != nil {
+			return err
+		}
+	}
 	return s.logins(ctx, true)
+}
+
+func (s *pgStore) settle(ctx context.Context) error {
+	return pgx.BeginFunc(ctx, s.sys, func(tx pgx.Tx) error {
+		q := generated.New(tx)
+		if err := q.AdvisoryXactLock(ctx, storeLock); err != nil {
+			return err
+		}
+		return q.StoreCatalog(ctx)
+	})
 }
 
 func (s *pgStore) logins(ctx context.Context, every bool) error {
@@ -871,18 +886,13 @@ func storeSplit(src string) []string {
 }
 
 func (s *pgStore) Catalog(ctx context.Context) (*Catalog, error) {
-	q := generated.New(s.sys)
-	b, err := q.Catalog(ctx)
+	r, err := generated.New(s.sys).StoredCatalog(ctx)
 	if err != nil {
 		return nil, err
 	}
-	rev, err := q.Revision(ctx)
-	if err != nil {
-		return nil, err
-	}
-	c, err := catalogParse(b)
+	c, err := catalogParse(r.Catalog)
 	if c != nil {
-		c.stamp = rev
+		c.stamp = r.Revision
 	}
 	return c, err
 }

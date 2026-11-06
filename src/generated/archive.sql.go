@@ -220,66 +220,14 @@ func (q *Queries) BusinessName(ctx context.Context) (string, error) {
 }
 
 const catalog = `-- name: Catalog :one
-WITH col AS (
-    SELECT a.attrelid AS rel, a.attnum AS num, jsonb_build_object(
-        'name', a.attname,
-        'description', coalesce(col_description(a.attrelid, a.attnum), ''),
-        'type', e.typname,
-        'schema', e.typnamespace::regnamespace::text,
-        'reg', format_type(e.oid, a.atttypmod),
-        'list', t.typcategory = 'A' AND t.typelem <> 0,
-        'not_null', a.attnotnull,
-        'default', a.atthasdef,
-        'generated', a.attgenerated <> '',
-        'pk', EXISTS (SELECT FROM pg_catalog.pg_constraint k WHERE k.conrelid = a.attrelid AND k.contype = 'p' AND k.conkey = ARRAY[a.attnum]),
-        'ref', coalesce((SELECT r.relnamespace::regnamespace::text || '.' || r.relname FROM pg_catalog.pg_constraint k JOIN pg_catalog.pg_class r ON r.oid = k.confrelid
-            WHERE k.conrelid = a.attrelid AND k.contype = 'f' AND k.conkey = ARRAY[a.attnum] LIMIT 1), '')) AS c
-    FROM pg_catalog.pg_attribute a
-    JOIN pg_catalog.pg_type t ON t.oid = a.atttypid
-    JOIN pg_catalog.pg_type e ON e.oid = CASE WHEN t.typcategory = 'A' AND t.typelem <> 0 THEN t.typelem ELSE t.oid END
-    WHERE a.attnum > 0 AND NOT a.attisdropped
-)
-SELECT jsonb_build_object(
-    'tables', coalesce((SELECT jsonb_object_agg(c.relname, jsonb_build_object(
-        'name', c.relname,
-        'schema', c.relnamespace::regnamespace::text,
-        'kind', CASE c.relkind WHEN 'v' THEN 'view' ELSE 'table' END,
-        'description', coalesce(obj_description(c.oid, 'pg_class'), ''),
-        'rls', c.relrowsecurity,
-        'force', c.relforcerowsecurity,
-        'security_invoker', coalesce((SELECT o.option_value::bool FROM pg_options_to_table(c.reloptions) o WHERE o.option_name = 'security_invoker'), false),
-        'object', EXISTS (SELECT FROM pg_catalog.pg_inherits i WHERE i.inhrelid = c.oid AND i.inhparent = 'archive.object'::regclass),
-        'partitioned', c.relkind = 'p' OR c.relispartition,
-        'policy', coalesce((SELECT count(*) = 1 AND bool_and(p.polname = 'access' AND p.polcmd = '*' AND p.polpermissive AND p.polroles = '{0}'::oid[]
-            AND regexp_replace(pg_get_expr(p.polqual, p.polrelid), '^archive\.', '') = 'can(access)'
-            AND regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)')
-            FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid), false),
-        'columns', (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid)))
-        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.relnamespace = 'archive'::regnamespace AND c.relname NOT IN ('object', 'revision', 'ddl_key', 'upload', 'composite_use', 'blob_gone', 'work')
-            AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
-    'sync', coalesce((SELECT jsonb_object_agg(c.relname, (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid))
-        FROM pg_catalog.pg_class c WHERE c.relnamespace = 'archive'::regnamespace AND c.relkind IN ('r', 'p') AND EXISTS (SELECT FROM pg_catalog.pg_constraint k
-            JOIN pg_catalog.pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = ANY(k.conkey)
-            WHERE k.conrelid = c.oid AND k.contype = 'f' AND k.confrelid = 'archive.connection'::regclass AND a.attname = 'connection')), '{}'),
-    'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
-        'name', t.typname,
-        'schema', t.typnamespace::regnamespace::text,
-        'kind', t.typtype,
-        'description', coalesce(obj_description(t.oid, 'pg_type'), ''),
-        'base', coalesce((SELECT b.typname FROM pg_catalog.pg_type b WHERE b.oid = t.typbasetype), ''),
-        'base_schema', coalesce((SELECT b.typnamespace::regnamespace::text FROM pg_catalog.pg_type b WHERE b.oid = t.typbasetype), ''),
-        'enum', coalesce((SELECT jsonb_agg(l.enumlabel ORDER BY l.enumsortorder) FROM pg_catalog.pg_enum l WHERE l.enumtypid = t.oid), '[]'),
-        'attrs', coalesce((SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = t.typrelid), '[]')))
-        FROM pg_catalog.pg_type t LEFT JOIN pg_catalog.pg_class r ON r.oid = t.typrelid
-        WHERE t.typnamespace IN ('archive'::regnamespace, 'public'::regnamespace)
-          AND (t.typtype IN ('d', 'e') OR t.typtype = 'c' AND r.relkind = 'c')), '{}'))
+SELECT archive.catalog()
 `
 
 func (q *Queries) Catalog(ctx context.Context) ([]byte, error) {
 	row := q.db.QueryRow(ctx, catalog)
-	var jsonb_build_object []byte
-	err := row.Scan(&jsonb_build_object)
-	return jsonb_build_object, err
+	var catalog []byte
+	err := row.Scan(&catalog)
+	return catalog, err
 }
 
 const claimPull = `-- name: ClaimPull :one
@@ -1769,7 +1717,7 @@ func (q *Queries) MemberConnections(ctx context.Context, member uuid.UUID) ([]Ar
 }
 
 const memberEntry = `-- name: MemberEntry :one
-SELECT coalesce((SELECT r.id::text || ':' || r.hash FROM archive.revision r ORDER BY r.created_at DESC, r.id DESC LIMIT 1), '')::text AS revision, m.id, m.role::text AS role, m."group" FROM archive.member m WHERE m.email = $1::text
+SELECT coalesce((SELECT r.id::text || ':' || r.hash FROM archive.revision r ORDER BY r.id DESC LIMIT 1), '')::text AS revision, m.id, m.role::text AS role, m."group" FROM archive.member m WHERE m.email = $1::text
 `
 
 type MemberEntryRow struct {
@@ -2161,7 +2109,7 @@ func (q *Queries) RetryBlobGone(ctx context.Context, at time.Time, hash string) 
 }
 
 const revision = `-- name: Revision :one
-SELECT coalesce((SELECT id::text || ':' || hash FROM archive.revision ORDER BY created_at DESC, id DESC LIMIT 1), '')::text
+SELECT coalesce((SELECT id::text || ':' || hash FROM archive.revision ORDER BY id DESC LIMIT 1), '')::text
 `
 
 func (q *Queries) Revision(ctx context.Context) (string, error) {
@@ -2444,6 +2392,31 @@ UPDATE archive.workflow SET next_at = $3 WHERE id = $1 AND trigger = $2
 func (q *Queries) SetWorkflowNext(ctx context.Context, iD uuid.UUID, trigger string, nextAt *time.Time) error {
 	_, err := q.db.Exec(ctx, setWorkflowNext, iD, trigger, nextAt)
 	return err
+}
+
+const storeCatalog = `-- name: StoreCatalog :exec
+UPDATE archive.revision SET catalog = archive.catalog() WHERE id = (SELECT r.id FROM archive.revision r ORDER BY r.id DESC LIMIT 1)
+`
+
+func (q *Queries) StoreCatalog(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, storeCatalog)
+	return err
+}
+
+const storedCatalog = `-- name: StoredCatalog :one
+SELECT (id::text || ':' || hash)::text AS revision, catalog FROM archive.revision ORDER BY id DESC LIMIT 1
+`
+
+type StoredCatalogRow struct {
+	Revision string
+	Catalog  []byte
+}
+
+func (q *Queries) StoredCatalog(ctx context.Context) (StoredCatalogRow, error) {
+	row := q.db.QueryRow(ctx, storedCatalog)
+	var i StoredCatalogRow
+	err := row.Scan(&i.Revision, &i.Catalog)
+	return i, err
 }
 
 const trimWorkflowRuns = `-- name: TrimWorkflowRuns :exec
