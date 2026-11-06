@@ -616,8 +616,8 @@ export function openSettings(section = null, sub = null) {
 export const onboards = () => ws()?.look.type === 'business';
 
 export const onboardingSteps = [
-  { id: 'msa', group: 'Legal', title: 'Sign the master services agreement', body: 'The terms for your archive, billing and support.', action: 'Review and sign' },
-  { id: 'dpa', group: 'Legal', title: 'Sign the data processing agreement', body: 'How we process personal data on your behalf.', action: 'Review and sign' },
+  { id: 'msa', group: 'Legal', title: 'Sign the MSA and DPA', body: 'The terms for your archive, billing, support and personal data.', action: 'Review and sign' },
+  { id: 'baa', group: 'Legal', title: 'Sign the BAA', body: 'How we protect health information on your behalf.', action: 'Review and sign' },
   { id: 'business', group: 'Billing', title: 'Add your business details', body: 'Your legal name, EIN and address.', action: 'Add' },
   { id: 'card', group: 'Billing', title: 'Link a card', body: 'We charge it under your agreement.', action: 'Link' }
 ];
@@ -634,7 +634,7 @@ export const signed = (kind) => app.signup.agreement.find((a) => a.kind === kind
 
 export function stepDone(id) {
   if (id === 'business') return app.signup.business.length > 0;
-  if (id === 'msa' || id === 'dpa') return Boolean(signed(id));
+  if (id === 'msa' || id === 'baa') return Boolean(signed(id));
   return Boolean(app.signup.billing[0]?.name);
 }
 

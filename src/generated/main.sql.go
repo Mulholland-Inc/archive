@@ -853,6 +853,46 @@ func (q *Queries) SoonDue(ctx context.Context, workspace uuid.UUID, kind string,
 	return i, err
 }
 
+const terms = `-- name: Terms :many
+SELECT kind, body FROM archive.terms
+`
+
+type TermsRow struct {
+	Kind string
+	Body string
+}
+
+func (q *Queries) Terms(ctx context.Context) ([]TermsRow, error) {
+	rows, err := q.db.Query(ctx, terms)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TermsRow
+	for rows.Next() {
+		var i TermsRow
+		if err := rows.Scan(&i.Kind, &i.Body); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const termsOf = `-- name: TermsOf :one
+SELECT body FROM archive.terms WHERE kind = $1
+`
+
+func (q *Queries) TermsOf(ctx context.Context, kind string) (string, error) {
+	row := q.db.QueryRow(ctx, termsOf, kind)
+	var body string
+	err := row.Scan(&body)
+	return body, err
+}
+
 const tokenSealed = `-- name: TokenSealed :one
 SELECT sealed FROM archive.token WHERE id = $1 AND user_id = $2 AND kind = 'api' AND sealed IS NOT NULL AND (NOT $3::bool OR workspace = $4)
 `
