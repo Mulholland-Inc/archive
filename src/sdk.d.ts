@@ -68,7 +68,7 @@
  *   CREATE VIEW task_board WITH (security_invoker = true) AS SELECT * FROM task WHERE status <> 'done';
  *   COMMENT ON VIEW task_board IS E'Open tasks\nlayout: board\nby: status';
  *   SELECT * keeps the table's columns as they are then. A column a view selects cannot be dropped until the view changes.
- * - The comment is a description, then key: value lines; only layout and by are keys. Layouts, with what by is:
+ * - The comment is a description, then key: value lines; only layout, by and icon are keys. icon is optional, any Lucide icon name like list-checks, and replaces the layout's icon. Layouts, with what by is:
  *   table; board (column to group by); calendar (date); list; map (archive.geo); gallery; chart (column, a date by month);
  *   timeline (date, to the view's next date column); tree (uuid to the view's own table, null at the root); stack (floor number, each
  *   row's width its first other number); scatter (number or money, up by the first other); year (date).
@@ -381,6 +381,8 @@ interface Table {
     layout?: "table" | "board" | "calendar" | "list" | "map" | "gallery" | "chart" | "timeline" | "tree" | "stack"
         | "scatter" | "year";
     by?: string;
+    /** A view's icon: line, a Lucide icon name; without one it shows its layout's icon. */
+    icon?: string;
     columns: {
         name: string;
         /** SQL type, like "text", "archive.money", "uuid[]" or "invoice_status". */

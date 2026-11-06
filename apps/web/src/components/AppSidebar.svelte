@@ -1,6 +1,6 @@
 <script>
   import { Plus, Library, Database, Workflow, Blocks, Lock, Settings } from '@lucide/svelte';
-  import { layoutOf } from '../layouts/index.js';
+  import { viewIcon } from '../layouts/icons.svelte.js';
   import Sidebar from './Sidebar.svelte';
   import SidebarItem from './SidebarItem.svelte';
   import SidebarSection from './SidebarSection.svelte';
@@ -80,7 +80,7 @@
   {#if views.length}
     <SidebarSection title={collapsed ? undefined : 'Views'}>
       {#each views as view (view.id)}
-        <SidebarItem icon={layoutOf(view).icon} label={view.name} href={`/view/${view.id}`} active={active(`/view/${view.id}`)} onrename={atLeast('manager') ? (name) => renameView(view.id, name) : undefined} bind:editing={() => renaming === view.id, (on) => (renaming = on ? view.id : null)} />
+        <SidebarItem icon={viewIcon(view)} label={view.name} href={`/view/${view.id}`} active={active(`/view/${view.id}`)} onrename={atLeast('manager') ? (name) => renameView(view.id, name) : undefined} bind:editing={() => renaming === view.id, (on) => (renaming = on ? view.id : null)} />
       {/each}
     </SidebarSection>
   {/if}

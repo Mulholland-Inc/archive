@@ -363,7 +363,7 @@ icon: calendar'</span>;</pre>
 <ul>
 <li><code>WITH (security_invoker = true)</code>, so row-level security applies to whoever reads it.</li>
 <li>An <code>id</code> column, which <code>SELECT *</code> from a table already gives you.</li>
-<li>A comment, with <code>layout</code>, <code>by</code> and <code>icon</code> as its last lines.</li>
+<li>A comment, with <code>layout</code> and <code>by</code> as its last lines, and optionally <code>icon</code>, any <a href="https://lucide.dev/icons">Lucide</a> icon name.</li>
 </ul>
 
 <h3 id="views-read">Reading a view</h3>

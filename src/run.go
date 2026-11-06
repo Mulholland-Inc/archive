@@ -104,6 +104,7 @@ type runTable struct {
 	Description string      `json:"description"`
 	Layout      string      `json:"layout,omitempty"`
 	By          string      `json:"by,omitempty"`
+	Icon        string      `json:"icon,omitempty"`
 	Columns     []runColumn `json:"columns"`
 	DDL         string      `json:"ddl"`
 }
@@ -1174,7 +1175,7 @@ func runTables(cat *Catalog) []runTable {
 	out := []runTable{}
 	for _, name := range cat.names() {
 		tb := cat.Tables[name]
-		t := runTable{Name: name, Kind: tb.Kind, Description: tb.Description, Layout: tb.Layout, By: tb.By, Columns: []runColumn{}}
+		t := runTable{Name: name, Kind: tb.Kind, Description: tb.Description, Layout: tb.Layout, By: tb.By, Icon: tb.Icon, Columns: []runColumn{}}
 		for _, c := range tb.Columns {
 			if c.Type == "tsvector" {
 				continue

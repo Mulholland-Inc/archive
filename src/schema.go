@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -38,6 +39,7 @@ type Table struct {
 	Description string    `json:"description"`
 	Layout      string    `json:"layout,omitempty"`
 	By          string    `json:"by,omitempty"`
+	Icon        string    `json:"icon,omitempty"`
 	RLS         bool      `json:"rls"`
 	Force       bool      `json:"force"`
 	Invoker     bool      `json:"security_invoker,omitempty"`
@@ -139,6 +141,8 @@ func catalogParse(b []byte) (*Catalog, error) {
 				t.Layout = kv[1]
 			case "by":
 				t.By = kv[1]
+			case "icon":
+				t.Icon = kv[1]
 			}
 		}
 		if t.Kind == "view" && t.Layout == "" {
@@ -237,6 +241,9 @@ func catalogComment(s string) (string, [][2]string) {
 	}
 	return strings.TrimSpace(strings.Join(lines, "\n")), meta
 }
+
+//go:embed lucide.txt
+var catalogIcons string
 
 var catalogLayouts = []string{"table", "board", "calendar", "list", "map", "gallery", "chart", "timeline", "tree", "stack", "scatter", "year"}
 
@@ -387,19 +394,21 @@ func (c *Catalog) Check() error {
 func (c *Catalog) checkMeta(t *Table, bad func(path, msg string)) {
 	keys, what := []string{}, "COMMENT ON TABLE "+t.Name
 	if t.Kind == "view" {
-		keys, what = []string{"layout", "by"}, "COMMENT ON VIEW "+t.Name
+		keys, what = []string{"layout", "by", "icon"}, "COMMENT ON VIEW "+t.Name
 	}
 	seen := map[string]bool{}
 	for _, kv := range t.meta {
 		k, v, path := kv[0], kv[1], t.Name+"."+kv[0]
 		switch {
-		case k == "icon":
+		case k == "icon" && t.Kind != "view":
 		case !slices.Contains(keys, k) && len(keys) == 0:
 			bad(path, "unknown key "+k+" in the last line of "+what+"; a table's comment is only its description")
 		case !slices.Contains(keys, k):
 			bad(path, "unknown key "+k+" in the last lines of "+what+"; want description lines, then key: value lines with "+strings.Join(keys, ", "))
 		case seen[k]:
 			bad(path, k+" is set twice in "+what)
+		case k == "icon" && !strings.Contains(catalogIcons, "\n"+v+"\n"):
+			bad(path, "unknown icon "+strconv.Quote(v)+"; want a Lucide icon name from lucide.dev/icons, like list-checks")
 		case k == "layout" && !slices.Contains(catalogLayouts, v):
 			bad(path, "unknown layout "+strconv.Quote(v)+"; want "+strings.Join(catalogLayouts, ", "))
 		case k == "by" && t.col(v) == nil:
