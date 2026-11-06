@@ -39,6 +39,8 @@ function column(c, types, tables) {
   return {
     name: c.name,
     type,
+    sql: c.type,
+    list: Boolean(c.list),
     label: c.list ? `List of ${(label ?? typeLabels[type]).toLowerCase()}` : label,
     required: Boolean(c.not_null && !c.default),
     notes: own.has(c.name) ? 'Set by the archive' : c.name === 'name' && !c.description ? 'The title the row and every link to it show' : c.description,

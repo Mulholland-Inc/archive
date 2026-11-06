@@ -424,15 +424,125 @@ export const preview = resource({
   }
 });
 
+export const VIEW_PAGE = 500;
+const NO_FILTER = ['card', 'us_ssn', 'national', 'passport', 'geo', 'tsvector'];
+const views = $state({});
+const blank = { query: '', sort: '', page: 1, filters: {} };
+
+export const viewState = (id) => views[id] ?? blank;
+
+export function filterKind(c) {
+  if (NO_FILTER.includes(c.sql) || c.type === 'file') return null;
+  if (c.type === 'long') return 'contains';
+  if (c.list) return 'values';
+  if (c.type === 'money' || c.type === 'number') return 'range';
+  if (c.type === 'date' && ['date', 'timestamptz'].includes(c.sql)) return 'dates';
+  return 'values';
+}
+
+const quoted = (name) => `"${name.replaceAll('"', '""')}"`;
+
+function relation(name) {
+  const [schema, table] = name.includes('.') ? name.split('.') : [ws().catalog.catalog.tables[name]?.schema ?? 'public', name];
+  return `${quoted(schema)}.${quoted(table)}`;
+}
+
+const sourceOf = (t) => (t.kind === 'view' ? `(SELECT * FROM ${relation(t.id)} OFFSET 0)` : relation(t.id));
+const like = (s) => `%${s.replace(/[\\%_]/g, '\\$&')}%`;
+
+function textOf(t, c, of) {
+  const to = linkOf(t, c);
+  return to && to !== 'archive.file' && !c.list ? `(SELECT x.name FROM ${relation(to)} x WHERE x.id = ${of})` : `${of}::text`;
+}
+
+function whereOf(t, state, skip) {
+  const params = [];
+  const bind = (v) => `$${params.push(v)}`;
+  const all = [];
+  for (const [name, f] of Object.entries(state.filters)) {
+    const c = t.columns.find((x) => x.name === name);
+    if (!c || name === skip) continue;
+    const col = `t.${quoted(name)}`;
+    if (f.values?.length) {
+      const some = f.values.filter((v) => v !== null);
+      const set = `(SELECT jsonb_array_elements(${bind(JSON.stringify(some))}::jsonb))`;
+      const hit = c.list ? `EXISTS (SELECT 1 FROM unnest(${col}) x WHERE to_jsonb(x) IN ${set})` : `to_jsonb(${col}) IN ${set}`;
+      all.push(some.length < f.values.length ? `(${hit} OR ${col} IS NULL)` : hit);
+    }
+    if (f.contains) all.push(`${textOf(t, c, col)} ILIKE ${bind(like(f.contains))}`);
+    const value = c.type === 'money' ? `(${col}).amount` : c.type === 'date' ? `${col}::date` : col;
+    const cast = c.type === 'date' ? 'date' : 'numeric';
+    if (f.min) all.push(`${value} >= ${bind(f.min)}::${cast}`);
+    if (f.max) all.push(`${value} <= ${bind(f.max)}::${cast}`);
+  }
+  if (state.query.trim()) {
+    const named = t.columns.filter((c) => c.name === 'name' || (shownOf(t).includes(c) && filterKind(c)));
+    all.push(`concat_ws(' ', ${named.map((c) => textOf(t, c, `t.${quoted(c.name)}`)).join(', ')}) ILIKE ${bind(like(state.query.trim()))}`);
+  }
+  return { sql: all.length ? ` WHERE ${all.join(' AND ')}` : '', params };
+}
+
+function orderOf(t, state) {
+  const id = t.columns.some((c) => c.name === 'id');
+  const c = t.columns.find((x) => x.name === state.sort);
+  if (!c) return id ? ' ORDER BY t.id' : '';
+  const col = `t.${quoted(c.name)}`;
+  const value = c.type === 'money' ? `(${col}).amount` : ['number', 'date'].includes(c.type) ? col : textOf(t, c, col);
+  return ` ORDER BY ${value} ${c.type === 'date' ? 'DESC' : 'ASC'} NULLS LAST${id ? ', t.id' : ''}`;
+}
+
+const queryCode = (sql, params) => `archive.query(${[sql, ...params].map((p) => JSON.stringify(p)).join(', ')})`;
+
 export const viewRows = resource({
   tables: (c) => !c.table.startsWith('archive.'),
   param: (c) => c.table,
   load: async (id) => {
     const v = ws();
-    const rows = (await call(`/api/${encodeURIComponent(id)}?limit=500`).catch(() => [])) ?? [];
-    v.viewRows = { ...v.viewRows, [id]: rows };
+    let asked;
+    do {
+      const state = viewState(id);
+      asked = JSON.stringify(state);
+      const t = tableOf(id, v) ?? (await schema.refresh(), tableOf(id, v));
+      if (!t) return;
+      const { sql, params } = whereOf(t, state);
+      const from = ` FROM ${sourceOf(t)} t${sql}`;
+      const fields = t.columns.map((c) => `t.${quoted(c.name)}`).join(', ');
+      try {
+        const got = await runCode(`return { rows: await ${queryCode(`SELECT ${fields}${from}${orderOf(t, state)} LIMIT ${VIEW_PAGE} OFFSET ${(state.page - 1) * VIEW_PAGE}`, params)}, total: (await ${queryCode(`SELECT count(*)::int AS n${from}`, params)})[0].n };`, v.id);
+        if (!got.rows.length && got.total) views[id] = { ...state, page: Math.ceil(got.total / VIEW_PAGE) };
+        v.viewRows = { ...v.viewRows, [id]: got.rows };
+        v.viewTotals = { ...v.viewTotals, [id]: { total: got.total, error: '' } };
+      } catch (e) {
+        if (e instanceof Unauthorized) throw e;
+        v.viewRows = { ...v.viewRows, [id]: [] };
+        v.viewTotals = { ...v.viewTotals, [id]: { total: 0, error: e.message } };
+      }
+    } while (asked !== JSON.stringify(viewState(id)));
   }
 });
+
+let viewTimer = null;
+
+export function setView(id, patch, wait = 0) {
+  views[id] = { ...viewState(id), page: 1, ...patch };
+  clearTimeout(viewTimer);
+  viewTimer = setTimeout(() => viewRows.refresh(id), wait);
+}
+
+export function setFilter(id, name, filter, wait = 0) {
+  const filters = { ...viewState(id).filters, [name]: filter };
+  if (!filter?.values?.length && !filter?.contains && !filter?.min && !filter?.max) delete filters[name];
+  setView(id, { filters }, wait);
+}
+
+export async function filterOptions(id, c, term) {
+  const t = tableOf(id);
+  const { sql, params } = whereOf(t, viewState(id), c.name);
+  const col = `t.${quoted(c.name)}`;
+  const source = c.list ? `unnest(${col}) v` : `LATERAL (SELECT ${col} AS v) v`;
+  const search = term ? `${sql ? ' AND' : ' WHERE'} ${textOf(t, c, 'v.v')} ILIKE $${params.push(like(term))}` : '';
+  return (await runCode(`return await ${queryCode(`SELECT to_jsonb(v.v) AS v, count(*)::int AS n FROM ${sourceOf(t)} t, ${source}${sql}${search} GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 100`, params)};`)) ?? [];
+}
 
 export function tableOf(id, v = ws()) {
   return v?.schema.find((x) => x.id === id) ?? v?.archiveTables?.find((x) => x.id === id);
