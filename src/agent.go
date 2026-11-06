@@ -190,7 +190,7 @@ func (a *Archive) turn(w http.ResponseWriter, r *http.Request) {
 		httpWrite(w, http.StatusNoContent, nil, a.ClearTurns(r.Context(), body.Agent))
 		return
 	}
-	key := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY"))
+	key := strings.TrimSpace(secretEnv("ANTHROPIC_API_KEY"))
 	if key == "" {
 		httpWrite(w, http.StatusServiceUnavailable, map[string]string{"error": "the agent needs ANTHROPIC_API_KEY set on the server"}, nil)
 		return
@@ -1005,7 +1005,7 @@ func (a *Archive) Email(ctx context.Context, m emailMail) (*EmailSent, error) {
 			}
 		}
 	}
-	key := strings.TrimSpace(os.Getenv("ARCHIVE_EMAIL"))
+	key := strings.TrimSpace(secretEnv("ARCHIVE_EMAIL"))
 	if key == "" {
 		return nil, fmt.Errorf("this server does not send email: ARCHIVE_EMAIL is not set: %w", ErrForbidden)
 	}
@@ -1080,7 +1080,7 @@ func emailPost(ctx context.Context, key, from, name, to, subject, text string) (
 }
 
 func (h *Hub) emailHTTP(w http.ResponseWriter, r *http.Request) {
-	key := strings.TrimSpace(os.Getenv("ARCHIVE_EMAIL_KEY"))
+	key := strings.TrimSpace(secretEnv("ARCHIVE_EMAIL_KEY"))
 	if key == "" {
 		http.NotFound(w, r)
 		return

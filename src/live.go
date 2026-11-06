@@ -66,7 +66,7 @@ type liveHub struct {
 }
 
 func newLive(api string, key []byte) *liveHub {
-	l := &liveHub{key: strings.TrimSpace(os.Getenv("ARCHIVE_LIVE_KEY")), client: &http.Client{Timeout: 5 * time.Second},
+	l := &liveHub{key: strings.TrimSpace(secretEnv("ARCHIVE_LIVE_KEY")), client: &http.Client{Timeout: 5 * time.Second},
 		pending: map[string]*livePending{}, socks: map[string]map[*liveSocket]bool{}}
 	if l.key != "" {
 		l.to = strings.TrimRight(coreEnv("ARCHIVE_LIVE_URL", api), "/") + "/live/announce"

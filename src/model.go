@@ -222,7 +222,7 @@ func modelPage(data []byte, page int) (out []byte, err error) {
 }
 
 func modelKey(env string) (string, error) {
-	key := strings.TrimSpace(os.Getenv(env))
+	key := strings.TrimSpace(secretEnv(env))
 	if key == "" {
 		return "", fmt.Errorf("this model is not configured on this server; it needs %s", env)
 	}
@@ -299,7 +299,7 @@ func modelGemini(ctx context.Context, req *modelReq, parts []modelPart) (*ModelR
 }
 
 func geminiEndpoint(ctx context.Context, model string) (string, http.Header, error) {
-	if key := strings.TrimSpace(os.Getenv("GEMINI_API_KEY")); key != "" {
+	if key := strings.TrimSpace(secretEnv("GEMINI_API_KEY")); key != "" {
 		return "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent", http.Header{"x-goog-api-key": {key}}, nil
 	}
 	project := os.Getenv("GOOGLE_CLOUD_PROJECT")

@@ -622,7 +622,7 @@ func newSignin(h *Hub) (*signin, error) {
 	}
 	for _, c := range signinBuiltin {
 		env := "ARCHIVE_" + strings.ToUpper(c.ID)
-		raw := strings.TrimSpace(os.Getenv(env))
+		raw := strings.TrimSpace(secretEnv(env))
 		if raw == "" {
 			continue
 		}
@@ -1371,7 +1371,7 @@ func signinNext(next string) string {
 }
 
 func secretLoadKey(dir string) ([]byte, error) {
-	if s := strings.TrimSpace(os.Getenv("ARCHIVE_SECRET_KEY")); s != "" {
+	if s := strings.TrimSpace(secretEnv("ARCHIVE_SECRET_KEY")); s != "" {
 		for _, dec := range []func(string) ([]byte, error){hex.DecodeString, base64.StdEncoding.DecodeString, base64.RawURLEncoding.DecodeString} {
 			if k, err := dec(s); err == nil && len(k) == 32 {
 				return k, nil

@@ -132,8 +132,31 @@ func withArchive(ctx context.Context, a *Archive) context.Context {
 	return context.WithValue(ctx, archiveKey{}, a)
 }
 
+var secretEnvs = map[string]string{}
+
+func secretsLoad() error {
+	raw := strings.TrimSpace(os.Getenv("ARCHIVE_ENV"))
+	if raw == "" {
+		return nil
+	}
+	if json.Unmarshal([]byte(raw), &secretEnvs) != nil {
+		return errors.New("ARCHIVE_ENV: want a JSON object of secret names and their values")
+	}
+	return nil
+}
+
+func secretEnv(name string) string {
+	if v, ok := secretEnvs[name]; ok {
+		return v
+	}
+	return os.Getenv(name)
+}
+
 func Open(ctx context.Context) (*Hub, error) {
-	return openHub(ctx, os.Getenv("DATABASE_URL"), "./data")
+	if err := secretsLoad(); err != nil {
+		return nil, err
+	}
+	return openHub(ctx, secretEnv("DATABASE_URL"), "./data")
 }
 
 func openHub(ctx context.Context, dsn, dir string) (*Hub, error) {
@@ -160,7 +183,7 @@ func openHub(ctx context.Context, dsn, dir string) (*Hub, error) {
 	if err != nil {
 		return nil, fmt.Errorf("DATABASE_URL: %w", err)
 	}
-	conns, err := connect.Load(os.Getenv)
+	conns, err := connect.Load(secretEnv)
 	if err != nil {
 		return nil, err
 	}
@@ -1531,7 +1554,7 @@ func (a *Archive) onboarding(ctx context.Context) (any, error) {
 type stripeAPI struct{ base, secret, publishable string }
 
 func stripeEnv() (*stripeAPI, error) {
-	raw := strings.TrimSpace(os.Getenv("ARCHIVE_STRIPE"))
+	raw := strings.TrimSpace(secretEnv("ARCHIVE_STRIPE"))
 	if raw == "" {
 		return nil, fmt.Errorf("this server does not link cards: ARCHIVE_STRIPE is not set: %w", ErrForbidden)
 	}

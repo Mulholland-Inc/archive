@@ -9,6 +9,7 @@ locals {
   mcp_url = "https://mcp.${var.domain}"
 
   secrets = merge(jsondecode(file("${path.module}/secrets.json")), {
+    ARCHIVE_ENV        = "A JSON object of secret names and their values, read before the env var of each name. A space leaves it empty."
     DATABASE_URL       = "Postgres as the archive user: host=/cloudsql/<connection name> user=archive password=<password> dbname=archive."
     ARCHIVE_SECRET_KEY = "32 random bytes, hex or base64, wrapping every workspace's data key."
     ARCHIVE_LIVE_KEY   = "Key the API announces live changes to the app Worker with and signs its WebSocket tickets with; the image workflow sets it on the Worker as LIVE_KEY."
