@@ -606,7 +606,7 @@ func runCheckChild() error {
 
 func checkApart(ctx context.Context, limit time.Duration, in checkIn, plan func(checkScan) (checkPlan, []checkErr, error)) (checkOut, error) {
 	var out checkOut
-	wait := time.NewTimer(limit)
+	wait := time.NewTimer(runTimeout)
 	defer wait.Stop()
 	select {
 	case checkSlots <- struct{}{}:
