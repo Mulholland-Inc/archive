@@ -58,37 +58,70 @@ func (a *Archive) ClearTurns(ctx context.Context, agent uuid.UUID) error {
 	return err
 }
 
-func (a *Archive) boot(ctx context.Context) (map[string]any, error) {
-	out := map[string]any{}
-	err := a.as(ctx, func(ctx context.Context) error {
-		for key, typ := range map[string]string{"agents": "agent_list", "workflows": "workflow_list", "members": "member"} {
-			rows, err := a.List(ctx, typ, nil, 1000, uuid.Nil, false)
-			if err != nil {
-				return err
-			}
-			out[key] = rows
+var bootLists = map[string]string{"agents": "agent_list", "workflows": "workflow_list", "members": "member"}
+
+func (a *Archive) boot(ctx context.Context, only string) (map[string]any, error) {
+	want := map[string]bool{}
+	for _, k := range strings.Split(only, ",") {
+		switch {
+		case k == "":
+		case k == "me" || k == "types" || k == "signup" || bootLists[k] != "":
+			want[k] = true
+		default:
+			return nil, fmt.Errorf("only: no %q; want me, agents, workflows, members, types or signup: %w", k, httpErrBadRequest)
 		}
-		var err error
-		out["signup"], err = a.signup(ctx, func(r map[string]any) error { return nil })
-		return err
-	})
+	}
+	all := len(want) == 0
+	lists := []string{}
+	for key := range bootLists {
+		if all || want[key] {
+			lists = append(lists, key)
+		}
+	}
+	out := map[string]any{}
+	var err error
+	if len(lists) > 0 || all {
+		err = a.as(ctx, func(ctx context.Context) error {
+			for _, key := range lists {
+				rows, err := a.List(ctx, bootLists[key], nil, 1000, uuid.Nil, false)
+				if err != nil {
+					return err
+				}
+				out[key] = rows
+			}
+			if !all {
+				return nil
+			}
+			var err error
+			out["signup"], err = a.signup(ctx, func(r map[string]any) error { return nil })
+			return err
+		})
+	}
+	if err == nil && want["signup"] {
+		out["signup"], err = a.onboarding(ctx)
+	}
+	if err == nil && (all || want["me"]) {
+		out["me"], err = a.me(ctx)
+	}
+	if err == nil && (all || want["types"]) {
+		out["types"], err = a.types(ctx)
+	}
 	if err != nil {
 		return nil, err
 	}
-	if out["me"], err = a.me(ctx); err != nil {
-		return nil, err
-	}
-	out["types"], err = a.types(ctx)
-	return out, err
+	return out, nil
 }
 
 func (a *Archive) types(ctx context.Context) (map[string]any, error) {
-	schema, err := a.Schema(ctx, "")
-	if err != nil {
+	if _, err := signedIn(ctx); err != nil {
 		return nil, err
 	}
 	cat := a.Catalog()
-	return map[string]any{"tables": cat.Tables, "types": cat.Types, "connectors": a.connectors(), "schema": schema}, nil
+	ddl, err := a.st.Schema(ctx, cat.stamp)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"tables": cat.Tables, "types": cat.Types, "connectors": a.connectors(), "schema": ddl}, nil
 }
 
 func (a *Archive) turnCreate(ctx context.Context, agent, member uuid.UUID, text string, first agentMessage) (uuid.UUID, error) {

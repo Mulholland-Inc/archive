@@ -36,15 +36,15 @@ type Table struct {
 	Name        string    `json:"name"`
 	Schema      string    `json:"schema"`
 	Kind        string    `json:"kind"`
-	Description string    `json:"description"`
+	Description string    `json:"description,omitempty"`
 	Layout      string    `json:"layout,omitempty"`
 	By          string    `json:"by,omitempty"`
 	Icon        string    `json:"icon,omitempty"`
-	RLS         bool      `json:"rls"`
-	Force       bool      `json:"force"`
+	RLS         bool      `json:"rls,omitempty"`
+	Force       bool      `json:"force,omitempty"`
 	Invoker     bool      `json:"security_invoker,omitempty"`
-	Policy      bool      `json:"policy"`
-	Object      bool      `json:"object"`
+	Policy      bool      `json:"policy,omitempty"`
+	Object      bool      `json:"object,omitempty"`
 	Partitioned bool      `json:"partitioned,omitempty"`
 	Columns     []*Column `json:"columns"`
 	meta        [][2]string
@@ -53,27 +53,27 @@ type Table struct {
 
 type Column struct {
 	Name        string `json:"name"`
-	Description string `json:"description"`
+	Description string `json:"description,omitempty"`
 	Type        string `json:"type"`
 	Schema      string `json:"schema"`
 	Reg         string `json:"reg"`
-	List        bool   `json:"list"`
-	NotNull     bool   `json:"not_null"`
-	Default     bool   `json:"default"`
-	Generated   bool   `json:"generated"`
-	PK          bool   `json:"pk"`
-	Ref         string `json:"ref"`
+	List        bool   `json:"list,omitempty"`
+	NotNull     bool   `json:"not_null,omitempty"`
+	Default     bool   `json:"default,omitempty"`
+	Generated   bool   `json:"generated,omitempty"`
+	PK          bool   `json:"pk,omitempty"`
+	Ref         string `json:"ref,omitempty"`
 }
 
 type PgType struct {
 	Name        string    `json:"name"`
 	Schema      string    `json:"schema"`
 	Kind        string    `json:"kind"`
-	Description string    `json:"description"`
-	Base        string    `json:"base"`
-	BaseSchema  string    `json:"base_schema"`
-	Enum        []string  `json:"enum"`
-	Attrs       []*Column `json:"attrs"`
+	Description string    `json:"description,omitempty"`
+	Base        string    `json:"base,omitempty"`
+	BaseSchema  string    `json:"base_schema,omitempty"`
+	Enum        []string  `json:"enum,omitempty"`
+	Attrs       []*Column `json:"attrs,omitempty"`
 }
 
 type Hints struct {
@@ -249,11 +249,11 @@ var catalogLayouts = []string{"table", "board", "calendar", "list", "map", "gall
 
 var (
 	catalogSystem   = map[string]bool{"id": true, "created_at": true, "updated_at": true}
-	catalogReserved = map[string]bool{"boot": true, "files": true, "views": true, "search": true, "schema": true, "types": true,
+	catalogReserved = map[string]bool{"boot": true, "files": true, "views": true, "search": true, "schema": true,
 		"member": true, "group": true, "user": true, "token": true, "file": true, "upload": true, "revision": true, "run": true,
 		"workflow": true, "workflow_run": true, "connection": true, "agent": true, "turn": true, "memory": true,
 		"business": true, "agreement": true, "billing": true,
-		"docs": true, "terms": true, "work": true, "agent_list": true, "workflow_list": true}
+		"docs": true, "work": true, "agent_list": true, "workflow_list": true}
 	catalogNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 	catalogRefRe  = regexp.MustCompile(`(?i)^references\s+([a-z][a-z0-9_]*)\b[\s.;:,-]*`)
 )

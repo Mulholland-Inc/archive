@@ -46,8 +46,7 @@ function column(c, types, tables) {
   };
 }
 
-export function toTables(catalog, schema = [], counts = {}, workflows = [], archive = false) {
-  const ddls = Object.fromEntries(schema.map((s) => [s.name, s.ddl]));
+export function toTables(catalog, ddls = {}, counts = {}, workflows = [], archive = false) {
   return Object.values(catalog.tables ?? {})
     .filter((t) => (t.schema === 'archive') === archive)
     .map((t) => {

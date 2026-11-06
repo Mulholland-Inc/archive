@@ -17,7 +17,7 @@ export function apiPrompt({ key, archive, archives }) {
 - Never print the key back to me or put it in code you share; read it from an ARCHIVE_API_KEY environment variable in scripts.
 
 ## Endpoints
-- \`GET /api/types\`: every table and view, with its columns, types and descriptions. Start here.
+- \`GET /api/boot?only=types\`: every table and view, with its columns, types and descriptions; a field that is false or empty is left out. Start here.
 - \`GET /api/{table}?limit=&after=&desc=1&<column>=<value>\`, \`GET /api/{table}/{id}\`: list and read rows; an empty value matches null.
 - \`POST /api/{table}\`, \`PATCH /api/{table}/{id}\`, \`DELETE /api/{table}/{id}\`: write rows (JSON bodies).
 - \`GET /api/search?q=&type=&limit=\`: full-text search across tables.

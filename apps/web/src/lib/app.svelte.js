@@ -128,12 +128,12 @@ async function loadMe() {
   let me;
   let here = true;
   try {
-    me = await api('/auth/me', { workspace: app.archive });
+    ({ me } = await api('/api/boot?only=me', { workspace: app.archive }));
   } catch (e) {
     if (e instanceof Unauthorized) return leave();
     here = false;
     setWorkspace('');
-    me = await api('/auth/me').catch((e) => (e instanceof Unauthorized ? leave() : null));
+    me = (await api('/api/boot?only=me').catch((e) => (e instanceof Unauthorized ? leave() : null)))?.me;
     if (!me) return setWorkspace(app.archive);
   }
   if (here) setMe(me);
@@ -387,7 +387,7 @@ export const schema = resource({
   tables: ['archive.revision'],
   load: async () => {
     const v = ws();
-    const [catalog] = await Promise.all([booted(v, 'types', () => api('/api/types', { workspace: v.id })), workflows.refresh()]);
+    const [catalog] = await Promise.all([booted(v, 'types', async () => (await api('/api/boot?only=types', { workspace: v.id })).types), workflows.refresh()]);
     v.catalog = { catalog, ddl: catalog.schema, flows: v.flows };
     tables(v);
     counts.reset();
@@ -411,7 +411,7 @@ function tables(v) {
   if (!v.catalog) return;
   const samples = new Map(v.schema.map((t) => [t.id, t.sample]));
   v.schema = toTables(v.catalog.catalog, v.catalog.ddl, v.counts ?? {}, v.catalog.flows).map((t) => ({ ...t, sample: samples.get(t.id) ?? [] }));
-  v.archiveTables = toTables(v.catalog.catalog, [], {}, [], true);
+  v.archiveTables = toTables(v.catalog.catalog, {}, {}, [], true);
 }
 
 export const preview = resource({
@@ -630,7 +630,7 @@ export const onboardingSteps = [
 
 export async function loadSignup() {
   try {
-    Object.assign(app.signup, await call('/api/terms'));
+    Object.assign(app.signup, (await call('/api/boot?only=signup')).signup);
   } catch (e) {
     await complain(e);
   }

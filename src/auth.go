@@ -719,9 +719,6 @@ func (s *signin) handler() http.Handler {
 		u, err := userBy(r.Context(), h, (*generated.Queries).UserByID, t.UserID)
 		return ok(map[string]*User{"user": u}, err)
 	})
-	authed("GET /auth/me", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		return ok(archiveFrom(r.Context()).me(r.Context()))
-	})
 	authed("DELETE /auth/unread", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		return http.StatusNoContent, nil, h.q().ClearUnread(r.Context(), archiveFrom(r.Context()).ws.ID, ActorFrom(r.Context()).UserID)
 	})
