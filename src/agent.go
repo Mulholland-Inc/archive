@@ -144,17 +144,22 @@ func agentToolError(uses []agentBlock, msg string) *agentMessage {
 }
 
 func (a *Archive) turn(w http.ResponseWriter, r *http.Request) {
-	key := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY"))
-	if key == "" {
-		httpWrite(w, http.StatusServiceUnavailable, map[string]string{"error": "the agent needs ANTHROPIC_API_KEY set on the server"}, nil)
-		return
-	}
 	var body struct {
 		Agent uuid.UUID `json:"agent"`
 		Text  string    `json:"text"`
+		Clear bool      `json:"clear"`
 	}
 	if err := httpDecode(r, &body); err != nil {
 		httpWrite(w, 0, nil, err)
+		return
+	}
+	if body.Clear {
+		httpWrite(w, http.StatusNoContent, nil, a.ClearTurns(r.Context(), body.Agent))
+		return
+	}
+	key := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY"))
+	if key == "" {
+		httpWrite(w, http.StatusServiceUnavailable, map[string]string{"error": "the agent needs ANTHROPIC_API_KEY set on the server"}, nil)
 		return
 	}
 	ctx := context.WithValue(context.WithValue(r.Context(), schemaTurnKey{}, uuid.NewString()), emailAgentKey{}, body.Agent.String())

@@ -1572,7 +1572,14 @@ func (a *Archive) billingCustomer(ctx context.Context) (string, error) {
 	return customer, err
 }
 
-func (a *Archive) cardStart(ctx context.Context) (any, error) {
+func (a *Archive) billingSave(ctx context.Context, _ uuid.UUID, data map[string]any) (map[string]any, error) {
+	if id, ok := data["setup_intent"].(string); ok {
+		return a.cardLinked(ctx, id)
+	}
+	return a.cardStart(ctx)
+}
+
+func (a *Archive) cardStart(ctx context.Context) (map[string]any, error) {
 	ac, err := a.ownerInPerson(ctx, "links a card")
 	if err != nil {
 		return nil, err
@@ -1609,10 +1616,10 @@ func (a *Archive) cardStart(ctx context.Context) (any, error) {
 	if err := s.call(ctx, http.MethodPost, "/v1/setup_intents", form, "", &si); err != nil {
 		return nil, err
 	}
-	return map[string]string{"secret": si.Secret, "key": s.publishable}, nil
+	return map[string]any{"secret": si.Secret, "key": s.publishable}, nil
 }
 
-func (a *Archive) cardLinked(ctx context.Context, id string) (any, error) {
+func (a *Archive) cardLinked(ctx context.Context, id string) (map[string]any, error) {
 	if _, err := a.ownerInPerson(ctx, "links a card"); err != nil {
 		return nil, err
 	}
@@ -1651,5 +1658,5 @@ func (a *Archive) cardLinked(ctx context.Context, id string) (any, error) {
 	}
 	card := si.Method.Card.Brand + " " + si.Method.Card.Last4
 	err = a.sys(ctx, func(ctx context.Context) error { return a.st.db(ctx).LinkCard(ctx, card) })
-	return map[string]string{"card": card}, err
+	return map[string]any{"card": card}, err
 }

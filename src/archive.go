@@ -227,6 +227,7 @@ func init() {
 		"workflow":   {save: (*Archive).workflowSave, remove: (*Archive).workflowDelete},
 		"connection": {save: (*Archive).connectionSave, remove: (*Archive).connectionRemove},
 		"agreement":  {create: (*Archive).agreementCreate},
+		"billing":    {save: (*Archive).billingSave},
 	}
 }
 

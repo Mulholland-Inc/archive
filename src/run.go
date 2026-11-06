@@ -928,11 +928,12 @@ func (r *runner) sdk() {
 		}
 		var opts struct {
 			Confirm string `json:"confirm"`
+			Name    string `json:"name"`
 		}
 		if err := r.arg(call, 1, "migrate", "opts", &opts); err != nil {
 			return nil, err
 		}
-		return a.Migrate(ctx, sql, "", opts.Confirm)
+		return a.Migrate(ctx, sql, opts.Name, opts.Confirm)
 	})
 	r.def(o, "files", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		var opts struct {

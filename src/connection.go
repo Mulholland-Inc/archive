@@ -215,6 +215,7 @@ func (a *Archive) connectionSave(ctx context.Context, id uuid.UUID, data map[str
 		Provider string            `json:"provider"`
 		Keys     map[string]string `json:"keys"`
 		Access   *string           `json:"access"`
+		Sync     bool              `json:"sync"`
 	}
 	b, err := json.Marshal(data)
 	if err == nil {
@@ -223,13 +224,23 @@ func (a *Archive) connectionSave(ctx context.Context, id uuid.UUID, data map[str
 		err = d.Decode(&body)
 	}
 	if err != nil {
-		return nil, &ValidationError{Type: "connection", Errors: []FieldError{{Message: fmt.Sprintf(`want { provider, keys } to connect, or { access } to narrow an integration: %v`, err)}}}
+		return nil, &ValidationError{Type: "connection", Errors: []FieldError{{Message: fmt.Sprintf(`want { provider, keys } to connect, { provider } for a connector's link token, { access } to narrow an integration, or { sync: true } to sync now: %v`, err)}}}
 	}
-	if id == uuid.Nil {
-		if id, err = a.connectKeys(ctx, body.Provider, body.Keys); err != nil {
+	switch {
+	case id == uuid.Nil && body.Keys == nil:
+		tok, err := a.connectLink(ctx, body.Provider)
+		if err != nil {
 			return nil, err
 		}
-	} else if err = a.SetAccess(ctx, id, deref(body.Access)); err != nil {
+		return map[string]any{"token": tok}, nil
+	case id == uuid.Nil:
+		id, err = a.connectKeys(ctx, body.Provider, body.Keys)
+	case body.Sync:
+		err = a.SyncNow(ctx, id)
+	default:
+		err = a.SetAccess(ctx, id, deref(body.Access))
+	}
+	if err != nil {
 		return nil, err
 	}
 	return a.Get(ctx, "connection", id)
