@@ -1,5 +1,5 @@
 
-import { API, api, firstBoot, forgetBlobs, upload, setWorkspace, workspace, local, setLocal, saveDraft, signOut as apiSignOut, Unauthorized, passkeys, passkeyAsked } from './api.js';
+import { API, api, forgetBlobs, upload, setWorkspace, workspace, local, setLocal, saveDraft, signOut as apiSignOut, Unauthorized, passkeys, passkeyAsked } from './api.js';
 import { resource, listen, onChange, onRefused } from './stream.svelte.js';
 import { toFile, toMember, toWorkflow, toRun, relative, show } from './live.js';
 import { toTables, countsQuery } from './schema.js';
@@ -89,7 +89,7 @@ async function complain(error, title = 'That didn’t work') {
   await notify({ title, body: error?.message ?? String(error) });
 }
 
-export async function boot(booting = firstBoot) {
+export async function boot(booting = api('/api/boot')) {
   const query = new URLSearchParams(location.search);
   const named = query.get('workspace');
   if (query.get('error')) notify({ title: 'That didn’t connect', body: query.get('error') });
@@ -103,7 +103,7 @@ export async function boot(booting = firstBoot) {
   } catch (e) {
     if (!(e instanceof Unauthorized) && workspace() && e.status >= 403) {
       setWorkspace('');
-      return boot(api('/api/boot'));
+      return boot();
     }
     if (!(e instanceof Unauthorized)) throw e;
     app.status = 'signedOut';
@@ -424,7 +424,7 @@ export const preview = resource({
   }
 });
 
-export const VIEW_PAGE = 500;
+export const VIEW_PAGE = 100;
 const NO_FILTER = ['card', 'us_ssn', 'national', 'passport', 'geo', 'tsvector'];
 const views = $state({});
 const blank = { query: '', sort: '', page: 1, filters: {} };

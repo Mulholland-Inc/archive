@@ -3,11 +3,12 @@
   import ContextMenu from './components/ContextMenu.svelte';
   import { route, replace } from './lib/router.svelte.js';
   import { app, ws, onboards, toggleSidebar, closeDrawer, openSettings, boot, account, lastAgent } from './lib/app.svelte.js';
+  import { firstBoot } from './lib/api.js';
   import PromptHost from './components/PromptHost.svelte';
   import Loading from './components/Loading.svelte';
   import { pageOf } from './lib/preload.js';
 
-  boot();
+  boot(firstBoot);
 
   const page = $derived(pageOf(route.parts, onboards()));
   const load = $derived(page.load);
