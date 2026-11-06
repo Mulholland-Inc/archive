@@ -180,6 +180,8 @@ type ArchiveWorkflow struct {
 	Member *uuid.UUID
 	// When it runs: { cron, tz? }, { table, events }, { webhook: true }, or null to run only with archive.run
 	On json.RawMessage
+	// Why a migration stopped it, with line and column; it does not run until a save passes the checks, which clears this. Read only
+	Broken *string
 }
 
 // A run of one of your workflows, newest kept: the last 100 of each. Read only; Archive records them
